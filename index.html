@@ -144,6 +144,7 @@ textarea{min-height:170px;font-family:ui-monospace,SFMono-Regular,Menlo,monospac
   </div>
   <div class="row">
     <span class="badge" id="hToday"></span>
+    <span class="badge" id="syncBadge" style="cursor:pointer;display:none" title="点击进入云同步设置"></span>
     <button class="btn" id="btnTheme">深色</button>
     <button class="btn primary" id="btnExport">导出 JSON</button>
   </div>
@@ -222,6 +223,17 @@ textarea{min-height:170px;font-family:ui-monospace,SFMono-Regular,Menlo,monospac
 </section>
 
 <section class="pane" id="p-set">
+  <div class="card" id="ghCard">
+    <h2>云同步（GitHub Gist）</h2>
+    <p class="hint">连接后，每次改动自动推送到你 GitHub 账号下的一个<b>私密 Gist</b>，打开页面时自动拉取 —— 手机、电脑之间无需再导入导出。令牌只保存在本设备浏览器里，不会写进任何导出文件。</p>
+    <div id="ghBox"></div>
+    <details style="margin-top:10px"><summary class="small" style="cursor:pointer">怎么获取令牌 (Personal Access Token)？</summary>
+      <div class="small" style="line-height:1.7;margin-top:6px">
+        1. 登录 GitHub → 右上角头像 → <b>Settings</b> → 左栏最底部 <b>Developer settings</b> → <b>Personal access tokens</b> → <b>Tokens (classic)</b> → <b>Generate new token (classic)</b>。<br>
+        2. Note 随便填（如 fee-console），Expiration 选 <b>No expiration</b>，Scopes <b>只勾 gist</b> 一项。<br>
+        3. 点 Generate，把生成的 <code>ghp_…</code> 字符串复制过来粘到上面。这一步只需做一次；换新设备时把同一个令牌再粘一次即可自动找到同一份数据。
+      </div></details>
+  </div>
   <div class="card">
     <h2>核心参数</h2>
     <p class="hint">改动参数只影响<b>未封账</b>月份。已封账月份的数字在封账那一刻就冻结了，改费率、改基准都不会动它。</p>
@@ -333,7 +345,107 @@ function confirmBox(title,msg,onOk){
    沙盒 artifact 环境不支持时静默降级为手动导出 JSON ---- */
 const STORE_KEY="feeConsoleDB.v2";
 const store=(()=>{try{const k="__probe";localStorage.setItem(k,"1");localStorage.removeItem(k);return localStorage;}catch(_){return null;}})();
-function autosave(){ if(store){ try{store.setItem(STORE_KEY,JSON.stringify(DB));}catch(_){}} }
+// 只有数据真的变了才盖时间戳并落盘/推云端，避免每次重绘都把本机标成"更新"
+const strip=o=>JSON.stringify({...o,updatedAt:0});
+let _lastJson=null;
+function autosave(){
+  const j=strip(DB); if(j===_lastJson) return;
+  _lastJson=j; DB.updatedAt=new Date().toISOString();
+  if(store){ try{store.setItem(STORE_KEY,JSON.stringify(DB));}catch(_){}}
+  ghSchedule();
+}
+
+/* ---- 云同步：GitHub Gist 作为跨设备数据库 ----
+   令牌与 Gist id 只存在本设备浏览器，绝不写进 DB / 导出 JSON。 */
+const GH={tokKey:"feeConsole.gh.token",gidKey:"feeConsole.gh.gist",file:"fee-console-db.json"};
+const ghTok=()=>store?(store.getItem(GH.tokKey)||""):"";
+const ghGid=()=>store?(store.getItem(GH.gidKey)||""):"";
+let _ghT=null,_ghBusy=false,_ghDirty=false,_ghRemoteAt=null;
+function setSync(msg,err){
+  const b=document.getElementById("syncBadge"); if(!b) return;
+  if(!store){ b.style.display="none"; return; }
+  if(!ghTok()){ b.textContent="☁ 未连接云同步"; b.className="badge"; b.style.display=""; return; }
+  b.style.display=""; b.textContent="☁ "+msg; b.className="badge "+(err?"hwm":(/同步中/.test(msg)?"est":"ok"));
+  const s=document.getElementById("ghStatus"); if(s) s.textContent=msg;
+}
+async function ghApi(path,opt={}){
+  const r=await fetch("https://api.github.com"+path,{...opt,headers:{"Accept":"application/vnd.github+json","Authorization":"Bearer "+ghTok(),"Content-Type":"application/json",...(opt.headers||{})}});
+  if(!r.ok){ let t=""; try{t=(await r.json()).message||"";}catch(_){ } throw new Error(r.status+(t?" "+t:"")); }
+  return r.status===204?null:r.json();
+}
+async function ghFind(){
+  // 换设备时自动找到同一个 Gist（按文件名匹配）
+  for(let page=1;page<=5;page++){
+    const list=await ghApi(`/gists?per_page=100&page=${page}`);
+    const hit=list.find(g=>g.files&&g.files[GH.file]);
+    if(hit){ store.setItem(GH.gidKey,hit.id); return hit.id; }
+    if(list.length<100) break;
+  }
+  return "";
+}
+async function ghPull(){
+  const gid=ghGid(); if(!gid) return null;
+  const g=await ghApi("/gists/"+gid);
+  const f=g.files&&g.files[GH.file]; if(!f) return null;
+  let content=f.content;
+  if(f.truncated){ content=await (await fetch(f.raw_url)).text(); }
+  _ghRemoteAt=g.updated_at;
+  const o=JSON.parse(content);
+  if(!o||!o.settings||!Array.isArray(o.months)) throw new Error("云端数据格式不符");
+  return o;
+}
+async function ghPush(){
+  const body={files:{[GH.file]:{content:JSON.stringify(DB,null,1)}}};
+  let gid=ghGid();
+  if(!gid){
+    const g=await ghApi("/gists",{method:"POST",body:JSON.stringify({description:"投资管理费管理台 · 数据自动同步（私密）",public:false,...body})});
+    store.setItem(GH.gidKey,g.id); _ghRemoteAt=g.updated_at;
+  }else{
+    const g=await ghApi("/gists/"+gid,{method:"PATCH",body:JSON.stringify(body)});
+    _ghRemoteAt=g.updated_at;
+  }
+}
+const hhmm=()=>new Date().toTimeString().slice(0,5);
+function ghSchedule(){ if(!store||!ghTok()) return; clearTimeout(_ghT); _ghT=setTimeout(ghSync,1500); }
+async function ghSync(){
+  if(!store||!ghTok()) return;
+  if(_ghBusy){ _ghDirty=true; return; }
+  _ghBusy=true; setSync("同步中…");
+  try{ await ghPush(); setSync("已同步 "+hhmm()); }
+  catch(e){ setSync("同步失败："+e.message,true); }
+  finally{ _ghBusy=false; if(_ghDirty){ _ghDirty=false; ghSchedule(); } }
+}
+async function ghInit(quiet){
+  if(!store||!ghTok()){ setSync(""); return; }
+  if(_ghBusy) return; _ghBusy=true; setSync("同步中…");
+  try{
+    if(!ghGid()) await ghFind();
+    const remote=await ghPull();
+    if(remote){
+      const ra=remote.updatedAt||"", la=DB.updatedAt||"";
+      if(ra>la){ DB=remote; _lastJson=strip(DB); if(store) store.setItem(STORE_KEY,JSON.stringify(DB)); render(); setSync("已从云端更新 "+hhmm()); if(!quiet) toast("已从云端拉取最新数据"); }
+      else if(la>ra){ await ghPush(); setSync("已同步 "+hhmm()); }
+      else setSync("已同步 "+hhmm());
+    }else{ await ghPush(); setSync("已同步（已新建云端存档）"); if(!quiet) toast("已在你的 GitHub 新建私密存档"); }
+  }catch(e){ setSync("离线 / 同步失败："+e.message,true); }
+  finally{ _ghBusy=false; if(_ghDirty){ _ghDirty=false; ghSchedule(); } }
+}
+async function ghConnect(tok){
+  if(!store){ toast("当前环境不支持本机存储，无法启用云同步"); return; }
+  tok=(tok||"").trim(); if(!tok){ toast("请先粘贴 GitHub 令牌"); return; }
+  store.setItem(GH.tokKey,tok);
+  try{ await ghApi("/gists?per_page=1"); }
+  catch(e){ store.removeItem(GH.tokKey); setSync(""); toast("令牌无效或权限不足："+e.message); renderSettings(); return; }
+  await ghInit(false); renderSettings();
+}
+function ghDisconnect(){
+  if(!store) return;
+  store.removeItem(GH.tokKey); store.removeItem(GH.gidKey);
+  setSync(""); toast("已断开云同步（本机数据保留，云端存档未删除）"); renderSettings();
+}
+// 切回前台 / 网络恢复时自动拉一次，保证换设备后看到的是最新
+document.addEventListener("visibilitychange",()=>{ if(document.visibilityState==="visible") ghInit(true); });
+window.addEventListener("online",()=>ghInit(true));
 
 function seed(){
   return {
@@ -708,7 +820,31 @@ function renderAudit(){
   </tr>`).join(""):`<tr><td colspan="5" class="empty">还没有封账记录</td></tr>`}</tbody>`;
 }
 
+function renderGh(){
+  const box=document.getElementById("ghBox"); if(!box) return;
+  if(!store){ box.innerHTML=`<div class="warn">当前环境不支持本机存储，云同步不可用。请在 iPhone Safari 或电脑浏览器里打开网页版使用。</div>`; return; }
+  if(ghTok()){
+    const gid=ghGid();
+    box.innerHTML=`<div class="res">
+      <div class="line"><span>状态</span><span id="ghStatus">${(document.getElementById("syncBadge")||{}).textContent?.replace(/^☁ /,"")||"已连接"}</span></div>
+      <div class="line"><span>云端存档</span><span>${gid?`<a href="https://gist.github.com/${gid}" target="_blank" rel="noopener">gist/${gid.slice(0,8)}…</a>`:"首次同步时自动创建"}</span></div>
+      <div class="line"><span>令牌</span><span>已保存在本设备（${ghTok().slice(0,7)}…）</span></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn primary" id="btnGhSync">立即同步</button>
+      <button class="btn danger" id="btnGhOff">断开云同步</button>
+    </div>`;
+  }else{
+    box.innerHTML=`<div class="grid g2">
+      <div style="grid-column:1/-1"><label class="f">GitHub 令牌（只需 gist 权限）</label>
+        <input type="password" id="ghTokIn" placeholder="ghp_… 或 github_pat_…" autocomplete="off"></div>
+    </div>
+    <div class="row" style="margin-top:10px"><button class="btn primary" id="btnGhOn">连接并同步</button>
+      <span class="small">若云端已有存档会自动接上并合并（以较新的一方为准）。</span></div>`;
+  }
+}
 function renderSettings(){
+  renderGh();
   const S=DB.settings;
   sStart.value=S.start; sMgmt.value=S.mgmt; sCarry.value=S.carry; sBasis.value=S.basis;
   sNet.value=String(S.netOfMgmt); sHwm.value=S.hwmMode; sWho.value=S.who||"";
@@ -844,7 +980,9 @@ function renderAll(){
   document.getElementById("dump").value=JSON.stringify(DB,null,2);
   const sv=document.getElementById("saveState");
   if(sv) sv.innerHTML=store
-    ?'<b>本机自动保存：已启用</b> —— 每次改动即存入本设备浏览器，下次打开自动恢复。仍建议定期「导出 JSON」备份（换设备 / 清浏览器数据时靠它）。'
+    ?(ghTok()
+      ?'<b>本机自动保存 + 云同步：已启用</b> —— 改动即存本机并推送到你的 GitHub 私密 Gist，其他设备打开自动拉取。导入/导出 JSON 仅作为额外备份或迁移手段。'
+      :'<b>本机自动保存：已启用</b>；<b>云同步：未连接</b> —— 到「参数设置 → 云同步」粘一次 GitHub 令牌，就能在手机和电脑之间自动同步，不用再导入导出。')
     :'<b>本机自动保存：当前环境不可用</b> —— 关闭前请「导出 JSON」下载存档，下次打开用「导入 JSON」恢复。';
   autosave();
 }
@@ -910,6 +1048,10 @@ document.getElementById("btnTheme").addEventListener("click",e=>{
 });
 document.body.addEventListener("click",e=>{
   const T=e.target;
+  if(T.id==="btnGhOn"){ ghConnect(document.getElementById("ghTokIn").value); return; }
+  if(T.id==="btnGhOff"){ ghDisconnect(); return; }
+  if(T.id==="btnGhSync"){ ghInit(false); return; }
+  if(T.id==="syncBadge"){ document.querySelector('[data-p="p-set"]').click(); document.getElementById("ghCard").scrollIntoView({behavior:"smooth"}); return; }
   const tog=T.closest("[data-tog]");
   if(tog&&!T.closest("input,select,button")){ tog.parentElement.classList.toggle("open"); return; }
   if(T.dataset.lock){ askLock(T.dataset.lock); }
@@ -994,6 +1136,7 @@ function load(obj){
   DB=obj; DB.expenses=DB.expenses||[]; DB.payments=DB.payments||[]; DB.audit=DB.audit||[];
   DB.mtd=DB.mtd||{close:{},flows:[]};
   DB.months.forEach(m=>{m.flows=m.flows||[];m.close=m.close||{};m.avgOverride=m.avgOverride||{};});
+  _lastJson=null;          // 手工导入视为一次改动：盖新时间戳并推送云端
   render(); toast("载入成功");
 }
 document.getElementById("fileIn").onchange=e=>{const f=e.target.files[0];if(!f)return;
@@ -1003,7 +1146,10 @@ document.getElementById("btnReset").onclick=()=>{
   confirmBox("清空重来","将清空全部数据（含月度、支出、支付、结算记录、本机自动存档）并恢复初始模板，此操作不可撤销。",
     ()=>{DB=seed();if(store){try{store.removeItem(STORE_KEY);}catch(_){}}render();toast("已恢复初始模板");});};
 
+_lastJson=strip(DB);   // 载入态作为基线，避免首屏重绘被当成"改动"
 render();
+setSync("");
+ghInit(true);          // 有令牌则拉取云端（较新一方为准）
 </script>
 </body>
 </html>
