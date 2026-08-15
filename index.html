@@ -1,0 +1,1009 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="管理费">
+<meta name="theme-color" content="#fcfcfb">
+<title>投资管理费 · 管理台</title>
+<style>
+:root{
+  color-scheme: light;
+  --surface-1:#fcfcfb; --plane:#f9f9f7;
+  --ink-1:#0b0b0b; --ink-2:#52514e; --ink-muted:#898781;
+  --grid:#e1e0d9; --axis:#c3c2b7; --border:rgba(11,11,11,0.10);
+  --series-1:#2a78d6; --series-2:#eb6834;
+  --good:#0ca30c; --good-text:#006300; --critical:#d03b3b; --warning:#fab219;
+  --chip:#f0efec; --lockbg:rgba(11,11,11,0.035);
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --surface-1:#1a1a19; --plane:#0d0d0d;
+  --ink-1:#ffffff; --ink-2:#c3c2b7; --ink-muted:#898781;
+  --grid:#2c2c2a; --axis:#383835; --border:rgba(255,255,255,0.10);
+  --series-1:#3987e5; --series-2:#d95926;
+  --good:#0ca30c; --good-text:#0ca30c; --critical:#d03b3b; --warning:#fab219;
+  --chip:#262624; --lockbg:rgba(255,255,255,0.04);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--plane);color:var(--ink-1);
+  font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:14px;line-height:1.5}
+.wrap{max-width:1240px;margin:0 auto;padding:20px 20px 80px}
+header.top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-size:20px;margin:0 0 4px;letter-spacing:-0.01em}
+.sub{color:var(--ink-2);font-size:13px}
+.btn{background:var(--surface-1);color:var(--ink-1);border:1px solid var(--border);border-radius:8px;padding:6px 12px;font-size:13px;cursor:pointer;font-family:inherit}
+.btn:hover{background:var(--chip)}
+.btn.primary{background:var(--series-1);border-color:transparent;color:#fff}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--critical)}
+.btn.sm{padding:3px 9px;font-size:12px}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:18px}
+.kpi{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.kpi .lab{font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.kpi .val{font-size:24px;font-weight:600;letter-spacing:-0.02em}
+.kpi .note{font-size:11px;color:var(--ink-muted);margin-top:4px}
+.pos{color:var(--good-text)} .neg{color:var(--critical)}
+
+nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:18px;flex-wrap:wrap}
+nav.tabs button{background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-2);padding:9px 14px;font-size:14px;cursor:pointer;font-family:inherit;margin-bottom:-1px}
+nav.tabs button.on{color:var(--ink-1);border-bottom-color:var(--series-1);font-weight:600}
+section.pane{display:none} section.pane.on{display:block}
+
+.card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+.card h2{font-size:15px;margin:0 0 4px}
+.card .hint{font-size:12px;color:var(--ink-2);margin:0 0 12px}
+.card h3{font-size:13px;margin:16px 0 8px;color:var(--ink-2);font-weight:600}
+
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:right;font-weight:600;color:var(--ink-2);font-size:12px;padding:7px 8px;border-bottom:1px solid var(--axis);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+td{padding:7px 8px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+tbody tr:hover{background:var(--chip)}
+tfoot td{font-weight:600;border-top:1px solid var(--axis);border-bottom:none}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
+td.wrap-cell{white-space:normal;min-width:220px}
+
+input,select,textarea{background:var(--plane);color:var(--ink-1);border:1px solid var(--border);border-radius:6px;padding:5px 8px;font-size:13px;font-family:inherit;width:100%;font-variant-numeric:tabular-nums}
+input:focus,select:focus,textarea:focus{outline:2px solid var(--series-1);outline-offset:-1px}
+input[type=number]{text-align:right}
+input:disabled,select:disabled{background:var(--lockbg);color:var(--ink-2);cursor:default;border-style:dashed}
+td select{min-width:92px} td input[type=date]{min-width:132px}
+td input[type=checkbox]{width:16px;height:16px;accent-color:var(--series-1)}
+label.f{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px}
+.grid{display:grid;gap:12px}
+.g2{grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}
+.g3{grid-template-columns:repeat(auto-fit,minmax(190px,1fr))}
+.g4{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+
+.mcard{border:1px solid var(--border);border-radius:10px;margin-bottom:12px;overflow:hidden;background:var(--surface-1)}
+.mcard.locked{background:var(--lockbg)}
+.mhead{display:flex;align-items:center;gap:10px;padding:11px 14px;background:var(--chip);cursor:pointer;flex-wrap:wrap}
+.mhead .mo{font-weight:600;font-size:14px;min-width:82px}
+.mhead .mi{font-size:12px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.mhead .sp{flex:1}
+.mbody{padding:14px;display:none}
+.mcard.open .mbody{display:block}
+.acct{border:1px solid var(--grid);border-radius:8px;padding:12px;margin-bottom:10px}
+.acct .an{font-size:13px;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+.res{background:var(--plane);border:1px solid var(--grid);border-radius:8px;padding:12px;margin-top:10px}
+.res .line{display:flex;justify-content:space-between;gap:16px;padding:4px 0;font-size:13px;font-variant-numeric:tabular-nums}
+.res .line.tot{border-top:1px solid var(--axis);margin-top:6px;padding-top:8px;font-weight:600}
+.res .line span:first-child{color:var(--ink-2);text-align:left}
+
+.badge{font-size:11px;padding:2px 7px;border-radius:20px;background:var(--chip);color:var(--ink-2);border:1px solid var(--border);white-space:nowrap}
+.badge.est{background:rgba(250,178,25,.16);color:var(--ink-1);border-color:rgba(250,178,25,.55)}
+.badge.hwm{background:rgba(235,104,52,.14);border-color:rgba(235,104,52,.45)}
+.badge.ok{background:rgba(12,163,12,.14);border-color:rgba(12,163,12,.45)}
+.badge.lock{background:rgba(42,120,214,.14);border-color:rgba(42,120,214,.45);color:var(--ink-1)}
+
+.chartbox{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px}
+.chartbox h2{font-size:15px;margin:0 0 2px}
+.chartbox .hint{font-size:12px;color:var(--ink-2);margin:0 0 10px}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--ink-2);margin-bottom:8px}
+.legend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:6px;vertical-align:-1px}
+svg{display:block;width:100%;height:auto;overflow:visible}
+.tt{position:fixed;pointer-events:none;background:var(--surface-1);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:12px;box-shadow:0 6px 20px rgba(0,0,0,.14);z-index:99;display:none;font-variant-numeric:tabular-nums;min-width:150px}
+.tt b{display:block;margin-bottom:5px}
+.tt .r{display:flex;justify-content:space-between;gap:14px;padding:1px 0;color:var(--ink-2)}
+.tt .r em{font-style:normal;color:var(--ink-1)}
+.empty{color:var(--ink-muted);font-size:13px;padding:18px;text-align:center}
+.warn{background:rgba(250,178,25,.12);border:1px solid rgba(250,178,25,.45);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:12px}
+.info{background:rgba(42,120,214,.09);border:1px solid rgba(42,120,214,.35);border-radius:8px;padding:10px 12px;font-size:12.5px;margin-bottom:12px}
+.small{font-size:12px;color:var(--ink-2)}
+code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
+textarea{min-height:170px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;resize:vertical}
+.ib{display:inline-block}
+.del{color:var(--critical);cursor:pointer;background:none;border:none;font-size:15px;padding:0 4px;line-height:1}
+.mtd{border:1px dashed var(--axis);border-radius:12px;padding:16px;background:var(--surface-1);margin-bottom:14px}
+.diff{font-size:11.5px;color:var(--ink-2);font-variant-numeric:tabular-nums}
+.diff b{color:var(--ink-1)}
+/* 自绘模态框与提示条 —— 沙盒环境里原生 alert/confirm/dialog 会被拦截，一律不用 */
+.ovl{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:none;align-items:flex-start;justify-content:center;padding:9vh 16px 16px}
+.ovl.on{display:flex}
+.modal{border:1px solid var(--border);border-radius:12px;background:var(--surface-1);color:var(--ink-1);max-width:460px;width:100%;padding:18px;box-shadow:0 18px 50px rgba(0,0,0,.3)}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink-1);color:var(--surface-1);padding:9px 16px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transition:opacity .18s;pointer-events:none;max-width:80%;text-align:center}
+.toast.on{opacity:.94}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>投资管理费 · 管理台</h1>
+    <div class="sub">Schwab-HK + Webull（Sharesight）· 起算 <span id="hStart">2026-08-01</span> · 管理费 <span id="hMgmt">2.00%</span>/年（日均 AUM × 实际天数/365）· Carry <span id="hCarry">20%</span> 毛收益 · 累计高水位线</div>
+  </div>
+  <div class="row">
+    <span class="badge" id="hToday"></span>
+    <button class="btn" id="btnTheme">深色</button>
+    <button class="btn primary" id="btnExport">导出 JSON</button>
+  </div>
+</header>
+
+<div class="kpis" id="kpis"></div>
+
+<nav class="tabs" id="tabs">
+  <button data-p="p-dash" class="on">概览</button>
+  <button data-p="p-months">月度台账</button>
+  <button data-p="p-exp">费用支出</button>
+  <button data-p="p-pay">支付与余额</button>
+  <button data-p="p-audit">结算记录</button>
+  <button data-p="p-set">参数设置</button>
+  <button data-p="p-data">数据存取</button>
+</nav>
+
+<section class="pane on" id="p-dash">
+  <div id="mtdBox"></div>
+  <div class="chartbox">
+    <h2>累计净收益 vs 高水位线</h2>
+    <p class="hint">仅统计已完结月份。Carry 只对突破高水位线 (High-Water Mark) 的部分计提；曲线低于水位线的区间即"补亏中"。</p>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>累计净收益</span><span><i style="background:var(--series-2)"></i>高水位线</span></div>
+    <div id="chart1"></div>
+  </div>
+  <div class="chartbox">
+    <h2>每月计提费用构成</h2>
+    <p class="hint">管理费按日均 AUM 逐月发生；Carry 仅在突破高水位时产生。</p>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>管理费 (Management fee)</span><span><i style="background:var(--series-2)"></i>Carry (Performance fee)</span></div>
+    <div id="chart2"></div>
+  </div>
+  <div class="card">
+    <h2>月度汇总表</h2>
+    <p class="hint">与图表同源；可直接复制到邮件或 Excel 对账。</p>
+    <div class="scroll"><table id="tblSum"></table></div>
+  </div>
+</section>
+
+<section class="pane" id="p-months">
+  <div class="info">
+    <b>月度自动生成</b>：系统按当前日期自动列出从起算日到<b>上一个已完结自然月</b>的所有月份，没有"新增"入口，未到的月份不会出现。当月进度请看「概览」顶部的 MTD 实时预览，它不计入应付余额。<br>
+    <b>封账不可逆</b>：录完月末总资产点「结算封账」后，该月所有字段与已算出的费用永久冻结 —— 界面上没有解锁入口，之后改费率、改参数也不会再动它。封账前请核对清楚。
+  </div>
+  <div class="warn">
+    <b>录入口径</b>：只需填<b>月末总资产</b>（持仓市值 + 现金，与 Sharesight 组合估值一致）与<b>出入金</b>。期初由上月月末自动结转，首月期初取参数设置里的起始基准，均不可手工改。<br>
+    <b>注意</b>：Sharesight 的 performance 报告默认 <code>include_sales=false</code>，不含当期已了结头寸的收益，<b>不要直接抄它的 total gain</b> —— 本工具用「期末总资产 − 期初总资产 − 净出入金」计算，已实现收益自然涵盖。
+  </div>
+  <div id="months"></div>
+</section>
+
+<section class="pane" id="p-exp">
+  <div class="card">
+    <h2>费用支出明细</h2>
+    <p class="hint">记录管理过程中发生的开支（数据订阅、服务费、差旅等）。勾选「抵扣」的条目会从应付余额中扣除；不勾选则仅作台账记录。</p>
+    <div class="scroll"><table id="tblExp"></table></div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="btnAddExp">+ 新增支出</button></div>
+  </div>
+</section>
+
+<section class="pane" id="p-pay">
+  <div class="card"><h2>费用余额勾稽</h2><div class="res" id="balBox"></div></div>
+  <div class="card">
+    <h2>支付记录</h2>
+    <p class="hint">支付方式包括银行转账、账户内扣划、现金、股票划转等。金额按记录汇率折美元入账。</p>
+    <div class="scroll"><table id="tblPay"></table></div>
+    <div class="row" style="margin-top:12px"><button class="btn" id="btnAddPay">+ 新增支付</button></div>
+  </div>
+</section>
+
+<section class="pane" id="p-audit">
+  <div class="card">
+    <h2>结算记录 (Settlement log)</h2>
+    <p class="hint">每次封账的时间、期间、操作人与当时锁定的全部数字。只增不改，导出 JSON 时一并带走，可作为对账凭据。</p>
+    <div class="scroll"><table id="tblAudit"></table></div>
+  </div>
+</section>
+
+<section class="pane" id="p-set">
+  <div class="card">
+    <h2>核心参数</h2>
+    <p class="hint">改动参数只影响<b>未封账</b>月份。已封账月份的数字在封账那一刻就冻结了，改费率、改基准都不会动它。</p>
+    <div class="grid g3">
+      <div><label class="f">起算日</label><input type="date" id="sStart"></div>
+      <div><label class="f">管理费率（年化 %）</label><input type="number" id="sMgmt" step="0.01"></div>
+      <div><label class="f">Carry 比例（%）</label><input type="number" id="sCarry" step="0.1"></div>
+      <div><label class="f">计息基准 (day count)</label><select id="sBasis"><option value="365">实际天数 / 365</option><option value="360">实际天数 / 360</option><option value="12">1/12 月份法</option></select></div>
+      <div><label class="f">Carry 是否先扣管理费</label><select id="sNet"><option value="0">否 — 对毛收益计提（当前设定）</option><option value="1">是 — 收益先减管理费再计提</option></select></div>
+      <div><label class="f">高水位线模式</label><select id="sHwm"><option value="perp">永久高水位（跨年不重置）</option><option value="year">每自然年 1 月 1 日重置</option></select></div>
+      <div><label class="f">操作人（记入痕迹）</label><input id="sWho" placeholder="姓名或缩写"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>起始基准（首月期初）</h2>
+    <p class="hint">起算日前一交易日的总资产，作为整条台账的起点。已有封账月份后不建议再改。</p>
+    <div class="grid g3" id="openBox"></div>
+  </div>
+  <div class="card">
+    <h2>管理账户</h2>
+    <p class="hint">对应 Sharesight 组合。</p>
+    <div id="acctList"></div>
+    <button class="btn sm" id="btnAddAcct">+ 增加账户</button>
+  </div>
+  <div class="card">
+    <h2>汇率表（折美元）</h2>
+    <p class="hint">用于费用支出与支付记录的换算。1 单位外币 = ? USD。逐笔可单独覆盖。</p>
+    <div class="grid g4" id="fxBox"></div>
+  </div>
+  <div class="card">
+    <h2>计算口径</h2>
+    <div class="small" style="line-height:1.75">
+      <p style="margin:0 0 8px"><b>管理费</b> = 日均 AUM × 年费率 × 当期实际天数 / 365。日均 AUM 采用 Modified Dietz 分母：<code>期初总资产 + Σ(出入金 × 剩余天数/当期天数)</code>。有每日净值时可用「日均 AUM 覆盖」替代。</p>
+      <p style="margin:0 0 8px"><b>当月净收益</b> = 期末总资产 − 期初总资产 − 净出入金。已实现 + 未实现 + 股息全部涵盖。</p>
+      <p style="margin:0 0 8px"><b>Carry</b> = max(0, 累计净收益 − 高水位线) × Carry 比例。计提后水位线上移；亏损月 Carry 为 0 且水位线不动，须先补回亏损。</p>
+      <p style="margin:0"><b>不含 clawback（回拨）</b>：已收 Carry 在后续亏损时不退回，高水位线只保证不重复计提同一段收益。</p>
+    </div>
+  </div>
+</section>
+
+<section class="pane" id="p-data">
+  <div class="card">
+    <h2>数据存取</h2>
+    <div class="warn" id="saveState"></div>
+    <div class="row" style="margin-bottom:12px">
+      <button class="btn primary" id="btnExport2">下载 JSON 存档</button>
+      <button class="btn" id="btnCopy">复制到剪贴板</button>
+      <button class="btn" id="btnCsv">导出月度 CSV</button>
+      <label class="btn ib" style="cursor:pointer">导入 JSON<input type="file" id="fileIn" accept=".json,application/json" style="display:none"></label>
+      <button class="btn danger" id="btnReset">清空重来</button>
+    </div>
+    <label class="f">当前存档</label>
+    <textarea id="dump" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:8px"><button class="btn" id="btnLoadText">从文本载入</button></div>
+  </div>
+</section>
+
+</div>
+<div class="tt" id="tt"></div>
+
+<div class="ovl" id="dlg">
+  <div class="modal">
+    <h3 style="margin:0 0 6px;font-size:15px">结算封账 · 不可撤销</h3>
+    <p class="small" id="dlgMsg" style="margin:0 0 10px"></p>
+    <div class="res" id="dlgSnap" style="margin:0 0 12px"></div>
+    <div class="warn" style="margin:0 0 12px"><b>封账后本月所有字段永久只读</b>，界面上没有解锁入口。请先核对上方数字。</div>
+    <label class="f">在下方输入 <code>封账</code> 两字以确认</label>
+    <input id="dlgReason" placeholder="封账">
+    <div class="row" style="margin-top:14px;justify-content:flex-end">
+      <button class="btn" id="dlgCancel">取消</button>
+      <button class="btn primary" id="dlgOk">确认封账</button>
+    </div>
+  </div>
+</div>
+<div class="ovl" id="cfm">
+  <div class="modal">
+    <h3 style="margin:0 0 8px;font-size:15px" id="cfmTitle">确认操作</h3>
+    <p class="small" id="cfmMsg" style="margin:0 0 14px"></p>
+    <div class="row" style="justify-content:flex-end">
+      <button class="btn" id="cfmCancel">取消</button>
+      <button class="btn danger" id="cfmOk">确认</button>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+"use strict";
+const uid=()=>Math.random().toString(36).slice(2,9);
+const CCY=["USD","HKD","CNY","EUR","SGD","GBP","JPY"];
+
+/* ---- 沙盒安全的提示与确认（替代 alert/confirm/dialog）---- */
+let _toastT=null;
+function toast(msg){
+  const t=document.getElementById("toast");
+  t.textContent=msg; t.classList.add("on");
+  if(_toastT) clearTimeout(_toastT);
+  _toastT=setTimeout(()=>t.classList.remove("on"),2600);
+}
+let _cfmCb=null;
+function confirmBox(title,msg,onOk){
+  document.getElementById("cfmTitle").textContent=title;
+  document.getElementById("cfmMsg").textContent=msg;
+  _cfmCb=onOk;
+  document.getElementById("cfm").classList.add("on");
+}
+
+/* ---- 本机自动保存：环境支持 localStorage 时启用（如 iPhone Safari / 自托管网页），
+   沙盒 artifact 环境不支持时静默降级为手动导出 JSON ---- */
+const STORE_KEY="feeConsoleDB.v2";
+const store=(()=>{try{const k="__probe";localStorage.setItem(k,"1");localStorage.removeItem(k);return localStorage;}catch(_){return null;}})();
+function autosave(){ if(store){ try{store.setItem(STORE_KEY,JSON.stringify(DB));}catch(_){}} }
+
+function seed(){
+  return {
+    v:2,
+    settings:{ start:"2026-08-01", mgmt:2.0, carry:20, basis:"365", netOfMgmt:0, hwmMode:"perp", who:"",
+      openingAt:"2026-07-31",
+      fx:{USD:1,HKD:0.1282,CNY:0.1400,EUR:1.09,SGD:0.745,GBP:1.27,JPY:0.0065} },
+    accounts:[
+      {id:"schwab",name:"Schwab-HK",opening:0},
+      {id:"webull",name:"Webull",opening:0}],
+    months:[], expenses:[], payments:[], audit:[],
+    mtd:{ close:{}, flows:[] }
+  };
+}
+let DB=seed();
+// 启动时从本机存档恢复（若有且合法）
+if(store){
+  try{
+    const s=store.getItem(STORE_KEY);
+    if(s){ const o=JSON.parse(s); if(o&&o.settings&&Array.isArray(o.months)) DB=o; }
+  }catch(_){}
+}
+
+const P=s=>{const[y,m,d]=String(s).split("-").map(Number);return new Date(Date.UTC(y,m-1,d));};
+const F=dt=>dt.toISOString().slice(0,10);
+const DAY=86400000;
+const inclDays=(a,b)=>Math.round((P(b)-P(a))/DAY)+1;
+const eom=ym=>{const[y,m]=ym.split("-").map(Number);return F(new Date(Date.UTC(y,m,0)));};
+const nextYm=ym=>{let[y,m]=ym.split("-").map(Number);m++;if(m>12){m=1;y++;}return y+"-"+String(m).padStart(2,"0");};
+const ymLabel=ym=>{const[y,m]=ym.split("-");return y+"年"+Number(m)+"月";};
+const num=v=>{const n=parseFloat(v);return isFinite(n)?n:0;};
+const todayStr=()=>new Date().toISOString().slice(0,10);
+const nowStr=()=>new Date().toISOString().slice(0,16).replace("T"," ");
+const fmt=(v,d=2)=>(v==null||!isFinite(v))?"—":(v<0?"-":"")+Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const usd=(v,d=2)=>(v==null||!isFinite(v))?"—":(v<0?"-$":"$")+Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const sgn=v=>v>0?"pos":(v<0?"neg":"");
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+
+/* ---------- 自动生成已完结月份 ---------- */
+function syncMonths(){
+  const startYm=DB.settings.start.slice(0,7);
+  const cur=todayStr().slice(0,7);
+  const have=new Set(DB.months.map(m=>m.ym));
+  let ym=startYm;
+  const wanted=[];
+  while(ym<cur){ wanted.push(ym); ym=nextYm(ym); if(wanted.length>600) break; }
+  for(const w of wanted){
+    if(!have.has(w)){
+      const close={}; DB.accounts.forEach(a=>close[a.id]="");
+      DB.months.push({id:uid(),ym:w,close,avgOverride:{},flows:[],locked:false,lockedAt:null,snap:null,note:""});
+    }
+  }
+  // 清掉起算日之前 / 未完结的自动月份（未封账且无数据时才清）
+  DB.months=DB.months.filter(m=>{
+    if(m.ym>=startYm && m.ym<cur) return true;
+    const hasData=Object.values(m.close||{}).some(v=>v!==""&&v!=null)||(m.flows||[]).length||m.locked;
+    return hasData;
+  });
+  DB.months.sort((a,b)=>a.ym.localeCompare(b.ym));
+  DB.months.forEach(m=>{ m.close=m.close||{}; m.avgOverride=m.avgOverride||{}; m.flows=m.flows||[];
+    DB.accounts.forEach(a=>{ if(!(a.id in m.close)) m.close[a.id]=""; }); });
+  // MTD 区块跨月结转：上个月过完后，把 MTD 里登记的出入金搬进正式月度，市值不搬（那是月中数）
+  DB.mtd=DB.mtd||{close:{},flows:[],ym:cur}; DB.mtd.close=DB.mtd.close||{}; DB.mtd.flows=DB.mtd.flows||[];
+  if(DB.mtd.ym&&DB.mtd.ym!==cur){
+    const target=DB.months.find(m=>m.ym===DB.mtd.ym);
+    if(target&&!target.locked&&DB.mtd.flows.length){
+      const seen=new Set(target.flows.map(f=>f.id));
+      DB.mtd.flows.forEach(f=>{ if(!seen.has(f.id)) target.flows.push({...f}); });
+    }
+    DB.mtd={close:{},flows:[],ym:cur};
+  }
+  DB.mtd.ym=cur;
+}
+
+/* ---------- 核心计算 ---------- */
+function periodOf(ym){
+  const s=DB.settings.start;
+  const from=(ym===s.slice(0,7))?s:ym+"-01";
+  return {from,to:eom(ym)};
+}
+function calcPeriod(openByAcct, closeByAcct, flows, from, to, avgOverride){
+  const days=Math.max(1,inclDays(from,to));
+  let openT=0,closeT=0,avgT=0,flowT=0,ovrAny=false;
+  const per=[];
+  for(const a of DB.accounts){
+    const op=num(openByAcct[a.id]);
+    const rawCl=closeByAcct[a.id];
+    const filled=(rawCl!==""&&rawCl!=null&&isFinite(parseFloat(rawCl)));
+    const cl=filled?parseFloat(rawCl):op;
+    const fl=(flows||[]).filter(f=>f.acct===a.id);
+    const net=fl.reduce((s,f)=>s+num(f.amount),0);
+    let w=op;
+    for(const f of fl){
+      const el=Math.max(0,Math.min(days,Math.round((P(f.date||from)-P(from))/DAY)));
+      w+=num(f.amount)*((days-el)/days);
+    }
+    const ovRaw=(avgOverride||{})[a.id];
+    const ov=(ovRaw!==""&&ovRaw!=null&&isFinite(parseFloat(ovRaw)));
+    if(ov) ovrAny=true;
+    const avg=Math.max(0, ov?parseFloat(ovRaw):w);
+    openT+=op; closeT+=cl; avgT+=avg; flowT+=net;
+    per.push({id:a.id,name:a.name,open:op,close:cl,filled,net,avg,pnl:cl-op-net,ov});
+  }
+  const pnl=per.reduce((s,x)=>s+x.pnl,0);
+  const S=DB.settings;
+  const frac=S.basis==="12"?1/12:days/Number(S.basis);
+  const mgmt=avgT*(num(S.mgmt)/100)*frac;
+  const complete=per.every(x=>x.filled);
+  return {days,openT,closeT,avgT,flowT,per,pnl,mgmt,frac,ovrAny,complete};
+}
+function compute(){
+  const S=DB.settings, carryRate=num(S.carry)/100;
+  let cum=0,hwm=0,lastYear=null;
+  const openByAcct={}; DB.accounts.forEach(a=>openByAcct[a.id]=num(a.opening));
+  const rows=[];
+  for(const m of DB.months){
+    const y=Number(m.ym.slice(0,4));
+    const {from,to}=periodOf(m.ym);
+
+    // 已封账：完全使用封账时冻结的数字，不随参数或后续改动重算
+    if(m.locked&&m.snap){
+      const s=m.snap;
+      rows.push({...m,from:s.from||from,to:s.to||to,days:s.days,openT:s.openT,closeT:s.closeT,avgT:s.avgT,
+        flowT:s.flowT,per:s.per||[],pnl:s.pnl,mgmt:s.mgmt,carry:s.carry,total:s.total,
+        cumBefore:s.cumBefore,cum:s.cum,hwmBefore:s.hwmBefore,hwm:s.hwm,excess:s.excess,
+        underwater:s.excess<=0?(s.hwm-s.cum):0,complete:true,ovrAny:s.ovrAny,frozen:true});
+      cum=s.cum; hwm=s.hwm; lastYear=y;
+      DB.accounts.forEach(a=>{ const p=(s.per||[]).find(x=>x.id===a.id); openByAcct[a.id]=p?p.close:num(openByAcct[a.id]); });
+      continue;
+    }
+
+    if(S.hwmMode==="year"&&lastYear!==null&&y!==lastYear) hwm=cum;
+    lastYear=y;
+    const c=calcPeriod(openByAcct,m.close,m.flows,from,to,m.avgOverride);
+    const carryPnl=Number(S.netOfMgmt)?(c.pnl-c.mgmt):c.pnl;
+    const cumBefore=cum; cum+=carryPnl;
+    const hwmBefore=hwm;
+    const excess=cum-hwm;
+    const carry=excess>0?excess*carryRate:0;
+    if(excess>0) hwm=cum;
+    rows.push({...m,from,to,...c,carry,total:c.mgmt+carry,cumBefore,cum,hwmBefore,hwm,excess,
+      underwater:excess<=0?(hwm-cum):0});
+    DB.accounts.forEach(a=>{ const p=c.per.find(x=>x.id===a.id); openByAcct[a.id]=p?p.close:0; });
+  }
+  return {rows,openNext:{...openByAcct},cum,hwm};
+}
+function computeMTD(state){
+  const cur=todayStr().slice(0,7);
+  if(cur<DB.settings.start.slice(0,7)) return null;
+  const from=(cur===DB.settings.start.slice(0,7))?DB.settings.start:cur+"-01";
+  const to=todayStr();
+  if(P(to)<P(from)) return null;
+  const c=calcPeriod(state.openNext,DB.mtd.close,DB.mtd.flows,from,to,{});
+  const carryRate=num(DB.settings.carry)/100;
+  const carryPnl=Number(DB.settings.netOfMgmt)?(c.pnl-c.mgmt):c.pnl;
+  const cum=state.cum+carryPnl;
+  const excess=cum-state.hwm;
+  const carry=excess>0?excess*carryRate:0;
+  return {ym:cur,from,to,...c,carry,total:c.mgmt+carry,cum,hwm:state.hwm,excess,
+    underwater:excess<=0?(state.hwm-cum):0, monthEnd:eom(cur)};
+}
+function balance(rows){
+  const fxOf=e=>(e.fx!=null&&e.fx!==""&&isFinite(parseFloat(e.fx)))?parseFloat(e.fx):(DB.settings.fx[e.ccy]||1);
+  const L=rows.filter(r=>r.locked), U=rows.filter(r=>!r.locked);
+  const lockMgmt=L.reduce((s,r)=>s+r.mgmt,0), lockCarry=L.reduce((s,r)=>s+r.carry,0);
+  const openMgmt=U.reduce((s,r)=>s+r.mgmt,0), openCarry=U.reduce((s,r)=>s+r.carry,0);
+  const accrMgmt=lockMgmt+openMgmt, accrCarry=lockCarry+openCarry, accrued=accrMgmt+accrCarry;
+  const expAll=DB.expenses.reduce((s,e)=>s+num(e.amount)*fxOf(e),0);
+  const expDed=DB.expenses.filter(e=>e.deduct).reduce((s,e)=>s+num(e.amount)*fxOf(e),0);
+  const paid=DB.payments.reduce((s,p)=>s+num(p.amount)*fxOf(p),0);
+  return {accrMgmt,accrCarry,accrued,lockAccrued:lockMgmt+lockCarry,openAccrued:openMgmt+openCarry,
+    nLock:L.length,nOpen:U.length,expAll,expDed,paid,due:accrued-expDed-paid,
+    dueLocked:(lockMgmt+lockCarry)-expDed-paid,fxOf};
+}
+
+/* ---------- 渲染 ---------- */
+function renderKPIs(rows,B,mtd){
+  const last=rows[rows.length-1];
+  document.getElementById("hToday").textContent="系统日期 "+todayStr();
+  document.getElementById("kpis").innerHTML=`
+  <div class="kpi"><div class="lab">应付费用余额</div><div class="val ${B.due>0?'':'pos'}">${usd(B.due)}</div>
+    <div class="note">${B.nOpen?`含 ${B.nOpen} 个待结算月 ${usd(B.openAccrued,0)}`:`全部 ${B.nLock} 个月已封账`}</div></div>
+  <div class="kpi"><div class="lab">累计管理费</div><div class="val">${usd(B.accrMgmt)}</div><div class="note">${DB.settings.mgmt}%/年 · 日均 AUM</div></div>
+  <div class="kpi"><div class="lab">累计 Carry</div><div class="val">${usd(B.accrCarry)}</div><div class="note">${DB.settings.carry}% · 高水位以上</div></div>
+  <div class="kpi"><div class="lab">累计净收益（已完结月）</div><div class="val ${sgn(last?last.cum:0)}">${usd(last?last.cum:0)}</div>
+    <div class="note">${last?(last.cum>=last.hwm?'已在高水位线上':'距高水位还差 '+usd(last.hwm-last.cum,0)):'首月尚未完结'}</div></div>`;
+  const live=mtd&&mtd.complete;
+  const size=live?mtd.closeT:(last?last.closeT:DB.accounts.reduce((s,a)=>s+num(a.opening),0));
+  const asOf=live?('MTD '+mtd.to):(last?(ymLabel(last.ym)+'期末'):('起始基准 '+DB.settings.openingAt));
+  document.getElementById("kpis").insertAdjacentHTML("beforeend",
+  `<div class="kpi"><div class="lab">当前管理规模</div><div class="val">${usd(size,0)}</div>
+    <div class="note">${asOf} · ${DB.accounts.length} 个账户</div></div>`);
+}
+
+function renderMTD(mtd){
+  const box=document.getElementById("mtdBox");
+  if(!mtd){ box.innerHTML=""; return; }
+  const need=!mtd.complete;
+  box.innerHTML=`<div class="mtd">
+    <div class="row" style="justify-content:space-between;margin-bottom:4px">
+      <h2 style="font-size:15px;margin:0">${ymLabel(mtd.ym)} · MTD 实时预览 <span class="badge est">进行中 · 不计入应付余额</span></h2>
+      <span class="small">${mtd.from} → ${mtd.to}（${mtd.days} 天 / 全月 ${inclDays(mtd.from,mtd.monthEnd)} 天）</span>
+    </div>
+    <p class="hint small" style="margin:0 0 12px">填入今天的总资产即可看到本月至今的收益与费用走向。<b>${mtd.monthEnd} 之后</b>本月会自动进入下方「月度台账」，届时再录月末数正式结算。</p>
+    <div class="grid g4">
+      ${DB.accounts.map((a,i)=>`<div><label class="f"><span class="dot" style="background:var(--series-${i%2+1});margin-right:6px"></span>${esc(a.name)} 当前总资产</label>
+        <input type="number" step="0.01" data-mtd="close" data-a="${a.id}" value="${DB.mtd.close[a.id]??''}" placeholder="期初 ${fmt(mtd.per.find(p=>p.id===a.id)?.open||0,0)}"></div>`).join("")}
+      <div><label class="f">本月至今净收益</label><input disabled value="${need?'待录入':fmt(mtd.pnl)}" class="${need?'':sgn(mtd.pnl)}"></div>
+      <div><label class="f">预估费用（按当前进度）</label><input disabled value="${need?'—':fmt(mtd.total)}"></div>
+    </div>
+    ${need?'':`<div class="res" style="margin-top:12px">
+      <div class="line"><span>日均 AUM（${mtd.days} 天）</span><span>${usd(mtd.avgT)}</span></div>
+      <div class="line"><span>管理费（截至 ${mtd.to}）</span><span>${usd(mtd.mgmt)}</span></div>
+      <div class="line"><span>累计净收益若结算于今日</span><span class="${sgn(mtd.cum)}">${usd(mtd.cum)}</span></div>
+      <div class="line"><span>高水位线</span><span>${usd(mtd.hwm)}</span></div>
+      <div class="line"><span>Carry 预估</span><span>${mtd.excess>0?usd(mtd.carry):'0.00（补亏中，还差 '+fmt(mtd.underwater,0)+'）'}</span></div>
+      <div class="line tot"><span>本月至今预估费用</span><span>${usd(mtd.total)}</span></div></div>`}
+    <div style="margin-top:10px"><label class="f">本月出入金（会带入正式结算）</label>
+      <div class="scroll"><table><thead><tr><th>日期</th><th>账户</th><th>金额 (USD)</th><th>备注</th><th></th></tr></thead>
+      <tbody>${DB.mtd.flows.length?DB.mtd.flows.map(f=>`<tr>
+        <td><input type="date" data-mtdf="${f.id}" data-k="date" value="${f.date||''}"></td>
+        <td><select data-mtdf="${f.id}" data-k="acct">${DB.accounts.map(a=>`<option value="${a.id}" ${f.acct===a.id?'selected':''}>${esc(a.name)}</option>`).join("")}</select></td>
+        <td><input type="number" step="0.01" data-mtdf="${f.id}" data-k="amount" value="${f.amount??''}"></td>
+        <td><input data-mtdf="${f.id}" data-k="note" value="${esc(f.note||'')}"></td>
+        <td><button class="del" data-delmtdf="${f.id}">×</button></td></tr>`).join(""):`<tr><td colspan="5" class="empty">本月无出入金</td></tr>`}
+      </tbody></table></div>
+      <button class="btn sm" style="margin-top:8px" id="btnAddMtdF">+ 出入金</button></div>
+  </div>`;
+}
+
+function renderSummary(rows){
+  const t=document.getElementById("tblSum");
+  if(!rows.length){ t.innerHTML=`<tbody><tr><td class="empty">尚无已完结月份 —— 第一个可结算月份为 ${ymLabel(DB.settings.start.slice(0,7))}，将在 ${eom(DB.settings.start.slice(0,7))} 之后自动出现。</td></tr></tbody>`; return; }
+  const T=rows.reduce((s,r)=>({p:s.p+r.pnl,m:s.m+r.mgmt,c:s.c+r.carry,t:s.t+r.total}),{p:0,m:0,c:0,t:0});
+  t.innerHTML=`<thead><tr><th>月份</th><th>天数</th><th>期初总额</th><th>净出入金</th><th>期末总额</th><th>日均 AUM</th>
+    <th>当月净收益</th><th>累计净收益</th><th>高水位线</th><th>管理费</th><th>Carry</th><th>本月合计</th></tr></thead>
+  <tbody>${rows.map(r=>`<tr>
+    <td>${ymLabel(r.ym)} ${r.locked?'<span class="badge lock">已封账</span>':(r.complete?'<span class="badge est">待封账</span>':'<span class="badge est">待录入</span>')}</td>
+    <td>${r.days}</td><td>${fmt(r.openT,0)}</td><td class="${sgn(r.flowT)}">${r.flowT?fmt(r.flowT,0):'—'}</td>
+    <td>${r.complete?fmt(r.closeT,0):'—'}</td><td>${fmt(r.avgT,0)}${r.ovrAny?' *':''}</td>
+    <td class="${sgn(r.pnl)}">${r.complete?fmt(r.pnl):'—'}</td><td class="${sgn(r.cum)}">${fmt(r.cum)}</td>
+    <td>${fmt(r.hwm)}</td><td>${fmt(r.mgmt)}</td><td>${fmt(r.carry)}</td><td><b>${fmt(r.total)}</b></td></tr>`).join("")}</tbody>
+  <tfoot><tr><td>合计</td><td></td><td></td><td></td><td></td><td></td>
+    <td class="${sgn(T.p)}">${fmt(T.p)}</td><td></td><td></td><td>${fmt(T.m)}</td><td>${fmt(T.c)}</td><td>${fmt(T.t)}</td></tr></tfoot>`;
+}
+
+function renderMonths(rows){
+  const host=document.getElementById("months");
+  if(!rows.length){
+    host.innerHTML=`<div class="card"><div class="empty">还没有已完结的月份。<br><br>第一个可结算月份是 <b>${ymLabel(DB.settings.start.slice(0,7))}</b>，会在 <b>${eom(DB.settings.start.slice(0,7))}</b> 过后自动出现在这里。<br>在那之前请用「概览」页顶部的 MTD 实时预览跟踪进度。</div></div>`;
+    return;
+  }
+  const openSet=new Set([...host.querySelectorAll(".mcard.open")].map(e=>e.dataset.id));
+  if(!openSet.size){ const firstOpen=rows.find(r=>!r.locked); openSet.add((firstOpen||rows[rows.length-1]).id); }
+  const D=r=>r.locked?"disabled":"";
+  host.innerHTML=rows.map(r=>`
+  <div class="mcard ${openSet.has(r.id)?'open':''} ${r.locked?'locked':''}" data-id="${r.id}">
+    <div class="mhead" data-tog="${r.id}">
+      <span class="mo">${ymLabel(r.ym)}</span>
+      ${r.complete?`<span class="mi">净收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b></span>
+      <span class="mi">管理费 ${fmt(r.mgmt,0)}</span><span class="mi">Carry ${fmt(r.carry,0)}</span>`
+      :`<span class="mi">尚未录入月末总资产</span>`}
+      ${r.locked?`<span class="badge lock">已封账 ${r.lockedAt||''}</span>`:(r.complete?'<span class="badge est">待封账</span>':'<span class="badge est">待录入</span>')}
+      ${r.complete&&r.excess>0?'<span class="badge ok">突破高水位</span>':(r.complete&&r.underwater>0?'<span class="badge hwm">补亏中 '+fmt(r.underwater,0)+'</span>':'')}
+      <span class="sp"></span>
+      <span class="mi">合计 <b>${r.complete?usd(r.total,0):'—'}</b></span><span class="badge">▾</span>
+    </div>
+    <div class="mbody">
+      <div class="grid g4" style="margin-bottom:12px">
+        <div><label class="f">计费起日</label><input value="${r.from}" disabled></div>
+        <div><label class="f">计费止日</label><input value="${r.to}" disabled></div>
+        <div><label class="f">计费天数</label><input value="${r.days} 天" disabled></div>
+        <div><label class="f">状态</label><input value="${r.locked?'已封账（只读）':(r.complete?'待封账':'待录入月末总资产')}" disabled></div>
+      </div>
+      ${r.per.map((a,i)=>`<div class="acct">
+        <div class="an"><span class="dot" style="background:var(--series-${i%2+1})"></span>${esc(a.name)}</div>
+        <div class="grid g4">
+          <div><label class="f">期初总资产（自动结转）</label><input value="${fmt(a.open,2)}" disabled></div>
+          <div><label class="f">期末总资产 (USD) ${a.filled?'':'· 待填'}</label>
+            <input type="number" step="0.01" data-m="${r.id}" data-a="${a.id}" data-k="close" value="${DB.months.find(x=>x.id===r.id).close[a.id]??''}" ${D(r)}></div>
+          <div><label class="f">日均 AUM 覆盖（可空）</label>
+            <input type="number" step="0.01" placeholder="${fmt(a.avg,0)}" data-m="${r.id}" data-a="${a.id}" data-k="avgOverride" value="${DB.months.find(x=>x.id===r.id).avgOverride[a.id]??''}" ${D(r)}></div>
+          <div><label class="f">本账户净收益</label><input value="${a.filled?fmt(a.pnl):'—'}" disabled class="${a.filled?sgn(a.pnl):''}"></div>
+        </div></div>`).join("")}
+
+      <h3>出入金 (Capital flows) — 存入为正，取出为负</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>日期</th><th>账户</th><th>金额 (USD)</th><th>加权天数</th><th>备注</th><th></th></tr></thead>
+        <tbody>${(r.flows||[]).length?r.flows.map(f=>{
+          const el=Math.max(0,Math.min(r.days,Math.round((P(f.date||r.from)-P(r.from))/86400000)));
+          return `<tr>
+          <td><input type="date" min="${r.from}" max="${r.to}" data-m="${r.id}" data-f="${f.id}" data-k="date" value="${f.date||''}" ${D(r)}></td>
+          <td><select data-m="${r.id}" data-f="${f.id}" data-k="acct" ${D(r)}>${DB.accounts.map(a=>`<option value="${a.id}" ${f.acct===a.id?'selected':''}>${esc(a.name)}</option>`).join("")}</select></td>
+          <td><input type="number" step="0.01" data-m="${r.id}" data-f="${f.id}" data-k="amount" value="${f.amount??''}" ${D(r)}></td>
+          <td>${r.days-el} / ${r.days}</td>
+          <td><input data-m="${r.id}" data-f="${f.id}" data-k="note" value="${esc(f.note||'')}" ${D(r)}></td>
+          <td>${r.locked?'':`<button class="del" data-delf="${f.id}" data-m="${r.id}">×</button>`}</td></tr>`;}).join("")
+          :`<tr><td colspan="6" class="empty">本月无出入金</td></tr>`}</tbody></table></div>
+      ${r.locked?'':`<button class="btn sm" style="margin-top:8px" data-addf="${r.id}">+ 出入金</button>`}
+
+      <div class="res">
+        <div class="line"><span>日均 AUM（Modified Dietz${r.ovrAny?'，含手工覆盖':''}）</span><span>${usd(r.avgT)}</span></div>
+        <div class="line"><span>管理费 = ${usd(r.avgT,0)} × ${DB.settings.mgmt}% × ${DB.settings.basis==="12"?"1/12":r.days+"/"+DB.settings.basis}</span><span>${usd(r.mgmt)}</span></div>
+        <div class="line"><span>当月净收益（期末 − 期初 − 净出入金）</span><span class="${sgn(r.pnl)}">${r.complete?usd(r.pnl):'待录入'}</span></div>
+        <div class="line"><span>累计净收益（期初 ${fmt(r.cumBefore,0)} →）</span><span class="${sgn(r.cum)}">${usd(r.cum)}</span></div>
+        <div class="line"><span>高水位线（本月前）</span><span>${usd(r.hwmBefore)}</span></div>
+        <div class="line"><span>Carry 基数 = max(0, 累计 − 高水位)</span><span>${r.excess>0?usd(r.excess):'0.00（补亏中，还差 '+fmt(r.underwater,0)+'）'}</span></div>
+        <div class="line"><span>Carry @ ${DB.settings.carry}%</span><span>${usd(r.carry)}</span></div>
+        <div class="line tot"><span>本月应计费用合计</span><span>${usd(r.total)}</span></div>
+      </div>
+      <div style="margin-top:10px"><label class="f">备注</label><input data-m="${r.id}" data-k="note" value="${esc(r.note||'')}" ${D(r)}></div>
+      <div class="row" style="margin-top:12px">
+        ${r.locked
+          ? `<span class="badge lock">🔒 已封账，不可修改</span><span class="small">封账于 ${r.lockedAt||'—'}${r.snap&&r.snap.who?' · 操作人 '+esc(r.snap.who):''}</span>`
+          : `<button class="btn primary" data-lock="${r.id}" ${r.complete?'':'disabled'}>结算封账</button>
+             <span class="small">${r.complete?'封账后本月所有字段永久只读，界面上无解锁入口 —— 请先核对数字。':'请先录入全部账户的月末总资产。'}</span>`}
+      </div>
+    </div>
+  </div>`).join("");
+}
+
+function renderExp(B){
+  document.getElementById("tblExp").innerHTML=`<thead><tr><th>日期</th><th>类别</th><th>金额</th><th>币种</th><th>汇率→USD</th><th>折美元</th><th>抵扣</th><th>备注</th><th></th></tr></thead>
+  <tbody>${DB.expenses.length?DB.expenses.map(e=>`<tr>
+    <td><input type="date" data-e="${e.id}" data-k="date" value="${e.date||''}"></td>
+    <td><input data-e="${e.id}" data-k="cat" value="${esc(e.cat||'')}" placeholder="数据/服务/差旅"></td>
+    <td><input type="number" step="0.01" data-e="${e.id}" data-k="amount" value="${e.amount??''}"></td>
+    <td><select data-e="${e.id}" data-k="ccy">${CCY.map(c=>`<option ${e.ccy===c?'selected':''}>${c}</option>`).join("")}</select></td>
+    <td><input type="number" step="0.0001" data-e="${e.id}" data-k="fx" value="${e.fx??''}" placeholder="${DB.settings.fx[e.ccy]||1}"></td>
+    <td>${usd(num(e.amount)*B.fxOf(e))}</td>
+    <td><input type="checkbox" data-e="${e.id}" data-k="deduct" ${e.deduct?'checked':''}></td>
+    <td><input data-e="${e.id}" data-k="note" value="${esc(e.note||'')}"></td>
+    <td><button class="del" data-dele="${e.id}">×</button></td></tr>`).join(""):`<tr><td colspan="9" class="empty">还没有支出记录</td></tr>`}</tbody>
+  <tfoot><tr><td>合计</td><td></td><td></td><td></td><td></td><td>${usd(B.expAll)}</td><td colspan="3">其中可抵扣 ${usd(B.expDed)}</td></tr></tfoot>`;
+}
+
+function renderPay(B){
+  const METH=["银行转账","账户内扣划","现金","股票/证券划转","第三方支付","其他"];
+  document.getElementById("tblPay").innerHTML=`<thead><tr><th>日期</th><th>金额</th><th>币种</th><th>汇率→USD</th><th>折美元</th><th>支付方式</th><th>对应期间</th><th>备注</th><th></th></tr></thead>
+  <tbody>${DB.payments.length?DB.payments.map(p=>`<tr>
+    <td><input type="date" data-p="${p.id}" data-k="date" value="${p.date||''}"></td>
+    <td><input type="number" step="0.01" data-p="${p.id}" data-k="amount" value="${p.amount??''}"></td>
+    <td><select data-p="${p.id}" data-k="ccy">${CCY.map(c=>`<option ${p.ccy===c?'selected':''}>${c}</option>`).join("")}</select></td>
+    <td><input type="number" step="0.0001" data-p="${p.id}" data-k="fx" value="${p.fx??''}" placeholder="${DB.settings.fx[p.ccy]||1}"></td>
+    <td>${usd(num(p.amount)*B.fxOf(p))}</td>
+    <td><select data-p="${p.id}" data-k="method">${METH.map(m=>`<option ${p.method===m?'selected':''}>${m}</option>`).join("")}</select></td>
+    <td><input data-p="${p.id}" data-k="period" value="${esc(p.period||'')}" placeholder="2026-08"></td>
+    <td><input data-p="${p.id}" data-k="note" value="${esc(p.note||'')}"></td>
+    <td><button class="del" data-delp="${p.id}">×</button></td></tr>`).join(""):`<tr><td colspan="9" class="empty">还没有支付记录</td></tr>`}</tbody>
+  <tfoot><tr><td>已付合计</td><td></td><td></td><td></td><td>${usd(B.paid)}</td><td colspan="4"></td></tr></tfoot>`;
+
+  document.getElementById("balBox").innerHTML=`
+    <div class="line"><span>已封账月份应计费用（${B.nLock} 个月）</span><span>${usd(B.lockAccrued)}</span></div>
+    <div class="line"><span>待结算月份应计费用（${B.nOpen} 个月，数字可能还会变）</span><span>${usd(B.openAccrued)}</span></div>
+    <div class="line tot"><span>累计应计费用</span><span>${usd(B.accrued)}</span></div>
+    <div class="line" style="margin-top:8px"><span>其中：管理费 / Carry</span><span>${usd(B.accrMgmt)} / ${usd(B.accrCarry)}</span></div>
+    <div class="line"><span>减：可抵扣支出</span><span>−${usd(B.expDed)}</span></div>
+    <div class="line"><span>减：已支付</span><span>−${usd(B.paid)}</span></div>
+    <div class="line tot"><span>应付余额（含待结算）</span><span class="${B.due>0?'':'pos'}">${usd(B.due)}</span></div>
+    <div class="line"><span>其中已封账部分（可据此开票收款）</span><span>${usd(B.dueLocked)}</span></div>
+    <div class="small" style="margin-top:8px">备查：不抵扣的支出台账合计 ${usd(B.expAll-B.expDed)}（仅记录，不进余额）。当月 MTD 预估不含在以上任何数字里。</div>`;
+}
+
+function renderAudit(){
+  const t=document.getElementById("tblAudit");
+  const a=[...DB.audit].reverse();
+  t.innerHTML=`<thead><tr><th>封账时间</th><th>月份</th><th>计费期间</th><th>操作人</th><th>锁定数字</th></tr></thead>
+  <tbody>${a.length?a.map(x=>`<tr>
+    <td>${x.ts}</td><td>${x.ym?ymLabel(x.ym):'—'}</td>
+    <td>${esc(x.period||'—')}</td><td>${esc(x.who||'—')}</td>
+    <td class="wrap-cell" style="text-align:left"><div class="diff">${x.diff||''}</div></td>
+  </tr>`).join(""):`<tr><td colspan="5" class="empty">还没有封账记录</td></tr>`}</tbody>`;
+}
+
+function renderSettings(){
+  const S=DB.settings;
+  sStart.value=S.start; sMgmt.value=S.mgmt; sCarry.value=S.carry; sBasis.value=S.basis;
+  sNet.value=String(S.netOfMgmt); sHwm.value=S.hwmMode; sWho.value=S.who||"";
+  hStart.textContent=S.start; hMgmt.textContent=Number(S.mgmt).toFixed(2)+"%"; hCarry.textContent=Number(S.carry)+"%";
+  const anyLock=DB.months.some(m=>m.locked);
+  document.getElementById("openBox").innerHTML=
+    `<div><label class="f">起始基准估值日</label><input type="date" id="sOpenAt" value="${S.openingAt}" ${anyLock?'disabled':''}></div>`+
+    DB.accounts.map((a,i)=>`<div><label class="f"><span class="dot" style="background:var(--series-${i%2+1});margin-right:6px"></span>${esc(a.name)} 总资产</label>
+      <input type="number" step="0.01" data-open="${a.id}" value="${a.opening??''}" ${anyLock?'disabled':''}></div>`).join("")+
+    (anyLock?`<div class="small" style="align-self:end">已有封账月份，起始基准已锁定。</div>`:"");
+  document.getElementById("acctList").innerHTML=DB.accounts.map((a,i)=>`
+    <div class="row" style="margin-bottom:8px"><span class="dot" style="background:var(--series-${i%2+1})"></span>
+      <input style="max-width:260px" data-acct="${a.id}" value="${esc(a.name)}">
+      <button class="btn sm danger" data-delacct="${a.id}" ${anyLock?'disabled':''}>删除</button></div>`).join("");
+  document.getElementById("fxBox").innerHTML=CCY.filter(c=>c!=="USD").map(c=>`
+    <div><label class="f">1 ${c} = ? USD</label><input type="number" step="0.0001" data-fx="${c}" value="${S.fx[c]??''}"></div>`).join("");
+}
+
+/* ---------- 图表 ---------- */
+const CH={w:900,h:280,l:64,r:20,t:16,b:34};
+function axisTicks(min,max,n=5){
+  const span=max-min||1,raw=span/n,mag=Math.pow(10,Math.floor(Math.log10(raw)));
+  const step=[1,2,2.5,5,10].map(x=>x*mag).find(x=>x>=raw)||mag*10;
+  const lo=Math.floor(min/step)*step,hi=Math.ceil(max/step)*step,out=[];
+  for(let v=lo;v<=hi+step/2;v+=step) out.push(+v.toFixed(6));
+  if(out.length<2) out.push(+(out[0]+step).toFixed(6));  // 全零/单值时避免刻度塌缩成一条
+  return out;
+}
+const K=v=>Math.abs(v)>=1000?(v/1000).toFixed(Math.abs(v)>=10000?0:1)+"k":v.toFixed(0);
+function chartLine(rows){
+  const box=document.getElementById("chart1");
+  if(!rows.length){ box.innerHTML=`<div class="empty">首月完结后此处出现走势图</div>`; return; }
+  const {w,h,l,r,t,b}=CH,iw=w-l-r,ih=h-t-b;
+  const pts=rows.map((x,i)=>({i,ym:x.ym,cum:x.cum,hwm:x.hwm,carry:x.carry,pnl:x.pnl,mgmt:x.mgmt}));
+  const vals=pts.flatMap(p=>[p.cum,p.hwm]).concat([0]);
+  const ticks=axisTicks(Math.min(...vals),Math.max(...vals));
+  const y0=ticks[0];
+  const y1=(ticks[ticks.length-1]===y0)?y0+1:ticks[ticks.length-1];
+  const X=i=>pts.length===1?l+iw/2:l+i*(iw/(pts.length-1));
+  const Y=v=>t+ih-((v-y0)/(y1-y0))*ih;
+  const path=k=>pts.map((p,i)=>(i?"L":"M")+X(i).toFixed(1)+","+Y(p[k]).toFixed(1)).join("");
+  const base=Y(y0<0?0:y0);
+  const area="M"+X(0).toFixed(1)+","+base.toFixed(1)+pts.map((p,i)=>"L"+X(i).toFixed(1)+","+Y(p.cum).toFixed(1)).join("")+"L"+X(pts.length-1).toFixed(1)+","+base.toFixed(1)+"Z";
+  box.innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="累计净收益与高水位线走势">
+    <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="var(--series-1)" stop-opacity=".22"/><stop offset="100%" stop-color="var(--series-1)" stop-opacity="0"/></linearGradient></defs>
+    ${ticks.map(v=>`<line x1="${l}" x2="${w-r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--grid)"/><text x="${l-10}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--ink-muted)">${K(v)}</text>`).join("")}
+    ${(y0<0&&y1>0)?`<line x1="${l}" x2="${w-r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--axis)" stroke-width="1.5"/>`:""}
+    <path d="${area}" fill="url(#g1)"/>
+    <path d="${path('hwm')}" fill="none" stroke="var(--series-2)" stroke-width="2" stroke-dasharray="6 4" stroke-linejoin="round"/>
+    <path d="${path('cum')}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    ${pts.map((p,i)=>`<circle cx="${X(i).toFixed(1)}" cy="${Y(p.cum).toFixed(1)}" r="4.5" fill="var(--series-1)" stroke="var(--surface-1)" stroke-width="2"/>`).join("")}
+    ${pts.map((p,i)=>`<text x="${X(i).toFixed(1)}" y="${h-12}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${p.ym.slice(2).replace("-","/")}</text>`).join("")}
+    ${pts.map((p,i)=>`<rect x="${(X(i)-iw/Math.max(1,pts.length)/2).toFixed(1)}" y="${t}" width="${(iw/Math.max(1,pts.length)).toFixed(1)}" height="${ih}" fill="transparent" class="hit"
+      data-tip='${esc(JSON.stringify({t:ymLabel(p.ym),r:[["累计净收益",usd(p.cum)],["高水位线",usd(p.hwm)],["当月净收益",usd(p.pnl)],["管理费",usd(p.mgmt)],["Carry",usd(p.carry)]]}))}'/>`).join("")}
+  </svg>`;
+  wireTips(box);
+}
+function chartBars(rows){
+  const box=document.getElementById("chart2");
+  if(!rows.length){ box.innerHTML=`<div class="empty">首月完结后此处出现费用柱图</div>`; return; }
+  const {w,h,l,r,t,b}=CH,iw=w-l-r,ih=h-t-b;
+  const ticks=axisTicks(0,Math.max(...rows.map(x=>x.total),1));
+  const y1=ticks[ticks.length-1],Y=v=>t+ih-(v/y1)*ih;
+  const slot=iw/rows.length,bw=Math.min(58,slot*0.6);
+  box.innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img" aria-label="每月管理费与 Carry 构成">
+    ${ticks.map(v=>`<line x1="${l}" x2="${w-r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--grid)"/><text x="${l-10}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--ink-muted)">${K(v)}</text>`).join("")}
+    <line x1="${l}" x2="${w-r}" y1="${(t+ih).toFixed(1)}" y2="${(t+ih).toFixed(1)}" stroke="var(--axis)"/>
+    ${rows.map((x,i)=>{const cx=l+slot*i+slot/2,x0=cx-bw/2;
+      const hM=Math.max(0,(x.mgmt/y1)*ih),hC=Math.max(0,(x.carry/y1)*ih),gap=hC>0?2:0;
+      const yM=t+ih-hM,yC=yM-gap-hC;
+      return `${hM>0?`<rect x="${x0.toFixed(1)}" y="${yM.toFixed(1)}" width="${bw.toFixed(1)}" height="${hM.toFixed(1)}" fill="var(--series-1)" ${hC>0?'':'rx="4"'}/>`:""}
+      ${hC>0?`<rect x="${x0.toFixed(1)}" y="${yC.toFixed(1)}" width="${bw.toFixed(1)}" height="${hC.toFixed(1)}" rx="4" fill="var(--series-2)"/>`:""}
+      <text x="${cx.toFixed(1)}" y="${(Math.min(yM,yC)-7).toFixed(1)}" text-anchor="middle" font-size="11" fill="var(--ink-2)" font-weight="600">${K(x.total)}</text>
+      <text x="${cx.toFixed(1)}" y="${h-12}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${x.ym.slice(2).replace("-","/")}</text>
+      <rect x="${(cx-slot/2).toFixed(1)}" y="${t}" width="${slot.toFixed(1)}" height="${ih}" fill="transparent" class="hit"
+        data-tip='${esc(JSON.stringify({t:ymLabel(x.ym),r:[["管理费",usd(x.mgmt)],["Carry",usd(x.carry)],["合计",usd(x.total)],["日均 AUM",usd(x.avgT,0)],["计费天数",x.days+" 天"]]}))}'/>`;}).join("")}
+  </svg>`;
+  wireTips(box);
+}
+const TT=document.getElementById("tt");
+function wireTips(box){
+  box.querySelectorAll(".hit").forEach(el=>{
+    el.addEventListener("mouseenter",ev=>{
+      const d=JSON.parse(el.dataset.tip.replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>'));
+      TT.innerHTML=`<b>${d.t}</b>`+d.r.map(([k,v])=>`<div class="r"><span>${k}</span><em>${v}</em></div>`).join("");
+      TT.style.display="block"; move(ev);
+    });
+    el.addEventListener("mousemove",move);
+    el.addEventListener("mouseleave",()=>TT.style.display="none");
+  });
+  function move(ev){const pad=14;let x=ev.clientX+pad,y=ev.clientY+pad;const rc=TT.getBoundingClientRect();
+    if(x+rc.width>innerWidth-8)x=ev.clientX-rc.width-pad; if(y+rc.height>innerHeight-8)y=ev.clientY-rc.height-pad;
+    TT.style.left=x+"px";TT.style.top=y+"px";}
+}
+
+/* ---------- 主渲染 ---------- */
+// 每次重绘都会重建整块 DOM，若不还原焦点，用户在字段间 Tab 时输入焦点会丢失。
+const FKEYS=["m","a","f","k","e","p","mtd","mtdf","fx","acct","open"];
+function focusKey(el){
+  if(!el||!el.tagName||!("dataset" in el)) return null;
+  if(!/^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) return null;
+  return JSON.stringify([el.tagName,el.id||"",...FKEYS.map(k=>el.dataset[k]||"")]);
+}
+function restoreFocus(key,selS,selE){
+  if(!key) return;
+  for(const el of document.querySelectorAll("input,select,textarea")){
+    if(focusKey(el)===key){
+      el.focus();
+      try{ if(selS!=null&&el.setSelectionRange) el.setSelectionRange(selS,selE); }catch(_){}
+      return;
+    }
+  }
+}
+function render(){
+  const ae=document.activeElement, key=focusKey(ae);
+  let selS=null,selE=null;
+  if(key){ try{ selS=ae.selectionStart; selE=ae.selectionEnd; }catch(_){} }
+  renderAll();
+  restoreFocus(key,selS,selE);
+}
+// change 事件在 blur 时触发：此刻焦点还没落到下一个字段。延后一拍再重绘，
+// 才能把焦点还给用户 Tab 过去的那个输入框，而不是把它丢给 body。
+let _pending=null;
+function scheduleRender(keepId){
+  if(_pending) clearTimeout(_pending);
+  _pending=setTimeout(()=>{ _pending=null; render(); if(keepId) openM(keepId); },0);
+}
+function renderAll(){
+  syncMonths();
+  const st=compute(), rows=st.rows, mtd=computeMTD(st), B=balance(rows);
+  renderKPIs(rows,B,mtd); renderMTD(mtd); renderSummary(rows); chartLine(rows); chartBars(rows);
+  renderMonths(rows); renderExp(B); renderPay(B); renderAudit(); renderSettings();
+  document.getElementById("dump").value=JSON.stringify(DB,null,2);
+  const sv=document.getElementById("saveState");
+  if(sv) sv.innerHTML=store
+    ?'<b>本机自动保存：已启用</b> —— 每次改动即存入本设备浏览器，下次打开自动恢复。仍建议定期「导出 JSON」备份（换设备 / 清浏览器数据时靠它）。'
+    :'<b>本机自动保存：当前环境不可用</b> —— 关闭前请「导出 JSON」下载存档，下次打开用「导入 JSON」恢复。';
+  autosave();
+}
+const openM=id=>{const el=document.querySelector(`.mcard[data-id="${id}"]`); if(el) el.classList.add("open");};
+
+/* ---------- 封账 / 解锁 ---------- */
+const SNAPF=[["openT","期初总额"],["flowT","净出入金"],["closeT","期末总额"],["avgT","日均AUM"],
+  ["pnl","当月净收益"],["mgmt","管理费"],["carry","Carry"],["total","本月合计"]];
+function snapOf(r){
+  const o={who:DB.settings.who||"",from:r.from,to:r.to,days:r.days,ovrAny:!!r.ovrAny,
+    rate:{mgmt:num(DB.settings.mgmt),carry:num(DB.settings.carry),basis:DB.settings.basis,
+          netOfMgmt:Number(DB.settings.netOfMgmt),hwmMode:DB.settings.hwmMode},
+    per:(r.per||[]).map(p=>({id:p.id,name:p.name,open:+p.open.toFixed(2),close:+p.close.toFixed(2),
+      net:+p.net.toFixed(2),avg:+p.avg.toFixed(2),pnl:+p.pnl.toFixed(2),filled:true,ov:!!p.ov}))};
+  SNAPF.forEach(([k])=>o[k]=+(r[k]||0).toFixed(2));
+  ["cumBefore","cum","hwmBefore","hwm","excess"].forEach(k=>o[k]=+(r[k]||0).toFixed(2));
+  return o;
+}
+function logAudit(o){ DB.audit.push({ts:nowStr(),who:DB.settings.who||"",...o}); }
+
+let pendingLock=null;
+const dlg=document.getElementById("dlg");
+function askLock(id){
+  const r=compute().rows.find(x=>x.id===id); if(!r||!r.complete||r.locked) return;
+  pendingLock=id;
+  document.getElementById("dlgMsg").textContent=`即将结算 ${ymLabel(r.ym)}（${r.from} → ${r.to}，${r.days} 天）。`;
+  document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,lab])=>
+    `<div class="line"><span>${lab}</span><span>${fmt(r[k])}</span></div>`).join("");
+  document.getElementById("dlgReason").value="";
+  dlg.classList.add("on"); document.getElementById("dlgReason").focus();
+}
+document.getElementById("dlgCancel").onclick=()=>{pendingLock=null;dlg.classList.remove("on");};
+document.getElementById("dlgOk").onclick=()=>{
+  if(document.getElementById("dlgReason").value.trim()!=="封账"){ toast("请输入「封账」两字确认"); return; }
+  const id=pendingLock;
+  const r=compute().rows.find(x=>x.id===id);
+  const m=DB.months.find(x=>x.id===id);
+  const fresh=snapOf(r);
+  m.locked=true; m.lockedAt=nowStr(); m.snap=fresh;
+  logAudit({ym:m.ym,action:"结算封账",period:`${r.from} → ${r.to}`,
+    diff:SNAPF.map(([k,lab])=>`${lab} ${fmt(fresh[k])}`).join("；")});
+  dlg.classList.remove("on"); pendingLock=null; render(); openM(id);
+  toast(ymLabel(m.ym)+" 已封账");
+};
+document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
+document.getElementById("cfmOk").onclick=()=>{
+  const cb=_cfmCb; _cfmCb=null;
+  document.getElementById("cfm").classList.remove("on");
+  if(cb) cb();
+};
+
+/* ---------- 事件 ---------- */
+document.getElementById("tabs").addEventListener("click",e=>{
+  const b=e.target.closest("button[data-p]"); if(!b) return;
+  document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));
+  document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));
+});
+document.getElementById("btnTheme").addEventListener("click",e=>{
+  const d=document.documentElement.dataset.theme==="dark";
+  document.documentElement.dataset.theme=d?"light":"dark";
+  e.target.textContent=d?"深色":"浅色";
+  const st=compute(); chartLine(st.rows); chartBars(st.rows);
+});
+document.body.addEventListener("click",e=>{
+  const T=e.target;
+  const tog=T.closest("[data-tog]");
+  if(tog&&!T.closest("input,select,button")){ tog.parentElement.classList.toggle("open"); return; }
+  if(T.dataset.lock){ askLock(T.dataset.lock); }
+  if(T.dataset.addf){ const m=DB.months.find(x=>x.id===T.dataset.addf); if(m.locked)return;
+    const {from}=periodOf(m.ym); m.flows.push({id:uid(),date:from,acct:DB.accounts[0].id,amount:"",note:""}); render(); openM(T.dataset.addf); }
+  if(T.dataset.delf){ const m=DB.months.find(x=>x.id===T.dataset.m); if(m.locked)return;
+    m.flows=m.flows.filter(f=>f.id!==T.dataset.delf); render(); openM(T.dataset.m); }
+  if(T.id==="btnAddMtdF"){ DB.mtd.flows.push({id:uid(),date:todayStr(),acct:DB.accounts[0].id,amount:"",note:""}); render(); }
+  if(T.dataset.delmtdf){ DB.mtd.flows=DB.mtd.flows.filter(f=>f.id!==T.dataset.delmtdf); render(); }
+  if(T.dataset.dele){ DB.expenses=DB.expenses.filter(x=>x.id!==T.dataset.dele); render(); }
+  if(T.dataset.delp){ DB.payments=DB.payments.filter(x=>x.id!==T.dataset.delp); render(); }
+  if(T.dataset.delacct){ if(DB.accounts.length<2){toast("至少保留一个账户");return;}
+    if(DB.months.some(m=>m.locked)){toast("已有封账月份，不能删除账户");return;}
+    const id=T.dataset.delacct, nm=(DB.accounts.find(a=>a.id===id)||{}).name||"";
+    confirmBox("删除账户","将删除「"+nm+"」及其在各月度的市值与出入金数据，此操作不可撤销。",()=>{
+      DB.accounts=DB.accounts.filter(a=>a.id!==id);
+      DB.months.forEach(m=>{delete m.close[id];delete m.avgOverride[id];m.flows=m.flows.filter(f=>f.acct!==id);});
+      delete DB.mtd.close[id]; DB.mtd.flows=DB.mtd.flows.filter(f=>f.acct!==id); render();
+      toast("账户已删除"); }); }
+});
+document.getElementById("btnAddExp").onclick=()=>{DB.expenses.push({id:uid(),date:todayStr(),cat:"",amount:"",ccy:"USD",fx:"",deduct:false,note:""});render();document.querySelector('[data-p="p-exp"]').click();};
+document.getElementById("btnAddPay").onclick=()=>{DB.payments.push({id:uid(),date:todayStr(),amount:"",ccy:"USD",fx:"",method:"银行转账",period:"",note:""});render();};
+document.getElementById("btnAddAcct").onclick=()=>{ if(DB.months.some(m=>m.locked)){toast("已有封账月份，不能增删账户");return;}
+  const id=uid(); DB.accounts.push({id,name:"新账户",opening:0});
+  DB.months.forEach(m=>{m.close[id]="";}); render(); };
+
+document.body.addEventListener("change",e=>{
+  const T=e.target,k=T.dataset.k;
+  const val=T.type==="checkbox"?T.checked:T.value;
+  let dirty=true,keep=null;
+  if(T.dataset.m&&T.dataset.a){ const m=DB.months.find(x=>x.id===T.dataset.m); if(m.locked)return;
+    if(k==="close") m.close[T.dataset.a]=val; else m.avgOverride[T.dataset.a]=val; keep=T.dataset.m; }
+  else if(T.dataset.m&&T.dataset.f){ const m=DB.months.find(x=>x.id===T.dataset.m); if(m.locked)return;
+    const f=m.flows.find(z=>z.id===T.dataset.f); f[k]=val; keep=T.dataset.m; }
+  else if(T.dataset.m){ const m=DB.months.find(x=>x.id===T.dataset.m); if(m.locked)return; m[k]=val; keep=T.dataset.m; }
+  else if(T.dataset.mtd==="close"){ DB.mtd.close[T.dataset.a]=val; }
+  else if(T.dataset.mtdf){ const f=DB.mtd.flows.find(z=>z.id===T.dataset.mtdf); f[k]=val; }
+  else if(T.dataset.e){ Object.assign(DB.expenses.find(z=>z.id===T.dataset.e),{[k]:val}); }
+  else if(T.dataset.p){ Object.assign(DB.payments.find(z=>z.id===T.dataset.p),{[k]:val}); }
+  else if(T.dataset.acct){ DB.accounts.find(a=>a.id===T.dataset.acct).name=val; }
+  else if(T.dataset.open){ DB.accounts.find(a=>a.id===T.dataset.open).opening=parseFloat(val)||0; }
+  else if(T.dataset.fx){ DB.settings.fx[T.dataset.fx]=parseFloat(val)||0; }
+  else if(T.id==="sOpenAt"){ DB.settings.openingAt=val; }
+  else if(T.id==="sStart"){ DB.settings.start=val; }
+  else if(T.id==="sMgmt"){ DB.settings.mgmt=parseFloat(val)||0; }
+  else if(T.id==="sCarry"){ DB.settings.carry=parseFloat(val)||0; }
+  else if(T.id==="sBasis"){ DB.settings.basis=val; }
+  else if(T.id==="sNet"){ DB.settings.netOfMgmt=Number(val); }
+  else if(T.id==="sHwm"){ DB.settings.hwmMode=val; }
+  else if(T.id==="sWho"){ DB.settings.who=val; }
+  else dirty=false;
+  if(dirty) scheduleRender(keep);
+});
+
+/* ---------- 存取 ---------- */
+function dl(name,text,type){
+  try{
+    const b=new Blob([text],{type}),u=URL.createObjectURL(b);
+    const a=document.createElement("a");a.href=u;a.download=name;
+    document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(u),800);
+    toast("已开始下载 "+name);
+  }catch(_){
+    toast("当前环境不允许下载 —— 请到「数据存取」页复制文本另存");
+    document.querySelector('[data-p="p-data"]').click();
+  }
+}
+const doExport=()=>dl(`管理费台账_${todayStr()}.json`,JSON.stringify(DB,null,2),"application/json");
+document.getElementById("btnExport").onclick=doExport;
+document.getElementById("btnExport2").onclick=doExport;
+document.getElementById("btnCopy").onclick=async()=>{try{await navigator.clipboard.writeText(JSON.stringify(DB,null,2));toast("已复制到剪贴板");}catch(_){document.getElementById("dump").select();toast("剪贴板不可用 —— 已全选下方文本，请按 Ctrl/Cmd+C 复制");}};
+document.getElementById("btnCsv").onclick=()=>{
+  const rows=compute().rows;
+  const head=["月份","起日","止日","天数","期初总额","净出入金","期末总额","日均AUM","当月净收益","累计净收益","高水位线","管理费","Carry","本月合计","状态","封账时间","备注"];
+  const body=rows.map(r=>[r.ym,r.from,r.to,r.days,r.openT.toFixed(2),r.flowT.toFixed(2),r.complete?r.closeT.toFixed(2):"",
+    r.avgT.toFixed(2),r.complete?r.pnl.toFixed(2):"",r.cum.toFixed(2),r.hwm.toFixed(2),r.mgmt.toFixed(2),r.carry.toFixed(2),
+    r.total.toFixed(2),r.locked?"已封账":(r.complete?"待封账":"待录入"),r.lockedAt||"",(r.note||"").replace(/"/g,'""')]);
+  dl(`管理费月度_${todayStr()}.csv`,"﻿"+[head,...body].map(r=>r.map(c=>`"${c}"`).join(",")).join("\n"),"text/csv");
+};
+function load(obj){
+  if(!obj||!obj.settings||!Array.isArray(obj.months)) throw new Error("格式不符");
+  DB=obj; DB.expenses=DB.expenses||[]; DB.payments=DB.payments||[]; DB.audit=DB.audit||[];
+  DB.mtd=DB.mtd||{close:{},flows:[]};
+  DB.months.forEach(m=>{m.flows=m.flows||[];m.close=m.close||{};m.avgOverride=m.avgOverride||{};});
+  render(); toast("载入成功");
+}
+document.getElementById("fileIn").onchange=e=>{const f=e.target.files[0];if(!f)return;
+  const r=new FileReader();r.onload=()=>{try{load(JSON.parse(r.result));}catch(err){toast("导入失败："+err.message);}};r.readAsText(f);e.target.value="";};
+document.getElementById("btnLoadText").onclick=()=>{try{load(JSON.parse(document.getElementById("dump").value));}catch(err){toast("解析失败："+err.message);}};
+document.getElementById("btnReset").onclick=()=>{
+  confirmBox("清空重来","将清空全部数据（含月度、支出、支付、结算记录、本机自动存档）并恢复初始模板，此操作不可撤销。",
+    ()=>{DB=seed();if(store){try{store.removeItem(STORE_KEY);}catch(_){}}render();toast("已恢复初始模板");});};
+
+render();
+</script>
+</body>
+</html>
