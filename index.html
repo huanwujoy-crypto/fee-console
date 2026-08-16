@@ -113,7 +113,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   </div>
   <div class="card">
     <h2>月度</h2>
-    <p class="hint">管理费 = 日均资产 × 2%/年 × 天数/365；Carry = 突破高水位部分 × 20%；亏损先补齐再计提。已结账月份数字永久冻结。</p>
+    <p class="hint">管理费 = 日均资产（每日实测，缺数据时用期初+出入金加权）× 2%/年 × 天数/365；Carry = 突破高水位部分 × 20%；亏损先补齐再计提。已结账月份数字永久冻结。</p>
     <div id="monthsBox"></div>
   </div>
   <div class="card">
@@ -264,7 +264,7 @@ function calcPeriod(openBy,closeBy,flows,from,to){
     let avg=Math.max(0,w),avgSrc="dietz";
     // 有每日数据时改用真实日均（自然日逐日取最近一个数据点，期初前用期初值）—— 口径 §3/§11
     if(ds.length){let sum=0;let j=0,last=null;for(let i=0;i<days;i++){const d=F(new Date(P(from).getTime()+i*DAY));while(j<ds.length&&ds[j].d<=d){last=ds[j];j++;}sum+=(last&&last[a.id]!=null)?num(last[a.id]):op;}avg=sum/days;avgSrc="daily";}
-    openT+=op;closeT+=cl;avgT+=avg;flowT+=net;per.push({id:a.id,name:a.name,open:op,close:cl,net,avg,avgSrc,pnl:cl-op-net});}    <p class="hint">管理费 = 日均资产（每日实测，缺数据时用期初+出入金加权）× 2%/年 × 天数/365；Carry = 突破高水位部分 × 20%；亏损先补齐再计提。已结账月份数字永久冻结。</p>
+    openT+=op;closeT+=cl;avgT+=avg;flowT+=net;per.push({id:a.id,name:a.name,open:op,close:cl,net,avg,avgSrc,pnl:cl-op-net});}
   const pnl=per.reduce((s,x)=>s+x.pnl,0);const mgmt=avgT*(num(DB.settings.mgmt)/100)*days/365;
   return {days,openT,closeT,avgT,avgSrc:per.some(x=>x.avgSrc==="daily")?"daily":"dietz",flowT,per,pnl,mgmt};
 }
