@@ -419,7 +419,9 @@ function renderSetup(){
     <p class="small" style="margin:0 0 8px">打开的页面权限已选好，<b>拉到最底点绿色 Generate token</b>，<b>长按复制</b>出现的 <code>ghp_…</code>，回到这里。</p>
     <label class="f">② 粘到这里</label><input type="password" id="tokIn" placeholder="ghp_…" autocomplete="off">
     <button class="btn primary big" id="btnConnect" style="margin-top:8px">③ 连接</button>
-    ${cfg(K.key)?"":'<p class="small" style="margin:8px 0 0;color:var(--critical)">提示：这个链接里没有数据密钥，请用我发给你的完整链接打开。</p>'}
+    ${cfg(K.key)?"":'<p class="small" style="margin:8px 0 0;color:var(--critical)">提示：这个链接里没有数据密钥，请用我发给你的完整链接打开，或把链接粘到下面。</p>'}
+    <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f">已经有链接？（主屏幕图标首次打开 / 只读手机）把整条链接粘到这里</label>
+      <input id="linkIn" placeholder="https://…#…" autocomplete="off"><button class="btn big" id="btnLink" style="margin-top:8px">应用链接</button></div>
   </div>`;
 }
 function renderA2hs(){const el=document.getElementById("a2hs");const ios=/iPhone|iPad|iPod/.test(navigator.userAgent),sa=!!navigator.standalone;el.style.display=(ios&&!sa&&!cfg(K.a2hs))?"flex":"none";}
@@ -527,6 +529,8 @@ document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.cl
   document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));});
 document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
+  if(T.id==="btnLink"){const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是我发的链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
+  if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败，请在设置里长按链接"));return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
   if(!isMgr())return;
   if(T.dataset.lock){askLock(T.dataset.lock);return;}
