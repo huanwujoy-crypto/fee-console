@@ -135,8 +135,9 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="card"><h2>共享给其他手机（只看）</h2>
     <p class="hint">生成一个只读链接/二维码，其他手机打开后只能查看，不能修改。</p>
     <button class="btn primary big" id="btnShare">📱 显示只读二维码 / 链接</button>
-    <p class="hint" style="margin-top:12px">主屏幕图标是独立的：第一次从图标打开时会要求粘贴链接。管理人手机点下面按钮复制自己的链接（含令牌，只给自己用），到图标里粘贴即可。</p>
-    <button class="btn big" id="btnMgrLink">复制管理人链接（本人主屏幕图标用）</button>
+    <p class="hint" style="margin-top:12px">想把本页放到主屏幕：先点下面按钮，再点 Safari 底部「分享 → 添加到主屏幕」，图标打开就直接是管理人状态，不用再连接。</p>
+    <button class="btn primary big" id="btnPrepIcon">① 准备主屏幕图标</button>
+    <button class="btn big" id="btnMgrLink" style="margin-top:8px">复制管理人链接（备用：到图标里粘贴）</button>
   </div>
   <div class="card"><h2>参数</h2>
     <div class="grid">
@@ -229,7 +230,7 @@ const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
   const h={tok:q.get("tok")||"",gid:q.get("gid")||"",k:q.get("k")||"",seed:q.get("seed")||"",who:q.get("who")||""};
-  history.replaceState(null,"",location.pathname+location.search);return h;}catch(_){return null;}})();
+  if(h.tok)history.replaceState(null,"",location.pathname+location.search);return h;}catch(_){return null;}})();   // 只读链接保留 #（加主屏幕时随图标带走）；含令牌的链接读完即抹掉
 if(HASH){ if(HASH.k) setCfg(K.key,HASH.k); if(HASH.gid) setCfg(K.gid,HASH.gid); }
 window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k)=/.test(location.hash)) location.reload(); });
 
@@ -532,6 +533,7 @@ document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.cl
 document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
   if(T.id==="btnLink"){const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是我发的链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
+  if(T.id==="btnPrepIcon"){history.replaceState(null,"",location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||""));toast("已准备好：现在点 Safari 底部「分享」→「添加到主屏幕」");return;}
   if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败，请在设置里长按链接"));return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
   if(!isMgr())return;
