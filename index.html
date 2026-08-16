@@ -239,7 +239,7 @@ function seed(){return {v:3,updatedAt:"",
   fees:[]      // {id,type:'exp'|'pay',date,cat,amount,ccy,fx,deduct,note}
 };}
 let DB=seed();
-try{const s=cfg(K.db);if(s){const o=JSON.parse(s);if(o&&o.settings&&Array.isArray(o.months))DB=o;}}catch(_){}
+try{const s=cfg(K.db);if(s){const o=JSON.parse(s);if(o&&o.v===3&&o.settings&&Array.isArray(o.months)){DB=o;DB.fees=DB.fees||[];}}}catch(_){}
 let DAILY={updatedAt:"",daily:[],flowsAuto:[]};
 try{const s=cfg(K.daily);if(s)DAILY=JSON.parse(s);}catch(_){}
 let _seeded=false;
@@ -432,8 +432,9 @@ async function ghApi(path,opt={},auth=true){
 async function ghFind(){for(let p=1;p<=5;p++){const l=await ghApi(`/gists?per_page=100&page=${p}`);const hit=l.find(g=>g.files&&g.files[GH_FILE]);if(hit){setCfg(K.gid,hit.id);return hit.id;}if(l.length<100)break;}return "";}
 async function ghPull(){const gid=cfg(K.gid);if(!gid)return null;const g=await ghApi("/gists/"+gid,{},isMgr());const f=g.files&&g.files[GH_FILE];if(!f)return null;
   let c=f.content;if(f.truncated)c=await (await fetch(f.raw_url)).text();const o=JSON.parse(c);
-  if(o&&o.enc){if(!cfg(K.key))throw new Error("缺少数据密钥");const key=await keyOf(cfg(K.key));return JSON.parse(await decTxt(key,o.data));}
-  return o;}
+  let d=o;if(o&&o.enc){if(!cfg(K.key))throw new Error("缺少数据密钥");const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}
+  if(!d||d.v!==3||!d.settings||!Array.isArray(d.months))return null;   // 旧版/异常存档：忽略（管理人会用 v3 覆盖）
+  d.fees=d.fees||[];d.accounts=d.accounts||seed().accounts;return d;}
 async function ghPush(){if(!isMgr())return;let content;
   if(cfg(K.key)){const key=await keyOf(cfg(K.key));content=JSON.stringify({enc:true,v:3,data:await encTxt(key,JSON.stringify(DB))});}else content=JSON.stringify(DB);
   const body={files:{[GH_FILE]:{content}}};let gid=cfg(K.gid);
