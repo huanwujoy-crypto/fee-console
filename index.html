@@ -257,12 +257,16 @@ function valOf(pt,acct){return pt?num(pt[acct]):null;}
 function periodOf(ym){const s=DB.settings.start;return {from:(ym===s.slice(0,7))?s:ym+"-01",to:eom(ym)};}
 function calcPeriod(openBy,closeBy,flows,from,to){
   const days=Math.max(1,inclDays(from,to));let openT=0,closeT=0,avgT=0,flowT=0;const per=[];
+  const dsAll=dailySorted().filter(x=>x.d<=to);const ds=dsAll.some(x=>x.d>=from)?dsAll:[];
   for(const a of DB.accounts){const op=num(openBy[a.id]);const cl=closeBy[a.id]==null?op:num(closeBy[a.id]);
     const fl=(flows||[]).filter(f=>f.acct===a.id);const net=fl.reduce((s,f)=>s+num(f.amount),0);
     let w=op;for(const f of fl){const el=Math.max(0,Math.min(days,Math.round((P(f.date||from)-P(from))/DAY)));w+=num(f.amount)*((days-el)/days);}
-    const avg=Math.max(0,w);openT+=op;closeT+=cl;avgT+=avg;flowT+=net;per.push({id:a.id,name:a.name,open:op,close:cl,net,avg,pnl:cl-op-net});}
+    let avg=Math.max(0,w),avgSrc="dietz";
+    // 有每日数据时改用真实日均（自然日逐日取最近一个数据点，期初前用期初值）—— 口径 §3/§11
+    if(ds.length){let sum=0;let j=0,last=null;for(let i=0;i<days;i++){const d=F(new Date(P(from).getTime()+i*DAY));while(j<ds.length&&ds[j].d<=d){last=ds[j];j++;}sum+=(last&&last[a.id]!=null)?num(last[a.id]):op;}avg=sum/days;avgSrc="daily";}
+    openT+=op;closeT+=cl;avgT+=avg;flowT+=net;per.push({id:a.id,name:a.name,open:op,close:cl,net,avg,avgSrc,pnl:cl-op-net});}    <p class="hint">管理费 = 日均资产（每日实测，缺数据时用期初+出入金加权）× 2%/年 × 天数/365；Carry = 突破高水位部分 × 20%；亏损先补齐再计提。已结账月份数字永久冻结。</p>
   const pnl=per.reduce((s,x)=>s+x.pnl,0);const mgmt=avgT*(num(DB.settings.mgmt)/100)*days/365;
-  return {days,openT,closeT,avgT,flowT,per,pnl,mgmt};
+  return {days,openT,closeT,avgT,avgSrc:per.some(x=>x.avgSrc==="daily")?"daily":"dietz",flowT,per,pnl,mgmt};
 }
 function ensureMonths(){
   const startYm=DB.settings.start.slice(0,7),cur=todayStr().slice(0,7);const have=new Set(DB.months.map(m=>m.ym));
@@ -485,18 +489,18 @@ function askLock(ym){
   document.getElementById("dlgFlows").innerHTML=(auto.length||conf.length)?`<label class="f">本月出入金（勾选=计入）</label>`+
     auto.map(f=>{const on=conf.some(c=>c.src===f.id);return `<div class="mrow"><label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-flow="${f.id}" ${on?'checked':''} style="width:20px;height:20px">${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">${esc(f.desc||'')}</span></label></div>`;}).join("")
     :`<p class="small">未检测到外部出入金。</p>`;
-  document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,l])=>`<div class="line"><span>${l}</span><span>${fmt(r[k])}</span></div>`).join("");
+  document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,l])=>`<div class="line"><span>${k==="avgT"?(r.avgSrc==="daily"?"日均资产（每日实测）":"日均资产（加权近似）"):l}</span><span>${fmt(r[k])}</span></div>`).join("");
   document.getElementById("dlgConfirm").value="";document.getElementById("dlg").classList.add("on");
 }
 document.getElementById("dlgCancel").onclick=()=>{_pendYm=null;document.getElementById("dlg").classList.remove("on");};
 document.getElementById("dlg").addEventListener("change",e=>{const T=e.target;if(!T.dataset.flow)return;const m=DB.months.find(x=>x.ym===_pendYm);const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f)return;
   m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:uid(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});
-  const r=compute().rows.find(x=>x.ym===_pendYm);document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,l])=>`<div class="line"><span>${l}</span><span>${fmt(r[k])}</span></div>`).join("");});
+  const r=compute().rows.find(x=>x.ym===_pendYm);document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,l])=>`<div class="line"><span>${k==="avgT"?(r.avgSrc==="daily"?"日均资产（每日实测）":"日均资产（加权近似）"):l}</span><span>${fmt(r[k])}</span></div>`).join("");});
 document.getElementById("dlgOk").onclick=()=>{
   if(document.getElementById("dlgConfirm").value.trim()!=="结账"){toast("请输入「结账」两字确认");return;}
   const r=compute().rows.find(x=>x.ym===_pendYm);const m=DB.months.find(x=>x.ym===_pendYm);
   const snap={who:DB.settings.who||"",from:r.from,to:r.to,days:r.days,closeSource:r.closeSource,closeDate:r.closeDate,per:r.per.map(p=>({...p})),
-    openT:r.openT,flowT:r.flowT,closeT:r.closeT,avgT:r.avgT,pnl:r.pnl,mgmt:r.mgmt,carry:r.carry,total:r.total,cumBefore:r.cumBefore,cum:r.cum,hwmBefore:r.hwmBefore,hwm:r.hwm,excess:r.excess,
+    openT:r.openT,flowT:r.flowT,closeT:r.closeT,avgT:r.avgT,avgSrc:r.avgSrc,pnl:r.pnl,mgmt:r.mgmt,carry:r.carry,total:r.total,cumBefore:r.cumBefore,cum:r.cum,hwmBefore:r.hwmBefore,hwm:r.hwm,excess:r.excess,
     rate:{mgmt:num(DB.settings.mgmt),carry:num(DB.settings.carry)}};
   Object.keys(snap).forEach(k=>{if(typeof snap[k]==="number")snap[k]=+snap[k].toFixed(2);});
   m.locked=true;m.lockedAt=nowStr();m.snap=snap;document.getElementById("dlg").classList.remove("on");_pendYm=null;render();toast(ymLabel(m.ym)+" 已结账");
