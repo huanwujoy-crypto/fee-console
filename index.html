@@ -31,7 +31,11 @@ h1{font-size:19px;margin:0}
 .kpi .lab{font-size:12px;color:var(--ink-2);margin-bottom:4px}
 .kpi .val{font-size:22px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .kpi .note{font-size:11px;color:var(--ink-muted);margin-top:3px}
+.rr{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;font-size:14px}
+.rr span{color:var(--ink-2)}
+.rr b{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
 .pos{color:var(--good-text)} .neg{color:var(--critical)}
+.amt{color:var(--ink-1);font-weight:600}
 nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:12px}
 nav.tabs button{flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-2);padding:10px 4px;font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:-1px}
 nav.tabs button.on{color:var(--ink-1);border-bottom-color:var(--series-1);font-weight:600}
@@ -40,17 +44,10 @@ section.pane{display:none} section.pane.on{display:block}
 .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
 .card h2{font-size:15px;margin:0 0 4px}
 .card .hint{font-size:12px;color:var(--ink-2);margin:0 0 10px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{text-align:right;font-weight:600;color:var(--ink-2);font-size:12px;padding:7px 6px;border-bottom:1px solid var(--axis);white-space:nowrap}
-th:first-child,td:first-child{text-align:left;position:sticky;left:0;background:var(--surface-1)}
-td{padding:8px 6px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-tfoot td{font-weight:600;border-top:1px solid var(--axis);border-bottom:none}
-.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch}
 .feeCard{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:var(--lockbg)}
 .feeCard .fr{display:flex;gap:8px;align-items:center;margin-top:8px}.feeCard .fr:first-child{margin-top:0}
-.feeCard input,.feeCard select{min-width:0;font-size:16px;padding:8px}.feeCard .chk{display:flex;align-items:center;gap:6px;white-space:nowrap;font-size:14px}.feeCard .chk input{width:20px;height:20px}
+.feeCard input,.feeCard select{min-width:0;font-size:16px;padding:8px}
 .feeSum{display:flex;justify-content:space-between;margin-top:12px;font-weight:600;font-size:14px}.feeSum .l{font-weight:400;color:var(--ink-muted)}
-
 input,select{background:var(--plane);color:var(--ink-1);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:16px;font-family:inherit;width:100%;font-variant-numeric:tabular-nums}
 input:disabled,select:disabled{background:var(--lockbg);color:var(--ink-2);border-style:dashed}
 input[type=number]{text-align:right}
@@ -65,8 +62,7 @@ label.f{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px}
 .badge.est{background:rgba(250,178,25,.16);color:var(--ink-1);border-color:rgba(250,178,25,.55)}
 .badge.hwm{background:rgba(235,104,52,.14);border-color:rgba(235,104,52,.45)}
 .badge.ok{background:rgba(12,163,12,.14);border-color:rgba(12,163,12,.45)}
-.badge.lock{background:rgba(42,120,214,.14);border-color:rgba(42,120,214,.45);color:var(--ink-1)}
-.legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2);margin-bottom:6px}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--ink-2);margin-bottom:6px;flex-wrap:wrap}
 .legend i{width:11px;height:11px;border-radius:3px;display:inline-block;margin-right:5px;vertical-align:-1px}
 svg{display:block;width:100%;height:auto;overflow:visible}
 .empty{color:var(--ink-muted);font-size:13px;padding:14px;text-align:center}
@@ -80,11 +76,12 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .modal{border:1px solid var(--border);border-radius:14px;background:var(--surface-1);color:var(--ink-1);max-width:460px;width:100%;padding:16px;box-shadow:0 18px 50px rgba(0,0,0,.3)}
 .toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);background:var(--ink-1);color:var(--surface-1);padding:9px 16px;border-radius:8px;font-size:13px;z-index:300;opacity:0;transition:opacity .18s;pointer-events:none;max-width:86%;text-align:center}
 .toast.on{opacity:.94}
-.mrow{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 0;border-bottom:1px solid var(--grid);font-size:14px}
+.mrow{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:10px 0;border-bottom:1px solid var(--grid);font-size:14px}
+.mrow>div:first-child{flex:1;min-width:0}
+.mrow>div:last-child{flex:0 0 auto;text-align:right;white-space:nowrap}
 .mrow:last-child{border-bottom:none}
 .mrow .l{color:var(--ink-2);font-size:12px}
 .mrow b{font-variant-numeric:tabular-nums}
-.amt{color:var(--ink-1);font-weight:600}
 </style>
 </head>
 <body>
@@ -101,7 +98,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 
 <nav class="tabs" id="tabs">
   <button data-p="p-home" class="on">总览</button>
-  <button data-p="p-fee" class="mgr">费用</button>
+  <button data-p="p-fee" class="mgr">付款</button>
   <button data-p="p-set" class="mgr">设置</button>
 </nav>
 
@@ -113,22 +110,27 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <div id="chart1"></div>
   </div>
   <div class="card">
-    <h2>月度</h2>
-    <p class="hint">管理费 = 日均资产（每日实测，缺数据时用期初+出入金加权）× 2%/年 × 天数/365；Carry = 突破高水位部分 × 20%；亏损先补齐再计提。已结账月份数字永久冻结。</p>
+    <h2>各月费用与收益率</h2>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>管理费</span><span><i style="background:var(--series-2)"></i>Carry</span><span>柱下为当月毛收益率</span></div>
+    <div id="chart2"></div>
+  </div>
+  <div class="card">
+    <h2>月度明细</h2>
+    <p class="hint">管理费 = （月初 + 月末）÷ 2 × 2%/年 × 天数/365；Carry = 累计净收益突破高水位的部分 × 20%，亏损先补齐再计提。数字随每日数据自动更新。</p>
     <div id="monthsBox"></div>
   </div>
   <div class="card">
-    <h2>费用余额</h2>
+    <h2>应付费用</h2>
     <div class="res" id="balBox"></div>
   </div>
 </section>
 
 <section class="pane" id="p-fee">
   <div class="card">
-    <h2>费用与支付</h2>
-    <p class="hint">「支出」= 管理过程中发生的开支（仅记录，不影响应付余额）；「付款」= 已支付给管理人的钱，从应付余额中扣减。</p>
+    <h2>付款记录</h2>
+    <p class="hint">记录已支付给管理人的款项，自动从应付费用余额中扣减。</p>
     <div id="tblFee"></div>
-    <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔</button></div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔付款</button></div>
   </div>
 </section>
 
@@ -136,9 +138,9 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="card"><h2>共享给其他手机（只看）</h2>
     <p class="hint">生成一个只读链接/二维码，其他手机打开后只能查看，不能修改。</p>
     <button class="btn primary big" id="btnShare">📱 显示只读二维码 / 链接</button>
-    <p class="hint" style="margin-top:12px">想把本页放到主屏幕：先点下面按钮，再点 Safari 底部「分享 → 添加到主屏幕」，图标打开就直接是管理人状态，不用再连接。</p>
-    <button class="btn primary big" id="btnPrepIcon">① 准备主屏幕图标</button>
-    <button class="btn big" id="btnMgrLink" style="margin-top:8px">复制管理人链接（备用：到图标里粘贴）</button>
+    <p class="hint" style="margin-top:12px">想把本页放到主屏幕：先点下面按钮，再点 Safari 底部「分享 → 添加到主屏幕」，图标打开就直接是管理人状态。</p>
+    <button class="btn big" id="btnPrepIcon">① 准备主屏幕图标</button>
+    <button class="btn big" id="btnMgrLink" style="margin-top:8px">复制管理人链接（备用）</button>
   </div>
   <div class="card"><h2>参数</h2>
     <div class="grid">
@@ -150,6 +152,10 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <div id="openBox" style="margin-top:10px"></div>
     <div id="acctBox" style="margin-top:10px"></div>
   </div>
+  <div class="card"><h2>出入金</h2>
+    <p class="hint">外部转入/转出会影响收益计算。系统从券商现金流水自动识别，勾选后计入；买卖交易不算出入金。</p>
+    <div id="flowBox"></div>
+  </div>
   <div class="card"><h2>数据</h2>
     <div class="res" id="ghStatusBox"></div>
     <div class="row" style="margin-top:10px">
@@ -160,16 +166,6 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </section>
 </div>
 
-<div class="ovl" id="dlg"><div class="modal">
-  <h3 style="margin:0 0 6px;font-size:16px" id="dlgTitle">月度结账</h3>
-  <p class="small" id="dlgMsg" style="margin:0 0 10px"></p>
-  <div id="dlgFlows"></div>
-  <div class="res" id="dlgSnap" style="margin:8px 0 10px"></div>
-  <div class="warn">结账后本月数字永久冻结，没有解锁入口。请先核对。</div>
-  <label class="f">输入 <code>结账</code> 两字确认</label>
-  <input id="dlgConfirm" placeholder="结账">
-  <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" id="dlgCancel">取消</button><button class="btn primary" id="dlgOk">确认结账</button></div>
-</div></div>
 <div class="ovl" id="cfm"><div class="modal">
   <h3 style="margin:0 0 8px;font-size:16px" id="cfmTitle">确认</h3><p class="small" id="cfmMsg" style="margin:0 0 14px"></p>
   <div class="row" style="justify-content:flex-end"><button class="btn" id="cfmCancel">取消</button><button class="btn danger" id="cfmOk">确认</button></div>
@@ -183,7 +179,6 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" id="shCopy">复制链接</button><button class="btn primary" id="shClose">关闭</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
-
 <script>/* qrcode-generator 1.4.4 — MIT (c) Kazuhiko Arase */
 var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],f={},c=function(t,r){o=function(t){for(var r=new Array(t),e=0;e<t;e+=1){r[e]=new Array(t);for(var n=0;n<t;n+=1)r[e][n]=null}return r}(i=4*e+17),l(0,0),l(i-7,0),l(0,i-7),s(),h(),d(t,r),e>=7&&v(t),null==a&&(a=p(e,n,u)),w(a,r)},l=function(t,r){for(var e=-1;e<=7;e+=1)if(!(t+e<=-1||i<=t+e))for(var n=-1;n<=7;n+=1)r+n<=-1||i<=r+n||(o[t+e][r+n]=0<=e&&e<=6&&(0==n||6==n)||0<=n&&n<=6&&(0==e||6==e)||2<=e&&e<=4&&2<=n&&n<=4)},h=function(){for(var t=8;t<i-8;t+=1)null==o[t][6]&&(o[t][6]=t%2==0);for(var r=8;r<i-8;r+=1)null==o[6][r]&&(o[6][r]=r%2==0)},s=function(){for(var t=B.getPatternPosition(e),r=0;r<t.length;r+=1)for(var n=0;n<t.length;n+=1){var i=t[r],a=t[n];if(null==o[i][a])for(var u=-2;u<=2;u+=1)for(var f=-2;f<=2;f+=1)o[i+u][a+f]=-2==u||2==u||-2==f||2==f||0==u&&0==f}},v=function(t){for(var r=B.getBCHTypeNumber(e),n=0;n<18;n+=1){var a=!t&&1==(r>>n&1);o[Math.floor(n/3)][n%3+i-8-3]=a}for(n=0;n<18;n+=1){a=!t&&1==(r>>n&1);o[n%3+i-8-3][Math.floor(n/3)]=a}},d=function(t,r){for(var e=n<<3|r,a=B.getBCHTypeInfo(e),u=0;u<15;u+=1){var f=!t&&1==(a>>u&1);u<6?o[u][8]=f:u<8?o[u+1][8]=f:o[i-15+u][8]=f}for(u=0;u<15;u+=1){f=!t&&1==(a>>u&1);u<8?o[8][i-u-1]=f:u<9?o[8][15-u-1+1]=f:o[8][15-u-1]=f}o[i-8][8]=!t},w=function(t,r){for(var e=-1,n=i-1,a=7,u=0,f=B.getMaskFunction(r),c=i-1;c>0;c-=2)for(6==c&&(c-=1);;){for(var g=0;g<2;g+=1)if(null==o[n][c-g]){var l=!1;u<t.length&&(l=1==(t[u]>>>a&1)),f(n,c-g)&&(l=!l),o[n][c-g]=l,-1==(a-=1)&&(u+=1,a=7)}if((n+=e)<0||i<=n){n-=e,e=-e;break}}},p=function(t,r,e){for(var n=A.getRSBlocks(t,r),o=b(),i=0;i<e.length;i+=1){var a=e[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var u=0;for(i=0;i<n.length;i+=1)u+=n[i].dataCount;if(o.getLengthInBits()>8*u)throw"code length overflow. ("+o.getLengthInBits()+">"+8*u+")";for(o.getLengthInBits()+4<=8*u&&o.put(0,4);o.getLengthInBits()%8!=0;)o.putBit(!1);for(;!(o.getLengthInBits()>=8*u||(o.put(236,8),o.getLengthInBits()>=8*u));)o.put(17,8);return function(t,r){for(var e=0,n=0,o=0,i=new Array(r.length),a=new Array(r.length),u=0;u<r.length;u+=1){var f=r[u].dataCount,c=r[u].totalCount-f;n=Math.max(n,f),o=Math.max(o,c),i[u]=new Array(f);for(var g=0;g<i[u].length;g+=1)i[u][g]=255&t.getBuffer()[g+e];e+=f;var l=B.getErrorCorrectPolynomial(c),h=k(i[u],l.getLength()-1).mod(l);for(a[u]=new Array(l.getLength()-1),g=0;g<a[u].length;g+=1){var s=g+h.getLength()-a[u].length;a[u][g]=s>=0?h.getAt(s):0}}var v=0;for(g=0;g<r.length;g+=1)v+=r[g].totalCount;var d=new Array(v),w=0;for(g=0;g<n;g+=1)for(u=0;u<r.length;u+=1)g<i[u].length&&(d[w]=i[u][g],w+=1);for(g=0;g<o;g+=1)for(u=0;u<r.length;u+=1)g<a[u].length&&(d[w]=a[u][g],w+=1);return d}(o,n)};f.addData=function(t,r){var e=null;switch(r=r||"Byte"){case"Numeric":e=M(t);break;case"Alphanumeric":e=x(t);break;case"Byte":e=m(t);break;case"Kanji":e=L(t);break;default:throw"mode:"+r}u.push(e),a=null},f.isDark=function(t,r){if(t<0||i<=t||r<0||i<=r)throw t+","+r;return o[t][r]},f.getModuleCount=function(){return i},f.make=function(){if(e<1){for(var t=1;t<40;t++){for(var r=A.getRSBlocks(t,n),o=b(),i=0;i<u.length;i++){var a=u[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var g=0;for(i=0;i<r.length;i++)g+=r[i].dataCount;if(o.getLengthInBits()<=8*g)break}e=t}c(!1,function(){for(var t=0,r=0,e=0;e<8;e+=1){c(!0,e);var n=B.getLostPoint(f);(0==e||t>n)&&(t=n,r=e)}return r}())},f.createTableTag=function(t,r){t=t||2;var e="";e+='<table style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: "+(r=void 0===r?4*t:r)+"px;",e+='">',e+="<tbody>";for(var n=0;n<f.getModuleCount();n+=1){e+="<tr>";for(var o=0;o<f.getModuleCount();o+=1)e+='<td style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: 0px;",e+=" width: "+t+"px;",e+=" height: "+t+"px;",e+=" background-color: ",e+=f.isDark(n,o)?"#000000":"#ffffff",e+=";",e+='"/>';e+="</tr>"}return e+="</tbody>",e+="</table>"},f.createSvgTag=function(t,r,e,n){var o={};"object"==typeof arguments[0]&&(t=(o=arguments[0]).cellSize,r=o.margin,e=o.alt,n=o.title),t=t||2,r=void 0===r?4*t:r,(e="string"==typeof e?{text:e}:e||{}).text=e.text||null,e.id=e.text?e.id||"qrcode-description":null,(n="string"==typeof n?{text:n}:n||{}).text=n.text||null,n.id=n.text?n.id||"qrcode-title":null;var i,a,u,c,g=f.getModuleCount()*t+2*r,l="";for(c="l"+t+",0 0,"+t+" -"+t+",0 0,-"+t+"z ",l+='<svg version="1.1" xmlns="http://www.w3.org/2000/svg"',l+=o.scalable?"":' width="'+g+'px" height="'+g+'px"',l+=' viewBox="0 0 '+g+" "+g+'" ',l+=' preserveAspectRatio="xMinYMin meet"',l+=n.text||e.text?' role="img" aria-labelledby="'+y([n.id,e.id].join(" ").trim())+'"':"",l+=">",l+=n.text?'<title id="'+y(n.id)+'">'+y(n.text)+"</title>":"",l+=e.text?'<description id="'+y(e.id)+'">'+y(e.text)+"</description>":"",l+='<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>',l+='<path d="',a=0;a<f.getModuleCount();a+=1)for(u=a*t+r,i=0;i<f.getModuleCount();i+=1)f.isDark(a,i)&&(l+="M"+(i*t+r)+","+u+c);return l+='" stroke="transparent" fill="black"/>',l+="</svg>"},f.createDataURL=function(t,r){t=t||2,r=void 0===r?4*t:r;var e=f.getModuleCount()*t+2*r,n=r,o=e-r;return I(e,e,function(r,e){if(n<=r&&r<o&&n<=e&&e<o){var i=Math.floor((r-n)/t),a=Math.floor((e-n)/t);return f.isDark(a,i)?0:1}return 1})},f.createImgTag=function(t,r,e){t=t||2,r=void 0===r?4*t:r;var n=f.getModuleCount()*t+2*r,o="";return o+="<img",o+=' src="',o+=f.createDataURL(t,r),o+='"',o+=' width="',o+=n,o+='"',o+=' height="',o+=n,o+='"',e&&(o+=' alt="',o+=y(e),o+='"'),o+="/>"};var y=function(t){for(var r="",e=0;e<t.length;e+=1){var n=t.charAt(e);switch(n){case"<":r+="&lt;";break;case">":r+="&gt;";break;case"&":r+="&amp;";break;case'"':r+="&quot;";break;default:r+=n}}return r};return f.createASCII=function(t,r){if((t=t||1)<2)return function(t){t=void 0===t?2:t;var r,e,n,o,i,a=1*f.getModuleCount()+2*t,u=t,c=a-t,g={"██":"█","█ ":"▀"," █":"▄","  ":" "},l={"██":"▀","█ ":"▀"," █":" ","  ":" "},h="";for(r=0;r<a;r+=2){for(n=Math.floor((r-u)/1),o=Math.floor((r+1-u)/1),e=0;e<a;e+=1)i="█",u<=e&&e<c&&u<=r&&r<c&&f.isDark(n,Math.floor((e-u)/1))&&(i=" "),u<=e&&e<c&&u<=r+1&&r+1<c&&f.isDark(o,Math.floor((e-u)/1))?i+=" ":i+="█",h+=t<1&&r+1>=c?l[i]:g[i];h+="\n"}return a%2&&t>0?h.substring(0,h.length-a-1)+Array(a+1).join("▀"):h.substring(0,h.length-1)}(r);t-=1,r=void 0===r?2*t:r;var e,n,o,i,a=f.getModuleCount()*t+2*r,u=r,c=a-r,g=Array(t+1).join("██"),l=Array(t+1).join("  "),h="",s="";for(e=0;e<a;e+=1){for(o=Math.floor((e-u)/t),s="",n=0;n<a;n+=1)i=1,u<=n&&n<c&&u<=e&&e<c&&f.isDark(o,Math.floor((n-u)/t))&&(i=0),s+=i?g:l;for(o=0;o<t;o+=1)h+=s+"\n"}return h.substring(0,h.length-1)},f.renderTo2dContext=function(t,r){r=r||2;for(var e=f.getModuleCount(),n=0;n<e;n++)for(var o=0;o<e;o++)t.fillStyle=f.isDark(n,o)?"black":"white",t.fillRect(n*r,o*r,r,r)},f};t.stringToBytes=(t.stringToBytesFuncs={default:function(t){for(var r=[],e=0;e<t.length;e+=1){var n=t.charCodeAt(e);r.push(255&n)}return r}}).default,t.createStringToBytes=function(t,r){var e=function(){for(var e=S(t),n=function(){var t=e.read();if(-1==t)throw"eof";return t},o=0,i={};;){var a=e.read();if(-1==a)break;var u=n(),f=n()<<8|n();i[String.fromCharCode(a<<8|u)]=f,o+=1}if(o!=r)throw o+" != "+r;return i}(),n="?".charCodeAt(0);return function(t){for(var r=[],o=0;o<t.length;o+=1){var i=t.charCodeAt(o);if(i<128)r.push(i);else{var a=e[t.charAt(o)];"number"==typeof a?(255&a)==a?r.push(a):(r.push(a>>>8),r.push(255&a)):r.push(n)}}return r}};var r,e,n,o,i,a=1,u=2,f=4,c=8,g={L:1,M:0,Q:3,H:2},l=0,h=1,s=2,v=3,d=4,w=5,p=6,y=7,B=(r=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],e=1335,n=7973,i=function(t){for(var r=0;0!=t;)r+=1,t>>>=1;return r},(o={}).getBCHTypeInfo=function(t){for(var r=t<<10;i(r)-i(e)>=0;)r^=e<<i(r)-i(e);return 21522^(t<<10|r)},o.getBCHTypeNumber=function(t){for(var r=t<<12;i(r)-i(n)>=0;)r^=n<<i(r)-i(n);return t<<12|r},o.getPatternPosition=function(t){return r[t-1]},o.getMaskFunction=function(t){switch(t){case l:return function(t,r){return(t+r)%2==0};case h:return function(t,r){return t%2==0};case s:return function(t,r){return r%3==0};case v:return function(t,r){return(t+r)%3==0};case d:return function(t,r){return(Math.floor(t/2)+Math.floor(r/3))%2==0};case w:return function(t,r){return t*r%2+t*r%3==0};case p:return function(t,r){return(t*r%2+t*r%3)%2==0};case y:return function(t,r){return(t*r%3+(t+r)%2)%2==0};default:throw"bad maskPattern:"+t}},o.getErrorCorrectPolynomial=function(t){for(var r=k([1],0),e=0;e<t;e+=1)r=r.multiply(k([1,C.gexp(e)],0));return r},o.getLengthInBits=function(t,r){if(1<=r&&r<10)switch(t){case a:return 10;case u:return 9;case f:case c:return 8;default:throw"mode:"+t}else if(r<27)switch(t){case a:return 12;case u:return 11;case f:return 16;case c:return 10;default:throw"mode:"+t}else{if(!(r<41))throw"type:"+r;switch(t){case a:return 14;case u:return 13;case f:return 16;case c:return 12;default:throw"mode:"+t}}},o.getLostPoint=function(t){for(var r=t.getModuleCount(),e=0,n=0;n<r;n+=1)for(var o=0;o<r;o+=1){for(var i=0,a=t.isDark(n,o),u=-1;u<=1;u+=1)if(!(n+u<0||r<=n+u))for(var f=-1;f<=1;f+=1)o+f<0||r<=o+f||0==u&&0==f||a==t.isDark(n+u,o+f)&&(i+=1);i>5&&(e+=3+i-5)}for(n=0;n<r-1;n+=1)for(o=0;o<r-1;o+=1){var c=0;t.isDark(n,o)&&(c+=1),t.isDark(n+1,o)&&(c+=1),t.isDark(n,o+1)&&(c+=1),t.isDark(n+1,o+1)&&(c+=1),0!=c&&4!=c||(e+=3)}for(n=0;n<r;n+=1)for(o=0;o<r-6;o+=1)t.isDark(n,o)&&!t.isDark(n,o+1)&&t.isDark(n,o+2)&&t.isDark(n,o+3)&&t.isDark(n,o+4)&&!t.isDark(n,o+5)&&t.isDark(n,o+6)&&(e+=40);for(o=0;o<r;o+=1)for(n=0;n<r-6;n+=1)t.isDark(n,o)&&!t.isDark(n+1,o)&&t.isDark(n+2,o)&&t.isDark(n+3,o)&&t.isDark(n+4,o)&&!t.isDark(n+5,o)&&t.isDark(n+6,o)&&(e+=40);var g=0;for(o=0;o<r;o+=1)for(n=0;n<r;n+=1)t.isDark(n,o)&&(g+=1);return e+=Math.abs(100*g/r/r-50)/5*10},o),C=function(){for(var t=new Array(256),r=new Array(256),e=0;e<8;e+=1)t[e]=1<<e;for(e=8;e<256;e+=1)t[e]=t[e-4]^t[e-5]^t[e-6]^t[e-8];for(e=0;e<255;e+=1)r[t[e]]=e;var n={glog:function(t){if(t<1)throw"glog("+t+")";return r[t]},gexp:function(r){for(;r<0;)r+=255;for(;r>=256;)r-=255;return t[r]}};return n}();function k(t,r){if(void 0===t.length)throw t.length+"/"+r;var e=function(){for(var e=0;e<t.length&&0==t[e];)e+=1;for(var n=new Array(t.length-e+r),o=0;o<t.length-e;o+=1)n[o]=t[o+e];return n}(),n={getAt:function(t){return e[t]},getLength:function(){return e.length},multiply:function(t){for(var r=new Array(n.getLength()+t.getLength()-1),e=0;e<n.getLength();e+=1)for(var o=0;o<t.getLength();o+=1)r[e+o]^=C.gexp(C.glog(n.getAt(e))+C.glog(t.getAt(o)));return k(r,0)},mod:function(t){if(n.getLength()-t.getLength()<0)return n;for(var r=C.glog(n.getAt(0))-C.glog(t.getAt(0)),e=new Array(n.getLength()),o=0;o<n.getLength();o+=1)e[o]=n.getAt(o);for(o=0;o<t.getLength();o+=1)e[o]^=C.gexp(C.glog(t.getAt(o))+r);return k(e,0).mod(t)}};return n}var A=function(){var t=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12,7,37,13],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],r=function(t,r){var e={};return e.totalCount=t,e.dataCount=r,e},e={};return e.getRSBlocks=function(e,n){var o=function(r,e){switch(e){case g.L:return t[4*(r-1)+0];case g.M:return t[4*(r-1)+1];case g.Q:return t[4*(r-1)+2];case g.H:return t[4*(r-1)+3];default:return}}(e,n);if(void 0===o)throw"bad rs block @ typeNumber:"+e+"/errorCorrectionLevel:"+n;for(var i=o.length/3,a=[],u=0;u<i;u+=1)for(var f=o[3*u+0],c=o[3*u+1],l=o[3*u+2],h=0;h<f;h+=1)a.push(r(c,l));return a},e}(),b=function(){var t=[],r=0,e={getBuffer:function(){return t},getAt:function(r){var e=Math.floor(r/8);return 1==(t[e]>>>7-r%8&1)},put:function(t,r){for(var n=0;n<r;n+=1)e.putBit(1==(t>>>r-n-1&1))},getLengthInBits:function(){return r},putBit:function(e){var n=Math.floor(r/8);t.length<=n&&t.push(0),e&&(t[n]|=128>>>r%8),r+=1}};return e},M=function(t){var r=a,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+2<r.length;)t.put(o(r.substring(n,n+3)),10),n+=3;n<r.length&&(r.length-n==1?t.put(o(r.substring(n,n+1)),4):r.length-n==2&&t.put(o(r.substring(n,n+2)),7))}},o=function(t){for(var r=0,e=0;e<t.length;e+=1)r=10*r+i(t.charAt(e));return r},i=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);throw"illegal char :"+t};return n},x=function(t){var r=u,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+1<r.length;)t.put(45*o(r.charAt(n))+o(r.charAt(n+1)),11),n+=2;n<r.length&&t.put(o(r.charAt(n)),6)}},o=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);if("A"<=t&&t<="Z")return t.charCodeAt(0)-"A".charCodeAt(0)+10;switch(t){case" ":return 36;case"$":return 37;case"%":return 38;case"*":return 39;case"+":return 40;case"-":return 41;case".":return 42;case"/":return 43;case":":return 44;default:throw"illegal char :"+t}};return n},m=function(r){var e=f,n=t.stringToBytes(r),o={getMode:function(){return e},getLength:function(t){return n.length},write:function(t){for(var r=0;r<n.length;r+=1)t.put(n[r],8)}};return o},L=function(r){var e=c,n=t.stringToBytesFuncs.SJIS;if(!n)throw"sjis not supported.";!function(){var t=n("友");if(2!=t.length||38726!=(t[0]<<8|t[1]))throw"sjis not supported."}();var o=n(r),i={getMode:function(){return e},getLength:function(t){return~~(o.length/2)},write:function(t){for(var r=o,e=0;e+1<r.length;){var n=(255&r[e])<<8|255&r[e+1];if(33088<=n&&n<=40956)n-=33088;else{if(!(57408<=n&&n<=60351))throw"illegal char at "+(e+1)+"/"+n;n-=49472}n=192*(n>>>8&255)+(255&n),t.put(n,13),e+=2}if(e<r.length)throw"illegal char at "+(e+1)}};return i},D=function(){var t=[],r={writeByte:function(r){t.push(255&r)},writeShort:function(t){r.writeByte(t),r.writeByte(t>>>8)},writeBytes:function(t,e,n){e=e||0,n=n||t.length;for(var o=0;o<n;o+=1)r.writeByte(t[o+e])},writeString:function(t){for(var e=0;e<t.length;e+=1)r.writeByte(t.charCodeAt(e))},toByteArray:function(){return t},toString:function(){var r="";r+="[";for(var e=0;e<t.length;e+=1)e>0&&(r+=","),r+=t[e];return r+="]"}};return r},S=function(t){var r=t,e=0,n=0,o=0,i={read:function(){for(;o<8;){if(e>=r.length){if(0==o)return-1;throw"unexpected end of file./"+o}var t=r.charAt(e);if(e+=1,"="==t)return o=0,-1;t.match(/^\s$/)||(n=n<<6|a(t.charCodeAt(0)),o+=6)}var i=n>>>o-8&255;return o-=8,i}},a=function(t){if(65<=t&&t<=90)return t-65;if(97<=t&&t<=122)return t-97+26;if(48<=t&&t<=57)return t-48+52;if(43==t)return 62;if(47==t)return 63;throw"c:"+t};return i},I=function(t,r,e){for(var n=function(t,r){var e=t,n=r,o=new Array(t*r),i={setPixel:function(t,r,n){o[r*e+t]=n},write:function(t){t.writeString("GIF87a"),t.writeShort(e),t.writeShort(n),t.writeByte(128),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(255),t.writeByte(255),t.writeByte(255),t.writeString(","),t.writeShort(0),t.writeShort(0),t.writeShort(e),t.writeShort(n),t.writeByte(0);var r=a(2);t.writeByte(2);for(var o=0;r.length-o>255;)t.writeByte(255),t.writeBytes(r,o,255),o+=255;t.writeByte(r.length-o),t.writeBytes(r,o,r.length-o),t.writeByte(0),t.writeString(";")}},a=function(t){for(var r=1<<t,e=1+(1<<t),n=t+1,i=u(),a=0;a<r;a+=1)i.add(String.fromCharCode(a));i.add(String.fromCharCode(r)),i.add(String.fromCharCode(e));var f,c,g,l=D(),h=(f=l,c=0,g=0,{write:function(t,r){if(t>>>r!=0)throw"length over";for(;c+r>=8;)f.writeByte(255&(t<<c|g)),r-=8-c,t>>>=8-c,g=0,c=0;g|=t<<c,c+=r},flush:function(){c>0&&f.writeByte(g)}});h.write(r,n);var s=0,v=String.fromCharCode(o[s]);for(s+=1;s<o.length;){var d=String.fromCharCode(o[s]);s+=1,i.contains(v+d)?v+=d:(h.write(i.indexOf(v),n),i.size()<4095&&(i.size()==1<<n&&(n+=1),i.add(v+d)),v=d)}return h.write(i.indexOf(v),n),h.write(e,n),h.flush(),l.toByteArray()},u=function(){var t={},r=0,e={add:function(n){if(e.contains(n))throw"dup key:"+n;t[n]=r,r+=1},size:function(){return r},indexOf:function(r){return t[r]},contains:function(r){return void 0!==t[r]}};return e};return i}(t,r),o=0;o<r;o+=1)for(var i=0;i<t;i+=1)n.setPixel(i,o,e(i,o));var a=D();n.write(a);for(var u=function(){var t=0,r=0,e=0,n="",o={},i=function(t){n+=String.fromCharCode(a(63&t))},a=function(t){if(t<0);else{if(t<26)return 65+t;if(t<52)return t-26+97;if(t<62)return t-52+48;if(62==t)return 43;if(63==t)return 47}throw"n:"+t};return o.writeByte=function(n){for(t=t<<8|255&n,r+=8,e+=1;r>=6;)i(t>>>r-6),r-=6},o.flush=function(){if(r>0&&(i(t<<6-r),t=0,r=0),e%3!=0)for(var o=3-e%3,a=0;a<o;a+=1)n+="="},o.toString=function(){return n},o}(),f=a.toByteArray(),c=0;c<f.length;c+=1)u.writeByte(f[c]);return u.flush(),"data:image/gif;base64,"+u};return t}();qrcode.stringToBytesFuncs["UTF-8"]=function(t){return function(t){for(var r=[],e=0;e<t.length;e++){var n=t.charCodeAt(e);n<128?r.push(n):n<2048?r.push(192|n>>6,128|63&n):n<55296||n>=57344?r.push(224|n>>12,128|n>>6&63,128|63&n):(e++,n=65536+((1023&n)<<10|1023&t.charCodeAt(e)),r.push(240|n>>18,128|n>>12&63,128|n>>6&63,128|63&n))}return r}(t)},function(t){"function"==typeof define&&define.amd?define([],t):"object"==typeof exports&&(module.exports=t())}(function(){return qrcode});
 </script>
@@ -209,6 +204,7 @@ const todayStr=()=>new Date().toISOString().slice(0,10);
 const nowStr=()=>new Date().toISOString().slice(0,16).replace("T"," ");
 const fmt=(v,d=2)=>(v==null||!isFinite(v))?"—":(v<0?"-":"")+Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
 const usd=(v,d=2)=>(v==null||!isFinite(v))?"—":(v<0?"-$":"$")+Math.abs(v).toLocaleString("en-US",{minimumFractionDigits:d,maximumFractionDigits:d});
+const pct=(v,d=2)=>(v==null||!isFinite(v))?"—":(v>0?"+":"")+(v*100).toFixed(d)+"%";
 const sgn=v=>v>0?"pos":(v<0?"neg":"");
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 
@@ -231,122 +227,123 @@ const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
   const h={tok:q.get("tok")||"",gid:q.get("gid")||"",k:q.get("k")||"",seed:q.get("seed")||"",who:q.get("who")||""};
-  if(h.tok)history.replaceState(null,"",location.pathname+location.search);return h;}catch(_){return null;}})();   // 只读链接保留 #（加主屏幕时随图标带走）；含令牌的链接读完即抹掉
+  if(h.tok)history.replaceState(null,"",location.pathname+location.search);return h;}catch(_){return null;}})();
 if(HASH){ if(HASH.k) setCfg(K.key,HASH.k); if(HASH.gid) setCfg(K.gid,HASH.gid); }
 window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k)=/.test(location.hash)) location.reload(); });
 
 /* ============ 数据模型 ============ */
-function seed(){return {v:3,updatedAt:"",
+function seed(){return {v:4,updatedAt:"",
   settings:{start:"2026-08-01",mgmt:2.0,carry:20,who:"",openingAt:"2026-07-31",fx:{USD:1,HKD:0.1282,CNY:0.14,EUR:1.09,SGD:0.745,GBP:1.27,JPY:0.0065}},
   accounts:[{id:"schwab",name:"Schwab-HK",opening:0},{id:"webull",name:"Webull",opening:0}],
-  months:[],   // {ym, locked, lockedAt, snap, flows:[{id,date,acct,amount,note}], manualClose:{acct:val}}
-  fees:[]      // {id,type:'exp'|'pay',date,cat,amount,ccy,fx,note}
+  months:[],   // {ym, flows:[{id,src,date,acct,amount,note}]}
+  fees:[]      // 付款记录 {id,date,amount,ccy,fx,note}
 };}
+function migrate(o){
+  if(!o||!o.settings||!Array.isArray(o.months))return null;
+  const d={...seed(),...o,v:4};
+  d.settings={...seed().settings,...o.settings};
+  d.accounts=(o.accounts&&o.accounts.length)?o.accounts:seed().accounts;
+  d.months=(o.months||[]).map(m=>({ym:m.ym,flows:(m.flows||[]).map(f=>({id:f.id||uid(),src:f.src||"",date:f.date,acct:f.acct,amount:num(f.amount),note:f.note||""}))})).filter(m=>m.ym);
+  d.fees=(o.fees||[]).filter(f=>f.type!=="exp").map(f=>({id:f.id||uid(),date:f.date||"",amount:f.amount,ccy:f.ccy||"USD",fx:f.fx||"",note:f.note||""}));
+  return d;
+}
 let DB=seed();
-try{const s=cfg(K.db);if(s){const o=JSON.parse(s);if(o&&o.v===3&&o.settings&&Array.isArray(o.months)){DB=o;DB.fees=DB.fees||[];}}}catch(_){}
+try{const s=cfg(K.db);if(s){const m=migrate(JSON.parse(s));if(m)DB=m;}}catch(_){}
 let DAILY={updatedAt:"",daily:[],flowsAuto:[]};
 try{const s=cfg(K.daily);if(s)DAILY=JSON.parse(s);}catch(_){}
 let _seeded=false;
 if(HASH&&HASH.seed){const n=HASH.seed.split(",").map(parseFloat);DB.accounts.forEach((a,i)=>{if(isFinite(n[i])&&!(num(a.opening)>0)){a.opening=n[i];_seeded=true;}});if(HASH.who&&!DB.settings.who){DB.settings.who=HASH.who;_seeded=true;}}
-function localBlank(){return DB.accounts.every(a=>!(num(a.opening)>0))&&DB.months.every(m=>!m.locked&&!(m.flows||[]).length)&&!DB.fees.length;}
+function localBlank(){return DB.accounts.every(a=>!(num(a.opening)>0))&&DB.months.every(m=>!(m.flows||[]).length)&&!DB.fees.length;}
 const strip=o=>JSON.stringify({...o,updatedAt:0});
 let _last=null;
 function autosave(){const j=strip(DB);if(j===_last)return;_last=j;DB.updatedAt=new Date().toISOString();setCfg(K.db,JSON.stringify(DB));ghSchedule();}
 
 /* ============ 计算引擎 ============ */
 function dailySorted(){return [...(DAILY.daily||[])].filter(d=>d&&d.d).sort((a,b)=>a.d.localeCompare(b.d));}
-function lastDailyOnOrBefore(date){const ds=dailySorted();let hit=null;for(const x of ds){if(x.d<=date)hit=x;else break;}return hit;}
 function lastDailyInMonth(ym){const ds=dailySorted().filter(x=>x.d.slice(0,7)===ym);return ds.length?ds[ds.length-1]:null;}
-function valOf(pt,acct){return pt?num(pt[acct]):null;}
-function periodOf(ym){const s=DB.settings.start;return {from:(ym===s.slice(0,7))?s:ym+"-01",to:eom(ym)};}
-function calcPeriod(openBy,closeBy,flows,from,to){
-  const days=Math.max(1,inclDays(from,to));let openT=0,closeT=0,avgT=0,flowT=0;const per=[];
-  const dsAll=dailySorted().filter(x=>x.d<=to);const ds=dsAll.some(x=>x.d>=from)?dsAll:[];
-  for(const a of DB.accounts){const op=num(openBy[a.id]);const cl=closeBy[a.id]==null?op:num(closeBy[a.id]);
-    const fl=(flows||[]).filter(f=>f.acct===a.id);const net=fl.reduce((s,f)=>s+num(f.amount),0);
-    let w=op;for(const f of fl){const el=Math.max(0,Math.min(days,Math.round((P(f.date||from)-P(from))/DAY)));w+=num(f.amount)*((days-el)/days);}
-    let avg=Math.max(0,w),avgSrc="dietz";
-    // 有每日数据时改用真实日均（自然日逐日取最近一个数据点，期初前用期初值）—— 口径 §3/§11
-    if(ds.length){let sum=0;let j=0,last=null;for(let i=0;i<days;i++){const d=F(new Date(P(from).getTime()+i*DAY));while(j<ds.length&&ds[j].d<=d){last=ds[j];j++;}sum+=(last&&last[a.id]!=null)?num(last[a.id]):op;}avg=sum/days;avgSrc="daily";}
-    openT+=op;closeT+=cl;avgT+=avg;flowT+=net;per.push({id:a.id,name:a.name,open:op,close:cl,net,avg,avgSrc,pnl:cl-op-net});}
-  const pnl=per.reduce((s,x)=>s+x.pnl,0);const mgmt=avgT*(num(DB.settings.mgmt)/100)*days/365;
-  return {days,openT,closeT,avgT,avgSrc:per.some(x=>x.avgSrc==="daily")?"daily":"dietz",flowT,per,pnl,mgmt};
-}
-function ensureMonths(){
-  const startYm=DB.settings.start.slice(0,7),cur=todayStr().slice(0,7);const have=new Set(DB.months.map(m=>m.ym));
-  let ym=startYm,n=0;while(ym<cur&&n<600){if(!have.has(ym))DB.months.push({ym,locked:false,lockedAt:null,snap:null,flows:[],manualClose:{}});ym=nextYm(ym);n++;}
-  DB.months=DB.months.filter(m=>m.ym>=startYm&&(m.ym<cur||m.locked||(m.flows||[]).length));
-  DB.months.sort((a,b)=>a.ym.localeCompare(b.ym));DB.months.forEach(m=>{m.flows=m.flows||[];m.manualClose=m.manualClose||{};});
-}
+function totOf(pt){return pt?DB.accounts.reduce((s,a)=>s+num(pt[a.id]),0):0;}
+function curYm(){return todayStr().slice(0,7);}
+function monthYms(){const out=[];let ym=DB.settings.start.slice(0,7);const cur=curYm();let n=0;while(ym<=cur&&n<600){out.push(ym);ym=nextYm(ym);n++;}return out;}
+function monthOf(ym){let m=DB.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};DB.months.push(m);DB.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows||[];return m;}
+function ann(r,days){return days>0?Math.pow(1+r,365/days)-1:0;}
+
 function compute(){
-  const carryRate=num(DB.settings.carry)/100;let cum=0,hwm=0;const openBy={};DB.accounts.forEach(a=>openBy[a.id]=num(a.opening));
-  const rows=[];
-  for(const m of DB.months){
-    const {from,to}=periodOf(m.ym);
-    if(m.locked&&m.snap){const s=m.snap;rows.push({...m,from,to,...s,complete:true,frozen:true,underwater:s.excess<=0?(s.hwm-s.cum):0});cum=s.cum;hwm=s.hwm;
-      DB.accounts.forEach(a=>{const p=(s.per||[]).find(x=>x.id===a.id);if(p)openBy[a.id]=p.close;});continue;}
-    // 期末：优先每日数据的当月最后一天；其次手工填写
-    const pt=lastDailyInMonth(m.ym);const closeBy={};let complete=true;
-    for(const a of DB.accounts){let v=pt?valOf(pt,a.id):null;if(v==null&&m.manualClose[a.id]!==""&&m.manualClose[a.id]!=null)v=num(m.manualClose[a.id]);if(v==null){complete=false;}closeBy[a.id]=v;}
-    const c=calcPeriod(openBy,closeBy,m.flows,from,to);
-    const cumBefore=cum;cum+=complete?c.pnl:0;const hwmBefore=hwm;const excess=cum-hwm;const carry=(complete&&excess>0)?excess*carryRate:0;if(complete&&excess>0)hwm=cum;
-    rows.push({...m,from,to,...c,carry,total:c.mgmt+carry,cumBefore,cum,hwmBefore,hwm,excess,complete,closeSource:pt?"daily":"manual",closeDate:pt?pt.d:null,underwater:excess<=0?(hwm-cum):0});
-    if(complete)DB.accounts.forEach(a=>{const p=c.per.find(x=>x.id===a.id);openBy[a.id]=p.close;});
+  const rate=num(DB.settings.mgmt)/100, cr=num(DB.settings.carry)/100, start=DB.settings.start;
+  const openBy={};DB.accounts.forEach(a=>openBy[a.id]=num(a.opening));
+  let openT=DB.accounts.reduce((s,a)=>s+num(a.opening),0);
+  let cum=0,hwm=0,idxG=1,idxN=1;const rows=[];const cur=curYm();
+  for(const ym of monthYms()){
+    const pt=lastDailyInMonth(ym);if(!pt)continue;
+    const inProgress=(ym===cur);
+    const from=(ym===start.slice(0,7))?start:ym+"-01";
+    const to=inProgress?pt.d:eom(ym);
+    const days=Math.max(1,inclDays(from,to));
+    const closeT=totOf(pt);
+    const m=DB.months.find(x=>x.ym===ym)||{flows:[]};const fl=m.flows||[];
+    const flowT=fl.reduce((s,f)=>s+num(f.amount),0);
+    let den=openT;for(const f of fl){const el=Math.max(0,Math.min(days,Math.round((P(f.date||from)-P(from))/DAY)));den+=num(f.amount)*((days-el)/days);}
+    den=Math.max(1,den);
+    const pnl=closeT-openT-flowT;
+    const mgmt=((openT+closeT)/2)*rate*days/365;
+    const cumBefore=cum;cum+=pnl;const excess=cum-hwm;const carry=excess>0?excess*cr:0;const hwmBefore=hwm;if(excess>0)hwm=cum;
+    const fees=mgmt+carry;
+    const rG=pnl/den, rN=(pnl-fees)/den;
+    idxG*=(1+rG);idxN*=(1+rN);
+    rows.push({ym,from,to,days,openT,closeT,flowT,den,pnl,mgmt,carry,fees,rG,rN,cumBefore,cum,hwmBefore,hwm,excess,inProgress,idxG:idxG-1,idxN:idxN-1});
+    openT=closeT;
   }
-  return {rows,openNext:{...openBy},cum,hwm};
+  const done=rows.filter(r=>!r.inProgress),live=rows.find(r=>r.inProgress)||null;
+  const lastPt=dailySorted().pop();
+  const spanDays=lastPt?Math.max(1,inclDays(start,lastPt.d)):0;
+  const gross=rows.reduce((s,r)=>s+r.pnl,0);
+  const feesDone=done.reduce((s,r)=>s+r.fees,0);
+  const feesLive=live?live.fees:0;
+  return {rows,done,live,lastPt,spanDays,gross,feesDone,feesLive,
+    net:gross-feesDone-feesLive, twrG:idxG-1, twrN:idxN-1, hwm, cum, nav:lastPt?totOf(lastPt):DB.accounts.reduce((s,a)=>s+num(a.opening),0)};
 }
-function computeMTD(st){
-  const cur=todayStr().slice(0,7);const s=DB.settings.start;if(cur<s.slice(0,7))return null;
-  const from=(cur===s.slice(0,7))?s:cur+"-01";const pt=lastDailyInMonth(cur);if(!pt)return null;
-  const closeBy={};DB.accounts.forEach(a=>closeBy[a.id]=valOf(pt,a.id));
-  const flows=(DB.months.find(m=>m.ym===cur)||{}).flows||[];
-  const c=calcPeriod(st.openNext,closeBy,flows,from,pt.d);const cum=st.cum+c.pnl;const excess=cum-st.hwm;const carry=excess>0?excess*num(DB.settings.carry)/100:0;
-  return {ym:cur,from,to:pt.d,...c,cum,hwm:st.hwm,excess,carry,total:c.mgmt+carry,underwater:excess<=0?(st.hwm-cum):0};
-}
-function balance(rows){
+function balance(st){
   const fxOf=e=>(e.fx!=null&&e.fx!==""&&isFinite(parseFloat(e.fx)))?parseFloat(e.fx):(DB.settings.fx[e.ccy]||1);
-  const L=rows.filter(r=>r.locked),U=rows.filter(r=>!r.locked&&r.complete);
-  const lock=L.reduce((s,r)=>s+r.total,0),open=U.reduce((s,r)=>s+r.total,0);
-  const expAll=DB.fees.filter(f=>f.type==="exp").reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
-  const paid=DB.fees.filter(f=>f.type==="pay").reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
-  return {lock,open,expAll,paid,due:lock+open-paid,dueLocked:lock-paid,nLock:L.length,nOpen:U.length,fxOf,
-    mgmt:rows.reduce((s,r)=>s+(r.complete?r.mgmt:0),0),carry:rows.reduce((s,r)=>s+(r.complete?r.carry:0),0)};
+  const paid=DB.fees.reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
+  return {accrued:st.feesDone,live:st.feesLive,paid,due:st.feesDone-paid,fxOf,
+    mgmt:st.done.reduce((s,r)=>s+r.mgmt,0),carry:st.done.reduce((s,r)=>s+r.carry,0),nDone:st.done.length};
 }
-/* 每日累计收益序列（用于图表）：以起始基准为 0，逐日 总资产 − 起始 − 累计确认出入金 */
-function dailySeries(){
+/* 每日累计净收益（毛）序列，用于图表 */
+function dailySeries(st){
   const ds=dailySorted().filter(x=>x.d>=DB.settings.start);if(!ds.length)return [];
   const base=DB.accounts.reduce((s,a)=>s+num(a.opening),0);
   const flows=DB.months.flatMap(m=>m.flows||[]).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-  let hwm=0;const out=[];const carryRate=num(DB.settings.carry)/100;
-  // 高水位：只在已结账月份推进（与结算口径一致）
-  const lockedRows=compute().rows.filter(r=>r.locked);
-  for(const x of ds){const tot=DB.accounts.reduce((s,a)=>s+num(x[a.id]),0);const fl=flows.filter(f=>f.date<=x.d).reduce((s,f)=>s+num(f.amount),0);
-    const cum=tot-base-fl;const lastLock=lockedRows.filter(r=>r.to<=x.d).pop();hwm=lastLock?lastLock.hwm:0;out.push({d:x.d,cum,hwm,tot});}
+  const out=[];
+  for(const x of ds){const tot=totOf(x);const f=flows.filter(z=>z.date<=x.d).reduce((s,z)=>s+num(z.amount),0);
+    const r=st.done.filter(z=>z.to<=x.d).pop();out.push({d:x.d,cum:tot-base-f,hwm:r?r.hwm:0});}
   return out;
 }
-
 /* ============ 渲染 ============ */
 function render(){
-  ensureMonths();const st=compute(),rows=st.rows,mtd=computeMTD(st),B=balance(rows);
-  document.body.classList.toggle("viewer",!isMgr());
+  const st=compute(),B=balance(st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%`+(isMgr()?"":" · 只读");
-  renderKPIs(rows,B,mtd);renderChart();renderMonths(rows,mtd);renderBal(B);
-  if(isMgr()){renderFees(B);renderSettings();}
+  renderKPIs(st,B);renderChart1(st);renderChart2(st);renderMonths(st);renderBal(st,B);
+  if(isMgr()){renderFees(st,B);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
-function renderKPIs(rows,B,mtd){
-  const last=rows.filter(r=>r.complete).pop();const lp=dailySorted().pop();
-  const nav=lp?DB.accounts.reduce((s,a)=>s+num(lp[a.id]),0):DB.accounts.reduce((s,a)=>s+num(a.opening),0);
+function renderKPIs(st,B){
+  const lp=st.lastPt;const showAnn=st.spanDays>365;
+  const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
   document.getElementById("kpis").innerHTML=`
-  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(nav,0)}</div>
-    <div class="note">${mtd?`本月至今 <b class="${sgn(mtd.pnl)}">${usd(mtd.pnl,0)}</b> · 预估费用 <b class="amt">${usd(mtd.total,0)}</b>`:"本月暂无数据（美股收盘后自动更新）"}</div></div>
-  <div class="kpi"><div class="lab">应付费用余额</div><div class="val ${B.due>0?'':'pos'}">${usd(B.due,0)}</div><div class="note">已结账 ${usd(B.dueLocked,0)}${B.nOpen?` · 待结账 ${usd(B.open,0)}`:""}</div></div>
-  <div class="kpi"><div class="lab">累计净收益（已结账）</div><div class="val ${sgn(last?last.cum:0)}">${usd(last?last.cum:0,0)}</div><div class="note">${last?(last.cum>=last.hwm?"在高水位线上":"距高水位 "+usd(last.hwm-last.cum,0)):"首月尚未结账"}</div></div>`;
+  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>
+    <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 预估费用 <b class="amt">${usd(st.live.fees,0)}</b>`:"本月暂无数据（美股收盘后自动更新）"}</div></div>
+  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
+    <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesDone+st.feesLive,0)}</div></div>
+  <div class="kpi"><div class="lab">管理方 · 应付费用余额</div><div class="val">${usd(B.due,0)}</div>
+    <div class="note">已计提 ${usd(B.accrued,0)} · 已付 ${usd(B.paid,0)}${st.feesLive?` · 本月预估 ${usd(st.feesLive,0)}`:""}</div></div>
+  <div class="kpi wide"><div class="lab">收益率 · ${DB.settings.start} → ${lp?lp.d:"—"}（${st.spanDays} 天）</div>
+    ${rr("投资收益率（管理方，扣费前）",st.twrG)}
+    ${rr("净收益率（出资方，扣费后）",st.twrN)}
+    <div class="note">${showAnn?`年化：投资 ${pct(ann(st.twrG,st.spanDays))} · 净 ${pct(ann(st.twrN,st.spanDays))}`:"满一年后自动显示年化"}</div></div>`;
 }
-function renderChart(){
-  const box=document.getElementById("chart1");const s=dailySeries();
+function renderChart1(st){
+  const box=document.getElementById("chart1");const s=dailySeries(st);
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s[s.length-1].d}`:"";
   if(s.length<2){box.innerHTML=`<div class="empty">每日数据到位后此处出现走势</div>`;return;}
   const w=720,h=240,l=54,r=12,t=12,b=28,iw=w-l-r,ih=h-t-b;
@@ -354,75 +351,96 @@ function renderChart(){
   const X=i=>l+i*(iw/(s.length-1)),Y=v=>t+ih-((v-lo)/(hi-lo))*ih;
   const path=k=>s.map((p,i)=>(i?"L":"M")+X(i).toFixed(1)+","+Y(p[k]).toFixed(1)).join("");
   const ticks=[lo+pad,(lo+hi)/2,hi-pad].map(v=>Math.round(v));
-  const K=v=>Math.abs(v)>=1000?(v/1000).toFixed(Math.abs(v)>=10000?0:1)+"k":v.toFixed(0);
+  const KK=v=>Math.abs(v)>=1000?(v/1000).toFixed(Math.abs(v)>=10000?0:1)+"k":v.toFixed(0);
   const idx=[0,Math.floor((s.length-1)/2),s.length-1];
   box.innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img">
-    ${ticks.map(v=>`<line x1="${l}" x2="${w-r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--grid)"/><text x="${l-8}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--ink-muted)">${K(v)}</text>`).join("")}
+    ${ticks.map(v=>`<line x1="${l}" x2="${w-r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--grid)"/><text x="${l-8}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--ink-muted)">${KK(v)}</text>`).join("")}
     ${(lo<0&&hi>0)?`<line x1="${l}" x2="${w-r}" y1="${Y(0).toFixed(1)}" y2="${Y(0).toFixed(1)}" stroke="var(--axis)" stroke-width="1.5"/>`:""}
     <path d="${path('hwm')}" fill="none" stroke="var(--series-2)" stroke-width="2" stroke-dasharray="6 4"/>
     <path d="${path('cum')}" fill="none" stroke="var(--series-1)" stroke-width="2" stroke-linejoin="round"/>
     ${idx.map(i=>`<text x="${X(i).toFixed(1)}" y="${h-8}" text-anchor="${i===0?'start':(i===s.length-1?'end':'middle')}" font-size="11" fill="var(--ink-muted)">${s[i].d.slice(5)}</text>`).join("")}
   </svg>`;
 }
-function renderMonths(rows,mtd){
-  const box=document.getElementById("monthsBox");let html="";
-  if(!rows.length&&!mtd){box.innerHTML=`<div class="empty">第一个可结账月份是 ${ymLabel(DB.settings.start.slice(0,7))}，月末过后自动出现。</div>`;return;}
-  const line=(r,isMtd)=>`<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b> ${isMtd?'<span class="badge est">进行中</span>':(r.locked?`<span class="badge lock">已结账</span>`:(r.complete?'<span class="badge est">待结账</span>':'<span class="badge est">缺数据</span>'))}
-      ${r.complete&&r.excess>0?'<span class="badge ok">超高水位</span>':(r.complete&&r.underwater>0?'<span class="badge hwm">补亏中</span>':'')}</div>
-      <div class="l">${r.complete||isMtd?`收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b> · 管理费 <b class="amt">${fmt(r.mgmt,0)}</b> · Carry <b class="amt">${fmt(r.carry,0)}</b>`:'等待月末数据'}${r.locked?` · ${r.lockedAt||''}`:''}</div></div>
-    <div style="text-align:right"><b>${r.complete||isMtd?usd(r.total,0):'—'}</b>
-      ${(!isMtd&&isMgr()&&!r.locked&&r.complete)?`<div><button class="btn sm primary" data-lock="${r.ym}" style="margin-top:4px">月度结账</button></div>`:''}
-      ${(!isMtd&&isMgr()&&!r.locked&&!r.complete)?`<div><button class="btn sm" data-manual="${r.ym}" style="margin-top:4px">手工填月末</button></div>`:''}
-    </div></div>`;
-  html+=rows.map(r=>line(r,false)).join("");if(mtd)html+=line(mtd,true);
-  box.innerHTML=html;
+function renderChart2(st){
+  const box=document.getElementById("chart2");const R=st.rows;
+  if(!R.length){box.innerHTML=`<div class="empty">月末后此处出现柱状图</div>`;return;}
+  const w=720,h=230,l=54,r=12,t=14,b=52,iw=w-l-r,ih=h-t-b;
+  const max=Math.max(...R.map(x=>x.fees),1)*1.15;
+  const step=iw/R.length,bw=Math.min(64,step*0.55);
+  const Y=v=>t+ih-(v/max)*ih;
+  const KK=v=>Math.abs(v)>=1000?(v/1000).toFixed(Math.abs(v)>=10000?0:1)+"k":v.toFixed(0);
+  const ticks=[0,max/2,max].map(v=>Math.round(v));
+  box.innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img">
+    ${ticks.map(v=>`<line x1="${l}" x2="${w-r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--grid)"/><text x="${l-8}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--ink-muted)">${KK(v)}</text>`).join("")}
+    ${R.map((x,i)=>{const cx=l+step*i+step/2;const y1=Y(x.mgmt),y2=Y(x.mgmt+x.carry);return `
+      <rect x="${(cx-bw/2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,t+ih-y1).toFixed(1)}" fill="var(--series-1)" rx="2"/>
+      <rect x="${(cx-bw/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,y1-y2).toFixed(1)}" fill="var(--series-2)" rx="2"/>
+      <text x="${cx.toFixed(1)}" y="${(y2-6).toFixed(1)}" text-anchor="middle" font-size="11" fill="var(--ink-1)" font-weight="600">${KK(x.fees)}</text>
+      <text x="${cx.toFixed(1)}" y="${h-26}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>
+      <text x="${cx.toFixed(1)}" y="${h-8}" text-anchor="middle" font-size="11" fill="${x.rG>=0?'var(--good-text)':'var(--critical)'}">${pct(x.rG,1)}</text>`;}).join("")}
+  </svg>${st.live?`<p class="small" style="margin:6px 0 0">* 本月进行中，数字为至今预估</p>`:""}`;
 }
-function renderBal(B){
+function renderMonths(st){
+  const box=document.getElementById("monthsBox");
+  if(!st.rows.length){box.innerHTML=`<div class="empty">${ymLabel(DB.settings.start.slice(0,7))}起，每日数据到位后自动出现。</div>`;return;}
+  box.innerHTML=st.rows.map(r=>`<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b>
+      ${r.inProgress?'<span class="badge est">进行中</span>':''}
+      ${r.excess>0?'<span class="badge ok">超高水位</span>':(r.cum<r.hwm?'<span class="badge hwm">补亏中</span>':'')}</div>
+      <div class="l">收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（${pct(r.rG,1)}） · 管理费 <b class="amt">${fmt(r.mgmt,0)}</b> · Carry <b class="amt">${fmt(r.carry,0)}</b></div></div>
+    <div style="text-align:right"><b>${usd(r.fees,0)}</b><div class="l">净 ${fmt(r.pnl-r.fees,0)}</div></div></div>`).join("");
+}
+function renderBal(st,B){
   document.getElementById("balBox").innerHTML=`
-    <div class="line"><span>已结账应计（${B.nLock} 个月）</span><span>${usd(B.lock)}</span></div>
-    <div class="line"><span>待结账预估（${B.nOpen} 个月）</span><span>${usd(B.open)}</span></div>
+    <div class="line"><span>累计管理费（${B.nDone} 个完整月）</span><span>${usd(B.mgmt)}</span></div>
+    <div class="line"><span>累计 Carry</span><span>${usd(B.carry)}</span></div>
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
     <div class="line tot"><span>应付余额</span><span class="${B.due>0?'':'pos'}">${usd(B.due)}</span></div>
-    <div class="line"><span>其中已结账可付</span><span>${usd(B.dueLocked)}</span></div>`;
+    ${st.feesLive?`<div class="line"><span>本月至今预估（未计入）</span><span>${usd(st.feesLive)}</span></div>`:""}`;
 }
-function renderFees(B){
+function renderFees(st,B){
   const t=document.getElementById("tblFee");
   t.innerHTML=(DB.fees.length?DB.fees.map(f=>`<div class="feeCard">
-    <div class="fr"><select data-fee="${f.id}" data-k="type" style="flex:0 0 78px"><option value="exp" ${f.type==='exp'?'selected':''}>支出</option><option value="pay" ${f.type==='pay'?'selected':''}>付款</option></select>
-      <input type="date" data-fee="${f.id}" data-k="date" value="${f.date||''}" style="flex:1 1 140px">
+    <div class="fr"><input type="date" data-fee="${f.id}" data-k="date" value="${f.date||''}" style="flex:1 1 150px">
       <button class="del" data-delfee="${f.id}">×</button></div>
-    <div class="fr"><input type="number" inputmode="decimal" step="0.01" data-fee="${f.id}" data-k="amount" value="${f.amount??''}" placeholder="金额" style="flex:1 1 110px">
-      <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 78px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select>
-      </div>
-    <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：数据订阅 / 8月费用）" style="flex:1"></div>
-  </div>`).join(""):`<div class="empty">还没有记录</div>`)+
-  `<div class="feeSum"><span>支出 ${usd(B.expAll,0)}<span class="l">（仅记录）</span></span><span>已付款 ${usd(B.paid,0)}</span></div>`;
+    <div class="fr"><input type="number" inputmode="decimal" step="0.01" data-fee="${f.id}" data-k="amount" value="${f.amount??''}" placeholder="金额" style="flex:1 1 120px">
+      <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 82px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select></div>
+    <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：8 月费用）" style="flex:1"></div>
+  </div>`).join(""):`<div class="empty">还没有付款记录</div>`)+
+  `<div class="feeSum"><span>已付款 ${usd(B.paid,0)}</span><span>应付余额 ${usd(B.due,0)}</span></div>`;
+}
+function renderFlows(){
+  const box=document.getElementById("flowBox");const auto=(DAILY.flowsAuto||[]);
+  const inc=DB.months.flatMap(m=>(m.flows||[]).map(f=>({...f,ym:m.ym})));
+  const manual=inc.filter(f=>!f.src);
+  if(!auto.length&&!manual.length){box.innerHTML=`<div class="empty">未检测到外部出入金</div>`;return;}
+  box.innerHTML=auto.map(f=>{const on=inc.some(c=>c.src===f.id);return `<div class="mrow"><label style="display:flex;gap:8px;align-items:center;font-size:13px">
+    <input type="checkbox" data-flow="${f.id}" ${on?'checked':''} style="width:20px;height:20px">
+    ${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">${esc(f.desc||'')}</span></label></div>`;}).join("")
+    +manual.map(f=>`<div class="mrow"><span style="font-size:13px">${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">手工</span></span><button class="del" data-delflow="${f.id}">×</button></div>`).join("");
 }
 function renderSettings(){
   const S=DB.settings;sMgmt.value=S.mgmt;sCarry.value=S.carry;sStart.value=S.start;sWho.value=S.who||"";
-  const anyLock=DB.months.some(m=>m.locked);
-  document.getElementById("openBox").innerHTML=`<label class="f">起始基准（${S.openingAt} 总资产）${anyLock?'· 已有结账月，已锁定':''}</label><div class="grid">`+
-    DB.accounts.map(a=>`<div><label class="f">${esc(a.name)}</label><input type="number" step="0.01" data-open="${a.id}" value="${a.opening??''}" ${anyLock?'disabled':''}></div>`).join("")+`</div>`;
+  document.getElementById("openBox").innerHTML=`<label class="f">起始基准（${S.openingAt} 总资产）</label><div class="grid">`+
+    DB.accounts.map(a=>`<div><label class="f">${esc(a.name)}</label><input type="number" step="0.01" data-open="${a.id}" value="${a.opening??''}"></div>`).join("")+`</div>`;
   document.getElementById("acctBox").innerHTML=`<label class="f">账户名称</label><div class="grid">`+DB.accounts.map(a=>`<div><input data-acct="${a.id}" value="${esc(a.name)}"></div>`).join("")+`</div>`;
   document.getElementById("ghStatusBox").innerHTML=`
     <div class="line"><span>云同步</span><span id="ghStatus">${(document.getElementById("syncBadge").textContent||"").replace(/^☁ /,"")||"—"}</span></div>
     <div class="line"><span>每日数据</span><span>${DAILY.updatedAt?("更新于 "+DAILY.updatedAt.slice(0,16).replace("T"," ")):"尚未收到"}</span></div>
-    <div class="line"><span>云端存档</span><span>${cfg(K.gid)?`<a href="https://gist.github.com/${cfg(K.gid)}" target="_blank" rel="noopener">gist/${cfg(K.gid).slice(0,8)}…</a>`:"首次同步时创建"}</span></div>`;
+    <div class="line"><span>云端存档</span><span>${cfg(K.gid)?"已建立":"首次同步时创建"}</span></div>`;
 }
 function renderSetup(){
   const el=document.getElementById("setupBox");
   if(!store){el.innerHTML=`<div class="warn">此环境不支持本机存储，请在 iPhone Safari 打开网页版。</div>`;return;}
   if(isMgr()){el.innerHTML="";return;}
-  if(cfg(K.gid)&&cfg(K.key)){el.innerHTML="";return;}   // 只读模式已就绪
+  if(cfg(K.gid)&&cfg(K.key)){el.innerHTML="";return;}
   el.innerHTML=`<div class="card" style="border-color:rgba(42,120,214,.5)">
     <h2>首次设置（管理人手机，只做一次）</h2>
     <p class="hint">连上后你的记录自动存到 GitHub，其他手机扫码只读。<b>如果你不是管理人</b>：请让管理人在设置里生成只读二维码给你扫。</p>
     <a class="btn primary big" href="${TOKEN_URL}" target="_blank" rel="noopener" style="display:block;text-decoration:none;text-align:center;margin-bottom:8px">① 去 GitHub 生成令牌</a>
-    <p class="small" style="margin:0 0 8px">打开的页面权限已选好，<b>拉到最底点绿色 Generate token</b>，<b>长按复制</b>出现的 <code>ghp_…</code>，回到这里。</p>
+    <p class="small" style="margin:0 0 8px">打开的页面权限已选好，<b>拉到最底点绿色 Generate token</b>，<b>长按复制</b>出现的字符串，回到这里。</p>
     <label class="f">② 粘到这里</label><input type="password" id="tokIn" placeholder="ghp_…" autocomplete="off">
     <button class="btn primary big" id="btnConnect" style="margin-top:8px">③ 连接</button>
-    ${cfg(K.key)?"":'<p class="small" style="margin:8px 0 0;color:var(--critical)">提示：这个链接里没有数据密钥，请用我发给你的完整链接打开，或把链接粘到下面。</p>'}
-    <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f">已经有链接？（主屏幕图标首次打开 / 只读手机）把整条链接粘到这里</label>
+    <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f">已经有链接？（主屏幕图标 / 只读手机）把整条链接粘到这里</label>
       <input id="linkIn" placeholder="https://…#…" autocomplete="off"><button class="btn big" id="btnLink" style="margin-top:8px">应用链接</button></div>
   </div>`;
 }
@@ -441,10 +459,9 @@ async function ghFind(){for(let p=1;p<=5;p++){const l=await ghApi(`/gists?per_pa
 async function ghPull(){const gid=cfg(K.gid);if(!gid)return null;const g=await ghApi("/gists/"+gid,{},isMgr());const f=g.files&&g.files[GH_FILE];if(!f)return null;
   let c=f.content;if(f.truncated)c=await (await fetch(f.raw_url)).text();const o=JSON.parse(c);
   let d=o;if(o&&o.enc){if(!cfg(K.key))throw new Error("缺少数据密钥");const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}
-  if(!d||d.v!==3||!d.settings||!Array.isArray(d.months))return null;   // 旧版/异常存档：忽略（管理人会用 v3 覆盖）
-  d.fees=d.fees||[];d.accounts=d.accounts||seed().accounts;return d;}
+  return migrate(d);}
 async function ghPush(){if(!isMgr())return;let content;
-  if(cfg(K.key)){const key=await keyOf(cfg(K.key));content=JSON.stringify({enc:true,v:3,data:await encTxt(key,JSON.stringify(DB))});}else content=JSON.stringify(DB);
+  if(cfg(K.key)){const key=await keyOf(cfg(K.key));content=JSON.stringify({enc:true,v:4,data:await encTxt(key,JSON.stringify(DB))});}else content=JSON.stringify(DB);
   const body={files:{[GH_FILE]:{content}}};let gid=cfg(K.gid);
   if(!gid){const g=await ghApi("/gists",{method:"POST",body:JSON.stringify({description:"投资管理费 · 数据（加密）",public:false,...body})});setCfg(K.gid,g.id);}
   else await ghApi("/gists/"+gid,{method:"PATCH",body:JSON.stringify(body)});}
@@ -452,11 +469,9 @@ const hhmm=()=>new Date().toTimeString().slice(0,5);
 function ghSchedule(){if(!isMgr())return;clearTimeout(_ghT);_ghT=setTimeout(ghSync,1500);}
 async function ghSync(){if(!isMgr())return;if(_busy){_dirty=true;return;}_busy=true;setSync("同步中…");try{await ghPush();setSync("已同步 "+hhmm());}catch(e){setSync("同步失败："+e.message,true);}finally{_busy=false;if(_dirty){_dirty=false;ghSchedule();}}}
 async function pullAll(quiet){
-  // 1) 每日数据（仓库 data.json，加密）
   try{const r=await fetch(DATA_URL+"?t="+Date.now(),{cache:"no-store"});if(r.ok){const o=await r.json();let d=o;
       if(o&&o.enc){if(cfg(K.key)){const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}else d=null;}
       if(d&&Array.isArray(d.daily)){DAILY=d;setCfg(K.daily,JSON.stringify(d));}}}catch(_){}
-  // 2) 管理人记录（Gist）
   if(!cfg(K.gid)&&isMgr()){try{await ghFind();}catch(_){}}
   if(cfg(K.gid)){
     if(_busy)return;_busy=true;if(isMgr())setSync("同步中…");
@@ -480,43 +495,6 @@ async function connect(tok){tok=(tok||"").trim();if(!tok){toast("请先粘贴令
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")pullAll(true);});
 window.addEventListener("online",()=>pullAll(true));
 
-/* ============ 结账 ============ */
-const SNAPF=[["openT","期初总额"],["flowT","净出入金"],["closeT","期末总额"],["avgT","日均资产"],["pnl","当月净收益"],["mgmt","管理费"],["carry","Carry"],["total","本月合计"]];
-let _pendYm=null;
-function askLock(ym){
-  const r=compute().rows.find(x=>x.ym===ym);if(!r||!r.complete||r.locked)return;_pendYm=ym;
-  const m=DB.months.find(x=>x.ym===ym);
-  document.getElementById("dlgMsg").textContent=`${ymLabel(ym)}（${r.from} → ${r.to}）。期末取自 ${r.closeSource==="daily"?("每日数据 "+r.closeDate):"手工填写"}。`;
-  // 候选外部出入金：自动检测 + 已确认
-  const auto=(DAILY.flowsAuto||[]).filter(f=>f.date>=r.from&&f.date<=r.to);
-  const conf=m.flows||[];
-  document.getElementById("dlgFlows").innerHTML=(auto.length||conf.length)?`<label class="f">本月出入金（勾选=计入）</label>`+
-    auto.map(f=>{const on=conf.some(c=>c.src===f.id);return `<div class="mrow"><label style="display:flex;gap:8px;align-items:center;font-size:13px"><input type="checkbox" data-flow="${f.id}" ${on?'checked':''} style="width:20px;height:20px">${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">${esc(f.desc||'')}</span></label></div>`;}).join("")
-    :`<p class="small">未检测到外部出入金。</p>`;
-  document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,l])=>`<div class="line"><span>${k==="avgT"?(r.avgSrc==="daily"?"日均资产（每日实测）":"日均资产（加权近似）"):l}</span><span>${fmt(r[k])}</span></div>`).join("");
-  document.getElementById("dlgConfirm").value="";document.getElementById("dlg").classList.add("on");
-}
-document.getElementById("dlgCancel").onclick=()=>{_pendYm=null;document.getElementById("dlg").classList.remove("on");};
-document.getElementById("dlg").addEventListener("change",e=>{const T=e.target;if(!T.dataset.flow)return;const m=DB.months.find(x=>x.ym===_pendYm);const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f)return;
-  m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:uid(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});
-  const r=compute().rows.find(x=>x.ym===_pendYm);document.getElementById("dlgSnap").innerHTML=SNAPF.map(([k,l])=>`<div class="line"><span>${k==="avgT"?(r.avgSrc==="daily"?"日均资产（每日实测）":"日均资产（加权近似）"):l}</span><span>${fmt(r[k])}</span></div>`).join("");});
-document.getElementById("dlgOk").onclick=()=>{
-  if(document.getElementById("dlgConfirm").value.trim()!=="结账"){toast("请输入「结账」两字确认");return;}
-  const r=compute().rows.find(x=>x.ym===_pendYm);const m=DB.months.find(x=>x.ym===_pendYm);
-  const snap={who:DB.settings.who||"",from:r.from,to:r.to,days:r.days,closeSource:r.closeSource,closeDate:r.closeDate,per:r.per.map(p=>({...p})),
-    openT:r.openT,flowT:r.flowT,closeT:r.closeT,avgT:r.avgT,avgSrc:r.avgSrc,pnl:r.pnl,mgmt:r.mgmt,carry:r.carry,total:r.total,cumBefore:r.cumBefore,cum:r.cum,hwmBefore:r.hwmBefore,hwm:r.hwm,excess:r.excess,
-    rate:{mgmt:num(DB.settings.mgmt),carry:num(DB.settings.carry)}};
-  Object.keys(snap).forEach(k=>{if(typeof snap[k]==="number")snap[k]=+snap[k].toFixed(2);});
-  m.locked=true;m.lockedAt=nowStr();m.snap=snap;document.getElementById("dlg").classList.remove("on");_pendYm=null;render();toast(ymLabel(m.ym)+" 已结账");
-};
-function askManual(ym){const m=DB.months.find(x=>x.ym===ym);if(!m)return;
-  document.getElementById("cfmTitle").textContent="手工填写 "+ymLabel(ym)+" 月末总资产";
-  document.getElementById("cfmMsg").innerHTML=`<p class="small">仅在每日数据缺失时使用。</p>`+DB.accounts.map(a=>`<label class="f">${esc(a.name)}</label><input type="number" step="0.01" data-mc="${a.id}" value="${m.manualClose[a.id]??''}" style="margin-bottom:8px">`).join("");
-  _cfmCb=()=>{document.querySelectorAll("#cfmMsg [data-mc]").forEach(i=>{m.manualClose[i.dataset.mc]=i.value;});render();};
-  document.getElementById("cfm").classList.add("on");}
-document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
-document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
-
 /* ============ 分享（只读） ============ */
 function viewLink(){return location.origin+location.pathname+"#gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key));}
 function showShare(){
@@ -529,26 +507,28 @@ function showShare(){
 /* ============ 事件 ============ */
 document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.closest("button[data-p]");if(!b)return;
   document.querySelectorAll("#tabs button").forEach(x=>x.classList.toggle("on",x===b));document.querySelectorAll("section.pane").forEach(s=>s.classList.toggle("on",s.id===b.dataset.p));});
+document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
+document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
   if(T.id==="btnLink"){const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是我发的链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
-  if(T.id==="btnPrepIcon"){history.replaceState(null,"",location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||""));toast("已准备好：现在点 Safari 底部「分享」→「添加到主屏幕」");return;}
-  if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败，请在设置里长按链接"));return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
   if(!isMgr())return;
-  if(T.dataset.lock){askLock(T.dataset.lock);return;}
-  if(T.dataset.manual){askManual(T.dataset.manual);return;}
-  if(T.id==="btnAddFee"){DB.fees.push({id:uid(),type:"exp",date:todayStr(),amount:"",ccy:"USD",fx:"",note:""});render();return;}
+  if(T.id==="btnAddFee"){DB.fees.push({id:uid(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""});render();return;}
   if(T.dataset.delfee){DB.fees=DB.fees.filter(f=>f.id!==T.dataset.delfee);render();return;}
+  if(T.dataset.delflow){DB.months.forEach(m=>m.flows=(m.flows||[]).filter(f=>f.id!==T.dataset.delflow));render();return;}
   if(T.id==="btnShare"){showShare();return;}
   if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
   if(T.id==="shCopy"){const v=document.getElementById("shLink");navigator.clipboard?.writeText(v.value).then(()=>toast("链接已复制")).catch(()=>{v.select();toast("已全选，请长按复制");});return;}
+  if(T.id==="btnPrepIcon"){history.replaceState(null,"",location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||""));toast("已准备好：现在点 Safari 底部「分享」→「添加到主屏幕」");return;}
+  if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败"));return;}
   if(T.id==="btnGhSync"){pullAll(false);return;}
   if(T.id==="btnGhOff"){confirmBox("断开云同步","本机将不再是管理人设备（数据保留在云端与本机）。",()=>{setCfg(K.tok,"");render();setSync("");});return;}
 });
 let _pend=null;const scheduleRender=()=>{clearTimeout(_pend);_pend=setTimeout(render,0);};
 document.body.addEventListener("change",e=>{if(!isMgr())return;const T=e.target,k=T.dataset.k;const val=T.type==="checkbox"?T.checked:T.value;let dirty=true;
   if(T.dataset.fee){const f=DB.fees.find(x=>x.id===T.dataset.fee);if(f)f[k]=val;}
+  else if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(f){const ym=f.date.slice(0,7);const m=monthOf(ym);m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:uid(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});}}
   else if(T.dataset.open){DB.accounts.find(a=>a.id===T.dataset.open).opening=parseFloat(val)||0;}
   else if(T.dataset.acct){DB.accounts.find(a=>a.id===T.dataset.acct).name=val;}
   else if(T.id==="sMgmt")DB.settings.mgmt=parseFloat(val)||0;else if(T.id==="sCarry")DB.settings.carry=parseFloat(val)||0;
