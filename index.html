@@ -84,6 +84,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .mrow:last-child{border-bottom:none}
 .mrow .l{color:var(--ink-2);font-size:12px}
 .mrow b{font-variant-numeric:tabular-nums}
+.amt{color:var(--ink-1);font-weight:600}
 </style>
 </head>
 <body>
@@ -125,7 +126,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <section class="pane" id="p-fee">
   <div class="card">
     <h2>费用与支付</h2>
-    <p class="hint">「支出」= 管理过程中发生的开支（勾「抵扣」则从应付余额扣除）；「付款」= 已支付给管理人的钱。</p>
+    <p class="hint">「支出」= 管理过程中发生的开支（仅记录，不影响应付余额）；「付款」= 已支付给管理人的钱，从应付余额中扣减。</p>
     <div id="tblFee"></div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔</button></div>
   </div>
@@ -239,7 +240,7 @@ function seed(){return {v:3,updatedAt:"",
   settings:{start:"2026-08-01",mgmt:2.0,carry:20,who:"",openingAt:"2026-07-31",fx:{USD:1,HKD:0.1282,CNY:0.14,EUR:1.09,SGD:0.745,GBP:1.27,JPY:0.0065}},
   accounts:[{id:"schwab",name:"Schwab-HK",opening:0},{id:"webull",name:"Webull",opening:0}],
   months:[],   // {ym, locked, lockedAt, snap, flows:[{id,date,acct,amount,note}], manualClose:{acct:val}}
-  fees:[]      // {id,type:'exp'|'pay',date,cat,amount,ccy,fx,deduct,note}
+  fees:[]      // {id,type:'exp'|'pay',date,cat,amount,ccy,fx,note}
 };}
 let DB=seed();
 try{const s=cfg(K.db);if(s){const o=JSON.parse(s);if(o&&o.v===3&&o.settings&&Array.isArray(o.months)){DB=o;DB.fees=DB.fees||[];}}}catch(_){}
@@ -306,10 +307,9 @@ function balance(rows){
   const fxOf=e=>(e.fx!=null&&e.fx!==""&&isFinite(parseFloat(e.fx)))?parseFloat(e.fx):(DB.settings.fx[e.ccy]||1);
   const L=rows.filter(r=>r.locked),U=rows.filter(r=>!r.locked&&r.complete);
   const lock=L.reduce((s,r)=>s+r.total,0),open=U.reduce((s,r)=>s+r.total,0);
-  const expDed=DB.fees.filter(f=>f.type==="exp"&&f.deduct).reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
   const expAll=DB.fees.filter(f=>f.type==="exp").reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
   const paid=DB.fees.filter(f=>f.type==="pay").reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
-  return {lock,open,expDed,expAll,paid,due:lock+open-expDed-paid,dueLocked:lock-expDed-paid,nLock:L.length,nOpen:U.length,fxOf,
+  return {lock,open,expAll,paid,due:lock+open-paid,dueLocked:lock-paid,nLock:L.length,nOpen:U.length,fxOf,
     mgmt:rows.reduce((s,r)=>s+(r.complete?r.mgmt:0),0),carry:rows.reduce((s,r)=>s+(r.complete?r.carry:0),0)};
 }
 /* 每日累计收益序列（用于图表）：以起始基准为 0，逐日 总资产 − 起始 − 累计确认出入金 */
@@ -341,7 +341,7 @@ function renderKPIs(rows,B,mtd){
   const nav=lp?DB.accounts.reduce((s,a)=>s+num(lp[a.id]),0):DB.accounts.reduce((s,a)=>s+num(a.opening),0);
   document.getElementById("kpis").innerHTML=`
   <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(nav,0)}</div>
-    <div class="note">${mtd?`本月至今 <b class="${sgn(mtd.pnl)}">${usd(mtd.pnl,0)}</b> · 预估费用 ${usd(mtd.total,0)}`:"本月暂无数据（美股收盘后自动更新）"}</div></div>
+    <div class="note">${mtd?`本月至今 <b class="${sgn(mtd.pnl)}">${usd(mtd.pnl,0)}</b> · 预估费用 <b class="amt">${usd(mtd.total,0)}</b>`:"本月暂无数据（美股收盘后自动更新）"}</div></div>
   <div class="kpi"><div class="lab">应付费用余额</div><div class="val ${B.due>0?'':'pos'}">${usd(B.due,0)}</div><div class="note">已结账 ${usd(B.dueLocked,0)}${B.nOpen?` · 待结账 ${usd(B.open,0)}`:""}</div></div>
   <div class="kpi"><div class="lab">累计净收益（已结账）</div><div class="val ${sgn(last?last.cum:0)}">${usd(last?last.cum:0,0)}</div><div class="note">${last?(last.cum>=last.hwm?"在高水位线上":"距高水位 "+usd(last.hwm-last.cum,0)):"首月尚未结账"}</div></div>`;
 }
@@ -369,7 +369,7 @@ function renderMonths(rows,mtd){
   if(!rows.length&&!mtd){box.innerHTML=`<div class="empty">第一个可结账月份是 ${ymLabel(DB.settings.start.slice(0,7))}，月末过后自动出现。</div>`;return;}
   const line=(r,isMtd)=>`<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b> ${isMtd?'<span class="badge est">进行中</span>':(r.locked?`<span class="badge lock">已结账</span>`:(r.complete?'<span class="badge est">待结账</span>':'<span class="badge est">缺数据</span>'))}
       ${r.complete&&r.excess>0?'<span class="badge ok">超高水位</span>':(r.complete&&r.underwater>0?'<span class="badge hwm">补亏中</span>':'')}</div>
-      <div class="l">${r.complete||isMtd?`收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b> · 管理费 ${fmt(r.mgmt,0)} · Carry ${fmt(r.carry,0)}`:'等待月末数据'}${r.locked?` · ${r.lockedAt||''}`:''}</div></div>
+      <div class="l">${r.complete||isMtd?`收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b> · 管理费 <b class="amt">${fmt(r.mgmt,0)}</b> · Carry <b class="amt">${fmt(r.carry,0)}</b>`:'等待月末数据'}${r.locked?` · ${r.lockedAt||''}`:''}</div></div>
     <div style="text-align:right"><b>${r.complete||isMtd?usd(r.total,0):'—'}</b>
       ${(!isMtd&&isMgr()&&!r.locked&&r.complete)?`<div><button class="btn sm primary" data-lock="${r.ym}" style="margin-top:4px">月度结账</button></div>`:''}
       ${(!isMtd&&isMgr()&&!r.locked&&!r.complete)?`<div><button class="btn sm" data-manual="${r.ym}" style="margin-top:4px">手工填月末</button></div>`:''}
@@ -381,7 +381,6 @@ function renderBal(B){
   document.getElementById("balBox").innerHTML=`
     <div class="line"><span>已结账应计（${B.nLock} 个月）</span><span>${usd(B.lock)}</span></div>
     <div class="line"><span>待结账预估（${B.nOpen} 个月）</span><span>${usd(B.open)}</span></div>
-    <div class="line"><span>减：可抵扣支出</span><span>−${usd(B.expDed)}</span></div>
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
     <div class="line tot"><span>应付余额</span><span class="${B.due>0?'':'pos'}">${usd(B.due)}</span></div>
     <div class="line"><span>其中已结账可付</span><span>${usd(B.dueLocked)}</span></div>`;
@@ -394,10 +393,10 @@ function renderFees(B){
       <button class="del" data-delfee="${f.id}">×</button></div>
     <div class="fr"><input type="number" inputmode="decimal" step="0.01" data-fee="${f.id}" data-k="amount" value="${f.amount??''}" placeholder="金额" style="flex:1 1 110px">
       <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 78px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select>
-      ${f.type==='exp'?`<label class="chk"><input type="checkbox" data-fee="${f.id}" data-k="deduct" ${f.deduct?'checked':''}> 抵扣</label>`:''}</div>
+      </div>
     <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：数据订阅 / 8月费用）" style="flex:1"></div>
   </div>`).join(""):`<div class="empty">还没有记录</div>`)+
-  `<div class="feeSum"><span>支出 ${usd(B.expAll,0)}<span class="l">（抵扣 ${usd(B.expDed,0)}）</span></span><span>已付款 ${usd(B.paid,0)}</span></div>`;
+  `<div class="feeSum"><span>支出 ${usd(B.expAll,0)}<span class="l">（仅记录）</span></span><span>已付款 ${usd(B.paid,0)}</span></div>`;
 }
 function renderSettings(){
   const S=DB.settings;sMgmt.value=S.mgmt;sCarry.value=S.carry;sStart.value=S.start;sWho.value=S.who||"";
@@ -539,7 +538,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(!isMgr())return;
   if(T.dataset.lock){askLock(T.dataset.lock);return;}
   if(T.dataset.manual){askManual(T.dataset.manual);return;}
-  if(T.id==="btnAddFee"){DB.fees.push({id:uid(),type:"exp",date:todayStr(),amount:"",ccy:"USD",fx:"",deduct:true,note:""});render();return;}
+  if(T.id==="btnAddFee"){DB.fees.push({id:uid(),type:"exp",date:todayStr(),amount:"",ccy:"USD",fx:"",note:""});render();return;}
   if(T.dataset.delfee){DB.fees=DB.fees.filter(f=>f.id!==T.dataset.delfee);render();return;}
   if(T.id==="btnShare"){showShare();return;}
   if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
