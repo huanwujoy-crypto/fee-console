@@ -110,14 +110,16 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <div id="chart1"></div>
   </div>
   <div class="card">
-    <h2>各月费用与收益率</h2>
-    <div class="legend"><span><i style="background:var(--series-1)"></i>管理费</span><span><i style="background:var(--series-2)"></i>Carry</span><span>柱下为当月毛收益率</span></div>
-    <div id="chart2"></div>
+    <h2>各月费用</h2>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>管理费</span><span><i style="background:var(--series-2)"></i>Carry</span></div>    <div id="chart2"></div>
   </div>
   <div class="card">
-    <h2>月度明细</h2>
-    <p class="hint">管理费 = （月初 + 月末）÷ 2 × 2%/年 × 天数/365；Carry = 累计净收益突破高水位的部分 × 20%，亏损先补齐再计提。数字随每日数据自动更新。</p>
-    <div id="monthsBox"></div>
+    <h2>各月收益率</h2>
+    <div class="legend"><span><i style="background:var(--series-1)"></i>本组合（扣费前）</span><span><i style="background:var(--ink-muted)"></i>S&amp;P 500（CSPX）</span></div>
+    <div id="chart3"></div>
+  </div>
+  <div class="card">    <h2>月度明细</h2>
+    <p class="hint">管理费 = （月初 + 月末）÷ 2 × 2%/年 × 天数/365；Carry = 累计净收益突破高水位的部分 × 20%，亏损先补齐再计提。数字随每日数据自动更新，当月按至今天数计。</p>    <div id="monthsBox"></div>
   </div>
   <div class="card">
     <h2>应付费用</h2>
@@ -271,7 +273,8 @@ function compute(){
   const rate=num(DB.settings.mgmt)/100, cr=num(DB.settings.carry)/100, start=DB.settings.start;
   const openBy={};DB.accounts.forEach(a=>openBy[a.id]=num(a.opening));
   let openT=DB.accounts.reduce((s,a)=>s+num(a.opening),0);
-  let cum=0,hwm=0,idxG=1,idxN=1;const rows=[];const cur=curYm();
+  const ds0=dailySorted();const pre=ds0.filter(x=>x.d<start).pop()||ds0[0]||null;
+  let bPrev=pre?num(pre.cspx):0,idxB=1,bHas=false,bVal=openT;  let cum=0,hwm=0,idxG=1,idxN=1;const rows=[];const cur=curYm();
   for(const ym of monthYms()){
     const pt=lastDailyInMonth(ym);if(!pt)continue;
     const inProgress=(ym===cur);
@@ -289,8 +292,9 @@ function compute(){
     const fees=mgmt+carry;
     const rG=pnl/den, rN=(pnl-fees)/den;
     idxG*=(1+rG);idxN*=(1+rN);
-    rows.push({ym,from,to,days,openT,closeT,flowT,den,pnl,mgmt,carry,fees,rG,rN,cumBefore,cum,hwmBefore,hwm,excess,inProgress,idxG:idxG-1,idxN:idxN-1});
-    openT=closeT;
+    const bClose=num(pt.cspx);let rB=null;
+    if(bPrev>0&&bClose>0){rB=bClose/bPrev-1;idxB*=(1+rB);bHas=true;bVal=bVal*(1+rB)+flowT;bPrev=bClose;}
+    rows.push({ym,from,to,days,openT,closeT,flowT,den,pnl,mgmt,carry,fees,rG,rN,rB,cumBefore,cum,hwmBefore,hwm,excess,inProgress,idxG:idxG-1,idxN:idxN-1});    openT=closeT;
   }
   const done=rows.filter(r=>!r.inProgress),live=rows.find(r=>r.inProgress)||null;
   const lastPt=dailySorted().pop();
@@ -298,15 +302,15 @@ function compute(){
   const gross=rows.reduce((s,r)=>s+r.pnl,0);
   const feesDone=done.reduce((s,r)=>s+r.fees,0);
   const feesLive=live?live.fees:0;
-  return {rows,done,live,lastPt,spanDays,gross,feesDone,feesLive,
-    net:gross-feesDone-feesLive, twrG:idxG-1, twrN:idxN-1, hwm, cum, nav:lastPt?totOf(lastPt):DB.accounts.reduce((s,a)=>s+num(a.opening),0)};
-}
+  const feesAll=feesDone+feesLive;
+  return {rows,done,live,lastPt,spanDays,gross,feesDone,feesLive,feesAll,
+    net:gross-feesAll, twrG:idxG-1, twrN:idxN-1, twrB:bHas?idxB-1:null, benchVal:bHas?bVal:null,
+    hwm, cum, nav:lastPt?totOf(lastPt):DB.accounts.reduce((s,a)=>s+num(a.opening),0)};}
 function balance(st){
   const fxOf=e=>(e.fx!=null&&e.fx!==""&&isFinite(parseFloat(e.fx)))?parseFloat(e.fx):(DB.settings.fx[e.ccy]||1);
   const paid=DB.fees.reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
-  return {accrued:st.feesDone,live:st.feesLive,paid,due:st.feesDone-paid,fxOf,
-    mgmt:st.done.reduce((s,r)=>s+r.mgmt,0),carry:st.done.reduce((s,r)=>s+r.carry,0),nDone:st.done.length};
-}
+  return {accrued:st.feesAll,paid,due:st.feesAll-paid,fxOf,
+    mgmt:st.rows.reduce((s,r)=>s+r.mgmt,0),carry:st.rows.reduce((s,r)=>s+r.carry,0),n:st.rows.length};}
 /* 每日累计净收益（毛）序列，用于图表 */
 function dailySeries(st){
   const ds=dailySorted().filter(x=>x.d>=DB.settings.start);if(!ds.length)return [];
@@ -323,8 +327,7 @@ function render(){
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%`+(isMgr()?"":" · 只读");
-  renderKPIs(st,B);renderChart1(st);renderChart2(st);renderMonths(st);renderBal(st,B);
-  if(isMgr()){renderFees(st,B);renderSettings();renderFlows();}
+  renderKPIs(st,B);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B);  if(isMgr()){renderFees(st,B);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
 function renderKPIs(st,B){
@@ -332,16 +335,14 @@ function renderKPIs(st,B){
   const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
   document.getElementById("kpis").innerHTML=`
   <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>
-    <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 预估费用 <b class="amt">${usd(st.live.fees,0)}</b>`:"本月暂无数据（美股收盘后自动更新）"}</div></div>
-  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
-    <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesDone+st.feesLive,0)}</div></div>
-  <div class="kpi"><div class="lab">管理方 · 应付费用余额</div><div class="val">${usd(B.due,0)}</div>
-    <div class="note">已计提 ${usd(B.accrued,0)} · 已付 ${usd(B.paid,0)}${st.feesLive?` · 本月预估 ${usd(st.feesLive,0)}`:""}</div></div>
-  <div class="kpi wide"><div class="lab">收益率 · ${DB.settings.start} → ${lp?lp.d:"—"}（${st.spanDays} 天）</div>
+    <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 本月费用 <b class="amt">${usd(st.live.fees,0)}</b>`:"本月暂无数据（美股收盘后自动更新）"}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
+    <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
+  <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val">${usd(B.due,0)}</div>
+    <div class="note">累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${DB.settings.start} → ${lp?lp.d:"—"}（${st.spanDays} 天）</div>
     ${rr("投资收益率（管理方，扣费前）",st.twrG)}
     ${rr("净收益率（出资方，扣费后）",st.twrN)}
-    <div class="note">${showAnn?`年化：投资 ${pct(ann(st.twrG,st.spanDays))} · 净 ${pct(ann(st.twrN,st.spanDays))}`:"满一年后自动显示年化"}</div></div>`;
-}
+    ${st.twrB!=null?rr("同期 S&P 500（CSPX）",st.twrB):""}
+    <div class="note">${st.twrB!=null?`若同期全部买入 CSPX，现值约 ${usd(st.benchVal,0)}（实际 ${usd(st.nav,0)}）· `:""}${showAnn?`年化：投资 ${pct(ann(st.twrG,st.spanDays))} · 净 ${pct(ann(st.twrN,st.spanDays))}${st.twrB!=null?` · CSPX ${pct(ann(st.twrB,st.spanDays))}`:""}`:"满一年后自动显示年化"}</div></div>`;}
 function renderChart1(st){
   const box=document.getElementById("chart1");const s=dailySeries(st);
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s[s.length-1].d}`:"";
@@ -364,8 +365,7 @@ function renderChart1(st){
 function renderChart2(st){
   const box=document.getElementById("chart2");const R=st.rows;
   if(!R.length){box.innerHTML=`<div class="empty">月末后此处出现柱状图</div>`;return;}
-  const w=720,h=230,l=54,r=12,t=14,b=52,iw=w-l-r,ih=h-t-b;
-  const max=Math.max(...R.map(x=>x.fees),1)*1.15;
+  const w=720,h=210,l=54,r=12,t=14,b=32,iw=w-l-r,ih=h-t-b;  const max=Math.max(...R.map(x=>x.fees),1)*1.15;
   const step=iw/R.length,bw=Math.min(64,step*0.55);
   const Y=v=>t+ih-(v/max)*ih;
   const KK=v=>Math.abs(v)>=1000?(v/1000).toFixed(Math.abs(v)>=10000?0:1)+"k":v.toFixed(0);
@@ -376,27 +376,39 @@ function renderChart2(st){
       <rect x="${(cx-bw/2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,t+ih-y1).toFixed(1)}" fill="var(--series-1)" rx="2"/>
       <rect x="${(cx-bw/2).toFixed(1)}" y="${y2.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(0,y1-y2).toFixed(1)}" fill="var(--series-2)" rx="2"/>
       <text x="${cx.toFixed(1)}" y="${(y2-6).toFixed(1)}" text-anchor="middle" font-size="11" fill="var(--ink-1)" font-weight="600">${KK(x.fees)}</text>
-      <text x="${cx.toFixed(1)}" y="${h-26}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>
-      <text x="${cx.toFixed(1)}" y="${h-8}" text-anchor="middle" font-size="11" fill="${x.rG>=0?'var(--good-text)':'var(--critical)'}">${pct(x.rG,1)}</text>`;}).join("")}
-  </svg>${st.live?`<p class="small" style="margin:6px 0 0">* 本月进行中，数字为至今预估</p>`:""}`;
+      <text x="${cx.toFixed(1)}" y="${h-10}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>`;}).join("")}
+  </svg>${st.live?`<p class="small" style="margin:6px 0 0">* 本月按至今天数计</p>`:""}`;
 }
+function renderChart3(st){
+  const box=document.getElementById("chart3");const R=st.rows;
+  if(!R.length){box.innerHTML=`<div class="empty">月末后此处出现柱状图</div>`;return;}
+  const hasB=R.some(x=>x.rB!=null);
+  const w=720,h=210,l=54,r=12,t=14,b=32,iw=w-l-r,ih=h-t-b;
+  const vals=R.flatMap(x=>[x.rG,x.rB==null?0:x.rB]).concat([0]);
+  let lo=Math.min(...vals),hi=Math.max(...vals);if(hi<=lo)hi=lo+0.01;const pd=(hi-lo)*0.15;lo-=pd;hi+=pd;if(lo>0)lo=0;if(hi<0)hi=0;
+  const Y=v=>t+ih-((v-lo)/(hi-lo))*ih;const y0=Y(0);
+  const step=iw/R.length,bw=Math.min(30,step*(hasB?0.24:0.4));
+  const ticks=[lo,(lo+hi)/2,hi];
+  box.innerHTML=`<svg viewBox="0 0 ${w} ${h}" role="img">
+    ${ticks.map(v=>`<line x1="${l}" x2="${w-r}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}" stroke="var(--grid)"/><text x="${l-8}" y="${(Y(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="var(--ink-muted)">${(v*100).toFixed(1)}%</text>`).join("")}
+    <line x1="${l}" x2="${w-r}" y1="${y0.toFixed(1)}" y2="${y0.toFixed(1)}" stroke="var(--axis)" stroke-width="1.5"/>
+    ${R.map((x,i)=>{const cx=l+step*i+step/2;const bar=(v,off,col)=>{if(v==null)return "";const yy=Y(v),hh=Math.abs(yy-y0);return `<rect x="${(cx+off-bw/2).toFixed(1)}" y="${Math.min(yy,y0).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hh).toFixed(1)}" fill="${col}" rx="2"/><text x="${(cx+off).toFixed(1)}" y="${(v>=0?Math.min(yy,y0)-5:Math.max(yy,y0)+13).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--ink-2)">${(v*100).toFixed(1)}</text>`;};
+      return bar(x.rG,hasB?-bw*0.6:0,"var(--series-1)")+bar(x.rB,bw*0.6,"var(--ink-muted)")+
+      `<text x="${cx.toFixed(1)}" y="${h-10}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>`;}).join("")}
+  </svg>`;}
 function renderMonths(st){
   const box=document.getElementById("monthsBox");
   if(!st.rows.length){box.innerHTML=`<div class="empty">${ymLabel(DB.settings.start.slice(0,7))}起，每日数据到位后自动出现。</div>`;return;}
   box.innerHTML=st.rows.map(r=>`<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b>
       ${r.inProgress?'<span class="badge est">进行中</span>':''}
       ${r.excess>0?'<span class="badge ok">超高水位</span>':(r.cum<r.hwm?'<span class="badge hwm">补亏中</span>':'')}</div>
-      <div class="l">收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（${pct(r.rG,1)}） · 管理费 <b class="amt">${fmt(r.mgmt,0)}</b> · Carry <b class="amt">${fmt(r.carry,0)}</b></div></div>
-    <div style="text-align:right"><b>${usd(r.fees,0)}</b><div class="l">净 ${fmt(r.pnl-r.fees,0)}</div></div></div>`).join("");
+      <div class="l">收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（${pct(r.rG,1)}${r.rB!=null?` ｜ CSPX ${pct(r.rB,1)}`:""}） · 管理费 <b class="amt">${fmt(r.mgmt,0)}</b> · Carry <b class="amt">${fmt(r.carry,0)}</b></div></div>    <div style="text-align:right"><b>${usd(r.fees,0)}</b><div class="l">净 ${fmt(r.pnl-r.fees,0)}</div></div></div>`).join("");
 }
 function renderBal(st,B){
   document.getElementById("balBox").innerHTML=`
-    <div class="line"><span>累计管理费（${B.nDone} 个完整月）</span><span>${usd(B.mgmt)}</span></div>
-    <div class="line"><span>累计 Carry</span><span>${usd(B.carry)}</span></div>
+    <div class="line"><span>累计管理费（${B.n} 个月）</span><span>${usd(B.mgmt)}</span></div>    <div class="line"><span>累计 Carry</span><span>${usd(B.carry)}</span></div>
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
-    <div class="line tot"><span>应付余额</span><span class="${B.due>0?'':'pos'}">${usd(B.due)}</span></div>
-    ${st.feesLive?`<div class="line"><span>本月至今预估（未计入）</span><span>${usd(st.feesLive)}</span></div>`:""}`;
-}
+    <div class="line tot"><span>应付费用</span><span class="${B.due>0?'':'pos'}">${usd(B.due)}</span></div>`;}
 function renderFees(st,B){
   const t=document.getElementById("tblFee");
   t.innerHTML=(DB.fees.length?DB.fees.map(f=>`<div class="feeCard">
@@ -406,8 +418,7 @@ function renderFees(st,B){
       <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 82px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select></div>
     <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：8 月费用）" style="flex:1"></div>
   </div>`).join(""):`<div class="empty">还没有付款记录</div>`)+
-  `<div class="feeSum"><span>已付款 ${usd(B.paid,0)}</span><span>应付余额 ${usd(B.due,0)}</span></div>`;
-}
+  `<div class="feeSum"><span>已付款 ${usd(B.paid,0)}</span><span>应付费用 ${usd(B.due,0)}</span></div>`;}
 function renderFlows(){
   const box=document.getElementById("flowBox");const auto=(DAILY.flowsAuto||[]);
   const inc=DB.months.flatMap(m=>(m.flows||[]).map(f=>({...f,ym:m.ym})));
