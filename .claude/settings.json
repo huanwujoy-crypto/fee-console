@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git branch -D*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__.*__(?:.*_)?(?:place|submit|cancel|modify|create|update|delete|edit|set|add|remove)_.*cash.*transaction.*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked by fee-console policy: this repository is read-only toward Sharesight. Cash-transaction writes (create/update/delete/edit/set) are never performed by this automation. Read-only queries remain available.\"}}'"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__.*__(?:.*_)?(?:place|submit|cancel|modify|create|update|delete|edit|set|add|remove)_.*(?:order|watchlist|alert).*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked by fee-console policy: this repository is read-only toward the broker. Placing, modifying, cancelling, editing, or setting the status of orders, watchlists, or alerts is never performed by this automation. Read-only queries remain available.\"}}'"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__(?:Family_Portfolio_Sharesight__sharesight_(?:create|update|delete)_cash_transaction|Interactive_Brokers__(?:create_order_instruction|delete_order_instruction|create_watchlist|edit_watchlist|delete_watchlist|create_alert|update_alert|delete_alert|set_alert_status|provide_customer_feedback))$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked by fee-console policy: named mutating tool on the Sharesight or Interactive Brokers connector. This repository holds read-only access to both connectors; it only writes data.json via ordinary Git. Read-only queries remain available.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
