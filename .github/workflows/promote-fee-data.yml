@@ -3,7 +3,7 @@ name: Promote fee-console data
 on:
   push:
     branches:
-      - claude/focused-heisenberg
+      - claude/focused-heisenberg-*
 
 permissions:
   contents: write
@@ -26,8 +26,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          expected_branch="claude/focused-heisenberg"
-          if [[ "$GITHUB_REF_NAME" != "$expected_branch" ]]; then
+          if [[ ! "$GITHUB_REF_NAME" =~ ^claude/focused-heisenberg-[a-z0-9]{6}$ ]]; then
             echo "Refusing unexpected branch: $GITHUB_REF_NAME" >&2
             exit 1
           fi
