@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push --force*)",
+      "Bash(git branch -D*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "^mcp__.*__.*(?:create|update|delete).*cash.*transaction.*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked by fee-console policy: this repository is read-only toward Sharesight. Cash-transaction writes (create/update/delete) are never performed by this automation.\"}}'"
+          }
+        ]
+      },
+      {
+        "matcher": "^mcp__.*__.*(?:place|submit|cancel|modify|create|update|delete).*(?:order|watchlist|alert).*$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"deny\",\"permissionDecisionReason\":\"Blocked by fee-console policy: this repository is read-only toward the broker. Placing, modifying, or cancelling orders, watchlists, or alerts is never performed by this automation.\"}}'"
+          }
+        ]
+      }
+    ]
+  }
+}
