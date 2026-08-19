@@ -1,0 +1,41 @@
+name: Validate fee-console UI PR
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  ui-pr-check:
+    name: ui-pr-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the proposed merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the trusted base branch
+        shell: bash
+        run: git fetch --no-tags origin "${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+
+      - name: Load the guard from the trusted base branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "origin/${GITHUB_BASE_REF}:scripts/ui-pr-guard.mjs" > "${RUNNER_TEMP}/ui-pr-guard.mjs"
+          git show "origin/${GITHUB_BASE_REF}:security/allowed-origins.txt" > "${RUNNER_TEMP}/allowed-origins.txt"
+          git show "origin/${GITHUB_BASE_REF}:security/ui-risk-baseline.json" > "${RUNNER_TEMP}/ui-risk-baseline.json"
+
+      - name: Validate any index.html change
+        shell: bash
+        run: |
+          node "${RUNNER_TEMP}/ui-pr-guard.mjs" \
+            "origin/${GITHUB_BASE_REF}" \
+            HEAD \
+            "${RUNNER_TEMP}/allowed-origins.txt" \
+            "${RUNNER_TEMP}/ui-risk-baseline.json"
+

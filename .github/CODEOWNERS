@@ -1,0 +1,7 @@
+# The console UI handles a GitHub token and an encryption key. Keep its code
+# and every file that defines its review policy under explicit owner review.
+/index.html @huanwujoy-crypto
+/.github/ @huanwujoy-crypto
+/scripts/ @huanwujoy-crypto
+/security/ @huanwujoy-crypto
+

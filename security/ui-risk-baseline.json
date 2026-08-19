@@ -1,0 +1,25 @@
+{
+  "maxDiffLines": 800,
+  "maxOccurrences": {
+    "fetch": 3,
+    "XMLHttpRequest": 0,
+    "sendBeacon": 0,
+    "WebSocket": 0,
+    "EventSource": 0,
+    "Worker": 0,
+    "importScripts": 0,
+    "dynamicImport": 0,
+    "serviceWorker": 0,
+    "windowOpen": 0,
+    "locationAssign": 0,
+    "ImageCtor": 0,
+    "metaRefresh": 0,
+    "localStorage": 3,
+    "sessionStorage": 0,
+    "documentCookie": 0,
+    "eval": 0,
+    "FunctionCtor": 0,
+    "atob": 2,
+    "StringFromCharCode": 7
+  }
+}
