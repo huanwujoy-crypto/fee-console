@@ -337,8 +337,10 @@ function renderKPIs(st,B){
   const mixSum=mixV.cash+mixV.stock+mixV.other;
   const mixCell=(lab,v)=>`<div><div class="k">${lab}</div><div class="v">${usd(v,0)}<span class="p">${st.nav>0?(v/st.nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
   const mix=hasMix?`<div class="mix">${mixCell("现金类",mixV.cash)}${mixCell("股票",mixV.stock)}${mixCell("其它",mixV.other)}</div>${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
+  /* 分账户：总资产下方列出各账户当日数值（与起始基准页的账户名一致） */
+  const acctLine=lp?`<div class="small" style="margin-top:2px">${DB.accounts.map(a=>`${esc(a.name)} <b style="font-weight:600;font-variant-numeric:tabular-nums">${usd(num(lp[a.id]),0)}</b>`).join(" · ")}</div>`:"";
   document.getElementById("kpis").innerHTML=`
-  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>${mix}
+  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>${acctLine}${mix}
     <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 本月至今费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val">${usd(B.due,0)}</div>
