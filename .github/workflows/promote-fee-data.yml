@@ -1,12 +1,14 @@
 name: Promote fee-console data
 
+# This workflow deliberately runs only from the trusted default branch.
+# Claude prepares data on a claude/* branch; it never receives the deploy key.
 on:
-  push:
-    branches:
-      - 'claude/*'
+  schedule:
+    - cron: '15,45 0-2 * * *'
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: promote-fee-data
@@ -15,72 +17,101 @@ concurrency:
 jobs:
   promote:
     runs-on: ubuntu-latest
+    environment: trusted-promotion
     steps:
-      - name: Check out the routine branch
-        uses: actions/checkout@v4
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
+          ref: main
           fetch-depth: 0
+          ssh-key: ${{ secrets.PROMOTE_MAIN_DEPLOY_KEY }}
 
-      - name: Validate and fast-forward main
+      - name: Fetch Claude Routine branches
+        shell: bash
+        run: git fetch --no-tags --prune origin '+refs/heads/claude/*:refs/remotes/origin/claude/*'
+
+      - name: Select one fresh, verified data update
+        id: candidate
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
-          if [[ ! "$GITHUB_REF_NAME" =~ ^claude/[a-z0-9-]+-[a-z0-9]{6}$ ]]; then
-            echo "Refusing unexpected branch: $GITHUB_REF_NAME" >&2
-            exit 1
-          fi
+          base_sha=$(git rev-parse origin/main)
+          cutoff_epoch=$(date -u -d '36 hours ago' +%s)
+          today_utc=$(date -u +%F)
+          yesterday_utc=$(date -u -d 'yesterday' +%F)
+          candidates=()
 
-          git fetch --no-tags origin main
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            echo "Routine branch is not a descendant of origin/main" >&2
-            exit 1
-          fi
-
-          mapfile -t changed_files < <(git diff --name-only origin/main..HEAD)
-          if (( ${#changed_files[@]} == 0 )); then
-            echo "No file changes; branch authorization probe succeeded."
-            exit 0
-          fi
-          if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "data.json" ]]; then
-            echo "Only data.json may be promoted to main" >&2
-            printf '%s\n' "${changed_files[@]}" >&2
-            exit 1
-          fi
-
-          while IFS=$'\t' read -r author_email committer_email subject; do
-            if [[ "$author_email" != "noreply@anthropic.com" ]] || [[ "$committer_email" != "noreply@anthropic.com" ]]; then
-              echo "Unexpected commit identity: $author_email / $committer_email" >&2
-              exit 1
+          while IFS= read -r candidate_ref; do
+            branch_name=${candidate_ref#origin/}
+            if [[ ! "$branch_name" =~ ^claude/[a-z0-9-]+-[a-z0-9]{6}$ ]]; then
+              continue
             fi
-            if [[ ! "$subject" =~ ^daily\ [0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-              echo "Unexpected commit subject: $subject" >&2
-              exit 1
-            fi
-          done < <(git log --format='%ae%x09%ce%x09%s' origin/main..HEAD)
 
-          for commit_sha in $(git rev-list origin/main..HEAD); do
+            if ! git merge-base --is-ancestor origin/main "$candidate_ref"; then
+              continue
+            fi
+            if [[ $(git rev-list --count "origin/main..$candidate_ref") -ne 1 ]]; then
+              continue
+            fi
+            if [[ $(git rev-parse "$candidate_ref^") != "$base_sha" ]]; then
+              continue
+            fi
+
+            mapfile -t changed_files < <(git diff --name-only "origin/main..$candidate_ref")
+            if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "data.json" ]]; then
+              continue
+            fi
+            if [[ $(git rev-list --count --merges "origin/main..$candidate_ref") -ne 0 ]]; then
+              continue
+            fi
+
+            candidate_sha=$(git rev-parse "$candidate_ref")
+            read -r author_email committer_email subject < <(
+              git show -s --format='%ae%x09%ce%x09%s' "$candidate_sha"
+            )
+            if [[ "$author_email" != "noreply@anthropic.com" ]] ||
+               [[ "$committer_email" != "noreply@anthropic.com" ]]; then
+              continue
+            fi
+            if [[ ! "$subject" =~ ^daily\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]]; then
+              continue
+            fi
+            data_date=${BASH_REMATCH[1]}
+            if [[ "$data_date" != "$yesterday_utc" && "$data_date" != "$today_utc" ]]; then
+              continue
+            fi
+
+            commit_epoch=$(git show -s --format='%ct' "$candidate_sha")
+            if (( commit_epoch < cutoff_epoch )); then
+              continue
+            fi
+
             read -r verified author_login committer_login < <(
-              curl --fail --silent --show-error -H "Accept: application/vnd.github+json" -H "Authorization: Bearer $GH_TOKEN" -H "X-GitHub-Api-Version: 2022-11-28" "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$commit_sha" |
+              curl --fail --silent --show-error \
+                -H 'Accept: application/vnd.github+json' \
+                -H "Authorization: Bearer $GH_TOKEN" \
+                -H 'X-GitHub-Api-Version: 2022-11-28' \
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$candidate_sha" |
                 jq -r '[.commit.verification.verified, .author.login, .committer.login] | @tsv'
             )
-            if [[ "$verified" != "true" ]] || [[ "$author_login" != "claude" ]] || [[ "$committer_login" != "claude" ]]; then
-              echo "Commit $commit_sha is not a verified Claude commit" >&2
-              exit 1
+            if [[ "$verified" != "true" ]] ||
+               [[ "$author_login" != "claude" ]] ||
+               [[ "$committer_login" != "claude" ]]; then
+              continue
             fi
-          done
 
-          size_bytes=$(wc -c < data.json)
-          if (( size_bytes >= 2097152 )); then
-            echo "data.json exceeds the 2 MiB limit" >&2
-            exit 1
-          fi
-
-          node <<'NODE'
+            git show "$candidate_ref:data.json" > "$RUNNER_TEMP/candidate-data.json"
+            size_bytes=$(wc -c < "$RUNNER_TEMP/candidate-data.json")
+            if (( size_bytes >= 2097152 )); then
+              continue
+            fi
+            if ! node - "$RUNNER_TEMP/candidate-data.json" <<'NODE'
           const fs = require('fs');
-          const outer = JSON.parse(fs.readFileSync('data.json', 'utf8'));
+          const file = process.argv[2];
+          const outer = JSON.parse(fs.readFileSync(file, 'utf8'));
           if (!outer || typeof outer !== 'object' || Array.isArray(outer)) {
             throw new Error('data.json must be a JSON object');
           }
@@ -93,6 +124,44 @@ jobs:
           if (!/^[A-Za-z0-9+/]+={0,2}$/.test(outer.data)) {
             throw new Error('data.json ciphertext is not standard base64');
           }
+          if (Buffer.from(outer.data, 'base64').toString('base64') !== outer.data) {
+            throw new Error('data.json ciphertext is not canonical base64');
+          }
           NODE
+            then
+              continue
+            fi
 
-          git push origin HEAD:main
+            candidates+=("$candidate_ref")
+          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/)
+
+          if (( ${#candidates[@]} == 0 )); then
+            echo 'No fresh data update is waiting; nothing to promote.'
+            echo 'sha=' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if (( ${#candidates[@]} != 1 )); then
+            echo 'Refusing ambiguous promotion; multiple valid Routine branches are waiting:' >&2
+            printf '  %s\n' "${candidates[@]}" >&2
+            exit 1
+          fi
+
+          candidate_sha=$(git rev-parse "${candidates[0]}")
+          echo "Selected ${candidates[0]} at $candidate_sha"
+          echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Fast-forward main with the dedicated deploy key
+        if: steps.candidate.outputs.sha != ''
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          EXPECTED_BASE_SHA: ${{ steps.candidate.outputs.base_sha }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          if [[ $(git rev-parse origin/main) != "$EXPECTED_BASE_SHA" ]]; then
+            echo 'main changed after validation; refusing promotion' >&2
+            exit 1
+          fi
+          git push origin "$CANDIDATE_SHA:refs/heads/main"
