@@ -31,6 +31,10 @@ h1{font-size:19px;margin:0}
 .kpi .lab{font-size:12px;color:var(--ink-2);margin-bottom:4px}
 .kpi .val{font-size:22px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .kpi .note{font-size:11px;color:var(--ink-muted);margin-top:3px}
+.mix{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 4px;padding:8px 0 6px;border-top:1px solid var(--grid)}
+.mix .k{font-size:11px;color:var(--ink-2)}
+.mix .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
+.mix .p{font-size:11px;color:var(--ink-muted);margin-left:3px;font-weight:400}
 .rr{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;font-size:14px}
 .rr span{color:var(--ink-2)}
 .rr b{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
@@ -118,7 +122,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <h2>各月收益率</h2>
     <div class="legend"><span><i style="background:var(--series-1)"></i>本组合·扣费前</span><span><i style="background:var(--good-text)"></i>本组合·扣费后</span><span><i style="background:var(--ink-muted)"></i>S&amp;P 500</span><span><i style="background:var(--series-2)"></i>纳斯达克100</span></div>    <div id="chart3"></div>  </div>
   <div class="card">    <h2>月度明细</h2>
-    <p class="hint">管理费 = （月初 + 月末）÷ 2 × 2%/年 × 天数/365；Carry = 累计净收益突破高水位的部分 × 20%，亏损先补齐再计提。数字随每日数据自动更新，当月按至今天数计。</p>    <div id="monthsBox"></div>
+    <p class="hint">管理费 = （月初 + 月末）÷ 2 × 2%/年 × 天数/365；Carry = 累计净收益突破高水位的部分 × 20%，亏损先补齐再计提；净收益 = 毛收益 − 费用（管理费 + Carry）；「占毛收益」= 费用 ÷ 毛收益，亏损月不显示。数字随每日数据自动更新，当月按至今天数计。</p>    <div id="monthsBox"></div>
   </div>
   <div class="card">
     <h2>应付费用</h2>
@@ -327,9 +331,15 @@ function render(){
 function renderKPIs(st,B){
   const lp=st.lastPt;const showAnn=st.spanDays>365;
   const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
+  /* 资产拆分：现金类（现金账户 + 短期国债 ETF）/ 股票 / 其它；字段缺失的旧数据点不显示 */
+  const hasMix=!!(lp&&(lp.cash!=null||lp.stock!=null||lp.other!=null));
+  const mixV={cash:num(lp&&lp.cash),stock:num(lp&&lp.stock),other:num(lp&&lp.other)};
+  const mixSum=mixV.cash+mixV.stock+mixV.other;
+  const mixCell=(lab,v)=>`<div><div class="k">${lab}</div><div class="v">${usd(v,0)}<span class="p">${st.nav>0?(v/st.nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
+  const mix=hasMix?`<div class="mix">${mixCell("现金类",mixV.cash)}${mixCell("股票",mixV.stock)}${mixCell("其它",mixV.other)}</div>${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
   document.getElementById("kpis").innerHTML=`
-  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>
-    <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 本月费用 <b class="amt">${usd(st.live.fees,0)}</b>`:"本月暂无数据（美股收盘后自动更新）"}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
+  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>${mix}
+    <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 本月至今费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val">${usd(B.due,0)}</div>
     <div class="note">累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${DB.settings.start} → ${lp?lp.d:"—"}（${st.spanDays} 天）</div>
@@ -400,10 +410,11 @@ function renderChart3(st){
 function renderMonths(st){
   const box=document.getElementById("monthsBox");
   if(!st.rows.length){box.innerHTML=`<div class="empty">${ymLabel(DB.settings.start.slice(0,7))}起，每日数据到位后自动出现。</div>`;return;}
-  box.innerHTML=st.rows.map(r=>`<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b>
+  box.innerHTML=st.rows.map(r=>{const net=r.pnl-r.fees;const take=r.pnl>0?r.fees/r.pnl:null;return `<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b>
       ${r.inProgress?'<span class="badge est">进行中</span>':''}
       ${r.excess>0?'<span class="badge ok">超高水位</span>':(r.cum<r.hwm?'<span class="badge hwm">补亏中</span>':'')}</div>
-      <div class="l">收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（毛 ${pct(r.rG,1)} / 净 ${pct(r.rN,1)}${(st.bench||[]).map(b=>` ｜ ${b.name.replace(/（.*/,"")} ${pct(r.rB&&r.rB[b.k],1)}`).join("")}） · 管理费 <b class="amt">${fmt(r.mgmt,0)}</b> · Carry <b class="amt">${fmt(r.carry,0)}</b></div></div>    <div style="text-align:right"><b>${usd(r.fees,0)}</b><div class="l">净 ${fmt(r.pnl-r.fees,0)}</div></div></div>`).join("");}function renderBal(st,B){
+      <div class="l">毛收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（毛 ${pct(r.rG,1)} / 净 ${pct(r.rN,1)}${(st.bench||[]).map(b=>` ｜ ${b.name.replace(/（.*/,"")} ${pct(r.rB&&r.rB[b.k],1)}`).join("")}）</div>
+      <div class="l">费用 <b class="amt">${fmt(r.fees,0)}</b> = 管理费 ${fmt(r.mgmt,0)} + Carry ${fmt(r.carry,0)}${take!=null?` · 占毛收益 ${(take*100).toFixed(1)}%`:""}</div></div>    <div style="text-align:right"><div class="l">净收益</div><b class="${sgn(net)}" style="font-size:16px">${usd(net,0)}</b></div></div>`;}).join("");}function renderBal(st,B){
   document.getElementById("balBox").innerHTML=`
     <div class="line"><span>累计管理费（${B.n} 个月）</span><span>${usd(B.mgmt)}</span></div>    <div class="line"><span>累计 Carry</span><span>${usd(B.carry)}</span></div>
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
