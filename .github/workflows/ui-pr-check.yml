@@ -38,4 +38,3 @@ jobs:
             HEAD \
             "${RUNNER_TEMP}/allowed-origins.txt" \
             "${RUNNER_TEMP}/ui-risk-baseline.json"
-
