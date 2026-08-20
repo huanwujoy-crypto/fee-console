@@ -1,0 +1,24 @@
+name: Validate fee-console scripts
+
+# scripts/ holds the only code that writes data.json. Every change to it must
+# keep the blocking rules in docs/daily-data-contract.md provably intact.
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  scripts-check:
+    name: scripts-check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the proposed merge
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Run the script test suite
+        shell: bash
+        run: node --test scripts/daily.test.mjs scripts/ui-pr-guard.test.mjs
