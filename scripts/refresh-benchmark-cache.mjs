@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 
 const CACHE_PATH = process.env.BENCHMARK_CACHE_PATH || 'benchmark-close.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
+const RETENTION_DAYS = 120;
 
 export const DEFINITIONS = Object.freeze({
   cspx: Object.freeze({
@@ -106,7 +107,7 @@ function normalizedSeries(series) {
 }
 
 export function mergePrices(existing, fetched, now = new Date()) {
-  const cutoff = new Date(now.getTime() - 400 * DAY_MS).toISOString().slice(0, 10);
+  const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS).toISOString().slice(0, 10);
   const benchmarks = {};
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
     const prior = existing?.benchmarks?.[key]?.series || [];
@@ -158,7 +159,7 @@ async function fetchJson(url) {
 async function fetchSymbol(definition, now) {
   const errors = [];
   for (const host of ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']) {
-    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=1y&interval=1d&events=history`;
+    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=3mo&interval=1d&events=history`;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         return extractPrices(await fetchJson(url), definition, now);

@@ -54,7 +54,7 @@ test('validates the exact ETF identity and USD currency', () => {
 test('merges by date, replaces corrections, and preserves the last good cache', () => {
   const existing = {
     benchmarks: {
-      cspx: { series: [{ d: '2026-08-18', p: 829.52 }, { d: '2026-08-19', p: 830 }] },
+      cspx: { series: [{ d: '2026-01-02', p: 700 }, { d: '2026-08-18', p: 829.52 }, { d: '2026-08-19', p: 830 }] },
       eqac: { series: [{ d: '2026-08-19', p: 505.1 }] },
     },
   };
