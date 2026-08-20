@@ -1,0 +1,460 @@
+import assert from "node:assert/strict";
+import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import test from "node:test";
+
+import {
+  validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
+  flowId, buildPoint, buildStatus, nyDate, dayDiff,
+  SPLIT_PROVISIONAL, MAX_LOOKBACK_DAYS
+} from "./daily-core.mjs";
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const cli = path.join(here, "daily.mjs");
+
+/* A throwaway key: never the production one. */
+const TEST_KEY = crypto.randomBytes(32).toString("base64url");
+
+const today = () => nyDate(new Date());
+const shift = (d, n) => new Date(Date.parse(d + "T00:00:00Z") + n * 86400000).toISOString().slice(0, 10);
+
+const baseArgs = (over = {}) => ({
+  date: over.date ?? today(),
+  schwab: "598517.36",
+  webull: "119026.45",
+  "src-schwab": over["src-schwab"] ?? over.date ?? today(),
+  "src-webull": over["src-webull"] ?? over.date ?? today(),
+  cash: "263697.83",
+  stock: "453845.98",
+  other: "0",
+  ...over
+});
+
+const run = (dir, over = {}, extra = []) => {
+  const args = baseArgs(over);
+  const argv = Object.entries(args)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .map(([k, v]) => `--${k}=${v}`);
+  return spawnSync(process.execPath, [cli, ...argv, `--file=${path.join(dir, "data.json")}`, ...extra], {
+    encoding: "utf8",
+    env: { ...process.env, FEE_DATA_KEY: TEST_KEY }
+  });
+};
+
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), "daily-test-"));
+
+const readPayload = dir => {
+  const outer = JSON.parse(fs.readFileSync(path.join(dir, "data.json"), "utf8"));
+  const b = Buffer.from(outer.data, "base64");
+  const key = Buffer.from(TEST_KEY, "base64url");
+  const d = crypto.createDecipheriv("aes-256-gcm", key, b.subarray(0, 12));
+  d.setAuthTag(b.subarray(b.length - 16));
+  return JSON.parse(Buffer.concat([d.update(b.subarray(12, b.length - 16)), d.final()]).toString());
+};
+
+const NUMBERS = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{4,}\.\d{2}\b/;
+const ok = (accounts, splits, extra = {}) => validateInputs({
+  date: extra.date ?? today(), accounts, splits,
+  sourceDates: extra.sourceDates ?? { schwab: extra.date ?? today(), webull: extra.date ?? today() },
+  bench: extra.bench ?? {}, benchDate: extra.benchDate ?? null,
+  calibrated: !!extra.calibrated, now: extra.now ?? new Date()
+});
+
+/* ---------------- missing accounts block ---------------- */
+test("blocks when the Schwab total is missing", () => {
+  const dir = tmp();
+  const r = run(dir, { schwab: undefined });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /missing --schwab/);
+  assert.equal(fs.existsSync(path.join(dir, "data.json")), false);
+});
+
+test("blocks when the Webull total is missing", () => {
+  const dir = tmp();
+  const r = run(dir, { webull: undefined });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /missing --webull/);
+  assert.equal(fs.existsSync(path.join(dir, "data.json")), false);
+});
+
+test("blocks an impossible account amount", () => {
+  const dir = tmp();
+  const r = run(dir, { webull: "0" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--webull must be greater than 0/);
+});
+
+/* ---------------- split buckets ---------------- */
+test("accepts other=0", () => {
+  const dir = tmp();
+  const r = run(dir);
+  assert.equal(r.status, 0, r.stderr);
+  const p = readPayload(dir);
+  assert.equal(p.daily.at(-1).other, 0);
+  assert.equal(p.status.provisional, false);
+});
+
+test("blocks when a split bucket is omitted entirely", () => {
+  const dir = tmp();
+  const r = run(dir, { other: undefined });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /missing --other/);
+});
+
+test("a small split gap is 暂估, not a block", () => {
+  const dir = tmp();
+  const r = run(dir, { other: "40" });               // 40 off, well under 2% of ~717k
+  assert.equal(r.status, 0, r.stderr);
+  const p = readPayload(dir);
+  assert.equal(p.status.provisional, true);
+  assert.equal(p.daily.at(-1).prov, 1);
+  assert.ok(p.status.notes.some(n => /split off by/.test(n)), JSON.stringify(p.status.notes));
+});
+
+test("an impossible split gap blocks", () => {
+  const dir = tmp();
+  const r = run(dir, { other: "50000" });            // > 2% of the total
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /split is impossible/);
+  assert.equal(fs.existsSync(path.join(dir, "data.json")), false);
+});
+
+test("split tolerance boundary", () => {
+  assert.equal(SPLIT_PROVISIONAL, 1);
+  assert.deepEqual(ok({ schwab: 100, webull: 100 }, { cash: 100, stock: 99.4, other: 0 }).provisional, []);
+  assert.ok(ok({ schwab: 100, webull: 100 }, { cash: 100, stock: 98.5, other: 0 }).provisional.length > 0);
+});
+
+/* ---------------- weekday lag is allowed ---------------- */
+test("a one-day Schwab lag is written and flagged 暂估, not blocked", () => {
+  const dir = tmp();
+  const t = today();
+  const r = run(dir, { "src-schwab": shift(t, -1) });
+  assert.equal(r.status, 0, r.stderr);
+  const p = readPayload(dir);
+  assert.equal(p.daily.at(-1).prov, 1);
+  assert.equal(p.status.provisional, true);
+  assert.ok(p.status.notes.some(n => /schwab: valued on/.test(n)), JSON.stringify(p.status.notes));
+});
+
+test("an implausible lag still blocks", () => {
+  const dir = tmp();
+  const t = today();
+  const r = run(dir, { "src-schwab": shift(t, -9) });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /not a plausible lag/);
+});
+
+test("a benchmark priced on another day is 暂估", () => {
+  const t = today();
+  const v = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { cspx: 800 }, benchDate: shift(t, -1) });
+  assert.deepEqual(v.errors, []);
+  assert.ok(v.provisional.some(n => /benchmark priced on/.test(n)));
+});
+
+/* ---------------- weekend calibration ---------------- */
+test("--calibrated clears the 暂估 flag and the point stays clean", () => {
+  const dir = tmp();
+  const t = today();
+  const first = run(dir, { "src-schwab": shift(t, -1) });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(readPayload(dir).daily.at(-1).prov, 1);
+
+  const second = run(dir, {}, ["--calibrated"]);
+  assert.equal(second.status, 0, second.stderr);
+  const p = readPayload(dir);
+  assert.equal("prov" in p.daily.at(-1), false, "a calibrated rewrite must drop the flag");
+  assert.equal(p.status.calibrated, true);
+  assert.equal(p.status.provisional, false);
+  assert.match(second.stdout, /calibrated/);
+});
+
+test("the calibration window reaches back but not indefinitely", () => {
+  const now = new Date("2026-08-24T02:00:00Z");          // New York 2026-08-23 (Sunday)
+  assert.equal(nyDate(now), "2026-08-23");
+  const inWindow = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { date: "2026-08-19", now, calibrated: true });
+  assert.deepEqual(inWindow.errors, []);
+  const tooOld = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { date: "2026-08-01", now, calibrated: true });
+  assert.ok(tooOld.errors.some(e => /calibration window/.test(e)));
+  assert.equal(MAX_LOOKBACK_DAYS, 10);
+  assert.equal(dayDiff("2026-08-19", "2026-08-23"), 4);
+});
+
+/* ---------------- New York / Hong Kong cross-day ---------------- */
+test("uses the New York calendar, not the Hong Kong one", () => {
+  const now = new Date("2026-08-20T02:00:00Z");    // NY 2026-08-19 22:00, HK 2026-08-20 10:00
+  assert.equal(nyDate(now), "2026-08-19");
+  const hk = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { date: "2026-08-20", now });
+  assert.ok(hk.errors.some(e => /in the future for New York/.test(e)), JSON.stringify(hk.errors));
+  const ny = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { date: "2026-08-19", now });
+  assert.deepEqual(ny.errors, []);
+});
+
+/* ---------------- duplicate / stale cash ---------------- */
+test("blocks duplicate cash: a settled movement missing from the balance", () => {
+  // The real 2026-08-18 Webull failure: sells + a buy settled, balance still pre-trade.
+  const errs = checkCashLedger({
+    date: "2026-08-18",
+    acctCash: { webull: 12866.30 },        // stale, pre-trade
+    prevAcctCash: { webull: 12866.30 },
+    movements: [
+      { date: "2026-08-18", acct: "webull", amount: 4034.40 },
+      { date: "2026-08-18", acct: "webull", amount: 42297.00 },
+      { date: "2026-08-18", acct: "webull", amount: -57833.50 }
+    ]
+  });
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /duplicate\/stale cash in webull/);
+});
+
+test("accepts the correct post-trade cash balance", () => {
+  const errs = checkCashLedger({
+    date: "2026-08-18",
+    acctCash: { webull: 1364.20 },
+    prevAcctCash: { webull: 12866.30 },
+    movements: [
+      { date: "2026-08-18", acct: "webull", amount: 4034.40 },
+      { date: "2026-08-18", acct: "webull", amount: 42297.00 },
+      { date: "2026-08-18", acct: "webull", amount: -57833.50 }
+    ]
+  });
+  assert.deepEqual(errs, []);
+});
+
+test("requires the cash pair once a movement settles that day", () => {
+  const errs = checkCashLedger({
+    date: "2026-08-18", acctCash: {}, prevAcctCash: {},
+    movements: [{ date: "2026-08-18", acct: "webull", amount: -100 }]
+  });
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /required/);
+});
+
+test("blocks stale cash end-to-end through the CLI", () => {
+  const dir = tmp();
+  const t = today();
+  const flows = JSON.stringify([
+    { date: t, acct: "webull", amount: -57833.5, type: "WITHDRAWAL",
+      desc: "SGOV buy 575 @ USD 100.58", foreignIdentifier: "wb-SGOV-BUY-cash" }
+  ]);
+  const r = run(dir, { "acct-cash-webull": "12866.30", "prev-acct-cash-webull": "12866.30" }, [`--flows=${flows}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /duplicate\/stale cash/);
+  assert.equal(fs.existsSync(path.join(dir, "data.json")), false);
+});
+
+/* ---------------- impossible movement ---------------- */
+test("blocks an impossible day-on-day jump with no external money", () => {
+  const errs = checkMove({ d: "2026-08-18", schwab: 600000, webull: 100000 },
+    { d: "2026-08-19", schwab: 600000, webull: 900000 }, new Set());
+  assert.equal(errs.length, 1);
+  assert.match(errs[0], /webull moved .* refusing an impossible amount/s);
+});
+
+test("the same jump is fine when external money explains it", () => {
+  const errs = checkMove({ d: "2026-08-18", schwab: 600000, webull: 100000 },
+    { d: "2026-08-19", schwab: 600000, webull: 900000 }, new Set(["webull"]));
+  assert.deepEqual(errs, []);
+});
+
+/* ---------------- flow classification ---------------- */
+test("an e-mail-imported sale typed DEPOSIT is an internal trade", () => {
+  const c = classifyFlow({
+    date: "2026-08-18", acct: "webull", amount: 42297,
+    desc: "AAOI sale 300 @ USD 140.99 — Webull HK execution 2026-08-18 09:59:22 EDT",
+    type: "DEPOSIT",
+    foreignIdentifier: "webullhk-10205226-email-AAOI-SELL-20260818T095922EDT-300-140.9900-cash"
+  });
+  assert.equal(c.kind, "internal", c.reason);
+});
+
+test("an e-mail-imported buy typed WITHDRAWAL is an internal trade", () => {
+  const c = classifyFlow({
+    date: "2026-08-18", acct: "webull", amount: -57833.5,
+    desc: "SGOV buy 575 @ USD 100.58 — Webull HK execution",
+    type: "WITHDRAWAL",
+    foreignIdentifier: "webullhk-10205226-email-SGOV-BUY-20260818T100015EDT-575-100.5800-cash"
+  });
+  assert.equal(c.kind, "internal", c.reason);
+});
+
+test("a linked Sharesight trade is internal", () => {
+  const c = classifyFlow({
+    date: "2026-08-17", acct: "schwab", amount: -4000,
+    desc: "Buy trade of 39.7745 SGOV.NYSE shares",
+    type: "Buy Trade", tradeId: 135570907, holdingId: 28771540
+  });
+  assert.equal(c.kind, "internal", c.reason);
+});
+
+test("a same-day holding change makes an untyped movement internal", () => {
+  const c = classifyFlow({ date: "2026-08-18", acct: "webull", amount: -1000,
+    desc: "adjustment", type: "WITHDRAWAL", holdingDelta: 12 });
+  assert.equal(c.kind, "internal", c.reason);
+});
+
+test("a whole same-day trade set produces no flow candidates", () => {
+  const trades = [
+    { date: "2026-08-18", acct: "webull", amount: 4034.4, type: "DEPOSIT",
+      desc: "GGLL sale 40 @ USD 100.86", foreignIdentifier: "wb-GGLL-SELL-cash" },
+    { date: "2026-08-18", acct: "webull", amount: 42297, type: "DEPOSIT",
+      desc: "AAOI sale 300 @ USD 140.99", foreignIdentifier: "wb-AAOI-SELL-cash" },
+    { date: "2026-08-18", acct: "webull", amount: -57833.5, type: "WITHDRAWAL",
+      desc: "SGOV buy 575 @ USD 100.58", foreignIdentifier: "wb-SGOV-BUY-cash" }
+  ];
+  const r = reconcileFlows([], [], trades);
+  assert.equal(r.auto.length, 0);
+  assert.equal(r.unresolved.length, 0);
+  assert.deepEqual(r.errors, []);
+});
+
+test("an internal trade asserted as an external transfer is an obvious error", () => {
+  const c = classifyFlow({
+    date: "2026-08-18", acct: "webull", amount: -57833.5,
+    desc: "SGOV buy 575 @ USD 100.58", type: "WITHDRAWAL",
+    foreignIdentifier: "wb-SGOV-BUY-cash",
+    evidence: "external_transfer", externalRef: "WIRE-999"
+  });
+  assert.equal(c.kind, "misfiled");
+  const r = reconcileFlows([], [], [{ date: "2026-08-18", acct: "webull", amount: -57833.5,
+    desc: "SGOV buy 575 @ USD 100.58", type: "WITHDRAWAL", foreignIdentifier: "wb-SGOV-BUY-cash",
+    evidence: "external_transfer", externalRef: "WIRE-999" }]);
+  assert.equal(r.errors.length, 1);
+  assert.match(r.errors[0], /asserted as an external transfer/);
+});
+
+test("blocks a misfiled internal trade end-to-end", () => {
+  const dir = tmp();
+  const t = today();
+  const flows = JSON.stringify([
+    { date: t, acct: "webull", amount: -57833.5, type: "WITHDRAWAL",
+      desc: "SGOV buy 575 @ USD 100.58", foreignIdentifier: "wb-SGOV-BUY-cash",
+      evidence: "external_transfer", externalRef: "WIRE-999" }
+  ]);
+  const r = run(dir, { "acct-cash-webull": "1364.20", "prev-acct-cash-webull": "59197.70" }, [`--flows=${flows}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /asserted as an external transfer/);
+  assert.equal(fs.existsSync(path.join(dir, "data.json")), false);
+});
+
+test("a genuine external wire becomes a flow candidate", () => {
+  const c = classifyFlow({ date: "2026-09-02", acct: "schwab", amount: 25000,
+    desc: "Incoming wire transfer from HSBC current account", type: "DEPOSIT" });
+  assert.equal(c.kind, "external", c.reason);
+});
+
+test("explicit external evidence still needs a reference", () => {
+  assert.equal(classifyFlow({ date: "2026-09-02", acct: "schwab", amount: 25000, desc: "cash in",
+    type: "DEPOSIT", evidence: "external_transfer", externalRef: "WIRE-1" }).kind, "external");
+  assert.equal(classifyFlow({ date: "2026-09-02", acct: "schwab", amount: 25000, desc: "cash in",
+    type: "DEPOSIT", evidence: "external_transfer" }).kind, "unresolved");
+});
+
+/* ---------------- unresolved: 暂估, never auto-selected, never a block ---------------- */
+test("a bare DEPOSIT is unresolved, marks the day 暂估 and is never auto-selected", () => {
+  const dir = tmp();
+  const t = today();
+  const flows = JSON.stringify([{ date: t, acct: "schwab", amount: 12345.67, desc: "", type: "DEPOSIT" }]);
+  const r = run(dir, { "acct-cash-schwab": "12554.01", "prev-acct-cash-schwab": "208.34" }, [`--flows=${flows}`]);
+  assert.equal(r.status, 0, r.stderr);
+  const p = readPayload(dir);
+  assert.equal(p.flowsAuto.length, 0, "must not auto-select an unexplained movement");
+  assert.equal(p.flowsUnresolved.length, 1);
+  assert.equal(p.status.provisional, true);
+  assert.ok(p.status.notes.some(n => /unclassified/.test(n)));
+});
+
+test("evidence arriving later promotes an unresolved record exactly once", () => {
+  const raw = { date: "2026-09-02", acct: "schwab", amount: 25000, desc: "cash in", type: "DEPOSIT" };
+  const first = reconcileFlows([], [], [raw]);
+  assert.equal(first.unresolved.length, 1);
+  const resolved = { ...raw, evidence: "external_transfer", externalRef: "WIRE-1" };
+  assert.equal(flowId(resolved), flowId(raw), "id must stay stable when evidence is added");
+  const second = reconcileFlows(first.auto, first.unresolved, [resolved]);
+  assert.equal(second.auto.length, 1);
+  assert.equal(second.unresolved.length, 0);
+  assert.equal(second.promoted, 1);
+  const third = reconcileFlows(second.auto, second.unresolved, [resolved]);
+  assert.equal(third.added, 0);
+  assert.equal(third.promoted, 0);
+});
+
+/* ---------------- idempotency ---------------- */
+test("running twice with identical input is a byte-for-byte no-op", () => {
+  const dir = tmp();
+  assert.equal(run(dir).status, 0);
+  const bytes1 = fs.readFileSync(path.join(dir, "data.json"));
+  const second = run(dir);
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /^no-op /m);
+  assert.ok(bytes1.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+test("a repeated run with the same trade set stays a no-op", () => {
+  const dir = tmp();
+  const t = today();
+  const flows = JSON.stringify([
+    { date: t, acct: "webull", amount: -57833.5, type: "WITHDRAWAL",
+      desc: "SGOV buy 575 @ USD 100.58", foreignIdentifier: "wb-SGOV-BUY-cash" }
+  ]);
+  const extra = { "acct-cash-webull": "1364.20", "prev-acct-cash-webull": "59197.70" };
+  assert.equal(run(dir, extra, [`--flows=${flows}`]).status, 0);
+  const bytes1 = fs.readFileSync(path.join(dir, "data.json"));
+  const again = run(dir, extra, [`--flows=${flows}`]);
+  assert.match(again.stdout, /^no-op /m);
+  assert.ok(bytes1.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+/* ---------------- hygiene ---------------- */
+test("refuses a --key argument", () => {
+  const dir = tmp();
+  const r = run(dir, {}, [`--key=${TEST_KEY}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--key is refused/);
+});
+
+test("stdout carries no monetary amounts", () => {
+  const dir = tmp();
+  const r = run(dir);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(NUMBERS.test(r.stdout), false, `stdout leaked a figure: ${r.stdout}`);
+  assert.equal(r.stdout.includes(TEST_KEY), false);
+});
+
+test("rejects unknown arguments and unknown flags", () => {
+  const dir = tmp();
+  assert.match(run(dir, {}, ["--sp500=123"]).stderr, /unknown argument --sp500/);
+  assert.match(run(dir, {}, ["--settle"]).stderr, /unknown flag --settle/);
+});
+
+test("stores an eqac benchmark under its own key", () => {
+  const dir = tmp();
+  const r = run(dir, { cspx: "832.79", eqac: "505.10" });
+  assert.equal(r.status, 0, r.stderr);
+  const last = readPayload(dir).daily.at(-1);
+  assert.equal(last.eqac, 505.10);
+  assert.equal(last.cspx, 832.79);
+  assert.equal("eqqq" in last, false, "eqac must not be written under the old eqqq key");
+});
+
+test("buildPoint omits prov when nothing is provisional", () => {
+  const clean = buildPoint({ date: "2026-08-19", accounts: { schwab: 1, webull: 2 },
+    splits: { cash: 3, stock: 0, other: 0 }, provisional: [] });
+  assert.equal("prov" in clean, false);
+  const est = buildPoint({ date: "2026-08-19", accounts: { schwab: 1, webull: 2 },
+    splits: { cash: 3, stock: 0, other: 0 }, provisional: ["lag"] });
+  assert.equal(est.prov, 1);
+  const cal = buildPoint({ date: "2026-08-19", accounts: { schwab: 1, webull: 2 },
+    splits: { cash: 3, stock: 0, other: 0 }, provisional: ["lag"], calibrated: true });
+  assert.equal("prov" in cal, false);
+  assert.equal(buildStatus({ date: "2026-08-19", splitDelta: 0, unresolved: [], provisional: ["lag"], calibrated: true }).provisional, false);
+});
