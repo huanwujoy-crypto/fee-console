@@ -1,0 +1,57 @@
+name: Refresh public benchmark closes
+
+on:
+  schedule:
+    # 07:35 Hong Kong time on Tuesday-Saturday, after each Mon-Fri session.
+    - cron: '35 23 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: public-benchmark-cache
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Prepare isolated cache branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          cp scripts/refresh-benchmark-cache.mjs "$RUNNER_TEMP/refresh-benchmark-cache.mjs"
+          cp benchmark-close.json "$RUNNER_TEMP/benchmark-close.seed.json"
+          if git ls-remote --exit-code origin refs/heads/market-data-cache >/dev/null 2>&1; then
+            git fetch --no-tags origin refs/heads/market-data-cache:refs/remotes/origin/market-data-cache
+            git switch --track -c market-data-cache origin/market-data-cache
+          else
+            git switch --orphan market-data-cache
+            git rm -rf --ignore-unmatch .
+            cp "$RUNNER_TEMP/benchmark-close.seed.json" benchmark-close.json
+          fi
+
+      - name: Fetch and validate completed ETF closes
+        shell: bash
+        run: node "$RUNNER_TEMP/refresh-benchmark-cache.mjs"
+
+      - name: Publish cache when a completed close changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add benchmark-close.json
+          if git diff --cached --quiet; then
+            echo 'No new completed close.'
+            exit 0
+          fi
+          git commit -m "market data $(date -u +%F)"
+          git push origin HEAD:market-data-cache
