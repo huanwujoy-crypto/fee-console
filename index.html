@@ -396,7 +396,7 @@ function renderKPIs(st,B,G){
     ${rr("投资收益率（管理方，扣费前）",st.twrG)}
     ${rr("净收益率（出资方，扣费后）",st.twrN)}
     ${st.bench.map(b=>rr("同期 "+b.name,b.twr)).join("")}
-    <div class="note">${st.bench.length?`同期全仓买入：${st.bench.map(b=>b.name.replace(/（.*/,"")+" "+usd(b.val,0)).join(" · ")}（实际 ${usd(st.nav,0)}）· `:""}${showAnn?`年化：投资 ${pct(ann(st.twrG,st.spanDays))} · 净 ${pct(ann(st.twrN,st.spanDays))}${st.bench.map(b=>` · ${b.name.replace(/（.*/,"")} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后自动显示年化"}${st.bench.some(b=>b.k==="eqqq")?`<br>纳斯达克100 目前用 EQQQ（分配型，只反映价格涨幅，长期约比含息低 0.5%/年）。EQAC 真实收盘价到位后自动切换，不做换算估算。`:""}</div></div>`;}function renderChart1(st){
+    <div class="note">${st.bench.length?`同期全仓买入：${st.bench.map(b=>b.name.replace(/（.*/,"")+" "+usd(b.val,0)).join(" · ")}（实际 ${usd(st.nav,0)}）· `:""}${showAnn?`年化：投资 ${pct(ann(st.twrG,st.spanDays))} · 净 ${pct(ann(st.twrN,st.spanDays))}${st.bench.map(b=>` · ${b.name.replace(/（.*/,"")} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后自动显示年化"}${st.bench.some(b=>b.k==="eqqq")?`<br>⚠ 纳斯达克100 暂用 EQQQ（分配型）代替，实测与含息口径偏差显著：2026-07-31→08-19 两个独立累积型基金 EQAC +5.15%、CNDX +5.18% 相互吻合，EQQQ 仅 +4.01%，低约 114bp。此行仅供参考，不宜据此判断跑赢跑输；EQAC 真实收盘价到位后自动切换，不做换算估算。`:""}</div></div>`;}function renderChart1(st){
   const box=document.getElementById("chart1");const s=dailySeries(st);
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s[s.length-1].d}`:"";
   if(s.length<2){box.innerHTML=`<div class="empty">每日数据到位后此处出现走势</div>`;return;}
