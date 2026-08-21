@@ -67,6 +67,8 @@ Webull 走邮件导入的买卖会被 Sharesight 记成 `DEPOSIT` / `WITHDRAWAL`
 | 判定 | 结果 |
 |---|---|
 | `evidence: "internal_trade"` | 内部交易 |
+| `evidence: "external_asset_transfer"`，且来源/目标 trade、目标 holding、数量变化与外部编号齐全 | **实物转仓 → 自动生效** |
+| `evidence: "external_asset_transfer"` 但配对证据不全 | unresolved |
 | `evidence: "external_transfer"` 但带交易证据 | **misfiled → 阻断** |
 | `evidence: "external_transfer"` 且带 `externalRef` | 外部资金 |
 | `evidence: "external_transfer"` 但无 `externalRef` | unresolved |
@@ -78,8 +80,11 @@ Webull 走邮件导入的买卖会被 Sharesight 记成 `DEPOSIT` / `WITHDRAWAL`
 | 描述含 wire / ACH / external transfer | 外部资金 |
 | 裸 `DEPOSIT` / `WITHDRAWAL`，无任何证据 | unresolved |
 
-- 只有"外部资金"进入 `flowsAuto`，且仍然只是**候选** —— 脚本永不自动勾选，
-  仍需管理人在设置里确认。
+- 普通现金"外部资金"进入 `flowsAuto` 后仍然只是**候选**，需管理人在设置里确认。
+- 唯一自动生效的例外是证据完整的**跨管理边界实物转仓**：组合外来源 trade 与组合内
+  目标 trade 必须在证券、数量和市场日期上逐项相等，并同时提供两端 trade id、目标 holding id、
+  非零持仓变化及稳定外部编号。它按目标账户的 `transaction_date` 和当日市场价值计入，
+  不要求管理员手机或私密 Gist 再勾选。香港通知日只写入备注，不替代纽约市场日。
 - unresolved 进入 `flowsUnresolved`，把当天标为暂估，**不阻断**。
 - 证据后补时，同一条记录从 unresolved **提升**为候选，`id` 保持不变。
 

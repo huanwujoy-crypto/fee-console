@@ -359,6 +359,101 @@ test("explicit external evidence still needs a reference", () => {
     type: "DEPOSIT", evidence: "external_transfer" }).kind, "unresolved");
 });
 
+test("a fully paired in-kind transfer is external and immediately effective", () => {
+  const c = classifyFlow({
+    date: "2026-08-20", acct: "webull", amount: 387550.8,
+    desc: "BRK/B 780 shares received from IB-HK by FOP; confirmed 2026-08-21 HKT",
+    type: "OPENING_BALANCE", sourceTradeId: 135783050, tradeId: 135784216,
+    holdingId: 28921427, holdingDelta: 780,
+    sourceDate: "2026-08-20", destinationDate: "2026-08-20",
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    evidence: "external_asset_transfer",
+    externalRef: "sharesight:135783050->135784216"
+  });
+  assert.equal(c.kind, "external", c.reason);
+  assert.equal(c.effective, true);
+});
+
+test("an in-kind transfer without both Sharesight trades stays unresolved", () => {
+  const c = classifyFlow({
+    date: "2026-08-20", acct: "webull", amount: 387550.8,
+    tradeId: 135784216, holdingId: 28921427, holdingDelta: 780,
+    evidence: "external_asset_transfer",
+    externalRef: "sharesight:135784216"
+  });
+  assert.equal(c.kind, "unresolved", c.reason);
+  assert.equal(c.effective, false);
+});
+
+test("an in-kind transfer with mismatched dates, instruments or quantities stays unresolved", () => {
+  const base = {
+    date: "2026-08-20", acct: "webull", amount: 387550.8,
+    sourceTradeId: 135783050, tradeId: 135784216, holdingId: 28921427,
+    holdingDelta: 780, sourceDate: "2026-08-20", destinationDate: "2026-08-20",
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    evidence: "external_asset_transfer",
+    externalRef: "sharesight:135783050->135784216"
+  };
+  for (const raw of [
+    { ...base, sourceDate: "2026-08-19" },
+    { ...base, destinationInstrument: "GOOG" },
+    { ...base, destinationQuantity: 779 },
+  ]) {
+    const c = classifyFlow(raw);
+    assert.equal(c.kind, "unresolved", c.reason);
+    assert.equal(c.effective, false);
+  }
+});
+
+test("a verified in-kind transfer does not require cash-balance evidence", () => {
+  const errs = checkCashLedger({
+    date: "2026-08-20", acctCash: {}, prevAcctCash: {},
+    movements: [{ date: "2026-08-20", acct: "webull", amount: 387550.8,
+      evidence: "external_asset_transfer" }]
+  });
+  assert.deepEqual(errs, []);
+});
+
+test("a verified in-kind transfer is stored as an effective flow", () => {
+  const raw = {
+    id: "ss-fop-135783050-135784216", date: "2026-08-20", acct: "webull",
+    amount: 387550.8, desc: "BRK/B 780 share FOP", sourceTradeId: 135783050,
+    tradeId: 135784216, holdingId: 28921427, holdingDelta: 780,
+    sourceDate: "2026-08-20", destinationDate: "2026-08-20",
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    evidence: "external_asset_transfer",
+    externalRef: "sharesight:135783050->135784216"
+  };
+  const r = reconcileFlows([], [], [raw]);
+  assert.equal(r.auto.length, 1);
+  assert.equal(r.auto[0].effective, true);
+  assert.equal(r.unresolved.length, 0);
+});
+
+test("the CLI accepts and stores a verified in-kind transfer without cash arguments", () => {
+  const dir = tmp();
+  const t = today();
+  const flows = JSON.stringify([{
+    id: "ss-fop-135783050-135784216", date: t, acct: "webull",
+    amount: 387550.8, desc: "BRK/B 780 share FOP; confirmed next morning HKT",
+    sourceTradeId: 135783050, tradeId: 135784216, holdingId: 28921427,
+    holdingDelta: 780, evidence: "external_asset_transfer",
+    sourceDate: t, destinationDate: t,
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    externalRef: "sharesight:135783050->135784216"
+  }]);
+  const result = run(dir, {}, [`--flows=${flows}`]);
+  assert.equal(result.status, 0, result.stderr);
+  const payload = readPayload(dir);
+  assert.equal(payload.flowsAuto.length, 1);
+  assert.equal(payload.flowsAuto[0].effective, true);
+  assert.equal(payload.flowsUnresolved.length, 0);
+});
+
 /* ---------------- unresolved: 暂估, never auto-selected, never a block ---------------- */
 test("a bare DEPOSIT is unresolved, marks the day 暂估 and is never auto-selected", () => {
   const dir = tmp();
