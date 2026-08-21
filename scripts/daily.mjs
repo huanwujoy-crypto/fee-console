@@ -148,14 +148,21 @@ if (args.flows !== undefined) {
     const desc = f.desc == null ? "" : String(f.desc);
     if (desc.length > 300) die(`flow #${i} desc is too long`);
     if (f.id != null && f.id !== "" && !ID_RE.test(String(f.id))) die(`flow #${i} has a bad id`);
-    if (f.evidence != null && !["external_transfer", "internal_trade"].includes(f.evidence))
+    if (f.evidence != null && !["external_transfer", "external_asset_transfer", "internal_trade"].includes(f.evidence))
       die(`flow #${i} has an unknown evidence value`);
     return {
       id: f.id == null || f.id === "" ? "" : String(f.id),
       date: f.date, acct: f.acct, amount, desc,
       type: f.type == null ? "" : String(f.type),
+      sourceTradeId: f.sourceTradeId ?? null,
       tradeId: f.tradeId ?? null,
       holdingId: f.holdingId ?? null,
+      sourceDate: f.sourceDate == null ? "" : String(f.sourceDate),
+      destinationDate: f.destinationDate == null ? "" : String(f.destinationDate),
+      sourceInstrument: f.sourceInstrument == null ? "" : String(f.sourceInstrument),
+      destinationInstrument: f.destinationInstrument == null ? "" : String(f.destinationInstrument),
+      sourceQuantity: Number.isFinite(f.sourceQuantity) ? f.sourceQuantity : 0,
+      destinationQuantity: Number.isFinite(f.destinationQuantity) ? f.destinationQuantity : 0,
       foreignIdentifier: f.foreignIdentifier == null ? "" : String(f.foreignIdentifier),
       holdingDelta: Number.isFinite(f.holdingDelta) ? f.holdingDelta : 0,
       evidence: f.evidence ?? null,

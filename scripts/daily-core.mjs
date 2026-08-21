@@ -151,7 +151,9 @@ export function validateInputs(input) {
 export function checkCashLedger({ date, acctCash = {}, prevAcctCash = {}, movements = [] }) {
   const errors = [];
   for (const a of ACCOUNTS) {
-    const sameDay = movements.filter(m => m.acct === a && m.date === date);
+    const sameDay = movements.filter(m =>
+      m.acct === a && m.date === date && m.evidence !== "external_asset_transfer"
+    );
     if (!sameDay.length) continue;
     const now = acctCash[a], before = prevAcctCash[a];
     if (!Number.isFinite(now) || !Number.isFinite(before)) {
@@ -223,14 +225,43 @@ export function classifyFlow(raw) {
   const desc = typeof raw.desc === "string" ? raw.desc : "";
   const type = typeof raw.type === "string" ? raw.type : "";
   const trade = hasTradeEvidence(raw);
+  const externalRef = typeof raw.externalRef === "string" ? raw.externalRef.trim() : "";
+
+  // A verified in-kind transfer is the one case where a linked trade is also
+  // external to the managed composite. Require both sides to agree on market
+  // date, instrument and quantity before it can take effect.
+  if (raw.evidence === "external_asset_transfer") {
+    const normalizeInstrument = value => typeof value === "string"
+      ? value.toUpperCase().replace(/[^A-Z0-9]/g, "") : "";
+    const sourceInstrument = normalizeInstrument(raw.sourceInstrument);
+    const destinationInstrument = normalizeInstrument(raw.destinationInstrument);
+    const sourceQuantity = Number(raw.sourceQuantity);
+    const destinationQuantity = Number(raw.destinationQuantity);
+    const quantitiesMatch = Number.isFinite(sourceQuantity) && Number.isFinite(destinationQuantity)
+      && sourceQuantity !== 0 && Math.abs(Math.abs(sourceQuantity) - Math.abs(destinationQuantity)) < 1e-8
+      && Number.isFinite(raw.holdingDelta)
+      && Math.abs(Math.abs(raw.holdingDelta) - Math.abs(destinationQuantity)) < 1e-8;
+    const paired = raw.sourceTradeId != null && raw.tradeId != null
+      && String(raw.sourceTradeId) !== String(raw.tradeId)
+      && raw.holdingId != null
+      && raw.sourceDate === raw.date && raw.destinationDate === raw.date
+      && sourceInstrument !== "" && sourceInstrument === destinationInstrument
+      && quantitiesMatch;
+    if (!externalRef || !paired) {
+      return { kind: "unresolved", effective: false,
+        reason: "external asset transfer lacks paired source/destination trade evidence" };
+    }
+    return { kind: "external", effective: true,
+      reason: `verified external asset transfer ${externalRef}` };
+  }
 
   if (raw.evidence === "internal_trade") return { kind: "internal", reason: "explicit evidence: internal_trade" };
   if (raw.evidence === "external_transfer") {
     if (trade) {
       return { kind: "misfiled", reason: `asserted as an external transfer but ${trade}` };
     }
-    if (typeof raw.externalRef === "string" && raw.externalRef.trim() !== "") {
-      return { kind: "external", reason: `explicit evidence with reference ${raw.externalRef.trim()}` };
+    if (externalRef) {
+      return { kind: "external", effective: false, reason: `explicit evidence with reference ${externalRef}` };
     }
     return { kind: "unresolved", reason: "evidence=external_transfer but no externalRef supplied" };
   }
@@ -238,7 +269,7 @@ export function classifyFlow(raw) {
   if (trade) return { kind: "internal", reason: trade };
 
   if (EXTERNAL_DESC_RE.some(re => re.test(desc))) {
-    return { kind: "external", reason: "description shows an external transfer" };
+    return { kind: "external", effective: false, reason: "description shows an external transfer" };
   }
   if (/^(?:deposit|withdrawal)$/i.test(type.trim())) {
     return { kind: "unresolved", reason: `bare ${type.toUpperCase()} with no trade or transfer evidence` };
@@ -272,15 +303,23 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
 
   for (const raw of incoming) {
     const id = raw.id != null && raw.id !== "" ? String(raw.id) : flowId(raw);
-    const { kind, reason } = classifyFlow(raw);
+    const { kind, reason, effective = false } = classifyFlow(raw);
     if (kind === "misfiled") { errors.push(`flow ${raw.date} ${raw.acct}: ${reason}`); continue; }
     if (kind === "internal") continue;
 
     const record = { id, date: raw.date, acct: raw.acct, amount: raw.amount,
-      desc: typeof raw.desc === "string" ? raw.desc : "", reason };
+      desc: typeof raw.desc === "string" ? raw.desc : "", reason,
+      effective: effective === true };
 
     if (kind === "external") {
-      if (autoIds.has(id)) continue;
+      if (autoIds.has(id)) {
+        const i = auto.findIndex(f => f.id === id);
+        if (effective && i >= 0 && auto[i].effective !== true) {
+          auto[i] = record;
+          promoted++;
+        }
+        continue;
+      }
       if (unresolvedIds.has(id)) {
         const i = unresolved.findIndex(f => f.id === id);
         if (i >= 0) unresolved.splice(i, 1);
