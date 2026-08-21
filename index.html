@@ -285,6 +285,15 @@ function totOf(pt){return pt?DB.accounts.reduce((s,a)=>s+num(pt[a.id]),0):0;}
 function curYm(){return todayStr().slice(0,7);}
 function monthYms(){const out=[];let ym=DB.settings.start.slice(0,7);const cur=curYm();let n=0;while(ym<=cur&&n<600){out.push(ym);ym=nextYm(ym);n++;}return out;}
 function monthOf(ym){let m=DB.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};DB.months.push(m);DB.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows||[];return m;}
+/* 管理人已确认的记录仍以私密云存档为准；只有后端完成逐项配对核验的实物转仓
+   可以直接参与计算，避免为了无现金转仓再依赖管理人手机勾选。 */
+function effectiveFlows(){
+  const confirmed=DB.months.flatMap(m=>m.flows||[]);
+  const confirmedSrc=new Set(confirmed.map(f=>f.src).filter(Boolean));
+  const verified=(DAILY.flowsAuto||[]).filter(f=>f&&f.effective===true&&!confirmedSrc.has(f.id))
+    .map(f=>({id:f.id,src:f.id,date:f.date,acct:f.acct,amount:num(f.amount),note:f.desc||"",automatic:true}));
+  return confirmed.concat(verified);
+}
 function ann(r,days){return days>0?Math.pow(1+r,365/days)-1:0;}
 /* 基准。EQAC 是累积型（含息），与 CSPX 同类，是纳斯达克100 的正确对照；
    EQQQ 是分配型，只反映价格指数。两者各自独立的数据字段，绝不互相顶替：
@@ -311,7 +320,7 @@ function compute(){
     const to=inProgress?pt.d:eom(ym);
     const days=Math.max(1,inclDays(from,to));
     const closeT=totOf(pt);
-    const m=DB.months.find(x=>x.ym===ym)||{flows:[]};const fl=m.flows||[];
+    const fl=effectiveFlows().filter(f=>(f.date||"").slice(0,7)===ym);
     const flowT=fl.reduce((s,f)=>s+num(f.amount),0);
     let den=openT;for(const f of fl){const el=Math.max(0,Math.min(days,Math.round((P(f.date||from)-P(from))/DAY)));den+=num(f.amount)*((days-el)/days);}
     den=Math.max(1,den);
@@ -357,7 +366,7 @@ function health(st){
 function dailySeries(st){
   const ds=dailySorted().filter(x=>x.d>=DB.settings.start);if(!ds.length)return [];
   const base=DB.accounts.reduce((s,a)=>s+num(a.opening),0);
-  const flows=DB.months.flatMap(m=>m.flows||[]).sort((a,b)=>(a.date||"").localeCompare(b.date||""));
+  const flows=effectiveFlows().sort((a,b)=>(a.date||"").localeCompare(b.date||""));
   const out=[];
   for(const x of ds){const tot=totOf(x);const f=flows.filter(z=>z.date<=x.d).reduce((s,z)=>s+num(z.amount),0);
     const r=st.done.filter(z=>z.to<=x.d).pop();out.push({d:x.d,cum:tot-base-f,hwm:r?r.hwm:0,tot});}  return out;
@@ -485,9 +494,9 @@ function renderFlows(){
   const inc=DB.months.flatMap(m=>(m.flows||[]).map(f=>({...f,ym:m.ym})));
   const manual=inc.filter(f=>!f.src);
   if(!auto.length&&!manual.length){box.innerHTML=`<div class="empty">未检测到外部出入金</div>`;return;}
-  box.innerHTML=auto.map(f=>{const on=inc.some(c=>c.src===f.id);return `<div class="mrow"><label style="display:flex;gap:8px;align-items:center;font-size:13px">
-    <input type="checkbox" data-flow="${f.id}" ${on?'checked':''} style="width:20px;height:20px">
-    ${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">${esc(f.desc||'')}</span></label></div>`;}).join("")
+  box.innerHTML=auto.map(f=>{const verified=f.effective===true;const on=verified||inc.some(c=>c.src===f.id);return `<div class="mrow"><label style="display:flex;gap:8px;align-items:center;font-size:13px">
+    <input type="checkbox" data-flow="${f.id}" ${on?'checked':''} ${verified?'disabled':''} style="width:20px;height:20px">
+    ${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">${verified?'配对核验·自动计入':esc(f.desc||'')}</span></label></div>`;}).join("")
     +manual.map(f=>`<div class="mrow"><span style="font-size:13px">${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">手工</span></span><button class="del" data-delflow="${f.id}">×</button></div>`).join("");
 }
 function renderSettings(){
