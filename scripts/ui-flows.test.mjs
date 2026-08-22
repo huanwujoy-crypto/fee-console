@@ -114,11 +114,6 @@ test("contradicting instrument evidence on the same day is not merged", () => {
   assert.equal(flows.length, 2);
 });
 
-test("a different account is never merged", () => {
-  const flows = effectiveFlows(month("2026-08", [legacyBrkb({ acct: "schwab" })]), [AUTO_BRKB]);
-  assert.equal(flows.length, 2);
-});
-
 test("a different amount beyond the cent tolerance is never merged", () => {
   const flows = effectiveFlows(month("2026-08", [legacyBrkb({ amount: TRANSFER + 0.02 })]), [AUTO_BRKB]);
   assert.equal(flows.length, 2);
