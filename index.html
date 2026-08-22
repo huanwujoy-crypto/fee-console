@@ -330,6 +330,7 @@ function flowSameEvent(x,y,sameAcct){
   if(!isFinite(gap)||gap>1)return false;
   const ev=flowEvidence(x.note,y.note);
   if(ev==="conflict")return false;
+  if(!sameAcct)return ev==="match";
   return gap>0?ev==="match":true;
 }
 function flowPair(list,f,pick){
