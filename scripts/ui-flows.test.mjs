@@ -114,7 +114,11 @@ test("contradicting instrument evidence on the same day is not merged", () => {
   assert.equal(flows.length, 2);
 });
 
-test.todo("a legacy wrong account still merges on same-day instrument and quantity evidence");
+test("a legacy wrong account still merges on same-day instrument and quantity evidence", () => {
+  const flows = effectiveFlows(month("2026-08", [legacyBrkb({ acct: "schwab" })]), [AUTO_BRKB]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
 
 test("different accounts without matching instrument and quantity stay separate", () => {
   const manual = legacyBrkb({ acct: "schwab", note: "external cash transfer" });
