@@ -287,48 +287,71 @@ function monthYms(){const out=[];let ym=DB.settings.start.slice(0,7);const cur=c
 function monthOf(ym){let m=DB.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};DB.months.push(m);DB.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows||[];return m;}
 /* 管理人已确认的记录仍以私密云存档为准；只有后端完成逐项配对核验的实物转仓
    可以直接参与计算，避免为了无现金转仓再依赖管理人手机勾选。 */
-/* flow-dedupe:start —— 同一笔业务事件在「手工确认」与「自动核验」两条路径里
-   最多只能计一次。新的手工确认带 src，按 src 配对；v4.4 之前的手工记录没有
-   src，只能按证据配对：账户 + 金额（分币容差）+ 业务日为基键，说明里的标的
-   与数量做反证 —— 两边都给得出证据却毫无交集时判为不同事件。业务日相差 1 天
-   的（券商通知日/交收时区一度被误当业务日）必须有证据交集才配。配对一对一
-   消费：同日同账户两笔真实的等额转账仍各计一次。 */
+/* flow-dedupe:start —— 同一笔业务事件只能计一次，无论它从哪条路径进来：
+   管理人手工确认（私密云存档）、后端逐项核验的自动记录，或同一事件在
+   data.json 里被重新哈希成两条自动记录。
+   新的手工确认带 src，按 src 配对。没有 src 的旧记录、以及自动记录之间，
+   按证据配对：金额（分币容差）+ 业务日为基键，说明里的标的与数量做双向反证
+   —— 两边都给得出同类证据却毫无交集时判为不同事件。
+   账户分两轮：先只配同账户，剩下的再配不同账户（旧手工记录的账户字段可能
+   填错，2026-08-20 的 BRK/B 实物转入就是如此）。先同后异保证同日等额但确实
+   分属两个账户的真实转账各自配对，不会被并成一笔。
+   业务日相差 1 天的（券商通知日/交收时区一度被误当业务日）必须有证据交集。
+   配对一对一消费：同日同账户两笔真实的等额转账仍各计一次。 */
 const FLOW_CENT=0.005;
 const FLOW_STOP=new Set(["USD","HKD","CNY","EUR","IN","KIND","FOP","TRANSFER","TRANSFERS","EXTERNAL","ASSET","FROM","TO","SHARES","SHARE","STOCK","CASH","DEPOSIT","WITHDRAWAL","THE","AND","OF","VERIFIED","INBOUND","OUTBOUND","CONTRIBUTION"]);
 function flowTokens(text){
-  const out=new Set();const s=String(text==null?"":text).toUpperCase();
+  const a=new Set(),n=new Set(),s=String(text==null?"":text).toUpperCase();
   for(const t of (s.match(/[A-Z][A-Z0-9]*(?:[.\-]?[A-Z0-9]+)*/g)||[])){
     const k=t.replace(/[^A-Z0-9]/g,"");
-    if(k.length>=2&&!FLOW_STOP.has(t)&&!FLOW_STOP.has(k))out.add(k);
+    if(k.length>=2&&!FLOW_STOP.has(t)&&!FLOW_STOP.has(k))a.add(k);
   }
-  for(const n of (s.match(/\d+(?:\.\d+)?/g)||[]))out.add("#"+Number(n));
-  return out;
+  for(const q of (s.match(/\d+(?:\.\d+)?/g)||[]))n.add("#"+Number(q));
+  return {a,n};
+}
+function flowMeet(p,q){for(const t of p)if(q.has(t))return true;return false;}
+/* "conflict" = 同类证据互斥；"match" = 有交集；"none" = 至少一边说不出话。 */
+function flowEvidence(x,y){
+  const A=flowTokens(x),B=flowTokens(y);
+  const aBoth=A.a.size>0&&B.a.size>0,nBoth=A.n.size>0&&B.n.size>0;
+  const aMeet=aBoth&&flowMeet(A.a,B.a),nMeet=nBoth&&flowMeet(A.n,B.n);
+  if((aBoth&&!aMeet)||(nBoth&&!nMeet))return "conflict";
+  return (aMeet||nMeet)?"match":"none";
 }
 function flowDayGap(a,b){
   const t1=Date.parse(String(a||"")+"T00:00:00Z"),t2=Date.parse(String(b||"")+"T00:00:00Z");
   if(!isFinite(t1)||!isFinite(t2))return NaN;
   return Math.abs(t1-t2)/86400000;
 }
-function flowSameEvent(manual,auto){
-  if(String(manual.acct||"")!==String(auto.acct||""))return false;
-  if(Math.abs(num(manual.amount)-num(auto.amount))>FLOW_CENT)return false;
-  const gap=flowDayGap(manual.date,auto.date);
+function flowSameEvent(x,y,sameAcct){
+  if(Math.abs(num(x.amount)-num(y.amount))>FLOW_CENT)return false;
+  if((String(x.acct||"")===String(y.acct||""))!==sameAcct)return false;
+  const gap=flowDayGap(x.date,y.date);
   if(!isFinite(gap)||gap>1)return false;
-  const a=flowTokens(manual.note),b=flowTokens(auto.desc==null?auto.note:auto.desc);
-  let shared=false;for(const t of a){if(b.has(t)){shared=true;break;}}
-  if(gap>0)return shared;
-  if(!a.size||!b.size)return true;
-  return shared;
+  const ev=flowEvidence(x.note,y.note);
+  if(ev==="conflict")return false;
+  if(!sameAcct)return ev==="match";
+  return gap>0?ev==="match":true;
+}
+function flowPair(list,f,pick){
+  let i=list.findIndex(x=>pick(x)&&flowSameEvent(pick(x),f,true));
+  if(i<0)i=list.findIndex(x=>pick(x)&&flowSameEvent(pick(x),f,false));
+  return i;
 }
 function effectiveFlows(){
   const confirmed=DB.months.flatMap(m=>m.flows||[]);
   const confirmedSrc=new Set(confirmed.map(f=>f.src).filter(Boolean));
-  const legacy=confirmed.filter(f=>f&&!f.src);
-  const used=new Set();
-  const verified=(DAILY.flowsAuto||[]).filter(f=>f&&f.effective===true&&!confirmedSrc.has(f.id))
-    .filter(f=>{const i=legacy.findIndex((m,idx)=>!used.has(idx)&&flowSameEvent(m,f));if(i<0)return true;used.add(i);return false;})
-    .map(f=>({id:f.id,src:f.id,date:f.date,acct:f.acct,amount:num(f.amount),note:f.desc||"",automatic:true}));
-  return confirmed.concat(verified);
+  const pool=confirmed.filter(f=>f&&!f.src).map(f=>({rec:f,used:false}));
+  const kept=[];
+  for(const f of (DAILY.flowsAuto||[])){
+    if(!f||f.effective!==true||confirmedSrc.has(f.id))continue;
+    const a={id:f.id,src:f.id,date:f.date,acct:f.acct,amount:num(f.amount),note:f.desc||"",automatic:true};
+    const i=flowPair(pool,a,p=>p.used?null:p.rec);
+    if(i>=0){pool[i].used=true;continue;}
+    if(flowPair(kept,a,k=>k)>=0)continue;
+    kept.push(a);
+  }
+  return confirmed.concat(kept);
 }
 /* flow-dedupe:end */
 function ann(r,days){return days>0?Math.pow(1+r,365/days)-1:0;}
@@ -413,7 +436,7 @@ function render(){
   const st=compute(),B=balance(st),G=health(st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
-  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%`+(isMgr()?"":" · 只读");
+  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.4.2"+(isMgr()?"":" · 只读");
   renderKPIs(st,B,G);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B,G);  if(isMgr()){renderFees(st,B,G);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
