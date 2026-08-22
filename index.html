@@ -289,10 +289,10 @@ function monthOf(ym){let m=DB.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};D
    可以直接参与计算，避免为了无现金转仓再依赖管理人手机勾选。 */
 /* flow-dedupe:start —— 同一笔业务事件在「手工确认」与「自动核验」两条路径里
    最多只能计一次。新的手工确认带 src，按 src 配对；v4.4 之前的手工记录没有
-   src，只能按证据配对：账户 + 金额（分币容差）+ 业务日为基键，说明里的标的
-   与数量做反证 —— 两边都给得出证据却毫无交集时判为不同事件。业务日相差 1 天
-   的（券商通知日/交收时区一度被误当业务日）必须有证据交集才配。配对一对一
-   消费：同日同账户两笔真实的等额转账仍各计一次。 */
+   src，只能按证据配对：金额（分币容差）+ 业务日为基键，账户通常也须一致；但
+   旧记录若误选账户，只有在同日且说明同时对上标的/参考号与数量时才允许配对。
+   业务日相差 1 天的（券商通知日/交收时区一度被误当业务日）仍必须同账户并有
+   证据交集。配对一对一消费：真实的等额转账仍各计一次。 */
 const FLOW_CENT=0.005;
 const FLOW_STOP=new Set(["USD","HKD","CNY","EUR","IN","KIND","FOP","TRANSFER","TRANSFERS","EXTERNAL","ASSET","FROM","TO","SHARES","SHARE","STOCK","CASH","DEPOSIT","WITHDRAWAL","THE","AND","OF","VERIFIED","INBOUND","OUTBOUND","CONTRIBUTION"]);
 function flowTokens(text){
@@ -310,12 +310,14 @@ function flowDayGap(a,b){
   return Math.abs(t1-t2)/86400000;
 }
 function flowSameEvent(manual,auto){
-  if(String(manual.acct||"")!==String(auto.acct||""))return false;
   if(Math.abs(num(manual.amount)-num(auto.amount))>FLOW_CENT)return false;
   const gap=flowDayGap(manual.date,auto.date);
   if(!isFinite(gap)||gap>1)return false;
   const a=flowTokens(manual.note),b=flowTokens(auto.desc==null?auto.note:auto.desc);
-  let shared=false;for(const t of a){if(b.has(t)){shared=true;break;}}
+  let shared=false,sharedWord=false,sharedNumber=false;
+  for(const t of a){if(b.has(t)){shared=true;if(t[0]==="#")sharedNumber=true;else sharedWord=true;}}
+  const sameAcct=String(manual.acct||"")===String(auto.acct||"");
+  if(!sameAcct)return gap===0&&sharedWord&&sharedNumber;
   if(gap>0)return shared;
   if(!a.size||!b.size)return true;
   return shared;
