@@ -114,12 +114,57 @@ test("contradicting instrument evidence on the same day is not merged", () => {
   assert.equal(flows.length, 2);
 });
 
-test.todo("a legacy wrong account still merges on same-day instrument and quantity evidence");
+test("a legacy wrong account still merges on same-day instrument and quantity evidence", () => {
+  const manual = legacyBrkb({ acct: "schwab" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+  assert.equal(flows[0].id, "man-1");
+});
 
 test("different accounts without matching instrument and quantity stay separate", () => {
   const manual = legacyBrkb({ acct: "schwab", note: "external cash transfer" });
   const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
   assert.equal(flows.length, 2);
+});
+
+test("a rehashed verified auto record counts once", () => {
+  const rehashed = {
+    ...AUTO_BRKB,
+    id: "rehashed-auto",
+    desc: "verified BRK/B 780 transfer from IB-HK into Webull"
+  };
+  const flows = effectiveFlows([], [AUTO_BRKB, rehashed]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("a rehashed verified auto record on the adjacent notification day counts once", () => {
+  const notificationDay = {
+    ...AUTO_BRKB,
+    id: "notification-day-auto",
+    date: "2026-08-21",
+    desc: "BRK/B 780 shares received from IB-HK"
+  };
+  const flows = effectiveFlows([], [AUTO_BRKB, notificationDay]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("verified auto records with different references remain separate", () => {
+  const autoA = { ...AUTO_BRKB, id: "wire-a", amount: 10000, desc: "external wire reference 1001" };
+  const autoB = { ...AUTO_BRKB, id: "wire-b", amount: 10000, desc: "external wire reference 1002" };
+  const flows = effectiveFlows([], [autoA, autoB]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), 20000);
+});
+
+test("verified auto records with different instruments remain separate", () => {
+  const brkb = { ...AUTO_BRKB, id: "asset-brkb", amount: 10000, desc: "BRK/B 20" };
+  const aapl = { ...AUTO_BRKB, id: "asset-aapl", amount: 10000, desc: "AAPL 20" };
+  const flows = effectiveFlows([], [brkb, aapl]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), 20000);
 });
 
 test("a different amount beyond the cent tolerance is never merged", () => {
