@@ -174,23 +174,27 @@ test("a legacy wrong account still merges on same-day instrument and quantity ev
 });
 
 test("crossing accounts without any evidence never merges, even on the same day", () => {
-  const manual = legacyBrkb({ acct: "schwab", note: "现金转入" });  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "external cash transfer" })]);
+  const manual = legacyBrkb({ acct: "schwab", note: "现金转入" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "external cash transfer" })]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), Number((TRANSFER * 2).toFixed(2)));
 });
 
 test("crossing accounts merges on a shared quantity alone", () => {
-  const manual = legacyBrkb({ acct: "schwab", note: "实物转入 780" });  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "verified transfer 780 units" })]);
+  const manual = legacyBrkb({ acct: "schwab", note: "实物转入 780" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "verified transfer 780 units" })]);
   assert.equal(flows.length, 1);
 });
 
 test("crossing accounts merges on a shared instrument alone", () => {
-  const manual = legacyBrkb({ acct: "schwab", note: "BRKB 实物转入" });  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "verified transfer BRKB in kind" })]);
+  const manual = legacyBrkb({ acct: "schwab", note: "BRKB 实物转入" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "verified transfer BRKB in kind" })]);
   assert.equal(flows.length, 1);
 });
 
 test("a shared instrument with a contradicting quantity is a conflict, not a match", () => {
-  const manual = legacyBrkb({ acct: "schwab", note: "BRK/B 500 股自 IB-HK 实物转入" });  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
+  const manual = legacyBrkb({ acct: "schwab", note: "BRK/B 500 股自 IB-HK 实物转入" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
   assert.equal(flows.length, 2);
 });
 
@@ -264,14 +268,16 @@ test("the cent tolerance is exclusive at its boundary", () => {
 });
 
 test("outbound flows de-duplicate the same way inbound ones do", () => {
-  const manual = { id: "m-out", src: "", date: "2026-08-20", acct: "webull", amount: -50000, note: "提现 50000" };  const auto = { id: "a-out", date: "2026-08-20", acct: "webull", amount: -50000, desc: "verified outbound wire 50000", effective: true };
+  const manual = { id: "m-out", src: "", date: "2026-08-20", acct: "webull", amount: -50000, note: "提现 50000" };
+  const auto = { id: "a-out", date: "2026-08-20", acct: "webull", amount: -50000, desc: "verified outbound wire 50000", effective: true };
   const flows = effectiveFlows(month("2026-08", [manual]), [auto]);
   assert.equal(flows.length, 1);
   assert.equal(sum(flows), -50000);
 });
 
 test("an inflow and an outflow of the same size are never the same event", () => {
-  const manual = { id: "m-in", src: "", date: "2026-08-20", acct: "webull", amount: 50000, note: "入金" };  const auto = { id: "a-out", date: "2026-08-20", acct: "webull", amount: -50000, desc: "outbound", effective: true };
+  const manual = { id: "m-in", src: "", date: "2026-08-20", acct: "webull", amount: 50000, note: "入金" };
+  const auto = { id: "a-out", date: "2026-08-20", acct: "webull", amount: -50000, desc: "outbound", effective: true };
   const flows = effectiveFlows(month("2026-08", [manual]), [auto]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), 0);
@@ -292,7 +298,8 @@ test("stop-word-only notes on the same account still merge", () => {
 test("a month of mixed events keeps every distinct one exactly once", () => {
   const manuals = [
     legacyBrkb({ id: "m-brkb", acct: "schwab" }),
-    { id: "m-cash", src: "", date: "2026-08-05", acct: "schwab", amount: 2500, note: "现金转入" }  ];
+    { id: "m-cash", src: "", date: "2026-08-05", acct: "schwab", amount: 2500, note: "现金转入" }
+  ];
   const autos = [
     AUTO_BRKB,
     { id: "auto-wire", date: "2026-08-12", acct: "webull", amount: 7500, desc: "verified inbound wire 7500", effective: true },
