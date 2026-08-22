@@ -114,8 +114,6 @@ test("contradicting instrument evidence on the same day is not merged", () => {
   assert.equal(flows.length, 2);
 });
 
-test.todo("a legacy wrong account still merges on same-day instrument and quantity evidence");
-
 test("different accounts without matching instrument and quantity stay separate", () => {
   const manual = legacyBrkb({ acct: "schwab", note: "external cash transfer" });
   const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
@@ -157,4 +155,157 @@ test("unrelated confirmations in the same month are untouched", () => {
   const flows = effectiveFlows(month("2026-08", [other, legacyBrkb()]), [AUTO_BRKB]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), Number((TRANSFER + 2500).toFixed(2)));
+});
+
+/* ---------------------------------------------------------------------------
+ * 2026-08-22 hardening: identifying a flow by its event means the account field
+ * is no longer part of the key, so the pairing runs in two rounds (same account
+ * first, then across accounts) and the cross-account round demands positive
+ * evidence. These 20 cases pin that contract from both sides: what must still
+ * collapse, and what must never collapse.
+ * ------------------------------------------------------------------------- */
+
+const autoAt = over => ({ ...AUTO_BRKB, ...over });
+
+test("a legacy wrong account still merges on same-day instrument and quantity evidence", () => {
+  const flows = effectiveFlows(month("2026-08", [legacyBrkb({ acct: "schwab" })]), [AUTO_BRKB]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("crossing accounts without any evidence never merges, even on the same day", () => {
+  const manual = legacyBrkb({ acct: "schwab", note: "\u73b0\u91d1\u8f6c\u5165" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "external cash transfer" })]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), Number((TRANSFER * 2).toFixed(2)));
+});
+
+test("crossing accounts merges on a shared quantity alone", () => {
+  const manual = legacyBrkb({ acct: "schwab", note: "\u5b9e\u7269\u8f6c\u5165 780" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "verified transfer 780 units" })]);
+  assert.equal(flows.length, 1);
+});
+
+test("crossing accounts merges on a shared instrument alone", () => {
+  const manual = legacyBrkb({ acct: "schwab", note: "BRKB \u5b9e\u7269\u8f6c\u5165" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "verified transfer BRKB in kind" })]);
+  assert.equal(flows.length, 1);
+});
+
+test("a shared instrument with a contradicting quantity is a conflict, not a match", () => {
+  const manual = legacyBrkb({ acct: "schwab", note: "BRK/B 500 \u80a1\u81ea IB-HK \u5b9e\u7269\u8f6c\u5165" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
+  assert.equal(flows.length, 2);
+});
+
+test("crossing accounts on the adjacent day still merges when the evidence matches", () => {
+  const manual = legacyBrkb({ acct: "schwab", date: "2026-08-21" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
+  assert.equal(flows.length, 1);
+});
+
+test("crossing accounts on the adjacent day without evidence stays two", () => {
+  const manual = legacyBrkb({ acct: "schwab", date: "2026-08-21", note: "" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
+  assert.equal(flows.length, 2);
+});
+
+test("the same-account candidate is consumed before the cross-account one", () => {
+  const right = legacyBrkb({ id: "m-right", acct: "webull" });
+  const wrong = legacyBrkb({ id: "m-wrong", acct: "schwab" });
+  const flows = effectiveFlows(month("2026-08", [wrong, right]), [AUTO_BRKB]);
+  assert.equal(flows.length, 2, "one auto can only retire one confirmation");
+  assert.deepEqual(flows.map(f => f.id).sort(), ["m-right", "m-wrong"]);
+});
+
+test("the same business event rehashed into two auto records counts once", () => {
+  const rehashed = autoAt({ id: "rehashed-same-event" });
+  const flows = effectiveFlows([], [AUTO_BRKB, rehashed]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("two auto records with contradicting evidence are two events", () => {
+  const other = autoAt({ id: "auto-aapl", desc: "verified external asset transfer AAPL 100 from IB-HK" });
+  const flows = effectiveFlows([], [AUTO_BRKB, other]);
+  assert.equal(flows.length, 2);
+});
+
+test("auto-to-auto collapsing does not swallow a genuine third event", () => {
+  const rehashed = autoAt({ id: "rehashed" });
+  const genuine = autoAt({ id: "genuine-second", acct: "schwab", desc: "verified external asset transfer AAPL 100" });
+  const flows = effectiveFlows([], [AUTO_BRKB, rehashed, genuine]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), Number((TRANSFER * 2).toFixed(2)));
+});
+
+test("an explicit src link wins even when the account disagrees", () => {
+  const linked = legacyBrkb({ id: "m-src", src: AUTO_BRKB.id, acct: "schwab", note: "" });
+  const flows = effectiveFlows(month("2026-08", [linked]), [AUTO_BRKB]);
+  assert.equal(flows.length, 1);
+  assert.equal(flows[0].id, "m-src");
+});
+
+test("an explicit src link wins even when the amount disagrees", () => {
+  const linked = legacyBrkb({ id: "m-src2", src: AUTO_BRKB.id, amount: TRANSFER - 1000 });
+  const flows = effectiveFlows(month("2026-08", [linked]), [AUTO_BRKB]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), Number((TRANSFER - 1000).toFixed(2)));
+});
+
+test("a src pointing at a record that is not in the feed still counts once", () => {
+  const orphan = legacyBrkb({ id: "m-orphan", src: "no-such-auto-id" });
+  const flows = effectiveFlows(month("2026-08", [orphan]), []);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("the cent tolerance is exclusive at its boundary", () => {
+  const inside = effectiveFlows(month("2026-08", [legacyBrkb({ amount: TRANSFER + 0.004 })]), [AUTO_BRKB]);
+  const outside = effectiveFlows(month("2026-08", [legacyBrkb({ amount: TRANSFER + 0.006 })]), [AUTO_BRKB]);
+  assert.equal(inside.length, 1);
+  assert.equal(outside.length, 2);
+});
+
+test("outbound flows de-duplicate the same way inbound ones do", () => {
+  const manual = { id: "m-out", src: "", date: "2026-08-20", acct: "webull", amount: -50000, note: "\u63d0\u73b0 50000" };
+  const auto = { id: "a-out", date: "2026-08-20", acct: "webull", amount: -50000, desc: "verified outbound wire 50000", effective: true };
+  const flows = effectiveFlows(month("2026-08", [manual]), [auto]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), -50000);
+});
+
+test("an inflow and an outflow of the same size are never the same event", () => {
+  const manual = { id: "m-in", src: "", date: "2026-08-20", acct: "webull", amount: 50000, note: "\u5165\u91d1" };
+  const auto = { id: "a-out", date: "2026-08-20", acct: "webull", amount: -50000, desc: "outbound", effective: true };
+  const flows = effectiveFlows(month("2026-08", [manual]), [auto]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), 0);
+});
+
+test("a malformed date never merges and never throws", () => {
+  const manual = legacyBrkb({ date: "not-a-date" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [AUTO_BRKB]);
+  assert.equal(flows.length, 2);
+});
+
+test("stop-word-only notes on the same account still merge", () => {
+  const manual = legacyBrkb({ note: "cash transfer" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [autoAt({ desc: "external transfer" })]);
+  assert.equal(flows.length, 1);
+});
+
+test("a month of mixed events keeps every distinct one exactly once", () => {
+  const manuals = [
+    legacyBrkb({ id: "m-brkb", acct: "schwab" }),
+    { id: "m-cash", src: "", date: "2026-08-05", acct: "schwab", amount: 2500, note: "\u73b0\u91d1\u8f6c\u5165" }
+  ];
+  const autos = [
+    AUTO_BRKB,
+    { id: "auto-wire", date: "2026-08-12", acct: "webull", amount: 7500, desc: "verified inbound wire 7500", effective: true },
+    { id: "auto-pending", date: "2026-08-13", acct: "webull", amount: 999, desc: "not verified", effective: false }
+  ];
+  const flows = effectiveFlows(month("2026-08", manuals), autos);
+  assert.equal(flows.length, 3, "BRK/B once, the 2,500 cash-in, and the 7,500 wire");
+  assert.equal(sum(flows), Number((TRANSFER + 2500 + 7500).toFixed(2)));
 });
