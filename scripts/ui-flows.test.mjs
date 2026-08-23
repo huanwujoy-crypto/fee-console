@@ -93,15 +93,15 @@ test("month-to-date gross gain is right once the event is counted once", () => {
 test("two genuine same-day, same-account transfers of equal size stay two", () => {
   const manualA = { id: "m-a", src: "", date: "2026-08-20", acct: "schwab", amount: 10000, note: "wire ref 1001" };
   const manualB = { id: "m-b", src: "", date: "2026-08-20", acct: "schwab", amount: 10000, note: "wire ref 1002" };
-  const autoA = { id: "auto-a", date: "2026-08-20", acct: "schwab", amount: 10000, desc: "external transfer wire ref 1001", effective: true };
-  const autoB = { id: "auto-b", date: "2026-08-20", acct: "schwab", amount: 10000, desc: "external transfer wire ref 1002", effective: true };
+  const autoA = { id: "auto-a", date: "2026-08-20", acct: "schwab", amount: 10000, desc: "external transfer wire ref 1001", reason: "verified external asset transfer wire-1001", effective: true };
+  const autoB = { id: "auto-b", date: "2026-08-20", acct: "schwab", amount: 10000, desc: "external transfer wire ref 1002", reason: "verified external asset transfer wire-1002", effective: true };
   const flows = effectiveFlows(month("2026-08", [manualA, manualB]), [autoA, autoB]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), 20000);
 });
 
 test("one confirmation cannot swallow two distinct verified flows", () => {
-  const autoB = { ...AUTO_BRKB, id: "second-auto" };
+  const autoB = { ...AUTO_BRKB, id: "second-auto", reason: "verified external asset transfer ib-hk-webull-brkb-20260820-780-second" };
   const flows = effectiveFlows(month("2026-08", [legacyBrkb({ note: "" })]), [AUTO_BRKB, autoB]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), Number((TRANSFER * 2).toFixed(2)));
@@ -152,16 +152,16 @@ test("a rehashed verified auto record on the adjacent notification day counts on
 });
 
 test("verified auto records with different references remain separate", () => {
-  const autoA = { ...AUTO_BRKB, id: "wire-a", amount: 10000, desc: "external wire reference 1001" };
-  const autoB = { ...AUTO_BRKB, id: "wire-b", amount: 10000, desc: "external wire reference 1002" };
+  const autoA = { ...AUTO_BRKB, id: "wire-a", amount: 10000, desc: "external wire reference 1001", reason: "verified external asset transfer wire-1001" };
+  const autoB = { ...AUTO_BRKB, id: "wire-b", amount: 10000, desc: "external wire reference 1002", reason: "verified external asset transfer wire-1002" };
   const flows = effectiveFlows([], [autoA, autoB]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), 20000);
 });
 
 test("verified auto records with different instruments remain separate", () => {
-  const brkb = { ...AUTO_BRKB, id: "asset-brkb", amount: 10000, desc: "BRK/B 20" };
-  const aapl = { ...AUTO_BRKB, id: "asset-aapl", amount: 10000, desc: "AAPL 20" };
+  const brkb = { ...AUTO_BRKB, id: "asset-brkb", amount: 10000, desc: "BRK/B 20", reason: "verified external asset transfer ib-webull-brkb-20" };
+  const aapl = { ...AUTO_BRKB, id: "asset-aapl", amount: 10000, desc: "AAPL 20", reason: "verified external asset transfer ib-webull-aapl-20" };
   const flows = effectiveFlows([], [brkb, aapl]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), 20000);
@@ -208,13 +208,13 @@ test("unrelated confirmations in the same month are untouched", () => {
  * 2026-08-22 hardening: identifying a flow by its event means the account field
  * is no longer part of the key, so the pairing runs in two rounds (same account
  * first, then across accounts) and the cross-account round demands positive
- * evidence. These 20 cases pin that contract from both sides: what must still
- * collapse, and what must never collapse.
+ * evidence. Same `reason` (it embeds the stable externalRef) is one event;
+ * a different `reason` is two, whatever the descriptions happen to say.
  * ------------------------------------------------------------------------- */
 
 const autoAt = over => ({ ...AUTO_BRKB, ...over });
 
-test("a legacy wrong account still merges on same-day instrument and quantity evidence", () => {
+test("a wrong-account legacy confirmation still nets to a single transfer", () => {
   const flows = effectiveFlows(month("2026-08", [legacyBrkb({ acct: "schwab" })]), [AUTO_BRKB]);
   assert.equal(flows.length, 1);
   assert.equal(sum(flows), TRANSFER);
@@ -266,21 +266,21 @@ test("the same-account candidate is consumed before the cross-account one", () =
 });
 
 test("the same business event rehashed into two auto records counts once", () => {
-  const rehashed = autoAt({ id: "rehashed-same-event" });
+  const rehashed = autoAt({ id: "rehashed-same-event" });   // 同一 reason = 同一业务事件
   const flows = effectiveFlows([], [AUTO_BRKB, rehashed]);
   assert.equal(flows.length, 1);
   assert.equal(sum(flows), TRANSFER);
 });
 
 test("two auto records with contradicting evidence are two events", () => {
-  const other = autoAt({ id: "auto-aapl", desc: "verified external asset transfer AAPL 100 from IB-HK" });
+  const other = autoAt({ id: "auto-aapl", desc: "verified external asset transfer AAPL 100 from IB-HK", reason: "verified external asset transfer ib-hk-webull-aapl-20260820-100" });
   const flows = effectiveFlows([], [AUTO_BRKB, other]);
   assert.equal(flows.length, 2);
 });
 
 test("auto-to-auto collapsing does not swallow a genuine third event", () => {
-  const rehashed = autoAt({ id: "rehashed" });
-  const genuine = autoAt({ id: "genuine-second", acct: "schwab", desc: "verified external asset transfer AAPL 100" });
+  const rehashed = autoAt({ id: "rehashed" });               // 同一 reason = 同一业务事件
+  const genuine = autoAt({ id: "genuine-second", acct: "schwab", desc: "verified external asset transfer AAPL 100", reason: "verified external asset transfer ib-schwab-aapl-20260820-100" });
   const flows = effectiveFlows([], [AUTO_BRKB, rehashed, genuine]);
   assert.equal(flows.length, 2);
   assert.equal(sum(flows), Number((TRANSFER * 2).toFixed(2)));
@@ -349,7 +349,7 @@ test("a month of mixed events keeps every distinct one exactly once", () => {
   ];
   const autos = [
     AUTO_BRKB,
-    { id: "auto-wire", date: "2026-08-12", acct: "webull", amount: 7500, desc: "verified inbound wire 7500", effective: true },
+    { id: "auto-wire", date: "2026-08-12", acct: "webull", amount: 7500, desc: "verified inbound wire 7500", reason: "verified external asset transfer wire-20260812-7500", effective: true },
     { id: "auto-pending", date: "2026-08-13", acct: "webull", amount: 999, desc: "not verified", effective: false }
   ];
   const flows = effectiveFlows(month("2026-08", manuals), autos);
