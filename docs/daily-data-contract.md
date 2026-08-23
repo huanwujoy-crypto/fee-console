@@ -83,14 +83,26 @@ Webull 走邮件导入的买卖会被 Sharesight 记成 `DEPOSIT` / `WITHDRAWAL`
 - 普通现金"外部资金"进入 `flowsAuto` 后仍然只是**候选**，需管理人在设置里确认。
 - 唯一自动生效的例外是证据完整的**跨管理边界实物转仓**：组合外来源 trade 与组合内
   目标 trade 必须在证券、数量和市场日期上逐项相等，并同时提供两端 trade id、目标 holding id、
-  非零持仓变化及稳定外部编号。它按目标账户的 `transaction_date` 和当日市场价值计入，
+  非零持仓变化。它按目标账户的 `transaction_date` 和当日市场价值计入，
   不要求管理员手机或私密 Gist 再勾选。香港通知日只写入备注，不替代纽约市场日。
 - unresolved 进入 `flowsUnresolved`，把当天标为暂估，**不阻断**。
 - 证据后补时，同一条记录从 unresolved **提升**为候选，`id` 保持不变。
 
 ### 稳定 id 与幂等
 
+普通现金记录继续使用
 `id = sha256(date | acct | amount(2dp) | foreignIdentifier | desc)[0:16]`。
+
+实物转仓不采信 Routine 传入的自由文本 `id`、`desc` 或 `externalRef`，而使用 Sharesight
+不可变对象编号组成业务身份：
+
+`businessKey = sharesight:<sourceTradeId>-><tradeId>;holding:<holdingId>`
+
+`id = sha256("external_asset_transfer " + businessKey)[0:16]`。
+
+同一 `businessKey` 重跑、改写备注或外部说明仍只保留一条；完整且不同的业务身份即使同日、
+同账户、同金额也保留为两笔。若历史有效记录只有相同日/账户/金额而没有这些不可变编号，
+脚本会阻断并保持文件字节不变，要求先人工核实并修复旧记录，不会静默合并或继续追加。
 数据点、flow、status 全部无变化时脚本打印 `no-op <date>` 并以 0 退出，
 **不改动文件字节**（IV 与 `updatedAt` 不变）。
 

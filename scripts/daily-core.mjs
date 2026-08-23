@@ -221,11 +221,33 @@ export function hasTradeEvidence(raw) {
   return null;
 }
 
+/**
+ * Immutable identity for a Sharesight in-kind transfer.  Free-form fields such
+ * as desc, externalRef and a caller-supplied id are deliberately excluded:
+ * scheduled runs may reword them, while the three Sharesight object ids name
+ * the same business event across runs.
+ */
+export function inKindBusinessKey(raw) {
+  if (raw.evidence !== "external_asset_transfer") return "";
+  const objectId = value => {
+    const text = value == null ? "" : String(value).trim();
+    if (!/^\d+$/.test(text)) return "";
+    const normalized = BigInt(text).toString();
+    return normalized === "0" ? "" : normalized;
+  };
+  const sourceTradeId = objectId(raw.sourceTradeId);
+  const tradeId = objectId(raw.tradeId);
+  const holdingId = objectId(raw.holdingId);
+  if (!sourceTradeId || !tradeId || !holdingId) return "";
+  return `sharesight:${sourceTradeId}->${tradeId};holding:${holdingId}`;
+}
+
 export function classifyFlow(raw) {
   const desc = typeof raw.desc === "string" ? raw.desc : "";
   const type = typeof raw.type === "string" ? raw.type : "";
   const trade = hasTradeEvidence(raw);
   const externalRef = typeof raw.externalRef === "string" ? raw.externalRef.trim() : "";
+  const businessKey = inKindBusinessKey(raw);
 
   // A verified in-kind transfer is the one case where a linked trade is also
   // external to the managed composite. Require both sides to agree on market
@@ -247,12 +269,12 @@ export function classifyFlow(raw) {
       && raw.sourceDate === raw.date && raw.destinationDate === raw.date
       && sourceInstrument !== "" && sourceInstrument === destinationInstrument
       && quantitiesMatch;
-    if (!externalRef || !paired) {
+    if (!businessKey || !paired) {
       return { kind: "unresolved", effective: false,
         reason: "external asset transfer lacks paired source/destination trade evidence" };
     }
     return { kind: "external", effective: true,
-      reason: `verified external asset transfer ${externalRef}` };
+      reason: `verified external asset transfer ${businessKey}` };
   }
 
   if (raw.evidence === "internal_trade") return { kind: "internal", reason: "explicit evidence: internal_trade" };
@@ -279,7 +301,8 @@ export function classifyFlow(raw) {
 
 /** Stable, idempotent identifier for a cash record. */
 export function flowId(raw) {
-  const canon = [
+  const businessKey = inKindBusinessKey(raw);
+  const canon = businessKey ? `external_asset_transfer ${businessKey}` : [
     raw.date ?? "",
     raw.acct ?? "",
     typeof raw.amount === "number" ? raw.amount.toFixed(2) : String(raw.amount ?? ""),
@@ -302,16 +325,45 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
   let added = 0, promoted = 0, flagged = 0;
 
   for (const raw of incoming) {
-    const id = raw.id != null && raw.id !== "" ? String(raw.id) : flowId(raw);
     const { kind, reason, effective = false } = classifyFlow(raw);
+    const businessKey = inKindBusinessKey(raw);
+    // A verified in-kind transfer always uses the immutable source identity.
+    // Never trust a free-form id supplied by a scheduled prompt for this case.
+    const id = businessKey ? flowId(raw)
+      : (raw.id != null && raw.id !== "" ? String(raw.id) : flowId(raw));
     if (kind === "misfiled") { errors.push(`flow ${raw.date} ${raw.acct}: ${reason}`); continue; }
     if (kind === "internal") continue;
 
     const record = { id, date: raw.date, acct: raw.acct, amount: raw.amount,
       desc: typeof raw.desc === "string" ? raw.desc : "", reason,
-      effective: effective === true };
+      effective: effective === true,
+      ...(businessKey ? {
+        businessKey,
+        sourceTradeId: raw.sourceTradeId,
+        tradeId: raw.tradeId,
+        holdingId: raw.holdingId
+      } : {}) };
 
     if (kind === "external") {
+      if (businessKey && effective) {
+        // De-duplicate by the business event even if an older producer chose a
+        // different record id.  Distinct complete keys remain distinct events.
+        if (auto.some(f => f && f.businessKey === businessKey)) continue;
+
+        // Legacy verified rows did not persist their immutable source ids.  A
+        // same-tuple match is therefore ambiguous: fail closed rather than add
+        // a fourth copy or silently merge two genuine equal-value transfers.
+        const sameTupleLegacy = auto.filter(f => f && f.effective === true
+          && f.date === raw.date && f.acct === raw.acct
+          && Number.isFinite(Number(f.amount))
+          && Math.abs(Number(f.amount) - Number(raw.amount)) < 0.005
+          && /^verified external asset transfer\b/.test(String(f.reason || ""))
+          && !f.businessKey);
+        if (sameTupleLegacy.length) {
+          errors.push(`flow ${raw.date} ${raw.acct}: ambiguous legacy in-kind transfer; source ids must be repaired before writing`);
+          continue;
+        }
+      }
       if (autoIds.has(id)) {
         const i = auto.findIndex(f => f.id === id);
         if (effective && i >= 0 && auto[i].effective !== true) {
