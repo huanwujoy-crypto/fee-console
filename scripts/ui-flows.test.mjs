@@ -356,3 +356,125 @@ test("a month of mixed events keeps every distinct one exactly once", () => {
   assert.equal(flows.length, 3, "BRK/B once, the 2,500 cash-in, and the 7,500 wire");
   assert.equal(sum(flows), Number((TRANSFER + 2500 + 7500).toFixed(2)));
 });
+
+/* ---------------------------------------------------------------------------
+ * 2026-08-23: the residual double count. `effectiveFlows` used to drop an auto
+ * record the moment a confirmation absorbed it, so a second copy of the SAME
+ * business event had nothing left to compare against and was counted again —
+ * the shape of the 2026-08-20 incident, one layer deeper.
+ *
+ * Identity now comes from `reason`, which carries the stable externalRef
+ * (scripts/daily-core.mjs classifyFlow builds it for every effective record).
+ * `id` is a hash over date|acct|amount|foreignIdentifier|desc, so the same
+ * event re-hashed after a description change gives two ids and one reason,
+ * while two different transfers always give two reasons. These cases pin that,
+ * and pin that records with no reason keep the pre-existing behaviour exactly.
+ * ------------------------------------------------------------------------- */
+
+const REF = "ib-hk-webull-brkb-20260820-780-v1";
+const withReason = (over = {}) => ({ ...AUTO_BRKB, reason: `verified external asset transfer ${REF}`, ...over });
+const noReason = (over = {}) => {
+  const rec = { ...AUTO_BRKB, ...over };
+  delete rec.reason;
+  return rec;
+};
+
+test("a confirmation plus two copies of one event counts the event once", () => {
+  const copy = withReason({ id: "rehash-b", desc: "BRK/B 780 received from IB-HK" });
+  const flows = effectiveFlows(month("2026-08", [legacyBrkb()]), [withReason(), copy]);
+  assert.equal(flows.length, 1, "the confirmation absorbs the event; the copy is not a second one");
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("an src-linked confirmation plus two copies of one event counts the event once", () => {
+  const linked = legacyBrkb({ id: "man-src", src: AUTO_BRKB.id, note: "" });
+  const copy = withReason({ id: "rehash-c", desc: "BRK/B 780 received from IB-HK" });
+  const flows = effectiveFlows(month("2026-08", [linked]), [withReason(), copy]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("three copies of one event still count once", () => {
+  const flows = effectiveFlows([], [
+    withReason({ id: "c1" }),
+    withReason({ id: "c2", desc: "BRK/B 780 in kind" }),
+    withReason({ id: "c3", date: "2026-08-21", desc: "BRK/B 780 received" })
+  ]);
+  assert.equal(flows.length, 1);
+  assert.equal(sum(flows), TRANSFER);
+});
+
+test("two references stay two events even when the descriptions are identical", () => {
+  const a = withReason({ id: "ref-a", amount: 10000, reason: "verified external asset transfer wire-A" });
+  const b = withReason({ id: "ref-b", amount: 10000, reason: "verified external asset transfer wire-B" });
+  const flows = effectiveFlows([], [a, b]);
+  assert.equal(flows.length, 2, "identical descriptions must not merge two different references");
+  assert.equal(sum(flows), 20000);
+});
+
+test("a confirmation cannot hide a second reference behind an identical description", () => {
+  const a = withReason({ id: "ref-a", amount: 10000, reason: "verified external asset transfer wire-A" });
+  const b = withReason({ id: "ref-b", amount: 10000, reason: "verified external asset transfer wire-B" });
+  const manual = { id: "man-w", src: "", date: "2026-08-20", acct: "webull", amount: 10000, note: "" };
+  const flows = effectiveFlows(month("2026-08", [manual]), [a, b]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), 20000);
+});
+
+test("two references in two accounts stay two events", () => {
+  const a = withReason({ id: "acct-a", acct: "schwab", amount: 10000, reason: "verified external asset transfer ref-S" });
+  const b = withReason({ id: "acct-b", acct: "webull", amount: 10000, reason: "verified external asset transfer ref-W" });
+  const flows = effectiveFlows([], [a, b]);
+  assert.equal(flows.length, 2);
+  assert.equal(sum(flows), 20000);
+});
+
+test("a pending copy of an effective event never adds a second count", () => {
+  const pending = withReason({ id: "pending-copy", effective: false });
+  assert.equal(effectiveFlows([], [withReason(), pending]).length, 1);
+  assert.equal(effectiveFlows([], [pending, withReason()]).length, 1);
+  assert.equal(effectiveFlows([], [pending]).length, 0);
+});
+
+test("records with no reason keep the previous behaviour when a confirmation covers one", () => {
+  const manual = { id: "man-n", src: "", date: "2026-08-20", acct: "webull", amount: 10000, note: "" };
+  const a = noReason({ id: "nr-a", amount: 10000, desc: "" });
+  const b = noReason({ id: "nr-b", amount: 10000, desc: "" });
+  const flows = effectiveFlows(month("2026-08", [manual]), [a, b]);
+  assert.equal(flows.length, 2, "the confirmation retires one; the other is still its own event");
+  assert.equal(sum(flows), 20000);
+});
+
+test("records with no reason still collapse against what was already kept", () => {
+  const a = noReason({ id: "nr-a", amount: 10000, desc: "" });
+  const b = noReason({ id: "nr-b", amount: 10000, desc: "" });
+  const flows = effectiveFlows([], [a, b]);
+  assert.equal(flows.length, 1, "unchanged from before the reason key existed");
+});
+
+test("an empty reason string is treated as no reason at all", () => {
+  const a = withReason({ id: "blank-a", amount: 10000, reason: "   ", desc: "wire 1001" });
+  const b = withReason({ id: "blank-b", amount: 10000, reason: "", desc: "wire 1002" });
+  const flows = effectiveFlows([], [a, b]);
+  assert.equal(flows.length, 2, "distinct descriptions still separate them under the fallback");
+});
+
+test("the surviving flow carries its reason forward", () => {
+  const flows = effectiveFlows([], [withReason()]);
+  assert.equal(flows.length, 1);
+  assert.equal(flows[0].reason, `verified external asset transfer ${REF}`);
+});
+
+test("a mixed month with copies, references and a confirmation stays whole", () => {
+  const manual = legacyBrkb({ id: "m-brkb" });
+  const autos = [
+    withReason({ id: "brkb-1" }),
+    withReason({ id: "brkb-2", desc: "BRK/B 780 received from IB-HK" }),
+    withReason({ id: "wire-1", date: "2026-08-12", amount: 7500, desc: "inbound wire", reason: "verified external asset transfer wire-0812" }),
+    withReason({ id: "wire-2", date: "2026-08-12", amount: 7500, desc: "inbound wire", reason: "verified external asset transfer wire-0812-second" }),
+    withReason({ id: "later", date: "2026-08-13", amount: 999, effective: false, reason: "verified external asset transfer pending" })
+  ];
+  const flows = effectiveFlows(month("2026-08", [manual]), autos);
+  assert.equal(flows.length, 3, "BRK/B once, and the two same-day wires separately");
+  assert.equal(sum(flows), Number((TRANSFER + 7500 + 7500).toFixed(2)));
+});
