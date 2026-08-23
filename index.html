@@ -300,7 +300,8 @@ function monthOf(ym){let m=DB.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};D
    配对一对一消费：同日同账户两笔真实的等额转账仍各计一次。
    两条自动记录之间不用上面的证据启发式：effective 记录的 reason 里带着稳定的
    externalRef（见 scripts/daily-core.mjs classifyFlow），同 reason = 同一业务事件，
-   不同 reason = 两笔，描述写成什么样都不算数。只有没有 reason 的历史记录才退回启发式。 */
+   不同 reason = 两笔，描述写成什么样都不算数。没有 reason 的历史记录完全维持旧行为：
+   不进 Set，只在 src 与手工配对都没覆盖它之后，才和已保留的 kept 做一次启发式比对。 */
 const FLOW_CENT=0.005;
 const FLOW_STOP=new Set(["USD","HKD","CNY","EUR","IN","KIND","FOP","TRANSFER","TRANSFERS","EXTERNAL","ASSET","FROM","TO","SHARES","SHARE","STOCK","CASH","DEPOSIT","WITHDRAWAL","THE","AND","OF","VERIFIED","INBOUND","OUTBOUND","CONTRIBUTION"]);
 function flowTokens(text){
@@ -345,15 +346,16 @@ function effectiveFlows(){
   const confirmed=DB.months.flatMap(m=>m.flows||[]);
   const confirmedSrc=new Set(confirmed.map(f=>f.src).filter(Boolean));
   const pool=confirmed.filter(f=>f&&!f.src).map(f=>({rec:f,used:false}));
-  const kept=[],seenKey=new Set(),seenFuzzy=[];
+  const kept=[],seenKey=new Set();
   for(const f of (DAILY.flowsAuto||[])){
     if(!f||f.effective!==true)continue;
-    const a={id:f.id,src:f.id,date:f.date,acct:f.acct,amount:num(f.amount),note:f.desc||"",automatic:true};
-    const key=String(f.reason==null?"":f.reason).trim();
-    if(key){if(seenKey.has(key))continue;seenKey.add(key);}else{if(flowPair(seenFuzzy,a,k=>k)>=0)continue;seenFuzzy.push(a);}
+    const a={id:f.id,src:f.id,date:f.date,acct:f.acct,amount:num(f.amount),note:f.desc||"",reason:f.reason==null?"":f.reason,automatic:true};
+    const rk=String(a.reason).trim();
+    if(rk){if(seenKey.has(rk))continue;seenKey.add(rk);}
     if(confirmedSrc.has(f.id))continue;
     const i=flowPair(pool,a,p=>p.used?null:p.rec);
     if(i>=0){pool[i].used=true;continue;}
+    if(!rk&&flowPair(kept,a,k=>k)>=0)continue;
     kept.push(a);
   }
   return confirmed.concat(kept);
