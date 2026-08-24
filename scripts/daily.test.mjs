@@ -15,6 +15,7 @@ import {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "daily.mjs");
+const repairCli = path.join(here, "repair-brkb-20260820.mjs");
 
 /* A throwaway key: never the production one. */
 const TEST_KEY = crypto.randomBytes(32).toString("base64url");
@@ -64,6 +65,28 @@ const writePayload = (dir, payload) => {
   const data = Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64");
   fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({ enc: true, v: 3, data }));
 };
+
+const runRepair = (dir, extra = [], key = TEST_KEY) => spawnSync(
+  process.execPath,
+  [repairCli, `--file=${path.join(dir, "data.json")}`, ...extra],
+  { encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: key } }
+);
+
+const repairPayload = (legacyCount = 4) => ({
+  updatedAt: "2026-08-23T02:00:00.000Z",
+  daily: [{ d: "2026-08-23", schwab: 599842.51, webull: 505604.62 }],
+  flowsAuto: [
+    { id: "wire-kept", date: "2026-08-18", acct: "schwab", amount: 2500,
+      desc: "external wire", reason: "explicit evidence with reference WIRE-1", effective: false },
+    ...Array.from({ length: legacyCount }, (_, i) => ({
+      id: `legacy-brkb-${i + 1}`, date: "2026-08-20", acct: "webull", amount: 387550.8,
+      desc: `BRK/B FOP wording ${i + 1}`,
+      reason: `verified external asset transfer legacy-${i + 1}`, effective: true
+    }))
+  ],
+  flowsUnresolved: [],
+  status: { asOf: "2026-08-23", provisional: false }
+});
 
 const NUMBERS = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{4,}\.\d{2}\b/;
 const ok = (accounts, splits, extra = {}) => validateInputs({
@@ -587,6 +610,71 @@ test("a repeated run with the same trade set stays a no-op", () => {
   const again = run(dir, extra, [`--flows=${flows}`]);
   assert.match(again.stdout, /^no-op /m);
   assert.ok(bytes1.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+/* ---------------- incident repair: exact, dry-run first, idempotent ---------------- */
+test("the BRK/B repair dry-run validates four legacy rows without changing bytes", () => {
+  const dir = tmp();
+  writePayload(dir, repairPayload());
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const result = runRepair(dir);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /ready canonical=0 legacy=4 apply=false/);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+test("the BRK/B repair replaces four legacy rows with one canonical Sharesight event", () => {
+  const dir = tmp();
+  writePayload(dir, repairPayload());
+  const result = runRepair(dir, ["--apply"]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /ok repaired=3 canonical=1/);
+
+  const payload = readPayload(dir);
+  assert.equal(payload.flowsAuto.length, 2, "unrelated wire plus one BRK/B event");
+  const repaired = payload.flowsAuto.find(flow => flow.businessKey);
+  assert.deepEqual({
+    id: repaired.id,
+    businessKey: repaired.businessKey,
+    sourceTradeId: repaired.sourceTradeId,
+    tradeId: repaired.tradeId,
+    holdingId: repaired.holdingId,
+    effective: repaired.effective
+  }, {
+    id: "66902b9317c6feeb",
+    businessKey: "sharesight:135783050->135784216;holding:28921427",
+    sourceTradeId: 135783050,
+    tradeId: 135784216,
+    holdingId: 28921427,
+    effective: true
+  });
+
+  const once = fs.readFileSync(path.join(dir, "data.json"));
+  const second = runRepair(dir, ["--apply"]);
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /no-op canonical=1 legacy=0/);
+  assert.ok(once.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+test("the BRK/B repair refuses an unexpected row count and preserves bytes", () => {
+  const dir = tmp();
+  writePayload(dir, repairPayload(3));
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const result = runRepair(dir, ["--apply"]);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /expected four-legacy-row shape/);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, "data.json"))));
+});
+
+test("the BRK/B repair refuses the wrong key and preserves bytes", () => {
+  const dir = tmp();
+  writePayload(dir, repairPayload());
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const wrongKey = crypto.randomBytes(32).toString("base64url");
+  const result = runRepair(dir, ["--apply"], wrongKey);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /decrypt failed/);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, "data.json"))));
 });
 
 /* ---------------- hygiene ---------------- */
