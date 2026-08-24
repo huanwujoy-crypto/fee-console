@@ -106,6 +106,14 @@ Webull 走邮件导入的买卖会被 Sharesight 记成 `DEPOSIT` / `WITHDRAWAL`
 数据点、flow、status 全部无变化时脚本打印 `no-op <date>` 并以 0 退出，
 **不改动文件字节**（IV 与 `updatedAt` 不变）。
 
+### 2026-08-20 BRK/B 事故修复
+
+`scripts/repair-brkb-20260820.mjs` 是事件专用、默认只读的历史修复工具。它只接受加密 v3
+数据，并且必须精确看到四条同日、同账户、同金额、已生效但缺少 `businessKey` 的旧记录，
+同时不能存在 canonical 或 unresolved 副本。只有显式 `--apply` 才把四条旧记录替换为一条
+带完整 Sharesight source trade、target trade 与 holding 身份的记录；数量、身份、密钥或结构
+任一不符都会拒绝写入并保持原文件字节不变。成功后再次执行为 byte-for-byte `no-op`。
+
 ## 5. status 块
 
 ```jsonc
