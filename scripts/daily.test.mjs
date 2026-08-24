@@ -9,7 +9,7 @@ import test from "node:test";
 
 import {
   validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
-  flowId, buildPoint, buildStatus, nyDate, dayDiff,
+  flowId, inKindBusinessKey, buildPoint, buildStatus, nyDate, dayDiff,
   SPLIT_PROVISIONAL, MAX_LOOKBACK_DAYS
 } from "./daily-core.mjs";
 
@@ -54,6 +54,15 @@ const readPayload = dir => {
   const d = crypto.createDecipheriv("aes-256-gcm", key, b.subarray(0, 12));
   d.setAuthTag(b.subarray(b.length - 16));
   return JSON.parse(Buffer.concat([d.update(b.subarray(12, b.length - 16)), d.final()]).toString());
+};
+
+const writePayload = (dir, payload) => {
+  const key = Buffer.from(TEST_KEY, "base64url");
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([c.update(JSON.stringify(payload), "utf8"), c.final()]);
+  const data = Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64");
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({ enc: true, v: 3, data }));
 };
 
 const NUMBERS = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{4,}\.\d{2}\b/;
@@ -430,7 +439,78 @@ test("a verified in-kind transfer is stored as an effective flow", () => {
   const r = reconcileFlows([], [], [raw]);
   assert.equal(r.auto.length, 1);
   assert.equal(r.auto[0].effective, true);
+  assert.equal(r.auto[0].businessKey, "sharesight:135783050->135784216;holding:28921427");
+  assert.equal(r.auto[0].id, flowId(raw), "caller-supplied ids must not control in-kind identity");
   assert.equal(r.unresolved.length, 0);
+});
+
+test("an in-kind transfer has one immutable identity across rewritten prompts", () => {
+  const base = {
+    date: "2026-08-20", acct: "webull", amount: 387550.8,
+    sourceTradeId: 135783050, tradeId: 135784216, holdingId: 28921427,
+    holdingDelta: 780, sourceDate: "2026-08-20", destinationDate: "2026-08-20",
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    evidence: "external_asset_transfer"
+  };
+  assert.equal(inKindBusinessKey(base), "sharesight:135783050->135784216;holding:28921427");
+  assert.equal(classifyFlow(base).effective, true,
+    "the immutable Sharesight ids themselves are the stable external reference");
+  const variants = [
+    { ...base, id: "routine-first", desc: "BRK/B FOP", externalRef: "first wording" },
+    { ...base, id: "routine-second", desc: "780 shares received", externalRef: "second wording" },
+    { ...base, id: "routine-third", desc: "confirmed next morning", externalRef: "third wording",
+      foreignIdentifier: "changed-by-source" }
+  ];
+  assert.equal(new Set(variants.map(flowId)).size, 1);
+  const r = reconcileFlows([], [], variants);
+  assert.equal(r.auto.length, 1);
+  assert.equal(r.added, 1);
+  assert.deepEqual(r.errors, []);
+});
+
+test("equal-value in-kind transfers with different immutable ids stay separate", () => {
+  const base = {
+    date: "2026-08-20", acct: "webull", amount: 387550.8, desc: "BRK/B FOP",
+    sourceTradeId: 135783050, tradeId: 135784216, holdingId: 28921427,
+    holdingDelta: 780, sourceDate: "2026-08-20", destinationDate: "2026-08-20",
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    evidence: "external_asset_transfer"
+  };
+  const other = { ...base, sourceTradeId: 235783050, tradeId: 235784216, holdingId: 38921427 };
+  const r = reconcileFlows([], [], [base, other]);
+  assert.equal(r.auto.length, 2);
+  assert.equal(new Set(r.auto.map(f => f.businessKey)).size, 2);
+  assert.deepEqual(r.errors, []);
+});
+
+test("an ambiguous legacy in-kind row blocks the write and preserves encrypted bytes", () => {
+  const dir = tmp();
+  const t = today();
+  assert.equal(run(dir).status, 0);
+  const payload = readPayload(dir);
+  payload.flowsAuto = [{
+    id: "legacy-routine-id", date: t, acct: "webull", amount: 387550.8,
+    desc: "BRK/B 780 share FOP", reason: "verified external asset transfer old free text",
+    effective: true
+  }];
+  writePayload(dir, payload);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const flows = JSON.stringify([{
+    id: "new-routine-id", date: t, acct: "webull", amount: 387550.8,
+    desc: "same transfer, rewritten", sourceTradeId: 135783050,
+    tradeId: 135784216, holdingId: 28921427, holdingDelta: 780,
+    evidence: "external_asset_transfer", sourceDate: t, destinationDate: t,
+    sourceInstrument: "BRK.B", destinationInstrument: "BRK/B",
+    sourceQuantity: 780, destinationQuantity: 780,
+    externalRef: "another wording"
+  }]);
+  const r = run(dir, {}, [`--flows=${flows}`]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /ambiguous legacy in-kind transfer/);
+  assert.match(r.stderr, /nothing written/);
+  assert.ok(before.equals(fs.readFileSync(path.join(dir, "data.json"))));
 });
 
 test("the CLI accepts and stores a verified in-kind transfer without cash arguments", () => {
