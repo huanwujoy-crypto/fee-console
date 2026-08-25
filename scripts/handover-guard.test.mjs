@@ -10,7 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const guard = path.join(here, 'handover-guard.mjs');
 
 const valid = (extra = '') => `<!doctype html>
-<html><head><title>XUAN-IB 睡前交接</title><style>body{color:#111}</style></head>
+<html><head><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-IB 交接"><title>XUAN-IB 睡前交接</title><style>body{color:#111}</style></head>
 <body><!-- xuan-ib-handover:v1 --><h1>2026-08-25</h1><p>${'完整简报 '.repeat(180)}</p>${extra}</body></html>
 `;
 
@@ -32,6 +32,12 @@ test('rejects the wrong data date', () => {
   const result = run(valid(), '2026-08-24');
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /date is not present/);
+});
+
+test('rejects a page that cannot be installed like the fee console', () => {
+  const result = run(valid().replace('<meta name="apple-mobile-web-app-capable" content="yes">', ''));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /iPhone web-app capability/);
 });
 
 test('rejects outbound network code', () => {

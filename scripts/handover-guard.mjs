@@ -44,6 +44,12 @@ if (count(/<!--\s*xuan-ib-handover:v1\s*-->/gi) !== 1) {
 if (!/<title>\s*XUAN-IB\s+睡前交接\s*<\/title>/i.test(html)) {
   fail('the approved title is missing');
 }
+if (!/<meta\b[^>]*name=["']apple-mobile-web-app-capable["'][^>]*content=["']yes["']/i.test(html)) {
+  fail('the iPhone web-app capability is missing');
+}
+if (!/<meta\b[^>]*name=["']apple-mobile-web-app-title["'][^>]*content=["']XUAN-IB 交接["']/i.test(html)) {
+  fail('the iPhone home-screen title is missing');
+}
 if (!html.includes(expectedDate)) {
   fail('the declared data date is not present');
 }
