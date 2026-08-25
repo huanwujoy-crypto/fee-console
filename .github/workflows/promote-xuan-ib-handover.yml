@@ -44,6 +44,15 @@ jobs:
           set -euo pipefail
 
           base_sha=$(git rev-parse origin/main)
+          published_blob=$(git rev-parse origin/main:xuan-ib/latest.html)
+          published_commit_epoch=$(git log -1 --format='%ct' origin/main -- xuan-ib/latest.html)
+          published_date=$(git show origin/main:xuan-ib/latest.html |
+            sed -nE 's/.*<span class="date">([0-9]{4}-[0-9]{2}-[0-9]{2}).*/\1/p' |
+            head -n 1)
+          if [[ ! "$published_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo 'Could not determine the currently published handover date.' >&2
+            exit 1
+          fi
           cutoff_epoch=$(date -u -d '18 hours ago' +%s)
           today_hkt=$(TZ=Asia/Hong_Kong date +%F)
           yesterday_hkt=$(TZ=Asia/Hong_Kong date -d 'yesterday' +%F)
@@ -56,21 +65,35 @@ jobs:
             if [[ ! "$branch_name" =~ $branch_re ]]; then
               continue
             fi
-            if ! git merge-base --is-ancestor origin/main "$candidate_ref"; then
+            candidate_parent=$(git rev-parse "$candidate_ref^")
+            if ! git merge-base --is-ancestor "$candidate_parent" origin/main; then
               continue
             fi
-            if [[ $(git rev-list --count "origin/main..$candidate_ref") -ne 1 ]]; then
-              continue
-            fi
-            if [[ $(git rev-parse "$candidate_ref^") != "$base_sha" ]]; then
+            if [[ $(git rev-list --count "$candidate_parent..$candidate_ref") -ne 1 ]]; then
               continue
             fi
 
-            mapfile -t changed_files < <(git diff --name-only "origin/main..$candidate_ref")
+            mapfile -t changed_files < <(git diff --name-only "$candidate_parent..$candidate_ref")
             if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "xuan-ib/index.html" ]]; then
               continue
             fi
-            if [[ $(git rev-list --count --merges "origin/main..$candidate_ref") -ne 0 ]]; then
+            if [[ $(git rev-list --count --merges "$candidate_parent..$candidate_ref") -ne 0 ]]; then
+              continue
+            fi
+
+            candidate_blob=$(git rev-parse "$candidate_ref:xuan-ib/index.html")
+            if [[ "$candidate_blob" == "$published_blob" ]]; then
+              continue
+            fi
+            previously_published=false
+            while IFS= read -r published_commit; do
+              historical_blob=$(git rev-parse "$published_commit:xuan-ib/latest.html" 2>/dev/null || true)
+              if [[ "$candidate_blob" == "$historical_blob" ]]; then
+                previously_published=true
+                break
+              fi
+            done < <(git rev-list origin/main -- xuan-ib/latest.html)
+            if [[ "$previously_published" == true ]]; then
               continue
             fi
 
@@ -93,6 +116,12 @@ jobs:
 
             commit_epoch=$(git show -s --format='%ct' "$candidate_sha")
             if (( commit_epoch < cutoff_epoch )); then
+              continue
+            fi
+            if [[ "$data_date" < "$published_date" ]]; then
+              continue
+            fi
+            if [[ "$data_date" == "$published_date" ]] && (( commit_epoch <= published_commit_epoch )); then
               continue
             fi
 
@@ -118,6 +147,12 @@ jobs:
 
           if (( ${#candidates[@]} == 0 )); then
             echo 'No fresh handover is waiting; nothing to promote.'
+            {
+              echo '### XUAN-IB promotion'
+              echo ''
+              echo ':information_source: No unpublished, fresh, verified handover candidate was found.'
+              echo "Trusted main remained at \`$base_sha\`."
+            } >> "$GITHUB_STEP_SUMMARY"
             echo 'sha=' >> "$GITHUB_OUTPUT"
             exit 0
           fi
