@@ -9,7 +9,7 @@
 //     for the trend line.
 //   * 周末自动校准 — when both brokers have settled, the routine re-runs the
 //     trailing days with one valuation date per day and clears the flag.
-//     Long-run performance and the CSPX / EQAC comparison prefer these
+//     Long-run performance and the SPY / QQQ comparison prefer these
 //     calibrated snapshots.
 //   * 历史月份自动归档 — a month becomes history by the calendar turning over.
 //     There is no settlement button, no confirmation step, nothing to click.
@@ -30,7 +30,12 @@ export const CASH_EPS = 0.01;
 
 export const ACCOUNTS = ["schwab", "webull"];
 export const SPLITS = ["cash", "stock", "other"];
-export const BENCH_KEYS = ["cspx", "eqac", "eqqq"];
+/* 基准（口径 v4.6）：美股收盘、含息。存的是当日原始收盘价 + 当日除息金额，
+   两者都写一次就永不重述——这是不用 Yahoo adjclose 的原因（见 §9.2）。
+   cspx / eqac 是 v4.5 及以前的欧洲收盘口径，只读不再写，供历史数据回放。 */
+export const BENCH_KEYS = ["spy", "qqq"];
+export const BENCH_DIV_KEYS = ["spyd", "qqqd"];
+export const BENCH_LEGACY_KEYS = ["cspx", "eqac", "eqqq"];
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -67,7 +72,7 @@ export const isWeekend = d => {
 export function validateInputs(input) {
   const errors = [], provisional = [];
   const {
-    date, accounts = {}, splits = {}, sourceDates = {}, bench = {},
+    date, accounts = {}, splits = {}, sourceDates = {}, bench = {}, benchDiv = {},
     benchDate = null, calibrated = false, now
   } = input;
 
@@ -112,11 +117,29 @@ export function validateInputs(input) {
   }
 
   for (const [k, v] of Object.entries(bench)) {
-    if (!BENCH_KEYS.includes(k)) errors.push(`unknown benchmark field --${k}`);
+    if (![...BENCH_KEYS, ...BENCH_LEGACY_KEYS].includes(k)) errors.push(`unknown benchmark field --${k}`);
     else if (!Number.isFinite(v) || !(v > 0)) errors.push(`--${k} must be a number greater than 0`);
   }
+  const hasNewBench = BENCH_KEYS.some(k => bench[k] !== undefined);
+  const hasLegacyBench = BENCH_LEGACY_KEYS.some(k => bench[k] !== undefined);
+  if (hasNewBench && BENCH_KEYS.some(k => bench[k] === undefined)) {
+    errors.push(`benchmark prices must be supplied as a pair: ${BENCH_KEYS.join(" and ")}`);
+  }
+  if (hasLegacyBench && !(["cspx", "eqac"].every(k => bench[k] !== undefined))) {
+    errors.push("legacy benchmark prices must be supplied as a pair: cspx and eqac");
+  }
+  if (hasNewBench && hasLegacyBench) errors.push("do not mix SPY/QQQ and legacy benchmark inputs in one run");
+  // 除息金额绝大多数日子是 0，所以下界是 0 而不是 >0；负数一定是取数错误。
+  for (const [k, v] of Object.entries(benchDiv)) {
+    if (!BENCH_DIV_KEYS.includes(k)) errors.push(`unknown benchmark dividend field --${k}`);
+    else if (!Number.isFinite(v) || v < 0) errors.push(`--${k} must be a number of zero or greater`);
+    else if (bench[k.slice(0, -1)] === undefined) {
+      errors.push(`--${k} needs its price --${k.slice(0, -1)} on the same day`);
+    }
+  }
   if (Object.keys(bench).length) {
-    if (benchDate && !isIsoDate(benchDate)) errors.push("--src-bench must be a valid ISO calendar date");
+    if (!benchDate) errors.push("--src-bench is required when benchmark prices are supplied");
+    else if (!isIsoDate(benchDate)) errors.push("--src-bench must be a valid ISO calendar date");
     else if (benchDate && benchDate !== date) {
       provisional.push(`benchmark priced on ${benchDate}, not ${date}`);
     }
@@ -395,11 +418,13 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, bench = {}, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, bench = {}, benchDiv = {}, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
-  for (const k of BENCH_KEYS) if (bench[k] !== undefined) point[k] = bench[k];
+  for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
+  // 只在真有除息时落字段：绝大多数日子为 0，写进去会让 samePoint 与每日 diff 变噪。
+  for (const k of BENCH_DIV_KEYS) if (Number(benchDiv[k]) > 0) point[k] = benchDiv[k];
   const prov = !calibrated && provisional.length > 0;
   if (prov) point.prov = 1;
   return point;

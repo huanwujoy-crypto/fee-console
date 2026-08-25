@@ -21,4 +21,4 @@ jobs:
 
       - name: Run the script test suite
         shell: bash
-        run: node --test scripts/daily.test.mjs scripts/benchmark-cache.test.mjs scripts/ui-pr-guard.test.mjs scripts/ui-flows.test.mjs scripts/handover-guard.test.mjs scripts/xuan-ib-loader.test.mjs
+        run: node --test scripts/daily.test.mjs scripts/benchmark-cache.test.mjs scripts/ui-pr-guard.test.mjs scripts/ui-flows.test.mjs scripts/handover-guard.test.mjs scripts/xuan-ib-loader.test.mjs scripts/backfill-benchmark.test.mjs

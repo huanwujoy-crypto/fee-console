@@ -92,7 +92,7 @@ const NUMBERS = /\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b|\b\d{4,}\.\d{2}\b/;
 const ok = (accounts, splits, extra = {}) => validateInputs({
   date: extra.date ?? today(), accounts, splits,
   sourceDates: extra.sourceDates ?? { schwab: extra.date ?? today(), webull: extra.date ?? today() },
-  bench: extra.bench ?? {}, benchDate: extra.benchDate ?? null,
+  bench: extra.bench ?? {}, benchDiv: extra.benchDiv ?? {}, benchDate: extra.benchDate ?? null,
   calibrated: !!extra.calibrated, now: extra.now ?? new Date()
 });
 
@@ -184,7 +184,7 @@ test("an implausible lag still blocks", () => {
 test("a benchmark priced on another day is 暂估", () => {
   const t = today();
   const v = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
-    { bench: { cspx: 800 }, benchDate: shift(t, -1) });
+    { bench: { spy: 747.03, qqq: 687.99 }, benchDate: shift(t, -1) });
   assert.deepEqual(v.errors, []);
   assert.ok(v.provisional.some(n => /benchmark priced on/.test(n)));
 });
@@ -699,14 +699,67 @@ test("rejects unknown arguments and unknown flags", () => {
   assert.match(run(dir, {}, ["--settle"]).stderr, /unknown flag --settle/);
 });
 
-test("stores an eqac benchmark under its own key", () => {
+test("stores the SPY and QQQ benchmarks under their own keys", () => {
   const dir = tmp();
-  const r = run(dir, { cspx: "832.79", eqac: "505.10" });
+  const r = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": today() });
   assert.equal(r.status, 0, r.stderr);
   const last = readPayload(dir).daily.at(-1);
-  assert.equal(last.eqac, 505.10);
-  assert.equal(last.cspx, 832.79);
-  assert.equal("eqqq" in last, false, "eqac must not be written under the old eqqq key");
+  assert.equal(last.spy, 763.47);
+  assert.equal(last.qqq, 706.32);
+  assert.equal("cspx" in last, false, "SPY must not be written under the retired European key");
+});
+
+/* 除息日之外不落字段：写 0 会让 samePoint 判定为变化，每天制造一次空 diff。 */
+test("a dividend is stored only on the day it goes ex", () => {
+  const dir = tmp();
+  const quiet = run(dir, { spy: "763.47", qqq: "706.32", spyd: "0", "src-bench": today() });
+  assert.equal(quiet.status, 0, quiet.stderr);
+  assert.equal("spyd" in readPayload(dir).daily.at(-1), false);
+
+  const dir2 = tmp();
+  const exDay = run(dir2, { spy: "768.40", qqq: "706.32", spyd: "1.903516", "src-bench": today() });
+  assert.equal(exDay.status, 0, exDay.stderr);
+  assert.equal(readPayload(dir2).daily.at(-1).spyd, 1.903516);
+});
+
+test("SPY and QQQ plus their source date are mandatory as a pair", () => {
+  const missingPair = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { spy: 763.47 }, benchDate: today() });
+  assert.ok(missingPair.errors.some(e => /must be supplied as a pair/.test(e)), missingPair.errors.join("; "));
+  const missingDate = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { spy: 763.47, qqq: 706.32 } });
+  assert.ok(missingDate.errors.some(e => /--src-bench is required/.test(e)), missingDate.errors.join("; "));
+});
+
+test("the old Routine can finish during migration, but may not mix benchmark systems", () => {
+  const dir = tmp(), d = today();
+  const legacy = run(dir, { cspx: "825.29", eqac: "497.50", "src-bench": d });
+  assert.equal(legacy.status, 0, legacy.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.cspx, 825.29);
+  assert.equal(point.eqac, 497.50);
+  const mixed = run(tmp(), { spy: "763.47", qqq: "706.32", cspx: "825.29", eqac: "497.50", "src-bench": d });
+  assert.notEqual(mixed.status, 0);
+  assert.match(mixed.stderr, /do not mix SPY\/QQQ and legacy benchmark inputs/);
+});
+
+test("rerunning an ex-date without an event preserves the verified dividend", () => {
+  const dir = tmp(), d = today();
+  const first = run(dir, { spy: "768.40", qqq: "706.32", spyd: "1.903516", "src-bench": d });
+  assert.equal(first.status, 0, first.stderr);
+  const second = run(dir, { spy: "768.40", qqq: "706.32", "src-bench": d });
+  assert.equal(second.status, 0, second.stderr);
+  assert.equal(readPayload(dir).daily.at(-1).spyd, 1.903516);
+});
+
+test("a dividend without its price is refused, and a negative one too", () => {
+  const orphan = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { qqq: 706.32 }, benchDiv: { spyd: 1.9 } });
+  assert.ok(orphan.errors.some(e => /--spyd needs its price --spy/.test(e)), orphan.errors.join("; "));
+
+  const negative = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { spy: 763.47 }, benchDiv: { spyd: -1 } });
+  assert.ok(negative.errors.some(e => /--spyd must be a number of zero or greater/.test(e)), negative.errors.join("; "));
 });
 
 test("buildPoint omits prov when nothing is provisional", () => {
