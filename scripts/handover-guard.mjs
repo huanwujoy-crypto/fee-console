@@ -57,6 +57,8 @@ if (!html.includes(expectedDate)) {
 const forbidden = [
   ['external script', /<script\b[^>]*\bsrc\s*=/i],
   ['embedded frame or object', /<(?:iframe|frame|embed|object)\b/i],
+  ['protocol-relative URL', /[="'(\s]\/\/[A-Za-z0-9]/i],
+  ['remote resource', /<(?:img|audio|video|source|track|link|image)\b|\bsrcset\s*=|\burl\s*\(|@import\b|<meta\b[^>]*http-equiv\s*=\s*["']?refresh/i],
   ['form submission', /<form\b[^>]*\baction\s*=/i],
   ['network call', /\b(?:fetch|XMLHttpRequest|WebSocket|EventSource)\s*\(/i],
   ['browser storage or cookie access', /\b(?:localStorage|sessionStorage|document\.cookie)\b/i],

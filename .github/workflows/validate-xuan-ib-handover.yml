@@ -1,0 +1,64 @@
+name: Validate XUAN-IB candidate
+
+on:
+  push:
+    branches:
+      - 'claude/**'
+    paths:
+      - xuan-ib/index.html
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the candidate only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Load the guard from trusted main
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          git show origin/main:scripts/handover-guard.mjs > "$RUNNER_TEMP/handover-guard.mjs"
+
+      - name: Validate the candidate contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          head_sha=$(git rev-parse HEAD)
+          base_sha=$(git rev-parse origin/main)
+          if [[ $(git rev-list --count "origin/main..HEAD") -ne 1 ]] ||
+             [[ $(git rev-parse "HEAD^") != "$base_sha" ]] ||
+             [[ $(git rev-list --count --merges "origin/main..HEAD") -ne 0 ]]; then
+            echo 'Candidate must be one non-merge commit directly on current main.' >&2
+            exit 1
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only "origin/main..HEAD")
+          if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "xuan-ib/index.html" ]]; then
+            echo 'Candidate must change xuan-ib/index.html only.' >&2
+            exit 1
+          fi
+
+          subject=$(git show -s --format='%s' "$head_sha")
+          subject_re='^handover ([0-9]{4}-[0-9]{2}-[0-9]{2})$'
+          if [[ ! "$subject" =~ $subject_re ]]; then
+            echo 'Commit subject must be handover YYYY-MM-DD.' >&2
+            exit 1
+          fi
+          data_date=${BASH_REMATCH[1]}
+          today_hkt=$(TZ=Asia/Hong_Kong date +%F)
+          yesterday_hkt=$(TZ=Asia/Hong_Kong date -d 'yesterday' +%F)
+          if [[ "$data_date" != "$today_hkt" && "$data_date" != "$yesterday_hkt" ]]; then
+            echo 'Candidate data date is stale or in the future.' >&2
+            exit 1
+          fi
+
+          node "$RUNNER_TEMP/handover-guard.mjs" xuan-ib/index.html "$data_date"
