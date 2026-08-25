@@ -6,25 +6,37 @@ import { pathToFileURL } from 'node:url';
 const CACHE_PATH = process.env.BENCHMARK_CACHE_PATH || 'benchmark-close.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_DAYS = 120;
+const TOTAL_RETURN_TOLERANCE = 5e-4;
 
 export const DEFINITIONS = Object.freeze({
-  cspx: Object.freeze({
-    symbol: 'CSPX.L',
+  spy: Object.freeze({
+    symbol: 'SPY',
     currency: 'USD',
-    exchangeNames: Object.freeze(['LSE']),
-    exchange: 'LSE',
-    timezone: 'Europe/London',
-    closeMinutes: 16 * 60 + 30,
+    // Yahoo has used both the legacy 'PCX' and the current 'NYSEArca' for NYSE
+    // Arca listings; either is accepted. Anything else means the symbol did not
+    // resolve to the listing we intend to track, so the fetch must fail loudly.
+    exchangeNames: Object.freeze(['PCX', 'NYSEArca', 'ARCA']),
+    exchangeTimezoneName: 'America/New_York',
+    exchange: 'NYSEArca',
+    timezone: 'America/New_York',
+    closeMinutes: 16 * 60,
   }),
-  eqac: Object.freeze({
-    symbol: 'EQAC.SW',
+  qqq: Object.freeze({
+    symbol: 'QQQ',
     currency: 'USD',
-    exchangeNames: Object.freeze(['EBS']),
-    exchange: 'SIX',
-    timezone: 'Europe/Zurich',
-    closeMinutes: 17 * 60 + 30,
+    exchangeNames: Object.freeze(['NMS', 'NasdaqGS', 'NGM']),
+    exchangeTimezoneName: 'America/New_York',
+    exchange: 'NasdaqGS',
+    timezone: 'America/New_York',
+    closeMinutes: 16 * 60,
   }),
 });
+
+// Why raw closes plus dividends rather than Yahoo's adjusted close:
+// `adjclose` is restated backwards on every ex-date, but data.json stores each
+// day's benchmark once and never rewrites history. Pairing an unadjusted close
+// with the dividend that went ex that day keeps every stored value permanent
+// while still producing a total-return chain: r = (P + D) / P_prev - 1.
 
 function localParts(date, timezone) {
   const parts = new Intl.DateTimeFormat('en-CA', {
@@ -66,29 +78,70 @@ export function extractPrices(payload, definition, now = new Date()) {
   if (!definition.exchangeNames.includes(meta.exchangeName)) {
     throw new Error(`Unexpected exchange for ${definition.symbol}: ${meta.exchangeName}`);
   }
+  if (meta.exchangeTimezoneName !== definition.exchangeTimezoneName) {
+    throw new Error(`Unexpected timezone for ${definition.symbol}: ${meta.exchangeTimezoneName}`);
+  }
 
   const byDate = new Map();
+  const rawByDate = new Map();
   const timestamps = result.timestamp || [];
   const closes = result.indicators?.quote?.[0]?.close || [];
+  const adjusted = result.indicators?.adjclose?.[0]?.adjclose;
+  if (!Array.isArray(adjusted) || adjusted.length !== timestamps.length) {
+    throw new Error(`Missing adjusted-close verification series for ${definition.symbol}`);
+  }
   for (let i = 0; i < timestamps.length; i += 1) {
     const price = closes[i];
     if (!Number.isFinite(price) || price <= 0) continue;
+    const adj = adjusted[i];
+    if (!Number.isFinite(adj) || adj <= 0) {
+      throw new Error(`Invalid adjusted-close verification value for ${definition.symbol}`);
+    }
     const date = new Date(timestamps[i] * 1000);
     if (!isCompletedSession(date, definition, now)) continue;
-    byDate.set(localParts(date, definition.timezone).date, roundPrice(price));
+    const d = localParts(date, definition.timezone).date;
+    byDate.set(d, roundPrice(price));
+    rawByDate.set(d, { p: Number(price), adj: Number(adj) });
   }
 
-  // Yahoo occasionally leaves the newest daily candle null while exposing the
-  // completed close in meta. Accept it only after that exchange session ended.
-  if (Number.isFinite(meta.regularMarketPrice) && meta.regularMarketPrice > 0 && Number.isFinite(meta.regularMarketTime)) {
-    const quoteTime = new Date(meta.regularMarketTime * 1000);
-    if (isCompletedSession(quoteTime, definition, now)) {
-      byDate.set(localParts(quoteTime, definition.timezone).date, roundPrice(meta.regularMarketPrice));
+  // Do not use meta.regularMarketPrice as a fallback.  It has no paired
+  // adjusted-close observation, so an ex-dividend omission could not be
+  // verified.  A one-day stale cache is safer than an unverifiable close.
+
+  // Cash dividends, keyed by ex-date in the listing's own timezone. Yahoo only
+  // returns these when the request carries `events=div`.
+  const divByDate = new Map();
+  for (const event of Object.values(result.events?.dividends || {})) {
+    const amount = Number(event?.amount);
+    const stamp = Number(event?.date);
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(stamp)) {
+      throw new Error(`Malformed dividend event for ${definition.symbol}`);
+    }
+    const exDate = localParts(new Date(stamp * 1000), definition.timezone).date;
+    divByDate.set(exDate, roundPrice((divByDate.get(exDate) || 0) + amount));
+  }
+
+  for (const d of divByDate.keys()) {
+    if (!byDate.has(d)) throw new Error(`Dividend on ${d} has no completed close for ${definition.symbol}`);
+  }
+
+  // `adjclose` is verification-only and is never stored.  Comparing adjacent
+  // factors catches a Yahoo response that silently omitted a dividend event.
+  const verified = [...rawByDate.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  for (let i = 1; i < verified.length; i += 1) {
+    const [d, cur] = verified[i], [, prev] = verified[i - 1];
+    const rawFactor = (cur.p + (divByDate.get(d) || 0)) / prev.p;
+    const adjustedFactor = cur.adj / prev.adj;
+    if (Math.abs(rawFactor - adjustedFactor) > TOTAL_RETURN_TOLERANCE) {
+      throw new Error(`Dividend/adjusted-close mismatch for ${definition.symbol} on ${d}`);
     }
   }
 
   const series = [...byDate.entries()]
-    .map(([d, p]) => ({ d, p }))
+    .map(([d, p]) => {
+      const div = divByDate.get(d) || 0;
+      return div > 0 ? { d, p, div } : { d, p };
+    })
     .sort((a, b) => a.d.localeCompare(b.d));
   if (!series.length) throw new Error(`No completed closes for ${definition.symbol}`);
   return series;
@@ -97,12 +150,16 @@ export function extractPrices(payload, definition, now = new Date()) {
 function normalizedSeries(series) {
   const byDate = new Map();
   for (const item of series || []) {
-    if (/^\d{4}-\d{2}-\d{2}$/.test(item?.d) && Number.isFinite(item?.p) && item.p > 0) {
-      byDate.set(item.d, roundPrice(item.p));
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(item?.d)) throw new Error('Malformed benchmark cache date');
+    if (!Number.isFinite(item?.p) || item.p <= 0) throw new Error(`Malformed benchmark price on ${item.d}`);
+    if (item.div !== undefined && (!Number.isFinite(item.div) || item.div <= 0)) {
+      throw new Error(`Malformed benchmark dividend on ${item.d}`);
     }
+    const div = Number.isFinite(item?.div) && item.div > 0 ? roundPrice(item.div) : 0;
+    byDate.set(item.d, { p: roundPrice(item.p), ...(div > 0 ? { div } : {}) });
   }
   return [...byDate.entries()]
-    .map(([d, p]) => ({ d, p }))
+    .map(([d, { p, div }]) => (div > 0 ? { d, p, div } : { d, p }))
     .sort((a, b) => a.d.localeCompare(b.d));
 }
 
@@ -110,9 +167,19 @@ export function mergePrices(existing, fetched, now = new Date()) {
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS).toISOString().slice(0, 10);
   const benchmarks = {};
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
-    const prior = existing?.benchmarks?.[key]?.series || [];
-    const incoming = fetched[key] || [];
-    const series = normalizedSeries([...prior, ...incoming]).filter(({ d }) => d >= cutoff);
+    const prior = normalizedSeries(existing?.benchmarks?.[key]?.series || []);
+    const incoming = normalizedSeries(fetched[key] || []);
+    const byDate = new Map(prior.map(item => [item.d, item]));
+    for (const item of incoming) {
+      const old = byDate.get(item.d);
+      // A later response without a dividend event must never erase a dividend
+      // that a prior verified response already recorded.
+      byDate.set(item.d, old?.div > 0 && !(item.div > 0)
+        ? { d: item.d, p: item.p, div: old.div }
+        : item);
+    }
+    const series = [...byDate.values()].filter(({ d }) => d >= cutoff)
+      .sort((a, b) => a.d.localeCompare(b.d));
     if (!series.length) throw new Error(`No usable cache data for ${key}`);
     benchmarks[key] = {
       symbol: definition.symbol,
@@ -159,7 +226,7 @@ async function fetchJson(url) {
 async function fetchSymbol(definition, now) {
   const errors = [];
   for (const host of ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']) {
-    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=3mo&interval=1d&events=history`;
+    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=3mo&interval=1d&events=div%2Csplits&includeAdjustedClose=true`;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
         return extractPrices(await fetchJson(url), definition, now);

@@ -6,7 +6,7 @@
 // 定位：长期观察管理人能力。每日看趋势、周末自动校准、历史月份自动归档。
 //   * 工作日允许一家券商比另一家晚一天同步 —— 照常写入，标 prov（暂估）。
 //   * 周末两家都落定后，例行任务用同一估值日回看重写最近几天，加 --calibrated
-//     清掉暂估标记。长期业绩与 CSPX / EQAC 对比优先采用这些校准快照。
+//     清掉暂估标记。长期业绩与 SPY / QQQ 对比优先采用这些校准快照。
 //   * 月份结束后自动成为历史月份，没有结算按钮，也不需要任何确认动作。
 //
 // 只阻断明显错账：重复/陈旧现金、内部交易被当成外部资金流、账户缺失、金额不可能。
@@ -17,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import {
-  ACCOUNTS, SPLITS, BENCH_KEYS,
+  ACCOUNTS, SPLITS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows,
   buildPoint, samePoint, buildStatus, sameStatus, isIsoDate
 } from "./daily-core.mjs";
@@ -57,7 +57,7 @@ const num = (name, raw) => {
 
 const known = new Set([
   "date", "flows", "file", "src-bench",
-  ...ACCOUNTS, ...SPLITS, ...BENCH_KEYS,
+  ...ACCOUNTS, ...SPLITS, ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
   ...ACCOUNTS.map(a => `acct-cash-${a}`),
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
@@ -66,7 +66,7 @@ for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${
 for (const f of flags) if (f !== "calibrated") die(`unknown flag --${f}`);
 const calibrated = flags.has("calibrated");
 
-const accounts = {}, splits = {}, bench = {}, sourceDates = {}, acctCash = {}, prevAcctCash = {};
+const accounts = {}, splits = {}, bench = {}, benchDiv = {}, sourceDates = {}, acctCash = {}, prevAcctCash = {};
 for (const a of ACCOUNTS) {
   if (args[a] !== undefined) accounts[a] = num(a, args[a]);
   if (args[`src-${a}`] !== undefined) sourceDates[a] = args[`src-${a}`];
@@ -75,12 +75,14 @@ for (const a of ACCOUNTS) {
 }
 for (const s of SPLITS) if (args[s] !== undefined) splits[s] = num(s, args[s]);
 for (const b of BENCH_KEYS) if (args[b] !== undefined) bench[b] = num(b, args[b]);
+for (const b of BENCH_LEGACY_KEYS) if (args[b] !== undefined) bench[b] = num(b, args[b]);
+for (const b of BENCH_DIV_KEYS) if (args[b] !== undefined) benchDiv[b] = num(b, args[b]);
 
 const date = args.date;
 if (date === undefined) die("missing --date");
 
 const check = validateInputs({
-  date, accounts, splits, sourceDates, bench,
+  date, accounts, splits, sourceDates, bench, benchDiv,
   benchDate: args["src-bench"] ?? null, calibrated, now: new Date()
 });
 if (check.errors.length) dieAll([...check.errors, "nothing written"]);
@@ -178,7 +180,14 @@ hard.push(...checkCashLedger({ date, acctCash, prevAcctCash, movements: incoming
 const flows = reconcileFlows(data.flowsAuto, data.flowsUnresolved, incoming);
 hard.push(...flows.errors);
 
-const point = buildPoint({ date, accounts, splits, bench, provisional: check.provisional, calibrated });
+const point = buildPoint({ date, accounts, splits, bench, benchDiv, provisional: check.provisional, calibrated });
+const existingPoint = data.daily.find(x => x && x.d === date);
+// A repeated run that receives no dividend event must never erase a dividend
+// already verified for that ex-date.  Explicit corrections require the
+// one-time audited backfill path rather than a blind daily overwrite.
+for (const k of BENCH_DIV_KEYS) {
+  if (point[k] === undefined && Number(existingPoint?.[k]) > 0) point[k] = Number(existingPoint[k]);
+}
 
 const prior = data.daily
   .filter(x => x && typeof x.d === "string" && x.d < date)
