@@ -362,42 +362,145 @@ function effectiveFlows(){
 }
 /* flow-dedupe:end */
 function ann(r,days){return days>0?Math.pow(1+r,365/days)-1:0;}
-/* 基准。EQAC 是累积型（含息），与 CSPX 同类，是纳斯达克100 的正确对照；
-   EQQQ 是分配型，只反映价格指数。两者各自独立的数据字段，绝不互相顶替：
-   有 eqac 真实数据才显示 EQAC，否则显示 EQQQ 并在脚注说明差异。 */
-const BENCH_ALL=[{k:"cspx",name:"S&P 500（CSPX·含息）",col:"var(--ink-muted)"},
-  {k:"eqac",name:"纳斯达克100（EQAC·含息）",col:"var(--series-2)"},
-  {k:"eqqq",name:"纳斯达克100（EQQQ·价格）",col:"var(--series-2)"}];
-let BENCH=[BENCH_ALL[0],BENCH_ALL[2]];
+/* 基准（口径 v4.6）：SPY / QQQ，美股收盘、含息。含息由「当日原始收盘价 + 当日
+   除息金额」自己链式得出，不用 Yahoo adjclose —— adjclose 每逢除息回溯改写全部
+   历史值，而这里每天只写一次、永不重述，两者不兼容。
+   cspx / eqac 是 v4.5 及以前的欧洲收盘口径（LSE/SIX 约 11:30 ET），与组合的美股
+   收盘估值存在时点错位（2026-08 实测约 0.9pp）。只在 SPY/QQQ 尚未回补时回放，
+   并在脚注标明；两套字段各自独立，绝不互相顶替、绝不做换算估算。 */
+const BENCH_ALL=[{k:"spy",dk:"spyd",name:"S&P 500（SPY·含息）",col:"var(--ink-muted)"},
+  {k:"qqq",dk:"qqqd",name:"纳斯达克100（QQQ·含息）",col:"var(--series-2)"},
+  {k:"cspx",dk:"",name:"S&P 500（CSPX·欧洲收盘）",col:"var(--ink-muted)"},
+  {k:"eqac",dk:"",name:"纳斯达克100（EQAC·欧洲收盘）",col:"var(--series-2)"}];
+let BENCH=[BENCH_ALL[0],BENCH_ALL[1]];
+/* 起算日之前那一点是全部基准的分母。它缺 SPY/QQQ 就没有可比的整段口径，
+   此时回放欧洲口径，而不是画一条从半途开始的假曲线。 */
 function syncBench(){
-  const hasEqac=dailySorted().some(p=>num(p.eqac)>0);
-  BENCH=[BENCH_ALL[0],hasEqac?BENCH_ALL[1]:BENCH_ALL[2]];
-  return hasEqac;
+  const ds=dailySorted();
+  const start=DB.settings.start,pre=ds.filter(x=>x.d<start).pop()||null;
+  const live=ds.filter(x=>x.d>=start);
+  const covers=keys=>!!pre&&keys.every(k=>num(pre[k])>0)&&live.length>0&&
+    live.every(p=>keys.every(k=>num(p[k])>0));
+  if(covers(["spy","qqq"]))BENCH=[BENCH_ALL[0],BENCH_ALL[1]];
+  else if(covers(["cspx","eqac"]))BENCH=[BENCH_ALL[2],BENCH_ALL[3]];
+  else BENCH=[];
+  return BENCH.length===2&&BENCH[0].k==="spy";
 }
+/* returns:start —— 收益率口径 v4.6（口径 §9）。单月区间一次算完三种口径，
+   它们各自独立、不可互相顶替：
+   · rG / rN ＝逐日 TWR（扣费前 / 扣费后）。剔除出入金对分母的影响，衡量管理人
+     能力，与基准同口径可比；rG − rN 就是纯粹的费用侵蚀。
+   · rD ＝出资方净收益率，Modified Dietz（Sharesight 口径），分母按各笔出资的
+     在场天数加权，含出资方自身的加仓择时。**不要拿它和 rG 相减当费用。**
+   · rB ＝基准含息逐日链 (P+D)/P_prev−1，D 是当日除息金额。
+   出入金一律按入账日**收盘**计价：当日不参与任何一方的收益，权重从次日起算，
+   所以 Modified Dietz 的在场天数是 days−inclDays(from,入账日)。
+   bPrev / bVal / bHas 跨月延续，由调用方持有。 */
+function periodReturns(o){
+  const DAYMS=86400000;
+  const ms=v=>{const a=String(v).split("-");return Date.UTC(+a[0],+a[1]-1,+a[2]);};
+  const incl=(x,y)=>Math.round((ms(y)-ms(x))/DAYMS)+1;
+  const next=d=>new Date(ms(d)+DAYMS).toISOString().slice(0,10);
+  const pts=(o.points||[]).slice().sort((a,b)=>String(a.d).localeCompare(String(b.d)));
+  const bench=o.bench||[],flowBy=o.flowByDate||{},to=o.to;
+  const openT=o.openT,days=Math.max(1,o.days),rate=o.rate,cr=o.cr;
+  const cumBefore=o.cumBefore,hwmBefore=o.hwmBefore,feesBefore=o.feesBefore;
+  const bPrev=o.bPrev,bVal=o.bVal,bHas=o.bHas;
+  const issues=[],pointDates=new Set();
+  for(const p of pts){
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(p.d)||p.d<o.from||p.d>to)issues.push("估值日期越界 "+p.d);
+    if(pointDates.has(p.d))issues.push("估值日期重复 "+p.d);
+    pointDates.add(p.d);
+    if(!(Number.isFinite(p.tot)&&p.tot>0))issues.push("总资产无效 "+p.d);
+  }
+  for(let d=o.from;d<=to;d=next(d))if(!pointDates.has(d))issues.push("缺少每日估值 "+d);
+  let flowT=0;
+  for(const d in flowBy){
+    if(d<o.from||d>to){issues.push("出入金日期越界 "+d);continue;}
+    if(!Number.isFinite(flowBy[d])){issues.push("出入金金额无效 "+d);continue;}
+    flowT+=flowBy[d];
+    if(!pointDates.has(d))issues.push("出入金当日缺少估值 "+d);
+  }
+  let den=openT;
+  for(const d in flowBy){
+    if(d<o.from||d>to||!Number.isFinite(flowBy[d]))continue;
+    const el=Math.max(0,Math.min(days,incl(o.from,d)));
+    den+=flowBy[d]*((days-el)/days);
+  }
+  if(!(den>0))issues.push("Modified Dietz 分母不为正");
+  const idxB={},seen={};for(let j=0;j<bench.length;j++){idxB[bench[j].k]=1;seen[bench[j].k]=false;}
+  let idxG=1,prevG=openT,idxN=1,prevN=openT-feesBefore;
+  const closeT=pts.length?pts[pts.length-1].tot:openT;
+  const pnl=closeT-openT-flowT;
+  const mgmt=((openT+closeT)/2)*rate*days/365;
+  const carry=Math.max(0,cumBefore+pnl-hwmBefore)*cr,fees=mgmt+carry;
+  const portfolioReady=issues.length===0;
+  if(portfolioReady){
+    let flowSoFar=0;
+    for(let i=0;i<pts.length;i++){
+      const p=pts[i],tot=p.tot,f=flowBy[p.d]||0;flowSoFar+=f;
+      if(prevG>0)idxG*=(tot-f)/prevG;prevG=tot;
+      const el=(i===pts.length-1)?days:Math.max(1,Math.min(days,incl(o.from,p.d)));
+      const m=((openT+tot)/2)*rate*el/365;
+      const c=Math.max(0,cumBefore+(tot-openT-flowSoFar)-hwmBefore)*cr;
+      const netTot=tot-feesBefore-m-c;
+      if(prevN>0)idxN*=(netTot-f)/prevN;prevN=netTot;
+    }
+  }
+  const benchIssues=[];
+  for(const bk of bench){
+    if(!(bPrev[bk.k]>0))benchIssues.push(bk.k+" 缺少起算日前基准");
+    for(const p of pts){
+      if(!(p[bk.k]>0))benchIssues.push(bk.k+" 缺少价格 "+p.d);
+      if(bk.dk&&p[bk.dk]!==undefined&&(!(Number.isFinite(p[bk.dk]))||p[bk.dk]<0))benchIssues.push(bk.dk+" 无效 "+p.d);
+    }
+  }
+  if(portfolioReady&&benchIssues.length===0){
+    for(const p of pts){
+      const f=flowBy[p.d]||0;
+      for(const bk of bench){
+        const px=p[bk.k],dv=bk.dk?(p[bk.dk]||0):0,r=(px+dv)/bPrev[bk.k]-1;
+        idxB[bk.k]*=(1+r);bVal[bk.k]=bVal[bk.k]*(1+r);seen[bk.k]=true;bHas[bk.k]=true;bPrev[bk.k]=px;
+      }
+      if(f)for(const bk of bench)bVal[bk.k]+=f;
+    }
+  }
+  const rB={};for(let j=0;j<bench.length;j++){const k=bench[j].k;rB[k]=seen[k]?idxB[k]-1:null;}
+  return {closeT,flowT,den,pnl,mgmt,carry,fees,
+    rG:portfolioReady?idxG-1:null,rN:portfolioReady?idxN-1:null,
+    rD:portfolioReady?(pnl-fees)/den:null,rB,issues:[...new Set(issues)],benchIssues:[...new Set(benchIssues)]};
+}
+/* returns:end */
 function compute(){
   syncBench();
   const rate=num(DB.settings.mgmt)/100, cr=num(DB.settings.carry)/100, start=DB.settings.start;
-  const openBy={};DB.accounts.forEach(a=>openBy[a.id]=num(a.opening));
-  let openT=DB.accounts.reduce((s,a)=>s+num(a.opening),0);
+  const initialOpen=DB.accounts.reduce((s,a)=>s+num(a.opening),0);let openT=initialOpen;
   const ds0=dailySorted();const pre=ds0.filter(x=>x.d<start).pop()||ds0[0]||null;
-  const bPrev={},idxB={},bVal={},bHas={};BENCH.forEach(x=>{bPrev[x.k]=pre?num(pre[x.k]):0;idxB[x.k]=1;bVal[x.k]=openT;bHas[x.k]=false;});  let cum=0,hwm=0,idxG=1,idxN=1;const rows=[];const cur=curYm();  for(const ym of monthYms()){
-    const pt=lastDailyInMonth(ym);if(!pt)continue;
-    const inProgress=(ym===cur);
+  const bPrev={},idxB={},bVal={},bHas={};BENCH.forEach(x=>{bPrev[x.k]=pre?num(pre[x.k]):0;idxB[x.k]=1;bVal[x.k]=openT;bHas[x.k]=false;});
+  const benchArg=BENCH.map(x=>({k:x.k,dk:x.dk}));
+  let cum=0,hwm=0,idxG=1,idxN=1,feesBefore=0,returnsValid=true;const rows=[],returnIssues=[];const cur=curYm();
+  for(const ym of monthYms()){
     const from=(ym===start.slice(0,7))?start:ym+"-01";
+    const pts=ds0.filter(x=>x.d.slice(0,7)===ym&&x.d>=from);
+    if(!pts.length)continue;
+    const pt=pts[pts.length-1];
+    const inProgress=(ym===cur);
     const to=inProgress?pt.d:eom(ym);
     const days=Math.max(1,inclDays(from,to));
-    const closeT=totOf(pt);
-    const fl=effectiveFlows().filter(f=>(f.date||"").slice(0,7)===ym);
-    const flowT=fl.reduce((s,f)=>s+num(f.amount),0);
-    let den=openT;for(const f of fl){const el=Math.max(0,Math.min(days,Math.round((P(f.date||from)-P(from))/DAY)));den+=num(f.amount)*((days-el)/days);}
-    den=Math.max(1,den);
-    const pnl=closeT-openT-flowT;
-    const mgmt=((openT+closeT)/2)*rate*days/365;
-    const cumBefore=cum;cum+=pnl;const excess=cum-hwm;const carry=excess>0?excess*cr:0;const hwmBefore=hwm;if(excess>0)hwm=cum;
-    const fees=mgmt+carry;
-    const rG=pnl/den, rN=(pnl-fees)/den;
-    idxG*=(1+rG);idxN*=(1+rN);
-    const rB={};BENCH.forEach(x=>{const c=num(pt[x.k]);if(bPrev[x.k]>0&&c>0){const r=c/bPrev[x.k]-1;rB[x.k]=r;idxB[x.k]*=(1+r);bVal[x.k]=bVal[x.k]*(1+r)+flowT;bHas[x.k]=true;bPrev[x.k]=c;}else rB[x.k]=null;});    rows.push({ym,from,to,days,openT,closeT,flowT,den,pnl,mgmt,carry,fees,rG,rN,rB,cumBefore,cum,hwmBefore,hwm,excess,inProgress,idxG:idxG-1,idxN:idxN-1});    openT=closeT;
+    const fl=effectiveFlows().filter(f=>(f.date||"")>=from&&(f.date||"")<=to);
+    const flowByDate={};for(const f of fl){const d=f.date||from;flowByDate[d]=(flowByDate[d]||0)+num(f.amount);}
+    const points=pts.map(p=>{const o={d:p.d,tot:totOf(p)};BENCH.forEach(x=>{o[x.k]=num(p[x.k]);if(x.dk)o[x.dk]=num(p[x.dk]);});return o;});
+    const pr=periodReturns({points,openT,from,to,days,flowByDate,rate,cr,
+      cumBefore:cum,hwmBefore:hwm,feesBefore,bench:benchArg,bPrev,bVal,bHas});
+    const closeT=pr.closeT,flowT=pr.flowT,pnl=pr.pnl,mgmt=pr.mgmt,carry=pr.carry,fees=pr.fees,den=pr.den;
+    const cumBefore=cum;cum+=pnl;const excess=cum-hwm;const hwmBefore=hwm;if(excess>0)hwm=cum;
+    if(pr.rG==null||pr.rN==null)returnsValid=false;
+    else{idxG*=(1+pr.rG);idxN*=(1+pr.rN);}
+    returnIssues.push(...pr.issues,...pr.benchIssues);
+    BENCH.forEach(x=>{if(pr.rB[x.k]!=null)idxB[x.k]*=(1+pr.rB[x.k]);});
+    rows.push({ym,from,to,days,openT,closeT,flowT,den,pnl,mgmt,carry,fees,rG:pr.rG,rN:pr.rN,rD:pr.rD,rB:pr.rB,
+      cumBefore,cum,hwmBefore,hwm,excess,inProgress,idxG:returnsValid?idxG-1:null,idxN:returnsValid?idxN-1:null});
+    openT=closeT;feesBefore+=fees;
   }
   const done=rows.filter(r=>!r.inProgress),live=rows.find(r=>r.inProgress)||null;
   const lastPt=dailySorted().pop();
@@ -406,8 +509,13 @@ function compute(){
   const feesDone=done.reduce((s,r)=>s+r.fees,0);
   const feesLive=live?live.fees:0;
   const feesAll=feesDone+feesLive;
+  const allFlows=effectiveFlows().filter(f=>(f.date||"")>=start&&lastPt&&(f.date||"")<=lastPt.d);
+  let fullDen=initialOpen;
+  for(const f of allFlows){const el=Math.max(0,Math.min(spanDays,inclDays(start,f.date)));fullDen+=num(f.amount)*((spanDays-el)/spanDays);}
+  const mwrD=returnsValid&&fullDen>0?(gross-feesAll)/fullDen:null;
   return {rows,done,live,lastPt,spanDays,gross,feesDone,feesLive,feesAll,
-    net:gross-feesAll, twrG:idxG-1, twrN:idxN-1, bench:BENCH.filter(x=>bHas[x.k]).map(x=>({k:x.k,name:x.name,col:x.col,twr:idxB[x.k]-1,val:bVal[x.k]})),    hwm, cum, nav:lastPt?totOf(lastPt):DB.accounts.reduce((s,a)=>s+num(a.opening),0)};}
+    net:gross-feesAll,twrG:returnsValid?idxG-1:null,twrN:returnsValid?idxN-1:null,mwrD,returnIssues:[...new Set(returnIssues)],
+    bench:BENCH.filter(x=>bHas[x.k]).map(x=>({k:x.k,name:x.name,col:x.col,twr:idxB[x.k]-1,val:bVal[x.k]})),    hwm, cum, nav:lastPt?totOf(lastPt):DB.accounts.reduce((s,a)=>s+num(a.opening),0)};}
 function balance(st){
   const fxOf=e=>(e.fx!=null&&e.fx!==""&&isFinite(parseFloat(e.fx)))?parseFloat(e.fx):(DB.settings.fx[e.ccy]||1);
   const paid=DB.fees.reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
@@ -428,6 +536,7 @@ function health(st){
     if(ms>0&&Math.abs(ms-st.nav)>st.nav*0.02)hold.push("资产拆分与账户总额相差过大");
   }
   if(unresolved>0)hold.push(unresolved+" 笔资金变动尚未判定内部交易或外部出入金");
+  for(const issue of (st.returnIssues||[]))hold.push("收益率数据不完整："+issue);
   return {hold:hold.length>0,holdReasons:hold};}
 /* 每日累计净收益（毛）序列，用于图表 */
 function dailySeries(st){
@@ -443,7 +552,7 @@ function render(){
   const st=compute(),B=balance(st),G=health(st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
-  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.4.2"+(isMgr()?"":" · 只读");
+  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.0"+(isMgr()?"":" · 只读");
   renderKPIs(st,B,G);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B,G);  if(isMgr()){renderFees(st,B,G);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
@@ -468,10 +577,11 @@ function renderKPIs(st,B,G){
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
     <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${DB.settings.start} → ${lp?lp.d:"—"}（${st.spanDays} 天）</div>
-    ${rr("投资收益率（管理方，扣费前）",st.twrG)}
-    ${rr("净收益率（出资方，扣费后）",st.twrN)}
+    ${rr("组合毛 TWR（管理能力）",st.twrG)}
+    ${rr("组合扣费后 TWR（模型值）",st.twrN)}
+    ${rr("出资方 Modified Dietz（EOD flow 模型）",st.mwrD)}
     ${st.bench.map(b=>rr("同期 "+b.name,b.twr)).join("")}
-    <div class="note">${st.bench.length?`同期全仓买入：${st.bench.map(b=>b.name.replace(/（.*/,"")+" "+usd(b.val,0)).join(" · ")}（实际 ${usd(st.nav,0)}）· `:""}${showAnn?`年化：投资 ${pct(ann(st.twrG,st.spanDays))} · 净 ${pct(ann(st.twrN,st.spanDays))}${st.bench.map(b=>` · ${b.name.replace(/（.*/,"")} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后自动显示年化"}${st.bench.some(b=>b.k==="eqqq")?`<br>⚠ 纳斯达克100 暂用 EQQQ（分配型）代替，实测与含息口径偏差显著：2026-07-31→08-19 两个独立累积型基金 EQAC +5.15%、CNDX +5.18% 相互吻合，EQQQ 仅 +4.01%，低约 114bp。此行仅供参考，不宜据此判断跑赢跑输；EQAC 真实收盘价到位后自动切换，不做换算估算。`:""}</div></div>`;}function renderChart1(st){
+    <div class="note">${st.bench.length?`同期全仓买入：${st.bench.map(b=>b.name.replace(/（.*/,"")+" "+usd(b.val,0)).join(" · ")}（实际 ${usd(st.nav,0)}）· `:"⚠ 基准数据未完整覆盖，暂不显示。"}${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))} · 组合扣费后 TWR ${pct(ann(st.twrN,st.spanDays))}${st.bench.map(b=>` · ${b.name.replace(/（.*/,"")} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}<br>前两行是逐日时间加权（TWR），剔除出入金择时，与基准同口径可比；两者之差 ${pct(st.twrG==null||st.twrN==null?null:st.twrG-st.twrN,2)} 叫“扣费拖累（pp）”。第三行是本工具按每日收盘入账假设计算的单一区间 Modified Dietz 模型值，包含出资方加仓择时，<b>不是 Sharesight 的精确对账值，也不要与第一行相减当费用</b>。${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div>`;}function renderChart1(st){
   const box=document.getElementById("chart1");const s=dailySeries(st);
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s[s.length-1].d}`:"";
   if(s.length<2){box.innerHTML=`<div class="empty">每日数据到位后此处出现走势</div>`;return;}
@@ -538,7 +648,7 @@ function renderMonths(st){
   box.innerHTML=st.rows.map(r=>{const net=r.pnl-r.fees;const take=r.pnl>0?r.fees/r.pnl:null;return `<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b>
       ${r.inProgress?'<span class="badge est">进行中</span>':''}
       ${r.excess>0?'<span class="badge ok">超高水位</span>':(r.cum<r.hwm?'<span class="badge hwm">补亏中</span>':'')}</div>
-      <div class="l">毛收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（毛 ${pct(r.rG,1)} / 净 ${pct(r.rN,1)}${(st.bench||[]).map(b=>` ｜ ${b.name.replace(/（.*/,"")} ${pct(r.rB&&r.rB[b.k],1)}`).join("")}）</div>
+      <div class="l">毛收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（毛 TWR ${pct(r.rG,1)} / 扣费后 TWR ${pct(r.rN,1)} / 出资方 Dietz ${pct(r.rD,1)}${(st.bench||[]).map(b=>` ｜ ${b.name.replace(/（.*/,"")} ${pct(r.rB&&r.rB[b.k],1)}`).join("")}）</div>
       <div class="l">费用 <b class="amt">${fmt(r.fees,0)}</b> = 管理费 ${fmt(r.mgmt,0)} + Carry ${fmt(r.carry,0)}${take!=null?` · 占毛收益 ${(take*100).toFixed(1)}%`:""}</div></div>    <div style="text-align:right"><div class="l">净收益</div><b class="${sgn(net)}" style="font-size:16px">${usd(net,0)}</b></div></div>`;}).join("");}function renderBal(st,B,G){
   G=G||{hold:false,holdReasons:[]};
   document.getElementById("balBox").innerHTML=`
