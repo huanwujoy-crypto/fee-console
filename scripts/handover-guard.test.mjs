@@ -57,3 +57,10 @@ test('rejects external frames and URLs', () => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /frame or object|external URL/);
 });
+
+
+test('rejects protocol-relative and automatic remote resources', () => {
+  const result = run(valid('<img src="//example.com/leak">'));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /protocol-relative URL|remote resource/);
+});
