@@ -145,6 +145,8 @@ test("v4.6.1 and later expose only decision-useful TWR metrics", () => {
   assert.doesNotMatch(block, /\brN\b|\bidxN\b|\bprevN\b/);
   assert.match(html, /SPY·含息 ETF TWR/);
   assert.match(html, /QQQ·含息 ETF TWR/);
+  assert.match(html, /现金流匹配的被动账户期末值/);
+  assert.match(html, /相同资金路径下的期末金额/);
 });
 
 /* ---------------- 1. 逐日 TWR，而不是逐月 Modified Dietz ---------------- */
@@ -288,14 +290,64 @@ test("the what-if-I-had-bought-the-index figure rolls the flow from its own date
   const spyFactor = (500 / 500) * ((498 + 2) / 500) * (510 / 498);
   const rolled = OPEN * spyFactor + TRANSFER * (510 / 498);
   const monthEnd = OPEN * spyFactor + TRANSFER; // 旧写法：flow 整月不吃基准收益
-  near(r.bVal.spy, rolled, 1.0, "同期全仓买入 S&P 500");
+  near(r.bVal.spy, rolled, 1.0, "现金流匹配的 S&P 500 被动账户");
   assert.ok(Math.abs(rolled - monthEnd) > 300,
     "this month the two conventions must differ enough for the test to bite");
   assert.ok(Math.abs(r.bVal.spy - monthEnd) > 300,
     "the flow must not sit out the whole month on the benchmark side");
   const qqqFactor = (404 / 400) * ((402 + 2) / 404) * (412 / 402);
   near(r.bVal.qqq, OPEN * qqqFactor + TRANSFER * (412 / 402), 1.0,
-    "同期全仓买入 纳斯达克100");
+    "现金流匹配的纳斯达克100被动账户");
+});
+
+test("the passive benchmark account matches an inflow and a later withdrawal across months", () => {
+  if (!usesDailyEodFee) return;
+  const bPrev = { spy: 100 }, bVal = { spy: 100 }, bHas = { spy: false };
+  const september = periodReturns({
+    points: [
+      { d: "2026-09-29", tot: 100, spy: 100 },
+      { d: "2026-09-30", tot: 150, spy: 110 },
+    ],
+    openT: 100, from: "2026-09-29", to: "2026-09-30", days: 2,
+    flowByDate: { "2026-09-30": 50 }, rate: 0, cr: 0,
+    cumBefore: 0, hwmBefore: 0, bench: [{ k: "spy", dk: "spyd", account: "S&P 500（SPY）" }],
+    bPrev, bVal, bHas, benchmarkValid: true, benchmarkValueValid: true,
+  });
+  near(bVal.spy, 160, 1e-12, "期初 100 上涨 10% 后 EOD 入金 50");
+  assert.equal(september.benchmarkValueValid, true);
+
+  const october = periodReturns({
+    points: [
+      { d: "2026-10-01", tot: 110, spy: 121 },
+      { d: "2026-10-02", tot: 110, spy: 133.1 },
+    ],
+    openT: 150, from: "2026-10-01", to: "2026-10-02", days: 2,
+    flowByDate: { "2026-10-01": -40 }, rate: 0, cr: 0,
+    cumBefore: 0, hwmBefore: 0, bench: [{ k: "spy", dk: "spyd", account: "S&P 500（SPY）" }],
+    bPrev, bVal, bHas, benchmarkValid: september.benchmarkValid,
+    benchmarkValueValid: september.benchmarkValueValid,
+  });
+  // 160 × 1.10 − 40，再从次日起取得 10% 收益。
+  near(bVal.spy, 149.6, 1e-10, "跨月现金流匹配期末值");
+  assert.equal(october.benchmarkValueValid, true);
+});
+
+test("an oversized withdrawal disables only the passive-account value, not benchmark TWR", () => {
+  if (!usesDailyEodFee) return;
+  const bVal = { spy: 70 };
+  const r = periodReturns({
+    points: [{ d: "2026-10-03", tot: 20, spy: 100 }],
+    openT: 100, from: "2026-10-03", to: "2026-10-03", days: 1,
+    flowByDate: { "2026-10-03": -80 }, rate: 0, cr: 0,
+    cumBefore: 0, hwmBefore: 0, bench: [{ k: "spy", dk: "spyd", account: "S&P 500（SPY）" }],
+    bPrev: { spy: 100 }, bVal, bHas: { spy: false },
+    benchmarkValid: true, benchmarkValueValid: true,
+  });
+  assert.equal(r.benchmarkValid, true);
+  assert.equal(r.benchmarkValueValid, false);
+  near(r.rB.spy, 0, 1e-12, "基准 TWR 继续可用");
+  near(bVal.spy, 70, 1e-12, "不自动借款或做空");
+  assert.ok(r.benchValueIssues.some(x=>/提款超过被动账户价值/.test(x)), r.benchValueIssues.join("; "));
 });
 
 test("the benchmark side and the portfolio side treat the flow the same way", () => {
