@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.6.2">
+<meta name="fee-console-build" content="4.6.3">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -50,6 +50,36 @@ h1{font-size:19px;margin:0}
 .expl>summary::after{content:" ▾"}
 .expl[open]>summary::after{content:" ▴"}
 .expl>.hint{margin-top:7px}
+.bench-title{font-size:12px;font-weight:600;color:var(--ink-2);margin:12px 0 6px}
+.bench-table-wrap{overflow:hidden;border:1px solid var(--grid);border-radius:10px;background:var(--plane)}
+.bench-table{width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;font-variant-numeric:tabular-nums}
+.bench-table th,.bench-table td{padding:8px 7px;border-bottom:1px solid var(--grid);vertical-align:middle;text-align:left}
+.bench-table tr:last-child td{border-bottom:none}
+.bench-table th{color:var(--ink-muted);font-size:10px;font-weight:600;background:var(--lockbg)}
+.bench-table th:nth-child(1),.bench-table td:nth-child(1){width:31%}
+.bench-table th:nth-child(2),.bench-table td:nth-child(2){width:27%;text-align:right;white-space:nowrap}
+.bench-table th:nth-child(3),.bench-table td:nth-child(3){width:42%;text-align:right}
+.bench-table .scenario{font-weight:600;color:var(--ink-1)}
+.bench-table .tag{display:block;color:var(--ink-muted);font-size:10px;font-weight:400}
+.bench-table .end-val{font-weight:600;color:var(--ink-1)}
+.bench-table .gap-dir{display:block;color:var(--ink-2);font-size:10px}
+.bench-table .gap-val{display:block;font-weight:600;white-space:nowrap}
+.bench-formula{font-size:10px;color:var(--ink-muted);margin:6px 1px 10px}
+.bench-expl{margin:0}
+.bench-expl>summary{display:flex;align-items:center;justify-content:space-between;width:100%;border:1px solid var(--border);border-radius:9px;background:var(--surface-1);padding:8px 10px;font-weight:600}
+.bench-expl>summary::after{margin-left:8px}
+.bench-expl>.hint{line-height:1.55}
+.bench-points{margin:8px 0 0;padding-left:22px}
+.bench-points li{margin:0 0 7px;padding-left:2px}
+.bench-points li:last-child{margin-bottom:0}
+@media(max-width:430px){
+  .bench-table{font-size:11px}
+  .bench-table th,.bench-table td{padding:8px 5px}
+  .bench-table th{font-size:9px}
+  .bench-table th:nth-child(1),.bench-table td:nth-child(1){width:29%}
+  .bench-table th:nth-child(2),.bench-table td:nth-child(2){width:28%}
+  .bench-table th:nth-child(3),.bench-table td:nth-child(3){width:43%}
+}
 .amt{color:var(--ink-1);font-weight:600}
 nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:12px}
 nav.tabs button{flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-2);padding:10px 4px;font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:-1px}
@@ -104,7 +134,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <div class="wrap">
 <header class="top">
   <div><h1>投资管理费</h1><div class="sub" id="subTitle"></div></div>
-  <div class="row"><span class="badge" id="syncBadge" style="display:none"></span></div>
+  <div class="row"><button class="btn sm" id="btnRefresh" type="button">↻ 刷新</button><span class="badge" id="syncBadge" style="display:none"></span></div>
 </header>
 
 <div id="setupBox"></div>
@@ -570,13 +600,14 @@ function render(){
   const st=compute(),B=balance(st),G=health(st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
-  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.2"+(isMgr()?"":" · 只读");
+  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.3"+(isMgr()?"":" · 只读");
   renderKPIs(st,B,G);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B,G);  if(isMgr()){renderFees(st,B,G);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
 function renderKPIs(st,B,G){
   G=G||{hold:false,holdReasons:[]};
   const lp=st.lastPt;const showAnn=st.spanDays>365;
+  const benchExplainOpen=document.getElementById("benchExplain")?.open===true;
   const gateBox=document.getElementById("gateBox");
   gateBox.innerHTML=G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
     <ul>${G.holdReasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>`:"";
@@ -590,9 +621,27 @@ function renderKPIs(st,B,G){
   /* 分账户：总资产下方列出各账户当日数值（与起始基准页的账户名一致） */
   const acctLine=lp?`<div class="small" style="margin-top:2px">${DB.accounts.map(a=>`${esc(a.name)} <b style="font-weight:600;font-variant-numeric:tabular-nums">${usd(num(lp[a.id]),0)}</b>`).join(" · ")}</div>`:"";
   const benchmarkAccountReady=st.bench.length>0&&st.bench.every(b=>b.val!=null&&isFinite(b.val));
-  const benchmarkAccountNote=benchmarkAccountReady
-    ?`现金流匹配的被动账户期末值：${st.bench.map(b=>(b.account||b.name)+" "+usd(b.val,0)).join(" · ")}（实际组合 ${usd(st.nav,0)}）· `
-    :st.bench.length?"⚠ 被动账户无法完整复制全部出入金，暂不显示期末值；基准 TWR 不受影响。":"⚠ 基准数据未完整覆盖，暂不显示。";
+  const benchmarkAccountAlert=st.bench.length
+    ?"⚠ 被动账户无法完整复制全部出入金，暂不显示期末值；基准 TWR 不受影响。"
+    :"⚠ 基准数据未完整覆盖，暂不显示。";
+  const benchmarkGapRow=b=>{
+    const gap=st.nav-b.val,ratio=b.val>0?gap/b.val:null;
+    const same=Math.abs(gap)<.5,dir=same?"实际持平":gap>0?"实际领先":"实际落后";
+    const amount=same?usd(0,0):(gap>0?"+":"-")+usd(Math.abs(gap),0);
+    return `<tr><td><span class="scenario">${esc(b.account||b.name)}</span><span class="tag">假想被动账户</span></td><td><span class="end-val">${usd(b.val,0)}</span></td><td><span class="gap-dir">${dir}</span><span class="gap-val ${sgn(gap)}">${amount} · ${pct(ratio)}</span></td></tr>`;
+  };
+  const benchmarkTable=benchmarkAccountReady?`<div class="bench-title">现金流匹配的被动账户期末值</div>
+    <div class="bench-table-wrap"><table class="bench-table" aria-label="实际组合与现金流匹配被动账户期末值比较">
+      <thead><tr><th>方案</th><th>期末金额</th><th>实际组合相对该方案</th></tr></thead>
+      <tbody><tr><td><span class="scenario">实际组合</span><span class="tag">实际</span></td><td><span class="end-val">${usd(st.nav,0)}</span></td><td><span class="gap-dir">比较基准</span><span class="gap-val">—</span></td></tr>${st.bench.map(benchmarkGapRow).join("")}</tbody>
+    </table></div><div class="bench-formula">金额差＝实际组合－被动账户；比例＝金额差÷被动账户期末金额。</div>`
+    :`<div class="note" style="margin-top:10px">${benchmarkAccountAlert}</div>`;
+  const benchmarkMethod=`<details class="expl bench-expl" id="benchExplain"${benchExplainOpen?" open":""}><summary>查看计算方法与重要说明</summary><div class="hint"><ol class="bench-points">
+    <li><b>同一起点：</b>假想被动账户的期初投入与实际组合相同；表格显示的是<b>相同资金路径下的期末金额</b>，不是把区间收益率简单乘以期初本金。</li>
+    <li><b>同步出入金：</b>每笔已确认的外部入金或出金，按同一日期、同一金额在收盘后买入或卖出 SPY / QQQ，并从次日起参与收益；允许碎股，忽略税费与滑点。</li>
+    <li><b>可比收益率：</b>组合毛 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较。</li>
+    <li><b>独立的出资方口径：</b>Modified Dietz 是本工具按每日收盘入账假设计算的单一区间模型值，包含出资方加仓择时；<b>它不是 Sharesight 的精确对账值，也不能与组合毛 TWR 相减当作费用</b>。</li>
+  </ol><div class="note">${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
   document.getElementById("kpis").innerHTML=`
   <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>${acctLine}${mix}
     <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 本月至今费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
@@ -602,7 +651,7 @@ function renderKPIs(st,B,G){
     ${rr("组合毛 TWR（管理能力）",st.twrG)}
     ${rr("出资方 Modified Dietz（EOD flow 模型）",st.mwrD)}
     ${st.bench.map(b=>rr("同期 "+b.name,b.twr)).join("")}
-    <div class="note">${benchmarkAccountNote}${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}<br>假想被动账户的期初投入与实际组合相同；每笔已确认的外部入金或出金也按同一日期、同一金额在收盘后买入或卖出 SPY / QQQ，并从次日起参与收益（允许碎股，忽略税费与滑点）。因此这里显示的是<b>相同资金路径下的期末金额</b>，不是只把区间收益率乘以期初本金。<br>组合毛 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较。出资方 Modified Dietz 是本工具按每日收盘入账假设计算的单一区间模型值，包含出资方加仓择时，<b>不是 Sharesight 的精确对账值，也不要与组合毛 TWR 相减当费用</b>。${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div>`;}function renderChart1(st){
+    ${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(st){
   const box=document.getElementById("chart1");const s=dailySeries(st);
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s[s.length-1].d}`:"";
   if(s.length<2){box.innerHTML=`<div class="empty">每日数据到位后此处出现走势</div>`;return;}
@@ -763,11 +812,35 @@ async function ensureLatestShell(){
   }catch(_){return false;}finally{_shellCheck=null;}})();
   return _shellCheck;
 }
-async function pullAll(quiet){
-  if(await ensureLatestShell())return;
-  try{const r=await freshFetch(DATA_URL+"?t="+Date.now(),{cache:"no-store"});if(r.ok){const o=await r.json();let d=o;
-      if(o&&o.enc){if(cfg(K.key)){const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}else d=null;}
-      if(d&&Array.isArray(d.daily)){DAILY=d;setCfg(K.daily,JSON.stringify(d));}}}catch(_){}
+let _manualRefreshing=false;
+async function manualRefresh(){
+  if(_manualRefreshing)return;
+  const b=document.getElementById("btnRefresh"),old=b.textContent;
+  _manualRefreshing=true;b.disabled=true;b.textContent="刷新中…";
+  try{
+    const stamp=Date.now(),target=new URL(location.href);target.searchParams.delete("_shell_check");target.searchParams.set("_refresh",String(stamp));
+    const [r,next]=await Promise.all([freshFetch(target.toString(),{cache:"no-store"}),fetchDailyFresh(stamp)]);
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const doc=new DOMParser().parseFromString(await r.text(),"text/html"),remote=doc.querySelector('meta[name="fee-console-build"]')?.content||"";
+    if(!remote)throw new Error("页面校验失败");
+    DAILY=next;setCfg(K.daily,JSON.stringify(next));
+    if(remote!==SHELL_BUILD){
+      target.searchParams.set("_shell",remote);target.searchParams.set("_refreshed","1");
+      history.replaceState(null,"",target.pathname+target.search+target.hash);location.reload();return;
+    }
+    await pullAll(true,{skipShell:true,skipDaily:true});toast("已重新读取最新页面和数据");
+    _manualRefreshing=false;b.disabled=false;b.textContent=old;
+  }catch(_){toast("刷新失败，已保留当前页面");_manualRefreshing=false;b.disabled=false;b.textContent=old;}
+}
+async function fetchDailyFresh(stamp=Date.now()){
+  const r=await freshFetch(DATA_URL+"?t="+stamp,{cache:"no-store"});if(!r.ok)throw new Error("data.json HTTP "+r.status);
+  const o=await r.json();let d=o;
+  if(o&&o.enc){if(!cfg(K.key))throw new Error("缺少数据密钥");const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}
+  if(!d||!Array.isArray(d.daily))throw new Error("data.json 校验失败");return d;
+}
+async function pullAll(quiet,opt={}){
+  if(!opt.skipShell&&await ensureLatestShell())return;
+  if(!opt.skipDaily)try{const d=await fetchDailyFresh();DAILY=d;setCfg(K.daily,JSON.stringify(d));}catch(_){}
   if(!cfg(K.gid)&&isMgr()){try{await ghFind();}catch(_){}}
   if(cfg(K.gid)){
     if(_busy)return;_busy=true;if(isMgr())setSync("同步中…");
@@ -807,6 +880,7 @@ document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.cl
 document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
+  if(T.id==="btnRefresh"){manualRefresh();return;}
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
   if(T.id==="btnLink"){const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是我发的链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
@@ -835,6 +909,7 @@ document.body.addEventListener("change",e=>{if(!isMgr())return;const T=e.target,
 /* ============ 启动 ============ */
 _last=_seeded?null:strip(DB);
 render();setSync("");
+try{const u=new URL(location.href);if(u.searchParams.get("_refreshed")==="1"){u.searchParams.delete("_refreshed");history.replaceState(null,"",u.pathname+u.search+u.hash);setTimeout(()=>toast("已重新读取最新页面和数据"),250);}}catch(_){}
 if(HASH&&HASH.tok&&store){connect(HASH.tok);}else pullAll(true);
 </script>
 </body>
