@@ -134,7 +134,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <div class="wrap">
 <header class="top">
   <div><h1>投资管理费</h1><div class="sub" id="subTitle"></div></div>
-  <div class="row"><span class="badge" id="syncBadge" style="display:none"></span></div>
+  <div class="row"><button class="btn sm" id="btnRefresh" type="button">↻ 刷新</button><span class="badge" id="syncBadge" style="display:none"></span></div>
 </header>
 
 <div id="setupBox"></div>
@@ -276,6 +276,7 @@ const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
 const freshFetch=(url,opt)=>fetch(url,opt);
+const REFRESH_NOTICE_KEY="feeConsole.manualRefresh.notice";
 
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
@@ -812,11 +813,35 @@ async function ensureLatestShell(){
   }catch(_){return false;}finally{_shellCheck=null;}})();
   return _shellCheck;
 }
-async function pullAll(quiet){
-  if(await ensureLatestShell())return;
-  try{const r=await freshFetch(DATA_URL+"?t="+Date.now(),{cache:"no-store"});if(r.ok){const o=await r.json();let d=o;
-      if(o&&o.enc){if(cfg(K.key)){const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}else d=null;}
-      if(d&&Array.isArray(d.daily)){DAILY=d;setCfg(K.daily,JSON.stringify(d));}}}catch(_){}
+let _manualRefreshing=false;
+async function manualRefresh(){
+  if(_manualRefreshing)return;
+  const b=document.getElementById("btnRefresh"),old=b.textContent;
+  _manualRefreshing=true;b.disabled=true;b.textContent="刷新中…";
+  try{
+    const stamp=Date.now(),target=new URL(location.href);target.searchParams.delete("_shell_check");target.searchParams.set("_refresh",String(stamp));
+    const [r,next]=await Promise.all([freshFetch(target.toString(),{cache:"no-store"}),fetchDailyFresh(stamp)]);
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    const doc=new DOMParser().parseFromString(await r.text(),"text/html"),remote=doc.querySelector('meta[name="fee-console-build"]')?.content||"";
+    if(!remote)throw new Error("页面校验失败");
+    DAILY=next;setCfg(K.daily,JSON.stringify(next));
+    if(remote!==SHELL_BUILD){
+      target.searchParams.set("_shell",remote);try{sessionStorage.setItem(REFRESH_NOTICE_KEY,"1");}catch(_){}
+      location.replace(target.toString());return;
+    }
+    await pullAll(true,{skipShell:true,skipDaily:true});toast("已重新读取最新页面和数据");
+    _manualRefreshing=false;b.disabled=false;b.textContent=old;
+  }catch(_){toast("刷新失败，已保留当前页面");_manualRefreshing=false;b.disabled=false;b.textContent=old;}
+}
+async function fetchDailyFresh(stamp=Date.now()){
+  const r=await freshFetch(DATA_URL+"?t="+stamp,{cache:"no-store"});if(!r.ok)throw new Error("data.json HTTP "+r.status);
+  const o=await r.json();let d=o;
+  if(o&&o.enc){if(!cfg(K.key))throw new Error("缺少数据密钥");const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}
+  if(!d||!Array.isArray(d.daily))throw new Error("data.json 校验失败");return d;
+}
+async function pullAll(quiet,opt={}){
+  if(!opt.skipShell&&await ensureLatestShell())return;
+  if(!opt.skipDaily)try{const d=await fetchDailyFresh();DAILY=d;setCfg(K.daily,JSON.stringify(d));}catch(_){}
   if(!cfg(K.gid)&&isMgr()){try{await ghFind();}catch(_){}}
   if(cfg(K.gid)){
     if(_busy)return;_busy=true;if(isMgr())setSync("同步中…");
@@ -856,6 +881,7 @@ document.getElementById("tabs").addEventListener("click",e=>{const b=e.target.cl
 document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElementById("cfm").classList.remove("on");};
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
+  if(T.id==="btnRefresh"){manualRefresh();return;}
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
   if(T.id==="btnLink"){const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是我发的链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
@@ -884,6 +910,7 @@ document.body.addEventListener("change",e=>{if(!isMgr())return;const T=e.target,
 /* ============ 启动 ============ */
 _last=_seeded?null:strip(DB);
 render();setSync("");
+try{if(sessionStorage.getItem(REFRESH_NOTICE_KEY)){sessionStorage.removeItem(REFRESH_NOTICE_KEY);setTimeout(()=>toast("已重新读取最新页面和数据"),250);}}catch(_){}
 if(HASH&&HASH.tok&&store){connect(HASH.tok);}else pullAll(true);
 </script>
 </body>
