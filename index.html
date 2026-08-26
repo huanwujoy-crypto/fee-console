@@ -827,7 +827,7 @@ async function manualRefresh(){
     DAILY=next;setCfg(K.daily,JSON.stringify(next));
     if(remote!==SHELL_BUILD){
       target.searchParams.set("_shell",remote);try{sessionStorage.setItem(REFRESH_NOTICE_KEY,"1");}catch(_){}
-      location.replace(target.toString());return;
+      history.replaceState(null,"",target.pathname+target.search+target.hash);location.reload();return;
     }
     await pullAll(true,{skipShell:true,skipDaily:true});toast("已重新读取最新页面和数据");
     _manualRefreshing=false;b.disabled=false;b.textContent=old;
