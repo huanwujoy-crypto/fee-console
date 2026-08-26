@@ -276,7 +276,6 @@ const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
 const freshFetch=(url,opt)=>fetch(url,opt);
-const REFRESH_NOTICE_KEY="feeConsole.manualRefresh.notice";
 
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
@@ -826,7 +825,7 @@ async function manualRefresh(){
     if(!remote)throw new Error("页面校验失败");
     DAILY=next;setCfg(K.daily,JSON.stringify(next));
     if(remote!==SHELL_BUILD){
-      target.searchParams.set("_shell",remote);try{sessionStorage.setItem(REFRESH_NOTICE_KEY,"1");}catch(_){}
+      target.searchParams.set("_shell",remote);target.searchParams.set("_refreshed","1");
       history.replaceState(null,"",target.pathname+target.search+target.hash);location.reload();return;
     }
     await pullAll(true,{skipShell:true,skipDaily:true});toast("已重新读取最新页面和数据");
@@ -910,7 +909,7 @@ document.body.addEventListener("change",e=>{if(!isMgr())return;const T=e.target,
 /* ============ 启动 ============ */
 _last=_seeded?null:strip(DB);
 render();setSync("");
-try{if(sessionStorage.getItem(REFRESH_NOTICE_KEY)){sessionStorage.removeItem(REFRESH_NOTICE_KEY);setTimeout(()=>toast("已重新读取最新页面和数据"),250);}}catch(_){}
+try{const u=new URL(location.href);if(u.searchParams.get("_refreshed")==="1"){u.searchParams.delete("_refreshed");history.replaceState(null,"",u.pathname+u.search+u.hash);setTimeout(()=>toast("已重新读取最新页面和数据"),250);}}catch(_){}
 if(HASH&&HASH.tok&&store){connect(HASH.tok);}else pullAll(true);
 </script>
 </body>
