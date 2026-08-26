@@ -1,109 +1,470 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="default"><meta name="apple-mobile-web-app-title" content="XUAN-IB 交接"><meta name="theme-color" content="#f9f9f7"><title>XUAN-IB 睡前交接</title><style>:root{color-scheme:light dark}html,body{margin:0;padding:0;background:#f9f9f7}@media (prefers-color-scheme:dark){html,body{background:#0d0d0d}}</style><style>
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="XUAN-IB 交接">
+<meta name="theme-color" content="#f9f9f7">
+<title>XUAN-IB 睡前交接</title>
+<style>
+:root{color-scheme:light dark;
+--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mut:#898781;--grid:#e1e0d9;
+--blue:#2a78d6;--orange:#eb6834;--good:#0ca30c;--warn:#fab219;--ser:#ec835a;--crit:#d03b3b;
+--up:#006300;--dn:#d03b3b;--wash:#f2f1ec;--pill:#efeee8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}}
+:root[data-theme="dark"]{
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+html,body{margin:0;padding:0;background:#f9f9f7}
+@media (prefers-color-scheme:dark){html,body{background:#0d0d0d}}
 *{box-sizing:border-box}
-body{margin:0;font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;-webkit-text-size-adjust:100%}
-.vh{position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;margin:0;padding:0;border:0;z-index:-1;pointer-events:none}
-.page{--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mute:#898781;--grid:#e1e0d9;--pri:#2a78d6;--org:#eb6834;--up:#006300;--dn:#d03b3b;--good:#0ca30c;--warn:#fab219;--ser:#ec835a;--crit:#d03b3b;--wash:rgba(0,0,0,.035);--pillbg:#f1f0ea;
-background:var(--bg);color:var(--ink);min-height:100vh;padding:0 0 40px}
-@media (prefers-color-scheme:dark){.page{--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mute:#898781;--grid:#2c2c2a;--pri:#3987e5;--org:#d95926;--up:#0ca30c;--dn:#d03b3b;--wash:rgba(255,255,255,.045);--pillbg:#242422}}
-#thm:checked ~ .page{--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mute:#898781;--grid:#2c2c2a;--pri:#3987e5;--org:#d95926;--up:#0ca30c;--dn:#d03b3b;--wash:rgba(255,255,255,.045);--pillbg:#242422}
-@media (prefers-color-scheme:dark){#thm:checked ~ .page{--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mute:#898781;--grid:#e1e0d9;--pri:#2a78d6;--org:#eb6834;--up:#006300;--dn:#d03b3b;--wash:rgba(0,0,0,.035);--pillbg:#f1f0ea}}
-.wrap{max-width:1000px;margin:0 auto;padding:0 14px}
-.hd{padding:16px 0 10px}
-.hdtop{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
-h1{font-size:19px;margin:0;letter-spacing:.2px}
-.tgl{cursor:pointer;font-size:12px;color:var(--ink2);border:1px solid var(--grid);border-radius:999px;padding:3px 10px;background:var(--card);white-space:nowrap}
-.date{display:block;margin-top:5px;font-size:12.5px;color:var(--ink2);white-space:normal;overflow-wrap:anywhere}
-.warn{margin-top:9px;padding:8px 11px;border-radius:8px;background:rgba(250,178,25,.16);border:1px solid rgba(250,178,25,.5);font-size:13px;color:var(--ink);white-space:normal;overflow-wrap:anywhere}
-.warn.crit{background:rgba(208,59,59,.14);border-color:rgba(208,59,59,.5)}
-details{border:1px solid var(--grid);border-radius:9px;background:var(--card);margin-top:9px}
-summary{cursor:pointer;padding:8px 11px;font-size:13px;color:var(--ink);list-style:none;display:flex;gap:8px;align-items:baseline;justify-content:space-between;flex-wrap:wrap}
-summary::-webkit-details-marker{display:none}
-summary::before{content:"▸";color:var(--mute);margin-right:2px}
-details[open]>summary::before{content:"▾"}
-.sname{font-weight:600;white-space:normal}
-.sval{color:var(--ink2);font-size:12.5px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
-.dbody{padding:2px 11px 11px;font-size:13.5px;border-top:1px solid var(--grid)}
-.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:9px;margin-top:12px}
-.kpi{background:var(--card);border:1px solid var(--grid);border-radius:10px;padding:10px 11px}
-.kpi .t{font-size:11.5px;color:var(--mute);letter-spacing:.4px;white-space:normal}
-.kpi .n{font-size:23px;font-weight:650;margin-top:3px;letter-spacing:-.3px}
-.kpi .sub{font-size:11.5px;color:var(--ink2);margin-top:4px;white-space:normal;overflow-wrap:anywhere;line-height:1.45}
-.tabs{position:sticky;top:0;z-index:6;display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:14px 0 0;padding:8px 0;background:var(--bg)}
-.tabs label{cursor:pointer;text-align:center;font-size:13px;padding:7px 4px;border-radius:8px;border:1px solid var(--grid);background:var(--card);color:var(--ink2);white-space:nowrap}
-.tabs label .bdg{display:inline-block;min-width:16px;margin-left:4px;font-size:10.5px;border-radius:999px;background:var(--pillbg);color:var(--ink2);padding:0 4px}
-.pane{display:none;padding-top:4px}
-#t1:checked ~ .page label[for=t1],#t2:checked ~ .page label[for=t2],#t3:checked ~ .page label[for=t3],#t4:checked ~ .page label[for=t4]{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600}
-#t1:checked ~ .page label[for=t1] .bdg,#t2:checked ~ .page label[for=t2] .bdg,#t3:checked ~ .page label[for=t3] .bdg,#t4:checked ~ .page label[for=t4] .bdg{background:rgba(255,255,255,.25);color:#fff}
-#t1:checked ~ .page #p1,#t2:checked ~ .page #p2,#t3:checked ~ .page #p3,#t4:checked ~ .page #p4{display:block}
-.card{background:var(--card);border:1px solid var(--grid);border-radius:10px;padding:11px 12px;margin-top:10px}
-.card>h2{font-size:14px;margin:0 0 8px;letter-spacing:.2px}
-.card>h2 .hint{font-weight:400;font-size:11.5px;color:var(--mute);margin-left:6px}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:13.5px;font-variant-numeric:tabular-nums}
-.kv dt{color:var(--ink2);white-space:normal}
-.kv dd{margin:0;text-align:right;white-space:normal;overflow-wrap:anywhere}
-.tblwrap{overflow-x:auto;margin-top:8px}
-table{border-collapse:collapse;width:100%;font-size:13px;font-variant-numeric:tabular-nums}
-th{font-size:10.5px;letter-spacing:.7px;color:var(--mute);font-weight:600;text-align:right;padding:4px 6px;border-bottom:1px solid var(--grid);text-transform:lowercase}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+-webkit-text-size-adjust:100%}
+.page{background:var(--bg);color:var(--ink);min-height:100vh;padding:14px 12px 40px}
+.wrap{max-width:940px;margin:0 auto}
+.num{font-variant-numeric:tabular-nums}
+h1{font-size:19px;margin:0;letter-spacing:-.01em}
+.date{font-size:12.5px;color:var(--ink2);display:block;margin-top:3px;font-variant-numeric:tabular-nums}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.tgl{display:flex;gap:4px;flex:0 0 auto}
+.tgl label{font-size:11px;padding:4px 9px;border:1px solid var(--grid);border-radius:99px;color:var(--ink2);cursor:pointer;background:var(--card)}
+#tl:checked~.page .tgl label[for="tl"],#td:checked~.page .tgl label[for="td"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#tl,#td{position:absolute;opacity:0;pointer-events:none}
+#tl:checked~.page{--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e1e0d9;--blue:#2a78d6;--orange:#eb6834;--up:#006300;--wash:#f2f1ec;--pill:#efeee8}
+#td:checked~.page{--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--grid:#2c2c2a;--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+details{background:var(--card);border:1px solid var(--grid);border-radius:10px;margin-top:8px}
+details>summary{cursor:pointer;padding:9px 11px;font-size:13px;font-weight:600;list-style:none;
+display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--mut);font-weight:400}
+details[open]>summary::before{content:"▾ "}
+details>summary .rt{font-weight:500;color:var(--ink2);font-size:12px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+.dbody{padding:2px 11px 11px;font-size:13px;line-height:1.55;color:var(--ink2)}
+.alert{margin-top:9px;border-radius:9px;padding:8px 11px;font-size:12.5px;line-height:1.5;
+background:rgba(250,178,25,.14);border:1px solid rgba(250,178,25,.55);color:var(--ink);overflow-wrap:anywhere}
+.alert.crit{background:rgba(208,59,59,.13);border-color:rgba(208,59,59,.55)}
+.alert b{font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.kpi{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:10px}
+.kpi .lab{font-size:10.5px;color:var(--mut);letter-spacing:.03em;text-transform:uppercase}
+.kpi .big{font-size:21px;font-weight:650;margin-top:3px;letter-spacing:-.02em}
+.kpi .sub{font-size:11px;color:var(--ink2);margin-top:4px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .big{font-size:20px}}
+.tabs{margin-top:14px}
+.tabs input{position:absolute;opacity:0;pointer-events:none}
+.tabbar{display:flex;gap:5px;position:sticky;top:0;z-index:5;background:var(--bg);padding:6px 0;flex-wrap:wrap}
+.tabbar label{font-size:12.5px;padding:6px 11px;border-radius:99px;border:1px solid var(--grid);
+background:var(--card);color:var(--ink2);cursor:pointer;display:flex;gap:5px;align-items:center}
+.tabbar label .dot{background:var(--pill);color:var(--ink2);border-radius:99px;font-size:10px;padding:0 5px;min-width:15px;text-align:center}
+#s1:checked~.tabbar label[for="s1"],#s2:checked~.tabbar label[for="s2"],#s3:checked~.tabbar label[for="s3"],#s4:checked~.tabbar label[for="s4"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s1:checked~.tabbar label[for="s1"] .dot,#s2:checked~.tabbar label[for="s2"] .dot,#s3:checked~.tabbar label[for="s3"] .dot,#s4:checked~.tabbar label[for="s4"] .dot{background:var(--bg);color:var(--ink)}
+.pane{display:none}
+#s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}
+.card{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:11px;margin-top:9px}
+.card h2{font-size:13.5px;margin:0 0 7px;letter-spacing:-.01em}
+.card h2 small{font-weight:400;color:var(--mut);font-size:11.5px;margin-left:5px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--ink2);flex:0 0 auto}
+.kv .v{text-align:right;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kv{flex-direction:column;gap:1px}.kv .v{text-align:left}}
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{font-size:10.5px;text-transform:lowercase;letter-spacing:.06em;color:var(--mut);font-weight:600;
+text-align:right;padding:5px 6px;border-bottom:1px solid var(--grid);white-space:nowrap}
 th:first-child{text-align:left}
-td{padding:5px 6px;border-bottom:1px solid var(--grid);text-align:right}
-td:first-child{text-align:left}
-tr.sec td{background:var(--wash);font-weight:650;font-size:12.5px}
-tr.tot td{font-weight:700;border-top:2px solid var(--grid)}
-.sym{font-weight:600;white-space:nowrap}
-.sub{display:block;font-size:11px;color:var(--mute);white-space:normal;line-height:1.4;font-weight:400}
-.up{color:var(--up)}.dn{color:var(--dn)}
-.num{white-space:nowrap;width:1%}
-.four td.num,.four th.num{white-space:nowrap;width:1%}
-.stick td:first-child,.stick th:first-child{position:sticky;left:0;background:var(--card);z-index:2}
-tr.sec td:first-child{background:var(--card)}
-.bar{margin-top:9px}
-.bar .lbl{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;flex-wrap:wrap}
-.bar .lbl b{font-weight:600}
-.bar .rt{font-variant-numeric:tabular-nums;color:var(--ink2);white-space:normal;text-align:right}
-.track{position:relative;height:8px;border-radius:5px;background:var(--pillbg);margin-top:4px;overflow:hidden}
-.fill{position:absolute;left:0;top:0;bottom:0;background:var(--pri);border-radius:5px}
-.fill.over{background:var(--org)}
-.mark{position:absolute;top:0;bottom:0;width:2px;background:var(--ink);opacity:.75}
-.note{font-size:12px;color:var(--ink2);margin-top:7px;white-space:normal;overflow-wrap:anywhere}
-.tag{display:inline-block;font-size:10.5px;padding:1px 6px;border-radius:999px;border:1px solid var(--grid);color:var(--ink2);background:var(--pillbg);white-space:nowrap}
-.tag.g{color:#fff;background:var(--good);border-color:var(--good)}
-.tag.w{color:#3b2c00;background:var(--warn);border-color:var(--warn)}
-.tag.s{color:#fff;background:var(--ser);border-color:var(--ser)}
-.tag.c{color:#fff;background:var(--crit);border-color:var(--crit)}
-.evkeys{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:2px 0 8px}
-.evkeys label{cursor:pointer;text-align:center;font-size:12.5px;padding:5px 4px;border-radius:999px;border:1px solid var(--grid);background:var(--pillbg);color:var(--ink2);white-space:nowrap}
-#e1:checked ~ .page label[for=e1],#e2:checked ~ .page label[for=e2],#e3:checked ~ .page label[for=e3]{background:var(--pri);border-color:var(--pri);color:#fff;font-weight:600}
-.evpane{display:none}
-#e1:checked ~ .page #ev1,#e2:checked ~ .page #ev2,#e3:checked ~ .page #ev3{display:block}
-.tl{display:grid;grid-template-columns:74px 1fr auto;gap:7px 9px;font-size:13px;align-items:baseline}
-.tl .tm{font-size:11px;color:var(--ink2);background:var(--pillbg);border-radius:999px;padding:1px 6px;text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap}
-.tl .ev{white-space:normal;overflow-wrap:anywhere}
-.tl .ev b{font-weight:650}
-.tl .st{text-align:right;white-space:nowrap}
-.fix{margin-top:10px;padding-top:8px;border-top:1px solid var(--grid);font-size:13px;white-space:normal;overflow-wrap:anywhere}
-ol.todo{margin:4px 0 0;padding-left:20px;font-size:13.5px}
-ol.todo li{margin:5px 0;white-space:normal;overflow-wrap:anywhere}
-.foot{margin-top:16px;font-size:11.5px;color:var(--mute);white-space:normal;overflow-wrap:anywhere}
-@media (max-width:640px){
-body{font-size:14px}
-.kpis{grid-template-columns:repeat(2,1fr);gap:8px}
-.kpi .n{font-size:21px}
-.kv{grid-template-columns:1fr;gap:1px}
-.kv dt{font-size:11.5px;color:var(--mute);margin-top:5px}
-.kv dd{text-align:left}
-.dbody{padding:2px 6px 8px}
-.card{padding:10px 8px}
-.tabs label{font-size:12px;padding:6px 2px}
-.tl{grid-template-columns:60px 1fr;gap:5px 7px}
-.tl .st{grid-column:2;text-align:left;margin-top:-4px}
-table{font-size:12px}
-td,th{padding:4px 4px}
+td{padding:5px 6px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{text-align:left;position:sticky;left:0;background:var(--card);white-space:normal}
+tr.sec td{background:var(--wash);font-weight:700}
+tr.sec td:first-child{background:var(--wash)}
+tr.tot td{font-weight:700;background:var(--wash)}
+tr.tot td:first-child{background:var(--wash)}
+.sym{font-weight:600}
+.sub{font-size:10.5px;color:var(--mut);font-weight:400;white-space:normal;display:block;margin-top:1px}
+.up{color:var(--up)}.dn{color:var(--dn)}.or{color:var(--orange)}.bl{color:var(--blue)}
+.wv{color:var(--warn)}.cv{color:var(--crit)}.gv{color:var(--good)}
+.bar{margin:9px 0}
+.bar .lbl{display:flex;justify-content:space-between;gap:9px;font-size:12px;margin-bottom:3px;flex-wrap:wrap}
+.bar .lbl .r{font-variant-numeric:tabular-nums;color:var(--ink2);white-space:normal;overflow-wrap:anywhere;text-align:right}
+.track{height:7px;background:var(--pill);border-radius:99px;position:relative;overflow:hidden}
+.fill{height:100%;background:var(--blue);border-radius:99px}
+.fill.over{background:var(--orange)}
+.mark{position:absolute;top:0;height:100%;width:2px;background:var(--ink)}
+.tl{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:12.5px}
+.tl:last-child{border-bottom:0}
+.tl .t{flex:0 0 62px;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:11.5px}
+.tl .e{flex:1 1 auto}
+.tl .e b{font-weight:650}
+.tl .s{flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--pill);color:var(--ink2);height:fit-content;white-space:nowrap}
+.sw{margin-top:8px}
+.sw input{position:absolute;opacity:0;pointer-events:none}
+.swbar{display:flex;gap:5px;margin-bottom:7px}
+.swbar label{font-size:11.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--grid);color:var(--ink2);cursor:pointer}
+#e1:checked~.swbar label[for="e1"],#e2:checked~.swbar label[for="e2"],#e3:checked~.swbar label[for="e3"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.epane{display:none}
+#e1:checked~.q1,#e2:checked~.q2,#e3:checked~.q3{display:block}
+ol,ul{margin:5px 0;padding-left:19px}
+li{font-size:12.5px;margin:3px 0;line-height:1.5}
+.foot{font-size:11px;color:var(--mut);margin-top:14px;line-height:1.6}
+@media(max-width:640px){
+.page{padding:11px 9px 34px}body{font-size:14px}
+.dbody,.kv,li,td,.tl{font-size:12px}
+details .dbody{padding-left:7px;padding-right:7px}
+.tl .t{flex:0 0 56px}
 }
-</style></head><body><!-- xuan-ib-handover:v1 --><input type="checkbox" id="thm" class="vh"><input type="radio" name="tab" id="t1" class="vh" checked><input type="radio" name="tab" id="t2" class="vh"><input type="radio" name="tab" id="t3" class="vh"><input type="radio" name="tab" id="t4" class="vh"><input type="radio" name="ev" id="e1" class="vh" checked><input type="radio" name="ev" id="e2" class="vh"><input type="radio" name="ev" id="e3" class="vh"><div class="page"><div class="wrap"><header class="hd"><div class="hdtop"><h1>XUAN-IB 睡前交接</h1><label class="tgl" for="thm">◐ 深浅切换</label></div><span class="date">2026-08-26 周三 · 16:56 HKT 取数 · 计划外加跑（常规 21:00）· 规范 v9.14 / 交付 v9.15</span></header><div class="warn">🔁 <b>自动发布链路复验；沿用今日已核实数据，不代表重新取数</b> — 本次仅为验证「Claude 候选分支 → Validate → Promote → Pages」自动发布链路是否贯通。页面全文取自 main 上今日已核实的交接页（16:56 HKT 取数），所有金额、价格、取数时点、as-of 日期、方法论与风险声明均逐字保留、未作任何改动。本次<b>未连接 IB / Sharesight，未重新取数</b>，不构成新的持仓或市场读数。复验页生成时间：2026-08-26 19:29 HKT。</div>
-<div class="warn">ℹ <b>本期为计划外加跑（16:56 HKT 取数）</b> — 已通过 handover guard，并由受控补发流程发布到手机固定页；全部数据来自只读 IB / Sharesight。</div>
-<div class="warn">⚠ <b>本期运行点 16:56 HKT，非常规 21:00</b>：欧股开盘约 2 小时（盘中），美股盘前仅约 1 小时、流动性极薄——多只美股无盘前成交、现价即昨收；TSE 未开盘。①段读数请按此口径理解。</div><div class="warn">🔴 <b>睡前须处理的挂单：MSFT 卖 90 @ 488.43</b>（今日 09:38 HKT 新增），现价 488.28，距离仅 +0.03%，<b>21:30 开盘极可能即成交</b>。Claude 只读、不下单/不改单/不撤单。</div><details><summary><span class="sname">三行摘要</span><span class="sval">3 条</span></summary><div class="dbody"><ol class="todo">
-<li><b>计划外加跑于 16:56 HKT 取数</b>：IB NAV $5,025,791（+$6,674 vs 08-25 报点）；欧股盘中、美股极早盘前、TSE 昨收，为混合口径。</li>
-<li><b>MSFT 卖 90 @ 488.43 距现价仅 +0.03%，21:30 开盘极可能即成交</b>；另新增 AMD 卖 20 @ 500（+4.2%）。今夜 04:20 HKT NVDA 财报（已核实）。</li><li>AI 压力中情景 <b>22.62%</b>（提醒区间，距 25% 预警 $145,929 / 2.38 个百分点，fail-closed PASS）；IB NAV <b>$5,025,791</b>（+$6,674 vs 昨报点）；单票 0 告警。</li></ol></div></details><details><summary><span class="sname">运行信息 · 口径</span><span class="sval">IB 实时 + Sharesight · 混合口径</span></summary><div class="dbody"><dl class="kv"><dt>取数时点</dt><dd>2026-08-26 08:56–08:58 UTC（16:56–16:58 HKT）</dd><dt>运行性质</dt><dd>计划外加跑（常规 cron 12:55 UTC = 20:55 HKT）</dd><dt>市场状态</dt><dd>LSE / EBS 盘中（15:00–23:30 HKT）· 美股盘前极早（04:56 ET）· TSE 未开盘</dd><dt>IB NAV 口径</dt><dd>混合：欧股实时 + 美股极早盘前 mark + TSE 昨收</dd><dt>数据源</dt><dd>IB Web API（只读）· Sharesight User API（只读）</dd><dt>对账</dt><dd>IB 逐仓合计 vs gross_position_value 差 −0.0011%</dd><dt>AI 指标账户集合</dt><dd>IB-HK 936247 + Schwab-HK 936249 + Webull 1350094（与 NAV / 四桶 / 四类 / 单票上限口径不同，不可横向比较）</dd><dt>四类归类</dt><dd>Sharesight 自定义组「资产类别」六类清单（规范 v9.6 块 1）</dd><dt>四桶</dt><dd>沿用 2026-08-24 周一全量</dd><dt>边界</dt><dd>只用 IB / Sharesight 只读工具；不下单、不撤单、不改单</dd></dl></div></details><div class="kpis"><div class="kpi"><div class="t">IB NAV · 混合口径</div><div class="n">$5,025,791</div><div class="sub">vs 08-25 报点 <span class="up">+$6,674</span> · 剔美股盘前效应 ≈$5,028,215 · 零杠杆</div></div><div class="kpi"><div class="t">可用现金 · 已扣 reserve</div><div class="n">$540,335</div><div class="sub">现金池 $780,335（IB 422,366 + NOAH 357,969）· 覆盖待 call 3.25x ✓</div></div><div class="kpi"><div class="t">四桶 · HL 缺口（vs 40%）</div><div class="n">$6.92M</div><div class="sub">HL 17.75%/40% · VC-PE 51.74%/30%（<span style="color:var(--org)">超配 ~$6.76M</span>）· HF 14.58% · 常青 15.93% 毛 · 沿用 08-24 周一</div></div><div class="kpi"><div class="t">四类 · 补仓缺口合计</div><div class="n">$842,071</div><div class="sub">EXUS 11.27%/23% + EIMI 10.25%/12% = $842,071 · <span style="color:var(--org)">科技超配 $391,006</span> · 现金覆盖 <span style="color:var(--warn)">64.2%</span></div></div></div><nav class="tabs"><label for="t1">今夜<span class="bdg">3</span></label><label for="t2">弹药·上限<span class="bdg">2</span></label><label for="t3">配置<span class="bdg">3</span></label>
-<label for="t4">待办·换仓<span class="bdg">4</span></label>
-</nav><section class="pane" id="p1"><div class="card"><h2>① 欧股盘中 + 美股盘前<span class="hint">运行点 16:56 HKT</span></h2><dl class="kv"><dt>IB NAV（混合）</dt><dd>$5,025,791　<span class="up">+$6,674</span> vs 08-25 报点</dd><dt>持仓日内 P&amp;L</dt><dd><span class="dn">−$725</span>　= 欧股盘中 <span class="up">+$1,698</span> + 美股极早盘前 <span class="dn">−$2,423</span></dd><dt>IB 现金 / 股息应计</dt><dd>$422,366.22 / $260.57（USD 422,122.13 + CAD 338.46）</dd><dt>盘前流动性口径</dt><dd>美股盘前 16:00 HKT 起，本时点仅约 1 小时、成交极薄；APO / KKR / VGSH / VCN 等无盘前成交，现价 = 昨收</dd></dl><div class="note"><b>|日内Δ| ≥ 1% 异动（1 只）</b></div><div class="tblwrap"><table class="four stick"><thead><tr><th>标的</th><th class="num">现价</th><th class="num">日内 %</th><th class="num">市值 $</th></tr></thead><tbody><tr><td><span class="sym">MSTR</span><span class="sub">US · 780 股 · 盘前</span></td><td class="num">$125.10</td><td class="num dn">-1.36%<span class="sub">-$1,349</span></td><td class="num">97,578</td></tr></tbody></table></div><details><summary><span class="sname">全部持仓表（26 只）</span><span class="sval">其余 25 只 &lt;1%，收在此表</span></summary><div class="dbody"><div class="tblwrap"><table class="four stick"><thead><tr><th>标的</th><th class="num">现价</th><th class="num">日内 %</th><th class="num">市值 $</th></tr></thead><tbody><tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900 股 · 盘中</span></td><td class="num">$225.87</td><td class="num up">+0.02%<span class="sub">+$196</span></td><td class="num">1,106,763</td></tr><tr><td><span class="sym">CSPX</span><span class="sub">LSE · 610 股 · 盘中</span></td><td class="num">$827.03</td><td class="num up">+0.04%<span class="sub">+$214</span></td><td class="num">504,488</td></tr><tr><td><span class="sym">EQAC</span><span class="sub">EBS · 960 股 · 盘中</span></td><td class="num">$498.85</td><td class="num dn">-0.25%<span class="sub">-$1,200</span></td><td class="num">478,896</td></tr><tr><td><span class="sym">EXUS</span><span class="sub">LSE · 8,500 股 · 盘中</span></td><td class="num">$47.34</td><td class="num up">+0.04%<span class="sub">+$170</span></td><td class="num">402,390</td></tr><tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530 股 · 盘中</span></td><td class="num">$55.35</td><td class="num up">+0.56%<span class="sub">+$2,024</span></td><td class="num">361,435</td></tr><tr><td><span class="sym">BRK.B</span><span class="sub">US · 450 股 · 盘前</span></td><td class="num">$504.50</td><td class="num up">+0.04%<span class="sub">+$81</span></td><td class="num">227,025</td></tr><tr><td><span class="sym">GOOG</span><span class="sub">US · 420 股 · 盘前</span></td><td class="num">$343.35</td><td class="num up">+0.00%<span class="sub">+$5</span></td><td class="num">144,207</td></tr><tr><td><span class="sym">META</span><span class="sub">US · 250 股 · 盘前</span></td><td class="num">$574.20</td><td class="num up">+0.73%<span class="sub">+$1,038</span></td><td class="num">143,550</td></tr><tr><td><span class="sym">VGIT</span><span class="sub">US · 2,400 股 · 盘前</span></td><td class="num">$58.43</td><td class="num dn">-0.27%<span class="sub">-$384</span></td><td class="num">140,232</td></tr><tr><td><span class="sym">TSLA</span><span class="sub">US · 390 股 · 盘前</span></td><td class="num">$349.80</td><td class="num dn">-0.13%<span class="sub">-$176</span></td><td class="num">136,422</td></tr><tr><td><span class="sym">GLD</span><span class="sub">US · 300 股 · 盘前</span></td><td class="num">$424.33</td><td class="num dn">-0.87%<span class="sub">-$1,122</span></td><td class="num">127,299</td></tr><tr><td><span class="sym">IVAI</span><span class="sub">LSE · 11,200 股 · 盘中</span></td><td class="num">$10.64</td><td class="num up">+0.21%<span class="sub">+$246</span></td><td class="num">119,123</td></tr><tr><td><span class="sym">MSTR</span><span class="sub">US · 780 股 · 盘前</span></td><td class="num">$125.10</td><td class="num dn">-1.36%<span class="sub">-$1,349</span></td><td class="num">97,578</td></tr><tr><td><span class="sym">VGSH</span><span class="sub">US · 1,500 股 · 盘前</span></td><td class="num">$58.20</td><td class="num up">+0.00%<span class="sub">+$0</span></td><td class="num">87,300</td></tr><tr><td><span class="sym">APO</span><span class="sub">US · 500 股 · 盘前</span></td><td class="num">$133.18</td><td class="num dn">-0.00%<span class="sub">-$0</span></td><td class="num">66,590</td></tr><tr><td><span class="sym">KKR</span><span class="sub">US · 600 股 · 盘前</span></td><td class="num">$107.58</td><td class="num up">+0.00%<span class="sub">+$0</span></td><td class="num">64,548</td></tr><tr><td><span class="sym">TLT</span><span class="sub">US · 700 股 · 盘前</span></td><td class="num">$83.29</td><td class="num dn">-0.22%<span class="sub">-$126</span></td><td class="num">58,303</td></tr><tr><td><span class="sym">SMH</span><span class="sub">US · 100 股 · 盘前</span></td><td class="num">$556.95</td><td class="num up">+0.20%<span class="sub">+$113</span></td><td class="num">55,695</td></tr><tr><td><span class="sym">VCN</span><span class="sub">TSE · 1,025 股 · 昨收</span></td><td class="num">C$75.23</td><td class="num up">+0.00%<span class="sub">+$0</span></td><td class="num">55,626</td></tr><tr><td><span class="sym">INDA</span><span class="sub">US · 1,100 股 · 盘前</span></td><td class="num">$50.19</td><td class="num dn">-0.08%<span class="sub">-$44</span></td><td class="num">55,209</td></tr><tr><td><span class="sym">MSFT</span><span class="sub">US · 100 股 · 盘前</span></td><td class="num">$488.28</td><td class="num dn">-0.70%<span class="sub">-$343</span></td><td class="num">48,828</td></tr><tr><td><span class="sym">AMD</span><span class="sub">US · 100 股 · 盘前</span></td><td class="num">$480.00</td><td class="num up">+0.17%<span class="sub">+$82</span></td><td class="num">48,000</td></tr><tr><td><span class="sym">ORCL</span><span class="sub">US · 200 股 · 盘前</span></td><td class="num">$144.30</td><td class="num dn">-0.32%<span class="sub">-$92</span></td><td class="num">28,860</td></tr><tr><td><span class="sym">SLV</span><span class="sub">US · 320 股 · 盘前</span></td><td class="num">$61.99</td><td class="num dn">-0.53%<span class="sub">-$106</span></td><td class="num">19,837</td></tr><tr><td><span class="sym">USSC</span><span class="sub">LSE · 160 股 · 盘中</span></td><td class="num">$95.12</td><td class="num up">+0.22%<span class="sub">+$34</span></td><td class="num">15,219</td></tr><tr><td><span class="sym">HODL</span><span class="sub">EBS · 600 股 · 盘中</span></td><td class="num">$14.70</td><td class="num up">+0.16%<span class="sub">+$14</span></td><td class="num">8,818</td></tr></tbody></table></div></div></details></div><div class="card"><h2>③ 今夜你睡着时会发生什么<span class="hint">时间为香港时间</span></h2><div class="evkeys"><label for="e1">今夜</label><label for="e2">本周</label><label for="e3">已出</label></div><div class="evpane" id="ev1"><div class="tl"><div class="tm">20:30</div><div class="ev"><b>美国 Q2 GDP 二估 + 核心 PCE + 耐用品订单</b><span class="sub">8:30 ET；GDP 预期 1.5%（前 2.1%）· 核心 PCE 预期 +0.2%（前 +0.1%）· 核心耐用品预期 +0.5%</span></div><div class="st"><span class="tag g">双源已核实</span></div><div class="tm">21:30</div><div class="ev"><b>美股开盘</b><span class="sub">MSFT 卖 90 @ 488.43 距现价 +0.03%，开盘极可能即成交</span></div><div class="st"><span class="tag c">需处理</span></div><div class="tm">22:30</div><div class="ev"><b>EIA 原油库存</b><span class="sub">10:30 ET；预期 +1.9M（前 +4.405M）</span></div><div class="st"><span class="tag g">已核实</span></div><div class="tm">23:30</div><div class="ev"><b>2 年期 FRN 标售</b><span class="sub">Treasury 官方日程列于今日；具体时刻</span></div><div class="st"><span class="tag w">时刻待核实</span></div><div class="tm">23:30</div><div class="ev"><b>LSE / EBS 收盘</b><span class="sub">EXUS 买 100 @ 46.90 若今日不成交则顺延（第 3 日）</span></div><div class="st"></div><div class="tm">04:20</div><div class="ev"><b>NVDA 财报（周四凌晨，盘后）</b><span class="sub">1:20 PM PT 发布 · 2:00 PM PT 电话会（= 05:00 HKT）；市场共识营收 ~$91.85B / EPS ~$2.08，公司指引 $91.0B ±2%</span></div><div class="st"><span class="tag g">已核实</span></div></div><div class="fix"><b>持仓财报：无</b>（NVDA 非直接持仓，但经 SMH / IVAI / EQAC / MXUS / CSPX 间接持有，是 AI 压力主读数的最大单一驱动）　·　<b>需睡前处理的挂单：有</b>（MSFT 卖 90 @ 488.43，带内；处置由 Wu 在 IB 端执行）</div></div><div class="evpane" id="ev2"><div class="tl"><div class="tm">周三 20:30</div><div class="ev"><b>GDP 二估 / 核心 PCE / 耐用品</b><span class="sub">今夜</span></div><div class="st"><span class="tag g">已核实</span></div><div class="tm">周四 04:20</div><div class="ev"><b>NVDA Q2 FY27 财报</b><span class="sub">AI capex 周期最重要的单一数据点</span></div><div class="st"><span class="tag g">已核实</span></div><div class="tm">周四</div><div class="ev"><b>CRM · CRWD 财报</b><span class="sub">具体时刻</span></div><div class="st"><span class="tag w">待核实</span></div><div class="tm">周四</div><div class="ev"><b>Jackson Hole 开幕（8/27–29）</b><span class="sub"></span></div><div class="st"><span class="tag g">已核实</span></div><div class="tm">周四</div><div class="ev"><b>5 年期国债标售</b><span class="sub">官方日程内部日期不一致（列 8/27）</span></div><div class="st"><span class="tag w">待核实</span></div><div class="tm">周五</div><div class="ev"><b>Warsh 首演</b><span class="sub">时间</span></div><div class="st"><span class="tag w">待核实</span></div><div class="tm">9/15–16</div><div class="ev"><b>下次 FOMC</b><span class="sub"></span></div><div class="st"><span class="tag g">已核实</span></div></div></div><div class="evpane" id="ev3"><div class="tl"><div class="tm">08-26 01:38</div><div class="ev"><b>MSFT 卖 90 @ 488.43 挂出</b><span class="sub">Wu 在 IB 端下单（09:38 HKT）</span></div><div class="st"><span class="tag s">新</span></div><div class="tm">08-25 23:08</div><div class="ev"><b>AMD 卖 20 @ 500 挂出</b><span class="sub">Wu 在 IB 端下单（07:08 HKT）</span></div><div class="st"><span class="tag s">新</span></div><div class="tm">08-25 夜</div><div class="ev"><b>美股时段零成交</b><span class="sub">TODAY 与昨夜美股时段均无成交</span></div><div class="st"></div><div class="tm">08-24 14:03</div><div class="ev"><b>EIMI 买 100 @ 53.99 成交</b><span class="sub">$5,399，节奏单第 1 笔</span></div><div class="st"><span class="tag g">已成交</span></div><div class="tm">08-20 13:30</div><div class="ev"><b>VCN 买 25 @ C$73.75 成交</b><span class="sub">C$1,843.75</span></div><div class="st"><span class="tag g">已成交</span></div></div></div></div></section><section class="pane" id="p2"><div class="card"><h2>② 弹药与 reserve 状态</h2><dl class="kv"><dt>IB 现金</dt><dd>$422,366.22</dd><dt>NOAH-HK 现金</dt><dd>$357,968.92（零变动）</dd><dt>现金池合计</dt><dd>$780,335.14</dd><dt>现金覆盖待 call 款</dt><dd><b>3.2514x</b> ✓（待 call $240,000；&lt;1.0x 才告警）</dd><dt>可用现金（扣 reserve）</dt><dd><b>$540,335.14</b></dd><dt>二线弹药</dt><dd>$285,835（VGSH 87,300 · VGIT 140,232 · TLT 58,303）</dd><dt>HL 平日近似分母</dt><dd>$5,383,760.18（IB NAV + NOAH-HK 现金）</dd></dl><div class="note">现金补仓池 = <b>非美发达 + 新兴市场</b>（v9.6；USSC 走底仓内部换壳、不占用现金）。</div></div><details class="card" style="padding:0"><summary><span class="sname">AI 压力敞口 · §0-C（三账户 · v9.11 系数）</span><span class="sval">中 <b>22.62%</b> · 提醒区间 · fail-closed <span class="tag g">PASS</span></span></summary><div class="dbody"><details><summary><span class="sname">中情景主读数　$1,390,098　=　22.62%</span><span class="sval">▸ 展开计算组成</span></summary><div class="dbody"><div class="note">算法：每一笔持仓按其所属层级乘以中情景系数（<b>T1 卖铲子 80% · T2 买铲子 55% · T3 使用者 5%</b>）后求和；ETF 按官方 holdings 的三层权重加权。系数是<b>指定压力情景下的预期损失比例</b>（stress-loss），不是「AI 相关度」。低 / 高情景 = 同一张表换系数阶梯（60/40/0 与 100/70/10）。</div><div class="tblwrap"><table class="stick"><thead><tr><th>标的</th><th class="num">市值 $</th><th class="num">× 中系数</th><th class="num">计入 $</th></tr></thead><tbody><tr class="sec"><td colspan="3">IB-HK 936247</td><td>分子小计 1,134,239</td></tr><tr><td><span class="sym">AMD</span><span class="sub">T1 卖铲子 · 直接持仓</span></td><td class="num">48,000</td><td class="num">80.00%</td><td class="num">38,400</td></tr><tr><td><span class="sym">APO</span><span class="sub">T3 使用者 · 另类资管</span></td><td class="num">66,590</td><td class="num">5.00%</td><td class="num">3,329</td></tr><tr><td><span class="sym">BRK.B</span><span class="sub">T3 · 底层持仓不经 look-through 注入分子</span></td><td class="num">227,025</td><td class="num">5.00%</td><td class="num">11,351</td></tr><tr><td><span class="sym">CSPX</span><span class="sub">ETF 三层加权 T1 19.88 / T2 16.94 / T3 11.42 · holdings as-of 2026-08-20</span></td><td class="num">504,488</td><td class="num">25.79%</td><td class="num">130,108</td></tr><tr><td><span class="sym">EIMI</span><span class="sub">ETF 三层加权 T1 29.98 / T2 4.51 / T3 1.68 · holdings as-of 2026-08-18</span></td><td class="num">361,435</td><td class="num">26.55%</td><td class="num">95,961</td></tr><tr><td><span class="sym">EQAC</span><span class="sub">ETF 三层加权 T1 37.23 / T2 18.99 / T3 16.86 · holdings as-of 2026-08-20</span></td><td class="num">478,896</td><td class="num">41.07%</td><td class="num">196,683</td></tr><tr><td><span class="sym">EXUS</span><span class="sub">ETF 估计权重 T1 5.65 / T2 2.40 / T3 3.40 · 无官方 holdings，C 级估计</span></td><td class="num">402,390</td><td class="num">6.01%</td><td class="num">24,184</td></tr><tr><td><span class="sym">GOOG</span><span class="sub">T2 买铲子 · 超大规模 capex 方</span></td><td class="num">144,207</td><td class="num">55.00%</td><td class="num">79,314</td></tr><tr><td><span class="sym">INDA</span><span class="sub">T3 · 单一新兴国家</span></td><td class="num">55,209</td><td class="num">5.00%</td><td class="num">2,760</td></tr><tr><td><span class="sym">IVAI</span><span class="sub">ETF 纯 T1（100%）· holdings as-of 2026-08-20</span></td><td class="num">119,123</td><td class="num">80.00%</td><td class="num">95,299</td></tr><tr><td><span class="sym">KKR</span><span class="sub">T3 · 另类资管</span></td><td class="num">64,548</td><td class="num">5.00%</td><td class="num">3,227</td></tr><tr><td><span class="sym">META</span><span class="sub">T2 买铲子</span></td><td class="num">143,550</td><td class="num">55.00%</td><td class="num">78,953</td></tr><tr><td><span class="sym">MSFT</span><span class="sub">T2 买铲子</span></td><td class="num">48,828</td><td class="num">55.00%</td><td class="num">26,855</td></tr><tr><td><span class="sym">MXUS</span><span class="sub">ETF 三层加权 T1 19.44 / T2 16.12 / T3 12.18 · holdings as-of 2026-07-08 ⚠ 滞后</span></td><td class="num">1,106,763</td><td class="num">25.03%</td><td class="num">277,023</td></tr><tr><td><span class="sym">ORCL</span><span class="sub">T2 买铲子</span></td><td class="num">28,860</td><td class="num">55.00%</td><td class="num">15,873</td></tr><tr><td><span class="sym">SMH</span><span class="sub">ETF 纯 T1（100%）· VanEck 官方</span></td><td class="num">55,695</td><td class="num">80.00%</td><td class="num">44,556</td></tr><tr><td><span class="sym">TSLA</span><span class="sub">T3 使用者</span></td><td class="num">136,422</td><td class="num">5.00%</td><td class="num">6,821</td></tr><tr><td><span class="sym">USSC</span><span class="sub">T3 · 美国小盘</span></td><td class="num">15,219</td><td class="num">5.00%</td><td class="num">761</td></tr><tr><td><span class="sym">VCN</span><span class="sub">T3 · 加拿大全市场</span></td><td class="num">55,626</td><td class="num">5.00%</td><td class="num">2,781</td></tr><tr class="sec"><td colspan="3">Schwab-HK 936249</td><td>分子小计 199,423</td></tr><tr><td><span class="sym">METU</span><span class="sub">杠杆 ETF：min(2 × T2 55%, 100%) = 100%</span></td><td class="num">22,228</td><td class="num">100.00%</td><td class="num">22,228</td></tr><tr><td><span class="sym">AVGO</span><span class="sub">T1 卖铲子</span></td><td class="num">35,674</td><td class="num">80.00%</td><td class="num">28,539</td></tr><tr><td><span class="sym">BRK.B</span><span class="sub">T3 · 底层持仓不经 look-through 注入分子</span></td><td class="num">75,648</td><td class="num">5.00%</td><td class="num">3,782</td></tr><tr><td><span class="sym">GOOGL</span><span class="sub">T2 买铲子</span></td><td class="num">104,782</td><td class="num">55.00%</td><td class="num">57,630</td></tr><tr><td><span class="sym">META</span><span class="sub">T2 买铲子</span></td><td class="num">136,812</td><td class="num">55.00%</td><td class="num">75,247</td></tr><tr><td><span class="sym">TSEM</span><span class="sub">特例：归 T2（40 / 55 / 70），Wu 2026-08-24 裁定</span></td><td class="num">21,271</td><td class="num">55.00%</td><td class="num">11,699</td></tr><tr><td><span class="sym">TSLA</span><span class="sub">T3 使用者</span></td><td class="num">5,954</td><td class="num">5.00%</td><td class="num">298</td></tr><tr class="sec"><td colspan="3">Webull 1350094</td><td>分子小计 56,436</td></tr><tr><td><span class="sym">BRK.B</span><span class="sub">T3 · 底层持仓不经 look-through 注入分子</span></td><td class="num">393,370</td><td class="num">5.00%</td><td class="num">19,668</td></tr><tr><td><span class="sym">GOOG</span><span class="sub">T2 买铲子 · 超大规模 capex 方</span></td><td class="num">51,501</td><td class="num">55.00%</td><td class="num">28,326</td></tr><tr><td><span class="sym">IREN</span><span class="sub">特例：T1 但中情景按 100%（AI Cloud / GPU 基建运营商）· 季度复核</span></td><td class="num">8,442</td><td class="num">100.00%</td><td class="num">8,442</td></tr><tr class="tot"><td>分子合计（中情景）</td><td class="num"></td><td class="num"></td><td class="num">1,390,098</td></tr><tr><td>÷ 分母 = 三账户总市值（含现金）<span class="sub">IB-HK 5,025,791 + Schwab-HK 605,771 + Webull 512,545</span></td><td class="num"></td><td class="num"></td><td class="num">6,144,107</td></tr><tr class="tot"><td>= 中情景占比</td><td class="num"></td><td class="num"></td><td class="num">22.62%</td></tr></tbody></table></div><div class="note"><b>不进分子（但计入分母）</b>：MSTR $97,578（判「不适用」——风险因子是 BTC 不是 AI capex，也不算作 0%）· GLD $127,299 / SLV $19,837 / HODL $8,818（主题类非股票）· 防御资产 VGSH+VGIT+TLT $285,835 · SGOV（Schwab $184,260 + Webull $57,868）· 三账户现金 $442,873。合计 $1,224,367。</div></div></details><dl class="kv" style="margin-top:8px"><dt>三级状态</dt><dd><span class="tag w">提醒区间</span>　越过 20% 提醒线 $161,276 / 2.62 个百分点</dd><dt>距 25% 预警线</dt><dd><b>$145,929 / 2.38 个百分点</b></dd><dt>距 30% 最高警报线</dt><dd>$453,134 / 7.38 个百分点</dd><dt>低情景（60/40/0）</dt><dd>$977,007　15.90%</dd><dt>高情景（100/70/10）</dt><dd>$1,795,220　29.22%（越过 25% 参考位，仅观察注记、不触发分级）</dd><dt>分账户分子（中）</dt><dd>IB-HK $1,134,239 · Schwab-HK $199,423 · Webull $56,436</dd><dt>分类敏感度</dt><dd>TSEM 若归 T1 → 22.71%；IREN 若按 80% → 22.60%。日常表述「约 22.6%–22.7%」</dd><dt>数据截止日期</dt><dd>2026-08-26 16:56 HKT（IB 实时）· Schwab-HK / Webull 为 Sharesight 08-25 收盘价，分子分母同源同日</dd><dt>账户集合</dt><dd>IB-HK 936247 + Schwab-HK 936249 + Webull 1350094</dd><dt>分母金额</dt><dd><b>$6,144,107.17</b></dd><dt>规范版本</dt><dd>§0-C v9.11 系数 / 显示 v9.14</dd><dt>ETF 持仓 as-of</dt><dd>MXUS <b>2026-07-08 ⚠ 滞后</b>（占分母 18.01%，最大单笔）· EQAC / CSPX / IVAI 2026-08-20 · EIMI 2026-08-18 · EXUS 无官方持仓（<b>C 级估计</b>）</dd><dt>fail-closed 校验</dt><dd><span class="tag g">PASS</span>　分子账户集合 = 分母账户集合 = {936247, 936249, 1350094}</dd><dt>IREN 季度复核</dt><dd>下次复核：按正式分部收入 / 已投产 GPU / 合同兑现情况（v9.11 块 4）</dd></dl><div class="note">读数为<b>压力情景估算，非预测</b>；T1/T2/T3 仅作监控，不是交易指令，不产生买卖建议、不含时点判断、不触发自动执行。本指标账户集合与 NAV / 四桶 / 四类 / 单票上限口径不同，<b>不可横向比较</b>。</div></div></details><details class="card" style="padding:0"><summary><span class="sname">单票集中度 · 双视图（v9.11）</span><span class="sval">家庭 BRK.B <b>11.33%</b> · IB 视图 <b>0 告警</b></span></summary><div class="dbody"><div class="note"><b>主视图 · 家庭三账户合并</b>（分母 $6,144,107，与 AI 指标同源同日）</div><div class="tblwrap"><table class="four stick"><thead><tr><th>标的</th><th class="num">三账户合计 $</th><th class="num">占分母</th><th class="num">距 5% 线</th></tr></thead><tbody><tr><td><span class="sym">BRK.B</span><span class="sub">线 12.8% · 已裁定维持</span></td><td class="num">696,043</td><td class="num">11.33%</td><td class="num">90,403</td></tr><tr><td><span class="sym">GOOG/GOOGL</span><span class="sub">距 5% 仅 0.11 个百分点 · 待裁决</span></td><td class="num">300,490</td><td class="num">4.89%</td><td class="num">6,715</td></tr><tr><td><span class="sym">META</span><span class="sub">市值口径；名义（含 METU 2x）324,817 = 5.29%</span></td><td class="num">280,362</td><td class="num">4.56%</td><td class="num">26,843</td></tr><tr><td><span class="sym">TSLA</span></td><td class="num">142,376</td><td class="num">2.32%</td><td class="num">164,829</td></tr><tr><td><span class="sym">MSTR</span></td><td class="num">97,578</td><td class="num">1.59%</td><td class="num">209,627</td></tr><tr><td><span class="sym">APO</span></td><td class="num">66,590</td><td class="num">1.08%</td><td class="num">240,615</td></tr><tr><td><span class="sym">KKR</span></td><td class="num">64,548</td><td class="num">1.05%</td><td class="num">242,657</td></tr><tr><td><span class="sym">MSFT</span></td><td class="num">48,828</td><td class="num">0.79%</td><td class="num">258,377</td></tr><tr><td><span class="sym">AMD</span></td><td class="num">48,000</td><td class="num">0.78%</td><td class="num">259,205</td></tr><tr><td><span class="sym">AVGO</span></td><td class="num">35,674</td><td class="num">0.58%</td><td class="num">271,531</td></tr><tr><td><span class="sym">ORCL</span></td><td class="num">28,860</td><td class="num">0.47%</td><td class="num">278,345</td></tr></tbody></table></div><div class="note">⚠ <b>两处待 Wu 裁决（第 4 日）</b>：GOOG/GOOGL 家庭口径 4.89%（距 5% 仅 $6,715）· META 名义口径（含 METU 2x）5.29% 已越 5%。v9.11 明载「名义口径越线是否算越线」与「线值未经等美元换算」待定 —— <b>未裁决前只报读数、不报越线、不触发任何动作</b>。</div><div class="note" style="margin-top:12px"><b>辅助视图 · IB 执行口径</b>（分母 HL 平日近似 $5,383,760；软 5% / 硬 5.5% / BRK.B 12.8%）—— <b>0 告警</b>，最紧为 GOOG（软余 $124,981）</div><div class="tblwrap"><table class="four stick"><thead><tr><th>标的</th><th class="num">市值 $</th><th class="num">占 HL 近似</th><th class="num">软线余 $</th></tr></thead><tbody><tr><td><span class="sym">BRK.B</span><span class="sub">线 12.8%</span></td><td class="num">227,025</td><td class="num">4.22%</td><td class="num">462,096</td></tr><tr><td><span class="sym">GOOG</span><span class="sub">线 5.0%</span></td><td class="num">144,207</td><td class="num">2.68%</td><td class="num">124,981</td></tr><tr><td><span class="sym">META</span><span class="sub">线 5.0%</span></td><td class="num">143,550</td><td class="num">2.67%</td><td class="num">125,638</td></tr><tr><td><span class="sym">TSLA</span><span class="sub">线 5.0%</span></td><td class="num">136,422</td><td class="num">2.53%</td><td class="num">132,766</td></tr><tr><td><span class="sym">MSTR</span><span class="sub">线 5.0%</span></td><td class="num">97,578</td><td class="num">1.81%</td><td class="num">171,610</td></tr><tr><td><span class="sym">APO</span><span class="sub">线 5.0%</span></td><td class="num">66,590</td><td class="num">1.24%</td><td class="num">202,598</td></tr><tr><td><span class="sym">KKR</span><span class="sub">线 5.0%</span></td><td class="num">64,548</td><td class="num">1.20%</td><td class="num">204,640</td></tr><tr><td><span class="sym">MSFT</span><span class="sub">线 5.0%</span></td><td class="num">48,828</td><td class="num">0.91%</td><td class="num">220,360</td></tr><tr><td><span class="sym">AMD</span><span class="sub">线 5.0%</span></td><td class="num">48,000</td><td class="num">0.89%</td><td class="num">221,188</td></tr><tr><td><span class="sym">ORCL</span><span class="sub">线 5.0%</span></td><td class="num">28,860</td><td class="num">0.54%</td><td class="num">240,328</td></tr></tbody></table></div><div class="note">BRK.B 计入单票集中度，但其<b>底层持仓不自动并入 AI 分子</b>（直接持仓仍按 T3 阶梯计入）。BRK.B 超 12.8% 线已裁定维持；再提请仅当 ≥13.8% / 出现「巴菲特方法」具名反例 / Wu 主动重启。</div></div></details><details><summary><span class="sname">口径与分母说明</span><span class="sval">4 个分母并存</span></summary><div class="dbody"><dl class="kv"><dt>AI 压力分母</dt><dd>三账户总市值含现金 $6,144,107（含 Schwab-HK / Webull）</dd><dt>HL 平日近似分母</dt><dd>IB NAV + NOAH-HK 现金 $5,383,760（单票 IB 执行视图、主题投资软上限用）</dd><dt>四类分母 T</dt><dd>IB-HK 前四类合计 $4,062,875（不含主题投资与防御资产）</dd><dt>四桶分母</dt><dd>家庭口径 $31,115,693（08-24 周一全量）</dd><dt>为何不可横向比较</dt><dd>§0 通用规则剔除 Schwab-HK 与 Webull；AI 指标按 Wu 2026-08-23 裁决包含这两个账户</dd></dl></div></details></section><section class="pane" id="p3"><div class="card"><h2>④ 配置<span class="hint">四桶 · 四类</span></h2><div class="note"><b>四桶（家庭口径 $31,115,693 · 沿用 2026-08-24 周一全量）</b></div><div class="bar"><div class="lbl"><b>Highly Liquid<span class="sub">缺口 $6.92M</span></b><span class="rt">17.75% / 40%</span></div><div class="track"><div class="fill" style="width:27.73%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>VC-PE（closed-end）<span class="sub">超配 ~$6.76M</span></b><span class="rt">51.74% / 30%</span></div><div class="track"><div class="fill over" style="width:100.00%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>对冲基金<span class="sub"></span></b><span class="rt">14.58% / 15%</span></div><div class="track"><div class="fill" style="width:60.75%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>常青（evergreen）<span class="sub">净 14.82%</span></b><span class="rt">15.93% / 15%</span></div><div class="track"><div class="fill over" style="width:66.38%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="note">HSBC-HK（1350095）wind-down：Apollo BDC 赎回进度 $47,511 / $159,001 = <b>29.9%</b>（周一口径）。周三无新异常。</div><div class="note" style="margin-top:14px"><b>四类（IB-HK 每日实时；分母 T = $4,062,875）</b></div><div class="bar"><div class="lbl"><b>美国底仓<span class="sub">$1,984,633 · 超 $156,340</span></b><span class="rt">48.85% / 45%</span></div><div class="track"><div class="fill over" style="width:67.84%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>美国科技<span class="sub">$1,203,582 · 超 $391,006</span></b><span class="rt">29.62% / 20%</span></div><div class="track"><div class="fill over" style="width:92.57%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>非美发达<span class="sub">$458,016 · 缺 $476,446（静态）</span></b><span class="rt">11.27% / 23%</span></div><div class="track"><div class="fill" style="width:30.63%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>新兴市场<span class="sub">$416,644 · 缺 $70,901（静态）</span></b><span class="rt">10.25% / 12%</span></div><div class="track"><div class="fill" style="width:53.41%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><div class="bar"><div class="lbl"><b>USSC 小盘<span class="sub">底仓内结构位 · 走底仓内部换壳，不占用现金补仓池</span></b><span class="rt">0.94% / 14% · 缺 $212,487</span></div><div class="track"><div class="fill" style="width:4.18%"></div><div class="mark" style="left:calc(62.50% - 1px)"></div></div></div><dl class="kv" style="margin-top:10px"><dt>USSC 基数构成</dt><dd>MXUS $1,106,763 + CSPX $504,488 + USSC $15,219 = $1,626,470（「纯指数化美国底仓」，v9.8）</dd><dt>USSC 目标 / 现持 / 缺口</dt><dd>$227,706 / $15,219 / <b>$212,487</b>　换壳进度 $0</dd><dt>MSCI 依据</dt><dd>MSCI USA 85% + MSCI USA Small Cap 14% = MSCI USA IMI 99%；14% 为市值中性、非超配（仅在 MSCI 体系内成立）</dd><dt>现金补仓池（动态）</dt><dd>EXUS +$670,122 + EIMI +$171,949 = <b>$842,071</b>；可用现金覆盖 <b>64.2%</b>（静态 $547,346 仅供 rebalance 参考）</dd><dt>美国科技超配</dt><dd>$391,006（29.62% vs 20%）· 处置 = <b>不新增 + Wu 择时减持 + 被动稀释</b>；可用现金全额补入后稀释至 <b>26.15%</b>。只列读数、不催、不做个股前瞻判断</dd><dt>主题投资软上限</dt><dd>$253,531 / HL 近似 $5,383,760 = <b>4.71%</b> vs ~7% ✓</dd><dt>防御资产（弹药池）</dt><dd>$285,835 = VGSH + VGIT + TLT</dd><dt>新标的</dt><dd>无（本期无清单外新标的需按 §0-A 规则归类）</dd></dl><details><summary><span class="sname">7 个 portfolio 明细</span><span class="sval">周一全量口径（08-24）</span></summary><div class="dbody"><dl class="kv"><dt>NOAH-HK 936238</dt><dd>总值 $12,657,882.79 · 现金 $357,968.92（本期实取）</dd><dt>NOAH-US 936240</dt><dd>沿用 08-24（VC 估值日 = 上年末，年内分配按比例调减，非减值）</dd><dt>ANTARCTICA 1021748</dt><dd>沿用 08-24</dd><dt>UBS 1031350</dt><dd>沿用 08-24</dd><dt>IB-HK 936247</dt><dd>NAV $5,025,791.26（本期实时）</dd><dt>Citi-HK & 地产四期 936243</dt><dd>沿用 08-24</dd><dt>HSBC-HK 1350095</dt><dd>wind-down；Apollo BDC 赎回进度 29.9%（周一口径）</dd><dt>参考（不计入 Wu 管理）</dt><dd>Schwab-HK 936249 $605,771.11 · Webull 1350094 $512,544.80 —— 仅用于 AI 压力指标</dd></dl></div></details></div></section><section class="pane" id="p4"><div class="card"><h2>⑤ 待决定事项</h2><ol class="todo">
-<li><b>家庭主视图越线裁决（第 4 日）</b>：GOOG/GOOGL 4.89%（距 5% $6,715）· META 名义 5.29%（含 METU 2x）。待 Wu 一句话：「名义口径越线是否算越线」「线值是否需等美元换算」。</li><li><b>JMS 赎回款 ~$84.1K 去向待确认</b>（到账默认记 Highly Liquid）。</li><li><b>AMD 两张 REPLACED 卖单待 TWS 目视确认（第 9 日）</b>：555 / 520；今日另新增 20 股 @ 500。</li><li><b>定时任务去重待确认</b>：两个「睡前交接」任务同 cron 并存；本期为计划外加跑，今晚 20:55 仍会有一次定时运行。</li></ol><div class="note">已结案（本期）：无新增结案项。</div></div><details class="card" style="padding:0"><summary><span class="sname">⑥ 换仓触发检查</span><span class="sval">触发：<b>有</b>（MSFT 卖单带内）· GTC <b>12 张</b>（+2）· 待撤 4 张 $150,520</span></summary><div class="dbody"><div class="note"><b>触发判定</b>：MSFT（迁移池标的）新挂卖单 90 股 @ 488.43，距现价 +0.03%，开盘极可能即成交 —— 属 Wu 择时执行范畴，Claude 只记录、不做时点或前瞻判断。AMD 新增卖 20 @ 500。其余迁移池标的（GOOG / TSLA / APO / KKR / MSTR）无触发；BRK.B 不在触发清单。</div><div class="note" style="margin-top:10px"><b>GTC 校准（限价 vs 盘前/盘中价）</b></div><div class="tblwrap"><table class="four stick"><thead><tr><th>挂单</th><th class="num">限价</th><th class="num">距现价</th><th class="num">名义 $</th></tr></thead><tbody><tr><td><span class="sym">MSFT 卖 90</span><span class="sub">2026-08-26 · 🆕 新增（今日 09:38 HKT 下单）· 距现价带内</span></td><td class="num">488.43</td><td class="num up">+0.03%<span class="sub">带内 ≤2%</span></td><td class="num">43,959</td></tr><tr><td><span class="sym">AMD 卖 20</span><span class="sub">2026-08-25 · 🆕 新增（昨 07:08 HKT）</span></td><td class="num">500.00</td><td class="num up">+4.17%</td><td class="num">10,000</td></tr><tr><td><span class="sym">AMD 卖 30</span><span class="sub">2026-08-25 · REPLACED 待 TWS 目视（第 9 日）</span></td><td class="num">555.00</td><td class="num up">+15.62%</td><td class="num">16,650</td></tr><tr><td><span class="sym">AMD 卖 50</span><span class="sub">2026-08-18 · REPLACED 待 TWS 目视（第 9 日）</span></td><td class="num">520.00</td><td class="num up">+8.33%</td><td class="num">26,000</td></tr><tr><td><span class="sym">EXUS 买 100</span><span class="sub">2026-08-24 · 节奏单 · LSE 盘中 · 第 3 日未成交</span></td><td class="num">46.90</td><td class="num dn">-0.93%<span class="sub">带内 ≤2%</span></td><td class="num">4,690</td></tr><tr><td><span class="sym">EIMI 买 500</span><span class="sub">2026-07-15 · 机会单 · 42 天</span></td><td class="num">49.50</td><td class="num dn">-10.57%</td><td class="num">24,750</td></tr><tr><td><span class="sym">EXUS 买 300</span><span class="sub">2026-07-09 · 机会单 · 48 天</span></td><td class="num">44.00</td><td class="num dn">-7.06%</td><td class="num">13,200</td></tr><tr><td><span class="sym">EIMI 买 1,000</span><span class="sub">2026-06-04 · ⚠ 待撤 · 83 天</span></td><td class="num">47.12</td><td class="num dn">-14.87%</td><td class="num">47,120</td></tr><tr><td><span class="sym">EXUS 买 1,000</span><span class="sub">2026-06-04 · ⚠ 待撤 · 83 天</span></td><td class="num">42.00</td><td class="num dn">-11.28%</td><td class="num">42,000</td></tr><tr><td><span class="sym">EXUS 买 1,000</span><span class="sub">2026-06-04 · ⚠ 待撤 · 83 天</span></td><td class="num">41.50</td><td class="num dn">-12.34%</td><td class="num">41,500</td></tr><tr><td><span class="sym">MXUS 买 100</span><span class="sub">2026-05-26 · ⚠ 待撤 · 92 天</span></td><td class="num">199.00</td><td class="num dn">-11.90%</td><td class="num">19,900</td></tr><tr><td><span class="sym">SLV 卖 160</span><span class="sub">2026-04-16 · 卖单免龄</span></td><td class="num">82.00</td><td class="num up">+32.28%</td><td class="num">13,120</td></tr></tbody></table></div><div class="note">卖单免龄；买单 &gt;60 天或距市价 &gt;5% 才提示。<b>待撤四张（第 28 期）名义合计 $150,520</b>：EIMI@47.12 · EXUS@42 · EXUS@41.50 · MXUS@199。撤单由 <b>Wu 自己在 IB / TWS 端执行</b>，Claude 只提醒和核对结果。</div><div class="note" style="margin-top:10px"><b>§2e 三行进度（第 10 日）</b>：已成交 <b>$5,399</b>（EIMI 100 @ 53.99，08-24）／ 节奏单在途 <b>$4,690</b>（EXUS 100 @ 46.90，DAY 带内）／ 机会单在途 <b>按 0 计</b>（6 张）。昨夜美股时段与今日均零成交。</div><details><summary><span class="sname">迁移池成本对照</span><span class="sval">今晚 mark · 按差异降序</span></summary><div class="dbody"><div class="tblwrap"><table class="four stick"><thead><tr><th>标的</th><th class="num">成本 / 股</th><th class="num">现价</th><th class="num">差异 %</th></tr></thead><tbody><tr><td><span class="sym">AMD</span><span class="sub">未实现 +$28,183</span></td><td class="num">$198.17</td><td class="num">$480.00</td><td class="num up">+142.2%</td></tr><tr><td><span class="sym">VCN</span><span class="sub">未实现 +C$29,942</span></td><td class="num">C$46.02</td><td class="num">C$75.23</td><td class="num up">+63.5%</td></tr><tr><td><span class="sym">MSFT</span><span class="sub">未实现 +$12,476</span></td><td class="num">$363.52</td><td class="num">$488.28</td><td class="num up">+34.3%</td></tr><tr><td><span class="sym">APO</span><span class="sub">未实现 +$6,266</span></td><td class="num">$120.65</td><td class="num">$133.18</td><td class="num up">+10.4%</td></tr><tr><td><span class="sym">GOOG</span><span class="sub">未实现 +$13,503</span></td><td class="num">$311.20</td><td class="num">$343.35</td><td class="num up">+10.3%</td></tr><tr><td><span class="sym">KKR</span><span class="sub">未实现 -$5,216</span></td><td class="num">$116.27</td><td class="num">$107.58</td><td class="num dn">-7.5%</td></tr><tr><td><span class="sym">TSLA</span><span class="sub">未实现 -$11,078</span></td><td class="num">$378.21</td><td class="num">$349.80</td><td class="num dn">-7.5%</td></tr><tr><td><span class="sym">ORCL</span><span class="sub">未实现 -$2,729</span></td><td class="num">$157.94</td><td class="num">$144.30</td><td class="num dn">-8.6%</td></tr><tr><td><span class="sym">MSTR</span><span class="sub">未实现 -$26,295</span></td><td class="num">$158.81</td><td class="num">$125.10</td><td class="num dn">-21.2%</td></tr></tbody></table></div><div class="note"><b>护栏（框架 §2c）</b>：历史成本与 trailing return <b>不作为主要卖出依据</b>；VCN 以 C$ 计。</div></div></details></div></details></section><div class="foot">口径：只统计 Wu 管理资产，剔除 TEST-VTI / NOAH-EB-5 / Schwab-HK / Webull；CSPX 全口径计入（v9.1）。AI 压力敞口按 §0-C v9.11 三账户口径，<b>包含 Schwab-HK 与 Webull</b>，与其它指标不可横向比较。本页只读、只做计算与预警，<b>不构成任何交易、改价、撤单或减仓授权</b>；一切下单由 Wu 在 IB 端执行。核实来源：IB Web API · Sharesight User API · Investing.com / TradingEconomics（经济日历）· Investing.com / StockTitan（NVDA 财报）· US Treasury 官方标售日程。规范 v9.14 · 交付契约 v9.15 · 生成于 2026-08-26 16:5x HKT。</div></div></div></body></html>
+</style>
+</head><body>
+<!-- xuan-ib-handover:v1 -->
+<input type="radio" name="th" id="tl"><input type="radio" name="th" id="td">
+<div class="page"><div class="wrap">
+
+<div class="hdr">
+<div>
+<h1>XUAN-IB 睡前交接</h1>
+<span class="date">2026-08-26 周三 · 21:00 HKT 定时正式版 · 欧股盘中 + 美股盘前</span>
+</div>
+<div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
+</div>
+
+<div class="alert crit"><b>🔴 手机固定页未更新，仍保留上一期。</b> 本会话未被授予 <b>fee-console</b> 仓库源，<code>git push</code> 被 git proxy 以 <b>403</b> 拒绝（仅一次 dry-run，未重试、未 force、未改凭据、未走 REST 旁路、未碰 main）。固定页当前内容 = <b>今日 16:56 加跑版</b>（Wu 手工经 PR #47 发布），<b>不是本期 21:00 定时版</b>。须 Wu 在定时任务/会话创建时附上该仓库源。</div>
+
+<div class="alert"><b>⚠️ VCN 报价异常，已单列剔除。</b> TSE 未开盘、成交量 0、last = 昨收 C$75.23，IB 却按盘前买卖盘 C$81.17 计价 ⇒ NAV 与日内 P&amp;L 各含 <b>约 +$4,392 虚增</b>。本期一切读数保留 IB 口径以与 NAV 自洽，并同时给出剔除后读数；迁移池成本对照按 C$75.23 计。</div>
+
+<div class="alert"><b>⚠️ 需睡前处理的挂单：有。</b> MSFT 卖 90 @ 488.43，现价 488.77（限价低于市价 <b>0.07%</b>）⇒ <b>21:30 开盘极可能即成交</b>。Claude 只提醒、不改单。</div>
+
+<details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
+<div class="dbody">
+<ol>
+<li><b>手机固定页未更新，仍保留上一期</b> —— 本会话无仓库源，推送被 403 拒绝；固定页停在今日 16:56 加跑版。</li>
+<li><b>MSFT 卖 90 @ 488.43 仅距市价 0.07%，开盘几乎必成交</b>；成交后四类科技占比降约 0.3 个百分点、迁移池 MSFT 归零。</li>
+<li><b>AI 压力中情景 22.64%</b>（提醒区间，距 25% 预警线 $145,142 / 2.36 个百分点），fail-closed <b>PASS</b>；NVDA 财报周四 04:20 HKT。</li>
+</ol>
+</div></details>
+
+<details><summary>运行信息 · 口径 <span class="rt">规范 v9.14 · 交付契约 v9.15</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">取数时点</span><span class="v">2026-08-26 12:58–13:00 UTC（20:58–21:00 HKT）</span></div>
+<div class="kv"><span class="k">市场状态</span><span class="v">LSE / EBS 盘中（收 23:30 HKT）· 美股盘前（21:30 开盘）· TSE 未开盘</span></div>
+<div class="kv"><span class="k">IB NAV 口径</span><span class="v">混合：欧股实时 + 美股盘前 mark + VCN 盘前买卖盘（异常，见上）</span></div>
+<div class="kv"><span class="k">数据源</span><span class="v">IB Web API（只读）· Sharesight User API（只读）</span></div>
+<div class="kv"><span class="k">交易边界</span><span class="v">只读：不下单、不撤单、不改单、不改 GTC</span></div>
+<div class="kv"><span class="k">计算口径</span><span class="v">规范 v9.14（AI 压力 §0-C v9.11 系数 · 四类 v9.6 清单 · USSC v9.8 基数）</span></div>
+<div class="kv"><span class="k">AI 账户例外</span><span class="v">AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b></span></div>
+<div class="kv"><span class="k">四桶</span><span class="v">沿用 2026-08-24 周一全量（周三无新异常）</span></div>
+</div></details>
+
+<div class="kpis">
+<div class="kpi"><div class="lab">IB NAV</div><div class="big num">$5,021,747</div>
+<div class="sub">混合口径 · vs 08-25 定时版 <span class="up">+$2,630</span><br>剔美股盘前 ≈$5,023,368<br>剔 VCN 虚价 ≈$5,017,355</div></div>
+<div class="kpi"><div class="lab">可用现金</div><div class="big num">$540,335</div>
+<div class="sub">现金池 $780,335（IB 422,366 + NOAH 357,969）<br>已扣 reserve $240,000</div></div>
+<div class="kpi"><div class="lab">四桶 · HL 缺口</div><div class="big num">$6.92M</div>
+<div class="sub">HL 17.75%/40% · VC-PE 51.74%/30%（<span class="or">超 ~$6.77M</span>）<br>HF 14.58% · 常青 15.93% 毛<br>沿用 08-24 周一全量</div></div>
+<div class="kpi"><div class="lab">四类 · 补仓缺口合计</div><div class="big num">$838,491</div>
+<div class="sub">EXUS 11.38%/23% + EIMI 10.22%/12%<br>科技超配 <span class="or">$390,429</span><br>现金覆盖 <span class="wv">64.4%</span></div></div>
+</div>
+
+<div class="tabs">
+<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">
+<div class="tabbar">
+<label for="s1">今夜 <span class="dot">5</span></label>
+<label for="s2">弹药·上限 <span class="dot">2</span></label>
+<label for="s3">配置 <span class="dot">4</span></label>
+<label for="s4">待办·换仓 <span class="dot">6</span></label>
+</div>
+
+<div class="pane p1">
+<div class="card">
+<h2>① 欧股盘中 + 美股盘前 <small>21:00 HKT</small></h2>
+<div class="kv"><span class="k">持仓日内 P&amp;L（IB 口径）</span><span class="v"><span class="up">+$750</span> = 欧股盘中 <span class="dn">−$2,022</span> + 美股盘前 <span class="dn">−$1,620</span> + VCN 虚价 <span class="up">+$4,392</span></span></div>
+<div class="kv"><span class="k">剔 VCN 虚价后真实 P&amp;L</span><span class="v"><span class="dn">−$3,642</span>（欧股与美股盘前双弱）</span></div>
+<div class="kv"><span class="k">美股盘前基准</span><span class="v">SPY 764.68 <span class="dn">−0.16%</span> · QQQ 707.59 <span class="dn">−0.44%</span>（REALTIME，盘前薄量）</span></div>
+<div class="kv"><span class="k">对账</span><span class="v">逐仓合计 $4,603,717 vs gross $4,598,247 → +0.119%（差额主要来自 VCN 盘前买卖盘计价）</span></div>
+<div class="tblwrap"><table>
+<thead><tr><th>|日内Δ| ≥ 1%</th><th>现价</th><th>日内 %</th><th>市值 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">VCN</span><span class="sub">TSE · 1,025 股 · ⚠ 盘前买卖盘虚价</span></td><td>C$81.17</td><td class="up">+7.90%<span class="sub">+C$6,089</span></td><td>60,018</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">NASDAQ · 250 股 · 盘前</span></td><td>586.74</td><td class="up">+2.93%<span class="sub">+$4,172</span></td><td>146,685</td></tr>
+<tr><td><span class="sym">MSTR</span><span class="sub">NASDAQ · 780 股 · 盘前</span></td><td>124.97</td><td class="dn">−1.47%<span class="sub">−$1,451</span></td><td>97,477</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">NASDAQ · 100 股 · 盘前</span></td><td>473.40</td><td class="dn">−1.21%<span class="sub">−$578</span></td><td>47,340</td></tr>
+<tr><td><span class="sym">GLD</span><span class="sub">NYSE · 300 股 · 盘前</span></td><td>423.53</td><td class="dn">−1.06%<span class="sub">−$1,362</span></td><td>127,059</td></tr>
+</tbody></table></div>
+<details><summary>全部持仓表 <span class="rt">其余 21 只 &lt;1% 收在此表</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>现价</th><th>日内 %</th><th>市值 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900</span></td><td>225.72</td><td class="dn">−0.05%<span class="sub">−$539</span></td><td>1,106,028</td></tr>
+<tr><td><span class="sym">CSPX</span><span class="sub">LSE · 610</span></td><td>826.32</td><td class="dn">−0.04%<span class="sub">−$220</span></td><td>504,055</td></tr>
+<tr><td><span class="sym">EQAC</span><span class="sub">EBS · 960</span></td><td>497.85</td><td class="dn">−0.45%<span class="sub">−$2,160</span></td><td>477,936</td></tr>
+<tr><td><span class="sym">EXUS</span><span class="sub">LSE · 8,500</span></td><td>47.335</td><td class="up">+0.03%<span class="sub">+$127</span></td><td>402,347</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530</span></td><td>55.18</td><td class="up">+0.25%<span class="sub">+$914</span></td><td>360,325</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">NYSE · 450 · 盘前</span></td><td>505.72</td><td class="up">+0.28%<span class="sub">+$630</span></td><td>227,574</td></tr>
+<tr><td><span class="sym">VGIT</span><span class="sub">NASDAQ · 2,400 · 盘前</span></td><td>58.52</td><td class="dn">−0.12%<span class="sub">−$168</span></td><td>140,448</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">NASDAQ · 390 · 盘前</span></td><td>347.14</td><td class="dn">−0.89%<span class="sub">−$1,213</span></td><td>135,385</td></tr>
+<tr><td><span class="sym">IVAI</span><span class="sub">LSE · 11,200</span></td><td>10.60</td><td class="dn">−0.13%<span class="sub">−$157</span></td><td>118,720</td></tr>
+<tr><td><span class="sym">VGSH</span><span class="sub">NASDAQ · 1,500 · 盘前</span></td><td>58.17</td><td class="dn">−0.05%<span class="sub">−$45</span></td><td>87,255</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">NYSE · 500 · 盘前，未动</span></td><td>133.18</td><td>0.00%</td><td>66,590</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">NYSE · 600 · 盘前</span></td><td>107.00</td><td class="dn">−0.54%<span class="sub">−$348</span></td><td>64,200</td></tr>
+<tr><td><span class="sym">TLT</span><span class="sub">NASDAQ · 700 · 盘前</span></td><td>83.27</td><td class="dn">−0.24%<span class="sub">−$140</span></td><td>58,289</td></tr>
+<tr><td><span class="sym">SMH</span><span class="sub">NASDAQ · 100 · 盘前</span></td><td>553.00</td><td class="dn">−0.51%<span class="sub">−$282</span></td><td>55,300</td></tr>
+<tr><td><span class="sym">INDA</span><span class="sub">BATS · 1,100 · 盘前</span></td><td>49.90</td><td class="dn">−0.66%<span class="sub">−$363</span></td><td>54,890</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">NASDAQ · 100 · 盘前 · 卖单带内</span></td><td>488.77</td><td class="dn">−0.60%<span class="sub">−$294</span></td><td>48,877</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">NASDAQ · 420 · 盘前</span></td><td>342.62</td><td class="dn">−0.21%<span class="sub">−$302</span></td><td>143,900</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">NYSE · 200 · 盘前</span></td><td>146.00</td><td class="up">+0.86%<span class="sub">+$248</span></td><td>29,200</td></tr>
+<tr><td><span class="sym">SLV</span><span class="sub">NYSE · 320 · 盘前</span></td><td>61.93</td><td class="dn">−0.63%<span class="sub">−$125</span></td><td>19,818</td></tr>
+<tr><td><span class="sym">USSC</span><span class="sub">LSE · 160</span></td><td>95.00</td><td class="up">+0.09%<span class="sub">+$14</span></td><td>15,200</td></tr>
+<tr><td><span class="sym">HODL</span><span class="sub">EBS · 600</span></td><td>14.668</td><td class="dn">−0.03%<span class="sub">−$2</span></td><td>8,801</td></tr>
+</tbody></table></div></div></details>
+</div>
+
+<div class="card">
+<h2>③ 今夜你睡着时会发生什么 <small>时间为香港时间</small></h2>
+<div class="sw">
+<input type="radio" name="ev" id="e1" checked><input type="radio" name="ev" id="e2"><input type="radio" name="ev" id="e3">
+<div class="swbar"><label for="e1">今夜</label><label for="e2">本周</label><label for="e3">已出</label></div>
+<div class="epane q1">
+<div class="tl"><span class="t">21:30</span><span class="e"><b>美股开盘</b><span class="sub">MSFT 卖 90 @ 488.43 带内，极可能即成交</span></span><span class="s">需处理</span></div>
+<div class="tl"><span class="t">22:30</span><span class="e"><b>EIA 原油库存</b><span class="sub">预期 +1.9M，前值 +4.405M</span></span><span class="s">已核实</span></div>
+<div class="tl"><span class="t">~23:30</span><span class="e"><b>2 年期 FRN 标售</b><span class="sub">日期在 Treasury 官方日程内；具体时刻本期未复核</span></span><span class="s">时刻待核实</span></div>
+<div class="tl"><span class="t">23:30</span><span class="e"><b>LSE / EBS 收盘</b><span class="sub">EXUS 买 100 @ 46.90 节奏单最后成交窗口（第 3 日）</span></span><span class="s">观察</span></div>
+<div class="tl"><span class="t">周四 04:20</span><span class="e"><b>NVDA Q2 FY27 财报</b><span class="sub">共识营收 ~$91.85B / EPS ~$2.08，公司指引 $91.0B ±2%；05:00 电话会</span></span><span class="s">已核实</span></div>
+<div class="tl"><span class="t">周四 04:00</span><span class="e"><b>美股收盘</b></span><span class="s">—</span></div>
+<div class="kv" style="margin-top:7px"><span class="k">持仓财报</span><span class="v"><b>无</b> —— NVDA 非直接持仓，但经 SMH / IVAI / EQAC / MXUS / CSPX 间接持有，是 AI 压力主读数的最大单一驱动</span></div>
+<div class="kv"><span class="k">需睡前处理的挂单</span><span class="v"><b class="cv">有</b> —— MSFT 卖 90 @ 488.43（距市价 −0.07%）</span></div>
+</div>
+<div class="epane q2">
+<div class="tl"><span class="t">周四</span><span class="e"><b>CRM / CRWD 财报 · Jackson Hole 开幕（8/27–29）· 5 年期国债标售</b><span class="sub">时刻待核实</span></span><span class="s">待核实</span></div>
+<div class="tl"><span class="t">周五</span><span class="e"><b>Warsh 首演</b><span class="sub">时间待核实</span></span><span class="s">待核实</span></div>
+<div class="tl"><span class="t">9/15–16</span><span class="e"><b>下次 FOMC</b></span><span class="s">已核实</span></div>
+</div>
+<div class="epane q3">
+<div class="tl"><span class="t">20:30</span><span class="e"><b>美国 Q2 GDP 二估 + 核心 PCE + 耐用品订单</b><span class="sub">预期 GDP 1.5%（前 2.1%）· 核心 PCE +0.2%（前 +0.1%）· 耐用品核心 +0.5%。<b>本期运行点在发布后 30 分钟，实际读数未取回</b> —— 按规范不凭记忆填写</span></span><span class="s">结果待核实</span></div>
+<div class="tl"><span class="t">08-24</span><span class="e"><b>EIMI 买 100 @ 53.99 成交</b><span class="sub">$5,399，节奏单进度唯一已成交项</span></span><span class="s">已确认</span></div>
+</div>
+</div>
+<details><summary>本周完整日历 <span class="rt">flash PMI 连续第 7 晚未取（低优先）</span></summary>
+<div class="dbody">周三（今日）：GDP 二估 / 核心 PCE / 耐用品（20:30）· EIA 原油（22:30）· 2 年期 FRN 标售（~23:30）。周四：NVDA 财报（04:20）· CRM / CRWD 财报 · Jackson Hole 开幕 · 5 年期国债标售。周五：Warsh 首演（时间待核实）。下次 FOMC：9/15–16。</div>
+</details>
+</div>
+</div>
+
+<div class="pane p2">
+<div class="card">
+<h2>② 弹药与 reserve 状态</h2>
+<div class="kv"><span class="k">IB 现金</span><span class="v">$422,366.20（USD 422,122.13 + CAD 338.46）</span></div>
+<div class="kv"><span class="k">NOAH-HK 现金</span><span class="v">$357,968.92（零变动）</span></div>
+<div class="kv"><span class="k">现金池合计</span><span class="v">$780,335.12</span></div>
+<div class="kv"><span class="k">现金覆盖待 call 款</span><span class="v"><span class="gv">3.2514x ✓</span>（reserve $240,000；&lt;1.0x 才告警）</span></div>
+<div class="kv"><span class="k">可用现金</span><span class="v"><b>$540,335.12</b>（已扣 reserve）</span></div>
+<div class="kv"><span class="k">二线弹药</span><span class="v">$285,992（VGSH 87,255 → VGIT 140,448 → TLT 58,289）</span></div>
+<div class="kv"><span class="k">现金补仓池口径</span><span class="v">非美发达 + 新兴市场（v9.6；USSC 走底仓换壳、不占用现金）</span></div>
+<div class="kv"><span class="k">股息应计</span><span class="v">$260.57 · 杠杆 0（initial / maintenance margin 均为 0）</span></div>
+</div>
+
+<details><summary>AI 压力敞口 · §0-C（三账户 · v9.11 系数）
+<span class="rt">中 22.64% · 提醒区间 · fail-closed PASS</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">fail-closed 校验</span><span class="v"><span class="gv">PASS</span> —— 分子账户集合 = 分母账户集合 = {936247 IB-HK, 936249 Schwab-HK, 1350094 Webull}</span></div>
+<div class="kv"><span class="k">数据截止日期</span><span class="v">2026-08-26（IB 实时；Schwab / Webull = Sharesight 08-25 收盘价，分子分母同日同源）</span></div>
+<div class="kv"><span class="k">分母（三账户总市值含现金）</span><span class="v"><b>$6,140,063.39</b> = IB 5,021,747.48 + Schwab 605,771.11 + Webull 512,544.80</span></div>
+<div class="kv"><span class="k">规范版本</span><span class="v">v9.14（§0-C 口径 = v9.11 系数）</span></div>
+
+<details><summary>中情景主读数 <span class="rt">$1,389,874.30 / 22.64% —— 展开看计算组成</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:4px 0 8px">算法：每笔持仓市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），ETF 按官方 holdings 三层加权后的合成系数，逐笔求和 ÷ 分母。<b>系数 = 指定压力情景下的预期损失比例（stress-loss），不是「AI 相关度」。</b></p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>市值 $</th><th>×系数</th><th>计入 $</th></tr></thead>
+<tbody>
+<tr class="sec"><td>IB-HK 936247<span class="sub">分子小计 $1,134,015.58</span></td><td>5,021,747</td><td>—</td><td>1,134,016</td></tr>
+<tr><td><span class="sym">MXUS</span><span class="sub">ETF 加权 T1 19.44 / T2 16.12 / T3 12.18% · holdings as-of <b>2026-07-08 ⚠ 滞后</b></span></td><td>1,106,028</td><td>25.03%</td><td>276,839</td></tr>
+<tr><td><span class="sym">CSPX</span><span class="sub">ETF 加权 · holdings as-of 2026-08-20</span></td><td>504,055</td><td>25.79%</td><td>129,996</td></tr>
+<tr><td><span class="sym">EQAC</span><span class="sub">ETF 加权（Nasdaq-100）· holdings as-of 2026-08-20</span></td><td>477,936</td><td>41.07%</td><td>196,288</td></tr>
+<tr><td><span class="sym">EXUS</span><span class="sub">ETF 加权 · <b>无官方 holdings，C 级估计</b>（全区间敏感度 ±0.31 个百分点）</span></td><td>402,347</td><td>6.01%</td><td>24,181</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">ETF 加权 · holdings as-of 2026-08-18</span></td><td>360,325</td><td>26.55%</td><td>95,666</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3 · 底层持仓不经 look-through 注入分子</span></td><td>227,574</td><td>5%</td><td>11,379</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">T2 买铲子</span></td><td>146,685</td><td>55%</td><td>80,677</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">T2 买铲子</span></td><td>143,900</td><td>55%</td><td>79,145</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">T3 使用者</span></td><td>135,385</td><td>5%</td><td>6,769</td></tr>
+<tr><td><span class="sym">IVAI</span><span class="sub">纯 T1（AI 主题）· holdings as-of 2026-08-20</span></td><td>118,720</td><td>80%</td><td>94,976</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">T3</span></td><td>64,200</td><td>5%</td><td>3,210</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">T3</span></td><td>66,590</td><td>5%</td><td>3,330</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">T3 · 含盘前虚价影响 ≈+$220 计入额</span></td><td>60,018</td><td>5%</td><td>3,001</td></tr>
+<tr><td><span class="sym">SMH</span><span class="sub">纯 T1（半导体）</span></td><td>55,300</td><td>80%</td><td>44,240</td></tr>
+<tr><td><span class="sym">INDA</span><span class="sub">T3</span></td><td>54,890</td><td>5%</td><td>2,745</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">T2 · 卖单带内，成交后此行减 90 股</span></td><td>48,877</td><td>55%</td><td>26,882</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">T1 卖铲子</span></td><td>47,340</td><td>80%</td><td>37,872</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">T2</span></td><td>29,200</td><td>55%</td><td>16,060</td></tr>
+<tr><td><span class="sym">USSC</span><span class="sub">T3</span></td><td>15,200</td><td>5%</td><td>760</td></tr>
+<tr class="sec"><td>Schwab-HK 936249<span class="sub">分子小计 $199,422.69</span></td><td>605,771</td><td>—</td><td>199,423</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">T2</span></td><td>136,812</td><td>55%</td><td>75,247</td></tr>
+<tr><td><span class="sym">GOOGL</span><span class="sub">T2</span></td><td>104,782</td><td>55%</td><td>57,630</td></tr>
+<tr><td><span class="sym">AVGO</span><span class="sub">T1</span></td><td>35,674</td><td>80%</td><td>28,539</td></tr>
+<tr><td><span class="sym">METU</span><span class="sub">META 2x 杠杆 ETF · 规则 min(2 × 55%, 100%)</span></td><td>22,228</td><td>100%</td><td>22,228</td></tr>
+<tr><td><span class="sym">TSEM</span><span class="sub">特例：归 T2（2026-08-24 定案，阶梯 40/55/70）</span></td><td>21,271</td><td>55%</td><td>11,699</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>75,648</td><td>5%</td><td>3,782</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">T3</span></td><td>5,954</td><td>5%</td><td>298</td></tr>
+<tr class="sec"><td>Webull 1350094<span class="sub">分子小计 $56,436.03</span></td><td>512,545</td><td>—</td><td>56,436</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">T2</span></td><td>51,501</td><td>55%</td><td>28,326</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>393,370</td><td>5%</td><td>19,668</td></tr>
+<tr><td><span class="sym">IREN</span><span class="sub">特例：T1 但中情景按 <b>100%</b>（2026-08-24 Wu 裁定，季度复核）</span></td><td>8,442</td><td>100%</td><td>8,442</td></tr>
+<tr class="tot"><td>分子合计</td><td>—</td><td>—</td><td>1,389,874</td></tr>
+<tr class="tot"><td>÷ 分母（三账户含现金）</td><td>6,140,063</td><td>—</td><td>—</td></tr>
+<tr class="tot"><td>= 中情景占比</td><td>—</td><td>—</td><td>22.64%</td></tr>
+</tbody></table></div>
+<p style="font-size:12px;margin:8px 0 3px"><b>不进分子（但全部计入分母）：</b></p>
+<ul>
+<li><b>MSTR $97,477 判「不适用」</b> —— 风险因子是 BTC 不是 AI capex；<b>不进分子，也不算作 0%</b>。</li>
+<li>主题非股票：GLD $127,059 · SLV $19,818 · HODL $8,801。</li>
+<li>防御与现金类：VGIT $140,448 · VGSH $87,255 · TLT $58,289 · IB 现金 $422,366 · Schwab SGOV $184,260 + 现金 $19,143 · Webull SGOV $57,868 + 现金 $1,364。</li>
+</ul>
+<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景 = 同一张表换系数阶梯</b>（低 T1 60 / T2 40 / T3 0% · 高 T1 100 / T2 70 / T3 10%；ETF 与特例同步换档）。</p>
+</div></details>
+
+<div class="kv"><span class="k">三级状态</span><span class="v"><b class="wv">提醒区间</b>（已越 20% 提醒线 $161,862 / 2.64 个百分点）</span></div>
+<div class="kv"><span class="k">距 25% 预警线</span><span class="v"><b>$145,142 / 2.36 个百分点</b></span></div>
+<div class="kv"><span class="k">距 30% 最高警报线</span><span class="v">$452,145 / 7.36 个百分点</span></div>
+<div class="kv"><span class="k">低情景（60/40/0）</span><span class="v">$976,695.82 / <b>15.91%</b></span></div>
+<div class="kv"><span class="k">高情景（100/70/10）</span><span class="v">$1,795,083.82 / <b>29.24%</b> —— 越 25% 参考位，仅加观察注记、不触发分级</span></div>
+<div class="kv"><span class="k">分账户分子（中）</span><span class="v">IB $1,134,016 · Schwab $199,423 · Webull $56,436</span></div>
+<div class="kv"><span class="k">分类敏感度</span><span class="v">TSEM 若归 T1 → 22.72%；IREN 若按 80% → 22.61% ⇒ 日常表述「<b>约 22.6%–22.7%</b>」</span></div>
+<div class="kv"><span class="k">ETF 持仓 as-of 日期</span><span class="v"><b>MXUS 2026-07-08 ⚠ 滞后</b>（占分母 18.01%，最大单笔，官方未更新，沿用最后可验证数据）· EQAC / CSPX / IVAI 2026-08-20 · EIMI 2026-08-18 · EXUS 无官方持仓（C 级估计）</span></div>
+<div class="kv"><span class="k">三点对照</span><span class="v">08-25 定时版 22.59% → 今日 16:56 加跑 22.62% → 本期 <b>22.64%</b>（纯行情微差）</span></div>
+<div class="kv"><span class="k">性质</span><span class="v">T1/T2/T3 仅作监控，<b>不是交易指令</b>；不产生买卖建议、不含时点判断、不触发自动执行</span></div>
+</div></details>
+
+<details><summary>单票集中度 · 双视图（v9.11）
+<span class="rt">家庭 BRK.B 11.35% · IB 视图 0 告警</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:3px 0 6px"><b>主视图 = 家庭三账户合并</b>（分母 $6,140,063.39，与 AI 指标同源同日）</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>合计市值 $</th><th>占比</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">BRK.B</span><span class="sub">IB 227,574 + Schwab 75,648 + Webull 393,370</span></td><td>696,592</td><td>11.35%</td><td>主要风险数字</td></tr>
+<tr><td><span class="sym">GOOG / GOOGL</span><span class="sub">IB 143,900 + Schwab 104,782 + Webull 51,501</span></td><td>300,183</td><td>4.89%</td><td class="wv">距 5% $6,820</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">市值口径：IB 146,685 + Schwab 136,812</span></td><td>283,497</td><td>4.62%</td><td>线内</td></tr>
+<tr><td><span class="sym">META 名义</span><span class="sub">含 METU 2x 名义敞口 $44,455</span></td><td>327,952</td><td>5.34%</td><td class="wv">待裁决</td></tr>
+</tbody></table></div>
+<div class="kv" style="margin-top:6px"><span class="k">两处待 Wu 裁决（第 5 日）</span><span class="v">「名义口径越线是否算越线」与「线值 5% / 5.5% / 12.8% 未经等美元换算」——<b>未裁决前只报读数、不报越线、不触发动作</b></span></div>
+<p style="font-size:12px;margin:9px 0 6px"><b>辅助视图 = IB 执行口径</b>（分母 = HL 平日近似 $5,379,716.40 = IB NAV + NOAH-HK 现金；软 5% / 硬 5.5% / BRK.B 12.8%）</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>市值 $</th><th>占比 / 线</th><th>余量 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">BRK.B</span><span class="sub">专线 12.8% · 已裁定维持</span></td><td>227,574</td><td>4.23% / 12.8%</td><td>461,030</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">当期最紧（软 5%）</span></td><td>146,685</td><td>2.73% / 5%</td><td>122,301</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">次紧</span></td><td>143,900</td><td>2.67% / 5%</td><td>125,085</td></tr>
+<tr><td><span class="sym">TSLA</span></td><td>135,385</td><td>2.52% / 5%</td><td>133,601</td></tr>
+<tr><td><span class="sym">MSTR</span></td><td>97,477</td><td>1.81% / 5%</td><td>171,509</td></tr>
+</tbody></table></div>
+<div class="kv" style="margin-top:6px"><span class="k">IB 视图告警数</span><span class="v"><b class="gv">0 项</b> —— 全部线内；ETF 不适用单票线</span></div>
+</div></details>
+
+<details><summary>口径与分母说明 <span class="rt">三个分母互不相同，勿混用</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">AI 压力分母</span><span class="v">$6,140,063.39 = IB-HK + Schwab-HK + Webull 三账户总市值含现金（§0-C）</span></div>
+<div class="kv"><span class="k">HL 平日近似分母</span><span class="v">$5,379,716.40 = IB NAV + NOAH-HK 现金（单票 IB 执行视图 / 主题投资软上限用）</span></div>
+<div class="kv"><span class="k">四类分母 T</span><span class="v">$4,064,570.91 = 美国底仓 + 美国科技 + 非美发达 + 新兴市场（equity-only 相对比例）</span></div>
+<div class="kv"><span class="k">跨指标张力</span><span class="v">§0 通用规则剔除 Schwab-HK 与 Webull，AI 指标按 Wu 2026-08-23 裁决<b>包含</b>这两个账户 ⇒ AI 读数不可与 NAV / 四桶 / 四类 / 单票横向比较</span></div>
+</div></details>
+</div>
+
+<div class="pane p3">
+<div class="card">
+<h2>④ 配置 <small>四桶 · 四类</small></h2>
+<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px">四桶沿用 <b>2026-08-24 周一全量</b>（家庭口径 $31,115,693）；四类每日实时。</p>
+<div class="bar"><div class="lbl"><span>Highly Liquid</span><span class="r">17.75% / 40% · 缺 $6.92M</span></div><div class="track"><div class="fill" style="width:44.4%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>VC-PE（closed-end）</span><span class="r or">51.74% / 30% · 超 ~$6.77M</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:58%"></div></div></div>
+<div class="bar"><div class="lbl"><span>对冲基金</span><span class="r">14.58% / 15%</span></div><div class="track"><div class="fill" style="width:97.2%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>常青（evergreen）</span><span class="r">15.93% 毛 · 14.82% 净 / 15%</span></div><div class="track"><div class="fill" style="width:98.8%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+</div>
+
+<div class="card">
+<h2>四类比例 <small>Sharesight「资产类别」归类 · T = $4,064,571</small></h2>
+<div class="bar"><div class="lbl"><span>美国底仓 <span class="sub">MXUS · CSPX · BRK.B · USSC · APO · KKR</span></span><span class="r or">48.80% / 45% · 超 $154,590</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:92.2%"></div></div></div>
+<div class="bar"><div class="lbl"><span>美国科技 <span class="sub">EQAC · SMH · IVAI · GOOG · META · MSFT · AMD · ORCL · TSLA</span></span><span class="r or">29.61% / 20% · 超 $390,429</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:67.5%"></div></div></div>
+<div class="bar"><div class="lbl"><span>非美发达 <span class="sub">EXUS · VCN</span></span><span class="r">11.38% / 23%</span></div><div class="track"><div class="fill" style="width:49.5%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>新兴市场 <span class="sub">EIMI · INDA</span></span><span class="r">10.22% / 12%</span></div><div class="track"><div class="fill" style="width:85.2%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>USSC 小盘 <span class="sub">底仓内结构位 · 走换壳、不占现金补仓池</span></span><span class="r">0.94% / 14% · 缺 $212,340</span></div><div class="track"><div class="fill" style="width:6.7%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="kv"><span class="k">动态缺口（纯新钱补入）</span><span class="v">EXUS +$665,339 + EIMI +$173,152 = <b>$838,491</b>；可用现金覆盖 <span class="wv">64.4%</span>（静态口径 $545,019 仅供 rebalance 情景参考）</span></div>
+<div class="kv"><span class="k">USSC 14% 位</span><span class="v">基数 $1,625,283（MXUS + CSPX + USSC）→ 目标 $227,540 · 现持 $15,200 · 缺 $212,340 · <b>换壳进度 $0</b></span></div>
+<div class="kv"><span class="k">主题投资</span><span class="v">$253,154 = <span class="gv">4.71% / 7% 软上限 ✓</span>（GLD · SLV · MSTR · HODL）</span></div>
+<div class="kv"><span class="k">防御资产（弹药池）</span><span class="v">$285,992（VGSH · VGIT · TLT）</span></div>
+<div class="kv"><span class="k">科技超配处置</span><span class="v">不新增（新钱不投该类 9 只）+ Wu 择时减持 + 被动稀释；全额补仓后预估稀释至 <b>26.13%</b>。只报读数、不催、不做个股前瞻判断</span></div>
+<div class="kv"><span class="k">新标的</span><span class="v"><b>无</b> —— 本期无清单外标的需按 §0-A 规则归类</span></div>
+<div class="kv"><span class="k">HSBC-HK 赎回进度</span><span class="v">29.9%（$47,511 / $159,001）· 周一报，本期沿用</span></div>
+</div>
+
+<details><summary>7 个 portfolio 明细 <span class="rt">周一全量沿用 08-24；本期仅取 NOAH-HK 现金与 AI 三账户</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">NOAH-HK 936238</span><span class="v">总值 $12,657,882.79 · 现金 $357,968.92（零变动）</span></div>
+<div class="kv"><span class="k">IB-HK 936247</span><span class="v">NAV $5,021,747.48（实时混合口径）</span></div>
+<div class="kv"><span class="k">Schwab-HK 936249</span><span class="v">$605,771.11（08-25 收盘价；§0 剔除，仅进 AI 指标）</span></div>
+<div class="kv"><span class="k">Webull 1350094</span><span class="v">$512,544.80（08-25 收盘价；§0 剔除，仅进 AI 指标）</span></div>
+<div class="kv"><span class="k">NOAH-US / ANTARCTICA / UBS / Citi-HK / HSBC-HK</span><span class="v">沿用 08-24 周一全量，本期未重取（周三非全量日）</span></div>
+</div></details>
+</div>
+
+<div class="pane p4">
+<div class="card">
+<h2>⑤ 待决定事项</h2>
+<ol>
+<li><b class="cv">仓库源缺失（最高优先，须 Wu 一次性处理）</b> —— 本次定时会话未绑定 <b>fee-console</b> 仓库源，推送被 403 拒绝，固定页无法更新。08-25 那个能推的任务是 <code>http_api</code> 路径创建、带 <code>session_context.sources</code>；请确认今晚跑的是同一个任务，或为其补上仓库源。</li>
+<li><b>家庭主视图越线裁决（第 5 日）</b> —— GOOG/GOOGL 4.89%（距 5% $6,820）· META 名义 5.34%。等你一句话：名义口径越线是否算越线；线值是否按等美元换算重订。</li>
+<li><b>MSFT 卖 90 @ 488.43 今晚开盘几乎必成交</b> —— 成交后四类科技 29.61% → 约 29.28%，迁移池 MSFT 归零，US-situs 减约 $44K。明晚一次性记录。</li>
+<li><b>JMS 赎回款 ~$84.1K 去向待确认</b>（到账默认记 Highly Liquid）。</li>
+</ol>
+<div class="kv"><span class="k">已结案 / 只读观察</span><span class="v">AMD 两张 REPLACED 卖单待 TWS 目视（第 10 日）· 补仓换壳（第 12 日，EXUS 100 @ 46.90 第 3 日未成交）· 科技超配 $390,429 按裁定只报读数</span></div>
+</div>
+
+<details><summary>⑥ 换仓触发检查 <span class="rt">触发：无 · GTC 12 张 · 待撤 4 张 $150,520</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:3px 0 7px"><b>触发判定：无。</b> 迁移池（MSFT / GOOG / TSLA / APO / KKR / AMD / MSTR，不含 BRK.B）本期无落后度触发、无估值或强势兑现信号、无临近财报事件需处置。MSFT 卖单为 Wu 自行下达的既有单，不构成 Claude 的换仓建议。</p>
+<div class="kv"><span class="k">三行进度（第 11 日）</span><span class="v">已成交 <b>$5,399</b>（EIMI 100 @ 53.99，08-24）/ 节奏单在途 <b>$4,690</b>（EXUS 100 @ 46.90）/ 机会单一律按 <b>0</b> 计（6 张）</span></div>
+<div class="kv"><span class="k">昨夜美股时段成交</span><span class="v">零成交；<code>trades DAYS_7</code> 仅 EIMI（08-24）与 VCN 25 @ C$73.75（08-20）</span></div>
+<details><summary>GTC 明细表 <span class="rt">12 张 · 较昨日持平</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>挂单</th><th>限价</th><th>距市价</th><th>龄 / 状态</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">MSFT 卖 90</span><span class="sub">🆕 08-26 09:38 HKT 下单</span></td><td>488.43</td><td class="cv">−0.07%</td><td>带内 · 开盘即成交</td></tr>
+<tr><td><span class="sym">EXUS 买 100</span><span class="sub">节奏单</span></td><td>46.90</td><td class="wv">−0.92%</td><td>2 天 · 带内未成交</td></tr>
+<tr><td><span class="sym">AMD 卖 20</span></td><td>500.00</td><td>+5.62%</td><td>1 天 · NEW</td></tr>
+<tr><td><span class="sym">AMD 卖 50</span></td><td>520.00</td><td>+9.84%</td><td>8 天 · <b>REPLACED 待目视（第 10 日）</b></td></tr>
+<tr><td><span class="sym">AMD 卖 30</span></td><td>555.00</td><td>+17.24%</td><td>1 天 · <b>REPLACED 待目视</b></td></tr>
+<tr><td><span class="sym">SLV 卖 160</span><span class="sub">卖单免龄</span></td><td>82.00</td><td>+32.41%</td><td>132 天 · 免龄</td></tr>
+<tr><td><span class="sym">EIMI 买 500</span><span class="sub">提示带</span></td><td>49.50</td><td>−10.29%</td><td>42 天 · &gt;5% 提示</td></tr>
+<tr><td><span class="sym">EXUS 买 300</span><span class="sub">提示带</span></td><td>44.00</td><td>−7.05%</td><td>48 天 · &gt;5% 提示</td></tr>
+<tr><td><span class="sym">EIMI 买 1000</span><span class="sub">待撤</span></td><td>47.12</td><td>−14.61%</td><td>83 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">EXUS 买 1000</span><span class="sub">待撤</span></td><td>42.00</td><td>−11.27%</td><td>83 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">EXUS 买 1000</span><span class="sub">待撤</span></td><td>41.50</td><td>−12.33%</td><td>83 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">MXUS 买 100</span><span class="sub">待撤</span></td><td>199.00</td><td>−11.84%</td><td>92 天 · <b>待撤</b></td></tr>
+</tbody></table></div>
+<p style="font-size:12px;margin:6px 0 0"><b>待撤四张第 29 期，名义合计 $150,520</b>（&gt;60 天且距市价 &gt;5%）。撤单一律由 Wu 在 TWS / IBKR 端执行，Claude 只提醒与核对。</p>
+</div></details>
+<details><summary>迁移池成本对照 <span class="rt">§2c：历史成本与 trailing return 不作为主要卖出依据</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>成本 / 股</th><th>现价</th><th>差异 %</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">AMD</span><span class="sub">未实现 +$27,523</span></td><td>198.17</td><td>473.40</td><td class="up">+138.9%</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">未实现 +C$29,942 · 按昨收 C$75.23 计</span></td><td>C$46.02</td><td>C$75.23</td><td class="up">+63.5%</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">未实现 +$12,525</span></td><td>363.52</td><td>488.77</td><td class="up">+34.5%</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">未实现 +$6,266</span></td><td>120.65</td><td>133.18</td><td class="up">+10.4%</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">未实现 +$13,196</span></td><td>311.20</td><td>342.62</td><td class="up">+10.1%</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">未实现 −$2,389</span></td><td>157.95</td><td>146.00</td><td class="dn">−7.6%</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">未实现 −$5,564</span></td><td>116.27</td><td>107.00</td><td class="dn">−8.0%</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">未实现 −$12,116</span></td><td>378.21</td><td>347.14</td><td class="dn">−8.2%</td></tr>
+<tr><td><span class="sym">MSTR</span><span class="sub">未实现 −$26,396 · 静默持有</span></td><td>158.81</td><td>124.97</td><td class="dn">−21.3%</td></tr>
+</tbody></table></div></div></details>
+</div></details>
+</div>
+</div>
+
+<div class="foot">
+XUAN-IB 睡前交接 · 数据日 2026-08-26（香港时间）· 规范 v9.14 · 交付契约 v9.15 ·
+全程仅使用 Interactive Brokers 与 Sharesight 只读工具；本期未下单、未撤单、未改单，未改动任何定时任务、网络或券商权限。
+AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，不构成交易指令。
+仓库侧仅做只读 clone / ls-remote 与本地校验，未推送任何分支、未碰 main。
+</div>
+
+</div></div>
+</body></html>
