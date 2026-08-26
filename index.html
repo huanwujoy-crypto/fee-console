@@ -8,6 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
+<meta name="fee-console-build" content="4.6.2">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -243,6 +244,8 @@ const isMgr=()=>!!cfg(K.tok);
 const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
+const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
+const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
@@ -567,7 +570,7 @@ function render(){
   const st=compute(),B=balance(st),G=health(st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
-  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.1"+(isMgr()?"":" · 只读");
+  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.2"+(isMgr()?"":" · 只读");
   renderKPIs(st,B,G);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B,G);  if(isMgr()){renderFees(st,B,G);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
@@ -744,8 +747,25 @@ async function ghPush(){if(!isMgr())return;let content;
 const hhmm=()=>new Date().toTimeString().slice(0,5);
 function ghSchedule(){if(!isMgr())return;clearTimeout(_ghT);_ghT=setTimeout(ghSync,1500);}
 async function ghSync(){if(!isMgr())return;if(_busy){_dirty=true;return;}_busy=true;setSync("同步中…");try{await ghPush();setSync("已同步 "+hhmm());}catch(e){setSync("同步失败："+e.message,true);}finally{_busy=false;if(_dirty){_dirty=false;ghSchedule();}}}
+let _shellCheck=null;
+async function ensureLatestShell(){
+  if(_shellCheck)return _shellCheck;
+  _shellCheck=(async()=>{try{
+    const probe=new URL(location.href);probe.hash="";probe.searchParams.set("_shell_check",String(Date.now()));
+    const r=await freshFetch(probe.toString(),{cache:"no-store"});if(!r.ok)return false;
+    const doc=new DOMParser().parseFromString(await r.text(),"text/html");
+    const remote=doc.querySelector('meta[name="fee-console-build"]')?.content||"";
+    if(!remote||remote===SHELL_BUILD)return false;
+    const target=new URL(location.href);if(target.searchParams.get("_shell")===remote)return false;
+    target.searchParams.delete("_shell_check");target.searchParams.set("_shell",remote);
+    const hash=location.hash;history.replaceState(null,"",target.pathname+target.search+hash);location.reload();
+    return true;
+  }catch(_){return false;}finally{_shellCheck=null;}})();
+  return _shellCheck;
+}
 async function pullAll(quiet){
-  try{const r=await fetch(DATA_URL+"?t="+Date.now(),{cache:"no-store"});if(r.ok){const o=await r.json();let d=o;
+  if(await ensureLatestShell())return;
+  try{const r=await freshFetch(DATA_URL+"?t="+Date.now(),{cache:"no-store"});if(r.ok){const o=await r.json();let d=o;
       if(o&&o.enc){if(cfg(K.key)){const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}else d=null;}
       if(d&&Array.isArray(d.daily)){DAILY=d;setCfg(K.daily,JSON.stringify(d));}}}catch(_){}
   if(!cfg(K.gid)&&isMgr()){try{await ghFind();}catch(_){}}
@@ -769,6 +789,7 @@ async function connect(tok){tok=(tok||"").trim();if(!tok){toast("请先粘贴令
   try{await ghApi("/gists?per_page=1");}catch(e){setCfg(K.tok,"");toast("令牌无效："+e.message);render();return;}
   await pullAll(false);toast("已连接");render();}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")pullAll(true);});
+window.addEventListener("pageshow",e=>{if(e.persisted)pullAll(true);});
 window.addEventListener("online",()=>pullAll(true));
 
 /* ============ 分享（只读） ============ */
