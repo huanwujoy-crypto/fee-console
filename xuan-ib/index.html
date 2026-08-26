@@ -29,6 +29,7 @@
     .title { min-width: 0; }
     .title strong { display: block; font-size: 18px; line-height: 1.25; }
     #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; }
+    #status.error { color: #b3261e; }
     #refresh {
       flex: 0 0 auto;
       appearance: none;
@@ -59,14 +60,16 @@
       </div>
       <button id="refresh" type="button">刷新</button>
     </header>
-    <iframe id="handover" title="XUAN-IB 最新睡前交接" sandbox=""></iframe>
+    <iframe id="handover" title="XUAN-IB 最新睡前交接" sandbox="" referrerpolicy="no-referrer"></iframe>
   </div>
   <script>
     (() => {
-      const frame = document.querySelector("#handover");
+      let frame = document.querySelector("#handover");
       const button = document.querySelector("#refresh");
       const status = document.querySelector("#status");
+      const loaderBuild = "2026-08-26.1";
       let lastSuccess = 0;
+      let lastAttempt = 0;
       let lastHtml = "";
       let requestSequence = 0;
 
@@ -77,14 +80,66 @@
         timeZone: "Asia/Hong_Kong"
       }).format(new Date());
 
+      const dataDate = (html) => {
+        const match = html.match(/<span class="date">(\d{4}-\d{2}-\d{2})\b/);
+        return match ? match[1].slice(5) : "日期未知";
+      };
+
+      function reloadLoader() {
+        const url = new URL(location.href);
+        url.searchParams.set("loader", `${loaderBuild}-${Date.now()}`);
+        location.replace(url);
+      }
+
+      function loadDirect(request) {
+        const url = new URL("latest.html", location.href);
+        url.searchParams.set("direct", `${loaderBuild}-${Date.now()}`);
+        const replacement = document.createElement("iframe");
+        replacement.id = "handover";
+        replacement.title = "XUAN-IB 最新睡前交接";
+        replacement.setAttribute("sandbox", "");
+        replacement.setAttribute("referrerpolicy", "no-referrer");
+        replacement.hidden = true;
+        status.classList.add("error");
+        status.textContent = `网络读取异常，正在切换直接模式… · L ${loaderBuild}`;
+        frame.before(replacement);
+        replacement.addEventListener("load", () => {
+          if (request !== requestSequence) {
+            replacement.remove();
+            return;
+          }
+          frame.remove();
+          replacement.hidden = false;
+          frame = replacement;
+          status.textContent = `直接模式已打开 ${clock()}（内容未校验）· L ${loaderBuild}`;
+        }, { once: true });
+        replacement.addEventListener("error", () => {
+          if (request !== requestSequence) {
+            replacement.remove();
+            return;
+          }
+          replacement.remove();
+          status.textContent = "直接读取也失败，仍显示上一版";
+        }, { once: true });
+        replacement.src = url;
+      }
+
       async function loadLatest() {
         const request = ++requestSequence;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 10_000);
+        lastAttempt = Date.now();
         button.disabled = true;
+        status.classList.remove("error");
         status.textContent = lastHtml ? "正在核对最新版…" : "正在读取最新版…";
         try {
           const url = new URL("latest.html", location.href);
           url.searchParams.set("v", String(Date.now()));
-          const response = await fetch(url, { cache: "no-store", credentials: "omit" });
+          const response = await fetch(url, {
+            cache: "no-store",
+            credentials: "omit",
+            signal: controller.signal
+          });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           const html = await response.text();
           if (request !== requestSequence) return;
@@ -97,26 +152,35 @@
           frame.srcdoc = protectedHtml;
           lastHtml = protectedHtml;
           lastSuccess = Date.now();
-          status.textContent = `已同步 ${clock()}`;
+          status.textContent = `已同步 ${clock()} · 数据 ${dataDate(html)} · L ${loaderBuild}`;
         } catch (error) {
           if (request !== requestSequence) return;
+          if (error.name === "AbortError" || error instanceof TypeError) {
+            loadDirect(request);
+            return;
+          }
+          status.classList.add("error");
           status.textContent = lastHtml ? "更新失败，仍显示上一版" : "暂时无法读取最新版，请重试";
           if (!lastHtml) {
             frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
           }
           console.warn("XUAN-IB latest-page refresh failed", error);
         } finally {
+          window.clearTimeout(timeout);
           if (request === requestSequence) button.disabled = false;
         }
       }
 
-      button.addEventListener("click", loadLatest);
-      window.addEventListener("pageshow", loadLatest);
+      button.addEventListener("click", reloadLoader);
+      window.addEventListener("pageshow", (event) => {
+        if (event.persisted) reloadLoader();
+        else loadLatest();
+      });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && Date.now() - lastSuccess > 60_000) loadLatest();
+        if (!document.hidden && Date.now() - lastAttempt > 60_000) reloadLoader();
       });
       window.setInterval(() => {
-        if (!document.hidden && Date.now() - lastSuccess > 5 * 60_000) loadLatest();
+        if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();
       }, 60_000);
     })();
   </script>
