@@ -7,8 +7,7 @@ on:
     types:
       - completed
   schedule:
-    - cron: '5,20,35,50 13 * * 1-5'
-    - cron: '5 14 * * 1-5'
+    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
@@ -35,7 +34,7 @@ jobs:
         shell: bash
         run: git fetch --no-tags --prune origin '+refs/heads/claude/*:refs/remotes/origin/claude/*'
 
-      - name: Select one fresh verified handover
+      - name: Select the newest fresh verified handover
         id: candidate
         shell: bash
         env:
@@ -45,19 +44,56 @@ jobs:
 
           base_sha=$(git rev-parse origin/main)
           published_blob=$(git rev-parse origin/main:xuan-ib/latest.html)
-          published_commit_epoch=$(git log -1 --format='%ct' origin/main -- xuan-ib/latest.html)
-          published_date=$(git show origin/main:xuan-ib/latest.html |
-            sed -nE 's/.*<span class="date">([0-9]{4}-[0-9]{2}-[0-9]{2}).*/\1/p' |
-            head -n 1)
-          if [[ ! "$published_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-            echo 'Could not determine the currently published handover date.' >&2
+          meta_source_sha=$(jq -r '.sourceSha' xuan-ib/latest.meta.json)
+          source_commit_json=$(curl --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$meta_source_sha")
+          IFS=$'\t' read -r source_verified source_author source_committer source_date source_subject < <(
+            jq -r '[.commit.verification.verified, .author.login, .committer.login, .commit.committer.date, (.commit.message | split("\n")[0])] | @tsv' \
+              <<< "$source_commit_json"
+          )
+          if [[ "$source_verified" != "true" ]] ||
+             [[ "$source_author" != "claude" ]] ||
+             [[ "$source_committer" != "claude" ]]; then
+            echo 'Published metadata source is not a verified Claude commit.' >&2
             exit 1
           fi
-          cutoff_epoch=$(date -u -d '18 hours ago' +%s)
+          source_subject_re='^handover ([0-9]{4}-[0-9]{2}-[0-9]{2})$'
+          if [[ ! "$source_subject" =~ $source_subject_re ]]; then
+            echo 'Published metadata source has an invalid handover subject.' >&2
+            exit 1
+          fi
+          source_data_date=${BASH_REMATCH[1]}
+          source_epoch=$(date -u -d "$source_date" +%s)
+          source_blob=$(curl --fail --silent --show-error \
+            -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'X-GitHub-Api-Version: 2022-11-28' \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/contents/xuan-ib/index.html?ref=$meta_source_sha" |
+            jq -r '.sha')
+          node scripts/xuan-ib-promotion.mjs validate-meta \
+            xuan-ib/latest.meta.json "$published_blob" \
+            "$meta_source_sha" "$source_epoch" "$source_blob" "$source_data_date"
+          published_source_tag="refs/tags/xuan-ib-published/${source_data_date}-${meta_source_sha:0:12}"
+          remote_source_sha=$(git ls-remote origin "$published_source_tag" | awk '{print $1}')
+          if [[ -z "$remote_source_sha" ]]; then
+            if ! git cat-file -e "$meta_source_sha^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$meta_source_sha"
+            fi
+            git push origin "$meta_source_sha:$published_source_tag"
+          elif [[ "$remote_source_sha" != "$meta_source_sha" ]]; then
+            echo 'The immutable published-source tag points at another commit.' >&2
+            exit 1
+          fi
           today_hkt=$(TZ=Asia/Hong_Kong date +%F)
           yesterday_hkt=$(TZ=Asia/Hong_Kong date -d 'yesterday' +%F)
-          candidates=()
-          candidate_dates=()
+          now_epoch=$(date -u +%s)
+          future_cutoff_epoch=$(date -u -d '5 minutes' +%s)
+          candidates_file="$RUNNER_TEMP/candidates.json"
+          selected_file="$RUNNER_TEMP/selected.json"
+          printf '[]\n' > "$candidates_file"
 
           while IFS= read -r candidate_ref; do
             branch_name=${candidate_ref#origin/}
@@ -65,23 +101,56 @@ jobs:
             if [[ ! "$branch_name" =~ $branch_re ]]; then
               continue
             fi
-            candidate_parent=$(git rev-parse "$candidate_ref^")
+            if ! candidate_parent=$(git rev-parse "$candidate_ref^" 2>/dev/null); then
+              echo "Skipping $branch_name: its parent commit cannot be resolved."
+              continue
+            fi
             if ! git merge-base --is-ancestor "$candidate_parent" origin/main; then
               continue
             fi
-            if [[ $(git rev-list --count "$candidate_parent..$candidate_ref") -ne 1 ]]; then
+            if ! candidate_lag=$(git rev-list --first-parent --count "$candidate_parent..origin/main"); then
+              echo "Skipping $branch_name: its distance from main cannot be measured."
+              continue
+            fi
+            if (( candidate_lag > 50 )); then
+              continue
+            fi
+            if ! parent_epoch=$(git show -s --format='%ct' "$candidate_parent"); then
+              echo "Skipping $branch_name: its parent timestamp cannot be read."
+              continue
+            fi
+            if [[ "$candidate_parent" != "$base_sha" ]] &&
+               (( parent_epoch < now_epoch - 604800 )); then
+              continue
+            fi
+            if ! candidate_commit_count=$(git rev-list --count "$candidate_parent..$candidate_ref"); then
+              echo "Skipping $branch_name: its commit range cannot be read."
+              continue
+            fi
+            if [[ "$candidate_commit_count" -ne 1 ]]; then
               continue
             fi
 
-            mapfile -t changed_files < <(git diff --name-only "$candidate_parent..$candidate_ref")
+            if ! changed_files_text=$(git diff --name-only "$candidate_parent..$candidate_ref"); then
+              echo "Skipping $branch_name: its changed-file list cannot be read."
+              continue
+            fi
+            mapfile -t changed_files < <(printf '%s' "$changed_files_text")
             if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "xuan-ib/index.html" ]]; then
               continue
             fi
-            if [[ $(git rev-list --count --merges "$candidate_parent..$candidate_ref") -ne 0 ]]; then
+            if ! candidate_merge_count=$(git rev-list --count --merges "$candidate_parent..$candidate_ref"); then
+              echo "Skipping $branch_name: its merge history cannot be read."
+              continue
+            fi
+            if [[ "$candidate_merge_count" -ne 0 ]]; then
               continue
             fi
 
-            candidate_blob=$(git rev-parse "$candidate_ref:xuan-ib/index.html")
+            if ! candidate_blob=$(git rev-parse "$candidate_ref:xuan-ib/index.html" 2>/dev/null); then
+              echo "Skipping $branch_name: xuan-ib/index.html is missing or unreadable."
+              continue
+            fi
             if [[ "$candidate_blob" == "$published_blob" ]]; then
               continue
             fi
@@ -97,10 +166,15 @@ jobs:
               continue
             fi
 
-            candidate_sha=$(git rev-parse "$candidate_ref")
-            IFS=$'\t' read -r author_email committer_email subject < <(
-              git show -s --format='%ae%x09%ce%x09%s' "$candidate_sha"
-            )
+            if ! candidate_sha=$(git rev-parse "$candidate_ref" 2>/dev/null); then
+              echo "Skipping $branch_name: its commit cannot be resolved."
+              continue
+            fi
+            if ! identity_line=$(git show -s --format='%ae%x09%ce%x09%s' "$candidate_sha"); then
+              echo "Skipping $branch_name: its commit identity cannot be read."
+              continue
+            fi
+            IFS=$'\t' read -r author_email committer_email subject <<< "$identity_line"
             if [[ "$author_email" != "noreply@anthropic.com" ]] ||
                [[ "$committer_email" != "noreply@anthropic.com" ]]; then
               continue
@@ -114,38 +188,59 @@ jobs:
               continue
             fi
 
-            commit_epoch=$(git show -s --format='%ct' "$candidate_sha")
-            if (( commit_epoch < cutoff_epoch )); then
+            if ! commit_epoch=$(git show -s --format='%ct' "$candidate_sha"); then
+              echo "Skipping $branch_name: its commit timestamp cannot be read."
               continue
             fi
-            if [[ "$data_date" < "$published_date" ]]; then
-              continue
-            fi
-            if [[ "$data_date" == "$published_date" ]] && (( commit_epoch <= published_commit_epoch )); then
+            if (( commit_epoch < now_epoch - 172800 || commit_epoch > future_cutoff_epoch )); then
               continue
             fi
 
-            IFS=$'\t' read -r verified author_login committer_login < <(
-              curl --fail --silent --show-error \
+            if ! commit_api_json=$(curl --fail --silent --show-error \
                 -H 'Accept: application/vnd.github+json' \
                 -H "Authorization: Bearer $GH_TOKEN" \
                 -H 'X-GitHub-Api-Version: 2022-11-28' \
-                "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$candidate_sha" |
-                jq -r '[.commit.verification.verified, .author.login, .committer.login] | @tsv'
-            )
+                "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$candidate_sha"); then
+              echo "Skipping $branch_name: GitHub could not verify its commit."
+              continue
+            fi
+            if ! verification_line=$(jq -er \
+              '[.commit.verification.verified, .author.login, .committer.login] | @tsv' \
+              <<< "$commit_api_json"); then
+              echo "Skipping $branch_name: GitHub returned incomplete verification data."
+              continue
+            fi
+            IFS=$'\t' read -r verified author_login committer_login <<< "$verification_line"
             if [[ "$verified" != "true" ]] ||
                [[ "$author_login" != "claude" ]] ||
                [[ "$committer_login" != "claude" ]]; then
               continue
             fi
 
-            git show "$candidate_ref:xuan-ib/index.html" > "$RUNNER_TEMP/handover.html"
-            node scripts/handover-guard.mjs "$RUNNER_TEMP/handover.html" "$data_date"
-            candidates+=("$candidate_ref")
-            candidate_dates+=("$data_date")
+            if ! git show "$candidate_ref:xuan-ib/index.html" > "$RUNNER_TEMP/handover.html"; then
+              echo "Skipping $branch_name: its handover page cannot be materialized."
+              continue
+            fi
+            if ! node scripts/handover-guard.mjs "$RUNNER_TEMP/handover.html" "$data_date"; then
+              echo "Skipping $branch_name: its handover page failed validation."
+              continue
+            fi
+            jq \
+              --arg ref "$candidate_ref" \
+              --arg sha "$candidate_sha" \
+              --arg dataDate "$data_date" \
+              --arg htmlBlob "$candidate_blob" \
+              --argjson commitEpoch "$commit_epoch" \
+              '. + [{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob}]' \
+              "$candidates_file" > "$RUNNER_TEMP/candidates.next.json"
+            mv "$RUNNER_TEMP/candidates.next.json" "$candidates_file"
           done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/)
 
-          if (( ${#candidates[@]} == 0 )); then
+          node scripts/xuan-ib-promotion.mjs select \
+            "$candidates_file" xuan-ib/latest.meta.json "$published_blob" > "$selected_file"
+          candidate_sha=$(jq -r '.sha // empty' "$selected_file")
+
+          if [[ -z "$candidate_sha" ]]; then
             echo 'No fresh handover is waiting; nothing to promote.'
             {
               echo '### XUAN-IB promotion'
@@ -156,22 +251,23 @@ jobs:
             echo 'sha=' >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          if (( ${#candidates[@]} != 1 )); then
-            echo 'Refusing ambiguous promotion; multiple valid handovers are waiting:' >&2
-            printf '  %s\n' "${candidates[@]}" >&2
-            exit 1
-          fi
 
-          candidate_sha=$(git rev-parse "${candidates[0]}")
+          candidate_blob=$(jq -r '.htmlBlob' "$selected_file")
+          commit_epoch=$(jq -r '.commitEpoch' "$selected_file")
+          data_date=$(jq -r '.dataDate' "$selected_file")
           echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
-          echo "data_date=${candidate_dates[0]}" >> "$GITHUB_OUTPUT"
+          echo "data_date=$data_date" >> "$GITHUB_OUTPUT"
+          echo "html_blob=$candidate_blob" >> "$GITHUB_OUTPUT"
+          echo "commit_epoch=$commit_epoch" >> "$GITHUB_OUTPUT"
 
       - name: Publish the verified page behind the stable mobile loader
         if: steps.candidate.outputs.sha != ''
         shell: bash
         env:
           CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          CANDIDATE_BLOB: ${{ steps.candidate.outputs.html_blob }}
+          CANDIDATE_COMMIT_EPOCH: ${{ steps.candidate.outputs.commit_epoch }}
           EXPECTED_BASE_SHA: ${{ steps.candidate.outputs.base_sha }}
           DATA_DATE: ${{ steps.candidate.outputs.data_date }}
         run: |
@@ -182,9 +278,38 @@ jobs:
             exit 1
           fi
 
+          source_tag="refs/tags/xuan-ib-published/${DATA_DATE}-${CANDIDATE_SHA:0:12}"
+          remote_source_sha=$(git ls-remote origin "$source_tag" | awk '{print $1}')
+          if [[ -z "$remote_source_sha" ]]; then
+            git push origin "$CANDIDATE_SHA:$source_tag"
+          elif [[ "$remote_source_sha" != "$CANDIDATE_SHA" ]]; then
+            echo 'The immutable candidate source tag points at another commit.' >&2
+            exit 1
+          fi
+
           git show "$CANDIDATE_SHA:xuan-ib/index.html" > xuan-ib/latest.html
           node scripts/handover-guard.mjs xuan-ib/latest.html "$DATA_DATE"
-          git add xuan-ib/latest.html
+          actual_blob=$(git hash-object xuan-ib/latest.html)
+          if [[ "$actual_blob" != "$CANDIDATE_BLOB" ]]; then
+            echo 'Candidate blob changed while preparing the publication.' >&2
+            exit 1
+          fi
+
+          jq -n \
+            --arg ref 'origin/claude/trusted-selected' \
+            --arg sha "$CANDIDATE_SHA" \
+            --arg dataDate "$DATA_DATE" \
+            --arg htmlBlob "$CANDIDATE_BLOB" \
+            --argjson commitEpoch "$CANDIDATE_COMMIT_EPOCH" \
+            '{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob}' \
+            > "$RUNNER_TEMP/selected-candidate.json"
+          node scripts/xuan-ib-promotion.mjs create-meta \
+            "$RUNNER_TEMP/selected-candidate.json" > xuan-ib/latest.meta.json
+          node scripts/xuan-ib-promotion.mjs validate-meta \
+            xuan-ib/latest.meta.json "$actual_blob" \
+            "$CANDIDATE_SHA" "$CANDIDATE_COMMIT_EPOCH" "$CANDIDATE_BLOB" "$DATA_DATE"
+
+          git add xuan-ib/latest.html xuan-ib/latest.meta.json
           if git diff --cached --quiet; then
             echo 'Verified page already matches the published latest.html.'
             exit 0
