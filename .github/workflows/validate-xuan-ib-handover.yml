@@ -33,15 +33,33 @@ jobs:
           set -euo pipefail
 
           head_sha=$(git rev-parse HEAD)
-          base_sha=$(git rev-parse origin/main)
-          if [[ $(git rev-list --count "origin/main..HEAD") -ne 1 ]] ||
-             [[ $(git rev-parse "HEAD^") != "$base_sha" ]] ||
-             [[ $(git rev-list --count --merges "origin/main..HEAD") -ne 0 ]]; then
-            echo 'Candidate must be one non-merge commit directly on current main.' >&2
+          candidate_parent=$(git rev-parse "HEAD^")
+          if ! git merge-base --is-ancestor "$candidate_parent" origin/main ||
+             [[ $(git rev-list --count "$candidate_parent..HEAD") -ne 1 ]] ||
+             [[ $(git rev-list --count --merges "$candidate_parent..HEAD") -ne 0 ]]; then
+            echo 'Candidate must be one non-merge commit based on a trusted main ancestor.' >&2
+            exit 1
+          fi
+          candidate_lag=$(git rev-list --first-parent --count "$candidate_parent..origin/main")
+          if (( candidate_lag > 50 )); then
+            echo 'Candidate is based on an excessively old main ancestor.' >&2
+            exit 1
+          fi
+          now_epoch=$(date -u +%s)
+          current_main=$(git rev-parse origin/main)
+          candidate_epoch=$(git show -s --format='%ct' "$head_sha")
+          parent_epoch=$(git show -s --format='%ct' "$candidate_parent")
+          if (( candidate_epoch < now_epoch - 172800 || candidate_epoch > now_epoch + 300 )); then
+            echo 'Candidate commit time is outside the approved 48-hour window.' >&2
+            exit 1
+          fi
+          if [[ "$candidate_parent" != "$current_main" ]] &&
+             (( parent_epoch < now_epoch - 604800 )); then
+            echo 'Candidate parent is older than the approved seven-day window.' >&2
             exit 1
           fi
 
-          mapfile -t changed_files < <(git diff --name-only "origin/main..HEAD")
+          mapfile -t changed_files < <(git diff --name-only "$candidate_parent..HEAD")
           if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "xuan-ib/index.html" ]]; then
             echo 'Candidate must change xuan-ib/index.html only.' >&2
             exit 1

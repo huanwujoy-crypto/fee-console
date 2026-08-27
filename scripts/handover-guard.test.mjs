@@ -11,7 +11,7 @@ const guard = path.join(here, 'handover-guard.mjs');
 
 const valid = (extra = '') => `<!doctype html>
 <html><head><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-IB 交接"><title>XUAN-IB 睡前交接</title><style>body{color:#111}</style></head>
-<body><!-- xuan-ib-handover:v1 --><h1>2026-08-25</h1><p>${'完整简报 '.repeat(180)}</p>${extra}</body></html>
+<body><!-- xuan-ib-handover:v1 --><h1>XUAN-IB 睡前交接</h1><span class="date">2026-08-25 周二 · 21:00 HKT</span><p>${'完整简报 '.repeat(180)}</p>${extra}</body></html>
 `;
 
 const run = (html, date = '2026-08-25') => {
@@ -31,7 +31,31 @@ test('accepts a self-contained dated handover', () => {
 test('rejects the wrong data date', () => {
   const result = run(valid(), '2026-08-24');
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /date is not present/);
+  assert.match(result.stderr, /primary data-date header/);
+});
+
+test('rejects a stale primary date even if the expected date appears elsewhere', () => {
+  const html = valid('<p>备注日期 2026-08-26</p>').replace(
+    '<span class="date">2026-08-25',
+    '<span class="date">2026-08-24'
+  );
+  const result = run(html, '2026-08-26');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /primary data-date header/);
+});
+
+test('rejects more than one primary date header', () => {
+  const result = run(valid('<span class="date">2026-08-25 duplicate</span>'));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /primary data-date header/);
+});
+
+test('ignores a fake date element hidden inside a script or comment', () => {
+  const html = valid('<script>const fake = `<span class="date">2026-08-26</span>`;</script><!-- <span class="date">2026-08-26</span> -->')
+    .replace('<span class="date">2026-08-25', '<span class="date">2026-08-24');
+  const result = run(html, '2026-08-26');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /primary data-date header/);
 });
 
 test('rejects a page that cannot be installed like the fee console', () => {

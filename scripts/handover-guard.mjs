@@ -50,8 +50,19 @@ if (!/<meta\b[^>]*name=["']apple-mobile-web-app-capable["'][^>]*content=["']yes[
 if (!/<meta\b[^>]*name=["']apple-mobile-web-app-title["'][^>]*content=["']XUAN-IB 交接["']/i.test(html)) {
   fail('the iPhone home-screen title is missing');
 }
-if (!html.includes(expectedDate)) {
-  fail('the declared data date is not present');
+const visibleMarkup = html
+  .replace(/<!--([\s\S]*?)-->/g, '')
+  .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
+const primaryDates = [];
+for (const match of visibleMarkup.matchAll(/<span\b([^>]*)>([\s\S]*?)<\/span\s*>/gi)) {
+  const classAttribute = match[1].match(/\bclass\s*=\s*(["'])(.*?)\1/i);
+  if (!classAttribute || !classAttribute[2].split(/\s+/).includes('date')) continue;
+  const text = match[2].replace(/<[^>]*>/g, ' ').trim();
+  const date = text.match(/^(\d{4}-\d{2}-\d{2})\b/);
+  primaryDates.push(date ? date[1] : 'invalid');
+}
+if (primaryDates.length !== 1 || primaryDates[0] !== expectedDate) {
+  fail('exactly one primary data-date header must match the expected date');
 }
 
 const forbidden = [

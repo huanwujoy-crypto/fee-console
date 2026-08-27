@@ -22,6 +22,25 @@ jobs:
         shell: bash
         run: git fetch --no-tags origin "${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
 
+      - name: Block direct replacement of the published XUAN-IB page
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="origin/${GITHUB_BASE_REF}"
+          changed_files=$(git diff --name-only "$base...HEAD")
+          if ! git cat-file -e "$base:xuan-ib/latest.meta.json" 2>/dev/null; then
+            if grep -Eq '^xuan-ib/(index\.html|latest\.html)$' <<< "$changed_files"; then
+              echo 'The metadata seed PR must not replace the phone loader or the published handover.' >&2
+              exit 1
+            fi
+            echo 'Initial metadata seed is allowed without changing either published page.'
+            exit 0
+          fi
+          if grep -Eq '^xuan-ib/(index\.html|latest\.html|latest\.meta\.json)$' <<< "$changed_files"; then
+            echo 'Do not replace the phone loader, latest handover, or publication metadata in a PR; use the verified promotion workflow.' >&2
+            exit 1
+          fi
+
       - name: Load the guard from the trusted base branch
         shell: bash
         run: |

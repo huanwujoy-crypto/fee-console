@@ -1,0 +1,47 @@
+name: Lock XUAN-IB publication policy
+
+on:
+  pull_request_target:
+    branches:
+      - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  policy-lock:
+    name: xuan-ib-policy-lock
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse pull requests that alter the trusted publication boundary
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          EXPECTED_FILE_COUNT: ${{ github.event.pull_request.changed_files }}
+        run: |
+          set -euo pipefail
+          files_json="$RUNNER_TEMP/pr-files.json"
+          gh api --paginate --slurp \
+            "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
+            > "$files_json"
+          returned_file_count=$(jq '[.[][]] | length' "$files_json")
+          if [[ "$returned_file_count" != "$EXPECTED_FILE_COUNT" ]] ||
+             (( returned_file_count > 1000 )); then
+            echo 'The pull-request file list is incomplete or exceeds the approved review size.' >&2
+            exit 1
+          fi
+          protected_re='^(CLAUDE\.md|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader)\.(mjs|test\.mjs)$|xuan-ib/)'
+          if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
+             grep -Eq "$protected_re"; then
+            echo 'This PR changes the locked XUAN-IB publication boundary.' >&2
+            echo 'Use an explicit repository-administrator maintenance window, then restore this required check.' >&2
+            exit 1
+          fi
+          echo 'The PR does not alter the XUAN-IB publication boundary.'
