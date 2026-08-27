@@ -1,9 +1,29 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 
 const loader = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
-const latest = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url), 'utf8');
+const latestBytes = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url));
+const latest = latestBytes.toString('utf8');
+
+// Git addresses a file by the SHA-1 of "blob <byte length>\0" plus its bytes.
+// Deriving it here keeps the trusted-metadata test honest against whatever the
+// promotion workflow last published, instead of freezing one day's digest.
+const gitBlobSha = (bytes) => crypto
+  .createHash('sha1')
+  .update(`blob ${bytes.length}\0`, 'utf8')
+  .update(bytes)
+  .digest('hex');
+
+// The one title the loader requires of every future candidate, plus any title
+// it still tolerates while previously published pages age out.
+const approvedTitles = [...loader.matchAll(/"(<title>[^"]*<\/title>)"/g)].map((match) => match[1]);
+const primaryDate = (html) => {
+  const match = html.match(/<span class="date">(\d{4}-\d{2}-\d{2})\b/);
+  assert.ok(match, 'the published handover must carry a primary data date');
+  return match[1];
+};
 const promotion = fs.readFileSync(new URL('../.github/workflows/promote-xuan-ib-handover.yml', import.meta.url), 'utf8');
 const validation = fs.readFileSync(new URL('../.github/workflows/validate-xuan-ib-handover.yml', import.meta.url), 'utf8');
 const uiPrCheck = fs.readFileSync(new URL('../.github/workflows/ui-pr-check.yml', import.meta.url), 'utf8');
@@ -41,6 +61,44 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /<iframe[^>]+sandbox=""/);
   assert.doesNotMatch(loader, /serviceWorker/);
   assert.doesNotMatch(loader, /<!--\s*xuan-ib-handover:v1\s*-->/);
+});
+
+test('the phone page is branded XUAN-投资管理 everywhere the reader sees it', () => {
+  assert.match(loader, /<title>XUAN-投资管理<\/title>/);
+  assert.match(
+    loader,
+    /<meta name="apple-mobile-web-app-title" content="XUAN-投资管理">/
+  );
+  assert.match(loader, /<strong>XUAN-投资管理<\/strong>/);
+  assert.match(loader, /<iframe id="handover" title="XUAN-投资管理 最新简报"/);
+  assert.match(loader, /replacement\.title = "XUAN-投资管理 最新简报";/);
+  // The retired name may survive only inside the migration allowlist, never in
+  // anything the reader is shown.
+  const branding = loader.replace(/const approvedTitles = \[[\s\S]*?\];/, '');
+  assert.doesNotMatch(branding, /XUAN-IB 睡前交接/);
+  assert.doesNotMatch(branding, /content="XUAN-IB 交接"/);
+  assert.doesNotMatch(branding, /title="XUAN-IB 最新睡前交接"/);
+});
+
+test('the integrity check accepts both titles for the length of the rename', () => {
+  // The check must stay a whole-title comparison: a bare product-name substring
+  // would let an unrelated page satisfy it.
+  assert.match(loader, /!approvedTitles\.some\(\(title\) => html\.includes\(title\)\)/);
+  assert.match(loader, /!html\.includes\("xuan-ib-handover:v1"\)/);
+  assert.deepEqual(approvedTitles, [
+    '<title>XUAN-投资管理</title>',
+    '<title>XUAN-IB 睡前交接</title>',
+  ]);
+
+  // Exercise the loader's own predicate rather than restating it.
+  const accepts = (html) =>
+    html.includes('xuan-ib-handover:v1') &&
+    approvedTitles.some((title) => html.includes(title));
+  const marker = '<!-- xuan-ib-handover:v1 -->';
+  assert.equal(accepts(`${marker}<title>XUAN-投资管理</title>`), true);
+  assert.equal(accepts(`${marker}<title>XUAN-IB 睡前交接</title>`), true);
+  assert.equal(accepts(`${marker}<title>XUAN-投资管理 摘要</title>`), false);
+  assert.equal(accepts('<title>XUAN-投资管理</title>'), false);
 });
 
 test('validation and promotion accept a verified single-file candidate based on a trusted main ancestor', () => {
@@ -83,9 +141,11 @@ test('validation and promotion accept a verified single-file candidate based on 
 test('trusted publication metadata matches the currently published Git blob', () => {
   assert.equal(metadata.schemaVersion, 1);
   assert.match(metadata.sourceSha, /^[0-9a-f]{40}$/);
-  assert.equal(metadata.sourceCommitEpoch, 1787757398);
-  assert.equal(metadata.dataDate, '2026-08-26');
-  assert.equal(metadata.htmlBlob, 'f8ea7e14fe6db4573fd3d576ec73b6b774b058a7');
+  assert.match(metadata.htmlBlob, /^[0-9a-f]{40}$/);
+  assert.ok(Number.isInteger(metadata.sourceCommitEpoch) && metadata.sourceCommitEpoch > 0);
+  assert.match(metadata.dataDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(metadata.htmlBlob, gitBlobSha(latestBytes));
+  assert.equal(metadata.dataDate, primaryDate(latest));
 });
 
 test('ordinary PRs cannot replace either fixed phone page or trusted metadata', () => {
@@ -108,6 +168,11 @@ test('a base-controlled policy lock protects the publication code itself', () =>
 
 test('the variable handover stays separate from the fixed loader', () => {
   assert.match(latest, /<!--\s*xuan-ib-handover:v1\s*-->/);
-  assert.match(latest, /<title>\s*XUAN-IB\s+睡前交接\s*<\/title>/);
+  const publishedTitle = latest.match(/<title>[^<]*<\/title>/);
+  assert.ok(publishedTitle, 'the published handover must carry a title');
+  assert.ok(
+    approvedTitles.includes(publishedTitle[0]),
+    `the published title ${publishedTitle[0]} is not one the loader accepts`
+  );
   assert.match(latest, /apple-mobile-web-app-capable/);
 });

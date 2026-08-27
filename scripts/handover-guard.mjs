@@ -41,13 +41,13 @@ if (count(/<body\b/gi) !== 1 || count(/<\/body\s*>/gi) !== 1) {
 if (count(/<!--\s*xuan-ib-handover:v1\s*-->/gi) !== 1) {
   fail('the publication marker is missing');
 }
-if (!/<title>\s*XUAN-IB\s+睡前交接\s*<\/title>/i.test(html)) {
+if (!/<title>\s*XUAN-投资管理\s*<\/title>/i.test(html)) {
   fail('the approved title is missing');
 }
 if (!/<meta\b[^>]*name=["']apple-mobile-web-app-capable["'][^>]*content=["']yes["']/i.test(html)) {
   fail('the iPhone web-app capability is missing');
 }
-if (!/<meta\b[^>]*name=["']apple-mobile-web-app-title["'][^>]*content=["']XUAN-IB 交接["']/i.test(html)) {
+if (!/<meta\b[^>]*name=["']apple-mobile-web-app-title["'][^>]*content=["']XUAN-投资管理["']/i.test(html)) {
   fail('the iPhone home-screen title is missing');
 }
 const visibleMarkup = html
