@@ -1,0 +1,123 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-08-07",
+  "approvedBy": "Wu",
+  "classificationBasis": "investment vehicle liquidity, not underlying asset exposure",
+  "buckets": [
+    "highly_liquid",
+    "vc_pe",
+    "hedge_fund",
+    "evergreen"
+  ],
+  "defaultAssetClassRules": {
+    "Highly Liquid": "highly_liquid",
+    "Illiquid": "vc_pe"
+  },
+  "portfolioRules": [
+    {
+      "portfolioId": 936247,
+      "portfolioName": "IB-HK",
+      "rule": "all",
+      "bucket": "highly_liquid"
+    },
+    {
+      "portfolioId": 1021748,
+      "portfolioName": "ANTARCTICA",
+      "rule": "all_non_cash",
+      "bucket": "hedge_fund"
+    },
+    {
+      "portfolioId": 1031350,
+      "portfolioName": "UBS",
+      "rule": "all_non_cash_except_holding_overrides",
+      "bucket": "evergreen"
+    },
+    {
+      "portfolioId": 1350095,
+      "portfolioName": "HSBC-HK",
+      "rule": "all_non_cash",
+      "bucket": "evergreen"
+    }
+  ],
+  "cashRule": {
+    "match": "cash holding or cash account",
+    "bucket": "highly_liquid"
+  },
+  "holdingOverrides": [
+    {
+      "portfolioId": 936238,
+      "holdingId": 18589470,
+      "nameContains": "景林金色中国",
+      "bucket": "hedge_fund"
+    },
+    {
+      "portfolioId": 936238,
+      "holdingId": 19201557,
+      "nameContains": "P72",
+      "bucket": "hedge_fund"
+    },
+    {
+      "portfolioId": 936238,
+      "holdingId": 20184698,
+      "nameContains": "AQR",
+      "bucket": "hedge_fund"
+    },
+    {
+      "portfolioId": 936238,
+      "holdingId": 20184705,
+      "nameContains": "汉领",
+      "bucket": "evergreen"
+    },
+    {
+      "portfolioId": 936238,
+      "holdingId": 24458376,
+      "nameContains": "景林",
+      "bucket": "hedge_fund"
+    },
+    {
+      "portfolioId": 936238,
+      "holdingId": 27078301,
+      "nameContains": "VistaOne",
+      "bucket": "evergreen"
+    },
+    {
+      "portfolioId": 936238,
+      "holdingId": 27848979,
+      "nameContains": "Stonepeak",
+      "bucket": "evergreen"
+    },
+    {
+      "portfolioId": 1031350,
+      "holdingId": 21097888,
+      "nameContains": "GCM",
+      "bucket": "hedge_fund"
+    }
+  ],
+  "threeLayerLiquidity": {
+    "highly_liquid": [
+      "highly_liquid"
+    ],
+    "semi_liquid": [
+      "hedge_fund",
+      "evergreen"
+    ],
+    "illiquid": [
+      "vc_pe"
+    ]
+  },
+  "pendingRedemptionRule": {
+    "classification": "keep in original bucket until redemption completes",
+    "evergreenNet": "subtract pending redemption amount from evergreen gross for coverage display only",
+    "doNot": "do not move pending redemption to highly_liquid before cash is received"
+  },
+  "matchingPolicy": {
+    "primaryKey": "portfolioId + holdingId",
+    "secondaryCheck": "nameContains",
+    "unknownSemiLiquid": "fail item classification and use the approved dated Monday snapshot fallback; do not guess"
+  },
+  "sourceEvidence": [
+    "xuan-ib/latest.html report dated 2026-08-24, Wu 08-07 rule",
+    "NOAH-HK holding snapshot dated 2026-07-14",
+    "UBS holding verification dated 2026-07-08"
+  ]
+}
