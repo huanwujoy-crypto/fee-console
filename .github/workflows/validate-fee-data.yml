@@ -1,0 +1,52 @@
+name: Validate fee-console data candidate
+
+# Runs on every Routine data push to a claude/* branch. Its only job is to
+# sanity-check the candidate envelope and, by completing, wake the trusted
+# promote-fee-data workflow (workflow_run, executed from main) so promotion
+# happens within minutes of the push instead of waiting for a cron window.
+# This workflow has no secrets and writes nothing; promote-fee-data
+# re-validates every candidate from the trusted default branch.
+
+on:
+  push:
+    branches:
+      - 'claude/**'
+    paths:
+      - data.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-fee-data-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out pushed candidate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 1
+
+      - name: Verify data.json is an encrypted v3 envelope
+        shell: bash
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const outer = JSON.parse(fs.readFileSync('data.json', 'utf8'));
+          if (!outer || typeof outer !== 'object' || Array.isArray(outer)) {
+            throw new Error('data.json must be a JSON object');
+          }
+          if (outer.enc !== true || outer.v !== 3) {
+            throw new Error('data.json must use the encrypted v3 envelope');
+          }
+          if (typeof outer.data !== 'string' || outer.data.length < 40 || outer.data.length % 4 !== 0) {
+            throw new Error('data.json ciphertext has an invalid length');
+          }
+          if (!/^[A-Za-z0-9+/]+={0,2}$/.test(outer.data)) {
+            throw new Error('data.json ciphertext is not standard base64');
+          }
+          console.log('envelope ok');
+          NODE
