@@ -319,3 +319,54 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git commit -m "Publish XUAN-IB handover $DATA_DATE"
           git push origin HEAD:refs/heads/main
+
+      - name: Observe the Pages rollout without gating promotion
+        if: steps.candidate.outputs.sha != ''
+        shell: bash
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          CANDIDATE_BLOB: ${{ steps.candidate.outputs.html_blob }}
+          DATA_DATE: ${{ steps.candidate.outputs.data_date }}
+        run: |
+          set -uo pipefail
+          repo_name=${GITHUB_REPOSITORY#*/}
+          base_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${repo_name}/xuan-ib/"
+          set +e
+          result=$(node scripts/xuan-ib-publish-health.mjs probe \
+            --base-url "$base_url" \
+            --expected-sha "$CANDIDATE_SHA" \
+            --expected-blob "$CANDIDATE_BLOB" \
+            --expected-date "$DATA_DATE" \
+            --attempts 20 \
+            --interval-ms 15000 2>&1)
+          probe_status=$?
+          set -e
+          probe_ok=false
+          if (( probe_status == 0 )); then
+            probe_ok=$(jq -r '.ok // false' <<< "$result" 2>/dev/null || printf false)
+          fi
+          if [[ "$probe_ok" == true ]]; then
+            {
+              echo '### XUAN-IB Pages observation'
+              echo ''
+              echo ":white_check_mark: The fixed mobile page exposed the promoted bytes after $(jq -r '.attempts' <<< "$result") probe attempt(s)."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo '### XUAN-IB Pages observation'
+              echo ''
+              echo ':warning: Promotion to `main` succeeded, but Pages did not expose the same bytes within about five minutes.'
+              echo ''
+              echo 'This observation is non-gating: Pages rollout delay does not change the promotion result.'
+              echo ''
+              echo '```json'
+              if ! jq . <<< "$result" 2>/dev/null; then
+                printf '%s\n' "$result"
+              fi
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          # This observer is intentionally non-gating. A network, JSON, script,
+          # or eventual-consistency problem is recorded above but never changes
+          # the already completed promotion result.
+          exit 0
