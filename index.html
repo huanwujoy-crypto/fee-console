@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.6.3">
+<meta name="fee-console-build" content="4.6.4">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -33,6 +33,7 @@ h1{font-size:19px;margin:0}
 .kpi .val{font-size:22px;font-weight:600;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .kpi .note{font-size:11px;color:var(--ink-muted);margin-top:3px}
 .mix{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 4px;padding:8px 0 6px;border-top:1px solid var(--grid)}
+.mix.two{grid-template-columns:repeat(2,1fr)}
 .mix .k{font-size:11px;color:var(--ink-2)}
 .mix .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
 .mix .p{font-size:11px;color:var(--ink-muted);margin-left:3px;font-weight:400}
@@ -582,6 +583,10 @@ function health(st){
     if(age>10)hold.push("每日数据已停更 "+age+" 天（最新 "+lp.d+"）");
     const ms=num(lp.cash)+num(lp.stock)+num(lp.other);
     if(ms>0&&Math.abs(ms-st.nav)>st.nav*0.02)hold.push("资产拆分与账户总额相差过大");
+    const styleFields=[lp.growth,lp.value].filter(v=>v!=null&&v!=="");
+    if(styleFields.length===1)hold.push("成长股 / 价值股拆分只有一项，暂按股票未拆分显示");
+    else if(styleFields.length===2&&Math.abs(num(lp.growth)+num(lp.value)-num(lp.stock))>1)
+      hold.push("成长股 + 价值股与股票总额不一致，暂按股票未拆分显示");
   }
   if(unresolved>0)hold.push(unresolved+" 笔资金变动尚未判定内部交易或外部出入金");
   for(const issue of (st.returnIssues||[]))hold.push("收益率数据不完整："+issue);
@@ -600,7 +605,7 @@ function render(){
   const st=compute(),B=balance(st),G=health(st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
-  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.3"+(isMgr()?"":" · 只读");
+  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.4"+(isMgr()?"":" · 只读");
   renderKPIs(st,B,G);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B,G);  if(isMgr()){renderFees(st,B,G);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
@@ -612,12 +617,15 @@ function renderKPIs(st,B,G){
   gateBox.innerHTML=G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
     <ul>${G.holdReasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>`:"";
   const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
-  /* 资产拆分：现金类（现金账户 + 短期国债 ETF）/ 股票 / 其它；字段缺失的旧数据点不显示 */
+  /* 展示合并 cash+other；只有经核实且与 stock 对账的 style pair 才拆为成长/价值。 */
   const hasMix=!!(lp&&(lp.cash!=null||lp.stock!=null||lp.other!=null));
   const mixV={cash:num(lp&&lp.cash),stock:num(lp&&lp.stock),other:num(lp&&lp.other)};
   const mixSum=mixV.cash+mixV.stock+mixV.other;
+  const hasStyle=!!(lp&&lp.growth!=null&&lp.value!=null&&isFinite(Number(lp.growth))&&isFinite(Number(lp.value)));
+  const styleReady=hasStyle&&Math.abs(num(lp.growth)+num(lp.value)-mixV.stock)<=1;
   const mixCell=(lab,v)=>`<div><div class="k">${lab}</div><div class="v">${usd(v,0)}<span class="p">${st.nav>0?(v/st.nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
-  const mix=hasMix?`<div class="mix">${mixCell("现金类",mixV.cash)}${mixCell("股票",mixV.stock)}${mixCell("其它",mixV.other)}</div>${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
+  const mixCells=styleReady?`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("成长股",num(lp.growth))}${mixCell("价值股",num(lp.value))}`:`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("股票（未拆分）",mixV.stock)}`;
+  const mix=hasMix?`<div class="mix${styleReady?"":" two"}">${mixCells}</div>${!styleReady?`<div class="note">尚无经核实的成长股 / 价值股持仓级拆分</div>`:""}${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
   /* 分账户：总资产下方列出各账户当日数值（与起始基准页的账户名一致） */
   const acctLine=lp?`<div class="small" style="margin-top:2px">${DB.accounts.map(a=>`${esc(a.name)} <b style="font-weight:600;font-variant-numeric:tabular-nums">${usd(num(lp[a.id]),0)}</b>`).join(" · ")}</div>`:"";
   const benchmarkAccountReady=st.bench.length>0&&st.bench.every(b=>b.val!=null&&isFinite(b.val));
