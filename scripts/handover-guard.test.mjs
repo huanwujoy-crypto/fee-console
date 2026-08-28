@@ -10,8 +10,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const guard = path.join(here, 'handover-guard.mjs');
 
 const valid = (extra = '') => `<!doctype html>
-<html><head><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-IB 交接"><title>XUAN-IB 睡前交接</title><style>body{color:#111}</style></head>
-<body><!-- xuan-ib-handover:v1 --><h1>XUAN-IB 睡前交接</h1><span class="date">2026-08-25 周二 · 21:00 HKT</span><p>${'完整简报 '.repeat(180)}</p>${extra}</body></html>
+<html><head><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>body{color:#111}</style></head>
+<body><!-- xuan-ib-handover:v1 --><h1>XUAN-投资管理</h1><span class="date">2026-08-25 周二 · 21:00 HKT</span><p>${'完整简报 '.repeat(180)}</p>${extra}</body></html>
 `;
 
 const run = (html, date = '2026-08-25') => {
@@ -26,6 +26,18 @@ const run = (html, date = '2026-08-25') => {
 test('accepts a self-contained dated handover', () => {
   const result = run(valid());
   assert.equal(result.status, 0, result.stderr);
+});
+
+test('rejects the retired product title once the rename has landed', () => {
+  const result = run(valid().replace('<title>XUAN-投资管理</title>', '<title>XUAN-IB 睡前交接</title>'));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /approved title/);
+});
+
+test('rejects the retired iPhone home-screen title', () => {
+  const result = run(valid().replace('content="XUAN-投资管理"', 'content="XUAN-IB 交接"'));
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /iPhone home-screen title/);
 });
 
 test('rejects the wrong data date', () => {
