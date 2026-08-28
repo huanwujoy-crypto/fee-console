@@ -21,3 +21,10 @@ those tags from a handover-producing session.
 Financial systems are read-only for this workflow. Never place, modify, or cancel
 orders, and never initiate transfers or write to IB, Sharesight, or another
 financial account.
+
+## Fee-console daily style classification contract
+
+Any scheduled, Run now, recovery, or manual fee-console daily AUM run must read
+and obey `docs/daily-data-contract.md` and `claude/fee-style-mapping.json` before
+computing or passing `--growth` or `--value`. This section does not apply to
+XUAN-IB handover publication.
