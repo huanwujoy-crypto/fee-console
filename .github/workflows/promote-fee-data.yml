@@ -3,7 +3,18 @@ name: Promote fee-console data
 # This workflow deliberately runs only from the trusted default branch.
 # Claude prepares data on a claude/* branch; it never receives the deploy key.
 on:
+  # Primary path: every no-secret candidate validation wakes this trusted
+  # default-branch workflow immediately. The promotion job still performs its
+  # full independent provenance and envelope validation before using the key.
+  workflow_run:
+    workflows:
+      - Validate fee-console data candidate
+    types:
+      - completed
+    branches:
+      - 'claude/**'
   schedule:
+    # Fallback only, in case GitHub delays or drops a workflow_run event.
     - cron: '15,45 0-2 * * *'
   workflow_dispatch:
 
@@ -16,6 +27,10 @@ concurrency:
 
 jobs:
   promote:
+    if: >-
+      ${{ github.event_name != 'workflow_run' ||
+          (github.event.workflow_run.conclusion == 'success' &&
+           github.event.workflow_run.event == 'push') }}
     runs-on: ubuntu-latest
     environment: trusted-promotion
     steps:

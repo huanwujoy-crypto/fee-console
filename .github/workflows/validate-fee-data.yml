@@ -28,11 +28,89 @@ jobs:
       - name: Check out pushed candidate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
-          fetch-depth: 1
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify candidate boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git fetch --no-tags origin main:refs/remotes/origin/main
+          branch_name=${GITHUB_REF#refs/heads/}
+          if [[ ! "$branch_name" =~ ^claude/[a-z0-9-]+-[a-z0-9]{6}$ ]]; then
+            echo "Unexpected Routine branch: $branch_name" >&2
+            exit 1
+          fi
+
+          if [[ $(git rev-list --count "origin/main..HEAD") -ne 1 ]] ||
+             [[ $(git rev-list --count --merges "origin/main..HEAD") -ne 0 ]] ||
+             [[ $(git rev-parse HEAD^) != $(git rev-parse origin/main) ]]; then
+            echo 'Candidate must be exactly one non-merge commit on current main.' >&2
+            exit 1
+          fi
+
+          mapfile -t changed_files < <(git diff --name-only origin/main..HEAD)
+          if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != 'data.json' ]]; then
+            echo 'Candidate may change only data.json.' >&2
+            printf 'Changed: %s\n' "${changed_files[@]}" >&2
+            exit 1
+          fi
+
+          read -r author_email committer_email subject < <(
+            git show -s --format='%ae%x09%ce%x09%s' HEAD
+          )
+          if [[ "$author_email" != 'noreply@anthropic.com' ]] ||
+             [[ "$committer_email" != 'noreply@anthropic.com' ]] ||
+             [[ ! "$subject" =~ ^daily\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]]; then
+            echo 'Candidate provenance or commit subject is invalid.' >&2
+            exit 1
+          fi
+
+          data_date=${BASH_REMATCH[1]}
+          today_utc=$(date -u +%F)
+          yesterday_utc=$(date -u -d 'yesterday' +%F)
+          if [[ "$data_date" != "$today_utc" && "$data_date" != "$yesterday_utc" ]]; then
+            echo "Candidate data date is stale or unexpected: $data_date" >&2
+            exit 1
+          fi
+
+          now_epoch=$(date -u +%s)
+          commit_epoch=$(git show -s --format='%ct' HEAD)
+          if (( commit_epoch < now_epoch - 129600 || commit_epoch > now_epoch + 300 )); then
+            echo 'Candidate commit time is stale or implausibly in the future.' >&2
+            exit 1
+          fi
+
+      - name: Verify GitHub identity and signature
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          read -r verified author_login committer_login < <(
+            curl --fail --silent --show-error \
+              -H 'Accept: application/vnd.github+json' \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H 'X-GitHub-Api-Version: 2022-11-28' \
+              "https://api.github.com/repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA" |
+              jq -r '[.commit.verification.verified, .author.login, .committer.login] | @tsv'
+          )
+          if [[ "$verified" != 'true' ]] ||
+             [[ "$author_login" != 'claude' ]] ||
+             [[ "$committer_login" != 'claude' ]]; then
+            echo 'Candidate is not a GitHub-verified Claude commit.' >&2
+            exit 1
+          fi
 
       - name: Verify data.json is an encrypted v3 envelope
         shell: bash
         run: |
+          size_bytes=$(wc -c < data.json)
+          if (( size_bytes >= 2097152 )); then
+            echo 'data.json is too large.' >&2
+            exit 1
+          fi
           node - <<'NODE'
           const fs = require('fs');
           const outer = JSON.parse(fs.readFileSync('data.json', 'utf8'));
@@ -47,6 +125,9 @@ jobs:
           }
           if (!/^[A-Za-z0-9+/]+={0,2}$/.test(outer.data)) {
             throw new Error('data.json ciphertext is not standard base64');
+          }
+          if (Buffer.from(outer.data, 'base64').toString('base64') !== outer.data) {
+            throw new Error('data.json ciphertext is not canonical base64');
           }
           console.log('envelope ok');
           NODE
