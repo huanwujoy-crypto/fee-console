@@ -10,7 +10,7 @@ import test from "node:test";
 import {
   validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
   flowId, inKindBusinessKey, buildPoint, buildStatus, nyDate, dayDiff,
-  SPLIT_PROVISIONAL, MAX_LOOKBACK_DAYS
+  SPLIT_PROVISIONAL, STYLE_SPLIT_EPS, MAX_LOOKBACK_DAYS
 } from "./daily-core.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -159,6 +159,77 @@ test("split tolerance boundary", () => {
   assert.equal(SPLIT_PROVISIONAL, 1);
   assert.deepEqual(ok({ schwab: 100, webull: 100 }, { cash: 100, stock: 99.4, other: 0 }).provisional, []);
   assert.ok(ok({ schwab: 100, webull: 100 }, { cash: 100, stock: 98.5, other: 0 }).provisional.length > 0);
+});
+
+test("accepts a complete growth/value look-through that reconciles to stock", () => {
+  const dir = tmp();
+  const r = run(dir, { growth: "250000", value: "203845.98" });
+  assert.equal(r.status, 0, r.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.growth, 250000);
+  assert.equal(point.value, 203845.98);
+  assert.equal(point.stock, point.growth + point.value);
+});
+
+test("keeps historical input backward-compatible when style fields are absent", () => {
+  const dir = tmp();
+  const r = run(dir);
+  assert.equal(r.status, 0, r.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(Object.hasOwn(point, "growth"), false);
+  assert.equal(Object.hasOwn(point, "value"), false);
+});
+
+test("blocks a one-sided growth/value split", () => {
+  const dir = tmp();
+  const r = run(dir, { growth: "250000" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--growth and --value must be supplied together/);
+});
+
+test("blocks a growth/value split that does not reconcile to stock", () => {
+  const dir = tmp();
+  const r = run(dir, { growth: "250000", value: "100000" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /growth\/value split is incomplete/);
+});
+
+test("blocks a negative style bucket", () => {
+  const dir = tmp();
+  const r = run(dir, { growth: "-1", value: "453846.98" });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /--growth must be zero or greater/);
+});
+
+test("style reconciliation has an independent one-dollar boundary", () => {
+  assert.equal(STYLE_SPLIT_EPS, 1);
+  const base = { date: today(), accounts: { schwab: 100, webull: 100 },
+    splits: { cash: 50, stock: 150, other: 0 },
+    sourceDates: { schwab: today(), webull: today() }, now: new Date() };
+  assert.deepEqual(validateInputs({ ...base, styleSplits: { growth: 100, value: 49 } }).errors, []);
+  assert.match(validateInputs({ ...base, styleSplits: { growth: 100, value: 48.99 } }).errors.join("\n"),
+    /growth\/value split is incomplete/);
+});
+
+test("a same-day correction without style inputs preserves a verified pair when stock is unchanged", () => {
+  const dir = tmp();
+  const first = run(dir, { growth: "250000", value: "203845.98" });
+  assert.equal(first.status, 0, first.stderr);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const second = run(dir);
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+});
+
+test("a changed stock total never carries forward stale style classification", () => {
+  const dir = tmp();
+  assert.equal(run(dir, { growth: "250000", value: "203845.98" }).status, 0);
+  const changed = run(dir, { cash: "263597.83", stock: "453945.98" });
+  assert.equal(changed.status, 0, changed.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(Object.hasOwn(point, "growth"), false);
+  assert.equal(Object.hasOwn(point, "value"), false);
 });
 
 /* ---------------- weekday lag is allowed ---------------- */

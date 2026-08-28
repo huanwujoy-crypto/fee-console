@@ -24,12 +24,16 @@ import crypto from "node:crypto";
 
 export const SPLIT_PROVISIONAL = 1;      // USD — above this the day is 暂估
 export const SPLIT_IMPOSSIBLE_RATIO = 0.02; // 2% of NAV — above this it is wrong
+export const STYLE_SPLIT_EPS = 1;        // USD — complete look-through must reconcile within this
 export const MOVE_IMPOSSIBLE = 0.5;      // 50% day-on-day with no external flow
 export const MAX_LOOKBACK_DAYS = 10;     // weekend calibration reach
 export const CASH_EPS = 0.01;
 
 export const ACCOUNTS = ["schwab", "webull"];
 export const SPLITS = ["cash", "stock", "other"];
+// Optional style look-through.  Keep `stock` as the authoritative equity total:
+// growth/value are only accepted as a complete, reconciling pair.
+export const STYLE_SPLITS = ["growth", "value"];
 /* 基准（口径 v4.6）：美股收盘、含息。存的是当日原始收盘价 + 当日除息金额，
    两者都写一次就永不重述——这是不用 Yahoo adjclose 的原因（见 §9.2）。
    cspx / eqac 是 v4.5 及以前的欧洲收盘口径，只读不再写，供历史数据回放。 */
@@ -72,7 +76,7 @@ export const isWeekend = d => {
 export function validateInputs(input) {
   const errors = [], provisional = [];
   const {
-    date, accounts = {}, splits = {}, sourceDates = {}, bench = {}, benchDiv = {},
+    date, accounts = {}, splits = {}, styleSplits = {}, sourceDates = {}, bench = {}, benchDiv = {},
     benchDate = null, calibrated = false, now
   } = input;
 
@@ -114,6 +118,23 @@ export function validateInputs(input) {
     if (v === undefined || v === null) { errors.push(`missing --${s} (pass 0 when the bucket is empty)`); continue; }
     if (!Number.isFinite(v)) errors.push(`--${s} must be a finite number`);
     else if (v < 0) errors.push(`--${s} must be zero or greater`);
+  }
+
+  const stylePresent = STYLE_SPLITS.filter(s => styleSplits[s] !== undefined && styleSplits[s] !== null);
+  if (stylePresent.length === 1) {
+    errors.push("--growth and --value must be supplied together");
+  } else if (stylePresent.length === STYLE_SPLITS.length) {
+    for (const s of STYLE_SPLITS) {
+      const v = styleSplits[s];
+      if (!Number.isFinite(v)) errors.push(`--${s} must be a finite number`);
+      else if (v < 0) errors.push(`--${s} must be zero or greater`);
+    }
+    const styleTotal = STYLE_SPLITS.reduce((sum, s) => sum + styleSplits[s], 0);
+    if (Number.isFinite(styleTotal) && Number.isFinite(splits.stock) &&
+        Math.abs(styleTotal - splits.stock) > STYLE_SPLIT_EPS) {
+      errors.push(`growth/value split is incomplete: growth+value differs from stock by ` +
+        `${(splits.stock - styleTotal).toFixed(2)} (> ${STYLE_SPLIT_EPS.toFixed(2)})`);
+    }
   }
 
   for (const [k, v] of Object.entries(bench)) {
@@ -418,10 +439,11 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, bench = {}, benchDiv = {}, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {}, benchDiv = {}, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
+  for (const s of STYLE_SPLITS) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
   // 只在真有除息时落字段：绝大多数日子为 0，写进去会让 samePoint 与每日 diff 变噪。
   for (const k of BENCH_DIV_KEYS) if (Number(benchDiv[k]) > 0) point[k] = benchDiv[k];

@@ -17,7 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
 import {
-  ACCOUNTS, SPLITS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
+  ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows,
   buildPoint, samePoint, buildStatus, sameStatus, isIsoDate
 } from "./daily-core.mjs";
@@ -57,7 +57,7 @@ const num = (name, raw) => {
 
 const known = new Set([
   "date", "flows", "file", "src-bench",
-  ...ACCOUNTS, ...SPLITS, ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
+  ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
   ...ACCOUNTS.map(a => `acct-cash-${a}`),
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
@@ -66,7 +66,7 @@ for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${
 for (const f of flags) if (f !== "calibrated") die(`unknown flag --${f}`);
 const calibrated = flags.has("calibrated");
 
-const accounts = {}, splits = {}, bench = {}, benchDiv = {}, sourceDates = {}, acctCash = {}, prevAcctCash = {};
+const accounts = {}, splits = {}, styleSplits = {}, bench = {}, benchDiv = {}, sourceDates = {}, acctCash = {}, prevAcctCash = {};
 for (const a of ACCOUNTS) {
   if (args[a] !== undefined) accounts[a] = num(a, args[a]);
   if (args[`src-${a}`] !== undefined) sourceDates[a] = args[`src-${a}`];
@@ -74,6 +74,7 @@ for (const a of ACCOUNTS) {
   if (args[`prev-acct-cash-${a}`] !== undefined) prevAcctCash[a] = num(`prev-acct-cash-${a}`, args[`prev-acct-cash-${a}`]);
 }
 for (const s of SPLITS) if (args[s] !== undefined) splits[s] = num(s, args[s]);
+for (const s of STYLE_SPLITS) if (args[s] !== undefined) styleSplits[s] = num(s, args[s]);
 for (const b of BENCH_KEYS) if (args[b] !== undefined) bench[b] = num(b, args[b]);
 for (const b of BENCH_LEGACY_KEYS) if (args[b] !== undefined) bench[b] = num(b, args[b]);
 for (const b of BENCH_DIV_KEYS) if (args[b] !== undefined) benchDiv[b] = num(b, args[b]);
@@ -82,7 +83,7 @@ const date = args.date;
 if (date === undefined) die("missing --date");
 
 const check = validateInputs({
-  date, accounts, splits, sourceDates, bench, benchDiv,
+  date, accounts, splits, styleSplits, sourceDates, bench, benchDiv,
   benchDate: args["src-bench"] ?? null, calibrated, now: new Date()
 });
 if (check.errors.length) dieAll([...check.errors, "nothing written"]);
@@ -180,8 +181,18 @@ hard.push(...checkCashLedger({ date, acctCash, prevAcctCash, movements: incoming
 const flows = reconcileFlows(data.flowsAuto, data.flowsUnresolved, incoming);
 hard.push(...flows.errors);
 
-const point = buildPoint({ date, accounts, splits, bench, benchDiv, provisional: check.provisional, calibrated });
+const point = buildPoint({ date, accounts, splits, styleSplits, bench, benchDiv, provisional: check.provisional, calibrated });
 const existingPoint = data.daily.find(x => x && x.d === date);
+// A read-only correction that leaves `stock` unchanged must not erase a style
+// look-through already verified for the same day.  If stock changes materially,
+// the old style pair is deliberately dropped so the UI falls back to
+// “股票（未拆分）” instead of presenting stale classification.
+const noIncomingStyle = STYLE_SPLITS.every(k => point[k] === undefined);
+const hasExistingStyle = STYLE_SPLITS.every(k => Number.isFinite(existingPoint?.[k]));
+if (noIncomingStyle && hasExistingStyle &&
+    Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
+  for (const k of STYLE_SPLITS) point[k] = Number(existingPoint[k]);
+}
 // A repeated run that receives no dividend event must never erase a dividend
 // already verified for that ex-date.  Explicit corrections require the
 // one-time audited backfill path rather than a blind daily overwrite.
