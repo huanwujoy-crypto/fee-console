@@ -75,6 +75,7 @@ const sameMeta = (left, right) => [
 
 export function evaluateFreshness({
   indexHtml,
+  mainIndexHtml,
   onlineHtml,
   onlineMeta,
   mainHtml,
@@ -85,15 +86,21 @@ export function evaluateFreshness({
   now = new Date()
 }) {
   const issues = [];
+  const indexBytes = Buffer.isBuffer(indexHtml) ? indexHtml : Buffer.from(indexHtml);
+  const mainIndexBytes = Buffer.isBuffer(mainIndexHtml) ? mainIndexHtml : Buffer.from(mainIndexHtml);
   const onlineBytes = Buffer.isBuffer(onlineHtml) ? onlineHtml : Buffer.from(onlineHtml);
   const mainBytes = Buffer.isBuffer(mainHtml) ? mainHtml : Buffer.from(mainHtml);
   const onlineBlob = gitBlobSha(onlineBytes);
   const mainBlob = gitBlobSha(mainBytes);
+  const onlineIndexBlob = gitBlobSha(indexBytes);
+  const mainIndexBlob = gitBlobSha(mainIndexBytes);
   const dateLine = extractPrimaryDateLine(onlineBytes.toString("utf8"));
   const actualEdition = classifyEdition(dateLine);
   const primaryDate = dateLine.match(/\b(\d{4}-\d{2}-\d{2})\b/)?.[1] ?? null;
 
-  if (!String(indexHtml).includes("latest.html")) issues.push("fixed loader does not reference latest.html");
+  if (!indexBytes.includes(Buffer.from("latest.html"))) issues.push("fixed loader does not reference latest.html");
+  if (!indexBytes.equals(mainIndexBytes)) issues.push("online index.html differs from main loader");
+  if (onlineIndexBlob !== mainIndexBlob) issues.push("online and main loader Git blobs differ");
   if (!onlineBytes.equals(mainBytes)) issues.push("online latest.html differs from main");
   if (onlineBlob !== mainBlob) issues.push("online and main HTML Git blobs differ");
   if (!sameMeta(onlineMeta, mainMeta)) issues.push("online latest.meta.json differs from main");
@@ -126,6 +133,8 @@ export function evaluateFreshness({
     actualEdition,
     onlineBlob,
     mainBlob,
+    onlineIndexBlob,
+    mainIndexBlob,
     sourceSha: onlineMeta?.sourceSha ?? null,
     sourceCommitEpoch: sourceEpoch ?? null,
     scheduledEvidence: scheduledEvidence.map(entry => ({
@@ -178,7 +187,7 @@ const fetchBytes = async (url, fetchFn = fetch) => {
 
 const joinUrl = (baseUrl, path) => new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
 
-export async function runWatcher({baseUrl, mainHtml, mainMeta, publicationHistory = [], expectedEdition = "auto", now = new Date(), fetchFn = fetch}) {
+export async function runWatcher({baseUrl, mainIndexHtml, mainHtml, mainMeta, publicationHistory = [], expectedEdition = "auto", now = new Date(), fetchFn = fetch}) {
   let expected = expectedEdition;
   const automatic = expectedEditionAt(now);
   if (expected === "auto") {
@@ -195,7 +204,8 @@ export async function runWatcher({baseUrl, mainHtml, mainMeta, publicationHistor
     fetchBytes(joinUrl(baseUrl, "latest.meta.json"), fetchFn)
   ]);
   return evaluateFreshness({
-    indexHtml: indexBytes.toString("utf8"),
+    indexHtml: indexBytes,
+    mainIndexHtml,
     onlineHtml: onlineBytes,
     onlineMeta: JSON.parse(onlineMetaBytes.toString("utf8")),
     mainHtml,
@@ -205,6 +215,27 @@ export async function runWatcher({baseUrl, mainHtml, mainMeta, publicationHistor
     publicationHistory,
     now
   });
+}
+
+export async function runWatcherWithRetries({
+  attempts = 4,
+  intervalMs = 20_000,
+  waitFn = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  ...watcherOptions
+}) {
+  if (!Number.isInteger(attempts) || attempts < 1) throw new Error("attempts must be a positive integer");
+  if (!Number.isFinite(intervalMs) || intervalMs < 0) throw new Error("interval-ms must be non-negative");
+  let last = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      last = await runWatcher(watcherOptions);
+      if (last.ok) return {...last, attempts: attempt};
+    } catch (error) {
+      last = {ok: false, issues: [`watch attempt failed: ${error.message}`]};
+    }
+    if (attempt < attempts) await waitFn(intervalMs);
+  }
+  return {...last, attempts};
 }
 
 export async function probePublication({baseUrl, expectedSha, expectedBlob, expectedDate, attempts = 20, intervalMs = 15_000, fetchFn = fetch, waitFn = ms => new Promise(resolve => setTimeout(resolve, ms))}) {
@@ -242,14 +273,18 @@ async function main() {
   const baseUrl = option(args, "--base-url");
   if (!baseUrl) throw new Error("--base-url is required");
   if (command === "watch") {
+    const indexPath = option(args, "--main-index", "xuan-ib/index.html");
     const htmlPath = option(args, "--main-html", "xuan-ib/latest.html");
     const metaPath = option(args, "--main-meta", "xuan-ib/latest.meta.json");
-    const result = await runWatcher({
+    const result = await runWatcherWithRetries({
       baseUrl,
+      mainIndexHtml: fs.readFileSync(indexPath),
       mainHtml: fs.readFileSync(htmlPath),
       mainMeta: JSON.parse(fs.readFileSync(metaPath, "utf8")),
       publicationHistory: readPublicationHistory(),
-      expectedEdition: option(args, "--expected", "auto")
+      expectedEdition: option(args, "--expected", "auto"),
+      attempts: Number(option(args, "--attempts", "4")),
+      intervalMs: Number(option(args, "--interval-ms", "20000"))
     });
     console.log(JSON.stringify(result));
     if (!result.ok) process.exitCode = 1;

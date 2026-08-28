@@ -156,11 +156,15 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-28\.1"/);
+  assert.match(loader, /loaderBuild = "2026-08-28\.2"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
   assert.match(loader, /restoreVerified\(request\)/);
+  assert.match(loader, /requireMonotonic\(/);
+  assert.match(loader, /record\.meta\.dataDate < previous\.meta\.dataDate/);
+  assert.match(loader, /record\.meta\.sourceCommitEpoch < previous\.meta\.sourceCommitEpoch/);
+  assert.match(loader, /record\.meta\.htmlBlob\.toLowerCase\(\) !== previous\.meta\.htmlBlob\.toLowerCase\(\)/);
   assert.match(loader, /上游暂不一致，正在显示上一份已验证版本/);
   assert.match(loader, /Content-Security-Policy/);
   assert.match(loader, /default-src &apos;none&apos;/);
@@ -225,6 +229,85 @@ test('mixed metadata and HTML fail closed to the locally stored verified report'
   assert.match(app.status.textContent, /显示上一份已验证版本 · 报告 2026-08-27 · 睡前版/);
   assert.equal(app.status.classList.contains('error'), true);
   assert.equal(app.button.disabled, false);
+});
+
+test('a valid but older report cannot replace the locally verified newer date', async () => {
+  const cachedHtml = reportHtml('2026-08-28', '早间版', 'newer-local-report');
+  const cachedMeta = metaFor(cachedHtml, {sourceCommitEpoch: 1_788_000_000});
+  const incomingHtml = reportHtml('2026-08-27', '睡前版', 'older-upstream-report');
+  const incomingMeta = metaFor(incomingHtml, {sourceCommitEpoch: 1_788_100_000});
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const original = stored.get('xuan-ib:last-verified:v1');
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: incomingMeta, bytes: []})
+      : response({json: null, bytes: Buffer.from(incomingHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /newer-local-report/);
+  assert.doesNotMatch(app.frame.srcdoc, /older-upstream-report/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(stored.get('xuan-ib:last-verified:v1'), original);
+});
+
+test('a lower source epoch on the same data date cannot roll back the verified report', async () => {
+  const cachedHtml = reportHtml('2026-08-28', '睡前版', 'higher-epoch-local-report');
+  const cachedMeta = metaFor(cachedHtml, {sourceCommitEpoch: 1_788_000_100});
+  const incomingHtml = reportHtml('2026-08-28', '睡前版', 'lower-epoch-upstream-report');
+  const incomingMeta = metaFor(incomingHtml, {sourceCommitEpoch: 1_788_000_000});
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const original = stored.get('xuan-ib:last-verified:v1');
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: incomingMeta, bytes: []})
+      : response({json: null, bytes: Buffer.from(incomingHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /higher-epoch-local-report/);
+  assert.doesNotMatch(app.frame.srcdoc, /lower-epoch-upstream-report/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(stored.get('xuan-ib:last-verified:v1'), original);
+});
+
+test('the same data date and source epoch fail closed when the HTML blob changes', async () => {
+  const epoch = 1_788_000_100;
+  const cachedHtml = reportHtml('2026-08-28', '睡前版', 'original-epoch-report');
+  const cachedMeta = metaFor(cachedHtml, {sourceCommitEpoch: epoch});
+  const incomingHtml = reportHtml('2026-08-28', '睡前版', 'conflicting-epoch-report');
+  const incomingMeta = metaFor(incomingHtml, {sourceCommitEpoch: epoch});
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const original = stored.get('xuan-ib:last-verified:v1');
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: incomingMeta, bytes: []})
+      : response({json: null, bytes: Buffer.from(incomingHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /original-epoch-report/);
+  assert.doesNotMatch(app.frame.srcdoc, /conflicting-epoch-report/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(stored.get('xuan-ib:last-verified:v1'), original);
 });
 
 test('network failure retains the verified cache and never opens an unverified direct page', async () => {

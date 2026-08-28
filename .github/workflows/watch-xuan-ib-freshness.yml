@@ -2,9 +2,9 @@ name: Watch XUAN-IB fixed page freshness
 
 on:
   schedule:
-    # Every 30 minutes on weekdays. The script is silent before 08:30 HKT,
-    # checks AM from 08:30, and checks PM from 22:15 (first cron after: 22:30).
-    - cron: '*/30 * * * 1-5'
+    # Every 30 minutes on weekdays, offset from the publication window. The
+    # first eligible checks are 08:35 HKT for AM and 22:35 HKT for PM.
+    - cron: '5,35 * * * 1-5'
   workflow_dispatch:
     inputs:
       expected_edition:
@@ -27,6 +27,7 @@ concurrency:
 jobs:
   watch:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Check out trusted main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -48,8 +49,11 @@ jobs:
           set +e
           result=$(node scripts/xuan-ib-publish-health.mjs watch \
             --base-url "$base_url" \
+            --main-index xuan-ib/index.html \
             --main-html xuan-ib/latest.html \
             --main-meta xuan-ib/latest.meta.json \
+            --attempts 4 \
+            --interval-ms 20000 \
             --expected "$expected" 2>&1)
           status=$?
           set -e

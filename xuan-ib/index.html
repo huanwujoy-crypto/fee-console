@@ -82,7 +82,7 @@
       const button = document.querySelector("#refresh");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-28.1";
+      const loaderBuild = "2026-08-28.2";
       const storageKey = "xuan-ib:last-verified:v1";
       let lastSuccess = 0;
       let lastAttempt = 0;
@@ -177,6 +177,22 @@
         return { html, protectedHtml: protect(html), meta, info, blob };
       }
 
+      function requireMonotonic(record, previous) {
+        if (!previous) return record;
+        if (record.meta.dataDate < previous.meta.dataDate) {
+          throw new Error("上游报告日期早于本机已验证版本");
+        }
+        if (record.meta.dataDate > previous.meta.dataDate) return record;
+        if (record.meta.sourceCommitEpoch < previous.meta.sourceCommitEpoch) {
+          throw new Error("上游同日报告版本早于本机已验证版本");
+        }
+        if (record.meta.sourceCommitEpoch === previous.meta.sourceCommitEpoch &&
+            record.meta.htmlBlob.toLowerCase() !== previous.meta.htmlBlob.toLowerCase()) {
+          throw new Error("同一发布版本出现不同页面指纹");
+        }
+        return record;
+      }
+
       const statusFor = (record, prefix) =>
         `${prefix} · 报告 ${record.info.dataDate} · ${record.info.edition} · L ${loaderBuild}`;
 
@@ -248,7 +264,10 @@
             metaResponse.json(),
             htmlResponse.arrayBuffer()
           ]);
-          const record = await verifyPair(new Uint8Array(bytes), meta);
+          const record = requireMonotonic(
+            await verifyPair(new Uint8Array(bytes), meta),
+            lastVerified
+          );
           if (request !== requestSequence) return;
           renderVerified(record, `已同步 ${clock()}`);
           saveVerified(record);
