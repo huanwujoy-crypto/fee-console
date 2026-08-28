@@ -15,9 +15,7 @@ on:
       - 'claude/**'
   schedule:
     # Fallback only, in case GitHub delays or drops a workflow_run event.
-    # Cover 08:15-14:45 HKT so a late Sharesight same-date revision can still
-    # replace the early snapshot without waiting for the next calendar day.
-    - cron: '15,45 0-6 * * *'
+    - cron: '15,45 0-2 * * *'
   workflow_dispatch:
 
 permissions:
