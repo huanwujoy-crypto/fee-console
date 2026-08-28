@@ -332,7 +332,8 @@ jobs:
           repo_name=${GITHUB_REPOSITORY#*/}
           base_url="https://${GITHUB_REPOSITORY_OWNER}.github.io/${repo_name}/xuan-ib/"
           set +e
-          result=$(node scripts/xuan-ib-publish-health.mjs probe \
+          result=$(timeout --signal=TERM 285s \
+            node scripts/xuan-ib-publish-health.mjs probe \
             --base-url "$base_url" \
             --expected-sha "$CANDIDATE_SHA" \
             --expected-blob "$CANDIDATE_BLOB" \

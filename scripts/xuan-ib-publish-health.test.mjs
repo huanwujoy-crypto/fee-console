@@ -267,6 +267,7 @@ test("workflows keep the HKT SLA, read-only watcher, and post-push non-gating pr
 
   const promotion = fs.readFileSync(".github/workflows/promote-xuan-ib-handover.yml", "utf8");
   assert.ok(promotion.indexOf("git push origin HEAD:refs/heads/main") < promotion.indexOf("Observe the Pages rollout"));
+  assert.match(promotion, /timeout --signal=TERM 285s/);
   assert.match(promotion, /--attempts 20/);
   assert.match(promotion, /--interval-ms 15000/);
   assert.match(promotion, /Pages rollout delay does not change the promotion result/);
