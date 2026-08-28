@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-08-28",
+  "approvedBy": "Wu",
+  "classificationBasis": "user-approved investment style",
+  "primaryKey": [
+    "portfolioId",
+    "holdingId"
+  ],
+  "secondaryCheck": "ticker",
+  "unknownHoldingPolicy": "fail_closed",
+  "holdings": [
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "holdingId": 28656359,
+      "ticker": "GOOG",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "holdingId": 28656361,
+      "ticker": "IREN",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "holdingId": 28987468,
+      "ticker": "MRVL",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 26135015,
+      "ticker": "AVGO",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 25984197,
+      "ticker": "GOOGL",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 26135016,
+      "ticker": "META",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 28925679,
+      "ticker": "METU",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 27711874,
+      "ticker": "TSEM",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 25118882,
+      "ticker": "TSLA",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "holdingId": 22452279,
+      "ticker": "BRK/B",
+      "style": "value"
+    },
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "holdingId": 28921427,
+      "ticker": "BRK/B",
+      "style": "value"
+    }
+  ]
+}
