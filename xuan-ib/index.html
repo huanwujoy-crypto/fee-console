@@ -42,12 +42,25 @@
       font-weight: 650;
     }
     #refresh:disabled { opacity: .55; }
+    #warning {
+      flex: 0 0 auto;
+      padding: 10px 18px;
+      border-bottom: 1px solid #e0a33a;
+      background: #fff1cf;
+      color: #6f4200;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.4;
+      text-align: center;
+    }
+    #warning[hidden] { display: none; }
     #handover { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #f9f9f7; }
     @media (prefers-color-scheme: dark) {
       html, body, #handover { background: #0d0d0d; }
       .bar { background: rgba(13, 13, 13, .96); border-color: #2c2c2a; color: #fff; }
       #status { color: #aaa8a2; }
       #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
+      #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
     }
   </style>
 </head>
@@ -60,17 +73,20 @@
       </div>
       <button id="refresh" type="button">刷新</button>
     </header>
+    <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
     <iframe id="handover" title="XUAN-投资管理 最新简报" sandbox="" referrerpolicy="no-referrer"></iframe>
   </div>
   <script>
     (() => {
-      let frame = document.querySelector("#handover");
+      const frame = document.querySelector("#handover");
       const button = document.querySelector("#refresh");
       const status = document.querySelector("#status");
-      const loaderBuild = "2026-08-26.1";
+      const warning = document.querySelector("#warning");
+      const loaderBuild = "2026-08-28.2";
+      const storageKey = "xuan-ib:last-verified:v1";
       let lastSuccess = 0;
       let lastAttempt = 0;
-      let lastHtml = "";
+      let lastVerified = null;
       let requestSequence = 0;
 
       // Migration window: the phone page must keep working while published
@@ -89,48 +105,135 @@
         timeZone: "Asia/Hong_Kong"
       }).format(new Date());
 
-      const dataDate = (html) => {
-        const match = html.match(/<span class="date">(\d{4}-\d{2}-\d{2})\b/);
-        return match ? match[1].slice(5) : "日期未知";
-      };
+      const storage = (() => {
+        try {
+          localStorage.setItem("__xuan_ib_probe", "1");
+          localStorage.removeItem("__xuan_ib_probe");
+          return localStorage;
+        } catch (_) {
+          return null;
+        }
+      })();
 
-      function reloadLoader() {
-        const url = new URL(location.href);
-        url.searchParams.set("loader", `${loaderBuild}-${Date.now()}`);
-        location.replace(url);
+      const hex = (buffer) => Array.from(new Uint8Array(buffer), (byte) =>
+        byte.toString(16).padStart(2, "0")
+      ).join("");
+
+      async function gitBlobSha(bytes) {
+        const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        const header = new TextEncoder().encode(`blob ${body.byteLength}\0`);
+        const payload = new Uint8Array(header.byteLength + body.byteLength);
+        payload.set(header, 0);
+        payload.set(body, header.byteLength);
+        return hex(await crypto.subtle.digest("SHA-1", payload));
       }
 
-      function loadDirect(request) {
-        const url = new URL("latest.html", location.href);
-        url.searchParams.set("direct", `${loaderBuild}-${Date.now()}`);
-        const replacement = document.createElement("iframe");
-        replacement.id = "handover";
-        replacement.title = "XUAN-投资管理 最新简报";
-        replacement.setAttribute("sandbox", "");
-        replacement.setAttribute("referrerpolicy", "no-referrer");
-        replacement.hidden = true;
-        status.classList.add("error");
-        status.textContent = `网络读取异常，正在切换直接模式… · L ${loaderBuild}`;
-        frame.before(replacement);
-        replacement.addEventListener("load", () => {
-          if (request !== requestSequence) {
-            replacement.remove();
-            return;
-          }
-          frame.remove();
-          replacement.hidden = false;
-          frame = replacement;
-          status.textContent = `直接模式已打开 ${clock()}（内容未校验）· L ${loaderBuild}`;
-        }, { once: true });
-        replacement.addEventListener("error", () => {
-          if (request !== requestSequence) {
-            replacement.remove();
-            return;
-          }
-          replacement.remove();
-          status.textContent = "直接读取也失败，仍显示上一版";
-        }, { once: true });
-        replacement.src = url;
+      const reportInfo = (html) => {
+        const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
+        if (!match) throw new Error("页面缺少报告日期与版次");
+        const text = match[1]
+          .replace(/<[^>]*>/g, " ")
+          .replace(/&nbsp;|&#160;/gi, " ")
+          .replace(/&middot;|&#183;/gi, "·")
+          .replace(/\s+/g, " ")
+          .trim();
+        const date = text.match(/^(\d{4}-\d{2}-\d{2})\b/);
+        const parts = text.split("·").map((part) => part.trim()).filter(Boolean);
+        if (!date || parts.length < 2) throw new Error("报告日期或版次无法识别");
+        return { dataDate: date[1], edition: parts[1], label: text };
+      };
+
+      const validateMeta = (meta) => {
+        if (!meta || meta.schemaVersion !== 1) throw new Error("发布信息版本不兼容");
+        if (!/^[0-9a-f]{40}$/i.test(meta.sourceSha || "")) throw new Error("发布来源无效");
+        if (!Number.isInteger(meta.sourceCommitEpoch) || meta.sourceCommitEpoch <= 0) {
+          throw new Error("发布时间无效");
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(meta.dataDate || "")) throw new Error("数据日期无效");
+        if (!/^[0-9a-f]{40}$/i.test(meta.htmlBlob || "")) throw new Error("页面指纹无效");
+        return meta;
+      };
+
+      const protect = (html) => {
+        const csp = '<meta http-equiv="Content-Security-Policy" content="default-src &apos;none&apos;; style-src &apos;unsafe-inline&apos;; script-src &apos;none&apos;; img-src &apos;none&apos;; font-src &apos;none&apos;; media-src &apos;none&apos;; connect-src &apos;none&apos;; frame-src &apos;none&apos;; object-src &apos;none&apos;; base-uri &apos;none&apos;; form-action &apos;none&apos;">';
+        const protectedHtml = html.replace(/<head[^>]*>/i, (head) => head + csp);
+        if (protectedHtml === html) throw new Error("页面缺少安全头");
+        return protectedHtml;
+      };
+
+      async function verifyPair(bytes, meta) {
+        validateMeta(meta);
+        const blob = await gitBlobSha(bytes);
+        if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
+          throw new Error("发布信息与页面不是同一版本");
+        }
+        const html = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        if (!html.includes("xuan-ib-handover:v1") ||
+            !approvedTitles.some((title) => html.includes(title))) {
+          throw new Error("页面完整性标记不符");
+        }
+        const info = reportInfo(html);
+        if (info.dataDate !== meta.dataDate) throw new Error("发布日期与页面日期不一致");
+        return { html, protectedHtml: protect(html), meta, info, blob };
+      }
+
+      function requireMonotonic(record, previous) {
+        if (!previous) return record;
+        if (record.meta.dataDate < previous.meta.dataDate) {
+          throw new Error("上游报告日期早于本机已验证版本");
+        }
+        if (record.meta.dataDate > previous.meta.dataDate) return record;
+        if (record.meta.sourceCommitEpoch < previous.meta.sourceCommitEpoch) {
+          throw new Error("上游同日报告版本早于本机已验证版本");
+        }
+        if (record.meta.sourceCommitEpoch === previous.meta.sourceCommitEpoch &&
+            record.meta.htmlBlob.toLowerCase() !== previous.meta.htmlBlob.toLowerCase()) {
+          throw new Error("同一发布版本出现不同页面指纹");
+        }
+        return record;
+      }
+
+      const statusFor = (record, prefix) =>
+        `${prefix} · 报告 ${record.info.dataDate} · ${record.info.edition} · L ${loaderBuild}`;
+
+      function renderVerified(record, prefix, showWarning = false) {
+        frame.srcdoc = record.protectedHtml;
+        lastVerified = record;
+        warning.hidden = !showWarning;
+        status.classList.toggle("error", showWarning);
+        status.textContent = statusFor(record, prefix);
+      }
+
+      function saveVerified(record) {
+        if (!storage) return;
+        try {
+          storage.setItem(storageKey, JSON.stringify({
+            cacheVersion: 1,
+            html: record.html,
+            meta: record.meta,
+            verifiedAt: Date.now()
+          }));
+        } catch (error) {
+          console.warn("XUAN-IB verified-page backup failed", error);
+        }
+      }
+
+      async function restoreVerified(request) {
+        if (lastVerified || !storage) return Boolean(lastVerified);
+        try {
+          const raw = storage.getItem(storageKey);
+          if (!raw) return false;
+          const saved = JSON.parse(raw);
+          if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
+          const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
+          if (request !== requestSequence) return false;
+          renderVerified(record, "正在核对最新版");
+          return true;
+        } catch (error) {
+          try { storage.removeItem(storageKey); } catch (_) {}
+          console.warn("XUAN-IB saved verified page was rejected", error);
+          return false;
+        }
       }
 
       async function loadLatest() {
@@ -139,39 +242,44 @@
         const timeout = window.setTimeout(() => controller.abort(), 10_000);
         lastAttempt = Date.now();
         button.disabled = true;
+        warning.hidden = true;
         status.classList.remove("error");
-        status.textContent = lastHtml ? "正在核对最新版…" : "正在读取最新版…";
+        const restored = await restoreVerified(request);
+        if (request !== requestSequence) return;
+        if (!restored) status.textContent = "正在读取最新版…";
         try {
-          const url = new URL("latest.html", location.href);
-          url.searchParams.set("v", String(Date.now()));
-          const response = await fetch(url, {
-            cache: "no-store",
-            credentials: "omit",
-            signal: controller.signal
-          });
-          if (!response.ok) throw new Error(`HTTP ${response.status}`);
-          const html = await response.text();
+          const token = `${loaderBuild}-${Date.now()}`;
+          const metaUrl = new URL("latest.meta.json", location.href);
+          const htmlUrl = new URL("latest.html", location.href);
+          metaUrl.searchParams.set("v", token);
+          htmlUrl.searchParams.set("v", token);
+          const options = { cache: "no-store", credentials: "omit", signal: controller.signal };
+          const [metaResponse, htmlResponse] = await Promise.all([
+            fetch(metaUrl, options),
+            fetch(htmlUrl, options)
+          ]);
+          if (!metaResponse.ok) throw new Error(`metadata HTTP ${metaResponse.status}`);
+          if (!htmlResponse.ok) throw new Error(`page HTTP ${htmlResponse.status}`);
+          const [meta, bytes] = await Promise.all([
+            metaResponse.json(),
+            htmlResponse.arrayBuffer()
+          ]);
+          const record = requireMonotonic(
+            await verifyPair(new Uint8Array(bytes), meta),
+            lastVerified
+          );
           if (request !== requestSequence) return;
-          if (!html.includes("xuan-ib-handover:v1") ||
-              !approvedTitles.some((title) => html.includes(title))) {
-            throw new Error("页面完整性标记不符");
-          }
-          const csp = '<meta http-equiv="Content-Security-Policy" content="default-src &apos;none&apos;; style-src &apos;unsafe-inline&apos;; script-src &apos;none&apos;; img-src &apos;none&apos;; font-src &apos;none&apos;; media-src &apos;none&apos;; connect-src &apos;none&apos;; frame-src &apos;none&apos;; object-src &apos;none&apos;; base-uri &apos;none&apos;; form-action &apos;none&apos;">';
-          const protectedHtml = html.replace(/<head[^>]*>/i, (head) => head + csp);
-          if (protectedHtml === html) throw new Error("页面缺少安全头");
-          frame.srcdoc = protectedHtml;
-          lastHtml = protectedHtml;
+          renderVerified(record, `已同步 ${clock()}`);
+          saveVerified(record);
           lastSuccess = Date.now();
-          status.textContent = `已同步 ${clock()} · 数据 ${dataDate(html)} · L ${loaderBuild}`;
         } catch (error) {
           if (request !== requestSequence) return;
-          if (error.name === "AbortError" || error instanceof TypeError) {
-            loadDirect(request);
-            return;
-          }
           status.classList.add("error");
-          status.textContent = lastHtml ? "更新失败，仍显示上一版" : "暂时无法读取最新版，请重试";
-          if (!lastHtml) {
+          if (lastVerified) {
+            renderVerified(lastVerified, "显示上一份已验证版本", true);
+          } else {
+            warning.hidden = true;
+            status.textContent = `暂时无法读取已验证报告 · L ${loaderBuild}`;
             frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
           }
           console.warn("XUAN-IB latest-page refresh failed", error);
@@ -181,13 +289,12 @@
         }
       }
 
-      button.addEventListener("click", reloadLoader);
+      button.addEventListener("click", loadLatest);
       window.addEventListener("pageshow", (event) => {
-        if (event.persisted) reloadLoader();
-        else loadLatest();
+        loadLatest();
       });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && Date.now() - lastAttempt > 60_000) reloadLoader();
+        if (!document.hidden && Date.now() - lastAttempt > 60_000) loadLatest();
       });
       window.setInterval(() => {
         if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();

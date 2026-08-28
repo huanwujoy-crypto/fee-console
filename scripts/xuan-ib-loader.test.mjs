@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const loader = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
 const latestBytes = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url));
@@ -30,37 +31,315 @@ const uiPrCheck = fs.readFileSync(new URL('../.github/workflows/ui-pr-check.yml'
 const policyLock = fs.readFileSync(new URL('../.github/workflows/xuan-ib-policy-lock.yml', import.meta.url), 'utf8');
 const metadata = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
 
+const inlineScript = loader.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+assert.ok(inlineScript, 'the phone loader must contain one executable inline script');
+
+const classList = () => {
+  const names = new Set();
+  return {
+    add: (...values) => values.forEach((value) => names.add(value)),
+    remove: (...values) => values.forEach((value) => names.delete(value)),
+    toggle: (value, force) => {
+      if (force === undefined ? !names.has(value) : force) names.add(value);
+      else names.delete(value);
+    },
+    contains: (value) => names.has(value),
+  };
+};
+
+const response = ({json, bytes, status = 200}) => ({
+  ok: status >= 200 && status < 300,
+  status,
+  json: async () => json,
+  arrayBuffer: async () => Uint8Array.from(bytes).buffer,
+});
+
+const reportHtml = (date, edition, body = '') => `<!doctype html><html><head><title>XUAN-投资管理</title></head><body>
+<!-- xuan-ib-handover:v1 -->
+<span class="date">${date} 周五 · ${edition} · 美股盘前</span>
+<main>${body}</main></body></html>`;
+
+const metaFor = (html, overrides = {}) => {
+  const bytes = Buffer.from(html, 'utf8');
+  return {
+    schemaVersion: 1,
+    sourceSha: '1'.repeat(40),
+    sourceCommitEpoch: 1_788_000_000,
+    dataDate: primaryDate(html),
+    htmlBlob: gitBlobSha(bytes),
+    ...overrides,
+  };
+};
+
+function loaderHarness({fetchImpl, stored = new Map()}) {
+  const listeners = {button: {}, window: {}, document: {}};
+  const frame = {srcdoc: ''};
+  const button = {
+    disabled: false,
+    addEventListener: (name, callback) => { listeners.button[name] = callback; },
+  };
+  const status = {textContent: '', classList: classList()};
+  const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
+  const elements = new Map([
+    ['#handover', frame],
+    ['#refresh', button],
+    ['#status', status],
+    ['#warning', warning],
+  ]);
+  const localStorage = {
+    setItem: (key, value) => stored.set(key, String(value)),
+    getItem: (key) => stored.has(key) ? stored.get(key) : null,
+    removeItem: (key) => stored.delete(key),
+  };
+  const warnings = [];
+  const document = {
+    hidden: false,
+    querySelector: (selector) => elements.get(selector),
+    addEventListener: (name, callback) => { listeners.document[name] = callback; },
+  };
+  const window = {
+    addEventListener: (name, callback) => { listeners.window[name] = callback; },
+    setTimeout: () => 1,
+    clearTimeout: () => {},
+    setInterval: () => 1,
+  };
+  const context = {
+    AbortController,
+    Array,
+    Date,
+    Error,
+    Intl,
+    JSON,
+    Map,
+    Number,
+    Promise,
+    RegExp,
+    String,
+    TextDecoder,
+    TextEncoder,
+    TypeError,
+    URL,
+    Uint8Array,
+    console: {warn: (...args) => warnings.push(args)},
+    crypto: crypto.webcrypto,
+    document,
+    fetch: fetchImpl,
+    localStorage,
+    location: {href: 'https://example.test/xuan-ib/'},
+    window,
+  };
+  vm.runInNewContext(inlineScript, context);
+  return {button, frame, listeners, status, stored, warning, warnings};
+}
+
 test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
+  assert.match(loader, /new URL\("latest\.meta\.json", location\.href\)/);
   assert.match(loader, /new URL\("latest\.html", location\.href\)/);
   assert.match(loader, /Date\.now\(\)/);
-  assert.match(loader, /fetch\(url, \{/);
+  assert.match(loader, /Promise\.all\(\[/);
+  assert.match(loader, /fetch\(metaUrl, options\)/);
+  assert.match(loader, /fetch\(htmlUrl, options\)/);
   assert.match(loader, /cache: "no-store"/);
   assert.match(loader, /credentials: "omit"/);
   assert.match(loader, /signal: controller\.signal/);
   assert.match(loader, /controller\.abort\(\), 10_000/);
-  assert.match(loader, /error\.name === "AbortError" \|\| error instanceof TypeError/);
-  assert.match(loader, /replacement\.src = url/);
-  assert.match(loader, /正在切换直接模式/);
-  assert.match(loader, /内容未校验/);
-  assert.match(loader, /replacement\.addEventListener\("load"/);
+  assert.match(loader, /crypto\.subtle\.digest\("SHA-1", payload\)/);
+  assert.match(loader, /blob \$\{body\.byteLength\}\\0/);
+  assert.match(loader, /blob\.toLowerCase\(\) !== meta\.htmlBlob\.toLowerCase\(\)/);
+  assert.match(loader, /schemaVersion !== 1/);
+  assert.match(loader, /info\.dataDate !== meta\.dataDate/);
   assert.match(loader, /lastSuccess = Date\.now\(\);/);
-  assert.match(loader, /replacement\.setAttribute\("sandbox", ""\)/);
-  assert.match(loader, /replacement\.setAttribute\("referrerpolicy", "no-referrer"\)/);
-  assert.match(loader, /if \(request !== requestSequence\) \{/);
+  assert.match(loader, /if \(request !== requestSequence\) return/);
   assert.match(loader, /lastAttempt = Date\.now\(\)/);
   assert.match(loader, /Date\.now\(\) - lastAttempt > 5 \* 60_000/);
   assert.match(loader, /visibilitychange/);
-  assert.match(loader, /location\.replace\(url\)/);
-  assert.match(loader, /event\.persisted/);
-  assert.match(loader, /数据 \$\{dataDate\(html\)\}/);
-  assert.match(loader, /loaderBuild = "2026-08-26\.1"/);
+  assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
+  assert.match(loader, /record\.info\.dataDate/);
+  assert.match(loader, /record\.info\.edition/);
+  assert.match(loader, /loaderBuild = "2026-08-28\.2"/);
   assert.match(loader, /requestSequence/);
+  assert.match(loader, /xuan-ib:last-verified:v1/);
+  assert.match(loader, /storage\.setItem\(storageKey/);
+  assert.match(loader, /restoreVerified\(request\)/);
+  assert.match(loader, /requireMonotonic\(/);
+  assert.match(loader, /record\.meta\.dataDate < previous\.meta\.dataDate/);
+  assert.match(loader, /record\.meta\.sourceCommitEpoch < previous\.meta\.sourceCommitEpoch/);
+  assert.match(loader, /record\.meta\.htmlBlob\.toLowerCase\(\) !== previous\.meta\.htmlBlob\.toLowerCase\(\)/);
+  assert.match(loader, /上游暂不一致，正在显示上一份已验证版本/);
   assert.match(loader, /Content-Security-Policy/);
   assert.match(loader, /default-src &apos;none&apos;/);
   assert.match(loader, /style-src &apos;unsafe-inline&apos;/);
   assert.match(loader, /<iframe[^>]+sandbox=""/);
+  assert.doesNotMatch(loader, /loadDirect/);
+  assert.doesNotMatch(loader, /内容未校验/);
   assert.doesNotMatch(loader, /serviceWorker/);
   assert.doesNotMatch(loader, /<!--\s*xuan-ib-handover:v1\s*-->/);
+});
+
+test('a schema-v1 metadata and HTML pair is rendered only after its exact Git blob matches', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', 'fresh-pair');
+  const meta = metaFor(html);
+  const requests = [];
+  const app = loaderHarness({
+    fetchImpl: async (url) => {
+      requests.push(new URL(String(url)));
+      return String(url).includes('latest.meta.json')
+        ? response({json: meta, bytes: []})
+        : response({json: null, bytes: Buffer.from(html)});
+    },
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /fresh-pair/);
+  assert.match(app.frame.srcdoc, /Content-Security-Policy/);
+  assert.match(app.status.textContent, /报告 2026-08-28 · 睡前版/);
+  assert.equal(app.status.classList.contains('error'), false);
+  assert.equal(app.warning.hidden, true);
+  assert.equal(app.button.disabled, false);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].searchParams.get('v'), requests[1].searchParams.get('v'));
+  const saved = JSON.parse(app.stored.get('xuan-ib:last-verified:v1'));
+  assert.equal(saved.cacheVersion, 1);
+  assert.equal(saved.meta.htmlBlob, meta.htmlBlob);
+  assert.equal(saved.html, html);
+});
+
+test('mixed metadata and HTML fail closed to the locally stored verified report', async () => {
+  const cachedHtml = reportHtml('2026-08-27', '睡前版', 'known-good-cache');
+  const cachedMeta = metaFor(cachedHtml);
+  const freshHtml = reportHtml('2026-08-28', '临时版', 'unpaired-upstream');
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: {...metaFor(freshHtml), htmlBlob: 'f'.repeat(40)}, bytes: []})
+      : response({json: null, bytes: Buffer.from(freshHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /known-good-cache/);
+  assert.doesNotMatch(app.frame.srcdoc, /unpaired-upstream/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.warning.textContent, '上游暂不一致，正在显示上一份已验证版本');
+  assert.match(app.status.textContent, /显示上一份已验证版本 · 报告 2026-08-27 · 睡前版/);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(app.button.disabled, false);
+});
+
+test('a valid but older report cannot replace the locally verified newer date', async () => {
+  const cachedHtml = reportHtml('2026-08-28', '早间版', 'newer-local-report');
+  const cachedMeta = metaFor(cachedHtml, {sourceCommitEpoch: 1_788_000_000});
+  const incomingHtml = reportHtml('2026-08-27', '睡前版', 'older-upstream-report');
+  const incomingMeta = metaFor(incomingHtml, {sourceCommitEpoch: 1_788_100_000});
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const original = stored.get('xuan-ib:last-verified:v1');
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: incomingMeta, bytes: []})
+      : response({json: null, bytes: Buffer.from(incomingHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /newer-local-report/);
+  assert.doesNotMatch(app.frame.srcdoc, /older-upstream-report/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(stored.get('xuan-ib:last-verified:v1'), original);
+});
+
+test('a lower source epoch on the same data date cannot roll back the verified report', async () => {
+  const cachedHtml = reportHtml('2026-08-28', '睡前版', 'higher-epoch-local-report');
+  const cachedMeta = metaFor(cachedHtml, {sourceCommitEpoch: 1_788_000_100});
+  const incomingHtml = reportHtml('2026-08-28', '睡前版', 'lower-epoch-upstream-report');
+  const incomingMeta = metaFor(incomingHtml, {sourceCommitEpoch: 1_788_000_000});
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const original = stored.get('xuan-ib:last-verified:v1');
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: incomingMeta, bytes: []})
+      : response({json: null, bytes: Buffer.from(incomingHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /higher-epoch-local-report/);
+  assert.doesNotMatch(app.frame.srcdoc, /lower-epoch-upstream-report/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(stored.get('xuan-ib:last-verified:v1'), original);
+});
+
+test('the same data date and source epoch fail closed when the HTML blob changes', async () => {
+  const epoch = 1_788_000_100;
+  const cachedHtml = reportHtml('2026-08-28', '睡前版', 'original-epoch-report');
+  const cachedMeta = metaFor(cachedHtml, {sourceCommitEpoch: epoch});
+  const incomingHtml = reportHtml('2026-08-28', '睡前版', 'conflicting-epoch-report');
+  const incomingMeta = metaFor(incomingHtml, {sourceCommitEpoch: epoch});
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: cachedMeta, verifiedAt: 1}),
+  ]]);
+  const original = stored.get('xuan-ib:last-verified:v1');
+  const app = loaderHarness({
+    stored,
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: incomingMeta, bytes: []})
+      : response({json: null, bytes: Buffer.from(incomingHtml)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /original-epoch-report/);
+  assert.doesNotMatch(app.frame.srcdoc, /conflicting-epoch-report/);
+  assert.equal(app.warning.hidden, false);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.equal(stored.get('xuan-ib:last-verified:v1'), original);
+});
+
+test('network failure retains the verified cache and never opens an unverified direct page', async () => {
+  const cachedHtml = reportHtml('2026-08-27', '早间版', 'offline-cache');
+  const stored = new Map([[
+    'xuan-ib:last-verified:v1',
+    JSON.stringify({cacheVersion: 1, html: cachedHtml, meta: metaFor(cachedHtml), verifiedAt: 1}),
+  ]]);
+  const app = loaderHarness({stored, fetchImpl: async () => { throw new TypeError('offline'); }});
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /offline-cache/);
+  assert.equal(app.warning.hidden, false);
+  assert.match(app.status.textContent, /报告 2026-08-27 · 早间版/);
+  assert.equal(app.status.classList.contains('error'), true);
+});
+
+test('unsupported metadata with no cache shows no report instead of rendering unchecked HTML', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', 'must-not-render');
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html, {schemaVersion: 2}), bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.doesNotMatch(app.frame.srcdoc, /must-not-render/);
+  assert.match(app.frame.srcdoc, /暂时无法读取最新交接页/);
+  assert.match(app.status.textContent, /暂时无法读取已验证报告/);
+  assert.equal(app.warning.hidden, true);
 });
 
 test('the phone page is branded XUAN-投资管理 everywhere the reader sees it', () => {
@@ -71,7 +350,6 @@ test('the phone page is branded XUAN-投资管理 everywhere the reader sees it'
   );
   assert.match(loader, /<strong>XUAN-投资管理<\/strong>/);
   assert.match(loader, /<iframe id="handover" title="XUAN-投资管理 最新简报"/);
-  assert.match(loader, /replacement\.title = "XUAN-投资管理 最新简报";/);
   // The retired name may survive only inside the migration allowlist, never in
   // anything the reader is shown.
   const branding = loader.replace(/const approvedTitles = \[[\s\S]*?\];/, '');
