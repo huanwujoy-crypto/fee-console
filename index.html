@@ -621,7 +621,7 @@ function renderKPIs(st,B,G){
   const hasMix=!!(lp&&(lp.cash!=null||lp.stock!=null||lp.other!=null));
   const mixV={cash:num(lp&&lp.cash),stock:num(lp&&lp.stock),other:num(lp&&lp.other)};
   const mixSum=mixV.cash+mixV.stock+mixV.other;
-  const hasStyle=!!(lp&&lp.growth!=null&&lp.value!=null&&isFinite(Number(lp.growth))&&isFinite(Number(lp.value)));
+  const hasStyle=!!(lp&&lp.growth!=null&&lp.value!=null&&isFinite(Number(lp.growth))&&isFinite(Number(lp.value))&&Number(lp.growth)>=0&&Number(lp.value)>=0);
   const styleReady=hasStyle&&Math.abs(num(lp.growth)+num(lp.value)-mixV.stock)<=1;
   const mixCell=(lab,v)=>`<div><div class="k">${lab}</div><div class="v">${usd(v,0)}<span class="p">${st.nav>0?(v/st.nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
   const mixCells=styleReady?`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("成长股",num(lp.growth))}${mixCell("价值股",num(lp.value))}`:`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("股票（未拆分）",mixV.stock)}`;
