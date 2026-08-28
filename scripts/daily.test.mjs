@@ -16,6 +16,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "daily.mjs");
 const repairCli = path.join(here, "repair-brkb-20260820.mjs");
+const styleMapPath = path.join(here, "..", "claude", "fee-style-mapping.json");
 
 /* A throwaway key: never the production one. */
 const TEST_KEY = crypto.randomBytes(32).toString("base64url");
@@ -169,6 +170,32 @@ test("accepts a complete growth/value look-through that reconciles to stock", ()
   assert.equal(point.growth, 250000);
   assert.equal(point.value, 203845.98);
   assert.equal(point.stock, point.growth + point.value);
+});
+
+test("the approved fee style mapping has unique holding keys and classifies Webull BRK/B as value", () => {
+  const mapping = JSON.parse(fs.readFileSync(styleMapPath, "utf8"));
+  assert.equal(mapping.schemaVersion, 1);
+  assert.deepEqual(mapping.primaryKey, ["portfolioId", "holdingId"]);
+  assert.equal(mapping.unknownHoldingPolicy, "fail_closed");
+
+  const seen = new Set();
+  for (const holding of mapping.holdings) {
+    assert.ok(Number.isInteger(holding.portfolioId) && holding.portfolioId > 0);
+    assert.ok(Number.isInteger(holding.holdingId) && holding.holdingId > 0);
+    assert.ok(["growth", "value"].includes(holding.style));
+    assert.equal(typeof holding.ticker, "string");
+    assert.ok(holding.ticker.length > 0);
+    const key = `${holding.portfolioId}:${holding.holdingId}`;
+    assert.equal(seen.has(key), false, `duplicate style key ${key}`);
+    seen.add(key);
+  }
+
+  const webullBrkb = mapping.holdings.find(holding =>
+    holding.portfolioId === 1350094 && holding.holdingId === 28921427);
+  assert.deepEqual(
+    { ticker: webullBrkb?.ticker, style: webullBrkb?.style },
+    { ticker: "BRK/B", style: "value" }
+  );
 });
 
 test("keeps historical input backward-compatible when style fields are absent", () => {
