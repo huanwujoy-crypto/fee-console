@@ -24,6 +24,8 @@ import {
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+const SOURCE_FINGERPRINT_RE = /^[a-f0-9]{64}$/i;
+const SOURCE_META_KEYS = new Set(["sourceFetchedAt", "sourceFingerprint"]);
 
 const die = msg => { console.error("error: " + msg); process.exit(1); };
 const dieAll = msgs => { for (const m of msgs) console.error("error: " + m); process.exit(1); };
@@ -56,7 +58,7 @@ const num = (name, raw) => {
 };
 
 const known = new Set([
-  "date", "flows", "file", "src-bench",
+  "date", "flows", "file", "src-bench", "source-fetched-at", "source-fingerprint",
   ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
   ...ACCOUNTS.map(a => `acct-cash-${a}`),
@@ -65,6 +67,23 @@ const known = new Set([
 for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${k}`);
 for (const f of flags) if (f !== "calibrated") die(`unknown flag --${f}`);
 const calibrated = flags.has("calibrated");
+
+/* Optional source provenance.  Older callers may omit both fields. */
+let sourceFetchedAt = null;
+if (args["source-fetched-at"] !== undefined) {
+  const raw = String(args["source-fetched-at"]).trim();
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(raw) || !Number.isFinite(Date.parse(raw))) {
+    die("--source-fetched-at must be an RFC 3339 instant with a Z or numeric offset");
+  }
+  sourceFetchedAt = new Date(raw).toISOString();
+}
+let suppliedSourceFingerprint = null;
+if (args["source-fingerprint"] !== undefined) {
+  const raw = String(args["source-fingerprint"]).trim();
+  if (!SOURCE_FINGERPRINT_RE.test(raw)) die("--source-fingerprint must be a 64-character SHA-256 hex value");
+  if (!sourceFetchedAt) die("--source-fingerprint requires --source-fetched-at");
+  suppliedSourceFingerprint = raw.toLowerCase();
+}
 
 const accounts = {}, splits = {}, styleSplits = {}, bench = {}, benchDiv = {}, sourceDates = {}, acctCash = {}, prevAcctCash = {};
 for (const a of ACCOUNTS) {
@@ -198,6 +217,48 @@ if (noIncomingStyle && hasExistingStyle &&
 // one-time audited backfill path rather than a blind daily overwrite.
 for (const k of BENCH_DIV_KEYS) {
   if (point[k] === undefined && Number(existingPoint?.[k]) > 0) point[k] = Number(existingPoint[k]);
+}
+
+/*
+ * Source provenance is deliberately optional, so every historical invocation
+ * remains valid.  When a caller supplies only the fetch instant, derive a
+ * deterministic fingerprint from every accepted input that can affect the
+ * point or its cash-flow interpretation.  A caller with a stable upstream
+ * revision/checksum may supply that SHA-256 value explicitly instead.
+ *
+ * Re-reading an unchanged source must remain byte-for-byte idempotent.  Keep
+ * the first fetch instant for an unchanged fingerprint; a changed fingerprint
+ * records the new instant even when the accepted portfolio values happen to
+ * be equal.  A legacy caller that omits provenance keeps existing metadata only
+ * for a truly unchanged point, and drops it on a correction rather than
+ * presenting stale provenance as current.
+ */
+const stableJson = value => JSON.stringify((function canonical(v) {
+  if (Array.isArray(v)) return v.map(canonical);
+  if (!v || typeof v !== "object") return v;
+  return Object.fromEntries(Object.keys(v).sort().map(k => [k, canonical(v[k])]));
+})(value));
+const withoutSourceMeta = value => Object.fromEntries(
+  Object.entries(value || {}).filter(([k]) => !SOURCE_META_KEYS.has(k))
+);
+const existingSourceMetaValid = typeof existingPoint?.sourceFetchedAt === "string"
+  && Number.isFinite(Date.parse(existingPoint.sourceFetchedAt))
+  && SOURCE_FINGERPRINT_RE.test(String(existingPoint?.sourceFingerprint || ""));
+
+if (sourceFetchedAt) {
+  const canonicalIncoming = [...incoming].sort((a, b) => stableJson(a).localeCompare(stableJson(b)));
+  const sourceFingerprint = suppliedSourceFingerprint || crypto.createHash("sha256").update(stableJson({
+    point: withoutSourceMeta(point), sourceDates, benchDate: args["src-bench"] ?? null,
+    acctCash, prevAcctCash, flows: canonicalIncoming
+  })).digest("hex");
+  point.sourceFingerprint = sourceFingerprint;
+  point.sourceFetchedAt = existingSourceMetaValid
+    && String(existingPoint.sourceFingerprint).toLowerCase() === sourceFingerprint
+    ? new Date(existingPoint.sourceFetchedAt).toISOString()
+    : sourceFetchedAt;
+} else if (existingSourceMetaValid && samePoint(withoutSourceMeta(existingPoint), point)) {
+  point.sourceFetchedAt = new Date(existingPoint.sourceFetchedAt).toISOString();
+  point.sourceFingerprint = String(existingPoint.sourceFingerprint).toLowerCase();
 }
 
 const prior = data.daily

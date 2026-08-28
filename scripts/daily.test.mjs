@@ -232,6 +232,93 @@ test("a changed stock total never carries forward stale style classification", (
   assert.equal(Object.hasOwn(point, "value"), false);
 });
 
+/* ---------------- source snapshot provenance ---------------- */
+test("persists an RFC 3339 source fetch instant and a derived SHA-256 fingerprint", () => {
+  const dir = tmp();
+  const r = run(dir, { "source-fetched-at": "2026-08-28T12:30:00+08:00" });
+  assert.equal(r.status, 0, r.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.sourceFetchedAt, "2026-08-28T04:30:00.000Z");
+  assert.match(point.sourceFingerprint, /^[a-f0-9]{64}$/);
+});
+
+test("a later read of the same source fingerprint remains byte-for-byte no-op", () => {
+  const dir = tmp();
+  const first = run(dir, { "source-fetched-at": "2026-08-28T04:30:00Z" });
+  assert.equal(first.status, 0, first.stderr);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const second = run(dir, { "source-fetched-at": "2026-08-28T04:35:00Z" });
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+  assert.equal(readPayload(dir).daily.at(-1).sourceFetchedAt, "2026-08-28T04:30:00.000Z");
+});
+
+test("a same-day source revision replaces the old point and provenance", () => {
+  const dir = tmp();
+  assert.equal(run(dir, { "source-fetched-at": "2026-08-28T04:30:00Z" }).status, 0);
+  const before = readPayload(dir).daily.at(-1);
+  const revised = run(dir, {
+    webull: "119126.45", cash: "263797.83", stock: "453845.98",
+    "source-fetched-at": "2026-08-28T05:30:00Z"
+  });
+  assert.equal(revised.status, 0, revised.stderr);
+  const after = readPayload(dir).daily.at(-1);
+  assert.equal(after.webull, 119126.45);
+  assert.equal(after.sourceFetchedAt, "2026-08-28T05:30:00.000Z");
+  assert.notEqual(after.sourceFingerprint, before.sourceFingerprint);
+  assert.equal(readPayload(dir).daily.filter(p => p.d === today()).length, 1);
+});
+
+test("an explicit upstream SHA-256 revision is persisted verbatim", () => {
+  const dir = tmp();
+  const fingerprint = "a".repeat(64);
+  const r = run(dir, {
+    "source-fetched-at": "2026-08-28T04:30:00Z",
+    "source-fingerprint": fingerprint
+  });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(readPayload(dir).daily.at(-1).sourceFingerprint, fingerprint);
+});
+
+test("a legacy no-provenance no-op preserves verified source metadata", () => {
+  const dir = tmp();
+  assert.equal(run(dir, { "source-fetched-at": "2026-08-28T04:30:00Z" }).status, 0);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const legacy = run(dir);
+  assert.equal(legacy.status, 0, legacy.stderr);
+  assert.match(legacy.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+});
+
+test("a legacy correction drops stale source metadata", () => {
+  const dir = tmp();
+  assert.equal(run(dir, { "source-fetched-at": "2026-08-28T04:30:00Z" }).status, 0);
+  const legacy = run(dir, { webull: "119126.45", cash: "263797.83" });
+  assert.equal(legacy.status, 0, legacy.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(Object.hasOwn(point, "sourceFetchedAt"), false);
+  assert.equal(Object.hasOwn(point, "sourceFingerprint"), false);
+});
+
+test("rejects malformed or unpaired source provenance without writing", () => {
+  const badTimeDir = tmp();
+  const badTime = run(badTimeDir, { "source-fetched-at": "2026-08-28 12:30" });
+  assert.notEqual(badTime.status, 0);
+  assert.match(badTime.stderr, /RFC 3339 instant/);
+  assert.equal(fs.existsSync(path.join(badTimeDir, "data.json")), false);
+
+  const badHashDir = tmp();
+  const badHash = run(badHashDir, { "source-fetched-at": "2026-08-28T04:30:00Z", "source-fingerprint": "abc" });
+  assert.notEqual(badHash.status, 0);
+  assert.match(badHash.stderr, /64-character SHA-256/);
+
+  const unpairedDir = tmp();
+  const unpaired = run(unpairedDir, { "source-fingerprint": "a".repeat(64) });
+  assert.notEqual(unpaired.status, 0);
+  assert.match(unpaired.stderr, /requires --source-fetched-at/);
+});
+
 /* ---------------- weekday lag is allowed ---------------- */
 test("a one-day Schwab lag is written and flagged 暂估, not blocked", () => {
   const dir = tmp();
