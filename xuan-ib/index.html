@@ -82,7 +82,7 @@
       const button = document.querySelector("#refresh");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-28.2";
+      const loaderBuild = "2026-08-29.1";
       const storageKey = "xuan-ib:last-verified:v1";
       let lastSuccess = 0;
       let lastAttempt = 0;
@@ -143,6 +143,57 @@
         return { dataDate: date[1], edition: parts[1], label: text };
       };
 
+      const hktContext = (now = new Date()) => {
+        const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+        return {
+          date: shifted.toISOString().slice(0, 10),
+          weekday: shifted.getUTCDay(),
+          minuteOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
+        };
+      };
+
+      const previousBusinessDate = (date) => {
+        const value = new Date(`${date}T00:00:00Z`);
+        do value.setUTCDate(value.getUTCDate() - 1);
+        while (value.getUTCDay() === 0 || value.getUTCDay() === 6);
+        return value.toISOString().slice(0, 10);
+      };
+
+      const expectedBusinessEdition = (now = new Date()) => {
+        const context = hktContext(now);
+        if (context.weekday === 0 || context.weekday === 6) {
+          return { dataDate: previousBusinessDate(context.date), edition: "pm", label: "睡前版" };
+        }
+        if (context.minuteOfDay < 8 * 60 + 30) {
+          return { dataDate: previousBusinessDate(context.date), edition: "pm", label: "睡前版" };
+        }
+        if (context.minuteOfDay < 22 * 60 + 15) {
+          return { dataDate: context.date, edition: "am", label: "早间版" };
+        }
+        return { dataDate: context.date, edition: "pm", label: "睡前版" };
+      };
+
+      const classifyEdition = (edition) => {
+        const value = String(edition).toLowerCase();
+        if (/计划外|加跑|补跑|临时|ad[ -]?hoc/.test(value)) return "adhoc";
+        if (/睡前|晚间|定时正式版|\bpm\b/.test(value)) return "pm";
+        if (/早间|上午|早班|\bam\b/.test(value)) return "am";
+        return "unknown";
+      };
+
+      const staleMessage = (record, now = new Date()) => {
+        const expected = expectedBusinessEdition(now);
+        const actualEdition = classifyEdition(record.info.edition);
+        const dateBehind = record.info.dataDate < expected.dataDate;
+        const slotBehind = record.info.dataDate === expected.dataDate &&
+          (actualEdition === "unknown" || actualEdition === "adhoc" ||
+           (expected.edition === "pm" && actualEdition !== "pm"));
+        if (!dateBehind && !slotBehind) return "";
+        return `报告已过期：应至少为 ${expected.dataDate} ${expected.label}，` +
+          `当前为 ${record.info.dataDate} ${record.info.edition}。` +
+          "现继续显示最后一份已验证报告，未伪造新数据。";
+      };
+
       const validateMeta = (meta) => {
         if (!meta || meta.schemaVersion !== 1) throw new Error("发布信息版本不兼容");
         if (!/^[0-9a-f]{40}$/i.test(meta.sourceSha || "")) throw new Error("发布来源无效");
@@ -196,11 +247,12 @@
       const statusFor = (record, prefix) =>
         `${prefix} · 报告 ${record.info.dataDate} · ${record.info.edition} · L ${loaderBuild}`;
 
-      function renderVerified(record, prefix, showWarning = false) {
+      function renderVerified(record, prefix, warningMessage = "") {
         frame.srcdoc = record.protectedHtml;
         lastVerified = record;
-        warning.hidden = !showWarning;
-        status.classList.toggle("error", showWarning);
+        warning.hidden = !warningMessage;
+        warning.textContent = warningMessage;
+        status.classList.toggle("error", Boolean(warningMessage));
         status.textContent = statusFor(record, prefix);
       }
 
@@ -227,7 +279,7 @@
           if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
           const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
           if (request !== requestSequence) return false;
-          renderVerified(record, "正在核对最新版");
+          renderVerified(record, "正在核对最新版", staleMessage(record));
           return true;
         } catch (error) {
           try { storage.removeItem(storageKey); } catch (_) {}
@@ -269,14 +321,16 @@
             lastVerified
           );
           if (request !== requestSequence) return;
-          renderVerified(record, `已同步 ${clock()}`);
+          renderVerified(record, `已同步 ${clock()}`, staleMessage(record));
           saveVerified(record);
           lastSuccess = Date.now();
         } catch (error) {
           if (request !== requestSequence) return;
           status.classList.add("error");
           if (lastVerified) {
-            renderVerified(lastVerified, "显示上一份已验证版本", true);
+            const stale = staleMessage(lastVerified);
+            const fallback = "上游暂不一致，正在显示上一份已验证版本";
+            renderVerified(lastVerified, "显示上一份已验证版本", stale ? `${stale} ${fallback}` : fallback);
           } else {
             warning.hidden = true;
             status.textContent = `暂时无法读取已验证报告 · L ${loaderBuild}`;

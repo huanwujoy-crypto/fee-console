@@ -28,11 +28,27 @@ test("classifies AM, PM, and ad-hoc pages with ad-hoc precedence", () => {
   assert.equal(classifyEdition("2026-08-27 · 市场简报"), "unknown");
 });
 
-test("selects weekday HKT SLA slots and skips weekends", () => {
+test("selects weekday HKT SLA slots, carries Friday PM through Saturday, and skips Sunday", () => {
   assert.equal(expectedEditionAt(new Date("2026-08-27T00:29:00Z")).expectedEdition, null);
   assert.equal(expectedEditionAt(new Date("2026-08-27T00:30:00Z")).expectedEdition, "am");
   assert.equal(expectedEditionAt(new Date("2026-08-27T14:15:00Z")).expectedEdition, "pm");
-  assert.equal(expectedEditionAt(new Date("2026-08-29T14:15:00Z")).reason, "weekend");
+  assert.deepEqual(
+    expectedEditionAt(new Date("2026-08-28T16:05:00Z")),
+    {
+      date: "2026-08-29", weekday: 6, minuteOfDay: 5,
+      expectedEdition: "pm", expectedDate: "2026-08-28",
+      reason: "friday-pm-carry-forward"
+    }
+  );
+  assert.deepEqual(
+    expectedEditionAt(new Date("2026-08-28T23:35:00Z")),
+    {
+      date: "2026-08-29", weekday: 6, minuteOfDay: 7 * 60 + 35,
+      expectedEdition: "pm", expectedDate: "2026-08-28",
+      reason: "friday-pm-carry-forward"
+    }
+  );
+  assert.equal(expectedEditionAt(new Date("2026-08-29T16:05:00Z")).reason, "weekend");
 });
 
 test("accepts only a matching scheduled page from main and Pages", () => {
@@ -132,6 +148,80 @@ test("the online watcher compares all three fixed-page resources", async () => {
     fetchFn
   });
   assert.equal(result.ok, true);
+});
+
+test("Saturday auto mode audits the prior Friday PM publication without requiring a Saturday report", async () => {
+  const bytes = Buffer.from(html("2026-08-28", "睡前版"));
+  const blob = gitBlobSha(bytes);
+  const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-28", "pm") + 60, dataDate: "2026-08-28", htmlBlob: blob};
+  const fetchFn = async url => {
+    if (url.pathname.endsWith("index.html")) return response(loaderBytes);
+    if (url.pathname.endsWith("latest.html")) return response(bytes);
+    return response(JSON.stringify(meta));
+  };
+  const result = await runWatcher({
+    baseUrl: "https://example.invalid/xuan-ib/",
+    mainIndexHtml: loaderBytes,
+    mainHtml: bytes,
+    mainMeta: meta,
+    publicationHistory: [{...meta, commit: sha("d"), valid: true, edition: "pm"}],
+    expectedEdition: "auto",
+    now: new Date("2026-08-28T23:35:00Z"),
+    fetchFn
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.expectedDate, "2026-08-28");
+  assert.equal(result.expectedEdition, "pm");
+});
+
+test("Saturday explicit PM mode also audits Friday instead of requiring a Saturday edition", async () => {
+  const bytes = Buffer.from(html("2026-08-28", "睡前版"));
+  const blob = gitBlobSha(bytes);
+  const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-28", "pm") + 60, dataDate: "2026-08-28", htmlBlob: blob};
+  const fetchFn = async url => {
+    if (url.pathname.endsWith("index.html")) return response(loaderBytes);
+    if (url.pathname.endsWith("latest.html")) return response(bytes);
+    return response(JSON.stringify(meta));
+  };
+  const result = await runWatcher({
+    baseUrl: "https://example.invalid/xuan-ib/",
+    mainIndexHtml: loaderBytes,
+    mainHtml: bytes,
+    mainMeta: meta,
+    publicationHistory: [{...meta, commit: sha("d"), valid: true, edition: "pm"}],
+    expectedEdition: "pm",
+    now: new Date("2026-08-28T23:35:00Z"),
+    fetchFn
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.expectedDate, "2026-08-28");
+  assert.equal(result.expectedEdition, "pm");
+});
+
+test("Saturday auto mode fails when Friday PM was missed instead of hiding it behind a weekend skip", async () => {
+  const bytes = Buffer.from(html("2026-08-27", "睡前版"));
+  const blob = gitBlobSha(bytes);
+  const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-27", "pm") + 60, dataDate: "2026-08-27", htmlBlob: blob};
+  const fetchFn = async url => {
+    if (url.pathname.endsWith("index.html")) return response(loaderBytes);
+    if (url.pathname.endsWith("latest.html")) return response(bytes);
+    return response(JSON.stringify(meta));
+  };
+  const result = await runWatcher({
+    baseUrl: "https://example.invalid/xuan-ib/",
+    mainIndexHtml: loaderBytes,
+    mainHtml: bytes,
+    mainMeta: meta,
+    publicationHistory: [{...meta, commit: sha("d"), valid: true, edition: "pm"}],
+    expectedEdition: "auto",
+    now: new Date("2026-08-28T23:35:00Z"),
+    fetchFn
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.skipped, undefined);
+  assert.equal(result.expectedDate, "2026-08-28");
+  assert.match(result.issues.join("\n"), /expected HKT data date 2026-08-28/);
+  assert.match(result.issues.join("\n"), /history does not prove the scheduled PM/);
 });
 
 test("an old deployed loader fails even when latest HTML and metadata are current", async () => {
@@ -257,6 +347,7 @@ test("workflows keep the HKT SLA, read-only watcher, and post-push non-gating pr
   const watcher = fs.readFileSync(".github/workflows/watch-xuan-ib-freshness.yml", "utf8");
   assert.match(watcher, /cron: '5,35 \* \* \* 1-5'/);
   assert.match(watcher, /first eligible checks are 08:35 HKT for AM and 22:35 HKT for PM/);
+  assert.match(watcher, /Saturday HKT carry-over checks keep auditing Friday PM/);
   assert.match(watcher, /--main-index xuan-ib\/index\.html/);
   assert.match(watcher, /--attempts 4/);
   assert.match(watcher, /--interval-ms 20000/);
