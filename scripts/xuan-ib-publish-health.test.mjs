@@ -174,6 +174,30 @@ test("Saturday auto mode audits the prior Friday PM publication without requirin
   assert.equal(result.expectedEdition, "pm");
 });
 
+test("Saturday explicit PM mode also audits Friday instead of requiring a Saturday edition", async () => {
+  const bytes = Buffer.from(html("2026-08-28", "睡前版"));
+  const blob = gitBlobSha(bytes);
+  const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-28", "pm") + 60, dataDate: "2026-08-28", htmlBlob: blob};
+  const fetchFn = async url => {
+    if (url.pathname.endsWith("index.html")) return response(loaderBytes);
+    if (url.pathname.endsWith("latest.html")) return response(bytes);
+    return response(JSON.stringify(meta));
+  };
+  const result = await runWatcher({
+    baseUrl: "https://example.invalid/xuan-ib/",
+    mainIndexHtml: loaderBytes,
+    mainHtml: bytes,
+    mainMeta: meta,
+    publicationHistory: [{...meta, commit: sha("d"), valid: true, edition: "pm"}],
+    expectedEdition: "pm",
+    now: new Date("2026-08-28T23:35:00Z"),
+    fetchFn
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.expectedDate, "2026-08-28");
+  assert.equal(result.expectedEdition, "pm");
+});
+
 test("Saturday auto mode fails when Friday PM was missed instead of hiding it behind a weekend skip", async () => {
   const bytes = Buffer.from(html("2026-08-27", "睡前版"));
   const blob = gitBlobSha(bytes);

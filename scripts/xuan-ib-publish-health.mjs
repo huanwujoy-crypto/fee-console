@@ -216,6 +216,11 @@ export async function runWatcher({baseUrl, mainIndexHtml, mainHtml, mainMeta, pu
     }
     expected = automatic.expectedEdition;
     expectedDate = automatic.expectedDate;
+  } else if (automatic.reason === "friday-pm-carry-forward" && expected === "pm") {
+    // A manual Saturday PM audit has the same business meaning as automatic
+    // mode: verify Friday's required PM handover, not a nonexistent Saturday
+    // edition.
+    expectedDate = automatic.expectedDate;
   }
   if (!EDITIONS.has(expected)) throw new Error("expected edition must be auto, am, or pm");
   const [indexBytes, onlineBytes, onlineMetaBytes] = await Promise.all([
