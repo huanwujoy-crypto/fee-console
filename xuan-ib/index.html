@@ -96,11 +96,11 @@
       </div>
       <div class="header-actions">
         <a id="adhoc"
-           href="https://claude.ai/code/routines/trig_0119mP9Z1F9f8QuwMsRLWL7Y"
+           href="shortcuts://run-shortcut?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"
            rel="noopener noreferrer"
-           aria-label="打开 Claude；请再点 Run now 生成临时报告">
+           aria-label="通过 iPhone 快捷指令启动 Claude 临时报告；完成后自动刷新">
           <span>生成临时报告</span>
-          <small>打开 Claude → Run now</small>
+          <small>一键启动 · 自动刷新</small>
         </a>
         <button id="refresh" type="button">刷新</button>
       </div>
@@ -115,7 +115,7 @@
       const adhocButton = document.querySelector("#adhoc");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-29.4";
+      const loaderBuild = "2026-08-29.5";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const adhocPollMs = 15_000;
