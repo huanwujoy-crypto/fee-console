@@ -97,7 +97,6 @@
       <div class="header-actions">
         <a id="adhoc"
            href="https://claude.ai/code/routines/trig_0119mP9Z1F9f8QuwMsRLWL7Y"
-           target="_blank"
            rel="noopener noreferrer"
            aria-label="打开 Claude；请再点 Run now 生成临时报告">
           <span>生成临时报告</span>
@@ -113,14 +112,19 @@
     (() => {
       const frame = document.querySelector("#handover");
       const button = document.querySelector("#refresh");
+      const adhocButton = document.querySelector("#adhoc");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-29.3";
+      const loaderBuild = "2026-08-29.4";
       const storageKey = "xuan-ib:last-verified:v1";
+      const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
+      const adhocPollMs = 15_000;
+      const adhocWaitMs = 20 * 60_000;
       let lastSuccess = 0;
       let lastAttempt = 0;
       let lastVerified = null;
       let requestSequence = 0;
+      let adhocWait = null;
 
       // Migration window: the phone page must keep working while published
       // handovers still carry the previous product name. The first entry is the
@@ -147,6 +151,108 @@
           return null;
         }
       })();
+
+      const reportVersion = (record) => ({
+        dataDate: record.meta.dataDate,
+        sourceCommitEpoch: record.meta.sourceCommitEpoch,
+        htmlBlob: record.meta.htmlBlob.toLowerCase()
+      });
+
+      const validReportVersion = (version) => version &&
+        /^\d{4}-\d{2}-\d{2}$/.test(version.dataDate || "") &&
+        Number.isInteger(version.sourceCommitEpoch) && version.sourceCommitEpoch > 0 &&
+        /^[0-9a-f]{40}$/i.test(version.htmlBlob || "");
+
+      const reportIsNewerThan = (record, baseline) =>
+        record.meta.dataDate > baseline.dataDate ||
+        (record.meta.dataDate === baseline.dataDate &&
+          record.meta.sourceCommitEpoch > baseline.sourceCommitEpoch);
+
+      function persistAdhocWait() {
+        if (!storage || !adhocWait) return;
+        try {
+          storage.setItem(adhocWaitStorageKey, JSON.stringify(adhocWait));
+        } catch (error) {
+          console.warn("XUAN-IB ad-hoc wait backup failed", error);
+        }
+      }
+
+      function clearAdhocWait() {
+        adhocWait = null;
+        if (!storage) return;
+        try { storage.removeItem(adhocWaitStorageKey); } catch (_) {}
+      }
+
+      function restoreAdhocWait() {
+        if (!storage) return;
+        try {
+          const raw = storage.getItem(adhocWaitStorageKey);
+          if (!raw) return;
+          const saved = JSON.parse(raw);
+          const valid = saved.cacheVersion === 1 &&
+            Number.isInteger(saved.startedAt) &&
+            Number.isInteger(saved.deadline) &&
+            saved.deadline > Date.now() &&
+            (saved.baseline === null || validReportVersion(saved.baseline));
+          if (!valid) throw new Error("saved ad-hoc wait is invalid or expired");
+          adhocWait = saved;
+        } catch (error) {
+          clearAdhocWait();
+          console.warn("XUAN-IB saved ad-hoc wait was rejected", error);
+        }
+      }
+
+      function showAdhocPending() {
+        status.classList.remove("error");
+        status.textContent = `临时报告正在生成，请稍候 · L ${loaderBuild}`;
+      }
+
+      function expireAdhocWait() {
+        if (!adhocWait || Date.now() <= adhocWait.deadline) return false;
+        clearAdhocWait();
+        status.classList.add("error");
+        status.textContent = `临时报告尚未完成，请稍后刷新 · L ${loaderBuild}`;
+        return true;
+      }
+
+      function updateAdhocWait(record) {
+        if (!adhocWait || expireAdhocWait()) return false;
+        if (!adhocWait.baseline) {
+          adhocWait.baseline = reportVersion(record);
+          persistAdhocWait();
+          showAdhocPending();
+          return false;
+        }
+        if (!reportIsNewerThan(record, adhocWait.baseline)) {
+          showAdhocPending();
+          return false;
+        }
+        // latest.meta.json does not yet identify the report class. Complete the
+        // request only when the already verified HTML labels the newer report
+        // as ad-hoc; a scheduled publication may still render, but cannot
+        // falsely claim that the user's ad-hoc request has finished.
+        if (classifyEdition(record.info.edition) !== "adhoc") {
+          showAdhocPending();
+          return false;
+        }
+        clearAdhocWait();
+        status.classList.toggle("error", !warning.hidden);
+        status.textContent = statusFor(record, "临时报告已完成");
+        return true;
+      }
+
+      function beginAdhocWait() {
+        const now = Date.now();
+        adhocWait = {
+          cacheVersion: 1,
+          startedAt: now,
+          deadline: now + adhocWaitMs,
+          baseline: lastVerified ? reportVersion(lastVerified) : null
+        };
+        persistAdhocWait();
+        showAdhocPending();
+        return loadLatest();
+      }
 
       const hex = (buffer) => Array.from(new Uint8Array(buffer), (byte) =>
         byte.toString(16).padStart(2, "0")
@@ -378,6 +484,7 @@
           renderVerified(record, `已同步 ${clock()}`, staleMessage(record));
           saveVerified(record);
           lastSuccess = Date.now();
+          updateAdhocWait(record);
         } catch (error) {
           if (request !== requestSequence) return;
           status.classList.add("error");
@@ -390,6 +497,7 @@
             status.textContent = `暂时无法读取已验证报告 · L ${loaderBuild}`;
             frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
           }
+          if (adhocWait && !expireAdhocWait()) showAdhocPending();
           console.warn("XUAN-IB latest-page refresh failed", error);
         } finally {
           window.clearTimeout(timeout);
@@ -397,13 +505,23 @@
         }
       }
 
+      restoreAdhocWait();
+      if (adhocWait) showAdhocPending();
+      adhocButton.addEventListener("click", beginAdhocWait);
       button.addEventListener("click", loadLatest);
       window.addEventListener("pageshow", (event) => {
-        loadLatest();
+        if (!expireAdhocWait()) return loadLatest();
+      });
+      window.addEventListener("focus", () => {
+        if (adhocWait && !expireAdhocWait()) return loadLatest();
       });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && Date.now() - lastAttempt > 60_000) loadLatest();
+        if (!document.hidden && adhocWait && !expireAdhocWait()) return loadLatest();
+        if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
       });
+      window.setInterval(() => {
+        if (adhocWait && !expireAdhocWait()) return loadLatest();
+      }, adhocPollMs);
       window.setInterval(() => {
         if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();
       }, 60_000);

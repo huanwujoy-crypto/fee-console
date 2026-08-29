@@ -72,8 +72,12 @@ const metaFor = (html, overrides = {}) => {
 };
 
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z'}) {
-  const listeners = {button: {}, window: {}, document: {}};
+  const listeners = {adhoc: {}, button: {}, window: {}, document: {}};
+  const intervals = [];
   const frame = {srcdoc: ''};
+  const adhoc = {
+    addEventListener: (name, callback) => { listeners.adhoc[name] = callback; },
+  };
   const button = {
     disabled: false,
     addEventListener: (name, callback) => { listeners.button[name] = callback; },
@@ -81,6 +85,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   const status = {textContent: '', classList: classList()};
   const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
   const elements = new Map([
+    ['#adhoc', adhoc],
     ['#handover', frame],
     ['#refresh', button],
     ['#status', status],
@@ -101,7 +106,10 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     addEventListener: (name, callback) => { listeners.window[name] = callback; },
     setTimeout: () => 1,
     clearTimeout: () => {},
-    setInterval: () => 1,
+    setInterval: (callback, delay) => {
+      intervals.push({callback, delay});
+      return intervals.length;
+    },
   };
   const NativeDate = Date;
   class FixedDate extends NativeDate {
@@ -134,7 +142,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     window,
   };
   vm.runInNewContext(inlineScript, context);
-  return {button, frame, listeners, status, stored, warning, warnings};
+  return {adhoc, button, frame, intervals, listeners, status, stored, warning, warnings};
 }
 
 test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
@@ -161,7 +169,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-29\.3"/);
+  assert.match(loader, /loaderBuild = "2026-08-29\.4"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -188,11 +196,97 @@ test('the ad-hoc report control opens the verified Claude routine without embedd
     link,
     /href="https:\/\/claude\.ai\/code\/routines\/trig_0119mP9Z1F9f8QuwMsRLWL7Y"/
   );
-  assert.match(link, /target="_blank"/);
+  assert.doesNotMatch(link, /target="_blank"/);
   assert.match(link, /rel="noopener noreferrer"/);
   assert.match(link, />生成临时报告</);
   assert.match(link, /打开 Claude → Run now/);
   assert.doesNotMatch(link, /[?&](?:token|secret|api[_-]?key)=/i);
+  assert.match(loader, /adhocButton\.addEventListener\("click", beginAdhocWait\)/);
+  assert.match(loader, /临时报告正在生成，请稍候/);
+  assert.match(loader, /临时报告已完成/);
+  assert.match(loader, /adhocPollMs = 15_000/);
+  assert.match(loader, /xuan-ib:adhoc-wait:v1/);
+  assert.match(loader, /window\.addEventListener\("focus"/);
+  assert.match(loader, /if \(adhocWait && !expireAdhocWait\(\)\) return loadLatest\(\)/);
+});
+
+test('the ad-hoc launcher waits for a newly verified publication and then renders it automatically', async () => {
+  const firstHtml = reportHtml('2026-08-28', '早间版', 'before-ad-hoc');
+  const firstMeta = metaFor(firstHtml, {sourceCommitEpoch: 1_788_000_000});
+  const nextHtml = reportHtml('2026-08-28', '临时版', 'completed-ad-hoc');
+  const nextMeta = metaFor(nextHtml, {sourceCommitEpoch: 1_788_000_060});
+  let current = {html: firstHtml, meta: firstMeta};
+  const requests = [];
+  const app = loaderHarness({
+    fetchImpl: async (url) => {
+      requests.push(String(url));
+      return String(url).includes('latest.meta.json')
+        ? response({json: current.meta, bytes: []})
+        : response({json: null, bytes: Buffer.from(current.html)});
+    },
+  });
+
+  await app.listeners.button.click();
+  assert.match(app.frame.srcdoc, /before-ad-hoc/);
+
+  await app.listeners.adhoc.click();
+  assert.match(app.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
+  assert.match(app.frame.srcdoc, /before-ad-hoc/);
+
+  current = {html: nextHtml, meta: nextMeta};
+  const poll = app.intervals.find(({delay}) => delay === 15_000);
+  assert.ok(poll, 'the loader must poll while an ad-hoc report is pending');
+  await poll.callback();
+
+  assert.match(app.frame.srcdoc, /completed-ad-hoc/);
+  assert.match(app.status.textContent, /^临时报告已完成 · 报告 2026-08-28 · 临时版/);
+  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
+  assert.equal(requests.filter((url) => url.includes('latest.meta.json')).length, 3);
+  assert.equal(requests.filter((url) => url.includes('latest.html')).length, 3);
+});
+
+test('the ad-hoc wait survives a phone page reload and never treats the baseline as complete', async () => {
+  const html = reportHtml('2026-08-28', '早间版', 'same-baseline');
+  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
+  const stored = new Map();
+  const fetchImpl = async (url) => String(url).includes('latest.meta.json')
+    ? response({json: meta, bytes: []})
+    : response({json: null, bytes: Buffer.from(html)});
+  const first = loaderHarness({fetchImpl, stored});
+  await first.listeners.button.click();
+  await first.listeners.adhoc.click();
+  assert.ok(stored.has('xuan-ib:adhoc-wait:v1'));
+
+  const reloaded = loaderHarness({fetchImpl, stored});
+  assert.match(reloaded.status.textContent, /^临时报告正在生成，请稍候/);
+  await reloaded.listeners.button.click();
+  assert.match(reloaded.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.match(reloaded.frame.srcdoc, /same-baseline/);
+  assert.ok(stored.has('xuan-ib:adhoc-wait:v1'));
+});
+
+test('a newer scheduled publication cannot falsely complete an ad-hoc request', async () => {
+  const firstHtml = reportHtml('2026-08-28', '早间版', 'before-request');
+  const firstMeta = metaFor(firstHtml, {sourceCommitEpoch: 1_788_000_000});
+  const scheduledHtml = reportHtml('2026-08-28', '睡前版', 'new-scheduled-report');
+  const scheduledMeta = metaFor(scheduledHtml, {sourceCommitEpoch: 1_788_000_060});
+  let current = {html: firstHtml, meta: firstMeta};
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: current.meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(current.html)}),
+  });
+  await app.listeners.button.click();
+  await app.listeners.adhoc.click();
+
+  current = {html: scheduledHtml, meta: scheduledMeta};
+  const poll = app.intervals.find(({delay}) => delay === 15_000);
+  await poll.callback();
+
+  assert.match(app.frame.srcdoc, /new-scheduled-report/);
+  assert.match(app.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
 });
 
 test('a schema-v1 metadata and HTML pair is rendered only after its exact Git blob matches', async () => {
