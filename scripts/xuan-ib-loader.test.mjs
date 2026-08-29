@@ -71,7 +71,7 @@ const metaFor = (html, overrides = {}) => {
   };
 };
 
-function loaderHarness({fetchImpl, stored = new Map()}) {
+function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z'}) {
   const listeners = {button: {}, window: {}, document: {}};
   const frame = {srcdoc: ''};
   const button = {
@@ -103,10 +103,15 @@ function loaderHarness({fetchImpl, stored = new Map()}) {
     clearTimeout: () => {},
     setInterval: () => 1,
   };
+  const NativeDate = Date;
+  class FixedDate extends NativeDate {
+    constructor(...args) { super(...(args.length ? args : [now])); }
+    static now() { return new NativeDate(now).getTime(); }
+  }
   const context = {
     AbortController,
     Array,
-    Date,
+    Date: FixedDate,
     Error,
     Intl,
     JSON,
@@ -156,7 +161,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-28\.2"/);
+  assert.match(loader, /loaderBuild = "2026-08-29\.1"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -205,6 +210,80 @@ test('a schema-v1 metadata and HTML pair is rendered only after its exact Git bl
   assert.equal(saved.html, html);
 });
 
+test('Saturday retains Friday PM but clearly warns when only Thursday PM is published', async () => {
+  const html = reportHtml('2026-08-27', '睡前版', 'trusted-thursday');
+  const meta = metaFor(html);
+  const app = loaderHarness({
+    now: '2026-08-29T00:21:00Z', // Saturday 08:21 HKT
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /trusted-thursday/);
+  assert.equal(app.warning.hidden, false);
+  assert.match(app.warning.textContent, /报告已过期/);
+  assert.match(app.warning.textContent, /应至少为 2026-08-28 睡前版/);
+  assert.match(app.warning.textContent, /当前为 2026-08-27 睡前版/);
+  assert.match(app.warning.textContent, /未伪造新数据/);
+  assert.equal(app.status.classList.contains('error'), true);
+});
+
+test('Friday PM remains current throughout the weekend and Monday before the AM SLA', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', 'trusted-friday-pm');
+  const meta = metaFor(html);
+  for (const now of ['2026-08-29T00:21:00Z', '2026-08-30T12:00:00Z', '2026-08-30T23:59:00Z']) {
+    const app = loaderHarness({
+      now,
+      fetchImpl: async (url) => String(url).includes('latest.meta.json')
+        ? response({json: meta, bytes: []})
+        : response({json: null, bytes: Buffer.from(html)}),
+    });
+    await app.listeners.button.click();
+    assert.equal(app.warning.hidden, true, `${now} must accept the last Friday PM report`);
+    assert.equal(app.status.classList.contains('error'), false);
+  }
+});
+
+test('weekday SLA advances from prior PM to same-day AM and then same-day PM', async () => {
+  const cases = [
+    ['2026-09-01T00:20:00Z', '2026-08-31', '睡前版', false], // Tue 08:20 HKT
+    ['2026-09-01T00:31:00Z', '2026-08-31', '睡前版', true],  // Tue 08:31 HKT
+    ['2026-09-01T00:31:00Z', '2026-09-01', '早间版', false],
+    ['2026-09-01T14:16:00Z', '2026-09-01', '早间版', true],  // Tue 22:16 HKT
+    ['2026-09-01T14:16:00Z', '2026-09-01', '睡前版', false],
+  ];
+  for (const [now, date, edition, stale] of cases) {
+    const html = reportHtml(date, edition, `${date}-${edition}`);
+    const meta = metaFor(html);
+    const app = loaderHarness({
+      now,
+      fetchImpl: async (url) => String(url).includes('latest.meta.json')
+        ? response({json: meta, bytes: []})
+        : response({json: null, bytes: Buffer.from(html)}),
+    });
+    await app.listeners.button.click();
+    assert.equal(!app.warning.hidden, stale, `${now} / ${date} / ${edition}`);
+  }
+});
+
+test('an ad-hoc report never impersonates a due scheduled edition', async () => {
+  const html = reportHtml('2026-09-01', '计划外加跑（常规 21:00）', 'trusted-adhoc');
+  const meta = metaFor(html);
+  const app = loaderHarness({
+    now: '2026-09-01T14:16:00Z',
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+  await app.listeners.button.click();
+  assert.match(app.frame.srcdoc, /trusted-adhoc/);
+  assert.equal(app.warning.hidden, false);
+  assert.match(app.warning.textContent, /应至少为 2026-09-01 睡前版/);
+});
+
 test('mixed metadata and HTML fail closed to the locally stored verified report', async () => {
   const cachedHtml = reportHtml('2026-08-27', '睡前版', 'known-good-cache');
   const cachedMeta = metaFor(cachedHtml);
@@ -225,7 +304,7 @@ test('mixed metadata and HTML fail closed to the locally stored verified report'
   assert.match(app.frame.srcdoc, /known-good-cache/);
   assert.doesNotMatch(app.frame.srcdoc, /unpaired-upstream/);
   assert.equal(app.warning.hidden, false);
-  assert.equal(app.warning.textContent, '上游暂不一致，正在显示上一份已验证版本');
+  assert.match(app.warning.textContent, /上游暂不一致，正在显示上一份已验证版本/);
   assert.match(app.status.textContent, /显示上一份已验证版本 · 报告 2026-08-27 · 睡前版/);
   assert.equal(app.status.classList.contains('error'), true);
   assert.equal(app.button.disabled, false);
