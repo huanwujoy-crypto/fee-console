@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
   pull-requests: read
 
 jobs:
@@ -40,8 +41,34 @@ jobs:
           protected_re='^(CLAUDE\.md|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader)\.(mjs|test\.mjs)$|xuan-ib/)'
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
+            head_sha='${{ github.event.pull_request.head.sha }}'
+            approval_line="/approve-xuan-ib-maintenance $head_sha"
+            comments_json="$RUNNER_TEMP/pr-comments.json"
+            gh api --paginate --slurp \
+              "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments?per_page=100" \
+              > "$comments_json"
+            approval_count=$(jq --arg approval_line "$approval_line" '
+              [
+                .[][]
+                | select(.author_association == "OWNER")
+                | select(
+                    (.body
+                      | split("\n")
+                      | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))
+                      | index($approval_line)
+                    ) != null
+                  )
+              ]
+              | length
+            ' "$comments_json")
+            if (( approval_count > 0 )); then
+              echo "Repository-owner maintenance approval matches the exact head SHA: $head_sha"
+              exit 0
+            fi
             echo 'This PR changes the locked XUAN-IB publication boundary.' >&2
-            echo 'Use an explicit repository-administrator maintenance window, then restore this required check.' >&2
+            echo 'For an intentional maintenance PR, keep it in draft, add this exact OWNER comment, then mark it ready:' >&2
+            echo "$approval_line" >&2
+            echo 'The approval is invalidated automatically by every new commit.' >&2
             exit 1
           fi
           echo 'The PR does not alter the XUAN-IB publication boundary.'

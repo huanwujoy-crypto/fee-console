@@ -522,9 +522,10 @@ test('trusted publication metadata matches the currently published Git blob', ()
   assert.equal(metadata.dataDate, primaryDate(latest));
 });
 
-test('ordinary PRs cannot replace either fixed phone page or trusted metadata', () => {
-  assert.match(uiPrCheck, /xuan-ib\/\(index\\\.html\|latest\\\.html\|latest\\\.meta\\\.json\)/);
-  assert.match(uiPrCheck, /metadata seed PR must not replace the phone loader/);
+test('the UI check delegates XUAN-IB publication locking to the single base-controlled policy check', () => {
+  assert.doesNotMatch(uiPrCheck, /Block direct replacement of the published XUAN-IB page/);
+  assert.doesNotMatch(uiPrCheck, /latest\\\.meta\\\.json/);
+  assert.match(uiPrCheck, /ui-pr-guard\.mjs/);
 });
 
 test('a base-controlled policy lock protects the publication code itself', () => {
@@ -537,6 +538,10 @@ test('a base-controlled policy lock protects the publication code itself', () =>
   assert.match(policyLock, /previous_filename/);
   assert.match(policyLock, /EXPECTED_FILE_COUNT/);
   assert.match(policyLock, /returned_file_count > 1000/);
+  assert.match(policyLock, /issues: read/);
+  assert.match(policyLock, /\/approve-xuan-ib-maintenance \$head_sha/);
+  assert.match(policyLock, /author_association == "OWNER"/);
+  assert.match(policyLock, /approval is invalidated automatically by every new commit/);
   assert.doesNotMatch(policyLock, /actions\/checkout/);
 });
 
