@@ -4,6 +4,8 @@ on:
   schedule:
     # Every 30 minutes on weekdays, offset from the publication window. The
     # first eligible checks are 08:35 HKT for AM and 22:35 HKT for PM.
+    # Saturday HKT carry-over checks keep auditing Friday PM; they never require
+    # a new Saturday report.
     - cron: '5,35 * * * 1-5'
   workflow_dispatch:
     inputs:

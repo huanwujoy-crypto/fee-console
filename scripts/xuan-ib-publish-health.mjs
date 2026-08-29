@@ -48,9 +48,27 @@ export function hktContext(now = new Date()) {
   return {date, weekday, minuteOfDay};
 }
 
+const previousIsoDate = date => {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() - 1);
+  return value.toISOString().slice(0, 10);
+};
+
 export function expectedEditionAt(now = new Date()) {
   const context = hktContext(now);
-  if (context.weekday === 0 || context.weekday === 6) {
+  // The UTC weekday cron continues into early Saturday HKT. Keep auditing the
+  // last required Friday PM publication instead of treating midnight as a
+  // clean slate that can hide a missed Friday handover. No Saturday edition is
+  // required.
+  if (context.weekday === 6) {
+    return {
+      ...context,
+      expectedEdition: "pm",
+      expectedDate: previousIsoDate(context.date),
+      reason: "friday-pm-carry-forward"
+    };
+  }
+  if (context.weekday === 0) {
     return {...context, expectedEdition: null, reason: "weekend"};
   }
   if (context.minuteOfDay < 8 * 60 + 30) {
@@ -59,6 +77,7 @@ export function expectedEditionAt(now = new Date()) {
   return {
     ...context,
     expectedEdition: context.minuteOfDay >= 22 * 60 + 15 ? "pm" : "am",
+    expectedDate: context.date,
     reason: "due"
   };
 }
@@ -189,15 +208,16 @@ const joinUrl = (baseUrl, path) => new URL(path, baseUrl.endsWith("/") ? baseUrl
 
 export async function runWatcher({baseUrl, mainIndexHtml, mainHtml, mainMeta, publicationHistory = [], expectedEdition = "auto", now = new Date(), fetchFn = fetch}) {
   let expected = expectedEdition;
+  let expectedDate = hktContext(now).date;
   const automatic = expectedEditionAt(now);
   if (expected === "auto") {
     if (!automatic.expectedEdition) {
       return {ok: true, skipped: true, reason: automatic.reason, expectedDate: automatic.date};
     }
     expected = automatic.expectedEdition;
+    expectedDate = automatic.expectedDate;
   }
   if (!EDITIONS.has(expected)) throw new Error("expected edition must be auto, am, or pm");
-  const expectedDate = hktContext(now).date;
   const [indexBytes, onlineBytes, onlineMetaBytes] = await Promise.all([
     fetchBytes(joinUrl(baseUrl, "index.html"), fetchFn),
     fetchBytes(joinUrl(baseUrl, "latest.html"), fetchFn),
