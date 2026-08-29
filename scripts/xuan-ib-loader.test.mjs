@@ -169,7 +169,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-29\.4"/);
+  assert.match(loader, /loaderBuild = "2026-08-29\.5"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -189,18 +189,20 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.doesNotMatch(loader, /<!--\s*xuan-ib-handover:v1\s*-->/);
 });
 
-test('the ad-hoc report control opens the verified Claude routine without embedding credentials', () => {
+test('the ad-hoc report control runs the private iPhone Shortcut without embedding credentials', () => {
   const link = loader.match(/<a id="adhoc"[\s\S]*?<\/a>/)?.[0];
   assert.ok(link, 'the fixed phone header must offer an ad-hoc report control');
   assert.match(
     link,
-    /href="https:\/\/claude\.ai\/code\/routines\/trig_0119mP9Z1F9f8QuwMsRLWL7Y"/
+    /href="shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"/
   );
   assert.doesNotMatch(link, /target="_blank"/);
   assert.match(link, /rel="noopener noreferrer"/);
   assert.match(link, />生成临时报告</);
-  assert.match(link, /打开 Claude → Run now/);
+  assert.match(link, /一键启动 · 自动刷新/);
   assert.doesNotMatch(link, /[?&](?:token|secret|api[_-]?key)=/i);
+  assert.doesNotMatch(loader, /sk-ant-oat01-/);
+  assert.doesNotMatch(loader, /api\.anthropic\.com\/v1\/claude_code\/routines/);
   assert.match(loader, /adhocButton\.addEventListener\("click", beginAdhocWait\)/);
   assert.match(loader, /临时报告正在生成，请稍候/);
   assert.match(loader, /临时报告已完成/);
