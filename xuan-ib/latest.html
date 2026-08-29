@@ -61,6 +61,11 @@ background:var(--card);color:var(--ink2);cursor:pointer;display:flex;gap:5px;ali
 .tabbar label .dot{background:var(--pill);color:var(--ink2);border-radius:99px;font-size:10px;padding:0 5px;min-width:15px;text-align:center}
 #s1:checked~.tabbar label[for="s1"],#s2:checked~.tabbar label[for="s2"],#s3:checked~.tabbar label[for="s3"],#s4:checked~.tabbar label[for="s4"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
 #s1:checked~.tabbar label[for="s1"] .dot,#s2:checked~.tabbar label[for="s2"] .dot,#s3:checked~.tabbar label[for="s3"] .dot,#s4:checked~.tabbar label[for="s4"] .dot{background:var(--bg);color:var(--ink)}
+@media(max-width:640px){
+.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;flex-wrap:nowrap;max-width:100%;overflow:hidden}
+.tabbar label{min-height:44px;min-width:0;padding:4px 6px;font-size:12px;gap:4px;justify-content:center;white-space:nowrap;overflow:hidden}
+.tabbar label .dot{flex:0 0 auto}
+}
 .pane{display:none}
 #s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}
 .card{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:11px;margin-top:9px}
@@ -130,7 +135,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 
 <div class="alert wv"><b>临时版 / ad hoc</b> —— 本页由用户手动启动生成，使用启动时（08-29 21:39 HKT）可取得的数据；不代替、也不冒充周一至周五 20:55 睡前版或周二至周六 08:00 早间版的定时成功证据。周六无新定时版；下一次定时版为周二 08:00 早间版。<b>本日第二次临时版</b>（上一次 08-29 20:33 HKT）——IB、Sharesight 全部核心账户重新只读读取，NAV、现金、持仓股数、GTC 挂单（12 张）、DAYS_7 成交与 7 个 Sharesight 组合总值与上一版逐项核对<b>完全一致（零变动）</b>；本次 IB 持仓端点（get_account_positions）转为直接读取成功，不再需要上一版的 Sharesight IB-HK 替代，见「运行信息」。</div>
 
-<details open><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
+<details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
 <div class="dbody">
 <ol>
 <li><b>本次为本日第二次临时版，核心数据与 08-29 20:33 HKT 版核对零变动</b>：IB NAV $5,053,336、现金池、7 个 Sharesight 组合总值、12 张 GTC 挂单、DAYS_7 成交逐项一致。<b>四桶 / 三层流动性继续沿用 2026-08-24 周一 verified snapshot</b>（<code>claude/four-bucket-mapping.json</code> 未变、约 50 个 Semi Liquid 标签持仓仍仅 8 个有 holdingOverrides，fail-closed 继续沿用，这是第三次沿用）。本次 IB 持仓端点 <code>get_account_positions</code> 直接读取成功（上一版因该端点故障改用 Sharesight IB-HK 替代），逐仓展示价格因此改用 IB 直读，与上一版 Sharesight 价存在 &lt;1% 展示级价差（周末休市，非盘中真实变动，见「运行信息」）。</li>
@@ -167,10 +172,10 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="tabs">
 <input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">
 <div class="tabbar">
-<label for="s1">收盘一览 <span class="dot">4</span></label>
-<label for="s2">弹药·上限 <span class="dot">2</span></label>
-<label for="s3">配置 <span class="dot">4</span></label>
-<label for="s4">待办·换仓 <span class="dot">5</span></label>
+<label for="s1" aria-label="概览：① 08-28 周五收盘一览与 ③ 下一交易日开盘前会发生什么，4 项">概览 <span class="dot" aria-hidden="true">4</span></label>
+<label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明，2 项">风险 <span class="dot" aria-hidden="true">2</span></label>
+<label for="s3" aria-label="配置：④ 四桶与四类配置比例、8 个 portfolio 明细，4 项">配置 <span class="dot" aria-hidden="true">4</span></label>
+<label for="s4" aria-label="待办：⑤ 待决定事项与 ⑥ 换仓触发检查，5 项">待办 <span class="dot" aria-hidden="true">5</span></label>
 </div>
 
 <div class="pane p1">
@@ -210,7 +215,6 @@ details .dbody{padding-left:7px;padding-right:7px}
 <tr><td><span class="sym">HODL</span><span class="sub">EBS · 600</span></td><td>14.92</td><td>8,952</td></tr>
 <tr><td><span class="sym">MSFT</span><span class="sub">NASDAQ · 10 · 卖 90 后残余</span></td><td>513.53</td><td>5,135</td></tr>
 </tbody></table></div></div></details>
-</div>
 </div>
 
 <details><summary>③ 下一交易日开盘前会发生什么 <span class="rt">周末无新增持仓财报 · 需处理挂单 无</span></summary>
