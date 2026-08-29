@@ -30,16 +30,38 @@
     .title strong { display: block; font-size: 18px; line-height: 1.25; }
     #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; }
     #status.error { color: #b3261e; }
+    .header-actions {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    #adhoc,
     #refresh {
       flex: 0 0 auto;
       appearance: none;
-      border: 1px solid #80afe6;
       border-radius: 999px;
-      padding: 8px 15px;
-      background: #eef5fc;
-      color: #216ec8;
       font: inherit;
       font-weight: 650;
+    }
+    #adhoc {
+      border: 1px solid #8a75d1;
+      padding: 5px 10px 4px;
+      background: #f3efff;
+      color: #5c43b6;
+      line-height: 1.15;
+      text-align: center;
+      text-decoration: none;
+    }
+    #adhoc span,
+    #adhoc small { display: block; white-space: nowrap; }
+    #adhoc span { font-size: 12px; }
+    #adhoc small { margin-top: 2px; font-size: 9px; font-weight: 600; }
+    #refresh {
+      border: 1px solid #80afe6;
+      padding: 8px 13px;
+      background: #eef5fc;
+      color: #216ec8;
     }
     #refresh:disabled { opacity: .55; }
     #warning {
@@ -59,6 +81,7 @@
       html, body, #handover { background: #0d0d0d; }
       .bar { background: rgba(13, 13, 13, .96); border-color: #2c2c2a; color: #fff; }
       #status { color: #aaa8a2; }
+      #adhoc { border-color: #7059c6; background: #211b3a; color: #bcaeff; }
       #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
       #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
     }
@@ -71,7 +94,17 @@
         <strong>XUAN-投资管理</strong>
         <span id="status" role="status" aria-live="polite">正在读取最新版…</span>
       </div>
-      <button id="refresh" type="button">刷新</button>
+      <div class="header-actions">
+        <a id="adhoc"
+           href="https://claude.ai/code/routines/trig_0119mP9Z1F9f8QuwMsRLWL7Y"
+           target="_blank"
+           rel="noopener noreferrer"
+           aria-label="打开 Claude；请再点 Run now 生成临时报告">
+          <span>生成临时报告</span>
+          <small>打开 Claude → Run now</small>
+        </a>
+        <button id="refresh" type="button">刷新</button>
+      </div>
     </header>
     <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
     <iframe id="handover" title="XUAN-投资管理 最新简报" sandbox="" referrerpolicy="no-referrer"></iframe>
@@ -82,7 +115,7 @@
       const button = document.querySelector("#refresh");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-29.2";
+      const loaderBuild = "2026-08-29.3";
       const storageKey = "xuan-ib:last-verified:v1";
       let lastSuccess = 0;
       let lastAttempt = 0;

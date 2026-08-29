@@ -161,7 +161,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-29\.2"/);
+  assert.match(loader, /loaderBuild = "2026-08-29\.3"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -179,6 +179,20 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.doesNotMatch(loader, /内容未校验/);
   assert.doesNotMatch(loader, /serviceWorker/);
   assert.doesNotMatch(loader, /<!--\s*xuan-ib-handover:v1\s*-->/);
+});
+
+test('the ad-hoc report control opens the verified Claude routine without embedding credentials', () => {
+  const link = loader.match(/<a id="adhoc"[\s\S]*?<\/a>/)?.[0];
+  assert.ok(link, 'the fixed phone header must offer an ad-hoc report control');
+  assert.match(
+    link,
+    /href="https:\/\/claude\.ai\/code\/routines\/trig_0119mP9Z1F9f8QuwMsRLWL7Y"/
+  );
+  assert.match(link, /target="_blank"/);
+  assert.match(link, /rel="noopener noreferrer"/);
+  assert.match(link, />生成临时报告</);
+  assert.match(link, /打开 Claude → Run now/);
+  assert.doesNotMatch(link, /[?&](?:token|secret|api[_-]?key)=/i);
 });
 
 test('a schema-v1 metadata and HTML pair is rendered only after its exact Git blob matches', async () => {
