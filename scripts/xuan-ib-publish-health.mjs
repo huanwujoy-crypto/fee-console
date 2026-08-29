@@ -6,6 +6,10 @@ import {execFileSync} from "node:child_process";
 
 const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const EDITIONS = new Set(["am", "pm"]);
+const HKT_SLOTS = {
+  am: {startMinute: 8 * 60, dueMinute: 8 * 60 + 35, weekdays: new Set([2, 3, 4, 5, 6])},
+  pm: {startMinute: 20 * 60 + 55, dueMinute: 21 * 60 + 25, weekdays: new Set([1, 2, 3, 4, 5])}
+};
 
 export function gitBlobSha(content) {
   const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -48,44 +52,51 @@ export function hktContext(now = new Date()) {
   return {date, weekday, minuteOfDay};
 }
 
-const previousIsoDate = date => {
+const addIsoDays = (date, days) => {
   const value = new Date(`${date}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() - 1);
+  value.setUTCDate(value.getUTCDate() + days);
   return value.toISOString().slice(0, 10);
 };
 
-export function expectedEditionAt(now = new Date()) {
-  const context = hktContext(now);
-  // The UTC weekday cron continues into early Saturday HKT. Keep auditing the
-  // last required Friday PM publication instead of treating midnight as a
-  // clean slate that can hide a missed Friday handover. No Saturday edition is
-  // required.
-  if (context.weekday === 6) {
-    return {
-      ...context,
-      expectedEdition: "pm",
-      expectedDate: previousIsoDate(context.date),
-      reason: "friday-pm-carry-forward"
-    };
-  }
-  if (context.weekday === 0) {
-    return {...context, expectedEdition: null, reason: "weekend"};
-  }
-  if (context.minuteOfDay < 8 * 60 + 30) {
-    return {...context, expectedEdition: null, reason: "not-due"};
-  }
-  return {
-    ...context,
-    expectedEdition: context.minuteOfDay >= 22 * 60 + 15 ? "pm" : "am",
-    expectedDate: context.date,
-    reason: "due"
-  };
-}
+const hktMinuteEpoch = (date, minute) => Math.floor(
+  (Date.parse(`${date}T00:00:00Z`) - HKT_OFFSET_MS + minute * 60 * 1000) / 1000
+);
 
 export function slotStartEpoch(dataDate, edition) {
   if (!EDITIONS.has(edition)) throw new Error(`unsupported edition: ${edition}`);
-  const minute = edition === "am" ? 8 * 60 : 21 * 60 + 45;
-  return Math.floor((Date.parse(`${dataDate}T00:00:00Z`) - HKT_OFFSET_MS + minute * 60 * 1000) / 1000);
+  return hktMinuteEpoch(dataDate, HKT_SLOTS[edition].startMinute);
+}
+
+export function slotDueEpoch(dataDate, edition) {
+  if (!EDITIONS.has(edition)) throw new Error(`unsupported edition: ${edition}`);
+  return hktMinuteEpoch(dataDate, HKT_SLOTS[edition].dueMinute);
+}
+
+export function expectedEditionAt(now = new Date(), editionFilter = null) {
+  if (editionFilter !== null && !EDITIONS.has(editionFilter)) {
+    throw new Error(`unsupported edition: ${editionFilter}`);
+  }
+  const context = hktContext(now);
+  const nowEpoch = Math.floor(now.getTime() / 1000);
+  let latest = null;
+  for (let offset = 0; offset <= 8; offset += 1) {
+    const date = addIsoDays(context.date, -offset);
+    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+    for (const edition of EDITIONS) {
+      if (editionFilter !== null && edition !== editionFilter) continue;
+      if (!HKT_SLOTS[edition].weekdays.has(weekday)) continue;
+      const dueEpoch = slotDueEpoch(date, edition);
+      if (dueEpoch > nowEpoch) continue;
+      if (!latest || dueEpoch > latest.dueEpoch) latest = {date, edition, dueEpoch};
+    }
+  }
+  if (!latest) return {...context, expectedEdition: null, reason: "no-due-slot"};
+  return {
+    ...context,
+    expectedEdition: latest.edition,
+    expectedDate: latest.date,
+    reason: "latest-due-slot"
+  };
 }
 
 const sameMeta = (left, right) => [
@@ -117,6 +128,10 @@ export function evaluateFreshness({
   const actualEdition = classifyEdition(dateLine);
   const primaryDate = dateLine.match(/\b(\d{4}-\d{2}-\d{2})\b/)?.[1] ?? null;
 
+  if (!new Set(["am", "pm", "adhoc"]).has(actualEdition)) {
+    issues.push(`fixed page edition is ${actualEdition}; expected an explicit AM, PM, or ad-hoc label`);
+  }
+
   if (!indexBytes.includes(Buffer.from("latest.html"))) issues.push("fixed loader does not reference latest.html");
   if (!indexBytes.equals(mainIndexBytes)) issues.push("online index.html differs from main loader");
   if (onlineIndexBlob !== mainIndexBlob) issues.push("online and main loader Git blobs differ");
@@ -125,8 +140,10 @@ export function evaluateFreshness({
   if (!sameMeta(onlineMeta, mainMeta)) issues.push("online latest.meta.json differs from main");
   if (mainMeta?.htmlBlob !== mainBlob) issues.push("main metadata htmlBlob does not match main latest.html");
   if (onlineMeta?.htmlBlob !== onlineBlob) issues.push("online metadata htmlBlob does not match online latest.html");
-  if (onlineMeta?.dataDate !== expectedDate || primaryDate !== expectedDate) {
-    issues.push(`expected HKT data date ${expectedDate}, got meta=${onlineMeta?.dataDate ?? "missing"}, page=${primaryDate ?? "missing"}`);
+  if (onlineMeta?.dataDate !== primaryDate) {
+    issues.push(`online metadata and page dates differ: meta=${onlineMeta?.dataDate ?? "missing"}, page=${primaryDate ?? "missing"}`);
+  } else if (!primaryDate || primaryDate < expectedDate) {
+    issues.push(`expected HKT report date at least ${expectedDate}, got ${primaryDate ?? "missing"}`);
   }
   const sourceEpoch = onlineMeta?.sourceCommitEpoch;
   if (!Number.isInteger(sourceEpoch)) {
@@ -143,6 +160,11 @@ export function evaluateFreshness({
   );
   if (scheduledEvidence.length === 0) {
     issues.push(`main publication history does not prove the scheduled ${expectedEdition.toUpperCase()} edition`);
+  } else if (Number.isInteger(sourceEpoch)) {
+    const newestScheduledEpoch = Math.max(...scheduledEvidence.map(entry => entry.sourceCommitEpoch));
+    if (sourceEpoch < newestScheduledEpoch) {
+      issues.push("fixed page predates the proven scheduled publication");
+    }
   }
   return {
     ok: issues.length === 0,
@@ -208,19 +230,20 @@ const joinUrl = (baseUrl, path) => new URL(path, baseUrl.endsWith("/") ? baseUrl
 
 export async function runWatcher({baseUrl, mainIndexHtml, mainHtml, mainMeta, publicationHistory = [], expectedEdition = "auto", now = new Date(), fetchFn = fetch}) {
   let expected = expectedEdition;
-  let expectedDate = hktContext(now).date;
-  const automatic = expectedEditionAt(now);
+  let expectedDate;
   if (expected === "auto") {
+    const automatic = expectedEditionAt(now);
     if (!automatic.expectedEdition) {
       return {ok: true, skipped: true, reason: automatic.reason, expectedDate: automatic.date};
     }
     expected = automatic.expectedEdition;
     expectedDate = automatic.expectedDate;
-  } else if (automatic.reason === "friday-pm-carry-forward" && expected === "pm") {
-    // A manual Saturday PM audit has the same business meaning as automatic
-    // mode: verify Friday's required PM handover, not a nonexistent Saturday
-    // edition.
-    expectedDate = automatic.expectedDate;
+  } else {
+    const latestOfType = expectedEditionAt(now, expected);
+    if (!latestOfType.expectedEdition) {
+      return {ok: true, skipped: true, reason: latestOfType.reason, expectedDate: latestOfType.date};
+    }
+    expectedDate = latestOfType.expectedDate;
   }
   if (!EDITIONS.has(expected)) throw new Error("expected edition must be auto, am, or pm");
   const [indexBytes, onlineBytes, onlineMetaBytes] = await Promise.all([

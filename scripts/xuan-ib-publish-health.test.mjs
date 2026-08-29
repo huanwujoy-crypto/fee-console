@@ -9,6 +9,7 @@ import {
   probePublication,
   runWatcher,
   runWatcherWithRetries,
+  slotDueEpoch,
   slotStartEpoch
 } from "./xuan-ib-publish-health.mjs";
 
@@ -28,27 +29,26 @@ test("classifies AM, PM, and ad-hoc pages with ad-hoc precedence", () => {
   assert.equal(classifyEdition("2026-08-27 · 市场简报"), "unknown");
 });
 
-test("selects weekday HKT SLA slots, carries Friday PM through Saturday, and skips Sunday", () => {
-  assert.equal(expectedEditionAt(new Date("2026-08-27T00:29:00Z")).expectedEdition, null);
-  assert.equal(expectedEditionAt(new Date("2026-08-27T00:30:00Z")).expectedEdition, "am");
-  assert.equal(expectedEditionAt(new Date("2026-08-27T14:15:00Z")).expectedEdition, "pm");
-  assert.deepEqual(
-    expectedEditionAt(new Date("2026-08-28T16:05:00Z")),
-    {
-      date: "2026-08-29", weekday: 6, minuteOfDay: 5,
-      expectedEdition: "pm", expectedDate: "2026-08-28",
-      reason: "friday-pm-carry-forward"
-    }
-  );
-  assert.deepEqual(
-    expectedEditionAt(new Date("2026-08-28T23:35:00Z")),
-    {
-      date: "2026-08-29", weekday: 6, minuteOfDay: 7 * 60 + 35,
-      expectedEdition: "pm", expectedDate: "2026-08-28",
-      reason: "friday-pm-carry-forward"
-    }
-  );
-  assert.equal(expectedEditionAt(new Date("2026-08-29T16:05:00Z")).reason, "weekend");
+test("selects the latest due Hong Kong AM or PM slot across the full week", () => {
+  const cases = [
+    ["2026-08-27T00:34:00Z", "2026-08-26", "pm"], // Thu 08:34 HKT
+    ["2026-08-27T00:35:00Z", "2026-08-27", "am"], // Thu 08:35 HKT
+    ["2026-08-27T13:24:00Z", "2026-08-27", "am"], // Thu 21:24 HKT
+    ["2026-08-27T13:25:00Z", "2026-08-27", "pm"], // Thu 21:25 HKT
+    ["2026-08-29T00:34:00Z", "2026-08-28", "pm"], // Sat 08:34 HKT
+    ["2026-08-29T00:35:00Z", "2026-08-29", "am"], // Sat 08:35 HKT
+    ["2026-08-30T12:00:00Z", "2026-08-29", "am"], // Sun 20:00 HKT
+    ["2026-08-31T13:24:00Z", "2026-08-29", "am"], // Mon 21:24 HKT
+    ["2026-08-31T13:25:00Z", "2026-08-31", "pm"]  // Mon 21:25 HKT
+  ];
+  for (const [now, expectedDate, expectedEdition] of cases) {
+    const result = expectedEditionAt(new Date(now));
+    assert.equal(result.expectedDate, expectedDate, now);
+    assert.equal(result.expectedEdition, expectedEdition, now);
+    assert.equal(result.reason, "latest-due-slot", now);
+  }
+  assert.equal(slotStartEpoch("2026-08-27", "pm"), Date.parse("2026-08-27T12:55:00Z") / 1000);
+  assert.equal(slotDueEpoch("2026-08-27", "pm"), Date.parse("2026-08-27T13:25:00Z") / 1000);
 });
 
 test("accepts only a matching scheduled page from main and Pages", () => {
@@ -122,6 +122,39 @@ test("a later ad-hoc page does not hide or impersonate a scheduled publication",
   assert.equal(withPm.scheduledEvidence.length, 1);
 });
 
+test("rejects an unlabeled or ambiguous fixed page even when scheduled history exists", () => {
+  for (const label of ["市场简报", "早间与晚间摘要"]) {
+    const bytes = Buffer.from(html("2026-08-27", label));
+    const meta = {
+      schemaVersion: 1,
+      sourceSha: sha("a"),
+      sourceCommitEpoch: slotStartEpoch("2026-08-27", "pm") + 600,
+      dataDate: "2026-08-27",
+      htmlBlob: gitBlobSha(bytes)
+    };
+    const result = evaluateFreshness({
+      indexHtml: loaderBytes,
+      mainIndexHtml: loaderBytes,
+      onlineHtml: bytes,
+      onlineMeta: meta,
+      mainHtml: bytes,
+      mainMeta: meta,
+      expectedEdition: "pm",
+      expectedDate: "2026-08-27",
+      publicationHistory: [{
+        ...meta,
+        commit: sha("c"),
+        valid: true,
+        edition: "pm",
+        sourceCommitEpoch: slotStartEpoch("2026-08-27", "pm") + 60
+      }],
+      now: new Date("2026-08-27T15:00:00Z")
+    });
+    assert.equal(result.ok, false, label);
+    assert.match(result.issues.join("\n"), /explicit AM, PM, or ad-hoc label/, label);
+  }
+});
+
 const response = body => ({
   ok: true,
   status: 200,
@@ -150,7 +183,7 @@ test("the online watcher compares all three fixed-page resources", async () => {
   assert.equal(result.ok, true);
 });
 
-test("Saturday auto mode audits the prior Friday PM publication without requiring a Saturday report", async () => {
+test("Saturday before the AM deadline still audits the prior Friday PM publication", async () => {
   const bytes = Buffer.from(html("2026-08-28", "睡前版"));
   const blob = gitBlobSha(bytes);
   const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-28", "pm") + 60, dataDate: "2026-08-28", htmlBlob: blob};
@@ -198,6 +231,30 @@ test("Saturday explicit PM mode also audits Friday instead of requiring a Saturd
   assert.equal(result.expectedEdition, "pm");
 });
 
+test("Saturday at the AM deadline requires the new Saturday morning report", async () => {
+  const bytes = Buffer.from(html("2026-08-29", "早间版"));
+  const blob = gitBlobSha(bytes);
+  const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-29", "am") + 60, dataDate: "2026-08-29", htmlBlob: blob};
+  const fetchFn = async url => {
+    if (url.pathname.endsWith("index.html")) return response(loaderBytes);
+    if (url.pathname.endsWith("latest.html")) return response(bytes);
+    return response(JSON.stringify(meta));
+  };
+  const result = await runWatcher({
+    baseUrl: "https://example.invalid/xuan-ib/",
+    mainIndexHtml: loaderBytes,
+    mainHtml: bytes,
+    mainMeta: meta,
+    publicationHistory: [{...meta, commit: sha("d"), valid: true, edition: "am"}],
+    expectedEdition: "auto",
+    now: new Date("2026-08-29T00:35:00Z"),
+    fetchFn
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.expectedDate, "2026-08-29");
+  assert.equal(result.expectedEdition, "am");
+});
+
 test("Saturday auto mode fails when Friday PM was missed instead of hiding it behind a weekend skip", async () => {
   const bytes = Buffer.from(html("2026-08-27", "睡前版"));
   const blob = gitBlobSha(bytes);
@@ -220,8 +277,38 @@ test("Saturday auto mode fails when Friday PM was missed instead of hiding it be
   assert.equal(result.ok, false);
   assert.equal(result.skipped, undefined);
   assert.equal(result.expectedDate, "2026-08-28");
-  assert.match(result.issues.join("\n"), /expected HKT data date 2026-08-28/);
+  assert.match(result.issues.join("\n"), /expected HKT report date at least 2026-08-28/);
   assert.match(result.issues.join("\n"), /history does not prove the scheduled PM/);
+});
+
+test("a newer ad-hoc fixed page is healthy only when history still proves the scheduled slot", () => {
+  const scheduledBytes = Buffer.from(html("2026-08-28", "睡前版"));
+  const adhocBytes = Buffer.from(html("2026-08-29", "临时版"));
+  const adhocMeta = {
+    schemaVersion: 1,
+    sourceSha: sha("a"),
+    sourceCommitEpoch: slotStartEpoch("2026-08-29", "am") + 600,
+    dataDate: "2026-08-29",
+    htmlBlob: gitBlobSha(adhocBytes)
+  };
+  const scheduledEntry = {
+    commit: sha("c"), valid: true, dataDate: "2026-08-28", edition: "pm",
+    sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch("2026-08-28", "pm") + 60
+  };
+  const base = {
+    indexHtml: loaderBytes,
+    mainIndexHtml: loaderBytes,
+    onlineHtml: adhocBytes,
+    onlineMeta: adhocMeta,
+    mainHtml: adhocBytes,
+    mainMeta: adhocMeta,
+    expectedEdition: "pm",
+    expectedDate: "2026-08-28",
+    now: new Date("2026-08-29T00:34:00Z")
+  };
+  assert.equal(evaluateFreshness({...base, publicationHistory: []}).ok, false);
+  assert.equal(evaluateFreshness({...base, publicationHistory: [scheduledEntry]}).ok, true);
+  assert.notEqual(gitBlobSha(scheduledBytes), adhocMeta.htmlBlob);
 });
 
 test("an old deployed loader fails even when latest HTML and metadata are current", async () => {
@@ -345,9 +432,10 @@ test("the non-gating Pages probe retries stale data and reports timeout as data"
 
 test("workflows keep the HKT SLA, read-only watcher, and post-push non-gating probe", () => {
   const watcher = fs.readFileSync(".github/workflows/watch-xuan-ib-freshness.yml", "utf8");
-  assert.match(watcher, /cron: '5,35 \* \* \* 1-5'/);
-  assert.match(watcher, /first eligible checks are 08:35 HKT for AM and 22:35 HKT for PM/);
-  assert.match(watcher, /Saturday HKT carry-over checks keep auditing Friday PM/);
+  assert.match(watcher, /cron: '35 0 \* \* 2-6'/);
+  assert.match(watcher, /cron: '25 13 \* \* 1-5'/);
+  assert.match(watcher, /AM is due Tuesday-Saturday/);
+  assert.match(watcher, /PM is due Monday-Friday/);
   assert.match(watcher, /--main-index xuan-ib\/index\.html/);
   assert.match(watcher, /--attempts 4/);
   assert.match(watcher, /--interval-ms 20000/);

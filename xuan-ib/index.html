@@ -82,7 +82,7 @@
       const button = document.querySelector("#refresh");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-29.1";
+      const loaderBuild = "2026-08-29.2";
       const storageKey = "xuan-ib:last-verified:v1";
       let lastSuccess = 0;
       let lastAttempt = 0;
@@ -152,25 +152,42 @@
         };
       };
 
-      const previousBusinessDate = (date) => {
+      const addIsoDays = (date, days) => {
         const value = new Date(`${date}T00:00:00Z`);
-        do value.setUTCDate(value.getUTCDate() - 1);
-        while (value.getUTCDay() === 0 || value.getUTCDay() === 6);
+        value.setUTCDate(value.getUTCDate() + days);
         return value.toISOString().slice(0, 10);
       };
 
+      const hktSlots = {
+        am: { startMinute: 8 * 60, dueMinute: 8 * 60 + 35, weekdays: new Set([2, 3, 4, 5, 6]) },
+        pm: { startMinute: 20 * 60 + 55, dueMinute: 21 * 60 + 25, weekdays: new Set([1, 2, 3, 4, 5]) }
+      };
+
+      const hktSlotEpoch = (date, edition, minuteKey) => Math.floor(
+        (Date.parse(`${date}T00:00:00Z`) - 8 * 60 * 60 * 1000 +
+          hktSlots[edition][minuteKey] * 60 * 1000) / 1000
+      );
+
       const expectedBusinessEdition = (now = new Date()) => {
         const context = hktContext(now);
-        if (context.weekday === 0 || context.weekday === 6) {
-          return { dataDate: previousBusinessDate(context.date), edition: "pm", label: "睡前版" };
+        const nowEpoch = Math.floor(now.getTime() / 1000);
+        let latest = null;
+        for (let offset = 0; offset <= 8; offset += 1) {
+          const date = addIsoDays(context.date, -offset);
+          const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
+          for (const edition of ["am", "pm"]) {
+            if (!hktSlots[edition].weekdays.has(weekday)) continue;
+            const dueEpoch = hktSlotEpoch(date, edition, "dueMinute");
+            if (dueEpoch > nowEpoch) continue;
+            if (!latest || dueEpoch > latest.dueEpoch) latest = { dataDate: date, edition, dueEpoch };
+          }
         }
-        if (context.minuteOfDay < 8 * 60 + 30) {
-          return { dataDate: previousBusinessDate(context.date), edition: "pm", label: "睡前版" };
-        }
-        if (context.minuteOfDay < 22 * 60 + 15) {
-          return { dataDate: context.date, edition: "am", label: "早间版" };
-        }
-        return { dataDate: context.date, edition: "pm", label: "睡前版" };
+        if (!latest) throw new Error("无法确定最近应完成的香港报告版次");
+        return {
+          ...latest,
+          startEpoch: hktSlotEpoch(latest.dataDate, latest.edition, "startMinute"),
+          label: latest.edition === "am" ? "早间版" : "睡前版"
+        };
       };
 
       const classifyEdition = (edition) => {
@@ -185,9 +202,13 @@
         const expected = expectedBusinessEdition(now);
         const actualEdition = classifyEdition(record.info.edition);
         const dateBehind = record.info.dataDate < expected.dataDate;
+        const editionRank = {am: 1, pm: 2};
+        const adHocBeforeSlot = actualEdition === "adhoc" &&
+          record.meta.sourceCommitEpoch < expected.startEpoch;
+        const scheduledBehind = (editionRank[actualEdition] ?? 0) < editionRank[expected.edition];
         const slotBehind = record.info.dataDate === expected.dataDate &&
-          (actualEdition === "unknown" || actualEdition === "adhoc" ||
-           (expected.edition === "pm" && actualEdition !== "pm"));
+          (actualEdition === "unknown" || adHocBeforeSlot ||
+            (actualEdition !== "adhoc" && scheduledBehind));
         if (!dateBehind && !slotBehind) return "";
         return `报告已过期：应至少为 ${expected.dataDate} ${expected.label}，` +
           `当前为 ${record.info.dataDate} ${record.info.edition}。` +
