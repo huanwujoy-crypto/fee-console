@@ -161,7 +161,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-29\.1"/);
+  assert.match(loader, /loaderBuild = "2026-08-29\.2"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -231,10 +231,10 @@ test('Saturday retains Friday PM but clearly warns when only Thursday PM is publ
   assert.equal(app.status.classList.contains('error'), true);
 });
 
-test('Friday PM remains current throughout the weekend and Monday before the AM SLA', async () => {
-  const html = reportHtml('2026-08-28', '睡前版', 'trusted-friday-pm');
+test('Saturday AM remains current through Sunday and Monday before the PM deadline', async () => {
+  const html = reportHtml('2026-08-29', '早间版', 'trusted-saturday-am');
   const meta = metaFor(html);
-  for (const now of ['2026-08-29T00:21:00Z', '2026-08-30T12:00:00Z', '2026-08-30T23:59:00Z']) {
+  for (const now of ['2026-08-29T00:35:00Z', '2026-08-30T12:00:00Z', '2026-08-31T13:24:00Z']) {
     const app = loaderHarness({
       now,
       fetchImpl: async (url) => String(url).includes('latest.meta.json')
@@ -242,18 +242,21 @@ test('Friday PM remains current throughout the weekend and Monday before the AM 
         : response({json: null, bytes: Buffer.from(html)}),
     });
     await app.listeners.button.click();
-    assert.equal(app.warning.hidden, true, `${now} must accept the last Friday PM report`);
+    assert.equal(app.warning.hidden, true, `${now} must accept the last Saturday AM report`);
     assert.equal(app.status.classList.contains('error'), false);
   }
 });
 
-test('weekday SLA advances from prior PM to same-day AM and then same-day PM', async () => {
+test('Hong Kong SLA advances at Tuesday-Saturday 08:35 and Monday-Friday 21:25', async () => {
   const cases = [
-    ['2026-09-01T00:20:00Z', '2026-08-31', '睡前版', false], // Tue 08:20 HKT
-    ['2026-09-01T00:31:00Z', '2026-08-31', '睡前版', true],  // Tue 08:31 HKT
-    ['2026-09-01T00:31:00Z', '2026-09-01', '早间版', false],
-    ['2026-09-01T14:16:00Z', '2026-09-01', '早间版', true],  // Tue 22:16 HKT
-    ['2026-09-01T14:16:00Z', '2026-09-01', '睡前版', false],
+    ['2026-09-01T00:34:00Z', '2026-08-31', '睡前版', false], // Tue 08:34 HKT
+    ['2026-09-01T00:35:00Z', '2026-08-31', '睡前版', true],  // Tue 08:35 HKT
+    ['2026-09-01T00:35:00Z', '2026-09-01', '早间版', false],
+    ['2026-09-01T13:25:00Z', '2026-09-01', '早间版', true],  // Tue 21:25 HKT
+    ['2026-09-01T13:25:00Z', '2026-09-01', '睡前版', false],
+    ['2026-09-05T00:34:00Z', '2026-09-04', '睡前版', false], // Sat 08:34 HKT
+    ['2026-09-05T00:35:00Z', '2026-09-04', '睡前版', true],
+    ['2026-09-05T00:35:00Z', '2026-09-05', '早间版', false],
   ];
   for (const [now, date, edition, stale] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);
@@ -269,17 +272,31 @@ test('weekday SLA advances from prior PM to same-day AM and then same-day PM', a
   }
 });
 
-test('an ad-hoc report never impersonates a due scheduled edition', async () => {
+test('a newer ad-hoc report can be the phone page without impersonating the scheduled history', async () => {
   const html = reportHtml('2026-09-01', '计划外加跑（常规 21:00）', 'trusted-adhoc');
-  const meta = metaFor(html);
+  const meta = metaFor(html, {sourceCommitEpoch: Date.parse('2026-09-01T13:05:00Z') / 1000});
   const app = loaderHarness({
-    now: '2026-09-01T14:16:00Z',
+    now: '2026-09-01T13:25:00Z',
     fetchImpl: async (url) => String(url).includes('latest.meta.json')
       ? response({json: meta, bytes: []})
       : response({json: null, bytes: Buffer.from(html)}),
   });
   await app.listeners.button.click();
   assert.match(app.frame.srcdoc, /trusted-adhoc/);
+  assert.equal(app.warning.hidden, true);
+  assert.equal(app.status.classList.contains('error'), false);
+});
+
+test('an ad-hoc report created before a newly due slot is marked stale after that deadline', async () => {
+  const html = reportHtml('2026-09-01', '临时版', 'pre-slot-adhoc');
+  const meta = metaFor(html, {sourceCommitEpoch: Date.parse('2026-09-01T12:30:00Z') / 1000});
+  const app = loaderHarness({
+    now: '2026-09-01T13:25:00Z',
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+  await app.listeners.button.click();
   assert.equal(app.warning.hidden, false);
   assert.match(app.warning.textContent, /应至少为 2026-09-01 睡前版/);
 });

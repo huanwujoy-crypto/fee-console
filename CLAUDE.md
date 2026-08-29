@@ -21,3 +21,18 @@ those tags from a handover-producing session.
 Financial systems are read-only for this workflow. Never place, modify, or cancel
 orders, and never initiate transfers or write to IB, Sharesight, or another
 financial account.
+
+## Hong Kong report schedule
+
+Read and follow `claude/xuan-ib-report-schedule-HKT-v1.md` before producing any
+XUAN-IB report. `Asia/Hong_Kong` is the only scheduling clock:
+
+- PM / 睡前版: Monday-Friday at 20:55 HKT.
+- AM / 早间版: Tuesday-Saturday at 08:00 HKT.
+- Ad hoc / 临时版: only when manually requested; it may run at any time.
+
+Every successful edition uses the same candidate, validation, promotion, Pages,
+and fixed-mobile-link path above. An ad-hoc edition may become the newest phone
+page, but it never proves that a required AM or PM edition ran. US daylight
+saving time and market holidays change the report's market-status wording and
+data-as-of disclosure, never the Hong Kong delivery schedule.

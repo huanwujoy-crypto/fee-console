@@ -2,11 +2,11 @@ name: Watch XUAN-IB fixed page freshness
 
 on:
   schedule:
-    # Every 30 minutes on weekdays, offset from the publication window. The
-    # first eligible checks are 08:35 HKT for AM and 22:35 HKT for PM.
-    # Saturday HKT carry-over checks keep auditing Friday PM; they never require
-    # a new Saturday report.
-    - cron: '5,35 * * * 1-5'
+    # Hong Kong is the only scheduling clock. AM is due Tuesday-Saturday at
+    # 08:35 HKT; PM is due Monday-Friday at 21:25 HKT. US DST changes only the
+    # market-stage wording inside the report, never these delivery times.
+    - cron: '35 0 * * 2-6'
+    - cron: '25 13 * * 1-5'
   workflow_dispatch:
     inputs:
       expected_edition:
