@@ -394,10 +394,23 @@ const normalizeRecordsUpdateHtml = (documentHtml, decisionState) => {
       /(\baria-label\s*=\s*)(["'])(.*?)\2/i,
       (attribute, prefix, quote, value) => `${prefix}${quote}${value.replace(/(待办[^0-9]*)\d+/, '$1__COUNT__')}${quote}`
     );
+    // A zero pending count has no visible badge. Normalize the standard,
+    // non-interactive badge away so a 3 -> 0 records-update can remove it.
+    // Keep unexpected attributes/markup intact: removing or changing them
+    // must still fail the immutable-content comparison below.
     const body = rawBody.replace(
-      /(<span\b[^>]*\bclass\s*=\s*(["'])[^"']*\bdot\b[^"']*\2[^>]*>)\s*\d+\s*(<\/span\s*>)/i,
-      '$1__COUNT__$3'
-    );
+      /<span\b([^>]*)>\s*\d+\s*<\/span\s*>/gi,
+      (badge, badgeAttributes) => {
+        const classes = quotedAttribute(badgeAttributes, 'class', 'pending-decision badge') || '';
+        if (!classes.split(/\s+/).includes('dot')) return badge;
+        const remainingAttributes = badgeAttributes
+          .replace(/\bclass\s*=\s*(["'])dot\1/i, '')
+          .replace(/\baria-hidden\s*=\s*(["'])true\1/i, '')
+          .trim();
+        if (classes === 'dot' && remainingAttributes === '') return '';
+        return badge.replace(/(>)\s*\d+\s*(<\/span\s*>)/i, '$1__COUNT__$2');
+      }
+    ).trimEnd();
     return `<label${attributes}>${body}</label>`;
   });
   const canonicalCards = decisionState.decisions

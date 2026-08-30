@@ -81,6 +81,8 @@
 
 每个待决定事项必须有跨版本不变的 `decisionId`（例如 `D-20260829-MRVL-CLASS`）和明确状态：`awaiting_user / accepted / rejected / modified / superseded`。同一问题重复出现时更新原 `decisionId`，不得反复新建。导航徽标只统计 `awaiting_user`，不把已结案或只读观察混入。
 
+手机 loader 将「换仓触发检查」置于待办栏目最前，把「待决定事项」默认折叠并与「回应待办」按钮同行；不要为此在报告内加入脚本或跳转动作。回应 Routine 按 `claude/xuan-ib-decision-interaction-v1.md` §3，先给三列简表，再用主会话原生 `AskUserQuestion` 提供「采纳 Claude 意见／输入我的意见／稍后决定」单选。0 项不提问；取消或 Skip 不是稍后；`accepted / modified` 属于「已决定／待落实」，不得改成不存在的 `closed` 状态。
+
 手机显示上，每项用默认收起的编号卡；summary 只显示「序号 + 事项名 + Claude 建议短句 + 状态」，展开后才显示本节规定的三行完整内容。
 
 在 receipt 驱动的手机互动正式上线前，待办栏标题下必须显示一行静态说明：「当前为只读清单；请在 Claude App 中引用事项编号回复。」不得先放出没有可验证回执的「采纳 / 修改 / 稍后」按钮。

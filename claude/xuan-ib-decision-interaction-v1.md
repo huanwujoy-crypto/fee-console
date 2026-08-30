@@ -71,18 +71,25 @@ Routine 不信任由手机 URL 传入的报告身份，而是自行读取并配�
 
 ## 3. Claude App 内互动
 
-Routine 按报告中的编号逐项显示：事项名、Claude 建议短句、当前状态及以下三个选择：
+Routine 验证可信基线后，先用简短中文表格显示全部待决定事项。表格固定三列：「序号／事项」「Claude 建议」「当前状态」；每项建议只用一句话，稳定 `decisionId` 留在会话上下文与回执内，不把长 ID、hash 或技术步骤挤进手机表格。建议摘要须忠实于报告原文；原文选项 A/B/C 不再作为回应按钮编号，避免把「采纳 Claude 建议」误读为采纳原文 A 方案。
+
+表格下必须优先调用主会话的原生 `AskUserQuestion`，每题明确对应同一表格行，`multiSelect: false`，提供三个真正可点击的选项（表格文字不是按钮）：
 
 1. **采纳 Claude 意见**；
-2. **修改意见**；
+2. **输入我的意见**；
 3. **稍后决定**。
 
 规则：
 
+- 每批最多 4 题，每题分别选择；不得替用户勾选默认答案，不得把打开会话、API 启动、测试文字、空答、Skip 或取消当作采纳或稍后。没有明确答案的事项保持原状且不生成 receipt。
+- 只有原生工具确实不可用时才退回文字回应，并简短说明限制。可保留「1A、2A、3A」兼容，但不得让用户在支持点击的界面被迫输入编码，也不得伪造 Markdown／HTML 按钮。初始运行没有答案是正常等待，不是失败。
+- 若 `awaiting_user` 为 0，显示「暂无待决定事项」，可附已决定事项的简表；不调用选择工具，不重建已采纳 receipt，也不把已决定事项重新放回待决定。
 - **采纳**：记录 `accepted`，只代表 Wu 接受该分析结论；不代表授权实施或交易。
-- **修改**：允许 Wu 在 Claude App 中输入完整意见。Routine 必须先复述并要求 Wu 确认一条最多 120 字的公开短摘要；只有确认后的短摘要可进入公开固定页。原始自由文本不得原样放进 URL、Shortcut、公开 HTML、Git commit message 或 workflow log。
+- **输入我的意见**（或原生 Other 自由输入）：先收集 Wu 的实际意见；仅点击此入口、尚未输入内容不算 `modified`。Routine 必须先复述并要求 Wu 确认一条最多 120 个 Unicode code point 的公开短摘要，可用原生「确认记录／继续修改」选择；只有确认后的短摘要可进入公开固定页。原始自由文本不得原样放进 URL、Shortcut、公开 HTML、Git commit message 或 workflow log。
 - **稍后**：写入 `deferred` receipt，但 decision 状态继续为 `awaiting_user`；导航徽标仍计数，页面显示「已选择稍后决定」。
 - v1 不另设「否决」按钮；不采纳 Claude 意见时走「修改意见」，公开短摘要可写成「不采纳，沿用现行规则」。
+- 已确认的 `accepted / modified` 维持对应机器状态，显示分组为「已决定／待落实」；不存在 `closed` 状态，采纳意见不等于事情已经落实。
+- 完成后用「事项／你的选择／记录结果」简表回读；必须正式版本回验成功才称「意见已记录」。保留既有回执；仅待正式发布时，明确说「已提交，等待发布」，不要提前宣告手机更新成功。
 
 用户最终确认前，Routine 必须再次读取 `latest.meta.json`。若 `sourceSha` 或 `htmlBlob` 已变化，则说明报告已更新，并要求基于最新待办重新选择；不得把旧页面的决定静默应用到新页面。
 
@@ -179,9 +186,13 @@ workflow 调用 guard 时必须同时提供可信上一份 `latest.html`、其�
 
 纯回应候选的内部运行类别固定为 `records-update`，并用唯一 inert marker `<!-- xuan-ib-records-update:v1 -->` 明确、可机读地分类；marker 必须无空白紧接现有 `<!-- xuan-ib-handover:v1 -->`。它必须追加至少一个可信 receipt，且 `interaction` 不得相对可信上一页改变。除机器 template、对应状态属性、待办 badge/aria，以及上述双 marker 分组内相应卡片的受控迁移、固定状态标签和标题计数外，上一页中文版别、主日期行、数据日、取数时点、金额、价格、as-of、计算文字、事实/选项与 Claude 意见均须保持字节语义不变。不得改称「临时版」，不得增加「本日第 N 次临时版」，也不得作为 AM / PM 定时成功证据。commit subject 保持原 `handover <trusted previous dataDate>`；records-update 可在数日后回应，workflow 仅对此分类允许旧 dataDate，普通候选仍只限香港今日/昨日。marker 即 run manifest 的 fail-closed `records-update` 分类；不得改动既有 promotion meta schema。
 
-## 6. Future loader 的 pending / receipt 行为
+## 6. Loader 的布局与 pending / receipt 行为
 
-loader 实施阶段另开受保护 PR。点击「回应待办」时：
+「回应待办」入口在「待办」栏目中，与默认收起的「待决定事项」同一行；「换仓触发检查」排在该栏目最上方。无待决定事项时按钮禁用、导航不显示 0 徽标，已决定／待落实的记录仍保留。
+
+入口由可信父 loader 创建并绑定父 realm `addEventListener`，只在已验证的报告文档内作显示层 DOM 调整。iframe 仅增加 `allow-same-origin`，绝不增加脚本、表单、弹窗或顶层导航权限；报告 CSP 仍禁止脚本与网络。点击必须核对当前文档身份、`about:srcdoc` 与可信 blob，并由父页同步启动固定 Shortcut。不得在报告中加入脚本、事件属性或可变跳转链接，不改写原始报告、hash、metadata 或缓存。相同可信版本刷新保留栏目与展开状态；报告换版保留栏目，但待决定恢复默认折叠。
+
+点击「回应待办」时：
 
 1. 把当前已验证的 `sourceSha + htmlBlob + startedAt + deadline` 存入 `localStorage`，key 使用 `xuan-ib:decision-wait:v1`；
 2. 显示「已进入 Claude，请在 App 内完成选择」；
@@ -199,6 +210,8 @@ loader 不读取或保存原始自由文本，只保存非敏感的版本指纹�
 - Shortcut 链接只含固定名称，无 token、hash、decision 或意见参数；
 - Shortcut 动作中没有 Clipboard、GitHub 写入、IB / Sharesight 写入或任意金融连接动作；
 - Routine 能从配对成功的最新报告列出全部 `awaiting_user` decisions；
+- 先显示三列中文表格，再提供真实原生单选组件；每题与稳定事项映射不变，不把表格或 Markdown 文字宣称为按钮；
+- 0 项不提问、不新增 receipt；Skip／取消／空答无写入；「输入我的意见」入口本身不生成 modified receipt；
 - meta/HTML 不配对、decision 不存在或基线已变化时 fail-closed；
 - `accepted / modified / deferred` 各有一条真实 iPhone 测试；
 - 修改意见必须完成公开短摘要二次确认，原始文本不出现在固定页、URL 或 workflow log。
