@@ -131,16 +131,16 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="page"><div class="wrap">
 
 <div class="hdr">
-<span class="date">2026-08-30 周日 · 临时版 / ad hoc · 美股 / LSE / EBS / TSE 休市（数据为上一交易日 08-28 周五收盘，连续第二个自然日沿用同一收盘价）</span>
+<span class="date">2026-08-30 周日 · 临时版 · 数据截至 08-28 收盘（市场休市）</span>
 <div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
 </div>
 
-<div class="alert"><b>数据降级：四桶 / 三层流动性沿用 2026-08-24 verified Monday snapshot</b>（第七次沿用）—— <code>claude/four-bucket-mapping.json</code> 本次已重新读取确认内容未变：带 Semi Liquid 标签的持仓精确计数 56 个，仍仅 8 个有 <code>holdingOverrides</code>，按其 <code>unknownSemiLiquid</code> 规则 fail-closed，不得猜测。替代源＝08-24 verified Monday snapshot，as-of 2026-08-24；影响范围＝四桶比例、三层流动性及依赖归桶的 KPI。其余数据为 2026-08-30 11:09–11:11 UTC（19:09–19:11 HKT）只读实时读取。</div>
+<div class="alert"><b>数据降级：四桶 / 三层流动性</b>沿用 2026-08-24 verified Monday snapshot（as-of 2026-08-24），影响依赖归桶的 KPI；<b>其余数据为本次 19:09–19:11 HKT 只读实时读数</b>。详见「报告说明」第 2 项。</div>
 
 <details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
 <div class="dbody">
 <ol>
-<li><b>本次为本日第四次临时版</b>（周日无新定时版；上一个已发布版本为 08-30 18:50–18:53 HKT 临时版，本日第三次，于 18:57 HKT 发布）。核心数据逐项核对<b>零变动</b>：IB NAV $5,053,336、现金池 $824,291、7 个 Sharesight 组合总值 $31,437,271、12 张 GTC 挂单、DAYS_7 成交（MSFT 卖90股、EIMI 买100股）逐项一致，本次会话未执行任何交易。<b>四桶 / 三层流动性继续沿用 2026-08-24 周一 verified snapshot</b>（第七次沿用；<code>claude/four-bucket-mapping.json</code> 本次重新核实内容未变，Semi Liquid 标签持仓精确计数 56 个，仍仅 8 个有 holdingOverrides，fail-closed 继续沿用）。已按日历规则确认：下一交易日周一 08-31 为<b>正常交易日</b>（美国 Labor Day 是九月第一个周一，即 2026-09-07，08-31 并非节前缩短交易日——按公历规则推算确认，非外部日历源核实，沿用上一版结论）。</li>
+<li><b>本次为本日第四次临时版</b>（周日无新定时版；上一个已发布版本为 08-30 18:50–18:53 HKT 临时版，本日第三次，于 18:57 HKT 发布）。核心数据逐项核对<b>零变动</b>：IB NAV $5,053,336、现金池 $824,291、7 个 Sharesight 组合总值 $31,437,271、12 张 GTC 挂单、DAYS_7 成交（MSFT 卖90股、EIMI 买100股）逐项一致，本次会话未执行任何交易。<b>四桶 / 三层流动性继续沿用 2026-08-24 周一 verified snapshot</b>（第七次沿用；原因与影响范围见「报告说明」第 2 项）。下一交易日周一 <b>08-31 为正常交易日</b>（推算依据见「已结案 / 只读观察」第 2 项）。</li>
 <li><b>AI 压力中情景 22.36%</b>（$1,379,598 / $6,169,420，逐票重算，与上一版完全一致），距 25% 预警线 <b>$162,757 / 2.64 个百分点</b>（与上一版一致），fail-closed <b>PASS</b>，结论与上一版一致。Webull BRK.B 仍为已平仓状态、MRVL $21,662 仍因 §0-A 规则不可得不计入分子（详见 ⑤，待 Wu 审核事项不变）。</li>
 <li><b>需当晚/近端处理挂单：无</b>；GTC 12 张与上一版完全一致（无新增、无成交、无撤单）。距市价最近的是 META 卖 150@590（+2.01%，提示带内）与 AMD 卖 30@499（+7.07%）；待撤 4 张（名义合计 $150,520）仍待 Wu 在 TWS 端执行。家庭主视图单票集中度：<b>BRK.B 4.91%（线内，与上一版一致）</b>；<b>GOOG/GOOGL 三账户合计 5.47%（与上一版一致，仍越 5% 参考线，超额 $29,190）</b>。</li>
 </ol>
@@ -161,10 +161,10 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="tabs">
 <input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">
 <div class="tabbar">
-<label for="s1" aria-label="概览：① 08-28 周五收盘一览与 ③ 下一交易日开盘前会发生什么，4 项">概览 <span class="dot" aria-hidden="true">4</span></label>
-<label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明，2 项">风险 <span class="dot" aria-hidden="true">2</span></label>
-<label for="s3" aria-label="配置：④ 四桶与四类配置比例、8 个 portfolio 明细，4 项">配置 <span class="dot" aria-hidden="true">4</span></label>
-<label for="s4" aria-label="待办：⑤ 待决定事项 3 项待 Wu 裁决；另含已结案 / 只读观察与 ⑥ 换仓触发检查">待办 <span class="dot" aria-hidden="true">3</span></label>
+<label for="s1" aria-label="概览：① 08-28 周五收盘一览与 ③ 下一交易日开盘前会发生什么">概览</label>
+<label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明">风险</label>
+<label for="s3" aria-label="配置：④ 四桶与四类配置比例、8 个 portfolio 明细">配置</label>
+<label for="s4" aria-label="待办：3 项待 Wu 裁决；另含已结案 / 只读观察与 ⑥ 换仓触发检查">待办 <span class="dot" aria-hidden="true">3</span></label>
 </div>
 
 <div class="pane p1">
@@ -390,6 +390,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="pane p4">
 <div class="card">
 <h2>⑤ 待决定事项 <small>3 项待 Wu 裁决 · 展开看 事实/选项 → Claude 意见 → 状态</small></h2>
+<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px">当前为只读清单；请在 Claude App 中引用事项编号回复。</p>
 
 <details class="dcard" id="D-20260829-MRVL-CLASS"><summary>1 · Webull MRVL $21,662 属 §0-A 未分类新标的
 <span class="rt wv">建议 (B) 不计入分子并披露 · 待 Wu 审核</span></summary>
@@ -474,7 +475,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <details><summary>报告说明 <span class="rt">版别 · 取数时点 · 数据日 · 只读</span></summary>
 <div class="dbody">
 <ol>
-<li><b>版次与时点。</b>版别：<b>临时版 / ad hoc，本日第四次</b>，由用户手动 Run now 启动。启动 / 取数时点：<b>2026-08-30 11:09–11:11 UTC（周日 19:09–19:11 HKT）</b>。数据日：<b>2026-08-30</b>，价格为上一交易日 08-28（周五）收盘（美股 / LSE / EBS / TSE 周六、周日连续两日休市）。<b>不代替、也不冒充</b>周一至周五 20:55 睡前版或周二至周六 08:00 早间版的定时成功证据；周日无新定时版，下一次定时版为周二 08:00 早间版（对应周一 08-31 正常交易日的收盘）。</li>
+<li><b>版次与时点。</b>版别：<b>临时版，本日第四次</b>，由用户手动 Run now 启动。启动 / 取数时点：<b>2026-08-30 11:09–11:11 UTC（周日 19:09–19:11 HKT）</b>。数据日：<b>2026-08-30</b>，价格为上一交易日 08-28（周五）收盘（美股 / LSE / EBS / TSE 周六、周日连续两日休市）。<b>不代替、也不冒充</b>周一至周五 20:55 睡前版或周二至周六 08:00 早间版的定时成功证据；周日无新定时版，下一次定时版为周二 08:00 早间版（对应周一 08-31 正常交易日的收盘）。</li>
 <li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 verified Monday snapshot</b>（第七次沿用，as-of 2026-08-24），因 <code>claude/four-bucket-mapping.json</code> 的 <code>unknownSemiLiquid</code> 规则要求 fail-closed，56 个 Semi Liquid 标签持仓中仅 8 个有 <code>holdingOverrides</code>，本次已重新读取确认内容未变；影响范围＝四桶比例、三层流动性及依赖归桶的 KPI，其余数据为本次实时只读读数，与上一版（18:53 HKT）逐项核对零变动。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重逐票沿用（未发明新系数）· 四类清单 v9.6 · USSC 基数 v9.8 · 四类「动态缺口」沿用既定 v9.6 方法学（本次未重新推导公式）；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。本次已再次检索当前环境已授权的 Google Drive（关键词 XUAN + MRVL 全文检索、标题含 XUAN/IB-HK/MRVL/0-A/分类），未发现新的 §0-A 分类规则文件，待决定事项 1 沿用未决。FX 参考 CAD/USD 0.7192039（IB Base，与上一版一致），无换汇动作。</li>
 <li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本期未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本临时版通过与定时版相同的候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接，但不冒充或替代 AM/PM 定时版的成功证据。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项，完整取数记录见本次会话最终输出）。</li>
 </ol>
