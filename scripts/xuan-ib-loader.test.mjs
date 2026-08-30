@@ -242,7 +242,7 @@ test('the ad-hoc launcher waits for a newly verified publication and then render
   await poll.callback();
 
   assert.match(app.frame.srcdoc, /completed-ad-hoc/);
-  assert.match(app.status.textContent, /^临时报告已完成 · 报告 2026-08-28 · 临时版/);
+  assert.equal(app.status.textContent, '临时报告已完成 · 已自动刷新');
   assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
   assert.equal(requests.filter((url) => url.includes('latest.meta.json')).length, 3);
   assert.equal(requests.filter((url) => url.includes('latest.html')).length, 3);
@@ -308,7 +308,8 @@ test('a schema-v1 metadata and HTML pair is rendered only after its exact Git bl
 
   assert.match(app.frame.srcdoc, /fresh-pair/);
   assert.match(app.frame.srcdoc, /Content-Security-Policy/);
-  assert.match(app.status.textContent, /报告 2026-08-28 · 睡前版/);
+  assert.match(app.status.textContent, /^已同步 \d{2}:\d{2}$/);
+  assert.doesNotMatch(app.status.textContent, /报告|睡前版|\bL\b/);
   assert.equal(app.status.classList.contains('error'), false);
   assert.equal(app.warning.hidden, true);
   assert.equal(app.button.disabled, false);
@@ -510,7 +511,7 @@ test('mixed metadata and HTML fail closed to the locally stored verified report'
   assert.doesNotMatch(app.frame.srcdoc, /unpaired-upstream/);
   assert.equal(app.warning.hidden, false);
   assert.match(app.warning.textContent, /上游暂不一致，正在显示上一份已验证版本/);
-  assert.match(app.status.textContent, /显示上一份已验证版本 · 报告 2026-08-27 · 睡前版/);
+  assert.equal(app.status.textContent, '显示上一份已验证版本 · 2026-08-27 睡前版');
   assert.equal(app.status.classList.contains('error'), true);
   assert.equal(app.button.disabled, false);
 });
@@ -606,7 +607,7 @@ test('network failure retains the verified cache and never opens an unverified d
 
   assert.match(app.frame.srcdoc, /offline-cache/);
   assert.equal(app.warning.hidden, false);
-  assert.match(app.status.textContent, /报告 2026-08-27 · 早间版/);
+  assert.equal(app.status.textContent, '显示上一份已验证版本 · 2026-08-27 早间版');
   assert.equal(app.status.classList.contains('error'), true);
 });
 
