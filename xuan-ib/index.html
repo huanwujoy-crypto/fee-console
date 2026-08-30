@@ -267,6 +267,29 @@
         return hex(await crypto.subtle.digest("SHA-1", payload));
       }
 
+      const decodeUtf8 = (bytes) =>
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+
+      const canonicalizeTransportInjection = (bytes) => {
+        const maxPublishedBytes = 2_000_000;
+        const maxTransportOverhead = 64 * 1024;
+        if (bytes.byteLength >= maxPublishedBytes + maxTransportOverhead) return null;
+        const html = decodeUtf8(bytes);
+        const externalScript = /<script\b(?=[^>]*[\t\n\f\r ]src[\t\n\f\r ]*=)[^>]*>[\s\S]*?<\/script[\t\n\f\r ]*>/gi;
+        const injected = html.match(externalScript) || [];
+        if (!injected.length || injected.length > 4) return null;
+        const encoder = new TextEncoder();
+        const removedBytes = injected.reduce(
+          (total, script) => total + encoder.encode(script).byteLength,
+          0
+        );
+        if (removedBytes > maxTransportOverhead) return null;
+        const canonicalBytes = encoder.encode(html.replace(externalScript, ""));
+        if (canonicalBytes.byteLength >= maxPublishedBytes ||
+            bytes.byteLength - canonicalBytes.byteLength !== removedBytes) return null;
+        return canonicalBytes;
+      };
+
       const reportInfo = (html) => {
         const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
         if (!match) throw new Error("页面缺少报告日期与版次");
@@ -374,11 +397,19 @@
 
       async function verifyPair(bytes, meta) {
         validateMeta(meta);
-        const blob = await gitBlobSha(bytes);
+        let verifiedBytes = bytes;
+        let blob = await gitBlobSha(verifiedBytes);
         if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
-          throw new Error("发布信息与页面不是同一版本");
+          const canonicalBytes = canonicalizeTransportInjection(bytes);
+          if (!canonicalBytes) throw new Error("发布信息与页面不是同一版本");
+          blob = await gitBlobSha(canonicalBytes);
+          if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
+            throw new Error("发布信息与页面不是同一版本");
+          }
+          verifiedBytes = canonicalBytes;
+          console.warn("XUAN-IB removed a transport-injected external script before verification");
         }
-        const html = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        const html = decodeUtf8(verifiedBytes);
         if (!html.includes("xuan-ib-handover:v1") ||
             !approvedTitles.some((title) => html.includes(title))) {
           throw new Error("页面完整性标记不符");
