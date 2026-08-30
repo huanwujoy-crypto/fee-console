@@ -1,7 +1,8 @@
 # Fee-console daily AUM contract
 
 This rule applies only to fee-console daily AUM runs. It does not apply to
-XUAN-IB handover publication.
+XUAN-IB handover publication. XUAN-IB runs instead follow
+`.claude/rules/xuan-ib-handover.md`; never combine the two write contracts.
 
 Before any scheduled, Run now, recovery, or manual fee-console daily AUM run
 computes values or writes `data.json`, it must read and obey:

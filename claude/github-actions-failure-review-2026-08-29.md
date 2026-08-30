@@ -79,3 +79,30 @@ endpoints were unavailable; it did not overwrite the phone page with guesses.
 - intentional maintenance: draft PR plus exact-SHA owner approval; no temporary
   removal of branch protection in future.
 
+## Follow-up audit — 2026-08-30
+
+The nine additional failure emails generated on 2026-08-29 HKT were reconciled
+against GitHub's run records:
+
+- five `xuan-ib-policy-lock` failures: three were from the superseded double-lock
+  design on PRs 65/66, while PRs 69/70 failed before their exact-head-SHA owner
+  comments and then passed on runs `33237423342` and `33241002794`;
+- three UI failures: the old UI guard duplicated the publication lock on PRs
+  65/66 and was permanently de-duplicated by PR 67; and
+- one freshness failure (`33232411691`): this was a true alarm because the
+  scheduled 2026-08-29 AM edition was absent and the fixed page still proved
+  only the 2026-08-27 PM edition. A later ad-hoc report must not be relabelled as
+  that missing scheduled edition.
+
+After the final failure at 2026-08-29 15:28 HKT, the next 50 workflow runs were
+49 successful and one deliberately skipped, with no failure or in-progress run.
+Historical red runs are retained and are not rerun merely to change their
+colour. The next scheduled PM/AM edition remains the end-to-end operational
+proof for the freshness watcher.
+
+The policy lock deliberately remains fail closed while a protected maintenance
+PR lacks an exact-SHA owner comment. To reduce notification races without
+weakening the required check, use this order: create the draft, immediately add
+the exact-SHA owner comment, then mark the PR ready. Do not make draft checks
+artificially green, because the same head SHA could otherwise have a brief
+mergeable window while the `ready_for_review` check is being registered.

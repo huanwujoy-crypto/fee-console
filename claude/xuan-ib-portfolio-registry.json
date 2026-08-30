@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-08-30",
+  "approvedBy": "Wu",
+  "approvedScope": "XUAN-IB report read-only portfolio scope",
+  "portfolios": [
+    {
+      "portfolioId": 936238,
+      "portfolioName": "NOAH-HK",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 936240,
+      "portfolioName": "NOAH-US",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 1021748,
+      "portfolioName": "ANTARCTICA",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 1031350,
+      "portfolioName": "UBS",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 936247,
+      "portfolioName": "IB-HK",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 936243,
+      "portfolioName": "Citi-HK & 地产四期",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 1350095,
+      "portfolioName": "HSBC-HK",
+      "role": "family",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 936249,
+      "portfolioName": "Schwab-HK",
+      "role": "ai_only",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "role": "ai_only",
+      "requiredEachReport": true
+    },
+    {
+      "portfolioId": 1021747,
+      "portfolioName": "NOAH-EB-5",
+      "role": "excluded",
+      "requiredEachReport": false
+    }
+  ],
+  "aggregationRules": {
+    "familyTotal": "include role=family only",
+    "aiPressureAuxiliary": "include role=ai_only only in the approved AI-pressure account set",
+    "excluded": "never include role=excluded in a total or derived metric"
+  }
+}
