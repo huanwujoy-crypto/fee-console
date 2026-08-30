@@ -392,7 +392,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <h2>⑤ 待决定事项 <small>3 项待 Wu 裁决 · 展开看 事实/选项 → Claude 意见 → 状态</small></h2>
 <p style="font-size:12px;color:var(--ink2);margin:2px 0 8px">当前为只读清单；请在 Claude App 中引用事项编号回复。</p>
 
-<details class="dcard" id="D-20260829-MRVL-CLASS"><summary>1 · Webull MRVL $21,662 属 §0-A 未分类新标的
+<details class="dcard" id="D-20260829-MRVL-CLASS" data-decision-id="D-20260829-MRVL-CLASS" data-decision-status="awaiting_user"><summary>1 · Webull MRVL $21,662 属 §0-A 未分类新标的
 <span class="rt wv">建议 (B) 不计入分子并披露 · 待 Wu 审核</span></summary>
 <div class="dbody">
 <p style="margin:5px 0"><b class="lab">事实/选项：</b>本次（08-30 19:11 HKT）重新读取 Webull 持仓，MRVL 仍在（数量 100、市值 $21,662，与上一版一致），§0-A 新标的分类规则本次会话仍未能核实（本仓库与本次检索的 Google Drive 材料中均未找到，关键词 XUAN / IB-HK / MRVL 未命中相关分类文件）。选项与此前版本相同：(A) 参照同为半导体的 SMH/AVGO 按 T1 80% 计入；(B) 保持不计入分子、比照 MSTR 处理并披露；(C) 停发整份报告直至规则可核实。</p>
@@ -400,7 +400,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <p style="margin:5px 0"><b class="lab">状态：</b><b>待 Wu 审核</b>（<code>awaiting_user</code>；沿用，本次仅重新确认事实不变）· 编号 <code>D-20260829-MRVL-CLASS</code></p>
 </div></details>
 
-<details class="dcard" id="D-20260829-GOOG-FAMILY-LIMIT"><summary>2 · GOOG/GOOGL 家庭主视图 5.47% 越 5% 参考线
+<details class="dcard" id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-status="awaiting_user"><summary>2 · GOOG/GOOGL 家庭主视图 5.47% 越 5% 参考线
 <span class="rt wv">建议 (B) 先重订线值 · 待 Wu 审核</span></summary>
 <div class="dbody">
 <p style="margin:5px 0"><b class="lab">事实/选项：</b>合计 $337,661 / $6,169,420 = 5.47%（IB 143,842 + Schwab 104,670 + Webull 89,149，本次逐票重算），与上一版一致（标的、股数、价格均未变动）。选项沿用不变：(A) 立线值 5% 硬约束；(B) 先重订线值（家庭合并 vs IB 执行视图分母不同）；(C) 忽略越线。</p>
@@ -408,7 +408,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <p style="margin:5px 0"><b class="lab">状态：</b><b>待 Wu 审核</b>（<code>awaiting_user</code>；沿用此前未决事项，本次仅更新读数）· 编号 <code>D-20260829-GOOG-FAMILY-LIMIT</code></p>
 </div></details>
 
-<details class="dcard" id="D-20260829-SEMILIQUID-MAPPING"><summary>3 · 四桶 mapping 仍缺多数 Semi Liquid 持仓的 override
+<details class="dcard" id="D-20260829-SEMILIQUID-MAPPING" data-decision-id="D-20260829-SEMILIQUID-MAPPING" data-decision-status="awaiting_user"><summary>3 · 四桶 mapping 仍缺多数 Semi Liquid 持仓的 override
 <span class="rt wv">建议 (A) 继续沿用，并尽快 (C) 补全 mapping · 待 Wu 审核</span></summary>
 <div class="dbody">
 <p style="margin:5px 0"><b class="lab">事实/选项：</b>本次已重新读取 <code>claude/four-bucket-mapping.json</code> 并逐项核对：内容与 08-24 verified snapshot 时一致，NOAH-HK / ANTARCTICA / UBS 三个组合中带「Semi Liquid」Sharesight 标签的持仓本次<b>精确计数为 56 个</b>（此前版本估计为「约 50 个」），其中仍仅 8 个在 <code>holdingOverrides</code> 中有明确 hedge_fund/evergreen 归类；其余 48 个因 mapping 自带 <code>unknownSemiLiquid</code> 规则要求 fail-closed，本次继续沿用 08-24 快照，这是第六个使用同一快照的读数周期。选项不变：(A) 继续沿用直至 mapping 补全；(B) 由 Claude 按名称模式推断补全（明确违反 mapping 自身规则，不建议）；(C) 提请 Wu/仓库侧补全 mapping 后再固化。</p>
@@ -484,4 +484,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="foot">只读报告 · 数据截至 19:11 HKT · 已验证发布 · 不是交易指令</div>
 
 </div></div>
+<template id="xuan-ib-decision-state-v1" type="application/json">
+{"schemaVersion":1,"interaction":"disabled","decisions":[{"decisionId":"D-20260829-MRVL-CLASS","status":"awaiting_user"},{"decisionId":"D-20260829-GOOG-FAMILY-LIMIT","status":"awaiting_user"},{"decisionId":"D-20260829-SEMILIQUID-MAPPING","status":"awaiting_user"}],"receipts":[]}
+</template>
 </body></html>
