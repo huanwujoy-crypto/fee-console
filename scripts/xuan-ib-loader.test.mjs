@@ -84,10 +84,196 @@ const metaFor = (html, overrides = {}) => {
   };
 };
 
-function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z'}) {
+// Deliberately small DOM model for the parent-owned display enhancement. It
+// models adoption, element identity and load ordering; it does not pretend to
+// establish real-browser sandbox or iOS external-protocol behavior.
+class DisplayElement {
+  constructor(tagName, ownerDocument) {
+    this.tagName = tagName.toUpperCase();
+    this.ownerDocument = ownerDocument;
+    this.parentElement = null;
+    this.children = [];
+    this.attributes = new Map();
+    this._text = '';
+    this.hidden = false;
+    this.disabled = false;
+    this.checked = false;
+    this.listeners = {};
+  }
+  get className() { return this.getAttribute('class') || ''; }
+  set className(value) { this.setAttribute('class', value); }
+  get id() { return this.getAttribute('id') || ''; }
+  set id(value) { this.setAttribute('id', value); }
+  get content() { return this.getAttribute('content') || ''; }
+  set content(value) { this.setAttribute('content', value); }
+  get textContent() { return this._text + this.children.map((node) => node.textContent).join(''); }
+  set textContent(value) {
+    for (const node of this.children) node.parentElement = null;
+    this.children = [];
+    this._text = String(value);
+  }
+  get nextElementSibling() {
+    const siblings = this.parentElement?.children || [];
+    return siblings[siblings.indexOf(this) + 1] || null;
+  }
+  setAttribute(name, value) { this.attributes.set(name, String(value)); }
+  getAttribute(name) { return this.attributes.has(name) ? this.attributes.get(name) : null; }
+  hasAttribute(name) { return this.attributes.has(name); }
+  removeAttribute(name) { this.attributes.delete(name); }
+  addEventListener(name, callback) { this.listeners[name] = callback; }
+  adopt(ownerDocument) {
+    this.ownerDocument = ownerDocument;
+    for (const node of this.children) node.adopt(ownerDocument);
+  }
+  append(...nodes) {
+    for (const node of nodes) {
+      node.remove();
+      node.adopt(this.ownerDocument);
+      node.parentElement = this;
+      this.children.push(node);
+    }
+  }
+  prepend(...nodes) {
+    for (const node of [...nodes].reverse()) {
+      node.remove();
+      node.adopt(this.ownerDocument);
+      node.parentElement = this;
+      this.children.unshift(node);
+    }
+  }
+  remove() {
+    if (!this.parentElement) return;
+    const siblings = this.parentElement.children;
+    siblings.splice(siblings.indexOf(this), 1);
+    this.parentElement = null;
+  }
+  replaceWith(node) {
+    const parent = this.parentElement;
+    assert.ok(parent, 'replacement target must have a parent');
+    const position = parent.children.indexOf(this);
+    node.remove();
+    node.adopt(this.ownerDocument);
+    node.parentElement = parent;
+    parent.children[position] = node;
+    this.parentElement = null;
+  }
+  contains(node) { return this === node || this.children.some((child) => child.contains(node)); }
+  matches(selector) {
+    const attributes = [...selector.matchAll(/\[([\w-]+)="([^"]*)"\]/g)];
+    const presentAttributes = [...selector.matchAll(/\[([\w-]+)\]/g)].map((match) => match[1]);
+    const simple = selector.replace(/\[[^\]]+\]/g, '').replace(/:checked/g, '');
+    const tag = simple.match(/^[a-z][a-z0-9-]*/i)?.[0];
+    const classes = [...simple.matchAll(/\.([\w-]+)/g)].map((match) => match[1]);
+    const id = simple.match(/#([\w-]+)/)?.[1];
+    return (!tag || this.tagName === tag.toUpperCase()) &&
+      (!id || this.id === id) &&
+      classes.every((name) => this.className.split(/\s+/).includes(name)) &&
+      attributes.every(([, name, value]) => this.getAttribute(name) === value) &&
+      presentAttributes.every((name) => this.hasAttribute(name)) &&
+      (!selector.includes(':checked') || this.checked);
+  }
+  querySelectorAll(selector) {
+    const descendants = this.children.flatMap((child) => [child, ...child.descendants()]);
+    const parts = selector.trim().split(/\s+(?![^\[]*\])/);
+    return descendants.filter((node) => {
+      if (!node.matches(parts.at(-1))) return false;
+      let ancestor = node.parentElement;
+      for (let index = parts.length - 2; index >= 0; index -= 1) {
+        while (ancestor && !ancestor.matches(parts[index])) ancestor = ancestor.parentElement;
+        if (!ancestor) return false;
+        ancestor = ancestor.parentElement;
+      }
+      return true;
+    });
+  }
+  descendants() { return this.children.flatMap((child) => [child, ...child.descendants()]); }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+}
+
+class DisplayDocument {
+  constructor(url = 'about:srcdoc') {
+    this.URL = url;
+    this.documentElement = new DisplayElement('html', this);
+    this.head = this.createElement('head');
+    this.body = this.createElement('body');
+    this.documentElement.append(this.head, this.body);
+  }
+  createElement(tagName) { return new DisplayElement(tagName, this); }
+  querySelectorAll(selector) { return this.documentElement.querySelectorAll(selector); }
+  querySelector(selector) { return this.querySelectorAll(selector)[0] || null; }
+  getElementById(id) { return this.documentElement.descendants().find((node) => node.id === id) || null; }
+}
+
+function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicatePane = false,
+  duplicateHeading = false, omitHeading = false, mismatchCard = false} = {}) {
+  const doc = new DisplayDocument(url);
+  const element = (tag, attributes = {}, text = '') => {
+    const node = doc.createElement(tag);
+    for (const [name, value] of Object.entries(attributes)) node.setAttribute(name, value);
+    node.textContent = text;
+    return node;
+  };
+  const renderToken = token ?? srcdoc.match(/<meta name="xuan-loader-render" content="([^"]+)">/)?.[1];
+  doc.head.append(element('meta', {name: 'xuan-loader-render', content: renderToken || ''}));
+  for (let index = 1; index <= 4; index += 1) {
+    const radio = element('input', {id: `s${index}`, name: 'sec'});
+    radio.checked = index === 1;
+    doc.body.append(radio);
+  }
+  const label = element('label', {for: 's4'}, '待办');
+  label.append(element('span', {class: 'dot'}, String(decisions.filter((item) => item.status === 'awaiting_user').length)));
+  doc.body.append(label);
+  const pane = element('div', {class: 'pane p4'});
+  const card = element('div', {class: 'card'});
+  if (!omitHeading) card.append(element('h2', {'data-decision-group-title': 'awaiting_user'}, '⑤ 待决定事项'));
+  if (duplicateHeading) card.append(element('h2', {'data-decision-group-title': 'awaiting_user'}, '重复标题'));
+  card.append(element('p', {}, '当前为只读清单；请在 Claude App 中引用事项编号回复。'));
+  for (const item of decisions.filter((decision) => decision.status === 'awaiting_user')) {
+    const details = element('details', {
+      class: 'dcard', id: item.decisionId,
+      'data-decision-id': mismatchCard ? 'D-20260830-WRONG' : item.decisionId,
+      'data-decision-status': item.status,
+    });
+    details.append(element('summary', {}, `${item.decisionId} · 原始待办`));
+    details.append(element('p', {}, '原始金额 $100.00；原始意见不变'));
+    card.append(details);
+  }
+  card.append(element('h2', {'data-decision-group-title': 'resolved'}, '已决定 / 待落实'));
+  for (const item of decisions.filter((decision) => decision.status !== 'awaiting_user')) {
+    const details = element('details', {
+      class: 'dcard', id: item.decisionId,
+      'data-decision-id': item.decisionId, 'data-decision-status': item.status,
+    });
+    details.append(element('summary', {}, '已决定 / 待落实'));
+    card.append(details);
+  }
+  const closed = element('details');
+  closed.append(element('summary', {}, '已结案 / 只读观察'));
+  const trigger = element('details');
+  trigger.append(element('summary', {}, '⑥ 换仓触发检查'));
+  trigger.append(element('p', {}, '触发无；GTC 12 张'));
+  pane.append(card, closed, trigger);
+  doc.body.append(pane);
+  if (duplicatePane) doc.body.append(element('div', {class: 'pane p4'}));
+  return {doc, pane, card, closed, trigger};
+}
+
+function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false}) {
   const listeners = {adhoc: {}, decision: {}, button: {}, window: {}, document: {}};
   const intervals = [];
-  const frame = {srcdoc: ''};
+  let frameSrcdoc = '';
+  const frame = {
+    srcdocWrites: 0, contentDocument: null, writes: [], attributes: new Map([['sandbox', '']]),
+    setAttribute(name, value) {
+      this.attributes.set(name, String(value));
+      this.writes.push({attribute: name, value: String(value)});
+    },
+    getAttribute(name) { return this.attributes.get(name) ?? null; },
+  };
+  Object.defineProperty(frame, 'srcdoc', {
+    get: () => frameSrcdoc,
+    set: (value) => { frameSrcdoc = value; frame.srcdocWrites += 1; frame.writes.push({attribute: 'srcdoc', value}); },
+  });
   const adhoc = {
     addEventListener: (name, callback) => { listeners.adhoc[name] = callback; },
   };
@@ -95,13 +281,23 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     disabled: false,
     addEventListener: (name, callback) => { listeners.button[name] = callback; },
   };
-  const decisionAttributes = new Map();
-  const decision = {
+  const outerDocument = displayDom ? new DisplayDocument('https://example.test/xuan-ib/') : null;
+  const decision = displayDom ? outerDocument.createElement('button') : {
     hidden: true,
-    addEventListener: (name, callback) => { listeners.decision[name] = callback; },
-    setAttribute: (name, value) => decisionAttributes.set(name, String(value)),
+    attributes: new Map(),
+    setAttribute(name, value) { this.attributes.set(name, String(value)); },
   };
-  const decisionCount = {textContent: '0'};
+  decision.hidden = true;
+  decision.addEventListener = (name, callback) => { listeners.decision[name] = callback; };
+  const decisionAttributes = decision.attributes;
+  const decisionCount = displayDom ? outerDocument.createElement('span') : {textContent: '0'};
+  decisionCount.textContent = '0';
+  if (displayDom) {
+    decision.id = 'decision';
+    decisionCount.id = 'decision-count';
+    decision.append(decisionCount);
+    outerDocument.body.append(decision);
+  }
   const status = {textContent: '', classList: classList()};
   const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
   const elements = new Map([
@@ -192,6 +388,8 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     decisionAttributes,
     decisionCount,
     frame,
+    loadFrame: (doc) => { frame.contentDocument = doc; frame.onload?.(); },
+    outerDocument,
     intervals,
     listeners,
     location,
@@ -226,7 +424,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-30\.1"/);
+  assert.match(loader, /loaderBuild = "2026-08-31\.1"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -270,21 +468,33 @@ test('the ad-hoc report control runs the private iPhone Shortcut without embeddi
 });
 
 test('the decision control uses one fixed Shortcut URL and never embeds report or user data', () => {
-  const link = loader.match(/<a id="decision"[\s\S]*?<\/a>/)?.[0];
-  assert.ok(link, 'the outer loader must contain the decision launcher');
+  const control = loader.match(/<button id="decision"[\s\S]*?<\/button>/)?.[0];
+  assert.ok(control, 'the trusted parent must own the decision launcher');
   assert.match(
-    link,
-    /href="shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E"/
+    loader,
+    /const decisionShortcutUrl = "shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E"/
   );
-  assert.match(link, /hidden/);
-  assert.match(link, /回应待办/);
-  assert.doesNotMatch(link, /target="_blank"/);
-  assert.doesNotMatch(link, /decisionId|sourceSha|htmlBlob|publicSummary|token|secret|api[_-]?key/i);
+  assert.match(control, /type="button"/);
+  assert.match(control, /hidden/);
+  assert.match(control, /回应待办/);
+  assert.doesNotMatch(control, /\bhref=|\bonclick=|\btarget=/);
+  assert.doesNotMatch(control, /decisionId|sourceSha|htmlBlob|publicSummary|token|secret|api[_-]?key/i);
+  assert.doesNotMatch(loader.match(/<header\b[\s\S]*?<\/header>/)?.[0] || '', /id="decision"|回应待办/);
+  assert.match(loader, /<div id="decision-parking" hidden>/);
+  const sandbox = loader.match(/<iframe\b[^>]*\bsandbox="([^"]*)"/)?.[1];
+  assert.equal(sandbox, '', 'the initial frame starts fully sandboxed');
+  const allowedSandboxValues = [...loader.matchAll(/frame\.setAttribute\("sandbox", "([^"]*)"\)/g)].map((match) => match[1]);
+  assert.deepEqual(new Set(allowedSandboxValues), new Set(['allow-same-origin', '']),
+    'only a verified report can get same-origin; scripts, forms, popups and navigation remain forbidden');
+  for (const directive of ['default-src', 'script-src', 'connect-src', 'frame-src', 'object-src', 'form-action']) {
+    assert.ok(loader.includes(`${directive} &apos;none&apos;`), `${directive} remains blocked`);
+  }
   assert.match(loader, /xuan-ib:decision-wait:v1/);
   assert.match(loader, /waitTimeoutMs = 20 \* 60_000/);
   assert.match(loader, /decisionButton\.addEventListener\("click", beginDecisionWait\)/);
   assert.match(loader, /event\.preventDefault\(\)/);
   assert.match(loader, /location\.href = decisionShortcutUrl/);
+  assert.doesNotMatch(loader, /decisionButton\.onclick\s*=/);
   assert.doesNotMatch(loader, /clipboard/i);
 });
 
@@ -306,6 +516,11 @@ test('only an enabled inert decision template reveals the compact awaiting-user 
       count: '1',
     },
     {
+      body: decisionTemplate({decisions: [{decisionId: 'D-20260830-ACCEPTED', status: 'accepted'}]}),
+      hidden: false,
+      count: '0',
+    },
+    {
       body: decisionTemplate({
         decisions: [awaitingDecision(), awaitingDecision('D-20260830-SECOND-ITEM')],
       }),
@@ -324,7 +539,354 @@ test('only an enabled inert decision template reveals the compact awaiting-user 
     await app.listeners.button.click();
     assert.equal(app.decision.hidden, variant.hidden, `variant ${index}`);
     assert.equal(app.decisionCount.textContent, variant.count, `variant ${index}`);
+    assert.equal(app.decision.disabled, variant.hidden || variant.count === '0', `variant ${index}`);
+    assert.equal(app.decisionAttributes.get('aria-disabled'), String(variant.hidden || variant.count === '0'));
+    assert.equal(app.decisionCount.hidden, variant.count === '0');
   }
+});
+
+test('verified todo display puts the trigger first and a collapsed pending fold beside the parent button', async () => {
+  const decisions = [awaitingDecision(), awaitingDecision('D-20260830-SECOND-ITEM'),
+    {decisionId: 'D-20260830-ALREADY-ACCEPTED', status: 'accepted'}];
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + '原始财务正文 $100.00');
+  const meta = metaFor(html);
+  let fetches = 0;
+  const app = loaderHarness({displayDom: true, fetchImpl: async (url) => {
+    fetches += 1;
+    return String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)});
+  }});
+  const record = await app.listeners.button.click();
+  const fixture = todoDocument(app.frame.srcdoc, decisions);
+  const originalCards = decisions.map((item) => fixture.doc.getElementById(item.decisionId));
+  const originalTexts = originalCards.map((card) => card.textContent);
+  const originalButton = app.decision;
+  const originalListener = app.listeners.decision.click;
+
+  app.loadFrame(fixture.doc);
+
+  const row = fixture.doc.querySelector('.xuan-decision-row');
+  const fold = fixture.doc.querySelector('.xuan-decision-fold');
+  const body = fixture.doc.querySelector('.xuan-decision-body');
+  assert.equal(fixture.pane.children[0], fixture.trigger);
+  assert.equal(row.parentElement, fixture.card);
+  assert.equal(fold.parentElement, row);
+  assert.equal(fold.hasAttribute('open'), false, 'pending content starts collapsed');
+  assert.equal(fold.querySelector('summary').textContent, '待决定事项2 项');
+  assert.equal(app.decision, originalButton, 'move the parent-owned element, never clone a report action');
+  assert.equal(app.decision.parentElement, row, 'button is a sibling of the fold, not inside its summary');
+  assert.equal(app.decision.ownerDocument, fixture.doc);
+  assert.equal(app.decisionCount.ownerDocument, fixture.doc, 'adoption includes the count');
+  assert.equal(app.listeners.decision.click, originalListener, 'parent callback survives document adoption');
+  assert.deepEqual(body.children, originalCards.slice(0, 2));
+  assert.equal(originalCards[2].parentElement, fixture.card, 'already-decided items stay outside pending');
+  assert.deepEqual(originalCards.map((card) => card.textContent), originalTexts);
+  assert.equal(fixture.card.children.some((node) => node.tagName === 'P' && node.textContent.startsWith('当前为只读清单')), false);
+  const displayStyle = fixture.doc.head.querySelector('style').textContent;
+  assert.match(displayStyle, /\.xuan-decision-row\{position:relative/);
+  assert.match(displayStyle, /\.xuan-decision-fold\{display:block/);
+  assert.match(displayStyle, /\.xuan-decision-fold>summary\{width:calc\(100% - 108px\)/);
+  assert.match(displayStyle, /\.xuan-decision-body\{width:100%;min-width:0\}/);
+  assert.match(displayStyle, /#decision\{position:absolute;top:0;right:0;width:100px/);
+  assert.doesNotMatch(displayStyle, /display:contents|display:grid|grid-column/);
+  assert.match(fixture.doc.head.querySelector('style').textContent, /\.xuan-decision-fold:not\(\[open\]\)>\.xuan-decision-body\{display:none\}/);
+
+  const saved = JSON.parse(app.stored.get('xuan-ib:last-verified:v1'));
+  assert.equal(saved.html, html, 'display mutation never changes the cached canonical HTML');
+  assert.equal(record.html, html);
+  assert.equal(record.blob, gitBlobSha(Buffer.from(html)));
+  assert.deepEqual(saved.meta, meta);
+  assert.doesNotMatch(saved.html, /xuan-decision-row|xuan-loader-render/);
+
+  let prevented = false;
+  const beforeClickFetches = fetches;
+  app.listeners.decision.click({preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
+  assert.match(app.location.href, /^shortcuts:\/\/run-shortcut\?name=XUAN-IB%20/);
+  assert.equal(fetches, beforeClickFetches, 'the real click must launch synchronously without awaiting a refresh');
+  const wait = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
+  assert.deepEqual(wait.awaitingDecisionIds, decisions.slice(0, 2).map((item) => item.decisionId));
+  assert.equal(wait.baselines[0].htmlBlob, meta.htmlBlob);
+});
+
+test('zero pending keeps a disabled inline response control and preserves all accepted items', async () => {
+  const decisions = [1, 2, 3].map((number) => ({decisionId: `D-20260830-ACCEPTED-${number}`, status: 'accepted'}));
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}));
+  const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const fixture = todoDocument(app.frame.srcdoc, decisions);
+  app.loadFrame(fixture.doc);
+
+  assert.equal(app.decision.hidden, false);
+  assert.equal(app.decision.disabled, true);
+  assert.equal(app.decisionAttributes.get('aria-disabled'), 'true');
+  assert.equal(app.decisionCount.hidden, true);
+  assert.equal(fixture.doc.querySelector('.xuan-decision-fold').hasAttribute('open'), false);
+  assert.equal(fixture.doc.querySelector('.xuan-decision-fold').querySelector('summary').textContent, '待决定事项0 项');
+  assert.match(fixture.doc.querySelector('.xuan-decision-empty').textContent, /暂无待决定事项/);
+  assert.equal(fixture.doc.querySelector('label[for="s4"] .dot'), null, 'zero is not a pending attention badge');
+  for (const item of decisions) assert.equal(fixture.doc.getElementById(item.decisionId).parentElement, fixture.card);
+  app.listeners.decision.click({preventDefault() {}});
+  assert.equal(app.location.href, 'https://example.test/xuan-ib/');
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+});
+
+test('todo controls fail closed on missing or ambiguous containers, headings and pending cards', async () => {
+  const decisions = [awaitingDecision()];
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}));
+  for (const variant of [{duplicatePane: true}, {duplicateHeading: true}, {omitHeading: true}, {mismatchCard: true}]) {
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const fixture = todoDocument(app.frame.srcdoc, decisions, variant);
+    app.loadFrame(fixture.doc);
+    assert.equal(app.decision.ownerDocument, app.outerDocument, JSON.stringify(variant));
+    assert.equal(fixture.doc.querySelector('.xuan-decision-row'), null, JSON.stringify(variant));
+    app.listeners.decision.click({preventDefault() {}});
+    assert.equal(app.location.href, 'https://example.test/xuan-ib/', JSON.stringify(variant));
+    assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false, JSON.stringify(variant));
+  }
+});
+
+test('ordinary AM and PM reports retain the response control with one explicit legacy pending H2', async () => {
+  for (const edition of ['早间版', '睡前版']) {
+    const decisions = [awaitingDecision(), {decisionId: 'D-20260830-RESOLVED', status: 'accepted'}];
+    const html = reportHtml('2026-08-30', edition, decisionTemplate({decisions}));
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const fixture = todoDocument(app.frame.srcdoc, decisions);
+    for (const heading of fixture.doc.querySelectorAll('[data-decision-group-title]')) heading.removeAttribute('data-decision-group-title');
+    const pendingCard = fixture.doc.getElementById(decisions[0].decisionId);
+    app.loadFrame(fixture.doc);
+    assert.equal(app.decision.ownerDocument, fixture.doc, edition);
+    assert.equal(fixture.doc.querySelector('.xuan-decision-fold').hasAttribute('open'), false, edition);
+    assert.equal(fixture.doc.querySelector('.xuan-decision-body').children[0], pendingCard, edition);
+    assert.equal(fixture.doc.getElementById(decisions[1].decisionId).parentElement, fixture.card, edition);
+    app.listeners.decision.click({preventDefault() {}});
+    assert.match(app.location.href, /^shortcuts:\/\/run-shortcut\?name=XUAN-IB%20/, edition);
+  }
+});
+
+test('legacy compatibility rejects conflicting groups, lookalike titles and misplaced or duplicate pending cards', async () => {
+  const variants = ['duplicate-legacy', 'lookalike-title', 'incomplete-typed-groups', 'marker-without-typed-heading',
+    'typed-and-legacy-conflict', 'card-before-heading', 'card-after-resolved-heading', 'card-inside-trigger',
+    'duplicate-card-id', 'duplicate-decision-id', 'non-details-card'];
+  const decisions = [awaitingDecision()];
+  for (const variant of variants) {
+    const groupMarker = variant === 'marker-without-typed-heading' ? '<!-- xuan-ib-decision-group:v1:awaiting_user:start -->' : '';
+    const html = reportHtml('2026-08-30', '睡前版', decisionTemplate({decisions}) + groupMarker);
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const fixture = todoDocument(app.frame.srcdoc, decisions);
+    const heading = fixture.doc.querySelector('[data-decision-group-title="awaiting_user"]');
+    const pendingCard = fixture.doc.getElementById(decisions[0].decisionId);
+    if (variant !== 'typed-and-legacy-conflict') {
+      for (const node of fixture.doc.querySelectorAll('[data-decision-group-title]')) node.removeAttribute('data-decision-group-title');
+    }
+    if (variant === 'duplicate-legacy' || variant === 'typed-and-legacy-conflict') {
+      const duplicate = fixture.doc.createElement('h2');
+      duplicate.textContent = '⑤ 待决定事项';
+      fixture.card.append(duplicate);
+    } else if (variant === 'lookalike-title') heading.textContent = '说明：⑤ 待决定事项';
+    else if (variant === 'incomplete-typed-groups') fixture.card.querySelectorAll('h2')[1].setAttribute('data-decision-group-title', 'resolved');
+    else if (variant === 'card-before-heading') fixture.card.prepend(pendingCard);
+    else if (variant === 'card-after-resolved-heading') fixture.card.append(pendingCard);
+    else if (variant === 'card-inside-trigger') fixture.trigger.append(pendingCard);
+    else if (variant === 'duplicate-card-id' || variant === 'duplicate-decision-id') {
+      const duplicate = fixture.doc.createElement('details');
+      duplicate.setAttribute(variant === 'duplicate-card-id' ? 'id' : 'data-decision-id', decisions[0].decisionId);
+      fixture.doc.body.append(duplicate);
+    } else if (variant === 'non-details-card') pendingCard.tagName = 'DIV';
+
+    app.loadFrame(fixture.doc);
+    assert.equal(app.decision.ownerDocument, app.outerDocument, variant);
+    assert.equal(fixture.doc.querySelector('.xuan-decision-row'), null, variant);
+    app.listeners.decision.click({preventDefault() {}});
+    assert.equal(app.location.href, 'https://example.test/xuan-ib/', variant);
+    assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false, variant);
+  }
+});
+
+test('the frame only gains same-origin immediately before verified HTML and keeps errors fully sandboxed', async () => {
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions: [awaitingDecision()]}));
+  let valid = false;
+  const app = loaderHarness({fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: metaFor(html, valid ? {} : {htmlBlob: 'f'.repeat(40)}), bytes: []})
+    : response({bytes: Buffer.from(html)})});
+  assert.equal(app.frame.getAttribute('sandbox'), '');
+  await app.listeners.button.click();
+  assert.equal(app.frame.getAttribute('sandbox'), '');
+  assert.equal(app.frame.writes.some((write) => write.attribute === 'sandbox' && write.value !== ''), false);
+  assert.match(app.frame.srcdoc, /暂时无法读取最新交接页/);
+  valid = true;
+  await app.listeners.button.click();
+  assert.equal(app.frame.getAttribute('sandbox'), 'allow-same-origin');
+  const verifiedWrite = app.frame.writes.findLastIndex((write) => write.attribute === 'srcdoc');
+  assert.deepEqual(app.frame.writes[verifiedWrite - 1], {attribute: 'sandbox', value: 'allow-same-origin'});
+  assert.match(app.frame.writes[verifiedWrite].value, /Content-Security-Policy/);
+  assert.match(app.frame.writes[verifiedWrite].value, /script-src &apos;none&apos;/);
+  valid = false;
+  await app.listeners.button.click();
+  assert.equal(app.frame.getAttribute('sandbox'), 'allow-same-origin', 'a last-verified fallback is still trusted');
+  assert.match(app.frame.srcdoc, /xuan-ib-decision-state-v1/);
+  assert.equal(app.frame.writes.filter((write) => write.attribute === 'sandbox')
+    .every((write) => ['', 'allow-same-origin'].includes(write.value)), true);
+});
+
+test('a changed or missing render token invalidates the launcher even within the same installed document', async () => {
+  const decisions = [awaitingDecision()];
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}));
+  for (const missing of [false, true]) {
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const fixture = todoDocument(app.frame.srcdoc, decisions);
+    app.loadFrame(fixture.doc);
+    const token = fixture.doc.querySelector('meta[name="xuan-loader-render"]');
+    if (missing) token.remove();
+    else token.content = 'another-render';
+    app.listeners.decision.click({preventDefault() {}});
+    assert.equal(app.location.href, 'https://example.test/xuan-ib/');
+    assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+  }
+});
+
+test('iframe load requires the current render token and the actual about:srcdoc document', async () => {
+  const decisions = [awaitingDecision()];
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}));
+  for (const variant of [{token: 'xuan-render-forged'}, {url: 'https://example.test/other'}, {url: 'about:blank'}]) {
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const fixture = todoDocument(app.frame.srcdoc, decisions, variant);
+    app.loadFrame(fixture.doc);
+    assert.equal(app.decision.ownerDocument, app.outerDocument, JSON.stringify(variant));
+    assert.equal(fixture.doc.querySelector('.xuan-decision-row'), null);
+    app.listeners.decision.click({preventDefault() {}});
+    assert.equal(app.location.href, 'https://example.test/xuan-ib/');
+    assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+  }
+});
+
+test('late prior-frame loads cannot bind a new verified report to an old displayed document', async () => {
+  const decisions = [awaitingDecision()];
+  let html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'version A');
+  let meta = metaFor(html);
+  const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const first = todoDocument(app.frame.srcdoc, decisions);
+  const firstLoad = app.frame.onload;
+
+  html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'version B');
+  meta = metaFor(html, {sourceSha: '2'.repeat(40), sourceCommitEpoch: meta.sourceCommitEpoch + 1});
+  await app.listeners.button.click();
+  const second = todoDocument(app.frame.srcdoc, decisions);
+  app.frame.contentDocument = first.doc;
+  firstLoad();
+  assert.equal(app.decision.ownerDocument, app.outerDocument, 'old callback is rejected by render sequence');
+  app.frame.onload();
+  assert.equal(app.decision.ownerDocument, app.outerDocument, 'current callback also rejects old document token');
+  app.loadFrame(second.doc);
+  assert.equal(app.decision.ownerDocument, second.doc);
+
+  app.frame.contentDocument = first.doc;
+  app.listeners.decision.click({preventDefault() {}});
+  assert.equal(app.location.href, 'https://example.test/xuan-ib/', 'a detached old document cannot initiate a decision');
+  app.frame.contentDocument = second.doc;
+  second.doc.URL = 'https://example.test/unverified-navigation';
+  app.listeners.decision.click({preventDefault() {}});
+  assert.equal(app.location.href, 'https://example.test/xuan-ib/', 'navigation away from srcdoc invalidates the launcher');
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+});
+
+test('polling the same verified blob preserves the active todo tab, open fold and DOM identity', async () => {
+  const decisions = [awaitingDecision()];
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}));
+  const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const fixture = todoDocument(app.frame.srcdoc, decisions);
+  app.loadFrame(fixture.doc);
+  const fold = fixture.doc.querySelector('.xuan-decision-fold');
+  fold.setAttribute('open', '');
+  fixture.doc.getElementById('s1').checked = false;
+  fixture.doc.getElementById('s4').checked = true;
+  const initialWrites = app.frame.srcdocWrites;
+
+  await app.listeners.button.click();
+
+  assert.equal(app.frame.srcdocWrites, initialWrites);
+  assert.equal(app.frame.contentDocument, fixture.doc);
+  assert.equal(fixture.doc.querySelector('.xuan-decision-fold'), fold);
+  assert.equal(fold.hasAttribute('open'), true);
+  assert.equal(fixture.doc.getElementById('s4').checked, true);
+  assert.equal(app.decision.ownerDocument, fixture.doc);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
+});
+
+test('refreshing the same verified blob restores an iframe that navigated away or lost its render identity', async () => {
+  const decisions = [awaitingDecision()];
+  const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}));
+  for (const failure of ['navigated-away', 'same-url-new-document', 'changed-token', 'failed-load']) {
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const original = todoDocument(app.frame.srcdoc, decisions);
+    if (failure === 'failed-load') {
+      app.loadFrame(todoDocument(app.frame.srcdoc, decisions, {token: 'failed-load-token'}).doc);
+    } else {
+      app.loadFrame(original.doc);
+      if (failure === 'navigated-away') {
+        app.frame.contentDocument = new DisplayDocument('https://example.test/elsewhere');
+      } else if (failure === 'same-url-new-document') {
+        app.frame.contentDocument = todoDocument(app.frame.srcdoc, decisions).doc;
+      } else {
+        original.doc.querySelector('meta[name="xuan-loader-render"]').content = 'changed-token';
+      }
+    }
+    const beforeRefreshWrites = app.frame.srcdocWrites;
+    const oldToken = app.frame.srcdoc.match(/<meta name="xuan-loader-render" content="([^"]+)">/)?.[1];
+
+    await app.listeners.button.click();
+
+    assert.equal(app.frame.srcdocWrites, beforeRefreshWrites + 1, failure);
+    const restored = todoDocument(app.frame.srcdoc, decisions);
+    assert.notEqual(restored.doc.querySelector('meta[name="xuan-loader-render"]').content, oldToken, failure);
+    app.loadFrame(restored.doc);
+    assert.equal(app.decision.ownerDocument, restored.doc, failure);
+    assert.equal(restored.pane.children[0], restored.trigger, failure);
+    assert.equal(restored.doc.querySelector('.xuan-decision-fold').hasAttribute('open'), false, failure);
+    app.listeners.decision.click({preventDefault() {}});
+    assert.match(app.location.href, /^shortcuts:\/\/run-shortcut\?name=XUAN-IB%20/, failure);
+    assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html, failure);
+  }
+});
+
+test('a new verified blob keeps the selected todo tab but starts its pending fold collapsed', async () => {
+  const decisions = [awaitingDecision()];
+  let html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'first');
+  let meta = metaFor(html);
+  const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const first = todoDocument(app.frame.srcdoc, decisions);
+  app.loadFrame(first.doc);
+  first.doc.getElementById('s1').checked = false;
+  first.doc.getElementById('s4').checked = true;
+  first.doc.querySelector('.xuan-decision-fold').setAttribute('open', '');
+  html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'second');
+  meta = metaFor(html, {sourceSha: '2'.repeat(40), sourceCommitEpoch: meta.sourceCommitEpoch + 1});
+  await app.listeners.button.click();
+  const second = todoDocument(app.frame.srcdoc, decisions);
+  app.loadFrame(second.doc);
+  assert.equal(second.doc.getElementById('s4').checked, true);
+  assert.equal(second.doc.querySelector('.xuan-decision-fold').hasAttribute('open'), false);
+  assert.equal(app.decision.ownerDocument, second.doc);
+  assert.equal(first.doc.querySelector('#decision'), null, 'the existing control is moved out of the retired document');
 });
 
 test('malformed or duplicate decision templates fail closed instead of exposing an action', async () => {
@@ -611,7 +1173,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-30.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.1');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 

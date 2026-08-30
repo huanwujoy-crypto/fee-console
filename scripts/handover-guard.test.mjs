@@ -542,6 +542,63 @@ test('records-update preserves interaction and permits only a marked resolved-ca
   assert.match(downgrade.stderr, /preserve the trusted previous interaction mode/);
 });
 
+test('records-update accepts three decisions resolved together with the zero badge removed', () => {
+  const ids = ['D-20260829-MRVL-CLASS', 'D-20260829-GOOG-LIMIT', 'D-20260829-MAPPING'];
+  const previous = withDecisionDisplayGroups({
+    decisions: ids.map((id) => decision(id, 'awaiting_user')),
+  }).replace('<span class="dot">3</span>', '<span class="dot" aria-hidden="true">3</span>');
+  const current = withDecisionDisplayGroups({
+    decisions: ids.map((id) => decision(id, 'accepted')),
+    receipts: ids.map((id, index) => receipt({
+      decisionId: id,
+      receiptId: `R-20260830-15450${index}-A1B2C3D${index}`,
+      recordedAtHkt: `2026-08-30T15:45:0${index}+08:00`,
+    })),
+    recordsUpdate: true,
+  }).replace(' <span class="dot">0</span>', '');
+  const result = run(current, '2026-08-25', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.equal(result.status, 0, result.stderr);
+
+  const wrongVisibleCount = current.replace('待办</label>', '待办 <span class="dot">1</span></label>');
+  const wrongBadge = run(wrongVisibleCount, '2026-08-25', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.notEqual(wrongBadge.status, 0);
+  assert.match(wrongBadge.stderr, /aria label must match its badge|badge must equal awaiting_user/);
+
+  const wrongAria = run(current.replace('待办：0 项', '待办：3 项'), '2026-08-25', {
+    previousHtml: previous, sourceSha, htmlBlob,
+  });
+  assert.notEqual(wrongAria.status, 0);
+  assert.match(wrongAria.stderr, /aria label must match its badge/);
+});
+
+test('zero-badge normalization cannot hide remaining decisions or change unrelated badge attributes', () => {
+  const previous = withDecisionDisplayGroups({
+    decisions: [
+      decision('D-20260829-MRVL-CLASS', 'awaiting_user'),
+      decision('D-20260829-GOOG-LIMIT', 'awaiting_user'),
+    ],
+  });
+  const current = withDecisionDisplayGroups({
+    decisions: [
+      decision('D-20260829-MRVL-CLASS', 'accepted'),
+      decision('D-20260829-GOOG-LIMIT', 'awaiting_user'),
+    ],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  });
+  const missingBadge = run(current.replace('<span class="dot">1</span>', ''), '2026-08-25', {
+    previousHtml: previous, sourceSha, htmlBlob,
+  });
+  assert.notEqual(missingBadge.status, 0);
+  assert.match(missingBadge.stderr, /aria label must match its badge|badge must equal awaiting_user/);
+
+  const changedAttributes = run(current.replace('<span class="dot">1</span>', '<span class="dot" title="changed">1</span>'), '2026-08-25', {
+    previousHtml: previous, sourceSha, htmlBlob,
+  });
+  assert.notEqual(changedAttributes.status, 0);
+  assert.match(changedAttributes.stderr, /changed content outside/);
+});
+
 test('marked decision migration rejects wrong groups, count labels, and advice edits', () => {
   const previous = withDecisionDisplayGroups({
     decisions: [

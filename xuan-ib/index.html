@@ -135,17 +135,18 @@
           <span>生成临时报告</span>
           <small>一键启动 · 自动刷新</small>
         </a>
-        <a id="decision"
-           href="shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E"
-           rel="noopener noreferrer"
-           aria-label="通过 Claude 回应当前待决定事项；只记录意见，不执行交易"
-           hidden>
-          回应待办 <span id="decision-count" aria-hidden="true">0</span>
-        </a>
         <button id="refresh" type="button">刷新</button>
       </div>
     </header>
     <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
+    <div id="decision-parking" hidden>
+      <button id="decision" type="button"
+              aria-label="通过 Claude 回应当前待决定事项；只记录意见，不执行交易" hidden>
+        回应待办 <span id="decision-count" aria-hidden="true">0</span>
+      </button>
+    </div>
+    <!-- Same-origin lets only the trusted parent place its own controls.
+         Report scripts, forms, popups and top-navigation remain forbidden. -->
     <iframe id="handover" title="XUAN-投资管理 最新简报" sandbox="" referrerpolicy="no-referrer"></iframe>
   </div>
   <script>
@@ -157,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-30.1";
+      const loaderBuild = "2026-08-31.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -170,6 +171,12 @@
       let requestSequence = 0;
       let adhocWait = null;
       let decisionWait = null;
+      let renderedBlob = null;
+      let renderSequence = 0;
+      let decisionDocument = null;
+      let decisionDocumentBlob = null;
+      let renderedDocument = null;
+      let renderedToken = null;
 
       // Migration window: the phone page must keep working while published
       // handovers still carry the previous product name. The first entry is the
@@ -431,6 +438,13 @@
 
       function beginDecisionWait(event) {
         event.preventDefault();
+        if (decisionButton.ownerDocument && (!decisionDocument ||
+            decisionButton.ownerDocument !== decisionDocument ||
+            frame.contentDocument !== decisionDocument ||
+            decisionDocument.URL !== "about:srcdoc" ||
+            renderedDocument !== decisionDocument || !renderedToken ||
+            decisionDocument.querySelector('meta[name="xuan-loader-render"]')?.content !== renderedToken ||
+            decisionDocumentBlob !== lastVerified?.blob)) return;
         if (decisionWait && !expireWaits()) {
           showDecisionPending();
           return;
@@ -765,9 +779,13 @@
         const count = state
           ? state.decisions.filter((decision) => decision.status === "awaiting_user").length
           : 0;
-        const enabled = Boolean(state && state.interaction === "enabled" && count > 0);
-        decisionButton.hidden = !enabled;
+        const available = Boolean(state && state.interaction === "enabled");
+        const enabled = available && count > 0;
+        decisionButton.hidden = !available;
+        decisionButton.disabled = !enabled;
+        decisionButton.setAttribute("aria-disabled", String(!enabled));
         decisionCount.textContent = String(count);
+        decisionCount.hidden = count === 0;
         decisionButton.setAttribute(
           "aria-label",
           enabled
@@ -776,10 +794,131 @@
         );
       }
 
+      // Display-only enhancement of already verified bytes. Neither the
+      // canonical report/hash nor the receipt/decision ledger is rewritten.
+      function installTodoControls(doc, record) {
+        const panes = doc.querySelectorAll(".pane.p4");
+        if (panes.length !== 1) return;
+        const todo = panes[0];
+        const trigger = Array.from(todo.children).find((node) =>
+          node.tagName === "DETAILS" &&
+          node.querySelector("summary")?.textContent.includes("换仓触发检查")
+        );
+        if (trigger) todo.prepend(trigger);
+        if (!record.decisionState) return;
+        const groupHeadings = Array.from(todo.querySelectorAll('[data-decision-group-title]'));
+        const headings = groupHeadings.filter((node) =>
+          node.getAttribute("data-decision-group-title") === "awaiting_user");
+        const legacyHeadings = Array.from(todo.querySelectorAll("h2")).filter((node) =>
+          !node.hasAttribute("data-decision-group-title") && /^⑤\s*待决定事项(?:\s|$)/.test(node.textContent.trim()));
+        // Ordinary AM/PM reports may still use the original, unmarked H2.
+        // Never use that fallback to repair ambiguous or incomplete v1 groups.
+        const hasDisplayGroups = groupHeadings.length > 0 ||
+          record.html.includes("<!-- xuan-ib-decision-group:v1:");
+        if (hasDisplayGroups ? headings.length !== 1 || legacyHeadings.length !== 0 : legacyHeadings.length !== 1) return;
+        const heading = hasDisplayGroups ? headings[0] : legacyHeadings[0];
+        if (heading.tagName !== "H2") return;
+        const siblings = Array.from(heading.parentElement.children);
+        const headingIndex = siblings.indexOf(heading);
+        const nextHeadingIndex = siblings.findIndex((node, index) => index > headingIndex && node.tagName === "H2");
+        const pending = record.decisionState.decisions.filter((item) => item.status === "awaiting_user");
+        const cards = pending.map((item) => doc.getElementById(item.decisionId));
+        if (todo.querySelectorAll('[data-decision-status="awaiting_user"]').length !== cards.length ||
+            cards.some((card, index) => !card || card.tagName !== "DETAILS" || !todo.contains(card) ||
+            card.parentElement !== heading.parentElement || siblings.indexOf(card) <= headingIndex ||
+            (nextHeadingIndex >= 0 && siblings.indexOf(card) >= nextHeadingIndex) ||
+            doc.querySelectorAll(`[id="${pending[index].decisionId}"]`).length !== 1 ||
+            doc.querySelectorAll(`[data-decision-id="${pending[index].decisionId}"]`).length !== 1 ||
+            card.getAttribute("data-decision-id") !== pending[index].decisionId ||
+            card.getAttribute("data-decision-status") !== "awaiting_user")) return;
+
+        const style = doc.createElement("style");
+        style.textContent = `
+          .xuan-decision-row{position:relative;margin:0 0 12px}
+          .xuan-decision-fold{display:block;margin:0;border:0;background:transparent}
+          .xuan-decision-fold>summary{width:calc(100% - 108px);box-sizing:border-box;min-height:44px;display:flex;align-items:center;gap:7px;padding:9px 10px;border:1px solid var(--line,#deddd8);border-radius:12px;font-size:14px;white-space:nowrap;cursor:pointer}
+          .xuan-decision-fold>summary::before{content:'▸';font-size:12px}
+          .xuan-decision-fold[open]>summary::before{content:'▾'}
+          .xuan-decision-fold>summary::after{display:none}
+          .xuan-decision-fold>summary::-webkit-details-marker{display:none}
+          .xuan-decision-fold>summary small{margin-left:auto;font-size:12px;color:var(--mut,#777)}
+          .xuan-decision-body{width:100%;min-width:0}
+          .xuan-decision-fold:not([open])>.xuan-decision-body{display:none}
+          .xuan-decision-empty{margin:8px 0;color:var(--ink2,#666);font-size:13px}
+          #decision{position:absolute;top:0;right:0;width:100px;box-sizing:border-box;min-height:44px;padding:9px 8px;border:1px solid #63a170;border-radius:12px;background:#eef8f0;color:#246c35;font:inherit;font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer}
+          #decision:disabled{opacity:.5;cursor:default}
+          #decision[hidden],#decision-count[hidden]{display:none}
+          #decision-count{display:inline-block;margin-left:3px;min-width:18px;padding:1px 4px;border-radius:99px;background:#246c35;color:white;font-size:11px}
+          @media(prefers-color-scheme:dark){#decision{border-color:#4f8c5d;background:#142b19;color:#8ed09b}}
+        `;
+        doc.head.append(style);
+        const row = doc.createElement("div");
+        row.className = "xuan-decision-row";
+        const fold = doc.createElement("details");
+        fold.className = "xuan-decision-fold";
+        const summary = doc.createElement("summary");
+        summary.textContent = "待决定事项";
+        const count = doc.createElement("small");
+        count.textContent = `${pending.length} 项`;
+        summary.append(count);
+        const body = doc.createElement("div");
+        body.className = "xuan-decision-body";
+        if (cards.length) body.append(...cards);
+        else {
+          const empty = doc.createElement("p");
+          empty.className = "xuan-decision-empty";
+          empty.textContent = "暂无待决定事项；已采纳的意见保留在下方“已决定／待落实”。";
+          body.append(empty);
+        }
+        fold.append(summary, body);
+        row.append(fold, decisionButton);
+        const oldHint = heading.nextElementSibling;
+        if (oldHint?.tagName === "P" && oldHint.textContent.startsWith("当前为只读清单")) oldHint.remove();
+        heading.replaceWith(row);
+        decisionDocument = doc;
+        decisionDocumentBlob = record.blob;
+        if (pending.length === 0) {
+          const badge = doc.querySelector('label[for="s4"] .dot');
+          if (badge) badge.remove();
+        }
+      }
+
+      function displayVerified(record) {
+        // Polling an unchanged publication must not collapse open cards,
+        // reset the active tab or interrupt the user's place in the report.
+        if (renderedBlob === record.blob && renderedDocument &&
+            frame.contentDocument === renderedDocument && renderedDocument.URL === "about:srcdoc" &&
+            renderedDocument.querySelector('meta[name="xuan-loader-render"]')?.content === renderedToken) return;
+        let section = null;
+        try { section = frame.contentDocument?.querySelector('input[name="sec"]:checked')?.id; } catch (_) {}
+        const sequence = ++renderSequence;
+        const token = `xuan-render-${sequence}`;
+        frame.onload = () => {
+          const doc = frame.contentDocument;
+          if (sequence !== renderSequence || lastVerified?.blob !== record.blob || !doc ||
+              doc.URL !== "about:srcdoc" ||
+              doc.querySelector('meta[name="xuan-loader-render"]')?.content !== token) {
+            if (sequence === renderSequence) renderedBlob = null;
+            return;
+          }
+          installTodoControls(doc, record);
+          renderedDocument = doc;
+          renderedToken = token;
+          if (/^s[1-4]$/.test(section || "")) {
+            const radio = doc.getElementById(section);
+            if (radio?.getAttribute("name") === "sec") radio.checked = true;
+          }
+        };
+        frame.setAttribute("sandbox", "allow-same-origin");
+        frame.srcdoc = record.protectedHtml.replace(/<head[^>]*>/i,
+          (head) => `${head}<meta name="xuan-loader-render" content="${token}">`);
+        renderedBlob = record.blob;
+      }
+
       function renderVerified(record, prefix, warningMessage = "") {
-        frame.srcdoc = record.protectedHtml;
         lastVerified = record;
         updateDecisionControl(record);
+        displayVerified(record);
         warning.hidden = !warningMessage;
         warning.textContent = warningMessage;
         status.classList.toggle("error", Boolean(warningMessage));
@@ -868,6 +1007,7 @@
             warning.hidden = true;
             status.textContent = "暂时无法读取已验证报告";
             decisionButton.hidden = true;
+            frame.setAttribute("sandbox", "");
             frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
           }
           if (activeWait() && !expireWaits()) {
