@@ -14,6 +14,58 @@ manual, recovery, or ad hoc—must enter the same trusted publication path.
    deployment have completed. Never edit `xuan-ib/latest.html` or
    `xuan-ib/latest.meta.json` directly.
 
+## Decision and receipt continuity
+
+Before producing any candidate, read the paired, trusted
+`xuan-ib/latest.meta.json` and `xuan-ib/latest.html` from `main`. AM, PM, ad hoc,
+manual, recovery, and records-only candidates must carry forward every existing
+decision and every receipt from that trusted page. Existing receipt objects are
+append-only and immutable: the complete old receipt array must remain the exact
+ordered prefix of the new array. Stable decision IDs must not be deleted,
+recreated, or silently reset. A new receipt may reference only a decision that
+already existed as `awaiting_user` in the trusted previous page; do not create a
+decision and receipt together. Because v1 has no reject action, do not change
+`awaiting_user` directly to `rejected`. A candidate may otherwise add decisions,
+append receipts, or apply an allowed decision-state transition, but it must
+never make the phone page forget previously published management responses.
+
+A candidate that only records a decision response is a `records-update`, not an
+ad-hoc report. It must preserve the prior edition label, data date, as-of times,
+financial values, and calculation text, and it must not be counted as evidence
+that an AM or PM run succeeded. Do not relabel it as `临时版` or fetch financial
+data merely to record the response.
+
+Classify that candidate with exactly one inert marker placed immediately after
+the existing publication marker, without adding whitespace:
+`<!-- xuan-ib-handover:v1 --><!-- xuan-ib-records-update:v1 -->`.
+The marker is fail-closed: a records-update must append at least one receipt for
+a decision that existed as `awaiting_user` in the trusted previous page, and
+must preserve the trusted previous `interaction` mode exactly. Apart from the
+inert template, matching `data-decision-status`, pending badge/aria count, and
+the guarded display migration below, the prior HTML must remain
+byte-semantically identical. An accepted/modified card may move from
+`待决定事项` to `已决定 / 待落实` only inside the two unique
+`xuan-ib-decision-group:v1:{awaiting_user|resolved}:{start|end}` marker pairs.
+The guard requires exact group titles/counts, exact visible status labels, and
+an otherwise unchanged card, including its recommendation body. Do not change
+edition/date/as-of/amount/calculation text, unrelated cards, or add a new
+decision in a records-update. The
+commit subject remains `handover <trusted previous dataDate>` even when that
+date is older than today/yesterday; this stale-date exception applies only to a
+guard-verified records-update.
+
+Decision-state rollout is staged. While the trusted previous page has no
+`xuan-ib-decision-state-v1` template, legacy candidates without one remain
+compatible. The first structural bootstrap must publish a strictly valid
+template with `interaction: "disabled"` and an empty `receipts` array; it must
+not invent historical receipts.
+Once a trusted published page contains the template, every later report must
+inherit it and its complete history. Flip it to `interaction: "enabled"` only
+after the real Routine and Shortcut have been exercised against the bootstrap.
+A later, separately reviewed maintenance change may make the template globally
+mandatory after production evidence exists; do not combine that tightening with
+the first bootstrap.
+
 The trusted promotion workflow anchors each published source commit under the
 immutable `xuan-ib-published/` tag namespace. Do not create, move, or delete
 those tags from a handover-producing session.

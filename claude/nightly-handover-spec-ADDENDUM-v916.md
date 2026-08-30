@@ -91,6 +91,16 @@
 
 手机当期页最多显示最近 **5 项**；超出部分继续完整保存在 `claude/reports/handover-YYYY-MM-DD.md` 及 Git 历史，summary 可补「另 N 项已存档」。尚未消失的重大风险观察可保留在当期页，但不得因此把已结案历史无限复制进手机 HTML。
 
+### 6.3 Decision / receipt 连续继承与纯记录更新
+
+每次产生候选前必须读取 `main` 上配对成功的可信 `latest.meta.json + latest.html`。所有睡前版、早间版、临时版、手动补跑、恢复版都必须继承上一份机器清单内的全部 stable decisions 与 receipts；receipt 是不可变、只追加的审计记录，版别切换、数据刷新或移动到「已结案 / 只读观察」均不得删除、改写或重建旧记录。
+
+手机回应产生的纯记录候选内部类别为 `records-update`，不是临时版，也不是一次金融取数。候选必须在现有 publication marker 后无空白紧接唯一 inert marker：`<!-- xuan-ib-handover:v1 --><!-- xuan-ib-records-update:v1 -->`。该类别必须保持 `interaction` 与可信上一页完全一致；只允许改变 inert decision template、对应 `data-decision-status`、待办 badge/aria 数量并追加 receipt。`accepted/modified` 卡片可从「待决定事项」受控移到「已决定 / 待落实」，但必须位于唯一的 `xuan-ib-decision-group:v1:{awaiting_user|resolved}:{start|end}` marker 对内，标题/计数和固定状态文字须与模板一致，卡片事实、选项、Claude 意见及其他正文不得改变。上一页中文版别、主日期行、数据日、取数时点、全部金融数字、as-of 与计算说明必须保持字节语义一致，不得写成 `ad hoc / 临时版`，也不得冒充 AM / PM 定时任务成功。commit subject 继续使用可信上一页的原 `handover <dataDate>`；即使该数据日早于今日/昨日，workflow 也只对通过 records-update 严格守卫的候选放行，普通候选仍限制今日/昨日。存档/run manifest 以该唯一 marker 可机读识别 `records-update`；既有 promotion meta schema 不变。
+
+新 receipt 只能回应可信上一页中已经存在且当时为 `awaiting_user` 的 decision，禁止在同一候选中新建 decision 后立即附 accepted/modified receipt。v1 无 reject 动作，`awaiting_user` 不得无 receipt 直接变为 `rejected`。receipts 数组是真正 append-only：可信上一页的完整数组必须以相同顺序、逐对象原样成为新数组前缀；不得以 ID map 意义上的“仍存在”替代顺序不变。
+
+首次机器清单采用分阶段迁移：可信上一页无模板时，旧候选仍兼容；首次模板只能以 `interaction: "disabled", "receipts": []` bootstrap，且不得猜测历史 receipt。真实 Claude Routine、Shortcut 与 fail-closed 路径验证后，才可改为 `enabled`。一旦可信线上页含模板，后续候选必须连续继承；待生产证据稳定后再用独立维护 PR 把「模板必需」收紧为全局硬闸，不得与首次 bootstrap 同批上线。
+
 ## 7. 手机「报告说明」信息层级（Wu 已批，2026-08-30）
 
 正常 AM / PM / 临时版不再显示始终展开的长横幅或长页脚。报头日期行已能标识版别；「临时版 / ad hoc」及「本日第 N 次」等说明不得单独作为系统异常黄条。只有真实的认证失效、取数失败、数据降级、映射异常、市场状态可能误读或口径变更，才保留一条简短、始终可见的系统异常黄条。

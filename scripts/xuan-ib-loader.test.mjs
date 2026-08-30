@@ -59,6 +59,19 @@ const reportHtml = (date, edition, body = '') => `<!doctype html><html><head><ti
 <span class="date">${date} 周五 · ${edition} · 美股盘前</span>
 <main>${body}</main></body></html>`;
 
+const decisionTemplate = ({interaction = 'enabled', decisions = [], receipts = []} = {}) =>
+  `<template id="xuan-ib-decision-state-v1">${JSON.stringify({
+    schemaVersion: 1,
+    interaction,
+    decisions,
+    receipts,
+  })}</template>`;
+
+const awaitingDecision = (decisionId = 'D-20260830-TEST-ITEM') => ({
+  decisionId,
+  status: 'awaiting_user',
+});
+
 const metaFor = (html, overrides = {}) => {
   const bytes = Buffer.from(html, 'utf8');
   return {
@@ -72,7 +85,7 @@ const metaFor = (html, overrides = {}) => {
 };
 
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z'}) {
-  const listeners = {adhoc: {}, button: {}, window: {}, document: {}};
+  const listeners = {adhoc: {}, decision: {}, button: {}, window: {}, document: {}};
   const intervals = [];
   const frame = {srcdoc: ''};
   const adhoc = {
@@ -82,10 +95,19 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     disabled: false,
     addEventListener: (name, callback) => { listeners.button[name] = callback; },
   };
+  const decisionAttributes = new Map();
+  const decision = {
+    hidden: true,
+    addEventListener: (name, callback) => { listeners.decision[name] = callback; },
+    setAttribute: (name, value) => decisionAttributes.set(name, String(value)),
+  };
+  const decisionCount = {textContent: '0'};
   const status = {textContent: '', classList: classList()};
   const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
   const elements = new Map([
     ['#adhoc', adhoc],
+    ['#decision', decision],
+    ['#decision-count', decisionCount],
     ['#handover', frame],
     ['#refresh', button],
     ['#status', status],
@@ -112,14 +134,34 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     },
   };
   const NativeDate = Date;
+  let nowEpoch = new NativeDate(now).getTime();
   class FixedDate extends NativeDate {
-    constructor(...args) { super(...(args.length ? args : [now])); }
-    static now() { return new NativeDate(now).getTime(); }
+    constructor(...args) { super(...(args.length ? args : [nowEpoch])); }
+    static now() { return nowEpoch; }
   }
+  class TestDOMParser {
+    parseFromString(html) {
+      const visible = html.replace(/<!--[\s\S]*?-->/g, '');
+      return {
+        querySelectorAll: (selector) => {
+          assert.equal(selector, 'template#xuan-ib-decision-state-v1');
+          const templates = [];
+          const pattern = /<template\b([^>]*)>([\s\S]*?)<\/template\s*>/gi;
+          for (const match of visible.matchAll(pattern)) {
+            if (!/\bid\s*=\s*(["'])xuan-ib-decision-state-v1\1/i.test(match[1])) continue;
+            templates.push({content: {textContent: match[2]}, textContent: match[2]});
+          }
+          return templates;
+        },
+      };
+    }
+  }
+  const location = {href: 'https://example.test/xuan-ib/'};
   const context = {
     AbortController,
     Array,
     Date: FixedDate,
+    DOMParser: TestDOMParser,
     Error,
     Intl,
     JSON,
@@ -138,11 +180,26 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     document,
     fetch: fetchImpl,
     localStorage,
-    location: {href: 'https://example.test/xuan-ib/'},
+    location,
     window,
   };
   vm.runInNewContext(inlineScript, context);
-  return {adhoc, button, frame, intervals, listeners, status, stored, warning, warnings};
+  return {
+    adhoc,
+    advanceTime: (milliseconds) => { nowEpoch += milliseconds; },
+    button,
+    decision,
+    decisionAttributes,
+    decisionCount,
+    frame,
+    intervals,
+    listeners,
+    location,
+    status,
+    stored,
+    warning,
+    warnings,
+  };
 }
 
 test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
@@ -161,7 +218,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /blob\.toLowerCase\(\) !== meta\.htmlBlob\.toLowerCase\(\)/);
   assert.match(loader, /schemaVersion !== 1/);
   assert.match(loader, /info\.dataDate !== meta\.dataDate/);
-  assert.match(loader, /lastSuccess = Date\.now\(\);/);
+  assert.match(loader, /lastSuccess = verifiedAt;/);
   assert.match(loader, /if \(request !== requestSequence\) return/);
   assert.match(loader, /lastAttempt = Date\.now\(\)/);
   assert.match(loader, /Date\.now\(\) - lastAttempt > 5 \* 60_000/);
@@ -169,7 +226,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-29\.5"/);
+  assert.match(loader, /loaderBuild = "2026-08-30\.1"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -206,10 +263,481 @@ test('the ad-hoc report control runs the private iPhone Shortcut without embeddi
   assert.match(loader, /adhocButton\.addEventListener\("click", beginAdhocWait\)/);
   assert.match(loader, /临时报告正在生成，请稍候/);
   assert.match(loader, /临时报告已完成/);
-  assert.match(loader, /adhocPollMs = 15_000/);
+  assert.match(loader, /waitPollMs = 15_000/);
   assert.match(loader, /xuan-ib:adhoc-wait:v1/);
   assert.match(loader, /window\.addEventListener\("focus"/);
-  assert.match(loader, /if \(adhocWait && !expireAdhocWait\(\)\) return loadLatest\(\)/);
+  assert.match(loader, /if \(activeWait\(\) && !expireWaits\(\)\) return loadLatest\(\)/);
+});
+
+test('the decision control uses one fixed Shortcut URL and never embeds report or user data', () => {
+  const link = loader.match(/<a id="decision"[\s\S]*?<\/a>/)?.[0];
+  assert.ok(link, 'the outer loader must contain the decision launcher');
+  assert.match(
+    link,
+    /href="shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E"/
+  );
+  assert.match(link, /hidden/);
+  assert.match(link, /回应待办/);
+  assert.doesNotMatch(link, /target="_blank"/);
+  assert.doesNotMatch(link, /decisionId|sourceSha|htmlBlob|publicSummary|token|secret|api[_-]?key/i);
+  assert.match(loader, /xuan-ib:decision-wait:v1/);
+  assert.match(loader, /waitTimeoutMs = 20 \* 60_000/);
+  assert.match(loader, /decisionButton\.addEventListener\("click", beginDecisionWait\)/);
+  assert.match(loader, /event\.preventDefault\(\)/);
+  assert.match(loader, /location\.href = decisionShortcutUrl/);
+  assert.doesNotMatch(loader, /clipboard/i);
+});
+
+test('only an enabled inert decision template reveals the compact awaiting-user count', async () => {
+  const variants = [
+    {
+      body: '正文里写 awaiting_user 不得被当成机器状态',
+      hidden: true,
+      count: '0',
+    },
+    {
+      body: '<!-- <template id="xuan-ib-decision-state-v1">{"schemaVersion":1,"interaction":"enabled","decisions":[{"decisionId":"D-20260830-COMMENT","status":"awaiting_user"}],"receipts":[]}</template> -->',
+      hidden: true,
+      count: '0',
+    },
+    {
+      body: decisionTemplate({interaction: 'disabled', decisions: [awaitingDecision()]}),
+      hidden: true,
+      count: '1',
+    },
+    {
+      body: decisionTemplate({
+        decisions: [awaitingDecision(), awaitingDecision('D-20260830-SECOND-ITEM')],
+      }),
+      hidden: false,
+      count: '2',
+    },
+  ];
+
+  for (const [index, variant] of variants.entries()) {
+    const html = reportHtml('2026-08-30', '临时版', variant.body);
+    const app = loaderHarness({
+      fetchImpl: async (url) => String(url).includes('latest.meta.json')
+        ? response({json: metaFor(html), bytes: []})
+        : response({json: null, bytes: Buffer.from(html)}),
+    });
+    await app.listeners.button.click();
+    assert.equal(app.decision.hidden, variant.hidden, `variant ${index}`);
+    assert.equal(app.decisionCount.textContent, variant.count, `variant ${index}`);
+  }
+});
+
+test('malformed or duplicate decision templates fail closed instead of exposing an action', async () => {
+  const invalidStates = [
+    '<template id="xuan-ib-decision-state-v1">{"schemaVersion":1,"interaction":"enabled","decisions":[],"receipts":[],"extra":true}</template>',
+    decisionTemplate({decisions: [awaitingDecision()]}) + decisionTemplate({decisions: []}),
+    '<template id="xuan-ib-decision-state-v1">{"schemaVersion":1,"interaction":"enabled","decisions":[{"decisionId":"bad","status":"awaiting_user"}],"receipts":[]}</template>',
+  ];
+  for (const body of invalidStates) {
+    const html = reportHtml('2026-08-30', '临时版', body);
+    const app = loaderHarness({
+      fetchImpl: async (url) => String(url).includes('latest.meta.json')
+        ? response({json: metaFor(html), bytes: []})
+        : response({json: null, bytes: Buffer.from(html)}),
+    });
+    await app.listeners.button.click();
+    assert.equal(app.decision.hidden, true);
+    assert.doesNotMatch(app.frame.srcdoc, /xuan-ib-decision-state-v1/);
+    assert.match(app.status.textContent, /暂时无法读取已验证报告/);
+  }
+});
+
+test('the loader accepts the same millisecond-precision HKT receipts as the guard', async () => {
+  const html = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({
+      decisions: [awaitingDecision()],
+      receipts: [{
+        receiptId: 'R-20260830-154500-A1B2C3D4',
+        decisionId: 'D-20260830-TEST-ITEM',
+        action: 'deferred',
+        responseToSourceSha: '1'.repeat(40),
+        responseToHtmlBlob: '2'.repeat(40),
+        recordedAtHkt: '2026-08-30T15:45:00.125+08:00',
+        publicSummary: '稍后决定；只记录，不执行',
+      }],
+    })
+  );
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.equal(app.decision.hidden, false);
+  assert.match(app.frame.srcdoc, /2026-08-30T15:45:00\.125\+08:00/);
+});
+
+test('decision launch synchronously snapshots the verified report before opening Claude', async () => {
+  const html = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]})
+  );
+  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+  await app.listeners.button.click();
+  assert.equal(app.decision.hidden, false);
+
+  let prevented = false;
+  app.listeners.decision.click({preventDefault: () => { prevented = true; }});
+
+  assert.equal(prevented, true);
+  assert.equal(
+    app.location.href,
+    'shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E'
+  );
+  const wait = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
+  assert.equal(wait.cacheVersion, 2);
+  assert.deepEqual(wait.awaitingDecisionIds, ['D-20260830-TEST-ITEM']);
+  assert.deepEqual(wait.initialReceiptIds, []);
+  assert.equal(wait.baselines[0].sourceSha, meta.sourceSha);
+  assert.equal(wait.baselines[0].htmlBlob, meta.htmlBlob);
+  assert.deepEqual(wait.baselines[0].awaitingDecisionIds, ['D-20260830-TEST-ITEM']);
+  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
+});
+
+test('decision launch fails closed without a verified report and suppresses duplicate starts', async () => {
+  const html = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]})
+  );
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+
+  app.listeners.decision.click({preventDefault: () => {}});
+  assert.equal(app.location.href, 'https://example.test/xuan-ib/');
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+  assert.match(app.status.textContent, /^请先刷新并确认当前待办/);
+
+  await app.listeners.button.click();
+  app.listeners.decision.click({preventDefault: () => {}});
+  const firstWait = app.stored.get('xuan-ib:decision-wait:v1');
+  assert.match(app.location.href, /^shortcuts:/);
+  app.location.href = 'https://example.test/xuan-ib/';
+  app.listeners.decision.click({preventDefault: () => {}});
+  assert.equal(app.location.href, 'https://example.test/xuan-ib/');
+  assert.equal(app.stored.get('xuan-ib:decision-wait:v1'), firstWait);
+});
+
+test('A to B to C completes only when C carries a new target receipt bound to verified B', async () => {
+  const baselineHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]})
+  );
+  const baselineMeta = metaFor(baselineHtml, {sourceCommitEpoch: 1_788_000_000});
+  let current = {html: baselineHtml, meta: baselineMeta};
+  const app = loaderHarness({
+    now: '2026-08-30T07:45:00.900Z',
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: current.meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(current.html)}),
+  });
+  await app.listeners.button.click();
+  app.listeners.decision.click({preventDefault: () => {}});
+  app.location.href = 'https://example.test/xuan-ib/';
+
+  const noReceiptHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]}) + 'ordinary-newer-publication'
+  );
+  current = {
+    html: noReceiptHtml,
+    meta: metaFor(noReceiptHtml, {sourceCommitEpoch: 1_788_000_060}),
+  };
+  const poll = app.intervals.find(({delay}) => delay === 15_000);
+  await poll.callback();
+  assert.match(app.frame.srcdoc, /ordinary-newer-publication/);
+  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.ok(app.stored.has('xuan-ib:decision-wait:v1'));
+  const waitAfterB = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
+  assert.equal(waitAfterB.baselines.length, 2);
+  assert.equal(waitAfterB.baselines[1].sourceSha, current.meta.sourceSha);
+  assert.equal(waitAfterB.baselines[1].htmlBlob, current.meta.htmlBlob);
+  assert.deepEqual(waitAfterB.baselines[1].awaitingDecisionIds, ['D-20260830-TEST-ITEM']);
+
+  const bMeta = current.meta;
+
+  const receipt = {
+    receiptId: 'R-20260830-154500-A1B2C3D4',
+    decisionId: 'D-20260830-TEST-ITEM',
+    action: 'accepted',
+    responseToSourceSha: bMeta.sourceSha,
+    responseToHtmlBlob: bMeta.htmlBlob,
+    recordedAtHkt: '2026-08-30T15:45:00+08:00',
+    publicSummary: '采纳 Claude 意见；只记录，不执行',
+  };
+  const completedHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({
+      decisions: [{decisionId: receipt.decisionId, status: 'accepted'}],
+      receipts: [receipt],
+    }) + 'receipt-completed-publication'
+  );
+  current = {
+    html: completedHtml,
+    meta: metaFor(completedHtml, {sourceCommitEpoch: 1_788_000_120}),
+  };
+  await poll.callback();
+
+  assert.match(app.frame.srcdoc, /receipt-completed-publication/);
+  assert.equal(app.status.textContent, '回应已记录，报告已自动刷新');
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+});
+
+test('a decision first introduced in B can complete when C binds its receipt to B', async () => {
+  const originalDecision = awaitingDecision();
+  const newDecision = awaitingDecision('D-20260830-INTRODUCED-IN-B');
+  const aHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [originalDecision]})
+  );
+  const aMeta = metaFor(aHtml, {sourceCommitEpoch: 1_788_000_000});
+  let current = {html: aHtml, meta: aMeta};
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: current.meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(current.html)}),
+  });
+  await app.listeners.button.click();
+  app.listeners.decision.click({preventDefault: () => {}});
+  app.location.href = 'https://example.test/xuan-ib/';
+
+  const bHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [originalDecision, newDecision]}) + 'B-adds-decision'
+  );
+  current = {
+    html: bHtml,
+    meta: metaFor(bHtml, {sourceCommitEpoch: 1_788_000_060}),
+  };
+  const bMeta = current.meta;
+  const poll = app.intervals.find(({delay}) => delay === 15_000);
+  await poll.callback();
+  const waitAfterB = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
+  assert.deepEqual(
+    waitAfterB.baselines[1].awaitingDecisionIds,
+    ['D-20260830-TEST-ITEM', 'D-20260830-INTRODUCED-IN-B']
+  );
+
+  const receipt = {
+    receiptId: 'R-20260830-154503-NEWINB01',
+    decisionId: newDecision.decisionId,
+    action: 'accepted',
+    responseToSourceSha: bMeta.sourceSha,
+    responseToHtmlBlob: bMeta.htmlBlob,
+    recordedAtHkt: '2026-08-30T15:45:03+08:00',
+    publicSummary: '采纳新增待办意见；只记录，不执行',
+  };
+  const cHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({
+      decisions: [originalDecision, {decisionId: newDecision.decisionId, status: 'accepted'}],
+      receipts: [receipt],
+    }) + 'C-binds-B-new-decision'
+  );
+  current = {
+    html: cHtml,
+    meta: metaFor(cHtml, {sourceCommitEpoch: 1_788_000_120}),
+  };
+  await poll.callback();
+  assert.match(app.frame.srcdoc, /C-binds-B-new-decision/);
+  assert.equal(app.status.textContent, '回应已记录，报告已自动刷新');
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+});
+
+test('a mismatched, old, or pre-click receipt never completes the decision wait', async () => {
+  const baselineHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]})
+  );
+  const baselineMeta = metaFor(baselineHtml, {sourceCommitEpoch: 1_788_000_000});
+  let current = {html: baselineHtml, meta: baselineMeta};
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: current.meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(current.html)}),
+  });
+  await app.listeners.button.click();
+  app.listeners.decision.click({preventDefault: () => {}});
+  app.location.href = 'https://example.test/xuan-ib/';
+
+  const unrelatedReceipt = {
+    receiptId: 'R-20260830-154501-Z9Y8X7W6',
+    decisionId: 'D-20260830-TEST-ITEM',
+    action: 'deferred',
+    responseToSourceSha: '2'.repeat(40),
+    responseToHtmlBlob: '3'.repeat(40),
+    recordedAtHkt: '2026-08-30T15:45:01+08:00',
+    publicSummary: '稍后决定；只记录，不执行',
+  };
+  const newerHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()], receipts: [unrelatedReceipt]})
+  );
+  current = {
+    html: newerHtml,
+    meta: metaFor(newerHtml, {sourceCommitEpoch: 1_788_000_060}),
+  };
+  const poll = app.intervals.find(({delay}) => delay === 15_000);
+  await poll.callback();
+  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.ok(app.stored.has('xuan-ib:decision-wait:v1'));
+
+  app.advanceTime(20 * 60_000 + 1);
+  await poll.callback();
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-30.1');
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+});
+
+test('receipts for non-initial decisions or genuinely pre-click times stay pending', async () => {
+  const baselineHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({
+      decisions: [
+        awaitingDecision(),
+        {decisionId: 'D-20260830-CLOSED-ITEM', status: 'accepted'},
+      ],
+    })
+  );
+  const baselineMeta = metaFor(baselineHtml, {sourceCommitEpoch: 1_788_000_000});
+  let current = {html: baselineHtml, meta: baselineMeta};
+  const app = loaderHarness({
+    now: '2026-08-30T07:45:00.900Z',
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: current.meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(current.html)}),
+  });
+  await app.listeners.button.click();
+  app.listeners.decision.click({preventDefault: () => {}});
+  app.location.href = 'https://example.test/xuan-ib/';
+
+  const receipts = [
+    {
+      receiptId: 'R-20260830-154501-NONTARGT',
+      decisionId: 'D-20260830-CLOSED-ITEM',
+      action: 'accepted',
+      responseToSourceSha: baselineMeta.sourceSha,
+      responseToHtmlBlob: baselineMeta.htmlBlob,
+      recordedAtHkt: '2026-08-30T15:45:01+08:00',
+      publicSummary: '已结案事项回执；只记录，不执行',
+    },
+    {
+      receiptId: 'R-20260830-154502-TOOEARLY',
+      decisionId: 'D-20260830-TEST-ITEM',
+      action: 'deferred',
+      responseToSourceSha: baselineMeta.sourceSha,
+      responseToHtmlBlob: baselineMeta.htmlBlob,
+      recordedAtHkt: '2026-08-30T15:44:58+08:00',
+      publicSummary: '稍后决定；只记录，不执行',
+    },
+  ];
+  const newerHtml = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({
+      decisions: [
+        awaitingDecision(),
+        {decisionId: 'D-20260830-CLOSED-ITEM', status: 'accepted'},
+      ],
+      receipts,
+    })
+  );
+  current = {
+    html: newerHtml,
+    meta: metaFor(newerHtml, {sourceCommitEpoch: 1_788_000_060}),
+  };
+  const poll = app.intervals.find(({delay}) => delay === 15_000);
+  await poll.callback();
+  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  const wait = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
+  assert.deepEqual(wait.awaitingDecisionIds, ['D-20260830-TEST-ITEM']);
+  assert.equal(wait.baselines.length, 2);
+});
+
+test('ad-hoc and decision waits are mutually exclusive and share one refresh loop', async () => {
+  const html = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]})
+  );
+  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+  await app.listeners.button.click();
+  await app.listeners.adhoc.click();
+  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
+
+  await app.listeners.decision.click({preventDefault: () => {}});
+  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
+  assert.ok(app.stored.has('xuan-ib:decision-wait:v1'));
+
+  await app.listeners.adhoc.click();
+  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+  assert.equal(app.intervals.filter(({delay}) => delay === 15_000).length, 1);
+});
+
+test('decision pending survives reload and refresh triggers without treating its baseline as complete', async () => {
+  const html = reportHtml(
+    '2026-08-30',
+    '临时版',
+    decisionTemplate({decisions: [awaitingDecision()]})
+  );
+  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
+  const stored = new Map();
+  let requestCount = 0;
+  const fetchImpl = async (url) => {
+    requestCount += 1;
+    return String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)});
+  };
+  const first = loaderHarness({fetchImpl, stored});
+  await first.listeners.button.click();
+  await first.listeners.decision.click({preventDefault: () => {}});
+  assert.ok(stored.has('xuan-ib:decision-wait:v1'));
+
+  const reloaded = loaderHarness({fetchImpl, stored});
+  assert.match(reloaded.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  await reloaded.listeners.window.pageshow({persisted: true});
+  assert.match(reloaded.frame.srcdoc, /xuan-ib-decision-state-v1/);
+  assert.match(reloaded.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.ok(stored.has('xuan-ib:decision-wait:v1'));
+
+  const beforeFocus = requestCount;
+  await reloaded.listeners.window.focus();
+  assert.equal(requestCount, beforeFocus + 2);
+  assert.ok(stored.has('xuan-ib:decision-wait:v1'));
 });
 
 test('the ad-hoc launcher waits for a newly verified publication and then renders it automatically', async () => {
@@ -689,7 +1217,10 @@ test('validation and promotion accept a verified single-file candidate based on 
   assert.match(promotion, /xuan-ib\/latest\.meta\.json/);
   assert.match(promotion, /xuan-ib-promotion\.mjs select/);
   assert.match(promotion, /if ! commit_api_json=\$\(curl --fail --silent --show-error/);
-  assert.match(promotion, /if ! node scripts\/handover-guard\.mjs/);
+  assert.match(
+    promotion,
+    /if ! XUAN_IB_PREVIOUS_SOURCE_SHA="\$meta_source_sha"[\s\S]*?node scripts\/handover-guard\.mjs/
+  );
   assert.match(promotion, /Skipping \$branch_name: its handover page failed validation/);
   assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json/);
   assert.match(promotion, /Published metadata source is not a verified Claude commit/);

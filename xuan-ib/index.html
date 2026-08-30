@@ -17,6 +17,7 @@
     .bar {
       flex: 0 0 auto;
       display: flex;
+      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
@@ -35,10 +36,13 @@
       display: flex;
       align-items: center;
       gap: 7px;
+      margin-left: auto;
     }
     #adhoc,
+    #decision,
     #refresh {
       flex: 0 0 auto;
+      min-height: 44px;
       appearance: none;
       border-radius: 999px;
       font: inherit;
@@ -52,11 +56,38 @@
       line-height: 1.15;
       text-align: center;
       text-decoration: none;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
     }
     #adhoc span,
     #adhoc small { display: block; white-space: nowrap; }
     #adhoc span { font-size: 12px; }
     #adhoc small { margin-top: 2px; font-size: 9px; font-weight: 600; }
+    #decision {
+      border: 1px solid #63a170;
+      padding: 8px 11px;
+      background: #eef8f0;
+      color: #246c35;
+      line-height: 1;
+      text-align: center;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    #decision[hidden] { display: none; }
+    #decision-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      min-height: 20px;
+      margin-left: 4px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: #246c35;
+      color: #fff;
+      font-size: 12px;
+    }
     #refresh {
       border: 1px solid #80afe6;
       padding: 8px 13px;
@@ -82,6 +113,8 @@
       .bar { background: rgba(13, 13, 13, .96); border-color: #2c2c2a; color: #fff; }
       #status { color: #aaa8a2; }
       #adhoc { border-color: #7059c6; background: #211b3a; color: #bcaeff; }
+      #decision { border-color: #4f8c5d; background: #142b19; color: #8ed09b; }
+      #decision-count { background: #8ed09b; color: #102315; }
       #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
       #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
     }
@@ -102,6 +135,13 @@
           <span>生成临时报告</span>
           <small>一键启动 · 自动刷新</small>
         </a>
+        <a id="decision"
+           href="shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E"
+           rel="noopener noreferrer"
+           aria-label="通过 Claude 回应当前待决定事项；只记录意见，不执行交易"
+           hidden>
+          回应待办 <span id="decision-count" aria-hidden="true">0</span>
+        </a>
         <button id="refresh" type="button">刷新</button>
       </div>
     </header>
@@ -113,18 +153,23 @@
       const frame = document.querySelector("#handover");
       const button = document.querySelector("#refresh");
       const adhocButton = document.querySelector("#adhoc");
+      const decisionButton = document.querySelector("#decision");
+      const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-29.5";
+      const loaderBuild = "2026-08-30.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
-      const adhocPollMs = 15_000;
-      const adhocWaitMs = 20 * 60_000;
+      const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
+      const decisionShortcutUrl = "shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E";
+      const waitPollMs = 15_000;
+      const waitTimeoutMs = 20 * 60_000;
       let lastSuccess = 0;
       let lastAttempt = 0;
       let lastVerified = null;
       let requestSequence = 0;
       let adhocWait = null;
+      let decisionWait = null;
 
       // Migration window: the phone page must keep working while published
       // handovers still carry the previous product name. The first entry is the
@@ -154,12 +199,14 @@
 
       const reportVersion = (record) => ({
         dataDate: record.meta.dataDate,
+        sourceSha: record.meta.sourceSha.toLowerCase(),
         sourceCommitEpoch: record.meta.sourceCommitEpoch,
         htmlBlob: record.meta.htmlBlob.toLowerCase()
       });
 
       const validReportVersion = (version) => version &&
         /^\d{4}-\d{2}-\d{2}$/.test(version.dataDate || "") &&
+        /^[0-9a-f]{40}$/i.test(version.sourceSha || "") &&
         Number.isInteger(version.sourceCommitEpoch) && version.sourceCommitEpoch > 0 &&
         /^[0-9a-f]{40}$/i.test(version.htmlBlob || "");
 
@@ -168,13 +215,25 @@
         (record.meta.dataDate === baseline.dataDate &&
           record.meta.sourceCommitEpoch > baseline.sourceCommitEpoch);
 
-      function persistAdhocWait() {
-        if (!storage || !adhocWait) return;
+      const receiptIdPattern = /^R-[0-9]{8}-[0-9]{6}-[A-Z0-9]{8}$/;
+
+      const activeWait = () => decisionWait || adhocWait;
+
+      function persistWait(key, value, label) {
+        if (!storage || !value) return;
         try {
-          storage.setItem(adhocWaitStorageKey, JSON.stringify(adhocWait));
+          storage.setItem(key, JSON.stringify(value));
         } catch (error) {
-          console.warn("XUAN-IB ad-hoc wait backup failed", error);
+          console.warn(`XUAN-IB ${label} wait backup failed`, error);
         }
+      }
+
+      function persistAdhocWait() {
+        persistWait(adhocWaitStorageKey, adhocWait, "ad-hoc");
+      }
+
+      function persistDecisionWait() {
+        persistWait(decisionWaitStorageKey, decisionWait, "decision");
       }
 
       function clearAdhocWait() {
@@ -183,18 +242,47 @@
         try { storage.removeItem(adhocWaitStorageKey); } catch (_) {}
       }
 
+      function clearDecisionWait() {
+        decisionWait = null;
+        if (!storage) return;
+        try { storage.removeItem(decisionWaitStorageKey); } catch (_) {}
+      }
+
+      const validWaitHeader = (saved) => saved &&
+        Number.isInteger(saved.startedAt) && saved.startedAt > 0 &&
+        Number.isInteger(saved.deadline) && saved.deadline > saved.startedAt;
+
+      const decisionIdPattern = /^D-[0-9]{8}-[A-Z0-9-]{1,64}$/;
+      const responsePairKey = (version) =>
+        `${version.sourceSha.toLowerCase()}:${version.htmlBlob.toLowerCase()}`;
+
+      const validUniqueIds = (values, pattern) => Array.isArray(values) &&
+        values.length <= 1_000 &&
+        values.every((id) => pattern.test(id)) &&
+        new Set(values).size === values.length;
+
+      const validDecisionBaseline = (baseline) => validReportVersion(baseline) &&
+        validUniqueIds(baseline.awaitingDecisionIds, decisionIdPattern);
+
+      const validDecisionWait = (saved) => validWaitHeader(saved) &&
+        saved.cacheVersion === 2 &&
+        validUniqueIds(saved.awaitingDecisionIds, decisionIdPattern) &&
+        saved.awaitingDecisionIds.length > 0 &&
+        validUniqueIds(saved.initialReceiptIds, receiptIdPattern) &&
+        Array.isArray(saved.baselines) &&
+        saved.baselines.length > 0 && saved.baselines.length <= 100 &&
+        saved.baselines.every(validDecisionBaseline) &&
+        new Set(saved.baselines.map(responsePairKey)).size === saved.baselines.length;
+
       function restoreAdhocWait() {
         if (!storage) return;
         try {
           const raw = storage.getItem(adhocWaitStorageKey);
           if (!raw) return;
           const saved = JSON.parse(raw);
-          const valid = saved.cacheVersion === 1 &&
-            Number.isInteger(saved.startedAt) &&
-            Number.isInteger(saved.deadline) &&
-            saved.deadline > Date.now() &&
+          const valid = saved.cacheVersion === 1 && validWaitHeader(saved) &&
             (saved.baseline === null || validReportVersion(saved.baseline));
-          if (!valid) throw new Error("saved ad-hoc wait is invalid or expired");
+          if (!valid) throw new Error("saved ad-hoc wait is invalid");
           adhocWait = saved;
         } catch (error) {
           clearAdhocWait();
@@ -202,21 +290,57 @@
         }
       }
 
+      function restoreDecisionWait() {
+        if (!storage) return;
+        try {
+          const raw = storage.getItem(decisionWaitStorageKey);
+          if (!raw) return;
+          const saved = JSON.parse(raw);
+          if (!validDecisionWait(saved)) throw new Error("saved decision wait is invalid");
+          decisionWait = saved;
+        } catch (error) {
+          clearDecisionWait();
+          console.warn("XUAN-IB saved decision wait was rejected", error);
+        }
+      }
+
+      function restoreWaits() {
+        restoreAdhocWait();
+        restoreDecisionWait();
+        if (!adhocWait || !decisionWait) return;
+        if (decisionWait.startedAt >= adhocWait.startedAt) clearAdhocWait();
+        else clearDecisionWait();
+      }
+
       function showAdhocPending() {
         status.classList.remove("error");
         status.textContent = `临时报告正在生成，请稍候 · L ${loaderBuild}`;
       }
 
-      function expireAdhocWait() {
-        if (!adhocWait || Date.now() <= adhocWait.deadline) return false;
-        clearAdhocWait();
+      function showDecisionPending() {
+        status.classList.remove("error");
+        status.textContent = `已进入 Claude，请在 App 内完成选择 · L ${loaderBuild}`;
+      }
+
+      function expireWaits() {
+        const now = Date.now();
+        let message = "";
+        if (decisionWait && now > decisionWait.deadline) {
+          clearDecisionWait();
+          message = `尚未收到回应回执，请稍后刷新 · L ${loaderBuild}`;
+        }
+        if (adhocWait && now > adhocWait.deadline) {
+          clearAdhocWait();
+          message = `临时报告尚未完成，请稍后刷新 · L ${loaderBuild}`;
+        }
+        if (!message) return false;
         status.classList.add("error");
-        status.textContent = `临时报告尚未完成，请稍后刷新 · L ${loaderBuild}`;
+        status.textContent = message;
         return true;
       }
 
       function updateAdhocWait(record) {
-        if (!adhocWait || expireAdhocWait()) return false;
+        if (!adhocWait || expireWaits()) return false;
         if (!adhocWait.baseline) {
           adhocWait.baseline = reportVersion(record);
           persistAdhocWait();
@@ -241,17 +365,105 @@
         return true;
       }
 
+      function updateDecisionWait(record) {
+        if (!decisionWait || expireWaits()) return false;
+        const state = record.decisionState;
+        const latestBaseline = decisionWait.baselines[decisionWait.baselines.length - 1];
+        if (!reportIsNewerThan(record, latestBaseline)) {
+          showDecisionPending();
+          return false;
+        }
+        const initialReceiptIds = new Set(decisionWait.initialReceiptIds);
+        const acceptableBaselines = new Map(decisionWait.baselines.map((baseline) => [
+          responsePairKey(baseline),
+          new Set(baseline.awaitingDecisionIds)
+        ]));
+        const earliestReceiptEpoch = decisionWait.startedAt - 1_000;
+        const matchingReceipt = state && state.receipts.find((receipt) => {
+          const awaitingAtResponseBaseline = acceptableBaselines.get(responsePairKey({
+            sourceSha: receipt.responseToSourceSha,
+            htmlBlob: receipt.responseToHtmlBlob
+          }));
+          return !initialReceiptIds.has(receipt.receiptId) &&
+            Boolean(awaitingAtResponseBaseline) &&
+            awaitingAtResponseBaseline.has(receipt.decisionId) &&
+            Date.parse(receipt.recordedAtHkt) >= earliestReceiptEpoch;
+        });
+        if (!matchingReceipt) {
+          decisionWait.baselines.push({
+            ...reportVersion(record),
+            awaitingDecisionIds: state
+              ? state.decisions
+                .filter((decision) => decision.status === "awaiting_user")
+                .map((decision) => decision.decisionId)
+              : []
+          });
+          if (decisionWait.baselines.length > 100) decisionWait.baselines.shift();
+          persistDecisionWait();
+          showDecisionPending();
+          return false;
+        }
+        clearDecisionWait();
+        status.classList.toggle("error", !warning.hidden);
+        status.textContent = statusFor(record, "回应已记录");
+        return true;
+      }
+
+      function updateActiveWait(record, verifiedAt) {
+        if (decisionWait) return updateDecisionWait(record);
+        if (adhocWait) return updateAdhocWait(record);
+        return false;
+      }
+
       function beginAdhocWait() {
+        clearDecisionWait();
         const now = Date.now();
         adhocWait = {
           cacheVersion: 1,
           startedAt: now,
-          deadline: now + adhocWaitMs,
+          deadline: now + waitTimeoutMs,
           baseline: lastVerified ? reportVersion(lastVerified) : null
         };
         persistAdhocWait();
         showAdhocPending();
         return loadLatest();
+      }
+
+      function beginDecisionWait(event) {
+        event.preventDefault();
+        if (decisionWait && !expireWaits()) {
+          showDecisionPending();
+          return;
+        }
+        const state = lastVerified && lastVerified.decisionState;
+        const awaitingDecisionIds = state
+          ? state.decisions
+            .filter((decision) => decision.status === "awaiting_user")
+            .map((decision) => decision.decisionId)
+          : [];
+        if (!lastVerified || !state || state.interaction !== "enabled" ||
+            awaitingDecisionIds.length === 0) {
+          clearDecisionWait();
+          status.classList.add("error");
+          status.textContent = `请先刷新并确认当前待办 · L ${loaderBuild}`;
+          return;
+        }
+        clearAdhocWait();
+        const now = Date.now();
+        decisionWait = {
+          cacheVersion: 2,
+          startedAt: now,
+          deadline: now + waitTimeoutMs,
+          awaitingDecisionIds,
+          initialReceiptIds: state.receipts.map((receipt) => receipt.receiptId),
+          baselines: [{
+            ...reportVersion(lastVerified),
+            awaitingDecisionIds: [...awaitingDecisionIds]
+          }]
+        };
+        persistDecisionWait();
+        showDecisionPending();
+        location.href = decisionShortcutUrl;
       }
 
       const hex = (buffer) => Array.from(new Uint8Array(buffer), (byte) =>
@@ -304,6 +516,109 @@
         if (!date || parts.length < 2) throw new Error("报告日期或版次无法识别");
         return { dataDate: date[1], edition: parts[1], label: text };
       };
+
+      const requireExactKeys = (value, keys, label) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw new Error(`${label} 必须是对象`);
+        }
+        const actual = Object.keys(value).sort();
+        const expected = [...keys].sort();
+        if (actual.length !== expected.length ||
+            actual.some((key, index) => key !== expected[index])) {
+          throw new Error(`${label} 含未知或缺失字段`);
+        }
+      };
+
+      const validHktTimestamp = (value) => {
+        if (typeof value !== "string") return false;
+        const match = value.match(
+          /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\+08:00$/
+        );
+        if (!match) return false;
+        const [, year, month, day, hour, minute, second, fraction = ""] = match;
+        const milliseconds = Number(fraction.padEnd(3, "0"));
+        const instant = new Date(Date.UTC(
+          Number(year), Number(month) - 1, Number(day), Number(hour) - 8,
+          Number(minute), Number(second), milliseconds
+        ));
+        if (Number.isNaN(instant.valueOf())) return false;
+        const hkt = new Date(instant.valueOf() + 8 * 60 * 60 * 1000);
+        return hkt.getUTCFullYear() === Number(year) &&
+          hkt.getUTCMonth() + 1 === Number(month) &&
+          hkt.getUTCDate() === Number(day) &&
+          hkt.getUTCHours() === Number(hour) &&
+          hkt.getUTCMinutes() === Number(minute) &&
+          hkt.getUTCSeconds() === Number(second) &&
+          hkt.getUTCMilliseconds() === milliseconds;
+      };
+
+      function parseDecisionState(html) {
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const templates = parsed.querySelectorAll("template#xuan-ib-decision-state-v1");
+        if (templates.length === 0) return null;
+        if (templates.length !== 1) throw new Error("回应状态模板必须恰好一个");
+        const template = templates[0];
+        const raw = (template.content ? template.content.textContent : template.textContent).trim();
+        if (!raw) throw new Error("回应状态模板为空");
+        const state = JSON.parse(raw);
+        requireExactKeys(
+          state,
+          ["schemaVersion", "interaction", "decisions", "receipts"],
+          "回应状态"
+        );
+        if (state.schemaVersion !== 1) throw new Error("回应状态版本不兼容");
+        if (!new Set(["disabled", "enabled"]).has(state.interaction)) {
+          throw new Error("回应入口状态无效");
+        }
+        if (!Array.isArray(state.decisions) || !Array.isArray(state.receipts)) {
+          throw new Error("回应状态清单无效");
+        }
+        const decisionIds = new Set();
+        for (const decision of state.decisions) {
+          requireExactKeys(decision, ["decisionId", "status"], "待办状态");
+          if (!/^D-[0-9]{8}-[A-Z0-9-]{1,64}$/.test(decision.decisionId || "")) {
+            throw new Error("待办编号无效");
+          }
+          if (!new Set(["awaiting_user", "accepted", "rejected", "modified", "superseded"])
+            .has(decision.status)) {
+            throw new Error("待办状态无效");
+          }
+          if (decisionIds.has(decision.decisionId)) throw new Error("待办编号重复");
+          decisionIds.add(decision.decisionId);
+        }
+        const receiptIds = new Set();
+        for (const receipt of state.receipts) {
+          requireExactKeys(
+            receipt,
+            [
+              "receiptId", "decisionId", "action", "responseToSourceSha",
+              "responseToHtmlBlob", "recordedAtHkt", "publicSummary"
+            ],
+            "回应回执"
+          );
+          if (!receiptIdPattern.test(receipt.receiptId || "")) throw new Error("回应回执编号无效");
+          if (receiptIds.has(receipt.receiptId)) throw new Error("回应回执编号重复");
+          receiptIds.add(receipt.receiptId);
+          if (!decisionIds.has(receipt.decisionId)) throw new Error("回应回执引用未知待办");
+          if (!new Set(["accepted", "modified", "deferred"]).has(receipt.action)) {
+            throw new Error("回应动作无效");
+          }
+          if (!/^[0-9a-f]{40}$/i.test(receipt.responseToSourceSha || "") ||
+              !/^[0-9a-f]{40}$/i.test(receipt.responseToHtmlBlob || "")) {
+            throw new Error("回应基线无效");
+          }
+          if (!validHktTimestamp(receipt.recordedAtHkt)) throw new Error("回应时间无效");
+          if (typeof receipt.publicSummary !== "string" ||
+              [...receipt.publicSummary].length < 1 ||
+              [...receipt.publicSummary].length > 120 ||
+              /[<>&\u0000-\u001f\u007f-\u009f]/u.test(receipt.publicSummary) ||
+              /(?:https?:\/\/|www\.)/i.test(receipt.publicSummary) ||
+              /\b[0-9]{8,}\b/.test(receipt.publicSummary)) {
+            throw new Error("回应公开摘要无效");
+          }
+        }
+        return state;
+      }
 
       const hktContext = (now = new Date()) => {
         const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
@@ -416,7 +731,8 @@
         }
         const info = reportInfo(html);
         if (info.dataDate !== meta.dataDate) throw new Error("发布日期与页面日期不一致");
-        return { html, protectedHtml: protect(html), meta, info, blob };
+        const decisionState = parseDecisionState(html);
+        return { html, protectedHtml: protect(html), meta, info, decisionState, blob };
       }
 
       function requireMonotonic(record, previous) {
@@ -437,15 +753,33 @@
 
       const statusFor = (record, prefix) => {
         if (prefix === "临时报告已完成") return "临时报告已完成 · 已自动刷新";
+        if (prefix === "回应已记录") return "回应已记录，报告已自动刷新";
         if (prefix === "显示上一份已验证版本" || prefix === "正在核对最新版") {
           return `${prefix} · ${record.info.dataDate} ${record.info.edition}`;
         }
         return prefix;
       };
 
+      function updateDecisionControl(record) {
+        const state = record.decisionState;
+        const count = state
+          ? state.decisions.filter((decision) => decision.status === "awaiting_user").length
+          : 0;
+        const enabled = Boolean(state && state.interaction === "enabled" && count > 0);
+        decisionButton.hidden = !enabled;
+        decisionCount.textContent = String(count);
+        decisionButton.setAttribute(
+          "aria-label",
+          enabled
+            ? `通过 Claude 回应 ${count} 项待决定事项；只记录意见，不执行交易`
+            : "当前没有可回应的待决定事项"
+        );
+      }
+
       function renderVerified(record, prefix, warningMessage = "") {
         frame.srcdoc = record.protectedHtml;
         lastVerified = record;
+        updateDecisionControl(record);
         warning.hidden = !warningMessage;
         warning.textContent = warningMessage;
         status.classList.toggle("error", Boolean(warningMessage));
@@ -517,10 +851,12 @@
             lastVerified
           );
           if (request !== requestSequence) return;
+          const verifiedAt = Date.now();
           renderVerified(record, `已同步 ${clock()}`, staleMessage(record));
           saveVerified(record);
-          lastSuccess = Date.now();
-          updateAdhocWait(record);
+          lastSuccess = verifiedAt;
+          updateActiveWait(record, verifiedAt);
+          return record;
         } catch (error) {
           if (request !== requestSequence) return;
           status.classList.add("error");
@@ -531,33 +867,42 @@
           } else {
             warning.hidden = true;
             status.textContent = "暂时无法读取已验证报告";
+            decisionButton.hidden = true;
             frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
           }
-          if (adhocWait && !expireAdhocWait()) showAdhocPending();
+          if (activeWait() && !expireWaits()) {
+            if (decisionWait) showDecisionPending();
+            else showAdhocPending();
+          }
           console.warn("XUAN-IB latest-page refresh failed", error);
+          return null;
         } finally {
           window.clearTimeout(timeout);
           if (request === requestSequence) button.disabled = false;
         }
       }
 
-      restoreAdhocWait();
-      if (adhocWait) showAdhocPending();
+      restoreWaits();
+      expireWaits();
+      if (decisionWait) showDecisionPending();
+      else if (adhocWait) showAdhocPending();
       adhocButton.addEventListener("click", beginAdhocWait);
+      decisionButton.addEventListener("click", beginDecisionWait);
       button.addEventListener("click", loadLatest);
       window.addEventListener("pageshow", (event) => {
-        if (!expireAdhocWait()) return loadLatest();
+        expireWaits();
+        return loadLatest();
       });
       window.addEventListener("focus", () => {
-        if (adhocWait && !expireAdhocWait()) return loadLatest();
+        if (activeWait() && !expireWaits()) return loadLatest();
       });
       document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && adhocWait && !expireAdhocWait()) return loadLatest();
+        if (!document.hidden && activeWait() && !expireWaits()) return loadLatest();
         if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
       });
       window.setInterval(() => {
-        if (adhocWait && !expireAdhocWait()) return loadLatest();
-      }, adhocPollMs);
+        if (activeWait() && !expireWaits()) return loadLatest();
+      }, waitPollMs);
       window.setInterval(() => {
         if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();
       }, 60_000);
