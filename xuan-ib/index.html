@@ -435,8 +435,13 @@
         return record;
       }
 
-      const statusFor = (record, prefix) =>
-        `${prefix} · 报告 ${record.info.dataDate} · ${record.info.edition} · L ${loaderBuild}`;
+      const statusFor = (record, prefix) => {
+        if (prefix === "临时报告已完成") return "临时报告已完成 · 已自动刷新";
+        if (prefix === "显示上一份已验证版本" || prefix === "正在核对最新版") {
+          return `${prefix} · ${record.info.dataDate} ${record.info.edition}`;
+        }
+        return prefix;
+      };
 
       function renderVerified(record, prefix, warningMessage = "") {
         frame.srcdoc = record.protectedHtml;
@@ -525,7 +530,7 @@
             renderVerified(lastVerified, "显示上一份已验证版本", stale ? `${stale} ${fallback}` : fallback);
           } else {
             warning.hidden = true;
-            status.textContent = `暂时无法读取已验证报告 · L ${loaderBuild}`;
+            status.textContent = "暂时无法读取已验证报告";
             frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
           }
           if (adhocWait && !expireAdhocWait()) showAdhocPending();
