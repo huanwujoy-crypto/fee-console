@@ -1,562 +1,486 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="XUAN-投资管理">
-  <meta name="theme-color" content="#f9f9f7">
-  <title>XUAN-投资管理</title>
-  <style>
-    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; background: #f9f9f7; }
-    .app { height: 100%; display: flex; flex-direction: column; }
-    .bar {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      min-height: 64px;
-      padding: calc(10px + env(safe-area-inset-top)) 18px 10px;
-      border-bottom: 1px solid #deddd8;
-      background: rgba(249, 249, 247, .96);
-      color: #111;
-    }
-    .title { min-width: 0; }
-    .title strong { display: block; font-size: 18px; line-height: 1.25; }
-    #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; }
-    #status.error { color: #b3261e; }
-    .header-actions {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-    }
-    #adhoc,
-    #refresh {
-      flex: 0 0 auto;
-      appearance: none;
-      border-radius: 999px;
-      font: inherit;
-      font-weight: 650;
-    }
-    #adhoc {
-      border: 1px solid #8a75d1;
-      padding: 5px 10px 4px;
-      background: #f3efff;
-      color: #5c43b6;
-      line-height: 1.15;
-      text-align: center;
-      text-decoration: none;
-    }
-    #adhoc span,
-    #adhoc small { display: block; white-space: nowrap; }
-    #adhoc span { font-size: 12px; }
-    #adhoc small { margin-top: 2px; font-size: 9px; font-weight: 600; }
-    #refresh {
-      border: 1px solid #80afe6;
-      padding: 8px 13px;
-      background: #eef5fc;
-      color: #216ec8;
-    }
-    #refresh:disabled { opacity: .55; }
-    #warning {
-      flex: 0 0 auto;
-      padding: 10px 18px;
-      border-bottom: 1px solid #e0a33a;
-      background: #fff1cf;
-      color: #6f4200;
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1.4;
-      text-align: center;
-    }
-    #warning[hidden] { display: none; }
-    #handover { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #f9f9f7; }
-    @media (prefers-color-scheme: dark) {
-      html, body, #handover { background: #0d0d0d; }
-      .bar { background: rgba(13, 13, 13, .96); border-color: #2c2c2a; color: #fff; }
-      #status { color: #aaa8a2; }
-      #adhoc { border-color: #7059c6; background: #211b3a; color: #bcaeff; }
-      #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
-      #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
-    }
-  </style>
-</head>
-<body>
-  <div class="app">
-    <header class="bar">
-      <div class="title">
-        <strong>XUAN-投资管理</strong>
-        <span id="status" role="status" aria-live="polite">正在读取最新版…</span>
-      </div>
-      <div class="header-actions">
-        <a id="adhoc"
-           href="shortcuts://run-shortcut?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"
-           rel="noopener noreferrer"
-           aria-label="通过 iPhone 快捷指令启动 Claude 临时报告；完成后自动刷新">
-          <span>生成临时报告</span>
-          <small>一键启动 · 自动刷新</small>
-        </a>
-        <button id="refresh" type="button">刷新</button>
-      </div>
-    </header>
-    <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
-    <iframe id="handover" title="XUAN-投资管理 最新简报" sandbox="" referrerpolicy="no-referrer"></iframe>
-  </div>
-  <script>
-    (() => {
-      const frame = document.querySelector("#handover");
-      const button = document.querySelector("#refresh");
-      const adhocButton = document.querySelector("#adhoc");
-      const status = document.querySelector("#status");
-      const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-29.5";
-      const storageKey = "xuan-ib:last-verified:v1";
-      const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
-      const adhocPollMs = 15_000;
-      const adhocWaitMs = 20 * 60_000;
-      let lastSuccess = 0;
-      let lastAttempt = 0;
-      let lastVerified = null;
-      let requestSequence = 0;
-      let adhocWait = null;
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="XUAN-投资管理">
+<meta name="theme-color" content="#f9f9f7">
+<title>XUAN-投资管理</title>
+<style>
+:root{color-scheme:light dark;
+--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mut:#898781;--grid:#e1e0d9;
+--blue:#2a78d6;--orange:#eb6834;--good:#0ca30c;--warn:#fab219;--ser:#ec835a;--crit:#d03b3b;
+--up:#006300;--dn:#d03b3b;--wash:#f2f1ec;--pill:#efeee8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}}
+:root[data-theme="dark"]{
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+html,body{margin:0;padding:0;background:#f9f9f7}
+@media (prefers-color-scheme:dark){html,body{background:#0d0d0d}}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+-webkit-text-size-adjust:100%}
+.page{background:var(--bg);color:var(--ink);min-height:100vh;padding:14px 12px 40px}
+.wrap{max-width:940px;margin:0 auto}
+.num{font-variant-numeric:tabular-nums}
+.date{font-size:12.5px;color:var(--ink2);display:block;font-variant-numeric:tabular-nums}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.tgl{display:flex;gap:4px;flex:0 0 auto}
+.tgl label{font-size:11px;padding:4px 9px;border:1px solid var(--grid);border-radius:99px;color:var(--ink2);cursor:pointer;background:var(--card)}
+#tl:checked~.page .tgl label[for="tl"],#td:checked~.page .tgl label[for="td"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#tl,#td{position:absolute;opacity:0;pointer-events:none}
+#tl:checked~.page{--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e1e0d9;--blue:#2a78d6;--orange:#eb6834;--up:#006300;--wash:#f2f1ec;--pill:#efeee8}
+#td:checked~.page{--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--grid:#2c2c2a;--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+details{background:var(--card);border:1px solid var(--grid);border-radius:10px;margin-top:8px}
+details>summary{cursor:pointer;padding:9px 11px;font-size:13px;font-weight:600;list-style:none;
+display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--mut);font-weight:400}
+details[open]>summary::before{content:"▾ "}
+details>summary .rt{font-weight:500;color:var(--ink2);font-size:12px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+details>summary .rt.wv{color:var(--warn)}
+.dbody{padding:2px 11px 11px;font-size:13px;line-height:1.55;color:var(--ink2)}
+.alert{margin-top:9px;border-radius:9px;padding:8px 11px;font-size:12.5px;line-height:1.5;
+background:rgba(250,178,25,.14);border:1px solid rgba(250,178,25,.55);color:var(--ink);overflow-wrap:anywhere}
+.alert.crit{background:rgba(208,59,59,.13);border-color:rgba(208,59,59,.55)}
+.alert.ok{background:rgba(12,163,12,.12);border-color:rgba(12,163,12,.55)}
+.alert b{font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.kpi{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:10px}
+.kpi .lab{font-size:10.5px;color:var(--mut);letter-spacing:.03em;text-transform:uppercase}
+.kpi .big{font-size:21px;font-weight:650;margin-top:3px;letter-spacing:-.02em}
+.kpi .sub{font-size:11px;color:var(--ink2);margin-top:4px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .big{font-size:20px}}
+.tabs{margin-top:14px}
+.tabs input{position:absolute;opacity:0;pointer-events:none}
+.tabbar{display:flex;gap:5px;position:sticky;top:0;z-index:5;background:var(--bg);padding:6px 0;flex-wrap:wrap}
+.tabbar label{font-size:12.5px;padding:6px 11px;border-radius:99px;border:1px solid var(--grid);
+background:var(--card);color:var(--ink2);cursor:pointer;display:flex;gap:5px;align-items:center}
+.tabbar label .dot{background:var(--pill);color:var(--ink2);border-radius:99px;font-size:10px;padding:0 5px;min-width:15px;text-align:center}
+#s1:checked~.tabbar label[for="s1"],#s2:checked~.tabbar label[for="s2"],#s3:checked~.tabbar label[for="s3"],#s4:checked~.tabbar label[for="s4"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s1:checked~.tabbar label[for="s1"] .dot,#s2:checked~.tabbar label[for="s2"] .dot,#s3:checked~.tabbar label[for="s3"] .dot,#s4:checked~.tabbar label[for="s4"] .dot{background:var(--bg);color:var(--ink)}
+@media(max-width:640px){
+.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;flex-wrap:nowrap;max-width:100%;overflow:hidden}
+.tabbar label{min-height:44px;min-width:0;padding:4px 6px;font-size:12px;gap:4px;justify-content:center;white-space:nowrap;overflow:hidden}
+.tabbar label .dot{flex:0 0 auto}
+}
+.pane{display:none}
+#s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}
+.card{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:11px;margin-top:9px}
+.card h2{font-size:13.5px;margin:0 0 7px;letter-spacing:-.01em}
+.card h2 small{font-weight:400;color:var(--mut);font-size:11.5px;margin-left:5px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--ink2);flex:0 0 auto}
+.kv .v{text-align:right;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kv{flex-direction:column;gap:1px}.kv .v{text-align:left}}
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{font-size:10.5px;text-transform:lowercase;letter-spacing:.06em;color:var(--mut);font-weight:600;
+text-align:right;padding:5px 6px;border-bottom:1px solid var(--grid);white-space:nowrap}
+th:first-child{text-align:left}
+td{padding:5px 6px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{text-align:left;position:sticky;left:0;background:var(--card);white-space:normal}
+tr.sec td{background:var(--wash);font-weight:700}
+tr.sec td:first-child{background:var(--wash)}
+tr.tot td{font-weight:700;background:var(--wash)}
+tr.tot td:first-child{background:var(--wash)}
+.sym{font-weight:600}
+.sub{font-size:10.5px;color:var(--mut);font-weight:400;white-space:normal;display:block;margin-top:1px}
+.up{color:var(--up)}.dn{color:var(--dn)}.or{color:var(--orange)}.bl{color:var(--blue)}
+.wv{color:var(--warn)}.cv{color:var(--crit)}.gv{color:var(--good)}
+.bar{margin:9px 0}
+.bar .lbl{display:flex;justify-content:space-between;gap:9px;font-size:12px;margin-bottom:3px;flex-wrap:wrap}
+.bar .lbl .r{font-variant-numeric:tabular-nums;color:var(--ink2);white-space:normal;overflow-wrap:anywhere;text-align:right}
+.track{height:7px;background:var(--pill);border-radius:99px;position:relative;overflow:hidden}
+.fill{height:100%;background:var(--blue);border-radius:99px}
+.fill.over{background:var(--orange)}
+.mark{position:absolute;top:0;height:100%;width:2px;background:var(--ink)}
+.tl{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:12.5px}
+.tl:last-child{border-bottom:0}
+.tl .t{flex:0 0 62px;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:11.5px}
+.tl .e{flex:1 1 auto}
+.tl .e b{font-weight:650}
+.tl .s{flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--pill);color:var(--ink2);height:fit-content;white-space:nowrap}
+.sw{margin-top:8px}
+.sw input{position:absolute;opacity:0;pointer-events:none}
+.swbar{display:flex;gap:5px;margin-bottom:7px}
+.swbar label{font-size:11.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--grid);color:var(--ink2);cursor:pointer}
+#e1:checked~.swbar label[for="e1"],#e2:checked~.swbar label[for="e2"],#e3:checked~.swbar label[for="e3"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.epane{display:none}
+#e1:checked~.q1,#e2:checked~.q2,#e3:checked~.q3{display:block}
+ol,ul{margin:5px 0;padding-left:19px}
+li{font-size:12.5px;margin:3px 0;line-height:1.5}
+.dec li{margin:6px 0}
+.dec li b.lab,.dbody b.lab{display:inline-block;min-width:66px;color:var(--ink2);font-weight:600}
+.dcard{margin-top:8px}
+.dcard>summary .rt{white-space:normal}
+.foot{font-size:11px;color:var(--mut);margin-top:14px;line-height:1.6}
+@media(max-width:640px){
+.page{padding:11px 9px 34px}body{font-size:14px}
+.dbody,.kv,li,td,.tl{font-size:12px}
+details .dbody{padding-left:7px;padding-right:7px}
+.tl .t{flex:0 0 56px}
+}
+</style>
+</head><body>
+<!-- xuan-ib-handover:v1 -->
+<input type="radio" name="th" id="tl"><input type="radio" name="th" id="td">
+<div class="page"><div class="wrap">
 
-      // Migration window: the phone page must keep working while published
-      // handovers still carry the previous product name. The first entry is the
-      // title every future candidate must use; the second is the title already
-      // live in latest.html and is dropped once that page has been republished.
-      const approvedTitles = [
-        "<title>XUAN-投资管理</title>",
-        "<title>XUAN-IB 睡前交接</title>"
-      ];
+<div class="hdr">
+<span class="date">2026-08-30 周日 · 临时版 / ad hoc · 美股 / LSE / EBS / TSE 休市（数据为上一交易日 08-28 周五收盘，连续第二个自然日沿用同一收盘价）</span>
+<div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
+</div>
 
-      const clock = () => new Intl.DateTimeFormat("zh-HK", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: "Asia/Hong_Kong"
-      }).format(new Date());
+<div class="alert"><b>数据降级：四桶 / 三层流动性沿用 2026-08-24 verified Monday snapshot</b>（第五次沿用）—— <code>claude/four-bucket-mapping.json</code> 本次已重新读取确认内容未变：带 Semi Liquid 标签的持仓精确计数 56 个，仍仅 8 个有 <code>holdingOverrides</code>，按其 <code>unknownSemiLiquid</code> 规则 fail-closed，不得猜测。替代源＝08-24 verified Monday snapshot，as-of 2026-08-24；影响范围＝四桶比例、三层流动性及依赖归桶的 KPI。其余数据为 2026-08-30 10:08–10:10 UTC（18:08–18:10 HKT）只读实时读取。</div>
 
-      const storage = (() => {
-        try {
-          localStorage.setItem("__xuan_ib_probe", "1");
-          localStorage.removeItem("__xuan_ib_probe");
-          return localStorage;
-        } catch (_) {
-          return null;
-        }
-      })();
+<details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
+<div class="dbody">
+<ol>
+<li><b>本次为本日第二次临时版</b>（周日无新定时版；上一个已发布版本为 08-30 17:29–17:44 HKT 临时版，本日第一次，经候选修正后于 17:44 HKT 发布）。核心数据逐项核对<b>零变动</b>：IB NAV $5,053,336、现金池 $824,291、7 个 Sharesight 组合总值 $31,437,271、12 张 GTC 挂单、DAYS_7 成交（MSFT 卖90股、EIMI 买100股）逐项一致，本次会话未执行任何交易。<b>四桶 / 三层流动性继续沿用 2026-08-24 周一 verified snapshot</b>（第五次沿用；<code>claude/four-bucket-mapping.json</code> 本次重新核实内容未变，Semi Liquid 标签持仓精确计数 56 个，仍仅 8 个有 holdingOverrides，fail-closed 继续沿用）。已按日历规则确认：下一交易日周一 08-31 为<b>正常交易日</b>（美国 Labor Day 是九月第一个周一，即 2026-09-07，08-31 并非节前缩短交易日——按公历规则推算确认，非外部日历源核实，沿用上一版结论）。</li>
+<li><b>AI 压力中情景 22.36%</b>（$1,379,598 / $6,169,420，逐票重算，与上一版完全一致），距 25% 预警线 <b>$162,757 / 2.64 个百分点</b>（本次按精确算法复核，较上一版展示的 $163,764 更正为 $162,757，属换算精度修正、非新事实），fail-closed <b>PASS</b>，结论与上一版一致。Webull BRK.B 仍为已平仓状态、MRVL $21,662 仍因 §0-A 规则不可得不计入分子（详见 ⑤，待 Wu 审核事项不变）。</li>
+<li><b>需当晚/近端处理挂单：无</b>；GTC 12 张与上一版完全一致（无新增、无成交、无撤单）。距市价最近的是 META 卖 150@590（+2.01%，提示带内）与 AMD 卖 30@499（+7.07%）；待撤 4 张（名义合计 $150,520）仍待 Wu 在 TWS 端执行。家庭主视图单票集中度：<b>BRK.B 4.91%（线内，与上一版一致）</b>；<b>GOOG/GOOGL 三账户合计 5.47%（与上一版一致，仍越 5% 参考线，超额 $29,190——本次修正上一版展示的 $6,552 换算误差）</b>。</li>
+</ol>
+</div></details>
 
-      const reportVersion = (record) => ({
-        dataDate: record.meta.dataDate,
-        sourceCommitEpoch: record.meta.sourceCommitEpoch,
-        htmlBlob: record.meta.htmlBlob.toLowerCase()
-      });
 
-      const validReportVersion = (version) => version &&
-        /^\d{4}-\d{2}-\d{2}$/.test(version.dataDate || "") &&
-        Number.isInteger(version.sourceCommitEpoch) && version.sourceCommitEpoch > 0 &&
-        /^[0-9a-f]{40}$/i.test(version.htmlBlob || "");
+<div class="kpis">
+<div class="kpi"><div class="lab">IB NAV</div><div class="big num">$5,053,336</div>
+<div class="sub">08-28 周五收盘价（周日沿用）· vs 08-30 17:44 HKT 读数 $5,053,336 <span class="gv">零变动</span><br>股票 $4,585,767 + 现金 $466,322</div></div>
+<div class="kpi"><div class="lab">可用现金</div><div class="big num">$584,291</div>
+<div class="sub">现金池 $824,291（IB 466,322 + NOAH-HK 357,969，零变动）<br>已扣 reserve $240,000 · 覆盖 3.43x</div></div>
+<div class="kpi"><div class="lab">四桶 · HL 缺口 <small style="font-weight:400">(08-24 沿用)</small></div><div class="big num">$6.92M</div>
+<div class="sub">HL 17.75% / 40% · VC-PE 51.74% / 30%（<span class="or">超 ~$6.77M</span>）<br>HF 14.58% · 常青 15.93% 毛<br><b class="wv">沿用 08-24 · 第4次 · mapping 已核实仍缺 override</b></div></div>
+<div class="kpi"><div class="lab">四类 · 补仓缺口合计</div><div class="big num">$698,494</div>
+<div class="sub">EXUS+VCN 11.24% / 23% + EIMI+INDA 10.30% / 12%<br>科技超配 <span class="or">$362,458</span> · US底 <span class="or">$183,022</span><br>现金覆盖 <span class="gv">83.7%</span></div></div>
+</div>
 
-      const reportIsNewerThan = (record, baseline) =>
-        record.meta.dataDate > baseline.dataDate ||
-        (record.meta.dataDate === baseline.dataDate &&
-          record.meta.sourceCommitEpoch > baseline.sourceCommitEpoch);
+<div class="tabs">
+<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">
+<div class="tabbar">
+<label for="s1" aria-label="概览：① 08-28 周五收盘一览与 ③ 下一交易日开盘前会发生什么，4 项">概览 <span class="dot" aria-hidden="true">4</span></label>
+<label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明，2 项">风险 <span class="dot" aria-hidden="true">2</span></label>
+<label for="s3" aria-label="配置：④ 四桶与四类配置比例、8 个 portfolio 明细，4 项">配置 <span class="dot" aria-hidden="true">4</span></label>
+<label for="s4" aria-label="待办：⑤ 待决定事项 3 项待 Wu 裁决；另含已结案 / 只读观察与 ⑥ 换仓触发检查">待办 <span class="dot" aria-hidden="true">3</span></label>
+</div>
 
-      function persistAdhocWait() {
-        if (!storage || !adhocWait) return;
-        try {
-          storage.setItem(adhocWaitStorageKey, JSON.stringify(adhocWait));
-        } catch (error) {
-          console.warn("XUAN-IB ad-hoc wait backup failed", error);
-        }
-      }
+<div class="pane p1">
+<div class="card">
+<h2>① 08-28 周五收盘一览 <small>周日休市 · 数据为上一交易日收盘（已连续两个自然日沿用）</small></h2>
+<div class="kv"><span class="k">与 08-30 17:44 HKT 上一版读数对照</span><span class="v"><span class="gv">$0（零变动）</span>（IB NAV），股数、价格与上一版完全一致，无新成交</span></div>
+<div class="kv"><span class="k">对账</span><span class="v">本次 IB 持仓端点直接读取成功；逐仓表按 IB 持仓明细 + CAD/USD 0.7192039 汇总合计 $4,586,341，与 IB Balance stock_market_value（权威）$4,585,767 差 $573 / 0.013%（VCN 持仓快照与账户余额快照之间的 CAD 汇率/时点噪音，在正常区间内，不影响 NAV/AI 压力等以 IB 权威总值为准的指标）</span></div>
+<div class="kv"><span class="k">FX 参考</span><span class="v">CAD/USD 0.7192039（IB Base，与上一版一致）· 无换汇动作</span></div>
+<details open><summary>全部持仓表 <span class="rt">26 只 · 逐仓合计 $4,586,341（IB 权威 NAV 仍以 $4,585,767 为准）· 与上一版完全一致</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>08-28 收盘价（IB 直读）</th><th>市值 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900</span></td><td>228.59</td><td>1,120,091</td></tr>
+<tr><td><span class="sym">CSPX</span><span class="sub">LSE · 610</span></td><td>836.87</td><td>510,491</td></tr>
+<tr><td><span class="sym">EQAC</span><span class="sub">SWX · 960</span></td><td>508.70</td><td>488,352</td></tr>
+<tr><td><span class="sym">EXUS</span><span class="sub">LSE · 8,500</span></td><td>47.085</td><td>400,222</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530</span></td><td>55.53</td><td>362,611</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">NYSE · 450</span></td><td>505.00</td><td>227,250</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">NASDAQ · 250</span></td><td>578.35</td><td>144,587</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">NASDAQ · 420</span></td><td>342.48</td><td>143,842</td></tr>
+<tr><td><span class="sym">VGIT</span><span class="sub">NASDAQ · 2,400</span></td><td>58.31</td><td>139,944</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">NASDAQ · 390</span></td><td>348.115</td><td>135,765</td></tr>
+<tr><td><span class="sym">GLD</span><span class="sub">NYSE · 300</span></td><td>409.23</td><td>122,769</td></tr>
+<tr><td><span class="sym">IVAI</span><span class="sub">LSE · 11,200</span></td><td>10.958</td><td>122,730</td></tr>
+<tr><td><span class="sym">MSTR</span><span class="sub">NASDAQ · 780</span></td><td>127.94</td><td>99,793</td></tr>
+<tr><td><span class="sym">VGSH</span><span class="sub">NASDAQ · 1,500</span></td><td>58.032</td><td>87,048</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">NYSE · 500</span></td><td>135.04</td><td>67,520</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">NYSE · 600</span></td><td>108.68</td><td>65,208</td></tr>
+<tr><td><span class="sym">TLT</span><span class="sub">NASDAQ · 700</span></td><td>82.942</td><td>58,059</td></tr>
+<tr><td><span class="sym">SMH</span><span class="sub">NASDAQ · 100</span></td><td>553.65</td><td>55,365</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">TSE · 1,025</span></td><td>C$74.43</td><td>54,869</td></tr>
+<tr><td><span class="sym">INDA</span><span class="sub">BATS · 1,100</span></td><td>49.56</td><td>54,516</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">NASDAQ · 100</span></td><td>466.04</td><td>46,604</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">NYSE · 200</span></td><td>150.95</td><td>30,190</td></tr>
+<tr><td><span class="sym">SLV</span><span class="sub">NYSE · 320</span></td><td>60.035</td><td>19,211</td></tr>
+<tr><td><span class="sym">USSC</span><span class="sub">LSE · 160</span></td><td>95.10</td><td>15,216</td></tr>
+<tr><td><span class="sym">HODL</span><span class="sub">EBS · 600</span></td><td>14.92</td><td>8,952</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">NASDAQ · 10 · 卖 90 后残余</span></td><td>513.53</td><td>5,135</td></tr>
+</tbody></table></div></div></details>
+</div>
 
-      function clearAdhocWait() {
-        adhocWait = null;
-        if (!storage) return;
-        try { storage.removeItem(adhocWaitStorageKey); } catch (_) {}
-      }
+<details><summary>③ 下一交易日开盘前会发生什么 <span class="rt">周一 08-31 正常交易日 · 需处理挂单 无</span></summary>
+<div class="dbody">
+<div class="sw">
+<input type="radio" name="ev" id="e1" checked><input type="radio" name="ev" id="e2"><input type="radio" name="ev" id="e3">
+<div class="swbar"><label for="e1">本周末</label><label for="e2">下周</label><label for="e3">已出（近端）</label></div>
+<div class="epane q1">
+<div class="tl"><span class="t">全周末</span><span class="e"><b>US / LSE / EBS / TSE 全部休市</b><span class="sub">下一交易日为周一 08-31，<b>正常交易日</b>（美国 Labor Day＝九月第一个周一，2026 年即 09-07，与 08-31 相距一周；按公历规则推算，非外部日历源核实，解决上一版「待核实」事项）</span></span><span class="s">已确认</span></div>
+<div class="kv" style="margin-top:7px"><span class="k">持仓财报</span><span class="v"><b>无</b> —— 本次会话未接入实时新闻/日历源，具体财报与宏观数据点未逐条核实，不据记忆填写，避免臆造</span></div>
+<div class="kv"><span class="k">需处理的挂单</span><span class="v"><b class="gv">无</b> —— 全部 GTC 距市价 &gt;2%（除 META 590 提示带内、周末不可能成交）；卡片默认折叠</span></div>
+</div>
+<div class="epane q2">
+<div class="tl"><span class="t">9/15–16</span><span class="e"><b>下次 FOMC</b><span class="sub">沿用此前已核实日期，本次未重新核实</span></span><span class="s">沿用</span></div>
+<div class="tl"><span class="t">09-07</span><span class="e"><b>US Labor Day（市场休市）</b><span class="sub">本次按公历「九月第一个周一」规则计算确认，非外部日历源核实</span></span><span class="s">已确认（日历推算）</span></div>
+<div class="kv" style="margin-top:7px"><span class="k">其余下周事件</span><span class="v">本次会话未核实，不填写以避免与既往版本重复或臆造未发生的确认状态</span></div>
+</div>
+<div class="epane q3">
+<div class="tl"><span class="t">08-27 21:56 HKT</span><span class="e"><b>META 卖 150 @ 590 挂出 REPLACED</b><span class="sub">08-27 睡前版已记录，本次沿用</span></span><span class="s">已确认（沿用）</span></div>
+<div class="tl"><span class="t">08-26</span><span class="e"><b>MSFT 卖 90 @ 488.43 成交</b><span class="sub">08-27 睡前版已记录，本次沿用</span></span><span class="s">已确认（沿用）</span></div>
+<div class="tl"><span class="t">08-24</span><span class="e"><b>EIMI 买 100 @ 53.99 成交</b><span class="sub">08-27 睡前版已记录，本次沿用；DAYS_7 内 IB 侧无更晚成交</span></span><span class="s">已确认（沿用）</span></div>
+<div class="tl"><span class="t">08-29</span><span class="e"><b>Webull：BRK.B 平仓 · 新增 MRVL 持仓</b><span class="sub">08-29 版已记录；本次重新读取 Webull 当前持仓仍维持该状态，Claude 未参与该操作</span></span><span class="s">如实披露（沿用）</span></div>
+</div>
+</div>
+</div></details>
+</div>
 
-      function restoreAdhocWait() {
-        if (!storage) return;
-        try {
-          const raw = storage.getItem(adhocWaitStorageKey);
-          if (!raw) return;
-          const saved = JSON.parse(raw);
-          const valid = saved.cacheVersion === 1 &&
-            Number.isInteger(saved.startedAt) &&
-            Number.isInteger(saved.deadline) &&
-            saved.deadline > Date.now() &&
-            (saved.baseline === null || validReportVersion(saved.baseline));
-          if (!valid) throw new Error("saved ad-hoc wait is invalid or expired");
-          adhocWait = saved;
-        } catch (error) {
-          clearAdhocWait();
-          console.warn("XUAN-IB saved ad-hoc wait was rejected", error);
-        }
-      }
+<div class="pane p2">
+<div class="card">
+<h2>② 弹药与 reserve 状态</h2>
+<div class="kv"><span class="k">IB 现金</span><span class="v">$466,322.32</span></div>
+<div class="kv"><span class="k">NOAH-HK 现金</span><span class="v">$357,968.92（零变动，Sharesight 本次读取值与上一版一致）</span></div>
+<div class="kv"><span class="k">现金池合计</span><span class="v">$824,291.24</span></div>
+<div class="kv"><span class="k">现金覆盖待 call 款</span><span class="v"><span class="gv">3.4345x ✓</span>（reserve $240,000；&lt;1.0x 才告警）</span></div>
+<div class="kv"><span class="k">可用现金</span><span class="v"><b>$584,291.24</b>（已扣 reserve）</span></div>
+<div class="kv"><span class="k">二线弹药</span><span class="v">$285,051（VGSH 87,048 → VGIT 139,944 → TLT 58,059；本次按 IB 直读市值精确重算）</span></div>
+<div class="kv"><span class="k">现金补仓池口径</span><span class="v">非美发达 + 新兴市场（v9.6；USSC 走底仓换壳、不占用现金）</span></div>
+<div class="kv"><span class="k">股息应计</span><span class="v">$260.57 · 杠杆 0（initial / maintenance margin 均为 0）</span></div>
+</div>
 
-      function showAdhocPending() {
-        status.classList.remove("error");
-        status.textContent = `临时报告正在生成，请稍候 · L ${loaderBuild}`;
-      }
+<details><summary>AI 压力敞口 · §0-C（三账户 · 沿用 v9.11 系数）
+<span class="rt wv">中 22.36% · 提醒区间 · fail-closed PASS</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">fail-closed 校验</span><span class="v"><span class="gv">PASS</span> —— 分子账户集合 = 分母账户集合 = {936247 IB-HK, 936249 Schwab-HK, 1350094 Webull}</span></div>
+<div class="kv"><span class="k">数据截止时点</span><span class="v">2026-08-30 10:08–10:10 UTC（周日 18:08–18:10 HKT），价格为 08-28 周五收盘；三账户本次分别经 IB 直读（IB-HK）与 Sharesight 只读（Schwab-HK / Webull）</span></div>
+<div class="kv"><span class="k">分母（三账户总市值含现金）</span><span class="v"><b>$6,169,420</b> = IB 5,053,336 + Schwab 609,041 + Webull 507,043（与上一版一致）</span></div>
+<div class="kv"><span class="k">系数来源</span><span class="v">逐票 T1/T2/T3 与 ETF 穿透权重<b>沿用上一版已采用的分类</b>，未发明新系数；ETF holdings as-of 日期同前次披露</span></div>
 
-      function expireAdhocWait() {
-        if (!adhocWait || Date.now() <= adhocWait.deadline) return false;
-        clearAdhocWait();
-        status.classList.add("error");
-        status.textContent = `临时报告尚未完成，请稍后刷新 · L ${loaderBuild}`;
-        return true;
-      }
+<details><summary>中情景主读数 <span class="rt">$1,379,598 / 22.36% —— 展开看计算组成</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:4px 0 8px">算法沿用上一版：每笔持仓市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），ETF 按沿用权重逐笔求和 ÷ 分母；市值改用本次 IB 直读，逐票复核与上一版数值一致。系数 = 压力情景下预期损失比例，不是「AI 相关度」。</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>市值 $</th><th>×系数</th><th>计入 $</th></tr></thead>
+<tbody>
+<tr class="sec"><td>IB-HK 936247<span class="sub">分子小计 $1,121,788</span></td><td>5,053,336</td><td>—</td><td>1,121,788</td></tr>
+<tr><td><span class="sym">MXUS</span><span class="sub">ETF 穿透沿用 25.03%</span></td><td>1,120,091</td><td>25.03%</td><td>280,399</td></tr>
+<tr><td><span class="sym">CSPX</span><span class="sub">ETF 穿透沿用 25.79%</span></td><td>510,491</td><td>25.79%</td><td>131,656</td></tr>
+<tr><td><span class="sym">EQAC</span><span class="sub">ETF 穿透沿用 41.07%</span></td><td>488,352</td><td>41.07%</td><td>200,566</td></tr>
+<tr><td><span class="sym">EXUS</span><span class="sub">ETF 穿透沿用 6.01%（C 级估计）</span></td><td>400,222</td><td>6.01%</td><td>24,053</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">ETF 穿透沿用 26.55%</span></td><td>362,611</td><td>26.55%</td><td>96,273</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>227,250</td><td>5%</td><td>11,363</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">T2</span></td><td>144,587</td><td>55%</td><td>79,523</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">T2</span></td><td>143,842</td><td>55%</td><td>79,113</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">T3</span></td><td>135,765</td><td>5%</td><td>6,788</td></tr>
+<tr><td><span class="sym">IVAI</span><span class="sub">纯 T1</span></td><td>122,730</td><td>80%</td><td>98,184</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">T3</span></td><td>67,520</td><td>5%</td><td>3,376</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">T3</span></td><td>65,208</td><td>5%</td><td>3,260</td></tr>
+<tr><td><span class="sym">SMH</span><span class="sub">纯 T1</span></td><td>55,365</td><td>80%</td><td>44,292</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">T3</span></td><td>54,869</td><td>5%</td><td>2,743</td></tr>
+<tr><td><span class="sym">INDA</span><span class="sub">T3</span></td><td>54,516</td><td>5%</td><td>2,726</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">T1</span></td><td>46,604</td><td>80%</td><td>37,283</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">T2</span></td><td>30,190</td><td>55%</td><td>16,605</td></tr>
+<tr><td><span class="sym">USSC</span><span class="sub">T3</span></td><td>15,216</td><td>5%</td><td>761</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">T2 · 卖 90 后残留 10 股</span></td><td>5,135</td><td>55%</td><td>2,824</td></tr>
+<tr class="sec"><td>Schwab-HK 936249<span class="sub">分子小计 $201,688</span></td><td>609,041</td><td>—</td><td>201,688</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">T2</span></td><td>138,725</td><td>55%</td><td>76,299</td></tr>
+<tr><td><span class="sym">GOOGL</span><span class="sub">T2</span></td><td>104,670</td><td>55%</td><td>57,569</td></tr>
+<tr><td><span class="sym">AVGO</span><span class="sub">T1</span></td><td>36,879</td><td>80%</td><td>29,503</td></tr>
+<tr><td><span class="sym">METU</span><span class="sub">META 2x 杠杆 ETF · min(2×55%,100%)</span></td><td>22,793</td><td>100%</td><td>22,793</td></tr>
+<tr><td><span class="sym">TSEM</span><span class="sub">特例沿用归 T2</span></td><td>20,801</td><td>55%</td><td>11,441</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>75,750</td><td>5%</td><td>3,788</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">T3</span></td><td>5,929</td><td>5%</td><td>296</td></tr>
+<tr class="sec"><td>Webull 1350094<span class="sub">分子小计 $56,122（不含 MRVL）</span></td><td>507,043</td><td>—</td><td>56,122</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">T2</span></td><td>89,149</td><td>55%</td><td>49,032</td></tr>
+<tr><td><span class="sym">IREN</span><span class="sub">特例沿用中情景 100%</span></td><td>7,090</td><td>100%</td><td>7,090</td></tr>
+<tr><td><span class="sym">MRVL</span><span class="sub"><b>本期新标的，§0-A 未核实，不计入分子</b>（若按 T1 80% 估算 +$17,330）</span></td><td>21,662</td><td>—</td><td>0</td></tr>
+<tr class="tot"><td>分子合计</td><td>—</td><td>—</td><td>1,379,598</td></tr>
+<tr class="tot"><td>÷ 分母（三账户含现金）</td><td>6,169,420</td><td>—</td><td>—</td></tr>
+<tr class="tot"><td>= 中情景占比</td><td>—</td><td>—</td><td>22.36%</td></tr>
+</tbody></table></div>
+<p style="font-size:12px;margin:8px 0 3px"><b>不进分子（但全部计入分母）：</b></p>
+<ul>
+<li><b>MSTR $99,793 判「不适用」</b> —— 风险因子是 BTC 不是 AI capex；不进分子，也不算作 0%。</li>
+<li><b>Webull MRVL $21,662</b> —— 本期新标的，§0-A 分类规则本次仍未能核实，比照 MSTR 处理方式不进分子（详见 ⑤）。</li>
+<li>主题非股票：GLD $122,769 · SLV $19,211 · HODL $8,952。</li>
+<li>防御与现金类：VGIT $139,944 · VGSH $87,048 · TLT $58,059 · IB 现金 $466,322 · Schwab SGOV $184,351 + 现金 $19,143 · Webull SGOV $37,759 + 现金 $351,384（与上一版一致）。</li>
+</ul>
+<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景</b> = 沿用上一版低/中、高/中比例（0.7005 / 1.292）近似换算，未逐票重算三档系数：低 ≈$966,408 / <b>15.66%</b>；高 ≈$1,782,441 / <b>28.89%</b>。</p>
+</div></details>
 
-      function updateAdhocWait(record) {
-        if (!adhocWait || expireAdhocWait()) return false;
-        if (!adhocWait.baseline) {
-          adhocWait.baseline = reportVersion(record);
-          persistAdhocWait();
-          showAdhocPending();
-          return false;
-        }
-        if (!reportIsNewerThan(record, adhocWait.baseline)) {
-          showAdhocPending();
-          return false;
-        }
-        // latest.meta.json does not yet identify the report class. Complete the
-        // request only when the already verified HTML labels the newer report
-        // as ad-hoc; a scheduled publication may still render, but cannot
-        // falsely claim that the user's ad-hoc request has finished.
-        if (classifyEdition(record.info.edition) !== "adhoc") {
-          showAdhocPending();
-          return false;
-        }
-        clearAdhocWait();
-        status.classList.toggle("error", !warning.hidden);
-        status.textContent = statusFor(record, "临时报告已完成");
-        return true;
-      }
+<div class="kv"><span class="k">三级状态</span><span class="v"><b class="wv">提醒区间</b>（已越 20% 提醒线，+2.36 个百分点）</span></div>
+<div class="kv"><span class="k">距 25% 预警线</span><span class="v"><b>$162,757 / 2.64 个百分点</b>（本次精确复核；上一版展示的 $163,764 为换算取整误差，已修正）</span></div>
+<div class="kv"><span class="k">距 30% 最高警报线</span><span class="v">$471,228 / 7.64 个百分点</span></div>
+<div class="kv"><span class="k">分账户分子（中）</span><span class="v">IB $1,121,788 · Schwab $201,688 · Webull $56,122（不含 MRVL）</span></div>
+<div class="kv"><span class="k">分类敏感度</span><span class="v">TSEM 若归 T1 → 22.44%；IREN 若按 80% → 22.34%；MRVL 若计入(T1 80%) → 22.64% ⇒ 日常表述「<b>约 22.3%–22.6%</b>」</span></div>
+<div class="kv"><span class="k">对照</span><span class="v">08-30 17:44 HKT 版 22.36% → 本期 08-30 18:10 HKT 临时版 <b>22.36%</b>（<span class="gv">零变动</span>，标的、股数、价格均未变动——周末无交易日）</span></div>
+<div class="kv"><span class="k">性质</span><span class="v">T1/T2/T3 仅作监控，<b>不是交易指令</b>；不产生买卖建议、不含时点判断、不触发自动执行</span></div>
+</div></details>
 
-      function beginAdhocWait() {
-        const now = Date.now();
-        adhocWait = {
-          cacheVersion: 1,
-          startedAt: now,
-          deadline: now + adhocWaitMs,
-          baseline: lastVerified ? reportVersion(lastVerified) : null
-        };
-        persistAdhocWait();
-        showAdhocPending();
-        return loadLatest();
-      }
+<details><summary>单票集中度 · 双视图
+<span class="rt">家庭 BRK.B 4.91%（线内，与上一版一致）· GOOG/GOOGL 5.47%（仍越线）</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:3px 0 6px"><b>主视图 = 家庭三账户合并</b>（分母 $6,169,420，与 AI 指标同源同时）</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>合计市值 $</th><th>占比</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">GOOG / GOOGL</span><span class="sub">IB 143,842 + Schwab 104,670 + Webull 89,149</span></td><td>337,661</td><td>5.47%</td><td class="wv">越 5% 参考线 $29,190，与上一版 5.47% 一致（本次修正上一版展示的 $6,552 换算误差）</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">IB 227,250 + Schwab 75,750 + Webull 0（已平仓）</span></td><td>303,000</td><td>4.91%</td><td class="gv">线内 —— 与上一版一致</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">市值口径：IB 144,587 + Schwab 138,725</span></td><td>283,312</td><td>4.59%</td><td>线内</td></tr>
+<tr><td><span class="sym">META 名义</span><span class="sub">含 METU 2x 名义敞口约 $22,793</span></td><td>~306,105</td><td>~4.96%</td><td>线内（分母口径不同，数值仅供参考）</td></tr>
+</tbody></table></div>
+<div class="kv" style="margin-top:6px"><span class="k">待 Wu 裁决（沿用）</span><span class="v">线值口径（家庭合并 vs IB 执行视图）与名义口径是否算越线仍待裁决——本次读数与上一版结论一致，两处待决事项状态不变（见 ⑤）</span></div>
+<p style="font-size:12px;margin:9px 0 6px"><b>辅助视图 = IB 执行口径</b>（分母 = IB NAV + NOAH-HK 现金 $5,411,305；软 5% / 硬 5.5% / BRK.B 12.8%）</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>市值 $</th><th>占比 / 线</th><th>余量 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">BRK.B</span><span class="sub">专线 12.8%</span></td><td>227,250</td><td>4.20% / 12.8%</td><td>465,397</td></tr>
+<tr><td><span class="sym">META</span></td><td>144,587</td><td>2.67% / 5%</td><td>125,978</td></tr>
+<tr><td><span class="sym">GOOG</span></td><td>143,842</td><td>2.66% / 5%</td><td>126,724</td></tr>
+<tr><td><span class="sym">TSLA</span></td><td>135,765</td><td>2.51% / 5%</td><td>134,800</td></tr>
+<tr><td><span class="sym">MSTR</span></td><td>99,793</td><td>1.84% / 5%</td><td>170,772</td></tr>
+</tbody></table></div>
+<div class="kv" style="margin-top:6px"><span class="k">IB 视图告警数</span><span class="v"><b class="gv">0 项</b> —— 全部线内；ETF 不适用单票线</span></div>
+</div></details>
 
-      const hex = (buffer) => Array.from(new Uint8Array(buffer), (byte) =>
-        byte.toString(16).padStart(2, "0")
-      ).join("");
+<details><summary>口径与分母说明 <span class="rt">三个分母互不相同，勿混用</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">AI 压力分母</span><span class="v">$6,169,420 = IB-HK + Schwab-HK + Webull 三账户总市值含现金（§0-C）</span></div>
+<div class="kv"><span class="k">HL 平日近似分母</span><span class="v">$5,411,305 = IB NAV + NOAH-HK 现金（单票 IB 执行视图用）</span></div>
+<div class="kv"><span class="k">四类分母 T</span><span class="v">$4,048,851 = 美国底仓 + 美国科技 + 非美发达 + 新兴市场（equity-only 相对比例；08-28 收盘价）</span></div>
+<div class="kv"><span class="k">跨指标张力</span><span class="v">§0 通用规则剔除 Schwab-HK 与 Webull，AI 指标按既定裁决<b>包含</b>这两个账户 ⇒ AI 读数不可与 NAV / 四桶 / 四类 / 单票横向比较</span></div>
+</div></details>
+</div>
 
-      async function gitBlobSha(bytes) {
-        const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-        const header = new TextEncoder().encode(`blob ${body.byteLength}\0`);
-        const payload = new Uint8Array(header.byteLength + body.byteLength);
-        payload.set(header, 0);
-        payload.set(body, header.byteLength);
-        return hex(await crypto.subtle.digest("SHA-1", payload));
-      }
+<div class="pane p3">
+<div class="card">
+<h2>④ 配置 <small>四桶 · 四类</small></h2>
+<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px"><b class="wv">四桶沿用 2026-08-24 verified Monday snapshot</b>（第五次沿用；家庭口径基数 $31,115,693；本次已重新读取 <code>four-bucket-mapping.json</code> 确认内容未变）。四类为本次 08-30 18:10 HKT 实时重读（08-28 收盘价，IB 直读），逐项与上一版核对结果一致。</p>
+<div class="bar"><div class="lbl"><span>Highly Liquid <small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">17.75% / 40% · 缺 $6.92M</span></div><div class="track"><div class="fill" style="width:44.4%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>VC-PE（closed-end）<small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r or">51.74% / 30% · 超 ~$6.77M</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:58%"></div></div></div>
+<div class="bar"><div class="lbl"><span>对冲基金 <small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">14.58% / 15%</span></div><div class="track"><div class="fill" style="width:97.2%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>常青（evergreen）<small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">15.93% 毛 · 14.82% 净 / 15%</span></div><div class="track"><div class="fill" style="width:98.8%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+</div>
 
-      const decodeUtf8 = (bytes) =>
-        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+<div class="card">
+<h2>四类比例 <small>Sharesight「资产类别」归类 · T = $4,048,851（实时）</small></h2>
+<div class="bar"><div class="lbl"><span>美国底仓 <span class="sub">MXUS · CSPX · BRK.B · USSC · APO · KKR</span></span><span class="r or">49.54% / 45% · 超 $183,793</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:91.0%"></div></div></div>
+<div class="bar"><div class="lbl"><span>美国科技 <span class="sub">EQAC · SMH · IVAI · GOOG · META · MSFT · AMD · ORCL · TSLA</span></span><span class="r or">28.96% / 20% · 超 $362,704</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:69.1%"></div></div></div>
+<div class="bar"><div class="lbl"><span>非美发达 <span class="sub">EXUS · VCN</span></span><span class="r">11.24% / 23%</span></div><div class="track"><div class="fill" style="width:48.9%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>新兴市场 <span class="sub">EIMI · INDA</span></span><span class="r">10.30% / 12%</span></div><div class="track"><div class="fill" style="width:85.8%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>USSC 小盘 <span class="sub">底仓内结构位 · 走换壳、不占现金补仓池</span></span><span class="r">0.9% (基数内) / 14%</span></div><div class="track"><div class="fill" style="width:6.4%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="kv"><span class="k">动态缺口（纯新钱补入）</span><span class="v">非美发达（EXUS 载体）+$619,792 + 新兴市场（EIMI 载体）+$78,702 = <b>$698,494</b>（沿用既定 v9.6 方法学，本次会话未重新推导该公式，仅确认输入持仓与上一版逐仓比对零变动）；可用现金覆盖 <span class="gv">83.7%</span></span></div>
+<div class="kv"><span class="k">主题投资</span><span class="v">GLD+SLV+MSTR+HODL = $250,247 = <span class="gv">6.18% / 7% 软上限 ✓</span></span></div>
+<div class="kv"><span class="k">防御资产（弹药池）</span><span class="v">$285,051（VGSH · VGIT · TLT，本次精确重算）</span></div>
+<div class="kv"><span class="k">HSBC-HK 赎回进度</span><span class="v">29.9%（$47,511 / $159,001）· 私募资产本次读取值与上一版一致，进度未见更新</span></div>
+</div>
 
-      const canonicalizeTransportInjection = (bytes) => {
-        const maxPublishedBytes = 2_000_000;
-        const maxTransportOverhead = 64 * 1024;
-        if (bytes.byteLength >= maxPublishedBytes + maxTransportOverhead) return null;
-        const html = decodeUtf8(bytes);
-        const externalScript = /<script\b(?=[^>]*[\t\n\f\r ]src[\t\n\f\r ]*=)[^>]*>[\s\S]*?<\/script[\t\n\f\r ]*>/gi;
-        const injected = html.match(externalScript) || [];
-        if (!injected.length || injected.length > 4) return null;
-        const encoder = new TextEncoder();
-        const removedBytes = injected.reduce(
-          (total, script) => total + encoder.encode(script).byteLength,
-          0
-        );
-        if (removedBytes > maxTransportOverhead) return null;
-        const canonicalBytes = encoder.encode(html.replace(externalScript, ""));
-        if (canonicalBytes.byteLength >= maxPublishedBytes ||
-            bytes.byteLength - canonicalBytes.byteLength !== removedBytes) return null;
-        return canonicalBytes;
-      };
+<details><summary>7 个 portfolio 明细 <span class="rt">2026-08-30 10:08–10:10 UTC Sharesight/IB 实时</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">NOAH-HK 936238</span><span class="v">总值 <b>$12,657,882.79</b>（较上一版零变动）· 现金 $357,968.92</span></div>
+<div class="kv"><span class="k">NOAH-US 936240</span><span class="v"><b>$5,455,199.00</b>（较上一版零变动 · Illiquid PE/VC 全量）</span></div>
+<div class="kv"><span class="k">ANTARCTICA 1021748</span><span class="v"><b>$2,901,407.16</b>（较上一版零变动 · HF 多策略）</span></div>
+<div class="kv"><span class="k">UBS 1031350</span><span class="v"><b>$4,706,100.12</b>（较上一版零变动 · 常青 PE 平台）</span></div>
+<div class="kv"><span class="k">IB-HK 936247</span><span class="v"><b>NAV $5,053,335.94（IB 权威，本次直读）</b>（较上一版零变动；Sharesight 侧同组合读数 $5,050,168.34，差 0.06%，属正常展示噪音，不改变权威值）</span></div>
+<div class="kv"><span class="k">Citi-HK &amp; 地产四期 936243</span><span class="v"><b>$500,000</b>（静态，较上一版零变动）</span></div>
+<div class="kv"><span class="k">HSBC-HK 1350095</span><span class="v"><b>$163,345.50</b>（较上一版零变动）</span></div>
+<div class="kv"><span class="k">7-portfolio 家庭合计（实时）</span><span class="v"><b>$31,437,271</b>（与上一版一致，零变动——私募/半流动仓位周内多为静态，周末更无变动，符合预期）</span></div>
+<div class="kv"><span class="k">AI 三账户附加（非四桶）</span><span class="v">Schwab-HK $609,040.52 + Webull $507,043.38 = $1,116,083.90（仅进 AI 指标分母，与上一版一致）</span></div>
+<div class="kv"><span class="k">NOAH-EB-5 1021747</span><span class="v"><b>不计入家庭 7-portfolio 合计</b>——沿用既有报告范围，本次仅确认其存在、未纳入任何汇总，避免擅自扩大统计口径</span></div>
+<div class="kv"><span class="k">四桶归类映射</span><span class="v"><b class="wv">沿用 2026-08-24 verified snapshot</b> —— 本次已重新读取 <code>claude/four-bucket-mapping.json</code> 确认内容未变：Semi Liquid 标签持仓精确计数 56 个，仍仅 8 个有 <code>holdingOverrides</code>，其余按 mapping 自带 fail-closed 规则不得猜测</span></div>
+</div></details>
+</div>
 
-      const reportInfo = (html) => {
-        const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
-        if (!match) throw new Error("页面缺少报告日期与版次");
-        const text = match[1]
-          .replace(/<[^>]*>/g, " ")
-          .replace(/&nbsp;|&#160;/gi, " ")
-          .replace(/&middot;|&#183;/gi, "·")
-          .replace(/\s+/g, " ")
-          .trim();
-        const date = text.match(/^(\d{4}-\d{2}-\d{2})\b/);
-        const parts = text.split("·").map((part) => part.trim()).filter(Boolean);
-        if (!date || parts.length < 2) throw new Error("报告日期或版次无法识别");
-        return { dataDate: date[1], edition: parts[1], label: text };
-      };
+<div class="pane p4">
+<div class="card">
+<h2>⑤ 待决定事项 <small>3 项待 Wu 裁决 · 展开看 事实/选项 → Claude 意见 → 状态</small></h2>
 
-      const hktContext = (now = new Date()) => {
-        const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        return {
-          date: shifted.toISOString().slice(0, 10),
-          weekday: shifted.getUTCDay(),
-          minuteOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
-        };
-      };
+<details class="dcard" id="D-20260829-MRVL-CLASS"><summary>1 · Webull MRVL $21,662 属 §0-A 未分类新标的
+<span class="rt wv">建议 (B) 不计入分子并披露 · 待 Wu 审核</span></summary>
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>本次（08-30 18:10 HKT）重新读取 Webull 持仓，MRVL 仍在（数量 100、市值 $21,662，与上一版一致），§0-A 新标的分类规则本次会话仍未能核实（本仓库与本次检索的 Google Drive 材料中均未找到，关键词 XUAN / IB-HK / MRVL 未命中相关分类文件）。选项与此前版本相同：(A) 参照同为半导体的 SMH/AVGO 按 T1 80% 计入；(B) 保持不计入分子、比照 MSTR 处理并披露；(C) 停发整份报告直至规则可核实。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>沿用此前意见，倾向 <b>(B) 不计入分子并披露</b>——理由不变：§0-A 规则文本仍不可得；MRVL 占分母仅 0.35%，若按最高 T1 80% 计入主读数仅升至约 22.64%，仍在 25% 预警线以下，不影响 fail-closed 结论；(C) 代价过高，不构成停发理由。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>待 Wu 审核</b>（<code>awaiting_user</code>；沿用，本次仅重新确认事实不变）· 编号 <code>D-20260829-MRVL-CLASS</code></p>
+</div></details>
 
-      const addIsoDays = (date, days) => {
-        const value = new Date(`${date}T00:00:00Z`);
-        value.setUTCDate(value.getUTCDate() + days);
-        return value.toISOString().slice(0, 10);
-      };
+<details class="dcard" id="D-20260829-GOOG-FAMILY-LIMIT"><summary>2 · GOOG/GOOGL 家庭主视图 5.47% 越 5% 参考线
+<span class="rt wv">建议 (B) 先重订线值 · 待 Wu 审核</span></summary>
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>合计 $337,661 / $6,169,420 = 5.47%（IB 143,842 + Schwab 104,670 + Webull 89,149，本次逐票重算），与上一版一致（标的、股数、价格均未变动）。选项沿用不变：(A) 立线值 5% 硬约束；(B) 先重订线值（家庭合并 vs IB 执行视图分母不同）；(C) 忽略越线。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>沿用此前意见，倾向 <b>(B) 先重订线值</b>——判断逻辑未变：现行 5% 线针对 IB 执行视图（分母 $5.4M），未对家庭合并（分母 $6.17M）做等美元换算。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>待 Wu 审核</b>（<code>awaiting_user</code>；沿用此前未决事项，本次仅更新读数）· 编号 <code>D-20260829-GOOG-FAMILY-LIMIT</code></p>
+</div></details>
 
-      const hktSlots = {
-        am: { startMinute: 8 * 60, dueMinute: 8 * 60 + 35, weekdays: new Set([2, 3, 4, 5, 6]) },
-        pm: { startMinute: 20 * 60 + 55, dueMinute: 21 * 60 + 25, weekdays: new Set([1, 2, 3, 4, 5]) }
-      };
+<details class="dcard" id="D-20260829-SEMILIQUID-MAPPING"><summary>3 · 四桶 mapping 仍缺多数 Semi Liquid 持仓的 override
+<span class="rt wv">建议 (A) 继续沿用，并尽快 (C) 补全 mapping · 待 Wu 审核</span></summary>
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>本次已重新读取 <code>claude/four-bucket-mapping.json</code> 并逐项核对：内容与 08-24 verified snapshot 时一致，NOAH-HK / ANTARCTICA / UBS 三个组合中带「Semi Liquid」Sharesight 标签的持仓本次<b>精确计数为 56 个</b>（此前版本估计为「约 50 个」），其中仍仅 8 个在 <code>holdingOverrides</code> 中有明确 hedge_fund/evergreen 归类；其余 48 个因 mapping 自带 <code>unknownSemiLiquid</code> 规则要求 fail-closed，本次继续沿用 08-24 快照，这是第四个使用同一快照的读数周期。选项不变：(A) 继续沿用直至 mapping 补全；(B) 由 Claude 按名称模式推断补全（明确违反 mapping 自身规则，不建议）；(C) 提请 Wu/仓库侧补全 mapping 后再固化。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>倾向 <b>(A) 继续沿用</b>，并再次建议尽快 (C)——已连续四个读数周期沿用同一快照，长期沿用会使四桶读数与实际家庭配置渐行渐远，值得提请补全约 48 个未覆盖的 Semi Liquid holdingId（本次精确计数较此前估计的「约 50 个」略高，提示该标签持仓仍在增长）。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>待 Wu 审核 / 待仓库侧补全 mapping</b>（<code>awaiting_user</code>；沿用）· 编号 <code>D-20260829-SEMILIQUID-MAPPING</code></p>
+</div></details>
+</div>
 
-      const hktSlotEpoch = (date, edition, minuteKey) => Math.floor(
-        (Date.parse(`${date}T00:00:00Z`) - 8 * 60 * 60 * 1000 +
-          hktSlots[edition][minuteKey] * 60 * 1000) / 1000
-      );
+<details><summary>已结案 / 只读观察 <span class="rt">最近 5 项 · 无需 Wu 决策</span></summary>
+<div class="dbody">
+<ol>
+<li><b>本次（08-30 18:10 HKT）与上一版（08-30 17:44 HKT）逐项核对零变动</b> —— IB NAV、现金、持仓股数与价格、7 个 Sharesight 组合总值、GTC 挂单（12 张）与 DAYS_7 成交全部一致；本次会话未执行任何交易，符合周末无交易日的预期。<span class="sub">只读观察 · 编号 <code>O-20260830-ZERO-DELTA</code></span></li>
+<li><b>US Labor Day 日期按日历规则推算确认为 2026-09-07</b> —— 解决上一版「周一 08-31 是否为假期缩短周，待核实」的悬项：Labor Day 定义为「九月第一个周一」，与 08-31 相距一整周，故 08-31 为正常交易日。本次按公历规则计算得出，非外部日历/新闻源核实。<span class="sub">只读观察 · 编号 <code>O-20260830-LABORDAY-CONFIRMED</code></span></li>
+<li><b>Webull BRK.B 仍为已平仓状态、MRVL 持仓仍在</b> —— 本次重新读取 Webull 当前持仓，仍不含 BRK.B（现金 $351,383.83，与上一版一致）；该操作发生在 IB 只读范围之外，Claude 未参与、也无法核实具体成交价与时间。处理：如实记录，不做归因。<span class="sub">仅披露，不需要 Wu 决策 · 编号 <code>O-20260830-WEBULL-BRKB</code></span></li>
+<li><b>AMD 三张 REPLACED/NEW 卖单待 TWS 目视</b> —— 限价 500 / 499 / 520，撤改一律由 Wu 在 TWS / IBKR 端执行。<span class="sub">只读观察 · 编号 <code>O-20260830-AMD-ORDERS</code></span></li>
+<li><b>EXUS 买 100 @ 46.90 节奏单仍在窗口内</b> —— 距市价 +0.39%，6 天未成交，带内。<span class="sub">只读观察 · 编号 <code>O-20260830-EXUS-PACING</code></span></li>
+</ol>
+</div></details>
 
-      const expectedBusinessEdition = (now = new Date()) => {
-        const context = hktContext(now);
-        const nowEpoch = Math.floor(now.getTime() / 1000);
-        let latest = null;
-        for (let offset = 0; offset <= 8; offset += 1) {
-          const date = addIsoDays(context.date, -offset);
-          const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
-          for (const edition of ["am", "pm"]) {
-            if (!hktSlots[edition].weekdays.has(weekday)) continue;
-            const dueEpoch = hktSlotEpoch(date, edition, "dueMinute");
-            if (dueEpoch > nowEpoch) continue;
-            if (!latest || dueEpoch > latest.dueEpoch) latest = { dataDate: date, edition, dueEpoch };
-          }
-        }
-        if (!latest) throw new Error("无法确定最近应完成的香港报告版次");
-        return {
-          ...latest,
-          startEpoch: hktSlotEpoch(latest.dataDate, latest.edition, "startMinute"),
-          label: latest.edition === "am" ? "早间版" : "睡前版"
-        };
-      };
+<details><summary>⑥ 换仓触发检查 <span class="rt">触发：无 · GTC 12 张 · 待撤 4 张 $150,520</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:3px 0 7px"><b>触发判定：无。</b> 迁移池（GOOG / TSLA / APO / KKR / AMD / MSTR / META，不含 BRK.B；MSFT 已归零）本次无落后度触发、无估值或强势兑现信号；周末无交易窗口。所有剩余卖单为 Wu 自行下达的既有单，不构成 Claude 的换仓建议。</p>
+<div class="kv"><span class="k">GTC 挂单</span><span class="v">与上一版完全一致（12 张，无新增/撤单/成交），股数、限价均未变</span></div>
+<details><summary>GTC 明细表 <span class="rt">12 张 · 与上一版一致，年龄按日历天数重新计算</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>挂单</th><th>限价</th><th>距市价（IB 直读）</th><th>年龄 / 状态</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">EXUS 买 100</span><span class="sub">节奏单</span></td><td>46.90</td><td class="wv">+0.39%</td><td>6 天 · 带内未成交</td></tr>
+<tr><td><span class="sym">META 卖 150</span><span class="sub">REPLACED（08-27 21:56 HKT）</span></td><td>590.00</td><td class="wv">+2.01%</td><td>3 天 · REPLACED · 提示带</td></tr>
+<tr><td><span class="sym">AMD 卖 20</span></td><td>500.00</td><td>+7.29%</td><td>5 天 · NEW</td></tr>
+<tr><td><span class="sym">AMD 卖 30</span><span class="sub">REPLACED（原 555 → 499）</span></td><td>499.00</td><td>+7.07%</td><td>3 天 · REPLACED 待目视</td></tr>
+<tr><td><span class="sym">AMD 卖 50</span><span class="sub">REPLACED</span></td><td>520.00</td><td>+11.58%</td><td>12 天 · REPLACED 待目视</td></tr>
+<tr><td><span class="sym">SLV 卖 160</span><span class="sub">卖单免龄</span></td><td>82.00</td><td>+36.58%</td><td>136 天 · 免龄</td></tr>
+<tr><td><span class="sym">EIMI 买 500</span><span class="sub">提示带</span></td><td>49.50</td><td>−10.86%</td><td>46 天 · &gt;5% 提示</td></tr>
+<tr><td><span class="sym">EXUS 买 300</span><span class="sub">提示带</span></td><td>44.00</td><td>−6.55%</td><td>52 天 · &gt;5% 提示</td></tr>
+<tr><td><span class="sym">EIMI 买 1000</span><span class="sub">待撤</span></td><td>47.12</td><td>−15.15%</td><td>87 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">EXUS 买 1000</span><span class="sub">待撤 · REPLACED</span></td><td>42.00</td><td>−10.80%</td><td>87 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">EXUS 买 1000</span><span class="sub">待撤</span></td><td>41.50</td><td>−11.86%</td><td>87 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">MXUS 买 100</span><span class="sub">待撤</span></td><td>199.00</td><td>−12.95%</td><td>96 天 · <b>待撤</b></td></tr>
+</tbody></table></div>
+<p style="font-size:12px;margin:6px 0 0"><b>待撤四张，名义合计 $150,520</b>（&gt;60 天且距市价 &gt;5%）。撤单一律由 Wu 在 TWS / IBKR 端执行，Claude 只提醒与核对。</p>
+</div></details>
+<details><summary>迁移池成本对照 <span class="rt">IB 持仓成本（average_price，直读）· 历史成本与 trailing return 不作为主要卖出依据</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:4px 0 8px">口径：IB average_price，与 Sharesight 加权成本方法论不同，两者不保证一致，如实分列不作调和。本次持仓、成本与市价与上一版完全一致，本次会话未执行任何交易。</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>IB 成本 / 股</th><th>08-28 收盘价（IB）</th><th>差异 %</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">AMD</span><span class="sub">未实现 +$26,787</span></td><td>198.17</td><td>466.04</td><td class="up">+135.2%</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">未实现 C$29,122</span></td><td>C$46.02</td><td>C$74.43</td><td class="up">+61.8%</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">卖 90 剩 10</span></td><td>355.02</td><td>513.53</td><td class="up">+44.7%</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">未实现 +$7,196</span></td><td>120.65</td><td>135.04</td><td class="up">+11.9%</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">未实现 +$13,138</span></td><td>311.20</td><td>342.48</td><td class="up">+10.1%</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">未实现 −$2,158</span></td><td>586.98</td><td>578.35</td><td class="dn">−1.5%</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">未实现 −$1,399</span></td><td>157.95</td><td>150.95</td><td class="dn">−4.4%</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">未实现 −$4,556</span></td><td>116.27</td><td>108.68</td><td class="dn">−6.5%</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">未实现 −$11,735</span></td><td>378.21</td><td>348.115</td><td class="dn">−8.0%</td></tr>
+<tr><td><span class="sym">MSTR</span><span class="sub">未实现 −$24,080 · 静默持有</span></td><td>158.81</td><td>127.94</td><td class="dn">−19.4%</td></tr>
+</tbody></table></div></div></details>
+</div></details>
+</div>
+</div>
 
-      const classifyEdition = (edition) => {
-        const value = String(edition).toLowerCase();
-        if (/计划外|加跑|补跑|临时|ad[ -]?hoc/.test(value)) return "adhoc";
-        if (/睡前|晚间|定时正式版|\bpm\b/.test(value)) return "pm";
-        if (/早间|上午|早班|\bam\b/.test(value)) return "am";
-        return "unknown";
-      };
+<details><summary>报告说明 <span class="rt">版别 · 取数时点 · 数据日 · 只读</span></summary>
+<div class="dbody">
+<ol>
+<li><b>版次与时点。</b>版别：<b>临时版 / ad hoc，本日第二次</b>，由用户手动 Run now 启动。启动 / 取数时点：<b>2026-08-30 10:08–10:10 UTC（周日 18:08–18:10 HKT）</b>。数据日：<b>2026-08-30</b>，价格为上一交易日 08-28（周五）收盘（美股 / LSE / EBS / TSE 周六、周日连续两日休市）。<b>不代替、也不冒充</b>周一至周五 20:55 睡前版或周二至周六 08:00 早间版的定时成功证据；周日无新定时版，下一次定时版为周二 08:00 早间版（对应周一 08-31 正常交易日的收盘）。</li>
+<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 verified Monday snapshot</b>（第五次沿用，as-of 2026-08-24），因 <code>claude/four-bucket-mapping.json</code> 的 <code>unknownSemiLiquid</code> 规则要求 fail-closed，56 个 Semi Liquid 标签持仓中仅 8 个有 <code>holdingOverrides</code>，本次已重新读取确认内容未变；影响范围＝四桶比例、三层流动性及依赖归桶的 KPI，其余数据为本次实时只读读数，与上一版（17:44 HKT）逐项核对零变动。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重逐票沿用（未发明新系数）· 四类清单 v9.6 · USSC 基数 v9.8 · 四类「动态缺口」沿用既定 v9.6 方法学（本次未重新推导公式）；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。本次已检索当前环境已授权的 Google Drive XUAN-IB 资料（关键词 XUAN / IB-HK / MRVL），未发现新的 §0-A 分类规则文件，待决定事项 1 沿用未决。FX 参考 CAD/USD 0.7192039（IB Base，与上一版一致），无换汇动作。</li>
+<li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本期未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本临时版通过与定时版相同的候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接，但不冒充或替代 AM/PM 定时版的成功证据。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项，完整取数记录见本次会话最终输出）。</li>
+</ol>
+</div></details>
 
-      const staleMessage = (record, now = new Date()) => {
-        const expected = expectedBusinessEdition(now);
-        const actualEdition = classifyEdition(record.info.edition);
-        const dateBehind = record.info.dataDate < expected.dataDate;
-        const editionRank = {am: 1, pm: 2};
-        const adHocBeforeSlot = actualEdition === "adhoc" &&
-          record.meta.sourceCommitEpoch < expected.startEpoch;
-        const scheduledBehind = (editionRank[actualEdition] ?? 0) < editionRank[expected.edition];
-        const slotBehind = record.info.dataDate === expected.dataDate &&
-          (actualEdition === "unknown" || adHocBeforeSlot ||
-            (actualEdition !== "adhoc" && scheduledBehind));
-        if (!dateBehind && !slotBehind) return "";
-        return `报告已过期：应至少为 ${expected.dataDate} ${expected.label}，` +
-          `当前为 ${record.info.dataDate} ${record.info.edition}。` +
-          "现继续显示最后一份已验证报告，未伪造新数据。";
-      };
+<div class="foot">只读报告 · 数据截至 18:10 HKT · 已验证发布 · 不是交易指令</div>
 
-      const validateMeta = (meta) => {
-        if (!meta || meta.schemaVersion !== 1) throw new Error("发布信息版本不兼容");
-        if (!/^[0-9a-f]{40}$/i.test(meta.sourceSha || "")) throw new Error("发布来源无效");
-        if (!Number.isInteger(meta.sourceCommitEpoch) || meta.sourceCommitEpoch <= 0) {
-          throw new Error("发布时间无效");
-        }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(meta.dataDate || "")) throw new Error("数据日期无效");
-        if (!/^[0-9a-f]{40}$/i.test(meta.htmlBlob || "")) throw new Error("页面指纹无效");
-        return meta;
-      };
-
-      const protect = (html) => {
-        const csp = '<meta http-equiv="Content-Security-Policy" content="default-src &apos;none&apos;; style-src &apos;unsafe-inline&apos;; script-src &apos;none&apos;; img-src &apos;none&apos;; font-src &apos;none&apos;; media-src &apos;none&apos;; connect-src &apos;none&apos;; frame-src &apos;none&apos;; object-src &apos;none&apos;; base-uri &apos;none&apos;; form-action &apos;none&apos;">';
-        const protectedHtml = html.replace(/<head[^>]*>/i, (head) => head + csp);
-        if (protectedHtml === html) throw new Error("页面缺少安全头");
-        return protectedHtml;
-      };
-
-      async function verifyPair(bytes, meta) {
-        validateMeta(meta);
-        let verifiedBytes = bytes;
-        let blob = await gitBlobSha(verifiedBytes);
-        if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
-          const canonicalBytes = canonicalizeTransportInjection(bytes);
-          if (!canonicalBytes) throw new Error("发布信息与页面不是同一版本");
-          blob = await gitBlobSha(canonicalBytes);
-          if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
-            throw new Error("发布信息与页面不是同一版本");
-          }
-          verifiedBytes = canonicalBytes;
-          console.warn("XUAN-IB removed a transport-injected external script before verification");
-        }
-        const html = decodeUtf8(verifiedBytes);
-        if (!html.includes("xuan-ib-handover:v1") ||
-            !approvedTitles.some((title) => html.includes(title))) {
-          throw new Error("页面完整性标记不符");
-        }
-        const info = reportInfo(html);
-        if (info.dataDate !== meta.dataDate) throw new Error("发布日期与页面日期不一致");
-        return { html, protectedHtml: protect(html), meta, info, blob };
-      }
-
-      function requireMonotonic(record, previous) {
-        if (!previous) return record;
-        if (record.meta.dataDate < previous.meta.dataDate) {
-          throw new Error("上游报告日期早于本机已验证版本");
-        }
-        if (record.meta.dataDate > previous.meta.dataDate) return record;
-        if (record.meta.sourceCommitEpoch < previous.meta.sourceCommitEpoch) {
-          throw new Error("上游同日报告版本早于本机已验证版本");
-        }
-        if (record.meta.sourceCommitEpoch === previous.meta.sourceCommitEpoch &&
-            record.meta.htmlBlob.toLowerCase() !== previous.meta.htmlBlob.toLowerCase()) {
-          throw new Error("同一发布版本出现不同页面指纹");
-        }
-        return record;
-      }
-
-      const statusFor = (record, prefix) =>
-        `${prefix} · 报告 ${record.info.dataDate} · ${record.info.edition} · L ${loaderBuild}`;
-
-      function renderVerified(record, prefix, warningMessage = "") {
-        frame.srcdoc = record.protectedHtml;
-        lastVerified = record;
-        warning.hidden = !warningMessage;
-        warning.textContent = warningMessage;
-        status.classList.toggle("error", Boolean(warningMessage));
-        status.textContent = statusFor(record, prefix);
-      }
-
-      function saveVerified(record) {
-        if (!storage) return;
-        try {
-          storage.setItem(storageKey, JSON.stringify({
-            cacheVersion: 1,
-            html: record.html,
-            meta: record.meta,
-            verifiedAt: Date.now()
-          }));
-        } catch (error) {
-          console.warn("XUAN-IB verified-page backup failed", error);
-        }
-      }
-
-      async function restoreVerified(request) {
-        if (lastVerified || !storage) return Boolean(lastVerified);
-        try {
-          const raw = storage.getItem(storageKey);
-          if (!raw) return false;
-          const saved = JSON.parse(raw);
-          if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
-          const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
-          if (request !== requestSequence) return false;
-          renderVerified(record, "正在核对最新版", staleMessage(record));
-          return true;
-        } catch (error) {
-          try { storage.removeItem(storageKey); } catch (_) {}
-          console.warn("XUAN-IB saved verified page was rejected", error);
-          return false;
-        }
-      }
-
-      async function loadLatest() {
-        const request = ++requestSequence;
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 10_000);
-        lastAttempt = Date.now();
-        button.disabled = true;
-        warning.hidden = true;
-        status.classList.remove("error");
-        const restored = await restoreVerified(request);
-        if (request !== requestSequence) return;
-        if (!restored) status.textContent = "正在读取最新版…";
-        try {
-          const token = `${loaderBuild}-${Date.now()}`;
-          const metaUrl = new URL("latest.meta.json", location.href);
-          const htmlUrl = new URL("latest.html", location.href);
-          metaUrl.searchParams.set("v", token);
-          htmlUrl.searchParams.set("v", token);
-          const options = { cache: "no-store", credentials: "omit", signal: controller.signal };
-          const [metaResponse, htmlResponse] = await Promise.all([
-            fetch(metaUrl, options),
-            fetch(htmlUrl, options)
-          ]);
-          if (!metaResponse.ok) throw new Error(`metadata HTTP ${metaResponse.status}`);
-          if (!htmlResponse.ok) throw new Error(`page HTTP ${htmlResponse.status}`);
-          const [meta, bytes] = await Promise.all([
-            metaResponse.json(),
-            htmlResponse.arrayBuffer()
-          ]);
-          const record = requireMonotonic(
-            await verifyPair(new Uint8Array(bytes), meta),
-            lastVerified
-          );
-          if (request !== requestSequence) return;
-          renderVerified(record, `已同步 ${clock()}`, staleMessage(record));
-          saveVerified(record);
-          lastSuccess = Date.now();
-          updateAdhocWait(record);
-        } catch (error) {
-          if (request !== requestSequence) return;
-          status.classList.add("error");
-          if (lastVerified) {
-            const stale = staleMessage(lastVerified);
-            const fallback = "上游暂不一致，正在显示上一份已验证版本";
-            renderVerified(lastVerified, "显示上一份已验证版本", stale ? `${stale} ${fallback}` : fallback);
-          } else {
-            warning.hidden = true;
-            status.textContent = `暂时无法读取已验证报告 · L ${loaderBuild}`;
-            frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
-          }
-          if (adhocWait && !expireAdhocWait()) showAdhocPending();
-          console.warn("XUAN-IB latest-page refresh failed", error);
-        } finally {
-          window.clearTimeout(timeout);
-          if (request === requestSequence) button.disabled = false;
-        }
-      }
-
-      restoreAdhocWait();
-      if (adhocWait) showAdhocPending();
-      adhocButton.addEventListener("click", beginAdhocWait);
-      button.addEventListener("click", loadLatest);
-      window.addEventListener("pageshow", (event) => {
-        if (!expireAdhocWait()) return loadLatest();
-      });
-      window.addEventListener("focus", () => {
-        if (adhocWait && !expireAdhocWait()) return loadLatest();
-      });
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && adhocWait && !expireAdhocWait()) return loadLatest();
-        if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
-      });
-      window.setInterval(() => {
-        if (adhocWait && !expireAdhocWait()) return loadLatest();
-      }, adhocPollMs);
-      window.setInterval(() => {
-        if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();
-      }, 60_000);
-    })();
-  </script>
-</body>
-</html>
+</div></div>
+</body></html>
