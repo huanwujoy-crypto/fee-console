@@ -26,6 +26,8 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main:refs/remotes/origin/main
           git show origin/main:scripts/handover-guard.mjs > "$RUNNER_TEMP/handover-guard.mjs"
+          git show origin/main:xuan-ib/latest.html > "$RUNNER_TEMP/previous-latest.html"
+          git show origin/main:xuan-ib/latest.meta.json > "$RUNNER_TEMP/previous-latest.meta.json"
 
       - name: Validate the candidate contract
         shell: bash
@@ -74,9 +76,37 @@ jobs:
           data_date=${BASH_REMATCH[1]}
           today_hkt=$(TZ=Asia/Hong_Kong date +%F)
           yesterday_hkt=$(TZ=Asia/Hong_Kong date -d 'yesterday' +%F)
-          if [[ "$data_date" != "$today_hkt" && "$data_date" != "$yesterday_hkt" ]]; then
-            echo 'Candidate data date is stale or in the future.' >&2
+
+          previous_data_date=$(jq -er \
+            '.dataDate | select(type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}$"))' \
+            "$RUNNER_TEMP/previous-latest.meta.json")
+          records_update=false
+          if grep -Eiq '<!--[[:space:]]*xuan-ib-records-update:v1[[:space:]]*-->' xuan-ib/index.html; then
+            records_update=true
+          fi
+          if [[ "$records_update" == true ]]; then
+            if [[ "$data_date" != "$previous_data_date" ]]; then
+              echo 'Records-update subject must preserve the trusted previous data date.' >&2
+              exit 1
+            fi
+          elif [[ "$data_date" != "$today_hkt" && "$data_date" != "$yesterday_hkt" ]]; then
+            echo 'Ordinary candidate data date is stale or in the future.' >&2
             exit 1
           fi
 
-          node "$RUNNER_TEMP/handover-guard.mjs" xuan-ib/index.html "$data_date"
+          previous_source_sha=$(jq -er \
+            '.sourceSha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            "$RUNNER_TEMP/previous-latest.meta.json")
+          previous_html_blob=$(jq -er \
+            '.htmlBlob | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            "$RUNNER_TEMP/previous-latest.meta.json")
+          actual_previous_blob=$(git hash-object "$RUNNER_TEMP/previous-latest.html")
+          if [[ "$actual_previous_blob" != "$previous_html_blob" ]]; then
+            echo 'Trusted previous HTML does not match latest.meta.json.' >&2
+            exit 1
+          fi
+
+          XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" \
+          XUAN_IB_PREVIOUS_HTML_BLOB="$previous_html_blob" \
+            node "$RUNNER_TEMP/handover-guard.mjs" \
+              xuan-ib/index.html "$data_date" "$RUNNER_TEMP/previous-latest.html"

@@ -184,7 +184,17 @@ jobs:
               continue
             fi
             data_date=${BASH_REMATCH[1]}
-            if [[ "$data_date" != "$today_hkt" && "$data_date" != "$yesterday_hkt" ]]; then
+            records_update=false
+            records_marker_count=$(git show "$candidate_ref:xuan-ib/index.html" |
+              grep -Eic '<!--[[:space:]]*xuan-ib-records-update:v1[[:space:]]*-->' || true)
+            if (( records_marker_count > 0 )); then
+              records_update=true
+            fi
+            if [[ "$records_update" == true ]]; then
+              if [[ "$data_date" != "$source_data_date" ]]; then
+                continue
+              fi
+            elif [[ "$data_date" != "$today_hkt" && "$data_date" != "$yesterday_hkt" ]]; then
               continue
             fi
 
@@ -221,7 +231,10 @@ jobs:
               echo "Skipping $branch_name: its handover page cannot be materialized."
               continue
             fi
-            if ! node scripts/handover-guard.mjs "$RUNNER_TEMP/handover.html" "$data_date"; then
+            if ! XUAN_IB_PREVIOUS_SOURCE_SHA="$meta_source_sha" \
+                XUAN_IB_PREVIOUS_HTML_BLOB="$published_blob" \
+                node scripts/handover-guard.mjs \
+                  "$RUNNER_TEMP/handover.html" "$data_date" xuan-ib/latest.html; then
               echo "Skipping $branch_name: its handover page failed validation."
               continue
             fi
@@ -278,6 +291,19 @@ jobs:
             exit 1
           fi
 
+          previous_source_sha=$(jq -er \
+            '.sourceSha | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            xuan-ib/latest.meta.json)
+          previous_html_blob=$(jq -er \
+            '.htmlBlob | select(type == "string" and test("^[0-9a-f]{40}$"))' \
+            xuan-ib/latest.meta.json)
+          actual_previous_blob=$(git hash-object xuan-ib/latest.html)
+          if [[ "$actual_previous_blob" != "$previous_html_blob" ]]; then
+            echo 'Trusted previous HTML does not match latest.meta.json.' >&2
+            exit 1
+          fi
+          cp xuan-ib/latest.html "$RUNNER_TEMP/previous-latest.html"
+
           source_tag="refs/tags/xuan-ib-published/${DATA_DATE}-${CANDIDATE_SHA:0:12}"
           remote_source_sha=$(git ls-remote origin "$source_tag" | awk '{print $1}')
           if [[ -z "$remote_source_sha" ]]; then
@@ -288,7 +314,10 @@ jobs:
           fi
 
           git show "$CANDIDATE_SHA:xuan-ib/index.html" > xuan-ib/latest.html
-          node scripts/handover-guard.mjs xuan-ib/latest.html "$DATA_DATE"
+          XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" \
+          XUAN_IB_PREVIOUS_HTML_BLOB="$previous_html_blob" \
+            node scripts/handover-guard.mjs \
+              xuan-ib/latest.html "$DATA_DATE" "$RUNNER_TEMP/previous-latest.html"
           actual_blob=$(git hash-object xuan-ib/latest.html)
           if [[ "$actual_blob" != "$CANDIDATE_BLOB" ]]; then
             echo 'Candidate blob changed while preparing the publication.' >&2
