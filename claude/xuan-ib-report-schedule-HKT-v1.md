@@ -49,7 +49,7 @@
 
 > 立即生成并发布一次 XUAN-IB 临时报告到手机固定链接。使用当前可取得的数据，逐项注明 as-of 时间，不进行任何交易操作。
 
-临时报告报头必须含“临时版”或 `ad hoc`，不得含会让看护误判为 AM/PM 成功的标签。
+临时报告报头必须使用中文“临时版”，不得含会让看护误判为 AM/PM 成功的标签。`adhoc` 仅作为 workflow / metadata 内部分类，不再作为手机可见英文文案。
 
 手机固定页的「生成临时报告」通过同名 iOS Shortcut 启动。已验证动作链为：authenticated Routine `fire` → 读取 `claude_code_session_url` → 把 `https://claude.ai/code/` 改为 `claude://code/` → 转换为 `URL` 对象 → `Open X-Callback URL`。普通 `Open URLs` 会错误调用 Safari，不得使用。首次运行仅需允许一次 Shortcut 打开 Claude；之后应直接进入新建的 Claude App session。固定页继续按 15 秒轮询最新受控发布，新的合格 `adhoc` 报告上线后自动刷新。
 
