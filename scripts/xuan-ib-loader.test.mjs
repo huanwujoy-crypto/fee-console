@@ -320,6 +320,84 @@ test('a schema-v1 metadata and HTML pair is rendered only after its exact Git bl
   assert.equal(saved.html, html);
 });
 
+test('a bounded external script injected in transit is removed only when the trusted Git blob is restored', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', 'trusted-after-transport');
+  const injected = html.replace(
+    '</head>',
+    "<script type='text/javascript' src='https://huanwujoy-crypto.github.io/nordvpn-injected.js'></script></head>"
+  );
+  const meta = metaFor(html);
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(injected)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /trusted-after-transport/);
+  assert.doesNotMatch(app.frame.srcdoc, /nordvpn-injected/);
+  assert.equal(app.warning.hidden, true);
+  assert.equal(app.status.classList.contains('error'), false);
+  assert.equal(app.warnings.length, 1);
+  assert.match(String(app.warnings[0][0]), /transport-injected external script/);
+  const saved = JSON.parse(app.stored.get('xuan-ib:last-verified:v1'));
+  assert.equal(saved.html, html, 'only the exact trusted HTML may be cached');
+});
+
+test('transport recovery still fails closed when any trusted report byte was also changed', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', 'trusted-body');
+  const injectedAndChanged = html
+    .replace('trusted-body', 'changed-body')
+    .replace('</head>', "<script src='https://example.invalid/injected.js'></script></head>");
+  const app = loaderHarness({
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(injectedAndChanged)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.doesNotMatch(app.frame.srcdoc, /changed-body/);
+  assert.match(app.frame.srcdoc, /暂时无法读取最新交接页/);
+  assert.match(app.status.textContent, /暂时无法读取已验证报告/);
+  assert.equal(app.stored.has('xuan-ib:last-verified:v1'), false);
+});
+
+test('transport recovery rejects ambiguous scripts, invalid UTF-8, and removal-limit overflow', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', 'must-remain-trusted');
+  const meta = metaFor(html);
+  const variants = [
+    html.replace('</head>', "<script data-src='https://example.invalid/not-src.js'></script></head>"),
+    html.replace('</head>', '<script>globalThis.modified = true</script></head>'),
+    html.replace('</head>', "<script src='https://example.invalid/unclosed.js'></head>"),
+    html.replace(
+      '</head>',
+      Array.from({length: 5}, (_, index) =>
+        `<script src='https://example.invalid/${index}.js'></script>`
+      ).join('') + '</head>'
+    ),
+    html.replace(
+      '</head>',
+      `<script data-padding='${'x'.repeat(65 * 1024)}' src='https://example.invalid/large.js'></script></head>`
+    ),
+    Buffer.concat([Buffer.from(html), Buffer.from([0xff])]),
+  ];
+
+  for (const variant of variants) {
+    const bytes = Buffer.isBuffer(variant) ? variant : Buffer.from(variant);
+    const app = loaderHarness({
+      fetchImpl: async (url) => String(url).includes('latest.meta.json')
+        ? response({json: meta, bytes: []})
+        : response({json: null, bytes}),
+    });
+    await app.listeners.button.click();
+    assert.doesNotMatch(app.frame.srcdoc, /must-remain-trusted/);
+    assert.match(app.frame.srcdoc, /暂时无法读取最新交接页/);
+    assert.equal(app.stored.has('xuan-ib:last-verified:v1'), false);
+  }
+});
+
 test('Saturday retains Friday PM but clearly warns when only Thursday PM is published', async () => {
   const html = reportHtml('2026-08-27', '睡前版', 'trusted-thursday');
   const meta = metaFor(html);
