@@ -13,7 +13,15 @@
 3. 再修改固定 loader，增加「回应待办」入口、pending 状态和 receipt 驱动的自动刷新；
 4. 最后才考虑 Shortcut 内原生菜单或自动传参。除非 Anthropic 正式支持且已测试 Routine `fire` API 的动态 authenticated request body，否则不得猜测接口字段或依赖未公开行为。
 
-当前已验证的 `XUAN-IB 临时报告` Shortcut 只有三步：向固定 Routine 的 `fire` endpoint 发出已认证请求、读取返回的 `claude_code_session_url`、用 Claude App 打开该会话。当前 Shortcuts 动作库未提供可验证的 Claude `Ask` / `Send Message` App Intent，因此 v1 的用户选择与自由文本必须发生在 Claude App 会话内，不在 Shortcut 内伪造自动提交。
+当前已用真实 iPhone Mirroring 验证的 `XUAN-IB 临时报告` Shortcut 使用五步：
+
+1. 向固定 Routine 的 `fire` endpoint 发出已认证请求；
+2. 读取返回的 `claude_code_session_url`；
+3. 把 `https://claude.ai/code/` 前缀替换为 `claude://code/`；
+4. 把替换后的文字显式转换为 Shortcuts 的 `URL` 对象；
+5. 使用 `Open X-Callback URL` 打开 Claude App session。
+
+不得用 Safari 的普通 `Open URLs` 动作代替第 5 步：真实 iPhone 测试表明，即使 `claude://code/session_…` 本身有效且手动点击能正确进入 Claude App，普通 `Open URLs` 仍会先调用受密码保护的 Safari 并失败。第一次运行时 iOS 会显示一次「允许此 Shortcut 打开 Claude」；用户允许后系统会记住该选择。当前 Shortcuts 动作库未提供可验证的 Claude `Ask` / `Send Message` App Intent，因此 v1 的用户选择与自由文本必须发生在 Claude App 会话内，不在 Shortcut 内伪造自动提交。
 
 ## 2. 端到端数据流
 
@@ -38,7 +46,7 @@ shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E
 
 1. 使用 Shortcuts 自身受保护的认证配置 POST 专用 Routine `XUAN-IB 回应待办（只读记录）`；
 2. 从响应中读取 `claude_code_session_url`；
-3. 直接用 Claude App 打开该 session。
+3. 按上述已验证的 `https://claude.ai/code/` → `claude://code/`、`URL` 对象、`Open X-Callback URL` 三步打开 Claude App session；不得使用普通 `Open URLs` 动作。
 
 Shortcut 不使用 Clipboard、不保存用户意见、不写 GitHub、不调用 IB / Sharesight，也不把认证材料放入仓库、页面或 URL。
 

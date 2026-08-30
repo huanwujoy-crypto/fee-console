@@ -51,6 +51,8 @@
 
 临时报告报头必须含“临时版”或 `ad hoc`，不得含会让看护误判为 AM/PM 成功的标签。
 
+手机固定页的「生成临时报告」通过同名 iOS Shortcut 启动。已验证动作链为：authenticated Routine `fire` → 读取 `claude_code_session_url` → 把 `https://claude.ai/code/` 改为 `claude://code/` → 转换为 `URL` 对象 → `Open X-Callback URL`。普通 `Open URLs` 会错误调用 Safari，不得使用。首次运行仅需允许一次 Shortcut 打开 Claude；之后应直接进入新建的 Claude App session。固定页继续按 15 秒轮询最新受控发布，新的合格 `adhoc` 报告上线后自动刷新。
+
 ## 6. 验收边界
 
 1. 周一晚、周二早、周五晚、周六早、周日与临时加跑均有回归测试。
