@@ -52,6 +52,13 @@ NOAH-EB-5 entry is pinned only to prevent scope drift and is not read or summed.
 
 ## 3. Cache and hash boundary
 
+Cash-first planning follows `claude/xuan-ib-cash-first-plan-v1.md` and its
+deterministic renderer. Use actual report inputs, not a copied historical
+repair snapshot. The single user-requested source-blob-bound formula/display
+repair specified there does not fetch data, fabricate stage times or prove a
+new AM/PM run. It preserves original source values and data times while
+explicitly recalculating only the cash-planning scenario.
+
 Classification explanation is no longer free-form narrative. For ordinary
 four-bucket reports, render the exact trusted section with
 `node scripts/xuan-ib-classification-disclosure.mjs`. This is an explicitly

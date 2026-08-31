@@ -11,6 +11,7 @@ Before reading financial data or generating a report, read and obey:
 - `claude/xuan-ib-runtime-contract-v1.md`
 - `claude/xuan-ib-portfolio-registry.json`
 - `claude/four-bucket-mapping.json`
+- `claude/xuan-ib-cash-first-plan-v1.md`
 
 Use only read operations against Interactive Brokers and Sharesight. Never
 place, modify, or cancel an order; never initiate a transfer; never create,
@@ -27,6 +28,13 @@ strict no-new-data contract in CLAUDE.md. It retains the prior edition, date,
 as-of, amounts, calculations and receipts, states that no new data was read,
 and does not prove an AM/PM run. Do not fetch data or fabricate a run manifest
 merely to correct the classification explanation.
+
+The separately approved source-blob-bound cash-plan repair in
+`claude/xuan-ib-cash-first-plan-v1.md` may recalculate only planning values from
+the trusted prior snapshot, without fresh reads. It must preserve raw financial
+inputs, dates/as-of and receipts, explicitly disclose the recalculation, and
+must not count as a fresh AM/PM run. Do not expand this into a general cache
+substitute for normal reports or overwrite a later report with the old repair.
 
 Classification prose must come from the trusted deterministic disclosure
 module, not the previous latest.html. Run the canonical renderer and preserve
