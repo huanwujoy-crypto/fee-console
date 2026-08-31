@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 export const CASH_PLAN_ID = 'xuan-ib-cash-plan-v1';
 const TARGETS = [0.23, 0.12];
 const INPUT_KEYS = ['schemaVersion', 'status', 'sourceAsOfHkt', 'equityTotal', 'developed', 'emerging', 'ibCash', 'noahCash', 'reserve', 'currency', 'denominator'];
+const V2_INPUT_KEYS = [...INPUT_KEYS, 'usBase', 'ussc', 'usscBudgetShare'];
+const APPROVED_USSC_BUDGET_SHARE = 0.10;
 const money = value => '$' + Math.round(value).toLocaleString('en-US');
 const percent = value => (value * 100).toFixed(2) + '%';
 const cents = value => Math.round(value * 100) / 100;
@@ -21,6 +23,7 @@ function validSourceTime(value) {
 // Planning only. No quotes, orders, sales proceeds, transfer assumptions or
 // financial connectors. Targets and account scope are unchanged.
 export function calculateCashPlan(input) {
+  if (input?.schemaVersion === 2) return calculateCashPlanV2(input);
   if (!input || typeof input !== 'object' || Array.isArray(input)
       || Object.keys(input).some(key => !INPUT_KEYS.includes(key)) || input.schemaVersion !== 1) throw new Error('Invalid cash-plan schema');
   if (input.status === 'unavailable') {
@@ -71,10 +74,96 @@ export function calculateCashPlan(input) {
   };
 }
 
+// Version 2 is the approved three-way scenario, not a new strategic target.
+// Reuse the unchanged v1 buy-only solver after the fixed USSC purchase enlarges
+// the stock denominator. USSC is already inside usBase: never add it twice.
+function calculateCashPlanV2(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)
+      || Object.keys(input).some(key => !V2_INPUT_KEYS.includes(key))) throw new Error('Invalid cash-plan schema');
+  if (input.status === 'unavailable') {
+    if (Object.keys(input).some(key => !['schemaVersion', 'status'].includes(key))) throw new Error('Unavailable cash plan must not contain guessed inputs');
+    return { status: 'unavailable' };
+  }
+  if (input.usscBudgetShare !== APPROVED_USSC_BUDGET_SHARE) throw new Error('USSC cash-budget share must match the approved 10% scenario, not a permanent portfolio target');
+  for (const key of ['usBase', 'ussc']) {
+    if (typeof input[key] !== 'number' || !Number.isFinite(input[key]) || input[key] < 0 || input[key] > 1e12) throw new Error(`Invalid cash-plan input: ${key}`);
+  }
+  const legacyInput = Object.fromEntries(INPUT_KEYS.map(key => [key, key === 'schemaVersion' ? 1 : input[key]]));
+  const baseline = calculateCashPlan(legacyInput);
+  const { equityTotal: total, developed, emerging, usBase, ussc } = input;
+  if (ussc > usBase || developed + emerging + usBase > total + Math.min(1, total * 1e-6)) {
+    throw new Error('Cash-plan USSC must be inside US base and disjoint category totals must reconcile to the equity denominator');
+  }
+  const budget = baseline.budget;
+  // Integer cents conserve the budget even for a one-cent planning balance.
+  const budgetCents = Math.round(budget * 100);
+  const usscCents = Math.round(budgetCents * APPROVED_USSC_BUDGET_SHARE);
+  const usscAllocation = usscCents / 100;
+  const developedEmergingBudget = (budgetCents - usscCents) / 100;
+  if (budgetCents > 0 && baseline.fullNeed <= 0.01) {
+    throw new Error('Three-way cash policy requires review when both target categories have no gap; use schema 2 unavailable and retain cash');
+  }
+  const de = calculateCashPlan({ ...legacyInput, equityTotal: total + usscAllocation, ibCash: developedEmergingBudget, noahCash: 0, reserve: 0 });
+  if (budgetCents > 0 && developedEmergingBudget > cents(de.fullNeed)) {
+    throw new Error('Three-way cash budget exceeds the two-category buy-only need; use schema 2 unavailable and retain surplus cash pending policy review');
+  }
+  const allocations = [...de.allocations, usscAllocation];
+  const plannedSpend = (Math.round(de.plannedSpend * 100) + usscCents) / 100;
+  const afterTotal = total + plannedSpend;
+  if ([developed, emerging].some((value, i) => allocations[i] > 0.01 && value / total >= TARGETS[i]
+      && (value + allocations[i]) / afterTotal > TARGETS[i] + 1e-8)) {
+    throw new Error('Limited cash would buy an already overweight class; use schema 2 unavailable pending policy review');
+  }
+  return {
+    status: 'snapshot', schemaVersion: 2, budget, plannedSpend, allocations,
+    usscBudgetShare: APPROVED_USSC_BUDGET_SHARE, usscAllocation, developedEmergingBudget,
+    budgetUnused: cents(budget - plannedSpend), afterTotal,
+    fullNeed: de.fullNeed, full: de.full, fundingShortfall: Math.max(0, de.fullNeed - de.plannedSpend),
+    currentWeights: [developed, emerging, ussc].map(value => value / total),
+    afterWeights: [developed, emerging, ussc].map((value, i) => (value + allocations[i]) / afterTotal),
+    usBaseCurrentWeight: usBase / total, usBaseAfterWeight: (usBase + usscAllocation) / afterTotal,
+    staticGaps: baseline.staticGaps, coverage: de.coverage,
+  };
+}
+
+function renderCashPlanV2(input, plan, template) {
+  if (plan.status === 'unavailable') return {
+    template,
+    kpi: '<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big">待核实</div><div class="sub">EXUS · EIMI · USSC<br>暂不分配 · 详见「配置」</div></div>',
+    detail: '<section class="card" id="xuan-ib-cash-plan-detail"><h2>现金优先补仓参考</h2><p>① EXUS｜非美发达、② EIMI｜新兴市场、③ USSC｜美国小盘价值：数据或适用条件待核实，暂不分配现金；不影响其他报告内容。</p><p>三方向方案须以已核实的同口径持仓及现金重新计算。USSC 的 10% 仅为本次补仓预算的参考比例，不是持仓目标；不使用旧数或零值替代缺失数据，不预计卖出回款，不生成交易指令。</p></section>',
+  };
+  const [d, e, u] = plan.allocations;
+  const remaining = plan.fundingShortfall > 0.01 ? `两类仍需 ${money(plan.fundingShortfall)}` : '两类参考目标可覆盖';
+  const kpi = `<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big num">${money(plan.plannedSpend)}</div><div class="sub">现金规划 · 非下单额度<br><b>EXUS ${money(d)}</b><br><b>EIMI ${money(e)}</b><br><b>USSC ${money(u)}</b><br>${remaining}<br>详见「配置」</div></div>`;
+  const detail = `<section class="card" id="xuan-ib-cash-plan-detail">
+<h2>现金优先补仓参考 <small>只作规划，不执行交易</small></h2>
+<p style="font-size:12px">三方向补充 · USSC 占本次预算 10%，其余重算 EXUS、EIMI；不是永久持仓比例。金额为美元规划值，非下单额度。</p>
+<div class="kv"><span class="k">① EXUS｜非美发达</span><span class="v"><b>${money(d)}</b><br>EXUS＋VCN 类别合计<br>当前 ${percent(plan.currentWeights[0])} → 补后约 ${percent(plan.afterWeights[0])} / 目标 23%</span></div>
+<div class="kv"><span class="k">② EIMI｜新兴市场</span><span class="v"><b>${money(e)}</b><br>EIMI＋INDA 类别合计<br>当前 ${percent(plan.currentWeights[1])} → 补后约 ${percent(plan.afterWeights[1])} / 目标 12%</span></div>
+<div class="kv"><span class="k">③ USSC｜美国小盘价值</span><span class="v"><b>${money(u)}</b><br>本次现金预算 10%<br>占股票总额：${percent(plan.currentWeights[2])} → 补后约 ${percent(plan.afterWeights[2])}</span></div>
+<div class="kv"><span class="k">美国底仓合计（含 USSC）</span><span class="v">${percent(plan.usBaseCurrentWeight)} → 补后约 ${percent(plan.usBaseAfterWeight)}<br>45% 为参考目标，非强制上限</span></div>
+<div class="kv"><span class="k">现金规划上限 / 本次参考分配</span><span class="v">${money(plan.budget)} / ${money(plan.plannedSpend)}${plan.budgetUnused > 0.01 ? `；余款 ${money(plan.budgetUnused)} 保留` : ''}</span></div>
+<div class="kv"><span class="k">券商可立即用于本次补仓</span><span class="v"><b class="wv">待核实</b> · 挂单占款待核；跨平台资金未假设已到账</span></div>
+<p style="font-size:12px"><b>${remaining}。</b>指在本次三方向分配后，以纯现金继续补足非美发达、新兴市场参考目标的金额；不是 USSC 缺口，也不代表四类全部达标。卖出回款实际可用后再评估；本次不依赖卖出。</p>
+<details><summary>使用前核对 · 金额与口径 <span class="rt">默认折叠</span></summary><div class="dbody"><ol>
+<li>先核实 IB 可用余额、现有买单占款及 reserve 所在账户；NOAH-HK 现金尚需确认能否及何时用于本次补仓。现金池不是 IB 即时购买力。</li>
+<li>未成交卖单不计回款；“待撤”买单不等于已经撤销，不能当作资金已释放。未核实冻结口径时不重复扣减，也不把名义挂单金额当券商实际冻结金额。</li>
+<li>规划预算＝IB ${money(input.ibCash)}＋NOAH-HK ${money(input.noahCash)}−预留 ${money(input.reserve)}，共 ${money(plan.budget)}。不含保证金、借款或待售资产；实际可用资金更少时，应按新预算重算三个金额。</li>
+<li>USSC 先分配本次预算 10%，按美分取整为 ${money(u)}；剩余 ${money(plan.developedEmergingBudget)} 用于 EXUS、EIMI。其参考目标按类别合计计，不是单只 ETF 目标；USSC 的 10% 不是股票仓位目标，不设未经核实的 14% 目标分母。</li>
+<li>原股票总额 ${money(input.equityTotal)}。先纳入 USSC 分配后，只补非美发达、新兴市场至 23%／12% 同时达标仍需 ${money(plan.fullNeed)}，其中 ${money(plan.full[0])}／${money(plan.full[1])}；以剩余预算按这两个完整补足额的比例分配，并按美分平衡。并非将旧方案直接打九折。</li>
+<li>本次补仓后的股票总额＝原股票总额＋实际规划分配，共 ${money(plan.afterTotal)}。USSC 原持仓 ${money(input.ussc)} 已包含于美国底仓 ${money(input.usBase)}，不重复计入；现金本身不计入股票分母。45% 仅作美国底仓参考目标，不构成强制上限。</li>
+<li>资金超出本方案两类需求、两类均无需补充或有限现金将继续买入超配类别时，暂列待核实并保留现金，不擅自扩展 USSC 预算或花完余款。</li>
+<li>数据时点：${input.sourceAsOfHkt}。价格、持仓或可用现金改变后重新计算；不提供股数、限价或自动交易，不保证此配置收益更高。</li>
+</ol></div></details>
+</section>`;
+  return { kpi, detail, template };
+}
+
 export function renderCashPlan(input) {
   const plan = calculateCashPlan(input);
   // Keep the existing decision template as the page's only HTML template.
   const template = `<!-- ${CASH_PLAN_ID}:${Buffer.from(JSON.stringify(input), 'utf8').toString('base64url')} -->`;
+  if (input.schemaVersion === 2) return renderCashPlanV2(input, plan, template);
   if (plan.status === 'unavailable') return {
     template,
     kpi: '<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big">待核实</div><div class="sub">缺少已核实的持仓或现金数据，暂不列金额；不影响其他报告内容。</div></div>',
@@ -115,7 +204,16 @@ export function validateCashPlan(html, { previousHtml = null } = {}) {
   const matches = [...source.matchAll(/<!-- xuan-ib-cash-plan-v1:([A-Za-z0-9_-]+) -->/g)];
   if (matches.length !== 1 || source.split(CASH_PLAN_ID).length !== 2) return ['cash plan requires exactly one canonical input comment'];
   try {
-    const rendered = renderCashPlan(JSON.parse(Buffer.from(matches[0][1], 'base64url').toString('utf8')));
+    const input = JSON.parse(Buffer.from(matches[0][1], 'base64url').toString('utf8'));
+    if (previous.includes(CASH_PLAN_ID)) {
+      const previousMatches = [...previous.matchAll(/<!-- xuan-ib-cash-plan-v1:([A-Za-z0-9_-]+) -->/g)];
+      if (previousMatches.length !== 1 || previous.split(CASH_PLAN_ID).length !== 2) return ['previous cash plan requires exactly one canonical input comment'];
+      const previousInput = JSON.parse(Buffer.from(previousMatches[0][1], 'base64url').toString('utf8'));
+      // An unavailable schema-2 report still carries the approved minimum
+      // version. Hiding/removing markup must not make the old policy legal.
+      if (previousInput.schemaVersion === 2 && input.schemaVersion !== 2) return ['cash plan cannot downgrade the approved three-way schema 2 policy'];
+    }
+    const rendered = renderCashPlan(input);
     for (const id of ['xuan-ib-cash-plan-kpi', 'xuan-ib-cash-plan-detail']) {
       const ids = [...source.matchAll(/\bid\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)];
       if (ids.filter(match => (match[1] ?? match[2] ?? match[3]) === id).length !== 1) return [`cash plan ${id} must be unique`];

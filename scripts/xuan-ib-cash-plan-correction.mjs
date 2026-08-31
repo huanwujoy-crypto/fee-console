@@ -13,6 +13,36 @@ export const CASH_CORRECTION_NOTICE = '补仓规划更正：按原报告快照�
 export const CASH_PRESENTATION_SOURCE_SHA = '12922932bcc89af59c363855f12e86aa48c2c390';
 export const CASH_PRESENTATION_SOURCE_BLOB = '2091098e98933e121b9fbdbbfd63771287d9e11c';
 export const CASH_PRESENTATION_NOTICE = '展示更新：仅调整代码名称及 USSC 资金安排提示，未重新取数或调整补仓金额。';
+export const CASH_THREE_WAY_SOURCE_SHA = '23fb2c54630314fada37135869eb519c61d0e0b5';
+export const CASH_THREE_WAY_SOURCE_BLOB = 'e5e34415c896e900bb30a3b03c32942b89133231';
+export const CASH_THREE_WAY_NOTICE = '规划更新：按已批准的三方向方案重算，USSC 参考占本次预算 10%（不是持仓目标）；未重新取数，原持仓、现金、日期与回执不变。';
+
+// These additions were reconciled against the exact source report's US-base
+// holdings: 1120091+510491+226960+15216+67520+65952=2006230. The
+// existing 14% USSC structural reference has an unverified denominator and is
+// deliberately not an input or a new strategic target.
+export function updateThreeWayCashPlan(html) {
+  if (typeof html !== 'string' || classificationReportBlob(html) !== CASH_THREE_WAY_SOURCE_BLOB) throw new Error('Three-way cash planning requires the exact approved source report blob; do not overwrite a newer report');
+  const comments = [...html.matchAll(/<!-- xuan-ib-cash-plan-v1:([A-Za-z0-9_-]+) -->/g)];
+  if (comments.length !== 1) throw new Error('Three-way cash planning requires one original input comment');
+  const previousInput = JSON.parse(Buffer.from(comments[0][1], 'base64url').toString('utf8'));
+  if (JSON.stringify(previousInput) !== JSON.stringify(CASH_CORRECTION_INPUT)) throw new Error('Three-way source inputs differ from the approved snapshot');
+  const input = { ...previousInput, schemaVersion: 2, usBase: 2006230, ussc: 15216, usscBudgetShare: 0.10 };
+  const rendered = renderCashPlan(input);
+  let output = replaceOne(html, /<div class="kpi" id="xuan-ib-cash-plan-kpi">[\s\S]*?<\/div><\/div>/, rendered.kpi);
+  output = replaceOne(output, /<section class="card" id="xuan-ib-cash-plan-detail">[\s\S]*?<\/section>/, rendered.detail);
+  output = replaceOne(output, /<!-- xuan-ib-cash-plan-v1:[A-Za-z0-9_-]+ -->/, rendered.template);
+  output = replaceOne(output, /非美发达 \+ 新兴市场（v9\.6；USSC 走底仓换壳、不占用现金）/,
+    'EXUS + EIMI + USSC；USSC 参考占本次预算 10%，余款按联立模型分配');
+  output = replaceOne(output, /底仓内结构位 · 走换壳、不占现金补仓池/,
+    '底仓内结构位 · 本次现金参考 10%；旧 14% 基数待核实，不用于本次测算');
+  output = replaceOne(output, /展示更新：仅调整代码名称及 USSC 资金安排提示，未重新取数或调整补仓金额。/, CASH_THREE_WAY_NOTICE);
+  output = replaceOne(output, /四类分类及目标不变；现金补仓采用现金优先联立模型，股票分母随买入增加，预算不足按完整补足额同比例缩减，仅为规划情景/,
+    '四类分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限');
+  const errors = validateCashPlan(output, { previousHtml: html });
+  if (errors.length) throw new Error(errors.join('; '));
+  return output;
+}
 
 function replaceOne(html, pattern, replacement) {
   if ([...html.matchAll(new RegExp(pattern.source, 'g'))].length !== 1) throw new Error('Cash correction anchor missing or ambiguous: ' + pattern.source);
@@ -75,8 +105,10 @@ export function correctCashPlan(html) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     const presentation = process.argv[2] === '--ticker-first';
-    if (process.argv.length !== (presentation ? 4 : 3)) throw new Error('Usage: node scripts/xuan-ib-cash-plan-correction.mjs [--ticker-first] INPUT.html');
-    const source = fs.readFileSync(process.argv[presentation ? 3 : 2], 'utf8');
-    process.stdout.write(presentation ? updateCashPlanPresentation(source) : correctCashPlan(source));
+    const threeWay = process.argv[2] === '--three-way';
+    const flagged = presentation || threeWay;
+    if (process.argv.length !== (flagged ? 4 : 3)) throw new Error('Usage: node scripts/xuan-ib-cash-plan-correction.mjs [--ticker-first|--three-way] INPUT.html');
+    const source = fs.readFileSync(process.argv[flagged ? 3 : 2], 'utf8');
+    process.stdout.write(threeWay ? updateThreeWayCashPlan(source) : presentation ? updateCashPlanPresentation(source) : correctCashPlan(source));
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }
 }
