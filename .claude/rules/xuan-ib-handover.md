@@ -12,6 +12,8 @@ Before reading financial data or generating a report, read and obey:
 - `claude/xuan-ib-portfolio-registry.json`
 - `claude/four-bucket-mapping.json`
 - `claude/xuan-ib-cash-first-plan-v1.md`
+- `claude/xuan-ib-mrvl-t1-approval-2026-08-31.md`
+- `claude/xuan-ib-ai-tier-overrides-v1.json`
 
 Use only read operations against Interactive Brokers and Sharesight. Never
 place, modify, or cancel an order; never initiate a transfer; never create,
@@ -40,6 +42,13 @@ Classification prose must come from the trusted deterministic disclosure
 module, not the previous latest.html. Run the canonical renderer and preserve
 its exact section; keep coverage reasoning only there. A mapping-file read or
 override count is not a holdings-completeness audit.
+
+The user-approved MRVL standard T1 rule and its single exact-source-blob
+risk recalculation exception are defined in the MRVL approval document above.
+That exception recalculates risk only from the identified prior snapshot,
+preserves data times and original receipts, discloses approximate low/high
+results and never counts as a fresh AM/PM run. It does not relax publication
+gates or allow a stale report to replace a newer report.
 
 Before the candidate is prepared, validate a run manifest with
 `scripts/xuan-ib-run-manifest.mjs`. Do not place raw connector errors, holdings,

@@ -72,10 +72,16 @@ Do not infer gaps from the size of holdingOverrides or from a mapping-file hash.
 Before normalizing classification inputs, read
 `claude/xuan-ib-classification-authority-review-2026-08-31.md` and
 `claude/xuan-ib-cash-identities-v1.json`. Ordinary asset classification (§0-A)
-is separate from AI pressure tiers (§0-C). MRVL's ordinary classification has
-dated evidence; its proposed standard T1 mapping is not approved. Continue the
-previously approved temporary exclusion and disclosure until a specific new
-approval, without blocking unrelated report output.
+is separate from AI pressure tiers (§0-C). The user explicitly approved MRVL
+standard T1 on 2026-08-31. Read `claude/xuan-ib-mrvl-t1-approval-2026-08-31.md`
+and `claude/xuan-ib-ai-tier-overrides-v1.json`; verify identity and current USD
+market value, then calculate its low/mid/high contribution as 60%/80%/100%.
+Do not carry the historical temporary exclusion forward or request duplicate
+approval. The original decision and receipt remain immutable history.
+The approval document permits a single exact-source-blob risk recalculation
+without fresh reads, clearly dated to the original snapshot; it is not fresh
+AM/PM evidence and gives no stale-date or publication exception. Ordinary
+reports still use live reads and the current report's own source amounts.
 
 For the single registered UBS cash proxy, call `resolveCashIdentity` from
 `scripts/xuan-ib-cash-identity.mjs` before the classification audit. Supply

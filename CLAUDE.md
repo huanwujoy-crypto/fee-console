@@ -154,9 +154,15 @@ rules also apply. Never silently change GOOG account scope or risk thresholds.
 
 Use the sourced distinction in
 `claude/xuan-ib-classification-authority-review-2026-08-31.md`: MRVL ordinary
-asset classification is not its AI-pressure tier. The latter's proposed T1
-mapping still needs a specific approval; keep the already-approved temporary
-exclusion and disclosure until then. The runtime contract also defines the
+asset classification is not its AI-pressure tier. The user explicitly approved
+MRVL standard T1 (60% / 80% / 100%) on 2026-08-31; follow
+`claude/xuan-ib-mrvl-t1-approval-2026-08-31.md` and the identity-bound rule in
+`claude/xuan-ib-ai-tier-overrides-v1.json`. Do not ask for the same approval or
+continue the historical temporary exclusion. Preserve its original receipt.
+The approval document permits one exact-source-blob risk recalculation without
+fresh reads; it retains the original edition/data time, clearly discloses the
+snapshot update, does not prove a new AM/PM run, and keeps every publication gate.
+Normal reports still require the live reads. The runtime contract also defines the
 source-bound cash-identity resolver and treatment of genuinely absent labels.
 Read it before asserting a classification gap or copying an old pending reason.
 

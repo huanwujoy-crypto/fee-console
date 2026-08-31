@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "effectiveFromHkt": "2026-08-31T22:05:00+08:00",
+  "purpose": "risk-measurement-only",
+  "overrides": [
+    {
+      "symbol": "MRVL",
+      "portfolioId": "1350094",
+      "holdingId": "28987468",
+      "tier": "T1",
+      "low": 0.6,
+      "mid": 0.8,
+      "high": 1,
+      "approvalId": "WU-20260831-MRVL-T1"
+    }
+  ]
+}

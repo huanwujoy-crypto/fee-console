@@ -27,7 +27,7 @@ jobs:
         run: node scripts/xuan-ib-progress.mjs "$BASE_SHA"
 
       - name: Test implementation progress and classification audit
-        run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs
+        run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs
 
       - name: Run the script test suite
         shell: bash
