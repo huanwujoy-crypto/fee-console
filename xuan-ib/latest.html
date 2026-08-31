@@ -134,7 +134,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
 </div>
 
-<div class="alert"><b>数据降级：四桶 / 三层流动性</b>继续沿用 2026-08-24 verified Monday snapshot（本次已重新读取 <code>four-bucket-mapping.json</code> 确认内容未变，56 个 Semi Liquid 标签持仓仍仅 8 个有 <code>holdingOverrides</code>，其余按 mapping 自带 fail-closed 规则不得猜测）；<b>其余数据为本次 16:48–16:55 HKT 只读实时读数</b>。当前处于美股盘前时段（LSE/SWX/EBS 已开盘，NYSE/NASDAQ/TSE 尚未开盘），IB 报价为现场可得最新价格，非 08-31 正式收盘价，详见「报告说明」。</div>
+<div class="alert"><b>数据降级：四桶 / 三层流动性</b>继续沿用 2026-08-24 已批准快照，完整核验条件与历史审计证据见「报告说明」。<b>其余数据为原报告 16:48–16:55 HKT 只读实时读数</b>。原报告处于美股盘前时段（LSE/SWX/EBS 已开盘，NYSE/NASDAQ/TSE 尚未开盘），IB 报价为原报告取数时可得最新价格，非 08-31 正式收盘价。<b>说明更正：仅更正四桶分类解释，未重新取数或重算金额；原报告数据时点不变。</b></div>
 
 <details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
 <div class="dbody">
@@ -152,7 +152,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="kpi"><div class="lab">可用现金</div><div class="big num">$584,291</div>
 <div class="sub">现金池 $824,291（IB 466,322 + NOAH-HK 357,969，零变动）<br>已扣 reserve $240,000 · 覆盖 3.4345x</div></div>
 <div class="kpi"><div class="lab">四桶 · HL 缺口 <small style="font-weight:400">(08-24 沿用)</small></div><div class="big num">$6.92M</div>
-<div class="sub">HL 17.75% / 40% · VC-PE 51.74% / 30%（<span class="or">超 ~$6.77M</span>）<br>HF 14.58% · 常青 15.93% 毛<br><b class="wv">沿用 08-24 · mapping 已核实仍缺 override</b></div></div>
+<div class="sub">HL 17.75% / 40% · VC-PE 51.74% / 30%（<span class="or">超 ~$6.77M</span>）<br>HF 14.58% · 常青 15.93% 毛<br><b class="wv">沿用 08-24 · 完整核验仍待完成</b></div></div>
 <div class="kpi"><div class="lab">四类 · 补仓缺口合计</div><div class="big num">$543,526</div>
 <div class="sub">非美发达+新兴市场缺口（实时重算，v9.6 方法学）<br>科技超配 <span class="or">$357,607</span> · US底超配 <span class="or">$185,919</span><br>现金覆盖 <span class="gv">107.50%</span></div></div>
 </div>
@@ -379,10 +379,10 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="kv"><span class="k">IB-HK 936247</span><span class="v"><b>NAV $5,033,559（IB 权威，本次直读，美股盘前）</b>（较上一版 08-30 19:11 HKT -$19,776；Sharesight 侧同组合读数 $5,050,219.55，差 0.33%，属正常展示噪音，不改变权威值）</span></div>
 <div class="kv"><span class="k">Citi-HK &amp; 地产四期 936243</span><span class="v"><b>$500,000</b>（静态，较上一版零变动）</span></div>
 <div class="kv"><span class="k">HSBC-HK 1350095</span><span class="v"><b>$163,345.50</b>（较上一版零变动）</span></div>
-<div class="kv"><span class="k">7-portfolio 家庭合计（实时）</span><span class="v"><b>$31,417,494</b>（较上一版 -$19,777，差异全部来自 IB-HK NAV 盘前变动；私募/半流动仓位本身零变动，符合预期）</span></div>
+<div class="kv"><span class="k">7-portfolio 家庭合计（实时）</span><span class="v"><b>$31,417,494</b>（较上一版 -$19,777，差异全部来自 IB-HK NAV 盘前变动；私募及其他非公开仓位本身零变动，符合预期）</span></div>
 <div class="kv"><span class="k">AI 三账户附加（非四桶）</span><span class="v">Schwab-HK $609,040.52 + Webull $507,043.38 = $1,116,083.90（仅进 AI 指标分母，与上一版一致）</span></div>
 <div class="kv"><span class="k">NOAH-EB-5 1021747</span><span class="v"><b>不计入家庭 7-portfolio 合计</b>——沿用既有报告范围，本次仅确认其存在、未纳入任何汇总，避免擅自扩大统计口径</span></div>
-<div class="kv"><span class="k">四桶归类映射</span><span class="v"><b class="wv">沿用 2026-08-24 verified snapshot</b> —— 本次已重新读取 <code>claude/four-bucket-mapping.json</code> 确认内容未变：仍仅 8 个持仓有 <code>holdingOverrides</code>，其余按 mapping 自带 fail-closed 规则不得猜测</span></div>
+<div class="kv"><span class="k">四桶归类映射</span><span class="v"><b class="wv">沿用 2026-08-24 已批准快照</b> —— 完整核验条件与历史审计证据统一列于「报告说明」；本次仅更正解释，不更新四桶金额。</span></div>
 </div></details>
 </div>
 
@@ -407,11 +407,11 @@ details .dbody{padding-left:7px;padding-right:7px}
 <p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用，08-31 口径确认已收到，下一份正常报告落实双视图展示——本次即为落实版本）· 编号 <code>D-20260829-GOOG-FAMILY-LIMIT</code></p>
 </div></details>
 
-<details class="dcard" id="D-20260829-SEMILIQUID-MAPPING" data-decision-id="D-20260829-SEMILIQUID-MAPPING" data-decision-status="accepted"><summary>3 · 四桶 mapping 仍缺多数 Semi Liquid 持仓的 override
-<span class="rt wv">建议 (A) 继续沿用，并尽快 (C) 补全 mapping · 已决定 / 待落实</span></summary>
+<details class="dcard" id="D-20260829-SEMILIQUID-MAPPING" data-decision-id="D-20260829-SEMILIQUID-MAPPING" data-decision-status="accepted"><summary>3 · 四桶分类核验与数据完整性复核
+<span class="rt wv">已采纳继续沿用；后续核实现金身份与剩余组合 · 已决定 / 待落实</span></summary>
 <div class="dbody">
-<p style="margin:5px 0"><b class="lab">事实/选项：</b>本次已重新读取 <code>claude/four-bucket-mapping.json</code> 并逐项核对：内容与 08-24 verified snapshot 时一致，NOAH-HK / ANTARCTICA / UBS 三个组合中带「Semi Liquid」Sharesight 标签的持仓本次<b>精确计数仍为 56 个</b>，其中仍仅 8 个在 <code>holdingOverrides</code> 中有明确 hedge_fund/evergreen 归类；其余 48 个因 mapping 自带 <code>unknownSemiLiquid</code> 规则要求 fail-closed，本次继续沿用 08-24 快照。选项不变：(A) 继续沿用直至 mapping 补全；(B) 由 Claude 按名称模式推断补全（明确违反 mapping 自身规则，不建议）；(C) 提请 Wu/仓库侧补全 mapping 后再固化。</p>
-<p style="margin:5px 0"><b class="lab">Claude 意见：</b>倾向 <b>(A) 继续沿用</b>，并再次建议尽快 (C)——已连续多个读数周期沿用同一快照，长期沿用会使四桶读数与实际家庭配置渐行渐远，值得提请补全约 48 个未覆盖的 Semi Liquid holdingId。08-31 独立分类审计（见 <code>xuan-ib/implementation-progress.json</code> 事件 P-20260831-3/4）已核实 NOAH-HK/ANTARCTICA/UBS 三组合的 38 项半流动持仓全部由 7 条逐仓例外 + 31 次整账户规则覆盖，未覆盖为 0，但这是落实进度证据、不是 mapping 文件本身的变更，本报告不据此改写四桶数值。</p>
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>原报告对分类覆盖缺口的解释有误，现按已核实的历史审计纠正；证据、范围和沿用条件统一见「报告说明」。本项用户决定与原回执保持不变，继续沿用已批准快照；不以此说明更正宣布家庭全量核验完成或更新四桶金额。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>落实既有决定：继续沿用已批准快照；下一步先核实现金身份及剩余组合的数据完整性，再完成来源对账与受控核验。不能把历史局部审计视为当前全量结果，不再要求按错误的数量差补建分类。仅推进数据核验，不执行交易。</p>
 <p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用）· 编号 <code>D-20260829-SEMILIQUID-MAPPING</code></p>
 </div></details><!-- xuan-ib-decision-group:v1:resolved:end -->
 </div>
@@ -420,7 +420,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody">
 <ol>
 <li><b>本次（08-31 16:48–16:55 HKT）与上一版（08-30 19:11 HKT）持仓与挂单逐项核对零变动</b> —— 股数、GTC 挂单（12 张）与 DAYS_7 成交全部一致；价格因美股尚未开盘、LSE/SWX 已开盘而有正常波动，IB NAV 差 -$19,777。本次会话未执行任何交易。<span class="sub">只读观察 · 编号 <code>O-20260831-ZERO-TRADE</code></span></li>
-<li><b>四桶 mapping 与 Semi Liquid 覆盖数再次核实不变</b> —— 56 个 Semi Liquid 标签持仓、8 个 holdingOverrides、48 个未覆盖，与前几个周期一致；四桶/三层流动性继续 fail-closed 沿用 08-24 快照。<span class="sub">只读观察 · 编号 <code>O-20260831-MAPPING-RECHECK</code></span></li>
+<li><b>四桶分类说明已更正，金额未重算</b> —— 原覆盖缺口解释不再采用；历史审计及完整核验条件见「报告说明」。继续沿用已批准快照，保留原数据时点与用户意见。<span class="sub">只读观察 · 编号 <code>O-20260831-MAPPING-RECHECK</code></span></li>
 <li><b>Webull BRK.B 仍为已平仓状态、MRVL 持仓仍在</b> —— 本次重新读取 Webull 当前持仓，仍不含 BRK.B（现金 $351,383.83，与上一版一致）；该操作发生在 IB 只读范围之外，Claude 未参与、也无法核实具体成交价与时间。<span class="sub">仅披露，不需要 Wu 决策 · 编号 <code>O-20260831-WEBULL-BRKB</code></span></li>
 <li><b>AMD 三张 REPLACED/NEW 卖单待 TWS 目视</b> —— 限价 500 / 499 / 520，撤改一律由 Wu 在 TWS / IBKR 端执行。<span class="sub">只读观察 · 编号 <code>O-20260831-AMD-ORDERS</code></span></li>
 <li><b>EXUS 买 100 @ 46.90 节奏单已非常接近现场报价</b> —— 距现场报价 -0.39%，6 天未成交；美股尚未开盘，暂不构成「需处理」，开盘后需留意是否成交。<span class="sub">只读观察 · 编号 <code>O-20260831-EXUS-PACING</code></span></li>
@@ -475,9 +475,18 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody">
 <ol>
 <li><b>版次与时点。</b>版别：<b>临时版</b>，由用户手动 Run now 启动。启动 / 取数时点：<b>2026-08-31 08:48–08:55 UTC（周一 16:48–16:55 HKT）</b>。数据日：<b>2026-08-31</b>。美股（NYSE/NASDAQ）与 TSE（VCN）尚未开盘（现场为盘前时段，常规交易时段约 21:30 HKT 开始），IB 现场报价可能反映盘前极稀薄成交或延续上一交易日 08-28 收盘，非 08-31 正式收盘价；LSE/SWX/EBS 挂牌品种已处于当地正常交易时段。08-31 官方收盘数据要在美股收盘后（约 09-01 05:00 HKT 前后）才可获得。<b>不代替、也不冒充</b>周一至周五 20:55 睡前版或周二至周六 08:00 早间版的定时成功证据；main 上可信 <code>latest.meta.json</code> 数据日仍为 08-30，本次为 08-31 当日候选。</li>
-<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 verified Monday snapshot</b>（as-of 2026-08-24），因 <code>claude/four-bucket-mapping.json</code> 的 <code>unknownSemiLiquid</code> 规则要求 fail-closed，56 个 Semi Liquid 标签持仓中仅 8 个有 <code>holdingOverrides</code>，本次已重新读取并逐一核对确认内容与覆盖数未变；影响范围＝四桶比例、三层流动性及依赖归桶的 KPI，其余数据为本次实时只读读数。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重逐票沿用（未发明新系数）· 四类清单 v9.6 · USSC 基数 v9.8 · 四类「动态缺口」沿用既定 v9.6 方法学；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，未新增任何交易触发。MRVL 待决定事项沿用未决（§0-A 规则本次仍未核实）。FX 参考 CAD/USD 0.71947（IB Base）。</li>
+<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24）；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」。本次仅更正分类解释，影响范围＝四桶解释文字；原四桶比例、三层流动性及依赖归桶的 KPI 金额均未重算，其余数据与原报告取数时点均保持不变。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重逐票沿用（未发明新系数）· 四类清单 v9.6 · USSC 基数 v9.8 · 四类「动态缺口」沿用既定 v9.6 方法学；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，未新增任何交易触发。MRVL 待决定事项沿用未决（§0-A 规则本次仍未核实）。FX 参考 CAD/USD 0.71947（IB Base）。</li>
 <li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本期未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本临时版通过与定时版相同的候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接，但不冒充或替代 AM/PM 定时版的成功证据。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项）。</li>
 </ol>
+<section id="xuan-ib-classification-disclosure-v1">
+<h3>四桶分类核验与沿用口径</h3>
+<ol>
+<li>历史核验范围：2026-08-31 15:31–15:34 HKT，仅 NOAH-HK、ANTARCTICA、UBS 三个组合，不是本次七组合全量核验。</li>
+<li>该次 38 项 Semi Liquid 持仓全部覆盖：7 次逐仓例外（holdingOverrides）＋31 次整组合规则（portfolioRules），该三组合的半流动持仓未覆盖为 0。规则顺序为：来源明确的现金 → 逐仓 ID 与名称交叉校验 → 整组合规则 → 精确通用资产标签 → 未知。不能用持仓总数减逐仓例外数量推算分类缺口。</li>
+<li>该次共核查 57 行，56 行已分类，1 行 UBS 现金身份尚待来源核实；其余四个家庭组合不在该次核验范围。不能把三组合覆盖结果当成七组合全量完成，也不能按名称猜现金或分类。</li>
+<li>本页四桶、三层流动性及依赖归桶的指标继续沿用已批准的 2026-08-24 快照。只有七组合范围、现金身份、完整持仓及金额对账经来源核验，并通过受控维护更新本说明后，才可改称实时重算。其他指标按各自已披露的数据时点与来源处理，不因本项回退停止报告。</li>
+</ol>
+</section>
 </div></details>
 
 <div class="foot">只读报告 · 数据截至 16:55 HKT（美股盘前）· 已验证发布 · 不是交易指令</div>
