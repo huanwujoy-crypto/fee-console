@@ -107,7 +107,7 @@ test('verification rejects arbitrary extra edits even if their numbers look unch
   }
 });
 
-test('trusted publication guard rejects obsolete report and accepts exact explanation-only repair', t => {
+test('trusted guard rejects obsolete classification, then requires the later cash-model repair', t => {
   const previous = temporaryReport(t, original, 'previous.html');
   const current = temporaryReport(t, corrected);
   const env = {
@@ -119,7 +119,11 @@ test('trusted publication guard rejects obsolete report and accepts exact explan
   assert.notEqual(rejected.status, 0);
   assert.match(rejected.stderr + rejected.stdout, /classification disclosure/);
   const accepted = spawnSync(process.execPath, [guard, current.file, '2026-08-31', previous.file], { env, encoding: 'utf8' });
-  assert.equal(accepted.status, 0, accepted.stderr + accepted.stdout);
+  // The historical classification repair itself still validates above. After
+  // the cash-first rollout its unchanged static-gap claim is no longer a
+  // publishable complete report; do not weaken the new gate for this fixture.
+  assert.notEqual(accepted.status, 0);
+  assert.match(accepted.stderr + accepted.stdout, /cash plan/);
 });
 
 test('CLI emits only corrected HTML or a concise invariant result and never writes a report', t => {

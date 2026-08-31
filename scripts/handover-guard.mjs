@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 
 const [file, expectedDate, previousFile] = process.argv.slice(2);
 
@@ -729,6 +730,8 @@ if (continuityInputs.every(Boolean)) {
 if (!verifiedRecordsUpdate) {
   const classificationErrors = validateClassificationDisclosure(html, { previousHtml: trustedPreviousHtml });
   if (classificationErrors.length) fail(classificationErrors[0]);
+  const cashPlanErrors = validateCashPlan(html, { previousHtml: trustedPreviousHtml });
+  if (cashPlanErrors.length) fail(cashPlanErrors[0]);
 }
 
 console.log(`handover guard passed: ${expectedDate}, ${bytes} bytes`);

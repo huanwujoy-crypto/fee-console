@@ -91,6 +91,19 @@ data-as-of disclosure, never the Hong Kong delivery schedule.
 
 ## Implementation progress after a recorded decision
 
+### Cash-first allocation planning
+
+Follow `claude/xuan-ib-cash-first-plan-v1.md`. The user confirmed existing cash
+as the primary source; sales are secondary only after proceeds are available.
+Use the deterministic cash-plan renderer with verified USD equity-only inputs.
+Never treat static allocation gaps as cash-buy amounts, assume pending sales
+are cash, or describe the cross-platform cash pool as IB immediate buying power.
+The approved source-blob-bound snapshot correction in that document is a narrow
+formula/display repair, not a financial refresh: preserve raw source data,
+edition/date/as-of and all receipts, disclose recalculation, use the ordinary
+single-file candidate path, and never count it as new AM/PM success evidence.
+Only this requested repair may omit fresh reads; normal reports may not.
+
 ### Required deterministic classification disclosure
 
 For every ordinary report with four-bucket content, run

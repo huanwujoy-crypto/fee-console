@@ -144,3 +144,9 @@ Routine 显式将 `<routine-fire-payload>` 中严格 JSON 当作**已确认字�
 ## 8. 版式迁移授权（一次性）
 
 今晚运行**允许并要求**偏离 latest.html 模板，落实第 2 / 3(a) / 4 / 5 / 6 / 7 条；落实后的新页即成为后续模板。第 3(b) 改名待仓库 PR 合并后另行切换。其余布局、栏目、口径、guard 要求（含 `<span class="date">`）一律照旧。
+# Cash-first planning update (2026-08-31)
+
+User confirmed: existing cash first; uncertain sale proceeds are secondary.
+Follow `claude/xuan-ib-cash-first-plan-v1.md`, including its deterministic
+renderer, unchanged allocation targets, equity-only denominator, disclosed
+cash-availability limitations, and no-financial-execution boundary.
