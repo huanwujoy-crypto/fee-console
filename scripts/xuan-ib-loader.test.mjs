@@ -432,7 +432,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-31\.4"/);
+  assert.match(loader, /loaderBuild = "2026-08-31\.5"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -582,14 +582,15 @@ test('verified todo display expands the first trigger and keeps a collapsed pend
   assert.equal(row.parentElement, fixture.card);
   assert.equal(fold.parentElement, row);
   assert.equal(fold.hasAttribute('open'), false, 'pending content starts collapsed');
-  assert.equal(fold.querySelector('summary').textContent, '待决定事项2 项');
+  assert.equal(fold.querySelector('summary').textContent, '待决定事项⚠ 2 项');
+  assert.equal(fold.querySelector('summary').getAttribute('aria-label'), '待决定事项，2 项待你确认');
   assert.equal(app.decision, originalButton, 'move the parent-owned element, never clone a report action');
   assert.equal(app.decision.parentElement, row, 'button is a sibling of the fold, not inside its summary');
   assert.equal(app.decision.ownerDocument, fixture.doc);
   assert.equal(app.decisionCount.ownerDocument, fixture.doc, 'adoption includes the count');
   assert.equal(app.listeners.decision.click, originalListener, 'parent callback survives document adoption');
   assert.deepEqual(body.children, originalCards.slice(0, 2));
-  assert.equal(originalCards[2].parentElement, fixture.card, 'already-decided items stay outside pending');
+  assert.equal(originalCards[2].parentElement, fixture.doc.querySelector('.xuan-progress-body'), 'already-decided items stay outside pending in their own closed progress group');
   assert.deepEqual(originalCards.map((card) => card.textContent), originalTexts);
   assert.equal(fixture.card.children.some((node) => node.tagName === 'P' && node.textContent.startsWith('当前为只读清单')), false);
   const displayStyle = fixture.doc.head.querySelector('style').textContent;
@@ -657,7 +658,7 @@ test('zero pending keeps a disabled inline response control and preserves all ac
   assert.equal(fixture.doc.querySelector('.xuan-decision-fold').querySelector('summary').textContent, '待决定事项0 项');
   assert.match(fixture.doc.querySelector('.xuan-decision-empty').textContent, /暂无待决定事项/);
   assert.equal(fixture.doc.querySelector('label[for="s4"] .dot'), null, 'zero is not a pending attention badge');
-  for (const item of decisions) assert.equal(fixture.doc.getElementById(item.decisionId).parentElement, fixture.card);
+  for (const item of decisions) assert.equal(fixture.doc.getElementById(item.decisionId).parentElement, fixture.doc.querySelector('.xuan-progress-body'));
   app.listeners.decision.click({preventDefault() {}});
   assert.equal(app.location.href, 'https://example.test/xuan-ib/');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
@@ -1209,7 +1210,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.4');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.5');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1898,6 +1899,9 @@ test('independent progress refresh updates the same report without resetting ori
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);
   await settleProgress();
   assert.equal(doc.querySelectorAll('.xuan-work').length,3);
+  const progressFold=doc.getElementById('xuan-progress-fold');
+  assert.equal(progressFold.hasAttribute('open'),false);
+  progressFold.setAttribute('open','');
   assert.match(doc.getElementById('progress-'+data.events[0].decisionId).textContent,/临时处理已生效/);
   const history=doc.querySelector('.xuan-work-original');history.setAttribute('open','');
   doc.getElementById('s4').checked=true;
@@ -1908,6 +1912,8 @@ test('independent progress refresh updates the same report without resetting ori
   assert.equal(app.frame.srcdocWrites,writes);
   assert.equal(doc.getElementById('s4').checked,true);
   assert.equal(history.hasAttribute('open'),true);
+  assert.equal(doc.getElementById('xuan-progress-fold'),progressFold);
+  assert.equal(progressFold.hasAttribute('open'),true);
   assert.match(doc.getElementById('progress-'+data.events[0].decisionId).textContent,/新进度已核对/);
   assert.equal(doc.querySelectorAll('.xuan-work').length,3);
   assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html,latest);
@@ -1950,13 +1956,18 @@ test('GOOG scope confirmation clears the extra approval notice on same-report re
 test('new report cannot inherit a current verified status from an older observed pair',async()=>{
   const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
   await app.listeners.button.click();
-  app.loadFrame(todoDocument(app.frame.srcdoc,publishedState.decisions).doc);await settleProgress();
+  const priorDoc=todoDocument(app.frame.srcdoc,publishedState.decisions).doc;
+  app.loadFrame(priorDoc);await settleProgress();
+  priorDoc.getElementById('xuan-progress-fold').setAttribute('open','');
   const updated=latest.replace('</body>','<p>new financial report test</p></body>');
   setReport({html:updated,meta:metaFor(updated,{sourceSha:'a'.repeat(40),sourceCommitEpoch:metadata.sourceCommitEpoch+60})});
   await app.listeners.button.click();
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
   assert.equal(doc.querySelectorAll('.xuan-work-badge').length,3);
   for(const badge of doc.querySelectorAll('.xuan-work-badge')) assert.match(badge.textContent,/历史进度 · 本期尚未复核/);
+  assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
+  assert.equal(doc.getElementById('xuan-progress-attention').textContent,'历史进度待复核');
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
 });
 test('wrong receipt and malformed progress fail closed independently',async()=>{
   for(const mode of ['receipt','json']) {
@@ -2000,5 +2011,183 @@ test('candidate-owned progress class or reserved ID never authorizes replacement
     assert.ok(original.contains(fact));
     assert.equal(fact.textContent,'Original fact must survive');
     if(mode==='id') assert.equal(doc.querySelectorAll('.xuan-work').length,0);
+  }
+});
+
+function userRequestProgress(status='awaiting_approval') {
+  const data=structuredClone(progressFixture);data.revision++;
+  const base=data.events.filter(e=>e.decisionId==='D-20260829-GOOG-FAMILY-LIMIT').at(-1);
+  data.events.push({...base,eventId:'P-USER-REQUEST',recordedAtHkt:progressFollowup,status,
+    blocker:'仅用户能够确认这项新请求',nextAction:'请核对本项缺少的原始资料'});
+  return data;
+}
+
+test('progress starts as one native closed group with zero actual user requests and no neighbor absorption',async()=>{
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
+  await app.listeners.button.click();
+  const fixture=todoDocument(app.frame.srcdoc,publishedState.decisions);
+  const originals=publishedState.decisions.map(d=>fixture.doc.getElementById(d.decisionId));
+  const extra=fixture.doc.createElement('p');extra.textContent='Unrelated source facts must stay outside';fixture.card.append(extra);
+  app.loadFrame(fixture.doc);await settleProgress();
+  const {doc}=fixture, fold=doc.getElementById('xuan-progress-fold');
+  assert.equal(fold.tagName,'DETAILS');assert.equal(fold.hasAttribute('open'),false);
+  assert.equal(fold.children[0].tagName,'SUMMARY');
+  const heading=doc.querySelector('[data-decision-group-title="resolved"]');
+  assert.equal(heading.tagName,'H2');assert.equal(heading.parentElement,fold.children[0]);
+  assert.equal(heading.textContent,'已决定 · 落实进度 3 项');
+  assert.equal(fold.children[0].getAttribute('aria-label'),'已决定 · 落实进度 3 项');
+  assert.equal(doc.getElementById('xuan-progress-attention').hidden,true);
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+  assert.equal(doc.querySelectorAll('.xuan-needs-user').length,0);
+  for(const original of originals) assert.ok(fold.contains(original));
+  for(const other of [fixture.closed,fixture.trigger,extra,doc.querySelector('.xuan-decision-row')]) assert.equal(fold.contains(other),false);
+  assert.equal(fixture.trigger.hasAttribute('open'),true);
+  assert.equal(extra.parentElement,fixture.card);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html,latest);
+});
+
+for(const [status,label] of [['awaiting_approval','待你确认'],['user_action_required','待你处理']]) {
+  test(`explicit ${status} gets a current amber text hint while the progress group is closed`,async()=>{
+    let data=userRequestProgress(status);
+    const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
+    await app.listeners.button.click();
+    const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);
+    doc.getElementById('s4').setAttribute('aria-label','原待办导航');
+    app.loadFrame(doc);await settleProgress();
+    const hint=doc.getElementById('xuan-progress-attention'), nav=doc.getElementById('xuan-progress-nav-attention');
+    assert.equal(hint.hidden,false);assert.equal(hint.textContent,`⚠ ${label} 1 项`);
+    assert.match(hint.className,/xuan-needs-user/);
+    assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
+    assert.match(doc.getElementById('xuan-progress-fold').querySelector('summary').getAttribute('aria-label'),new RegExp(label+' 1 项'));
+    assert.equal(nav.hidden,false);assert.equal(nav.textContent,'⚠');
+    assert.match(nav.parentElement.getAttribute('aria-label'),new RegExp(label+' 1 项'));
+    assert.match(doc.getElementById('s4').getAttribute('aria-label'),new RegExp(label+' 1 项'));
+    assert.equal(app.decision.disabled,true,'a subsequent implementation request is not a repeat of the original decision');
+    assert.equal(doc.querySelector('.xuan-decision-fold').querySelector('summary').textContent,'待决定事项0 项');
+    const style=doc.getElementById('xuan-progress-style').textContent;
+    assert.match(style,/\.xuan-needs-user\{color:#754600!important;background:#fff3d6/);
+    // An appended in-progress event clears this request without resetting the disclosure.
+    doc.getElementById('xuan-progress-fold').setAttribute('open','');
+    data.revision++;data.events.push({...data.events.at(-1),eventId:'P-USER-HANDLED',status:'in_progress'});
+    await app.listeners.button.click();await settleProgress();
+    assert.equal(hint.hidden,true);assert.equal(nav.hidden,true);
+    assert.equal(doc.getElementById('s4').getAttribute('aria-label'),'原待办导航');
+    assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),true);
+  });
+}
+
+test('technical work never becomes a user request by matching owner names or free text',async()=>{
+  const data=userRequestProgress('blocked');
+  Object.assign(data.events.at(-1),{owner:'Wu',blocker:'待用户确认字样只是历史引用',summary:'技术核对中；请勿重复原决定'});
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  assert.equal(doc.getElementById('xuan-progress-attention').hidden,true);
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+  assert.equal(doc.querySelectorAll('.xuan-needs-user').length,0);
+});
+
+test('pending initial decisions and subsequent user-only actions keep separate counts',async()=>{
+  const state=structuredClone(publishedState);state.decisions.push(awaitingDecision());
+  const html=latest.replace(/(<template id="xuan-ib-decision-state-v1"[^>]*>)[\s\S]*?(<\/template>)/,
+    (_,a,b)=>a+JSON.stringify(state)+b);
+  const meta=metaFor(html,{sourceSha:metadata.sourceSha,sourceCommitEpoch:metadata.sourceCommitEpoch});
+  const data=userRequestProgress('user_action_required');
+  for(const event of data.events) event.observedPair={sourceSha:meta.sourceSha,htmlBlob:meta.htmlBlob};
+  const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));setReport({html,meta});
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress();
+  assert.equal(doc.querySelector('.xuan-decision-fold').querySelector('summary').textContent,'待决定事项⚠ 1 项');
+  assert.equal(doc.getElementById('xuan-progress-attention').textContent,'⚠ 待你处理 1 项');
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').textContent,'⚠');
+  assert.match(doc.querySelector('label[for="s4"]').getAttribute('aria-label'),/待决定 1 项；待你处理 1 项/);
+  assert.match(doc.getElementById('s4').getAttribute('aria-label'),/待决定 1 项；待你处理 1 项/);
+  assert.equal(app.decision.disabled,false);assert.equal(app.decisionCount.textContent,'1');
+});
+
+test('a stale observed pair suppresses current user request counts without pretending that work is complete',async()=>{
+  const data=userRequestProgress();data.events.at(-1).observedPair={sourceSha:'c'.repeat(40),htmlBlob:'d'.repeat(40)};
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const hint=doc.getElementById('xuan-progress-attention');
+  assert.equal(hint.hidden,false);assert.equal(hint.textContent,'历史进度待复核');
+  assert.doesNotMatch(hint.className,/xuan-needs-user/);
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+  assert.doesNotMatch(doc.getElementById('xuan-progress-status').textContent,/后续规则待你确认/);
+});
+
+test('failure withdraws an earlier user request hint; an initial failure still safely folds only resolved items',async()=>{
+  for(const initialFailure of [false,true]) {
+    let failed=initialFailure;
+    const {app}=progressApp(()=>response({status:failed?503:200,bytes:Buffer.from(JSON.stringify(userRequestProgress()))}));
+    await app.listeners.button.click();
+    const {doc,closed,trigger}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+    failed=true;await app.listeners.button.click();await settleProgress();
+    assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
+    assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实');
+    assert.doesNotMatch(doc.getElementById('xuan-progress-attention').className,/xuan-needs-user/);
+    assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+    assert.equal(doc.getElementById('xuan-progress-fold').contains(closed),false);
+    assert.equal(doc.getElementById('xuan-progress-fold').contains(trigger),false);
+    assert.equal(trigger.hasAttribute('open'),true);
+    for(const d of publishedState.decisions) assert.ok(doc.getElementById(d.decisionId));
+  }
+});
+
+test('a newer receipt without its own implementation evidence shows unverified progress instead of old user requests',async()=>{
+  const state=structuredClone(publishedState), id='D-20260829-GOOG-FAMILY-LIMIT';
+  state.decisions.find(d=>d.decisionId===id).status='modified';
+  state.receipts.push({...state.receipts.find(r=>r.decisionId===id),receiptId:'R-20260831-161200-ABCDEFGH',
+    recordedAtHkt:progressFollowup,action:'modified',publicSummary:'新的后续意见已经收到'});
+  const html=latest.replace(/(<template id="xuan-ib-decision-state-v1"[^>]*>)[\s\S]*?(<\/template>)/,
+    (_,a,b)=>a+JSON.stringify(state)+b);
+  const meta=metaFor(html,{sourceSha:metadata.sourceSha,sourceCommitEpoch:metadata.sourceCommitEpoch});
+  const data=userRequestProgress();
+  for(const event of data.events) event.observedPair={sourceSha:meta.sourceSha,htmlBlob:meta.htmlBlob};
+  const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));setReport({html,meta});
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress();
+  assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实');
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+  assert.doesNotMatch(doc.getElementById('xuan-progress-status').textContent,/后续规则待你确认/);
+  assert.ok(doc.getElementById(id));
+});
+
+test('print temporarily opens progress details and restores the original disclosure state',async()=>{
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const fold=doc.getElementById('xuan-progress-fold'), child=fold.querySelector('details');child.setAttribute('open','');
+  app.listeners.window.beforeprint();
+  assert.equal(fold.hasAttribute('open'),true);
+  for(const node of fold.querySelectorAll('details')) assert.equal(node.hasAttribute('open'),true);
+  app.listeners.window.afterprint();
+  assert.equal(fold.hasAttribute('open'),false);assert.equal(child.hasAttribute('open'),true);
+  assert.ok(fold.querySelectorAll('details').some(node=>!node.hasAttribute('open')));
+});
+
+test('fold ownership rejects reserved IDs, misplaced cards and ambiguous groups without hiding source facts',async()=>{
+  for(const variant of ['fold-id','attention-id','nav-id','outside-card','next-heading','duplicate-decision-id','outside-heading','duplicate-heading','duplicate-pane']) {
+    const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
+    await app.listeners.button.click();
+    const fixture=todoDocument(app.frame.srcdoc,publishedState.decisions);
+    const {doc,card,pane}=fixture, original=doc.getElementById(publishedState.decisions[0].decisionId);
+    const heading=doc.querySelector('[data-decision-group-title="resolved"]');
+    const fact=doc.createElement('p');fact.textContent='Source fact is immutable';original.append(fact);
+    const newNode=doc.createElement('div');
+    if(variant.endsWith('-id') && variant!=='duplicate-decision-id') {
+      newNode.id={'fold-id':'xuan-progress-fold','attention-id':'xuan-progress-attention','nav-id':'xuan-progress-nav-attention'}[variant];card.append(newNode);
+    } else if(variant==='outside-card') doc.body.append(original);
+    else if(variant==='outside-heading') doc.body.append(heading);
+    else if(variant==='next-heading') {const h=doc.createElement('h2');original.replaceWith(h);card.append(original);}
+    else if(variant==='duplicate-decision-id') {newNode.setAttribute('data-decision-id',publishedState.decisions[0].decisionId);card.append(newNode);}
+    else if(variant==='duplicate-heading') {const h=doc.createElement('h2');h.setAttribute('data-decision-group-title','resolved');card.append(h);}
+    else if(variant==='duplicate-pane') {newNode.className='pane p4';doc.body.append(newNode);}
+    app.loadFrame(doc);await settleProgress();
+    assert.equal(doc.querySelectorAll('.xuan-progress-fold').length,0,variant);
+    assert.equal(doc.querySelectorAll('.xuan-work').length,0,variant);
+    assert.ok(original.contains(fact),variant);assert.equal(fact.textContent,'Source fact is immutable');
+    assert.ok(pane.contains(fixture.trigger),variant);
   }
 });

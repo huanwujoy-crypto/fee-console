@@ -97,11 +97,11 @@ export function validateProgress(data, state, previous = null, now = Date.now())
     if (time < lastTime || time < stamp(receipt.recordedAtHkt) || time > now + 60000) fail("事件时间倒退或在未来");
     lastTime = time;
     if (stamp(e.reviewAfterHkt) < time) fail("复核日早于记录日");
-    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "evidence_recorded"].includes(e.status)) fail("进度状态");
+    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "user_action_required", "evidence_recorded"].includes(e.status)) fail("进度状态");
     for (const k of ["title", "owner"]) text(e[k], 70);
     for (const k of ["summary", "nextAction"]) text(e[k]);
     text(e.blocker, 180, true);
-    if (["blocked", "awaiting_approval"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
+    if (["blocked", "awaiting_approval", "user_action_required"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
     if (!Array.isArray(e.evidence) || e.evidence.length > 5) fail("证据清单");
     for (const evidence of e.evidence) text(evidence);
     if (e.status === "evidence_recorded" && e.evidence.length === 0) fail("没有落实证据");
