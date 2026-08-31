@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "revision": 2,
+  "events": [
+    {
+      "eventId": "P-20260831-1",
+      "decisionId": "D-20260829-MRVL-CLASS",
+      "receiptId": "R-20260831-064906-7F3K9QXM",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "recordedAtHkt": "2026-08-31T15:09:00+08:00",
+      "observedPair": {
+        "sourceSha": "15052ccc00ab074d64fc7479db970f290e388551",
+        "htmlBlob": "df85b0f35d9be13a937e7cf70d80e2e9b1712029"
+      },
+      "title": "MRVL：临时处理已生效，正式分类待核实",
+      "status": "blocked",
+      "owner": "Codex 跟进；Claude 核对分类依据",
+      "summary": "现报告已排除于 AI 压力分子并披露；这不是风险为零，正式分类尚未完成。",
+      "nextAction": "找到并核实 §0-A 原规则；如无已批准依据，提交明确分类选项，不按名称猜测。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "缺少可核实的 §0-A 分类规则；暂不影响报告按已批准临时口径输出。",
+      "evidence": [
+        "已核对本期 MRVL 明细、压力敏感性说明及原采纳回执；临时排除和披露已存在。",
+        "本期报告数据为 08-30；本次核对不是重新取得实时持仓。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-2",
+      "decisionId": "D-20260829-GOOG-FAMILY-LIMIT",
+      "receiptId": "R-20260831-064907-2LM4P8YB",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "recordedAtHkt": "2026-08-31T15:09:01+08:00",
+      "observedPair": {
+        "sourceSha": "15052ccc00ab074d64fc7479db970f290e388551",
+        "htmlBlob": "df85b0f35d9be13a937e7cf70d80e2e9b1712029"
+      },
+      "title": "GOOG：规则方案已备妥，等你确认",
+      "status": "awaiting_approval",
+      "owner": "Claude 提建议；Codex 复算；Wu 批准规则",
+      "summary": "建议分开“三个证券账户合并观察”与“IB 执行视图”；尚未修改任何比例或上限。",
+      "nextAction": "请在本任务确认是否采纳分开口径方案；三账户沿用原参考线作观察，IB 现行软硬线不变。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "原决定只同意研究重订规则，不等于批准某个新阈值或执行范围。",
+      "evidence": [
+        "已与 Claude 复核原报告：合并观察只含 IB、Schwab、Webull，不等于家庭全部资产。",
+        "等美元换算仅是备选，不能自动将不同账户范围的额度视为同一风险政策。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-3",
+      "decisionId": "D-20260829-SEMILIQUID-MAPPING",
+      "receiptId": "R-20260831-064908-9RT6WZ2N",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "recordedAtHkt": "2026-08-31T15:09:02+08:00",
+      "observedPair": {
+        "sourceSha": "15052ccc00ab074d64fc7479db970f290e388551",
+        "htmlBlob": "df85b0f35d9be13a937e7cf70d80e2e9b1712029"
+      },
+      "title": "四桶分类：已纠正缺口算法，待全量核对",
+      "status": "blocked",
+      "owner": "Codex 审计规则；Claude 获取逐仓明细",
+      "summary": "不能用 56 减 8 得出缺口；整账户规则同样有效。真实未覆盖数量仍待全量逐仓核对。",
+      "nextAction": "按现金、逐仓例外、整账户规则、资产标签依次审计；只将真正未知项交你确认。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "本次可用只读入口没有取得全量持仓；不将旧数据或部分样本当作全量核对。",
+      "evidence": [
+        "已核对四桶规则：ANTARCTICA、UBS 等已有整账户分类；不能只计 holdingOverrides。",
+        "未覆盖数暂记未知；已批准的有日期快照继续保留，当前金额未被擅自重算。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-4",
+      "decisionId": "D-20260829-SEMILIQUID-MAPPING",
+      "receiptId": "R-20260831-064908-9RT6WZ2N",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "recordedAtHkt": "2026-08-31T15:42:00+08:00",
+      "observedPair": {
+        "sourceSha": "15052ccc00ab074d64fc7479db970f290e388551",
+        "htmlBlob": "df85b0f35d9be13a937e7cf70d80e2e9b1712029"
+      },
+      "title": "四桶分类：38 项半流动持仓均有规则",
+      "status": "in_progress",
+      "owner": "Codex 核对覆盖与金额；Claude 复核剩余身份",
+      "summary": "NOAH、ANTARCTICA、UBS 的 38 项半流动持仓全部覆盖；另有 1 项现金身份待核实，尚未重算全家庭金额。",
+      "nextAction": "核实 UBS 现金记录的正式身份，再核对其余四组合；只把无法由证据解决的分类交你确认。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "一项记录的现金名称与证券类型不一致；其余四组合未核对，继续保留已有日期的四桶快照。",
+      "evidence": [
+        "08-31 15:31–15:34 HKT 只读核对三组合；逐行金额与各页面总额精确相等。",
+        "38 项半流动持仓由 7 条逐仓例外和 31 次整账户规则覆盖，未覆盖为 0。",
+        "全部输入 57 行，56 行已分类、1 行现金身份待核实；不是 48 项半流动分类缺口。",
+        "已检查滚动懒加载；本次仅更新落实证据，原金融报告、映射与回执均未改写。"
+      ]
+    }
+  ]
+}

@@ -88,3 +88,14 @@ and fixed-mobile-link path above. An ad-hoc edition may become the newest phone
 page, but it never proves that a required AM or PM edition ran. US daylight
 saving time and market holidays change the report's market-status wording and
 data-as-of disclosure, never the Hong Kong delivery schedule.
+
+## Implementation progress after a recorded decision
+
+Read `claude/xuan-ib-implementation-progress-v1.md` and the independent
+`xuan-ib/implementation-progress.json` before presenting accepted decisions as
+unimplemented. A receipt records an opinion, not execution. Preserve the receipt
+history; distinguish verified interim measures from unresolved follow-up work.
+The progress ledger is append-only and changes only through a separately
+approved maintenance PR. Report candidates must not write it. Never infer a
+classification gap as Semi Liquid count minus override count: portfolio-wide
+rules also apply. Never silently change GOOG account scope or risk thresholds.
