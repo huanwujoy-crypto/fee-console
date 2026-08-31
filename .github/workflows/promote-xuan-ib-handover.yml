@@ -338,7 +338,13 @@ jobs:
             xuan-ib/latest.meta.json "$actual_blob" \
             "$CANDIDATE_SHA" "$CANDIDATE_COMMIT_EPOCH" "$CANDIDATE_BLOB" "$DATA_DATE"
 
-          git add xuan-ib/latest.html xuan-ib/latest.meta.json
+          # The menu is a derived view, never another source of report truth.
+          # A verified report with unsupported menu markup publishes a disabled
+          # menu; a mismatched meta/HTML pair still fails closed.
+          node scripts/xuan-ib-decision-menu.mjs publish-manifest \
+            xuan-ib/latest.meta.json xuan-ib/latest.html > xuan-ib/latest.decisions.json
+
+          git add xuan-ib/latest.html xuan-ib/latest.meta.json xuan-ib/latest.decisions.json
           if git diff --cached --quiet; then
             echo 'Verified page already matches the published latest.html.'
             exit 0

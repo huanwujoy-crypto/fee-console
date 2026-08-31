@@ -158,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-31.1";
+      const loaderBuild = "2026-08-31.2";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -326,7 +326,7 @@
 
       function showDecisionPending() {
         status.classList.remove("error");
-        status.textContent = `已进入 Claude，请在 App 内完成选择 · L ${loaderBuild}`;
+        status.textContent = `请在手机菜单中选择；提交后等待回应回执 · L ${loaderBuild}`;
       }
 
       function expireWaits() {
