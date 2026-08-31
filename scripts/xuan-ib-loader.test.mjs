@@ -1924,6 +1924,29 @@ test('progress failure removes current-status claims without damaging the financ
   assert.equal(app.decision.disabled,true);
   assert.ok(doc.getElementById(progressFixture.events[0].decisionId));
 });
+test('GOOG scope confirmation clears the extra approval notice on same-report refresh while preserving its history',async()=>{
+  const confirmationIndex=progressFixture.events.findIndex(e=>e.eventId==='P-20260831-5');
+  assert.ok(confirmationIndex>0);
+  let data={...structuredClone(progressFixture),revision:2,events:structuredClone(progressFixture.events.slice(0,confirmationIndex))};
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const id='D-20260829-GOOG-FAMILY-LIMIT';
+  const original=doc.getElementById(id), originalText=original.textContent;
+  const writes=app.frame.srcdocWrites;
+  assert.match(doc.getElementById('xuan-progress-status').textContent,/1 项后续规则待你确认/);
+  data=structuredClone(progressFixture);
+  await app.listeners.button.click();await settleProgress();
+  assert.equal(app.frame.srcdocWrites,writes);
+  assert.equal(doc.getElementById(id),original);
+  assert.equal(original.textContent,originalText);
+  const current=doc.getElementById('progress-'+id).querySelector('.xuan-work-current');
+  assert.match(current.textContent,/双视图已确认，等待新版核验/);
+  assert.doesNotMatch(current.textContent,/待你确认规则|等你确认/);
+  assert.doesNotMatch(doc.getElementById('xuan-progress-status').textContent,/后续规则待你确认/);
+  assert.equal(app.decision.disabled,true);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html,latest);
+});
 test('new report cannot inherit a current verified status from an older observed pair',async()=>{
   const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
   await app.listeners.button.click();
