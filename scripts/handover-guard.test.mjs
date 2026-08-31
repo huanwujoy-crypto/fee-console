@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const guard = path.join(here, 'handover-guard.mjs');
@@ -772,4 +773,63 @@ test('continuity arguments are all-or-nothing', () => {
   const result = run(valid(), '2026-08-25', { sourceSha, htmlBlob });
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /requires PREVIOUS_HTML/);
+});
+
+test('ordinary report rejects the published override-subtraction regression and accepts fixed disclosure', () => {
+  const finance = '<p>IB NAV $5,033,559；四桶沿用2026-08-24；四类缺口 $543,526。</p>';
+  const bad = '<p>四桶 mapping 与 Semi Liquid 覆盖数再次核实不变：56 个 Semi Liquid 标签持仓、8 个 holdingOverrides、48 个未覆盖。</p>';
+  const rejected = run(valid(finance + bad));
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /classification disclosure/);
+  const corrected = valid(finance + renderClassificationDisclosure());
+  assert.ok(corrected.includes(finance));
+  const accepted = run(corrected);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  const stillWrong = run(valid(finance + bad + renderClassificationDisclosure()));
+  assert.notEqual(stillWrong.status, 0);
+  assert.match(stillWrong.stderr, /only in the canonical/);
+});
+
+test('ordinary report cannot remove an inherited four-bucket policy', () => {
+  const result = run(valid(), '2026-08-25', {
+    previousHtml: valid('<p>四桶沿用2026-08-24</p>'), sourceSha, htmlBlob,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /classification disclosure/);
+});
+
+test('only fully verified immutable legacy records-update may retain old classification text', () => {
+  const pending = [decision('D-20260829-MRVL-CLASS', 'awaiting_user')];
+  const resolved = [decision('D-20260829-MRVL-CLASS', 'accepted')];
+  const bad = '<p>四桶 mapping：56 Semi Liquid，8 holdingOverrides，48个未覆盖。</p>';
+  const insert = html => html.replace('</body>', bad + '</body>');
+  const previous = insert(withDecisionDisplayGroups({ decisions: pending, receipts: [], recordsUpdate: true }))
+    .replace('<!-- xuan-ib-records-update:v1 -->', '');
+  const response = insert(withDecisionDisplayGroups({ decisions: resolved, receipts: [receipt()], recordsUpdate: true }));
+  const continuity = { previousHtml: previous, sourceSha, htmlBlob };
+  const accepted = run(response, '2026-08-25', continuity);
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  const untrusted = run(response);
+  assert.notEqual(untrusted.status, 0);
+  assert.match(untrusted.stderr, /requires a trusted previous/);
+
+  const forged = run(markRecordsUpdate(valid(bad)), '2026-08-25', { previousHtml: valid(bad), sourceSha, htmlBlob });
+  assert.notEqual(forged.status, 0);
+  assert.match(forged.stderr, /requires decision state/);
+
+  const altered = run(response.replace('48个未覆盖', '49个未覆盖'), '2026-08-25', continuity);
+  assert.notEqual(altered.status, 0);
+  assert.match(altered.stderr, /changed content outside/);
+
+  const noReceipt = run(insert(withDecisionDisplayGroups({ decisions: pending, receipts: [], recordsUpdate: true })), '2026-08-25', continuity);
+  assert.notEqual(noReceipt.status, 0);
+  assert.match(noReceipt.stderr, /must append at least one decision receipt/);
+});
+
+test('candidate validation loads classification code from the same trusted main as the guard', () => {
+  assert.match(validateWorkflow, /git show origin\/main:scripts\/handover-guard\.mjs > "\$RUNNER_TEMP\/handover-guard\.mjs"/);
+  assert.match(validateWorkflow, /git show origin\/main:scripts\/xuan-ib-classification-disclosure\.mjs > "\$RUNNER_TEMP\/xuan-ib-classification-disclosure\.mjs"/);
+  assert.match(validateWorkflow, /node "\$RUNNER_TEMP\/handover-guard\.mjs"/);
+  assert.match(promoteWorkflow, /node scripts\/handover-guard\.mjs/);
 });

@@ -26,6 +26,7 @@ jobs:
           set -euo pipefail
           git fetch --no-tags origin main:refs/remotes/origin/main
           git show origin/main:scripts/handover-guard.mjs > "$RUNNER_TEMP/handover-guard.mjs"
+          git show origin/main:scripts/xuan-ib-classification-disclosure.mjs > "$RUNNER_TEMP/xuan-ib-classification-disclosure.mjs"
           git show origin/main:xuan-ib/latest.html > "$RUNNER_TEMP/previous-latest.html"
           git show origin/main:xuan-ib/latest.meta.json > "$RUNNER_TEMP/previous-latest.meta.json"
 
