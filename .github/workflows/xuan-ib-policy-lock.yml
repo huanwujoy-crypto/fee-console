@@ -38,7 +38,7 @@ jobs:
             echo 'The pull-request file list is incomplete or exceeds the approved review size.' >&2
             exit 1
           fi
-          protected_re='^(CLAUDE\.md|\.claude/rules/xuan-ib-handover\.md|claude/(nightly-handover-spec-ADDENDUM-v916|xuan-ib-runtime-contract-v1|xuan-ib-cash-first-plan-v1|xuan-ib-classification-authority-review-2026-08-31)\.md|claude/xuan-ib-cash-identities-v1\.json$|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader|xuan-ib-decision-menu|build-xuan-decision-shortcut|xuan-ib-progress|xuan-ib-classification-audit|xuan-ib-classification-disclosure|xuan-ib-classification-correction|xuan-ib-cash-plan|xuan-ib-cash-plan-correction|xuan-ib-cash-identity)\.(mjs|test\.mjs)$|xuan-ib/)'
+          protected_re='^(CLAUDE\.md|\.claude/rules/xuan-ib-handover\.md|claude/(nightly-handover-spec-ADDENDUM-v916|xuan-ib-runtime-contract-v1|xuan-ib-cash-first-plan-v1|xuan-ib-classification-authority-review-2026-08-31|xuan-ib-mrvl-t1-approval-2026-08-31)\.md|claude/(xuan-ib-cash-identities-v1|xuan-ib-ai-tier-overrides-v1)\.json$|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader|xuan-ib-decision-menu|build-xuan-decision-shortcut|xuan-ib-progress|xuan-ib-classification-audit|xuan-ib-classification-disclosure|xuan-ib-classification-correction|xuan-ib-cash-plan|xuan-ib-cash-plan-correction|xuan-ib-cash-identity|xuan-ib-mrvl-t1)\.(mjs|test\.mjs)$|xuan-ib/)'
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
             head_sha='${{ github.event.pull_request.head.sha }}'

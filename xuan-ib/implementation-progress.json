@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 4,
+  "revision": 5,
   "events": [
     {
       "eventId": "P-20260831-1",
@@ -195,6 +195,30 @@
         "现金代理的精确身份有 08-27 入账和回读凭证；保留原证券记录类型，不冒充当前银行余额。",
         "四项无标签持仓保留无标签事实，只使用已批准整组合规则，没有改写 Sharesight 标签。",
         "七组合原始响应、规范化输入与审计结果留在私有证据目录；没有改动资产或金融账户。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-9",
+      "decisionId": "D-20260829-MRVL-CLASS",
+      "receiptId": "R-20260831-064906-7F3K9QXM",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "fdf1aa6ebb87e56fc5c1a640838e8397bfc68b20",
+        "htmlBlob": "ef5c5be7d078eafd8d4a82f72d0435fa6e7c17eb"
+      },
+      "recordedAtHkt": "2026-08-31T22:05:00+08:00",
+      "title": "MRVL：T1 已确认，正在更新风险读数",
+      "status": "in_progress",
+      "owner": "Claude 发布报告；Codex 保存规则并独立验收",
+      "summary": "已收到你对标准 T1 的明确确认：低、中、高情景为 60%、80%、100%。无需再操作，原回执继续保留。",
+      "nextAction": "按当前已发布快照重算并验证手机页；此更新不是重新取数，后续正常报告沿用新批准规则。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "",
+      "evidence": [
+        "用户已在本任务对 MRVL 标准 T1 的具体确认问题回复确认，已记录新批准依据。",
+        "Claude 独立复核中情景为 22.69%；低、高仍是旧近似基数加该持仓的准确分类增量。",
+        "规则和进度走独立维护审批，报告仍走单文件候选验证发布；不改原回执，不授权交易。"
       ]
     }
   ]
