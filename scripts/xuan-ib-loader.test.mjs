@@ -430,7 +430,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-31\.2"/);
+  assert.match(loader, /loaderBuild = "2026-08-31\.3"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -551,7 +551,7 @@ test('only an enabled inert decision template reveals the compact awaiting-user 
   }
 });
 
-test('verified todo display puts the trigger first and a collapsed pending fold beside the parent button', async () => {
+test('verified todo display expands the first trigger and keeps a collapsed pending fold beside the parent button', async () => {
   const decisions = [awaitingDecision(), awaitingDecision('D-20260830-SECOND-ITEM'),
     {decisionId: 'D-20260830-ALREADY-ACCEPTED', status: 'accepted'}];
   const html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + '原始财务正文 $100.00');
@@ -575,6 +575,8 @@ test('verified todo display puts the trigger first and a collapsed pending fold 
   const fold = fixture.doc.querySelector('.xuan-decision-fold');
   const body = fixture.doc.querySelector('.xuan-decision-body');
   assert.equal(fixture.pane.children[0], fixture.trigger);
+  assert.equal(fixture.trigger.hasAttribute('open'), true, 'swap trigger starts expanded');
+  assert.equal(fixture.closed.hasAttribute('open'), false, 'closed observations remain collapsed');
   assert.equal(row.parentElement, fixture.card);
   assert.equal(fold.parentElement, row);
   assert.equal(fold.hasAttribute('open'), false, 'pending content starts collapsed');
@@ -613,6 +615,27 @@ test('verified todo display puts the trigger first and a collapsed pending fold 
   const wait = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
   assert.deepEqual(wait.awaitingDecisionIds, decisions.slice(0, 2).map((item) => item.decisionId));
   assert.equal(wait.baselines[0].htmlBlob, meta.htmlBlob);
+});
+
+test('legacy reports only expand the matching swap trigger and leave other details unchanged', async () => {
+  for (const hasTrigger of [true, false]) {
+    const html = reportHtml('2026-08-30', '临时版', 'legacy report without a decision template');
+    const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    const fixture = todoDocument(app.frame.srcdoc, []);
+    if (!hasTrigger) fixture.trigger.querySelector('summary').textContent = '其他检查';
+    const untouched = fixture.doc.createElement('details');
+    untouched.setAttribute('open', '');
+    fixture.pane.append(untouched);
+    app.loadFrame(fixture.doc);
+
+    assert.equal(fixture.trigger.hasAttribute('open'), hasTrigger);
+    assert.equal(fixture.closed.hasAttribute('open'), false);
+    assert.equal(untouched.hasAttribute('open'), true);
+    assert.equal(fixture.doc.querySelector('.xuan-decision-fold'), null);
+    assert.equal(app.decision.hidden, true);
+  }
 });
 
 test('zero pending keeps a disabled inline response control and preserves all accepted items', async () => {
@@ -819,6 +842,7 @@ test('polling the same verified blob preserves the active todo tab, open fold an
   app.loadFrame(fixture.doc);
   const fold = fixture.doc.querySelector('.xuan-decision-fold');
   fold.setAttribute('open', '');
+  fixture.trigger.removeAttribute('open');
   fixture.doc.getElementById('s1').checked = false;
   fixture.doc.getElementById('s4').checked = true;
   const initialWrites = app.frame.srcdocWrites;
@@ -829,6 +853,7 @@ test('polling the same verified blob preserves the active todo tab, open fold an
   assert.equal(app.frame.contentDocument, fixture.doc);
   assert.equal(fixture.doc.querySelector('.xuan-decision-fold'), fold);
   assert.equal(fold.hasAttribute('open'), true);
+  assert.equal(fixture.trigger.hasAttribute('open'), false, 'same-report refresh preserves a manually collapsed trigger');
   assert.equal(fixture.doc.getElementById('s4').checked, true);
   assert.equal(app.decision.ownerDocument, fixture.doc);
   assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
@@ -865,6 +890,7 @@ test('refreshing the same verified blob restores an iframe that navigated away o
     app.loadFrame(restored.doc);
     assert.equal(app.decision.ownerDocument, restored.doc, failure);
     assert.equal(restored.pane.children[0], restored.trigger, failure);
+    assert.equal(restored.trigger.hasAttribute('open'), true, failure);
     assert.equal(restored.doc.querySelector('.xuan-decision-fold').hasAttribute('open'), false, failure);
     app.listeners.decision.click({preventDefault() {}});
     assert.match(app.location.href, /^shortcuts:\/\/run-shortcut\?name=XUAN-IB%20/, failure);
@@ -884,6 +910,7 @@ test('a new verified blob keeps the selected todo tab but starts its pending fol
   first.doc.getElementById('s1').checked = false;
   first.doc.getElementById('s4').checked = true;
   first.doc.querySelector('.xuan-decision-fold').setAttribute('open', '');
+  first.trigger.removeAttribute('open');
   html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'second');
   meta = metaFor(html, {sourceSha: '2'.repeat(40), sourceCommitEpoch: meta.sourceCommitEpoch + 1});
   await app.listeners.button.click();
@@ -891,6 +918,7 @@ test('a new verified blob keeps the selected todo tab but starts its pending fol
   app.loadFrame(second.doc);
   assert.equal(second.doc.getElementById('s4').checked, true);
   assert.equal(second.doc.querySelector('.xuan-decision-fold').hasAttribute('open'), false);
+  assert.equal(second.trigger.hasAttribute('open'), true, 'a new report uses the expanded trigger default');
   assert.equal(app.decision.ownerDocument, second.doc);
   assert.equal(first.doc.querySelector('#decision'), null, 'the existing control is moved out of the retired document');
 });
@@ -1179,7 +1207,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.2');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.3');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 

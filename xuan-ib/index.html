@@ -158,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-31.2";
+      const loaderBuild = "2026-08-31.3";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -804,7 +804,10 @@
           node.tagName === "DETAILS" &&
           node.querySelector("summary")?.textContent.includes("换仓触发检查")
         );
-        if (trigger) todo.prepend(trigger);
+        if (trigger) {
+          todo.prepend(trigger);
+          trigger.setAttribute("open", "");
+        }
         if (!record.decisionState) return;
         const groupHeadings = Array.from(todo.querySelectorAll('[data-decision-group-title]'));
         const headings = groupHeadings.filter((node) =>
