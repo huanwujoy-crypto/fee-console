@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 5,
+  "revision": 6,
   "events": [
     {
       "eventId": "P-20260831-1",
@@ -219,6 +219,78 @@
         "用户已在本任务对 MRVL 标准 T1 的具体确认问题回复确认，已记录新批准依据。",
         "Claude 独立复核中情景为 22.69%；低、高仍是旧近似基数加该持仓的准确分类增量。",
         "规则和进度走独立维护审批，报告仍走单文件候选验证发布；不改原回执，不授权交易。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-10",
+      "decisionId": "D-20260829-MRVL-CLASS",
+      "receiptId": "R-20260831-064906-7F3K9QXM",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "730b7d5bd251773af7da9729133630b195efaaec",
+        "htmlBlob": "db531b7fb2dc06e3c4e2767103c297d4316ad2be"
+      },
+      "recordedAtHkt": "2026-08-31T22:26:00+08:00",
+      "title": "MRVL：T1 已落实，报告已核验",
+      "status": "evidence_recorded",
+      "owner": "Claude 实施发布；Codex 独立复算和线上回验",
+      "summary": "已按你确认的标准 T1 纳入风险测算，中情景现为 22.69%。规则已保存，后续正常报告沿用；无需你再处理。",
+      "nextAction": "下一次正常报告用当期已核实市值计算；原三条意见回执保留，不会触发交易或转账。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "",
+      "evidence": [
+        "已记录低、中、高情景 60%、80%、100% 的明确批准，只用于已核实身份的 MRVL。",
+        "按今晚原快照显示输入未舍入汇总，中情景 22.69%，距 25% 中情景预警线 2.31 个百分点。",
+        "低、高仍为近似参考，已明确披露；本次未重新取数，原数据时间仍是 20:55 至 20:58 HKT。",
+        "候选验证、受控发布及 Pages 均成功；线上报告与独立计算输出逐字节一致。",
+        "原三条回执、持仓、现金、非 AI 金融表及其他规则保持不变；这不是新一轮定时报告。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-11",
+      "decisionId": "D-20260829-GOOG-FAMILY-LIMIT",
+      "receiptId": "R-20260831-064907-2LM4P8YB",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "730b7d5bd251773af7da9729133630b195efaaec",
+        "htmlBlob": "db531b7fb2dc06e3c4e2767103c297d4316ad2be"
+      },
+      "recordedAtHkt": "2026-08-31T22:26:01+08:00",
+      "title": "GOOG：双视图已落实，本次保持不变",
+      "status": "evidence_recorded",
+      "owner": "Claude 沿用已确认范围；Codex 核验本期一致性",
+      "summary": "三账户合并观察 5.48%，IB 单独视图 2.66%；本次 MRVL 更新未改变其金额、口径或原阈值，无需重复确认。",
+      "nextAction": "后续正常报告继续按同范围当期数据复算，不把三账户观察线改成交易触发线。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "",
+      "evidence": [
+        "线上本期 GOOG 风险表和事项说明与上一可信版本逐字节相同，原三账户和 IB 分母保持不变。",
+        "本次只是同一晚间快照的 MRVL 风险口径更新，不是新的 GOOG 取数或金融操作。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-12",
+      "decisionId": "D-20260829-SEMILIQUID-MAPPING",
+      "receiptId": "R-20260831-064908-9RT6WZ2N",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "730b7d5bd251773af7da9729133630b195efaaec",
+        "htmlBlob": "db531b7fb2dc06e3c4e2767103c297d4316ad2be"
+      },
+      "recordedAtHkt": "2026-08-31T22:26:02+08:00",
+      "title": "四桶：规则核验通过，新金额仍待验收",
+      "status": "in_progress",
+      "owner": "Claude 完成同轮取数；Codex 复算验收",
+      "summary": "七组合 95 行的规则覆盖审计已完成，不需要你逐项分类；本次只更新 MRVL，四桶新金额没有冒充完成。",
+      "nextAction": "正常报告完成同轮七组合取数和金额核验后再更新四桶；目前继续保留有日期的已批准快照。",
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "blocker": "现有覆盖审计来自不同读取时间，不能替代同轮全家庭估值。",
+      "evidence": [
+        "本次线上分类披露、四桶金额及原决定卡均与上一可信版本逐字节一致，未重新取数。",
+        "先前 95 行覆盖和现金身份证据仍保留；该历史规则审计不冒充本次新的金融估值。"
       ]
     }
   ]
