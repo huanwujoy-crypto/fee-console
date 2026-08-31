@@ -69,6 +69,37 @@ verified seven-portfolio scope, cash identities, complete paginated holdings
 and value reconciliation, then a reviewed update of the interim disclosure.
 Do not infer gaps from the size of holdingOverrides or from a mapping-file hash.
 
+Before normalizing classification inputs, read
+`claude/xuan-ib-classification-authority-review-2026-08-31.md` and
+`claude/xuan-ib-cash-identities-v1.json`. Ordinary asset classification (§0-A)
+is separate from AI pressure tiers (§0-C). MRVL's ordinary classification has
+dated evidence; its proposed standard T1 mapping is not approved. Continue the
+previously approved temporary exclusion and disclosure until a specific new
+approval, without blocking unrelated report output.
+
+For the single registered UBS cash proxy, call `resolveCashIdentity` from
+`scripts/xuan-ib-cash-identity.mjs` before the classification audit. Supply
+explicit source IDs, normalized full name, record type, USD currency, unit
+price and received/not-pending status; never fabricate fields to pass it.
+Only `resolved` supplies `isCash: true`. An `unresolved` result is a review
+blocker for that row, not permission to classify it as a non-cash security.
+Preserve the source holding/security type: the registry proves economic cash
+identity, not a native cash account, a current balance or transfer availability.
+Native cash accounts require their own source evidence and are not proxy rows.
+
+Preserve absent labels as `sourceLabels: []` and explicit `assetClass:
+"Unlabelled"`; do not manufacture a liquidity label. Existing verified
+portfolio-wide rules may cover such a row. If no approved rule covers it,
+retain unknown. Coverage evidence assembled at different read times proves
+rule coverage only, not a new same-run family valuation. Before replacing the
+dated fallback, a normal run must independently read all seven family
+portfolios, reconcile holdings plus cash and pass reviewed publication checks.
+
+Derive every GOOG/GOOGL figure in the summary, risk table and accepted-item
+fact paragraph from the same current report inputs. Do not copy an old item
+paragraph and label its old amounts as newly recomputed. Historical receipt
+wording remains immutable; current facts and progress must distinguish it.
+
 Explicit explanation-only corrections follow CLAUDE.md, not the live-read
 stages: no financial refresh, no fabricated stage times, preserve original
 edition/date/as-of/values/receipts, and no new AM/PM success evidence.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 3,
+  "revision": 4,
   "events": [
     {
       "eventId": "P-20260831-1",
@@ -119,6 +119,82 @@
         "三账户合并直接持有的 GOOG 与 GOOGL；不改成家庭全部资产范围，不新增 ETF 穿透。",
         "三账户仅作合并观察，IB 仍按原分子和分母；不把观察参考线改为交易触发线，也不做等美元改线。",
         "生成规则已记录；原决定、三条回执与金融报告保留，不授权下单、撤单、改单或转账。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-6",
+      "decisionId": "D-20260829-MRVL-CLASS",
+      "receiptId": "R-20260831-064906-7F3K9QXM",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "fdf1aa6ebb87e56fc5c1a640838e8397bfc68b20",
+        "htmlBlob": "ef5c5be7d078eafd8d4a82f72d0435fa6e7c17eb"
+      },
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "recordedAtHkt": "2026-08-31T21:41:00+08:00",
+      "title": "MRVL：普通分类已有依据，AI 分层等你确认",
+      "status": "awaiting_approval",
+      "owner": "Wu 确认新分层；Claude 实施；Codex 验收",
+      "summary": "已找到原规范；普通资产分类与 AI 压力分层是两件事。原临时排除继续生效，不影响整份报告输出。",
+      "nextAction": "请确认是否把 MRVL 按标准 T1 纳入 AI 压力测算，低、中、高情景系数为 60%、80%、100%；这是风险计量，不是交易。",
+      "blocker": "原回执批准临时排除，不等于批准正式 T1；本次没有擅自变更压力结果。",
+      "evidence": [
+        "已直接读取 Claude 项目主规范 v9.14 的 §0-A 与 §0-C，并与 Claude 复核适用范围。",
+        "08-28 来源回读已确认美国科技与高流动性；成长股字段另有批准记录，均不等于 AI tier。",
+        "Marvell 官方业务为 AI 芯片与数据中心网络供应方，支持标准 T1 提案；系数来自既有情景框架，不是跌幅预测。",
+        "三条原决定回执保持不变；本次只追加落实证据与具体待确认事项。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-7",
+      "decisionId": "D-20260829-GOOG-FAMILY-LIMIT",
+      "receiptId": "R-20260831-064907-2LM4P8YB",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "fdf1aa6ebb87e56fc5c1a640838e8397bfc68b20",
+        "htmlBlob": "ef5c5be7d078eafd8d4a82f72d0435fa6e7c17eb"
+      },
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "recordedAtHkt": "2026-08-31T21:41:01+08:00",
+      "title": "GOOG：双视图及同页说明已核验",
+      "status": "evidence_recorded",
+      "owner": "Claude 生成和修正；Codex 独立复算验收",
+      "summary": "本期三账户合并观察为 5.48%，IB 单独视图为 2.66%；原待办沿用旧金额的问题已作单处纠正。",
+      "nextAction": "无需你再次确认。后续正常报告保持同范围复算，摘要、风险表与事项事实说明共用本期数据；不自动交易。",
+      "blocker": "",
+      "evidence": [
+        "核对本期 08-31 20:55–20:58 HKT 数据：三账户分子 336,829，含现金分母 6,141,014。",
+        "IB 分子 143,010，IB NAV 加 NOAH 现金分母约 5,382,899；原软 5%、硬 5.5% 保持不变。",
+        "修复后原待办事实段与风险表一致；原始决定模板、三条回执及其余金融表逐字保留。",
+        "本次是旧说明纠错和算术验收，不是新取数，不作为一次新的定时报告成功证据。"
+      ]
+    },
+    {
+      "eventId": "P-20260831-8",
+      "decisionId": "D-20260829-SEMILIQUID-MAPPING",
+      "receiptId": "R-20260831-064908-9RT6WZ2N",
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "fdf1aa6ebb87e56fc5c1a640838e8397bfc68b20",
+        "htmlBlob": "ef5c5be7d078eafd8d4a82f72d0435fa6e7c17eb"
+      },
+      "reviewAfterHkt": "2026-09-01T12:00:00+08:00",
+      "recordedAtHkt": "2026-08-31T21:41:02+08:00",
+      "title": "四桶：95 项规则核验通过，新金额尚待验收",
+      "status": "in_progress",
+      "owner": "Claude 取得当期数据并计算；Codex 核验和发布",
+      "summary": "七组合提供的 95 行均有有效规则，未解决和重复均为 0；UBS 现金身份已用入账凭证核实，不需要你逐项分类。",
+      "nextAction": "按已核实规则完成同一轮七组合取数、金额复算及受控发布验收；通过前保留有日期的旧快照，不把覆盖审计当新报告。",
+      "blocker": "本次覆盖审计合并下午和晚间读取，不是同一轮家庭估值；当前四桶金额仍未完成新取数发布验收。",
+      "evidence": [
+        "已核对七组合全部提供行与各自来源总额，逐组合差额均为 0；没有把无现金记录等同外部现金为零。",
+        "38 项半流动持仓全部有规则：7 次逐仓例外、31 次整组合规则；不能用持仓数减例外数算缺口。",
+        "现金代理的精确身份有 08-27 入账和回读凭证；保留原证券记录类型，不冒充当前银行余额。",
+        "四项无标签持仓保留无标签事实，只使用已批准整组合规则，没有改写 Sharesight 标签。",
+        "七组合原始响应、规范化输入与审计结果留在私有证据目录；没有改动资产或金融账户。"
       ]
     }
   ]

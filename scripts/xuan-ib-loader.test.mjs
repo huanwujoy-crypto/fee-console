@@ -1881,7 +1881,13 @@ const publishedProgressFixture = JSON.parse(fs.readFileSync(new URL('../xuan-ib/
 // copying its older observedPair made "current" test cases silently become
 // history cases after every new report. Rebind only the synthetic observation,
 // never the immutable receipt's responseToSourceSha / responseToHtmlBlob.
-const progressFixture = structuredClone(publishedProgressFixture);
+// Historical scenarios stop at the already-confirmed GOOG scope event. New
+// ledger events must not change these zero-user-request scenario assumptions.
+const historicalProgressEnd = publishedProgressFixture.events.findIndex(e=>e.eventId==='P-20260831-5');
+assert.ok(historicalProgressEnd >= 0);
+const historicalProgressFixture = {schemaVersion:1,revision:3,
+  events:structuredClone(publishedProgressFixture.events.slice(0,historicalProgressEnd+1))};
+const progressFixture = structuredClone(historicalProgressFixture);
 for(const event of progressFixture.events) {
   event.observedPair={sourceSha:metadata.sourceSha,htmlBlob:metadata.htmlBlob};
 }
@@ -1889,9 +1895,9 @@ const progressFollowup = new Date(Date.parse(progressFixture.events.at(-1).recor
 const progressTestNow = new Date(Date.parse(progressFollowup)+60000).toISOString();
 const publishedState = JSON.parse(latest.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
 const settleProgress = () => new Promise(resolve => setTimeout(resolve, 15));
-function progressApp(getProgress) {
+function progressApp(getProgress,now=progressTestNow) {
   let current = {html:latest,meta:metadata};
-  const app=loaderHarness({now:progressTestNow,displayDom:true,fetchImpl:async(url,opts)=>{
+  const app=loaderHarness({now,displayDom:true,fetchImpl:async(url,opts)=>{
     if(String(url).includes('implementation-progress.json')) {
       assert.equal(opts.cache,'no-store');assert.equal(opts.credentials,'omit');assert.equal(opts.redirect,'error');
       return getProgress();
@@ -1902,7 +1908,9 @@ function progressApp(getProgress) {
   return {app,setReport:value=>{current=value;}};
 }
 test('current-progress fixture changes only synthetic observation pairs, preserving published receipt provenance',()=>{
-  assert.equal(progressFixture.events.length,publishedProgressFixture.events.length);
+  assert.equal(progressFixture.revision,3);
+  assert.equal(progressFixture.events.length,historicalProgressEnd+1);
+  assert.equal(progressFixture.events.at(-1).eventId,'P-20260831-5');
   for(let i=0;i<progressFixture.events.length;i++) {
     const {observedPair,...fixtureEvent}=progressFixture.events[i];
     const {observedPair:publishedPair,...publishedEvent}=publishedProgressFixture.events[i];
@@ -1910,6 +1918,45 @@ test('current-progress fixture changes only synthetic observation pairs, preserv
     assert.deepEqual(fixtureEvent,publishedEvent);
     assert.notEqual(observedPair,publishedPair);
   }
+});
+test('entire current published ledger renders latest receipt-bound statuses and exact user attention counts',async()=>{
+  const data=structuredClone(publishedProgressFixture);
+  const now=new Date(Math.max(Date.parse(progressTestNow),...data.events.map(e=>Date.parse(e.recordedAtHkt)+60000))).toISOString();
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}),now);
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const resolved=publishedState.decisions.filter(d=>['accepted','modified'].includes(d.status));
+  assert.equal(doc.querySelectorAll('.xuan-work').length,resolved.length);
+  assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
+  const labels={not_started:'待安排',in_progress:'处理中',blocked:'受阻 · 临时处理保留',awaiting_approval:'待你确认规则',user_action_required:'待你处理',evidence_recorded:'已有落实证据 · 持续观察'};
+  let approvals=0,actions=0,historical=false,unverifiedCount=0;
+  for(const decision of resolved) {
+    const receipt=publishedState.receipts.filter(r=>r.decisionId===decision.decisionId)
+      .sort((a,b)=>Date.parse(a.recordedAtHkt)-Date.parse(b.recordedAtHkt)||a.receiptId.localeCompare(b.receiptId)).at(-1);
+    const event=data.events.filter(e=>e.decisionId===decision.decisionId&&e.receiptId===receipt?.receiptId).at(-1);
+    const card=doc.getElementById('progress-'+decision.decisionId);
+    assert.ok(card,'every resolved decision retains its progress card');
+    if(!event) {
+      unverifiedCount++;
+      assert.match(card.textContent,/当前进度未核实/);
+      assert.equal(card.querySelector('.xuan-work-badge'),null);
+      assert.ok(doc.getElementById(decision.decisionId),'original decision survives missing progress');
+      continue;
+    }
+    assert.ok(card.textContent.includes(event.title));
+    assert.ok(card.textContent.includes(event.summary));
+    const current=event.observedPair.sourceSha===metadata.sourceSha&&event.observedPair.htmlBlob===metadata.htmlBlob;
+    assert.equal(card.querySelector('.xuan-work-badge').textContent,current?labels[event.status]:'历史进度 · 本期尚未复核');
+    if(current) {approvals+=Number(event.status==='awaiting_approval');actions+=Number(event.status==='user_action_required');}
+    else historical=true;
+  }
+  const expected=[approvals?`待你确认 ${approvals} 项`:'',actions?`待你处理 ${actions} 项`:''].filter(Boolean).join(' · ');
+  const attention=doc.getElementById('xuan-progress-attention');
+  assert.equal(attention.textContent,expected?`⚠ ${expected}`:unverifiedCount?'进度未核实':historical?'历史进度待复核':'');
+  assert.equal(/(?:^|\s)xuan-needs-user(?:\s|$)/.test(attention.className),Boolean(approvals+actions));
+  const pending=publishedState.decisions.filter(d=>d.status==='awaiting_user').length;
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,!(pending+approvals+actions));
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html,latest);
 });
 test('independent progress refresh updates the same report without resetting original cards or selected tab',async()=>{
   let data=structuredClone(progressFixture);
