@@ -1,1435 +1,520 @@
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
-  <meta name="apple-mobile-web-app-title" content="XUAN-投资管理">
-  <meta name="theme-color" content="#f9f9f7">
-  <title>XUAN-投资管理</title>
-  <style>
-    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    html, body { height: 100%; margin: 0; background: #f9f9f7; }
-    .app { height: 100%; display: flex; flex-direction: column; }
-    .bar {
-      flex: 0 0 auto;
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      min-height: 64px;
-      padding: calc(10px + env(safe-area-inset-top)) 18px 10px;
-      border-bottom: 1px solid #deddd8;
-      background: rgba(249, 249, 247, .96);
-      color: #111;
-    }
-    .title { min-width: 0; }
-    .title strong { display: block; font-size: 18px; line-height: 1.25; }
-    #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; }
-    #status.error { color: #b3261e; }
-    .header-actions {
-      flex: 0 0 auto;
-      display: flex;
-      align-items: center;
-      gap: 7px;
-      margin-left: auto;
-    }
-    #adhoc,
-    #decision,
-    #refresh {
-      flex: 0 0 auto;
-      min-height: 44px;
-      appearance: none;
-      border-radius: 999px;
-      font: inherit;
-      font-weight: 650;
-    }
-    #adhoc {
-      border: 1px solid #8a75d1;
-      padding: 5px 10px 4px;
-      background: #f3efff;
-      color: #5c43b6;
-      line-height: 1.15;
-      text-align: center;
-      text-decoration: none;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-    #adhoc span,
-    #adhoc small { display: block; white-space: nowrap; }
-    #adhoc span { font-size: 12px; }
-    #adhoc small { margin-top: 2px; font-size: 9px; font-weight: 600; }
-    #decision {
-      border: 1px solid #63a170;
-      padding: 8px 11px;
-      background: #eef8f0;
-      color: #246c35;
-      line-height: 1;
-      text-align: center;
-      text-decoration: none;
-      white-space: nowrap;
-    }
-    #decision[hidden] { display: none; }
-    #decision-count {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 20px;
-      min-height: 20px;
-      margin-left: 4px;
-      padding: 0 5px;
-      border-radius: 999px;
-      background: #246c35;
-      color: #fff;
-      font-size: 12px;
-    }
-    #refresh {
-      border: 1px solid #80afe6;
-      padding: 8px 13px;
-      background: #eef5fc;
-      color: #216ec8;
-    }
-    #refresh:disabled { opacity: .55; }
-    #warning {
-      flex: 0 0 auto;
-      padding: 10px 18px;
-      border-bottom: 1px solid #e0a33a;
-      background: #fff1cf;
-      color: #6f4200;
-      font-size: 13px;
-      font-weight: 700;
-      line-height: 1.4;
-      text-align: center;
-    }
-    #warning[hidden] { display: none; }
-    #handover { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #f9f9f7; }
-    @media (prefers-color-scheme: dark) {
-      html, body, #handover { background: #0d0d0d; }
-      .bar { background: rgba(13, 13, 13, .96); border-color: #2c2c2a; color: #fff; }
-      #status { color: #aaa8a2; }
-      #adhoc { border-color: #7059c6; background: #211b3a; color: #bcaeff; }
-      #decision { border-color: #4f8c5d; background: #142b19; color: #8ed09b; }
-      #decision-count { background: #8ed09b; color: #102315; }
-      #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
-      #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
-    }
-  </style>
-</head>
-<body>
-  <div class="app">
-    <header class="bar">
-      <div class="title">
-        <strong>XUAN-投资管理</strong>
-        <span id="status" role="status" aria-live="polite">正在读取最新版…</span>
-      </div>
-      <div class="header-actions">
-        <a id="adhoc"
-           href="shortcuts://run-shortcut?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"
-           rel="noopener noreferrer"
-           aria-label="通过 iPhone 快捷指令启动 Claude 临时报告；完成后自动刷新">
-          <span>生成临时报告</span>
-          <small>一键启动 · 自动刷新</small>
-        </a>
-        <button id="refresh" type="button">刷新</button>
-      </div>
-    </header>
-    <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
-    <div id="decision-parking" hidden>
-      <button id="decision" type="button"
-              aria-label="通过 Claude 回应当前待决定事项；只记录意见，不执行交易" hidden>
-        回应待办 <span id="decision-count" aria-hidden="true">0</span>
-      </button>
-    </div>
-    <!-- Same-origin lets only the trusted parent place its own controls.
-         Report scripts, forms, popups and top-navigation remain forbidden. -->
-    <iframe id="handover" title="XUAN-投资管理 最新简报" sandbox="" referrerpolicy="no-referrer"></iframe>
-  </div>
-  <script>
-    (() => {
-      const frame = document.querySelector("#handover");
-      const button = document.querySelector("#refresh");
-      const adhocButton = document.querySelector("#adhoc");
-      const decisionButton = document.querySelector("#decision");
-      const decisionCount = document.querySelector("#decision-count");
-      const status = document.querySelector("#status");
-      const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-31.5";
-      const storageKey = "xuan-ib:last-verified:v1";
-      const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
-      const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
-      const decisionShortcutUrl = "shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E";
-      const waitPollMs = 15_000;
-      const waitTimeoutMs = 20 * 60_000;
-      let lastSuccess = 0;
-      let lastAttempt = 0;
-      let lastVerified = null;
-      let requestSequence = 0;
-      let adhocWait = null;
-      let decisionWait = null;
-      let renderedBlob = null;
-      let renderSequence = 0;
-      let decisionDocument = null;
-      let decisionDocumentBlob = null;
-      let renderedDocument = null;
-      let renderedToken = null;
-      let progressLedger = null;
-      let progressFingerprint = null;
-      let progressMessage = "落实进度正在读取…";
-      let progressView = null;
-      let progressPrintState = null;
-
-// BEGIN PROGRESS VALIDATOR
-// Shared with the trusted loader; keep its marked copy byte-for-byte in sync.
-function parseProgressJson(source) {
-  if (typeof source !== "string" || source.length > 250000) throw new Error("进度文件过大");
-  let i = 0;
-  const ws = () => { while (/[ \t\r\n]/.test(source[i] || "")) i++; };
-  const string = () => {
-    const start = i++;
-    let escaped = false;
-    while (i < source.length) {
-      const c = source[i++];
-      if (!escaped && c === '"') return JSON.parse(source.slice(start, i));
-      if (!escaped && c.charCodeAt(0) < 32) throw new Error("无效字符");
-      escaped = !escaped && c === "\\";
-    }
-    throw new Error("字符串未结束");
-  };
-  const value = (depth = 0) => {
-    if (depth > 20) throw new Error("进度层数过深");
-    ws();
-    if (source[i] === '"') return string();
-    if (source[i] === "{") {
-      i++; ws(); const out = Object.create(null);
-      if (source[i] === "}") { i++; return out; }
-      while (i < source.length) {
-        ws(); if (source[i] !== '"') throw new Error("无效键");
-        const key = string();
-        if (Object.hasOwn(out, key)) throw new Error("重复键");
-        ws(); if (source[i++] !== ":") throw new Error("缺少冒号");
-        out[key] = value(depth + 1); ws();
-        if (source[i] === "}") { i++; return out; }
-        if (source[i++] !== ",") throw new Error("缺少逗号");
-      }
-    } else if (source[i] === "[") {
-      i++; ws(); const out = [];
-      if (source[i] === "]") { i++; return out; }
-      while (i < source.length) {
-        out.push(value(depth + 1)); ws();
-        if (source[i] === "]") { i++; return out; }
-        if (source[i++] !== ",") throw new Error("缺少逗号");
-      }
-    } else {
-      const t = source.slice(i).match(/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/)?.[0];
-      if (t) { i += t.length; return JSON.parse(t); }
-    }
-    throw new Error("进度 JSON 无效");
-  };
-  const out = value(); ws();
-  if (i !== source.length) throw new Error("多余内容");
-  return out;
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="XUAN-投资管理">
+<meta name="theme-color" content="#f9f9f7">
+<title>XUAN-投资管理</title>
+<style>
+:root{color-scheme:light dark;
+--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mut:#898781;--grid:#e1e0d9;
+--blue:#2a78d6;--orange:#eb6834;--good:#0ca30c;--warn:#fab219;--ser:#ec835a;--crit:#d03b3b;
+--up:#006300;--dn:#d03b3b;--wash:#f2f1ec;--pill:#efeee8}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}}
+:root[data-theme="dark"]{
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+html,body{margin:0;padding:0;background:#f9f9f7}
+@media (prefers-color-scheme:dark){html,body{background:#0d0d0d}}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,"Helvetica Neue",Arial,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+-webkit-text-size-adjust:100%}
+.page{background:var(--bg);color:var(--ink);min-height:100vh;padding:14px 12px 40px}
+.wrap{max-width:940px;margin:0 auto}
+.num{font-variant-numeric:tabular-nums}
+.date{font-size:12.5px;color:var(--ink2);display:block;font-variant-numeric:tabular-nums}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.tgl{display:flex;gap:4px;flex:0 0 auto}
+.tgl label{font-size:11px;padding:4px 9px;border:1px solid var(--grid);border-radius:99px;color:var(--ink2);cursor:pointer;background:var(--card)}
+#tl:checked~.page .tgl label[for="tl"],#td:checked~.page .tgl label[for="td"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#tl,#td{position:absolute;opacity:0;pointer-events:none}
+#tl:checked~.page{--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e1e0d9;--blue:#2a78d6;--orange:#eb6834;--up:#006300;--wash:#f2f1ec;--pill:#efeee8}
+#td:checked~.page{--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--grid:#2c2c2a;--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+details{background:var(--card);border:1px solid var(--grid);border-radius:10px;margin-top:8px}
+details>summary{cursor:pointer;padding:9px 11px;font-size:13px;font-weight:600;list-style:none;
+display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+details>summary::-webkit-details-marker{display:none}
+details>summary::before{content:"▸ ";color:var(--mut);font-weight:400}
+details[open]>summary::before{content:"▾ "}
+details>summary .rt{font-weight:500;color:var(--ink2);font-size:12px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+details>summary .rt.wv{color:var(--warn)}
+.dbody{padding:2px 11px 11px;font-size:13px;line-height:1.55;color:var(--ink2)}
+.alert{margin-top:9px;border-radius:9px;padding:8px 11px;font-size:12.5px;line-height:1.5;
+background:rgba(250,178,25,.14);border:1px solid rgba(250,178,25,.55);color:var(--ink);overflow-wrap:anywhere}
+.alert.crit{background:rgba(208,59,59,.13);border-color:rgba(208,59,59,.55)}
+.alert.ok{background:rgba(12,163,12,.12);border-color:rgba(12,163,12,.55)}
+.alert b{font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.kpi{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:10px}
+.kpi .lab{font-size:10.5px;color:var(--mut);letter-spacing:.03em;text-transform:uppercase}
+.kpi .big{font-size:21px;font-weight:650;margin-top:3px;letter-spacing:-.02em}
+.kpi .sub{font-size:11px;color:var(--ink2);margin-top:4px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .big{font-size:20px}}
+.tabs{margin-top:14px}
+.tabs input{position:absolute;opacity:0;pointer-events:none}
+.tabbar{display:flex;gap:5px;position:sticky;top:0;z-index:5;background:var(--bg);padding:6px 0;flex-wrap:wrap}
+.tabbar label{font-size:12.5px;padding:6px 11px;border-radius:99px;border:1px solid var(--grid);
+background:var(--card);color:var(--ink2);cursor:pointer;display:flex;gap:5px;align-items:center}
+.tabbar label .dot{background:var(--pill);color:var(--ink2);border-radius:99px;font-size:10px;padding:0 5px;min-width:15px;text-align:center}
+#s1:checked~.tabbar label[for="s1"],#s2:checked~.tabbar label[for="s2"],#s3:checked~.tabbar label[for="s3"],#s4:checked~.tabbar label[for="s4"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s1:checked~.tabbar label[for="s1"] .dot,#s2:checked~.tabbar label[for="s2"] .dot,#s3:checked~.tabbar label[for="s3"] .dot,#s4:checked~.tabbar label[for="s4"] .dot{background:var(--bg);color:var(--ink)}
+@media(max-width:640px){
+.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;flex-wrap:nowrap;max-width:100%;overflow:hidden}
+.tabbar label{min-height:44px;min-width:0;padding:4px 6px;font-size:12px;gap:4px;justify-content:center;white-space:nowrap;overflow:hidden}
+.tabbar label .dot{flex:0 0 auto}
 }
-
-function validateProgress(data, state, previous = null, now = Date.now()) {
-  const fail = (s) => { throw new Error("落实进度：" + s); };
-  const keys = (v, expected) => {
-    if (!v || typeof v !== "object" || Array.isArray(v) ||
-        Object.keys(v).length !== expected.length ||
-        Object.keys(v).sort().some((key, index) => key !== expected.slice().sort()[index])) fail("未知或缺失字段");
-  };
-  const text = (v, max = 180, empty = false) => {
-    if (typeof v !== "string" || v.trim() !== v || (!empty && !v) || [...v].length > max ||
-        /[<>&\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069]/u.test(v) ||
-        /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(v) ||
-        /(?:https?:|www\.|[a-z][a-z0-9+.-]*:\/\/|mailto:|github_pat_|gh[pousr]_|\bBearer\s|\bsk-[A-Za-z0-9_-]{12,}|(?:token|password|secret|api[_ -]?key)\s*[:=])/iu.test(v) ||
-        /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\b[UF]\d{6,}\b|\b\d{8,}\b/iu.test(v)) fail("不安全的公开文字");
-  };
-  const stamp = (v) => {
-    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?\+08:00$/.test(v)) fail("时间格式");
-    const n = Date.parse(v);
-    if (!Number.isFinite(n) || new Date(n + 28800000).toISOString().slice(0, 19) !== v.slice(0, 19)) fail("无效时间");
-    return n;
-  };
-  const pair = (v) => {
-    keys(v, ["sourceSha", "htmlBlob"]);
-    if (![v.sourceSha, v.htmlBlob].every(s => typeof s === "string" && /^[0-9a-f]{40}$/.test(s))) fail("证据指纹");
-  };
-  const canonical = (v) => Array.isArray(v) ? "[" + v.map(canonical).join(",") + "]" :
-    v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canonical(v[k])).join(",") + "}" : JSON.stringify(v);
-  keys(data, ["schemaVersion", "revision", "events"]);
-  if (data.schemaVersion !== 1 || !Number.isSafeInteger(data.revision) || data.revision < 1 ||
-      !Array.isArray(data.events) || data.events.length < 1 || data.events.length > 300) fail("版本或清单无效");
-  if (!state || !Array.isArray(state.receipts) || !Array.isArray(state.decisions)) fail("没有可信回执");
-  const ids = new Set();
-  let lastTime = 0;
-  for (const e of data.events) {
-    keys(e, ["eventId", "decisionId", "receiptId", "responseToSourceSha", "responseToHtmlBlob",
-      "recordedAtHkt", "observedPair", "title", "status", "owner", "summary", "nextAction",
-      "reviewAfterHkt", "blocker", "evidence"]);
-    if (typeof e.eventId !== "string" || !/^P-[A-Z0-9-]{1,70}$/.test(e.eventId) || ids.has(e.eventId)) fail("事件编号");
-    ids.add(e.eventId);
-    const receipt = state.receipts.find(r => r.receiptId === e.receiptId);
-    if (!receipt || !["accepted", "modified"].includes(receipt.action) ||
-        receipt.decisionId !== e.decisionId || receipt.responseToSourceSha !== e.responseToSourceSha ||
-        receipt.responseToHtmlBlob !== e.responseToHtmlBlob ||
-        !state.decisions.some(d => d.decisionId === e.decisionId)) fail("决定回执不匹配");
-    pair(e.observedPair);
-    const time = stamp(e.recordedAtHkt);
-    if (time < lastTime || time < stamp(receipt.recordedAtHkt) || time > now + 60000) fail("事件时间倒退或在未来");
-    lastTime = time;
-    if (stamp(e.reviewAfterHkt) < time) fail("复核日早于记录日");
-    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "user_action_required", "evidence_recorded"].includes(e.status)) fail("进度状态");
-    for (const k of ["title", "owner"]) text(e[k], 70);
-    for (const k of ["summary", "nextAction"]) text(e[k]);
-    text(e.blocker, 180, true);
-    if (["blocked", "awaiting_approval", "user_action_required"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
-    if (!Array.isArray(e.evidence) || e.evidence.length > 5) fail("证据清单");
-    for (const evidence of e.evidence) text(evidence);
-    if (e.status === "evidence_recorded" && e.evidence.length === 0) fail("没有落实证据");
-  }
-  if (previous) {
-    if (data.revision < previous.revision || data.events.length < previous.events.length ||
-        previous.events.some((e, i) => canonical(e) !== canonical(data.events[i])) ||
-        (data.revision === previous.revision && canonical(data) !== canonical(previous)) ||
-        (data.revision > previous.revision && data.events.length === previous.events.length)) fail("历史事件不可重写或删除");
-  }
-  return data;
+.pane{display:none}
+#s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}
+.card{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:11px;margin-top:9px}
+.card h2{font-size:13.5px;margin:0 0 7px;letter-spacing:-.01em}
+.card h2 small{font-weight:400;color:var(--mut);font-size:11.5px;margin-left:5px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--ink2);flex:0 0 auto}
+.kv .v{text-align:right;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kv{flex-direction:column;gap:1px}.kv .v{text-align:left}}
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{font-size:10.5px;text-transform:lowercase;letter-spacing:.06em;color:var(--mut);font-weight:600;
+text-align:right;padding:5px 6px;border-bottom:1px solid var(--grid);white-space:nowrap}
+th:first-child{text-align:left}
+td{padding:5px 6px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{text-align:left;position:sticky;left:0;background:var(--card);white-space:normal}
+tr.sec td{background:var(--wash);font-weight:700}
+tr.sec td:first-child{background:var(--wash)}
+tr.tot td{font-weight:700;background:var(--wash)}
+tr.tot td:first-child{background:var(--wash)}
+.sym{font-weight:600}
+.sub{font-size:10.5px;color:var(--mut);font-weight:400;white-space:normal;display:block;margin-top:1px}
+.up{color:var(--up)}.dn{color:var(--dn)}.or{color:var(--orange)}.bl{color:var(--blue)}
+.wv{color:var(--warn)}.cv{color:var(--crit)}.gv{color:var(--good)}
+.bar{margin:9px 0}
+.bar .lbl{display:flex;justify-content:space-between;gap:9px;font-size:12px;margin-bottom:3px;flex-wrap:wrap}
+.bar .lbl .r{font-variant-numeric:tabular-nums;color:var(--ink2);white-space:normal;overflow-wrap:anywhere;text-align:right}
+.track{height:7px;background:var(--pill);border-radius:99px;position:relative;overflow:hidden}
+.fill{height:100%;background:var(--blue);border-radius:99px}
+.fill.over{background:var(--orange)}
+.mark{position:absolute;top:0;height:100%;width:2px;background:var(--ink)}
+.tl{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:12.5px}
+.tl:last-child{border-bottom:0}
+.tl .t{flex:0 0 62px;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:11.5px}
+.tl .e{flex:1 1 auto}
+.tl .e b{font-weight:650}
+.tl .s{flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--pill);color:var(--ink2);height:fit-content;white-space:nowrap}
+.sw{margin-top:8px}
+.sw input{position:absolute;opacity:0;pointer-events:none}
+.swbar{display:flex;gap:5px;margin-bottom:7px}
+.swbar label{font-size:11.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--grid);color:var(--ink2);cursor:pointer}
+#e1:checked~.swbar label[for="e1"],#e2:checked~.swbar label[for="e2"],#e3:checked~.swbar label[for="e3"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.epane{display:none}
+#e1:checked~.q1,#e2:checked~.q2,#e3:checked~.q3{display:block}
+ol,ul{margin:5px 0;padding-left:19px}
+li{font-size:12.5px;margin:3px 0;line-height:1.5}
+.dec li{margin:6px 0}
+.dec li b.lab,.dbody b.lab{display:inline-block;min-width:66px;color:var(--ink2);font-weight:600}
+.dcard{margin-top:8px}
+.dcard>summary .rt{white-space:normal}
+.foot{font-size:11px;color:var(--mut);margin-top:14px;line-height:1.6}
+@media(max-width:640px){
+.page{padding:11px 9px 34px}body{font-size:14px}
+.dbody,.kv,li,td,.tl{font-size:12px}
+details .dbody{padding-left:7px;padding-right:7px}
+.tl .t{flex:0 0 56px}
 }
-// END PROGRESS VALIDATOR
+</style>
+</head><body><!-- xuan-ib-handover:v1 -->
+<input type="radio" name="th" id="tl"><input type="radio" name="th" id="td">
+<div class="page"><div class="wrap">
 
-      // Migration window: the phone page must keep working while published
-      // handovers still carry the previous product name. The first entry is the
-      // title every future candidate must use; the second is the title already
-      // live in latest.html and is dropped once that page has been republished.
-      const approvedTitles = [
-        "<title>XUAN-投资管理</title>",
-        "<title>XUAN-IB 睡前交接</title>"
-      ];
+<div class="hdr">
+<span class="date">2026-08-31 周一 · 睡前版 · 数据截至 20:55–20:58 HKT 现场读数（美股盘前）</span>
+<div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
+</div>
 
-      const clock = () => new Intl.DateTimeFormat("zh-HK", {
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: false,
-        timeZone: "Asia/Hong_Kong"
-      }).format(new Date());
+<div class="alert"><b>数据降级：四桶 / 三层流动性</b>继续沿用 2026-08-24 已批准快照，完整核验条件与历史审计证据见「报告说明」。<b>其余数据为本次 20:55–20:58 HKT 只读实时读数</b>。本次处于美股盘前时段（LSE/SWX/EBS 已开盘，NYSE/NASDAQ/TSE 尚未开盘，NYSE/NASDAQ 常规交易约 21:30 HKT 开始），IB 报价为取数时可得最新价格，非 08-31 正式收盘价。</div>
 
-      const storage = (() => {
-        try {
-          localStorage.setItem("__xuan_ib_probe", "1");
-          localStorage.removeItem("__xuan_ib_probe");
-          return localStorage;
-        } catch (_) {
-          return null;
-        }
-      })();
+<details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
+<div class="dbody">
+<ol>
+<li><b>本次为 08-31（周一）睡前版 · PM</b>（HKT 20:55 定时版；main 上可信 <code>latest.meta.json</code> 数据日为 08-31，上一份为同日 16:48–16:55 HKT 临时版）。IB NAV <b>$5,024,930</b>（较 08-31 16:48–16:55 HKT 临时版 $5,033,559 变动 -$8,629，仍为美股盘前现场读数、非正式收盘价）；现金池 $824,292；7 个 Sharesight 家庭组合合计 $31,408,864（含本次 IB 权威 NAV）；GTC 挂单 12 张、DAYS_7 内成交（MSFT 卖 90 股、EIMI 买 100 股）与上一版逐项一致，本次会话未执行任何交易。<b>四桶 / 三层流动性继续沿用 2026-08-24 周一 verified snapshot</b>（mapping 本次已重新核对未变，原因见「报告说明」第 2 项）。</li>
+<li><b>AI 压力中情景 22.41%</b>（$1,376,293 / $6,141,014，逐票按 IB 现场报价与 Sharesight 现读重算），距 25% 预警线 <b>$158,961 / 2.59 个百分点</b>，fail-closed <b>PASS</b>，结论与上一版一致（提醒区间，未越警）。Webull BRK.B 仍为已平仓状态、MRVL $21,662 仍因 §0-A 规则不可得不计入分子（详见 ⑤，决定沿用 <code>accepted</code>）。</li>
+<li><b>需当晚/近端处理挂单：无</b>；GTC 12 张与上一版完全一致（无新增、无成交、无撤单）。距市价最近的是 EXUS 买 100@46.90（-0.39%，节奏单，持续观察）与 META 卖 150@590（+1.92%，提示带内）；待撤 4 张（名义合计 $150,520）仍待 Wu 在 TWS 端执行。家庭主视图单票集中度：<b>BRK.B 4.93%（线内）</b>；<b>GOOG/GOOGL 三账户合计 5.48%（仍越 5% 参考线，超额 $29,778，双视图已确认见 ⑤ 沿用记录）</b>。</li>
+</ol>
+</div></details>
 
-      const reportVersion = (record) => ({
-        dataDate: record.meta.dataDate,
-        sourceSha: record.meta.sourceSha.toLowerCase(),
-        sourceCommitEpoch: record.meta.sourceCommitEpoch,
-        htmlBlob: record.meta.htmlBlob.toLowerCase()
-      });
 
-      const validReportVersion = (version) => version &&
-        /^\d{4}-\d{2}-\d{2}$/.test(version.dataDate || "") &&
-        /^[0-9a-f]{40}$/i.test(version.sourceSha || "") &&
-        Number.isInteger(version.sourceCommitEpoch) && version.sourceCommitEpoch > 0 &&
-        /^[0-9a-f]{40}$/i.test(version.htmlBlob || "");
+<div class="kpis">
+<div class="kpi"><div class="lab">IB NAV</div><div class="big num">$5,024,930</div>
+<div class="sub">08-31 20:55–20:58 HKT 现场读数（美股盘前，非正式收盘价）· vs 08-31 16:48–16:55 HKT 临时版 $5,033,559 <span class="dn">-$8,629</span><br>股票 $4,557,361 + 现金 $466,323</div></div>
+<div class="kpi"><div class="lab">可用现金</div><div class="big num">$584,292</div>
+<div class="sub">现金池 $824,292（IB 466,323 + NOAH-HK 357,969，NOAH-HK 零变动）<br>已扣 reserve $240,000 · 覆盖 3.4346x</div></div>
+<div class="kpi"><div class="lab">四桶 · HL 缺口 <small style="font-weight:400">(08-24 沿用)</small></div><div class="big num">$6.92M</div>
+<div class="sub">HL 17.75% / 40% · VC-PE 51.74% / 30%（<span class="or">超 ~$6.77M</span>）<br>HF 14.58% · 常青 15.93% 毛<br><b class="wv">沿用 08-24 · 完整核验仍待完成</b></div></div>
+<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big num">$584,292</div><div class="sub">现金规划 · 非下单额度<br><b>EXUS $417,327</b><br><b>EIMI $108,535</b><br><b>USSC $58,429</b><br>两类仍需 $340,163<br>详见「配置」</div></div>
+</div>
 
-      const reportIsNewerThan = (record, baseline) =>
-        record.meta.dataDate > baseline.dataDate ||
-        (record.meta.dataDate === baseline.dataDate &&
-          record.meta.sourceCommitEpoch > baseline.sourceCommitEpoch);
+<div class="tabs">
+<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">
+<div class="tabbar">
+<label for="s1" aria-label="概览：① 08-31 盘前持仓一览与 ③ 今日开盘前会发生什么">概览</label>
+<label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明">风险</label>
+<label for="s3" aria-label="配置：④ 四桶与四类配置比例、8 个 portfolio 明细">配置</label>
+<label for="s4" aria-label="待办：0 项待 Wu 裁决；另含已结案 / 只读观察与 ⑥ 换仓触发检查">待办 <span class="dot" aria-hidden="true">0</span></label>
+</div>
 
-      const receiptIdPattern = /^R-[0-9]{8}-[0-9]{6}-[A-Z0-9]{8}$/;
+<div class="pane p1">
+<div class="card">
+<h2>① 08-31 周一盘前持仓一览 <small>现场只读读数 · LSE/SWX/EBS 已开盘、NYSE/NASDAQ/TSE 尚未开盘</small></h2>
+<div class="kv"><span class="k">与 08-31 16:48–16:55 HKT 临时版读数对照</span><span class="v"><span class="dn">-$8,629</span>（IB NAV，仍为美股盘前，差异主要来自 LSE/SWX 已开盘品种的价格波动与盘前噪音），股数与上一版完全一致，无新成交</span></div>
+<div class="kv"><span class="k">对账</span><span class="v">本次 IB 持仓端点直接读取成功；逐仓表按 IB 持仓明细汇总 $4,577,175，与 IB Balance stock_market_value（权威）$4,557,361 差 $19,814 / 0.43%（当前处于价格持续更新的盘前时段，持仓快照与账户余额快照之间存在数秒时差，噪音幅度大于平日，不影响 NAV 等以 balances/summary 为权威的指标）</span></div>
+<div class="kv"><span class="k">FX 参考</span><span class="v">CAD/USD 0.71947（IB Base）</span></div>
+<details open><summary>全部持仓表 <span class="rt">26 只 · 逐仓合计 $4,577,175（IB 权威 stock_market_value 仍以 $4,557,361 为准）</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>现场报价（IB 直读）</th><th>市值 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900</span></td><td>228.59</td><td>1,120,091</td></tr>
+<tr><td><span class="sym">CSPX</span><span class="sub">LSE · 610</span></td><td>836.87</td><td>510,491</td></tr>
+<tr><td><span class="sym">EQAC</span><span class="sub">SWX · 960</span></td><td>502.40</td><td>482,304</td></tr>
+<tr><td><span class="sym">EXUS</span><span class="sub">LSE · 8,500</span></td><td>47.08</td><td>400,222</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530</span></td><td>55.53</td><td>362,611</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">NYSE · 450</span></td><td>504.00</td><td>226,800</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">NASDAQ · 250</span></td><td>578.90</td><td>144,725</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">NASDAQ · 420</span></td><td>340.50</td><td>143,010</td></tr>
+<tr><td><span class="sym">VGIT</span><span class="sub">NASDAQ · 2,400</span></td><td>58.21</td><td>139,704</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">NASDAQ · 390</span></td><td>345.46</td><td>134,729</td></tr>
+<tr><td><span class="sym">IVAI</span><span class="sub">LSE · 11,200</span></td><td>10.96</td><td>122,730</td></tr>
+<tr><td><span class="sym">GLD</span><span class="sub">NYSE · 300</span></td><td>406.93</td><td>122,079</td></tr>
+<tr><td><span class="sym">MSTR</span><span class="sub">NASDAQ · 780</span></td><td>128.28</td><td>100,061</td></tr>
+<tr><td><span class="sym">VGSH</span><span class="sub">NASDAQ · 1,500</span></td><td>58.06</td><td>87,097</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">NYSE · 500</span></td><td>135.04</td><td>67,520</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">NYSE · 600</span></td><td>109.55</td><td>65,730</td></tr>
+<tr><td><span class="sym">TLT</span><span class="sub">NASDAQ · 700</span></td><td>82.42</td><td>57,694</td></tr>
+<tr><td><span class="sym">SMH</span><span class="sub">NASDAQ · 100</span></td><td>553.24</td><td>55,324</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">TSE · 1,025</span></td><td>C$74.43</td><td>54,895</td></tr>
+<tr><td><span class="sym">INDA</span><span class="sub">BATS · 1,100</span></td><td>49.71</td><td>54,681</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">NASDAQ · 100</span></td><td>464.10</td><td>46,410</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">NYSE · 200</span></td><td>149.60</td><td>29,920</td></tr>
+<tr><td><span class="sym">SLV</span><span class="sub">NYSE · 320</span></td><td>60.28</td><td>19,290</td></tr>
+<tr><td><span class="sym">USSC</span><span class="sub">LSE · 160</span></td><td>95.10</td><td>15,216</td></tr>
+<tr><td><span class="sym">HODL</span><span class="sub">EBS · 600</span></td><td>14.58</td><td>8,748</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">NASDAQ · 10·卖90后残余</span></td><td>509.16</td><td>5,092</td></tr>
+</tbody></table></div></div></details>
+</div>
 
-      const activeWait = () => decisionWait || adhocWait;
+<details><summary>③ 今日开盘前会发生什么 <span class="rt">周一 08-31 正常交易日 · 需处理挂单 无</span></summary>
+<div class="dbody">
+<div class="sw">
+<input type="radio" name="ev" id="e1" checked><input type="radio" name="ev" id="e2"><input type="radio" name="ev" id="e3">
+<div class="swbar"><label for="e1">今日</label><label for="e2">本周</label><label for="e3">已出（近端）</label></div>
+<div class="epane q1">
+<div class="tl"><span class="t">21:30 HKT</span><span class="e"><b>NYSE / NASDAQ 常规交易开盘</b><span class="sub">现场读数时点为 20:55–20:58 HKT，距开盘约 32–35 分钟；LSE/SWX/EBS 已处于当地正常交易时段</span></span><span class="s">已确认</span></div>
+<div class="kv" style="margin-top:7px"><span class="k">持仓财报</span><span class="v"><b>无</b> —— 本次会话未接入实时新闻/日历源，具体财报与宏观数据点未逐条核实，不据记忆填写，避免臆造</span></div>
+<div class="kv"><span class="k">需处理的挂单</span><span class="v"><b class="gv">无</b> —— 美股尚未开盘，全部 GTC 距现场报价 &gt;2%（除 EXUS 46.90 节奏单、META 590 提示带内均不会在盘前成交）；卡片默认折叠</span></div>
+</div>
+<div class="epane q2">
+<div class="tl"><span class="t">9/15–16</span><span class="e"><b>下次 FOMC</b><span class="sub">沿用此前已核实日期，本次未重新核实</span></span><span class="s">沿用</span></div>
+<div class="tl"><span class="t">09-07</span><span class="e"><b>US Labor Day（市场休市）</b><span class="sub">沿用此前按公历规则计算确认，非外部日历源核实</span></span><span class="s">沿用</span></div>
+<div class="kv" style="margin-top:7px"><span class="k">其余本周事件</span><span class="v">本次会话未核实，不填写以避免臆造未发生的确认状态</span></div>
+</div>
+<div class="epane q3">
+<div class="tl"><span class="t">08-27 21:56 HKT</span><span class="e"><b>META 卖 150 @ 590 挂出 REPLACED</b><span class="sub">沿用既有记录</span></span><span class="s">已确认（沿用）</span></div>
+<div class="tl"><span class="t">08-26</span><span class="e"><b>MSFT 卖 90 @ 488.43 成交</b><span class="sub">本次 DAYS_7 成交记录重新核对一致</span></span><span class="s">已确认（沿用）</span></div>
+<div class="tl"><span class="t">08-24</span><span class="e"><b>EIMI 买 100 @ 53.99 成交</b><span class="sub">本次 DAYS_7 内 IB 侧无更晚成交</span></span><span class="s">已确认（沿用）</span></div>
+<div class="tl"><span class="t">08-29</span><span class="e"><b>Webull：BRK.B 平仓 · 新增 MRVL 持仓</b><span class="sub">本次重新读取 Webull 当前持仓仍维持该状态，Claude 未参与该操作</span></span><span class="s">如实披露（沿用）</span></div>
+</div>
+</div>
+</div></details>
+</div>
 
-      function persistWait(key, value, label) {
-        if (!storage || !value) return;
-        try {
-          storage.setItem(key, JSON.stringify(value));
-        } catch (error) {
-          console.warn(`XUAN-IB ${label} wait backup failed`, error);
-        }
-      }
+<div class="pane p2">
+<div class="card">
+<h2>② 弹药与 reserve 状态</h2>
+<div class="kv"><span class="k">IB 现金</span><span class="v">$466,322.71（BASE，IB Balance 权威）</span></div>
+<div class="kv"><span class="k">NOAH-HK 现金</span><span class="v">$357,968.92（零变动，Sharesight 本次读取值与上一版一致）</span></div>
+<div class="kv"><span class="k">现金池合计</span><span class="v">$824,291.63</span></div>
+<div class="kv"><span class="k">现金覆盖待 call 款</span><span class="v"><span class="gv">3.4346x ✓</span>（reserve $240,000；&lt;1.0x 才告警）</span></div>
+<div class="kv"><span class="k">可用现金</span><span class="v"><b>$584,291.63</b>（已扣 reserve）</span></div>
+<div class="kv"><span class="k">二线弹药</span><span class="v">$284,495（VGSH 87,097 → VGIT 139,704 → TLT 57,694；本次按 IB 现场报价精确重算）</span></div>
+<div class="kv"><span class="k">现金补仓池口径</span><span class="v">EXUS + EIMI + USSC；USSC 参考占本次预算 10%，余款按联立模型分配</span></div>
+<div class="kv"><span class="k">股息应计</span><span class="v">$260.57 · 杠杆 0（initial / maintenance margin 均为 0）</span></div>
+</div>
 
-      function persistAdhocWait() {
-        persistWait(adhocWaitStorageKey, adhocWait, "ad-hoc");
-      }
+<details><summary>AI 压力敞口 · §0-C（三账户 · 沿用 v9.11 系数）
+<span class="rt wv">中 22.41% · 提醒区间 · fail-closed PASS</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">fail-closed 校验</span><span class="v"><span class="gv">PASS</span> —— 分子账户集合 = 分母账户集合 = {936247 IB-HK, 936249 Schwab-HK, 1350094 Webull}</span></div>
+<div class="kv"><span class="k">数据截止时点</span><span class="v">2026-08-31 20:55–20:58 HKT；三账户本次分别经 IB 直读（IB-HK）与 Sharesight 只读（Schwab-HK / Webull）；美股尚未开盘，报价为现场最新可得值</span></div>
+<div class="kv"><span class="k">分母（三账户总市值含现金）</span><span class="v"><b>$6,141,014</b> = IB 5,024,930 + Schwab 609,041 + Webull 507,043</span></div>
+<div class="kv"><span class="k">系数来源</span><span class="v">逐票 T1/T2/T3 与 ETF 穿透权重<b>沿用上一版已采用的分类</b>，未发明新系数；ETF holdings as-of 日期同前次披露</span></div>
 
-      function persistDecisionWait() {
-        persistWait(decisionWaitStorageKey, decisionWait, "decision");
-      }
+<details><summary>中情景主读数 <span class="rt">$1,376,293 / 22.41% —— 展开看计算组成</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:4px 0 8px">算法沿用上一版：每笔持仓市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），ETF 按沿用权重逐笔求和 ÷ 分母；市值改用本次 IB / Sharesight 现场读数，系数逐票沿用不变。系数 = 压力情景下预期损失比例，不是「AI 相关度」。</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>市值 $</th><th>×系数</th><th>计入 $</th></tr></thead>
+<tbody>
+<tr class="sec"><td>IB-HK 936247<span class="sub">分子小计 1,118,483</span></td><td>5,024,930</td><td>—</td><td>1,118,483</td></tr>
+<tr><td><span class="sym">MXUS</span><span class="sub">ETF 穿透沿用 25.03%</span></td><td>1,120,091</td><td>25.03%</td><td>280,359</td></tr>
+<tr><td><span class="sym">CSPX</span><span class="sub">ETF 穿透沿用 25.79%</span></td><td>510,491</td><td>25.79%</td><td>131,656</td></tr>
+<tr><td><span class="sym">EQAC</span><span class="sub">ETF 穿透沿用 41.07%</span></td><td>482,304</td><td>41.07%</td><td>198,082</td></tr>
+<tr><td><span class="sym">EXUS</span><span class="sub">ETF 穿透沿用 6.01%（C 级估计）</span></td><td>400,222</td><td>6.01%</td><td>24,053</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">ETF 穿透沿用 26.55%</span></td><td>362,611</td><td>26.55%</td><td>96,273</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>226,800</td><td>5.00%</td><td>11,340</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">T2</span></td><td>144,725</td><td>55.00%</td><td>79,599</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">T2</span></td><td>143,010</td><td>55.00%</td><td>78,656</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">T3</span></td><td>134,729</td><td>5.00%</td><td>6,736</td></tr>
+<tr><td><span class="sym">IVAI</span><span class="sub">纯 T1</span></td><td>122,730</td><td>80.00%</td><td>98,184</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">T3</span></td><td>67,520</td><td>5.00%</td><td>3,376</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">T3</span></td><td>65,730</td><td>5.00%</td><td>3,287</td></tr>
+<tr><td><span class="sym">SMH</span><span class="sub">纯 T1</span></td><td>55,324</td><td>80.00%</td><td>44,259</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">T3</span></td><td>54,895</td><td>5.00%</td><td>2,745</td></tr>
+<tr><td><span class="sym">INDA</span><span class="sub">T3</span></td><td>54,681</td><td>5.00%</td><td>2,734</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">T1</span></td><td>46,410</td><td>80.00%</td><td>37,128</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">T2</span></td><td>29,920</td><td>55.00%</td><td>16,456</td></tr>
+<tr><td><span class="sym">USSC</span><span class="sub">T3</span></td><td>15,216</td><td>5.00%</td><td>761</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">T2</span></td><td>5,092</td><td>55.00%</td><td>2,800</td></tr>
+<tr class="sec"><td>Schwab-HK 936249<span class="sub">分子小计 201,688</span></td><td>609,041</td><td>—</td><td>201,688</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">T2</span></td><td>138,725</td><td>55.00%</td><td>76,299</td></tr>
+<tr><td><span class="sym">GOOGL</span><span class="sub">T2</span></td><td>104,670</td><td>55.00%</td><td>57,569</td></tr>
+<tr><td><span class="sym">AVGO</span><span class="sub">T1</span></td><td>36,879</td><td>80.00%</td><td>29,503</td></tr>
+<tr><td><span class="sym">METU</span><span class="sub">META 2x 杠杆 ETF · min(2×55%,100%)</span></td><td>22,793</td><td>100.00%</td><td>22,793</td></tr>
+<tr><td><span class="sym">TSEM</span><span class="sub">特例沿用归 T2</span></td><td>20,801</td><td>55.00%</td><td>11,441</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>75,750</td><td>5.00%</td><td>3,788</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">T3</span></td><td>5,929</td><td>5.00%</td><td>296</td></tr>
+<tr class="sec"><td>Webull 1350094<span class="sub">分子小计 56,122（不含 MRVL）</span></td><td>507,043</td><td>—</td><td>56,122</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">T2</span></td><td>89,149</td><td>55.00%</td><td>49,032</td></tr>
+<tr><td><span class="sym">IREN</span><span class="sub">特例沿用中情景 100%</span></td><td>7,090</td><td>100.00%</td><td>7,090</td></tr>
+<tr><td><span class="sym">MRVL</span><span class="sub"><b>§0-A 未核实，不计入分子</b>（若按 T1 80% 估算 +$17,330）</span></td><td>21,662</td><td>—</td><td>0</td></tr>
+<tr class="tot"><td>分子合计</td><td>—</td><td>—</td><td>1,376,293</td></tr>
+<tr class="tot"><td>÷ 分母（三账户含现金）</td><td>6,141,014</td><td>—</td><td>—</td></tr>
+<tr class="tot"><td>= 中情景占比</td><td>—</td><td>—</td><td>22.41%</td></tr>
+</tbody></table></div>
+<p style="font-size:12px;margin:8px 0 3px"><b>不进分子（但全部计入分母）：</b></p>
+<ul>
+<li><b>MSTR $100,061 判「不适用」</b> —— 风险因子是 BTC 不是 AI capex；不进分子，也不算作 0%。</li>
+<li><b>Webull MRVL $21,662</b> —— §0-A 分类规则本次仍未能核实，比照 MSTR 处理方式不进分子（详见 ⑤）。</li>
+<li>主题非股票：GLD $122,079 · SLV $19,290 · HODL $8,748。</li>
+<li>防御与现金类：VGIT $139,704 · VGSH $87,097 · TLT $57,694 · IB 现金 $466,323 · Schwab SGOV 184,351 + 现金 19,143 · Webull SGOV 37,759 + 现金 351,384。</li>
+</ul>
+<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景</b> = 沿用上一版低/中、高/中比例（0.7005 / 1.292）近似换算，未逐票重算三档系数：低 ≈$964,094 / <b>15.70%</b>；高 ≈$1,778,171 / <b>28.96%</b>。</p>
+</div></details>
 
-      function clearAdhocWait() {
-        adhocWait = null;
-        if (!storage) return;
-        try { storage.removeItem(adhocWaitStorageKey); } catch (_) {}
-      }
+<div class="kv"><span class="k">三级状态</span><span class="v"><b class="wv">提醒区间</b>（已越 20% 提醒线，+2.41 个百分点）</span></div>
+<div class="kv"><span class="k">距 25% 预警线</span><span class="v"><b>$158,961 / 2.59 个百分点</b></span></div>
+<div class="kv"><span class="k">距 30% 最高警报线</span><span class="v">$466,011 / 7.59 个百分点</span></div>
+<div class="kv"><span class="k">分账户分子（中）</span><span class="v">IB 1,118,483 · Schwab 201,688 · Webull 56,122（不含 MRVL）</span></div>
+<div class="kv"><span class="k">分类敏感度</span><span class="v">MRVL 若计入(T1 80%) → 22.69% ⇒ 日常表述「<b>约 22.4%–22.7%</b>」</span></div>
+<div class="kv"><span class="k">对照</span><span class="v">08-31 16:48–16:55 HKT 临时版 22.39% → 本期 08-31 20:55–20:58 HKT 睡前版 <b>22.41%</b>（小幅上行，仍属盘前现场报价正常噪音）</span></div>
+<div class="kv"><span class="k">性质</span><span class="v">T1/T2/T3 仅作监控，<b>不是交易指令</b>；不产生买卖建议、不含时点判断、不触发自动执行</span></div>
+</div></details>
 
-      function clearDecisionWait() {
-        decisionWait = null;
-        if (!storage) return;
-        try { storage.removeItem(decisionWaitStorageKey); } catch (_) {}
-      }
+<details><summary>单票集中度 · 双视图
+<span class="rt">家庭 BRK.B 4.93%（线内）· GOOG/GOOGL 5.48%（仍越线）</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:3px 0 6px"><b>主视图 = 家庭三账户合并</b>（分母 $6,141,014，与 AI 指标同源同时；08-31 已确认「三账户合并观察 + IB 执行视图」双视图口径，本次沿用）</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>合计市值 $</th><th>占比</th><th>状态</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">GOOG / GOOGL</span><span class="sub">IB 143,010 + Schwab 104,670 + Webull 89,149</span></td><td>336,829</td><td>5.48%</td><td class="wv">越 5% 参考线 $29,778</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">IB 226,800 + Schwab 75,750 + Webull 0（已平仓）</span></td><td>302,550</td><td>4.93%</td><td class="gv">线内</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">市值口径：IB 144,725 + Schwab 138,725</span></td><td>283,450</td><td>4.62%</td><td>线内</td></tr>
+<tr><td><span class="sym">META 名义</span><span class="sub">含 METU 2x 名义敞口约 22,793</span></td><td>~306,243</td><td>~4.99%</td><td>线内（分母口径不同，数值仅供参考）</td></tr>
+</tbody></table></div>
+<div class="kv" style="margin-top:6px"><span class="k">GOOG 线值口径（沿用 08-31 已确认结论）</span><span class="v">三账户合并观察参考线仍为观察用途，不升级为交易触发；IB 执行视图沿用现行软 5% / 硬 5.5%；本次读数与决定 <code>D-20260829-GOOG-FAMILY-LIMIT</code> 沿用记录一致，见 ⑤</span></div>
+<p style="font-size:12px;margin:9px 0 6px"><b>辅助视图 = IB 执行口径</b>（分母 = IB NAV + NOAH-HK 现金 $5,382,899；软 5% / 硬 5.5% / BRK.B 12.8%）</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>市值 $</th><th>占比 / 线</th><th>余量 $</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">BRK.B</span><span class="sub">专线 12.8%</span></td><td>226,800</td><td>4.21% / 12.8%</td><td>462,211</td></tr>
+<tr><td><span class="sym">META</span></td><td>144,725</td><td>2.69% / 5%</td><td>124,420</td></tr>
+<tr><td><span class="sym">GOOG</span></td><td>143,010</td><td>2.66% / 5%</td><td>126,135</td></tr>
+<tr><td><span class="sym">TSLA</span></td><td>134,729</td><td>2.50% / 5%</td><td>134,416</td></tr>
+<tr><td><span class="sym">MSTR</span></td><td>100,061</td><td>1.86% / 5%</td><td>169,084</td></tr>
+</tbody></table></div>
+<div class="kv" style="margin-top:6px"><span class="k">IB 视图告警数</span><span class="v"><b class="gv">0 项</b> —— 全部线内；ETF 不适用单票线</span></div>
+</div></details>
 
-      const validWaitHeader = (saved) => saved &&
-        Number.isInteger(saved.startedAt) && saved.startedAt > 0 &&
-        Number.isInteger(saved.deadline) && saved.deadline > saved.startedAt;
+<details><summary>口径与分母说明 <span class="rt">三个分母互不相同，勿混用</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">AI 压力分母</span><span class="v">$6,141,014 = IB-HK + Schwab-HK + Webull 三账户总市值含现金（§0-C）</span></div>
+<div class="kv"><span class="k">HL 平日近似分母</span><span class="v">$5,382,899 = IB NAV + NOAH-HK 现金（单票 IB 执行视图用）</span></div>
+<div class="kv"><span class="k">四类分母 T</span><span class="v">$4,042,501 = 美国底仓 + 美国科技 + 非美发达 + 新兴市场（equity-only 相对比例；现场报价）</span></div>
+<div class="kv"><span class="k">跨指标张力</span><span class="v">§0 通用规则剔除 Schwab-HK 与 Webull，AI 指标按既定裁决<b>包含</b>这两个账户 ⇒ AI 读数不可与 NAV / 四桶 / 四类 / 单票横向比较</span></div>
+</div></details>
+</div>
 
-      const decisionIdPattern = /^D-[0-9]{8}-[A-Z0-9-]{1,64}$/;
-      const responsePairKey = (version) =>
-        `${version.sourceSha.toLowerCase()}:${version.htmlBlob.toLowerCase()}`;
+<div class="pane p3">
+<section class="card" id="xuan-ib-cash-plan-detail">
+<h2>现金优先补仓参考 <small>只作规划，不执行交易</small></h2>
+<p style="font-size:12px">三方向补充 · USSC 占本次预算 10%，其余重算 EXUS、EIMI；不是永久持仓比例。金额为美元规划值，非下单额度。</p>
+<div class="kv"><span class="k">① EXUS｜非美发达</span><span class="v"><b>$417,327</b><br>EXUS＋VCN 类别合计<br>当前 11.26% → 补后约 18.86% / 目标 23%</span></div>
+<div class="kv"><span class="k">② EIMI｜新兴市场</span><span class="v"><b>$108,535</b><br>EIMI＋INDA 类别合计<br>当前 10.32% → 补后约 11.36% / 目标 12%</span></div>
+<div class="kv"><span class="k">③ USSC｜美国小盘价值</span><span class="v"><b>$58,429</b><br>本次现金预算 10%<br>占股票总额：0.38% → 补后约 1.59%</span></div>
+<div class="kv"><span class="k">美国底仓合计（含 USSC）</span><span class="v">49.62% → 补后约 44.62%<br>45% 为参考目标，非强制上限</span></div>
+<div class="kv"><span class="k">现金规划上限 / 本次参考分配</span><span class="v">$584,292 / $584,292</span></div>
+<div class="kv"><span class="k">券商可立即用于本次补仓</span><span class="v"><b class="wv">待核实</b> · 挂单占款待核；跨平台资金未假设已到账</span></div>
+<p style="font-size:12px"><b>两类仍需 $340,163。</b>指在本次三方向分配后，以纯现金继续补足非美发达、新兴市场参考目标的金额；不是 USSC 缺口，也不代表四类全部达标。卖出回款实际可用后再评估；本次不依赖卖出。</p>
+<details><summary>使用前核对 · 金额与口径 <span class="rt">默认折叠</span></summary><div class="dbody"><ol>
+<li>先核实 IB 可用余额、现有买单占款及 reserve 所在账户；NOAH-HK 现金尚需确认能否及何时用于本次补仓。现金池不是 IB 即时购买力。</li>
+<li>未成交卖单不计回款；“待撤”买单不等于已经撤销，不能当作资金已释放。未核实冻结口径时不重复扣减，也不把名义挂单金额当券商实际冻结金额。</li>
+<li>规划预算＝IB $466,323＋NOAH-HK $357,969−预留 $240,000，共 $584,292。不含保证金、借款或待售资产；实际可用资金更少时，应按新预算重算三个金额。</li>
+<li>USSC 先分配本次预算 10%，按美分取整为 $58,429；剩余 $525,862 用于 EXUS、EIMI。其参考目标按类别合计计，不是单只 ETF 目标；USSC 的 10% 不是股票仓位目标，不设未经核实的 14% 目标分母。</li>
+<li>原股票总额 $4,042,501。先纳入 USSC 分配后，只补非美发达、新兴市场至 23%／12% 同时达标仍需 $866,025，其中 $687,283／$178,743；以剩余预算按这两个完整补足额的比例分配，并按美分平衡。并非将旧方案直接打九折。</li>
+<li>本次补仓后的股票总额＝原股票总额＋实际规划分配，共 $4,626,793。USSC 原持仓 $15,216 已包含于美国底仓 $2,005,848，不重复计入；现金本身不计入股票分母。45% 仅作美国底仓参考目标，不构成强制上限。</li>
+<li>资金超出本方案两类需求、两类均无需补充或有限现金将继续买入超配类别时，暂列待核实并保留现金，不擅自扩展 USSC 预算或花完余款。</li>
+<li>数据时点：2026-08-31 20:55–20:58 HKT。价格、持仓或可用现金改变后重新计算；不提供股数、限价或自动交易，不保证此配置收益更高。</li>
+</ol></div></details>
+</section>
+<div class="card">
+<h2>④ 配置 <small>四桶 · 四类</small></h2>
+<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px"><b class="wv">四桶沿用 2026-08-24 verified Monday snapshot</b>（家庭口径基数 $31,115,693；本次已重新读取 <code>four-bucket-mapping.json</code> 确认内容未变）。四类为本次 2026-08-31 20:55–20:58 HKT 实时重读（IB 现场报价），逐项按 IB 持仓重算。</p>
+<div class="bar"><div class="lbl"><span>Highly Liquid <small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">17.75% / 40% · 缺 $6.92M</span></div><div class="track"><div class="fill" style="width:44.4%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>VC-PE（closed-end）<small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r or">51.74% / 30% · 超 ~$6.77M</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:58%"></div></div></div>
+<div class="bar"><div class="lbl"><span>对冲基金 <small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">14.58% / 15%</span></div><div class="track"><div class="fill" style="width:97.2%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>常青（evergreen）<small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">15.93% 毛 · 14.82% 净 / 15%</span></div><div class="track"><div class="fill" style="width:98.8%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+</div>
 
-      const validUniqueIds = (values, pattern) => Array.isArray(values) &&
-        values.length <= 1_000 &&
-        values.every((id) => pattern.test(id)) &&
-        new Set(values).size === values.length;
+<div class="card">
+<h2>四类比例 <small>Sharesight「资产类别」归类 · T = $4,042,501（实时）</small></h2>
+<div class="bar"><div class="lbl"><span>非美发达 <span class="sub">EXUS · VCN</span></span><span class="r">11.26% / 23%</span></div><div class="track"><div class="fill" style="width:49.0%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="bar"><div class="lbl"><span>新兴市场 <span class="sub">EIMI · INDA</span></span><span class="r">10.32% / 12%</span></div><div class="track"><div class="fill" style="width:86.0%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<details><summary>超配观察 <span class="rt">暂不计入补仓资金</span></summary><div class="dbody"><div class="bar"><div class="lbl"><span>美国底仓 <span class="sub">MXUS · CSPX · BRK.B · USSC · APO · KKR</span></span><span class="r or">49.62% / 45% · 超 $186,723</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:91.0%"></div></div></div>
+<div class="bar"><div class="lbl"><span>美国科技 <span class="sub">EQAC · SMH · IVAI · GOOG · META · MSFT · AMD · ORCL · TSLA</span></span><span class="r or">28.80% / 20% · 超 $355,844</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:69.1%"></div></div></div>
+</div></details>
+<div class="bar"><div class="lbl"><span>USSC 小盘 <span class="sub">底仓内结构位 · 本次现金参考 10%；旧 14% 基数待核实，不用于本次测算</span></span><span class="r">0.4% (基数内) / 14%</span></div><div class="track"><div class="fill" style="width:2.7%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
+<div class="kv"><span class="k">现金补仓</span><span class="v">见本页上方「现金优先补仓参考」；不把固定分母的静态差额当成现金补足额。</span></div>
+<div class="kv"><span class="k">主题投资</span><span class="v">GLD+SLV+MSTR+HODL = $250,178 = <span class="gv">6.19% / 7% 软上限 ✓</span></span></div>
+<div class="kv"><span class="k">防御资产（弹药池）</span><span class="v">$284,495（VGSH · VGIT · TLT，本次精确重算）</span></div>
+<div class="kv"><span class="k">HSBC-HK 赎回进度</span><span class="v">29.9%（$47,511 / $159,001）· 私募资产本次读取值与上一版一致，进度未见更新</span></div>
+</div>
 
-      const validDecisionBaseline = (baseline) => validReportVersion(baseline) &&
-        validUniqueIds(baseline.awaitingDecisionIds, decisionIdPattern);
+<details><summary>7 个 portfolio 明细 <span class="rt">2026-08-31 20:55–20:58 HKT Sharesight/IB 实时</span></summary>
+<div class="dbody">
+<div class="kv"><span class="k">NOAH-HK 936238</span><span class="v">总值 <b>$12,657,882.79</b>（较上一版零变动）· 现金 $357,968.92</span></div>
+<div class="kv"><span class="k">NOAH-US 936240</span><span class="v"><b>$5,455,199.00</b>（较上一版零变动 · Illiquid PE/VC 全量）</span></div>
+<div class="kv"><span class="k">ANTARCTICA 1021748</span><span class="v"><b>$2,901,407.16</b>（较上一版零变动 · HF 多策略）</span></div>
+<div class="kv"><span class="k">UBS 1031350</span><span class="v"><b>$4,706,100.12</b>（较上一版零变动 · 常青 PE 平台）</span></div>
+<div class="kv"><span class="k">IB-HK 936247</span><span class="v"><b>NAV $5,024,930（IB 权威，本次直读，美股盘前）</b>（较上一版 08-31 16:48–16:55 HKT 临时版 -$8,629；Sharesight 侧同组合读数 $5,050,276.22，差 0.50%，属正常展示噪音，不改变权威值）</span></div>
+<div class="kv"><span class="k">Citi-HK &amp; 地产四期 936243</span><span class="v"><b>$500,000</b>（静态，较上一版零变动）</span></div>
+<div class="kv"><span class="k">HSBC-HK 1350095</span><span class="v"><b>$163,345.50</b>（较上一版零变动）</span></div>
+<div class="kv"><span class="k">7-portfolio 家庭合计（实时）</span><span class="v"><b>$31,408,864</b>（较上一版 -$8,630，差异全部来自 IB-HK NAV 盘前变动；私募及其他非公开仓位本身零变动，符合预期）</span></div>
+<div class="kv"><span class="k">AI 三账户附加（非四桶）</span><span class="v">Schwab-HK $609,040.52 + Webull $507,043.38 = $1,116,083.90（仅进 AI 指标分母，与上一版一致）</span></div>
+<div class="kv"><span class="k">NOAH-EB-5 1021747</span><span class="v"><b>不计入家庭 7-portfolio 合计</b>——沿用既有报告范围，本次仅确认其存在、未纳入任何汇总，避免擅自扩大统计口径</span></div>
+<div class="kv"><span class="k">四桶归类映射</span><span class="v"><b class="wv">沿用 2026-08-24 已批准快照</b> —— 完整核验条件与历史审计证据统一列于「报告说明」；本次未更新四桶金额。</span></div>
+</div></details>
+</div>
 
-      const validDecisionWait = (saved) => validWaitHeader(saved) &&
-        saved.cacheVersion === 2 &&
-        validUniqueIds(saved.awaitingDecisionIds, decisionIdPattern) &&
-        saved.awaitingDecisionIds.length > 0 &&
-        validUniqueIds(saved.initialReceiptIds, receiptIdPattern) &&
-        Array.isArray(saved.baselines) &&
-        saved.baselines.length > 0 && saved.baselines.length <= 100 &&
-        saved.baselines.every(validDecisionBaseline) &&
-        new Set(saved.baselines.map(responsePairKey)).size === saved.baselines.length;
+<div class="pane p4">
+<div class="card">
+<!-- xuan-ib-decision-group:v1:awaiting_user:start --><h2 data-decision-group-title="awaiting_user">⑤ 待决定事项 <small>0 项待 Wu 裁决</small></h2><!-- xuan-ib-decision-group:v1:awaiting_user:end -->
+<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px">当前为只读清单；请在 Claude App 中引用事项编号回复。</p>
+<!-- xuan-ib-decision-group:v1:resolved:start --><h2 data-decision-group-title="resolved">已决定 / 待落实 <small>3 项 · 只记录意见，不执行交易</small></h2>
+<details class="dcard" id="D-20260829-MRVL-CLASS" data-decision-id="D-20260829-MRVL-CLASS" data-decision-status="accepted"><summary>1 · Webull MRVL $21,662 属 §0-A 未分类新标的
+<span class="rt wv">建议 (B) 不计入分子并披露 · 已决定 / 待落实</span></summary>
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>本次（2026-08-31 16:48–16:55 HKT）重新读取 Webull 持仓，MRVL 仍在（数量 100、市值 $21,662，与上一版一致），§0-A 新标的分类规则本次会话仍未能核实（本仓库检索未命中相关分类文件）。选项与此前版本相同：(A) 参照同为半导体的 SMH/AVGO 按 T1 80% 计入；(B) 保持不计入分子、比照 MSTR 处理并披露；(C) 停发整份报告直至规则可核实。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>沿用此前意见，倾向 <b>(B) 不计入分子并披露</b>——理由不变：§0-A 规则文本仍不可得；MRVL 占分母仅 0.35%，若按最高 T1 80% 计入主读数仅升至约 22.68%，仍在 25% 预警线以下，不影响 fail-closed 结论；(C) 代价过高，不构成停发理由。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用，本次仅重新确认事实不变）· 编号 <code>D-20260829-MRVL-CLASS</code></p>
+</div></details>
 
-      function restoreAdhocWait() {
-        if (!storage) return;
-        try {
-          const raw = storage.getItem(adhocWaitStorageKey);
-          if (!raw) return;
-          const saved = JSON.parse(raw);
-          const valid = saved.cacheVersion === 1 && validWaitHeader(saved) &&
-            (saved.baseline === null || validReportVersion(saved.baseline));
-          if (!valid) throw new Error("saved ad-hoc wait is invalid");
-          adhocWait = saved;
-        } catch (error) {
-          clearAdhocWait();
-          console.warn("XUAN-IB saved ad-hoc wait was rejected", error);
-        }
-      }
+<details class="dcard" id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-status="accepted"><summary>2 · GOOG/GOOGL 家庭主视图 5.48% 越 5% 参考线
+<span class="rt wv">双视图口径已于 08-31 确认 · 已决定 / 待落实</span></summary>
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>本期三账户合并观察：$336,829 / $6,141,014 = 5.48%（IB 143,010 + Schwab 104,670 + Webull 89,149；数据时点为 2026-08-31 20:55–20:58 HKT，与本报告「风险」双视图一致）。本段仅更正沿用旧金额的说明；未重新取数或重算金融数据，不构成新的定时报表完成证据。Wu 已于 2026-08-31 在本任务确认「三账户合并观察 + IB 单独执行视图」双视图方案：三账户合并观察分子=三账户直接持有 GOOG/GOOGL 美元市值合计，分母=同三账户总市值含现金；IB 执行视图继续沿用现行软 5% / 硬 5.5% 阈值；本次确认不新增任何交易触发或阈值。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>已确认口径与此前建议一致——三账户合并观察仅作参考，不升级为交易触发；IB 执行视图继续独立判断。本次报告已按双视图口径展示（见「风险」标签「单票集中度 · 双视图」）。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用，08-31 口径确认已收到，下一份正常报告落实双视图展示——本次即为落实版本）· 编号 <code>D-20260829-GOOG-FAMILY-LIMIT</code></p>
+</div></details>
 
-      function restoreDecisionWait() {
-        if (!storage) return;
-        try {
-          const raw = storage.getItem(decisionWaitStorageKey);
-          if (!raw) return;
-          const saved = JSON.parse(raw);
-          if (!validDecisionWait(saved)) throw new Error("saved decision wait is invalid");
-          decisionWait = saved;
-        } catch (error) {
-          clearDecisionWait();
-          console.warn("XUAN-IB saved decision wait was rejected", error);
-        }
-      }
+<details class="dcard" id="D-20260829-SEMILIQUID-MAPPING" data-decision-id="D-20260829-SEMILIQUID-MAPPING" data-decision-status="accepted"><summary>3 · 四桶分类核验与数据完整性复核
+<span class="rt wv">已采纳继续沿用；后续核实现金身份与剩余组合 · 已决定 / 待落实</span></summary>
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>原报告对分类覆盖缺口的解释有误，现按已核实的历史审计纠正；证据、范围和沿用条件统一见「报告说明」。本项用户决定与原回执保持不变，继续沿用已批准快照；不以此说明更正宣布家庭全量核验完成或更新四桶金额。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>落实既有决定：继续沿用已批准快照；下一步先核实现金身份及剩余组合的数据完整性，再完成来源对账与受控核验。不能把历史局部审计视为当前全量结果，不再要求按错误的数量差补建分类。仅推进数据核验，不执行交易。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用）· 编号 <code>D-20260829-SEMILIQUID-MAPPING</code></p>
+</div></details><!-- xuan-ib-decision-group:v1:resolved:end -->
+</div>
 
-      function restoreWaits() {
-        restoreAdhocWait();
-        restoreDecisionWait();
-        if (!adhocWait || !decisionWait) return;
-        if (decisionWait.startedAt >= adhocWait.startedAt) clearAdhocWait();
-        else clearDecisionWait();
-      }
+<details><summary>已结案 / 只读观察 <span class="rt">最近 5 项 · 无需 Wu 决策</span></summary>
+<div class="dbody">
+<ol>
+<li><b>本次（08-31 20:55–20:58 HKT）与上一版（08-31 16:48–16:55 HKT 临时版）持仓与挂单逐项核对零变动</b> —— 股数、GTC 挂单（12 张）与 DAYS_7 成交全部一致；价格因美股尚未开盘、LSE/SWX 已开盘而有正常波动，IB NAV 差 -$8,629。本次会话未执行任何交易。<span class="sub">只读观察 · 编号 <code>O-20260831-ZERO-TRADE</code></span></li>
+<li><b>四桶分类说明沿用受信任 disclosure 模块结果</b> —— 历史审计及完整核验条件见「报告说明」；本期不因该项回退阻断其他成功取数字段。<span class="sub">只读观察 · 编号 <code>O-20260831-MAPPING-RECHECK</code></span></li>
+<li><b>Webull BRK.B 仍为已平仓状态、MRVL 持仓仍在</b> —— 本次重新读取 Webull 当前持仓，仍不含 BRK.B（现金 $351,383.83，与上一版一致）；该操作发生在 IB 只读范围之外，Claude 未参与、也无法核实具体成交价与时间。<span class="sub">仅披露，不需要 Wu 决策 · 编号 <code>O-20260831-WEBULL-BRKB</code></span></li>
+<li><b>AMD 三张 REPLACED/NEW 卖单待 TWS 目视</b> —— 限价 500 / 499 / 520，撤改一律由 Wu 在 TWS / IBKR 端执行。<span class="sub">只读观察 · 编号 <code>O-20260831-AMD-ORDERS</code></span></li>
+<li><b>EXUS 买 100 @ 46.90 节奏单已非常接近现场报价</b> —— 距现场报价 -0.39%，6 天未成交；美股尚未开盘，暂不构成「需处理」，开盘后需留意是否成交。<span class="sub">只读观察 · 编号 <code>O-20260831-EXUS-PACING</code></span></li>
+</ol>
+</div></details>
 
-      function showAdhocPending() {
-        status.classList.remove("error");
-        status.textContent = `临时报告正在生成，请稍候 · L ${loaderBuild}`;
-      }
+<details><summary>⑥ 换仓触发检查 <span class="rt">触发：无 · GTC 12 张 · 待撤 4 张 $150,520</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:3px 0 7px"><b>触发判定：无。</b> 迁移池（GOOG / TSLA / APO / KKR / AMD / MSTR / META，不含 BRK.B；MSFT 已归零）本次无落后度触发、无估值或强势兑现信号；美股尚未开盘，无成交窗口。所有剩余卖单为 Wu 自行下达的既有单，不构成 Claude 的换仓建议。</p>
+<div class="kv"><span class="k">GTC 挂单</span><span class="v">与上一版完全一致（12 张，无新增/撤单/成交），股数、限价均未变；距市价百分比按本次现场报价重算</span></div>
+<details><summary>GTC 明细表 <span class="rt">12 张 · 限价与上一版一致，距市价按现场报价重算</span></summary>
+<div class="dbody"><div class="tblwrap"><table>
+<thead><tr><th>挂单</th><th>限价</th><th>距现场报价（IB 直读）</th><th>年龄 / 状态</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">EXUS 买 100</span><span class="sub">节奏单</span></td><td>46.90</td><td class="wv">-0.39%</td><td>7 天 · 带内未成交</td></tr>
+<tr><td><span class="sym">META 卖 150</span><span class="sub">REPLACED（08-27 21:56 HKT）</span></td><td>590.00</td><td class="wv">+1.92%</td><td>4 天 · REPLACED · 提示带</td></tr>
+<tr><td><span class="sym">AMD 卖 20</span></td><td>500.00</td><td class="">+7.74%</td><td>6 天 · NEW</td></tr>
+<tr><td><span class="sym">AMD 卖 30</span><span class="sub">REPLACED（原 555 → 499）</span></td><td>499.00</td><td class="">+7.52%</td><td>4 天 · REPLACED 待目视</td></tr>
+<tr><td><span class="sym">AMD 卖 50</span><span class="sub">REPLACED</span></td><td>520.00</td><td class="">+12.04%</td><td>13 天 · REPLACED 待目视</td></tr>
+<tr><td><span class="sym">SLV 卖 160</span><span class="sub">卖单免龄</span></td><td>82.00</td><td class="">+36.03%</td><td>137 天 · 免龄</td></tr>
+<tr><td><span class="sym">EIMI 买 500</span><span class="sub">提示带</span></td><td>49.50</td><td class="">-10.86%</td><td>47 天 · &gt;5% 提示</td></tr>
+<tr><td><span class="sym">EXUS 买 300</span><span class="sub">提示带</span></td><td>44.00</td><td class="">-6.55%</td><td>53 天 · &gt;5% 提示</td></tr>
+<tr><td><span class="sym">EIMI 买 1000</span><span class="sub">待撤</span></td><td>47.12</td><td class="">-15.14%</td><td>88 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">EXUS 买 1000</span><span class="sub">待撤 · REPLACED</span></td><td>42.00</td><td class="">-10.80%</td><td>88 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">EXUS 买 1000</span><span class="sub">待撤</span></td><td>41.50</td><td class="">-11.86%</td><td>88 天 · <b>待撤</b></td></tr>
+<tr><td><span class="sym">MXUS 买 100</span><span class="sub">待撤</span></td><td>199.00</td><td class="">-12.94%</td><td>97 天 · <b>待撤</b></td></tr>
+</tbody></table></div>
+<p style="font-size:12px;margin:6px 0 0"><b>待撤四张，名义合计 $150,520</b>（&gt;60 天且距市价 &gt;5%，卖单免龄）。撤单一律由 Wu 在 TWS / IBKR 端执行，Claude 只提醒与核对。</p>
+</div></details>
+<details><summary>迁移池成本对照 <span class="rt">IB 持仓成本（average_price，直读）· 历史成本与 trailing return 不作为主要卖出依据</span></summary>
+<div class="dbody">
+<p style="font-size:12px;margin:4px 0 8px">口径：IB average_price，与 Sharesight 加权成本方法论不同，两者不保证一致，如实分列不作调和。本次持仓与成本与上一版完全一致，报价按现场读数更新，本次会话未执行任何交易。</p>
+<div class="tblwrap"><table>
+<thead><tr><th>标的</th><th>IB 成本 / 股</th><th>现场报价（IB）</th><th>差异 %</th></tr></thead>
+<tbody>
+<tr><td><span class="sym">AMD</span><span class="sub">未实现 +$26,593</span></td><td>198.17</td><td>464.10</td><td class="up">+134.2%</td></tr>
+<tr><td><span class="sym">VCN</span><span class="sub">未实现 +C$29,122</span></td><td>C$46.02</td><td>C$74.43</td><td class="up">+61.7%</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">卖 90 剩 10</span></td><td>355.02</td><td>509.16</td><td class="up">+43.4%</td></tr>
+<tr><td><span class="sym">APO</span><span class="sub">未实现 +$7,196</span></td><td>120.65</td><td>135.04</td><td class="up">+11.9%</td></tr>
+<tr><td><span class="sym">GOOG</span><span class="sub">未实现 +$12,306</span></td><td>311.20</td><td>340.50</td><td class="up">+9.4%</td></tr>
+<tr><td><span class="sym">META</span><span class="sub">未实现 -$2,020</span></td><td>586.98</td><td>578.90</td><td class="dn">-1.4%</td></tr>
+<tr><td><span class="sym">ORCL</span><span class="sub">未实现 -$1,669</span></td><td>157.95</td><td>149.60</td><td class="dn">-5.3%</td></tr>
+<tr><td><span class="sym">KKR</span><span class="sub">未实现 -$4,034</span></td><td>116.27</td><td>109.55</td><td class="dn">-5.8%</td></tr>
+<tr><td><span class="sym">TSLA</span><span class="sub">未实现 -$12,771</span></td><td>378.21</td><td>345.46</td><td class="dn">-8.7%</td></tr>
+<tr><td><span class="sym">MSTR</span><span class="sub">未实现 -$23,812 · 静默持有</span></td><td>158.81</td><td>128.28</td><td class="dn">-19.2%</td></tr>
+</tbody></table></div></div></details>
+</div></details>
+</div>
+</div>
 
-      function showDecisionPending() {
-        status.classList.remove("error");
-        status.textContent = `请在手机菜单中选择；提交后等待回应回执 · L ${loaderBuild}`;
-      }
+<details><summary>报告说明 <span class="rt">版别 · 取数时点 · 数据日 · 只读</span></summary>
+<div class="dbody">
+<ol>
+<li><b>版次与时点。</b>版别：<b>睡前版 · PM</b>（HKT 周一至周五 20:55 定时版）。启动 / 取数时点：<b>2026-08-31 12:55–12:58 UTC（周一 20:55–20:58 HKT）</b>。数据日：<b>2026-08-31</b>。美股（NYSE/NASDAQ）与 TSE（VCN）尚未开盘（现场为盘前时段，常规交易时段约 21:30 HKT 开始），IB 现场报价可能反映盘前极稀薄成交或延续上一交易日 08-28 收盘，非 08-31 正式收盘价；LSE/SWX/EBS 挂牌品种已处于当地正常交易时段。08-31 官方收盘数据要在美股收盘后（约 09-01 05:00 HKT 前后）才可获得。上一份为同日 16:48–16:55 HKT 临时版；main 上可信 <code>latest.meta.json</code> 数据日为 08-31。</li>
+<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）；本次逐票按 IB / Sharesight 现场读数重算，未使用缓存替代实读。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24）；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」。四桶比例、三层流动性及依赖归桶的金额不变。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重逐票沿用（未发明新系数）· 四类清单 v9.6 · USSC 基数 v9.8 · 四类分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，未新增任何交易触发。MRVL 待决定事项沿用未决（§0-A 规则本次仍未核实）。FX 参考 CAD/USD 0.71947（IB Base）。</li>
+<li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本期未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本睡前版通过既有候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接；本次为 08-31 周一 20:55 HKT 定时 PM 版。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项）。</li>
+</ol>
+<section id="xuan-ib-classification-disclosure-v1">
+<h3>四桶分类核验与沿用口径</h3>
+<ol>
+<li>历史核验范围：2026-08-31 15:31–15:34 HKT，仅 NOAH-HK、ANTARCTICA、UBS 三个组合，不是本次七组合全量核验。</li>
+<li>该次 38 项 Semi Liquid 持仓全部覆盖：7 次逐仓例外（holdingOverrides）＋31 次整组合规则（portfolioRules），该三组合的半流动持仓未覆盖为 0。规则顺序为：来源明确的现金 → 逐仓 ID 与名称交叉校验 → 整组合规则 → 精确通用资产标签 → 未知。不能用持仓总数减逐仓例外数量推算分类缺口。</li>
+<li>该次共核查 57 行，56 行已分类，1 行 UBS 现金身份尚待来源核实；其余四个家庭组合不在该次核验范围。不能把三组合覆盖结果当成七组合全量完成，也不能按名称猜现金或分类。</li>
+<li>本页四桶、三层流动性及依赖归桶的指标继续沿用已批准的 2026-08-24 快照。只有七组合范围、现金身份、完整持仓及金额对账经来源核验，并通过受控维护更新本说明后，才可改称实时重算。其他指标按各自已披露的数据时点与来源处理，不因本项回退停止报告。</li>
+</ol>
+</section>
+</div></details>
 
-      function expireWaits() {
-        const now = Date.now();
-        let message = "";
-        if (decisionWait && now > decisionWait.deadline) {
-          clearDecisionWait();
-          message = `尚未收到回应回执，请稍后刷新 · L ${loaderBuild}`;
-        }
-        if (adhocWait && now > adhocWait.deadline) {
-          clearAdhocWait();
-          message = `临时报告尚未完成，请稍后刷新 · L ${loaderBuild}`;
-        }
-        if (!message) return false;
-        status.classList.add("error");
-        status.textContent = message;
-        return true;
-      }
+<div class="foot">只读报告 · 数据截至 20:58 HKT（美股盘前）· 已验证发布 · 不是交易指令</div>
 
-      function updateAdhocWait(record) {
-        if (!adhocWait || expireWaits()) return false;
-        if (!adhocWait.baseline) {
-          adhocWait.baseline = reportVersion(record);
-          persistAdhocWait();
-          showAdhocPending();
-          return false;
-        }
-        if (!reportIsNewerThan(record, adhocWait.baseline)) {
-          showAdhocPending();
-          return false;
-        }
-        // latest.meta.json does not yet identify the report class. Complete the
-        // request only when the already verified HTML labels the newer report
-        // as ad-hoc; a scheduled publication may still render, but cannot
-        // falsely claim that the user's ad-hoc request has finished.
-        if (classifyEdition(record.info.edition) !== "adhoc") {
-          showAdhocPending();
-          return false;
-        }
-        clearAdhocWait();
-        status.classList.toggle("error", !warning.hidden);
-        status.textContent = statusFor(record, "临时报告已完成");
-        return true;
-      }
-
-      function updateDecisionWait(record) {
-        if (!decisionWait || expireWaits()) return false;
-        const state = record.decisionState;
-        const latestBaseline = decisionWait.baselines[decisionWait.baselines.length - 1];
-        if (!reportIsNewerThan(record, latestBaseline)) {
-          showDecisionPending();
-          return false;
-        }
-        const initialReceiptIds = new Set(decisionWait.initialReceiptIds);
-        const acceptableBaselines = new Map(decisionWait.baselines.map((baseline) => [
-          responsePairKey(baseline),
-          new Set(baseline.awaitingDecisionIds)
-        ]));
-        const earliestReceiptEpoch = decisionWait.startedAt - 1_000;
-        const matchingReceipt = state && state.receipts.find((receipt) => {
-          const awaitingAtResponseBaseline = acceptableBaselines.get(responsePairKey({
-            sourceSha: receipt.responseToSourceSha,
-            htmlBlob: receipt.responseToHtmlBlob
-          }));
-          return !initialReceiptIds.has(receipt.receiptId) &&
-            Boolean(awaitingAtResponseBaseline) &&
-            awaitingAtResponseBaseline.has(receipt.decisionId) &&
-            Date.parse(receipt.recordedAtHkt) >= earliestReceiptEpoch;
-        });
-        if (!matchingReceipt) {
-          decisionWait.baselines.push({
-            ...reportVersion(record),
-            awaitingDecisionIds: state
-              ? state.decisions
-                .filter((decision) => decision.status === "awaiting_user")
-                .map((decision) => decision.decisionId)
-              : []
-          });
-          if (decisionWait.baselines.length > 100) decisionWait.baselines.shift();
-          persistDecisionWait();
-          showDecisionPending();
-          return false;
-        }
-        clearDecisionWait();
-        status.classList.toggle("error", !warning.hidden);
-        status.textContent = statusFor(record, "回应已记录");
-        return true;
-      }
-
-      function updateActiveWait(record, verifiedAt) {
-        if (decisionWait) return updateDecisionWait(record);
-        if (adhocWait) return updateAdhocWait(record);
-        return false;
-      }
-
-      function beginAdhocWait() {
-        clearDecisionWait();
-        const now = Date.now();
-        adhocWait = {
-          cacheVersion: 1,
-          startedAt: now,
-          deadline: now + waitTimeoutMs,
-          baseline: lastVerified ? reportVersion(lastVerified) : null
-        };
-        persistAdhocWait();
-        showAdhocPending();
-        return loadLatest();
-      }
-
-      function beginDecisionWait(event) {
-        event.preventDefault();
-        if (decisionButton.ownerDocument && (!decisionDocument ||
-            decisionButton.ownerDocument !== decisionDocument ||
-            frame.contentDocument !== decisionDocument ||
-            decisionDocument.URL !== "about:srcdoc" ||
-            renderedDocument !== decisionDocument || !renderedToken ||
-            decisionDocument.querySelector('meta[name="xuan-loader-render"]')?.content !== renderedToken ||
-            decisionDocumentBlob !== lastVerified?.blob)) return;
-        if (decisionWait && !expireWaits()) {
-          showDecisionPending();
-          return;
-        }
-        const state = lastVerified && lastVerified.decisionState;
-        const awaitingDecisionIds = state
-          ? state.decisions
-            .filter((decision) => decision.status === "awaiting_user")
-            .map((decision) => decision.decisionId)
-          : [];
-        if (!lastVerified || !state || state.interaction !== "enabled" ||
-            awaitingDecisionIds.length === 0) {
-          clearDecisionWait();
-          status.classList.add("error");
-          status.textContent = `请先刷新并确认当前待办 · L ${loaderBuild}`;
-          return;
-        }
-        clearAdhocWait();
-        const now = Date.now();
-        decisionWait = {
-          cacheVersion: 2,
-          startedAt: now,
-          deadline: now + waitTimeoutMs,
-          awaitingDecisionIds,
-          initialReceiptIds: state.receipts.map((receipt) => receipt.receiptId),
-          baselines: [{
-            ...reportVersion(lastVerified),
-            awaitingDecisionIds: [...awaitingDecisionIds]
-          }]
-        };
-        persistDecisionWait();
-        showDecisionPending();
-        location.href = decisionShortcutUrl;
-      }
-
-      const hex = (buffer) => Array.from(new Uint8Array(buffer), (byte) =>
-        byte.toString(16).padStart(2, "0")
-      ).join("");
-
-      async function gitBlobSha(bytes) {
-        const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
-        const header = new TextEncoder().encode(`blob ${body.byteLength}\0`);
-        const payload = new Uint8Array(header.byteLength + body.byteLength);
-        payload.set(header, 0);
-        payload.set(body, header.byteLength);
-        return hex(await crypto.subtle.digest("SHA-1", payload));
-      }
-
-      const decodeUtf8 = (bytes) =>
-        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-
-      const canonicalizeTransportInjection = (bytes) => {
-        const maxPublishedBytes = 2_000_000;
-        const maxTransportOverhead = 64 * 1024;
-        if (bytes.byteLength >= maxPublishedBytes + maxTransportOverhead) return null;
-        const html = decodeUtf8(bytes);
-        const externalScript = /<script\b(?=[^>]*[\t\n\f\r ]src[\t\n\f\r ]*=)[^>]*>[\s\S]*?<\/script[\t\n\f\r ]*>/gi;
-        const injected = html.match(externalScript) || [];
-        if (!injected.length || injected.length > 4) return null;
-        const encoder = new TextEncoder();
-        const removedBytes = injected.reduce(
-          (total, script) => total + encoder.encode(script).byteLength,
-          0
-        );
-        if (removedBytes > maxTransportOverhead) return null;
-        const canonicalBytes = encoder.encode(html.replace(externalScript, ""));
-        if (canonicalBytes.byteLength >= maxPublishedBytes ||
-            bytes.byteLength - canonicalBytes.byteLength !== removedBytes) return null;
-        return canonicalBytes;
-      };
-
-      const reportInfo = (html) => {
-        const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
-        if (!match) throw new Error("页面缺少报告日期与版次");
-        const text = match[1]
-          .replace(/<[^>]*>/g, " ")
-          .replace(/&nbsp;|&#160;/gi, " ")
-          .replace(/&middot;|&#183;/gi, "·")
-          .replace(/\s+/g, " ")
-          .trim();
-        const date = text.match(/^(\d{4}-\d{2}-\d{2})\b/);
-        const parts = text.split("·").map((part) => part.trim()).filter(Boolean);
-        if (!date || parts.length < 2) throw new Error("报告日期或版次无法识别");
-        return { dataDate: date[1], edition: parts[1], label: text };
-      };
-
-      const requireExactKeys = (value, keys, label) => {
-        if (!value || typeof value !== "object" || Array.isArray(value)) {
-          throw new Error(`${label} 必须是对象`);
-        }
-        const actual = Object.keys(value).sort();
-        const expected = [...keys].sort();
-        if (actual.length !== expected.length ||
-            actual.some((key, index) => key !== expected[index])) {
-          throw new Error(`${label} 含未知或缺失字段`);
-        }
-      };
-
-      const validHktTimestamp = (value) => {
-        if (typeof value !== "string") return false;
-        const match = value.match(
-          /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\+08:00$/
-        );
-        if (!match) return false;
-        const [, year, month, day, hour, minute, second, fraction = ""] = match;
-        const milliseconds = Number(fraction.padEnd(3, "0"));
-        const instant = new Date(Date.UTC(
-          Number(year), Number(month) - 1, Number(day), Number(hour) - 8,
-          Number(minute), Number(second), milliseconds
-        ));
-        if (Number.isNaN(instant.valueOf())) return false;
-        const hkt = new Date(instant.valueOf() + 8 * 60 * 60 * 1000);
-        return hkt.getUTCFullYear() === Number(year) &&
-          hkt.getUTCMonth() + 1 === Number(month) &&
-          hkt.getUTCDate() === Number(day) &&
-          hkt.getUTCHours() === Number(hour) &&
-          hkt.getUTCMinutes() === Number(minute) &&
-          hkt.getUTCSeconds() === Number(second) &&
-          hkt.getUTCMilliseconds() === milliseconds;
-      };
-
-      function parseDecisionState(html) {
-        const parsed = new DOMParser().parseFromString(html, "text/html");
-        const templates = parsed.querySelectorAll("template#xuan-ib-decision-state-v1");
-        if (templates.length === 0) return null;
-        if (templates.length !== 1) throw new Error("回应状态模板必须恰好一个");
-        const template = templates[0];
-        const raw = (template.content ? template.content.textContent : template.textContent).trim();
-        if (!raw) throw new Error("回应状态模板为空");
-        const state = JSON.parse(raw);
-        requireExactKeys(
-          state,
-          ["schemaVersion", "interaction", "decisions", "receipts"],
-          "回应状态"
-        );
-        if (state.schemaVersion !== 1) throw new Error("回应状态版本不兼容");
-        if (!new Set(["disabled", "enabled"]).has(state.interaction)) {
-          throw new Error("回应入口状态无效");
-        }
-        if (!Array.isArray(state.decisions) || !Array.isArray(state.receipts)) {
-          throw new Error("回应状态清单无效");
-        }
-        const decisionIds = new Set();
-        for (const decision of state.decisions) {
-          requireExactKeys(decision, ["decisionId", "status"], "待办状态");
-          if (!/^D-[0-9]{8}-[A-Z0-9-]{1,64}$/.test(decision.decisionId || "")) {
-            throw new Error("待办编号无效");
-          }
-          if (!new Set(["awaiting_user", "accepted", "rejected", "modified", "superseded"])
-            .has(decision.status)) {
-            throw new Error("待办状态无效");
-          }
-          if (decisionIds.has(decision.decisionId)) throw new Error("待办编号重复");
-          decisionIds.add(decision.decisionId);
-        }
-        const receiptIds = new Set();
-        for (const receipt of state.receipts) {
-          requireExactKeys(
-            receipt,
-            [
-              "receiptId", "decisionId", "action", "responseToSourceSha",
-              "responseToHtmlBlob", "recordedAtHkt", "publicSummary"
-            ],
-            "回应回执"
-          );
-          if (!receiptIdPattern.test(receipt.receiptId || "")) throw new Error("回应回执编号无效");
-          if (receiptIds.has(receipt.receiptId)) throw new Error("回应回执编号重复");
-          receiptIds.add(receipt.receiptId);
-          if (!decisionIds.has(receipt.decisionId)) throw new Error("回应回执引用未知待办");
-          if (!new Set(["accepted", "modified", "deferred"]).has(receipt.action)) {
-            throw new Error("回应动作无效");
-          }
-          if (!/^[0-9a-f]{40}$/i.test(receipt.responseToSourceSha || "") ||
-              !/^[0-9a-f]{40}$/i.test(receipt.responseToHtmlBlob || "")) {
-            throw new Error("回应基线无效");
-          }
-          if (!validHktTimestamp(receipt.recordedAtHkt)) throw new Error("回应时间无效");
-          if (typeof receipt.publicSummary !== "string" ||
-              [...receipt.publicSummary].length < 1 ||
-              [...receipt.publicSummary].length > 120 ||
-              /[<>&\u0000-\u001f\u007f-\u009f]/u.test(receipt.publicSummary) ||
-              /(?:https?:\/\/|www\.)/i.test(receipt.publicSummary) ||
-              /\b[0-9]{8,}\b/.test(receipt.publicSummary)) {
-            throw new Error("回应公开摘要无效");
-          }
-        }
-        return state;
-      }
-
-      const hktContext = (now = new Date()) => {
-        const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        return {
-          date: shifted.toISOString().slice(0, 10),
-          weekday: shifted.getUTCDay(),
-          minuteOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
-        };
-      };
-
-      const addIsoDays = (date, days) => {
-        const value = new Date(`${date}T00:00:00Z`);
-        value.setUTCDate(value.getUTCDate() + days);
-        return value.toISOString().slice(0, 10);
-      };
-
-      const hktSlots = {
-        am: { startMinute: 8 * 60, dueMinute: 8 * 60 + 35, weekdays: new Set([2, 3, 4, 5, 6]) },
-        pm: { startMinute: 20 * 60 + 55, dueMinute: 21 * 60 + 25, weekdays: new Set([1, 2, 3, 4, 5]) }
-      };
-
-      const hktSlotEpoch = (date, edition, minuteKey) => Math.floor(
-        (Date.parse(`${date}T00:00:00Z`) - 8 * 60 * 60 * 1000 +
-          hktSlots[edition][minuteKey] * 60 * 1000) / 1000
-      );
-
-      const expectedBusinessEdition = (now = new Date()) => {
-        const context = hktContext(now);
-        const nowEpoch = Math.floor(now.getTime() / 1000);
-        let latest = null;
-        for (let offset = 0; offset <= 8; offset += 1) {
-          const date = addIsoDays(context.date, -offset);
-          const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
-          for (const edition of ["am", "pm"]) {
-            if (!hktSlots[edition].weekdays.has(weekday)) continue;
-            const dueEpoch = hktSlotEpoch(date, edition, "dueMinute");
-            if (dueEpoch > nowEpoch) continue;
-            if (!latest || dueEpoch > latest.dueEpoch) latest = { dataDate: date, edition, dueEpoch };
-          }
-        }
-        if (!latest) throw new Error("无法确定最近应完成的香港报告版次");
-        return {
-          ...latest,
-          startEpoch: hktSlotEpoch(latest.dataDate, latest.edition, "startMinute"),
-          label: latest.edition === "am" ? "早间版" : "睡前版"
-        };
-      };
-
-      const classifyEdition = (edition) => {
-        const value = String(edition).toLowerCase();
-        if (/计划外|加跑|补跑|临时|ad[ -]?hoc/.test(value)) return "adhoc";
-        if (/睡前|晚间|定时正式版|\bpm\b/.test(value)) return "pm";
-        if (/早间|上午|早班|\bam\b/.test(value)) return "am";
-        return "unknown";
-      };
-
-      const staleMessage = (record, now = new Date()) => {
-        const expected = expectedBusinessEdition(now);
-        const actualEdition = classifyEdition(record.info.edition);
-        const dateBehind = record.info.dataDate < expected.dataDate;
-        const editionRank = {am: 1, pm: 2};
-        const adHocBeforeSlot = actualEdition === "adhoc" &&
-          record.meta.sourceCommitEpoch < expected.startEpoch;
-        const scheduledBehind = (editionRank[actualEdition] ?? 0) < editionRank[expected.edition];
-        const slotBehind = record.info.dataDate === expected.dataDate &&
-          (actualEdition === "unknown" || adHocBeforeSlot ||
-            (actualEdition !== "adhoc" && scheduledBehind));
-        if (!dateBehind && !slotBehind) return "";
-        return `报告已过期：应至少为 ${expected.dataDate} ${expected.label}，` +
-          `当前为 ${record.info.dataDate} ${record.info.edition}。` +
-          "现继续显示最后一份已验证报告，未伪造新数据。";
-      };
-
-      const validateMeta = (meta) => {
-        if (!meta || meta.schemaVersion !== 1) throw new Error("发布信息版本不兼容");
-        if (!/^[0-9a-f]{40}$/i.test(meta.sourceSha || "")) throw new Error("发布来源无效");
-        if (!Number.isInteger(meta.sourceCommitEpoch) || meta.sourceCommitEpoch <= 0) {
-          throw new Error("发布时间无效");
-        }
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(meta.dataDate || "")) throw new Error("数据日期无效");
-        if (!/^[0-9a-f]{40}$/i.test(meta.htmlBlob || "")) throw new Error("页面指纹无效");
-        return meta;
-      };
-
-      const protect = (html) => {
-        const csp = '<meta http-equiv="Content-Security-Policy" content="default-src &apos;none&apos;; style-src &apos;unsafe-inline&apos;; script-src &apos;none&apos;; img-src &apos;none&apos;; font-src &apos;none&apos;; media-src &apos;none&apos;; connect-src &apos;none&apos;; frame-src &apos;none&apos;; object-src &apos;none&apos;; base-uri &apos;none&apos;; form-action &apos;none&apos;">';
-        const protectedHtml = html.replace(/<head[^>]*>/i, (head) => head + csp);
-        if (protectedHtml === html) throw new Error("页面缺少安全头");
-        return protectedHtml;
-      };
-
-      async function verifyPair(bytes, meta) {
-        validateMeta(meta);
-        let verifiedBytes = bytes;
-        let blob = await gitBlobSha(verifiedBytes);
-        if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
-          const canonicalBytes = canonicalizeTransportInjection(bytes);
-          if (!canonicalBytes) throw new Error("发布信息与页面不是同一版本");
-          blob = await gitBlobSha(canonicalBytes);
-          if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
-            throw new Error("发布信息与页面不是同一版本");
-          }
-          verifiedBytes = canonicalBytes;
-          console.warn("XUAN-IB removed a transport-injected external script before verification");
-        }
-        const html = decodeUtf8(verifiedBytes);
-        if (!html.includes("xuan-ib-handover:v1") ||
-            !approvedTitles.some((title) => html.includes(title))) {
-          throw new Error("页面完整性标记不符");
-        }
-        const info = reportInfo(html);
-        if (info.dataDate !== meta.dataDate) throw new Error("发布日期与页面日期不一致");
-        const decisionState = parseDecisionState(html);
-        return { html, protectedHtml: protect(html), meta, info, decisionState, blob };
-      }
-
-      function requireMonotonic(record, previous) {
-        if (!previous) return record;
-        if (record.meta.dataDate < previous.meta.dataDate) {
-          throw new Error("上游报告日期早于本机已验证版本");
-        }
-        if (record.meta.dataDate > previous.meta.dataDate) return record;
-        if (record.meta.sourceCommitEpoch < previous.meta.sourceCommitEpoch) {
-          throw new Error("上游同日报告版本早于本机已验证版本");
-        }
-        if (record.meta.sourceCommitEpoch === previous.meta.sourceCommitEpoch &&
-            record.meta.htmlBlob.toLowerCase() !== previous.meta.htmlBlob.toLowerCase()) {
-          throw new Error("同一发布版本出现不同页面指纹");
-        }
-        return record;
-      }
-
-      const statusFor = (record, prefix) => {
-        if (prefix === "临时报告已完成") return "临时报告已完成 · 已自动刷新";
-        if (prefix === "回应已记录") return "回应已记录，报告已自动刷新";
-        if (prefix === "显示上一份已验证版本" || prefix === "正在核对最新版") {
-          return `${prefix} · ${record.info.dataDate} ${record.info.edition}`;
-        }
-        return prefix;
-      };
-
-      function updateDecisionControl(record) {
-        const state = record.decisionState;
-        const count = state
-          ? state.decisions.filter((decision) => decision.status === "awaiting_user").length
-          : 0;
-        const available = Boolean(state && state.interaction === "enabled");
-        const enabled = available && count > 0;
-        decisionButton.hidden = !available;
-        decisionButton.disabled = !enabled;
-        decisionButton.setAttribute("aria-disabled", String(!enabled));
-        decisionCount.textContent = String(count);
-        decisionCount.hidden = count === 0;
-        decisionButton.setAttribute(
-          "aria-label",
-          enabled
-            ? `通过 Claude 回应 ${count} 项待决定事项；只记录意见，不执行交易`
-            : "当前没有可回应的待决定事项"
-        );
-      }
-
-      // Display-only enhancement of already verified bytes. Neither the
-      // canonical report/hash nor the receipt/decision ledger is rewritten.
-      function installTodoControls(doc, record) {
-        const panes = doc.querySelectorAll(".pane.p4");
-        if (panes.length !== 1) return;
-        const todo = panes[0];
-        const trigger = Array.from(todo.children).find((node) =>
-          node.tagName === "DETAILS" &&
-          node.querySelector("summary")?.textContent.includes("换仓触发检查")
-        );
-        if (trigger) {
-          todo.prepend(trigger);
-          trigger.setAttribute("open", "");
-        }
-        if (!record.decisionState) return;
-        const groupHeadings = Array.from(todo.querySelectorAll('[data-decision-group-title]'));
-        const headings = groupHeadings.filter((node) =>
-          node.getAttribute("data-decision-group-title") === "awaiting_user");
-        const legacyHeadings = Array.from(todo.querySelectorAll("h2")).filter((node) =>
-          !node.hasAttribute("data-decision-group-title") && /^⑤\s*待决定事项(?:\s|$)/.test(node.textContent.trim()));
-        // Ordinary AM/PM reports may still use the original, unmarked H2.
-        // Never use that fallback to repair ambiguous or incomplete v1 groups.
-        const hasDisplayGroups = groupHeadings.length > 0 ||
-          record.html.includes("<!-- xuan-ib-decision-group:v1:");
-        if (hasDisplayGroups ? headings.length !== 1 || legacyHeadings.length !== 0 : legacyHeadings.length !== 1) return;
-        const heading = hasDisplayGroups ? headings[0] : legacyHeadings[0];
-        if (heading.tagName !== "H2") return;
-        const siblings = Array.from(heading.parentElement.children);
-        const headingIndex = siblings.indexOf(heading);
-        const nextHeadingIndex = siblings.findIndex((node, index) => index > headingIndex && node.tagName === "H2");
-        const pending = record.decisionState.decisions.filter((item) => item.status === "awaiting_user");
-        const cards = pending.map((item) => doc.getElementById(item.decisionId));
-        if (todo.querySelectorAll('[data-decision-status="awaiting_user"]').length !== cards.length ||
-            cards.some((card, index) => !card || card.tagName !== "DETAILS" || !todo.contains(card) ||
-            card.parentElement !== heading.parentElement || siblings.indexOf(card) <= headingIndex ||
-            (nextHeadingIndex >= 0 && siblings.indexOf(card) >= nextHeadingIndex) ||
-            doc.querySelectorAll(`[id="${pending[index].decisionId}"]`).length !== 1 ||
-            doc.querySelectorAll(`[data-decision-id="${pending[index].decisionId}"]`).length !== 1 ||
-            card.getAttribute("data-decision-id") !== pending[index].decisionId ||
-            card.getAttribute("data-decision-status") !== "awaiting_user")) return;
-
-        const style = doc.createElement("style");
-        style.textContent = `
-          .xuan-decision-row{position:relative;margin:0 0 12px}
-          .xuan-decision-fold{display:block;margin:0;border:0;background:transparent}
-          .xuan-decision-fold>summary{width:calc(100% - 108px);box-sizing:border-box;min-height:44px;display:flex;align-items:center;gap:7px;padding:9px 10px;border:1px solid var(--line,#deddd8);border-radius:12px;font-size:14px;white-space:nowrap;cursor:pointer}
-          .xuan-decision-fold>summary::before{content:'▸';font-size:12px}
-          .xuan-decision-fold[open]>summary::before{content:'▾'}
-          .xuan-decision-fold>summary::after{display:none}
-          .xuan-decision-fold>summary::-webkit-details-marker{display:none}
-          .xuan-decision-fold>summary small{margin-left:auto;font-size:12px;color:var(--mut,#777)}
-          .xuan-decision-fold>summary.xuan-decision-attention{border-color:#b7791f;background:#fff3d6;color:#754600}
-          .xuan-decision-fold>summary.xuan-decision-attention small{color:inherit}
-          .xuan-decision-body{width:100%;min-width:0}
-          .xuan-decision-fold:not([open])>.xuan-decision-body{display:none}
-          .xuan-decision-empty{margin:8px 0;color:var(--ink2,#666);font-size:13px}
-          #decision{position:absolute;top:0;right:0;width:100px;box-sizing:border-box;min-height:44px;padding:9px 8px;border:1px solid #63a170;border-radius:12px;background:#eef8f0;color:#246c35;font:inherit;font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer}
-          #decision:disabled{opacity:.5;cursor:default}
-          #decision[hidden],#decision-count[hidden]{display:none}
-          #decision-count{display:inline-block;margin-left:3px;min-width:18px;padding:1px 4px;border-radius:99px;background:#246c35;color:white;font-size:11px}
-          @media(prefers-color-scheme:dark){#decision{border-color:#4f8c5d;background:#142b19;color:#8ed09b}.xuan-decision-fold>summary.xuan-decision-attention{background:#3a2b0d;color:#ffd58a;border-color:#ca9b43}}
-        `;
-        doc.head.append(style);
-        const row = doc.createElement("div");
-        row.className = "xuan-decision-row";
-        const fold = doc.createElement("details");
-        fold.className = "xuan-decision-fold";
-        const summary = doc.createElement("summary");
-        summary.textContent = "待决定事项";
-        if (pending.length) {
-          summary.className = "xuan-decision-attention";
-          summary.setAttribute("aria-label", `待决定事项，${pending.length} 项待你确认`);
-        }
-        const count = doc.createElement("small");
-        count.textContent = `${pending.length ? '⚠ ' : ''}${pending.length} 项`;
-        summary.append(count);
-        const body = doc.createElement("div");
-        body.className = "xuan-decision-body";
-        if (cards.length) body.append(...cards);
-        else {
-          const empty = doc.createElement("p");
-          empty.className = "xuan-decision-empty";
-          empty.textContent = "暂无待决定事项；已采纳意见的负责人、下一步及证据见下方落实进度。";
-          body.append(empty);
-        }
-        fold.append(summary, body);
-        row.append(fold, decisionButton);
-        const oldHint = heading.nextElementSibling;
-        if (oldHint?.tagName === "P" && oldHint.textContent.startsWith("当前为只读清单")) oldHint.remove();
-        heading.replaceWith(row);
-        decisionDocument = doc;
-        decisionDocumentBlob = record.blob;
-        if (pending.length === 0) {
-          const badge = doc.querySelector('label[for="s4"] .dot');
-          if (badge) badge.remove();
-        }
-      }
-
-      // An independent, main-owned maintenance ledger. HTTPS and the protected
-      // maintenance PR establish its provenance; its digest only detects change.
-      // It never signs a report, changes a decision or authorizes an investment.
-      function renderProgress(record) {
-        const doc = renderedDocument;
-        if (!doc || frame.contentDocument !== doc || doc.URL !== "about:srcdoc" ||
-            lastVerified?.blob !== record.blob ||
-            doc.querySelector('meta[name="xuan-loader-render"]')?.content !== renderedToken) return;
-        const headings = doc.querySelectorAll('[data-decision-group-title="resolved"]');
-        if (headings.length !== 1 || headings[0].tagName !== "H2") return;
-        const heading = headings[0];
-        const panes = doc.querySelectorAll(".pane.p4");
-        if (panes.length !== 1 || !panes[0].contains(heading)) return;
-        const resolved = (record.decisionState?.decisions || []).filter(d => ["accepted", "modified"].includes(d.status));
-        const make = (tag, text, className) => {
-          const node = doc.createElement(tag);
-          if (text) node.textContent = text;
-          if (className) node.className = className;
-          return node;
-        };
-        if (progressView?.doc !== doc) {
-          // Never adopt or replace candidate-supplied elements by a class or
-          // reserved ID. Only this private map owns enhancement nodes.
-          const collision = ["xuan-progress-style", "xuan-progress-status", "xuan-progress-fold",
-            "xuan-progress-attention", "xuan-progress-nav-attention",
-            ...(record.decisionState?.decisions || []).map(d => `progress-${d.decisionId}`)]
-            .some(id => doc.getElementById(id));
-          const siblings = Array.from(heading.parentElement.children);
-          const headingIndex = siblings.indexOf(heading);
-          const nextHeadingIndex = siblings.findIndex((node, index) => index > headingIndex && node.tagName === "H2");
-          const originalCards = resolved.map(d => doc.getElementById(d.decisionId));
-          const invalidCards = originalCards.some((card, index) => !card || card.tagName !== "DETAILS" ||
-            card.parentElement !== heading.parentElement || siblings.indexOf(card) <= headingIndex ||
-            (nextHeadingIndex >= 0 && siblings.indexOf(card) >= nextHeadingIndex) ||
-            doc.querySelectorAll(`[id="${resolved[index].decisionId}"]`).length !== 1 ||
-            doc.querySelectorAll(`[data-decision-id="${resolved[index].decisionId}"]`).length !== 1 ||
-            card.getAttribute("data-decision-id") !== resolved[index].decisionId ||
-            card.getAttribute("data-decision-status") !== resolved[index].status);
-          const notice = make("p", "", "xuan-progress-status");
-          notice.setAttribute("role", "status");
-          heading.parentElement.append(notice);
-          progressView = {doc, notice, cards:new Map(), blocked:collision || invalidCards};
-          if (progressView.blocked) {
-            notice.textContent = "报告含冲突的进度标记；为保留原文，暂不增强此版。";
-            return;
-          }
-          notice.id = "xuan-progress-status";
-          const fold = make("details", "", "xuan-progress-fold"); fold.id = "xuan-progress-fold";
-          const summary = make("summary");
-          const title = make("span", "", "xuan-progress-title");
-          const attention = make("span", "", "xuan-progress-attention"); attention.id = "xuan-progress-attention";
-          attention.hidden = true;
-          const body = make("div", "", "xuan-progress-body");
-          heading.replaceWith(fold);
-          heading.textContent = "";
-          heading.append(title, attention);
-          summary.append(heading);
-          body.append(notice, ...originalCards);
-          fold.append(summary, body);
-          // A new report starts closed. Never set `open` during an ordinary
-          // refresh; the user's disclosure state belongs to this document.
-          Object.assign(progressView, {fold, summary, title, attention, body});
-          const navs = doc.querySelectorAll('label[for="s4"]');
-          if (navs.length === 1) {
-            const nav = navs[0];
-            const navAttention = make("span", "⚠", "xuan-progress-nav-attention");
-            navAttention.id = "xuan-progress-nav-attention"; navAttention.hidden = true;
-            navAttention.setAttribute("aria-hidden", "true");
-            nav.append(navAttention);
-            const inputs = doc.querySelectorAll('[id="s4"]');
-            const navInput = inputs.length === 1 && inputs[0].tagName === "INPUT" ? inputs[0] : null;
-            Object.assign(progressView, {nav, navAttention, navInput,
-              navOriginalLabel:nav.getAttribute("aria-label"), navInputOriginalLabel:navInput?.getAttribute("aria-label")});
-          }
-          const style = make("style"); style.id = "xuan-progress-style";
-          style.textContent = `
-            .xuan-progress-fold{margin:12px 0;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0}
-            .xuan-progress-fold>summary{min-height:48px;box-sizing:border-box;padding:12px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
-            .xuan-progress-fold>summary::before{content:'▸';font-size:12px}
-            .xuan-progress-fold[open]>summary::before{content:'▾'}
-            .xuan-progress-fold>summary::after{display:none}
-            .xuan-progress-fold>summary::-webkit-details-marker{display:none}
-            .xuan-progress-fold>summary h2{font-size:15px;line-height:1.5;margin:0;flex:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
-            .xuan-progress-title{flex:1 1 180px;min-width:0}
-            .xuan-progress-fold>summary:focus-visible{outline:2px solid #876018;outline-offset:3px;border-radius:12px}
-            .xuan-progress-body{padding:0 10px 10px;min-width:0}
-            .xuan-progress-fold:not([open])>.xuan-progress-body{display:none}
-            .xuan-progress-attention{font-size:12px;line-height:1.5;color:var(--mut,#777);overflow-wrap:anywhere}
-            .xuan-needs-user{color:#754600!important;background:#fff3d6;border:1px solid #b7791f;border-radius:8px;padding:3px 7px}
-            .xuan-progress-nav-attention{font-size:12px;line-height:1.3;color:#754600;background:#fff3d6;border:1px solid #b7791f;border-radius:50%;padding:0 3px;flex:0 0 auto}
-            .xuan-progress-attention[hidden],.xuan-progress-nav-attention[hidden]{display:none}
-            .xuan-work{margin:12px 0;padding:12px;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0;overflow-wrap:anywhere}
-            .xuan-work h3{font-size:16px;margin:0 0 6px;line-height:1.5}
-            .xuan-work p{font-size:13px;line-height:1.6;margin:6px 0}
-            .xuan-work summary{min-height:44px;box-sizing:border-box;padding:11px 8px;font-size:13px;cursor:pointer}
-            .xuan-work details{margin:8px 0 0}
-            .xuan-work .xuan-work-meta,.xuan-progress-status{font-size:12px;color:var(--mut,#777);line-height:1.5}
-            .xuan-work-badge{display:inline-block;padding:2px 8px;border:1px solid var(--line,#999);border-radius:8px;font-size:12px;margin-bottom:4px}
-            .xuan-work-fields{padding:0 10px 10px}
-            @media(prefers-color-scheme:dark){.xuan-needs-user,.xuan-progress-nav-attention{color:#ffd58a!important;background:#3a2b0d;border-color:#ca9b43}}
-            @media print{.xuan-progress-body{display:block!important}.xuan-progress-fold,.xuan-work{break-inside:auto}.xuan-progress-nav-attention{display:none!important}}
-          `;
-          doc.head.append(style);
-        }
-        if (progressView.blocked) return;
-        const notice = progressView.notice;
-        notice.textContent = resolved.length ? progressMessage : "暂无需要跟进的已决定事项。";
-        const events = new Map();
-        if (progressLedger && progressFingerprint) {
-          try {
-            validateProgress(progressLedger, record.decisionState);
-            for (const event of progressLedger.events) {
-              const latestReceipt = record.decisionState.receipts.filter(r => r.decisionId === event.decisionId)
-                .sort((a,b) => Date.parse(a.recordedAtHkt)-Date.parse(b.recordedAtHkt) || a.receiptId.localeCompare(b.receiptId)).at(-1);
-              if (latestReceipt?.receiptId === event.receiptId) events.set(event.decisionId, event);
-            }
-          } catch (_) { notice.textContent = "落实进度暂不可用；原决定和报告仍保留。"; }
-        }
-        progressView.title.textContent = `已决定 · 落实进度 ${resolved.length} 项`;
-        const matchesReport = event => event?.observedPair.sourceSha === record.meta.sourceSha && event?.observedPair.htmlBlob === record.blob;
-        const currentEvents = resolved.map(d => events.get(d.decisionId)).filter(matchesReport);
-        const approvals = currentEvents.filter(e => e.status === "awaiting_approval").length;
-        const actions = currentEvents.filter(e => e.status === "user_action_required").length;
-        const needsUser = approvals + actions;
-        const attentionText = [approvals ? `待你确认 ${approvals} 项` : '', actions ? `待你处理 ${actions} 项` : ''].filter(Boolean).join(' · ');
-        const historical = resolved.some(d => events.has(d.decisionId) && !matchesReport(events.get(d.decisionId)));
-        const missing = resolved.some(d => !events.has(d.decisionId));
-        const attention = progressView.attention;
-        attention.className = "xuan-progress-attention" + (needsUser ? " xuan-needs-user" : "");
-        attention.textContent = !resolved.length ? "" : needsUser ? `⚠ ${attentionText}` : missing || !progressFingerprint ? "进度未核实" : historical ? "历史进度待复核" : "";
-        attention.hidden = !attention.textContent;
-        progressView.summary.setAttribute("aria-label", `${progressView.title.textContent}${attention.textContent ? '；'+attention.textContent : ''}`);
-        if (approvals) notice.textContent += `；另有 ${approvals} 项后续规则待你确认（不重复原决定，详见卡片）`;
-        if (actions) notice.textContent += `；另有 ${actions} 项需要你处理（不执行交易，详见卡片）`;
-        // Initial decisions and subsequent implementation requests remain
-        // separate counts. A technical blocker or stale evidence is not a
-        // new request for the user, even if its prose happens to mention Wu.
-        const pendingCount = (record.decisionState?.decisions || []).filter(d => d.status === "awaiting_user").length;
-        if (progressView.navAttention) {
-          progressView.navAttention.hidden = !(pendingCount || needsUser);
-          if (pendingCount || needsUser) {
-            const parts = [pendingCount ? `待决定 ${pendingCount} 项` : '', attentionText].filter(Boolean);
-            const navLabel = `待办：${parts.join('；')}；请选择待办查看`;
-            progressView.nav.setAttribute("aria-label", navLabel);
-            progressView.navInput?.setAttribute("aria-label", navLabel);
-            progressView.navAttention.setAttribute("title", parts.join('；'));
-          } else {
-            if (progressView.navOriginalLabel === null) progressView.nav.removeAttribute("aria-label");
-            else progressView.nav.setAttribute("aria-label", progressView.navOriginalLabel);
-            if (progressView.navInputOriginalLabel === null) progressView.navInput?.removeAttribute("aria-label");
-            else if (progressView.navInput) progressView.navInput.setAttribute("aria-label", progressView.navInputOriginalLabel);
-          }
-        }
-        const labels = {not_started:"待安排",in_progress:"处理中",blocked:"受阻 · 临时处理保留",awaiting_approval:"待你确认规则",user_action_required:"待你处理",evidence_recorded:"已有落实证据 · 持续观察"};
-        for (const [index, decision] of resolved.entries()) {
-          const card = doc.getElementById(decision.decisionId);
-          if (!card || card.tagName !== "DETAILS" ||
-              doc.querySelectorAll(`[id="${decision.decisionId}"]`).length !== 1 ||
-              card.getAttribute("data-decision-id") !== decision.decisionId ||
-              card.getAttribute("data-decision-status") !== decision.status) continue;
-          const event = events.get(decision.decisionId);
-          let owned = progressView.cards.get(decision.decisionId);
-          let wrapper = owned?.wrapper;
-          if (!wrapper && event) {
-            wrapper = make("section", "", "xuan-work"); wrapper.id = `progress-${decision.decisionId}`;
-            card.replaceWith(wrapper);
-            const original = make("details", "", "xuan-work-original");
-            original.append(make("summary", "原决定与回执（历史记录）"), card);
-            wrapper.append(original);
-            owned = {wrapper, panel:null, key:null};
-            progressView.cards.set(decision.decisionId, owned);
-          }
-          if (!wrapper) continue;
-          const old = owned.panel;
-          if (old && old.parentElement !== wrapper) continue;
-          // Keep open/scroll state if the ledger and observed report did not change.
-          const key = `${progressFingerprint || 'unavailable'}:${record.meta.sourceSha}:${record.blob}:${event?.eventId || 'missing'}:${progressMessage}`;
-          if (owned.key === key) continue;
-          const panel = make("div", "", "xuan-work-current");
-          if (!event) panel.append(make("p", "当前进度未核实；请稍后刷新。原决定保留在下方。"));
-          else {
-            const matched = matchesReport(event);
-            panel.append(make("h3", `${index + 1} · ${event.title}`));
-            panel.append(make("span", matched ? labels[event.status] : "历史进度 · 本期尚未复核", "xuan-work-badge" +
-              (matched && ["awaiting_approval", "user_action_required"].includes(event.status) ? " xuan-needs-user" : "")));
-            panel.append(make("p", event.summary));
-            const details = make("details");
-            if (old?.querySelector("details")?.hasAttribute("open")) details.setAttribute("open", "");
-            details.append(make("summary", "负责人 · 下一步 · 核对依据"));
-            const fields = make("div", "", "xuan-work-fields");
-            fields.append(make("p", `1. 负责人：${event.owner}`));
-            fields.append(make("p", `2. 下一步：${event.nextAction}`));
-            fields.append(make("p", `3. 阻碍／待确认：${event.blocker || '暂无'}`));
-            fields.append(make("p", `4. 核对依据：${event.evidence.join('；') || '尚无'}`));
-            fields.append(make("p", `5. 最近核对：${event.recordedAtHkt.replace('T',' ').replace('+08:00',' HKT')}；目标复核：${event.reviewAfterHkt.replace('T',' ').replace('+08:00',' HKT')}（不是自动运行承诺）`, "xuan-work-meta"));
-            fields.append(make("p", `对应回执：${event.receiptId}；事件：${event.eventId}`, "xuan-work-meta"));
-            if (!matched) fields.append(make("p", "证据对应较早报告；不代表本期数据已经复核。"));
-            details.append(fields); panel.append(details);
-          }
-          if (old) old.replaceWith(panel); else wrapper.prepend(panel);
-          owned.key = key; owned.panel = panel;
-        }
-      }
-
-      // Native closed details are opened only for printing, then restored.
-      // The report and receipt bytes remain untouched, and normal refreshes
-      // never expand disclosures on the user's behalf.
-      window.addEventListener("beforeprint", () => {
-        if (!progressView?.fold || progressView.doc !== renderedDocument || progressPrintState) return;
-        const nodes = [progressView.fold, ...progressView.fold.querySelectorAll("details")];
-        progressPrintState = nodes.map(node => [node, node.hasAttribute("open")]);
-        for (const [node] of progressPrintState) node.setAttribute("open", "");
-      });
-      window.addEventListener("afterprint", () => {
-        for (const [node, wasOpen] of progressPrintState || []) if (!wasOpen) node.removeAttribute("open");
-        progressPrintState = null;
-      });
-
-      async function refreshProgress(record, request) {
-        if (!record.decisionState?.decisions.some(d => ["accepted", "modified"].includes(d.status))) return;
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 8000);
-        try {
-          const url = new URL("implementation-progress.json", location.href);
-          url.searchParams.set("v", `${loaderBuild}-${Date.now()}-${request}`);
-          const response = await fetch(url, {cache:"no-store",credentials:"omit",signal:controller.signal,redirect:"error"});
-          if (!response.ok) throw new Error("progress HTTP");
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          if (bytes.byteLength > 250000) throw new Error("progress size");
-          const data = validateProgress(parseProgressJson(decodeUtf8(bytes)), record.decisionState, progressLedger);
-          const fingerprint = await gitBlobSha(bytes);
-          if (request !== requestSequence || lastVerified?.blob !== record.blob) return;
-          progressLedger = data; progressFingerprint = fingerprint;
-          progressMessage = `落实进度已读取 · 版本 ${data.revision} · 只跟进规则与数据，不执行交易`;
-        } catch (_) {
-          if (request !== requestSequence) return;
-          // Keep the previous ledger only as an anti-rollback high-water mark.
-          progressMessage = "落实进度暂不可用；原决定和报告仍保留，请稍后刷新。";
-          progressFingerprint = null;
-        } finally {
-          window.clearTimeout(timeout);
-          if (request === requestSequence) renderProgress(record);
-        }
-      }
-
-      function displayVerified(record) {
-        // Polling an unchanged publication must not collapse open cards,
-        // reset the active tab or interrupt the user's place in the report.
-        if (renderedBlob === record.blob && renderedDocument &&
-            frame.contentDocument === renderedDocument && renderedDocument.URL === "about:srcdoc" &&
-            renderedDocument.querySelector('meta[name="xuan-loader-render"]')?.content === renderedToken) return;
-        let section = null;
-        try { section = frame.contentDocument?.querySelector('input[name="sec"]:checked')?.id; } catch (_) {}
-        const sequence = ++renderSequence;
-        const token = `xuan-render-${sequence}`;
-        frame.onload = () => {
-          const doc = frame.contentDocument;
-          if (sequence !== renderSequence || lastVerified?.blob !== record.blob || !doc ||
-              doc.URL !== "about:srcdoc" ||
-              doc.querySelector('meta[name="xuan-loader-render"]')?.content !== token) {
-            if (sequence === renderSequence) renderedBlob = null;
-            return;
-          }
-          installTodoControls(doc, record);
-          renderedDocument = doc;
-          renderedToken = token;
-          renderProgress(record);
-          if (/^s[1-4]$/.test(section || "")) {
-            const radio = doc.getElementById(section);
-            if (radio?.getAttribute("name") === "sec") radio.checked = true;
-          }
-        };
-        frame.setAttribute("sandbox", "allow-same-origin");
-        frame.srcdoc = record.protectedHtml.replace(/<head[^>]*>/i,
-          (head) => `${head}<meta name="xuan-loader-render" content="${token}">`);
-        renderedBlob = record.blob;
-      }
-
-      function renderVerified(record, prefix, warningMessage = "") {
-        lastVerified = record;
-        updateDecisionControl(record);
-        displayVerified(record);
-        warning.hidden = !warningMessage;
-        warning.textContent = warningMessage;
-        status.classList.toggle("error", Boolean(warningMessage));
-        status.textContent = statusFor(record, prefix);
-      }
-
-      function saveVerified(record) {
-        if (!storage) return;
-        try {
-          storage.setItem(storageKey, JSON.stringify({
-            cacheVersion: 1,
-            html: record.html,
-            meta: record.meta,
-            verifiedAt: Date.now()
-          }));
-        } catch (error) {
-          console.warn("XUAN-IB verified-page backup failed", error);
-        }
-      }
-
-      async function restoreVerified(request) {
-        if (lastVerified || !storage) return Boolean(lastVerified);
-        try {
-          const raw = storage.getItem(storageKey);
-          if (!raw) return false;
-          const saved = JSON.parse(raw);
-          if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
-          const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
-          if (request !== requestSequence) return false;
-          renderVerified(record, "正在核对最新版", staleMessage(record));
-          return true;
-        } catch (error) {
-          try { storage.removeItem(storageKey); } catch (_) {}
-          console.warn("XUAN-IB saved verified page was rejected", error);
-          return false;
-        }
-      }
-
-      async function loadLatest() {
-        const request = ++requestSequence;
-        const controller = new AbortController();
-        const timeout = window.setTimeout(() => controller.abort(), 10_000);
-        lastAttempt = Date.now();
-        button.disabled = true;
-        warning.hidden = true;
-        status.classList.remove("error");
-        const restored = await restoreVerified(request);
-        if (request !== requestSequence) return;
-        if (!restored) status.textContent = "正在读取最新版…";
-        try {
-          const token = `${loaderBuild}-${Date.now()}`;
-          const metaUrl = new URL("latest.meta.json", location.href);
-          const htmlUrl = new URL("latest.html", location.href);
-          metaUrl.searchParams.set("v", token);
-          htmlUrl.searchParams.set("v", token);
-          const options = { cache: "no-store", credentials: "omit", signal: controller.signal };
-          const [metaResponse, htmlResponse] = await Promise.all([
-            fetch(metaUrl, options),
-            fetch(htmlUrl, options)
-          ]);
-          if (!metaResponse.ok) throw new Error(`metadata HTTP ${metaResponse.status}`);
-          if (!htmlResponse.ok) throw new Error(`page HTTP ${htmlResponse.status}`);
-          const [meta, bytes] = await Promise.all([
-            metaResponse.json(),
-            htmlResponse.arrayBuffer()
-          ]);
-          const record = requireMonotonic(
-            await verifyPair(new Uint8Array(bytes), meta),
-            lastVerified
-          );
-          if (request !== requestSequence) return;
-          const verifiedAt = Date.now();
-          renderVerified(record, `已同步 ${clock()}`, staleMessage(record));
-          saveVerified(record);
-          lastSuccess = verifiedAt;
-          updateActiveWait(record, verifiedAt);
-          // Deliberately not awaited: a progress outage must never delay or
-          // invalidate a verified financial report, even on an unchanged blob.
-          void refreshProgress(record, request);
-          return record;
-        } catch (error) {
-          if (request !== requestSequence) return;
-          status.classList.add("error");
-          if (lastVerified) {
-            const stale = staleMessage(lastVerified);
-            const fallback = "上游暂不一致，正在显示上一份已验证版本";
-            renderVerified(lastVerified, "显示上一份已验证版本", stale ? `${stale} ${fallback}` : fallback);
-            void refreshProgress(lastVerified, request);
-          } else {
-            warning.hidden = true;
-            status.textContent = "暂时无法读取已验证报告";
-            decisionButton.hidden = true;
-            frame.setAttribute("sandbox", "");
-            frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
-          }
-          if (activeWait() && !expireWaits()) {
-            if (decisionWait) showDecisionPending();
-            else showAdhocPending();
-          }
-          console.warn("XUAN-IB latest-page refresh failed", error);
-          return null;
-        } finally {
-          window.clearTimeout(timeout);
-          if (request === requestSequence) button.disabled = false;
-        }
-      }
-
-      restoreWaits();
-      expireWaits();
-      if (decisionWait) showDecisionPending();
-      else if (adhocWait) showAdhocPending();
-      adhocButton.addEventListener("click", beginAdhocWait);
-      decisionButton.addEventListener("click", beginDecisionWait);
-      button.addEventListener("click", loadLatest);
-      window.addEventListener("pageshow", (event) => {
-        expireWaits();
-        return loadLatest();
-      });
-      window.addEventListener("focus", () => {
-        if (activeWait() && !expireWaits()) return loadLatest();
-      });
-      document.addEventListener("visibilitychange", () => {
-        if (!document.hidden && activeWait() && !expireWaits()) return loadLatest();
-        if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
-      });
-      window.setInterval(() => {
-        if (activeWait() && !expireWaits()) return loadLatest();
-      }, waitPollMs);
-      window.setInterval(() => {
-        if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();
-      }, 60_000);
-    })();
-  </script>
-</body>
-</html>
+</div></div>
+<template id="xuan-ib-decision-state-v1" type="application/json">
+{"schemaVersion":1,"interaction":"enabled","decisions":[{"decisionId":"D-20260829-MRVL-CLASS","status":"accepted"},{"decisionId":"D-20260829-GOOG-FAMILY-LIMIT","status":"accepted"},{"decisionId":"D-20260829-SEMILIQUID-MAPPING","status":"accepted"}],"receipts":[{"receiptId":"R-20260831-064906-7F3K9QXM","decisionId":"D-20260829-MRVL-CLASS","action":"accepted","responseToSourceSha":"3769a3e05e954474573b6b1e247374f4e2addfb5","responseToHtmlBlob":"0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b","recordedAtHkt":"2026-08-31T06:49:06+08:00","publicSummary":"采纳 Claude 意见：MRVL 暂不计入分子并披露；仅记录本次回应，不构成交易授权。"},{"receiptId":"R-20260831-064907-2LM4P8YB","decisionId":"D-20260829-GOOG-FAMILY-LIMIT","action":"accepted","responseToSourceSha":"3769a3e05e954474573b6b1e247374f4e2addfb5","responseToHtmlBlob":"0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b","recordedAtHkt":"2026-08-31T06:49:07+08:00","publicSummary":"采纳 Claude 意见：先重订家庭主视图集中度参考线口径；仅记录本次回应，不构成交易授权。"},{"receiptId":"R-20260831-064908-9RT6WZ2N","decisionId":"D-20260829-SEMILIQUID-MAPPING","action":"accepted","responseToSourceSha":"3769a3e05e954474573b6b1e247374f4e2addfb5","responseToHtmlBlob":"0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b","recordedAtHkt":"2026-08-31T06:49:08+08:00","publicSummary":"采纳 Claude 意见：继续沿用四桶 mapping 快照并推进补全；仅记录本次回应，不构成交易授权。"}]}
+</template>
+<!-- xuan-ib-cash-plan-v1:eyJzY2hlbWFWZXJzaW9uIjoyLCJzdGF0dXMiOiJzbmFwc2hvdCIsInNvdXJjZUFzT2ZIa3QiOiIyMDI2LTA4LTMxIDIwOjU14oCTMjA6NTggSEtUIiwiZXF1aXR5VG90YWwiOjQwNDI1MDEsImRldmVsb3BlZCI6NDU1MTE3LCJlbWVyZ2luZyI6NDE3MjkyLCJpYkNhc2giOjQ2NjMyMi43MSwibm9haENhc2giOjM1Nzk2OC45MiwicmVzZXJ2ZSI6MjQwMDAwLCJjdXJyZW5jeSI6IlVTRCIsImRlbm9taW5hdG9yIjoiZXF1aXR5LW9ubHkiLCJ1c0Jhc2UiOjIwMDU4NDgsInVzc2MiOjE1MjE2LCJ1c3NjQnVkZ2V0U2hhcmUiOjAuMX0 -->
+</body></html>
