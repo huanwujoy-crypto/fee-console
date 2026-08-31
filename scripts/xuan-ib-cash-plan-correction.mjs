@@ -10,10 +10,29 @@ export const CASH_CORRECTION_SOURCE_BLOB = '4987cbb9e1c10a3a5562247784d9fc8a7e57
 // input fixture. Future reports must supply their newly verified USD values.
 export const CASH_CORRECTION_INPUT = Object.freeze({ schemaVersion: 1, status: 'snapshot', sourceAsOfHkt: '2026-08-31 16:48–16:55 HKT', equityTotal: 4045136, developed: 455111, emerging: 417160, ibCash: 466322.41, noahCash: 357968.92, reserve: 240000, currency: 'USD', denominator: 'equity-only' });
 export const CASH_CORRECTION_NOTICE = '补仓规划更正：按原报告快照重算现金优先方案，未重新取数；持仓、现金、数据时点与原决策回执均不变。';
+export const CASH_PRESENTATION_SOURCE_SHA = '12922932bcc89af59c363855f12e86aa48c2c390';
+export const CASH_PRESENTATION_SOURCE_BLOB = '2091098e98933e121b9fbdbbfd63771287d9e11c';
+export const CASH_PRESENTATION_NOTICE = '展示更新：仅调整代码名称及 USSC 资金安排提示，未重新取数或调整补仓金额。';
 
 function replaceOne(html, pattern, replacement) {
   if ([...html.matchAll(new RegExp(pattern.source, 'g'))].length !== 1) throw new Error('Cash correction anchor missing or ambiguous: ' + pattern.source);
   return html.replace(pattern, () => replacement);
+}
+
+// One user-approved display migration. All original bytes outside the two
+// cash-plan display blocks and this explanatory notice remain unchanged.
+export function updateCashPlanPresentation(html) {
+  if (typeof html !== 'string' || classificationReportBlob(html) !== CASH_PRESENTATION_SOURCE_BLOB) throw new Error('Cash presentation requires the exact approved source report blob; do not overwrite a newer report');
+  const inputs = [...html.matchAll(/<!-- xuan-ib-cash-plan-v1:([A-Za-z0-9_-]+) -->/g)];
+  if (inputs.length !== 1) throw new Error('Cash presentation requires one original input comment');
+  const rendered = renderCashPlan(JSON.parse(Buffer.from(inputs[0][1], 'base64url').toString('utf8')));
+  if (rendered.template !== inputs[0][0]) throw new Error('Cash presentation must preserve input bytes');
+  let output = replaceOne(html, /<div class="kpi" id="xuan-ib-cash-plan-kpi">[\s\S]*?<\/div><\/div>/, rendered.kpi);
+  output = replaceOne(output, /<section class="card" id="xuan-ib-cash-plan-detail">[\s\S]*?<\/section>/, rendered.detail);
+  output = replaceOne(output, /<li><b>数据与口径。<\/b>/, '<li><b>数据与口径。</b>' + CASH_PRESENTATION_NOTICE);
+  const errors = validateCashPlan(output, { previousHtml: html });
+  if (errors.length) throw new Error(errors.join('; '));
+  return output;
 }
 
 export function correctCashPlan(html) {
@@ -55,7 +74,9 @@ export function correctCashPlan(html) {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    if (process.argv.length !== 3) throw new Error('Usage: node scripts/xuan-ib-cash-plan-correction.mjs INPUT.html');
-    process.stdout.write(correctCashPlan(fs.readFileSync(process.argv[2], 'utf8')));
+    const presentation = process.argv[2] === '--ticker-first';
+    if (process.argv.length !== (presentation ? 4 : 3)) throw new Error('Usage: node scripts/xuan-ib-cash-plan-correction.mjs [--ticker-first] INPUT.html');
+    const source = fs.readFileSync(process.argv[presentation ? 3 : 2], 'utf8');
+    process.stdout.write(presentation ? updateCashPlanPresentation(source) : correctCashPlan(source));
   } catch (error) { process.stderr.write(error.message + '\n'); process.exitCode = 1; }
 }
