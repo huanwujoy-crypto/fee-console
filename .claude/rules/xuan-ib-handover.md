@@ -17,10 +17,21 @@ place, modify, or cancel an order; never initiate a transfer; never create,
 update, or delete financial records. Repository writes remain limited to the
 trusted single-file candidate process in `CLAUDE.md`.
 
-Every run must read the live IB endpoints and the registry's required
+Every new financial report must read the live IB endpoints and the registry's required
 Sharesight portfolios. A cache must never replace those live reads. Independent
 reads may run in bounded parallel batches, and every result must be recorded
 individually even when a sibling read fails.
+
+Exception: an explicitly requested explanation-only correction follows the
+strict no-new-data contract in CLAUDE.md. It retains the prior edition, date,
+as-of, amounts, calculations and receipts, states that no new data was read,
+and does not prove an AM/PM run. Do not fetch data or fabricate a run manifest
+merely to correct the classification explanation.
+
+Classification prose must come from the trusted deterministic disclosure
+module, not the previous latest.html. Run the canonical renderer and preserve
+its exact section; keep coverage reasoning only there. A mapping-file read or
+override count is not a holdings-completeness audit.
 
 Before the candidate is prepared, validate a run manifest with
 `scripts/xuan-ib-run-manifest.mjs`. Do not place raw connector errors, holdings,

@@ -52,6 +52,20 @@ NOAH-EB-5 entry is pinned only to prevent scope drift and is not read or summed.
 
 ## 3. Cache and hash boundary
 
+Classification explanation is no longer free-form narrative. For ordinary
+four-bucket reports, render the exact trusted section with
+`node scripts/xuan-ib-classification-disclosure.mjs`. This is an explicitly
+dated, limited-scope historical audit statement; it is not a cached claim that
+current holdings were read. The handover guard requires it and rejects coverage
+reasoning outside it. Current full-family classification requires independently
+verified seven-portfolio scope, cash identities, complete paginated holdings
+and value reconciliation, then a reviewed update of the interim disclosure.
+Do not infer gaps from the size of holdingOverrides or from a mapping-file hash.
+
+Explicit explanation-only corrections follow CLAUDE.md, not the live-read
+stages: no financial refresh, no fabricated stage times, preserve original
+edition/date/as-of/values/receipts, and no new AM/PM success evidence.
+
 Every run still performs the live IB and required Sharesight reads. A cache may
 never replace them and may never cache an error.
 

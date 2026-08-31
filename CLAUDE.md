@@ -91,6 +91,45 @@ data-as-of disclosure, never the Hong Kong delivery schedule.
 
 ## Implementation progress after a recorded decision
 
+### Required deterministic classification disclosure
+
+For every ordinary report with four-bucket content, run
+`node scripts/xuan-ib-classification-disclosure.mjs` and insert its exact HTML
+section once inside the folded report explanation. This is a trusted,
+historically dated three-portfolio audit disclosure, not a new holdings feed.
+Do not copy classification reasoning from the previous report. Detailed
+classification coverage, Semi Liquid and override/portfolio-rule counts belong
+only in this canonical section; use a short dated fallback reference elsewhere.
+The trusted handover guard enforces this contract for both Validate and Promote.
+
+The interim disclosure preserves the approved 2026-08-24 four-bucket fallback.
+Seven-portfolio holdings completeness, cash identity, pagination and value
+reconciliation must be independently checked before a reviewed maintenance
+update may replace it with complete-current-audit evidence. A three-portfolio
+audit or a mapping-file read alone is not that evidence. The unresolved
+classification work never by itself blocks unrelated successfully read report
+fields. Do not change mapping rules merely to eliminate a warning.
+
+### Explanation-only correction candidates
+
+An explicitly requested explanation correction is an ordinary publication
+candidate, not a new financial read and not a `records-update`. Preserve the
+trusted previous edition, data date, all source/as-of times, all financial
+amounts and calculations, complete decision state and receipt bytes. Add a
+visible statement that only the classification explanation was corrected and
+no financial data was fetched or recalculated. Use the canonical section above.
+The correction does not count as AM/PM scheduled-run evidence, must satisfy the
+ordinary today/yesterday candidate date window, and receives no stale-date
+exception or new publication permission. If that date window has expired,
+stop rather than relabeling old data as current.
+
+This narrow correction exception supersedes the live-read requirement in
+`.claude/rules/xuan-ib-handover.md` and the runtime contract only for this
+explicitly requested explanation repair. Regular AM/PM/ad-hoc reports still
+must perform their required live reads. Never invent a receipt to obtain the
+records-update exception. A legacy receipt-only update can preserve the old
+explanation only after all trusted-pair and immutable-body checks succeed.
+
 Read `claude/xuan-ib-implementation-progress-v1.md` and the independent
 `xuan-ib/implementation-progress.json` before presenting accepted decisions as
 unimplemented. A receipt records an opinion, not execution. Preserve the receipt

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 
 const [file, expectedDate, previousFile] = process.argv.slice(2);
 
@@ -588,6 +589,8 @@ const currentDecisionState = parseDecisionState(visibleMarkup);
 const previousSourceSha = process.env.XUAN_IB_PREVIOUS_SOURCE_SHA;
 const previousHtmlBlob = process.env.XUAN_IB_PREVIOUS_HTML_BLOB;
 const continuityInputs = [previousFile, previousSourceSha, previousHtmlBlob];
+let trustedPreviousHtml = null;
+let verifiedRecordsUpdate = false;
 if (continuityInputs.some(Boolean) && !continuityInputs.every(Boolean)) {
   fail('decision continuity requires PREVIOUS_HTML and both trusted previous hashes');
 }
@@ -604,6 +607,7 @@ if (continuityInputs.every(Boolean)) {
   } catch {
     fail('could not read the previous handover file');
   }
+  trustedPreviousHtml = previousHtml;
   const previousVisibleMarkup = previousHtml
     .replace(/<!--[\s\S]*?-->/g, '')
     .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, '');
@@ -715,7 +719,16 @@ if (continuityInputs.every(Boolean)) {
           !== normalizeRecordsUpdateHtml(previousHtml, previousDecisionState)) {
       fail('records-update changed content outside the allowed decision state, status, and pending badge fields');
     }
+    // Only a fully checked, byte-semantically immutable legacy response may
+    // retain the previous report's classification prose. The marker alone
+    // never grants this compatibility exception.
+    if (isRecordsUpdate) verifiedRecordsUpdate = true;
   }
+}
+
+if (!verifiedRecordsUpdate) {
+  const classificationErrors = validateClassificationDisclosure(html, { previousHtml: trustedPreviousHtml });
+  if (classificationErrors.length) fail(classificationErrors[0]);
 }
 
 console.log(`handover guard passed: ${expectedDate}, ${bytes} bytes`);

@@ -1875,7 +1875,16 @@ test('the variable handover stays separate from the fixed loader', () => {
   assert.match(latest, /apple-mobile-web-app-capable/);
 });
 
-const progressFixture = JSON.parse(fs.readFileSync(new URL('../xuan-ib/implementation-progress.json',import.meta.url),'utf8'));
+const publishedProgressFixture = JSON.parse(fs.readFileSync(new URL('../xuan-ib/implementation-progress.json',import.meta.url),'utf8'));
+// These UI cases explicitly simulate progress verified against the test's
+// report. Real publications legitimately advance independently of the ledger;
+// copying its older observedPair made "current" test cases silently become
+// history cases after every new report. Rebind only the synthetic observation,
+// never the immutable receipt's responseToSourceSha / responseToHtmlBlob.
+const progressFixture = structuredClone(publishedProgressFixture);
+for(const event of progressFixture.events) {
+  event.observedPair={sourceSha:metadata.sourceSha,htmlBlob:metadata.htmlBlob};
+}
 const progressFollowup = new Date(Date.parse(progressFixture.events.at(-1).recordedAtHkt)+60000+28800000).toISOString().slice(0,19)+'+08:00';
 const progressTestNow = new Date(Date.parse(progressFollowup)+60000).toISOString();
 const publishedState = JSON.parse(latest.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
@@ -1892,6 +1901,16 @@ function progressApp(getProgress) {
   }});
   return {app,setReport:value=>{current=value;}};
 }
+test('current-progress fixture changes only synthetic observation pairs, preserving published receipt provenance',()=>{
+  assert.equal(progressFixture.events.length,publishedProgressFixture.events.length);
+  for(let i=0;i<progressFixture.events.length;i++) {
+    const {observedPair,...fixtureEvent}=progressFixture.events[i];
+    const {observedPair:publishedPair,...publishedEvent}=publishedProgressFixture.events[i];
+    assert.deepEqual(observedPair,{sourceSha:metadata.sourceSha,htmlBlob:metadata.htmlBlob});
+    assert.deepEqual(fixtureEvent,publishedEvent);
+    assert.notEqual(observedPair,publishedPair);
+  }
+});
 test('independent progress refresh updates the same report without resetting original cards or selected tab',async()=>{
   let data=structuredClone(progressFixture);
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
