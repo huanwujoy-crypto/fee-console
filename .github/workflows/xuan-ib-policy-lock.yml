@@ -38,7 +38,7 @@ jobs:
             echo 'The pull-request file list is incomplete or exceeds the approved review size.' >&2
             exit 1
           fi
-          protected_re='^(CLAUDE\.md|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader|xuan-ib-decision-menu|build-xuan-decision-shortcut)\.(mjs|test\.mjs)$|xuan-ib/)'
+          protected_re='^(CLAUDE\.md|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader|xuan-ib-decision-menu|build-xuan-decision-shortcut|xuan-ib-progress|xuan-ib-classification-audit)\.(mjs|test\.mjs)$|xuan-ib/)'
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
             head_sha='${{ github.event.pull_request.head.sha }}'

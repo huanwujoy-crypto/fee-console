@@ -158,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-31.3";
+      const loaderBuild = "2026-08-31.4";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -177,6 +177,129 @@
       let decisionDocumentBlob = null;
       let renderedDocument = null;
       let renderedToken = null;
+      let progressLedger = null;
+      let progressFingerprint = null;
+      let progressMessage = "落实进度正在读取…";
+      let progressView = null;
+
+// BEGIN PROGRESS VALIDATOR
+// Shared with the trusted loader; keep its marked copy byte-for-byte in sync.
+function parseProgressJson(source) {
+  if (typeof source !== "string" || source.length > 250000) throw new Error("进度文件过大");
+  let i = 0;
+  const ws = () => { while (/[ \t\r\n]/.test(source[i] || "")) i++; };
+  const string = () => {
+    const start = i++;
+    let escaped = false;
+    while (i < source.length) {
+      const c = source[i++];
+      if (!escaped && c === '"') return JSON.parse(source.slice(start, i));
+      if (!escaped && c.charCodeAt(0) < 32) throw new Error("无效字符");
+      escaped = !escaped && c === "\\";
+    }
+    throw new Error("字符串未结束");
+  };
+  const value = (depth = 0) => {
+    if (depth > 20) throw new Error("进度层数过深");
+    ws();
+    if (source[i] === '"') return string();
+    if (source[i] === "{") {
+      i++; ws(); const out = Object.create(null);
+      if (source[i] === "}") { i++; return out; }
+      while (i < source.length) {
+        ws(); if (source[i] !== '"') throw new Error("无效键");
+        const key = string();
+        if (Object.hasOwn(out, key)) throw new Error("重复键");
+        ws(); if (source[i++] !== ":") throw new Error("缺少冒号");
+        out[key] = value(depth + 1); ws();
+        if (source[i] === "}") { i++; return out; }
+        if (source[i++] !== ",") throw new Error("缺少逗号");
+      }
+    } else if (source[i] === "[") {
+      i++; ws(); const out = [];
+      if (source[i] === "]") { i++; return out; }
+      while (i < source.length) {
+        out.push(value(depth + 1)); ws();
+        if (source[i] === "]") { i++; return out; }
+        if (source[i++] !== ",") throw new Error("缺少逗号");
+      }
+    } else {
+      const t = source.slice(i).match(/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/)?.[0];
+      if (t) { i += t.length; return JSON.parse(t); }
+    }
+    throw new Error("进度 JSON 无效");
+  };
+  const out = value(); ws();
+  if (i !== source.length) throw new Error("多余内容");
+  return out;
+}
+
+function validateProgress(data, state, previous = null, now = Date.now()) {
+  const fail = (s) => { throw new Error("落实进度：" + s); };
+  const keys = (v, expected) => {
+    if (!v || typeof v !== "object" || Array.isArray(v) ||
+        Object.keys(v).length !== expected.length ||
+        Object.keys(v).sort().some((key, index) => key !== expected.slice().sort()[index])) fail("未知或缺失字段");
+  };
+  const text = (v, max = 180, empty = false) => {
+    if (typeof v !== "string" || v.trim() !== v || (!empty && !v) || [...v].length > max ||
+        /[<>&\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069]/u.test(v) ||
+        /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(v) ||
+        /(?:https?:|www\.|[a-z][a-z0-9+.-]*:\/\/|mailto:|github_pat_|gh[pousr]_|\bBearer\s|\bsk-[A-Za-z0-9_-]{12,}|(?:token|password|secret|api[_ -]?key)\s*[:=])/iu.test(v) ||
+        /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\b[UF]\d{6,}\b|\b\d{8,}\b/iu.test(v)) fail("不安全的公开文字");
+  };
+  const stamp = (v) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?\+08:00$/.test(v)) fail("时间格式");
+    const n = Date.parse(v);
+    if (!Number.isFinite(n) || new Date(n + 28800000).toISOString().slice(0, 19) !== v.slice(0, 19)) fail("无效时间");
+    return n;
+  };
+  const pair = (v) => {
+    keys(v, ["sourceSha", "htmlBlob"]);
+    if (![v.sourceSha, v.htmlBlob].every(s => typeof s === "string" && /^[0-9a-f]{40}$/.test(s))) fail("证据指纹");
+  };
+  const canonical = (v) => Array.isArray(v) ? "[" + v.map(canonical).join(",") + "]" :
+    v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canonical(v[k])).join(",") + "}" : JSON.stringify(v);
+  keys(data, ["schemaVersion", "revision", "events"]);
+  if (data.schemaVersion !== 1 || !Number.isSafeInteger(data.revision) || data.revision < 1 ||
+      !Array.isArray(data.events) || data.events.length < 1 || data.events.length > 300) fail("版本或清单无效");
+  if (!state || !Array.isArray(state.receipts) || !Array.isArray(state.decisions)) fail("没有可信回执");
+  const ids = new Set();
+  let lastTime = 0;
+  for (const e of data.events) {
+    keys(e, ["eventId", "decisionId", "receiptId", "responseToSourceSha", "responseToHtmlBlob",
+      "recordedAtHkt", "observedPair", "title", "status", "owner", "summary", "nextAction",
+      "reviewAfterHkt", "blocker", "evidence"]);
+    if (typeof e.eventId !== "string" || !/^P-[A-Z0-9-]{1,70}$/.test(e.eventId) || ids.has(e.eventId)) fail("事件编号");
+    ids.add(e.eventId);
+    const receipt = state.receipts.find(r => r.receiptId === e.receiptId);
+    if (!receipt || !["accepted", "modified"].includes(receipt.action) ||
+        receipt.decisionId !== e.decisionId || receipt.responseToSourceSha !== e.responseToSourceSha ||
+        receipt.responseToHtmlBlob !== e.responseToHtmlBlob ||
+        !state.decisions.some(d => d.decisionId === e.decisionId)) fail("决定回执不匹配");
+    pair(e.observedPair);
+    const time = stamp(e.recordedAtHkt);
+    if (time < lastTime || time < stamp(receipt.recordedAtHkt) || time > now + 60000) fail("事件时间倒退或在未来");
+    lastTime = time;
+    if (stamp(e.reviewAfterHkt) < time) fail("复核日早于记录日");
+    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "evidence_recorded"].includes(e.status)) fail("进度状态");
+    for (const k of ["title", "owner"]) text(e[k], 70);
+    for (const k of ["summary", "nextAction"]) text(e[k]);
+    text(e.blocker, 180, true);
+    if (["blocked", "awaiting_approval"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
+    if (!Array.isArray(e.evidence) || e.evidence.length > 5) fail("证据清单");
+    for (const evidence of e.evidence) text(evidence);
+    if (e.status === "evidence_recorded" && e.evidence.length === 0) fail("没有落实证据");
+  }
+  if (previous) {
+    if (data.revision < previous.revision || data.events.length < previous.events.length ||
+        previous.events.some((e, i) => canonical(e) !== canonical(data.events[i])) ||
+        (data.revision === previous.revision && canonical(data) !== canonical(previous)) ||
+        (data.revision > previous.revision && data.events.length === previous.events.length)) fail("历史事件不可重写或删除");
+  }
+  return data;
+}
+// END PROGRESS VALIDATOR
 
       // Migration window: the phone page must keep working while published
       // handovers still carry the previous product name. The first entry is the
@@ -870,7 +993,7 @@
         else {
           const empty = doc.createElement("p");
           empty.className = "xuan-decision-empty";
-          empty.textContent = "暂无待决定事项；已采纳的意见保留在下方“已决定／待落实”。";
+          empty.textContent = "暂无待决定事项；已采纳意见的负责人、下一步及证据见下方落实进度。";
           body.append(empty);
         }
         fold.append(summary, body);
@@ -883,6 +1006,146 @@
         if (pending.length === 0) {
           const badge = doc.querySelector('label[for="s4"] .dot');
           if (badge) badge.remove();
+        }
+      }
+
+      // An independent, main-owned maintenance ledger. HTTPS and the protected
+      // maintenance PR establish its provenance; its digest only detects change.
+      // It never signs a report, changes a decision or authorizes an investment.
+      function renderProgress(record) {
+        const doc = renderedDocument;
+        if (!doc || frame.contentDocument !== doc || doc.URL !== "about:srcdoc" ||
+            lastVerified?.blob !== record.blob ||
+            doc.querySelector('meta[name="xuan-loader-render"]')?.content !== renderedToken) return;
+        const headings = doc.querySelectorAll('[data-decision-group-title="resolved"]');
+        if (headings.length !== 1 || headings[0].tagName !== "H2") return;
+        const heading = headings[0];
+        const make = (tag, text, className) => {
+          const node = doc.createElement(tag);
+          if (text) node.textContent = text;
+          if (className) node.className = className;
+          return node;
+        };
+        if (progressView?.doc !== doc) {
+          // Never adopt or replace candidate-supplied elements by a class or
+          // reserved ID. Only this private map owns enhancement nodes.
+          const collision = ["xuan-progress-style", "xuan-progress-status",
+            ...(record.decisionState?.decisions || []).map(d => `progress-${d.decisionId}`)]
+            .some(id => doc.getElementById(id));
+          const notice = make("p", "", "xuan-progress-status");
+          notice.setAttribute("role", "status");
+          heading.parentElement.append(notice);
+          progressView = {doc, notice, cards:new Map(), blocked:collision};
+          if (collision) {
+            notice.textContent = "报告含冲突的进度标记；为保留原文，暂不增强此版。";
+            return;
+          }
+          notice.id = "xuan-progress-status";
+          const style = make("style"); style.id = "xuan-progress-style";
+          style.textContent = `
+            .xuan-work{margin:12px 0;padding:12px;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0;overflow-wrap:anywhere}
+            .xuan-work h3{font-size:16px;margin:0 0 6px;line-height:1.5}
+            .xuan-work p{font-size:13px;line-height:1.6;margin:6px 0}
+            .xuan-work summary{min-height:44px;box-sizing:border-box;padding:11px 8px;font-size:13px;cursor:pointer}
+            .xuan-work details{margin:8px 0 0}
+            .xuan-work .xuan-work-meta,.xuan-progress-status{font-size:12px;color:var(--mut,#777);line-height:1.5}
+            .xuan-work-badge{display:inline-block;padding:2px 8px;border:1px solid var(--line,#999);border-radius:8px;font-size:12px;margin-bottom:4px}
+            .xuan-work-fields{padding:0 10px 10px}
+          `;
+          doc.head.append(style);
+        }
+        if (progressView.blocked) return;
+        const notice = progressView.notice;
+        notice.textContent = progressMessage;
+        const events = new Map();
+        if (progressLedger && progressFingerprint) {
+          try {
+            validateProgress(progressLedger, record.decisionState);
+            for (const event of progressLedger.events) {
+              const latestReceipt = record.decisionState.receipts.filter(r => r.decisionId === event.decisionId)
+                .sort((a,b) => Date.parse(a.recordedAtHkt)-Date.parse(b.recordedAtHkt) || a.receiptId.localeCompare(b.receiptId)).at(-1);
+              if (latestReceipt?.receiptId === event.receiptId) events.set(event.decisionId, event);
+            }
+          } catch (_) { notice.textContent = "落实进度暂不可用；原决定和报告仍保留。"; }
+        }
+        const resolved = (record.decisionState?.decisions || []).filter(d => ["accepted", "modified"].includes(d.status));
+        if (events.size) heading.textContent = `已决定 · 落实进度 ${resolved.length} 项`;
+        const approvals = resolved.filter(d => events.get(d.decisionId)?.status === "awaiting_approval");
+        if (approvals.length) notice.textContent += `；另有 ${approvals.length} 项后续规则待你确认（不重复原决定，详见卡片；旧证据以卡片提示为准）`;
+        const labels = {not_started:"待安排",in_progress:"处理中",blocked:"受阻 · 临时处理保留",awaiting_approval:"待你确认规则",evidence_recorded:"已有落实证据 · 持续观察"};
+        for (const [index, decision] of resolved.entries()) {
+          const card = doc.getElementById(decision.decisionId);
+          if (!card || card.tagName !== "DETAILS" ||
+              doc.querySelectorAll(`[id="${decision.decisionId}"]`).length !== 1 ||
+              card.getAttribute("data-decision-id") !== decision.decisionId ||
+              card.getAttribute("data-decision-status") !== decision.status) continue;
+          const event = events.get(decision.decisionId);
+          let owned = progressView.cards.get(decision.decisionId);
+          let wrapper = owned?.wrapper;
+          if (!wrapper && event) {
+            wrapper = make("section", "", "xuan-work"); wrapper.id = `progress-${decision.decisionId}`;
+            card.replaceWith(wrapper);
+            const original = make("details", "", "xuan-work-original");
+            original.append(make("summary", "原决定与回执（历史记录）"), card);
+            wrapper.append(original);
+            owned = {wrapper, panel:null, key:null};
+            progressView.cards.set(decision.decisionId, owned);
+          }
+          if (!wrapper) continue;
+          const old = owned.panel;
+          if (old && old.parentElement !== wrapper) continue;
+          // Keep open/scroll state if the ledger and observed report did not change.
+          const key = `${progressFingerprint || 'unavailable'}:${record.meta.sourceSha}:${record.blob}:${event?.eventId || 'missing'}:${progressMessage}`;
+          if (owned.key === key) continue;
+          const panel = make("div", "", "xuan-work-current");
+          if (!event) panel.append(make("p", "当前进度未核实；请稍后刷新。原决定保留在下方。"));
+          else {
+            const matched = event.observedPair.sourceSha === record.meta.sourceSha && event.observedPair.htmlBlob === record.blob;
+            panel.append(make("h3", `${index + 1} · ${event.title}`));
+            panel.append(make("span", matched ? labels[event.status] : "历史进度 · 本期尚未复核", "xuan-work-badge"));
+            panel.append(make("p", event.summary));
+            const details = make("details");
+            if (old?.querySelector("details")?.hasAttribute("open")) details.setAttribute("open", "");
+            details.append(make("summary", "负责人 · 下一步 · 核对依据"));
+            const fields = make("div", "", "xuan-work-fields");
+            fields.append(make("p", `1. 负责人：${event.owner}`));
+            fields.append(make("p", `2. 下一步：${event.nextAction}`));
+            fields.append(make("p", `3. 阻碍／待确认：${event.blocker || '暂无'}`));
+            fields.append(make("p", `4. 核对依据：${event.evidence.join('；') || '尚无'}`));
+            fields.append(make("p", `5. 最近核对：${event.recordedAtHkt.replace('T',' ').replace('+08:00',' HKT')}；目标复核：${event.reviewAfterHkt.replace('T',' ').replace('+08:00',' HKT')}（不是自动运行承诺）`, "xuan-work-meta"));
+            fields.append(make("p", `对应回执：${event.receiptId}；事件：${event.eventId}`, "xuan-work-meta"));
+            if (!matched) fields.append(make("p", "证据对应较早报告；不代表本期数据已经复核。"));
+            details.append(fields); panel.append(details);
+          }
+          if (old) old.replaceWith(panel); else wrapper.prepend(panel);
+          owned.key = key; owned.panel = panel;
+        }
+      }
+
+      async function refreshProgress(record, request) {
+        if (!record.decisionState?.decisions.some(d => ["accepted", "modified"].includes(d.status))) return;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 8000);
+        try {
+          const url = new URL("implementation-progress.json", location.href);
+          url.searchParams.set("v", `${loaderBuild}-${Date.now()}-${request}`);
+          const response = await fetch(url, {cache:"no-store",credentials:"omit",signal:controller.signal,redirect:"error"});
+          if (!response.ok) throw new Error("progress HTTP");
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength > 250000) throw new Error("progress size");
+          const data = validateProgress(parseProgressJson(decodeUtf8(bytes)), record.decisionState, progressLedger);
+          const fingerprint = await gitBlobSha(bytes);
+          if (request !== requestSequence || lastVerified?.blob !== record.blob) return;
+          progressLedger = data; progressFingerprint = fingerprint;
+          progressMessage = `落实进度已读取 · 版本 ${data.revision} · 只跟进规则与数据，不执行交易`;
+        } catch (_) {
+          if (request !== requestSequence) return;
+          // Keep the previous ledger only as an anti-rollback high-water mark.
+          progressMessage = "落实进度暂不可用；原决定和报告仍保留，请稍后刷新。";
+          progressFingerprint = null;
+        } finally {
+          window.clearTimeout(timeout);
+          if (request === requestSequence) renderProgress(record);
         }
       }
 
@@ -907,6 +1170,7 @@
           installTodoControls(doc, record);
           renderedDocument = doc;
           renderedToken = token;
+          renderProgress(record);
           if (/^s[1-4]$/.test(section || "")) {
             const radio = doc.getElementById(section);
             if (radio?.getAttribute("name") === "sec") radio.checked = true;
@@ -998,6 +1262,9 @@
           saveVerified(record);
           lastSuccess = verifiedAt;
           updateActiveWait(record, verifiedAt);
+          // Deliberately not awaited: a progress outage must never delay or
+          // invalidate a verified financial report, even on an unchanged blob.
+          void refreshProgress(record, request);
           return record;
         } catch (error) {
           if (request !== requestSequence) return;
@@ -1006,6 +1273,7 @@
             const stale = staleMessage(lastVerified);
             const fallback = "上游暂不一致，正在显示上一份已验证版本";
             renderVerified(lastVerified, "显示上一份已验证版本", stale ? `${stale} ${fallback}` : fallback);
+            void refreshProgress(lastVerified, request);
           } else {
             warning.hidden = true;
             status.textContent = "暂时无法读取已验证报告";
