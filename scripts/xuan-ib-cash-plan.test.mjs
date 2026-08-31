@@ -50,3 +50,24 @@ test('invalid dates, reversed source ranges and cash-limited buying into a curre
   assert.throws(() => calculateCashPlan({ ...snapshot, equityTotal: 100, developed: 24, emerging: 0, ibCash: 1, noahCash: 0, reserve: 0 }), /already overweight/);
   assert.throws(() => calculateCashPlan({ ...snapshot, equityTotal: 1, developed: 1, emerging: 1 }), /reconcile/);
 });
+
+test('ticker-first guidance includes secondary USSC without changing the two-class cash model', () => {
+  const rendered = renderCashPlan(snapshot);
+  for (const label of ['① EXUS｜非美发达', '② EIMI｜新兴市场', '③ USSC｜美国小盘价值', '待回款后重算', '不占本次现金预算']) assert.ok(rendered.detail.includes(label), label);
+  for (const label of ['EXUS', 'EIMI', 'USSC 待回款后重算', '非下单额度']) assert.ok(rendered.kpi.includes(label), label);
+  assert.doesNotMatch(rendered.kpi, /非美发达|新兴市场|美国小盘价值/);
+  assert.ok(rendered.kpi.split('<br>').length <= 6);
+  assert.doesNotMatch(rendered.kpi + rendered.detail, /EMMI/);
+  assert.match(rendered.detail, /比例是类别合计，非单只 ETF 目标/);
+  assert.match(rendered.detail, /EXUS＋VCN/);
+  assert.match(rendered.detail, /EIMI＋INDA/);
+  assert.deepEqual(calculateCashPlan(snapshot).allocations, [466482.25, 117809.08]);
+  assert.equal(calculateCashPlan(snapshot).plannedSpend, 584291.33);
+  assert.match(rendered.kpi, /\$466,482/);
+  assert.match(rendered.kpi, /\$117,809/);
+  const usscRow = rendered.detail.match(/<div class="kv"><span class="k">③ USSC[\s\S]*?<\/div>/)?.[0];
+  assert.ok(usscRow); assert.doesNotMatch(usscRow, /\$|\d+%/);
+  const unavailable = renderCashPlan({ schemaVersion: 1, status: 'unavailable' });
+  for (const label of ['EXUS', 'EIMI', 'USSC', '待回款后重算']) assert.ok(unavailable.detail.includes(label));
+  assert.doesNotMatch(unavailable.detail, /\$[\d,]/);
+});

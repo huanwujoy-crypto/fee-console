@@ -78,16 +78,18 @@ export function renderCashPlan(input) {
   if (plan.status === 'unavailable') return {
     template,
     kpi: '<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big">待核实</div><div class="sub">缺少已核实的持仓或现金数据，暂不列金额；不影响其他报告内容。</div></div>',
-    detail: '<section class="card" id="xuan-ib-cash-plan-detail"><h2>现金优先补仓参考</h2><p>本项数据待核实。不以零或旧数伪装新读数，不计未成交卖出回款，不生成交易指令。</p></section>',
+    detail: '<section class="card" id="xuan-ib-cash-plan-detail"><h2>现金优先补仓参考</h2><p>① EXUS｜非美发达、② EIMI｜新兴市场：金额待核实。</p><p>③ USSC｜美国小盘价值：待回款后重算，不占本次现金预算。</p><p>不以零或旧数伪装新读数，不计未成交卖出回款，不生成交易指令。</p></section>',
   };
   const [d, e] = plan.allocations;
   const remaining = plan.fundingShortfall > 0.01 ? `此情景补足两类仍需约 ${money(plan.fundingShortfall)}` : '两类参考目标可覆盖；不代表四类全部达标';
-  const kpi = `<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big num">${money(plan.plannedSpend)}</div><div class="sub">现金规划 · 非下单额度<br><b>① 非美发达 ${money(d)}</b><br><b>② 新兴市场 ${money(e)}</b><br>${remaining}<br>含跨平台资金，挂单占款待核<br>详见「配置」· 卖出回款后再算</div></div>`;
+  const compactRemaining = plan.fundingShortfall > 0.01 ? `补足两类仍需 ${money(plan.fundingShortfall)}` : '两类参考目标可覆盖';
+  const kpi = `<div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big num">${money(plan.plannedSpend)}</div><div class="sub">现金规划 · 非下单额度<br><b>EXUS ${money(d)}</b><br><b>EIMI ${money(e)}</b><br>USSC 待回款后重算<br>${compactRemaining}<br>详见「配置」</div></div>`;
   const detail = `<section class="card" id="xuan-ib-cash-plan-detail">
 <h2>现金优先补仓参考 <small>只作规划，不执行交易</small></h2>
-<p style="font-size:12px">目标按股票总额计，不含现金；全部金额为美元（USD）。按现金池扣预留款规划，不依赖持仓卖出。金额是两类完整补足方案按预算同比例缩小的情景参考，不是已核实的券商下单额度。</p>
-<div class="kv"><span class="k">① 非美发达 · EXUS 方向</span><span class="v"><b>${money(d)}</b><br>当前 ${percent(plan.currentWeights[0])} → 补后约 ${percent(plan.afterWeights[0])} / 目标 23%</span></div>
-<div class="kv"><span class="k">② 新兴市场 · EIMI 方向</span><span class="v"><b>${money(e)}</b><br>当前 ${percent(plan.currentWeights[1])} → 补后约 ${percent(plan.afterWeights[1])} / 目标 12%</span></div>
+<p style="font-size:12px">现金优先 · 金额为美元规划值，非下单额度。比例是类别合计，非单只 ETF 目标。</p>
+<div class="kv"><span class="k">① EXUS｜非美发达</span><span class="v"><b>${money(d)}</b><br>EXUS＋VCN 类别合计<br>当前 ${percent(plan.currentWeights[0])} → 补后约 ${percent(plan.afterWeights[0])} / 目标 23%</span></div>
+<div class="kv"><span class="k">② EIMI｜新兴市场</span><span class="v"><b>${money(e)}</b><br>EIMI＋INDA 类别合计<br>当前 ${percent(plan.currentWeights[1])} → 补后约 ${percent(plan.afterWeights[1])} / 目标 12%</span></div>
+<div class="kv"><span class="k">③ USSC｜美国小盘价值</span><span class="v"><b>待回款后重算</b><br>底仓调整回款为辅 · 不占本次现金预算</span></div>
 <div class="kv"><span class="k">现金规划上限 / 本次参考分配</span><span class="v">${money(plan.budget)} / ${money(plan.plannedSpend)}${plan.budgetUnused > 0.01 ? `；余款 ${money(plan.budgetUnused)} 保留` : ''}</span></div>
 <div class="kv"><span class="k">券商可立即用于本次补仓</span><span class="v"><b class="wv">待核实</b> · 未扣未核实的挂单占款；跨平台资金未假设已到账</span></div>
 <p style="font-size:12px"><b>${remaining}。</b>回款时间未确定，不假设卖出，也不预先计入预算；成交、调拨到账或价格改变后按新持仓重算。此方案只改善上述两类，不代表四类全部回到目标。</p>
@@ -96,8 +98,9 @@ export function renderCashPlan(input) {
 <li>未成交卖单不计回款；“待撤”买单不等于已经撤销，不能当作资金已释放。未核实冻结口径时不重复扣减，也不把名义挂单金额当券商实际冻结金额。</li>
 <li>规划预算＝IB ${money(input.ibCash)}＋NOAH-HK ${money(input.noahCash)}−预留 ${money(input.reserve)}。不含保证金、借款或待售资产。若实际可调动资金更少，应缩小预算重新计算。</li>
 <li>股票分母原为 ${money(input.equityTotal)}，现金买入后增加。只买这两类使二者同时达标需约 ${money(plan.fullNeed)}，其中非美发达 ${money(plan.full[0])}、新兴 ${money(plan.full[1])}。现金池覆盖约 ${plan.coverage === null ? '不适用（无需补足）' : percent(plan.coverage)}。</li>
-<li>固定股票分母的静态不足＝${money(plan.staticGaps[0] + plan.staticGaps[1])}；它不是现金买入的达标金额。预算不足时按完整补足额的比例分配；不改变现有目标，不属于新的 v9.6 授权，也不提供股数、限价或自动交易。</li>
+<li>固定股票分母的静态不足＝${money(plan.staticGaps[0] + plan.staticGaps[1])}；它不是现金买入的达标金额。目标按股票总额计，不含现金。按现金池扣预留款规划，不依赖持仓卖出；预算不足时按完整补足额的比例分配，仅为规划情景。不改变现有目标，不属于新的 v9.6 授权，也不提供股数、限价或自动交易。</li>
 <li>数据时点：${input.sourceAsOfHkt}。上述为该快照下的预算情景，不是未来成交承诺。</li>
+<li>23% 是非美发达类别（EXUS＋VCN）目标，12% 是新兴市场类别（EIMI＋INDA）目标，并非单只 ETF 目标。USSC 属美国底仓内部调整，卖出回款实际可用后另行重算；未给它分配本次现金，也未新增目标或交易指令。</li>
 </ol></div></details>
 </section>`;
   return { kpi, detail, template };

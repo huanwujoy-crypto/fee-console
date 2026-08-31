@@ -41,6 +41,16 @@ Render the module's exact kpi, detail and template once each. Put the KPI in
 the original cash-gap card, the detail first in Configuration, and the inert
 input comment in the report (canonical base64url JSON; no extra HTML template).
 Put overweight observations in closed details.
+Use code-first short labels: EXUS｜非美发达, EIMI｜新兴市场, and
+USSC｜美国小盘价值. The first two remain the only cash-funded directions.
+Show USSC alongside them as “待回款后重算”, funded secondarily by available
+proceeds from the existing US-base replacement policy, not this cash budget.
+Do not add a USSC amount, buy target, denominator or trading instruction.
+Weights and 23% / 12% targets describe the entire developed (EXUS + VCN) and
+emerging (EIMI + INDA) classes, not either individual ETF.
+Keep the small overview card concise: codes and amounts, USSC status, a short
+remaining-need line, and “详见「配置」”. Short Chinese names and category/funding
+explanations belong in Configuration; detailed methodology stays folded.
 The trusted guard checks rendered amounts against the input comment. It is
 not a substitute for source reconciliation. After initial rollout, later
 reports cannot remove the plan silently; unavailable is an explicit fallback.
@@ -72,3 +82,19 @@ edition/date/as-of and visibly disclose snapshot recalculation. It supplies no
 new AM/PM success evidence and gets no stale-date exception. Normal reports
 still require the established live reads. Validation/promotion/Pages and all
 permission boundaries stay unchanged.
+
+## Approved ticker-first presentation update (2026-08-31)
+
+The user approved code-first labels and visible secondary USSC funding, with
+all cash allocations unchanged. Run
+`node scripts/xuan-ib-cash-plan-correction.mjs --ticker-first INPUT.html`
+only on the trusted source 12922932bcc89af59c363855f12e86aa48c2c390, HTML blob
+2091098e98933e121b9fbdbbfd63771287d9e11c. The helper changes only the two
+canonical cash-plan display blocks and one notice inside report explanations.
+It reads the existing canonical inputs, preserving their exact bytes, all
+amounts/calculation results, source times, edition/date and complete receipts.
+This display-only update requires no financial reads, is not a records-update
+or a new AM/PM report, and uses the unchanged ordinary single-file Claude
+candidate, date window, validation, promotion and Pages publication path.
+If the trusted source has advanced, stop; never overwrite it with this snapshot.
+Regular reports must use the new renderer with their own verified fresh inputs.
