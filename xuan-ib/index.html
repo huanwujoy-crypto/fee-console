@@ -158,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-31.4";
+      const loaderBuild = "2026-08-31.5";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -181,6 +181,7 @@
       let progressFingerprint = null;
       let progressMessage = "落实进度正在读取…";
       let progressView = null;
+      let progressPrintState = null;
 
 // BEGIN PROGRESS VALIDATOR
 // Shared with the trusted loader; keep its marked copy byte-for-byte in sync.
@@ -282,11 +283,11 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
     if (time < lastTime || time < stamp(receipt.recordedAtHkt) || time > now + 60000) fail("事件时间倒退或在未来");
     lastTime = time;
     if (stamp(e.reviewAfterHkt) < time) fail("复核日早于记录日");
-    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "evidence_recorded"].includes(e.status)) fail("进度状态");
+    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "user_action_required", "evidence_recorded"].includes(e.status)) fail("进度状态");
     for (const k of ["title", "owner"]) text(e[k], 70);
     for (const k of ["summary", "nextAction"]) text(e[k]);
     text(e.blocker, 180, true);
-    if (["blocked", "awaiting_approval"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
+    if (["blocked", "awaiting_approval", "user_action_required"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
     if (!Array.isArray(e.evidence) || e.evidence.length > 5) fail("证据清单");
     for (const evidence of e.evidence) text(evidence);
     if (e.status === "evidence_recorded" && e.evidence.length === 0) fail("没有落实证据");
@@ -968,6 +969,8 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           .xuan-decision-fold>summary::after{display:none}
           .xuan-decision-fold>summary::-webkit-details-marker{display:none}
           .xuan-decision-fold>summary small{margin-left:auto;font-size:12px;color:var(--mut,#777)}
+          .xuan-decision-fold>summary.xuan-decision-attention{border-color:#b7791f;background:#fff3d6;color:#754600}
+          .xuan-decision-fold>summary.xuan-decision-attention small{color:inherit}
           .xuan-decision-body{width:100%;min-width:0}
           .xuan-decision-fold:not([open])>.xuan-decision-body{display:none}
           .xuan-decision-empty{margin:8px 0;color:var(--ink2,#666);font-size:13px}
@@ -975,7 +978,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           #decision:disabled{opacity:.5;cursor:default}
           #decision[hidden],#decision-count[hidden]{display:none}
           #decision-count{display:inline-block;margin-left:3px;min-width:18px;padding:1px 4px;border-radius:99px;background:#246c35;color:white;font-size:11px}
-          @media(prefers-color-scheme:dark){#decision{border-color:#4f8c5d;background:#142b19;color:#8ed09b}}
+          @media(prefers-color-scheme:dark){#decision{border-color:#4f8c5d;background:#142b19;color:#8ed09b}.xuan-decision-fold>summary.xuan-decision-attention{background:#3a2b0d;color:#ffd58a;border-color:#ca9b43}}
         `;
         doc.head.append(style);
         const row = doc.createElement("div");
@@ -984,8 +987,12 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         fold.className = "xuan-decision-fold";
         const summary = doc.createElement("summary");
         summary.textContent = "待决定事项";
+        if (pending.length) {
+          summary.className = "xuan-decision-attention";
+          summary.setAttribute("aria-label", `待决定事项，${pending.length} 项待你确认`);
+        }
         const count = doc.createElement("small");
-        count.textContent = `${pending.length} 项`;
+        count.textContent = `${pending.length ? '⚠ ' : ''}${pending.length} 项`;
         summary.append(count);
         const body = doc.createElement("div");
         body.className = "xuan-decision-body";
@@ -1020,6 +1027,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         const headings = doc.querySelectorAll('[data-decision-group-title="resolved"]');
         if (headings.length !== 1 || headings[0].tagName !== "H2") return;
         const heading = headings[0];
+        const panes = doc.querySelectorAll(".pane.p4");
+        if (panes.length !== 1 || !panes[0].contains(heading)) return;
+        const resolved = (record.decisionState?.decisions || []).filter(d => ["accepted", "modified"].includes(d.status));
         const make = (tag, text, className) => {
           const node = doc.createElement(tag);
           if (text) node.textContent = text;
@@ -1029,20 +1039,74 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         if (progressView?.doc !== doc) {
           // Never adopt or replace candidate-supplied elements by a class or
           // reserved ID. Only this private map owns enhancement nodes.
-          const collision = ["xuan-progress-style", "xuan-progress-status",
+          const collision = ["xuan-progress-style", "xuan-progress-status", "xuan-progress-fold",
+            "xuan-progress-attention", "xuan-progress-nav-attention",
             ...(record.decisionState?.decisions || []).map(d => `progress-${d.decisionId}`)]
             .some(id => doc.getElementById(id));
+          const siblings = Array.from(heading.parentElement.children);
+          const headingIndex = siblings.indexOf(heading);
+          const nextHeadingIndex = siblings.findIndex((node, index) => index > headingIndex && node.tagName === "H2");
+          const originalCards = resolved.map(d => doc.getElementById(d.decisionId));
+          const invalidCards = originalCards.some((card, index) => !card || card.tagName !== "DETAILS" ||
+            card.parentElement !== heading.parentElement || siblings.indexOf(card) <= headingIndex ||
+            (nextHeadingIndex >= 0 && siblings.indexOf(card) >= nextHeadingIndex) ||
+            doc.querySelectorAll(`[id="${resolved[index].decisionId}"]`).length !== 1 ||
+            doc.querySelectorAll(`[data-decision-id="${resolved[index].decisionId}"]`).length !== 1 ||
+            card.getAttribute("data-decision-id") !== resolved[index].decisionId ||
+            card.getAttribute("data-decision-status") !== resolved[index].status);
           const notice = make("p", "", "xuan-progress-status");
           notice.setAttribute("role", "status");
           heading.parentElement.append(notice);
-          progressView = {doc, notice, cards:new Map(), blocked:collision};
-          if (collision) {
+          progressView = {doc, notice, cards:new Map(), blocked:collision || invalidCards};
+          if (progressView.blocked) {
             notice.textContent = "报告含冲突的进度标记；为保留原文，暂不增强此版。";
             return;
           }
           notice.id = "xuan-progress-status";
+          const fold = make("details", "", "xuan-progress-fold"); fold.id = "xuan-progress-fold";
+          const summary = make("summary");
+          const title = make("span", "", "xuan-progress-title");
+          const attention = make("span", "", "xuan-progress-attention"); attention.id = "xuan-progress-attention";
+          attention.hidden = true;
+          const body = make("div", "", "xuan-progress-body");
+          heading.replaceWith(fold);
+          heading.textContent = "";
+          heading.append(title, attention);
+          summary.append(heading);
+          body.append(notice, ...originalCards);
+          fold.append(summary, body);
+          // A new report starts closed. Never set `open` during an ordinary
+          // refresh; the user's disclosure state belongs to this document.
+          Object.assign(progressView, {fold, summary, title, attention, body});
+          const navs = doc.querySelectorAll('label[for="s4"]');
+          if (navs.length === 1) {
+            const nav = navs[0];
+            const navAttention = make("span", "⚠", "xuan-progress-nav-attention");
+            navAttention.id = "xuan-progress-nav-attention"; navAttention.hidden = true;
+            navAttention.setAttribute("aria-hidden", "true");
+            nav.append(navAttention);
+            const inputs = doc.querySelectorAll('[id="s4"]');
+            const navInput = inputs.length === 1 && inputs[0].tagName === "INPUT" ? inputs[0] : null;
+            Object.assign(progressView, {nav, navAttention, navInput,
+              navOriginalLabel:nav.getAttribute("aria-label"), navInputOriginalLabel:navInput?.getAttribute("aria-label")});
+          }
           const style = make("style"); style.id = "xuan-progress-style";
           style.textContent = `
+            .xuan-progress-fold{margin:12px 0;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0}
+            .xuan-progress-fold>summary{min-height:48px;box-sizing:border-box;padding:12px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+            .xuan-progress-fold>summary::before{content:'▸';font-size:12px}
+            .xuan-progress-fold[open]>summary::before{content:'▾'}
+            .xuan-progress-fold>summary::after{display:none}
+            .xuan-progress-fold>summary::-webkit-details-marker{display:none}
+            .xuan-progress-fold>summary h2{font-size:15px;line-height:1.5;margin:0;flex:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+            .xuan-progress-title{flex:1 1 180px;min-width:0}
+            .xuan-progress-fold>summary:focus-visible{outline:2px solid #876018;outline-offset:3px;border-radius:12px}
+            .xuan-progress-body{padding:0 10px 10px;min-width:0}
+            .xuan-progress-fold:not([open])>.xuan-progress-body{display:none}
+            .xuan-progress-attention{font-size:12px;line-height:1.5;color:var(--mut,#777);overflow-wrap:anywhere}
+            .xuan-needs-user{color:#754600!important;background:#fff3d6;border:1px solid #b7791f;border-radius:8px;padding:3px 7px}
+            .xuan-progress-nav-attention{font-size:12px;line-height:1.3;color:#754600;background:#fff3d6;border:1px solid #b7791f;border-radius:50%;padding:0 3px;flex:0 0 auto}
+            .xuan-progress-attention[hidden],.xuan-progress-nav-attention[hidden]{display:none}
             .xuan-work{margin:12px 0;padding:12px;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0;overflow-wrap:anywhere}
             .xuan-work h3{font-size:16px;margin:0 0 6px;line-height:1.5}
             .xuan-work p{font-size:13px;line-height:1.6;margin:6px 0}
@@ -1051,12 +1115,14 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             .xuan-work .xuan-work-meta,.xuan-progress-status{font-size:12px;color:var(--mut,#777);line-height:1.5}
             .xuan-work-badge{display:inline-block;padding:2px 8px;border:1px solid var(--line,#999);border-radius:8px;font-size:12px;margin-bottom:4px}
             .xuan-work-fields{padding:0 10px 10px}
+            @media(prefers-color-scheme:dark){.xuan-needs-user,.xuan-progress-nav-attention{color:#ffd58a!important;background:#3a2b0d;border-color:#ca9b43}}
+            @media print{.xuan-progress-body{display:block!important}.xuan-progress-fold,.xuan-work{break-inside:auto}.xuan-progress-nav-attention{display:none!important}}
           `;
           doc.head.append(style);
         }
         if (progressView.blocked) return;
         const notice = progressView.notice;
-        notice.textContent = progressMessage;
+        notice.textContent = resolved.length ? progressMessage : "暂无需要跟进的已决定事项。";
         const events = new Map();
         if (progressLedger && progressFingerprint) {
           try {
@@ -1068,11 +1134,42 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             }
           } catch (_) { notice.textContent = "落实进度暂不可用；原决定和报告仍保留。"; }
         }
-        const resolved = (record.decisionState?.decisions || []).filter(d => ["accepted", "modified"].includes(d.status));
-        if (events.size) heading.textContent = `已决定 · 落实进度 ${resolved.length} 项`;
-        const approvals = resolved.filter(d => events.get(d.decisionId)?.status === "awaiting_approval");
-        if (approvals.length) notice.textContent += `；另有 ${approvals.length} 项后续规则待你确认（不重复原决定，详见卡片；旧证据以卡片提示为准）`;
-        const labels = {not_started:"待安排",in_progress:"处理中",blocked:"受阻 · 临时处理保留",awaiting_approval:"待你确认规则",evidence_recorded:"已有落实证据 · 持续观察"};
+        progressView.title.textContent = `已决定 · 落实进度 ${resolved.length} 项`;
+        const matchesReport = event => event?.observedPair.sourceSha === record.meta.sourceSha && event?.observedPair.htmlBlob === record.blob;
+        const currentEvents = resolved.map(d => events.get(d.decisionId)).filter(matchesReport);
+        const approvals = currentEvents.filter(e => e.status === "awaiting_approval").length;
+        const actions = currentEvents.filter(e => e.status === "user_action_required").length;
+        const needsUser = approvals + actions;
+        const attentionText = [approvals ? `待你确认 ${approvals} 项` : '', actions ? `待你处理 ${actions} 项` : ''].filter(Boolean).join(' · ');
+        const historical = resolved.some(d => events.has(d.decisionId) && !matchesReport(events.get(d.decisionId)));
+        const missing = resolved.some(d => !events.has(d.decisionId));
+        const attention = progressView.attention;
+        attention.className = "xuan-progress-attention" + (needsUser ? " xuan-needs-user" : "");
+        attention.textContent = !resolved.length ? "" : needsUser ? `⚠ ${attentionText}` : missing || !progressFingerprint ? "进度未核实" : historical ? "历史进度待复核" : "";
+        attention.hidden = !attention.textContent;
+        progressView.summary.setAttribute("aria-label", `${progressView.title.textContent}${attention.textContent ? '；'+attention.textContent : ''}`);
+        if (approvals) notice.textContent += `；另有 ${approvals} 项后续规则待你确认（不重复原决定，详见卡片）`;
+        if (actions) notice.textContent += `；另有 ${actions} 项需要你处理（不执行交易，详见卡片）`;
+        // Initial decisions and subsequent implementation requests remain
+        // separate counts. A technical blocker or stale evidence is not a
+        // new request for the user, even if its prose happens to mention Wu.
+        const pendingCount = (record.decisionState?.decisions || []).filter(d => d.status === "awaiting_user").length;
+        if (progressView.navAttention) {
+          progressView.navAttention.hidden = !(pendingCount || needsUser);
+          if (pendingCount || needsUser) {
+            const parts = [pendingCount ? `待决定 ${pendingCount} 项` : '', attentionText].filter(Boolean);
+            const navLabel = `待办：${parts.join('；')}；请选择待办查看`;
+            progressView.nav.setAttribute("aria-label", navLabel);
+            progressView.navInput?.setAttribute("aria-label", navLabel);
+            progressView.navAttention.setAttribute("title", parts.join('；'));
+          } else {
+            if (progressView.navOriginalLabel === null) progressView.nav.removeAttribute("aria-label");
+            else progressView.nav.setAttribute("aria-label", progressView.navOriginalLabel);
+            if (progressView.navInputOriginalLabel === null) progressView.navInput?.removeAttribute("aria-label");
+            else if (progressView.navInput) progressView.navInput.setAttribute("aria-label", progressView.navInputOriginalLabel);
+          }
+        }
+        const labels = {not_started:"待安排",in_progress:"处理中",blocked:"受阻 · 临时处理保留",awaiting_approval:"待你确认规则",user_action_required:"待你处理",evidence_recorded:"已有落实证据 · 持续观察"};
         for (const [index, decision] of resolved.entries()) {
           const card = doc.getElementById(decision.decisionId);
           if (!card || card.tagName !== "DETAILS" ||
@@ -1100,9 +1197,10 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const panel = make("div", "", "xuan-work-current");
           if (!event) panel.append(make("p", "当前进度未核实；请稍后刷新。原决定保留在下方。"));
           else {
-            const matched = event.observedPair.sourceSha === record.meta.sourceSha && event.observedPair.htmlBlob === record.blob;
+            const matched = matchesReport(event);
             panel.append(make("h3", `${index + 1} · ${event.title}`));
-            panel.append(make("span", matched ? labels[event.status] : "历史进度 · 本期尚未复核", "xuan-work-badge"));
+            panel.append(make("span", matched ? labels[event.status] : "历史进度 · 本期尚未复核", "xuan-work-badge" +
+              (matched && ["awaiting_approval", "user_action_required"].includes(event.status) ? " xuan-needs-user" : "")));
             panel.append(make("p", event.summary));
             const details = make("details");
             if (old?.querySelector("details")?.hasAttribute("open")) details.setAttribute("open", "");
@@ -1121,6 +1219,20 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           owned.key = key; owned.panel = panel;
         }
       }
+
+      // Native closed details are opened only for printing, then restored.
+      // The report and receipt bytes remain untouched, and normal refreshes
+      // never expand disclosures on the user's behalf.
+      window.addEventListener("beforeprint", () => {
+        if (!progressView?.fold || progressView.doc !== renderedDocument || progressPrintState) return;
+        const nodes = [progressView.fold, ...progressView.fold.querySelectorAll("details")];
+        progressPrintState = nodes.map(node => [node, node.hasAttribute("open")]);
+        for (const [node] of progressPrintState) node.setAttribute("open", "");
+      });
+      window.addEventListener("afterprint", () => {
+        for (const [node, wasOpen] of progressPrintState || []) if (!wasOpen) node.removeAttribute("open");
+        progressPrintState = null;
+      });
 
       async function refreshProgress(record, request) {
         if (!record.decisionState?.decisions.some(d => ["accepted", "modified"].includes(d.status))) return;

@@ -19,6 +19,16 @@ test('all three original decisions stay accepted; progress is separate', () => {
   assert.equal(state.decisions.filter(d=>d.status==='accepted').length,3);
   assert.equal(new Set(validateProgress(copy(ledger),state,null,now).events.map(e=>e.decisionId)).size,3);
 });
+test('user-only implementation requests require an explicit state and an actionable blocker', () => {
+  const d=copy(ledger);d.revision++;
+  d.events.push({...copy(d.events[0]),eventId:'P-USER-ACTION',recordedAtHkt:followup,
+    status:'user_action_required',owner:'Wu',blocker:'需要本人核对原始资料',nextAction:'请提供缺少的资料日期'});
+  validateProgress(d,state,ledger,now);
+  d.events.at(-1).blocker='';
+  assert.throws(()=>validateProgress(d,state,ledger,now),/缺少阻碍说明/);
+  d.events.at(-1).blocker='需要本人核对原始资料';d.events.at(-1).nextAction='';
+  assert.throws(()=>validateProgress(d,state,ledger,now));
+});
 test('GOOG scope confirmation is a new event, not a rewritten opinion or a completed financial report', () => {
   const prior=ledger.events.find(e=>e.eventId==='P-20260831-2');
   const confirmation=ledger.events.find(e=>e.eventId==='P-20260831-5');
