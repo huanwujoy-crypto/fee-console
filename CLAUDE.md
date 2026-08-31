@@ -99,3 +99,11 @@ The progress ledger is append-only and changes only through a separately
 approved maintenance PR. Report candidates must not write it. Never infer a
 classification gap as Semi Liquid count minus override count: portfolio-wide
 rules also apply. Never silently change GOOG account scope or risk thresholds.
+
+The user confirmed GOOG/GOOGL three-account observation (IB, Schwab, Webull)
+on 2026-08-31. Apply the two-view contract in the progress document on the next
+normal report: three-account observation plus the existing IB execution view.
+Keep existing direct-holding numerators, cash-inclusive denominators and all
+thresholds; do not infer a new trading trigger, ETF look-through or transfer.
+Do not ask for this same scope confirmation again. A recorded rule is not proof
+that a new financial report has been generated or verified.

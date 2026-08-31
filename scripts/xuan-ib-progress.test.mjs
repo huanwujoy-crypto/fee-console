@@ -19,6 +19,21 @@ test('all three original decisions stay accepted; progress is separate', () => {
   assert.equal(state.decisions.filter(d=>d.status==='accepted').length,3);
   assert.equal(new Set(validateProgress(copy(ledger),state,null,now).events.map(e=>e.decisionId)).size,3);
 });
+test('GOOG scope confirmation is a new event, not a rewritten opinion or a completed financial report', () => {
+  const prior=ledger.events.find(e=>e.eventId==='P-20260831-2');
+  const confirmation=ledger.events.find(e=>e.eventId==='P-20260831-5');
+  assert.equal(prior.status,'awaiting_approval');
+  assert.equal(confirmation.status,'in_progress');
+  for (const field of ['decisionId','receiptId','responseToSourceSha','responseToHtmlBlob'])
+    assert.equal(confirmation[field],prior[field]);
+  assert.ok(Date.parse(confirmation.recordedAtHkt)>Date.parse(prior.recordedAtHkt));
+  assert.match(confirmation.summary,/IB、Schwab、Webull 三账户合并观察/);
+  assert.match(confirmation.summary,/现有阈值不变/);
+  assert.match(confirmation.nextAction,/未重新取数或生成新报告/);
+  const spec=fs.readFileSync(new URL('../claude/xuan-ib-implementation-progress-v1.md',import.meta.url),'utf8');
+  assert.match(spec,/IB NAV＋NOAH-HK 现金/);
+  assert.match(spec,/不做等美元阈值换算/);
+});
 for (const [name, mutate] of [
   ['unknown fields', d=>d.extra=true],
   ['duplicate events', d=>d.events.push(copy(d.events[0]))],
