@@ -140,7 +140,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody">
 <ol>
 <li><b>本次为 08-31（周一）睡前版 · PM</b>（HKT 20:55 定时版；main 上可信 <code>latest.meta.json</code> 数据日为 08-31，上一份为同日 16:48–16:55 HKT 临时版）。IB NAV <b>$5,024,930</b>（较 08-31 16:48–16:55 HKT 临时版 $5,033,559 变动 -$8,629，仍为美股盘前现场读数、非正式收盘价）；现金池 $824,292；7 个 Sharesight 家庭组合合计 $31,408,864（含本次 IB 权威 NAV）；GTC 挂单 12 张、DAYS_7 内成交（MSFT 卖 90 股、EIMI 买 100 股）与上一版逐项一致，本次会话未执行任何交易。<b>四桶 / 三层流动性继续沿用 2026-08-24 周一 verified snapshot</b>（mapping 本次已重新核对未变，原因见「报告说明」第 2 项）。</li>
-<li><b>AI 压力中情景 22.41%</b>（$1,376,293 / $6,141,014，逐票按 IB 现场报价与 Sharesight 现读重算），距 25% 预警线 <b>$158,961 / 2.59 个百分点</b>，fail-closed <b>PASS</b>，结论与上一版一致（提醒区间，未越警）。Webull BRK.B 仍为已平仓状态、MRVL $21,662 仍因 §0-A 规则不可得不计入分子（详见 ⑤，决定沿用 <code>accepted</code>）。</li>
+<li><b>AI 压力中情景 22.69%</b>（$1,393,623 / $6,141,014，原快照表内输入未舍入汇总），距 25% 预警线 <b>$141,630 / 2.31 个百分点</b>，fail-closed <b>PASS</b>，仍在提醒区间。MRVL $21,662 已按用户批准标准 T1 纳入；仅更新原快照风险口径，未重新取数，不代表新的定时运行。</li>
 <li><b>需当晚/近端处理挂单：无</b>；GTC 12 张与上一版完全一致（无新增、无成交、无撤单）。距市价最近的是 EXUS 买 100@46.90（-0.39%，节奏单，持续观察）与 META 卖 150@590（+1.92%，提示带内）；待撤 4 张（名义合计 $150,520）仍待 Wu 在 TWS 端执行。家庭主视图单票集中度：<b>BRK.B 4.93%（线内）</b>；<b>GOOG/GOOGL 三账户合计 5.48%（仍越 5% 参考线，超额 $29,778，双视图已确认见 ⑤ 沿用记录）</b>。</li>
 </ol>
 </div></details>
@@ -242,21 +242,21 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="kv"><span class="k">股息应计</span><span class="v">$260.57 · 杠杆 0（initial / maintenance margin 均为 0）</span></div>
 </div>
 
-<details><summary>AI 压力敞口 · §0-C（三账户 · 沿用 v9.11 系数）
-<span class="rt wv">中 22.41% · 提醒区间 · fail-closed PASS</span></summary>
+<details><summary>AI 压力敞口 · §0-C（三账户 · MRVL 已批准标准 T1）
+<span class="rt wv">中 22.69% · 提醒区间 · fail-closed PASS</span></summary>
 <div class="dbody">
 <div class="kv"><span class="k">fail-closed 校验</span><span class="v"><span class="gv">PASS</span> —— 分子账户集合 = 分母账户集合 = {936247 IB-HK, 936249 Schwab-HK, 1350094 Webull}</span></div>
 <div class="kv"><span class="k">数据截止时点</span><span class="v">2026-08-31 20:55–20:58 HKT；三账户本次分别经 IB 直读（IB-HK）与 Sharesight 只读（Schwab-HK / Webull）；美股尚未开盘，报价为现场最新可得值</span></div>
 <div class="kv"><span class="k">分母（三账户总市值含现金）</span><span class="v"><b>$6,141,014</b> = IB 5,024,930 + Schwab 609,041 + Webull 507,043</span></div>
-<div class="kv"><span class="k">系数来源</span><span class="v">逐票 T1/T2/T3 与 ETF 穿透权重<b>沿用上一版已采用的分类</b>，未发明新系数；ETF holdings as-of 日期同前次披露</span></div>
+<div class="kv"><span class="k">系数来源</span><span class="v">MRVL 按用户新批准标准 <b>T1：60% / 80% / 100%</b>；其余逐票分类与 ETF 穿透权重沿用，ETF holdings as-of 日期不变。普通资产类别按 §0-A，AI 压力 tier 按独立 §0-C，不混为一谈</span></div>
 
-<details><summary>中情景主读数 <span class="rt">$1,376,293 / 22.41% —— 展开看计算组成</span></summary>
+<details><summary>中情景主读数 <span class="rt">$1,393,623 / 22.69% —— 展开看计算组成</span></summary>
 <div class="dbody">
-<p style="font-size:12px;margin:4px 0 8px">算法沿用上一版：每笔持仓市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），ETF 按沿用权重逐笔求和 ÷ 分母；市值改用本次 IB / Sharesight 现场读数，系数逐票沿用不变。系数 = 压力情景下预期损失比例，不是「AI 相关度」。</p>
+<p style="font-size:12px;margin:4px 0 8px">每笔原快照表内市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），先按未舍入结果汇总，再除以原分母；仅 MRVL 新纳入 T1，其余系数及市值不变。系数是压力情景损失比例，不是「AI 相关度」。各行与账户小计独立四舍五入到美元，显示项相加与合计可差 $1；合计不使用已舍入行值。</p>
 <div class="tblwrap"><table>
 <thead><tr><th>标的</th><th>市值 $</th><th>×系数</th><th>计入 $</th></tr></thead>
 <tbody>
-<tr class="sec"><td>IB-HK 936247<span class="sub">分子小计 1,118,483</span></td><td>5,024,930</td><td>—</td><td>1,118,483</td></tr>
+<tr class="sec"><td>IB-HK 936247<span class="sub">分子小计 1,118,484</span></td><td>5,024,930</td><td>—</td><td>1,118,484</td></tr>
 <tr><td><span class="sym">MXUS</span><span class="sub">ETF 穿透沿用 25.03%</span></td><td>1,120,091</td><td>25.03%</td><td>280,359</td></tr>
 <tr><td><span class="sym">CSPX</span><span class="sub">ETF 穿透沿用 25.79%</span></td><td>510,491</td><td>25.79%</td><td>131,656</td></tr>
 <tr><td><span class="sym">EQAC</span><span class="sub">ETF 穿透沿用 41.07%</span></td><td>482,304</td><td>41.07%</td><td>198,082</td></tr>
@@ -275,7 +275,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <tr><td><span class="sym">AMD</span><span class="sub">T1</span></td><td>46,410</td><td>80.00%</td><td>37,128</td></tr>
 <tr><td><span class="sym">ORCL</span><span class="sub">T2</span></td><td>29,920</td><td>55.00%</td><td>16,456</td></tr>
 <tr><td><span class="sym">USSC</span><span class="sub">T3</span></td><td>15,216</td><td>5.00%</td><td>761</td></tr>
-<tr><td><span class="sym">MSFT</span><span class="sub">T2</span></td><td>5,092</td><td>55.00%</td><td>2,800</td></tr>
+<tr><td><span class="sym">MSFT</span><span class="sub">T2</span></td><td>5,092</td><td>55.00%</td><td>2,801</td></tr>
 <tr class="sec"><td>Schwab-HK 936249<span class="sub">分子小计 201,688</span></td><td>609,041</td><td>—</td><td>201,688</td></tr>
 <tr><td><span class="sym">META</span><span class="sub">T2</span></td><td>138,725</td><td>55.00%</td><td>76,299</td></tr>
 <tr><td><span class="sym">GOOGL</span><span class="sub">T2</span></td><td>104,670</td><td>55.00%</td><td>57,569</td></tr>
@@ -284,30 +284,30 @@ details .dbody{padding-left:7px;padding-right:7px}
 <tr><td><span class="sym">TSEM</span><span class="sub">特例沿用归 T2</span></td><td>20,801</td><td>55.00%</td><td>11,441</td></tr>
 <tr><td><span class="sym">BRK.B</span><span class="sub">T3</span></td><td>75,750</td><td>5.00%</td><td>3,788</td></tr>
 <tr><td><span class="sym">TSLA</span><span class="sub">T3</span></td><td>5,929</td><td>5.00%</td><td>296</td></tr>
-<tr class="sec"><td>Webull 1350094<span class="sub">分子小计 56,122（不含 MRVL）</span></td><td>507,043</td><td>—</td><td>56,122</td></tr>
+<tr class="sec"><td>Webull 1350094<span class="sub">分子小计 73,452</span></td><td>507,043</td><td>—</td><td>73,452</td></tr>
 <tr><td><span class="sym">GOOG</span><span class="sub">T2</span></td><td>89,149</td><td>55.00%</td><td>49,032</td></tr>
 <tr><td><span class="sym">IREN</span><span class="sub">特例沿用中情景 100%</span></td><td>7,090</td><td>100.00%</td><td>7,090</td></tr>
-<tr><td><span class="sym">MRVL</span><span class="sub"><b>§0-A 未核实，不计入分子</b>（若按 T1 80% 估算 +$17,330）</span></td><td>21,662</td><td>—</td><td>0</td></tr>
-<tr class="tot"><td>分子合计</td><td>—</td><td>—</td><td>1,376,293</td></tr>
+<tr><td><span class="sym">MRVL</span><span class="sub"><b>用户已批准标准 T1</b> · 低 / 中 / 高 60% / 80% / 100%</span></td><td>21,662</td><td>80.00%</td><td>17,330</td></tr>
+<tr class="tot"><td>分子合计</td><td>—</td><td>—</td><td>1,393,623</td></tr>
 <tr class="tot"><td>÷ 分母（三账户含现金）</td><td>6,141,014</td><td>—</td><td>—</td></tr>
-<tr class="tot"><td>= 中情景占比</td><td>—</td><td>—</td><td>22.41%</td></tr>
+<tr class="tot"><td>= 中情景占比</td><td>—</td><td>—</td><td>22.69%</td></tr>
 </tbody></table></div>
 <p style="font-size:12px;margin:8px 0 3px"><b>不进分子（但全部计入分母）：</b></p>
 <ul>
 <li><b>MSTR $100,061 判「不适用」</b> —— 风险因子是 BTC 不是 AI capex；不进分子，也不算作 0%。</li>
-<li><b>Webull MRVL $21,662</b> —— §0-A 分类规则本次仍未能核实，比照 MSTR 处理方式不进分子（详见 ⑤）。</li>
 <li>主题非股票：GLD $122,079 · SLV $19,290 · HODL $8,748。</li>
 <li>防御与现金类：VGIT $139,704 · VGSH $87,097 · TLT $57,694 · IB 现金 $466,323 · Schwab SGOV 184,351 + 现金 19,143 · Webull SGOV 37,759 + 现金 351,384。</li>
 </ul>
-<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景</b> = 沿用上一版低/中、高/中比例（0.7005 / 1.292）近似换算，未逐票重算三档系数：低 ≈$964,094 / <b>15.70%</b>；高 ≈$1,778,171 / <b>28.96%</b>。</p>
+<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景（近似，非完整逐票三档重算）</b>：保留原组合近似基数 $964,094 / $1,778,171，分别加 MRVL 精确增量 $12,997.20 / $21,662.00；低 ≈$977,091 / <b>15.91%</b>；高 ≈$1,799,833 / <b>29.31%</b>。原组合基数仍为比例近似，不可据此精确判断高情景是否越过警戒线；下列 20% / 25% / 30% 比较均采用中情景。</p>
 </div></details>
 
-<div class="kv"><span class="k">三级状态</span><span class="v"><b class="wv">提醒区间</b>（已越 20% 提醒线，+2.41 个百分点）</span></div>
-<div class="kv"><span class="k">距 25% 预警线</span><span class="v"><b>$158,961 / 2.59 个百分点</b></span></div>
-<div class="kv"><span class="k">距 30% 最高警报线</span><span class="v">$466,011 / 7.59 个百分点</span></div>
-<div class="kv"><span class="k">分账户分子（中）</span><span class="v">IB 1,118,483 · Schwab 201,688 · Webull 56,122（不含 MRVL）</span></div>
-<div class="kv"><span class="k">分类敏感度</span><span class="v">MRVL 若计入(T1 80%) → 22.69% ⇒ 日常表述「<b>约 22.4%–22.7%</b>」</span></div>
-<div class="kv"><span class="k">对照</span><span class="v">08-31 16:48–16:55 HKT 临时版 22.39% → 本期 08-31 20:55–20:58 HKT 睡前版 <b>22.41%</b>（小幅上行，仍属盘前现场报价正常噪音）</span></div>
+<div class="kv"><span class="k">三级状态（中情景）</span><span class="v"><b class="wv">提醒区间</b>（已越 20% 提醒线，+$165,421 / +2.69 个百分点）</span></div>
+<div class="kv"><span class="k">距 25% 预警线（中情景）</span><span class="v"><b>$141,630 / 2.31 个百分点</b></span></div>
+<div class="kv"><span class="k">距 30% 最高警报线（中情景）</span><span class="v">$448,681 / 7.31 个百分点</span></div>
+<div class="kv"><span class="k">分账户分子（中）</span><span class="v">IB 1,118,484 · Schwab 201,688 · Webull 73,452（含 MRVL）</span></div>
+<div class="kv"><span class="k">MRVL 已批准计入</span><span class="v">$21,662 × 80% = $17,329.60（显示 $17,330）；不再使用未分类排除或敏感度区间作为主读数</span></div>
+<div class="kv"><span class="k">同快照口径对照</span><span class="v">旧口径中情景 22.41% → 纳入已批准 MRVL 后 <b>22.69%</b>；变化来自风险口径及汇总精度修正，不是新的市场涨跌或重新取数</span></div>
+<details id="xuan-ib-mrvl-t1-snapshot-update"><summary>本次风险口径更新 <span class="rt">原快照 · 未重新取数</span></summary><div class="dbody"><p>本次仅按用户新批准的 MRVL 标准 T1（60% / 80% / 100%）更新旧 2026-08-31 20:55–20:58 HKT 快照的风险口径，未重新取数；原日期、睡前版别、持仓、现金规划与 3 条原始意见回执不变，不证明新的 AM / PM 定时运行成功。</p></div></details>
 <div class="kv"><span class="k">性质</span><span class="v">T1/T2/T3 仅作监控，<b>不是交易指令</b>；不产生买卖建议、不含时点判断、不触发自动执行</span></div>
 </div></details>
 
@@ -412,12 +412,12 @@ details .dbody{padding-left:7px;padding-right:7px}
 <!-- xuan-ib-decision-group:v1:awaiting_user:start --><h2 data-decision-group-title="awaiting_user">⑤ 待决定事项 <small>0 项待 Wu 裁决</small></h2><!-- xuan-ib-decision-group:v1:awaiting_user:end -->
 <p style="font-size:12px;color:var(--ink2);margin:2px 0 8px">当前为只读清单；请在 Claude App 中引用事项编号回复。</p>
 <!-- xuan-ib-decision-group:v1:resolved:start --><h2 data-decision-group-title="resolved">已决定 / 待落实 <small>3 项 · 只记录意见，不执行交易</small></h2>
-<details class="dcard" id="D-20260829-MRVL-CLASS" data-decision-id="D-20260829-MRVL-CLASS" data-decision-status="accepted"><summary>1 · Webull MRVL $21,662 属 §0-A 未分类新标的
-<span class="rt wv">建议 (B) 不计入分子并披露 · 已决定 / 待落实</span></summary>
+<details class="dcard" id="D-20260829-MRVL-CLASS" data-decision-id="D-20260829-MRVL-CLASS" data-decision-status="accepted"><summary>1 · Webull MRVL 标准 T1 风险口径已落实
+<span class="rt gv">用户已批准 60% / 80% / 100% · 只调整风险测算</span></summary>
 <div class="dbody">
-<p style="margin:5px 0"><b class="lab">事实/选项：</b>本次（2026-08-31 16:48–16:55 HKT）重新读取 Webull 持仓，MRVL 仍在（数量 100、市值 $21,662，与上一版一致），§0-A 新标的分类规则本次会话仍未能核实（本仓库检索未命中相关分类文件）。选项与此前版本相同：(A) 参照同为半导体的 SMH/AVGO 按 T1 80% 计入；(B) 保持不计入分子、比照 MSTR 处理并披露；(C) 停发整份报告直至规则可核实。</p>
-<p style="margin:5px 0"><b class="lab">Claude 意见：</b>沿用此前意见，倾向 <b>(B) 不计入分子并披露</b>——理由不变：§0-A 规则文本仍不可得；MRVL 占分母仅 0.35%，若按最高 T1 80% 计入主读数仅升至约 22.68%，仍在 25% 预警线以下，不影响 fail-closed 结论；(C) 代价过高，不构成停发理由。</p>
-<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用，本次仅重新确认事实不变）· 编号 <code>D-20260829-MRVL-CLASS</code></p>
+<p style="margin:5px 0"><b class="lab">事实：</b>普通资产分类「Highly Liquid / 美国科技」与 §0-C AI 压力 tier 是两项规则。现按用户新批准的标准 T1，以原报告 MRVL 市值 $21,662 计入低 / 中 / 高 $12,997.20 / $17,329.60 / $21,662.00，未改变持仓或重新取数。</p>
+<p style="margin:5px 0"><b class="lab">落实：</b>本期中情景已纳入 MRVL，并使用未舍入逐票贡献汇总；低 / 高仅增加 MRVL 精确增量，原组合基数仍为近似。未来同一持仓使用已批准 T1 规则和当期核实市值，不复用本期金额。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 本期风险计算已更新</b>（<code>accepted</code> 为原回执历史状态，原文保留；不是买卖或转账授权）· 编号 <code>D-20260829-MRVL-CLASS</code> · 新口径批准记录 <code>WU-20260831-MRVL-T1</code></p>
 </div></details>
 
 <details class="dcard" id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-status="accepted"><summary>2 · GOOG/GOOGL 家庭主视图 5.48% 越 5% 参考线
@@ -496,7 +496,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody">
 <ol>
 <li><b>版次与时点。</b>版别：<b>睡前版 · PM</b>（HKT 周一至周五 20:55 定时版）。启动 / 取数时点：<b>2026-08-31 12:55–12:58 UTC（周一 20:55–20:58 HKT）</b>。数据日：<b>2026-08-31</b>。美股（NYSE/NASDAQ）与 TSE（VCN）尚未开盘（现场为盘前时段，常规交易时段约 21:30 HKT 开始），IB 现场报价可能反映盘前极稀薄成交或延续上一交易日 08-28 收盘，非 08-31 正式收盘价；LSE/SWX/EBS 挂牌品种已处于当地正常交易时段。08-31 官方收盘数据要在美股收盘后（约 09-01 05:00 HKT 前后）才可获得。上一份为同日 16:48–16:55 HKT 临时版；main 上可信 <code>latest.meta.json</code> 数据日为 08-31。</li>
-<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）；本次逐票按 IB / Sharesight 现场读数重算，未使用缓存替代实读。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24）；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」。四桶比例、三层流动性及依赖归桶的金额不变。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重逐票沿用（未发明新系数）· 四类清单 v9.6 · USSC 基数 v9.8 · 四类分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，未新增任何交易触发。MRVL 待决定事项沿用未决（§0-A 规则本次仍未核实）。FX 参考 CAD/USD 0.71947（IB Base）。</li>
+<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读）· Sharesight User API（只读）；本次逐票按 IB / Sharesight 现场读数重算，未使用缓存替代实读。<b>本次降级 / 回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24）；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」。四桶比例、三层流动性及依赖归桶的金额不变。<b>计算口径</b>：AI 压力除 MRVL 按新批准标准 T1 60% / 80% / 100% 纳入外，其余 T1/T2/T3 阶梯与 ETF 穿透权重沿用；中情景按原快照表内输入未舍入汇总，低 / 高仅为原组合近似基数加 MRVL 增量· 四类清单 v9.6 · USSC 基数 v9.8 · 四类分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，未新增任何交易触发。MRVL 普通资产分类与 §0-C AI 压力分类分开；本次按用户新批准标准 T1 纳入风险测算，原 3 条回执保持历史原文，不代表交易授权。FX 参考 CAD/USD 0.71947（IB Base）。</li>
 <li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本期未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本睡前版通过既有候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接；本次为 08-31 周一 20:55 HKT 定时 PM 版。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项）。</li>
 </ol>
 <section id="xuan-ib-classification-disclosure-v1">
