@@ -31,6 +31,12 @@ const uiPrCheck = fs.readFileSync(new URL('../.github/workflows/ui-pr-check.yml'
 const policyLock = fs.readFileSync(new URL('../.github/workflows/xuan-ib-policy-lock.yml', import.meta.url), 'utf8');
 const metadata = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
 
+test('promotion commits the derived decision menu with its paired report and metadata', () => {
+  assert.match(promotion, /xuan-ib-decision-menu\.mjs publish-manifest/);
+  assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json xuan-ib\/latest\.decisions\.json/);
+  assert.match(policyLock, /xuan-ib-decision-menu\|build-xuan-decision-shortcut/);
+});
+
 const inlineScript = loader.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 assert.ok(inlineScript, 'the phone loader must contain one executable inline script');
 
@@ -424,7 +430,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-31\.1"/);
+  assert.match(loader, /loaderBuild = "2026-08-31\.2"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -968,7 +974,7 @@ test('decision launch synchronously snapshots the verified report before opening
   assert.equal(wait.baselines[0].sourceSha, meta.sourceSha);
   assert.equal(wait.baselines[0].htmlBlob, meta.htmlBlob);
   assert.deepEqual(wait.baselines[0].awaitingDecisionIds, ['D-20260830-TEST-ITEM']);
-  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.match(app.status.textContent, /^请在手机菜单中选择；提交后等待回应回执/);
   assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
 });
 
@@ -1029,7 +1035,7 @@ test('A to B to C completes only when C carries a new target receipt bound to ve
   const poll = app.intervals.find(({delay}) => delay === 15_000);
   await poll.callback();
   assert.match(app.frame.srcdoc, /ordinary-newer-publication/);
-  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.match(app.status.textContent, /^请在手机菜单中选择；提交后等待回应回执/);
   assert.ok(app.stored.has('xuan-ib:decision-wait:v1'));
   const waitAfterB = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
   assert.equal(waitAfterB.baselines.length, 2);
@@ -1168,12 +1174,12 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
   };
   const poll = app.intervals.find(({delay}) => delay === 15_000);
   await poll.callback();
-  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.match(app.status.textContent, /^请在手机菜单中选择；提交后等待回应回执/);
   assert.ok(app.stored.has('xuan-ib:decision-wait:v1'));
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.2');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1237,7 +1243,7 @@ test('receipts for non-initial decisions or genuinely pre-click times stay pendi
   };
   const poll = app.intervals.find(({delay}) => delay === 15_000);
   await poll.callback();
-  assert.match(app.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.match(app.status.textContent, /^请在手机菜单中选择；提交后等待回应回执/);
   const wait = JSON.parse(app.stored.get('xuan-ib:decision-wait:v1'));
   assert.deepEqual(wait.awaitingDecisionIds, ['D-20260830-TEST-ITEM']);
   assert.equal(wait.baselines.length, 2);
@@ -1290,10 +1296,10 @@ test('decision pending survives reload and refresh triggers without treating its
   assert.ok(stored.has('xuan-ib:decision-wait:v1'));
 
   const reloaded = loaderHarness({fetchImpl, stored});
-  assert.match(reloaded.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.match(reloaded.status.textContent, /^请在手机菜单中选择；提交后等待回应回执/);
   await reloaded.listeners.window.pageshow({persisted: true});
   assert.match(reloaded.frame.srcdoc, /xuan-ib-decision-state-v1/);
-  assert.match(reloaded.status.textContent, /^已进入 Claude，请在 App 内完成选择/);
+  assert.match(reloaded.status.textContent, /^请在手机菜单中选择；提交后等待回应回执/);
   assert.ok(stored.has('xuan-ib:decision-wait:v1'));
 
   const beforeFocus = requestCount;
