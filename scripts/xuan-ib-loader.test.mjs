@@ -1850,7 +1850,7 @@ test('the UI check delegates XUAN-IB publication locking to the single base-cont
 
 test('a base-controlled policy lock protects the publication code itself', () => {
   assert.match(policyLock, /pull_request_target/);
-  assert.match(policyLock, /name: xuan-ib-policy-lock/);
+  assert.match(policyLock, /'xuan-ib-policy-lock'/);
   assert.match(policyLock, /workflows\//);
   assert.match(policyLock, /handover-guard/);
   assert.match(policyLock, /xuan-ib\//);
@@ -1866,6 +1866,8 @@ test('a base-controlled policy lock protects the publication code itself', () =>
 });
 
 test('draft pull requests stay quiet until ready, then every blocking check runs', () => {
+  assert.match(policyLock, /name: \$\{\{ github\.event\.pull_request\.draft && 'xuan-ib-policy-lock-draft-notice' \|\| 'xuan-ib-policy-lock' \}\}/);
+  assert.match(scriptsCheck, /name: \$\{\{ github\.event\.pull_request\.draft && 'scripts-check-draft-notice' \|\| 'scripts-check' \}\}/);
   assert.match(policyLock, /Explain deferred enforcement for draft pull requests[\s\S]*draft == true/);
   assert.match(policyLock, /Refuse pull requests that alter the trusted publication boundary[\s\S]*draft == false/);
   assert.match(policyLock, /ready_for_review/);

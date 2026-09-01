@@ -17,7 +17,10 @@ permissions:
 
 jobs:
   policy-lock:
-    name: xuan-ib-policy-lock
+    # Draft notices deliberately use a non-required context name. Otherwise a
+    # green draft notice could briefly satisfy the required publication lock
+    # while the same SHA is being moved to Ready for review.
+    name: ${{ github.event.pull_request.draft && 'xuan-ib-policy-lock-draft-notice' || 'xuan-ib-policy-lock' }}
     runs-on: ubuntu-latest
     steps:
       - name: Explain deferred enforcement for draft pull requests

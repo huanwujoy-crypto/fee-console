@@ -18,7 +18,9 @@ permissions:
 
 jobs:
   scripts-check:
-    name: scripts-check
+    # Keep the draft notice separate from the required scripts-check context.
+    # The required name appears only when full validation is actually running.
+    name: ${{ github.event.pull_request.draft && 'scripts-check-draft-notice' || 'scripts-check' }}
     runs-on: ubuntu-latest
     steps:
       - name: Explain deferred validation for draft pull requests
