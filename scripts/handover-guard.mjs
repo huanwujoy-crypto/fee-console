@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
+import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 
 const [file, expectedDate, previousFile] = process.argv.slice(2);
 
@@ -30,6 +33,99 @@ try {
 const bytes = Buffer.byteLength(html);
 if (bytes < 1_000 || bytes >= 2_000_000) {
   fail('file size is outside the approved range');
+}
+
+const policyJsonFile = process.env.XUAN_IB_POLICY_V2_JSON
+  || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../claude/xuan-ib-policy-v2.json');
+const policyIdAttributeCount = (html.match(/\bid\s*=\s*(["'])xuan-ib-policy-v2\1/gi) || []).length
+  + (html.match(/\bid\s*=\s*xuan-ib-policy-v2(?=[\s>])/gi) || []).length;
+const policyMarkerCount = (html.match(new RegExp(`<!--\\s*${POLICY_ID}:[0-9a-f]{64}\\s*-->`, 'gi')) || []).length;
+
+const blankMatch = (match) => ' '.repeat(match.length);
+const structuralHtml = html
+  .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, blankMatch)
+  .replace(/<template\b[^>]*>[\s\S]*?<\/template\s*>/gi, blankMatch)
+  .replace(/<!--[\s\S]*?-->/g, blankMatch);
+const policySectionOpeningCount = (structuralHtml.match(/<section\b[^>]*\bid\s*=\s*(["'])xuan-ib-policy-v2\1[^>]*>/gi) || []).length;
+
+const classTokens = (tag) => {
+  const match = tag.match(/\bclass\s*=\s*(["'])(.*?)\1/i);
+  return match ? match[2].split(/\s+/).filter(Boolean) : [];
+};
+
+const elementRange = (source, tagName, opening) => {
+  const tags = new RegExp(`<\\/?${tagName}\\b[^>]*>`, 'gi');
+  tags.lastIndex = opening.index;
+  let depth = 0;
+  let tag;
+  while ((tag = tags.exec(source)) !== null) {
+    if (tag.index === opening.index && /^<\//.test(tag[0])) return null;
+    depth += /^<\//.test(tag[0]) ? -1 : 1;
+    if (depth === 0) {
+      return {
+        start: opening.index,
+        openEnd: opening.index + opening[0].length,
+        closeStart: tag.index,
+        end: tags.lastIndex,
+      };
+    }
+  }
+  return null;
+};
+
+const paneRanges = (paneClass) => [...structuralHtml.matchAll(/<div\b[^>]*>/gi)]
+  .filter((opening) => {
+    const tokens = classTokens(opening[0]);
+    return tokens.includes('pane') && tokens.includes(paneClass);
+  })
+  .map((opening) => elementRange(structuralHtml, 'div', opening))
+  .filter(Boolean);
+
+// Stage 2 is deliberately optional-if-present: an ordinary report may omit the
+// approved policy module until production rollout is proven. Once a candidate
+// claims the reserved section ID or marker, however, the complete section must
+// be the exact deterministic rendering of the policy stored on trusted main.
+// This excludes copied live values, stale amounts, scripts and partial edits.
+if (policyIdAttributeCount > 0 || policyMarkerCount > 0) {
+  let canonicalPolicySection;
+  try {
+    canonicalPolicySection = renderPolicySection(JSON.parse(fs.readFileSync(policyJsonFile, 'utf8')));
+  } catch (error) {
+    fail(`could not load the trusted policy-v2 contract: ${error.message}`);
+  }
+  const canonicalCount = html.split(canonicalPolicySection).length - 1;
+  if (policyIdAttributeCount !== 1 || policySectionOpeningCount !== 1 || policyMarkerCount !== 1) {
+    fail('policy-v2 section ID and marker must each be unique');
+  }
+  if (canonicalCount !== 1) {
+    fail('policy-v2 section bytes must equal the trusted deterministic rendering');
+  }
+  const canonicalStart = html.indexOf(canonicalPolicySection);
+  const canonicalEnd = canonicalStart + canonicalPolicySection.length;
+  if (!structuralHtml.startsWith('<section id="xuan-ib-policy-v2"', canonicalStart)) {
+    fail('policy-v2 section must be visible report markup');
+  }
+  const configPanes = paneRanges('p3');
+  const todoPanes = paneRanges('p4');
+  if (configPanes.length !== 1 || todoPanes.length !== 1) {
+    fail('policy-v2 requires unique configuration and todo panes');
+  }
+  const configPane = configPanes[0];
+  const todoPane = todoPanes[0];
+  if (!(configPane.openEnd <= canonicalStart && canonicalEnd <= configPane.closeStart
+      && configPane.closeStart < todoPane.start)) {
+    fail('policy-v2 section must be inside the configuration pane before the todo pane');
+  }
+  const configStructural = structuralHtml.slice(configPane.openEnd, configPane.closeStart);
+  const cashPlanLocalIndex = configStructural.search(/\bid\s*=\s*(["'])xuan-ib-cash-plan-detail\1/i);
+  if (cashPlanLocalIndex >= 0 && configPane.openEnd + cashPlanLocalIndex < canonicalStart) {
+    fail('policy-v2 section must precede the cash-plan detail in the configuration pane');
+  }
+  const beforePolicy = html.slice(configPane.openEnd, canonicalStart)
+    .replace(/<!--[\s\S]*?-->/g, '');
+  if (beforePolicy.trim() !== '') {
+    fail('policy-v2 section must be the first visible module in the configuration pane');
+  }
 }
 
 const count = (regex) => (html.match(regex) || []).length;
