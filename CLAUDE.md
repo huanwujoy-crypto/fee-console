@@ -74,6 +74,31 @@ Financial systems are read-only for this workflow. Never place, modify, or cance
 orders, and never initiate transfers or write to IB, Sharesight, or another
 financial account.
 
+## Static index-ETF policy page
+
+`xuan-ib/policy.html` is the deterministic, static, read-only presentation of
+the separately approved index-ETF policy in
+`claude/xuan-ib-policy-v2.json`. Its approval record is
+`claude/xuan-ib-policy-v2-approval-2026-09-01.md`, and
+`scripts/xuan-ib-policy-page.mjs` is the only trusted renderer for the page.
+
+This policy page is not a handover report, report candidate, scheduled-run
+result, financial-data snapshot, or evidence that an AM, PM, recovery, manual,
+or ad-hoc report succeeded. It must not be substituted for
+`xuan-ib/index.html`, `xuan-ib/latest.html`, or `xuan-ib/latest.meta.json`, and
+it must never be changed in a single-file handover candidate. Changes to the
+policy JSON, approval record, renderer, tests, or rendered page require a
+separately reviewed maintenance PR and exact-SHA owner approval under the
+publication lock.
+
+Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
+The static page may describe approved targets, reserve logic, staged funding,
+benchmark definitions, and unresolved inputs, but it must not silently relabel
+operational-v1 values as policy-v2, invent current financial values, or imply
+that a plan has been executed. All page actions are navigation or local display
+controls only. Never add order, transfer, financial-write, or broker-action
+controls.
+
 ## Hong Kong report schedule
 
 Read and follow `claude/xuan-ib-report-schedule-HKT-v1.md` before producing any

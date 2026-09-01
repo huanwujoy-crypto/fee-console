@@ -14,3 +14,8 @@
 /claude/xuan-ib-cash-identities-v1.json @huanwujoy-crypto
 /claude/xuan-ib-ai-tier-overrides-v1.json @huanwujoy-crypto
 /claude/xuan-ib-mrvl-t1-approval-2026-08-31.md @huanwujoy-crypto
+/claude/xuan-ib-policy-v2.json @huanwujoy-crypto
+/claude/xuan-ib-policy-v2-approval-2026-09-01.md @huanwujoy-crypto
+/scripts/xuan-ib-policy-page.mjs @huanwujoy-crypto
+/scripts/xuan-ib-policy-page.test.mjs @huanwujoy-crypto
+/xuan-ib/policy.html @huanwujoy-crypto
