@@ -93,13 +93,19 @@ publication lock.
 
 The only permitted handover integration is the byte-identical output of
 `renderPolicySection(policy)`, placed as the first visible module inside the
-unique `.pane.p3` configuration pane. Do not copy or edit `policy.html`, the
+unique independent `.pane.p5` ETF pane. The five visible labels remain in the
+fixed order `概览 / 风险 / 配置 / ETF / 待办`; the existing todo radio and pane
+remain `s4` / `p4`. Do not copy or edit `policy.html`, the
 policy JSON, renderer, approval record, or tests in a candidate; the single-file
 `xuan-ib/index.html` candidate contract remains unchanged. The first production
 rollout is complete: every ordinary fresh report must include the canonical
-section. A records-update may only preserve the previous page's policy state
-byte for byte: inherit the existing section when present, or keep it absent on
-a legacy page. Never bootstrap the section through a records-update.
+section in `p5`. Use the trusted `scripts/xuan-ib-etf-pane.mjs` migration for a
+legacy ordinary report; it is deterministic, idempotent, and must not be used
+on a records-update. A records-update may only preserve the previous page's
+policy state byte for byte and in place: inherit legacy `p3` or current `p5`
+when present, or keep it absent on a legacy page. Never bootstrap or move the
+section through a records-update. Any optional A/B/C runtime block follows the
+canonical policy section inside `p5`; it never precedes or replaces it.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,

@@ -25,10 +25,22 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags origin main:refs/remotes/origin/main
-          git show origin/main:scripts/handover-guard.mjs > "$RUNNER_TEMP/handover-guard.mjs"
-          git show origin/main:scripts/xuan-ib-classification-disclosure.mjs > "$RUNNER_TEMP/xuan-ib-classification-disclosure.mjs"
-          git show origin/main:scripts/xuan-ib-cash-plan.mjs > "$RUNNER_TEMP/xuan-ib-cash-plan.mjs"
-          git show origin/main:scripts/xuan-ib-policy-page.mjs > "$RUNNER_TEMP/xuan-ib-policy-page.mjs"
+          trusted_root="$RUNNER_TEMP/xuan-ib-trusted"
+          mkdir -p "$trusted_root"
+          git archive origin/main -- scripts | tar -x -C "$trusted_root"
+          for required in \
+            scripts/handover-guard.mjs \
+            scripts/xuan-ib-classification-disclosure.mjs \
+            scripts/xuan-ib-cash-plan.mjs \
+            scripts/xuan-ib-policy-page.mjs \
+            scripts/xuan-ib-etf-pane.mjs \
+            scripts/xuan-ib-etf-abc.mjs
+          do
+            if [[ ! -s "$trusted_root/$required" ]]; then
+              echo "Trusted main is missing required guard dependency: $required" >&2
+              exit 1
+            fi
+          done
           git show origin/main:claude/xuan-ib-policy-v2.json > "$RUNNER_TEMP/xuan-ib-policy-v2.json"
           git show origin/main:xuan-ib/latest.html > "$RUNNER_TEMP/previous-latest.html"
           git show origin/main:xuan-ib/latest.meta.json > "$RUNNER_TEMP/previous-latest.meta.json"
@@ -113,5 +125,5 @@ jobs:
           XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" \
           XUAN_IB_PREVIOUS_HTML_BLOB="$previous_html_blob" \
           XUAN_IB_POLICY_V2_JSON="$RUNNER_TEMP/xuan-ib-policy-v2.json" \
-            node "$RUNNER_TEMP/handover-guard.mjs" \
+            node "$RUNNER_TEMP/xuan-ib-trusted/scripts/handover-guard.mjs" \
               xuan-ib/index.html "$data_date" "$RUNNER_TEMP/previous-latest.html"

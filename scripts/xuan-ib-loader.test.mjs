@@ -224,7 +224,7 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
   };
   const renderToken = token ?? srcdoc.match(/<meta name="xuan-loader-render" content="([^"]+)">/)?.[1];
   doc.head.append(element('meta', {name: 'xuan-loader-render', content: renderToken || ''}));
-  for (let index = 1; index <= 4; index += 1) {
+  for (let index = 1; index <= 5; index += 1) {
     const radio = element('input', {id: `s${index}`, name: 'sec'});
     radio.checked = index === 1;
     doc.body.append(radio);
@@ -925,6 +925,28 @@ test('a new verified blob keeps the selected todo tab but starts its pending fol
   assert.equal(second.trigger.hasAttribute('open'), true, 'a new report uses the expanded trigger default');
   assert.equal(app.decision.ownerDocument, second.doc);
   assert.equal(first.doc.querySelector('#decision'), null, 'the existing control is moved out of the retired document');
+});
+
+test('a new verified blob keeps the selected independent ETF tab', async () => {
+  const decisions = [awaitingDecision()];
+  let html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'first');
+  let meta = metaFor(html);
+  const app = loaderHarness({displayDom: true, fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const first = todoDocument(app.frame.srcdoc, decisions);
+  app.loadFrame(first.doc);
+  first.doc.getElementById('s1').checked = false;
+  first.doc.getElementById('s5').checked = true;
+
+  html = reportHtml('2026-08-30', '临时版', decisionTemplate({decisions}) + 'second');
+  meta = metaFor(html, {sourceSha: '2'.repeat(40), sourceCommitEpoch: meta.sourceCommitEpoch + 1});
+  await app.listeners.button.click();
+  const second = todoDocument(app.frame.srcdoc, decisions);
+  app.loadFrame(second.doc);
+
+  assert.equal(second.doc.getElementById('s5').checked, true);
+  assert.equal(app.decision.ownerDocument, second.doc);
 });
 
 test('malformed or duplicate decision templates fail closed instead of exposing an action', async () => {
