@@ -20,7 +20,21 @@ jobs:
     name: xuan-ib-policy-lock
     runs-on: ubuntu-latest
     steps:
+      - name: Explain deferred enforcement for draft pull requests
+        if: ${{ github.event.pull_request.draft == true }}
+        shell: bash
+        run: |
+          echo 'This pull request is still a draft, so it cannot be merged.'
+          echo 'The publication lock will run in full when the pull request is marked ready for review.'
+          {
+            echo '### XUAN-IB publication lock'
+            echo ''
+            echo ':information_source: Draft pull request — strict enforcement is deferred until **Ready for review**.'
+            echo 'No publication permission has been granted.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Refuse pull requests that alter the trusted publication boundary
+        if: ${{ github.event.pull_request.draft == false }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}

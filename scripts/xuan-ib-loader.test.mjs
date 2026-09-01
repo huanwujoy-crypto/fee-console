@@ -31,6 +31,7 @@ const promotion = fs.readFileSync(new URL('../.github/workflows/promote-xuan-ib-
 const validation = fs.readFileSync(new URL('../.github/workflows/validate-xuan-ib-handover.yml', import.meta.url), 'utf8');
 const uiPrCheck = fs.readFileSync(new URL('../.github/workflows/ui-pr-check.yml', import.meta.url), 'utf8');
 const policyLock = fs.readFileSync(new URL('../.github/workflows/xuan-ib-policy-lock.yml', import.meta.url), 'utf8');
+const scriptsCheck = fs.readFileSync(new URL('../.github/workflows/scripts-check.yml', import.meta.url), 'utf8');
 const metadata = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
 
 test('promotion commits the derived decision menu with its paired report and metadata', () => {
@@ -1862,6 +1863,18 @@ test('a base-controlled policy lock protects the publication code itself', () =>
   assert.match(policyLock, /author_association == "OWNER"/);
   assert.match(policyLock, /approval is invalidated automatically by every new commit/);
   assert.doesNotMatch(policyLock, /actions\/checkout/);
+});
+
+test('draft pull requests stay quiet until ready, then every blocking check runs', () => {
+  assert.match(policyLock, /Explain deferred enforcement for draft pull requests[\s\S]*draft == true/);
+  assert.match(policyLock, /Refuse pull requests that alter the trusted publication boundary[\s\S]*draft == false/);
+  assert.match(policyLock, /ready_for_review/);
+  assert.match(scriptsCheck, /ready_for_review/);
+  assert.match(scriptsCheck, /Explain deferred validation for draft pull requests[\s\S]*draft == true/);
+  assert.match(scriptsCheck, /Check out the proposed merge[\s\S]*draft == false/);
+  assert.match(scriptsCheck, /Verify append-only implementation progress[\s\S]*draft == false/);
+  assert.match(scriptsCheck, /Test implementation progress and classification audit[\s\S]*draft == false/);
+  assert.match(scriptsCheck, /Run the script test suite[\s\S]*draft == false/);
 });
 
 test('the variable handover stays separate from the fixed loader', () => {
