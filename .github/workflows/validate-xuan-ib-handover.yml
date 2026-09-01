@@ -28,6 +28,8 @@ jobs:
           git show origin/main:scripts/handover-guard.mjs > "$RUNNER_TEMP/handover-guard.mjs"
           git show origin/main:scripts/xuan-ib-classification-disclosure.mjs > "$RUNNER_TEMP/xuan-ib-classification-disclosure.mjs"
           git show origin/main:scripts/xuan-ib-cash-plan.mjs > "$RUNNER_TEMP/xuan-ib-cash-plan.mjs"
+          git show origin/main:scripts/xuan-ib-policy-page.mjs > "$RUNNER_TEMP/xuan-ib-policy-page.mjs"
+          git show origin/main:claude/xuan-ib-policy-v2.json > "$RUNNER_TEMP/xuan-ib-policy-v2.json"
           git show origin/main:xuan-ib/latest.html > "$RUNNER_TEMP/previous-latest.html"
           git show origin/main:xuan-ib/latest.meta.json > "$RUNNER_TEMP/previous-latest.meta.json"
 
@@ -110,5 +112,6 @@ jobs:
 
           XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" \
           XUAN_IB_PREVIOUS_HTML_BLOB="$previous_html_blob" \
+          XUAN_IB_POLICY_V2_JSON="$RUNNER_TEMP/xuan-ib-policy-v2.json" \
             node "$RUNNER_TEMP/handover-guard.mjs" \
               xuan-ib/index.html "$data_date" "$RUNNER_TEMP/previous-latest.html"

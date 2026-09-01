@@ -6,11 +6,14 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const guard = path.join(here, 'handover-guard.mjs');
 const validateWorkflow = fs.readFileSync(path.join(here, '../.github/workflows/validate-xuan-ib-handover.yml'), 'utf8');
 const promoteWorkflow = fs.readFileSync(path.join(here, '../.github/workflows/promote-xuan-ib-handover.yml'), 'utf8');
+const approvedPolicy = JSON.parse(fs.readFileSync(path.join(here, '../claude/xuan-ib-policy-v2.json'), 'utf8'));
+const approvedPolicySection = renderPolicySection(approvedPolicy);
 
 const valid = (extra = '') => `<!doctype html>
 <html><head><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>body{color:#111}</style></head>
@@ -21,6 +24,12 @@ const markRecordsUpdate = (html) => html.replace(
   '<!-- xuan-ib-handover:v1 -->',
   '<!-- xuan-ib-handover:v1 --><!-- xuan-ib-records-update:v1 -->'
 );
+
+const withPaneLayout = (html, { p1 = '', p3 = '', p4 = '' } = {}) => html.replace(
+  '</body>',
+  `<div class="pane p1">${p1}</div><div class="pane p3">${p3}</div><div class="pane p4">${p4}</div></body>`
+);
+const withPolicySection = (html, section = approvedPolicySection) => withPaneLayout(html, { p3: section });
 
 const run = (html, date = '2026-08-25', continuity = null) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handover-guard-'));
@@ -110,6 +119,71 @@ function decisionGroupMarkerForTest(status, edge) {
 test('accepts a self-contained dated handover', () => {
   const result = run(valid());
   assert.equal(result.status, 0, result.stderr);
+});
+
+test('policy-v2 rollout is optional, but an included section must equal trusted bytes', () => {
+  const omitted = run(valid());
+  assert.equal(omitted.status, 0, omitted.stderr);
+
+  const exact = run(withPolicySection(valid()));
+  assert.equal(exact.status, 0, exact.stderr);
+
+  const changedStatus = run(withPolicySection(valid(), approvedPolicySection.replace(
+    '已批准 · 建基线中',
+    '已批准 · 已执行'
+  )));
+  assert.notEqual(changedStatus.status, 0);
+  assert.match(changedStatus.stderr, /section bytes must equal/);
+
+  const staleLiveValue = run(withPolicySection(valid(), approvedPolicySection.replace(
+    '<p class="xpv2-readonly">',
+    '<p>昨日 NAV $9,999</p><p class="xpv2-readonly">'
+  )));
+  assert.notEqual(staleLiveValue.status, 0);
+  assert.match(staleLiveValue.stderr, /section bytes must equal/);
+
+  const duplicate = run(withPolicySection(withPolicySection(valid())));
+  assert.notEqual(duplicate.status, 0);
+  assert.match(duplicate.stderr, /must each be unique/);
+});
+
+test('policy-v2 reserved ID or marker cannot be used by a partial or malformed section', () => {
+  const idOnly = run(valid('<section id="xuan-ib-policy-v2"><p>partial</p></section>'));
+  assert.notEqual(idOnly.status, 0);
+  assert.match(idOnly.stderr, /section ID and marker|section bytes/);
+
+  const markerOnly = run(valid('<!-- xuan-ib-index-etf-policy-v2:' + 'a'.repeat(64) + ' -->'));
+  assert.notEqual(markerOnly.status, 0);
+  assert.match(markerOnly.stderr, /section ID and marker/);
+
+  const unquotedId = run(valid('<section id=xuan-ib-policy-v2><p>partial</p></section>'));
+  assert.notEqual(unquotedId.status, 0);
+  assert.match(unquotedId.stderr, /section ID and marker/);
+});
+
+test('policy-v2 belongs at the top of the configuration pane only', () => {
+  const correct = run(withPaneLayout(valid(), { p3: '\n<!-- layout: configuration -->\n' + approvedPolicySection }));
+  assert.equal(correct.status, 0, correct.stderr);
+
+  const inOverview = run(withPaneLayout(valid(), { p1: approvedPolicySection }));
+  assert.notEqual(inOverview.status, 0);
+  assert.match(inOverview.stderr, /inside the configuration pane/);
+
+  const inTodo = run(withPaneLayout(valid(), { p4: approvedPolicySection }));
+  assert.notEqual(inTodo.status, 0);
+  assert.match(inTodo.stderr, /inside the configuration pane/);
+
+  const afterCashPlan = run(withPaneLayout(valid(), {
+    p3: '<section class="card" id="xuan-ib-cash-plan-detail">existing cash plan</section>' + approvedPolicySection,
+  }));
+  assert.notEqual(afterCashPlan.status, 0);
+  assert.match(afterCashPlan.stderr, /precede the cash-plan detail/);
+
+  const afterOrdinaryModule = run(withPaneLayout(valid(), {
+    p3: '<section class="card" id="some-other-module">existing module</section>' + approvedPolicySection,
+  }));
+  assert.notEqual(afterOrdinaryModule.status, 0);
+  assert.match(afterOrdinaryModule.stderr, /first visible module/);
 });
 
 test('rejects the retired product title once the rename has landed', () => {
@@ -572,6 +646,36 @@ test('records-update accepts three decisions resolved together with the zero bad
   assert.match(wrongAria.stderr, /aria label must match its badge/);
 });
 
+test('records-update preserves an inherited canonical policy-v2 section byte for byte', () => {
+  const previous = withPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')],
+    receipts: [],
+  }));
+  const current = withPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  }));
+  const accepted = run(current, '2026-08-25', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  const changed = run(current.replace('已批准 · 建基线中', '已批准 · 已执行'), '2026-08-25', {
+    previousHtml: previous,
+    sourceSha,
+    htmlBlob,
+  });
+  assert.notEqual(changed.status, 0);
+  assert.match(changed.stderr, /section bytes must equal/);
+
+  const removed = run(current.replace(approvedPolicySection, ''), '2026-08-25', {
+    previousHtml: previous,
+    sourceSha,
+    htmlBlob,
+  });
+  assert.notEqual(removed.status, 0);
+  assert.match(removed.stderr, /changed content outside/);
+});
+
 test('zero-badge normalization cannot hide remaining decisions or change unrelated badge attributes', () => {
   const previous = withDecisionDisplayGroups({
     decisions: [
@@ -830,6 +934,9 @@ test('only fully verified immutable legacy records-update may retain old classif
 test('candidate validation loads classification code from the same trusted main as the guard', () => {
   assert.match(validateWorkflow, /git show origin\/main:scripts\/handover-guard\.mjs > "\$RUNNER_TEMP\/handover-guard\.mjs"/);
   assert.match(validateWorkflow, /git show origin\/main:scripts\/xuan-ib-classification-disclosure\.mjs > "\$RUNNER_TEMP\/xuan-ib-classification-disclosure\.mjs"/);
+  assert.match(validateWorkflow, /git show origin\/main:scripts\/xuan-ib-policy-page\.mjs > "\$RUNNER_TEMP\/xuan-ib-policy-page\.mjs"/);
+  assert.match(validateWorkflow, /git show origin\/main:claude\/xuan-ib-policy-v2\.json > "\$RUNNER_TEMP\/xuan-ib-policy-v2\.json"/);
+  assert.match(validateWorkflow, /XUAN_IB_POLICY_V2_JSON="\$RUNNER_TEMP\/xuan-ib-policy-v2\.json"/);
   assert.match(validateWorkflow, /node "\$RUNNER_TEMP\/handover-guard\.mjs"/);
   assert.match(promoteWorkflow, /node scripts\/handover-guard\.mjs/);
 });
