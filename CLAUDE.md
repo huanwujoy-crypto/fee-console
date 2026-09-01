@@ -91,6 +91,14 @@ policy JSON, approval record, renderer, tests, or rendered page require a
 separately reviewed maintenance PR and exact-SHA owner approval under the
 publication lock.
 
+The only permitted handover integration is the byte-identical output of
+`renderPolicySection(policy)`, placed as the first visible module inside the
+unique `.pane.p3` configuration pane. Do not copy or edit `policy.html`, the
+policy JSON, renderer, approval record, or tests in a candidate; the single-file
+`xuan-ib/index.html` candidate contract remains unchanged. A first ordinary
+report may add the canonical section. A records-update may only inherit an
+existing section byte for byte.
+
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,
 benchmark definitions, and unresolved inputs, but it must not silently relabel
