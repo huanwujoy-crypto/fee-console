@@ -1283,7 +1283,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedDocument = doc;
           renderedToken = token;
           renderProgress(record);
-          if (/^s[1-4]$/.test(section || "")) {
+          if (/^s[1-5]$/.test(section || "")) {
             const radio = doc.getElementById(section);
             if (radio?.getAttribute("name") === "sec") radio.checked = true;
           }

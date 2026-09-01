@@ -6,6 +6,19 @@ import { fileURLToPath } from 'node:url';
 import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
+import {
+  ETF_TAB_CSS_V1,
+  ETF_TAB_LABEL_V1,
+  ETF_TAB_RADIO_V1,
+} from './xuan-ib-etf-pane.mjs';
+import {
+  ETF_ABC_RUNTIME_END,
+  ETF_ABC_RUNTIME_START,
+  countVisibleEtfAbcRuntimeClassElements,
+  parseEtfAbcPublicRuntimeStateJson,
+  renderEtfAbcPublicRuntimeCard,
+  validateEtfAbcInitialPublicRuntimeState,
+} from './xuan-ib-etf-abc.mjs';
 
 const [file, expectedDate, previousFile] = process.argv.slice(2);
 
@@ -48,15 +61,52 @@ const policyIdAttributeCount = (html.match(/\bid\s*=\s*(["'])xuan-ib-policy-v2\1
 const policyMarkerCount = (html.match(new RegExp(`<!--\\s*${POLICY_ID}:[0-9a-f]{64}\\s*-->`, 'gi')) || []).length;
 
 const blankMatch = (match) => ' '.repeat(match.length);
-const structuralHtml = html
+const structuralMarkup = (source) => source
   .replace(/<script\b[^>]*>[\s\S]*?<\/script\s*>/gi, blankMatch)
   .replace(/<template\b[^>]*>[\s\S]*?<\/template\s*>/gi, blankMatch)
   .replace(/<!--[\s\S]*?-->/g, blankMatch);
+const visibleElementMarkup = (source) => source
+  .replace(/<(script|style|template|textarea|title|noscript|iframe|noembed|noframes|xmp)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, blankMatch)
+  .replace(/<!--[\s\S]*?-->/g, blankMatch);
+const structuralHtml = structuralMarkup(html);
 const policySectionOpeningCount = (structuralHtml.match(/<section\b[^>]*\bid\s*=\s*(["'])xuan-ib-policy-v2\1[^>]*>/gi) || []).length;
 
+const quotedAttribute = (attributes, name, label) => {
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matches = [...attributes.matchAll(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(["'])(.*?)\\1`, 'gi'))];
+  if (matches.length > 1) fail(`${label} repeats ${name}`);
+  return matches.length === 1 ? matches[0][2] : null;
+};
+
+const escapeRegex = value => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const attributeValueCount = (source, name, value) => (source.match(new RegExp(
+  `(?:^|[\\s<])${escapeRegex(name)}\\s*=\\s*(?:"${escapeRegex(value)}"|'${escapeRegex(value)}'|${escapeRegex(value)}(?=[\\s>/]))`,
+  'gi'
+)) || []).length;
+const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\s*=\s*(?:"[^"]*&[^"]*"|'[^']*&[^']*'|[^\s>]*&[^\s>]*)/i.test(source);
+const navigationOrder = Object.freeze(['s1', 's2', 's3', 's5', 's4']);
+const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s5: 'ETF', s4: '待办' });
+const DECISION_STATE_TEMPLATE_ID = 'xuan-ib-decision-state-v1';
+const ETF_ABC_STATE_TEMPLATE_ID = 'xuan-ib-etf-abc-state-v1';
+const ETF_ABC_STATE_TEMPLATE_OPENING = `<template id="${ETF_ABC_STATE_TEMPLATE_ID}" type="application/json">`;
+
 const classTokens = (tag) => {
-  const match = tag.match(/\bclass\s*=\s*(["'])(.*?)\1/i);
-  return match ? match[2].split(/\s+/).filter(Boolean) : [];
+  const match = tag.match(/\bclass\s*=\s*(?:(["'])(.*?)\1|([^\s>]+))/i);
+  return match ? (match[2] ?? match[3]).split(/\s+/).filter(Boolean) : [];
+};
+
+const decodedClassTokens = (tag) => {
+  const match = tag.match(/\bclass\s*=\s*(?:(["'])(.*?)\1|([^\s>]+))/i);
+  if (!match) return [];
+  const decoded = (match[2] ?? match[3])
+    .replace(/&#(?:x([0-9a-f]+)|([0-9]+));?/gi, (whole, hex, decimal) => {
+      const codePoint = Number.parseInt(hex ?? decimal, hex ? 16 : 10);
+      return Number.isInteger(codePoint) && codePoint > 0 && codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint) : '\ufffd';
+    })
+    .replace(/&Tab;/gi, '\t')
+    .replace(/&NewLine;/gi, '\n');
+  return decoded.split(/[\t\n\f\r ]+/).filter(Boolean);
 };
 
 const elementRange = (source, tagName, opening) => {
@@ -73,21 +123,226 @@ const elementRange = (source, tagName, opening) => {
         openEnd: opening.index + opening[0].length,
         closeStart: tag.index,
         end: tags.lastIndex,
+        openingTag: opening[0],
       };
     }
   }
   return null;
 };
 
-const paneRanges = (paneClass) => [...structuralHtml.matchAll(/<div\b[^>]*>/gi)]
-  .filter((opening) => {
-    const tokens = classTokens(opening[0]);
-    return tokens.includes('pane') && tokens.includes(paneClass);
-  })
-  .map((opening) => elementRange(structuralHtml, 'div', opening))
+const divRangesWithClass = (source, className) => [...source.matchAll(/<div\b[^>]*>/gi)]
+  .filter(opening => classTokens(opening[0]).includes(className))
+  .map((opening) => elementRange(source, 'div', opening))
   .filter(Boolean);
 
+const paneRanges = (source, paneClass) => divRangesWithClass(source, 'pane')
+  .filter(range => classTokens(range.openingTag).includes(paneClass));
+
+const policyPaneClass = (source, start, end) => {
+  const containing = ['p3', 'p5'].flatMap((paneClass) => paneRanges(source, paneClass)
+    .filter((pane) => pane.openEnd <= start && end <= pane.closeStart)
+    .map(() => paneClass));
+  return containing.length === 1 ? containing[0] : null;
+};
+
+const validateEtfNavigation = (source) => {
+  if (identityAttributeHasCharacterReference(source)) {
+    fail('navigation identity attributes cannot contain character references');
+  }
+  const inputTags = [...source.matchAll(/<input\b([^>]*)>/gi)];
+  const labelTags = [...source.matchAll(/<label\b([^>]*)>([\s\S]*?)<\/label\s*>/gi)];
+  const exactInputs = inputTags
+    .filter(match => match[0] === ETF_TAB_RADIO_V1);
+  const exactLabels = labelTags
+    .filter(match => match[0] === ETF_TAB_LABEL_V1);
+  if (exactInputs.length !== 1 || exactLabels.length !== 1) {
+    fail('ETF pane requires the exact enabled s5 radio and compact accessible label once');
+  }
+  const tabbars = divRangesWithClass(source, 'tabbar');
+  const panes = divRangesWithClass(source, 'pane');
+  if (tabbars.length !== 1) fail('ETF navigation requires exactly one tabbar');
+  const orderedInputs = [];
+  const orderedLabels = [];
+  for (const id of navigationOrder) {
+    if (attributeValueCount(source, 'id', id) !== 1
+        || attributeValueCount(source, 'for', id) !== 1) {
+      fail(`navigation must reserve id=${id} and for=${id} exactly once`);
+    }
+    const inputs = inputTags.filter(match => quotedAttribute(match[1], 'id', `navigation input ${id}`) === id);
+    const labels = labelTags.filter(match => quotedAttribute(match[1], 'for', `navigation label ${id}`) === id);
+    if (inputs.length !== 1 || labels.length !== 1
+        || quotedAttribute(inputs[0][1], 'type', `navigation input ${id}`) !== 'radio'
+        || quotedAttribute(inputs[0][1], 'name', `navigation input ${id}`) !== 'sec'
+        || /(?:^|\s)(?:disabled|hidden)(?:\s|=|$)/i.test(inputs[0][1])
+        || /(?:^|\s)hidden(?:\s|=|$)/i.test(labels[0][1])) {
+      fail(`navigation control ${id} must be an enabled sec radio and label`);
+    }
+    const text = labels[0][2].replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (id === 's4' ? !/^待办(?:\s+\d+)?$/.test(text) : text !== navigationText[id]) {
+      fail(`navigation label ${id} has the wrong visible text`);
+    }
+    orderedInputs.push(inputs[0]);
+    orderedLabels.push(labels[0]);
+  }
+  if (orderedInputs.some((match, index) => index > 0 && orderedInputs[index - 1].index >= match.index)
+      || orderedLabels.some((match, index) => index > 0 && orderedLabels[index - 1].index >= match.index)
+      || orderedInputs.some(match => match.index >= tabbars[0].start)
+      || orderedLabels.some(match => match.index < tabbars[0].openEnd
+        || match.index + match[0].length > tabbars[0].closeStart)
+      || panes.length === 0
+      || panes.some(pane => tabbars[0].end > pane.start)) {
+    fail('navigation must appear as 概览 / 风险 / 配置 / ETF / 待办 before all panes');
+  }
+};
+
+const validateEtfLayoutCss = (source) => {
+  if (source.split(ETF_TAB_CSS_V1).length - 1 !== 1) {
+    fail('ETF navigation must include the exact five-column and narrow-screen CSS contract once');
+  }
+  const cssStart = source.indexOf(ETF_TAB_CSS_V1);
+  const cssEnd = cssStart + ETF_TAB_CSS_V1.length;
+  const bodyOpenings = [...source.matchAll(/<body\b[^>]*>/gi)];
+  const containingStyles = [...source.matchAll(/<style\b[^>]*>/gi)]
+    .map((opening) => elementRange(source, 'style', opening))
+    .filter((range) => range && range.openEnd <= cssStart && cssEnd <= range.closeStart);
+  if (bodyOpenings.length !== 1 || containingStyles.length !== 1
+      || containingStyles[0].openingTag !== '<style>'
+      || containingStyles[0].end > bodyOpenings[0].index) {
+    fail('ETF five-column CSS must be inside one ordinary document-level style element');
+  }
+};
+
+const publicationTemplates = (source) => {
+  const inertElement = /<(script|style|textarea|title|noscript|iframe|noembed|noframes|xmp)\b[^>]*>[\s\S]*?<\/\1\s*>/gi;
+  const comment = /<!--[\s\S]*?-->/g;
+  for (const match of source.matchAll(inertElement)) {
+    if (/<\/?template\b/i.test(match[0])) {
+      fail('publication templates cannot be hidden or forged inside inert markup');
+    }
+  }
+  for (const match of source.matchAll(comment)) {
+    if (/<\/?template\b/i.test(match[0])) {
+      fail('publication templates cannot be hidden or forged inside comments');
+    }
+  }
+  const markup = source.replace(inertElement, blankMatch).replace(comment, blankMatch);
+  const tags = /<(\/?)template\b([^>]*)>/gi;
+  const templates = [];
+  let opening = null;
+  let tag;
+  while ((tag = tags.exec(markup)) !== null) {
+    if (tag[1] === '/') {
+      if (tag[2].trim() !== '' || !opening) fail('publication template markup is malformed');
+      templates.push({
+        ...opening,
+        body: source.slice(opening.openEnd, tag.index),
+        closeStart: tag.index,
+        end: tags.lastIndex,
+      });
+      opening = null;
+      continue;
+    }
+    if (opening) fail('publication templates cannot be nested');
+    if (identityAttributeHasCharacterReference(tag[0])) {
+      fail('publication template identity cannot contain character references');
+    }
+    opening = {
+      start: tag.index,
+      openEnd: tags.lastIndex,
+      openingTag: tag[0],
+      attributes: tag[2],
+    };
+  }
+  if (opening) fail('publication template markup is malformed');
+  return templates;
+};
+
+const validatePublicationTemplates = (source, policyContext) => {
+  const templates = publicationTemplates(source);
+  const byId = new Map();
+  for (const template of templates) {
+    const id = quotedAttribute(template.attributes, 'id', 'publication template');
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID].includes(id)) {
+      fail('only the approved decision and ETF A/B/C state templates are allowed');
+    }
+    if (byId.has(id)) fail(`${id} template must be unique`);
+    byId.set(id, template);
+  }
+
+  const decisionTemplate = byId.get(DECISION_STATE_TEMPLATE_ID);
+  if (decisionTemplate) {
+    const templateType = quotedAttribute(decisionTemplate.attributes, 'type', 'decision template');
+    if (templateType !== null && templateType.toLowerCase() !== 'application/json') {
+      fail('decision state template type must be application/json');
+    }
+    const remaining = decisionTemplate.attributes
+      .replace(/\bid\s*=\s*(["'])xuan-ib-decision-state-v1\1/i, '')
+      .replace(/\btype\s*=\s*(["'])application\/json\1/i, '')
+      .trim();
+    if (remaining !== '') fail('decision state template has unknown HTML attributes');
+  }
+
+  const runtimeTemplate = byId.get(ETF_ABC_STATE_TEMPLATE_ID);
+  const runtimeStartCount = source.split(ETF_ABC_RUNTIME_START).length - 1;
+  const runtimeEndCount = source.split(ETF_ABC_RUNTIME_END).length - 1;
+  let reservedRuntimeElementCount;
+  try {
+    reservedRuntimeElementCount = countVisibleEtfAbcRuntimeClassElements(source);
+  } catch (error) {
+    fail(`ETF A/B/C reserved runtime class scan failed: ${error.message}`);
+  }
+  if (!runtimeTemplate) {
+    if (runtimeStartCount !== 0 || runtimeEndCount !== 0 || reservedRuntimeElementCount !== 0) {
+      fail('ETF A/B/C runtime markers and reserved runtime class require one validated public state template');
+    }
+    return;
+  }
+  if (runtimeTemplate.openingTag !== ETF_ABC_STATE_TEMPLATE_OPENING) {
+    fail('ETF A/B/C public state template must use the exact trusted opening tag');
+  }
+  let runtimeState;
+  try {
+    runtimeState = parseEtfAbcPublicRuntimeStateJson(runtimeTemplate.body);
+    validateEtfAbcInitialPublicRuntimeState(runtimeState);
+  } catch (error) {
+    fail(`ETF A/B/C public runtime state is invalid: ${error.message}`);
+  }
+  if (runtimeState.economicDateHkt !== expectedDate) {
+    fail('ETF A/B/C public runtime economic date must match the report data date');
+  }
+  if (runtimeStartCount !== 1 || runtimeEndCount !== 1) {
+    fail('ETF A/B/C runtime markers must be one complete unique pair');
+  }
+  if (!policyContext || policyContext.paneClass !== 'p5') {
+    fail('ETF A/B/C runtime state requires the independent ETF pane');
+  }
+  const runtimeStart = source.indexOf(ETF_ABC_RUNTIME_START);
+  const runtimeEnd = source.indexOf(ETF_ABC_RUNTIME_END);
+  const runtimeStartEnd = runtimeStart + ETF_ABC_RUNTIME_START.length;
+  const pane = policyContext.pane;
+  const expectedCard = renderEtfAbcPublicRuntimeCard(runtimeState);
+  const expectedBlock = `${ETF_ABC_RUNTIME_START}\n${ETF_ABC_STATE_TEMPLATE_OPENING}${runtimeTemplate.body}</template>\n${expectedCard}\n${ETF_ABC_RUNTIME_END}`;
+  const runtimeStructural = visibleElementMarkup(source);
+  const reservedRuntimeElements = [...runtimeStructural.matchAll(/<([a-z][a-z0-9:-]*)\b[^>]*>/gi)]
+    .filter(opening => decodedClassTokens(opening[0]).includes('xuan-etf-abc-runtime'));
+  const runtimeCard = reservedRuntimeElements.length === 1
+    && reservedRuntimeElements[0][1].toLowerCase() === 'section'
+    ? elementRange(runtimeStructural, 'section', reservedRuntimeElements[0]) : null;
+  if (runtimeStart < policyContext.end || runtimeEnd <= runtimeStart
+      || runtimeEnd + ETF_ABC_RUNTIME_END.length > pane.closeStart
+      || runtimeTemplate.start <= runtimeStartEnd || runtimeTemplate.end >= runtimeEnd
+      || source.slice(policyContext.end, runtimeStart).trim() !== ''
+      || source.slice(runtimeStartEnd, runtimeTemplate.start).trim() !== ''
+      || source.slice(runtimeStart, runtimeEnd + ETF_ABC_RUNTIME_END.length) !== expectedBlock
+      || reservedRuntimeElementCount !== 1 || reservedRuntimeElements.length !== 1 || !runtimeCard
+      || source.slice(runtimeCard.start, runtimeCard.end) !== expectedCard
+      || runtimeCard.start <= runtimeTemplate.end || runtimeCard.end >= runtimeEnd) {
+    fail('ETF A/B/C runtime block and visible card must be byte-exact after canonical policy inside the ETF pane');
+  }
+};
+
 const candidateHasPolicyReservation = policyIdAttributeCount > 0 || policyMarkerCount > 0;
+let candidatePolicyContext = null;
 
 // The first production rollout is complete, so every ordinary fresh report now
 // requires the trusted deterministic policy module. A records-update is not a
@@ -98,6 +353,8 @@ if (!isRecordsUpdate && !candidateHasPolicyReservation) {
   fail('ordinary reports must include the canonical policy-v2 section');
 }
 
+let recordsUpdatePreviousPolicyHtml = null;
+let recordsUpdatePreviousPolicyStructuralHtml = null;
 if (isRecordsUpdate) {
   if (!previousFile) fail('records-update requires a trusted previous handover and pair');
   let previousPolicyHtml;
@@ -106,6 +363,8 @@ if (isRecordsUpdate) {
   } catch {
     fail('could not read the previous handover file');
   }
+  recordsUpdatePreviousPolicyHtml = previousPolicyHtml;
+  recordsUpdatePreviousPolicyStructuralHtml = structuralMarkup(previousPolicyHtml);
   const previousPolicyIdCount = (previousPolicyHtml.match(/\bid\s*=\s*(["'])xuan-ib-policy-v2\1/gi) || []).length
     + (previousPolicyHtml.match(/\bid\s*=\s*xuan-ib-policy-v2(?=[\s>])/gi) || []).length;
   const previousPolicyMarkerCount = (previousPolicyHtml.match(
@@ -145,28 +404,58 @@ if (candidateHasPolicyReservation) {
   if (!structuralHtml.startsWith('<section id="xuan-ib-policy-v2"', canonicalStart)) {
     fail('policy-v2 section must be visible report markup');
   }
-  const configPanes = paneRanges('p3');
-  const todoPanes = paneRanges('p4');
-  if (configPanes.length !== 1 || todoPanes.length !== 1) {
-    fail('policy-v2 requires unique configuration and todo panes');
+  const configPanes = paneRanges(structuralHtml, 'p3');
+  const etfPanes = paneRanges(structuralHtml, 'p5');
+  const todoPanes = paneRanges(structuralHtml, 'p4');
+  if (configPanes.length !== 1 || todoPanes.length !== 1 || etfPanes.length > 1) {
+    fail('policy-v2 requires unique configuration, ETF and todo panes');
   }
   const configPane = configPanes[0];
+  const etfPane = etfPanes[0] || null;
   const todoPane = todoPanes[0];
-  if (!(configPane.openEnd <= canonicalStart && canonicalEnd <= configPane.closeStart
-      && configPane.closeStart < todoPane.start)) {
-    fail('policy-v2 section must be inside the configuration pane before the todo pane');
+  const candidatePaneClass = policyPaneClass(structuralHtml, canonicalStart, canonicalEnd);
+  let policyPane;
+  if (!isRecordsUpdate) {
+    if (!etfPane || candidatePaneClass !== 'p5'
+        || !(configPane.closeStart < etfPane.start && etfPane.closeStart < todoPane.start)) {
+      fail('fresh reports must place policy-v2 in the independent ETF pane between configuration and todo');
+    }
+    validateEtfNavigation(structuralHtml);
+    validateEtfLayoutCss(structuralHtml);
+    policyPane = etfPane;
+  } else {
+    const previousCanonicalCount = recordsUpdatePreviousPolicyHtml.split(canonicalPolicySection).length - 1;
+    const previousCanonicalStart = recordsUpdatePreviousPolicyHtml.indexOf(canonicalPolicySection);
+    const previousCanonicalEnd = previousCanonicalStart + canonicalPolicySection.length;
+    const previousPaneClass = previousCanonicalCount === 1
+      ? policyPaneClass(recordsUpdatePreviousPolicyStructuralHtml, previousCanonicalStart, previousCanonicalEnd)
+      : null;
+    if (!candidatePaneClass || !previousPaneClass || candidatePaneClass !== previousPaneClass) {
+      fail('records-update must preserve the inherited policy pane and cannot move or bootstrap it');
+    }
+    if (candidatePaneClass === 'p5') {
+      if (!etfPane) fail('records-update inherited an invalid ETF pane');
+      validateEtfNavigation(structuralHtml);
+      validateEtfLayoutCss(structuralHtml);
+      policyPane = etfPane;
+    } else {
+      policyPane = configPane;
+    }
   }
-  const configStructural = structuralHtml.slice(configPane.openEnd, configPane.closeStart);
-  const cashPlanLocalIndex = configStructural.search(/\bid\s*=\s*(["'])xuan-ib-cash-plan-detail\1/i);
-  if (cashPlanLocalIndex >= 0 && configPane.openEnd + cashPlanLocalIndex < canonicalStart) {
-    fail('policy-v2 section must precede the cash-plan detail in the configuration pane');
-  }
-  const beforePolicy = html.slice(configPane.openEnd, canonicalStart)
+  const beforePolicy = html.slice(policyPane.openEnd, canonicalStart)
     .replace(/<!--[\s\S]*?-->/g, '');
   if (beforePolicy.trim() !== '') {
-    fail('policy-v2 section must be the first visible module in the configuration pane');
+    fail('policy-v2 section must be the first visible module in its inherited pane');
   }
+  candidatePolicyContext = {
+    start: canonicalStart,
+    end: canonicalEnd,
+    pane: policyPane,
+    paneClass: candidatePaneClass,
+  };
 }
+
+validatePublicationTemplates(html, candidatePolicyContext);
 
 if (count(/<!doctype\s+html\b/gi) !== 1) fail('exactly one doctype is required');
 if (count(/<html\b/gi) !== 1 || count(/<\/html\s*>/gi) !== 1) {
@@ -305,13 +594,6 @@ const parseStrictJson = (source, label) => {
   } catch (error) {
     fail(`${label} is not strict JSON: ${error.message}`);
   }
-};
-
-const quotedAttribute = (attributes, name, label) => {
-  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const matches = [...attributes.matchAll(new RegExp(`(?:^|\\s)${escapedName}\\s*=\\s*(["'])(.*?)\\1`, 'gi'))];
-  if (matches.length > 1) fail(`${label} repeats ${name}`);
-  return matches.length === 1 ? matches[0][2] : null;
 };
 
 const validHktTimestamp = (value) => {
@@ -554,14 +836,14 @@ const normalizeRecordsUpdateHtml = (documentHtml, decisionState) => {
 
 const parseDecisionState = (documentHtml, options = {}) => {
   const templateTags = [...documentHtml.matchAll(/<template\b([^>]*)>([\s\S]*?)<\/template\s*>/gi)];
-  const matching = templateTags.filter((match) => quotedAttribute(match[1], 'id', 'decision template') === 'xuan-ib-decision-state-v1');
-  const markerCount = (documentHtml.match(/xuan-ib-decision-state-v1/gi) || []).length;
+  const matching = templateTags.filter((match) => quotedAttribute(match[1], 'id', 'decision template') === DECISION_STATE_TEMPLATE_ID);
+  const markerCount = (documentHtml.match(new RegExp(DECISION_STATE_TEMPLATE_ID, 'gi')) || []).length;
   if (matching.length === 0) {
     if (markerCount !== 0) fail('decision state template is malformed');
     return null;
   }
   if (markerCount !== 1) fail('decision state template must be unique');
-  if (matching.length !== 1 || templateTags.length !== 1) fail('decision state template must be unique');
+  if (matching.length !== 1) fail('decision state template must be unique');
   const templateType = quotedAttribute(matching[0][1], 'type', 'decision template');
   if (templateType !== null && templateType.toLowerCase() !== 'application/json') {
     fail('decision state template type must be application/json');

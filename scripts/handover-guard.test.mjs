@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -7,6 +8,19 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
+import {
+  ETF_TAB_CSS_V1,
+  ETF_TAB_LABEL_V1,
+  ETF_TAB_RADIO_V1,
+} from './xuan-ib-etf-pane.mjs';
+import {
+  ETF_ABC_METHOD_ID,
+  ETF_ABC_RUNTIME_END,
+  ETF_ABC_RUNTIME_START,
+  ETF_ABC_T0_DATE,
+  computeEtfAbcObservation,
+  upsertEtfAbcRuntime,
+} from './xuan-ib-etf-abc.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const guard = path.join(here, 'handover-guard.mjs');
@@ -25,11 +39,25 @@ const markRecordsUpdate = (html) => html.replace(
   '<!-- xuan-ib-handover:v1 --><!-- xuan-ib-records-update:v1 -->'
 );
 
-const withPaneLayout = (html, { p1 = '', p3 = '', p4 = '' } = {}) => html.replace(
-  '</body>',
-  `<div class="pane p1">${p1}</div><div class="pane p3">${p3}</div><div class="pane p4">${p4}</div></body>`
-);
-const withPolicySection = (html, section = approvedPolicySection) => withPaneLayout(html, { p3: section });
+const withPaneLayout = (html, {
+  p1 = '', p2 = '', p3 = '', p5 = '', p4 = '', includeEtf = true,
+} = {}) => {
+  let styled = includeEtf ? html.replace('</style>', `\n${ETF_TAB_CSS_V1}\n</style>`) : html;
+  const todoLabelMatch = styled.match(/<label\b[^>]*\bfor\s*=\s*(["'])s4\1[^>]*>[\s\S]*?<\/label\s*>/i);
+  const todoLabel = todoLabelMatch?.[0] ?? '<label for="s4" aria-label="待办：0 项">待办</label>';
+  if (todoLabelMatch) styled = styled.slice(0, todoLabelMatch.index) + styled.slice(todoLabelMatch.index + todoLabel.length);
+  const inputs = `<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3">${includeEtf ? ETF_TAB_RADIO_V1 : ''}<input type="radio" name="sec" id="s4">`;
+  const labels = `<label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label>${includeEtf ? ETF_TAB_LABEL_V1 : ''}${todoLabel}`;
+  return styled.replace(
+    '</body>',
+    `<div class="tabs">${inputs}<div class="tabbar">${labels}</div><div class="pane p1">${p1}</div><div class="pane p2">${p2}</div><div class="pane p3">${p3}</div>${includeEtf ? `<div class="pane p5">${p5}</div>` : ''}<div class="pane p4">${p4}</div></div></body>`
+  );
+};
+const withPolicySection = (html, section = approvedPolicySection) => withPaneLayout(html, { p5: section });
+const withLegacyPolicySection = (html, section = approvedPolicySection) => withPaneLayout(html, {
+  p3: section,
+  includeEtf: false,
+});
 
 // Most tests exercise rules unrelated to policy-v2. Model a post-rollout
 // ordinary report by adding the canonical module unless a test intentionally
@@ -71,6 +99,71 @@ const receipt = (overrides = {}) => ({
   publicSummary: '采纳 Claude 意见；只记录，不执行',
   ...overrides,
 });
+
+const fp = character => character.repeat(64);
+const etfAbcInput = () => {
+  const requiredInstruments = { A: ['CSPX'], B: ['CSPX', 'EIMI', 'EQAC', 'EXUS', 'USSC'], C: ['CSPX'] };
+  const coverageIdentity = {
+    aHoldingsFingerprint: fp('a'),
+    bShadowUnitsFingerprint: fp('b'),
+    requiredInstruments,
+  };
+  const economicDateHkt = '2026-09-02';
+  const amountUsd = 100;
+  return {
+    schemaVersion: 1,
+    methodId: ETF_ABC_METHOD_ID,
+    mode: 'read-only',
+    t0DateHkt: ETF_ABC_T0_DATE,
+    baseline: {
+      status: 'pending', dateHkt: ETF_ABC_T0_DATE, mode: 'clone-a-marginal-shadow',
+      aHoldingsFingerprint: null, bHoldingsFingerprint: null, aValueUsd: null, bValueUsd: null,
+    },
+    calendar: {
+      status: 'complete', economicDateHkt, effectiveMarketDate: economicDateHkt,
+      observationCutoffHkt: `${economicDateHkt}T23:59:59+08:00`, staleMarketClosed: false,
+      coverage: {
+        ...coverageIdentity,
+        evidenceFingerprint: createHash('sha256').update(JSON.stringify(coverageIdentity)).digest('hex'),
+      },
+      priceDates: Object.fromEntries(['CSPX', 'EIMI', 'EQAC', 'EXUS', 'USSC'].map(ticker => [ticker, {
+        date: economicDateHkt, closeAtHkt: `${economicDateHkt}T23:00:00+08:00`, status: 'official-close',
+      }])),
+    },
+    flow: {
+      economicEventId: 'flow-20260902-guard-e2e', classification: 'external', economicDateHkt,
+      effectiveMarketDate: economicDateHkt, amountUsd,
+      fx: {
+        identity: 'fx-usd-usd-20260902', pair: 'USD/USD', rate: 1,
+        asOfHkt: `${economicDateHkt}T16:00:00+08:00`, source: 'verified-ledger',
+      },
+      applications: ['A', 'B', 'C'].map(arm => ({
+        arm, economicDateHkt, effectiveMarketDate: economicDateHkt, amountUsd,
+        fxIdentity: 'fx-usd-usd-20260902',
+      })),
+    },
+    arms: {
+      A: { openingValueUsd: 1000, endingValueBeforeFlowUsd: 1010, holdingsFingerprint: fp('a') },
+      B: {
+        openingValueUsd: 1000, endingValueBeforeFlowUsd: 1005,
+        baselineMode: 'clone-a-marginal-shadow', reserveStatus: 'incomplete',
+        requiredReserveUsd: null, reserveEvidence: null, pendingCashUnallocatedUsd: 25,
+        pendingOutflowUnsimulatedUsd: 0, shadowUnitsFingerprint: fp('b'),
+      },
+      C: {
+        openingValueUsd: 1000, endingValueBeforeFlowUsd: 1015, ticker: 'CSPX',
+        isin: 'IE00B5BMR087', distribution: 'accumulation', cashDividendUsd: 0,
+      },
+    },
+    tiltState: 'pending-validation',
+    tiltValidation: { status: 'pending', evidenceFingerprint: null, effectiveMarketDate: null },
+    quarters: [{ id: '2026-Q3', status: 'stub' }],
+    metrics: {
+      afterTaxReturn: null, maximumDrawdown: null, aiParticipation: null,
+      usSitusShare: null, callCoverage: null,
+    },
+  };
+};
 
 const withDecisionState = ({
   interaction = 'disabled',
@@ -170,29 +263,75 @@ test('policy-v2 reserved ID or marker cannot be used by a partial or malformed s
   assert.match(unquotedId.stderr, /section ID and marker/);
 });
 
-test('policy-v2 belongs at the top of the configuration pane only', () => {
-  const correct = run(withPaneLayout(valid(), { p3: '\n<!-- layout: configuration -->\n' + approvedPolicySection }));
+test('fresh policy-v2 belongs at the top of a reachable independent ETF pane', () => {
+  const correctHtml = withPaneLayout(valid(), { p5: '\n<!-- layout: ETF -->\n' + approvedPolicySection });
+  const correct = run(correctHtml);
   assert.equal(correct.status, 0, correct.stderr);
 
-  const inOverview = run(withPaneLayout(valid(), { p1: approvedPolicySection }));
-  assert.notEqual(inOverview.status, 0);
-  assert.match(inOverview.stderr, /inside the configuration pane/);
+  const inConfiguration = run(withPaneLayout(valid(), { p3: approvedPolicySection }));
+  assert.notEqual(inConfiguration.status, 0);
+  assert.match(inConfiguration.stderr, /independent ETF pane/);
 
   const inTodo = run(withPaneLayout(valid(), { p4: approvedPolicySection }));
   assert.notEqual(inTodo.status, 0);
-  assert.match(inTodo.stderr, /inside the configuration pane/);
-
-  const afterCashPlan = run(withPaneLayout(valid(), {
-    p3: '<section class="card" id="xuan-ib-cash-plan-detail">existing cash plan</section>' + approvedPolicySection,
-  }));
-  assert.notEqual(afterCashPlan.status, 0);
-  assert.match(afterCashPlan.stderr, /precede the cash-plan detail/);
+  assert.match(inTodo.stderr, /independent ETF pane/);
 
   const afterOrdinaryModule = run(withPaneLayout(valid(), {
-    p3: '<section class="card" id="some-other-module">existing module</section>' + approvedPolicySection,
+    p5: '<section class="card" id="some-other-module">existing module</section>' + approvedPolicySection,
   }));
   assert.notEqual(afterOrdinaryModule.status, 0);
   assert.match(afterOrdinaryModule.stderr, /first visible module/);
+
+  for (const broken of [
+    correctHtml.replace(ETF_TAB_RADIO_V1, ''),
+    correctHtml.replace(ETF_TAB_LABEL_V1, ''),
+    correctHtml.replace('aria-label="XUAN-ETF 计划"', 'aria-label="配置"'),
+    correctHtml.replace('>ETF</label>', '>ETF计划</label>'),
+    correctHtml.replace(ETF_TAB_RADIO_V1, '<input type="text" name="sec" id="s5">'),
+    correctHtml.replace(ETF_TAB_RADIO_V1, '<input type="radio" name="sec" id="s5" disabled>'),
+    correctHtml.replace(ETF_TAB_RADIO_V1, `${ETF_TAB_RADIO_V1}<input id=s5>`),
+    correctHtml.replace(ETF_TAB_LABEL_V1, `${ETF_TAB_LABEL_V1}<label for=s5>duplicate</label>`),
+    correctHtml.replace(ETF_TAB_RADIO_V1, `${ETF_TAB_RADIO_V1}<input id="s&#53;">`),
+    correctHtml.replace(ETF_TAB_LABEL_V1, `${ETF_TAB_LABEL_V1}<label for="s&#53;">duplicate</label>`),
+    correctHtml.replace(
+      `${ETF_TAB_RADIO_V1}<input type="radio" name="sec" id="s4">`,
+      `<input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}`
+    ),
+    correctHtml.replace(
+      `${ETF_TAB_LABEL_V1}<label for="s4" aria-label="待办：0 项">待办</label>`,
+      `<label for="s4" aria-label="待办：0 项">待办</label>${ETF_TAB_LABEL_V1}`
+    ),
+    correctHtml.replace('<label for="s2">风险</label>', '<label for="s2">配置</label>'),
+    correctHtml.replace(ETF_TAB_LABEL_V1, '').replace(
+      '<div class="pane p1">',
+      `${ETF_TAB_LABEL_V1}<div class="pane p1">`
+    ),
+    correctHtml.replace(ETF_TAB_RADIO_V1, '').replace(
+      '<div class="pane p1">',
+      `${ETF_TAB_RADIO_V1}<div class="pane p1">`
+    ),
+  ]) {
+    const result = run(broken);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /ETF pane|ETF radio|navigation/);
+  }
+
+  for (const brokenCss of [
+    correctHtml.replace(ETF_TAB_CSS_V1, ''),
+    correctHtml.replace('repeat(5,minmax(0,1fr))', 'repeat(4,minmax(0,1fr))'),
+    correctHtml.replace('@media(max-width:360px)', '@media(max-width:359px)'),
+    correctHtml.replace(ETF_TAB_CSS_V1, `${ETF_TAB_CSS_V1}\n${ETF_TAB_CSS_V1}`),
+    correctHtml.replace('<style>', '<style media="not all">'),
+    correctHtml.replace('<style>', '<style disabled>'),
+    correctHtml.replace(`\n${ETF_TAB_CSS_V1}\n`, '').replace(
+      '<div class="tabs">',
+      `<style>${ETF_TAB_CSS_V1}</style><div class="tabs">`
+    ),
+  ]) {
+    const result = run(brokenCss);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /five-column|narrow-screen CSS/);
+  }
 });
 
 test('rejects the retired product title once the rename has landed', () => {
@@ -278,6 +417,114 @@ test('accepts a strict optional decision state with a bound receipt', () => {
   );
   const typedResult = run(typedTemplate);
   assert.equal(typedResult.status, 0, typedResult.stderr);
+});
+
+test('publishes one trusted ETF runtime state alongside the inherited decision template', () => {
+  const reportWithDecisionAndPolicy = withPolicySection(withDecisionState({ interaction: 'enabled' }))
+    .replaceAll('2026-08-25', '2026-09-02');
+  const candidate = upsertEtfAbcRuntime(
+    reportWithDecisionAndPolicy,
+    computeEtfAbcObservation(etfAbcInput())
+  );
+  const result = run(candidate, '2026-09-02');
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(candidate, /<template id="xuan-ib-decision-state-v1"/);
+  assert.match(candidate, /<template id="xuan-ib-etf-abc-state-v1" type="application\/json">/);
+});
+
+test('ETF runtime state rejects unknown, duplicate, hidden, forged, and noncanonical templates', () => {
+  const candidate = upsertEtfAbcRuntime(
+    withPolicySection(withDecisionState({ interaction: 'enabled' }))
+      .replaceAll('2026-08-25', '2026-09-02'),
+    computeEtfAbcObservation(etfAbcInput())
+  );
+  const opening = '<template id="xuan-ib-etf-abc-state-v1" type="application/json">';
+  const stateTemplate = candidate.match(/<template id="xuan-ib-etf-abc-state-v1" type="application\/json">[\s\S]*?<\/template>/)?.[0];
+  const runtimeCard = candidate.match(/<section class="xuan-etf-abc-runtime"[\s\S]*?<\/section>/)?.[0];
+  assert.ok(stateTemplate);
+  assert.ok(runtimeCard);
+  const brokenCandidates = [
+    candidate.replace('</body>', '<template id="unapproved-state">{}</template></body>'),
+    candidate.replace(stateTemplate, `${stateTemplate}${stateTemplate}`),
+    candidate.replace(opening, '<template id="xuan-ib-etf-abc-state-v1" type="application/json" hidden>'),
+    candidate.replace(opening, '<template id="xuan-ib-etf-abc-state-v1" type="text/html">'),
+    candidate.replace(opening, '<template id="xuan-ib-etf-abc-state-v&#49;" type="application/json">'),
+    candidate.replace(stateTemplate, `<noscript>${stateTemplate}</noscript>`),
+    candidate.replace(stateTemplate, `<!-- ${stateTemplate} -->`),
+    candidate.replace(opening + '{', opening + ' {'),
+    candidate.replace('"baselineStatus":"pending"', '"baselineStatus":"established"'),
+    candidate.replace(
+      '"economicDateHkt":"2026-09-02","effectiveMarketDate":"2026-09-02"',
+      '"economicDateHkt":"2026-09-03","effectiveMarketDate":"2026-09-03"'
+    ),
+    candidate.replace('<h3>XUAN-ETF · A/B/C</h3>', '<h3>XUAN-ETF · 伪造</h3>'),
+    candidate.replace('<section class="xuan-etf-abc-runtime"', '<section hidden class="xuan-etf-abc-runtime"'),
+    candidate.replace(runtimeCard, ''),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n${runtimeCard}`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n<div class="xuan-etf-abc-runtime">duplicate</div>`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n<span class="xuan-etf-abc-runtime">duplicate</span>`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n<x-runtime class="xuan-etf-abc-runtime">duplicate</x-runtime>`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n<div data-x="a>b" class="xuan-etf-abc-runtime">quoted-angle duplicate</div>`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n<div class="xuan-etf-abc-runt&#105;me">encoded duplicate</div>`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n<div class="other&Tab;xuan-etf-abc-runtime">encoded token boundary</div>`),
+    candidate.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}\n${ETF_ABC_RUNTIME_END}`),
+    candidate.replace(ETF_ABC_RUNTIME_START, `${ETF_ABC_RUNTIME_START}<div hidden>`)
+      .replace(ETF_ABC_RUNTIME_END, `</div>${ETF_ABC_RUNTIME_END}`),
+  ];
+  for (const broken of brokenCandidates) {
+    const result = run(broken, '2026-09-02');
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /template|runtime|canonical|character references|byte-exact|initial ETF/i);
+  }
+});
+
+test('runtime-card lookalikes in comments and raw-text containers are inert', () => {
+  const candidate = upsertEtfAbcRuntime(
+    withPolicySection(withDecisionState({ interaction: 'enabled' }))
+      .replaceAll('2026-08-25', '2026-09-02'),
+    computeEtfAbcObservation(etfAbcInput())
+  );
+  const lookalike = '<div class="xuan-etf-abc-runtime">example only</div>';
+  const inertExamples = [
+    `<!-- ${lookalike} -->`,
+    `<script>const runtimeCardExample = '${lookalike}';</script>`,
+    `<style>.runtime-example::after{content:'${lookalike}'}</style>`,
+    `<textarea>${lookalike}</textarea>`,
+    `<title>${lookalike}</title>`,
+    `<noscript>${lookalike}</noscript>`,
+  ];
+  for (const inert of inertExamples) {
+    const result = run(candidate.replace('</body>', `${inert}</body>`), '2026-09-02');
+    assert.equal(result.status, 0, result.stderr);
+  }
+});
+
+test('pages without an ETF runtime template reject reserved runtime elements but ignore inert lookalikes', () => {
+  const reserved = '<div data-x="a>b" class="xuan-etf-abc-runtime">forged runtime</div>';
+  const fresh = run(withPolicySection(valid(reserved)));
+  assert.notEqual(fresh.status, 0);
+  assert.match(fresh.stderr, /reserved runtime class|runtime.*template/i);
+
+  const legacyRecordsUpdate = markRecordsUpdate(valid(reserved));
+  const legacy = run(legacyRecordsUpdate, '2026-08-25', {
+    previousHtml: valid(reserved), sourceSha, htmlBlob,
+  }, { autoPolicy: false });
+  assert.notEqual(legacy.status, 0);
+  assert.match(legacy.stderr, /reserved runtime class|runtime.*template/i);
+
+  const lookalike = '<div class="xuan-etf-abc-runtime">example only</div>';
+  const inertExamples = [
+    `<!-- ${lookalike} -->`,
+    `<script>const runtimeCardExample = '${lookalike}';</script>`,
+    `<style>.runtime-example::after{content:'${lookalike}'}</style>`,
+    `<textarea>${lookalike}</textarea>`,
+    `<title>${lookalike}</title>`,
+    `<noscript>${lookalike}</noscript>`,
+  ];
+  for (const inert of inertExamples) {
+    const result = run(withPolicySection(valid(inert)));
+    assert.equal(result.status, 0, result.stderr);
+  }
 });
 
 test('rejects duplicate or unknown decision state fields', () => {
@@ -426,7 +673,7 @@ test('counts publicSummary by Unicode code points and rejects dangerous content'
       receipts: [receipt({ publicSummary })],
     }));
     assert.notEqual(result.status, 0, publicSummary);
-    assert.match(result.stderr, /publicSummary|external URL/);
+    assert.match(result.stderr, /publicSummary|external URL|reserved runtime class scan/);
   }
 });
 
@@ -683,6 +930,37 @@ test('records-update preserves an inherited canonical policy-v2 section byte for
   });
   assert.notEqual(removed.status, 0);
   assert.match(removed.stderr, /must preserve the trusted previous policy-v2 section/);
+
+  const movedBackToLegacy = run(withLegacyPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  })), '2026-08-25', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.notEqual(movedBackToLegacy.status, 0);
+  assert.match(movedBackToLegacy.stderr, /preserve the inherited policy pane|content outside/);
+});
+
+test('records-update preserves a legacy p3 policy in place and cannot perform the p3 to p5 migration', () => {
+  const previous = withLegacyPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')],
+    receipts: [],
+  }));
+  const legacyResponse = withLegacyPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  }));
+  const continuity = { previousHtml: previous, sourceSha, htmlBlob };
+  const accepted = run(legacyResponse, '2026-08-25', continuity);
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  const moved = run(withPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  })), '2026-08-25', continuity);
+  assert.notEqual(moved.status, 0);
+  assert.match(moved.stderr, /preserve the inherited policy pane|content outside/);
 });
 
 test('records-update preserves the legacy absence of policy-v2 and cannot bootstrap it', () => {
@@ -959,12 +1237,17 @@ test('only fully verified immutable legacy records-update may retain old classif
   assert.match(noReceipt.stderr, /must append at least one decision receipt/);
 });
 
-test('candidate validation loads classification code from the same trusted main as the guard', () => {
-  assert.match(validateWorkflow, /git show origin\/main:scripts\/handover-guard\.mjs > "\$RUNNER_TEMP\/handover-guard\.mjs"/);
-  assert.match(validateWorkflow, /git show origin\/main:scripts\/xuan-ib-classification-disclosure\.mjs > "\$RUNNER_TEMP\/xuan-ib-classification-disclosure\.mjs"/);
-  assert.match(validateWorkflow, /git show origin\/main:scripts\/xuan-ib-policy-page\.mjs > "\$RUNNER_TEMP\/xuan-ib-policy-page\.mjs"/);
+test('candidate validation loads the guard dependency graph from the same trusted main', () => {
+  assert.match(validateWorkflow, /git archive origin\/main -- scripts \| tar -x -C "\$trusted_root"/);
+  assert.match(validateWorkflow, /scripts\/handover-guard\.mjs/);
+  assert.match(validateWorkflow, /scripts\/xuan-ib-classification-disclosure\.mjs/);
+  assert.match(validateWorkflow, /scripts\/xuan-ib-policy-page\.mjs/);
+  assert.match(validateWorkflow, /scripts\/xuan-ib-etf-pane\.mjs/);
+  assert.match(validateWorkflow, /scripts\/xuan-ib-etf-abc\.mjs/);
+  assert.match(validateWorkflow, /Trusted main is missing required guard dependency/);
   assert.match(validateWorkflow, /git show origin\/main:claude\/xuan-ib-policy-v2\.json > "\$RUNNER_TEMP\/xuan-ib-policy-v2\.json"/);
   assert.match(validateWorkflow, /XUAN_IB_POLICY_V2_JSON="\$RUNNER_TEMP\/xuan-ib-policy-v2\.json"/);
-  assert.match(validateWorkflow, /node "\$RUNNER_TEMP\/handover-guard\.mjs"/);
+  assert.match(validateWorkflow, /node "\$RUNNER_TEMP\/xuan-ib-trusted\/scripts\/handover-guard\.mjs"/);
+  assert.doesNotMatch(validateWorkflow, /git show origin\/main:scripts\//);
   assert.match(promoteWorkflow, /node scripts\/handover-guard\.mjs/);
 });

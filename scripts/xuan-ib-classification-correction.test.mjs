@@ -15,17 +15,19 @@ import {
 } from './xuan-ib-classification-correction.mjs';
 import { renderClassificationDisclosure, validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
+import { migratePolicyToEtfPane } from './xuan-ib-etf-pane.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const script = fileURLToPath(new URL('./xuan-ib-classification-correction.mjs', import.meta.url));
 const guard = fileURLToPath(new URL('./handover-guard.mjs', import.meta.url));
-const approvedPolicySection = renderPolicySection(JSON.parse(
-  fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8')
-));
-const withRequiredPolicy = (html) => html.replace(
+const approvedPolicy = JSON.parse(fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
+const approvedPolicySection = renderPolicySection(approvedPolicy);
+// Historical fixture: first add the canonical legacy p3 section, then apply
+// the trusted ordinary-report migration into independent p5.
+const withMigratedEtfPolicyFixture = (html) => migratePolicyToEtfPane(html.replace(
   '<div class="pane p3">',
   '<div class="pane p3">' + approvedPolicySection
-);
+), approvedPolicy);
 // Main's immutable published ancestor is available in the required full-history
 // scripts-check checkout. Never silently switch this fixture to a later report.
 const fixture = spawnSync('git', ['show', 'a64f78c55f2b51008de30ae914fa173e8770f61d:xuan-ib/latest.html'], {
@@ -116,8 +118,8 @@ test('verification rejects arbitrary extra edits even if their numbers look unch
 });
 
 test('trusted guard rejects obsolete classification, then requires the later cash-model repair', t => {
-  const previous = temporaryReport(t, withRequiredPolicy(original), 'previous.html');
-  const current = temporaryReport(t, withRequiredPolicy(corrected));
+  const previous = temporaryReport(t, withMigratedEtfPolicyFixture(original), 'previous.html');
+  const current = temporaryReport(t, withMigratedEtfPolicyFixture(corrected));
   const env = {
     ...process.env,
     XUAN_IB_PREVIOUS_SOURCE_SHA: CLASSIFICATION_CORRECTION_SOURCE_SHA,
