@@ -124,6 +124,11 @@ li{font-size:12.5px;margin:3px 0;line-height:1.5}
 details .dbody{padding-left:7px;padding-right:7px}
 .tl .t{flex:0 0 56px}
 }
+
+#s5:checked~.tabbar label[for="s5"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s5:checked~.p5{display:block}
+@media(max-width:640px){.tabbar{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media(max-width:360px){.tabbar{gap:2px}.tabbar label{padding:4px 2px;font-size:11px;gap:2px}.tabbar label .dot{min-width:14px;padding:0 3px}}
 </style>
 </head><body><!-- xuan-ib-handover:v1 -->
 <input type="radio" name="th" id="tl"><input type="radio" name="th" id="td">
@@ -157,11 +162,12 @@ details .dbody{padding-left:7px;padding-right:7px}
 </div>
 
 <div class="tabs">
-<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">
+<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s5"><input type="radio" name="sec" id="s4">
 <div class="tabbar">
 <label for="s1" aria-label="概览：① 08-31 收盘持仓一览与 ③ 今晨到下次开盘前会发生什么">概览</label>
 <label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明">风险</label>
 <label for="s3" aria-label="配置：④ 四桶与四类配置比例、7 个 portfolio 明细">配置</label>
+<label for="s5" aria-label="XUAN-ETF 计划">ETF</label>
 <label for="s4" aria-label="待办：0 项待 Wu 裁决；另含已结案 / 只读观察与 ⑥ 换仓触发检查">待办 <span class="dot" aria-hidden="true">0</span></label>
 </div>
 
@@ -346,29 +352,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 </div>
 
 <div class="pane p3">
-<section id="xuan-ib-policy-v2" data-policy-id="xuan-ib-index-etf-policy-v2" data-policy-status="approved-not-implemented" data-policy-fingerprint="3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f">
-<!-- xuan-ib-index-etf-policy-v2:3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f -->
-<style>
-#xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--xpv2-ink);background:var(--xpv2-bg);color-scheme:light dark;font-size:16px;display:block;box-sizing:border-box;width:100%;max-width:390px;margin:auto;padding:18px 14px 34px;overflow-wrap:anywhere}
-#xuan-ib-policy-v2 *{box-sizing:border-box;min-width:0}#xuan-ib-policy-v2 .xpv2-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:5px 2px 18px}#xuan-ib-policy-v2 .xpv2-top h1{font-size:25px;margin:0 0 4px}#xuan-ib-policy-v2 .xpv2-muted{color:var(--xpv2-muted);font-size:13px}#xuan-ib-policy-v2 .xpv2-pill{white-space:nowrap;border:1px solid var(--xpv2-border);border-radius:999px;padding:7px 10px;background:var(--xpv2-surface);font-size:12px;font-weight:700}#xuan-ib-policy-v2 .xpv2-card,#xuan-ib-policy-v2 details{background:var(--xpv2-surface);border:1px solid var(--xpv2-border);border-radius:18px;margin:0 0 12px;padding:16px;box-shadow:0 1px 0 var(--xpv2-shadow)}#xuan-ib-policy-v2 .xpv2-hero{display:grid;gap:10px}#xuan-ib-policy-v2 .xpv2-hero h2,#xuan-ib-policy-v2 .xpv2-call h2{font-size:18px;margin:0}#xuan-ib-policy-v2 .xpv2-status{font-size:22px;font-weight:800}#xuan-ib-policy-v2 .xpv2-note{font-size:14px;line-height:1.45;margin:0}#xuan-ib-policy-v2 .xpv2-targets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}#xuan-ib-policy-v2 .xpv2-target{border-radius:14px;background:var(--xpv2-target);padding:12px 8px;text-align:center}#xuan-ib-policy-v2 .xpv2-target b{display:block;font-size:24px}#xuan-ib-policy-v2 .xpv2-target span{font-size:11px;color:var(--xpv2-target-muted)}#xuan-ib-policy-v2 .xpv2-call{border:2px solid var(--xpv2-call-border);background:var(--xpv2-call)}#xuan-ib-policy-v2 .xpv2-call .xpv2-gate{display:inline-block;background:var(--xpv2-gate);color:#fff;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;margin-bottom:9px}#xuan-ib-policy-v2 details{padding:0}#xuan-ib-policy-v2 summary{cursor:pointer;list-style:none;padding:16px;font-weight:800}#xuan-ib-policy-v2 summary::-webkit-details-marker{display:none}#xuan-ib-policy-v2 summary:after{content:"＋";float:right;color:#777}#xuan-ib-policy-v2 .xpv2-body{border-top:1px solid var(--xpv2-divider);padding:14px 16px 16px}#xuan-ib-policy-v2 .xpv2-row{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--xpv2-divider);padding:9px 0;font-size:14px}#xuan-ib-policy-v2 .xpv2-row:last-child{border:0}#xuan-ib-policy-v2 .xpv2-row b{text-align:right;max-width:52%}#xuan-ib-policy-v2 .xpv2-readonly{text-align:center;color:var(--xpv2-muted);font-size:12px;line-height:1.5;margin-top:18px}
-@media(min-width:600px){#xuan-ib-policy-v2{max-width:430px}}
-@media(prefers-color-scheme:dark){#xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}}
-#tl:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;color-scheme:light}
-#td:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}
-</style>
-  <header class="xpv2-top"><div><h1>XUAN-ETF 计划</h1><div class="xpv2-muted">长期配置 · 只读规划</div></div><span class="xpv2-pill">已批准 · 建基线中</span></header>
-  <section class="xpv2-card xpv2-hero" aria-labelledby="xpv2-policy-status"><h2 id="xpv2-policy-status">当前状态</h2><div class="xpv2-status">已批准 · 尚未接入日报计算</div><p class="xpv2-note">先核实 CALL 账本，再建立 A／B／C 基线。当前暂不显示可投入金额。</p></section>
-  <section class="xpv2-card" aria-labelledby="xpv2-policy-targets"><h2 id="xpv2-policy-targets" style="font-size:18px;margin:0 0 12px">长期目标</h2><div class="xpv2-targets"><div class="xpv2-target"><b>65%</b><span>美国</span></div><div class="xpv2-target"><b>23%</b><span>非美发达</span></div><div class="xpv2-target"><b>12%</b><span>新兴市场</span></div></div></section>
-  <section class="xpv2-card xpv2-call" id="xuan-ib-policy-v2-call-gate" aria-labelledby="xpv2-call-title"><span class="xpv2-gate">资料未齐 · 暂停金额计算</span><h2 id="xpv2-call-title">CALL 账本未核实</h2><p class="xpv2-note">不把缺失值当作 0，不计算可投入金额，也不执行配置。<span class="xpv2-muted">技术规则：fail-closed。</span></p></section>
-  <details><summary>美国 65% 如何分</summary><div class="xpv2-body"><div class="xpv2-row"><span>USSC · 小盘价值</span><b>5%</b></div><div class="xpv2-row"><span>EQAC · AI／成长倾斜</span><b>0–8%</b></div><div class="xpv2-row"><span>CSPX · 大盘核心</span><b>52–60%</b></div><p class="xpv2-note">核心＝60%−倾斜；初始 8% 只在 mapping 与 AI exposure 验证后生效。</p></div></details>
-  <details><summary>补仓顺序</summary><div class="xpv2-body"><div class="xpv2-row"><span>① 现有现金</span><b>主要来源</b></div><div class="xpv2-row"><span>② 已有持仓卖出</span><b>结算后才计</b></div><p class="xpv2-note">不预计未成交卖出回款；资金不足时保留上一个已核实方案。</p></div></details>
-  <details><summary>范围与排除</summary><div class="xpv2-body"><p class="xpv2-note">范围为 IB-HK 全部资产加 NOAH-HK 现金；GLD、SLV、MSTR、HODL 主题投资不纳入本计划。</p></div></details>
-  <details><summary>产品与角色</summary><div class="xpv2-body"><div class="xpv2-row"><span>1. CSPX<br><small>IE00B5BMR087 · LSE</small></span><b>美国大盘核心</b></div><div class="xpv2-row"><span>2. EQAC<br><small>IE00BFZXGZ54 · SWX</small></span><b>AI／成长倾斜</b></div><div class="xpv2-row"><span>3. USSC<br><small>IE00BSPLC413 · LSE</small></span><b>美国小盘价值</b></div><div class="xpv2-row"><span>4. EXUS<br><small>IE0006WW1TQ4 · LSE</small></span><b>非美发达</b></div><div class="xpv2-row"><span>5. EIMI<br><small>IE00BKM4GZ66 · LSE</small></span><b>新兴市场</b></div><div class="xpv2-row"><span>6. IB01<br><small>IE00BGSF1X88 · LSE</small></span><b>CALL 备用金候选</b></div></div></details>
-  <details><summary>税务要点</summary><div class="xpv2-body"><p class="xpv2-note">候选产品均为爱尔兰注册 UCITS。美国 situs 风险仍需逐项核实；分红税、遗产税及个人适用结论请取得专业税务意见。</p></div></details>
-  <details><summary>A／B／C 评分</summary><div class="xpv2-body"><div class="xpv2-row"><span>A</span><b>实际组合</b></div><div class="xpv2-row"><span>B</span><b>现金优先影子方案</b></div><div class="xpv2-row"><span>C</span><b>CSPX 累积型</b></div><div class="xpv2-row"><span>1. 税后收益</span><b>待建基线</b></div><div class="xpv2-row"><span>2. 最大回撤</span><b>待建基线</b></div><div class="xpv2-row"><span>3. AI 参与</span><b>待建基线</b></div><div class="xpv2-row"><span>4. US-situs 占比</span><b>待建基线</b></div><div class="xpv2-row"><span>5. CALL 覆盖</span><b>待建基线</b></div><p class="xpv2-note">至少 4 个完整季度后才排名。</p></div></details>
-  <details><summary>与当前日报的关系</summary><div class="xpv2-body"><p class="xpv2-note">当前日报现金计划仍是 operational-v1。policy-v2 是已批准的长期目标，须在 mapping、CALL 账本和 T0 基线完成后版本化接入；不得把旧数字改名为新方案。</p></div></details>
-  <p class="xpv2-readonly">只读 · 不下单、不改单、不撤单、不转账<br>任何金融操作均须另行明确批准</p>
-</section>
+
 <section class="card" id="xuan-ib-cash-plan-detail">
 <h2>现金优先补仓参考 <small>只作规划，不执行交易</small></h2>
 <p style="font-size:12px">三方向补充 · USSC 占本次预算 10%，其余重算 EXUS、EIMI；不是永久持仓比例。金额为美元规划值，非下单额度。</p>
@@ -429,6 +413,43 @@ details .dbody{padding-left:7px;padding-right:7px}
 </div></details>
 </div>
 
+<div class="pane p5">
+<section id="xuan-ib-policy-v2" data-policy-id="xuan-ib-index-etf-policy-v2" data-policy-status="approved-not-implemented" data-policy-fingerprint="3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f">
+<!-- xuan-ib-index-etf-policy-v2:3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f -->
+<style>
+#xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--xpv2-ink);background:var(--xpv2-bg);color-scheme:light dark;font-size:16px;display:block;box-sizing:border-box;width:100%;max-width:390px;margin:auto;padding:18px 14px 34px;overflow-wrap:anywhere}
+#xuan-ib-policy-v2 *{box-sizing:border-box;min-width:0}#xuan-ib-policy-v2 .xpv2-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:5px 2px 18px}#xuan-ib-policy-v2 .xpv2-top h1{font-size:25px;margin:0 0 4px}#xuan-ib-policy-v2 .xpv2-muted{color:var(--xpv2-muted);font-size:13px}#xuan-ib-policy-v2 .xpv2-pill{white-space:nowrap;border:1px solid var(--xpv2-border);border-radius:999px;padding:7px 10px;background:var(--xpv2-surface);font-size:12px;font-weight:700}#xuan-ib-policy-v2 .xpv2-card,#xuan-ib-policy-v2 details{background:var(--xpv2-surface);border:1px solid var(--xpv2-border);border-radius:18px;margin:0 0 12px;padding:16px;box-shadow:0 1px 0 var(--xpv2-shadow)}#xuan-ib-policy-v2 .xpv2-hero{display:grid;gap:10px}#xuan-ib-policy-v2 .xpv2-hero h2,#xuan-ib-policy-v2 .xpv2-call h2{font-size:18px;margin:0}#xuan-ib-policy-v2 .xpv2-status{font-size:22px;font-weight:800}#xuan-ib-policy-v2 .xpv2-note{font-size:14px;line-height:1.45;margin:0}#xuan-ib-policy-v2 .xpv2-targets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}#xuan-ib-policy-v2 .xpv2-target{border-radius:14px;background:var(--xpv2-target);padding:12px 8px;text-align:center}#xuan-ib-policy-v2 .xpv2-target b{display:block;font-size:24px}#xuan-ib-policy-v2 .xpv2-target span{font-size:11px;color:var(--xpv2-target-muted)}#xuan-ib-policy-v2 .xpv2-call{border:2px solid var(--xpv2-call-border);background:var(--xpv2-call)}#xuan-ib-policy-v2 .xpv2-call .xpv2-gate{display:inline-block;background:var(--xpv2-gate);color:#fff;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;margin-bottom:9px}#xuan-ib-policy-v2 details{padding:0}#xuan-ib-policy-v2 summary{cursor:pointer;list-style:none;padding:16px;font-weight:800}#xuan-ib-policy-v2 summary::-webkit-details-marker{display:none}#xuan-ib-policy-v2 summary:after{content:"＋";float:right;color:#777}#xuan-ib-policy-v2 .xpv2-body{border-top:1px solid var(--xpv2-divider);padding:14px 16px 16px}#xuan-ib-policy-v2 .xpv2-row{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--xpv2-divider);padding:9px 0;font-size:14px}#xuan-ib-policy-v2 .xpv2-row:last-child{border:0}#xuan-ib-policy-v2 .xpv2-row b{text-align:right;max-width:52%}#xuan-ib-policy-v2 .xpv2-readonly{text-align:center;color:var(--xpv2-muted);font-size:12px;line-height:1.5;margin-top:18px}
+@media(min-width:600px){#xuan-ib-policy-v2{max-width:430px}}
+@media(prefers-color-scheme:dark){#xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}}
+#tl:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;color-scheme:light}
+#td:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}
+</style>
+  <header class="xpv2-top"><div><h1>XUAN-ETF 计划</h1><div class="xpv2-muted">长期配置 · 只读规划</div></div><span class="xpv2-pill">已批准 · 建基线中</span></header>
+  <section class="xpv2-card xpv2-hero" aria-labelledby="xpv2-policy-status"><h2 id="xpv2-policy-status">当前状态</h2><div class="xpv2-status">已批准 · 尚未接入日报计算</div><p class="xpv2-note">先核实 CALL 账本，再建立 A／B／C 基线。当前暂不显示可投入金额。</p></section>
+  <section class="xpv2-card" aria-labelledby="xpv2-policy-targets"><h2 id="xpv2-policy-targets" style="font-size:18px;margin:0 0 12px">长期目标</h2><div class="xpv2-targets"><div class="xpv2-target"><b>65%</b><span>美国</span></div><div class="xpv2-target"><b>23%</b><span>非美发达</span></div><div class="xpv2-target"><b>12%</b><span>新兴市场</span></div></div></section>
+  <section class="xpv2-card xpv2-call" id="xuan-ib-policy-v2-call-gate" aria-labelledby="xpv2-call-title"><span class="xpv2-gate">资料未齐 · 暂停金额计算</span><h2 id="xpv2-call-title">CALL 账本未核实</h2><p class="xpv2-note">不把缺失值当作 0，不计算可投入金额，也不执行配置。<span class="xpv2-muted">技术规则：fail-closed。</span></p></section>
+  <details><summary>美国 65% 如何分</summary><div class="xpv2-body"><div class="xpv2-row"><span>USSC · 小盘价值</span><b>5%</b></div><div class="xpv2-row"><span>EQAC · AI／成长倾斜</span><b>0–8%</b></div><div class="xpv2-row"><span>CSPX · 大盘核心</span><b>52–60%</b></div><p class="xpv2-note">核心＝60%−倾斜；初始 8% 只在 mapping 与 AI exposure 验证后生效。</p></div></details>
+  <details><summary>补仓顺序</summary><div class="xpv2-body"><div class="xpv2-row"><span>① 现有现金</span><b>主要来源</b></div><div class="xpv2-row"><span>② 已有持仓卖出</span><b>结算后才计</b></div><p class="xpv2-note">不预计未成交卖出回款；资金不足时保留上一个已核实方案。</p></div></details>
+  <details><summary>范围与排除</summary><div class="xpv2-body"><p class="xpv2-note">范围为 IB-HK 全部资产加 NOAH-HK 现金；GLD、SLV、MSTR、HODL 主题投资不纳入本计划。</p></div></details>
+  <details><summary>产品与角色</summary><div class="xpv2-body"><div class="xpv2-row"><span>1. CSPX<br><small>IE00B5BMR087 · LSE</small></span><b>美国大盘核心</b></div><div class="xpv2-row"><span>2. EQAC<br><small>IE00BFZXGZ54 · SWX</small></span><b>AI／成长倾斜</b></div><div class="xpv2-row"><span>3. USSC<br><small>IE00BSPLC413 · LSE</small></span><b>美国小盘价值</b></div><div class="xpv2-row"><span>4. EXUS<br><small>IE0006WW1TQ4 · LSE</small></span><b>非美发达</b></div><div class="xpv2-row"><span>5. EIMI<br><small>IE00BKM4GZ66 · LSE</small></span><b>新兴市场</b></div><div class="xpv2-row"><span>6. IB01<br><small>IE00BGSF1X88 · LSE</small></span><b>CALL 备用金候选</b></div></div></details>
+  <details><summary>税务要点</summary><div class="xpv2-body"><p class="xpv2-note">候选产品均为爱尔兰注册 UCITS。美国 situs 风险仍需逐项核实；分红税、遗产税及个人适用结论请取得专业税务意见。</p></div></details>
+  <details><summary>A／B／C 评分</summary><div class="xpv2-body"><div class="xpv2-row"><span>A</span><b>实际组合</b></div><div class="xpv2-row"><span>B</span><b>现金优先影子方案</b></div><div class="xpv2-row"><span>C</span><b>CSPX 累积型</b></div><div class="xpv2-row"><span>1. 税后收益</span><b>待建基线</b></div><div class="xpv2-row"><span>2. 最大回撤</span><b>待建基线</b></div><div class="xpv2-row"><span>3. AI 参与</span><b>待建基线</b></div><div class="xpv2-row"><span>4. US-situs 占比</span><b>待建基线</b></div><div class="xpv2-row"><span>5. CALL 覆盖</span><b>待建基线</b></div><p class="xpv2-note">至少 4 个完整季度后才排名。</p></div></details>
+  <details><summary>与当前日报的关系</summary><div class="xpv2-body"><p class="xpv2-note">当前日报现金计划仍是 operational-v1。policy-v2 是已批准的长期目标，须在 mapping、CALL 账本和 T0 基线完成后版本化接入；不得把旧数字改名为新方案。</p></div></details>
+  <p class="xpv2-readonly">只读 · 不下单、不改单、不撤单、不转账<br>任何金融操作均须另行明确批准</p>
+</section>
+<!-- xuan-ib-etf-abc-runtime:v1:start -->
+<template id="xuan-ib-etf-abc-state-v1" type="application/json">{"schemaVersion":1,"methodId":"xuan-ib-etf-abc-v1","mode":"read-only","t0DateHkt":"2026-09-01","t0QuarterStatus":"stub","baselineStatus":"pending","economicDateHkt":"2026-09-01","effectiveMarketDate":"2026-09-01","calendarStatus":"unavailable","staleMarketClosed":false,"comparisonStatus":"incomplete","targetVectorStatus":"candidate-not-deployable","bReserveStatus":"incomplete","bPendingCashUnallocated":false,"bPendingOutflowUnsimulated":false,"bImplementationStatus":"incomplete-call-reserve","cDistributionTreatment":"embedded-in-accumulating-price","rawMetricsComplete":false,"completedQuarterIds":[],"completeQuarterCount":0,"minimumCompleteQuartersForRanking":4,"rankingEligible":false,"rankingStatus":"not-eligible-less-than-four-complete-quarters"}</template>
+<section class="xuan-etf-abc-runtime" data-method-id="xuan-ib-etf-abc-v1" data-t0="2026-09-01">
+  <h3>XUAN-ETF · A/B/C</h3>
+  <p>① T0 2026-09-01 · 基线待建立 · 暂不比较</p>
+  <p>② A 实际 · B A克隆边际影子 · C CSPX累积型</p>
+  <p>③ 资金流同日同额 · EOD；估值不完整</p>
+  <p>④ CALL 未齐 · 不建份额</p>
+  <p>⑤ 0/4 完整季度 · 暂不排名</p>
+  <p>只读方法 · 不下单、不改单、不撤单、不转账</p>
+</section>
+<!-- xuan-ib-etf-abc-runtime:v1:end -->
+</div>
 <div class="pane p4">
 <div class="card">
 <!-- xuan-ib-decision-group:v1:awaiting_user:start --><h2 data-decision-group-title="awaiting_user">⑤ 待决定事项 <small>0 项待 Wu 裁决</small></h2><!-- xuan-ib-decision-group:v1:awaiting_user:end -->
