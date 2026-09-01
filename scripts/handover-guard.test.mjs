@@ -31,10 +31,18 @@ const withPaneLayout = (html, { p1 = '', p3 = '', p4 = '' } = {}) => html.replac
 );
 const withPolicySection = (html, section = approvedPolicySection) => withPaneLayout(html, { p3: section });
 
-const run = (html, date = '2026-08-25', continuity = null) => {
+// Most tests exercise rules unrelated to policy-v2. Model a post-rollout
+// ordinary report by adding the canonical module unless a test intentionally
+// supplies a policy reservation or a records-update marker.
+const addRequiredPolicyFixture = (html) => {
+  if (/xuan-ib-records-update:v1|xuan-ib-policy-v2|xuan-ib-index-etf-policy-v2:/i.test(html)) return html;
+  return withPolicySection(html);
+};
+
+const run = (html, date = '2026-08-25', continuity = null, { autoPolicy = true } = {}) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'handover-guard-'));
   const file = path.join(dir, 'index.html');
-  fs.writeFileSync(file, html);
+  fs.writeFileSync(file, autoPolicy ? addRequiredPolicyFixture(html) : html);
   const args = [guard, file, date];
   const env = { ...process.env };
   if (continuity?.previousHtml !== undefined) {
@@ -121,9 +129,10 @@ test('accepts a self-contained dated handover', () => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('policy-v2 rollout is optional, but an included section must equal trusted bytes', () => {
-  const omitted = run(valid());
-  assert.equal(omitted.status, 0, omitted.stderr);
+test('ordinary reports require policy-v2 and an included section must equal trusted bytes', () => {
+  const omitted = run(valid(), '2026-08-25', null, { autoPolicy: false });
+  assert.notEqual(omitted.status, 0);
+  assert.match(omitted.stderr, /ordinary reports must include/);
 
   const exact = run(withPolicySection(valid()));
   assert.equal(exact.status, 0, exact.stderr);
@@ -673,7 +682,26 @@ test('records-update preserves an inherited canonical policy-v2 section byte for
     htmlBlob,
   });
   assert.notEqual(removed.status, 0);
-  assert.match(removed.stderr, /changed content outside/);
+  assert.match(removed.stderr, /must preserve the trusted previous policy-v2 section/);
+});
+
+test('records-update preserves the legacy absence of policy-v2 and cannot bootstrap it', () => {
+  const previous = withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')],
+    receipts: [],
+  });
+  const legacyResponse = withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  });
+  const continuity = { previousHtml: previous, sourceSha, htmlBlob };
+  const accepted = run(legacyResponse, '2026-08-25', continuity);
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  const bootstrapped = run(withPolicySection(legacyResponse), '2026-08-25', continuity);
+  assert.notEqual(bootstrapped.status, 0);
+  assert.match(bootstrapped.stderr, /cannot bootstrap policy-v2 onto a legacy page/);
 });
 
 test('zero-badge normalization cannot hide remaining decisions or change unrelated badge attributes', () => {

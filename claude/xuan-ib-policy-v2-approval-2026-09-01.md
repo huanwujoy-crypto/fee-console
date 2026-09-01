@@ -39,3 +39,13 @@ The US 65% sleeve is divided into:
 ## Authority boundary
 
 This approval authorizes the policy record and its read-only display. It does **not** authorize an order, order change, cancellation, transfer, currency conversion or other financial write. Every future transaction requires separate explicit approval.
+
+## Publication enforcement
+
+The first production rollout was completed on 2026-09-01. Every subsequent
+ordinary fresh XUAN-IB report must include the byte-identical canonical section
+rendered from the approved policy JSON as the first visible module in the
+configuration pane. A `records-update` is limited to receipt/state continuity:
+it must preserve an inherited section byte for byte, and a legacy page without
+the section must remain without it. A `records-update` must never bootstrap the
+policy display.

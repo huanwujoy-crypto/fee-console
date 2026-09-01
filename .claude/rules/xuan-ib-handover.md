@@ -75,9 +75,12 @@ permitted handover integration is the byte-identical output of
 `renderPolicySection(policy)`, placed as the first visible module inside the
 unique `.pane.p3` configuration pane. Do not copy or edit the standalone page,
 its JSON, approval record, renderer, or tests in a candidate: the candidate
-contract remains one commit changing only `xuan-ib/index.html`. A first ordinary
-report may add the canonical section. A records-update may only inherit an
-existing section byte for byte. Never replace the loader, latest report,
+contract remains one commit changing only `xuan-ib/index.html`. The first
+production rollout is complete, so every ordinary fresh report must include the
+canonical section. A records-update may only preserve the previous page's
+policy state byte for byte: inherit it when present, or keep it absent on a
+legacy page. Never bootstrap the section through a records-update. Never replace
+the loader, latest report,
 metadata, or promotion evidence with the policy page. Any policy-page contract
 or rendered output change belongs in a separately approved maintenance PR.
 

@@ -95,9 +95,11 @@ The only permitted handover integration is the byte-identical output of
 `renderPolicySection(policy)`, placed as the first visible module inside the
 unique `.pane.p3` configuration pane. Do not copy or edit `policy.html`, the
 policy JSON, renderer, approval record, or tests in a candidate; the single-file
-`xuan-ib/index.html` candidate contract remains unchanged. A first ordinary
-report may add the canonical section. A records-update may only inherit an
-existing section byte for byte.
+`xuan-ib/index.html` candidate contract remains unchanged. The first production
+rollout is complete: every ordinary fresh report must include the canonical
+section. A records-update may only preserve the previous page's policy state
+byte for byte: inherit the existing section when present, or keep it absent on
+a legacy page. Never bootstrap the section through a records-update.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,

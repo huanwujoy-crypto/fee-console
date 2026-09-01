@@ -35,6 +35,12 @@ if (bytes < 1_000 || bytes >= 2_000_000) {
   fail('file size is outside the approved range');
 }
 
+const count = (regex) => (html.match(regex) || []).length;
+const recordsUpdateMarker = /<!--\s*xuan-ib-records-update:v1\s*-->/gi;
+const recordsUpdateMarkerCount = count(recordsUpdateMarker);
+if (recordsUpdateMarkerCount > 1) fail('records-update marker must be unique');
+const isRecordsUpdate = recordsUpdateMarkerCount === 1;
+
 const policyJsonFile = process.env.XUAN_IB_POLICY_V2_JSON
   || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../claude/xuan-ib-policy-v2.json');
 const policyIdAttributeCount = (html.match(/\bid\s*=\s*(["'])xuan-ib-policy-v2\1/gi) || []).length
@@ -81,12 +87,46 @@ const paneRanges = (paneClass) => [...structuralHtml.matchAll(/<div\b[^>]*>/gi)]
   .map((opening) => elementRange(structuralHtml, 'div', opening))
   .filter(Boolean);
 
-// Stage 2 is deliberately optional-if-present: an ordinary report may omit the
-// approved policy module until production rollout is proven. Once a candidate
-// claims the reserved section ID or marker, however, the complete section must
-// be the exact deterministic rendering of the policy stored on trusted main.
-// This excludes copied live values, stale amounts, scripts and partial edits.
-if (policyIdAttributeCount > 0 || policyMarkerCount > 0) {
+const candidateHasPolicyReservation = policyIdAttributeCount > 0 || policyMarkerCount > 0;
+
+// The first production rollout is complete, so every ordinary fresh report now
+// requires the trusted deterministic policy module. A records-update is not a
+// fresh report: it may only preserve the previous page's policy state. This
+// deliberately leaves legacy pages without a module instead of using a receipt
+// update to bootstrap unrelated presentation content.
+if (!isRecordsUpdate && !candidateHasPolicyReservation) {
+  fail('ordinary reports must include the canonical policy-v2 section');
+}
+
+if (isRecordsUpdate) {
+  if (!previousFile) fail('records-update requires a trusted previous handover and pair');
+  let previousPolicyHtml;
+  try {
+    previousPolicyHtml = fs.readFileSync(previousFile, 'utf8');
+  } catch {
+    fail('could not read the previous handover file');
+  }
+  const previousPolicyIdCount = (previousPolicyHtml.match(/\bid\s*=\s*(["'])xuan-ib-policy-v2\1/gi) || []).length
+    + (previousPolicyHtml.match(/\bid\s*=\s*xuan-ib-policy-v2(?=[\s>])/gi) || []).length;
+  const previousPolicyMarkerCount = (previousPolicyHtml.match(
+    new RegExp(`<!--\\s*${POLICY_ID}:[0-9a-f]{64}\\s*-->`, 'gi')
+  ) || []).length;
+  const previousHasPolicyReservation = previousPolicyIdCount > 0 || previousPolicyMarkerCount > 0;
+  if ((previousPolicyIdCount === 0) !== (previousPolicyMarkerCount === 0)
+      || previousPolicyIdCount > 1 || previousPolicyMarkerCount > 1) {
+    fail('trusted previous policy-v2 section is incomplete or duplicated');
+  }
+  if (previousHasPolicyReservation && !candidateHasPolicyReservation) {
+    fail('records-update must preserve the trusted previous policy-v2 section');
+  }
+  if (!previousHasPolicyReservation && candidateHasPolicyReservation) {
+    fail('records-update cannot bootstrap policy-v2 onto a legacy page');
+  }
+}
+
+// Any included module must equal the policy rendered from trusted main. This
+// excludes copied live values, stale amounts, scripts and partial edits.
+if (candidateHasPolicyReservation) {
   let canonicalPolicySection;
   try {
     canonicalPolicySection = renderPolicySection(JSON.parse(fs.readFileSync(policyJsonFile, 'utf8')));
@@ -128,7 +168,6 @@ if (policyIdAttributeCount > 0 || policyMarkerCount > 0) {
   }
 }
 
-const count = (regex) => (html.match(regex) || []).length;
 if (count(/<!doctype\s+html\b/gi) !== 1) fail('exactly one doctype is required');
 if (count(/<html\b/gi) !== 1 || count(/<\/html\s*>/gi) !== 1) {
   fail('exactly one html document is required');
@@ -139,10 +178,6 @@ if (count(/<body\b/gi) !== 1 || count(/<\/body\s*>/gi) !== 1) {
 if (count(/<!--\s*xuan-ib-handover:v1\s*-->/gi) !== 1) {
   fail('the publication marker is missing');
 }
-const recordsUpdateMarker = /<!--\s*xuan-ib-records-update:v1\s*-->/gi;
-const recordsUpdateMarkerCount = count(recordsUpdateMarker);
-if (recordsUpdateMarkerCount > 1) fail('records-update marker must be unique');
-const isRecordsUpdate = recordsUpdateMarkerCount === 1;
 if (isRecordsUpdate && count(/<!--\s*xuan-ib-handover:v1\s*--><!--\s*xuan-ib-records-update:v1\s*-->/gi) !== 1) {
   fail('records-update marker must immediately follow the publication marker');
 }
