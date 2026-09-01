@@ -61,3 +61,24 @@ exists. A single positions failure must follow the approved Sharesight IB-HK
 fallback instead of stopping the whole report. Multiple critical source
 failures, an unconfirmed account scope, or a failed publication gate remain
 fail closed. Never fill a missing value with zero or a guess.
+
+## Static policy-page isolation
+
+The approved index-ETF policy is rendered separately at
+`xuan-ib/policy.html` from `claude/xuan-ib-policy-v2.json` by
+`scripts/xuan-ib-policy-page.mjs`. Read its approval record in
+`claude/xuan-ib-policy-v2-approval-2026-09-01.md` before quoting policy-v2.
+
+The policy page is static planning material, not a live financial read, report
+candidate, scheduled-run result, or publication-success signal. Never include
+the policy page, its JSON, approval record, renderer, or tests in a handover
+candidate: the candidate contract remains one commit changing only
+`xuan-ib/index.html`. Never replace the loader, latest report, metadata, or
+promotion evidence with the policy page. Any policy-page contract or rendered
+output change belongs in a separately approved maintenance PR.
+
+Do not conflate policy-v2 with the operational-v1 cash plan. Preserve their
+labels and purposes, show missing inputs as unresolved rather than zero, and do
+not infer execution from an approved plan. The page is read-only: it must not
+place, modify, or cancel orders; initiate transfers; or write to financial
+systems.

@@ -49,7 +49,7 @@ jobs:
 
       - name: Test implementation progress and classification audit
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs
+        run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-cash-plan.test.mjs scripts/xuan-ib-cash-plan-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs scripts/xuan-ib-policy-page.test.mjs
 
       - name: Run the script test suite
         if: ${{ github.event.pull_request.draft == false }}

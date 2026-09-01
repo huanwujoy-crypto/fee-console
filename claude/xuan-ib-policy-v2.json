@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 2,
+  "policyId": "xuan-ib-index-etf-policy-v2",
+  "status": "approved-not-implemented",
+  "approvedDate": "2026-09-01",
+  "mode": "read-only-planning",
+  "scope": {
+    "fundingSources": [
+      "IB-HK all assets",
+      "NOAH-HK cash excluding theme investments"
+    ],
+    "eligibleAssets": "equity-index-etf-only",
+    "themeExclusions": [
+      "GLD",
+      "SLV",
+      "MSTR",
+      "HODL"
+    ]
+  },
+  "allocation": {
+    "total": {
+      "us": 0.65,
+      "developedExUs": 0.23,
+      "emergingMarkets": 0.12
+    },
+    "us": {
+      "smallValue": 0.05,
+      "aiGrowthTilt": {
+        "minimum": 0,
+        "initialAfterValidation": 0.08,
+        "maximum": 0.08
+      },
+      "largeCapCore": {
+        "formula": "0.60 - aiGrowthTilt",
+        "minimum": 0.52,
+        "maximum": 0.60
+      }
+    }
+  },
+  "funding": {
+    "primary": "cash-first",
+    "secondary": "existing-holdings-sales-after-settlement",
+    "assumeSaleProceeds": false
+  },
+  "callReserve": {
+    "status": "incomplete",
+    "gate": "fail-closed",
+    "floorUsd": 240000,
+    "formula": "max(floorUsd, verified90dCalls + approvedBuffer + fxOpsBuffer)",
+    "verified90dCallsUsd": null,
+    "approvedBufferUsd": null,
+    "fxOpsBufferUsd": null
+  },
+  "benchmark": {
+    "actual": "A",
+    "policyShadow": "B",
+    "market": "CSPX accumulation",
+    "status": "baseline-pending",
+    "metrics": [
+      "after-tax-return",
+      "max-drawdown",
+      "ai-participation",
+      "us-situs-share",
+      "call-coverage"
+    ],
+    "minimumCompleteQuartersForRanking": 4
+  },
+  "products": [
+    {
+      "ticker": "CSPX",
+      "isin": "IE00B5BMR087",
+      "venue": "LSE",
+      "role": "us-large-cap-core",
+      "domicile": "Ireland"
+    },
+    {
+      "ticker": "EQAC",
+      "isin": "IE00BFZXGZ54",
+      "venue": "SWX",
+      "role": "ai-growth-tilt",
+      "domicile": "Ireland"
+    },
+    {
+      "ticker": "USSC",
+      "isin": "IE00BSPLC413",
+      "venue": "LSE",
+      "role": "us-small-value",
+      "domicile": "Ireland"
+    },
+    {
+      "ticker": "EXUS",
+      "isin": "IE0006WW1TQ4",
+      "venue": "LSE",
+      "role": "developed-ex-us",
+      "domicile": "Ireland"
+    },
+    {
+      "ticker": "EIMI",
+      "isin": "IE00BKM4GZ66",
+      "venue": "LSE",
+      "role": "emerging-markets",
+      "domicile": "Ireland"
+    },
+    {
+      "ticker": "IB01",
+      "isin": "IE00BGSF1X88",
+      "venue": "LSE",
+      "role": "call-reserve-candidate",
+      "domicile": "Ireland"
+    }
+  ],
+  "controls": {
+    "publishLiveAmounts": false,
+    "allowOrders": false,
+    "allowOrderChanges": false,
+    "allowTransfers": false,
+    "retainPreviousOnMissingInputs": true
+  }
+}
