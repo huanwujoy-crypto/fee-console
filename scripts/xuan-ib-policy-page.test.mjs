@@ -58,6 +58,10 @@ test('one deterministic renderer serves a scoped inline section and standalone p
   assert.match(html, /apple-mobile-web-app-capable/);
   assert.match(html, /Content-Security-Policy/);
   assert.match(html, /prefers-color-scheme:dark/);
+  assert.match(html, /#tl:checked~\.page #xuan-ib-policy-v2/);
+  assert.match(html, /#td:checked~\.page #xuan-ib-policy-v2/);
+  assert.match(html, /--xpv2-bg:#f6f6f3/);
+  assert.match(html, /--xpv2-bg:#111214/);
   assert.match(html, /width:100%;max-width:390px/);
   assert.doesNotMatch(html, /<script|fetch\(|https?:\/\/|<button/i);
   assert.ok(html.includes(policyFingerprint(policy)));
