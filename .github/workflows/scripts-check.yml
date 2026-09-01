@@ -7,6 +7,11 @@ on:
   pull_request:
     branches:
       - main
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
 
 permissions:
   contents: read
@@ -16,19 +21,35 @@ jobs:
     name: scripts-check
     runs-on: ubuntu-latest
     steps:
+      - name: Explain deferred validation for draft pull requests
+        if: ${{ github.event.pull_request.draft == true }}
+        shell: bash
+        run: |
+          echo 'This pull request is still a draft, so it cannot be merged.'
+          echo 'The complete script suite will run when the pull request is marked ready for review.'
+          {
+            echo '### fee-console script validation'
+            echo ''
+            echo ':information_source: Draft pull request — full validation is deferred until **Ready for review**.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Check out the proposed merge
+        if: ${{ github.event.pull_request.draft == false }}
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           fetch-depth: 0
 
       - name: Verify append-only implementation progress
+        if: ${{ github.event.pull_request.draft == false }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: node scripts/xuan-ib-progress.mjs "$BASE_SHA"
 
       - name: Test implementation progress and classification audit
+        if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs
 
       - name: Run the script test suite
+        if: ${{ github.event.pull_request.draft == false }}
         shell: bash
         run: node --test scripts/daily.test.mjs scripts/benchmark-cache.test.mjs scripts/ui-pr-guard.test.mjs scripts/ui-flows.test.mjs scripts/handover-guard.test.mjs scripts/xuan-ib-loader.test.mjs scripts/xuan-ib-decision-menu.test.mjs scripts/build-xuan-decision-shortcut.test.mjs scripts/xuan-ib-run-manifest.test.mjs scripts/xuan-ib-promotion.test.mjs scripts/xuan-ib-publish-health.test.mjs scripts/backfill-benchmark.test.mjs scripts/returns.test.mjs
