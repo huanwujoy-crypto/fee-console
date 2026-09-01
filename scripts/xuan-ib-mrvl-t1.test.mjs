@@ -9,8 +9,16 @@ import { calculateMrvlT1, calculateMrvlT1Snapshot, updateMrvlT1Report, validateM
   MRVL_T1_SOURCE_SHA, MRVL_T1_SOURCE_BLOB, MRVL_T1_IDENTITY, MRVL_T1_SNAPSHOT_NOTICE } from './xuan-ib-mrvl-t1.mjs';
 import { classificationReportBlob } from './xuan-ib-classification-correction.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
+import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
+const approvedPolicySection = renderPolicySection(JSON.parse(
+  fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8')
+));
+const withRequiredPolicy = (html) => html.replace(
+  '<div class="pane p3">',
+  '<div class="pane p3">' + approvedPolicySection
+);
 const fixtureCommit = 'fc27cd8aaadfda0be42d0c5114ca4066d5fad499';
 const original = execFileSync('git', ['show', fixtureCommit + ':xuan-ib/latest.html'], { cwd: repo, encoding: 'utf8' });
 const meta = JSON.parse(execFileSync('git', ['show', fixtureCommit + ':xuan-ib/latest.meta.json'], { cwd: repo, encoding: 'utf8' }));
@@ -129,10 +137,11 @@ test('trusted publication guard accepts the candidate and explicit-binding CLI e
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mrvl-t1-test-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
-  fs.writeFileSync(previous, original); fs.writeFileSync(current, updated);
+  fs.writeFileSync(previous, withRequiredPolicy(original)); fs.writeFileSync(current, withRequiredPolicy(updated));
   const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: binding.sourceSha, XUAN_IB_PREVIOUS_HTML_BLOB: binding.htmlBlob };
   const guard = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(guard.status, 0, guard.stderr + guard.stdout);
+  fs.writeFileSync(previous, original);
   const script = path.join(repo, 'scripts/xuan-ib-mrvl-t1.mjs');
   const cli = spawnSync(process.execPath, [script, previous, '--source-sha', binding.sourceSha, '--html-blob', binding.htmlBlob], { encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stderr); assert.equal(cli.stdout, updated); assert.equal(fs.readFileSync(previous, 'utf8'), original);

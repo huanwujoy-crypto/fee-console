@@ -14,10 +14,18 @@ import {
   verifyClassificationCorrection,
 } from './xuan-ib-classification-correction.mjs';
 import { renderClassificationDisclosure, validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const script = fileURLToPath(new URL('./xuan-ib-classification-correction.mjs', import.meta.url));
 const guard = fileURLToPath(new URL('./handover-guard.mjs', import.meta.url));
+const approvedPolicySection = renderPolicySection(JSON.parse(
+  fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8')
+));
+const withRequiredPolicy = (html) => html.replace(
+  '<div class="pane p3">',
+  '<div class="pane p3">' + approvedPolicySection
+);
 // Main's immutable published ancestor is available in the required full-history
 // scripts-check checkout. Never silently switch this fixture to a later report.
 const fixture = spawnSync('git', ['show', 'a64f78c55f2b51008de30ae914fa173e8770f61d:xuan-ib/latest.html'], {
@@ -108,8 +116,8 @@ test('verification rejects arbitrary extra edits even if their numbers look unch
 });
 
 test('trusted guard rejects obsolete classification, then requires the later cash-model repair', t => {
-  const previous = temporaryReport(t, original, 'previous.html');
-  const current = temporaryReport(t, corrected);
+  const previous = temporaryReport(t, withRequiredPolicy(original), 'previous.html');
+  const current = temporaryReport(t, withRequiredPolicy(corrected));
   const env = {
     ...process.env,
     XUAN_IB_PREVIOUS_SOURCE_SHA: CLASSIFICATION_CORRECTION_SOURCE_SHA,

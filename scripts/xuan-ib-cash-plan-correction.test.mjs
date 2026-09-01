@@ -8,7 +8,15 @@ import { fileURLToPath } from 'node:url';
 import { correctCashPlan, CASH_CORRECTION_SOURCE_SHA, CASH_CORRECTION_SOURCE_BLOB, CASH_CORRECTION_NOTICE, updateCashPlanPresentation, CASH_PRESENTATION_SOURCE_SHA, CASH_PRESENTATION_SOURCE_BLOB, CASH_PRESENTATION_NOTICE, updateThreeWayCashPlan, CASH_THREE_WAY_SOURCE_SHA, CASH_THREE_WAY_SOURCE_BLOB, CASH_THREE_WAY_NOTICE } from './xuan-ib-cash-plan-correction.mjs';
 import { classificationReportBlob } from './xuan-ib-classification-correction.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
+import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 const repo = fileURLToPath(new URL('..', import.meta.url));
+const approvedPolicySection = renderPolicySection(JSON.parse(
+  fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8')
+));
+const withRequiredPolicy = (html) => html.replace(
+  '<div class="pane p3">',
+  '<div class="pane p3">' + approvedPolicySection
+);
 const original = execFileSync('git', ['show', '258f98fe59c28b745908d43f998dbc144662dc1b:xuan-ib/latest.html'], { cwd: repo, encoding: 'utf8' });
 const corrected = correctCashPlan(original);
 const extract = (html, regex) => [...html.matchAll(regex)].map(m => m[0]);
@@ -28,12 +36,12 @@ test('cash correction passes the entire trusted publication guard with original 
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cash-plan-guard-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
-  fs.writeFileSync(previous, original); fs.writeFileSync(current, corrected);
+  fs.writeFileSync(previous, withRequiredPolicy(original)); fs.writeFileSync(current, withRequiredPolicy(corrected));
   const guard = path.join(repo, 'scripts/handover-guard.mjs');
   const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_CORRECTION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_CORRECTION_SOURCE_BLOB };
   const result = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  fs.writeFileSync(current, corrected.replace('$466,482', '$475,270'));
+  fs.writeFileSync(current, withRequiredPolicy(corrected.replace('$466,482', '$475,270')));
   const invalid = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /cash plan/);
 });
@@ -67,13 +75,14 @@ test('ticker-first candidate passes trusted guard with original decisions and it
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cash-display-guard-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
-  fs.writeFileSync(previous, presentationOriginal); fs.writeFileSync(current, presentationUpdated);
+  fs.writeFileSync(previous, withRequiredPolicy(presentationOriginal)); fs.writeFileSync(current, withRequiredPolicy(presentationUpdated));
   const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_PRESENTATION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_PRESENTATION_SOURCE_BLOB };
   const result = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+  fs.writeFileSync(previous, presentationOriginal);
   const cli = spawnSync(process.execPath, [path.join(repo, 'scripts/xuan-ib-cash-plan-correction.mjs'), '--ticker-first', previous], { encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stderr); assert.equal(cli.stdout, presentationUpdated);
-  fs.writeFileSync(current, presentationUpdated.replace('USSC 待回款后重算', 'USSC 已有现金可立即买入'));
+  fs.writeFileSync(current, withRequiredPolicy(presentationUpdated.replace('USSC 待回款后重算', 'USSC 已有现金可立即买入')));
   const invalid = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /cash plan/);
 });
@@ -112,14 +121,15 @@ test('three-way candidate passes full publication guard, CLI is deterministic, a
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cash-three-way-guard-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
-  fs.writeFileSync(previous, threeWayOriginal); fs.writeFileSync(current, updated);
+  fs.writeFileSync(previous, withRequiredPolicy(threeWayOriginal)); fs.writeFileSync(current, withRequiredPolicy(updated));
   const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_THREE_WAY_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_THREE_WAY_SOURCE_BLOB };
   const guard = path.join(repo, 'scripts/handover-guard.mjs');
   const result = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+  fs.writeFileSync(previous, threeWayOriginal);
   const cli = spawnSync(process.execPath, [path.join(repo, 'scripts/xuan-ib-cash-plan-correction.mjs'), '--three-way', previous], { encoding: 'utf8' });
   assert.equal(cli.status, 0, cli.stderr); assert.equal(cli.stdout, updated);
-  fs.writeFileSync(current, updated.replace('$58,429', '$158,429'));
+  fs.writeFileSync(current, withRequiredPolicy(updated.replace('$58,429', '$158,429')));
   const invalid = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /cash plan/);
   assert.ok(validateCashPlan(threeWayOriginal, { previousHtml: updated }).length, 'trusted v2 must not downgrade to old two-way plan');
