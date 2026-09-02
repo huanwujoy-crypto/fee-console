@@ -29,8 +29,9 @@ const attributeValueCount = (source, name, value) => (source.match(new RegExp(
   'gi'
 )) || []).length;
 const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\s*=\s*(?:"[^"]*&[^"]*"|'[^']*&[^']*'|[^\s>]*&[^\s>]*)/i.test(source);
-const navigationOrder = Object.freeze(['s1', 's2', 's3', 's5', 's4']);
-const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s5: 'ETF', s4: '待办' });
+const navigationOrder = Object.freeze(['s1', 's2', 's3', 's4', 's5']);
+const legacyEtfFirstNavigationOrder = Object.freeze(['s1', 's2', 's3', 's5', 's4']);
+const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s4: '待办', s5: 'ETF' });
 
 const elementRange = (source, tagName, opening) => {
   const tags = new RegExp(`<\\/?${tagName}\\b[^>]*>`, 'gi');
@@ -67,14 +68,21 @@ const quotedAttribute = (attributes, name) => {
   return matches.length === 1 ? matches[0][2] : null;
 };
 
-function assertIntegratedEtfPane(source, canonicalSection) {
+function assertIntegratedEtfPane(source, canonicalSection, { etfBeforeTodo = false } = {}) {
   const structural = structuralMarkup(source);
   const config = paneRanges(source, 'p3');
   const etf = paneRanges(source, 'p5');
   const todo = paneRanges(source, 'p4');
+  const expectedNavigationOrder = etfBeforeTodo ? legacyEtfFirstNavigationOrder : navigationOrder;
+  const expectedNavigationText = etfBeforeTodo
+    ? '概览 / 风险 / 配置 / ETF / 待办'
+    : '概览 / 风险 / 配置 / 待办 / ETF';
+  const expectedPaneOrder = etfBeforeTodo ? 'p3, p5 and p4' : 'p3, p4 and p5';
   if (config.length !== 1 || etf.length !== 1 || todo.length !== 1
-      || !(config[0].closeStart < etf[0].start && etf[0].closeStart < todo[0].start)) {
-    throw new Error('integrated handover must have one p3, p5 and p4 in configuration / ETF / todo order');
+      || !(etfBeforeTodo
+        ? config[0].closeStart < etf[0].start && etf[0].closeStart < todo[0].start
+        : config[0].closeStart < todo[0].start && todo[0].closeStart < etf[0].start)) {
+    throw new Error(`integrated handover must have one ${expectedPaneOrder} in ${expectedNavigationText} DOM order`);
   }
   const policyStart = source.indexOf(canonicalSection);
   const policyEnd = policyStart + canonicalSection.length;
@@ -103,7 +111,7 @@ function assertIntegratedEtfPane(source, canonicalSection) {
   }
   const orderedInputs = [];
   const orderedLabels = [];
-  for (const id of navigationOrder) {
+  for (const id of expectedNavigationOrder) {
     if (attributeValueCount(structural, 'id', id) !== 1
         || attributeValueCount(structural, 'for', id) !== 1) {
       throw new Error(`navigation must reserve id=${id} and for=${id} exactly once`);
@@ -131,7 +139,7 @@ function assertIntegratedEtfPane(source, canonicalSection) {
         || match.index + match[0].length > tabbars[0].closeStart)
       || allPanes.length === 0
       || allPanes.some(pane => tabbars[0].end > pane.start)) {
-    throw new Error('navigation must appear as 概览 / 风险 / 配置 / ETF / 待办 before all panes');
+    throw new Error(`navigation must appear as ${expectedNavigationText} before all panes`);
   }
   const cssStart = structural.indexOf(ETF_TAB_CSS_V1);
   const cssEnd = cssStart + ETF_TAB_CSS_V1.length;
@@ -147,10 +155,42 @@ function assertIntegratedEtfPane(source, canonicalSection) {
   const s4InputIndex = source.search(/<input\b[^>]*\bid\s*=\s*(["'])s4\1[^>]*>/i);
   const s4LabelIndex = source.search(/<label\b[^>]*\bfor\s*=\s*(["'])s4\1[^>]*>/i);
   if (s4InputIndex < 0 || s4LabelIndex < 0
-      || source.indexOf(ETF_TAB_RADIO_V1) > s4InputIndex
-      || source.indexOf(ETF_TAB_LABEL_V1) > s4LabelIndex) {
-    throw new Error('ETF navigation must appear immediately before the existing todo navigation');
+      || (etfBeforeTodo
+        ? source.indexOf(ETF_TAB_RADIO_V1) > s4InputIndex
+          || source.indexOf(ETF_TAB_LABEL_V1) > s4LabelIndex
+        : source.indexOf(ETF_TAB_RADIO_V1) < s4InputIndex
+          || source.indexOf(ETF_TAB_LABEL_V1) < s4LabelIndex)) {
+    throw new Error(`ETF navigation must appear ${etfBeforeTodo ? 'before' : 'after'} the existing todo navigation`);
   }
+}
+
+function reorderExistingEtfAfterTodo(source, canonicalSection) {
+  assertIntegratedEtfPane(source, canonicalSection, { etfBeforeTodo: true });
+
+  let reordered = source.replace(ETF_TAB_RADIO_V1, '');
+  const s4Input = [...reordered.matchAll(/<input\b([^>]*)>/gi)]
+    .find(match => quotedAttribute(match[1], 'id') === 's4');
+  if (!s4Input) throw new Error('could not resolve the s4 radio reorder point');
+  const inputEnd = s4Input.index + s4Input[0].length;
+  reordered = reordered.slice(0, inputEnd) + ETF_TAB_RADIO_V1 + reordered.slice(inputEnd);
+
+  reordered = reordered.replace(ETF_TAB_LABEL_V1, '');
+  const s4Label = [...reordered.matchAll(/<label\b([^>]*)>[\s\S]*?<\/label\s*>/gi)]
+    .find(match => quotedAttribute(match[1], 'for') === 's4');
+  if (!s4Label) throw new Error('could not resolve the s4 label reorder point');
+  const labelEnd = s4Label.index + s4Label[0].length;
+  reordered = reordered.slice(0, labelEnd) + ETF_TAB_LABEL_V1 + reordered.slice(labelEnd);
+
+  const etfPane = paneRanges(reordered, 'p5');
+  if (etfPane.length !== 1) throw new Error('could not resolve the ETF pane reorder point');
+  const etfMarkup = reordered.slice(etfPane[0].start, etfPane[0].end);
+  reordered = reordered.slice(0, etfPane[0].start) + reordered.slice(etfPane[0].end);
+  const todoPane = paneRanges(reordered, 'p4');
+  if (todoPane.length !== 1) throw new Error('could not resolve the todo pane reorder point');
+  reordered = reordered.slice(0, todoPane[0].end) + etfMarkup + reordered.slice(todoPane[0].end);
+
+  assertIntegratedEtfPane(reordered, canonicalSection);
+  return reordered;
 }
 
 // Migrate presentation only. The source must already contain the approved,
@@ -169,6 +209,10 @@ export function migratePolicyToEtfPane(html, policy) {
 
   const existingEtfPane = paneRanges(source, 'p5');
   if (existingEtfPane.length === 1) {
+    const existingTodoPane = paneRanges(source, 'p4');
+    if (existingTodoPane.length === 1 && existingEtfPane[0].start < existingTodoPane[0].start) {
+      return reorderExistingEtfAfterTodo(source, canonicalSection);
+    }
     assertIntegratedEtfPane(source, canonicalSection);
     return source;
   }
@@ -210,18 +254,23 @@ export function migratePolicyToEtfPane(html, policy) {
   const styleClose = documentStyles[0].closeStart;
 
   let migrated = source.slice(0, styleClose) + '\n' + ETF_TAB_CSS_V1 + '\n' + source.slice(styleClose);
-  const s4InputIndex = migrated.search(/<input\b[^>]*\bname\s*=\s*(["'])sec\1[^>]*\bid\s*=\s*(["'])s4\2[^>]*>|<input\b[^>]*\bid\s*=\s*(["'])s4\3[^>]*\bname\s*=\s*(["'])sec\4[^>]*>/i);
-  if (s4InputIndex < 0) throw new Error('could not resolve the s4 radio insertion point');
-  migrated = migrated.slice(0, s4InputIndex) + ETF_TAB_RADIO_V1 + migrated.slice(s4InputIndex);
-  const s4LabelIndex = migrated.search(/<label\b[^>]*\bfor\s*=\s*(["'])s4\1[^>]*>/i);
-  if (s4LabelIndex < 0) throw new Error('could not resolve the s4 label insertion point');
-  migrated = migrated.slice(0, s4LabelIndex) + ETF_TAB_LABEL_V1 + '\n' + migrated.slice(s4LabelIndex);
+  const s4Input = [...migrated.matchAll(/<input\b([^>]*)>/gi)]
+    .find(match => quotedAttribute(match[1], 'id') === 's4'
+      && quotedAttribute(match[1], 'name') === 'sec');
+  if (!s4Input) throw new Error('could not resolve the s4 radio insertion point');
+  const s4InputEnd = s4Input.index + s4Input[0].length;
+  migrated = migrated.slice(0, s4InputEnd) + ETF_TAB_RADIO_V1 + migrated.slice(s4InputEnd);
+  const s4Label = [...migrated.matchAll(/<label\b([^>]*)>[\s\S]*?<\/label\s*>/gi)]
+    .find(match => quotedAttribute(match[1], 'for') === 's4');
+  if (!s4Label) throw new Error('could not resolve the s4 label insertion point');
+  const s4LabelEnd = s4Label.index + s4Label[0].length;
+  migrated = migrated.slice(0, s4LabelEnd) + '\n' + ETF_TAB_LABEL_V1 + migrated.slice(s4LabelEnd);
   migrated = migrated.replace(canonicalSection, '');
   const migratedTodo = paneRanges(migrated, 'p4');
   if (migratedTodo.length !== 1) throw new Error('could not resolve the todo pane insertion point');
-  migrated = migrated.slice(0, migratedTodo[0].start)
-    + `<div class="pane p5">\n${canonicalSection}\n</div>\n`
-    + migrated.slice(migratedTodo[0].start);
+  migrated = migrated.slice(0, migratedTodo[0].end)
+    + `\n<div class="pane p5">\n${canonicalSection}\n</div>\n`
+    + migrated.slice(migratedTodo[0].end);
   assertIntegratedEtfPane(migrated, canonicalSection);
   return migrated;
 }

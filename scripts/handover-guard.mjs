@@ -84,8 +84,8 @@ const attributeValueCount = (source, name, value) => (source.match(new RegExp(
   'gi'
 )) || []).length;
 const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\s*=\s*(?:"[^"]*&[^"]*"|'[^']*&[^']*'|[^\s>]*&[^\s>]*)/i.test(source);
-const navigationOrder = Object.freeze(['s1', 's2', 's3', 's5', 's4']);
-const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s5: 'ETF', s4: '待办' });
+const navigationOrder = Object.freeze(['s1', 's2', 's3', 's4', 's5']);
+const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s4: '待办', s5: 'ETF' });
 const DECISION_STATE_TEMPLATE_ID = 'xuan-ib-decision-state-v1';
 const ETF_ABC_STATE_TEMPLATE_ID = 'xuan-ib-etf-abc-state-v1';
 const ETF_ABC_STATE_TEMPLATE_OPENING = `<template id="${ETF_ABC_STATE_TEMPLATE_ID}" type="application/json">`;
@@ -191,7 +191,7 @@ const validateEtfNavigation = (source) => {
         || match.index + match[0].length > tabbars[0].closeStart)
       || panes.length === 0
       || panes.some(pane => tabbars[0].end > pane.start)) {
-    fail('navigation must appear as 概览 / 风险 / 配置 / ETF / 待办 before all panes');
+    fail('navigation must appear as 概览 / 风险 / 配置 / 待办 / ETF before all panes');
   }
 };
 
@@ -417,8 +417,8 @@ if (candidateHasPolicyReservation) {
   let policyPane;
   if (!isRecordsUpdate) {
     if (!etfPane || candidatePaneClass !== 'p5'
-        || !(configPane.closeStart < etfPane.start && etfPane.closeStart < todoPane.start)) {
-      fail('fresh reports must place policy-v2 in the independent ETF pane between configuration and todo');
+        || !(configPane.closeStart < todoPane.start && todoPane.closeStart < etfPane.start)) {
+      fail('fresh reports must place policy-v2 in the independent ETF pane after todo');
     }
     validateEtfNavigation(structuralHtml);
     validateEtfLayoutCss(structuralHtml);

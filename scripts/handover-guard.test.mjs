@@ -40,17 +40,19 @@ const markRecordsUpdate = (html) => html.replace(
 );
 
 const withPaneLayout = (html, {
-  p1 = '', p2 = '', p3 = '', p5 = '', p4 = '', includeEtf = true,
+  p1 = '', p2 = '', p3 = '', p5 = '', p4 = '', includeEtf = true, etfBeforeTodo = false,
 } = {}) => {
   let styled = includeEtf ? html.replace('</style>', `\n${ETF_TAB_CSS_V1}\n</style>`) : html;
   const todoLabelMatch = styled.match(/<label\b[^>]*\bfor\s*=\s*(["'])s4\1[^>]*>[\s\S]*?<\/label\s*>/i);
   const todoLabel = todoLabelMatch?.[0] ?? '<label for="s4" aria-label="待办：0 项">待办</label>';
   if (todoLabelMatch) styled = styled.slice(0, todoLabelMatch.index) + styled.slice(todoLabelMatch.index + todoLabel.length);
-  const inputs = `<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3">${includeEtf ? ETF_TAB_RADIO_V1 : ''}<input type="radio" name="sec" id="s4">`;
-  const labels = `<label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label>${includeEtf ? ETF_TAB_LABEL_V1 : ''}${todoLabel}`;
+  const inputs = `<input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${includeEtf ? ETF_TAB_RADIO_V1 : ''}`;
+  const labels = `<label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label>${todoLabel}${includeEtf ? ETF_TAB_LABEL_V1 : ''}`;
+  const todoPane = `<div class="pane p4">${p4}</div>`;
+  const etfPane = includeEtf ? `<div class="pane p5">${p5}</div>` : '';
   return styled.replace(
     '</body>',
-    `<div class="tabs">${inputs}<div class="tabbar">${labels}</div><div class="pane p1">${p1}</div><div class="pane p2">${p2}</div><div class="pane p3">${p3}</div>${includeEtf ? `<div class="pane p5">${p5}</div>` : ''}<div class="pane p4">${p4}</div></div></body>`
+    `<div class="tabs">${inputs}<div class="tabbar">${labels}</div><div class="pane p1">${p1}</div><div class="pane p2">${p2}</div><div class="pane p3">${p3}</div>${etfBeforeTodo ? etfPane + todoPane : todoPane + etfPane}</div></body>`
   );
 };
 const withPolicySection = (html, section = approvedPolicySection) => withPaneLayout(html, { p5: section });
@@ -282,6 +284,13 @@ test('fresh policy-v2 belongs at the top of a reachable independent ETF pane', (
   assert.notEqual(afterOrdinaryModule.status, 0);
   assert.match(afterOrdinaryModule.stderr, /first visible module/);
 
+  const oldDomOrder = run(withPaneLayout(valid(), {
+    p5: approvedPolicySection,
+    etfBeforeTodo: true,
+  }));
+  assert.notEqual(oldDomOrder.status, 0);
+  assert.match(oldDomOrder.stderr, /ETF pane after todo/);
+
   for (const broken of [
     correctHtml.replace(ETF_TAB_RADIO_V1, ''),
     correctHtml.replace(ETF_TAB_LABEL_V1, ''),
@@ -294,12 +303,12 @@ test('fresh policy-v2 belongs at the top of a reachable independent ETF pane', (
     correctHtml.replace(ETF_TAB_RADIO_V1, `${ETF_TAB_RADIO_V1}<input id="s&#53;">`),
     correctHtml.replace(ETF_TAB_LABEL_V1, `${ETF_TAB_LABEL_V1}<label for="s&#53;">duplicate</label>`),
     correctHtml.replace(
-      `${ETF_TAB_RADIO_V1}<input type="radio" name="sec" id="s4">`,
-      `<input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}`
+      `<input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}`,
+      `${ETF_TAB_RADIO_V1}<input type="radio" name="sec" id="s4">`
     ),
     correctHtml.replace(
-      `${ETF_TAB_LABEL_V1}<label for="s4" aria-label="待办：0 项">待办</label>`,
-      `<label for="s4" aria-label="待办：0 项">待办</label>${ETF_TAB_LABEL_V1}`
+      `<label for="s4" aria-label="待办：0 项">待办</label>${ETF_TAB_LABEL_V1}`,
+      `${ETF_TAB_LABEL_V1}<label for="s4" aria-label="待办：0 项">待办</label>`
     ),
     correctHtml.replace('<label for="s2">风险</label>', '<label for="s2">配置</label>'),
     correctHtml.replace(ETF_TAB_LABEL_V1, '').replace(

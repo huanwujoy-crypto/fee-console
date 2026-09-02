@@ -74,7 +74,8 @@ candidate, scheduled-run result, or publication-success signal. The only
 permitted handover integration is the byte-identical output of
 `renderPolicySection(policy)`, placed as the first visible module inside the
 unique independent `.pane.p5` ETF pane. Keep the visible navigation order
-`概览 / 风险 / 配置 / ETF / 待办`, while preserving todo as `s4` / `p4`.
+`概览 / 风险 / 配置 / 待办 / ETF`, while preserving todo as `s4` / `p4`,
+ETF as `s5` / `p5`, and pane DOM order as `p1 / p2 / p3 / p4 / p5`.
 Do not copy or edit the standalone page,
 its JSON, approval record, renderer, or tests in a candidate: the candidate
 contract remains one commit changing only `xuan-ib/index.html`. The first

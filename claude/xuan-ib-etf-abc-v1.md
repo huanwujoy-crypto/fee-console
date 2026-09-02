@@ -199,3 +199,43 @@ it accepts only a pending baseline, incomplete comparison, no completed
 quarters, incomplete raw metrics and `rankingEligible=false`. Established or
 eligible states require a later reviewed integration with the separately
 trusted append-only measurement ledger; self-asserted public JSON is not enough.
+
+## 8. Private ledger and public checkpoint boundary
+
+The authoritative evidence manifest, append-only measurement ledger and HMAC
+secret are private operational data. They must remain outside this public
+repository, below an explicitly approved current-user-owned `0700` root. The
+loader accepts only direct-child, current-user-owned, single-link regular files
+with exact `0600` permissions and reads them through a no-follow file
+descriptor. It rejects symlinks, hard links, directories, oversized files and
+roots inside the public repository.
+
+The private manifest is byte-canonical JSON. An established baseline cannot be
+asserted by a caller: it must contain T0 `2026-09-01`, an explicit completed
+common valuation cutoff exactly at `2026-09-02T04:00:00+08:00`, an
+evidence-observed timestamp at or after that cutoff and not in the future,
+policy/scope/source/calendar fingerprints, and sorted per-account holding
+evidence. Every holding binds its account, instrument, canonical quantity,
+canonical USD unit price, explicit valuation-as-of HKT timestamp within the T0
+window, source fingerprint and valuation-evidence fingerprint. The code rounds
+each holding's quantity times price to USD cents
+using half-up rounding, then sums those cents to derive A. It derives B as an
+exact value-and-holdings clone of A. A later price cannot be used to reconstruct
+missing T0 evidence, and neither A nor B can be supplied as an input amount.
+
+Private entries use a SHA-256 hash chain and immutable-prefix continuity.
+Public checkpoints use domain-separated `HMAC-SHA256` commitments under a
+private random secret, expose only a non-secret key identifier, and bind ledger
+identity, method, T0, entry count and private head. Each successor must link to
+both the preceding public checkpoint and preceding private-head commitment;
+trusted verification requires the secret and both private ledger states.
+
+The repository may contain only
+`claude/xuan-ib-etf-ledger-public-genesis-v1.json`: a canonical, value-free
+pending bootstrap checkpoint. Its committed key and commitments are structural
+test fixtures, not an operational secret or proof that the baseline is
+established. Before an actual baseline exists, operations must create a new
+chain with a private random secret and private evidence under the approved
+root. Public validation rejects records, payloads, NAV, cash, flows, prices,
+holdings, positions and units. A public checkpoint is continuity evidence only;
+it does not establish the baseline or authorize a financial write.

@@ -20,6 +20,28 @@ const policy = JSON.parse(fs.readFileSync(policyPath, 'utf8'));
 const script = fileURLToPath(new URL('./xuan-ib-etf-pane.mjs', import.meta.url));
 const canonical = renderPolicySection(policy);
 
+const exactPaneMarkup = (source, paneClass) => {
+  const openings = [...source.matchAll(/<div\b[^>]*>/gi)];
+  const opening = openings.find(match => new RegExp(`(?:^|\\s)${paneClass}(?:\\s|$)`).test(
+    match[0].match(/\bclass\s*=\s*(["'])(.*?)\1/i)?.[2] ?? '',
+  ));
+  if (!opening) throw new Error(`missing ${paneClass}`);
+  const tags = /<\/?div\b[^>]*>/gi;
+  tags.lastIndex = opening.index;
+  let depth = 0;
+  let match;
+  while ((match = tags.exec(source))) {
+    depth += /^<\/div/i.test(match[0]) ? -1 : 1;
+    if (depth === 0) return source.slice(opening.index, tags.lastIndex);
+  }
+  throw new Error(`unclosed ${paneClass}`);
+};
+
+const withoutMovedEtfNavigation = source => source
+  .replace(ETF_TAB_RADIO_V1, '')
+  .replace(ETF_TAB_LABEL_V1, '')
+  .replace(exactPaneMarkup(source, 'p5'), '');
+
 const legacyHandover = () => `<!doctype html><html><head><style>
 .tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr))}
 .pane{display:none}#s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}
@@ -40,12 +62,12 @@ test('ordinary migration creates an independent compact ETF tab without changing
   assert.equal(migrated.split(ETF_TAB_CSS_V1).length - 1, 1);
   assert.equal(migrated.split(ETF_TAB_RADIO_V1).length - 1, 1);
   assert.equal(migrated.split(ETF_TAB_LABEL_V1).length - 1, 1);
-  assert.ok(migrated.indexOf(ETF_TAB_RADIO_V1) < migrated.indexOf('id="s4"'));
-  assert.ok(migrated.indexOf(ETF_TAB_LABEL_V1) < migrated.indexOf('for="s4"'));
+  assert.ok(migrated.indexOf('id="s4"') < migrated.indexOf(ETF_TAB_RADIO_V1));
+  assert.ok(migrated.indexOf('for="s4"') < migrated.indexOf(ETF_TAB_LABEL_V1));
   assert.match(migrated, /<div class="pane p3">\s*<!-- canonical policy follows -->\s*<section id="operational-v1">/);
   assert.match(migrated, /<div class="pane p5">\s*<section id="xuan-ib-policy-v2"/);
-  assert.ok(migrated.indexOf('class="pane p3"') < migrated.indexOf('class="pane p5"'));
-  assert.ok(migrated.indexOf('class="pane p5"') < migrated.indexOf('class="pane p4"'));
+  assert.ok(migrated.indexOf('class="pane p3"') < migrated.indexOf('class="pane p4"'));
+  assert.ok(migrated.indexOf('class="pane p4"') < migrated.indexOf('class="pane p5"'));
   for (const unchanged of ['NAV $5,000,000', '风险 20%', '现金计划 $584,489', '待办 0']) {
     assert.equal(migrated.split(unchanged).length - 1, 1, unchanged);
   }
@@ -54,13 +76,18 @@ test('ordinary migration creates an independent compact ETF tab without changing
   assert.match(ETF_TAB_CSS_V1, /font-size:11px/);
 });
 
-test('migration accepts the current checked-in production report without altering financial tokens', () => {
+test('migration accepts the current checked-in production report and changes only the three moved ETF chunks', () => {
   const current = fs.readFileSync(path.join(repo, 'xuan-ib/latest.html'), 'utf8');
   const migrated = migratePolicyToEtfPane(current, policy);
   const financialTokens = source => source.match(/(?:[+-]?(?:C?\$|USD\s|CAD\s)[\d,]+(?:\.\d+)?(?:[MK])?|[+-]?\d+(?:\.\d+)?%)/g) ?? [];
   assert.deepEqual(financialTokens(migrated).sort(), financialTokens(current).sort());
   assert.equal(migrated.split(canonical).length - 1, 1);
   assert.match(migrated, /<div class="pane p5">\s*<section id="xuan-ib-policy-v2"/);
+  assert.ok(migrated.indexOf('id="s4"') < migrated.indexOf(ETF_TAB_RADIO_V1));
+  assert.ok(migrated.indexOf('for="s4"') < migrated.indexOf(ETF_TAB_LABEL_V1));
+  assert.ok(migrated.indexOf('class="pane p4"') < migrated.indexOf('class="pane p5"'));
+  assert.equal(exactPaneMarkup(migrated, 'p5'), exactPaneMarkup(current, 'p5'));
+  assert.equal(withoutMovedEtfNavigation(migrated), withoutMovedEtfNavigation(current));
   assert.equal(migratePolicyToEtfPane(migrated, policy), migrated);
 });
 
@@ -89,12 +116,12 @@ test('integrated migration rejects unquoted duplicates and unreachable navigatio
     migrated.replace(ETF_TAB_LABEL_V1, `${ETF_TAB_LABEL_V1}<label for="s&#53;">duplicate</label>`),
     migrated.replace(ETF_TAB_RADIO_V1, '<input type="radio" name="sec" id="s5" disabled>'),
     migrated.replace(
-      `${ETF_TAB_RADIO_V1}<input type="radio" name="sec" id="s4">`,
-      `<input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}`
+      `<input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}`,
+      `${ETF_TAB_RADIO_V1}<input type="radio" name="sec" id="s4">`
     ),
     migrated.replace(
-      `${ETF_TAB_LABEL_V1}\n<label for="s4" aria-label="待办：0 项">待办</label>`,
-      `<label for="s4" aria-label="待办：0 项">待办</label>\n${ETF_TAB_LABEL_V1}`
+      `<label for="s4" aria-label="待办：0 项">待办</label>\n${ETF_TAB_LABEL_V1}`,
+      `${ETF_TAB_LABEL_V1}\n<label for="s4" aria-label="待办：0 项">待办</label>`
     ),
     migrated.replace('<label for="s2">风险</label>', '<label for="s2">配置</label>'),
     migrated.replace(ETF_TAB_LABEL_V1, '').replace(
