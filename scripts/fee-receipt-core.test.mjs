@@ -323,7 +323,12 @@ test("the read-only report consumer emits only a public-and-private validated re
   const encrypted = encryptedFiles(payload, economicInput);
   const valid = spawnSync(process.execPath, [reportCli, `--file=${encrypted.target}`], {
     encoding: "utf8",
-    env: { ...process.env, FEE_DATA_KEY: encrypted.key, FEE_ECON_FILE: encrypted.econTarget }
+    env: {
+      ...process.env,
+      GITHUB_ACTIONS: "",
+      FEE_DATA_KEY: encrypted.key,
+      FEE_ECON_FILE: encrypted.econTarget
+    }
   });
   assert.equal(valid.status, 0, valid.stderr);
   const parsed = JSON.parse(valid.stdout);
@@ -336,7 +341,12 @@ test("the read-only report consumer emits only a public-and-private validated re
   const staleEncrypted = encryptedFiles(stalePayload, economicInput);
   const stale = spawnSync(process.execPath, [reportCli, `--file=${staleEncrypted.target}`], {
     encoding: "utf8",
-    env: { ...process.env, FEE_DATA_KEY: staleEncrypted.key, FEE_ECON_FILE: staleEncrypted.econTarget }
+    env: {
+      ...process.env,
+      GITHUB_ACTIONS: "",
+      FEE_DATA_KEY: staleEncrypted.key,
+      FEE_ECON_FILE: staleEncrypted.econTarget
+    }
   });
   assert.notEqual(stale.status, 0);
   assert.equal(stale.stdout, "");
