@@ -16,16 +16,24 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows,
   buildPoint, samePoint, buildStatus, sameStatus, isIsoDate
 } from "./daily-core.mjs";
+import {
+  buildFeeCalculationReceipt,
+  normalizeEconomicInputs,
+  sameFeeCalculationReceipt,
+  validateFeeCalculationReceipt
+} from "./fee-receipt-core.mjs";
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const SOURCE_FINGERPRINT_RE = /^[a-f0-9]{64}$/i;
 const SOURCE_META_KEYS = new Set(["sourceFetchedAt", "sourceFingerprint"]);
+const MAX_ECON_SNAPSHOT_BYTES = 5 * 1024 * 1024;
 
 const die = msg => { console.error("error: " + msg); process.exit(1); };
 const dieAll = msgs => { for (const m of msgs) console.error("error: " + m); process.exit(1); };
@@ -129,6 +137,52 @@ const dec = b64 => {
   return Buffer.concat([d.update(ct), d.final()]).toString("utf8");
 };
 
+/* ---------- 私密经济输入（只接受仓库外的加密 v4 快照） ---------- */
+const loadEconomicInput = () => {
+  const configured = String(process.env.FEE_ECON_FILE || "").trim();
+  if (!configured) return null;
+  if (!path.isAbsolute(configured)) die("FEE_ECON_FILE must be an absolute path");
+  let target;
+  try { target = fs.realpathSync(configured); }
+  catch { die("FEE_ECON_FILE cannot be read — nothing written"); }
+  const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+  const relative = path.relative(repoRoot, target);
+  if (relative === "" || (!relative.startsWith(".." + path.sep) && relative !== "..")) {
+    die("FEE_ECON_FILE must remain outside the repository — nothing written");
+  }
+  let first, second;
+  try {
+    const stat = fs.statSync(target);
+    if (!stat.isFile()) die("FEE_ECON_FILE must be a regular file — nothing written");
+    if (stat.size <= 0 || stat.size > MAX_ECON_SNAPSHOT_BYTES) {
+      die("FEE_ECON_FILE has an invalid size — nothing written");
+    }
+    first = fs.readFileSync(target);
+    second = fs.readFileSync(target);
+  } catch {
+    die("FEE_ECON_FILE cannot be read — nothing written");
+  }
+  if (!first.equals(second)) die("FEE_ECON_FILE changed while it was being read — nothing written");
+  let outer;
+  try { outer = JSON.parse(first.toString("utf8")); }
+  catch { die("FEE_ECON_FILE is not valid JSON — nothing written"); }
+  if (!outer || typeof outer !== "object" || Array.isArray(outer)
+      || outer.enc !== true || outer.v !== 4 || typeof outer.data !== "string") {
+    die("FEE_ECON_FILE must be an encrypted v4 envelope — nothing written");
+  }
+  let plain;
+  try { plain = dec(outer.data); }
+  catch { die("FEE_ECON_FILE decrypt failed (wrong key or corrupt data) — nothing written"); }
+  let economicInput;
+  try { economicInput = JSON.parse(plain); }
+  catch { die("FEE_ECON_FILE decrypted payload is not valid JSON — nothing written"); }
+  if (!economicInput || typeof economicInput !== "object" || Array.isArray(economicInput)
+      || economicInput.v !== 4) {
+    die("FEE_ECON_FILE decrypted payload must be fee-console v4 — nothing written");
+  }
+  return economicInput;
+};
+
 /* ---------- 读取 ---------- */
 const file = args.file || "data.json";
 let data = { updatedAt: "", daily: [], flowsAuto: [], flowsUnresolved: [] };
@@ -150,9 +204,49 @@ if (fs.existsSync(file)) {
   }
 }
 if (!data || typeof data !== "object" || Array.isArray(data)) die("decrypted payload has an unexpected shape");
-data.daily = Array.isArray(data.daily) ? data.daily : [];
-data.flowsAuto = Array.isArray(data.flowsAuto) ? data.flowsAuto : [];
-data.flowsUnresolved = Array.isArray(data.flowsUnresolved) ? data.flowsUnresolved : [];
+for (const field of ["daily", "flowsAuto", "flowsUnresolved"]) {
+  if (Object.hasOwn(data, field) && !Array.isArray(data[field])) {
+    die(`decrypted payload ${field} must be an array — nothing written`);
+  }
+  if (!Object.hasOwn(data, field)) data[field] = [];
+  for (const [index, record] of data[field].entries()) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      die(`decrypted payload ${field}[${index}] must be an object — nothing written`);
+    }
+  }
+}
+if (Object.hasOwn(data, "status")) {
+  if (!data.status || typeof data.status !== "object" || Array.isArray(data.status)) {
+    die("decrypted payload status must be an object — nothing written");
+  }
+  for (const field of ["asOf", "provisional", "calibrated", "splitDelta", "unresolvedCount", "notes"]) {
+    if (!Object.hasOwn(data.status, field)) {
+      die(`decrypted payload status.${field} is missing — nothing written`);
+    }
+  }
+  if (!isIsoDate(data.status.asOf)) {
+    die("decrypted payload status.asOf must be a calendar date — nothing written");
+  }
+  for (const field of ["provisional", "calibrated"]) {
+    if (typeof data.status[field] !== "boolean") {
+      die(`decrypted payload status.${field} must be a boolean — nothing written`);
+    }
+  }
+  if (!Number.isFinite(data.status.splitDelta)) {
+    die("decrypted payload status.splitDelta must be a finite number — nothing written");
+  }
+  if (!Number.isInteger(data.status.unresolvedCount) || data.status.unresolvedCount < 0) {
+    die("decrypted payload status.unresolvedCount must be a non-negative integer — nothing written");
+  }
+  if (!Array.isArray(data.status.notes) || data.status.notes.some(note => typeof note !== "string")) {
+    die("decrypted payload status.notes must be an array of strings — nothing written");
+  }
+}
+const economicInput = loadEconomicInput();
+if (economicInput) {
+  try { normalizeEconomicInputs(economicInput); }
+  catch (error) { die(`FEE_ECON_FILE economic input rejected: ${error.message} — nothing written`); }
+}
 
 /* ---------- 出入金输入 ---------- */
 let incoming = [];
@@ -275,23 +369,56 @@ const status = buildStatus({
   provisional: check.provisional, calibrated
 });
 
-/* ---------- 幂等 ---------- */
+/* ---------- 候选 payload、计算回执与幂等 ---------- */
 const existing = data.daily.filter(x => x && x.d === date);
-if (existing.length === 1 && samePoint(existing[0], point)
+const baseUnchanged = existing.length === 1 && samePoint(existing[0], point)
   && flows.added === 0 && flows.promoted === 0 && flows.flagged === 0
-  && sameStatus(data.status, status)) {
+  && sameStatus(data.status, status);
+
+const nextDaily = data.daily.filter(x => x && x.d !== date);
+nextDaily.push(point);
+nextDaily.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+const nextData = {
+  ...data,
+  daily: nextDaily,
+  flowsAuto: flows.auto,
+  flowsUnresolved: flows.unresolved,
+  status
+};
+
+let receiptState = "unchanged";
+if (economicInput) {
+  // An unresolved cash movement makes fees and Carry non-authoritative, but it
+  // must not prevent the read-only AUM point from being recorded.  Remove any
+  // prior receipt and publish no replacement until the flow ledger is resolved.
+  if (nextData.flowsUnresolved.length > 0) {
+    if (data.feeCalculationReceipt) {
+      delete nextData.feeCalculationReceipt;
+      receiptState = "unavailable-removed";
+    } else receiptState = "unavailable";
+  } else {
+    let receipt;
+    try { receipt = buildFeeCalculationReceipt({ data: nextData, economicInput }); }
+    catch (error) { die(`fee calculation receipt failed: ${error.message} — nothing written`); }
+    if (!sameFeeCalculationReceipt(data.feeCalculationReceipt, receipt)) receiptState = "updated";
+    nextData.feeCalculationReceipt = receipt;
+  }
+} else if (data.feeCalculationReceipt) {
+  const validation = validateFeeCalculationReceipt(data.feeCalculationReceipt, nextData);
+  if (!validation.ok) {
+    delete nextData.feeCalculationReceipt;
+    receiptState = "stale-removed";
+  }
+}
+
+const receiptUnchanged = sameFeeCalculationReceipt(data.feeCalculationReceipt, nextData.feeCalculationReceipt);
+if (baseUnchanged && receiptUnchanged) {
   console.log(`no-op ${date}`);
   process.exit(0);
 }
 
 /* ---------- 合并并原子写回 ---------- */
-data.daily = data.daily.filter(x => x && x.d !== date);
-data.daily.push(point);
-data.daily.sort((a, b) => String(a.d).localeCompare(String(b.d)));
-data.flowsAuto = flows.auto;
-data.flowsUnresolved = flows.unresolved;
-data.status = status;
-data.updatedAt = new Date().toISOString();
+nextData.updatedAt = new Date().toISOString();
 
 const writeAtomic = (target, contents) => {
   const abs = path.resolve(target);
@@ -306,11 +433,11 @@ const writeAtomic = (target, contents) => {
   catch (e) { try { fs.unlinkSync(tmp); } catch { /* ignore */ } throw e; }
   try { const d = fs.openSync(dir, "r"); try { fs.fsyncSync(d); } finally { fs.closeSync(d); } } catch { /* ignore */ }
 };
-writeAtomic(file, JSON.stringify({ enc: true, v: 3, data: enc(JSON.stringify(data)) }));
+writeAtomic(file, JSON.stringify({ enc: true, v: 3, data: enc(JSON.stringify(nextData)) }));
 
 console.log(
-  `ok ${date} points=${data.daily.length} ${calibrated ? "calibrated" : (status.provisional ? "provisional" : "clean")} ` +
-  `flows=${data.flowsAuto.length} new-flows=${flows.added} promoted=${flows.promoted} ` +
-  `unresolved=${data.flowsUnresolved.length}`
+  `ok ${date} points=${nextData.daily.length} ${calibrated ? "calibrated" : (status.provisional ? "provisional" : "clean")} ` +
+  `flows=${nextData.flowsAuto.length} new-flows=${flows.added} promoted=${flows.promoted} ` +
+  `unresolved=${nextData.flowsUnresolved.length} receipt=${receiptState}`
 );
 for (const n of status.notes) console.warn(`note: ${n}`);

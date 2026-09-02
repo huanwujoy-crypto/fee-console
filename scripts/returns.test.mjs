@@ -10,25 +10,20 @@
  *
  * 合成数字只服务于方法回归，不表示任何实际组合、持仓、交易或市场快照。
  *
- * periodReturns 从 index.html 抽出来跑，页面仍保持单文件。
+ * periodReturns 由可信 writer 的纯引擎提供。手机迁移后只消费计算回执，
+ * 不再保留或执行这套公式。
  */
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { periodReturns } from "./fee-engine.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 
-const START = "/* returns:start";
-const END = "/* returns:end */";
-const from = html.indexOf(START);
-const to = html.indexOf(END);
-assert.ok(from >= 0 && to > from, "index.html must carry the returns block");
-assert.equal(html.indexOf(START, from + 1), -1, "the returns block must appear once");
-const block = html.slice(from, to);
-const periodReturns = new Function(`${block}\nreturn periodReturns;`)();
+const block = periodReturns.toString();
 const annMatch = html.match(/function ann\(r,days\)\{([^}]*)\}/);
 assert.ok(annMatch, "index.html must carry the annualisation helper");
 const annualise = new Function("r", "days", annMatch[1]);
