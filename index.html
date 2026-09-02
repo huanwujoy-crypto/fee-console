@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.6.4">
+<meta name="fee-console-build" content="4.7.0">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -129,6 +129,31 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .mrow:last-child{border-bottom:none}
 .mrow .l{color:var(--ink-2);font-size:12px}
 .mrow b{font-variant-numeric:tabular-nums}
+.trend>summary,.month-detail>summary,.month-history>summary{list-style:none;cursor:pointer;min-height:44px;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none}
+.trend>summary::-webkit-details-marker,.month-detail>summary::-webkit-details-marker,.month-history>summary::-webkit-details-marker{display:none}
+.trend>summary::before,.month-detail>summary::before,.month-history>summary::before{content:"▸";color:var(--ink-muted);font-size:11px;flex:0 0 auto}
+.trend[open]>summary::before,.month-detail[open]>summary::before,.month-history[open]>summary::before{content:"▾"}
+.trend-title,.month-title{font-weight:600;flex:1;min-width:0}
+.trend-note,.month-summary{font-size:12px;color:var(--ink-2);text-align:right;font-variant-numeric:tabular-nums}
+.trend-body{padding-top:10px}
+.trend-body .chart-block{padding:12px 0;border-top:1px solid var(--grid)}
+.trend-body .chart-block:first-child{border-top:0;padding-top:0}
+.trend-body h3{font-size:13px;margin:0 0 7px}
+.month-detail{border-bottom:1px solid var(--grid)}
+.month-detail:last-child{border-bottom:0}
+.month-detail>summary{padding:8px 0}
+.month-detail.latest>summary{padding-top:2px}
+.month-detail .month-body{padding:0 0 12px 20px}
+.month-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px 14px;font-size:12px;color:var(--ink-2)}
+.month-grid .wide{grid-column:1/-1}
+.month-grid b{float:right;color:var(--ink-1);font-variant-numeric:tabular-nums}
+.month-history{margin-top:6px;border-top:1px solid var(--grid)}
+.month-history>summary{padding:8px 0}
+.history-tools{display:flex;align-items:center;gap:10px;padding:2px 0 8px 20px}
+.history-tools label{font-size:12px;color:var(--ink-2)}
+.history-tools select{width:auto;min-width:112px;min-height:44px;padding:8px 30px 8px 10px}
+.receipt-pending{min-height:52px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--ink-muted);font-size:13px}
+@media(max-width:430px){.trend-note,.month-summary{font-size:11px}.month-grid{grid-template-columns:1fr}.month-grid .wide{grid-column:auto}}
 </style>
 </head>
 <body>
@@ -153,23 +178,20 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div id="gateBox"></div>
   <div class="kpis" id="kpis"></div>
   <div class="card">
-    <h2>累计净收益 <span class="small" id="chartAsOf"></span></h2>
-    <div class="legend"><span><i style="background:var(--series-1)"></i>累计净收益（每日）</span><span><i style="background:var(--series-2)"></i>高水位线</span></div>
-    <div id="chart1"></div>
+    <details class="trend" id="trendDetails"><summary><span class="trend-title">近期走势</span><span class="trend-note">最近12个月</span></summary>
+      <div class="trend-body">
+        <div class="chart-block"><h3>累计毛收益 <span class="small" id="chartAsOf"></span></h3><div class="legend"><span><i style="background:var(--series-1)"></i>累计毛收益（月末）</span><span><i style="background:var(--series-2)"></i>高水位线</span></div><div id="chart1"></div></div>
+        <div class="chart-block"><h3>各月费用</h3><div class="legend"><span><i style="background:var(--series-1)"></i>管理费</span><span><i style="background:var(--series-2)"></i>Carry</span></div><div id="chart2"></div></div>
+        <div class="chart-block"><h3>各月收益率</h3><div class="legend"><span><i style="background:var(--series-1)"></i>本组合·毛 TWR</span><span><i style="background:var(--ink-muted)"></i>SPY·含息 ETF TWR</span><span><i style="background:var(--series-2)"></i>QQQ·含息 ETF TWR</span></div><div id="chart3"></div></div>
+      </div>
+    </details>
   </div>
-  <div class="card">
-    <h2>各月费用</h2>
-    <div class="legend"><span><i style="background:var(--series-1)"></i>管理费</span><span><i style="background:var(--series-2)"></i>Carry</span></div>    <div id="chart2"></div>
-  </div>
-  <div class="card">
-    <h2>各月收益率</h2>
-    <div class="legend"><span><i style="background:var(--series-1)"></i>本组合·毛 TWR</span><span><i style="background:var(--ink-muted)"></i>SPY·含息 ETF TWR</span><span><i style="background:var(--series-2)"></i>QQQ·含息 ETF TWR</span></div>    <div id="chart3"></div>  </div>
   <div class="card">    <h2>月度明细</h2>
     <details class="expl"><summary>计算说明</summary><div class="hint">每日管理费 = 当日收盘、出入金发生前的总资产 × 2%/365；月内逐日累加（当日收盘入金从次日起计费）。<br>
       Carry = 累计净收益突破高水位的部分 × 20%，亏损先补齐再计提。<br>
       净收益 = 毛收益 − 费用（管理费 + Carry）。<br>
       「占毛收益」= 费用 ÷ 毛收益，亏损月不显示。<br>
-      当月按至今天数计，数字随每日数据变化。</div></details>    <div id="monthsBox"></div>
+      当月按最新数据日计；费用、Carry 与净收益只读取已验证计算回执。</div></details><div id="monthsBox"></div>
   </div>
   <div class="card">
     <h2>应付费用</h2>
@@ -267,6 +289,169 @@ async function keyOf(b64u){return crypto.subtle.importKey("raw",b64u2buf(b64u),"
 async function encTxt(key,txt){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(txt)));const o=new Uint8Array(12+ct.length);o.set(iv);o.set(ct,12);return buf2b64(o);}
 async function decTxt(key,b64){const b=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:b.slice(0,12)},key,b.slice(12));return new TextDecoder().decode(pt);}
 
+/* fee-receipt-consumer:start */
+(()=>{
+  const SCHEMA="fee-console.calculation-receipt.v1",ENGINE="fee-v4.6.1",ACCOUNTS=["schwab","webull"];
+  const DATE=/^(\d{4})-(\d{2})-(\d{2})$/,YM=/^\d{4}-(?:0[1-9]|1[0-2])$/,NUMBER=/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+  const HASH=/^[a-f0-9]{64}$/,RATE_MAX=1000000,DAY_MS=86400000;
+  const ROOT=["schema","engineVersion","asOf","start","accountIds","managementRatePpm","carryRatePpm","dataInputsHash","econInputsHash","paymentInputsHash","effectiveFlowsHash","effectiveFlowCount","effectiveFlowNetCents","periods","totals","balance","status","receiptId"];
+  const PERIOD=["ym","from","to","state","openingCents","closingCents","flowNetCents","grossPnlCents","feeBaseSumCents","averageFeeBaseCents","managementFeeCents","carryCents","totalFeeCents","dietzDenominatorCents","grossTwrPpm","investorDietzPpm","feeBasisDayCount","calendarDayCount","mgmtValid","cumulativePnlBeforeCents","cumulativePnlAfterCents","highWaterBeforeCents","highWaterAfterCents"];
+  const TOTAL=["grossPnlCents","managementFeeCents","carryCents","totalFeeCents","netPnlCents","grossTwrPpm","investorDietzPpm","dietzDenominatorCents","spanDays"];
+  const BALANCE=["accruedCents","paidCents","dueCents"],STATUS=["valid","provisional","provisionalCodes"];
+  const PROVISIONAL=new Set(["daily-provisional","status-provisional"]);
+  const canonical=value=>JSON.stringify((function walk(input){
+    if(Array.isArray(input))return input.map(walk);
+    if(!input||typeof input!=="object")return input;
+    return Object.fromEntries(Object.keys(input).sort().map(key=>[key,walk(input[key])]));
+  })(value));
+  const same=(a,b)=>canonical(a)===canonical(b);
+  const rawHash=async text=>Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(text))),b=>b.toString(16).padStart(2,"0")).join("");
+  const semanticHash=(domain,value)=>rawHash(`fee-console:${domain}:v1\0${canonical(value)}`);
+  const calendarDate=value=>{
+    const m=DATE.exec(String(value||""));if(!m)return false;
+    const y=Number(m[1]),mo=Number(m[2]),d=Number(m[3]),dt=new Date(Date.UTC(y,mo-1,d));
+    return dt.getUTCFullYear()===y&&dt.getUTCMonth()===mo-1&&dt.getUTCDate()===d;
+  };
+  const dateMs=value=>{if(!calendarDate(value))throw new Error("date");const p=value.split("-").map(Number);return Date.UTC(p[0],p[1]-1,p[2]);};
+  const inclusiveDays=(a,b)=>Math.round((dateMs(b)-dateMs(a))/DAY_MS)+1;
+  const addDay=value=>new Date(dateMs(value)+DAY_MS).toISOString().slice(0,10);
+  const endOfMonth=ym=>{if(!YM.test(String(ym)))throw new Error("month");const p=ym.split("-").map(Number);return new Date(Date.UTC(p[0],p[1],0)).toISOString().slice(0,10);};
+  const finite=(value)=>{let n;if(typeof value==="number")n=value;else if(typeof value==="string"&&value.trim()&&NUMBER.test(value.trim()))n=Number(value);else throw new Error("number");if(!Number.isFinite(n))throw new Error("number");return n;};
+  const integer=value=>{if(!Number.isSafeInteger(value))throw new Error("integer");return value;};
+  const cents=value=>integer(Math.round(finite(value)*100));
+  const ratePpm=value=>{const n=finite(value),ppm=Math.round(n*10000);if(n<0||ppm>RATE_MAX||Math.abs(n*10000-ppm)>1e-8)throw new Error("rate");return ppm;};
+  const applyPpm=(amount,ppm,divisor=1)=>integer(Math.round((amount/divisor)*(ppm/1000000)));
+  const exact=(value,keys)=>!!value&&typeof value==="object"&&!Array.isArray(value)&&same(Object.keys(value).sort(),[...keys].sort());
+  const unique=(rows,pick)=>{const seen=new Set();for(const row of rows){const value=pick(row);if(!value)continue;if(seen.has(value))throw new Error("duplicate");seen.add(value);}};
+  const normalizePrivateFlow=flow=>{
+    if(!flow||typeof flow!=="object"||Array.isArray(flow))throw new Error("flow");
+    const id=String(flow.id||"").trim(),date=String(flow.date||""),amount=finite(flow.amount);
+    if(!id||!calendarDate(date)||amount===0)throw new Error("flow");
+    return {id,src:String(flow.src||"").trim(),date,acct:String(flow.acct||""),amount,note:String(flow.note||"")};
+  };
+  const normalizeEcon=raw=>{
+    if(!raw||typeof raw!=="object"||Array.isArray(raw)||!raw.settings||typeof raw.settings!=="object"||Array.isArray(raw.settings))throw new Error("econ");
+    const start=String(raw.settings.start||"");if(!calendarDate(start))throw new Error("start");
+    const managementRatePpm=ratePpm(raw.settings.mgmt),carryRatePpm=ratePpm(raw.settings.carry);
+    if(!Array.isArray(raw.accounts)||!raw.accounts.length)throw new Error("accounts");
+    const accounts=raw.accounts.map(account=>{
+      if(!account||typeof account!=="object"||Array.isArray(account))throw new Error("account");
+      const id=String(account.id||""),opening=finite(account.opening);if(!id||opening<0)throw new Error("account");return {id,opening};
+    }).sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+    unique(accounts,a=>a.id);if(!same(accounts.map(a=>a.id),ACCOUNTS))throw new Error("accounts");
+    if(raw.months!==undefined&&!Array.isArray(raw.months))throw new Error("months");
+    const months=(raw.months||[]).map(month=>{
+      if(!month||typeof month!=="object"||Array.isArray(month)||!YM.test(String(month.ym||""))||month.flows!==undefined&&!Array.isArray(month.flows))throw new Error("month");
+      return {ym:String(month.ym),flows:(month.flows||[]).map(normalizePrivateFlow).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0)};
+    }).sort((a,b)=>a.ym<b.ym?-1:a.ym>b.ym?1:0);
+    unique(months,m=>m.ym);const confirmed=months.flatMap(m=>m.flows);unique(confirmed,f=>f.id);unique(confirmed,f=>f.src);
+    if(confirmed.some(f=>!accounts.some(a=>a.id===f.acct)))throw new Error("flow account");
+    const fxMap=raw.settings.fx===undefined?{}:raw.settings.fx;
+    if(!fxMap||typeof fxMap!=="object"||Array.isArray(fxMap)||raw.fees!==undefined&&!Array.isArray(raw.fees))throw new Error("fees");
+    const fees=(raw.fees||[]).map(fee=>{
+      if(!fee||typeof fee!=="object"||Array.isArray(fee))throw new Error("payment");
+      const id=String(fee.id||"").trim(),date=String(fee.date||""),amount=finite(fee.amount),ccy=String(fee.ccy||"").trim().toUpperCase();
+      if(!id||!calendarDate(date)||!/^[A-Z]{3}$/.test(ccy))throw new Error("payment");
+      const explicit=fee.fx!==undefined&&String(fee.fx).trim()!==""?finite(fee.fx):null;
+      const fallback=Object.hasOwn(fxMap,ccy)?finite(fxMap[ccy]):ccy==="USD"?1:null,fx=explicit??fallback;
+      if(!(fx>0))throw new Error("payment fx");return {id,date,amount,ccy,fx};
+    }).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
+    unique(fees,f=>f.id);
+    return {settings:{start,mgmt:managementRatePpm/10000,carry:carryRatePpm/10000},accounts,months,fees};
+  };
+  const normalizeAuto=flow=>{
+    if(!flow||typeof flow!=="object"||Array.isArray(flow))throw new Error("auto flow");
+    const date=String(flow.date||"");if(!calendarDate(date))throw new Error("auto flow date");
+    return {id:String(flow.id||"").trim(),date,acct:String(flow.acct||""),amount:finite(flow.amount),desc:String(flow.desc||""),reason:String(flow.reason||""),effective:flow.effective===true,businessKey:String(flow.businessKey||"").trim()};
+  };
+  const latestDate=data=>{
+    if(!data||typeof data!=="object"||Array.isArray(data)||!Array.isArray(data.daily))throw new Error("daily");
+    for(const point of data.daily)if(!point||typeof point!=="object"||Array.isArray(point)||!calendarDate(String(point.d||"")))throw new Error("daily");
+    return data.daily.map(point=>String(point.d)).sort().at(-1)||"";
+  };
+  const normalizeData=async(data,{start,asOf,accountIds})=>{
+    if(!data||typeof data!=="object"||Array.isArray(data)||!calendarDate(start)||!calendarDate(asOf)||asOf<start)throw new Error("data");
+    const ids=[...accountIds].sort();if(!ids.length||new Set(ids).size!==ids.length||!same(ids,ACCOUNTS))throw new Error("data accounts");
+    for(const field of ["daily","flowsAuto","flowsUnresolved"])if(data[field]!==undefined&&!Array.isArray(data[field]))throw new Error(field);
+    const unresolved=data.flowsUnresolved||[];for(const flow of unresolved)if(!flow||typeof flow!=="object"||Array.isArray(flow))throw new Error("unresolved");
+    const allDaily=data.daily||[];for(const point of allDaily)if(!point||typeof point!=="object"||Array.isArray(point)||!calendarDate(String(point.d||"")))throw new Error("daily");unique(allDaily,p=>String(p.d));
+    const daily=allDaily.filter(p=>p.d>=start&&p.d<=asOf).map(point=>({d:point.d,accounts:ids.map(id=>{const value=finite(point[id]);if(value<0)throw new Error("nav");return {id,value};}),provisional:point.prov?true:false})).sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:0);
+    const flowsAuto=(data.flowsAuto||[]).map(normalizeAuto).filter(flow=>flow.date>=start&&flow.date<=asOf).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
+    if(flowsAuto.some(f=>!f.id||!ids.includes(f.acct)))throw new Error("auto flow");
+    for(const flow of flowsAuto)if(flow.businessKey){const expected=(await rawHash(`external_asset_transfer ${flow.businessKey}`)).slice(0,16);if(!flow.effective||flow.id!==expected||flow.reason!==`verified external asset transfer ${flow.businessKey}`)throw new Error("business identity");}else if(flow.effective)throw new Error("business identity");
+    unique(flowsAuto,f=>f.id);unique(flowsAuto,f=>f.businessKey);
+    const status=data.status;if(!status||typeof status!=="object"||Array.isArray(status)||typeof status.provisional!=="boolean"||typeof status.calibrated!=="boolean"||!Number.isInteger(status.unresolvedCount)||status.unresolvedCount<0||status.unresolvedCount!==unresolved.length||String(status.asOf||"")!==asOf)throw new Error("status");
+    return {start,asOf,accountIds:ids,daily,flowsAuto,status:{asOf,provisional:status.provisional,calibrated:status.calibrated,unresolvedCount:unresolved.length}};
+  };
+  const STOP=new Set(["USD","HKD","CNY","EUR","IN","KIND","FOP","TRANSFER","TRANSFERS","EXTERNAL","ASSET","FROM","TO","SHARES","SHARE","STOCK","CASH","DEPOSIT","WITHDRAWAL","THE","AND","OF","VERIFIED","INBOUND","OUTBOUND","CONTRIBUTION"]);
+  const tokens=text=>{const alpha=new Set(),numeric=new Set(),source=String(text==null?"":text).toUpperCase();for(const token of source.match(/[A-Z][A-Z0-9]*(?:[.\-]?[A-Z0-9]+)*/g)||[]){const compact=token.replace(/[^A-Z0-9]/g,"");if(compact.length>=2&&!STOP.has(token)&&!STOP.has(compact))alpha.add(compact);}for(const token of source.match(/\d+(?:\.\d+)?/g)||[])numeric.add("#"+Number(token));return {alpha,numeric};};
+  const intersects=(a,b)=>{for(const value of a)if(b.has(value))return true;return false;};
+  const evidence=(a,b)=>{const x=tokens(a),y=tokens(b),aa=x.alpha.size>0&&y.alpha.size>0,nn=x.numeric.size>0&&y.numeric.size>0,am=aa&&intersects(x.alpha,y.alpha),nm=nn&&intersects(x.numeric,y.numeric);if(aa&&!am||nn&&!nm)return "conflict";return am||nm?"match":"none";};
+  const sameEvent=(a,b,sameAccount)=>{if(Math.abs(finite(a.amount)-finite(b.amount))>.005||(String(a.acct||"")===String(b.acct||""))!==sameAccount)return false;const gap=Math.abs(dateMs(a.date)-dateMs(b.date))/DAY_MS;if(!Number.isFinite(gap)||gap>1)return false;const ev=evidence(a.note,b.note);if(ev==="conflict")return false;return sameAccount?(gap>0?ev==="match":true):ev==="match";};
+  const pair=(list,flow,pick)=>{let i=list.findIndex(value=>pick(value)&&sameEvent(pick(value),flow,true));if(i<0)i=list.findIndex(value=>pick(value)&&sameEvent(pick(value),flow,false));return i;};
+  const effectiveFlows=(econ,normalized)=>{
+    const confirmed=econ.months.flatMap(month=>month.flows),sources=new Set(confirmed.map(f=>f.src).filter(Boolean)),pool=confirmed.filter(f=>f&&!f.src).map(record=>({record,used:false})),kept=[],seen=new Set();
+    for(const flow of normalized.flowsAuto){if(!flow||flow.effective!==true)continue;const automatic={id:flow.id,src:flow.id,date:flow.date,acct:flow.acct,amount:finite(flow.amount),note:flow.desc||"",reason:flow.reason==null?"":flow.reason,automatic:true},key=String(automatic.reason).trim();if(key){if(seen.has(key))continue;seen.add(key);}if(sources.has(flow.id))continue;const index=pair(pool,automatic,value=>value.used?null:value.record);if(index>=0){pool[index].used=true;continue;}if(!key&&pair(kept,automatic,value=>value)>=0)continue;kept.push(automatic);}return confirmed.concat(kept).filter(flow=>flow.date>=normalized.start&&flow.date<=normalized.asOf);
+  };
+  const validateStructure=async receipt=>{
+    if(!exact(receipt,ROOT)||receipt.schema!==SCHEMA||receipt.engineVersion!==ENGINE||!calendarDate(receipt.start)||!calendarDate(receipt.asOf)||receipt.asOf<receipt.start||!same(receipt.accountIds,ACCOUNTS))throw new Error("receipt");
+    integer(receipt.managementRatePpm);integer(receipt.carryRatePpm);if(receipt.managementRatePpm<0||receipt.managementRatePpm>RATE_MAX||receipt.carryRatePpm<0||receipt.carryRatePpm>RATE_MAX)throw new Error("rate");
+    for(const key of ["dataInputsHash","econInputsHash","paymentInputsHash","effectiveFlowsHash","receiptId"])if(!HASH.test(String(receipt[key]||"")))throw new Error("hash");
+    integer(receipt.effectiveFlowCount);integer(receipt.effectiveFlowNetCents);if(receipt.effectiveFlowCount<0||!Array.isArray(receipt.periods)||!receipt.periods.length)throw new Error("periods");
+    let expectedFrom=receipt.start,priorClosing=null,cumulative=0,highWater=0;
+    for(const period of receipt.periods){
+      if(!exact(period,PERIOD))throw new Error("period");const ym=expectedFrom.slice(0,7),expectedTo=ym===receipt.asOf.slice(0,7)?receipt.asOf:endOfMonth(ym),expectedState=expectedTo===receipt.asOf&&receipt.asOf<endOfMonth(ym)?"in-progress":"complete";
+      if(period.ym!==ym||period.from!==expectedFrom||period.to!==expectedTo||period.state!==expectedState)throw new Error("period range");
+      for(const key of PERIOD.filter(key=>!["ym","from","to","state","mgmtValid"].includes(key)))integer(period[key]);
+      const days=inclusiveDays(period.from,period.to);if(period.mgmtValid!==true||period.feeBasisDayCount!==days||period.calendarDayCount!==days||period.openingCents<=0||period.closingCents<=0||period.feeBaseSumCents<0||period.averageFeeBaseCents<0||period.managementFeeCents<0||period.carryCents<0||period.totalFeeCents<0||period.dietzDenominatorCents<=0||period.grossTwrPpm<=-1000000)throw new Error("period value");
+      if(priorClosing!==null&&period.openingCents!==priorClosing||period.grossPnlCents!==period.closingCents-period.openingCents-period.flowNetCents||period.averageFeeBaseCents!==Math.round(period.feeBaseSumCents/period.calendarDayCount)||period.managementFeeCents!==applyPpm(period.feeBaseSumCents,receipt.managementRatePpm,365))throw new Error("period identity");
+      if(period.cumulativePnlBeforeCents!==cumulative||period.highWaterBeforeCents!==highWater)throw new Error("chain");cumulative+=period.grossPnlCents;const expectedCarry=applyPpm(Math.max(0,cumulative-highWater),receipt.carryRatePpm);highWater=Math.max(highWater,cumulative);
+      if(period.cumulativePnlAfterCents!==cumulative||period.highWaterAfterCents!==highWater||period.carryCents!==expectedCarry||period.totalFeeCents!==period.managementFeeCents+period.carryCents||period.investorDietzPpm!==Math.round(((period.grossPnlCents-period.totalFeeCents)/period.dietzDenominatorCents)*1000000))throw new Error("period totals");
+      expectedFrom=addDay(expectedTo);priorClosing=period.closingCents;
+    }
+    if(receipt.periods.at(-1).to!==receipt.asOf||receipt.periods.reduce((sum,p)=>sum+p.flowNetCents,0)!==receipt.effectiveFlowNetCents)throw new Error("period end");
+    if(!exact(receipt.totals,TOTAL))throw new Error("totals");for(const key of TOTAL)integer(receipt.totals[key]);
+    const sum=key=>receipt.periods.reduce((total,p)=>total+p[key],0);if(receipt.totals.dietzDenominatorCents<=0||receipt.totals.spanDays<=0||receipt.totals.grossPnlCents!==sum("grossPnlCents")||receipt.totals.managementFeeCents!==sum("managementFeeCents")||receipt.totals.carryCents!==sum("carryCents")||receipt.totals.totalFeeCents!==receipt.totals.managementFeeCents+receipt.totals.carryCents||receipt.totals.netPnlCents!==receipt.totals.grossPnlCents-receipt.totals.totalFeeCents)throw new Error("total identity");
+    const twr=Math.round((receipt.periods.reduce((index,p)=>index*(1+p.grossTwrPpm/1000000),1)-1)*1000000);if(receipt.totals.grossTwrPpm!==twr||receipt.totals.investorDietzPpm!==Math.round((receipt.totals.netPnlCents/receipt.totals.dietzDenominatorCents)*1000000)||receipt.totals.spanDays!==inclusiveDays(receipt.start,receipt.asOf))throw new Error("total return");
+    if(!exact(receipt.balance,BALANCE))throw new Error("balance");for(const key of BALANCE)integer(receipt.balance[key]);if(receipt.balance.accruedCents!==receipt.totals.totalFeeCents||receipt.balance.dueCents!==receipt.balance.accruedCents-receipt.balance.paidCents)throw new Error("balance identity");
+    if(!exact(receipt.status,STATUS)||receipt.status.valid!==true||typeof receipt.status.provisional!=="boolean"||!Array.isArray(receipt.status.provisionalCodes)||receipt.status.provisionalCodes.some(code=>!PROVISIONAL.has(code))||new Set(receipt.status.provisionalCodes).size!==receipt.status.provisionalCodes.length||receipt.status.provisional!==(receipt.status.provisionalCodes.length>0))throw new Error("receipt status");
+    const body=structuredClone(receipt);delete body.receiptId;if(await semanticHash("calculation-receipt",body)!==receipt.receiptId)throw new Error("receipt id");
+  };
+  globalThis.feeReceiptUiModel=async({receipt,data,economicInput}={})=>{
+    try{
+      await validateStructure(receipt);if(latestDate(data)!==receipt.asOf)throw new Error("stale");
+      const econ=normalizeEcon(economicInput),normalized=await normalizeData(data,{start:receipt.start,asOf:receipt.asOf,accountIds:receipt.accountIds});
+      if(normalized.status.unresolvedCount>0||econ.settings.start!==receipt.start||ratePpm(econ.settings.mgmt)!==receipt.managementRatePpm||ratePpm(econ.settings.carry)!==receipt.carryRatePpm)throw new Error("inputs");
+      const autoById=new Map(normalized.flowsAuto.map(flow=>[flow.id,flow]));for(const flow of econ.months.flatMap(month=>month.flows).filter(flow=>flow.date>=receipt.start&&flow.date<=receipt.asOf)){if(!flow.src)continue;const automatic=autoById.get(flow.src);if(!automatic||flow.date!==automatic.date||flow.acct!==automatic.acct||cents(flow.amount)!==cents(automatic.amount))throw new Error("flow link");}
+      const publicHash=await semanticHash("public-calculation-inputs",normalized),econHash=await semanticHash("private-economic-inputs",econ);
+      const payments=econ.fees.filter(fee=>fee.date>=receipt.start&&fee.date<=receipt.asOf).map(fee=>({date:fee.date,amountCents:cents(fee.amount),ccy:fee.ccy,fxPpb:integer(Math.round(fee.fx*1000000000))})).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
+      const flows=effectiveFlows(econ,normalized),flowDigest=[];for(const flow of flows){const identity={id:String(flow.id||""),src:String(flow.src||""),reason:String(flow.reason||""),note:String(flow.note||"")};flowDigest.push({date:String(flow.date||""),acct:String(flow.acct||""),amountCents:cents(flow.amount),eventKeyHash:await semanticHash("effective-flow-event",identity)});}flowDigest.sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
+      const codes=[];if(normalized.daily.some(point=>point.provisional))codes.push("daily-provisional");if(normalized.status.provisional)codes.push("status-provisional");
+      if(publicHash!==receipt.dataInputsHash||econHash!==receipt.econInputsHash||await semanticHash("payment-inputs",payments)!==receipt.paymentInputsHash||await semanticHash("effective-flows",flowDigest)!==receipt.effectiveFlowsHash||flowDigest.length!==receipt.effectiveFlowCount||flowDigest.reduce((sum,flow)=>sum+flow.amountCents,0)!==receipt.effectiveFlowNetCents||!same(codes,receipt.status.provisionalCodes))throw new Error("commitment");
+      return {ok:true,reason:null,receiptId:receipt.receiptId,asOf:receipt.asOf,start:receipt.start,managementRatePpm:receipt.managementRatePpm,carryRatePpm:receipt.carryRatePpm,status:structuredClone(receipt.status),periods:structuredClone(receipt.periods),totals:structuredClone(receipt.totals),balance:structuredClone(receipt.balance)};
+    }catch(_){return {ok:false,reason:"calculation receipt pending"};}
+  };
+})();
+/* fee-receipt-consumer:end */
+
+/* fee-receipt-render:start */
+(()=>{globalThis.feeReceiptRenderProjection=model=>model&&model.ok===true?{state:"verified",message:null,receiptId:model.receiptId,asOf:model.asOf,start:model.start,managementRatePpm:model.managementRatePpm,carryRatePpm:model.carryRatePpm,status:model.status,periods:model.periods,totals:model.totals,balance:model.balance}:{state:"pending",message:"计算回执待更新",receiptId:null,asOf:null,start:null,managementRatePpm:null,carryRatePpm:null,status:null,periods:[],totals:null,balance:null};})();
+/* fee-receipt-render:end */
+
+/* month-history-view:start */
+(()=>{
+  globalThis.monthHistoryViewModel=({rows,publicAsOf,selectedYear}={})=>{
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(publicAsOf||""))||!Array.isArray(rows)||!rows.length)throw new Error("publicAsOf is invalid");
+    const publicYm=publicAsOf.slice(0,7),ordered=[...rows].sort((a,b)=>String(a.ym).localeCompare(String(b.ym)));
+    if(ordered.some(row=>!row||!/^\d{4}-(?:0[1-9]|1[0-2])$/.test(String(row.ym||""))||row.ym>publicYm)||ordered.at(-1).ym!==publicYm)throw new Error("publicAsOf does not match history");
+    const latest=ordered.at(-1),historyRows=ordered.slice(0,-1),years=[...new Set(ordered.map(row=>row.ym.slice(0,4)))].sort().reverse(),preferred=String(selectedYear||"");
+    const year=years.includes(preferred)?preferred:publicYm.slice(0,4);
+    return {allCount:ordered.length,latest,historyCount:historyRows.length,recent12:ordered.slice(-12),defaults:{latestOpen:true,historyOpen:false,monthOpen:false,trendOpen:false},years,selectedYear:year,history:historyRows.filter(row=>row.ym.startsWith(year+"-")).reverse()};
+  };
+  globalThis.monthHistoryYearFromEvent=event=>event&&event.target&&event.target.id==="monthHistoryYear"?String(event.target.value||""):null;
+})();
+/* month-history-view:end */
+
 /* ============ 本地配置 ============ */
 const K={db:"feeConsole.v3.db",tok:"feeConsole.gh.token",gid:"feeConsole.gh.gist",key:"feeConsole.key",daily:"feeConsole.v3.daily",a2hs:"feeConsole.a2hs.off"};
 const cfg=k=>store?(store.getItem(k)||""):"";
@@ -276,6 +461,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
+const UI_VERSION_LABEL=" · v4.7.0";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -407,174 +593,44 @@ const BENCH_ALL=[{k:"spy",dk:"spyd",name:"S&P 500（SPY·含息 ETF TWR）",acco
   {k:"cspx",dk:"",name:"S&P 500（CSPX·欧洲收盘）",account:"S&P 500（CSPX）",col:"var(--ink-muted)"},
   {k:"eqac",dk:"",name:"纳斯达克100（EQAC·欧洲收盘）",account:"纳斯达克100（EQAC）",col:"var(--series-2)"}];
 let BENCH=[BENCH_ALL[0],BENCH_ALL[1]];
-/* 起算日之前那一点是全部基准的分母。它缺 SPY/QQQ 就没有可比的整段口径，
-   此时回放欧洲口径，而不是画一条从半途开始的假曲线。 */
-function syncBench(){
-  const ds=dailySorted();
-  const start=DB.settings.start,pre=ds.filter(x=>x.d<start).pop()||null;
-  const live=ds.filter(x=>x.d>=start);
-  const covers=keys=>!!pre&&keys.every(k=>num(pre[k])>0)&&live.length>0&&
-    live.every(p=>keys.every(k=>num(p[k])>0));
+/* 基准仍只读公开 daily ledger；费用、Carry、净收益及应付余额完全来自计算回执。
+   基准缺价时直接隐藏，绝不把旧值或其它时点的价格补进来。 */
+function syncBench(start,asOf){
+  const ds=dailySorted(),pre=ds.filter(x=>x.d<start).pop()||null,live=ds.filter(x=>x.d>=start&&x.d<=asOf);
+  const covers=keys=>!!pre&&live.length>0&&keys.every(k=>num(pre[k])>0)&&live.every(p=>keys.every(k=>num(p[k])>0));
   if(covers(["spy","qqq"]))BENCH=[BENCH_ALL[0],BENCH_ALL[1]];
   else if(covers(["cspx","eqac"]))BENCH=[BENCH_ALL[2],BENCH_ALL[3]];
   else BENCH=[];
-  return BENCH.length===2&&BENCH[0].k==="spy";
+  return BENCH;
 }
-/* returns:start —— 收益率口径 v4.6.1（口径 §9）。单月区间一次算完三种口径，
-   它们各自独立、不可互相顶替：
-   · rG ＝组合毛 TWR。逐日剔除出入金对分母的影响，衡量管理人能力。
-   · rD ＝出资方净收益率，Modified Dietz（Sharesight 口径），分母按各笔出资的
-     在场天数加权，含出资方自身的加仓择时。**不要拿它和 rG 相减当费用。**
-   · rB ＝SPY / QQQ 含息 ETF TWR，逐日链 (P+D)/P_prev−1，D 是当日除息金额；
-     它与 rG 都是 TWR，可按同一期间直接比较。
-   出入金一律按入账日**收盘**计价：当日不参与任何一方的收益，权重从次日起算，
-   所以 Modified Dietz 的在场天数是 days−inclDays(from,入账日)。
-   bPrev / bVal / bHas 跨月延续，由调用方持有。bVal 是现金流匹配的假想被动
-   账户：期初金额与组合相同，每日先取得 ETF 含息回报，再于 EOD 加减组合当日
-   外部现金流；允许碎股，不假设借款或做空。 */
-function periodReturns(o){
-  const DAYMS=86400000;
-  const ms=v=>{const a=String(v).split("-");return Date.UTC(+a[0],+a[1]-1,+a[2]);};
-  const incl=(x,y)=>Math.round((ms(y)-ms(x))/DAYMS)+1;
-  const next=d=>new Date(ms(d)+DAYMS).toISOString().slice(0,10);
-  const pts=(o.points||[]).slice().sort((a,b)=>String(a.d).localeCompare(String(b.d)));
-  const bench=o.bench||[],flowBy=o.flowByDate||{},to=o.to;
-  const openT=o.openT,days=Math.max(1,o.days),rate=o.rate,cr=o.cr;
-  const cumBefore=o.cumBefore,hwmBefore=o.hwmBefore;
-  const bPrev=o.bPrev,bVal=o.bVal,bHas=o.bHas;
-  const issues=[],pointDates=new Set();
-  for(const p of pts){
-    if(!/^\d{4}-\d{2}-\d{2}$/.test(p.d)||p.d<o.from||p.d>to)issues.push("估值日期越界 "+p.d);
-    if(pointDates.has(p.d))issues.push("估值日期重复 "+p.d);
-    pointDates.add(p.d);
-    if(!(Number.isFinite(p.tot)&&p.tot>0))issues.push("总资产无效 "+p.d);
+function benchmarkView(feeView,rows){
+  const selected=syncBench(feeView.start,feeView.asOf),daily=dailySorted(),pre=daily.filter(x=>x.d<feeView.start).pop()||null;
+  if(!selected.length||!pre)return {bench:[],byMonth:{}};
+  const previous={},totalIndex={},byMonth={};for(const item of selected){previous[item.k]=num(pre[item.k]);totalIndex[item.k]=1;}
+  for(const row of rows){const monthIndex={};for(const item of selected)monthIndex[item.k]=1;
+    const points=daily.filter(point=>point.d>=row.from&&point.d<=row.to);
+    if(points.length!==row.days)return {bench:[],byMonth:{}};
+    for(const point of points)for(const item of selected){const price=num(point[item.k]),dividend=item.dk?num(point[item.dk]):0;if(!(previous[item.k]>0&&price>0&&dividend>=0))return {bench:[],byMonth:{}};const dailyReturn=(price+dividend)/previous[item.k]-1;monthIndex[item.k]*=1+dailyReturn;totalIndex[item.k]*=1+dailyReturn;previous[item.k]=price;}
+    byMonth[row.ym]=Object.fromEntries(selected.map(item=>[item.k,monthIndex[item.k]-1]));
   }
-  for(let d=o.from;d<=to;d=next(d))if(!pointDates.has(d))issues.push("缺少每日估值 "+d);
-  let flowT=0;
-  for(const d in flowBy){
-    if(d<o.from||d>to){issues.push("出入金日期越界 "+d);continue;}
-    if(!Number.isFinite(flowBy[d])){issues.push("出入金金额无效 "+d);continue;}
-    flowT+=flowBy[d];
-    if(!pointDates.has(d))issues.push("出入金当日缺少估值 "+d);
-  }
-  let den=openT;
-  for(const d in flowBy){
-    if(d<o.from||d>to||!Number.isFinite(flowBy[d]))continue;
-    const el=Math.max(0,Math.min(days,incl(o.from,d)));
-    den+=flowBy[d]*((days-el)/days);
-  }
-  if(!(den>0))issues.push("Modified Dietz 分母不为正");
-  const idxB={},seen={};for(let j=0;j<bench.length;j++){idxB[bench[j].k]=1;seen[bench[j].k]=false;}
-  let idxG=1,prevG=openT;
-  const closeT=pts.length?pts[pts.length-1].tot:openT;
-  const pnl=closeT-openT-flowT;
-  /* 管理费逐日按 EOD 出入金发生前的 NAV 计提。入金在当日收盘入账，因此当天不
-     参与计费；出金同理先还原出金前 NAV。次日起，资金自然进入每日计费基数。 */
-  const feeBases=pts.map(p=>({p,f:flowBy[p.d]||0,basis:p.tot-(flowBy[p.d]||0)}));
-  for(const x of feeBases)if(!(Number.isFinite(x.basis)&&x.basis>=0))issues.push("管理费基数无效 "+x.p.d);
-  const mgmt=feeBases.every(x=>Number.isFinite(x.basis)&&x.basis>=0)
-    ?feeBases.reduce((s,x)=>s+x.basis*rate/365,0):0;
-  const carry=Math.max(0,cumBefore+pnl-hwmBefore)*cr,fees=mgmt+carry;
-  const portfolioReady=issues.length===0;
-  if(portfolioReady){
-    for(let i=0;i<pts.length;i++){
-      const p=pts[i],tot=p.tot,f=flowBy[p.d]||0;
-      if(prevG>0)idxG*=(tot-f)/prevG;prevG=tot;
-    }
-  }
-  const benchIssues=[];
-  for(const bk of bench){
-    if(!(bPrev[bk.k]>0))benchIssues.push(bk.k+" 缺少起算日前基准");
-    for(const p of pts){
-      if(!(p[bk.k]>0))benchIssues.push(bk.k+" 缺少价格 "+p.d);
-      if(bk.dk&&p[bk.dk]!==undefined&&(!(Number.isFinite(p[bk.dk]))||p[bk.dk]<0))benchIssues.push(bk.dk+" 无效 "+p.d);
-    }
-  }
-  /* benchmarkValid is a one-way fuse owned by compute(). Once any earlier
-     period could not be chained, a later clean period must not bridge the gap
-     and silently make the benchmark look available again. */
-  const benchmarkValid=o.benchmarkValid!==false&&portfolioReady&&benchIssues.length===0;
-  let benchmarkValueValid=o.benchmarkValueValid!==false&&benchmarkValid;
-  const benchValueIssues=[];
-  if(benchmarkValid){
-    for(const p of pts){
-      const f=flowBy[p.d]||0;
-      for(const bk of bench){
-        const px=p[bk.k],dv=bk.dk?(p[bk.dk]||0):0,r=(px+dv)/bPrev[bk.k]-1;
-        idxB[bk.k]*=(1+r);if(benchmarkValueValid)bVal[bk.k]=bVal[bk.k]*(1+r);seen[bk.k]=true;bHas[bk.k]=true;bPrev[bk.k]=px;
-      }
-      if(f&&benchmarkValueValid){
-        const bad=bench.find(bk=>!(Number.isFinite(bVal[bk.k]+f)&&bVal[bk.k]+f>=0));
-        if(bad){benchValueIssues.push((bad.account||bad.k)+" 的提款超过被动账户价值 "+p.d);benchmarkValueValid=false;}
-        else for(const bk of bench)bVal[bk.k]+=f;
-      }
-    }
-  }
-  const rB={};for(let j=0;j<bench.length;j++){const k=bench[j].k;rB[k]=seen[k]?idxB[k]-1:null;}
-  return {closeT,flowT,den,pnl,mgmt,carry,fees,
-    rG:portfolioReady?idxG-1:null,rD:portfolioReady?(pnl-fees)/den:null,rB,benchmarkValid,benchmarkValueValid,
-    issues:[...new Set(issues)],benchIssues:[...new Set(benchIssues)],benchValueIssues:[...new Set(benchValueIssues)]};
+  return {byMonth,bench:selected.map(item=>({...item,twr:totalIndex[item.k]-1,val:null}))};
 }
-/* returns:end */
-function compute(){
-  syncBench();
-  const rate=num(DB.settings.mgmt)/100, cr=num(DB.settings.carry)/100, start=DB.settings.start;
-  const initialOpen=DB.accounts.reduce((s,a)=>s+num(a.opening),0);let openT=initialOpen;
-  const ds0=dailySorted();const pre=ds0.filter(x=>x.d<start).pop()||ds0[0]||null;
-  const bPrev={},idxB={},bVal={},bHas={};BENCH.forEach(x=>{bPrev[x.k]=pre?num(pre[x.k]):0;idxB[x.k]=1;bVal[x.k]=openT;bHas[x.k]=false;});
-  const benchArg=BENCH.map(x=>({k:x.k,dk:x.dk,account:x.account}));
-  let cum=0,hwm=0,idxG=1,returnsValid=true,benchmarkValid=BENCH.length>0,benchmarkValueValid=BENCH.length>0;
-  const rows=[],returnIssues=[];const cur=curYm();
-  for(const ym of monthYms()){
-    const from=(ym===start.slice(0,7))?start:ym+"-01";
-    const pts=ds0.filter(x=>x.d.slice(0,7)===ym&&x.d>=from);
-    if(!pts.length)continue;
-    const pt=pts[pts.length-1];
-    const inProgress=(ym===cur);
-    const to=inProgress?pt.d:eom(ym);
-    const days=Math.max(1,inclDays(from,to));
-    const fl=effectiveFlows().filter(f=>(f.date||"")>=from&&(f.date||"")<=to);
-    const flowByDate={};for(const f of fl){const d=f.date||from;flowByDate[d]=(flowByDate[d]||0)+num(f.amount);}
-    const points=pts.map(p=>{const o={d:p.d,tot:totOf(p)};BENCH.forEach(x=>{o[x.k]=num(p[x.k]);if(x.dk)o[x.dk]=num(p[x.dk]);});return o;});
-    const pr=periodReturns({points,openT,from,to,days,flowByDate,rate,cr,
-      cumBefore:cum,hwmBefore:hwm,bench:benchArg,bPrev,bVal,bHas,benchmarkValid,benchmarkValueValid});
-    const closeT=pr.closeT,flowT=pr.flowT,pnl=pr.pnl,mgmt=pr.mgmt,carry=pr.carry,fees=pr.fees,den=pr.den;
-    const cumBefore=cum;cum+=pnl;const excess=cum-hwm;const hwmBefore=hwm;if(excess>0)hwm=cum;
-    if(pr.rG==null)returnsValid=false;
-    else idxG*=(1+pr.rG);
-    returnIssues.push(...pr.issues,...pr.benchIssues,...(pr.benchValueIssues||[]));
-    benchmarkValid=benchmarkValid&&pr.benchmarkValid;
-    benchmarkValueValid=benchmarkValueValid&&pr.benchmarkValueValid;
-    BENCH.forEach(x=>{if(benchmarkValid&&pr.rB[x.k]!=null)idxB[x.k]*=(1+pr.rB[x.k]);});
-    rows.push({ym,from,to,days,openT,closeT,flowT,den,pnl,mgmt,carry,fees,rG:pr.rG,rD:pr.rD,rB:pr.rB,
-      cumBefore,cum,hwmBefore,hwm,excess,inProgress,idxG:returnsValid?idxG-1:null});
-    openT=closeT;
-  }
-  const done=rows.filter(r=>!r.inProgress),live=rows.find(r=>r.inProgress)||null;
-  const lastPt=dailySorted().pop();
-  const spanDays=lastPt?Math.max(1,inclDays(start,lastPt.d)):0;
-  const gross=rows.reduce((s,r)=>s+r.pnl,0);
-  const feesDone=done.reduce((s,r)=>s+r.fees,0);
-  const feesLive=live?live.fees:0;
-  const feesAll=feesDone+feesLive;
-  const allFlows=effectiveFlows().filter(f=>(f.date||"")>=start&&lastPt&&(f.date||"")<=lastPt.d);
-  let fullDen=initialOpen;
-  for(const f of allFlows){const el=Math.max(0,Math.min(spanDays,inclDays(start,f.date)));fullDen+=num(f.amount)*((spanDays-el)/spanDays);}
-  const mwrD=returnsValid&&fullDen>0?(gross-feesAll)/fullDen:null;
-  return {rows,done,live,lastPt,spanDays,gross,feesDone,feesLive,feesAll,
-    net:gross-feesAll,twrG:returnsValid?idxG-1:null,mwrD,returnIssues:[...new Set(returnIssues)],
-    bench:benchmarkValid?BENCH.filter(x=>bHas[x.k]).map(x=>({k:x.k,name:x.name,account:x.account,col:x.col,twr:idxB[x.k]-1,val:benchmarkValueValid?bVal[x.k]:null})):[],
-    hwm, cum, nav:lastPt?totOf(lastPt):DB.accounts.reduce((s,a)=>s+num(a.opening),0)};}
-function balance(st){
-  const fxOf=e=>(e.fx!=null&&e.fx!==""&&isFinite(parseFloat(e.fx)))?parseFloat(e.fx):(DB.settings.fx[e.ccy]||1);
-  const paid=DB.fees.reduce((s,f)=>s+num(f.amount)*fxOf(f),0);
-  /* 应付费用含当月至今，随每日数据变化；已付多于已计提时为负数（= 预付），照实显示。 */
-  return {accrued:st.feesAll,paid,due:st.feesAll-paid,fxOf,
-    mgmt:st.rows.reduce((s,r)=>s+r.mgmt,0),carry:st.rows.reduce((s,r)=>s+r.carry,0),n:st.rows.length};}
+function receiptState(feeView){
+  const all=dailySorted(),lastPt=feeView.state==="verified"?all.find(point=>point.d===feeView.asOf)||null:all.at(-1)||null;
+  const nav=lastPt?totOf(lastPt):0;if(feeView.state!=="verified")return {rows:[],done:[],live:null,lastPt,spanDays:0,gross:null,feesAll:null,net:null,twrG:null,mwrD:null,bench:[],hwm:null,cum:null,nav};
+  let netCum=0;const rows=feeView.periods.map(period=>{const row={ym:period.ym,from:period.from,to:period.to,days:period.calendarDayCount,openT:period.openingCents/100,closeT:period.closingCents/100,flowT:period.flowNetCents/100,den:period.dietzDenominatorCents/100,averageFeeBase:period.averageFeeBaseCents/100,pnl:period.grossPnlCents/100,mgmt:period.managementFeeCents/100,carry:period.carryCents/100,fees:period.totalFeeCents/100,rG:period.grossTwrPpm/1000000,rD:period.investorDietzPpm/1000000,rB:{},cumBefore:period.cumulativePnlBeforeCents/100,cum:period.cumulativePnlAfterCents/100,hwmBefore:period.highWaterBeforeCents/100,hwm:period.highWaterAfterCents/100,excess:(period.cumulativePnlAfterCents-period.highWaterBeforeCents)/100,inProgress:period.state==="in-progress"};netCum+=(period.grossPnlCents-period.totalFeeCents)/100;row.netCum=netCum;return row;});
+  const benchmark=benchmarkView(feeView,rows);for(const row of rows)row.rB=benchmark.byMonth[row.ym]||{};
+  return {rows,done:rows.filter(row=>!row.inProgress),live:rows.find(row=>row.inProgress)||null,lastPt,spanDays:feeView.totals.spanDays,gross:feeView.totals.grossPnlCents/100,feesAll:feeView.totals.totalFeeCents/100,net:feeView.totals.netPnlCents/100,twrG:feeView.totals.grossTwrPpm/1000000,mwrD:feeView.totals.investorDietzPpm/1000000,bench:benchmark.bench,hwm:rows.at(-1).hwm,cum:rows.at(-1).cum,nav};
+}
+function receiptBalance(feeView){
+  if(feeView.state!=="verified")return null;
+  return {accrued:feeView.balance.accruedCents/100,paid:feeView.balance.paidCents/100,due:feeView.balance.dueCents/100,mgmt:feeView.totals.managementFeeCents/100,carry:feeView.totals.carryCents/100,n:feeView.periods.length};
+}
 /* 数据闸门：只在明显有问题时挡住可付款金额（无数据、长期停更、拆分严重不符、
    资金变动未判定内外部）。券商延迟一天属正常，不提示。 */
-function health(st){
+function health(feeView,st){
   const hold=[];
+  if(feeView.state!=="verified")hold.push(feeView.message);
   const unresolved=(DAILY.flowsUnresolved||[]).length;
   const lp=st.lastPt;
   if(!lp)hold.push("尚无每日数据");
@@ -589,27 +645,23 @@ function health(st){
       hold.push("成长股 + 价值股与股票总额不一致，暂按股票未拆分显示");
   }
   if(unresolved>0)hold.push(unresolved+" 笔资金变动尚未判定内部交易或外部出入金");
-  for(const issue of (st.returnIssues||[]))hold.push("收益率数据不完整："+issue);
   return {hold:hold.length>0,holdReasons:hold};}
-/* 每日累计净收益（毛）序列，用于图表 */
-function dailySeries(st){
-  const ds=dailySorted().filter(x=>x.d>=DB.settings.start);if(!ds.length)return [];
-  const base=DB.accounts.reduce((s,a)=>s+num(a.opening),0);
-  const flows=effectiveFlows().sort((a,b)=>(a.date||"").localeCompare(b.date||""));
-  const out=[];
-  for(const x of ds){const tot=totOf(x);const f=flows.filter(z=>z.date<=x.d).reduce((s,z)=>s+num(z.amount),0);
-    const r=st.done.filter(z=>z.to<=x.d).pop();out.push({d:x.d,cum:tot-base-f,hwm:r?r.hwm:0,tot});}  return out;
-}
 /* ============ 渲染 ============ */
-function render(){
-  const st=compute(),B=balance(st),G=health(st);
+let _renderGeneration=0;
+async function render(){
+  const generation=++_renderGeneration;
+  /* fee-receipt-render-call */
+  const feeView=feeReceiptRenderProjection(await feeReceiptUiModel({receipt:DAILY.feeCalculationReceipt,data:DAILY,economicInput:DB}));
+  if(generation!==_renderGeneration)return;
+  const st=receiptState(feeView),B=receiptBalance(feeView),G=health(feeView,st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   document.getElementById("tabs").classList.toggle("hidden",!isMgr());
-  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")} · 起算 ${DB.settings.start} · ${DB.settings.mgmt}% / ${DB.settings.carry}%` + " · v4.6.4"+(isMgr()?"":" · 只读");
-  renderKPIs(st,B,G);renderChart1(st);renderChart2(st);renderChart3(st);renderMonths(st);renderBal(st,B,G);  if(isMgr()){renderFees(st,B,G);renderSettings();renderFlows();}
+  const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
+  document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
+  renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
   renderSetup();renderA2hs();autosave();
 }
-function renderKPIs(st,B,G){
+function renderKPIs(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
   const lp=st.lastPt;const showAnn=st.spanDays>365;
   const benchExplainOpen=document.getElementById("benchExplain")?.open===true;
@@ -628,43 +680,32 @@ function renderKPIs(st,B,G){
   const mix=hasMix?`<div class="mix${styleReady?"":" two"}">${mixCells}</div>${!styleReady?`<div class="note">尚无经核实的成长股 / 价值股持仓级拆分</div>`:""}${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
   /* 分账户：总资产下方列出各账户当日数值（与起始基准页的账户名一致） */
   const acctLine=lp?`<div class="small" style="margin-top:2px">${DB.accounts.map(a=>`${esc(a.name)} <b style="font-weight:600;font-variant-numeric:tabular-nums">${usd(num(lp[a.id]),0)}</b>`).join(" · ")}</div>`:"";
-  const benchmarkAccountReady=st.bench.length>0&&st.bench.every(b=>b.val!=null&&isFinite(b.val));
-  const benchmarkAccountAlert=st.bench.length
-    ?"⚠ 被动账户无法完整复制全部出入金，暂不显示期末值；基准 TWR 不受影响。"
-    :"⚠ 基准数据未完整覆盖，暂不显示。";
-  const benchmarkGapRow=b=>{
-    const gap=st.nav-b.val,ratio=b.val>0?gap/b.val:null;
-    const same=Math.abs(gap)<.5,dir=same?"实际持平":gap>0?"实际领先":"实际落后";
-    const amount=same?usd(0,0):(gap>0?"+":"-")+usd(Math.abs(gap),0);
-    return `<tr><td><span class="scenario">${esc(b.account||b.name)}</span><span class="tag">假想被动账户</span></td><td><span class="end-val">${usd(b.val,0)}</span></td><td><span class="gap-dir">${dir}</span><span class="gap-val ${sgn(gap)}">${amount} · ${pct(ratio)}</span></td></tr>`;
-  };
-  const benchmarkTable=benchmarkAccountReady?`<div class="bench-title">现金流匹配的被动账户期末值</div>
-    <div class="bench-table-wrap"><table class="bench-table" aria-label="实际组合与现金流匹配被动账户期末值比较">
-      <thead><tr><th>方案</th><th>期末金额</th><th>实际组合相对该方案</th></tr></thead>
-      <tbody><tr><td><span class="scenario">实际组合</span><span class="tag">实际</span></td><td><span class="end-val">${usd(st.nav,0)}</span></td><td><span class="gap-dir">比较基准</span><span class="gap-val">—</span></td></tr>${st.bench.map(benchmarkGapRow).join("")}</tbody>
-    </table></div><div class="bench-formula">金额差＝实际组合－被动账户；比例＝金额差÷被动账户期末金额。</div>`
-    :`<div class="note" style="margin-top:10px">${benchmarkAccountAlert}</div>`;
+  const benchmarkTable=`<div class="note" style="margin-top:10px">${st.bench.length?"现金流匹配的被动账户期末值等待公开出入金明细；基准 TWR 不受影响。":"⚠ 基准数据未完整覆盖，暂不显示。"}</div>`;
   const benchmarkMethod=`<details class="expl bench-expl" id="benchExplain"${benchExplainOpen?" open":""}><summary>查看计算方法与重要说明</summary><div class="hint"><ol class="bench-points">
-    <li><b>同一起点：</b>假想被动账户的期初投入与实际组合相同；表格显示的是<b>相同资金路径下的期末金额</b>，不是把区间收益率简单乘以期初本金。</li>
-    <li><b>同步出入金：</b>每笔已确认的外部入金或出金，按同一日期、同一金额在收盘后买入或卖出 SPY / QQQ，并从次日起参与收益；允许碎股，忽略税费与滑点。</li>
+    <li><b>同一起点：</b>相同资金路径下的期末金额必须有公开出入金明细才能显示；不会用月末假设代替。</li>
     <li><b>可比收益率：</b>组合毛 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较。</li>
-    <li><b>独立的出资方口径：</b>Modified Dietz 是本工具按每日收盘入账假设计算的单一区间模型值，包含出资方加仓择时；<b>它不是 Sharesight 的精确对账值，也不能与组合毛 TWR 相减当作费用</b>。</li>
+    <li><b>独立的出资方口径：</b>Modified Dietz 读取计算回执，包含出资方加仓择时；不能与组合毛 TWR 相减当作费用。</li>
   </ol><div class="note">${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,st.spanDays))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
+  const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${mix}`;
+  if(feeView.state!=="verified"){
+    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="lab">收益率</div><div class="receipt-pending">${feeView.message}</div></div>`;return;
+  }
   document.getElementById("kpis").innerHTML=`
-  <div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 起始基准"}</span></div><div class="val">${usd(st.nav,0)}</div>${acctLine}${mix}
+  ${assetCard}
     <div class="note">${st.live?`本月至今 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · 本月至今费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
-    <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${DB.settings.start} → ${lp?lp.d:"—"}（${st.spanDays} 天）</div>
+    <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${feeView.start} → ${feeView.asOf}（${st.spanDays} 天）</div>
     ${rr("组合毛 TWR（管理能力）",st.twrG)}
     ${rr("出资方 Modified Dietz（EOD flow 模型）",st.mwrD)}
     ${st.bench.map(b=>rr("同期 "+b.name,b.twr)).join("")}
-    ${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(st){
-  const box=document.getElementById("chart1");const s=dailySeries(st);
-  document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s[s.length-1].d}`:"";
-  if(s.length<2){box.innerHTML=`<div class="empty">每日数据到位后此处出现走势</div>`;return;}
+    ${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
+  const box=document.getElementById("chart1");if(feeView.state!=="verified"){document.getElementById("chartAsOf").textContent="";box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
+  const s=st.rows.slice(-12).map(row=>({d:row.to,cum:row.cum,hwm:row.hwm,tot:row.closeT}));
+  document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s.at(-1).d}`:"";
+  if(!s.length){box.innerHTML=`<div class="empty">月度数据到位后此处出现走势</div>`;return;}
   const w=720,h=290,l=8,r=64,t=18,b=28,iw=w-l-r,ih=h-t-b;
-  const vals=s.flatMap(p=>[p.cum,p.hwm]).concat([0]);let lo=Math.min(...vals),hi=Math.max(...vals);if(hi===lo)hi=lo+1;const pad=(hi-lo)*0.12;lo-=pad;hi+=pad;  const X=i=>l+i*(iw/(s.length-1)),Y=v=>t+ih-((v-lo)/(hi-lo))*ih;
+  const vals=s.flatMap(p=>[p.cum,p.hwm]).concat([0]);let lo=Math.min(...vals),hi=Math.max(...vals);if(hi===lo)hi=lo+1;const pad=(hi-lo)*0.12;lo-=pad;hi+=pad;const X=i=>s.length===1?l+iw/2:l+i*(iw/(s.length-1)),Y=v=>t+ih-((v-lo)/(hi-lo))*ih;
   const line=s.map((p,i)=>(i?"L":"M")+X(i).toFixed(1)+","+Y(p.cum).toFixed(1)).join("");
   const area=line+`L${X(s.length-1).toFixed(1)},${(t+ih).toFixed(1)}L${X(0).toFixed(1)},${(t+ih).toFixed(1)}Z`;
   const hpath=s.map((p,i)=>(i?"L":"M")+X(i).toFixed(1)+","+Y(p.hwm).toFixed(1)).join("");
@@ -687,13 +728,13 @@ function renderKPIs(st,B,G){
   const move=e=>{const pt=(e.touches&&e.touches[0])||e;const rc=svg.getBoundingClientRect();if(!rc.width)return;
     const rx=(pt.clientX-rc.left)/rc.width*w;let i=Math.round((rx-l)/(iw/(s.length-1)));i=Math.max(0,Math.min(s.length-1,i));const p=s[i];
     cross.style.display="";cl.setAttribute("x1",X(i));cl.setAttribute("x2",X(i));cc.setAttribute("cx",X(i));cc.setAttribute("cy",Y(p.cum));
-    tip.style.display="block";tip.innerHTML=`<b>${p.d}</b><br>累计净收益 <b class="${sgn(p.cum)}">${usd(p.cum,0)}</b><br>总资产 ${usd(p.tot,0)}`;
+    tip.style.display="block";tip.innerHTML=`<b>${p.d}</b><br>累计毛收益 <b class="${sgn(p.cum)}">${usd(p.cum,0)}</b><br>总资产 ${usd(p.tot,0)}`;
     const px=X(i)/w*rc.width;tip.style.left=Math.max(4,Math.min(px-tip.offsetWidth/2,rc.width-tip.offsetWidth-4))+"px";tip.style.top="2px";};
   const leave=()=>{cross.style.display="none";tip.style.display="none";};
   wrap.addEventListener("pointerdown",move);wrap.addEventListener("pointermove",move);wrap.addEventListener("pointerleave",leave);wrap.addEventListener("pointerup",leave);
   wrap.addEventListener("touchmove",move,{passive:true});wrap.addEventListener("touchend",leave);}
-function renderChart2(st){
-  const box=document.getElementById("chart2");const R=st.rows;
+function renderChart2(feeView,st){
+  const box=document.getElementById("chart2");if(feeView.state!=="verified"){box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}const R=st.rows.slice(-12);
   if(!R.length){box.innerHTML=`<div class="empty">月末后此处出现柱状图</div>`;return;}
   const w=720,h=210,l=54,r=12,t=14,b=32,iw=w-l-r,ih=h-t-b;  const max=Math.max(...R.map(x=>x.fees),1)*1.15;
   const step=iw/R.length,bw=Math.min(64,step*0.55);
@@ -709,8 +750,8 @@ function renderChart2(st){
       <text x="${cx.toFixed(1)}" y="${h-10}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>`;}).join("")}
   </svg>${st.live?`<p class="small" style="margin:6px 0 0">* 本月按至今天数计</p>`:""}`;
 }
-function renderChart3(st){
-  const box=document.getElementById("chart3");const R=st.rows;
+function renderChart3(feeView,st){
+  const box=document.getElementById("chart3");if(feeView.state!=="verified"){box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}const R=st.rows.slice(-12);
   if(!R.length){box.innerHTML=`<div class="empty">月末后此处出现柱状图</div>`;return;}
   const BB=st.bench||[];  const w=720,h=210,l=54,r=12,t=14,b=32,iw=w-l-r,ih=h-t-b;
   const vals=R.flatMap(x=>[x.rG].concat(BB.map(b2=>x.rB&&x.rB[b2.k]!=null?x.rB[b2.k]:0))).concat([0]);  let lo=Math.min(...vals),hi=Math.max(...vals);if(hi<=lo)hi=lo+0.01;const pd=(hi-lo)*0.15;lo-=pd;hi+=pd;if(lo>0)lo=0;if(hi<0)hi=0;  const Y=v=>t+ih-((v-lo)/(hi-lo))*ih;const y0=Y(0);
@@ -720,20 +761,24 @@ function renderChart3(st){
     ${R.map((x,i)=>{const cx=l+step*i+step/2;const bar=(v,off,col)=>{if(v==null)return "";const yy=Y(v),hh=Math.abs(yy-y0);return `<rect x="${(cx+off-bw/2).toFixed(1)}" y="${Math.min(yy,y0).toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1,hh).toFixed(1)}" fill="${col}" rx="2"/>`+(lab?`<text x="${(cx+off).toFixed(1)}" y="${(v>=0?Math.min(yy,y0)-5:Math.max(yy,y0)+13).toFixed(1)}" text-anchor="middle" font-size="10" fill="var(--ink-2)">${(v*100).toFixed(1)}</text>`:"");};
       const S=[{v:x.rG,col:"var(--series-1)"}].concat(BB.map(b2=>({v:x.rB?x.rB[b2.k]:null,col:b2.col})));      return S.map((sr,si)=>bar(sr.v,(si-(NS-1)/2)*bw*1.12,sr.col)).join("")+      `<text x="${cx.toFixed(1)}" y="${h-10}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>`;}).join("")}
   </svg>`;}
-function renderMonths(st){
+let _monthHistoryYear="";
+function renderMonths(feeView,st){
   const box=document.getElementById("monthsBox");
-  if(!st.rows.length){box.innerHTML=`<div class="empty">${ymLabel(DB.settings.start.slice(0,7))}起，每日数据到位后自动出现。</div>`;return;}
-  box.innerHTML=st.rows.map(r=>{const net=r.pnl-r.fees;const take=r.pnl>0?r.fees/r.pnl:null;return `<div class="mrow"><div><div><b>${ymLabel(r.ym)}</b>
-      ${r.inProgress?'<span class="badge est">进行中</span>':''}
-      ${r.excess>0?'<span class="badge ok">超高水位</span>':(r.cum<r.hwm?'<span class="badge hwm">补亏中</span>':'')}</div>
-      <div class="l">毛收益 <b class="${sgn(r.pnl)}">${fmt(r.pnl,0)}</b>（毛 TWR ${pct(r.rG,1)} / 出资方 Dietz ${pct(r.rD,1)}${(st.bench||[]).map(b=>` ｜ ${b.name} ${pct(r.rB&&r.rB[b.k],1)}`).join("")}）</div>
-      <div class="l">费用 <b class="amt">${fmt(r.fees,0)}</b> = 管理费 ${fmt(r.mgmt,0)} + Carry ${fmt(r.carry,0)}${take!=null?` · 占毛收益 ${(take*100).toFixed(1)}%`:""}</div></div>    <div style="text-align:right"><div class="l">净收益</div><b class="${sgn(net)}" style="font-size:16px">${usd(net,0)}</b></div></div>`;}).join("");}function renderBal(st,B,G){
+  if(feeView.state!=="verified"){box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
+  let model;try{model=monthHistoryViewModel({rows:st.rows,publicAsOf:feeView.asOf,selectedYear:_monthHistoryYear,isManager:isMgr()});}catch(_){box.innerHTML='<div class="receipt-pending">计算回执待更新</div>';return;}_monthHistoryYear=model.selectedYear;
+  const wasHistoryOpen=document.getElementById("monthHistory")?.open===true,opened=new Set([...box.querySelectorAll("details.month-detail[open][data-ym]")].map(el=>el.dataset.ym));
+  const card=(r,latest=false)=>{const net=r.pnl-r.fees,status=r.inProgress?"进行中":r.excess>0?"超高水位":r.cum<r.hwm?"补亏中":"完整月",open=latest||opened.has(r.ym);return `<details class="month-detail${latest?" latest":""}" data-ym="${r.ym}"${open?" open":""}><summary><span class="month-title">${ymLabel(r.ym)} <span class="badge ${r.inProgress?"est":r.excess>0?"ok":r.cum<r.hwm?"hwm":""}">${status}</span></span><span class="month-summary">净收益 <b class="${sgn(net)}">${usd(net,0)}</b> · 费用 ${usd(r.fees,0)}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>毛收益 <b class="${sgn(r.pnl)}">${usd(r.pnl,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt,0)}</b></span><span>Carry <b>${usd(r.carry,0)}</b></span><span>总费用 <b>${usd(r.fees,0)}</b></span><span>组合毛 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)} <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}</div></div></details>`;};
+  const history=model.history.map(row=>card(row)).join("")||'<div class="empty">该年份没有更早月份</div>';
+  box.innerHTML=card(model.latest,true)+(model.historyCount?`<details class="month-history" id="monthHistory"${wasHistoryOpen?" open":""}><summary><span class="month-title">历史月份（${model.historyCount}）</span><span class="month-summary">完整保存</span></summary><div class="history-tools"><label for="monthHistoryYear">年份</label><select id="monthHistoryYear" aria-label="选择历史年份">${model.years.map(year=>`<option value="${year}"${year===model.selectedYear?" selected":""}>${year}年</option>`).join("")}</select></div>${history}</details>`:"");
+}
+function renderBal(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
+  if(feeView.state!=="verified"||!B){document.getElementById("balBox").innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
   document.getElementById("balBox").innerHTML=`
     <div class="line"><span>累计管理费（${B.n} 个月）</span><span>${usd(B.mgmt)}</span></div>    <div class="line"><span>累计 Carry</span><span>${usd(B.carry)}</span></div>
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
     <div class="line tot"><span>应付费用</span><span class="${G.hold?'hold':(B.due>0?'':'pos')}">${G.hold?"暂不可用":usd(B.due)}</span></div>`;}
-function renderFees(st,B,G){
+function renderFees(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
   const t=document.getElementById("tblFee");
   t.innerHTML=(DB.fees.length?DB.fees.map(f=>`<div class="feeCard">
@@ -743,7 +788,7 @@ function renderFees(st,B,G){
       <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 82px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select></div>
     <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：8 月费用）" style="flex:1"></div>
   </div>`).join(""):`<div class="empty">还没有付款记录</div>`)+
-  `<div class="feeSum"><span>已付款 ${usd(B.paid,0)}</span><span>应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span></div>`;}
+  `<div class="feeSum">${feeView.state!=="verified"||!B?`<span>${feeView.message}</span>`:`<span>已付款 ${usd(B.paid,0)}</span><span>应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span>`}</div>`;}
 function renderFlows(){
   const box=document.getElementById("flowBox");const auto=(DAILY.flowsAuto||[]);
   const inc=DB.months.flatMap(m=>(m.flows||[]).map(f=>({...f,ym:m.ym})));
@@ -905,7 +950,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnGhOff"){confirmBox("断开云同步","本机将不再是管理人设备（数据保留在云端与本机）。",()=>{setCfg(K.tok,"");render();setSync("");});return;}
 });
 let _pend=null;const scheduleRender=()=>{clearTimeout(_pend);_pend=setTimeout(render,0);};
-document.body.addEventListener("change",e=>{if(!isMgr())return;const T=e.target,k=T.dataset.k;const val=T.type==="checkbox"?T.checked:T.value;let dirty=true;
+document.body.addEventListener("change",e=>{const historyYear=monthHistoryYearFromEvent(e);if(historyYear){_monthHistoryYear=historyYear;const history=document.getElementById("monthHistory");if(history)history.open=true;scheduleRender();return;}if(!isMgr())return;const T=e.target,k=T.dataset.k;const val=T.type==="checkbox"?T.checked:T.value;let dirty=true;
   if(T.dataset.fee){const f=DB.fees.find(x=>x.id===T.dataset.fee);if(f)f[k]=val;}
   else if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(f){const ym=f.date.slice(0,7);const m=monthOf(ym);m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:uid(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});}}
   else if(T.dataset.open){DB.accounts.find(a=>a.id===T.dataset.open).opening=parseFloat(val)||0;}
