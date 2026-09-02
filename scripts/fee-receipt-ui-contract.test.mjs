@@ -136,6 +136,49 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     balance: receipt.balance
   });
 
+  const outOfRangeEconomicInput = structuredClone(economicInput);
+  outOfRangeEconomicInput.months.push(
+    { ym: "2026-07", flows: [{
+      id: "confirmed-before-start",
+      src: "outside-source-before",
+      date: "2026-07-31",
+      acct: "schwab",
+      amount: 900_000,
+      note: "outside the receipt window"
+    }] },
+    { ym: "2026-09", flows: [{
+      id: "confirmed-after-as-of",
+      src: "outside-source-after",
+      date: "2026-09-01",
+      acct: "webull",
+      amount: 800_000,
+      note: "outside the receipt window"
+    }] }
+  );
+  const outOfRangeReceipt = buildFeeCalculationReceipt({
+    data,
+    economicInput: outOfRangeEconomicInput
+  });
+  assert.notEqual(outOfRangeReceipt.econInputsHash, receipt.econInputsHash,
+    "out-of-range private records must remain committed by the receipt");
+  for (const key of [
+    "effectiveFlowsHash", "effectiveFlowCount", "effectiveFlowNetCents",
+    "periods", "totals", "balance"
+  ]) {
+    assert.deepEqual(outOfRangeReceipt[key], receipt[key],
+      `${key} must ignore confirmed private flows outside [start, asOf]`);
+  }
+  const outOfRangeValid = plain(await sandbox.feeReceiptUiModel({
+    receipt: outOfRangeReceipt,
+    data,
+    economicInput: outOfRangeEconomicInput
+  }));
+  assert.equal(outOfRangeValid.ok, true,
+    "the UI consumer must accept the core receipt when only out-of-range confirmed flows were added");
+  assert.deepEqual(outOfRangeValid.periods, valid.periods);
+  assert.deepEqual(outOfRangeValid.totals, valid.totals);
+  assert.deepEqual(outOfRangeValid.balance, valid.balance);
+
   const assertClosed = async input => {
     const result = plain(await sandbox.feeReceiptUiModel(input));
     assert.deepEqual(result, { ok: false, reason: "calculation receipt pending" });
