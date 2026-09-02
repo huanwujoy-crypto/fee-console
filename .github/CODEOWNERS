@@ -1,6 +1,7 @@
 # The console UI handles a GitHub token and an encryption key. Keep its code
 # and every file that defines its review policy under explicit owner review.
 /index.html @huanwujoy-crypto
+/.gitignore @huanwujoy-crypto
 /.github/ @huanwujoy-crypto
 /scripts/ @huanwujoy-crypto
 /security/ @huanwujoy-crypto
@@ -11,6 +12,7 @@
 /claude/xuan-ib-runtime-contract-v1.md @huanwujoy-crypto
 /claude/xuan-ib-cash-first-plan-v1.md @huanwujoy-crypto
 /claude/xuan-ib-etf-abc-v1.md @huanwujoy-crypto
+/claude/xuan-ib-etf-ledger-*.json @huanwujoy-crypto
 /claude/xuan-ib-classification-authority-review-2026-08-31.md @huanwujoy-crypto
 /claude/xuan-ib-cash-identities-v1.json @huanwujoy-crypto
 /claude/xuan-ib-ai-tier-overrides-v1.json @huanwujoy-crypto
@@ -23,4 +25,8 @@
 /scripts/xuan-ib-etf-pane.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-abc.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-abc.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-ledger.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-ledger.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-ledger-leak-guard.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-ledger-leak-guard.test.mjs @huanwujoy-crypto
 /xuan-ib/policy.html @huanwujoy-crypto

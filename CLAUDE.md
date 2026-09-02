@@ -94,8 +94,9 @@ publication lock.
 The only permitted handover integration is the byte-identical output of
 `renderPolicySection(policy)`, placed as the first visible module inside the
 unique independent `.pane.p5` ETF pane. The five visible labels remain in the
-fixed order `概览 / 风险 / 配置 / ETF / 待办`; the existing todo radio and pane
-remain `s4` / `p4`. Do not copy or edit `policy.html`, the
+fixed order `概览 / 风险 / 配置 / 待办 / ETF`; the existing todo radio and pane
+remain `s4` / `p4`, ETF remains `s5` / `p5`, and the pane DOM order is
+`p1 / p2 / p3 / p4 / p5`. Do not copy or edit `policy.html`, the
 policy JSON, renderer, approval record, or tests in a candidate; the single-file
 `xuan-ib/index.html` candidate contract remains unchanged. The first production
 rollout is complete: every ordinary fresh report must include the canonical

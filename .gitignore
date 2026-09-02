@@ -1,0 +1,6 @@
+# The ETF measurement ledger is private. Only its value-free public checkpoint
+# may exist in this public repository.
+**/*private-ledger*
+**/*private_ledger*
+**/*etf*ledger*.json
+!claude/xuan-ib-etf-ledger-public-genesis-v1.json
