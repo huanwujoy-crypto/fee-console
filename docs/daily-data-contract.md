@@ -175,3 +175,68 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
 - 只接受白名单参数与 `--calibrated` 一个标志，未知参数直接报错。
 - 原子写回（临时文件 + fsync + rename）。
 - stdout / stderr 只输出状态与计数，**不打印任何金额或密钥**。
+
+## 7. 单一费用计算回执（calculation receipt）
+
+管理费、Carry 和毛收益只允许由 `scripts/fee-receipt-core.mjs` 的确定性引擎计算一次。
+手机页面、Claude Scheduled task 和任何只读简报都必须消费同一份
+`feeCalculationReceipt`；不得各自重新套公式。
+
+### 7.1 权威公式
+
+- 每日管理费基数 = 当日两账户收盘总值 − 当日 EOD 外部出入金。
+- 当月管理费 = `Σ(每日管理费基数) × 年费率 ÷ 365`。
+- `feeBasisDayCount` 必须与该期间 `calendarDayCount` 完全相等；有一天缺失、重复，
+  或任一天基数为负，均不得生成回执。
+- Modified Dietz 只用于出资方收益率，**绝不是管理费分母**。
+- Carry 使用同一引擎维护的累计毛 P&L 与 High-water mark；任何实物转仓必须先经过
+  §4 的业务身份去重，恰好计入一次。
+
+### 7.2 私密经济输入
+
+`daily.mjs` 只从环境变量 `FEE_ECON_FILE` 指向的文件读取经济输入。该文件必须：
+
+- 使用绝对路径，并位于 Git 仓库之外；
+- 是手机私密 Gist `fee-console-db.json` 的原始 AES-256-GCM encrypted v4 envelope；
+- 在一次运行中连续读取两次且字节不变；
+- 使用现有 `FEE_DATA_KEY` 在内存解密，绝不把明文、Gist id 或密钥写入仓库或日志。
+
+Routine 必须先在远端连续读取同一个 Gist revision/ETag，并确认两次 encrypted content
+逐字节相同，再把它交给脚本。本地文件的连续双读只防止使用过程中被替换，不能单独证明
+远端 Gist 稳定。
+
+回执只保存输入 commitment（SHA-256 hash）和派生结果，不复制账户 opening、确认 flow、
+备注、付款 id、姓名或原始 FX 表。付款日期、金额、币种及实际采用的 USD FX 会进入私密
+输入 commitment，因为它们会改变 paid / due；早于费用起算日或晚于 `asOf` 的付款不属于
+本期 statement，也不会抵扣应付费用；对外只输出合计 paid / due。Hash 不是独立
+数字签名；可信边界仍是现有 AES-GCM envelope、受控 writer 与发布流程。完整 hash 不得进入
+通知、普通简报、Pages metadata 或 release tag，只可显示缩短的 receipt id。
+
+### 7.3 写入与失效规则
+
+- 回执是 encrypted v3 payload 的可选顶层字段；外层格式仍为 v3，旧页面可继续读取。
+- `daily.mjs` 先完成来源校验、flow reconciliation 和候选 daily point，再基于候选 payload
+  生成回执，最后才原子写回。
+- 每日数据未变、但费率、opening 或确认 flow 改变时，回执变化必须打破 `no-op` 并更新。
+- 未提供私密经济输入时，只有仍与 public input hash 匹配的旧回执可以保留；一旦不匹配，
+  必须删除 stale receipt，不能显示旧数字。
+- `flowsUnresolved` 非空时，已验证的原始 AUM 点仍可写入，但 stale receipt 必须删除且本次
+  不生成新回执；费用、Carry、已付／应付和费用后收益一律不可显示。
+- 已有 public ledger 的 `daily`、`flowsAuto`、`flowsUnresolved`，以及 private ledger 的
+  `months`、`month.flows`、`fees` 如存在但不是数组，必须原样保留文件并拒绝运行；不得把坏
+  shape 或数组内的空／非对象记录静默删除。已有 `status` 必须完整包含合法的 `asOf`、`provisional`、
+  `calibrated`、`splitDelta`、`unresolvedCount` 和字符串 `notes` 数组；不得以新状态静默覆盖
+  不完整或类型错误的旧状态。
+- 同一 public/private 输入必须保持 byte-for-byte `no-op`。
+
+### 7.4 只读消费规则
+
+`scripts/fee-receipt-report.mjs` 是 Scheduled task 的只读出口。它只解密并验证回执，
+绝不重新计算。它必须读取同一份仍然有效的 private snapshot，完成 public + private 双重
+校验；在 `GITHUB_ACTIONS=true` 时于读取任何文件或 secret 前直接拒绝。回执缺失、hash
+不匹配、版本未知或数据不完整时以非零状态退出，且不输出任何费用数字。此时任务可报告
+原始 AUM/来源状态，但管理费、Carry、已付／应付及费用后收益必须显示“计算回执待更新”，
+不得用 endpoint average、旧截图、memory 或人工 override 补数。
+
+v1 回执覆盖费用、Carry、已付／应付以及组合自身的毛／净收益率；SPY、QQQ 等 benchmark
+仍来自公开 daily ledger，暂不属于回执的单一计算源，不得把 v1 描述成覆盖页面全部数字。

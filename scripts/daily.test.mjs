@@ -36,14 +36,14 @@ const baseArgs = (over = {}) => ({
   ...over
 });
 
-const run = (dir, over = {}, extra = []) => {
+const run = (dir, over = {}, extra = [], envOver = {}) => {
   const args = baseArgs(over);
   const argv = Object.entries(args)
     .filter(([, v]) => v !== undefined && v !== null)
     .map(([k, v]) => `--${k}=${v}`);
   return spawnSync(process.execPath, [cli, ...argv, `--file=${path.join(dir, "data.json")}`, ...extra], {
     encoding: "utf8",
-    env: { ...process.env, FEE_DATA_KEY: TEST_KEY }
+    env: { ...process.env, FEE_DATA_KEY: TEST_KEY, ...envOver }
   });
 };
 
@@ -66,6 +66,28 @@ const writePayload = (dir, payload) => {
   const data = Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64");
   fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({ enc: true, v: 3, data }));
 };
+
+const writeEconEnvelope = (dir, payload, keyText = TEST_KEY) => {
+  const key = Buffer.from(keyText, "base64url");
+  const iv = crypto.randomBytes(12);
+  const c = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([c.update(JSON.stringify(payload), "utf8"), c.final()]);
+  const data = Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64");
+  const target = path.join(dir, "fee-console-db.encrypted.json");
+  fs.writeFileSync(target, JSON.stringify({ enc: true, v: 4, data }));
+  return target;
+};
+
+const econForToday = (over = {}) => ({
+  v: 4,
+  settings: { start: today(), mgmt: 2, carry: 20, who: "PRIVATE PERSON", ...(over.settings || {}) },
+  accounts: over.accounts || [
+    { id: "schwab", name: "PRIVATE SCHWAB", opening: 598517.36 },
+    { id: "webull", name: "PRIVATE WEBULL", opening: 119026.45 }
+  ],
+  months: over.months || [],
+  fees: over.fees || [{ id: "PRIVATE PAYMENT", date: today(), amount: 123, ccy: "USD", note: "PRIVATE NOTE" }]
+});
 
 const runRepair = (dir, extra = [], key = TEST_KEY) => spawnSync(
   process.execPath,
@@ -935,6 +957,241 @@ test("rerunning an ex-date without an event preserves the verified dividend", ()
   const second = run(dir, { spy: "768.40", qqq: "706.32", "src-bench": d });
   assert.equal(second.status, 0, second.stderr);
   assert.equal(readPayload(dir).daily.at(-1).spyd, 1.903516);
+});
+
+/* ---------------- deterministic fee calculation receipt ---------------- */
+test("an encrypted v4 economic snapshot produces a receipt inside the existing v3 envelope", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  const result = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /receipt=updated/);
+  const outer = JSON.parse(fs.readFileSync(path.join(dir, "data.json"), "utf8"));
+  assert.deepEqual({ enc: outer.enc, v: outer.v }, { enc: true, v: 3 });
+  const receipt = readPayload(dir).feeCalculationReceipt;
+  assert.equal(receipt.schema, "fee-console.calculation-receipt.v1");
+  assert.equal(receipt.asOf, today());
+  assert.equal(receipt.periods[0].feeBasisDayCount, 1);
+  assert.equal(receipt.periods[0].calendarDayCount, 1);
+  assert.equal(receipt.status.valid, true);
+});
+
+test("the receipt never copies private Gist records into the public calculation payload", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday({
+    months: [{ ym: today().slice(0, 7), flows: [{
+      id: "PRIVATE-ID", src: "", date: today(), acct: "schwab",
+      amount: 1, note: "PRIVATE-NOTE-MARKER"
+    }]}]
+  }));
+  const result = run(dir, { schwab: "598518.36", cash: "263698.83" }, [], { FEE_ECON_FILE: econFile });
+  assert.equal(result.status, 0, result.stderr);
+  const serialized = JSON.stringify(readPayload(dir).feeCalculationReceipt);
+  for (const marker of ["PRIVATE-ID", "PRIVATE-NOTE-MARKER", "PRIVATE PERSON", "PRIVATE PAYMENT"]) {
+    assert.equal(serialized.includes(marker), false, marker);
+  }
+});
+
+test("an unresolved flow records AUM but removes the fee receipt", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  assert.ok(readPayload(dir).feeCalculationReceipt);
+
+  const flows = JSON.stringify([{
+    date: today(), acct: "schwab", amount: 12345.67, desc: "", type: "DEPOSIT"
+  }]);
+  const result = run(dir, {
+    "acct-cash-schwab": "12554.01",
+    "prev-acct-cash-schwab": "208.34"
+  }, [`--flows=${flows}`], { FEE_ECON_FILE: econFile });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /receipt=unavailable-removed/);
+  const payload = readPayload(dir);
+  assert.equal(payload.daily.at(-1).d, today());
+  assert.equal(payload.flowsUnresolved.length, 1);
+  assert.equal(Object.hasOwn(payload, "feeCalculationReceipt"), false);
+});
+
+test("identical public and private inputs remain byte-for-byte no-op", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const again = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+});
+
+test("a private economic change updates the receipt even when the daily point is unchanged", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  const beforeBytes = fs.readFileSync(path.join(dir, "data.json"));
+  const beforeReceipt = readPayload(dir).feeCalculationReceipt;
+  writeEconEnvelope(dir, econForToday({ settings: { mgmt: 2.01 } }));
+  const changed = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.match(changed.stdout, /receipt=updated/);
+  assert.notDeepEqual(fs.readFileSync(path.join(dir, "data.json")), beforeBytes);
+  assert.notEqual(readPayload(dir).feeCalculationReceipt.receiptId, beforeReceipt.receiptId);
+});
+
+test("a no-economic-input run preserves a still-matching receipt", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const withoutEcon = run(dir);
+  assert.equal(withoutEcon.status, 0, withoutEcon.stderr);
+  assert.match(withoutEcon.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+});
+
+test("a public-data change without economic input removes a stale receipt", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  assert.ok(readPayload(dir).feeCalculationReceipt);
+  const changed = run(dir, { webull: "119126.45", cash: "263797.83" });
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.match(changed.stdout, /receipt=stale-removed/);
+  assert.equal(Object.hasOwn(readPayload(dir), "feeCalculationReceipt"), false);
+});
+
+test("wrong-key, corrupt and plaintext economic inputs fail closed without changing data", () => {
+  const dir = tmp();
+  assert.equal(run(dir).status, 0);
+  const dataFile = path.join(dir, "data.json");
+  const before = fs.readFileSync(dataFile);
+
+  const wrongKey = crypto.randomBytes(32).toString("base64url");
+  const econFile = writeEconEnvelope(dir, econForToday(), wrongKey);
+  const wrong = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr, /decrypt failed/);
+  assert.deepEqual(fs.readFileSync(dataFile), before);
+
+  fs.writeFileSync(econFile, "{broken");
+  const corrupt = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.notEqual(corrupt.status, 0);
+  assert.match(corrupt.stderr, /not valid JSON/);
+  assert.deepEqual(fs.readFileSync(dataFile), before);
+
+  fs.writeFileSync(econFile, JSON.stringify(econForToday()));
+  const plaintext = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.notEqual(plaintext.status, 0);
+  assert.match(plaintext.stderr, /encrypted v4 envelope/);
+  assert.deepEqual(fs.readFileSync(dataFile), before);
+});
+
+test("existing ledger arrays cannot be silently replaced by empty arrays", () => {
+  for (const field of ["daily", "flowsAuto", "flowsUnresolved"]) {
+    const dir = tmp();
+    const payload = {
+      updatedAt: "2026-08-01T00:00:00.000Z",
+      daily: [],
+      flowsAuto: [],
+      flowsUnresolved: [],
+      [field]: { malformed: true }
+    };
+    writePayload(dir, payload);
+    const dataFile = path.join(dir, "data.json");
+    const before = fs.readFileSync(dataFile);
+    const result = run(dir);
+    assert.notEqual(result.status, 0, `${field} unexpectedly passed`);
+    assert.match(result.stderr, new RegExp(`${field} must be an array`));
+    assert.deepEqual(fs.readFileSync(dataFile), before, `${field} failure changed bytes`);
+  }
+
+  for (const field of ["daily", "flowsAuto", "flowsUnresolved"]) {
+    const dir = tmp();
+    const payload = {
+      updatedAt: "2026-08-01T00:00:00.000Z",
+      daily: [],
+      flowsAuto: [],
+      flowsUnresolved: [],
+      [field]: [null]
+    };
+    writePayload(dir, payload);
+    const dataFile = path.join(dir, "data.json");
+    const before = fs.readFileSync(dataFile);
+    const result = run(dir);
+    assert.notEqual(result.status, 0, `${field} null member unexpectedly passed`);
+    assert.match(result.stderr, new RegExp(`${field}\\[0\\] must be an object`));
+    assert.deepEqual(fs.readFileSync(dataFile), before, `${field} member failure changed bytes`);
+  }
+});
+
+test("malformed existing status and private ledgers fail before reconciliation", () => {
+  const dir = tmp();
+  const dataFile = path.join(dir, "data.json");
+  const incompleteStatus = {
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    daily: [],
+    flowsAuto: [],
+    flowsUnresolved: [],
+    status: {}
+  };
+  writePayload(dir, incompleteStatus);
+  let before = fs.readFileSync(dataFile);
+  let result = run(dir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /status\.asOf is missing/);
+  assert.deepEqual(fs.readFileSync(dataFile), before);
+
+  const malformedStatus = {
+    updatedAt: "2026-08-01T00:00:00.000Z",
+    daily: [],
+    flowsAuto: [],
+    flowsUnresolved: [],
+    status: {
+      asOf: today(), provisional: "true", calibrated: false,
+      splitDelta: 0, unresolvedCount: 0, notes: []
+    }
+  };
+  writePayload(dir, malformedStatus);
+  before = fs.readFileSync(dataFile);
+  result = run(dir);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /status\.provisional must be a boolean/);
+  assert.deepEqual(fs.readFileSync(dataFile), before);
+
+  const valid = { ...malformedStatus, status: {
+    asOf: today(), provisional: false, calibrated: false,
+    splitDelta: 0, unresolvedCount: 0, notes: []
+  } };
+  writePayload(dir, valid);
+  const econFile = writeEconEnvelope(dir, { ...econForToday(), fees: {} });
+  before = fs.readFileSync(dataFile);
+  const flows = JSON.stringify([{
+    date: today(), acct: "schwab", amount: 12345.67, desc: "", type: "DEPOSIT"
+  }]);
+  result = run(dir, {}, [`--flows=${flows}`], { FEE_ECON_FILE: econFile });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /economic input rejected: economic input fees must be an array/);
+  assert.deepEqual(fs.readFileSync(dataFile), before);
+});
+
+test("economic input is accepted only from an absolute repository-external file", () => {
+  const dir = tmp();
+  const relative = run(dir, {}, [], { FEE_ECON_FILE: "relative.json" });
+  assert.notEqual(relative.status, 0);
+  assert.match(relative.stderr, /absolute path/);
+
+  const inside = run(dir, {}, [], { FEE_ECON_FILE: path.resolve(here, "..", "data.json") });
+  assert.notEqual(inside.status, 0);
+  assert.match(inside.stderr, /outside the repository/);
+});
+
+test("receipt status output contains no monetary amount or private input", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  const result = run(dir, {}, [], { FEE_ECON_FILE: econFile });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout + result.stderr, NUMBERS);
+  assert.doesNotMatch(result.stdout + result.stderr, /PRIVATE|598517|119026|fee-console-db/i);
 });
 
 test("a dividend without its price is refused, and a negative one too", () => {
