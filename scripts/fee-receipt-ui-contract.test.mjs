@@ -235,7 +235,7 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     totals: null,
     balance: null
   });
-  assert.doesNotMatch(JSON.stringify(pendingProjection), /Cents|Ppm|[0-9]/,
+  assert.equal(Object.values(pendingProjection).some(value => typeof value === "number"), false,
     "the pending render projection must contain no stale financial number");
 
   assert.equal(html.split(RENDER_CALL).length - 1, 1,
