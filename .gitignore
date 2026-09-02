@@ -4,3 +4,4 @@
 **/*private_ledger*
 **/*etf*ledger*.json
 !claude/xuan-ib-etf-ledger-public-genesis-v1.json
+!claude/xuan-ib-etf-ledger-public-established-v1.json

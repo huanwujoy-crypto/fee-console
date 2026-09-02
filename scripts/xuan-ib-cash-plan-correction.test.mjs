@@ -50,7 +50,8 @@ test('cash correction passes the entire trusted publication guard with original 
 
 test('trusted workflows copy and protect cash planning code alongside the guard', () => {
   const workflow = fs.readFileSync(path.join(repo, '.github/workflows/validate-xuan-ib-handover.yml'), 'utf8');
-  assert.match(workflow, /git archive origin\/main -- scripts \| tar -x -C "\$trusted_root"/);
+  assert.match(workflow, /git archive origin\/main --/);
+  assert.match(workflow, /\n\s+scripts \\/);
   assert.match(workflow, /scripts\/xuan-ib-cash-plan\.mjs/);
   const lock = fs.readFileSync(path.join(repo, '.github/workflows/xuan-ib-policy-lock.yml'), 'utf8');
   assert.ok(lock.includes('xuan-ib-cash-plan|xuan-ib-cash-plan-correction'));

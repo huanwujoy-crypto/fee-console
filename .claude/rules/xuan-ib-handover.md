@@ -86,7 +86,10 @@ records-updates. A records-update may only preserve the previous page's policy
 state byte for byte and in its inherited `p3` or `p5`: inherit it when present,
 or keep it absent on a legacy page. Never bootstrap or move the section through
 a records-update. An A/B/C runtime card, when present, follows the canonical
-section in `p5`. Never replace
+section in `p5` and must bind its public state to the exact `checkpointHash`
+from trusted main's canonical, value-free
+`claude/xuan-ib-etf-ledger-public-established-v1.json`. Candidate HTML cannot
+self-assert or substitute that checkpoint. Never replace
 the loader, latest report,
 metadata, or promotion evidence with the policy page. Any policy-page contract
 or rendered output change belongs in a separately approved maintenance PR.

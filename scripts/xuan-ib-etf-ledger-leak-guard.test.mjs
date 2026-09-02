@@ -11,11 +11,21 @@ import {
   auditGitRepository,
   collectTrackedAndChangedPaths,
   PUBLIC_ETF_LEDGER_CHECKPOINT,
+  PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT,
 } from './xuan-ib-etf-ledger-leak-guard.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
 const publicGenesis = fs.readFileSync(path.join(repo, PUBLIC_ETF_LEDGER_CHECKPOINT), 'utf8');
+const publicEstablished = `${JSON.stringify({
+  ...JSON.parse(publicGenesis),
+  baselineStatus: 'established',
+  checkpointHash: '3'.repeat(64),
+  entryCount: 2,
+  previousCheckpointHash: '4'.repeat(64),
+  previousPrivateHeadCommitment: '5'.repeat(64),
+  privateHeadCommitment: '6'.repeat(64),
+})}\n`;
 const privateLedger = JSON.stringify({
   schemaVersion: 1,
   mode: 'read-only-private-ledger',
@@ -34,9 +44,10 @@ test('the current tracked repository contains only the approved value-free publi
   assert.ok(result.fileCount > 0);
 });
 
-test('only the exact public genesis path can contain the whitelisted checkpoint', () => {
+test('only the two exact public checkpoint paths can contain their whitelisted states', () => {
   assert.deepEqual(auditEtfLedgerEntries([
     { path: PUBLIC_ETF_LEDGER_CHECKPOINT, content: publicGenesis },
+    { path: PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT, content: publicEstablished },
   ]), []);
   for (const filePath of [
     'claude/xuan-ib-etf-ledger-copy.json',
@@ -46,6 +57,7 @@ test('only the exact public genesis path can contain the whitelisted checkpoint'
     'archive/ledger/etf.json',
   ]) {
     assert.match(auditEtfLedgerEntries([{ path: filePath, content: publicGenesis }])[0].reason, /only/);
+    assert.match(auditEtfLedgerEntries([{ path: filePath, content: publicEstablished }])[0].reason, /only/);
   }
 });
 
@@ -63,6 +75,36 @@ test('the public checkpoint path fails closed on extra fields, values, or noncan
       { path: PUBLIC_ETF_LEDGER_CHECKPOINT, content },
     ]).length, 1);
   }
+});
+
+test('the established public checkpoint is canonical, value-free and requires both predecessor commitments', () => {
+  const established = JSON.parse(publicEstablished);
+  assert.deepEqual(auditEtfLedgerEntries([
+    { path: PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT, content: publicEstablished },
+  ]), []);
+  const invalid = [
+    { ...established, baselineStatus: 'pending' },
+    { ...established, entryCount: 1 },
+    { ...established, previousCheckpointHash: null },
+    { ...established, previousPrivateHeadCommitment: null },
+    { ...established, previousCheckpointHash: 'not-a-hash' },
+    { ...established, previousPrivateHeadCommitment: 'a'.repeat(63) },
+    { ...established, holdings: [] },
+    { ...established, NAV: 1 },
+    { ...established, valueUsd: 1 },
+  ];
+  for (const checkpoint of invalid) {
+    const [violation] = auditEtfLedgerEntries([{
+      path: PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT,
+      content: `${JSON.stringify(checkpoint)}\n`,
+    }]);
+    assert.ok(violation);
+    assert.doesNotMatch(violation.reason, /valueUsd|holdings|NAV|not-a-hash/);
+  }
+  assert.equal(auditEtfLedgerEntries([{
+    path: PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT,
+    content: ` ${publicEstablished}`,
+  }]).length, 1);
 });
 
 test('private-ledger names are denied regardless of extension or contents', () => {
@@ -144,6 +186,7 @@ test('repository controls keep ignore, CI, ownership and publication-lock covera
   const policyLock = fs.readFileSync(path.join(repo, '.github', 'workflows', 'xuan-ib-policy-lock.yml'), 'utf8');
   assert.match(ignore, /\*\*\/\*etf\*ledger\*\.json/);
   assert.match(ignore, /!claude\/xuan-ib-etf-ledger-public-genesis-v1\.json/);
+  assert.match(ignore, /!claude\/xuan-ib-etf-ledger-public-established-v1\.json/);
   assert.match(owners, /xuan-ib-etf-ledger-leak-guard/);
   assert.match(owners, /claude\/xuan-ib-etf-ledger-\*\.json/);
   assert.match(scriptsCheck, /xuan-ib-etf-ledger-leak-guard\.mjs/);

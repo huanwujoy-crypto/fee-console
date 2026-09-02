@@ -6,6 +6,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 export const PUBLIC_ETF_LEDGER_CHECKPOINT = 'claude/xuan-ib-etf-ledger-public-genesis-v1.json';
+export const PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT = 'claude/xuan-ib-etf-ledger-public-established-v1.json';
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 const PUBLIC_KEYS = [
@@ -105,7 +106,7 @@ function inspectJsonShape(value) {
   };
 }
 
-function validatePublicCheckpoint(content) {
+function validatePublicCheckpoint(content, expectedStatus) {
   const checkpoint = parseWholeJson(content);
   if (!isRecord(checkpoint)) return 'the public ETF checkpoint must be one canonical JSON object';
   const keys = Object.keys(checkpoint).sort();
@@ -117,14 +118,23 @@ function validatePublicCheckpoint(content) {
       || checkpoint.methodId !== 'xuan-ib-etf-abc-v1'
       || checkpoint.mode !== 'read-only-public-checkpoint'
       || checkpoint.t0DateHkt !== '2026-09-01'
-      || checkpoint.baselineStatus !== 'pending'
-      || checkpoint.entryCount !== 1
       || checkpoint.commitmentAlgorithm !== 'HMAC-SHA256'
       || !HASH_RE.test(checkpoint.commitmentKeyId)
       || !HASH_RE.test(checkpoint.privateHeadCommitment)
-      || !HASH_RE.test(checkpoint.checkpointHash)
-      || checkpoint.previousCheckpointHash !== null
-      || checkpoint.previousPrivateHeadCommitment !== null) {
+      || !HASH_RE.test(checkpoint.checkpointHash)) {
+    return 'the public ETF checkpoint identity or value-free state is invalid';
+  }
+  const validGenesis = expectedStatus === 'pending'
+    && checkpoint.baselineStatus === 'pending'
+    && checkpoint.entryCount === 1
+    && checkpoint.previousCheckpointHash === null
+    && checkpoint.previousPrivateHeadCommitment === null;
+  const validEstablished = expectedStatus === 'established'
+    && checkpoint.baselineStatus === 'established'
+    && checkpoint.entryCount === 2
+    && HASH_RE.test(checkpoint.previousCheckpointHash)
+    && HASH_RE.test(checkpoint.previousPrivateHeadCommitment);
+  if (!validGenesis && !validEstablished) {
     return 'the public ETF checkpoint identity or value-free state is invalid';
   }
   if (content !== `${canonicalJson(checkpoint)}\n`) {
@@ -139,8 +149,10 @@ export function auditEtfLedgerEntries(entries) {
   for (const entry of entries) {
     const filePath = normalizeRepositoryPath(entry.path);
     const content = typeof entry.content === 'string' ? entry.content : '';
-    if (filePath === PUBLIC_ETF_LEDGER_CHECKPOINT) {
-      const reason = validatePublicCheckpoint(content);
+    if (filePath === PUBLIC_ETF_LEDGER_CHECKPOINT
+        || filePath === PUBLIC_ETF_LEDGER_ESTABLISHED_CHECKPOINT) {
+      const expectedStatus = filePath === PUBLIC_ETF_LEDGER_CHECKPOINT ? 'pending' : 'established';
+      const reason = validatePublicCheckpoint(content, expectedStatus);
       if (reason) violations.push({ path: filePath, reason });
       continue;
     }

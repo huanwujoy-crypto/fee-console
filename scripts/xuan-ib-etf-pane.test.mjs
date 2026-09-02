@@ -155,7 +155,8 @@ test('trusted validation, test suite, policy lock and owner review cover the mig
   const scriptsWorkflow = fs.readFileSync(path.join(repo, '.github/workflows/scripts-check.yml'), 'utf8');
   const policyLock = fs.readFileSync(path.join(repo, '.github/workflows/xuan-ib-policy-lock.yml'), 'utf8');
   const codeowners = fs.readFileSync(path.join(repo, '.github/CODEOWNERS'), 'utf8');
-  assert.match(validateWorkflow, /git archive origin\/main -- scripts \| tar -x -C "\$trusted_root"/);
+  assert.match(validateWorkflow, /git archive origin\/main --/);
+  assert.match(validateWorkflow, /\n\s+scripts \\/);
   assert.match(validateWorkflow, /scripts\/xuan-ib-etf-pane\.mjs/);
   assert.match(validateWorkflow, /scripts\/xuan-ib-etf-abc\.mjs/);
   assert.match(scriptsWorkflow, /scripts\/xuan-ib-etf-pane\.test\.mjs/);

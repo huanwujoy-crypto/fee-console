@@ -31,6 +31,7 @@ import {
 const here = path.dirname(fileURLToPath(import.meta.url));
 const cliPath = path.join(here, 'xuan-ib-etf-ledger.mjs');
 const publicGenesisPath = path.join(here, '..', 'claude', 'xuan-ib-etf-ledger-public-genesis-v1.json');
+const publicEstablishedPath = path.join(here, '..', 'claude', 'xuan-ib-etf-ledger-public-established-v1.json');
 const NOW = new Date('2026-09-03T00:00:00+08:00');
 const secret = Buffer.alloc(32, 0x51);
 const hash = character => character.repeat(64);
@@ -249,6 +250,17 @@ test('committed public genesis is canonical, pending and contains only checkpoin
   assert.doesNotMatch(bytes, /records|payload|ValueUsd|Holdings|cash|flow|price|position|units|NAV/i);
 });
 
+test('committed public established checkpoint is canonical, value-free and successor-shaped', () => {
+  const bytes = fs.readFileSync(publicEstablishedPath, 'utf8');
+  const checkpoint = parseCanonicalPublicEtfLedgerCheckpoint(bytes);
+  assert.equal(checkpoint.baselineStatus, 'established');
+  assert.equal(checkpoint.entryCount, 2);
+  assert.match(checkpoint.previousCheckpointHash, /^[a-f0-9]{64}$/);
+  assert.match(checkpoint.previousPrivateHeadCommitment, /^[a-f0-9]{64}$/);
+  assert.equal(bytes, serializeCanonicalEtfLedger(checkpoint));
+  assert.doesNotMatch(bytes, /records|payload|ValueUsd|Holdings|cash|flow|price|position|units|NAV/i);
+});
+
 test('private loaders enforce approved root, owner-only root, regular current-user 0600 files and environment routing', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xuan-etf-approved-'));
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'xuan-etf-outside-'));
@@ -396,7 +408,14 @@ test('bootstrap CLI establishes only from canonical synthetic evidence and verif
   assert.equal(checkpoint.status, 0, checkpoint.stderr);
   assert.equal(checkpoint.stdout, 'ok checkpoint baseline=established entries=2\n');
   assertPrivateFile(establishedCheckpoint);
-  assert.doesNotMatch(fs.readFileSync(establishedCheckpoint, 'utf8'), /1250|records|payload|holdings/i);
+  const publicCheckpoint = JSON.parse(fs.readFileSync(establishedCheckpoint, 'utf8'));
+  for (const forbiddenKey of ['records', 'payload', 'holdings']) {
+    assert.equal(Object.hasOwn(publicCheckpoint, forbiddenKey), false);
+  }
+  assert.equal(
+    Object.values(publicCheckpoint).some(value => typeof value === 'number' && value === 1250),
+    false,
+  );
 
   const establishedReady = runCli([
     'readiness', '--private-root', root, '--ledger', establishedLedger,

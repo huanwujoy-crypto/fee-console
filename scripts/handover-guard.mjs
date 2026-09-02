@@ -17,8 +17,9 @@ import {
   countVisibleEtfAbcRuntimeClassElements,
   parseEtfAbcPublicRuntimeStateJson,
   renderEtfAbcPublicRuntimeCard,
-  validateEtfAbcInitialPublicRuntimeState,
+  validateEtfAbcEstablishedPublicRuntimeState,
 } from './xuan-ib-etf-abc.mjs';
+import { parseCanonicalPublicEtfLedgerCheckpoint } from './xuan-ib-etf-ledger.mjs';
 
 const [file, expectedDate, previousFile] = process.argv.slice(2);
 
@@ -56,6 +57,21 @@ const isRecordsUpdate = recordsUpdateMarkerCount === 1;
 
 const policyJsonFile = process.env.XUAN_IB_POLICY_V2_JSON
   || path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../claude/xuan-ib-policy-v2.json');
+const etfBaselineCheckpointFile = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../claude/xuan-ib-etf-ledger-public-established-v1.json',
+);
+let etfBaselineCheckpoint;
+try {
+  etfBaselineCheckpoint = parseCanonicalPublicEtfLedgerCheckpoint(
+    fs.readFileSync(etfBaselineCheckpointFile, 'utf8'),
+  );
+} catch (error) {
+  fail(`trusted ETF baseline checkpoint is unavailable or invalid: ${error.message}`);
+}
+if (etfBaselineCheckpoint.baselineStatus !== 'established' || etfBaselineCheckpoint.entryCount !== 2) {
+  fail('trusted ETF baseline checkpoint has not established the T0 baseline');
+}
 const policyIdAttributeCount = (html.match(/\bid\s*=\s*(["'])xuan-ib-policy-v2\1/gi) || []).length
   + (html.match(/\bid\s*=\s*xuan-ib-policy-v2(?=[\s>])/gi) || []).length;
 const policyMarkerCount = (html.match(new RegExp(`<!--\\s*${POLICY_ID}:[0-9a-f]{64}\\s*-->`, 'gi')) || []).length;
@@ -300,12 +316,88 @@ const validatePublicationTemplates = (source, policyContext) => {
   if (runtimeTemplate.openingTag !== ETF_ABC_STATE_TEMPLATE_OPENING) {
     fail('ETF A/B/C public state template must use the exact trusted opening tag');
   }
+
+  // A records-only response can be published while the trusted live page still
+  // carries the pre-checkpoint pending runtime.  That response is not allowed
+  // to migrate, repair, or reinterpret the runtime: it may only preserve the
+  // complete legacy block byte for byte.  Ordinary reports, and records-only
+  // responses after the established checkpoint is present, continue through
+  // the strict established-state validation below.
+  if (isRecordsUpdate && recordsUpdatePreviousPolicyHtml) {
+    const previousRuntimeStartCount = recordsUpdatePreviousPolicyHtml.split(ETF_ABC_RUNTIME_START).length - 1;
+    const previousRuntimeEndCount = recordsUpdatePreviousPolicyHtml.split(ETF_ABC_RUNTIME_END).length - 1;
+    if (previousRuntimeStartCount === 1 && previousRuntimeEndCount === 1) {
+      const previousRuntimeStart = recordsUpdatePreviousPolicyHtml.indexOf(ETF_ABC_RUNTIME_START);
+      const previousRuntimeEnd = recordsUpdatePreviousPolicyHtml.indexOf(ETF_ABC_RUNTIME_END);
+      const previousRuntimeBlockEnd = previousRuntimeEnd + ETF_ABC_RUNTIME_END.length;
+      const previousRuntimeBlock = previousRuntimeEnd > previousRuntimeStart
+        ? recordsUpdatePreviousPolicyHtml.slice(previousRuntimeStart, previousRuntimeBlockEnd)
+        : null;
+      let previousLegacyState = null;
+      if (previousRuntimeBlock) {
+        const previousTemplates = publicationTemplates(previousRuntimeBlock);
+        const previousRuntimeTemplates = previousTemplates.filter((template) => (
+          quotedAttribute(template.attributes, 'id', 'trusted previous publication template')
+            === ETF_ABC_STATE_TEMPLATE_ID
+        ));
+        if (previousRuntimeTemplates.length === 1
+            && previousRuntimeTemplates[0].openingTag === ETF_ABC_STATE_TEMPLATE_OPENING) {
+          try {
+            previousLegacyState = JSON.parse(previousRuntimeTemplates[0].body);
+          } catch {
+            previousLegacyState = null;
+          }
+        }
+      }
+      const isLegacyPendingState = previousLegacyState
+        && previousLegacyState.baselineStatus === 'pending'
+        && !Object.hasOwn(previousLegacyState, 'baselineCheckpointHash')
+        && previousLegacyState.methodId === etfBaselineCheckpoint.methodId
+        && previousLegacyState.t0DateHkt === etfBaselineCheckpoint.t0DateHkt
+        && previousLegacyState.economicDateHkt === expectedDate;
+      if (isLegacyPendingState) {
+        if (runtimeStartCount !== 1 || runtimeEndCount !== 1) {
+          fail('legacy pending ETF A/B/C runtime markers must be one complete unique pair');
+        }
+        if (!policyContext || policyContext.paneClass !== 'p5') {
+          fail('legacy pending ETF A/B/C runtime state requires the inherited ETF pane');
+        }
+        const runtimeStart = source.indexOf(ETF_ABC_RUNTIME_START);
+        const runtimeEnd = source.indexOf(ETF_ABC_RUNTIME_END);
+        const runtimeBlockEnd = runtimeEnd + ETF_ABC_RUNTIME_END.length;
+        const runtimeStartEnd = runtimeStart + ETF_ABC_RUNTIME_START.length;
+        const pane = policyContext.pane;
+        const runtimeStructural = visibleElementMarkup(source);
+        const reservedRuntimeElements = [...runtimeStructural.matchAll(/<([a-z][a-z0-9:-]*)\b[^>]*>/gi)]
+          .filter(opening => decodedClassTokens(opening[0]).includes('xuan-etf-abc-runtime'));
+        const runtimeCard = reservedRuntimeElements.length === 1
+          && reservedRuntimeElements[0][1].toLowerCase() === 'section'
+          ? elementRange(runtimeStructural, 'section', reservedRuntimeElements[0]) : null;
+        if (runtimeEnd <= runtimeStart
+            || runtimeBlockEnd > pane.closeStart
+            || runtimeTemplate.start <= runtimeStartEnd || runtimeTemplate.end >= runtimeEnd
+            || source.slice(policyContext.end, runtimeStart).trim() !== ''
+            || source.slice(runtimeStart, runtimeBlockEnd) !== previousRuntimeBlock
+            || reservedRuntimeElementCount !== 1 || reservedRuntimeElements.length !== 1 || !runtimeCard
+            || runtimeCard.start <= runtimeTemplate.end || runtimeCard.end >= runtimeEnd) {
+          fail('records-update must preserve the trusted legacy pending ETF A/B/C runtime block byte for byte');
+        }
+        return;
+      }
+    }
+  }
   let runtimeState;
   try {
     runtimeState = parseEtfAbcPublicRuntimeStateJson(runtimeTemplate.body);
-    validateEtfAbcInitialPublicRuntimeState(runtimeState);
+    validateEtfAbcEstablishedPublicRuntimeState(runtimeState);
   } catch (error) {
     fail(`ETF A/B/C public runtime state is invalid: ${error.message}`);
+  }
+  if (runtimeState.baselineStatus !== etfBaselineCheckpoint.baselineStatus
+      || runtimeState.baselineCheckpointHash !== etfBaselineCheckpoint.checkpointHash
+      || runtimeState.methodId !== etfBaselineCheckpoint.methodId
+      || runtimeState.t0DateHkt !== etfBaselineCheckpoint.t0DateHkt) {
+    fail('ETF A/B/C public runtime is not bound to the trusted established baseline checkpoint');
   }
   if (runtimeState.economicDateHkt !== expectedDate) {
     fail('ETF A/B/C public runtime economic date must match the report data date');

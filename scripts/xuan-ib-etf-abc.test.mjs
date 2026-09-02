@@ -10,9 +10,10 @@ import {
   computeEtfAbcObservation,
   parseEtfAbcPublicRuntimeStateJson,
   renderEtfAbcPublicRuntimeCard,
-  renderEtfAbcRuntimeCard,
-  upsertEtfAbcRuntime,
+  renderEtfAbcRuntimeCard as renderEtfAbcRuntimeCardImpl,
+  upsertEtfAbcRuntime as upsertEtfAbcRuntimeImpl,
   validateEtfAbcInput,
+  validateEtfAbcEstablishedPublicRuntimeState,
   validateEtfAbcInitialPublicRuntimeState,
   validateEtfAbcPublicRuntimeState,
   validateEtfAbcResult,
@@ -20,6 +21,13 @@ import {
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 
 const fp = char => char.repeat(64);
+const TEST_BASELINE_CHECKPOINT_HASH = fp('c');
+const renderEtfAbcRuntimeCard = (result, checkpointHash = TEST_BASELINE_CHECKPOINT_HASH) => (
+  renderEtfAbcRuntimeCardImpl(result, checkpointHash)
+);
+const upsertEtfAbcRuntime = (html, result, checkpointHash = TEST_BASELINE_CHECKPOINT_HASH) => (
+  upsertEtfAbcRuntimeImpl(html, result, checkpointHash)
+);
 function coverage() {
   const value = {
     aHoldingsFingerprint: fp('a'), bShadowUnitsFingerprint: fp('b'),
@@ -473,11 +481,19 @@ test('upsert public template carries statuses but no live values, prices or flow
   assert.ok(state);
   const parsed = JSON.parse(state);
   assert.equal(parsed.methodId, ETF_ABC_METHOD_ID);
+  assert.equal(parsed.baselineCheckpointHash, TEST_BASELINE_CHECKPOINT_HASH);
   assert.equal(parsed.bImplementationStatus, 'pending-cash-unallocated');
   assert.equal(JSON.stringify(parsed).includes('137'), false);
   for (const forbidden of ['openingValueUsd', 'endingValueAfterFlowUsd', 'pendingCashUnallocatedUsd', 'rawMetrics']) {
     assert.equal(forbidden in parsed, false);
   }
+});
+
+test('runtime generation requires an explicit value-free checkpoint hash', () => {
+  const result = computeEtfAbcObservation(sample());
+  assert.throws(() => renderEtfAbcRuntimeCardImpl(result), /checkpoint hash/);
+  assert.throws(() => upsertEtfAbcRuntimeImpl(candidate(''), result), /checkpoint hash/);
+  assert.throws(() => renderEtfAbcRuntimeCardImpl(result, 'not-a-hash'), /checkpoint hash/);
 });
 
 test('public runtime parser accepts only the exact canonical flat shape', () => {
@@ -518,9 +534,11 @@ test('initial publication gate permits only pending, non-comparable, unranked ev
   const establishedJson = establishedOutput.match(/<template id="xuan-ib-etf-abc-state-v1" type="application\/json">([^<]+)<\/template>/)?.[1];
   const establishedState = parseEtfAbcPublicRuntimeStateJson(establishedJson);
   assert.throws(() => validateEtfAbcInitialPublicRuntimeState(establishedState), /baseline-pending/);
+  assert.equal(validateEtfAbcEstablishedPublicRuntimeState(establishedState), establishedState);
   assert.deepEqual(Object.keys(establishedState).filter(key => JSON.stringify(establishedState[key]) !== JSON.stringify(pendingState[key])), ['baselineStatus']);
   assert.match(renderEtfAbcPublicRuntimeCard(establishedState), /基线已建立 · 暂不比较/);
   assert.notEqual(renderEtfAbcPublicRuntimeCard(establishedState), pendingCard);
+  assert.throws(() => validateEtfAbcEstablishedPublicRuntimeState(pendingState), /non-comparable/);
 });
 
 test('public runtime card bytes visibly encode comparison status', () => {
