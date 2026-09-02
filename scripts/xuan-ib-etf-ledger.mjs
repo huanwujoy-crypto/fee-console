@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -55,6 +55,7 @@ function canonicalize(value) {
 export const canonicalEtfLedgerJson = value => JSON.stringify(canonicalize(value));
 export const serializeCanonicalEtfLedger = value => `${canonicalEtfLedgerJson(value)}\n`;
 const sha256 = value => createHash('sha256').update(String(value)).digest('hex');
+const sha256Bytes = value => createHash('sha256').update(Buffer.from(value)).digest('hex');
 const validHash = value => typeof value === 'string' && HASH_RE.test(value);
 
 function validHktTimestamp(value) {
@@ -259,6 +260,17 @@ export function validatePrivateEtfLedgerContinuity(previous, next, options = {})
   return next;
 }
 
+function validatePrivateEtfV1Establishment(previous, next, options = {}) {
+  validatePrivateEtfLedgerContinuity(previous, next, options);
+  if (previous.baselineStatus !== 'pending' || previous.records.length !== 1
+      || next.baselineStatus !== 'established' || next.records.length !== 2
+      || next.records.length !== previous.records.length + 1
+      || next.headHash === previous.headHash) {
+    throw new Error('ETF v1 checkpoint must record exactly one pending-to-established baseline append');
+  }
+  return next;
+}
+
 function normalizeSecret(secret) {
   if (!(Buffer.isBuffer(secret) || secret instanceof Uint8Array) || secret.byteLength < 32) {
     throw new Error('ETF checkpoint HMAC requires a private random secret of at least 32 bytes');
@@ -266,7 +278,7 @@ function normalizeSecret(secret) {
   return Buffer.from(secret);
 }
 const hmac = (secret, domain, value) => createHmac('sha256', normalizeSecret(secret)).update(`${domain}\0${value}`).digest('hex');
-const commitmentKeyId = secret => sha256(normalizeSecret(secret));
+const commitmentKeyId = secret => sha256Bytes(normalizeSecret(secret));
 const headCommitment = (secret, ledger) => hmac(secret, 'xuan-etf-private-head-v1', canonicalEtfLedgerJson({
   entryCount: ledger.records.length,
   headHash: ledger.headHash,
@@ -325,7 +337,7 @@ export function verifyPublicEtfLedgerCheckpoint(checkpoint, {
   }
   validatePrivateEtfLedger(previousPrivateLedger, { now });
   verifyCheckpointMac(previousCheckpoint, secret, previousPrivateLedger);
-  validatePrivateEtfLedgerContinuity(previousPrivateLedger, privateLedger, { now });
+  validatePrivateEtfV1Establishment(previousPrivateLedger, privateLedger, { now });
   if (checkpoint.previousCheckpointHash !== previousCheckpoint.checkpointHash
       || checkpoint.previousPrivateHeadCommitment !== previousCheckpoint.privateHeadCommitment) {
     throw new Error('Public ETF checkpoint does not continue the previous private head and checkpoint');
@@ -341,7 +353,7 @@ export function projectPublicEtfLedgerCheckpoint(privateLedger, {
   if ((previousCheckpoint === null) !== (previousPrivateLedger === null)) throw new Error('Public ETF checkpoint requires both predecessor records or neither');
   if (previousPrivateLedger !== null) {
     verifyPublicEtfLedgerCheckpoint(previousCheckpoint, { commitmentSecret: secret, privateLedger: previousPrivateLedger, now });
-    validatePrivateEtfLedgerContinuity(previousPrivateLedger, privateLedger, { now });
+    validatePrivateEtfV1Establishment(previousPrivateLedger, privateLedger, { now });
   } else if (privateLedger.records.length !== 1) throw new Error('An established checkpoint must continue the pending genesis checkpoint');
   const state = {
     schemaVersion: 1, ledgerId: ETF_LEDGER_ID, methodId: ETF_ABC_METHOD_ID,
@@ -444,22 +456,338 @@ export function loadPrivateCommitmentSecret(filePath, { approvedRoot } = {}) {
   return normalizeSecret(secureReadPrivateFile(filePath, approvedRoot));
 }
 
+export function loadPrivatePublicEtfLedgerCheckpoint(filePath, { approvedRoot } = {}) {
+  return parseCanonicalPublicEtfLedgerCheckpoint(
+    secureReadPrivateFile(filePath, approvedRoot).toString('utf8'),
+  );
+}
+
+function resolvePrivateOutputPath(filePath, approvedRoot) {
+  if (typeof filePath !== 'string' || !path.isAbsolute(filePath)) {
+    throw new Error('ETF private output path must be absolute');
+  }
+  const root = resolveApprovedRoot(approvedRoot);
+  const normalized = path.resolve(filePath);
+  if (fs.realpathSync(path.dirname(normalized)) !== root || path.dirname(normalized) !== path.dirname(filePath)) {
+    throw new Error('ETF private output must be a direct child of the approved private root');
+  }
+  try {
+    fs.lstatSync(normalized);
+    throw new Error('ETF private output already exists; overwrite is forbidden');
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error;
+  }
+  return { root, filePath: normalized };
+}
+
+function fsyncDirectory(directory) {
+  const fd = fs.openSync(directory, fs.constants.O_RDONLY);
+  try {
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function atomicCreatePrivateFile(filePath, bytes, { approvedRoot } = {}) {
+  const payload = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes);
+  if (payload.byteLength < 1 || payload.byteLength > MAX_PRIVATE_FILE_BYTES) {
+    throw new Error('ETF private output must be nonempty and within the size limit');
+  }
+  const resolved = resolvePrivateOutputPath(filePath, approvedRoot);
+  const temporary = path.join(
+    resolved.root,
+    `.${path.basename(resolved.filePath)}.${process.pid}.${randomBytes(12).toString('hex')}.tmp`,
+  );
+  let fd;
+  let linked = false;
+  try {
+    fd = fs.openSync(
+      temporary,
+      fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW,
+      0o600,
+    );
+    fs.writeFileSync(fd, payload);
+    fs.fchmodSync(fd, 0o600);
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+
+    // link(2) publishes a fully written file without overwriting an existing
+    // destination. Removing the temporary name then restores the required
+    // single-link invariant used by the secure reader.
+    fs.linkSync(temporary, resolved.filePath);
+    linked = true;
+    fs.unlinkSync(temporary);
+    fsyncDirectory(resolved.root);
+
+    const stat = fs.lstatSync(resolved.filePath);
+    if (!stat.isFile() || stat.isSymbolicLink() || stat.uid !== process.getuid()
+        || (stat.mode & 0o777) !== 0o600 || stat.nlink !== 1 || stat.size !== payload.byteLength) {
+      throw new Error('ETF private output failed atomic post-write validation');
+    }
+    const persisted = secureReadPrivateFile(resolved.filePath, resolved.root);
+    if (!payload.equals(persisted)) {
+      throw new Error('ETF private output failed byte-exact read-back validation');
+    }
+    return resolved.filePath;
+  } catch (error) {
+    if (fd !== undefined) fs.closeSync(fd);
+    try { fs.unlinkSync(temporary); } catch (cleanupError) {
+      if (cleanupError?.code !== 'ENOENT') throw cleanupError;
+    }
+    if (linked) {
+      try { fs.unlinkSync(resolved.filePath); } catch (cleanupError) {
+        if (cleanupError?.code !== 'ENOENT') throw cleanupError;
+      }
+    }
+    throw error;
+  }
+}
+
+function assertDistinctOutputs(paths) {
+  if (paths.some(filePath => typeof filePath !== 'string' || !path.isAbsolute(filePath))) {
+    throw new Error('ETF bootstrap output paths must be absolute');
+  }
+  const normalized = paths.map(filePath => path.resolve(filePath));
+  if (new Set(normalized).size !== normalized.length) {
+    throw new Error('ETF bootstrap output paths must be distinct');
+  }
+}
+
+function removeCreatedFiles(paths) {
+  for (const filePath of [...paths].reverse()) {
+    try { fs.unlinkSync(filePath); } catch (error) {
+      if (error?.code !== 'ENOENT') throw error;
+    }
+  }
+}
+
+export function initializePrivateEtfBootstrap({
+  approvedRoot, ledgerOut, secretOut, checkpointOut,
+} = {}) {
+  assertDistinctOutputs([ledgerOut, secretOut, checkpointOut]);
+  // Preflight all destinations before creating any part of the bundle.
+  for (const filePath of [ledgerOut, secretOut, checkpointOut]) {
+    resolvePrivateOutputPath(filePath, approvedRoot);
+  }
+  const ledger = createInitialPrivateEtfLedger();
+  const commitmentSecret = randomBytes(32);
+  const checkpoint = projectPublicEtfLedgerCheckpoint(ledger, { commitmentSecret });
+  const created = [];
+  try {
+    created.push(atomicCreatePrivateFile(ledgerOut, serializeCanonicalEtfLedger(ledger), { approvedRoot }));
+    created.push(atomicCreatePrivateFile(checkpointOut, serializeCanonicalEtfLedger(checkpoint), { approvedRoot }));
+    // Publish the secret last so an interrupted bootstrap cannot appear ready.
+    created.push(atomicCreatePrivateFile(secretOut, commitmentSecret, { approvedRoot }));
+    const ready = checkPrivateEtfBootstrapReadiness({
+      approvedRoot, ledger: ledgerOut, secret: secretOut, checkpoint: checkpointOut,
+    });
+    if (ready.baselineStatus !== 'pending' || ready.entryCount !== 1
+        || ready.checkpointStatus !== 'verified') {
+      throw new Error('ETF pending bootstrap failed semantic read-back validation');
+    }
+  } catch (error) {
+    removeCreatedFiles(created);
+    throw error;
+  }
+  return { baselineStatus: ledger.baselineStatus, entryCount: ledger.records.length };
+}
+
+export function establishPrivateEtfBaselineFromManifest({
+  approvedRoot, ledgerIn, manifest, expectedManifestFingerprint, ledgerOut, now,
+} = {}) {
+  const previous = loadPrivateEtfLedger(ledgerIn, { approvedRoot, now });
+  const evidenceManifest = loadPrivateBaselineEvidenceManifest(manifest, { approvedRoot, now });
+  const reviewedFingerprint = deriveBaselineFromEvidence(evidenceManifest, { now }).evidenceManifestFingerprint;
+  if (!validHash(expectedManifestFingerprint)
+      || expectedManifestFingerprint !== reviewedFingerprint) {
+    throw new Error('ETF manifest changed after readiness review or the expected fingerprint is invalid');
+  }
+  const next = appendEstablishedBaseline(previous, evidenceManifest, { now });
+  validatePrivateEtfV1Establishment(previous, next, { now });
+  const created = atomicCreatePrivateFile(ledgerOut, serializeCanonicalEtfLedger(next), { approvedRoot });
+  try {
+    const persisted = loadPrivateEtfLedger(created, { approvedRoot, now });
+    validatePrivateEtfV1Establishment(previous, persisted, { now });
+    if (canonicalEtfLedgerJson(persisted) !== canonicalEtfLedgerJson(next)) {
+      throw new Error('ETF established ledger failed semantic read-back validation');
+    }
+  } catch (error) {
+    removeCreatedFiles([created]);
+    throw error;
+  }
+  return {
+    baselineStatus: next.baselineStatus,
+    entryCount: next.records.length,
+    holdingCount: evidenceManifest.holdings.length,
+    evidenceManifestFingerprint: next.records.at(-1).payload.evidenceManifestFingerprint,
+  };
+}
+
+export function createPrivateEtfCheckpoint({
+  approvedRoot, secret, previousLedger, previousCheckpoint, ledger, checkpointOut, now,
+} = {}) {
+  const commitmentSecret = loadPrivateCommitmentSecret(secret, { approvedRoot });
+  const priorLedger = loadPrivateEtfLedger(previousLedger, { approvedRoot, now });
+  const priorCheckpoint = loadPrivatePublicEtfLedgerCheckpoint(previousCheckpoint, { approvedRoot });
+  const currentLedger = loadPrivateEtfLedger(ledger, { approvedRoot, now });
+  const checkpoint = projectPublicEtfLedgerCheckpoint(currentLedger, {
+    commitmentSecret,
+    previousCheckpoint: priorCheckpoint,
+    previousPrivateLedger: priorLedger,
+    now,
+  });
+  const created = atomicCreatePrivateFile(checkpointOut, serializeCanonicalEtfLedger(checkpoint), { approvedRoot });
+  try {
+    const persisted = loadPrivatePublicEtfLedgerCheckpoint(created, { approvedRoot });
+    verifyPublicEtfLedgerCheckpoint(persisted, {
+      commitmentSecret,
+      privateLedger: currentLedger,
+      previousCheckpoint: priorCheckpoint,
+      previousPrivateLedger: priorLedger,
+      now,
+    });
+  } catch (error) {
+    removeCreatedFiles([created]);
+    throw error;
+  }
+  return { baselineStatus: checkpoint.baselineStatus, entryCount: checkpoint.entryCount };
+}
+
+export function checkPrivateEtfBootstrapReadiness({
+  approvedRoot, ledger, secret, checkpoint, previousLedger = null,
+  previousCheckpoint = null, manifest = null, now,
+} = {}) {
+  if ((previousLedger === null) !== (previousCheckpoint === null)) {
+    throw new Error('ETF readiness requires both previous ledger and previous checkpoint or neither');
+  }
+  const commitmentSecret = loadPrivateCommitmentSecret(secret, { approvedRoot });
+  const currentLedger = loadPrivateEtfLedger(ledger, { approvedRoot, now });
+  const currentCheckpoint = loadPrivatePublicEtfLedgerCheckpoint(checkpoint, { approvedRoot });
+  const priorLedger = previousLedger === null ? null
+    : loadPrivateEtfLedger(previousLedger, { approvedRoot, now });
+  const priorCheckpoint = previousCheckpoint === null ? null
+    : loadPrivatePublicEtfLedgerCheckpoint(previousCheckpoint, { approvedRoot });
+  verifyPublicEtfLedgerCheckpoint(currentCheckpoint, {
+    commitmentSecret,
+    privateLedger: currentLedger,
+    previousCheckpoint: priorCheckpoint,
+    previousPrivateLedger: priorLedger,
+    now,
+  });
+
+  let manifestState = { status: 'absent', holdingCount: null, evidenceManifestFingerprint: null };
+  if (manifest !== null) {
+    const evidenceManifest = loadPrivateBaselineEvidenceManifest(manifest, { approvedRoot, now });
+    const derived = deriveBaselineFromEvidence(evidenceManifest, { now });
+    if (currentLedger.baselineStatus === 'established') {
+      const embedded = currentLedger.records.at(-1).payload.evidenceManifest;
+      if (canonicalEtfLedgerJson(embedded) !== canonicalEtfLedgerJson(evidenceManifest)) {
+        throw new Error('ETF readiness manifest does not match the established private ledger');
+      }
+    }
+    manifestState = {
+      status: 'valid', holdingCount: evidenceManifest.holdings.length,
+      evidenceManifestFingerprint: derived.evidenceManifestFingerprint,
+    };
+  }
+  return {
+    baselineStatus: currentLedger.baselineStatus,
+    entryCount: currentLedger.records.length,
+    checkpointStatus: 'verified',
+    manifest: manifestState,
+  };
+}
+
+function parseCliOptions(args, allowed, required) {
+  if (args.length % 2 !== 0) throw new Error('CLI options must be flag/value pairs');
+  const options = Object.create(null);
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+    if (!allowed.includes(flag) || Object.prototype.hasOwnProperty.call(options, flag)
+        || typeof value !== 'string' || value.length === 0) {
+      throw new Error(`Unknown, duplicate, or empty CLI option: ${flag}`);
+    }
+    options[flag] = value;
+  }
+  for (const flag of required) {
+    if (!Object.prototype.hasOwnProperty.call(options, flag)) throw new Error(`Missing required CLI option: ${flag}`);
+  }
+  return options;
+}
+
+function printSafeReadiness(result) {
+  const manifest = result.manifest.status === 'absent' ? 'absent'
+    : `valid holdings=${result.manifest.holdingCount} fingerprint=${result.manifest.evidenceManifestFingerprint}`;
+  process.stdout.write(`ok readiness baseline=${result.baselineStatus} entries=${result.entryCount} checkpoint=verified manifest=${manifest}\n`);
+}
+
 function isDirectRun() {
   return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
 }
 
 if (isDirectRun()) {
-  const [command, filePath, rootFlag, approvedRoot] = process.argv.slice(2);
+  const [command, ...args] = process.argv.slice(2);
   try {
-    if (rootFlag !== '--private-root' || !approvedRoot) throw new Error('A --private-root path is mandatory');
-    if (command === '--check-private') {
-      const ledger = loadPrivateEtfLedger(filePath, { approvedRoot });
-      process.stdout.write(`ok private-ledger entries=${ledger.records.length} baseline=${ledger.baselineStatus}\n`);
-    } else if (command === '--check-evidence') {
-      const evidence = loadPrivateBaselineEvidenceManifest(filePath, { approvedRoot });
-      const derived = deriveBaselineFromEvidence(evidence);
-      process.stdout.write(`ok private-evidence holdings=${evidence.holdings.length} fingerprint=${derived.evidenceManifestFingerprint}\n`);
-    } else throw new Error('usage: --check-private PATH --private-root ROOT | --check-evidence PATH --private-root ROOT');
+    if (command === '--check-private' || command === '--check-evidence') {
+      const [filePath, rootFlag, approvedRoot] = args;
+      if (args.length !== 3 || rootFlag !== '--private-root' || !approvedRoot) {
+        throw new Error('A --private-root path is mandatory');
+      }
+      if (command === '--check-private') {
+        const ledger = loadPrivateEtfLedger(filePath, { approvedRoot });
+        process.stdout.write(`ok private-ledger entries=${ledger.records.length} baseline=${ledger.baselineStatus}\n`);
+      } else {
+        const evidence = loadPrivateBaselineEvidenceManifest(filePath, { approvedRoot });
+        const derived = deriveBaselineFromEvidence(evidence);
+        process.stdout.write(`ok private-evidence holdings=${evidence.holdings.length} fingerprint=${derived.evidenceManifestFingerprint}\n`);
+      }
+    } else if (command === 'init') {
+      const options = parseCliOptions(args,
+        ['--private-root', '--ledger-out', '--secret-out', '--checkpoint-out'],
+        ['--private-root', '--ledger-out', '--secret-out', '--checkpoint-out']);
+      const result = initializePrivateEtfBootstrap({
+        approvedRoot: options['--private-root'], ledgerOut: options['--ledger-out'],
+        secretOut: options['--secret-out'], checkpointOut: options['--checkpoint-out'],
+      });
+      process.stdout.write(`ok init baseline=${result.baselineStatus} entries=${result.entryCount}\n`);
+    } else if (command === 'readiness') {
+      const options = parseCliOptions(args,
+        ['--private-root', '--ledger', '--secret', '--checkpoint', '--previous-ledger', '--previous-checkpoint', '--manifest'],
+        ['--private-root', '--ledger', '--secret', '--checkpoint']);
+      printSafeReadiness(checkPrivateEtfBootstrapReadiness({
+        approvedRoot: options['--private-root'], ledger: options['--ledger'],
+        secret: options['--secret'], checkpoint: options['--checkpoint'],
+        previousLedger: options['--previous-ledger'] ?? null,
+        previousCheckpoint: options['--previous-checkpoint'] ?? null,
+        manifest: options['--manifest'] ?? null,
+      }));
+    } else if (command === 'establish-from-manifest') {
+      const options = parseCliOptions(args,
+        ['--private-root', '--ledger-in', '--manifest', '--expected-manifest-fingerprint', '--ledger-out'],
+        ['--private-root', '--ledger-in', '--manifest', '--expected-manifest-fingerprint', '--ledger-out']);
+      const result = establishPrivateEtfBaselineFromManifest({
+        approvedRoot: options['--private-root'], ledgerIn: options['--ledger-in'],
+        manifest: options['--manifest'],
+        expectedManifestFingerprint: options['--expected-manifest-fingerprint'],
+        ledgerOut: options['--ledger-out'],
+      });
+      process.stdout.write(`ok establish baseline=${result.baselineStatus} entries=${result.entryCount} holdings=${result.holdingCount} fingerprint=${result.evidenceManifestFingerprint}\n`);
+    } else if (command === 'checkpoint') {
+      const options = parseCliOptions(args,
+        ['--private-root', '--secret', '--previous-ledger', '--previous-checkpoint', '--ledger', '--checkpoint-out'],
+        ['--private-root', '--secret', '--previous-ledger', '--previous-checkpoint', '--ledger', '--checkpoint-out']);
+      const result = createPrivateEtfCheckpoint({
+        approvedRoot: options['--private-root'], secret: options['--secret'],
+        previousLedger: options['--previous-ledger'], previousCheckpoint: options['--previous-checkpoint'],
+        ledger: options['--ledger'], checkpointOut: options['--checkpoint-out'],
+      });
+      process.stdout.write(`ok checkpoint baseline=${result.baselineStatus} entries=${result.entryCount}\n`);
+    } else {
+      throw new Error('usage: init | readiness | establish-from-manifest | checkpoint | --check-private | --check-evidence');
+    }
   } catch (error) {
     process.stderr.write(`${error.message}\n`);
     process.exitCode = 1;

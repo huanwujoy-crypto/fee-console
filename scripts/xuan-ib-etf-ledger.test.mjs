@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -14,6 +15,7 @@ import {
   loadPrivateBaselineEvidenceManifest,
   loadPrivateCommitmentSecret,
   loadPrivateEtfLedger,
+  loadPrivatePublicEtfLedgerCheckpoint,
   parseCanonicalBaselineEvidenceManifest,
   parseCanonicalPrivateEtfLedger,
   parseCanonicalPublicEtfLedgerCheckpoint,
@@ -27,11 +29,34 @@ import {
 } from './xuan-ib-etf-ledger.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
+const cliPath = path.join(here, 'xuan-ib-etf-ledger.mjs');
 const publicGenesisPath = path.join(here, '..', 'claude', 'xuan-ib-etf-ledger-public-genesis-v1.json');
 const NOW = new Date('2026-09-03T00:00:00+08:00');
 const secret = Buffer.alloc(32, 0x51);
 const hash = character => character.repeat(64);
 const clone = value => JSON.parse(JSON.stringify(value));
+
+const runCli = args => spawnSync(process.execPath, [cliPath, ...args], {
+  cwd: path.resolve(here, '..'),
+  encoding: 'utf8',
+});
+
+const privateRoot = t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xuan-etf-bootstrap-'));
+  fs.chmodSync(root, 0o700);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  return root;
+};
+
+const privatePath = (root, name) => path.join(root, name);
+
+const assertPrivateFile = filePath => {
+  const stat = fs.lstatSync(filePath);
+  assert.equal(stat.isFile(), true);
+  assert.equal(stat.isSymbolicLink(), false);
+  assert.equal(stat.mode & 0o777, 0o600);
+  assert.equal(stat.nlink, 1);
+};
 
 const evidence = (overrides = {}) => ({
   schemaVersion: 1,
@@ -169,6 +194,14 @@ test('HMAC commitments hide the raw head and bind each checkpoint to both predec
     projectPublicEtfLedgerCheckpoint(pending, { commitmentSecret: otherSecret, now: NOW }).privateHeadCommitment,
     first.privateHeadCommitment,
   );
+  const highByteA = projectPublicEtfLedgerCheckpoint(pending, {
+    commitmentSecret: Buffer.alloc(32, 0x80), now: NOW,
+  });
+  const highByteB = projectPublicEtfLedgerCheckpoint(pending, {
+    commitmentSecret: Buffer.alloc(32, 0x81), now: NOW,
+  });
+  assert.notEqual(highByteA.commitmentKeyId, highByteB.commitmentKeyId);
+  assert.notEqual(highByteA.privateHeadCommitment, highByteB.privateHeadCommitment);
   assert.throws(() => verifyPublicEtfLedgerCheckpoint(first, {
     commitmentSecret: otherSecret, privateLedger: pending, now: NOW,
   }), /HMAC/);
@@ -272,4 +305,184 @@ test('private loaders enforce approved root, owner-only root, regular current-us
   assert.throws(() => loadPrivateEtfLedger(insideLedger, {
     approvedRoot: insidePublicRepo, now: NOW,
   }), /external/);
+});
+
+test('bootstrap CLI initializes a private pending chain and readiness proves it without leaking the secret', t => {
+  const root = privateRoot(t);
+  const ledger = privatePath(root, 'pending-ledger.json');
+  const secretPath = privatePath(root, 'commitment.key');
+  const checkpoint = privatePath(root, 'pending-checkpoint.json');
+  const result = runCli([
+    'init', '--private-root', root, '--ledger-out', ledger,
+    '--secret-out', secretPath, '--checkpoint-out', checkpoint,
+  ]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stderr, '');
+  assert.equal(result.stdout, 'ok init baseline=pending entries=1\n');
+  for (const filePath of [ledger, secretPath, checkpoint]) assertPrivateFile(filePath);
+  assert.equal(fs.readFileSync(secretPath).byteLength, 32);
+
+  const pending = loadPrivateEtfLedger(ledger, { approvedRoot: root, now: NOW });
+  const publicState = loadPrivatePublicEtfLedgerCheckpoint(checkpoint, { approvedRoot: root });
+  const secretBytes = loadPrivateCommitmentSecret(secretPath, { approvedRoot: root });
+  assert.equal(verifyPublicEtfLedgerCheckpoint(publicState, {
+    commitmentSecret: secretBytes, privateLedger: pending, now: NOW,
+  }), publicState);
+  const secretHex = secretBytes.toString('hex');
+  assert.doesNotMatch(result.stdout + result.stderr, new RegExp(secretHex));
+
+  const ready = runCli([
+    'readiness', '--private-root', root, '--ledger', ledger,
+    '--secret', secretPath, '--checkpoint', checkpoint,
+  ]);
+  assert.equal(ready.status, 0, ready.stderr);
+  assert.equal(ready.stdout, 'ok readiness baseline=pending entries=1 checkpoint=verified manifest=absent\n');
+  assert.doesNotMatch(ready.stdout + ready.stderr, new RegExp(secretHex));
+});
+
+test('bootstrap CLI establishes only from canonical synthetic evidence and verifies the successor checkpoint', t => {
+  const root = privateRoot(t);
+  const pendingLedger = privatePath(root, 'pending-ledger.json');
+  const secretPath = privatePath(root, 'commitment.key');
+  const pendingCheckpoint = privatePath(root, 'pending-checkpoint.json');
+  const manifestPath = privatePath(root, 'synthetic-evidence.json');
+  const establishedLedger = privatePath(root, 'established-ledger.json');
+  const establishedCheckpoint = privatePath(root, 'established-checkpoint.json');
+  assert.equal(runCli([
+    'init', '--private-root', root, '--ledger-out', pendingLedger,
+    '--secret-out', secretPath, '--checkpoint-out', pendingCheckpoint,
+  ]).status, 0);
+  const manifest = evidence({ evidenceObservedAtHkt: '2026-09-02T04:00:00+08:00' });
+  fs.writeFileSync(manifestPath, serializeCanonicalEtfLedger(manifest), { mode: 0o600 });
+
+  const pendingReady = runCli([
+    'readiness', '--private-root', root, '--ledger', pendingLedger,
+    '--secret', secretPath, '--checkpoint', pendingCheckpoint, '--manifest', manifestPath,
+  ]);
+  assert.equal(pendingReady.status, 0, pendingReady.stderr);
+  assert.match(pendingReady.stdout, /^ok readiness baseline=pending entries=1 checkpoint=verified manifest=valid holdings=2 fingerprint=[a-f0-9]{64}\n$/);
+  const reviewedFingerprint = pendingReady.stdout.match(/fingerprint=([a-f0-9]{64})/)?.[1];
+  assert.match(reviewedFingerprint, /^[a-f0-9]{64}$/);
+
+  fs.writeFileSync(manifestPath, serializeCanonicalEtfLedger(evidence({
+    evidenceObservedAtHkt: '2026-09-02T04:00:00+08:00',
+    sourceFingerprint: hash('8'),
+  })), { mode: 0o600 });
+  const changedAfterReview = runCli([
+    'establish-from-manifest', '--private-root', root, '--ledger-in', pendingLedger,
+    '--manifest', manifestPath, '--expected-manifest-fingerprint', reviewedFingerprint,
+    '--ledger-out', establishedLedger,
+  ]);
+  assert.notEqual(changedAfterReview.status, 0);
+  assert.match(changedAfterReview.stderr, /changed after readiness|expected fingerprint/);
+  assert.equal(fs.existsSync(establishedLedger), false);
+  fs.writeFileSync(manifestPath, serializeCanonicalEtfLedger(manifest), { mode: 0o600 });
+
+  const establish = runCli([
+    'establish-from-manifest', '--private-root', root, '--ledger-in', pendingLedger,
+    '--manifest', manifestPath, '--expected-manifest-fingerprint', reviewedFingerprint,
+    '--ledger-out', establishedLedger,
+  ]);
+  assert.equal(establish.status, 0, establish.stderr);
+  assert.match(establish.stdout, /^ok establish baseline=established entries=2 holdings=2 fingerprint=[a-f0-9]{64}\n$/);
+  assert.doesNotMatch(establish.stdout + establish.stderr, /1250(?:\.5|\.50)?/);
+  assertPrivateFile(establishedLedger);
+
+  const checkpoint = runCli([
+    'checkpoint', '--private-root', root, '--secret', secretPath,
+    '--previous-ledger', pendingLedger, '--previous-checkpoint', pendingCheckpoint,
+    '--ledger', establishedLedger, '--checkpoint-out', establishedCheckpoint,
+  ]);
+  assert.equal(checkpoint.status, 0, checkpoint.stderr);
+  assert.equal(checkpoint.stdout, 'ok checkpoint baseline=established entries=2\n');
+  assertPrivateFile(establishedCheckpoint);
+  assert.doesNotMatch(fs.readFileSync(establishedCheckpoint, 'utf8'), /1250|records|payload|holdings/i);
+
+  const establishedReady = runCli([
+    'readiness', '--private-root', root, '--ledger', establishedLedger,
+    '--secret', secretPath, '--checkpoint', establishedCheckpoint,
+    '--previous-ledger', pendingLedger, '--previous-checkpoint', pendingCheckpoint,
+    '--manifest', manifestPath,
+  ]);
+  assert.equal(establishedReady.status, 0, establishedReady.stderr);
+  assert.match(establishedReady.stdout, /^ok readiness baseline=established entries=2 checkpoint=verified manifest=valid holdings=2 fingerprint=[a-f0-9]{64}\n$/);
+  assert.doesNotMatch(establishedReady.stdout + establishedReady.stderr, /1250(?:\.5|\.50)?/);
+});
+
+test('bootstrap CLI is no-clobber and failed preflight leaves no partial bundle', t => {
+  const root = privateRoot(t);
+  const ledger = privatePath(root, 'pending-ledger.json');
+  const secretPath = privatePath(root, 'commitment.key');
+  const checkpoint = privatePath(root, 'blocked-checkpoint.json');
+  fs.writeFileSync(checkpoint, 'already-here', { mode: 0o600 });
+  const before = fs.readFileSync(checkpoint, 'utf8');
+  const blocked = runCli([
+    'init', '--private-root', root, '--ledger-out', ledger,
+    '--secret-out', secretPath, '--checkpoint-out', checkpoint,
+  ]);
+  assert.notEqual(blocked.status, 0);
+  assert.match(blocked.stderr, /already exists|overwrite/);
+  assert.equal(fs.existsSync(ledger), false);
+  assert.equal(fs.existsSync(secretPath), false);
+  assert.equal(fs.readFileSync(checkpoint, 'utf8'), before);
+
+  const duplicate = runCli([
+    'init', '--private-root', root, '--ledger-out', ledger,
+    '--secret-out', ledger, '--checkpoint-out', privatePath(root, 'other-checkpoint.json'),
+  ]);
+  assert.notEqual(duplicate.status, 0);
+  assert.match(duplicate.stderr, /distinct/);
+  assert.equal(fs.existsSync(ledger), false);
+});
+
+test('bootstrap CLI rejects wrong HMAC, incomplete predecessor pairs, unsafe roots and unknown options', t => {
+  const root = privateRoot(t);
+  const ledger = privatePath(root, 'pending-ledger.json');
+  const secretPath = privatePath(root, 'commitment.key');
+  const checkpoint = privatePath(root, 'pending-checkpoint.json');
+  assert.equal(runCli([
+    'init', '--private-root', root, '--ledger-out', ledger,
+    '--secret-out', secretPath, '--checkpoint-out', checkpoint,
+  ]).status, 0);
+  const wrongSecret = privatePath(root, 'wrong.key');
+  fs.writeFileSync(wrongSecret, Buffer.alloc(32, 0x7f), { mode: 0o600 });
+  const wrong = runCli([
+    'readiness', '--private-root', root, '--ledger', ledger,
+    '--secret', wrongSecret, '--checkpoint', checkpoint,
+  ]);
+  assert.notEqual(wrong.status, 0);
+  assert.match(wrong.stderr, /HMAC/);
+
+  const pair = runCli([
+    'readiness', '--private-root', root, '--ledger', ledger,
+    '--secret', secretPath, '--checkpoint', checkpoint, '--previous-ledger', ledger,
+  ]);
+  assert.notEqual(pair.status, 0);
+  assert.match(pair.stderr, /both previous/);
+
+  const noOpCheckpoint = privatePath(root, 'no-op-checkpoint.json');
+  const noOp = runCli([
+    'checkpoint', '--private-root', root, '--secret', secretPath,
+    '--previous-ledger', ledger, '--previous-checkpoint', checkpoint,
+    '--ledger', ledger, '--checkpoint-out', noOpCheckpoint,
+  ]);
+  assert.notEqual(noOp.status, 0);
+  assert.match(noOp.stderr, /pending-to-established/);
+  assert.equal(fs.existsSync(noOpCheckpoint), false);
+
+  const unsafe = runCli([
+    'init', '--private-root', path.resolve(here, '..'),
+    '--ledger-out', path.resolve(here, '..', '.never-ledger.json'),
+    '--secret-out', path.resolve(here, '..', '.never-secret.key'),
+    '--checkpoint-out', path.resolve(here, '..', '.never-checkpoint.json'),
+  ]);
+  assert.notEqual(unsafe.status, 0);
+  assert.match(unsafe.stderr, /external|owner-only/);
+  for (const name of ['.never-ledger.json', '.never-secret.key', '.never-checkpoint.json']) {
+    assert.equal(fs.existsSync(path.resolve(here, '..', name)), false);
+  }
+
+  const unknown = runCli(['init', '--private-root', root, '--unknown', 'value']);
+  assert.notEqual(unknown.status, 0);
+  assert.match(unknown.stderr, /Unknown|Missing/);
 });

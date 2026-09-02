@@ -239,3 +239,64 @@ chain with a private random secret and private evidence under the approved
 root. Public validation rejects records, payloads, NAV, cash, flows, prices,
 holdings, positions and units. A public checkpoint is continuity evidence only;
 it does not establish the baseline or authorize a financial write.
+
+## 9. Private bootstrap CLI runbook
+
+The bootstrap CLI only creates or verifies files under an approved private root
+outside this repository. The root must be current-user-owned mode `0700`; every
+direct-child input or output file is mode `0600`. Output creation is atomic and
+no-clobber. The CLI never prints the commitment secret or derived portfolio
+values, and it never copies a private ledger or manifest into the repository.
+
+Use absolute paths throughout:
+
+```text
+node scripts/xuan-ib-etf-ledger.mjs init \
+  --private-root /ABSOLUTE/PRIVATE_ROOT \
+  --ledger-out /ABSOLUTE/PRIVATE_ROOT/pending-ledger.json \
+  --secret-out /ABSOLUTE/PRIVATE_ROOT/commitment.key \
+  --checkpoint-out /ABSOLUTE/PRIVATE_ROOT/pending-checkpoint.json
+
+node scripts/xuan-ib-etf-ledger.mjs readiness \
+  --private-root /ABSOLUTE/PRIVATE_ROOT \
+  --ledger /ABSOLUTE/PRIVATE_ROOT/pending-ledger.json \
+  --secret /ABSOLUTE/PRIVATE_ROOT/commitment.key \
+  --checkpoint /ABSOLUTE/PRIVATE_ROOT/pending-checkpoint.json \
+  --manifest /ABSOLUTE/PRIVATE_ROOT/t0-evidence.json
+
+node scripts/xuan-ib-etf-ledger.mjs establish-from-manifest \
+  --private-root /ABSOLUTE/PRIVATE_ROOT \
+  --ledger-in /ABSOLUTE/PRIVATE_ROOT/pending-ledger.json \
+  --manifest /ABSOLUTE/PRIVATE_ROOT/t0-evidence.json \
+  --expected-manifest-fingerprint COPY_EXACT_FINGERPRINT_FROM_READINESS \
+  --ledger-out /ABSOLUTE/PRIVATE_ROOT/established-ledger.json
+
+node scripts/xuan-ib-etf-ledger.mjs checkpoint \
+  --private-root /ABSOLUTE/PRIVATE_ROOT \
+  --secret /ABSOLUTE/PRIVATE_ROOT/commitment.key \
+  --previous-ledger /ABSOLUTE/PRIVATE_ROOT/pending-ledger.json \
+  --previous-checkpoint /ABSOLUTE/PRIVATE_ROOT/pending-checkpoint.json \
+  --ledger /ABSOLUTE/PRIVATE_ROOT/established-ledger.json \
+  --checkpoint-out /ABSOLUTE/PRIVATE_ROOT/established-checkpoint.json
+
+node scripts/xuan-ib-etf-ledger.mjs readiness \
+  --private-root /ABSOLUTE/PRIVATE_ROOT \
+  --ledger /ABSOLUTE/PRIVATE_ROOT/established-ledger.json \
+  --secret /ABSOLUTE/PRIVATE_ROOT/commitment.key \
+  --checkpoint /ABSOLUTE/PRIVATE_ROOT/established-checkpoint.json \
+  --previous-ledger /ABSOLUTE/PRIVATE_ROOT/pending-ledger.json \
+  --previous-checkpoint /ABSOLUTE/PRIVATE_ROOT/pending-checkpoint.json \
+  --manifest /ABSOLUTE/PRIVATE_ROOT/t0-evidence.json
+```
+
+`init` creates only a pending chain. `readiness` is read-only.
+`establish-from-manifest` accepts only the canonical, cutoff-bound T0 manifest.
+Its mandatory expected fingerprint must be copied exactly from the immediately
+reviewed `readiness` output; any intervening manifest change fails closed. It
+creates a new immutable successor ledger and never overwrites the pending
+ledger. `checkpoint` accepts only the one-record pending ledger to two-record
+established ledger transition and creates a value-free successor checkpoint
+after verifying both predecessor links. These commands do not publish an
+established state to the mobile report: that requires a later separately
+reviewed integration and the normal Validate, Promote, Pages and phone
+read-back gates.
