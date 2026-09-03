@@ -9,6 +9,7 @@ computes values or writes `data.json`, it must read and obey:
 
 - `docs/daily-data-contract.md`
 - `claude/fee-style-mapping.json`
+- `docs/fee-economic-source.md`
 
 Do not guess growth/value classifications from a ticker or company name. Use
 the versioned `(portfolioId, holdingId)` mapping and fail closed on unknown or
@@ -29,26 +30,33 @@ account.
 Management fee, Carry and fee-adjusted performance have one authoritative
 calculation path. Before publishing any of those values:
 
-1. Read the encrypted `fee-console-db.json` Gist twice and require the same remote
-   revision/ETag plus byte-identical encrypted v4 content. The only v3 exception
-   is the explicit copy-only `fee-console.legacy-empty-expense.v1` policy in
+1. Use `scripts/fee-economic-source.mjs` and the existing private environment's
+   exact `FEE_ECON_GIST_ID` on every run. No token/key transfer or authentication
+   header is needed for this normal fixed-source GET. Do not expose the locator
+   or bypass a network refusal. The helper requires the original owner, secret
+   Gist visibility, exact named file, and two identical remote reads of the
+   revision, ETag and encrypted bytes. A missing locator or failed acquisition
+   stops this run before the writer; never omit the economic input and continue.
+   Native v4 supplies `FEE_ECON_FILE`. The only v3 exception is the explicit
+   copy-only `fee-console.legacy-empty-expense.v1` policy in
    `docs/fee-econ-v3-copy.md`: read that runbook and the receipt runbook first,
-   validate the original source identity independently, and make a new encrypted
-   v4 computation copy without changing the original Gist. Keep the verified
-   snapshot in a temporary file outside the repository and expose only its
-   absolute path through `FEE_ECON_FILE`. The scripts' two local file reads do not
-   replace this remote-stability check.
+   validate original-source identity independently, and make a new encrypted v4
+   computation copy without changing the original Gist. Keep the verified
+   snapshots temporary and outside the repository. The scripts' two local file
+   reads do not replace the remote-stability check.
    In legacy mode, retain the original encrypted snapshot as `FEE_ECON_V3_FILE`
    for both tools. They re-authenticate preserved source bytes, strict projection
    and fee partition; source-file checks are still not remote freshness proof.
-   Re-read the authorized Gist on every run and again before publication. Do not
-   turn a previous manual attachment into a permanent economic source.
+   Do not turn a previous manual attachment into a permanent economic source.
 2. Run `scripts/daily.mjs` with the existing `FEE_DATA_KEY`. The writer must build
    `feeCalculationReceipt` from the candidate daily data and the transient private
    snapshot before its no-op decision.
 3. Run `scripts/fee-receipt-report.mjs` against that same still-current private
-   snapshot and quote only its validated receipt output. Delete the temporary
-   encrypted snapshot when the run finishes.
+   snapshot and quote only its validated receipt output. Immediately before
+   protected publication, await the source snapshot's `checkCurrent()`; changed
+   or unavailable original bytes/version stop publication. In `finally`, call
+   its `cleanup()` and safely remove the separate computation copy on success
+   or failure. Report source-helper failures only through fixed error codes.
 
 Native v4 receipts remain v1. The approved legacy copy requires receipt v2 with
 the exact policy ID and commitments to exact original envelope and payload bytes,
@@ -57,9 +65,10 @@ source records stay only in encrypted provenance; source bindings stay only in
 encrypted receipts. Deploy both approved scripts and index-only consumer before
 real v2 acceptance. Unknown receipt versions fail closed. On the phone a missing,
 changed or unsupported raw v3 source must hide fees; the original v3 stays
-read-only. A writer run without economic input removes a legacy v2 receipt even
-when public AUM is unchanged. Never infer no real expenses/payments from an empty
-legacy row or from a snapshot containing no payment records.
+read-only. With an existing legacy v2 receipt, a writer run without economic
+input stops without changing `data.json`; acquisition failure is not permission
+to erase that receipt or publish an apparently fresh fee result. Never infer no
+real expenses/payments from an empty legacy row or absent payment records.
 
 Never calculate these values independently in the Scheduled task. In particular:
 

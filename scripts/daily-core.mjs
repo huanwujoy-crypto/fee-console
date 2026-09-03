@@ -480,6 +480,39 @@ export function buildStatus({ date, splitDelta, unresolved, provisional, calibra
   };
 };
 
+/** A historical rewrite must not replace the latest day's source/calibration status. */
+export function buildLatestStatus({ daily, previousStatus, previousUnresolved, ...input }) {
+  if (!daily.length || daily.some(point => !isIsoDate(point?.d))
+      || new Set(daily.map(point => point.d)).size !== daily.length) {
+    throw new Error("daily dates must be valid and unique before building status");
+  }
+  const latest = daily.reduce((a, b) => a.d > b.d ? a : b);
+  if (latest.d === input.date) return buildStatus(input);
+
+  // Only the current status retains calibration and full source-date notes.
+  // Absence of point.prov alone does not prove that a day was calibrated.
+  const reject = () => { throw new Error("historical rewrite requires a consistent latest-day status"); };
+  if (!previousStatus || previousStatus.asOf !== latest.d
+      || typeof previousStatus.calibrated !== "boolean"
+      || !Array.isArray(previousStatus.notes)
+      || previousStatus.notes.some(note => typeof note !== "string")
+      || previousStatus.unresolvedCount !== previousUnresolved.length
+      || ACCOUNTS.some(a => !Number.isFinite(latest[a]) || latest[a] <= 0)
+      || SPLITS.some(s => !Number.isFinite(latest[s]) || latest[s] < 0)
+      || (latest.prov !== undefined && latest.prov !== 1)) reject();
+  const splitDelta = ACCOUNTS.reduce((sum, a) => sum + latest[a], 0)
+    - SPLITS.reduce((sum, s) => sum + latest[s], 0);
+  if (!Number.isFinite(splitDelta)) reject();
+  const provisional = previousStatus.notes.slice();
+  if (previousUnresolved.length > 0
+      && provisional.pop() !== `${previousUnresolved.length} unclassified cash movement(s)`) reject();
+  const latestInput = { date: latest.d, splitDelta, provisional, calibrated: previousStatus.calibrated };
+  if (!!latest.prov !== (!latestInput.calibrated && provisional.length > 0)
+      || !sameStatus(previousStatus, buildStatus({ ...latestInput, unresolved: previousUnresolved }))) reject();
+  // Unresolved movements describe the entire ledger, not just the rewritten day.
+  return buildStatus({ ...latestInput, unresolved: input.unresolved });
+}
+
 export const sameStatus = (a, b) => {
   if (!a || !b) return false;
   return a.asOf === b.asOf
