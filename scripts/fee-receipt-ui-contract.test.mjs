@@ -11,7 +11,11 @@ import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const htmlPath = path.join(here, "..", "index.html");
+// Share the ledger suite's local-only, read-only cross-worktree preview.
+const htmlPath = process.env.FEE_LEDGER_TEST_INDEX || path.join(here, "..", "index.html");
+if (process.env.GITHUB_ACTIONS === "true" && process.env.FEE_LEDGER_TEST_INDEX)
+  throw new Error("external UI preview is local-only");
+assert.ok(path.isAbsolute(htmlPath), "the optional synthetic UI preview path must be absolute");
 const START = "/* fee-receipt-consumer:start */";
 const END = "/* fee-receipt-consumer:end */";
 const HISTORY_START = "/* month-history-view:start */";
@@ -211,7 +215,8 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     status: receipt.status,
     periods: receipt.periods,
     totals: receipt.totals,
-    balance: receipt.balance
+    balance: receipt.balance,
+    ...(html.includes("/* benchmark-account-view:start */") ? { benchmarkInputs: { openingCents: 10_000_000, flows: [{ date: "2026-08-02", amountCents: 2_400_000 }] } } : {})
   });
 
   const outOfRangeEconomicInput = structuredClone(economicInput);
@@ -338,7 +343,8 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     status: valid.status,
     periods: valid.periods,
     totals: valid.totals,
-    balance: valid.balance
+    balance: valid.balance,
+    ...(html.includes("/* benchmark-account-view:start */") ? { benchmarkInputs: valid.benchmarkInputs } : {})
   });
   const pendingProjection = plain(sandbox.feeReceiptRenderProjection({
     ok: false, reason: "calculation receipt pending"
@@ -354,7 +360,8 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     status: null,
     periods: [],
     totals: null,
-    balance: null
+    balance: null,
+    ...(html.includes("/* benchmark-account-view:start */") ? { benchmarkInputs: null } : {})
   });
   assert.equal(Object.values(pendingProjection).some(value => typeof value === "number"), false,
     "the pending render projection must contain no stale financial number");
@@ -389,10 +396,19 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
   vm.runInContext(html.slice(historyFrom, historyTo), sandbox, { filename: "index-month-history-view.js" });
   assert.equal(typeof sandbox.monthHistoryViewModel, "function",
     "the guarded history block must expose globalThis.monthHistoryViewModel");
-  assert.equal(typeof sandbox.monthHistoryYearFromEvent, "function",
-    "the guarded history block must expose globalThis.monthHistoryYearFromEvent");
-  assert.equal(sandbox.monthHistoryYearFromEvent({ target: { id: "monthHistoryYear", value: "2024" } }), "2024");
-  assert.equal(sandbox.monthHistoryYearFromEvent({ target: { id: "other", value: "2024" } }), null);
+  const compactMonths = html.includes("/* month-selection-view:v1 */");
+  if (compactMonths) {
+  assert.equal(typeof sandbox.monthHistoryMonthFromEvent, "function",
+    "the guarded history block must expose globalThis.monthHistoryMonthFromEvent");
+  assert.equal(sandbox.monthHistoryMonthFromEvent({ target: { id: "monthHistoryMonth", value: "2024-09" } }), "2024-09");
+  assert.equal(sandbox.monthHistoryMonthFromEvent({ target: { id: "other", value: "2024-09" } }), null);
+  assert.equal(sandbox.monthHistoryMonthFromEvent({ target: { id: "monthHistoryMonth", value: "2024-13" } }), null);
+  } else {
+    assert.equal(typeof sandbox.monthHistoryYearFromEvent, "function");
+    assert.equal(sandbox.monthHistoryYearFromEvent({ target: { id: "monthHistoryYear", value: "2024" } }), "2024");
+    assert.equal(sandbox.monthHistoryYearFromEvent({ target: { id: "other", value: "2024" } }), null);
+    assert.equal(html.includes("monthHistoryMonthFromEvent"), false, "partial month-selector rollout must not pass");
+  }
 
   const monthRows = (count, endYm) => {
     const rows = [];
@@ -404,28 +420,33 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     }
     return rows;
   };
-  const defaults = { latestOpen: true, historyOpen: false, monthOpen: false, trendOpen: false };
+  const defaults = compactMonths ? { detailOpen: false, trendOpen: false } : { latestOpen: true, historyOpen: false, monthOpen: false, trendOpen: false };
   for (const count of [1, 36, 120]) {
     const rows = monthRows(count, "2026-08");
     const model = plain(sandbox.monthHistoryViewModel({
-      rows, publicAsOf: "2026-08-31", selectedYear: "2024", isManager: false
+      rows, publicAsOf: "2026-08-31", selectedYm: "2024-09", selectedYear: "2024", isManager: false
     }));
     assert.equal(model.allCount, count);
     assert.deepEqual(model.latest, rows.at(-1));
-    assert.equal(model.historyCount, Math.max(0, count - 1));
     assert.deepEqual(model.recent12, rows.slice(-12));
     assert.deepEqual(model.defaults, defaults);
-    assert.deepEqual(model.years, [...new Set(rows.map(row => row.ym.slice(0, 4)))].sort().reverse());
+    if (compactMonths) {
+    assert.deepEqual(model.months, [...rows].reverse(), "every historical month remains selectable across years");
     if (count === 1) {
-      assert.equal(model.selectedYear, "2026");
-      assert.deepEqual(model.history, []);
+      assert.equal(model.selectedYm, "2026-08");
+      assert.deepEqual(model.selected, rows.at(-1));
     } else {
-      assert.equal(model.selectedYear, "2024");
-      assert.ok(model.history.every(row => row.ym.startsWith("2024-")));
-      assert.deepEqual(model.history, rows.slice(0, -1).filter(row => row.ym.startsWith("2024-")).reverse());
+      assert.equal(model.selectedYm, "2024-09");
+      assert.deepEqual(model.selected, rows.find(row => row.ym === "2024-09"));
+    }
+    } else {
+      assert.equal(model.historyCount, Math.max(0, count - 1));
+      assert.deepEqual(model.years, [...new Set(rows.map(row => row.ym.slice(0, 4)))].sort().reverse());
+      assert.equal(model.selectedYear, count === 1 ? "2026" : "2024");
+      assert.deepEqual(model.history, rows.slice(0, -1).filter(row => row.ym.startsWith(model.selectedYear + "-")).reverse());
     }
     const manager = plain(sandbox.monthHistoryViewModel({
-      rows, publicAsOf: "2026-08-31", selectedYear: model.selectedYear, isManager: true
+      rows, publicAsOf: "2026-08-31", selectedYm: model.selectedYm, selectedYear: model.selectedYear, isManager: true
     }));
     assert.deepEqual(manager, model, "read-only users and managers must have the same history navigation");
   }
@@ -433,17 +454,17 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
   const futureRows = monthRows(3, "2026-09");
   assert.throws(
     () => sandbox.monthHistoryViewModel({
-      rows: futureRows, publicAsOf: "2026-08-31", selectedYear: null, isManager: false
+      rows: futureRows, publicAsOf: "2026-08-31", selectedYm: null, isManager: false
     }),
     /publicAsOf/,
     "a row after the verified public as-of date must fail closed, not be hidden"
   );
   const crossYearRows = monthRows(3, "2027-01");
   const crossYear = plain(sandbox.monthHistoryViewModel({
-    rows: crossYearRows, publicAsOf: "2027-01-31", selectedYear: null, isManager: false
+    rows: crossYearRows, publicAsOf: "2027-01-31", selectedYm: null, isManager: false
   }));
-  assert.equal(crossYear.selectedYear, "2027",
-    "the default history year must match the verified public as-of year");
+  assert.equal(compactMonths ? crossYear.selectedYm : crossYear.selectedYear, compactMonths ? "2027-01" : "2027",
+    "the default selection must be the latest verified data month");
   assert.equal(crossYear.latest.ym, "2027-01");
   assert.throws(
     () => sandbox.monthHistoryViewModel({ rows: futureRows, publicAsOf: "not-a-date" }),
@@ -453,7 +474,7 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
   const incompleteRows = monthRows(3, "2026-07");
   assert.throws(
     () => sandbox.monthHistoryViewModel({
-      rows: incompleteRows, publicAsOf: "2026-08-31", selectedYear: null, isManager: false
+      rows: incompleteRows, publicAsOf: "2026-08-31", selectedYm: null, isManager: false
     }),
     /publicAsOf/,
     "history ending before the verified public as-of month must fail closed, not show stale history"
@@ -461,8 +482,111 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
 
   const changeHandler = html.indexOf('document.body.addEventListener("change"');
   assert.ok(changeHandler >= 0, "the page must retain its delegated change handler");
-  const historyChange = html.indexOf("monthHistoryYearFromEvent(e)", changeHandler);
+  if (compactMonths) assert.throws(() => sandbox.monthHistoryViewModel({ rows: [crossYearRows.at(-1), crossYearRows.at(-1)], publicAsOf: "2027-01-31" }), /publicAsOf/, "duplicate months cannot be hidden by a selector");
+  const historyChange = html.indexOf(compactMonths ? "monthHistoryMonthFromEvent(e)" : "monthHistoryYearFromEvent(e)", changeHandler);
   const managerGate = html.indexOf("if(!isMgr())return", changeHandler);
   assert.ok(historyChange > changeHandler && managerGate > historyChange,
-    "the read-only month-history year selector must be handled before the manager-only gate");
+    "the read-only month selector must be handled before the manager-only gate");
+});
+
+test("passive-account balances use only receipt-verified dated flows and independent benchmark prices", async t => {
+  const html = fs.readFileSync(htmlPath, "utf8");
+  if (!html.includes("/* benchmark-account-view:start */")) {
+    assert.equal(html.includes("benchmarkInputs"), false, "unmarked partial benchmark rollout cannot pass");
+    return; // The separately reviewed test PR must also accept the current main UI.
+  }
+  let points = [];
+  const context = vm.createContext({ crypto: crypto.webcrypto, TextEncoder, TextDecoder, structuredClone,
+    num: x => Number.parseFloat(x) || 0, dailySorted: () => points });
+  for (const [start, end] of [[START, END], [RENDER_START, RENDER_END]]) {
+    vm.runInContext(html.slice(html.indexOf(start) + start.length, html.indexOf(end)), context);
+  }
+  vm.runInContext(html.slice(html.indexOf("const BENCH_ALL="), html.indexOf("function receiptState(")), context);
+  const rowsOf = model => model.periods.map(p => ({ ym: p.ym, from: p.from, to: p.to, days: p.calendarDayCount }));
+  const { data, economicInput, receipt } = fixture();
+  data.daily.unshift({ d: "2026-07-31", schwab: 60_000, webull: 40_000, spy: 100, qqq: 100 });
+  Object.assign(data.daily[1], { spy: 100, qqq: 100 });
+  Object.assign(data.daily[2], { spy: 110, qqq: 105 });
+  Object.assign(data.daily[3], { spy: 121, qqq: 110.25 });
+  const valid = plain(await context.feeReceiptUiModel({ receipt, data, economicInput }));
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.benchmarkInputs, { openingCents: 10_000_000, flows: [{ date: "2026-08-02", amountCents: 2_400_000 }] },
+    "confirmed and automatic representations of one FOP must produce one dated flow only");
+  assert.doesNotMatch(JSON.stringify(valid.benchmarkInputs), /note|src|id|hash|acct|BRK|holding/i,
+    "the display projection must not disclose private provenance or notes");
+  const view = plain(context.feeReceiptRenderProjection(valid));
+
+  await t.test("same opening, total-return pricing and EOD contributions, not month-net shortcuts", () => {
+    points = data.daily;
+    const result = plain(context.benchmarkView(view, rowsOf(view)));
+    assert.ok(Math.abs(result.bench[0].val - 147_400) < 1e-7);
+    assert.ok(Math.abs(result.bench[1].val - 135_450) < 1e-7);
+    assert.ok(Math.abs(result.bench[0].twr - 0.21) < 1e-12);
+    assert.notEqual(result.bench[0].val, 100_000 * 1.21 + 24_000);
+  });
+  await t.test("same-day dividends are reinvested before an EOD flow", () => {
+    points = data.daily.map(p => ({ ...p }));
+    points[2].spy = 108; points[2].spyd = 2; points[3].spy = 118.8;
+    const result = plain(context.benchmarkView(view, rowsOf(view)));
+    assert.ok(Math.abs(result.bench[0].val - 147_400) < 1e-7);
+  });
+  await t.test("cross-month inflow and withdrawal preserve the same daily path", () => {
+    points = [
+      { d: "2026-09-28", spy: 100, qqq: 100 }, { d: "2026-09-29", spy: 100, qqq: 100 },
+      { d: "2026-09-30", spy: 110, qqq: 110 }, { d: "2026-10-01", spy: 121, qqq: 121 },
+      { d: "2026-10-02", spy: 133.1, qqq: 133.1 }
+    ];
+    const result = context.benchmarkView({ state: "verified", start: "2026-09-29", asOf: "2026-10-02",
+      benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-09-30", amountCents: 5_000 }, { date: "2026-10-01", amountCents: -4_000 }] } },
+    [{ ym: "2026-09", from: "2026-09-29", to: "2026-09-30", days: 2 }, { ym: "2026-10", from: "2026-10-01", to: "2026-10-02", days: 2 }]);
+    for (const bench of result.bench) assert.ok(Math.abs(bench.val - 149.6) < 1e-10);
+  });
+  await t.test("over-withdrawal disables the affected balance without borrowing or hiding TWR", () => {
+    points = [{ d: "2026-10-02", spy: 100, qqq: 100 }, { d: "2026-10-03", spy: 70, qqq: 100 }];
+    const result = context.benchmarkView({ state: "verified", start: "2026-10-03", asOf: "2026-10-03",
+      benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-10-03", amountCents: -8_000 }] } },
+    [{ ym: "2026-10", from: "2026-10-03", to: "2026-10-03", days: 1 }]);
+    assert.equal(result.bench[0].val, null); assert.equal(result.bench[0].valueReason, "withdrawal-exceeds-value");
+    assert.ok(Math.abs(result.bench[0].twr + .3) < 1e-12); assert.equal(result.bench[1].val, 20);
+  });
+  await t.test("missing or invalid quotes cannot create a passive-account balance", () => {
+    for (const change of [p => { delete p[2].spy; }, p => { p[2].qqqd = "invalid"; }, p => { p[2].spyd = -1; }]) {
+      points = data.daily.map(p => ({ ...p })); change(points);
+      assert.equal(context.benchmarkView(view, rowsOf(view)).bench.length, 0);
+    }
+    points = data.daily.map(p => ({ ...p })); points[0].d = "2026-07-30";
+    assert.deepEqual(plain(context.benchmarkView(view, rowsOf(view))), { bench: [], byMonth: {} },
+      "an earlier baseline cannot masquerade as same-period TWR or monthly benchmark returns");
+  });
+  await t.test("prior/current prices and present dividends reject coercible non-numbers", () => {
+    for (const invalid of ["100bad", "100", "", " ", null, true, false, [], [100], {}, undefined, Infinity, NaN]) {
+      for (const [index, key] of [[0, "spy"], [2, "spy"], [2, "spyd"]]) {
+        points = data.daily.map(p => ({ ...p })); points[index][key] = invalid;
+        assert.equal(context.benchmarkView(view, rowsOf(view)).bench.length, 0,
+          `reject ${String(invalid)} at ${index}/${key}, including a present undefined dividend`);
+      }
+    }
+    points = data.daily.map(p => ({ ...p }));
+    points[2].spyd = 0;
+    assert.ok(context.benchmarkView(view, rowsOf(view)).bench.every(b => Number.isFinite(b.val)),
+      "a numeric zero dividend and an omitted dividend remain valid");
+  });
+  await t.test("missing or malformed dated flows never turn into zero flows", () => {
+    points = data.daily;
+    for (const benchmarkInputs of [null, { openingCents: 10_000_000 },
+      { openingCents: 10_000_000, flows: [{ date: "2026-08-02", amountCents: 1.5 }] },
+      { openingCents: 10_000_000, flows: [{ date: "2026-09-02", amountCents: 100 }] }]) {
+      const result = context.benchmarkView({ ...view, benchmarkInputs }, rowsOf(view));
+      assert.ok(result.bench.every(b => b.val === null && Number.isFinite(b.twr)));
+    }
+  });
+  await t.test("failed receipt or changed private flows expose neither old balance inputs nor stale balances", async () => {
+    points = data.daily;
+    const changed = structuredClone(economicInput); changed.months[0].flows[0].amount += 1;
+    for (const input of [{ receipt: null, data, economicInput }, { receipt, data, economicInput: changed }]) {
+      const rejected = await context.feeReceiptUiModel(input), pending = context.feeReceiptRenderProjection(rejected);
+      assert.equal(rejected.ok, false); assert.equal(pending.benchmarkInputs, null);
+      assert.deepEqual(plain(context.benchmarkView(pending, rowsOf(view))), { bench: [], byMonth: {} });
+    }
+  });
 });

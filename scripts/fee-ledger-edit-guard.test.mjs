@@ -530,14 +530,114 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
   const html = fs.readFileSync(uiFile, "utf8");
   if (!loadGuard(html)) return;
 
-  await t.test("read-only viewers can still change the historical year without ledger editing", async () => {
+  await t.test("read-only viewers can change the selected month without ledger editing", async () => {
     const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
     h.run('setCfg(K.tok, "")');
-    const selector = h.element("monthHistoryYear"); selector.value = "2025";
+    const compact = html.includes("/* month-selection-view:v1 */");
+    const selector = h.element(compact ? "monthHistoryMonth" : "monthHistoryYear"); selector.value = compact ? "2026-08" : "2025";
     await h.emit("body", "change", { target: selector });
-    assert.equal(h.run("_monthHistoryYear"), "2025");
+    assert.equal(h.run(compact ? "_monthHistoryYm" : "_monthHistoryYear"), selector.value);
     assert.equal(h.run("EDIT.mode"), "locked");
     assert.equal(h.run("JSON.stringify(DB)"), original);
+    assert.deepEqual(h.writes(), []);
+  });
+
+  await t.test("compact monthly DOM defaults to the latest month, keeps all options and folds calculations", async () => {
+    const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
+    const row = ym => ({ ym, from: ym + "-01", to: ym === "2026-09" ? "2026-09-02" : ym + "-28",
+      pnl: 1000, fees: 250, mgmt: 50, carry: 200, openT: 100000, closeT: 101000, flowT: 0,
+      averageFeeBase: 100500, rG: .01, rD: .0075, excess: 1000, cum: 1000, hwm: 1000, inProgress: ym === "2026-09" });
+    h.run(`globalThis.monthFixture=${JSON.stringify({ rows: [row("2025-12"), row("2026-08"), row("2026-09")], bench: [] })}`);
+    h.run('globalThis.monthView={state:"verified",asOf:"2026-09-02",managementRatePpm:20000,carryRatePpm:200000,status:{provisional:true}}');
+    h.run("renderMonths(monthView,monthFixture)");
+    let output = h.element("monthsBox").innerHTML;
+    if (!html.includes("/* month-selection-view:v1 */")) {
+      assert.equal(html.includes("monthHistoryMonth"), false, "reject an unmarked partial month-selector rollout");
+      assert.match(output, /class="month-detail latest" data-ym="2026-09" open/,
+        "support-only release preserves the old latest-month expansion");
+      assert.match(output, /<details class="month-history" id="monthHistory">/,
+        "support-only release preserves the old folded history");
+      assert.match(output, /id="monthHistoryYear"/);
+      assert.match(output, /<option value="2026" selected>/);
+      assert.match(output, /<option value="2025">/);
+      assert.equal(h.run("JSON.stringify(DB)"), original); assert.deepEqual(h.writes(), []);
+      return;
+    }
+    assert.match(output, /<option value="2026-09" selected>/);
+    assert.equal((output.match(/<option /g) || []).length, 3);
+    assert.equal((output.match(/<select /g) || []).length, 1, "do not stack redundant year and month selectors");
+    assert.match(output, /毛收益/); assert.match(output, /<span>费用<b>/); assert.match(output, /净收益/);
+    assert.match(output, /本回执含暂估数据/); assert.doesNotMatch(output, /暂计费用/);
+    assert.doesNotMatch(output, /<details[^>]*\bopen(?:\s|>)/);
+    assert.match(output, /Carry：累计毛收益/); assert.doesNotMatch(output, /Carry[^<]*累计净收益/);
+    const details = h.element("monthCalculation"); details.dataset.ym = "2026-09"; details.open = true;
+    h.run("renderMonths(monthView,monthFixture)");
+    assert.match(h.element("monthsBox").innerHTML, /id="monthCalculation" data-ym="2026-09" open/,
+      "same-month rerenders preserve the user's explicit expansion");
+    const selector = h.element("monthHistoryMonth"); selector.value = "2025-12";
+    h.run('setCfg(K.tok, "")');
+    await h.emit("body", "change", { target: selector });
+    h.run("renderMonths(monthView,monthFixture)");
+    output = h.element("monthsBox").innerHTML;
+    assert.match(output, /<option value="2025-12" selected>/);
+    assert.match(output, /<span>费用<b>/); assert.match(output, /本回执含暂估数据/);
+    assert.doesNotMatch(output, /暂计费用/, "receipt-wide provisional status cannot classify a historical month's fee");
+    assert.doesNotMatch(output, /<details[^>]*\bopen(?:\s|>)/, "switching month starts with its calculations folded");
+    assert.equal(h.run("JSON.stringify(DB)"), original); assert.deepEqual(h.writes(), []);
+    h.run('monthView.status.provisional=false;renderMonths(monthView,monthFixture)');
+    assert.doesNotMatch(h.element("monthsBox").innerHTML, /本回执含暂估数据/);
+    h.run('renderMonths({state:"pending",message:"计算回执待更新"},monthFixture)');
+    assert.equal(h.element("monthsBox").innerHTML.includes("1000"), false);
+    assert.match(h.element("monthsBox").innerHTML, /计算回执待更新/);
+  });
+
+  await t.test("monthly return legend follows actual benchmark selection and clears unavailable labels", async () => {
+    if (!html.includes('id="chart3Legend"')) {
+      assert.equal(html.includes("chart3Legend"), false, "reject a partial dynamic legend rollout");
+      assert.match(html, /各月收益率<\/h3><div class="legend">.*SPY·含息 ETF TWR.*QQQ·含息 ETF TWR/,
+        "support-only release explicitly preserves the old static legend");
+      return;
+    }
+    const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
+    h.run('globalThis.legendView={state:"verified"};globalThis.legendState={rows:[{ym:"2026-08",rG:.03,rB:{spy:.02,qqq:.01,cspx:.04,eqac:.05}}],bench:[]}');
+    for (const [from, to, present, absent] of [[0, 2, /SPY.*QQQ/, /CSPX|EQAC/], [2, 4, /CSPX.*EQAC/, /SPY|QQQ/]]) {
+      h.run(`legendState.bench=BENCH_ALL.slice(${from},${to});renderChart3(legendView,legendState)`);
+      assert.match(h.element("chart3Legend").innerHTML, present);
+      assert.doesNotMatch(h.element("chart3Legend").innerHTML, absent);
+    }
+    h.run('legendState.bench=[];renderChart3(legendView,legendState)');
+    assert.match(h.element("chart3Legend").innerHTML, /本组合/);
+    assert.doesNotMatch(h.element("chart3Legend").innerHTML, /SPY|QQQ|CSPX|EQAC/);
+    h.run('renderChart3({state:"pending",message:"计算回执待更新"},legendState)');
+    assert.equal(h.element("chart3Legend").innerHTML, "");
+    assert.match(h.element("chart3").innerHTML, /计算回执待更新/);
+    assert.equal(h.run("JSON.stringify(DB)"), original); assert.deepEqual(h.writes(), []);
+  });
+
+  await t.test("a delayed verified benchmark render cannot refill balances after source invalidation", async () => {
+    const h = await browserHarness(html, { legacy: true });
+    await h.run("pullAll(false)");
+    h.run('DAILY.daily.unshift({d:"2026-07-31",schwab:60000,webull:40000,spy:100,qqq:100});Object.assign(DAILY.daily[1],{spy:100,qqq:100});Object.assign(DAILY.daily[2],{spy:110,qqq:105})');
+    await h.run("render()");
+    if (!html.includes("/* benchmark-account-view:start */")) {
+      assert.equal(html.includes("benchmarkInputs"), false, "reject an unmarked partial balance rollout");
+      assert.match(h.element("kpis").innerHTML, /等待公开出入金明细/);
+      assert.doesNotMatch(h.element("kpis").innerHTML, /<table class="bench-table"/,
+        "support-only release retains the old no-balance display, not a guessed balance");
+      assert.deepEqual(h.writes(), []);
+      return;
+    }
+    assert.match(h.element("kpis").innerHTML, /<span class="scenario">SPY<\/span>/);
+    assert.match(h.element("kpis").innerHTML, /<span class="scenario">QQQ<\/span>/);
+    assert.match(h.element("kpis").innerHTML, /未扣应计费/);
+    const gate = h.pauseNextRead("digest"), oldRender = h.run("render()");
+    await gate.entered;
+    h.run("invalidateReceiptSource()");
+    await h.run("render()");
+    assert.doesNotMatch(h.element("kpis").innerHTML, /<table class="bench-table"/);
+    gate.release(); await oldRender;
+    assert.doesNotMatch(h.element("kpis").innerHTML, /<table class="bench-table"/);
+    assert.match(h.element("kpis").innerHTML, /计算回执待更新/);
     assert.deepEqual(h.writes(), []);
   });
 
