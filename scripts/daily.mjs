@@ -20,11 +20,12 @@ import { fileURLToPath } from "node:url";
 import {
   ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows,
-  buildPoint, samePoint, buildStatus, sameStatus, isIsoDate
+  buildPoint, samePoint, buildLatestStatus, sameStatus, isIsoDate
 } from "./daily-core.mjs";
 import {
   buildFeeCalculationReceipt,
   FEE_RECEIPT_SCHEMA,
+  FEE_LEGACY_RECEIPT_SCHEMA,
   normalizeEconomicInputs,
   sameFeeCalculationReceipt,
   validateFeeCalculationReceipt
@@ -248,6 +249,9 @@ if (Object.hasOwn(data, "status")) {
   }
 }
 const economicInput = loadEconomicInput();
+if (!economicInput && data.feeCalculationReceipt?.schema === FEE_LEGACY_RECEIPT_SCHEMA) {
+  die("current legacy economic input is required to revalidate the existing v2 receipt — nothing written");
+}
 if (economicInput) {
   try { normalizeEconomicInputs(economicInput); }
   catch (error) { die(`FEE_ECON_FILE economic input rejected: ${error.message} — nothing written`); }
@@ -369,20 +373,23 @@ hard.push(...checkMove(prior, point, externalAccts));
 
 if (hard.length) dieAll([...hard, "nothing written"]);
 
-const status = buildStatus({
-  date, splitDelta: check.splitDelta, unresolved: flows.unresolved,
-  provisional: check.provisional, calibrated
-});
-
 /* ---------- 候选 payload、计算回执与幂等 ---------- */
+const nextDaily = data.daily.filter(x => x && x.d !== date);
+nextDaily.push(point);
+nextDaily.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+let status;
+try {
+  status = buildLatestStatus({
+    daily: nextDaily, previousStatus: data.status, previousUnresolved: data.flowsUnresolved,
+    date, splitDelta: check.splitDelta, unresolved: flows.unresolved,
+    provisional: check.provisional, calibrated
+  });
+} catch (error) { die(`${error.message} — nothing written`); }
 const existing = data.daily.filter(x => x && x.d === date);
 const baseUnchanged = existing.length === 1 && samePoint(existing[0], point)
   && flows.added === 0 && flows.promoted === 0 && flows.flagged === 0
   && sameStatus(data.status, status);
 
-const nextDaily = data.daily.filter(x => x && x.d !== date);
-nextDaily.push(point);
-nextDaily.sort((a, b) => String(a.d).localeCompare(String(b.d)));
 const nextData = {
   ...data,
   daily: nextDaily,
@@ -444,7 +451,8 @@ const writeAtomic = (target, contents) => {
 writeAtomic(file, JSON.stringify({ enc: true, v: 3, data: enc(JSON.stringify(nextData)) }));
 
 console.log(
-  `ok ${date} points=${nextData.daily.length} ${calibrated ? "calibrated" : (status.provisional ? "provisional" : "clean")} ` +
+  `ok ${date} points=${nextData.daily.length} status-as-of=${status.asOf} ` +
+  `${status.calibrated ? "calibrated" : (status.provisional ? "provisional" : "clean")} ` +
   `flows=${nextData.flowsAuto.length} new-flows=${flows.added} promoted=${flows.promoted} ` +
   `unresolved=${nextData.flowsUnresolved.length} receipt=${receiptState}`
 );

@@ -6,6 +6,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import "./fee-economic-source.test.mjs";
 import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 
@@ -91,11 +92,11 @@ const econForToday = (over = {}) => ({
   fees: over.fees || [{ id: "PRIVATE PAYMENT", date: today(), amount: 123, ccy: "USD", note: "PRIVATE NOTE" }]
 });
 
-const legacyFixture = dir => {
-  const raw = econForToday();
+const legacyFixture = (dir, start = today()) => {
+  const raw = econForToday({ settings: { start } });
   raw.v = 3;
   raw.updatedAt = today() + "T12:00:00Z";
-  raw.settings.openingAt = shift(today(), -1);
+  raw.settings.openingAt = shift(start, -1);
   raw.settings.fx = { USD: 1, HKD: 0.1282, CNY: 0.14, EUR: 1.1, SGD: 0.75, GBP: 1.3, JPY: 0.0067 };
   raw.fees = [
     { id: "PAY-SYNTHETIC", type: "pay", date: today(), amount: 123, ccy: "USD", fx: "", note: "" },
@@ -1011,14 +1012,18 @@ test("legacy receipt requires current original bytes and is deterministic across
   assert.doesNotMatch(first.stdout + first.stderr, /LEGACY-SYNTHETIC|PAY-SYNTHETIC|sourceEnvelope|sourcePayload|[a-f0-9]{64}/);
 });
 
-test("missing current legacy economic input removes v2 even when public AUM matches", () => {
+test("missing current legacy economic input preserves v2 and refuses any write or no-op claim", () => {
   const dir = tmp(), legacy = legacyFixture(dir);
   assert.equal(run(dir, {}, [], legacy.env).status, 0);
-  const result = run(dir, {}, [], { FEE_ECON_FILE: "", FEE_ECON_V3_FILE: "" });
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /receipt=stale-removed/);
-  assert.equal(Object.hasOwn(readPayload(dir), "feeCalculationReceipt"), false);
-  assert.equal(readPayload(dir).daily.at(-1).d, today());
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  for (const over of [{}, { webull: "119126.45", cash: "263797.83" }]) {
+    const result = run(dir, over, [], { FEE_ECON_FILE: "", FEE_ECON_V3_FILE: "" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /current legacy economic input is required/);
+    assert.equal(result.stdout, "");
+    assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+    assert.equal(readPayload(dir).feeCalculationReceipt.schema, "fee-console.calculation-receipt.v2");
+  }
 });
 
 test("unavailable or changed original source cannot emit or replace a legacy receipt", () => {
@@ -1154,6 +1159,212 @@ test("a private economic change updates the receipt even when the daily point is
   assert.match(changed.stdout, /receipt=updated/);
   assert.notDeepEqual(fs.readFileSync(path.join(dir, "data.json")), beforeBytes);
   assert.notEqual(readPayload(dir).feeCalculationReceipt.receiptId, beforeReceipt.receiptId);
+});
+
+/* ---------------- historical writes retain latest-day status ---------------- */
+for (const legacyMode of [false, true]) {
+  const schema = `fee-console.calculation-receipt.v${legacyMode ? 2 : 1}`;
+  test(`historical ${schema} rewrite and repeated R/T runs cover T without losing history`, () => {
+    const dir = tmp(), r = shift(today(), -1), t = today();
+    const legacy = legacyMode ? legacyFixture(dir, r) : null;
+    const env = legacy?.env || { FEE_ECON_FILE: writeEconEnvelope(dir, econForToday({ settings: { start: r } })) };
+    const historical = { date: r, growth: "250000", value: "203845.98",
+      spy: "600", qqq: "500", spyd: "1.25", "src-bench": r,
+      "source-fetched-at": r + "T12:00:00Z" };
+    for (const args of [historical, { date: t }]) {
+      const result = run(dir, args, [], env);
+      assert.equal(result.status, 0, result.stderr);
+    }
+    const initial = readPayload(dir);
+    initial.retainedMarker = "synthetic top-level field";
+    writePayload(dir, initial);
+    const before = fs.readFileSync(path.join(dir, "data.json"));
+    // Omitted optional style/dividend inputs must still inherit the verified R values.
+    const repeatR = { ...historical, growth: undefined, value: undefined, spyd: undefined };
+    for (const args of [repeatR, { date: t }, repeatR, { date: t }]) {
+      const result = run(dir, args, [], env);
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, /no-op/);
+      assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+    }
+    const corrected = { ...repeatR, schwab: "598617.36", cash: "263797.83" };
+    const result = run(dir, corrected, [], env);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`status-as-of=${t}`));
+    const after = readPayload(dir);
+    assert.equal(after.retainedMarker, initial.retainedMarker);
+    assert.deepEqual(after.daily.map(p => p.d), [r, t]);
+    assert.deepEqual(after.daily[1], initial.daily[1]);
+    assert.equal(after.daily[0].schwab, 598617.36);
+    assert.equal(after.daily[0].spyd, 1.25);
+    assert.equal(after.daily[0].growth, 250000);
+    assert.notEqual(after.daily[0].sourceFingerprint, initial.daily[0].sourceFingerprint);
+    assert.deepEqual(after.flowsAuto, initial.flowsAuto);
+    assert.deepEqual(after.flowsUnresolved, initial.flowsUnresolved);
+    assert.deepEqual(after.status, initial.status);
+    assert.equal(after.feeCalculationReceipt.schema, schema);
+    assert.equal(after.feeCalculationReceipt.asOf, t);
+    assert.notEqual(after.feeCalculationReceipt.receiptId, initial.feeCalculationReceipt.receiptId);
+    const correctedBytes = fs.readFileSync(path.join(dir, "data.json"));
+    const repeat = run(dir, corrected, [], env);
+    assert.equal(repeat.status, 0, repeat.stderr);
+    assert.match(repeat.stdout, /no-op/);
+    assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), correctedBytes);
+    const report = spawnSync(process.execPath, [path.join(here, "fee-receipt-report.mjs"),
+      `--file=${path.join(dir, "data.json")}`, "--format=json"], {
+      encoding: "utf8", env: { ...process.env, GITHUB_ACTIONS: "", FEE_DATA_KEY: TEST_KEY, ...env }
+    });
+    assert.equal(report.status, 0, report.stderr);
+    const receipt = JSON.parse(report.stdout);
+    assert.equal(receipt.asOf, t);
+    assert.equal(receipt.receiptId, after.feeCalculationReceipt.receiptId);
+    assert.equal(receipt.status.valid, true);
+  });
+
+  test(`historical ${schema} no-op still revalidates its current economic source`, () => {
+    const dir = tmp(), r = shift(today(), -1);
+    const legacy = legacyMode ? legacyFixture(dir, r) : null;
+    const econ = econForToday({ settings: { start: r } });
+    const env = legacy?.env || { FEE_ECON_FILE: writeEconEnvelope(dir, econ) };
+    for (const date of [r, today()]) assert.equal(run(dir, { date }, [], env).status, 0);
+    const beforeBytes = fs.readFileSync(path.join(dir, "data.json")), before = readPayload(dir);
+    if (legacy) {
+      legacy.rebuild();
+      assert.match(run(dir, { date: r }, [], env).stdout, /no-op/);
+      assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), beforeBytes);
+      fs.appendFileSync(legacy.sourceFile, "\n");
+      const refused = run(dir, { date: r }, [], env);
+      assert.notEqual(refused.status, 0);
+      assert.match(refused.stderr, /private legacy source validation failed/);
+      assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), beforeBytes);
+      legacy.rebuild();
+    } else {
+      econ.fees[0].amount = 124;
+      writeEconEnvelope(dir, econ);
+    }
+    const changed = run(dir, { date: r }, [], env);
+    assert.equal(changed.status, 0, changed.stderr);
+    assert.match(changed.stdout, /receipt=updated/);
+    const after = readPayload(dir);
+    assert.deepEqual(after.daily, before.daily);
+    assert.deepEqual(after.status, before.status);
+    assert.notEqual(after.feeCalculationReceipt.receiptId, before.feeCalculationReceipt.receiptId);
+    const changedBytes = fs.readFileSync(path.join(dir, "data.json"));
+    assert.match(run(dir, { date: r }, [], env).stdout, /no-op/);
+    assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), changedBytes);
+  });
+}
+
+test("historical calibration cannot overwrite latest-day lag, split delta or calibration", () => {
+  const dir = tmp(), r = shift(today(), -1), t = today();
+  const env = { FEE_ECON_FILE: writeEconEnvelope(dir, econForToday({ settings: { start: r } })) };
+  assert.equal(run(dir, { date: r, "src-schwab": shift(r, -1) }, [], env).status, 0);
+  const latestArgs = { "src-webull": r, cash: "263685.49" };
+  assert.equal(run(dir, latestArgs, [], env).status, 0);
+  const latest = readPayload(dir);
+  const calibratedR = run(dir, { date: r }, ["--calibrated"], env);
+  assert.equal(calibratedR.status, 0, calibratedR.stderr);
+  const after = readPayload(dir);
+  assert.equal(after.daily[0].prov, undefined);
+  assert.deepEqual(after.daily[1], latest.daily[1]);
+  assert.deepEqual(after.status, latest.status);
+  assert.equal(after.status.splitDelta, 12.34);
+  assert.equal(after.status.calibrated, false);
+  assert.equal(after.status.provisional, true);
+
+  assert.equal(run(dir, latestArgs, ["--calibrated"], env).status, 0);
+  const calibratedT = readPayload(dir);
+  const provisionalR = run(dir, { date: r, "src-schwab": shift(r, -1) }, [], env);
+  assert.equal(provisionalR.status, 0, provisionalR.stderr);
+  const final = readPayload(dir);
+  assert.deepEqual(final.status, calibratedT.status);
+  assert.deepEqual(final.daily[1], calibratedT.daily[1]);
+  assert.equal(final.status.asOf, t);
+  assert.equal(final.status.calibrated, true);
+  assert.equal(final.status.provisional, false);
+  assert.deepEqual(final.feeCalculationReceipt.status.provisionalCodes, ["daily-provisional"]);
+});
+
+for (const [latestCalibrated, latestLag] of [[false, false], [false, true], [true, false], [true, true]])
+test(`historical unresolved reconciliation retains latest calibrated=${latestCalibrated}, lag=${latestLag}`, () => {
+  const dir = tmp(), r = shift(today(), -1), t = today(), legacy = legacyFixture(dir, r);
+  assert.equal(run(dir, { date: r }, [], legacy.env).status, 0);
+  assert.equal(run(dir, latestLag ? { "src-webull": r } : {}, latestCalibrated ? ["--calibrated"] : [], legacy.env).status, 0);
+  const before = readPayload(dir);
+  const flow = { id: "SYNTHETIC-CASH", date: r, acct: "schwab", amount: 12, desc: "", type: "DEPOSIT" };
+  const args = { date: r, "acct-cash-schwab": "112", "prev-acct-cash-schwab": "100" };
+  const unresolved = run(dir, args, [`--flows=${JSON.stringify([flow])}`], legacy.env);
+  assert.equal(unresolved.status, 0, unresolved.stderr);
+  const pending = readPayload(dir);
+  assert.equal(pending.status.asOf, t);
+  assert.equal(pending.status.unresolvedCount, 1);
+  assert.equal(pending.status.provisional, !latestCalibrated);
+  assert.equal(pending.status.calibrated, latestCalibrated);
+  assert.deepEqual(pending.status.notes, [...before.status.notes, "1 unclassified cash movement(s)"]);
+  assert.deepEqual(pending.daily[1], before.daily[1]);
+  assert.equal(Object.hasOwn(pending, "feeCalculationReceipt"), false);
+  const pendingBytes = fs.readFileSync(path.join(dir, "data.json"));
+  assert.match(run(dir, args, [`--flows=${JSON.stringify([flow])}`], legacy.env).stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), pendingBytes);
+  const resolved = { ...flow, evidence: "external_transfer", externalRef: "SYNTHETIC-WIRE" };
+  const result = run(dir, args, [`--flows=${JSON.stringify([resolved])}`], legacy.env);
+  assert.equal(result.status, 0, result.stderr);
+  const after = readPayload(dir);
+  assert.deepEqual(after.status, before.status);
+  assert.equal(after.flowsUnresolved.length, 0);
+  assert.equal(after.flowsAuto.length, 1);
+  assert.equal(after.feeCalculationReceipt.asOf, t);
+  assert.equal(after.feeCalculationReceipt.status.valid, true);
+});
+
+test("historical writes reject inconsistent latest status without changing any bytes", () => {
+  const dir = tmp(), r = shift(today(), -1);
+  const env = { FEE_ECON_FILE: writeEconEnvelope(dir, econForToday({ settings: { start: r } })) };
+  assert.equal(run(dir, { date: r }, [], env).status, 0);
+  assert.equal(run(dir, { "src-webull": r }, [], env).status, 0);
+  const original = readPayload(dir);
+  for (const mutate of [
+    p => { delete p.status; },
+    p => { p.status.asOf = r; },
+    p => { p.status.splitDelta += 1; },
+    p => { p.status.calibrated = true; },
+    p => { p.status.provisional = false; },
+    p => { p.status.notes = []; },
+    p => { p.status.unresolvedCount = 1; },
+    p => { delete p.daily[1].prov; },
+    p => { delete p.daily[1].cash; },
+    p => { p.daily.push({ ...p.daily[1] }); },
+    p => { p.daily[1].d = "not-a-date"; }
+  ]) {
+    const payload = structuredClone(original);
+    mutate(payload);
+    writePayload(dir, payload);
+    const before = fs.readFileSync(path.join(dir, "data.json"));
+    const result = run(dir, { date: r }, [], env);
+    assert.notEqual(result.status, 0, "inconsistent latest-day metadata must not be inferred");
+    assert.match(result.stderr, /consistent latest-day status|dates must be valid and unique/);
+    assert.equal(result.stdout, "");
+    assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+  }
+});
+
+test("historical native v1 calls without economic input retain existing compatibility", () => {
+  const dir = tmp(), r = shift(today(), -1);
+  const env = { FEE_ECON_FILE: writeEconEnvelope(dir, econForToday({ settings: { start: r } })) };
+  for (const date of [r, today()]) assert.equal(run(dir, { date }, [], env).status, 0);
+  const before = readPayload(dir), bytes = fs.readFileSync(path.join(dir, "data.json"));
+  const noEcon = { FEE_ECON_FILE: "", FEE_ECON_V3_FILE: "" };
+  const unchanged = run(dir, { date: r }, [], noEcon);
+  assert.equal(unchanged.status, 0, unchanged.stderr);
+  assert.match(unchanged.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), bytes);
+  const correction = run(dir, { date: r, schwab: "598617.36", cash: "263797.83" }, [], noEcon);
+  assert.equal(correction.status, 0, correction.stderr);
+  assert.match(correction.stdout, /receipt=stale-removed/);
+  const after = readPayload(dir);
+  assert.equal(Object.hasOwn(after, "feeCalculationReceipt"), false);
+  assert.deepEqual(after.status, before.status);
+  assert.deepEqual(after.daily[1], before.daily[1]);
 });
 
 test("a no-economic-input run preserves a still-matching receipt", () => {

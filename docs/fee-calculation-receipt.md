@@ -98,10 +98,20 @@ source snapshot through `FEE_ECON_V3_FILE`. They authenticate the original bytes
 preserved in the copy, re-run the strict policy and full projection, compare the
 source file twice, and recheck before output. The caller still owns remote
 revision/ETag and source-identity checks before and after the run. A manual
-attachment is not a standing source. Without a current economic snapshot, a v2
-receipt is removed even if the public AUM is unchanged; native v1 behavior is
-unchanged. Changed/unavailable raw v3 on the phone suppresses fees, never falls
+attachment is not a standing source. The source lifecycle in
+`docs/fee-economic-source.md` obtains the original source afresh on every run.
+Without a current economic snapshot, a writer presented with an existing v2
+receipt now exits nonzero before any write and preserves the original encrypted
+file byte-for-byte; it does not claim a fresh receipt or successful no-op. This
+backstop replaces the older behavior that removed v2 while updating AUM. Native
+v1/no-receipt behavior is unchanged. Changed/unavailable raw v3 on the phone suppresses fees, never falls
 back to a migrated or cached economic hash.
+
+Historical R/T and weekend rewrites keep the global status and receipt bound to
+the latest daily valuation date. The writer validates the existing latest-day
+status, preserves that day's source/calibration notes, and updates the full
+unresolved-flow count. Missing or inconsistent latest-day state fails closed;
+do not change the receipt's latest-date rule or drop economic input to bypass it.
 
 If any flow remains unresolved, the writer may still preserve the validated raw
 AUM point, but it removes any stale receipt and emits no replacement. Consumers
