@@ -295,7 +295,7 @@ const b64u2buf=s=>Uint8Array.from(atob(s.replace(/-/g,"+").replace(/_/g,"/")),c=
 const buf2b64=u8=>{let s="";for(let i=0;i<u8.length;i+=0x8000)s+=String.fromCharCode.apply(null,u8.subarray(i,i+0x8000));return btoa(s);};
 async function keyOf(b64u){return crypto.subtle.importKey("raw",b64u2buf(b64u),"AES-GCM",false,["encrypt","decrypt"]);}
 async function encTxt(key,txt){const iv=crypto.getRandomValues(new Uint8Array(12));const ct=new Uint8Array(await crypto.subtle.encrypt({name:"AES-GCM",iv},key,new TextEncoder().encode(txt)));const o=new Uint8Array(12+ct.length);o.set(iv);o.set(ct,12);return buf2b64(o);}
-async function decTxt(key,b64){const b=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));const pt=await crypto.subtle.decrypt({name:"AES-GCM",iv:b.slice(0,12)},key,b.slice(12));return new TextDecoder().decode(pt);}
+async function decTxt(key,b64){return new TextDecoder().decode(await decBytes(key,b64));}
 async function decBytes(key,b64){const b=Uint8Array.from(atob(b64),c=>c.charCodeAt(0));return new Uint8Array(await crypto.subtle.decrypt({name:"AES-GCM",iv:b.slice(0,12)},key,b.slice(12)));}
 
 /* fee-legacy-policy:start */
