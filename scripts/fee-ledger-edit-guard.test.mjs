@@ -7,6 +7,7 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 import { buildFeeCalculationReceipt } from "./fee-receipt-core.mjs";
+import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const START = "/* fee-ledger-edit-guard:start */";
@@ -14,6 +15,11 @@ const END = "/* fee-ledger-edit-guard:end */";
 const NOW = Date.parse("2026-09-01T01:00:00Z");
 const FIVE_MINUTES = 5 * 60 * 1000;
 const plain = value => JSON.parse(JSON.stringify(value));
+// Local, read-only cross-worktree preview. CI must test its own checked-out UI.
+const uiFile = process.env.FEE_LEDGER_TEST_INDEX || path.join(root, "index.html");
+if (process.env.GITHUB_ACTIONS === "true" && process.env.FEE_LEDGER_TEST_INDEX)
+  throw new Error("external UI preview is local-only");
+assert.ok(path.isAbsolute(uiFile), "the optional synthetic UI preview path must be absolute");
 const ledger = () => ({
   v: 4,
   updatedAt: "2026-09-01T00:00:00Z",
@@ -31,6 +37,12 @@ const ledger = () => ({
 const snapshot = (over = {}) => ({
   revision: "fixture-revision-1", content: "fixture-encrypted-content-1", db: ledger(), ...over
 });
+const legacyLedger = () => {
+  const raw = ledger(); raw.v = 3;
+  Object.assign(raw.settings.fx, { CNY: 0.14, EUR: 1.09, SGD: 0.745, GBP: 1.27, JPY: 0.0065 });
+  raw.fees = [{ id: "fixture-legacy-empty", type: "exp", date: "2026-08-01", amount: "", ccy: "USD", fx: "", deduct: true, note: "" }];
+  return raw;
+};
 
 function extractBlock(html, start = START, end = END) {
   const starts = html.split(start).length - 1, ends = html.split(end).length - 1;
@@ -87,29 +99,37 @@ function bound(g, source = snapshot()) {
 // This is a synthetic browser, not a connection to a browser profile.  All
 // localStorage, timers and fetches below are in-memory fixtures.  No real Gist,
 // token, private ledger, filesystem browser store or outbound network is used.
-async function browserHarness(html, { stored = null } = {}) {
+async function browserHarness(html, { stored = null, legacy = false } = {}) {
   const inline = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].at(-1)?.[1];
   const boot = inline?.indexOf("/* ============ 启动 ============ */");
   assert.ok(boot > 0, "the main inline script must have an explicit startup boundary");
   const build = /name="fee-console-build" content="([^"]+)"/.exec(html)?.[1];
-  const committed = ledger();
+  const committed = legacy ? legacyLedger() : ledger();
   const data = {
     updatedAt: "2026-08-02T21:00:00Z",
     daily: [{ d: "2026-08-01", schwab: 60_000, webull: 40_000 }, { d: "2026-08-02", schwab: 60_100, webull: 40_100 }],
     flowsAuto: [], flowsUnresolved: [],
     status: { asOf: "2026-08-02", provisional: false, calibrated: true, unresolvedCount: 0 }
   };
-  data.feeCalculationReceipt = buildFeeCalculationReceipt({ data, economicInput: committed });
   const rawKey = new Uint8Array(32).fill(7);
   const key = await crypto.webcrypto.subtle.importKey("raw", rawKey, "AES-GCM", false, ["encrypt", "decrypt"]);
-  const seal = async db => {
+  const seal = async (db, version = 4) => {
     const iv = crypto.webcrypto.getRandomValues(new Uint8Array(12));
     const ciphertext = new Uint8Array(await crypto.webcrypto.subtle.encrypt(
       { name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(db))
     ));
     const bytes = new Uint8Array(iv.length + ciphertext.length); bytes.set(iv); bytes.set(ciphertext, iv.length);
-    return JSON.stringify({ enc: true, v: 4, data: Buffer.from(bytes).toString("base64") });
+    return JSON.stringify({ enc: true, v: version, data: Buffer.from(bytes).toString("base64") });
   };
+  const initialContent = await seal(committed, legacy ? 3 : 4);
+  let receiptEconomic = committed;
+  if (legacy) {
+    const copy = JSON.parse(convertEncryptedV3Copy(Buffer.from(initialContent), Buffer.from(rawKey), { policyId: "fee-console.legacy-empty-expense.v1" }));
+    const encrypted = Buffer.from(copy.data, "base64"), decipher = crypto.createDecipheriv("aes-256-gcm", Buffer.from(rawKey), encrypted.subarray(0, 12));
+    decipher.setAuthTag(encrypted.subarray(-16));
+    receiptEconomic = JSON.parse(Buffer.concat([decipher.update(encrypted.subarray(12, -16)), decipher.final()]));
+  }
+  data.feeCalculationReceipt = buildFeeCalculationReceipt({ data, economicInput: receiptEconomic });
   const store = new Map([
     ["feeConsole.gh.token", "fixture-manager-token"], ["feeConsole.gh.gist", "fixture-gist"],
     ["feeConsole.key", Buffer.from(rawKey).toString("base64url")],
@@ -144,8 +164,21 @@ async function browserHarness(html, { stored = null } = {}) {
     querySelector: selector => selector === 'meta[name="fee-console-build"]' ? { content: build } : null,
     querySelectorAll: () => [], addEventListener: (event, fn) => add(docListeners, event, fn)
   };
-  const remote = { revision: "fixture-revision-1", content: await seal(committed) };
-  const network = { loseWriteResponse: false, rejectWrite: false, corruptReadbackAfterWrite: false };
+  const remote = { revision: "fixture-revision-1", content: initialContent };
+  const network = { loseWriteResponse: false, rejectWrite: false, corruptReadbackAfterWrite: false,
+    failGistRead: false, missingGistFile: false, failDaily: false, invalidDaily: false };
+  const readGates = new Map();
+  const pauseNextRead = kind => {
+    let entered, release;
+    const enteredPromise = new Promise(resolve => { entered = resolve; });
+    const released = new Promise(resolve => { release = resolve; });
+    readGates.set(kind, { entered, released });
+    return { entered: enteredPromise, release };
+  };
+  const passReadGate = async kind => {
+    const gate = readGates.get(kind); readGates.delete(kind);
+    if (gate) { gate.entered(); await gate.released; }
+  };
   let encryptionGate = null;
   let decryptionGate = null;
   const pauseNextEncryption = () => {
@@ -166,7 +199,7 @@ async function browserHarness(html, { stored = null } = {}) {
     getRandomValues: value => crypto.webcrypto.getRandomValues(value), randomUUID: () => crypto.randomUUID(),
     subtle: {
       importKey: (...args) => crypto.webcrypto.subtle.importKey(...args),
-      digest: (...args) => crypto.webcrypto.subtle.digest(...args),
+      async digest(...args) { await passReadGate("digest"); return crypto.webcrypto.subtle.digest(...args); },
       async decrypt(...args) {
         const gate = decryptionGate; decryptionGate = null;
         if (gate) { gate.entered(); await gate.released; }
@@ -188,6 +221,7 @@ async function browserHarness(html, { stored = null } = {}) {
     requests.push({ url, method });
     const ok = body => ({ ok: true, status: 200, json: async () => structuredClone(body), text: async () => typeof body === "string" ? body : JSON.stringify(body) });
     if (url.includes("api.github.com/gists/fixture-gist")) {
+      if (method === "GET" && network.failGistRead) throw new Error("fixture source unavailable");
       if (method === "PATCH") {
         if (network.rejectWrite) return { ok: false, status: 403, json: async () => ({ message: "fixture rejected" }) };
         remote.content = JSON.parse(options.body).files["fee-console-db.json"].content;
@@ -196,17 +230,23 @@ async function browserHarness(html, { stored = null } = {}) {
       } else assert.equal(method, "GET", "test reached an unexpected economic write method");
       const readContent = method === "GET" && remote.revision === "fixture-revision-2" && network.corruptReadbackAfterWrite
         ? "fixture-corrupt-readback" : remote.content;
-      return ok({ id: "fixture-gist", history: [{ version: remote.revision }], files: { "fee-console-db.json": { content: readContent, truncated: false } } });
+      const result = ok({ id: "fixture-gist", history: [{ version: remote.revision }], files: network.missingGistFile ? {} : { "fee-console-db.json": { content: readContent, truncated: false } } });
+      if (method === "GET") await passReadGate("gist");
+      return result;
     }
     if (url.includes("api.github.com/gists?")) {
       assert.equal(method, "GET"); return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
     }
-    if (/^(?:data\.json|https:\/\/fixture\.invalid\/fee-console\/data\.json)(?:\?|$)/.test(url)) return ok(data);
+    if (/^(?:data\.json|https:\/\/fixture\.invalid\/fee-console\/data\.json)(?:\?|$)/.test(url)) {
+      if (network.failDaily) throw new Error("fixture daily unavailable");
+      const result = ok(structuredClone(network.invalidDaily ? { invalid: true } : data));
+      await passReadGate("daily"); return result;
+    }
     if (url.startsWith("https://fixture.invalid/fee-console/")) return ok(html);
     throw new Error(`unmocked network request: ${method} ${url}`);
   };
   const sandbox = {
-    crypto: pageCrypto, TextEncoder, TextDecoder, structuredClone, URL, URLSearchParams,
+    crypto: pageCrypto, TextEncoder, TextDecoder, Uint8Array, ArrayBuffer, structuredClone, URL, URLSearchParams,
     atob: text => Buffer.from(text, "base64").toString("binary"), btoa: text => Buffer.from(text, "binary").toString("base64"),
     console: { log() {}, warn() {}, error() {} }, document, location, fetch,
     navigator: { userAgent: "Synthetic iPhone Safari", standalone: false },
@@ -232,7 +272,7 @@ async function browserHarness(html, { stored = null } = {}) {
     for (const listener of listeners.get(event) || []) await listener({ type: event, ...extra });
     await settle();
   };
-  return { context, run, element, document, store, requests, remote, network, seal, emit, settle, data, committed, pauseNextEncryption, pauseNextDecryption,
+  return { context, run, element, document, store, requests, remote, network, seal, emit, settle, data, committed, pauseNextEncryption, pauseNextDecryption, pauseNextRead,
     writes: () => requests.filter(request => request.method !== "GET") };
 }
 
@@ -245,7 +285,7 @@ test("stage-one contract allows complete absence but rejects partial or unmarked
 });
 
 test("the future index-only ledger editor satisfies the frozen pure guard contract", async t => {
-  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const html = fs.readFileSync(uiFile, "utf8");
   const loaded = loadGuard(html);
   if (!loaded) return;
   const { guard: g, context } = loaded;
@@ -487,7 +527,7 @@ test("the future index-only ledger editor satisfies the frozen pure guard contra
 });
 
 test("the real inline page only writes a synthetic Gist after reviewed save and readback", async t => {
-  const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+  const html = fs.readFileSync(uiFile, "utf8");
   if (!loadGuard(html)) return;
 
   await t.test("read-only viewers can still change the historical year without ledger editing", async () => {
@@ -796,5 +836,167 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     await h.run("checkLedgerOutcome()");
     assert.equal(h.run("EDIT.mode"), "locked");
     assert.equal(h.writes().length, 1);
+  });
+});
+
+test("raw-v3 source lifecycle never restores stale verified fees after invalidation", async t => {
+  const html = fs.readFileSync(uiFile, "utf8");
+  const block = extractBlock(html, "/* fee-legacy-policy:start */", "/* fee-legacy-policy:end */");
+  if (block === null) {
+    // The support PR precedes the index-only PR. Once either marker or lifecycle
+    // implementation appears, absence/partial deployment must fail this test.
+    assert.equal(/feeLegacyPolicy|_receiptSource|_sourceEpoch/.test(html), false,
+      "legacy lifecycle must not exist without the complete shared-policy markers");
+    return;
+  }
+  assert.ok(loadGuard(html));
+  for (const name of ["invalidateReceiptSource", "acceptReceiptSource", "ghReadSnapshot", "pullAll", "render"])
+    assert.match(html, new RegExp("function " + name + "\\("), "missing lifecycle function " + name);
+
+  const pending = async h => {
+    await h.run("render()"); await h.settle();
+    assert.match(h.element("monthsBox").innerHTML, /计算回执待更新/);
+    assert.match(h.element("balBox").innerHTML, /计算回执待更新/);
+    assert.doesNotMatch(h.element("balBox").innerHTML, /应付费用|累计管理费/,
+      "pending status must hide the last verified fee figures");
+    assert.deepEqual(h.writes(), []);
+  };
+  const verified = async h => {
+    await h.run("render()"); await h.settle();
+    assert.equal(h.run('_receiptSource.state'), "verified");
+    assert.doesNotMatch(h.element("monthsBox").innerHTML, /计算回执待更新/);
+    assert.match(h.element("balBox").innerHTML, /应付费用/);
+    assert.deepEqual(h.writes(), []);
+  };
+  const ready = async () => {
+    const h = await browserHarness(html, { legacy: true });
+    await h.run("pullAll(true,{skipShell:true})"); await verified(h);
+    return h;
+  };
+
+  await t.test("cached raw v3 is pending until a real synthetic source read and never becomes an editable v4 source", async () => {
+    const h = await browserHarness(html, { legacy: true }), rawBefore = h.store.get("feeConsole.v3.db"), cloudBefore = h.remote.content;
+    await pending(h);
+    assert.equal(h.run("DB.v"), 4, "only the read-only display projection has v4 shape");
+    await h.run("pullAll(true,{skipShell:true})"); await verified(h);
+    assert.equal(h.run("DB.fees.length"), 0);
+    assert.equal(h.store.get("feeConsole.v3.db"), rawBefore);
+    await h.run("beginLedgerEdit()");
+    assert.equal(h.run("EDIT.mode"), "locked"); assert.equal(h.run("EDIT.draft"), null);
+    await assert.rejects(() => h.run("ghPush()"));
+    assert.equal(h.remote.content, cloudBefore); assert.deepEqual(h.writes(), []);
+  });
+
+  await t.test("source HTTP failure and missing source file hide previous fees while preserving raw records", async () => {
+    for (const flag of ["failGistRead", "missingGistFile"]) {
+      const h = await ready(), before = h.store.get("feeConsole.v3.db");
+      h.network[flag] = true;
+      await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+      assert.equal(h.run("_receiptSource.state"), "unverified");
+      assert.equal(h.store.get("feeConsole.v3.db"), before);
+      h.network[flag] = false;
+      await h.run("pullAll(true,{skipShell:true})"); await verified(h);
+    }
+  });
+
+  await t.test("daily failure or invalid daily shape cannot validate old fee results using a new source read", async () => {
+    for (const flag of ["failDaily", "invalidDaily"]) {
+      const h = await ready(); h.network[flag] = true;
+      await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+      assert.equal(h.run("_receiptSource.state"), "unverified");
+      h.network[flag] = false;
+      await h.run("pullAll(true,{skipShell:true})"); await verified(h);
+    }
+  });
+
+  await t.test("a now-nonempty expense or new unknown field fails before the old projection can be reused", async () => {
+    for (const mutate of [raw => { raw.fees[0].amount = 25; }, raw => { raw.fees[0].amount = "25.00"; },
+      raw => { raw.fees[0].unknown = true; }, raw => { raw.fees[0].deduct = "true"; }]) {
+      const h = await ready(), before = h.store.get("feeConsole.v3.db"), changed = legacyLedger(); mutate(changed);
+      h.remote.content = await h.seal(changed, 3); h.remote.revision = "fixture-changed-legacy";
+      await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+      assert.equal(h.store.get("feeConsole.v3.db"), before);
+      assert.equal(h.run("_receiptSource.state"), "unverified");
+    }
+  });
+
+  await t.test("same plaintext with new encrypted envelope bytes invalidates the old source-bound receipt", async () => {
+    const h = await ready(); h.remote.content = await h.seal(legacyLedger(), 3);
+    h.remote.revision = "fixture-reencrypted-source";
+    await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+    assert.equal(h.run("_receiptSource.state"), "verified", "a readable source is not proof that its old receipt matches");
+  });
+
+  await t.test("manual refresh failure keeps old fee results hidden", async () => {
+    const h = await ready(); h.network.failDaily = true;
+    await h.run("manualRefresh()"); await pending(h);
+    assert.equal(h.run("_manualRefreshing"), false);
+    assert.equal(h.element("btnRefresh").disabled, false);
+  });
+
+  await t.test("an older successful source response cannot refill fees after a newer refresh failed", async () => {
+    const h = await ready(), gate = h.pauseNextRead("gist");
+    const older = h.run("pullAll(true,{skipShell:true})"); await gate.entered;
+    h.network.failGistRead = true;
+    await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+    gate.release(); await older; await pending(h);
+    assert.equal(h.run("_receiptSource.state"), "unverified");
+  });
+
+  await t.test("an older failing source response cannot clear a newer successful refresh", async () => {
+    const h = await ready(), original = h.remote.content;
+    h.remote.content = "fixture-invalid-envelope";
+    const gate = h.pauseNextRead("gist"), older = h.run("pullAll(true,{skipShell:true})"); await gate.entered;
+    h.remote.content = original;
+    await h.run("pullAll(true,{skipShell:true})"); await verified(h);
+    gate.release(); await older; await verified(h);
+  });
+
+  await t.test("an older daily response cannot revive fees after a newer daily failure", async () => {
+    const h = await ready(), gate = h.pauseNextRead("daily");
+    const older = h.run("pullAll(true,{skipShell:true})"); await gate.entered;
+    h.network.failDaily = true;
+    await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+    gate.release(); await older; await pending(h);
+  });
+
+  await t.test("a delayed verified render cannot overwrite a newer pending render", async () => {
+    const h = await ready(), gate = h.pauseNextRead("digest");
+    const older = h.run("render()"); await gate.entered;
+    h.network.failGistRead = true;
+    await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+    gate.release(); await older; await pending(h);
+  });
+
+  await t.test("Gist or key change during a source read rejects its stale result without changing the new identity", async () => {
+    for (const field of ["gid", "key"]) {
+      const h = await ready(), gate = h.pauseNextRead("gist");
+      const older = h.run("pullAll(true,{skipShell:true})"); await gate.entered;
+      h.run(`setCfg(K.${field},"fixture-changed-identity")`);
+      gate.release(); await older; await pending(h);
+      assert.equal(h.run(`cfg(K.${field})`), "fixture-changed-identity");
+      assert.equal(h.run("_receiptSource.state"), "unverified");
+    }
+  });
+
+  await t.test("removing all source access and switching storage identity hide fees even without a successful next read", async () => {
+    const h = await ready();
+    h.run('setCfg(K.gid,"");setCfg(K.key,"");setCfg(K.tok,"")');
+    await h.run("pullAll(true,{skipShell:true})"); await pending(h);
+    const switched = await ready(); switched.network.failGistRead = true;
+    switched.run('setCfg(K.gid,"fixture-gist-switched")');
+    await switched.emit("window", "storage", { key: "feeConsole.gh.gist" });
+    await pending(switched);
+    assert.equal(switched.run("EDIT.mode"), "locked");
+  });
+
+  await t.test("background and pagehide invalidate the source; resume needs a fresh successful read", async () => {
+    const h = await ready(); h.document.visibilityState = "hidden";
+    await h.emit("document", "visibilitychange"); await pending(h);
+    h.document.visibilityState = "visible"; h.network.failGistRead = true;
+    await h.emit("document", "visibilitychange"); await pending(h);
+    h.network.failGistRead = false;
+    await h.run("pullAll(true,{skipShell:true})"); await verified(h);
+    await h.emit("window", "pagehide"); await pending(h);
   });
 });

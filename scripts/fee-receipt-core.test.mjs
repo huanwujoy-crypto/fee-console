@@ -8,9 +8,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { effectiveFlows, periodReturns } from "./fee-engine.mjs";
+import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 import {
   buildFeeCalculationReceipt,
   canonicalJson,
+  FEE_ENGINE_VERSION,
+  FEE_LEGACY_RECEIPT_SCHEMA,
+  FEE_RECEIPT_SCHEMA,
+  legacySourceBindingForEconomicInput,
   normalizeEconomicInputs,
   semanticHash,
   validateFeeCalculationReceipt,
@@ -607,4 +612,302 @@ test("the report refuses GitHub Actions, missing private proof, and changed priv
   assert.equal(malformed.stdout, "");
   assert.match(malformed.stderr, /no fee figures emitted/);
   assert.doesNotMatch(malformed.stderr, /TypeError|\n\s+at\s/);
+});
+
+// Entirely synthetic legacy source. These helpers never read a source file,
+// environment key, browser, Gist, or real financial data.
+const legacyRules = createLegacyPolicy();
+const rawV3Fixture = ({ legacy = true, pay = true } = {}) => {
+  const { economicInput } = fixture();
+  return {
+    v: 3,
+    updatedAt: "2026-08-24T12:00:00Z",
+    settings: {
+      ...economicInput.settings,
+      openingAt: "2026-07-31",
+      fx: { USD: 1, HKD: 0.1282, CNY: 0.14, EUR: 1.1, SGD: 0.75, GBP: 1.3, JPY: 0.007 }
+    },
+    accounts: economicInput.accounts,
+    months: [],
+    fees: [
+      ...(pay ? [{ ...economicInput.fees[0], type: "pay", fx: "" }] : []),
+      ...(legacy ? [{
+        id: "PRIVATE-EMPTY-LEGACY", type: "exp", date: "2026-08-23",
+        amount: "", ccy: "USD", fx: "", note: "", deduct: true
+      }] : [])
+    ]
+  };
+};
+
+const sealSyntheticBytes = (payloadBytes, key, version = 3) => {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const encrypted = Buffer.concat([iv, cipher.update(payloadBytes), cipher.final(), cipher.getAuthTag()]);
+  return Buffer.from(JSON.stringify({ enc: true, v: version, data: encrypted.toString("base64") }));
+};
+
+const legacyFixture = ({ raw = rawV3Fixture(), policyId = legacyRules.LEGACY_POLICY_ID } = {}) => {
+  const key = crypto.randomBytes(32);
+  const sourcePayload = Buffer.from(JSON.stringify(raw));
+  const sourceEnvelope = sealSyntheticBytes(sourcePayload, key);
+  const projected = legacyRules.projectV3(raw, policyId);
+  const legacy = policyId === legacyRules.LEGACY_POLICY_ID;
+  return {
+    data: fixture().data, raw, key, sourcePayload, sourceEnvelope,
+    economicInput: {
+      ...projected.economic,
+      legacyV3Copy: {
+        schema: legacy ? "fee-console.economic-v3-copy.v2" : "fee-console.economic-v3-copy.v1",
+        policy: policyId,
+        sourceEnvelopeBase64: sourceEnvelope.toString("base64"),
+        sourcePayloadBase64: sourcePayload.toString("base64"),
+        ...(legacy ? { paymentIds: projected.paymentIds, legacyRecords: projected.legacyRecords } : {})
+      }
+    }
+  };
+};
+
+const resignReceipt = receipt => {
+  const { receiptId, ...body } = structuredClone(receipt);
+  return { ...body, receiptId: semanticHash("calculation-receipt", body) };
+};
+
+test("native v4 remains byte-compatible with the pinned v1 receipt and unchanged engine", () => {
+  const input = fixture();
+  const receipt = buildFeeCalculationReceipt(input);
+  assert.equal(FEE_RECEIPT_SCHEMA, "fee-console.calculation-receipt.v1");
+  assert.equal(FEE_ENGINE_VERSION, "fee-v4.6.1");
+  assert.equal(receipt.schema, FEE_RECEIPT_SCHEMA);
+  assert.equal(receipt.receiptId, "85bd397ce44113a7141ad6897cbf3e6ac846b7f463e9b8d5d12d4ade3d67feb1");
+  assert.equal(crypto.createHash("sha256").update(JSON.stringify(receipt)).digest("hex"),
+    "3e83c264d20ae0f6ca6320225972838f8cfba5207d8acaa2dceb6d9d986975e5");
+  assert.equal(Object.hasOwn(receipt, "legacySource"), false);
+  assert.equal(legacySourceBindingForEconomicInput(input.economicInput), null);
+});
+
+test("legacy v2 binds both exact original byte streams without changing any fee formula", () => {
+  const input = legacyFixture();
+  const { legacyV3Copy, ...native } = input.economicInput;
+  const receipt = buildFeeCalculationReceipt(input);
+  const comparison = buildFeeCalculationReceipt({ data: input.data, economicInput: native });
+  assert.equal(receipt.schema, FEE_LEGACY_RECEIPT_SCHEMA);
+  assert.equal(receipt.engineVersion, comparison.engineVersion);
+  assert.deepEqual(receipt.legacySource, {
+    policyId: legacyRules.LEGACY_POLICY_ID,
+    sourceEnvelopeSha256: crypto.createHash("sha256").update(input.sourceEnvelope).digest("hex"),
+    sourcePayloadSha256: crypto.createHash("sha256").update(input.sourcePayload).digest("hex")
+  });
+  const { schema, legacySource, receiptId, ...numericalBody } = receipt;
+  const { schema: nativeSchema, receiptId: nativeId, ...nativeBody } = comparison;
+  assert.deepEqual(numericalBody, nativeBody);
+  assert.deepEqual(validateFeeCalculationReceipt(receipt, input.data), { ok: true, errors: [] });
+  assert.deepEqual(validateFeeCalculationReceiptWithEcon(receipt, input.data, input.economicInput), { ok: true, errors: [] });
+  const serialized = JSON.stringify(receipt);
+  for (const privateMarker of ["PRIVATE-EMPTY-LEGACY", "PRIVATE PAYMENT", "PRIVATE PERSON",
+    legacyV3Copy.sourcePayloadBase64, legacyV3Copy.sourceEnvelopeBase64]) {
+    assert.equal(serialized.includes(privateMarker), false);
+  }
+});
+
+test("source envelope whitespace or nonce and payload ordering each change the v2 receipt commitment", () => {
+  const input = legacyFixture();
+  const original = buildFeeCalculationReceipt(input);
+  const reorderedRaw = Object.fromEntries(Object.entries(input.raw).reverse());
+  const reorderedPayload = Buffer.from(JSON.stringify(reorderedRaw, null, 2));
+  const variants = [
+    { envelope: Buffer.from(JSON.stringify(JSON.parse(input.sourceEnvelope), null, 2)), payload: input.sourcePayload },
+    { envelope: sealSyntheticBytes(input.sourcePayload, input.key), payload: input.sourcePayload },
+    { envelope: sealSyntheticBytes(reorderedPayload, input.key), payload: reorderedPayload }
+  ];
+  for (const variant of variants) {
+    const economicInput = structuredClone(input.economicInput);
+    economicInput.legacyV3Copy.sourceEnvelopeBase64 = variant.envelope.toString("base64");
+    economicInput.legacyV3Copy.sourcePayloadBase64 = variant.payload.toString("base64");
+    const changed = buildFeeCalculationReceipt({ data: input.data, economicInput });
+    assert.equal(changed.econInputsHash, original.econInputsHash);
+    assert.deepEqual(changed.periods, original.periods);
+    assert.deepEqual(changed.balance, original.balance);
+    assert.notEqual(changed.receiptId, original.receiptId);
+    assert.equal(validateFeeCalculationReceiptWithEcon(original, input.data, economicInput).ok, false);
+  }
+  const changedPayload = buildFeeCalculationReceipt({
+    data: input.data,
+    economicInput: { ...input.economicInput, legacyV3Copy: {
+      ...input.economicInput.legacyV3Copy,
+      sourceEnvelopeBase64: variants[2].envelope.toString("base64"),
+      sourcePayloadBase64: reorderedPayload.toString("base64")
+    } }
+  });
+  assert.notEqual(changedPayload.legacySource.sourcePayloadSha256, original.legacySource.sourcePayloadSha256);
+});
+
+test("random encryption of a computation copy does not churn its original-source-bound receipt", () => {
+  const input = legacyFixture();
+  const copyBytes = Buffer.from(JSON.stringify(input.economicInput));
+  const first = sealSyntheticBytes(copyBytes, input.key, 4);
+  const second = sealSyntheticBytes(copyBytes, input.key, 4);
+  assert.equal(first.equals(second), false);
+  const open = bytes => {
+    const sealed = Buffer.from(JSON.parse(bytes).data, "base64");
+    const decipher = crypto.createDecipheriv("aes-256-gcm", input.key, sealed.subarray(0, 12));
+    decipher.setAuthTag(sealed.subarray(-16));
+    return JSON.parse(Buffer.concat([decipher.update(sealed.subarray(12, -16)), decipher.final()]));
+  };
+  const a = buildFeeCalculationReceipt({ data: input.data, economicInput: open(first) });
+  const b = buildFeeCalculationReceipt({ data: input.data, economicInput: open(second) });
+  assert.equal(canonicalJson(a), canonicalJson(b));
+});
+
+test("zero archived legacy rows still require the explicit v2 policy; old strict copies stay v1", () => {
+  for (const pay of [true, false]) {
+    const narrow = legacyFixture({ raw: rawV3Fixture({ legacy: false, pay }) });
+    assert.deepEqual(narrow.economicInput.legacyV3Copy.legacyRecords, []);
+    assert.equal(buildFeeCalculationReceipt(narrow).schema, FEE_LEGACY_RECEIPT_SCHEMA);
+    assert.equal(buildFeeCalculationReceipt(narrow).legacySource.policyId, legacyRules.LEGACY_POLICY_ID);
+  }
+  const strict = legacyFixture({ raw: rawV3Fixture({ legacy: false }), policyId: legacyRules.STRICT_POLICY_ID });
+  const { legacyV3Copy, ...native } = strict.economicInput;
+  const strictReceipt = buildFeeCalculationReceipt(strict);
+  assert.equal(strictReceipt.schema, FEE_RECEIPT_SCHEMA);
+  assert.equal(Object.hasOwn(strictReceipt, "legacySource"), false);
+  assert.equal(canonicalJson(strictReceipt), canonicalJson(buildFeeCalculationReceipt({ data: strict.data, economicInput: native })));
+});
+
+test("declared provenance never silently becomes native v4 after unknown policy, schema or fields", () => {
+  const input = legacyFixture();
+  const mutations = [
+    x => { x.legacyV3Copy = null; },
+    x => { x.legacyV3Copy = []; },
+    x => { x.legacyV3Copy.policy = "PRIVATE-UNAPPROVED-POLICY"; },
+    x => { x.legacyV3Copy.schema = "fee-console.economic-v3-copy.v99"; },
+    x => { x.legacyV3Copy.schema = "fee-console.economic-v3-copy.v1"; },
+    x => { x.legacyV3Copy.policy = legacyRules.STRICT_POLICY_ID; },
+    x => { x.legacyV3Copy.privateUnknown = "PRIVATE-SOURCE-VALUE"; },
+    x => { delete x.legacyV3Copy.paymentIds; },
+    x => { delete x.legacyV3Copy.legacyRecords; },
+    x => { x.privateUnknown = "PRIVATE-SOURCE-VALUE"; },
+    x => { x.v = 3; }
+  ];
+  for (const mutate of mutations) {
+    const economicInput = structuredClone(input.economicInput);
+    mutate(economicInput);
+    assert.throws(() => buildFeeCalculationReceipt({ data: input.data, economicInput }),
+      /^Error: legacy economic source is invalid or unsupported$/);
+    const result = validateFeeCalculationReceiptWithEcon(buildFeeCalculationReceipt(input), input.data, economicInput);
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE-/);
+  }
+  assert.throws(() => buildFeeCalculationReceipt({ data: input.data, economicInput: input.raw }), /legacy economic source/);
+});
+
+test("copy verification compares all economic fields and the complete ordered fee partition", () => {
+  const input = legacyFixture();
+  const originalNormalized = normalizeEconomicInputs(input.economicInput);
+  const nonEconomicMutations = [
+    x => { x.settings.who = "PRIVATE-CHANGED-NAME"; },
+    x => { x.accounts[0].name = "PRIVATE-CHANGED-NAME"; },
+    x => { x.fees[0].note = "PRIVATE-CHANGED-NOTE"; },
+    x => { x.updatedAt = "2026-08-25T12:00:00Z"; }
+  ];
+  for (const mutate of nonEconomicMutations) {
+    const economicInput = structuredClone(input.economicInput);
+    mutate(economicInput);
+    assert.deepEqual(normalizeEconomicInputs(economicInput), originalNormalized);
+    assert.throws(() => buildFeeCalculationReceipt({ data: input.data, economicInput }), /legacy economic source/);
+  }
+  for (const mutate of [
+    x => { x.fees = []; },
+    x => { delete x.fees; },
+    x => { x.settings.mgmt = 2.1; },
+    x => { x.legacyV3Copy.paymentIds = []; },
+    x => { x.legacyV3Copy.paymentIds.push("PRIVATE-EMPTY-LEGACY"); },
+    x => { x.legacyV3Copy.legacyRecords = []; },
+    x => { x.legacyV3Copy.legacyRecords[0].deduct = false; },
+    x => { x.legacyV3Copy.legacyRecords.push(x.legacyV3Copy.legacyRecords[0]); }
+  ]) {
+    const economicInput = structuredClone(input.economicInput);
+    mutate(economicInput);
+    assert.throws(() => buildFeeCalculationReceipt({ data: input.data, economicInput }), /legacy economic source/);
+  }
+});
+
+test("a changed raw legacy expense can never hide behind the unchanged canonical fee ledger", () => {
+  const input = legacyFixture();
+  for (const patch of [
+    { amount: 0 }, { amount: "0" }, { amount: 25 }, { amount: "25.00" }, { amount: " " },
+    { amount: null }, { fx: 1 }, { fx: " " }, { note: "PRIVATE-ACTUAL-EXPENSE" },
+    { deduct: "true" }, { cat: "PRIVATE-CATEGORY" }, { extra: true }
+  ]) {
+    const raw = structuredClone(input.raw);
+    Object.assign(raw.fees.at(-1), patch);
+    const payload = Buffer.from(JSON.stringify(raw));
+    const economicInput = structuredClone(input.economicInput);
+    economicInput.legacyV3Copy.sourcePayloadBase64 = payload.toString("base64");
+    economicInput.legacyV3Copy.sourceEnvelopeBase64 = sealSyntheticBytes(payload, input.key).toString("base64");
+    assert.equal(canonicalJson(normalizeEconomicInputs(economicInput)), canonicalJson(normalizeEconomicInputs(input.economicInput)));
+    assert.throws(() => buildFeeCalculationReceipt({ data: input.data, economicInput }), /legacy economic source/);
+  }
+});
+
+test("source JSON duplicate keys, malformed base64 and non-v3 envelopes fail closed", () => {
+  const input = legacyFixture();
+  const mutations = [
+    x => { x.legacyV3Copy.sourcePayloadBase64 = ""; },
+    x => { x.legacyV3Copy.sourcePayloadBase64 += "\n"; },
+    x => { x.legacyV3Copy.sourceEnvelopeBase64 = "PRIVATE-INVALID"; },
+    x => { x.legacyV3Copy.sourceEnvelopeBase64 = Buffer.from('{"enc":true,"v":3,"v":3,"data":"AAAA"}').toString("base64"); },
+    x => { x.legacyV3Copy.sourcePayloadBase64 = Buffer.from(input.sourcePayload.toString().replace('"v":3', '"v":3,"v":3')).toString("base64"); },
+    x => { x.legacyV3Copy.sourceEnvelopeBase64 = Buffer.from(JSON.stringify({ ...JSON.parse(input.sourceEnvelope), v: 4 })).toString("base64"); },
+    x => { x.legacyV3Copy.sourceEnvelopeBase64 = Buffer.from(JSON.stringify({ enc: true, v: 3, data: "AAAA" })).toString("base64"); }
+  ];
+  for (const mutate of mutations) {
+    const economicInput = structuredClone(input.economicInput);
+    mutate(economicInput);
+    assert.throws(() => buildFeeCalculationReceipt({ data: input.data, economicInput }), /legacy economic source/);
+  }
+});
+
+test("v2 exact-field/type validation rejects malformed commitments without echoing private values", () => {
+  const input = legacyFixture();
+  const original = buildFeeCalculationReceipt(input);
+  for (const mutate of [
+    x => { delete x.legacySource; },
+    x => { x.legacySource = null; },
+    x => { x.legacySource = []; },
+    x => { x.legacySource.policyId = "PRIVATE-UNAPPROVED-POLICY"; },
+    x => { x.legacySource.extra = "PRIVATE-SOURCE-VALUE"; },
+    x => { x.legacySource.sourceEnvelopeSha256 = [original.legacySource.sourceEnvelopeSha256]; },
+    x => { x.legacySource.sourcePayloadSha256 = 123; },
+    x => { x.legacySource.sourcePayloadSha256 = original.legacySource.sourcePayloadSha256.toUpperCase(); },
+    x => { x.schema = "fee-console.calculation-receipt.v99"; },
+    x => { x.engineVersion = "PRIVATE-UNKNOWN-ENGINE"; },
+    x => { x.periods[0] = null; }
+  ]) {
+    const changed = structuredClone(original);
+    mutate(changed);
+    const signed = resignReceipt(changed);
+    assert.doesNotThrow(() => validateFeeCalculationReceipt(signed, input.data));
+    const result = validateFeeCalculationReceipt(signed, input.data);
+    assert.equal(result.ok, false);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE-/);
+  }
+});
+
+test("private validation rebuilds source binding rather than trusting a re-signed or downgraded receipt", () => {
+  const input = legacyFixture();
+  const receipt = buildFeeCalculationReceipt(input);
+  const forged = structuredClone(receipt);
+  forged.legacySource.sourcePayloadSha256 = "0".repeat(64);
+  const forgedSigned = resignReceipt(forged);
+  // Public validation is only shape/arithmetic/public-data proof, never proof
+  // that the private original source was read or authenticated this run.
+  assert.equal(validateFeeCalculationReceipt(forgedSigned, input.data).ok, true);
+  assert.equal(validateFeeCalculationReceiptWithEcon(forgedSigned, input.data, input.economicInput).ok, false);
+  const downgrade = structuredClone(receipt);
+  downgrade.schema = FEE_RECEIPT_SCHEMA;
+  assert.equal(validateFeeCalculationReceipt(resignReceipt(downgrade), input.data).ok, false);
+  delete downgrade.legacySource;
+  assert.equal(validateFeeCalculationReceiptWithEcon(resignReceipt(downgrade), input.data, input.economicInput).ok, false);
+  const { legacyV3Copy, ...native } = input.economicInput;
+  assert.equal(validateFeeCalculationReceiptWithEcon(receipt, input.data, native).ok, false);
 });

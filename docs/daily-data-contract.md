@@ -198,12 +198,26 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
 
 - 使用绝对路径，并位于 Git 仓库之外；
 - 是手机私密 Gist `fee-console-db.json` 的原始 AES-256-GCM encrypted v4 envelope；
+- 唯一旧版例外：原源为 v3 且通过 `docs/fee-econ-v3-copy.md` 的显式
+  `fee-console.legacy-empty-expense.v1` 策略时，可使用保留全部原始字节的独立加密
+  v4 计算副本。原 Gist 不升级、不回写，不使用页面宽松 `migrate()`。
 - 在一次运行中连续读取两次且字节不变；
 - 使用现有 `FEE_DATA_KEY` 在内存解密，绝不把明文、Gist id 或密钥写入仓库或日志。
 
 Routine 必须先在远端连续读取同一个 Gist revision/ETag，并确认两次 encrypted content
 逐字节相同，再把它交给脚本。本地文件的连续双读只防止使用过程中被替换，不能单独证明
 远端 Gist 稳定。
+
+旧版例外每次运行还须以 `FEE_ECON_V3_FILE` 提供本次远端已验证的原密文快照。
+writer/reporter 会认证 provenance 内原封套、比对原 payload 准确字节、重跑严格策略
+和完整投影/ID分区，并连续双读该原密文文件，输出前再次复核。缺源或不符拒绝输出。
+来源身份、历史完整性与发布前远端 revision/ETag 回验仍须单独完成；人工附件不可长期
+代替每次重读原源。空白 exp 不计入付款，也不等于现实中费用为零或从未付款。
+
+原生 v4 维持回执 v1；窄兼容副本必须使用回执 v2，额外严格绑定 `legacySource`
+的策略 ID、原 envelope/payload 各自准确字节 SHA-256，禁止 canonical 再序列化替代。
+原字节与原记录仅在加密副本中，绑定仅在加密回执中，不进普通显示、日志或通知。
+手机必须在迁移/赋值之前核验原 v3；无原源、源已变、策略不符时隐藏旧费用。
 
 回执只保存输入 commitment（SHA-256 hash）和派生结果，不复制账户 opening、确认 flow、
 备注、付款 id、姓名或原始 FX 表。付款日期、金额、币种及实际采用的 USD FX 会进入私密
@@ -218,7 +232,8 @@ Routine 必须先在远端连续读取同一个 Gist revision/ETag，并确认�
 - `daily.mjs` 先完成来源校验、flow reconciliation 和候选 daily point，再基于候选 payload
   生成回执，最后才原子写回。
 - 每日数据未变、但费率、opening 或确认 flow 改变时，回执变化必须打破 `no-op` 并更新。
-- 未提供私密经济输入时，只有仍与 public input hash 匹配的旧回执可以保留；一旦不匹配，
+- 未提供私密经济输入时，只有原生 v1 且仍与 public input hash 匹配的旧回执可以保留；
+  legacy v2 无本次来源必须移除，即使 AUM 未变。一旦 public input 不匹配，
   必须删除 stale receipt，不能显示旧数字。
 - `flowsUnresolved` 非空时，已验证的原始 AUM 点仍可写入，但 stale receipt 必须删除且本次
   不生成新回执；费用、Carry、已付／应付和费用后收益一律不可显示。
@@ -240,3 +255,7 @@ Routine 必须先在远端连续读取同一个 Gist revision/ETag，并确认�
 
 v1 回执覆盖费用、Carry、已付／应付以及组合自身的毛／净收益率；SPY、QQQ 等 benchmark
 仍来自公开 daily ledger，暂不属于回执的单一计算源，不得把 v1 描述成覆盖页面全部数字。
+
+v2 保留相同数学引擎与覆盖范围，仅增加旧版来源验证；未知版本或额外字段必须拒绝。
+脚本和 index-only 两侧均完成审批部署后才允许真实 v2 验收，旧 consumer 拒绝 v2 与
+新 consumer 严格取源匹配均须有实际合成执行测试。原 v3 的编辑保存禁令不变。
