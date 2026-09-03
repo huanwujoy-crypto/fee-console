@@ -8,6 +8,9 @@ const html = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url),
 const state = JSON.parse(html.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
 const now = Date.parse(ledger.events.at(-1).recordedAtHkt)+120000;
 const followup = new Date(now-60000+28800000).toISOString().slice(0,19)+'+08:00';
+// A copied historical event keeps its immutable provenance, not its expired
+// review target: synthetic follow-ups get a target relative to their own time.
+const followupReview = new Date(Date.parse(followup)+86400000+28800000).toISOString().slice(0,19)+'+08:00';
 const copy = v => JSON.parse(JSON.stringify(v));
 test('published progress matches original receipts and shared validator', () => { checkProgress(); });
 test('strict JSON rejects duplicate keys, trailing content and nesting overflow', () => {
@@ -21,7 +24,7 @@ test('all three original decisions stay accepted; progress is separate', () => {
 });
 test('user-only implementation requests require an explicit state and an actionable blocker', () => {
   const d=copy(ledger);d.revision++;
-  d.events.push({...copy(d.events[0]),eventId:'P-USER-ACTION',recordedAtHkt:followup,
+  d.events.push({...copy(d.events[0]),eventId:'P-USER-ACTION',recordedAtHkt:followup,reviewAfterHkt:followupReview,
     status:'user_action_required',owner:'Wu',blocker:'需要本人核对原始资料',nextAction:'请提供缺少的资料日期'});
   validateProgress(d,state,ledger,now);
   d.events.at(-1).blocker='';
@@ -77,13 +80,22 @@ test('existing valid millisecond-precision receipts also accept independent prog
 });
 test('append-only accepts appended progress but never edits existing events',()=>{
   const d=copy(ledger);d.revision++;
-  d.events.push({...copy(d.events[2]),eventId:'P-NEXT',recordedAtHkt:followup});
+  d.events.push({...copy(d.events[2]),eventId:'P-NEXT',recordedAtHkt:followup,reviewAfterHkt:followupReview});
   validateProgress(d,state,ledger,now);
   const bad=copy(d);bad.events[0].summary='修改历史';
   assert.throws(()=>validateProgress(bad,state,ledger,now));
   const removed=copy(d);removed.events.shift();
   assert.throws(()=>validateProgress(removed,state,ledger,now));
   assert.throws(()=>validateProgress(ledger,state,d,now));
+});
+test('a synthetic follow-up uses its own review target and still rejects a target before its event',()=>{
+  const d=copy(ledger);d.revision++;
+  d.events.push({...copy(d.events[0]),eventId:'P-REVIEW-TARGET',recordedAtHkt:followup,reviewAfterHkt:followupReview});
+  validateProgress(d,state,ledger,now);
+  assert.deepEqual(d.events.slice(0,-1),ledger.events,'no historical event or receipt binding is rewritten');
+  assert.equal(Date.parse(d.events.at(-1).reviewAfterHkt)-Date.parse(followup),86400000);
+  d.events.at(-1).reviewAfterHkt=new Date(Date.parse(followup)-1000+28800000).toISOString().slice(0,19)+'+08:00';
+  assert.throws(()=>validateProgress(d,state,ledger,now),/复核日早于记录日/);
 });
 test('same revision cannot mutate payload and higher revision needs a new event',()=>{
   const d=copy(ledger);d.events.push({...copy(d.events[2]),eventId:'P-NEXT'});

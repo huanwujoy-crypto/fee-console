@@ -10,15 +10,24 @@ import { classificationReportBlob } from './xuan-ib-classification-correction.mj
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { migratePolicyToEtfPane } from './xuan-ib-etf-pane.mjs';
+import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const approvedPolicy = JSON.parse(fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
 const approvedPolicySection = renderPolicySection(approvedPolicy);
-// Historical fixtures carry policy-v2 in legacy p3. Model the next ordinary
-// report by applying the trusted presentation-only p3 -> p5 migration first.
-const withMigratedEtfPolicyFixture = (html) => migratePolicyToEtfPane(html.replace(
-  '<div class="pane p3">',
-  '<div class="pane p3">' + approvedPolicySection
-), approvedPolicy);
+// Model a current ordinary report's disclosure and p3 -> p5 presentation.
+// The exact historical repair outputs below stay untouched; this test-only
+// migration is not an expanded production repair or fresh financial evidence.
+const classificationBlock = /<section id="xuan-ib-classification-disclosure-v1">[\s\S]*?<\/section>/g;
+const withMigratedEtfPolicyFixture = (html) => {
+  const oldBlocks = [...html.matchAll(classificationBlock)];
+  assert.equal(oldBlocks.length, 1, 'historical fixture has exactly one disclosure');
+  const current = html.replace(oldBlocks[0][0], renderClassificationDisclosure());
+  assert.equal(current.replace(renderClassificationDisclosure(), oldBlocks[0][0]), html,
+    'synthetic disclosure migration changes no other bytes');
+  return migratePolicyToEtfPane(current.replace(
+    '<div class="pane p3">', '<div class="pane p3">' + approvedPolicySection
+  ), approvedPolicy);
+};
 const original = execFileSync('git', ['show', '258f98fe59c28b745908d43f998dbc144662dc1b:xuan-ib/latest.html'], { cwd: repo, encoding: 'utf8' });
 const corrected = correctCashPlan(original);
 const extract = (html, regex) => [...html.matchAll(regex)].map(m => m[0]);
@@ -41,6 +50,12 @@ test('cash correction passes the entire trusted publication guard with original 
   fs.writeFileSync(previous, withMigratedEtfPolicyFixture(original)); fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected));
   const guard = path.join(repo, 'scripts/handover-guard.mjs');
   const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_CORRECTION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_CORRECTION_SOURCE_BLOB };
+  const oldDisclosure = [...corrected.matchAll(classificationBlock)][0][0];
+  fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected).replace(renderClassificationDisclosure(), oldDisclosure));
+  const obsolete = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
+  assert.notEqual(obsolete.status, 0, 'unchanged historical disclosure must not pass the current gate');
+  assert.match(obsolete.stderr + obsolete.stdout, /classification disclosure/);
+  fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected));
   const result = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected.replace('$466,482', '$475,270')));

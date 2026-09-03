@@ -433,7 +433,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-08-31\.5"/);
+  assert.match(loader, /loaderBuild = "2026-09-03\.1"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -1233,7 +1233,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-08-31.5');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-03.1');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -2068,6 +2068,7 @@ test('new report cannot inherit a current verified status from an older observed
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
   assert.equal(doc.querySelectorAll('.xuan-work-badge').length,3);
   for(const badge of doc.querySelectorAll('.xuan-work-badge')) assert.match(badge.textContent,/历史进度 · 本期尚未复核/);
+  assert.equal(doc.querySelector('.xuan-progress-title').textContent,'落实进度 3 项');
   assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
   assert.equal(doc.getElementById('xuan-progress-attention').textContent,'历史进度待复核');
   assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
@@ -2125,6 +2126,117 @@ function userRequestProgress(status='awaiting_approval') {
   return data;
 }
 
+// Only synthetic follow-up events are rebound to the test report; old events,
+// receipt identities and their original response-to pair remain immutable.
+function headingProgress(statuses=['evidence_recorded','evidence_recorded','in_progress']) {
+  const data=structuredClone(progressFixture);data.revision++;
+  const resolved=publishedState.decisions.filter(d=>['accepted','modified'].includes(d.status));
+  assert.equal(statuses.length,resolved.length);
+  for(const [index,decision] of resolved.entries()) {
+    const base=data.events.filter(e=>e.decisionId===decision.decisionId).at(-1);
+    data.events.push({...structuredClone(base),eventId:`P-HEADING-${index}`,recordedAtHkt:progressFollowup,
+      status:statuses[index],title:'合成测试：仅核验本项规则',summary:'本期证据仅支持本项规则，不关闭后续工作',
+      blocker:['blocked','awaiting_approval','user_action_required'].includes(statuses[index])?'合成测试：尚有明确后续事项':'',
+      evidence:statuses[index]==='evidence_recorded'?['合成测试：本项规则已按本期报告核验']:[]});
+  }
+  return data;
+}
+async function renderHeadingProgress(data) {
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  return {app,doc};
+}
+
+test('progress heading counts current scoped evidence instead of all accepted decisions',async()=>{
+  const data=headingProgress(),originalReceipts=JSON.stringify(publishedState.receipts);
+  const {app,doc}=await renderHeadingProgress(data);
+  const fold=doc.getElementById('xuan-progress-fold');
+  assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
+  assert.equal(fold.querySelector('summary').getAttribute('aria-label'),'已核验 2 项 · 核验中 1 项');
+  assert.equal(fold.hasAttribute('open'),false);
+  assert.equal(doc.getElementById('xuan-progress-attention').hidden,true);
+  assert.equal(doc.querySelectorAll('.xuan-work').length,3,'implemented decisions retain their history cards');
+  assert.equal(doc.querySelectorAll('.xuan-work-badge').filter(b=>b.textContent==='已有落实证据 · 持续观察').length,2);
+  assert.ok(doc.querySelectorAll('.xuan-work-current').every(card=>card.textContent.includes('不关闭后续工作')));
+  assert.equal(JSON.stringify(publishedState.receipts),originalReceipts);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html,latest);
+});
+
+for(const [statuses,heading,attention] of [
+  [['evidence_recorded','evidence_recorded','evidence_recorded'],'已核验 3 项',''],
+  [['in_progress','in_progress','in_progress'],'核验中 3 项',''],
+  [['not_started','blocked','user_action_required'],'待安排 1 项 · 受阻 1 项 · 待你处理 1 项','⚠ 待你处理 1 项'],
+  [['evidence_recorded','awaiting_approval','user_action_required'],'已核验 1 项 · 待你确认 1 项 · 待你处理 1 项','⚠ 待你确认 1 项 · 待你处理 1 项']
+]) test(`progress heading distinguishes ${statuses.join('/')} without inventing completion`,async()=>{
+  const {doc}=await renderHeadingProgress(headingProgress(statuses));
+  assert.equal(doc.querySelector('.xuan-progress-title').textContent,heading);
+  assert.equal(doc.getElementById('xuan-progress-attention').textContent,attention);
+  assert.equal(doc.getElementById('xuan-progress-attention').hidden,!attention);
+  assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,!attention);
+  assert.equal(doc.querySelectorAll('.xuan-work').length,3);
+});
+
+for(const field of ['sourceSha','htmlBlob']) {
+  test(`progress heading never counts historical evidence when only ${field} differs`,async()=>{
+    const data=headingProgress(['evidence_recorded','evidence_recorded','evidence_recorded']);
+    for(const event of data.events) event.observedPair[field]='f'.repeat(40);
+    const {doc}=await renderHeadingProgress(data);
+    assert.equal(doc.querySelector('.xuan-progress-title').textContent,'落实进度 3 项');
+    assert.equal(doc.getElementById('xuan-progress-attention').textContent,'历史进度待复核');
+    assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+    for(const badge of doc.querySelectorAll('.xuan-work-badge')) assert.equal(badge.textContent,'历史进度 · 本期尚未复核');
+  });
+}
+
+test('progress heading separates mixed current, historical and missing evidence',async()=>{
+  for(const missing of [false,true]) {
+    const data=headingProgress(),middle=data.events.at(-2);
+    if(missing) data.events=data.events.filter(event=>event.decisionId!==middle.decisionId);
+    else middle.observedPair={sourceSha:'e'.repeat(40),htmlBlob:metadata.htmlBlob};
+    const {doc}=await renderHeadingProgress(data);
+    assert.equal(doc.querySelector('.xuan-progress-title').textContent,`已核验 1 项 · 核验中 1 项 · ${missing?'未核实':'待复核'} 1 项`);
+    assert.equal(doc.getElementById('xuan-progress-attention').textContent,missing?'进度未核实':'历史进度待复核');
+    assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
+    assert.ok(doc.getElementById(middle.decisionId),'a missing progress event never deletes the original decision');
+  }
+});
+
+test('progress heading withdraws completed counts after unreadable or invalid ledger refresh',async()=>{
+  for(const mode of ['http','json','receipt']) {
+    let failed=false;
+    const good=headingProgress(),bad=structuredClone(good);bad.events.at(-1).receiptId='R-20260831-000000-XXXXXXXX';
+    const {app}=progressApp(()=>response({status:failed&&mode==='http'?503:200,
+      bytes:Buffer.from(failed?(mode==='json'?'{"a":1,"a":2}':JSON.stringify(bad)):JSON.stringify(good))}));
+    await app.listeners.button.click();
+    const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+    assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
+    const fold=doc.getElementById('xuan-progress-fold');fold.setAttribute('open','');
+    failed=true;await app.listeners.button.click();await settleProgress();
+    assert.equal(doc.querySelector('.xuan-progress-title').textContent,'落实进度 3 项',mode);
+    assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实',mode);
+    assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true,mode);
+    assert.equal(doc.querySelectorAll('.xuan-work-badge').length,0,mode);
+    assert.equal(fold.hasAttribute('open'),true,'same-report failure does not close the user disclosure');
+    assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html,latest);
+  }
+});
+
+test('late earlier progress cannot replace the newer heading with inflated completion counts',async()=>{
+  let release,calls=0;
+  const earlier=headingProgress(['evidence_recorded','evidence_recorded','evidence_recorded']);
+  const newer=structuredClone(earlier);newer.revision++;
+  newer.events.push({...structuredClone(newer.events.at(-1)),eventId:'P-HEADING-RECHECK',status:'in_progress'});
+  const {app}=progressApp(()=>++calls===1?new Promise(resolve=>{release=resolve;}):response({bytes:Buffer.from(JSON.stringify(newer))}));
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);
+  await app.listeners.button.click();await settleProgress();
+  assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
+  release(response({bytes:Buffer.from(JSON.stringify(earlier))}));await settleProgress();
+  assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
+  assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
+});
+
 test('progress starts as one native closed group with zero actual user requests and no neighbor absorption',async()=>{
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
   await app.listeners.button.click();
@@ -2137,8 +2249,8 @@ test('progress starts as one native closed group with zero actual user requests 
   assert.equal(fold.children[0].tagName,'SUMMARY');
   const heading=doc.querySelector('[data-decision-group-title="resolved"]');
   assert.equal(heading.tagName,'H2');assert.equal(heading.parentElement,fold.children[0]);
-  assert.equal(heading.textContent,'已决定 · 落实进度 3 项');
-  assert.equal(fold.children[0].getAttribute('aria-label'),'已决定 · 落实进度 3 项');
+  assert.equal(heading.textContent,'核验中 2 项 · 受阻 1 项');
+  assert.equal(fold.children[0].getAttribute('aria-label'),'核验中 2 项 · 受阻 1 项');
   assert.equal(doc.getElementById('xuan-progress-attention').hidden,true);
   assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
   assert.equal(doc.querySelectorAll('.xuan-needs-user').length,0);
@@ -2252,6 +2364,7 @@ test('a newer receipt without its own implementation evidence shows unverified p
   await app.listeners.button.click();
   const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress();
   assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实');
+  assert.equal(doc.querySelector('.xuan-progress-title').textContent,'核验中 1 项 · 受阻 1 项 · 未核实 1 项');
   assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
   assert.doesNotMatch(doc.getElementById('xuan-progress-status').textContent,/后续规则待你确认/);
   assert.ok(doc.getElementById(id));

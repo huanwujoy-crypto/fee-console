@@ -151,7 +151,9 @@ Only this requested repair may omit fresh reads; normal reports may not.
 For every ordinary report with four-bucket content, run
 `node scripts/xuan-ib-classification-disclosure.mjs` and insert its exact HTML
 section once inside the folded report explanation. This is a trusted,
-historically dated three-portfolio audit disclosure, not a new holdings feed.
+historically dated seven-portfolio coverage audit disclosure, not a new holdings
+feed or a synchronized current valuation. Its two 2026-08-31 read windows are
+explicit; the earlier three-portfolio/cash-identity question is historical.
 Do not copy classification reasoning from the previous report. Detailed
 classification coverage, Semi Liquid and override/portfolio-rule counts belong
 only in this canonical section; use a short dated fallback reference elsewhere.
@@ -160,8 +162,9 @@ The trusted handover guard enforces this contract for both Validate and Promote.
 The interim disclosure preserves the approved 2026-08-24 four-bucket fallback.
 Seven-portfolio holdings completeness, cash identity, pagination and value
 reconciliation must be independently checked before a reviewed maintenance
-update may replace it with complete-current-audit evidence. A three-portfolio
-audit or a mapping-file read alone is not that evidence. The unresolved
+update may replace it with complete-current-audit evidence. Historical
+seven-portfolio coverage, a partial audit or a mapping-file read alone is not
+that evidence. The unresolved
 classification work never by itself blocks unrelated successfully read report
 fields. Do not change mapping rules merely to eliminate a warning.
 
