@@ -11,16 +11,25 @@ import { classificationReportBlob } from './xuan-ib-classification-correction.mj
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { migratePolicyToEtfPane } from './xuan-ib-etf-pane.mjs';
+import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const approvedPolicy = JSON.parse(fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
 const approvedPolicySection = renderPolicySection(approvedPolicy);
-// Preserve the operational p3 content while modelling an ordinary report
-// whose canonical policy section has moved into independent p5.
-const withMigratedEtfPolicyFixture = (html) => migratePolicyToEtfPane(html.replace(
-  '<div class="pane p3">',
-  '<div class="pane p3">' + approvedPolicySection
-), approvedPolicy);
+// Preserve the exact historical repair output while modelling a current
+// ordinary report's trusted disclosure and independent p5 presentation.
+// This test-only migration neither changes the repair binding nor reads data.
+const classificationBlock = /<section id="xuan-ib-classification-disclosure-v1">[\s\S]*?<\/section>/g;
+const withMigratedEtfPolicyFixture = (html) => {
+  const oldBlocks = [...html.matchAll(classificationBlock)];
+  assert.equal(oldBlocks.length, 1, 'historical fixture has exactly one disclosure');
+  const current = html.replace(oldBlocks[0][0], renderClassificationDisclosure());
+  assert.equal(current.replace(renderClassificationDisclosure(), oldBlocks[0][0]), html,
+    'synthetic disclosure migration changes no other bytes');
+  return migratePolicyToEtfPane(current.replace(
+    '<div class="pane p3">', '<div class="pane p3">' + approvedPolicySection
+  ), approvedPolicy);
+};
 const fixtureCommit = 'fc27cd8aaadfda0be42d0c5114ca4066d5fad499';
 const original = execFileSync('git', ['show', fixtureCommit + ':xuan-ib/latest.html'], { cwd: repo, encoding: 'utf8' });
 const meta = JSON.parse(execFileSync('git', ['show', fixtureCommit + ':xuan-ib/latest.meta.json'], { cwd: repo, encoding: 'utf8' }));
@@ -141,6 +150,12 @@ test('trusted publication guard accepts the candidate and explicit-binding CLI e
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
   fs.writeFileSync(previous, withMigratedEtfPolicyFixture(original)); fs.writeFileSync(current, withMigratedEtfPolicyFixture(updated));
   const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: binding.sourceSha, XUAN_IB_PREVIOUS_HTML_BLOB: binding.htmlBlob };
+  const oldDisclosure = [...updated.matchAll(classificationBlock)][0][0];
+  fs.writeFileSync(current, withMigratedEtfPolicyFixture(updated).replace(renderClassificationDisclosure(), oldDisclosure));
+  const obsolete = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });
+  assert.notEqual(obsolete.status, 0, 'unchanged historical disclosure must not pass the current gate');
+  assert.match(obsolete.stderr + obsolete.stdout, /classification disclosure/);
+  fs.writeFileSync(current, withMigratedEtfPolicyFixture(updated));
   const guard = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(guard.status, 0, guard.stderr + guard.stdout);
   fs.writeFileSync(previous, original);

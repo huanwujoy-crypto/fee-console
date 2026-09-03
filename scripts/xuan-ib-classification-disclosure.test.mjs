@@ -9,11 +9,14 @@ const page = (body) => `<!doctype html><html><head><title>Report</title></head><
 // Actual recurrence from the published 2026-08-31 16:48–16:55 HKT report.
 const recurrentClaim = '<p>NOAH-HK / ANTARCTICA / UBS 三个组合中带「Semi Liquid」Sharesight 标签的持仓本次<b>精确计数仍为 56 个</b>，其中仍仅 8 个在 <code>holdingOverrides</code> 中有明确 hedge_fund/evergreen 归类；其余 48 个因 mapping 自带 <code>unknownSemiLiquid</code> 规则要求 fail-closed，本次继续沿用 08-24 快照。</p>';
 
-test('canonical policy describes historical partial evidence and retains dated fallback', () => {
+test('canonical policy describes corrected historical seven-portfolio coverage but retains dated fallback', () => {
   assert.deepEqual(validateClassificationDisclosure(page(canonical)), []);
-  for (const detail of ['2026-08-31 15:31–15:34 HKT', '38 项 Semi Liquid', '7 次逐仓例外', '31 次整组合规则', '未覆盖为 0', '57 行', '56 行已分类', '1 行 UBS', '其余四个', '2026-08-24', '其他指标']) assert.ok(canonical.includes(detail), detail);
-  assert.match(canonical, /不是本次七组合全量核验/);
+  for (const detail of ['2026-08-31', '15:31–15:35、21:23–21:24 HKT', '七组合共 95 行全部覆盖', '未解决 0、重复 0', '38 项 Semi Liquid', '7 次逐仓例外', '31 次整组合规则', '未覆盖为 0', 'UBS 现金代理身份已由既有来源凭证核实', '原证券表示保留', '2026-08-24', '其他指标']) assert.ok(canonical.includes(detail), detail);
+  assert.match(canonical, /仅为当时规则覆盖，不是本期同步估值/);
+  assert.match(canonical, /这不是重新读取当前可用现金/);
+  assert.match(canonical, /当期同轮七组合范围、现金身份、完整持仓、分页／懒加载及逐行金额对账经来源核验/);
   assert.match(canonical, /通过受控维护更新本说明后/);
+  assert.doesNotMatch(canonical, /57 行|56 行已分类|身份尚待来源核实|其余四个/);
 });
 
 test('actual obsolete accounting cannot pass with or without an appended correct disclaimer', () => {
@@ -48,8 +51,12 @@ test('missing, duplicate, inert, altered, hidden and wrong-date canonical blocks
     canonical.replace('31 次整组合规则', '0 次整组合规则'),
     canonical.replace('未覆盖为 0', '未覆盖为 48'),
     canonical.replace('2026-08-24', '2026-08-31'),
-    canonical.replace('2026-08-31 15:31–15:34 HKT', '本次实时'),
-    canonical.replace('其余四个', '全部七个'),
+    canonical.replace('2026-08-31 分两批读取（15:31–15:35、21:23–21:24 HKT）', '本次实时'),
+    canonical.replace('95 行全部覆盖', '57 行全部覆盖'),
+    canonical.replace('未解决 0、重复 0', '未解决 1、重复 0'),
+    canonical.replace('现金代理身份已由既有来源凭证核实', '现金代理身份尚待来源核实'),
+    canonical.replace('不是本期同步估值', '是本期同步估值'),
+    canonical.replace('继续沿用已批准的 2026-08-24 快照', '已启用本期实时四桶'),
     canonical.replace('<section id=', '<section hidden id='),
   ]) assert.ok(validateClassificationDisclosure(page(body), { previousHtml: page(canonical) }).length, body);
 });
@@ -70,6 +77,8 @@ test('freeform rule/count reasoning and split or encoded old words fail outside 
     '<p>四桶七组合分类已全部完成</p>',
     '<p>七组合分类已全部完成</p>',
     '<p>四桶七组合全量核验已经完成</p>',
+    '<p>历史95行规则覆盖已完成，因此四桶已实时重算。</p>',
+    '<p>UBS现金身份已解决，七组合分类已全部完成。</p>',
   ]) assert.ok(validateClassificationDisclosure(page(canonical + claim)).length, claim);
 });
 

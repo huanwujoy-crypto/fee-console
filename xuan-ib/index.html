@@ -158,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-08-31.5";
+      const loaderBuild = "2026-09-03.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -1134,15 +1134,30 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             }
           } catch (_) { notice.textContent = "落实进度暂不可用；原决定和报告仍保留。"; }
         }
-        progressView.title.textContent = `已决定 · 落实进度 ${resolved.length} 项`;
         const matchesReport = event => event?.observedPair.sourceSha === record.meta.sourceSha && event?.observedPair.htmlBlob === record.blob;
         const currentEvents = resolved.map(d => events.get(d.decisionId)).filter(matchesReport);
         const approvals = currentEvents.filter(e => e.status === "awaiting_approval").length;
         const actions = currentEvents.filter(e => e.status === "user_action_required").length;
         const needsUser = approvals + actions;
         const attentionText = [approvals ? `待你确认 ${approvals} 项` : '', actions ? `待你处理 ${actions} 项` : ''].filter(Boolean).join(' · ');
-        const historical = resolved.some(d => events.has(d.decisionId) && !matchesReport(events.get(d.decisionId)));
-        const missing = resolved.some(d => !events.has(d.decisionId));
+        const historical = resolved.filter(d => events.has(d.decisionId) && !matchesReport(events.get(d.decisionId))).length;
+        const missing = resolved.filter(d => !events.has(d.decisionId)).length;
+        // Count the latest receipt-bound evidence only for this exact report.
+        // “已核验” covers the scope named by that event, not every future task;
+        // older evidence and missing records must never inflate this count.
+        const progressParts = [
+          ["evidence_recorded", "已核验"], ["in_progress", "核验中"],
+          ["not_started", "待安排"], ["blocked", "受阻"],
+          ["awaiting_approval", "待你确认"], ["user_action_required", "待你处理"]
+        ].flatMap(([status, label]) => {
+          const count = currentEvents.filter(event => event.status === status).length;
+          return count ? [`${label} ${count} 项`] : [];
+        });
+        if (currentEvents.length) {
+          if (historical) progressParts.push(`待复核 ${historical} 项`);
+          if (missing) progressParts.push(`未核实 ${missing} 项`);
+        }
+        progressView.title.textContent = progressParts.join(" · ") || `落实进度 ${resolved.length} 项`;
         const attention = progressView.attention;
         attention.className = "xuan-progress-attention" + (needsUser ? " xuan-needs-user" : "");
         attention.textContent = !resolved.length ? "" : needsUser ? `⚠ ${attentionText}` : missing || !progressFingerprint ? "进度未核实" : historical ? "历史进度待复核" : "";
