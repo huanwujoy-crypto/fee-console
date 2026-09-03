@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.7.0">
+<meta name="fee-console-build" content="4.7.1">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -153,6 +153,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .history-tools label{font-size:12px;color:var(--ink-2)}
 .history-tools select{width:auto;min-width:112px;min-height:44px;padding:8px 30px 8px 10px}
 .receipt-pending{min-height:52px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--ink-muted);font-size:13px}
+.ledger-bar{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px}.ledger-bar .row{margin-top:8px}.ledger-bar button{min-height:44px}.ledger-diff{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}.ledger-diff th,.ledger-diff td{padding:8px 5px;border-bottom:1px solid var(--grid);text-align:left;overflow-wrap:anywhere}.ledger-reason{margin:12px 0}.ledger-reason input{min-height:44px}.ledger-review-note{font-size:12px;color:var(--ink-2);line-height:1.6}
 @media(max-width:430px){.trend-note,.month-summary{font-size:11px}.month-grid{grid-template-columns:1fr}.month-grid .wide{grid-column:auto}}
 </style>
 </head>
@@ -164,6 +165,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </header>
 
 <div id="setupBox"></div>
+<div id="ledgerBar" class="ledger-bar" aria-live="polite"></div>
 <div id="a2hs" class="info" style="display:none;justify-content:space-between;align-items:center;gap:10px">
   <span>📲 点 Safari 底部<b>分享</b> → <b>添加到主屏幕</b>，以后像 App 一样打开。</span><button class="btn sm" id="a2hsOff">知道了</button>
 </div>
@@ -202,7 +204,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <section class="pane" id="p-fee">
   <div class="card">
     <h2>付款记录</h2>
-    <p class="hint">记录已支付给管理人的款项，自动从应付费用余额中扣减。</p>
+    <p class="hint">只记录已付款，不会转账。修改先保留为草稿，确认保存后再更新计算回执。</p>
     <div id="tblFee"></div>
     <div class="row" style="margin-top:12px"><button class="btn primary" id="btnAddFee">+ 新增一笔付款</button></div>
   </div>
@@ -212,11 +214,11 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="card"><h2>共享给其他手机（只看）</h2>
     <p class="hint">生成一个只读链接/二维码，其他手机打开后只能查看，不能修改。</p>
     <button class="btn primary big" id="btnShare">📱 显示只读二维码 / 链接</button>
-    <p class="hint" style="margin-top:12px">想把本页放到主屏幕：先点下面按钮，再点 Safari 底部「分享 → 添加到主屏幕」，图标打开就直接是管理人状态。</p>
+    <p class="hint" style="margin-top:12px">添加到主屏幕后仍默认只读；需要修改时主动进入编辑。</p>
     <button class="btn big" id="btnPrepIcon">① 准备主屏幕图标</button>
     <button class="btn big" id="btnMgrLink" style="margin-top:8px">复制管理人链接（备用）</button>
   </div>
-  <div class="card"><h2>参数</h2>
+  <div class="card"><h2>重要设置</h2><p class="hint">期初本金、费率和起算日影响历史计算；只有确认差异后才会保存。</p>
     <div class="grid">
       <div><label class="f">管理费率（%/年）</label><input type="number" id="sMgmt" step="0.01"></div>
       <div><label class="f">Carry（%）</label><input type="number" id="sCarry" step="0.1"></div>
@@ -233,7 +235,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="card"><h2>数据</h2>
     <div class="res" id="ghStatusBox"></div>
     <div class="row" style="margin-top:10px">
-      <button class="btn sm" id="btnGhSync">立即同步</button>
+      <button class="btn sm" id="btnGhSync">重新读取</button>
       <button class="btn sm danger" id="btnGhOff">断开云同步</button>
     </div>
   </div>
@@ -251,6 +253,12 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <input id="shLink" readonly style="font-size:11px">
   <p class="small" style="text-align:left;margin:8px 0 0">这条链接只能看不能改，但能看到全部数字 —— 只发给该看的人。</p>
   <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" id="shCopy">复制链接</button><button class="btn primary" id="shClose">关闭</button></div>
+</div></div>
+<div class="ovl" id="ledgerReview"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="ledgerReviewTitle">
+  <h3 id="ledgerReviewTitle">核对本次修改</h3><div id="ledgerDiff"></div>
+  <label class="f ledger-reason">修改原因（必填）<input id="ledgerReason" maxlength="300" autocomplete="off" placeholder="例如：补记已确认的付款"></label>
+  <p class="ledger-review-note">只修改管理费账本，不下单、不付款。保存前会复核云端版本；请勿同时在另一设备编辑。版本比较不是跨设备原子锁。</p>
+  <div class="row"><button class="btn" id="ledgerReviewBack">返回编辑</button><button class="btn primary" id="ledgerReviewConfirm">确认以上差异</button></div>
 </div></div>
 <div class="toast" id="toast"></div>
 <script>/* qrcode-generator 1.4.4 — MIT (c) Kazuhiko Arase */
@@ -452,6 +460,55 @@ async function decTxt(key,b64){const b=Uint8Array.from(atob(b64),c=>c.charCodeAt
 })();
 /* month-history-view:end */
 
+/* fee-ledger-edit-guard:start */
+(()=>{
+  const IDLE_MS=300000,clone=x=>structuredClone(x),object=x=>!!x&&typeof x==="object"&&!Array.isArray(x);
+  const canonical=x=>JSON.stringify((function sort(v){if(Array.isArray(v))return v.map(sort);if(!object(v))return v;return Object.fromEntries(Object.keys(v).sort().map(k=>[k,sort(v[k])]));})(x));
+  const date=x=>/^\d{4}-\d{2}-\d{2}$/.test(String(x))&&Number.isFinite(Date.parse(x+"T00:00:00Z"))&&new Date(x+"T00:00:00Z").toISOString().slice(0,10)===x;
+  const number=(x,label)=>{if((typeof x!=="number"&&typeof x!=="string")||!String(x).trim()||!/^[-+]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(String(x).trim())||!Number.isFinite(Number(x))||Math.abs(Number(x))>Number.MAX_SAFE_INTEGER/100)throw new Error(label+" 必须是有效数字，不能留空或过大");return Number(x);};
+  const unique=(rows,key,label)=>{const seen=new Set();for(const row of rows){if(!object(row)||!String(row[key]||"").trim()||seen.has(String(row[key]).trim()))throw new Error(label+" 缺少或重复编号");seen.add(String(row[key]).trim());}};
+  const validateLedger=db=>{
+    if(!object(db)||db.v!==4||!object(db.settings)||!Array.isArray(db.accounts)||!Array.isArray(db.months)||!Array.isArray(db.fees))throw new Error("需要完整、已验证的 v4 原账本");
+    const s=db.settings;if(!date(s.start)||!date(s.openingAt)||s.openingAt>=s.start)throw new Error("起算日或期初日期无效");
+    for(const k of ["mgmt","carry"]){const n=number(s[k],k);if(n<0||n>100||Math.abs(n*10000-Math.round(n*10000))>1e-8)throw new Error("费率须在 0–100% 之间且最多 4 位小数");}
+    if(!object(s.fx)||Object.entries(s.fx).some(([ccy,x])=>!/^[A-Z]{3}$/.test(ccy)||number(x,"汇率")<=0))throw new Error("汇率无效");
+    unique(db.accounts,"id","账户");if(canonical(db.accounts.map(a=>a.id).sort())!==canonical(["schwab","webull"]))throw new Error("账户范围不符");
+    if(db.accounts.some(a=>!String(a.name||"").trim()||number(a.opening,"期初本金")<0)||db.accounts.reduce((n,a)=>n+Number(a.opening),0)<=0)throw new Error("期初本金或账户名称无效");
+    unique(db.months,"ym","月份");const flows=[];for(const m of db.months){if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(m.ym)||!Array.isArray(m.flows))throw new Error("月份流水无效");for(const f of m.flows){if(!object(f)||!date(f.date)||f.date.slice(0,7)!==m.ym||!["schwab","webull"].includes(f.acct)||number(f.amount,"出入金")===0)throw new Error("出入金日期、账户或金额无效");flows.push(f);}}
+    unique(flows,"id","出入金");unique(flows.filter(f=>f.src),"src","来源流水");unique(db.fees,"id","付款");
+    for(const f of db.fees){if(!date(f.date)||number(f.amount,"付款金额")<=0||typeof f.ccy!=="string"||!/^[A-Z]{3}$/.test(f.ccy)||!Object.hasOwn(s.fx,f.ccy)||(f.type&&f.type!=="pay"))throw new Error("付款记录无效");if(f.fx!==undefined&&f.fx!==""&&number(f.fx,"付款汇率")<=0)throw new Error("付款汇率无效");}
+    if(db.editAudit!==undefined&&!Array.isArray(db.editAudit))throw new Error("修改记录无效");return true;
+  };
+  const projection=db=>({settings:{start:db.settings.start,mgmt:db.settings.mgmt,carry:db.settings.carry,who:db.settings.who||""},accounts:db.accounts.map(a=>({id:a.id,name:a.name,opening:a.opening})),months:db.months,fees:db.fees});
+  const diffLedger=(before,after)=>{
+    const out=[];const walk=(a,b,path)=>{if(canonical(a)===canonical(b))return;if(Array.isArray(a)&&Array.isArray(b)){const key=path==="months"?"ym":"id";if([...a,...b].every(x=>object(x)&&x[key])){const aa=Object.fromEntries(a.map(x=>[x[key],x])),bb=Object.fromEntries(b.map(x=>[x[key],x]));walk(aa,bb,path);return;}}
+      if(object(a)&&object(b)){for(const k of [...new Set([...Object.keys(a),...Object.keys(b)])].sort())walk(a[k],b[k],path?path+"."+k:k);return;}out.push({field:path,before:a===undefined?null:clone(a),after:b===undefined?null:clone(b)});};walk(projection(before),projection(after),"");return out;
+  };
+  const sameSnapshot=(a,b)=>!!(a&&b&&typeof a.revision==="string"&&a.revision&&typeof a.content==="string"&&a.content&&a.revision===b.revision&&a.content===b.content);
+  const createSession=()=>({mode:"locked",draft:null,base:null,lastActivity:0,review:null,pending:null});
+  const isEditable=(s,now)=>!!(s&&["editing","review"].includes(s.mode)&&!s.pending&&Number.isFinite(now)&&now>=s.lastActivity&&now-s.lastActivity<IDLE_MS);
+  const begin=(s,snapshot,now)=>{validateLedger(snapshot?.db);if(!sameSnapshot(snapshot,snapshot)||!Number.isFinite(now)||(snapshot.envelopeVersion!==undefined&&snapshot.envelopeVersion!==4))throw new Error("原账本版本未验证");if(s.pending||s.mode==="unknown")throw new Error("上次保存结果待核对，不能再次提交");if(s.draft&&!sameSnapshot(s.base,snapshot))throw new Error("云端账本已变化；草稿保留，请重新比较");return {...clone(s),mode:"editing",base:clone(snapshot),draft:clone(s.draft||snapshot.db),lastActivity:now,review:null};};
+  const lock=s=>({...clone(s),mode:s.pending?"unknown":"locked",review:null});
+  const touch=(s,now)=>isEditable(s,now)?{...s,lastActivity:now}:lock(s);
+  const change=(s,mutator,now)=>{if(!isEditable(s,now))throw new Error("编辑已锁定");const n=clone(s);mutator(n.draft);n.mode="editing";n.review=null;n.lastActivity=now;return n;};
+  const review=(s,reason,now)=>{if(!isEditable(s,now))throw new Error("编辑已锁定");validateLedger(s.draft);const r=String(reason||"").trim();if(r.length<2||r.length>300)throw new Error("请填写 2–300 字的修改原因");const diff=diffLedger(s.base.db,s.draft);if(!diff.length)throw new Error("没有需要保存的修改");return {...clone(s),mode:"review",lastActivity:now,review:{reason:r,diff,draft:canonical(s.draft)}};};
+  const prepareCommit=(s,remote,{now,id,at}={})=>{
+    if(!isEditable(s,now)||s.mode!=="review"||!s.review||s.review.draft!==canonical(s.draft))throw new Error("必须先核对本次差异");
+    if(!sameSnapshot(s.base,remote)||(remote.envelopeVersion!==undefined&&remote.envelopeVersion!==4))throw new Error("云端版本冲突，未保存，草稿已保留");validateLedger(s.draft);
+    const invariant=db=>{const n=clone(db);delete n.updatedAt;delete n.months;delete n.fees;for(const k of ["start","mgmt","carry","who"])delete n.settings[k];for(const a of n.accounts){delete a.name;delete a.opening;}return n;};
+    if(canonical(invariant(s.base.db))!==canonical(invariant(s.draft)))throw new Error("包含未审阅的账本字段变更");
+    if(typeof id!=="string"||!id||(s.base.db.editAudit||[]).some(entry=>entry.id===id)||typeof at!=="string"||!Number.isFinite(Date.parse(at)))throw new Error("保存编号或时间无效");
+    const db=clone(s.draft);db.updatedAt=at;db.editAudit=[...(s.base.db.editAudit||[]),{id,at,reason:s.review.reason,baseRevision:s.base.revision,changes:clone(s.review.diff)}];
+    return {...clone(s),mode:"saving",pending:{id,db,content:null},review:null};
+  };
+  const setPendingContent=(s,content)=>{if(s.mode!=="saving"||!s.pending||s.pending.content!==null||typeof content!=="string"||!content)throw new Error("提交密文未绑定");return {...clone(s),pending:{...clone(s.pending),content}};};
+  const markUnknown=s=>{if(!s.pending)throw new Error("没有待核对提交");return {...clone(s),mode:"unknown",review:null};};
+  const acceptReadback=(s,snapshot)=>{if(!s.pending?.content||snapshot?.content!==s.pending.content||!sameSnapshot(snapshot,snapshot)||canonical(snapshot.db)!==canonical(s.pending.db))throw new Error("保存结果尚未核验；请勿重复提交");validateLedger(snapshot.db);return createSession();};
+  const clear=s=>{if(s.pending||s.mode==="unknown")throw new Error("先核对上次保存结果");return createSession();};
+  globalThis.feeLedgerEditGuard={IDLE_MS,canonical,validateLedger,diffLedger,sameSnapshot,createSession,begin,lock,touch,isEditable,change,review,prepareCommit,setPendingContent,markUnknown,acceptReadback,clear};
+})();
+/* fee-ledger-edit-guard:end */
+
 /* ============ 本地配置 ============ */
 const K={db:"feeConsole.v3.db",tok:"feeConsole.gh.token",gid:"feeConsole.gh.gist",key:"feeConsole.key",daily:"feeConsole.v3.daily",a2hs:"feeConsole.a2hs.off"};
 const cfg=k=>store?(store.getItem(k)||""):"";
@@ -461,7 +518,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.7.0";
+const UI_VERSION_LABEL=" · v4.7.1";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -488,15 +545,62 @@ function migrate(o){
   return d;
 }
 let DB=seed();
-try{const s=cfg(K.db);if(s){const m=migrate(JSON.parse(s));if(m)DB=m;}}catch(_){}
+let _localLedgerPresent=!!cfg(K.db);
+try{const s=cfg(K.db);if(s){const raw=JSON.parse(s),m=raw?.v===4?raw:migrate(raw);if(m)DB=m;}}catch(_){}
 let DAILY={updatedAt:"",daily:[],flowsAuto:[]};
 try{const s=cfg(K.daily);if(s)DAILY=JSON.parse(s);}catch(_){}
-let _seeded=false;
-if(HASH&&HASH.seed){const n=HASH.seed.split(",").map(parseFloat);DB.accounts.forEach((a,i)=>{if(isFinite(n[i])&&!(num(a.opening)>0)){a.opening=n[i];_seeded=true;}});if(HASH.who&&!DB.settings.who){DB.settings.who=HASH.who;_seeded=true;}}
+// Link hints never modify the committed ledger. Restore only an existing cloud ledger.
+const LG=feeLedgerEditGuard,DRAFT_KEY="feeConsole.editDraft.v1",BASELINE_KEY="feeConsole.verifiedLedger.v1";
+let EDIT=LG.createSession(),_draftWrite=Promise.resolve(),_ledgerBusy=false,_ledgerMessage="",_draftRestoreDone=false,_draftRestoreTask=null,_draftBlocked=false,_ledgerConflict=[],_verifiedLocal=null,_baselineRestoreDone=false,_baselineRestoreTask=null;
+const editDB=()=>EDIT.draft||DB,canEdit=()=>isMgr()&&!_ledgerBusy&&!_draftBlocked&&LG.isEditable(EDIT,Date.now());
 function localBlank(){return DB.accounts.every(a=>!(num(a.opening)>0))&&DB.months.every(m=>!(m.flows||[]).length)&&!DB.fees.length;}
 const strip=o=>JSON.stringify({...o,updatedAt:0});
 let _last=null;
-function autosave(){const j=strip(DB);if(j===_last)return;_last=j;DB.updatedAt=new Date().toISOString();setCfg(K.db,JSON.stringify(DB));ghSchedule();}
+function autosave(){/* Viewing and rendering must never save an economic ledger. */}
+function persistDraft(){
+  if(_draftBlocked)return Promise.resolve(false);
+  const saved=structuredClone(EDIT),gid=cfg(K.gid),keyValue=cfg(K.key);
+  _draftWrite=_draftWrite.catch(()=>{}).then(async()=>{if(!saved.draft){setCfg(DRAFT_KEY,"");return true;}if(!store||!keyValue||!gid)throw new Error("草稿仅保留在当前页面，请勿关闭");const key=await keyOf(keyValue),data=await encTxt(key,JSON.stringify({gid,session:LG.lock(saved)}));store.setItem(DRAFT_KEY,JSON.stringify({enc:true,v:1,data}));return true;}).catch(()=>{_ledgerMessage="草稿尚未存到本机，请勿关闭页面";renderLedgerControls();return false;});return _draftWrite;
+}
+function restoreDraft(){if(_draftRestoreTask)return _draftRestoreTask;_draftRestoreTask=(async()=>{_draftRestoreDone=true;const raw=cfg(DRAFT_KEY);if(!raw)return;try{if(!cfg(K.key))throw new Error();const outer=JSON.parse(raw);if(outer.enc!==true||outer.v!==1)throw new Error();const saved=JSON.parse(await decTxt(await keyOf(cfg(K.key)),outer.data));if(saved.gid!==cfg(K.gid)||!saved.session?.draft||!LG.sameSnapshot(saved.session.base,saved.session.base))throw new Error();LG.validateLedger(saved.session.base.db);EDIT=LG.lock(saved.session);_ledgerMessage=EDIT.pending?"上次保存结果待核对，请勿重复提交":"已恢复未提交草稿，报告仍使用正式账本";}catch(_){_draftBlocked=true;_ledgerMessage="有一份草稿暂无法读取，编辑与切换已暂停；原草稿未覆盖或删除";}})();return _draftRestoreTask;}
+function restoreBaseline(){if(_baselineRestoreTask)return _baselineRestoreTask;_baselineRestoreTask=(async()=>{_baselineRestoreDone=true;try{const raw=JSON.parse(cfg(BASELINE_KEY)||"null");if(!raw||raw.enc!==true||raw.v!==1||!cfg(K.key))return;const b=JSON.parse(await decTxt(await keyOf(cfg(K.key)),raw.data));if(b.gid===cfg(K.gid)&&typeof b.dbCanonical==="string"&&b.revision&&b.content)_verifiedLocal=b;}catch(_){}})();return _baselineRestoreTask;}
+function localLedgerCanonical(){try{return LG.canonical(JSON.parse(cfg(K.db)));}catch(_){return "";}}
+const localMatchesBaseline=()=>!!(_verifiedLocal&&_verifiedLocal.gid===cfg(K.gid)&&localLedgerCanonical()===_verifiedLocal.dbCanonical);
+async function recordBaseline(snapshot){const original=cfg(K.db),b={gid:snapshot.gid,revision:snapshot.revision,content:snapshot.content,dbCanonical:LG.canonical(snapshot.db)},data=await encTxt(await keyOf(cfg(K.key)),JSON.stringify(b));if(!store)throw new Error("本机无法保留已核验基线");if(cfg(K.gid)!==snapshot.gid||cfg(K.db)!==original)throw new Error("读取期间本机账本已变化，原记录保留");store.setItem(BASELINE_KEY,JSON.stringify({enc:true,v:1,data}));_verifiedLocal=b;}
+function lockLedger(message="编辑已锁定，草稿保留"){
+  if(!EDIT.draft)return;EDIT=LG.lock(EDIT);_ledgerMessage=message;_cfmCb=null;document.getElementById("cfm").classList.remove("on");document.getElementById("ledgerReview").classList.remove("on");persistDraft();renderLedgerControls();
+}
+function renderLedgerControls(){
+  const bar=document.getElementById("ledgerBar"),active=canEdit();
+  bar.innerHTML=`<b>${active?"修改草稿 · 尚未保存":"只读查看 · 编辑已锁定"}</b><div class="small">${esc(_ledgerMessage||(EDIT.draft?"草稿保留，正式报告未改变":"查看与刷新不会修改账本"))}</div>${isMgr()&&!_draftBlocked?`<div class="row">${EDIT.pending?'<button class="btn" id="ledgerCheck">核对上次保存结果</button>':active?'<button class="btn primary" id="ledgerReviewOpen">核对并保存</button><button class="btn" id="ledgerLock">锁定编辑</button>':`<button class="btn" id="ledgerEdit">${EDIT.draft?"继续编辑草稿":"修改账本"}</button>`}${EDIT.draft&&!EDIT.pending?'<button class="btn" id="ledgerDiscard">丢弃草稿</button>':""}</div>`:""}`;
+  if(_ledgerConflict.length)bar.innerHTML+=`<details><summary>查看冲突：云端 → 我的草稿（${_ledgerConflict.length} 项）</summary>${ledgerDiffTable(_ledgerConflict)}</details>`;
+  for(const el of document.querySelectorAll('[data-open],[data-acct],[data-fee],[data-flow],#sMgmt,#sCarry,#sStart,#sWho,#btnAddFee,[data-delfee],[data-delflow]'))el.disabled=!active||(!!el.dataset.flow&&(DAILY.flowsAuto||[]).some(f=>f.id===el.dataset.flow&&f.effective===true));
+  bar.querySelectorAll("button").forEach(b=>b.disabled=_ledgerBusy);
+}
+function changeDraft(mutator,rerender=true){if(!canEdit()){lockLedger();return;}try{EDIT=LG.change(EDIT,mutator,Date.now());_ledgerMessage="仅修改草稿，尚未保存";persistDraft();if(rerender)scheduleRender();else renderLedgerControls();}catch(e){toast(e.message);}}
+async function beginLedgerEdit(){
+  await restoreDraft();if(!isMgr()||_ledgerBusy||_draftBlocked)return;_ledgerBusy=true;renderLedgerControls();try{const snapshot=await ghReadSnapshot();if(document.visibilityState!=="visible")throw new Error("页面已离开，编辑保持锁定");if(!EDIT.draft&&_localLedgerPresent&&!sameLedger(DB,snapshot.db)){_ledgerConflict=LG.diffLedger(snapshot.db,DB);throw new Error("本机与云端账本不同，原记录均保留；请先刷新复核，未进入编辑");}_ledgerConflict=EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)?LG.diffLedger(snapshot.db,EDIT.draft):[];EDIT=LG.begin(EDIT,snapshot,Date.now());_ledgerConflict=[];_ledgerMessage="5 分钟不操作或离开页面将自动锁定；草稿不会自动上传";await persistDraft();}catch(e){EDIT=LG.lock(EDIT);_ledgerMessage=e.message;}finally{_ledgerBusy=false;render();}
+}
+const sameLedger=(a,b)=>{const clean=x=>{const d=structuredClone(x);delete d.updatedAt;return d;};return LG.canonical(clean(a))===LG.canonical(clean(b));};
+const fieldLabel=field=>field.replace(/^settings\.mgmt$/,"管理费率 (%)").replace(/^settings\.carry$/,"Carry (%)").replace(/^settings\.start$/,"起算日").replace(/^settings\.who$/,"管理人").replace(/^accounts\.([^.]*)\.opening$/,"$1 期初本金").replace(/^accounts\.([^.]*)\.name$/,"$1 名称").replace(/^fees\./,"付款 ").replace(/^months\./,"出入金 ");
+function ledgerDiffTable(changes){const value=x=>x===null?"—":typeof x==="object"?JSON.stringify(x):String(x);return `<table class="ledger-diff"><thead><tr><th>项目</th><th>原值</th><th>新值</th></tr></thead><tbody>${changes.map(c=>`<tr><td>${esc(fieldLabel(c.field))}</td><td>${esc(value(c.before))}</td><td>${esc(value(c.after))}</td></tr>`).join("")}</tbody></table>`;}
+function showLedgerReview(){
+  if(!canEdit()){lockLedger();return;}try{LG.validateLedger(EDIT.draft);const changes=LG.diffLedger(EDIT.base.db,EDIT.draft);if(!changes.length){toast("没有修改，无需保存");return;}document.getElementById("ledgerDiff").innerHTML=ledgerDiffTable(changes);document.getElementById("ledgerReason").value="";document.getElementById("ledgerReview").classList.add("on");}catch(e){toast(e.message);}
+}
+function confirmLedgerReview(){
+  try{EDIT=LG.review(EDIT,document.getElementById("ledgerReason").value,Date.now());document.getElementById("ledgerReview").classList.remove("on");confirmBox("最后确认保存","将保存刚刚核对的 "+EDIT.review.diff.length+" 处修改，并记录原因。只改账本，不会付款或交易。",saveReviewedLedger);}catch(e){toast(e.message);}
+}
+async function finishLedgerReadback(snapshot){
+  const completed=LG.acceptReadback(EDIT,snapshot);await recordBaseline(snapshot);setCfg(K.db,JSON.stringify(snapshot.db));DB=structuredClone(snapshot.db);EDIT=completed;_last=strip(DB);_localLedgerPresent=true;await persistDraft();_ledgerConflict=[];_ledgerMessage="已保存并读回验证；费用计算回执待更新";setSync("已保存并核验 "+hhmm());
+}
+async function saveReviewedLedger(){
+  if(_ledgerBusy||!isMgr()||EDIT.pending)return;_ledgerBusy=true;let dispatched=false;renderLedgerControls();try{
+    const remote=await ghReadSnapshot();if(document.visibilityState!=="visible")throw new Error("页面已离开，未提交");_ledgerConflict=LG.sameSnapshot(EDIT.base,remote)?[]:LG.diffLedger(remote.db,EDIT.draft);EDIT=LG.prepareCommit(EDIT,remote,{now:Date.now(),id:crypto.randomUUID(),at:new Date().toISOString()});
+    const content=JSON.stringify({enc:true,v:4,data:await encTxt(await keyOf(cfg(K.key)),JSON.stringify(EDIT.pending.db))});EDIT=LG.setPendingContent(EDIT,content);if(!await persistDraft())throw new Error("提交记录未能保留，未发送");
+    if(document.visibilityState!=="visible"||EDIT.mode!=="saving")throw new Error("编辑已锁定，尚未发送");dispatched=true;await ghPush(EDIT.pending);await finishLedgerReadback(await ghReadSnapshot());
+  }catch(e){if(dispatched&&EDIT.pending){EDIT=LG.markUnknown(EDIT);await persistDraft();_ledgerMessage="保存结果待核对，草稿保留；请勿重复提交";}else{EDIT={...LG.lock(EDIT),mode:"locked",pending:null};_ledgerMessage=e.message+"；未发送，草稿保留";await persistDraft();}}finally{_ledgerBusy=false;render();}
+}
+async function checkLedgerOutcome(){if(_ledgerBusy||!EDIT.pending)return;_ledgerBusy=true;renderLedgerControls();try{await finishLedgerReadback(await ghReadSnapshot());}catch(_){_ledgerMessage="尚不能确认保存结果，草稿和提交编号均已保留；未再次写入";}finally{_ledgerBusy=false;render();}}
 
 /* ============ 计算引擎 ============ */
 function dailySorted(){return [...(DAILY.daily||[])].filter(d=>d&&d.d).sort((a,b)=>a.d.localeCompare(b.d));}
@@ -504,7 +608,6 @@ function lastDailyInMonth(ym){const ds=dailySorted().filter(x=>x.d.slice(0,7)===
 function totOf(pt){return pt?DB.accounts.reduce((s,a)=>s+num(pt[a.id]),0):0;}
 function curYm(){return todayStr().slice(0,7);}
 function monthYms(){const out=[];let ym=DB.settings.start.slice(0,7);const cur=curYm();let n=0;while(ym<=cur&&n<600){out.push(ym);ym=nextYm(ym);n++;}return out;}
-function monthOf(ym){let m=DB.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};DB.months.push(m);DB.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows||[];return m;}
 /* 管理人已确认的记录仍以私密云存档为准；只有后端完成逐项配对核验的实物转仓
    可以直接参与计算，避免为了无现金转仓再依赖管理人手机勾选。 */
 /* flow-dedupe:start —— 同一笔业务事件只能计一次，无论它从哪条路径进来：
@@ -659,7 +762,7 @@ async function render(){
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
-  renderSetup();renderA2hs();autosave();
+  renderSetup();renderA2hs();renderLedgerControls();
 }
 function renderKPIs(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
@@ -779,6 +882,7 @@ function renderBal(feeView,st,B,G){
     <div class="line"><span>减：已付款</span><span>−${usd(B.paid)}</span></div>
     <div class="line tot"><span>应付费用</span><span class="${G.hold?'hold':(B.due>0?'':'pos')}">${G.hold?"暂不可用":usd(B.due)}</span></div>`;}
 function renderFees(feeView,st,B,G){
+  const DB=editDB();
   G=G||{hold:false,holdReasons:[]};
   const t=document.getElementById("tblFee");
   t.innerHTML=(DB.fees.length?DB.fees.map(f=>`<div class="feeCard">
@@ -790,6 +894,7 @@ function renderFees(feeView,st,B,G){
   </div>`).join(""):`<div class="empty">还没有付款记录</div>`)+
   `<div class="feeSum">${feeView.state!=="verified"||!B?`<span>${feeView.message}</span>`:`<span>已付款 ${usd(B.paid,0)}</span><span>应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span>`}</div>`;}
 function renderFlows(){
+  const DB=editDB();
   const box=document.getElementById("flowBox");const auto=(DAILY.flowsAuto||[]);
   const inc=DB.months.flatMap(m=>(m.flows||[]).map(f=>({...f,ym:m.ym})));
   const manual=inc.filter(f=>!f.src);
@@ -800,6 +905,7 @@ function renderFlows(){
     +manual.map(f=>`<div class="mrow"><span style="font-size:13px">${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">手工</span></span><button class="del" data-delflow="${f.id}">×</button></div>`).join("");
 }
 function renderSettings(){
+  const DB=editDB();
   const S=DB.settings;sMgmt.value=S.mgmt;sCarry.value=S.carry;sStart.value=S.start;sWho.value=S.who||"";
   document.getElementById("openBox").innerHTML=`<label class="f">起始基准（${S.openingAt} 总资产）</label><div class="grid">`+
     DB.accounts.map(a=>`<div><label class="f">${esc(a.name)}</label><input type="number" step="0.01" data-open="${a.id}" value="${a.opening??''}"></div>`).join("")+`</div>`;
@@ -815,42 +921,41 @@ function renderSetup(){
   if(isMgr()){el.innerHTML="";return;}
   if(cfg(K.gid)&&cfg(K.key)){el.innerHTML="";return;}
   el.innerHTML=`<div class="card" style="border-color:rgba(42,120,214,.5)">
-    <h2>首次设置（管理人手机，只做一次）</h2>
-    <p class="hint">连上后你的记录自动存到 GitHub，其他手机扫码只读。<b>如果你不是管理人</b>：请让管理人在设置里生成只读二维码给你扫。</p>
-    <a class="btn primary big" href="${TOKEN_URL}" target="_blank" rel="noopener" style="display:block;text-decoration:none;text-align:center;margin-bottom:8px">① 去 GitHub 生成令牌</a>
-    <p class="small" style="margin:0 0 8px">打开的页面权限已选好，<b>拉到最底点绿色 Generate token</b>，<b>长按复制</b>出现的字符串，回到这里。</p>
-    <label class="f">② 粘到这里</label><input type="password" id="tokIn" placeholder="ghp_…" autocomplete="off">
-    <button class="btn primary big" id="btnConnect" style="margin-top:8px">③ 连接</button>
-    <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f">已经有链接？（主屏幕图标 / 只读手机）把整条链接粘到这里</label>
+    <h2>恢复原账本</h2>
+    <p class="hint">请打开原有主屏幕入口或使用原只读链接。此页不会创建或覆盖账本，不必生成新令牌。</p>
+    <details><summary>已有管理人访问</summary><label class="f">已有 GitHub 令牌（只在本机输入）</label><input type="password" id="tokIn" placeholder="已有令牌" autocomplete="off"><button class="btn primary big" id="btnConnect" style="margin-top:8px">连接已有访问（先只读）</button></details>
+    <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f">原完整链接（不要发送到聊天）</label>
       <input id="linkIn" placeholder="https://…#…" autocomplete="off"><button class="btn big" id="btnLink" style="margin-top:8px">应用链接</button></div>
   </div>`;
 }
 function renderA2hs(){const el=document.getElementById("a2hs");const ios=/iPhone|iPad|iPod/.test(navigator.userAgent),sa=!!navigator.standalone;el.style.display=(ios&&!sa&&!cfg(K.a2hs))?"flex":"none";}
 
 /* ============ 云同步：Gist（管理人写 / 所有人读，内容加密） ============ */
-let _ghT=null,_busy=false,_dirty=false;
+let _busy=false;
 function setSync(msg,err){const b=document.getElementById("syncBadge");if(!store){b.style.display="none";return;}
   if(!msg){b.style.display=(isMgr()||cfg(K.gid))?"":"none";b.textContent=isMgr()?"☁ 已连接":"👁 只读";b.className="badge";return;}
   b.style.display="";b.textContent="☁ "+msg;b.className="badge "+(err?"hwm":(/中/.test(msg)?"est":"ok"));const s=document.getElementById("ghStatus");if(s)s.textContent=msg;}
 async function ghApi(path,opt={},auth=true){
+  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,...request}=opt;
+  if(method!=="GET"&&!(method==="PATCH"&&_ledgerBusy&&!_draftBlocked&&EDIT.mode==="saving"&&EDIT.base?.envelopeVersion===4&&EDIT.base.db.v===4&&reviewedLedger===EDIT.pending&&EDIT.pending?.content&&path==="/gists/"+EDIT.base?.gid&&cfg(K.gid)===EDIT.base?.gid))throw new Error("只有已复核的明确保存可以写入原账本");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
-  const r=await fetch("https://api.github.com"+path,{...opt,headers:h});
+  const r=await fetch("https://api.github.com"+path,{...request,headers:h});
   if(!r.ok){let t="";try{t=(await r.json()).message||"";}catch(_){}throw new Error(r.status+(t?" "+t:""));}return r.status===204?null:r.json();}
 async function ghFind(){for(let p=1;p<=5;p++){const l=await ghApi(`/gists?per_page=100&page=${p}`);const hit=l.find(g=>g.files&&g.files[GH_FILE]);if(hit){setCfg(K.gid,hit.id);return hit.id;}if(l.length<100)break;}return "";}
-async function ghPull(){const gid=cfg(K.gid);if(!gid)return null;const g=await ghApi("/gists/"+gid,{},isMgr());const f=g.files&&g.files[GH_FILE];if(!f)return null;
-  let c=f.content;if(f.truncated)c=await (await fetch(f.raw_url)).text();const o=JSON.parse(c);
-  let d=o;if(o&&o.enc){if(!cfg(K.key))throw new Error("缺少数据密钥");const key=await keyOf(cfg(K.key));d=JSON.parse(await decTxt(key,o.data));}
-  return migrate(d);}
-async function ghPush(){if(!isMgr())return;let content;
-  if(cfg(K.key)){const key=await keyOf(cfg(K.key));content=JSON.stringify({enc:true,v:4,data:await encTxt(key,JSON.stringify(DB))});}else content=JSON.stringify(DB);
-  const body={files:{[GH_FILE]:{content}}};let gid=cfg(K.gid);
-  if(!gid){const g=await ghApi("/gists",{method:"POST",body:JSON.stringify({description:"投资管理费 · 数据（加密）",public:false,...body})});setCfg(K.gid,g.id);}
-  else await ghApi("/gists/"+gid,{method:"PATCH",body:JSON.stringify(body)});}
+async function ghReadSnapshot(){const gid=cfg(K.gid);if(!gid||!cfg(K.key))throw new Error("请先恢复原账本链接；不会创建新账本");const g=await ghApi("/gists/"+gid,{},isMgr()),f=g.files&&g.files[GH_FILE];if(!f)throw new Error("原账本文件不存在，未写入");
+  let content=f.content;if(f.truncated)content=await (await fetch(f.raw_url)).text();const o=JSON.parse(content),revision=g.history?.[0]?.version;
+  if(o?.enc!==true||![3,4].includes(o.v)||typeof o.data!=="string"||typeof revision!=="string"||!revision)throw new Error("原加密账本或版本无法验证");
+  const db=JSON.parse(await decTxt(await keyOf(cfg(K.key)),o.data));if(!db||typeof db!=="object"||Array.isArray(db))throw new Error("账本内容无效");return {gid,revision,content,db,envelopeVersion:o.v};
+}
+async function ghPull(){return ghReadSnapshot();}
+async function ghPush(commit){
+  if(!isMgr()||!_ledgerBusy||_draftBlocked||EDIT.mode!=="saving"||EDIT.base?.envelopeVersion!==4||EDIT.base.db.v!==4||commit!==EDIT.pending||!commit?.content||!EDIT.base?.gid||EDIT.base.gid!==cfg(K.gid))throw new Error("保存未经确认，未写入");
+  await ghApi("/gists/"+EDIT.base.gid,{method:"PATCH",reviewedLedger:commit,body:JSON.stringify({files:{[GH_FILE]:{content:commit.content}}})});
+}
 const hhmm=()=>new Date().toTimeString().slice(0,5);
-function ghSchedule(){if(!isMgr())return;clearTimeout(_ghT);_ghT=setTimeout(ghSync,1500);}
-async function ghSync(){if(!isMgr())return;if(_busy){_dirty=true;return;}_busy=true;setSync("同步中…");try{await ghPush();setSync("已同步 "+hhmm());}catch(e){setSync("同步失败："+e.message,true);}finally{_busy=false;if(_dirty){_dirty=false;ghSchedule();}}}
 let _shellCheck=null;
 async function ensureLatestShell(){
+  if(EDIT.draft)return false;
   if(_shellCheck)return _shellCheck;
   _shellCheck=(async()=>{try{
     const probe=new URL(location.href);probe.hash="";probe.searchParams.set("_shell_check",String(Date.now()));
@@ -868,6 +973,7 @@ async function ensureLatestShell(){
 let _manualRefreshing=false;
 async function manualRefresh(){
   if(_manualRefreshing)return;
+  if(EDIT.draft&&!await persistDraft()){toast("草稿未能保留，暂不重新载入");return;}
   const b=document.getElementById("btnRefresh"),old=b.textContent;
   _manualRefreshing=true;b.disabled=true;b.textContent="刷新中…";
   try{
@@ -892,29 +998,25 @@ async function fetchDailyFresh(stamp=Date.now()){
   if(!d||!Array.isArray(d.daily))throw new Error("data.json 校验失败");return d;
 }
 async function pullAll(quiet,opt={}){
+  await restoreDraft();await restoreBaseline();
   if(!opt.skipShell&&await ensureLatestShell())return;
   if(!opt.skipDaily)try{const d=await fetchDailyFresh();DAILY=d;setCfg(K.daily,JSON.stringify(d));}catch(_){}
   if(!cfg(K.gid)&&isMgr()){try{await ghFind();}catch(_){}}
-  if(cfg(K.gid)){
-    if(_busy)return;_busy=true;if(isMgr())setSync("同步中…");
-    try{const remote=await ghPull();
-      if(remote){const ra=remote.updatedAt||"",la=DB.updatedAt||"";
-        if(!isMgr()||ra>la||localBlank()){DB=remote;_last=strip(DB);setCfg(K.db,JSON.stringify(DB));render();if(isMgr()){setSync("已从云端更新 "+hhmm());if(!quiet)toast("已拉取最新数据");}else setSync("");}
-        else if(la>ra){await ghPush();setSync("已同步 "+hhmm());}else setSync("已同步 "+hhmm());}
-      else if(isMgr()){await ghPush();setSync("已同步（新建云端存档）");}
-    }catch(e){setSync((isMgr()?"离线/同步失败：":"读取失败：")+e.message,true);}
-    finally{_busy=false;if(_dirty){_dirty=false;ghSchedule();}}
-  }else if(isMgr()){
-    if(_busy)return;_busy=true;setSync("同步中…");
-    try{await ghPush();setSync("已同步（新建云端存档）");}catch(e){setSync("离线/同步失败："+e.message,true);}
-    finally{_busy=false;}
-  }else setSync("");
+  if(cfg(K.gid)&&!_busy&&!_ledgerBusy){
+    _busy=true;try{const snapshot=await ghPull(),raw=snapshot.db,remote=raw?.v===4?raw:migrate(raw);if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
+      if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
+      else{await recordBaseline(snapshot);if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage="正式账本已核验；刷新只读取，不会上传";}setSync("已读取 "+hhmm());if(!quiet)toast("已重新读取，不会上传账本");}
+    }catch(e){setSync("读取失败："+e.message,true);}finally{_busy=false;}
+  }else if(!cfg(K.gid))setSync(isMgr()?"请恢复原账本链接；不会新建":"");
+  await restoreDraft();
   render();
 }
-async function connect(tok){tok=(tok||"").trim();if(!tok){toast("请先粘贴令牌");return;}setCfg(K.tok,tok);
+async function connect(tok){await restoreDraft();if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("请先处理保留的草稿，不能切换访问");return;}tok=(tok||"").trim();if(!tok){toast("请先粘贴令牌");return;}setCfg(K.tok,tok);
   try{await ghApi("/gists?per_page=1");}catch(e){setCfg(K.tok,"");toast("令牌无效："+e.message);render();return;}
   await pullAll(false);toast("已连接");render();}
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")pullAll(true);});
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")pullAll(true);else lockLedger("已离开页面，编辑锁定；草稿保留");});
+window.addEventListener("pagehide",()=>lockLedger());
+setInterval(()=>{if(["editing","review"].includes(EDIT.mode)&&!LG.isEditable(EDIT,Date.now()))lockLedger("5 分钟未操作，编辑已锁定；草稿保留");},1000);
 window.addEventListener("pageshow",e=>{if(e.persisted)pullAll(true);});
 window.addEventListener("online",()=>pullAll(true));
 
@@ -934,33 +1036,42 @@ document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElemen
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnRefresh"){manualRefresh();return;}
+  if(T.id==="ledgerEdit"){beginLedgerEdit();return;}
+  if(T.id==="ledgerLock"){lockLedger();return;}
+  if(T.id==="ledgerReviewOpen"){showLedgerReview();return;}
+  if(T.id==="ledgerReviewConfirm"){confirmLedgerReview();return;}
+  if(T.id==="ledgerReviewBack"){document.getElementById("ledgerReview").classList.remove("on");return;}
+  if(T.id==="ledgerCheck"){checkLedgerOutcome();return;}
+  if(T.id==="ledgerDiscard"){if(_ledgerBusy||EDIT.pending||_draftBlocked)return;confirmBox("丢弃未提交草稿","只删除本机草稿，不改动正式账本。",()=>{EDIT=LG.clear(EDIT);_ledgerConflict=[];_ledgerMessage="草稿已丢弃，正式账本未修改";persistDraft();render();});return;}
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
-  if(T.id==="btnLink"){const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是我发的链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
+  if(T.id==="btnLink"){if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("先处理草稿，再切换原账本链接");return;}const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是原完整链接（缺少 # 后面的参数）");return;}location.hash=v.slice(i+1);return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
   if(!isMgr())return;
-  if(T.id==="btnAddFee"){DB.fees.push({id:uid(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""});render();return;}
-  if(T.dataset.delfee){DB.fees=DB.fees.filter(f=>f.id!==T.dataset.delfee);render();return;}
-  if(T.dataset.delflow){DB.months.forEach(m=>m.flows=(m.flows||[]).filter(f=>f.id!==T.dataset.delflow));render();return;}
+  if(T.id==="btnAddFee"){changeDraft(d=>d.fees.push({id:crypto.randomUUID(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""}));return;}
+  if(T.dataset.delfee){changeDraft(d=>{d.fees=d.fees.filter(f=>f.id!==T.dataset.delfee);});return;}
+  if(T.dataset.delflow){changeDraft(d=>d.months.forEach(m=>m.flows=m.flows.filter(f=>f.id!==T.dataset.delflow)));return;}
   if(T.id==="btnShare"){showShare();return;}
   if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
   if(T.id==="shCopy"){const v=document.getElementById("shLink");navigator.clipboard?.writeText(v.value).then(()=>toast("链接已复制")).catch(()=>{v.select();toast("已全选，请长按复制");});return;}
   if(T.id==="btnPrepIcon"){history.replaceState(null,"",location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||""));toast("已准备好：现在点 Safari 底部「分享」→「添加到主屏幕」");return;}
   if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败"));return;}
   if(T.id==="btnGhSync"){pullAll(false);return;}
-  if(T.id==="btnGhOff"){confirmBox("断开云同步","本机将不再是管理人设备（数据保留在云端与本机）。",()=>{setCfg(K.tok,"");render();setSync("");});return;}
+  if(T.id==="btnGhOff"){if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("草稿保留中，请先处理草稿");return;}confirmBox("断开云同步","本机将不再是管理人设备（数据保留在云端与本机）。",()=>{setCfg(K.tok,"");render();setSync("");});return;}
 });
 let _pend=null;const scheduleRender=()=>{clearTimeout(_pend);_pend=setTimeout(render,0);};
-document.body.addEventListener("change",e=>{const historyYear=monthHistoryYearFromEvent(e);if(historyYear){_monthHistoryYear=historyYear;const history=document.getElementById("monthHistory");if(history)history.open=true;scheduleRender();return;}if(!isMgr())return;const T=e.target,k=T.dataset.k;const val=T.type==="checkbox"?T.checked:T.value;let dirty=true;
-  if(T.dataset.fee){const f=DB.fees.find(x=>x.id===T.dataset.fee);if(f)f[k]=val;}
-  else if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(f){const ym=f.date.slice(0,7);const m=monthOf(ym);m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:uid(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});}}
-  else if(T.dataset.open){DB.accounts.find(a=>a.id===T.dataset.open).opening=parseFloat(val)||0;}
-  else if(T.dataset.acct){DB.accounts.find(a=>a.id===T.dataset.acct).name=val;}
-  else if(T.id==="sMgmt")DB.settings.mgmt=parseFloat(val)||0;else if(T.id==="sCarry")DB.settings.carry=parseFloat(val)||0;
-  else if(T.id==="sStart")DB.settings.start=val;else if(T.id==="sWho")DB.settings.who=val;
-  else dirty=false;if(dirty)scheduleRender();});
+function ledgerInput(e){const T=e.target,k=T.dataset.k,val=T.value;if(!canEdit())return;
+  if(T.dataset.fee)changeDraft(d=>{const f=d.fees.find(x=>x.id===T.dataset.fee);if(f&&["date","amount","ccy","fx","note"].includes(k))f[k]=val;},false);
+  else if(T.dataset.open)changeDraft(d=>{d.accounts.find(a=>a.id===T.dataset.open).opening=val;},false);
+  else if(T.dataset.acct)changeDraft(d=>{d.accounts.find(a=>a.id===T.dataset.acct).name=val;},false);
+  else{const field={sMgmt:"mgmt",sCarry:"carry",sStart:"start",sWho:"who"}[T.id];if(field)changeDraft(d=>{d.settings[field]=val;},false);}
+}
+document.body.addEventListener("input",ledgerInput);
+document.body.addEventListener("change",e=>{const historyYear=monthHistoryYearFromEvent(e);if(historyYear){_monthHistoryYear=historyYear;const history=document.getElementById("monthHistory");if(history)history.open=true;scheduleRender();return;}if(!isMgr())return;const T=e.target;
+  if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
+for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});
 
 /* ============ 启动 ============ */
-_last=_seeded?null:strip(DB);
+_last=strip(DB);
 render();setSync("");
 try{const u=new URL(location.href);if(u.searchParams.get("_refreshed")==="1"){u.searchParams.delete("_refreshed");history.replaceState(null,"",u.pathname+u.search+u.hash);setTimeout(()=>toast("已重新读取最新页面和数据"),250);}}catch(_){}
 if(HASH&&HASH.tok&&store){connect(HASH.tok);}else pullAll(true);
