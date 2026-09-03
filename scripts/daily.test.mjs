@@ -225,6 +225,7 @@ test("the approved fee style mapping has unique holding keys and classifies Webu
   const mapping = JSON.parse(fs.readFileSync(styleMapPath, "utf8"));
   assert.equal(mapping.schemaVersion, 1);
   assert.deepEqual(mapping.primaryKey, ["portfolioId", "holdingId"]);
+  assert.equal(mapping.secondaryCheck, "ticker");
   assert.equal(mapping.unknownHoldingPolicy, "fail_closed");
 
   const seen = new Set();
@@ -245,6 +246,20 @@ test("the approved fee style mapping has unique holding keys and classifies Webu
     { ticker: webullBrkb?.ticker, style: webullBrkb?.style },
     { ticker: "BRK/B", style: "value" }
   );
+});
+
+test("the approved BE growth mapping is scoped to the exact Webull holding", () => {
+  const mapping = JSON.parse(fs.readFileSync(styleMapPath, "utf8"));
+  const beMappings = mapping.holdings.filter(holding =>
+    holding.ticker === "BE" ||
+    (holding.portfolioId === 1350094 && holding.holdingId === 29037698));
+  assert.deepEqual(beMappings, [{
+    portfolioId: 1350094,
+    portfolioName: "Webull",
+    holdingId: 29037698,
+    ticker: "BE",
+    style: "growth"
+  }]);
 });
 
 test("keeps historical input backward-compatible when style fields are absent", () => {
