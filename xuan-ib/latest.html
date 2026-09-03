@@ -140,7 +140,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
 </div>
 
-<div class="alert"><b>字段级回退：</b>四桶 / 三层流动性继续沿用 2026-08-24 已批准快照；其余为本次 17:11–17:14 HKT 只读实时重读——各标的均为最新可用报价（美股盘前 / 欧洲盘中），上一已完成美股交易日为 09-02（21:30 HKT 今晚开盘），非统一收盘价，详见「报告说明」。</div>
+<div class="alert"><b>四桶暂用08-24快照，待完整核验。</b> 其余数据时点见「报告说明」。</div>
 
 <details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
 <div class="dbody">
@@ -554,7 +554,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <details><summary>报告说明 <span class="rt">版别 · 取数时点 · 数据日 · 只读</span></summary>
 <div class="dbody">
 <ol>
-<li><b>版次与时点。</b>版别：<b>临时版（用户随时手动启动，不代替 AM / PM 定时任务）</b>。启动 / 取数时点：<b>2026-09-03 09:11–09:14 UTC（周四 17:11–17:14 HKT）</b>。数据日：<b>2026-09-03</b>（对应美股仍为 <b>2026-09-02（周三）收盘</b>；美股 09-03 常规交易 21:30 HKT 今晚才开盘）。相对 main 上可信 <code>latest.meta.json</code>（今晨 08:05–08:10 HKT 早间版）：<b>IB 侧无新增成交、无新增/撤销挂单、持仓股数均未变</b>，市值差异全部来自盘前报价漂移，已如实披露、不重复计为新增成交。本次临时版落实 <code>claude/xuan-ib-report-schedule-HKT-v1.md</code> 第 5 条临时报告口径，不冒充 AM / PM 定时任务成功证据。</li>
+<li><b>版次与时点。</b>版别：<b>临时版（用户随时手动启动，不代替 AM / PM 定时任务）</b>。启动 / 取数时点：<b>2026-09-03 09:11–09:14 UTC（周四 17:11–17:14 HKT）</b>。报告日期：2026-09-03。持仓、NAV及现金读取于17:11–17:14 HKT；价格为当时可用估值，非统一收盘价。上一完成的美股交易日为09-02；日涨跌行情时间另见第2项。相对 main 上可信 <code>latest.meta.json</code>（今晨 08:05–08:10 HKT 早间版）：<b>IB 侧无新增成交、无新增/撤销挂单、持仓股数均未变</b>，市值差异全部来自盘前报价漂移，已如实披露、不重复计为新增成交。本次临时版落实 <code>claude/xuan-ib-report-schedule-HKT-v1.md</code> 第 5 条临时报告口径，不冒充 AM / PM 定时任务成功证据。</li>
 <li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读，5 个端点：summary / balances / positions / orders / trades 全部直接读取成功）· Sharesight User API（只读）。本次 9 个必读 Sharesight 组合（7 家庭 + 2 AI-only）<b>全部成功读取</b>：IB-HK（936247）因持仓数量较多，单次返回体积超出 MCP 工具的直接输出上限，改由该次调用已落盘的原始响应文件本地完整提取，数据本身完整、非连接器或数据源故障；其余 8 个组合直接返回。其中 6 个家庭组合（NOAH-HK / NOAH-US / ANTARCTICA / UBS / Citi-HK &amp; 地产四期 / HSBC-HK）与今晨早间版逐项零变动，IB-HK / Schwab-HK / Webull 随盘前报价小幅波动。未使用缓存替代本次实读。<b>字段级回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24，家庭口径基数 $31,115,693，<code>four-bucket-mapping.json</code> 内容未变）；沿用原因是完整七组合范围、现金身份、持仓分页与金额对账的核验证据及受控维护门槛尚未满足，<b>不是本次金额与该快照相等</b>——本次仅确认六个非 IB 家庭组合的 Sharesight 总值与今晨早间版逐项一致，IB-HK 随盘前报价变动；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」，四桶比例、三层流动性及依赖归桶的金额本次不变。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重沿用不变，MRVL 按用户已批准标准 T1 60% / 80% / 100% 本次现场重算（市值与今晨一致 $41,296）；中情景按本次盘前市值未舍入汇总，低 / 高仍为 2026-08-31 原组合近似基数加 MRVL 精确增量，未反映其后持仓变动，可信度较低（已在「风险」标签内标注）。四类清单 v9.6 · USSC 基数 v9.8 · 分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，本次维持 5% 线内，未新增任何交易触发。MRVL 普通资产分类与 §0-C AI 压力分类分开；原 3 条回执保持历史原文，不代表交易授权。FX 参考 CAD/USD 0.723991（IB Base）。全部持仓表默认只展开 |日涨跌| ≥1% 的持仓（本次仅 META），估值报价固定为 17:11–14 HKT 持仓读数；其余有可核实日涨跌依据但 &lt;1% 的 19 只折叠在「其它持仓」；APO / EQAC / HODL / VGIT / KKR / VCN 共 6 只本次缺可核实的日涨跌依据（前四者快照未返回 <code>change</code> 或上一收盘价；KKR、VCN 虽 last=priorClose 但 <code>change</code> 为空且无独立时间戳，不足以证明两个独立交易时点的比较，不按 0.00% 处理），单列「涨跌数据待核验」折叠，不猜测（1+19+6=26）。日涨跌取自 IB 实时快照的 <code>change</code> / <code>change_pct</code> 字段（当前价与上一交易日收盘价之差，非成本收益、股数变化或汇率差）；该字段返回的 <code>ts</code> 是行情自身时间（15:10–17:56 HKT 区间，如 IVAI 15:10），<b>不是</b>本次查询调用时间——实际调用时刻未独立记录，晚于 17:11–14 HKT 持仓/NAV 读数、早于本次候选提交，不倒填为与行情 ts 或 17:11–14 相同。已按原始报价字段核验日涨跌；报价时间与资产估值时间不同。所有持仓价格标注均为「估值报价」，非统一「收盘价」——美股（NASDAQ/NYSE/BATS）本次为盘前，LSE/EBS 为当地盘中，TSE 尚未开盘（显示为上一收盘）；上一已完成美股交易日为 09-02。</li>
 <li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本次未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限；此前 09-01/09-02 已披露的成交均为 Wu 既有挂单结果，与本次会话无关，本次不重复计为新增。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本临时版通过候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接；本会话未能直接读取 Pages 线上固定地址核实固定页已刷新，源提交与推送成功不等于线上固定页已核验，需另行核对固定手机链接的 source SHA / 生成时间是否已更新为本次。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项）。</li>
 </ol>
@@ -569,7 +569,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 </section>
 </div></details>
 
-<div class="foot">只读报告 · 数据截至 17:14 HKT（对应美股仍为 09-02 收盘）· 已验证发布 · 不是交易指令</div>
+<div class="foot">只读报告 · 资产读取17:11–17:14 HKT · 行情时点见报告说明 · 不是交易指令</div>
 
 </div></div>
 <template id="xuan-ib-decision-state-v1" type="application/json">
