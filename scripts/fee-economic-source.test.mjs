@@ -7,7 +7,9 @@ import path from "node:path";
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
 
 const ID = "a".repeat(32), OWNER = "huanwujoy-crypto", NAME = "fee-console-db.json";
+const TOKEN = "github_pat_" + "SYNTHETIC_NOT_A_REAL_TOKEN_".repeat(3);
 process.env.FEE_ECON_GIST_ID = ID;
+process.env.FEE_ECON_GITHUB_TOKEN = TOKEN;
 const envelope = (v = 3) => JSON.stringify({ enc: true, v, data: Buffer.alloc(40, 7).toString("base64") }, null, 2) + "\n";
 const fixture = (v = 3) => ({
   id: ID, public: false, owner: { login: OWNER }, truncated: false,
@@ -37,8 +39,8 @@ for (const v of [3, 4]) test(`v${v}: exact encrypted bytes, private modes, remot
     assert.equal(url, `https://api.github.com/gists/${ID}`);
     assert.equal(init.method, "GET"); assert.equal(init.redirect, "manual");
     assert.equal(init.credentials, "omit"); assert.equal(init.cache, "no-store");
-    assert.deepEqual(Object.keys(init.headers).sort(), ["Accept", "X-GitHub-Api-Version"]);
-    assert.equal(init.headers.Authorization, undefined);
+    assert.deepEqual(Object.keys(init.headers).sort(), ["Accept", "Authorization", "X-GitHub-Api-Version"]);
+    assert.equal(init.headers.Authorization, `Bearer ${TOKEN}`);
     return reply(fixture(v));
   });
   assert.equal(calls, 2); assert.equal(snapshot.envelopeVersion, v);
@@ -46,6 +48,8 @@ for (const v of [3, 4]) test(`v${v}: exact encrypted bytes, private modes, remot
   assert.equal(fs.statSync(snapshot.sourcePath).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(snapshot.sourcePath)).mode & 0o777, 0o700);
   assert.deepEqual(Object.keys(snapshot).sort(), ["checkCurrent", "cleanup", "envelopeVersion", "sourcePath"]);
+  assert.equal(JSON.stringify(snapshot).includes(TOKEN), false);
+  assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8").includes(TOKEN), false);
   assert.equal(await snapshot.checkCurrent(), true); assert.equal(calls, 4);
   snapshot.cleanup(); snapshot.cleanup(); assert.equal(fs.existsSync(snapshot.sourcePath), false);
   await rejected(snapshot.checkCurrent(), "SOURCE_CLOSED");
@@ -92,7 +96,8 @@ for (const raw of [
 for (const status of [301, 302, 307, 308, 304, 401, 403, 404, 429, 500]) test(`HTTP ${status} is rejected without retry`, async t => {
   let calls = 0;
   await rejected(run(t, async () => { calls++; return reply({}, '"etag"', status); }),
-    status === 403 ? "SOURCE_FORBIDDEN" : status >= 300 && status < 400 && status !== 304 ? "SOURCE_REDIRECT" : "SOURCE_HTTP");
+    status === 401 ? "SOURCE_AUTH" : status === 403 ? "SOURCE_FORBIDDEN" :
+      status >= 300 && status < 400 && status !== 304 ? "SOURCE_REDIRECT" : "SOURCE_HTTP");
   assert.equal(calls, 1);
 });
 
@@ -134,7 +139,7 @@ for (const change of ["revision", "etag", "bytes"]) test(`checkCurrent detects s
 
 test("network errors have at most two attempts and cannot leak their message", async t => {
   let calls = 0;
-  await rejected(run(t, async () => { calls++; throw new Error(`TOKEN-SECRET ${ID} https://private.invalid BODY-SECRET`); }), "SOURCE_NETWORK");
+  await rejected(run(t, async () => { calls++; throw new Error(`${TOKEN} ${ID} https://private.invalid BODY-SECRET`); }), "SOURCE_NETWORK");
   assert.equal(calls, 2);
 });
 test("a single transient network error can recover within the bound", async t => {
@@ -172,7 +177,9 @@ test("invalid and URL-shaped locators cause no network request", async t => {
   process.env.FEE_ECON_GIST_ID = ID;
 });
 test("URL/token/locator options cannot be supplied", async t => {
-  for (const option of ["url", "token", "gistId"]) await rejected(run(t, async () => reply(), { [option]: "SECRET" }), "SOURCE_OPTIONS");
+  for (const option of ["url", "token", "gistId", "headers", "authorization", "credentials"]) {
+    await rejected(run(t, async () => reply(), { [option]: "SECRET" }), "SOURCE_OPTIONS");
+  }
   for (const attempts of [0, 3, Infinity]) await rejected(run(t, async () => reply(), { attempts }), "SOURCE_OPTIONS");
 });
 test("snapshot directories inside a repository are refused before fetch", async t => {
@@ -196,11 +203,95 @@ test("helper emits no logs on success or failure, and formatter is whitelisted",
   try {
     for (const key of Object.keys(old)) console[key] = (...args) => logs.push(args);
     const snapshot = await run(t, async () => reply()); snapshot.cleanup();
-    await rejected(run(t, async () => { throw new Error("TOKEN-SECRET BODY-SECRET"); }), "SOURCE_NETWORK");
+    await rejected(run(t, async () => { throw new Error(`${TOKEN} BODY-SECRET`); }), "SOURCE_NETWORK");
   } finally { Object.assign(console, old); }
   assert.deepEqual(logs, []);
   assert.equal(sourceFailureCode(new Error("TOKEN-SECRET")), "SOURCE_RESPONSE");
   assert.equal(new SourceFetchError("TOKEN-SECRET").message, "SOURCE_RESPONSE");
+});
+
+test("missing or malformed dedicated PAT fails before any request or snapshot write", async t => {
+  const tempRoot = makeRoot();
+  t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+  try {
+    for (const value of [undefined, "", " ", "github_pat_short", "ghp_" + "a".repeat(40),
+      "gho_" + "a".repeat(40), "Bearer " + TOKEN, TOKEN + "\n", " " + TOKEN,
+      TOKEN + "\r\nX-Secret: injected", TOKEN + "\t", TOKEN + "é", TOKEN + '"',
+      "github_pat_" + "a".repeat(256)]) {
+      if (value === undefined) delete process.env.FEE_ECON_GITHUB_TOKEN;
+      else process.env.FEE_ECON_GITHUB_TOKEN = value;
+      let calls = 0;
+      await rejected(fetchEconomicSnapshot({ tempRoot, fetchImpl: async () => { calls++; return reply(); } }), "SOURCE_AUTH_CONFIG");
+      assert.equal(calls, 0);
+      assert.deepEqual(fs.readdirSync(tempRoot), []);
+    }
+  } finally { process.env.FEE_ECON_GITHUB_TOKEN = TOKEN; }
+});
+
+test("generic GitHub credentials never substitute for the dedicated PAT", async t => {
+  // These synthetic decoys must never be inspected by the production helper.
+  for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ACCESS_TOKEN", "GH_ENTERPRISE_TOKEN"]) {
+    process.env[key] = "github_pat_" + "SYNTHETIC_GENERIC_DECOY_".repeat(3);
+  }
+  delete process.env.FEE_ECON_GITHUB_TOKEN;
+  try {
+    let calls = 0;
+    await rejected(run(t, async () => { calls++; return reply(); }), "SOURCE_AUTH_CONFIG");
+    assert.equal(calls, 0);
+  } finally {
+    process.env.FEE_ECON_GITHUB_TOKEN = TOKEN;
+    for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ACCESS_TOKEN", "GH_ENTERPRISE_TOKEN"]) delete process.env[key];
+  }
+});
+
+test("all reads use the frozen dedicated PAT and original endpoint, never switched environment values", async t => {
+  let calls = 0;
+  const snapshot = await run(t, async (url, init) => {
+    calls++;
+    assert.equal(url, `https://api.github.com/gists/${ID}`);
+    assert.equal(init.headers.Authorization, `Bearer ${TOKEN}`);
+    return reply();
+  });
+  try {
+    process.env.FEE_ECON_GIST_ID = "f".repeat(32);
+    process.env.FEE_ECON_GITHUB_TOKEN = "github_pat_" + "SYNTHETIC_DIFFERENT_TOKEN_".repeat(3);
+    await snapshot.checkCurrent();
+    assert.equal(calls, 4);
+  } finally {
+    process.env.FEE_ECON_GIST_ID = ID;
+    process.env.FEE_ECON_GITHUB_TOKEN = TOKEN;
+    snapshot.cleanup();
+  }
+});
+
+for (const status of [401, 403, 429]) test(`publication recheck HTTP ${status} stops without anonymous fallback or changing the snapshot`, async t => {
+  let calls = 0;
+  const snapshot = await run(t, async (url, init) => {
+    assert.equal(url, `https://api.github.com/gists/${ID}`);
+    assert.equal(init.headers.Authorization, `Bearer ${TOKEN}`);
+    return ++calls > 2 ? reply({ message: TOKEN }, '"etag"', status) : reply();
+  });
+  try {
+    await rejected(snapshot.checkCurrent(), status === 401 ? "SOURCE_AUTH" : status === 403 ? "SOURCE_FORBIDDEN" : "SOURCE_HTTP");
+    assert.equal(calls, 3);
+    assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8"), envelope());
+  } finally { snapshot.cleanup(); }
+});
+
+test("redirect location and remote error body cannot disclose the dedicated PAT", async t => {
+  let calls = 0;
+  const error = await run(t, async (url, init) => {
+    calls++;
+    assert.equal(url, `https://api.github.com/gists/${ID}`);
+    assert.equal(init.redirect, "manual");
+    assert.equal(init.headers.Authorization, `Bearer ${TOKEN}`);
+    return new Response(TOKEN, { status: 302, headers: { location: `https://attacker.invalid/${TOKEN}` } });
+  }).catch(error => error);
+  assert.equal(calls, 1);
+  assert.equal(sourceFailureCode(error), "SOURCE_REDIRECT");
+  assert.equal(JSON.stringify(error).includes(TOKEN), false);
+  assert.equal(String(error).includes(TOKEN), false);
+  assert.equal(error.stack.includes(TOKEN), false);
 });
 
 test("duplicate and escaped-duplicate envelope keys are refused", async t => {
@@ -226,4 +317,3 @@ test("replaced temporary directory cannot redirect cleanup outside the created d
   assert.equal(fs.readFileSync(sentinel, "utf8"), "SYNTHETIC-SENTINEL");
   fs.unlinkSync(directory); fs.renameSync(moved, directory); snapshot.cleanup();
 });
-
