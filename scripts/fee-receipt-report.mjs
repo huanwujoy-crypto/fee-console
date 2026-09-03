@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { validateFeeCalculationReceiptWithEcon } from "./fee-receipt-core.mjs";
+import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 
 const die = message => { console.error("error: " + message); process.exit(1); };
 const MAX_ECON_SNAPSHOT_BYTES = 5 * 1024 * 1024;
@@ -68,6 +69,7 @@ if (!configuredEcon) die("FEE_ECON_FILE is unavailable; no fee figures emitted")
 if (!path.isAbsolute(configuredEcon)) die("FEE_ECON_FILE must be an absolute path; no fee figures emitted");
 
 let economicInput;
+let verifyLegacySourceUnchanged = () => {};
 try {
   const target = fs.realpathSync(configuredEcon);
   const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -86,6 +88,7 @@ try {
   if (!economicInput || typeof economicInput !== "object" || Array.isArray(economicInput) || economicInput.v !== 4) {
     throw new Error("private snapshot payload is unsupported");
   }
+  verifyLegacySourceUnchanged = guardLegacySourceFile(economicInput, key);
 } catch {
   die("private snapshot validation failed; no fee figures emitted");
 }
@@ -98,6 +101,8 @@ try {
   die("calculation receipt validation failed safely; no fee figures emitted");
 }
 if (!validation.ok) die("calculation receipt is missing, stale, or unsupported; no fee figures emitted");
+try { verifyLegacySourceUnchanged(); }
+catch { die("private legacy source changed before output; no fee figures emitted"); }
 
 const pick = (source, keys) => Object.fromEntries(keys.map(key => [key, source[key]]));
 const periodKeys = [

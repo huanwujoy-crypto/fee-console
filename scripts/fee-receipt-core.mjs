@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 
 import {
   computeFeeStatement,
@@ -8,7 +9,12 @@ import {
 } from "./fee-engine.mjs";
 
 export const FEE_RECEIPT_SCHEMA = "fee-console.calculation-receipt.v1";
+export const FEE_LEGACY_RECEIPT_SCHEMA = "fee-console.calculation-receipt.v2";
 export const FEE_ENGINE_VERSION = "fee-v4.6.1";
+
+const legacyPolicy = createLegacyPolicy();
+const MAX_LEGACY_BYTES = 5 * 1024 * 1024;
+const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
 
 const HASH_RE = /^[a-f0-9]{64}$/;
 const YM_RE = /^\d{4}-(?:0[1-9]|1[0-2])$/;
@@ -63,6 +69,82 @@ export const semanticHash = (domain, value) => crypto.createHash("sha256")
   .update(`fee-console:${domain}:v1\0`)
   .update(canonicalJson(value))
   .digest("hex");
+
+/** Re-project declared copy provenance before it can enter the fee engine.
+ * This key-free check establishes exact-source commitments and projection
+ * consistency, not ciphertext authentication or source freshness. The writer
+ * and reporter must also authenticate the original envelope with the existing
+ * key; the phone checks its freshly read raw source before accepting v2.
+ * A malformed/unknown declared copy must never fall back to native-v4 v1.
+ */
+export function legacySourceBindingForEconomicInput(raw) {
+  let sourceBytes, payloadBytes;
+  try {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error("invalid economic object");
+    }
+    if (!Object.hasOwn(raw, "legacyV3Copy")) {
+      if (raw.v === 3 || "legacyV3Copy" in raw) throw new Error("unprojected legacy source");
+      return null;
+    }
+    const exact = (value, required) => {
+      if (!value || typeof value !== "object" || Array.isArray(value)
+          || canonicalJson(Object.keys(value).sort()) !== canonicalJson([...required].sort())) {
+        throw new Error("invalid source fields");
+      }
+    };
+    const bytes = value => {
+      if (typeof value !== "string" || value.length > Math.ceil(MAX_LEGACY_BYTES / 3) * 4
+          || !BASE64_RE.test(value)) throw new Error("invalid source bytes");
+      const decoded = Buffer.from(value, "base64");
+      if (!decoded.length || decoded.length > MAX_LEGACY_BYTES || decoded.toString("base64") !== value) {
+        throw new Error("invalid source bytes");
+      }
+      return decoded;
+    };
+    exact(raw, ["v", "updatedAt", "settings", "accounts", "months", "fees", "legacyV3Copy"]);
+    if (raw.v !== 4) throw new Error("invalid copy version");
+    const provenance = raw.legacyV3Copy;
+    const legacy = provenance?.schema === "fee-console.economic-v3-copy.v2"
+      && provenance?.policy === legacyPolicy.LEGACY_POLICY_ID;
+    const strict = provenance?.schema === "fee-console.economic-v3-copy.v1"
+      && provenance?.policy === legacyPolicy.STRICT_POLICY_ID;
+    if (!legacy && !strict) throw new Error("unsupported copy policy");
+    exact(provenance, ["schema", "policy", "sourceEnvelopeBase64", "sourcePayloadBase64",
+      ...(legacy ? ["paymentIds", "legacyRecords"] : [])]);
+    sourceBytes = bytes(provenance.sourceEnvelopeBase64);
+    payloadBytes = bytes(provenance.sourcePayloadBase64);
+    const envelope = legacyPolicy.parseExactJson(sourceBytes);
+    exact(envelope, ["enc", "v", "data"]);
+    if (envelope.enc !== true || envelope.v !== 3 || typeof envelope.data !== "string"
+        || !BASE64_RE.test(envelope.data)) throw new Error("invalid source envelope");
+    const sealed = Buffer.from(envelope.data, "base64");
+    if (sealed.length < 29 || sealed.toString("base64") !== envelope.data) {
+      throw new Error("invalid source ciphertext");
+    }
+    const projected = legacyPolicy.projectV3(legacyPolicy.parseExactJson(payloadBytes), provenance.policy);
+    const { legacyV3Copy, ...economic } = raw;
+    if (canonicalJson(economic) !== canonicalJson(projected.economic)) {
+      throw new Error("source projection mismatch");
+    }
+    if (legacy && (JSON.stringify(provenance.paymentIds) !== JSON.stringify(projected.paymentIds)
+        || JSON.stringify(provenance.legacyRecords) !== JSON.stringify(projected.legacyRecords))) {
+      throw new Error("source fee partition mismatch");
+    }
+    if (strict) return null;
+    return {
+      policyId: legacyPolicy.LEGACY_POLICY_ID,
+      sourceEnvelopeSha256: crypto.createHash("sha256").update(sourceBytes).digest("hex"),
+      sourcePayloadSha256: crypto.createHash("sha256").update(payloadBytes).digest("hex")
+    };
+  } catch {
+    // Never echo private field names/values, source bytes, or parsing errors.
+    throw new Error("legacy economic source is invalid or unsupported");
+  } finally {
+    sourceBytes?.fill(0);
+    payloadBytes?.fill(0);
+  }
+}
 
 const normalizePrivateFlow = (flow, label) => {
   if (!flow || typeof flow !== "object" || Array.isArray(flow)) throw new Error(`${label} must be an object`);
@@ -427,6 +509,7 @@ const provisionalCodesFor = normalizedData => {
 };
 
 export function buildFeeCalculationReceipt({ data, economicInput, asOf }) {
+  const legacySource = legacySourceBindingForEconomicInput(economicInput);
   const econ = normalizeEconomicInputs(economicInput);
   const newest = latestDailyDate(data);
   const finalAsOf = asOf || newest;
@@ -472,7 +555,7 @@ export function buildFeeCalculationReceipt({ data, economicInput, asOf }) {
   const paidCents = cents(statement.balance.paid, "paid fees");
   const provisionalCodes = provisionalCodesFor(normalizedData);
   const body = {
-    schema: FEE_RECEIPT_SCHEMA,
+    schema: legacySource ? FEE_LEGACY_RECEIPT_SCHEMA : FEE_RECEIPT_SCHEMA,
     engineVersion: FEE_ENGINE_VERSION,
     asOf: finalAsOf,
     start: econ.settings.start,
@@ -483,6 +566,7 @@ export function buildFeeCalculationReceipt({ data, economicInput, asOf }) {
     econInputsHash: semanticHash("private-economic-inputs", econ),
     paymentInputsHash: semanticHash("payment-inputs", paymentInputs),
     effectiveFlowsHash: semanticHash("effective-flows", flowDigest),
+    ...(legacySource ? { legacySource } : {}),
     effectiveFlowCount: flowDigest.length,
     effectiveFlowNetCents: safeInteger(flowDigest.reduce((sum, flow) => sum + flow.amountCents, 0), "effective flow net"),
     periods,
@@ -518,6 +602,7 @@ const ROOT_KEYS = [
   "dataInputsHash", "econInputsHash", "paymentInputsHash", "effectiveFlowsHash", "effectiveFlowCount",
   "effectiveFlowNetCents", "periods", "totals", "balance", "status", "receiptId"
 ];
+const LEGACY_SOURCE_KEYS = ["policyId", "sourceEnvelopeSha256", "sourcePayloadSha256"];
 const PERIOD_KEYS = [
   "ym", "from", "to", "state", "openingCents", "closingCents", "flowNetCents", "grossPnlCents",
   "feeBaseSumCents", "averageFeeBaseCents", "managementFeeCents", "carryCents", "totalFeeCents",
@@ -556,9 +641,22 @@ const sameArray = (left, right) => canonicalJson(left) === canonicalJson(right);
 
 function validateFeeCalculationReceiptUnsafe(receipt, data) {
   const errors = [];
-  if (!exactKeys(receipt, ROOT_KEYS, "receipt", errors)) return { ok: false, errors };
-  if (receipt.schema !== FEE_RECEIPT_SCHEMA) errors.push("receipt schema is unsupported");
+  const legacy = receipt?.schema === FEE_LEGACY_RECEIPT_SCHEMA;
+  if (!exactKeys(receipt, legacy ? [...ROOT_KEYS, "legacySource"] : ROOT_KEYS, "receipt", errors)) {
+    return { ok: false, errors };
+  }
+  if (receipt.schema !== FEE_RECEIPT_SCHEMA && !legacy) errors.push("receipt schema is unsupported");
   if (receipt.engineVersion !== FEE_ENGINE_VERSION) errors.push("receipt engine version is unsupported");
+  if (legacy && exactKeys(receipt.legacySource, LEGACY_SOURCE_KEYS, "legacy source", errors)) {
+    if (receipt.legacySource.policyId !== legacyPolicy.LEGACY_POLICY_ID) {
+      errors.push("legacy source policy is unsupported");
+    }
+    for (const field of ["sourceEnvelopeSha256", "sourcePayloadSha256"]) {
+      if (typeof receipt.legacySource[field] !== "string" || !HASH_RE.test(receipt.legacySource[field])) {
+        errors.push("legacy source commitment is invalid");
+      }
+    }
+  }
   const dateRangeValid = isCalendarDate(receipt.start) && isCalendarDate(receipt.asOf) && receipt.asOf >= receipt.start;
   if (!dateRangeValid) {
     errors.push("receipt date range is invalid");

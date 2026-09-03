@@ -7,6 +7,8 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 import { buildFeeCalculationReceipt, semanticHash } from "./fee-receipt-core.mjs";
+import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
+import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const htmlPath = path.join(here, "..", "index.html");
@@ -70,6 +72,82 @@ const resign = receipt => {
   delete body.receiptId;
   return { ...body, receiptId: semanticHash("calculation-receipt", body) };
 };
+
+test("legacy source binding has executable old/new consumer release interlocks", async () => {
+  const html = fs.readFileSync(htmlPath, "utf8");
+  const marker = "/* fee-legacy-policy:start */", endMarker = "/* fee-legacy-policy:end */";
+  const hasLegacy = html.includes(marker);
+  const { data, economicInput: native } = fixture();
+  const raw = structuredClone(native);
+  raw.v = 3;
+  raw.updatedAt = "2026-08-03T12:00:00Z";
+  raw.settings = { ...raw.settings, who: "SYNTHETIC", openingAt: "2026-07-31",
+    fx: { ...raw.settings.fx, CNY: 0.14, EUR: 1.1, SGD: 0.75, GBP: 1.3, JPY: 0.0067 } };
+  raw.accounts = raw.accounts.map(account => ({ ...account, name: "SYNTHETIC " + account.id }));
+  raw.months = raw.months.map(month => ({ ...month, locked: false, lockedAt: null, snap: null, manualClose: {} }));
+  raw.fees = raw.fees.map(fee => ({ ...fee, type: "pay", fx: "" }));
+  raw.fees.push({ id: "LEGACY", type: "exp", date: "2026-08-03", amount: "", ccy: "USD", fx: "", note: "", deduct: true });
+  const key = crypto.randomBytes(32);
+  const payloadBytes = Buffer.from(JSON.stringify(raw));
+  const iv = crypto.randomBytes(12), cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const sealed = Buffer.concat([iv, cipher.update(payloadBytes), cipher.final(), cipher.getAuthTag()]);
+  const envelopeBytes = Buffer.from(JSON.stringify({ enc: true, v: 3, data: sealed.toString("base64") }));
+  const copyEnvelope = JSON.parse(convertEncryptedV3Copy(envelopeBytes, key,
+    { policyId: "fee-console.legacy-empty-expense.v1" }));
+  const ct = Buffer.from(copyEnvelope.data, "base64"), decipher = crypto.createDecipheriv("aes-256-gcm", key, ct.subarray(0, 12));
+  decipher.setAuthTag(ct.subarray(-16));
+  const copy = JSON.parse(Buffer.concat([decipher.update(ct.subarray(12, -16)), decipher.final()]));
+  const receipt = buildFeeCalculationReceipt({ data, economicInput: copy });
+  const { legacyV3Copy, ...economicInput } = copy;
+  const legacySource = { envelopeBytes, payloadBytes };
+  const sandbox = { crypto: crypto.webcrypto, TextEncoder, TextDecoder, Uint8Array, structuredClone,
+    console: { log() {}, warn() {}, error() {} } };
+  sandbox.globalThis = sandbox;
+  vm.createContext(sandbox);
+  if (hasLegacy) {
+    assert.equal(html.split(marker).length, 2);
+    assert.equal(html.split(endMarker).length, 2);
+    const factory = html.slice(html.indexOf(marker) + marker.length, html.indexOf(endMarker)).trim();
+    assert.equal(factory, createLegacyPolicy.toString(), "mobile policy must be byte-identical to reviewed source factory");
+    vm.runInContext(factory + "; globalThis.feeLegacyPolicy = createLegacyPolicy();", sandbox);
+  }
+  vm.runInContext(html.slice(html.indexOf(START) + START.length, html.indexOf(END)), sandbox);
+  const closed = async input => assert.deepEqual(plain(await sandbox.feeReceiptUiModel(input)),
+    { ok: false, reason: "calculation receipt pending" });
+  const input = { receipt, data, economicInput, legacySource };
+  if (!hasLegacy) {
+    await closed(input);
+    assert.equal(receipt.schema, "fee-console.calculation-receipt.v2");
+    return; // Support PR first: actual deployed v1 code must reject this v2 receipt.
+  }
+  assert.equal((await sandbox.feeReceiptUiModel(input)).ok, true);
+  await closed({ receipt, data, economicInput });
+  await closed({ ...input, legacySource: null });
+  for (const amount of [25, "25.00", 0, "0", " ", null]) {
+    const changed = structuredClone(raw); changed.fees.at(-1).amount = amount;
+    await closed({ ...input, legacySource: { envelopeBytes, payloadBytes: Buffer.from(JSON.stringify(changed)) } });
+  }
+  for (const mutation of [r => { delete r.fees; }, r => { r.fees = {}; },
+    r => { delete r.fees.at(-1).deduct; }, r => { r.fees.at(-1).cat = ""; },
+    r => { r.fees.at(-1).unexpected = ""; }]) {
+    const changed = structuredClone(raw); mutation(changed);
+    await closed({ ...input, legacySource: { envelopeBytes, payloadBytes: Buffer.from(JSON.stringify(changed)) } });
+  }
+  for (const name of ["envelopeBytes", "payloadBytes"]) {
+    await closed({ ...input, legacySource: { ...legacySource, [name]: Buffer.concat([legacySource[name], Buffer.from(" ")]) } });
+  }
+  const malformed = structuredClone(receipt); malformed.legacySource.extra = true;
+  await closed({ ...input, receipt: resign(malformed) });
+  const wrongPolicy = structuredClone(receipt); wrongPolicy.legacySource.policyId = "unknown";
+  await closed({ ...input, receipt: resign(wrongPolicy) });
+  const downgraded = structuredClone(receipt); delete downgraded.legacySource;
+  downgraded.schema = "fee-console.calculation-receipt.v1";
+  await closed({ ...input, receipt: resign(downgraded) });
+  const changedDB = structuredClone(economicInput); changedDB.settings.fx.JPY = 0.0068;
+  await closed({ ...input, economicInput: changedDB });
+  const nativeReceipt = buildFeeCalculationReceipt({ data, economicInput: native });
+  assert.equal((await sandbox.feeReceiptUiModel({ receipt: nativeReceipt, data, economicInput: native })).ok, true);
+});
 
 test("the future index-only UI migration must satisfy the frozen receipt-consumer contract", async () => {
   const html = fs.readFileSync(htmlPath, "utf8");

@@ -6,6 +6,8 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
+import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 
 import {
   validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
@@ -88,6 +90,30 @@ const econForToday = (over = {}) => ({
   months: over.months || [],
   fees: over.fees || [{ id: "PRIVATE PAYMENT", date: today(), amount: 123, ccy: "USD", note: "PRIVATE NOTE" }]
 });
+
+const legacyFixture = dir => {
+  const raw = econForToday();
+  raw.v = 3;
+  raw.updatedAt = today() + "T12:00:00Z";
+  raw.settings.openingAt = shift(today(), -1);
+  raw.settings.fx = { USD: 1, HKD: 0.1282, CNY: 0.14, EUR: 1.1, SGD: 0.75, GBP: 1.3, JPY: 0.0067 };
+  raw.fees = [
+    { id: "PAY-SYNTHETIC", type: "pay", date: today(), amount: 123, ccy: "USD", fx: "", note: "" },
+    { id: "LEGACY-SYNTHETIC", type: "exp", date: today(), amount: "", ccy: "USD", fx: "", note: "", deduct: true }
+  ];
+  const sourceFile = path.join(dir, "original-v3.encrypted.json");
+  const ordinaryFile = writeEconEnvelope(dir, raw);
+  const outer = JSON.parse(fs.readFileSync(ordinaryFile, "utf8"));
+  outer.v = 3;
+  fs.writeFileSync(sourceFile, JSON.stringify(outer));
+  const copyFile = path.join(dir, "copy-v4.encrypted.json");
+  const rebuild = () => fs.writeFileSync(copyFile, convertEncryptedV3Copy(
+    fs.readFileSync(sourceFile), Buffer.from(TEST_KEY, "base64url"),
+    { policyId: "fee-console.legacy-empty-expense.v1" }
+  ));
+  rebuild();
+  return { sourceFile, copyFile, rebuild, env: { FEE_ECON_FILE: copyFile, FEE_ECON_V3_FILE: sourceFile } };
+};
 
 const runRepair = (dir, extra = [], key = TEST_KEY) => spawnSync(
   process.execPath,
@@ -960,6 +986,98 @@ test("rerunning an ex-date without an event preserves the verified dividend", ()
 });
 
 /* ---------------- deterministic fee calculation receipt ---------------- */
+test("legacy receipt requires current original bytes and is deterministic across copy nonces", () => {
+  const dir = tmp(), legacy = legacyFixture(dir);
+  const sourceBefore = fs.readFileSync(legacy.sourceFile);
+  const first = run(dir, {}, [], legacy.env);
+  assert.equal(first.status, 0, first.stderr);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const receipt = readPayload(dir).feeCalculationReceipt;
+  assert.equal(receipt.schema, "fee-console.calculation-receipt.v2");
+  const onDisk = before.toString("utf8"), envelope = JSON.parse(onDisk);
+  assert.deepEqual(Object.keys(envelope).sort(), ["data", "enc", "v"]);
+  assert.equal(envelope.enc, true);
+  assert.equal(envelope.v, 3);
+  assert.equal(onDisk.includes(receipt.legacySource.sourceEnvelopeSha256), false);
+  assert.equal(onDisk.includes(receipt.legacySource.sourcePayloadSha256), false);
+  assert.equal(onDisk.includes("legacySource"), false, "bindings exist inside ciphertext, not public JSON fields");
+  assert.equal(receipt.balance.paidCents, 12300, "empty exp is not a payment");
+  legacy.rebuild();
+  const repeat = run(dir, {}, [], legacy.env);
+  assert.equal(repeat.status, 0, repeat.stderr);
+  assert.match(repeat.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+  assert.deepEqual(fs.readFileSync(legacy.sourceFile), sourceBefore);
+  assert.doesNotMatch(first.stdout + first.stderr, /LEGACY-SYNTHETIC|PAY-SYNTHETIC|sourceEnvelope|sourcePayload|[a-f0-9]{64}/);
+});
+
+test("missing current legacy economic input removes v2 even when public AUM matches", () => {
+  const dir = tmp(), legacy = legacyFixture(dir);
+  assert.equal(run(dir, {}, [], legacy.env).status, 0);
+  const result = run(dir, {}, [], { FEE_ECON_FILE: "", FEE_ECON_V3_FILE: "" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /receipt=stale-removed/);
+  assert.equal(Object.hasOwn(readPayload(dir), "feeCalculationReceipt"), false);
+  assert.equal(readPayload(dir).daily.at(-1).d, today());
+});
+
+test("unavailable or changed original source cannot emit or replace a legacy receipt", () => {
+  const dir = tmp(), legacy = legacyFixture(dir);
+  assert.equal(run(dir, {}, [], legacy.env).status, 0);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  for (const sourcePath of ["", "relative.json", path.join(dir, "absent.json"), path.resolve(here, "..", "data.json")]) {
+    const result = run(dir, {}, [], { ...legacy.env, FEE_ECON_V3_FILE: sourcePath });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /private legacy source validation failed/);
+    assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+  }
+  fs.appendFileSync(legacy.sourceFile, "\n");
+  const result = run(dir, {}, [], legacy.env);
+  assert.notEqual(result.status, 0);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+  legacy.rebuild();
+  const changed = run(dir, {}, [], legacy.env);
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.match(changed.stdout, /receipt=updated/, "exact source bytes change must defeat no-op");
+});
+
+test("legacy original source is checked again after computation and before output", () => {
+  const dir = tmp(), legacy = legacyFixture(dir);
+  const copyEnvelope = JSON.parse(fs.readFileSync(legacy.copyFile, "utf8"));
+  const cipher = Buffer.from(copyEnvelope.data, "base64"), key = Buffer.from(TEST_KEY, "base64url");
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, cipher.subarray(0, 12));
+  decipher.setAuthTag(cipher.subarray(-16));
+  const economicInput = JSON.parse(Buffer.concat([decipher.update(cipher.subarray(12, -16)), decipher.final()]));
+  const recheck = guardLegacySourceFile(economicInput, key, legacy.sourceFile);
+  assert.doesNotThrow(recheck);
+  fs.appendFileSync(legacy.sourceFile, " ");
+  assert.throws(recheck, /legacy source is unavailable, changed, or unsupported/);
+});
+
+test("the independent reporter accepts legacy only with matching raw source and leaks no binding", () => {
+  const dir = tmp(), legacy = legacyFixture(dir);
+  assert.equal(run(dir, {}, [], legacy.env).status, 0);
+  const report = env => spawnSync(process.execPath, [path.join(here, "fee-receipt-report.mjs"),
+    `--file=${path.join(dir, "data.json")}`, "--format=json"], {
+    encoding: "utf8", env: { ...process.env, GITHUB_ACTIONS: "", FEE_DATA_KEY: TEST_KEY, ...legacy.env, ...env }
+  });
+  const valid = report({});
+  assert.equal(valid.status, 0, valid.stderr);
+  const output = JSON.parse(valid.stdout);
+  assert.equal(output.schema, "fee-console.calculation-receipt.v2");
+  assert.deepEqual(Object.keys(output).sort(), ["schema", "engineVersion", "asOf", "receiptId", "status", "currentPeriod", "totals", "balance"].sort());
+  assert.deepEqual(Object.keys(output.status).sort(), ["valid", "provisional", "provisionalCodes"].sort());
+  assert.deepEqual(Object.keys(output.balance).sort(), ["accruedCents", "paidCents", "dueCents"].sort());
+  assert.doesNotMatch(valid.stdout, /legacySource|sourceEnvelope|sourcePayload|PAY-SYNTHETIC|LEGACY-SYNTHETIC/);
+  const missing = report({ FEE_ECON_V3_FILE: "" });
+  assert.notEqual(missing.status, 0);
+  assert.equal(missing.stdout, "");
+  fs.appendFileSync(legacy.sourceFile, " ");
+  const changed = report({});
+  assert.notEqual(changed.status, 0);
+  assert.equal(changed.stdout, "");
+});
+
 test("an encrypted v4 economic snapshot produces a receipt inside the existing v3 envelope", () => {
   const dir = tmp();
   const econFile = writeEconEnvelope(dir, econForToday());

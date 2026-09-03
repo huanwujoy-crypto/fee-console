@@ -22,6 +22,8 @@ them; they are outside v1.
    reads of the same Gist revision/ETag and byte-identical encrypted content. The
    local double-read performed by the scripts protects against a file changing
    during use; it is not, by itself, proof that the remote Gist was stable.
+   The only reviewed v3 exception is the copy-only, explicitly named policy in
+   `docs/fee-econ-v3-copy.md`; it never upgrades or writes the original Gist.
 3. `daily.mjs` decrypts both sources in memory, validates them, and calls the pure
    fee engine with an explicit `asOf` date.
 4. The writer stores the receipt inside the existing encrypted v3 `data.json`
@@ -53,6 +55,23 @@ input commitments must never be copied into notifications, ordinary reports,
 Pages metadata or release tags;
 consumer-facing output may show only a shortened receipt id.
 
+### Legacy source binding (receipt schema v2)
+
+Native v4 inputs retain schema `fee-console.calculation-receipt.v1` and engine
+`fee-v4.6.1`. The approved legacy-empty-expense copy uses schema
+`fee-console.calculation-receipt.v2` with the same mathematical engine and one
+additional exact-key field `legacySource`:
+
+- `policyId`: exactly `fee-console.legacy-empty-expense.v1`;
+- `sourceEnvelopeSha256`: SHA-256 over exact original encrypted envelope bytes;
+- `sourcePayloadSha256`: SHA-256 over exact original authenticated UTF-8 bytes.
+
+The receipt ID commits this field too. Unknown schemas/policies/keys, v2 without
+binding, and v1 with extra binding are refused. Do not derive these commitments
+from canonical JSON, a migrated DB, or receipt-supplied assertions. They remain
+inside encrypted data, not the reporter output allowlist. Full original records
+and source bytes remain only inside the encrypted computation copy.
+
 ## Safe invocation
 
 The trusted Routine supplies the existing key through `FEE_DATA_KEY` and the
@@ -74,12 +93,29 @@ secrets. Malformed receipt structures return a closed validation result rather
 than throwing a stack trace. A repeated run with identical inputs must leave
 `data.json` byte-for-byte unchanged.
 
+For the legacy exception, both tools also require the fresh original encrypted
+source snapshot through `FEE_ECON_V3_FILE`. They authenticate the original bytes
+preserved in the copy, re-run the strict policy and full projection, compare the
+source file twice, and recheck before output. The caller still owns remote
+revision/ETag and source-identity checks before and after the run. A manual
+attachment is not a standing source. Without a current economic snapshot, a v2
+receipt is removed even if the public AUM is unchanged; native v1 behavior is
+unchanged. Changed/unavailable raw v3 on the phone suppresses fees, never falls
+back to a migrated or cached economic hash.
+
 If any flow remains unresolved, the writer may still preserve the validated raw
 AUM point, but it removes any stale receipt and emits no replacement. Consumers
 must then show `calculation receipt pending` and must not display fee, Carry,
 amount-due or fee-adjusted-return figures.
 
 ## Deployment gates
+
+For the v2 legacy exception, both the support PR and separate index-only PR must
+pass existing approval gates and be deployed before real acceptance. Synthetic
+tests must execute the actual old consumer rejecting v2 and the new consumer
+accepting only a fully matching raw-source binding. Do not rely on release order
+alone. The original v3 ledger remains read-only and cannot enter the v4 edit/save
+path. Native v4 behavior is preserved.
 
 1. Scripts/docs/tests PR: add the writer and read-only consumer without changing
    `index.html`.

@@ -24,10 +24,12 @@ import {
 } from "./daily-core.mjs";
 import {
   buildFeeCalculationReceipt,
+  FEE_RECEIPT_SCHEMA,
   normalizeEconomicInputs,
   sameFeeCalculationReceipt,
   validateFeeCalculationReceipt
 } from "./fee-receipt-core.mjs";
+import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -138,6 +140,7 @@ const dec = b64 => {
 };
 
 /* ---------- 私密经济输入（只接受仓库外的加密 v4 快照） ---------- */
+let verifyLegacySourceUnchanged = () => {};
 const loadEconomicInput = () => {
   const configured = String(process.env.FEE_ECON_FILE || "").trim();
   if (!configured) return null;
@@ -180,6 +183,8 @@ const loadEconomicInput = () => {
       || economicInput.v !== 4) {
     die("FEE_ECON_FILE decrypted payload must be fee-console v4 — nothing written");
   }
+  try { verifyLegacySourceUnchanged = guardLegacySourceFile(economicInput, key); }
+  catch { die("private legacy source validation failed — nothing written"); }
   return economicInput;
 };
 
@@ -405,12 +410,15 @@ if (economicInput) {
   }
 } else if (data.feeCalculationReceipt) {
   const validation = validateFeeCalculationReceipt(data.feeCalculationReceipt, nextData);
-  if (!validation.ok) {
+  if (!validation.ok || data.feeCalculationReceipt.schema !== FEE_RECEIPT_SCHEMA) {
     delete nextData.feeCalculationReceipt;
     receiptState = "stale-removed";
   }
 }
 
+// No-op is also an output claim: recheck the original source before either exit.
+try { verifyLegacySourceUnchanged(); }
+catch { die("private legacy source changed before output — nothing written"); }
 const receiptUnchanged = sameFeeCalculationReceipt(data.feeCalculationReceipt, nextData.feeCalculationReceipt);
 if (baseUnchanged && receiptUnchanged) {
   console.log(`no-op ${date}`);

@@ -9,14 +9,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { isCalendarDate } from "./fee-engine.mjs";
+import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 import { normalizeEconomicInputs } from "./fee-receipt-core.mjs";
 
 export const V3_COPY_SCHEMA = "fee-console.economic-v3-copy.v1";
+export const V3_LEGACY_COPY_SCHEMA = "fee-console.economic-v3-copy.v2";
 const MAX_BYTES = 5 * 1024 * 1024;
-const NUMBER = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
-const ACCOUNTS = ["schwab", "webull"];
-const LEGACY_FX = ["USD", "HKD", "CNY", "EUR", "SGD", "GBP", "JPY"];
+const policy = createLegacyPolicy();
+const { STRICT_POLICY_ID, LEGACY_POLICY_ID } = policy;
 const own = (o, key) => Object.hasOwn(o, key);
 const object = o => o !== null && typeof o === "object" && !Array.isArray(o);
 
@@ -30,159 +30,44 @@ const keys = (o, required, optional, code) => {
   requireThat(required.every(key => own(o, key))
     && Object.keys(o).every(key => required.includes(key) || optional.includes(key)), code);
 };
-const numeric = (value, code) => {
-  requireThat(typeof value === "number" || (typeof value === "string"
-    && value.trim() !== "" && NUMBER.test(value.trim())), code);
-  const n = Number(value);
-  requireThat(Number.isFinite(n) && Math.abs(n) <= Number.MAX_SAFE_INTEGER / 100, code);
-  return n;
+const policyCall = operation => {
+  try { return operation(); }
+  catch (error) {
+    if (error?.name === "LegacyPolicyError" && /^[A-Z_]+$/.test(error.code)) reject(error.code);
+    throw error;
+  }
 };
-const id = (value, code) => requireThat(typeof value === "string" && value.length > 0
-  && value === value.trim() && !/[\u0000-\u001f\u007f]/.test(value), code);
-const date = (value, code) => requireThat(typeof value === "string" && isCalendarDate(value), code);
-const unique = (values, code) => requireThat(new Set(values).size === values.length, code);
-const clone = value => structuredClone(value);
-
-// JSON.parse alone silently accepts duplicate keys. Scan valid JSON as well,
-// rejecting duplicate keys (including escaped spellings) without logging text.
-const parseExactJson = bytes => {
-  requireThat(Buffer.isBuffer(bytes) && bytes.length > 0 && bytes.length <= MAX_BYTES, "INPUT_BYTES_INVALID");
-  let text, parsed;
-  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); parsed = JSON.parse(text); }
-  catch { reject("INPUT_JSON_INVALID"); }
-  let pos = 0;
-  const ws = () => { while (/\s/.test(text[pos] || "") && pos < text.length) pos++; };
-  const string = () => {
-    const start = pos++;
-    while (pos < text.length) {
-      if (text[pos] === "\\") { pos += 2; continue; }
-      if (text[pos++] === '"') return JSON.parse(text.slice(start, pos));
-    }
-    reject("INPUT_JSON_INVALID");
-  };
-  const value = depth => {
-    requireThat(depth < 64, "INPUT_JSON_DEPTH"); ws();
-    if (text[pos] === '"') { string(); return; }
-    if (text[pos] === "{") {
-      pos++; ws(); const seen = new Set();
-      if (text[pos] === "}") { pos++; return; }
-      for (;;) {
-        ws(); const key = string();
-        requireThat(!seen.has(key), "INPUT_DUPLICATE_JSON_KEY"); seen.add(key);
-        ws(); pos++; value(depth + 1); ws();
-        if (text[pos++] === "}") return;
-      }
-    }
-    if (text[pos] === "[") {
-      pos++; ws(); if (text[pos] === "]") { pos++; return; }
-      for (;;) { value(depth + 1); ws(); if (text[pos++] === "]") return; }
-    }
-    while (pos < text.length && !/[\s,\]}]/.test(text[pos])) pos++;
-  };
-  value(0);
-  return parsed;
+const parseExactJson = bytes => policyCall(() => policy.parseExactJson(bytes));
+const projection = (raw, policyId) => policyCall(() => policy.projectV3(raw, policyId));
+const selectedPolicyId = options => {
+  keys(options, [], ["policyId"], "COPY_OPTIONS_UNSUPPORTED");
+  const id = own(options, "policyId") ? options.policyId : STRICT_POLICY_ID;
+  requireThat(id === STRICT_POLICY_ID || id === LEGACY_POLICY_ID, "LEGACY_POLICY_UNSUPPORTED");
+  return id;
 };
+const canonical = value => JSON.stringify((function sort(input) {
+  if (Array.isArray(input)) return input.map(sort);
+  if (!object(input)) return input;
+  return Object.fromEntries(Object.keys(input).sort().map(key => [key, sort(input[key])]));
+})(value));
 
-const validateV3 = raw => {
-  keys(raw, ["v", "updatedAt", "settings", "accounts", "months", "fees"], [], "LEDGER_FIELDS_UNSUPPORTED");
-  requireThat(raw.v === 3, "LEDGER_VERSION_UNSUPPORTED");
-  requireThat(typeof raw.updatedAt === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(raw.updatedAt)
-    && isCalendarDate(raw.updatedAt.slice(0, 10)) && Number.isFinite(Date.parse(raw.updatedAt)), "LEDGER_UPDATED_AT_INVALID");
-  const s = raw.settings;
-  keys(s, ["start", "mgmt", "carry", "who", "openingAt", "fx"], [], "SETTINGS_FIELDS_UNSUPPORTED");
-  date(s.start, "START_INVALID"); date(s.openingAt, "OPENING_DATE_INVALID");
-  requireThat(Date.parse(s.start + "T00:00:00Z") - Date.parse(s.openingAt + "T00:00:00Z") === 86400000,
-    "OPENING_DATE_REQUIRES_REVIEW");
-  requireThat(typeof s.who === "string", "OWNER_LABEL_INVALID");
-  numeric(s.mgmt, "MANAGEMENT_RATE_INVALID"); numeric(s.carry, "CARRY_RATE_INVALID");
-  requireThat(object(s.fx) && LEGACY_FX.every(ccy => own(s.fx, ccy)), "FX_MAP_INCOMPLETE");
-  for (const [ccy, fx] of Object.entries(s.fx)) {
-    requireThat(/^[A-Z]{3}$/.test(ccy) && numeric(fx, "FX_RATE_INVALID") > 0, "FX_RATE_INVALID");
-  }
-  requireThat(Number(s.fx.USD) === 1, "USD_FX_REQUIRES_REVIEW");
-  requireThat(Array.isArray(raw.accounts) && raw.accounts.length === 2, "ACCOUNT_SET_INVALID");
-  for (const a of raw.accounts) {
-    keys(a, ["id", "name", "opening"], [], "ACCOUNT_FIELDS_UNSUPPORTED");
-    requireThat(ACCOUNTS.includes(a.id), "ACCOUNT_SET_INVALID");
-    requireThat(typeof a.name === "string" && a.name.trim() !== "", "ACCOUNT_NAME_INVALID");
-    requireThat(numeric(a.opening, "OPENING_AMOUNT_INVALID") >= 0, "OPENING_AMOUNT_INVALID");
-  }
-  unique(raw.accounts.map(a => a.id), "ACCOUNT_SET_INVALID");
-  requireThat(raw.accounts.reduce((sum, a) => sum + Number(a.opening), 0) > 0, "BLANK_LEDGER_REJECTED");
-
-  requireThat(Array.isArray(raw.months), "MONTHS_MISSING");
-  const flows = [];
-  for (const m of raw.months) {
-    keys(m, ["ym", "locked", "lockedAt", "snap", "flows", "manualClose"], [], "MONTH_FIELDS_UNSUPPORTED");
-    requireThat(typeof m.ym === "string" && /^\d{4}-(?:0[1-9]|1[0-2])$/.test(m.ym)
-      && m.ym >= s.start.slice(0, 7), "MONTH_INVALID");
-    // Even an empty-looking historical snapshot or manual-close entry is not
-    // discarded. A separate reviewed migration is required for these features.
-    requireThat(m.locked === false && m.lockedAt === null && m.snap === null, "LEGACY_LOCK_REQUIRES_REVIEW");
-    requireThat(object(m.manualClose) && Object.keys(m.manualClose).length === 0, "LEGACY_MANUAL_CLOSE_REQUIRES_REVIEW");
-    requireThat(Array.isArray(m.flows), "FLOWS_MISSING");
-    for (const f of m.flows) {
-      keys(f, ["id", "date", "acct", "amount", "note"], ["src"], "FLOW_FIELDS_UNSUPPORTED");
-      id(f.id, "FLOW_ID_INVALID"); date(f.date, "FLOW_DATE_INVALID");
-      requireThat(f.date.slice(0, 7) === m.ym && f.date >= s.start, "FLOW_DATE_REQUIRES_REVIEW");
-      requireThat(ACCOUNTS.includes(f.acct), "FLOW_ACCOUNT_INVALID");
-      requireThat(numeric(f.amount, "FLOW_AMOUNT_INVALID") !== 0, "FLOW_AMOUNT_INVALID");
-      requireThat(typeof f.note === "string", "FLOW_NOTE_INVALID");
-      if (own(f, "src")) {
-        requireThat(typeof f.src === "string", "FLOW_SOURCE_INVALID");
-        if (f.src !== "") id(f.src, "FLOW_SOURCE_INVALID");
-      }
-      flows.push(f);
-    }
-  }
-  unique(raw.months.map(m => m.ym), "DUPLICATE_MONTH");
-  requireThat(raw.months.every((m, index) => index === 0 || raw.months[index - 1].ym < m.ym),
-    "MONTH_ORDER_REQUIRES_REVIEW");
-  unique(flows.map(f => f.id), "DUPLICATE_FLOW_ID");
-  unique(flows.filter(f => f.src).map(f => f.src), "DUPLICATE_FLOW_SOURCE");
-
-  requireThat(Array.isArray(raw.fees), "FEES_MISSING");
-  for (const f of raw.fees) {
-    keys(f, ["id", "type", "date", "amount", "ccy", "fx", "note"], ["cat"], "FEE_FIELDS_UNSUPPORTED");
-    requireThat(f.type === "pay", "LEGACY_EXPENSE_OR_TYPE_REQUIRES_REVIEW");
-    id(f.id, "PAYMENT_ID_INVALID"); date(f.date, "PAYMENT_DATE_INVALID");
-    requireThat(f.date >= s.start, "PAYMENT_DATE_REQUIRES_REVIEW");
-    requireThat(numeric(f.amount, "PAYMENT_AMOUNT_INVALID") > 0, "PAYMENT_AMOUNT_INVALID");
-    requireThat(typeof f.ccy === "string" && /^[A-Z]{3}$/.test(f.ccy) && own(s.fx, f.ccy), "PAYMENT_CURRENCY_INVALID");
-    // An explicitly blank FX uses the existing, required map in BOTH versions;
-    // it is preserved blank, not replaced by a new default or live quote.
-    requireThat(f.fx === "" || numeric(f.fx, "PAYMENT_FX_INVALID") > 0, "PAYMENT_FX_INVALID");
-    requireThat(typeof f.note === "string" && (!own(f, "cat") || typeof f.cat === "string"), "PAYMENT_TEXT_INVALID");
-  }
-  unique(raw.fees.map(f => f.id), "DUPLICATE_PAYMENT_ID");
-  return raw;
-};
-
-/** Private in-memory copy. Every source byte/field is retained in provenance.
- * IDs, dates, monetary representations, FX, and updatedAt are never synthesized.
- * Provenance belongs only inside the encrypted economic copy, never a receipt.
+/** Preserve every source byte/field inside encrypted provenance. No defaults,
+ * generated IDs, expense-to-payment coercion, or source authority claim.
  */
-function copyV3EconomicLedger(payloadBytes, sourceEnvelopeBytes) {
-  const raw = validateV3(parseExactJson(payloadBytes));
+function copyV3EconomicLedger(payloadBytes, sourceEnvelopeBytes, policyId) {
+  const { economic, paymentIds, legacyRecords } = projection(parseExactJson(payloadBytes), policyId);
   requireThat(Buffer.isBuffer(sourceEnvelopeBytes) && sourceEnvelopeBytes.length > 0
     && sourceEnvelopeBytes.length <= MAX_BYTES, "SOURCE_ENVELOPE_BYTES_REQUIRED");
   const result = {
-    v: 4,
-    updatedAt: raw.updatedAt,
-    settings: clone(raw.settings),
-    accounts: clone(raw.accounts),
-    months: raw.months.map(m => ({ ym: m.ym, flows: clone(m.flows) })),
-    fees: raw.fees.map(({ type, cat, ...payment }) => clone(payment)),
+    ...economic,
     legacyV3Copy: {
-      schema: V3_COPY_SCHEMA,
-      policy: "strict-safe-subset-copy-only",
+      schema: policyId === STRICT_POLICY_ID ? V3_COPY_SCHEMA : V3_LEGACY_COPY_SCHEMA,
+      policy: policyId,
       sourceEnvelopeBase64: sourceEnvelopeBytes.toString("base64"),
-      sourcePayloadBase64: payloadBytes.toString("base64")
+      sourcePayloadBase64: payloadBytes.toString("base64"),
+      ...(policyId === LEGACY_POLICY_ID ? { paymentIds, legacyRecords } : {})
     }
   };
-  // Payment type/cat and inactive lock/manualClose fields are accounted for in
-  // exact provenance, not silently forgotten. Current monetary inputs must pass
-  // the same strict normalizer used by the receipt writer and reader.
   try { normalizeEconomicInputs(result); }
   catch { reject("CURRENT_ECONOMIC_SCHEMA_REJECTED"); }
   return result;
@@ -206,12 +91,13 @@ const decrypt = (encrypted, key) => {
 };
 
 /** No network or filesystem access. Returns encrypted v4 bytes only. */
-export function convertEncryptedV3Copy(sourceBytes, key) {
+export function convertEncryptedV3Copy(sourceBytes, key, options = {}) {
   requireThat(Buffer.isBuffer(key) && key.length === 32, "KEY_INVALID");
+  const policyId = selectedPolicyId(options);
   const plain = decrypt(decodeEnvelope(sourceBytes, 3), key);
   let converted;
   try {
-    converted = Buffer.from(JSON.stringify(copyV3EconomicLedger(plain, sourceBytes)), "utf8");
+    converted = Buffer.from(JSON.stringify(copyV3EconomicLedger(plain, sourceBytes, policyId)), "utf8");
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
     const sealed = Buffer.concat([iv, cipher.update(converted), cipher.final(), cipher.getAuthTag()]);
@@ -219,6 +105,51 @@ export function convertEncryptedV3Copy(sourceBytes, key) {
     requireThat(result.length <= MAX_BYTES, "COPY_EXCEEDS_CONSUMER_LIMIT");
     return result;
   } finally { plain.fill(0); converted?.fill(0); }
+}
+
+const provenanceBytes = value => {
+  requireThat(typeof value === "string"
+    && /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value),
+    "COPY_PROVENANCE_BASE64_INVALID");
+  const bytes = Buffer.from(value, "base64");
+  requireThat(bytes.length > 0 && bytes.length <= MAX_BYTES && bytes.toString("base64") === value,
+    "COPY_PROVENANCE_BASE64_INVALID");
+  return bytes;
+};
+
+/** Authenticate copy provenance with the existing key, in memory only. This
+ * proves source/copy integrity, NOT freshness, authority, or actual payment.
+ * A native v4 without provenance is unchanged; declared provenance never gets
+ * ignored, even when malformed or from an unsupported policy/schema.
+ */
+export function assertLegacyCopyAuthenticity(raw, key) {
+  requireThat(object(raw) && raw.v === 4, "COPY_LEDGER_INVALID");
+  if (!own(raw, "legacyV3Copy")) return;
+  requireThat(Buffer.isBuffer(key) && key.length === 32, "KEY_INVALID");
+  keys(raw, ["v", "updatedAt", "settings", "accounts", "months", "fees", "legacyV3Copy"], [], "COPY_LEDGER_FIELDS_UNSUPPORTED");
+  const provenance = raw.legacyV3Copy;
+  requireThat(object(provenance), "COPY_PROVENANCE_INVALID");
+  const legacy = provenance.schema === V3_LEGACY_COPY_SCHEMA && provenance.policy === LEGACY_POLICY_ID;
+  const strict = provenance.schema === V3_COPY_SCHEMA && provenance.policy === STRICT_POLICY_ID;
+  requireThat(legacy || strict, "COPY_PROVENANCE_POLICY_UNSUPPORTED");
+  keys(provenance, ["schema", "policy", "sourceEnvelopeBase64", "sourcePayloadBase64",
+    ...(legacy ? ["paymentIds", "legacyRecords"] : [])], [], "COPY_PROVENANCE_FIELDS_UNSUPPORTED");
+  let claimed, authenticated;
+  try {
+    const source = provenanceBytes(provenance.sourceEnvelopeBase64);
+    claimed = provenanceBytes(provenance.sourcePayloadBase64);
+    authenticated = decrypt(decodeEnvelope(source, 3), key);
+    requireThat(claimed.equals(authenticated), "COPY_SOURCE_PAYLOAD_MISMATCH");
+    const expected = projection(parseExactJson(authenticated), provenance.policy);
+    const { legacyV3Copy, ...economic } = raw;
+    requireThat(canonical(economic) === canonical(expected.economic), "COPY_ECONOMIC_PROJECTION_MISMATCH");
+    if (legacy) {
+      requireThat(JSON.stringify(provenance.paymentIds) === JSON.stringify(expected.paymentIds)
+        && JSON.stringify(provenance.legacyRecords) === JSON.stringify(expected.legacyRecords), "COPY_FEE_PARTITION_MISMATCH");
+    }
+    try { normalizeEconomicInputs(raw); }
+    catch { reject("CURRENT_ECONOMIC_SCHEMA_REJECTED"); }
+  } finally { claimed?.fill(0); authenticated?.fill(0); }
 }
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -250,7 +181,8 @@ export function runCopyCli() {
     requireThat(stat.isFile() && stat.size > 0 && stat.size <= MAX_BYTES, "SOURCE_FILE_INVALID");
     const first = fs.readFileSync(source), second = fs.readFileSync(source);
     requireThat(first.equals(second), "SOURCE_CHANGED_DURING_READ");
-    const copy = convertEncryptedV3Copy(first, key);
+    const policyId = process.env.FEE_ECON_V3_POLICY === undefined ? STRICT_POLICY_ID : process.env.FEE_ECON_V3_POLICY;
+    const copy = convertEncryptedV3Copy(first, key, { policyId });
     const fd = fs.openSync(target, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
     written = target;
     try { fs.writeFileSync(fd, copy); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
