@@ -31,11 +31,16 @@ Management fee, Carry and fee-adjusted performance have one authoritative
 calculation path. Before publishing any of those values:
 
 1. Use `scripts/fee-economic-source.mjs` and the existing private environment's
-   exact `FEE_ECON_GIST_ID` on every run. No token/key transfer or authentication
-   header is needed for this normal fixed-source GET. Do not expose the locator
-   or bypass a network refusal. The helper requires the original owner, secret
+   exact `FEE_ECON_GIST_ID` plus the approved dedicated 30-day fine-grained PAT in
+   `FEE_ECON_GITHUB_TOKEN` on every run. Configure that PAT only in the authorized
+   fee environment with no added permissions or Gists write access; do not treat
+   a shared Environment as a per-Routine secret vault. Use only the helper's
+   fixed-origin authenticated GET. Never fall back to generic GitHub variables,
+   `gh`, OAuth, cookies or anonymous access. Missing/malformed PAT or HTTP 401/403
+   stops the run; do not expose the credential/locator, increase permissions,
+   transfer the decryption key or bypass a network refusal. The helper requires the original owner, secret
    Gist visibility, exact named file, and two identical remote reads of the
-   revision, ETag and encrypted bytes. A missing locator or failed acquisition
+   revision, ETag and encrypted bytes. A missing configuration or failed acquisition
    stops this run before the writer; never omit the economic input and continue.
    Native v4 supplies `FEE_ECON_FILE`. The only v3 exception is the explicit
    copy-only `fee-console.legacy-empty-expense.v1` policy in
@@ -82,7 +87,7 @@ If an external flow is unresolved, the encrypted private snapshot is unavailable
 the receipt is missing, or any receipt validation fails, fail closed. Raw read-only
 AUM/source status may still be reported, but management fee, Carry, paid/due and
 fee-adjusted return must say `calculation receipt pending` and contain no estimated
-figure. Never place `FEE_DATA_KEY`, the private Gist id, full input hashes, or
+figure. Never place `FEE_DATA_KEY`, `FEE_ECON_GITHUB_TOKEN`, the private Gist id, full input hashes, or
 decrypted economic input in GitHub Actions, plaintext repository content, command
 arguments, notifications, Pages metadata, task output, release tags or logs.
 The sole existing storage exception for receipt hashes is **inside the AES-GCM

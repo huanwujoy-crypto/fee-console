@@ -8,12 +8,30 @@ financial verification, publication, or phone acceptance.
 ## Configuration and fixed boundary
 
 - Configure only the exact already-authorized original locator through
-  `FEE_ECON_GIST_ID` in the existing private Routine environment. Do not put its
-  value in prompts, command arguments, the repository, Actions, logs or output.
-- Requests are unauthenticated GETs to fixed `api.github.com/gists/{id}` only.
-  No token/key lookup, Authorization header, redirect, alternate endpoint or
-  network-policy bypass. The existing decryption key stays in its authorized
-  private environment and is used only by the existing downstream tools.
+  `FEE_ECON_GIST_ID` and the separately approved **dedicated, 30-day fine-grained
+  PAT** through `FEE_ECON_GITHUB_TOKEN` in the authorized private fee Routine
+  environment. The PAT must have **no added permissions**, especially no Gists
+  write permission. GitHub documents that [Get a gist with a fine-grained token
+  requires no permissions](https://docs.github.com/en/rest/gists/gists#get-a-gist).
+  The owner must verify the credential's scope and expiry when configuring it;
+  successful acquisition is not proof of either. Do not put either value in
+  prompts, command arguments, the repository, Actions, setup scripts, logs or
+  output. Environment values are available to sessions/editors sharing that
+  environment; this is not a dedicated secret vault or a guarantee of single-
+  Routine isolation. Do not widen environment access to provision the PAT.
+- Requests are authenticated GETs to fixed `api.github.com/gists/{id}` only,
+  with `Authorization: Bearer` from that dedicated environment variable. The
+  helper freezes the exact locator and PAT for acquisition and `checkCurrent()`.
+  No `GITHUB_TOKEN`, `GH_TOKEN`, `gh`, OAuth, cookie, keychain or anonymous fallback;
+  no redirects, alternate endpoints, new permissions or network-policy bypass.
+  The existing decryption key stays in its authorized private environment and
+  is used only by the existing downstream tools.
+- Missing or malformed PAT configuration fails with `SOURCE_AUTH_CONFIG` before
+  any request or snapshot write. Syntax must be `github_pat_` followed by 20–255
+  ASCII letters, digits or underscores, with no trimming. This bounded local
+  check rejects obvious bad/header-unsafe values; it does not validate a token,
+  scope, owner or expiry. A 401 fails with `SOURCE_AUTH`, a 403 with
+  `SOURCE_FORBIDDEN`; neither retries anonymously or with another credential.
 - Require returned ID, owner `huanwujoy-crypto`, `public:false`, complete
   `fee-console-db.json`, explicit non-truncation, matching size and encrypted
   v3/v4 envelope. Other files are ignored; duplicates in envelope keys fail.
@@ -57,15 +75,19 @@ failed/source is unavailable, not that the previous receipt became a new result.
 The phone's independent fresh-source gate remains unchanged and may hide fees.
 
 On failure print only `sourceFailureCode(error)`, a fixed allowlisted code. Never
-print raw exceptions, source IDs/URLs, snapshot objects, headers, revisions, hashes
-or ciphertext. Respect native execution approvals and network refusals.
+print raw exceptions, credentials, source IDs/URLs, snapshot objects, headers,
+revisions, hashes or ciphertext. The PAT is used in memory for the fixed request
+header and is never a snapshot field or file; cleanup releases its closure
+reference, not the owner's environment configuration. Respect native execution
+approvals and network refusals. Expiry/revocation requires authorized credential
+renewal, never removal of authentication or broader permissions.
 
 ## Acceptance boundary
 
 Synthetic tests are `scripts/fee-economic-source.test.mjs`; every request is
 mocked. A manually uploaded copy can establish a bounded private capability test,
 but cannot establish durable integration. A fresh original Routine must obtain
-the reviewed helper and private locator configuration without a prior manual
-attachment, then satisfy the same source/calculation/publication gates. Retain
+the reviewed helper and dedicated private locator/PAT configuration without a
+prior manual attachment, then satisfy the same source/calculation/publication gates. Retain
 the actual schedule and next-run/read-back distinction; do not claim permanent
 success from a one-off manual session or from repository deployment alone.

@@ -1,5 +1,5 @@
-// Read-only, unauthenticated acquisition of one already-authorized encrypted Gist.
-// No key lookup, decryption, source write, public logging, or automatic execution.
+// Read-only acquisition of one authorized encrypted Gist with its dedicated PAT.
+// No other credential lookup, decryption, source write, logging, or automatic execution.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +9,8 @@ const FILE = "fee-console-db.json";
 const MAX_BODY = 2 * 1024 * 1024;
 const MAX_FILE = 1024 * 1024;
 const CODES = new Set([
-  "SOURCE_LOCATOR", "SOURCE_OPTIONS", "SOURCE_NETWORK", "SOURCE_TIMEOUT",
+  "SOURCE_LOCATOR", "SOURCE_OPTIONS", "SOURCE_AUTH_CONFIG", "SOURCE_AUTH",
+  "SOURCE_NETWORK", "SOURCE_TIMEOUT",
   "SOURCE_HTTP", "SOURCE_FORBIDDEN", "SOURCE_REDIRECT", "SOURCE_RESPONSE",
   "SOURCE_IDENTITY", "SOURCE_TRUNCATED", "SOURCE_FILE", "SOURCE_ENVELOPE",
   "SOURCE_REVISION", "SOURCE_ETAG", "SOURCE_CHANGED", "SOURCE_STORAGE", "SOURCE_CLOSED",
@@ -81,7 +82,7 @@ function inspect(body, response, id) {
   return { bytes, revision, etag, envelopeVersion: envelope.v };
 }
 
-async function readOnce(id, options) {
+async function readOnce(id, token, options) {
   const url = `https://api.github.com/gists/${id}`;
   const controller = new AbortController();
   let timer;
@@ -89,10 +90,14 @@ async function readOnce(id, options) {
     const response = await options.fetchImpl(url, {
       method: "GET", redirect: "manual", credentials: "omit", cache: "no-store",
       referrerPolicy: "no-referrer", signal: controller.signal,
-      headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+      headers: {
+        Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
+        Authorization: `Bearer ${token}`,
+      },
     });
     if (!response || response.redirected || response.type === "opaqueredirect"
         || (response.status >= 300 && response.status < 400 && response.status !== 304)) fail("SOURCE_REDIRECT");
+    if (response.status === 401) fail("SOURCE_AUTH");
     if (response.status === 403) fail("SOURCE_FORBIDDEN");
     if (response.status !== 200) fail("SOURCE_HTTP");
     if (response.url && response.url !== url) fail("SOURCE_REDIRECT");
@@ -111,9 +116,9 @@ async function readOnce(id, options) {
   } finally { clearTimeout(timer); }
 }
 
-async function readWithRetry(id, options) {
+async function readWithRetry(id, token, options) {
   for (let attempt = 0; attempt < options.attempts; attempt++) {
-    try { return await readOnce(id, options); }
+    try { return await readOnce(id, token, options); }
     catch (error) {
       if (!["SOURCE_NETWORK", "SOURCE_TIMEOUT"].includes(sourceFailureCode(error))
           || attempt + 1 === options.attempts) throw error;
@@ -123,8 +128,8 @@ async function readWithRetry(id, options) {
 function same(a, b) {
   return a.revision === b.revision && a.etag === b.etag && a.bytes.equals(b.bytes);
 }
-async function stableRead(id, options) {
-  const first = await readWithRetry(id, options), second = await readWithRetry(id, options);
+async function stableRead(id, token, options) {
+  const first = await readWithRetry(id, token, options), second = await readWithRetry(id, token, options);
   if (!same(first, second)) fail("SOURCE_CHANGED");
   return first;
 }
@@ -144,7 +149,8 @@ function checkedRoot(requested) {
 }
 
 /**
- * Locator comes ONLY from FEE_ECON_GIST_ID. Pass mock fetchImpl for synthetic tests.
+ * Locator comes ONLY from FEE_ECON_GIST_ID; dedicated PAT ONLY from FEE_ECON_GITHUB_TOKEN.
+ * Pass mock fetchImpl for synthetic tests. No fallback credentials or anonymous retry.
  * sourcePath is private runtime metadata, not a notification or public log field.
  * checkCurrent performs two new remote reads plus a local ciphertext integrity check.
  * This verifies acquisition/stability, NOT decryption, source business authority, or fees.
@@ -158,8 +164,13 @@ export async function fetchEconomicSnapshot(options = {}) {
       || opts.timeoutMs < 1 || opts.timeoutMs > 10_000 || ![1, 2].includes(opts.attempts)) fail("SOURCE_OPTIONS");
   const id = process.env.FEE_ECON_GIST_ID;
   if (typeof id !== "string" || !/^(?:[a-f0-9]{20}|[a-f0-9]{32})$/.test(id)) fail("SOURCE_LOCATOR");
+  let token = process.env.FEE_ECON_GITHUB_TOKEN;
+  // Syntax is not proof of ownership, permission scope, or expiry. The approved
+  // 30-day fine-grained PAT must be provisioned separately with no added permissions.
+  if (typeof token !== "string"
+      || !/^github_pat_[A-Za-z0-9_]{20,255}$/.test(token)) fail("SOURCE_AUTH_CONFIG");
   const root = checkedRoot(opts.tempRoot);
-  const expected = await stableRead(id, opts);
+  const expected = await stableRead(id, token, opts);
   let directory, sourcePath, directoryIdentity, closed = false;
   const checkedDirectory = () => {
     const stat = fs.lstatSync(directory);
@@ -174,6 +185,7 @@ export async function fetchEconomicSnapshot(options = {}) {
       if (sourcePath && fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
       if (directory && fs.existsSync(directory)) fs.rmdirSync(directory);
       closed = true;
+      token = undefined;
     } catch { fail("SOURCE_STORAGE"); }
   };
   try {
@@ -202,7 +214,7 @@ export async function fetchEconomicSnapshot(options = {}) {
     envelopeVersion: expected.envelopeVersion,
     async checkCurrent() {
       verifyLocal();
-      const current = await stableRead(id, opts);
+      const current = await stableRead(id, token, opts);
       if (!same(expected, current)) fail("SOURCE_CHANGED");
       verifyLocal();
       return true;
@@ -210,4 +222,3 @@ export async function fetchEconomicSnapshot(options = {}) {
     cleanup,
   });
 }
-
