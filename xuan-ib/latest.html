@@ -136,16 +136,16 @@ details .dbody{padding-left:7px;padding-right:7px}
 
 
 <div class="hdr">
-<span class="date">2026-09-03 周四 · 临时版 · 数据截至 09-02 收盘（对应美股 2026-09-02 周三交易日）</span>
+<span class="date">2026-09-03 周四 · 临时版 · 最新可用报价（上一完成美股交易日 09-02）</span>
 <div class="tgl"><label for="tl">浅</label><label for="td">深</label></div>
 </div>
 
-<div class="alert"><b>字段级回退：</b>四桶 / 三层流动性继续沿用 2026-08-24 已批准快照；其余为本次 17:11–17:14 HKT 只读实时重读（美股仍为 09-02 收盘，21:30 HKT 今晚开盘），详见「报告说明」。</div>
+<div class="alert"><b>字段级回退：</b>四桶 / 三层流动性继续沿用 2026-08-24 已批准快照；其余为本次 17:11–17:14 HKT 只读实时重读——各标的均为最新可用报价（美股盘前 / 欧洲盘中），上一已完成美股交易日为 09-02（21:30 HKT 今晚开盘），非统一收盘价，详见「报告说明」。</div>
 
 <details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary>
 <div class="dbody">
 <ol>
-<li><b>临时版</b>：2026-09-03 17:11–17:14 HKT 只读重读，对应美股仍为 <b>2026-09-02（周三）收盘</b>（21:30 HKT 今晚才开盘 09-03 常规交易）。相对 main 上可信 <code>latest.meta.json</code>（今晨 08:05–08:10 HKT 早间版）：<b>IB 侧无新增成交、GTC 挂单仍为 9 张、持仓股数均未变</b>；9 个必读 Sharesight 组合本次全部成功读取（IB-HK 因返回体积较大触发工具输出上限，改由本地文件完整提取，非数据源故障），其中 6 个家庭组合<b>零变动</b>，IB-HK / Schwab-HK / Webull 随盘前报价小幅波动。IB NAV <b>$5,013,384</b>（较早间版 $5,004,512 <span class="up">+$8,872</span>，纯盘前报价漂移，非新成交）；现金池 $992,935（IB 634,966 + NOAH-HK 357,969）；7 个 Sharesight 家庭组合合计 <b>$31,397,318</b>（较早间版 <span class="up">+$8,872</span>，差异全部来自 IB-HK 盘前报价；六个非 IB 组合与早间版逐项零变动）。四桶 / 三层流动性继续沿用 2026-08-24 已批准快照——沿用原因是完整七组合核验证据与受控维护门槛尚未满足，不是本次金额与该快照相同，见「报告说明」。</li>
+<li><b>临时版</b>：2026-09-03 17:11–17:14 HKT 只读重读，各标的为最新可用报价（美股盘前 / 欧洲盘中）；上一已完成美股交易日为 <b>2026-09-02（周三）</b>（21:30 HKT 今晚才开盘 09-03 常规交易）。相对 main 上可信 <code>latest.meta.json</code>（今晨 08:05–08:10 HKT 早间版）：<b>IB 侧无新增成交、GTC 挂单仍为 9 张、持仓股数均未变</b>；9 个必读 Sharesight 组合本次全部成功读取（IB-HK 因返回体积较大触发工具输出上限，改由本地文件完整提取，非数据源故障），其中 6 个家庭组合<b>零变动</b>，IB-HK / Schwab-HK / Webull 随盘前报价小幅波动。IB NAV <b>$5,013,384</b>（较早间版 $5,004,512 <span class="up">+$8,872</span>，纯盘前报价漂移，非新成交）；现金池 $992,935（IB 634,966 + NOAH-HK 357,969）；7 个 Sharesight 家庭组合合计 <b>$31,397,318</b>（较早间版 <span class="up">+$8,872</span>，差异全部来自 IB-HK 盘前报价；六个非 IB 组合与早间版逐项零变动）。四桶 / 三层流动性继续沿用 2026-08-24 已批准快照——沿用原因是完整七组合核验证据与受控维护门槛尚未满足，不是本次金额与该快照相同，见「报告说明」。</li>
 <li><b>AI 压力中情景 21.17%</b>（$1,297,262 / $6,127,859，本次逐票现场读数未舍入汇总），距 25% 预警线 <b>$234,703 / 3.83 个百分点</b>，仍高于 20% 提醒线 <b>$71,690 / 1.17 个百分点</b>，fail-closed <b>PASS</b>，仍在提醒区间（未越警戒）。MRVL 现场市值 $41,296（与早间版一致，Webull 侧本次重新核对）已按用户批准标准 T1（60% / 80% / 100%）纳入。</li>
 <li><b>需当下处理挂单：无</b>；距市价最近的仍是 EXUS 买 300@44（−5.90%，提示带）；待撤 4 张（名义合计 $150,520，与早间版一致）仍待 Wu 在 TWS 端执行。家庭主视图单票集中度：<b>GOOG/GOOGL 三账户合计 4.29%（线内，余量 $43,796；原 D-20260829-GOOG-FAMILY-LIMIT 决定与回执不变，见 ⑤）</b>；BRK.B 4.95%（线内）；META 名义口径 3.69%（线内）。本次会话未下单、未撤单、未改单、未转账。</li>
 </ol>
@@ -165,7 +165,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="tabs">
 <input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4"><input type="radio" name="sec" id="s5">
 <div class="tabbar">
-<label for="s1" aria-label="概览：① 09-02 收盘持仓一览与 ③ 今晨到下次开盘前会发生什么">概览</label>
+<label for="s1" aria-label="概览：① 持仓一览（最新可用报价）与 ③ 今晨到下次开盘前会发生什么">概览</label>
 <label for="s2" aria-label="风险：② 弹药与 reserve 状态、口径与分母上限说明">风险</label>
 <label for="s3" aria-label="配置：④ 四桶与四类配置比例、7 个 portfolio 明细">配置</label>
 
@@ -174,13 +174,13 @@ details .dbody{padding-left:7px;padding-right:7px}
 
 <div class="pane p1">
 <div class="card">
-<h2>① 2026-09-02 收盘持仓一览 <small>IB 只读读数（09-03 17:11–17:14 HKT 临时版重读）· 美股仍未开盘，报价为盘前</small></h2>
+<h2>① 持仓一览 · 最新可用报价 <small>IB 只读读数（09-03 17:11–17:14 HKT 临时版重读）· 上一完成美股交易日 09-02；美股本次为盘前、欧洲上市标的为当地盘中</small></h2>
 <div class="kv"><span class="k">与今晨早间版 08:05–08:10 HKT 读数对照</span><span class="v">股数、持仓构成全部一致，无新成交；市值 <span class="up">+$8,872</span>（IB NAV，纯盘前报价漂移）</span></div>
 <div class="kv"><span class="k">对账</span><span class="v">本次 IB 持仓端点直接读取成功；逐仓表按 IB 持仓明细汇总 $4,376,648，与 IB Balance stock_market_value（权威）$4,376,493 差 $155 / 0.004%（正常展示噪音，不影响 NAV 等以 balances/summary 为权威的指标）</span></div>
 <div class="kv"><span class="k">FX 参考</span><span class="v">CAD/USD 0.723991（IB Base）</span></div>
 <details open><summary>全部持仓表 <span class="rt">26 只 · 逐仓合计 $4,376,648（IB 权威 stock_market_value 仍以 $4,376,493 为准）</span></summary>
 <div class="dbody">
-<p style="font-size:11px;color:var(--mut);margin:2px 0 8px">日涨跌来自 IB 实时快照 <code>change_pct</code>（当前价 vs 上一交易日收盘价，非成本收益／数量变化／汇率差）；各标的按其上市地当地时段取值，美股为盘前、LSE/EBS 为当地盘中、TSE 未开盘显示为上一收盘。默认展开 |日涨跌| ≥1% 的持仓；缺可靠比较价的单独折叠「涨跌数据待核验」。</p>
+<p style="font-size:11px;color:var(--mut);margin:2px 0 8px">日涨跌来自 IB 实时快照 <code>change_pct</code>（当前价 vs 上一交易日收盘价，非成本收益／数量变化／汇率差），本次于 15:10–17:56 HKT 分两批独立查询取得，<b>不是</b> 17:11–17:14 HKT 持仓/NAV 读数的一部分、也不倒填为该时点；各标的按其最近成交时间取值（美股为盘前、LSE/EBS 为当地盘中、TSE 未开盘显示为上一收盘），持仓市值/数量仍为 17:11–17:14 HKT 读数。默认展开 |日涨跌| ≥1% 的持仓；缺可靠比较价的单独折叠「涨跌数据待核验」。</p>
 <div class="tblwrap"><table>
 <thead><tr><th>标的</th><th>最新可用报价（IB 直读）</th><th>日涨跌</th><th>市值 $</th></tr></thead>
 <tbody>
@@ -190,11 +190,11 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody"><div class="tblwrap"><table>
 <thead><tr><th>标的</th><th>最新可用报价（IB 直读）</th><th>日涨跌</th><th>市值 $</th></tr></thead>
 <tbody>
-<tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900</span></td><td>226.04</td><td class="up">+0.07%</td><td>1,107,596</td></tr>
+<tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900</span></td><td>226.04</td><td class="up">+0.03%</td><td>1,107,596</td></tr>
 <tr><td><span class="sym">CSPX</span><span class="sub">LSE · 610</span></td><td>827.82</td><td class="up">+0.03%</td><td>504,970</td></tr>
 <tr><td><span class="sym">EXUS</span><span class="sub">LSE · 8,700</span></td><td>46.76</td><td class="up">+0.54%</td><td>406,812</td></tr>
-<tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530</span></td><td>54.90</td><td class="dn">-0.45%</td><td>358,497</td></tr>
-<tr><td><span class="sym">BRK.B</span><span class="sub">NYSE · 450</span></td><td>506.32</td><td class="up">+0.19%</td><td>227,844</td></tr>
+<tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530</span></td><td>54.90</td><td class="dn">-0.47%</td><td>358,497</td></tr>
+<tr><td><span class="sym">BRK.B</span><span class="sub">NYSE · 450</span></td><td>506.32</td><td class="up">+0.15%</td><td>227,844</td></tr>
 <tr><td><span class="sym">TSLA</span><span class="sub">NASDAQ · 390</span></td><td>360.56</td><td class="up">+0.99%</td><td>140,618</td></tr>
 <tr><td><span class="sym">GLD</span><span class="sub">NYSE · 300</span></td><td>407.00</td><td class="up">+0.92%</td><td>122,100</td></tr>
 <tr><td><span class="sym">IVAI</span><span class="sub">LSE · 11,200</span></td><td>10.64</td><td class="up">+0.50%</td><td>119,168</td></tr>
@@ -202,12 +202,12 @@ details .dbody{padding-left:7px;padding-right:7px}
 <tr><td><span class="sym">VGSH</span><span class="sub">NASDAQ · 1,500</span></td><td>57.90</td><td class="up">+0.05%</td><td>86,850</td></tr>
 <tr><td><span class="sym">GOOG</span><span class="sub">NASDAQ · 220</span></td><td>336.38</td><td class="up">+0.67%</td><td>74,004</td></tr>
 <tr><td><span class="sym">KKR</span><span class="sub">NYSE · 600</span></td><td>106.43</td><td>0.00%<span class="sub">最新价=上一收盘</span></td><td>63,858</td></tr>
-<tr><td><span class="sym">TLT</span><span class="sub">NASDAQ · 700</span></td><td>82.06</td><td class="up">+0.10%</td><td>57,442</td></tr>
+<tr><td><span class="sym">TLT</span><span class="sub">NASDAQ · 700</span></td><td>82.06</td><td class="up">+0.05%</td><td>57,442</td></tr>
 <tr><td><span class="sym">SMH</span><span class="sub">NASDAQ · 100</span></td><td>550.00</td><td class="dn">-0.49%</td><td>55,000</td></tr>
 <tr><td><span class="sym">INDA</span><span class="sub">BATS · 1,100</span></td><td>49.94</td><td class="dn">-0.16%</td><td>54,934</td></tr>
 <tr><td><span class="sym">VCN</span><span class="sub">TSE · 1,025</span></td><td>C$73.47</td><td>0.00%<span class="sub">最新价=上一收盘</span></td><td>54,521</td></tr>
 <tr><td><span class="sym">ORCL</span><span class="sub">NYSE · 200</span></td><td>147.20</td><td class="up">+0.86%</td><td>29,440</td></tr>
-<tr><td><span class="sym">AMD</span><span class="sub">NASDAQ · 50</span></td><td>457.06</td><td class="dn">-0.28%</td><td>22,853</td></tr>
+<tr><td><span class="sym">AMD</span><span class="sub">NASDAQ · 50</span></td><td>457.06</td><td class="dn">-0.45%</td><td>22,853</td></tr>
 <tr><td><span class="sym">SLV</span><span class="sub">NYSE · 320</span></td><td>59.61</td><td class="up">+0.56%</td><td>19,075</td></tr>
 <tr><td><span class="sym">USSC</span><span class="sub">LSE · 160</span></td><td>94.50</td><td class="up">+0.16%</td><td>15,120</td></tr>
 <tr><td><span class="sym">MSFT</span><span class="sub">NASDAQ · 10（卖 90 后剩余）</span></td><td>499.66</td><td class="up">+0.59%</td><td>4,997</td></tr>
@@ -276,7 +276,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 
 <details><summary>中情景主读数 <span class="rt">$1,297,262 / 21.17% —— 展开看计算组成</span></summary>
 <div class="dbody">
-<p style="font-size:12px;margin:4px 0 8px">每笔本次收盘市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），先按未舍入结果汇总，再除以本次分母；MRVL 按标准 T1 独立现场重算，其余系数沿用不变。系数是压力情景损失比例，不是「AI 相关度」。各行与账户小计独立四舍五入到美元，显示项相加与合计可差 $1；合计不使用已舍入行值。</p>
+<p style="font-size:12px;margin:4px 0 8px">每笔本次最新可用报价市值 × 中情景系数（阶梯 <b>T1 80% / T2 55% / T3 5%</b>），先按未舍入结果汇总，再除以本次分母；MRVL 按标准 T1 独立现场重算，其余系数沿用不变。系数是压力情景损失比例，不是「AI 相关度」。各行与账户小计独立四舍五入到美元，显示项相加与合计可差 $1；合计不使用已舍入行值。</p>
 <div class="tblwrap"><table>
 <thead><tr><th>标的</th><th>市值 $</th><th>×系数</th><th>计入 $</th></tr></thead>
 <tbody>
@@ -323,7 +323,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <li>防御与现金类：VGIT $139,008 · VGSH $86,850 · TLT $57,442 · IB 现金 $634,966 · Schwab SGOV 183,857 + 现金 19,143 · Webull SGOV 37,658 + 现金 276,199。</li>
 <li>Webull BE（Bloom Energy）$54,320 —— 非 AI 相关个股，不进分子，也不算作 0%；本次核对分母对账时发现此前报告未单独列出，一并披露。</li>
 </ul>
-<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景（近似，本次未重算，沿用 2026-08-31 基数，可信度降低）</b>：沿用 2026-08-31 的原组合近似基数 $964,094 / $1,778,171 加 MRVL 精确增量 $24,777.60 / $41,296.00（MRVL 市值较上一份略降）；低 ≈$988,872 / <b>16.16%</b>；高 ≈$1,819,467 / <b>29.74%</b>。<b class="wv">该近似基数未反映 09-01/09-02 GOOG/AMD/EXUS/META 持仓变动，也未反映本次分母变化</b>；下列 20% / 25% / 30% 比较均只采用逐票现场重算的中情景，不用低/高判断越线。</p>
+<p style="font-size:12px;margin:5px 0 0"><b>低 / 高情景（近似，本次未重算，沿用 2026-08-31 基数，可信度降低）</b>：沿用 2026-08-31 的原组合近似基数 $964,094 / $1,778,171 加 MRVL 精确增量 $24,777.60 / $41,296.00（MRVL 市值与今晨早间版一致，此前——早间版之前——曾由 $42,078.00 降至现值，本次无新变化）；低 ≈$988,872 / <b>16.16%</b>；高 ≈$1,819,467 / <b>29.74%</b>。<b class="wv">该近似基数未反映 09-01/09-02 GOOG/AMD/EXUS/META 持仓变动，也未反映本次分母变化</b>；下列 20% / 25% / 30% 比较均只采用逐票现场重算的中情景，不用低/高判断越线。</p>
 </div></details>
 
 <div class="kv"><span class="k">三级状态（中情景）</span><span class="v"><b class="wv">提醒区间</b>（已越 20% 提醒线，+$71,690 / +1.17 个百分点）</span></div>
@@ -345,7 +345,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <tr><td><span class="sym">GOOG / GOOGL</span><span class="sub">IB 74,004 + Schwab 101,810 + Webull 86,783</span></td><td>262,597</td><td>4.29%</td><td class="gv">线内 · 余量 $43,796</td></tr>
 <tr><td><span class="sym">BRK.B</span><span class="sub">IB 227,844 + Schwab 75,786 + Webull 0（已平仓）</span></td><td>303,630</td><td>4.95%</td><td class="gv">线内</td></tr>
 <tr><td><span class="sym">META</span><span class="sub">市值口径：IB 59,979 + Schwab 142,284</span></td><td>202,263</td><td>3.30%</td><td>线内</td></tr>
-<tr><td><span class="sym">META 名义</span><span class="sub">含 METU 2x 名义敞口约 23,946</span></td><td>~226,209</td><td>~3.69%</td><td class="gv">线内（IB 侧减持后回落，此前约 5.01% 接近参考线）</td></tr>
+<tr><td><span class="sym">META 名义</span><span class="sub">含 METU 市值 23,946（与 AI 压力表口径一致，非独立核验的 2 倍美元名义）</span></td><td>~226,209</td><td>~3.69%</td><td class="gv">线内（IB 侧减持后回落，此前约 5.01% 接近参考线）</td></tr>
 </tbody></table></div>
 <div class="kv" style="margin-top:6px"><span class="k">GOOG 线值口径（沿用 08-31 已确认结论）</span><span class="v">三账户合并观察参考线仍为观察用途，不升级为交易触发；IB 执行视图沿用现行软 5% / 硬 5.5%；数值维持线内，决定 <code>D-20260829-GOOG-FAMILY-LIMIT</code> 与原回执不变，见 ⑤</span></div>
 <p style="font-size:12px;margin:9px 0 6px"><b>辅助视图 = IB 执行口径</b>（分母 = IB NAV + NOAH-HK 现金 $5,371,353；软 5% / 硬 5.5% / BRK.B 12.8%）</p>
@@ -395,7 +395,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 </section>
 <div class="card">
 <h2>④ 配置 <small>四桶 · 四类</small></h2>
-<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px"><b class="wv">四桶沿用 2026-08-24 verified Monday snapshot</b>（家庭口径基数 $31,115,693；<code>four-bucket-mapping.json</code> 内容未变；沿用原因是完整七组合范围、现金身份、持仓分页与金额对账的核验证据及受控维护门槛尚未满足，<b>不代表本次七组合金额与该快照相等</b>——本次仅确认六个非 IB 家庭组合的 Sharesight 总值与今晨早间版逐项一致，IB-HK 随盘前报价变动，详见「报告说明」）。四类为本次 2026-09-03 17:11–17:14 HKT 重新读取（IB 盘前报价，对应美股仍为 2026-09-02 收盘），逐项按 IB 持仓重算。</p>
+<p style="font-size:12px;color:var(--ink2);margin:2px 0 8px"><b class="wv">四桶沿用 2026-08-24 已批准快照；完整核验待完成。</b>详见「报告说明」。四类为本次重新读取，逐项按 IB 最新可用报价重算。</p>
 <div class="bar"><div class="lbl"><span>Highly Liquid <small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">17.75% / 40% · 缺 $6.92M</span></div><div class="track"><div class="fill" style="width:44.4%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
 <div class="bar"><div class="lbl"><span>VC-PE（closed-end）<small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r or">51.74% / 30% · 超 ~$6.77M</span></div><div class="track"><div class="fill over" style="width:100%"></div><div class="mark" style="left:58%"></div></div></div>
 <div class="bar"><div class="lbl"><span>对冲基金 <small style="color:var(--mut)">(08-24 沿用)</small></span><span class="r">14.58% / 15%</span></div><div class="track"><div class="fill" style="width:97.2%"></div><div class="mark" style="left:calc(100% - 2px)"></div></div></div>
@@ -479,7 +479,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="kv"><span class="k">GTC 挂单</span><span class="v">与今晨早间版一致，仍为 9 张；限价、股数均未变，距市价百分比按本次盘前报价重算</span></div>
 <details><summary>GTC 明细表 <span class="rt">9 张 · 限价与今晨早间版一致，距市价按盘前报价重算</span></summary>
 <div class="dbody"><div class="tblwrap"><table>
-<thead><tr><th>挂单</th><th>限价</th><th>距盘前报价（IB 直读）</th><th>年龄 / 状态</th></tr></thead>
+<thead><tr><th>挂单</th><th>限价</th><th>距最新可用报价（IB 直读）</th><th>年龄 / 状态</th></tr></thead>
 <tbody>
 <tr><td><span class="sym">AMD 卖 30</span><span class="sub">REPLACED（原 555 → 499）</span></td><td>499.00</td><td class="">+9.18%</td><td>7 天 · REPLACED 待目视</td></tr>
 <tr><td><span class="sym">AMD 卖 20</span></td><td>500.00</td><td class="">+9.39%</td><td>9 天 · NEW</td></tr>
@@ -497,7 +497,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody">
 <p style="font-size:12px;margin:4px 0 8px">口径：IB average_price，与 Sharesight 加权成本方法论不同，两者不保证一致，如实分列不作调和。本次会话未执行任何交易，报价按盘前读数更新。</p>
 <div class="tblwrap"><table>
-<thead><tr><th>标的</th><th>IB 成本 / 股</th><th>盘前报价（IB）</th><th>差异 %</th></tr></thead>
+<thead><tr><th>标的</th><th>IB 成本 / 股</th><th>最新可用报价（IB）</th><th>差异 %</th></tr></thead>
 <tbody>
 <tr><td><span class="sym">AMD</span><span class="sub">未实现 +$13,187</span></td><td>193.32</td><td>457.06</td><td class="up">+136.4%</td></tr>
 <tr><td><span class="sym">VCN</span><span class="sub">未实现 +C$28,138</span></td><td>C$46.02</td><td>C$73.47</td><td class="up">+59.7%</td></tr>
@@ -554,7 +554,7 @@ details .dbody{padding-left:7px;padding-right:7px}
 <div class="dbody">
 <ol>
 <li><b>版次与时点。</b>版别：<b>临时版（用户随时手动启动，不代替 AM / PM 定时任务）</b>。启动 / 取数时点：<b>2026-09-03 09:11–09:14 UTC（周四 17:11–17:14 HKT）</b>。数据日：<b>2026-09-03</b>（对应美股仍为 <b>2026-09-02（周三）收盘</b>；美股 09-03 常规交易 21:30 HKT 今晚才开盘）。相对 main 上可信 <code>latest.meta.json</code>（今晨 08:05–08:10 HKT 早间版）：<b>IB 侧无新增成交、无新增/撤销挂单、持仓股数均未变</b>，市值差异全部来自盘前报价漂移，已如实披露、不重复计为新增成交。本次临时版落实 <code>claude/xuan-ib-report-schedule-HKT-v1.md</code> 第 5 条临时报告口径，不冒充 AM / PM 定时任务成功证据。</li>
-<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读，5 个端点：summary / balances / positions / orders / trades 全部直接读取成功）· Sharesight User API（只读）。本次 9 个必读 Sharesight 组合（7 家庭 + 2 AI-only）<b>全部成功读取</b>：IB-HK（936247）因持仓数量较多，单次返回体积超出 MCP 工具的直接输出上限，改由该次调用已落盘的原始响应文件本地完整提取，数据本身完整、非连接器或数据源故障；其余 8 个组合直接返回。其中 6 个家庭组合（NOAH-HK / NOAH-US / ANTARCTICA / UBS / Citi-HK &amp; 地产四期 / HSBC-HK）与今晨早间版逐项零变动，IB-HK / Schwab-HK / Webull 随盘前报价小幅波动。未使用缓存替代本次实读。<b>字段级回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24）；沿用原因是完整七组合范围、现金身份、持仓分页与金额对账的核验证据及受控维护门槛尚未满足，<b>不是本次金额与该快照相等</b>——本次仅确认六个非 IB 家庭组合的 Sharesight 总值与今晨早间版逐项一致，IB-HK 随盘前报价变动；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」，四桶比例、三层流动性及依赖归桶的金额本次不变。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重沿用不变，MRVL 按用户已批准标准 T1 60% / 80% / 100% 本次现场重算（市值与今晨一致 $41,296）；中情景按本次盘前市值未舍入汇总，低 / 高仍为 2026-08-31 原组合近似基数加 MRVL 精确增量，未反映其后持仓变动，可信度较低（已在「风险」标签内标注）。四类清单 v9.6 · USSC 基数 v9.8 · 分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，本次维持 5% 线内，未新增任何交易触发。MRVL 普通资产分类与 §0-C AI 压力分类分开；原 3 条回执保持历史原文，不代表交易授权。FX 参考 CAD/USD 0.723991（IB Base）。全部持仓表默认只展开 |日涨跌| ≥1% 的持仓（本次仅 META）；其余有可靠日涨跌来源但 &lt;1% 的 21 只折叠在「其它持仓」；APO / EQAC / HODL / VGIT 本次未取得可靠日涨跌来源，单列「涨跌数据待核验」折叠，不猜测、不计入 &lt;1% 区。日涨跌取自 IB 实时快照的 <code>change</code> / <code>change_pct</code> 字段（来源为当前价与上一交易日收盘价之差，非成本收益、股数变化或汇率差；KKR、VCN 本次快照显示最新价与上一收盘价相同，按验证后的 0.00% 处理，不是未取值）；各标的按其上市地当地时段读取最新可用报价，非统一「收盘价」——美股（NASDAQ/NYSE/BATS）本次为盘前，LSE/EBS 为当地盘中，TSE 尚未开盘（显示为上一收盘）。</li>
+<li><b>数据与口径。</b>主数据源：Interactive Brokers Web API（只读，5 个端点：summary / balances / positions / orders / trades 全部直接读取成功）· Sharesight User API（只读）。本次 9 个必读 Sharesight 组合（7 家庭 + 2 AI-only）<b>全部成功读取</b>：IB-HK（936247）因持仓数量较多，单次返回体积超出 MCP 工具的直接输出上限，改由该次调用已落盘的原始响应文件本地完整提取，数据本身完整、非连接器或数据源故障；其余 8 个组合直接返回。其中 6 个家庭组合（NOAH-HK / NOAH-US / ANTARCTICA / UBS / Citi-HK &amp; 地产四期 / HSBC-HK）与今晨早间版逐项零变动，IB-HK / Schwab-HK / Webull 随盘前报价小幅波动。未使用缓存替代本次实读。<b>字段级回退</b>：四桶 / 三层流动性沿用 <b>2026-08-24 已批准快照</b>（as-of 2026-08-24，家庭口径基数 $31,115,693，<code>four-bucket-mapping.json</code> 内容未变）；沿用原因是完整七组合范围、现金身份、持仓分页与金额对账的核验证据及受控维护门槛尚未满足，<b>不是本次金额与该快照相等</b>——本次仅确认六个非 IB 家庭组合的 Sharesight 总值与今晨早间版逐项一致，IB-HK 随盘前报价变动；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」，四桶比例、三层流动性及依赖归桶的金额本次不变。<b>计算口径</b>：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重沿用不变，MRVL 按用户已批准标准 T1 60% / 80% / 100% 本次现场重算（市值与今晨一致 $41,296）；中情景按本次盘前市值未舍入汇总，低 / 高仍为 2026-08-31 原组合近似基数加 MRVL 精确增量，未反映其后持仓变动，可信度较低（已在「风险」标签内标注）。四类清单 v9.6 · USSC 基数 v9.8 · 分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，<b>不可横向比较</b>。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，本次维持 5% 线内，未新增任何交易触发。MRVL 普通资产分类与 §0-C AI 压力分类分开；原 3 条回执保持历史原文，不代表交易授权。FX 参考 CAD/USD 0.723991（IB Base）。全部持仓表默认只展开 |日涨跌| ≥1% 的持仓（本次仅 META）；其余有可靠日涨跌来源但 &lt;1% 的 21 只折叠在「其它持仓」；APO / EQAC / HODL / VGIT 本次未取得可靠日涨跌来源，单列「涨跌数据待核验」折叠，不猜测、不计入 &lt;1% 区。日涨跌取自 IB 实时快照的 <code>change</code> / <code>change_pct</code> 字段（来源为当前价与上一交易日收盘价之差，非成本收益、股数变化或汇率差；KKR、VCN 本次快照显示最新价与上一收盘价相同，按验证后的 0.00% 处理，不是未取值）。该字段本次于 <b>15:10–17:56 HKT</b> 分两批独立查询取得，与本页持仓市值/NAV 的 17:11–17:14 HKT 读数是两次不同的只读调用；各标的按其最近成交时间取值，不统一倒填为同一时点。所有持仓价格标注均改为「最新可用报价」，非统一「收盘价」——美股（NASDAQ/NYSE/BATS）本次为盘前，LSE/EBS 为当地盘中，TSE 尚未开盘（显示为上一收盘）；上一已完成美股交易日为 09-02。</li>
 <li><b>安全与发布。</b>全程仅使用 Interactive Brokers 与 Sharesight <b>只读</b>工具：本次未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限；此前 09-01/09-02 已披露的成交均为 Wu 既有挂单结果，与本次会话无关，本次不重复计为新增。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，<b>不构成交易指令</b>。发布：本临时版通过候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接；本会话未能直接读取 Pages 线上固定地址核实固定页已刷新，源提交与推送成功不等于线上固定页已核验，需另行核对固定手机链接的 source SHA / 生成时间是否已更新为本次。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 运行时观测契约 v1（本次未嵌入 Phase-0 run-manifest 注释，属可选/非阻断项）。</li>
 </ol>
 <section id="xuan-ib-classification-disclosure-v1">
