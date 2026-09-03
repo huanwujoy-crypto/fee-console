@@ -566,7 +566,8 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     assert.match(output, /<option value="2026-09" selected>/);
     assert.equal((output.match(/<option /g) || []).length, 3);
     assert.equal((output.match(/<select /g) || []).length, 1, "do not stack redundant year and month selectors");
-    assert.match(output, /毛收益/); assert.match(output, /暂计费用/); assert.match(output, /净收益/);
+    assert.match(output, /毛收益/); assert.match(output, /<span>费用<b>/); assert.match(output, /净收益/);
+    assert.match(output, /本回执含暂估数据/); assert.doesNotMatch(output, /暂计费用/);
     assert.doesNotMatch(output, /<details[^>]*\bopen(?:\s|>)/);
     assert.match(output, /Carry：累计毛收益/); assert.doesNotMatch(output, /Carry[^<]*累计净收益/);
     const details = h.element("monthCalculation"); details.dataset.ym = "2026-09"; details.open = true;
@@ -579,11 +580,38 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     h.run("renderMonths(monthView,monthFixture)");
     output = h.element("monthsBox").innerHTML;
     assert.match(output, /<option value="2025-12" selected>/);
+    assert.match(output, /<span>费用<b>/); assert.match(output, /本回执含暂估数据/);
+    assert.doesNotMatch(output, /暂计费用/, "receipt-wide provisional status cannot classify a historical month's fee");
     assert.doesNotMatch(output, /<details[^>]*\bopen(?:\s|>)/, "switching month starts with its calculations folded");
     assert.equal(h.run("JSON.stringify(DB)"), original); assert.deepEqual(h.writes(), []);
+    h.run('monthView.status.provisional=false;renderMonths(monthView,monthFixture)');
+    assert.doesNotMatch(h.element("monthsBox").innerHTML, /本回执含暂估数据/);
     h.run('renderMonths({state:"pending",message:"计算回执待更新"},monthFixture)');
     assert.equal(h.element("monthsBox").innerHTML.includes("1000"), false);
     assert.match(h.element("monthsBox").innerHTML, /计算回执待更新/);
+  });
+
+  await t.test("monthly return legend follows actual benchmark selection and clears unavailable labels", async () => {
+    if (!html.includes('id="chart3Legend"')) {
+      assert.equal(html.includes("chart3Legend"), false, "reject a partial dynamic legend rollout");
+      assert.match(html, /各月收益率<\/h3><div class="legend">.*SPY·含息 ETF TWR.*QQQ·含息 ETF TWR/,
+        "support-only release explicitly preserves the old static legend");
+      return;
+    }
+    const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
+    h.run('globalThis.legendView={state:"verified"};globalThis.legendState={rows:[{ym:"2026-08",rG:.03,rB:{spy:.02,qqq:.01,cspx:.04,eqac:.05}}],bench:[]}');
+    for (const [from, to, present, absent] of [[0, 2, /SPY.*QQQ/, /CSPX|EQAC/], [2, 4, /CSPX.*EQAC/, /SPY|QQQ/]]) {
+      h.run(`legendState.bench=BENCH_ALL.slice(${from},${to});renderChart3(legendView,legendState)`);
+      assert.match(h.element("chart3Legend").innerHTML, present);
+      assert.doesNotMatch(h.element("chart3Legend").innerHTML, absent);
+    }
+    h.run('legendState.bench=[];renderChart3(legendView,legendState)');
+    assert.match(h.element("chart3Legend").innerHTML, /本组合/);
+    assert.doesNotMatch(h.element("chart3Legend").innerHTML, /SPY|QQQ|CSPX|EQAC/);
+    h.run('renderChart3({state:"pending",message:"计算回执待更新"},legendState)');
+    assert.equal(h.element("chart3Legend").innerHTML, "");
+    assert.match(h.element("chart3").innerHTML, /计算回执待更新/);
+    assert.equal(h.run("JSON.stringify(DB)"), original); assert.deepEqual(h.writes(), []);
   });
 
   await t.test("a delayed verified benchmark render cannot refill balances after source invalidation", async () => {

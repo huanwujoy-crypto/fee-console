@@ -555,7 +555,8 @@ test("passive-account balances use only receipt-verified dated flows and indepen
       assert.equal(context.benchmarkView(view, rowsOf(view)).bench.length, 0);
     }
     points = data.daily.map(p => ({ ...p })); points[0].d = "2026-07-30";
-    assert.ok(context.benchmarkView(view, rowsOf(view)).bench.every(b => b.val === null));
+    assert.deepEqual(plain(context.benchmarkView(view, rowsOf(view))), { bench: [], byMonth: {} },
+      "an earlier baseline cannot masquerade as same-period TWR or monthly benchmark returns");
   });
   await t.test("prior/current prices and present dividends reject coercible non-numbers", () => {
     for (const invalid of ["100bad", "100", "", " ", null, true, false, [], [100], {}, undefined, Infinity, NaN]) {
