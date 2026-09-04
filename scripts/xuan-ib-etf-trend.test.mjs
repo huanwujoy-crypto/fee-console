@@ -98,3 +98,18 @@ test('amounts must be bound to the exact chart result',()=>{
   const r=run([day('2026-09-01')]),p=projectEtfTrend(r);const other=clone(r);other.rows[0].endingUsd.A++;
   assert.throws(()=>renderEtfTrend(p,{privateResult:other}),/same result/);assert.match(renderEtfTrend(p,{privateResult:r}),/1,200,000/);
 });
+test('source caveat appears once inside folded calculation notes without changing data',()=>{
+  const r=run([day('2026-09-01'),day('2026-09-02')]),p=projectEtfTrend(r);
+  const before=clone({r,p});
+  const caveat='<li>流量按可得账表核对；来源更正后从起点重算。本比较不是审计结算。</li>';
+  for(const options of [{},{privateResult:r}]){
+    const html=renderEtfTrend(p,options);
+    const folded=html.match(/<details\b([^>]*)><summary>计算说明与回撤<\/summary>([\s\S]*?)<\/details>/);
+    assert.ok(folded,'calculation notes exist');
+    assert.doesNotMatch(folded[1],/\bopen\b/);
+    assert.ok(folded[2].includes(caveat));
+    assert.equal(html.split(caveat).length-1,1);
+    assert.ok(!html.replace(folded[0],'').includes(caveat));
+  }
+  assert.deepEqual({r,p},before);
+});
