@@ -111,8 +111,14 @@ The separately reviewed indicative-v2 loader enhancement may show the validated
 owner-approved open comparison first and fold the original policy/history locally. This is
 presentation of an already verified document, not a change to the candidate,
 latest HTML, its blob, financial values or receipts. Follow
-`claude/xuan-ib-etf-trend-v2.md`; only a valid approved `etf-trend.json` can supply
-the open comparison. Never publish the original result, source records or keys.
+`claude/xuan-ib-etf-trend-v2.md`. A validated `xuan-etf-open-summary-v3` inert
+template at the end of the ETF pane can supply the same approved open allowlist
+through the ordinary candidate/promotion path. The loader reads it only from
+the already paired and verified report. Only when the template is absent may
+it load the approved legacy `etf-trend.json`; an invalid template is not a
+reason to silently serve the older file. Never publish the original result,
+source records or keys. Once present, preserve the summary and its fixed
+baseline on later reports; receipt-only updates must preserve it byte for byte.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,
