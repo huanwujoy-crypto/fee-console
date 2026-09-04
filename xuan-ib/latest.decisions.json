@@ -1,10 +1,16 @@
 {
   "schemaVersion": 1,
   "kind": "xuan-ib-decision-menu",
-  "sourceSha": "b4f809006c0ad5b39f43ce24fc45e937d1957ec3",
-  "htmlBlob": "ee84f02edf3a170217c6379d8f6cb756ebbf18b8",
+  "sourceSha": "a5e5248696d1f6c9f32afe11803b5e03d5fcfd1a",
+  "htmlBlob": "2205355c9085aefd44809854210a42941bcc63c1",
   "dataDate": "2026-09-04",
   "interaction": "enabled",
-  "pending": [],
+  "pending": [
+    {
+      "decisionId": "D-20260904-AAOI-AITIER",
+      "title": "Webull 新持仓 AAOI 的 §0-C AI 压力 tier",
+      "recommendation": "建议按 T1 计入。理由：AAOI 主营数据中心光模块/光收发器，需求直接绑定 AI 数据中心 capex，与既有 T1 的 AVGO / MRVL 属同一供应链压力来源；按既定框架「压力情景损失比例」口径，归入 T1 更保守，且金额小、不触发任何线值。若 Wu 认为其 AI 敞口应更低，可改 T2；不建议判不适用。仅为风险测算分层，不构成买卖或调仓建议。"
+    }
+  ],
   "available": true
 }
