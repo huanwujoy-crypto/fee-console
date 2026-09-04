@@ -152,7 +152,7 @@ test('repository controls keep ignore, CI, ownership and publication-lock covera
   assert.match(policyLock, /xuan-ib-etf-ledger-\[\^\/\]\+/);
 });
 
-const trendModules = ['xuan-ib-etf-trend', 'xuan-ib-etf-trend-envelope', 'xuan-ib-etf-trend-build', 'xuan-ib-etf-trend-view'];
+const trendModules = ['xuan-ib-etf-trend', 'xuan-ib-etf-trend-envelope', 'xuan-ib-etf-trend-build', 'xuan-ib-etf-trend-view', 'xuan-ib-etf-summary-transport'];
 const workflow = name => fs.readFileSync(path.join(repo, '.github', 'workflows', name), 'utf8');
 
 test('ETF trend and shared schedule paths require the existing exact-head OWNER gate', () => {

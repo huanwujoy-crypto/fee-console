@@ -85,6 +85,15 @@
 
 ## 维护者执行契约
 
+### 2026-09-04 分类规则与金额更新分开
+
+本轮七组合 95 行只读取数、逐组合对账和 38 项半流动持仓规则覆盖已核验。
+原“补齐分类规则”决定可据此追加 `evidence_recorded`，标题必须限定为
+“分类规则已落实”，同时显著说明“新四桶金额尚未上线”；不新增用户分类待办。
+这不是四桶金额、净赎回、可用现金或新报告已验收，也不自动撤销旧日期快照。
+现金代理凭证衔接、IB 整块权威值替换及新金额受控发布继续由维护者处理；
+未核赎回额不能当作零或到账现金。原事件及三条意见回执保持不变。
+
 1. `xuan-ib/implementation-progress.json` 是独立 main 维护账本；既有 events 永不改写或删除，新增事件并提高 revision。改正历史错误也用追加事件。
 2. 事件绑定决定 ID、真实 accepted/modified 回执 ID 及该回执原 sourceSha/htmlBlob。`observedPair` 另记核对时报告配对；二者不得混用。证据仅能支持它实际核对的范围。
 3. 状态独立于 decision：not_started、in_progress、blocked、awaiting_approval、user_action_required、evidence_recorded。`awaiting_approval` 仅用于尚未批准的后续规则确认；`user_action_required` 仅用于已核实必须由用户处理的明确动作（例如本人登录、补原始资料），必须填写阻碍及具体下一步。不能从 owner、blocker 或自由文本中的“Wu／待处理”猜测状态；不能把技术错误转嫁给用户。没有自动 completed/closed；临时措施有依据，不代表整个后续工作结束。

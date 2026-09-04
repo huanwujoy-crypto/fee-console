@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
+import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -262,11 +263,43 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID].includes(id)) {
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID].includes(id)) {
       fail('only the approved decision and ETF A/B/C state templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
     byId.set(id, template);
+  }
+
+  const openSummary = byId.get(ETF_SUMMARY_ID);
+  if(attributeValueCount(structuralMarkup(source),'id',ETF_SUMMARY_ID)!==0)
+    fail('ETF open summary ID is reserved exclusively for its validated template');
+  let openData;
+  if (openSummary) {
+    if (openSummary.openingTag !== ETF_SUMMARY_OPEN || !policyContext
+        || policyContext.paneClass !== 'p5' || openSummary.start < policyContext.end
+        || openSummary.end > policyContext.pane.closeStart
+        || source.slice(openSummary.end,policyContext.pane.closeStart).trim() !== '') {
+      fail('ETF open summary must be the exact final template in the independent ETF pane');
+    }
+    try {
+      openData = parseEtfSummary(openSummary.body);
+      if(openData.rows.at(-1).date > expectedDate || openData.frozenDate > expectedDate)
+        throw new Error('summary dates exceed report date');
+    } catch(error) { fail(`ETF open summary invalid: ${error.message}`); }
+  }
+  if(previousFile){
+    let prior;
+    try { prior=publicationTemplates(fs.readFileSync(previousFile,'utf8'))
+      .find(t=>quotedAttribute(t.attributes,'id','previous template')===ETF_SUMMARY_ID); }
+    catch(error){fail(`cannot read prior ETF summary: ${error.message}`);}
+    if(prior){
+      try{
+        const old=parseEtfSummary(prior.body);
+        if(!openData || openData.startDate!==old.startDate || openData.frozenDate!==old.frozenDate
+            ||openData.latestCompleteDate<old.latestCompleteDate ||openData.rows.at(-1).date<old.rows.at(-1).date)
+          throw new Error('cannot remove, restart or roll back the published comparison');
+      }catch(error){fail(`ETF open summary continuity: ${error.message}`);}
+    }
   }
 
   const decisionTemplate = byId.get(DECISION_STATE_TEMPLATE_ID);

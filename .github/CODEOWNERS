@@ -39,6 +39,8 @@
 /scripts/xuan-ib-etf-trend-build.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-trend-view.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-trend-view.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-summary-transport.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-summary-transport.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-report-schedule.mjs @huanwujoy-crypto
 /scripts/xuan-ib-publish-health.mjs @huanwujoy-crypto
 /scripts/xuan-ib-publish-health.test.mjs @huanwujoy-crypto

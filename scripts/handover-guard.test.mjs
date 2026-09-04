@@ -8,6 +8,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
+import {TREND_METHOD,simulateEtfTrend,projectOpenEtfTrend} from './xuan-ib-etf-trend.mjs';
+import {renderEtfSummaryTemplate,ETF_SUMMARY_ID} from './xuan-ib-etf-summary-transport.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -90,6 +92,32 @@ const run = (html, date = '2026-08-25', continuity = null, { autoPolicy = true }
 
 const sourceSha = 'a'.repeat(40);
 const htmlBlob = 'b'.repeat(40);
+const openSummary=(count=1)=>projectOpenEtfTrend(simulateEtfTrend({methodId:TREND_METHOD,startDate:'2020-09-01',
+  frozenDate:'2020-09-04',initialUsd:1000000,reserveUsd:240000,days:Array.from({length:count},(_,i)=>({date:`2020-09-0${i+1}`,
+  actualUsd:1000000+i,actualComplete:true,flowsComplete:true,flows:[],sourceRef:'synthetic-private',quotes:Object.fromEntries(
+    ['CSPX','EXUS','EIMI','USSC'].map(s=>[s,{status:'close',usd:10+i,date:`2020-09-0${i+1}`,source:'synthetic'}]))}))}));
+const withOpenSummary=(summary=openSummary())=>withPolicySection(valid(),approvedPolicySection+renderEtfSummaryTemplate(summary));
+test('ordinary reports may carry the exact approved open summary as final ETF template',()=>{
+  assert.equal(run(withOpenSummary()).status,0);
+});
+test('open summary rejects private fields, duplication, wrong placement, attrs and report-future dates',()=>{
+  const good=withOpenSummary();const tag=renderEtfSummaryTemplate(openSummary());
+  for(const bad of [good.replace(tag,tag+tag),good.replace(tag,'')+tag,
+    good.replace(tag,tag+`<div id="${ETF_SUMMARY_ID}"></div>`),
+    good.replace(tag,`<div id="${ETF_SUMMARY_ID}"></div>`),
+    good.replace(tag,`<div id="xuan-etf-open-summary-v&#51;"></div>`),
+    good.replace(`<template id="${ETF_SUMMARY_ID}"`,`<template class="extra" id="${ETF_SUMMARY_ID}"`),
+    good.replace('"purpose":"xuan-etf-open-comparison"','"privateInputs":{},"purpose":"xuan-etf-open-comparison"'),
+    good.replace(tag,'').replace(approvedPolicySection,tag+approvedPolicySection)]){
+    assert.notEqual(run(bad).status,0);
+  }
+  assert.notEqual(run(good.replace('2026-08-25','2019-08-25'),'2019-08-25').status,0);
+});
+test('a published open comparison cannot disappear, restart or roll back in a later report',()=>{
+  const previous=withOpenSummary(openSummary(2));
+  for(const candidate of [withPolicySection(valid()),withOpenSummary(openSummary(1))])
+    assert.notEqual(run(candidate,'2026-08-25',{previousHtml:previous,sourceSha,htmlBlob}).status,0);
+});
 const decision = (decisionId, status) => ({ decisionId, status });
 const receipt = (overrides = {}) => ({
   receiptId: 'R-20260830-154500-A1B2C3D4',
@@ -439,6 +467,25 @@ test('publishes one trusted ETF runtime state alongside the inherited decision t
   assert.equal(result.status, 0, result.stderr);
   assert.match(candidate, /<template id="xuan-ib-decision-state-v1"/);
   assert.match(candidate, /<template id="xuan-ib-etf-abc-state-v1" type="application\/json">/);
+});
+
+test('open summary coexists with legacy runtime and survives a receipt-only update unchanged', () => {
+  const tag = renderEtfSummaryTemplate(openSummary(2));
+  const build = (options) => {
+    const runtime = upsertEtfAbcRuntime(
+      withPolicySection(withDecisionDisplayGroups(options)).replaceAll('2026-08-25', '2026-09-02'),
+      computeEtfAbcObservation(etfAbcInput())
+    );
+    return runtime.replace(ETF_ABC_RUNTIME_END, `${ETF_ABC_RUNTIME_END}${tag}`);
+  };
+  const previous = build({ decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')], receipts: [] });
+  const current = build({ decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')], receipts: [receipt()], recordsUpdate: true });
+  const ordinary = run(previous, '2026-09-02');
+  assert.equal(ordinary.status, 0, ordinary.stderr);
+  const update = run(current, '2026-09-02', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.equal(update.status, 0, update.stderr);
+  const changed = current.replace(tag, renderEtfSummaryTemplate(openSummary(3)));
+  assert.notEqual(run(changed, '2026-09-02', { previousHtml: previous, sourceSha, htmlBlob }).status, 0);
 });
 
 test('ETF runtime state rejects unknown, duplicate, hidden, forged, and noncanonical templates', () => {

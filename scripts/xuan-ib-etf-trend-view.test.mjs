@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { TREND_METHOD, simulateEtfTrend, projectEtfTrend, projectOpenEtfTrend } from './xuan-ib-etf-trend.mjs';
 import { mountEtfTrend, clearEtfTrend, MAX_ETF_DISPLAY_BYTES, ETF_SEEN_DATE } from './xuan-ib-etf-trend-view.mjs';
+import {ETF_SUMMARY_ID} from './xuan-ib-etf-summary-transport.mjs';
 
 class Node {
   constructor(tag = '') { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null;
@@ -23,6 +24,8 @@ class Node {
   set textContent(text) { this.replaceChildren(); this.text = String(text); }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
   setAttribute(name, value) { this.attributes[name] = value; }
+  getAttribute(name) { return this.attributes[name] ?? null; }
+  contains(node) { for(let n=node;n;n=n.parentNode)if(n===this)return true;return false; }
   addEventListener(name, callback) { (this.listeners[name] ||= []).push(callback); }
   async click() { for (const callback of this.listeners.click || []) await callback(); }
   cloneNode(deep) { const node = new Node(this.tagName); node.id = this.id; node.className = this.className; node.text = this.text;
@@ -46,6 +49,7 @@ class Document extends Node {
   all() { const nodes = []; const walk = node => { nodes.push(node); node.children.forEach(walk); }; walk(this); return nodes; }
   getElementById(id) { return this.all().find(node => node.id === id) || null; }
   querySelectorAll(selector) {
+    if(selector===`[id="${ETF_SUMMARY_ID}"]`)return this.all().filter(n=>n.id===ETF_SUMMARY_ID);
     assert.equal(selector, '.pane.p5');
     return this.all().filter(node => ['pane', 'p5'].every(name => node.className.split(/\s+/).includes(name)));
   }
@@ -87,6 +91,11 @@ async function response(secret, through = 2) {
 }
 function deferred() { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; }
 const options = (f, storage, fetchFn, extra = {}) => ({ doc: f.doc, storage, baseUrl, fetchFn, now, ...extra });
+function embedSummary(f,text=JSON.stringify(projectOpenEtfTrend(payload().result,{now}))) {
+  const template=f.doc.createElement('template');template.id=ETF_SUMMARY_ID;
+  template.attributes={id:ETF_SUMMARY_ID,type:'application/json',length:2};
+  template.content.textContent=text;f.pane.append(template);return template;
+}
 function pauseNextDigest() {
   const subtle = globalThis.crypto.subtle, descriptor = Object.getOwnPropertyDescriptor(subtle, 'digest');
   const digest = subtle.digest.bind(subtle), entered = deferred(), release = deferred(); let first = true;
@@ -108,6 +117,26 @@ test('open comparison loads without access code and never reads or changes eithe
     assert.ok(storage.reads.every(k=>k===ETF_SEEN_DATE));assert.ok(storage.writes.every(([k])=>k===ETF_SEEN_DATE));
     assert.equal(f.doc.all().some(n=>n.tagName==='INPUT'||n.tagName==='BUTTON'),false);
     assert.equal(storage.values.get(ETF_DEVICE_KEY),legacy?'DO-NOT-READ':undefined);
+  }
+});
+
+test('verified report summary wins without a second network fetch and remains readable after folding',async()=>{
+  const f=documentFixture(),storage=storageFixture();embedSummary(f);let calls=0;
+  const mount=()=>mountEtfTrend(options(f,storage,async()=>{calls++;throw new Error('must not fetch');}));
+  await mount();assert.equal(privateHtml(f.doc),true);assert.equal(calls,0);
+  await mount();assert.equal(privateHtml(f.doc),true);assert.equal(calls,0);
+});
+test('invalid, duplicate, misplaced or forged embedded summary cannot fall back to the old public file',async()=>{
+  for(const mode of ['invalid','duplicate','misplaced','tag','attributes','type']){
+    const f=documentFixture(),storage=storageFixture(),summary=embedSummary(f);let calls=0;
+    if(mode==='invalid')summary.content.textContent='{}';
+    if(mode==='duplicate')embedSummary(f);
+    if(mode==='misplaced')f.doc.body.append(summary);
+    if(mode==='tag')summary.tagName='DIV';
+    if(mode==='attributes')summary.attributes.length=3;
+    if(mode==='type')summary.attributes.type='text/plain';
+    await mountEtfTrend(options(f,storage,async()=>{calls++;return response(key());}));
+    assert.equal(calls,0);assert.equal(privateHtml(f.doc),false);assert.deepEqual(storage.writes,[]);
   }
 });
 

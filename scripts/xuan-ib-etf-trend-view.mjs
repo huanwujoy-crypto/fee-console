@@ -1,5 +1,6 @@
 // Optional owner-approved open comparison. Never reads a key or the original ledger.
 import {validateOpenEtfTrend,renderEtfTrend} from './xuan-ib-etf-trend.mjs';
+import {ETF_SUMMARY_ID,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 export const ETF_SEEN_DATE='xuan-etf:last-source-date:open-v3';
 export const MAX_ETF_DISPLAY_BYTES=512000;
 const panelId='xuan-etf-private-panel'; // Retain the existing owned DOM identity.
@@ -19,6 +20,20 @@ export async function mountEtfTrend({doc,storage,baseUrl,fetchFn=globalThis.fetc
   if(displayed.get(doc)?.panel!==panel)message('正在读取 ABC 比较…');
   const controller=mount.controller,timeout=setTimeout(()=>controller.abort(),8000);
   try{
+    const summaries=doc.querySelectorAll(`[id="${ETF_SUMMARY_ID}"]`);
+    let bytes;
+    if(summaries.length){
+      if(summaries.length!==1)throw new Error('duplicate embedded summary');
+      const summary=summaries[0];
+      if(summary.tagName!=='TEMPLATE'||summary.getAttribute('type')!=='application/json'
+          ||summary.attributes.length!==2||!pane.contains(summary))throw new Error('embedded summary identity');
+      // doc belongs to an already verified sourceSha/htmlBlob pair. Invalid
+      // embedded content must fail locally, not silently fetch an older file.
+      const text=summary.content.textContent;
+      parseEtfSummary(text,{now,maxSeenDate:readSeen()});
+      bytes=new TextEncoder().encode(text);
+    }else{
+    // Migration fallback for reports predating the embedded daily summary.
     const url=new URL('etf-trend.json',baseUrl);
     if(url.origin!==new URL(baseUrl).origin||url.protocol!=='https:')throw new Error('origin');
     url.searchParams.set('v',String(now.getTime()));
@@ -26,7 +41,8 @@ export async function mountEtfTrend({doc,storage,baseUrl,fetchFn=globalThis.fetc
     if(!r.ok)throw new Error('unavailable');
     const size=r.headers?.get('Content-Length');
     if(size!==null&&size!==undefined&&Number(size)>=MAX_ETF_DISPLAY_BYTES)throw new Error('size');
-    const bytes=new Uint8Array(await r.arrayBuffer());
+    bytes=new Uint8Array(await r.arrayBuffer());
+    }
     if(bytes.byteLength>=MAX_ETF_DISPLAY_BYTES)throw new Error('size');
     const text=new TextDecoder('utf-8',{fatal:true}).decode(bytes).trim(),parsed=JSON.parse(text);
     if(JSON.stringify(parsed)!==text)throw new Error('noncanonical or duplicate JSON');

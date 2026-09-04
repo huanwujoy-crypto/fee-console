@@ -34,7 +34,9 @@ jobs:
             scripts/xuan-ib-cash-plan.mjs \
             scripts/xuan-ib-policy-page.mjs \
             scripts/xuan-ib-etf-pane.mjs \
-            scripts/xuan-ib-etf-abc.mjs
+            scripts/xuan-ib-etf-abc.mjs \
+            scripts/xuan-ib-etf-trend.mjs \
+            scripts/xuan-ib-etf-summary-transport.mjs
           do
             if [[ ! -s "$trusted_root/$required" ]]; then
               echo "Trusted main is missing required guard dependency: $required" >&2
