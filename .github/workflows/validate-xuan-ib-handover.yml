@@ -27,14 +27,19 @@ jobs:
           git fetch --no-tags origin main:refs/remotes/origin/main
           trusted_root="$RUNNER_TEMP/xuan-ib-trusted"
           mkdir -p "$trusted_root"
-          git archive origin/main -- scripts | tar -x -C "$trusted_root"
+          git archive origin/main -- \
+            scripts \
+            claude/xuan-ib-etf-ledger-public-established-v1.json \
+            | tar -x -C "$trusted_root"
           for required in \
             scripts/handover-guard.mjs \
             scripts/xuan-ib-classification-disclosure.mjs \
             scripts/xuan-ib-cash-plan.mjs \
             scripts/xuan-ib-policy-page.mjs \
             scripts/xuan-ib-etf-pane.mjs \
-            scripts/xuan-ib-etf-abc.mjs
+            scripts/xuan-ib-etf-abc.mjs \
+            scripts/xuan-ib-etf-ledger.mjs \
+            claude/xuan-ib-etf-ledger-public-established-v1.json
           do
             if [[ ! -s "$trusted_root/$required" ]]; then
               echo "Trusted main is missing required guard dependency: $required" >&2

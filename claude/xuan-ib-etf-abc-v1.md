@@ -153,7 +153,10 @@ the observation date; future quarter labels are rejected rather than counted.
 
 ## 7. Runtime integration
 
-`renderEtfAbcRuntimeCard()` emits a compact, static, read-only section.
+`renderEtfAbcRuntimeCard(result, baselineCheckpointHash)` emits a compact,
+static, read-only section. The mandatory hash is copied from the approved
+value-free public checkpoint; it is present only in the inert canonical state
+template and is not rendered as another phone-card row.
 It validates the full result, derives the public state and delegates byte-for-
 byte rendering to `renderEtfAbcPublicRuntimeCard(state)`. This lets the trusted
 publication guard require the visible card to match the canonical public JSON,
@@ -163,14 +166,15 @@ state; initial publication therefore says `基线待建立 · 暂不比较` with
 another phone-card row. If an unavailable calendar also contains some visibly
 carried prices, `估值不完整` takes display priority over the carry wording because
 the missing common valuation prevents comparison.
-`upsertEtfAbcRuntime()` is the only integration helper: it accepts HTML and an
-already computed result, locates the unique existing `.pane.p5`, and inserts or
-replaces the runtime block immediately after the unique canonical policy
+`upsertEtfAbcRuntime(html, result, baselineCheckpointHash)` is the only
+integration helper: it accepts HTML, an already computed result and the exact
+approved checkpoint hash, locates the unique existing `.pane.p5`, and inserts
+or replaces the runtime block immediately after the unique canonical policy
 section. It preserves every byte outside that block and fails closed when the
-pane or exact canonical policy bytes differ, or when runtime markers are
-orphaned, duplicated, or misplaced. Attribute-aware tokenization counts quoted
-and unquoted reserved IDs rather than treating attribute text as markup. It
-never writes a repository file.
+hash is absent or malformed, the pane or exact canonical policy bytes differ,
+or runtime markers are orphaned, duplicated, or misplaced. Attribute-aware
+tokenization counts quoted and unquoted reserved IDs rather than treating
+attribute text as markup. It never writes a repository file.
 
 The embedded JSON template contains only public method state and statuses. It
 does not contain NAV, cash, positions, flow amounts, prices, or other live
@@ -191,14 +195,17 @@ attributes. Self-closing syntax on `template` or a raw-text/inert container is
 also rejected because browsers keep those non-void elements open. The guard
 therefore does not rely on a bypassable regular expression or XML-like parsing.
 
-The public evidence includes `baselineStatus`, `rawMetricsComplete` and the
-ordered `completedQuarterIds`; counts and ranking status are re-derived from
-them. During the initial rollout,
-`validateEtfAbcInitialPublicRuntimeState()` is the mandatory publication gate:
-it accepts only a pending baseline, incomplete comparison, no completed
-quarters, incomplete raw metrics and `rankingEligible=false`. Established or
-eligible states require a later reviewed integration with the separately
-trusted append-only measurement ledger; self-asserted public JSON is not enough.
+The public evidence includes `baselineStatus`, `baselineCheckpointHash`,
+`rawMetricsComplete` and the ordered `completedQuarterIds`; counts and ranking
+status are re-derived from them. `validateEtfAbcInitialPublicRuntimeState()`
+retains the pending-bootstrap contract.
+`validateEtfAbcEstablishedPublicRuntimeState()` accepts the reviewed successor
+only while comparison remains incomplete, there are no completed quarters,
+raw metrics remain incomplete and `rankingEligible=false`. The trusted
+publication guard additionally requires the public state status, method, T0
+and exact checkpoint hash to match
+`claude/xuan-ib-etf-ledger-public-established-v1.json` from trusted `main`.
+Self-asserted candidate JSON is therefore not enough.
 
 ## 8. Private ledger and public checkpoint boundary
 
@@ -230,15 +237,22 @@ identity, method, T0, entry count and private head. Each successor must link to
 both the preceding public checkpoint and preceding private-head commitment;
 trusted verification requires the secret and both private ledger states.
 
-The repository may contain only
-`claude/xuan-ib-etf-ledger-public-genesis-v1.json`: a canonical, value-free
-pending bootstrap checkpoint. Its committed key and commitments are structural
-test fixtures, not an operational secret or proof that the baseline is
-established. Before an actual baseline exists, operations must create a new
-chain with a private random secret and private evidence under the approved
-root. Public validation rejects records, payloads, NAV, cash, flows, prices,
-holdings, positions and units. A public checkpoint is continuity evidence only;
-it does not establish the baseline or authorize a financial write.
+The repository may contain exactly two checkpoint-shaped files. The canonical,
+value-free `claude/xuan-ib-etf-ledger-public-genesis-v1.json` remains a pending
+structural test fixture; its committed key is not the operational key. The
+canonical, value-free
+`claude/xuan-ib-etf-ledger-public-established-v1.json` is a byte-for-byte copy
+of the privately verified operational successor checkpoint. It exposes only
+status, ledger identity, HMAC commitments and predecessor links. Because its
+operational chain deliberately uses a fresh private random secret, it must not
+be falsely linked to the unrelated public fixture.
+
+Public validation rejects records, payloads, NAV, cash, flows, prices,
+holdings, positions and units. GitHub CI can validate canonical shape,
+successor-link presence/shape and exact runtime binding, but cannot independently recompute
+the HMAC without the private secret. Authenticity therefore also requires the
+private `readiness` verification, byte-identical checkpoint copy and exact-SHA
+OWNER maintenance approval. Neither checkpoint authorizes a financial write.
 
 ## 9. Private bootstrap CLI runbook
 
@@ -296,7 +310,9 @@ reviewed `readiness` output; any intervening manifest change fails closed. It
 creates a new immutable successor ledger and never overwrites the pending
 ledger. `checkpoint` accepts only the one-record pending ledger to two-record
 established ledger transition and creates a value-free successor checkpoint
-after verifying both predecessor links. These commands do not publish an
-established state to the mobile report: that requires a later separately
-reviewed integration and the normal Validate, Promote, Pages and phone
-read-back gates.
+after verifying both predecessor links. These commands do not themselves
+publish an established state to the mobile report. Copy only the verified
+value-free `established-checkpoint.json` bytes to the approved
+public-established path in a separately reviewed maintenance PR. After that PR
+merges, generate a normal handover bound to its exact `checkpointHash`, then
+complete the ordinary Validate, Promote, Pages and phone read-back gates.

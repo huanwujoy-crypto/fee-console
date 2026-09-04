@@ -19,7 +19,7 @@ import {
   ETF_ABC_RUNTIME_START,
   ETF_ABC_T0_DATE,
   computeEtfAbcObservation,
-  upsertEtfAbcRuntime,
+  upsertEtfAbcRuntime as upsertEtfAbcRuntimeImpl,
 } from './xuan-ib-etf-abc.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +28,28 @@ const validateWorkflow = fs.readFileSync(path.join(here, '../.github/workflows/v
 const promoteWorkflow = fs.readFileSync(path.join(here, '../.github/workflows/promote-xuan-ib-handover.yml'), 'utf8');
 const approvedPolicy = JSON.parse(fs.readFileSync(path.join(here, '../claude/xuan-ib-policy-v2.json'), 'utf8'));
 const approvedPolicySection = renderPolicySection(approvedPolicy);
+const establishedCheckpoint = JSON.parse(fs.readFileSync(
+  path.join(here, '../claude/xuan-ib-etf-ledger-public-established-v1.json'),
+  'utf8',
+));
+const productionLatest = fs.readFileSync(path.join(here, '../xuan-ib/latest.html'), 'utf8');
+const productionLegacyRuntimeStart = productionLatest.indexOf(ETF_ABC_RUNTIME_START);
+const productionLegacyRuntimeEnd = productionLatest.indexOf(ETF_ABC_RUNTIME_END);
+const productionLegacyRuntimeBlock = productionLatest.slice(
+  productionLegacyRuntimeStart,
+  productionLegacyRuntimeEnd + ETF_ABC_RUNTIME_END.length,
+);
+const legacyPendingRuntimeBlockFor = (economicDateHkt) => productionLegacyRuntimeBlock.replace(
+  /"economicDateHkt":"\d{4}-\d{2}-\d{2}"/,
+  `"economicDateHkt":"${economicDateHkt}"`,
+);
+const withLegacyPendingRuntime = (html, economicDateHkt = '2026-08-25') => html.replace(
+  approvedPolicySection,
+  `${approvedPolicySection}\n${legacyPendingRuntimeBlockFor(economicDateHkt)}`,
+);
+const upsertEtfAbcRuntime = (html, result, checkpointHash = establishedCheckpoint.checkpointHash) => (
+  upsertEtfAbcRuntimeImpl(html, result, checkpointHash)
+);
 
 const valid = (extra = '') => `<!doctype html>
 <html><head><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>body{color:#111}</style></head>
@@ -118,8 +140,8 @@ const etfAbcInput = () => {
     mode: 'read-only',
     t0DateHkt: ETF_ABC_T0_DATE,
     baseline: {
-      status: 'pending', dateHkt: ETF_ABC_T0_DATE, mode: 'clone-a-marginal-shadow',
-      aHoldingsFingerprint: null, bHoldingsFingerprint: null, aValueUsd: null, bValueUsd: null,
+      status: 'established', dateHkt: ETF_ABC_T0_DATE, mode: 'clone-a-marginal-shadow',
+      aHoldingsFingerprint: fp('a'), bHoldingsFingerprint: fp('a'), aValueUsd: 1000, bValueUsd: 1000,
     },
     calendar: {
       status: 'complete', economicDateHkt, effectiveMarketDate: economicDateHkt,
@@ -461,7 +483,11 @@ test('ETF runtime state rejects unknown, duplicate, hidden, forged, and noncanon
     candidate.replace(stateTemplate, `<noscript>${stateTemplate}</noscript>`),
     candidate.replace(stateTemplate, `<!-- ${stateTemplate} -->`),
     candidate.replace(opening + '{', opening + ' {'),
-    candidate.replace('"baselineStatus":"pending"', '"baselineStatus":"established"'),
+    candidate.replace('"baselineStatus":"established"', '"baselineStatus":"pending"'),
+    candidate.replace(
+      `"baselineCheckpointHash":"${establishedCheckpoint.checkpointHash}"`,
+      `"baselineCheckpointHash":"${'f'.repeat(64)}"`,
+    ),
     candidate.replace(
       '"economicDateHkt":"2026-09-02","effectiveMarketDate":"2026-09-02"',
       '"economicDateHkt":"2026-09-03","effectiveMarketDate":"2026-09-03"'
@@ -483,7 +509,7 @@ test('ETF runtime state rejects unknown, duplicate, hidden, forged, and noncanon
   for (const broken of brokenCandidates) {
     const result = run(broken, '2026-09-02');
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /template|runtime|canonical|character references|byte-exact|initial ETF/i);
+    assert.match(result.stderr, /template|runtime|canonical|character references|byte-exact|established|checkpoint/i);
   }
 });
 
@@ -949,6 +975,46 @@ test('records-update preserves an inherited canonical policy-v2 section byte for
   assert.match(movedBackToLegacy.stderr, /preserve the inherited policy pane|content outside/);
 });
 
+test('current production runtime is the legacy pending state without a checkpoint binding', () => {
+  assert.ok(productionLegacyRuntimeStart >= 0);
+  assert.ok(productionLegacyRuntimeEnd > productionLegacyRuntimeStart);
+  const body = productionLegacyRuntimeBlock.match(
+    /<template id="xuan-ib-etf-abc-state-v1" type="application\/json">([\s\S]*?)<\/template>/,
+  )?.[1];
+  assert.ok(body);
+  const state = JSON.parse(body);
+  assert.equal(state.baselineStatus, 'pending');
+  assert.equal(Object.hasOwn(state, 'baselineCheckpointHash'), false);
+});
+
+test('records-update may only preserve the trusted legacy pending ETF runtime byte for byte', () => {
+  const previous = withLegacyPendingRuntime(withPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')],
+    receipts: [],
+  })));
+  const current = withLegacyPendingRuntime(withPolicySection(withDecisionDisplayGroups({
+    decisions: [decision('D-20260829-MRVL-CLASS', 'accepted')],
+    receipts: [receipt()],
+    recordsUpdate: true,
+  })));
+  const accepted = run(current, '2026-08-25', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.equal(accepted.status, 0, accepted.stderr);
+
+  const changedRuntime = current.replace('基线待建立', '基线已建立');
+  const changed = run(changedRuntime, '2026-08-25', { previousHtml: previous, sourceSha, htmlBlob });
+  assert.notEqual(changed.status, 0);
+  assert.match(changed.stderr, /preserve the trusted legacy pending ETF A\/B\/C runtime block byte for byte/);
+
+  const ordinary = run(
+    withLegacyPendingRuntime(withPolicySection(valid())),
+    '2026-08-25',
+    null,
+    { autoPolicy: false },
+  );
+  assert.notEqual(ordinary.status, 0);
+  assert.match(ordinary.stderr, /public runtime state is invalid/);
+});
+
 test('records-update preserves a legacy p3 policy in place and cannot perform the p3 to p5 migration', () => {
   const previous = withLegacyPolicySection(withDecisionDisplayGroups({
     decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')],
@@ -1247,12 +1313,14 @@ test('only fully verified immutable legacy records-update may retain old classif
 });
 
 test('candidate validation loads the guard dependency graph from the same trusted main', () => {
-  assert.match(validateWorkflow, /git archive origin\/main -- scripts \| tar -x -C "\$trusted_root"/);
+  assert.match(validateWorkflow, /git archive origin\/main --/);
   assert.match(validateWorkflow, /scripts\/handover-guard\.mjs/);
   assert.match(validateWorkflow, /scripts\/xuan-ib-classification-disclosure\.mjs/);
   assert.match(validateWorkflow, /scripts\/xuan-ib-policy-page\.mjs/);
   assert.match(validateWorkflow, /scripts\/xuan-ib-etf-pane\.mjs/);
   assert.match(validateWorkflow, /scripts\/xuan-ib-etf-abc\.mjs/);
+  assert.match(validateWorkflow, /scripts\/xuan-ib-etf-ledger\.mjs/);
+  assert.match(validateWorkflow, /claude\/xuan-ib-etf-ledger-public-established-v1\.json/);
   assert.match(validateWorkflow, /Trusted main is missing required guard dependency/);
   assert.match(validateWorkflow, /git show origin\/main:claude\/xuan-ib-policy-v2\.json > "\$RUNNER_TEMP\/xuan-ib-policy-v2\.json"/);
   assert.match(validateWorkflow, /XUAN_IB_POLICY_V2_JSON="\$RUNNER_TEMP\/xuan-ib-policy-v2\.json"/);

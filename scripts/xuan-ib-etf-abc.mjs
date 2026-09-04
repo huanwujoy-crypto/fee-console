@@ -31,7 +31,7 @@ const QUARTER_KEYS = ['id', 'status'];
 const PRICE_REFERENCE_KEYS = ['date', 'closeAtHkt', 'status'];
 const TILT_VALIDATION_KEYS = ['status', 'evidenceFingerprint', 'effectiveMarketDate'];
 const RESULT_KEYS = ['schemaVersion', 'methodId', 'mode', 't0DateHkt', 't0QuarterStatus', 'baselineStatus', 'economicDateHkt', 'effectiveMarketDate', 'observationCutoffHkt', 'calendarStatus', 'staleMarketClosed', 'valuationCoverage', 'comparisonStatus', 'targetVector', 'arms', 'rawMetrics', 'completedQuarterIds', 'completeQuarterCount', 'minimumCompleteQuartersForRanking', 'rankingEligible', 'rankingStatus'];
-const PUBLIC_RUNTIME_KEYS = ['schemaVersion', 'methodId', 'mode', 't0DateHkt', 't0QuarterStatus', 'baselineStatus', 'economicDateHkt', 'effectiveMarketDate', 'calendarStatus', 'staleMarketClosed', 'comparisonStatus', 'targetVectorStatus', 'bReserveStatus', 'bPendingCashUnallocated', 'bPendingOutflowUnsimulated', 'bImplementationStatus', 'cDistributionTreatment', 'rawMetricsComplete', 'completedQuarterIds', 'completeQuarterCount', 'minimumCompleteQuartersForRanking', 'rankingEligible', 'rankingStatus'];
+const PUBLIC_RUNTIME_KEYS = ['schemaVersion', 'methodId', 'mode', 't0DateHkt', 't0QuarterStatus', 'baselineStatus', 'baselineCheckpointHash', 'economicDateHkt', 'effectiveMarketDate', 'calendarStatus', 'staleMarketClosed', 'comparisonStatus', 'targetVectorStatus', 'bReserveStatus', 'bPendingCashUnallocated', 'bPendingOutflowUnsimulated', 'bImplementationStatus', 'cDistributionTreatment', 'rawMetricsComplete', 'completedQuarterIds', 'completeQuarterCount', 'minimumCompleteQuartersForRanking', 'rankingEligible', 'rankingStatus'];
 const RAW_TEXT_ELEMENTS = new Set(['iframe', 'noembed', 'noframes', 'noscript', 'script', 'style', 'textarea', 'title', 'xmp']);
 const ETF_ABC_RUNTIME_CLASS = 'xuan-etf-abc-runtime';
 const TARGET_ZERO = Object.freeze({ CSPX: 0.60, EQAC: 0, USSC: 0.05, EXUS: 0.23, EIMI: 0.12 });
@@ -444,9 +444,9 @@ export function computeEtfAbcObservation(input) {
   };
 }
 
-export function renderEtfAbcRuntimeCard(result) {
+export function renderEtfAbcRuntimeCard(result, baselineCheckpointHash) {
   validateEtfAbcResult(result);
-  return renderEtfAbcPublicRuntimeCard(publicRuntimeState(result));
+  return renderEtfAbcPublicRuntimeCard(publicRuntimeState(result, baselineCheckpointHash));
 }
 
 export function renderEtfAbcPublicRuntimeCard(state) {
@@ -761,7 +761,10 @@ function findUniqueP5(source, tokens) {
   return { ...matches[0], end: findMatchingElementEnd(tokens, matches[0]) };
 }
 
-function publicRuntimeState(result) {
+function publicRuntimeState(result, baselineCheckpointHash) {
+  if (!validFingerprint(baselineCheckpointHash)) {
+    throw new Error('ETF A/B/C public runtime requires an exact value-free baseline checkpoint hash');
+  }
   return validateEtfAbcPublicRuntimeState({
     schemaVersion: 1,
     methodId: ETF_ABC_METHOD_ID,
@@ -769,6 +772,7 @@ function publicRuntimeState(result) {
     t0DateHkt: ETF_ABC_T0_DATE,
     t0QuarterStatus: result.t0QuarterStatus,
     baselineStatus: result.baselineStatus,
+    baselineCheckpointHash,
     economicDateHkt: result.economicDateHkt,
     effectiveMarketDate: result.effectiveMarketDate,
     calendarStatus: result.calendarStatus,
@@ -806,6 +810,7 @@ export function validateEtfAbcPublicRuntimeState(state) {
   if (state.schemaVersion !== 1 || state.methodId !== ETF_ABC_METHOD_ID || state.mode !== 'read-only'
       || state.t0DateHkt !== ETF_ABC_T0_DATE || state.t0QuarterStatus !== 'stub'
       || !['pending', 'established'].includes(state.baselineStatus)
+      || !validFingerprint(state.baselineCheckpointHash)
       || !validDate(state.economicDateHkt) || state.economicDateHkt < ETF_ABC_T0_DATE
       || !validDate(state.effectiveMarketDate) || state.effectiveMarketDate < state.economicDateHkt
       || !['complete', 'market-closed-carry', 'unavailable'].includes(state.calendarStatus)
@@ -875,6 +880,17 @@ export function validateEtfAbcInitialPublicRuntimeState(state) {
   return state;
 }
 
+export function validateEtfAbcEstablishedPublicRuntimeState(state) {
+  validateEtfAbcPublicRuntimeState(state);
+  if (state.baselineStatus !== 'established' || state.comparisonStatus !== 'incomplete'
+      || state.rawMetricsComplete !== false || state.completedQuarterIds.length !== 0
+      || state.completeQuarterCount !== 0 || state.rankingEligible !== false
+      || state.rankingStatus !== 'not-eligible-less-than-four-complete-quarters') {
+    throw new Error('Established ETF A/B/C publication must remain non-comparable and unranked until later complete observations exist');
+  }
+  return state;
+}
+
 function safeJson(value) {
   return JSON.stringify(value).replace(/[<>&]/g, character => ({ '<': '\\u003c', '>': '\\u003e', '&': '\\u0026' })[character]);
 }
@@ -895,9 +911,9 @@ export function parseEtfAbcPublicRuntimeStateJson(json) {
   return parsed;
 }
 
-export function upsertEtfAbcRuntime(html, result) {
+export function upsertEtfAbcRuntime(html, result, baselineCheckpointHash) {
   const source = String(html ?? '');
-  const card = renderEtfAbcRuntimeCard(result);
+  const card = renderEtfAbcRuntimeCard(result, baselineCheckpointHash);
   const tokens = tokenizeHtml(source);
   const pane = findUniqueP5(source, tokens);
   const policyMatches = tokens.filter(token => !token.closing && token.name === 'section' && token.templateDepth === 0
@@ -911,7 +927,7 @@ export function upsertEtfAbcRuntime(html, result) {
       || createHash('sha256').update(policySource).digest('hex') !== ETF_ABC_CANONICAL_POLICY_SECTION_SHA256) {
     throw new Error('Canonical policy bytes differ from the fingerprint-bound approved section');
   }
-  const publicState = safeJson(publicRuntimeState(result));
+  const publicState = safeJson(publicRuntimeState(result, baselineCheckpointHash));
   const block = `${ETF_ABC_RUNTIME_START}\n<template id="xuan-ib-etf-abc-state-v1" type="application/json">${publicState}</template>\n${card}\n${ETF_ABC_RUNTIME_END}`;
   const startMatches = [...source.matchAll(new RegExp(ETF_ABC_RUNTIME_START.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))];
   const endMatches = [...source.matchAll(new RegExp(ETF_ABC_RUNTIME_END.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))];

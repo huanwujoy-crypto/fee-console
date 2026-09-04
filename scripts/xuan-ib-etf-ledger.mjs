@@ -307,7 +307,10 @@ export function validatePublicEtfLedgerCheckpoint(checkpoint) {
       || (checkpoint.baselineStatus === 'established' && checkpoint.entryCount !== 2)) throw new Error('Public ETF ledger checkpoint is invalid');
   const nullLinks = checkpoint.previousCheckpointHash === null && checkpoint.previousPrivateHeadCommitment === null;
   const hashLinks = validHash(checkpoint.previousCheckpointHash) && validHash(checkpoint.previousPrivateHeadCommitment);
-  if (!nullLinks && !hashLinks) throw new Error('Public ETF checkpoint predecessor links are incomplete');
+  if ((checkpoint.baselineStatus === 'pending' && !nullLinks)
+      || (checkpoint.baselineStatus === 'established' && !hashLinks)) {
+    throw new Error('Public ETF checkpoint predecessor links do not match its baseline state');
+  }
   return checkpoint;
 }
 

@@ -106,7 +106,10 @@ on a records-update. A records-update may only preserve the previous page's
 policy state byte for byte and in place: inherit legacy `p3` or current `p5`
 when present, or keep it absent on a legacy page. Never bootstrap or move the
 section through a records-update. Any optional A/B/C runtime block follows the
-canonical policy section inside `p5`; it never precedes or replaces it.
+canonical policy section inside `p5`; it never precedes or replaces it. Build
+that block with the exact `checkpointHash` from trusted main's canonical,
+value-free `claude/xuan-ib-etf-ledger-public-established-v1.json`; candidate
+HTML may not self-assert or substitute the baseline status or checkpoint hash.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,
