@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.7.3">
+<meta name="fee-console-build" content="4.7.4">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -164,7 +164,8 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </header>
 
 <div id="setupBox"></div>
-<div id="ledgerBar" class="ledger-bar" aria-live="polite"></div>
+<!-- ledger-settings-entry:v1 — routine read-only status belongs in Settings. -->
+<div id="ledgerNotice" class="info" role="status" style="display:none"></div>
 <div id="a2hs" class="info" style="display:none;justify-content:space-between;align-items:center;gap:10px">
   <span>📲 点 Safari 底部<b>分享</b> → <b>添加到主屏幕</b>，以后像 App 一样打开。</span><button class="btn sm" id="a2hsOff">知道了</button>
 </div>
@@ -206,6 +207,9 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </section>
 
 <section class="pane" id="p-set">
+  <div class="card"><h2>账本管理</h2>
+    <div id="ledgerBar" class="ledger-bar" aria-live="polite"></div>
+  </div>
   <div class="card"><h2>共享给其他手机（只看）</h2>
     <p class="hint">生成一个只读链接/二维码，其他手机打开后只能查看，不能修改。</p>
     <button class="btn primary big" id="btnShare">📱 显示只读二维码 / 链接</button>
@@ -755,6 +759,10 @@ function lockLedger(message="编辑已锁定，草稿保留"){
 }
 function renderLedgerControls(){
   const bar=document.getElementById("ledgerBar"),active=canEdit();
+  const notice=document.getElementById("ledgerNotice");
+  const note=EDIT.pending?"保存结果待核对，请勿重复提交":_draftBlocked?"草稿暂无法读取，原记录已保留":_ledgerConflict.length?"账本版本有差异，请到设置复核":EDIT.draft?"草稿未保存，正式报告未改变":"";
+  notice.textContent=note?(note+" · 请查看「设置 → 账本管理」"):"";
+  notice.style.display=note?"block":"none";
   bar.innerHTML=`<b>${active?"修改草稿 · 尚未保存":"只读查看 · 编辑已锁定"}</b><div class="small">${esc(_ledgerMessage||(EDIT.draft?"草稿保留，正式报告未改变":"查看与刷新不会修改账本"))}</div>${isMgr()&&!_draftBlocked?`<div class="row">${EDIT.pending?'<button class="btn" id="ledgerCheck">核对上次保存结果</button>':active?'<button class="btn primary" id="ledgerReviewOpen">核对并保存</button><button class="btn" id="ledgerLock">锁定编辑</button>':`<button class="btn" id="ledgerEdit">${EDIT.draft?"继续编辑草稿":"修改账本"}</button>`}${EDIT.draft&&!EDIT.pending?'<button class="btn" id="ledgerDiscard">丢弃草稿</button>':""}</div>`:""}`;
   if(_ledgerConflict.length)bar.innerHTML+=`<details><summary>查看冲突：云端 → 我的草稿（${_ledgerConflict.length} 项）</summary>${ledgerDiffTable(_ledgerConflict)}</details>`;
   for(const el of document.querySelectorAll('[data-open],[data-acct],[data-fee],[data-flow],#sMgmt,#sCarry,#sStart,#sWho,#btnAddFee,[data-delfee],[data-delflow]'))el.disabled=!active||(!!el.dataset.flow&&(DAILY.flowsAuto||[]).some(f=>f.id===el.dataset.flow&&f.effective===true));
