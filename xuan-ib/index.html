@@ -64,6 +64,18 @@
     #adhoc small { display: block; white-space: nowrap; }
     #adhoc span { font-size: 12px; }
     #adhoc small { margin-top: 2px; font-size: 9px; font-weight: 600; }
+    #adhoc:disabled { opacity: .55; cursor: wait; }
+    #stop-adhoc {
+      min-height: 44px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      font: inherit;
+      font-size: 12px;
+      text-decoration: underline;
+    }
+    #stop-adhoc[hidden] { display: none; }
     #decision {
       border: 1px solid #63a170;
       padding: 8px 11px;
@@ -126,15 +138,13 @@
       <div class="title">
         <strong>XUAN-投资管理</strong>
         <span id="status" role="status" aria-live="polite">正在读取最新版…</span>
+        <button id="stop-adhoc" type="button" hidden>停止本页等待</button>
       </div>
       <div class="header-actions">
-        <a id="adhoc"
-           href="shortcuts://run-shortcut?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"
-           rel="noopener noreferrer"
-           aria-label="通过 iPhone 快捷指令启动 Claude 临时报告；完成后自动刷新">
-          <span>生成临时报告</span>
-          <small>一键启动 · 自动刷新</small>
-        </a>
+        <button id="adhoc" type="button">
+          <span id="adhoc-label">生成临时报告</span>
+          <small id="adhoc-hint">确认后启动</small>
+        </button>
         <button id="refresh" type="button">刷新</button>
       </div>
     </header>
@@ -154,14 +164,18 @@
       const frame = document.querySelector("#handover");
       const button = document.querySelector("#refresh");
       const adhocButton = document.querySelector("#adhoc");
+      const adhocLabel = document.querySelector("#adhoc-label");
+      const adhocHint = document.querySelector("#adhoc-hint");
+      const stopAdhocButton = document.querySelector("#stop-adhoc");
       const decisionButton = document.querySelector("#decision");
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-04.1";
+      const loaderBuild = "2026-09-04.2";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
+      const adhocShortcutUrl = "shortcuts://run-shortcut?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A";
       const decisionShortcutUrl = "shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E";
       const waitPollMs = 15_000;
       const waitTimeoutMs = 20 * 60_000;
@@ -369,6 +383,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
 
       function clearAdhocWait() {
         adhocWait = null;
+        syncAdhocControls();
         if (!storage) return;
         try { storage.removeItem(adhocWaitStorageKey); } catch (_) {}
       }
@@ -412,6 +427,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (!raw) return;
           const saved = JSON.parse(raw);
           const valid = saved.cacheVersion === 1 && validWaitHeader(saved) &&
+            saved.startedAt <= Date.now() && saved.deadline - saved.startedAt <= waitTimeoutMs &&
             (saved.baseline === null || validReportVersion(saved.baseline));
           if (!valid) throw new Error("saved ad-hoc wait is invalid");
           adhocWait = saved;
@@ -443,9 +459,17 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         else clearDecisionWait();
       }
 
+      function syncAdhocControls() {
+        adhocButton.disabled = Boolean(adhocWait);
+        adhocLabel.textContent = adhocWait ? "等待报告" : "生成临时报告";
+        adhocHint.textContent = adhocWait ? "请勿重复点击" : "确认后启动";
+        stopAdhocButton.hidden = !adhocWait;
+      }
+
       function showAdhocPending() {
+        syncAdhocControls();
         status.classList.remove("error");
-        status.textContent = `临时报告正在生成，请稍候 · L ${loaderBuild}`;
+        status.textContent = `等待新报告；尚未确认任务启动 · L ${loaderBuild}`;
       }
 
       function showDecisionPending() {
@@ -462,7 +486,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         }
         if (adhocWait && now > adhocWait.deadline) {
           clearAdhocWait();
-          message = `临时报告尚未完成，请稍后刷新 · L ${loaderBuild}`;
+          message = `未发现新临时报告；请先检查 Claude，勿重复启动 · L ${loaderBuild}`;
         }
         if (!message) return false;
         status.classList.add("error");
@@ -482,17 +506,15 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           showAdhocPending();
           return false;
         }
-        // latest.meta.json does not yet identify the report class. Complete the
-        // request only when the already verified HTML labels the newer report
-        // as ad-hoc; a scheduled publication may still render, but cannot
-        // falsely claim that the user's ad-hoc request has finished.
+        // No request ID / server acknowledgement is available: finding a newer
+        // verified ad-hoc report is not proof that this device's request ran.
         if (classifyEdition(record.info.edition) !== "adhoc") {
           showAdhocPending();
           return false;
         }
         clearAdhocWait();
         status.classList.toggle("error", !warning.hidden);
-        status.textContent = statusFor(record, "临时报告已完成");
+        status.textContent = statusFor(record, "发现新的临时报告");
         return true;
       }
 
@@ -546,7 +568,15 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         return false;
       }
 
-      function beginAdhocWait() {
+      function beginAdhocWait(event) {
+        event?.preventDefault();
+        expireWaits();
+        if (adhocWait) {
+          showAdhocPending();
+          return;
+        }
+        const switching = decisionWait ? "\n将停止本页等待待办回执，不会取消后台任务。" : "";
+        if (!window.confirm("生成一份临时报告？\n此手机需已配置“XUAN-IB 临时报告”快捷指令。请只启动一次。\n只读报告，不执行交易。" + switching)) return;
         clearDecisionWait();
         const now = Date.now();
         adhocWait = {
@@ -557,7 +587,22 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         };
         persistAdhocWait();
         showAdhocPending();
+        // Keep the handoff within the confirmed user gesture. A successful URL
+        // assignment still cannot prove that the Shortcut exists or ran.
+        try { location.href = adhocShortcutUrl; }
+        catch (_) {
+          clearAdhocWait();
+          status.classList.add("error");
+          status.textContent = "未能打开快捷指令；请检查此手机的配置";
+          return;
+        }
         return loadLatest();
+      }
+
+      function stopAdhocWait() {
+        if (!adhocWait || !window.confirm("只停止本页等待，不会取消 Claude 后台任务。\n再次生成前，请先确认没有任务正在运行。")) return;
+        clearAdhocWait();
+        status.textContent = "已停止本页等待；后台任务不会因此取消";
       }
 
       function beginDecisionWait(event) {
@@ -586,6 +631,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           status.textContent = `请先刷新并确认当前待办 · L ${loaderBuild}`;
           return;
         }
+        if (adhocWait && !window.confirm("转去回应待办？\n将停止本页等待临时报告，不会取消 Claude 后台任务。")) return;
         clearAdhocWait();
         const now = Date.now();
         decisionWait = {
@@ -959,7 +1005,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       }
 
       const statusFor = (record, prefix) => {
-        if (prefix === "临时报告已完成") return "临时报告已完成 · 已自动刷新";
+        if (prefix === "发现新的临时报告") return "发现新的临时报告 · 已自动刷新";
         if (prefix === "回应已记录") return "回应已记录，报告已自动刷新";
         if (prefix === "显示上一份已验证版本" || prefix === "正在核对最新版") {
           return `${prefix} · ${record.info.dataDate} ${record.info.edition}`;
@@ -1534,9 +1580,11 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
 
       restoreWaits();
       expireWaits();
+      syncAdhocControls();
       if (decisionWait) showDecisionPending();
       else if (adhocWait) showAdhocPending();
       adhocButton.addEventListener("click", beginAdhocWait);
+      stopAdhocButton.addEventListener("click", stopAdhocWait);
       decisionButton.addEventListener("click", beginDecisionWait);
       button.addEventListener("click", loadLatest);
       window.addEventListener("pagehide", () => {
