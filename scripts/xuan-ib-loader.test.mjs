@@ -274,8 +274,10 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
 }
 
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false,
-  privateEtfImport = null}) {
-  const listeners = {adhoc: {}, decision: {}, button: {}, window: {}, document: {}};
+  privateEtfImport = null, confirm = () => true, storageBlocked = false, handoffBlocked = false}) {
+  const listeners = {adhoc: {}, stopAdhoc: {}, decision: {}, button: {}, window: {}, document: {}};
+  const confirmations = [];
+  const navigations = [];
   const intervals = [];
   let frameSrcdoc = '';
   const frame = {
@@ -291,7 +293,13 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     set: (value) => { frameSrcdoc = value; frame.srcdocWrites += 1; frame.writes.push({attribute: 'srcdoc', value}); },
   });
   const adhoc = {
+    disabled: false,
     addEventListener: (name, callback) => { listeners.adhoc[name] = callback; },
+  };
+  const adhocLabel = {textContent: '生成临时报告'};
+  const adhocHint = {textContent: '确认后启动'};
+  const stopAdhoc = {hidden: true,
+    addEventListener: (name, callback) => { listeners.stopAdhoc[name] = callback; },
   };
   const button = {
     disabled: false,
@@ -318,6 +326,9 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
   const elements = new Map([
     ['#adhoc', adhoc],
+    ['#adhoc-label', adhocLabel],
+    ['#adhoc-hint', adhocHint],
+    ['#stop-adhoc', stopAdhoc],
     ['#decision', decision],
     ['#decision-count', decisionCount],
     ['#handover', frame],
@@ -326,7 +337,10 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     ['#warning', warning],
   ]);
   const localStorage = {
-    setItem: (key, value) => stored.set(key, String(value)),
+    setItem: (key, value) => {
+      if (storageBlocked) throw new Error('storage unavailable');
+      stored.set(key, String(value));
+    },
     getItem: (key) => stored.has(key) ? stored.get(key) : null,
     removeItem: (key) => stored.delete(key),
   };
@@ -337,6 +351,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     addEventListener: (name, callback) => { listeners.document[name] = callback; },
   };
   const window = {
+    confirm: (message) => { confirmations.push(message); return confirm(message); },
     addEventListener: (name, callback) => { listeners.window[name] = callback; },
     setTimeout: () => 1,
     clearTimeout: () => {},
@@ -368,7 +383,11 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
       };
     }
   }
-  const location = {href: 'https://example.test/xuan-ib/'};
+  let href = 'https://example.test/xuan-ib/';
+  const location = {get href() { return href; }, set href(value) {
+    if (handoffBlocked) throw new Error('handoff blocked');
+    navigations.push(value); href = value;
+  }};
   const context = {
     AbortController,
     Array,
@@ -403,6 +422,11 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   vm.runInNewContext(privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript, context);
   return {
     adhoc,
+    adhocLabel,
+    adhocHint,
+    stopAdhoc,
+    confirmations,
+    navigations,
     advanceTime: (milliseconds) => { nowEpoch += milliseconds; },
     button,
     decision,
@@ -570,7 +594,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-04\.1"/);
+  assert.match(loader, /loaderBuild = "2026-09-04\.2"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -591,22 +615,22 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
 });
 
 test('the ad-hoc report control runs the private iPhone Shortcut without embedding credentials', () => {
-  const link = loader.match(/<a id="adhoc"[\s\S]*?<\/a>/)?.[0];
+  const link = loader.match(/<button id="adhoc"[\s\S]*?<\/button>/)?.[0];
   assert.ok(link, 'the fixed phone header must offer an ad-hoc report control');
   assert.match(
-    link,
-    /href="shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"/
+    loader,
+    /const adhocShortcutUrl = "shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"/
   );
   assert.doesNotMatch(link, /target="_blank"/);
-  assert.match(link, /rel="noopener noreferrer"/);
+  assert.doesNotMatch(link, /href=/);
   assert.match(link, />生成临时报告</);
-  assert.match(link, /一键启动 · 自动刷新/);
+  assert.match(link, /确认后启动/);
   assert.doesNotMatch(link, /[?&](?:token|secret|api[_-]?key)=/i);
   assert.doesNotMatch(loader, /sk-ant-oat01-/);
   assert.doesNotMatch(loader, /api\.anthropic\.com\/v1\/claude_code\/routines/);
   assert.match(loader, /adhocButton\.addEventListener\("click", beginAdhocWait\)/);
-  assert.match(loader, /临时报告正在生成，请稍候/);
-  assert.match(loader, /临时报告已完成/);
+  assert.match(loader, /等待新报告；尚未确认任务启动/);
+  assert.match(loader, /发现新的临时报告/);
   assert.match(loader, /waitPollMs = 15_000/);
   assert.match(loader, /xuan-ib:adhoc-wait:v1/);
   assert.match(loader, /window\.addEventListener\("focus"/);
@@ -1370,7 +1394,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-04.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-04.2');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1499,6 +1523,125 @@ test('decision pending survives reload and refresh triggers without treating its
   assert.ok(stored.has('xuan-ib:decision-wait:v1'));
 });
 
+function adhocTestApp(options = {}) {
+  const html = reportHtml('2026-08-28', '早间版', decisionTemplate({decisions: [awaitingDecision()]}));
+  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
+  return loaderHarness({fetchImpl: async (url) => String(url).includes('latest.meta.json')
+    ? response({json: meta, bytes: []}) : response({json: null, bytes: Buffer.from(html)}), ...options});
+}
+
+test('ad-hoc cancel neither launches nor clears an existing decision wait', async () => {
+  const app = adhocTestApp({confirm: () => false});
+  await app.listeners.button.click();
+  app.listeners.decision.click({preventDefault() {}});
+  const before = app.stored.get('xuan-ib:decision-wait:v1');
+  let prevented = false;
+  await app.listeners.adhoc.click({preventDefault() { prevented = true; }});
+  assert.equal(prevented, true);
+  assert.equal(app.navigations.length, 1, 'only the earlier decision handoff happened');
+  assert.equal(app.stored.get('xuan-ib:decision-wait:v1'), before);
+  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
+  assert.equal(app.adhoc.disabled, false);
+  assert.match(app.confirmations[0], /此手机需已配置/);
+});
+
+test('ad-hoc rapid repeat is ignored without resetting the deadline, including unavailable storage', async () => {
+  for (const storageBlocked of [false, true]) {
+    const app = adhocTestApp({storageBlocked});
+    await app.listeners.button.click();
+    const first = app.listeners.adhoc.click();
+    const originalWait = app.stored.get('xuan-ib:adhoc-wait:v1');
+    assert.equal(app.adhoc.disabled, true, 'lock before any asynchronous read');
+    app.advanceTime(500);
+    await app.listeners.adhoc.click();
+    await first;
+    assert.equal(app.confirmations.length, 1);
+    assert.equal(app.navigations.length, 1);
+    assert.equal(app.stored.get('xuan-ib:adhoc-wait:v1'), originalWait);
+    assert.equal(app.adhocLabel.textContent, '等待报告');
+    assert.equal(app.adhocHint.textContent, '请勿重复点击');
+    assert.equal(app.stopAdhoc.hidden, false);
+    assert.doesNotMatch(app.status.textContent, /正在生成|已启动|已完成/);
+  }
+});
+
+test('ad-hoc reload and BFCache never launch the Shortcut again and remain disabled', async () => {
+  const stored = new Map();
+  const first = adhocTestApp({stored});
+  await first.listeners.button.click();
+  await first.listeners.adhoc.click();
+  const restored = adhocTestApp({stored});
+  assert.equal(restored.adhoc.disabled, true);
+  await restored.listeners.window.pageshow({persisted: true});
+  await restored.listeners.window.focus();
+  await restored.listeners.adhoc.click();
+  assert.equal(restored.adhoc.disabled, true);
+  assert.equal(restored.navigations.length, 0);
+  assert.equal(restored.confirmations.length, 0);
+});
+
+test('stop waiting needs confirmation and never cancels or relaunches a backend task', async () => {
+  let accept = true;
+  const app = adhocTestApp({confirm: () => accept});
+  await app.listeners.button.click();
+  await app.listeners.adhoc.click();
+  const html = app.frame.srcdoc;
+  accept = false;
+  app.listeners.stopAdhoc.click();
+  assert.equal(app.adhoc.disabled, true);
+  accept = true;
+  app.listeners.stopAdhoc.click();
+  assert.equal(app.adhoc.disabled, false);
+  assert.equal(app.stopAdhoc.hidden, true);
+  assert.equal(app.frame.srcdoc, html);
+  assert.equal(app.navigations.length, 1);
+  assert.match(app.status.textContent, /后台任务不会因此取消/);
+});
+
+test('ad-hoc timeout releases the local button without auto-retrying or claiming generation failure', async () => {
+  const app = adhocTestApp();
+  await app.listeners.adhoc.click();
+  app.advanceTime(20 * 60_000 + 1);
+  await app.intervals.find(({delay}) => delay === 15_000).callback();
+  assert.equal(app.adhoc.disabled, false);
+  assert.equal(app.stopAdhoc.hidden, true);
+  assert.equal(app.navigations.length, 1);
+  assert.match(app.status.textContent, /未发现新临时报告；请先检查 Claude/);
+});
+
+test('invalid future or unbounded saved waits cannot permanently disable the ad-hoc control', () => {
+  const now = Date.parse('2026-08-28T06:00:00Z');
+  for (const [startedAt, deadline] of [[now + 1, now + 1000], [now, now + 21 * 60_000]]) {
+    const stored = new Map([['xuan-ib:adhoc-wait:v1', JSON.stringify({cacheVersion: 1, startedAt, deadline, baseline: null})]]);
+    const app = adhocTestApp({stored});
+    assert.equal(app.adhoc.disabled, false);
+    assert.equal(app.stopAdhoc.hidden, true);
+    assert.equal(stored.has('xuan-ib:adhoc-wait:v1'), false);
+    assert.equal(app.navigations.length, 0);
+  }
+});
+
+test('a synchronous Shortcut handoff failure releases the button with an honest message', async () => {
+  const app = adhocTestApp({handoffBlocked: true});
+  await app.listeners.adhoc.click();
+  assert.equal(app.adhoc.disabled, false);
+  assert.equal(app.stopAdhoc.hidden, true);
+  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
+  assert.match(app.status.textContent, /未能打开快捷指令/);
+});
+
+test('switching to a decision cannot silently drop an ad-hoc wait', async () => {
+  let accept = true;
+  const app = adhocTestApp({confirm: () => accept});
+  await app.listeners.button.click();
+  await app.listeners.adhoc.click();
+  accept = false;
+  app.listeners.decision.click({preventDefault() {}});
+  assert.equal(app.adhoc.disabled, true);
+  assert.equal(app.navigations.length, 1);
+  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
+});
+
 test('the ad-hoc launcher waits for a newly verified publication and then renders it automatically', async () => {
   const firstHtml = reportHtml('2026-08-28', '早间版', 'before-ad-hoc');
   const firstMeta = metaFor(firstHtml, {sourceCommitEpoch: 1_788_000_000});
@@ -1519,7 +1662,7 @@ test('the ad-hoc launcher waits for a newly verified publication and then render
   assert.match(app.frame.srcdoc, /before-ad-hoc/);
 
   await app.listeners.adhoc.click();
-  assert.match(app.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.match(app.status.textContent, /^等待新报告；尚未确认任务启动/);
   assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
   assert.match(app.frame.srcdoc, /before-ad-hoc/);
 
@@ -1529,8 +1672,10 @@ test('the ad-hoc launcher waits for a newly verified publication and then render
   await poll.callback();
 
   assert.match(app.frame.srcdoc, /completed-ad-hoc/);
-  assert.equal(app.status.textContent, '临时报告已完成 · 已自动刷新');
+  assert.equal(app.status.textContent, '发现新的临时报告 · 已自动刷新');
   assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
+  assert.equal(app.adhoc.disabled, false);
+  assert.equal(app.stopAdhoc.hidden, true);
   assert.equal(requests.filter((url) => url.includes('latest.meta.json')).length, 3);
   assert.equal(requests.filter((url) => url.includes('latest.html')).length, 3);
 });
@@ -1548,9 +1693,9 @@ test('the ad-hoc wait survives a phone page reload and never treats the baseline
   assert.ok(stored.has('xuan-ib:adhoc-wait:v1'));
 
   const reloaded = loaderHarness({fetchImpl, stored});
-  assert.match(reloaded.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.match(reloaded.status.textContent, /^等待新报告；尚未确认任务启动/);
   await reloaded.listeners.button.click();
-  assert.match(reloaded.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.match(reloaded.status.textContent, /^等待新报告；尚未确认任务启动/);
   assert.match(reloaded.frame.srcdoc, /same-baseline/);
   assert.ok(stored.has('xuan-ib:adhoc-wait:v1'));
 });
@@ -1574,7 +1719,7 @@ test('a newer scheduled publication cannot falsely complete an ad-hoc request', 
   await poll.callback();
 
   assert.match(app.frame.srcdoc, /new-scheduled-report/);
-  assert.match(app.status.textContent, /^临时报告正在生成，请稍候/);
+  assert.match(app.status.textContent, /^等待新报告；尚未确认任务启动/);
   assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
 });
 
@@ -2053,6 +2198,22 @@ test('the variable handover stays separate from the fixed loader', () => {
   assert.match(latest, /apple-mobile-web-app-capable/);
 });
 
+const liveProgressPublication = {html: latest, meta: metadata};
+// Historical progress scenarios model the original three resolved decisions,
+// not the live report's changing pending queue. Keep a separate live smoke test
+// below: a new real awaiting_user item must remain visible in production.
+{
+const liveState = JSON.parse(liveProgressPublication.html.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
+const historicalIds = new Set(['D-20260829-MRVL-CLASS', 'D-20260829-GOOG-FAMILY-LIMIT', 'D-20260829-SEMILIQUID-MAPPING']);
+const scenarioState = {...liveState,
+  decisions: liveState.decisions.filter(d => historicalIds.has(d.decisionId)),
+  receipts: liveState.receipts.filter(r => historicalIds.has(r.decisionId)),
+};
+assert.equal(scenarioState.decisions.length, 3);
+assert.ok(scenarioState.decisions.every(d => ['accepted', 'modified'].includes(d.status)));
+const latest = liveProgressPublication.html.replace(/<template id="xuan-ib-decision-state-v1"[^>]*>[\s\S]*?<\/template>/,
+  decisionTemplate(scenarioState));
+const metadata = {...liveProgressPublication.meta, htmlBlob: gitBlobSha(Buffer.from(latest))};
 const publishedProgressFixture = JSON.parse(fs.readFileSync(new URL('../xuan-ib/implementation-progress.json',import.meta.url),'utf8'));
 // These UI cases explicitly simulate progress verified against the test's
 // report. Real publications legitimately advance independently of the ledger;
@@ -2073,8 +2234,8 @@ const progressFollowup = new Date(Date.parse(progressFixture.events.at(-1).recor
 const progressTestNow = new Date(Date.parse(progressFollowup)+60000).toISOString();
 const publishedState = JSON.parse(latest.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
 const settleProgress = () => new Promise(resolve => setTimeout(resolve, 15));
-function progressApp(getProgress,now=progressTestNow) {
-  let current = {html:latest,meta:metadata};
+function progressApp(getProgress,now=progressTestNow,report={html:latest,meta:metadata}) {
+  let current = report;
   const app=loaderHarness({now,displayDom:true,fetchImpl:async(url,opts)=>{
     if(String(url).includes('implementation-progress.json')) {
       assert.equal(opts.cache,'no-store');assert.equal(opts.credentials,'omit');assert.equal(opts.redirect,'error');
@@ -2098,9 +2259,11 @@ test('current-progress fixture changes only synthetic observation pairs, preserv
   }
 });
 test('entire current published ledger renders latest receipt-bound statuses and exact user attention counts',async()=>{
+  const {html:latest,meta:metadata}=liveProgressPublication;
+  const publishedState=liveState;
   const data=structuredClone(publishedProgressFixture);
   const now=new Date(Math.max(Date.parse(progressTestNow),...data.events.map(e=>Date.parse(e.recordedAtHkt)+60000))).toISOString();
-  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}),now);
+  const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}),now,liveProgressPublication);
   await app.listeners.button.click();
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
   const resolved=publishedState.decisions.filter(d=>['accepted','modified'].includes(d.status));
@@ -2548,3 +2711,4 @@ test('fold ownership rejects reserved IDs, misplaced cards and ambiguous groups 
     assert.ok(pane.contains(fixture.trigger),variant);
   }
 });
+}
