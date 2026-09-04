@@ -107,11 +107,12 @@ policy state byte for byte and in place: inherit legacy `p3` or current `p5`
 when present, or keep it absent on a legacy page. Never bootstrap or move the
 section through a records-update. Any optional A/B/C block in a report candidate
 follows the canonical policy section inside `p5`; it never replaces it.
-The separately reviewed indicative-v2 loader enhancement may show a decrypted
-private comparison first and fold the original policy/history locally. This is
+The separately reviewed indicative-v2 loader enhancement may show the validated
+owner-approved open comparison first and fold the original policy/history locally. This is
 presentation of an already verified document, not a change to the candidate,
 latest HTML, its blob, financial values or receipts. Follow
-`claude/xuan-ib-etf-trend-v2.md`; no key/ciphertext means no claimed live comparison.
+`claude/xuan-ib-etf-trend-v2.md`; only a valid approved `etf-trend.json` can supply
+the open comparison. Never publish the original result, source records or keys.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,

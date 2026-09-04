@@ -2,9 +2,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { TREND_METHOD, simulateEtfTrend, projectEtfTrend } from './xuan-ib-etf-trend.mjs';
-import { encryptEtfTrend, MAX_ETF_ENVELOPE_BYTES } from './xuan-ib-etf-trend-envelope.mjs';
-import { mountEtfTrend, clearEtfTrend, ETF_DEVICE_KEY, ETF_SEEN_DATE } from './xuan-ib-etf-trend-view.mjs';
+import { TREND_METHOD, simulateEtfTrend, projectEtfTrend, projectOpenEtfTrend } from './xuan-ib-etf-trend.mjs';
+import { mountEtfTrend, clearEtfTrend, MAX_ETF_DISPLAY_BYTES, ETF_SEEN_DATE } from './xuan-ib-etf-trend-view.mjs';
 
 class Node {
   constructor(tag = '') { this.tagName = tag.toUpperCase(); this.children = []; this.parentNode = null;
@@ -65,6 +64,7 @@ function storageFixture(initial = {}) {
 }
 const now = new Date('2026-09-04T02:00:00Z');
 const baseUrl = 'https://example.test/fee-console/xuan-ib/';
+const ETF_DEVICE_KEY='xuan-etf:private-key:v2'; // Legacy storage must never be read.
 const key = () => randomBytes(32).toString('base64url');
 const panel = doc => doc.getElementById('xuan-etf-private-panel');
 const privateHtml = doc => panel(doc)?.innerHTML.includes('xuan-etf-trend-v2') || false;
@@ -80,7 +80,7 @@ function payload(through = 2) {
   return { projection: projectEtfTrend(result), result };
 }
 async function response(secret, through = 2) {
-  const envelope = await encryptEtfTrend(payload(through), secret, { now });
+  const envelope = projectOpenEtfTrend(payload(through).result, { now });
   const bytes = new TextEncoder().encode(JSON.stringify(envelope));
   return { ok: true, headers: { get: () => String(bytes.length) },
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) };
@@ -100,43 +100,18 @@ function pauseNextDigest() {
   } };
 }
 
-test('no independent ETF key: no network, no fee-key read, unlock form only', async () => {
-  const f = documentFixture(), storage = storageFixture({ 'feeConsole.key': 'DO-NOT-READ' }); let calls = 0;
-  await mountEtfTrend(options(f, storage, async () => { calls++; throw new Error('must not fetch'); }));
-  assert.equal(calls, 0); assert.equal(privateHtml(f.doc), false);
-  assert.deepEqual(storage.writes, []); assert.equal(storage.reads.includes('feeConsole.key'), false);
-  assert.ok(storage.reads.every(k => [ETF_DEVICE_KEY, ETF_SEEN_DATE].includes(k)));
-  assert.equal(panel(f.doc).children.find(n => n.tagName === 'INPUT').type, 'password');
-  assert.equal(f.original.parentNode, f.pane);
+test('open comparison loads without access code and never reads or changes either stored key', async () => {
+  for(const legacy of [false,true]){
+    const f=documentFixture(),storage=storageFixture(legacy ? {'feeConsole.key':'DO-NOT-READ',[ETF_DEVICE_KEY]:'DO-NOT-READ'} : {});let calls=0;
+    await mountEtfTrend(options(f,storage,async()=>{calls++;return response(key());}));
+    assert.equal(calls,1);assert.equal(privateHtml(f.doc),true);
+    assert.ok(storage.reads.every(k=>k===ETF_SEEN_DATE));assert.ok(storage.writes.every(([k])=>k===ETF_SEEN_DATE));
+    assert.equal(f.doc.all().some(n=>n.tagName==='INPUT'||n.tagName==='BUTTON'),false);
+    assert.equal(storage.values.get(ETF_DEVICE_KEY),legacy?'DO-NOT-READ':undefined);
+  }
 });
 
-function assertUnlockStyle(input) {
-  // This is a style contract, not computed CSS/browser layout acceptance.
-  assert.equal(input.type, 'password'); assert.equal(input.value, '');
-  assert.equal(input.autocomplete, 'off'); assert.equal(input.attributes['aria-label'], 'ETF 专属访问码');
-  for(const [name,value] of Object.entries({position:'static',opacity:'1',pointerEvents:'auto',display:'block',
-    boxSizing:'border-box',width:'100%',maxWidth:'100%',minHeight:'44px',fontSize:'16px',fontFamily:'inherit',
-    color:'var(--ink,#111)',background:'var(--card,#fff)',border:'1px solid var(--grid,#ccc)'}))
-    assert.equal(input.style[name], value, name);
-  assert.equal(input.style.outline, undefined, 'preserve the native focus indicator');
-}
-test('owned unlock field resists report radio styles without changing other inputs or taking access', async () => {
-  const f=documentFixture(),storage=storageFixture();let calls=0;
-  const radio=f.doc.createElement('input');radio.type='radio';f.pane.parentNode.prepend(radio);
-  await mountEtfTrend(options(f,storage,async()=>{calls++;throw new Error('must not fetch');}));
-  assertUnlockStyle(panel(f.doc).children.find(n=>n.tagName==='INPUT'));
-  assert.deepEqual(radio.style,{});assert.equal(radio.type,'radio');
-  assert.equal(calls,0);assert.deepEqual(storage.writes,[]);
-});
-test('re-entering after a rejected code recreates the same visible empty password field', async () => {
-  const f=documentFixture(),storage=storageFixture(),received=await response(key());
-  await mountEtfTrend(options(f,storage,async()=>received,{keyOverride:key()}));
-  const retry=panel(f.doc).children.find(n=>n.tagName==='BUTTON'&&n.textContent==='重新输入');
-  await retry.click();assertUnlockStyle(panel(f.doc).children.find(n=>n.tagName==='INPUT'));
-  assert.deepEqual(storage.writes,[]);assert.equal(privateHtml(f.doc),false);
-});
-
-test('successful decrypt renders bound amounts and stores only source high-water date', async () => {
+test('validated open data renders published summary amounts and stores only source high-water date', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret); let request;
   await mountEtfTrend(options(f, storage, async (...args) => { request = args; return received; }));
@@ -161,30 +136,12 @@ test('original ETF policy/history is folded, not deleted or duplicated', async (
   assert.equal(f.doc.all().filter(n => n.id === 'xuan-etf-original-history').length, 1);
 });
 
-test('keyOverride is not persisted before successful authenticated validation', async () => {
-  const f = documentFixture(), storage = storageFixture(), secret = key(), wait = deferred();
-  const mounting = mountEtfTrend(options(f, storage, () => wait.promise, { keyOverride: secret }));
-  assert.equal(storage.values.has(ETF_DEVICE_KEY), false);
-  wait.resolve(await response(secret)); await mounting;
-  assert.equal(storage.values.get(ETF_DEVICE_KEY), secret); assert.equal(privateHtml(f.doc), true);
-  assert.equal(storage.writes[0][0], ETF_DEVICE_KEY);
-});
-
-test('wrong keyOverride leaves no private DOM or saved candidate key', async () => {
-  const f = documentFixture(), storage = storageFixture(), candidate = key(), received = await response(key());
-  await mountEtfTrend(options(f, storage, async () => received, { keyOverride: candidate }));
-  assert.equal(privateHtml(f.doc), false); assert.equal(storage.values.has(ETF_DEVICE_KEY), false);
-  assert.equal(storage.values.has(ETF_SEEN_DATE), false);
-  assert.equal(panel(f.doc).innerHTML.includes('1,235,567'), false);
-  assert.equal(f.original.parentNode, f.pane);
-});
-
-test('network failure and oversized declared data render no private DOM', async () => {
+test('network failure and oversized declared data render no comparison DOM', async () => {
   for (const failMode of ['network', 'large', 'unavailable']) {
     const f = documentFixture(), storage = storageFixture({ [ETF_DEVICE_KEY]: key() }); let bodyRead = false;
     await mountEtfTrend(options(f, storage, async () => {
       if (failMode === 'network') throw new Error('synthetic failure');
-      return { ok: failMode !== 'unavailable', headers: { get: () => String(MAX_ETF_ENVELOPE_BYTES) },
+      return { ok: failMode !== 'unavailable', headers: { get: () => String(MAX_ETF_DISPLAY_BYTES) },
         arrayBuffer: async () => { bodyRead = true; return new ArrayBuffer(0); } };
     }));
     assert.equal(privateHtml(f.doc), false); assert.equal(bodyRead, false);
@@ -192,14 +149,35 @@ test('network failure and oversized declared data render no private DOM', async 
   }
 });
 
-test('stale external sequence never renders or saves keyOverride', async () => {
+test('public fetch parser rejects duplicate JSON, invalid UTF-8, excess bytes and unknown nested fields', async () => {
+  const valid = projectOpenEtfTrend(payload().result, { now });
+  const nested = structuredClone(valid); nested.latestBalances.usd.sourceRef = 'PRIVATE-SENTINEL';
+  const canonical = JSON.stringify(valid);
+  for (const bytes of [
+    new TextEncoder().encode(canonical.replace('{', '{"schemaVersion":3,')),
+    new Uint8Array([0xc3, 0x28]),
+    new Uint8Array(MAX_ETF_DISPLAY_BYTES),
+    new TextEncoder().encode(JSON.stringify(nested))
+  ]) {
+    const f = documentFixture(), storage = storageFixture();
+    await mountEtfTrend(options(f, storage, async () => ({ok:true, headers:{get:()=>null},
+      arrayBuffer:async()=>bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength)})));
+    assert.equal(privateHtml(f.doc), false);
+    assert.equal(panel(f.doc).textContent, 'ABC 比较暂不可用，请稍后刷新；其它报告保留。');
+    assert.ok(!panel(f.doc).textContent.includes('PRIVATE-SENTINEL'));
+    assert.deepEqual(storage.writes, []);
+    assert.equal(f.original.parentNode, f.pane);
+  }
+});
+
+test('stale external sequence never renders or writes a date', async () => {
   const f = documentFixture(), storage = storageFixture(), secret = key(), wait = deferred(); let current = true;
   const mounting = mountEtfTrend(options(f, storage, () => wait.promise, { keyOverride: secret, isCurrent: () => current }));
   current = false; wait.resolve(await response(secret)); await mounting;
   assert.equal(privateHtml(f.doc), false); assert.deepEqual(storage.writes, []);
 });
 
-test('stale failing request cannot append retry UI to a newer panel', async () => {
+test('stale failing request cannot replace content to a newer panel', async () => {
   const f = documentFixture(), storage = storageFixture(), wait = deferred(); let current = true;
   const mounting = mountEtfTrend(options(f, storage, () => wait.promise, { keyOverride: key(), isCurrent: () => current }));
   const before = panel(f.doc).innerHTML; current = false;
@@ -222,7 +200,7 @@ test('same-date verified source can be loaded again', async () => {
   assert.equal(privateHtml(f.doc), true);
 });
 
-test('identical ciphertext polling preserves verified nodes, visible date and details state', async () => {
+test('identical display data polling preserves verified nodes, visible date and details state', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret);
   await mountEtfTrend(options(f, storage, async () => received));
@@ -241,7 +219,7 @@ test('identical ciphertext polling preserves verified nodes, visible date and de
   }
 });
 
-test('different verified ciphertext replaces the prior panel content normally', async () => {
+test('different verified display data replaces the prior panel content normally', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   await mountEtfTrend(options(f, storage, async () => response(secret, 2)));
   const previous = panel(f.doc).children[0], detail = f.doc.createElement('details');
@@ -252,10 +230,10 @@ test('different verified ciphertext replaces the prior panel content normally', 
   assert.ok(panel(f.doc).innerHTML.includes('2020-09-03'));
 });
 
-test('refresh failure clears previously verified plaintext and permits the same cipher to recover', async () => {
+test('refresh failure clears previously verified plaintext and permits the same data to recover', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret);
-  for (const fail of [async () => { throw new Error('synthetic unavailable'); }, async () => response(key())]) {
+  for (const fail of [async () => { throw new Error('synthetic unavailable'); }, async () => ({ok:true,headers:{get:()=>null},arrayBuffer:async()=>new TextEncoder().encode('{}').buffer})]) {
     await mountEtfTrend(options(f, storage, async () => received));
     const previous = panel(f.doc).children[0];
     await mountEtfTrend(options(f, storage, fail));
@@ -266,7 +244,7 @@ test('refresh failure clears previously verified plaintext and permits the same 
   }
 });
 
-test('clear invalidates the displayed fingerprint so same-cipher remount renders again', async () => {
+test('clear invalidates the displayed fingerprint so same-data remount renders again', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret);
   await mountEtfTrend(options(f, storage, async () => received));
@@ -276,7 +254,7 @@ test('clear invalidates the displayed fingerprint so same-cipher remount renders
   assert.equal(privateHtml(f.doc), true); assert.notEqual(panel(f.doc).children[0], previous);
 });
 
-test('cipher fingerprint is bound to panel identity, not only the document', async () => {
+test('display fingerprint is bound to panel identity, not only the document', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret);
   await mountEtfTrend(options(f, storage, async () => received));
@@ -285,7 +263,7 @@ test('cipher fingerprint is bound to panel identity, not only the document', asy
   assert.notEqual(panel(f.doc), previous); assert.equal(privateHtml(f.doc), true);
 });
 
-test('same-cipher refresh rechecks cross-document high-water after asynchronous hashing', async () => {
+test('same-data refresh rechecks cross-document high-water after asynchronous hashing', async () => {
   const f = documentFixture(), other = documentFixture(), secret = key();
   const storage = storageFixture({ [ETF_DEVICE_KEY]: secret }), received = await response(secret, 2);
   const newest = await response(secret, 3);
@@ -301,19 +279,7 @@ test('same-cipher refresh rechecks cross-document high-water after asynchronous 
   } finally { pause.restore(); }
 });
 
-test('same-cipher refresh rechecks key removal after hashing and clears old plaintext', async () => {
-  const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
-  const received = await response(secret);
-  await mountEtfTrend(options(f, storage, async () => received));
-  const pause = pauseNextDigest();
-  try {
-    const mounting = mountEtfTrend(options(f, storage, async () => received));
-    await pause.entered; storage.removeItem(ETF_DEVICE_KEY); pause.release(); await mounting;
-    assert.equal(privateHtml(f.doc), false); assert.equal(storage.values.has(ETF_DEVICE_KEY), false);
-  } finally { pause.restore(); }
-});
-
-test('clear during hashing prevents same-cipher refresh from restoring private content', async () => {
+test('clear during hashing prevents same-data refresh from restoring comparison content', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret);
   await mountEtfTrend(options(f, storage, async () => received));
@@ -384,24 +350,6 @@ test('another document advancing shared high-water date invalidates older pendin
   assert.equal(privateHtml(oldDoc.doc), false);
   assert.equal(privateHtml(newDoc.doc), true);
   assert.equal(storage.values.get(ETF_SEEN_DATE), '2020-09-03');
-});
-
-test('key changed while fetch was pending cannot expose old-key plaintext', async () => {
-  const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret }), wait = deferred();
-  const mounting = mountEtfTrend(options(f, storage, () => wait.promise));
-  storage.values.set(ETF_DEVICE_KEY, key()); wait.resolve(await response(secret)); await mounting;
-  assert.equal(privateHtml(f.doc), false); assert.equal(storage.values.has(ETF_SEEN_DATE), false);
-});
-
-test('invalid unlock entry never fetches; successful entry clears password field', async () => {
-  const f = documentFixture(), storage = storageFixture(), secret = key(), received = await response(secret); let calls = 0;
-  await mountEtfTrend(options(f, storage, async () => { calls++; return received; }));
-  const input = panel(f.doc).children.find(n => n.tagName === 'INPUT');
-  const button = panel(f.doc).children.find(n => n.tagName === 'BUTTON');
-  input.value = 'invalid'; await button.click(); assert.equal(calls, 0); assert.equal(input.value, '');
-  input.value = ` ${secret} `; await button.click();
-  assert.equal(input.value, ''); assert.equal(calls, 1); assert.equal(privateHtml(f.doc), true);
-  assert.equal(storage.values.get(ETF_DEVICE_KEY), secret);
 });
 
 test('ambiguous or absent ETF pane is untouched and does not fetch', async () => {
