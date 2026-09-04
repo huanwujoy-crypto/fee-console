@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {TREND_METHOD, ETF_WEIGHTS, simulateEtfTrend, projectEtfTrend, validateTrendProjection, renderEtfTrend} from './xuan-ib-etf-trend.mjs';
+import {TREND_METHOD, ETF_WEIGHTS, simulateEtfTrend, projectEtfTrend, validateTrendProjection, renderEtfTrend, projectOpenEtfTrend, validateOpenEtfTrend} from './xuan-ib-etf-trend.mjs';
 const syms=Object.keys(ETF_WEIGHTS), clone=v=>structuredClone(v);
 const day=(date,actualUsd=1200000,price=100,flows=[])=>({date,actualUsd,actualComplete:true,flowsComplete:true,sourceRef:'synthetic source',flows,
   quotes:Object.fromEntries(syms.map(s=>[s,{status:'close',date,usd:price,source:'synthetic USD close'}]))});
@@ -9,6 +9,39 @@ const run=days=>simulateEtfTrend(input(days));
 const eq=(a,b)=>assert.ok(Math.abs(a-b)<1e-6,`${a} != ${b}`);
 const flow=(date,usd,id='fixture-flow')=>({id,date,usd,kind:'external'});
 const closeMarket=d=>{for(const s of syms)d.quotes[s]={status:'closed'};return d;};
+const openNow = new Date('2026-09-04T08:00:00Z');
+test('open summary is allowlisted and excludes raw financial sources and relative wealth',()=>{
+  const result=run([day('2026-09-01'),day('2026-09-02',1300000,100,[flow('2026-09-02',100000)])]);
+  const before=JSON.stringify(result),open=projectOpenEtfTrend(result,{now:openNow});
+  assert.deepEqual(open.latestBalances,{date:'2026-09-02',usd:result.rows[1].endingUsd});
+  assert.equal(JSON.stringify(result),before);
+  for(const field of ['sourceRef','relativeWealth','initialUsd','gainUsd','cumulativeFlowUsd','flows','result','positions','holdings'])assert.equal(JSON.stringify(open).includes('"'+field+'"'),false,field);
+  assert.equal(JSON.stringify(open).includes('synthetic source'),false);
+  const html=renderEtfTrend(open);assert.match(html,/估算余额 USD/);assert.doesNotMatch(html,/访问码|私密信息/);
+});
+test('open balances use the last complete day while estimates remain on the chart',()=>{
+  const d=day('2026-09-02',1210000);d.quotes.EXUS={status:'missing'};
+  const result=run([day('2026-09-01'),d]),open=projectOpenEtfTrend(result,{now:openNow});
+  assert.equal(open.rows.at(-1).estimated,true);assert.equal(open.latestBalances.date,'2026-09-01');
+  assert.deepEqual(open.latestBalances.usd,result.rows[0].endingUsd);
+});
+test('open schema rejects extra fields, invalid balances, inconsistent dates and metrics',()=>{
+  const base=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02',1210000,101)]),{now:openNow});
+  for(const mutate of [d=>d.sourceRef='private',d=>d.rows[0].sourceRef='private',d=>d.rows[0].relativeWealth={A:100,B:100,C:100},
+    d=>d.latestBalances.usd.account='private',d=>d.latestBalances.usd.A=-1,d=>d.latestBalances.usd.B=NaN,d=>d.latestBalances.usd.C=Infinity,
+    d=>d.latestBalances.date='2026-09-01',d=>d.schemaVersion=2,d=>d.purpose='other',d=>d.rows[1].maxDrawdown.A=.5,
+    d=>d.rows[1].quoteDates.EXUS='2026-09-03',d=>d.rows[0].index.C=101]){
+    const d=clone(base);mutate(d);assert.throws(()=>validateOpenEtfTrend(d,{now:openNow}));
+  }
+});
+test('open summary retains Hong Kong approval, New York source and date rollback gates',()=>{
+  const data=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02')]),{now:openNow});
+  assert.throws(()=>validateOpenEtfTrend(data,{now:new Date('2026-09-03T15:59:00Z')}),/Future/);
+  assert.throws(()=>validateOpenEtfTrend(data,{now:openNow,maxSeenDate:'2026-09-03'}),/older/);
+  assert.throws(()=>validateOpenEtfTrend(data,{now:openNow,maxSeenDate:'invalid'}),/Invalid/);
+  const future=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02'),day('2026-09-03'),day('2026-09-04')]),{now:openNow});
+  assert.throws(()=>validateOpenEtfTrend(future,{now:new Date('2026-09-04T00:30:00Z')}),/business/);
+});
 test('same baseline; reserve only affects B investment, not initial wealth',()=>{
   const r=run([day('2026-09-01'),day('2026-09-02',1320000,110)]);
   assert.deepEqual(r.rows[0].endingUsd,{A:1200000,B:1200000,C:1200000});
