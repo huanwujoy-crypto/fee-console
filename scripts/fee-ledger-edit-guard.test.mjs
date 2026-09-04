@@ -530,6 +530,39 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
   const html = fs.readFileSync(uiFile, "utf8");
   if (!loadGuard(html)) return;
 
+  await t.test("ledger controls live only in Settings, with exceptional global notices", async () => {
+    if (!html.includes("ledger-settings-entry:v1")) {
+      assert.equal(html.includes('id="ledgerNotice"'), false, "reject a partial placement migration");
+      return;
+    }
+    assert.equal((html.match(/id="ledgerBar"/g) || []).length, 1);
+    assert.equal((html.match(/id="ledgerNotice"/g) || []).length, 1);
+    const settings = html.match(/<section class="pane" id="p-set">([\s\S]*?)<\/section>/)?.[1];
+    assert.ok(settings?.includes('id="ledgerBar"'), "the only edit controls belong to the Settings pane");
+    const beforeTabs = html.slice(0, html.indexOf('<nav class="tabs"'));
+    assert.ok(beforeTabs.includes('id="ledgerNotice"'), "exception notice remains outside hidden panes");
+    assert.equal(beforeTabs.includes('id="ledgerBar"'), false);
+    const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
+    h.run("renderLedgerControls()");
+    assert.equal(h.element("ledgerNotice").style.display, "none");
+    for (const [setup, expected] of [
+      ['EDIT.draft=structuredClone(DB)', /草稿未保存/],
+      ['EDIT.pending={}', /保存结果待核对/],
+      ['EDIT.pending=null;_draftBlocked=true', /草稿暂无法读取/],
+      ['_draftBlocked=false;_ledgerConflict=[{field:"settings.mgmt",before:2,after:2.1}]', /账本版本有差异/]
+    ]) {
+      h.run(setup + ";renderLedgerControls()");
+      assert.equal(h.element("ledgerNotice").style.display, "block");
+      assert.match(h.element("ledgerNotice").textContent, expected);
+      assert.doesNotMatch(h.element("ledgerNotice").innerHTML, /<button|<input/);
+      assert.equal(h.run("EDIT.mode"), "locked");
+    }
+    h.run("EDIT.draft=null;_ledgerConflict=[];renderLedgerControls()");
+    assert.equal(h.element("ledgerNotice").style.display, "none");
+    assert.equal(h.run("JSON.stringify(DB)"), original);
+    assert.deepEqual(h.writes(), []);
+  });
+
   await t.test("read-only viewers can change the selected month without ledger editing", async () => {
     const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
     h.run('setCfg(K.tok, "")');

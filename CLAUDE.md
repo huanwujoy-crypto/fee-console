@@ -105,8 +105,13 @@ legacy ordinary report; it is deterministic, idempotent, and must not be used
 on a records-update. A records-update may only preserve the previous page's
 policy state byte for byte and in place: inherit legacy `p3` or current `p5`
 when present, or keep it absent on a legacy page. Never bootstrap or move the
-section through a records-update. Any optional A/B/C runtime block follows the
-canonical policy section inside `p5`; it never precedes or replaces it.
+section through a records-update. Any optional A/B/C block in a report candidate
+follows the canonical policy section inside `p5`; it never replaces it.
+The separately reviewed indicative-v2 loader enhancement may show a decrypted
+private comparison first and fold the original policy/history locally. This is
+presentation of an already verified document, not a change to the candidate,
+latest HTML, its blob, financial values or receipts. Follow
+`claude/xuan-ib-etf-trend-v2.md`; no key/ciphertext means no claimed live comparison.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,
@@ -116,20 +121,34 @@ that a plan has been executed. All page actions are navigation or local display
 controls only. Never add order, transfer, financial-write, or broker-action
 controls.
 
-## Hong Kong report schedule
+## Hong Kong report dates and New York PM schedule
 
 Read and follow `claude/xuan-ib-report-schedule-HKT-v1.md` before producing any
-XUAN-IB report. `Asia/Hong_Kong` is the only scheduling clock:
+XUAN-IB report. Dates and phone labels use `Asia/Hong_Kong`; PM follows
+`America/New_York` so daylight saving changes are resolved by the named timezone:
 
-- PM / 睡前版: Monday-Friday at 20:55 HKT.
+- PM / 睡前版: Monday-Friday at 09:35 New York, five minutes after the normal
+  US equity opening (21:35 HKT in daylight time; 22:35 HKT in standard time).
+- Retain a short PM report at that same New York time on full market holidays;
+  label it closed-market, not post-opening. Early closes do not change the start.
 - AM / 早间版: Tuesday-Saturday at 08:00 HKT.
 - Ad hoc / 临时版: only when manually requested; it may run at any time.
 
 Every successful edition uses the same candidate, validation, promotion, Pages,
 and fixed-mobile-link path above. An ad-hoc edition may become the newest phone
-page, but it never proves that a required AM or PM edition ran. US daylight
-saving time and market holidays change the report's market-status wording and
-data-as-of disclosure, never the Hong Kong delivery schedule.
+page, but it never proves that a required AM or PM edition ran. PM targets a
+verified public-page readback within ten minutes of the actual run start;
+record scheduler delay separately. Planned delivery is 09:45 New York, with the
+existing read-only watcher at 09:50; those slots are not evidence of an actual
+runtime or a guaranteed service level. Never skip sources or weaken Validate,
+Promote, Pages, or readback to meet the target. Use the shared pure module
+`scripts/xuan-ib-report-schedule.mjs` for delivery-slot calculations. A timezone
+configuration is not activated until the real Routine's saved next run is
+verified; repository code alone does not reschedule Claude.
+The planned HKT cutover date is `2026-09-04`. Earlier report dates retain their
+original 20:55 start / 21:25 due time for historical evidence; do not reclassify
+them under the new opening-time rule. If rollout misses that date, revise the
+shared cutover constant and contract before releasing, not the old reports.
 
 ## Implementation progress after a recorded decision
 

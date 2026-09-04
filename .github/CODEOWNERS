@@ -12,6 +12,8 @@
 /claude/xuan-ib-runtime-contract-v1.md @huanwujoy-crypto
 /claude/xuan-ib-cash-first-plan-v1.md @huanwujoy-crypto
 /claude/xuan-ib-etf-abc-v1.md @huanwujoy-crypto
+/claude/xuan-ib-report-schedule-HKT-v1.md @huanwujoy-crypto
+/claude/xuan-ib-etf-trend-v2.md @huanwujoy-crypto
 /claude/xuan-ib-etf-ledger-*.json @huanwujoy-crypto
 /claude/xuan-ib-classification-authority-review-2026-08-31.md @huanwujoy-crypto
 /claude/xuan-ib-cash-identities-v1.json @huanwujoy-crypto
@@ -29,4 +31,15 @@
 /scripts/xuan-ib-etf-ledger.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-ledger-leak-guard.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-ledger-leak-guard.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend-envelope.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend-envelope.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend-build.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend-build.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend-view.mjs @huanwujoy-crypto
+/scripts/xuan-ib-etf-trend-view.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-report-schedule.mjs @huanwujoy-crypto
+/scripts/xuan-ib-publish-health.mjs @huanwujoy-crypto
+/scripts/xuan-ib-publish-health.test.mjs @huanwujoy-crypto
 /xuan-ib/policy.html @huanwujoy-crypto

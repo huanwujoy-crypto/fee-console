@@ -151,3 +151,75 @@ test('repository controls keep ignore, CI, ownership and publication-lock covera
   assert.match(policyLock, /xuan-ib-etf-ledger-leak-guard/);
   assert.match(policyLock, /xuan-ib-etf-ledger-\[\^\/\]\+/);
 });
+
+const trendModules = ['xuan-ib-etf-trend', 'xuan-ib-etf-trend-envelope', 'xuan-ib-etf-trend-build', 'xuan-ib-etf-trend-view'];
+const workflow = name => fs.readFileSync(path.join(repo, '.github', 'workflows', name), 'utf8');
+
+test('ETF trend and shared schedule paths require the existing exact-head OWNER gate', () => {
+  const policyLock = workflow('xuan-ib-policy-lock.yml');
+  const pattern = policyLock.match(/^\s*protected_re='([^'\n]+)'$/m)?.[1];
+  assert.ok(pattern, 'the trusted policy must expose one protected path expression');
+  const protectedPaths = [
+    ...[...trendModules, 'xuan-ib-report-schedule', 'xuan-ib-publish-health'].flatMap(name =>
+      [`scripts/${name}.mjs`, `scripts/${name}.test.mjs`]),
+    'claude/xuan-ib-report-schedule-HKT-v1.md',
+    'claude/xuan-ib-etf-trend-v2.md',
+    'scripts/xuan-ib-etf-ledger-leak-guard.test.mjs',
+    '.github/workflows/xuan-ib-policy-lock.yml', '.github/workflows/scripts-check.yml',
+    '.github/workflows/watch-xuan-ib-freshness.yml', '.github/CODEOWNERS',
+  ];
+  // Execute the same POSIX extended regexp engine as the policy workflow.
+  for (const file of protectedPaths) {
+    const match = spawnSync('grep', ['-Eq', pattern], {input: `${file}\n`, encoding: 'utf8'});
+    assert.equal(match.status, 0, `unprotected ${file}: ${match.stderr}`);
+  }
+  for (const file of ['index.html', 'data.json', 'README.md',
+    'scripts/xuan-ib-etf-trend.mjs.bak', 'scripts/not-xuan-ib-report-schedule.mjs']) {
+    assert.equal(spawnSync('grep', ['-Eq', pattern], {input: `${file}\n`, encoding: 'utf8'}).status, 1, file);
+  }
+  assert.match(policyLock, /pull_request_target:/);
+  assert.match(policyLock, /head_sha='\$\{\{ github\.event\.pull_request\.head\.sha \}\}'/);
+  assert.match(policyLock, /approval_line="\/approve-xuan-ib-maintenance \$head_sha"/);
+  assert.match(policyLock, /select\(\.author_association == "OWNER"\)/);
+  assert.match(policyLock, /index\(\$approval_line\)/);
+  assert.match(policyLock, /\.filename, \(\.previous_filename \/\/ empty\)/);
+  assert.match(policyLock, /returned_file_count.*EXPECTED_FILE_COUNT/);
+  assert.match(policyLock, /returned_file_count > 1000/);
+  assert.doesNotMatch(policyLock, /actions\/checkout|contents: write|pull-requests: write/);
+});
+
+test('ETF trend suites run in required CI and schedule stays covered by the health suite', () => {
+  const scriptsCheck = workflow('scripts-check.yml');
+  const entries = [...scriptsCheck.matchAll(/^\s*run: node --test ([^\n]+)$/gm)]
+    .flatMap(match => match[1].trim().split(/\s+/));
+  assert.equal(new Set(entries).size, entries.length, 'test entries must not be duplicated');
+  for (const name of [...trendModules, 'xuan-ib-etf-ledger-leak-guard', 'xuan-ib-publish-health']) {
+    assert.ok(entries.includes(`scripts/${name}.test.mjs`), `CI is missing ${name}`);
+  }
+  const healthTest = fs.readFileSync(path.join(repo, 'scripts/xuan-ib-publish-health.test.mjs'), 'utf8');
+  assert.match(healthTest, /from ["']\.\/xuan-ib-report-schedule\.mjs["']/);
+  assert.match(healthTest, /PM_SCHEDULE_CUTOVER_HKT_DATE/);
+  assert.match(healthTest, /scheduledWatchEnabled/);
+  assert.match(scriptsCheck, /draft && 'scripts-check-draft-notice' \|\| 'scripts-check'/);
+});
+
+test('ETF trend ownership and trusted validation do not broaden UI-only or candidate publication', () => {
+  const owners = fs.readFileSync(path.join(repo, '.github/CODEOWNERS'), 'utf8').split('\n');
+  for (const name of trendModules) {
+    for (const suffix of ['mjs', 'test.mjs']) {
+      assert.ok(owners.includes(`/scripts/${name}.${suffix} @huanwujoy-crypto`));
+    }
+  }
+  for (const file of ['scripts/xuan-ib-report-schedule.mjs', 'scripts/xuan-ib-publish-health.mjs',
+    'scripts/xuan-ib-publish-health.test.mjs', 'claude/xuan-ib-report-schedule-HKT-v1.md']) {
+    assert.ok(owners.includes(`/${file} @huanwujoy-crypto`));
+  }
+  const uiCheck = workflow('ui-pr-check.yml');
+  assert.ok(uiCheck.includes('git show "origin/${GITHUB_BASE_REF}:scripts/ui-pr-guard.mjs"'));
+  const uiGuard = fs.readFileSync(path.join(repo, 'scripts/ui-pr-guard.mjs'), 'utf8');
+  assert.ok(uiGuard.includes('changedFiles.length !== 1 || changedFiles[0] !== "index.html"'));
+  const candidateCheck = workflow('validate-xuan-ib-handover.yml');
+  assert.ok(candidateCheck.includes('git archive origin/main -- scripts | tar -x -C "$trusted_root"'));
+  assert.ok(candidateCheck.includes('${#changed_files[@]} != 1'));
+  assert.ok(candidateCheck.includes('"${changed_files[0]}" != "xuan-ib/index.html"'));
+});
