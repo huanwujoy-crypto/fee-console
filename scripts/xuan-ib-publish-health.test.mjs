@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import {execFileSync} from "node:child_process";
 import {
   classifyEdition,
   evaluateFreshness,
@@ -12,6 +13,7 @@ import {
   slotDueEpoch,
   slotStartEpoch
 } from "./xuan-ib-publish-health.mjs";
+import {AM_WATCH_CRON, PM_RUN_TARGET_MS, PM_SCHEDULE_CUTOVER_HKT_DATE, PM_WATCH_CRONS, hktContext, scheduledWatchEdition, scheduledWatchEnabled} from "./xuan-ib-report-schedule.mjs";
 
 const sha = character => character.repeat(40);
 const html = (date, label) => `<!doctype html><title>XUAN-投资管理</title><!-- xuan-ib-handover:v1 --><span class="date">${date} 周四 · ${label}</span>`;
@@ -29,17 +31,27 @@ test("classifies AM, PM, and ad-hoc pages with ad-hoc precedence", () => {
   assert.equal(classifyEdition("2026-08-27 · 市场简报"), "unknown");
 });
 
-test("selects the latest due Hong Kong AM or PM slot across the full week", () => {
+test("selects AM and PM across the week without retroactively changing historical deadlines", () => {
   const cases = [
     ["2026-08-27T00:34:00Z", "2026-08-26", "pm"], // Thu 08:34 HKT
     ["2026-08-27T00:35:00Z", "2026-08-27", "am"], // Thu 08:35 HKT
-    ["2026-08-27T13:24:00Z", "2026-08-27", "am"], // Thu 21:24 HKT
-    ["2026-08-27T13:25:00Z", "2026-08-27", "pm"], // Thu 21:25 HKT
+    ["2026-08-27T13:24:59Z", "2026-08-27", "am"],
+    ["2026-08-27T13:25:00Z", "2026-08-27", "pm"], // Historical Thu 21:25 HKT
     ["2026-08-29T00:34:00Z", "2026-08-28", "pm"], // Sat 08:34 HKT
     ["2026-08-29T00:35:00Z", "2026-08-29", "am"], // Sat 08:35 HKT
     ["2026-08-30T12:00:00Z", "2026-08-29", "am"], // Sun 20:00 HKT
-    ["2026-08-31T13:24:00Z", "2026-08-29", "am"], // Mon 21:24 HKT
-    ["2026-08-31T13:25:00Z", "2026-08-31", "pm"]  // Mon 21:25 HKT
+    ["2026-08-28T16:00:00Z", "2026-08-28", "pm"], // Sat midnight HKT retains Friday PM.
+    ["2026-08-31T13:24:59Z", "2026-08-29", "am"],
+    ["2026-08-31T13:25:00Z", "2026-08-31", "pm"],
+    ["2026-09-04T00:34:59Z", "2026-09-03", "pm"],
+    ["2026-09-04T00:35:00Z", "2026-09-04", "am"],
+    ["2026-09-04T13:25:00Z", "2026-09-04", "am"], // Old deadline must not require new PM.
+    ["2026-09-04T13:44:59Z", "2026-09-04", "am"],
+    ["2026-09-04T13:45:00Z", "2026-09-04", "pm"],
+    ["2026-09-04T16:00:00Z", "2026-09-04", "pm"],
+    ["2026-09-05T00:35:00Z", "2026-09-05", "am"],
+    ["2026-09-07T13:44:59Z", "2026-09-05", "am"],
+    ["2026-09-07T13:45:00Z", "2026-09-07", "pm"]
   ];
   for (const [now, expectedDate, expectedEdition] of cases) {
     const result = expectedEditionAt(new Date(now));
@@ -47,8 +59,81 @@ test("selects the latest due Hong Kong AM or PM slot across the full week", () =
     assert.equal(result.expectedEdition, expectedEdition, now);
     assert.equal(result.reason, "latest-due-slot", now);
   }
-  assert.equal(slotStartEpoch("2026-08-27", "pm"), Date.parse("2026-08-27T12:55:00Z") / 1000);
-  assert.equal(slotDueEpoch("2026-08-27", "pm"), Date.parse("2026-08-27T13:25:00Z") / 1000);
+  assert.equal(PM_SCHEDULE_CUTOVER_HKT_DATE, "2026-09-04");
+  assert.equal(slotStartEpoch("2026-09-03", "pm"), Date.parse("2026-09-03T12:55:00Z") / 1000);
+  assert.equal(slotDueEpoch("2026-09-03", "pm"), Date.parse("2026-09-03T13:25:00Z") / 1000);
+  assert.equal(slotStartEpoch("2026-09-04", "pm"), Date.parse("2026-09-04T13:35:00Z") / 1000);
+  assert.equal(slotDueEpoch("2026-09-04", "pm"), Date.parse("2026-09-04T13:45:00Z") / 1000);
+});
+
+test("named New York timezone resolves both DST transitions while AM remains Hong Kong time", () => {
+  for (const [date, utcHour] of [
+    ["2026-10-30", 13], ["2026-11-02", 14],
+    ["2027-03-12", 14], ["2027-03-15", 13],
+    ["2027-11-05", 13], ["2027-11-08", 14],
+    ["2028-03-10", 14], ["2028-03-13", 13]
+  ]) {
+    const start = slotStartEpoch(date, "pm");
+    assert.equal(start, Date.parse(`${date}T${utcHour}:35:00Z`) / 1000, date);
+    assert.equal(hktContext(new Date(start * 1000)).minuteOfDay, (utcHour + 8) * 60 + 35);
+    assert.equal(slotDueEpoch(date, "pm") - start, PM_RUN_TARGET_MS / 1000);
+    assert.equal(slotStartEpoch(date, "am"), Date.parse(`${date}T00:00:00Z`) / 1000);
+    assert.equal(slotDueEpoch(date, "am"), Date.parse(`${date}T00:35:00Z`) / 1000);
+  }
+  assert.equal(expectedEditionAt(new Date("2026-11-02T13:45:00Z")).expectedDate, "2026-10-31");
+  assert.equal(expectedEditionAt(new Date("2026-11-02T14:44:59Z")).expectedEdition, "am");
+  assert.equal(expectedEditionAt(new Date("2026-11-02T14:45:00Z")).expectedEdition, "pm");
+});
+
+test("holidays retain the required short PM report and early closes do not move the opening slot", () => {
+  for (const [date, utcHour] of [["2026-09-07", 13], ["2026-11-27", 14], ["2026-12-24", 14], ["2026-12-25", 14]]) {
+    assert.equal(slotStartEpoch(date, "pm"), Date.parse(`${date}T${utcHour}:35:00Z`) / 1000);
+    const due = expectedEditionAt(new Date(`${date}T${utcHour}:45:00Z`));
+    assert.equal(due.expectedDate, date);
+    assert.equal(due.expectedEdition, "pm");
+  }
+});
+
+test("UTC watcher candidates select exactly one New York seasonal slot, including delayed jobs", () => {
+  for (const [iso, active] of [["2026-03-06T15:02:00Z", 1], ["2026-03-09T14:12:00Z", 0], ["2026-10-30T14:05:00Z", 0], ["2026-11-02T15:03:00Z", 1]]) {
+    assert.deepEqual(PM_WATCH_CRONS.map(c => scheduledWatchEnabled(c, new Date(iso))), [active === 0, active === 1]);
+    assert.equal(scheduledWatchEnabled(AM_WATCH_CRON, new Date(iso)), true);
+    assert.equal(scheduledWatchEnabled("", new Date(iso)), true);
+  }
+  assert.throws(() => scheduledWatchEnabled("25 13 * * 1-5"), /unrecognized/);
+  assert.equal(scheduledWatchEdition(AM_WATCH_CRON), "am");
+  for (const cron of PM_WATCH_CRONS) assert.equal(scheduledWatchEdition(cron), "pm");
+  assert.equal(scheduledWatchEdition(""), null);
+  assert.throws(() => scheduledWatchEdition("old-cron"), /unrecognized/);
+});
+
+test("shared browser schedule rejects invalid inputs instead of silently guessing a slot", () => {
+  for (const date of ["2026-02-30", "2026-9-1", "garbage", null]) assert.throws(() => slotStartEpoch(date, "pm"), /invalid report date/);
+  assert.throws(() => slotStartEpoch("2026-09-04", "adhoc"), /unsupported edition/);
+  assert.throws(() => expectedEditionAt(new Date("invalid")), /invalid schedule instant/);
+  assert.throws(() => expectedEditionAt(new Date(), "adhoc"), /unsupported edition/);
+  const source = fs.readFileSync("scripts/xuan-ib-report-schedule.mjs", "utf8");
+  assert.doesNotMatch(source, /(?:^|\n)\s*import\s|node:|\b(?:process|document|window|fetch|Buffer)\s*[.(]/);
+});
+
+test("inactive seasonal CLI watcher exits before file or website reads", () => {
+  const inactive = PM_WATCH_CRONS.find(expression => !scheduledWatchEnabled(expression));
+  const result = JSON.parse(execFileSync(process.execPath, [
+    "scripts/xuan-ib-publish-health.mjs", "watch", "--base-url", "https://example.invalid/",
+    "--main-index", "/synthetic-nonexistent-index", "--main-html", "/synthetic-nonexistent-html",
+    "--main-meta", "/synthetic-nonexistent-meta", "--schedule", inactive
+  ], {encoding: "utf8"}));
+  assert.deepEqual(result, {ok: true, skipped: true, reason: "inactive-seasonal-watch-slot"});
+});
+
+test("a pre-opening old-time PM commit cannot prove the new PM run even with matching bytes", () => {
+  const bytes = Buffer.from(html("2026-09-04", "睡前版"));
+  const meta = {schemaVersion: 1, sourceSha: sha("a"), sourceCommitEpoch: Date.parse("2026-09-04T12:56:00Z") / 1000, dataDate: "2026-09-04", htmlBlob: gitBlobSha(bytes)};
+  const base = {indexHtml: loaderBytes, mainIndexHtml: loaderBytes, onlineHtml: bytes, mainHtml: bytes,
+    onlineMeta: meta, mainMeta: meta, expectedDate: meta.dataDate, expectedEdition: "pm", now: new Date("2026-09-04T13:50:00Z")};
+  assert.equal(evaluateFreshness({...base, publicationHistory: [{...meta, commit: sha("b"), valid: true, edition: "pm"}]}).ok, false);
+  const current = {...meta, sourceCommitEpoch: slotStartEpoch(meta.dataDate, "pm") + 60};
+  assert.equal(evaluateFreshness({...base, onlineMeta: current, mainMeta: current, publicationHistory: [{...current, commit: sha("b"), valid: true, edition: "pm"}]}).ok, true);
 });
 
 test("accepts only a matching scheduled page from main and Pages", () => {
@@ -159,6 +244,29 @@ const response = body => ({
   ok: true,
   status: 200,
   arrayBuffer: async () => Buffer.from(body)
+});
+
+test("a delayed scheduled watcher cannot use the next edition to hide its own missing report", async () => {
+  for (const [scheduleExpression, date, label, edition, now, expectedDate, expectedEdition] of [
+    [PM_WATCH_CRONS[0], "2026-09-05", "早间版", "am", "2026-09-05T00:40:00Z", "2026-09-04", "pm"],
+    [AM_WATCH_CRON, "2026-09-04", "睡前版", "pm", "2026-09-04T13:50:00Z", "2026-09-04", "am"]
+  ]) {
+    const bytes = Buffer.from(html(date, label));
+    const meta = {schemaVersion: 1, sourceSha: sha("b"), sourceCommitEpoch: slotStartEpoch(date, edition) + 60, dataDate: date, htmlBlob: gitBlobSha(bytes)};
+    const fetchFn = async url => response(url.pathname.endsWith("index.html") ? loaderBytes : url.pathname.endsWith("latest.html") ? bytes : JSON.stringify(meta));
+    const result = await runWatcher({baseUrl: "https://example.invalid/xuan-ib/", mainIndexHtml: loaderBytes,
+      mainHtml: bytes, mainMeta: meta, publicationHistory: [{...meta, commit: sha("d"), valid: true, edition}],
+      scheduleExpression, now: new Date(now), fetchFn});
+    assert.equal(result.ok, false);
+    assert.equal(result.expectedDate, expectedDate);
+    assert.equal(result.expectedEdition, expectedEdition);
+  }
+});
+
+test("inactive seasonal watcher makes zero HTTP requests", async () => {
+  const result = await runWatcher({scheduleExpression: PM_WATCH_CRONS[1], now: new Date("2026-09-04T14:50:00Z"),
+    fetchFn: async () => { throw new Error("inactive watcher must not fetch"); }});
+  assert.deepEqual(result, {ok: true, skipped: true, reason: "inactive-seasonal-watch-slot"});
 });
 
 test("the online watcher compares all three fixed-page resources", async () => {
@@ -430,12 +538,15 @@ test("the non-gating Pages probe retries stale data and reports timeout as data"
   assert.equal(timedOut.attempts, 2);
 });
 
-test("workflows keep the HKT SLA, read-only watcher, and post-push non-gating probe", () => {
+test("workflows keep the shared DST schedule, read-only watcher, and post-push non-gating probe", () => {
   const watcher = fs.readFileSync(".github/workflows/watch-xuan-ib-freshness.yml", "utf8");
   assert.match(watcher, /cron: '35 0 \* \* 2-6'/);
-  assert.match(watcher, /cron: '25 13 \* \* 1-5'/);
+  assert.match(watcher, /cron: '50 13 \* \* 1-5'/);
+  assert.match(watcher, /cron: '50 14 \* \* 1-5'/);
+  assert.doesNotMatch(watcher, /cron: '25 13/);
   assert.match(watcher, /AM is due Tuesday-Saturday/);
-  assert.match(watcher, /PM is due Monday-Friday/);
+  assert.match(watcher, /PM targets 09:35 New York/);
+  assert.match(watcher, /--schedule "\$\{SCHEDULE_EXPRESSION:-\}"/);
   assert.match(watcher, /--main-index xuan-ib\/index\.html/);
   assert.match(watcher, /--attempts 4/);
   assert.match(watcher, /--interval-ms 20000/);

@@ -3,13 +3,11 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import {execFileSync} from "node:child_process";
+import {pathToFileURL} from "node:url";
+import {expectedEditionAt, scheduledWatchEdition, scheduledWatchEnabled, slotStartEpoch} from "./xuan-ib-report-schedule.mjs";
+export {expectedEditionAt, hktContext, slotDueEpoch, slotStartEpoch} from "./xuan-ib-report-schedule.mjs";
 
-const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const EDITIONS = new Set(["am", "pm"]);
-const HKT_SLOTS = {
-  am: {startMinute: 8 * 60, dueMinute: 8 * 60 + 35, weekdays: new Set([2, 3, 4, 5, 6])},
-  pm: {startMinute: 20 * 60 + 55, dueMinute: 21 * 60 + 25, weekdays: new Set([1, 2, 3, 4, 5])}
-};
 
 export function gitBlobSha(content) {
   const bytes = Buffer.isBuffer(content) ? content : Buffer.from(content);
@@ -42,61 +40,6 @@ export function classifyEdition(dateLine) {
   if (am) return "am";
   if (pm) return "pm";
   return "unknown";
-}
-
-export function hktContext(now = new Date()) {
-  const shifted = new Date(now.getTime() + HKT_OFFSET_MS);
-  const date = shifted.toISOString().slice(0, 10);
-  const weekday = shifted.getUTCDay();
-  const minuteOfDay = shifted.getUTCHours() * 60 + shifted.getUTCMinutes();
-  return {date, weekday, minuteOfDay};
-}
-
-const addIsoDays = (date, days) => {
-  const value = new Date(`${date}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + days);
-  return value.toISOString().slice(0, 10);
-};
-
-const hktMinuteEpoch = (date, minute) => Math.floor(
-  (Date.parse(`${date}T00:00:00Z`) - HKT_OFFSET_MS + minute * 60 * 1000) / 1000
-);
-
-export function slotStartEpoch(dataDate, edition) {
-  if (!EDITIONS.has(edition)) throw new Error(`unsupported edition: ${edition}`);
-  return hktMinuteEpoch(dataDate, HKT_SLOTS[edition].startMinute);
-}
-
-export function slotDueEpoch(dataDate, edition) {
-  if (!EDITIONS.has(edition)) throw new Error(`unsupported edition: ${edition}`);
-  return hktMinuteEpoch(dataDate, HKT_SLOTS[edition].dueMinute);
-}
-
-export function expectedEditionAt(now = new Date(), editionFilter = null) {
-  if (editionFilter !== null && !EDITIONS.has(editionFilter)) {
-    throw new Error(`unsupported edition: ${editionFilter}`);
-  }
-  const context = hktContext(now);
-  const nowEpoch = Math.floor(now.getTime() / 1000);
-  let latest = null;
-  for (let offset = 0; offset <= 8; offset += 1) {
-    const date = addIsoDays(context.date, -offset);
-    const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
-    for (const edition of EDITIONS) {
-      if (editionFilter !== null && edition !== editionFilter) continue;
-      if (!HKT_SLOTS[edition].weekdays.has(weekday)) continue;
-      const dueEpoch = slotDueEpoch(date, edition);
-      if (dueEpoch > nowEpoch) continue;
-      if (!latest || dueEpoch > latest.dueEpoch) latest = {date, edition, dueEpoch};
-    }
-  }
-  if (!latest) return {...context, expectedEdition: null, reason: "no-due-slot"};
-  return {
-    ...context,
-    expectedEdition: latest.edition,
-    expectedDate: latest.date,
-    reason: "latest-due-slot"
-  };
 }
 
 const sameMeta = (left, right) => [
@@ -228,8 +171,10 @@ const fetchBytes = async (url, fetchFn = fetch) => {
 
 const joinUrl = (baseUrl, path) => new URL(path, baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`).href;
 
-export async function runWatcher({baseUrl, mainIndexHtml, mainHtml, mainMeta, publicationHistory = [], expectedEdition = "auto", now = new Date(), fetchFn = fetch}) {
-  let expected = expectedEdition;
+export async function runWatcher({baseUrl, mainIndexHtml, mainHtml, mainMeta, publicationHistory = [], expectedEdition = "auto", scheduleExpression = "", now = new Date(), fetchFn = fetch}) {
+  if (!scheduledWatchEnabled(scheduleExpression, now)) return {ok: true, skipped: true, reason: "inactive-seasonal-watch-slot"};
+  // A late PM job must still audit PM, not accidentally turn into an AM check.
+  let expected = scheduledWatchEdition(scheduleExpression) || expectedEdition;
   let expectedDate;
   if (expected === "auto") {
     const automatic = expectedEditionAt(now);
@@ -321,6 +266,10 @@ async function main() {
   const baseUrl = option(args, "--base-url");
   if (!baseUrl) throw new Error("--base-url is required");
   if (command === "watch") {
+    if (!scheduledWatchEnabled(option(args, "--schedule", ""))) {
+      console.log(JSON.stringify({ok: true, skipped: true, reason: "inactive-seasonal-watch-slot"}));
+      return;
+    }
     const indexPath = option(args, "--main-index", "xuan-ib/index.html");
     const htmlPath = option(args, "--main-html", "xuan-ib/latest.html");
     const metaPath = option(args, "--main-meta", "xuan-ib/latest.meta.json");
@@ -331,6 +280,7 @@ async function main() {
       mainMeta: JSON.parse(fs.readFileSync(metaPath, "utf8")),
       publicationHistory: readPublicationHistory(),
       expectedEdition: option(args, "--expected", "auto"),
+      scheduleExpression: option(args, "--schedule", ""),
       attempts: Number(option(args, "--attempts", "4")),
       intervalMs: Number(option(args, "--interval-ms", "20000"))
     });
@@ -357,7 +307,7 @@ async function main() {
   }
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch(error => {
     console.error(`XUAN-IB publication health check failed: ${error.message}`);
     process.exitCode = 2;

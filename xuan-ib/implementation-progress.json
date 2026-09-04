@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "revision": 7,
+  "revision": 8,
   "events": [
     {
       "eventId": "P-20260831-1",
@@ -368,6 +368,81 @@
         "原生现金记录与 UBS 已登记现金代理分开核实，现金代理保留原证券类型；重读既有已确认入账不代表核实银行当前余额。",
         "七组合取数属同一轮页面核验，私募仍为最近登记估值；不把 Sharesight 金额直接替代 IB 权威净值或已发布旧快照。",
         "原始资料、来源指纹、逐行计算及审计结果留在本地私有目录；公开进度只记录结论，未写入完整持仓。"
+      ]
+    },
+    {
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "b4f809006c0ad5b39f43ce24fc45e937d1957ec3",
+        "htmlBlob": "ee84f02edf3a170217c6379d8f6cb756ebbf18b8"
+      },
+      "reviewAfterHkt": "2026-09-04T21:35:00+08:00",
+      "eventId": "P-20260904-1",
+      "decisionId": "D-20260829-MRVL-CLASS",
+      "receiptId": "R-20260831-064906-7F3K9QXM",
+      "recordedAtHkt": "2026-09-04T11:25:56+08:00",
+      "title": "MRVL：本期 T1 显示与算式已核验",
+      "status": "evidence_recorded",
+      "owner": "Codex 独立复算；Claude 按已批准规则生成报告",
+      "summary": "09-04 早间报告的 MRVL T1 贡献与批准规则相符；本次仅核对报告显示与算式，没有再次取源，也未更新全组合低高情景。",
+      "nextAction": "后续报告继续复核当期显示与来源；目标今天 21:35 HKT 再检查，不代表新建自动任务，无需重复确认 T1。",
+      "blocker": "",
+      "evidence": [
+        "本期 MRVL 市值 41,766.00，低、中、高 60%、80%、100% 对应 25,059.60、33,412.80、41,766.00；正式纯计算器与显示一致。",
+        "报告披露的来源窗口为 09-04 08:06–08:10 HKT；本次核验没有独立重读 Webull 或重新取得行情。",
+        "全组合低、高情景仍沿用历史近似基数，只核验 MRVL 自身精确贡献，不把整组情景标为已更新。",
+        "报告 HTML 指纹与元数据一致，原三条决定及回执完整保留；不构成任何交易授权。"
+      ]
+    },
+    {
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "b4f809006c0ad5b39f43ce24fc45e937d1957ec3",
+        "htmlBlob": "ee84f02edf3a170217c6379d8f6cb756ebbf18b8"
+      },
+      "reviewAfterHkt": "2026-09-04T21:35:00+08:00",
+      "eventId": "P-20260904-2",
+      "decisionId": "D-20260829-GOOG-FAMILY-LIMIT",
+      "receiptId": "R-20260831-064907-2LM4P8YB",
+      "recordedAtHkt": "2026-09-04T11:25:56+08:00",
+      "title": "GOOG：本期双视图显示与算式已核验",
+      "status": "evidence_recorded",
+      "owner": "Codex 独立复算；Claude 沿用已确认的双视图",
+      "summary": "三账户观察 4.30%，IB 单独视图 1.38%，本期显示与算式一致；不改分母范围及现行阈值，本次没有再次取源。",
+      "nextAction": "保持双视图分开；目标今天 21:35 HKT 再检查，不代表新建自动任务，也不增加交易触发。",
+      "blocker": "",
+      "evidence": [
+        "IB、Schwab、Webull 直接持仓合计 266,275.36，三账户含现金分母 6,199,396.39，显示 4.30%；距 5% 观察线余量 43,694.46。",
+        "IB 单独持仓 74,685.60，分母为 IB NAV 加 NOAH 现金 5,429,041.25，显示 1.38%；软 5% 余量 196,766.46，硬 5.5% 不变。",
+        "沿用报告披露的 09-04 08:06–08:10 HKT 来源窗口；核对的是本页数值与算式，没有重新读取账户。",
+        "未扩大到家庭全部资产或 ETF 穿透；原三条决定及回执保持不变，观察结果不是交易指令。"
+      ]
+    },
+    {
+      "responseToSourceSha": "3769a3e05e954474573b6b1e247374f4e2addfb5",
+      "responseToHtmlBlob": "0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b",
+      "observedPair": {
+        "sourceSha": "b4f809006c0ad5b39f43ce24fc45e937d1957ec3",
+        "htmlBlob": "ee84f02edf3a170217c6379d8f6cb756ebbf18b8"
+      },
+      "reviewAfterHkt": "2026-09-04T21:35:00+08:00",
+      "eventId": "P-20260904-3",
+      "decisionId": "D-20260829-SEMILIQUID-MAPPING",
+      "receiptId": "R-20260831-064908-9RT6WZ2N",
+      "recordedAtHkt": "2026-09-04T11:25:56+08:00",
+      "title": "四桶：本期金额与净额仍在核验",
+      "status": "in_progress",
+      "owner": "Codex 与 Claude 分别核验来源、金额及净额",
+      "summary": "既有规则已覆盖此前核验持仓，无需重新批准分类。正在复核本轮金额、IB 主口径和待赎回净额；本期四桶仍用 08-24 快照。",
+      "nextAction": "补齐同轮七组合逐行、IB 权威值及待赎回证据后受控切换；目标今天 21:35 HKT 再复核，不代表新建自动任务。",
+      "blocker": "本轮原始来源与金额桥接尚在独立核验，未证明完整闭合或完成金融报告切换；不以聊天回复或历史覆盖代替本期证据。",
+      "evidence": [
+        "当前报告仍明确保留 08-24 四桶及三层流动性快照；本次没有改写这些金额或解除回退。",
+        "此前 95 行分类覆盖、组合规则及现金身份依据保留；这是历史核验，不代表本期持仓总数、当前现金或净额已验收。",
+        "剩余门槛是同轮七组合逐行金额与范围、IB 权威值桥接及待赎回净额；只有实际未知分类才需用户新增决定。",
+        "完成来源核验后仍须受控维护、报告发布和精确读回；原决定及回执不变，其他合格报告内容继续输出。"
       ]
     }
   ]

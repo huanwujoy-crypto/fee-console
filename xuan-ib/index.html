@@ -158,7 +158,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-03.1";
+      const loaderBuild = "2026-09-04.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -758,51 +758,120 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         return state;
       }
 
-      const hktContext = (now = new Date()) => {
-        const shifted = new Date(now.getTime() + 8 * 60 * 60 * 1000);
-        return {
-          date: shifted.toISOString().slice(0, 10),
-          weekday: shifted.getUTCDay(),
-          minuteOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
+      // report-schedule-generated:start — byte checked against the shared pure module.
+      const reportSchedule = (() => {
+        // Pure shared schedule: safe to import in browsers and Node. No network, DOM,
+        // credentials or financial data. Holidays still receive a short closed-market
+        // report; this module determines delivery slots, not whether markets are open.
+        const PM_RUN_TARGET_MS = 10 * 60 * 1000;
+        const PM_SCHEDULE_CUTOVER_HKT_DATE = "2026-09-04";
+        const AM_WATCH_CRON = "35 0 * * 2-6";
+        const PM_WATCH_CRONS = Object.freeze(["50 13 * * 1-5", "50 14 * * 1-5"]);
+
+        const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
+        const EDITIONS = ["am", "pm"];
+        const newYorkClock = new Intl.DateTimeFormat("en-GB", {
+          timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+        });
+
+        const dateEpoch = date => {
+          if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("invalid report date");
+          const epoch = Date.parse(`${date}T00:00:00Z`);
+          if (!Number.isFinite(epoch) || new Date(epoch).toISOString().slice(0, 10) !== date) throw new Error("invalid report date");
+          return epoch;
         };
-      };
+        const instant = now => {
+          if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error("invalid schedule instant");
+          return now.getTime();
+        };
+        const checkEdition = edition => {
+          if (!EDITIONS.includes(edition)) throw new Error(`unsupported edition: ${edition}`);
+        };
+        const newYorkWallEpoch = epoch => {
+          const parts = Object.fromEntries(newYorkClock.formatToParts(new Date(epoch)).map(p => [p.type, p.value]));
+          return Date.parse(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`);
+        };
 
-      const addIsoDays = (date, days) => {
-        const value = new Date(`${date}T00:00:00Z`);
-        value.setUTCDate(value.getUTCDate() + days);
-        return value.toISOString().slice(0, 10);
-      };
-
-      const hktSlots = {
-        am: { startMinute: 8 * 60, dueMinute: 8 * 60 + 35, weekdays: new Set([2, 3, 4, 5, 6]) },
-        pm: { startMinute: 20 * 60 + 55, dueMinute: 21 * 60 + 25, weekdays: new Set([1, 2, 3, 4, 5]) }
-      };
-
-      const hktSlotEpoch = (date, edition, minuteKey) => Math.floor(
-        (Date.parse(`${date}T00:00:00Z`) - 8 * 60 * 60 * 1000 +
-          hktSlots[edition][minuteKey] * 60 * 1000) / 1000
-      );
-
-      const expectedBusinessEdition = (now = new Date()) => {
-        const context = hktContext(now);
-        const nowEpoch = Math.floor(now.getTime() / 1000);
-        let latest = null;
-        for (let offset = 0; offset <= 8; offset += 1) {
-          const date = addIsoDays(context.date, -offset);
-          const weekday = new Date(`${date}T00:00:00Z`).getUTCDay();
-          for (const edition of ["am", "pm"]) {
-            if (!hktSlots[edition].weekdays.has(weekday)) continue;
-            const dueEpoch = hktSlotEpoch(date, edition, "dueMinute");
-            if (dueEpoch > nowEpoch) continue;
-            if (!latest || dueEpoch > latest.dueEpoch) latest = { dataDate: date, edition, dueEpoch };
-          }
+        function hktContext(now = new Date()) {
+          const shifted = new Date(instant(now) + HKT_OFFSET_MS);
+          return {
+            date: shifted.toISOString().slice(0, 10), weekday: shifted.getUTCDay(),
+            minuteOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
+          };
         }
-        if (!latest) throw new Error("无法确定最近应完成的香港报告版次");
-        return {
-          ...latest,
-          startEpoch: hktSlotEpoch(latest.dataDate, latest.edition, "startMinute"),
-          label: latest.edition === "am" ? "早间版" : "睡前版"
+
+        const newYorkStartEpoch = dataDate => {
+          const midnight = dateEpoch(dataDate);
+          const desiredWall = midnight + (9 * 60 + 35) * 60 * 1000;
+          let epoch = desiredWall;
+          // Resolve the named timezone, never infer DST from a month or fixed offset.
+          for (let n = 0; n < 3; n += 1) epoch += desiredWall - newYorkWallEpoch(epoch);
+          if (!Number.isFinite(epoch) || newYorkWallEpoch(epoch) !== desiredWall) throw new Error("New York report slot is unresolved");
+          return epoch / 1000;
         };
+
+        function slotStartEpoch(dataDate, edition) {
+          const midnight = dateEpoch(dataDate);
+          checkEdition(edition);
+          if (edition === "am") return midnight / 1000; // 08:00 HKT = 00:00 UTC.
+          // Historical PM evidence keeps the contract that actually applied that day.
+          if (dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE) return midnight / 1000 + 12 * 3600 + 55 * 60;
+          return newYorkStartEpoch(dataDate);
+        }
+
+        function slotDueEpoch(dataDate, edition) {
+          const start = slotStartEpoch(dataDate, edition);
+          return start + (edition === "am" ? 35 * 60 : dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE ? 30 * 60 : PM_RUN_TARGET_MS / 1000);
+        }
+
+        function expectedEditionAt(now = new Date(), editionFilter = null) {
+          if (editionFilter !== null) checkEdition(editionFilter);
+          const context = hktContext(now), nowEpoch = instant(now) / 1000;
+          let latest = null;
+          for (let offset = 0; offset <= 8; offset += 1) {
+            const day = new Date(dateEpoch(context.date) - offset * 86400000);
+            const date = day.toISOString().slice(0, 10), weekday = day.getUTCDay();
+            for (const edition of EDITIONS) {
+              if (editionFilter !== null && edition !== editionFilter) continue;
+              if (edition === "am" ? weekday < 2 || weekday > 6 : weekday < 1 || weekday > 5) continue;
+              const dueEpoch = slotDueEpoch(date, edition);
+              if (dueEpoch <= nowEpoch && (!latest || dueEpoch > latest.dueEpoch)) latest = {date, edition, dueEpoch};
+            }
+          }
+          if (!latest) return {...context, expectedEdition: null, reason: "no-due-slot"};
+          return {...context, expectedEdition: latest.edition, expectedDate: latest.date,
+            startEpoch: slotStartEpoch(latest.date, latest.edition), dueEpoch: latest.dueEpoch, reason: "latest-due-slot"};
+        }
+
+        // GitHub cron uses UTC. Two seasonal candidates avoid a manual clock change;
+        // only the candidate matching 09:50 New York is enabled. A delayed job is still
+        // audited, not silently skipped for missing an exact wall-clock minute.
+        function scheduledWatchEnabled(expression, now = new Date()) {
+          const context = hktContext(now);
+          if (!expression || expression === AM_WATCH_CRON) return true;
+          if (!PM_WATCH_CRONS.includes(expression)) throw new Error("unrecognized watcher schedule");
+          const watch = new Date((newYorkStartEpoch(context.date) + 15 * 60) * 1000);
+          return expression === `50 ${watch.getUTCHours()} * * 1-5`;
+        }
+
+        function scheduledWatchEdition(expression) {
+          if (!expression) return null;
+          if (expression === AM_WATCH_CRON) return "am";
+          if (PM_WATCH_CRONS.includes(expression)) return "pm";
+          throw new Error("unrecognized watcher schedule");
+        }
+
+        return {hktContext, expectedEditionAt};
+      })();
+      // report-schedule-generated:end
+      const hktContext = reportSchedule.hktContext;
+      const expectedBusinessEdition = (now = new Date()) => {
+        const expected = reportSchedule.expectedEditionAt(now);
+        if (!expected.expectedEdition) throw new Error("无法确定最近应完成的香港报告版次");
+        return {dataDate:expected.expectedDate,edition:expected.expectedEdition,
+          startEpoch:expected.startEpoch,dueEpoch:expected.dueEpoch,
+          label:expected.expectedEdition==="am"?"早间版":"睡前版"};
       };
 
       const classifyEdition = (edition) => {
@@ -1276,6 +1345,47 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         }
       }
 
+      let privateEtfModule = null, privateEtfView = null, privateEtfSequence = 0;
+      let privateEtfPageActive = true;
+      function clearPrivateEtf() {
+        privateEtfSequence += 1;
+        // pagehide must clear synchronously, before a BFCache snapshot. If an
+        // import is still pending no mount has run, and its sequence is stale.
+        try { privateEtfView?.clearEtfTrend(renderedDocument); } catch (_) {}
+      }
+      async function refreshPrivateEtf(record) {
+        const doc = renderedDocument;
+        if (!doc?.querySelector('.pane.p5') || document.hidden || !privateEtfPageActive) return;
+        const sequence = ++privateEtfSequence;
+        const current = () => sequence === privateEtfSequence && !document.hidden && privateEtfPageActive &&
+          renderedDocument === doc && lastVerified?.blob === record.blob;
+        try {
+          if (!privateEtfModule) {
+            const pending = import(new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href).href);
+            privateEtfModule = pending;
+            pending.then(view => {
+              if (privateEtfModule === pending) privateEtfView = view;
+            }, () => {
+              // A transient module-fetch failure must not poison all later polls.
+              if (privateEtfModule === pending) privateEtfModule = null;
+            });
+          }
+          const view = await privateEtfModule;
+          if (current()) {
+            doc.getElementById('xuan-etf-load-status')?.remove();
+            await view.mountEtfTrend({doc,storage,baseUrl:location.href,isCurrent:current});
+          }
+        } catch (_) {
+          if (!current()) return;
+          let note = doc.getElementById('xuan-etf-load-status');
+          if (!note) {
+            note = doc.createElement('p'); note.id = 'xuan-etf-load-status';
+            doc.querySelector('.pane.p5').prepend(note);
+          }
+          note.textContent = 'ABC 私密比较暂未加载，请点“刷新”重试。';
+          /* Optional private comparison never blocks the trusted report. */
+        }
+      }
       function displayVerified(record) {
         // Polling an unchanged publication must not collapse open cards,
         // reset the active tab or interrupt the user's place in the report.
@@ -1298,6 +1408,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedDocument = doc;
           renderedToken = token;
           renderProgress(record);
+          refreshPrivateEtf(record);
           if (/^s[1-5]$/.test(section || "")) {
             const radio = doc.getElementById(section);
             if (radio?.getAttribute("name") === "sec") radio.checked = true;
@@ -1313,6 +1424,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         lastVerified = record;
         updateDecisionControl(record);
         displayVerified(record);
+        if (renderedDocument && frame.contentDocument === renderedDocument) refreshPrivateEtf(record);
         warning.hidden = !warningMessage;
         warning.textContent = warningMessage;
         status.classList.toggle("error", Boolean(warningMessage));
@@ -1427,7 +1539,13 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       adhocButton.addEventListener("click", beginAdhocWait);
       decisionButton.addEventListener("click", beginDecisionWait);
       button.addEventListener("click", loadLatest);
+      window.addEventListener("pagehide", () => {
+        privateEtfPageActive = false;
+        clearPrivateEtf();
+      });
       window.addEventListener("pageshow", (event) => {
+        privateEtfPageActive = true;
+        if (lastVerified) refreshPrivateEtf(lastVerified);
         expireWaits();
         return loadLatest();
       });
@@ -1435,6 +1553,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         if (activeWait() && !expireWaits()) return loadLatest();
       });
       document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          clearPrivateEtf();
+        } else if (lastVerified) refreshPrivateEtf(lastVerified);
         if (!document.hidden && activeWait() && !expireWaits()) return loadLatest();
         if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
       });

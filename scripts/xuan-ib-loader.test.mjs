@@ -43,6 +43,12 @@ test('promotion commits the derived decision menu with its paired report and met
 const inlineScript = loader.match(/<script>([\s\S]*?)<\/script>/)?.[1];
 assert.ok(inlineScript, 'the phone loader must contain one executable inline script');
 
+test('loader schedule is an exact generated copy of the shared tested module', () => {
+  const module = fs.readFileSync(new URL('./xuan-ib-report-schedule.mjs', import.meta.url), 'utf8');
+  const expected = module.replace(/^export /gm,'').split('\n').map(line=>line?'        '+line:'').join('\n');
+  assert.ok(loader.includes(expected), 'browser and watchdog must not drift on DST or cutover');
+});
+
 const classList = () => {
   const names = new Set();
   return {
@@ -267,7 +273,8 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
   return {doc, pane, card, closed, trigger};
 }
 
-function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false}) {
+function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false,
+  privateEtfImport = null}) {
   const listeners = {adhoc: {}, decision: {}, button: {}, window: {}, document: {}};
   const intervals = [];
   let frameSrcdoc = '';
@@ -387,8 +394,13 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     localStorage,
     location,
     window,
+    __importPrivateEtf: privateEtfImport,
   };
-  vm.runInNewContext(inlineScript, context);
+  // Execute the real loader and its actual event wiring. Only substitute the
+  // dynamic network import dependency; no production logic is reimplemented.
+  const importExpression = "import(new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href).href)";
+  if (privateEtfImport) assert.equal(inlineScript.split(importExpression).length, 2);
+  vm.runInNewContext(privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript, context);
   return {
     adhoc,
     advanceTime: (milliseconds) => { nowEpoch += milliseconds; },
@@ -396,6 +408,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     decision,
     decisionAttributes,
     decisionCount,
+    document,
     frame,
     loadFrame: (doc) => { frame.contentDocument = doc; frame.onload?.(); },
     outerDocument,
@@ -408,6 +421,130 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     warnings,
   };
 }
+
+function privateDeferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return {promise, resolve, reject};
+}
+const settlePrivateLoader = () => new Promise(resolve => setImmediate(resolve));
+function privateViewStub(firstMountWait = null) {
+  const runs = [], clears = [];
+  return {runs, clears,
+    async mountEtfTrend({doc, isCurrent}) {
+      const run = {doc, isCurrent, controller: new AbortController()}; runs.push(run);
+      if (isCurrent()) doc.privateText = `SYNTHETIC VERIFIED ${runs.length}`;
+      if (firstMountWait && runs.length === 1) {
+        await firstMountWait.promise;
+        if (isCurrent() && !run.controller.signal.aborted) doc.privateText = 'SYNTHETIC LATE RESULT';
+      }
+    },
+    clearEtfTrend(doc) {
+      clears.push(doc);
+      for (const run of runs) if (run.doc === doc) run.controller.abort();
+      if (doc) doc.privateText = null;
+    },
+  };
+}
+async function privateLoaderFixture({view = privateViewStub(), importer = null} = {}) {
+  const html = reportHtml('2026-08-28', '早间版', decisionTemplate()), meta = metaFor(html);
+  let gate = null, fetches = 0, imports = 0;
+  const app = loaderHarness({displayDom: true,
+    privateEtfImport: () => { imports++; return importer ? importer() : Promise.resolve(view); },
+    fetchImpl: async (url) => {
+      fetches++; if (gate) await gate;
+      return String(url).includes('latest.meta.json')
+        ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)});
+    },
+  });
+  await app.listeners.button.click();
+  const fixture = todoDocument(app.frame.srcdoc, []), etf = fixture.doc.createElement('section');
+  etf.className = 'pane p5'; fixture.doc.body.append(etf);
+  app.loadFrame(fixture.doc); await settlePrivateLoader();
+  return {app, doc: fixture.doc, view, etf, fetches: () => fetches, imports: () => imports,
+    blockReport: promise => { gate = promise; }};
+}
+
+test('loader pagehide synchronously clears private plaintext and invalidates pending work without visibilitychange', async () => {
+  const wait = privateDeferred(), view = privateViewStub(wait), f = await privateLoaderFixture({view});
+  assert.ok(f.doc.privateText); assert.equal(f.app.document.hidden, false);
+  assert.equal(view.runs.length, 1); const run = view.runs[0];
+  f.app.listeners.window.pagehide({persisted: true});
+  // Assertions happen in the same call stack, before any Promise can settle.
+  assert.equal(f.doc.privateText, null); assert.equal(view.clears.length, 1);
+  assert.equal(run.isCurrent(), false); assert.equal(run.controller.signal.aborted, true);
+  wait.resolve(); await settlePrivateLoader();
+  assert.equal(f.doc.privateText, null);
+  await f.app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(view.runs.length, 1, 'a pending report refresh cannot remount after pagehide');
+});
+
+test('loader BFCache pageshow starts a fresh private read even while report fetch is blocked', async () => {
+  const f = await privateLoaderFixture(), before = f.view.runs.length, wait = privateDeferred();
+  f.app.listeners.window.pagehide({persisted: true});
+  assert.equal(f.doc.privateText, null);
+  f.blockReport(wait.promise);
+  const showing = f.app.listeners.window.pageshow({persisted: true});
+  await settlePrivateLoader();
+  assert.ok(f.view.runs.length > before); assert.ok(f.doc.privateText);
+  assert.equal(f.view.runs.at(-1).isCurrent(), true);
+  wait.resolve(); await showing; await settlePrivateLoader();
+  assert.equal(f.imports(), 1, 'successful module reference can be reused, not its private payload');
+});
+
+test('loader pagehide during module import suppresses its late mount until pageshow', async () => {
+  const wait = privateDeferred(), view = privateViewStub();
+  const f = await privateLoaderFixture({view, importer: () => wait.promise});
+  assert.equal(view.runs.length, 0);
+  f.app.listeners.window.pagehide({persisted: true});
+  wait.resolve(view); await settlePrivateLoader();
+  assert.equal(view.runs.length, 0); assert.equal(f.doc.privateText, undefined);
+  await f.app.listeners.window.pageshow({persisted: true}); await settlePrivateLoader();
+  assert.ok(view.runs.length > 0); assert.ok(f.doc.privateText);
+});
+
+test('loader visibility lifecycle still synchronously clears and freshly remounts', async () => {
+  const f = await privateLoaderFixture(); const previous = f.view.runs.at(-1);
+  f.app.document.hidden = true;
+  f.app.listeners.document.visibilitychange();
+  assert.equal(f.doc.privateText, null); assert.equal(previous.isCurrent(), false);
+  assert.equal(previous.controller.signal.aborted, true);
+  f.app.document.hidden = false;
+  f.app.listeners.document.visibilitychange(); await settlePrivateLoader();
+  assert.ok(f.doc.privateText); assert.ok(f.view.runs.length > 1);
+});
+
+test('loader visibility return cannot reactivate a page hidden by pagehide before pageshow', async () => {
+  const f = await privateLoaderFixture(), count = f.view.runs.length;
+  f.app.listeners.window.pagehide({persisted: false});
+  f.app.document.hidden = false;
+  f.app.listeners.document.visibilitychange(); await settlePrivateLoader();
+  assert.equal(f.view.runs.length, count); assert.equal(f.doc.privateText, null);
+  await f.app.listeners.window.pageshow({persisted: false}); await settlePrivateLoader();
+  assert.ok(f.view.runs.length > count); assert.ok(f.doc.privateText);
+});
+
+test('loader transient module import failure is retryable by ordinary refresh', async () => {
+  const view = privateViewStub(); let attempt = 0;
+  const f = await privateLoaderFixture({view, importer: () => ++attempt === 1
+    ? Promise.reject(new Error('SYNTHETIC NETWORK FAILURE')) : Promise.resolve(view)});
+  assert.equal(view.runs.length, 0);
+  const note = f.doc.getElementById('xuan-etf-load-status'); assert.ok(note);
+  assert.match(note.textContent, /刷新/); assert.doesNotMatch(note.textContent, /SYNTHETIC NETWORK FAILURE/);
+  await f.app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(f.imports(), 2); assert.ok(view.runs.length > 0); assert.ok(f.doc.privateText);
+  assert.equal(f.doc.getElementById('xuan-etf-load-status'), null);
+});
+
+test('loader late rejected import does not append notices after leaving, and return retries', async () => {
+  const wait = privateDeferred(), view = privateViewStub(); let attempt = 0;
+  const f = await privateLoaderFixture({view, importer: () => ++attempt === 1 ? wait.promise : Promise.resolve(view)});
+  f.app.listeners.window.pagehide({persisted: true});
+  wait.reject(new Error('SYNTHETIC LATE FAILURE')); await settlePrivateLoader();
+  assert.equal(f.doc.getElementById('xuan-etf-load-status'), null); assert.equal(view.runs.length, 0);
+  await f.app.listeners.window.pageshow({persisted: true}); await settlePrivateLoader();
+  assert.equal(f.imports(), 2); assert.ok(f.doc.privateText);
+});
 
 test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /new URL\("latest\.meta\.json", location\.href\)/);
@@ -433,7 +570,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-03\.1"/);
+  assert.match(loader, /loaderBuild = "2026-09-04\.1"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -1233,7 +1370,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-03.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-04.1');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1596,6 +1733,10 @@ test('Hong Kong SLA advances at Tuesday-Saturday 08:35 and Monday-Friday 21:25',
     ['2026-09-05T00:34:00Z', '2026-09-04', '睡前版', false], // Sat 08:34 HKT
     ['2026-09-05T00:35:00Z', '2026-09-04', '睡前版', true],
     ['2026-09-05T00:35:00Z', '2026-09-05', '早间版', false],
+    ['2026-09-04T13:44:00Z', '2026-09-04', '早间版', false], // new PM not due yet
+    ['2026-09-04T13:45:00Z', '2026-09-04', '早间版', true],
+    ['2026-11-02T14:44:00Z', '2026-10-31', '早间版', false], // winter PM not due
+    ['2026-11-02T14:45:00Z', '2026-10-31', '早间版', true],
   ];
   for (const [now, date, edition, stale] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);
