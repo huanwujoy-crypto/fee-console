@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.7.4">
+<meta name="fee-console-build" content="4.7.5">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -708,7 +708,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.7.3";
+const UI_VERSION_LABEL=" · v4.7.5";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -729,7 +729,8 @@ const projectLegacyLedger=raw=>feeLegacyPolicy.projectV3(raw,"fee-console.legacy
 let _sourceEpoch=0,_receiptSource={state:"unverified"};
 const sourceIdentity=()=>({gid:cfg(K.gid),keyValue:cfg(K.key)});
 const sourceMatches=source=>source?.gid===cfg(K.gid)&&source?.keyValue===cfg(K.key);
-function invalidateReceiptSource(){const epoch=++_sourceEpoch;_receiptSource={state:"unverified"};++_renderGeneration;render();return epoch;}
+/* fee-receipt-loading:v1 */
+function invalidateReceiptSource(loading=false){const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};++_renderGeneration;render();return epoch;}
 function acceptReceiptSource(snapshot,epoch){if(epoch!==_sourceEpoch||!sourceMatches(snapshot))throw new Error("来源已变化，请重新读取");_receiptSource={state:"verified",...sourceIdentity(),legacySource:snapshot.legacySource};}
 let DB=seed();
 let _localLedgerPresent=!!cfg(K.db);
@@ -944,6 +945,7 @@ function receiptBalance(feeView){
 /* 数据闸门：只在明显有问题时挡住可付款金额（无数据、长期停更、拆分严重不符、
    资金变动未判定内外部）。券商延迟一天属正常，不提示。 */
 function health(feeView,st){
+  if(feeView.state==="loading")return {hold:true,holdReasons:[],loading:true};
   const hold=[];
   if(feeView.state!=="verified")hold.push(feeView.message);
   const unresolved=(DAILY.flowsUnresolved||[]).length;
@@ -968,6 +970,8 @@ async function render(){
   /* fee-receipt-render-call */
   const feeView=feeReceiptRenderProjection(await feeReceiptUiModel({receipt:source.state==="verified"&&sourceMatches(source)?DAILY.feeCalculationReceipt:null,data:DAILY,economicInput:DB,legacySource:source.legacySource}));
   if(generation!==_renderGeneration||sourceEpoch!==_sourceEpoch||source!==_receiptSource)return;
+  // An in-flight read has no trusted fee values, but is not a failed validation.
+  if(source.state==="loading"){feeView.state="loading";feeView.message="正在读取并核验…";}
   if(source.state==="verified"&&!sourceMatches(source)){invalidateReceiptSource();return;}
   const st=receiptState(feeView),B=receiptBalance(feeView),G=health(feeView,st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
@@ -982,7 +986,7 @@ function renderKPIs(feeView,st,B,G){
   const lp=st.lastPt;const showAnn=st.spanDays>365;
   const benchExplainOpen=document.getElementById("benchExplain")?.open===true;
   const gateBox=document.getElementById("gateBox");
-  gateBox.innerHTML=G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
+  gateBox.innerHTML=G.loading?'<div class="note" role="status">正在读取并核验，请稍候…</div>':G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
     <ul>${G.holdReasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>`:"";
   const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
   /* 展示合并 cash+other；只有经核实且与 stock 对账的 style pair 才拆为成长/价值。 */
@@ -1206,8 +1210,8 @@ async function ensureLatestShell(){
 let _manualRefreshing=false;
 async function manualRefresh(){
   if(_manualRefreshing)return;
-  const epoch=invalidateReceiptSource();
-  if(EDIT.draft&&!await persistDraft()){toast("草稿未能保留，暂不重新载入");return;}
+  const epoch=invalidateReceiptSource(true);
+  if(EDIT.draft&&!await persistDraft()){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("草稿未能保留，暂不重新载入");return;}
   const b=document.getElementById("btnRefresh"),old=b.textContent;
   _manualRefreshing=true;b.disabled=true;b.textContent="刷新中…";
   try{
@@ -1233,7 +1237,7 @@ async function fetchDailyFresh(stamp=Date.now()){
   if(!d||!Array.isArray(d.daily))throw new Error("data.json 校验失败");return d;
 }
 async function pullAll(quiet,opt={}){
-  const epoch=invalidateReceiptSource(),current=()=>epoch===_sourceEpoch;let dailyReady=!!opt.skipDaily;
+  const epoch=invalidateReceiptSource(true),current=()=>epoch===_sourceEpoch;let dailyReady=!!opt.skipDaily;
   await restoreDraft();await restoreBaseline();
   if(!current()||!opt.skipShell&&await ensureLatestShell())return;if(!current())return;
   if(!opt.skipDaily)try{const d=await fetchDailyFresh();if(!current())return;DAILY=d;setCfg(K.daily,JSON.stringify(d));dailyReady=true;}catch(_){}
@@ -1247,10 +1251,10 @@ async function pullAll(quiet,opt={}){
     }catch(e){if(current()){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";setSync("读取失败："+e.message,true);}}finally{_busy=false;}
   }else if(!cfg(K.gid))setSync(isMgr()?"请恢复原账本链接；不会新建":"");
   await restoreDraft();
-  if(current())render();
+  if(current()){if(_receiptSource.state==="loading")_receiptSource={state:"unverified"};await render();}
 }
-async function connect(tok){invalidateReceiptSource();await restoreDraft();if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("请先处理保留的草稿，不能切换访问");return;}tok=(tok||"").trim();if(!tok){toast("请先粘贴令牌");return;}setCfg(K.tok,tok);
-  try{await ghApi("/gists?per_page=1");}catch(e){setCfg(K.tok,"");toast("令牌无效："+e.message);render();return;}
+async function connect(tok){const epoch=invalidateReceiptSource(true);await restoreDraft();if(EDIT.draft||_ledgerBusy||_draftBlocked){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先处理保留的草稿，不能切换访问");return;}tok=(tok||"").trim();if(!tok){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先粘贴令牌");return;}setCfg(K.tok,tok);
+  try{await ghApi("/gists?per_page=1");}catch(e){setCfg(K.tok,"");if(epoch===_sourceEpoch)invalidateReceiptSource();toast("令牌无效："+e.message);render();return;}
   await pullAll(false);toast("已连接");render();}
 document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")pullAll(true);else{invalidateReceiptSource();lockLedger("已离开页面，编辑锁定；草稿保留");}});
 window.addEventListener("pagehide",()=>{invalidateReceiptSource();lockLedger();});
