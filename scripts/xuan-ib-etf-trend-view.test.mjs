@@ -52,7 +52,8 @@ class Document extends Node {
   }
 }
 function documentFixture() {
-  const doc = new Document(), pane = doc.createElement('section'); pane.className = 'pane p5'; doc.body.append(pane);
+  const doc = new Document(), tabs = doc.createElement('div'), pane = doc.createElement('section');
+  tabs.className = 'tabs'; doc.body.append(tabs); pane.className = 'pane p5'; tabs.append(pane);
   const original = doc.createElement('article'); original.id = 'original-policy'; original.textContent = 'SYNTHETIC ORIGINAL POLICY';
   const history = doc.createElement('article'); history.id = 'original-baseline'; history.textContent = 'SYNTHETIC BASELINE';
   pane.append(original, history); return { doc, pane, original, history };
@@ -107,6 +108,32 @@ test('no independent ETF key: no network, no fee-key read, unlock form only', as
   assert.ok(storage.reads.every(k => [ETF_DEVICE_KEY, ETF_SEEN_DATE].includes(k)));
   assert.equal(panel(f.doc).children.find(n => n.tagName === 'INPUT').type, 'password');
   assert.equal(f.original.parentNode, f.pane);
+});
+
+function assertUnlockStyle(input) {
+  // This is a style contract, not computed CSS/browser layout acceptance.
+  assert.equal(input.type, 'password'); assert.equal(input.value, '');
+  assert.equal(input.autocomplete, 'off'); assert.equal(input.attributes['aria-label'], 'ETF 专属访问码');
+  for(const [name,value] of Object.entries({position:'static',opacity:'1',pointerEvents:'auto',display:'block',
+    boxSizing:'border-box',width:'100%',maxWidth:'100%',minHeight:'44px',fontSize:'16px',fontFamily:'inherit',
+    color:'var(--ink,#111)',background:'var(--card,#fff)',border:'1px solid var(--grid,#ccc)'}))
+    assert.equal(input.style[name], value, name);
+  assert.equal(input.style.outline, undefined, 'preserve the native focus indicator');
+}
+test('owned unlock field resists report radio styles without changing other inputs or taking access', async () => {
+  const f=documentFixture(),storage=storageFixture();let calls=0;
+  const radio=f.doc.createElement('input');radio.type='radio';f.pane.parentNode.prepend(radio);
+  await mountEtfTrend(options(f,storage,async()=>{calls++;throw new Error('must not fetch');}));
+  assertUnlockStyle(panel(f.doc).children.find(n=>n.tagName==='INPUT'));
+  assert.deepEqual(radio.style,{});assert.equal(radio.type,'radio');
+  assert.equal(calls,0);assert.deepEqual(storage.writes,[]);
+});
+test('re-entering after a rejected code recreates the same visible empty password field', async () => {
+  const f=documentFixture(),storage=storageFixture(),received=await response(key());
+  await mountEtfTrend(options(f,storage,async()=>received,{keyOverride:key()}));
+  const retry=panel(f.doc).children.find(n=>n.tagName==='BUTTON'&&n.textContent==='重新输入');
+  await retry.click();assertUnlockStyle(panel(f.doc).children.find(n=>n.tagName==='INPUT'));
+  assert.deepEqual(storage.writes,[]);assert.equal(privateHtml(f.doc),false);
 });
 
 test('successful decrypt renders bound amounts and stores only source high-water date', async () => {

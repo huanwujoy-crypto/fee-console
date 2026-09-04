@@ -24,6 +24,12 @@ export async function mountEtfTrend({doc,storage,baseUrl,fetchFn=globalThis.fetc
     if(!current()||!panel.isConnected)return;
     message('ABC 私密比较：此手机首次查看需输入专属访问码。不会修改账本或交易。');
     const input=doc.createElement('input');input.type='password';input.autocomplete='off';input.placeholder='专属访问码';input.setAttribute('aria-label','ETF 专属访问码');
+    // The report's `.tabs input` rule hides its radios, but also matches this
+    // nested password field. Override only this owned control, never the report.
+    Object.assign(input.style,{position:'static',opacity:'1',pointerEvents:'auto',display:'block',
+      boxSizing:'border-box',width:'100%',maxWidth:'100%',minHeight:'44px',fontFamily:'inherit',fontSize:'16px',
+      padding:'10px 12px',margin:'8px 0',color:'var(--ink,#111)',background:'var(--card,#fff)',
+      border:'1px solid var(--grid,#ccc)',borderRadius:'8px'});
     const button=doc.createElement('button');button.type='button';button.textContent='启用此手机';button.style.minHeight='44px';
     button.addEventListener('click',()=>{
       if(!current()||!panel.isConnected)return;
