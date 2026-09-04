@@ -140,11 +140,16 @@ async function browserHarness(html, { stored = null, legacy = false } = {}) {
   let timerId = 0;
   const add = (map, event, callback) => map.set(event, [...(map.get(event) || []), callback]);
   const elements = new Map();
+  const paints = [];
   const element = id => {
     if (!elements.has(id)) {
       const classes = new Set();
+      let innerHTML = "";
       elements.set(id, {
-        id, dataset: {}, style: {}, innerHTML: "", textContent: id === "btnRefresh" ? "刷新" : "",
+        id, dataset: {}, style: {},
+        get innerHTML() { return innerHTML; },
+        set innerHTML(value) { innerHTML = value; paints.push({ id, html: String(value) }); },
+        textContent: id === "btnRefresh" ? "刷新" : "",
         value: "", disabled: false, checked: false, open: false,
         classList: {
           add: (...names) => names.forEach(name => classes.add(name)),
@@ -272,7 +277,7 @@ async function browserHarness(html, { stored = null, legacy = false } = {}) {
     for (const listener of listeners.get(event) || []) await listener({ type: event, ...extra });
     await settle();
   };
-  return { context, run, element, document, store, requests, remote, network, seal, emit, settle, data, committed, pauseNextEncryption, pauseNextDecryption, pauseNextRead,
+  return { context, run, element, document, store, requests, remote, network, seal, emit, settle, data, committed, pauseNextEncryption, pauseNextDecryption, pauseNextRead, paints,
     writes: () => requests.filter(request => request.method !== "GET") };
 }
 
@@ -1131,5 +1136,147 @@ test("raw-v3 source lifecycle never restores stale verified fees after invalidat
     h.network.failGistRead = false;
     await h.run("pullAll(true,{skipShell:true})"); await verified(h);
     await h.emit("window", "pagehide"); await pending(h);
+  });
+});
+
+test("receipt refresh distinguishes real in-flight reads from final validation failures", async t => {
+  const html = fs.readFileSync(uiFile, "utf8");
+  if (!html.includes("/* fee-receipt-loading:v1 */")) {
+    // The test-only maintenance PR must land before its separate index-only PR.
+    assert.doesNotMatch(html, /source\.state===\"loading\"|feeView\.state===\"loading\"/,
+      "reject an unmarked partial loading-state rollout");
+    return;
+  }
+  const fixture = async (legacy = true, sourceHtml = html) => {
+    const h = await browserHarness(sourceHtml, { legacy });
+    h.context.Date = class extends Date {
+      constructor(...args) { super(...(args.length ? args : ["2026-08-03T04:00:00Z"])); }
+      static now() { return Date.parse("2026-08-03T04:00:00Z"); }
+    };
+    return h;
+  };
+  const noRedPaint = h => assert.equal(h.paints.some(p => p.id === "gateBox" && /class="gate"|数据待复核/.test(p.html)), false,
+    "no intermediate DOM paint may mislabel an in-flight read as a failed validation");
+  const loading = async h => {
+    await h.settle();
+    assert.match(h.element("gateBox").innerHTML, /role="status".*正在读取并核验/);
+    assert.match(h.element("balBox").innerHTML, /正在读取并核验/);
+    assert.doesNotMatch(h.element("balBox").innerHTML, /应付费用|累计管理费|\$[\d,]+/,
+      "loading never preserves payable figures from a previous receipt");
+    assert.doesNotMatch(h.element("monthsBox").innerHTML, /管理费|Carry|\$[\d,]+/);
+    noRedPaint(h);
+  };
+  const complete = async h => {
+    await h.run("render()"); await h.settle();
+    assert.equal(h.element("gateBox").innerHTML, "");
+    assert.match(h.element("balBox").innerHTML, /应付费用/);
+    assert.doesNotMatch(h.element("balBox").innerHTML, /正在读取并核验|计算回执待更新/);
+    assert.deepEqual(h.writes(), []);
+  };
+  const failure = async h => {
+    await h.run("render()"); await h.settle();
+    assert.match(h.element("gateBox").innerHTML, /数据待复核.*暂不给出可付款金额/);
+    assert.match(h.element("balBox").innerHTML, /计算回执待更新/);
+    assert.doesNotMatch(h.element("balBox").innerHTML, /应付费用|累计管理费|\$[\d,]+/);
+    assert.doesNotMatch(h.element("gateBox").innerHTML, /正在读取并核验/);
+    assert.deepEqual(h.writes(), []);
+  };
+  const ready = async () => {
+    const h = await fixture(); await h.run("pullAll(true,{skipShell:true})"); await complete(h);
+    h.paints.length = 0;
+    return h;
+  };
+
+  await t.test("the prior unverified-during-read behavior reproduces the observed red flash", async () => {
+    const priorBehavior = html.replace('state:loading?"loading":"unverified"', 'state:"unverified"');
+    assert.notEqual(priorBehavior, html, "the mutation must actually restore the former read-start behavior");
+    const h = await fixture(true, priorBehavior), daily = h.pauseNextRead("daily");
+    const refresh = h.run("pullAll(true,{skipShell:true})");
+    await daily.entered; await h.settle();
+    assert.throws(() => noRedPaint(h), /intermediate DOM paint/,
+      "the no-red-paint check must detect the known regression rather than pass vacuously");
+    daily.release(); await refresh; await complete(h);
+  });
+
+  for (const legacy of [false, true]) await t.test(`${legacy ? "raw-v3" : "native-v4"} startup stays neutral through delayed data, source and receipt verification`, async () => {
+    const h = await fixture(legacy), before = h.store.get("feeConsole.v3.db"), original = h.remote.content;
+    const daily = h.pauseNextRead("daily");
+    // Execute the production startup ordering, including its initial render.
+    const startup = h.run("render();setSync('');pullAll(true,{skipShell:true})");
+    await daily.entered; await loading(h);
+    const gist = h.pauseNextRead("gist"); daily.release(); await gist.entered; await loading(h);
+    const digest = h.pauseNextRead("digest"); gist.release(); await digest.entered; await loading(h);
+    digest.release(); await startup; await complete(h); noRedPaint(h);
+    assert.equal(h.store.get("feeConsole.v3.db"), before);
+    assert.equal(h.remote.content, original); assert.equal(h.run("EDIT.mode"), "locked");
+  });
+
+  await t.test("manual refresh immediately removes old fees, shows neutral loading, then restores only a validated receipt", async () => {
+    const h = await ready(), before = h.store.get("feeConsole.v3.db");
+    const daily = h.pauseNextRead("daily"), refresh = h.run("manualRefresh()");
+    await daily.entered; await loading(h); assert.equal(h.element("btnRefresh").disabled, true);
+    const gist = h.pauseNextRead("gist"); daily.release(); await gist.entered; await loading(h);
+    gist.release(); await refresh; await complete(h); noRedPaint(h);
+    assert.equal(h.element("btnRefresh").disabled, false);
+    assert.equal(h.store.get("feeConsole.v3.db"), before);
+  });
+
+  await t.test("a manager-link connection uses loading and a rejected empty-token request does not get stuck there", async () => {
+    const h = await fixture(), daily = h.pauseNextRead("daily");
+    const connect = h.run('render();setSync("");connect("fixture-manager-token")');
+    await daily.entered; await loading(h); daily.release(); await connect; await complete(h); noRedPaint(h);
+    await h.run('connect("")'); await failure(h);
+    assert.notEqual(h.run("_receiptSource.state"), "loading");
+  });
+
+  await t.test("final source failure and a mismatched receipt remain red and fail closed, then recover on a fresh read", async () => {
+    for (const fail of [h => { h.network.failGistRead = true; }, h => { h.data.feeCalculationReceipt.receiptId = "a".repeat(64); }]) {
+      const h = await ready(), before = h.store.get("feeConsole.v3.db"), originalReceipt = structuredClone(h.data.feeCalculationReceipt);
+      fail(h);
+      const daily = h.pauseNextRead("daily"), refresh = h.run("pullAll(true,{skipShell:true})");
+      await daily.entered; await loading(h); daily.release(); await refresh; await failure(h);
+      assert.equal(h.store.get("feeConsole.v3.db"), before);
+      h.network.failGistRead = false; h.data.feeCalculationReceipt = originalReceipt;
+      h.paints.length = 0; await h.run("pullAll(true,{skipShell:true})"); await complete(h); noRedPaint(h);
+    }
+  });
+
+  await t.test("daily fetch failure, missing access and manual-refresh failure exit loading instead of hiding the error", async () => {
+    for (const setup of [h => { h.network.failDaily = true; }, h => { h.run('setCfg(K.gid,"");setCfg(K.key,"");setCfg(K.tok,"")'); }]) {
+      const h = await ready(); setup(h);
+      await h.run("pullAll(true,{skipShell:true})"); await failure(h);
+      assert.notEqual(h.run("_receiptSource.state"), "loading");
+    }
+    const h = await ready(); h.network.failDaily = true;
+    await h.run("manualRefresh()"); await failure(h);
+    assert.equal(h.element("btnRefresh").disabled, false);
+  });
+
+  await t.test("an older success cannot overwrite a newer refresh failure or leave a misleading loading state", async () => {
+    const h = await ready(), gist = h.pauseNextRead("gist"), older = h.run("pullAll(true,{skipShell:true})");
+    await gist.entered; await loading(h);
+    h.network.failGistRead = true;
+    await h.run("pullAll(true,{skipShell:true})"); await failure(h);
+    gist.release(); await older; await failure(h);
+  });
+
+  await t.test("an older failed source cannot flash red after a newer successful refresh", async () => {
+    const h = await ready(), original = h.remote.content; h.remote.content = "invalid-fixture-envelope";
+    const gist = h.pauseNextRead("gist"), older = h.run("pullAll(true,{skipShell:true})");
+    await gist.entered; await loading(h);
+    h.remote.content = original;
+    await h.run("pullAll(true,{skipShell:true})"); await complete(h);
+    gist.release(); await older; await complete(h); noRedPaint(h);
+  });
+
+  await t.test("pagehide invalidation still hides fees and resume displays loading only until a real successful read", async () => {
+    const h = await ready(); await h.emit("window", "pagehide"); await failure(h);
+    h.paints.length = 0;
+    const gist = h.pauseNextRead("gist"), resume = h.emit("window", "pageshow", { persisted: true });
+    await gist.entered; await loading(h); gist.release(); await resume;
+    // Browser events intentionally do not await their async read callback.
+    for (let i = 0; i < 100 && h.run('_receiptSource.state === "loading"'); i++) await h.settle();
+    assert.equal(h.run("_receiptSource.state"), "verified");
+    await complete(h); noRedPaint(h);
   });
 });
