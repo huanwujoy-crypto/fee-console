@@ -4,6 +4,8 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 
+export const APPROVED_IB_ACCOUNT_ID = "U6859001";
+
 export const RUN_STAGES = Object.freeze([
   "bootstrap",
   "ib-read",
@@ -298,29 +300,39 @@ export function validateManifest(manifest, registry) {
     if (stages.get(name).status !== "ok") fail(`${name} must be ok before a candidate manifest is encoded`);
   }
 
-  assertExactKeys(manifest.sources, ["ib", "sharesight"], [], "manifest.sources");
+  validateSourceEvidence(manifest.sources, registry);
+  validateMethods(manifest.methods);
+  checkSafeStrings(manifest);
+  return manifest;
+}
+
+// Source-only validation can run BEFORE rendering/guard. It must not create
+// fictional successful render/guard stage times merely to assess live reads.
+export function validateSourceEvidence(sources, registry) {
+  validateRegistry(registry);
+  assertExactKeys(sources, ["ib", "sharesight"], [], "manifest.sources");
   assertExactKeys(
-    manifest.sources.ib,
+    sources.ib,
     ["accountId", "accountScopeConfirmed", ...IB_ENDPOINTS],
     [],
     "manifest.sources.ib"
   );
-  if (manifest.sources.ib.accountId !== "U6859001") fail("IB accountId is outside the approved scope");
-  if (typeof manifest.sources.ib.accountScopeConfirmed !== "boolean") {
+  if (sources.ib.accountId !== APPROVED_IB_ACCOUNT_ID) fail("IB accountId is outside the approved scope");
+  if (typeof sources.ib.accountScopeConfirmed !== "boolean") {
     fail("IB accountScopeConfirmed must be boolean");
   }
   for (const endpoint of IB_ENDPOINTS) {
-    validateSourceRecord(manifest.sources.ib[endpoint], `manifest.sources.ib.${endpoint}`);
+    validateSourceRecord(sources.ib[endpoint], `manifest.sources.ib.${endpoint}`);
   }
 
-  if (!Array.isArray(manifest.sources.sharesight)) fail("manifest.sources.sharesight must be an array");
+  if (!Array.isArray(sources.sharesight)) fail("manifest.sources.sharesight must be an array");
   const required = registry.portfolios.filter(portfolio => portfolio.requiredEachReport);
-  if (manifest.sources.sharesight.length !== required.length) {
+  if (sources.sharesight.length !== required.length) {
     fail(`Sharesight sources must contain all ${required.length} required portfolios`);
   }
   const byId = new Map(required.map(portfolio => [portfolio.portfolioId, portfolio]));
   const seen = new Set();
-  for (const [index, source] of manifest.sources.sharesight.entries()) {
+  for (const [index, source] of sources.sharesight.entries()) {
     const label = `manifest.sources.sharesight[${index}]`;
     assertExactKeys(
       source,
@@ -344,9 +356,8 @@ export function validateManifest(manifest, registry) {
     if (!seen.has(portfolio.portfolioId)) fail(`Sharesight portfolio ${portfolio.portfolioId} is missing`);
   }
 
-  validateMethods(manifest.methods);
-  checkSafeStrings(manifest);
-  return manifest;
+  checkSafeStrings(sources);
+  return sources;
 }
 
 const directlyUsable = source => source.status === "ok";
@@ -354,20 +365,25 @@ const sharesightUsable = source => source.status === "ok" || source.status === "
 
 export function assessReadiness(manifest, registry) {
   validateManifest(manifest, registry);
+  return assessSourceReadiness(manifest.sources, registry);
+}
+
+export function assessSourceReadiness(sources, registry) {
+  validateSourceEvidence(sources, registry);
   const issues = [];
-  if (!manifest.sources.ib.accountScopeConfirmed) {
+  if (!sources.ib.accountScopeConfirmed) {
     return { blocked: true, degraded: true, positionSource: "unavailable", issues: ["ACCOUNT_SCOPE_UNCONFIRMED"] };
   }
 
   const critical = ["accountSummary", "balances", "orders", "trades"];
-  const failedCritical = critical.filter(endpoint => !directlyUsable(manifest.sources.ib[endpoint]));
+  const failedCritical = critical.filter(endpoint => !directlyUsable(sources.ib[endpoint]));
   for (const endpoint of failedCritical) {
     issues.push(`IB_${endpoint.replace(/[A-Z]/g, value => `_${value}`).toUpperCase()}_UNAVAILABLE`);
   }
 
   let positionSource = "ib";
-  if (!directlyUsable(manifest.sources.ib.positions)) {
-    const ibHk = manifest.sources.sharesight.find(source => source.portfolioId === 936247);
+  if (!directlyUsable(sources.ib.positions)) {
+    const ibHk = sources.sharesight.find(source => source.portfolioId === 936247);
     if (ibHk && sharesightUsable(ibHk) && Number.isInteger(ibHk.completedUsTradingDayLag)
       && ibHk.completedUsTradingDayLag <= 1) {
       positionSource = "sharesight-ib-hk";
@@ -383,7 +399,7 @@ export function assessReadiness(manifest, registry) {
     return { blocked: true, degraded: true, positionSource, issues };
   }
 
-  for (const source of manifest.sources.sharesight) {
+  for (const source of sources.sharesight) {
     if (!sharesightUsable(source)) issues.push(`SHARESIGHT_${source.portfolioId}_UNAVAILABLE`);
   }
   return { blocked: false, degraded: issues.length > 0, positionSource, issues };
