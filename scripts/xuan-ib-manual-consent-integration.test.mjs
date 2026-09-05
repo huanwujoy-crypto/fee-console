@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
 import { issueManualConsent, MANUAL_CONSENT_WINDOW_MS } from './xuan-ib-manual-consent.mjs';
 import { prepareReport } from './xuan-ib-report-prepare.mjs';
+import {inactiveAssociationSnapshot} from './xuan-ib-association-test-fixture.mjs';
 import {
   APPROVED_IB_ACCOUNT_ID,
   RUN_STAGES,
@@ -264,6 +265,7 @@ test('manual path is one-use, private, source-preserving and receipt-immutable e
     registry,
     journalPath: files.journalPath,
     manualConsentStore: files.storePath,
+    associationSnapshot: inactiveAssociationSnapshot(),
     now
   });
   assert.equal(prepared.result.status, 'prepared-not-published');
@@ -297,6 +299,7 @@ test('manual path is one-use, private, source-preserving and receipt-immutable e
     registry,
     journalPath: replayJournal,
     manualConsentStore: files.storePath,
+    associationSnapshot: inactiveAssociationSnapshot(),
     now
   }), /already been consumed/);
 });
@@ -327,7 +330,7 @@ test('manual proof is bound to journal, store, adhoc edition, prior SHA, run and
     now
   }), /MANUAL_JOURNAL_REQUIRED/);
   assert.throws(() => prepareReport(reportView(), evidence, {
-    previousHtml, previousMeta, policy, registry, journalPath: files.journalPath, now
+    previousHtml, previousMeta, policy, registry, journalPath: files.journalPath, now, associationSnapshot:inactiveAssociationSnapshot()
   }), /manual consent requires journal and private store/);
 
   const pm = clone(input);
@@ -379,7 +382,7 @@ test('native account path remains unchanged and cannot be mixed with manual evid
   endpoints.forEach(name => assert.equal(Object.hasOwn(evidence.sources.ib[name], 'readStartedAt'), false));
 
   const prepared = prepareReport(reportView(), evidence, {
-    previousHtml, previousMeta, policy, registry
+    previousHtml, previousMeta, policy, registry, associationSnapshot:inactiveAssociationSnapshot()
   });
   assert.equal(prepared.result.status, 'prepared-not-published');
   assert.equal(prepared.html.includes(manualDisclosure), false);
@@ -396,7 +399,8 @@ test('native account path remains unchanged and cannot be mixed with manual evid
     previousMeta,
     policy,
     registry,
-    manualConsentStore: files.storePath
+    manualConsentStore: files.storePath,
+    associationSnapshot:inactiveAssociationSnapshot()
   }), /private manual store supplied for a native-account report/);
 });
 

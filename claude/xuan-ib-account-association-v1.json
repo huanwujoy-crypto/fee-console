@@ -1,0 +1,14 @@
+{
+  "accountAlias": "IB-HK",
+  "basis": "owner-attested-recurring-v1",
+  "editions": [
+    "adhoc"
+  ],
+  "expiresAt": null,
+  "policyId": "ib-primary-7day-pilot-v1",
+  "publisher": "claude-verified-candidate-v1",
+  "purpose": "xuan-ib-read-only-report",
+  "schemaVersion": 1,
+  "status": "inactive",
+  "validFrom": null
+}

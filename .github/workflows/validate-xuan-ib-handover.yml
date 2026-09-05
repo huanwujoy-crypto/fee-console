@@ -30,6 +30,8 @@ jobs:
           git archive origin/main -- scripts | tar -x -C "$trusted_root"
           for required in \
             scripts/handover-guard.mjs \
+            scripts/xuan-ib-account-association.mjs \
+            scripts/xuan-ib-account-association-publication.mjs \
             scripts/xuan-ib-classification-disclosure.mjs \
             scripts/xuan-ib-cash-plan.mjs \
             scripts/xuan-ib-policy-page.mjs \
@@ -124,6 +126,9 @@ jobs:
             exit 1
           fi
 
+          # Never allow candidate/runtime environment to supply a policy. The
+          # trusted guard independently fetches current main for eligible runs.
+          env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON \
           XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" \
           XUAN_IB_PREVIOUS_HTML_BLOB="$previous_html_blob" \
           XUAN_IB_POLICY_V2_JSON="$RUNNER_TEMP/xuan-ib-policy-v2.json" \

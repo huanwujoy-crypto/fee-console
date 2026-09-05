@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { validateManualConsentProof } from './xuan-ib-manual-consent.mjs';
+import { validateAssociationReceipt, validateAssociationReceiptShape } from './xuan-ib-account-association.mjs';
 
 export const APPROVED_IB_ACCOUNT_ID = "U6859001";
 
@@ -188,10 +189,10 @@ export function validateRegistry(registry) {
   return registry;
 }
 
-const validateSourceRecord = (source, label, { allowLag = false, identityKeys = [], manualRead = false } = {}) => {
+const validateSourceRecord = (source, label, { allowLag = false, identityKeys = [], manualRead = false, failedPositionAttempt = false } = {}) => {
   assertExactKeys(
     source,
-    [...identityKeys, "status", "asOf", "retries", "fingerprint", ...(manualRead ? ['readStartedAt'] : [])],
+    [...identityKeys, "status", "asOf", "retries", "fingerprint", ...(manualRead ? ['readStartedAt'] : []), ...(failedPositionAttempt ? ['attemptCompletedAt'] : [])],
     ["errorCode", "completedUsTradingDayLag"],
     label
   );
@@ -216,6 +217,7 @@ const validateSourceRecord = (source, label, { allowLag = false, identityKeys = 
   if (source.errorCode !== undefined && !ERROR_CODE_RE.test(source.errorCode)) {
     fail(`${label}.errorCode is invalid`);
   }
+  if (failedPositionAttempt && (source.asOf !== null || source.fingerprint !== null)) fail(`${label} failed attempt cannot supply usable source data`);
   if (source.completedUsTradingDayLag !== undefined) {
     if (!allowLag) fail(`${label} cannot contain completedUsTradingDayLag`);
     if (!Number.isInteger(source.completedUsTradingDayLag)
@@ -243,7 +245,7 @@ const validateMethods = methods => {
   if (methods.methodBundleHash !== expected) fail("manifest.methods.methodBundleHash does not match its components");
 };
 
-export function validateManifest(manifest, registry) {
+export function validateManifest(manifest, registry, context = {}) {
   validateRegistry(registry);
   assertExactKeys(
     manifest,
@@ -303,7 +305,8 @@ export function validateManifest(manifest, registry) {
 
   validateSourceEvidence(manifest.sources, registry, {
     edition: manifest.edition, previousSourceSha: manifest.previousSourceSha,
-    runId: manifest.runId, preparedAt: manifest.preparedAt
+    runId: manifest.runId, preparedAt: manifest.preparedAt,
+    ...(context.associationSnapshot !== undefined ? { associationSnapshot: context.associationSnapshot, now: context.now } : {})
   });
   if (manifest.sources.ib.manualConsent) {
     const proof = manifest.sources.ib.manualConsent;
@@ -314,6 +317,24 @@ export function validateManifest(manifest, registry) {
       const source = manifest.sources.ib[endpoint];
       if (Date.parse(source.readStartedAt) < Date.parse(ibStage.startedAt)
         || Date.parse(source.asOf) > Date.parse(ibStage.endedAt)) fail('manual IB receipt outside manifest read stage');
+    }
+  }
+  if (manifest.sources.ib.accountAssociation) {
+    const checked = Date.parse(manifest.sources.ib.accountAssociation.policyCheckedAt);
+    const bootstrap = stages.get('bootstrap');
+    if (bootstrap.status !== 'ok' || checked < runStart || checked < Date.parse(bootstrap.endedAt)) fail('association check outside manifest bootstrap boundary');
+    const positionsFailed = ['failed','unavailable'].includes(manifest.sources.ib.positions.status);
+    if (stages.get('ib-read').status !== (positionsFailed ? 'degraded' : 'ok') || stages.get('sharesight-read').status !== 'ok') fail('association read stages contradict direct/fallback evidence');
+    for (const [name, records] of [
+      ['ib-read', IB_ENDPOINTS.map(endpoint => manifest.sources.ib[endpoint])],
+      ['sharesight-read', manifest.sources.sharesight]
+    ]) {
+      const stage = stages.get(name);
+      if (checked >= Date.parse(stage.startedAt)) fail('association check must precede both financial read stages');
+      for (const source of records) {
+        if (Date.parse(source.readStartedAt) < Date.parse(stage.startedAt)
+          || Date.parse(source.asOf ?? source.attemptCompletedAt) > Date.parse(stage.endedAt)) fail('association receipt outside manifest read stage');
+      }
     }
   }
   validateMethods(manifest.methods);
@@ -329,14 +350,19 @@ export function validateSourceEvidence(sources, registry, context = {}) {
   assertExactKeys(
     sources.ib,
     ["accountId", "accountScopeConfirmed", ...IB_ENDPOINTS],
-    ['accountScopeBasis', 'manualConsent'],
+    ['accountScopeBasis', 'manualConsent', 'accountAssociation'],
     "manifest.sources.ib"
   );
   if (sources.ib.accountId !== APPROVED_IB_ACCOUNT_ID) fail("IB accountId is outside the approved scope");
   if (typeof sources.ib.accountScopeConfirmed !== "boolean") {
     fail("IB accountScopeConfirmed must be boolean");
   }
-  const manual = Object.hasOwn(sources.ib, 'manualConsent') || Object.hasOwn(sources.ib, 'accountScopeBasis');
+  const association = Object.hasOwn(sources.ib, 'accountAssociation')
+    || sources.ib.accountScopeBasis === 'owner-attested-recurring-v1';
+  const manual = Object.hasOwn(sources.ib, 'manualConsent')
+    || sources.ib.accountScopeBasis === 'manual-consent-once-v1';
+  if (association && manual) fail('mixed account scope evidence is not permitted');
+  if (Object.hasOwn(sources.ib, 'accountScopeBasis') && !association && !manual) fail('invalid account scope basis');
   if (manual) {
     if (sources.ib.accountScopeBasis !== 'manual-consent-once-v1' || sources.ib.accountScopeConfirmed !== true) {
       fail('invalid manual account scope basis');
@@ -353,9 +379,44 @@ export function validateSourceEvidence(sources, registry, context = {}) {
       if (prepared < Date.parse(proof.issuedAt) || prepared >= Date.parse(proof.expiresAt)) fail('manual preparation outside consent window');
     }
   }
+  if (association) {
+    if (sources.ib.accountScopeBasis !== 'owner-attested-recurring-v1' || sources.ib.accountScopeConfirmed !== true) {
+      fail('invalid recurring association account scope basis');
+    }
+    // Historical source evidence validates the immutable receipt and recorded
+    // context only. It never claims that the referenced policy is still active.
+    const receipt = sources.ib.accountAssociation;
+    validateAssociationReceiptShape(receipt, {
+      edition: context.edition, previousSourceSha: context.previousSourceSha, runId: context.runId,
+      ...(context.preparedAt === undefined ? {} : { preparedAt: context.preparedAt })
+    });
+    if (context.associationSnapshot !== undefined) {
+      if (!Number.isSafeInteger(context.now) || context.now < 0) fail('live association validation requires an explicit clock');
+      validateAssociationReceipt(receipt, context.associationSnapshot, {
+        now: context.now, edition: context.edition,
+        previousSourceSha: context.previousSourceSha, runId: context.runId
+      });
+      if (context.preparedAt !== undefined
+        && parseInstant(context.preparedAt, 'association preparedAt') >= Date.parse(context.associationSnapshot.policy.expiresAt)) {
+        fail('association preparation outside policy validity');
+      }
+    }
+  }
+  const validateAssociationRead = (source, label) => {
+    const start = parseInstant(source.readStartedAt, `${label}.readStartedAt`);
+    const completedAt = source.asOf ?? source.attemptCompletedAt;
+    const end = parseInstant(completedAt, `${label}.completion`);
+    if (new Date(start).toISOString() !== source.readStartedAt || new Date(end).toISOString() !== completedAt) fail('association reads require canonical UTC instants');
+    if (start <= Date.parse(sources.ib.accountAssociation.policyCheckedAt) || end < start) fail('association read does not follow the pre-read check');
+    if (context.associationSnapshot !== undefined && (end >= Date.parse(context.associationSnapshot.policy.expiresAt)
+      || end > context.now)) fail('association read outside current policy validity or in the future');
+  };
   for (const endpoint of IB_ENDPOINTS) {
     const source = sources.ib[endpoint];
-    validateSourceRecord(source, `manifest.sources.ib.${endpoint}`, { manualRead: manual });
+    validateSourceRecord(source, `manifest.sources.ib.${endpoint}`, {
+      manualRead: manual || association,
+      failedPositionAttempt: association && endpoint === 'positions' && ['failed','unavailable'].includes(source.status)
+    });
     if (manual) {
       const start = parseInstant(source.readStartedAt, `${endpoint}.readStartedAt`);
       const end = parseInstant(source.asOf, `${endpoint}.asOf`);
@@ -363,6 +424,7 @@ export function validateSourceEvidence(sources, registry, context = {}) {
       if (new Date(start).toISOString() !== source.readStartedAt || new Date(end).toISOString() !== source.asOf) fail('manual IB reads require canonical UTC instants');
       if (start < Date.parse(proof.issuedAt) || end < start || end >= Date.parse(proof.expiresAt)) fail('manual IB read outside consent window');
     }
+    if (association) validateAssociationRead(source, endpoint);
   }
 
   if (!Array.isArray(sources.sharesight)) fail("manifest.sources.sharesight must be an array");
@@ -376,7 +438,7 @@ export function validateSourceEvidence(sources, registry, context = {}) {
     const label = `manifest.sources.sharesight[${index}]`;
     assertExactKeys(
       source,
-      ["portfolioId", "role", "status", "asOf", "retries", "fingerprint"],
+      ["portfolioId", "role", "status", "asOf", "retries", "fingerprint", ...(association ? ['readStartedAt'] : [])],
       ["errorCode", "completedUsTradingDayLag"],
       label
     );
@@ -389,8 +451,10 @@ export function validateSourceEvidence(sources, registry, context = {}) {
     seen.add(source.portfolioId);
     validateSourceRecord(source, label, {
       allowLag: source.portfolioId === 936247,
-      identityKeys: ["portfolioId", "role"]
+      identityKeys: ["portfolioId", "role"],
+      manualRead: association
     });
+    if (association) validateAssociationRead(source, label);
   }
   for (const portfolio of required) {
     if (!seen.has(portfolio.portfolioId)) fail(`Sharesight portfolio ${portfolio.portfolioId} is missing`);

@@ -11,6 +11,7 @@
 /claude/nightly-handover-spec-ADDENDUM-v916.md @huanwujoy-crypto
 /claude/xuan-ib-runtime-contract-v1.md @huanwujoy-crypto
 /claude/xuan-ib-compact-report-v1.md @huanwujoy-crypto
+/claude/xuan-ib-account-association* @huanwujoy-crypto
 /claude/xuan-ib-cash-first-plan-v1.md @huanwujoy-crypto
 /claude/xuan-ib-etf-abc-v1.md @huanwujoy-crypto
 /claude/xuan-ib-report-schedule-HKT-v1.md @huanwujoy-crypto
@@ -55,6 +56,13 @@
 /scripts/xuan-ib-manual-consent.mjs @huanwujoy-crypto
 /scripts/xuan-ib-manual-consent.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-manual-consent-integration.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-account-association.mjs @huanwujoy-crypto
+/scripts/xuan-ib-account-association.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-account-association-publication.mjs @huanwujoy-crypto
+/scripts/xuan-ib-account-association-publication.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-account-association-integration.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-association-test-fixture.mjs @huanwujoy-crypto
+/scripts/xuan-ib-association-sources.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-order-view.mjs @huanwujoy-crypto
 /scripts/xuan-ib-order-view.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-run-manifest.mjs @huanwujoy-crypto

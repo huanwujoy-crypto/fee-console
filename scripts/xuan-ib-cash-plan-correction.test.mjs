@@ -11,6 +11,7 @@ import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { migratePolicyToEtfPane } from './xuan-ib-etf-pane.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const approvedPolicy = JSON.parse(fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
 const approvedPolicySection = renderPolicySection(approvedPolicy);
@@ -31,6 +32,11 @@ const withMigratedEtfPolicyFixture = (html) => {
 const original = execFileSync('git', ['show', '258f98fe59c28b745908d43f998dbc144662dc1b:xuan-ib/latest.html'], { cwd: repo, encoding: 'utf8' });
 const corrected = correctCashPlan(original);
 const extract = (html, regex) => [...html.matchAll(regex)].map(m => m[0]);
+const offlineAssociationEnv = directory => {
+  const policyFile = path.join(directory, 'inactive-association-snapshot.json');
+  fs.writeFileSync(policyFile, JSON.stringify(inactiveAssociationSnapshot()));
+  return { XUAN_IB_ASSOCIATION_SNAPSHOT_JSON: policyFile };
+};
 
 test('cash correction is exact-source-bound and preserves accounts, source tables, receipts and dates', () => {
   assert.equal(classificationReportBlob(original), CASH_CORRECTION_SOURCE_BLOB);
@@ -49,7 +55,7 @@ test('cash correction passes the entire trusted publication guard with original 
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
   fs.writeFileSync(previous, withMigratedEtfPolicyFixture(original)); fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected));
   const guard = path.join(repo, 'scripts/handover-guard.mjs');
-  const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_CORRECTION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_CORRECTION_SOURCE_BLOB };
+  const env = { ...process.env, ...offlineAssociationEnv(dir), XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_CORRECTION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_CORRECTION_SOURCE_BLOB };
   const oldDisclosure = [...corrected.matchAll(classificationBlock)][0][0];
   fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected).replace(renderClassificationDisclosure(), oldDisclosure));
   const obsolete = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
@@ -94,7 +100,7 @@ test('ticker-first candidate passes trusted guard with original decisions and it
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
   fs.writeFileSync(previous, withMigratedEtfPolicyFixture(presentationOriginal)); fs.writeFileSync(current, withMigratedEtfPolicyFixture(presentationUpdated));
-  const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_PRESENTATION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_PRESENTATION_SOURCE_BLOB };
+  const env = { ...process.env, ...offlineAssociationEnv(dir), XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_PRESENTATION_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_PRESENTATION_SOURCE_BLOB };
   const result = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
   fs.writeFileSync(previous, presentationOriginal);
@@ -140,7 +146,7 @@ test('three-way candidate passes full publication guard, CLI is deterministic, a
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
   fs.writeFileSync(previous, withMigratedEtfPolicyFixture(threeWayOriginal)); fs.writeFileSync(current, withMigratedEtfPolicyFixture(updated));
-  const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_THREE_WAY_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_THREE_WAY_SOURCE_BLOB };
+  const env = { ...process.env, ...offlineAssociationEnv(dir), XUAN_IB_PREVIOUS_SOURCE_SHA: CASH_THREE_WAY_SOURCE_SHA, XUAN_IB_PREVIOUS_HTML_BLOB: CASH_THREE_WAY_SOURCE_BLOB };
   const guard = path.join(repo, 'scripts/handover-guard.mjs');
   const result = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);

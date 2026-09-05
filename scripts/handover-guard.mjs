@@ -7,6 +7,10 @@ import { validateClassificationDisclosure } from './xuan-ib-classification-discl
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
+import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
+import {
+  ASSOCIATION_TEMPLATE_ID, checkAssociationPublication, hasAssociationMarker, publicationEdition,
+} from './xuan-ib-account-association-publication.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -263,11 +267,14 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID].includes(id)) {
-      fail('only the approved decision and ETF A/B/C state templates are allowed');
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID].includes(id)) {
+      fail('only the approved decision, ETF and account-association templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
     byId.set(id, template);
+  }
+  if (attributeValueCount(structuralMarkup(source), 'id', ASSOCIATION_TEMPLATE_ID) !== 0) {
+    fail('account-association receipt ID is reserved exclusively for its validated template');
   }
 
   const openSummary = byId.get(ETF_SUMMARY_ID);
@@ -1179,5 +1186,25 @@ if (!verifiedRecordsUpdate) {
   const cashPlanErrors = validateCashPlan(html, { previousHtml: trustedPreviousHtml });
   if (cashPlanErrors.length) fail(cashPlanErrors[0]);
 }
+
+try {
+  const edition = publicationEdition(html);
+  if (!verifiedRecordsUpdate && !edition) fail('ordinary report requires one recognized edition in its primary header');
+  const needsCurrentPolicy = !verifiedRecordsUpdate && (edition === 'adhoc' || hasAssociationMarker(html));
+  let snapshot = null;
+  if (needsCurrentPolicy) {
+    // The injected path is only for trusted local caller/test processes, like
+    // POLICY_V2_JSON above. Both production workflows explicitly remove it on
+    // every guard invocation, so candidate files cannot choose this snapshot.
+    const injected = process.env.XUAN_IB_ASSOCIATION_SNAPSHOT_JSON;
+    snapshot = injected
+      ? JSON.parse(fs.readFileSync(injected, 'utf8'))
+      : loadTrustedAssociationPolicy({ cwd: process.cwd(), requireActive: false });
+    validateAssociationSnapshot(snapshot, { now: Date.now(), requireActive: false });
+  }
+  checkAssociationPublication(html, snapshot, {
+    edition, previousHtml: trustedPreviousHtml, previousSourceSha, verifiedRecordsUpdate,
+  });
+} catch (error) { fail(error.message); }
 
 console.log(`handover guard passed: ${expectedDate}, ${bytes} bytes`);
