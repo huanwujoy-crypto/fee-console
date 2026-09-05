@@ -270,4 +270,18 @@ test('structured orders are grouped, escaped, fresh-quoted and do not infer canc
   view.rotation.orders[0].marketAsOfHkt='2026-08-24 10:00 HKT';assert.throws(()=>renderReport(view,context),/quote must be current/);
 });
 
+test('folding preserves repeated lines instead of silently deduplicating them',()=>{
+  const view=fixture(),line='合成重复说明保留每一条';view.risk[0].lines=Array(4).fill(line);
+  const html=renderReport(view,context);
+  assert.equal(html.split(line).length-1,4);assert.ok(html.includes('详细说明'));
+});
+test('text retry cannot opportunistically rewrite already-valid summary text',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-draft-scope-')),base=path.join(dir,'base.json'),candidate=path.join(dir,'candidate.json');
+  try{
+    const view=fixture();view.observations[0]='长'.repeat(203);fs.writeFileSync(base,JSON.stringify(view));
+    view.observations[0]='短句';view.summary[0]='改短';fs.writeFileSync(candidate,JSON.stringify(view));
+    assert.throws(()=>runPrepareCli(['preflight-text-retry',base,candidate]),/TEXT_RETRY_NOT_OVERLONG/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
 export { fixture, context };

@@ -150,8 +150,9 @@ const briefView = brief => {
 const cardBody = card => {
   // The author supplies the source-backed conclusion. Never infer a green
   // status, trade action or edited financial meaning from arbitrary long prose.
-  const visible=card.brief?[]:card.lines.filter(line=>[...line].length<=80).slice(0,3);
-  const details=card.brief?card.lines:card.lines.filter(line=>!visible.includes(line));
+  const visibleIndices=card.brief?[]:card.lines.map((line,index)=>[...line].length<=80?index:null).filter(index=>index!==null).slice(0,3);
+  const visible=visibleIndices.map(index=>card.lines[index]);
+  const details=card.lines.filter((_,index)=>!visibleIndices.includes(index));
   return `<p class="sub">数据时点：${esc(card.asOfHkt)}</p>${card.brief?briefView(card.brief):numberedLines(visible)}${!card.brief&&!visible.length?'<p class="sub">说明已折叠，请结合下表查看。</p>':''}${table(card.columns,card.rows.slice(0,5))}${card.rows.length>5?fold(`更多数据（${card.rows.length-5} 行）`,table(card.columns,card.rows.slice(5))):''}${details.length?fold('详细说明',numberedLines(details)):''}${card.orders?orderTables(card.orders):''}`;
 };
 const card = value => `<section class="card"><h2>${esc(value.title)}</h2>${cardBody(value)}</section>`;

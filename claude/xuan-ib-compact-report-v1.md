@@ -167,7 +167,9 @@ supported independently verified modules may use current-value language.
    Keep the original failing view as a private immutable baseline. For a retry
    use `node scripts/xuan-ib-report-prepare.mjs preflight-text-retry
    /tmp/RUN.baseline.json /tmp/RUN.view.json`; it permits only shorter narrative
-   strings with unchanged list lengths and exact equality of all other fields.
+   strings whose original length exceeded that field's limit, with unchanged
+   list lengths and exact equality of all other fields. Already-compliant text
+   cannot be opportunistically rewritten in the same retry.
    Do not use the initial preflight command to bypass this comparison.
    On first-pass success finish narrative `ok`; after local correction finish
    it `degraded` with error code `NARRATIVE_REDUCED`. All elapsed drafting and

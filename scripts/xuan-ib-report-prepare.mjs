@@ -129,7 +129,7 @@ export function runPrepareCli(args){
     const baseline=read(args[1]),candidate=read(args[2]);
     // No amount, source, order, decision, brief or timestamp may drift while
     // repairing the narrative that failed its first local draft check.
-    const fields=['summary','observations','notes'];
+    const limits={summary:150,observations:200,notes:400},fields=Object.keys(limits);
     const nonText=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!fields.includes(key)));
     if(fingerprint(nonText(baseline))!==fingerprint(nonText(candidate)))fail('TEXT_RETRY_CHANGED_NON_TEXT');
     let changed=0;
@@ -138,7 +138,7 @@ export function runPrepareCli(args){
       baseline[field].forEach((value,index)=>{
         const next=candidate[field][index];
         if(value!==next){
-          if(typeof value!=='string'||typeof next!=='string'||[...next].length>=[...value].length)fail('TEXT_RETRY_NOT_SHORTER');
+          if(typeof value!=='string'||typeof next!=='string'||[...value].length<=limits[field]||[...next].length>=[...value].length)fail('TEXT_RETRY_NOT_OVERLONG_OR_NOT_SHORTER');
           changed+=1;
         }
       });
