@@ -59,7 +59,7 @@ jobs:
 
       - name: Test compact pilot source identity and display hardening
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-git-identity-preflight.test.mjs scripts/xuan-ib-source-adapter.test.mjs scripts/xuan-ib-order-view.test.mjs
+        run: node --test scripts/xuan-ib-git-identity-preflight.test.mjs scripts/xuan-ib-source-adapter.test.mjs scripts/xuan-ib-manual-consent.test.mjs scripts/xuan-ib-manual-consent-integration.test.mjs scripts/xuan-ib-order-view.test.mjs
 
       - name: Run the script test suite
         if: ${{ github.event.pull_request.draft == false }}

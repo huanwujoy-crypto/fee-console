@@ -1,6 +1,8 @@
 // Private, read-only source normalization. No API calls, inferred account
 // binding, copied HTML coefficients, automatic classification or trading.
 import { APPROVED_IB_ACCOUNT_ID, IB_ENDPOINTS, fingerprint, validateSourceEvidence } from './xuan-ib-run-manifest.mjs';
+import { getManualConsentRunId, validateManualConsentProof } from './xuan-ib-manual-consent.mjs';
+import { showRunJournal } from './xuan-ib-run-clock.mjs';
 const fail=code=>{throw new Error(`Source adapter: ${code}`);};
 const object=value=>value&&Object.getPrototypeOf(value)===Object.prototype;
 const num=value=>typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=1e12;
@@ -9,6 +11,18 @@ const need=(value,keys)=>{
   return value;
 };
 const array=value=>{if(!Array.isArray(value)||value.length>10_000)fail('INVALID_SOURCE_ARRAY');return value;};
+const checkManualAccountIds=raw=>{
+  let visited=0;
+  const walk=(value,depth=0)=>{
+    if(++visited>50_000||depth>20)fail('ACCOUNT_SCAN_LIMIT');
+    if(!value||typeof value!=='object')return;
+    for(const [key,child] of Object.entries(value)){
+      if(['account_id','accountId'].includes(key)&&child!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_MISMATCH');
+      if(child&&typeof child==='object')walk(child,depth+1);
+    }
+  };
+  walk(raw);
+};
 export function unwrapSource(kind,raw){
   switch(kind){
     case 'accountSummary':need(raw,['currency','net_liquidation','total_cash_value']);if(!/^[A-Z]{3}$/.test(raw.currency)||!num(raw.net_liquidation)||!num(raw.total_cash_value))fail('INVALID_SUMMARY');break;
@@ -51,17 +65,35 @@ export function sourceRecordFromRaw(raw,receipt){
   // independent attestation that a caller really executed a connector call.
   return {status:'ok',asOf:receipt.completedAt,retries:receipt.retries,fingerprint:fingerprint(raw)};
 }
-export function buildSourceEvidence(input,registry){
+export function buildSourceEvidence(input,registry,{manualConsentProof=null,journalPath=null,now=Date.now()}={}){
   need(input,['ib','sharesight','edition','dataDate','previousSourceSha']);
   const summary=unwrapSource('accountSummary',input.ib?.accountSummary?.raw);
-  // Current connector version may omit this field. Such input must stop here,
-  // not turn matching totals/holdings or the approved constant into evidence.
-  if(!Object.hasOwn(summary,'account_id')||summary.account_id!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_UNPROVEN');
-  const ib={accountId:summary.account_id,accountScopeConfirmed:true};
+  const native=Object.hasOwn(summary,'account_id');
+  // A present bad/null ID always wins over a manual claim. No raw mutation.
+  if(native&&summary.account_id!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_UNPROVEN');
+  if(native&&manualConsentProof!==null)fail('MANUAL_EVIDENCE_WITH_NATIVE_ID');
+  if(!native&&!manualConsentProof)fail('ACCOUNT_SCOPE_UNPROVEN');
+  let runId,ibStage;
+  if(!native){
+    if(!journalPath)fail('MANUAL_JOURNAL_REQUIRED');
+    const journal=showRunJournal(journalPath);
+    runId=getManualConsentRunId(journalPath);
+    validateManualConsentProof(manualConsentProof,{journalRunId:runId,previousSourceSha:input.previousSourceSha,edition:input.edition,requireUnexpired:true,now});
+    ibStage=journal.stages.find(stage=>stage.name==='ib-read');
+    if(!ibStage||ibStage.status!=='ok')fail('MANUAL_IB_STAGE_INCOMPLETE');
+  }
+  const ib={accountId:native?summary.account_id:APPROVED_IB_ACCOUNT_ID,accountScopeConfirmed:true,
+    ...(!native?{accountScopeBasis:'manual-consent-once-v1',manualConsent:manualConsentProof}:{})};
   for(const endpoint of IB_ENDPOINTS){
     const receipt=need(input.ib[endpoint],['raw']);const raw=unwrapSource(endpoint,receipt.raw);
-    if(Object.hasOwn(raw,'account_id')&&raw.account_id!==summary.account_id)fail('ACCOUNT_SCOPE_MISMATCH');
+    if(Object.hasOwn(raw,'account_id')&&raw.account_id!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_MISMATCH');
+    if(!native)checkManualAccountIds(raw);
     ib[endpoint]=sourceRecordFromRaw(raw,receipt);
+    if(!native){
+      const start=Date.parse(receipt.startedAt),end=Date.parse(receipt.completedAt);
+      if(start<Date.parse(ibStage.startedAt)||end>Date.parse(ibStage.endedAt)||end>now)fail('MANUAL_READ_OUTSIDE_JOURNAL');
+      ib[endpoint].readStartedAt=receipt.startedAt;
+    }
   }
   const sharesight=array(input.sharesight).map(receipt=>{
     const raw=unwrapSource('sharesight',receipt.raw),id=raw.result.portfolio.id;
@@ -69,6 +101,6 @@ export function buildSourceEvidence(input,registry){
     if(!registered)fail('UNEXPECTED_PORTFOLIO');
     return {portfolioId:id,role:registered.role,...sourceRecordFromRaw(raw,receipt)};
   });
-  const sources={ib,sharesight};validateSourceEvidence(sources,registry);
+  const sources={ib,sharesight};validateSourceEvidence(sources,registry,{edition:input.edition,previousSourceSha:input.previousSourceSha,runId});
   return {schemaVersion:1,edition:input.edition,dataDate:input.dataDate,previousSourceSha:input.previousSourceSha,sources};
 }

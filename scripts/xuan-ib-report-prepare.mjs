@@ -11,6 +11,7 @@ import { renderReport, reportHtmlBlob, validateReportView } from './xuan-ib-repo
 import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
 import { assessSourceReadiness, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
+import { getManualConsentRunId, validateManualConsentProof, consumeManualConsent } from './xuan-ib-manual-consent.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -82,11 +83,26 @@ function requireCompactUpstreamJournal(journalPath,readiness){
   }
 }
 
-export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null}={}){
+export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,now=null}={}){
   const required=['schemaVersion','edition','dataDate','previousSourceSha','sources'];
   if(!evidence || Object.keys(evidence).sort().join('|')!==required.sort().join('|') || evidence.schemaVersion!==1)fail('invalid source evidence envelope');
   if(evidence.dataDate!==viewInput.dataDate||evidence.edition!==viewInput.edition||evidence.previousSourceSha!==previousMeta.sourceSha)fail('view/evidence/prior publication mismatch');
-  const readiness=assessSourceReadiness(evidence.sources,registry);
+  const manual=Object.hasOwn(evidence.sources?.ib||{},'manualConsent');
+  let runId;
+  if(manual){
+    if(!journalPath||!manualConsentStore)fail('manual consent requires journal and private store');
+    const snapshot=showRunJournal(journalPath);
+    runId=getManualConsentRunId(journalPath);
+    const proof=evidence.sources.ib.manualConsent;
+    validateManualConsentProof(proof,{journalRunId:runId,previousSourceSha:previousMeta.sourceSha,edition:evidence.edition,requireUnexpired:true,now:now??Date.now()});
+    const ibStage=snapshot.stages.find(stage=>stage.name==='ib-read');
+    if(!ibStage)fail('manual consent requires completed IB read stage');
+    for(const endpoint of [...COMPACT_CRITICAL_IB,'positions']){
+      const source=evidence.sources.ib[endpoint];
+      if(!source||Date.parse(source.readStartedAt)<Date.parse(ibStage.startedAt)||Date.parse(source.asOf)>Date.parse(ibStage.endedAt)||Date.parse(source.asOf)>(now??Date.now()))fail('manual IB receipt outside journal read stage');
+    }
+  }else if(manualConsentStore!==null){fail('private manual store supplied for a native-account report');}
+  const readiness=assessSourceReadiness(evidence.sources,registry,{edition:evidence.edition,previousSourceSha:evidence.previousSourceSha,runId});
   if(readiness.blocked)fail(`publication blocked: ${readiness.issues.join(',')}`);
   requireCompactFreshSources(evidence,registry,readiness);
   const view=copy(viewInput);
@@ -102,12 +118,17 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     view.alerts=[{level:'warning',text:field},...view.alerts].slice(0,3);
   }
   if(journalPath)requireCompactUpstreamJournal(journalPath,readiness);
+  // Consumption is atomic and precedes render; even a later guard/render
+  // failure cannot reopen this observation for a second candidate attempt.
+  if(manual)consumeManualConsent({proof:evidence.sources.ib.manualConsent,journalPath,
+    previousSourceSha:previousMeta.sourceSha,edition:evidence.edition,storePath:manualConsentStore,
+    sourceEvidenceFingerprint:fingerprint(evidence),now:now??Date.now()});
   const stage=(name,fn)=>{
     if(journalPath)startJournalStage(journalPath,name);
     try{const value=fn();if(journalPath)finishJournalStage(journalPath,name);return value;}
     catch(error){if(journalPath)finishJournalStage(journalPath,name,{status:'failed',errorCode:'PREPARE_FAILED'});throw error;}
   };
-  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy}));
+  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual}));
   stage('guard',()=>{
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-'));
     try{
@@ -119,6 +140,8 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
       if(checked.status!==0)fail(`trusted guard failed: ${(checked.stderr||checked.stdout||checked.error?.message||'UNKNOWN').slice(0,1000)}`);
     }finally{fs.rmSync(temporary,{recursive:true,force:true});}
   });
+  if(manual)validateManualConsentProof(evidence.sources.ib.manualConsent,{journalRunId:runId,
+    previousSourceSha:previousMeta.sourceSha,edition:evidence.edition,requireUnexpired:true,now:now??Date.now()});
   return {html,result:{schemaVersion:1,status:'prepared-not-published',edition:view.edition,dataDate:view.dataDate,
     previousSourceSha:previousMeta.sourceSha,htmlBlob:reportHtmlBlob(html),viewFingerprint:fingerprint(view),sourceEvidenceFingerprint:fingerprint(evidence),degraded:readiness.degraded,issues:readiness.issues}};
 }
@@ -156,15 +179,16 @@ export function runPrepareCli(args){
   }
   // Pure API rendering remains usable in unit tests. The operational command
   // may never omit the journal and then claim a timed pilot run.
-  if(args.length!==5)fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required)');
-  const [viewFile,evidenceFile,outputFile,flag,journalPath]=args;
+  if(![5,7].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE]');
+  const [viewFile,evidenceFile,outputFile,flag,journalPath,manualFlag,manualConsentStore]=args;
   if(flag!=='--journal'||!journalPath)fail('a real run journal is required');
+  if(args.length===7&&(manualFlag!=='--manual-consent-store'||!manualConsentStore))fail('invalid manual consent store option');
   const output=path.resolve(outputFile);
   if(!output.endsWith('.html') || ['latest.html','policy.html'].includes(path.basename(output)) || output===path.join(root,'index.html'))fail('output must be a candidate HTML, never latest, policy or fee console');
   if(fs.existsSync(output))fail('output already exists; use a new staging path, then stage only validated candidate bytes');
   const prepared=prepareReport(read(viewFile),read(evidenceFile),{
     previousHtml:fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8'),previousMeta:read(path.join(root,'xuan-ib/latest.meta.json')),
-    policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath});
+    policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath,manualConsentStore:manualConsentStore??null});
   if(journalPath)startJournalStage(journalPath,'candidate-prep');
   try{
     fs.writeFileSync(output,prepared.html,{flag:'wx',mode:0o600});

@@ -52,6 +52,9 @@
 /scripts/xuan-ib-git-identity-preflight.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-source-adapter.mjs @huanwujoy-crypto
 /scripts/xuan-ib-source-adapter.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-manual-consent.mjs @huanwujoy-crypto
+/scripts/xuan-ib-manual-consent.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-manual-consent-integration.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-order-view.mjs @huanwujoy-crypto
 /scripts/xuan-ib-order-view.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-run-manifest.mjs @huanwujoy-crypto

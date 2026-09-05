@@ -216,7 +216,8 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false }) {
+  if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   validateReportView(view);
   // This validates the exact previous pair and its existing machine state. A
   // mismatched/unparseable history is not grounds to bootstrap empty receipts.
@@ -272,7 +273,7 @@ ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).joi
 <div class="pane p3">${cash.detail}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 换仓触发检查',cardBody(view.rotation),true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
-${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${renderClassificationDisclosure()}`,false,'版别 · 取数时点 · 数据日 · 只读')}
+${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${renderClassificationDisclosure()}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 ${fold('使用指南',`<ol class="brief-lines"><li><b>先看日期：</b>「已同步」是读取时间，不是数据时间；刷新只读取已发布报告。</li><li><b>怎么看：</b>概览看变化 → 风险看提醒 → 配置看现金参考。颜色不是买卖信号；小箭头可展开明细。</li><li><b>待办：</b>回应只记录意见，不自动交易；数字是待决定数量，琥珀色表示另有进度提醒。</li><li><b>ETF：</b>比较实际 A、协作方案 B、标普500基准 C；基线未建不排名，不保证收益。</li><li><b>临时报告：</b>确认后等待完成提示，勿重复点击；需已配置快捷指令，新手机可先只读查看。</li></ol><p class="sub">✓ 本期未触发 · ! 需留意 · ? 待核验 · — 未取得。所有报告、补仓参考及挂单提醒均不自动下单、撤单或转账。</p>`,false,'30 秒上手')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
 ${stateTemplate}\n${cash.template}\n</body></html>\n`;

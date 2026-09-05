@@ -3,6 +3,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
+import { validateManualConsentProof } from './xuan-ib-manual-consent.mjs';
 
 export const APPROVED_IB_ACCOUNT_ID = "U6859001";
 
@@ -187,10 +188,10 @@ export function validateRegistry(registry) {
   return registry;
 }
 
-const validateSourceRecord = (source, label, { allowLag = false, identityKeys = [] } = {}) => {
+const validateSourceRecord = (source, label, { allowLag = false, identityKeys = [], manualRead = false } = {}) => {
   assertExactKeys(
     source,
-    [...identityKeys, "status", "asOf", "retries", "fingerprint"],
+    [...identityKeys, "status", "asOf", "retries", "fingerprint", ...(manualRead ? ['readStartedAt'] : [])],
     ["errorCode", "completedUsTradingDayLag"],
     label
   );
@@ -300,7 +301,21 @@ export function validateManifest(manifest, registry) {
     if (stages.get(name).status !== "ok") fail(`${name} must be ok before a candidate manifest is encoded`);
   }
 
-  validateSourceEvidence(manifest.sources, registry);
+  validateSourceEvidence(manifest.sources, registry, {
+    edition: manifest.edition, previousSourceSha: manifest.previousSourceSha,
+    runId: manifest.runId, preparedAt: manifest.preparedAt
+  });
+  if (manifest.sources.ib.manualConsent) {
+    const proof = manifest.sources.ib.manualConsent;
+    if (Date.parse(proof.observedAt) < runStart
+      || Date.parse(proof.issuedAt) < Date.parse(stages.get('bootstrap').endedAt)) fail('manual proof outside manifest bootstrap boundary');
+    const ibStage = stages.get('ib-read');
+    for (const endpoint of IB_ENDPOINTS) {
+      const source = manifest.sources.ib[endpoint];
+      if (Date.parse(source.readStartedAt) < Date.parse(ibStage.startedAt)
+        || Date.parse(source.asOf) > Date.parse(ibStage.endedAt)) fail('manual IB receipt outside manifest read stage');
+    }
+  }
   validateMethods(manifest.methods);
   checkSafeStrings(manifest);
   return manifest;
@@ -308,21 +323,46 @@ export function validateManifest(manifest, registry) {
 
 // Source-only validation can run BEFORE rendering/guard. It must not create
 // fictional successful render/guard stage times merely to assess live reads.
-export function validateSourceEvidence(sources, registry) {
+export function validateSourceEvidence(sources, registry, context = {}) {
   validateRegistry(registry);
   assertExactKeys(sources, ["ib", "sharesight"], [], "manifest.sources");
   assertExactKeys(
     sources.ib,
     ["accountId", "accountScopeConfirmed", ...IB_ENDPOINTS],
-    [],
+    ['accountScopeBasis', 'manualConsent'],
     "manifest.sources.ib"
   );
   if (sources.ib.accountId !== APPROVED_IB_ACCOUNT_ID) fail("IB accountId is outside the approved scope");
   if (typeof sources.ib.accountScopeConfirmed !== "boolean") {
     fail("IB accountScopeConfirmed must be boolean");
   }
+  const manual = Object.hasOwn(sources.ib, 'manualConsent') || Object.hasOwn(sources.ib, 'accountScopeBasis');
+  if (manual) {
+    if (sources.ib.accountScopeBasis !== 'manual-consent-once-v1' || sources.ib.accountScopeConfirmed !== true) {
+      fail('invalid manual account scope basis');
+    }
+    validateManualConsentProof(sources.ib.manualConsent, {
+      edition: context.edition, previousSourceSha: context.previousSourceSha,
+      journalRunId: context.runId, requireUnexpired: false
+    });
+    const proof = sources.ib.manualConsent;
+    // Historical manifests may be read after expiry. Their recorded prepare
+    // and actual source instants must nevertheless be inside the original run.
+    if (context.preparedAt !== undefined) {
+      const prepared = parseInstant(context.preparedAt, 'manual preparedAt');
+      if (prepared < Date.parse(proof.issuedAt) || prepared >= Date.parse(proof.expiresAt)) fail('manual preparation outside consent window');
+    }
+  }
   for (const endpoint of IB_ENDPOINTS) {
-    validateSourceRecord(sources.ib[endpoint], `manifest.sources.ib.${endpoint}`);
+    const source = sources.ib[endpoint];
+    validateSourceRecord(source, `manifest.sources.ib.${endpoint}`, { manualRead: manual });
+    if (manual) {
+      const start = parseInstant(source.readStartedAt, `${endpoint}.readStartedAt`);
+      const end = parseInstant(source.asOf, `${endpoint}.asOf`);
+      const proof = sources.ib.manualConsent;
+      if (new Date(start).toISOString() !== source.readStartedAt || new Date(end).toISOString() !== source.asOf) fail('manual IB reads require canonical UTC instants');
+      if (start < Date.parse(proof.issuedAt) || end < start || end >= Date.parse(proof.expiresAt)) fail('manual IB read outside consent window');
+    }
   }
 
   if (!Array.isArray(sources.sharesight)) fail("manifest.sources.sharesight must be an array");
@@ -365,11 +405,14 @@ const sharesightUsable = source => source.status === "ok" || source.status === "
 
 export function assessReadiness(manifest, registry) {
   validateManifest(manifest, registry);
-  return assessSourceReadiness(manifest.sources, registry);
+  return assessSourceReadiness(manifest.sources, registry, {
+    edition: manifest.edition, previousSourceSha: manifest.previousSourceSha,
+    runId: manifest.runId, preparedAt: manifest.preparedAt
+  });
 }
 
-export function assessSourceReadiness(sources, registry) {
-  validateSourceEvidence(sources, registry);
+export function assessSourceReadiness(sources, registry, context = {}) {
+  validateSourceEvidence(sources, registry, context);
   const issues = [];
   if (!sources.ib.accountScopeConfirmed) {
     return { blocked: true, degraded: true, positionSource: "unavailable", issues: ["ACCOUNT_SCOPE_UNCONFIRMED"] };

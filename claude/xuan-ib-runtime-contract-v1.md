@@ -173,3 +173,13 @@ source-availability rules are deliberately stricter than the general fallback
 policy: do not silently relax them to fit a deadline. Read the pilot contract
 before using its prepare command. Do not fabricate missing source evidence,
 stage timing, an owner approval or a successful public read-back.
+
+The separately OWNER-confirmed 2026-09-05 manual-consent alternative is limited
+to one expressly requested ad-hoc compact run, with a fresh official IBKR UI
+observation, exact account equality, a 20-minute window, journal and prior-SHA
+binding and a private single-use controller store. Follow the complete compact
+contract; do not apply it to AM/PM or turn its human observation into a native
+API account_id. The existing optional manifest may validate historical manual
+proof only with explicit matching edition/run/prior-SHA context. That is not
+live issuance or publication permission. All financial sources, fallback rules,
+receipt continuity and trusted publication gates remain unchanged.
