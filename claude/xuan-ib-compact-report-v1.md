@@ -79,7 +79,7 @@ two `options` and `recommendation`, with `isNew:true`; they can only enter as
 
 ## One owner, reproducible preparation
 
-### Reusable source adapter and current limitation
+### Reusable source adapter and account scope
 
 Use `scripts/xuan-ib-source-adapter.mjs` for supported raw response shells,
 native position fields and whole-response hashes with actual read completion
@@ -90,13 +90,80 @@ provenance and timing. Raw receipts stay private. Native values are not silently
 USD; missing daily change is never zero. This helper is **not a complete
 financial derivation adapter** and cannot certify transcribed source data.
 
-`buildSourceEvidence` requires the approved account ID to be present in the
+The normal `buildSourceEvidence` path requires the approved account ID in the
 actual IB account-summary response, and rejects conflicting endpoint IDs.
-The connector observed in the first pilot omitted this field. It therefore
-cannot pass this path until authoritative, source-bound account identity is
-available. Matching Sharesight positions/NAV or copying the approved account
-constant is not account proof. Do not bypass this failure by hand-building a
-confirmed envelope. No new scope-inference policy is approved by this change.
+The connector observed in the first pilot omitted that field. The OWNER
+confirmed the following narrow manual-consent alternative on 2026-09-05;
+activation still requires this maintenance PR's exact-head OWNER approval.
+Matching Sharesight positions/NAV, currency or copying the approved account
+constant is not account proof. Never edit raw responses or hand-build a
+confirmed envelope to bypass the adapter.
+
+#### One manually requested ad-hoc run only
+
+- No AM or scheduled PM use, no lasting connector authorization and no trading.
+  A fresh manual request and fresh observation are required for any later run;
+  this approval is not standing permission to issue additional proofs.
+- Start the actual private run journal before the fresh observation. In the
+  same authenticated IBKR UI session, inspect the complete approved account,
+  exactly one Manage Third-Party Consents row for Anthropic and that account,
+  Claude enabled, and other AI platforms disabled. Do not infer Active status,
+  a grant ID or precise consent expiry from a relative consent date. Do not
+  revoke or reconnect. If any fact is absent or ambiguous, stop.
+- `issueManualConsent({observation,journalPath,previousSourceSha,storePath})`
+  is a private controller call after `bootstrap=ok` and before **any** financial
+  reads. First validate the full journal with `showRunJournal`; no stage may
+  remain active, no other stage may have started, and no source binding may
+  exist. Observation keys are exactly
+  `accountId, provider, consentRowObserved, singleConsentRow, claudeEnabled,
+  otherAiDisabled, humanAttested, attester, observedAt`. The provider is
+  `Anthropic`, attester is `owner-approved-operator`, five observation booleans
+  are true, and observedAt is the actual canonical UTC observation time.
+  The helper validates exact account equality privately; the source raw stays
+  unchanged. The old policy-discussion observation must never be reused.
+- The proof names the SHA-256 of the journal's original serialized init event
+  as its `runId`, the trusted previous publication SHA and `edition:adhoc`.
+  `issuedAt` is captured by the helper, not typed in a production call. It
+  expires exactly 20 minutes after observedAt. The upper bound is exclusive.
+  All five IB read intervals must be inside both this window and the same
+  journal's IB-read interval. The adapter preserves each real readStartedAt
+  and complete-raw fingerprint. It validates the journal and proof; even a
+  nested `account_id` or `accountId` contradiction rejects the manual path.
+  A present null/empty/wrong summary ID is never treated as absence.
+- Pass `{manualConsentProof, journalPath}` as the adapter's third argument
+  only when the actual summary lacks its own account_id. Native-ID runs use
+  the original path without these manual options. The resulting IB envelope
+  explicitly says `accountScopeBasis:manual-consent-once-v1`; it must not be
+  described as an API identity attestation.
+- Keep a **single designated persistent controller store file** in a private
+  0700 directory outside every repository, files 0600. `storePath` is a file,
+  not a directory. Issue reserves the observation fingerprint once; prepare
+  consumes it under an exclusive file lock and binds the entire source-evidence
+  fingerprint in the private receipt **before rendering**. A later failure
+  burns that attempt. No resetting, deleting, copying or changing stores to
+  retry, no new run journal around old reads. An existing lock after a crash
+  means stop and inspect, not automatically remove it.
+- For manual evidence add `--manual-consent-store /PRIVATE/consents.jsonl` to
+  the existing prepare command. A missing store/journal, replay, wrong run or
+  previous SHA, non-adhoc edition, expired proof or conflicting read window
+  stops preparation. Do not pass test clock overrides in a real run. Prepare
+  checks expiry again after guard and injects only one fixed short sentence
+  into folded report notes. Do not publish private observation/store files.
+- Store replay protection is procedural, not cryptographic: a trusted operator
+  controls the filesystem and the observation truth. An ephemeral cloud
+  container alone is **not** a durable cross-run store. Do not transfer this
+  workflow to a fresh container and claim continuity without the same private
+  controller. Current Claude-connection correspondence and revoke/reconnect
+  inside the window are human-attested and cannot be detected from these
+  tools. If either is suspected, abandon the run. The 20-minute bound and
+  previous-publication binding do not make these machine-verifiable facts.
+
+Proof validation accepts only fixed enums, hashes and timestamps. The existing
+optional manifest comment is public, not encrypted; do not add raw account
+consent rows, provider text, URLs, contact data, paths or credentials. Keep the
+proof and raw observation in the private archive for this pilot; publish only
+the fixed explanation. Historical manifest validation is not permission to
+reuse expired evidence for a new candidate.
 
 Use existing audited calculation modules only. The first pilot's transcribed
 AI coefficients, whole-book four-class membership, theme denominator and
