@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "kind": "xuan-ib-decision-menu",
-  "sourceSha": "48ef4ddd6ce3dc8de2716817546ce38de84352d8",
-  "htmlBlob": "5778b804b303d7b53fd65088e681e0df26a682b2",
-  "dataDate": "2026-09-04",
+  "sourceSha": "521e0aa5570b00a8a0029535c3558dad8ec7e33c",
+  "htmlBlob": "eec28a0694dcebdb3ca7790b592ceee38a0e4fa2",
+  "dataDate": "2026-09-05",
   "interaction": "enabled",
   "pending": [
     {
