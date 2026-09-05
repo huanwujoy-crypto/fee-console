@@ -4,11 +4,11 @@
   "editions": [
     "adhoc"
   ],
-  "expiresAt": null,
+  "expiresAt": "2026-09-12T13:30:00.000Z",
   "policyId": "ib-primary-7day-pilot-v1",
   "publisher": "claude-verified-candidate-v1",
   "purpose": "xuan-ib-read-only-report",
   "schemaVersion": 1,
-  "status": "inactive",
-  "validFrom": null
+  "status": "active",
+  "validFrom": "2026-09-05T13:30:00.000Z"
 }
