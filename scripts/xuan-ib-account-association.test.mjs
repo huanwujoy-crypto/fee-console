@@ -15,6 +15,7 @@ import {
   validateAssociationReceiptShape, validatePublicationAssociation
 } from './xuan-ib-account-association.mjs';
 import { initRunJournal, startJournalStage, finishJournalStage } from './xuan-ib-run-clock.mjs';
+import { inactiveAssociationPolicy, inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
 
 const NOW = Date.parse('2026-09-05T06:00:00.000Z');
 const SHA = 'a'.repeat(40), RUN = 'c'.repeat(64), PRIOR = 'd'.repeat(40);
@@ -29,16 +30,62 @@ const snapshot = (changes = {}) => ({ policy: policy(), policyCommit: SHA, polic
 const context = (changes = {}) => ({ now: NOW, edition: 'adhoc', previousSourceSha: PRIOR, runId: RUN, ...changes });
 const receipt = () => createAssociationReceipt(snapshot(), context());
 
-test('checked-in default is inactive with no validity clock or private identity', () => {
+test('checked-in deployment policy is canonical, bounded and contains no private identity', () => {
   const file = new URL(`../${ASSOCIATION_POLICY_PATH}`, import.meta.url);
   const text = fs.readFileSync(file, 'utf8'), value = JSON.parse(text);
   assert.equal(text, associationPolicyText(value));
+  // Deployment-state validation must remain valid after activation or expiry;
+  // runtime authorization and the inactive defaults are tested separately.
+  assert.deepEqual(validateAssociationPolicy(value, { now: NOW, requireActive: false }), value);
+  if (value.status === 'inactive') {
+    assert.equal(value.validFrom, null);
+    assert.equal(value.expiresAt, null);
+  } else {
+    const duration = Date.parse(value.expiresAt) - Date.parse(value.validFrom);
+    assert.ok(duration > 0 && duration <= MAX_ASSOCIATION_WINDOW_MS);
+  }
+  assert.doesNotMatch(text, /accountId|token|username|consentRow|observedAt|U\d{6,}/i);
+});
+
+test('fixed synthetic inactive policy has no timer and cannot authorize a run', () => {
+  const value = inactiveAssociationPolicy(), current = inactiveAssociationSnapshot(NOW);
   assert.equal(value.status, 'inactive');
   assert.equal(value.validFrom, null);
   assert.equal(value.expiresAt, null);
+  assert.deepEqual(current.policy, value);
+  assert.equal(current.policyBlob, associationPolicyBlob(value));
   assert.deepEqual(validateAssociationPolicy(value, { now: NOW, requireActive: false }), value);
   assert.throws(() => validateAssociationPolicy(value, { now: NOW }), /inactive/);
-  assert.doesNotMatch(text, /accountId|token|username|consentRow|observedAt|U\d{6,}/i);
+  assert.throws(() => validateAssociationSnapshot(current, { now: NOW }), /inactive/);
+});
+
+test('active or revoked deployment-file reads cannot alter the fixed inactive fixture', t => {
+  const file = new URL(`../${ASSOCIATION_POLICY_PATH}`, import.meta.url);
+  const originalRead = fs.readFileSync;
+  const unchangedDeploymentBytes = originalRead(file, 'utf8');
+  for (const status of ['active', 'revoked']) {
+    const deployment = policy({ status });
+    const fakeRead = t.mock.method(fs, 'readFileSync', function (input, ...args) {
+      if (String(input) === String(file)) return associationPolicyText(deployment);
+      return originalRead.call(this, input, ...args);
+    });
+    try {
+      assert.deepEqual(validateAssociationPolicy(JSON.parse(fs.readFileSync(file, 'utf8')),
+        { now: NOW, requireActive: false }), deployment);
+      const current = inactiveAssociationSnapshot(NOW);
+      assert.deepEqual(current.policy, inactiveAssociationPolicy());
+      assert.equal(current.policy.status, 'inactive');
+      assert.equal(current.policy.validFrom, null);
+      assert.equal(current.policy.expiresAt, null);
+      assert.equal(current.policyBlob, associationPolicyBlob(current.policy));
+      assert.equal(fakeRead.mock.callCount(), 1, 'the fixture must not read the deployment file');
+      current.policy.editions.push('pm');
+      assert.deepEqual(inactiveAssociationSnapshot(NOW).policy.editions, ['adhoc']);
+    } finally {
+      fakeRead.mock.restore();
+    }
+  }
+  assert.equal(originalRead(file, 'utf8'), unchangedDeploymentBytes, 'no deployment policy was written');
 });
 
 test('only exact bounded schema, alias, purpose, publisher, basis and adhoc scope accepted', () => {

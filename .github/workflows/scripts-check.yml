@@ -65,6 +65,10 @@ jobs:
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-ib-account-association.test.mjs scripts/xuan-ib-account-association-publication.test.mjs scripts/xuan-ib-association-sources.test.mjs scripts/xuan-ib-account-association-integration.test.mjs
 
+      - name: Test private source capture and deterministic minimal preparation
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/xuan-ib-source-capture.test.mjs scripts/xuan-ib-hook-response.test.mjs scripts/xuan-ib-source-hook.test.mjs scripts/xuan-ib-minimal-report.test.mjs scripts/xuan-ib-minimal-prepare.test.mjs
+
       - name: Run the script test suite
         if: ${{ github.event.pull_request.draft == false }}
         shell: bash

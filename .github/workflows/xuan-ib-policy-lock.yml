@@ -59,6 +59,7 @@ jobs:
           protected_re="${protected_re}|^scripts/(xuan-ib-git-identity-preflight|xuan-ib-source-adapter|xuan-ib-manual-consent|xuan-ib-manual-consent-integration|xuan-ib-order-view)\.(mjs|test\.mjs)$"
           protected_re="${protected_re}|^claude/xuan-ib-account-association[^/]*\.(json|md)$|^scripts/(xuan-ib-account-association|xuan-ib-account-association-publication|xuan-ib-account-association-integration)\.(mjs|test\.mjs)$"
           protected_re="${protected_re}|^scripts/(xuan-ib-association-test-fixture|xuan-ib-association-sources)\.(mjs|test\.mjs)$"
+          protected_re="${protected_re}|^scripts/(xuan-ib-source-capture|xuan-ib-hook-response|xuan-ib-source-hook|xuan-ib-minimal-report|xuan-ib-minimal-prepare)\.(mjs|test\.mjs)$"
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
             head_sha='${{ github.event.pull_request.head.sha }}'

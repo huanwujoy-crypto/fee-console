@@ -28,6 +28,206 @@ Those are separate maintenance/AM work, with original dates still disclosed.
 
 ## Input contract
 
+### Owner-approved minimal first trial (2026-09-05)
+
+For the separately activated **adhoc** first trial only, the owner approved a
+narrower useful display: current direct IB NAV, book cash, holdings and orders;
+immutable historic decisions/receipts and the original dated ABC comparison.
+Unsupported risk, four-bucket/classification and replenishment calculations
+are explicitly unavailable. Do not label book cash as spendable cash or deduct
+an unverified CALL reserve. This overrides the full derived-display scope above
+for this trial only, not the 5 IB / 9 Sharesight evidence requirements, account
+association approval, publication checks or existing AM/PM schedules.
+
+`xuan-ib-minimal-report.mjs` creates the view deterministically, rather than
+asking the author to transcribe numbers or compose a full report. It requires
+USD account-summary currency and the single `balances` row with
+`currency: BASE`, taking that row's actual `stock_market_value`. Summary does
+not supply this field; do not create it there. The BASE aggregate is not the
+separate USD component row. Never sum BASE and per-currency rows, infer FX
+direction, or substitute gross exposure or NAV minus cash. The stock-value
+KPI uses the balances read time; the holdings note keeps that time separately
+from the position-row read time. Native position labels
+stay verbatim and are not represented as verified tickers/venues. Foreign
+currency rows retain native price/currency/quantity with USD value null; no
+assumed FX direction or fabricated reconciliation tolerance. Unknown daily
+change, order-price distance, market calendar and trigger classification must
+remain unknown. Current trades are counted, not called newly executed trades.
+
+The verified native nonempty LIMIT-order shape uses string prices/quantities,
+uppercase BUY/SELL and observed NEW/REPLACED status, with instrument information
+only in free-text descriptions. Render complete primary/secondary descriptions
+and original prices/total/filled/remaining quantities in a generic card table,
+buys then sells, retaining source order within each side. Do not populate the
+structured `rotation.orders` schema with invented symbol/currency/cancelReview.
+Label each limit as currency-unavailable; do not compute price distance, order
+age or cancellation advice. Order IDs/times are validated privately, not
+published. Unsupported shapes/enums, numeric strings, inconsistent quantities
+or overlong untruncated descriptions stop explicitly. Missing/duplicate BASE
+or an unverified base currency likewise stops. Offline examples are not live
+source acceptance.
+
+### Capture and single-command preparation
+
+Use a fresh existing **0700 directory outside every Git ancestor**, with 0600
+files. A private temporary directory in the cloud is suitable for this one
+run's evidence; it does not replace the persistent manual-consent store. Never
+reopen an old journal or use old diagnostic reads as a new trial's source.
+
+1. Initialize the real journal at entry and complete bootstrap/identity check
+   as below. For the recurring pilot, run the freshly fetched main association
+   `check` after bootstrap and before either financial-read stage, writing its
+   receipt to the new directory's `association.json`. Policy must already be
+   active through its separate approved release; this helper cannot activate it.
+2. One owner starts the source stages and records their finishes. For each real
+   connector call, run the following `begin` immediately before the call and
+   `finish` after the complete native JSON response is available privately:
+
+   ```text
+   node scripts/xuan-ib-source-capture.mjs begin PRIVATE_DIR SOURCEKEY --journal JOURNAL
+   node scripts/xuan-ib-source-capture.mjs finish PRIVATE_DIR SOURCEKEY RAW_JSON_FILE --journal JOURNAL
+   ```
+
+   Keys are `ib.accountSummary`, `ib.balances`, `ib.positions`, `ib.orders`,
+   `ib.trades`, or `sharesight.PORTFOLIO_ID` for the nine required registry IDs.
+   Sharesight uses its existing performance `result.data.report` shell, not a
+   substituted holdings response. Preserve original native JSON: do not type
+   selected values back into a synthetic response. Unknown transport wrappers,
+   missing private result files or unavailable export capability stop this
+   path; the capture command does not itself call or extract connector tools.
+   Preserve original tool transcripts as provenance. Capture hashes/timestamps
+   are local integrity records, not independent proof the tool actually ran.
+3. After both source stages finish successfully, assemble exact 5+9 receipts:
+
+   ```text
+   node scripts/xuan-ib-source-capture.mjs assemble PRIVATE_DIR --journal JOURNAL --previous-source-sha SHA --data-date YYYY-MM-DD
+   node scripts/xuan-ib-minimal-prepare.mjs PRIVATE_DIR --journal JOURNAL
+   ```
+
+   Assemble creates immutable `input.json`. Prepare validates the original
+   `association.json` against freshly fetched main policy, checks local prior
+   HTML/meta/registry/rules against that pinned main, and records real validate,
+   derive and deterministic narrative stages. It writes `view.json` and
+   `sources.json`, then invokes the unchanged render/guard preparation path to
+   create `candidate.html`. No supplied production clock or policy override.
+   Existing outputs, failed/partial journals, missing sources or changed main
+   baselines stop; preserve evidence rather than editing it to retry.
+4. The result remains `prepared-not-published`. Follow the existing single-file
+   candidate, exact guard/Validate/Promote and public read-back steps below.
+   Keep every raw/capture/view/source/journal file out of Git. The first capture
+   implementation requires direct success from all sources; it does not invent
+   retries or fake a fallback. Existing separately supported source fallback
+   rules are unchanged, but are not automatically implemented in this builder.
+
+This sequence removes manual envelope/view drafting; it does **not** remove
+14 actual source reads, their private output handling, account checks or CI
+latency. Measure one real end-to-end run before claiming a ten-minute result.
+
+### Disabled-by-default hook bridge
+
+The one separately authorized public-only experiment on 2026-09-05 verified
+that a mid-session `PostToolUse` hook in the current Claude web runtime captured
+the actual `whats_new` result. It was a **JSON string**, not the parsed object.
+The temporary hook was removed, the original settings preserved, and the
+temporary session mode restored to Auto. This establishes one public response
+path only: it does not verify the five financial IB or nine Sharesight hook
+wrappers, large-output completeness, future session permissions or runtime.
+Large Sharesight tool results previously auto-saved by the harness likewise
+do not prove the hook receives every large response completely.
+
+`scripts/xuan-ib-hook-response.mjs` strictly accepts either a native object or
+one JSON-string layer, validates the existing source shell, and uses the
+repository's `fingerprint` for both the original `tool_response` value and its
+decoded raw value. These are canonical **value fingerprints**, not wire-byte
+hashes or independent provenance. For native objects the two hashes may be
+equal; for strings, whitespace/escapes remain significant in the transport
+hash. Duplicate keys, non-finite values (including JSON exponent overflow),
+excessive nesting/size, malformed JSON, errors and unknown wrappers stop.
+Parsing detects broken JSON, not every upstream partial/paginated response.
+Do not peel an unknown content wrapper or infer completeness from valid syntax.
+
+`scripts/xuan-ib-source-hook.mjs` mechanically connects an approved runtime hook
+to the existing begin/finish/assemble helpers. **This code does not install a
+hook, grant permission, activate policy, call an endpoint or publish anything.**
+Before a separately approved real run, obtain the current runtime session ID
+from an actual supported runtime event. Never substitute the cloud URL/session
+ID, an invented identifier or a value assumed to survive an environment restart.
+
+1. Keep the existing bootstrap, account-association and source-stage gates.
+   In the same owning runtime, immediately **before dispatch** arm each source
+   using a private 0600 binding file with exactly `toolName`,
+   `runtimeSessionId`, `toolInput`:
+
+   ```text
+   node scripts/xuan-ib-source-hook.mjs arm PRIVATE_DIR SOURCEKEY BINDING_JSON --journal JOURNAL
+   ```
+
+   Arm runs the original `begin` helper once and records a random nonce,
+   five-minute expiry, exact tool/input hash, run and begin-journal binding.
+   Do not run the separate source-capture `begin` for the same key. Arming can
+   be batched just before a bounded group of real calls; intervals then include
+   dispatch/queue overhead and are not exact per-API latency. Never arm after
+   dispatch or claim an older call that was already in flight.
+2. A separately approved temporary hook may invoke `capture PRIVATE_DIR
+   SOURCEKEY NONCE` with its real event on stdin, matching only the exact tool.
+   Use the same command for `PostToolUseFailure`; a failure consumes the arm
+   and cannot become an OK receipt. Several portfolio-specific handlers may
+   share the performance matcher; unrelated tool/input pairs are ignored.
+   The hook prints no stdout, changes no tool response/permission, and stores
+   only private response/binding evidence, never full inputs, transcript paths,
+   environment or raw failure diagnostics. Runtime ID and tool-use ID are not
+   broker account proof. Preserve normal tool permissions; a hook failure does
+   not retroactively cancel a completed read.
+3. An exclusive claim allows one result per source. Bounded valid-JSON unknown
+   wrappers are saved privately before rejection, with a separate static reason
+   code, so diagnosis need not repeat the read. Invalid/oversized event input
+   is rejected without persisting the full event. Failures/partial writes are
+   never repaired, overwritten or re-armed in the same run. Review evidence and
+   start a genuinely new run if authorized; do not manufacture success.
+4. One owner waits for all expected receipts, then closes source stages serially.
+   Hooks must not append the journal (its writer is not multi-process locked).
+   For hook-created results use the dedicated assembler below. The generic
+   assembler also enforces the same proof whenever a hook begin record or
+   artifact exists; deleting hook artifacts cannot turn these into ordinary
+   captures or bypass reconciliation:
+
+   ```text
+   node scripts/xuan-ib-source-hook.mjs assemble PRIVATE_DIR --journal JOURNAL --previous-source-sha SHA --data-date YYYY-MM-DD
+   node scripts/xuan-ib-minimal-prepare.mjs PRIVATE_DIR --journal JOURNAL
+   ```
+
+   It reconciles all fourteen arms, claims, original response values, decoded
+   files and final receipt hashes; mixed runtimes, reused tool-use IDs, rejected
+   or missing artifacts fail before `input.json`. The existing assembler then
+   independently checks source/run/journal/times. Keep every artifact outside
+   Git. Uninstall only the exact temporary configuration after the run and
+   verify original permission mode/settings; never overwrite concurrent edits.
+
+Runtime tool definitions were loaded and reviewed on 2026-09-05 without any
+financial read. The bridge permits the following **minimal** input variants:
+
+| Source | Exact tool name | Input |
+| --- | --- | --- |
+| IB summary | `mcp__Interactive_Brokers__get_account_summary` | `{}` |
+| IB balances | `mcp__Interactive_Brokers__get_account_balances` | `{}` |
+| IB positions | `mcp__Interactive_Brokers__get_account_positions` | `{}` |
+| IB orders | `mcp__Interactive_Brokers__get_account_orders` | `{}` |
+| IB trades | `mcp__Interactive_Brokers__get_account_trades` | `{}` or `period: TODAY` (UTC day, not since prior report) |
+| Nine registry portfolios | `mcp__Family_Portfolio_Sharesight__sharesight_get_performance` | `portfolio: ID-as-string`; optional null/valid dates, default `investment_type` grouping and false `include_sales` |
+
+The SS key is **portfolio**, not portfolio_id; the returned portfolio and
+report IDs must both match the registered source. Names/aliases are not used
+in this first bridge. Definitions confirm input syntax, not response shells,
+dates or pagination completeness. Defaults must match exactly what is armed;
+omitted fields and explicitly supplied defaults have different input hashes.
+
+The [official hooks reference](https://code.claude.com/docs/en/hooks) defines
+PostToolUse/Failure event fields. Real financial transport acceptance, approved
+activation, full timed publication and phone read-back remain separate gates.
+Keep the pilot inactive until those prerequisites are met. Do not retype raw
+financial values, turn fixtures into evidence, force output-cap spills, or route
+around a classifier/security refusal. Synthetic success is not live readiness.
+
 `scripts/xuan-ib-report-view.mjs` is a deterministic **presentation** renderer.
 It does not authenticate to a broker, derive/verify every financial calculation,
 or prove that caller-supplied numbers were genuinely fetched. Existing source

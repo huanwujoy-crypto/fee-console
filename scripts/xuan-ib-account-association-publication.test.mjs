@@ -13,9 +13,10 @@ import {
 } from './xuan-ib-account-association-publication.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_LABEL_V1, ETF_TAB_RADIO_V1 } from './xuan-ib-etf-pane.mjs';
+import { inactiveAssociationPolicy } from './xuan-ib-association-test-fixture.mjs';
 
 const repo = fileURLToPath(new URL('..', import.meta.url));
-const inactive = JSON.parse(fs.readFileSync(path.join(repo, 'claude/xuan-ib-account-association-v1.json'), 'utf8'));
+const inactive = inactiveAssociationPolicy();
 const fixedNow = Date.parse('2026-09-05T10:00:00.000Z');
 const sourceSha = 'a'.repeat(40), runId = 'b'.repeat(64);
 function snapshot(now = fixedNow, status = 'active') {
@@ -34,7 +35,7 @@ function fixture(now = fixedNow) {
 }
 const context = { now: fixedNow, previousSourceSha: sourceSha };
 
-test('default policy is inactive with no timer, preserving non-pilot report paths', () => {
+test('fixed inactive policy has no timer, preserving non-pilot report paths', () => {
   assert.equal(inactive.status, 'inactive');
   assert.equal(inactive.validFrom, null);
   assert.equal(inactive.expiresAt, null);
