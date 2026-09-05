@@ -8,6 +8,7 @@ import {prepareReport,runPrepareCli} from './xuan-ib-report-prepare.mjs';
 import {parseDecisionJson} from './xuan-ib-decision-menu.mjs';
 import {fingerprint,APPROVED_IB_ACCOUNT_ID} from './xuan-ib-run-manifest.mjs';
 import {initRunJournal,startJournalStage,finishJournalStage} from './xuan-ib-run-clock.mjs';
+import {inactiveAssociationSnapshot} from './xuan-ib-association-test-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const previousHtml=fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8');
@@ -19,7 +20,7 @@ const decisionState=parseDecisionJson(decisionJson,2_000_000);
 const dataDate=previousMeta.dataDate;
 const hktStamp=`${dataDate} 21:36–21:39 HKT`;
 const instant=`${dataDate}T21:38:00+08:00`;
-const context={previousHtml,previousMeta,policy,registry};
+const context={previousHtml,previousMeta,policy,registry,get associationSnapshot(){return inactiveAssociationSnapshot();}};
 const card=title=>({title,asOfHkt:hktStamp,lines:['合成安全测试；不是金融数据。'],columns:['项目','状态'],rows:[['合成项','仅测试']]});
 
 const view=()=>({schemaVersion:1,edition:'adhoc',dataDate,asOfHkt:hktStamp,

@@ -101,6 +101,13 @@ confirmed envelope to bypass the adapter.
 
 #### One manually requested ad-hoc run only
 
+The separate owner-approved implementation described in
+`claude/xuan-ib-account-association-v1.md` introduces an **inactive** recurring
+alternative. It does not extend or reuse the one-shot proof below. Initial
+activation requires fresh observation and separate exact-head approval. While
+that policy selects a recurring ad-hoc pilot, follow its pre-read check and
+publication receipt requirements instead of silently choosing this manual path.
+
 - No AM or scheduled PM use, no lasting connector authorization and no trading.
   A fresh manual request and fresh observation are required for any later run;
   this approval is not standing permission to issue additional proofs.

@@ -61,6 +61,10 @@ jobs:
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-ib-git-identity-preflight.test.mjs scripts/xuan-ib-source-adapter.test.mjs scripts/xuan-ib-manual-consent.test.mjs scripts/xuan-ib-manual-consent-integration.test.mjs scripts/xuan-ib-order-view.test.mjs
 
+      - name: Test inactive account-association pilot and independent publication gates
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/xuan-ib-account-association.test.mjs scripts/xuan-ib-account-association-publication.test.mjs scripts/xuan-ib-association-sources.test.mjs scripts/xuan-ib-account-association-integration.test.mjs
+
       - name: Run the script test suite
         if: ${{ github.event.pull_request.draft == false }}
         shell: bash

@@ -11,6 +11,7 @@ import { buildDecisionMenu } from './xuan-ib-decision-menu.mjs';
 import { prepareReport, runPrepareCli } from './xuan-ib-report-prepare.mjs';
 import { APPROVED_IB_ACCOUNT_ID, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { initRunJournal, startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
+import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Existing public history is read, never rewritten or copied into a new fixture.
@@ -19,7 +20,7 @@ const previousMeta=JSON.parse(fs.readFileSync(path.join(root,'xuan-ib/latest.met
 const policy=JSON.parse(fs.readFileSync(path.join(root,'claude/xuan-ib-policy-v2.json'),'utf8'));
 const priorTemplate=previousHtml.match(/<template id="xuan-ib-decision-state-v1" type="application\/json">([\s\S]*?)<\/template>/)[0];
 const priorState=JSON.parse(priorTemplate.replace(/^[^>]*>/,'').replace(/<\/template>$/,''));
-const context={previousHtml,previousMeta,policy};
+const context={previousHtml,previousMeta,policy,get associationSnapshot(){return inactiveAssociationSnapshot();}};
 const registry=JSON.parse(fs.readFileSync(path.join(root,'claude/xuan-ib-portfolio-registry.json'),'utf8'));
 const fixtureDate=previousMeta.dataDate;
 const stamp=`${fixtureDate} 21:36–21:39 HKT`;
@@ -43,8 +44,9 @@ function runGuard(html,reportDate=fixtureDate){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-compact-test-'));
   try{
     const candidate=path.join(dir,'candidate.html');fs.writeFileSync(candidate,html);
+    const associationFile=path.join(dir,'synthetic-association.json');fs.writeFileSync(associationFile,JSON.stringify(inactiveAssociationSnapshot()));
     return spawnSync(process.execPath,[path.join(root,'scripts/handover-guard.mjs'),candidate,reportDate,path.join(root,'xuan-ib/latest.html')],{
-      env:{...process.env,XUAN_IB_PREVIOUS_SOURCE_SHA:previousMeta.sourceSha,XUAN_IB_PREVIOUS_HTML_BLOB:previousMeta.htmlBlob,XUAN_IB_POLICY_V2_JSON:path.join(root,'claude/xuan-ib-policy-v2.json')},encoding:'utf8'});
+      env:{...process.env,XUAN_IB_PREVIOUS_SOURCE_SHA:previousMeta.sourceSha,XUAN_IB_PREVIOUS_HTML_BLOB:previousMeta.htmlBlob,XUAN_IB_POLICY_V2_JSON:path.join(root,'claude/xuan-ib-policy-v2.json'),XUAN_IB_ASSOCIATION_SNAPSHOT_JSON:associationFile},encoding:'utf8'});
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 }
 test('synthetic compact report passes unchanged trusted guard and native menu',()=>{
@@ -186,7 +188,7 @@ test('operational CLI writes guarded candidate once and completes all nine measu
     fs.writeFileSync(sourceFile,JSON.stringify(evidence()),{mode:0o600});
     initRunJournal(journalPath);
     for(const name of ['bootstrap','ib-read','sharesight-read','validate','derive','narrative']){startJournalStage(journalPath,name);finishJournalStage(journalPath,name);}
-    const args=[viewFile,sourceFile,output,'--journal',journalPath],result=runPrepareCli(args);
+    const args=[viewFile,sourceFile,output,'--journal',journalPath],result=runPrepareCli(args,{loadAssociationPolicy:()=>inactiveAssociationSnapshot()});
     assert.equal(result.status,'prepared-not-published');
     assert.equal(reportHtmlBlob(fs.readFileSync(output,'utf8')),result.htmlBlob);
     assert.equal(fs.statSync(output).mode&0o777,0o600);

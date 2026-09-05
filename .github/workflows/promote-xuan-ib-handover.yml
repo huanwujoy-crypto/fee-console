@@ -231,7 +231,10 @@ jobs:
               echo "Skipping $branch_name: its handover page cannot be materialized."
               continue
             fi
-            if ! XUAN_IB_PREVIOUS_SOURCE_SHA="$meta_source_sha" \
+            # Selection never inherits a runtime/candidate policy snapshot.
+            # Its trusted guard performs its own fresh current-main lookup.
+            if ! env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON \
+                XUAN_IB_PREVIOUS_SOURCE_SHA="$meta_source_sha" \
                 XUAN_IB_PREVIOUS_HTML_BLOB="$published_blob" \
                 node scripts/handover-guard.mjs \
                   "$RUNNER_TEMP/handover.html" "$data_date" xuan-ib/latest.html; then
@@ -304,16 +307,10 @@ jobs:
           fi
           cp xuan-ib/latest.html "$RUNNER_TEMP/previous-latest.html"
 
-          source_tag="refs/tags/xuan-ib-published/${DATA_DATE}-${CANDIDATE_SHA:0:12}"
-          remote_source_sha=$(git ls-remote origin "$source_tag" | awk '{print $1}')
-          if [[ -z "$remote_source_sha" ]]; then
-            git push origin "$CANDIDATE_SHA:$source_tag"
-          elif [[ "$remote_source_sha" != "$CANDIDATE_SHA" ]]; then
-            echo 'The immutable candidate source tag points at another commit.' >&2
-            exit 1
-          fi
-
           git show "$CANDIDATE_SHA:xuan-ib/index.html" > xuan-ib/latest.html
+          # Re-fetch through the guard after selection, immediately before
+          # creating publication metadata; expiry/revocation/hash changes fail.
+          env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON \
           XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" \
           XUAN_IB_PREVIOUS_HTML_BLOB="$previous_html_blob" \
             node scripts/handover-guard.mjs \
@@ -321,6 +318,15 @@ jobs:
           actual_blob=$(git hash-object xuan-ib/latest.html)
           if [[ "$actual_blob" != "$CANDIDATE_BLOB" ]]; then
             echo 'Candidate blob changed while preparing the publication.' >&2
+            exit 1
+          fi
+
+          source_tag="refs/tags/xuan-ib-published/${DATA_DATE}-${CANDIDATE_SHA:0:12}"
+          remote_source_sha=$(git ls-remote origin "$source_tag" | awk '{print $1}')
+          if [[ -z "$remote_source_sha" ]]; then
+            git push origin "$CANDIDATE_SHA:$source_tag"
+          elif [[ "$remote_source_sha" != "$CANDIDATE_SHA" ]]; then
+            echo 'The immutable candidate source tag points at another commit.' >&2
             exit 1
           fi
 

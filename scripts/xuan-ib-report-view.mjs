@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { renderCashPlan } from './xuan-ib-cash-plan.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { validateAssociationReceipt, renderAssociationReceipt, renderAssociationDisclosure } from './xuan-ib-account-association.mjs';
 import { groupOrders } from './xuan-ib-order-view.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
@@ -216,8 +217,12 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
+  if(associationReceipt){
+    if(manualAccountConsent)fail('account scope modes are mutually exclusive');
+    validateAssociationReceipt(associationReceipt,associationSnapshot,{edition:view.edition,previousSourceSha:previousMeta.sourceSha,runId:associationReceipt.runId});
+  }
   validateReportView(view);
   // This validates the exact previous pair and its existing machine state. A
   // mismatched/unparseable history is not grounds to bootstrap empty receipts.
@@ -277,7 +282,13 @@ ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join(
 ${fold('使用指南',`<ol class="brief-lines"><li><b>先看日期：</b>「已同步」是读取时间，不是数据时间；刷新只读取已发布报告。</li><li><b>怎么看：</b>概览看变化 → 风险看提醒 → 配置看现金参考。颜色不是买卖信号；小箭头可展开明细。</li><li><b>待办：</b>回应只记录意见，不自动交易；数字是待决定数量，琥珀色表示另有进度提醒。</li><li><b>ETF：</b>比较实际 A、协作方案 B、标普500基准 C；基线未建不排名，不保证收益。</li><li><b>临时报告：</b>确认后等待完成提示，勿重复点击；需已配置快捷指令，新手机可先只读查看。</li></ol><p class="sub">✓ 本期未触发 · ! 需留意 · ? 待核验 · — 未取得。所有报告、补仓参考及挂单提醒均不自动下单、撤单或转账。</p>`,false,'30 秒上手')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
 ${stateTemplate}\n${cash.template}\n</body></html>\n`;
+  // The public receipt contains only fixed aliases, hashes and timestamps.
+  // Full source envelopes and private account observations never enter HTML.
+  const output=associationReceipt?html
+    .replace('<body>','<body data-account-scope-basis="owner-attested-recurring-v1">')
+    .replace(renderClassificationDisclosure(),renderAssociationDisclosure(associationReceipt,associationSnapshot)+renderClassificationDisclosure())
+    .replace('</body>',renderAssociationReceipt(associationReceipt)+'\n</body>'):html;
   // Also prove that the rebuilt native decision menu remains functional.
-  buildDecisionMenu({html,meta:{...previousMeta,dataDate:view.dataDate,htmlBlob:reportHtmlBlob(html)}});
-  return html;
+  buildDecisionMenu({html:output,meta:{...previousMeta,dataDate:view.dataDate,htmlBlob:reportHtmlBlob(output)}});
+  return output;
 }

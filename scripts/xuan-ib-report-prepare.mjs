@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Existing read-only connector tools produce the view + source evidence.
-// This command ONLY prepares and guards a candidate. No reads of broker APIs,
-// git mutation, network, scheduler changes or publication claims.
+// Prepares and guards a candidate; the operational command freshly reads the
+// trusted policy via Git. No broker APIs, financial writes, scheduler changes
+// or publication claims. Pure API snapshots are test seams, not release proof.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +13,7 @@ import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
 import { assessSourceReadiness, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
 import { getManualConsentRunId, validateManualConsentProof, consumeManualConsent } from './xuan-ib-manual-consent.mjs';
+import { loadTrustedAssociationPolicy, validateAssociationReceipt } from './xuan-ib-account-association.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -83,12 +85,31 @@ function requireCompactUpstreamJournal(journalPath,readiness){
   }
 }
 
-export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,now=null}={}){
+export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null}={}){
   const required=['schemaVersion','edition','dataDate','previousSourceSha','sources'];
   if(!evidence || Object.keys(evidence).sort().join('|')!==required.sort().join('|') || evidence.schemaVersion!==1)fail('invalid source evidence envelope');
   if(evidence.dataDate!==viewInput.dataDate||evidence.edition!==viewInput.edition||evidence.previousSourceSha!==previousMeta.sourceSha)fail('view/evidence/prior publication mismatch');
   const manual=Object.hasOwn(evidence.sources?.ib||{},'manualConsent');
+  const association=evidence.sources?.ib?.accountAssociation??null;
+  if(manual&&association)fail('manual and recurring account association are mutually exclusive');
+  if(evidence.edition==='adhoc'&&!associationSnapshot)fail('current account association policy snapshot is required');
+  if(evidence.edition==='adhoc'&&associationSnapshot.policy.status!=='inactive'&&!association)fail('selected recurring policy requires account association receipt');
   let runId;
+  if(association){
+    if(!journalPath||manualConsentStore!==null)fail('recurring association needs its own journal, never the manual consent store');
+    runId=getManualConsentRunId(journalPath);
+    validateAssociationReceipt(association,associationSnapshot,{edition:evidence.edition,previousSourceSha:previousMeta.sourceSha,runId,now:now??Date.now()});
+    const snapshot=showRunJournal(journalPath),bootstrap=snapshot.stages.find(item=>item.name==='bootstrap');
+    if(!bootstrap||bootstrap.status!=='ok'||Date.parse(association.policyCheckedAt)<Date.parse(bootstrap.endedAt))fail('recurring policy check must follow completed bootstrap');
+    for(const [stageName,sources] of [['ib-read',Object.values(evidence.sources.ib).filter(item=>item&&typeof item==='object'&&Object.hasOwn(item,'readStartedAt'))],['sharesight-read',evidence.sources.sharesight]]){
+      const stage=snapshot.stages.find(item=>item.name===stageName);
+      if(!stage||Date.parse(stage.startedAt)<=Date.parse(association.policyCheckedAt))fail('financial reads must follow the recurring policy check');
+      for(const source of sources){
+        const endedAt=source?.asOf??source?.attemptCompletedAt;
+        if(!source||!Number.isFinite(Date.parse(source.readStartedAt))||!Number.isFinite(Date.parse(endedAt))||Date.parse(source.readStartedAt)<Date.parse(stage.startedAt)||Date.parse(endedAt)>Date.parse(stage.endedAt)||Date.parse(endedAt)>(now??Date.now()))fail('recurring source receipt outside journal read stage');
+      }
+    }
+  }
   if(manual){
     if(!journalPath||!manualConsentStore)fail('manual consent requires journal and private store');
     const snapshot=showRunJournal(journalPath);
@@ -102,7 +123,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
       if(!source||Date.parse(source.readStartedAt)<Date.parse(ibStage.startedAt)||Date.parse(source.asOf)>Date.parse(ibStage.endedAt)||Date.parse(source.asOf)>(now??Date.now()))fail('manual IB receipt outside journal read stage');
     }
   }else if(manualConsentStore!==null){fail('private manual store supplied for a native-account report');}
-  const readiness=assessSourceReadiness(evidence.sources,registry,{edition:evidence.edition,previousSourceSha:evidence.previousSourceSha,runId});
+  const readiness=assessSourceReadiness(evidence.sources,registry,{edition:evidence.edition,previousSourceSha:evidence.previousSourceSha,runId,associationSnapshot:association?associationSnapshot:undefined,now:now??Date.now()});
   if(readiness.blocked)fail(`publication blocked: ${readiness.issues.join(',')}`);
   requireCompactFreshSources(evidence,registry,readiness);
   const view=copy(viewInput);
@@ -128,25 +149,30 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     try{const value=fn();if(journalPath)finishJournalStage(journalPath,name);return value;}
     catch(error){if(journalPath)finishJournalStage(journalPath,name,{status:'failed',errorCode:'PREPARE_FAILED'});throw error;}
   };
-  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual}));
+  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot}));
   stage('guard',()=>{
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-'));
     try{
-      const candidate=path.join(temporary,'candidate.html'),prior=path.join(temporary,'previous.html'),policyFile=path.join(temporary,'policy.json');
+      const candidate=path.join(temporary,'candidate.html'),prior=path.join(temporary,'previous.html'),policyFile=path.join(temporary,'policy.json'),associationFile=path.join(temporary,'association.json');
       fs.writeFileSync(candidate,html,{mode:0o600});fs.writeFileSync(prior,previousHtml,{mode:0o600});fs.writeFileSync(policyFile,JSON.stringify(policy),{mode:0o600});
+      if(associationSnapshot)fs.writeFileSync(associationFile,JSON.stringify(associationSnapshot),{mode:0o600});
+      const guardEnv={...process.env,XUAN_IB_PREVIOUS_SOURCE_SHA:previousMeta.sourceSha,XUAN_IB_PREVIOUS_HTML_BLOB:previousMeta.htmlBlob,XUAN_IB_POLICY_V2_JSON:policyFile};
+      delete guardEnv.XUAN_IB_ASSOCIATION_SNAPSHOT_JSON;
+      if(associationSnapshot)guardEnv.XUAN_IB_ASSOCIATION_SNAPSHOT_JSON=associationFile;
       const checked=spawnSync(process.execPath,[path.join(root,'scripts/handover-guard.mjs'),candidate,evidence.dataDate,prior],{
         encoding:'utf8',timeout:30_000,maxBuffer:256_000,
-        env:{...process.env,XUAN_IB_PREVIOUS_SOURCE_SHA:previousMeta.sourceSha,XUAN_IB_PREVIOUS_HTML_BLOB:previousMeta.htmlBlob,XUAN_IB_POLICY_V2_JSON:policyFile}});
+        env:guardEnv});
       if(checked.status!==0)fail(`trusted guard failed: ${(checked.stderr||checked.stdout||checked.error?.message||'UNKNOWN').slice(0,1000)}`);
     }finally{fs.rmSync(temporary,{recursive:true,force:true});}
   });
   if(manual)validateManualConsentProof(evidence.sources.ib.manualConsent,{journalRunId:runId,
     previousSourceSha:previousMeta.sourceSha,edition:evidence.edition,requireUnexpired:true,now:now??Date.now()});
+  if(association)validateAssociationReceipt(association,associationSnapshot,{edition:evidence.edition,previousSourceSha:previousMeta.sourceSha,runId,now:now??Date.now()});
   return {html,result:{schemaVersion:1,status:'prepared-not-published',edition:view.edition,dataDate:view.dataDate,
     previousSourceSha:previousMeta.sourceSha,htmlBlob:reportHtmlBlob(html),viewFingerprint:fingerprint(view),sourceEvidenceFingerprint:fingerprint(evidence),degraded:readiness.degraded,issues:readiness.issues}};
 }
 
-export function runPrepareCli(args){
+export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociationPolicy}={}){
   if(args[0]==='preflight-text-retry'){
     if(args.length!==3)fail('Usage: preflight-text-retry BASE.json CANDIDATE.json');
     const baseline=read(args[1]),candidate=read(args[2]);
@@ -188,7 +214,9 @@ export function runPrepareCli(args){
   if(fs.existsSync(output))fail('output already exists; use a new staging path, then stage only validated candidate bytes');
   const prepared=prepareReport(read(viewFile),read(evidenceFile),{
     previousHtml:fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8'),previousMeta:read(path.join(root,'xuan-ib/latest.meta.json')),
-    policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath,manualConsentStore:manualConsentStore??null});
+    policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath,manualConsentStore:manualConsentStore??null,
+    // Never accept a candidate-selected snapshot path in the operational CLI.
+    associationSnapshot:read(evidenceFile).edition==='adhoc'?loadAssociationPolicy({cwd:root,requireActive:false}):null});
   if(journalPath)startJournalStage(journalPath,'candidate-prep');
   try{
     fs.writeFileSync(output,prepared.html,{flag:'wx',mode:0o600});
