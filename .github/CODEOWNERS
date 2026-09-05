@@ -55,6 +55,10 @@
 /scripts/xuan-ib-source-adapter.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-source-capture.mjs @huanwujoy-crypto
 /scripts/xuan-ib-source-capture.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-hook-response.mjs @huanwujoy-crypto
+/scripts/xuan-ib-hook-response.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-source-hook.mjs @huanwujoy-crypto
+/scripts/xuan-ib-source-hook.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-minimal-report.mjs @huanwujoy-crypto
 /scripts/xuan-ib-minimal-report.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-minimal-prepare.mjs @huanwujoy-crypto

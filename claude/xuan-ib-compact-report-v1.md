@@ -123,25 +123,110 @@ This sequence removes manual envelope/view drafting; it does **not** remove
 14 actual source reads, their private output handling, account checks or CI
 latency. Measure one real end-to-end run before claiming a ten-minute result.
 
-Readiness check on 2026-09-05 with the current permitted Claude model,
-Opus 4.8 / Max: large Sharesight results were observed auto-saved by the tool
-harness, but no supported exact-byte private-file capture for small inline IB
-results has been verified. The capture helper only consumes an existing file;
-it does not bridge that missing capability. Keep the real pilot inactive until
-this source-transfer gap is resolved through a supported path. Do not retype
-financial values, treat a unit fixture as real raw, manufacture hashes, force
-an output-cap spill, or route around a classifier/security refusal. A successful
-read-only connector diagnostic does not establish automatic producer readiness.
+### Disabled-by-default hook bridge
 
-The current [official hooks reference](https://code.claude.com/docs/en/hooks)
-documents `PostToolUse` with `tool_response`, including MCP tools and web
-sessions. This is a potential supported capture boundary, not proof it is
-configured or works in this environment. No hook is installed or enabled by
-this maintenance change. Any follow-up starts with a separately authorized,
-non-account-data test and must preserve normal permission checks, original
-tool results and private-only storage. The earlier reported classifier refusal
-was on a timestamp append; its cause and wider scope are unknown, not evidence
-of a general financial-export prohibition or permission to bypass it.
+The one separately authorized public-only experiment on 2026-09-05 verified
+that a mid-session `PostToolUse` hook in the current Claude web runtime captured
+the actual `whats_new` result. It was a **JSON string**, not the parsed object.
+The temporary hook was removed, the original settings preserved, and the
+temporary session mode restored to Auto. This establishes one public response
+path only: it does not verify the five financial IB or nine Sharesight hook
+wrappers, large-output completeness, future session permissions or runtime.
+Large Sharesight tool results previously auto-saved by the harness likewise
+do not prove the hook receives every large response completely.
+
+`scripts/xuan-ib-hook-response.mjs` strictly accepts either a native object or
+one JSON-string layer, validates the existing source shell, and uses the
+repository's `fingerprint` for both the original `tool_response` value and its
+decoded raw value. These are canonical **value fingerprints**, not wire-byte
+hashes or independent provenance. For native objects the two hashes may be
+equal; for strings, whitespace/escapes remain significant in the transport
+hash. Duplicate keys, non-finite values (including JSON exponent overflow),
+excessive nesting/size, malformed JSON, errors and unknown wrappers stop.
+Parsing detects broken JSON, not every upstream partial/paginated response.
+Do not peel an unknown content wrapper or infer completeness from valid syntax.
+
+`scripts/xuan-ib-source-hook.mjs` mechanically connects an approved runtime hook
+to the existing begin/finish/assemble helpers. **This code does not install a
+hook, grant permission, activate policy, call an endpoint or publish anything.**
+Before a separately approved real run, obtain the current runtime session ID
+from an actual supported runtime event. Never substitute the cloud URL/session
+ID, an invented identifier or a value assumed to survive an environment restart.
+
+1. Keep the existing bootstrap, account-association and source-stage gates.
+   In the same owning runtime, immediately **before dispatch** arm each source
+   using a private 0600 binding file with exactly `toolName`,
+   `runtimeSessionId`, `toolInput`:
+
+   ```text
+   node scripts/xuan-ib-source-hook.mjs arm PRIVATE_DIR SOURCEKEY BINDING_JSON --journal JOURNAL
+   ```
+
+   Arm runs the original `begin` helper once and records a random nonce,
+   five-minute expiry, exact tool/input hash, run and begin-journal binding.
+   Do not run the separate source-capture `begin` for the same key. Arming can
+   be batched just before a bounded group of real calls; intervals then include
+   dispatch/queue overhead and are not exact per-API latency. Never arm after
+   dispatch or claim an older call that was already in flight.
+2. A separately approved temporary hook may invoke `capture PRIVATE_DIR
+   SOURCEKEY NONCE` with its real event on stdin, matching only the exact tool.
+   Use the same command for `PostToolUseFailure`; a failure consumes the arm
+   and cannot become an OK receipt. Several portfolio-specific handlers may
+   share the performance matcher; unrelated tool/input pairs are ignored.
+   The hook prints no stdout, changes no tool response/permission, and stores
+   only private response/binding evidence, never full inputs, transcript paths,
+   environment or raw failure diagnostics. Runtime ID and tool-use ID are not
+   broker account proof. Preserve normal tool permissions; a hook failure does
+   not retroactively cancel a completed read.
+3. An exclusive claim allows one result per source. Bounded valid-JSON unknown
+   wrappers are saved privately before rejection, with a separate static reason
+   code, so diagnosis need not repeat the read. Invalid/oversized event input
+   is rejected without persisting the full event. Failures/partial writes are
+   never repaired, overwritten or re-armed in the same run. Review evidence and
+   start a genuinely new run if authorized; do not manufacture success.
+4. One owner waits for all expected receipts, then closes source stages serially.
+   Hooks must not append the journal (its writer is not multi-process locked).
+   For hook-created results use the dedicated assembler below. The generic
+   assembler also enforces the same proof whenever a hook begin record or
+   artifact exists; deleting hook artifacts cannot turn these into ordinary
+   captures or bypass reconciliation:
+
+   ```text
+   node scripts/xuan-ib-source-hook.mjs assemble PRIVATE_DIR --journal JOURNAL --previous-source-sha SHA --data-date YYYY-MM-DD
+   node scripts/xuan-ib-minimal-prepare.mjs PRIVATE_DIR --journal JOURNAL
+   ```
+
+   It reconciles all fourteen arms, claims, original response values, decoded
+   files and final receipt hashes; mixed runtimes, reused tool-use IDs, rejected
+   or missing artifacts fail before `input.json`. The existing assembler then
+   independently checks source/run/journal/times. Keep every artifact outside
+   Git. Uninstall only the exact temporary configuration after the run and
+   verify original permission mode/settings; never overwrite concurrent edits.
+
+Runtime tool definitions were loaded and reviewed on 2026-09-05 without any
+financial read. The bridge permits the following **minimal** input variants:
+
+| Source | Exact tool name | Input |
+| --- | --- | --- |
+| IB summary | `mcp__Interactive_Brokers__get_account_summary` | `{}` |
+| IB balances | `mcp__Interactive_Brokers__get_account_balances` | `{}` |
+| IB positions | `mcp__Interactive_Brokers__get_account_positions` | `{}` |
+| IB orders | `mcp__Interactive_Brokers__get_account_orders` | `{}` |
+| IB trades | `mcp__Interactive_Brokers__get_account_trades` | `{}` or `period: TODAY` (UTC day, not since prior report) |
+| Nine registry portfolios | `mcp__Family_Portfolio_Sharesight__sharesight_get_performance` | `portfolio: ID-as-string`; optional null/valid dates, default `investment_type` grouping and false `include_sales` |
+
+The SS key is **portfolio**, not portfolio_id; the returned portfolio and
+report IDs must both match the registered source. Names/aliases are not used
+in this first bridge. Definitions confirm input syntax, not response shells,
+dates or pagination completeness. Defaults must match exactly what is armed;
+omitted fields and explicitly supplied defaults have different input hashes.
+
+The [official hooks reference](https://code.claude.com/docs/en/hooks) defines
+PostToolUse/Failure event fields. Real financial transport acceptance, approved
+activation, full timed publication and phone read-back remain separate gates.
+Keep the pilot inactive until those prerequisites are met. Do not retype raw
+financial values, turn fixtures into evidence, force output-cap spills, or route
+around a classifier/security refusal. Synthetic success is not live readiness.
 
 `scripts/xuan-ib-report-view.mjs` is a deterministic **presentation** renderer.
 It does not authenticate to a broker, derive/verify every financial calculation,

@@ -12,6 +12,9 @@ import { IB_ENDPOINTS, fingerprint, sha256Hex, validateRegistry } from './xuan-i
 import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
 import { showRunJournal } from './xuan-ib-run-clock.mjs';
 import { unwrapSource } from './xuan-ib-source-adapter.mjs';
+// The hook module calls begin/finish only at runtime (no initialization work).
+// This shared verifier is mandatory even through the generic assembly entry.
+import { verifyHookSourceArtifacts } from './xuan-ib-source-hook.mjs';
 
 const MAX_RAW_BYTES = 4 * 1024 * 1024;
 const MAX_CAPTURE_BYTES = 6 * 1024 * 1024;
@@ -157,7 +160,7 @@ function readBegin(dir, key, journalPath, state) {
   const bytes = readPrivate(path.join(dir, `${key}.begin.json`), MAX_JOURNAL_BYTES), begin = strict(bytes);
   exact(begin, beginKeys);
   const event = state.events.find(item => item.type === 'stage-start' && item.stage === sourceStage(key));
-  if (begin.schemaVersion !== 1 || begin.kind !== 'source-capture-begin-v1' || begin.sourceKey !== key
+  if (begin.schemaVersion !== 1 || !['source-capture-begin-v1', 'source-hook-begin-v1'].includes(begin.kind) || begin.sourceKey !== key
     || begin.runId !== state.runId || begin.journalPath !== journalPath || begin.stage !== sourceStage(key)
     || !event || begin.stageStartFingerprint !== fingerprint(event) || instant(begin.startedAt) < event.wallMs) fail('BEGIN_RUN_BINDING_MISMATCH');
   verifyActivePrefix(begin, state.bytes, begin.stage, begin.stageStartFingerprint);
@@ -174,11 +177,22 @@ function validateRaw(key, raw) {
   return failed;
 }
 
-export function beginSourceCapture(dir, key, { journalPath, wallNow = () => Date.now() } = {}) {
+// Read-only preflight for the adjacent hook bridge. It cannot create or repair
+// a begin record, alter the run journal, or authorize a financial read.
+export function inspectSourceCaptureBegin(dir, key, { journalPath, wallNow = () => Date.now() } = {}) {
+  sourceStage(key); dir = privatePath(dir, { directory: true }); journalPath = privatePath(journalPath);
+  const state = journalState(journalPath), { begin, bytes } = readBegin(dir, key, journalPath, state);
+  const now = wallNow(); utc(now); activeStage(state, sourceStage(key), now);
+  if (now < instant(begin.startedAt)) fail('CAPTURE_CLOCK_MOVED_BACKWARDS');
+  return { begin, beginFingerprint: sha256Hex(bytes) };
+}
+
+export function beginSourceCapture(dir, key, { journalPath, wallNow = () => Date.now(), hookCapture = false } = {}) {
+  if (typeof hookCapture !== 'boolean') fail('INVALID_CAPTURE_MODE');
   sourceStage(key); dir = privatePath(dir, { directory: true }); journalPath = privatePath(journalPath);
   const state = journalState(journalPath), now = wallNow(), startedAt = utc(now);
   const event = activeStage(state, sourceStage(key), now);
-  const begin = { schemaVersion: 1, kind: 'source-capture-begin-v1', sourceKey: key, runId: state.runId,
+  const begin = { schemaVersion: 1, kind: hookCapture ? 'source-hook-begin-v1' : 'source-capture-begin-v1', sourceKey: key, runId: state.runId,
     journalPath, stage: sourceStage(key), stageStartFingerprint: fingerprint(event), startedAt,
     ...prefixFields(state.bytes) };
   return { status: 'begun', sourceKey: key, path: writeFresh(dir, `${key}.begin.json`, begin), runId: state.runId };
@@ -201,6 +215,11 @@ export function finishSourceCapture(dir, key, rawFile, { journalPath, wallNow = 
 
 export function assembleSourceCaptures(dir, { journalPath, previousSourceSha, dataDate, wallNow = () => Date.now() } = {}) {
   dir = privatePath(dir, { directory: true }); journalPath = privatePath(journalPath);
+  const hasHookBegin = CAPTURE_SOURCE_KEYS.some(key => {
+    const file = path.join(dir, `${key}.begin.json`);
+    return fs.existsSync(file) && strict(readPrivate(file, MAX_JOURNAL_BYTES)).kind === 'source-hook-begin-v1';
+  });
+  if (hasHookBegin || fs.readdirSync(dir).some(name => name.includes('.hook-'))) verifyHookSourceArtifacts(dir, { journalPath });
   if (typeof previousSourceSha !== 'string' || !/^[a-f0-9]{40}$/.test(previousSourceSha)) fail('INVALID_PREVIOUS_SOURCE_SHA');
   if (typeof dataDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dataDate)
     || !Number.isFinite(Date.parse(dataDate)) || new Date(dataDate).toISOString().slice(0, 10) !== dataDate) fail('INVALID_DATA_DATE');
