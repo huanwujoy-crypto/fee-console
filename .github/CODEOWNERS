@@ -10,6 +10,7 @@
 /.claude/rules/xuan-ib-handover.md @huanwujoy-crypto
 /claude/nightly-handover-spec-ADDENDUM-v916.md @huanwujoy-crypto
 /claude/xuan-ib-runtime-contract-v1.md @huanwujoy-crypto
+/claude/xuan-ib-compact-report-v1.md @huanwujoy-crypto
 /claude/xuan-ib-cash-first-plan-v1.md @huanwujoy-crypto
 /claude/xuan-ib-etf-abc-v1.md @huanwujoy-crypto
 /claude/xuan-ib-report-schedule-HKT-v1.md @huanwujoy-crypto
@@ -41,6 +42,14 @@
 /scripts/xuan-ib-etf-trend-view.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-summary-transport.mjs @huanwujoy-crypto
 /scripts/xuan-ib-etf-summary-transport.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-report-view.mjs @huanwujoy-crypto
+/scripts/xuan-ib-report-view.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-report-prepare.mjs @huanwujoy-crypto
+/scripts/xuan-ib-report-prepare-safety.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-run-clock.mjs @huanwujoy-crypto
+/scripts/xuan-ib-run-clock.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-run-manifest.mjs @huanwujoy-crypto
+/scripts/xuan-ib-run-manifest.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-report-schedule.mjs @huanwujoy-crypto
 /scripts/xuan-ib-publish-health.mjs @huanwujoy-crypto
 /scripts/xuan-ib-publish-health.test.mjs @huanwujoy-crypto

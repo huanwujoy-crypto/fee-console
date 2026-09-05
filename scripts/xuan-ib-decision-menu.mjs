@@ -174,11 +174,13 @@ function parseReportTree(html) {
     const closing = token.match(/^<\/([a-z][a-z0-9-]*)\s*>$/i);
     if (closing) {
       if (stack.length < 2 || stack.at(-1).tag !== closing[1].toLowerCase()) fail('unbalanced HTML tags; add explicit menu structure');
+      stack.at(-1).closeStart = start;
+      stack.at(-1).end = index;
       stack.pop(); continue;
     }
     const match = token.match(/^<([a-z][a-z0-9-]*)([\s\S]*?)\/?\s*>$/i);
     if (!match) fail('unsupported HTML tag');
-    const node = { tag: match[1].toLowerCase(), attrs: Object.create(null), children: [] };
+    const node = { tag: match[1].toLowerCase(), attrs: Object.create(null), children: [], start, openEnd: index };
     let rest = match[2];
     while (rest.trim()) {
       const attribute = rest.match(/^\s+([^\s="'<>`/]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>`]+)))?/);
@@ -194,6 +196,8 @@ function parseReportTree(html) {
       const end = close.exec(html);
       if (!end) fail(`unclosed ${node.tag}`);
       node.children.push({ tag: '#text', text: html.slice(index, end.index), parent: node });
+      node.closeStart = end.index;
+      node.end = close.lastIndex;
       index = close.lastIndex; continue;
     }
     if (!VOID_TAGS.has(node.tag)) {
@@ -283,6 +287,22 @@ function verifiedReport(input) {
     cards.set(item.decisionId, card);
   }
   return { meta, state, cards };
+}
+
+/** Exact visible card fragments from the SAME validated tree as the menu.
+ * Comments/script strings cannot impersonate cards. No opinion is rewritten.
+ */
+export function extractPairedDecisionCardFragments(input) {
+  const { cards } = verifiedReport(input);
+  return new Map([...cards].map(([decisionId, card]) => {
+    const summary = single(card.children.filter(node => node.tag === 'summary'), `summary ${decisionId}`);
+    if (!Number.isInteger(summary.end) || !Number.isInteger(card.closeStart)
+        || summary.end > card.closeStart) fail('invalid decision card bounds');
+    return [decisionId, {
+      prefix: input.html.slice(card.start, summary.end),
+      body: input.html.slice(summary.end, card.closeStart)
+    }];
+  }));
 }
 
 /** Build a read-only manifest from the canonical paired publication. */

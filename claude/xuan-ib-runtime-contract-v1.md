@@ -160,3 +160,16 @@ For at least two successful reports, retain the manifest in the Claude project
 archive and compare its measured critical path with GitHub workflow timestamps.
 Only after those samples should the manifest become a mandatory guard input or
 the deterministic renderer replace the legacy authoring path.
+
+## 7. Opt-in compact authoring pilot
+
+The maintenance helpers in `claude/xuan-ib-compact-report-v1.md` make an
+explicitly requested PM/ad-hoc pilot available. They do not activate a Routine,
+replace the default authoring path, change AM, or satisfy the acceptance above.
+The pilot supplies strict public view input, deterministic presentation and an
+immediately appended timing journal; it still uses existing read-only tools,
+normalization, financial calculations and publication checks. Its initial
+source-availability rules are deliberately stricter than the general fallback
+policy: do not silently relax them to fit a deadline. Read the pilot contract
+before using its prepare command. Do not fabricate missing source evidence,
+stage timing, an owner approval or a successful public read-back.
