@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
-import { renderReport, reportHtmlBlob } from './xuan-ib-report-view.mjs';
+import { renderReport, reportHtmlBlob, validateReportView } from './xuan-ib-report-view.mjs';
 import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
 import { assessSourceReadiness, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
@@ -124,6 +124,36 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
 }
 
 export function runPrepareCli(args){
+  if(args[0]==='preflight-text-retry'){
+    if(args.length!==3)fail('Usage: preflight-text-retry BASE.json CANDIDATE.json');
+    const baseline=read(args[1]),candidate=read(args[2]);
+    // No amount, source, order, decision, brief or timestamp may drift while
+    // repairing the narrative that failed its first local draft check.
+    const limits={summary:150,observations:200,notes:400},fields=Object.keys(limits);
+    const nonText=value=>Object.fromEntries(Object.entries(value).filter(([key])=>!fields.includes(key)));
+    if(fingerprint(nonText(baseline))!==fingerprint(nonText(candidate)))fail('TEXT_RETRY_CHANGED_NON_TEXT');
+    let changed=0;
+    for(const field of fields){
+      if(!Array.isArray(baseline[field])||!Array.isArray(candidate[field])||baseline[field].length!==candidate[field].length)fail('TEXT_RETRY_CHANGED_STRUCTURE');
+      baseline[field].forEach((value,index)=>{
+        const next=candidate[field][index];
+        if(value!==next){
+          if(typeof value!=='string'||typeof next!=='string'||[...value].length<=limits[field]||[...next].length>=[...value].length)fail('TEXT_RETRY_NOT_OVERLONG_OR_NOT_SHORTER');
+          changed+=1;
+        }
+      });
+    }
+    if(!changed)fail('TEXT_RETRY_NO_CHANGE');
+    validateReportView(candidate);
+    return {status:'valid-text-only-not-prepared',changed};
+  }
+  // Draft checks never finish/reopen a journal stage or refetch any source.
+  // Keep narrative active until this strict local check succeeds.
+  if(args[0]==='preflight-view'){
+    if(args.length!==2)fail('Usage: preflight-view VIEW.json');
+    validateReportView(read(args[1]));
+    return {status:'valid-not-prepared'};
+  }
   // Pure API rendering remains usable in unit tests. The operational command
   // may never omit the journal and then claim a timed pilot run.
   if(args.length!==5)fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required)');

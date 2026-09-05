@@ -48,6 +48,12 @@
 /scripts/xuan-ib-report-prepare-safety.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-run-clock.mjs @huanwujoy-crypto
 /scripts/xuan-ib-run-clock.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-git-identity-preflight.mjs @huanwujoy-crypto
+/scripts/xuan-ib-git-identity-preflight.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-source-adapter.mjs @huanwujoy-crypto
+/scripts/xuan-ib-source-adapter.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-order-view.mjs @huanwujoy-crypto
+/scripts/xuan-ib-order-view.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-run-manifest.mjs @huanwujoy-crypto
 /scripts/xuan-ib-run-manifest.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-report-schedule.mjs @huanwujoy-crypto

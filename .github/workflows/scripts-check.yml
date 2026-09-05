@@ -57,6 +57,10 @@ jobs:
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-ib-progress.test.mjs scripts/xuan-ib-classification-audit.test.mjs scripts/xuan-ib-classification-disclosure.test.mjs scripts/xuan-ib-classification-correction.test.mjs scripts/xuan-ib-cash-plan.test.mjs scripts/xuan-ib-cash-plan-correction.test.mjs scripts/xuan-ib-cash-identity.test.mjs scripts/xuan-ib-mrvl-t1.test.mjs scripts/xuan-ib-policy-page.test.mjs scripts/xuan-ib-etf-pane.test.mjs scripts/xuan-ib-etf-abc.test.mjs scripts/xuan-ib-etf-ledger.test.mjs scripts/xuan-ib-etf-ledger-leak-guard.test.mjs scripts/xuan-ib-etf-trend.test.mjs scripts/xuan-ib-etf-trend-envelope.test.mjs scripts/xuan-ib-etf-trend-build.test.mjs scripts/xuan-ib-etf-trend-view.test.mjs scripts/xuan-ib-etf-summary-transport.test.mjs
 
+      - name: Test compact pilot source identity and display hardening
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/xuan-ib-git-identity-preflight.test.mjs scripts/xuan-ib-source-adapter.test.mjs scripts/xuan-ib-order-view.test.mjs
+
       - name: Run the script test suite
         if: ${{ github.event.pull_request.draft == false }}
         shell: bash
