@@ -28,6 +28,121 @@ Those are separate maintenance/AM work, with original dates still disclosed.
 
 ## Input contract
 
+### Owner-approved minimal first trial (2026-09-05)
+
+For the separately activated **adhoc** first trial only, the owner approved a
+narrower useful display: current direct IB NAV, book cash, holdings and orders;
+immutable historic decisions/receipts and the original dated ABC comparison.
+Unsupported risk, four-bucket/classification and replenishment calculations
+are explicitly unavailable. Do not label book cash as spendable cash or deduct
+an unverified CALL reserve. This overrides the full derived-display scope above
+for this trial only, not the 5 IB / 9 Sharesight evidence requirements, account
+association approval, publication checks or existing AM/PM schedules.
+
+`xuan-ib-minimal-report.mjs` creates the view deterministically, rather than
+asking the author to transcribe numbers or compose a full report. It requires
+USD account-summary currency and the single `balances` row with
+`currency: BASE`, taking that row's actual `stock_market_value`. Summary does
+not supply this field; do not create it there. The BASE aggregate is not the
+separate USD component row. Never sum BASE and per-currency rows, infer FX
+direction, or substitute gross exposure or NAV minus cash. The stock-value
+KPI uses the balances read time; the holdings note keeps that time separately
+from the position-row read time. Native position labels
+stay verbatim and are not represented as verified tickers/venues. Foreign
+currency rows retain native price/currency/quantity with USD value null; no
+assumed FX direction or fabricated reconciliation tolerance. Unknown daily
+change, order-price distance, market calendar and trigger classification must
+remain unknown. Current trades are counted, not called newly executed trades.
+
+The verified native nonempty LIMIT-order shape uses string prices/quantities,
+uppercase BUY/SELL and observed NEW/REPLACED status, with instrument information
+only in free-text descriptions. Render complete primary/secondary descriptions
+and original prices/total/filled/remaining quantities in a generic card table,
+buys then sells, retaining source order within each side. Do not populate the
+structured `rotation.orders` schema with invented symbol/currency/cancelReview.
+Label each limit as currency-unavailable; do not compute price distance, order
+age or cancellation advice. Order IDs/times are validated privately, not
+published. Unsupported shapes/enums, numeric strings, inconsistent quantities
+or overlong untruncated descriptions stop explicitly. Missing/duplicate BASE
+or an unverified base currency likewise stops. Offline examples are not live
+source acceptance.
+
+### Capture and single-command preparation
+
+Use a fresh existing **0700 directory outside every Git ancestor**, with 0600
+files. A private temporary directory in the cloud is suitable for this one
+run's evidence; it does not replace the persistent manual-consent store. Never
+reopen an old journal or use old diagnostic reads as a new trial's source.
+
+1. Initialize the real journal at entry and complete bootstrap/identity check
+   as below. For the recurring pilot, run the freshly fetched main association
+   `check` after bootstrap and before either financial-read stage, writing its
+   receipt to the new directory's `association.json`. Policy must already be
+   active through its separate approved release; this helper cannot activate it.
+2. One owner starts the source stages and records their finishes. For each real
+   connector call, run the following `begin` immediately before the call and
+   `finish` after the complete native JSON response is available privately:
+
+   ```text
+   node scripts/xuan-ib-source-capture.mjs begin PRIVATE_DIR SOURCEKEY --journal JOURNAL
+   node scripts/xuan-ib-source-capture.mjs finish PRIVATE_DIR SOURCEKEY RAW_JSON_FILE --journal JOURNAL
+   ```
+
+   Keys are `ib.accountSummary`, `ib.balances`, `ib.positions`, `ib.orders`,
+   `ib.trades`, or `sharesight.PORTFOLIO_ID` for the nine required registry IDs.
+   Sharesight uses its existing performance `result.data.report` shell, not a
+   substituted holdings response. Preserve original native JSON: do not type
+   selected values back into a synthetic response. Unknown transport wrappers,
+   missing private result files or unavailable export capability stop this
+   path; the capture command does not itself call or extract connector tools.
+   Preserve original tool transcripts as provenance. Capture hashes/timestamps
+   are local integrity records, not independent proof the tool actually ran.
+3. After both source stages finish successfully, assemble exact 5+9 receipts:
+
+   ```text
+   node scripts/xuan-ib-source-capture.mjs assemble PRIVATE_DIR --journal JOURNAL --previous-source-sha SHA --data-date YYYY-MM-DD
+   node scripts/xuan-ib-minimal-prepare.mjs PRIVATE_DIR --journal JOURNAL
+   ```
+
+   Assemble creates immutable `input.json`. Prepare validates the original
+   `association.json` against freshly fetched main policy, checks local prior
+   HTML/meta/registry/rules against that pinned main, and records real validate,
+   derive and deterministic narrative stages. It writes `view.json` and
+   `sources.json`, then invokes the unchanged render/guard preparation path to
+   create `candidate.html`. No supplied production clock or policy override.
+   Existing outputs, failed/partial journals, missing sources or changed main
+   baselines stop; preserve evidence rather than editing it to retry.
+4. The result remains `prepared-not-published`. Follow the existing single-file
+   candidate, exact guard/Validate/Promote and public read-back steps below.
+   Keep every raw/capture/view/source/journal file out of Git. The first capture
+   implementation requires direct success from all sources; it does not invent
+   retries or fake a fallback. Existing separately supported source fallback
+   rules are unchanged, but are not automatically implemented in this builder.
+
+This sequence removes manual envelope/view drafting; it does **not** remove
+14 actual source reads, their private output handling, account checks or CI
+latency. Measure one real end-to-end run before claiming a ten-minute result.
+
+Readiness check on 2026-09-05 with the current permitted Claude model,
+Opus 4.8 / Max: large Sharesight results were observed auto-saved by the tool
+harness, but no supported exact-byte private-file capture for small inline IB
+results has been verified. The capture helper only consumes an existing file;
+it does not bridge that missing capability. Keep the real pilot inactive until
+this source-transfer gap is resolved through a supported path. Do not retype
+financial values, treat a unit fixture as real raw, manufacture hashes, force
+an output-cap spill, or route around a classifier/security refusal. A successful
+read-only connector diagnostic does not establish automatic producer readiness.
+
+The current [official hooks reference](https://code.claude.com/docs/en/hooks)
+documents `PostToolUse` with `tool_response`, including MCP tools and web
+sessions. This is a potential supported capture boundary, not proof it is
+configured or works in this environment. No hook is installed or enabled by
+this maintenance change. Any follow-up starts with a separately authorized,
+non-account-data test and must preserve normal permission checks, original
+tool results and private-only storage. The earlier reported classifier refusal
+was on a timestamp append; its cause and wider scope are unknown, not evidence
+of a general financial-export prohibition or permission to bypass it.
+
 `scripts/xuan-ib-report-view.mjs` is a deterministic **presentation** renderer.
 It does not authenticate to a broker, derive/verify every financial calculation,
 or prove that caller-supplied numbers were genuinely fetched. Existing source
