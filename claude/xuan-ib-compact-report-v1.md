@@ -79,6 +79,62 @@ two `options` and `recommendation`, with `isNew:true`; they can only enter as
 
 ## One owner, reproducible preparation
 
+### Reusable source adapter and current limitation
+
+Use `scripts/xuan-ib-source-adapter.mjs` for supported raw response shells,
+native position fields and whole-response hashes with actual read completion
+times. Capture `rawFingerprint` immediately on receipt; modified raw bytes must
+not pass against that original hash. These checks detect accidental drift,
+not fabricated connector evidence: callers remain responsible for actual tool
+provenance and timing. Raw receipts stay private. Native values are not silently converted to
+USD; missing daily change is never zero. This helper is **not a complete
+financial derivation adapter** and cannot certify transcribed source data.
+
+`buildSourceEvidence` requires the approved account ID to be present in the
+actual IB account-summary response, and rejects conflicting endpoint IDs.
+The connector observed in the first pilot omitted this field. It therefore
+cannot pass this path until authoritative, source-bound account identity is
+available. Matching Sharesight positions/NAV or copying the approved account
+constant is not account proof. Do not bypass this failure by hand-building a
+confirmed envelope. No new scope-inference policy is approved by this change.
+
+Use existing audited calculation modules only. The first pilot's transcribed
+AI coefficients, whole-book four-class membership, theme denominator and
+heuristic account binding are NOT production rules. Unsupported AI/theme or
+classification aggregates must be unavailable or explicitly dated historical
+values; incomplete cash-plan inputs produce schema 2 `unavailable`. Only
+supported independently verified modules may use current-value language.
+
+### Concise mobile display
+
+- KPI note target: at most 80 characters; move derivation detail into report
+  notes. Prefer 1–3 numbered conclusions, each at most 80 characters, rather
+  than dense paragraphs. Additional lines are collapsed, not deleted.
+- New risk/allocation/events/rotation cards should provide `brief` with exactly
+  `state` (`normal|attention|unverified|unavailable`), `takeaway` (at most 60
+  characters) and `action` (`observe|owner-review|verify`). No buy/sell action
+  is available. State must follow source-backed rules, not a guess from prose.
+  Unverified means evidence awaits checking; unavailable means the source was
+  not obtained. All figures in a table share its explicit card timestamp unless
+  individual timestamps are supplied. At most five rows show initially.
+  Original explanations remain folded. Legacy long prose is folded without
+  inventing a conclusion or a normal-state badge. A collapsed five-point guide
+  explains timestamps, tabs, decisions, ABC and report generation.
+- `rotation` may add `orders` alongside its usual card fields; then `columns`
+  and `rows` must be empty. Each order contains exactly `symbol, side` (`buy`
+  or `sell`), `quantity, limitPrice, marketPrice, currency, marketAsOfHkt,
+  ageDays, status, cancelReview`. Missing market price/date are both null;
+  unknown age is null. Limit and market prices must be in the same currency.
+  `cancelReview` is an existing reviewed classification, never inferred by
+  this display helper. It does not cancel an order.
+- The renderer groups buys then sells and sorts each group by unrounded
+  absolute percentage price distance. Ties retain input order; missing quotes
+  come last. Price distance is not probability of execution. Prices and
+  percentages stay whole; raw status/age appear under the order symbol.
+- The todo count remains the number of pending decisions; amber on the same
+  badge indicates an additional progress warning, not an added decision.
+  Existing accessible warning text and detailed progress explanation remain.
+
 1. At actual Routine entry, before reading contracts, initialize a new private
    timing journal: `node scripts/xuan-ib-run-clock.mjs init /tmp/RUN.clock.jsonl`.
    This is not the scheduler's queued time; record scheduling delay separately.
@@ -87,13 +143,39 @@ two `options` and `recommendation`, with `isNew:true`; they can only enter as
    writes have **one writer**; start independent stages sequentially, execute
    their source calls in parallel, then record their completions individually.
    Do not concurrently append from child processes. Never type stage times.
+   Inside bootstrap, **before any financial read**, run
+   `node scripts/xuan-ib-git-identity-preflight.mjs effective`.
+   A mismatch finishes bootstrap `failed/GIT_IDENTITY_INVALID` and stops.
+   This reads Git's effective author/committer, including environment overrides;
+   it does not repair identity or prove future GitHub signature/login approval.
+   Never manufacture an identity to make the check pass.
 3. Save the validated public view and private source-evidence envelope outside
    the repo. The latter has only `schemaVersion:1, edition, dataDate,
    previousSourceSha, sources`; `sources` is the existing run-manifest source
    schema. It requires every expected endpoint and portfolio, explicit status,
    asOf, retries, hash and bounded failure code. Do not invent successful reads
    or hashes for operations that did not occur.
-4. With trusted main contracts/helpers and matched `latest.html/latest.meta.json`:
+4. Keep `narrative` **active** while drafting and checking the view:
+
+   `node scripts/xuan-ib-report-prepare.mjs preflight-view /tmp/RUN.view.json`
+
+   This is a strict, read-only draft check, not rendering or preparation. If
+   only a summary/observation/note exceeds its text limit, shorten that text
+   locally, preserving facts and required disclosures, then check again (at
+   most three draft checks). Do not truncate blindly, change financial fields,
+   rewrite evidence, restart the journal or refetch sources for a prose error.
+   Keep the original failing view as a private immutable baseline. For a retry
+   use `node scripts/xuan-ib-report-prepare.mjs preflight-text-retry
+   /tmp/RUN.baseline.json /tmp/RUN.view.json`; it permits only shorter narrative
+   strings with unchanged list lengths and exact equality of all other fields.
+   Do not use the initial preflight command to bypass this comparison.
+   On first-pass success finish narrative `ok`; after local correction finish
+   it `degraded` with error code `NARRATIVE_REDUCED`. All elapsed drafting and
+   correction time remains inside the same stage. Retain failed draft-check
+   results in the private run transcript. Other schema/source/privacy errors,
+   or exhausted checks, finish `failed` and stop. An already-failed journal
+   stays immutable and cannot be reopened. Then, with trusted main helpers and
+   matched `latest.html/latest.meta.json`:
 
    `node scripts/xuan-ib-report-prepare.mjs /tmp/RUN.view.json /tmp/RUN.sources.json /tmp/RUN.candidate.html --journal /tmp/RUN.clock.jsonl`
 
@@ -109,6 +191,11 @@ two `options` and `recommendation`, with `isNew:true`; they can only enter as
    source envelope, journal or private source data. Stage validated candidate
    bytes; verify only that file changed; commit and push without in-run code
    maintenance. Bind its SHA once using `bind-source FILE SHA`.
+   Immediately before committing, repeat the `effective` identity check. After
+   the commit and before push, run `node scripts/xuan-ib-git-identity-preflight.mjs
+   commit FULL_SHA` against the actual immutable commit. The unchanged Promote
+   workflow still independently requires GitHub verified signature and both
+   author/committer logins. Local success does not replace those gates.
 6. Wait for actual Validate / Promote / Pages, then compare public sourceSha
    and htmlBlob to the candidate. `show FILE` gives private timing/manifest
    fields, not published-success status. Public readback/commit/deployment times

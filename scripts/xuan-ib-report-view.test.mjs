@@ -196,4 +196,78 @@ test('operational CLI writes guarded candidate once and completes all nine measu
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
+test('draft preflight is side-effect free and a 203-character correction reuses the same reads',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-draft-check-'));
+  const journalPath=path.join(dir,'clock.jsonl'),viewFile=path.join(dir,'view.json'),baseline=path.join(dir,'baseline.json');
+  try{
+    initRunJournal(journalPath);
+    for(const name of ['bootstrap','ib-read','sharesight-read','validate','derive']){startJournalStage(journalPath,name);finishJournalStage(journalPath,name);}
+    startJournalStage(journalPath,'narrative');
+    const view=fixture();view.observations[0]='长'.repeat(203);
+    fs.writeFileSync(viewFile,JSON.stringify(view));
+    fs.writeFileSync(baseline,JSON.stringify(view));
+    const before=fs.readFileSync(journalPath,'utf8');
+    assert.throws(()=>runPrepareCli(['preflight-view',viewFile]),/observations\[0\]/);
+    assert.equal(fs.readFileSync(journalPath,'utf8'),before);
+    assert.deepEqual(showRunJournal(journalPath).timing.runningStages,['narrative']);
+    view.observations[0]='短'.repeat(200);fs.writeFileSync(viewFile,JSON.stringify(view));
+    assert.deepEqual(runPrepareCli(['preflight-text-retry',baseline,viewFile]),{status:'valid-text-only-not-prepared',changed:1});
+    assert.equal(fs.readFileSync(journalPath,'utf8'),before);
+    finishJournalStage(journalPath,'narrative',{status:'degraded',errorCode:'NARRATIVE_REDUCED'});
+    const prepared=prepareReport(view,evidence(),{...context,registry,journalPath});
+    assert.equal(prepared.result.status,'prepared-not-published');
+    const events=fs.readFileSync(journalPath,'utf8').trim().split('\n').map(JSON.parse);
+    for(const name of ['ib-read','sharesight-read']){
+      assert.equal(events.filter(x=>x.type==='stage-start'&&x.stage===name).length,1);
+      assert.equal(events.find(x=>x.type==='stage-finish'&&x.stage===name).cacheHit,false);
+    }
+    assert.equal(showRunJournal(journalPath).stages.find(x=>x.name==='narrative').errorCode,'NARRATIVE_REDUCED');
+    assert.deepEqual(fs.readdirSync(dir).sort(),['baseline.json','clock.jsonl','view.json']);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('draft checks cannot forgive financial/schema/privacy errors or bypass final validation',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-draft-fail-')),file=path.join(dir,'view.json');
+  try{
+    for(const mutate of [v=>{v.holdings.rows[0].quantity=null;},v=>{v.summary.pop();},v=>{v.notes[0]='Bearer secret';}]){
+      const view=fixture();mutate(view);fs.writeFileSync(file,JSON.stringify(view));
+      assert.throws(()=>runPrepareCli(['preflight-view',file]));
+    }
+    const view=fixture();fs.writeFileSync(file,JSON.stringify(view));runPrepareCli(['preflight-view',file]);
+    view.observations[0]='长'.repeat(203);
+    assert.throws(()=>prepareReport(view,evidence(),{...context,registry}),/observations\[0\]/);
+    fs.writeFileSync(file,'{"schemaVersion":1,"schemaVersion":1}');
+    assert.throws(()=>runPrepareCli(['preflight-view',file]));
+    assert.throws(()=>runPrepareCli(['preflight-view',file,'extra']),/Usage/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('local text retry refuses valid-looking changes to financial values or decision facts',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-draft-bound-')),base=path.join(dir,'base.json'),candidate=path.join(dir,'candidate.json');
+  try{
+    const initial=fixture();initial.observations[0]='长'.repeat(203);fs.writeFileSync(base,JSON.stringify(initial));
+    for(const mutate of [v=>{v.kpis[0].value+=1;},v=>{v.decisions[0].fact='changed';},v=>{v.notes.push('extra');}]){
+      const next=structuredClone(initial);next.observations[0]='短句';mutate(next);fs.writeFileSync(candidate,JSON.stringify(next));
+      assert.throws(()=>runPrepareCli(['preflight-text-retry',base,candidate]),/TEXT_RETRY/);
+    }
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
+test('compact cards show source-backed status/action, short tables, folded detail and a guide',()=>{
+  const view=fixture();view.risk[0].brief={state:'unavailable',takeaway:'数据未取得，不作风险判断。',action:'verify'};
+  view.risk[0].lines=['详细依据一','详细依据二'];view.risk[0].rows=Array.from({length:7},(_,i)=>[`合成${i}`,String(i)]);
+  const html=renderReport(view,context);
+  assert.ok(html.includes('— 未取得'));assert.ok(html.includes('下一步：待核实'));
+  assert.ok(html.includes('<details><summary>详细说明'));assert.ok(html.includes('更多数据（2 行）'));
+  assert.ok(html.includes('<details><summary>使用指南'));assert.ok(html.includes('「已同步」是读取时间，不是数据时间'));
+  view.risk[0].brief.action='buy';assert.throws(()=>renderReport(view,context),/brief action/);
+});
+test('structured orders are grouped, escaped, fresh-quoted and do not infer cancellation',()=>{
+  const view=fixture();view.rotation.columns=[];view.rotation.rows=[];
+  const order=(symbol,side,limitPrice)=>({symbol,side,quantity:10,limitPrice,marketPrice:100,currency:'USD',marketAsOfHkt:stamp,ageDays:70,status:'NEW',cancelReview:false});
+  view.rotation.orders=[order('SELL','sell',110),order('FAR','buy',80),order('NEAR','buy',99)];
+  const html=renderReport(view,context);assert.ok(html.indexOf('1. NEAR')<html.indexOf('2. FAR'));assert.ok(html.indexOf('2. FAR')<html.indexOf('1. SELL'));
+  assert.ok(!html.includes('order-review">待撤复核'));assert.ok(html.includes('距离不代表成交概率'));
+  const result=runGuard(html);assert.equal(result.status,0,result.stderr);
+  view.rotation.orders[0].marketAsOfHkt='2026-08-24 10:00 HKT';assert.throws(()=>renderReport(view,context),/quote must be current/);
+});
+
 export { fixture, context };
