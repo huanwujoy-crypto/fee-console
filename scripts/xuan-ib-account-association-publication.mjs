@@ -90,16 +90,17 @@ function requireFoldedDisclosure(html, disclosure) {
 
 export function checkAssociationPublication(html, snapshot, {
   now = Date.now(), edition = publicationEdition(html), previousHtml = null,
-  previousSourceSha, verifiedRecordsUpdate = false,
+  previousSourceSha, verifiedRecordsUpdate = false, verifiedHistoricalCorrection = false,
 } = {}) {
   const receipt = extractAssociationReceipt(html);
   validateBodyMarker(html, receipt);
-  if (verifiedRecordsUpdate) {
+  if (verifiedRecordsUpdate || verifiedHistoricalCorrection) {
     const prior = extractAssociationReceipt(previousHtml ?? '');
     validateBodyMarker(previousHtml ?? '', prior);
     if (JSON.stringify(receipt) !== JSON.stringify(prior)) fail('records-only updates must preserve the historical association receipt');
-    // The outer handover guard already proves immutable HTML outside decision
-    // fields. No renewed authority, live read, or fresh financial report follows.
+    // The outer trusted guard proves either immutable decision-only content,
+    // or exact equality to the pinned AAOI same-snapshot correction. Neither
+    // option permits fresh financial reads or changing account receipts.
     return { mode: receipt ? 'historical-recurring' : 'legacy', freshRead: false };
   }
   if (snapshot) validateAssociationSnapshot(snapshot, { now, requireActive: false });

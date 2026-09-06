@@ -1,5 +1,13 @@
 # XUAN-IB handover publication contract
 
+## Owner routine closure and concise notes (2026-09-06)
+
+Read `claude/xuan-ib-routine-closeout-20260906.md` first. Routine, evidence-supported
+classification under existing coefficients is delegated: implement and verify,
+notify once, then archive. Codex is the single accountable owner. Historical
+rule records are not recurring user tasks. Preserve all source/receipt history;
+never mark missing calculations completed or treat this as trading authority.
+
 ## Owner retirement override (2026-09-06)
 
 Read `claude/xuan-ib-four-bucket-retirement-20260906.md` first. The owner has

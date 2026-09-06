@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import {verifyAaoiSnapshotCorrection} from './xuan-ib-aaoi-snapshot.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
@@ -1204,8 +1205,17 @@ if (!verifiedRecordsUpdate) {
 
 try {
   const edition = publicationEdition(html);
+  // This exact source-bound correction changes only the approved AAOI risk
+  // derivation. It is not fresh collection or a new adhoc authorization.
+  const verifiedHistoricalCorrection = !verifiedRecordsUpdate && verifyAaoiSnapshotCorrection(html, trustedPreviousHtml,
+    {sourceSha:previousSourceSha,htmlBlob:process.env.XUAN_IB_PREVIOUS_HTML_BLOB});
+  if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection) {
+    const activeRisk = html.match(/<div class="pane p2">([\s\S]*?)(?=<div class="pane p3">)/)?.[1] || '';
+    if (/不含\s*AAOI|AAOI[^<>。]{0,70}(?:尚无|仍无|没有|未有)已?批准\s*tier/i.test(activeRisk))
+      fail('AAOI T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen tier approval');
+  }
   if (!verifiedRecordsUpdate && !edition) fail('ordinary report requires one recognized edition in its primary header');
-  const needsCurrentPolicy = !verifiedRecordsUpdate && (edition === 'adhoc' || hasAssociationMarker(html));
+  const needsCurrentPolicy = !verifiedRecordsUpdate && !verifiedHistoricalCorrection && (edition === 'adhoc' || hasAssociationMarker(html));
   let snapshot = null;
   if (needsCurrentPolicy) {
     // The injected path is only for trusted local caller/test processes, like
@@ -1218,7 +1228,7 @@ try {
     validateAssociationSnapshot(snapshot, { now: Date.now(), requireActive: false });
   }
   checkAssociationPublication(html, snapshot, {
-    edition, previousHtml: trustedPreviousHtml, previousSourceSha, verifiedRecordsUpdate,
+    edition, previousHtml: trustedPreviousHtml, previousSourceSha, verifiedRecordsUpdate, verifiedHistoricalCorrection,
   });
 } catch (error) { fail(error.message); }
 

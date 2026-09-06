@@ -990,6 +990,23 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       // An independent, main-owned maintenance ledger. HTTPS and the protected
       // maintenance PR establish its provenance; its digest only detects change.
       // It never signs a report, changes a decision or authorizes an investment.
+      let routineReadingModule = null;
+      function organizeProgressReading(record) {
+        if (!routineReadingModule || !progressView?.fold || progressView.doc !== renderedDocument || lastVerified?.blob !== record.blob) return;
+        const events = new Map();
+        let dataAvailable = false;
+        if (progressLedger && progressFingerprint) {
+          try {
+            validateProgress(progressLedger, record.decisionState);
+            for (const event of progressLedger.events) {
+              const receipt = record.decisionState.receipts.filter(r => r.decisionId === event.decisionId).at(-1);
+              if (receipt?.receiptId === event.receiptId) events.set(event.decisionId, event);
+            }
+            dataAvailable = true;
+          } catch (_) {}
+        }
+        routineReadingModule.organizeRoutineRecords(renderedDocument, {...progressView,events:[...events.values()],dataAvailable,record});
+      }
       function renderProgress(record) {
         const doc = renderedDocument;
         if (!doc || frame.contentDocument !== doc || doc.URL !== "about:srcdoc" ||
@@ -1204,6 +1221,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (old) old.replaceWith(panel); else wrapper.prepend(panel);
           owned.key = key; owned.panel = panel;
         }
+        organizeProgressReading(record);
       }
 
       // Native closed details are opened only for printing, then restored.
@@ -1311,8 +1329,8 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedToken = token;
           renderProgress(record);
           refreshPrivateEtf(record);
-          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906-allocation-cards', location.href).href)
-            .then(view => { if(renderedDocument === doc && lastVerified?.blob === record.blob) view.improveMobileDisplay(doc); })
+          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906-routine-closeout', location.href).href)
+            .then(view => { if(renderedDocument === doc && lastVerified?.blob === record.blob) { view.improveMobileDisplay(doc); routineReadingModule = view; organizeProgressReading(record); } })
             .catch(() => { /* Optional layout never weakens paired-report validation. */ });
           if (/^s[1-5]$/.test(section || "")) {
             const radio = doc.getElementById(section);
