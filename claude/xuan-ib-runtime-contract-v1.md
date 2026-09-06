@@ -4,13 +4,15 @@ This contract adds observability and bounded read parallelism. It does not
 change any investment formula, account set, fallback, publication gate, or
 financial permission.
 
-2026-09-06 cadence amendment: the owner approved Monday-HKT Sharesight +
-four-bucket refresh, five IB endpoints live every report. Follow
-`xuan-ib-weekly-ss-snapshot-v1.md` for the explicit staged mode. The all-nine
-same-run statements below describe the preserved legacy protocol, not a
-requirement for `assemble-weekly`. Weekly amounts and durable storage are not
-yet active; the implemented adhoc minimal path marks dependent metrics
-unavailable. No AM/PM association or Routine activation is implied.
+2026-09-06 superseding cadence decision: after direct-read testing, the owner
+approved direct Sharesight reads and deterministic classification for each
+AM/PM report, rather than adding a weekly cache. Five IB endpoints remain
+direct. Use `xuan-ib-four-bucket-v1.md` section 4 for the full-view producer's
+source-bound sidecar and canonical display. This is a reviewed integration
+change, not proof that a Routine has been activated or published successfully.
+The old `assemble-weekly` metadata-only trial remains an explicit legacy mode;
+its dependent amounts stay unavailable. Do not silently select it for the
+new full report path. No temporary-report button is restored.
 
 ## 1. Required run stages
 
@@ -70,8 +72,10 @@ repair specified there does not fetch data, fabricate stage times or prove a
 new AM/PM run. It preserves original source values and data times while
 explicitly recalculating only the cash-planning scenario.
 
-Classification explanation is no longer free-form narrative. For ordinary
-four-bucket reports, render the exact trusted section with
+Classification explanation is no longer free-form narrative. Full reports
+with a source-bound computed four-bucket sidecar use the deterministic
+snapshot-based disclosure and guard described in `xuan-ib-four-bucket-v1.md`.
+For legacy reports without that new transport, render the exact trusted section with
 `node scripts/xuan-ib-classification-disclosure.mjs`. This is an explicitly
 dated, limited-scope historical audit statement; it is not a cached claim that
 current holdings were read. The handover guard requires it and rejects coverage

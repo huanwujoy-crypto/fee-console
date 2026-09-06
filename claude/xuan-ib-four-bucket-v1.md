@@ -1,10 +1,10 @@
 # Four-bucket gross aggregation — technical contract v1 (2026-09-06)
 
-Status: **pure modules and synthetic tests only.** Nothing here reads a
-financial system, publishes a value, activates a Routine, or changes the
-trusted classification disclosure. Release of fresh calculated buckets still
-requires the separately reviewed integration listed in §4, exact-SHA owner
-approval, and a read-only Gateway shape verification (§5).
+Status: **calculator plus source-bound prepare/render/guard integration in a
+draft maintenance change; not yet deployed.** Nothing here reads a financial
+system or activates a Routine. Release still needs exact-SHA owner approval,
+formal checks, source-bound report generation, publication and phone read-back.
+Source shape verification is described in §5. Tests are not release evidence.
 
 ## 1. Modules
 
@@ -84,32 +84,55 @@ approval, and a read-only Gateway shape verification (§5).
   unchanged by it, matching `pendingRedemptionRule.doNot`.
 - Fingerprints detect drift; they are not proof of source authenticity.
 
-## 4. Minimal trusted disclosure and guard integration (not in this change)
+## 4. Source-bound report integration
 
-To publish fresh calculated buckets, a separately reviewed maintenance PR must:
+`scripts/xuan-ib-four-bucket-report.mjs` connects calculation to the full
+report prepare path. After actual direct reads, pass a **private, outside-Git,
+0600** JSON sidecar to the existing prepare command:
 
-1. **Prepare path.** In full-live mode, after `buildSourceEvidence`, call
-   `deriveFourBucket` with the run's captured performance responses, the
-   matching listing reads, the previous page's parsed template as `previous`,
-   and explicit pending-redemption evidence or `null`. Embed
-   `renderFourBucketTemplate(result.snapshot)` in the report. Allocation card
-   values must come from that snapshot only, dated by `reportCutoff` and
-   `readWindow`, with `fallback` shown as an explicitly dated last-good value.
-   Minimal and weekly modes keep four-bucket metrics unavailable.
-2. **Disclosure v2.** Add a deterministic `renderClassificationDisclosure`
-   variant whose fourth sentence is generated from the snapshot: read windows,
-   report cutoff range, row counts, cash proxy count, reconciliation status,
-   and net status. The historical 2026-08-31 audit sentences stay verbatim.
-3. **Guard.** Parse the template exactly once with `parseFourBucketTemplate`,
-   require the v2 section byte-exact when the template is present, keep v1
-   byte-exact when it is absent, and reject a page that shows current
-   four-bucket figures without a valid template. Widen
-   `unsupportedCurrentClassification` only for the generated v2 sentence.
-   A records-update must preserve the template byte for byte.
-4. **Cross-checks.** Reject a template whose `scope.portfolioIds` differ from
-   the registry family set, whose `reportCutoff.latest` predates the previous
-   published snapshot, or whose `readWindow` is not inside the run journal.
-5. **Tests and CI.** Add guard and prepare cases to the blocking groups.
+```sh
+node scripts/xuan-ib-report-prepare.mjs VIEW.json SOURCES.json CANDIDATE.html \
+  --journal RUN.json --four-bucket-input FOUR_BUCKET_READS.json
+```
+
+The sidecar has exactly `{schemaVersion:1, reads:[...], pendingRedemption:null}`.
+Each of the seven family reads has exactly `portfolioId`, original `raw`,
+`readStartedAt`, `readCompletedAt`, and `listing`. Listing has original `raw`,
+`readStartedAt`, `readCompletedAt`. Capture both calls inside the genuine
+`sharesight-read` stage, before ending it. Do not fabricate a missing journal,
+receipt, flag, identity, read instant, source fingerprint or pending evidence.
+
+- Performance bytes/fingerprints and completion instants must match the
+  validated source evidence; listing and performance times must lie in that
+  run's real source stage and HKT report date. Duplicated or missing family
+  reads abort. The prepare CLI exposes no alternative mapping or registry.
+- Successful calculations produce one canonical compact four-row amount and
+  percentage card, plus an inert snapshot and status transport. Explanations
+  appear in the closed report notes, not as large prose above the numbers.
+  `常青基金` is the label. Other cash-plan amounts and receipt/ETF bytes are
+  untouched. Do not add a second free-form set of four-bucket figures.
+- Calculation/content failures retain the validated prior snapshot unchanged
+  and visibly label it `沿用上次`. Without a prior validated snapshot, display
+  `未取得`, not zero. Receipt binding errors abort instead of blessing inputs.
+- The canonical current disclosure replaces the historical-only policy for
+  this card. Older reports without the new transport keep the original v1
+  historical disclosure byte-for-byte. This is not a claim that all private
+  fund NAV dates are current. Gross is independent of unavailable net evidence.
+- The trusted guard validates arithmetic, family scope, current mapping and
+  cash identity fingerprints, unique canonical transports/card/disclosure,
+  source dates and monotonic updates. Fallback must equal the previous page's
+  snapshot. Records-only updates cannot alter or drop this state.
+- CI obtains the registry, mapping and cash identities from **trusted main**,
+  never the candidate. The new modules and contract require OWNER maintenance
+  approval. Blocking tests include the full prepare/render/guard route.
+
+This does not silently activate the existing minimal adhoc producer or weekly
+metadata mode: those modes still lack independently derived risk/cash guidance.
+The full-view producer must supply its existing verified cash plan, preserving
+the owner's concrete EXUS/EIMI/USSC guidance, and use the new sidecar for buckets.
+AM/PM use direct reads when activated; no weekly cache or temporary-report
+button is added. Routine activation and a complete <=20-minute published run
+remain separate acceptance gates, not outcomes implied by the code change.
 
 ## 5. Verified source shape (read-only, 2026-09-06)
 

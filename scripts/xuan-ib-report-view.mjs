@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import { renderCashPlan } from './xuan-ib-cash-plan.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { renderFourBucketCard, renderFourBucketReportTransport } from './xuan-ib-four-bucket-report.mjs';
 import { validateAssociationReceipt, renderAssociationReceipt, renderAssociationDisclosure } from './xuan-ib-account-association.mjs';
 import { groupOrders } from './xuan-ib-order-view.mjs';
 import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
@@ -224,7 +225,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   if(associationReceipt){
     if(manualAccountConsent)fail('account scope modes are mutually exclusive');
@@ -272,6 +273,7 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   const summary=template(previousHtml,'xuan-etf-open-summary-v3');
   if(summary){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
   const cash=renderCashPlan(view.cashPlan), pending=state.decisions.filter(item=>item.status==='awaiting_user').length;
+  const classificationDisclosure=renderClassificationDisclosure(fourBucket);
   const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
   const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi;
@@ -282,17 +284,17 @@ ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).joi
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition)}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
 <div class="pane p2">${view.risk.map(card).join('')}</div>
-<div class="pane p3">${cash.detail}${view.allocation.map(card).join('')}</div>
+<div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
-${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${renderClassificationDisclosure()}`,false,'版别 · 取数时点 · 数据日 · 只读')}
+${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
-${stateTemplate}\n${cash.template}\n</body></html>\n`;
+${stateTemplate}\n${cash.template}\n${fourBucket?renderFourBucketReportTransport(fourBucket):''}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.
   // Full source envelopes and private account observations never enter HTML.
   const output=associationReceipt?html
     .replace('<body>','<body data-account-scope-basis="owner-attested-recurring-v1">')
-    .replace(renderClassificationDisclosure(),renderAssociationDisclosure(associationReceipt,associationSnapshot)+renderClassificationDisclosure())
+    .replace(classificationDisclosure,renderAssociationDisclosure(associationReceipt,associationSnapshot)+classificationDisclosure)
     .replace('</body>',renderAssociationReceipt(associationReceipt)+'\n</body>'):html;
   // Also prove that the rebuilt native decision menu remains functional.
   buildDecisionMenu({html:output,meta:{...previousMeta,dataDate:view.dataDate,htmlBlob:reportHtmlBlob(output)}});
