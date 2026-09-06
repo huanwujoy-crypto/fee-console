@@ -1275,7 +1275,13 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
     const gist = h.pauseNextRead("gist"), resume = h.emit("window", "pageshow", { persisted: true });
     await gist.entered; await loading(h); gist.release(); await resume;
     // Browser events intentionally do not await their async read callback.
-    for (let i = 0; i < 100 && h.run('_receiptSource.state === "loading"'); i++) await h.settle();
+    // setImmediate-only spins can exhaust 100 iterations before native crypto
+    // returns on a busy CI runner. Yield real time, bounded to about one second;
+    // the unchanged assertion below still requires an actual verified receipt.
+    for (let i = 0; i < 100 && h.run('_receiptSource.state === "loading"'); i++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      await h.settle();
+    }
     assert.equal(h.run("_receiptSource.state"), "verified");
     await complete(h); noRedPaint(h);
   });

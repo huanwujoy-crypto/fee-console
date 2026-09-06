@@ -1,0 +1,717 @@
+<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>周六上午版 · 历史重排</title><style>:root{--ink:#171717;--bg:#fafaf8;--mut:#777;--line:#deded8;--card:#fff;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-size:16px;color:var(--ink);background:var(--bg)}*{box-sizing:border-box}body{margin:0}.page{background:var(--bg);color:var(--ink);min-height:100vh}.wrap{max-width:1000px;margin:auto;padding:12px}.hdr{display:flex;justify-content:space-between;gap:10px}.date{font-weight:650;font-size:14px}.tgl{display:flex;gap:5px}.tgl label{min-height:44px;padding:10px;border:1px solid var(--line);border-radius:30px}input[type=radio]{position:absolute;opacity:0;pointer-events:none}#td:checked~.page{--bg:#151515;--card:#202020;--ink:#eee;--mut:#aaa;--line:#444}h2{font-size:18px;margin:0 0 10px}h3{font-size:16px}p{line-height:1.55;margin:8px 0}small,.sub{font-size:14px;color:var(--mut)}.sub{display:block}.card,details,.kpi{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:14px;margin:12px 0;min-width:0;overflow-wrap:anywhere}details{padding:0}summary{cursor:pointer;min-height:48px;padding:14px;font-weight:700}.dbody{padding:0 14px 14px}.rt{color:var(--mut);font-size:14px;font-weight:500}.kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.kpi .big{font-size:28px;font-weight:800}.kpi .lab{font-size:14px;color:var(--mut)}.num,td{font-variant-numeric:tabular-nums}.tabbar{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:5px;position:sticky;top:0;z-index:1;background:var(--bg);padding:8px 0}.tabbar label{display:flex;align-items:center;justify-content:center;gap:4px;min-height:48px;border:1px solid var(--line);border-radius:40px;cursor:pointer;font-size:14px}.dot{background:var(--line);color:#171717;border-radius:20px;padding:0 5px}.pane{display:none}#s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}#s1:checked~.tabbar label[for="s1"],#s2:checked~.tabbar label[for="s2"],#s3:checked~.tabbar label[for="s3"],#s4:checked~.tabbar label[for="s4"]{background:var(--ink);color:var(--bg)}.tblwrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px}th,td{text-align:right;padding:9px 6px;border-bottom:1px solid var(--line);vertical-align:top}th:first-child,td:first-child{text-align:left}.sym{font-weight:700}.up,.gv{color:#15803d}.dn{color:#dc2626}.wv,.or{color:#a16207}.alert{border:1px solid #e4ae37;background:#fff2ca;color:#6b4500;padding:12px;border-radius:14px;margin:12px 0}.error{background:#ffe7e7;color:#991b1b;border-color:#dc2626}.foot{font-size:13px;color:var(--mut);padding:14px 0}.kv{display:flex;justify-content:space-between;gap:12px;border-bottom:1px solid var(--line);padding:10px 0}.v{text-align:right}@media(max-width:640px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}.kpi .big{font-size:24px}.wrap{padding:10px}}
+#s5:checked~.tabbar label[for="s5"]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s5:checked~.p5{display:block}
+@media(max-width:640px){.tabbar{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media(max-width:360px){.tabbar{gap:2px}.tabbar label{padding:4px 2px;font-size:11px;gap:2px}.tabbar label .dot{min-width:14px;padding:0 3px}}
+
+.kpi{container-type:inline-size}
+.kpi .big{white-space:nowrap;overflow-wrap:normal;font-size:clamp(18px,14cqi,28px)}
+.tabbar label{white-space:nowrap;overflow-wrap:normal;gap:3px}
+.tabbar label[for="s4"] .dot{flex:0 0 auto}
+.tabbar label[for="s4"]:has(.xuan-progress-nav-attention:not([hidden])) .dot{background:#fff3d6;color:#754600;border:1px solid #b7791f}
+.tabbar label[for="s4"]:has(.dot) .xuan-progress-nav-attention{display:none}
+.tabbar label[for="s4"] .xuan-progress-nav-attention:not([hidden]){font-size:0;padding:0;width:7px;height:7px;border-radius:50%;background:#b7791f}
+.brief-lines{padding-left:1.5em;line-height:1.6}.brief-lines li{margin:6px 0}
+.tblwrap table{min-width:460px}.tblwrap td:not(:first-child){white-space:nowrap;overflow-wrap:normal}
+.order-table table{min-width:300px}.order-table td:first-child{min-width:130px}.order-review{color:#a16207;font-weight:650}
+.tblwrap table[data-columns="2"],.tblwrap table[data-columns="3"]{min-width:300px}
+.brief-signal{padding:10px 12px;border-left:3px solid var(--line);border-radius:8px}
+.signal-label{font-size:13px;font-weight:700}.brief-signal p{font-size:15px;line-height:1.5;margin:7px 0}
+.brief-signal.normal{border-color:#15803d}.normal .signal-label{color:#15803d}
+.brief-signal.attention{border-color:#b7791f}.attention .signal-label{color:#a16207}
+.brief-signal.unverified,.brief-signal.unavailable{border-color:#777}.unverified .signal-label,.unavailable .signal-label{color:var(--mut)}
+@media(max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:640px){.tabbar{grid-template-columns:1fr 1fr 1fr minmax(86px,1.3fr) 1fr}}
+@media(max-width:360px){.kpis{grid-template-columns:1fr}}
+.history-header{padding:16px;background:#eef5fc;color:#174773;display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center}.history-header small{flex-basis:100%;font-size:13px}.history-header a{color:#174773;min-height:44px;display:flex;align-items:center}.num{font-variant-numeric:tabular-nums;white-space:nowrap}.big.num{font-size:clamp(22px,5.8vw,36px)}.tabs .tabbar{top:0}.history-original{margin:14px}.history-original iframe{width:100%;height:75vh;border:0}@media(prefers-color-scheme:dark){.history-header{background:#10253d;color:#a6c9ee}.history-header a{color:#a6c9ee}} </style></head><body><header class="history-header"><strong>XUAN-投资管理</strong><a href="../">返回最新版</a><small>周六上午版 · 2026-09-05 历史数据</small></header><!-- xuan-ib-historical-layout:20260905 -->
+<input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><div class="hdr"><span class="date">2026-09-05 周六 · 早间版 · 历史重排 · 对应 09-04 收盘及延长交易</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
+<div class="alert ">历史版 · 09-05 上午数据，非今日行情。待办及回执也是当时快照；后续回应请看最新版。这里只读，不提交回应。</div><div class="alert ">四桶仍是 08-24 快照；新布局不表示数据问题已解决。</div>
+<details><summary>三行摘要 <span class="rt">最重要的排第一</span></summary><div class="dbody"><ol><li>持仓与挂单数量未变，原报告记录无新增成交。</li><li>现金补仓参考以 EXUS、EIMI 为主，USSC 占预算 10%。</li><li>待决定 1 项；4 张旧买单仅提醒人工复核，不自动撤单。</li></ol></div></details><div class="kpis"><div class="kpi"><div class="lab">IB NAV</div><div class="big num">$5,057,944</div><div class="sub">周六原报告数值；非今日估值<br>2026-09-05 07:47–08:10 HKT</div></div><div class="kpi"><div class="lab">可用现金</div><div class="big num">$754,755</div><div class="sub">已扣预留款 240,000 美元<br>2026-09-05 07:47–08:10 HKT</div></div><div class="kpi"><div class="lab">AI 中情景压力</div><div class="big num">21.76%</div><div class="sub">提醒区间；情景测算不是预测<br>2026-09-05 07:47–08:10 HKT</div></div><div class="kpi" id="xuan-ib-cash-plan-kpi"><div class="lab">补仓指引 · 现金优先</div><div class="big num">$754,755</div><div class="sub">现金规划 · 非下单额度<br><b>EXUS $550,579</b><br><b>EIMI $128,701</b><br><b>USSC $75,476</b><br>两类仍需 $84,768<br>详见「配置」</div></div></div>
+<div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4"><input type="radio" name="sec" id="s5"><div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 1 项">待办 <span class="dot" aria-hidden="true">1</span></label><label for="s5" aria-label="XUAN-ETF 计划">ETF</label></div>
+<div class="pane p1"><section class="card"><h2>① 持仓一览</h2><p class="sub">2026-09-05 07:47–08:10 HKT · 26 只</p><p><b>权威市值 $4,420,972</b> · 直读</p><details open><summary>价格变化 ≥1%（10）</summary><div class="dbody"><div class="tblwrap"><table style="min-width:480px;overflow-wrap:normal"><thead><tr><th>标的</th><th>估值价</th><th>日涨跌</th><th>行情时点</th><th>市值 $</th></tr></thead><tbody><tr><td><span class="sym">TSLA</span><span class="sub">NASDAQ · 390</span></td><td>USD 352.89</td><td class="dn">-6.24%</td><td>2026-09-05 07:59 HKT</td><td>137,627</td></tr><tr><td><span class="sym">AMD</span><span class="sub">NASDAQ · 50</span></td><td>USD 477.57</td><td class="up">+4.4%</td><td>2026-09-05 07:59 HKT</td><td>23,879</td></tr><tr><td><span class="sym">ORCL</span><span class="sub">NYSE · 200</span></td><td>USD 159.7</td><td class="up">+3.67%</td><td>2026-09-05 07:59 HKT</td><td>31,940</td></tr><tr><td><span class="sym">SMH</span><span class="sub">NASDAQ · 100</span></td><td>USD 567.01</td><td class="up">+2.35%</td><td>2026-09-05 07:58 HKT</td><td>56,701</td></tr><tr><td><span class="sym">MSFT</span><span class="sub">NASDAQ · 10</span></td><td>USD 499.41</td><td class="dn">-2.1%</td><td>2026-09-05 07:59 HKT</td><td>4,994</td></tr><tr><td><span class="sym">KKR</span><span class="sub">NYSE · 600</span></td><td>USD 107.73</td><td class="dn">-1.61%</td><td>2026-09-05 04:48 HKT</td><td>64,638</td></tr><tr><td><span class="sym">MSTR</span><span class="sub">NASDAQ · 780</span></td><td>USD 142.58</td><td class="dn">-1.55%</td><td>2026-09-05 07:59 HKT</td><td>111,210</td></tr><tr><td><span class="sym">EIMI</span><span class="sub">LSE · 6,530</span></td><td>USD 56.09</td><td class="up">+1.52%</td><td>2026-09-04 23:36 HKT · 延迟</td><td>366,277</td></tr><tr><td><span class="sym">HODL</span><span class="sub">EBS · 600</span></td><td>USD 14.8</td><td class="dn">-1.48%</td><td>2026-09-04 22:36 HKT · 延迟</td><td>8,880</td></tr><tr><td><span class="sym">SLV</span><span class="sub">NYSE · 320</span></td><td>USD 59.87</td><td class="dn">-1.12%</td><td>2026-09-05 07:57 HKT</td><td>19,158</td></tr></tbody></table></div></div></details><details><summary>其它持仓（16）</summary><div class="dbody"><div class="tblwrap"><table style="min-width:480px;overflow-wrap:normal"><thead><tr><th>标的</th><th>估值价</th><th>日涨跌</th><th>行情时点</th><th>市值 $</th></tr></thead><tbody><tr><td><span class="sym">APO</span><span class="sub">NYSE · 500</span></td><td>USD 133.67</td><td class="dn">-0.61%</td><td>2026-09-05 04:19 HKT</td><td>66,835</td></tr><tr><td><span class="sym">BRK.B</span><span class="sub">NYSE · 450</span></td><td>USD 506.03</td><td class="dn">-0.52%</td><td>2026-09-05 07:50 HKT</td><td>227,713</td></tr><tr><td><span class="sym">CSPX</span><span class="sub">LSE · 610</span></td><td>USD 831.45</td><td class="dn">-0.49%</td><td>2026-09-04 23:36 HKT · 延迟</td><td>507,185</td></tr><tr><td><span class="sym">EQAC</span><span class="sub">EBS · 960</span></td><td>USD 504.65</td><td class="dn">-0.06%</td><td>2026-09-04 23:36 HKT</td><td>484,469</td></tr><tr><td><span class="sym">EXUS</span><span class="sub">LSE · 8,700</span></td><td>USD 47.16</td><td class="up">+0.04%</td><td>2026-09-04 23:35 HKT · 延迟</td><td>410,322</td></tr><tr><td><span class="sym">GLD</span><span class="sub">NYSE · 300</span></td><td>USD 406.55</td><td class="dn">-0.9%</td><td>2026-09-05 07:59 HKT</td><td>121,965</td></tr><tr><td><span class="sym">GOOG</span><span class="sub">NASDAQ · 220</span></td><td>USD 335.72</td><td class="dn">-0.93%</td><td>2026-09-05 07:59 HKT</td><td>73,859</td></tr><tr><td><span class="sym">INDA</span><span class="sub">BATS · 1,100</span></td><td>USD 49.91</td><td class="dn">-0.6%</td><td>2026-09-05 06:56 HKT</td><td>54,901</td></tr><tr><td><span class="sym">IVAI</span><span class="sub">LSE · 11,200</span></td><td>USD 10.81</td><td class="up">+0.31%</td><td>2026-09-04 21:11 HKT · 延迟</td><td>121,108</td></tr><tr><td><span class="sym">META</span><span class="sub">NASDAQ · 100</span></td><td>USD 615.2</td><td class="up">+0.74%</td><td>2026-09-05 07:59 HKT</td><td>61,520</td></tr><tr><td><span class="sym">MXUS</span><span class="sub">LSE · 4,900</span></td><td>USD 227.01</td><td class="dn">-0.04%</td><td>2026-09-04 23:35 HKT · 延迟</td><td>1,112,349</td></tr><tr><td><span class="sym">TLT</span><span class="sub">NASDAQ · 700</span></td><td>USD 82.24</td><td class="up">+0.21%</td><td>2026-09-05 07:47 HKT</td><td>57,568</td></tr><tr><td><span class="sym">USSC</span><span class="sub">LSE · 160</span></td><td>USD 95.1</td><td class="up">+0.21%</td><td>2026-09-04 23:35 HKT · 延迟</td><td>15,216</td></tr><tr><td><span class="sym">VCN</span><span class="sub">TSE · 1,025</span></td><td>CAD 74.39</td><td class="dn">-0.33%</td><td>2026-09-05 03:59 HKT</td><td>55,109</td></tr><tr><td><span class="sym">VGIT</span><span class="sub">NASDAQ · 2,400</span></td><td>USD 57.89</td><td class="dn">-0.14%</td><td>2026-09-05 06:50 HKT</td><td>138,928</td></tr><tr><td><span class="sym">VGSH</span><span class="sub">NASDAQ · 1,500</span></td><td>USD 57.92</td><td class="">0%</td><td>2026-09-05 06:24 HKT</td><td>86,880</td></tr></tbody></table></div></div></details><details><summary>涨跌数据待核验（0）</summary><div class="dbody"><div class="tblwrap"><table style="min-width:480px;overflow-wrap:normal"><thead><tr><th>标的</th><th>估值价</th><th>日涨跌</th><th>行情时点</th><th>市值 $</th></tr></thead><tbody></tbody></table></div></div></details><details><summary>持仓说明</summary><div class="dbody"><ol class="brief-lines"><li>原报告权威持仓总值；逐仓展示合计存在约 259 美元差异，保留不凑平。延迟报价保留各自日期，旧日期不会冒充本日实时涨跌。</li></ol></div></details></section><details><summary>③ 接下来会发生什么</summary><div class="dbody"><p class="sub">数据时点：2026-09-05 07:47–08:10 HKT</p><div class="brief-signal unverified"><span class="signal-label">? 待核验</span><p><b>1. 只看历史数据；日程以正式页为准</b></p><p>2. 下一步：观察</p></div><div class="tblwrap"><table data-columns="2"><thead><tr><th>版本</th><th>固定启动</th></tr></thead><tbody><tr><td>上午版</td><td>周二至周六 08:00 HKT</td></tr><tr><td>睡前版</td><td>周一至周五，纽约 09:30</td></tr></tbody></table></div><details><summary>详细说明</summary><div class="dbody"><ol class="brief-lines"><li>本页仅重排历史数据，不代表新的定时任务或 20 分钟交付验收。</li></ol></div></details></div></details></div>
+<div class="pane p2"><section class="card"><h2>① AI 压力</h2><p class="sub">数据时点：2026-09-05 07:47–08:10 HKT</p><div class="brief-signal attention"><span class="signal-label">! 需留意</span><p><b>1. 中情景 21.76%；留意未分类 AAOI</b></p><p>2. 下一步：待你裁决</p></div><div class="tblwrap"><table data-columns="2"><thead><tr><th>项目</th><th>原报告读数</th></tr></thead><tbody><tr><td>中情景</td><td>21.76%</td></tr><tr><td>AAOI</td><td>尚无批准 tier，不进分子</td></tr><tr><td>低 / 高情景</td><td>旧基数近似，不作本期精确值</td></tr></tbody></table></div><details><summary>详细说明</summary><div class="dbody"><ol class="brief-lines"><li>压力系数不是 AI 相关度；详细原始方法保留在原报告中。</li></ol></div></details></section><section class="card"><h2>② 单票集中度</h2><p class="sub">数据时点：2026-09-05 07:47–08:10 HKT</p><div class="brief-signal normal"><span class="signal-label">✓ 本期未触发</span><p><b>1. GOOG 三账户合并 4.25%</b></p><p>2. 下一步：观察</p></div><div class="tblwrap"><table data-columns="2"><thead><tr><th>范围</th><th>占比</th></tr></thead><tbody><tr><td>GOOG / GOOGL 三账户</td><td>4.25%</td></tr><tr><td>性质</td><td>观察口径，不触发交易</td></tr></tbody></table></div><details><summary>详细说明</summary><div class="dbody"><ol class="brief-lines"><li>原报告分子 263,254 美元；分母（三账户含现金）6,198,032 美元。原显示行值有舍入，不用显示行重加合计。</li><li>IB 执行视图与三账户观察视图分开，原阈值不修改。</li></ol></div></details></section></div>
+<div class="pane p3"><section class="card" id="xuan-ib-cash-plan-detail">
+<h2>现金优先补仓参考 <small>只作规划，不执行交易</small></h2>
+<p style="font-size:12px">三方向补充 · USSC 占本次预算 10%，其余重算 EXUS、EIMI；不是永久持仓比例。金额为美元规划值，非下单额度。</p>
+<div class="kv"><span class="k">① EXUS｜非美发达</span><span class="v"><b>$550,579</b><br>EXUS＋VCN 类别合计<br>当前 12.01% → 补后约 21.94% / 目标 23%</span></div>
+<div class="kv"><span class="k">② EIMI｜新兴市场</span><span class="v"><b>$128,701</b><br>EIMI＋INDA 类别合计<br>当前 10.86% → 补后约 11.87% / 目标 12%</span></div>
+<div class="kv"><span class="k">③ USSC｜美国小盘价值</span><span class="v"><b>$75,476</b><br>本次现金预算 10%<br>占股票总额：0.39% → 补后约 1.96%</span></div>
+<div class="kv"><span class="k">美国底仓合计（含 USSC）</span><span class="v">51.43% → 补后约 44.68%<br>45% 为参考目标，非强制上限</span></div>
+<div class="kv"><span class="k">现金规划上限 / 本次参考分配</span><span class="v">$754,755 / $754,755</span></div>
+<div class="kv"><span class="k">券商可立即用于本次补仓</span><span class="v"><b class="wv">待核实</b> · 挂单占款待核；跨平台资金未假设已到账</span></div>
+<p style="font-size:12px"><b>两类仍需 $84,768。</b>指在本次三方向分配后，以纯现金继续补足非美发达、新兴市场参考目标的金额；不是 USSC 缺口，也不代表四类全部达标。卖出回款实际可用后再评估；本次不依赖卖出。</p>
+<details><summary>使用前核对 · 金额与口径 <span class="rt">默认折叠</span></summary><div class="dbody"><ol>
+<li>先核实 IB 可用余额、现有买单占款及 reserve 所在账户；NOAH-HK 现金尚需确认能否及何时用于本次补仓。现金池不是 IB 即时购买力。</li>
+<li>未成交卖单不计回款；“待撤”买单不等于已经撤销，不能当作资金已释放。未核实冻结口径时不重复扣减，也不把名义挂单金额当券商实际冻结金额。</li>
+<li>规划预算＝IB $636,786＋NOAH-HK $357,969−预留 $240,000，共 $754,755。不含保证金、借款或待售资产；实际可用资金更少时，应按新预算重算三个金额。</li>
+<li>USSC 先分配本次预算 10%，按美分取整为 $75,476；剩余 $679,280 用于 EXUS、EIMI。其参考目标按类别合计计，不是单只 ETF 目标；USSC 的 10% 不是股票仓位目标，不设未经核实的 14% 目标分母。</li>
+<li>原股票总额 $3,876,641。先纳入 USSC 分配后，只补非美发达、新兴市场至 23%／12% 同时达标仍需 $764,048，其中 $619,286／$144,761；以剩余预算按这两个完整补足额的比例分配，并按美分平衡。并非将旧方案直接打九折。</li>
+<li>本次补仓后的股票总额＝原股票总额＋实际规划分配，共 $4,631,397。USSC 原持仓 $15,216 已包含于美国底仓 $1,993,936，不重复计入；现金本身不计入股票分母。45% 仅作美国底仓参考目标，不构成强制上限。</li>
+<li>资金超出本方案两类需求、两类均无需补充或有限现金将继续买入超配类别时，暂列待核实并保留现金，不擅自扩展 USSC 预算或花完余款。</li>
+<li>数据时点：2026-09-05 07:47–08:10 HKT。价格、持仓或可用现金改变后重新计算；不提供股数、限价或自动交易，不保证此配置收益更高。</li>
+</ol></div></details>
+</section><section class="card"><h2>③ 四桶快照</h2><p class="sub">数据时点：2026-08-24</p><div class="brief-signal unverified"><span class="signal-label">? 待核验</span><p><b>1. 08-24 旧快照，仍待完整核验</b></p><p>2. 下一步：待核实</p></div><div class="tblwrap"><table data-columns="2"><thead><tr><th>类别</th><th>快照占比</th></tr></thead><tbody><tr><td>高流动性</td><td>17.75%</td></tr><tr><td>VC / PE</td><td>51.74%</td></tr><tr><td>对冲基金</td><td>14.58%</td></tr><tr><td>常青</td><td>15.93%</td></tr></tbody></table></div><details><summary>详细说明</summary><div class="dbody"><ol class="brief-lines"><li>沿用旧日期，不能据此认定当前全量分类已完成。</li></ol></div></details></section></div>
+<div class="pane p4"><details open><summary>⑥ 换仓触发检查</summary><div class="dbody"><p class="sub">数据时点：2026-09-05 07:47–08:10 HKT</p><div class="brief-signal attention"><span class="signal-label">! 需留意</span><p><b>1. 原报告未触发；4 张买单待人工复核</b></p><p>2. 下一步：待你裁决</p></div><details><summary>详细说明</summary><div class="dbody"><ol class="brief-lines"><li>9 张挂单：买入在前、卖出在后，组内按绝对距市价由近到远。</li><li>本历史重排用原持仓表价格重新计算距离，舍入可能与旧表略有差异。</li><li>待撤标记仅沿用原报告，不根据距离新增撤单建议。</li></ol></div></details><h3>买入 <small>6 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody><tr><td><b>1. EXUS</b> ×300<span class="sub">58天 · &gt;5% 提示</span></td><td>44<span class="sub">USD</span></td><td>-6.7%</td></tr><tr><td><b>2. EXUS</b> ×1,000<span class="sub">93天 · 待撤 · <strong class="order-review">待撤复核</strong></span></td><td>42<span class="sub">USD</span></td><td>-10.94%</td></tr><tr><td><b>3. EIMI</b> ×500<span class="sub">51天 · &gt;5% 提示</span></td><td>49.5<span class="sub">USD</span></td><td>-11.75%</td></tr><tr><td><b>4. EXUS</b> ×1,000<span class="sub">93天 · 待撤 · <strong class="order-review">待撤复核</strong></span></td><td>41.5<span class="sub">USD</span></td><td>-12%</td></tr><tr><td><b>5. MXUS</b> ×100<span class="sub">101天 · 待撤 · <strong class="order-review">待撤复核</strong></span></td><td>199<span class="sub">USD</span></td><td>-12.34%</td></tr><tr><td><b>6. EIMI</b> ×1,000<span class="sub">93天 · 待撤 · <strong class="order-review">待撤复核</strong></span></td><td>47.12<span class="sub">USD</span></td><td>-15.99%</td></tr></tbody></table></div><h3>卖出 <small>3 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody><tr><td><b>1. AMD</b> ×30<span class="sub">9天 · REPLACED 待目视</span></td><td>499<span class="sub">USD</span></td><td>+4.49%</td></tr><tr><td><b>2. AMD</b> ×20<span class="sub">10天 · NEW</span></td><td>500<span class="sub">USD</span></td><td>+4.7%</td></tr><tr><td><b>3. SLV</b> ×160<span class="sub">141天 · 免龄</span></td><td>82<span class="sub">USD</span></td><td>+36.96%</td></tr></tbody></table></div><details><summary>排序与报价说明</summary><div class="dbody"><p>买卖分组，各组按绝对价格距离由近到远；同距保持原顺序，缺价置后。距离不代表成交概率；待撤仅提醒，不执行撤单。</p><ol class="brief-lines"><li>AMD：2026-09-05 07:47–08:10 HKT</li><li>AMD：2026-09-05 07:47–08:10 HKT</li><li>EXUS：2026-09-05 07:47–08:10 HKT</li><li>EXUS：2026-09-05 07:47–08:10 HKT</li><li>EIMI：2026-09-05 07:47–08:10 HKT</li><li>EXUS：2026-09-05 07:47–08:10 HKT</li><li>MXUS：2026-09-05 07:47–08:10 HKT</li><li>EIMI：2026-09-05 07:47–08:10 HKT</li><li>SLV：2026-09-05 07:47–08:10 HKT</li></ol></div></details></div></details><!-- xuan-ib-decision-group:v1:awaiting_user:start --><h2 data-decision-group-title="awaiting_user">⑤ 待决定事项 <small>1 项待 Wu 裁决</small></h2><details class="dcard" id="D-20260904-AAOI-AITIER" data-decision-id="D-20260904-AAOI-AITIER" data-decision-status="awaiting_user"><summary>1 · Webull 新持仓 AAOI 的 §0-C AI 压力 tier
+<span class="rt wv">建议 T1（80%）· 待 Wu 审核</span></summary><div class="dbody"><p><b>本期事实更新：</b>沿用周六原报告的事实与意见；本次仅重排显示，没有新回应；历史状态不代表今日进度。</p><p class="sub">2026-09-05 07:47–08:10 HKT；下列为原事项记录，历史金额不代表本期值。</p><details><summary>原事项记录（保留历史意见）</summary><div class="dbody"><!-- xuan-compact-card-body:start -->
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>Webull 于 09-03 13:07 EDT 买入 AAOI（Applied Optoelectronics）100 股 @ 101.69（该成交已在 09-04 睡前版首次披露），本次读取市值 $10,553.00（Sharesight 08:09:11 HKT，对应美股 09-04 收盘），为三账户 AI 指标范围内的持仓，§0-C 现行分层与 <code>xuan-ib-ai-tier-overrides-v1.json</code> 均无该标的的已批准 tier。可选路径：(a) T1（60% / 80% / 100%，中情景 +$8,442 / +0.14 个百分点）；(b) T2（35% / 55% / 75% 阶梯，中情景 +$5,804 / +0.09 个百分点）；(c) 判「不适用」不进分子。三种情形本次中情景均维持 21.8%–21.9%，不改变提醒区间结论；本期按 fail-closed 继续不进分子、只计分母。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>建议按 T1 计入。理由：AAOI 主营数据中心光模块/光收发器，需求直接绑定 AI 数据中心 capex，与既有 T1 的 AVGO / MRVL 属同一供应链压力来源；按既定框架「压力情景损失比例」口径，归入 T1 更保守，且金额小、不触发任何线值。若 Wu 认为其 AI 敞口应更低，可改 T2；不建议判不适用。仅为风险测算分层，不构成买卖或调仓建议。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>待 Wu 审核</b>（<code>awaiting_user</code>）· 编号 <code>D-20260904-AAOI-AITIER</code> · 本次早间版未收到回应，状态与回执均未变动</p>
+</div><!-- xuan-compact-card-body:end --></div></details></div></details><!-- xuan-ib-decision-group:v1:awaiting_user:end --><!-- xuan-ib-decision-group:v1:resolved:start --><h2 data-decision-group-title="resolved">已决定 / 待落实 <small>3 项 · 只记录意见，不执行交易</small></h2><details class="dcard" id="D-20260829-MRVL-CLASS" data-decision-id="D-20260829-MRVL-CLASS" data-decision-status="accepted"><summary>1 · Webull MRVL 标准 T1 风险口径已落实
+<span class="rt gv">用户已批准 60% / 80% / 100% · 只调整风险测算</span></summary><div class="dbody"><p><b>本期事实更新：</b>沿用周六原报告的事实与意见；本次仅重排显示，没有新回应；历史状态不代表今日进度。</p><p class="sub">2026-09-05 07:47–08:10 HKT；下列为原事项记录，历史金额不代表本期值。</p><details><summary>原事项记录（保留历史意见）</summary><div class="dbody"><!-- xuan-compact-card-body:start -->
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实：</b>普通资产分类「Highly Liquid / 美国科技」与 §0-C AI 压力 tier 是两项规则。本次按用户已批准的标准 T1，以本次读取市值 $67,065.00（2026-09-05 08:09:11 HKT，300 股 @ 223.55，对应美股 09-04 收盘；较本日早前临时版 $65,295.12 增加 $1,769.88，全部为收盘前价格变动，股数未变）计入低 / 中 / 高 $40,239.00 / $53,652.00 / $67,065.00，为本期独立现场重算。原 09-03 增持 100 股为 Wu 自行操作、Claude 未参与，已在 09-04 睡前版首次披露，本次不重复计为新增。</p>
+<p style="margin:5px 0"><b class="lab">落实：</b>本期中情景已纳入 MRVL，并使用未舍入逐票贡献汇总；低 / 高仅增加 MRVL 精确增量，原组合基数仍为 2026-08-31 近似且未反映近日持仓变动，可信度进一步降低（见「风险」标签说明）。后续报告继续使用已批准 T1 规则和当期核实市值。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 本期风险计算已更新</b>（<code>accepted</code> 为原回执历史状态，原文保留；不是买卖或转账授权）· 编号 <code>D-20260829-MRVL-CLASS</code> · 新口径批准记录 <code>WU-20260831-MRVL-T1</code></p>
+</div><!-- xuan-compact-card-body:end --></div></details></div></details><details class="dcard" id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-id="D-20260829-GOOG-FAMILY-LIMIT" data-decision-status="accepted"><summary>2 · GOOG/GOOGL 家庭主视图集中度 · 线内
+<span class="rt gv">双视图口径已于 08-31 确认 · 已决定 / 待落实</span></summary><div class="dbody"><p><b>本期事实更新：</b>沿用周六原报告的事实与意见；本次仅重排显示，没有新回应；历史状态不代表今日进度。</p><p class="sub">2026-09-05 07:47–08:10 HKT；下列为原事项记录，历史金额不代表本期值。</p><details><summary>原事项记录（保留历史意见）</summary><div class="dbody"><!-- xuan-compact-card-body:start -->
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>本期三账户合并观察：$263,254.16 / $6,198,031.57 = 4.25%（IB 73,858.64 + Schwab 102,214.92 + Webull 87,180.60；IB-HK 资产估值读取窗口 07:47–08:10 HKT，对应美股 09-04 收盘；Schwab-HK/Webull 经 Sharesight 08:09:05–08:09:11 HKT 读取，与本报告「风险」双视图一致）。与本日早前临时版 4.28%（22:08–22:11 HKT）基本持平，差异来自收盘前价格，GOOG/GOOGL 无持仓变化；<b>决定本身与原回执均不变</b>——事实变化不构成新的用户回应，不得据此自动改写 <code>awaiting_user</code> 以外的任何状态。Wu 已于 2026-08-31 在本任务确认「三账户合并观察 + IB 单独执行视图」双视图方案：三账户合并观察分子=三账户直接持有 GOOG/GOOGL 美元市值合计，分母=同三账户总市值含现金；IB 执行视图继续沿用现行软 5% / 硬 5.5% 阈值；本次确认不新增任何交易触发或阈值。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>已确认口径与此前建议一致——三账户合并观察仅作参考，不升级为交易触发；IB 执行视图继续独立判断。本次报告已按双视图口径展示（见「风险」标签「单票集中度 · 双视图」）。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用，08-31 口径确认已收到，本次继续按双视图口径落实展示）· 编号 <code>D-20260829-GOOG-FAMILY-LIMIT</code></p>
+</div><!-- xuan-compact-card-body:end --></div></details></div></details><details class="dcard" id="D-20260829-SEMILIQUID-MAPPING" data-decision-id="D-20260829-SEMILIQUID-MAPPING" data-decision-status="accepted"><summary>3 · 四桶分类核验与数据完整性复核
+<span class="rt wv">已采纳继续沿用；后续核实现金身份与剩余组合 · 已决定 / 待落实</span></summary><div class="dbody"><p><b>本期事实更新：</b>沿用周六原报告的事实与意见；本次仅重排显示，没有新回应；历史状态不代表今日进度。</p><p class="sub">2026-09-05 07:47–08:10 HKT；下列为原事项记录，历史金额不代表本期值。</p><details><summary>原事项记录（保留历史意见）</summary><div class="dbody"><!-- xuan-compact-card-body:start -->
+<div class="dbody">
+<p style="margin:5px 0"><b class="lab">事实/选项：</b>原报告对分类覆盖缺口的解释有误，现按已核实的历史审计纠正；证据、范围和沿用条件统一见「报告说明」。本项用户决定与原回执保持不变，继续沿用已批准快照；不以此说明更正宣布家庭全量核验完成或更新四桶金额。</p>
+<p style="margin:5px 0"><b class="lab">Claude 意见：</b>落实既有决定：继续沿用已批准快照；下一步先核实现金身份及剩余组合的数据完整性，再完成来源对账与受控核验。不能把历史局部审计视为当前全量结果，不再要求按错误的数量差补建分类。仅推进数据核验，不执行交易。</p>
+<p style="margin:5px 0"><b class="lab">状态：</b><b>已决定 / 待落实</b>（<code>accepted</code>；沿用）· 编号 <code>D-20260829-SEMILIQUID-MAPPING</code></p>
+</div><!-- xuan-compact-card-body:end --></div></details></div></details><!-- xuan-ib-decision-group:v1:resolved:end --><details><summary>已结案 / 只读观察 <span class="rt">最近 1 项</span></summary><div class="dbody"><ol><li>原报告记载：IB、Schwab、Webull 无新增成交。</li></ol></div></details></div>
+<div class="pane p5"><section id="xuan-ib-policy-v2" data-policy-id="xuan-ib-index-etf-policy-v2" data-policy-status="approved-not-implemented" data-policy-fingerprint="3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f">
+<!-- xuan-ib-index-etf-policy-v2:3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f -->
+<style>
+#xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--xpv2-ink);background:var(--xpv2-bg);color-scheme:light dark;font-size:16px;display:block;box-sizing:border-box;width:100%;max-width:390px;margin:auto;padding:18px 14px 34px;overflow-wrap:anywhere}
+#xuan-ib-policy-v2 *{box-sizing:border-box;min-width:0}#xuan-ib-policy-v2 .xpv2-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:5px 2px 18px}#xuan-ib-policy-v2 .xpv2-top h1{font-size:25px;margin:0 0 4px}#xuan-ib-policy-v2 .xpv2-muted{color:var(--xpv2-muted);font-size:13px}#xuan-ib-policy-v2 .xpv2-pill{white-space:nowrap;border:1px solid var(--xpv2-border);border-radius:999px;padding:7px 10px;background:var(--xpv2-surface);font-size:12px;font-weight:700}#xuan-ib-policy-v2 .xpv2-card,#xuan-ib-policy-v2 details{background:var(--xpv2-surface);border:1px solid var(--xpv2-border);border-radius:18px;margin:0 0 12px;padding:16px;box-shadow:0 1px 0 var(--xpv2-shadow)}#xuan-ib-policy-v2 .xpv2-hero{display:grid;gap:10px}#xuan-ib-policy-v2 .xpv2-hero h2,#xuan-ib-policy-v2 .xpv2-call h2{font-size:18px;margin:0}#xuan-ib-policy-v2 .xpv2-status{font-size:22px;font-weight:800}#xuan-ib-policy-v2 .xpv2-note{font-size:14px;line-height:1.45;margin:0}#xuan-ib-policy-v2 .xpv2-targets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}#xuan-ib-policy-v2 .xpv2-target{border-radius:14px;background:var(--xpv2-target);padding:12px 8px;text-align:center}#xuan-ib-policy-v2 .xpv2-target b{display:block;font-size:24px}#xuan-ib-policy-v2 .xpv2-target span{font-size:11px;color:var(--xpv2-target-muted)}#xuan-ib-policy-v2 .xpv2-call{border:2px solid var(--xpv2-call-border);background:var(--xpv2-call)}#xuan-ib-policy-v2 .xpv2-call .xpv2-gate{display:inline-block;background:var(--xpv2-gate);color:#fff;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;margin-bottom:9px}#xuan-ib-policy-v2 details{padding:0}#xuan-ib-policy-v2 summary{cursor:pointer;list-style:none;padding:16px;font-weight:800}#xuan-ib-policy-v2 summary::-webkit-details-marker{display:none}#xuan-ib-policy-v2 summary:after{content:"＋";float:right;color:#777}#xuan-ib-policy-v2 .xpv2-body{border-top:1px solid var(--xpv2-divider);padding:14px 16px 16px}#xuan-ib-policy-v2 .xpv2-row{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--xpv2-divider);padding:9px 0;font-size:14px}#xuan-ib-policy-v2 .xpv2-row:last-child{border:0}#xuan-ib-policy-v2 .xpv2-row b{text-align:right;max-width:52%}#xuan-ib-policy-v2 .xpv2-readonly{text-align:center;color:var(--xpv2-muted);font-size:12px;line-height:1.5;margin-top:18px}
+@media(min-width:600px){#xuan-ib-policy-v2{max-width:430px}}
+@media(prefers-color-scheme:dark){#xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}}
+#tl:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;color-scheme:light}
+#td:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}
+</style>
+  <header class="xpv2-top"><div><h1>XUAN-ETF 计划</h1><div class="xpv2-muted">长期配置 · 只读规划</div></div><span class="xpv2-pill">已批准 · 建基线中</span></header>
+  <section class="xpv2-card xpv2-hero" aria-labelledby="xpv2-policy-status"><h2 id="xpv2-policy-status">当前状态</h2><div class="xpv2-status">已批准 · 尚未接入日报计算</div><p class="xpv2-note">先核实 CALL 账本，再建立 A／B／C 基线。当前暂不显示可投入金额。</p></section>
+  <section class="xpv2-card" aria-labelledby="xpv2-policy-targets"><h2 id="xpv2-policy-targets" style="font-size:18px;margin:0 0 12px">长期目标</h2><div class="xpv2-targets"><div class="xpv2-target"><b>65%</b><span>美国</span></div><div class="xpv2-target"><b>23%</b><span>非美发达</span></div><div class="xpv2-target"><b>12%</b><span>新兴市场</span></div></div></section>
+  <section class="xpv2-card xpv2-call" id="xuan-ib-policy-v2-call-gate" aria-labelledby="xpv2-call-title"><span class="xpv2-gate">资料未齐 · 暂停金额计算</span><h2 id="xpv2-call-title">CALL 账本未核实</h2><p class="xpv2-note">不把缺失值当作 0，不计算可投入金额，也不执行配置。<span class="xpv2-muted">技术规则：fail-closed。</span></p></section>
+  <details><summary>美国 65% 如何分</summary><div class="xpv2-body"><div class="xpv2-row"><span>USSC · 小盘价值</span><b>5%</b></div><div class="xpv2-row"><span>EQAC · AI／成长倾斜</span><b>0–8%</b></div><div class="xpv2-row"><span>CSPX · 大盘核心</span><b>52–60%</b></div><p class="xpv2-note">核心＝60%−倾斜；初始 8% 只在 mapping 与 AI exposure 验证后生效。</p></div></details>
+  <details><summary>补仓顺序</summary><div class="xpv2-body"><div class="xpv2-row"><span>① 现有现金</span><b>主要来源</b></div><div class="xpv2-row"><span>② 已有持仓卖出</span><b>结算后才计</b></div><p class="xpv2-note">不预计未成交卖出回款；资金不足时保留上一个已核实方案。</p></div></details>
+  <details><summary>范围与排除</summary><div class="xpv2-body"><p class="xpv2-note">范围为 IB-HK 全部资产加 NOAH-HK 现金；GLD、SLV、MSTR、HODL 主题投资不纳入本计划。</p></div></details>
+  <details><summary>产品与角色</summary><div class="xpv2-body"><div class="xpv2-row"><span>1. CSPX<br><small>IE00B5BMR087 · LSE</small></span><b>美国大盘核心</b></div><div class="xpv2-row"><span>2. EQAC<br><small>IE00BFZXGZ54 · SWX</small></span><b>AI／成长倾斜</b></div><div class="xpv2-row"><span>3. USSC<br><small>IE00BSPLC413 · LSE</small></span><b>美国小盘价值</b></div><div class="xpv2-row"><span>4. EXUS<br><small>IE0006WW1TQ4 · LSE</small></span><b>非美发达</b></div><div class="xpv2-row"><span>5. EIMI<br><small>IE00BKM4GZ66 · LSE</small></span><b>新兴市场</b></div><div class="xpv2-row"><span>6. IB01<br><small>IE00BGSF1X88 · LSE</small></span><b>CALL 备用金候选</b></div></div></details>
+  <details><summary>税务要点</summary><div class="xpv2-body"><p class="xpv2-note">候选产品均为爱尔兰注册 UCITS。美国 situs 风险仍需逐项核实；分红税、遗产税及个人适用结论请取得专业税务意见。</p></div></details>
+  <details><summary>A／B／C 评分</summary><div class="xpv2-body"><div class="xpv2-row"><span>A</span><b>实际组合</b></div><div class="xpv2-row"><span>B</span><b>现金优先影子方案</b></div><div class="xpv2-row"><span>C</span><b>CSPX 累积型</b></div><div class="xpv2-row"><span>1. 税后收益</span><b>待建基线</b></div><div class="xpv2-row"><span>2. 最大回撤</span><b>待建基线</b></div><div class="xpv2-row"><span>3. AI 参与</span><b>待建基线</b></div><div class="xpv2-row"><span>4. US-situs 占比</span><b>待建基线</b></div><div class="xpv2-row"><span>5. CALL 覆盖</span><b>待建基线</b></div><p class="xpv2-note">至少 4 个完整季度后才排名。</p></div></details>
+  <details><summary>与当前日报的关系</summary><div class="xpv2-body"><p class="xpv2-note">当前日报现金计划仍是 operational-v1。policy-v2 是已批准的长期目标，须在 mapping、CALL 账本和 T0 基线完成后版本化接入；不得把旧数字改名为新方案。</p></div></details>
+  <p class="xpv2-readonly">只读 · 不下单、不改单、不撤单、不转账<br>任何金融操作均须另行明确批准</p>
+</section><!-- xuan-ib-etf-abc-runtime:v1:start -->
+<template id="xuan-ib-etf-abc-state-v1" type="application/json">{"schemaVersion":1,"methodId":"xuan-ib-etf-abc-v1","mode":"read-only","t0DateHkt":"2026-09-01","t0QuarterStatus":"stub","baselineStatus":"pending","economicDateHkt":"2026-09-05","effectiveMarketDate":"2026-09-05","calendarStatus":"unavailable","staleMarketClosed":false,"comparisonStatus":"incomplete","targetVectorStatus":"candidate-not-deployable","bReserveStatus":"incomplete","bPendingCashUnallocated":false,"bPendingOutflowUnsimulated":false,"bImplementationStatus":"incomplete-call-reserve","cDistributionTreatment":"embedded-in-accumulating-price","rawMetricsComplete":false,"completedQuarterIds":[],"completeQuarterCount":0,"minimumCompleteQuartersForRanking":4,"rankingEligible":false,"rankingStatus":"not-eligible-less-than-four-complete-quarters"}</template>
+<section class="xuan-etf-abc-runtime" data-method-id="xuan-ib-etf-abc-v1" data-t0="2026-09-01">
+  <h3>XUAN-ETF · A/B/C</h3>
+  <p>① T0 2026-09-01 · 基线待建立 · 暂不比较</p>
+  <p>② A 实际 · B A克隆边际影子 · C CSPX累积型</p>
+  <p>③ 资金流同日同额 · EOD；估值不完整</p>
+  <p>④ CALL 未齐 · 不建份额</p>
+  <p>⑤ 0/4 完整季度 · 暂不排名</p>
+  <p>只读方法 · 不下单、不改单、不撤单、不转账</p>
+</section>
+<!-- xuan-ib-etf-abc-runtime:v1:end --></div></div>
+<details><summary>报告说明 <span class="rt">版别 · 取数时点 · 数据日 · 只读</span></summary><div class="dbody"><ol><li>来源：已发布的周六上午版，数据读取窗口 2026-09-05 07:47–08:10 HKT；本次未读取金融接口。</li><li>仅展示层重排。持仓、挂单数量、金额与意见回执取自该历史报告；本页为上线的历史重排，不替代最新报告或证明新运行成功。</li><li>折叠下方原报告全文可逐项对照。原文旧日程仅为历史证据。原发布 source SHA：521e0aa5570b00a8a0029535c3558dad8ec7e33c；HTML blob：eec28a0694dcebdb3ca7790b592ceee38a0e4fa2。</li></ol><p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p><section id="xuan-ib-classification-disclosure-v1">
+<h3>四桶分类核验与沿用口径</h3>
+<ol>
+<li>历史分类核验：2026-08-31 分两批读取（15:31–15:35、21:23–21:24 HKT），七组合共 95 行全部覆盖，未解决 0、重复 0。仅为当时规则覆盖，不是本期同步估值。</li>
+<li>其中 38 项 Semi Liquid 持仓全部覆盖：7 次逐仓例外（holdingOverrides）＋31 次整组合规则（portfolioRules），未覆盖为 0。规则顺序不变：来源明确的现金 → 逐仓 ID 与名称交叉校验 → 整组合规则 → 精确通用资产标签 → 未知。不能用持仓总数减逐仓例外数量推算分类缺口。</li>
+<li>UBS 现金代理身份已由既有来源凭证核实，原证券表示保留；这不是重新读取当前可用现金。不能按名称猜现金或分类，也不再把历史身份疑点列作未解决缺口。</li>
+<li>本页四桶、三层流动性及依赖归桶的指标继续沿用已批准的 2026-08-24 快照。只有当期同轮七组合范围、现金身份、完整持仓、分页／懒加载及逐行金额对账经来源核验，并通过受控维护更新本说明后，才可改称实时重算。其他指标按各自已披露的数据时点与来源处理，不因本项回退停止报告。</li>
+</ol>
+</section></div></details>
+<details><summary>使用指南 <span class="rt">30 秒上手</span></summary><div class="dbody"><ol class="brief-lines"><li><b>先看日期：</b>「已同步」是读取时间，不是数据时间；刷新只读取已发布报告。</li><li><b>怎么看：</b>概览看变化 → 风险看提醒 → 配置看现金参考。颜色不是买卖信号；小箭头可展开明细。</li><li><b>待办：</b>回应只记录意见，不自动交易；数字是待决定数量，琥珀色表示另有进度提醒。</li><li><b>ETF：</b>比较实际 A、协作方案 B、标普500基准 C；基线未建不排名，不保证收益。</li><li><b>自动更新：</b>周二至周六 08:00 上午版；周一至周五美股开市时启动睡前版。刷新只查看结果，不会启动新报告。</li></ol><p class="sub">✓ 本期未触发 · ! 需留意 · ? 待核验 · — 未取得。所有报告、补仓参考及挂单提醒均不自动下单、撤单或转账。</p></div></details>
+<div class="foot">只读报告 · 数据截至 2026-09-05 07:47–08:10 HKT · 不是交易指令</div></div></div>
+<template id="xuan-ib-decision-state-v1" type="application/json">
+{"schemaVersion":1,"interaction":"enabled","decisions":[{"decisionId":"D-20260829-MRVL-CLASS","status":"accepted"},{"decisionId":"D-20260829-GOOG-FAMILY-LIMIT","status":"accepted"},{"decisionId":"D-20260829-SEMILIQUID-MAPPING","status":"accepted"},{"decisionId":"D-20260904-AAOI-AITIER","status":"awaiting_user"}],"receipts":[{"receiptId":"R-20260831-064906-7F3K9QXM","decisionId":"D-20260829-MRVL-CLASS","action":"accepted","responseToSourceSha":"3769a3e05e954474573b6b1e247374f4e2addfb5","responseToHtmlBlob":"0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b","recordedAtHkt":"2026-08-31T06:49:06+08:00","publicSummary":"采纳 Claude 意见：MRVL 暂不计入分子并披露；仅记录本次回应，不构成交易授权。"},{"receiptId":"R-20260831-064907-2LM4P8YB","decisionId":"D-20260829-GOOG-FAMILY-LIMIT","action":"accepted","responseToSourceSha":"3769a3e05e954474573b6b1e247374f4e2addfb5","responseToHtmlBlob":"0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b","recordedAtHkt":"2026-08-31T06:49:07+08:00","publicSummary":"采纳 Claude 意见：先重订家庭主视图集中度参考线口径；仅记录本次回应，不构成交易授权。"},{"receiptId":"R-20260831-064908-9RT6WZ2N","decisionId":"D-20260829-SEMILIQUID-MAPPING","action":"accepted","responseToSourceSha":"3769a3e05e954474573b6b1e247374f4e2addfb5","responseToHtmlBlob":"0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b","recordedAtHkt":"2026-08-31T06:49:08+08:00","publicSummary":"采纳 Claude 意见：继续沿用四桶 mapping 快照并推进补全；仅记录本次回应，不构成交易授权。"}]}
+</template>
+<!-- xuan-ib-cash-plan-v1:eyJzY2hlbWFWZXJzaW9uIjoyLCJzdGF0dXMiOiJzbmFwc2hvdCIsInNvdXJjZUFzT2ZIa3QiOiIyMDI2LTA5LTA1IDA3OjQ34oCTMDg6MTAgSEtUIiwiZXF1aXR5VG90YWwiOjM4NzY2NDEuNDcsImRldmVsb3BlZCI6NDY1NDMxLjQ0LCJlbWVyZ2luZyI6NDIxMTc4LjQ5LCJpYkNhc2giOjYzNjc4Ni40Nywibm9haENhc2giOjM1Nzk2OC45MiwicmVzZXJ2ZSI6MjQwMDAwLCJjdXJyZW5jeSI6IlVTRCIsImRlbm9taW5hdG9yIjoiZXF1aXR5LW9ubHkiLCJ1c0Jhc2UiOjE5OTM5MzUuODEsInVzc2MiOjE1MjE1LjgyLCJ1c3NjQnVkZ2V0U2hhcmUiOjAuMX0 -->
+<details class="history-original"><summary>原报告全文 · 未改动的历史对照</summary><iframe title="原周六上午版" sandbox="" srcdoc="&lt;!doctype html&gt;&lt;html lang=&quot;zh-CN&quot;&gt;&lt;head&gt;&lt;meta charset=&quot;utf-8&quot;&gt;
+&lt;meta name=&quot;viewport&quot; content=&quot;width=device-width,initial-scale=1,viewport-fit=cover&quot;&gt;
+&lt;meta name=&quot;apple-mobile-web-app-capable&quot; content=&quot;yes&quot;&gt;
+&lt;meta name=&quot;mobile-web-app-capable&quot; content=&quot;yes&quot;&gt;
+&lt;meta name=&quot;apple-mobile-web-app-status-bar-style&quot; content=&quot;default&quot;&gt;
+&lt;meta name=&quot;apple-mobile-web-app-title&quot; content=&quot;XUAN-投资管理&quot;&gt;
+&lt;meta name=&quot;theme-color&quot; content=&quot;#f9f9f7&quot;&gt;
+&lt;title&gt;XUAN-投资管理&lt;/title&gt;
+&lt;style&gt;
+:root{color-scheme:light dark;
+--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--mut:#898781;--grid:#e1e0d9;
+--blue:#2a78d6;--orange:#eb6834;--good:#0ca30c;--warn:#fab219;--ser:#ec835a;--crit:#d03b3b;
+--up:#006300;--dn:#d03b3b;--wash:#f2f1ec;--pill:#efeee8}
+@media (prefers-color-scheme:dark){:root:not([data-theme=&quot;light&quot;]){
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}}
+:root[data-theme=&quot;dark&quot;]{
+--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--mut:#898781;--grid:#2c2c2a;
+--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+html,body{margin:0;padding:0;background:#f9f9f7}
+@media (prefers-color-scheme:dark){html,body{background:#0d0d0d}}
+*{box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,system-ui,&quot;Helvetica Neue&quot;,Arial,&quot;PingFang SC&quot;,&quot;Hiragino Sans GB&quot;,&quot;Microsoft YaHei&quot;,sans-serif;
+-webkit-text-size-adjust:100%}
+.page{background:var(--bg);color:var(--ink);min-height:100vh;padding:14px 12px 40px}
+.wrap{max-width:940px;margin:0 auto}
+.num{font-variant-numeric:tabular-nums}
+.date{font-size:12.5px;color:var(--ink2);display:block;font-variant-numeric:tabular-nums}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.tgl{display:flex;gap:4px;flex:0 0 auto}
+.tgl label{font-size:11px;padding:4px 9px;border:1px solid var(--grid);border-radius:99px;color:var(--ink2);cursor:pointer;background:var(--card)}
+#tl:checked~.page .tgl label[for=&quot;tl&quot;],#td:checked~.page .tgl label[for=&quot;td&quot;]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#tl,#td{position:absolute;opacity:0;pointer-events:none}
+#tl:checked~.page{--bg:#f9f9f7;--card:#fcfcfb;--ink:#0b0b0b;--ink2:#52514e;--grid:#e1e0d9;--blue:#2a78d6;--orange:#eb6834;--up:#006300;--wash:#f2f1ec;--pill:#efeee8}
+#td:checked~.page{--bg:#0d0d0d;--card:#1a1a19;--ink:#ffffff;--ink2:#c3c2b7;--grid:#2c2c2a;--blue:#3987e5;--orange:#d95926;--up:#0ca30c;--wash:#212120;--pill:#242423}
+details{background:var(--card);border:1px solid var(--grid);border-radius:10px;margin-top:8px}
+details&gt;summary{cursor:pointer;padding:9px 11px;font-size:13px;font-weight:600;list-style:none;
+display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline}
+details&gt;summary::-webkit-details-marker{display:none}
+details&gt;summary::before{content:&quot;▸ &quot;;color:var(--mut);font-weight:400}
+details[open]&gt;summary::before{content:&quot;▾ &quot;}
+details&gt;summary .rt{font-weight:500;color:var(--ink2);font-size:12px;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+details&gt;summary .rt.wv{color:var(--warn)}
+.dbody{padding:2px 11px 11px;font-size:13px;line-height:1.55;color:var(--ink2)}
+.alert{margin-top:9px;border-radius:9px;padding:8px 11px;font-size:12.5px;line-height:1.5;
+background:rgba(250,178,25,.14);border:1px solid rgba(250,178,25,.55);color:var(--ink);overflow-wrap:anywhere}
+.alert.crit{background:rgba(208,59,59,.13);border-color:rgba(208,59,59,.55)}
+.alert.ok{background:rgba(12,163,12,.12);border-color:rgba(12,163,12,.55)}
+.alert b{font-weight:700}
+.kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-top:12px}
+.kpi{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:10px}
+.kpi .lab{font-size:10.5px;color:var(--mut);letter-spacing:.03em;text-transform:uppercase}
+.kpi .big{font-size:21px;font-weight:650;margin-top:3px;letter-spacing:-.02em}
+.kpi .sub{font-size:11px;color:var(--ink2);margin-top:4px;line-height:1.45;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kpis{grid-template-columns:repeat(2,1fr)}.kpi .big{font-size:20px}}
+.tabs{margin-top:14px}
+.tabs input{position:absolute;opacity:0;pointer-events:none}
+.tabbar{display:flex;gap:5px;position:sticky;top:0;z-index:5;background:var(--bg);padding:6px 0;flex-wrap:wrap}
+.tabbar label{font-size:12.5px;padding:6px 11px;border-radius:99px;border:1px solid var(--grid);
+background:var(--card);color:var(--ink2);cursor:pointer;display:flex;gap:5px;align-items:center}
+.tabbar label .dot{background:var(--pill);color:var(--ink2);border-radius:99px;font-size:10px;padding:0 5px;min-width:15px;text-align:center}
+#s1:checked~.tabbar label[for=&quot;s1&quot;],#s2:checked~.tabbar label[for=&quot;s2&quot;],#s3:checked~.tabbar label[for=&quot;s3&quot;],#s4:checked~.tabbar label[for=&quot;s4&quot;]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s1:checked~.tabbar label[for=&quot;s1&quot;] .dot,#s2:checked~.tabbar label[for=&quot;s2&quot;] .dot,#s3:checked~.tabbar label[for=&quot;s3&quot;] .dot,#s4:checked~.tabbar label[for=&quot;s4&quot;] .dot{background:var(--bg);color:var(--ink)}
+@media(max-width:640px){
+.tabbar{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;flex-wrap:nowrap;max-width:100%;overflow:hidden}
+.tabbar label{min-height:44px;min-width:0;padding:4px 6px;font-size:12px;gap:4px;justify-content:center;white-space:nowrap;overflow:hidden}
+.tabbar label .dot{flex:0 0 auto}
+}
+.pane{display:none}
+#s1:checked~.p1,#s2:checked~.p2,#s3:checked~.p3,#s4:checked~.p4{display:block}
+.card{background:var(--card);border:1px solid var(--grid);border-radius:11px;padding:11px;margin-top:9px}
+.card h2{font-size:13.5px;margin:0 0 7px;letter-spacing:-.01em}
+.card h2 small{font-weight:400;color:var(--mut);font-size:11.5px;margin-left:5px}
+.kv{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--grid)}
+.kv:last-child{border-bottom:0}
+.kv .k{color:var(--ink2);flex:0 0 auto}
+.kv .v{text-align:right;font-variant-numeric:tabular-nums;white-space:normal;overflow-wrap:anywhere}
+@media(max-width:640px){.kv{flex-direction:column;gap:1px}.kv .v{text-align:left}}
+.tblwrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+table{border-collapse:collapse;width:100%;font-size:12px}
+th{font-size:10.5px;text-transform:lowercase;letter-spacing:.06em;color:var(--mut);font-weight:600;
+text-align:right;padding:5px 6px;border-bottom:1px solid var(--grid);white-space:nowrap}
+th:first-child{text-align:left}
+td{padding:5px 6px;border-bottom:1px solid var(--grid);text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td:first-child{text-align:left;position:sticky;left:0;background:var(--card);white-space:normal}
+tr.sec td{background:var(--wash);font-weight:700}
+tr.sec td:first-child{background:var(--wash)}
+tr.tot td{font-weight:700;background:var(--wash)}
+tr.tot td:first-child{background:var(--wash)}
+.sym{font-weight:600}
+.sub{font-size:10.5px;color:var(--mut);font-weight:400;white-space:normal;display:block;margin-top:1px}
+.up{color:var(--up)}.dn{color:var(--dn)}.or{color:var(--orange)}.bl{color:var(--blue)}
+.wv{color:var(--warn)}.cv{color:var(--crit)}.gv{color:var(--good)}
+.bar{margin:9px 0}
+.bar .lbl{display:flex;justify-content:space-between;gap:9px;font-size:12px;margin-bottom:3px;flex-wrap:wrap}
+.bar .lbl .r{font-variant-numeric:tabular-nums;color:var(--ink2);white-space:normal;overflow-wrap:anywhere;text-align:right}
+.track{height:7px;background:var(--pill);border-radius:99px;position:relative;overflow:hidden}
+.fill{height:100%;background:var(--blue);border-radius:99px}
+.fill.over{background:var(--orange)}
+.mark{position:absolute;top:0;height:100%;width:2px;background:var(--ink)}
+.tl{display:flex;gap:9px;padding:7px 0;border-bottom:1px solid var(--grid);font-size:12.5px}
+.tl:last-child{border-bottom:0}
+.tl .t{flex:0 0 62px;font-variant-numeric:tabular-nums;color:var(--ink2);font-size:11.5px}
+.tl .e{flex:1 1 auto}
+.tl .e b{font-weight:650}
+.tl .s{flex:0 0 auto;font-size:10px;padding:1px 6px;border-radius:99px;background:var(--pill);color:var(--ink2);height:fit-content;white-space:nowrap}
+.sw{margin-top:8px}
+.sw input{position:absolute;opacity:0;pointer-events:none}
+.swbar{display:flex;gap:5px;margin-bottom:7px}
+.swbar label{font-size:11.5px;padding:4px 10px;border-radius:99px;border:1px solid var(--grid);color:var(--ink2);cursor:pointer}
+#e1:checked~.swbar label[for=&quot;e1&quot;],#e2:checked~.swbar label[for=&quot;e2&quot;],#e3:checked~.swbar label[for=&quot;e3&quot;]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.epane{display:none}
+#e1:checked~.q1,#e2:checked~.q2,#e3:checked~.q3{display:block}
+ol,ul{margin:5px 0;padding-left:19px}
+li{font-size:12.5px;margin:3px 0;line-height:1.5}
+.dec li{margin:6px 0}
+.dec li b.lab,.dbody b.lab{display:inline-block;min-width:66px;color:var(--ink2);font-weight:600}
+.dcard{margin-top:8px}
+.dcard&gt;summary .rt{white-space:normal}
+.foot{font-size:11px;color:var(--mut);margin-top:14px;line-height:1.6}
+@media(max-width:640px){
+.page{padding:11px 9px 34px}body{font-size:14px}
+.dbody,.kv,li,td,.tl{font-size:12px}
+details .dbody{padding-left:7px;padding-right:7px}
+.tl .t{flex:0 0 56px}
+}
+
+#s5:checked~.tabbar label[for=&quot;s5&quot;]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+#s5:checked~.p5{display:block}
+@media(max-width:640px){.tabbar{grid-template-columns:repeat(5,minmax(0,1fr))}}
+@media(max-width:360px){.tabbar{gap:2px}.tabbar label{padding:4px 2px;font-size:11px;gap:2px}.tabbar label .dot{min-width:14px;padding:0 3px}}
+&lt;/style&gt;
+&lt;/head&gt;&lt;body&gt;&lt;!-- xuan-ib-handover:v1 --&gt;
+&lt;input type=&quot;radio&quot; name=&quot;th&quot; id=&quot;tl&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;th&quot; id=&quot;td&quot;&gt;
+&lt;div class=&quot;page&quot;&gt;&lt;div class=&quot;wrap&quot;&gt;
+
+
+&lt;div class=&quot;hdr&quot;&gt;
+&lt;span class=&quot;date&quot;&gt;2026-09-05 周六 · 早间版 · 数据截至 09-04 收盘&lt;/span&gt;
+&lt;div class=&quot;tgl&quot;&gt;&lt;label for=&quot;tl&quot;&gt;浅&lt;/label&gt;&lt;label for=&quot;td&quot;&gt;深&lt;/label&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;alert&quot;&gt;&lt;b&gt;四桶暂用 08-24 快照，待完整核验；其余已按本次 07:47–08:10 HKT 读数更新。&lt;/b&gt;&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;三行摘要 &lt;span class=&quot;rt&quot;&gt;最重要的排第一&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;b&gt;早间版&lt;/b&gt;：2026-09-05（周六）香港时间 07:47–08:10 HKT 只读读数，对应美股交易日 &lt;b&gt;09-04（周五）&lt;/b&gt;，为该交易日常规 + 延长交易收盘后的总结（美股常规收盘 04:00 HKT，延长交易段至 08:00 HKT）；下一美股全日休市为 09-08（周一 Labor Day），09-07（周一）无新早间版，09-08（周二）恢复。IB summary / balances / positions / orders / trades、9 个必读 Sharesight 组合（7 家庭 + 2 AI-only）本次全部成功读取，并另行核对 Schwab-HK / Webull 自 09-04 起有无新成交。&lt;b&gt;IB 侧无新增成交、GTC 挂单仍为 9 张、持仓股数均未变；Schwab-HK / Webull 本次同样无新增成交&lt;/b&gt;（Sharesight 成交端点自 09-04 起均返回 0 笔）。IB NAV &lt;b&gt;$5,057,944&lt;/b&gt;（较本日早前临时版 $5,062,108 &lt;span class=&quot;dn&quot;&gt;−$4,164&lt;/span&gt;，收盘前后价格变动，非新增成交）；现金池 $994,755（IB 636,786 + NOAH-HK 357,969）；7 个 Sharesight 家庭组合合计 &lt;b&gt;$31,441,878&lt;/b&gt;（较本日早前临时版 &lt;span class=&quot;dn&quot;&gt;−$4,164&lt;/span&gt;，差额全部来自 IB-HK；6 个非 IB 家庭组合逐项数值相等）。四桶 / 三层流动性继续沿用 2026-08-24 已批准快照，见「报告说明」。&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;AI 压力中情景 21.76%&lt;/b&gt;（$1,348,514 / $6,198,032，逐票现场读数未舍入汇总），距 25% 预警线 &lt;b&gt;$200,994 / 3.24 个百分点&lt;/b&gt;，高于 20% 提醒线 &lt;b&gt;$108,908 / 1.76 个百分点&lt;/b&gt;，fail-closed &lt;b&gt;PASS&lt;/b&gt;，提醒区间（未越警戒）。较本日早前临时版 21.74% 上升 0.02 个百分点，差异&lt;b&gt;全部来自 Schwab-HK / Webull 收盘前价格变动，无持仓变化、无口径变更&lt;/b&gt;。Webull 持仓 &lt;b&gt;AAOI 本次市值 $10,553 仍无已批准 AI tier，继续不进分子&lt;/b&gt;（若按 T1 计入最多 +0.14 个百分点），待决定 &lt;code&gt;D-20260904-AAOI-AITIER&lt;/code&gt; 维持 &lt;code&gt;awaiting_user&lt;/code&gt;，本次未收到回应、未追加任何回执。&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;需当下处理挂单：无&lt;/b&gt; —— 9 张 GTC 全部距现场报价 &amp;gt;2%，限价与股数与本日早前临时版一致。距市价最近的仍是 &lt;b&gt;AMD 卖 30@499&lt;/b&gt;，收盘价 $477.57 使距市价收窄至约 +4.51%，仍未触发、仍在 TWS 待目视；买单中最近的仍是 EXUS 买 300@44（约 −6.7%）。待撤 4 张（名义合计 $150,520，限价与股数未变）仍待 Wu 在 TWS 端执行。家庭主视图单票集中度：&lt;b&gt;GOOG/GOOGL 三账户合计 4.25%（线内，余量 $46,647）&lt;/b&gt;；BRK.B 4.90%（线内）；META+METU 合并市值 3.80%（仅市值参考）。持仓表按收盘 &lt;code&gt;change_pct&lt;/code&gt; 默认展开 |日涨跌| ≥1% 的 10 只（TSLA −6.24%、MSFT −2.10%、ORCL +3.67% 为最大），26 只全部取得 IB 快照 &lt;code&gt;change_pct&lt;/code&gt;，无待核验项。本次会话未下单、未撤单、未改单、未转账。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+
+&lt;div class=&quot;kpis&quot;&gt;
+&lt;div class=&quot;kpi&quot;&gt;&lt;div class=&quot;lab&quot;&gt;IB NAV&lt;/div&gt;&lt;div class=&quot;big num&quot;&gt;$5,057,944&lt;/div&gt;
+&lt;div class=&quot;sub&quot;&gt;2026-09-05 07:47–08:10 HKT 早间版只读读数（对应美股 09-04 收盘 + 延长交易）· vs 本日早前临时版 22:08–22:11 HKT $5,062,108 &lt;span class=&quot;dn&quot;&gt;−$4,164&lt;/span&gt;（收盘前后价格变动，无新成交）&lt;br&gt;持仓 $4,421,231 + 现金 $636,786 + 未结算/其他调整&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;kpi&quot;&gt;&lt;div class=&quot;lab&quot;&gt;可用现金&lt;/div&gt;&lt;div class=&quot;big num&quot;&gt;$754,755&lt;/div&gt;
+&lt;div class=&quot;sub&quot;&gt;现金池 $994,755（IB 636,786 + NOAH-HK 357,969；NOAH-HK 与早前临时版相等）&lt;br&gt;已扣 reserve $240,000 · 覆盖 4.1448x&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;kpi&quot;&gt;&lt;div class=&quot;lab&quot;&gt;四桶 · HL 缺口 &lt;small style=&quot;font-weight:400&quot;&gt;(08-24 沿用)&lt;/small&gt;&lt;/div&gt;&lt;div class=&quot;big num&quot;&gt;$6.92M&lt;/div&gt;
+&lt;div class=&quot;sub&quot;&gt;HL 17.75% / 40% · VC-PE 51.74% / 30%（&lt;span class=&quot;or&quot;&gt;超 ~$6.77M&lt;/span&gt;）&lt;br&gt;HF 14.58% · 常青 15.93% 毛&lt;br&gt;&lt;b class=&quot;wv&quot;&gt;沿用 08-24 · 完整核验仍待完成&lt;/b&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;kpi&quot; id=&quot;xuan-ib-cash-plan-kpi&quot;&gt;&lt;div class=&quot;lab&quot;&gt;补仓指引 · 现金优先&lt;/div&gt;&lt;div class=&quot;big num&quot;&gt;$754,755&lt;/div&gt;&lt;div class=&quot;sub&quot;&gt;现金规划 · 非下单额度&lt;br&gt;&lt;b&gt;EXUS $550,579&lt;/b&gt;&lt;br&gt;&lt;b&gt;EIMI $128,701&lt;/b&gt;&lt;br&gt;&lt;b&gt;USSC $75,476&lt;/b&gt;&lt;br&gt;两类仍需 $84,768&lt;br&gt;详见「配置」&lt;/div&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;tabs&quot;&gt;
+&lt;input type=&quot;radio&quot; name=&quot;sec&quot; id=&quot;s1&quot; checked&gt;&lt;input type=&quot;radio&quot; name=&quot;sec&quot; id=&quot;s2&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;sec&quot; id=&quot;s3&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;sec&quot; id=&quot;s4&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;sec&quot; id=&quot;s5&quot;&gt;
+&lt;div class=&quot;tabbar&quot;&gt;
+&lt;label for=&quot;s1&quot; aria-label=&quot;概览：① 持仓一览（估值报价，对应 09-04 收盘）与 ③ 接下来会发生什么&quot;&gt;概览&lt;/label&gt;
+&lt;label for=&quot;s2&quot; aria-label=&quot;风险：② 弹药与 reserve 状态、口径与分母上限说明&quot;&gt;风险&lt;/label&gt;
+&lt;label for=&quot;s3&quot; aria-label=&quot;配置：④ 四桶与四类配置比例、7 个 portfolio 明细&quot;&gt;配置&lt;/label&gt;
+
+&lt;label for=&quot;s4&quot; aria-label=&quot;待办：1 项待 Wu 裁决；另含已决定 / 待落实、已结案 / 只读观察与 ⑥ 换仓触发检查&quot;&gt;待办 &lt;span class=&quot;dot&quot; aria-hidden=&quot;true&quot;&gt;1&lt;/span&gt;&lt;/label&gt;&lt;label for=&quot;s5&quot; aria-label=&quot;XUAN-ETF 计划&quot;&gt;ETF&lt;/label&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;pane p1&quot;&gt;
+&lt;div class=&quot;card&quot;&gt;
+&lt;h2&gt;① 持仓一览 · 估值报价（收盘） &lt;small&gt;IB 只读读数（2026-09-05 07:47–08:10 HKT 早间版）· 对应美股 09-04 常规 + 延长交易收盘；LSE / EBS / TSE 已各自收盘&lt;/small&gt;&lt;/h2&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;与本日早前临时版 22:08–22:11 HKT 读数对照&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;股数、持仓构成全部一致，无新成交；IB NAV &lt;span class=&quot;dn&quot;&gt;−$4,164&lt;/span&gt;（收盘前后价格变动）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;对账&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;本次 IB 持仓端点读取窗口内成功（07:47–08:10 HKT）；逐仓表按 IB 持仓明细汇总 $4,421,231，与 IB Balance stock_market_value（权威）$4,420,972 差 $258 / 0.006%（正常展示噪音，不影响 NAV 等以 balances/summary 为权威的指标）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;FX 参考&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;CAD/USD 0.72274305（IB Base）&lt;/span&gt;&lt;/div&gt;
+&lt;details open&gt;&lt;summary&gt;全部持仓表 &lt;span class=&quot;rt&quot;&gt;26 只 · 逐仓合计 $4,421,231（IB 权威 stock_market_value 仍以 $4,420,972 为准）&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;font-size:11px;color:var(--mut);margin:2px 0 8px&quot;&gt;三个时点分开标注：「估值报价」= IB 持仓端点读取的 market_price（07:47–08:10 HKT 窗口）；「日涨跌」= 另一独立只读 IB 实时快照的 &lt;code&gt;change_pct&lt;/code&gt;（当前价相对上一交易日收盘），本次 26 只逐只调用全部返回；「行情时间」= 快照自带的 &lt;code&gt;last.ts&lt;/code&gt;（HKT，含日期，因跨越香港午夜），7 只 LSE / EBS 标的为延迟报价（DELAYED，已在标的下方注明，其行情时间落在 09-04 香港时段），其余为实时（REALTIME，多数落在 09-05 凌晨的美股延长交易时段）。默认展开 |日涨跌| ≥1% 的 10 只；&amp;lt;1% 的 16 只折叠；本次无缺可靠比较依据的项（0）。10 + 16 + 0 = 26。&lt;/p&gt;
+&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;标的&lt;/th&gt;&lt;th&gt;估值报价&lt;/th&gt;&lt;th&gt;日涨跌&lt;/th&gt;&lt;th&gt;行情时间&lt;/th&gt;&lt;th&gt;市值 $&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TSLA&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 390&lt;/span&gt;&lt;/td&gt;&lt;td&gt;352.89&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-6.24%&lt;/td&gt;&lt;td&gt;09-05 07:59:58&lt;/td&gt;&lt;td&gt;137,627&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;AMD&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 50&lt;/span&gt;&lt;/td&gt;&lt;td&gt;477.57&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+4.40%&lt;/td&gt;&lt;td&gt;09-05 07:59:45&lt;/td&gt;&lt;td&gt;23,879&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;ORCL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NYSE · 200&lt;/span&gt;&lt;/td&gt;&lt;td&gt;159.70&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+3.67%&lt;/td&gt;&lt;td&gt;09-05 07:59:51&lt;/td&gt;&lt;td&gt;31,940&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;SMH&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 100&lt;/span&gt;&lt;/td&gt;&lt;td&gt;567.01&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+2.35%&lt;/td&gt;&lt;td&gt;09-05 07:58:14&lt;/td&gt;&lt;td&gt;56,701&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MSFT&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 10（卖 90 后剩余）&lt;/span&gt;&lt;/td&gt;&lt;td&gt;499.41&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-2.10%&lt;/td&gt;&lt;td&gt;09-05 07:59:30&lt;/td&gt;&lt;td&gt;4,994&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;KKR&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NYSE · 600&lt;/span&gt;&lt;/td&gt;&lt;td&gt;107.73&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-1.61%&lt;/td&gt;&lt;td&gt;09-05 04:48:35&lt;/td&gt;&lt;td&gt;64,638&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MSTR&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 780&lt;/span&gt;&lt;/td&gt;&lt;td&gt;142.58&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-1.55%&lt;/td&gt;&lt;td&gt;09-05 07:59:59&lt;/td&gt;&lt;td&gt;111,210&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EIMI&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;LSE · 6,530 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;56.09&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+1.52%&lt;/td&gt;&lt;td&gt;09-04 23:36:20&lt;/td&gt;&lt;td&gt;366,277&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;HODL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;EBS · 600 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;14.80&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-1.48%&lt;/td&gt;&lt;td&gt;09-04 22:36:37&lt;/td&gt;&lt;td&gt;8,880&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;SLV&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NYSE · 320&lt;/span&gt;&lt;/td&gt;&lt;td&gt;59.87&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-1.12%&lt;/td&gt;&lt;td&gt;09-05 07:57:32&lt;/td&gt;&lt;td&gt;19,158&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;
+&lt;details&gt;&lt;summary&gt;其它持仓（16） &lt;span class=&quot;rt&quot;&gt;默认折叠 · 有可靠日涨跌来源 · |日涨跌| &amp;lt;1%&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;标的&lt;/th&gt;&lt;th&gt;估值报价&lt;/th&gt;&lt;th&gt;日涨跌&lt;/th&gt;&lt;th&gt;行情时间&lt;/th&gt;&lt;th&gt;市值 $&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;APO&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NYSE · 500&lt;/span&gt;&lt;/td&gt;&lt;td&gt;133.67&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.61%&lt;/td&gt;&lt;td&gt;09-05 04:19:35&lt;/td&gt;&lt;td&gt;66,835&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;BRK.B&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NYSE · 450&lt;/span&gt;&lt;/td&gt;&lt;td&gt;506.03&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.52%&lt;/td&gt;&lt;td&gt;09-05 07:50:24&lt;/td&gt;&lt;td&gt;227,713&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;CSPX&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;LSE · 610 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;831.45&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.49%&lt;/td&gt;&lt;td&gt;09-04 23:36:20&lt;/td&gt;&lt;td&gt;507,185&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EQAC&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;EBS · 960&lt;/span&gt;&lt;/td&gt;&lt;td&gt;504.65&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.06%&lt;/td&gt;&lt;td&gt;09-04 23:36:20&lt;/td&gt;&lt;td&gt;484,469&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EXUS&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;LSE · 8,700 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;47.16&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+0.04%&lt;/td&gt;&lt;td&gt;09-04 23:35:26&lt;/td&gt;&lt;td&gt;410,322&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GLD&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NYSE · 300&lt;/span&gt;&lt;/td&gt;&lt;td&gt;406.55&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.90%&lt;/td&gt;&lt;td&gt;09-05 07:59:47&lt;/td&gt;&lt;td&gt;121,965&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOG&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 220&lt;/span&gt;&lt;/td&gt;&lt;td&gt;335.72&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.93%&lt;/td&gt;&lt;td&gt;09-05 07:59:58&lt;/td&gt;&lt;td&gt;73,859&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;INDA&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;BATS · 1,100&lt;/span&gt;&lt;/td&gt;&lt;td&gt;49.91&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.60%&lt;/td&gt;&lt;td&gt;09-05 06:56:58&lt;/td&gt;&lt;td&gt;54,901&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;IVAI&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;LSE · 11,200 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;10.81&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+0.31%&lt;/td&gt;&lt;td&gt;09-04 21:11:19&lt;/td&gt;&lt;td&gt;121,108&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 100&lt;/span&gt;&lt;/td&gt;&lt;td&gt;615.20&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+0.74%&lt;/td&gt;&lt;td&gt;09-05 07:59:55&lt;/td&gt;&lt;td&gt;61,520&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MXUS&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;LSE · 4,900 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;227.01&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.04%&lt;/td&gt;&lt;td&gt;09-04 23:35:20&lt;/td&gt;&lt;td&gt;1,112,349&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TLT&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 700&lt;/span&gt;&lt;/td&gt;&lt;td&gt;82.24&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+0.21%&lt;/td&gt;&lt;td&gt;09-05 07:47:18&lt;/td&gt;&lt;td&gt;57,568&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;USSC&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;LSE · 160 · 延迟报价&lt;/span&gt;&lt;/td&gt;&lt;td&gt;95.10&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+0.21%&lt;/td&gt;&lt;td&gt;09-04 23:35:21&lt;/td&gt;&lt;td&gt;15,216&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;VCN&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;TSE · 1,025 · C$76,250 × 0.72274305&lt;/span&gt;&lt;/td&gt;&lt;td&gt;C$74.39&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.33%&lt;/td&gt;&lt;td&gt;09-05 03:59:41&lt;/td&gt;&lt;td&gt;55,109&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;VGIT&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 2,400&lt;/span&gt;&lt;/td&gt;&lt;td&gt;57.89&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-0.14%&lt;/td&gt;&lt;td&gt;09-05 06:50:39&lt;/td&gt;&lt;td&gt;138,928&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;VGSH&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;NASDAQ · 1,500&lt;/span&gt;&lt;/td&gt;&lt;td&gt;57.92&lt;/td&gt;&lt;td&gt;0.00%&lt;/td&gt;&lt;td&gt;09-05 06:24:15&lt;/td&gt;&lt;td&gt;86,880&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;&lt;/div&gt;&lt;/details&gt;
+&lt;details&gt;&lt;summary&gt;涨跌数据待核验（0） &lt;span class=&quot;rt&quot;&gt;默认折叠 · 本次 26 只均取得 IB 快照 change_pct&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;&lt;p style=&quot;font-size:11.5px;margin:2px 0 6px&quot;&gt;本次没有缺可靠日涨跌依据的持仓：26 只全部由 IB 实时快照返回 &lt;code&gt;change_pct&lt;/code&gt;（当前价相对上一交易日收盘），未使用未实现盈亏、买入成本、股数变化或汇率变化代替。7 只 LSE / EBS 标的为延迟报价（DELAYED），已在上表逐只注明并标注 09-04 日期（欧洲交易所已先行收盘）；其中 IVAI 行情时间 09-04 21:11:19 HKT 为本次最旧，已如实列出，未按新价改写。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;③ 接下来会发生什么 &lt;span class=&quot;rt&quot;&gt;周六 09-05 · 美股 09-04 已收盘（含延长交易至 08:00 HKT）· 需处理挂单 无&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;div class=&quot;sw&quot;&gt;
+&lt;input type=&quot;radio&quot; name=&quot;ev&quot; id=&quot;e1&quot; checked&gt;&lt;input type=&quot;radio&quot; name=&quot;ev&quot; id=&quot;e2&quot;&gt;&lt;input type=&quot;radio&quot; name=&quot;ev&quot; id=&quot;e3&quot;&gt;
+&lt;div class=&quot;swbar&quot;&gt;&lt;label for=&quot;e1&quot;&gt;近端&lt;/label&gt;&lt;label for=&quot;e2&quot;&gt;本周&lt;/label&gt;&lt;label for=&quot;e3&quot;&gt;已出（近端）&lt;/label&gt;&lt;/div&gt;
+&lt;div class=&quot;epane q1&quot;&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;08:00 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;美股 09-04 延长交易已结束&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;常规收盘 04:00 HKT，延长交易段至 08:00 HKT；本次读数落在该窗口末段（07:47–08:10 HKT）&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已结束&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-06（周日）&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;无新定时版&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;周日没有新定时版；手机继续显示本份早间版或之后产生的合格临时版&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;待发生&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-07（周一）&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;US Labor Day，美股全日休市&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;当晚睡前版仍于纽约 09:35 生成简短休市版，明确写明美股休市；周一上午也没有新早间版&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;待发生&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-08（周二）08:00 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;下一份早间版&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;按香港时间契约，周二至周六 08:00 HKT 运行；将注明无新收盘数据（09-07 休市）&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;待发生&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot; style=&quot;margin-top:7px&quot;&gt;&lt;span class=&quot;k&quot;&gt;持仓财报&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b class=&quot;wv&quot;&gt;未核实&lt;/b&gt; —— 本次会话未接入实时新闻/日历源，具体财报与宏观数据点未逐条核实，不据记忆填写，避免臆造；不代表确认无财报&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;需处理的挂单&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b class=&quot;gv&quot;&gt;无&lt;/b&gt; —— GTC 9 张，无一张距现场报价 &amp;lt;2%（AMD 卖 30@499 最近，约 +4.51%）；卡片默认折叠&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;epane q2&quot;&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-07&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;US Labor Day（周一，美股全日休市）&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;沿用此前按公历规则计算确认，非外部日历源核实；按香港时间契约，当晚睡前版仍于纽约 09:35 生成简短休市版，09-08 早间版注明无新收盘数据&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;沿用&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;9/15–16&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;下次 FOMC&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;沿用此前已核实日期，本次未重新核实&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;沿用&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot; style=&quot;margin-top:7px&quot;&gt;&lt;span class=&quot;k&quot;&gt;其余本周事件&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;本次会话未核实，不填写以避免臆造未发生的确认状态&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;div class=&quot;epane q3&quot;&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-05 07:47–08:10 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;早间版只读读数：IB 与两个 AI-only 组合均无新增成交&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;对应美股 09-04 收盘；较本日早前临时版（22:08–22:11 HKT）对照，IB 持仓股数、GTC 挂单（9 张）均无变化；Schwab-HK / Webull 逐仓股数与现金亦无变化，成交记录（Sharesight 自 09-04 起）均返回 0 笔；IB NAV 随收盘价格变动至 $5,057,944（−$4,164）；6 个非 IB 家庭组合总值逐项相等；四桶 / 三层流动性因核验证据未满足继续沿用 2026-08-24 快照&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;如实披露（本次）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-04 22:08–22:11 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;临时版只读读数：IB、Schwab-HK、Webull 三处均无新增成交&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;较本日睡前版（21:36–21:40 HKT）对照，无新增成交；沿用既有披露记录&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-04 21:36–21:40 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;睡前版只读读数：IB 侧无新增成交；Schwab-HK / Webull 5 笔 Wu 自行成交首次披露&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;为香港时间契约切换日起首个按纽约 09:35 新时段运行的睡前版；本次不重复计为新增成交&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-03 13:07 EDT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;Webull：AAOI 买 100 @ 101.69 成交（$10,169）&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;Wu 自行操作，Claude 未参与；Sharesight 于 09-04 08:18 HKT 手工同步录入；已在 09-04 睡前版首次披露，本次沿用；新持仓，AI tier 待 Wu 裁决（⑤）&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-03 12:59 EDT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;Webull：MRVL 买 100 @ 211.80 成交（$21,180）&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;Wu 自行操作，Claude 未参与；Sharesight 于 09-04 08:15 HKT 手工同步录入；已在 09-04 睡前版首次披露，本次沿用；MRVL 现为 300 股&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-03（美股盘中）&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;Schwab-HK：TSEM 买 100 @ 207（$20,700）；SGOV 卖 298.739 @ 100.4221 + 卖 500 @ 100.43（合计 ≈$80,213）&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;Wu 自行操作，Claude 未参与；Sharesight 于 09-04 21:14 HKT 由 Schwab 成交确认邮件自动录入；已在 09-04 睡前版首次披露，本次沿用；确认邮件未提供具体成交时刻；TSEM 现为 200 股&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-04 08:06–08:10 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;早间版只读读数：IB 侧无新增成交，9 个 Sharesight 组合 performance 全部成功读取&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;较 09-03 睡前版对照，IB 持仓、GTC 挂单（9 张）均无变化；IB NAV 随 09-03 收盘上涨至 $5,071,072&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-02 13:45 UTC（21:45 HKT）&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;META 卖 150 @ 590 成交&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;Wu 既有挂单结果，Claude 未参与；沿用既有披露记录&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;tl&quot;&gt;&lt;span class=&quot;t&quot;&gt;09-01 21:42 HKT&lt;/span&gt;&lt;span class=&quot;e&quot;&gt;&lt;b&gt;GOOG 卖 120 @ 332 + 卖 80 @ 332 成交（共 200 股）&lt;/b&gt;&lt;span class=&quot;sub&quot;&gt;Wu 既有挂单结果，Claude 未参与；沿用既有披露记录&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;s&quot;&gt;已确认（沿用）&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;pane p2&quot;&gt;
+&lt;div class=&quot;card&quot;&gt;
+&lt;h2&gt;② 弹药与 reserve 状态&lt;/h2&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;IB 现金&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$636,786.47（BASE，IB Balance 权威；07:47–08:10 HKT 读数窗口）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;NOAH-HK 现金&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$357,968.92（与本日早前临时版相等，Sharesight 本次读取值一致）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;现金池合计&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$994,755.39&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;现金覆盖待 call 款&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;span class=&quot;gv&quot;&gt;4.1448x ✓&lt;/span&gt;（reserve $240,000；&amp;lt;1.0x 才告警）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;可用现金&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$754,755.39&lt;/b&gt;（已扣 reserve）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;二线弹药&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$283,376（VGSH 86,880 → VGIT 138,928 → TLT 57,568；本次按收盘报价精确重算）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;现金补仓池口径&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;EXUS + EIMI + USSC；USSC 参考占本次预算 10%，余款按联立模型分配&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;股息应计&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$97.58 · 杠杆 0（initial / maintenance margin 均为 0）&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;AI 压力敞口 · §0-C（三账户 · MRVL 已批准标准 T1）
+&lt;span class=&quot;rt wv&quot;&gt;中 21.76% · 提醒区间 · fail-closed PASS&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;fail-closed 校验&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;span class=&quot;gv&quot;&gt;PASS&lt;/span&gt; —— 分子账户集合 = 分母账户集合 = {936247 IB-HK, 936249 Schwab-HK, 1350094 Webull}&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;数据截止时点&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;IB-HK 资产估值读取窗口 07:47–08:10 HKT（对应美股 09-04 收盘 + 延长交易）；Schwab-HK / Webull 经 Sharesight 只读 08:09:05–08:09:11 HKT；本次为 09-04 收盘数据的首次早间版总结&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;分母（三账户总市值含现金）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$6,198,032&lt;/b&gt; = IB 5,057,944 + Schwab 620,609 + Webull 519,479&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;系数来源&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;MRVL 按用户已批准标准 &lt;b&gt;T1：60% / 80% / 100%&lt;/b&gt;；其余逐票分类与 ETF 穿透权重沿用，ETF holdings as-of 日期不变。普通资产类别按 §0-A，AI 压力 tier 按独立 §0-C，不混为一谈。&lt;b class=&quot;wv&quot;&gt;Webull 持仓 AAOI 无已批准 tier，本次继续不进分子（见下方与 ⑤）&lt;/b&gt;&lt;/span&gt;&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;中情景主读数 &lt;span class=&quot;rt&quot;&gt;$1,348,514 / 21.76% —— 展开看计算组成&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;font-size:12px;margin:4px 0 8px&quot;&gt;每笔本次最新可用报价市值 × 中情景系数（阶梯 &lt;b&gt;T1 80% / T2 55% / T3 5%&lt;/b&gt;），先按未舍入结果汇总，再除以本次分母；MRVL 按标准 T1 独立现场重算，其余系数沿用不变。系数是压力情景损失比例，不是「AI 相关度」。各行与账户小计独立四舍五入到美元，显示项相加与合计可差 $1；合计不使用已舍入行值。&lt;/p&gt;
+&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;标的&lt;/th&gt;&lt;th&gt;市值 $&lt;/th&gt;&lt;th&gt;×系数&lt;/th&gt;&lt;th&gt;计入 $&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr class=&quot;sec&quot;&gt;&lt;td&gt;IB-HK 936247&lt;span class=&quot;sub&quot;&gt;分子小计 1,017,326&lt;/span&gt;&lt;/td&gt;&lt;td&gt;5,057,944&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;1,017,326&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MXUS&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;ETF 穿透沿用 25.03%&lt;/span&gt;&lt;/td&gt;&lt;td&gt;1,112,349&lt;/td&gt;&lt;td&gt;25.03%&lt;/td&gt;&lt;td&gt;278,421&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;CSPX&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;ETF 穿透沿用 25.79%&lt;/span&gt;&lt;/td&gt;&lt;td&gt;507,185&lt;/td&gt;&lt;td&gt;25.79%&lt;/td&gt;&lt;td&gt;130,803&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EQAC&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;ETF 穿透沿用 41.07%&lt;/span&gt;&lt;/td&gt;&lt;td&gt;484,469&lt;/td&gt;&lt;td&gt;41.07%&lt;/td&gt;&lt;td&gt;198,971&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EXUS&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;ETF 穿透沿用 6.01%（C 级估计）&lt;/span&gt;&lt;/td&gt;&lt;td&gt;410,322&lt;/td&gt;&lt;td&gt;6.01%&lt;/td&gt;&lt;td&gt;24,660&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EIMI&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;ETF 穿透沿用 26.55%&lt;/span&gt;&lt;/td&gt;&lt;td&gt;366,277&lt;/td&gt;&lt;td&gt;26.55%&lt;/td&gt;&lt;td&gt;97,247&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;BRK.B&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;227,713&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;11,386&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;61,520&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;33,836&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOG&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;73,859&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;40,622&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TSLA&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;137,627&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;6,881&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;IVAI&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;纯 T1&lt;/span&gt;&lt;/td&gt;&lt;td&gt;121,108&lt;/td&gt;&lt;td&gt;80.00%&lt;/td&gt;&lt;td&gt;96,886&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;APO&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;66,835&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;3,342&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;KKR&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;64,638&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;3,232&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;SMH&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;纯 T1&lt;/span&gt;&lt;/td&gt;&lt;td&gt;56,701&lt;/td&gt;&lt;td&gt;80.00%&lt;/td&gt;&lt;td&gt;45,361&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;VCN&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;55,109&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;2,755&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;INDA&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;54,901&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;2,745&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;AMD&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T1&lt;/span&gt;&lt;/td&gt;&lt;td&gt;23,879&lt;/td&gt;&lt;td&gt;80.00%&lt;/td&gt;&lt;td&gt;19,103&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;ORCL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;31,940&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;17,567&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;USSC&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;15,216&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;761&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MSFT&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;4,994&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;2,747&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class=&quot;sec&quot;&gt;&lt;td&gt;Schwab-HK 936249&lt;span class=&quot;sub&quot;&gt;分子小计 220,651&lt;/span&gt;&lt;/td&gt;&lt;td&gt;620,609&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;220,651&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;148,025&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;81,414&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOGL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;102,215&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;56,218&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;AVGO&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T1&lt;/span&gt;&lt;/td&gt;&lt;td&gt;35,790&lt;/td&gt;&lt;td&gt;80.00%&lt;/td&gt;&lt;td&gt;28,632&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;METU&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;META 2x 杠杆 ETF · min(2×55%,100%)&lt;/span&gt;&lt;/td&gt;&lt;td&gt;25,834&lt;/td&gt;&lt;td&gt;100.00%&lt;/td&gt;&lt;td&gt;25,834&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TSEM&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;特例沿用归 T2 · 200 股（09-03 增持已披露）&lt;/span&gt;&lt;/td&gt;&lt;td&gt;44,467&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;24,457&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;BRK.B&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;75,904&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;3,795&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TSLA&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T3&lt;/span&gt;&lt;/td&gt;&lt;td&gt;6,019&lt;/td&gt;&lt;td&gt;5.00%&lt;/td&gt;&lt;td&gt;301&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class=&quot;sec&quot;&gt;&lt;td&gt;Webull 1350094&lt;span class=&quot;sub&quot;&gt;分子小计 110,537&lt;/span&gt;&lt;/td&gt;&lt;td&gt;519,479&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;110,537&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOG&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;T2&lt;/span&gt;&lt;/td&gt;&lt;td&gt;87,181&lt;/td&gt;&lt;td&gt;55.00%&lt;/td&gt;&lt;td&gt;47,949&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;IREN&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;特例沿用中情景 100%&lt;/span&gt;&lt;/td&gt;&lt;td&gt;8,936&lt;/td&gt;&lt;td&gt;100.00%&lt;/td&gt;&lt;td&gt;8,936&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MRVL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;&lt;b&gt;用户已批准标准 T1&lt;/b&gt; · 低 / 中 / 高 60% / 80% / 100% · 300 股&lt;/span&gt;&lt;/td&gt;&lt;td&gt;67,065&lt;/td&gt;&lt;td&gt;80.00%&lt;/td&gt;&lt;td&gt;53,652&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class=&quot;tot&quot;&gt;&lt;td&gt;分子合计&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;1,348,514&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class=&quot;tot&quot;&gt;&lt;td&gt;÷ 分母（三账户含现金）&lt;/td&gt;&lt;td&gt;6,198,032&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;/tr&gt;
+&lt;tr class=&quot;tot&quot;&gt;&lt;td&gt;= 中情景占比&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td&gt;21.76%&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;
+&lt;p style=&quot;font-size:12px;margin:8px 0 3px&quot;&gt;&lt;b&gt;不进分子（但全部计入分母）：&lt;/b&gt;&lt;/p&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;b&gt;MSTR $111,210 判「不适用」&lt;/b&gt; —— 风险因子是 BTC 不是 AI capex；不进分子，也不算作 0%。&lt;/li&gt;
+&lt;li&gt;主题非股票：GLD $121,965 · SLV $19,158 · HODL $8,880。&lt;/li&gt;
+&lt;li&gt;防御与现金类：VGIT $138,928 · VGSH $86,880 · TLT $57,568 · IB 现金 $636,786 · Schwab SGOV 103,699 + 现金 78,656 · Webull SGOV 37,676 + 现金 244,850。&lt;/li&gt;
+&lt;li&gt;Webull BE（Bloom Energy）$63,218 —— 非 AI 相关个股，不进分子，也不算作 0%。&lt;/li&gt;
+&lt;li&gt;&lt;b class=&quot;wv&quot;&gt;Webull AAOI（Applied Optoelectronics）$10,553 —— §0-C 尚无已批准 tier，本次继续不进分子、只计分母，待 Wu 裁决（⑤ &lt;code&gt;D-20260904-AAOI-AITIER&lt;/code&gt;）。&lt;/b&gt;若按 T1 计入 +$8,442 / +0.14 个百分点（中情景 21.89%），按 T2 +$5,804 / +0.09 个百分点；两种情形均不改变提醒区间结论。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p style=&quot;font-size:12px;margin:5px 0 0&quot;&gt;&lt;b&gt;低 / 高情景（近似，本次未逐票重算，沿用 2026-08-31 基数，可信度降低）&lt;/b&gt;：沿用 2026-08-31 的原组合近似基数 $964,094 / $1,778,171 加 MRVL 精确增量 $40,239.00 / $67,065.00（MRVL 本次市值 $67,065.00，300 股）；低 ≈$1,004,333 / &lt;b&gt;约 16.20%&lt;/b&gt;；高 ≈$1,845,236 / &lt;b&gt;约 29.77%&lt;/b&gt;。&lt;b class=&quot;wv&quot;&gt;该近似基数未反映 09-01 以来 GOOG/AMD/EXUS/META/TSEM 持仓变动与 AAOI 新仓，也未反映本次分母变化，不是全组合逐票三档计算&lt;/b&gt;；下列 20% / 25% / 30% 比较均只采用逐票现场重算的中情景，不用低/高判断越线。&lt;/p&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;三级状态（中情景）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b class=&quot;wv&quot;&gt;提醒区间&lt;/b&gt;（已越 20% 提醒线，+$108,908 / +1.76 个百分点）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;距 25% 预警线（中情景）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$200,994 / 3.24 个百分点&lt;/b&gt;&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;距 30% 最高警报线（中情景）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$510,895 / 8.24 个百分点&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;分账户分子（中）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;IB 1,017,326 · Schwab 220,651 · Webull 110,537（含 MRVL，不含 AAOI）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;MRVL 已批准计入&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$67,065.00 × 80% = $53,652.00（显示 $53,652）；股数与本日早前临时版相同（300 股），差异来自收盘前价格变动（$217.6504 → $223.55）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;同版本口径对照&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;本日早前临时版（22:08–22:11 HKT）中情景 21.74% → 本次 &lt;b&gt;21.76%&lt;/b&gt;；差异全部来自 IB-HK / Schwab-HK / Webull 收盘前后价格变动，&lt;b&gt;无持仓变化、不是口径变更&lt;/b&gt;&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;性质&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;T1/T2/T3 仅作监控，&lt;b&gt;不是交易指令&lt;/b&gt;；不产生买卖建议、不含时点判断、不触发自动执行&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;details&gt;&lt;summary&gt;单票集中度 · 双视图
+&lt;span class=&quot;rt&quot;&gt;家庭 GOOG/GOOGL 4.25%（线内）· BRK.B 4.90%（线内）&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;font-size:12px;margin:3px 0 6px&quot;&gt;&lt;b&gt;主视图 = 家庭三账户合并&lt;/b&gt;（分母 $6,198,032，与 AI 指标同源同时；沿用 08-31 已确认「三账户合并观察 + IB 执行视图」双视图口径）&lt;/p&gt;
+&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;标的&lt;/th&gt;&lt;th&gt;合计市值 $&lt;/th&gt;&lt;th&gt;占比&lt;/th&gt;&lt;th&gt;状态&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOG / GOOGL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;IB 73,859 + Schwab 102,215 + Webull 87,181&lt;/span&gt;&lt;/td&gt;&lt;td&gt;263,254&lt;/td&gt;&lt;td&gt;4.25%&lt;/td&gt;&lt;td class=&quot;gv&quot;&gt;线内 · 余量 $46,647&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;BRK.B&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;IB 227,713 + Schwab 75,904 + Webull 0（已平仓）&lt;/span&gt;&lt;/td&gt;&lt;td&gt;303,618&lt;/td&gt;&lt;td&gt;4.90%&lt;/td&gt;&lt;td class=&quot;gv&quot;&gt;线内&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;市值口径：IB 61,520 + Schwab 148,025&lt;/span&gt;&lt;/td&gt;&lt;td&gt;209,545&lt;/td&gt;&lt;td&gt;3.38%&lt;/td&gt;&lt;td&gt;线内&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META 名义敞口&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;缺已批准的 METU 杠杆美元名义换算依据&lt;/span&gt;&lt;/td&gt;&lt;td&gt;—&lt;/td&gt;&lt;td class=&quot;wv&quot;&gt;待核验&lt;/td&gt;&lt;td class=&quot;wv&quot;&gt;待核验 —— 不出具线内/线外结论&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META+METU 合并市值&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;IB 61,520 + Schwab 148,025 + METU 25,834（市值加总，非杠杆名义；不与此前 ~5.01% 名义口径比较）&lt;/span&gt;&lt;/td&gt;&lt;td&gt;235,379&lt;/td&gt;&lt;td&gt;3.80%&lt;/td&gt;&lt;td&gt;仅市值参考&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot; style=&quot;margin-top:6px&quot;&gt;&lt;span class=&quot;k&quot;&gt;GOOG 线值口径（沿用 08-31 已确认结论）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;三账户合并观察参考线仍为观察用途，不升级为交易触发；IB 执行视图沿用现行软 5% / 硬 5.5%；数值维持线内，决定 &lt;code&gt;D-20260829-GOOG-FAMILY-LIMIT&lt;/code&gt; 与原回执不变，见 ⑤&lt;/span&gt;&lt;/div&gt;
+&lt;p style=&quot;font-size:12px;margin:9px 0 6px&quot;&gt;&lt;b&gt;辅助视图 = IB 执行口径&lt;/b&gt;（分母 = IB NAV + NOAH-HK 现金 $5,415,912；软 5% / 硬 5.5% / BRK.B 12.8%）&lt;/p&gt;
+&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;标的&lt;/th&gt;&lt;th&gt;市值 $&lt;/th&gt;&lt;th&gt;占比 / 线&lt;/th&gt;&lt;th&gt;余量 $&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;BRK.B&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;专线 12.8%&lt;/span&gt;&lt;/td&gt;&lt;td&gt;227,713&lt;/td&gt;&lt;td&gt;4.20% / 12.8%&lt;/td&gt;&lt;td&gt;465,523&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META&lt;/span&gt;&lt;/td&gt;&lt;td&gt;61,520&lt;/td&gt;&lt;td&gt;1.14% / 5%&lt;/td&gt;&lt;td&gt;209,276&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOG&lt;/span&gt;&lt;/td&gt;&lt;td&gt;73,859&lt;/td&gt;&lt;td&gt;1.36% / 5%&lt;/td&gt;&lt;td&gt;196,937&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TSLA&lt;/span&gt;&lt;/td&gt;&lt;td&gt;137,627&lt;/td&gt;&lt;td&gt;2.54% / 5%&lt;/td&gt;&lt;td&gt;133,169&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MSTR&lt;/span&gt;&lt;/td&gt;&lt;td&gt;111,210&lt;/td&gt;&lt;td&gt;2.05% / 5%&lt;/td&gt;&lt;td&gt;159,586&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot; style=&quot;margin-top:6px&quot;&gt;&lt;span class=&quot;k&quot;&gt;IB 视图告警数&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b class=&quot;gv&quot;&gt;0 项&lt;/b&gt; —— 全部线内；ETF 不适用单票线&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;details&gt;&lt;summary&gt;口径与分母说明 &lt;span class=&quot;rt&quot;&gt;三个分母互不相同，勿混用&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;AI 压力分母&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$6,198,032 = IB-HK + Schwab-HK + Webull 三账户总市值含现金（§0-C）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;HL 平日近似分母&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$5,415,912 = IB NAV + NOAH-HK 现金（单票 IB 执行视图用）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;四类分母 T&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$3,876,641 = 美国底仓 + 美国科技 + 非美发达 + 新兴市场（equity-only 相对比例；本次收盘报价）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;跨指标张力&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;§0 通用规则剔除 Schwab-HK 与 Webull，AI 指标按既定裁决&lt;b&gt;包含&lt;/b&gt;这两个账户 ⇒ AI 读数不可与 NAV / 四桶 / 四类 / 单票横向比较&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;pane p3&quot;&gt;
+
+&lt;section class=&quot;card&quot; id=&quot;xuan-ib-cash-plan-detail&quot;&gt;
+&lt;h2&gt;现金优先补仓参考 &lt;small&gt;只作规划，不执行交易&lt;/small&gt;&lt;/h2&gt;
+&lt;p style=&quot;font-size:12px&quot;&gt;三方向补充 · USSC 占本次预算 10%，其余重算 EXUS、EIMI；不是永久持仓比例。金额为美元规划值，非下单额度。&lt;/p&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;① EXUS｜非美发达&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$550,579&lt;/b&gt;&lt;br&gt;EXUS＋VCN 类别合计&lt;br&gt;当前 12.01% → 补后约 21.94% / 目标 23%&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;② EIMI｜新兴市场&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$128,701&lt;/b&gt;&lt;br&gt;EIMI＋INDA 类别合计&lt;br&gt;当前 10.86% → 补后约 11.87% / 目标 12%&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;③ USSC｜美国小盘价值&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$75,476&lt;/b&gt;&lt;br&gt;本次现金预算 10%&lt;br&gt;占股票总额：0.39% → 补后约 1.96%&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;美国底仓合计（含 USSC）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;51.43% → 补后约 44.68%&lt;br&gt;45% 为参考目标，非强制上限&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;现金规划上限 / 本次参考分配&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$754,755 / $754,755&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;券商可立即用于本次补仓&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b class=&quot;wv&quot;&gt;待核实&lt;/b&gt; · 挂单占款待核；跨平台资金未假设已到账&lt;/span&gt;&lt;/div&gt;
+&lt;p style=&quot;font-size:12px&quot;&gt;&lt;b&gt;两类仍需 $84,768。&lt;/b&gt;指在本次三方向分配后，以纯现金继续补足非美发达、新兴市场参考目标的金额；不是 USSC 缺口，也不代表四类全部达标。卖出回款实际可用后再评估；本次不依赖卖出。&lt;/p&gt;
+&lt;details&gt;&lt;summary&gt;使用前核对 · 金额与口径 &lt;span class=&quot;rt&quot;&gt;默认折叠&lt;/span&gt;&lt;/summary&gt;&lt;div class=&quot;dbody&quot;&gt;&lt;ol&gt;
+&lt;li&gt;先核实 IB 可用余额、现有买单占款及 reserve 所在账户；NOAH-HK 现金尚需确认能否及何时用于本次补仓。现金池不是 IB 即时购买力。&lt;/li&gt;
+&lt;li&gt;未成交卖单不计回款；“待撤”买单不等于已经撤销，不能当作资金已释放。未核实冻结口径时不重复扣减，也不把名义挂单金额当券商实际冻结金额。&lt;/li&gt;
+&lt;li&gt;规划预算＝IB $636,786＋NOAH-HK $357,969−预留 $240,000，共 $754,755。不含保证金、借款或待售资产；实际可用资金更少时，应按新预算重算三个金额。&lt;/li&gt;
+&lt;li&gt;USSC 先分配本次预算 10%，按美分取整为 $75,476；剩余 $679,280 用于 EXUS、EIMI。其参考目标按类别合计计，不是单只 ETF 目标；USSC 的 10% 不是股票仓位目标，不设未经核实的 14% 目标分母。&lt;/li&gt;
+&lt;li&gt;原股票总额 $3,876,641。先纳入 USSC 分配后，只补非美发达、新兴市场至 23%／12% 同时达标仍需 $764,048，其中 $619,286／$144,761；以剩余预算按这两个完整补足额的比例分配，并按美分平衡。并非将旧方案直接打九折。&lt;/li&gt;
+&lt;li&gt;本次补仓后的股票总额＝原股票总额＋实际规划分配，共 $4,631,397。USSC 原持仓 $15,216 已包含于美国底仓 $1,993,936，不重复计入；现金本身不计入股票分母。45% 仅作美国底仓参考目标，不构成强制上限。&lt;/li&gt;
+&lt;li&gt;资金超出本方案两类需求、两类均无需补充或有限现金将继续买入超配类别时，暂列待核实并保留现金，不擅自扩展 USSC 预算或花完余款。&lt;/li&gt;
+&lt;li&gt;数据时点：2026-09-05 07:47–08:10 HKT。价格、持仓或可用现金改变后重新计算；不提供股数、限价或自动交易，不保证此配置收益更高。&lt;/li&gt;
+&lt;/ol&gt;&lt;/div&gt;&lt;/details&gt;
+&lt;/section&gt;
+&lt;div class=&quot;card&quot;&gt;
+&lt;h2&gt;④ 配置 &lt;small&gt;四桶 · 四类&lt;/small&gt;&lt;/h2&gt;
+&lt;p style=&quot;font-size:12px;color:var(--ink2);margin:2px 0 8px&quot;&gt;&lt;b class=&quot;wv&quot;&gt;四桶：08-24 快照，待完整核验；四类：本期重算。&lt;/b&gt;详见「报告说明」。&lt;/p&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;Highly Liquid &lt;small style=&quot;color:var(--mut)&quot;&gt;(08-24 沿用)&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;r&quot;&gt;17.75% / 40% · 缺 $6.92M&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill&quot; style=&quot;width:44.4%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:calc(100% - 2px)&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;VC-PE（closed-end）&lt;small style=&quot;color:var(--mut)&quot;&gt;(08-24 沿用)&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;r or&quot;&gt;51.74% / 30% · 超 ~$6.77M&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill over&quot; style=&quot;width:100%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:58%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;对冲基金 &lt;small style=&quot;color:var(--mut)&quot;&gt;(08-24 沿用)&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;r&quot;&gt;14.58% / 15%&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill&quot; style=&quot;width:97.2%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:calc(100% - 2px)&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;常青（evergreen）&lt;small style=&quot;color:var(--mut)&quot;&gt;(08-24 沿用)&lt;/small&gt;&lt;/span&gt;&lt;span class=&quot;r&quot;&gt;15.93% 毛 · 14.82% 净 / 15%&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill&quot; style=&quot;width:98.8%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:calc(100% - 2px)&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;card&quot;&gt;
+&lt;h2&gt;四类比例 &lt;small&gt;Sharesight「资产类别」归类 · T = $3,876,641（收盘）&lt;/small&gt;&lt;/h2&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;非美发达 &lt;span class=&quot;sub&quot;&gt;EXUS · VCN&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;r&quot;&gt;12.01% / 23%&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill&quot; style=&quot;width:52.2%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:calc(100% - 2px)&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;新兴市场 &lt;span class=&quot;sub&quot;&gt;EIMI · INDA&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;r&quot;&gt;10.86% / 12%&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill&quot; style=&quot;width:90.5%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:calc(100% - 2px)&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;details&gt;&lt;summary&gt;超配观察 &lt;span class=&quot;rt&quot;&gt;暂不计入补仓资金&lt;/span&gt;&lt;/summary&gt;&lt;div class=&quot;dbody&quot;&gt;&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;美国底仓 &lt;span class=&quot;sub&quot;&gt;MXUS · CSPX · BRK.B · USSC · APO · KKR&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;r or&quot;&gt;51.43% / 45% · 超 $249,447&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill over&quot; style=&quot;width:100%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:87.5%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;美国科技 &lt;span class=&quot;sub&quot;&gt;EQAC · SMH · IVAI · GOOG · META · MSFT · AMD · ORCL · TSLA&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;r or&quot;&gt;25.69% / 20% · 超 $220,767&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill over&quot; style=&quot;width:100%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:77.8%&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;div class=&quot;bar&quot;&gt;&lt;div class=&quot;lbl&quot;&gt;&lt;span&gt;USSC 小盘 &lt;span class=&quot;sub&quot;&gt;底仓内结构位 · 本次现金参考 10%；旧 14% 基数待核实，不用于本次测算&lt;/span&gt;&lt;/span&gt;&lt;span class=&quot;r&quot;&gt;0.39% (基数内) / 14%&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;track&quot;&gt;&lt;div class=&quot;fill&quot; style=&quot;width:2.8%&quot;&gt;&lt;/div&gt;&lt;div class=&quot;mark&quot; style=&quot;left:calc(100% - 2px)&quot;&gt;&lt;/div&gt;&lt;/div&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;现金补仓&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;见本页上方「现金优先补仓参考」；不把固定分母的静态差额当成现金补足额。&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;主题投资&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;GLD+SLV+MSTR+HODL = $261,214 = &lt;span class=&quot;gv&quot;&gt;6.74% / 7% 软上限 ✓&lt;/span&gt;&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;防御资产（弹药池）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;$283,376（VGSH · VGIT · TLT，本次精确重算）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;HSBC-HK 赎回进度&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;29.9%（$47,511 / $159,001）· 私募资产与现金账户本次读取值与早前临时版逐项相等，进度未见更新&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;7 个 portfolio 明细 &lt;span class=&quot;rt&quot;&gt;2026-09-05 07:47–08:10 HKT Sharesight/IB 只读（对应美股 09-04 收盘）&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;NOAH-HK 936238&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;总值 &lt;b&gt;$12,657,882.79&lt;/b&gt;（本次重新读取，与早前临时版相等）· 现金 $357,968.92&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;NOAH-US 936240&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$5,455,199.00&lt;/b&gt;（本次重新读取，与早前临时版相等 · Illiquid PE/VC 全量）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;ANTARCTICA 1021748&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$2,901,407.16&lt;/b&gt;（本次重新读取，与早前临时版相等 · HF 多策略）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;UBS 1031350&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$4,706,100.12&lt;/b&gt;（本次重新读取，与早前临时版相等 · 常青 PE 平台）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;IB-HK 936247&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;NAV $5,057,943.53（IB 权威，本次直读，对应美股 09-04 收盘）&lt;/b&gt;（较早前临时版 $5,062,107.82 &lt;span class=&quot;dn&quot;&gt;−$4,164.29&lt;/span&gt;，收盘前后价格变动，无新成交；逐仓明细汇总 $4,421,230.81 + 现金 $636,786.47 = $5,058,017.28，与 IB 权威差 $73.75 / 0.001%，属正常展示噪音，不改变权威值）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;Citi-HK &amp;amp; 地产四期 936243&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$500,000&lt;/b&gt;（静态，本次重新读取，与早前临时版相等）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;HSBC-HK 1350095&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$163,345.50&lt;/b&gt;（本次重新读取，与早前临时版相等 · 私募 112,205.37 + 现金 51,140.13）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;7-portfolio 家庭合计（实时）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;$31,441,878.10&lt;/b&gt;（较早前临时版 $31,446,042.39 &lt;span class=&quot;dn&quot;&gt;−$4,164.29&lt;/span&gt;，差异全部来自 IB-HK 收盘前后价格变动；六个非 IB 组合本次逐项数值比较与早前临时版相等）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;AI 三账户附加（非四桶）&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;Schwab-HK $620,609.44 + Webull $519,478.60 = $1,140,088.04（本次重新读取；较早前临时版分别 +$2,449.78 / +$4,000.05，均为收盘前价格变动，两个组合逐仓股数与现金余额均未变，成交记录自 09-04 起返回 0 笔；仅进 AI 指标分母）&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;NOAH-EB-5 1021747&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b&gt;不计入家庭 7-portfolio 合计&lt;/b&gt;——沿用既有报告范围，本次仅确认其存在、未纳入任何汇总，避免擅自扩大统计口径&lt;/span&gt;&lt;/div&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;四桶归类映射&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;&lt;b class=&quot;wv&quot;&gt;沿用 2026-08-24 已批准快照&lt;/b&gt; —— 完整核验条件与历史审计证据统一列于「报告说明」；本次未更新四桶金额。&lt;/span&gt;&lt;/div&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;
+
+&lt;div class=&quot;pane p4&quot;&gt;
+&lt;div class=&quot;card&quot;&gt;
+&lt;!-- xuan-ib-decision-group:v1:awaiting_user:start --&gt;&lt;h2 data-decision-group-title=&quot;awaiting_user&quot;&gt;⑤ 待决定事项 &lt;small&gt;1 项待 Wu 裁决&lt;/small&gt;&lt;/h2&gt;
+&lt;details class=&quot;dcard&quot; id=&quot;D-20260904-AAOI-AITIER&quot; data-decision-id=&quot;D-20260904-AAOI-AITIER&quot; data-decision-status=&quot;awaiting_user&quot;&gt;&lt;summary&gt;1 · Webull 新持仓 AAOI 的 §0-C AI 压力 tier
+&lt;span class=&quot;rt wv&quot;&gt;建议 T1（80%）· 待 Wu 审核&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;事实/选项：&lt;/b&gt;Webull 于 09-03 13:07 EDT 买入 AAOI（Applied Optoelectronics）100 股 @ 101.69（该成交已在 09-04 睡前版首次披露），本次读取市值 $10,553.00（Sharesight 08:09:11 HKT，对应美股 09-04 收盘），为三账户 AI 指标范围内的持仓，§0-C 现行分层与 &lt;code&gt;xuan-ib-ai-tier-overrides-v1.json&lt;/code&gt; 均无该标的的已批准 tier。可选路径：(a) T1（60% / 80% / 100%，中情景 +$8,442 / +0.14 个百分点）；(b) T2（35% / 55% / 75% 阶梯，中情景 +$5,804 / +0.09 个百分点）；(c) 判「不适用」不进分子。三种情形本次中情景均维持 21.8%–21.9%，不改变提醒区间结论；本期按 fail-closed 继续不进分子、只计分母。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;Claude 意见：&lt;/b&gt;建议按 T1 计入。理由：AAOI 主营数据中心光模块/光收发器，需求直接绑定 AI 数据中心 capex，与既有 T1 的 AVGO / MRVL 属同一供应链压力来源；按既定框架「压力情景损失比例」口径，归入 T1 更保守，且金额小、不触发任何线值。若 Wu 认为其 AI 敞口应更低，可改 T2；不建议判不适用。仅为风险测算分层，不构成买卖或调仓建议。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;状态：&lt;/b&gt;&lt;b&gt;待 Wu 审核&lt;/b&gt;（&lt;code&gt;awaiting_user&lt;/code&gt;）· 编号 &lt;code&gt;D-20260904-AAOI-AITIER&lt;/code&gt; · 本次早间版未收到回应，状态与回执均未变动&lt;/p&gt;
+&lt;/div&gt;&lt;/details&gt;&lt;!-- xuan-ib-decision-group:v1:awaiting_user:end --&gt;
+&lt;p style=&quot;font-size:12px;color:var(--ink2);margin:2px 0 8px&quot;&gt;当前为只读清单；请在 Claude App 中引用事项编号回复。&lt;/p&gt;
+&lt;!-- xuan-ib-decision-group:v1:resolved:start --&gt;&lt;h2 data-decision-group-title=&quot;resolved&quot;&gt;已决定 / 待落实 &lt;small&gt;3 项 · 只记录意见，不执行交易&lt;/small&gt;&lt;/h2&gt;
+&lt;details class=&quot;dcard&quot; id=&quot;D-20260829-MRVL-CLASS&quot; data-decision-id=&quot;D-20260829-MRVL-CLASS&quot; data-decision-status=&quot;accepted&quot;&gt;&lt;summary&gt;1 · Webull MRVL 标准 T1 风险口径已落实
+&lt;span class=&quot;rt gv&quot;&gt;用户已批准 60% / 80% / 100% · 只调整风险测算&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;事实：&lt;/b&gt;普通资产分类「Highly Liquid / 美国科技」与 §0-C AI 压力 tier 是两项规则。本次按用户已批准的标准 T1，以本次读取市值 $67,065.00（2026-09-05 08:09:11 HKT，300 股 @ 223.55，对应美股 09-04 收盘；较本日早前临时版 $65,295.12 增加 $1,769.88，全部为收盘前价格变动，股数未变）计入低 / 中 / 高 $40,239.00 / $53,652.00 / $67,065.00，为本期独立现场重算。原 09-03 增持 100 股为 Wu 自行操作、Claude 未参与，已在 09-04 睡前版首次披露，本次不重复计为新增。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;落实：&lt;/b&gt;本期中情景已纳入 MRVL，并使用未舍入逐票贡献汇总；低 / 高仅增加 MRVL 精确增量，原组合基数仍为 2026-08-31 近似且未反映近日持仓变动，可信度进一步降低（见「风险」标签说明）。后续报告继续使用已批准 T1 规则和当期核实市值。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;状态：&lt;/b&gt;&lt;b&gt;已决定 / 本期风险计算已更新&lt;/b&gt;（&lt;code&gt;accepted&lt;/code&gt; 为原回执历史状态，原文保留；不是买卖或转账授权）· 编号 &lt;code&gt;D-20260829-MRVL-CLASS&lt;/code&gt; · 新口径批准记录 &lt;code&gt;WU-20260831-MRVL-T1&lt;/code&gt;&lt;/p&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;details class=&quot;dcard&quot; id=&quot;D-20260829-GOOG-FAMILY-LIMIT&quot; data-decision-id=&quot;D-20260829-GOOG-FAMILY-LIMIT&quot; data-decision-status=&quot;accepted&quot;&gt;&lt;summary&gt;2 · GOOG/GOOGL 家庭主视图集中度 · 线内
+&lt;span class=&quot;rt gv&quot;&gt;双视图口径已于 08-31 确认 · 已决定 / 待落实&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;事实/选项：&lt;/b&gt;本期三账户合并观察：$263,254.16 / $6,198,031.57 = 4.25%（IB 73,858.64 + Schwab 102,214.92 + Webull 87,180.60；IB-HK 资产估值读取窗口 07:47–08:10 HKT，对应美股 09-04 收盘；Schwab-HK/Webull 经 Sharesight 08:09:05–08:09:11 HKT 读取，与本报告「风险」双视图一致）。与本日早前临时版 4.28%（22:08–22:11 HKT）基本持平，差异来自收盘前价格，GOOG/GOOGL 无持仓变化；&lt;b&gt;决定本身与原回执均不变&lt;/b&gt;——事实变化不构成新的用户回应，不得据此自动改写 &lt;code&gt;awaiting_user&lt;/code&gt; 以外的任何状态。Wu 已于 2026-08-31 在本任务确认「三账户合并观察 + IB 单独执行视图」双视图方案：三账户合并观察分子=三账户直接持有 GOOG/GOOGL 美元市值合计，分母=同三账户总市值含现金；IB 执行视图继续沿用现行软 5% / 硬 5.5% 阈值；本次确认不新增任何交易触发或阈值。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;Claude 意见：&lt;/b&gt;已确认口径与此前建议一致——三账户合并观察仅作参考，不升级为交易触发；IB 执行视图继续独立判断。本次报告已按双视图口径展示（见「风险」标签「单票集中度 · 双视图」）。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;状态：&lt;/b&gt;&lt;b&gt;已决定 / 待落实&lt;/b&gt;（&lt;code&gt;accepted&lt;/code&gt;；沿用，08-31 口径确认已收到，本次继续按双视图口径落实展示）· 编号 &lt;code&gt;D-20260829-GOOG-FAMILY-LIMIT&lt;/code&gt;&lt;/p&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;details class=&quot;dcard&quot; id=&quot;D-20260829-SEMILIQUID-MAPPING&quot; data-decision-id=&quot;D-20260829-SEMILIQUID-MAPPING&quot; data-decision-status=&quot;accepted&quot;&gt;&lt;summary&gt;3 · 四桶分类核验与数据完整性复核
+&lt;span class=&quot;rt wv&quot;&gt;已采纳继续沿用；后续核实现金身份与剩余组合 · 已决定 / 待落实&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;事实/选项：&lt;/b&gt;原报告对分类覆盖缺口的解释有误，现按已核实的历史审计纠正；证据、范围和沿用条件统一见「报告说明」。本项用户决定与原回执保持不变，继续沿用已批准快照；不以此说明更正宣布家庭全量核验完成或更新四桶金额。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;Claude 意见：&lt;/b&gt;落实既有决定：继续沿用已批准快照；下一步先核实现金身份及剩余组合的数据完整性，再完成来源对账与受控核验。不能把历史局部审计视为当前全量结果，不再要求按错误的数量差补建分类。仅推进数据核验，不执行交易。&lt;/p&gt;
+&lt;p style=&quot;margin:5px 0&quot;&gt;&lt;b class=&quot;lab&quot;&gt;状态：&lt;/b&gt;&lt;b&gt;已决定 / 待落实&lt;/b&gt;（&lt;code&gt;accepted&lt;/code&gt;；沿用）· 编号 &lt;code&gt;D-20260829-SEMILIQUID-MAPPING&lt;/code&gt;&lt;/p&gt;
+&lt;/div&gt;&lt;/details&gt;&lt;!-- xuan-ib-decision-group:v1:resolved:end --&gt;
+&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;已结案 / 只读观察 &lt;span class=&quot;rt&quot;&gt;最近 5 项 · 另 3 项已存档 · 无需 Wu 决策&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;b&gt;早间版只读读数：IB、Schwab-HK、Webull 三处均无新增成交&lt;/b&gt; —— 对应美股 09-04 收盘；较本日早前临时版（22:08–22:11 HKT）对照，IB 持仓股数与 GTC 挂单（9 张）均未变；Schwab-HK / Webull 逐仓股数与现金余额亦逐项相等，Sharesight 成交端点自 09-04 起均返回 0 笔；9 个必读 Sharesight 组合全部成功读取。本次会话未下单、未撤单、未改单、未转账。&lt;span class=&quot;sub&quot;&gt;只读观察 · 编号 &lt;code&gt;O-20260905-AM-NOCHANGE&lt;/code&gt;&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;临时版只读读数：IB、Schwab-HK、Webull 三处均无新增成交&lt;/b&gt; —— 较本日睡前版（21:36–21:40 HKT）对照，IB 持仓股数与 GTC 挂单（9 张）均未变；Schwab-HK / Webull 逐仓股数与现金余额亦逐项相等，Sharesight 成交记录中最新一批仍是 09-03 那 5 笔（睡前版已首次披露）；9 个必读 Sharesight 组合全部成功读取（IB-HK 因返回体积较大触发工具输出上限，改由本地文件完整提取，非数据源故障）；EQAC / HODL 行情快照首次带 EBS 交易所参数返回空，改用默认路由各重试 1 次后成功。本次会话未下单、未撤单、未改单、未转账。&lt;span class=&quot;sub&quot;&gt;只读观察 · 编号 &lt;code&gt;O-20260904-ADHOC2-NOCHANGE&lt;/code&gt;&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;睡前版只读读数：IB 侧无新增成交；Schwab-HK / Webull 新增 5 笔 Wu 自行成交首次披露&lt;/b&gt; —— 09-03 美股盘中：Webull MRVL 买 100@211.80、AAOI 买 100@101.69；Schwab TSEM 买 100@207、SGOV 卖 298.739@100.4221 与 500@100.43。均由 Sharesight 成交记录（Schwab 确认邮件自动导入 / Webull 手工同步）核实，录入时间均晚于早间版读数；现金变动与成交金额对账相符。IB 侧持仓、GTC 挂单（9 张）均无变化。&lt;span class=&quot;sub&quot;&gt;只读观察 · 编号 &lt;code&gt;O-20260904-PM-NONIB-TRADES&lt;/code&gt;&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;早间版只读读数：IB 侧无新增成交，9 个 Sharesight 组合本次全部成功读取&lt;/b&gt; —— 较 09-03 睡前版对照，GTC 挂单仍为 9 张、持仓股数均未变；IB NAV 随 09-03 收盘上涨至 $5,071,072；该会话未下单、未撤单、未改单、未转账。&lt;span class=&quot;sub&quot;&gt;只读观察 · 编号 &lt;code&gt;O-20260904-AM-NOCHANGE&lt;/code&gt;&lt;/span&gt;&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;临时版只读重读：无新增成交，9 个 Sharesight 组合本次全部成功读取&lt;/b&gt; —— 较 09-03 早间版对照，GTC 挂单仍为 9 张、持仓股数均未变；IB-HK 因返回体积较大触发工具输出上限，改由本地文件完整提取（非数据源故障）。&lt;span class=&quot;sub&quot;&gt;只读观察 · 编号 &lt;code&gt;O-20260903-ADHOC1-NOCHANGE&lt;/code&gt;&lt;/span&gt;&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;details&gt;&lt;summary&gt;⑥ 换仓触发检查 &lt;span class=&quot;rt&quot;&gt;触发：无 · GTC 9 张 · 待撤 4 张 $150,520&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;font-size:12px;margin:3px 0 7px&quot;&gt;&lt;b&gt;触发判定：无。&lt;/b&gt; 迁移池（GOOG / TSLA / APO / KKR / AMD / MSTR / META，不含 BRK.B；MSFT 剩余 10 股残值）本次无落后度触发、无估值或强势兑现信号；本次早间版重读未见 IB 侧任何新增成交，GTC 挂单、股数均与本日早前临时版一致。所有剩余挂单为 Wu 自行下达的既有单，不构成 Claude 的换仓建议。AMD 两张卖单（499 / 500）距收盘价已由早前临时版的 +5.60% / +5.81% 收窄至 &lt;b&gt;+4.49% / +4.70%&lt;/b&gt;，仍是本次距市价最近的挂单，仍在 TWS 待目视，未触发任何处理阈值。&lt;/p&gt;
+&lt;div class=&quot;kv&quot;&gt;&lt;span class=&quot;k&quot;&gt;GTC 挂单&lt;/span&gt;&lt;span class=&quot;v&quot;&gt;与本日早前临时版一致，仍为 9 张；限价、股数均未变，距市价百分比按本次 07:47–08:10 HKT 收盘报价重算&lt;/span&gt;&lt;/div&gt;
+&lt;details&gt;&lt;summary&gt;GTC 明细表 &lt;span class=&quot;rt&quot;&gt;9 张 · 限价与早前临时版一致，距市价按收盘报价重算&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;挂单&lt;/th&gt;&lt;th&gt;限价&lt;/th&gt;&lt;th&gt;距最新可用报价（IB 直读）&lt;/th&gt;&lt;th&gt;年龄 / 状态&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;AMD 卖 30&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;REPLACED（原 555 → 499）· 现距市价最近单&lt;/span&gt;&lt;/td&gt;&lt;td&gt;499.00&lt;/td&gt;&lt;td class=&quot;wv&quot;&gt;+4.49%&lt;/td&gt;&lt;td&gt;9 天 · REPLACED 待目视&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;AMD 卖 20&lt;/span&gt;&lt;/td&gt;&lt;td&gt;500.00&lt;/td&gt;&lt;td class=&quot;wv&quot;&gt;+4.70%&lt;/td&gt;&lt;td&gt;10 天 · NEW&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EXUS 买 300&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;提示带 · 买单中距市价最近&lt;/span&gt;&lt;/td&gt;&lt;td&gt;44.00&lt;/td&gt;&lt;td class=&quot;wv&quot;&gt;-6.71%&lt;/td&gt;&lt;td&gt;58 天 · &amp;gt;5% 提示&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EXUS 买 1000&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;待撤 · REPLACED&lt;/span&gt;&lt;/td&gt;&lt;td&gt;42.00&lt;/td&gt;&lt;td class=&quot;&quot;&gt;-10.95%&lt;/td&gt;&lt;td&gt;93 天 · &lt;b&gt;待撤&lt;/b&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EIMI 买 500&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;提示带&lt;/span&gt;&lt;/td&gt;&lt;td&gt;49.50&lt;/td&gt;&lt;td class=&quot;&quot;&gt;-11.75%&lt;/td&gt;&lt;td&gt;51 天 · &amp;gt;5% 提示&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EXUS 买 1000&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;待撤&lt;/span&gt;&lt;/td&gt;&lt;td&gt;41.50&lt;/td&gt;&lt;td class=&quot;&quot;&gt;-12.01%&lt;/td&gt;&lt;td&gt;93 天 · &lt;b&gt;待撤&lt;/b&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MXUS 买 100&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;待撤&lt;/span&gt;&lt;/td&gt;&lt;td&gt;199.00&lt;/td&gt;&lt;td class=&quot;&quot;&gt;-12.34%&lt;/td&gt;&lt;td&gt;101 天 · &lt;b&gt;待撤&lt;/b&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;EIMI 买 1000&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;待撤&lt;/span&gt;&lt;/td&gt;&lt;td&gt;47.12&lt;/td&gt;&lt;td class=&quot;&quot;&gt;-15.99%&lt;/td&gt;&lt;td&gt;93 天 · &lt;b&gt;待撤&lt;/b&gt;&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;SLV 卖 160&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;卖单免龄&lt;/span&gt;&lt;/td&gt;&lt;td&gt;82.00&lt;/td&gt;&lt;td class=&quot;&quot;&gt;+36.96%&lt;/td&gt;&lt;td&gt;141 天 · 免龄&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;
+&lt;p style=&quot;font-size:12px;margin:6px 0 0&quot;&gt;&lt;b&gt;待撤四张，名义合计 $150,520&lt;/b&gt;（&amp;gt;60 天且距市价 &amp;gt;5%，卖单免龄；金额与早前临时版相同，因限价与股数均未变）。撤单一律由 Wu 在 TWS / IBKR 端执行，Claude 只提醒与核对。&lt;/p&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;details&gt;&lt;summary&gt;迁移池成本对照 &lt;span class=&quot;rt&quot;&gt;IB 持仓成本（average_price，直读）· 历史成本与 trailing return 不作为主要卖出依据&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;p style=&quot;font-size:12px;margin:4px 0 8px&quot;&gt;口径：IB average_price，与 Sharesight 加权成本方法论不同，两者不保证一致，如实分列不作调和。本次会话未执行任何交易，报价按对应美股 09-04 收盘的 07:47–08:10 HKT 读数更新。&lt;/p&gt;
+&lt;div class=&quot;tblwrap&quot;&gt;&lt;table&gt;
+&lt;thead&gt;&lt;tr&gt;&lt;th&gt;标的&lt;/th&gt;&lt;th&gt;IB 成本 / 股&lt;/th&gt;&lt;th&gt;最新可用报价（IB）&lt;/th&gt;&lt;th&gt;差异 %&lt;/th&gt;&lt;/tr&gt;&lt;/thead&gt;
+&lt;tbody&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;AMD&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 +$14,213&lt;/span&gt;&lt;/td&gt;&lt;td&gt;193.32&lt;/td&gt;&lt;td&gt;477.57&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+147.0%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;VCN&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 +C$29,081&lt;/span&gt;&lt;/td&gt;&lt;td&gt;C$46.02&lt;/td&gt;&lt;td&gt;C$74.39&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+61.7%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MSFT&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;卖 90 后剩余 10&lt;/span&gt;&lt;/td&gt;&lt;td&gt;355.02&lt;/td&gt;&lt;td&gt;499.41&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+40.7%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;APO&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 +$6,511&lt;/span&gt;&lt;/td&gt;&lt;td&gt;120.65&lt;/td&gt;&lt;td&gt;133.67&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+10.8%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;GOOG&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 +$5,956&lt;/span&gt;&lt;/td&gt;&lt;td&gt;308.65&lt;/td&gt;&lt;td&gt;335.72&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+8.8%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;META&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 +$3,019 · 卖 150 后剩余 100&lt;/span&gt;&lt;/td&gt;&lt;td&gt;585.01&lt;/td&gt;&lt;td&gt;615.20&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+5.2%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;ORCL&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 +$351&lt;/span&gt;&lt;/td&gt;&lt;td&gt;157.95&lt;/td&gt;&lt;td&gt;159.70&lt;/td&gt;&lt;td class=&quot;up&quot;&gt;+1.1%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;KKR&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 -$5,126&lt;/span&gt;&lt;/td&gt;&lt;td&gt;116.27&lt;/td&gt;&lt;td&gt;107.73&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-7.3%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;TSLA&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 -$9,873&lt;/span&gt;&lt;/td&gt;&lt;td&gt;378.21&lt;/td&gt;&lt;td&gt;352.89&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-6.7%&lt;/td&gt;&lt;/tr&gt;
+&lt;tr&gt;&lt;td&gt;&lt;span class=&quot;sym&quot;&gt;MSTR&lt;/span&gt;&lt;span class=&quot;sub&quot;&gt;未实现 -$12,663 · 静默持有&lt;/span&gt;&lt;/td&gt;&lt;td&gt;158.81&lt;/td&gt;&lt;td&gt;142.58&lt;/td&gt;&lt;td class=&quot;dn&quot;&gt;-10.2%&lt;/td&gt;&lt;/tr&gt;
+&lt;/tbody&gt;&lt;/table&gt;&lt;/div&gt;&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;&lt;/details&gt;
+&lt;/div&gt;&lt;div class=&quot;pane p5&quot;&gt;
+&lt;section id=&quot;xuan-ib-policy-v2&quot; data-policy-id=&quot;xuan-ib-index-etf-policy-v2&quot; data-policy-status=&quot;approved-not-implemented&quot; data-policy-fingerprint=&quot;3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f&quot;&gt;
+&lt;!-- xuan-ib-index-etf-policy-v2:3de814cae31f058f8209f47771df03cf453ef985559274646234f5e43836af7f --&gt;
+&lt;style&gt;
+#xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;font-family:-apple-system,BlinkMacSystemFont,&quot;Segoe UI&quot;,sans-serif;color:var(--xpv2-ink);background:var(--xpv2-bg);color-scheme:light dark;font-size:16px;display:block;box-sizing:border-box;width:100%;max-width:390px;margin:auto;padding:18px 14px 34px;overflow-wrap:anywhere}
+#xuan-ib-policy-v2 *{box-sizing:border-box;min-width:0}#xuan-ib-policy-v2 .xpv2-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin:5px 2px 18px}#xuan-ib-policy-v2 .xpv2-top h1{font-size:25px;margin:0 0 4px}#xuan-ib-policy-v2 .xpv2-muted{color:var(--xpv2-muted);font-size:13px}#xuan-ib-policy-v2 .xpv2-pill{white-space:nowrap;border:1px solid var(--xpv2-border);border-radius:999px;padding:7px 10px;background:var(--xpv2-surface);font-size:12px;font-weight:700}#xuan-ib-policy-v2 .xpv2-card,#xuan-ib-policy-v2 details{background:var(--xpv2-surface);border:1px solid var(--xpv2-border);border-radius:18px;margin:0 0 12px;padding:16px;box-shadow:0 1px 0 var(--xpv2-shadow)}#xuan-ib-policy-v2 .xpv2-hero{display:grid;gap:10px}#xuan-ib-policy-v2 .xpv2-hero h2,#xuan-ib-policy-v2 .xpv2-call h2{font-size:18px;margin:0}#xuan-ib-policy-v2 .xpv2-status{font-size:22px;font-weight:800}#xuan-ib-policy-v2 .xpv2-note{font-size:14px;line-height:1.45;margin:0}#xuan-ib-policy-v2 .xpv2-targets{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}#xuan-ib-policy-v2 .xpv2-target{border-radius:14px;background:var(--xpv2-target);padding:12px 8px;text-align:center}#xuan-ib-policy-v2 .xpv2-target b{display:block;font-size:24px}#xuan-ib-policy-v2 .xpv2-target span{font-size:11px;color:var(--xpv2-target-muted)}#xuan-ib-policy-v2 .xpv2-call{border:2px solid var(--xpv2-call-border);background:var(--xpv2-call)}#xuan-ib-policy-v2 .xpv2-call .xpv2-gate{display:inline-block;background:var(--xpv2-gate);color:#fff;border-radius:999px;padding:4px 8px;font-size:12px;font-weight:800;margin-bottom:9px}#xuan-ib-policy-v2 details{padding:0}#xuan-ib-policy-v2 summary{cursor:pointer;list-style:none;padding:16px;font-weight:800}#xuan-ib-policy-v2 summary::-webkit-details-marker{display:none}#xuan-ib-policy-v2 summary:after{content:&quot;＋&quot;;float:right;color:#777}#xuan-ib-policy-v2 .xpv2-body{border-top:1px solid var(--xpv2-divider);padding:14px 16px 16px}#xuan-ib-policy-v2 .xpv2-row{display:flex;justify-content:space-between;gap:18px;border-bottom:1px solid var(--xpv2-divider);padding:9px 0;font-size:14px}#xuan-ib-policy-v2 .xpv2-row:last-child{border:0}#xuan-ib-policy-v2 .xpv2-row b{text-align:right;max-width:52%}#xuan-ib-policy-v2 .xpv2-readonly{text-align:center;color:var(--xpv2-muted);font-size:12px;line-height:1.5;margin-top:18px}
+@media(min-width:600px){#xuan-ib-policy-v2{max-width:430px}}
+@media(prefers-color-scheme:dark){#xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}}
+#tl:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#f6f6f3;--xpv2-ink:#111;--xpv2-muted:#6f6f6b;--xpv2-surface:#fff;--xpv2-border:#deded7;--xpv2-shadow:#e9e9e4;--xpv2-target:#f4f5f1;--xpv2-target-muted:#666;--xpv2-call:#fff8e5;--xpv2-call-border:#e6a933;--xpv2-gate:#9c6410;--xpv2-divider:#ecece7;color-scheme:light}
+#td:checked~.page #xuan-ib-policy-v2{--xpv2-bg:#111214;--xpv2-ink:#f4f4f2;--xpv2-muted:#aaa;--xpv2-surface:#1c1d1f;--xpv2-border:#36373a;--xpv2-shadow:#090a0b;--xpv2-target:#282a2d;--xpv2-target-muted:#bbb;--xpv2-call:#33260e;--xpv2-call-border:#b77a16;--xpv2-gate:#bd7e1a;--xpv2-divider:#35363a;color-scheme:dark}
+&lt;/style&gt;
+  &lt;header class=&quot;xpv2-top&quot;&gt;&lt;div&gt;&lt;h1&gt;XUAN-ETF 计划&lt;/h1&gt;&lt;div class=&quot;xpv2-muted&quot;&gt;长期配置 · 只读规划&lt;/div&gt;&lt;/div&gt;&lt;span class=&quot;xpv2-pill&quot;&gt;已批准 · 建基线中&lt;/span&gt;&lt;/header&gt;
+  &lt;section class=&quot;xpv2-card xpv2-hero&quot; aria-labelledby=&quot;xpv2-policy-status&quot;&gt;&lt;h2 id=&quot;xpv2-policy-status&quot;&gt;当前状态&lt;/h2&gt;&lt;div class=&quot;xpv2-status&quot;&gt;已批准 · 尚未接入日报计算&lt;/div&gt;&lt;p class=&quot;xpv2-note&quot;&gt;先核实 CALL 账本，再建立 A／B／C 基线。当前暂不显示可投入金额。&lt;/p&gt;&lt;/section&gt;
+  &lt;section class=&quot;xpv2-card&quot; aria-labelledby=&quot;xpv2-policy-targets&quot;&gt;&lt;h2 id=&quot;xpv2-policy-targets&quot; style=&quot;font-size:18px;margin:0 0 12px&quot;&gt;长期目标&lt;/h2&gt;&lt;div class=&quot;xpv2-targets&quot;&gt;&lt;div class=&quot;xpv2-target&quot;&gt;&lt;b&gt;65%&lt;/b&gt;&lt;span&gt;美国&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-target&quot;&gt;&lt;b&gt;23%&lt;/b&gt;&lt;span&gt;非美发达&lt;/span&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-target&quot;&gt;&lt;b&gt;12%&lt;/b&gt;&lt;span&gt;新兴市场&lt;/span&gt;&lt;/div&gt;&lt;/div&gt;&lt;/section&gt;
+  &lt;section class=&quot;xpv2-card xpv2-call&quot; id=&quot;xuan-ib-policy-v2-call-gate&quot; aria-labelledby=&quot;xpv2-call-title&quot;&gt;&lt;span class=&quot;xpv2-gate&quot;&gt;资料未齐 · 暂停金额计算&lt;/span&gt;&lt;h2 id=&quot;xpv2-call-title&quot;&gt;CALL 账本未核实&lt;/h2&gt;&lt;p class=&quot;xpv2-note&quot;&gt;不把缺失值当作 0，不计算可投入金额，也不执行配置。&lt;span class=&quot;xpv2-muted&quot;&gt;技术规则：fail-closed。&lt;/span&gt;&lt;/p&gt;&lt;/section&gt;
+  &lt;details&gt;&lt;summary&gt;美国 65% 如何分&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;USSC · 小盘价值&lt;/span&gt;&lt;b&gt;5%&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;EQAC · AI／成长倾斜&lt;/span&gt;&lt;b&gt;0–8%&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;CSPX · 大盘核心&lt;/span&gt;&lt;b&gt;52–60%&lt;/b&gt;&lt;/div&gt;&lt;p class=&quot;xpv2-note&quot;&gt;核心＝60%−倾斜；初始 8% 只在 mapping 与 AI exposure 验证后生效。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;details&gt;&lt;summary&gt;补仓顺序&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;① 现有现金&lt;/span&gt;&lt;b&gt;主要来源&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;② 已有持仓卖出&lt;/span&gt;&lt;b&gt;结算后才计&lt;/b&gt;&lt;/div&gt;&lt;p class=&quot;xpv2-note&quot;&gt;不预计未成交卖出回款；资金不足时保留上一个已核实方案。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;details&gt;&lt;summary&gt;范围与排除&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;p class=&quot;xpv2-note&quot;&gt;范围为 IB-HK 全部资产加 NOAH-HK 现金；GLD、SLV、MSTR、HODL 主题投资不纳入本计划。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;details&gt;&lt;summary&gt;产品与角色&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;1. CSPX&lt;br&gt;&lt;small&gt;IE00B5BMR087 · LSE&lt;/small&gt;&lt;/span&gt;&lt;b&gt;美国大盘核心&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;2. EQAC&lt;br&gt;&lt;small&gt;IE00BFZXGZ54 · SWX&lt;/small&gt;&lt;/span&gt;&lt;b&gt;AI／成长倾斜&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;3. USSC&lt;br&gt;&lt;small&gt;IE00BSPLC413 · LSE&lt;/small&gt;&lt;/span&gt;&lt;b&gt;美国小盘价值&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;4. EXUS&lt;br&gt;&lt;small&gt;IE0006WW1TQ4 · LSE&lt;/small&gt;&lt;/span&gt;&lt;b&gt;非美发达&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;5. EIMI&lt;br&gt;&lt;small&gt;IE00BKM4GZ66 · LSE&lt;/small&gt;&lt;/span&gt;&lt;b&gt;新兴市场&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;6. IB01&lt;br&gt;&lt;small&gt;IE00BGSF1X88 · LSE&lt;/small&gt;&lt;/span&gt;&lt;b&gt;CALL 备用金候选&lt;/b&gt;&lt;/div&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;details&gt;&lt;summary&gt;税务要点&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;p class=&quot;xpv2-note&quot;&gt;候选产品均为爱尔兰注册 UCITS。美国 situs 风险仍需逐项核实；分红税、遗产税及个人适用结论请取得专业税务意见。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;details&gt;&lt;summary&gt;A／B／C 评分&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;A&lt;/span&gt;&lt;b&gt;实际组合&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;B&lt;/span&gt;&lt;b&gt;现金优先影子方案&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;C&lt;/span&gt;&lt;b&gt;CSPX 累积型&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;1. 税后收益&lt;/span&gt;&lt;b&gt;待建基线&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;2. 最大回撤&lt;/span&gt;&lt;b&gt;待建基线&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;3. AI 参与&lt;/span&gt;&lt;b&gt;待建基线&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;4. US-situs 占比&lt;/span&gt;&lt;b&gt;待建基线&lt;/b&gt;&lt;/div&gt;&lt;div class=&quot;xpv2-row&quot;&gt;&lt;span&gt;5. CALL 覆盖&lt;/span&gt;&lt;b&gt;待建基线&lt;/b&gt;&lt;/div&gt;&lt;p class=&quot;xpv2-note&quot;&gt;至少 4 个完整季度后才排名。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;details&gt;&lt;summary&gt;与当前日报的关系&lt;/summary&gt;&lt;div class=&quot;xpv2-body&quot;&gt;&lt;p class=&quot;xpv2-note&quot;&gt;当前日报现金计划仍是 operational-v1。policy-v2 是已批准的长期目标，须在 mapping、CALL 账本和 T0 基线完成后版本化接入；不得把旧数字改名为新方案。&lt;/p&gt;&lt;/div&gt;&lt;/details&gt;
+  &lt;p class=&quot;xpv2-readonly&quot;&gt;只读 · 不下单、不改单、不撤单、不转账&lt;br&gt;任何金融操作均须另行明确批准&lt;/p&gt;
+&lt;/section&gt;
+&lt;!-- xuan-ib-etf-abc-runtime:v1:start --&gt;
+&lt;template id=&quot;xuan-ib-etf-abc-state-v1&quot; type=&quot;application/json&quot;&gt;{&quot;schemaVersion&quot;:1,&quot;methodId&quot;:&quot;xuan-ib-etf-abc-v1&quot;,&quot;mode&quot;:&quot;read-only&quot;,&quot;t0DateHkt&quot;:&quot;2026-09-01&quot;,&quot;t0QuarterStatus&quot;:&quot;stub&quot;,&quot;baselineStatus&quot;:&quot;pending&quot;,&quot;economicDateHkt&quot;:&quot;2026-09-05&quot;,&quot;effectiveMarketDate&quot;:&quot;2026-09-05&quot;,&quot;calendarStatus&quot;:&quot;unavailable&quot;,&quot;staleMarketClosed&quot;:false,&quot;comparisonStatus&quot;:&quot;incomplete&quot;,&quot;targetVectorStatus&quot;:&quot;candidate-not-deployable&quot;,&quot;bReserveStatus&quot;:&quot;incomplete&quot;,&quot;bPendingCashUnallocated&quot;:false,&quot;bPendingOutflowUnsimulated&quot;:false,&quot;bImplementationStatus&quot;:&quot;incomplete-call-reserve&quot;,&quot;cDistributionTreatment&quot;:&quot;embedded-in-accumulating-price&quot;,&quot;rawMetricsComplete&quot;:false,&quot;completedQuarterIds&quot;:[],&quot;completeQuarterCount&quot;:0,&quot;minimumCompleteQuartersForRanking&quot;:4,&quot;rankingEligible&quot;:false,&quot;rankingStatus&quot;:&quot;not-eligible-less-than-four-complete-quarters&quot;}&lt;/template&gt;
+&lt;section class=&quot;xuan-etf-abc-runtime&quot; data-method-id=&quot;xuan-ib-etf-abc-v1&quot; data-t0=&quot;2026-09-01&quot;&gt;
+  &lt;h3&gt;XUAN-ETF · A/B/C&lt;/h3&gt;
+  &lt;p&gt;① T0 2026-09-01 · 基线待建立 · 暂不比较&lt;/p&gt;
+  &lt;p&gt;② A 实际 · B A克隆边际影子 · C CSPX累积型&lt;/p&gt;
+  &lt;p&gt;③ 资金流同日同额 · EOD；估值不完整&lt;/p&gt;
+  &lt;p&gt;④ CALL 未齐 · 不建份额&lt;/p&gt;
+  &lt;p&gt;⑤ 0/4 完整季度 · 暂不排名&lt;/p&gt;
+  &lt;p&gt;只读方法 · 不下单、不改单、不撤单、不转账&lt;/p&gt;
+&lt;/section&gt;
+&lt;!-- xuan-ib-etf-abc-runtime:v1:end --&gt;
+&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;details&gt;&lt;summary&gt;报告说明 &lt;span class=&quot;rt&quot;&gt;版别 · 取数时点 · 数据日 · 只读&lt;/span&gt;&lt;/summary&gt;
+&lt;div class=&quot;dbody&quot;&gt;
+&lt;ol&gt;
+&lt;li&gt;&lt;b&gt;版次与时点。&lt;/b&gt;版别：&lt;b&gt;早间版（周二至周六 08:00 HKT 定时任务）&lt;/b&gt;。计划启动 08:00 HKT；实际启动 2026-09-05 07:47 HKT（前置读取自 07:47 起）；取数窗口 &lt;b&gt;07:47–08:10 HKT（2026-09-04T23:47:00Z–2026-09-05T00:10:00Z）&lt;/b&gt;。报告日期：2026-09-05（香港，周六）；对应美股交易日 09-04（周五）。美国市场状态：09-04 常规交易已于 04:00 HKT（周六）收盘，随后延长交易段至 08:00 HKT；本次读数为该交易日收盘 + 延长交易后的总结，&lt;b&gt;不是盘中值&lt;/b&gt;；下一美股全日休市为 09-07（周一，Labor Day），09-07 无新早间版，09-08（周二）恢复。IB summary / balances / positions / orders / trades、9 个必读 Sharesight 组合（7 家庭 + 2 AI-only）performance 均于本次窗口内重新读取，并另行核对 Schwab-HK / Webull 自 09-04 起的成交记录是否有新成交。相对本日早前临时版（22:08–22:11 HKT）：&lt;b&gt;IB 侧无新增成交、无新增/撤销挂单、持仓股数均未变；Schwab-HK / Webull 逐仓股数与现金余额亦未变&lt;/b&gt;；IB NAV 由 $5,062,108 变为 $5,057,944（−$4,164，收盘前后价格变动）。&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;数据与口径。&lt;/b&gt;主数据源：Interactive Brokers Web API（只读，本次 summary / balances / positions / orders / trades 全部直接读取成功，另加 26 次逐票 price snapshot 调用，0 次重试）· Sharesight User API（只读）。本次 9 个必读 Sharesight 组合（7 家庭 + 2 AI-only）&lt;b&gt;全部成功读取&lt;/b&gt;。6 个非 IB 家庭组合（NOAH-HK $12,657,882.79 / NOAH-US $5,455,199.00 / ANTARCTICA $2,901,407.16 / UBS $4,706,100.12 / Citi-HK &amp;amp; 地产四期 $500,000 / HSBC-HK $163,345.50）总值与本日早前临时版&lt;b&gt;逐项数值相等&lt;/b&gt;（同范围同口径比较，非仅 mapping 未变）；IB-HK、Schwab-HK（+$2,449.78）、Webull（+$4,000.05）的变动全部来自收盘前后报价。&lt;b&gt;新成交：无&lt;/b&gt; —— IB trades（近 7 日）中最新成交仍为 09-02；Schwab-HK / Webull 的 Sharesight 成交端点自 09-04 起均返回 0 笔，&lt;b&gt;本次未见任何新增&lt;/b&gt;。未使用缓存替代本次实读。授权 Google Drive 本次已按「XUAN」标题与全文两种条件检索：未发现晚于上一份报告（09-04 22:11 HKT）的新文件，&lt;b&gt;未据以更改本报告任何数值&lt;/b&gt;。&lt;b&gt;字段级回退&lt;/b&gt;：四桶 / 三层流动性沿用 &lt;b&gt;2026-08-24 已批准快照&lt;/b&gt;（as-of 2026-08-24，家庭口径基数 $31,115,693，&lt;code&gt;four-bucket-mapping.json&lt;/code&gt; 内容未变）；沿用原因是完整七组合范围、现金身份、持仓分页与金额对账的核验证据及受控维护门槛尚未满足，&lt;b&gt;不是本次金额与该快照相等&lt;/b&gt;；历史审计、适用范围及沿用条件统一见下方「四桶分类核验与沿用口径」，四桶比例、三层流动性及依赖归桶的金额本次不变。&lt;b&gt;计算口径&lt;/b&gt;：AI 压力 T1/T2/T3 阶梯与 ETF 穿透权重沿用不变，MRVL 按用户已批准标准 T1 60% / 80% / 100% 以本次市值 $67,065.00（300 股）现场重算；Webull 持仓 AAOI 无已批准 tier，按 fail-closed 不进分子、只计分母，待决定事项状态与回执均未变动（不猜测分层）；中情景按本次市值未舍入汇总，低 / 高仍为 2026-08-31 原组合近似基数加 MRVL 精确增量，未反映其后持仓变动，仅标「约」，可信度较低（已在「风险」标签内标注）。四类清单 v9.6 · USSC 基数 v9.8 · 分类及目标不变；USSC 参考占现金规划预算 10%，其余预算以含 USSC 买入后的股票分母重新联立计算 EXUS / EIMI，预算不足按完整补足额同比例缩减，仅为规划情景；45% 是美国底仓参考目标，不是新增硬上限；AI 压力指标含 Schwab-HK 与 Webull，与 NAV / 四桶 / 四类 / 单票口径不同，&lt;b&gt;不可横向比较&lt;/b&gt;。GOOG/GOOGL 家庭三账户合并观察 + IB 单独执行视图的双视图口径按 Wu 08-31 确认结论展示，本次维持 5% 线内，未新增任何交易触发。原 3 条回执保持历史原文，本次未新增、未修改任何回执，不代表交易授权。FX 参考 CAD/USD 0.72274305（IB Base）。&lt;b&gt;持仓表三个时点&lt;/b&gt;：估值报价为 IB 持仓端点读数（07:47–08:10 HKT 窗口）；日涨跌取自 IB 实时快照 &lt;code&gt;change&lt;/code&gt; / &lt;code&gt;change_pct&lt;/code&gt;（当前价相对上一交易日收盘，非成本收益、股数变化或汇率差），26 只逐只单独调用全部返回，7 只 LSE / EBS 标的为延迟报价（DELAYED，落在 09-04 香港时段）、其余实时（REALTIME，多数落在 09-05 凌晨延长交易时段）；每行另列快照自带行情时间 &lt;code&gt;last.ts&lt;/code&gt;（HKT，含日期）。默认展开 |日涨跌| ≥1% 的 10 只，&amp;lt;1% 的 16 只折叠，缺可靠依据的 0 只（10+16+0=26）；不按 0.00% 处理、不倒填。&lt;/li&gt;
+&lt;li&gt;&lt;b&gt;安全与发布。&lt;/b&gt;全程仅使用 Interactive Brokers 与 Sharesight &lt;b&gt;只读&lt;/b&gt;工具：本次未下单、未撤单、未改单、未改 GTC，未写入 IB / Sharesight，未改动任何定时任务、网络或券商权限；此前 09-01/09-02 IB 成交及 09-03 Schwab-HK / Webull 成交均为 Wu 自行操作或既有挂单结果，与本次会话无关。AI 压力读数为压力情景估算，非预测；T1/T2/T3 分层仅作监控，&lt;b&gt;不构成交易指令&lt;/b&gt;。发布：本早间版通过候选分支 → Validate → Promote → Pages 链路更新同一手机固定链接；本会话无法直接读取 Pages 线上固定地址，源提交与推送成功不等于线上固定页已核验，需另行核对固定手机链接的 source SHA / 生成时间是否已更新为本次。规范 v9.14 + 附录 v9.16 · 交付契约 v9.15 · 香港时间契约 v1 · 运行时观测契约 v1。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;section id=&quot;xuan-ib-classification-disclosure-v1&quot;&gt;
+&lt;h3&gt;四桶分类核验与沿用口径&lt;/h3&gt;
+&lt;ol&gt;
+&lt;li&gt;历史分类核验：2026-08-31 分两批读取（15:31–15:35、21:23–21:24 HKT），七组合共 95 行全部覆盖，未解决 0、重复 0。仅为当时规则覆盖，不是本期同步估值。&lt;/li&gt;
+&lt;li&gt;其中 38 项 Semi Liquid 持仓全部覆盖：7 次逐仓例外（holdingOverrides）＋31 次整组合规则（portfolioRules），未覆盖为 0。规则顺序不变：来源明确的现金 → 逐仓 ID 与名称交叉校验 → 整组合规则 → 精确通用资产标签 → 未知。不能用持仓总数减逐仓例外数量推算分类缺口。&lt;/li&gt;
+&lt;li&gt;UBS 现金代理身份已由既有来源凭证核实，原证券表示保留；这不是重新读取当前可用现金。不能按名称猜现金或分类，也不再把历史身份疑点列作未解决缺口。&lt;/li&gt;
+&lt;li&gt;本页四桶、三层流动性及依赖归桶的指标继续沿用已批准的 2026-08-24 快照。只有当期同轮七组合范围、现金身份、完整持仓、分页／懒加载及逐行金额对账经来源核验，并通过受控维护更新本说明后，才可改称实时重算。其他指标按各自已披露的数据时点与来源处理，不因本项回退停止报告。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/section&gt;
+&lt;/div&gt;&lt;/details&gt;
+
+&lt;div class=&quot;foot&quot;&gt;只读报告 · 数据截至 08:10 HKT · 行情时点见报告说明 · 不是交易指令&lt;/div&gt;
+
+&lt;/div&gt;&lt;/div&gt;
+&lt;template id=&quot;xuan-ib-decision-state-v1&quot; type=&quot;application/json&quot;&gt;
+{&quot;schemaVersion&quot;:1,&quot;interaction&quot;:&quot;enabled&quot;,&quot;decisions&quot;:[{&quot;decisionId&quot;:&quot;D-20260829-MRVL-CLASS&quot;,&quot;status&quot;:&quot;accepted&quot;},{&quot;decisionId&quot;:&quot;D-20260829-GOOG-FAMILY-LIMIT&quot;,&quot;status&quot;:&quot;accepted&quot;},{&quot;decisionId&quot;:&quot;D-20260829-SEMILIQUID-MAPPING&quot;,&quot;status&quot;:&quot;accepted&quot;},{&quot;decisionId&quot;:&quot;D-20260904-AAOI-AITIER&quot;,&quot;status&quot;:&quot;awaiting_user&quot;}],&quot;receipts&quot;:[{&quot;receiptId&quot;:&quot;R-20260831-064906-7F3K9QXM&quot;,&quot;decisionId&quot;:&quot;D-20260829-MRVL-CLASS&quot;,&quot;action&quot;:&quot;accepted&quot;,&quot;responseToSourceSha&quot;:&quot;3769a3e05e954474573b6b1e247374f4e2addfb5&quot;,&quot;responseToHtmlBlob&quot;:&quot;0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b&quot;,&quot;recordedAtHkt&quot;:&quot;2026-08-31T06:49:06+08:00&quot;,&quot;publicSummary&quot;:&quot;采纳 Claude 意见：MRVL 暂不计入分子并披露；仅记录本次回应，不构成交易授权。&quot;},{&quot;receiptId&quot;:&quot;R-20260831-064907-2LM4P8YB&quot;,&quot;decisionId&quot;:&quot;D-20260829-GOOG-FAMILY-LIMIT&quot;,&quot;action&quot;:&quot;accepted&quot;,&quot;responseToSourceSha&quot;:&quot;3769a3e05e954474573b6b1e247374f4e2addfb5&quot;,&quot;responseToHtmlBlob&quot;:&quot;0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b&quot;,&quot;recordedAtHkt&quot;:&quot;2026-08-31T06:49:07+08:00&quot;,&quot;publicSummary&quot;:&quot;采纳 Claude 意见：先重订家庭主视图集中度参考线口径；仅记录本次回应，不构成交易授权。&quot;},{&quot;receiptId&quot;:&quot;R-20260831-064908-9RT6WZ2N&quot;,&quot;decisionId&quot;:&quot;D-20260829-SEMILIQUID-MAPPING&quot;,&quot;action&quot;:&quot;accepted&quot;,&quot;responseToSourceSha&quot;:&quot;3769a3e05e954474573b6b1e247374f4e2addfb5&quot;,&quot;responseToHtmlBlob&quot;:&quot;0c64cbfcc39c43d13c4ed1cb46b398d3ce26091b&quot;,&quot;recordedAtHkt&quot;:&quot;2026-08-31T06:49:08+08:00&quot;,&quot;publicSummary&quot;:&quot;采纳 Claude 意见：继续沿用四桶 mapping 快照并推进补全；仅记录本次回应，不构成交易授权。&quot;}]}
+&lt;/template&gt;
+&lt;!-- xuan-ib-cash-plan-v1:eyJzY2hlbWFWZXJzaW9uIjoyLCJzdGF0dXMiOiJzbmFwc2hvdCIsInNvdXJjZUFzT2ZIa3QiOiIyMDI2LTA5LTA1IDA3OjQ34oCTMDg6MTAgSEtUIiwiZXF1aXR5VG90YWwiOjM4NzY2NDEuNDcsImRldmVsb3BlZCI6NDY1NDMxLjQ0LCJlbWVyZ2luZyI6NDIxMTc4LjQ5LCJpYkNhc2giOjYzNjc4Ni40Nywibm9haENhc2giOjM1Nzk2OC45MiwicmVzZXJ2ZSI6MjQwMDAwLCJjdXJyZW5jeSI6IlVTRCIsImRlbm9taW5hdG9yIjoiZXF1aXR5LW9ubHkiLCJ1c0Jhc2UiOjE5OTM5MzUuODEsInVzc2MiOjE1MjE1LjgyLCJ1c3NjQnVkZ2V0U2hhcmUiOjAuMX0 --&gt;
+&lt;/body&gt;&lt;/html&gt;
+" style="width:100%;height:75vh;border:0"></iframe></details></body></html>
