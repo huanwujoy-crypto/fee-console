@@ -5,6 +5,7 @@ import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { validateManualConsentProof } from './xuan-ib-manual-consent.mjs';
 import { validateAssociationReceipt, validateAssociationReceiptShape } from './xuan-ib-account-association.mjs';
+import { isWeeklyMode, validateWeeklyEvidence } from './xuan-ib-weekly-snapshot.mjs';
 
 export const APPROVED_IB_ACCOUNT_ID = "U6859001";
 
@@ -299,6 +300,9 @@ export function validateManifest(manifest, registry, context = {}) {
     stages.set(stage.name, stage);
   }
   for (const name of RUN_STAGES) if (!stages.has(name)) fail(`stage ${name} is missing`);
+  if (isWeeklyMode(manifest.sources) && stages.get('sharesight-read').status !== 'degraded') {
+    fail('weekly metadata lookup must not claim a successful live Sharesight read');
+  }
   for (const name of ["guard", "candidate-prep"]) {
     if (stages.get(name).status !== "ok") fail(`${name} must be ok before a candidate manifest is encoded`);
   }
@@ -324,11 +328,12 @@ export function validateManifest(manifest, registry, context = {}) {
     const bootstrap = stages.get('bootstrap');
     if (bootstrap.status !== 'ok' || checked < runStart || checked < Date.parse(bootstrap.endedAt)) fail('association check outside manifest bootstrap boundary');
     const positionsFailed = ['failed','unavailable'].includes(manifest.sources.ib.positions.status);
-    if (stages.get('ib-read').status !== (positionsFailed ? 'degraded' : 'ok') || stages.get('sharesight-read').status !== 'ok') fail('association read stages contradict direct/fallback evidence');
+    if (stages.get('ib-read').status !== (positionsFailed ? 'degraded' : 'ok') || stages.get('sharesight-read').status !== (isWeeklyMode(manifest.sources) ? 'degraded' : 'ok')) fail('association read stages contradict direct/fallback evidence');
     for (const [name, records] of [
       ['ib-read', IB_ENDPOINTS.map(endpoint => manifest.sources.ib[endpoint])],
       ['sharesight-read', manifest.sources.sharesight]
     ]) {
+      if (name === 'sharesight-read' && isWeeklyMode(manifest.sources)) continue;
       const stage = stages.get(name);
       if (checked >= Date.parse(stage.startedAt)) fail('association check must precede both financial read stages');
       for (const source of records) {
@@ -346,7 +351,7 @@ export function validateManifest(manifest, registry, context = {}) {
 // fictional successful render/guard stage times merely to assess live reads.
 export function validateSourceEvidence(sources, registry, context = {}) {
   validateRegistry(registry);
-  assertExactKeys(sources, ["ib", "sharesight"], [], "manifest.sources");
+  assertExactKeys(sources, ["ib", "sharesight"], ['sharesightWeekly'], "manifest.sources");
   assertExactKeys(
     sources.ib,
     ["accountId", "accountScopeConfirmed", ...IB_ENDPOINTS],
@@ -428,6 +433,20 @@ export function validateSourceEvidence(sources, registry, context = {}) {
   }
 
   if (!Array.isArray(sources.sharesight)) fail("manifest.sources.sharesight must be an array");
+  if (isWeeklyMode(sources)) {
+    if (context.edition !== 'adhoc') fail('weekly minimal mode is adhoc-only; scheduled activation is separate');
+    if (sources.sharesight.length) fail('weekly metadata must not be current-run Sharesight evidence');
+    const at = context.now ?? (context.preparedAt ? Date.parse(context.preparedAt)
+      : Math.max(...IB_ENDPOINTS.map(name => Date.parse(sources.ib[name].asOf))));
+    validateWeeklyEvidence(sources.sharesightWeekly, registry, at);
+    for (const name of IB_ENDPOINTS) {
+      if (sources.ib[name].status === 'ok' && (typeof sources.ib[name].asOf !== 'string'
+        || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(sources.ib[name].asOf)
+        || Date.parse(sources.ib[name].asOf) > at)) fail('weekly mode requires bounded live IB read instants');
+    }
+    checkSafeStrings(sources);
+    return sources;
+  }
   const required = registry.portfolios.filter(portfolio => portfolio.requiredEachReport);
   if (sources.sharesight.length !== required.length) {
     fail(`Sharesight sources must contain all ${required.length} required portfolios`);
@@ -480,6 +499,14 @@ export function assessSourceReadiness(sources, registry, context = {}) {
   const issues = [];
   if (!sources.ib.accountScopeConfirmed) {
     return { blocked: true, degraded: true, positionSource: "unavailable", issues: ["ACCOUNT_SCOPE_UNCONFIRMED"] };
+  }
+  if (isWeeklyMode(sources)) {
+    const failed = IB_ENDPOINTS.filter(name => !directlyUsable(sources.ib[name]));
+    const meta = sources.sharesightWeekly;
+    return { blocked: failed.length > 0, degraded: true,
+      positionSource: sources.ib.positions.status === 'ok' ? 'ib' : 'unavailable',
+      issues: [...failed.map(name => `IB_${name.toUpperCase()}_UNAVAILABLE`),
+        meta.status === 'unavailable' ? `SS_WEEKLY_${meta.reason}` : 'SS_WEEKLY_METADATA_ONLY'] };
   }
 
   const critical = ["accountSummary", "balances", "orders", "trades"];

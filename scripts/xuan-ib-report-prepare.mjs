@@ -14,6 +14,7 @@ import { assessSourceReadiness, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
 import { getManualConsentRunId, validateManualConsentProof, consumeManualConsent } from './xuan-ib-manual-consent.mjs';
 import { loadTrustedAssociationPolicy, validateAssociationReceipt } from './xuan-ib-account-association.mjs';
+import { isWeeklyMode, isWeeklyStage } from './xuan-ib-weekly-snapshot.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -47,6 +48,10 @@ function requireCompactFreshSources(evidence,registry,readiness){
     if(sourceHktDate(source.asOf)!==evidence.dataDate)fail(`direct IB ${endpoint} is not fresh for the report date`);
   }
 
+  if(isWeeklyMode(evidence.sources)){
+    if(readiness.positionSource!=='ib')fail('weekly mode requires live IB positions');
+    return;
+  }
   const byPortfolio=new Map(evidence.sources.sharesight.map(source=>[source.portfolioId,source]));
   for(const portfolio of registry.portfolios.filter(item=>item.requiredEachReport)){
     const source=byPortfolio.get(portfolio.portfolioId);
@@ -63,11 +68,15 @@ function requireCompactFreshSources(evidence,registry,readiness){
   }
 }
 
-function requireCompactUpstreamJournal(journalPath,readiness){
+function requireCompactUpstreamJournal(journalPath,readiness,weekly=false){
   const snapshot=showRunJournal(journalPath),byStage=new Map(snapshot.stages.map(stage=>[stage.name,stage]));
   for(const name of COMPACT_UPSTREAM){
     const stage=byStage.get(name);
     if(!stage)fail(`upstream journal stage ${name} is missing or still running`);
+    if(weekly&&name==='sharesight-read'){
+      if(!isWeeklyStage(stage))fail('weekly stage must be a disclosed metadata lookup');
+      continue;
+    }
     if(['bootstrap','sharesight-read','validate','derive'].includes(name)&&stage.status!=='ok'){
       fail(`upstream journal stage ${name} must be ok`);
     }
@@ -91,6 +100,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   if(evidence.dataDate!==viewInput.dataDate||evidence.edition!==viewInput.edition||evidence.previousSourceSha!==previousMeta.sourceSha)fail('view/evidence/prior publication mismatch');
   const manual=Object.hasOwn(evidence.sources?.ib||{},'manualConsent');
   const association=evidence.sources?.ib?.accountAssociation??null;
+  const weekly=isWeeklyMode(evidence.sources);
   if(manual&&association)fail('manual and recurring account association are mutually exclusive');
   if(evidence.edition==='adhoc'&&!associationSnapshot)fail('current account association policy snapshot is required');
   if(evidence.edition==='adhoc'&&associationSnapshot.policy.status!=='inactive'&&!association)fail('selected recurring policy requires account association receipt');
@@ -102,6 +112,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     const snapshot=showRunJournal(journalPath),bootstrap=snapshot.stages.find(item=>item.name==='bootstrap');
     if(!bootstrap||bootstrap.status!=='ok'||Date.parse(association.policyCheckedAt)<Date.parse(bootstrap.endedAt))fail('recurring policy check must follow completed bootstrap');
     for(const [stageName,sources] of [['ib-read',Object.values(evidence.sources.ib).filter(item=>item&&typeof item==='object'&&Object.hasOwn(item,'readStartedAt'))],['sharesight-read',evidence.sources.sharesight]]){
+      if(weekly&&stageName==='sharesight-read')continue;
       const stage=snapshot.stages.find(item=>item.name===stageName);
       if(!stage||Date.parse(stage.startedAt)<=Date.parse(association.policyCheckedAt))fail('financial reads must follow the recurring policy check');
       for(const source of sources){
@@ -127,6 +138,11 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   if(readiness.blocked)fail(`publication blocked: ${readiness.issues.join(',')}`);
   requireCompactFreshSources(evidence,registry,readiness);
   const view=copy(viewInput);
+  if(weekly && (view.cashPlan?.status!=='unavailable'
+    || [...view.risk,...view.allocation].some(card=>card.brief?.state!=='unavailable'||card.rows.length)
+    || view.kpis.length!==3 || view.kpis.map(k=>k.label).join('|')!=='IB NAV|IB 账面现金|IB 股票市值')){
+    fail('weekly metadata-only mode cannot expose unverified dependent metrics');
+  }
   const expected=({ib:'ok','sharesight-ib-hk':'fallback',unavailable:'unavailable'})[readiness.positionSource];
   if(view.holdings.status!==expected)fail('holdings status contradicts source evidence');
   if(expected==='ok' && (!view.holdings.asOfHkt.startsWith(view.dataDate+' ')||view.holdings.authoritativeValueUsd===null))fail('direct holdings require current read time and authoritative value');
@@ -138,7 +154,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     const field=expected==='fallback'?'持仓使用获批替代源；原始数据日期见持仓栏。':'部分来源未取得；受影响指标不得视为已核实。';
     view.alerts=[{level:'warning',text:field},...view.alerts].slice(0,3);
   }
-  if(journalPath)requireCompactUpstreamJournal(journalPath,readiness);
+  if(journalPath)requireCompactUpstreamJournal(journalPath,readiness,weekly);
   // Consumption is atomic and precedes render; even a later guard/render
   // failure cannot reopen this observation for a second candidate attempt.
   if(manual)consumeManualConsent({proof:evidence.sources.ib.manualConsent,journalPath,

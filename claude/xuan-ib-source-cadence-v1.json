@@ -15,5 +15,5 @@
   },
   "excludedNeverRead": [1021747],
   "notPositionsFallback": "The IB-HK (936247) weekly snapshot is never a live IB positions fallback.",
-  "durableStore": "not-activated: no safe durable private Sharesight store is configured; every non-Monday report takes the explicit degraded SS path until a separately reviewed store is added. No raw Sharesight holdings in the repo or Pages; no fee-Gist reuse."
+  "durableStore": "not-activated: no durable private Sharesight value store is configured. The explicit adhoc assemble-weekly path accepts private metadata only, including on Monday; it never enables cached amounts. Missing metadata degrades dependent metrics, not healthy IB. Automatic weekly capture, value reuse and scheduled activation remain incomplete. No raw Sharesight holdings in repo/Pages and no fee-Gist reuse."
 }

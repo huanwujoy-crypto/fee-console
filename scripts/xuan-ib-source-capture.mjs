@@ -4,13 +4,15 @@
 // records local times and immutable raw-response hashes; it is NOT a signature,
 // independent proof of a connector call, account authorization or publication.
 // The producer must begin BEFORE the real call and finish AFTER its return.
-// No network, credentials, normalization, journal writes or financial actions.
+// No network, credentials, normalization or financial actions. Capture itself
+// never writes journal stages; explicit weekly assembly records metadata lookup.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { IB_ENDPOINTS, fingerprint, sha256Hex, validateRegistry } from './xuan-ib-run-manifest.mjs';
 import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
-import { showRunJournal } from './xuan-ib-run-clock.mjs';
+import { showRunJournal, startJournalStage, finishJournalStage } from './xuan-ib-run-clock.mjs';
+import { validateWeeklyEvidence, WEEKLY_STAGE_ERROR } from './xuan-ib-weekly-snapshot.mjs';
 import { unwrapSource } from './xuan-ib-source-adapter.mjs';
 // The hook module calls begin/finish only at runtime (no initialization work).
 // This shared verifier is mandatory even through the generic assembly entry.
@@ -213,22 +215,30 @@ export function finishSourceCapture(dir, key, rawFile, { journalPath, wallNow = 
     path: writeFresh(dir, `${key}.receipt.json`, envelope), runId: state.runId };
 }
 
-export function assembleSourceCaptures(dir, { journalPath, previousSourceSha, dataDate, wallNow = () => Date.now() } = {}) {
+export function assembleSourceCaptures(dir, { journalPath, previousSourceSha, dataDate, weekly = false,
+  weeklySnapshotFile = null, wallNow = () => Date.now() } = {}) {
   dir = privatePath(dir, { directory: true }); journalPath = privatePath(journalPath);
+  if (typeof weekly !== 'boolean' || (!weekly && weeklySnapshotFile !== null)) fail('INVALID_WEEKLY_OPTIONS');
+  const keys = weekly ? CAPTURE_SOURCE_KEYS.filter(key => key.startsWith('ib.')) : CAPTURE_SOURCE_KEYS;
+  if (fs.existsSync(path.join(dir, 'input.json'))) fail('OUTPUT_ALREADY_EXISTS');
   const hasHookBegin = CAPTURE_SOURCE_KEYS.some(key => {
     const file = path.join(dir, `${key}.begin.json`);
     return fs.existsSync(file) && strict(readPrivate(file, MAX_JOURNAL_BYTES)).kind === 'source-hook-begin-v1';
   });
-  if (hasHookBegin || fs.readdirSync(dir).some(name => name.includes('.hook-'))) verifyHookSourceArtifacts(dir, { journalPath });
+  if (hasHookBegin || fs.readdirSync(dir).some(name => name.includes('.hook-'))) verifyHookSourceArtifacts(dir, { journalPath, weekly });
   if (typeof previousSourceSha !== 'string' || !/^[a-f0-9]{40}$/.test(previousSourceSha)) fail('INVALID_PREVIOUS_SOURCE_SHA');
   if (typeof dataDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(dataDate)
     || !Number.isFinite(Date.parse(dataDate)) || new Date(dataDate).toISOString().slice(0, 10) !== dataDate) fail('INVALID_DATA_DATE');
-  const expectedNames = new Set(CAPTURE_SOURCE_KEYS.flatMap(key => [`${key}.begin.json`, `${key}.receipt.json`]));
+  const expectedNames = new Set(keys.flatMap(key => [`${key}.begin.json`, `${key}.receipt.json`]));
   if (fs.readdirSync(dir).some(name => /\.(begin|receipt)\.json$/.test(name) && !expectedNames.has(name))) fail('UNEXPECTED_CAPTURE_SOURCE');
   const state = journalState(journalPath), now = wallNow(); utc(now);
+  // Never convert a failed/full-live run into a weekly run after the fact.
+  if (weekly && (state.journal.stages.length !== 2
+    || !['bootstrap', 'ib-read'].every(name => state.journal.stages.some(s => s.name === name && s.status === 'ok'))
+    || state.journal.timing.runningStages.length)) fail('WEEKLY_REQUIRES_FRESH_IB_ONLY_RUN');
   if (state.journal.timing.runningStages.some(name => ['ib-read', 'sharesight-read'].includes(name))) fail('READ_STAGES_STILL_ACTIVE');
   const collected = new Map();
-  for (const key of CAPTURE_SOURCE_KEYS) {
+  for (const key of keys) {
     const stage = state.journal.stages.find(item => item.name === sourceStage(key));
     if (stage?.status !== 'ok') fail('READ_STAGE_NOT_SUCCESSFUL');
     const { begin, bytes } = readBegin(dir, key, journalPath, state);
@@ -250,12 +260,35 @@ export function assembleSourceCaptures(dir, { journalPath, previousSourceSha, da
   }
   const input = { edition: 'adhoc', dataDate, previousSourceSha,
     ib: Object.fromEntries(IB_ENDPOINTS.map(endpoint => [endpoint, collected.get(`ib.${endpoint}`)])),
-    sharesight: requiredIds.map(id => collected.get(`sharesight.${id}`)) };
+    sharesight: weekly ? [] : requiredIds.map(id => collected.get(`sharesight.${id}`)) };
+  if (weekly) {
+    // The legacy journal slot is explicitly a metadata lookup, never a live
+    // read success or a fabricated current receipt. Actual raw data are unused.
+    startJournalStage(journalPath, 'sharesight-read');
+    let evidence = { schemaVersion: 1, status: 'unavailable', reason: 'DURABLE_CACHE_NOT_ACTIVATED' };
+    if (weeklySnapshotFile !== null) {
+      try {
+        const snapshot = readCaptureJson(weeklySnapshotFile, 32_768);
+        evidence = { schemaVersion: 1, status: 'metadata-only', snapshot };
+        validateWeeklyEvidence(evidence, registry, wallNow());
+      } catch (error) {
+        evidence = { schemaVersion: 1, status: 'unavailable', reason: 'INVALID_SNAPSHOT' };
+      }
+    }
+    input.sharesightWeekly = evidence;
+    finishJournalStage(journalPath, 'sharesight-read', { status: 'degraded', errorCode: WEEKLY_STAGE_ERROR });
+  }
   return { status: 'assembled', path: writeFresh(dir, 'input.json', input), runId: state.runId };
 }
 
 export function sourceCaptureCli(argv) {
   const [command, dir, ...args] = argv;
+  if (command === 'assemble-weekly' && [6, 8].includes(args.length)
+    && args[0] === '--journal' && args[2] === '--previous-source-sha' && args[4] === '--data-date'
+    && (args.length === 6 || args[6] === '--weekly-snapshot')) {
+    return assembleSourceCaptures(dir, { journalPath: args[1], previousSourceSha: args[3], dataDate: args[5],
+      weekly: true, weeklySnapshotFile: args[7] ?? null });
+  }
   if (command === 'begin' && args.length === 3 && args[1] === '--journal') {
     return beginSourceCapture(dir, args[0], { journalPath: args[2] });
   }

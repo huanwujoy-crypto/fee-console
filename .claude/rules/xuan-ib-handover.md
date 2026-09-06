@@ -20,8 +20,14 @@ place, modify, or cancel an order; never initiate a transfer; never create,
 update, or delete financial records. Repository writes remain limited to the
 trusted single-file candidate process in `CLAUDE.md`.
 
-Every new financial report must read the live IB endpoints and the registry's required
-Sharesight portfolios. A cache must never replace those live reads. Independent
+Read `claude/xuan-ib-weekly-ss-snapshot-v1.md` for the owner-confirmed weekly
+Sharesight/four-bucket cadence. Five IB endpoints remain live per report.
+The explicit adhoc `assemble-weekly` trial no longer requires nine same-run
+Sharesight reads; it allows only dated metadata and unavailable dependent metrics
+until durable values are activated. It does not widen account association to
+AM/PM or activate a Routine. Historical/full-live mode still requires all live
+IB endpoints and required Sharesight portfolios; a cache cannot replace those
+legacy reads. Independent
 reads may run in bounded parallel batches, and every result must be recorded
 individually even when a sibling read fails.
 

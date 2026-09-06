@@ -66,6 +66,7 @@ const requiredWeeklyIds = registry => {
 // Structural + scope validation. Never advances dates and never forces Monday
 // as a valuation date. `now` bounds "not in the future" checks only.
 export function validateWeeklySnapshot(snapshot, registry, { nowMs = Date.now() } = {}) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || nowMs > 8.64e15 - HKT_OFFSET_MS) fail('INVALID_CLOCK');
   if (!isPlainObject(snapshot)) fail('INVALID_SNAPSHOT');
   const keys = Object.keys(snapshot).sort().join(',');
   if (keys !== 'captureWeekOfMondayHkt,capturedAt,kind,portfolios,schemaVersion') fail('INVALID_SNAPSHOT_KEYS');
@@ -77,6 +78,7 @@ export function validateWeeklySnapshot(snapshot, registry, { nowMs = Date.now() 
   // Captured during (or after the start of) its own week; never before Monday.
   const capturedHktDate = hktDateOfMs(capturedMs);
   if (capturedHktDate < snapshot.captureWeekOfMondayHkt) fail('CAPTURED_BEFORE_WEEK');
+  if (mondayOfHktInstant(capturedMs) !== snapshot.captureWeekOfMondayHkt) fail('CAPTURE_WEEK_MISMATCH');
 
   const required = requiredWeeklyIds(registry);
   const byId = new Map(required.map(p => [p.portfolioId, p]));
@@ -96,14 +98,37 @@ export function validateWeeklySnapshot(snapshot, registry, { nowMs = Date.now() 
     if (typeof entry.fingerprint !== 'string' || !HEX64.test(entry.fingerprint)) fail(`${label}_FINGERPRINT`);
     const readMs = instantMs(entry.readCompletedAt);
     if (readMs === null || readMs > nowMs) fail(`${label}_READ_TIME`);
+    if (readMs > capturedMs || mondayOfHktInstant(readMs) !== snapshot.captureWeekOfMondayHkt) fail('READ_CAPTURE_CHRONOLOGY');
     // valuationDate is the native Sharesight end_date: any real calendar date,
     // not forced to Monday, not in the future. Could legitimately be a Friday.
     if (!isCalendarDate(entry.valuationDate)) fail(`${label}_VALUATION_DATE`);
     if (entry.valuationDate > capturedHktDate) fail(`${label}_VALUATION_IN_FUTURE`);
+    if (entry.valuationDate > hktDateOfMs(readMs)) fail('VALUATION_AFTER_READ');
   }
   // Partial snapshots are never complete: every required weekly portfolio present.
   if (seen.size !== required.length) fail('SNAPSHOT_INCOMPLETE');
   return snapshot;
+}
+
+// Public allowlist: metadata only. A valid envelope does NOT activate use of
+// financial values or attest raw-source authenticity. No paths or raw errors.
+const WEEKLY_REASONS = new Set(['DURABLE_CACHE_NOT_ACTIVATED', 'SNAPSHOT_MISSING', 'INVALID_SNAPSHOT']);
+export const WEEKLY_STAGE_ERROR = 'SHARESIGHT_WEEKLY_MODE';
+export const isWeeklyMode = sources => Object.hasOwn(sources ?? {}, 'sharesightWeekly');
+export const isWeeklyStage = stage => stage?.status === 'degraded'
+  && stage.cacheHit === false && stage.errorCode === WEEKLY_STAGE_ERROR;
+
+export function validateWeeklyEvidence(evidence, registry, nowMs) {
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0 || nowMs > 8.64e15 - HKT_OFFSET_MS) fail('INVALID_CLOCK');
+  if (!isPlainObject(evidence) || evidence.schemaVersion !== 1) fail('INVALID_WEEKLY_EVIDENCE');
+  const keys = Object.keys(evidence).sort().join(',');
+  if (evidence.status === 'unavailable') {
+    if (keys !== 'reason,schemaVersion,status' || !WEEKLY_REASONS.has(evidence.reason)) fail('INVALID_WEEKLY_REASON');
+    return { status: 'unavailable', reason: evidence.reason };
+  }
+  if (evidence.status !== 'metadata-only' || keys !== 'schemaVersion,snapshot,status') fail('INVALID_WEEKLY_EVIDENCE');
+  validateWeeklySnapshot(evidence.snapshot, registry, { nowMs });
+  return resolveWeeklySnapshot(registry, { nowMs, store: { loadLatest: () => evidence.snapshot } });
 }
 
 // Production-time monotonic guard: a newer snapshot must key to a strictly later

@@ -4,6 +4,14 @@ This contract adds observability and bounded read parallelism. It does not
 change any investment formula, account set, fallback, publication gate, or
 financial permission.
 
+2026-09-06 cadence amendment: the owner approved Monday-HKT Sharesight +
+four-bucket refresh, five IB endpoints live every report. Follow
+`xuan-ib-weekly-ss-snapshot-v1.md` for the explicit staged mode. The all-nine
+same-run statements below describe the preserved legacy protocol, not a
+requirement for `assemble-weekly`. Weekly amounts and durable storage are not
+yet active; the implemented adhoc minimal path marks dependent metrics
+unavailable. No AM/PM association or Routine activation is implied.
+
 ## 1. Required run stages
 
 Record these stages with RFC 3339 start/end instants and a recomputed
@@ -13,7 +21,10 @@ Record these stages with RFC 3339 start/end instants and a recomputed
    verified report state.
 2. `ib-read` — read account summary, balances, positions, orders, and trades.
 3. `sharesight-read` — read every `requiredEachReport` portfolio from the
-   registry.
+   registry in legacy mode. In explicit weekly mode, the legacy-named slot is
+   only a metadata lookup: `degraded`, `cacheHit:false`, journal error code
+   `SHARESIGHT_WEEKLY_MODE`, and no live Sharesight receipts. Never mark it `ok`
+   merely because cached metadata parsed successfully.
 4. `validate` — confirm account scope, source dates, identities, reconciliation,
    and approved fallback eligibility.
 5. `derive` — calculate metrics from validated inputs.
@@ -110,8 +121,11 @@ Explicit explanation-only corrections follow CLAUDE.md, not the live-read
 stages: no financial refresh, no fabricated stage times, preserve original
 edition/date/as-of/values/receipts, and no new AM/PM success evidence.
 
-Every run still performs the live IB and required Sharesight reads. A cache may
-never replace them and may never cache an error.
+Legacy full-live runs still perform the live IB and required Sharesight reads.
+A cache may never replace them or cache an error. The separately explicit
+weekly mode is the approved cadence exception; a missing or invalid snapshot
+removes dependent metrics rather than blocking five healthy IB reads. It never
+turns a prior failed/full-live journal into a successful new run.
 
 Hash reuse is allowed only for:
 

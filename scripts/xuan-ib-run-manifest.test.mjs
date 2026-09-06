@@ -135,6 +135,41 @@ test("a complete manifest validates and reports a healthy direct IB position sou
   });
 });
 
+const weeklyManifest = () => {
+  const m = validManifest();
+  m.sources.sharesight = [];
+  m.sources.sharesightWeekly = { schemaVersion: 1, status: 'unavailable', reason: 'DURABLE_CACHE_NOT_ACTIVATED' };
+  m.stages.find(s => s.name === 'sharesight-read').status = 'degraded';
+  return m;
+};
+test('weekly missing metadata is nonblocking, explicit, and survives manifest encoding', () => {
+  const m = weeklyManifest();
+  assert.equal(assessReadiness(m, registry).blocked, false);
+  assert.equal(assessReadiness(m, registry).degraded, true);
+  assert.deepEqual(extractManifestComment(buildManifestComment(m, registry), registry), m);
+  m.stages.find(s => s.name === 'sharesight-read').status = 'ok';
+  assert.throws(() => validateManifest(m, registry), /must not claim/);
+});
+test('weekly data never replace a failed IB endpoint, including positions', () => {
+  for (const name of ['accountSummary', 'balances', 'orders', 'trades', 'positions']) {
+    const m = weeklyManifest(); m.sources.ib[name] = failSource('SYNTHETIC_FAILED');
+    assert.equal(assessReadiness(m, registry).blocked, true);
+    if (name === 'positions') assert.equal(assessReadiness(m, registry).positionSource, 'unavailable');
+  }
+});
+test('weekly manifest rejects financial payload, arbitrary errors and current-read masquerading', () => {
+  for (const mutate of [
+    m => { m.sources.sharesightWeekly.holdings = [{ synthetic: 1 }]; },
+    m => { m.sources.sharesightWeekly.reason = 'SYNTHETIC_RAW_ERROR'; },
+    m => { m.sources.sharesight = validManifest().sources.sharesight; },
+    m => { m.edition = 'pm'; },
+    m => { m.sources.ib.orders.asOf = '2026-08-30T15:01:00+08:00'; },
+  ]) {
+    const m = weeklyManifest(); mutate(m);
+    assert.throws(() => validateManifest(m, registry));
+  }
+});
+
 test("parallel stage intervals are allowed but durations are recomputed exactly", () => {
   const manifest = validManifest();
   const ib = manifest.stages.find(stage => stage.name === "ib-read");

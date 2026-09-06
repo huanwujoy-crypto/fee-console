@@ -1,14 +1,47 @@
 # Weekly Sharesight snapshot — maintenance contract v1 (owner-approved 2026-09-06)
 
-Status: **partial / integration incomplete.** This document + the pure helper
-modules (`scripts/xuan-ib-weekly-snapshot.mjs`,
-`scripts/xuan-ib-weekly-report-readiness.mjs`) and cadence config
-(`claude/xuan-ib-source-cadence-v1.json`) define the mechanism and evidence
-schema. Wiring into the existing capture → adapter → manifest → prepare →
-renderer path (so a report no longer performs all-9 live Sharesight reads) is
-**not yet done** and is explicitly required before this mode is usable. Do not
-treat this branch as release-ready. It changes no routine and reads no financial
-data.
+Status: **IB-only adhoc minimal path implemented; weekly financial values and
+durable storage NOT activated.** Explicit `assemble-weekly` is wired through
+capture/hook → adapter → source readiness/manifest → journal → minimal prepare
+→ renderer → existing trusted guard. Missing/current/stale/invalid synthetic
+metadata cases exercise the actual pipeline. Tests are not a financial read,
+publication, timed live acceptance, or Routine activation. Maintenance release
+still requires exact-SHA owner approval.
+
+The public source schema adds `sharesightWeekly` and requires the ordinary live
+`sharesight` array to be empty. Weekly evidence is either
+`{schemaVersion:1,status:"unavailable",reason:<allowlisted code>}` or
+`{schemaVersion:1,status:"metadata-only",snapshot:<validated metadata>}`.
+It carries no raw financial values. Snapshot fingerprints are not source
+authenticity proof. Thus even valid current-week metadata leaves risk,
+allocation, cash-plan and other dependent amounts unavailable in this phase;
+only the three direct IB KPIs are enabled. Original decisions/receipts and ABC
+history survive unchanged. A failed IB endpoint blocks this minimal mode;
+weekly IB-HK can never supply its positions.
+
+## Operational trial entry
+
+Start a NEW approved adhoc run. Complete bootstrap, pre-read account association
+and all five IB captures. Do not begin a live `sharesight-read` stage. Run:
+
+```
+node scripts/xuan-ib-source-hook.mjs assemble-weekly PRIVATE_DIR --journal JOURNAL --previous-source-sha PREVIOUS_SHA --data-date YYYY-MM-DD
+node scripts/xuan-ib-minimal-prepare.mjs PRIVATE_DIR --journal JOURNAL
+```
+
+The generic source-capture entry also supports `assemble-weekly`, but cannot
+bypass hook proof when hook captures exist. An optional `--weekly-snapshot
+PRIVATE_METADATA_FILE` accepts only bounded strict JSON from a private file;
+it is an input mechanism, NOT durable storage activation. Missing/invalid input
+is explicitly unavailable. Never reuse the previous failed trial's journal.
+
+For journal compatibility the existing `sharesight-read` slot measures metadata
+lookup, with `degraded/cacheHit:false/SHARESIGHT_WEEKLY_MODE`, never successful
+live-read `ok`. The manifest explicitly carries the weekly evidence, preserves
+IB read timing and does not invent nine receipts. The journal and metadata
+lookup do not prove that any Sharesight tool was invoked. All downstream
+Validate/Promote/Pages/phone gates remain mandatory. AM/PM association activation
+and the live 20-minute acceptance still require separate evidence.
 
 ## What changes
 

@@ -3,6 +3,9 @@
 // non-blocking supporting evidence. The weekly snapshot — including IB-HK
 // (936247) — is NEVER a live-positions fallback: positionSource is carried
 // through from IB readiness only and is never derived from weekly SS here.
+// This composition helper is not authority to use financial values. The active
+// first-stage pipeline uses metadata-only evidence and leaves amounts disabled;
+// ssUsable here means eligible dated metadata, not verified raw-value readiness.
 const fail = code => { throw Object.assign(new Error(code), { readinessCode: code }); };
 const IB_POSITION_SOURCES = new Set(['ib', 'sharesight-ib-hk', 'unavailable']);
 

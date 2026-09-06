@@ -45,7 +45,13 @@
 
 `p5` 内的第一个可见模块必须是从 trusted main 渲染的 byte-identical canonical policy section；A/B/C runtime 卡只能紧随其后。普通新报告可使用 trusted `scripts/xuan-ib-etf-pane.mjs` 将旧 `p3` 确定性迁移为 `p5`；`records-update` 必须原位继承旧 `p3` 或新 `p5`，不得借回执更新新建或搬移模块。
 
-## 5. 「7 个 portfolio 明细」与四桶改即时（取 Sharesight 当时值）
+## 5. Sharesight 与四桶每周同步（Wu 已批，2026-09-06）
+
+新频率：9 个覆盖组合（7 家庭 + 2 辅助）与四桶／三层流动性在香港时间周一一同更新，周内保留原采集时间及来源估值日。周一是采集周标记，不是强行改写估值日期。失败保留上一份有效且清楚标日的历史快照；缺失只影响依赖指标，不阻断已成功读取的 IB 数据。IB 五个端点仍逐份实时读取，周快照不得代替当前 IB 持仓或账户身份核验。
+
+实施阶段以 `xuan-ib-weekly-ss-snapshot-v1.md` 为准：当前先实现手动精简试跑的 IB-only 路径；周数据金额、持久存储、定时任务接入尚未启用。不要宣称周数据已经自动更新，也不扩大现有 adhoc 账户关联试点。分类审计与已批准历史快照说明继续保留。
+
+以下为历史的每晚实时协议，供旧模式与历史核对使用，不再要求新 weekly 模式每次调用全部组合：
 
 - 运行时必须先读取并执行仓库源 `claude/four-bucket-mapping.json`；以 `portfolioId + holdingId` 为主键、名称为交叉校验，按投资载体流动性而非底层资产暴露归桶。待赎回资产在现金实际到账前保留原桶，只从「常青净额」展示中扣除。
 - 栏目 3 折叠「7 个 portfolio 明细与归桶」**每晚实时**取 7 个 portfolio（NOAH-HK / NOAH-US / ANTARCTICA / UBS / IB-HK / Citi-HK & 地产四期 / HSBC-HK）的 Sharesight 当时值，不再「沿用最近周一」。
