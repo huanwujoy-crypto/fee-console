@@ -1868,7 +1868,7 @@ test('Saturday AM remains current through Sunday and Monday before the PM deadli
   }
 });
 
-test('Hong Kong SLA advances at Tuesday-Saturday 08:35 and Monday-Friday 21:25', async () => {
+test('Hong Kong deadlines preserve history and apply opening plus twenty minutes after cutover', async () => {
   const cases = [
     ['2026-09-01T00:34:00Z', '2026-08-31', '睡前版', false], // Tue 08:34 HKT
     ['2026-09-01T00:35:00Z', '2026-08-31', '睡前版', true],  // Tue 08:35 HKT
@@ -1880,8 +1880,11 @@ test('Hong Kong SLA advances at Tuesday-Saturday 08:35 and Monday-Friday 21:25',
     ['2026-09-05T00:35:00Z', '2026-09-05', '早间版', false],
     ['2026-09-04T13:44:00Z', '2026-09-04', '早间版', false], // new PM not due yet
     ['2026-09-04T13:45:00Z', '2026-09-04', '早间版', true],
-    ['2026-11-02T14:44:00Z', '2026-10-31', '早间版', false], // winter PM not due
-    ['2026-11-02T14:45:00Z', '2026-10-31', '早间版', true],
+    ['2026-09-07T13:49:59Z', '2026-09-05', '早间版', false],
+    ['2026-09-07T13:50:00Z', '2026-09-05', '早间版', true],
+    ['2026-11-02T14:45:00Z', '2026-10-31', '早间版', false], // old winter deadline must not warn
+    ['2026-11-02T14:49:59Z', '2026-10-31', '早间版', false],
+    ['2026-11-02T14:50:00Z', '2026-10-31', '早间版', true],
   ];
   for (const [now, date, edition, stale] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);

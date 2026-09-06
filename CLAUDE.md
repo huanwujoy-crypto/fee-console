@@ -134,8 +134,8 @@ Read and follow `claude/xuan-ib-report-schedule-HKT-v1.md` before producing any
 XUAN-IB report. Dates and phone labels use `Asia/Hong_Kong`; PM follows
 `America/New_York` so daylight saving changes are resolved by the named timezone:
 
-- PM / 睡前版: Monday-Friday at 09:35 New York, five minutes after the normal
-  US equity opening (21:35 HKT in daylight time; 22:35 HKT in standard time).
+- PM / 睡前版: Monday-Friday at 09:30 New York, at the normal US equity opening
+  (21:30 HKT in daylight time; 22:30 HKT in standard time).
 - Retain a short PM report at that same New York time on full market holidays;
   label it closed-market, not post-opening. Early closes do not change the start.
 - AM / 早间版: Tuesday-Saturday at 08:00 HKT.
@@ -144,18 +144,19 @@ XUAN-IB report. Dates and phone labels use `Asia/Hong_Kong`; PM follows
 Every successful edition uses the same candidate, validation, promotion, Pages,
 and fixed-mobile-link path above. An ad-hoc edition may become the newest phone
 page, but it never proves that a required AM or PM edition ran. PM targets a
-verified public-page readback within ten minutes of the actual run start;
-record scheduler delay separately. Planned delivery is 09:45 New York, with the
-existing read-only watcher at 09:50; those slots are not evidence of an actual
+verified public-page readback within twenty minutes of the actual run start;
+record scheduler delay separately. Planned delivery is 09:50 New York, with the
+existing read-only watcher at 09:55; those slots are not evidence of an actual
 runtime or a guaranteed service level. Never skip sources or weaken Validate,
 Promote, Pages, or readback to meet the target. Use the shared pure module
 `scripts/xuan-ib-report-schedule.mjs` for delivery-slot calculations. A timezone
 configuration is not activated until the real Routine's saved next run is
 verified; repository code alone does not reschedule Claude.
-The planned HKT cutover date is `2026-09-04`. Earlier report dates retain their
-original 20:55 start / 21:25 due time for historical evidence; do not reclassify
-them under the new opening-time rule. If rollout misses that date, revise the
-shared cutover constant and contract before releasing, not the old reports.
+The opening-time/twenty-minute cutover date is `2026-09-06` HKT. Dates before
+`2026-09-04` retain 20:55 HKT start / 21:25 due; September 4–5 retain 09:35
+New York start / 09:45 due. Never reclassify historical evidence. Code release,
+saved Routine schedule and actual timed publication are separate acceptance
+gates. Do not widen the adhoc-only account-association pilot to PM implicitly.
 
 ## Implementation progress after a recorded decision
 

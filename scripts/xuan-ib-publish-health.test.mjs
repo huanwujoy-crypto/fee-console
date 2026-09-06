@@ -13,7 +13,7 @@ import {
   slotDueEpoch,
   slotStartEpoch
 } from "./xuan-ib-publish-health.mjs";
-import {AM_WATCH_CRON, PM_RUN_TARGET_MS, PM_SCHEDULE_CUTOVER_HKT_DATE, PM_WATCH_CRONS, hktContext, scheduledWatchEdition, scheduledWatchEnabled} from "./xuan-ib-report-schedule.mjs";
+import {AM_WATCH_CRON, PM_RUN_TARGET_MS, PM_SCHEDULE_CUTOVER_HKT_DATE, PM_OPENING_CUTOVER_HKT_DATE, PM_WATCH_CRONS, LEGACY_PM_WATCH_CRONS, hktContext, scheduledWatchEdition, scheduledWatchEnabled} from "./xuan-ib-report-schedule.mjs";
 
 const sha = character => character.repeat(40);
 const html = (date, label) => `<!doctype html><title>XUAN-投资管理</title><!-- xuan-ib-handover:v1 --><span class="date">${date} 周四 · ${label}</span>`;
@@ -51,7 +51,8 @@ test("selects AM and PM across the week without retroactively changing historica
     ["2026-09-04T16:00:00Z", "2026-09-04", "pm"],
     ["2026-09-05T00:35:00Z", "2026-09-05", "am"],
     ["2026-09-07T13:44:59Z", "2026-09-05", "am"],
-    ["2026-09-07T13:45:00Z", "2026-09-07", "pm"]
+    ["2026-09-07T13:49:59Z", "2026-09-05", "am"],
+    ["2026-09-07T13:50:00Z", "2026-09-07", "pm"]
   ];
   for (const [now, expectedDate, expectedEdition] of cases) {
     const result = expectedEditionAt(new Date(now));
@@ -64,6 +65,12 @@ test("selects AM and PM across the week without retroactively changing historica
   assert.equal(slotDueEpoch("2026-09-03", "pm"), Date.parse("2026-09-03T13:25:00Z") / 1000);
   assert.equal(slotStartEpoch("2026-09-04", "pm"), Date.parse("2026-09-04T13:35:00Z") / 1000);
   assert.equal(slotDueEpoch("2026-09-04", "pm"), Date.parse("2026-09-04T13:45:00Z") / 1000);
+  assert.equal(slotStartEpoch("2026-09-05", "pm"), Date.parse("2026-09-05T13:35:00Z") / 1000);
+  assert.equal(slotDueEpoch("2026-09-05", "pm"), Date.parse("2026-09-05T13:45:00Z") / 1000);
+  assert.equal(PM_OPENING_CUTOVER_HKT_DATE, "2026-09-06");
+  assert.equal(PM_RUN_TARGET_MS, 1_200_000);
+  assert.equal(slotStartEpoch("2026-09-06", "pm"), Date.parse("2026-09-06T13:30:00Z") / 1000);
+  assert.equal(slotDueEpoch("2026-09-06", "pm"), Date.parse("2026-09-06T13:50:00Z") / 1000);
 });
 
 test("named New York timezone resolves both DST transitions while AM remains Hong Kong time", () => {
@@ -74,21 +81,21 @@ test("named New York timezone resolves both DST transitions while AM remains Hon
     ["2028-03-10", 14], ["2028-03-13", 13]
   ]) {
     const start = slotStartEpoch(date, "pm");
-    assert.equal(start, Date.parse(`${date}T${utcHour}:35:00Z`) / 1000, date);
-    assert.equal(hktContext(new Date(start * 1000)).minuteOfDay, (utcHour + 8) * 60 + 35);
+    assert.equal(start, Date.parse(`${date}T${utcHour}:30:00Z`) / 1000, date);
+    assert.equal(hktContext(new Date(start * 1000)).minuteOfDay, (utcHour + 8) * 60 + 30);
     assert.equal(slotDueEpoch(date, "pm") - start, PM_RUN_TARGET_MS / 1000);
     assert.equal(slotStartEpoch(date, "am"), Date.parse(`${date}T00:00:00Z`) / 1000);
     assert.equal(slotDueEpoch(date, "am"), Date.parse(`${date}T00:35:00Z`) / 1000);
   }
   assert.equal(expectedEditionAt(new Date("2026-11-02T13:45:00Z")).expectedDate, "2026-10-31");
-  assert.equal(expectedEditionAt(new Date("2026-11-02T14:44:59Z")).expectedEdition, "am");
-  assert.equal(expectedEditionAt(new Date("2026-11-02T14:45:00Z")).expectedEdition, "pm");
+  assert.equal(expectedEditionAt(new Date("2026-11-02T14:49:59Z")).expectedEdition, "am");
+  assert.equal(expectedEditionAt(new Date("2026-11-02T14:50:00Z")).expectedEdition, "pm");
 });
 
 test("holidays retain the required short PM report and early closes do not move the opening slot", () => {
   for (const [date, utcHour] of [["2026-09-07", 13], ["2026-11-27", 14], ["2026-12-24", 14], ["2026-12-25", 14]]) {
-    assert.equal(slotStartEpoch(date, "pm"), Date.parse(`${date}T${utcHour}:35:00Z`) / 1000);
-    const due = expectedEditionAt(new Date(`${date}T${utcHour}:45:00Z`));
+    assert.equal(slotStartEpoch(date, "pm"), Date.parse(`${date}T${utcHour}:30:00Z`) / 1000);
+    const due = expectedEditionAt(new Date(`${date}T${utcHour}:50:00Z`));
     assert.equal(due.expectedDate, date);
     assert.equal(due.expectedEdition, "pm");
   }
@@ -96,7 +103,8 @@ test("holidays retain the required short PM report and early closes do not move 
 
 test("UTC watcher candidates select exactly one New York seasonal slot, including delayed jobs", () => {
   for (const [iso, active] of [["2026-03-06T15:02:00Z", 1], ["2026-03-09T14:12:00Z", 0], ["2026-10-30T14:05:00Z", 0], ["2026-11-02T15:03:00Z", 1]]) {
-    assert.deepEqual(PM_WATCH_CRONS.map(c => scheduledWatchEnabled(c, new Date(iso))), [active === 0, active === 1]);
+    const crons = iso.slice(0, 10) < PM_OPENING_CUTOVER_HKT_DATE ? LEGACY_PM_WATCH_CRONS : PM_WATCH_CRONS;
+    assert.deepEqual(crons.map(c => scheduledWatchEnabled(c, new Date(iso))), [active === 0, active === 1]);
     assert.equal(scheduledWatchEnabled(AM_WATCH_CRON, new Date(iso)), true);
     assert.equal(scheduledWatchEnabled("", new Date(iso)), true);
   }
@@ -105,6 +113,16 @@ test("UTC watcher candidates select exactly one New York seasonal slot, includin
   for (const cron of PM_WATCH_CRONS) assert.equal(scheduledWatchEdition(cron), "pm");
   assert.equal(scheduledWatchEdition(""), null);
   assert.throws(() => scheduledWatchEdition("old-cron"), /unrecognized/);
+});
+
+test("retired watcher expressions are recognized but cannot fire after the new cutover", () => {
+  assert.equal(scheduledWatchEnabled(LEGACY_PM_WATCH_CRONS[0], new Date("2026-09-05T13:50:00Z")), true);
+  assert.equal(scheduledWatchEnabled(PM_WATCH_CRONS[0], new Date("2026-09-05T13:55:00Z")), false);
+  for (const expression of LEGACY_PM_WATCH_CRONS) {
+    assert.equal(scheduledWatchEdition(expression), "pm");
+    assert.equal(scheduledWatchEnabled(expression, new Date("2026-09-07T13:55:00Z")), false);
+  }
+  assert.equal(scheduledWatchEnabled(PM_WATCH_CRONS[0], new Date("2026-09-07T13:55:00Z")), true);
 });
 
 test("shared browser schedule rejects invalid inputs instead of silently guessing a slot", () => {
@@ -248,7 +266,8 @@ const response = body => ({
 
 test("a delayed scheduled watcher cannot use the next edition to hide its own missing report", async () => {
   for (const [scheduleExpression, date, label, edition, now, expectedDate, expectedEdition] of [
-    [PM_WATCH_CRONS[0], "2026-09-05", "早间版", "am", "2026-09-05T00:40:00Z", "2026-09-04", "pm"],
+    [LEGACY_PM_WATCH_CRONS[0], "2026-09-05", "早间版", "am", "2026-09-05T00:40:00Z", "2026-09-04", "pm"],
+    [PM_WATCH_CRONS[0], "2026-09-08", "早间版", "am", "2026-09-08T00:40:00Z", "2026-09-07", "pm"],
     [AM_WATCH_CRON, "2026-09-04", "睡前版", "pm", "2026-09-04T13:50:00Z", "2026-09-04", "am"]
   ]) {
     const bytes = Buffer.from(html(date, label));
@@ -541,11 +560,11 @@ test("the non-gating Pages probe retries stale data and reports timeout as data"
 test("workflows keep the shared DST schedule, read-only watcher, and post-push non-gating probe", () => {
   const watcher = fs.readFileSync(".github/workflows/watch-xuan-ib-freshness.yml", "utf8");
   assert.match(watcher, /cron: '35 0 \* \* 2-6'/);
-  assert.match(watcher, /cron: '50 13 \* \* 1-5'/);
-  assert.match(watcher, /cron: '50 14 \* \* 1-5'/);
+  assert.match(watcher, /cron: '55 13 \* \* 1-5'/);
+  assert.match(watcher, /cron: '55 14 \* \* 1-5'/);
   assert.doesNotMatch(watcher, /cron: '25 13/);
   assert.match(watcher, /AM is due Tuesday-Saturday/);
-  assert.match(watcher, /PM targets 09:35 New York/);
+  assert.match(watcher, /PM targets 09:30 New York/);
   assert.match(watcher, /--schedule "\$\{SCHEDULE_EXPRESSION:-\}"/);
   assert.match(watcher, /--main-index xuan-ib\/index\.html/);
   assert.match(watcher, /--attempts 4/);
