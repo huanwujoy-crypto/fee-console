@@ -510,7 +510,10 @@ publication path. It must not fabricate a success for missing capabilities.
 - Journal stage sums may overlap. Use total elapsed for runtime; the union of
   active stages is only covered work time, not a dependency-graph proof.
 - First acceptance: real ad-hoc read → candidate → public exact pair within
-  ten minutes, and unchanged history/financial boundaries. Second acceptance:
+  twenty minutes (owner revised acceptance on 2026-09-06), and unchanged
+  history/financial boundaries. Ten minutes remains an optimization target,
+  not the pass/fail threshold. This does not lengthen source-arm TTLs or
+  widen the adhoc-only account-association policy. Second acceptance:
   observe actual scheduled PM separately. Local render tests and simulated
   timeouts do not count as either production timing sample.
 

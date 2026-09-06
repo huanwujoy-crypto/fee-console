@@ -2,12 +2,12 @@ name: Watch XUAN-IB fixed page freshness
 
 on:
   schedule:
-    # AM is due Tuesday-Saturday at 08:35 HKT. PM targets 09:35 New York,
-    # planned publication 09:45, observed 09:50 (21:50/22:50 HKT).
+    # AM is due Tuesday-Saturday at 08:35 HKT. PM targets 09:30 New York,
+    # planned publication 09:50, observed 09:55 (21:55/22:55 HKT).
     # The shared timezone gate enables only the matching UTC seasonal slot.
     - cron: '35 0 * * 2-6'
-    - cron: '50 13 * * 1-5'
-    - cron: '50 14 * * 1-5'
+    - cron: '55 13 * * 1-5'
+    - cron: '55 14 * * 1-5'
   workflow_dispatch:
     inputs:
       expected_edition:

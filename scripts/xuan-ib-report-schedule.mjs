@@ -1,10 +1,12 @@
 // Pure shared schedule: safe to import in browsers and Node. No network, DOM,
 // credentials or financial data. Holidays still receive a short closed-market
 // report; this module determines delivery slots, not whether markets are open.
-export const PM_RUN_TARGET_MS = 10 * 60 * 1000;
+export const PM_RUN_TARGET_MS = 20 * 60 * 1000;
 export const PM_SCHEDULE_CUTOVER_HKT_DATE = "2026-09-04";
+export const PM_OPENING_CUTOVER_HKT_DATE = "2026-09-06";
 export const AM_WATCH_CRON = "35 0 * * 2-6";
-export const PM_WATCH_CRONS = Object.freeze(["50 13 * * 1-5", "50 14 * * 1-5"]);
+export const PM_WATCH_CRONS = Object.freeze(["55 13 * * 1-5", "55 14 * * 1-5"]);
+export const LEGACY_PM_WATCH_CRONS = Object.freeze(["50 13 * * 1-5", "50 14 * * 1-5"]);
 
 const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
 const EDITIONS = ["am", "pm"];
@@ -39,9 +41,9 @@ export function hktContext(now = new Date()) {
   };
 }
 
-const newYorkStartEpoch = dataDate => {
+const newYorkStartEpoch = (dataDate, minute = dataDate < PM_OPENING_CUTOVER_HKT_DATE ? 35 : 30) => {
   const midnight = dateEpoch(dataDate);
-  const desiredWall = midnight + (9 * 60 + 35) * 60 * 1000;
+  const desiredWall = midnight + (9 * 60 + minute) * 60 * 1000;
   let epoch = desiredWall;
   // Resolve the named timezone, never infer DST from a month or fixed offset.
   for (let n = 0; n < 3; n += 1) epoch += desiredWall - newYorkWallEpoch(epoch);
@@ -60,7 +62,11 @@ export function slotStartEpoch(dataDate, edition) {
 
 export function slotDueEpoch(dataDate, edition) {
   const start = slotStartEpoch(dataDate, edition);
-  return start + (edition === "am" ? 35 * 60 : dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE ? 30 * 60 : PM_RUN_TARGET_MS / 1000);
+  const budget = edition === "am" ? 35 * 60
+    : dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE ? 30 * 60
+    : dataDate < PM_OPENING_CUTOVER_HKT_DATE ? 10 * 60
+    : PM_RUN_TARGET_MS / 1000;
+  return start + budget;
 }
 
 export function expectedEditionAt(now = new Date(), editionFilter = null) {
@@ -83,19 +89,20 @@ export function expectedEditionAt(now = new Date(), editionFilter = null) {
 }
 
 // GitHub cron uses UTC. Two seasonal candidates avoid a manual clock change;
-// only the candidate matching 09:50 New York is enabled. A delayed job is still
+// only the candidate matching 09:55 New York is enabled. A delayed job is still
 // audited, not silently skipped for missing an exact wall-clock minute.
 export function scheduledWatchEnabled(expression, now = new Date()) {
   const context = hktContext(now);
   if (!expression || expression === AM_WATCH_CRON) return true;
-  if (!PM_WATCH_CRONS.includes(expression)) throw new Error("unrecognized watcher schedule");
-  const watch = new Date((newYorkStartEpoch(context.date) + 15 * 60) * 1000);
-  return expression === `50 ${watch.getUTCHours()} * * 1-5`;
+  if (![...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) throw new Error("unrecognized watcher schedule");
+  const minute = context.date < PM_OPENING_CUTOVER_HKT_DATE ? 50 : 55;
+  const watch = new Date(newYorkStartEpoch(context.date, minute) * 1000);
+  return expression === `${minute} ${watch.getUTCHours()} * * 1-5`;
 }
 
 export function scheduledWatchEdition(expression) {
   if (!expression) return null;
   if (expression === AM_WATCH_CRON) return "am";
-  if (PM_WATCH_CRONS.includes(expression)) return "pm";
+  if ([...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
   throw new Error("unrecognized watcher schedule");
 }
