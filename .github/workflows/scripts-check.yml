@@ -63,7 +63,7 @@ jobs:
 
       - name: Test source-bound four-bucket report integration
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-four-bucket-report.test.mjs
+        run: node --test scripts/xuan-ib-four-bucket-report.test.mjs scripts/xuan-ib-four-bucket-retirement.test.mjs
 
       - name: Test inactive account-association pilot and independent publication gates
         if: ${{ github.event.pull_request.draft == false }}
