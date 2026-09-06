@@ -25,7 +25,7 @@ const holding = (id, instrumentCode, instrumentName, label, value, { price = 1, 
   labels: [{ id: 1, name: label, color: 'x', holding_ids: [], portfolio_ids: [] }], group_name: 'Ordinary Shares', number_of_unconfirmed_transactions: 0, ...extra,
 });
 // Native cash-account row shape as returned inside the performance report.
-const cash = (id, name, value, currency = 'USD') => ({ id, key: id, name, source: null, value, currency: { code: currency, id: 5, symbol: '$' }, portfolio: { id: 0, consolidated: false } });
+const cash = (id, name, value, currency = 'USD') => ({ id, key: id, name, source: null, value, currency: { code: currency, id: 5, symbol: '$' } });
 const SELF = 'https://example.invalid/performance?consolidated=false&end_date=2026-09-05&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false';
 const raw = (portfolioId, holdings, cash_accounts, { value = null, currency = 'USD', extra = {}, self = SELF } = {}) => ({
   result: { mode: 'read_only', portfolio: { id: portfolioId, currency_code: currency }, data: { report: {
@@ -43,7 +43,7 @@ const fixture = () => {
     936238: [[holding(18589470, '景林金色中国基金', 'Fund A', 'Semi Liquid', 1000), holding(20184705, '汉领资本', 'Fund B', 'Semi Liquid', 2000), holding(100001, 'SYN-ETF', 'Synthetic ETF', 'Highly Liquid', 500)], [cash(901, 'USD Cash', 100)]],
     936240: [[holding(200001, 'SYN-BOND', 'Synthetic Bond', 'Highly Liquid', 700), holding(200002, 'SYN-PE', 'Synthetic PE', 'Illiquid', 300)], []],
     1021748: [[holding(300001, 'SYN-HF', 'Synthetic HF', 'Semi Liquid', 1500)], [cash(903, 'USD', 50)]],
-    1031350: [[holding(21097888, 'FOF-GCM', 'Core A', 'Semi Liquid', 800), holding(PROXY.holdingId, '现金帐户', 'Cash', 'Highly Liquid', 200, { price: 1 }), holding(400001, 'SYN-EG', 'Synthetic Evergreen', 'Semi Liquid', 1200)], []],
+    1031350: [[holding(21097888, 'FOF-GCM', 'Core A', 'Semi Liquid', 800), holding(PROXY.holdingId, '现金帐户', 'Cash', 'Highly Liquid', 200, { price: 1, extra: { pendingRedemption: false } }), holding(400001, 'SYN-EG', 'Synthetic Evergreen', 'Semi Liquid', 1200)], []],
     936247: [[holding(500001, 'SYN-STOCK', 'Synthetic Stock', 'Highly Liquid', 900)], [cash(905, 'USD', 100)]],
     936243: [[holding(600001, 'SYN-FUND', 'Synthetic Fund', 'Illiquid', 400)], []],
     1350095: [[holding(700001, 'SYN-EG2', 'Synthetic Evergreen 2', 'Semi Liquid', 600)], [cash(907, 'HKD', 100, 'HKD')]],
@@ -208,6 +208,40 @@ test('cash proxy identity is exact; name, price or currency drift is a conflict,
   assert.equal(code(() => aggregate(data => { const row = data[1031350].holdings[1]; row.instrument.currency_code = 'HKD'; row.instrument_currency = { code: 'HKD' }; })), 'CASH_IDENTITY_CONFLICT');
 });
 
+test('legacy proxy needs explicit source nonpending proof, never absence from an evidence list', () => {
+  const remove = data => { delete data[1031350].holdings[1].pendingRedemption; };
+  assert.equal(code(() => aggregate(remove)), 'CASH_IDENTITY_CONFLICT');
+  assert.equal(code(() => aggregate(remove, { pendingRedemption: { schemaVersion: 1, evidenceDate: CUTOFF, evidenceRef: 'synthetic-empty-list', items: [] } })), 'CASH_IDENTITY_CONFLICT');
+  assert.equal(code(() => aggregate(data => { data[1031350].holdings[1].pendingRedemption = true; })), 'CASH_IDENTITY_CONFLICT');
+  assert.equal(code(() => aggregate(data => { data[1031350].holdings[1].isCash = false; })), 'CASH_IDENTITY_CONFLICT');
+  assert.equal(aggregate().coverage.cashProxyRows, 1);
+});
+
+test('row portfolio references are checked before normalization in holdings, cash and listing', () => {
+  assert.equal(code(() => normalizeAll(data => { data[936247].holdings[0].portfolio = { id: 936240 }; })), 'ROW_PORTFOLIO_MISMATCH');
+  assert.equal(code(() => normalizeAll(data => { data[936247].cashRows[0].portfolio_id = 936240; })), 'ROW_PORTFOLIO_MISMATCH');
+  assert.equal(code(() => normalizeAll(data => { data[936247].cashRows[0].portfolio = { id: 936247 }; data[936247].cashRows[0].portfolio_id = 936240; })), 'ROW_PORTFOLIO_MISMATCH');
+  assert.doesNotThrow(() => normalizeAll(data => { data[936247].cashRows[0].portfolio = { id: 936247, consolidated: false }; }));
+  const rawListing = { result: { mode: 'read_only', portfolio: { id: 936247 }, data: { holdings: [{ id: 1, portfolio: { id: 936240 } }] } } };
+  assert.equal(code(() => listingFromHoldingsResponse(rawListing, { portfolioId: 936247, readCompletedAt: READ.readCompletedAt })), 'ROW_PORTFOLIO_MISMATCH');
+});
+
+test('native cash key and source flags cannot contradict its identity', () => {
+  assert.equal(code(() => normalizeAll(data => { data[936247].cashRows[0].key = 999; })), 'CASH_ACCOUNT_AMBIGUOUS_FIELD');
+  assert.equal(code(() => normalizeAll(data => { data[936247].cashRows[0].isCash = false; })), 'NATIVE_CASH_FLAG_CONFLICT');
+  assert.equal(code(() => normalizeAll(data => { data[936247].cashRows[0].pendingRedemption = true; })), 'NATIVE_CASH_FLAG_CONFLICT');
+  assert.equal(code(() => normalizeAll(data => { data[936247].cashRows[0].isCash = null; })), 'SOURCE_FLAG_INVALID');
+  assert.equal(code(() => normalizeAll(data => { Object.assign(data[936247].cashRows[0], { isCash: true, is_cash: false }); })), 'SOURCE_FLAG_CONFLICT');
+});
+
+test('ordinary holdings preserve source flags without granting unregistered cash identity', () => {
+  assert.equal(code(() => aggregate(data => { data[936247].holdings[0].isCash = true; })), 'UNREGISTERED_CASH_CLAIM');
+  const reports = normalizeAll(data => { data[936240].holdings[1].pendingRedemption = true; });
+  assert.equal(reports.find(r => r.portfolioId === 936240).holdings[1].pendingRedemption, true);
+  assert.equal(aggregateFourBucket({ ...trusted, reports, now: NOW }).totals.buckets.vc_pe.usdMicro, String(700_000000n));
+  assert.equal(Object.hasOwn(reports.find(r => r.portfolioId === 936247).holdings[0], 'pendingRedemption'), false);
+});
+
 test('pagination signals, listing mismatch and missing listing all fail closed', () => {
   assert.equal(code(() => normalizeAll(data => { data[936238].rawOptions = { extra: { links: { next: 'page-2' } } }; })), 'PAGINATED_RESPONSE');
   assert.equal(code(() => normalizeAll(data => { data[936238].rawOptions = { extra: { total_pages: 2 } }; })), 'PAGINATED_RESPONSE');
@@ -278,7 +312,7 @@ test('pending-redemption net needs explicit evidence bound to an evergreen row a
   assert.equal(code(() => aggregate(undefined, { pendingRedemption: { ...evidence, items: [{ portfolioId: 1350095, holdingId: 700001, amountUsd: 601 }] } })), 'PENDING_REDEMPTION_EXCEEDS_VALUE');
   assert.equal(code(() => aggregate(undefined, { pendingRedemption: { ...evidence, evidenceRef: 'https://example.invalid' } })), 'PENDING_REDEMPTION_REF_INVALID');
   assert.equal(code(() => aggregate(undefined, { pendingRedemption: { ...evidence, evidenceDate: '2026-09-09' } })), 'PENDING_REDEMPTION_DATE_INVALID');
-  assert.equal(code(() => aggregate(undefined, { pendingRedemption: { ...evidence, items: [{ portfolioId: 1031350, holdingId: PROXY.holdingId, amountUsd: 1 }] } })), 'CASH_IDENTITY_CONFLICT');
+  assert.equal(code(() => aggregate(undefined, { pendingRedemption: { ...evidence, items: [{ portfolioId: 1031350, holdingId: PROXY.holdingId, amountUsd: 1 }] } })), 'PENDING_SOURCE_CONFLICT');
 });
 
 test('resolution: fresh, last-good fallback with explicit age, never zero, never regressed', () => {

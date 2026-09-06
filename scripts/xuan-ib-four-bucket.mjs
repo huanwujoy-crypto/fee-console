@@ -45,19 +45,15 @@ export const NATIVE_CASH_LABEL = 'Cash';
 export const MISSING_LABEL_MARKER = 'no approved liquidity label';
 export const UNRECOGNIZED_LABEL_MARKER = 'unrecognized liquidity label';
 export const LISTING_SOURCE = 'sharesight_get_holdings';
-// Narrow cash-proxy normalization contract. A performance response carries no
-// isCash or pendingRedemption booleans, so this module never reads them from
-// the source and never derives cash from a security type. A registered proxy
-// is resolved from the exact approved identity plus the source name, currency
-// and unit price; the resolver's explicit pendingRedemption=false is derived
-// solely from the explicit evidence input (no evidence item names the proxy).
-// An evidence item naming a proxy, or any other conflict, still rejects.
+// Missing flags remain missing. A legacy proxy requires the resolver's
+// explicit source proof; absence from a pending-evidence list is not proof.
+// Native cash accounts require no legacy-proxy exception.
 export const CASH_PROXY_NORMALIZATION = Object.freeze({
   schemaVersion: 1,
   identity: 'approved registry portfolioId + holdingId, exact normalized source name, explicit source currency, explicit source unit price',
-  isCash: 'assigned only by the reviewed cash-identity registry; never read from the source and never inferred from a security type or label',
-  pendingRedemption: 'never read from the performance response; false for a registered proxy only when no explicit pending-redemption evidence item names it; a naming item is a conflict',
-  ordinaryRows: 'pendingRedemption is set only when explicit evidence names the row; it is otherwise absent, not false',
+  isCash: 'cash identity comes from the reviewed registry or native cash account type; explicit source conflicts are rejected',
+  pendingRedemption: 'legacy proxy requires explicit source false; missing is never derived from absence in an evidence list; source true or a naming evidence item is a conflict',
+  ordinaryRows: 'source pending flags are preserved; dated pending evidence may add true but cannot contradict explicit source false; otherwise the field stays absent',
 });
 export const MICRO = 1_000_000n;
 export const CENT_MICRO = 10_000n;
@@ -93,7 +89,7 @@ export const SHARESIGHT_FIELDS = Object.freeze({
     unconfirmedTransactions: ['number_of_unconfirmed_transactions'],
   }),
   cashAccount: Object.freeze({
-    cashAccountId: ['cash_account_id', 'id'],
+    cashAccountId: ['cash_account_id', 'id', 'key'],
     name: ['name'],
     value: ['value', 'balance'],
     currency: ['currency_code', 'currency.code', 'currency'],
@@ -175,6 +171,29 @@ function pick(row, aliases, label, { required = true, normalize = value => value
 const currencyOf = value => (isObject(value) && typeof value.code === 'string' ? value.code : value);
 const pickCurrency = (row, aliases, label, options = {}) => pick(row, aliases, label, { ...options, normalize: currencyOf });
 
+function checkRowPortfolio(row, expectedId) {
+  const references = [];
+  if (Object.hasOwn(row, 'portfolio')) {
+    if (!isObject(row.portfolio) || !Object.hasOwn(row.portfolio, 'id')) fail('ROW_PORTFOLIO_INVALID');
+    references.push(row.portfolio.id);
+    if (row.portfolio.consolidated === true) fail('ROW_PORTFOLIO_MISMATCH');
+  }
+  if (Object.hasOwn(row, 'portfolio_id')) references.push(row.portfolio_id);
+  if (references.some(id => id !== expectedId)) fail('ROW_PORTFOLIO_MISMATCH');
+}
+
+function sourceFlags(row) {
+  const flags = {};
+  for (const [field, aliases] of [['isCash', ['isCash', 'is_cash']], ['pendingRedemption', ['pendingRedemption', 'pending_redemption']]]) {
+    const values = aliases.filter(key => Object.hasOwn(row, key)).map(key => row[key]);
+    if (!values.length) continue;
+    if (values.some(value => typeof value !== 'boolean')) fail('SOURCE_FLAG_INVALID');
+    if (values.some(value => value !== values[0])) fail('SOURCE_FLAG_CONFLICT');
+    flags[field] = values[0];
+  }
+  return flags;
+}
+
 /** Any pagination signal inside a captured response means the holdings array
  * is not provably complete. The Sharesight `links.self` shape is not a signal. */
 export function detectPagination(value, depth = 0) {
@@ -244,7 +263,11 @@ export function listingFromHoldingsResponse(raw, { portfolioId, readCompletedAt 
       || !isObject(raw.result.data) || !Array.isArray(raw.result.data.holdings) || raw.result.data.holdings.length > MAX_ROWS) fail('LISTING_SHAPE_INVALID');
   if (raw.result.portfolio.id !== expectedId) fail('LISTING_PORTFOLIO_MISMATCH');
   if (detectPagination(raw)) fail('PAGINATED_RESPONSE');
-  const holdingIds = raw.result.data.holdings.map(row => toId(isObject(row) ? row.id : undefined, 'LISTING'));
+  const holdingIds = raw.result.data.holdings.map(row => {
+    if (!isObject(row)) fail('LISTING_SHAPE_INVALID');
+    checkRowPortfolio(row, expectedId);
+    return toId(row.id, 'LISTING');
+  });
   return { source: LISTING_SOURCE, portfolioId: expectedId, readCompletedAt, holdingIds };
 }
 
@@ -315,6 +338,8 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
   const seen = new Set();
   for (const [index, row] of report.holdings.entries()) {
     if (!isObject(row)) fail('HOLDING_ROW_INVALID', index);
+    checkRowPortfolio(row, expectedId);
+    const flags = sourceFlags(row);
     const holdingId = toId(pick(row, fields.holding.holdingId, 'HOLDING'), 'HOLDING');
     if (seen.has(holdingId)) fail('DUPLICATE_HOLDING_ROW', holdingId);
     seen.add(holdingId);
@@ -336,7 +361,7 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
     if (navDate !== undefined && (!isCalendarDate(navDate) || navDate > report.end_date)) fail('HOLDING_NAV_DATE_INVALID', holdingId);
     const securityType = pick(row, fields.holding.securityType, 'HOLDING_SECURITY_TYPE', { required: false });
     holdings.push({
-      portfolioId: expectedId, holdingId,
+      portfolioId: expectedId, holdingId, ...flags,
       instrumentId: instrumentId === undefined ? null : toId(instrumentId, 'INSTRUMENT'),
       symbol: symbol === undefined ? null : text(symbol, 'HOLDING_SYMBOL', 120),
       name, recordType: 'holding', assetClass, sourceLabels, labelStatus,
@@ -354,11 +379,14 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
   const seenCash = new Set();
   for (const [index, row] of report.cash_accounts.entries()) {
     if (!isObject(row)) fail('CASH_ACCOUNT_ROW_INVALID', index);
+    checkRowPortfolio(row, expectedId);
+    const flags = sourceFlags(row);
+    if (flags.isCash === false || flags.pendingRedemption === true) fail('NATIVE_CASH_FLAG_CONFLICT');
     const cashAccountId = toId(pick(row, fields.cashAccount.cashAccountId, 'CASH_ACCOUNT'), 'CASH_ACCOUNT');
     if (seenCash.has(cashAccountId)) fail('DUPLICATE_CASH_ACCOUNT_ROW', cashAccountId);
     seenCash.add(cashAccountId);
     cashAccounts.push({
-      portfolioId: expectedId, cashAccountId,
+      portfolioId: expectedId, cashAccountId, ...flags,
       name: text(pick(row, fields.cashAccount.name, 'CASH_ACCOUNT_NAME'), 'CASH_ACCOUNT_NAME'),
       recordType: 'cash_account', assetClass: NATIVE_CASH_LABEL,
       currency: currencyCode(pickCurrency(row, fields.cashAccount.currency, 'CASH_ACCOUNT_CURRENCY'), 'CASH_ACCOUNT_CURRENCY'),
@@ -423,20 +451,21 @@ function auditRows(reports, cashIdentities, pending) {
     for (const holding of report.holdings) {
       const key = `${holding.portfolioId}:holding:${holding.holdingId}`;
       const namedByEvidence = pending.has(key);
-      // CASH_PROXY_NORMALIZATION: the resolver only inspects these fields for a
-      // registered identity. pendingRedemption here is derived from the explicit
-      // evidence input, not read from the source; a named proxy is rejected.
+      if (namedByEvidence && holding.pendingRedemption === false) fail('PENDING_SOURCE_CONFLICT');
+      const flags = sourceFlags(holding);
+      if (namedByEvidence) flags.pendingRedemption = true;
       const candidate = {
         portfolioId: holding.portfolioId, holdingId: holding.holdingId, name: holding.name, recordType: 'holding',
-        currency: holding.currency, unitPrice: holding.unitPrice, pendingRedemption: namedByEvidence,
+        currency: holding.currency, unitPrice: holding.unitPrice, ...flags,
       };
       const resolved = resolveCashIdentity(cashIdentities, candidate);
       if (resolved.status === 'unresolved') fail('CASH_IDENTITY_CONFLICT', { key, reason: resolved.reason, errors: resolved.errors });
       const isCash = resolved.status === 'resolved';
+      if (!isCash && holding.isCash === true) fail('UNREGISTERED_CASH_CLAIM');
       if (isCash) { cashProxyRows += 1; proxiesInPortfolio += 1; }
       rows.push({
         portfolioId: holding.portfolioId, holdingId: holding.holdingId, name: holding.name, recordType: 'holding', isCash,
-        assetClass: holding.assetClass, ...(namedByEvidence ? { pendingRedemption: true } : {}),
+        assetClass: holding.assetClass, ...(Object.hasOwn(flags, 'pendingRedemption') ? { pendingRedemption: flags.pendingRedemption } : {}),
       });
       values.set(key, BigInt(holding.valueMicro));
     }
@@ -448,7 +477,8 @@ function auditRows(reports, cashIdentities, pending) {
       fail('CASH_REPRESENTATION_AMBIGUOUS', { portfolioId: report.portfolioId, cashProxyRows: proxiesInPortfolio, cashAccountRows: report.cashAccounts.length });
     }
     for (const cash of report.cashAccounts) {
-      rows.push({ portfolioId: cash.portfolioId, cashAccountId: cash.cashAccountId, name: cash.name, recordType: 'cash_account', isCash: true, assetClass: NATIVE_CASH_LABEL, pendingRedemption: false });
+      if (cash.isCash === false || cash.pendingRedemption === true) fail('NATIVE_CASH_FLAG_CONFLICT');
+      rows.push({ portfolioId: cash.portfolioId, cashAccountId: cash.cashAccountId, name: cash.name, recordType: 'cash_account', isCash: true, assetClass: NATIVE_CASH_LABEL });
       values.set(`${cash.portfolioId}:cash:${cash.cashAccountId}`, BigInt(cash.valueMicro));
     }
   }

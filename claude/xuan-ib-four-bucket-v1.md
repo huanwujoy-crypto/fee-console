@@ -37,15 +37,15 @@ approval, and a read-only Gateway shape verification (§5).
   not pending redemption). A `Cash` label on an unregistered holding is not
   cash and, without an approved rule, fails the snapshot.
 - **Cash-proxy normalization contract** (`CASH_PROXY_NORMALIZATION`, recorded
-  in every snapshot): a performance response carries no `isCash` or
-  `pendingRedemption` booleans and none are read from it. `isCash` comes only
-  from the registry, never from a security type or label, so a registered
-  proxy represented as ordinary shares still resolves. The resolver's explicit
-  `pendingRedemption=false` is derived solely from the explicit evidence input
-  (no item names the proxy); an item naming a proxy is a conflict. Ordinary
-  rows get `pendingRedemption` only when evidence names them, otherwise the
-  field is absent, not false. Gross bucket availability is independent of the
-  evergreen-net evidence.
+  in every snapshot): missing source flags remain missing. A legacy proxy
+  still requires explicit source `pendingRedemption=false`, exact registry
+  identity, name, USD and unit price. Neither no evidence nor absence from a
+  pending-redemption list supplies that proof. Explicit source cash/pending
+  flags are preserved and conflicts are rejected. An ordinary source cash
+  claim cannot create an unregistered cash identity. Native cash accounts need
+  no legacy-proxy exception, but explicit noncash/pending flags on them fail.
+  Gross availability on the native-cash path is independent of evergreen-net
+  evidence. Source row portfolio references and cash id/key aliases must agree.
 - Approved source liquidity labels are exactly `Highly Liquid`, `Semi Liquid`,
   `Illiquid`, `Cash`, read from the holding's Sharesight labels. Two approved
   labels on one row is ambiguous and fails. A row with no approved label keeps
