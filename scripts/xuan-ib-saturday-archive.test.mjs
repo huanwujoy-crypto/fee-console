@@ -35,4 +35,9 @@ test('compact display includes all requested acceptance sections',()=>{
  assert.match(html,/其它持仓（/);
  assert.match(html,/详细说明/);
  assert.match(html,/原报告全文/);
+ assert.match(html,/ABC 表现比较/);
+ assert.match(html,/2026-09-01 收盘起算 · 数据至 2026-09-03/);
+ assert.match(html,/常青基金/);
+ assert.match(html,/<summary>⑥ 挂单提醒/);
+ assert.ok(html.indexOf('ABC 表现比较')<html.indexOf('原方案与历史基线记录'));
 });

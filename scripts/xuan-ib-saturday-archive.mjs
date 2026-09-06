@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
 import {renderReport,reportHtmlBlob} from './xuan-ib-report-view.mjs';
+import {validateOpenEtfTrend,renderEtfTrend} from './xuan-ib-etf-trend.mjs';
 const repo=fileURLToPath(new URL('../',import.meta.url));
 export function buildSaturdayArchive() {
 const read=(file)=>execFileSync('git',['show',`65c846fb342a9fd14285979ab0fd37424a19e3ff:${file}`],{cwd:repo,encoding:'utf8'});
@@ -49,13 +50,18 @@ const view={schemaVersion:1,edition:'am',dataDate:meta.dataDate,asOfHkt:stamp,ma
  holdings:{status:'ok',asOfHkt:stamp,authoritativeValueUsd:4420972,note:'原报告权威持仓总值；逐仓展示合计存在约 259 美元差异，保留不凑平。延迟报价保留各自日期，旧日期不会冒充本日实时涨跌。',rows},
  risk:[card('① AI 压力','中情景 21.76%；留意未分类 AAOI','attention','owner-review',['项目','原报告读数'],[['中情景','21.76%'],['AAOI','尚无批准 tier，不进分子'],['低 / 高情景','旧基数近似，不作本期精确值']],['压力系数不是 AI 相关度；详细原始方法保留在原报告中。']),
  card('② 单票集中度','GOOG 三账户合并 4.25%','normal','observe',['范围','占比'],[['GOOG / GOOGL 三账户','4.25%'],['性质','观察口径，不触发交易']],['原报告分子 263,254 美元；分母（三账户含现金）6,198,032 美元。原显示行值有舍入，不用显示行重加合计。','IB 执行视图与三账户观察视图分开，原阈值不修改。'])],
- allocation:[card('③ 四桶快照','08-24 旧快照，仍待完整核验','unverified','verify',['类别','快照占比'],[['高流动性','17.75%'],['VC / PE','51.74%'],['对冲基金','14.58%'],['常青','15.93%']],['沿用旧日期，不能据此认定当前全量分类已完成。'],'2026-08-24')],
+ allocation:[card('③ 四桶快照','08-24 旧快照，仍待完整核验','unverified','verify',['类别','快照占比'],[['高流动性','17.75%'],['VC / PE','51.74%'],['对冲基金','14.58%'],['常青基金','15.93%']],['沿用旧日期，不能据此认定当前全量分类已完成。'],'2026-08-24')],
  rotation:{...card('换仓触发检查','原报告未触发；4 张买单待人工复核','attention','owner-review',[],[],['9 张挂单：买入在前、卖出在后，组内按绝对距市价由近到远。','本历史重排用原持仓表价格重新计算距离，舍入可能与旧表略有差异。','待撤标记仅沿用原报告，不根据距离新增撤单建议。']),orders},
  events:card('日程','只看历史数据；日程以正式页为准','unverified','observe',['版本','固定启动'],[['上午版','周二至周六 08:00 HKT'],['睡前版','周一至周五，纽约 09:30']],['本页仅重排历史数据，不代表新的定时任务或 20 分钟交付验收。']),
  decisions:decisionState.decisions.map(d=>({decisionId:d.decisionId,asOfHkt:stamp,fact:'沿用周六原报告的事实与意见；本次仅重排显示，没有新回应；历史状态不代表今日进度。',isNew:false})),
  observations:['原报告记载：IB、Schwab、Webull 无新增成交。'],
  notes:['来源：已发布的周六上午版，数据读取窗口 2026-09-05 07:47–08:10 HKT；本次未读取金融接口。','仅展示层重排。持仓、挂单数量、金额与意见回执取自该历史报告；本页为上线的历史重排，不替代最新报告或证明新运行成功。','折叠下方原报告全文可逐项对照。原文旧日程仅为历史证据。原发布 source SHA：521e0aa5570b00a8a0029535c3558dad8ec7e33c；HTML blob：eec28a0694dcebdb3ca7790b592ceee38a0e4fa2。'],cashPlan};
 let html=renderReport(view,{previousHtml:source,previousMeta:meta,policy:JSON.parse(fs.readFileSync(repo+'claude/xuan-ib-policy-v2.json','utf8'))});
+// Same promoted archive anchor contains the already approved public summary.
+// Freeze it at build time; no network, new baseline, raw inputs or newer values.
+const trend=validateOpenEtfTrend(JSON.parse(read('xuan-ib/etf-trend.json')));
+assert.equal(trend.startDate,'2026-09-01');assert.equal(trend.latestCompleteDate,'2026-09-03');
+html=html.replace(/<div class="pane p5">([\s\S]*?)<\/div><\/div>\n/,(_,body)=>`<div class="pane p5">${renderEtfTrend(trend)}<details><summary>原方案与历史基线记录</summary>${body}</details></div></div>\n`);
 assert.ok(html.includes(source.match(/<template id="xuan-ib-decision-state-v1"[\s\S]*?<\/template>/)[0]));
 const escape=s=>s.replaceAll('&','&amp;').replaceAll('"','&quot;').replaceAll('<','&lt;').replaceAll('>','&gt;');
 html=html.replace('<!-- xuan-ib-handover:v1 -->','<!-- xuan-ib-historical-layout:20260905 -->').replace('<title>XUAN-投资管理</title>','<title>周六上午版 · 历史重排</title>');

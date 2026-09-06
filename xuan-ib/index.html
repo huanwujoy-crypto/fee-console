@@ -79,6 +79,11 @@
       color: #216ec8;
     }
     #refresh:disabled { opacity: .55; }
+    .header-guide { position:relative; font-size:14px; }
+    .header-guide summary { list-style:none; cursor:pointer; padding:11px 14px; min-height:44px; border:1px solid #9b7fe1; border-radius:999px; color:#6941ba; background:#f3efff; font-weight:650; }
+    .header-guide summary::-webkit-details-marker { display:none; }
+    .header-guide .guide-body { position:absolute; z-index:50; top:50px; right:-65px; width:min(340px,calc(100vw - 32px)); padding:16px; border:1px solid #ccc; border-radius:14px; background:Canvas; color:CanvasText; box-shadow:0 8px 24px #0002; line-height:1.5; }
+    .guide-body ol { padding-left:22px; margin:0; }.guide-body li { margin-bottom:9px; }
     #warning {
       flex: 0 0 auto;
       padding: 10px 18px;
@@ -112,6 +117,7 @@
         <a class="history-link" href="history/2026-09-05-am.html">周六上午版 · 新排版</a>
       </div>
       <div class="header-actions">
+        <details class="header-guide"><summary>使用指南</summary><div class="guide-body"><ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒与现金参考，箭头展开详情。</li><li><b>待办</b>：只处理需要你的事项；挂单仅提醒，不自动撤单。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：读取已发布结果，不生成新报告。上午版周二至周六 08:00；睡前版美股开市时启动。</li></ol><p>颜色是提醒，不是交易指令；所有页面均不自动买卖或转账。</p></div></details>
         <button id="refresh" type="button">刷新</button>
       </div>
     </header>
@@ -134,7 +140,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-06.2";
+      const loaderBuild = "2026-09-06.3";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -1305,6 +1311,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedToken = token;
           renderProgress(record);
           refreshPrivateEtf(record);
+          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906', location.href).href)
+            .then(view => { if(renderedDocument === doc && lastVerified?.blob === record.blob) view.improveMobileDisplay(doc); })
+            .catch(() => { /* Optional layout never weakens paired-report validation. */ });
           if (/^s[1-5]$/.test(section || "")) {
             const radio = doc.getElementById(section);
             if (radio?.getAttribute("name") === "sec") radio.checked = true;

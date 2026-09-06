@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-09-06",
+  "purpose": "risk-measurement-only",
+  "authority": "owner-authorized-evidence-supported-classification",
+  "notifyOnce": true,
+  "requireDecisionForRoutineClassification": false,
+  "preserveHistoricalReceipts": true,
+  "financialWrites": false,
+  "coefficientChanges": false,
+  "overrides": [{
+    "symbol": "AAOI",
+    "portfolioId": "1350094",
+    "holdingId": "28656360",
+    "instrumentId": "523742",
+    "currency": "USD",
+    "tier": "T1",
+    "low": 0.6,
+    "mid": 0.8,
+    "high": 1,
+    "approvalId": "WU-20260906-AAOI-T1"
+  }]
+}
