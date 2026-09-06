@@ -978,6 +978,7 @@ test('records-update inherits only byte-identical legacy cards with unchanged st
   assert.equal(result.status, 0, result.stderr);
   for (const bad of [
     current.replace('历史正文不改', '历史正文已改'),
+    current.replace(legacyCard, legacyCard + legacyCard),
     current.replace('建议 B · 已决定 / 待落实', '建议 B · 待 Wu 审核'),
     current.replace('<code>accepted</code>', '<code>awaiting_user</code>'),
     current.replace('组合总额 $1,000', '组合总额 $9,000'),
