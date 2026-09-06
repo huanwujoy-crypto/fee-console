@@ -140,7 +140,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-06.3";
+      const loaderBuild = "2026-09-06.4";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -1311,7 +1311,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedToken = token;
           renderProgress(record);
           refreshPrivateEtf(record);
-          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906', location.href).href)
+          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906-pane-notes', location.href).href)
             .then(view => { if(renderedDocument === doc && lastVerified?.blob === record.blob) view.improveMobileDisplay(doc); })
             .catch(() => { /* Optional layout never weakens paired-report validation. */ });
           if (/^s[1-5]$/.test(section || "")) {

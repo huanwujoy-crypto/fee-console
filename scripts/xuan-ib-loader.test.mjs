@@ -594,7 +594,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-06\.3"/);
+  assert.match(loader, /loaderBuild = "2026-09-06\.4"/);
   assert.match(loader, /href="history\/2026-09-05-am.html"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
@@ -1372,7 +1372,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-06.3');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-06.4');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -2022,7 +2022,8 @@ test('entire current published ledger renders latest receipt-bound statuses and 
   await app.listeners.button.click();
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
   const resolved=publishedState.decisions.filter(d=>['accepted','modified'].includes(d.status));
-  assert.equal(doc.querySelectorAll('.xuan-work').length,resolved.length);
+  const hasRecordedProgress = d => data.events.some(e=>e.decisionId===d.decisionId && publishedState.receipts.some(r=>r.receiptId===e.receiptId && r.decisionId===d.decisionId));
+  assert.equal(doc.querySelectorAll('.xuan-work').length,resolved.filter(hasRecordedProgress).length);
   assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
   const labels={not_started:'待安排',in_progress:'处理中',blocked:'受阻 · 临时处理保留',awaiting_approval:'待你确认规则',user_action_required:'待你处理',evidence_recorded:'已有落实证据 · 持续观察'};
   let approvals=0,actions=0,historical=false,unverifiedCount=0;
@@ -2031,14 +2032,13 @@ test('entire current published ledger renders latest receipt-bound statuses and 
       .sort((a,b)=>Date.parse(a.recordedAtHkt)-Date.parse(b.recordedAtHkt)||a.receiptId.localeCompare(b.receiptId)).at(-1);
     const event=data.events.filter(e=>e.decisionId===decision.decisionId&&e.receiptId===receipt?.receiptId).at(-1);
     const card=doc.getElementById('progress-'+decision.decisionId);
-    assert.ok(card,'every resolved decision retains its progress card');
     if(!event) {
       unverifiedCount++;
-      assert.match(card.textContent,/当前进度未核实/);
-      assert.equal(card.querySelector('.xuan-work-badge'),null);
+      assert.equal(card,null,'no event must not manufacture an implementation panel');
       assert.ok(doc.getElementById(decision.decisionId),'original decision survives missing progress');
       continue;
     }
+    assert.ok(card,'every recorded progress event retains its progress card');
     assert.ok(card.textContent.includes(event.title));
     assert.ok(card.textContent.includes(event.summary));
     const current=event.observedPair.sourceSha===metadata.sourceSha&&event.observedPair.htmlBlob===metadata.htmlBlob;
