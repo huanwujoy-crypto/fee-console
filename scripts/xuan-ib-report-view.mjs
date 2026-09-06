@@ -289,7 +289,7 @@ ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).joi
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
-${stateTemplate}\n${cash.template}\n${fourBucket?renderFourBucketReportTransport(fourBucket):''}\n</body></html>\n`;
+${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.
   // Full source envelopes and private account observations never enter HTML.
   const output=associationReceipt?html
