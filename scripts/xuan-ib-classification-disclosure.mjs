@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseFourBucketReport, fourBucketDisclosure, validateFourBucketReportHtml } from './xuan-ib-four-bucket-report.mjs';
 
 /** Trusted, read-only interim classification disclosure.
  * This is the scope of the independently checked 2026-08-31 audit, not a
@@ -18,8 +19,9 @@ const DISCLOSURE = `<section id="xuan-ib-classification-disclosure-v1">
 </ol>
 </section>`;
 
-export function renderClassificationDisclosure() {
-  return DISCLOSURE;
+export function renderClassificationDisclosure(fourBucket = null) {
+  if (!fourBucket) return DISCLOSURE;
+  return `<section id="${CLASSIFICATION_DISCLOSURE_ID}">\n<h3>四桶分类与数据口径</h3>\n<ol>\n${fourBucketDisclosure(fourBucket)}\n</ol>\n</section>`;
 }
 
 // Ignore inert source containers, but never accept a canonical block hidden
@@ -69,6 +71,11 @@ function disclosureTags(markup) {
  * and cannot be enabled by an option or marker supplied to this function.
  */
 export function validateClassificationDisclosure(html, { previousHtml = null } = {}) {
+  let fourBucket;
+  try { fourBucket = parseFourBucketReport(html); } catch(error) { return [error.message]; }
+  const errors = validateFourBucketReportHtml(html,{previousHtml});
+  if(errors.length) return errors;
+  const expected = renderClassificationDisclosure(fourBucket);
   const markup = displayedMarkup(html);
   const text = displayedText(markup);
   const previousText = displayedText(displayedMarkup(previousHtml));
@@ -80,11 +87,11 @@ export function validateClassificationDisclosure(html, { previousHtml = null } =
   if (blocks.length !== 1 || allBlocks.length !== 1) return ['classification disclosure must have exactly one visible canonical block'];
   const start = blocks[0].index;
   const rawStart = allBlocks[0].index;
-  if (markup.slice(start, start + DISCLOSURE.length) !== DISCLOSURE
-      || String(html).slice(rawStart, rawStart + DISCLOSURE.length) !== DISCLOSURE) {
+  if (markup.slice(start, start + expected.length) !== expected
+      || String(html).slice(rawStart, rawStart + expected.length) !== expected) {
     return ['classification disclosure differs from the trusted historical audit and fallback policy'];
   }
-  const outside = markup.slice(0, start) + markup.slice(start + DISCLOSURE.length);
+  const outside = markup.slice(0, start) + markup.slice(start + expected.length);
   const outsideText = displayedText(outside);
   if (ruleReasoning.test(outsideText)) {
     return ['classification rule/count reasoning must appear only in the canonical disclosure'];
