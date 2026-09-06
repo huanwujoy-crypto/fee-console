@@ -1,5 +1,14 @@
 # XUAN-IB handover publication contract
 
+## Owner retirement override (2026-09-06)
+
+Read `claude/xuan-ib-four-bucket-retirement-20260906.md` first. The owner has
+cancelled four-bucket configuration management after continued integration
+obstacles. Stop its extra collection/sidecar generation and target-gap prompts;
+preserve stock four-class cash planning, other source requirements and immutable
+historical financial/decision records. Earlier four-bucket cadence and activation
+requirements below are historical and do not override this retirement.
+
 ## Owner mobile and classification update (2026-09-06)
 
 Read `claude/xuan-ib-mobile-followup-20260906.md` before preparing reports.
