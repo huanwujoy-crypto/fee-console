@@ -27,6 +27,7 @@ test('header guide matches shared wording and runs only after verification',()=>
 });
 test('critical replenishment amounts remain visible without recomputing or guessing',()=>{
  assert.deepEqual(extractCashGuidance('EXUS $550,579 EIMI $128,701 USSC $75,476'),[['EXUS','$550,579'],['EIMI','$128,701'],['USSC','$75,476']]);
+ assert.deepEqual(extractCashGuidance('EXUS $550,579EIMI $128,701USSC $75,476两类仍需 $84,768'),[['EXUS','$550,579'],['EIMI','$128,701'],['USSC','$75,476']]);
  assert.deepEqual(extractCashGuidance('EXUS 未取得 USSC 待回款后重算'),[['USSC','待回款后重算']]);
  assert.deepEqual(extractCashGuidance('无有效补仓数值'),[]);
 });

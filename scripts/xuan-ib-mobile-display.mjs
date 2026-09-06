@@ -36,7 +36,7 @@ export function extractReadingMetrics(text) {
 }
 
 export function extractCashGuidance(text){
-  return ['EXUS','EIMI','USSC'].flatMap(ticker=>{const match=text.match(new RegExp(`\\b${ticker}\\s*(\\$[\\d,]+(?:\\.\\d+)?|待回款后重算)`));return match?[[ticker,match[1]]]:[];});
+  return ['EXUS','EIMI','USSC'].flatMap(ticker=>{const match=text.match(new RegExp(`(?:^|[^A-Z])${ticker}\\s*(\\$[\\d,]+(?:\\.\\d+)?|待回款后重算)`));return match?[[ticker,match[1]]]:[];});
 }
 
 export function simplifyPaneReading(doc) {

@@ -1311,7 +1311,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedToken = token;
           renderProgress(record);
           refreshPrivateEtf(record);
-          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906-pane-notes', location.href).href)
+          import(new URL('../scripts/xuan-ib-mobile-display.mjs?v=20260906-cash-guidance', location.href).href)
             .then(view => { if(renderedDocument === doc && lastVerified?.blob === record.blob) view.improveMobileDisplay(doc); })
             .catch(() => { /* Optional layout never weakens paired-report validation. */ });
           if (/^s[1-5]$/.test(section || "")) {
