@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "effectiveDate": "2026-09-06",
+  "note": "Refresh cadence is a separate dimension from registry scope. It does NOT change requiredEachReport (which remains the scope key across capture/adapter/manifest). IB stays live every report; the nine covered Sharesight portfolios are captured once per Asia/Hong_Kong week (Monday = capture/week key, not a valuation date).",
+  "ib": {
+    "cadence": "live-every-report",
+    "endpoints": ["accountSummary", "balances", "positions", "orders", "trades"]
+  },
+  "sharesightWeekly": {
+    "cadence": "weekly-monday-hkt",
+    "weekKey": "monday-Asia/Hong_Kong",
+    "valuationDate": "native-sharesight-end_date-per-portfolio (never forced to Monday)",
+    "staleRetention": "keep last good snapshot, shown explicitly dated as previous-week/historical; rollover never advances stored dates",
+    "portfolioIds": [936238, 936240, 1021748, 1031350, 936247, 936243, 1350095, 936249, 1350094]
+  },
+  "excludedNeverRead": [1021747],
+  "notPositionsFallback": "The IB-HK (936247) weekly snapshot is never a live IB positions fallback.",
+  "durableStore": "not-activated: no safe durable private Sharesight store is configured; every non-Monday report takes the explicit degraded SS path until a separately reviewed store is added. No raw Sharesight holdings in the repo or Pages; no fee-Gist reuse."
+}
