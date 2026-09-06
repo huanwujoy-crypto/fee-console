@@ -16,6 +16,17 @@ Reminders are not recommendations or execution instructions. Old signed report
 bytes remain immutable; the trusted loader can suppress the retired feature in
 its verified display while retaining the source report unchanged.
 
+### Mobile order reading (owner follow-up)
+
+Use distinct 买单 and 卖单 sections, with explicit direction labels as well as
+different colors. The verified loader renders existing order tables as narrow
+screen cards: quantity, limit, signed distance, 已挂天数 and source status.
+Each side remains sorted by absolute distance, nearest first, stable ties and
+unavailable quotes last. Do not infer order age, missing quotes or cancellation
+flags. Preserve quantity/price precision, currency when supplied, source dates,
+and the original signed report/decision receipts. This display migration does
+not create a new report, execute an order, or change report-generation cadence.
+
 ## Classification authority
 
 The owner explicitly approves Webull AAOI standard T1, low/mid/high 60/80/100%,
