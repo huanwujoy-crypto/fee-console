@@ -15,6 +15,8 @@ import { startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib
 import { getManualConsentRunId, validateManualConsentProof, consumeManualConsent } from './xuan-ib-manual-consent.mjs';
 import { loadTrustedAssociationPolicy, validateAssociationReceipt } from './xuan-ib-account-association.mjs';
 import { isWeeklyMode, isWeeklyStage } from './xuan-ib-weekly-snapshot.mjs';
+import { prepareFourBucketReport } from './xuan-ib-four-bucket-report.mjs';
+import { readCaptureJson } from './xuan-ib-source-capture.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -94,7 +96,7 @@ function requireCompactUpstreamJournal(journalPath,readiness,weekly=false){
   }
 }
 
-export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null}={}){
+export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null,fourBucketInput=null}={}){
   const required=['schemaVersion','edition','dataDate','previousSourceSha','sources'];
   if(!evidence || Object.keys(evidence).sort().join('|')!==required.sort().join('|') || evidence.schemaVersion!==1)fail('invalid source evidence envelope');
   if(evidence.dataDate!==viewInput.dataDate||evidence.edition!==viewInput.edition||evidence.previousSourceSha!==previousMeta.sourceSha)fail('view/evidence/prior publication mismatch');
@@ -155,6 +157,8 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     view.alerts=[{level:'warning',text:field},...view.alerts].slice(0,3);
   }
   if(journalPath)requireCompactUpstreamJournal(journalPath,readiness,weekly);
+  const fourBucket=fourBucketInput===null?null:prepareFourBucketReport(fourBucketInput,{
+    evidence,previousHtml,journal:journalPath?showRunJournal(journalPath):null,now:now??Date.now()});
   // Consumption is atomic and precedes render; even a later guard/render
   // failure cannot reopen this observation for a second candidate attempt.
   if(manual)consumeManualConsent({proof:evidence.sources.ib.manualConsent,journalPath,
@@ -165,7 +169,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     try{const value=fn();if(journalPath)finishJournalStage(journalPath,name);return value;}
     catch(error){if(journalPath)finishJournalStage(journalPath,name,{status:'failed',errorCode:'PREPARE_FAILED'});throw error;}
   };
-  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot}));
+  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket}));
   stage('guard',()=>{
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-'));
     try{
@@ -185,7 +189,10 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     previousSourceSha:previousMeta.sourceSha,edition:evidence.edition,requireUnexpired:true,now:now??Date.now()});
   if(association)validateAssociationReceipt(association,associationSnapshot,{edition:evidence.edition,previousSourceSha:previousMeta.sourceSha,runId,now:now??Date.now()});
   return {html,result:{schemaVersion:1,status:'prepared-not-published',edition:view.edition,dataDate:view.dataDate,
-    previousSourceSha:previousMeta.sourceSha,htmlBlob:reportHtmlBlob(html),viewFingerprint:fingerprint(view),sourceEvidenceFingerprint:fingerprint(evidence),degraded:readiness.degraded,issues:readiness.issues}};
+    previousSourceSha:previousMeta.sourceSha,htmlBlob:reportHtmlBlob(html),viewFingerprint:fingerprint(view),sourceEvidenceFingerprint:fingerprint(evidence),
+    degraded:readiness.degraded||Boolean(fourBucket&&fourBucket.status!=='fresh'),
+    issues:[...readiness.issues,...(fourBucket&&fourBucket.status!=='fresh'?[`FOUR_BUCKET_${fourBucket.status.toUpperCase()}`]:[])],
+    ...(fourBucket?{fourBucket:{status:fourBucket.status,reason:fourBucket.reason,fingerprint:fourBucket.snapshot?.fingerprint??null}}:{})}};
 }
 
 export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociationPolicy}={}){
@@ -221,16 +228,22 @@ export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociation
   }
   // Pure API rendering remains usable in unit tests. The operational command
   // may never omit the journal and then claim a timed pilot run.
-  if(![5,7].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE]');
-  const [viewFile,evidenceFile,outputFile,flag,journalPath,manualFlag,manualConsentStore]=args;
+  if(![5,7,9].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE] [--four-bucket-input FILE]');
+  const [viewFile,evidenceFile,outputFile,flag,journalPath]=args;
   if(flag!=='--journal'||!journalPath)fail('a real run journal is required');
-  if(args.length===7&&(manualFlag!=='--manual-consent-store'||!manualConsentStore))fail('invalid manual consent store option');
+  const options={};
+  for(let i=5;i<args.length;i+=2){
+    if(!['--manual-consent-store','--four-bucket-input'].includes(args[i])||!args[i+1]||Object.hasOwn(options,args[i]))fail('invalid or duplicate prepare option');
+    options[args[i]]=args[i+1];
+  }
+  const manualConsentStore=options['--manual-consent-store'];
   const output=path.resolve(outputFile);
   if(!output.endsWith('.html') || ['latest.html','policy.html'].includes(path.basename(output)) || output===path.join(root,'index.html'))fail('output must be a candidate HTML, never latest, policy or fee console');
   if(fs.existsSync(output))fail('output already exists; use a new staging path, then stage only validated candidate bytes');
   const prepared=prepareReport(read(viewFile),read(evidenceFile),{
     previousHtml:fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8'),previousMeta:read(path.join(root,'xuan-ib/latest.meta.json')),
     policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath,manualConsentStore:manualConsentStore??null,
+    fourBucketInput:options['--four-bucket-input']?readCaptureJson(options['--four-bucket-input']):null,
     // Never accept a candidate-selected snapshot path in the operational CLI.
     associationSnapshot:read(evidenceFile).edition==='adhoc'?loadAssociationPolicy({cwd:root,requireActive:false}):null});
   if(journalPath)startJournalStage(journalPath,'candidate-prep');

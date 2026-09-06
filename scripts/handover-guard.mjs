@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validateClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
+import { validateFourBucketReportHtml, FOUR_BUCKET_REPORT_ID } from './xuan-ib-four-bucket-report.mjs';
+import { FOUR_BUCKET_TEMPLATE_ID } from './xuan-ib-four-bucket.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
@@ -267,11 +269,14 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID].includes(id)) {
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID].includes(id)) {
       fail('only the approved decision, ETF and account-association templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
     byId.set(id, template);
+  }
+  for(const id of [FOUR_BUCKET_REPORT_ID,FOUR_BUCKET_TEMPLATE_ID]) {
+    if(attributeValueCount(structuralMarkup(source),'id',id)!==0)fail('four-bucket transport ID is reserved for its validated template');
   }
   if (attributeValueCount(structuralMarkup(source), 'id', ASSOCIATION_TEMPLATE_ID) !== 0) {
     fail('account-association receipt ID is reserved exclusively for its validated template');
@@ -1188,6 +1193,8 @@ if (continuityInputs.every(Boolean)) {
   }
 }
 
+const fourBucketErrors = validateFourBucketReportHtml(html, {previousHtml:trustedPreviousHtml,recordsUpdate:verifiedRecordsUpdate,reportDate:expectedDate});
+if (fourBucketErrors.length) fail(fourBucketErrors[0]);
 if (!verifiedRecordsUpdate) {
   const classificationErrors = validateClassificationDisclosure(html, { previousHtml: trustedPreviousHtml });
   if (classificationErrors.length) fail(classificationErrors[0]);
