@@ -85,7 +85,7 @@ function validateCard(card, reportDate, allowOrders=false) {
 export function validateReportView(view) {
   exact(view, ['schemaVersion','edition','dataDate','asOfHkt','marketContext','alerts','summary',
     'kpis','holdings','risk','allocation','rotation','events','decisions','observations','notes','cashPlan'], 'view');
-  if (view.schemaVersion !== 1 || !['pm','adhoc'].includes(view.edition)) fail('compact v1 is opt-in PM/adhoc only; AM remains unchanged');
+  if (view.schemaVersion !== 1 || !['am','pm','adhoc'].includes(view.edition)) fail('invalid compact report edition');
   date(view.dataDate); asOf(view.asOfHkt,view.dataDate);
   if (!view.asOfHkt.startsWith(view.dataDate+' ')) fail('run read window must include report date and time');
   text(view.marketContext,120);
@@ -159,10 +159,14 @@ const cardBody = card => {
 const card = value => `<section class="card"><h2>${esc(value.title)}</h2>${cardBody(value)}</section>`;
 const fold = (title,body,open=false,right='') => `<details${open?' open':''}><summary>${esc(title)}${right?` <span class="rt">${esc(right)}</span>`:''}</summary><div class="dbody">${body}</div></details>`;
 
-function holdingsView(holdings, reportDate) {
-  // Daily changes whose quote date differs from this report's data date are
-  // displayed as old, never classified as a fresh >1% move.
-  const usable=row=>row.changePct!==null && row.changeAsOfHkt.startsWith(reportDate);
+function holdingsView(holdings, reportDate, edition) {
+  // AM summarizes the previous close: European quotes can precede HKT midnight.
+  // Preserve the actual quote date and delayed label. This display window is
+  // NOT source authorization or an exchange-calendar freshness proof. Older
+  // quotes remain in the unverified group; PM behavior is unchanged.
+  const priorDate=new Date(Date.parse(reportDate+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+  const usable=row=>row.changePct!==null && (row.changeAsOfHkt.startsWith(reportDate)
+    || edition==='am' && row.changeAsOfHkt.startsWith(priorDate));
   // Do not round 0.9999% into a displayed 1% in the <1% group. Exact JS decimal
   // text is used only at a rounding boundary; ordinary values stay compact.
   const change=value=>Math.abs(value)<1&&Math.abs(Number(value.toFixed(2)))>=1?String(value):number(value);
@@ -265,7 +269,7 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   const summary=template(previousHtml,'xuan-etf-open-summary-v3');
   if(summary){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
   const cash=renderCashPlan(view.cashPlan), pending=state.decisions.filter(item=>item.status==='awaiting_user').length;
-  const edition={pm:'睡前版',adhoc:'临时版'}[view.edition];
+  const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
   const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi;
   const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head><body><!-- xuan-ib-handover:v1 -->
@@ -273,13 +277,13 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
-<div class="pane p1">${holdingsView(view.holdings,view.dataDate)}${fold('③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
+<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition)}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
 <div class="pane p2">${view.risk.map(card).join('')}</div>
 <div class="pane p3">${cash.detail}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 换仓触发检查',cardBody(view.rotation),true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${renderClassificationDisclosure()}`,false,'版别 · 取数时点 · 数据日 · 只读')}
-${fold('使用指南',`<ol class="brief-lines"><li><b>先看日期：</b>「已同步」是读取时间，不是数据时间；刷新只读取已发布报告。</li><li><b>怎么看：</b>概览看变化 → 风险看提醒 → 配置看现金参考。颜色不是买卖信号；小箭头可展开明细。</li><li><b>待办：</b>回应只记录意见，不自动交易；数字是待决定数量，琥珀色表示另有进度提醒。</li><li><b>ETF：</b>比较实际 A、协作方案 B、标普500基准 C；基线未建不排名，不保证收益。</li><li><b>临时报告：</b>确认后等待完成提示，勿重复点击；需已配置快捷指令，新手机可先只读查看。</li></ol><p class="sub">✓ 本期未触发 · ! 需留意 · ? 待核验 · — 未取得。所有报告、补仓参考及挂单提醒均不自动下单、撤单或转账。</p>`,false,'30 秒上手')}
+${fold('使用指南',`<ol class="brief-lines"><li><b>先看日期：</b>「已同步」是读取时间，不是数据时间；刷新只读取已发布报告。</li><li><b>怎么看：</b>概览看变化 → 风险看提醒 → 配置看现金参考。颜色不是买卖信号；小箭头可展开明细。</li><li><b>待办：</b>回应只记录意见，不自动交易；数字是待决定数量，琥珀色表示另有进度提醒。</li><li><b>ETF：</b>比较实际 A、协作方案 B、标普500基准 C；基线未建不排名，不保证收益。</li><li><b>自动更新：</b>周二至周六 08:00 上午版；周一至周五美股开市时启动睡前版。刷新只查看结果，不会启动新报告。</li></ol><p class="sub">✓ 本期未触发 · ! 需留意 · ? 待核验 · — 未取得。所有报告、补仓参考及挂单提醒均不自动下单、撤单或转账。</p>`,false,'30 秒上手')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
 ${stateTemplate}\n${cash.template}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.
