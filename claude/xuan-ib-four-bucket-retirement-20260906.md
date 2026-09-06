@@ -28,8 +28,10 @@ source identity, journal, publication, financial-write or fee-ledger safeguards.
 
 Past source HTML, dates, canonical transports, decision receipts and progress
 history are immutable. The verified loader removes retired current-management
-content from the active view, keeping it under a clearly retired historical
-fold. Original accepted decisions are historical records, not new user tasks;
+content from the active view. The later owner follow-up also removes the
+cancelled-feature/history entry from the current interface; retained display
+history is hidden, and original source reports remain unchanged. Original
+accepted decisions are historical records, not new user tasks;
 do not delete them or fabricate a completion receipt. The calculator and its
 tests remain available for historical reproducibility, not automatic use.
 

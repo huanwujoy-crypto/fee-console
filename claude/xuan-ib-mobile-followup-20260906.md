@@ -27,6 +27,21 @@ flags. Preserve quantity/price precision, currency when supplied, source dates,
 and the original signed report/decision receipts. This display migration does
 not create a new report, execute an order, or change report-generation cadence.
 
+### Mobile allocation reading (owner follow-up)
+
+Keep specific EXUS/EIMI/USSC cash amounts and sourced current/after/reference
+percentages visible in compact cards. USSC's 10% is a cash-budget share, never
+a permanent portfolio target. Show portfolio names and exact USD values as
+compact rows; move full IB NAV/source differences and other remarks to the
+configuration report notes. No recomputation or assumed funding settlement.
+
+Move only the non-actionable, unverified immediate-buying-power row into the
+execution-before-use notes. Keep the planning-only label visible. Reading this
+report does not itself require owner action; actual order execution still needs
+available-balance, pending-order and transfer-settlement checks. Missing planning
+amounts or other actionable warnings must remain visible. Hide the cancelled
+feature/history entry from the current interface without deleting source records.
+
 ## Classification authority
 
 The owner explicitly approves Webull AAOI standard T1, low/mid/high 60/80/100%,
