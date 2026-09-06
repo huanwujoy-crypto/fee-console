@@ -53,8 +53,11 @@ the guarded display migration below, the prior HTML must remain
 byte-semantically identical. An accepted/modified card may move from
 `待决定事项` to `已决定 / 待落实` only inside the two unique
 `xuan-ib-decision-group:v1:{awaiting_user|resolved}:{start|end}` marker pairs.
-The guard requires exact group titles/counts, exact visible status labels, and
-an otherwise unchanged card, including its recommendation body. Do not change
+The guard requires exact group titles/counts, exact visible status labels for
+newly resolved or edited cards, and an otherwise unchanged recommendation body.
+An existing card with unchanged status may retain legacy wording only when its
+complete raw HTML is byte-identical to the trusted previous card. Group
+placement and full-page immutable-content checks still apply. Do not change
 edition/date/as-of/amount/calculation text, unrelated cards, or add a new
 decision in a records-update. The
 commit subject remains `handover <trusted previous dataDate>` even when that

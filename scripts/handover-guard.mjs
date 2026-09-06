@@ -760,7 +760,9 @@ const normalizedDecisionCard = (cardHtml) => cardHtml
     '$1__VISIBLE_STATUS__$3__STATUS__$4'
   );
 
-const validateDecisionGroups = (documentHtml, decisionState) => {
+const validateDecisionGroups = (documentHtml, decisionState, previousHtml, previousState) => {
+  const previousCards = new Map(extractDecisionCards(previousHtml).map(card => [card.decisionId, card.html]));
+  const previousStatuses = new Map(previousState.decisions.map(item => [item.decisionId, item.status]));
   const ranges = new Map();
   let markerTotal = 0;
   for (const status of ['awaiting_user', 'resolved']) {
@@ -806,6 +808,12 @@ const validateDecisionGroups = (documentHtml, decisionState) => {
     if (card.start <= range.start || card.end >= range.end) {
       fail(`decision ${card.decisionId} is outside its required display group`);
     }
+    // Previously published cards may use legacy status wording. Only an exact,
+    // unchanged card with unchanged machine state inherits that wording. Newly
+    // resolved or edited cards still need canonical labels; the full-page
+    // immutable-content comparison below also remains mandatory.
+    if (previousStatuses.get(card.decisionId) === status
+        && previousCards.get(card.decisionId) === card.html) continue;
     const expectedResolvedLabel = status === 'rejected' ? '已拒绝 / 已结案'
       : status === 'superseded' ? '已取代 / 已结案' : '已决定 / 待落实';
     const resolvedLabelCount = (card.html.match(new RegExp(expectedResolvedLabel.replace(/ \/ /g, '\\s*\\/\\s*'), 'g')) || []).length;
@@ -1163,7 +1171,7 @@ if (continuityInputs.every(Boolean)) {
         const status = currentDecisions.get(previousDecision.decisionId)?.status;
         return previousDecision.status === 'awaiting_user' && ['accepted', 'modified'].includes(status);
       });
-      const hasDisplayGroups = validateDecisionGroups(html, currentDecisionState);
+      const hasDisplayGroups = validateDecisionGroups(html, currentDecisionState, previousHtml, previousDecisionState);
       if (requiresVisibleMigration && !hasDisplayGroups) {
         fail('accepted or modified records-update requires guarded decision display groups');
       }
