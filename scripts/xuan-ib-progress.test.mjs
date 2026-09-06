@@ -19,7 +19,9 @@ test('strict JSON rejects duplicate keys, trailing content and nesting overflow'
   assert.equal(parseProgressJson('{"a":[1,true,null,"text"]}').a[3], 'text');
 });
 test('all three original decisions stay accepted; progress is separate', () => {
-  assert.equal(state.decisions.filter(d=>d.status==='accepted').length,3);
+  const originalIds=[...new Set(ledger.events.map(e=>e.decisionId))];
+  assert.equal(originalIds.length,3);
+  for(const id of originalIds) assert.equal(state.decisions.find(d=>d.decisionId===id)?.status,'accepted');
   assert.equal(new Set(validateProgress(copy(ledger),state,null,now).events.map(e=>e.decisionId)).size,3);
 });
 test('user-only implementation requests require an explicit state and an actionable blocker', () => {

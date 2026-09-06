@@ -6,6 +6,7 @@ export const MOBILE_READING_CSS = `
 .kpi{container-type:inline-size;padding:14px!important;min-width:0}
 .kpi .big{font-size:clamp(18px,14cqi,32px)!important;white-space:nowrap!important;overflow-wrap:normal!important;letter-spacing:-.04em}
 .kpi .lab{font-size:13px!important;line-height:1.3}.mobile-state{display:block;font-size:12px;color:var(--mut);margin-top:5px}
+.mobile-cash-guidance{margin:8px 0 0;font-size:12px}.mobile-cash-guidance div{display:flex;justify-content:space-between;gap:4px;padding:3px 0}.mobile-cash-guidance dt,.mobile-cash-guidance dd{margin:0;white-space:nowrap}.mobile-cash-guidance dd{font-weight:750}
 .pane-notes{margin-top:20px!important}.pane-notes>summary{font-size:15px}.pane-notes .notes-section{padding:10px 0;border-bottom:1px solid var(--line)}
 .pane-notes p,.pane-notes li{font-size:14px!important;line-height:1.6}.pane-notes table{min-width:550px}
 .mobile-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.mobile-metrics div{padding:10px;background:var(--bg);border-radius:10px;min-width:0}.mobile-metrics dt{font-size:12px;color:var(--mut)}.mobile-metrics dd{margin:5px 0 0;font-weight:750;font-size:16px;white-space:nowrap}.mobile-metric-caveat{font-size:12px!important;color:#9a6500}
@@ -34,6 +35,10 @@ export function extractReadingMetrics(text) {
   return specs.flatMap(([label,re])=>{const m=text.match(re);return m?[[label,m[1]+(label==='持仓数量'?' 只':'')]]:[];});
 }
 
+export function extractCashGuidance(text){
+  return ['EXUS','EIMI','USSC'].flatMap(ticker=>{const match=text.match(new RegExp(`\\b${ticker}\\s*(\\$[\\d,]+(?:\\.\\d+)?|待回款后重算)`));return match?[[ticker,match[1]]]:[];});
+}
+
 export function simplifyPaneReading(doc) {
   if(!doc.createElement || doc.getElementById('xuan-pane-notes-p1'))return;
   const names=['概览','风险','配置','待办'];
@@ -56,8 +61,13 @@ export function simplifyPaneReading(doc) {
     const descriptions=[...kpi.children].filter(n=>n.matches('.sub,details'));
     const brief=descriptions.map(n=>n.textContent).join(' ');
     move(index===2?2:index===3?3:1,title,descriptions);
+    if(index===3){
+      const guidance=extractCashGuidance(brief);
+      if(guidance.length){const rows=doc.createElement('dl');rows.className='mobile-cash-guidance';
+        for(const [ticker,amount] of guidance){const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd');name.textContent=ticker;value.textContent=amount;pair.append(name,value);rows.append(pair);}kpi.append(rows);}
+    }
     const status=doc.createElement('small');status.className='mobile-state';
-    status.textContent=index===3?'参考金额 · 非下单':/提醒区间/.test(brief)?'提醒区间':/预警/.test(brief)?'需留意':'';
+    status.textContent=index===3?'现金优先 · 非下单':/提醒区间/.test(brief)?'提醒区间':/预警/.test(brief)?'需留意':'';
     if(status.textContent)kpi.append(status);
   });
   for(const [i,{pane}] of notes){
