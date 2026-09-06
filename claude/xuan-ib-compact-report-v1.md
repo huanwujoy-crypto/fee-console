@@ -1,4 +1,14 @@
-# Compact PM / ad-hoc pilot — v1
+# Compact report display — v1
+
+## 2026-09-06 owner update (takes precedence over historical pilot text)
+
+Manual ad-hoc generation is retired. No new manual trial is authorized by this
+document. AM now uses the same compact display renderer as PM; source readiness,
+scope, account authorization, guards and release requirements remain separate.
+This does not extend the adhoc-only association or weekly-minimal source pilot
+to AM/PM. Historical AM layout previews use dated published data, retain receipts,
+are explicitly non-published previews and cannot prove a scheduled run succeeded.
+The historical pilot details below document prior behavior, not reactivation.
 
 ## Scope and activation
 

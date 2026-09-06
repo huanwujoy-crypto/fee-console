@@ -594,7 +594,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-04\.2"/);
+  assert.match(loader, /loaderBuild = "2026-09-06\.1"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
   assert.match(loader, /storage\.setItem\(storageKey/);
@@ -612,29 +612,6 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.doesNotMatch(loader, /内容未校验/);
   assert.doesNotMatch(loader, /serviceWorker/);
   assert.doesNotMatch(loader, /<!--\s*xuan-ib-handover:v1\s*-->/);
-});
-
-test('the ad-hoc report control runs the private iPhone Shortcut without embedding credentials', () => {
-  const link = loader.match(/<button id="adhoc"[\s\S]*?<\/button>/)?.[0];
-  assert.ok(link, 'the fixed phone header must offer an ad-hoc report control');
-  assert.match(
-    loader,
-    /const adhocShortcutUrl = "shortcuts:\/\/run-shortcut\?name=XUAN-IB%20%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A"/
-  );
-  assert.doesNotMatch(link, /target="_blank"/);
-  assert.doesNotMatch(link, /href=/);
-  assert.match(link, />生成临时报告</);
-  assert.match(link, /确认后启动/);
-  assert.doesNotMatch(link, /[?&](?:token|secret|api[_-]?key)=/i);
-  assert.doesNotMatch(loader, /sk-ant-oat01-/);
-  assert.doesNotMatch(loader, /api\.anthropic\.com\/v1\/claude_code\/routines/);
-  assert.match(loader, /adhocButton\.addEventListener\("click", beginAdhocWait\)/);
-  assert.match(loader, /等待新报告；尚未确认任务启动/);
-  assert.match(loader, /发现新的临时报告/);
-  assert.match(loader, /waitPollMs = 15_000/);
-  assert.match(loader, /xuan-ib:adhoc-wait:v1/);
-  assert.match(loader, /window\.addEventListener\("focus"/);
-  assert.match(loader, /if \(activeWait\(\) && !expireWaits\(\)\) return loadLatest\(\)/);
 });
 
 test('the decision control uses one fixed Shortcut URL and never embeds report or user data', () => {
@@ -1394,7 +1371,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-04.2');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-06.1');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1464,32 +1441,6 @@ test('receipts for non-initial decisions or genuinely pre-click times stay pendi
   assert.equal(wait.baselines.length, 2);
 });
 
-test('ad-hoc and decision waits are mutually exclusive and share one refresh loop', async () => {
-  const html = reportHtml(
-    '2026-08-30',
-    '临时版',
-    decisionTemplate({decisions: [awaitingDecision()]})
-  );
-  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
-  const app = loaderHarness({
-    fetchImpl: async (url) => String(url).includes('latest.meta.json')
-      ? response({json: meta, bytes: []})
-      : response({json: null, bytes: Buffer.from(html)}),
-  });
-  await app.listeners.button.click();
-  await app.listeners.adhoc.click();
-  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
-
-  await app.listeners.decision.click({preventDefault: () => {}});
-  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
-  assert.ok(app.stored.has('xuan-ib:decision-wait:v1'));
-
-  await app.listeners.adhoc.click();
-  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
-  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
-  assert.equal(app.intervals.filter(({delay}) => delay === 15_000).length, 1);
-});
-
 test('decision pending survives reload and refresh triggers without treating its baseline as complete', async () => {
   const html = reportHtml(
     '2026-08-30',
@@ -1521,206 +1472,6 @@ test('decision pending survives reload and refresh triggers without treating its
   await reloaded.listeners.window.focus();
   assert.equal(requestCount, beforeFocus + 2);
   assert.ok(stored.has('xuan-ib:decision-wait:v1'));
-});
-
-function adhocTestApp(options = {}) {
-  const html = reportHtml('2026-08-28', '早间版', decisionTemplate({decisions: [awaitingDecision()]}));
-  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
-  return loaderHarness({fetchImpl: async (url) => String(url).includes('latest.meta.json')
-    ? response({json: meta, bytes: []}) : response({json: null, bytes: Buffer.from(html)}), ...options});
-}
-
-test('ad-hoc cancel neither launches nor clears an existing decision wait', async () => {
-  const app = adhocTestApp({confirm: () => false});
-  await app.listeners.button.click();
-  app.listeners.decision.click({preventDefault() {}});
-  const before = app.stored.get('xuan-ib:decision-wait:v1');
-  let prevented = false;
-  await app.listeners.adhoc.click({preventDefault() { prevented = true; }});
-  assert.equal(prevented, true);
-  assert.equal(app.navigations.length, 1, 'only the earlier decision handoff happened');
-  assert.equal(app.stored.get('xuan-ib:decision-wait:v1'), before);
-  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
-  assert.equal(app.adhoc.disabled, false);
-  assert.match(app.confirmations[0], /此手机需已配置/);
-});
-
-test('ad-hoc rapid repeat is ignored without resetting the deadline, including unavailable storage', async () => {
-  for (const storageBlocked of [false, true]) {
-    const app = adhocTestApp({storageBlocked});
-    await app.listeners.button.click();
-    const first = app.listeners.adhoc.click();
-    const originalWait = app.stored.get('xuan-ib:adhoc-wait:v1');
-    assert.equal(app.adhoc.disabled, true, 'lock before any asynchronous read');
-    app.advanceTime(500);
-    await app.listeners.adhoc.click();
-    await first;
-    assert.equal(app.confirmations.length, 1);
-    assert.equal(app.navigations.length, 1);
-    assert.equal(app.stored.get('xuan-ib:adhoc-wait:v1'), originalWait);
-    assert.equal(app.adhocLabel.textContent, '等待报告');
-    assert.equal(app.adhocHint.textContent, '请勿重复点击');
-    assert.equal(app.stopAdhoc.hidden, false);
-    assert.doesNotMatch(app.status.textContent, /正在生成|已启动|已完成/);
-  }
-});
-
-test('ad-hoc reload and BFCache never launch the Shortcut again and remain disabled', async () => {
-  const stored = new Map();
-  const first = adhocTestApp({stored});
-  await first.listeners.button.click();
-  await first.listeners.adhoc.click();
-  const restored = adhocTestApp({stored});
-  assert.equal(restored.adhoc.disabled, true);
-  await restored.listeners.window.pageshow({persisted: true});
-  await restored.listeners.window.focus();
-  await restored.listeners.adhoc.click();
-  assert.equal(restored.adhoc.disabled, true);
-  assert.equal(restored.navigations.length, 0);
-  assert.equal(restored.confirmations.length, 0);
-});
-
-test('stop waiting needs confirmation and never cancels or relaunches a backend task', async () => {
-  let accept = true;
-  const app = adhocTestApp({confirm: () => accept});
-  await app.listeners.button.click();
-  await app.listeners.adhoc.click();
-  const html = app.frame.srcdoc;
-  accept = false;
-  app.listeners.stopAdhoc.click();
-  assert.equal(app.adhoc.disabled, true);
-  accept = true;
-  app.listeners.stopAdhoc.click();
-  assert.equal(app.adhoc.disabled, false);
-  assert.equal(app.stopAdhoc.hidden, true);
-  assert.equal(app.frame.srcdoc, html);
-  assert.equal(app.navigations.length, 1);
-  assert.match(app.status.textContent, /后台任务不会因此取消/);
-});
-
-test('ad-hoc timeout releases the local button without auto-retrying or claiming generation failure', async () => {
-  const app = adhocTestApp();
-  await app.listeners.adhoc.click();
-  app.advanceTime(20 * 60_000 + 1);
-  await app.intervals.find(({delay}) => delay === 15_000).callback();
-  assert.equal(app.adhoc.disabled, false);
-  assert.equal(app.stopAdhoc.hidden, true);
-  assert.equal(app.navigations.length, 1);
-  assert.match(app.status.textContent, /未发现新临时报告；请先检查 Claude/);
-});
-
-test('invalid future or unbounded saved waits cannot permanently disable the ad-hoc control', () => {
-  const now = Date.parse('2026-08-28T06:00:00Z');
-  for (const [startedAt, deadline] of [[now + 1, now + 1000], [now, now + 21 * 60_000]]) {
-    const stored = new Map([['xuan-ib:adhoc-wait:v1', JSON.stringify({cacheVersion: 1, startedAt, deadline, baseline: null})]]);
-    const app = adhocTestApp({stored});
-    assert.equal(app.adhoc.disabled, false);
-    assert.equal(app.stopAdhoc.hidden, true);
-    assert.equal(stored.has('xuan-ib:adhoc-wait:v1'), false);
-    assert.equal(app.navigations.length, 0);
-  }
-});
-
-test('a synchronous Shortcut handoff failure releases the button with an honest message', async () => {
-  const app = adhocTestApp({handoffBlocked: true});
-  await app.listeners.adhoc.click();
-  assert.equal(app.adhoc.disabled, false);
-  assert.equal(app.stopAdhoc.hidden, true);
-  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
-  assert.match(app.status.textContent, /未能打开快捷指令/);
-});
-
-test('switching to a decision cannot silently drop an ad-hoc wait', async () => {
-  let accept = true;
-  const app = adhocTestApp({confirm: () => accept});
-  await app.listeners.button.click();
-  await app.listeners.adhoc.click();
-  accept = false;
-  app.listeners.decision.click({preventDefault() {}});
-  assert.equal(app.adhoc.disabled, true);
-  assert.equal(app.navigations.length, 1);
-  assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
-});
-
-test('the ad-hoc launcher waits for a newly verified publication and then renders it automatically', async () => {
-  const firstHtml = reportHtml('2026-08-28', '早间版', 'before-ad-hoc');
-  const firstMeta = metaFor(firstHtml, {sourceCommitEpoch: 1_788_000_000});
-  const nextHtml = reportHtml('2026-08-28', '临时版', 'completed-ad-hoc');
-  const nextMeta = metaFor(nextHtml, {sourceCommitEpoch: 1_788_000_060});
-  let current = {html: firstHtml, meta: firstMeta};
-  const requests = [];
-  const app = loaderHarness({
-    fetchImpl: async (url) => {
-      requests.push(String(url));
-      return String(url).includes('latest.meta.json')
-        ? response({json: current.meta, bytes: []})
-        : response({json: null, bytes: Buffer.from(current.html)});
-    },
-  });
-
-  await app.listeners.button.click();
-  assert.match(app.frame.srcdoc, /before-ad-hoc/);
-
-  await app.listeners.adhoc.click();
-  assert.match(app.status.textContent, /^等待新报告；尚未确认任务启动/);
-  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
-  assert.match(app.frame.srcdoc, /before-ad-hoc/);
-
-  current = {html: nextHtml, meta: nextMeta};
-  const poll = app.intervals.find(({delay}) => delay === 15_000);
-  assert.ok(poll, 'the loader must poll while an ad-hoc report is pending');
-  await poll.callback();
-
-  assert.match(app.frame.srcdoc, /completed-ad-hoc/);
-  assert.equal(app.status.textContent, '发现新的临时报告 · 已自动刷新');
-  assert.equal(app.stored.has('xuan-ib:adhoc-wait:v1'), false);
-  assert.equal(app.adhoc.disabled, false);
-  assert.equal(app.stopAdhoc.hidden, true);
-  assert.equal(requests.filter((url) => url.includes('latest.meta.json')).length, 3);
-  assert.equal(requests.filter((url) => url.includes('latest.html')).length, 3);
-});
-
-test('the ad-hoc wait survives a phone page reload and never treats the baseline as complete', async () => {
-  const html = reportHtml('2026-08-28', '早间版', 'same-baseline');
-  const meta = metaFor(html, {sourceCommitEpoch: 1_788_000_000});
-  const stored = new Map();
-  const fetchImpl = async (url) => String(url).includes('latest.meta.json')
-    ? response({json: meta, bytes: []})
-    : response({json: null, bytes: Buffer.from(html)});
-  const first = loaderHarness({fetchImpl, stored});
-  await first.listeners.button.click();
-  await first.listeners.adhoc.click();
-  assert.ok(stored.has('xuan-ib:adhoc-wait:v1'));
-
-  const reloaded = loaderHarness({fetchImpl, stored});
-  assert.match(reloaded.status.textContent, /^等待新报告；尚未确认任务启动/);
-  await reloaded.listeners.button.click();
-  assert.match(reloaded.status.textContent, /^等待新报告；尚未确认任务启动/);
-  assert.match(reloaded.frame.srcdoc, /same-baseline/);
-  assert.ok(stored.has('xuan-ib:adhoc-wait:v1'));
-});
-
-test('a newer scheduled publication cannot falsely complete an ad-hoc request', async () => {
-  const firstHtml = reportHtml('2026-08-28', '早间版', 'before-request');
-  const firstMeta = metaFor(firstHtml, {sourceCommitEpoch: 1_788_000_000});
-  const scheduledHtml = reportHtml('2026-08-28', '睡前版', 'new-scheduled-report');
-  const scheduledMeta = metaFor(scheduledHtml, {sourceCommitEpoch: 1_788_000_060});
-  let current = {html: firstHtml, meta: firstMeta};
-  const app = loaderHarness({
-    fetchImpl: async (url) => String(url).includes('latest.meta.json')
-      ? response({json: current.meta, bytes: []})
-      : response({json: null, bytes: Buffer.from(current.html)}),
-  });
-  await app.listeners.button.click();
-  await app.listeners.adhoc.click();
-
-  current = {html: scheduledHtml, meta: scheduledMeta};
-  const poll = app.intervals.find(({delay}) => delay === 15_000);
-  await poll.callback();
-
-  assert.match(app.frame.srcdoc, /new-scheduled-report/);
-  assert.match(app.status.textContent, /^等待新报告；尚未确认任务启动/);
-  assert.ok(app.stored.has('xuan-ib:adhoc-wait:v1'));
 });
 
 test('a schema-v1 metadata and HTML pair is rendered only after its exact Git blob matches', async () => {
@@ -2715,3 +2466,25 @@ test('fold ownership rejects reserved IDs, misplaced cards and ambiguous groups 
   }
 });
 }
+
+test('retired manual report entry is absent; only decision Shortcut remains', () => {
+  assert.doesNotMatch(loader, /id="(?:adhoc|stop-adhoc)"|beginAdhocWait|adhocShortcutUrl/);
+  assert.doesNotMatch(loader, /%E4%B8%B4%E6%97%B6%E6%8A%A5%E5%91%8A/);
+  assert.match(loader, /decisionButton.addEventListener/);
+});
+test('obsolete generation wait is removed without dropping verified data or decision receipts', async () => {
+  for (const saved of ['{}', 'invalid-json']) {
+    const stored = new Map([['xuan-ib:adhoc-wait:v1', saved]]);
+    const html = reportHtml('2026-08-28', '早间版', decisionTemplate({decisions:[awaitingDecision()]}));
+    const meta = metaFor(html);
+    const app = loaderHarness({stored,fetchImpl:async url=>String(url).includes('latest.meta.json')
+      ? response({json:meta,bytes:[]}) : response({json:null,bytes:Buffer.from(html)})});
+    await app.listeners.button.click();
+    assert.equal(stored.has('xuan-ib:adhoc-wait:v1'),false);
+    assert.ok(stored.has('xuan-ib:last-verified:v1'));
+    assert.equal(app.navigations.length,0);
+    app.listeners.decision.click({preventDefault(){}});
+    assert.ok(stored.has('xuan-ib:decision-wait:v1'));
+    assert.equal(app.navigations.length,1);
+  }
+});

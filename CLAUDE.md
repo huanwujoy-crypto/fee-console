@@ -74,6 +74,23 @@ Financial systems are read-only for this workflow. Never place, modify, or cance
 orders, and never initiate transfers or write to IB, Sharesight, or another
 financial account.
 
+## Scheduled-only reports and AM display (owner requested 2026-09-06)
+
+The owner retired the manual `生成临时报告` feature. Do not fire, restart or
+re-enable its Routine, use its Shortcut, or initiate another adhoc trial under
+older approval. Keep AM and PM schedules and decision-response recording.
+Existing historical adhoc reports remain readable; their integrity, receipts
+and scheduling semantics must not be rewritten or purged.
+
+Use the shared compact renderer for AM display as well as PM: concise numbered
+summaries, risk/status labels, buy/sell grouping with nearest-price sorting,
+folded details and the short guide. This is display support, NOT an extension
+of the adhoc-only account-association or weekly-minimal collection pilot.
+AM still needs its own existing complete source evidence and normal protected
+publication. A historical Saturday layout preview keeps its original dates,
+must be explicitly labeled as a preview, and is not a fresh run or a replacement
+for the newer trusted latest pair.
+
 ## Weekly Sharesight cadence (owner confirmed 2026-09-06)
 
 Read `claude/xuan-ib-weekly-ss-snapshot-v1.md`. The approved target is five live
@@ -156,7 +173,7 @@ XUAN-IB report. Dates and phone labels use `Asia/Hong_Kong`; PM follows
 - Retain a short PM report at that same New York time on full market holidays;
   label it closed-market, not post-opening. Early closes do not change the start.
 - AM / 早间版: Tuesday-Saturday at 08:00 HKT.
-- Ad hoc / 临时版: only when manually requested; it may run at any time.
+- Ad hoc / 临时版: retired 2026-09-06; retain historical parsing only.
 
 Every successful edition uses the same candidate, validation, promotion, Pages,
 and fixed-mobile-link path above. An ad-hoc edition may become the newest phone

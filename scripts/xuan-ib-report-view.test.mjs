@@ -81,7 +81,7 @@ test('escapes injection in every free text field, never interprets HTML',()=>{
   const html=renderReport(view,context);assert.ok(html.includes('&lt;script&gt;'));assert.ok(html.includes('&lt;img onerror=&quot;bad()&quot;&gt;'));assert.ok(!html.includes('<script>'));
 });
 test('rejects unsupported schemas, raw credentials, oversized narrative, NaN and duplicate holdings',()=>{
-  for(const edit of [v=>{v.token='secret';},v=>{v.summary[0]='Bearer secret';},v=>{v.summary[0]='a'.repeat(151);},v=>{v.kpis[0].value=NaN;},v=>{v.holdings.rows.push({...v.holdings.rows[0]});},v=>{v.edition='am';}]){
+  for(const edit of [v=>{v.token='secret';},v=>{v.summary[0]='Bearer secret';},v=>{v.summary[0]='a'.repeat(151);},v=>{v.kpis[0].value=NaN;},v=>{v.holdings.rows.push({...v.holdings.rows[0]});},v=>{v.edition='unknown';}]){
     const view=fixture();edit(view);assert.throws(()=>validateReportView(view));
   }
 });
@@ -287,3 +287,29 @@ test('text retry cannot opportunistically rewrite already-valid summary text',()
 });
 
 export { fixture, context };
+
+test('AM uses the same compact layout without broadening temporary account authorization',()=>{
+  const view=fixture();view.edition='am';
+  const html=renderReport(view,context);
+  assert.ok(html.includes('· 早间版 ·'));
+  assert.ok(html.includes('<details><summary>使用指南'));
+  assert.ok(html.includes('刷新只查看结果，不会启动新报告'));
+  assert.ok(!html.includes('<b>临时报告：</b>'));
+  assert.ok(html.includes(priorTemplate));
+  assert.throws(()=>renderReport(view,{...context,manualAccountConsent:true}),/adhoc only/);
+});
+
+test('AM previous-HKT-day closing quotes keep their timestamps; older and PM quotes stay unverified',()=>{
+  const view=fixture();view.edition='am';
+  const prior=new Date(Date.parse(view.dataDate+'T00:00:00Z')-86400000).toISOString().slice(0,10);
+  const older=new Date(Date.parse(view.dataDate+'T00:00:00Z')-2*86400000).toISOString().slice(0,10);
+  view.holdings.rows[0].changeAsOfHkt=prior+' 23:35 HKT';
+  view.holdings.rows[0].quoteStatus='delayed';
+  let html=renderReport(view,context);
+  assert.ok(html.includes('价格变化 ≥1%（1）'));assert.ok(html.includes(prior+' 23:35 HKT'));
+  assert.ok(html.includes('③ 接下来会发生什么'));
+  view.holdings.rows[0].changeAsOfHkt=older+' 23:35 HKT';
+  assert.ok(renderReport(view,context).includes('价格变化 ≥1%（0）'));
+  view.edition='pm';view.holdings.rows[0].changeAsOfHkt=prior+' 23:35 HKT';
+  assert.ok(renderReport(view,context).includes('价格变化 ≥1%（0）'));
+});
