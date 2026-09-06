@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,MOBILE_READING_CSS} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -24,4 +24,17 @@ test('header guide matches shared wording and runs only after verification',()=>
  assert.ok(loader.indexOf('class="header-guide"')<loader.indexOf('id="refresh"'));
  const module=fs.readFileSync(new URL('./xuan-ib-mobile-display.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(module,/fetch\(|localStorage|sessionStorage|innerHTML\s*=/);
+});
+test('critical replenishment amounts remain visible without recomputing or guessing',()=>{
+ assert.deepEqual(extractCashGuidance('EXUS $550,579 EIMI $128,701 USSC $75,476'),[['EXUS','$550,579'],['EIMI','$128,701'],['USSC','$75,476']]);
+ assert.deepEqual(extractCashGuidance('EXUS 未取得 USSC 待回款后重算'),[['USSC','待回款后重算']]);
+ assert.deepEqual(extractCashGuidance('无有效补仓数值'),[]);
+});
+test('reading metrics copy labelled values exactly, without inferring missing values',()=>{
+ assert.deepEqual(extractReadingMetrics('中情景 21.76% · 分母 $6,198,031.57'),[['AI 中情景','21.76%'],['三账户总额','$6,198,031.57']]);
+ assert.deepEqual(extractReadingMetrics('26 只 · 权威市值 $4,420,972'),[['持仓数量','26 只'],['持仓市值','$4,420,972']]);
+ assert.deepEqual(extractReadingMetrics('行情未取得，低情景近似 16.20%'),[]);
+ assert.deepEqual(extractReadingMetrics('HL 17.75% / 40% · 常青基金 15.93%'),[['HL 当前 / 目标','17.75% / 40%'],['常青基金','15.93%']]);
+ assert.match(MOBILE_READING_CSS,/white-space:nowrap!important/);
+ assert.match(MOBILE_READING_CSS,/repeat\(2,minmax\(0,1fr\)\)/);
 });
