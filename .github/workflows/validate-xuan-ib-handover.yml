@@ -28,7 +28,7 @@ jobs:
           trusted_root="$RUNNER_TEMP/xuan-ib-trusted"
           mkdir -p "$trusted_root"
           git archive origin/main -- scripts | tar -x -C "$trusted_root"
-          git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json | tar -x -C "$trusted_root"
+          git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json claude/xuan-ib-classification-delegation-v1.json | tar -x -C "$trusted_root"
           for required in \
             scripts/handover-guard.mjs \
             scripts/xuan-ib-account-association.mjs \
@@ -105,7 +105,7 @@ jobs:
           if grep -Eiq '<!--[[:space:]]*xuan-ib-records-update:v1[[:space:]]*-->' xuan-ib/index.html; then
             records_update=true
           fi
-          if [[ "$records_update" == true ]]; then
+          if [[ "$records_update" == true ]] || grep -Fq '<!-- xuan-ib-aaoi-snapshot-correction:v1 -->' xuan-ib/index.html; then
             if [[ "$data_date" != "$previous_data_date" ]]; then
               echo 'Records-update subject must preserve the trusted previous data date.' >&2
               exit 1

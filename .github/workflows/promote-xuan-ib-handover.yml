@@ -190,7 +190,9 @@ jobs:
             if (( records_marker_count > 0 )); then
               records_update=true
             fi
-            if [[ "$records_update" == true ]]; then
+            correction_marker_count=$(git show "$candidate_ref:xuan-ib/index.html" |
+              grep -Fc '<!-- xuan-ib-aaoi-snapshot-correction:v1 -->' || true)
+            if [[ "$records_update" == true ]] || (( correction_marker_count > 0 )); then
               if [[ "$data_date" != "$source_data_date" ]]; then
                 continue
               fi

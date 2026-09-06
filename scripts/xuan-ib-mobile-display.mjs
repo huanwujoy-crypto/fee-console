@@ -2,6 +2,8 @@
 import {retireFourBucketDisplay} from './xuan-ib-four-bucket-retirement.mjs';
 import {improveOrderCards,ORDER_CARDS_CSS} from './xuan-ib-order-cards.mjs';
 import {improveAllocationCards,ALLOCATION_CARDS_CSS} from './xuan-ib-allocation-cards.mjs';
+import {simplifyReportNotes} from './xuan-ib-routine-reading.mjs';
+export {organizeRoutineRecords} from './xuan-ib-routine-reading.mjs';
 export const GUIDE_BODY = `<ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒与现金参考，箭头展开详情。</li><li><b>待办</b>：只处理需要你的事项；挂单仅提醒，不自动撤单。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：读取已发布结果，不生成新报告。上午版周二至周六 08:00；睡前版美股开市时启动。</li></ol><p>颜色是提醒，不是交易指令；所有页面均不自动买卖或转账。</p>`;
 
 export const MOBILE_READING_CSS = `
@@ -200,4 +202,5 @@ export function improveMobileDisplay(doc) {
   improveOrderCards(doc);
   retireFourBucketDisplay(doc);
   improveAllocationCards(doc);
+  simplifyReportNotes(doc);
 }
