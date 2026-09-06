@@ -1,5 +1,12 @@
 # XUAN-IB handover publication contract
 
+## Owner mobile and classification update (2026-09-06)
+
+Read `claude/xuan-ib-mobile-followup-20260906.md` before preparing reports.
+It supersedes the old rotation-trigger requirement: retain order reminders
+only. It also records delegated evidence-supported classification and the
+explicit AAOI T1 approval, without changing trading or publication authority.
+
 Any complete XUAN-IB handover produced from this repository—scheduled, Run now,
 manual, recovery, or ad hoc—must enter the same trusted publication path.
 

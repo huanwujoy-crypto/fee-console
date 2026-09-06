@@ -7,6 +7,7 @@ import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { validateAssociationReceipt, renderAssociationReceipt, renderAssociationDisclosure } from './xuan-ib-account-association.mjs';
 import { groupOrders } from './xuan-ib-order-view.mjs';
+import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
 import { parseEtfSummary } from './xuan-ib-etf-summary-transport.mjs';
@@ -171,7 +172,7 @@ function holdingsView(holdings, reportDate, edition) {
   // text is used only at a rounding boundary; ordinary values stay compact.
   const change=value=>Math.abs(value)<1&&Math.abs(Number(value.toFixed(2)))>=1?String(value):number(value);
   const groups=[holdings.rows.filter(row=>usable(row)&&Math.abs(row.changePct)>=1),holdings.rows.filter(row=>usable(row)&&Math.abs(row.changePct)<1),holdings.rows.filter(row=>!usable(row))];
-  const rows = items => `<div class="tblwrap"><table style="min-width:480px;overflow-wrap:normal"><thead><tr><th>标的</th><th>估值价</th><th>日涨跌</th><th>行情时点</th><th>市值 $</th></tr></thead><tbody>${items.map(row=>`<tr><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td class="${direction(usable(row)?row.changePct:null)}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${change(row.changePct)}%${usable(row)?'':'（旧值）'}`}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td><td>${number(row.marketValueUsd,0)}</td></tr>`).join('')}</tbody></table></div>`;
+  const rows = items => `<div class="tblwrap"><table class="mobile-holdings"><thead><tr><th>标的</th><th>市值 $</th><th>日涨跌</th><th>估值价</th><th>行情时点</th></tr></thead><tbody>${[...items].sort((a,b)=>(b.marketValueUsd??-Infinity)-(a.marketValueUsd??-Infinity)).map(row=>`<tr><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${direction(usable(row)?row.changePct:null)}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${change(row.changePct)}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`).join('')}</tbody></table></div>`;
   return `<section class="card"><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
 }
 
@@ -209,6 +210,8 @@ export const COMPACT_RESPONSIVE_CSS = `
 .tabbar label[for="s4"] .xuan-progress-nav-attention:not([hidden]){font-size:0;padding:0;width:7px;height:7px;border-radius:50%;background:#b7791f}
 .brief-lines{padding-left:1.5em;line-height:1.6}.brief-lines li{margin:6px 0}
 .tblwrap table{min-width:460px}.tblwrap td:not(:first-child){white-space:nowrap;overflow-wrap:normal}
+.mobile-holdings{min-width:640px!important;table-layout:fixed}.mobile-holdings th:first-child,.mobile-holdings td:first-child{width:100px}.mobile-holdings th:nth-child(2),.mobile-holdings td:nth-child(2){width:110px;font-weight:650}
+.mobile-guide{margin:0 0 12px auto;max-width:520px}.mobile-guide>summary{color:#6941ba}.mobile-guide ol{padding-left:24px;line-height:1.55;font-size:15px}.mobile-guide li{margin:8px 0}
 .order-table table{min-width:300px}.order-table td:first-child{min-width:130px}.order-review{color:#a16207;font-weight:650}
 .tblwrap table[data-columns="2"],.tblwrap table[data-columns="3"]{min-width:300px}
 .brief-signal{padding:10px 12px;border-left:3px solid var(--line);border-radius:8px}
@@ -273,17 +276,16 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
   const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi;
   const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head><body><!-- xuan-ib-handover:v1 -->
-<input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
+<input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary>${GUIDE_BODY}</details><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition)}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
 <div class="pane p2">${view.risk.map(card).join('')}</div>
 <div class="pane p3">${cash.detail}${view.allocation.map(card).join('')}</div>
-<div class="pane p4">${fold('⑥ 换仓触发检查',cardBody(view.rotation),true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
+<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${renderClassificationDisclosure()}`,false,'版别 · 取数时点 · 数据日 · 只读')}
-${fold('使用指南',`<ol class="brief-lines"><li><b>先看日期：</b>「已同步」是读取时间，不是数据时间；刷新只读取已发布报告。</li><li><b>怎么看：</b>概览看变化 → 风险看提醒 → 配置看现金参考。颜色不是买卖信号；小箭头可展开明细。</li><li><b>待办：</b>回应只记录意见，不自动交易；数字是待决定数量，琥珀色表示另有进度提醒。</li><li><b>ETF：</b>比较实际 A、协作方案 B、标普500基准 C；基线未建不排名，不保证收益。</li><li><b>自动更新：</b>周二至周六 08:00 上午版；周一至周五美股开市时启动睡前版。刷新只查看结果，不会启动新报告。</li></ol><p class="sub">✓ 本期未触发 · ! 需留意 · ? 待核验 · — 未取得。所有报告、补仓参考及挂单提醒均不自动下单、撤单或转账。</p>`,false,'30 秒上手')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
 ${stateTemplate}\n${cash.template}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.

@@ -55,7 +55,7 @@ test('synthetic compact report passes unchanged trusted guard and native menu',(
   assert.equal(buildDecisionMenu({html,meta:{...previousMeta,htmlBlob:reportHtmlBlob(html)}}).pending.length,priorState.decisions.filter(item=>item.status==='awaiting_user').length);
   assert.ok(html.includes(priorTemplate),'unchanged entire decision template bytes');
   assert.ok(!/<script\b|<form\b|<button\b/i.test(html));
-  assert.ok(html.includes('<details open><summary>⑥ 换仓触发检查'));
+  assert.ok(html.includes('<details open><summary>⑥ 挂单提醒'));
   assert.ok(html.includes('<details><summary>三行摘要'));
 });
 test('known >=1%, small changes and missing quotes are disjoint and counted',()=>{
@@ -259,7 +259,7 @@ test('compact cards show source-backed status/action, short tables, folded detai
   const html=renderReport(view,context);
   assert.ok(html.includes('— 未取得'));assert.ok(html.includes('下一步：待核实'));
   assert.ok(html.includes('<details><summary>详细说明'));assert.ok(html.includes('更多数据（2 行）'));
-  assert.ok(html.includes('<details><summary>使用指南'));assert.ok(html.includes('「已同步」是读取时间，不是数据时间'));
+  assert.ok(html.includes('<details class="mobile-guide"><summary>使用指南'));assert.ok(html.includes('先看数据日期'));
   view.risk[0].brief.action='buy';assert.throws(()=>renderReport(view,context),/brief action/);
 });
 test('structured orders are grouped, escaped, fresh-quoted and do not infer cancellation',()=>{
@@ -288,12 +288,22 @@ test('text retry cannot opportunistically rewrite already-valid summary text',()
 
 export { fixture, context };
 
+test('holdings keep change groups, sort each by market value and expose value second',()=>{
+ const view=fixture();view.holdings.rows.push({...view.holdings.rows[0],symbol:'LARGE',marketValueUsd:900});
+ const html=renderReport(view,context),pane=html.split('<div class="pane p1">')[1].split('<div class="pane p2">')[0];
+ assert.match(pane,/<th>标的<\/th><th>市值 \$<\/th><th>日涨跌/);
+ assert.ok(pane.indexOf('LARGE')<pane.indexOf('TESTA'));
+ assert.match(pane,/其它持仓（1）/);assert.match(pane,/涨跌数据待核验（1）/);
+ assert.doesNotMatch(html,/⑥ 换仓触发检查/);assert.match(html,/不作换仓触发判定/);
+ assert.ok(html.indexOf('使用指南')<html.indexOf('三行摘要'));
+});
+
 test('AM uses the same compact layout without broadening temporary account authorization',()=>{
   const view=fixture();view.edition='am';
   const html=renderReport(view,context);
   assert.ok(html.includes('· 早间版 ·'));
-  assert.ok(html.includes('<details><summary>使用指南'));
-  assert.ok(html.includes('刷新只查看结果，不会启动新报告'));
+  assert.ok(html.includes('<details class="mobile-guide"><summary>使用指南'));
+  assert.ok(html.includes('读取已发布结果，不生成新报告'));
   assert.ok(!html.includes('<b>临时报告：</b>'));
   assert.ok(html.includes(priorTemplate));
   assert.throws(()=>renderReport(view,{...context,manualAccountConsent:true}),/adhoc only/);
