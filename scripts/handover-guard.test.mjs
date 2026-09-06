@@ -958,6 +958,40 @@ test('records-update accepts three decisions resolved together with the zero bad
   assert.match(wrongAria.stderr, /aria label must match its badge/);
 });
 
+test('records-update inherits only byte-identical legacy cards with unchanged status', () => {
+  const oldId = 'D-20260829-MRVL-CLASS';
+  const newId = 'D-20260904-AAOI-AITIER';
+  const oldReceipt = receipt();
+  const newReceipt = receipt({ decisionId: newId, receiptId: 'R-20260906-140000-B2C3D4E5',
+    recordedAtHkt: '2026-09-06T14:00:00+08:00' });
+  const legacyCard = `<details class="dcard" id="${oldId}" data-decision-id="${oldId}" data-decision-status="accepted"><summary>历史意见已落实</summary><div>历史正文不改</div></details>`;
+  const replaceOldCard = html => html.replace(new RegExp(`<details class="dcard" id="${oldId}"[\\s\\S]*?<\\/details>`), legacyCard);
+  const previous = replaceOldCard(withDecisionDisplayGroups({
+    decisions: [decision(oldId, 'accepted'), decision(newId, 'awaiting_user')], receipts: [oldReceipt],
+  }));
+  const current = replaceOldCard(withDecisionDisplayGroups({
+    decisions: [decision(oldId, 'accepted'), decision(newId, 'accepted')],
+    receipts: [oldReceipt, newReceipt], recordsUpdate: true,
+  }));
+  const continuity = { previousHtml: previous, sourceSha, htmlBlob };
+  const result = run(current, '2026-08-25', continuity);
+  assert.equal(result.status, 0, result.stderr);
+  for (const bad of [
+    current.replace('历史正文不改', '历史正文已改'),
+    current.replace(legacyCard, legacyCard + legacyCard),
+    current.replace('建议 B · 已决定 / 待落实', '建议 B · 待 Wu 审核'),
+    current.replace('<code>accepted</code>', '<code>awaiting_user</code>'),
+    current.replace('组合总额 $1,000', '组合总额 $9,000'),
+    current.replace(legacyCard, '').replace(decisionGroupMarkerForTest('awaiting_user', 'end'),
+      legacyCard + decisionGroupMarkerForTest('awaiting_user', 'end')),
+  ]) assert.notEqual(run(bad, '2026-08-25', continuity).status, 0);
+  // A formerly pending card cannot inherit its old pending labels after acceptance.
+  const pendingCard = previous.match(new RegExp(`<details class="dcard" id="${newId}"[\\s\\S]*?<\\/details>`))[0];
+  const badNew = current.replace(new RegExp(`<details class="dcard" id="${newId}"[\\s\\S]*?<\\/details>`),
+    pendingCard.replace('data-decision-status="awaiting_user"', 'data-decision-status="accepted"'));
+  assert.notEqual(run(badNew, '2026-08-25', continuity).status, 0);
+});
+
 test('records-update preserves an inherited canonical policy-v2 section byte for byte', () => {
   const previous = withPolicySection(withDecisionDisplayGroups({
     decisions: [decision('D-20260829-MRVL-CLASS', 'awaiting_user')],
