@@ -13,6 +13,7 @@ import { validateReportView } from './xuan-ib-report-view.mjs';
 import { runPrepareCli } from './xuan-ib-report-prepare.mjs';
 import { loadTrustedAssociationPolicy } from './xuan-ib-account-association.mjs';
 import { startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
+import { isWeeklyMode, isWeeklyStage } from './xuan-ib-weekly-snapshot.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const fail = code => { throw new Error(`Minimal prepare: ${code}`); };
@@ -43,11 +44,13 @@ export function prepareMinimalRun(dir, { journalPath,
   const outputNames = ['view.json', 'sources.json', 'candidate.html'];
   if (outputNames.some(name => fs.existsSync(path.join(dir, name)))) fail('OUTPUT_ALREADY_EXISTS');
   const journal = showRunJournal(journalPath);
+  const input = readCaptureJson(path.join(dir, 'input.json'));
+  const weekly = isWeeklyMode(input);
   if (journal.timing.runningStages.length || journal.stages.length !== 3
-    || !['bootstrap', 'ib-read', 'sharesight-read'].every(name => journal.stages.some(stage => stage.name === name && stage.status === 'ok'))) {
+    || !['bootstrap', 'ib-read', 'sharesight-read'].every(name => journal.stages.some(stage => stage.name === name
+      && (weekly && name === 'sharesight-read' ? isWeeklyStage(stage) : stage.status === 'ok')))) {
     fail('EXACT_COMPLETED_READ_STAGES_REQUIRED');
   }
-  const input = readCaptureJson(path.join(dir, 'input.json'));
   const associationReceipt = readCaptureJson(path.join(dir, 'association.json'), 16_384);
   if (input.edition !== 'adhoc') fail('ADHOC_TRIAL_ONLY');
   const stage = (name, action) => {

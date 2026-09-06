@@ -74,6 +74,23 @@ Financial systems are read-only for this workflow. Never place, modify, or cance
 orders, and never initiate transfers or write to IB, Sharesight, or another
 financial account.
 
+## Weekly Sharesight cadence (owner confirmed 2026-09-06)
+
+Read `claude/xuan-ib-weekly-ss-snapshot-v1.md`. The approved target is five live
+IB endpoints per report, with the nine covered Sharesight portfolios and their
+four-bucket derivation refreshed together Monday HKT. Preserve native valuation
+dates and the last good dated snapshot; weekly data never prove IB identity or
+replace current IB positions. This supersedes every-report Sharesight cadence,
+not registry scope, classification rules, account approval or publication gates.
+
+Rollout is staged: `assemble-weekly` now supports the explicitly requested
+adhoc minimal trial without nine live Sharesight calls. Missing weekly metadata
+does not block healthy live IB. Only metadata is accepted; weekly financial
+values/durable storage and scheduled AM/PM activation remain incomplete. Keep
+dependent metrics unavailable, not zero. Historical/full-live reports retain
+their old protocol. Do not infer that this release activates a Routine or widens
+the adhoc-only association policy. No new financial trial is implied by tests.
+
 ## Static index-ETF policy page
 
 `xuan-ib/policy.html` is the deterministic, static, read-only presentation of

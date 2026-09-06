@@ -24,7 +24,7 @@ const rawFor = key => key === 'ib.accountSummary' ? { currency: 'USD', net_liqui
     : { result: { mode: 'read_only', portfolio: { id: Number(key.slice('sharesight.'.length)), currency_code: 'USD' },
       data: { report: { portfolio_id: Number(key.slice('sharesight.'.length)), value: 1, end_date: '2026-09-04',
         currency: { code: 'USD' }, holdings: [], cash_accounts: [] } } } };
-function fixture(t) {
+function fixture(t, weekly = false) {
   const base = Date.now() - 1000;
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'xuan-source-hook-test-'));
   fs.chmodSync(root, 0o700);
@@ -35,7 +35,8 @@ function fixture(t) {
   const options = n => ({ journalPath, wallNow: () => base + n });
   initRunJournal(journalPath, clock(0)); startJournalStage(journalPath, 'bootstrap', clock(1));
   finishJournalStage(journalPath, 'bootstrap', {}, clock(2));
-  startJournalStage(journalPath, 'ib-read', clock(3)); startJournalStage(journalPath, 'sharesight-read', clock(4));
+  startJournalStage(journalPath, 'ib-read', clock(3));
+  if (!weekly) startJournalStage(journalPath, 'sharesight-read', clock(4));
   const binding = key => ({ toolName: toolFor(key), runtimeSessionId: 'SYNTHETIC-RUNTIME-SESSION', toolInput: inputFor(key) });
   const arm = (key = 'ib.positions', time = 10) => armHookSource(dir, key, binding(key), options(time));
   const event = (key = 'ib.positions', overrides = {}) => ({
@@ -113,6 +114,33 @@ test('the native-object transport remains native and has equal hashes without so
   const result = f.capture(armed, f.event('ib.positions', { tool_response: value }));
   assert.equal(result.wrapper, 'native-object'); assert.equal(result.transportFingerprint, result.rawFingerprint);
   assert.deepEqual(readCaptureJson(result.transportPath).toolResponse, value);
+});
+
+test('weekly hook assembly verifies every live IB transport without requiring Sharesight calls', t => {
+  const f = fixture(t, true);
+  for (const [i, key] of CAPTURE_SOURCE_KEYS.filter(k => k.startsWith('ib.')).entries()) {
+    f.capture(f.arm(key, 10 + i * 10), f.event(key), 11 + i * 10);
+  }
+  finishJournalStage(f.journalPath, 'ib-read', {}, f.clock(200));
+  const assembled = assembleHookSources(f.dir, { ...assemblyOptions(f, 300), weekly: true });
+  const input = readCaptureJson(assembled.path);
+  assert.equal(Object.keys(input.ib).length, 5);
+  assert.deepEqual(input.sharesight, []);
+  assert.equal(input.sharesightWeekly.reason, 'DURABLE_CACHE_NOT_ACTIVATED');
+  assert.equal(fs.readdirSync(f.dir).filter(n => n.endsWith('.receipt.json')).length, 5);
+});
+
+test('weekly mode still rejects tampered IB hook proof before adding a stage', t => {
+  const f = fixture(t, true);
+  for (const [i, key] of CAPTURE_SOURCE_KEYS.filter(k => k.startsWith('ib.')).entries()) {
+    f.capture(f.arm(key, 10 + i * 10), f.event(key), 11 + i * 10);
+  }
+  finishJournalStage(f.journalPath, 'ib-read', {}, f.clock(200));
+  writeJson(f.file('ib.positions', 'raw'), { positions: [{ tampered: true }] });
+  const before = fs.readFileSync(f.journalPath);
+  assert.throws(() => assembleHookSources(f.dir, { ...assemblyOptions(f, 300), weekly: true }), /HOOK_RAW_CHANGED/);
+  assert.deepEqual(fs.readFileSync(f.journalPath), before);
+  assert.equal(fs.existsSync(path.join(f.dir, 'input.json')), false);
 });
 
 test('only actual read-only input schemas can arm; public probes and guessed tools cannot', t => {

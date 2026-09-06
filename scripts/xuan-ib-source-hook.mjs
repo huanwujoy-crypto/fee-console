@@ -180,10 +180,11 @@ export function captureHookSource(dir, key, nonce, bytes, { wallNow = () => Date
 
 export function verifyHookSourceArtifacts(dir, options = {}) {
   dir = directory(dir);
+  const keys = options.weekly === true ? CAPTURE_SOURCE_KEYS.filter(key => key.startsWith('ib.')) : CAPTURE_SOURCE_KEYS;
   const seenIds = new Set(), runtimeIds = new Set();
-  const names = new Set(CAPTURE_SOURCE_KEYS.flatMap(key => ['arm', 'claim', 'transport', 'raw'].map(suffix => `${key}.hook-${suffix}.json`)));
+  const names = new Set(keys.flatMap(key => ['arm', 'claim', 'transport', 'raw'].map(suffix => `${key}.hook-${suffix}.json`)));
   if (fs.readdirSync(dir).some(name => name.includes('.hook-') && !names.has(name))) fail('REJECTED_OR_UNKNOWN_HOOK_ARTIFACT');
-  for (const key of CAPTURE_SOURCE_KEYS) {
+  for (const key of keys) {
     const arm = readPrivate(path.join(dir, `${key}.hook-arm.json`), 16_384); exact(arm, armFields);
     const claim = readPrivate(path.join(dir, `${key}.hook-claim.json`), 16_384); exact(claim, identityFields);
     const transport = readPrivate(path.join(dir, `${key}.hook-transport.json`));
@@ -215,7 +216,7 @@ export function verifyHookSourceArtifacts(dir, options = {}) {
     seenIds.add(id); runtimeIds.add(claim.runtimeSessionId);
   }
   if (runtimeIds.size !== 1) fail('MIXED_HOOK_RUNTIMES');
-  return { status: 'hook-artifacts-verified', sourceCount: CAPTURE_SOURCE_KEYS.length };
+  return { status: 'hook-artifacts-verified', sourceCount: keys.length };
 }
 
 export function assembleHookSources(dir, options = {}) {
@@ -229,6 +230,12 @@ export function assembleHookSources(dir, options = {}) {
 }
 
 export async function runSourceHookCli(argv, stdin = process.stdin) {
+  if (argv[0] === 'assemble-weekly' && [8, 10].includes(argv.length) && argv[2] === '--journal'
+    && argv[4] === '--previous-source-sha' && argv[6] === '--data-date'
+    && (argv.length === 8 || argv[8] === '--weekly-snapshot')) {
+    return assembleHookSources(argv[1], { journalPath: argv[3], previousSourceSha: argv[5], dataDate: argv[7],
+      weekly: true, weeklySnapshotFile: argv[9] ?? null });
+  }
   if (argv[0] === 'assemble' && argv.length === 8 && argv[2] === '--journal'
     && argv[4] === '--previous-source-sha' && argv[6] === '--data-date') {
     return assembleHookSources(argv[1], { journalPath: argv[3], previousSourceSha: argv[5], dataDate: argv[7] });

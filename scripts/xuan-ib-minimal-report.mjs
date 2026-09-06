@@ -6,6 +6,7 @@ import { buildSourceEvidence, normalizePositions, unwrapSource } from './xuan-ib
 import { IB_ENDPOINTS } from './xuan-ib-run-manifest.mjs';
 import { buildDecisionMenu, parseDecisionJson } from './xuan-ib-decision-menu.mjs';
 import { validateReportView } from './xuan-ib-report-view.mjs';
+import { isWeeklyMode, validateWeeklyEvidence } from './xuan-ib-weekly-snapshot.mjs';
 
 const fail = code => { throw new Error(`Minimal report: ${code}`); };
 const finite = value => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1e12;
@@ -160,6 +161,10 @@ export function buildMinimalReport(input, {
   const evidence = buildSourceEvidence(input, registry, {
     associationReceipt, associationSnapshot, journalPath, now,
   });
+  const weekly = isWeeklyMode(input) ? validateWeeklyEvidence(input.sharesightWeekly, registry, now) : null;
+  const weeklyNote = !weekly ? null : weekly.status === 'unavailable'
+    ? '数据与口径：5 个 IB 端点实时读取；Sharesight 周快照未启用或不可用，仅影响相关指标。本次没有调用 9 个 Sharesight 组合，不把缺失金额填成零。'
+    : `数据与口径：5 个 IB 端点实时读取；${weekly.status === 'stale' ? '历史' : '本周'} Sharesight 快照元数据，采集 ${sourceTime(weekly.capturedAt)}，周标记 ${weekly.captureWeekOfMondayHkt}。组合估值日 ${[...new Set(weekly.portfolios.map(p=>p.valuationDate))].sort().join('、')}。日期原样保留；本次未调用 Sharesight，快照金额尚未启用。`;
   const previousDecisions = verifiedPreviousDecisions(previousHtml, previousMeta, input.previousSourceSha, input.dataDate);
   const asOfHkt = readWindow(input, now);
   const summary = unwrapSource('accountSummary', input.ib.accountSummary.raw);
@@ -197,8 +202,8 @@ export function buildMinimalReport(input, {
     observations: [`成交端点返回 ${trades.length} 条；本次未判定其中的新成交。`],
     notes: [
       `版次与时点：手动精简试跑，${asOfHkt}。显示读取时间，不把历史估值日改成本日。`,
-      '数据与口径：5 个 IB 端点及 9 个必读 Sharesight 组合均经原始回执校验。Sharesight 数值未用于本次现金、风险或配置汇总。风险、四桶及补仓未重算；原有 ABC 保留原始日期，不是本次刷新。',
-      '只读边界：不下单、撤单、改单或转账。历史意见与回执完整继承；生成候选页不等于发布成功，也不证明十分钟目标达成。',
+      weeklyNote ?? '数据与口径：5 个 IB 端点及 9 个必读 Sharesight 组合均经原始回执校验。Sharesight 数值未用于本次现金、风险或配置汇总。风险、四桶及补仓未重算；原有 ABC 保留原始日期，不是本次刷新。',
+      '只读边界：不下单、撤单、改单或转账。历史意见与回执完整继承；生成候选页不等于发布成功，也不证明二十分钟目标达成。',
     ],
     cashPlan: { schemaVersion: 2, status: 'unavailable' },
   };

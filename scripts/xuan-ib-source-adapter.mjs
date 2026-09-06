@@ -4,6 +4,7 @@ import { APPROVED_IB_ACCOUNT_ID, IB_ENDPOINTS, fingerprint, validateSourceEviden
 import { getManualConsentRunId, validateManualConsentProof } from './xuan-ib-manual-consent.mjs';
 import { showRunJournal } from './xuan-ib-run-clock.mjs';
 import { validateAssociationReceipt } from './xuan-ib-account-association.mjs';
+import { isWeeklyMode, isWeeklyStage, validateWeeklyEvidence } from './xuan-ib-weekly-snapshot.mjs';
 const fail=code=>{throw new Error(`Source adapter: ${code}`);};
 const object=value=>value&&Object.getPrototypeOf(value)===Object.prototype;
 const num=value=>typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=1e12;
@@ -83,10 +84,16 @@ export function buildSourceEvidence(input,registry,{
   manualConsentProof=null,associationReceipt=null,associationSnapshot=null,journalPath=null,now=Date.now()
 }={}){
   need(input,['ib','sharesight','edition','dataDate','previousSourceSha']);
+  const weekly=isWeeklyMode(input);
+  if(weekly){
+    if(array(input.sharesight).length)fail('WEEKLY_CANNOT_INCLUDE_LIVE_SHARESIGHT');
+    validateWeeklyEvidence(input.sharesightWeekly,registry,now);
+  }
   const summary=unwrapSource('accountSummary',input.ib?.accountSummary?.raw);
   const native=Object.hasOwn(summary,'account_id');
   const association=associationReceipt!==null||associationSnapshot!==null;
   const positionsFailed=association&&['failed','unavailable'].includes(input.ib?.positions?.status);
+  if(weekly&&positionsFailed)fail('WEEKLY_CANNOT_REPLACE_LIVE_POSITIONS');
   // A present bad/null ID always wins over a manual claim. No raw mutation.
   if(native&&summary.account_id!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_UNPROVEN');
   if(association&&manualConsentProof!==null)fail('MIXED_ACCOUNT_SCOPE_EVIDENCE');
@@ -108,10 +115,10 @@ export function buildSourceEvidence(input,registry,{
       sharesightStage=journal.stages.find(stage=>stage.name==='sharesight-read');
       if(!bootstrap||bootstrap.status!=='ok')fail('ASSOCIATION_BOOTSTRAP_INCOMPLETE');
       const ibStatusAllowed=positionsFailed?ibStage?.status==='degraded'&&ibStage.errorCode==='IB_POSITIONS_FALLBACK':ibStage?.status==='ok';
-      if(!ibStatusAllowed||!sharesightStage||sharesightStage.status!=='ok')fail('ASSOCIATION_READ_STAGE_INCOMPLETE');
+      if(!ibStatusAllowed||!sharesightStage||(weekly?!isWeeklyStage(sharesightStage):sharesightStage.status!=='ok'))fail('ASSOCIATION_READ_STAGE_INCOMPLETE');
       const checked=Date.parse(associationReceipt.policyCheckedAt);
       if(checked<Date.parse(journal.timing.startedAt)||checked<Date.parse(bootstrap.endedAt)
-        ||checked>=Date.parse(ibStage.startedAt)||checked>=Date.parse(sharesightStage.startedAt))fail('ASSOCIATION_NOT_BEFORE_FINANCIAL_READS');
+        ||checked>=Date.parse(ibStage.startedAt)||(!weekly&&checked>=Date.parse(sharesightStage.startedAt)))fail('ASSOCIATION_NOT_BEFORE_FINANCIAL_READS');
     }else{
       validateManualConsentProof(manualConsentProof,{journalRunId:runId,previousSourceSha:input.previousSourceSha,edition:input.edition,requireUnexpired:true,now});
       if(!ibStage||ibStage.status!=='ok')fail('MANUAL_IB_STAGE_INCOMPLETE');
@@ -154,8 +161,9 @@ export function buildSourceEvidence(input,registry,{
     }
     return source;
   });
-  const sources={ib,sharesight};validateSourceEvidence(sources,registry,{
+  const sources={ib,sharesight,...(weekly?{sharesightWeekly:input.sharesightWeekly}:{})};validateSourceEvidence(sources,registry,{
     edition:input.edition,previousSourceSha:input.previousSourceSha,runId,
+    now,
     ...(association?{associationSnapshot,now}:{})
   });
   if(positionsFailed){

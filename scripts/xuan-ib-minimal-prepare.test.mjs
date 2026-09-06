@@ -6,11 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { prepareMinimalRun, runMinimalPrepareCli } from './xuan-ib-minimal-prepare.mjs';
-import { writeCaptureJson, readCaptureJson } from './xuan-ib-source-capture.mjs';
+import { writeCaptureJson, readCaptureJson, beginSourceCapture, finishSourceCapture, assembleSourceCaptures } from './xuan-ib-source-capture.mjs';
 import { initRunJournal, startJournalStage, finishJournalStage, showRunJournal, RUN_STAGES } from './xuan-ib-run-clock.mjs';
 import { fingerprint, IB_ENDPOINTS } from './xuan-ib-run-manifest.mjs';
 import { associationPolicyBlob, createPreReadAssociationReceipt, extractAssociationReceipt } from './xuan-ib-account-association.mjs';
 import { runPrepareCli } from './xuan-ib-report-prepare.mjs';
+import { WEEKLY_SNAPSHOT_KIND, WEEKLY_STAGE_ERROR, mondayOfHktInstant } from './xuan-ib-weekly-snapshot.mjs';
+import { createPublishedMeta, validatePublishedMeta, selectNewestCandidate } from './xuan-ib-promotion.mjs';
+import { buildPublishedDecisionMenu } from './xuan-ib-decision-menu.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const previousHtml = fs.readFileSync(path.join(root, 'xuan-ib/latest.html'), 'utf8');
@@ -18,7 +21,8 @@ const previousMeta = JSON.parse(fs.readFileSync(path.join(root, 'xuan-ib/latest.
 const registry = JSON.parse(fs.readFileSync(path.join(root, 'claude/xuan-ib-portfolio-registry.json'), 'utf8'));
 const priorTemplate = previousHtml.match(/<template id="xuan-ib-decision-state-v1" type="application\/json">[\s\S]*?<\/template>/)[0];
 
-async function fixture(t, { missingAssociation = false, failedRead = false, activeRead = false, mutate = null } = {}) {
+async function fixture(t, { missingAssociation = false, failedRead = false, activeRead = false, mutate = null,
+  weekly = false, weeklySnapshot = null } = {}) {
   // Synthetic times stay in this process's real monotonic domain so the
   // wrapper can append genuine local stage times without a clock workaround.
   const epoch = Date.now() - 10_000;
@@ -43,9 +47,11 @@ async function fixture(t, { missingAssociation = false, failedRead = false, acti
     journalPath, now: epoch + 400, edition: 'adhoc', previousSourceSha: previousMeta.sourceSha,
   });
   startJournalStage(journalPath, 'ib-read', clock(1000));
+  if (!weekly) {
   finishJournalStage(journalPath, 'ib-read', failedRead ? { status: 'failed', errorCode: 'SYNTHETIC_FAILED' } : {}, clock(2000));
   startJournalStage(journalPath, 'sharesight-read', clock(2100));
   if (!activeRead) finishJournalStage(journalPath, 'sharesight-read', {}, clock(3000));
+  }
   const dataDate = new Date(epoch + 8 * 3_600_000).toISOString().slice(0, 10);
   const captured = (raw, start, end) => ({ raw, status: 'ok', startedAt: stamp(start),
     completedAt: stamp(end), retries: 0, rawFingerprint: fingerprint(raw) });
@@ -66,7 +72,22 @@ async function fixture(t, { missingAssociation = false, failedRead = false, acti
     }, 2200, 2300)),
   };
   if (mutate) mutate(input, association);
-  writeCaptureJson(dir, 'input.json', input);
+  if (weekly) {
+    for (const [i, endpoint] of IB_ENDPOINTS.entries()) {
+      const rawFile = path.join(dir, `${endpoint}.synthetic.json`);
+      fs.writeFileSync(rawFile, JSON.stringify(input.ib[endpoint].raw), { mode: 0o600, flag: 'wx' });
+      beginSourceCapture(dir, `ib.${endpoint}`, { journalPath, wallNow: () => epoch + 1100 + i * 100 });
+      finishSourceCapture(dir, `ib.${endpoint}`, rawFile, { journalPath, wallNow: () => epoch + 1150 + i * 100 });
+    }
+    finishJournalStage(journalPath, 'ib-read', failedRead ? { status: 'failed', errorCode: 'SYNTHETIC_FAILED' } : {}, clock(2000));
+    let weeklySnapshotFile = null;
+    if (weeklySnapshot !== null) {
+      weeklySnapshotFile = path.join(dir, 'weekly.synthetic.json');
+      fs.writeFileSync(weeklySnapshotFile, JSON.stringify(weeklySnapshot), { mode: 0o600, flag: 'wx' });
+    }
+    assembleSourceCaptures(dir, { journalPath, previousSourceSha: input.previousSourceSha,
+      dataDate, weekly: true, weeklySnapshotFile });
+  } else writeCaptureJson(dir, 'input.json', input);
   if (!missingAssociation) writeCaptureJson(dir, 'association.json', association);
   const baseline = { previousHtml, previousMeta, registry };
   const calls = [];
@@ -129,6 +150,79 @@ test('actual recurring build -> existing prepare CLI -> real trusted guard -> pr
   if (abc) assert.ok(html.includes(abc));
   assert.ok(!html.includes(f.journalPath));
   assert.ok(!html.includes(f.input.ib.positions.rawFingerprint));
+});
+
+const weeklyMetadata = (stale = false) => {
+  const week = mondayOfHktInstant(Date.now() - (stale ? 7 * 86_400_000 : 0));
+  const at = new Date(Date.parse(`${week}T00:00:00+08:00`)).toISOString();
+  return { schemaVersion: 1, kind: WEEKLY_SNAPSHOT_KIND, captureWeekOfMondayHkt: week, capturedAt: at,
+    portfolios: registry.portfolios.filter(p => p.requiredEachReport).map(p => ({
+      portfolioId: p.portfolioId, role: p.role, status: 'ok', fingerprint: 'b'.repeat(64),
+      readCompletedAt: at, valuationDate: week,
+    })) };
+};
+
+for (const kind of ['missing', 'current', 'stale', 'invalid']) {
+  test(`weekly ${kind}: actual five-source capture -> prepare -> trusted guard preserves history`, async t => {
+    const metadata = kind === 'missing' ? null : kind === 'invalid' ? { bad: 'synthetic' } : weeklyMetadata(kind === 'stale');
+    const f = await fixture(t, { weekly: true, weeklySnapshot: metadata });
+    const original = fs.readFileSync(path.join(f.dir, 'input.json'));
+    const input = readCaptureJson(path.join(f.dir, 'input.json'));
+    assert.deepEqual(input.sharesight, []);
+    assert.equal(fs.readdirSync(f.dir).some(name => name.startsWith('sharesight.')), false);
+    const lookup = stages(f).find(s => s.name === 'sharesight-read');
+    assert.equal(lookup.status, 'degraded'); assert.equal(lookup.cacheHit, false);
+    assert.equal(lookup.errorCode, WEEKLY_STAGE_ERROR);
+    const result = prepareMinimalRun(f.dir, { ...f.options,
+      prepareCandidate: args => runPrepareCli(args, { loadAssociationPolicy: () => f.snapshot() }),
+    });
+    assert.equal(result.status, 'prepared-not-published');
+    assert.equal(result.degraded, true);
+    assert.equal(showRunJournal(f.journalPath).timing.allRequiredStagesFinished, true);
+    const html = fs.readFileSync(path.join(f.dir, 'candidate.html'), 'utf8');
+    assert.ok(html.includes(priorTemplate));
+    assert.ok(!html.includes('9 个必读 Sharesight 组合均经原始回执校验'));
+    assert.ok(!html.includes('rawFingerprint')); assert.ok(!html.includes(f.dir));
+    // Exercise the same pure post-guard functions used by Promote. This is
+    // offline synthetic identity only, never a Git commit/tag/owner approval.
+    const candidate = { ref: 'origin/claude/synthetic-weekly-test', sha: 'c'.repeat(40),
+      commitEpoch: Math.max(previousMeta.sourceCommitEpoch + 1, Math.floor(Date.now() / 1000)),
+      dataDate: input.dataDate, htmlBlob: result.htmlBlob };
+    assert.deepEqual(selectNewestCandidate([candidate], previousMeta), candidate);
+    const meta = createPublishedMeta(candidate);
+    assert.deepEqual(validatePublishedMeta(meta, result.htmlBlob, { sourceSha: candidate.sha,
+      sourceCommitEpoch: candidate.commitEpoch, sourceHtmlBlob: candidate.htmlBlob, sourceDataDate: candidate.dataDate }), meta);
+    const menu = buildPublishedDecisionMenu({ html, meta });
+    const priorMenu = buildPublishedDecisionMenu({ html: previousHtml, meta: previousMeta });
+    assert.equal(menu.available, true);
+    assert.deepEqual(menu.pending, priorMenu.pending);
+    assert.equal(menu.interaction, priorMenu.interaction);
+    if (kind === 'current' || kind === 'stale') {
+      assert.deepEqual(input.sharesightWeekly.snapshot, metadata);
+      assert.ok(html.includes(metadata.captureWeekOfMondayHkt));
+      assert.ok(html.includes(kind === 'stale' ? '历史 Sharesight' : '本周 Sharesight'));
+    } else assert.equal(input.sharesightWeekly.status, 'unavailable');
+    assert.deepEqual(fs.readFileSync(path.join(f.dir, 'input.json')), original);
+    const before = fs.readFileSync(f.journalPath);
+    assert.throws(() => assembleSourceCaptures(f.dir, { journalPath: f.journalPath,
+      previousSourceSha: input.previousSourceSha, dataDate: input.dataDate, weekly: true }), /OUTPUT_ALREADY_EXISTS/);
+    assert.deepEqual(fs.readFileSync(f.journalPath), before);
+  });
+}
+
+test('weekly mode cannot retrofit a completed full-live journal', async t => {
+  const f = await fixture(t);
+  const before = fs.readFileSync(f.journalPath);
+  assert.throws(() => assembleSourceCaptures(f.dir, { journalPath: f.journalPath,
+    previousSourceSha: f.input.previousSourceSha, dataDate: f.input.dataDate, weekly: true }), /OUTPUT_ALREADY_EXISTS/);
+  assert.deepEqual(fs.readFileSync(f.journalPath), before);
+});
+
+test('weekly mode retains cross-run account-association rejection and failed journal immutability', async t => {
+  const f = await fixture(t, { weekly: true, mutate: (_input, association) => { association.runId = 'f'.repeat(64); } });
+  expectNoRetry(f);
+  assert.equal(stages(f).at(-1).status, 'failed');
+  assert.deepEqual(outputs(f), []);
 });
 
 test('missing pre-read association stops before starting any derivation or requesting a policy', async t => {
