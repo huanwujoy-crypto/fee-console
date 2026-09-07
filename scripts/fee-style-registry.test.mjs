@@ -40,7 +40,8 @@ const badCases = [
   ['per account missing value', f => { f.input.portfolios[0].stockTotalUsd = 102; }, /ACCOUNT_STOCK_SUM/],
   ['total missing value', f => { f.stock = 302; }, /STOCK_SUM/],
   ['source date mismatch', f => { f.input.portfolios[1].sourceDate = '2026-09-03'; }, /SOURCE_DATE/],
-  ['future classification cannot classify older source', f => { f.input.proposals[0].effectiveFrom = '2026-09-05'; }, /FUTURE_CLASSIFICATION/],
+  ['future classification cannot classify older source', f => { f.input.proposals[0].effectiveFrom = f.input.proposals[0].firstHeldOn = '2026-09-05'; }, /FUTURE_CLASSIFICATION/],
+  ['initial classification must cover the first holding day', f => { f.input.proposals[0].effectiveFrom = '2026-09-04'; }, /EFFECTIVE_FIRST_HOLDING/],
   ['future audit time', f => { f.input.proposals[0].classifiedAt = '2026-09-08T00:00:00Z'; }, /FUTURE_CLASSIFICATION/],
   ['classification before first holding', f => { f.input.proposals[0].firstHeldOn = '2026-09-04'; }, /BEFORE_FIRST_HOLDING/],
   ['no evidence', f => { f.input.proposals[0].rationale = ''; }, /EVIDENCE_REQUIRED/],
@@ -75,6 +76,14 @@ test('learned entry cannot be used for historical source before effective date',
   for (const p of f.input.portfolios) p.sourceDate = f.sourceDates[p.account] = f.date;
   assert.throws(() => resolveStyle(f), /MISSING_ROWS_1/);
 });
+test('weekend lookback reuses initial decision from first-held date without mutation', () => {
+  const f = fixture(); f.registry = resolveStyle(f).registry; f.input.proposals = [];
+  const saved = structuredClone(f.registry);
+  f.date = f.input.date = '2026-09-03';
+  for (const p of f.input.portfolios) p.sourceDate = f.sourceDates[p.account] = f.date;
+  const r = resolveStyle(f);
+  assert.equal(r.growth, 200); assert.deepEqual(r.registry, saved); assert.deepEqual(r.newEventIds, []);
+});
 test('empty equity portfolios valid; no phantom notifications', () => {
   const f = fixture(); f.stock = 0; f.input.proposals = [];
   for (const p of f.input.portfolios) { p.holdings = []; p.stockTotalUsd = 0; }
@@ -94,4 +103,7 @@ test('private input path guards repository files, symlinks, changed bytes and si
   fs.writeFileSync(source, ''); assert.throws(() => readStyleInput(source, repo), /FILE_SIZE/);
   fs.writeFileSync(source, '{}'); fs.chmodSync(source, 0o644);
   assert.throws(() => readStyleInput(source, repo), /FILE_PERMISSIONS/);
+  fs.chmodSync(source, 0o600); fs.chmodSync(d, 0o755);
+  assert.throws(() => readStyleInput(source, repo), /DIRECTORY_PERMISSIONS/);
+  fs.chmodSync(d, 0o700);
 });

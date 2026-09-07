@@ -22,6 +22,11 @@ const cli = path.join(here, "daily.mjs");
 const repairCli = path.join(here, "repair-brkb-20260820.mjs");
 const styleMapPath = path.join(here, "..", "claude", "fee-style-mapping.json");
 
+test('reviewed static mapping effective date cannot advance and invalidate history', () => {
+  const mapping = JSON.parse(fs.readFileSync(styleMapPath, 'utf8'));
+  assert.equal(mapping.effectiveDate, '2026-08-28');
+});
+
 /* A throwaway key: never the production one. */
 const TEST_KEY = crypto.randomBytes(32).toString("base64url");
 

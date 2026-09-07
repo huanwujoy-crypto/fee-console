@@ -35,6 +35,8 @@ function validateEntry(e, saved = false) {
   if (!['growth', 'value'].includes(e.style)) fail('STYLE');
   iso(e.effectiveFrom); iso(e.firstHeldOn);
   if (e.firstHeldOn > e.effectiveFrom) fail('BEFORE_FIRST_HOLDING');
+  // An immutable initial decision must also cover subsequent weekend lookbacks.
+  if (e.effectiveFrom !== e.firstHeldOn) fail('EFFECTIVE_FIRST_HOLDING');
   if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(e.classifiedAt)
       || !Number.isFinite(Date.parse(e.classifiedAt))
       || new Date(e.classifiedAt).toISOString().slice(0, 10) !== e.classifiedAt.slice(0, 10)
@@ -113,6 +115,7 @@ export function resolveStyle({ input, registry, staticMap, date, sourceDates, st
     if (known.has(key)) fail('STATIC_IMMUTABLE');
     learned.set(key, candidate); appended.push(candidate);
   }
+  if (saved.entries.length + appended.length > 10000) fail('REGISTRY_CAPACITY');
   let growth = 0, value = 0;
   const missing = [];
   for (const [i, h] of holdings.entries()) {
@@ -137,6 +140,7 @@ export function readStyleInput(filename, repoRoot) {
   if (!relative || (relative !== '..' && !relative.startsWith('..' + path.sep))) fail('FILE_IN_REPO');
   const read = () => {
     if (fs.realpathSync(filename) !== target) fail('FILE_CHANGED');
+    if (fs.statSync(path.dirname(target)).mode & 0o077) fail('DIRECTORY_PERMISSIONS');
     const s = fs.statSync(target);
     if (!s.isFile() || s.size <= 0 || s.size > 5 * 1024 * 1024) fail('FILE_SIZE');
     if (s.mode & 0o077) fail('FILE_PERMISSIONS');
