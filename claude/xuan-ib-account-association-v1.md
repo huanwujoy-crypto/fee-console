@@ -28,6 +28,20 @@ closed-market wording and truthful source dates, not an invented market opening.
 This section supersedes the historical adhoc-only restrictions below and in
 earlier Routine prompts after controlled rollout. All other requirements remain.
 
+### Ordinary correction candidates are not an identity exception
+
+While a report edition is selected by the deployed association, an ordinary
+explanation-only correction, cash-plan repair or ETF-pane migration WITHOUT a
+current valid receipt is rejected too. Earlier no-financial-read correction
+permissions do not grant an account-verification exception. Do not fabricate a
+new pre-read receipt over an old report or relabel old data to pass this gate.
+Use the next fully sourced, genuinely authorized normal report, or obtain a
+separately reviewed exact-source-bound historical correction implementation.
+The only existing no-current-policy exceptions are the trusted guard's strictly
+verified records-update and pinned AAOI historical correction paths. At expiry,
+ordinary association candidates, including corrections, remain blocked pending
+separate reconfirmation; historical source files are never modified or deleted.
+
 ## Original pilot history and unchanged boundaries
 
 The owner approved implementation on 2026-09-05 after being told the residual
