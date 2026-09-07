@@ -45,6 +45,9 @@ test('checked-in deployment policy is canonical, bounded and contains no private
     assert.ok(duration > 0 && duration <= MAX_ASSOCIATION_WINDOW_MS);
   }
   assert.doesNotMatch(text, /accountId|token|username|consentRow|observedAt|U\d{6,}/i);
+  assert.deepEqual(value.editions, ['adhoc', 'am', 'pm']);
+  assert.equal(value.validFrom, '2026-09-05T13:30:00.000Z');
+  assert.equal(value.expiresAt, '2026-09-12T13:30:00.000Z');
 });
 
 test('fixed synthetic inactive policy has no timer and cannot authorize a run', () => {
@@ -88,12 +91,12 @@ test('active or revoked deployment-file reads cannot alter the fixed inactive fi
   assert.equal(originalRead(file, 'utf8'), unchangedDeploymentBytes, 'no deployment policy was written');
 });
 
-test('only exact bounded schema, alias, purpose, publisher, basis and adhoc scope accepted', () => {
+test('only exact bounded schema, alias, purpose, publisher, basis and selected edition accepted', () => {
   assert.deepEqual(validateAssociationPolicy(policy(), context()), policy());
   const cases = [
     { accountId: 'private-account' }, { schemaVersion: 2 }, { accountAlias: 'Other' },
     { basis: 'manual-consent-once-v1' }, { policyId: 'unreviewed' },
-    { purpose: 'trading' }, { publisher: 'other' }, { editions: ['adhoc', 'pm'] },
+    { purpose: 'trading' }, { publisher: 'other' }, { editions: ['adhoc', 'other'] }, { editions: ['am'] },
     { editions: [] }, { editions: ['adhoc', 'adhoc'] }, { status: 'enabled' }
   ];
   for (const change of cases) assert.throws(() => validateAssociationPolicy(policy(change), context()));
@@ -102,6 +105,24 @@ test('only exact bounded schema, alias, purpose, publisher, basis and adhoc scop
   assert.throws(() => validateAssociationPolicy(policy(), { ...context(), publisher: 'other' }), /scope/);
   assert.throws(() => validateAssociationPolicy(policy(), { ...context(), purpose: 'other' }), /scope/);
   assert.throws(() => validateAssociationPolicy(policy(), { ...context(), now: NaN }), /epoch/);
+});
+
+test('scheduled editions require explicit selection and cannot cross-bind receipts or renew expiry', () => {
+  const p = policy({ editions: ['adhoc', 'am', 'pm'] });
+  const s = snapshot({ policy: p });
+  for (const edition of ['am', 'pm']) {
+    const c = context({ edition });
+    assert.deepEqual(validateAssociationPolicy(p, c), p);
+    const r = createAssociationReceipt(s, c);
+    assert.equal(r.edition, edition);
+    assert.deepEqual(validateAssociationReceipt(r, s, c), r);
+    assert.throws(() => validateAssociationReceipt(r, s, context({edition: edition === 'am' ? 'pm' : 'am'})), /bind/);
+    assert.throws(() => createAssociationReceipt(snapshot(), c), /scope/);
+    const changed = {...p, editions: ['adhoc']};
+    assert.throws(() => validateAssociationReceipt(r, {...s, policy:changed, policyBlob:associationPolicyBlob(changed)}, c), /scope|changed/);
+    const end = Date.parse(p.expiresAt);
+    assert.throws(() => validateAssociationReceipt(r, {...s, checkedAt: iso(end)}, {...c, now: end}), /expired/);
+  }
 });
 
 test('future, expired, revoked, inactive and over-seven-day policy cannot authorize', () => {

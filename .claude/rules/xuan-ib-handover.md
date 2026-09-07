@@ -1,5 +1,12 @@
 # XUAN-IB handover runtime rule
 
+The explicit owner approval of 2026-09-07 extends only the existing bounded
+account association to fixed AM/PM. Read the current September 7 section in
+`claude/xuan-ib-account-association-v1.md`; it supersedes older adhoc-only
+association restrictions, not source completeness, publication gates, manual
+consent or weekly-minimal trial limits. Use the actual edition on a fresh
+pre-read receipt; the original September 12 expiry is unchanged.
+
 This rule applies only to scheduled, Run now, recovery, manual, and ad-hoc
 XUAN-IB reports. It does not authorize a fee-console `data.json` write.
 

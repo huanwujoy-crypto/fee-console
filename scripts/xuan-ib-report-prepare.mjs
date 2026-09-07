@@ -104,8 +104,8 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   const association=evidence.sources?.ib?.accountAssociation??null;
   const weekly=isWeeklyMode(evidence.sources);
   if(manual&&association)fail('manual and recurring account association are mutually exclusive');
-  if(evidence.edition==='adhoc'&&!associationSnapshot)fail('current account association policy snapshot is required');
-  if(evidence.edition==='adhoc'&&associationSnapshot.policy.status!=='inactive'&&!association)fail('selected recurring policy requires account association receipt');
+  if(!associationSnapshot)fail('current account association policy snapshot is required');
+  if(associationSnapshot.policy.editions.includes(evidence.edition)&&associationSnapshot.policy.status!=='inactive'&&!association)fail('selected recurring policy requires account association receipt');
   let runId;
   if(association){
     if(!journalPath||manualConsentStore!==null)fail('recurring association needs its own journal, never the manual consent store');
@@ -245,7 +245,7 @@ export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociation
     policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath,manualConsentStore:manualConsentStore??null,
     fourBucketInput:options['--four-bucket-input']?readCaptureJson(options['--four-bucket-input']):null,
     // Never accept a candidate-selected snapshot path in the operational CLI.
-    associationSnapshot:read(evidenceFile).edition==='adhoc'?loadAssociationPolicy({cwd:root,requireActive:false}):null});
+    associationSnapshot:loadAssociationPolicy({cwd:root,requireActive:false})});
   if(journalPath)startJournalStage(journalPath,'candidate-prep');
   try{
     fs.writeFileSync(output,prepared.html,{flag:'wx',mode:0o600});

@@ -6,6 +6,7 @@ import {
   renderAssociationDisclosure,
   validateAssociationSnapshot,
   validatePublicationAssociation,
+  ASSOCIATION_EDITIONS,
 } from './xuan-ib-account-association.mjs';
 
 export const ASSOCIATION_BODY_ATTRIBUTE = 'data-account-scope-basis="owner-attested-recurring-v1"';
@@ -104,15 +105,15 @@ export function checkAssociationPublication(html, snapshot, {
     return { mode: receipt ? 'historical-recurring' : 'legacy', freshRead: false };
   }
   if (snapshot) validateAssociationSnapshot(snapshot, { now, requireActive: false });
-  const selected = edition === 'adhoc' && snapshot?.policy?.status !== 'inactive';
-  if (edition === 'adhoc' && !snapshot) fail('ordinary ad hoc publication requires a fresh trusted policy snapshot');
+  const selected = snapshot?.policy?.editions.includes(edition) && snapshot.policy.status !== 'inactive';
+  if (ASSOCIATION_EDITIONS.includes(edition) && !snapshot) fail('ordinary publication requires a fresh trusted policy snapshot');
   if ((selected || receipt) && !receipt) fail('the current pilot policy requires its recurring receipt; stripping it does not select a legacy route');
   if (!receipt) {
     if (hasAssociationMarker(html)) fail('association markup without its canonical receipt is not allowed');
     return { mode: 'legacy', freshRead: false };
   }
   if (!snapshot) fail('recurring publication requires a fresh trusted policy snapshot');
-  if (edition !== 'adhoc') fail('the initial recurring pilot is ad hoc only');
+  if (!snapshot.policy.editions.includes(edition)) fail('report scope is not selected by the policy');
   if (!previousSourceSha) fail('recurring publication requires the trusted previous source');
   validatePublicationAssociation(html, snapshot, { now, edition, previousSourceSha, runId: receipt.runId });
   requireFoldedDisclosure(html, renderAssociationDisclosure(receipt, snapshot));
