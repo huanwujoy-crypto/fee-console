@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import "./fee-economic-source.test.mjs";
+import "./fee-style-registry.test.mjs";
 import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 
@@ -20,6 +21,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const cli = path.join(here, "daily.mjs");
 const repairCli = path.join(here, "repair-brkb-20260820.mjs");
 const styleMapPath = path.join(here, "..", "claude", "fee-style-mapping.json");
+
+test('reviewed static mapping effective date cannot advance and invalidate history', () => {
+  const mapping = JSON.parse(fs.readFileSync(styleMapPath, 'utf8'));
+  assert.equal(mapping.effectiveDate, '2026-08-28');
+});
 
 /* A throwaway key: never the production one. */
 const TEST_KEY = crypto.randomBytes(32).toString("base64url");
@@ -69,6 +75,92 @@ const writePayload = (dir, payload) => {
   const data = Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64");
   fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({ enc: true, v: 3, data }));
 };
+
+const styleFixture = dir => {
+  const source = path.join(dir, 'style-input.json');
+  const makeEntry = (portfolioId, holdingId, ticker, style) => ({
+    portfolioId, holdingId, ticker, style, firstHeldOn: today(), effectiveFrom: today(),
+    classifiedAt: new Date().toISOString(), classifier: 'Claude', reviewer: 'Codex',
+    evidenceRef: 'https://example.test/synthetic', rationale: 'Synthetic business evidence',
+    reviewNote: 'Independent synthetic review'
+  });
+  const input = { schemaVersion: 1, date: today(), portfolios: [
+    { account: 'schwab', portfolioId: 936249, sourceDate: today(), stockTotalUsd: 200000,
+      holdings: [{ holdingId: 901, ticker: 'SYNTHA', valueUsd: 200000 }] },
+    { account: 'webull', portfolioId: 1350094, sourceDate: today(), stockTotalUsd: 253845.98,
+      holdings: [{ holdingId: 902, ticker: 'SYNTHB', valueUsd: 253845.98 }] }
+  ], proposals: [makeEntry(936249, 901, 'SYNTHA', 'value'), makeEntry(1350094, 902, 'SYNTHB', 'growth')] };
+  const save = () => fs.writeFileSync(source, JSON.stringify(input), { mode: 0o600 });
+  save();
+  return { source, input, save, env: { FEE_STYLE_INPUT_FILE: source } };
+};
+
+test('style registry: atomic encrypted integration, next-run reuse and byte no-op', () => {
+  const dir = tmp(), f = styleFixture(dir);
+  const r = run(dir, {}, [], f.env); assert.equal(r.status, 0, r.stderr);
+  const p = readPayload(dir), before = fs.readFileSync(path.join(dir, 'data.json'));
+  assert.equal(p.daily[0].growth, 253845.98); assert.equal(p.daily[0].value, 200000);
+  assert.equal(p.classificationRegistry.entries.length, 2);
+  assert.deepEqual(Object.keys(JSON.parse(before)).sort(), ['data', 'enc', 'v']);
+  assert.ok(!before.includes(Buffer.from('SYNTHA')));
+  f.input.proposals = []; f.save();
+  const again = run(dir, {}, [], f.env); assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+});
+
+test('style registry: missing new holding never writes or reuses old split', () => {
+  const dir = tmp(), f = styleFixture(dir);
+  assert.equal(run(dir, {}, [], f.env).status, 0);
+  const before = fs.readFileSync(path.join(dir, 'data.json'));
+  f.input.proposals = []; f.input.portfolios[1].holdings[0].holdingId = 903; f.save();
+  const r = run(dir, {}, [], f.env); assert.notEqual(r.status, 0); assert.match(r.stderr, /STYLE_MISSING_ROWS_1/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+  const omitted = run(dir, {}, [], { FEE_STYLE_INPUT_FILE: '' });
+  assert.notEqual(omitted.status, 0); assert.match(omitted.stderr, /STYLE_INPUT_REQUIRED/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+});
+
+test('style registry: manual totals and malformed private input rejected without data changes', () => {
+  const dir = tmp(), f = styleFixture(dir);
+  const r = run(dir, { growth: 253845.98, value: 200000 }, [], f.env);
+  assert.notEqual(r.status, 0); assert.match(r.stderr, /MANUAL_TOTALS_REFUSED/);
+  fs.writeFileSync(f.source, 'not json PRIVATE');
+  const bad = run(dir, {}, [], f.env); assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /STYLE_INPUT_INVALID/); assert.doesNotMatch(bad.stderr, /PRIVATE/);
+  assert.ok(!fs.existsSync(path.join(dir, 'data.json')));
+});
+
+test('style registry: preflight is read-only and does not claim fee validation or delivery', () => {
+  const dir = tmp(), f = styleFixture(dir);
+  const pre = run(dir, {}, ['--style-preflight'], f.env);
+  assert.equal(pre.status, 0, pre.stderr); assert.match(pre.stdout, /no data written/);
+  assert.ok(!fs.existsSync(path.join(dir, 'data.json')));
+  assert.equal(run(dir, {}, [], f.env).status, 0);
+  const before = fs.readFileSync(path.join(dir, 'data.json'));
+  assert.equal(run(dir, {}, ['--style-preflight'], f.env).status, 0);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+});
+
+test('style registry: fees, original legacy source, historical points and no-op stay intact', () => {
+  const dir = tmp(), f = styleFixture(dir), legacy = legacyFixture(dir);
+  const original = fs.readFileSync(legacy.sourceFile);
+  const initial = run(dir, {}, [], legacy.env); assert.equal(initial.status, 0, initial.stderr);
+  const old = readPayload(dir);
+  const env = { ...legacy.env, ...f.env };
+  const upgraded = run(dir, {}, [], env); assert.equal(upgraded.status, 0, upgraded.stderr);
+  const p = readPayload(dir);
+  assert.deepEqual(p.feeCalculationReceipt, old.feeCalculationReceipt);
+  assert.deepEqual(p.flowsAuto, old.flowsAuto); assert.deepEqual(p.flowsUnresolved, old.flowsUnresolved);
+  assert.equal(p.daily.length, old.daily.length);
+  assert.deepEqual(fs.readFileSync(legacy.sourceFile), original);
+  const before = fs.readFileSync(path.join(dir, 'data.json'));
+  const again = run(dir, {}, [], env); assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /no-op/); assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+  const missingEconomic = run(dir, {}, [], { ...f.env, FEE_ECON_FILE: '', FEE_ECON_V3_FILE: '' });
+  assert.notEqual(missingEconomic.status, 0);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+});
 
 const writeEconEnvelope = (dir, payload, keyText = TEST_KEY) => {
   const key = Buffer.from(keyText, "base64url");
