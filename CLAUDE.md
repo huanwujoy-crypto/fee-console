@@ -1,5 +1,19 @@
 # XUAN-IB handover publication contract
 
+## Explicit scheduled account association scope (owner approved 2026-09-07)
+
+Read `claude/xuan-ib-account-association-v1.md` first. Its September 7 section
+supersedes the older adhoc-only scope restrictions below for fixed AM and PM
+after exact-head maintenance approval and merge. Use current trusted-main policy
+and a new pre-read run-bound receipt for the actual edition. Do not reuse failed
+run journals, change raw account identity, extend the September 12 expiry or
+reenable retired manual reports. Financial reads and publication remain guarded.
+This does not widen weekly-minimal/adhoc-only collection or manual-consent paths.
+The same section also governs ordinary explanation/cash-plan/ETF-pane corrections:
+old no-read correction permissions do not exempt them from current association
+verification. Never mint a fresh receipt over old financial evidence. Only the
+guard's strictly verified historical exceptions remain exempt.
+
 ## Owner routine closure and concise notes (2026-09-06)
 
 Read `claude/xuan-ib-routine-closeout-20260906.md` first. Routine, evidence-supported

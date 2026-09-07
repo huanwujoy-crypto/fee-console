@@ -12,6 +12,7 @@ import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { migratePolicyToEtfPane } from './xuan-ib-etf-pane.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
+import { associationPolicyBlob } from './xuan-ib-account-association.mjs';
 const repo = fileURLToPath(new URL('..', import.meta.url));
 const approvedPolicy = JSON.parse(fs.readFileSync(path.join(repo, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
 const approvedPolicySection = renderPolicySection(approvedPolicy);
@@ -64,6 +65,20 @@ test('cash correction passes the entire trusted publication guard with original 
   fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected));
   const result = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+  // A valid old no-read repair is NOT exempt from the deployed account gate.
+  // Offline inactive fixtures above only test historical financial continuity.
+  const now = Date.now();
+  for (const expired of [false, true]) {
+    const snapshot = inactiveAssociationSnapshot(now);
+    snapshot.policy = {...snapshot.policy, status:'active', editions:['adhoc','am','pm'],
+      validFrom:new Date(now - 60000).toISOString(), expiresAt:new Date(now + (expired ? -1 : 60000)).toISOString()};
+    snapshot.policyBlob = associationPolicyBlob(snapshot.policy);
+    fs.writeFileSync(env.XUAN_IB_ASSOCIATION_SNAPSHOT_JSON, JSON.stringify(snapshot));
+    const blocked = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], {env, encoding:'utf8'});
+    assert.notEqual(blocked.status, 0);
+    assert.match(blocked.stderr, /stripping it does not select a legacy route/);
+  }
+  offlineAssociationEnv(dir);
   fs.writeFileSync(current, withMigratedEtfPolicyFixture(corrected.replace('$466,482', '$475,270')));
   const invalid = spawnSync(process.execPath, [guard, current, '2026-08-31', previous], { env, encoding: 'utf8' });
   assert.notEqual(invalid.status, 0); assert.match(invalid.stderr, /cash plan/);

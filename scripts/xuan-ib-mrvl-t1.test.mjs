@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { calculateMrvlT1, calculateMrvlT1Snapshot, updateMrvlT1Report, validateMrvlT1Policy, loadMrvlT1Policy,
@@ -149,7 +150,9 @@ test('trusted publication guard accepts the candidate and explicit-binding CLI e
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const previous = path.join(dir, 'previous.html'), current = path.join(dir, 'current.html');
   fs.writeFileSync(previous, withMigratedEtfPolicyFixture(original)); fs.writeFileSync(current, withMigratedEtfPolicyFixture(updated));
-  const env = { ...process.env, XUAN_IB_PREVIOUS_SOURCE_SHA: binding.sourceSha, XUAN_IB_PREVIOUS_HTML_BLOB: binding.htmlBlob };
+  const snapshotFile = path.join(dir, 'synthetic-inactive-policy.json');
+  fs.writeFileSync(snapshotFile, JSON.stringify(inactiveAssociationSnapshot()));
+  const env = { ...process.env, XUAN_IB_ASSOCIATION_SNAPSHOT_JSON: snapshotFile, XUAN_IB_PREVIOUS_SOURCE_SHA: binding.sourceSha, XUAN_IB_PREVIOUS_HTML_BLOB: binding.htmlBlob };
   const oldDisclosure = [...updated.matchAll(classificationBlock)][0][0];
   fs.writeFileSync(current, withMigratedEtfPolicyFixture(updated).replace(renderClassificationDisclosure(), oldDisclosure));
   const obsolete = spawnSync(process.execPath, [path.join(repo, 'scripts/handover-guard.mjs'), current, '2026-08-31', previous], { env, encoding: 'utf8' });

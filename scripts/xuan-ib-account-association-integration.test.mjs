@@ -29,7 +29,7 @@ const priorTemplate = template(previousHtml);
 const priorState = parseDecisionJson(priorTemplate[1], 2_000_000);
 const clone = value => JSON.parse(JSON.stringify(value));
 
-async function fixture(t,{positionsFallback=false}={}) {
+async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
   const now = Date.now(), epoch = now - 30_000;
   const stamp = offset => new Date(epoch + offset).toISOString();
   const clock = offset => ({ wallNow: () => epoch + offset, monotonicNowMs: () => offset });
@@ -44,12 +44,12 @@ async function fixture(t,{positionsFallback=false}={}) {
   const policy = {
     schemaVersion: 1, policyId: 'ib-primary-7day-pilot-v1', accountAlias: 'IB-HK',
     basis: 'owner-attested-recurring-v1', status: 'active', purpose: 'xuan-ib-read-only-report',
-    editions: ['adhoc'], publisher: 'claude-verified-candidate-v1',
+    editions: ['adhoc', 'am', 'pm'], publisher: 'claude-verified-candidate-v1',
     validFrom: stamp(-1000), expiresAt: stamp(7 * 86_400_000 - 1000),
   };
   const snapshotAt = offset => ({ policy, policyCommit: 'a'.repeat(40), policyBlob: associationPolicyBlob(policy), checkedAt: stamp(offset) });
   const receipt = await createPreReadAssociationReceipt(snapshotAt(2000), {
-    journalPath, now: epoch + 2000, edition: 'adhoc', previousSourceSha: previousMeta.sourceSha,
+    journalPath, now: epoch + 2000, edition, previousSourceSha: previousMeta.sourceSha,
   });
   for (const [name, start, end] of [
     ['ib-read', 5000, 10_000], ['sharesight-read', 11_000, 12_000],
@@ -66,7 +66,7 @@ async function fixture(t,{positionsFallback=false}={}) {
     orders: { orders: [] }, trades: { trades: [] },
   };
   const input = {
-    edition: 'adhoc', dataDate, previousSourceSha: previousMeta.sourceSha,
+    edition, dataDate, previousSourceSha: previousMeta.sourceSha,
     ib: Object.fromEntries(IB_ENDPOINTS.map((name, index) => [name, captured(raws[name], 5100 + index * 900, 5200 + index * 900)])),
     sharesight: registry.portfolios.filter(item => item.requiredEachReport).map(item => captured({ result: {
       mode: 'read_only', portfolio: { id: item.portfolioId, currency_code: 'USD' },
@@ -83,7 +83,7 @@ async function fixture(t,{positionsFallback=false}={}) {
   const evidence = buildSourceEvidence(input, registry, { associationReceipt: receipt, associationSnapshot, journalPath, now });
   const card = title => ({ title, asOfHkt: hkt, lines: ['合成测试，不是金融数据。'], columns: ['项目', '状态'], rows: [['合成', '仅测试']] });
   const view = {
-    schemaVersion: 1, edition: 'adhoc', dataDate, asOfHkt: hkt, marketContext: '合成集成测试',
+    schemaVersion: 1, edition, dataDate, asOfHkt: hkt, marketContext: '合成集成测试',
     alerts: [{ level: 'warning', text: '合成测试，不得发布。' }], summary: ['合成一。', '合成二。', '合成三。'],
     kpis: [
       { label: '合成 NAV', value: 100, format: 'usd', asOfHkt: hkt, note: '合成' },
@@ -157,8 +157,8 @@ test('current policy cannot be stripped, changed, expired or revoked after succe
   }
 });
 
-test('prepare rejects cross-run, missing snapshot and read-before-policy evidence before rendering', async t => {
-  const f = await fixture(t);
+for (const edition of ['adhoc', 'am', 'pm']) test(`${edition} prepare rejects cross-run, missing snapshot and read-before-policy evidence`, async t => {
+  const f = await fixture(t, {edition});
   assert.throws(() => prepareReport(f.view, f.evidence, { ...f.options, associationSnapshot: null }), /snapshot is required/);
   assert.throws(() => prepareReport(f.view, f.evidence, { ...f.options, manualConsentStore: path.join(f.directory, 'not-a-store') }), /never the manual consent store/);
   const forged = clone(f.evidence); forged.sources.ib.accountAssociation.runId = 'e'.repeat(64);
@@ -168,10 +168,17 @@ test('prepare rejects cross-run, missing snapshot and read-before-policy evidenc
   const badRead = clone(f.evidence); badRead.sources.sharesight[0].readStartedAt = f.stamp(2000);
   assert.throws(() => prepareReport(f.view, badRead, f.options), /outside journal read stage/);
   assert.equal(showRunJournal(f.journalPath).timing.completedStages.includes('render'), false);
+  const stripped = clone(f.evidence);
+  delete stripped.sources.ib.accountAssociation;
+  assert.throws(() => prepareReport(f.view, stripped, f.options), /requires account association receipt/);
+  const conflict = clone(f.input);
+  conflict.ib.accountSummary.raw.account_id = 'SYNTHETIC_WRONG_ACCOUNT';
+  conflict.ib.accountSummary.rawFingerprint = fingerprint(conflict.ib.accountSummary.raw);
+  assert.throws(() => buildSourceEvidence(conflict, registry, {associationReceipt:f.receipt, associationSnapshot:f.associationSnapshot,journalPath:f.journalPath,now:f.now}), /ACCOUNT_SCOPE/);
 });
 
-test('operational prepare path independently requests current policy and writes only guarded candidate bytes', async t => {
-  const f = await fixture(t);
+for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepare independently requests policy and writes only guarded bytes`, async t => {
+  const f = await fixture(t, {edition});
   const viewFile = path.join(f.directory, 'synthetic-view.json'), sourcesFile = path.join(f.directory, 'synthetic-sources.json');
   const outputFile = path.join(f.directory, 'synthetic-candidate.html');
   fs.writeFileSync(viewFile, JSON.stringify(f.view), { mode: 0o600 });

@@ -1,6 +1,48 @@
-# Seven-day owner-attested account association — inactive pilot
+# Seven-day owner-attested account association
 
-## Status and boundaries
+## Scheduled scope approved by owner, 2026-09-07
+
+The owner explicitly approved extending the existing IB-HK association to fixed
+AM and PM reports after the September 7 PM run stopped at ACCOUNT_SCOPE_UNPROVEN.
+This maintenance change selects `adhoc`, `am`, and `pm`; retaining historical
+adhoc compatibility does NOT restore the retired manual-report feature.
+The validity remains 2026-09-05T13:30:00.000Z through (exclusive)
+2026-09-12T13:30:00.000Z. No renewal, extension, new account, connector change,
+trade or financial write is authorized. Upstream silent account remapping may
+remain undetected: this is owner attestation, not native IB account-ID proof.
+Any changed account/connector, contradictory ID or revoked/expired policy stops
+the association. At expiry the fixed reports stop on this path until separately
+reconfirmed; do not silently renew or switch to unverified identity.
+
+Activation requires this exact-head maintenance approval and merge, followed by
+the original fixed Routine prompt updates and a separately evidenced real run.
+Code tests do not prove deployment or report delivery. Before either source read
+stage, use the real run journal and `check --edition am` or `--edition pm`.
+Refresh the current policy snapshot as required; preserve raw responses without
+adding account_id. Prepare and BOTH publication gates independently load current
+main for every ordinary edition; selected editions require their exact run-bound
+receipt even if every association marker is removed. Cross-edition receipts fail.
+Holiday PM retains the complete required evidence and guard, with concise visible
+closed-market wording and truthful source dates, not an invented market opening.
+
+This section supersedes the historical adhoc-only restrictions below and in
+earlier Routine prompts after controlled rollout. All other requirements remain.
+
+### Ordinary correction candidates are not an identity exception
+
+While a report edition is selected by the deployed association, an ordinary
+explanation-only correction, cash-plan repair or ETF-pane migration WITHOUT a
+current valid receipt is rejected too. Earlier no-financial-read correction
+permissions do not grant an account-verification exception. Do not fabricate a
+new pre-read receipt over an old report or relabel old data to pass this gate.
+Use the next fully sourced, genuinely authorized normal report, or obtain a
+separately reviewed exact-source-bound historical correction implementation.
+The only existing no-current-policy exceptions are the trusted guard's strictly
+verified records-update and pinned AAOI historical correction paths. At expiry,
+ordinary association candidates, including corrections, remain blocked pending
+separate reconfirmation; historical source files are never modified or deleted.
+
+## Original pilot history and unchanged boundaries
 
 The owner approved implementation on 2026-09-05 after being told the residual
 risk: a silent upstream account remapping may remain undetected and a read-only

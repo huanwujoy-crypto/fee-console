@@ -1215,7 +1215,7 @@ try {
       fail('AAOI T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen tier approval');
   }
   if (!verifiedRecordsUpdate && !edition) fail('ordinary report requires one recognized edition in its primary header');
-  const needsCurrentPolicy = !verifiedRecordsUpdate && !verifiedHistoricalCorrection && (edition === 'adhoc' || hasAssociationMarker(html));
+  const needsCurrentPolicy = !verifiedRecordsUpdate && !verifiedHistoricalCorrection;
   let snapshot = null;
   if (needsCurrentPolicy) {
     // The injected path is only for trusted local caller/test processes, like

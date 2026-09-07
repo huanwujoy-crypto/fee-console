@@ -5,6 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
 import {
   CLASSIFICATION_CORRECTION_NOTICE,
   CLASSIFICATION_CORRECTION_SOURCE_BLOB,
@@ -120,8 +121,11 @@ test('verification rejects arbitrary extra edits even if their numbers look unch
 test('trusted guard rejects obsolete classification, then requires the later cash-model repair', t => {
   const previous = temporaryReport(t, withMigratedEtfPolicyFixture(original), 'previous.html');
   const current = temporaryReport(t, withMigratedEtfPolicyFixture(corrected));
+  const snapshotFile = path.join(current.dir, 'synthetic-inactive-policy.json');
+  fs.writeFileSync(snapshotFile, JSON.stringify(inactiveAssociationSnapshot()));
   const env = {
     ...process.env,
+    XUAN_IB_ASSOCIATION_SNAPSHOT_JSON: snapshotFile,
     XUAN_IB_PREVIOUS_SOURCE_SHA: CLASSIFICATION_CORRECTION_SOURCE_SHA,
     XUAN_IB_PREVIOUS_HTML_BLOB: CLASSIFICATION_CORRECTION_SOURCE_BLOB,
   };

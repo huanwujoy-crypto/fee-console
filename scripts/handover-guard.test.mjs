@@ -6,6 +6,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {TREND_METHOD,simulateEtfTrend,projectOpenEtfTrend} from './xuan-ib-etf-trend.mjs';
@@ -76,7 +77,9 @@ const run = (html, date = '2026-08-25', continuity = null, { autoPolicy = true }
   const file = path.join(dir, 'index.html');
   fs.writeFileSync(file, autoPolicy ? addRequiredPolicyFixture(html) : html);
   const args = [guard, file, date];
-  const env = { ...process.env };
+  const snapshotFile = path.join(dir, 'synthetic-inactive-policy.json');
+  fs.writeFileSync(snapshotFile, JSON.stringify(inactiveAssociationSnapshot()));
+  const env = { ...process.env, XUAN_IB_ASSOCIATION_SNAPSHOT_JSON: snapshotFile };
   if (continuity?.previousHtml !== undefined) {
     const previousFile = path.join(dir, 'previous.html');
     fs.writeFileSync(previousFile, continuity.previousHtml);

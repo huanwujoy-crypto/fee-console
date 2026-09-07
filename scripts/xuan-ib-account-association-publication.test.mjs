@@ -109,16 +109,38 @@ test('receipt-only continuity preserves historical association without pretendin
   assert.throws(() => checkAssociationPublication(html.replace(template, '').replace(` ${ASSOCIATION_BODY_ATTRIBUTE}`, ''), null, { ...context, previousHtml: html, verifiedRecordsUpdate: true }), /preserve the historical/);
 });
 
-test('AM and PM legacy paths remain unchanged while recurring cannot relabel its edition', () => {
+test('unselected AM and PM retain legacy compatibility but cannot relabel a recurring receipt', () => {
   const { html, current } = fixture();
   for (const edition of ['早间版', '睡前版']) {
-    assert.throws(() => checkAssociationPublication(html.replace('临时版', edition), current, context), /ad hoc only/);
+    assert.throws(() => checkAssociationPublication(html.replace('临时版', edition), current, context), /scope/);
     const plain = `<body><span class="date">2026-09-05 周六 · ${edition} · 收盘</span></body>`;
-    assert.equal(checkAssociationPublication(plain, null, context).mode, 'legacy');
+    assert.throws(() => checkAssociationPublication(plain, null, context), /fresh trusted policy/);
+    assert.equal(checkAssociationPublication(plain, current, context).mode, 'legacy');
   }
   assert.equal(publicationEdition('<span class="date">2026-09-05 · 临&#26102;版 · 收盘</span>'), 'adhoc');
   assert.equal(publicationEdition('<span class="date">2026-09-05</span><p class="edition">临时版</p>'), 'adhoc');
   assert.throws(() => publicationEdition('<span class="date">2026-09-05 · 临时版 · 早间版</span>'), /ambiguous/);
+});
+
+test('selected scheduled editions require receipts even when markers are entirely stripped', () => {
+  for (const [edition, label] of [['am', '早间版'], ['pm', '睡前版']]) {
+    const current = snapshot();
+    current.policy.editions = ['adhoc', 'am', 'pm'];
+    current.policyBlob = associationPolicyBlob(current.policy);
+    const r = createAssociationReceipt(current, {...context, edition, runId});
+    const html = `<body ${ASSOCIATION_BODY_ATTRIBUTE}><span class="date">2026-09-05 · ${label}</span><details><summary>报告说明</summary>${renderAssociationDisclosure(r, current)}</details>${renderAssociationReceipt(r)}</body>`;
+    assert.equal(checkAssociationPublication(html, current, context).freshRead, true);
+    const plain = `<body><span class="date">2026-09-05 · ${label}</span></body>`;
+    assert.throws(() => checkAssociationPublication(plain, current, context), /stripping/);
+    for (const status of ['revoked', 'active']) {
+      const p = {...current.policy, status, ...(status === 'active' ? {expiresAt: new Date(fixedNow).toISOString()} : {})};
+      const s = {...current, policy: p, policyBlob: associationPolicyBlob(p)};
+      assert.throws(() => checkAssociationPublication(plain, s, context), /stripping/);
+      assert.throws(() => checkAssociationPublication(html, s, context), /revoked|expired|changed/);
+    }
+    assert.throws(() => checkAssociationPublication(html.replace(label, '临时版'), current, context), /bind/);
+    assert.deepEqual(checkAssociationPublication(html, null, {...context, previousHtml: html, verifiedRecordsUpdate: true}), {mode:'historical-recurring',freshRead:false});
+  }
 });
 
 function fullHtml(fragment) {

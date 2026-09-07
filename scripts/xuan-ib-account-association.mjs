@@ -14,6 +14,7 @@ export const ASSOCIATION_RECEIPT_ID = 'xuan-ib-account-association-v1';
 export const ASSOCIATION_DISCLOSURE_ID = 'xuan-ib-account-association-disclosure-v1';
 export const MAX_ASSOCIATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_POLICY_LOOKUP_AGE_MS = 60_000;
+export const ASSOCIATION_EDITIONS = Object.freeze(['adhoc', 'am', 'pm']);
 const POLICY_ID = 'ib-primary-7day-pilot-v1';
 const PURPOSE = 'xuan-ib-read-only-report';
 const PUBLISHER = 'claude-verified-candidate-v1';
@@ -48,7 +49,7 @@ const instant = (value, label) => {
 };
 const hash = (value, pattern, label) => { if (typeof value !== 'string' || !pattern.test(value)) fail(`${label} is invalid`); };
 const scope = ({ edition = 'adhoc', purpose = PURPOSE, publisher = PUBLISHER } = {}) => {
-  if (edition !== 'adhoc' || purpose !== PURPOSE || publisher !== PUBLISHER) fail('report scope or publisher is not approved');
+  if (!ASSOCIATION_EDITIONS.includes(edition) || purpose !== PURPOSE || publisher !== PUBLISHER) fail('report scope or publisher is not approved');
 };
 
 export function validateAssociationPolicy(policy, { now = Date.now(), edition = 'adhoc', purpose = PURPOSE, publisher = PUBLISHER, requireActive = true } = {}) {
@@ -57,7 +58,11 @@ export function validateAssociationPolicy(policy, { now = Date.now(), edition = 
   scope({ edition, purpose, publisher });
   exactKeys(policy, POLICY_KEYS, 'policy');
   if (policy.schemaVersion !== 1 || policy.policyId !== POLICY_ID || policy.accountAlias !== 'IB-HK' || policy.basis !== ASSOCIATION_BASIS || policy.purpose !== PURPOSE || policy.publisher !== PUBLISHER) fail('policy scope is not approved');
-  if (!Array.isArray(policy.editions) || policy.editions.length !== 1 || policy.editions[0] !== 'adhoc') fail('policy must allow only adhoc');
+  if (!Array.isArray(policy.editions) || !policy.editions.length
+    || new Set(policy.editions).size !== policy.editions.length
+    || !policy.editions.includes('adhoc')
+    || policy.editions.some(item => !ASSOCIATION_EDITIONS.includes(item))) fail('policy editions are not approved');
+  if (!policy.editions.includes(edition)) fail('report scope is not selected by the policy');
   if (!['inactive', 'active', 'revoked'].includes(policy.status)) fail('policy status is invalid');
   if (policy.status === 'inactive') {
     if (policy.validFrom !== null || policy.expiresAt !== null) fail('inactive policy must not start a validity clock');
@@ -88,7 +93,7 @@ const validateSnapshot = validateAssociationSnapshot;
 
 export function validateAssociationReceiptShape(receipt, context = {}) {
   exactKeys(receipt, RECEIPT_KEYS, 'association receipt');
-  if (receipt.schemaVersion !== 1 || receipt.basis !== ASSOCIATION_BASIS || receipt.policyId !== POLICY_ID || receipt.edition !== 'adhoc') fail('association receipt scope is invalid');
+  if (receipt.schemaVersion !== 1 || receipt.basis !== ASSOCIATION_BASIS || receipt.policyId !== POLICY_ID || !ASSOCIATION_EDITIONS.includes(receipt.edition)) fail('association receipt scope is invalid');
   for (const key of ['policyBlob', 'policyCommit', 'previousSourceSha']) hash(receipt[key], SHA, key);
   hash(receipt.runId, HASH, 'runId');
   instant(receipt.policyCheckedAt, 'policyCheckedAt');
@@ -255,7 +260,7 @@ async function main(args) {
     process.stdout.write(`${json(loadTrustedAssociationPolicy())}\n`);
     return;
   }
-  if (command !== 'check' || rest.length !== 8) fail('usage: check --journal PATH --previous-source-sha SHA --edition adhoc --output PATH; or snapshot');
+  if (command !== 'check' || rest.length !== 8) fail('usage: check --journal PATH --previous-source-sha SHA --edition adhoc|am|pm --output PATH; or snapshot');
   const options = {};
   for (let i = 0; i < rest.length; i += 2) {
     if (!['--journal', '--previous-source-sha', '--edition', '--output'].includes(rest[i]) || Object.hasOwn(options, rest[i]) || !rest[i + 1]) fail('invalid or duplicate CLI flag');
