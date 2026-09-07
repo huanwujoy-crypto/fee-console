@@ -13,6 +13,13 @@
     {
       "portfolioId": 1350094,
       "portfolioName": "Webull",
+      "holdingId": 28656360,
+      "ticker": "AAOI",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
       "holdingId": 28656359,
       "ticker": "GOOG",
       "style": "growth"

@@ -248,6 +248,21 @@ test("the approved fee style mapping has unique holding keys and classifies Webu
   );
 });
 
+test("the delegated AAOI growth mapping is scoped to the exact Webull holding", () => {
+  const mapping = JSON.parse(fs.readFileSync(styleMapPath, "utf8"));
+  const aaoiMappings = mapping.holdings.filter(holding =>
+    holding.ticker === "AAOI" ||
+    (holding.portfolioId === 1350094 && holding.holdingId === 28656360));
+  assert.deepEqual(aaoiMappings, [{
+    portfolioId: 1350094,
+    portfolioName: "Webull",
+    holdingId: 28656360,
+    ticker: "AAOI",
+    style: "growth"
+  }]);
+  assert.equal(mapping.unknownHoldingPolicy, "fail_closed");
+});
+
 test("the approved BE growth mapping is scoped to the exact Webull holding", () => {
   const mapping = JSON.parse(fs.readFileSync(styleMapPath, "utf8"));
   const beMappings = mapping.holdings.filter(holding =>
