@@ -75,8 +75,12 @@
   调用方若不能证明该保留值仍有效，应在修订前停止并报告，不手动删字段强行通过。
   新日期的可选风格缺口本身不否定已独立核实的 AUM。正式映射表为
   `claude/fee-style-mapping.json`；每次自动运行必须先
-  读取它，以 portfolio + holding ID 为主键，ticker 只用于交叉核对。出现未知或重复映射时
-  fail closed，不得靠名称猜测或沿用过期提示词。
+  读取它，以 portfolio + holding ID 为主键，ticker 只用于交叉核对。新流程详见
+  `docs/fee-style-registry.md`：固定任务提供 `FEE_STYLE_INPUT_FILE`，由 writer 根据
+  受审静态映射及加密追加分类记录计算 growth/value，不再传手工风格总数。
+  新仓由 Codex / Claude 按用户授权取证、独立复核并通知一次；证据不足或身份冲突
+  则停止写入，由 Codex 负责异常，不猜测。首次启用 registry 后禁止无输入回退；
+  上述省略参数兼容行为仅适用于尚未启用 registry 的旧调用。
 - 页面把 `cash + other` 合并显示为“现金及其它”；这只改变展示，不改变账户总额、
   收益率或费用计算。
 - 拆分与两账户之和的差额：

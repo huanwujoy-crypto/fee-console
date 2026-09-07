@@ -31,6 +31,7 @@ import {
   validateFeeCalculationReceipt
 } from "./fee-receipt-core.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
+import { readStyleInput, resolveStyle } from "./fee-style-registry.mjs";
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -76,7 +77,7 @@ const known = new Set([
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
 ]);
 for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${k}`);
-for (const f of flags) if (f !== "calibrated") die(`unknown flag --${f}`);
+for (const f of flags) if (!["calibrated", "style-preflight"].includes(f)) die(`unknown flag --${f}`);
 const calibrated = flags.has("calibrated");
 
 /* Optional source provenance.  Older callers may omit both fields. */
@@ -112,7 +113,7 @@ for (const b of BENCH_DIV_KEYS) if (args[b] !== undefined) benchDiv[b] = num(b, 
 const date = args.date;
 if (date === undefined) die("missing --date");
 
-const check = validateInputs({
+let check = validateInputs({
   date, accounts, splits, styleSplits, sourceDates, bench, benchDiv,
   benchDate: args["src-bench"] ?? null, calibrated, now: new Date()
 });
@@ -247,6 +248,38 @@ if (Object.hasOwn(data, "status")) {
   if (!Array.isArray(data.status.notes) || data.status.notes.some(note => typeof note !== "string")) {
     die("decrypted payload status.notes must be an array of strings — nothing written");
   }
+}
+// Ordinary learned classifications travel only inside the encrypted payload.
+// Legacy callers remain supported until the registry is first activated.
+let styleResult = null, verifyStyleInput = () => {};
+const styleFile = (process.env.FEE_STYLE_INPUT_FILE || '').trim();
+if (flags.has('style-preflight') && !styleFile) die('STYLE_INPUT_REQUIRED — nothing written');
+if (data.classificationRegistry !== undefined && !styleFile) {
+  die('STYLE_INPUT_REQUIRED for an activated registry — nothing written');
+}
+if (styleFile) {
+  if (STYLE_SPLITS.some(k => args[k] !== undefined)) die('STYLE_MANUAL_TOTALS_REFUSED — nothing written');
+  try {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const snapshot = readStyleInput(styleFile, repoRoot);
+    verifyStyleInput = snapshot.verify;
+    const staticMap = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/fee-style-mapping.json'), 'utf8'));
+    styleResult = resolveStyle({ input: snapshot.input, registry: data.classificationRegistry,
+      staticMap, date, sourceDates, stock: splits.stock });
+    styleSplits.growth = styleResult.growth;
+    styleSplits.value = styleResult.value;
+  } catch (error) {
+    const code = /^STYLE_[A-Z0-9_]+$/.test(error.message) ? error.message : 'STYLE_INPUT_INVALID';
+    die(`${code} — nothing written`);
+  }
+  check = validateInputs({ date, accounts, splits, styleSplits, sourceDates, bench, benchDiv,
+    benchDate: args['src-bench'] ?? null, calibrated, now: new Date() });
+  if (check.errors.length) dieAll([...check.errors, 'nothing written']);
+}
+if (flags.has('style-preflight')) {
+  try { verifyStyleInput(); } catch { die('STYLE_FILE_CHANGED — nothing written'); }
+  console.log(`style-preflight pass new-classifications=${styleResult.newEventIds.length}; no data written; not a publication or delivery receipt`);
+  process.exit(0);
 }
 const economicInput = loadEconomicInput();
 if (!economicInput && data.feeCalculationReceipt?.schema === FEE_LEGACY_RECEIPT_SCHEMA) {
@@ -397,6 +430,7 @@ const nextData = {
   flowsUnresolved: flows.unresolved,
   status
 };
+if (styleResult) nextData.classificationRegistry = styleResult.registry;
 
 let receiptState = "unchanged";
 if (economicInput) {
@@ -426,8 +460,11 @@ if (economicInput) {
 // No-op is also an output claim: recheck the original source before either exit.
 try { verifyLegacySourceUnchanged(); }
 catch { die("private legacy source changed before output — nothing written"); }
+try { verifyStyleInput(); }
+catch { die('STYLE_FILE_CHANGED — nothing written'); }
 const receiptUnchanged = sameFeeCalculationReceipt(data.feeCalculationReceipt, nextData.feeCalculationReceipt);
-if (baseUnchanged && receiptUnchanged) {
+const registryUnchanged = stableJson(data.classificationRegistry) === stableJson(nextData.classificationRegistry);
+if (baseUnchanged && receiptUnchanged && registryUnchanged) {
   console.log(`no-op ${date}`);
   process.exit(0);
 }
