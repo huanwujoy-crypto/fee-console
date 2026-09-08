@@ -26,6 +26,11 @@ Timing and DST limitations: [report schedule](xuan-ib-report-schedule-HKT-v1.md)
 Target: actual entry to exact public read-back **≤20 minutes**; record schedule
 delay and planned-start-to-public elapsed separately. Retries do not reset the
 overall measurement. A late valid report can publish; no missing time is zero.
+The pure `summarizeRunObservation` helper in
+[`scripts/xuan-ib-run-observation.mjs`](../scripts/xuan-ib-run-observation.mjs)
+can summarize separately recorded timestamps and public-readback evidence IDs.
+Its `observation-only` output is not a receipt or independent byte verification;
+missing starts or evidence must remain `not-recorded`. It never edits journals.
 
 ## 2. Bootstrap and account scope before any financial read
 
