@@ -77,11 +77,25 @@ function sourceContext(doc, table) {
   const scope=table.closest('section.card') || table.closest('details');
   if(!scope || contexts.get(scope)?.parentElement===scope)return;
   const candidates=[...scope.querySelectorAll(':scope > p,:scope > .dbody > p,:scope > ol.brief-lines,:scope > .dbody > ol.brief-lines')];
-  const selected=candidates.filter(node=>CONTEXT.test(node.textContent)||CAUTION.test(node.textContent));
   const context=el(doc,'aside','holdings-source-context');
-  for(const source of selected){
-    const line=el(doc,'div');copyContents(source,line);context.append(line);
+  const appendWhole=whole=>{
+    for(const node of whole.querySelectorAll('[id]'))node.removeAttribute('id');
+    if([...normalize(whole.textContent)].length>180){
+      const fold=el(doc,'details','holdings-context-detail');
+      fold.append(el(doc,'summary','','来源限定条件（完整原说明）'),whole);context.append(fold);
+    }else context.append(whole);
+  };
+  // Only the generator's standalone data/time and authoritative-total labels
+  // may be separated from surrounding prose. All other direct paragraphs form
+  // one original context unit, so a preceding denial/condition is not lost.
+  const standalone=text=>/^(?:数据时点[：:]\s*)?\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?:–\d{2}:\d{2})? HKT(?: · \d+ 只)?$/.test(text)
+    || /^权威市值 (?:\$[\d,.]+|未取得) · (?:直读|替代源|未取得)$/.test(text);
+  const prose=el(doc,'div','holdings-context-note');
+  for(const source of candidates){
+    if(standalone(normalize(source.textContent))){const line=el(doc,'div');copyContents(source,line);context.append(line);}
+    else prose.append(source.cloneNode(true));
   }
+  if(CONTEXT.test(prose.textContent)||CAUTION.test(prose.textContent))appendWhole(prose);
   // Never extract a keyword-matching child without its parent introduction: a
   // list headed "以下情况均未发生" must not become a positive failure claim.
   // Copy the complete known note unit instead, leaving ordinary method notes
@@ -96,11 +110,7 @@ function sourceContext(doc, table) {
       whole.append(node.cloneNode(true));
     }
     if(!CAUTION.test(whole.textContent))continue;
-    for(const node of whole.querySelectorAll('[id]'))node.removeAttribute('id');
-    if([...normalize(whole.textContent)].length>180){
-      const fold=el(doc,'details','holdings-context-detail');
-      fold.append(el(doc,'summary','','来源限定条件（完整原说明）'),whole);context.append(fold);
-    }else context.append(whole);
+    appendWhole(whole);
   }
   if(!context.children.length)return;
   const heading=scope.querySelector(':scope > h2,:scope > summary');

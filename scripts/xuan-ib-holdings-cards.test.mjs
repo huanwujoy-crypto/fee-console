@@ -153,6 +153,13 @@ test('source note preserves the whole parent negation and conditional list, neve
     assert.equal(signature(note),before);
   }
 });
+test('direct card explanations also preserve the preceding denial instead of isolating a warning paragraph',()=>{
+  const f=fixture();f.card.append(element('p','以下情况均未发生：'),element('p','行情延迟使用替代源。'));
+  improveHoldingsCards(f.doc);const copy=f.doc.querySelector('.holdings-context-note');
+  assert.equal(copy.textContent,'以下情况均未发生：行情延迟使用替代源。');
+  assert.equal(copy.children[0].textContent,'以下情况均未发生：');
+  assert.ok(f.doc.querySelector('.holdings-source-context').textContent.includes('2026-09-08 08:29–08:31 HKT'));
+});
 test('long contextual qualification stays whole in a neutral fold, with source time and row exceptions still visible',()=>{
   const f=fixture(),note=element('details'),body=element('div',null,'dbody');
   body.append(element('p','以下情况均未发生：'),element('p','行情延迟使用替代源。'),element('p','本段说明估值与账户来源的对应方法。'.repeat(20)));
