@@ -274,7 +274,8 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
 }
 
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false,
-  privateEtfImport = null, confirm = () => true, storageBlocked = false, handoffBlocked = false}) {
+  privateEtfImport = null, confirm = () => true, storageBlocked = false, handoffBlocked = false,
+  headerGuide = true, headerGuideBody = true}) {
   const listeners = {adhoc: {}, stopAdhoc: {}, decision: {}, button: {}, window: {}, document: {}};
   const confirmations = [];
   const navigations = [];
@@ -325,6 +326,8 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   const status = {textContent: '', classList: classList()};
   const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
   const elements = new Map([
+    ['.header-guide > summary', headerGuide ? {} : null],
+    ['.header-guide .guide-body', headerGuideBody ? {} : null],
     ['#adhoc', adhoc],
     ['#adhoc-label', adhocLabel],
     ['#adhoc-hint', adhocHint],
@@ -594,7 +597,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-06\.4"/);
+  assert.match(loader, /loaderBuild = "2026-09-08\.1"/);
   assert.match(loader, /href="history\/2026-09-05-am.html"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
@@ -1372,7 +1375,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-06.4');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-08.1');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1503,6 +1506,39 @@ test('a schema-v1 metadata and HTML pair is rendered only after its exact Git bl
   assert.equal(saved.cacheVersion, 1);
   assert.equal(saved.meta.htmlBlob, meta.htmlBlob);
   assert.equal(saved.html, html);
+});
+
+test('fixed page suppresses only the embedded guide before first paint and preserves canonical bytes', async () => {
+  const body = '<div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary><p>Guide</p></details><details><summary>报告说明</summary></details></div></div>';
+  const html = reportHtml('2026-08-28', '早间版', body), meta = metaFor(html);
+  const app = loaderHarness({fetchImpl: async url => String(url).includes('latest.meta.json')
+    ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const style = '<style id="xuan-embedded-guide-style">.page > .wrap > details.mobile-guide{display:none!important}</style>';
+  assert.ok(app.frame.srcdoc.includes(style));
+  assert.ok(app.frame.srcdoc.indexOf(style) < app.frame.srcdoc.indexOf('<body>'), 'style is present before iframe load / async imports');
+  assert.ok(app.frame.srcdoc.includes(body), 'display rule never deletes source content or other explanations');
+  const cached = JSON.parse(app.stored.get('xuan-ib:last-verified:v1'));
+  assert.equal(cached.html, html);
+  assert.equal(cached.meta.htmlBlob, gitBlobSha(Buffer.from(html)));
+  assert.doesNotMatch(cached.html, /xuan-embedded-guide-style/);
+  await app.listeners.button.click();
+  assert.equal(app.frame.srcdoc.split(style).length, 2, 'refresh is idempotent');
+  const restored = loaderHarness({stored: app.stored, fetchImpl: async () => { throw new Error('offline'); }});
+  await restored.listeners.button.click();
+  assert.ok(restored.frame.srcdoc.includes(style), 'offline verified cache uses the same display rule');
+  assert.match(loader, /<details class="header-guide"><summary>使用指南<\/summary><div class="guide-body">/);
+});
+
+test('an absent or incomplete header guide never suppresses the report only guide', async () => {
+  const html = reportHtml('2026-08-28', '早间版', '<details class="mobile-guide"><summary>使用指南</summary></details>'), meta = metaFor(html);
+  for (const options of [{headerGuide: false}, {headerGuideBody: false}]) {
+    const app = loaderHarness({...options, fetchImpl: async url => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+    await app.listeners.button.click();
+    assert.doesNotMatch(app.frame.srcdoc, /xuan-embedded-guide-style/);
+    assert.match(app.frame.srcdoc, /<details class="mobile-guide">/);
+  }
 });
 
 test('a bounded external script injected in transit is removed only when the trusted Git blob is restored', async () => {

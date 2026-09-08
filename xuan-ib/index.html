@@ -140,7 +140,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-06.4";
+      const loaderBuild = "2026-09-08.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -1338,8 +1338,15 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           }
         };
         frame.setAttribute("sandbox", "allow-same-origin");
+        // The fixed page already owns the guide. Suppress only the embedded
+        // duplicate before first paint, even if optional layout imports fail.
+        // Standalone reports and the canonical/cached bytes stay unchanged.
+        const guideStyle = document.querySelector('.header-guide > summary') &&
+          document.querySelector('.header-guide .guide-body')
+          ? '<style id="xuan-embedded-guide-style">.page > .wrap > details.mobile-guide{display:none!important}</style>'
+          : '';
         frame.srcdoc = record.protectedHtml.replace(/<head[^>]*>/i,
-          (head) => `${head}<meta name="xuan-loader-render" content="${token}">`);
+          (head) => `${head}<meta name="xuan-loader-render" content="${token}">${guideStyle}`);
         renderedBlob = record.blob;
       }
 
