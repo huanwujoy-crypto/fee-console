@@ -65,6 +65,11 @@ test('known generated and legacy contracts retain label roles; unknown headers d
   assert.deepEqual(holdingsHeaderContract(generated),{identity:0,value:1,change:2,quote:3,time:4,headers:generated});
   assert.equal(holdingsHeaderContract(['标的','估值价','日涨跌','行情时点','市值 $']).value,4);
   assert.equal(holdingsHeaderContract(['标的','市值 $','收盘报价（ib 直读）']).change,null);
+  for(const quote of ['收盘报价（IB 直读）','收盘报价（IB直读）','收盘报价 (IB 直读)']){
+    assert.equal(holdingsHeaderContract(['标的','市值 $',quote]).quote,2);
+    assert.equal(holdingsHeaderContract(['标的',quote,'市值 $']).quote,1);
+  }
+  assert.equal(holdingsHeaderContract(['标的','市值 $','收盘报价（OTHER 直读）']),null);
   assert.equal(holdingsHeaderContract(['标的','市值 EUR','日涨跌','估值价','行情时点']),null);
   assert.equal(holdingsHeaderContract(['标的','市值 $','盈亏','估值价','行情时点']),null);
 });
@@ -113,6 +118,31 @@ test('blank change never becomes blank or zero, and totals stay distinct from ho
   assert.ok(cards[0].querySelector('.holdings-primary-values').textContent.includes('日涨跌未取得'));
   assert.ok(cards[1].textContent.includes('+0.00%'));
   assert.ok(cards[2].classList.contains('holdings-total'));
+  assert.equal(cards[2].querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,3);
+  assert.equal(cards[2].querySelector('.holdings-flags'),null);
+  assert.ok(!cards[2].textContent.includes('未取得'));
+});
+test('totals retain existing quote/change/time values while empty legacy fields are neutrally inapplicable',()=>{
+  const f=fixture({rows:[['总计','40','−1.00%','USD 3','2026-09-08 08:30 HKT']]});
+  const before=signature(f.table);improveHoldingsCards(f.doc);const card=f.doc.querySelector('.holdings-total');
+  assert.equal(signature(f.table),before);
+  for(const exact of ['40','−1.00%','USD 3','2026-09-08 08:30 HKT'])assert.ok(card.textContent.includes(exact));
+  assert.ok(!card.textContent.includes('不适用'));
+  const old=fixture({headers:['标的','市值 $','收盘报价（IB 直读）'],rows:[['合计','40','']]});
+  improveHoldingsCards(old.doc);const total=old.doc.querySelector('.holdings-total');
+  assert.equal(total.querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,3);
+  assert.equal(total.querySelector('.holdings-flags'),null);
+});
+test('numeric quote warning classes on the cell or any descendant keep the exact quote visible',()=>{
+  for(const cls of ['wv','or'])for(const nested of [false,true]){
+    const f=fixture(),quote=f.tbody.children[0].children[3];
+    if(nested){quote.textContent='';quote.append(element('span','CAD 12.2500',cls));}else quote.className=cls;
+    const before=signature(f.table);improveHoldingsCards(f.doc);const card=f.doc.querySelector('.holdings-mobile-card');
+    assert.equal(signature(f.table),before);assert.equal(card.querySelector('details.holdings-quote'),null);
+    const display=card.querySelector('.holdings-quote');
+    assert.ok(display.textContent.includes('CAD 12.2500'));assert.ok(display.querySelector('.'+cls));
+    assert.equal(display.closest('details'),f.group);
+  }
 });
 test('retry is idempotent, source qualifications survive later note moves and cloned IDs do not repeat',()=>{
   const f=fixture();const symbol=element('span','SYNTH');symbol.setAttribute('id','source-symbol');f.tbody.children[0].children[0].append(symbol);
@@ -138,6 +168,15 @@ test('nested quote and identity tooltip qualifications remain visible outside cl
     assert.ok(flags.some(n=>n.textContent===expected&&n.closest('details')===f.group),expected);
   }
   assert.ok(card.querySelector('details.holdings-quote'));
+});
+test('header tooltip warnings are visible with their original column labels and preserve source header bytes',()=>{
+  const f=fixture(),heads=f.table.querySelectorAll('thead th');
+  heads[3].setAttribute('title','报价延迟15分钟');heads[1].setAttribute('aria-label','市值使用近似估计');
+  const before=signature(f.table);improveHoldingsCards(f.doc);const card=f.doc.querySelector('.holdings-mobile-card');
+  assert.equal(signature(f.table),before);
+  for(const exact of ['估值价：报价延迟15分钟','市值 $：市值使用近似估计']){
+    assert.ok(card.querySelectorAll('p.holdings-flags').some(n=>n.textContent===exact&&n.closest('details')===f.group));
+  }
 });
 test('source note preserves the whole parent negation and conditional list, never isolated alarming children',()=>{
   for(const intro of ['以下情况均未发生：','如果今后发现以下情况，才改用替代源：']){

@@ -44,7 +44,8 @@ export function holdingsHeaderContract(headers) {
     ['标的','市值 $','估值价','日涨跌','行情时点'],
     ['标的','估值价','日涨跌','行情时点','市值 $'],
   ];
-  const legacy = ['收盘报价（ib 直读）','收盘报价（ib直读）','收盘报价 (ib 直读)'];
+  const legacy = ['收盘报价（ib 直读）','收盘报价（ib直读）','收盘报价 (ib 直读)',
+    '收盘报价（IB 直读）','收盘报价（IB直读）','收盘报价 (IB 直读)'];
   if (full.some(shape => JSON.stringify(shape) === JSON.stringify(keys))) {
     return { identity:0, value:keys.indexOf('市值 $'), change:keys.indexOf('日涨跌'),
       quote:keys.indexOf('估值价'), time:keys.indexOf('行情时点'), headers:keys };
@@ -134,32 +135,36 @@ export function improveHoldingsCards(doc) {
     const list=el(doc,'ol','holdings-mobile-cards');
     for(const row of rows){
       const cells=[...row.children],identity=cells[contract.identity];
-      const card=el(doc,'li','holdings-mobile-card'+(TOTAL.test(normalize(identity.textContent))?' holdings-total':''));
+      const isTotal=TOTAL.test(normalize(identity.textContent));
+      const card=el(doc,'li','holdings-mobile-card'+(isTotal?' holdings-total':''));
       const main=el(doc,'div','holdings-main'),name=el(doc,'div','holdings-identity');copyContents(identity,name);
       const values=el(doc,'dl','holdings-primary-values');
       values.append(field(doc,contract.headers[contract.value],cells[contract.value]));
-      values.append(field(doc,'日涨跌',contract.change===null?null:cells[contract.change],'',contract.change===null?'未取得（原表未提供）':'未取得'));
+      values.append(field(doc,'日涨跌',contract.change===null?null:cells[contract.change],'',isTotal?'不适用':contract.change===null?'未取得（原表未提供）':'未取得'));
       main.append(name,values);card.append(main);
       const time=el(doc,'dl','holdings-time');
-      time.append(field(doc,'行情时点',contract.time===null?null:cells[contract.time],'',contract.time===null?'原表未提供':'未取得'));card.append(time);
+      time.append(field(doc,'行情时点',contract.time===null?null:cells[contract.time],'',isTotal?'不适用':contract.time===null?'原表未提供':'未取得'));card.append(time);
       const quote=cells[contract.quote],quoteText=normalize(quote.textContent);
       // Only an ordinary numeric quote goes into the optional fold. Any extra
       // qualification, missing price or warning stays visible with its label.
-      const simpleQuote=/^(?:[A-Z]{3} )?[+−-]?\d[\d,]*(?:\.\d+)?$/.test(quoteText);
-      const quoteFields=el(doc,'dl');quoteFields.append(field(doc,contract.headers[contract.quote],quote));
+      const warningQuote=quote.classList.contains('wv')||quote.classList.contains('or')||!!quote.querySelector('.wv,.or');
+      const simpleQuote=!warningQuote&&/^(?:[A-Z]{3} )?[+−-]?\d[\d,]*(?:\.\d+)?$/.test(quoteText);
+      const quoteFields=el(doc,'dl');quoteFields.append(field(doc,contract.headers[contract.quote],quote,'',isTotal?'不适用':'未取得'));
       if(simpleQuote){const fold=el(doc,'details','holdings-quote');fold.append(el(doc,'summary','','报价详情'),quoteFields);card.append(fold);}
-      else{quoteFields.className='holdings-quote holdings-flags';card.append(quoteFields);}
+      else{quoteFields.className='holdings-quote'+(isTotal&&!quoteText?'':' holdings-flags');card.append(quoteFields);}
       // Attributes are not financial evidence. Preserve explicit source title/
       // aria qualifications, including a quote warning that must not be folded.
       const flags=new Set();
-      for(const [index,root] of [row,...cells].entries()){
+      const annotated=[{root:row,label:null},...cells.map((root,i)=>({root,label:contract.headers[i]})),
+        ...heads.map((root,i)=>({root,label:contract.headers[i]}))];
+      for(const {root,label} of annotated){
         // The row itself is handled separately; cell descendants can otherwise
         // hide a qualification in a tooltip under a closed quote-details fold.
-        const nodes=index?[root,...root.querySelectorAll('[title],[aria-label]')]:[root];
+        const nodes=label!==null?[root,...root.querySelectorAll('[title],[aria-label]')]:[root];
         for(const node of nodes)for(const attr of ['title','aria-label']){
           const flag=node.getAttribute(attr);
           if(flag && CAUTION.test(flag)){
-            const labelled=index?`${contract.headers[index-1]}：${flag}`:flag;
+            const labelled=label!==null?`${label}：${flag}`:flag;
             if(!flags.has(labelled)){flags.add(labelled);card.append(el(doc,'p','holdings-flags',labelled));}
           }
         }
