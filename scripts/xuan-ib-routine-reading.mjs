@@ -4,6 +4,7 @@ const views = new WeakMap();
 const make=(doc,tag,text,cls)=>{const n=doc.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
 const NOTE_RECORDS='template,script,style,[data-decision-id],.dcard,.xuan-work,.xuan-progress-fold,#xuan-aaoi-applied';
 const MATERIAL_NOTE=/读取失败|来源缺失|账户[^。；\n]*不匹配|数据[^。；\n]*冲突|计算失败|无法计算/;
+const LIMITED_NOTE=/待核验|待核实|未核验|数据降级|已过期|未取得|未调用逐票行情|未查询逐票行情|不含 AAOI|尚未计入 AAOI|近似|未逐票重算|非完整逐票/;
 const PUBLICATION_BOILERPLATE='发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。';
 
 function sourceNoteText(node){
@@ -23,7 +24,11 @@ function materialNoteContexts(roots) {
       // neighbouring source dates and denominator/currency labels. A flat list
       // of matching sentences can reverse the meaning of a qualified failure.
       const section=node.closest('.notes-section,.allocation-account-source,.allocation-original');
-      const context=section&&root.contains(section)?section:root;
+      // Without an explicit section boundary a preceding sibling can qualify
+      // (or negate) the entire list. Preserve the complete fold body in order,
+      // not just the root that happened to contain the matching sentence.
+      if(!section||!root.contains(section))return roots.filter(item=>!item.matches(NOTE_RECORDS));
+      const context=section;
       if(contexts.some(prior=>prior.contains(context)))continue;
       for(let i=contexts.length-1;i>=0;i--)if(context.contains(contexts[i]))contexts.splice(i,1);
       contexts.push(context);
@@ -69,6 +74,8 @@ export function simplifyReportNotes(doc) {
     if(fold.querySelector(':scope > .concise-report-notes'))continue;
     const roots=[...fold.children].filter(child=>child.tagName!=='SUMMARY');
     const text=roots.map(sourceNoteText).join('\n');
+    const hasLimits=MATERIAL_NOTE.test(text)||LIMITED_NOTE.test(text);
+    if(hasLimits)fold.querySelector(':scope > summary')?.append(make(doc,'span',' · 含数据限制','routine-note-limit-label'));
     const body=make(doc,'div','','dbody concise-report-notes');
     const lines=reportNoteLines(pane,text,{aaoiApplied});
     if(lines.length<2)lines.push('报告内未给出的数据不视为已核实；来源及范围见完整口径。');
@@ -94,17 +101,24 @@ export function simplifyReportNotes(doc) {
     // not flatten list items, deduplicate matching text or discard unrecognized
     // source limitations. Signed/cached report bytes are never changed here.
     const extra=make(doc,'details','','routine-data-limits');
-    extra.append(make(doc,'summary','来源与完整口径'));
+    extra.append(make(doc,'summary',hasLimits?'来源与完整口径 · 含数据限制':'来源与完整口径'));
+    let hasSourceContent=false;
     for(const root of roots){
       if(root.matches('p,li')&&!root.children.length&&root.textContent===PUBLICATION_BOILERPLATE){root.remove();continue;}
       for(const node of root.querySelectorAll('p,li')){
         if(!node.closest(NOTE_RECORDS)&&!node.children.length&&node.textContent===PUBLICATION_BOILERPLATE)node.remove();
       }
-      if(root.textContent.trim()||root.matches(NOTE_RECORDS)||root.querySelector(NOTE_RECORDS))extra.append(root);
-      else root.remove();
+      // Textless images, separators, media and other structures are still
+      // source context. Keep every remaining original node, even when an empty
+      // container alone does not warrant another disclosure.
+      if(root.textContent.trim()||root.children.length||!root.matches('div,p,section,ul,ol')||root.matches(NOTE_RECORDS))hasSourceContent=true;
+      extra.append(root);
     }
-    if(extra.children.length>1)body.append(extra);
-    else body.append(make(doc,'p','本页暂无额外来源说明；不代表缺失数据已经核实。'));
+    if(hasSourceContent)body.append(extra);
+    else {
+      for(const root of [...extra.children].filter(child=>child.tagName!=='SUMMARY'))body.append(root);
+      body.append(make(doc,'p','本页暂无额外来源说明；不代表缺失数据已经核实。'));
+    }
     fold.append(body);
     if(pane===2&&aaoiApplied){
       const proof=doc.getElementById('xuan-aaoi-applied');

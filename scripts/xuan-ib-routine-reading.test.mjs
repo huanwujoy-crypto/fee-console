@@ -109,6 +109,55 @@ test('unrecognized and mild limitations keep their full notes instead of disappe
   assert.equal(snapshot(body),raw);assert.ok(fold.querySelector('.routine-data-limits').contains(body));
   assert.equal(section.querySelector('.routine-material-exceptions'),null);
   assert.match(fold.textContent,/报价 CAD、汇总 USD/);
+  assert.match(fold.querySelector(':scope > summary').textContent,/含数据限制/);
+  assert.match(fold.querySelector('.routine-data-limits').querySelector(':scope > summary').textContent,/含数据限制/);
+});
+
+for(const container of ['bare-siblings','generic-body'])test(`unwrapped ${container} material notes retain preceding negation and the complete fold context`,()=>{
+  const {doc,fold,body,section}=fixture();body.remove();
+  const parent=container==='generic-body'?add(doc,fold,'div','','dbody'):fold;
+  const before=add(doc,parent,'p','2026-09-08 08:31 HKT；USD、三账户含现金。以下情况均未发生：');
+  const list=add(doc,parent,'ul');add(doc,list,'li','来源缺失或账户不匹配；没有发生，不应解释为本期失败。');
+  const after=add(doc,parent,'p','以上检查范围不含 NOAH；其报价 CAD，非本期美元分母。');
+  const record=add(doc,fold,'details','','xuan-work');add(doc,record,'p','历史读取失败：不得提升为本期提醒。');
+  const script=add(doc,fold,'script','historical failure record');
+  const originals=[before,list,after,record,script].map(snapshot);
+  simplifyReportNotes(doc);
+  const alert=section.querySelector('.routine-material-exceptions');
+  assert.ok(alert&&!fold.contains(alert));
+  assert.match(alert.textContent,/以下情况均未发生：/);
+  assert.ok(alert.textContent.indexOf('以下情况均未发生：')<alert.textContent.indexOf('来源缺失'));
+  assert.ok(alert.textContent.indexOf('来源缺失')<alert.textContent.indexOf('以上检查范围不含 NOAH'));
+  assert.match(alert.textContent,/2026-09-08 08:31 HKT；USD、三账户含现金/);
+  assert.match(alert.textContent,/其报价 CAD，非本期美元分母/);
+  assert.doesNotMatch(alert.textContent,/历史读取失败|historical failure record/);
+  assert.equal(alert.querySelector('script,.xuan-work'),null);
+  assert.deepEqual([before,list,after,record,script].map(snapshot),originals);
+  assert.ok([before,list,after,record,script].every(node=>fold.contains(node)));
+  const rendered=snapshot(doc);simplifyReportNotes(doc);assert.equal(snapshot(doc),rendered);
+});
+
+for(const limitation of ['名义敞口待核验','数据降级：采用注明日期的替代源','报价已过期，保留最后已核实来源'])test(`${limitation} is signposted on the closed notes without creating a severe alert`,()=>{
+  const {doc,fold,body,section}=fixture(1);add(doc,body,'p',limitation+'；2026-09-07，USD，限 IB。');
+  const original=snapshot(body);simplifyReportNotes(doc);
+  assert.equal(fold.open,false);assert.match(fold.querySelector(':scope > summary').textContent,/含数据限制/);
+  assert.equal(section.querySelector('.routine-material-exceptions'),null);
+  assert.equal(snapshot(body),original);assert.ok(fold.querySelector('.routine-data-limits').contains(body));
+  const rendered=snapshot(doc);simplifyReportNotes(doc);assert.equal(snapshot(doc),rendered);
+});
+
+test('textless source roots and nested image structures are preserved intact and in order',()=>{
+  const {doc,fold,body}=fixture(1);body.remove();
+  const image=add(doc,fold,'img');image.setAttribute('src','source-risk-chart.svg');image.id='source-chart';
+  const separator=add(doc,fold,'hr');
+  const figure=add(doc,fold,'figure'),nested=add(doc,figure,'img');nested.setAttribute('src','source-scope.svg');
+  const original=[image,separator,figure].map(snapshot);simplifyReportNotes(doc);
+  const full=fold.querySelector('.routine-data-limits');
+  assert.ok(full);assert.deepEqual(full.children.slice(1),[image,separator,figure]);
+  assert.deepEqual([image,separator,figure].map(snapshot),original);
+  assert.equal(doc.getElementById('source-chart'),image);
+  assert.doesNotMatch(fold.querySelector(':scope > summary').textContent,/含数据限制/);
+  assert.doesNotMatch(fold.textContent,/暂无额外来源说明/);
 });
 
 test('only exact known boilerplate is removed; decisions and technical records are not reinterpreted or modified',()=>{
@@ -123,6 +172,7 @@ test('only exact known boilerplate is removed; decisions and technical records a
   assert.equal(removed.parentElement,null);assert.ok(fold.contains(qualified));
   assert.deepEqual([decision,button,technical].map(snapshot),originals);
   assert.ok(fold.contains(decision));assert.equal(section.querySelector('.routine-material-exceptions'),null);
+  assert.doesNotMatch(fold.querySelector(':scope > summary').textContent,/含数据限制/);
   assert.equal(doc.querySelectorAll('[data-decision-id]').length,1);
 });
 
