@@ -1341,13 +1341,13 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           view = await mobileDisplayModule;
         } catch (_) {
           mobileDisplayStates.set(doc, 'import-failed');
-          notice('简洁排版暂未加载，点“刷新”重试；当前显示已验证报告。');
+          notice('简洁排版暂未加载，点“刷新”重试；仍未恢复请重新打开页面。当前显示已验证报告。');
           return;
         }
         if (!current()) return;
         try {
-          view.improveMobileDisplay(doc);
           doc.getElementById('xuan-mobile-layout-status')?.remove();
+          view.improveMobileDisplay(doc);
           routineReadingModule = view;
           mobileDisplayStates.set(doc, 'applied');
           organizeProgressReading(record);

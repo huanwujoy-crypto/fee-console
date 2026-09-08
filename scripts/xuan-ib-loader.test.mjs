@@ -485,7 +485,10 @@ async function mobileLoaderFixture(importer) {
 
 test('explicit refresh retries a failed layout import without replacing the verified document', async () => {
   const urls = [], applied = [];
-  const view = {improveMobileDisplay: doc => applied.push(doc), organizeRoutineRecords() {}};
+  const view = {improveMobileDisplay: doc => {
+    assert.equal(Boolean(doc.getElementById('xuan-mobile-layout-status')), false, 'loader-only notice is removed before report enhancement');
+    applied.push(doc);
+  }, organizeRoutineRecords() {}};
   const {app, doc, html} = await mobileLoaderFixture(url => {
     urls.push(url); return urls.length === 1 ? Promise.reject(new Error('offline')) : Promise.resolve(view);
   });
