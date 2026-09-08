@@ -78,6 +78,10 @@ jobs:
         shell: bash
         run: node --test scripts/daily.test.mjs scripts/fee-receipt-core.test.mjs scripts/fee-receipt-ui-contract.test.mjs scripts/fee-ledger-edit-guard.test.mjs scripts/fee-econ-v3-copy.test.mjs scripts/benchmark-cache.test.mjs scripts/ui-pr-guard.test.mjs scripts/ui-flows.test.mjs scripts/handover-guard.test.mjs scripts/xuan-ib-loader.test.mjs scripts/xuan-ib-decision-menu.test.mjs scripts/build-xuan-decision-shortcut.test.mjs scripts/xuan-ib-report-view.test.mjs scripts/xuan-ib-report-prepare-safety.test.mjs scripts/xuan-ib-run-clock.test.mjs scripts/xuan-ib-run-manifest.test.mjs scripts/xuan-ib-promotion.test.mjs scripts/xuan-ib-publish-health.test.mjs scripts/backfill-benchmark.test.mjs scripts/returns.test.mjs
 
+      - name: Test fixed-run intent and mobile holdings reliability
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/xuan-ib-source-plan.test.mjs scripts/xuan-ib-run-observation.test.mjs scripts/xuan-ib-holdings-cards.test.mjs
+
       - name: Verify source-bound Saturday historical layout
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-ib-saturday-archive.test.mjs scripts/xuan-ib-mobile-display.test.mjs scripts/xuan-ib-order-cards.test.mjs scripts/xuan-ib-allocation-cards.test.mjs scripts/xuan-ib-aaoi-t1.test.mjs scripts/xuan-ib-aaoi-snapshot.test.mjs scripts/xuan-ib-routine-reading.test.mjs
