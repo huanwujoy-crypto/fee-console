@@ -1707,6 +1707,62 @@ test('Saturday retains Friday PM but clearly warns when only Thursday PM is publ
   assert.equal(app.status.classList.contains('error'), true);
 });
 
+test('refresh preserves stale warning until a fresh pair has passed verification', async () => {
+  const oldHtml = reportHtml('2026-08-27', '睡前版', 'old-verified');
+  const freshHtml = reportHtml('2026-08-29', '早间版', 'fresh-verified');
+  let currentHtml = oldHtml, gate = null;
+  const app = loaderHarness({now: '2026-08-29T00:40:00Z', fetchImpl: async url => {
+    if (gate) await gate.promise;
+    return String(url).includes('latest.meta.json')
+      ? response({json: metaFor(currentHtml), bytes: []})
+      : response({json: null, bytes: Buffer.from(currentHtml)});
+  }});
+  await app.listeners.button.click();
+  const warning = app.warning.textContent;
+  gate = privateDeferred();
+  const refresh = app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(app.warning.hidden, false); assert.equal(app.warning.textContent, warning);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.match(app.status.textContent, /正在核对最新版/);
+  currentHtml = freshHtml; gate.resolve(); await refresh;
+  assert.equal(app.warning.hidden, true); assert.equal(app.status.classList.contains('error'), false);
+  assert.match(app.frame.srcdoc, /fresh-verified/);
+});
+
+test('a report crossing its deadline becomes visibly stale while refresh is still pending', async () => {
+  const html = reportHtml('2026-09-08', '早间版', 'crossing-deadline');
+  let gate = null;
+  const app = loaderHarness({now: '2026-09-08T13:49:00Z', fetchImpl: async url => {
+    if (gate) await gate.promise;
+    return String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(html)});
+  }});
+  await app.listeners.button.click(); assert.equal(app.warning.hidden, true);
+  app.advanceTime(61_000); gate = privateDeferred();
+  const refresh = app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(app.warning.hidden, false); assert.match(app.warning.textContent, /报告已过期/);
+  gate.resolve(); await refresh;
+  assert.equal(app.warning.hidden, false, 'the same old pair cannot clear the warning');
+});
+
+test('refresh does not clear a transport warning or accept mismatched fresh-looking bytes', async () => {
+  const html = reportHtml('2026-08-29', '早间版', 'trusted');
+  let failed = false, gate = null;
+  const app = loaderHarness({now: '2026-08-29T00:40:00Z', fetchImpl: async url => {
+    if (gate) await gate.promise;
+    return String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(failed ? html.replace('trusted', 'untrusted') : html)});
+  }});
+  await app.listeners.button.click(); failed = true; await app.listeners.button.click();
+  assert.equal(app.warning.hidden, false); const warning = app.warning.textContent;
+  gate = privateDeferred(); const refresh = app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(app.warning.hidden, false); assert.equal(app.warning.textContent, warning);
+  gate.resolve(); await refresh;
+  assert.equal(app.warning.hidden, false); assert.doesNotMatch(app.frame.srcdoc, /untrusted/);
+});
+
 test('Saturday AM remains current through Sunday and Monday before the PM deadline', async () => {
   const html = reportHtml('2026-08-29', '早间版', 'trusted-saturday-am');
   const meta = metaFor(html);

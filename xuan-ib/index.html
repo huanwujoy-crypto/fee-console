@@ -1452,11 +1452,21 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         lastAttempt = Date.now();
         button.disabled = true;
         if (retryLayout && lastVerified) void refreshMobileDisplay(lastVerified, {retry: true});
-        warning.hidden = true;
-        status.classList.remove("error");
         const restored = await restoreVerified(request);
         if (request !== requestSequence) return;
-        if (!restored) status.textContent = "正在读取最新版…";
+        if (lastVerified) {
+          // Checking is additive: neither starting a fetch nor receiving bytes
+          // proves freshness. Preserve an existing warning until pair verification.
+          const stale = staleMessage(lastVerified);
+          if (stale) {
+            warning.hidden = false;
+            warning.textContent = stale;
+          }
+          status.classList.toggle("error", !warning.hidden);
+          status.textContent = statusFor(lastVerified, "正在核对最新版");
+        } else if (!restored) {
+          status.textContent = "正在读取最新版…";
+        }
         try {
           const token = `${loaderBuild}-${Date.now()}`;
           const metaUrl = new URL("latest.meta.json", location.href);
