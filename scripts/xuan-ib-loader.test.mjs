@@ -275,8 +275,9 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
 
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false,
   privateEtfImport = null, confirm = () => true, storageBlocked = false, handoffBlocked = false,
-  headerGuide = true, headerGuideBody = true}) {
+  headerGuide = true, headerGuideBody = true, mobileDisplayImport = null}) {
   const listeners = {adhoc: {}, stopAdhoc: {}, decision: {}, button: {}, window: {}, document: {}};
+  const progressTasks = new Map();
   const confirmations = [];
   const navigations = [];
   const intervals = [];
@@ -417,13 +418,28 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     location,
     window,
     __importPrivateEtf: privateEtfImport,
+    __importMobileDisplay: mobileDisplayImport,
+    // Observe the real task's completion without awaiting it in the production
+    // caller, changing its result, or replacing validation/rendering logic.
+    __trackProgress: (request, task) => { progressTasks.set(request, task); },
   };
-  // Execute the real loader and its actual event wiring. Only substitute the
-  // dynamic network import dependency; no production logic is reimplemented.
+  // Execute the real loader and its actual event wiring. Substitute only the
+  // dynamic network imports and observe fire-and-forget progress promises;
+  // no production validation, rendering or concurrency logic is reimplemented.
   const importExpression = "import(new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href).href)";
   if (privateEtfImport) assert.equal(inlineScript.split(importExpression).length, 2);
-  vm.runInNewContext(privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript, context);
+  let testScript = privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript;
+  if (mobileDisplayImport) {
+    assert.equal(testScript.split('import(mobileUrl.href)').length, 2);
+    testScript = testScript.replace('import(mobileUrl.href)', '__importMobileDisplay(mobileUrl.href)');
+  }
+  const progressDispatch = /void refreshProgress\((record|lastVerified), request\);/g;
+  assert.equal([...testScript.matchAll(progressDispatch)].length, 2);
+  testScript = testScript.replace(progressDispatch,
+    (_, record) => `void __trackProgress(request, refreshProgress(${record}, request));`);
+  vm.runInNewContext(testScript, context);
   return {
+    progressTasks,
     adhoc,
     adhocLabel,
     adhocHint,
@@ -455,6 +471,70 @@ function privateDeferred() {
   return {promise, resolve, reject};
 }
 const settlePrivateLoader = () => new Promise(resolve => setImmediate(resolve));
+
+async function mobileLoaderFixture(importer) {
+  const html = reportHtml('2026-08-28', '早间版', decisionTemplate()), meta = metaFor(html);
+  const app = loaderHarness({displayDom: true, mobileDisplayImport: importer,
+    fetchImpl: async url => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const fixture = todoDocument(app.frame.srcdoc, []);
+  app.loadFrame(fixture.doc); await settlePrivateLoader();
+  return {app, doc: fixture.doc, html};
+}
+
+test('explicit refresh retries a failed layout import without replacing the verified document', async () => {
+  const urls = [], applied = [];
+  const view = {improveMobileDisplay: doc => {
+    assert.equal(Boolean(doc.getElementById('xuan-mobile-layout-status')), false, 'loader-only notice is removed before report enhancement');
+    applied.push(doc);
+  }, organizeRoutineRecords() {}};
+  const {app, doc, html} = await mobileLoaderFixture(url => {
+    urls.push(url); return urls.length === 1 ? Promise.reject(new Error('offline')) : Promise.resolve(view);
+  });
+  assert.match(doc.getElementById('xuan-mobile-layout-status').textContent, /点“刷新”重试/);
+  const writes = app.frame.srcdocWrites;
+  const radio = doc.getElementById('s4'); radio.checked = true;
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(urls.length, 2); assert.notEqual(urls[0], urls[1], 'failed browser module cache is not reused');
+  assert.deepEqual(applied, [doc]); assert.equal(app.frame.srcdocWrites, writes);
+  assert.equal(radio.checked, true); assert.equal(Boolean(doc.getElementById('xuan-mobile-layout-status')), false);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(urls.length, 2); assert.deepEqual(applied, [doc], 'successful mutation is never repeated');
+});
+
+test('background refresh never retries failed layout and pending imports are single flight', async () => {
+  const gate = privateDeferred(); let imports = 0, applies = 0;
+  const {app} = await mobileLoaderFixture(() => { imports++; return gate.promise; });
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(imports, 1);
+  gate.reject(new Error('blocked')); await settlePrivateLoader();
+  app.advanceTime(6 * 60_000);
+  await app.listeners.document.visibilitychange(); await settlePrivateLoader();
+  assert.equal(imports, 1, 'existing background polls do not create a retry loop');
+  assert.equal(applies, 0);
+});
+
+test('a partial display failure is not applied a second time to mutated DOM', async () => {
+  let applies = 0;
+  const {app, doc} = await mobileLoaderFixture(() => Promise.resolve({improveMobileDisplay(d) {
+    applies++; d.partialMutation = true; throw new Error('partial display failure');
+  }}));
+  assert.equal(doc.partialMutation, true);
+  assert.match(doc.getElementById('xuan-mobile-layout-status').textContent, /重新打开页面/);
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(applies, 1); assert.ok(app.frame.srcdoc.includes('xuan-loader-render'));
+});
+
+test('late layout import never mutates a document that left the verified frame', async () => {
+  const gate = privateDeferred(), applied = [];
+  const {app, doc} = await mobileLoaderFixture(() => gate.promise);
+  app.frame.contentDocument = new DisplayDocument('https://example.test/unverified');
+  gate.resolve({improveMobileDisplay: d => applied.push(d)}); await settlePrivateLoader();
+  assert.deepEqual(applied, []); assert.notEqual(app.frame.contentDocument, doc);
+});
+
 function privateViewStub(firstMountWait = null) {
   const runs = [], clears = [];
   return {runs, clears,
@@ -594,10 +674,10 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /lastAttempt = Date\.now\(\)/);
   assert.match(loader, /Date\.now\(\) - lastAttempt > 5 \* 60_000/);
   assert.match(loader, /visibilitychange/);
-  assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
+  assert.match(loader, /button\.addEventListener\("click", \(\) => loadLatest\(\{retryLayout: true\}\)\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-08\.1"/);
+  assert.match(loader, /loaderBuild = "2026-09-08\.2"/);
   assert.match(loader, /href="history\/2026-09-05-am.html"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
@@ -1375,7 +1455,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-08.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-08.2');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1638,6 +1718,62 @@ test('Saturday retains Friday PM but clearly warns when only Thursday PM is publ
   assert.match(app.warning.textContent, /当前为 2026-08-27 睡前版/);
   assert.match(app.warning.textContent, /未伪造新数据/);
   assert.equal(app.status.classList.contains('error'), true);
+});
+
+test('refresh preserves stale warning until a fresh pair has passed verification', async () => {
+  const oldHtml = reportHtml('2026-08-27', '睡前版', 'old-verified');
+  const freshHtml = reportHtml('2026-08-29', '早间版', 'fresh-verified');
+  let currentHtml = oldHtml, gate = null;
+  const app = loaderHarness({now: '2026-08-29T00:40:00Z', fetchImpl: async url => {
+    if (gate) await gate.promise;
+    return String(url).includes('latest.meta.json')
+      ? response({json: metaFor(currentHtml), bytes: []})
+      : response({json: null, bytes: Buffer.from(currentHtml)});
+  }});
+  await app.listeners.button.click();
+  const warning = app.warning.textContent;
+  gate = privateDeferred();
+  const refresh = app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(app.warning.hidden, false); assert.equal(app.warning.textContent, warning);
+  assert.equal(app.status.classList.contains('error'), true);
+  assert.match(app.status.textContent, /正在核对最新版/);
+  currentHtml = freshHtml; gate.resolve(); await refresh;
+  assert.equal(app.warning.hidden, true); assert.equal(app.status.classList.contains('error'), false);
+  assert.match(app.frame.srcdoc, /fresh-verified/);
+});
+
+test('a report crossing its deadline becomes visibly stale while refresh is still pending', async () => {
+  const html = reportHtml('2026-09-08', '早间版', 'crossing-deadline');
+  let gate = null;
+  const app = loaderHarness({now: '2026-09-08T13:49:00Z', fetchImpl: async url => {
+    if (gate) await gate.promise;
+    return String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(html)});
+  }});
+  await app.listeners.button.click(); assert.equal(app.warning.hidden, true);
+  app.advanceTime(61_000); gate = privateDeferred();
+  const refresh = app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(app.warning.hidden, false); assert.match(app.warning.textContent, /报告已过期/);
+  gate.resolve(); await refresh;
+  assert.equal(app.warning.hidden, false, 'the same old pair cannot clear the warning');
+});
+
+test('refresh does not clear a transport warning or accept mismatched fresh-looking bytes', async () => {
+  const html = reportHtml('2026-08-29', '早间版', 'trusted');
+  let failed = false, gate = null;
+  const app = loaderHarness({now: '2026-08-29T00:40:00Z', fetchImpl: async url => {
+    if (gate) await gate.promise;
+    return String(url).includes('latest.meta.json')
+      ? response({json: metaFor(html), bytes: []})
+      : response({json: null, bytes: Buffer.from(failed ? html.replace('trusted', 'untrusted') : html)});
+  }});
+  await app.listeners.button.click(); failed = true; await app.listeners.button.click();
+  assert.equal(app.warning.hidden, false); const warning = app.warning.textContent;
+  gate = privateDeferred(); const refresh = app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(app.warning.hidden, false); assert.equal(app.warning.textContent, warning);
+  gate.resolve(); await refresh;
+  assert.equal(app.warning.hidden, false); assert.doesNotMatch(app.frame.srcdoc, /untrusted/);
 });
 
 test('Saturday AM remains current through Sunday and Monday before the PM deadline', async () => {
@@ -2024,7 +2160,22 @@ for(const event of progressFixture.events) {
 const progressFollowup = new Date(Date.parse(progressFixture.events.at(-1).recordedAtHkt)+60000+28800000).toISOString().slice(0,19)+'+08:00';
 const progressTestNow = new Date(Date.parse(progressFollowup)+60000).toISOString();
 const publishedState = JSON.parse(latest.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
-const settleProgress = () => new Promise(resolve => setTimeout(resolve, 15));
+async function settleProgress(app, {all = false, timeoutMs = 1000} = {}) {
+  assert.ok(app.progressTasks.size, 'expected a dispatched progress task before settling');
+  const entries = [...app.progressTasks.entries()];
+  const selected = all ? entries : [entries.at(-1)];
+  let timer;
+  try {
+    await Promise.race([
+      Promise.all(selected.map(([, task]) => task)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(
+          `progress request(s) ${selected.map(([id]) => id).join(',')} did not settle within ${timeoutMs}ms`
+        )), timeoutMs);
+      }),
+    ]);
+  } finally { clearTimeout(timer); }
+}
 function progressApp(getProgress,now=progressTestNow,report={html:latest,meta:metadata}) {
   let current = report;
   const app=loaderHarness({now,displayDom:true,fetchImpl:async(url,opts)=>{
@@ -2037,6 +2188,23 @@ function progressApp(getProgress,now=progressTestNow,report={html:latest,meta:me
   }});
   return {app,setReport:value=>{current=value;}};
 }
+test('progress settling observes actual async completion and fails explicitly for missing or stalled tasks',async()=>{
+  let release;
+  const delayed=new Promise(resolve=>{release=resolve;});
+  const {app}=progressApp(()=>delayed);
+  await app.listeners.button.click();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);
+  let settled=false;
+  const pending=settleProgress(app).then(()=>{settled=true;});
+  await new Promise(resolve=>setImmediate(resolve));
+  assert.equal(settled,false,'waiting must not finish before the actual progress task');
+  release(response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
+  await pending;
+  assert.ok(doc.getElementById('xuan-progress-status').textContent.includes('版本 '+progressFixture.revision));
+  await assert.rejects(settleProgress({progressTasks:new Map()}),/expected a dispatched progress task/);
+  await assert.rejects(settleProgress({progressTasks:new Map([[7,new Promise(()=>{})]])},{timeoutMs:10}),
+    /progress request\(s\) 7 did not settle within 10ms/);
+});
 test('current-progress fixture changes only synthetic observation pairs, preserving published receipt provenance',()=>{
   assert.equal(progressFixture.revision,3);
   assert.equal(progressFixture.events.length,historicalProgressEnd+1);
@@ -2056,7 +2224,7 @@ test('entire current published ledger renders latest receipt-bound statuses and 
   const now=new Date(Math.max(Date.parse(progressTestNow),...data.events.map(e=>Date.parse(e.recordedAtHkt)+60000))).toISOString();
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}),now,liveProgressPublication);
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   const resolved=publishedState.decisions.filter(d=>['accepted','modified'].includes(d.status));
   const hasRecordedProgress = d => data.events.some(e=>e.decisionId===d.decisionId && publishedState.receipts.some(r=>r.receiptId===e.receiptId && r.decisionId===d.decisionId));
   assert.equal(doc.querySelectorAll('.xuan-work').length,resolved.filter(hasRecordedProgress).length);
@@ -2095,7 +2263,7 @@ test('independent progress refresh updates the same report without resetting ori
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
   await app.listeners.button.click();
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);
-  await settleProgress();
+  await settleProgress(app);
   assert.equal(doc.querySelectorAll('.xuan-work').length,3);
   const progressFold=doc.getElementById('xuan-progress-fold');
   assert.equal(progressFold.hasAttribute('open'),false);
@@ -2106,7 +2274,7 @@ test('independent progress refresh updates the same report without resetting ori
   const writes=app.frame.srcdocWrites;
   data.revision++;
   data.events.push({...structuredClone(data.events[0]),eventId:'P-UPDATE',recordedAtHkt:progressFollowup,summary:'新进度已核对'});
-  await app.listeners.button.click();await settleProgress();
+  await app.listeners.button.click();await settleProgress(app);
   assert.equal(app.frame.srcdocWrites,writes);
   assert.equal(doc.getElementById('s4').checked,true);
   assert.equal(history.hasAttribute('open'),true);
@@ -2120,8 +2288,8 @@ test('progress failure removes current-status claims without damaging the financ
   let bad=false;
   const {app}=progressApp(()=>response({status:bad?404:200,bytes:Buffer.from(JSON.stringify(progressFixture))}));
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
-  bad=true;await app.listeners.button.click();await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
+  bad=true;await app.listeners.button.click();await settleProgress(app);
   assert.match(doc.getElementById('xuan-progress-status').textContent,/暂不可用/);
   assert.match(doc.querySelector('.xuan-work-current').textContent,/当前进度未核实/);
   assert.equal(app.status.classList.contains('error'),false);
@@ -2134,13 +2302,13 @@ test('GOOG scope confirmation clears the extra approval notice on same-report re
   let data={...structuredClone(progressFixture),revision:2,events:structuredClone(progressFixture.events.slice(0,confirmationIndex))};
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   const id='D-20260829-GOOG-FAMILY-LIMIT';
   const original=doc.getElementById(id), originalText=original.textContent;
   const writes=app.frame.srcdocWrites;
   assert.match(doc.getElementById('xuan-progress-status').textContent,/1 项后续规则待你确认/);
   data=structuredClone(progressFixture);
-  await app.listeners.button.click();await settleProgress();
+  await app.listeners.button.click();await settleProgress(app);
   assert.equal(app.frame.srcdocWrites,writes);
   assert.equal(doc.getElementById(id),original);
   assert.equal(original.textContent,originalText);
@@ -2155,12 +2323,12 @@ test('new report cannot inherit a current verified status from an older observed
   const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
   await app.listeners.button.click();
   const priorDoc=todoDocument(app.frame.srcdoc,publishedState.decisions).doc;
-  app.loadFrame(priorDoc);await settleProgress();
+  app.loadFrame(priorDoc);await settleProgress(app);
   priorDoc.getElementById('xuan-progress-fold').setAttribute('open','');
   const updated=latest.replace('</body>','<p>new financial report test</p></body>');
   setReport({html:updated,meta:metaFor(updated,{sourceSha:'a'.repeat(40),sourceCommitEpoch:metadata.sourceCommitEpoch+60})});
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   assert.equal(doc.querySelectorAll('.xuan-work-badge').length,3);
   for(const badge of doc.querySelectorAll('.xuan-work-badge')) assert.match(badge.textContent,/历史进度 · 本期尚未复核/);
   assert.equal(doc.querySelector('.xuan-progress-title').textContent,'落实进度 3 项');
@@ -2173,7 +2341,7 @@ test('wrong receipt and malformed progress fail closed independently',async()=>{
     const d=structuredClone(progressFixture);d.events[0].receiptId='R-20260831-000000-XXXXXXXX';
     const {app}=progressApp(()=>response({bytes:Buffer.from(mode==='json'?'{"x":1,"x":2}':JSON.stringify(d))}));
     await app.listeners.button.click();
-    const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+    const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
     assert.match(doc.getElementById('xuan-progress-status').textContent,/暂不可用/);
     assert.equal(doc.querySelectorAll('.xuan-work').length,0);
     assert.match(app.status.textContent,/已同步/);
@@ -2190,8 +2358,8 @@ test('a stalled progress request neither blocks the report nor lets late earlier
   });
   await app.listeners.button.click();assert.equal(app.button.disabled,false);
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);
-  await app.listeners.button.click();await settleProgress();
-  release(response({bytes:Buffer.from(JSON.stringify(progressFixture))}));await settleProgress();
+  await app.listeners.button.click();await settleProgress(app);
+  release(response({bytes:Buffer.from(JSON.stringify(progressFixture))}));await settleProgress(app, {all:true});
   assert.ok(doc.getElementById('xuan-progress-status').textContent.includes('版本 '+newer.revision));
   assert.match(doc.querySelector('.xuan-work-current').textContent,/较新进度/);
 });
@@ -2206,7 +2374,7 @@ test('candidate-owned progress class or reserved ID never authorizes replacement
     if(mode==='class') fact.className='xuan-work-current';
     else fact.id='progress-'+progressFixture.events[0].decisionId;
     original.append(fact);
-    app.loadFrame(doc);await settleProgress();
+    app.loadFrame(doc);await settleProgress(app);
     assert.ok(original.contains(fact));
     assert.equal(fact.textContent,'Original fact must survive');
     if(mode==='id') assert.equal(doc.querySelectorAll('.xuan-work').length,0);
@@ -2239,7 +2407,7 @@ function headingProgress(statuses=['evidence_recorded','evidence_recorded','in_p
 async function renderHeadingProgress(data) {
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   return {app,doc};
 }
 
@@ -2304,10 +2472,10 @@ test('progress heading withdraws completed counts after unreadable or invalid le
     const {app}=progressApp(()=>response({status:failed&&mode==='http'?503:200,
       bytes:Buffer.from(failed?(mode==='json'?'{"a":1,"a":2}':JSON.stringify(bad)):JSON.stringify(good))}));
     await app.listeners.button.click();
-    const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+    const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
     assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
     const fold=doc.getElementById('xuan-progress-fold');fold.setAttribute('open','');
-    failed=true;await app.listeners.button.click();await settleProgress();
+    failed=true;await app.listeners.button.click();await settleProgress(app);
     assert.equal(doc.querySelector('.xuan-progress-title').textContent,'落实进度 3 项',mode);
     assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实',mode);
     assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true,mode);
@@ -2325,9 +2493,9 @@ test('late earlier progress cannot replace the newer heading with inflated compl
   const {app}=progressApp(()=>++calls===1?new Promise(resolve=>{release=resolve;}):response({bytes:Buffer.from(JSON.stringify(newer))}));
   await app.listeners.button.click();
   const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);
-  await app.listeners.button.click();await settleProgress();
+  await app.listeners.button.click();await settleProgress(app);
   assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
-  release(response({bytes:Buffer.from(JSON.stringify(earlier))}));await settleProgress();
+  release(response({bytes:Buffer.from(JSON.stringify(earlier))}));await settleProgress(app, {all:true});
   assert.equal(doc.querySelector('.xuan-progress-title').textContent,'已核验 2 项 · 核验中 1 项');
   assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
 });
@@ -2338,7 +2506,7 @@ test('progress starts as one native closed group with zero actual user requests 
   const fixture=todoDocument(app.frame.srcdoc,publishedState.decisions);
   const originals=publishedState.decisions.map(d=>fixture.doc.getElementById(d.decisionId));
   const extra=fixture.doc.createElement('p');extra.textContent='Unrelated source facts must stay outside';fixture.card.append(extra);
-  app.loadFrame(fixture.doc);await settleProgress();
+  app.loadFrame(fixture.doc);await settleProgress(app);
   const {doc}=fixture, fold=doc.getElementById('xuan-progress-fold');
   assert.equal(fold.tagName,'DETAILS');assert.equal(fold.hasAttribute('open'),false);
   assert.equal(fold.children[0].tagName,'SUMMARY');
@@ -2363,7 +2531,7 @@ for(const [status,label] of [['awaiting_approval','待你确认'],['user_action_
     await app.listeners.button.click();
     const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);
     doc.getElementById('s4').setAttribute('aria-label','原待办导航');
-    app.loadFrame(doc);await settleProgress();
+    app.loadFrame(doc);await settleProgress(app);
     const hint=doc.getElementById('xuan-progress-attention'), nav=doc.getElementById('xuan-progress-nav-attention');
     assert.equal(hint.hidden,false);assert.equal(hint.textContent,`⚠ ${label} 1 项`);
     assert.match(hint.className,/xuan-needs-user/);
@@ -2379,7 +2547,7 @@ for(const [status,label] of [['awaiting_approval','待你确认'],['user_action_
     // An appended in-progress event clears this request without resetting the disclosure.
     doc.getElementById('xuan-progress-fold').setAttribute('open','');
     data.revision++;data.events.push({...data.events.at(-1),eventId:'P-USER-HANDLED',status:'in_progress'});
-    await app.listeners.button.click();await settleProgress();
+    await app.listeners.button.click();await settleProgress(app);
     assert.equal(hint.hidden,true);assert.equal(nav.hidden,true);
     assert.equal(doc.getElementById('s4').getAttribute('aria-label'),'原待办导航');
     assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),true);
@@ -2391,7 +2559,7 @@ test('technical work never becomes a user request by matching owner names or fre
   Object.assign(data.events.at(-1),{owner:'Wu',blocker:'待用户确认字样只是历史引用',summary:'技术核对中；请勿重复原决定'});
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   assert.equal(doc.getElementById('xuan-progress-attention').hidden,true);
   assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
   assert.equal(doc.querySelectorAll('.xuan-needs-user').length,0);
@@ -2406,7 +2574,7 @@ test('pending initial decisions and subsequent user-only actions keep separate c
   for(const event of data.events) event.observedPair={sourceSha:meta.sourceSha,htmlBlob:meta.htmlBlob};
   const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));setReport({html,meta});
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress(app);
   assert.equal(doc.querySelector('.xuan-decision-fold').querySelector('summary').textContent,'待决定事项⚠ 1 项');
   assert.equal(doc.getElementById('xuan-progress-attention').textContent,'⚠ 待你处理 1 项');
   assert.equal(doc.getElementById('xuan-progress-nav-attention').textContent,'⚠');
@@ -2419,7 +2587,7 @@ test('a stale observed pair suppresses current user request counts without prete
   const data=userRequestProgress();data.events.at(-1).observedPair={sourceSha:'c'.repeat(40),htmlBlob:'d'.repeat(40)};
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   const hint=doc.getElementById('xuan-progress-attention');
   assert.equal(hint.hidden,false);assert.equal(hint.textContent,'历史进度待复核');
   assert.doesNotMatch(hint.className,/xuan-needs-user/);
@@ -2432,8 +2600,8 @@ test('failure withdraws an earlier user request hint; an initial failure still s
     let failed=initialFailure;
     const {app}=progressApp(()=>response({status:failed?503:200,bytes:Buffer.from(JSON.stringify(userRequestProgress()))}));
     await app.listeners.button.click();
-    const {doc,closed,trigger}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
-    failed=true;await app.listeners.button.click();await settleProgress();
+    const {doc,closed,trigger}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
+    failed=true;await app.listeners.button.click();await settleProgress(app);
     assert.equal(doc.getElementById('xuan-progress-fold').hasAttribute('open'),false);
     assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实');
     assert.doesNotMatch(doc.getElementById('xuan-progress-attention').className,/xuan-needs-user/);
@@ -2457,7 +2625,7 @@ test('a newer receipt without its own implementation evidence shows unverified p
   for(const event of data.events) event.observedPair={sourceSha:meta.sourceSha,htmlBlob:meta.htmlBlob};
   const {app,setReport}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(data))}));setReport({html,meta});
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,state.decisions);app.loadFrame(doc);await settleProgress(app);
   assert.equal(doc.getElementById('xuan-progress-attention').textContent,'进度未核实');
   assert.equal(doc.querySelector('.xuan-progress-title').textContent,'核验中 1 项 · 受阻 1 项 · 未核实 1 项');
   assert.equal(doc.getElementById('xuan-progress-nav-attention').hidden,true);
@@ -2468,7 +2636,7 @@ test('a newer receipt without its own implementation evidence shows unverified p
 test('print temporarily opens progress details and restores the original disclosure state',async()=>{
   const {app}=progressApp(()=>response({bytes:Buffer.from(JSON.stringify(progressFixture))}));
   await app.listeners.button.click();
-  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress();
+  const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
   const fold=doc.getElementById('xuan-progress-fold'), child=fold.querySelector('details');child.setAttribute('open','');
   app.listeners.window.beforeprint();
   assert.equal(fold.hasAttribute('open'),true);
@@ -2495,7 +2663,7 @@ test('fold ownership rejects reserved IDs, misplaced cards and ambiguous groups 
     else if(variant==='duplicate-decision-id') {newNode.setAttribute('data-decision-id',publishedState.decisions[0].decisionId);card.append(newNode);}
     else if(variant==='duplicate-heading') {const h=doc.createElement('h2');h.setAttribute('data-decision-group-title','resolved');card.append(h);}
     else if(variant==='duplicate-pane') {newNode.className='pane p4';doc.body.append(newNode);}
-    app.loadFrame(doc);await settleProgress();
+    app.loadFrame(doc);await settleProgress(app);
     assert.equal(doc.querySelectorAll('.xuan-progress-fold').length,0,variant);
     assert.equal(doc.querySelectorAll('.xuan-work').length,0,variant);
     assert.ok(original.contains(fact),variant);assert.equal(fact.textContent,'Source fact is immutable');

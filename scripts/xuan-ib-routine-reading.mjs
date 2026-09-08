@@ -2,6 +2,40 @@
 const prepared = new WeakSet();
 const views = new WeakMap();
 const make=(doc,tag,text,cls)=>{const n=doc.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
+const NOTE_RECORDS='template,script,style,[data-decision-id],.dcard,.xuan-work,.xuan-progress-fold,#xuan-aaoi-applied';
+const MATERIAL_NOTE=/读取失败|来源缺失|账户[^。；\n]*不匹配|数据[^。；\n]*冲突|计算失败|无法计算/;
+const LIMITED_NOTE=/待核验|待核实|未核验|数据降级|已过期|未取得|未调用逐票行情|未查询逐票行情|不含 AAOI|尚未计入 AAOI|近似|未逐票重算|非完整逐票/;
+const PUBLICATION_BOILERPLATE='发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。';
+
+function sourceNoteText(node){
+  if(node.matches(NOTE_RECORDS))return '';
+  const copy=node.cloneNode(true);
+  for(const child of copy.querySelectorAll(NOTE_RECORDS))child.remove();
+  return copy.textContent;
+}
+
+function materialNoteContexts(roots) {
+  const contexts=[];
+  for(const root of roots){
+    const candidates=[...(root.matches('p,li')?[root]:[]),...root.querySelectorAll('p,li')];
+    for(const node of candidates){
+      if(node.closest(NOTE_RECORDS)||!MATERIAL_NOTE.test(sourceNoteText(node)))continue;
+      // Keep the whole contextual section, including parent list qualifiers,
+      // neighbouring source dates and denominator/currency labels. A flat list
+      // of matching sentences can reverse the meaning of a qualified failure.
+      const section=node.closest('.notes-section,.allocation-account-source,.allocation-original');
+      // Without an explicit section boundary a preceding sibling can qualify
+      // (or negate) the entire list. Preserve the complete fold body in order,
+      // not just the root that happened to contain the matching sentence.
+      if(!section||!root.contains(section))return roots.filter(item=>!item.matches(NOTE_RECORDS));
+      const context=section;
+      if(contexts.some(prior=>prior.contains(context)))continue;
+      for(let i=contexts.length-1;i>=0;i--)if(context.contains(contexts[i]))contexts.splice(i,1);
+      contexts.push(context);
+    }
+  }
+  return contexts;
+}
 
 export function reportNoteLines(pane,text,{aaoiApplied=false}={}) {
   const lines={
@@ -27,7 +61,6 @@ export function reportNoteLines(pane,text,{aaoiApplied=false}={}) {
 
 export function simplifyReportNotes(doc) {
   if(!doc?.createElement||prepared.has(doc))return;
-  prepared.add(doc);
   // Cancel only the exact obsolete observation entry; leave current decisions
   // and order reminders untouched. The original signed source remains intact.
   for(const fold of [...doc.querySelectorAll('.pane.p4 details')]){
@@ -38,23 +71,54 @@ export function simplifyReportNotes(doc) {
   for(let pane=1;pane<=5;pane++){
     const fold=doc.getElementById(`xuan-pane-notes-p${pane}`) || (pane===5 ? [...doc.querySelectorAll('.pane.p5 details')].find(d=>/^报告说明/.test(d.querySelector(':scope > summary')?.textContent||'')) : null);
     if(!fold)continue;
-    const text=fold.textContent;
+    if(fold.querySelector(':scope > .concise-report-notes'))continue;
+    const roots=[...fold.children].filter(child=>child.tagName!=='SUMMARY');
+    const text=roots.map(sourceNoteText).join('\n');
+    const hasLimits=MATERIAL_NOTE.test(text)||LIMITED_NOTE.test(text);
+    if(hasLimits)fold.querySelector(':scope > summary')?.append(make(doc,'span',' · 含数据限制','routine-note-limit-label'));
     const body=make(doc,'div','','dbody concise-report-notes');
     const lines=reportNoteLines(pane,text,{aaoiApplied});
+    if(lines.length<2)lines.push('报告内未给出的数据不视为已核实；来源及范围见完整口径。');
     const list=doc.createElement('ul');for(const line of lines)list.append(make(doc,'li',line));
     body.append(list);
-    // These are current material exceptions, not stale decision history. Keep
-    // their full sentences rather than silently shortening away qualifiers.
-    const exceptions=[...fold.querySelectorAll('p')].filter(n=>!n.closest('.dcard,.xuan-work,.xuan-progress-fold,.allocation-original'))
-      .map(n=>n.textContent.trim()).filter(t=>/读取失败|来源缺失|账户.*不匹配|数据.*冲突|计算失败|无法计算|待核实|待核验|未知|尚无批准|数据降级|已过期/.test(t));
-    if(exceptions.length){
-      const extra=doc.createElement('details');extra.className='routine-data-limits';
-      const unique=[...new Set(exceptions)];extra.append(make(doc,'summary',`数据限制 · ${unique.length} 项`));
-      for(const text of unique)extra.append(make(doc,'p',text));
-      body.append(extra);
-      for(const text of unique.filter(t=>/读取失败|来源缺失|账户.*不匹配|数据.*冲突|计算失败|无法计算/.test(t)))body.append(make(doc,'p',text,'mobile-metric-caveat'));
+    const contexts=materialNoteContexts(roots);
+    if(contexts.length){
+      const alert=make(doc,'section','','routine-material-exceptions mobile-metric-caveat');
+      alert.append(make(doc,'h3','数据提醒 · 保留来源口径'));
+      for(const context of contexts){
+        const copy=context.cloneNode(true);
+        for(const node of copy.querySelectorAll(NOTE_RECORDS))node.remove();
+        copy.removeAttribute('id');
+        for(const node of copy.querySelectorAll('[id]'))node.removeAttribute('id');
+        // Source details must not hide the exception behind a second disclosure.
+        if(copy.tagName==='DETAILS')copy.open=true;
+        for(const node of copy.querySelectorAll('details'))node.open=true;
+        alert.append(copy);
+      }
+      fold.before(alert);
     }
-    for(const child of [...fold.children])if(child.tagName!=='SUMMARY')child.remove();
+    // Preserve original subtrees and their order in the verified display. Do
+    // not flatten list items, deduplicate matching text or discard unrecognized
+    // source limitations. Signed/cached report bytes are never changed here.
+    const extra=make(doc,'details','','routine-data-limits');
+    extra.append(make(doc,'summary',hasLimits?'来源与完整口径 · 含数据限制':'来源与完整口径'));
+    let hasSourceContent=false;
+    for(const root of roots){
+      if(root.matches('p,li')&&!root.children.length&&root.textContent===PUBLICATION_BOILERPLATE){root.remove();continue;}
+      for(const node of root.querySelectorAll('p,li')){
+        if(!node.closest(NOTE_RECORDS)&&!node.children.length&&node.textContent===PUBLICATION_BOILERPLATE)node.remove();
+      }
+      // Textless images, separators, media and other structures are still
+      // source context. Keep every remaining original node, even when an empty
+      // container alone does not warrant another disclosure.
+      if(root.textContent.trim()||root.children.length||!root.matches('div,p,section,ul,ol')||root.matches(NOTE_RECORDS))hasSourceContent=true;
+      extra.append(root);
+    }
+    if(hasSourceContent)body.append(extra);
+    else {
+      for(const root of [...extra.children].filter(child=>child.tagName!=='SUMMARY'))body.append(root);
+      body.append(make(doc,'p','本页暂无额外来源说明；不代表缺失数据已经核实。'));
+    }
     fold.append(body);
     if(pane===2&&aaoiApplied){
       const proof=doc.getElementById('xuan-aaoi-applied');
@@ -63,6 +127,7 @@ export function simplifyReportNotes(doc) {
       if(proof){proof.open=false;body.append(proof);}
     }
   }
+  prepared.add(doc);
 }
 
 export function organizeRoutineRecords(doc,{fold,title,attention,nav,navAttention,events=[],dataAvailable=false,record}={}) {

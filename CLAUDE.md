@@ -1,5 +1,10 @@
 # XUAN-IB handover publication contract
 
+Read `claude/xuan-ib-current-runbook.md` first for the 2026-09-08 current
+AM/PM route and precedence over historical pilot/cadence text. It is a concise
+index, not permission to relax the linked source, receipt or publication gates.
+Merging this file does not update or verify the actual Claude Routines.
+
 ## Explicit scheduled account association scope (owner approved 2026-09-07)
 
 Read `claude/xuan-ib-account-association-v1.md` first. Its September 7 section

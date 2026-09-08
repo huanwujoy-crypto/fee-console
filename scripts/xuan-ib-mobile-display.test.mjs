@@ -20,7 +20,8 @@ test('verified display reorders intact cells with stable descending amounts and 
 test('header guide matches shared wording and runs only after verification',()=>{
  const loader=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
  assert.ok(loader.includes(GUIDE_BODY));
-  assert.match(loader,/renderedDocument === doc && lastVerified\?\.blob === record\.blob\) \{ view\.improveMobileDisplay\(doc\)/);
+ assert.match(loader,/renderedDocument === doc && lastVerified\?\.blob === record\.blob/);
+  assert.match(loader,/if \(!current\(\)\) return;\s*try \{\s*doc\.getElementById\('xuan-mobile-layout-status'\)\?\.remove\(\);\s*view\.improveMobileDisplay\(doc\)/);
  assert.ok(loader.indexOf('class="header-guide"')<loader.indexOf('id="refresh"'));
  const module=fs.readFileSync(new URL('./xuan-ib-mobile-display.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(module,/fetch\(|localStorage|sessionStorage|innerHTML\s*=/);
