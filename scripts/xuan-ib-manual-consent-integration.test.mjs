@@ -31,9 +31,12 @@ const previousMeta = JSON.parse(fs.readFileSync(path.join(repoRoot, 'xuan-ib/lat
 const policy = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
 const registry = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/xuan-ib-portfolio-registry.json'), 'utf8'));
 const dataDate = previousMeta.dataDate;
-const epoch = Date.parse(`${dataDate}T03:00:00.000Z`);
+// Real preparation appends journal events using the machine clock. A newly
+// published morning report must not put the synthetic run start in the future.
+const epoch = Math.min(Date.parse(`${dataDate}T03:00:00.000Z`), Date.now() - 60_000);
 const now = epoch + 19_000;
-const hktStamp = `${dataDate} 11:00–11:01 HKT`;
+const hktTime = ms => new Date(ms + 8 * 60 * 60_000).toISOString().slice(11,16);
+const hktStamp = `${dataDate} ${hktTime(epoch)}–${hktTime(epoch + 60_000)} HKT`;
 const manualDisclosure = '人工核验账户授权，仅限本次临时报告，不代表接口自动核验。';
 const endpoints = ['accountSummary', 'balances', 'positions', 'orders', 'trades'];
 
