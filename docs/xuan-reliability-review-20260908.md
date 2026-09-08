@@ -31,6 +31,16 @@ stage journal. Missing stage times remain missing. The five-minute observer
 that repeated scheduled prompts remains paused; no replacement scheduler was
 created. Promotion no-op and a second collection attempt are distinct events.
 
+Claude's subsequent code review returned **PASS with limitations**. Codex
+confirmed the existing freshness/status functions and verified-success reset,
+the retained table's parent through full browser transforms, and the absence
+of import-time hook activation. Review follow-ups add bare-list qualifier
+preservation, text-less source structure preservation, visible limitation
+labels, total-row and nested/header quote cues, strict tool-name checks and a
+completed-attempt prerequisite for timing pass. A browser-cached dependency
+failure may require reopening the page; the loader now says so explicitly and
+removes its temporary notice before transforming report content.
+
 ## Preserved boundaries
 
 - Financial sources remain read-only. No trading, order changes, transfers,
@@ -47,7 +57,8 @@ created. Promotion no-op and a second collection attempt are distinct events.
 
 ## Remaining gates and deliberately deferred work
 
-Local regression: 1,590 tests, 1,588 passed, 2 existing skips, zero failures.
+Final unchanged-code recheck: 1,611 tests, 1,609 passed, 2 existing skips,
+zero failures (22.44 seconds).
 Browser checks used isolated Chrome with the real current report at 320, 390
 and 1280 pixels, all five panes, mobile holdings, desktop/print preservation,
 failed-module recovery and unchanged canonical cache. The Saturday archive also
@@ -55,6 +66,12 @@ retained all 26 holdings and its immutable record templates. These are local
 checks, not production rollout or physical-phone proof. A formerly fixed 15ms
 test wait now observes completion of the actual progress task with a bounded
 timeout; production timing is unchanged.
+One full-suite run also exposed an unchanged legacy manual-consent concurrency
+test's fail-closed error-text race (`private store size is invalid` rather than
+one of its expected loser messages). Its one-success/one-refusal invariant
+held. The retired manual-consent implementation and its strict assertions were
+not modified or bypassed; retain this test flake in the audit rather than
+claiming the whole repository has no pre-existing intermittent failures.
 
 1. **Release:** exact-head owner approval and all formal checks remain required.
    Local tests do not authorize deployment.
