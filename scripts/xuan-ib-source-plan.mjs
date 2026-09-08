@@ -50,7 +50,10 @@ export function validatePlannedCall(call, registry = bundledRegistry) {
   checkedRegistry(registry);
   exact(call, ['sourceKey', 'toolName', 'toolInput'], 'INVALID_PLANNED_CALL_FIELDS');
   if (!keysFor(registry).has(call.sourceKey)) fail('SOURCE_OUTSIDE_APPROVED_PLAN');
-  if (call.toolName !== toolFor(call.sourceKey)) fail('UNEXPECTED_SOURCE_TOOL');
+  const expectedTool = toolFor(call.sourceKey);
+  if (typeof call.toolName !== 'string' || !call.toolName.trim()
+    || typeof expectedTool !== 'string' || !expectedTool.trim()
+    || call.toolName !== expectedTool) fail('UNEXPECTED_SOURCE_TOOL');
   const expectedInput = inputFor(call.sourceKey);
   exact(call.toolInput, Object.keys(expectedInput), 'INVALID_PLANNED_INPUT_FIELDS');
   try { validateHookInput(call.sourceKey, call.toolInput); }
@@ -68,6 +71,10 @@ export function buildSourcePlan(context, registry = bundledRegistry) {
     .map(item => `sharesight.${item.portfolioId}`);
   const family = sourceKeys('family'), auxiliary = sourceKeys('ai_only');
   if (family.length !== 7 || auxiliary.length !== 2 || IB_ENDPOINTS.length !== 5) fail('INVALID_BATCH_SCOPE');
+  const required = keysFor(registry);
+  const planned = new Set([...IB_ENDPOINTS.map(endpoint => `ib.${endpoint}`), ...family, ...auxiliary]);
+  if (required.size !== 14 || planned.size !== required.size
+    || [...required].some(key => !planned.has(key))) fail('INVALID_BATCH_SCOPE');
   const calls = keys => keys.map(key => validatePlannedCall(callFor(key), registry));
   const ready = 'bootstrap-and-fresh-edition-run-bound-association-verified';
   return {

@@ -86,6 +86,28 @@ test('reject a changed registry even when the overall scope counts still validat
   assert.throws(() => validateSourcePlan(plan(), changed), /INVALID_OR_CHANGED_REGISTRY/);
 });
 
+test('all required registry sources are planned; unknown required roles cannot be silently omitted', () => {
+  const value = plan();
+  const required = registry.portfolios.filter(item => item.requiredEachReport);
+  assert.equal(required.length, 9);
+  assert.equal(required.filter(item => item.role === 'family').length, 7);
+  assert.equal(required.filter(item => item.role === 'ai_only').length, 2);
+  assert.equal(calls(value).length, 14);
+  assert.deepEqual(new Set(calls(value).filter(call => call.sourceKey.startsWith('sharesight.'))
+    .map(call => call.sourceKey)), new Set(required.map(item => `sharesight.${item.portfolioId}`)));
+  const changed = clone(registry);
+  changed.portfolios.find(item => item.requiredEachReport).role = 'unknown-required-role';
+  assert.throws(() => buildSourcePlan(context('am'), changed), /INVALID_OR_CHANGED_REGISTRY/);
+});
+
+for (const [name, toolName] of [['undefined', undefined], ['null', null], ['empty', ''],
+  ['whitespace', '   '], ['number', 1], ['object', {}]]) {
+  test(`tool name must be a nonempty string: ${name}`, () => {
+    const call = ssCall(); call.toolName = toolName;
+    assert.throws(() => validatePlannedCall(call), /UNEXPECTED_SOURCE_TOOL/);
+  });
+}
+
 for (const [name, mutate] of [
   ['holdings API', call => { call.toolName = call.toolName.replace('get_performance', 'get_holdings'); }],
   ['unrelated tool', call => { call.toolName = 'write_financial_record'; }],

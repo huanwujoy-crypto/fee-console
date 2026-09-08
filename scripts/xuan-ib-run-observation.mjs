@@ -45,7 +45,7 @@ export function summarizeRunObservation(record, options) {
   };
   const scheduledMs = observedTime(record.scheduledAt);
   const ids = new Set(), starts = [];
-  let previousStart = null, missingStart = false, failedAttemptCount = 0;
+  let previousStart = null, missingStart = false, failedAttemptCount = 0, completedAttemptCount = 0;
   for (const attempt of record.attempts) {
     exact(attempt, ['attemptId', 'startedAt', 'outcome']);
     if (!identifier(attempt.attemptId)) fail('INVALID_ATTEMPT_ID');
@@ -53,6 +53,7 @@ export function summarizeRunObservation(record, options) {
     ids.add(attempt.attemptId);
     if (!OBSERVED_ATTEMPT_OUTCOMES.includes(attempt.outcome)) fail('INVALID_ATTEMPT_OUTCOME');
     if (attempt.outcome === 'failed') failedAttemptCount++;
+    if (attempt.outcome === 'completed') completedAttemptCount++;
     const start = observedTime(attempt.startedAt);
     if (start === null) { missingStart = true; continue; }
     if (previousStart !== null && start < previousStart) fail('ATTEMPTS_OUT_OF_ORDER');
@@ -87,6 +88,7 @@ export function summarizeRunObservation(record, options) {
   const scheduledDelay = scheduledMs === null ? notRecorded('SCHEDULE_NOT_RECORDED')
     : firstMs === null ? notRecorded('FIRST_ATTEMPT_START_NOT_RECORDED') : recorded(firstMs - scheduledMs);
   const wholeRun = firstMs === null ? notRecorded('FIRST_ATTEMPT_START_NOT_RECORDED')
+    : completedAttemptCount === 0 ? notRecorded('NO_COMPLETED_ATTEMPT')
     : readbackReason !== null ? notRecorded(readbackReason) : recorded(verifiedMs - firstMs);
   return {
     schemaVersion: 1,

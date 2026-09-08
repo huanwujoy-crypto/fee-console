@@ -92,6 +92,31 @@ test('a running or stopped attempt without public evidence is not a passing comp
   }
 });
 
+for (const outcomes of [['failed', 'failed'], ['in-progress'], ['stopped'], ['failed', 'in-progress']]) {
+  test(`public evidence cannot produce final timing without a completed attempt: ${outcomes.join(',')}`, () => {
+    const value = record();
+    value.attempts = outcomes.map((outcome, index) => attempt(`attempt-${index + 1}`, 5 + index, outcome));
+    const result = summarize(value);
+    assert.equal(result.wholeRun.reason, 'NO_COMPLETED_ATTEMPT');
+    assert.equal(result.wholeRun.status, 'not-recorded');
+    assert.equal(result.wholeRun.durationMs, null);
+    assert.equal(result.wholeRun.timingResult, 'not-recorded');
+    assert.equal(result.scheduledDelay.durationMs, 5 * 60_000);
+    assert.equal(result.status, 'observation-only');
+  });
+}
+
+test('one completed retry permits timing but retains the original failed attempt start', () => {
+  const value = record();
+  value.attempts = [attempt('attempt-1', 5, 'failed'), attempt('attempt-2', 10, 'failed'),
+    attempt('attempt-3', 15, 'completed')];
+  const result = summarize(value);
+  assert.equal(result.firstStartedAt, iso(5));
+  assert.equal(result.wholeRun.durationMs, 15 * 60_000);
+  assert.equal(result.wholeRun.timingResult, 'pass');
+  assert.equal(result.failedAttemptCount, 2);
+});
+
 for (const field of ['verifiedAt', 'sourceSha', 'htmlBlob', 'evidenceId', 'bytesMatched']) {
   test(`missing public endpoint/evidence ${field} is not-recorded`, () => {
     const value = record(); value.publicReadback[field] = null;
