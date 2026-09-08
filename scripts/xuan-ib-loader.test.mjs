@@ -275,7 +275,7 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
 
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false,
   privateEtfImport = null, confirm = () => true, storageBlocked = false, handoffBlocked = false,
-  headerGuide = true, headerGuideBody = true}) {
+  headerGuide = true, headerGuideBody = true, mobileDisplayImport = null}) {
   const listeners = {adhoc: {}, stopAdhoc: {}, decision: {}, button: {}, window: {}, document: {}};
   const confirmations = [];
   const navigations = [];
@@ -417,12 +417,18 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     location,
     window,
     __importPrivateEtf: privateEtfImport,
+    __importMobileDisplay: mobileDisplayImport,
   };
   // Execute the real loader and its actual event wiring. Only substitute the
   // dynamic network import dependency; no production logic is reimplemented.
   const importExpression = "import(new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href).href)";
   if (privateEtfImport) assert.equal(inlineScript.split(importExpression).length, 2);
-  vm.runInNewContext(privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript, context);
+  let testScript = privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript;
+  if (mobileDisplayImport) {
+    assert.equal(testScript.split('import(mobileUrl.href)').length, 2);
+    testScript = testScript.replace('import(mobileUrl.href)', '__importMobileDisplay(mobileUrl.href)');
+  }
+  vm.runInNewContext(testScript, context);
   return {
     adhoc,
     adhocLabel,
@@ -455,6 +461,67 @@ function privateDeferred() {
   return {promise, resolve, reject};
 }
 const settlePrivateLoader = () => new Promise(resolve => setImmediate(resolve));
+
+async function mobileLoaderFixture(importer) {
+  const html = reportHtml('2026-08-28', '早间版', decisionTemplate()), meta = metaFor(html);
+  const app = loaderHarness({displayDom: true, mobileDisplayImport: importer,
+    fetchImpl: async url => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)})});
+  await app.listeners.button.click();
+  const fixture = todoDocument(app.frame.srcdoc, []);
+  app.loadFrame(fixture.doc); await settlePrivateLoader();
+  return {app, doc: fixture.doc, html};
+}
+
+test('explicit refresh retries a failed layout import without replacing the verified document', async () => {
+  const urls = [], applied = [];
+  const view = {improveMobileDisplay: doc => applied.push(doc), organizeRoutineRecords() {}};
+  const {app, doc, html} = await mobileLoaderFixture(url => {
+    urls.push(url); return urls.length === 1 ? Promise.reject(new Error('offline')) : Promise.resolve(view);
+  });
+  assert.match(doc.getElementById('xuan-mobile-layout-status').textContent, /点“刷新”重试/);
+  const writes = app.frame.srcdocWrites;
+  const radio = doc.getElementById('s4'); radio.checked = true;
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(urls.length, 2); assert.notEqual(urls[0], urls[1], 'failed browser module cache is not reused');
+  assert.deepEqual(applied, [doc]); assert.equal(app.frame.srcdocWrites, writes);
+  assert.equal(radio.checked, true); assert.equal(Boolean(doc.getElementById('xuan-mobile-layout-status')), false);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(urls.length, 2); assert.deepEqual(applied, [doc], 'successful mutation is never repeated');
+});
+
+test('background refresh never retries failed layout and pending imports are single flight', async () => {
+  const gate = privateDeferred(); let imports = 0, applies = 0;
+  const {app} = await mobileLoaderFixture(() => { imports++; return gate.promise; });
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(imports, 1);
+  gate.reject(new Error('blocked')); await settlePrivateLoader();
+  app.advanceTime(6 * 60_000);
+  await app.listeners.document.visibilitychange(); await settlePrivateLoader();
+  assert.equal(imports, 1, 'existing background polls do not create a retry loop');
+  assert.equal(applies, 0);
+});
+
+test('a partial display failure is not applied a second time to mutated DOM', async () => {
+  let applies = 0;
+  const {app, doc} = await mobileLoaderFixture(() => Promise.resolve({improveMobileDisplay(d) {
+    applies++; d.partialMutation = true; throw new Error('partial display failure');
+  }}));
+  assert.equal(doc.partialMutation, true);
+  assert.match(doc.getElementById('xuan-mobile-layout-status').textContent, /重新打开页面/);
+  await app.listeners.button.click(); await settlePrivateLoader();
+  assert.equal(applies, 1); assert.ok(app.frame.srcdoc.includes('xuan-loader-render'));
+});
+
+test('late layout import never mutates a document that left the verified frame', async () => {
+  const gate = privateDeferred(), applied = [];
+  const {app, doc} = await mobileLoaderFixture(() => gate.promise);
+  app.frame.contentDocument = new DisplayDocument('https://example.test/unverified');
+  gate.resolve({improveMobileDisplay: d => applied.push(d)}); await settlePrivateLoader();
+  assert.deepEqual(applied, []); assert.notEqual(app.frame.contentDocument, doc);
+});
+
 function privateViewStub(firstMountWait = null) {
   const runs = [], clears = [];
   return {runs, clears,
@@ -594,10 +661,10 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /lastAttempt = Date\.now\(\)/);
   assert.match(loader, /Date\.now\(\) - lastAttempt > 5 \* 60_000/);
   assert.match(loader, /visibilitychange/);
-  assert.match(loader, /button\.addEventListener\("click", loadLatest\)/);
+  assert.match(loader, /button\.addEventListener\("click", \(\) => loadLatest\(\{retryLayout: true\}\)\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-08\.1"/);
+  assert.match(loader, /loaderBuild = "2026-09-08\.2"/);
   assert.match(loader, /href="history\/2026-09-05-am.html"/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
@@ -1375,7 +1442,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-08.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-08.2');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
