@@ -21,6 +21,12 @@ export const MOBILE_READING_CSS = `
 .mobile-risk-table td:last-child{width:58%;text-align:right;white-space:nowrap!important}
 .mobile-risk-table th,.mobile-risk-table td{font-size:14px!important;overflow-wrap:normal!important;padding:10px 6px!important}
 .mobile-risk-table strong{font-size:17px}.mobile-risk-table small{display:block;font-size:12px;line-height:1.6;color:var(--mut);white-space:nowrap}
+.ai-risk-strip{display:flex;flex-wrap:wrap;margin:12px 0 18px;border:1px solid var(--line);border-radius:12px;max-width:100%;text-align:center;font-variant-numeric:tabular-nums}
+.ai-risk-strip>div{box-sizing:border-box;flex:1 1 4.5rem;min-width:0;padding:10px 4px}
+.ai-risk-strip dt{margin:0 0 4px;font-size:.875rem;color:var(--mut);line-height:1.4}
+.ai-risk-strip dd{margin:0;font-size:1.125rem;font-weight:650;line-height:1.4;white-space:nowrap}
+.ai-risk-strip>.ai-risk-current{flex:1.35 1 6rem;background:var(--bg);border-radius:11px}
+.ai-risk-strip .ai-risk-current dt{color:var(--ink);font-weight:650}.ai-risk-strip .ai-risk-current dd{font-size:1.5rem;font-weight:800;color:var(--warn,#9a6500)}
 .pane table th,.pane table td{overflow-wrap:normal!important;word-break:normal!important}
 .pane table td:not(:first-child){white-space:nowrap}.pane table th{font-size:13px}.pane .tblwrap{overflow-x:auto}
 @media(min-width:850px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
@@ -45,6 +51,50 @@ export function extractCashGuidance(text){
   return ['EXUS','EIMI','USSC'].flatMap(ticker=>{const match=text.match(new RegExp(`(?:^|[^A-Z])${ticker}\\s*(\\$[\\d,]+(?:\\.\\d+)?|待回款后重算)`));return match?[[ticker,match[1]]]:[];});
 }
 
+export function aiRiskStripValues({title,state,takeaway,action,kpiLabel,kpiValue,kpiDetails}={}) {
+  const clean=value=>String(value??'').trim().replace(/\s+/g,' ');
+  // One known, source-authored reminder band only. Other alerts, owner actions,
+  // approximations and new threshold wording keep their original presentation.
+  if(!/^AI 压力敞口(?:$| ·)/.test(clean(title)) || clean(state)!=='brief-signal attention'
+    || clean(action)!=='2. 下一步：观察' || clean(kpiLabel)!=='AI 压力中情景')return null;
+  const current=clean(takeaway).match(/^1\. 中情景 (\d+(?:\.\d+)?)%，提醒区间，未越 25%$/)?.[1];
+  if(!current || clean(kpiValue)!==`${current}%` || !(Number(current)>20&&Number(current)<25))return null;
+  const band=clean(kpiDetails).match(/提醒区间[（(]>(20%)，未越 (25%)[）)]/);
+  if(!band)return null;
+  if(/待核|未核|近似|估计|估算|缺失|失败|冲突|未取得|降级|过期|尚未计入|不含 AAOI|不一致/.test(clean(kpiDetails)))return null;
+  return [['提醒',band[1]],['当前',`${current}%`],['预警',band[2]]];
+}
+
+function compactAiRiskStrip(doc,move) {
+  const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
+    .filter(card=>/^AI 压力敞口(?:$| ·)/.test(card.querySelector(':scope > h2')?.textContent.trim()||''));
+  const kpis=[...doc.querySelectorAll('.kpis .kpi')]
+    .filter(kpi=>kpi.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
+  if(cards.length!==1||kpis.length!==1)return;
+  const card=cards[0],kpi=kpis[0],briefs=card.querySelectorAll(':scope > .brief-signal');
+  if(briefs.length!==1||card.matches('[data-decision-id],.dcard')||card.querySelector('[data-decision-id],.dcard'))return;
+  const brief=briefs[0],parts=[...brief.children],subs=kpi.querySelectorAll(':scope > .sub');
+  if(parts.length!==3||parts[0].tagName!=='SPAN'||parts[0].className!=='signal-label'
+    ||parts[0].textContent.trim()!=='! 需留意'||parts[1].tagName!=='P'||parts[2].tagName!=='P'
+    ||parts[1].children.length!==1||parts[1].children[0].tagName!=='B'||parts[2].children.length
+    ||parts[0].children.length||brief.hasAttribute('title')||brief.hasAttribute('aria-label')
+    ||brief.querySelector('a,button,input,template,script,style,[title],[aria-label],[aria-describedby]')||subs.length!==1
+    ||brief.textContent.replace(/\s/g,'')!==parts.map(p=>p.textContent).join('').replace(/\s/g,''))return;
+  const values=aiRiskStripValues({title:card.querySelector(':scope > h2')?.textContent,state:brief.className,
+    takeaway:parts[1].textContent,action:parts[2].textContent,kpiLabel:kpi.querySelector('.lab')?.textContent,
+    kpiValue:kpi.querySelector('.big')?.textContent,kpiDetails:subs[0].textContent});
+  if(!values)return;
+  const strip=doc.createElement('dl');strip.className='ai-risk-strip';strip.setAttribute('aria-label','AI 压力中情景与提醒、预警线');
+  for(const [label,value] of values){
+    const pair=doc.createElement('div'),key=doc.createElement('dt'),amount=doc.createElement('dd');
+    if(label==='当前')pair.className='ai-risk-current';key.textContent=label;amount.textContent=value;
+    pair.setAttribute('aria-label',`${label==='当前'?'当前 AI 压力中情景':label+'线'} ${value}`);
+    pair.append(key,amount);strip.append(pair);
+  }
+  brief.before(strip);
+  move(2,'AI 压力原提示',[brief]);
+}
+
 export function simplifyPaneReading(doc) {
   if(!doc.createElement || doc.getElementById('xuan-pane-notes-p1'))return;
   const names=['概览','风险','配置','待办'];
@@ -61,6 +111,8 @@ export function simplifyPaneReading(doc) {
     const h=doc.createElement('h3');h.textContent=title;section.append(h);
     nodes.forEach(n=>section.append(n));target.body.append(section);
   };
+  // Read the agreeing source KPI before its explanatory subtree is moved.
+  compactAiRiskStrip(doc,move);
   // Keep exact original explanations and figures accessible, not deleted.
   [...doc.querySelectorAll('.kpis .kpi')].forEach((kpi,index)=>{
     const title=kpi.querySelector('.lab')?.textContent||'指标说明';
@@ -102,7 +154,7 @@ export function simplifyPaneReading(doc) {
       for(const detail of [...card.querySelectorAll(':scope > details,:scope > .dbody > details')]){
         if(/详细说明|排序与报价说明|使用前核对/.test(detail.querySelector('summary')?.textContent||''))move(i,title,[detail]);
       }
-      if(!card.querySelector('table,.kv,.mobile-metrics,.brief-signal,details,li')&&!card.querySelector(':scope > p'))card.remove();
+      if(!card.querySelector('table,.kv,.mobile-metrics,.brief-signal,.ai-risk-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
     }
   }
   // Two-column risk ledger: compact identity/weight left, contribution/value right.
