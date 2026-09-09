@@ -1,5 +1,14 @@
 # Owner-requested Saturday historical layout publication
 
+## 2026-09-09: retire the preview link from the main screen
+
+The owner requested removing the obsolete “周六上午版 · 新排版” entry. Remove
+only that loader link and its unused style. Keep the source-bound archive, its
+backlink, original dates and immutable records unchanged. This display cleanup
+does not generate a report or change the current latest HTML/meta pair.
+
+## Historical publication scope
+
 On 2026-09-06 the owner explicitly requested publishing the compact Saturday
 AM display and testing it through iPhone Mirroring. This supersedes the prior
 local-only preview restriction only for the isolated archive below.
@@ -12,8 +21,9 @@ local-only preview restriction only for the isolated archive below.
 - No fresh financial read, new candidate, scheduled run or timing evidence.
   No latest-pair, policy, receipt, progress or financial-account mutation.
 - Publish through reviewed maintenance, never the handover-candidate path.
-  The normal loader links to the archive; a prominent backlink returns to
-  latest. Do not automatically substitute the archive for the latest report.
+  The normal loader originally linked to the archive (retired above); a prominent
+  backlink returns to latest. Do not automatically substitute the archive for
+  the latest report.
 - All original decisions/receipts remain immutable historical records, not
   today's pending-work status. No response/generation/trading controls exist.
 - Simplified headlines are source-backed extracts, not new risk calculations.
