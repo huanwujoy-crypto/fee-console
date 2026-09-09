@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Webull Gmail Sharesight Sync</title>
+  <meta name="description" content="A private, single-user workflow that reads Webull trade execution notices from Gmail and reconciles eligible trades with Sharesight.">
+  <style>
+    body { max-width: 760px; margin: 48px auto; padding: 0 20px; font: 17px/1.6 system-ui, sans-serif; color: #172033; }
+    h1, h2 { line-height: 1.25; }
+    .notice { padding: 16px 18px; background: #f3f6fb; border-left: 4px solid #315efb; }
+    footer { margin-top: 48px; font-size: 14px; color: #586174; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Webull Gmail Sharesight Sync</h1>
+    <p class="notice">This is a private, single-user investment-record workflow. It does not place trades, change broker records, or send or modify email.</p>
+
+    <h2>Purpose</h2>
+    <p>The application reads Webull trade execution notifications in the account owner's Gmail mailbox, extracts the minimum trade details needed for reconciliation, checks for duplicates, and prepares or records eligible transactions in the owner's Sharesight portfolio under controlled validation rules.</p>
+
+    <h2>Google access</h2>
+    <p>The application requests exactly <code>https://www.googleapis.com/auth/gmail.readonly</code>. This scope can technically view all email messages and Gmail settings in the authorized mailbox. The application deliberately uses that access only to search for and read matching Webull trade execution notifications. It cannot send, delete, archive, label, or modify messages.</p>
+
+    <h2>Controls</h2>
+    <p>Ambiguous, partial, unsupported, unusually large, or otherwise exceptional events are held for supervised review. Gmail and Webull remain read-only source systems.</p>
+
+    <p><a href="privacy.html">Privacy Policy</a> · <a href="mailto:huanwu.joy@gmail.com">Contact and data-deletion requests</a></p>
+  </main>
+  <footer>Last updated: 9 September 2026</footer>
+</body>
+</html>

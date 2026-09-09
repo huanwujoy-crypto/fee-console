@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — Webull Gmail Sharesight Sync</title>
+  <style>
+    body { max-width: 760px; margin: 48px auto; padding: 0 20px; font: 16px/1.65 system-ui, sans-serif; color: #172033; }
+    h1, h2 { line-height: 1.25; }
+    footer { margin-top: 48px; font-size: 14px; color: #586174; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Privacy Policy</h1>
+    <p>This policy applies to Webull Gmail Sharesight Sync, a private application operated solely for its owner's personal investment records.</p>
+
+    <h2>Google user data accessed</h2>
+    <p>The application requests exactly <code>https://www.googleapis.com/auth/gmail.readonly</code>. This scope technically permits the application to view all email messages and Gmail settings in the authorized mailbox. The application deliberately limits its actual processing to searches for matching Webull trade execution notifications and transiently reads only the message content and authentication metadata needed to validate and extract trade date and time, market, side, symbol, quantity, price, and currency.</p>
+
+    <h2>How data is used</h2>
+    <p>Extracted trade facts are used only to detect duplicates, classify an event for controlled processing, reconcile the owner's Webull records with the owner's Sharesight portfolio, and create an audit trail. The application does not send email, alter messages, place trades, modify broker records, advertise, profile users, sell data, or use Google user data to create, train, or improve any artificial-intelligence or machine-learning model.</p>
+
+    <h2>Storage and retention</h2>
+    <p>OAuth client credentials and the refresh token are stored in Google Secret Manager with restricted service-account access and are retained until they are revoked, replaced, the application is disabled, or a valid deletion request is completed. Short-lived access tokens and complete message bodies are processed only in memory and are not retained as application state.</p>
+    <p>Minimum extracted transaction facts, message and economic fingerprints, validation outcomes, synchronization receipts, and reconciliation audit evidence may be retained for up to seven years for duplicate prevention and personal financial-record integrity, unless the owner requests earlier deletion. Cloud application logs exclude complete message bodies and credentials and are retained for 30 days. Data that is no longer required under these rules is deleted.</p>
+
+    <h2>Sharing and transfer</h2>
+    <p>The application does not sell Google user data. Minimum derived trade details may be transferred only to the owner's Sharesight account to perform the user-requested synchronization and reconciliation. Google Cloud processes data only as needed to authenticate the application, run the private workflow, protect secrets, deliver events, and retain the minimum state and audit evidence described above. No other transfer is permitted except where legally required.</p>
+
+    <h2>Limited Use</h2>
+    <p>Google user data is used only to provide and improve this owner-facing synchronization feature. It is not used for advertising, marketing, sale, creating, training, or improving any AI or machine-learning model, creditworthiness assessment, lending, or any unrelated profiling. A human will not read Gmail message content unless the account owner gives explicit consent for a specific message, or access is strictly necessary to investigate a security incident, prevent abuse, or comply with law. Any such access is limited to the minimum necessary purpose.</p>
+
+    <h2>Security</h2>
+    <p>Source access is read-only. The application uses least-privilege service accounts, encrypted secret storage, authenticated service endpoints, idempotency and duplicate checks, and fail-closed review gates for uncertain events.</p>
+
+    <h2>User control</h2>
+    <p>The owner may revoke the application's Google access at any time from <a href="https://myaccount.google.com/connections">Google Account third-party connections</a>; revocation stops future Gmail access. To request deletion, email <a href="mailto:huanwu.joy@gmail.com?subject=Delete%20Webull%20Gmail%20Sharesight%20Sync%20Data">huanwu.joy@gmail.com</a> from the authorized mailbox with the subject “Delete Webull Gmail Sharesight Sync Data” and state whether the request covers OAuth credentials only or all application data.</p>
+    <p>Access and deletion requests will be acknowledged and completed within 30 days. A completed full-deletion request disables and deletes the active OAuth credential and deletes the extracted state and audit data controlled by this application. If applicable law requires a specific record to remain, the owner will be told the exact legal basis, the data retained, and the fixed retention period. No general operational or “integrity” exception overrides a valid deletion request.</p>
+
+    <h2>Google API Services User Data Policy</h2>
+    <p>The application's use and transfer of information received from Google APIs adheres to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including its Limited Use requirements, and the <a href="https://developers.google.com/workspace/workspace-api-user-data-developer-policy">Google Workspace API User Data and Developer Policy</a>.</p>
+
+    <p><a href="index.html">Return to application home</a></p>
+  </main>
+  <footer>Effective and last updated: 9 September 2026</footer>
+</body>
+</html>
