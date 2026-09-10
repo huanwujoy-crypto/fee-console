@@ -14,10 +14,30 @@ export const ALLOCATION_CARDS_CSS = `
 .allocation-account-list{padding:0;margin:10px 0;display:grid;gap:8px}
 .allocation-account-list>div{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);min-width:0}
 .allocation-account-list dt{font-size:15px;overflow-wrap:anywhere}.allocation-account-list dd{margin:0;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;max-width:100%}
+.allocation-category-list{display:none}
 .allocation-original .kv{display:block!important;font-size:14px}.allocation-original .kv .k,.allocation-original .kv .v{display:block!important;text-align:left!important;font-weight:400!important;font-size:14px!important;white-space:normal!important;width:auto!important}
 .allocation-original .kv .k{font-weight:650!important;margin-bottom:4px}
 #xuan-ib-cash-plan-detail>h2{font-size:18px}#xuan-ib-cash-plan-detail>h2 small{display:block;margin-top:5px;font-size:14px;font-weight:400}
+@media screen and (max-width:640px){
+  .allocation-category-source{display:none!important}
+  .allocation-category-list{display:grid;gap:7px;margin:10px 0}
+  .allocation-category-list>div{display:grid;grid-template-columns:minmax(6em,1fr) minmax(5em,.72fr) minmax(4.5em,.62fr);gap:6px;align-items:center;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg);min-width:0}
+  .allocation-category-list dt{font-size:14px;font-weight:700;min-width:0}
+  .allocation-category-list dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .allocation-category-list strong{display:block;font-size:16px}
+  .allocation-category-list small{display:block;font-size:11px;color:var(--mut);margin-top:2px}
+  .allocation-category-target strong{color:#2875b8}
+}
+@media print{.allocation-category-list{display:none!important}.allocation-category-source{display:block!important}}
 `;
+
+export function compactAllocationCategory(values) {
+  if(!Array.isArray(values)||values.length!==4)return null;
+  const [rawName,marketValue,current,target]=values.map(value=>String(value??'').trim());
+  const name=rawName.replace(/[（(][^()（）]*[）)]\s*$/,'').trim();
+  if(!name||!/^\$?[\d,]+(?:\.\d+)?$/.test(marketValue)||!/^\d+(?:\.\d+)?%$/.test(current)||!/^\d+(?:\.\d+)?%$/.test(target))return null;
+  return {name,marketValue,current,target};
+}
 
 export function allocationMetrics(text) {
   const current=text.match(/(?:当前\s*|占股票总额[：:]\s*|^)(\d+(?:\.\d+)?%)\s*→/);
@@ -74,6 +94,21 @@ export function improveAllocationCards(doc) {
   for(const table of [...pane.querySelectorAll('table')]){
     if(table.closest('.pane-notes,[data-decision-id]'))continue;
     const heads=[...table.querySelectorAll('thead th')].map(n=>n.textContent.trim());
+    if(JSON.stringify(heads)===JSON.stringify(['类别','市值 $','本轮占比','参考目标'])){
+      const rows=[...table.querySelectorAll('tbody tr')],parsed=rows.map(row=>compactAllocationCategory([...row.children].map(cell=>cell.textContent)));
+      if(rows.length&&parsed.every(Boolean)){
+        const list=el('dl','allocation-category-list');
+        for(const item of parsed){
+          const pair=el('div'),name=el('dt',null,item.name),current=el('dd','allocation-category-current'),target=el('dd','allocation-category-target');
+          current.append(el('strong',null,item.current),el('small',null,item.marketValue));
+          target.append(el('strong',null,item.target),el('small',null,'参考目标'));
+          pair.append(name,current,target);list.append(pair);
+        }
+        const source=table.parentElement.matches('.tblwrap')?table.parentElement:table;
+        source.classList.add('allocation-category-source');source.before(list);
+      }
+      continue;
+    }
     if(heads.length!==3||heads[0]!=='组合'||!/^本次读取值\s*\$$/.test(heads[1])||heads[2]!=='备注')continue;
     const rows=[...table.querySelectorAll('tbody tr')];if(!rows.length||rows.some(row=>row.children.length!==3))continue;
     const card=table.closest('section.card'),heading=card?.querySelector(':scope > h2');

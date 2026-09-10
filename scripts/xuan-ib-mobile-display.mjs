@@ -12,6 +12,8 @@ export const MOBILE_READING_CSS = `
 .kpi{container-type:inline-size;padding:14px!important;min-width:0}
 .kpi .big{font-size:clamp(18px,14cqi,32px)!important;white-space:nowrap!important;overflow-wrap:normal!important;letter-spacing:-.04em}
 .kpi .lab{font-size:13px!important;line-height:1.3}.mobile-state{display:block;font-size:12px;color:var(--mut);margin-top:5px}
+.kpi-secondary{display:block;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
+.kpi-secondary dt{font-size:12px;color:var(--mut);white-space:nowrap}.kpi-secondary dd{margin:2px 0 0;font-size:16px;font-weight:750;white-space:nowrap}
 .mobile-cash-guidance{margin:8px 0 0;font-size:12px}.mobile-cash-guidance div{display:flex;justify-content:space-between;gap:4px;padding:3px 0}.mobile-cash-guidance dt,.mobile-cash-guidance dd{margin:0;white-space:nowrap}.mobile-cash-guidance dd{font-weight:750}
 .pane-notes{margin-top:20px!important}.pane-notes>summary{font-size:15px}.pane-notes .notes-section{padding:10px 0;border-bottom:1px solid var(--line)}
 .pane-notes p,.pane-notes li{font-size:14px!important;line-height:1.6}.pane-notes table{min-width:550px}
@@ -65,6 +67,43 @@ export function aiRiskStripValues({title,state,takeaway,action,kpiLabel,kpiValue
   return [['提醒',band[1]],['当前',`${current}%`],['预警',band[2]]];
 }
 
+export function largestOrdinaryConcentration(headers,rows,headline='') {
+  const clean=value=>String(value??'').trim().replace(/\s+/g,' ');
+  if(JSON.stringify((headers||[]).map(clean))!==JSON.stringify(['IB 视图标的','市值 $','占比 / 线','余量 $'])||!Array.isArray(rows))return null;
+  // The source-authored three-account observation is the primary concentration
+  // view. The IB table remains the fallback execution view. Never recompute or
+  // merge their different denominators in the browser.
+  const primary=clean(headline).match(/(?:^|\s)([A-Z0-9./]+)\s+三账户\s+(\d+(?:\.\d+)?)%/);
+  if(primary&&primary[1]!=='BRK.B')return {symbol:primary[1],percent:Number(primary[2]),label:`${primary[1]} ${primary[2]}%`};
+  let best=null;
+  for(const values of rows){
+    if(!Array.isArray(values)||values.length!==4)continue;
+    const symbol=clean(values[0]).split(/\s+/)[0],match=clean(values[2]).match(/^(\d+(?:\.\d+)?)%\s*\//);
+    if(!/^[A-Z0-9.]+$/.test(symbol)||symbol==='BRK.B'||!match)continue;
+    const percent=Number(match[1]);if(!Number.isFinite(percent))continue;
+    if(!best||percent>best.percent)best={symbol,percent,label:`${symbol} ${match[1]}%`};
+  }
+  return best;
+}
+
+function addConcentrationToAiKpi(doc) {
+  const kpis=[...doc.querySelectorAll('.kpis .kpi')].filter(kpi=>kpi.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
+  const cards=[...doc.querySelectorAll('.pane.p2 > section.card')].filter(card=>/^单票集中度(?:$|\s*·)/.test(card.querySelector(':scope > h2')?.textContent.trim()||''));
+  if(kpis.length!==1||cards.length!==1||kpis[0].querySelector('.kpi-secondary'))return;
+  const table=[...cards[0].querySelectorAll('table')].find(candidate=>{
+    const heads=[...candidate.querySelectorAll('thead th')].map(cell=>cell.textContent);
+    return heads[0]?.trim()==='IB 视图标的';
+  });
+  if(!table)return;
+  const headers=[...table.querySelectorAll('thead th')].map(cell=>cell.textContent);
+  const rows=[...table.querySelectorAll('tbody tr')].map(row=>[...row.children].map(cell=>cell.textContent));
+  const headline=cards[0].querySelector(':scope > .brief-signal')?.textContent||'';
+  const largest=largestOrdinaryConcentration(headers,rows,headline);if(!largest)return;
+  const metric=doc.createElement('dl');metric.className='kpi-secondary';
+  const name=doc.createElement('dt'),value=doc.createElement('dd');name.textContent='单票集中度';value.textContent=largest.label;
+  metric.setAttribute('aria-label',`除 BRK.B 外最大单票集中度 ${largest.label}`);metric.append(name,value);kpis[0].append(metric);
+}
+
 function compactAiRiskStrip(doc,move) {
   const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
     .filter(card=>/^AI 压力敞口(?:$| ·)/.test(card.querySelector(':scope > h2')?.textContent.trim()||''));
@@ -112,6 +151,7 @@ export function simplifyPaneReading(doc) {
     nodes.forEach(n=>section.append(n));target.body.append(section);
   };
   // Read the agreeing source KPI before its explanatory subtree is moved.
+  addConcentrationToAiKpi(doc);
   compactAiRiskStrip(doc,move);
   // Keep exact original explanations and figures accessible, not deleted.
   [...doc.querySelectorAll('.kpis .kpi')].forEach((kpi,index)=>{
@@ -218,7 +258,22 @@ export function improveMobileDisplay(doc) {
       const raw = row.children[1]?.textContent.trim().replace(/[$,\s]/g, '');
       return raw && /^-?\d+(\.\d+)?$/.test(raw) ? Number(raw) : -Infinity;
     };
-    [...body.children].sort((a,b) => value(b)-value(a)).forEach(row => body.append(row));
+    const groupTitle=table.closest?.('details')?.querySelector?.(':scope > summary')?.textContent.trim()||'';
+    const changeIndex=heads.findIndex(h=>h.textContent.trim()==='日涨跌');
+    const change=row=>{
+      const match=row.children[changeIndex]?.textContent.trim().replace(/−/g,'-').match(/^([+-]?\d+(?:\.\d+)?)%/);
+      return match?Number(match[1]):null;
+    };
+    const ordered=[...body.children];
+    if(/^价格变化\s*≥1%/.test(groupTitle)&&changeIndex>=0&&ordered.every(row=>change(row)!==null&&change(row)!==0)){
+      const original=new Map(ordered.map((row,index)=>[row,index]));
+      ordered.sort((a,b)=>{
+        const av=change(a),bv=change(b);
+        if((av>0)!==(bv>0))return av>0?-1:1;
+        return av>0?bv-av||original.get(a)-original.get(b):av-bv||original.get(a)-original.get(b);
+      });
+    }else ordered.sort((a,b)=>value(b)-value(a));
+    ordered.forEach(row => body.append(row));
     table.classList.add('mobile-holdings');
   }
   // Label-only alias. Do not mutate templates, receipts or attribute values.
