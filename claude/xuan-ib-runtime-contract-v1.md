@@ -98,6 +98,23 @@ without fresh reads, clearly dated to the original snapshot; it is not fresh
 AM/PM evidence and gives no stale-date or publication exception. Ordinary
 reports still use live reads and the current report's own source amounts.
 
+Every other delegated tier is applied only through `calculateDelegatedTier` in
+`scripts/xuan-ib-delegated-tier.mjs`, the single supported reader of
+`claude/xuan-ib-classification-delegation-v1.json`. It resolves one rule by its
+approval ID, requires the input to match every identity field that rule records
+— exactly, including custodian, venue and instrument name when recorded — and
+scales the verified USD value in integer cents. Only coefficients already on
+its whitelist may be applied: adopting a new tier or a new coefficient triple is
+a decision the delegation withholds (`coefficientChanges: false`), so an
+unlisted one stops the calculation instead of being computed. Currently
+approved: AAOI standard T1 (`WU-20260906-AAOI-T1`) and Webull VST / Vistra Corp,
+NYSE, delegated standard T1 (`DELEG-20260910-VST-T1`). Its `notifyId` is one stable identity
+per rule that survives the holding's value and date moving, so a later report
+under the same established tier is not a new classification; generating it is
+neither a message nor proof that one was delivered. Every failure it raises is a
+Codex-owned technical exception recorded in the technical record — never an
+`awaiting_user` decision, never a guessed tier, and never zero.
+
 For the single registered UBS cash proxy, call `resolveCashIdentity` from
 `scripts/xuan-ib-cash-identity.mjs` before the classification audit. Supply
 explicit source IDs, normalized full name, record type, USD currency, unit
@@ -139,23 +156,50 @@ Two measurement sources feed it, both normalized in
   identical share count at the close that P&L is measured from, inside one
   currency and therefore free of any FX assumption.
 
-Which source an edition uses is recorded here once measured, not assumed. AM
-reports a completed session and uses the window. **The PM source is still
-open**: it must not be written as settled until the read-only intraday probes
-have measured whether the window source updates during a session, how late it
-runs and whether every venue behaves alike. Do not record in this contract
-that the window source has no intraday value before that evidence exists.
+Which source an edition uses is fixed in `DAILY_CHANGE_EDITION_RULES` and
+enforced by the builder and the publication gate, not chosen per run:
+
+- **AM** publishes `window-v1` only, and only for the completed session one
+  calendar day before its Hong Kong data date.
+- **PM** publishes `session-pnl-v1` only, and only for the session running on
+  its own Hong Kong data date. It reads the move out of the positions payload
+  the run already holds, so nothing about the window source's intraday
+  behaviour is assumed. **The window source's intraday behaviour remains
+  unmeasured**, so PM must not borrow it, and this contract must not record
+  that it has or has not intraday value until the read-only intraday probes
+  have measured how it updates during a session and whether every venue
+  behaves alike.
+- The retired ad-hoc edition has no measured column at all.
+
+A PM run whose read slips onto the next Hong Kong date loses the column, since
+its observation instant would then name a different date from the session it
+reports. That is the intended direction: no column beats a relabelled one.
 
 Every row must carry its own proof, and the following are enforced in code:
 
 - **Session proof is per row.** Pass `venuesComplete` with the venues whose
-  session for that date is provably finished. The upstream book rolls its
-  session per instrument and per venue — measured 2026-09-10, US rows had
-  rolled while a Toronto and a London row had not — so one report-wide flag
-  cannot cover a portfolio spanning several exchanges. Never infer it from the
-  edition or from a fixed clock offset: the PM trigger currently fires at a
+  session for that date is provably finished and, for an intraday reading,
+  `venuesOpen` with those whose session is provably running. A venue in both,
+  or in neither, has no usable evidence and its rows are dropped. The upstream
+  book rolls its session per instrument and per venue — measured 2026-09-10, US
+  rows had rolled while a Toronto and a London row had not — so one report-wide
+  flag cannot cover a portfolio spanning several exchanges. Never infer it from
+  the edition or from a fixed clock offset: the PM trigger currently fires at a
   fixed UTC time, so from 2026-11-02 it starts an hour before the New York
   open and any edition-derived assumption would be wrong from that date.
+- **An intraday reading names the minute it was taken.** Pass `observedAtHkt`
+  as `YYYY-MM-DD HH:MM HKT` on the session being reported. The same instrument's
+  PM intraday reading and its following AM close reading legitimately differ, so
+  each is labelled with what it measures and the two are never reconciled.
+- **An intraday reading must reconcile its own mark.** `market_price ×
+  position` must reproduce the payload's `market_value` to within cent
+  rounding before its `daily_pnl` may become a percentage. A contract carrying
+  a multiplier never reconciles, so no multiplier is ever assumed, and a mark
+  the payload carried forward beside a fresh value is caught rather than
+  published.
+- **A measurement set names the source that produced it.** A set assembled by
+  the other adapter fails the whole column instead of degrading row by row: its
+  rows would otherwise be published under a method that did not measure them.
 - **Identity is venue-scoped and alias-normalized.** `BRK B`, `BRK/B` and
   `BRK.B` are one instrument; the same ticker on two exchanges is two. A row
   whose identity does not resolve, or that collides with another inside one
@@ -180,20 +224,24 @@ counted while the rest of the column publishes. The window-shape guards
 measurement, so the column becomes unavailable while the rest of the report
 still publishes.
 
-Label each measured row with its own session date, never with the moment the
-run happened to read it: an AM column carries a completed session's move and
-must not be described as an 08:00 reading. State which method produced the
-column in the holdings note, and disclose the specific reason a row is missing
-— a fill in the window, a corporate action, an unresolved identity, an
-unproven session, or a value indistinguishable from a carried-forward price —
-instead of the generic missing-quote line. Neither method is an
-exchange-verified quote, so keep each source's own date and any delayed label.
+Label each measured row with what it measured, and let the module decide the
+label: an AM column carries a completed session's move and is labelled with
+that session's date, never described as an 08:00 reading, while a PM column
+carries one reading inside a running session and is labelled with the minute it
+was taken. State which method produced the column in the holdings note, and
+disclose the specific reason a row is missing — a fill in the window, a
+corporate action, an unresolved identity, an unproven session, an unproven
+observation instant, an unreconciled mark, or a value indistinguishable from a
+carried-forward price — instead of the generic missing-quote line. Neither
+method is an exchange-verified quote, so keep each source's own date and any
+delayed label, and say plainly that a PM number is an intraday reading rather
+than a session result.
 
-A published row carrying a change must name its method and session date; the
-publication gate enforces this as soon as the measured column is in use. The
-same PM intraday reading and the following AM close reading of one instrument
-legitimately differ, so both must be labelled with what they measure rather
-than reconciled into one number.
+A published row carrying a change must name its method and session date, and
+its label must match its method: the publication gate refuses an intraday
+method without a minute, a completed-session method carrying one, a method the
+edition may not publish, and a session at any distance from the data date other
+than the edition's own.
 
 Derive every GOOG/GOOGL figure in the summary, risk table and accepted-item
 fact paragraph from the same current report inputs. Do not copy an old item

@@ -8,6 +8,7 @@ import { validateClassificationDisclosure } from './xuan-ib-classification-discl
 import { validateFourBucketReportHtml, FOUR_BUCKET_REPORT_ID } from './xuan-ib-four-bucket-report.mjs';
 import { FOUR_BUCKET_TEMPLATE_ID } from './xuan-ib-four-bucket.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
+import { validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
@@ -1213,8 +1214,13 @@ try {
     const activeRisk = html.match(/<div class="pane p2">([\s\S]*?)(?=<div class="pane p3">)/)?.[1] || '';
     if (/不含\s*AAOI|AAOI[^<>。]{0,70}(?:尚无|仍无|没有|未有)已?批准\s*tier/i.test(activeRisk))
       fail('AAOI T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen tier approval');
+    if (/VST[^<>。]{0,100}(?:待核验|待分类|未分类|未含|未计入分子|边界未定义)/i.test(activeRisk))
+      fail('VST T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen classification');
   }
   if (!verifiedRecordsUpdate && !edition) fail('ordinary report requires one recognized edition in its primary header');
+  if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection && ['am', 'pm'].includes(edition)) {
+    validatePublishedDailyChangeHtml(html, { edition, dataDate: expectedDate });
+  }
   const needsCurrentPolicy = !verifiedRecordsUpdate && !verifiedHistoricalCorrection;
   let snapshot = null;
   if (needsCurrentPolicy) {

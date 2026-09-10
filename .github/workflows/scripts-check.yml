@@ -84,4 +84,4 @@ jobs:
 
       - name: Verify source-bound Saturday historical layout
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-saturday-archive.test.mjs scripts/xuan-ib-mobile-display.test.mjs scripts/xuan-ib-order-cards.test.mjs scripts/xuan-ib-allocation-cards.test.mjs scripts/xuan-ib-aaoi-t1.test.mjs scripts/xuan-ib-aaoi-snapshot.test.mjs scripts/xuan-ib-routine-reading.test.mjs
+        run: node --test scripts/xuan-ib-saturday-archive.test.mjs scripts/xuan-ib-mobile-display.test.mjs scripts/xuan-ib-order-cards.test.mjs scripts/xuan-ib-allocation-cards.test.mjs scripts/xuan-ib-delegated-tier.test.mjs scripts/xuan-ib-aaoi-t1.test.mjs scripts/xuan-ib-aaoi-snapshot.test.mjs scripts/xuan-ib-routine-reading.test.mjs

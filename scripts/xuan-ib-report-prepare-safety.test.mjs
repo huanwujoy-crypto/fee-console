@@ -127,6 +127,50 @@ test('positive direct authoritative value cannot be paired with an empty holding
   assert.equal(prepareReport(zero,evidence(),context).result.status,'prepared-not-published');
 });
 
+// The measured daily-change column is edition-bound: AM publishes the completed
+// session before its Hong Kong date from the window source, PM publishes the
+// session running on that date from the same positions payload, and the retired
+// ad-hoc edition publishes no measured column at all.
+const priorSession=new Date(Date.parse(`${dataDate}T00:00:00Z`)-86_400_000).toISOString().slice(0,10);
+const measuredView=(edition,over={})=>{
+  const base=edition==='am'
+    ?{changePct:1.25,changeAsOfHkt:priorSession,changeMethod:'window-v1',changeSessionDate:priorSession}
+    :{changePct:1.25,changeAsOfHkt:`${dataDate} 21:38 HKT`,changeMethod:'session-pnl-v1',changeSessionDate:dataDate};
+  const input=view();input.edition=edition;
+  input.holdings.rows=[{symbol:'SYNTH',market:'TEST',quantity:1,price:100,priceCurrency:'USD',
+    marketValueUsd:100,quoteStatus:'ok',...base,...over}];
+  return input;
+};
+const measuredEvidence=edition=>Object.assign(evidence(),{edition});
+
+test('a measured daily change may name only its own edition method, session and label',()=>{
+  for(const edition of ['am','pm']){
+    assert.equal(prepareReport(measuredView(edition),measuredEvidence(edition),context).result.status,'prepared-not-published');
+  }
+  // Neither edition may borrow the other's method, whose behaviour in the other
+  // edition's session has not been measured.
+  assert.throws(()=>prepareReport(measuredView('am',{changeMethod:'session-pnl-v1'}),measuredEvidence('am'),context),
+    /method this edition may not publish/);
+  assert.throws(()=>prepareReport(measuredView('pm',{changeMethod:'window-v1'}),measuredEvidence('pm'),context),
+    /method this edition may not publish/);
+  // The retired ad-hoc edition has no measured column.
+  assert.throws(()=>prepareReport(measuredView('adhoc'),evidence(),context),
+    /edition may not publish a measured daily change/);
+  // AM may not relabel the running session, and PM may not relabel yesterday's.
+  assert.throws(()=>prepareReport(measuredView('am',{changeAsOfHkt:dataDate,changeSessionDate:dataDate}),measuredEvidence('am'),context),
+    /outside the report window/);
+  assert.throws(()=>prepareReport(measuredView('pm',{changeAsOfHkt:`${priorSession} 21:38 HKT`,changeSessionDate:priorSession}),measuredEvidence('pm'),context),
+    /outside the report window/);
+  // An intraday reading must name the minute it was taken; a completed session
+  // must not be dressed up as one.
+  assert.throws(()=>prepareReport(measuredView('pm',{changeAsOfHkt:dataDate}),measuredEvidence('pm'),context),
+    /label does not match its measurement method/);
+  assert.throws(()=>prepareReport(measuredView('am',{changeAsOfHkt:`${priorSession} 21:38 HKT`}),measuredEvidence('am'),context),
+    /label does not match its measurement method/);
+  assert.throws(()=>prepareReport(measuredView('am',{changeMethod:'invented'}),measuredEvidence('am'),context),
+    /known measurement method/);
+});
+
 function withJournal(statuses,run){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-safety-')),journal=path.join(dir,'clock.jsonl');
   try{

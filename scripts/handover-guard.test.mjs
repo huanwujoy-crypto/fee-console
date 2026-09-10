@@ -1344,3 +1344,26 @@ test('candidate validation loads the guard dependency graph from the same truste
   assert.doesNotMatch(validateWorkflow, /git show origin\/main:scripts\//);
   assert.match(promoteWorkflow, /node scripts\/handover-guard\.mjs/);
 });
+
+test('ordinary reports cannot reopen the delegated VST classification', () => {
+  const html = withPaneLayout(valid(), {
+    p2: '<section><p>Webull VST 待核验，未计入分子。</p></section>',
+    p5: approvedPolicySection,
+  });
+  const result = run(html, '2026-08-25', null, { autoPolicy: false });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /VST T1 is already delegated/);
+});
+
+test('trusted guard requires row evidence for each published PM daily change', () => {
+  const row = attributes => `<table><tbody><tr${attributes}><td>TEST</td><td class="up">+1.25%</td></tr></tbody></table>`;
+  const make = attributes => withPaneLayout(valid(), {
+    p1: row(attributes), p5: approvedPolicySection,
+  });
+  const missing = run(make(''), '2026-08-25', null, { autoPolicy: false });
+  assert.notEqual(missing.status, 0);
+  assert.match(missing.stderr, /PUBLISHED_EVIDENCE_MISSING/);
+  const good = run(make(' data-daily-change-v1="1" data-change-method="session-pnl-v1" data-change-session="2026-08-25" data-change-as-of="2026-08-25 21:00 HKT" data-change-pct="1.25"'),
+    '2026-08-25', null, { autoPolicy: false });
+  assert.equal(good.status, 0, good.stderr);
+});
