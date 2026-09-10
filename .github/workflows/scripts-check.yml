@@ -80,7 +80,7 @@ jobs:
 
       - name: Test fixed-run intent and mobile holdings reliability
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-source-plan.test.mjs scripts/xuan-ib-run-observation.test.mjs scripts/xuan-ib-holdings-cards.test.mjs
+        run: node --test scripts/xuan-ib-source-plan.test.mjs scripts/xuan-ib-run-observation.test.mjs scripts/xuan-ib-holdings-cards.test.mjs scripts/xuan-ib-daily-change.test.mjs
 
       - name: Verify source-bound Saturday historical layout
         if: ${{ github.event.pull_request.draft == false }}
