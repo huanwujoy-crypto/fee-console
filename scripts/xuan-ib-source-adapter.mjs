@@ -67,23 +67,42 @@ export function normalizePositions(raw){
 // owns every publish/suppress decision. Neither judges a row here, so a guard
 // can never be bypassed by the order in which rows are masked.
 //
-// `sessionComplete` is never inferred from an edition or a clock offset: the
-// caller passes the venues whose session for that date is provably finished,
-// because the upstream book rolls its session per instrument and per venue,
-// and a schedule pinned to a fixed UTC offset drifts against a venue's own
-// daylight-saving rule. Anything not listed stays unproven and is dropped
-// downstream.
-const venueComplete=(venues,venue)=>Array.isArray(venues)&&venues.includes(venue);
+// A venue's session phase is never inferred from an edition or a clock offset:
+// the caller passes the venues whose session for that date is provably still
+// running (`venuesOpen`) and those whose session is provably finished
+// (`venuesComplete`), because the upstream book rolls its session per
+// instrument and per venue, and a schedule pinned to a fixed UTC offset drifts
+// against a venue's own daylight-saving rule. A venue listed in both, or in
+// neither, has no usable evidence: it stays unproven and is dropped downstream.
+const sessionPhase=(venue,open,complete)=>{
+  const running=Array.isArray(open)&&open.includes(venue),finished=Array.isArray(complete)&&complete.includes(venue);
+  return running===finished?null:running?'open':'complete';
+};
+
+// An intraday reading is only usable when the payload's own mark, share count
+// and market value agree: `price * quantity` must reproduce `marketValueNative`
+// to within its published rounding. A contract carrying a multiplier (an
+// option, a future) never reconciles, so no multiplier is ever assumed, and a
+// mark the payload carried forward beside a fresh value is caught rather than
+// turned into a percentage. The tolerance covers cent rounding only.
+const markReconciled=position=>{
+  if(!num(position.price)||!num(position.quantity)||!num(position.marketValueNative))return false;
+  const implied=position.price*position.quantity;
+  return num(implied)&&Math.abs(implied-position.marketValueNative)<=Math.max(0.01,Math.abs(position.marketValueNative)*1e-6);
+};
 
 // (A) Session profit and loss carried inside the same positions payload:
 //   base = marketValueNative - dailyPnlNative
 // is the identical share count valued at the close that P&L is measured from,
 // and the ratio stays inside one currency, so no FX or venue policy is
 // implied. Absent or unusable inputs produce a null measurement, never a zero.
-export function measurePositionSessionChange(position,{venue=null,code=null,sessionDate=null,venuesComplete=[]}={}){
+// `observedAtHkt` is the minute the payload was read, passed through verbatim:
+// a reading taken while the session runs is only meaningful with the instant
+// it belongs to, and two readings inside one session must never be reconciled.
+export function measurePositionSessionChange(position,{venue=null,code=null,sessionDate=null,venuesOpen=[],venuesComplete=[],observedAtHkt=null}={}){
   if(!object(position)||!Object.hasOwn(position,'dailyPnlNative')||!Object.hasOwn(position,'marketValueNative'))fail('INVALID_DAILY_CHANGE_INPUT');
-  const row={code,venue,changePct:null,currencyChangePct:null,sessionDate,
-    sessionComplete:venueComplete(venuesComplete,venue)};
+  const row={method:'session-pnl-v1',code,venue,changePct:null,currencyChangePct:null,sessionDate,
+    sessionPhase:sessionPhase(venue,venuesOpen,venuesComplete),observedAtHkt,markReconciled:markReconciled(position)};
   if(position.dailyPnlNative===null)return row;
   if(!num(position.dailyPnlNative)||!num(position.marketValueNative))fail('INVALID_DAILY_CHANGE_INPUT');
   const base=position.marketValueNative-position.dailyPnlNative;
@@ -116,11 +135,13 @@ export function normalizeDailyChangeWindow(raw,{date=null,venuesComplete=[]}={})
     const venue=object(instrument)&&typeof instrument.market_code==='string'?instrument.market_code:null;
     const code=object(instrument)&&typeof instrument.code==='string'?instrument.code:null;
     const usable=object(holding)&&num(holding.capital_gain_percent);
-    return {code,venue,
+    return {method:'window-v1',code,venue,
       instrumentId:object(instrument)&&Number.isSafeInteger(instrument.id)?instrument.id:null,
       changePct:usable?holding.capital_gain_percent:null,
       currencyChangePct:usable&&num(holding.currency_gain_percent)?holding.currency_gain_percent:null,
-      sessionDate:date,sessionComplete:venueComplete(venuesComplete,venue)};
+      // A completed-session window has no observation instant to publish: it is
+      // labelled with the session it measures, not with the moment it was read.
+      sessionDate:date,sessionPhase:sessionPhase(venue,[],venuesComplete),observedAtHkt:null};
   });
 }
 export function sourceRecordFromRaw(raw,receipt){

@@ -27,6 +27,19 @@ notify once, then archive. Codex is the single accountable owner. Historical
 rule records are not recurring user tasks. Preserve all source/receipt history;
 never mark missing calculations completed or treat this as trading authority.
 
+Apply a delegated tier only through `calculateDelegatedTier` in
+`scripts/xuan-ib-delegated-tier.mjs`, the single supported reader of the locked
+`claude/xuan-ib-classification-delegation-v1.json`. Identity must match every
+field the approved rule records, and only whitelisted coefficients may be
+applied: a new tier or coefficient triple is a separate owner decision, not a
+delegated one. Approved rules are AAOI standard T1 and Webull VST / Vistra Corp,
+NYSE, standard T1 (`DELEG-20260910-VST-T1`); both keep one stable `notifyId` per
+rule, which is an identity to record delivery against, not delivery itself.
+Anything the reader refuses is a Codex-owned technical exception for the
+technical record — never a new `awaiting_user` item, never a guess, never zero.
+Changing that policy file, its reader or its tests needs a separately reviewed
+maintenance PR under the publication lock.
+
 ## Owner retirement override (2026-09-06)
 
 Read `claude/xuan-ib-four-bucket-retirement-20260906.md` first. The owner has
@@ -225,6 +238,14 @@ XUAN-IB report. Dates and phone labels use `Asia/Hong_Kong`; PM follows
   label it closed-market, not post-opening. Early closes do not change the start.
 - AM / 早间版: Tuesday-Saturday at 08:00 HKT.
 - Ad hoc / 临时版: retired 2026-09-06; retain historical parsing only.
+
+The measured 日涨跌 column is bound to the edition, and the builder and the
+publication gate enforce it: AM publishes the completed session one day before
+its Hong Kong data date, PM publishes an intraday reading of the session running
+on that date, labelled with the minute it was taken, and the retired ad-hoc
+edition publishes no measured column. A PM reading and the following AM close
+reading of one instrument legitimately differ and are never reconciled. See
+`claude/xuan-ib-runtime-contract-v1.md` for the per-row evidence each requires.
 
 Every successful edition uses the same candidate, validation, promotion, Pages,
 and fixed-mobile-link path above. An ad-hoc edition may become the newest phone

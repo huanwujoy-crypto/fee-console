@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { renderReport, validateReportView } from './xuan-ib-report-view.mjs';
 import { normalizeDailyChangeWindow, measurePositionSessionChange } from './xuan-ib-source-adapter.mjs';
 import { buildDailyChangeColumn, applyDailyChangeColumn, canonicalCode, identityKey,
-  UNAVAILABLE_REASONS, DAILY_CHANGE_METHODS } from './xuan-ib-daily-change.mjs';
+  UNAVAILABLE_REASONS, DAILY_CHANGE_METHODS, DAILY_CHANGE_EDITION_RULES,
+  validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const previousMeta = JSON.parse(fs.readFileSync(path.join(root, 'xuan-ib/latest.meta.json'), 'utf8'));
@@ -32,12 +33,24 @@ const holding = (code, market, pct, ccyPct = 0, over = {}) => ({
   instrument_currency: { code: 'USD' }, instrument_price: 10,
   capital_gain_percent: pct, currency_gain_percent: ccyPct, ...over });
 const build = (measurements, extra = {}) => buildDailyChangeColumn({
-  method: 'window-v1', intendedSessionDate: priorSession, measurements, ...extra });
+  edition: 'am', method: 'window-v1', dataDate: reportDate,
+  intendedSessionDate: priorSession, measurements, ...extra });
 const reasonsOf = column => Object.fromEntries(column.rows.map(row => [row.key, row.reason]));
+
+// PM reads the running New York session out of the same positions payload the
+// report already holds. Synthetic values only; nothing here is a real holding.
+const observedAtHkt = `${reportDate} 21:35 HKT`;
+const position = (price, quantity, dailyPnlNative) => ({
+  price, quantity, marketValueNative: Number((price * quantity).toFixed(2)), dailyPnlNative });
+const intraday = (code, venue, position, over = {}) => measurePositionSessionChange(position,
+  { code, venue, sessionDate: reportDate, venuesOpen: [venue], observedAtHkt, ...over });
+const buildPm = (measurements, extra = {}) => buildDailyChangeColumn({
+  edition: 'pm', method: 'session-pnl-v1', dataDate: reportDate,
+  intendedSessionDate: reportDate, measurements, ...extra });
 
 const card = title => ({ title, asOfHkt: stamp, lines: ['合成测试；不是实际报告或投资建议。'],
   columns: ['项目', '读数'], rows: [['合成项', '仅测试']] });
-const viewWith = rows => ({ schemaVersion: 1, edition: 'am', dataDate: reportDate, asOfHkt: stamp,
+const viewWith = (rows, edition = 'am') => ({ schemaVersion: 1, edition, dataDate: reportDate, asOfHkt: stamp,
   marketContext: '合成测试 · 非真实运行', alerts: [{ level: 'warning', text: '合成测试数据；不得发布。' }],
   summary: ['合成测试摘要一。', '合成测试摘要二。', '合成测试摘要三。'],
   kpis: [{ label: '测试 NAV', value: 100, format: 'usd', asOfHkt: stamp, note: '合成数值' },
@@ -53,6 +66,7 @@ const viewWith = rows => ({ schemaVersion: 1, edition: 'am', dataDate: reportDat
   cashPlan: { schemaVersion: 2, status: 'unavailable' } });
 const viewRow = (symbol, market) => ({ symbol, market, quantity: 1, price: 10, priceCurrency: 'USD',
   marketValueUsd: 10, changePct: null, changeAsOfHkt: null, quoteStatus: 'unavailable' });
+const venueOf = row => row.market;
 
 test('end to end: a source payload becomes a rendered column, and a suppressed row stays 未取得', () => {
   const raw = windowRaw([holding('META', 'NASDAQ', 6.55), holding('VCN', 'TSE', -0.61, -0.18),
@@ -62,13 +76,14 @@ test('end to end: a source payload becomes a rendered column, and a suppressed r
   const column = build(measurements);
   assert.equal(column.coverage.available, 2);
   const rows = applyDailyChangeColumn(
-    [viewRow('META', 'NASDAQ'), viewRow('VCN', 'TSE'), viewRow('IVAI', 'LSE')], column);
+    [viewRow('META', 'NASDAQ'), viewRow('VCN', 'TSE'), viewRow('IVAI', 'LSE')], column, { venueOf });
   const view = viewWith(rows);
   validateReportView(view);
   const html = renderReport(view, renderContext);
   // The measured rows reach the page as numbers, not as a placeholder.
   assert.match(html, /\+6\.55%/);
   assert.match(html, /-0\.61%/);
+  assert.deepEqual(validatePublishedDailyChangeHtml(html,{edition:'am',dataDate:reportDate}),{measured:2});
   assert.ok(html.includes(priorSession), 'the column is labelled with its own session date');
   // The indistinguishable row is still explicitly missing, and no row is 0.00%.
   assert.match(html, /未取得/);
@@ -140,9 +155,11 @@ test('aliases resolve to one venue-scoped key and a duplicate key publishes neit
   assert.deepEqual(dupe.rows.map(row => row.reason),
     [UNAVAILABLE_REASONS.AMBIGUOUS, UNAVAILABLE_REASONS.AMBIGUOUS]);
   // An unmergeable identity never inherits a neighbour's move.
-  const merged = applyDailyChangeColumn([viewRow('CSPX', 'SWX')], cross);
+  const merged = applyDailyChangeColumn(
+    [viewRow('CSPX', 'SWX'), viewRow('CSPX', 'LSE')], cross, { venueOf });
   assert.equal(merged[0].changePct, 2);
-  assert.equal(applyDailyChangeColumn([viewRow('CSPX', 'XETRA')], cross)[0].changePct, null);
+  assert.throws(() => applyDailyChangeColumn(
+    [viewRow('CSPX', 'XETRA'), viewRow('CSPX', 'LSE')], cross, { venueOf }), /COLUMN_MERGE_INCOMPLETE/);
 });
 
 test('a corporate action suppresses the row; the magnitude guard is only an outlier trap', () => {
@@ -187,7 +204,7 @@ test('window shape guards and the session-P&L measurement stay fail closed', () 
   const measured = measurePositionSessionChange({ marketValueNative: 64551.501465, dailyPnlNative: 3203.501465 },
     { code: 'META', venue: 'NASDAQ', sessionDate: priorSession, venuesComplete: ['NASDAQ'] });
   assert.equal(Number(measured.changePct.toFixed(4)), 5.2219);
-  assert.equal(measured.sessionComplete, true);
+  assert.equal(measured.sessionPhase, 'complete');
   // Native currency needs no FX assumption.
   assert.equal(Number(measurePositionSessionChange({ marketValueNative: 75101.74656625, dailyPnlNative: -338.25343375 },
     { code: 'VCN', venue: 'TSE', sessionDate: priorSession }).changePct.toFixed(4)), -0.4484);
@@ -203,10 +220,95 @@ test('window shape guards and the session-P&L measurement stay fail closed', () 
   assert.ok(DAILY_CHANGE_METHODS.includes('session-pnl-v1'));
 });
 
+test('PM publishes the running session from the positions payload, labelled with its own minute', () => {
+  const column = buildPm([
+    intraday('META', 'NASDAQ', position(645.51, 100, 3203.5)),
+    intraday('GOOG', 'NASDAQ', position(230.4, 50, -145.2))]);
+  assert.equal(column.coverage.available, 2);
+  const rows = applyDailyChangeColumn([viewRow('META', 'NASDAQ'), viewRow('GOOG', 'NASDAQ')], column, { venueOf });
+  // The intraday label is the minute the payload was read, not the bare date:
+  // the following AM close reading of the same instrument legitimately differs.
+  assert.equal(rows[0].changeAsOfHkt, observedAtHkt);
+  assert.equal(rows[0].changeMethod, 'session-pnl-v1');
+  assert.equal(rows[0].changeSessionDate, reportDate);
+  const view = viewWith(rows, 'pm');
+  validateReportView(view);
+  const html = renderReport(view, renderContext);
+  // 3203.5 / (64551 - 3203.5) and -145.2 / (11520 + 145.2), inside one currency.
+  assert.match(html, /\+5\.22%/);
+  assert.match(html, /-1\.24%/);
+  assert.deepEqual(validatePublishedDailyChangeHtml(html,{edition:'pm',dataDate:reportDate}),{measured:2});
+  assert.ok(html.includes(observedAtHkt), 'the intraday column names the minute it was read');
+  assert.ok(!/涨跌数据待核验（2）/.test(html));
+});
+
+test('an intraday row without per-venue session evidence, a minute or a reconciled mark stays 未取得', () => {
+  const value = position(645.51, 100, 3203.5);
+  // No venue evidence at all, and a venue claimed both open and complete.
+  for (const over of [{ venuesOpen: [] }, { venuesOpen: ['NASDAQ'], venuesComplete: ['NASDAQ'] }]) {
+    assert.equal(buildPm([intraday('META', 'NASDAQ', value, over)]).rows[0].reason, UNAVAILABLE_REASONS.SESSION);
+  }
+  // The reading must name the minute it was taken, on the session it reports.
+  for (const instant of [null, reportDate, `${reportDate} 21:35`, `${priorSession} 21:35 HKT`,
+    `${reportDate} 25:35 HKT`, `${reportDate} 21:99 HKT`]) {
+    assert.equal(buildPm([intraday('META', 'NASDAQ', value, { observedAtHkt: instant })]).rows[0].reason,
+      UNAVAILABLE_REASONS.INSTANT);
+  }
+  // mark * quantity must reproduce the payload's own market value. A contract
+  // with a multiplier never reconciles, so no multiplier is ever assumed.
+  const optionLike = { price: 6.4551, quantity: 100, marketValueNative: 64551, dailyPnlNative: 3203.5 };
+  assert.equal(buildPm([intraday('META', 'NASDAQ', optionLike)]).rows[0].reason, UNAVAILABLE_REASONS.MARK);
+  const carriedMark = { ...value, price: 630 };
+  assert.equal(buildPm([intraday('META', 'NASDAQ', carriedMark)]).rows[0].reason, UNAVAILABLE_REASONS.MARK);
+  // A four-decimal mark whose product only rounds to the payload's own value
+  // still publishes: the guard is against a multiplier, not against cents.
+  assert.equal(buildPm([intraday('META', 'NASDAQ',
+    { price: 64.5515, quantity: 1000, marketValueNative: 64551.5, dailyPnlNative: 3203.5 })]).rows[0].quoteStatus, 'ok');
+  // A missing session P&L is unavailable, never zero.
+  assert.equal(buildPm([intraday('META', 'NASDAQ', { ...value, dailyPnlNative: null })]).rows[0].reason,
+    UNAVAILABLE_REASONS.MALFORMED);
+  // Intraday trades and corporate actions suppress the row exactly as they do
+  // for a completed session: a share count that moved breaks the P&L base.
+  assert.equal(buildPm([intraday('META', 'NASDAQ', value)], { trades: [{ code: 'META', venue: 'NASDAQ' }] })
+    .rows[0].reason, UNAVAILABLE_REASONS.TRADED);
+  assert.equal(buildPm([intraday('META', 'NASDAQ', value)], { corporateActions: [{ code: 'META', venue: 'NASDAQ' }] })
+    .rows[0].reason, UNAVAILABLE_REASONS.CORPORATE_ACTION);
+  // A flat intraday reading is still indistinguishable from a stale one.
+  assert.equal(buildPm([intraday('META', 'NASDAQ', position(645.51, 100, 0))]).rows[0].reason,
+    UNAVAILABLE_REASONS.FLAT_OR_STALE);
+});
+
+test('an edition may publish only its own method, session and measurement set', () => {
+  assert.deepEqual(DAILY_CHANGE_EDITION_RULES.am, { methods: ['window-v1'], lagDays: 1 });
+  assert.deepEqual(DAILY_CHANGE_EDITION_RULES.pm, { methods: ['session-pnl-v1'], lagDays: 0 });
+  const windowRows = normalizeDailyChangeWindow(windowRaw([holding('META', 'NASDAQ', 6.55)]),
+    { date: priorSession, venuesComplete: ['NASDAQ'] });
+  const intradayRows = [intraday('META', 'NASDAQ', position(645.51, 100, 3203.5))];
+  // AM may not borrow the intraday method, and PM may not borrow the window,
+  // whose intraday behaviour has not been measured.
+  assert.throws(() => build(intradayRows, { method: 'session-pnl-v1' }), /METHOD_NOT_APPROVED_FOR_EDITION/);
+  assert.throws(() => buildPm(windowRows, { method: 'window-v1' }), /METHOD_NOT_APPROVED_FOR_EDITION/);
+  // The retired ad-hoc edition, and anything else, has no measured column.
+  for (const edition of ['adhoc', null, 'AM']) {
+    assert.throws(() => build(windowRows, { edition }), /UNKNOWN_EDITION/);
+  }
+  // The session a column names is fixed by the edition, never chosen per run.
+  assert.throws(() => build(windowRows, { intendedSessionDate: reportDate }), /SESSION_OUTSIDE_EDITION_WINDOW/);
+  assert.throws(() => buildPm(intradayRows, { intendedSessionDate: priorSession }), /SESSION_OUTSIDE_EDITION_WINDOW/);
+  for (const date of ['2026-02-31', '2026-9-9', null]) {
+    assert.throws(() => buildDailyChangeColumn({ edition: 'pm', method: 'session-pnl-v1',
+      dataDate: date, intendedSessionDate: date, measurements: [] }), /INVALID_SESSION_DATE/);
+  }
+  // A set assembled by the other adapter fails the whole column: its rows would
+  // otherwise be published under a method that did not measure them.
+  assert.throws(() => buildPm(windowRows.map(row => ({ ...row, method: 'window-v1',
+    sessionDate: reportDate, sessionPhase: 'open' }))), /MEASUREMENT_METHOD_MISMATCH/);
+});
+
 test('a published row must name its method and session, and a zero is never publishable', () => {
   const raw = windowRaw([holding('META', 'NASDAQ', 6.55)]);
   const column = build(normalizeDailyChangeWindow(raw, { date: priorSession, venuesComplete: ['NASDAQ'] }));
-  const rows = applyDailyChangeColumn([viewRow('META', 'NASDAQ')], column);
+  const rows = applyDailyChangeColumn([viewRow('META', 'NASDAQ')], column, { venueOf });
   assert.equal(rows[0].changeMethod, 'window-v1');
   assert.equal(rows[0].changeSessionDate, priorSession);
   validateReportView(viewWith(rows));
@@ -228,4 +330,34 @@ test('a published row must name its method and session, and a zero is never publ
   assert.throws(() => validateReportView(orphan), /cannot carry measurement evidence/);
   // Passing no column leaves every row untouched.
   assert.deepEqual(applyDailyChangeColumn([viewRow('META', 'NASDAQ')], null)[0].changePct, null);
+});
+
+test('the merge requires an explicit venue resolver and catches the real US-to-venue mismatch', () => {
+  const column = build(normalizeDailyChangeWindow(
+    windowRaw([holding('META', 'NASDAQ', 6.55)]),
+    { date: priorSession, venuesComplete: ['NASDAQ'] }));
+  const compact = viewRow('META', 'US');
+  assert.throws(() => applyDailyChangeColumn([compact], column), /VENUE_RESOLVER_REQUIRED/);
+  assert.throws(() => applyDailyChangeColumn([compact], column, { venueOf }), /COLUMN_MERGE_INCOMPLETE/);
+  const merged = applyDailyChangeColumn([compact], column,
+    { venueOf: row => row.market === 'US' ? 'NASDAQ' : row.market });
+  assert.equal(merged[0].changePct, 6.55);
+  assert.equal(merged[0].changeMethod, 'window-v1');
+});
+
+test('the release-side HTML check rejects missing or contradictory row evidence', () => {
+  const column = build(normalizeDailyChangeWindow(
+    windowRaw([holding('META', 'NASDAQ', 6.55)]),
+    { date: priorSession, venuesComplete: ['NASDAQ'] }));
+  const html = renderReport(viewWith(applyDailyChangeColumn(
+    [viewRow('META', 'NASDAQ')], column, { venueOf })), renderContext);
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace(' data-daily-change-v1="1"', ''), { edition: 'am', dataDate: reportDate }),
+  /PUBLISHED_EVIDENCE_MISSING/);
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace('data-change-session="'+priorSession+'"','data-change-session="'+reportDate+'"'),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_SESSION_OUTSIDE_EDITION_WINDOW/);
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace('data-change-pct="6.55"','data-change-pct="9.99"'),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_VALUE_MISMATCH/);
 });

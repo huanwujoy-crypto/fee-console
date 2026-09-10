@@ -17,7 +17,7 @@ import { loadTrustedAssociationPolicy, validateAssociationReceipt } from './xuan
 import { isWeeklyMode, isWeeklyStage } from './xuan-ib-weekly-snapshot.mjs';
 import { prepareFourBucketReport } from './xuan-ib-four-bucket-report.mjs';
 import { readCaptureJson } from './xuan-ib-source-capture.mjs';
-import { DAILY_CHANGE_METHODS } from './xuan-ib-daily-change.mjs';
+import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, DAILY_CHANGE_EDITION_RULES } from './xuan-ib-daily-change.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -158,15 +158,25 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   // failure than the gap it closes. Correctness guards that apply to every
   // row, measured or not, live in the view validator instead.
   const measured=view.holdings.rows.some(row=>Object.hasOwn(row,'changeMethod'));
+  // Which method an edition may publish, and which session it may name, is
+  // fixed by the measurement module. The retired ad-hoc edition has no rule and
+  // therefore no measured column at all.
+  const changeRule=Object.hasOwn(DAILY_CHANGE_EDITION_RULES,view.edition)?DAILY_CHANGE_EDITION_RULES[view.edition]:null;
+  if(measured&&changeRule===null)fail('this edition may not publish a measured daily change');
   for(const row of measured?view.holdings.rows:[]){
     if(row.changePct===null)continue;
     if(!DAILY_CHANGE_METHODS.includes(row.changeMethod))fail('published daily change must name a known measurement method');
+    if(!changeRule.methods.includes(row.changeMethod))fail('published daily change uses a method this edition may not publish');
     if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.changeSessionDate)))fail('published daily change must name its session date');
-    // The session it reports cannot postdate the report, and a completed
-    // session more than one calendar day back is a stale label, not a daily
-    // change. Both bounds use the report's own Hong Kong data date.
+    // AM reports the completed session before its Hong Kong data date; PM
+    // reports the session running on that date. Any other distance is a
+    // relabelled session, not a daily change.
     const lag=(Date.parse(`${view.dataDate}T00:00:00Z`)-Date.parse(`${row.changeSessionDate}T00:00:00Z`))/86_400_000;
-    if(!Number.isFinite(lag)||lag<0||lag>1)fail('published daily change session is outside the report window');
+    if(!Number.isFinite(lag)||lag!==changeRule.lagDays)fail('published daily change session is outside the report window');
+    // A reading taken inside a running session must name the minute it was
+    // taken; a completed session must not be dressed up as one.
+    const timed=/^\d{4}-\d{2}-\d{2} \d{2}:\d{2} HKT$/.test(String(row.changeAsOfHkt));
+    if(timed!==(DAILY_CHANGE_METHOD_RULES[row.changeMethod].label==='instant'))fail('published daily change label does not match its measurement method');
   }
   // Field-level degradation is conspicuous and source-bound, never hidden by
   // optional prose. Financial derivation still belongs to the source adapter.

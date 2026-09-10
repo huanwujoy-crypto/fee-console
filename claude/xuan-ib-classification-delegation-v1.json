@@ -19,5 +19,19 @@
     "mid": 0.8,
     "high": 1,
     "approvalId": "WU-20260906-AAOI-T1"
+  }, {
+    "symbol": "VST",
+    "custodian": "Webull",
+    "venue": "NYSE",
+    "instrumentName": "Vistra Corp",
+    "portfolioId": "1350094",
+    "holdingId": "29098649",
+    "instrumentId": "1753523",
+    "currency": "USD",
+    "tier": "T1",
+    "low": 0.6,
+    "mid": 0.8,
+    "high": 1,
+    "approvalId": "DELEG-20260910-VST-T1"
   }]
 }
