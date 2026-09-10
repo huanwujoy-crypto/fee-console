@@ -46,14 +46,81 @@ export function unwrapSource(kind,raw){
   return raw;
 }
 // Return native values only. Do not silently assume USD, infer venues/aliases,
-// manufacture daily changes or implement a new FX/asset-classification policy.
+// invent a quote source or implement a new FX/asset-classification policy.
+// `daily_pnl` is preserved when the payload carries it because it is part of
+// the same authoritative positions read; it is passed through unchanged and is
+// never itself a displayed change. Absent/unusable stays null, not zero.
 export function normalizePositions(raw){
   return unwrapSource('positions',raw).positions.map(position=>{
     need(position,['contract_description','position','market_price','market_value','currency']);
     if(typeof position.contract_description!=='string'||!position.contract_description.trim()
       || !/^[A-Z]{3}$/.test(position.currency)||![position.position,position.market_price,position.market_value].every(num))fail('INVALID_POSITION');
+    const carriesDailyPnl=Object.hasOwn(position,'daily_pnl')&&position.daily_pnl!==null;
+    if(carriesDailyPnl&&!num(position.daily_pnl))fail('INVALID_POSITION_DAILY_PNL');
     return {description:position.contract_description,quantity:position.position,price:position.market_price,
-      marketValueNative:position.market_value,currency:position.currency,changePct:null,quoteStatus:'unavailable'};
+      marketValueNative:position.market_value,currency:position.currency,
+      dailyPnlNative:carriesDailyPnl?position.daily_pnl:null,changePct:null,quoteStatus:'unavailable'};
+  });
+}
+// Two measurement sources for the daily-change column. Both only NORMALIZE:
+// they emit measurement rows for `scripts/xuan-ib-daily-change.mjs`, which
+// owns every publish/suppress decision. Neither judges a row here, so a guard
+// can never be bypassed by the order in which rows are masked.
+//
+// `sessionComplete` is never inferred from an edition or a clock offset: the
+// caller passes the venues whose session for that date is provably finished,
+// because the upstream book rolls its session per instrument and per venue,
+// and a schedule pinned to a fixed UTC offset drifts against a venue's own
+// daylight-saving rule. Anything not listed stays unproven and is dropped
+// downstream.
+const venueComplete=(venues,venue)=>Array.isArray(venues)&&venues.includes(venue);
+
+// (A) Session profit and loss carried inside the same positions payload:
+//   base = marketValueNative - dailyPnlNative
+// is the identical share count valued at the close that P&L is measured from,
+// and the ratio stays inside one currency, so no FX or venue policy is
+// implied. Absent or unusable inputs produce a null measurement, never a zero.
+export function measurePositionSessionChange(position,{venue=null,code=null,sessionDate=null,venuesComplete=[]}={}){
+  if(!object(position)||!Object.hasOwn(position,'dailyPnlNative')||!Object.hasOwn(position,'marketValueNative'))fail('INVALID_DAILY_CHANGE_INPUT');
+  const row={code,venue,changePct:null,currencyChangePct:null,sessionDate,
+    sessionComplete:venueComplete(venuesComplete,venue)};
+  if(position.dailyPnlNative===null)return row;
+  if(!num(position.dailyPnlNative)||!num(position.marketValueNative))fail('INVALID_DAILY_CHANGE_INPUT');
+  const base=position.marketValueNative-position.dailyPnlNative;
+  if(!num(base)||base<=0)return row;
+  const changePct=position.dailyPnlNative/base*100;
+  if(!Number.isFinite(changePct))return row;
+  return {...row,changePct};
+}
+
+// (B) A single-session performance window from the portfolio source. One call
+// returns every holding's own dated move, with the price move and any currency
+// move already separated by that source, so nothing is derived or cross-sourced.
+// The row set is emitted verbatim; suppression happens downstream.
+export function normalizeDailyChangeWindow(raw,{date=null,venuesComplete=[]}={}){
+  if(typeof date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(date))fail('INVALID_DAILY_CHANGE_WINDOW');
+  if(!Array.isArray(venuesComplete))fail('INVALID_DAILY_CHANGE_WINDOW');
+  const report=unwrapSource('sharesight',raw).result.data.report;
+  // !! The window is INCLUSIVE of start_date: 2026-09-08..2026-09-09 returned
+  // a TWO-session move (+5.99% on one row) where 09-09 alone was +6.55%. A
+  // daily column therefore requires start_date === end_date === the reported
+  // date, or it silently prints a multi-session move under a one-day label.
+  if(report.start_date!==date||report.end_date!==date)fail('DAILY_CHANGE_WINDOW_NOT_SINGLE_DAY');
+  // Full-history reports annualise their percentages; a daily column must not.
+  if(report.percentages_annualised!==false)fail('DAILY_CHANGE_WINDOW_ANNUALISED');
+  // Rows are normalized, never rejected here: one malformed row must not be
+  // able to destroy a column that is otherwise fully evidenced. The builder
+  // marks such a row unavailable and counts it.
+  return array(report.holdings).map(holding=>{
+    const instrument=object(holding)?holding.instrument:null;
+    const venue=object(instrument)&&typeof instrument.market_code==='string'?instrument.market_code:null;
+    const code=object(instrument)&&typeof instrument.code==='string'?instrument.code:null;
+    const usable=object(holding)&&num(holding.capital_gain_percent);
+    return {code,venue,
+      instrumentId:object(instrument)&&Number.isSafeInteger(instrument.id)?instrument.id:null,
+      changePct:usable?holding.capital_gain_percent:null,
+      currencyChangePct:usable&&num(holding.currency_gain_percent)?holding.currency_gain_percent:null,
+      sessionDate:date,sessionComplete:venueComplete(venuesComplete,venue)};
   });
 }
 export function sourceRecordFromRaw(raw,receipt){

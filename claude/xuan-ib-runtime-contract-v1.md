@@ -116,6 +116,85 @@ rule coverage only, not a new same-run family valuation. Before replacing the
 dated fallback, a normal run must independently read all seven family
 portfolios, reconcile holdings plus cash and pass reviewed publication checks.
 
+Populate each holding row's daily change only through
+`buildDailyChangeColumn` in `scripts/xuan-ib-daily-change.mjs`, then merge it
+with `applyDailyChangeColumn`. A report must not leave every row `未取得`
+while the inputs are present, must never substitute zero, unrealized P&L, a
+period return or a hand-typed quote, and must never assemble the column row by
+row outside that module: every publish or suppress decision belongs to it, so
+a guard cannot be bypassed by the order in which rows are masked.
+
+Two measurement sources feed it, both normalized in
+`scripts/xuan-ib-source-adapter.mjs`:
+
+- `normalizeDailyChangeWindow` — a single-session performance window from the
+  portfolio source, which carries its own session date and reports the price
+  move and any currency move separately. Request it with
+  `start_date === end_date ===` the reported session date, taken from the
+  session being reported and never from the Hong Kong clock: that source
+  evaluates dates in `America/New_York` and refuses a future start with HTTP
+  422, so an 08:00 HKT run on HKT date D must request D−1.
+- `measurePositionSessionChange` — the session profit and loss inside the same
+  positions payload, where `base = marketValueNative - dailyPnlNative` is the
+  identical share count at the close that P&L is measured from, inside one
+  currency and therefore free of any FX assumption.
+
+Which source an edition uses is recorded here once measured, not assumed. AM
+reports a completed session and uses the window. **The PM source is still
+open**: it must not be written as settled until the read-only intraday probes
+have measured whether the window source updates during a session, how late it
+runs and whether every venue behaves alike. Do not record in this contract
+that the window source has no intraday value before that evidence exists.
+
+Every row must carry its own proof, and the following are enforced in code:
+
+- **Session proof is per row.** Pass `venuesComplete` with the venues whose
+  session for that date is provably finished. The upstream book rolls its
+  session per instrument and per venue — measured 2026-09-10, US rows had
+  rolled while a Toronto and a London row had not — so one report-wide flag
+  cannot cover a portfolio spanning several exchanges. Never infer it from the
+  edition or from a fixed clock offset: the PM trigger currently fires at a
+  fixed UTC time, so from 2026-11-02 it starts an hour before the New York
+  open and any edition-derived assumption would be wrong from that date.
+- **Identity is venue-scoped and alias-normalized.** `BRK B`, `BRK/B` and
+  `BRK.B` are one instrument; the same ticker on two exchanges is two. A row
+  whose identity does not resolve, or that collides with another inside one
+  venue, is unavailable rather than merged. `traded` and `corporateActions`
+  are venue-scoped too, and an event whose identity cannot be resolved is
+  counted, never silently dropped.
+- **Exactly zero is never published.** It cannot be told apart from a price the
+  source carried forward for a session it has not loaded, and that ambiguity is
+  per row: a portfolio-wide check misses the case where only some venues are
+  stale, and a traded row masked first would defeat it entirely. Losing a
+  genuinely flat row is the safe direction.
+- **Corporate actions suppress the row.** An unadjusted 2-for-1 split reads as
+  about −50% and sits inside any plausible magnitude bound, so the magnitude
+  guard is an outlier trap and never a corporate-action detector. Supply the
+  session's splits, consolidations, symbol changes and similar events.
+- **A row that traded in the window is unavailable**, because a share count
+  that moved mixes trade effects into either measurement.
+
+Degradation is per row, not per column: one malformed row is marked and
+counted while the rest of the column publishes. The window-shape guards
+(single-day, non-annualised) are different — they invalidate the whole
+measurement, so the column becomes unavailable while the rest of the report
+still publishes.
+
+Label each measured row with its own session date, never with the moment the
+run happened to read it: an AM column carries a completed session's move and
+must not be described as an 08:00 reading. State which method produced the
+column in the holdings note, and disclose the specific reason a row is missing
+— a fill in the window, a corporate action, an unresolved identity, an
+unproven session, or a value indistinguishable from a carried-forward price —
+instead of the generic missing-quote line. Neither method is an
+exchange-verified quote, so keep each source's own date and any delayed label.
+
+A published row carrying a change must name its method and session date; the
+publication gate enforces this as soon as the measured column is in use. The
+same PM intraday reading and the following AM close reading of one instrument
+legitimately differ, so both must be labelled with what they measure rather
+than reconciled into one number.
+
 Derive every GOOG/GOOGL figure in the summary, risk table and accepted-item
 fact paragraph from the same current report inputs. Do not copy an old item
 paragraph and label its old amounts as newly recomputed. Historical receipt

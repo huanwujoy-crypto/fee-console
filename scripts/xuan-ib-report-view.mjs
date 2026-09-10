@@ -50,6 +50,7 @@ const finite = (value, label, { negative = false, nullable = true } = {}) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e12
       || (!negative && value < 0)) fail(`invalid ${label}`);
 };
+import { DAILY_CHANGE_METHODS } from './xuan-ib-daily-change.mjs';
 const number = (value, digits = 2) => value === null ? '未取得' : value.toLocaleString('en-US', {maximumFractionDigits:digits});
 const money = value => value === null ? '未取得' : `$${number(Math.round(value),0)}`;
 const direction = value => value === null || value === 0 ? '' : value > 0 ? 'up' : 'dn';
@@ -106,15 +107,38 @@ export function validateReportView(view) {
   if(holdings.status==='unavailable' && holdings.rows.length)fail('unavailable holdings cannot contain guessed rows');
   const identities=new Set();
   holdings.rows.forEach(row=>{
-    exact(row,['symbol','market','quantity','price','priceCurrency','marketValueUsd','changePct','changeAsOfHkt','quoteStatus'],'holding');
+    // A row either carries no measured change (legacy shape) or carries one
+    // together with the evidence that makes it publishable. The extra keys are
+    // optional so an existing producer keeps validating unchanged, but a row
+    // that claims a number cannot omit them.
+    const LEGACY=['symbol','market','quantity','price','priceCurrency','marketValueUsd','changePct','changeAsOfHkt','quoteStatus'];
+    const keys=Object.keys(row).sort().join('|');
+    if(keys!==[...LEGACY].sort().join('|')&&keys!==[...LEGACY,'changeMethod','changeSessionDate'].sort().join('|'))fail('holding has missing or unknown fields');
     text(row.symbol,30);text(row.market,30);
     const identity=row.market+':'+row.symbol;if(identities.has(identity))fail('duplicate holding');identities.add(identity);
     finite(row.quantity,'quantity',{negative:true,nullable:false});finite(row.price,'price');finite(row.marketValueUsd,'holding value',{negative:true});
     if(!/^[A-Z]{3}$/.test(row.priceCurrency))fail('invalid price currency');
     finite(row.changePct,'daily change',{negative:true});
     if(!['ok','delayed','unavailable'].includes(row.quoteStatus))fail('invalid quote status');
-    if(row.changePct===null){if(row.changeAsOfHkt!==null || row.quoteStatus!=='unavailable')fail('missing change must be explicitly unavailable');}
-    else {if(row.quoteStatus==='unavailable')fail('unavailable quote has a change');asOf(row.changeAsOfHkt,view.dataDate);}
+    if(row.changePct===null){if(row.changeAsOfHkt!==null || row.quoteStatus!=='unavailable')fail('missing change must be explicitly unavailable');
+      if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate'))fail('unavailable change cannot carry measurement evidence');}
+    else {
+      if(row.quoteStatus==='unavailable')fail('unavailable quote has a change');
+      // Measurement evidence stays optional here so an existing producer such
+      // as the historical archive keeps validating and its already published
+      // bytes stay renderable; a fresh publication candidate is separately
+      // required to carry it (see report prepare). When it is present the row
+      // must be internally consistent, and exactly zero is refused: a zero
+      // cannot be told apart from a price a source carried forward for a
+      // session it never loaded.
+      if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate')){
+        if(row.changePct===0)fail('a zero change is not distinguishable from a carried-forward price');
+        if(!DAILY_CHANGE_METHODS.includes(row.changeMethod))fail('measured change needs a known method');
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.changeSessionDate)))fail('measured change needs its session date');
+        if(typeof row.changeAsOfHkt!=='string'||!row.changeAsOfHkt.startsWith(row.changeSessionDate))fail('change label must name its own session');
+      }
+      asOf(row.changeAsOfHkt,view.dataDate);
+    }
   });
   for(const key of ['risk','allocation']){list(view[key],1,8,key);view[key].forEach(card=>validateCard(card,view.dataDate));}
   validateCard(view.rotation,view.dataDate,true);validateCard(view.events,view.dataDate);

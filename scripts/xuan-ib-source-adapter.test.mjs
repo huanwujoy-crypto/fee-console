@@ -33,9 +33,22 @@ test('missing, duplicate, mismatched or excluded portfolios fail closed',()=>{
 });
 test('normalization never fabricates USD values, quote changes, or converts strings to numbers',()=>{
   const raw={positions:[{contract_description:'TEST @SYNTHETIC',position:2,market_price:10,market_value:20,currency:'EUR'}]};
-  assert.deepEqual(normalizePositions(raw),[{description:'TEST @SYNTHETIC',quantity:2,price:10,marketValueNative:20,currency:'EUR',changePct:null,quoteStatus:'unavailable'}]);
+  assert.deepEqual(normalizePositions(raw),[{description:'TEST @SYNTHETIC',quantity:2,price:10,marketValueNative:20,currency:'EUR',dailyPnlNative:null,changePct:null,quoteStatus:'unavailable'}]);
   raw.positions[0].market_value='20';assert.throws(()=>normalizePositions(raw),/INVALID_POSITION/);
 });
+test('position daily P&L is preserved unchanged, never coerced and never itself a change',()=>{
+  const raw={positions:[{contract_description:'TEST @SYNTHETIC',position:2,market_price:10,market_value:20,currency:'EUR',daily_pnl:-1.5}]};
+  const [row]=normalizePositions(raw);
+  assert.equal(row.dailyPnlNative,-1.5);
+  // Normalization alone still reports no change: derivation is a separate step.
+  assert.equal(row.changePct,null);assert.equal(row.quoteStatus,'unavailable');
+  assert.deepEqual(normalizePositions({positions:[{...raw.positions[0],daily_pnl:null}]})[0].dailyPnlNative,null);
+  for(const bad of ['-1.5',Number.NaN,Infinity,{},[]]){
+    assert.throws(()=>normalizePositions({positions:[{...raw.positions[0],daily_pnl:bad}]}),/INVALID_POSITION_DAILY_PNL/);
+  }
+});
+// Measurement and column behaviour now live in xuan-ib-daily-change.test.mjs,
+// which exercises them through the builder that actually publishes them.
 test('failed reads, invalid source shapes and invalid clock receipts are rejected',()=>{
   assert.throws(()=>unwrapSource('positions',{positions:null}));
   assert.throws(()=>unwrapSource('orders',{orders:[],isError:true}));
