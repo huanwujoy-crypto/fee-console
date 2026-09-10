@@ -17,6 +17,7 @@ import { loadTrustedAssociationPolicy, validateAssociationReceipt } from './xuan
 import { isWeeklyMode, isWeeklyStage } from './xuan-ib-weekly-snapshot.mjs';
 import { prepareFourBucketReport } from './xuan-ib-four-bucket-report.mjs';
 import { readCaptureJson } from './xuan-ib-source-capture.mjs';
+import { DAILY_CHANGE_METHODS } from './xuan-ib-daily-change.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -150,6 +151,23 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   if(expected==='ok' && (!view.holdings.asOfHkt.startsWith(view.dataDate+' ')||view.holdings.authoritativeValueUsd===null))fail('direct holdings require current read time and authoritative value');
   if(expected==='ok'&&view.holdings.authoritativeValueUsd>0&&!view.holdings.rows.length)fail('positive direct authoritative holdings require at least one holding row');
   if(expected==='unavailable' && (view.holdings.rows.length||view.holdings.authoritativeValueUsd!==null))fail('unavailable holdings cannot retain current-looking numbers');
+  // A publication candidate may only show a daily change it can attribute.
+  // The requirement switches on as soon as the measured column is in use:
+  // making it unconditional would refuse an otherwise valid legacy candidate
+  // the moment this merges and take the phone page down, which is a worse
+  // failure than the gap it closes. Correctness guards that apply to every
+  // row, measured or not, live in the view validator instead.
+  const measured=view.holdings.rows.some(row=>Object.hasOwn(row,'changeMethod'));
+  for(const row of measured?view.holdings.rows:[]){
+    if(row.changePct===null)continue;
+    if(!DAILY_CHANGE_METHODS.includes(row.changeMethod))fail('published daily change must name a known measurement method');
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.changeSessionDate)))fail('published daily change must name its session date');
+    // The session it reports cannot postdate the report, and a completed
+    // session more than one calendar day back is a stale label, not a daily
+    // change. Both bounds use the report's own Hong Kong data date.
+    const lag=(Date.parse(`${view.dataDate}T00:00:00Z`)-Date.parse(`${row.changeSessionDate}T00:00:00Z`))/86_400_000;
+    if(!Number.isFinite(lag)||lag<0||lag>1)fail('published daily change session is outside the report window');
+  }
   // Field-level degradation is conspicuous and source-bound, never hidden by
   // optional prose. Financial derivation still belongs to the source adapter.
   if(readiness.degraded){
