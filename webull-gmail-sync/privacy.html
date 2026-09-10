@@ -23,7 +23,7 @@
 
     <h2>Storage and retention</h2>
     <p>OAuth client credentials and the refresh token are stored in Google Secret Manager with restricted service-account access and are retained until they are revoked, replaced, the application is disabled, or a valid deletion request is completed. Short-lived access tokens and complete message bodies are processed only in memory and are not retained as application state.</p>
-    <p>Minimum extracted transaction facts, message and economic fingerprints, validation outcomes, synchronization receipts, and reconciliation audit evidence may be retained for up to seven years for duplicate prevention and personal financial-record integrity, unless the owner requests earlier deletion. Cloud application logs exclude complete message bodies and credentials and are retained for 30 days. Data that is no longer required under these rules is deleted.</p>
+    <p>Minimum extracted transaction facts, message and economic fingerprints, validation outcomes, synchronization receipts, and reconciliation audit evidence are ordinarily retained for financial recordkeeping and duplicate prevention. Each stored object version is configured to become eligible for automated deletion 2,548 days after its creation. Google Cloud Storage performs lifecycle actions asynchronously. After deletion, the version remains non-readable but recoverable under a seven-day soft-delete policy before permanent deletion. These are configured retention targets, not a guaranteed exact deletion timestamp. The owner may request earlier deletion, subject only to any legally required retention disclosed at that time. Cloud application logs exclude complete message bodies and credentials and are retained for 30 days.</p>
 
     <h2>Sharing and transfer</h2>
     <p>The application does not sell Google user data. Minimum derived trade details may be transferred only to the owner's Sharesight account to perform the user-requested synchronization and reconciliation. Google Cloud processes data only as needed to authenticate the application, run the private workflow, protect secrets, deliver events, and retain the minimum state and audit evidence described above. No other transfer is permitted except where legally required.</p>
@@ -43,6 +43,6 @@
 
     <p><a href="index.html">Return to application home</a></p>
   </main>
-  <footer>Effective and last updated: 9 September 2026</footer>
+  <footer>Effective and last updated: 10 September 2026</footer>
 </body>
 </html>
