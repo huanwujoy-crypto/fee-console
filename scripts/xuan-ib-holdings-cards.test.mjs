@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveHoldingsCards,holdingsHeaderContract,HOLDINGS_CARDS_CSS} from './xuan-ib-holdings-cards.mjs';
+import {improveHoldingsCards,holdingsHeaderContract,HOLDINGS_CARDS_CSS,dailyChangeNumber,splitDailyChangeEntries} from './xuan-ib-holdings-cards.mjs';
 
 // Synthetic DOM for deterministic CI. Actual width/zoom acceptance is a separate
 // browser check; this model does not pretend to measure CSS layout.
@@ -73,6 +73,16 @@ test('known generated and legacy contracts retain label roles; unknown headers d
   assert.equal(holdingsHeaderContract(['标的','市值 EUR','日涨跌','估值价','行情时点']),null);
   assert.equal(holdingsHeaderContract(['标的','市值 $','盈亏','估值价','行情时点']),null);
 });
+test('large price moves split into gains and losses with signed percentage ordering',()=>{
+  assert.equal(dailyChangeNumber('−2.80%'),-2.8);
+  const entries=[{id:'a',change:'-1.26%'},{id:'b',change:'+2.27%'},{id:'c',change:'-2.80%'},{id:'d',change:'+6.55%'}];
+  const split=splitDailyChangeEntries(entries);
+  assert.deepEqual(split.up.map(item=>item.id),['d','b']);
+  assert.deepEqual(split.down.map(item=>item.id),['c','a']);
+  assert.equal(splitDailyChangeEntries([{change:'未取得'}]),null);
+  assert.match(HOLDINGS_CARDS_CSS,/holdings-direction-up/);
+  assert.match(HOLDINGS_CARDS_CSS,/holdings-direction-down/);
+});
 test('current compact report authoring header contract remains recognized without financial fixtures',()=>{
   const renderer=fs.readFileSync(new URL('./xuan-ib-report-view.mjs',import.meta.url),'utf8');
   const start=renderer.indexOf('const rows = items =>');
@@ -80,7 +90,7 @@ test('current compact report authoring header contract remains recognized withou
   const labels=[...header.matchAll(/<th>(.*?)<\/th>/g)].map(m=>m[1]);
   assert.ok(holdingsHeaderContract(labels),'new renderer headers need explicit card support or unmodified fallback');
 });
-test('cards preserve source table bytes, signs, currencies, dates, warnings and group nesting',()=>{
+test('current cards preserve source table bytes and core values while omitting quote/time clutter',()=>{
   const f=fixture();const identity=f.tbody.children[0].children[0];identity.textContent='';
   identity.append(element('span','SYNTH','sym'),element('span','TSX · −10.5000','sub'));
   f.tbody.children[0].children[2].className='dn';
@@ -88,11 +98,9 @@ test('cards preserve source table bytes, signs, currencies, dates, warnings and 
   improveHoldingsCards(f.doc);
   assert.equal(signature(f.table),before);assert.equal(f.group.parentElement,groupParent);
   const card=f.doc.querySelector('.holdings-mobile-card');
-  for(const text of ['SYNTH','TSX · −10.5000','市值 $','1,200','日涨跌','−1.50%（旧值）','CAD 12.2500','2026-09-07 16:00 HKT · 延迟'])assert.ok(card.textContent.includes(text),text);
+  for(const text of ['SYNTH','TSX · −10.5000','市值 $','1,200','日涨跌','−1.50%（旧值）'])assert.ok(card.textContent.includes(text),text);
+  for(const text of ['CAD 12.2500','2026-09-07 16:00 HKT · 延迟','报价详情'])assert.ok(!card.textContent.includes(text),text);
   assert.ok(card.querySelector('dd.dn'));
-  assert.ok(card.querySelector('.holdings-time').textContent.includes('延迟'));
-  assert.equal(card.querySelector('.holdings-time').closest('details'),f.group);
-  const quote=card.querySelector('details.holdings-quote');assert.ok(quote.textContent.includes('CAD 12.2500'));
   assert.equal(f.doc.querySelectorAll('.holdings-source-context').length,1);
   assert.ok(f.doc.querySelector('.holdings-source-context').textContent.includes('权威市值 $9,876 · 替代源'));
   assert.equal(f.doc.querySelector('.holdings-source-context').closest('details'),null);
@@ -118,30 +126,30 @@ test('blank change never becomes blank or zero, and totals stay distinct from ho
   assert.ok(cards[0].querySelector('.holdings-primary-values').textContent.includes('日涨跌未取得'));
   assert.ok(cards[1].textContent.includes('+0.00%'));
   assert.ok(cards[2].classList.contains('holdings-total'));
-  assert.equal(cards[2].querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,3);
+  assert.equal(cards[2].querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,1);
   assert.equal(cards[2].querySelector('.holdings-flags'),null);
   assert.ok(!cards[2].textContent.includes('未取得'));
 });
-test('totals retain existing quote/change/time values while empty legacy fields are neutrally inapplicable',()=>{
+test('totals retain visible change while current quote/time stay only in the source table',()=>{
   const f=fixture({rows:[['总计','40','−1.00%','USD 3','2026-09-08 08:30 HKT']]});
   const before=signature(f.table);improveHoldingsCards(f.doc);const card=f.doc.querySelector('.holdings-total');
   assert.equal(signature(f.table),before);
-  for(const exact of ['40','−1.00%','USD 3','2026-09-08 08:30 HKT'])assert.ok(card.textContent.includes(exact));
+  for(const exact of ['40','−1.00%'])assert.ok(card.textContent.includes(exact));
+  for(const hidden of ['USD 3','2026-09-08 08:30 HKT'])assert.ok(!card.textContent.includes(hidden));
   assert.ok(!card.textContent.includes('不适用'));
   const old=fixture({headers:['标的','市值 $','收盘报价（IB 直读）'],rows:[['合计','40','']]});
   improveHoldingsCards(old.doc);const total=old.doc.querySelector('.holdings-total');
   assert.equal(total.querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,3);
   assert.equal(total.querySelector('.holdings-flags'),null);
 });
-test('numeric quote warning classes on the cell or any descendant keep the exact quote visible',()=>{
+test('current phone cards omit quote values while the verified source table keeps them intact',()=>{
   for(const cls of ['wv','or'])for(const nested of [false,true]){
     const f=fixture(),quote=f.tbody.children[0].children[3];
     if(nested){quote.textContent='';quote.append(element('span','CAD 12.2500',cls));}else quote.className=cls;
     const before=signature(f.table);improveHoldingsCards(f.doc);const card=f.doc.querySelector('.holdings-mobile-card');
     assert.equal(signature(f.table),before);assert.equal(card.querySelector('details.holdings-quote'),null);
-    const display=card.querySelector('.holdings-quote');
-    assert.ok(display.textContent.includes('CAD 12.2500'));assert.ok(display.querySelector('.'+cls));
-    assert.equal(display.closest('details'),f.group);
+    assert.equal(card.querySelector('.holdings-quote'),null);
+    assert.ok(!card.textContent.includes('CAD 12.2500'));
   }
 });
 test('retry is idempotent, source qualifications survive later note moves and cloned IDs do not repeat',()=>{
@@ -167,7 +175,8 @@ test('nested quote and identity tooltip qualifications remain visible outside cl
   for(const expected of ['估值价：报价延迟15分钟','估值价：本行估值为替代源','标的：旧值，身份待核实']){
     assert.ok(flags.some(n=>n.textContent===expected&&n.closest('details')===f.group),expected);
   }
-  assert.ok(card.querySelector('details.holdings-quote'));
+  assert.equal(card.querySelector('details.holdings-quote'),null);
+  assert.ok(!card.textContent.includes('CAD 12.2500'));
 });
 test('header tooltip warnings are visible with their original column labels and preserve source header bytes',()=>{
   const f=fixture(),heads=f.table.querySelectorAll('thead th');
@@ -208,7 +217,7 @@ test('long contextual qualification stays whole in a neutral fold, with source t
   assert.equal(fold.querySelector('.holdings-context-note').textContent,body.textContent);
   assert.ok(context.children.some(n=>n.textContent==='2026-09-08 08:29–08:31 HKT · 3 只'));
   assert.ok(context.children.some(n=>n.textContent==='权威市值 $9,876 · 替代源'));
-  assert.ok(f.doc.querySelector('.holdings-time').textContent.includes('延迟'));
+  assert.equal(f.doc.querySelector('.holdings-time'),null);
   const once=signature(f.doc);improveHoldingsCards(f.doc);assert.equal(signature(f.doc),once);
 });
 test('ordinary method-only holdings notes are not copied into the mobile main context',()=>{

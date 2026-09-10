@@ -1,10 +1,16 @@
-// Verified DOM presentation only. No source reads, classification, sorting or arithmetic.
+// Verified DOM presentation only. No source reads, classification or financial arithmetic.
 // Keep each source table intact for desktop/print, and each existing change group in place.
 export const HOLDINGS_CARDS_CSS = `
-.holdings-mobile-cards,.holdings-source-context{display:none}
+.holdings-mobile-cards,.holdings-mobile-groups,.holdings-source-context{display:none}
 .holdings-responsive{min-width:0;max-width:100%}
 @media screen and (max-width:640px){
   .holdings-responsive>table{display:none!important}
+  .holdings-mobile-groups{display:grid;gap:14px;min-width:0;max-width:100%}
+  .holdings-direction-group{min-width:0}
+  .holdings-direction-group>h3{display:flex;align-items:center;gap:7px;margin:0 0 8px;font-size:14px}
+  .holdings-direction-group>h3::before{content:"";width:8px;height:8px;border-radius:50%;background:currentColor}
+  .holdings-direction-up>h3{color:var(--up,#16835b)}
+  .holdings-direction-down>h3{color:var(--dn,#c2413b)}
   .holdings-mobile-cards{display:grid;list-style:none!important;margin:0!important;padding:0!important;gap:10px;min-width:0;max-width:100%}
   .holdings-mobile-card{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--bg);min-width:0;max-width:100%;line-height:1.5}
   .holdings-mobile-card .holdings-main{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.25fr);gap:8px 12px;align-items:start}
@@ -14,12 +20,6 @@ export const HOLDINGS_CARDS_CSS = `
   .holdings-mobile-card dt{font-size:12px;color:var(--mut);font-weight:400}
   .holdings-mobile-card dd{margin:2px 0 8px;font-size:16px;font-weight:650;font-variant-numeric:tabular-nums}
   .holdings-mobile-card .holdings-primary-values{text-align:right}
-  .holdings-mobile-card .holdings-time{margin-top:4px;font-size:12px}
-  .holdings-mobile-card .holdings-time dd{font-size:12px;font-weight:400}
-  .holdings-mobile-card .holdings-quote{margin-top:8px;font-size:13px}
-  .holdings-mobile-card .holdings-quote>summary{font-size:13px;min-height:44px;padding:10px}
-  .holdings-mobile-card .holdings-quote>dl{padding:0 10px 6px}
-  .holdings-mobile-card .holdings-quote dd{font-size:14px}
   .holdings-mobile-card :is(.holdings-identity,dd,.sub,.holdings-flags){white-space:normal!important;overflow-wrap:anywhere!important;word-break:normal!important;min-width:0;max-width:100%}
   .holdings-mobile-card .holdings-flags{font-size:12px;font-weight:650;color:var(--warn,#a16207);margin:6px 0}
   .holdings-mobile-card.holdings-total{border-top:3px solid var(--ink);background:var(--card)}
@@ -27,7 +27,7 @@ export const HOLDINGS_CARDS_CSS = `
   .holdings-source-context p,.holdings-source-context li{font-size:12px!important;line-height:1.5;margin:4px 0}
   .holdings-source-context .holdings-context-detail>summary{font-size:12px;min-height:44px;padding:10px}
 }
-@media print{.holdings-mobile-cards,.holdings-source-context{display:none!important}.holdings-responsive>table{display:table!important}}
+@media print{.holdings-mobile-cards,.holdings-mobile-groups,.holdings-source-context{display:none!important}.holdings-responsive>table{display:table!important}}
 `;
 
 const enhanced = new WeakMap(), contexts = new WeakMap();
@@ -35,6 +35,23 @@ const normalize = text => String(text ?? '').trim().replace(/\s+/g, ' ');
 const CAUTION = /未取得|待核|沿用|延迟|旧值|估算|估计|近似|替代|覆盖|fallback|stale|override|unavailable|delayed|unverified|missing|estimated/i;
 const CONTEXT = /\d{4}-\d{2}-\d{2}|\d{1,2}:\d{2}|HKT|权威|合计|总计|\d+\s*只|直读|来源|数据时点/;
 const TOTAL = /^(?:合计|总计|小计|总市值|持仓合计|total|subtotal)(?:\s|$|[：:（(])/i;
+
+export function dailyChangeNumber(value) {
+  const normalized=normalize(value).replace(/−/g,'-');
+  const match=normalized.match(/^([+-]?\d+(?:\.\d+)?)%/);
+  return match?Number(match[1]):null;
+}
+
+export function splitDailyChangeEntries(entries) {
+  if(!Array.isArray(entries)||!entries.length)return null;
+  const parsed=entries.map((entry,index)=>({entry,index,value:dailyChangeNumber(entry?.change)}));
+  if(parsed.some(item=>item.value===null||item.value===0))return null;
+  const stable=(a,b)=>a.index-b.index;
+  return {
+    up:parsed.filter(item=>item.value>0).sort((a,b)=>b.value-a.value||stable(a,b)).map(item=>item.entry),
+    down:parsed.filter(item=>item.value<0).sort((a,b)=>a.value-b.value||stable(a,b)).map(item=>item.entry),
+  };
+}
 
 // Explicit known contracts only. Header guessing could mislabel a price as a change.
 export function holdingsHeaderContract(headers) {
@@ -132,7 +149,7 @@ export function improveHoldingsCards(doc) {
     const rows=[...table.querySelectorAll('tbody tr')];
     if(!rows.length || rows.some(row=>row.parentElement.tagName!=='TBODY' || row.children.length!==heads.length
       || [...row.children].some(cell=>cell.tagName!=='TD') || !normalize(row.children[0].textContent)))continue;
-    const list=el(doc,'ol','holdings-mobile-cards');
+    const entries=[];
     for(const row of rows){
       const cells=[...row.children],identity=cells[contract.identity];
       const isTotal=TOTAL.test(normalize(identity.textContent));
@@ -142,16 +159,20 @@ export function improveHoldingsCards(doc) {
       values.append(field(doc,contract.headers[contract.value],cells[contract.value]));
       values.append(field(doc,'日涨跌',contract.change===null?null:cells[contract.change],'',isTotal?'不适用':contract.change===null?'未取得（原表未提供）':'未取得'));
       main.append(name,values);card.append(main);
-      const time=el(doc,'dl','holdings-time');
-      time.append(field(doc,'行情时点',contract.time===null?null:cells[contract.time],'',isTotal?'不适用':contract.time===null?'原表未提供':'未取得'));card.append(time);
-      const quote=cells[contract.quote],quoteText=normalize(quote.textContent);
-      // Only an ordinary numeric quote goes into the optional fold. Any extra
-      // qualification, missing price or warning stays visible with its label.
-      const warningQuote=quote.classList.contains('wv')||quote.classList.contains('or')||!!quote.querySelector('.wv,.or');
-      const simpleQuote=!warningQuote&&/^(?:[A-Z]{3} )?[+−-]?\d[\d,]*(?:\.\d+)?$/.test(quoteText);
-      const quoteFields=el(doc,'dl');quoteFields.append(field(doc,contract.headers[contract.quote],quote,'',isTotal?'不适用':'未取得'));
-      if(simpleQuote){const fold=el(doc,'details','holdings-quote');fold.append(el(doc,'summary','','报价详情'),quoteFields);card.append(fold);}
-      else{quoteFields.className='holdings-quote'+(isTotal&&!quoteText?'':' holdings-flags');card.append(quoteFields);}
+      // The verified source table and report notes retain quote/time evidence.
+      // A current generated holding already has an explicit daily-change field,
+      // so its phone card intentionally omits row-level quote/time clutter.
+      // Legacy price-only tables keep their sole useful price and time fields.
+      if(contract.change===null){
+        const time=el(doc,'dl','holdings-time');
+        time.append(field(doc,'行情时点',contract.time===null?null:cells[contract.time],'',isTotal?'不适用':contract.time===null?'原表未提供':'未取得'));card.append(time);
+        const quote=cells[contract.quote],quoteText=normalize(quote.textContent);
+        const warningQuote=quote.classList.contains('wv')||quote.classList.contains('or')||!!quote.querySelector('.wv,.or');
+        const simpleQuote=!warningQuote&&/^(?:[A-Z]{3} )?[+−-]?\d[\d,]*(?:\.\d+)?$/.test(quoteText);
+        const quoteFields=el(doc,'dl');quoteFields.append(field(doc,contract.headers[contract.quote],quote,'',isTotal?'不适用':'未取得'));
+        if(simpleQuote){const fold=el(doc,'details','holdings-quote');fold.append(el(doc,'summary','','报价详情'),quoteFields);card.append(fold);}
+        else{quoteFields.className='holdings-quote'+(isTotal&&!quoteText?'':' holdings-flags');card.append(quoteFields);}
+      }
       // Attributes are not financial evidence. Preserve explicit source title/
       // aria qualifications, including a quote warning that must not be folded.
       const flags=new Set();
@@ -169,10 +190,24 @@ export function improveHoldingsCards(doc) {
           }
         }
       }
-      list.append(card);
+      entries.push({card,change:contract.change===null?'':cells[contract.change].textContent});
     }
     sourceContext(doc,table);
     const wrapper=el(doc,'div','holdings-responsive');
-    table.before(wrapper);wrapper.append(list,table);enhanced.set(table,wrapper);
+    const groupTitle=normalize(table.closest('details')?.querySelector(':scope > summary')?.textContent);
+    const split=/^价格变化\s*≥1%/.test(groupTitle)?splitDailyChangeEntries(entries):null;
+    if(split){
+      const groups=el(doc,'div','holdings-mobile-groups');
+      for(const [key,label] of [['up','上涨'],['down','下跌']]){
+        if(!split[key].length)continue;
+        const section=el(doc,'section',`holdings-direction-group holdings-direction-${key}`),list=el(doc,'ol','holdings-mobile-cards');
+        section.append(el(doc,'h3','',`${label} ${split[key].length}`));split[key].forEach(item=>list.append(item.card));section.append(list);groups.append(section);
+      }
+      table.before(wrapper);wrapper.append(groups,table);
+    }else{
+      const list=el(doc,'ol','holdings-mobile-cards');entries.forEach(item=>list.append(item.card));
+      table.before(wrapper);wrapper.append(list,table);
+    }
+    enhanced.set(table,wrapper);
   }
 }
