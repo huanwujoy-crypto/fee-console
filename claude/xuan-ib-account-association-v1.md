@@ -1,12 +1,13 @@
 # Bounded owner-attested account association
 
-## 28-day renewal approved by owner, 2026-09-11
+## 29-day renewal approved by owner, 2026-09-11
 
 The owner approved a longer but still bounded read-only association to reduce
 repeat approvals after the morning report was approved for retirement. The renewed validity is
-2026-09-12T13:30:00.000Z through (exclusive)
-2026-10-10T13:30:00.000Z, covering four complete PM reporting weeks. The
-mechanical maximum is 30 days; this activation is 28 days and never rolls or
+2026-09-11T13:30:00.000Z through (exclusive)
+2026-10-10T13:30:00.000Z, covering four complete PM reporting weeks without a
+gap before the 2026-09-11 PM run. The
+mechanical maximum is 30 days; this activation is 29 days and never rolls or
 renews automatically. The legacy `ib-primary-7day-pilot-v1` policy identifier is
 retained only to preserve historical receipt compatibility; it does not describe
 the current duration and does not restore the retired manual-report feature.
