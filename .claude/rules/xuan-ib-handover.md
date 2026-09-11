@@ -27,6 +27,7 @@ Before reading financial data or generating a report, read and obey:
 - `claude/xuan-ib-venue-identity-v1.json`
 - `claude/xuan-ib-auto-classification-v1.json`
 - `claude/xuan-ib-be-t1-approval-2026-09-11.md`
+- `claude/xuan-ib-ai-risk-tiers-v1.json`
 
 Use only read operations against Interactive Brokers and Sharesight. Never
 place, modify, or cancel an order; never initiate a transfer; never create,
@@ -97,12 +98,32 @@ BE / Bloom Energy is a `DELEG` rule (`DELEG-20260911-BE-T1`), not an AUTO record
 
 Resolve the whole constituent universe through
 `buildAiTierCoverage` in `scripts/xuan-ib-ai-tier-coverage.mjs` and pass the
-result to `prepareReport` as `riskConstituents` (CLI: `--risk-constituents`).
+result to `prepareReport` as `riskConstituents` (CLI: `--risk-constituents`),
+together with the source-bound three-account cash-inclusive denominator as
+`riskDenominator` (CLI: `--risk-denominator`). Every constituent carries its
+`custodian` alongside `portfolioId`, `holdingId` and `instrumentId`: the risk
+universe is keyed on `(portfolioId, holdingId)`, never on a ticker, because one
+company is legitimately held under more than one custodian and two custodians
+legitimately spell one company differently.
+
 An ordinary AM or PM report dated `2026-09-11` or later that shows holdings
-must carry the resulting `xuan-ib-ai-tier-records-v1` manifest; the gate
-reconciles it against the holdings table's own declared universe rather than
-against prose, so every symbol in the table is classified with a `WU`, `DELEG`
-or `AUTO` record id or excluded with an enumerated reason. Resolve cross-source
+must carry the resulting `xuan-ib-ai-tier-records-v1` manifest and the risk
+pane's own `data-ai-risk-universe-v1` declaration; the gate reconciles the two
+by identity rather than against prose, so every constituent is classified with a
+`WU`, `DELEG`, `REG` or `AUTO` record id or excluded with an enumerated reason.
+That declaration is the risk pane's own and is never the holdings table's
+`data-holdings-universe-v1`, which covers one custodian's book and keeps its own
+separate check.
+
+Take §0-C coefficients only from `claude/xuan-ib-ai-risk-tiers-v1.json` through
+`scripts/xuan-ib-ai-risk-registry.mjs`, and compute the numerator, the scenario
+totals and the ratio only with `computeAiPressure` in
+`scripts/xuan-ib-ai-pressure.mjs`. Never retype a coefficient, a contribution, a
+numerator or a ratio into a report, an assembly script or a card: the renderer
+derives the whole section and refuses a hand-supplied AI-pressure card, and the
+gate recomputes the total from the page's own per-constituent contributions.
+Where the approved material defines no low or high case, publish that scenario
+as unavailable and named — never the mid case repeated, never zero. Resolve cross-source
 identity by the strong identifier each payload publishes (`contract_id`,
 `instrument.id`) and use the venue+code key only when none exists. Decide
 "notify once" with `decideAutoNotification` against the previous trusted page's

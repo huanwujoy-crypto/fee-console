@@ -117,6 +117,56 @@ module and is never reachable through it. Changing either policy file, its
 reader or its tests needs a separately reviewed maintenance PR under the
 publication lock.
 
+**Identity-keyed risk universe, and a calculated numerator.** Two further
+defects of the same run were structural rather than textual, and both are closed
+here. They take effect only once the owner posts the exact-head-SHA approval
+comment on the pull request that introduces them and it merges.
+
+The AI-pressure universe is keyed on `(portfolioId, holdingId)` and never on a
+ticker. It spans three accounts — IB-HK, Schwab-HK and Webull — so one company
+is legitimately held in more than one of them: `GOOG` at IB-HK and `GOOG` at
+Webull are two positions with two market values and two contributions, and
+`BRK.B` at IB-HK and `BRK/B` at Schwab-HK are one company spelled two ways by
+two custodians. A symbol-keyed universe refused the first case and merged the
+second. `instrumentId` is bound into every record and checked independently, so
+one instrument cannot appear twice inside one account.
+
+That universe is declared by the risk pane itself as `data-ai-risk-universe-v1`
+with one `data-ai-risk-constituent` identity marker per constituent, and it is
+reconciled against the manifest by the gate. It is **not** the holdings table's
+`data-holdings-universe-v1`, which stays exactly as it is: one custodian's book,
+its own count, its own check. Reconciling the risk manifest against the holdings
+count checked the wrong arithmetic — it would have passed a report that dropped
+every Schwab and Webull constituent and failed a correct one.
+
+§0-C coefficients are read from `claude/xuan-ib-ai-risk-tiers-v1.json` through
+`scripts/xuan-ib-ai-risk-registry.mjs`, its single supported reader, under the
+`REG` namespace. That file is a mechanical transcription of already-published,
+already-approved values — the three standard ladders from the owner-reviewed
+§0-C table, and every per-instrument assignment, ETF look-through percentage and
+named exception from the published report — with its record in
+`claude/xuan-ib-ai-risk-tiers-approval-2026-09-11.md`. It changes no
+coefficient and invents none. A new tier, ladder or exception remains a separate
+owner decision, and changing that file, its reader or its tests needs a
+separately reviewed maintenance PR under the publication lock.
+
+The published number is then computed, not typed. `scripts/xuan-ib-ai-pressure.mjs`
+is pure: it takes identities, source-bound market values and a source-bound
+three-account cash-inclusive denominator from its caller, applies the ladder the
+approved rule or the registry already records, and returns every contribution,
+the scenario totals and the ratios. It fetches nothing. `renderReport` generates
+the §0-C section from that result and refuses a candidate that also supplies its
+own AI-pressure card: there is no longer any input on the assembly path that
+accepts a ready-made numerator or ratio. The gate recomputes the numerator from
+the page's own per-constituent contributions and fails a displayed total, ratio,
+coefficient or contribution that does not follow from them, as well as a
+classified constituent that contributes no row at all.
+
+Where the approved material genuinely defines no low or high case — an ETF
+look-through is a single composition percentage, not a scenario ladder — that
+scenario total is published as unavailable and named. It is never filled in with
+the mid case and never with zero.
+
 **Wired coverage, not available coverage.** These readers are reached from the
 actual assembly path, not merely importable. `scripts/xuan-ib-ai-tier-coverage.mjs`
 resolves every risk constituent of a run — an exact `WU` or `DELEG` rule first,

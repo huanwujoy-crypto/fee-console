@@ -29,6 +29,7 @@ import {
   AUTO_EXCLUSION_REASONS, AUTO_NAMESPACE, assertNoProvisionalWording,
   classifyFirstSeenPosition, readAutoClassificationPolicy, renderAutoClassificationRecord,
 } from './xuan-ib-auto-classification.mjs';
+import { AI_RISK_NAMESPACE, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 import { calculateDelegatedTier, listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import fs from 'node:fs';
 
@@ -56,8 +57,25 @@ const fail = (code, detail = null) => { throw new AiTierCoverageException(code, 
 // The identity a constituent must carry before it can be resolved at all. These
 // are the same fields the approved rules are written against, so a report can
 // never satisfy a rule with less identity than the rule records.
-const CONSTITUENT = Object.freeze(['symbol', 'venue', 'portfolioId', 'holdingId', 'instrumentId',
-  'currency', 'assetType', 'marketValueUsd', 'valueDate', 'identityVerified', 'firstSeen']);
+//
+// `custodian` is part of that identity, not decoration. The risk universe spans
+// three accounts, and the same company is legitimately held in more than one of
+// them: `GOOG` at IB-HK and `GOOG` at Webull are two positions, two market
+// values and two contributions. `BRK.B` at IB-HK and `BRK/B` at Schwab-HK are
+// one company spelled two ways. Neither fact is expressible in a ticker.
+const CONSTITUENT = Object.freeze(['symbol', 'custodian', 'venue', 'portfolioId', 'holdingId',
+  'instrumentId', 'currency', 'assetType', 'marketValueUsd', 'valueDate', 'identityVerified',
+  'firstSeen']);
+
+/**
+ * The identity key of one constituent.
+ *
+ * `(portfolioId, holdingId)` is the pair every source in this pipeline already
+ * publishes and the pair every approved rule is already written against. It is
+ * the only key this module uses for coverage, deduplication, the manifest and
+ * the gate's reconciliation. The symbol is display text.
+ */
+export const constituentKey = entry => `${entry.portfolioId}:${entry.holdingId}`;
 
 // The owner's own identity-bound overrides, read from the repository beside this
 // module. They are `WU` selections and carry no delegated coefficients, so they
@@ -84,17 +102,22 @@ function validateConstituent(entry, index) {
 }
 
 // One constituent, resolved. Never a guess, never zero, never silent.
-function resolveOne(constituent, { rules, overrides, policy, autoPolicyRevision }) {
+function resolveOne(constituent, { rules, overrides, registry, policy, autoPolicyRevision }) {
   const symbol = constituent.symbol.trim().toUpperCase();
-  const holdingKey = `${constituent.portfolioId}:${constituent.holdingId}`;
+  const holdingKey = constituentKey(constituent);
+  const identity = {
+    key: holdingKey, symbol, custodian: constituent.custodian,
+    portfolioId: constituent.portfolioId, holdingId: constituent.holdingId,
+    instrumentId: constituent.instrumentId,
+  };
   // A deterministic id for an exclusion, so that even a position nothing could
   // classify is still named by a stable machine-readable record instead of
   // disappearing from the manifest.
   const exclusionId = `${AUTO_NAMESPACE}:${autoPolicyRevision}:${
     /^\d{1,18}$/.test(String(constituent.portfolioId)) ? constituent.portfolioId : 'unresolved'}:${
     /^\d{1,18}$/.test(String(constituent.holdingId)) ? constituent.holdingId : symbol}`;
-  const excluded = reason => ({ entry: { symbol, namespace: AUTO_NAMESPACE, recordId: exclusionId,
-    status: 'excluded', reason }, record: null, basis: 'excluded' });
+  const excluded = reason => ({ entry: { ...identity, namespace: AUTO_NAMESPACE, recordId: exclusionId,
+    status: 'excluded', reason }, record: null, basis: 'excluded', ladder: null });
 
   // (1) An exact delegated rule. `calculateDelegatedTier` is the only supported
   // reader and does the field-by-field identity proof itself; this module never
@@ -119,8 +142,10 @@ function resolveOne(constituent, { rules, overrides, policy, autoPolicyRevision 
       // the approval or quietly handed to the automatic path.
       return excluded(AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
     }
-    return { entry: { symbol, namespace: delegated.rule.approvalId.startsWith('WU-') ? 'WU' : 'DELEG',
-      recordId: calculated.approvalId, status: 'classified' }, record: null, basis: 'delegated', calculated };
+    return { entry: { ...identity, namespace: delegated.rule.approvalId.startsWith('WU-') ? 'WU' : 'DELEG',
+      recordId: calculated.approvalId, status: 'classified' }, record: null, basis: 'delegated', calculated,
+      ladder: { low: delegated.rule.low, mid: delegated.rule.mid, high: delegated.rule.high },
+      tier: delegated.rule.tier };
   }
 
   // (1b) The owner's own identity-bound override, which records symbol,
@@ -130,8 +155,28 @@ function resolveOne(constituent, { rules, overrides, policy, autoPolicyRevision 
     if (String(override.symbol).toUpperCase() !== symbol) {
       return excluded(AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
     }
-    return { entry: { symbol, namespace: 'WU', recordId: override.approvalId, status: 'classified' },
-      record: null, basis: 'owner-override' };
+    return { entry: { ...identity, namespace: 'WU', recordId: override.approvalId, status: 'classified' },
+      record: null, basis: 'owner-override',
+      ladder: { low: override.low, mid: override.mid, high: override.high }, tier: override.tier };
+  }
+
+  // (1c) The transcribed registry of already-published tier assignments, ETF
+  // look-through percentages and named exceptions. This is the step that used to
+  // exist only as a coefficient retyped into a throwaway assembly script. It is
+  // matched on custodian and symbol because that is exactly the granularity the
+  // published report itself discloses — `IB-HK GOOG T2` and `Webull GOOG T2` are
+  // two rows there and two rules here — and an entry may additionally pin a
+  // portfolio, holding or instrument, in which case that binding must match too.
+  const registered = registry.lookup(constituent.custodian, symbol);
+  if (registered) {
+    for (const field of ['portfolioId', 'holdingId', 'instrumentId']) {
+      if (Object.hasOwn(registered, field) && registered[field] !== constituent[field]) {
+        return excluded(AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
+      }
+    }
+    return { entry: { ...identity, namespace: AI_RISK_NAMESPACE, recordId: registered.recordId,
+      status: 'classified' }, record: null, basis: 'registry', ladder: registered.ladder,
+      tier: registered.tier, registered };
   }
 
   // (2) The automatic policy, for a first-seen ordinary stock only. Everything
@@ -145,8 +190,9 @@ function resolveOne(constituent, { rules, overrides, policy, autoPolicyRevision 
       marketValueUsd: constituent.marketValueUsd, valueDate: constituent.valueDate,
       identityVerified: constituent.identityVerified, firstSeen: constituent.firstSeen,
     }, { policy });
-    return { entry: { symbol, namespace: AUTO_NAMESPACE, recordId: record.classificationId,
-      status: 'classified' }, record, basis: 'auto' };
+    return { entry: { ...identity, namespace: AUTO_NAMESPACE, recordId: record.classificationId,
+      status: 'classified' }, record, basis: 'auto',
+      ladder: registry.ladderFor(record.tier), tier: record.tier };
   } catch (error) {
     if (error.name !== 'AutoClassificationException') throw error;
     // (3) Fail-visible. A refusal with no enumerated reason would be the exact
@@ -166,36 +212,64 @@ function resolveOne(constituent, { rules, overrides, policy, autoPolicyRevision 
  * `classified` with a `WU`, `DELEG` or `AUTO` record id, or `excluded` with an
  * enumerated reason. There is no third state and nothing is omitted.
  */
-export function buildAiTierCoverage(constituents, { policy = readAutoClassificationPolicy() } = {}) {
+export function buildAiTierCoverage(constituents, {
+  policy = readAutoClassificationPolicy(),
+  registry = readAiRiskRegistry(),
+} = {}) {
   if (!Array.isArray(constituents) || constituents.length > 500) fail('CONSTITUENTS_INVALID');
   constituents.forEach(validateConstituent);
   const rules = listDelegatedRules();
   const overrides = ownerOverrides();
   const autoPolicyRevision = policy.policy.policyRevision;
   const resolved = constituents.map(constituent =>
-    resolveOne(constituent, { rules, overrides, policy, autoPolicyRevision }));
+    resolveOne(constituent, { rules, overrides, registry, policy, autoPolicyRevision }));
   const entries = resolved.map(item => item.entry);
   const seen = new Set();
+  const byInstrument = new Set();
   for (const entry of entries) {
-    // One symbol may hold exactly one coverage record. Two disagreeing records
-    // for one symbol would make the reconciliation below depend on order.
-    if (seen.has(entry.symbol)) fail('DUPLICATE_CONSTITUENT', entry.symbol);
-    seen.add(entry.symbol);
+    // One identity may hold exactly one coverage record. Two disagreeing records
+    // for one identity would make the reconciliation below depend on order.
+    //
+    // Deliberately NOT keyed on the symbol. The risk universe is three accounts
+    // wide and a symbol recurs across them legitimately: rejecting the second
+    // `GOOG` would have refused to publish a real, correctly identified Webull
+    // position — the same "classified but absent from the numerator" outcome
+    // this module exists to make impossible, arrived at from the other side.
+    if (seen.has(entry.key)) fail('DUPLICATE_CONSTITUENT', entry.key);
+    seen.add(entry.key);
+    // Instrument identity as the second, independent check. One account holding
+    // the same instrument under two holding ids would be counted twice in the
+    // numerator while appearing once in the book.
+    const instrument = `${entry.portfolioId}/${entry.instrumentId}`;
+    if (byInstrument.has(instrument)) fail('DUPLICATE_INSTRUMENT_IN_PORTFOLIO', instrument);
+    byInstrument.add(instrument);
   }
   const classified = entries.filter(entry => entry.status === 'classified');
   return {
     schemaVersion: 1,
     policyRevision: autoPolicyRevision,
+    registryRevision: registry.policyRevision,
     entries,
+    // The resolved ladder beside each entry, in input order, for the calculation
+    // module. Kept out of `entries` so the published manifest stays identity and
+    // classification only.
+    resolved: resolved.map((item, index) => ({ key: entries[index].key, basis: item.basis,
+      tier: item.tier ?? null, ladder: item.ladder ?? null })),
     // The records that need a human sentence beside them on the page. Only the
     // automatic path produces one: a `WU` or `DELEG` classification is already
     // disclosed by its own approval record.
     autoRecords: resolved.filter(item => item.basis === 'auto').map(item => item.record),
-    universe: entries.map(entry => entry.symbol),
+    // The universe is identities, not tickers. This is the declaration the gate
+    // reconciles the manifest against, and it belongs to the AI-risk pane — it
+    // is not, and must not be confused with, the IB-only holdings table's own
+    // `data-holdings-universe-v1` count.
+    universe: entries.map(entry => entry.key),
+    universeSymbols: entries.map(entry => entry.symbol),
     coverage: {
       total: entries.length,
       classified: classified.length,
       excluded: entries.length - classified.length,
+      numeratorKeys: classified.map(entry => entry.key),
       // The AI-pressure numerator's own membership, stated rather than implied:
       // a classified constituent is in it, an excluded one is out of it and
       // says why. Both stay in the denominator, which is the defect of
@@ -245,8 +319,18 @@ export function renderAiTierCoverage(coverage) {
     return `<p data-ai-tier-excluded="${escape(entry.symbol)}" data-ai-tier-reason="${escape(entry.reason)}">`
       + `${escape(text)}</p>`;
   }).join('');
-  const summary = `<p data-ai-tier-coverage-v1="${coverage.coverage.classified}/${coverage.coverage.total}">`
+  // The AI-risk pane's own constituent universe, declared independently of the
+  // IB-only holdings table. These are two different populations: the holdings
+  // table is one custodian's book, the risk universe spans three accounts, and
+  // reconciling the manifest against the holdings count was checking the wrong
+  // arithmetic — it would have passed a report that silently dropped every
+  // Schwab and Webull constituent, and failed a correct one.
+  const constituents = coverage.entries.map(entry =>
+    `<span data-ai-risk-constituent="${escape(entry.key)}" data-ai-risk-symbol="${escape(entry.symbol)}"`
+    + ` data-ai-risk-custodian="${escape(entry.custodian)}"></span>`).join('');
+  const summary = `<p data-ai-risk-universe-v1="${coverage.entries.length}"`
+    + ` data-ai-tier-coverage-v1="${coverage.coverage.classified}/${coverage.coverage.total}">`
     + `AI 压力口径覆盖：共 ${coverage.coverage.total} 项，已分类 ${coverage.coverage.classified} 项计入分子，`
     + `${coverage.coverage.excluded} 项按列名原因排除但仍在分母内。</p>`;
-  return { template, disclosures: `${summary}${auto}${excluded}` };
+  return { template, disclosures: `${summary}${constituents}${auto}${excluded}` };
 }

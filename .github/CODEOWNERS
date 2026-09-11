@@ -31,6 +31,12 @@
 /scripts/xuan-ib-venue-identity.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-ai-tier-coverage.mjs @huanwujoy-crypto
 /scripts/xuan-ib-ai-tier-coverage.test.mjs @huanwujoy-crypto
+/claude/xuan-ib-ai-risk-tiers-v1.json @huanwujoy-crypto
+/claude/xuan-ib-ai-risk-tiers-approval-2026-09-11.md @huanwujoy-crypto
+/scripts/xuan-ib-ai-risk-registry.mjs @huanwujoy-crypto
+/scripts/xuan-ib-ai-pressure.mjs @huanwujoy-crypto
+/scripts/xuan-ib-ai-pressure.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-ai-risk-three-account.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-delegated-tier.mjs @huanwujoy-crypto
 /scripts/xuan-ib-delegated-tier.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-aaoi-t1.mjs @huanwujoy-crypto

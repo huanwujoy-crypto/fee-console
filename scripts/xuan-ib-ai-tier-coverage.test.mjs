@@ -64,11 +64,17 @@ const evidence = () => {
       ...(item.portfolioId === 936247 ? { completedUsTradingDayLag: 0 } : {}) })) } };
 };
 
-const constituent = (over) => ({ symbol: 'NEWCO', venue: 'NASDAQ', portfolioId: '1350094',
-  holdingId: '99000001', instrumentId: '99000001', currency: 'USD', assetType: 'STK',
-  marketValueUsd: 100, valueDate: dataDate, identityVerified: true, firstSeen: true, ...over });
+const constituent = (over) => ({ symbol: 'NEWCO', custodian: 'Webull', venue: 'NASDAQ',
+  portfolioId: '1350094', holdingId: '99000001', instrumentId: '99000001', currency: 'USD',
+  assetType: 'STK', marketValueUsd: 100, valueDate: dataDate, identityVerified: true,
+  firstSeen: true, ...over });
 const constituents = () => [constituent({}),
   constituent({ symbol: 'GLDETF', venue: 'NYSE', holdingId: '99000002', instrumentId: '99000002', assetType: 'ETF' })];
+// Source-bound account totals, supplied by the caller exactly as a real run
+// supplies them. Nothing in this pipeline fetches them.
+const denominator = () => ({ components: [{ label: '合成账户', valueUsd: 1000 }] });
+const prepared = (over = {}) => prepareReport(view(), evidence(),
+  { ...context, riskConstituents: constituents(), riskDenominator: denominator(), ...over });
 
 // ---------------------------------------------------------------------------
 // Gap 2: the AUTO path has a production caller, reached from the real assembly
@@ -76,11 +82,11 @@ const constituents = () => [constituent({}),
 // ---------------------------------------------------------------------------
 
 test('a first-seen stock reaches the rendered report and the trusted guard through the real prepare path', () => {
-  const prepared = prepareReport(view(), evidence(), { ...context, riskConstituents: constituents() });
+  const built = prepared();
   // `prepareReport` runs the actual trusted guard on the actual candidate
   // bytes, so reaching this line is the guard accepting the page.
-  assert.equal(prepared.result.status, 'prepared-not-published');
-  const html = prepared.html;
+  assert.equal(built.result.status, 'prepared-not-published');
+  const html = built.html;
 
   // The constituent universe the table declares, in machine-readable form.
   assert.match(html, /data-holdings-universe-v1="2"/);
@@ -90,13 +96,21 @@ test('a first-seen stock reaches the rendered report and the trusted guard throu
   // The complete records manifest: one AUTO classification, one named exclusion.
   const records = JSON.parse(html.match(
     /<template id="xuan-ib-ai-tier-records-v1" type="application\/json">([\s\S]*?)<\/template>/)[1]);
+  // Each record carries the identity it was resolved against, not just a ticker.
   assert.deepEqual(records, [
-    { symbol: 'NEWCO', namespace: 'AUTO',
+    { key: '1350094:99000001', symbol: 'NEWCO', custodian: 'Webull', portfolioId: '1350094',
+      holdingId: '99000001', instrumentId: '99000001', namespace: 'AUTO',
       recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001', status: 'classified' },
-    { symbol: 'GLDETF', namespace: 'AUTO',
+    { key: '1350094:99000002', symbol: 'GLDETF', custodian: 'Webull', portfolioId: '1350094',
+      holdingId: '99000002', instrumentId: '99000002', namespace: 'AUTO',
       recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000002', status: 'excluded',
       reason: AUTO_EXCLUSION_REASONS.ASSET_TYPE_NOT_ORDINARY_STOCK },
   ]);
+  // The AI-risk pane declares its own universe, separately from the IB-only
+  // holdings table above it.
+  assert.match(html, /data-ai-risk-universe-v1="2"/);
+  assert.match(html, /data-ai-risk-constituent="1350094:99000001"/);
+  assert.match(html, /data-ai-risk-constituent="1350094:99000002"/);
 
   // The numerator/denominator split the report actually publishes: the new
   // stock is inside the numerator, the ETF is outside it and still inside the
@@ -120,10 +134,20 @@ test('an ordinary scheduled edition cannot show holdings without resolved consti
   // assembly step rather than producing a page whose coverage nobody checked.
   assert.throws(() => prepareReport(view(), evidence(), context),
     /require resolved AI-tier risk constituents/);
-  // The records must describe this report's own table, not another list.
+  // The computed pressure needs its own source-bound denominator; it is never
+  // derived from the constituents, because an account total includes cash and
+  // positions this pane does not enumerate.
   assert.throws(() => prepareReport(view(), evidence(),
-    { ...context, riskConstituents: [constituent({})] }),
-  /do not cover exactly the reported holdings/);
+    { ...context, riskConstituents: constituents() }),
+  /require a source-bound AI pressure denominator/);
+  // The risk universe is deliberately NOT required to equal the holdings table:
+  // they are different populations, and a three-account risk universe correctly
+  // contains constituents the IB-only holdings table never lists.
+  const narrower = prepareReport(view(), evidence(),
+    { ...context, riskConstituents: [constituent({})], riskDenominator: denominator() });
+  assert.equal(narrower.result.status, 'prepared-not-published');
+  assert.match(narrower.html, /data-ai-risk-universe-v1="1"/);
+  assert.match(narrower.html, /data-holdings-universe-v1="2"/);
 });
 
 test('every constituent is classified or excluded with an enumerated reason, and never guessed', () => {
@@ -155,9 +179,25 @@ test('every constituent is classified or excluded with an enumerated reason, and
     instrumentId: '28987468', firstSeen: false })]);
   assert.equal(mismatched.entries[0].status, 'excluded');
   assert.equal(mismatched.entries[0].reason, AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
-  // One symbol may carry only one record, or reconciliation would depend on order.
-  assert.throws(() => buildAiTierCoverage([constituent({}), constituent({ holdingId: '99000009',
-    instrumentId: '99000009' })]), /DUPLICATE_CONSTITUENT/);
+  // One IDENTITY may carry only one record, or reconciliation would depend on
+  // order. The key is the portfolio-and-holding pair, never the ticker.
+  assert.throws(() => buildAiTierCoverage([constituent({}), constituent({})]),
+    /DUPLICATE_CONSTITUENT \(1350094:99000001\)/);
+  // And the same instrument may not appear twice inside one account under two
+  // holding ids, which would double-count it in the numerator.
+  assert.throws(() => buildAiTierCoverage([constituent({}),
+    constituent({ holdingId: '99000009' })]), /DUPLICATE_INSTRUMENT_IN_PORTFOLIO/);
+  // But one ticker across two custodians is two legitimate constituents, and
+  // refusing it would drop a real position out of the numerator — the same
+  // understatement, reached from the other side.
+  const twoAccounts = buildAiTierCoverage([
+    constituent({ symbol: 'DUPCO', firstSeen: true }),
+    constituent({ symbol: 'DUPCO', custodian: 'Schwab-HK', portfolioId: '936249',
+      holdingId: '88000001', instrumentId: '88000001', firstSeen: true }),
+  ]);
+  assert.equal(twoAccounts.coverage.classified, 2);
+  assert.deepEqual(twoAccounts.universe, ['1350094:99000001', '936249:88000001']);
+  assert.deepEqual(twoAccounts.universeSymbols, ['DUPCO', 'DUPCO']);
   // A constituent carrying a field this module does not check is refused rather
   // than classified more widely than the approved policies allow.
   assert.throws(() => buildAiTierCoverage([{ ...constituent({}), tier: 'T3' }]), /CONSTITUENT_FIELDS_UNEXPECTED/);
@@ -182,7 +222,7 @@ const runGuard = (t, html) => {
 };
 
 test('a symbol dropped from the records fails the guard even with no prose about it at all', t => {
-  const accepted = prepareReport(view(), evidence(), { ...context, riskConstituents: constituents() });
+  const accepted = prepared();
   assert.equal(runGuard(t, accepted.html).status, 0, 'the untouched candidate must pass');
 
   // Silently drop GLDETF: remove its manifest entry AND every sentence that
@@ -191,38 +231,44 @@ test('a symbol dropped from the records fails the guard even with no prose about
   const records = accepted.html.match(
     /<template id="xuan-ib-ai-tier-records-v1" type="application\/json">([\s\S]*?)<\/template>/)[1];
   const trimmed = JSON.stringify(JSON.parse(records).filter(entry => entry.symbol !== 'GLDETF'));
+  const key = '1350094:99000002';
   const silent = accepted.html
     .replace(records, trimmed)
-    .replace(/<p data-ai-tier-excluded="GLDETF"[\s\S]*?<\/p>/, '');
+    .replace(/<p data-ai-tier-excluded="GLDETF"[\s\S]*?<\/p>/, '')
+    // …and its derived contribution row, so the page really does say nothing.
+    .replace(new RegExp(`<tr data-ai-risk-row="${key}"[\\s\\S]*?</tr>`), '');
   // The page genuinely says nothing about it: no exclusion wording anywhere.
   assert.equal(/待核验|待分类|未分类|未含|未计入分子|边界未定义|无\s*已?批准\s*tier/.test(
     silent.match(/<div class="pane p2">([\s\S]*?)(?=<div class="pane p3">)/)[1]), false);
   const dropped = runGuard(t, silent);
   assert.notEqual(dropped.status, 0);
   assert.match(dropped.stderr + dropped.stdout,
-    /GLDETF is a reported holding with no machine-readable AI tier record/);
+    new RegExp(`${key} is a declared AI risk constituent with no machine-readable AI tier record`));
 
-  // Removing the row from the table as well does not help either: the declared
-  // universe and the rendered rows must agree, so an omission is arithmetic.
-  const hidden = silent.replace(/<tr data-holding-symbol="GLDETF"[\s\S]*?<\/tr>/, '');
+  // Removing its identity marker as well does not help either: the declared
+  // universe and the named constituents must agree, so an omission is arithmetic.
+  const hidden = silent.replace(new RegExp(`<span data-ai-risk-constituent="${key}"[\\s\\S]*?</span>`), '');
   const hiddenResult = runGuard(t, hidden);
   assert.notEqual(hiddenResult.status, 0);
   assert.match(hiddenResult.stderr + hiddenResult.stdout, /declares 2 constituents but names 1/);
 
-  // And a record for something this report does not hold cannot be used to make
+  // And a record for something this report does not carry cannot be used to make
   // the coverage arithmetic look complete.
   const invented = accepted.html.replace(records,
-    JSON.stringify([...JSON.parse(records), { symbol: 'GHOST', namespace: 'AUTO',
+    JSON.stringify([...JSON.parse(records), { key: '1350094:99000099', symbol: 'GHOST',
+      custodian: 'Webull', portfolioId: '1350094', holdingId: '99000099', instrumentId: '99000099',
+      namespace: 'AUTO',
       recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000099', status: 'classified' }]));
   const ghost = runGuard(t, invented);
   assert.notEqual(ghost.status, 0);
-  assert.match(ghost.stderr + ghost.stdout, /GHOST does not correspond to any reported holding/);
+  assert.match(ghost.stderr + ghost.stdout,
+    /1350094:99000099 does not correspond to any declared AI risk constituent/);
 });
 
 test('the prose regression backstop still fails the cases it was written for', t => {
   // The wording-based scan is kept, not replaced: a report that does reopen a
   // delegated classification in prose still fails on that ground alone.
-  const accepted = prepareReport(view(), evidence(), { ...context, riskConstituents: constituents() });
+  const accepted = prepared();
   const reopened = accepted.html.replace('<div class="pane p2">',
     '<div class="pane p2"><p>AAOI 尚无已批准 tier，未计入分子。</p>');
   const result = runGuard(t, reopened);
@@ -250,7 +296,7 @@ test('a first appearance notifies, and the same identity on the next run does no
   assert.equal(first.state, 'pending');
 
   // The page this run publishes, which becomes the next run's trusted previous.
-  const published = prepareReport(view(), evidence(), { ...context, riskConstituents: constituents() }).html;
+  const published = prepared().html;
   assert.equal(runGuard(t, published).status, 0);
   assert.equal(publishedAutoNotifyIds(published).has(record.notifyId), true);
 
@@ -302,7 +348,8 @@ test('an unreadable previous manifest is refused rather than read as nothing not
 test('rendering refuses an exclusion it cannot name', () => {
   const coverage = buildAiTierCoverage([constituent({})]);
   assert.match(renderAiTierCoverage(coverage).template, /xuan-ib-ai-tier-records-v1/);
-  const forged = { ...coverage, entries: [{ symbol: 'X', namespace: 'AUTO', recordId: 'AUTO:x',
+  const forged = { ...coverage, entries: [{ key: '1:2', symbol: 'X', custodian: 'Webull',
+    portfolioId: '1', holdingId: '2', instrumentId: '2', namespace: 'AUTO', recordId: 'AUTO:x',
     status: 'excluded', reason: 'because-i-said-so' }] };
   assert.throws(() => renderAiTierCoverage(forged), /EXCLUSION_REASON_UNENUMERATED/);
 });

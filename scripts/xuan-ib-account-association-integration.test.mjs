@@ -101,11 +101,14 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
   if(positionsFallback)view.holdings.status='fallback';
   // Exactly the constituents the view shows, carrying the identity the approved
   // rules are written against.
-  const riskConstituents = [{ symbol: 'SYNTH', venue: 'TEST', portfolioId: '1350094', holdingId: '99000001',
+  const riskConstituents = [{ symbol: 'SYNTH', custodian: 'Webull', venue: 'TEST',
+    portfolioId: '1350094', holdingId: '99000001',
     instrumentId: '99000001', currency: 'USD', assetType: 'STK', marketValueUsd: 100, valueDate: dataDate,
     identityVerified: true, firstSeen: true }];
+  // Source-bound account totals, supplied by the caller; never fetched here.
+  const riskDenominator = { components: [{ label: '合成账户', valueUsd: 1000 }] };
   const options = { previousHtml, previousMeta, policy: etfPolicy, registry, journalPath, associationSnapshot, now };
-  return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options, riskConstituents };
+  return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options, riskConstituents, riskDenominator };
 }
 
 test('recurring prepare runs the actual guard, preserves old receipts and publishes only minimal association evidence', async t => {
@@ -194,9 +197,11 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   // AI-pressure numerator while remaining in the denominator.
   const constituentsFile = path.join(f.directory, 'synthetic-constituents.json');
   fs.writeFileSync(constituentsFile, JSON.stringify(f.riskConstituents), { mode: 0o600 });
+  const denominatorFile = path.join(f.directory, 'synthetic-denominator.json');
+  fs.writeFileSync(denominatorFile, JSON.stringify(f.riskDenominator), { mode: 0o600 });
   let reads = 0;
   const result = runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
-    '--risk-constituents', constituentsFile], {
+    '--risk-constituents', constituentsFile, '--risk-denominator', denominatorFile], {
     loadAssociationPolicy(options) {
       reads += 1;
       assert.equal(options.cwd, repoRoot);

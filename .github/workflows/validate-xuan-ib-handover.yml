@@ -28,7 +28,7 @@ jobs:
           trusted_root="$RUNNER_TEMP/xuan-ib-trusted"
           mkdir -p "$trusted_root"
           git archive origin/main -- scripts | tar -x -C "$trusted_root"
-          git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json claude/xuan-ib-classification-delegation-v1.json claude/xuan-ib-ai-tier-overrides-v1.json claude/xuan-ib-auto-classification-v1.json claude/xuan-ib-venue-identity-v1.json | tar -x -C "$trusted_root"
+          git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json claude/xuan-ib-classification-delegation-v1.json claude/xuan-ib-ai-tier-overrides-v1.json claude/xuan-ib-auto-classification-v1.json claude/xuan-ib-venue-identity-v1.json claude/xuan-ib-ai-risk-tiers-v1.json | tar -x -C "$trusted_root"
           for required in \
             scripts/handover-guard.mjs \
             scripts/xuan-ib-venue-identity.mjs \
@@ -36,6 +36,8 @@ jobs:
             claude/xuan-ib-venue-identity-v1.json \
             claude/xuan-ib-auto-classification-v1.json \
             claude/xuan-ib-ai-tier-overrides-v1.json \
+            scripts/xuan-ib-ai-risk-registry.mjs \
+            claude/xuan-ib-ai-risk-tiers-v1.json \
             scripts/xuan-ib-account-association.mjs \
             scripts/xuan-ib-account-association-publication.mjs \
             scripts/xuan-ib-classification-disclosure.mjs \

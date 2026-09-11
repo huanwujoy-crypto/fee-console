@@ -1387,18 +1387,30 @@ test('a machine-readable WU, DELEG or AUTO record satisfies the AI-tier rule', (
   0);
   // The strict template form, which is also how a genuinely excluded non-stock
   // is disclosed by name with an enumerated reason.
-  const template = (entries) => `<template id="xuan-ib-ai-tier-records-v1" type="application/json">${JSON.stringify(entries)}</template>`;
+  // The manifest is identity-keyed, and the risk pane declares the universe it
+  // covers — its own, not the IB-only holdings table's.
+  const identity = { key: '1350094:99000001', custodian: 'Webull', portfolioId: '1350094',
+    holdingId: '99000001', instrumentId: '99000001' };
+  const template = (entries) => `<p data-ai-risk-universe-v1="${entries.length}"></p>`
+    + entries.map(entry => `<span data-ai-risk-constituent="${entry.key}"></span>`).join('')
+    + `<template id="xuan-ib-ai-tier-records-v1" type="application/json">${JSON.stringify(entries)}</template>`;
   assert.equal(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
-    + template([{ symbol: 'NEWCO', namespace: 'AUTO', recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001',
+    + template([{ ...identity, symbol: 'NEWCO', namespace: 'AUTO', recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001',
       status: 'excluded', reason: 'asset-type-not-ordinary-stock' }])).status, 0);
   // An exclusion with no enumerated reason is the failure mode this exists to
   // prevent, and a namespace that disagrees with its own id is refused.
   assert.match(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
-    + template([{ symbol: 'NEWCO', namespace: 'AUTO', recordId: 'AUTO:x', status: 'excluded', reason: 'because' }])).stderr,
+    + template([{ ...identity, symbol: 'NEWCO', namespace: 'AUTO', recordId: 'AUTO:x', status: 'excluded', reason: 'because' }])).stderr,
   /must name an enumerated exclusion reason/);
   assert.match(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
-    + template([{ symbol: 'NEWCO', namespace: 'DELEG', recordId: 'AUTO:x', status: 'classified' }])).stderr,
+    + template([{ ...identity, symbol: 'NEWCO', namespace: 'DELEG', recordId: 'AUTO:x', status: 'classified' }])).stderr,
   /does not match its declared DELEG namespace/);
+  // A manifest with no declared universe cannot be reconciled at all, so it is
+  // refused rather than silently accepted as covering whatever is convenient.
+  assert.match(runRisk('<p>x</p><template id="xuan-ib-ai-tier-records-v1" type="application/json">'
+    + JSON.stringify([{ ...identity, symbol: 'NEWCO', namespace: 'AUTO',
+      recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001', status: 'classified' }])
+    + '</template>').stderr, /must declare the AI risk constituent universe/);
   assert.match(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
     + '<p data-ai-tier-symbol="NEWCO" data-ai-tier-namespace="OWNER" data-ai-tier-record="X">x</p>').stderr,
   /needs a WU, DELEG or AUTO namespace and record id/);

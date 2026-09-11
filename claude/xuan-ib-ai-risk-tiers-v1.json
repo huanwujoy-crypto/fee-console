@@ -1,0 +1,102 @@
+{
+  "schemaVersion": 1,
+  "policyRevision": "ai-risk-tiers-v1-2026-09-11",
+  "purpose": "risk-measurement-only",
+  "namespace": "REG",
+  "financialWrites": false,
+  "coefficientChanges": false,
+  "transcription": {
+    "kind": "mechanical-transcription",
+    "changesAnyCoefficient": false,
+    "inventsAnyCoefficient": false,
+    "ladderSource": "claude/xuan-ib-classification-authority-review-2026-08-31.md",
+    "assignmentSource": "xuan-ib/latest.html, the published 2026-09-11 AM edition, pane p2 table 'AI 压力敞口 · §0-C'",
+    "note": "Every number in this file was read out of an already-published, already-approved artefact. The three standard ladders are transcribed from the owner-reviewed §0-C table in the authority review; every per-instrument assignment and every ETF look-through percentage is transcribed from the AI-pressure table of the published report named above. Nothing here is a new financial judgement, a new coefficient, a new tier, a new account scope or a trading authority.",
+    "effective": "This file has no effect until the repository owner posts the exact-head-SHA approval comment on the pull request that introduces it and that pull request merges. Until then it is a reviewed proposal only.",
+    "unresolved": "The published report states a low/mid/high ladder only for the three standard tiers and for the named IREN exception. It publishes a single composition percentage for each ETF look-through and a single mid-scenario ratio. Low and high are therefore genuinely undefined for ETF look-through, and this file records that as unresolved rather than filling it with a guess or a zero."
+  },
+  "ladders": {
+    "T1": {
+      "low": 0.6,
+      "mid": 0.8,
+      "high": 1,
+      "definition": "AI capex direct recipient: compute silicon, semiconductor equipment, data-centre networking and power equipment.",
+      "publishedAs": "60% / 80% / 100%"
+    },
+    "T2": {
+      "low": 0.4,
+      "mid": 0.55,
+      "high": 0.7,
+      "definition": "Hyperscale spender.",
+      "publishedAs": "40% / 55% / 70%"
+    },
+    "T3": {
+      "low": 0,
+      "mid": 0.05,
+      "high": 0.1,
+      "definition": "Adopts AI but does not depend on AI capex.",
+      "publishedAs": "0% / 5% / 10%"
+    }
+  },
+  "stocks": [
+    { "custodian": "IB-HK", "symbol": "IVAI", "tier": "T1", "publishedLabel": "纯 T1" },
+    { "custodian": "IB-HK", "symbol": "SMH", "tier": "T1", "publishedLabel": "纯 T1" },
+    { "custodian": "IB-HK", "symbol": "GOOG", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "META", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "MSFT", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "ORCL", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "APO", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "BRK.B", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "INDA", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "KKR", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "TSLA", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "USSC", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "VCN", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "Schwab-HK", "symbol": "AVGO", "tier": "T1", "publishedLabel": "T1" },
+    { "custodian": "Schwab-HK", "symbol": "GOOGL", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "Schwab-HK", "symbol": "META", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "Schwab-HK", "symbol": "BRK/B", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "Schwab-HK", "symbol": "TSLA", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "Webull", "symbol": "GOOG", "tier": "T2", "publishedLabel": "T2" }
+  ],
+  "etfLookThrough": [
+    { "custodian": "IB-HK", "symbol": "MXUS", "mid": 0.2503, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 25.03%" },
+    { "custodian": "IB-HK", "symbol": "CSPX", "mid": 0.2579, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 25.79%" },
+    { "custodian": "IB-HK", "symbol": "EQAC", "mid": 0.4107, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 41.07%" },
+    { "custodian": "IB-HK", "symbol": "EXUS", "mid": 0.0601, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 6.01%" },
+    { "custodian": "IB-HK", "symbol": "EIMI", "mid": 0.2655, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 26.55%" }
+  ],
+  "specialCases": [
+    {
+      "id": "REG-SPECIAL-METU-LEVERAGED-T2",
+      "custodian": "Schwab-HK",
+      "symbol": "METU",
+      "kind": "leveraged-etf",
+      "underlyingTier": "T2",
+      "leverage": 2,
+      "cap": 1,
+      "publishedLabel": "META 2x 杠杆 ETF · min(2×55%,100%)",
+      "note": "The published report applies min(leverage × tier coefficient, cap) and shows the mid scenario as min(2 × 55%, 100%) = 100%. The same formula is applied to each scenario of the underlying ladder."
+    },
+    {
+      "id": "REG-SPECIAL-TSEM-T2",
+      "custodian": "Schwab-HK",
+      "symbol": "TSEM",
+      "kind": "named-tier-exception",
+      "tier": "T2",
+      "publishedLabel": "特例沿用归 T2",
+      "note": "Named in the owner-reviewed §0-C exception row as T2 and carried forward unchanged by the published report."
+    },
+    {
+      "id": "REG-SPECIAL-IREN-LADDER",
+      "custodian": "Webull",
+      "symbol": "IREN",
+      "kind": "explicit-ladder",
+      "low": 0.6,
+      "mid": 1,
+      "high": 1,
+      "publishedLabel": "特例沿用中情景 100%",
+      "note": "Named in the owner-reviewed §0-C exception row with the explicit ladder 60% / 100% / 100%; the published report shows its mid scenario as 100%."
+    }
+  ]
+}
