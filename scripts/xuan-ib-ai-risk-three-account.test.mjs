@@ -95,10 +95,15 @@ function universe() {
   ];
 }
 
+// The denominator as a composition: one stable key, one label and one exact
+// integer micro-USD amount per account. These keys are synthetic in the same way
+// every market value here is synthetic; binding the production three-account set
+// to the run's own source reports is the source adapter's job, not this
+// fixture's, and the arithmetic below does not depend on which keys they are.
 const denominator = () => ({ components: [
-  { label: 'IB NAV', valueUsd: 5000000 },
-  { label: 'Schwab-HK', valueUsd: 700000 },
-  { label: 'Webull', valueUsd: 600000 },
+  { key: 'ib-hk', label: 'IB NAV', valueMicro: '5000000000000' },
+  { key: 'schwab-hk', label: 'Schwab-HK', valueMicro: '700000000000' },
+  { key: 'webull', label: 'Webull', valueMicro: '600000000000' },
 ] });
 
 // The holdings table is the IB book alone — three rows here — while the risk
@@ -302,19 +307,28 @@ test('a hand-tampered numerator, ratio, row or coefficient is caught by the real
   fails(built.html.replace(`data-ai-ratio-bp="${ratio}"`, `data-ai-ratio-bp="${ratio - 500}"`),
     /ratio that does not follow from its own numerator and denominator/);
 
-  // 3. A single contribution silently inflated, with the summary left alone.
+  // 3. A single displayed contribution silently inflated, with the exact
+  //    unrounded product and the summary both left alone.
   const goog = built.html.match(new RegExp(`<tr data-ai-risk-row="${keyOf('GOOG', 'IB-HK')}"[^<>]*>`))[0];
   fails(built.html.replace(goog, goog.replace(/data-ai-contribution-cents="\d+"/,
     'data-ai-contribution-cents="9999999"')),
+  /is not its own unrounded value rounded to cents/);
+
+  // 3b. And the exact product moved instead, which is the figure the numerator
+  //     is actually summed from.
+  fails(built.html.replace(goog, goog.replace(/data-ai-contribution-mbp="\d+"/,
+    'data-ai-contribution-mbp="9999999999999"')),
   /is not its market value times its own coefficient/);
 
   // 4. A coefficient quietly raised, with its own contribution kept consistent
-  //    so the row's arithmetic still closes. The total no longer does.
+  //    so the row's arithmetic still closes. The total no longer does — and the
+  //    coefficient itself is refused against the approval it claims to be.
   const brk = built.html.match(new RegExp(`<tr data-ai-risk-row="${keyOf('BRK.B', 'IB-HK').replace('.', '\\.')}"[^<>]*>`))[0];
   fails(built.html.replace(brk, brk
     .replace('data-ai-coefficient-bp="500"', 'data-ai-coefficient-bp="8000"')
+    .replace(/data-ai-contribution-mbp="\d+"/, 'data-ai-contribution-mbp="160000000000000"')
     .replace(/data-ai-contribution-cents="\d+"/, 'data-ai-contribution-cents="16000000"')),
-  /but its own rows sum to/);
+  /displays a coefficient of 8000 basis points, but .* records 500/);
 
   // 5. A whole constituent dropped from the table while it stays classified in
   //    the manifest — the 2026-09-11 defect itself, stated as arithmetic.
@@ -327,9 +341,17 @@ test('a hand-tampered numerator, ratio, row or coefficient is caught by the real
   //    symbol-keyed pipeline would have produced. The manifest still names both.
   const ibGoog = built.html.match(new RegExp(`<tr data-ai-risk-row="${keyOf('GOOG', 'IB-HK')}"[\\s\\S]*?</tr>`))[0];
   fails(built.html.replace(webullGoog, '').replace(ibGoog,
-    ibGoog.replace(/data-ai-market-value-cents="\d+"/, 'data-ai-market-value-cents="22000000"')
+    ibGoog.replace(/data-ai-market-value-micro="\d+"/, 'data-ai-market-value-micro="220000000000"')
+      .replace(/data-ai-market-value-cents="\d+"/, 'data-ai-market-value-cents="22000000"')
+      .replace(/data-ai-contribution-mbp="\d+"/, 'data-ai-contribution-mbp="1210000000000000"')
       .replace(/data-ai-contribution-cents="\d+"/, 'data-ai-contribution-cents="12100000"')),
   /carries an AI tier classified record but contributes no row/);
+
+  // 6b. A market value whose two published forms disagree — the micro-USD the
+  //     arithmetic uses against the cents the reader sees.
+  fails(built.html.replace(ibGoog, ibGoog.replace(/data-ai-market-value-cents="\d+"/,
+    'data-ai-market-value-cents="22000000"')),
+  /shows a market value in cents that is not its own micro-USD value/);
 
   // 7. An excluded row given a contribution, which is the same understatement
   //    running the other way.
@@ -349,6 +371,200 @@ test('a hand-tampered numerator, ratio, row or coefficient is caught by the real
   // 9. And removing it entirely is not an escape either.
   fails(built.html.replace(/<div class="kpi" data-ai-pressure-kpi-v1[\s\S]*?<\/div><\/div>/, ''),
     /requires exactly one headline KPI derived from it/);
+});
+
+// ---------------------------------------------------------------------------
+// Gap C: the coherent tamper. Every check above compares the page against
+// itself, so a candidate that moves a coefficient AND re-derives the row, the
+// total, the ratio and the headline tile from it produces a completely
+// self-consistent page. Until the gate re-resolved the coefficient from the
+// trusted approvals, that page passed.
+// ---------------------------------------------------------------------------
+
+// Rewrite one row's coefficient and then re-derive, from that new coefficient,
+// every other figure the page publishes — the row's exact product, the row's
+// displayed cents, the summary's unrounded numerator, the summary's cents, the
+// ratio, and all three of the tile's numbers. The result is internally perfect.
+const coherentlyRetuned = (html, key, newBp) => {
+  const attribute = (tag, name) => BigInt(tag.match(new RegExp(`\\b${name}="(\\d+)"`))[1]);
+  const round = (value) => (value + 50_000_000n) / 100_000_000n;
+  const rowTag = html.match(new RegExp(`<tr data-ai-risk-row="${key}"[^<>]*>`))[0];
+  const summaryTag = html.match(/<tr data-ai-pressure-v1="1"[^<>]*>/)[0];
+  const kpiTag = html.match(/<div class="kpi" data-ai-pressure-kpi-v1[^<>]*>/)[0];
+
+  const valueMicro = attribute(rowTag, 'data-ai-market-value-micro');
+  const previous = attribute(rowTag, 'data-ai-contribution-mbp');
+  const replacement = valueMicro * newBp;
+  const numerator = attribute(summaryTag, 'data-ai-numerator-mbp') - previous + replacement;
+  const denominatorMicroBasis = attribute(summaryTag, 'data-ai-denominator-micro') * 10_000n;
+  const ratio = (numerator * 1_000_000n + denominatorMicroBasis / 2n) / denominatorMicroBasis;
+
+  return html
+    .replace(rowTag, rowTag
+      .replace(/data-ai-coefficient-bp="\d+"/, `data-ai-coefficient-bp="${newBp}"`)
+      .replace(/data-ai-contribution-mbp="\d+"/, `data-ai-contribution-mbp="${replacement}"`)
+      .replace(/data-ai-contribution-cents="\d+"/, `data-ai-contribution-cents="${round(replacement)}"`))
+    .replace(summaryTag, summaryTag
+      .replace(/data-ai-numerator-mbp="\d+"/, `data-ai-numerator-mbp="${numerator}"`)
+      .replace(/data-ai-numerator-cents="\d+"/, `data-ai-numerator-cents="${round(numerator)}"`)
+      .replace(/data-ai-ratio-bp="\d+"/, `data-ai-ratio-bp="${ratio}"`))
+    .replace(kpiTag, kpiTag
+      .replace(/data-ai-kpi-numerator-mbp="\d+"/, `data-ai-kpi-numerator-mbp="${numerator}"`)
+      .replace(/data-ai-kpi-numerator-cents="\d+"/, `data-ai-kpi-numerator-cents="${round(numerator)}"`)
+      .replace(/data-ai-kpi-ratio-bp="\d+"/, `data-ai-kpi-ratio-bp="${ratio}"`));
+};
+
+test('a coefficient raised coherently across row, total, ratio and KPI is still refused', t => {
+  const built = build();
+  assert.equal(runGuard(t, built.html).status, 0);
+  const manifest = manifestOf(built.html);
+  const keyOf = (symbol, custodian) => manifest.find(entry =>
+    entry.symbol === symbol && entry.custodian === custodian).key;
+  const fails = (html, pattern) => {
+    const result = runGuard(t, html);
+    assert.notEqual(result.status, 0, 'a self-consistent page with an unapproved coefficient must be refused');
+    assert.match(result.stderr + result.stdout, pattern);
+  };
+
+  // A `REG` assignment. The old check proved only that the record id existed in
+  // the trusted registry, never that the displayed coefficient was that rule's.
+  const retunedReg = coherentlyRetuned(built.html, keyOf('BRK.B', 'IB-HK'), 8000n);
+  // The page really is internally consistent: nothing in it disagrees with
+  // anything else in it.
+  assert.match(retunedReg, /data-ai-coefficient-bp="8000"/);
+  fails(retunedReg, /displays a coefficient of 8000 basis points, but REG-\S+ records 500/);
+
+  // A `DELEG` approval, where the old check tested only the id's prefix.
+  fails(coherentlyRetuned(built.html, keyOf('VST', 'Webull'), 10_000n),
+    /displays a coefficient of 10000 basis points, but DELEG-\S+ records 8000/);
+
+  // An owner `WU` selection.
+  fails(coherentlyRetuned(built.html, keyOf('MRVL', 'Webull'), 4000n),
+    /displays a coefficient of 4000 basis points, but WU-\S+ records 8000/);
+
+  // And an `AUTO` record, whose id is itself a policy revision and an identity.
+  fails(coherentlyRetuned(built.html, keyOf('NEWAI', 'Webull'), 10_000n),
+    /displays a coefficient of 10000 basis points, but AUTO:\S+ records 8000/);
+
+  // Lowering one is refused in exactly the same way: this is a binding to the
+  // approval, not a one-sided ceiling.
+  fails(coherentlyRetuned(built.html, keyOf('GOOG', 'Webull'), 100n),
+    /displays a coefficient of 100 basis points, but \S+ records 5500/);
+});
+
+// ---------------------------------------------------------------------------
+// Gap D: the denominator, which used to be a single typed total.
+// ---------------------------------------------------------------------------
+
+test('the denominator is re-added from its own published components', t => {
+  const built = build();
+  const composition = built.html.match(
+    /<template id="xuan-ib-ai-denominator-v1" type="application\/json">([\s\S]*?)<\/template>/);
+  const components = JSON.parse(composition[1]);
+  const fails = (html, pattern) => {
+    const result = runGuard(t, html);
+    assert.notEqual(result.status, 0, 'the tampered denominator must be refused');
+    assert.match(result.stderr + result.stdout, pattern);
+  };
+  const withComponents = (next) => built.html.replace(composition[1], JSON.stringify(next));
+
+  // Each account is named once, by a stable key, with its own exact integer
+  // micro-USD amount, and the three add up to the total the table divides by.
+  assert.deepEqual(components.map(item => item.key), ['ib-hk', 'schwab-hk', 'webull']);
+  assert.deepEqual(components.map(item => item.valueMicro),
+    ['5000000000000', '700000000000', '600000000000']);
+  assert.match(built.html, /data-ai-denominator-v1="3"/);
+
+  // A dropped account understates the denominator and overstates the published
+  // ratio. Before the composition existed there was nothing to notice it with.
+  fails(withComponents(components.filter(item => item.key !== 'webull')),
+    /declares 3 components but names 2/);
+  // ...including when the declared count is moved to match.
+  fails(withComponents(components.filter(item => item.key !== 'webull'))
+    .replace('data-ai-denominator-v1="3"', 'data-ai-denominator-v1="2"'),
+  /must contain exactly ib-hk, schwab-hk, webull/);
+
+  // A repeated account double-counts one book and understates the ratio.
+  fails(withComponents([...components, components[2]])
+    .replace('data-ai-denominator-v1="3"', 'data-ai-denominator-v1="4"'),
+  /names the component webull more than once/);
+
+  // Even a zero-valued invented component is outside the approved scope. Its
+  // sum is coherent, so only an exact account-set guard can catch it.
+  fails(withComponents([...components,
+    { key: 'invented', label: 'Invented', valueMicro: '0' }])
+    .replace('data-ai-denominator-v1="3"', 'data-ai-denominator-v1="4"'),
+  /must contain exactly ib-hk, schwab-hk, webull/);
+
+  // One component quietly changed, with the total left alone.
+  fails(withComponents(components.map(item =>
+    item.key === 'schwab-hk' ? { ...item, valueMicro: '900000000000' } : item)),
+  /components sum to 6500000000000 micro-USD but the table uses 6300000000000/);
+
+  // A component finer than a cent, which no published figure could be shown as.
+  fails(withComponents(components.map(item =>
+    item.key === 'webull' ? { ...item, valueMicro: '600000000001' } : item)),
+  /component webull is not verified to the cent/);
+
+  // A component with no stable key, or with fields nothing verifies.
+  fails(withComponents(components.map(item =>
+    item.key === 'ib-hk' ? { ...item, key: 'IB HK' } : item)),
+  /does not carry a stable component key/);
+  fails(withComponents(components.map(item =>
+    item.key === 'ib-hk' ? { ...item, note: '手写' } : item)),
+  /component has missing or unknown fields/);
+
+  // And the composition cannot simply be removed.
+  fails(built.html.replace(composition[0], ''),
+    /requires exactly one xuan-ib-ai-denominator-v1 composition template/);
+});
+
+test('a coherent denominator tamper is caught by the components it does not change', t => {
+  const built = build();
+  const summaryTag = built.html.match(/<tr data-ai-pressure-v1="1"[^<>]*>/)[0];
+  const kpiTag = built.html.match(/<div class="kpi" data-ai-pressure-kpi-v1[^<>]*>/)[0];
+  const paragraph = built.html.match(/<p data-ai-denominator-v1="3"[^<>]*>/)[0];
+  const numerator = BigInt(summaryTag.match(/data-ai-numerator-mbp="(\d+)"/)[1]);
+
+  // Shrinking the denominator inflates the published ratio. Here it is moved
+  // everywhere it appears — the summary row, the visible composition line, the
+  // headline tile — and the ratio is re-derived from the new value, so the page
+  // agrees with itself in every figure it shows. That is exactly the tamper the
+  // old single-total form had no answer to.
+  const movedMicro = 5_000_000_000_000n;
+  const movedCents = movedMicro / 10_000n;
+  const movedRatio = (numerator * 1_000_000n + movedMicro * 10_000n / 2n) / (movedMicro * 10_000n);
+  const tampered = built.html
+    .replace(summaryTag, summaryTag
+      .replace(/data-ai-denominator-micro="\d+"/, `data-ai-denominator-micro="${movedMicro}"`)
+      .replace(/data-ai-denominator-cents="\d+"/, `data-ai-denominator-cents="${movedCents}"`)
+      .replace(/data-ai-ratio-bp="\d+"/, `data-ai-ratio-bp="${movedRatio}"`))
+    .replace(paragraph, paragraph
+      .replace(/data-ai-denominator-total-micro="\d+"/, `data-ai-denominator-total-micro="${movedMicro}"`)
+      .replace(/data-ai-denominator-total-cents="\d+"/, `data-ai-denominator-total-cents="${movedCents}"`))
+    .replace(kpiTag, kpiTag
+      .replace(/data-ai-kpi-denominator-micro="\d+"/, `data-ai-kpi-denominator-micro="${movedMicro}"`)
+      .replace(/data-ai-kpi-denominator-cents="\d+"/, `data-ai-kpi-denominator-cents="${movedCents}"`)
+      .replace(/data-ai-kpi-ratio-bp="\d+"/, `data-ai-kpi-ratio-bp="${movedRatio}"`));
+
+  const result = runGuard(t, tampered);
+  assert.notEqual(result.status, 0, 'a denominator moved consistently everywhere must still be refused');
+  assert.match(result.stderr + result.stdout,
+    /components sum to 6300000000000 micro-USD but the table uses 5000000000000/);
+});
+
+test('an ordinary report cannot keep the manifest while omitting the pressure computation', t => {
+  const built = build();
+  const stripped = built.html
+    .replace(/<template id="xuan-ib-ai-denominator-v1"[\s\S]*?<\/template>/, '')
+    .replace(/data-ai-pressure-v1/g, 'data-ai-pressure-disabled')
+    .replace(/data-ai-risk-row/g, 'data-ai-risk-row-disabled')
+    .replace(/data-ai-pressure-kpi-v1/g, 'data-ai-pressure-kpi-disabled')
+    .replace(/data-ai-denominator-v1/g, 'data-ai-denominator-disabled');
+  const result = runGuard(t, stripped);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr + result.stdout,
+    /must publish its computed AI pressure table/);
 });
 
 test('the headline AI pressure KPI is derived, not accepted from the caller', () => {

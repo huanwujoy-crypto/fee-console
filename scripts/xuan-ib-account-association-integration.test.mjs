@@ -68,11 +68,26 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
   const input = {
     edition, dataDate, previousSourceSha: previousMeta.sourceSha,
     ib: Object.fromEntries(IB_ENDPOINTS.map((name, index) => [name, captured(raws[name], 5100 + index * 900, 5200 + index * 900)])),
-    sharesight: registry.portfolios.filter(item => item.requiredEachReport).map(item => captured({ result: {
-      mode: 'read_only', portfolio: { id: item.portfolioId, currency_code: 'USD' },
-      data: { report: { portfolio_id: item.portfolioId, value: 100, end_date: dataDate,
-        currency: { code: 'USD' }, holdings: [], cash_accounts: [] } },
-    } }, 11_100, 11_200)),
+    sharesight: registry.portfolios.filter(item => item.requiredEachReport).map(item => {
+      const selected = [936247, 936249, 1350094].includes(item.portfolioId);
+      const webull = item.portfolioId === 1350094;
+      const holdings = webull ? [{ id: 99000001, portfolio: { id: item.portfolioId }, instrument: {
+        id: 99000001, code: 'SYNTH', market_code: 'TEST', name: 'Synthetic stock',
+        currency_code: 'USD', friendly_instrument_description_code: 'ordinary_shares' },
+      instrument_currency: { code: 'USD' }, valid_position: true, quantity: 1, value: 100,
+      instrument_price: 100, labels: [], group_name: 'Ordinary Shares',
+      number_of_unconfirmed_transactions: 0 }] : [];
+      const cash_accounts = selected && !webull ? [{ id: item.portfolioId,
+        portfolio: { id: item.portfolioId }, name: 'USD Cash', value: 100,
+        currency: { code: 'USD' } }] : [];
+      return captured({ result: {
+        mode: 'read_only', portfolio: { id: item.portfolioId, currency_code: 'USD' },
+        data: { report: { portfolio_id: item.portfolioId, value: selected ? 100 : 0,
+          start_date: dataDate, end_date: dataDate, percentages_annualised: false,
+          include_sales: false, currency: { code: 'USD' }, holdings, cash_accounts },
+        links: { self: 'https://example.invalid/performance?consolidated=false&include_sales=false&report_combined=false' } },
+      } }, 11_100, 11_200);
+    }),
   };
   if(positionsFallback){
     const raw={isError:true,error:'SYNTHETIC_UNAVAILABLE'};
@@ -106,7 +121,8 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
     instrumentId: '99000001', currency: 'USD', assetType: 'STK', marketValueUsd: 100, valueDate: dataDate,
     identityVerified: true, firstSeen: true }];
   // Source-bound account totals, supplied by the caller; never fetched here.
-  const riskDenominator = { components: [{ label: '合成账户', valueUsd: 1000 }] };
+  const riskDenominator = { components: [
+    { key: 'synthetic-account', label: '合成账户', valueMicro: '1000000000' }] };
   const options = { previousHtml, previousMeta, policy: etfPolicy, registry, journalPath, associationSnapshot, now };
   return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options, riskConstituents, riskDenominator };
 }
@@ -195,13 +211,11 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   // path by prepare itself. SYNTH reaches no WU or DELEG rule, so an ordinary
   // scheduled edition has to classify it rather than let it drop out of the
   // AI-pressure numerator while remaining in the denominator.
-  const constituentsFile = path.join(f.directory, 'synthetic-constituents.json');
-  fs.writeFileSync(constituentsFile, JSON.stringify(f.riskConstituents), { mode: 0o600 });
-  const denominatorFile = path.join(f.directory, 'synthetic-denominator.json');
-  fs.writeFileSync(denominatorFile, JSON.stringify(f.riskDenominator), { mode: 0o600 });
+  const sourceInputFile = path.join(f.directory, 'synthetic-source-input.json');
+  fs.writeFileSync(sourceInputFile, JSON.stringify(f.input), { mode: 0o600 });
   let reads = 0;
   const result = runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
-    '--risk-constituents', constituentsFile, '--risk-denominator', denominatorFile], {
+    '--risk-source-capture', fs.realpathSync(sourceInputFile)], {
     loadAssociationPolicy(options) {
       reads += 1;
       assert.equal(options.cwd, repoRoot);
@@ -215,7 +229,7 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   assert.equal(showRunJournal(f.journalPath).stages.find(item => item.name === 'candidate-prep').status, 'ok');
   assert.equal(fs.statSync(outputFile).mode & 0o777, 0o600);
   assert.throws(() => runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
-    '--risk-constituents', constituentsFile]), /already exists/);
+    '--risk-source-capture', fs.realpathSync(sourceInputFile)]), /already exists/);
   // The candidate carries complete, machine-readable coverage of exactly the
   // constituents it shows, which is what the publication gate reconciles.
   const candidate = fs.readFileSync(outputFile, 'utf8');

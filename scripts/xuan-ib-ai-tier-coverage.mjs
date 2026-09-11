@@ -27,7 +27,8 @@
 // `awaiting_user` item and never adopts a coefficient.
 import {
   AUTO_EXCLUSION_REASONS, AUTO_NAMESPACE, assertNoProvisionalWording,
-  classifyFirstSeenPosition, readAutoClassificationPolicy, renderAutoClassificationRecord,
+  classifyFirstSeenPosition, continueAutoClassification, readAutoClassificationPolicy,
+  renderAutoClassificationRecord,
 } from './xuan-ib-auto-classification.mjs';
 import { AI_RISK_NAMESPACE, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 import { calculateDelegatedTier, listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
@@ -67,6 +68,14 @@ const CONSTITUENT = Object.freeze(['symbol', 'custodian', 'venue', 'portfolioId'
   'instrumentId', 'currency', 'assetType', 'marketValueUsd', 'valueDate', 'identityVerified',
   'firstSeen']);
 
+// The exact integer form of the same market value, in micro-USD. It is optional
+// here and authoritative wherever it appears: this module classifies and never
+// values, so it neither reads nor checks the amount, and `computeAiPressure`
+// refuses a record whose two forms disagree. It is listed rather than ignored so
+// that the strict field check below stays strict — an unrecognized field could
+// carry a claim nothing verifies.
+const CONSTITUENT_OPTIONAL = Object.freeze(['marketValueMicro', 'previousAutoRecordId']);
+
 /**
  * The identity key of one constituent.
  *
@@ -92,7 +101,7 @@ function ownerOverrides() {
 
 function validateConstituent(entry, index) {
   if (!plain(entry)) fail('CONSTITUENT_MALFORMED', `#${index}`);
-  const keys = Object.keys(entry).sort().join('|');
+  const keys = Object.keys(entry).filter(key => !CONSTITUENT_OPTIONAL.includes(key)).sort().join('|');
   // Exact shape. An unrecognized field could carry a claim this module does not
   // check — a tier, an approval, an exemption — and ignoring it would classify
   // more widely than the approved policies allow.
@@ -177,6 +186,35 @@ function resolveOne(constituent, { rules, overrides, registry, policy, autoPolic
     return { entry: { ...identity, namespace: AI_RISK_NAMESPACE, recordId: registered.recordId,
       status: 'classified' }, record: null, basis: 'registry', ladder: registered.ladder,
       tier: registered.tier, registered };
+  }
+
+  // A conservative AUTO classification is a real effective classification,
+  // not a one-report placeholder. If the last trusted public page carried its
+  // exact record id for this identity, continue it under the same protected
+  // policy. It is not emitted as a new notification.
+  if (constituent.previousAutoRecordId !== null
+    && constituent.previousAutoRecordId !== undefined) {
+    let record = null;
+    try {
+      record = continueAutoClassification({
+        symbol: constituent.symbol, venue: constituent.venue,
+        portfolioId: constituent.portfolioId, holdingId: constituent.holdingId,
+        instrumentId: constituent.instrumentId, currency: constituent.currency,
+        assetType: constituent.assetType, marketValueUsd: constituent.marketValueUsd,
+        valueDate: constituent.valueDate, identityVerified: constituent.identityVerified,
+        firstSeen: constituent.firstSeen,
+      }, { policy, previousRecordId: constituent.previousAutoRecordId });
+    } catch (error) {
+      if (error.name !== 'AutoClassificationException') throw error;
+      if (typeof error.reason === 'string'
+        && Object.values(AUTO_EXCLUSION_REASONS).includes(error.reason)) {
+        return excluded(error.reason);
+      }
+      fail('PERSISTED_AUTO_RECORD_INVALID', `${symbol}:${error.code}`);
+    }
+    return { entry: { ...identity, namespace: AUTO_NAMESPACE, recordId: record.classificationId,
+      status: 'classified' }, record: null, basis: 'auto-carried',
+      ladder: registry.ladderFor(record.tier), tier: record.tier };
   }
 
   // (2) The automatic policy, for a first-seen ordinary stock only. Everything

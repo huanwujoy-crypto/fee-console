@@ -72,7 +72,11 @@ const constituents = () => [constituent({}),
   constituent({ symbol: 'GLDETF', venue: 'NYSE', holdingId: '99000002', instrumentId: '99000002', assetType: 'ETF' })];
 // Source-bound account totals, supplied by the caller exactly as a real run
 // supplies them. Nothing in this pipeline fetches them.
-const denominator = () => ({ components: [{ label: '合成账户', valueUsd: 1000 }] });
+const denominator = () => ({ components: [
+  { key: 'ib-hk', label: 'IB-HK', valueMicro: '500000000' },
+  { key: 'schwab-hk', label: 'Schwab-HK', valueMicro: '300000000' },
+  { key: 'webull', label: 'Webull', valueMicro: '200000000' },
+] });
 const prepared = (over = {}) => prepareReport(view(), evidence(),
   { ...context, riskConstituents: constituents(), riskDenominator: denominator(), ...over });
 
@@ -201,6 +205,39 @@ test('every constituent is classified or excluded with an enumerated reason, and
   // A constituent carrying a field this module does not check is refused rather
   // than classified more widely than the approved policies allow.
   assert.throws(() => buildAiTierCoverage([{ ...constituent({}), tier: 'T3' }]), /CONSTITUENT_FIELDS_UNEXPECTED/);
+});
+
+test('a previously published AUTO classification remains effective without notifying again', () => {
+  const recordId = 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001';
+  const continued = buildAiTierCoverage([constituent({
+    firstSeen: false, previousAutoRecordId: recordId,
+  })]);
+  assert.equal(continued.entries[0].status, 'classified');
+  assert.equal(continued.entries[0].namespace, 'AUTO');
+  assert.equal(continued.entries[0].recordId, recordId);
+  assert.equal(continued.resolved[0].basis, 'auto-carried');
+  assert.equal(continued.resolved[0].ladder.mid, 0.8);
+  assert.deepEqual(continued.autoRecords, [], 'a carried classification is not a second notification');
+
+  assert.throws(() => buildAiTierCoverage([constituent({
+    firstSeen: false,
+    previousAutoRecordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99999999',
+  })]), /PERSISTED_AUTO_RECORD_INVALID/);
+
+  const migrated = buildAiTierCoverage([constituent({
+    firstSeen: false,
+    previousAutoRecordId: 'AUTO:AUTO-20260910-NEWSTK-T1-R9:1350094:99000001',
+  })]);
+  assert.equal(migrated.entries[0].status, 'classified');
+  assert.equal(migrated.entries[0].recordId, recordId);
+  assert.deepEqual(migrated.autoRecords, []);
+
+  const changedType = buildAiTierCoverage([constituent({
+    firstSeen: false, previousAutoRecordId: recordId, assetType: 'ETF',
+  })]);
+  assert.equal(changedType.entries[0].status, 'excluded');
+  assert.equal(changedType.entries[0].reason,
+    AUTO_EXCLUSION_REASONS.ASSET_TYPE_NOT_ORDINARY_STOCK);
 });
 
 // ---------------------------------------------------------------------------

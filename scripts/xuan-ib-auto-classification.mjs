@@ -98,7 +98,7 @@ const POLICY_KEYS = Object.freeze(['schemaVersion', 'policyId', 'policyRevision'
   'activation', 'purpose', 'authority', 'namespace', 'tier', 'low', 'mid', 'high', 'notifyOnce',
   'createsAwaitingUser', 'mintsOwnerReceipt', 'requireDecisionForRoutineClassification',
   'coefficientChanges', 'accountScopeChanges', 'financialWrites', 'requireSourceIdentityVerified',
-  'requireFirstSeen', 'ordinaryStockAssetTypes', 'excludedAssetTypes']);
+  'requireFirstSeen', 'carryForwardFromPreviousPublic', 'ordinaryStockAssetTypes', 'excludedAssetTypes']);
 
 export function readAutoClassificationPolicy({ path = POLICY_PATH } = {}) {
   let policy = null;
@@ -130,6 +130,7 @@ export function readAutoClassificationPolicy({ path = POLICY_PATH } = {}) {
     || policy.financialWrites !== false
     || policy.requireSourceIdentityVerified !== true
     || policy.requireFirstSeen !== true
+    || policy.carryForwardFromPreviousPublic !== true
     || !Array.isArray(policy.ordinaryStockAssetTypes) || !policy.ordinaryStockAssetTypes.length
     || !Array.isArray(policy.excludedAssetTypes) || !policy.excludedAssetTypes.length) fail('POLICY_MISMATCH');
   // The policy is not free to invent coefficients: it may only name a tier that
@@ -189,6 +190,15 @@ export function classifyFirstSeenPosition(input, {
   policy = readAutoClassificationPolicy(),
   ownerRuleKeys = null,
 } = {}) {
+  return classifyUnderAutoPolicy(input, { policy, ownerRuleKeys, requireFirstSeen: true });
+}
+
+function classifyUnderAutoPolicy(input, {
+  policy = readAutoClassificationPolicy(),
+  ownerRuleKeys = null,
+  requireFirstSeen = true,
+  previousRecordId = null,
+} = {}) {
   const { policy: file, tier, ordinary, excluded } = policy;
   if (!plain(input)) fail('INPUT_MALFORMED');
   for (const key of IDENTITY) {
@@ -214,8 +224,12 @@ export function classifyFirstSeenPosition(input, {
   }
   // First-ever-seen only. A position the reports have carried for weeks without
   // a rule is a different question and is not silently settled here.
-  if (input.firstSeen !== true) {
+  if (requireFirstSeen && input.firstSeen !== true) {
     fail('NOT_FIRST_SEEN', { symbol, reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
+  }
+  if (!requireFirstSeen && input.firstSeen !== false) {
+    fail('PERSISTED_RECORD_NOT_PREVIOUSLY_SEEN', { symbol,
+      reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
   }
   const keys = ownerRuleKeys ?? existingOwnerRuleKeys();
   const existing = keys.get(`${input.portfolioId}:${input.holdingId}`) ?? null;
@@ -255,13 +269,18 @@ export function classifyFirstSeenPosition(input, {
   // published low/mid/high never drifts with binary floating point.
   const cents = BigInt(Math.round(value * 100));
   const scale = name => { const [factor, divisor] = tier.cents[name]; return Number(cents * factor) / divisor; };
+  const classificationId = `${AUTO_NAMESPACE}:${file.policyRevision}:${input.portfolioId}:${input.holdingId}`;
+  if (!requireFirstSeen && previousRecordId !== classificationId) {
+    fail('PERSISTED_RECORD_ID_MISMATCH', { detail: String(previousRecordId), symbol,
+      reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
+  }
   return {
     namespace: AUTO_NAMESPACE,
     policyId: file.policyId,
     policyRevision: file.policyRevision,
     // An AUTO record id, never a `WU-` or `DELEG-` approval id. Nothing here
     // may be read as an owner selection or a named delegated approval.
-    classificationId: `${AUTO_NAMESPACE}:${file.policyRevision}:${input.portfolioId}:${input.holdingId}`,
+    classificationId,
     tier: file.tier,
     symbol, venue: input.venue, assetType,
     portfolioId: input.portfolioId, holdingId: input.holdingId, instrumentId: input.instrumentId,
@@ -281,6 +300,40 @@ export function classifyFirstSeenPosition(input, {
     requiresOwnerDecision: false,
     effective: true,
   };
+}
+
+/**
+ * Continue an AUTO classification that the last trusted public page already
+ * carried for this exact identity and policy revision.
+ *
+ * This is intentionally not another first-seen decision. The first report made
+ * the conservative T1 assignment; later reports must preserve that effective
+ * classification until a protected WU/DELEG/REG rule supersedes it. Requiring
+ * `firstSeen` again would turn the second report into an exclusion and recreate
+ * the dropped-numerator defect one day later.
+ */
+export function continueAutoClassification(input, {
+  previousRecordId,
+  policy = readAutoClassificationPolicy(),
+  ownerRuleKeys = null,
+} = {}) {
+  if (typeof previousRecordId !== 'string' || !previousRecordId) {
+    fail('PERSISTED_RECORD_ID_REQUIRED', { symbol: input?.symbol ?? null,
+      reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
+  }
+  const previous = AUTO_RECORD_ID.exec(previousRecordId);
+  if (!previous || !/^AUTO-\d{8}-NEWSTK-T1-R\d{1,3}$/.test(previous[1])
+    || previous[2] !== input?.portfolioId || previous[3] !== input?.holdingId) {
+    fail('PERSISTED_RECORD_IDENTITY_MISMATCH', { symbol: input?.symbol ?? null });
+  }
+  // The policy id is permanently T1 and its coefficients are checked against
+  // the protected tier whitelist. A later reviewed revision therefore migrates
+  // the record id to the current revision without changing its classification
+  // or producing another notification.
+  const currentRecordId = `${AUTO_NAMESPACE}:${policy.policy.policyRevision}:${input.portfolioId}:${input.holdingId}`;
+  return classifyUnderAutoPolicy(input, {
+    policy, ownerRuleKeys, requireFirstSeen: false, previousRecordId: currentRecordId,
+  });
 }
 
 // Notification is closed once — and only once the published page carrying the

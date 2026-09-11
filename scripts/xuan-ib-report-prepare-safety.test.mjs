@@ -150,7 +150,12 @@ const measuredConstituents=[{symbol:'SYNTH',custodian:'Webull',venue:'TEST',port
   holdingId:'99000001',instrumentId:'99000001',currency:'USD',assetType:'STK',marketValueUsd:100,
   valueDate:dataDate,identityVerified:true,firstSeen:true}];
 // Source-bound account totals, supplied by the caller; never fetched here.
-const measuredDenominator={components:[{label:'合成账户',valueUsd:1000}]};
+// The exact protected three-account denominator scope, with synthetic values.
+const measuredDenominator={components:[
+  {key:'ib-hk',label:'IB-HK',valueMicro:'500000000'},
+  {key:'schwab-hk',label:'Schwab-HK',valueMicro:'300000000'},
+  {key:'webull',label:'Webull',valueMicro:'200000000'},
+]};
 const measuredContext={...context,riskConstituents:measuredConstituents,
   riskDenominator:measuredDenominator};
 

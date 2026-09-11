@@ -20,6 +20,7 @@
   "financialWrites": false,
   "requireSourceIdentityVerified": true,
   "requireFirstSeen": true,
+  "carryForwardFromPreviousPublic": true,
   "ordinaryStockAssetTypes": [
     "STK",
     "COMMON_STOCK",

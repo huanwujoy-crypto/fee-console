@@ -7,7 +7,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
-import { computeAiPressure, renderAiPressureSection } from './xuan-ib-ai-pressure.mjs';
+import {
+  AI_DENOMINATOR_TEMPLATE_ID, computeAiPressure, renderAiPressureSection,
+} from './xuan-ib-ai-pressure.mjs';
 import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 
 const dataDate = '2026-09-11';
@@ -15,7 +17,12 @@ const constituent = (over = {}) => ({ symbol: 'GOOG', custodian: 'IB-HK', venue:
   portfolioId: '936247', holdingId: '60000001', instrumentId: '60000001', currency: 'USD',
   assetType: 'STK', marketValueUsd: 1000, valueDate: dataDate, identityVerified: true,
   firstSeen: false, ...over });
-const denominator = () => ({ components: [{ label: '合成账户', valueUsd: 10000 }] });
+// A synthetic single-account denominator, named by a stable key. The production
+// three-account set is bound where the run's source reports are read; what the
+// calculation enforces here is that the keys are well formed, unique, and the
+// only thing the total can be made of.
+const denominator = () => ({ components: [
+  { key: 'synthetic-account', label: '合成账户', valueMicro: '10000000000' }] });
 const compute = (constituents, options = {}) =>
   computeAiPressure(constituents, buildAiTierCoverage(constituents),
     { denominator: denominator(), ...options });
@@ -26,22 +33,118 @@ test('the calculation is pure: identical inputs give byte-identical output', () 
   assert.deepEqual(first, second);
   assert.equal(first.numeratorUsd, 550);
   assert.equal(first.ratio, 0.055);
-  // Exact cents, not binary drift: 0.2503 x a value whose product is awkward.
+  assert.equal(first.rows[0].marketValueMicro, '1000000000');
+  assert.equal(first.numeratorMicroBasis, '5500000000000');
+});
+
+// ---------------------------------------------------------------------------
+// Fractional cents. This is the arithmetic the earlier contract refused.
+// ---------------------------------------------------------------------------
+
+test('a contribution that is not a whole number of cents is exact, not refused', () => {
+  // 25.03% of $1,000.01 is $250.302503 — six decimal places, and nowhere near
+  // a whole cent. The earlier rule required `valueCents x coefficientBp` to
+  // divide evenly by 10,000 and refused publication otherwise, so this ordinary
+  // ETF look-through of an ordinary market value could not be published at all.
+  const etf = compute([constituent({ symbol: 'MXUS', assetType: 'ETF', marketValueUsd: 1000.01 })]);
+  const row = etf.rows[0];
+  assert.equal(row.coefficients.mid, 0.2503);
+  assert.equal(row.coefficientsBp.mid, 2503);
+  // The exact product is kept: 1,000,010,000 micro-USD x 2,503 basis points.
+  assert.equal(row.contributionsMicroBasis.mid, String(1_000_010_000n * 2503n));
+  assert.equal(row.contributions.mid, 250.302_503);
+  // Only the displayed figure is rounded, half away from zero:
+  // 25,030.2503 cents -> 25030.
+  assert.equal(row.contributionCents, '25030');
+  // And the published exact product is not a whole number of cents, which is
+  // precisely the case the old `% BASIS !== 0` check called a defect.
+  assert.notEqual(BigInt(row.contributionsMicroBasis.mid) % 100_000_000n, 0n);
+});
+
+test('6.01% of a real cent amount keeps its fraction of a cent', () => {
+  // 6.01% of $405,988.00 is exactly $24,399.8788 — the worked example the
+  // earlier contract could not express.
+  // EXUS at IB-HK, whose approved look-through the trusted registry records as
+  // 6.01% and which this test does not retype anywhere but in the assertion.
+  assert.equal(readAiRiskRegistry().lookup('IB-HK', 'EXUS').ladder.mid, 0.0601);
   const etf = compute([constituent({ symbol: 'EXUS', assetType: 'ETF', marketValueUsd: 405988 })]);
-  assert.equal(etf.rows[0].contributions.mid, 24399.878_8);
+  const row = etf.rows[0];
+  assert.equal(row.coefficientsBp.mid, 601);
+  assert.equal(row.contributionsMicroBasis.mid, String(405_988_000_000n * 601n));
+  assert.equal(row.contributions.mid, 24399.878_8);
+  assert.equal(row.contributionCents, '2439988');
+});
+
+test('rows are summed unrounded and the total is rounded exactly once', () => {
+  // Three rows whose exact contributions each end in half a cent. Rounding each
+  // row first and adding the rounded rows drifts with the number of rows; the
+  // contract sums the exact products and rounds the total once.
+  const rows = [0, 1, 2].map(index => constituent({ symbol: 'MXUS', assetType: 'ETF',
+    marketValueUsd: 1000.01, holdingId: `6000010${index}`, instrumentId: `6000010${index}` }));
+  const pressure = compute(rows);
+  const single = 1_000_010_000n * 2503n;
+  assert.equal(pressure.numeratorMicroBasis, String(single * 3n));
+  // 3 x $250.302503 = $750.907509 -> 75091 cents, one rounding on the total.
+  assert.equal(pressure.numeratorCents, '75091');
+  // Each displayed row still rounds to 25030 cents; adding those would give
+  // 75090 and understate the published total by a cent.
+  assert.deepEqual(pressure.rows.map(row => row.contributionCents), ['25030', '25030', '25030']);
+});
+
+test('a market value may be supplied as integer micro-USD, and the two forms must agree', () => {
+  const micro = compute([constituent({ marketValueMicro: '1000000000' })]);
+  assert.equal(micro.rows[0].marketValueMicro, '1000000000');
+  assert.equal(micro.numeratorUsd, 550);
+  // The integer form is authoritative, and a record whose two forms disagree is
+  // two different claims about one position rather than one value to pick from.
+  assert.throws(() => compute([constituent({ marketValueMicro: '2000000000' })]),
+    /VALUE_MICRO_DISAGREES_WITH_USD/);
+  // Finer than a cent is refused rather than rounded.
+  assert.throws(() => compute([constituent({ marketValueMicro: '1000000001' })]),
+    /VALUE_NOT_VERIFIED_USD_CENTS/);
+  // And a float is not an integer input, even when it carries the right amount.
+  for (const value of [1_000_000_000, 1.5, '12.5', '1e9', {}]) {
+    assert.throws(() => compute([constituent({ marketValueMicro: value })]),
+      /VALUE_NOT_VERIFIED_USD_CENTS/);
+  }
 });
 
 test('a denominator is required, positive and never inferred from the constituents', () => {
   assert.throws(() => compute([constituent()], { denominator: null }), /DENOMINATOR_INVALID/);
   assert.throws(() => compute([constituent()], { denominator: { components: [] } }), /DENOMINATOR_INVALID/);
   assert.throws(() => compute([constituent()],
-    { denominator: { components: [{ label: 'x', valueUsd: 0 }] } }), /DENOMINATOR_NOT_POSITIVE/);
+    { denominator: { components: [{ key: 'a', label: 'x', valueUsd: 0 }] } }), /DENOMINATOR_NOT_POSITIVE/);
   // An account total is not the sum of the constituents this pane enumerates:
   // it includes cash and positions the pane never lists. Deriving one from the
   // other would silently redefine the metric.
   const pressure = compute([constituent()]);
   assert.equal(pressure.denominatorUsd, 10000);
   assert.notEqual(pressure.denominatorUsd, pressure.rows[0].marketValueUsd);
+});
+
+test('the denominator total can only be the sum of uniquely keyed components', () => {
+  const of = components => compute([constituent()], { denominator: { components } });
+  // Every component names itself, once, with an integer amount.
+  assert.throws(() => of([{ label: 'x', valueMicro: '1' }]), /DENOMINATOR_COMPONENT_KEY_INVALID/);
+  assert.throws(() => of([{ key: 'Not A Key', label: 'x', valueMicro: '10000' }]),
+    /DENOMINATOR_COMPONENT_KEY_INVALID/);
+  assert.throws(() => of([{ key: 'a', label: '', valueMicro: '10000' }]),
+    /DENOMINATOR_COMPONENT_LABEL_REQUIRED/);
+  // A repeated key double-counts one account and understates the ratio; it was
+  // invisible while only the sum was published.
+  assert.throws(() => of([
+    { key: 'a', label: 'A', valueMicro: '10000000000' },
+    { key: 'a', label: 'A again', valueMicro: '10000000000' }]), /DENOMINATOR_COMPONENT_DUPLICATE/);
+  // And the total is the exact sum, never a figure supplied beside them.
+  const summed = of([
+    { key: 'ib-hk', label: 'IB-HK', valueMicro: '5000000000' },
+    { key: 'schwab-hk', label: 'Schwab-HK', valueMicro: '3000000000' },
+    { key: 'webull', label: 'Webull', valueMicro: '2000000000' }]);
+  assert.equal(summed.denominatorMicro, '10000000000');
+  assert.equal(summed.denominatorCents, '1000000');
+  assert.equal(summed.denominatorUsd, 10000);
+  assert.deepEqual(summed.denominator.components.map(item => item.key),
+    ['ib-hk', 'schwab-hk', 'webull']);
 });
 
 test('an unusable market value stops the calculation instead of becoming zero', () => {
@@ -99,14 +202,26 @@ test('the rendered section publishes a machine-readable form of every number it 
   const pressure = compute([constituent()]);
   const html = renderAiPressureSection(pressure, { title: '§0-C', asOfHkt: `${dataDate} 08:00 HKT` });
   assert.match(html, /data-ai-risk-row="936247:60000001"/);
+  // Money as an exact integer of micro-USD, beside the cents it displays as.
+  assert.match(html, /data-ai-market-value-micro="1000000000"/);
   assert.match(html, /data-ai-market-value-cents="100000"/);
   assert.match(html, /data-ai-coefficient-bp="5500"/);
+  // The exact unrounded product, beside the rounded figure the reader sees.
+  assert.match(html, /data-ai-contribution-mbp="5500000000000"/);
   assert.match(html, /data-ai-contribution-cents="55000"/);
   assert.match(html, /data-ai-pressure-v1="1"/);
+  assert.match(html, /data-ai-units="micro-usd:basis-points"/);
+  assert.match(html, /data-ai-numerator-mbp="5500000000000"/);
   assert.match(html, /data-ai-numerator-cents="55000"/);
+  assert.match(html, /data-ai-denominator-micro="10000000000"/);
   assert.match(html, /data-ai-denominator-cents="1000000"/);
   assert.match(html, /data-ai-ratio-bp="55000"/);
   assert.match(html, /data-ai-constituents="1"/);
+  // The denominator is published as its own composition, in strict JSON, so the
+  // gate can add the accounts up again rather than taking the total on trust.
+  assert.match(html, /<p data-ai-denominator-v1="1" data-ai-denominator-total-micro="10000000000" data-ai-denominator-total-cents="1000000">/);
+  assert.match(html, new RegExp(`<template id="${AI_DENOMINATOR_TEMPLATE_ID}" type="application/json">`
+    + `\\[\\{"key":"synthetic-account","label":"合成账户","valueMicro":"10000000000"\\}\\]</template>`));
   // There is no parameter that supplies a total: it is derived or it is absent.
   assert.throws(() => renderAiPressureSection({ ...pressure, rows: [] },
     { title: 'x', asOfHkt: 'y' }), /PRESSURE_INVALID/);

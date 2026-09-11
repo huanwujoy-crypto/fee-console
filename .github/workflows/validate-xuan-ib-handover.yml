@@ -37,7 +37,11 @@ jobs:
             claude/xuan-ib-auto-classification-v1.json \
             claude/xuan-ib-ai-tier-overrides-v1.json \
             scripts/xuan-ib-ai-risk-registry.mjs \
+            scripts/xuan-ib-ai-coefficient-resolver.mjs \
+            scripts/xuan-ib-ai-risk-input.mjs \
             claude/xuan-ib-ai-risk-tiers-v1.json \
+            claude/xuan-ib-classification-delegation-v1.json \
+            claude/xuan-ib-portfolio-registry.json \
             scripts/xuan-ib-account-association.mjs \
             scripts/xuan-ib-account-association-publication.mjs \
             scripts/xuan-ib-classification-disclosure.mjs \

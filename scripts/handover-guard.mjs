@@ -13,6 +13,10 @@ import { listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import { listVenueEquivalences } from './xuan-ib-venue-identity.mjs';
 import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
 import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import {
+  AI_DENOMINATOR_TEMPLATE_ID, BASIS_POINTS, DENOMINATOR_COMPONENT_FIELDS, DENOMINATOR_COMPONENT_KEY,
+  AI_RISK_ACCOUNT_KEYS, MICRO_PER_CENT, resolveTrustedMidCoefficientBp, roundMicroBasisToCents,
+} from './xuan-ib-ai-coefficient-resolver.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
@@ -104,6 +108,10 @@ const DECISION_STATE_TEMPLATE_ID = 'xuan-ib-decision-state-v1';
 // any instrument excluded from the numerator with its enumerated reason. It is
 // declared here because the template allowlist below has to know about it.
 const AI_TIER_RECORDS_ID = 'xuan-ib-ai-tier-records-v1';
+// The inert composition of the AI-pressure denominator: one stable key, one
+// label and one integer micro-USD amount per account. Declared here for the same
+// reason, and carrying no holding, no coefficient and no owner artefact.
+const AI_DENOMINATOR_ID = AI_DENOMINATOR_TEMPLATE_ID;
 const ETF_ABC_STATE_TEMPLATE_ID = 'xuan-ib-etf-abc-state-v1';
 const ETF_ABC_STATE_TEMPLATE_OPENING = `<template id="${ETF_ABC_STATE_TEMPLATE_ID}" type="application/json">`;
 
@@ -279,7 +287,7 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID, AI_TIER_RECORDS_ID].includes(id)) {
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID, AI_TIER_RECORDS_ID, AI_DENOMINATOR_ID].includes(id)) {
       fail('only the approved decision, ETF, account-association and AI tier record templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
@@ -1469,8 +1477,9 @@ function checkAiTierManifestUniverse(pane, documentHtml, { edition, reportDate }
 function checkAiRiskUniverse(pane, documentHtml, { edition, reportDate }) {
   const declared = [...pane.matchAll(/\bdata-ai-risk-universe-v1\s*=\s*(["'])(.*?)\1/gi)];
   if (declared.length > 1) fail('the AI risk section may declare its constituent universe only once');
-  const keys = [...pane.matchAll(/\bdata-ai-risk-constituent\s*=\s*(["'])(.*?)\1/gi)]
-    .map((match) => match[2].trim());
+  const markers = [...pane.matchAll(/<[a-z][^<>]*\bdata-ai-risk-constituent\s*=\s*(["'])(.*?)\1[^<>]*>/gi)]
+    .map((match) => ({ tag: match[0], key: match[2].trim() }));
+  const keys = markers.map((marker) => marker.key);
   const mandatory = ['am', 'pm'].includes(edition) && String(reportDate) >= AI_TIER_COVERAGE_REQUIRED_FROM;
   const { byKey: records } = aiTierRecordsFromMarkup(documentHtml);
 
@@ -1491,7 +1500,6 @@ function checkAiRiskUniverse(pane, documentHtml, { edition, reportDate }) {
   }
   const universe = new Set(keys);
   if (universe.size !== keys.length) fail('the AI risk section names one constituent identity more than once');
-  if (!universe.size) return;
   for (const key of [...universe].sort()) {
     // The whole defect of 2026-09-11, stated structurally: a constituent that is
     // in the denominator and carries no record at all.
@@ -1506,7 +1514,100 @@ function checkAiRiskUniverse(pane, documentHtml, { edition, reportDate }) {
       fail(`AI tier record ${key} does not correspond to any declared AI risk constituent in this report`);
     }
   }
+  // The symbol and custodian a constituent marker declares must be the ones its
+  // own record carries. Those two fields are what a `REG` rule is keyed on, so
+  // leaving them unreconciled would let a page keep a correct identity key while
+  // pointing the record at another account's coefficient.
+  for (const marker of markers) {
+    const record = records.get(marker.key);
+    const declaredSymbol = quotedAttribute(marker.tag, 'data-ai-risk-symbol', 'AI risk constituent');
+    const declaredCustodian = quotedAttribute(marker.tag, 'data-ai-risk-custodian', 'AI risk constituent');
+    if (declaredSymbol === null && declaredCustodian === null) continue;
+    if (declaredSymbol !== null && declaredSymbol.trim().toUpperCase() !== record.symbol) {
+      fail(`AI risk constituent ${marker.key} declares a symbol its own AI tier record does not carry`);
+    }
+    if (declaredCustodian !== null && declaredCustodian.trim() !== record.custodian) {
+      fail(`AI risk constituent ${marker.key} declares a custodian its own AI tier record does not carry`);
+    }
+  }
   return records;
+}
+
+// The denominator's own composition, re-parsed and re-added from the page's own
+// strict machine-readable components.
+//
+// Publishing only the total meant a candidate could move the denominator and
+// the ratio and the tile together and stay self-consistent: there was nothing
+// on the page the total could be compared against. Each account is therefore
+// named once, by a stable key, with its own exact integer micro-USD amount, and
+// the total must be their exact sum. A missing account understates the
+// denominator and overstates the published ratio; a repeated one does the
+// reverse; a changed one moves it silently. All three are arithmetic here.
+//
+// The gate also pins the approved production account set. Otherwise a coherent
+// candidate could add an invented fourth component, recompute the ratio and KPI
+// and pass while understating the three-account pressure percentage.
+function checkAiPressureDenominator(pane, documentHtml, declaredMicro, declaredCents, integer) {
+  const paragraphs = [...pane.matchAll(/<[a-z][^<>]*\bdata-ai-denominator-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
+  const templates = [...String(documentHtml).matchAll(new RegExp(
+    `<template id="${AI_DENOMINATOR_TEMPLATE_ID}" type="application/json">([\\s\\S]*?)</template>`, 'gi'))];
+  if (!paragraphs.length) fail('a computed AI pressure table must publish its denominator composition');
+  if (paragraphs.length > 1) fail('the AI pressure denominator may declare its composition only once');
+  if (templates.length !== 1) {
+    fail(`the AI pressure denominator requires exactly one ${AI_DENOMINATOR_TEMPLATE_ID} composition template`);
+  }
+  // The template is the machine-readable half and must live inside the same
+  // risk pane as the table it belongs to, not somewhere else on the page.
+  if (!pane.includes(templates[0][0])) {
+    fail(`the ${AI_DENOMINATOR_TEMPLATE_ID} composition must sit inside the AI risk section it describes`);
+  }
+  const components = parseStrictJson(templates[0][1], AI_DENOMINATOR_TEMPLATE_ID);
+  if (!Array.isArray(components) || !components.length || components.length > 64) {
+    fail(`${AI_DENOMINATOR_TEMPLATE_ID} must be a non-empty array of denominator components`);
+  }
+  const declaredCount = integer(paragraphs[0][0], 'data-ai-denominator-v1');
+  if (declaredCount !== BigInt(components.length)) {
+    fail(`AI pressure denominator declares ${declaredCount} components but names ${components.length}`);
+  }
+  if (integer(paragraphs[0][0], 'data-ai-denominator-total-micro') !== declaredMicro
+    || integer(paragraphs[0][0], 'data-ai-denominator-total-cents') !== declaredCents) {
+    fail('the AI pressure denominator composition does not declare the total the table uses');
+  }
+  let sum = 0n;
+  const seen = new Set();
+  for (const component of components) {
+    strictKeys(component, DENOMINATOR_COMPONENT_FIELDS, `${AI_DENOMINATOR_TEMPLATE_ID} component`);
+    const key = typeof component.key === 'string' ? component.key : '';
+    if (!DENOMINATOR_COMPONENT_KEY.test(key)) {
+      fail(`AI pressure denominator component ${key || 'with no key'} does not carry a stable component key`);
+    }
+    if (seen.has(key)) fail(`AI pressure denominator names the component ${key} more than once`);
+    seen.add(key);
+    if (typeof component.label !== 'string' || !component.label.trim()) {
+      fail(`AI pressure denominator component ${key} must carry a display label`);
+    }
+    if (typeof component.valueMicro !== 'string' || !/^(?:0|[1-9]\d{0,20})$/.test(component.valueMicro)) {
+      fail(`AI pressure denominator component ${key} must carry an integer micro-USD value`);
+    }
+    const value = BigInt(component.valueMicro);
+    // Verified to the cent, exactly as every other published amount is: a
+    // component finer than a cent could not be shown beside the total it feeds.
+    if (value % MICRO_PER_CENT !== 0n) {
+      fail(`AI pressure denominator component ${key} is not verified to the cent`);
+    }
+    sum += value;
+  }
+  if (seen.size !== AI_RISK_ACCOUNT_KEYS.length
+    || AI_RISK_ACCOUNT_KEYS.some(key => !seen.has(key))) {
+    fail(`AI pressure denominator must contain exactly ${AI_RISK_ACCOUNT_KEYS.join(', ')}`);
+  }
+  if (sum !== declaredMicro) {
+    fail(`AI pressure denominator components sum to ${sum} micro-USD but the table uses ${declaredMicro}`);
+  }
+  if (declaredMicro / MICRO_PER_CENT !== declaredCents) {
+    fail('the AI pressure denominator total in cents is not its own micro-USD total');
+  }
+  return sum;
 }
 
 // Recompute the AI-pressure numerator from the page's own per-constituent
@@ -1517,7 +1618,26 @@ function checkAiRiskUniverse(pane, documentHtml, { edition, reportDate }) {
 // that left a classified position out of the arithmetic looked exactly like a
 // report that had included it. Here the page must publish every contribution it
 // claims to have added up, and the gate adds them up again.
-function checkAiPressureArithmetic(pane, records, documentHtml) {
+//
+// Two things this originally got wrong are fixed here.
+//
+// It required every `valueCents x coefficientBp` to divide evenly into whole
+// cents, which is false for ordinary inputs: an ETF look-through of 25.03% or
+// 6.01% of a real cent amount lands between cents far more often than on one.
+// Each row now publishes its market value as exact integer micro-USD and its
+// exact unrounded contribution in micro-basis units (micro-USD x basis points)
+// beside the displayed cents it rounds to; the gate recomputes both, sums the
+// UNROUNDED values, and applies the single round-half-away-from-zero to the
+// total. Summing rounded rows would drift with the number of rows.
+//
+// And it compared a coefficient against nothing at all. A `REG` record id was
+// checked for existence; `WU`, `DELEG` and `AUTO` were checked only for their
+// prefix. So a candidate could raise a coefficient, recompute its own row, its
+// own total, its own ratio and its own headline tile, and pass — a coherent
+// tamper that every self-consistency check accepts by construction. Every
+// classified row's coefficient is now re-resolved from the trusted repository
+// files through the same protected resolver the calculation engine uses.
+function checkAiPressureArithmetic(pane, records, documentHtml, { mandatory = false } = {}) {
   const summaries = [...pane.matchAll(/<tr[^<>]*\bdata-ai-pressure-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
   const rows = [...pane.matchAll(/<tr[^<>]*\bdata-ai-risk-row\s*=\s*(["'])(.*?)\1[^<>]*>/gi)];
   const tiles = [...String(documentHtml).matchAll(/<div[^<>]*\bdata-ai-pressure-kpi-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
@@ -1527,6 +1647,7 @@ function checkAiPressureArithmetic(pane, records, documentHtml) {
     // a headline ratio with no table behind it.
     if (rows.length) fail('an AI pressure table naming per-constituent contributions must declare its recomputable total');
     if (tiles.length) fail('an AI pressure KPI must be supported by the table it summarises');
+    if (mandatory) fail('an ordinary report with AI tier records must publish its computed AI pressure table');
     return;
   }
   if (summaries.length > 1) fail('the AI pressure table may declare its total only once');
@@ -1534,11 +1655,12 @@ function checkAiPressureArithmetic(pane, records, documentHtml) {
 
   const integer = (tag, name) => {
     const raw = quotedAttribute(tag, name, 'AI pressure');
-    if (!/^-?\d{1,18}$/.test(String(raw))) fail(`AI pressure ${name} must be a plain integer`);
+    if (!/^-?\d{1,30}$/.test(String(raw))) fail(`AI pressure ${name} must be a plain integer`);
     return BigInt(raw);
   };
-  const BASIS = 10_000n;
-  let numeratorMicro = 0n;
+  const BASIS = BigInt(BASIS_POINTS);
+  // Micro-basis units: the exact, unrounded contribution of every row.
+  let numeratorMicroBasis = 0n;
   const seen = new Set();
   for (const match of rows) {
     const tag = match[0];
@@ -1550,25 +1672,63 @@ function checkAiPressureArithmetic(pane, records, documentHtml) {
     // two different universes.
     const record = records?.get(key) ?? null;
     if (!record) fail(`AI pressure row ${key} has no machine-readable AI tier record`);
-    const value = integer(tag, 'data-ai-market-value-cents');
+    // Money is an integer on this page: micro-USD, verified to the cent, with
+    // the displayed cent figure derived from it rather than asserted beside it.
+    const value = integer(tag, 'data-ai-market-value-micro');
+    if (value < 0n) fail(`AI pressure row ${key} declares a negative market value`);
+    if (value % MICRO_PER_CENT !== 0n) fail(`AI pressure row ${key} declares a market value that is not verified to the cent`);
+    if (integer(tag, 'data-ai-market-value-cents') !== value / MICRO_PER_CENT) {
+      fail(`AI pressure row ${key} shows a market value in cents that is not its own micro-USD value`);
+    }
     const contribution = integer(tag, 'data-ai-contribution-cents');
     const status = quotedAttribute(tag, 'data-ai-status', 'AI pressure');
     if (status !== record.status) fail(`AI pressure row ${key} disagrees with its own AI tier record`);
+    // The row's own symbol must be the record's. Otherwise a row could keep a
+    // correct identity key while displaying another instrument's name beside a
+    // coefficient resolved for that other name.
+    const rowSymbol = quotedAttribute(tag, 'data-ai-risk-symbol', 'AI pressure');
+    if (typeof rowSymbol === 'string' && rowSymbol.trim().toUpperCase() !== record.symbol) {
+      fail(`AI pressure row ${key} names a symbol its own AI tier record does not carry`);
+    }
+    const declaredRowMicroBasis = integer(tag, 'data-ai-contribution-mbp');
     if (status === 'excluded') {
       // Out of the numerator, still inside the denominator. A nonzero
       // contribution on an excluded row would be the opposite error.
-      if (contribution !== 0n) fail(`AI pressure row ${key} is excluded but claims a contribution`);
+      if (contribution !== 0n || declaredRowMicroBasis !== 0n) {
+        fail(`AI pressure row ${key} is excluded but claims a contribution`);
+      }
       continue;
     }
     const points = integer(tag, 'data-ai-coefficient-bp');
     if (points < 0n || points > BASIS) fail(`AI pressure row ${key} declares a coefficient outside 0-100%`);
-    // The row's own arithmetic, checked before it is allowed into the total.
-    const expected = (value * points) / BASIS;
-    if ((value * points) % BASIS !== 0n) fail(`AI pressure row ${key} does not resolve to whole cents`);
-    if (contribution !== expected) {
-      fail(`AI pressure row ${key} shows a contribution that is not its market value times its own coefficient`);
+    // The coefficient, re-resolved from the trusted repository files against the
+    // identity and record id this page publishes. This is the check that makes a
+    // coherent tamper fail: the page can be perfectly self-consistent and still
+    // be applying a coefficient no approved rule records for this instrument.
+    let trusted = null;
+    try {
+      trusted = resolveTrustedMidCoefficientBp({
+        namespace: record.namespace, recordId: record.recordId, symbol: record.symbol,
+        custodian: record.custodian, portfolioId: record.portfolioId,
+        holdingId: record.holdingId, instrumentId: record.instrumentId,
+      });
+    } catch (error) {
+      fail(`AI pressure row ${key} cites ${record.recordId}, which the trusted approvals do not resolve for this identity (${error.code ?? 'UNRESOLVED'})`);
     }
-    numeratorMicro += value * points;
+    if (BigInt(trusted.midBp) !== points) {
+      fail(`AI pressure row ${key} displays a coefficient of ${points} basis points, but ${record.recordId} records ${trusted.midBp}`);
+    }
+    // The row's own arithmetic. The unrounded product is exact and is NOT
+    // required to be a whole number of cents; the displayed cents must be that
+    // unrounded value rounded half away from zero.
+    const expectedMicroBasis = value * points;
+    if (declaredRowMicroBasis !== expectedMicroBasis) {
+      fail(`AI pressure row ${key} shows an unrounded contribution that is not its market value times its own coefficient`);
+    }
+    if (contribution !== roundMicroBasisToCents(expectedMicroBasis)) {
+      fail(`AI pressure row ${key} shows a displayed contribution that is not its own unrounded value rounded to cents`);
+    }
+    numeratorMicroBasis += expectedMicroBasis;
   }
   // Every classified record must have appeared as a row. This is the dropped
   // constituent, caught as arithmetic rather than as wording.
@@ -1577,23 +1737,34 @@ function checkAiPressureArithmetic(pane, records, documentHtml) {
   }
 
   const summary = summaries[0][0];
+  const declaredMicroBasis = integer(summary, 'data-ai-numerator-mbp');
   const declaredNumerator = integer(summary, 'data-ai-numerator-cents');
-  const denominator = integer(summary, 'data-ai-denominator-cents');
+  const denominatorMicro = integer(summary, 'data-ai-denominator-micro');
+  const denominatorCents = integer(summary, 'data-ai-denominator-cents');
   const declaredRatio = integer(summary, 'data-ai-ratio-bp');
   const constituents = integer(summary, 'data-ai-constituents');
   if (constituents !== BigInt(rows.length)) {
     fail(`AI pressure total claims ${constituents} constituents but the table shows ${rows.length}`);
   }
-  if (denominator <= 0n) fail('AI pressure denominator must be positive');
-  const recomputed = numeratorMicro / BASIS;
-  if (numeratorMicro % BASIS !== 0n) fail('AI pressure numerator does not resolve to whole cents');
+  if (denominatorMicro <= 0n) fail('AI pressure denominator must be positive');
+  // The denominator is not taken from the summary line: it is re-added from the
+  // page's own published components, so moving the total and the ratio together
+  // no longer produces a page that agrees with itself.
+  const recomputedDenominatorMicro = checkAiPressureDenominator(
+    pane, documentHtml, denominatorMicro, denominatorCents, integer);
+  if (declaredMicroBasis !== numeratorMicroBasis) {
+    fail(`AI pressure shows an unrounded numerator of ${declaredMicroBasis} but its own rows sum to ${numeratorMicroBasis}`);
+  }
+  // One rounding, on the total, after the unrounded rows were added.
+  const recomputed = roundMicroBasisToCents(numeratorMicroBasis);
   if (declaredNumerator !== recomputed) {
     fail(`AI pressure shows a numerator of ${declaredNumerator} cents but its own rows sum to ${recomputed}`);
   }
-  // The ratio is recomputed from the recomputed numerator, not from the
-  // displayed one, and compared to a millionth. A hand-edited percentage beside
-  // a correct table fails here.
-  const expectedRatio = (recomputed * 1_000_000n + denominator / 2n) / denominator;
+  // The ratio is recomputed from the unrounded numerator and the recomputed
+  // denominator, never from the displayed figures. A hand-edited percentage
+  // beside a correct table fails here.
+  const denominatorMicroBasis = recomputedDenominatorMicro * BASIS;
+  const expectedRatio = (numeratorMicroBasis * 1_000_000n + denominatorMicroBasis / 2n) / denominatorMicroBasis;
   const drift = expectedRatio > declaredRatio ? expectedRatio - declaredRatio : declaredRatio - expectedRatio;
   if (drift > 1n) {
     fail(`AI pressure shows a ratio that does not follow from its own numerator and denominator`);
@@ -1605,8 +1776,10 @@ function checkAiPressureArithmetic(pane, records, documentHtml) {
   // nothing to notice. It must be present and it must agree.
   if (tiles.length !== 1) fail('a computed AI pressure table requires exactly one headline KPI derived from it');
   const tile = tiles[0][0];
-  if (integer(tile, 'data-ai-kpi-numerator-cents') !== recomputed
-    || integer(tile, 'data-ai-kpi-denominator-cents') !== denominator
+  if (integer(tile, 'data-ai-kpi-numerator-mbp') !== numeratorMicroBasis
+    || integer(tile, 'data-ai-kpi-numerator-cents') !== recomputed
+    || integer(tile, 'data-ai-kpi-denominator-micro') !== recomputedDenominatorMicro
+    || integer(tile, 'data-ai-kpi-denominator-cents') !== denominatorCents
     || integer(tile, 'data-ai-kpi-ratio-bp') !== declaredRatio) {
     fail('the AI pressure KPI disagrees with the table it summarises');
   }
@@ -1641,7 +1814,10 @@ try {
     // reconciled against the manifest by identity rather than by ticker.
     const aiRecords = checkAiRiskUniverse(activeRisk, html, { edition, reportDate: expectedDate });
     // Then the number itself, recomputed from the page's own contributions.
-    checkAiPressureArithmetic(activeRisk, aiRecords, html);
+    checkAiPressureArithmetic(activeRisk, aiRecords, html, {
+      mandatory: ['am', 'pm'].includes(edition) && expectedDate >= AI_TIER_COVERAGE_REQUIRED_FROM
+        && aiRecords instanceof Map && aiRecords.size > 0,
+    });
     checkAiTierCoverage(activeRisk, html);
     checkVenueIdentityClaims(html);
   }
