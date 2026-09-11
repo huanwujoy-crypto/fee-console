@@ -19,6 +19,12 @@ const bundledRegistry = JSON.parse(fs.readFileSync(
   new URL('../claude/xuan-ib-portfolio-registry.json', import.meta.url), 'utf8'));
 validateRegistry(bundledRegistry);
 const bundledRegistryFingerprint = fingerprint(bundledRegistry);
+const EVIDENCE_SEQUENCE = Object.freeze({
+  begin: 'before-dispatch',
+  bind: 'same-call-native-result-by-tool-use-id',
+  finish: 'before-stage-close',
+  onMissing: 'fail-closed-no-replay',
+});
 
 // Injection permits offline callers to supply the same versioned registry,
 // never to enlarge its scope. The checkout itself is not current-main proof.
@@ -85,6 +91,7 @@ export function buildSourcePlan(context, registry = bundledRegistry) {
     edition: context.edition,
     registryFingerprint: bundledRegistryFingerprint,
     runtimeEvidence: 'not-checked',
+    evidenceSequence: clone(EVIDENCE_SEQUENCE),
     batches: [
       { id: 'ib-1', stage: 'ib-read', after: [ready],
         calls: calls(['ib.accountSummary', 'ib.balances']) },
@@ -106,8 +113,10 @@ export function buildSourcePlan(context, registry = bundledRegistry) {
 export function validateSourcePlan(plan, registry = bundledRegistry) {
   checkedRegistry(registry);
   exact(plan, ['schemaVersion', 'kind', 'status', 'protocol', 'edition', 'registryFingerprint',
-    'runtimeEvidence', 'batches'], 'INVALID_SOURCE_PLAN_FIELDS');
+    'runtimeEvidence', 'evidenceSequence', 'batches'], 'INVALID_SOURCE_PLAN_FIELDS');
   checkedContext({ protocol: plan.protocol, edition: plan.edition });
+  exact(plan.evidenceSequence, ['begin', 'bind', 'finish', 'onMissing'], 'INVALID_EVIDENCE_SEQUENCE_FIELDS');
+  if (fingerprint(plan.evidenceSequence) !== fingerprint(EVIDENCE_SEQUENCE)) fail('INVALID_EVIDENCE_SEQUENCE');
   if (!Array.isArray(plan.batches) || plan.batches.length !== 6) fail('INVALID_PLAN_BATCHES');
   const seen = new Set();
   for (const batch of plan.batches) {

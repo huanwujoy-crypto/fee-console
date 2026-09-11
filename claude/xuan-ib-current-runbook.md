@@ -77,6 +77,17 @@ does not create a journal, receipt or candidate.
   fabricated successful capture. Only supported bounded failed-endpoint retries
   are allowed; failed journals/artifacts remain immutable.
 
+For every planned connector call or bounded batch, enforce this order inside
+the active journal stage: run `xuan-ib-source-capture begin` for each planned
+source key **before dispatch**; execute the connector; bind the exact native
+result from that same call by its `tool_use_id`; write the private source file
+with mode `0600`; then run `xuan-ib-source-capture finish` **before closing the
+stage**. Close the stage only after every planned key has a finish receipt. If
+the same-call native result is unavailable, fail closed: do not close the stage
+and replay all reads, backfill begin records, or scan another session. This is
+an ordering contract only; it does not activate the disabled hook bridge, grant
+new authority, or relax any source/financial guard.
+
 Stage/batching rules: [runtime contract](xuan-ib-runtime-contract-v1.md).
 Capture/prepare interfaces and their stricter readiness limits:
 [compact report contract](xuan-ib-compact-report-v1.md). Its historical

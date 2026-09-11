@@ -94,6 +94,22 @@ test('end to end: a source payload becomes a rendered column, and a suppressed r
   assert.ok(!/涨跌数据待核验（3）/.test(html));
 });
 
+test('published midpoint percentages use the same rounding in the page and guard', () => {
+  const measurements = normalizeDailyChangeWindow(
+    windowRaw([holding('UP', 'NASDAQ', 2.195), holding('DOWN', 'NYSE', -2.195)]),
+    { date: priorSession, venuesComplete: ['NASDAQ', 'NYSE'] });
+  const rows = applyDailyChangeColumn(
+    [viewRow('UP', 'NASDAQ'), viewRow('DOWN', 'NYSE')], build(measurements), { venueOf });
+  const html = renderReport(viewWith(rows), renderContext);
+  assert.match(html, />\+2\.2%/);
+  assert.match(html, />-2\.2%/);
+  assert.deepEqual(validatePublishedDailyChangeHtml(html, { edition: 'am', dataDate: reportDate }),
+    { measured: 2 });
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace('>+2.2%', '>+2.19%'), { edition: 'am', dataDate: reportDate }),
+  /PUBLISHED_VALUE_MISMATCH/);
+});
+
 test('a column that cannot prove its session publishes nothing, including a winter PM before the open', () => {
   // A schedule pinned to a fixed UTC offset drifts an hour against New York
   // when daylight saving ends, so the run can start before the session exists.

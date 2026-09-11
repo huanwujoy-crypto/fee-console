@@ -21,6 +21,12 @@ for (const edition of ['am', 'pm']) {
     assert.deepEqual(validateSourcePlan(value), value);
     assert.equal(value.status, 'planned-not-authorized');
     assert.equal(value.runtimeEvidence, 'not-checked');
+    assert.deepEqual(value.evidenceSequence, {
+      begin: 'before-dispatch',
+      bind: 'same-call-native-result-by-tool-use-id',
+      finish: 'before-stage-close',
+      onMissing: 'fail-closed-no-replay',
+    });
     assert.equal(value.protocol, 'full-live');
     assert.equal(value.edition, edition);
     assert.match(value.registryFingerprint, /^[a-f0-9]{64}$/);
@@ -151,6 +157,10 @@ for (const [name, mutate] of [
   ['auxiliary concurrent with family', value => { value.batches[5].after = []; }],
   ['false successful status', value => { value.status = 'verified'; }],
   ['claimed runtime proof', value => { value.runtimeEvidence = 'verified'; }],
+  ['late evidence begin', value => { value.evidenceSequence.begin = 'after-dispatch'; }],
+  ['unbound native result', value => { value.evidenceSequence.bind = 'best-effort'; }],
+  ['stage closed before finish', value => { value.evidenceSequence.finish = 'after-stage-close'; }],
+  ['replay permitted after missing result', value => { value.evidenceSequence.onMissing = 'replay'; }],
   ['wrong registry fingerprint', value => { value.registryFingerprint = 'a'.repeat(64); }],
   ['schema changed', value => { value.schemaVersion = 2; }],
   ['kind changed', value => { value.kind = 'authorized-run'; }],

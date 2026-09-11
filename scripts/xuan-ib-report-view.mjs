@@ -52,7 +52,8 @@ const finite = (value, label, { negative = false, nullable = true } = {}) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e12
       || (!negative && value < 0)) fail(`invalid ${label}`);
 };
-import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, UNAVAILABLE_REASONS } from './xuan-ib-daily-change.mjs';
+import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, UNAVAILABLE_REASONS,
+  formatPublishedDailyChangePct } from './xuan-ib-daily-change.mjs';
 const DAILY_CHANGE_REASONS = Object.values(UNAVAILABLE_REASONS);
 const number = (value, digits = 2) => value === null ? '未取得' : value.toLocaleString('en-US', {maximumFractionDigits:digits});
 const money = value => value === null ? '未取得' : `$${number(Math.round(value),0)}`;
@@ -226,9 +227,6 @@ function holdingsView(holdings, reportDate, edition, { declareUniverse = false }
   const priorDate=new Date(Date.parse(reportDate+'T00:00:00Z')-86400000).toISOString().slice(0,10);
   const usable=row=>row.changePct!==null && (row.changeAsOfHkt.startsWith(reportDate)
     || edition==='am' && row.changeAsOfHkt.startsWith(priorDate));
-  // Do not round 0.9999% into a displayed 1% in the <1% group. Exact JS decimal
-  // text is used only at a rounding boundary; ordinary values stay compact.
-  const change=value=>Math.abs(value)<1&&Math.abs(Number(value.toFixed(2)))>=1?String(value):number(value);
   const groups=[holdings.rows.filter(row=>usable(row)&&Math.abs(row.changePct)>=1),holdings.rows.filter(row=>usable(row)&&Math.abs(row.changePct)<1),holdings.rows.filter(row=>!usable(row))];
   const rows = items => `<div class="tblwrap"><table class="mobile-holdings"><thead><tr><th>标的</th><th>市值 $</th><th>日涨跌</th><th>估值价</th><th>行情时点</th></tr></thead><tbody>${[...items].sort((a,b)=>(b.marketValueUsd??-Infinity)-(a.marketValueUsd??-Infinity)).map(row=>{
     // Invisible evidence lets the trusted publication guard verify the exact
@@ -244,7 +242,7 @@ function holdingsView(holdings, reportDate, edition, { declareUniverse = false }
     const cls=row.changePct===0&&corroborated?'flat':direction(usable(row)?row.changePct:null);
     // A corroborated zero is shown with both decimals so it reads as a measured
     // result rather than as a placeholder.
-    const shown=row.changePct===0&&corroborated?'0.00':change(row.changePct??0);
+    const shown=row.changePct===0&&corroborated?'0.00':formatPublishedDailyChangePct(row.changePct??0);
     // The constituent's own name, in machine-readable form. Without it the
     // publication gate can only reconcile AI-tier coverage against prose, which
     // means it can only catch a problem the report already confessed to in
