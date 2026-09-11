@@ -16,6 +16,7 @@ import {
   FEE_LEGACY_RECEIPT_SCHEMA,
   FEE_RECEIPT_SCHEMA,
   legacySourceBindingForEconomicInput,
+  normalizeDataInputs,
   normalizeEconomicInputs,
   semanticHash,
   validateFeeCalculationReceipt,
@@ -278,6 +279,16 @@ test("the receipt contains derived results and commitments, never raw private re
   }
   assert.match(receipt.econInputsHash, /^[a-f0-9]{64}$/);
   assert.match(receipt.dataInputsHash, /^[a-f0-9]{64}$/);
+});
+
+test("benchmark date evidence is public display metadata, not a fee-receipt input", () => {
+  const { data, economicInput } = fixture();
+  const withBenchmarkDates = structuredClone(data);
+  for (const point of withBenchmarkDates.daily) point.bd = point.d;
+  const options = { start: "2026-08-01", asOf: "2026-08-24", accountIds: ["schwab", "webull"] };
+  assert.deepEqual(normalizeDataInputs(withBenchmarkDates, options), normalizeDataInputs(data, options));
+  assert.equal(buildFeeCalculationReceipt({ data: withBenchmarkDates, economicInput }).dataInputsHash,
+    buildFeeCalculationReceipt({ data, economicInput }).dataInputsHash);
 });
 
 test("public and private receipt validation both fail closed on changed inputs", () => {

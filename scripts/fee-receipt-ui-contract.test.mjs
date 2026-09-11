@@ -218,6 +218,10 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     balance: receipt.balance,
     ...(html.includes("/* benchmark-account-view:start */") ? { benchmarkInputs: { openingCents: 10_000_000, flows: [{ date: "2026-08-02", amountCents: 2_400_000 }] } } : {})
   });
+  const withBenchmarkDates = structuredClone(data);
+  for (const point of withBenchmarkDates.daily) point.bd = point.d;
+  assert.equal((await sandbox.feeReceiptUiModel({ receipt, data: withBenchmarkDates, economicInput })).ok, true,
+    "public benchmark-date metadata must not invalidate the fee receipt hash");
 
   const outOfRangeEconomicInput = structuredClone(economicInput);
   outOfRangeEconomicInput.months.push(
@@ -495,6 +499,15 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.equal(html.includes("benchmarkInputs"), false, "unmarked partial benchmark rollout cannot pass");
     return; // The separately reviewed test PR must also accept the current main UI.
   }
+  if (!html.includes("/* benchmark-date-integrity:start */")) {
+    assert.equal(html.includes("bench-date-pending"), false,
+      "unmarked partial benchmark-date rollout cannot pass");
+    return; // Support PR first; the index-only PR activates the frozen contract below.
+  }
+  assert.equal(html.split("/* benchmark-date-integrity:start */").length, 2);
+  assert.equal(html.split("/* benchmark-date-integrity:end */").length, 2);
+  assert.match(html, /bench-date-pending/, "the DOM must distinguish a pending benchmark date from missing flows");
+  assert.match(html, /基准截至 \$\{st\.benchAsOf\}/, "the benchmark section must disclose its actual coverage date");
   let points = [];
   const context = vm.createContext({ crypto: crypto.webcrypto, TextEncoder, TextDecoder, structuredClone,
     num: x => Number.parseFloat(x) || 0, dailySorted: () => points });
@@ -532,9 +545,11 @@ test("passive-account balances use only receipt-verified dated flows and indepen
   });
   await t.test("cross-month inflow and withdrawal preserve the same daily path", () => {
     points = [
-      { d: "2026-09-28", spy: 100, qqq: 100 }, { d: "2026-09-29", spy: 100, qqq: 100 },
-      { d: "2026-09-30", spy: 110, qqq: 110 }, { d: "2026-10-01", spy: 121, qqq: 121 },
-      { d: "2026-10-02", spy: 133.1, qqq: 133.1 }
+      { d: "2026-09-28", spy: 100, qqq: 100, bd: "2026-09-28" },
+      { d: "2026-09-29", spy: 100, qqq: 100, bd: "2026-09-29" },
+      { d: "2026-09-30", spy: 110, qqq: 110, bd: "2026-09-30" },
+      { d: "2026-10-01", spy: 121, qqq: 121, bd: "2026-10-01" },
+      { d: "2026-10-02", spy: 133.1, qqq: 133.1, bd: "2026-10-02" }
     ];
     const result = context.benchmarkView({ state: "verified", start: "2026-09-29", asOf: "2026-10-02",
       benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-09-30", amountCents: 5_000 }, { date: "2026-10-01", amountCents: -4_000 }] } },
@@ -542,15 +557,96 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     for (const bench of result.bench) assert.ok(Math.abs(bench.val - 149.6) < 1e-10);
   });
   await t.test("over-withdrawal disables the affected balance without borrowing or hiding TWR", () => {
-    points = [{ d: "2026-10-02", spy: 100, qqq: 100 }, { d: "2026-10-03", spy: 70, qqq: 100 }];
+    points = [{ d: "2026-10-02", spy: 100, qqq: 100, bd: "2026-10-02" },
+      { d: "2026-10-03", spy: 70, qqq: 100, bd: "2026-10-03" }];
     const result = context.benchmarkView({ state: "verified", start: "2026-10-03", asOf: "2026-10-03",
       benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-10-03", amountCents: -8_000 }] } },
     [{ ym: "2026-10", from: "2026-10-03", to: "2026-10-03", days: 1 }]);
     assert.equal(result.bench[0].val, null); assert.equal(result.bench[0].valueReason, "withdrawal-exceeds-value");
     assert.ok(Math.abs(result.bench[0].twr + .3) < 1e-12); assert.equal(result.bench[1].val, 20);
   });
-  await t.test("missing or invalid quotes cannot create a passive-account balance", () => {
-    for (const change of [p => { delete p[2].spy; }, p => { p[2].qqqd = "invalid"; }, p => { p[2].spyd = -1; }]) {
+  await t.test("a stale weekday tail clamps returns and hides cross-date simulated balances", () => {
+    points = [
+      { d: "2026-09-08", spy: 100, qqq: 100, cspx: 80, eqac: 80 },
+      { d: "2026-09-09", spy: 110, qqq: 105, cspx: 81, eqac: 81 },
+      { d: "2026-09-10", spy: 110, qqq: 105, bd: "2026-09-09", cspx: 82, eqac: 82 }
+    ];
+    const result = plain(context.benchmarkView({ state: "verified", start: "2026-09-09", asOf: "2026-09-10",
+      benchmarkInputs: { openingCents: 10_000, flows: [] } },
+    [{ ym: "2026-09", from: "2026-09-09", to: "2026-09-10", days: 2 }]));
+    assert.equal(result.benchAsOf, "2026-09-09");
+    assert.equal(result.benchPriceAsOf, "2026-09-09");
+    assert.equal(result.benchmarkPending, true);
+    assert.equal(result.bench[0].k, "spy", "a SPY tail gap must never fall back to CSPX");
+    assert.ok(Math.abs(result.bench[0].twr - .1) < 1e-12);
+    assert.ok(result.bench.every(item => item.val === null && item.valueReason === "bench-date-pending"));
+  });
+  await t.test("a weekend carry remains current while preserving the last real price date", () => {
+    points = [
+      { d: "2026-09-10", spy: 100, qqq: 100, bd: "2026-09-10" },
+      { d: "2026-09-11", spy: 110, qqq: 110, bd: "2026-09-11" },
+      { d: "2026-09-12", spy: 110, qqq: 110, bd: "2026-09-11" }
+    ];
+    const result = plain(context.benchmarkView({ state: "verified", start: "2026-09-11", asOf: "2026-09-12",
+      benchmarkInputs: { openingCents: 10_000, flows: [] } },
+    [{ ym: "2026-09", from: "2026-09-11", to: "2026-09-12", days: 2 }]));
+    assert.equal(result.benchAsOf, "2026-09-12"); assert.equal(result.benchPriceAsOf, "2026-09-11");
+    assert.equal(result.benchmarkPending, false); assert.ok(Math.abs(result.bench[0].val - 110) < 1e-12);
+  });
+  await t.test("a later source date proves a weekday market closure without a maintained holiday list", () => {
+    points = [
+      { d: "2026-12-23", spy: 100, qqq: 100, bd: "2026-12-23" },
+      { d: "2026-12-24", spy: 100, qqq: 100, bd: "2026-12-24" },
+      { d: "2026-12-25", spy: 100, qqq: 100, bd: "2026-12-24" },
+      { d: "2026-12-26", spy: 100, qqq: 100, bd: "2026-12-24" },
+      { d: "2026-12-27", spy: 100, qqq: 100, bd: "2026-12-24" },
+      { d: "2026-12-28", spy: 110, qqq: 110, bd: "2026-12-28" }
+    ];
+    const view = { state: "verified", start: "2026-12-24", asOf: "2026-12-28",
+      benchmarkInputs: { openingCents: 10_000, flows: [] } };
+    const result = plain(context.benchmarkView(view,
+      [{ ym: "2026-12", from: "2026-12-24", to: "2026-12-28", days: 5 }]));
+    assert.equal(result.benchAsOf, "2026-12-28"); assert.equal(result.benchmarkPending, false);
+    assert.deepEqual(result.inferredClosures, ["2026-12-25"]);
+    assert.ok(Math.abs(result.bench[0].twr - .1) < 1e-12, "the closure must add zero, not defer a double return");
+  });
+  await t.test("an inferred weekday closure remains disclosed across a month boundary", () => {
+    points = [
+      { d: "2026-09-28", spy: 100, qqq: 100, bd: "2026-09-28" },
+      { d: "2026-09-29", spy: 100, qqq: 100, bd: "2026-09-29" },
+      { d: "2026-09-30", spy: 100, qqq: 100, bd: "2026-09-29" },
+      { d: "2026-10-01", spy: 110, qqq: 110, bd: "2026-10-01" }
+    ];
+    const result = plain(context.benchmarkView({ state: "verified", start: "2026-09-29", asOf: "2026-10-01",
+      benchmarkInputs: { openingCents: 10_000, flows: [] } }, [
+      { ym: "2026-09", from: "2026-09-29", to: "2026-09-30", days: 2 },
+      { ym: "2026-10", from: "2026-10-01", to: "2026-10-01", days: 1 }
+    ]));
+    assert.deepEqual(result.inferredClosures, ["2026-09-30"]);
+    assert.equal(result.byMonth["2026-09"].spy, 0);
+    assert.ok(Math.abs(result.byMonth["2026-10"].spy - .1) < 1e-12);
+  });
+  await t.test("same-date evidence restores the real return without a zero day or double day", () => {
+    points = [
+      { d: "2026-09-08", spy: 100, qqq: 100 },
+      { d: "2026-09-09", spy: 110, qqq: 110 },
+      { d: "2026-09-10", spy: 99, qqq: 99, bd: "2026-09-10" }
+    ];
+    const result = plain(context.benchmarkView({ state: "verified", start: "2026-09-09", asOf: "2026-09-10",
+      benchmarkInputs: { openingCents: 10_000, flows: [] } },
+    [{ ym: "2026-09", from: "2026-09-09", to: "2026-09-10", days: 2 }]));
+    assert.equal(result.benchmarkPending, false); assert.equal(result.benchAsOf, "2026-09-10");
+    assert.ok(Math.abs(result.bench[0].twr + .01) < 1e-12);
+    assert.ok(Math.abs(result.bench[0].val - 99) < 1e-12);
+  });
+  await t.test("a missing quote clamps coverage, while malformed quotes fail closed", () => {
+    points = data.daily.map(p => ({ ...p })); delete points[2].spy;
+    const missing = plain(context.benchmarkView(view, rowsOf(view)));
+    assert.equal(missing.benchAsOf, "2026-08-01");
+    assert.equal(missing.benchmarkPending, true);
+    assert.equal(missing.bench.length, 2);
+    assert.ok(missing.bench.every(item => item.val === null && item.valueReason === "bench-date-pending"));
+    for (const change of [p => { p[2].qqqd = "invalid"; }, p => { p[2].spyd = -1; }]) {
       points = data.daily.map(p => ({ ...p })); change(points);
       assert.equal(context.benchmarkView(view, rowsOf(view)).bench.length, 0);
     }

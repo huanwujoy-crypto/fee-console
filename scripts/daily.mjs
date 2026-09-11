@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import {
   ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows,
-  buildPoint, samePoint, buildLatestStatus, sameStatus, isIsoDate
+  buildPoint, validateBenchmarkTimeline, samePoint, buildLatestStatus, sameStatus, isIsoDate
 } from "./daily-core.mjs";
 import {
   buildFeeCalculationReceipt,
@@ -336,7 +336,11 @@ hard.push(...checkCashLedger({ date, acctCash, prevAcctCash, movements: incoming
 const flows = reconcileFlows(data.flowsAuto, data.flowsUnresolved, incoming);
 hard.push(...flows.errors);
 
-const point = buildPoint({ date, accounts, splits, styleSplits, bench, benchDiv, provisional: check.provisional, calibrated });
+const benchmarkRejected = check.benchmarkErrors.length > 0;
+const acceptedBench = benchmarkRejected ? {} : bench;
+const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
+const point = buildPoint({ date, accounts, splits, styleSplits, bench: acceptedBench, benchDiv: acceptedBenchDiv,
+  benchDate: args["src-bench"] ?? null, provisional: check.provisional, calibrated });
 const existingPoint = data.daily.find(x => x && x.d === date);
 // A read-only correction that leaves `stock` unchanged must not erase a style
 // look-through already verified for the same day.  If stock changes materially,
@@ -348,11 +352,43 @@ if (noIncomingStyle && hasExistingStyle &&
     Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
   for (const k of STYLE_SPLITS) point[k] = Number(existingPoint[k]);
 }
-// A repeated run that receives no dividend event must never erase a dividend
-// already verified for that ex-date.  Explicit corrections require the
-// one-time audited backfill path rather than a blind daily overwrite.
-for (const k of BENCH_DIV_KEYS) {
-  if (point[k] === undefined && Number(existingPoint?.[k]) > 0) point[k] = Number(existingPoint[k]);
+// Same-date portfolio corrections may omit public benchmark arguments.  Keep
+// the complete price/date/dividend bundle together; never retain an orphaned
+// dividend, and never move a dividend to a different benchmark session.
+const incomingNewBench = BENCH_KEYS.every(k => Number.isFinite(point[k]));
+const incomingLegacyBench = BENCH_LEGACY_KEYS.some(k => Number.isFinite(point[k]));
+const existingNewBench = BENCH_KEYS.every(k => Number.isFinite(existingPoint?.[k]));
+const suppliedAnyBench = [...BENCH_KEYS, ...BENCH_LEGACY_KEYS].some(k => args[k] !== undefined);
+const priorTimelineErrors = new Set(validateBenchmarkTimeline(data.daily));
+const existingBenchmarkValid = existingNewBench && validateBenchmarkTimeline([existingPoint]).length === 0;
+const preserveExistingBenchmark = !incomingNewBench && !incomingLegacyBench && existingNewBench
+  && ((!benchmarkRejected && !suppliedAnyBench) || (benchmarkRejected && existingBenchmarkValid));
+if (preserveExistingBenchmark) {
+  for (const k of BENCH_KEYS) point[k] = Number(existingPoint[k]);
+  if (isIsoDate(existingPoint.bd)) point.bd = existingPoint.bd;
+  for (const k of BENCH_DIV_KEYS) {
+    if (Number(existingPoint[k]) > 0) point[k] = Number(existingPoint[k]);
+  }
+} else if (incomingNewBench) {
+  const existingSession = isIsoDate(existingPoint?.bd) ? existingPoint.bd : existingPoint?.d;
+  if (existingSession === point.bd) {
+    for (const k of BENCH_DIV_KEYS) {
+      if (point[k] === undefined && Number(existingPoint?.[k]) > 0) point[k] = Number(existingPoint[k]);
+    }
+  }
+}
+
+// Benchmark faults must fail closed for benchmark output without blocking the
+// independent AUM point.  Preserve pre-existing timeline findings, but if this
+// candidate introduces a new conflict, omit only its public benchmark bundle.
+const timelineCandidate = data.daily.filter(x => x && x.d !== date).concat(point);
+const introducedTimelineErrors = validateBenchmarkTimeline(timelineCandidate)
+  .filter(message => !priorTimelineErrors.has(message));
+if (introducedTimelineErrors.length) {
+  for (const k of [...BENCH_KEYS, ...BENCH_DIV_KEYS, "bd"]) delete point[k];
+  if (!check.provisional.some(note => /benchmark omitted/.test(note))) {
+    check.provisional.push("benchmark omitted pending source-date repair");
+  }
 }
 
 /*
@@ -465,6 +501,7 @@ catch { die('STYLE_FILE_CHANGED — nothing written'); }
 const receiptUnchanged = sameFeeCalculationReceipt(data.feeCalculationReceipt, nextData.feeCalculationReceipt);
 const registryUnchanged = stableJson(data.classificationRegistry) === stableJson(nextData.classificationRegistry);
 if (baseUnchanged && receiptUnchanged && registryUnchanged) {
+  for (const message of check.benchmarkErrors) console.warn(`benchmark omitted: ${message}`);
   console.log(`no-op ${date}`);
   process.exit(0);
 }
@@ -493,4 +530,5 @@ console.log(
   `flows=${nextData.flowsAuto.length} new-flows=${flows.added} promoted=${flows.promoted} ` +
   `unresolved=${nextData.flowsUnresolved.length} receipt=${receiptState}`
 );
+for (const message of check.benchmarkErrors) console.warn(`benchmark omitted: ${message}`);
 for (const n of status.notes) console.warn(`note: ${n}`);

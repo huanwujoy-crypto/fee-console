@@ -27,6 +27,10 @@ export const SPLIT_IMPOSSIBLE_RATIO = 0.02; // 2% of NAV — above this it is wr
 export const STYLE_SPLIT_EPS = 1;        // USD — complete look-through must reconcile within this
 export const MOVE_IMPOSSIBLE = 0.5;      // 50% day-on-day with no external flow
 export const MAX_LOOKBACK_DAYS = 10;     // weekend calibration reach
+export const BENCH_MAX_SOURCE_LAG_DAYS = 3;
+// Points before this date predate per-point benchmark-date evidence.  They are
+// retained as reviewed migration history; new SPY/QQQ writes always carry `bd`.
+export const BENCH_DATE_EVIDENCE_FROM = "2026-09-10";
 export const CASH_EPS = 0.01;
 
 export const ACCOUNTS = ["schwab", "webull"];
@@ -35,7 +39,7 @@ export const SPLITS = ["cash", "stock", "other"];
 // growth/value are only accepted as a complete, reconciling pair.
 export const STYLE_SPLITS = ["growth", "value"];
 /* 基准（口径 v4.6）：美股收盘、含息。存的是当日原始收盘价 + 当日除息金额，
-   两者都写一次就永不重述——这是不用 Yahoo adjclose 的原因（见 §9.2）。
+   两者都写一次就永不重述——这是不用 Yahoo adjclose 的原因。
    cspx / eqac 是 v4.5 及以前的欧洲收盘口径，只读不再写，供历史数据回放。 */
 export const BENCH_KEYS = ["spy", "qqq"];
 export const BENCH_DIV_KEYS = ["spyd", "qqqd"];
@@ -74,7 +78,7 @@ export const isWeekend = d => {
  * ------------------------------------------------------------------ */
 
 export function validateInputs(input) {
-  const errors = [], provisional = [];
+  const errors = [], provisional = [], benchmarkErrors = [];
   const {
     date, accounts = {}, splits = {}, styleSplits = {}, sourceDates = {}, bench = {}, benchDiv = {},
     benchDate = null, calibrated = false, now
@@ -82,7 +86,7 @@ export function validateInputs(input) {
 
   if (!isIsoDate(date)) {
     errors.push(`--date must be a valid ISO calendar date (got ${JSON.stringify(date)})`);
-    return { errors, provisional, total: NaN, splitTotal: NaN, splitDelta: NaN };
+    return { errors, provisional, benchmarkErrors, total: NaN, splitTotal: NaN, splitDelta: NaN };
   }
 
   // The clock only guards against nonsense, not against a one-day broker lag.
@@ -138,31 +142,44 @@ export function validateInputs(input) {
   }
 
   for (const [k, v] of Object.entries(bench)) {
-    if (![...BENCH_KEYS, ...BENCH_LEGACY_KEYS].includes(k)) errors.push(`unknown benchmark field --${k}`);
-    else if (!Number.isFinite(v) || !(v > 0)) errors.push(`--${k} must be a number greater than 0`);
+    if (![...BENCH_KEYS, ...BENCH_LEGACY_KEYS].includes(k)) benchmarkErrors.push(`unknown benchmark field --${k}`);
+    else if (!Number.isFinite(v) || !(v > 0)) benchmarkErrors.push(`--${k} must be a number greater than 0`);
   }
   const hasNewBench = BENCH_KEYS.some(k => bench[k] !== undefined);
   const hasLegacyBench = BENCH_LEGACY_KEYS.some(k => bench[k] !== undefined);
   if (hasNewBench && BENCH_KEYS.some(k => bench[k] === undefined)) {
-    errors.push(`benchmark prices must be supplied as a pair: ${BENCH_KEYS.join(" and ")}`);
+    benchmarkErrors.push(`benchmark prices must be supplied as a pair: ${BENCH_KEYS.join(" and ")}`);
   }
   if (hasLegacyBench && !(["cspx", "eqac"].every(k => bench[k] !== undefined))) {
-    errors.push("legacy benchmark prices must be supplied as a pair: cspx and eqac");
+    benchmarkErrors.push("legacy benchmark prices must be supplied as a pair: cspx and eqac");
   }
-  if (hasNewBench && hasLegacyBench) errors.push("do not mix SPY/QQQ and legacy benchmark inputs in one run");
+  if (hasNewBench && hasLegacyBench) benchmarkErrors.push("do not mix SPY/QQQ and legacy benchmark inputs in one run");
+  if (hasLegacyBench && date >= BENCH_DATE_EVIDENCE_FROM) {
+    benchmarkErrors.push(`legacy benchmark inputs are retired on and after ${BENCH_DATE_EVIDENCE_FROM}`);
+  }
   // 除息金额绝大多数日子是 0，所以下界是 0 而不是 >0；负数一定是取数错误。
   for (const [k, v] of Object.entries(benchDiv)) {
-    if (!BENCH_DIV_KEYS.includes(k)) errors.push(`unknown benchmark dividend field --${k}`);
-    else if (!Number.isFinite(v) || v < 0) errors.push(`--${k} must be a number of zero or greater`);
+    if (!BENCH_DIV_KEYS.includes(k)) benchmarkErrors.push(`unknown benchmark dividend field --${k}`);
+    else if (!Number.isFinite(v) || v < 0) benchmarkErrors.push(`--${k} must be a number of zero or greater`);
     else if (bench[k.slice(0, -1)] === undefined) {
-      errors.push(`--${k} needs its price --${k.slice(0, -1)} on the same day`);
+      benchmarkErrors.push(`--${k} needs its price --${k.slice(0, -1)} on the same day`);
     }
   }
   if (Object.keys(bench).length) {
-    if (!benchDate) errors.push("--src-bench is required when benchmark prices are supplied");
-    else if (!isIsoDate(benchDate)) errors.push("--src-bench must be a valid ISO calendar date");
-    else if (benchDate && benchDate !== date) {
-      provisional.push(`benchmark priced on ${benchDate}, not ${date}`);
+    if (!benchDate) benchmarkErrors.push("--src-bench is required when benchmark prices are supplied");
+    else if (!isIsoDate(benchDate)) benchmarkErrors.push("--src-bench must be a valid ISO calendar date");
+    else {
+      const lag = dayDiff(benchDate, date);
+      if (lag < 0) benchmarkErrors.push(`--src-bench=${benchDate} cannot be after --date=${date}`);
+      else if (lag > BENCH_MAX_SOURCE_LAG_DAYS) {
+        benchmarkErrors.push(`--src-bench=${benchDate} is not a plausible lag behind ${date}`);
+        provisional.push(`benchmark source is ${lag} day(s) behind ${date}; benchmark omitted`);
+      } else if (lag > 0) {
+        provisional.push(`benchmark priced on ${benchDate}, ${lag} day(s) behind ${date}`);
+      }
+      if (lag !== 0 && Object.values(benchDiv).some(v => Number(v) > 0)) {
+        benchmarkErrors.push("benchmark dividends cannot be repeated on a carried-forward price date");
+      }
     }
   }
 
@@ -184,7 +201,7 @@ export function validateInputs(input) {
     // A calibrated run outside the weekend is fine; nothing to say.
   }
 
-  return { errors, provisional, total, splitTotal, splitDelta };
+  return { errors, provisional, benchmarkErrors, total, splitTotal, splitDelta };
 }
 
 /**
@@ -439,17 +456,79 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {}, benchDiv = {}, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {}, benchDiv = {}, benchDate = null, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
   for (const s of STYLE_SPLITS) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
+  if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) point.bd = benchDate;
   // 只在真有除息时落字段：绝大多数日子为 0，写进去会让 samePoint 与每日 diff 变噪。
   for (const k of BENCH_DIV_KEYS) if (Number(benchDiv[k]) > 0) point[k] = benchDiv[k];
   const prov = !calibrated && provisional.length > 0;
   if (prov) point.prov = 1;
   return point;
+}
+
+/**
+ * Validate persisted SPY/QQQ date evidence without inventing a market calendar.
+ * A repeated `bd` is a non-trading carry and therefore must repeat the same
+ * prices.  Missing `bd` remains readable only as legacy input; every new write
+ * produced by buildPoint carries it.
+ */
+export function validateBenchmarkTimeline(points = []) {
+  const errors = [];
+  let priorBd = null;
+  const pricesByBd = new Map();
+  for (const point of [...points].sort((a, b) => String(a?.d || "").localeCompare(String(b?.d || "")))) {
+    if (!point || !isIsoDate(point.d)) continue;
+    const present = BENCH_KEYS.filter(k => point[k] !== undefined);
+    const hasPair = present.length === BENCH_KEYS.length;
+    if (present.length && !hasPair) {
+      errors.push(`${point.d}: persisted benchmark prices must remain a SPY/QQQ pair`);
+    }
+    for (const divKey of BENCH_DIV_KEYS) {
+      if (point[divKey] !== undefined && point[divKey] !== null
+          && point[divKey.slice(0, -1)] === undefined) {
+        errors.push(`${point.d}: persisted ${divKey} has no paired price`);
+      }
+    }
+    if (point.bd === undefined) {
+      if (hasPair && point.d >= BENCH_DATE_EVIDENCE_FROM) {
+        errors.push(`${point.d}: persisted SPY/QQQ prices require bd`);
+      } else if (hasPair) {
+        priorBd = point.d;
+        pricesByBd.set(point.d, BENCH_KEYS.map(k => point[k]));
+      }
+      continue;
+    }
+    if (!hasPair) {
+      errors.push(`${point.d}: persisted bd requires a SPY/QQQ pair`);
+      continue;
+    }
+    if (!isIsoDate(point.bd)) {
+      errors.push(`${point.d}: persisted bd must be an ISO calendar date`);
+      continue;
+    }
+    const lag = dayDiff(point.bd, point.d);
+    if (lag < 0) errors.push(`${point.d}: persisted bd ${point.bd} is in the future`);
+    else if (lag > BENCH_MAX_SOURCE_LAG_DAYS) {
+      errors.push(`${point.d}: persisted bd ${point.bd} is too far behind`);
+    }
+    if (priorBd && point.bd < priorBd) {
+      errors.push(`${point.d}: persisted bd ${point.bd} regresses behind ${priorBd}`);
+    }
+    const prices = BENCH_KEYS.map(k => point[k]);
+    const priorPrices = pricesByBd.get(point.bd);
+    if (priorPrices && !prices.every((value, index) => Object.is(value, priorPrices[index]))) {
+      errors.push(`${point.d}: repeated bd ${point.bd} changed a persisted benchmark price`);
+    } else if (!priorPrices) pricesByBd.set(point.bd, prices);
+    if (point.bd !== point.d && BENCH_DIV_KEYS.some(k => Number(point[k]) > 0)) {
+      errors.push(`${point.d}: carried benchmark date ${point.bd} repeats a dividend`);
+    }
+    priorBd = point.bd;
+  }
+  return errors;
 }
 
 export const samePoint = (a, b) => {

@@ -28,6 +28,15 @@ fingerprint, then run the same-date replacement and trusted publication path
 defined by the data contract. If the source is still changing, stop without
 writing.
 
+Read SPY/QQQ only from the validated `market-data-cache` row and pass that row's
+actual date as `--src-bench`; never label the cache's last row with the target
+date. If the cache has not reached the target's completed U.S. session, the
+portfolio AUM may still be written with the older row and its true date so the
+phone clamps the benchmark window and labels it pending. Retry the same target
+date after the cache advances, using the normal same-date replacement path.
+Never fill the gap from IBKR, an intraday quote, `adjclose`, or a hand-copied
+price, and do not add or infer a separate market-holiday calendar.
+
 Financial systems remain read-only. Never place, modify, or cancel orders, and
 never initiate transfers or write to IB, Sharesight, or another financial
 account.
