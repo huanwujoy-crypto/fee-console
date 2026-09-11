@@ -119,9 +119,10 @@ Take §0-C coefficients only from `claude/xuan-ib-ai-risk-tiers-v1.json` through
 `scripts/xuan-ib-ai-risk-registry.mjs`, and compute the numerator, the scenario
 totals and the ratio only with `computeAiPressure` in
 `scripts/xuan-ib-ai-pressure.mjs`. Never retype a coefficient, a contribution, a
-numerator or a ratio into a report, an assembly script or a card: the renderer
-derives the whole section and refuses a hand-supplied AI-pressure card, and the
-gate recomputes the total from the page's own per-constituent contributions.
+numerator or a ratio into a report, an assembly script, a card or a KPI tile:
+the renderer derives the whole section and the headline KPI, refuses a
+hand-supplied AI-pressure card or KPI, and the gate recomputes the total from
+the page's own per-constituent contributions and reconciles the tile against it.
 Where the approved material defines no low or high case, publish that scenario
 as unavailable and named — never the mid case repeated, never zero. Resolve cross-source
 identity by the strong identifier each payload publishes (`contract_id`,

@@ -13,7 +13,7 @@ import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-et
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
 import { parseEtfSummary } from './xuan-ib-etf-summary-transport.mjs';
 import { renderAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
-import { renderAiPressureSection } from './xuan-ib-ai-pressure.mjs';
+import { renderAiPressureKpi, renderAiPressureSection } from './xuan-ib-ai-pressure.mjs';
 import { parseEtfAbcPublicRuntimeStateJson, renderEtfAbcPublicRuntimeCard,
   ETF_ABC_RUNTIME_START, ETF_ABC_RUNTIME_END } from './xuan-ib-etf-abc.mjs';
 
@@ -391,12 +391,18 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
     for(const item of view.risk){
       if(/§0-C|AI\s*压力/.test(String(item.title)))fail('the AI pressure section is derived and must not also be supplied as a risk card');
     }
+    // The headline tile too. It sits outside the risk pane, so an independently
+    // authored one could disagree with the table beneath it indefinitely.
+    for(const item of view.kpis){
+      if(/AI\s*压力/.test(String(item.label)))fail('the AI pressure KPI is derived and must not also be supplied as a view KPI');
+    }
   }
   const cash=renderCashPlan(view.cashPlan), pending=state.decisions.filter(item=>item.status==='awaiting_user').length;
   const classificationDisclosure=renderClassificationDisclosure(fourBucket);
   const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
-  const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi;
+  const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi
+    +(aiPressure===null?'':renderAiPressureKpi(aiPressure,{asOfHkt:view.asOfHkt}));
   const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head><body><!-- xuan-ib-handover:v1 -->
 <input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary>${GUIDE_BODY}</details><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}

@@ -337,6 +337,36 @@ test('a hand-tampered numerator, ratio, row or coefficient is caught by the real
   fails(built.html.replace(odd, odd.replace('data-ai-contribution-cents="0"',
     'data-ai-contribution-cents="720000"')),
   /is excluded but claims a contribution/);
+
+  // 8. The headline KPI, edited on its own. It lives outside the risk pane and
+  //    on the page this repair came from it was authored separately from the
+  //    table, so the two could disagree with nothing to notice.
+  const kpi = built.html.match(/<div class="kpi" data-ai-pressure-kpi-v1[^<>]*>/)[0];
+  fails(built.html.replace(kpi, kpi.replace(/data-ai-kpi-ratio-bp="\d+"/, 'data-ai-kpi-ratio-bp="1"')),
+    /KPI disagrees with the table it summarises/);
+  fails(built.html.replace(kpi, kpi.replace(/data-ai-kpi-numerator-cents="\d+"/,
+    'data-ai-kpi-numerator-cents="1"')), /KPI disagrees with the table it summarises/);
+  // 9. And removing it entirely is not an escape either.
+  fails(built.html.replace(/<div class="kpi" data-ai-pressure-kpi-v1[\s\S]*?<\/div><\/div>/, ''),
+    /requires exactly one headline KPI derived from it/);
+});
+
+test('the headline AI pressure KPI is derived, not accepted from the caller', () => {
+  const built = build();
+  // It carries the computation's own numbers, in machine-readable form.
+  assert.match(built.html, /data-ai-pressure-kpi-v1="1"/);
+  assert.match(built.html, /<div class="lab">AI 压力中情景<\/div>/);
+  // Twelve constituents, one of them excluded, disclosed on the tile itself.
+  assert.match(built.html, /1 项无可用系数未计入分子，仍在分母内/);
+
+  // A caller that tries to author its own AI-pressure tile is refused rather
+  // than rendered beside the derived one.
+  const shadowed = view();
+  shadowed.kpis[2] = { label: 'AI 压力中情景（不完整）', value: 22.75, format: 'percent',
+    asOfHkt: hktStamp, note: '手写数值' };
+  assert.throws(() => prepareReport(shadowed, evidence(),
+    { ...context, riskConstituents: universe(), riskDenominator: denominator() }),
+  /derived and must not also be supplied as a view KPI/);
 });
 
 test('a fabricated REG record is refused against the trusted registry', t => {

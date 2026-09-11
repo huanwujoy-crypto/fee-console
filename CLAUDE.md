@@ -157,7 +157,10 @@ approved rule or the registry already records, and returns every contribution,
 the scenario totals and the ratios. It fetches nothing. `renderReport` generates
 the §0-C section from that result and refuses a candidate that also supplies its
 own AI-pressure card: there is no longer any input on the assembly path that
-accepts a ready-made numerator or ratio. The gate recomputes the numerator from
+accepts a ready-made numerator or ratio. The headline AI-pressure KPI is derived
+from the same computation and a hand-authored one is refused — it sits outside
+the risk pane, so an independently written tile could disagree with the table
+beneath it indefinitely. The gate recomputes the numerator from
 the page's own per-constituent contributions and fails a displayed total, ratio,
 coefficient or contribution that does not follow from them, as well as a
 classified constituent that contributes no row at all.

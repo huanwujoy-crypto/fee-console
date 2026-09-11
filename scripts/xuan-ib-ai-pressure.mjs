@@ -197,6 +197,31 @@ const coefficientText = value => `${(value * 100).toFixed(2)}%`;
 const ratioBasis = ratio => Math.round(ratio * 1_000_000);
 const centsOf = value => Math.round(value * 100);
 
+export const AI_PRESSURE_KPI_MARKER = 'data-ai-pressure-kpi-v1';
+
+/**
+ * The headline AI-pressure KPI, derived from the same computation as the table.
+ *
+ * This tile is the number most readers actually see, and it sits outside the
+ * risk pane entirely — on the published page it was authored independently of
+ * the table beneath it, so the two could disagree without anything noticing.
+ * It is generated here and reconciled against the table by the gate.
+ */
+export function renderAiPressureKpi(pressure, { asOfHkt } = {}) {
+  if (!plain(pressure) || !Array.isArray(pressure.rows) || !pressure.rows.length) fail('PRESSURE_INVALID');
+  if (typeof asOfHkt !== 'string' || !asOfHkt.trim()) fail('AS_OF_REQUIRED');
+  const excluded = pressure.excludedKeys.length;
+  return `<div class="kpi" ${AI_PRESSURE_KPI_MARKER}="1"`
+    + ` data-ai-kpi-numerator-cents="${centsOf(pressure.numeratorUsd)}"`
+    + ` data-ai-kpi-denominator-cents="${centsOf(pressure.denominatorUsd)}"`
+    + ` data-ai-kpi-ratio-bp="${ratioBasis(pressure.ratio)}">`
+    + `<div class="lab">AI 压力中情景</div>`
+    + `<div class="big num">${percent(pressure.ratio)}</div>`
+    + `<div class="sub">${money(pressure.numeratorUsd)} / ${money(pressure.denominatorUsd)} `
+    + `${escape(pressure.denominator.components.map(item => item.label).join(' + '))}，含现金`
+    + `${excluded ? ` · ${excluded} 项无可用系数未计入分子，仍在分母内` : ''}<br>${escape(asOfHkt)}</div></div>`;
+}
+
 /**
  * The §0-C section, rendered from the computation and from nothing else.
  *

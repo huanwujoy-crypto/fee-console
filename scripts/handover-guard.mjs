@@ -1517,13 +1517,16 @@ function checkAiRiskUniverse(pane, documentHtml, { edition, reportDate }) {
 // that left a classified position out of the arithmetic looked exactly like a
 // report that had included it. Here the page must publish every contribution it
 // claims to have added up, and the gate adds them up again.
-function checkAiPressureArithmetic(pane, records) {
+function checkAiPressureArithmetic(pane, records, documentHtml) {
   const summaries = [...pane.matchAll(/<tr[^<>]*\bdata-ai-pressure-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
   const rows = [...pane.matchAll(/<tr[^<>]*\bdata-ai-risk-row\s*=\s*(["'])(.*?)\1[^<>]*>/gi)];
+  const tiles = [...String(documentHtml).matchAll(/<div[^<>]*\bdata-ai-pressure-kpi-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
   if (!summaries.length) {
     // A page may carry no AI-pressure computation at all (a legacy edition), but
-    // it may not show the per-constituent rows while hiding the total.
+    // it may not show the per-constituent rows while hiding the total, nor show
+    // a headline ratio with no table behind it.
     if (rows.length) fail('an AI pressure table naming per-constituent contributions must declare its recomputable total');
+    if (tiles.length) fail('an AI pressure KPI must be supported by the table it summarises');
     return;
   }
   if (summaries.length > 1) fail('the AI pressure table may declare its total only once');
@@ -1595,6 +1598,18 @@ function checkAiPressureArithmetic(pane, records) {
   if (drift > 1n) {
     fail(`AI pressure shows a ratio that does not follow from its own numerator and denominator`);
   }
+
+  // And the headline tile, which lives outside the risk pane and is the number
+  // most readers actually see. On the page this repair came from it was authored
+  // independently of the table beneath it, so the two could disagree with
+  // nothing to notice. It must be present and it must agree.
+  if (tiles.length !== 1) fail('a computed AI pressure table requires exactly one headline KPI derived from it');
+  const tile = tiles[0][0];
+  if (integer(tile, 'data-ai-kpi-numerator-cents') !== recomputed
+    || integer(tile, 'data-ai-kpi-denominator-cents') !== denominator
+    || integer(tile, 'data-ai-kpi-ratio-bp') !== declaredRatio) {
+    fail('the AI pressure KPI disagrees with the table it summarises');
+  }
 }
 
 function checkVenueIdentityClaims(documentHtml) {
@@ -1626,7 +1641,7 @@ try {
     // reconciled against the manifest by identity rather than by ticker.
     const aiRecords = checkAiRiskUniverse(activeRisk, html, { edition, reportDate: expectedDate });
     // Then the number itself, recomputed from the page's own contributions.
-    checkAiPressureArithmetic(activeRisk, aiRecords);
+    checkAiPressureArithmetic(activeRisk, aiRecords, html);
     checkAiTierCoverage(activeRisk, html);
     checkVenueIdentityClaims(html);
   }
