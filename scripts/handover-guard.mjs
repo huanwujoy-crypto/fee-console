@@ -9,6 +9,9 @@ import { validateFourBucketReportHtml, FOUR_BUCKET_REPORT_ID } from './xuan-ib-f
 import { FOUR_BUCKET_TEMPLATE_ID } from './xuan-ib-four-bucket.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
+import { listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
+import { listVenueEquivalences } from './xuan-ib-venue-identity.mjs';
+import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
@@ -96,6 +99,10 @@ const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\
 const navigationOrder = Object.freeze(['s1', 's2', 's3', 's4', 's5']);
 const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s4: '待办', s5: 'ETF' });
 const DECISION_STATE_TEMPLATE_ID = 'xuan-ib-decision-state-v1';
+// The inert record of which AI-pressure tier covers which instrument, and of
+// any instrument excluded from the numerator with its enumerated reason. It is
+// declared here because the template allowlist below has to know about it.
+const AI_TIER_RECORDS_ID = 'xuan-ib-ai-tier-records-v1';
 const ETF_ABC_STATE_TEMPLATE_ID = 'xuan-ib-etf-abc-state-v1';
 const ETF_ABC_STATE_TEMPLATE_OPENING = `<template id="${ETF_ABC_STATE_TEMPLATE_ID}" type="application/json">`;
 
@@ -271,8 +278,8 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID].includes(id)) {
-      fail('only the approved decision, ETF and account-association templates are allowed');
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID, AI_TIER_RECORDS_ID].includes(id)) {
+      fail('only the approved decision, ETF, account-association and AI tier record templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
     byId.set(id, template);
@@ -1204,6 +1211,147 @@ if (!verifiedRecordsUpdate) {
   if (cashPlanErrors.length) fail(cashPlanErrors[0]);
 }
 
+// Symbols the risk pane shows as carrying no approved AI tier, or as excluded
+// from the pressure numerator. This replaces an enumerated blocklist that named
+// AAOI and VST specifically: on 2026-09-11 a new position in exactly the same
+// situation passed the guard untouched because nobody had added its ticker. The
+// rule is now structural — whichever instrument the panel says it could not
+// classify has to carry a machine-readable record — so a name nobody
+// anticipated is covered on the day it first appears.
+// The trigger is an explicit statement that an instrument has no approved tier
+// or is out of the numerator. A bare 不含 is deliberately not one: a numerator
+// subtotal legitimately says which holdings it excludes, and reading that as an
+// unclassified instrument would fail byte-frozen historical repairs that may
+// not be rewritten. The `无已批准 tier` form below covers the same substance
+// whenever a report actually makes that claim about an instrument.
+const AI_TIER_EXCLUSION = /(?:待核验|待分类|未分类|未含|未计入分子|边界未定义|(?:尚无|仍无|没有|未有|无)\s*已?批准\s*tier)/i;
+// The sentence must actually be about AI-pressure tiering. Without this a
+// report could lose its column for an unrelated reason and be read as an
+// unclassified instrument.
+const AI_TIER_CONTEXT = /(?:分子|tier|T[1-9]\b|AI\s*压力|已?批准)/i;
+// Uppercase tokens that are never instrument symbols in this report's prose.
+// A token here is skipped rather than treated as an unclassified holding.
+const NOT_A_SYMBOL = new Set(['AI', 'ETF', 'ETFS', 'IB', 'PM', 'AM', 'US', 'UK', 'HK', 'HKT', 'NY',
+  'NAV', 'USD', 'HKD', 'CAD', 'GBP', 'EUR', 'CHF', 'JPY', 'CNY', 'NYSE', 'NASDAQ', 'BATS', 'LSE',
+  'SWX', 'TSE', 'EBS', 'XETRA', 'EURONEXT', 'LSEETF', 'SIX', 'ARCA', 'AMEX', 'T1', 'T2', 'T3',
+  'WU', 'DELEG', 'AUTO', 'JSON', 'HTML', 'SHA', 'ID', 'IDS', 'PNL', 'FX', 'GDP', 'CPI', 'IPO']);
+const AI_TIER_NAMESPACES = new Set(['WU', 'DELEG', 'AUTO']);
+const AI_TIER_RECORD_STATUSES = new Set(['classified', 'excluded']);
+const AUTO_EXCLUSION_REASON_VALUES = new Set(Object.values(AUTO_EXCLUSION_REASONS));
+
+function aiTierRecordsFromMarkup(documentHtml) {
+  const records = new Map();
+  // Attribute form, written beside the human sentence that explains the record.
+  for (const match of documentHtml.matchAll(/<[a-z][^<>]*\bdata-ai-tier-symbol\s*=\s*(["'])(.*?)\1[^<>]*>/gi)) {
+    const tag = match[0];
+    const symbol = match[2].trim().toUpperCase();
+    const namespace = quotedAttribute(tag, 'data-ai-tier-namespace', 'AI tier record');
+    const recordId = quotedAttribute(tag, 'data-ai-tier-record', 'AI tier record');
+    if (!symbol || !AI_TIER_NAMESPACES.has(namespace) || !recordId) {
+      fail(`AI tier record for ${symbol || 'an unnamed symbol'} needs a WU, DELEG or AUTO namespace and record id`);
+    }
+    const prefix = namespace === 'AUTO' ? 'AUTO:' : `${namespace}-`;
+    if (!recordId.startsWith(prefix)) fail(`AI tier record ${recordId} does not match its declared ${namespace} namespace`);
+    const existing = records.get(symbol);
+    if (existing && (existing.namespace !== namespace || existing.recordId !== recordId)) {
+      fail(`AI tier records for ${symbol} disagree with each other`);
+    }
+    records.set(symbol, { symbol, namespace, recordId, status: 'classified', reason: null });
+  }
+  // Strict inert template, which is also how a genuinely excluded position —
+  // an ETF, a fund, an unreadable asset type — is disclosed by name with its
+  // enumerated reason instead of silently vanishing from the numerator.
+  const template = documentHtml.match(new RegExp(
+    `<template id="${AI_TIER_RECORDS_ID}" type="application/json">([\\s\\S]*?)</template>`, 'i'));
+  if (template) {
+    const entries = parseStrictJson(template[1], AI_TIER_RECORDS_ID);
+    if (!Array.isArray(entries) || entries.length > 500) fail(`${AI_TIER_RECORDS_ID} must be an array of records`);
+    for (const entry of entries) {
+      const expected = ['symbol', 'namespace', 'recordId', 'status'];
+      if (isRecord(entry) && Object.hasOwn(entry, 'reason')) expected.push('reason');
+      strictKeys(entry, expected, `${AI_TIER_RECORDS_ID} entry`);
+      const symbol = typeof entry.symbol === 'string' ? entry.symbol.trim().toUpperCase() : '';
+      if (!symbol || !AI_TIER_NAMESPACES.has(entry.namespace) || typeof entry.recordId !== 'string'
+        || !entry.recordId || !AI_TIER_RECORD_STATUSES.has(entry.status)) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol || 'an unnamed symbol'} is incomplete`);
+      }
+      const prefix = entry.namespace === 'AUTO' ? 'AUTO:' : `${entry.namespace}-`;
+      if (!entry.recordId.startsWith(prefix)) fail(`AI tier record ${entry.recordId} does not match its declared ${entry.namespace} namespace`);
+      // An exclusion must say why, in the module's own enumerated vocabulary.
+      // "Excluded, no reason given" is the failure mode this whole check exists
+      // to prevent.
+      if (entry.status === 'excluded'
+        && (typeof entry.reason !== 'string' || !AUTO_EXCLUSION_REASON_VALUES.has(entry.reason))) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} must name an enumerated exclusion reason`);
+      }
+      if (entry.status === 'classified' && Object.hasOwn(entry, 'reason') && entry.reason !== null) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} cannot be classified and carry an exclusion reason`);
+      }
+      records.set(symbol, { symbol, namespace: entry.namespace, recordId: entry.recordId,
+        status: entry.status, reason: entry.reason ?? null });
+    }
+  }
+  return records;
+}
+
+function approvedTierSymbols() {
+  const symbols = new Map();
+  // Every rule the trusted delegation file records, plus the owner's own
+  // identity-bound overrides. Both are read from the repository beside this
+  // guard, never from the candidate.
+  for (const { rule } of listDelegatedRules()) symbols.set(rule.symbol.toUpperCase(), rule.approvalId);
+  const overridesPath = path.join(path.dirname(fileURLToPath(import.meta.url)),
+    '../claude/xuan-ib-ai-tier-overrides-v1.json');
+  if (fs.existsSync(overridesPath)) {
+    const overrides = JSON.parse(fs.readFileSync(overridesPath, 'utf8'));
+    for (const rule of overrides.overrides || []) {
+      if (typeof rule?.symbol === 'string') symbols.set(rule.symbol.toUpperCase(), rule.approvalId);
+    }
+  }
+  return symbols;
+}
+
+function checkAiTierCoverage(activeRisk, documentHtml) {
+  const candidates = new Set();
+  for (const sentence of activeRisk.split(/[。<>]/)) {
+    if (!AI_TIER_EXCLUSION.test(sentence) || !AI_TIER_CONTEXT.test(sentence)) continue;
+    // Two characters minimum: a single capital in this prose is a section
+    // marker such as §0-C, never a holding.
+    for (const token of sentence.match(/\b[A-Z][A-Z0-9]{1,4}(?:[./][A-Z0-9]{1,3})?\b/g) || []) {
+      if (!NOT_A_SYMBOL.has(token)) candidates.add(token);
+    }
+  }
+  if (!candidates.size) return;
+  const records = aiTierRecordsFromMarkup(documentHtml);
+  const approved = approvedTierSymbols();
+  for (const symbol of [...candidates].sort()) {
+    if (records.has(symbol)) continue;
+    const approvalId = approved.get(symbol);
+    // An instrument the owner or the standing delegation already classified must
+    // not have its classification reopened in prose. This is the AAOI and VST
+    // case, now reached through the general rule rather than by naming them.
+    if (approvalId) {
+      fail(`${symbol} T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen classification`);
+    }
+    // And an instrument nobody has classified may not simply drop out of the
+    // numerator while staying in the denominator, which understates the metric.
+    fail(`${symbol} is shown without an approved AI tier and excluded from the numerator, but carries no machine-readable WU, DELEG or AUTO record; classify it or disclose it by name with an enumerated exclusion reason`);
+  }
+}
+
+function checkVenueIdentityClaims(documentHtml) {
+  const claimed = [...documentHtml.matchAll(/\bdata-venue-identity-ref\s*=\s*(["'])(.*?)\1/gi)]
+    .map((match) => match[2].trim());
+  if (!claimed.length) return;
+  const reviewed = new Set(listVenueEquivalences().map((item) => item.entry.instrumentRef));
+  for (const ref of [...new Set(claimed)].sort()) {
+    // A cross-venue join is only ever as good as the reviewed, instrument-scoped
+    // entry behind it. A reference to an entry the trusted registry does not
+    // carry is named and refused, never accepted on the page's own word.
+    if (!reviewed.has(ref)) fail(`venue identity ${ref} is not a reviewed instrument-scoped equivalence in the trusted registry`);
+  }
+}
+
 try {
   const edition = publicationEdition(html);
   // This exact source-bound correction changes only the approved AAOI risk
@@ -1212,10 +1360,8 @@ try {
     {sourceSha:previousSourceSha,htmlBlob:process.env.XUAN_IB_PREVIOUS_HTML_BLOB});
   if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection) {
     const activeRisk = html.match(/<div class="pane p2">([\s\S]*?)(?=<div class="pane p3">)/)?.[1] || '';
-    if (/不含\s*AAOI|AAOI[^<>。]{0,70}(?:尚无|仍无|没有|未有)已?批准\s*tier/i.test(activeRisk))
-      fail('AAOI T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen tier approval');
-    if (/VST[^<>。]{0,100}(?:待核验|待分类|未分类|未含|未计入分子|边界未定义)/i.test(activeRisk))
-      fail('VST T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen classification');
+    checkAiTierCoverage(activeRisk, html);
+    checkVenueIdentityClaims(html);
   }
   if (!verifiedRecordsUpdate && !edition) fail('ordinary report requires one recognized edition in its primary header');
   if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection && ['am', 'pm'].includes(edition)) {

@@ -24,6 +24,9 @@ Before reading financial data or generating a report, read and obey:
 - `claude/xuan-ib-cash-first-plan-v1.md`
 - `claude/xuan-ib-mrvl-t1-approval-2026-08-31.md`
 - `claude/xuan-ib-ai-tier-overrides-v1.json`
+- `claude/xuan-ib-venue-identity-v1.json`
+- `claude/xuan-ib-auto-classification-v1.json`
+- `claude/xuan-ib-be-t1-approval-2026-09-11.md`
 
 Use only read operations against Interactive Brokers and Sharesight. Never
 place, modify, or cancel an order; never initiate a transfer; never create,
@@ -53,6 +56,44 @@ the trusted prior snapshot, without fresh reads. It must preserve raw financial
 inputs, dates/as-of and receipts, explicitly disclose the recalculation, and
 must not count as a fresh AM/PM run. Do not expand this into a general cache
 substitute for normal reports or overwrite a later report with the old repair.
+
+## Identity and presence integrity (2026-09-11)
+
+Resolve cross-source instrument identity only through
+`scripts/xuan-ib-venue-identity.mjs` and its reviewed registry
+`claude/xuan-ib-venue-identity-v1.json`, and pass that resolver to the
+daily-change builder and merge. Each entry is scoped to one instrument and bound
+to the identifier each raw payload already carries. Never declare two venues
+synonyms, and never take a venue from another custodian's portfolio because it
+lists the same ticker — that is not evidence about this account's instrument. A
+cross-venue pairing no reviewed entry records is named and refused; adding one is
+a separately reviewed maintenance change, never part of a report run.
+
+A daily-change reading of exactly zero publishes only when an independent
+same-run reading of the same completed session corroborates it, and the row names
+the corroborating method. When two readings disagree, withhold the row and
+disclose it by name as contradicted; do not average, prefer or arbitrate. Give
+every unmeasured row its enumerated reason and declare the holdings coverage.
+
+AM may use the per-row fallback `am-session-pnl-v1` only for a row the
+single-day window never returned, and only with all of its evidence: session
+D−1, the venue's session provably finished, `observedAtHkt` on report date D,
+`mark × quantity` reconciled against the payload's own market value, and no
+trade or corporate action on that position in the same window. It never
+overrides a window reading. PM is unchanged: no fallback, its own method, its
+own instant rule. Do not relax PM to match AM.
+
+A first-seen position that no `WU` or `DELEG` rule covers must not simply drop
+out of the AI-pressure numerator while remaining in the denominator. Use
+`classifyFirstSeenPosition` in `scripts/xuan-ib-auto-classification.mjs` with
+`claude/xuan-ib-auto-classification-v1.json`: verified identity, no existing
+owner rule, unambiguously ordinary stock, standard T1 under the `AUTO`
+namespace as this period's effective classification. Non-stock and unknown or
+ambiguous asset types are fail-visible — named, disclosed with an enumerated
+reason and excluded. This creates no `awaiting_user` item, mints no `WU` or
+`DELEG` receipt, changes no coefficient or account scope, and reaches no
+financial write. Never word an AUTO classification 临时, 待确认 or 待裁决.
+BE / Bloom Energy is a `DELEG` rule (`DELEG-20260911-BE-T1`), not an AUTO record.
 
 Classification prose must come from the trusted deterministic disclosure
 module, not the previous latest.html. Run the canonical renderer and preserve

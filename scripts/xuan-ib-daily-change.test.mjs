@@ -4,9 +4,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { renderReport, validateReportView } from './xuan-ib-report-view.mjs';
-import { normalizeDailyChangeWindow, measurePositionSessionChange } from './xuan-ib-source-adapter.mjs';
+import { normalizeDailyChangeWindow, measurePositionSessionChange,
+  measurePositionCompletedSessionChange } from './xuan-ib-source-adapter.mjs';
 import { buildDailyChangeColumn, applyDailyChangeColumn, canonicalCode, identityKey,
   UNAVAILABLE_REASONS, DAILY_CHANGE_METHODS, DAILY_CHANGE_EDITION_RULES,
+  DAILY_CHANGE_EDITION_FALLBACK, editionPublishableMethods,
   validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -360,4 +362,190 @@ test('the release-side HTML check rejects missing or contradictory row evidence'
   assert.throws(() => validatePublishedDailyChangeHtml(
     html.replace('data-change-pct="6.55"','data-change-pct="9.99"'),
     { edition: 'am', dataDate: reportDate }), /PUBLISHED_VALUE_MISMATCH/);
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-11 follow-up: three-valued presence, and AM's own per-row fallback.
+// ---------------------------------------------------------------------------
+
+// The same positions payload read after the session it reports has closed. This
+// is a distinct method from PM's intraday reading, with its own instant rule.
+const completed = (code, venue, position, over = {}) => measurePositionCompletedSessionChange(position,
+  { code, venue, sessionDate: priorSession, venuesComplete: [venue],
+    observedAtHkt: `${reportDate} 08:05 HKT`, ...over });
+const buildAm = (measurements, extra = {}) => buildDailyChangeColumn({
+  edition: 'am', method: 'window-v1', dataDate: reportDate,
+  intendedSessionDate: priorSession, measurements, ...extra });
+
+test('a row the single-day window never returned is filled by the AM completed-session fallback', () => {
+  // The SGOV shape: a position live in the broker's book before the portfolio
+  // source has synced it into the window at all. Before this, AM had no
+  // per-row fallback and a mixed column failed the whole report closed.
+  const measurements = normalizeDailyChangeWindow(windowRaw([holding('META', 'NASDAQ', 6.55)]),
+    { date: priorSession, venuesComplete: ['NASDAQ'] });
+  const column = buildAm(measurements, {
+    fallbackMeasurements: [completed('SGOV', 'NYSE', position(100.51, 100, 15))] });
+  assert.equal(column.fallbackMethod, 'am-session-pnl-v1');
+  assert.equal(column.coverage.available, 2);
+  const filled = column.rows.find(row => row.key === 'NYSE:SGOV');
+  assert.equal(filled.quoteStatus, 'ok');
+  // It publishes under its own name, never under the window's or PM's.
+  assert.equal(filled.method, 'am-session-pnl-v1');
+  assert.equal(filled.presence, 'not-in-window');
+  assert.equal(filled.sessionDate, priorSession);
+  // Its label is the minute it was taken, on the report date.
+  assert.equal(filled.asOfLabel, `${reportDate} 08:05 HKT`);
+  // The window row still publishes under the window method: the column is
+  // mixed per row, and each row names what measured it.
+  const rows = applyDailyChangeColumn([viewRow('META', 'NASDAQ'), viewRow('SGOV', 'NYSE')],
+    column, { venueOf });
+  assert.equal(rows[0].changeMethod, 'window-v1');
+  assert.equal(rows[1].changeMethod, 'am-session-pnl-v1');
+  assert.equal(rows[1].changeAsOfHkt, `${reportDate} 08:05 HKT`);
+  validateReportView(viewWith(rows));
+});
+
+test('the AM fallback publishes nothing until every piece of its evidence lines up', () => {
+  const only = fallback => buildAm([], { fallbackMeasurements: [fallback] }).rows[0];
+  const good = position(100.51, 100, 15);
+  assert.equal(only(completed('SGOV', 'NYSE', good)).quoteStatus, 'ok');
+  // The venue's session must be proven FINISHED. Merely running is PM's bar,
+  // and it is not enough for a column that reports a completed session.
+  assert.equal(only(completed('SGOV', 'NYSE', good, { venuesComplete: [] })).reason,
+    UNAVAILABLE_REASONS.SESSION);
+  // The reading must have been taken on the report's own Hong Kong date. An
+  // instant on the session date would be PM's rule, and accepting it here
+  // would let a reading taken a day late pass as if taken at the close.
+  assert.equal(only(completed('SGOV', 'NYSE', good, { observedAtHkt: `${priorSession} 21:35 HKT` })).reason,
+    UNAVAILABLE_REASONS.INSTANT);
+  for (const observedAtHkt of [null, reportDate, `${reportDate} 25:00 HKT`, '08:05 HKT']) {
+    assert.equal(only(completed('SGOV', 'NYSE', good, { observedAtHkt })).reason, UNAVAILABLE_REASONS.INSTANT);
+  }
+  // mark x quantity must reproduce the payload's own market value.
+  assert.equal(only(completed('SGOV', 'NYSE', { ...good, price: 96 })).reason, UNAVAILABLE_REASONS.MARK);
+  // The session it reports is fixed by the edition, so a row that names another
+  // session is refused rather than relabelled.
+  assert.equal(only(completed('SGOV', 'NYSE', good, { sessionDate: reportDate })).reason,
+    UNAVAILABLE_REASONS.SESSION);
+  // A trade or a corporate action in the same window suppresses it exactly as
+  // it suppresses a window row.
+  for (const [key, reason] of [['trades', UNAVAILABLE_REASONS.TRADED],
+    ['corporateActions', UNAVAILABLE_REASONS.CORPORATE_ACTION]]) {
+    const column = buildAm([], { fallbackMeasurements: [completed('SGOV', 'NYSE', good)],
+      [key]: [{ code: 'SGOV', venue: 'NYSE' }] });
+    assert.equal(column.rows[0].reason, reason);
+  }
+  // With nothing to corroborate it, the fallback's own zero stays unpublishable
+  // for exactly the original reason.
+  assert.equal(only(completed('SGOV', 'NYSE', position(100.51, 100, 0))).reason,
+    UNAVAILABLE_REASONS.FLAT_OR_STALE);
+});
+
+test('presence is three-valued: corroborated zero publishes, a contradiction never does', () => {
+  const flat = normalizeDailyChangeWindow(windowRaw([holding('EQAC', 'SWX', 0)]),
+    { date: priorSession, venuesComplete: ['SWX'] });
+  // Uncorroborated, a zero is still indistinguishable from a carried-forward
+  // price and is not published.
+  assert.equal(buildAm(flat).rows[0].reason, UNAVAILABLE_REASONS.FLAT_OR_STALE);
+  // An independent same-run reading of the same completed session settles it.
+  const corroborated = buildAm(flat, {
+    fallbackMeasurements: [completed('EQAC', 'SWX', position(80, 100, 0))] });
+  assert.equal(corroborated.rows[0].quoteStatus, 'ok');
+  assert.equal(corroborated.rows[0].changePct, 0);
+  assert.equal(corroborated.rows[0].corroboratedBy, 'am-session-pnl-v1');
+  // Disagreement is disclosed by name and never arbitrated into a number.
+  const contradicted = buildAm(flat, {
+    fallbackMeasurements: [completed('EQAC', 'SWX', position(80, 100, 240))] });
+  assert.equal(contradicted.rows[0].quoteStatus, 'unavailable');
+  assert.equal(contradicted.rows[0].reason, UNAVAILABLE_REASONS.CONTRADICTED);
+  assert.match(contradicted.rows[0].reason, /contradicted/);
+  // A nonzero window reading is the one that publishes, and the fallback never
+  // overrides it — but a material disagreement still withholds the row.
+  const moved = normalizeDailyChangeWindow(windowRaw([holding('EQAC', 'SWX', 1.5)]),
+    { date: priorSession, venuesComplete: ['SWX'] });
+  const agreeing = buildAm(moved, {
+    fallbackMeasurements: [completed('EQAC', 'SWX', position(80, 100, 118.2))] });
+  assert.equal(agreeing.rows[0].changePct, 1.5);
+  assert.equal(agreeing.rows[0].method, 'window-v1');
+  assert.equal(buildAm(moved, { fallbackMeasurements: [completed('EQAC', 'SWX', position(80, 100, 700))] })
+    .rows[0].reason, UNAVAILABLE_REASONS.CONTRADICTED);
+  // The third state: never returned by the window at all. A view row with no
+  // measurement says so by name rather than vanishing into a bare 未取得.
+  const merged = applyDailyChangeColumn([viewRow('EQAC', 'SWX'), viewRow('SGOV', 'NYSE')],
+    buildAm(moved), { venueOf });
+  assert.equal(merged[0].changePct, 1.5);
+  assert.equal(merged[1].changeReason, UNAVAILABLE_REASONS.NOT_IN_WINDOW);
+  assert.equal(merged[1].changeReason, 'not-in-single-day-window');
+  // A suppressed window row keeps its own reason through the merge.
+  assert.equal(applyDailyChangeColumn([viewRow('EQAC', 'SWX')], buildAm(flat), { venueOf })[0].changeReason,
+    UNAVAILABLE_REASONS.FLAT_OR_STALE);
+});
+
+test('the PM contract is untouched: no fallback, its own method, its own instant rule', () => {
+  // PM's edition rule is unchanged, byte for byte.
+  assert.deepEqual(DAILY_CHANGE_EDITION_RULES.pm, { methods: ['session-pnl-v1'], lagDays: 0 });
+  assert.equal(DAILY_CHANGE_EDITION_FALLBACK.pm, null);
+  assert.deepEqual(editionPublishableMethods('pm'), ['session-pnl-v1']);
+  // PM refuses a fallback set outright rather than quietly ignoring it.
+  assert.throws(() => buildPm([intraday('META', 'NASDAQ', position(645.51, 100, 3203.5))],
+    { fallbackMeasurements: [] }), /FALLBACK_NOT_APPROVED_FOR_EDITION/);
+  // AM keeps its primary method and still may not borrow PM's.
+  assert.deepEqual(DAILY_CHANGE_EDITION_RULES.am, { methods: ['window-v1'], lagDays: 1 });
+  assert.deepEqual(editionPublishableMethods('am'), ['window-v1', 'am-session-pnl-v1']);
+  assert.throws(() => buildAm([intraday('META', 'NASDAQ', position(645.51, 100, 3203.5))],
+    { method: 'session-pnl-v1' }), /METHOD_NOT_APPROVED_FOR_EDITION/);
+  // A fallback set assembled by the wrong adapter fails the whole column.
+  assert.throws(() => buildAm([], { fallbackMeasurements:
+    [intraday('META', 'NASDAQ', position(645.51, 100, 3203.5))] }), /MEASUREMENT_METHOD_MISMATCH/);
+  // PM's own intraday instant still belongs to the session it is reading.
+  assert.equal(buildPm([intraday('META', 'NASDAQ', position(645.51, 100, 3203.5),
+    { observedAtHkt: `${priorSession} 21:35 HKT` })]).rows[0].reason, UNAVAILABLE_REASONS.INSTANT);
+});
+
+test('the published gate checks per-row reasons, coverage and the corroborated zero', () => {
+  const measurements = normalizeDailyChangeWindow(
+    windowRaw([holding('META', 'NASDAQ', 6.55), holding('EQAC', 'SWX', 0), holding('IVAI', 'LSE', 0)]),
+    { date: priorSession, venuesComplete: ['NASDAQ', 'SWX', 'LSE'] });
+  const column = buildAm(measurements, { fallbackMeasurements: [
+    completed('EQAC', 'SWX', position(80, 100, 0)),
+    completed('SGOV', 'NYSE', position(100.51, 100, 15))] });
+  const rows = applyDailyChangeColumn(
+    [viewRow('META', 'NASDAQ'), viewRow('EQAC', 'SWX'), viewRow('IVAI', 'LSE'), viewRow('SGOV', 'NYSE')],
+    column, { venueOf });
+  const html = renderReport(viewWith(rows), renderContext);
+  assert.deepEqual(validatePublishedDailyChangeHtml(html, { edition: 'am', dataDate: reportDate }),
+    { measured: 3 });
+  // The corroborated zero is published as a measured 0.00%, with the method
+  // that corroborated it named on the row.
+  assert.match(html, /data-change-corroborated-by="am-session-pnl-v1"/);
+  assert.match(html, /class="flat">0\.00%/);
+  // Strip the corroboration and the same zero is refused again.
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace(' data-change-corroborated-by="am-session-pnl-v1"', ''),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_VALUE_MISMATCH/);
+  // The unmeasured row carries an enumerated reason, and a free-text or unknown
+  // one is refused.
+  assert.match(html, /data-change-unavailable-v1="1" data-change-reason="flat-or-stale-indistinguishable"/);
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace('data-change-reason="flat-or-stale-indistinguishable"', 'data-change-reason="因为没有"'),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_REASON_INVALID/);
+  // Coverage makes a silently dropped row arithmetic rather than a matter of
+  // trust: the declared totals must match the rows actually rendered.
+  assert.match(html, /data-daily-change-coverage-v1="3\/4"/);
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace('data-daily-change-coverage-v1="3/4"', 'data-daily-change-coverage-v1="3/3"'),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_COVERAGE_MISMATCH/);
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace(' data-daily-change-coverage-v1="3/4"', ''),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_COVERAGE_MISSING/);
+  // The AM fallback row is accepted only with an instant on the report date.
+  const fallbackAttributes = `data-change-method="am-session-pnl-v1" data-change-session="${priorSession}" data-change-as-of="${reportDate} 08:05 HKT"`;
+  assert.ok(html.includes(fallbackAttributes));
+  assert.throws(() => validatePublishedDailyChangeHtml(
+    html.replace(fallbackAttributes,
+      `data-change-method="am-session-pnl-v1" data-change-session="${priorSession}" data-change-as-of="${priorSession} 08:05 HKT"`),
+    { edition: 'am', dataDate: reportDate }), /PUBLISHED_INSTANT_INVALID/);
+  // PM may still not publish the AM fallback method.
+  assert.throws(() => validatePublishedDailyChangeHtml(html, { edition: 'pm', dataDate: reportDate }),
+    /PUBLISHED_(?:METHOD_NOT_APPROVED_FOR_EDITION|SESSION_OUTSIDE_EDITION_WINDOW)/);
 });

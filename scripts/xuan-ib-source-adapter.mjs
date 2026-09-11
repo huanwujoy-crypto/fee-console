@@ -112,6 +112,28 @@ export function measurePositionSessionChange(position,{venue=null,code=null,sess
   return {...row,changePct};
 }
 
+// (A2) The SAME positions payload, read after the session it reports has
+// already closed. This is a separate method from (A), not the same reading
+// under another edition's name: it requires the venue's session to be proven
+// FINISHED rather than merely running, and its `observedAtHkt` belongs to the
+// report's own Hong Kong date rather than to the session date, because an 08:00
+// HKT run reads the previous New York session hours after its close. It exists
+// only to fill a row the portfolio source's single-day window never returned —
+// a position that is live in the broker's book before that source has synced
+// it. It never overrides a window reading, and (A) is left exactly as it was.
+export function measurePositionCompletedSessionChange(position,{venue=null,code=null,sessionDate=null,venuesComplete=[],observedAtHkt=null}={}){
+  if(!object(position)||!Object.hasOwn(position,'dailyPnlNative')||!Object.hasOwn(position,'marketValueNative'))fail('INVALID_DAILY_CHANGE_INPUT');
+  const row={method:'am-session-pnl-v1',code,venue,changePct:null,currencyChangePct:null,sessionDate,
+    sessionPhase:sessionPhase(venue,[],venuesComplete),observedAtHkt,markReconciled:markReconciled(position)};
+  if(position.dailyPnlNative===null)return row;
+  if(!num(position.dailyPnlNative)||!num(position.marketValueNative))fail('INVALID_DAILY_CHANGE_INPUT');
+  const base=position.marketValueNative-position.dailyPnlNative;
+  if(!num(base)||base<=0)return row;
+  const changePct=position.dailyPnlNative/base*100;
+  if(!Number.isFinite(changePct))return row;
+  return {...row,changePct};
+}
+
 // (B) A single-session performance window from the portfolio source. One call
 // returns every holding's own dated move, with the price move and any currency
 // move already separated by that source, so nothing is derived or cross-sourced.

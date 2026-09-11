@@ -107,13 +107,44 @@ scales the verified USD value in integer cents. Only coefficients already on
 its whitelist may be applied: adopting a new tier or a new coefficient triple is
 a decision the delegation withholds (`coefficientChanges: false`), so an
 unlisted one stops the calculation instead of being computed. Currently
-approved: AAOI standard T1 (`WU-20260906-AAOI-T1`) and Webull VST / Vistra Corp,
-NYSE, delegated standard T1 (`DELEG-20260910-VST-T1`). Its `notifyId` is one stable identity
+approved: AAOI standard T1 (`WU-20260906-AAOI-T1`), Webull VST / Vistra Corp,
+NYSE, delegated standard T1 (`DELEG-20260910-VST-T1`), and Webull BE / Bloom
+Energy Corp, NYSE, delegated standard T1 (`DELEG-20260911-BE-T1`, approval
+record `claude/xuan-ib-be-t1-approval-2026-09-11.md`). Its `notifyId` is one stable identity
 per rule that survives the holding's value and date moving, so a later report
 under the same established tier is not a new classification; generating it is
 neither a message nor proof that one was delivered. Every failure it raises is a
 Codex-owned technical exception recorded in the technical record — never an
 `awaiting_user` decision, never a guessed tier, and never zero.
+
+A position that no `WU` or `DELEG` rule covers at all is the case that reader
+deliberately refuses, and refusing it is not permission to drop the position out
+of the AI-pressure numerator while leaving it in the denominator — that
+understates the metric the panel exists to report, and it is what happened on
+2026-09-11. Use `classifyFirstSeenPosition` in
+`scripts/xuan-ib-auto-classification.mjs`, the single supported reader of
+`claude/xuan-ib-auto-classification-v1.json`. It applies only to a first-ever-seen
+position whose source identity is verified, which no `WU`- or `DELEG`-namespaced
+rule already covers, and whose asset type is unambiguously ordinary stock. ETF,
+fund, bond, cash, commodity and every other known non-stock type are refused by
+name, and an unknown or ambiguous type is fail-visible: named, disclosed with its
+enumerated reason and excluded, never rounded towards "probably a stock". Such a
+position takes the most conservative approved tier, standard T1, as this period's
+effective classification under its own `AUTO` namespace, its own policy revision
+id, and one `notifyId` per identity and revision that is stable across runs,
+notified once and closed only against a verified public read-back. It is a real
+if conservative classification and not a placeholder, so never word it 临时,
+待确认 or 待裁决, and never let it create an `awaiting_user` item, mint a `WU` or
+`DELEG` receipt, change a coefficient, widen an account scope or reach any order,
+transfer or financial write.
+
+The trusted guard enforces this structurally rather than by naming instruments:
+whichever symbol the risk pane shows as carrying no approved tier, or as excluded
+from the numerator, fails publication unless the page carries a machine-readable
+`WU`, `DELEG` or `AUTO` record for it, and an excluded instrument must name an
+enumerated reason. A report may carry those records as `data-ai-tier-symbol` /
+`data-ai-tier-namespace` / `data-ai-tier-record` attributes beside the sentence
+that explains them, or in the strict inert `xuan-ib-ai-tier-records-v1` template.
 
 For the single registered UBS cash proxy, call `resolveCashIdentity` from
 `scripts/xuan-ib-cash-identity.mjs` before the classification audit. Supply
@@ -156,8 +187,17 @@ Two measurement sources feed it, both normalized in
   identical share count at the close that P&L is measured from, inside one
   currency and therefore free of any FX assumption.
 
-Which source an edition uses is fixed in `DAILY_CHANGE_EDITION_RULES` and
-enforced by the builder and the publication gate, not chosen per run:
+- `measurePositionCompletedSessionChange` — the same positions payload, read
+  after the session it reports has already closed. It is a third method,
+  `am-session-pnl-v1`, and not the intraday reading under another edition's
+  name: it requires the venue's session to be proven finished rather than
+  merely running, and its observation instant belongs to the report's own Hong
+  Kong date rather than to the session date, because an 08:00 HKT run reads the
+  previous New York session hours after its close.
+
+Which source an edition uses is fixed in `DAILY_CHANGE_EDITION_RULES`, plus the
+one per-row fallback in `DAILY_CHANGE_EDITION_FALLBACK`, and enforced by the
+builder and the publication gate, not chosen per run:
 
 - **AM** publishes `window-v1` only, and only for the completed session one
   calendar day before its Hong Kong data date.
@@ -169,6 +209,20 @@ enforced by the builder and the publication gate, not chosen per run:
   that it has or has not intraday value until the read-only intraday probes
   have measured how it updates during a session and whether every venue
   behaves alike.
+- **AM additionally has one per-row fallback**, `am-session-pnl-v1`, for a row
+  the single-day window never returned at all — a position live in the broker's
+  book before the portfolio source has synced it. It fills a gap; it never
+  overrides a window reading, and it is not the primary AM source. Before it
+  may publish a row, every one of the following must hold: the intended session
+  is D−1 relative to the Hong Kong data date D; the venue's session for that
+  date is provably **finished**, not merely running; the reading's
+  `observedAtHkt` falls on report date D; `mark × quantity` reproduces the
+  payload's own `market_value` within cent rounding; and no trade or corporate
+  action in the same window touched the position. A fallback set supplied for
+  any other edition is refused outright rather than ignored.
+- **PM is unchanged by that addition.** It has no fallback, keeps
+  `session-pnl-v1` as its only method, and keeps its own instant rule that the
+  minute belongs to the session being read. Do not relax PM to match AM.
 - The retired ad-hoc edition has no measured column at all.
 
 A PM run whose read slips onto the next Hong Kong date loses the column, since
@@ -206,11 +260,40 @@ Every row must carry its own proof, and the following are enforced in code:
   venue, is unavailable rather than merged. `traded` and `corporateActions`
   are venue-scoped too, and an event whose identity cannot be resolved is
   counted, never silently dropped.
-- **Exactly zero is never published.** It cannot be told apart from a price the
-  source carried forward for a session it has not loaded, and that ambiguity is
-  per row: a portfolio-wide check misses the case where only some venues are
-  stale, and a traded row masked first would defeat it entirely. Losing a
-  genuinely flat row is the safe direction.
+- **Two books may spell one instrument differently, and only a reviewed entry
+  joins them.** Measured 2026-09-11, IB described a holding as `HODLUSD` on
+  `EBS` while the portfolio source reported `HODL` on `EURONEXT`; a replay
+  showed that as soon as that row carried a publishable number the merge would
+  have failed the whole report closed. Pass the resolver from
+  `scripts/xuan-ib-venue-identity.mjs`, which reads the reviewed registry
+  `claude/xuan-ib-venue-identity-v1.json`. Each entry is scoped to ONE
+  instrument and bound to the strong identifier each raw payload already
+  carries — the IB contract id and the portfolio source's `instrument.id`.
+  `EBS` and `EURONEXT` remain different exchanges: never record a blanket venue
+  alias, and never take a venue from another custodian's portfolio because it
+  happens to list the same ticker. A cross-venue pairing no entry records is
+  named in the `COLUMN_MERGE_INCOMPLETE` failure and refused; adding an
+  equivalence is a separately reviewed maintenance change under the publication
+  lock, never something a candidate does.
+- **Exactly zero publishes only when corroborated.** One source reading zero
+  still cannot be told apart from a price it carried forward for a session it
+  has not loaded, and that ambiguity is per row: a portfolio-wide check misses
+  the case where only some venues are stale, and a traded row masked first
+  would defeat it entirely. Presence is therefore three-valued. Uncorroborated,
+  the row stays unavailable as before. Corroborated by an independent same-run
+  reading of the same completed session, it publishes as `0.00%` and the row
+  names the method that corroborated it. If the two readings disagree
+  materially the row is withheld and disclosed by name as contradicted between
+  sources — never averaged, and neither source preferred. The same
+  contradiction rule applies to a nonzero reading that a fallback reading of the
+  same session disputes, while the window's own nonzero value remains the one
+  that publishes whenever it exists.
+- **Every unmeasured row states an enumerated reason, and coverage is
+  declared.** A row that publishes no number carries a machine-readable reason
+  from `UNAVAILABLE_REASONS`, including `not-in-single-day-window` for a row
+  that source never returned, and the holdings section declares measured and
+  total counts. The publication gate recomputes both from the rendered rows, so
+  a silently dropped row is arithmetic rather than a matter of trust.
 - **Corporate actions suppress the row.** An unadjusted 2-for-1 split reads as
   about −50% and sits inside any plausible magnitude bound, so the magnitude
   guard is an outlier trap and never a corporate-action detector. Supply the

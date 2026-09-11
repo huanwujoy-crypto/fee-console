@@ -40,6 +40,83 @@ technical record — never a new `awaiting_user` item, never a guess, never zero
 Changing that policy file, its reader or its tests needs a separately reviewed
 maintenance PR under the publication lock.
 
+## Identity and presence integrity (2026-09-11 AM findings)
+
+The 2026-09-11 early edition surfaced four defects in one run. The repairs below
+are measurement and disclosure only: they add no financial permission, no new
+coefficient, no account scope and no trading authority, and none of them is
+evidence that any AM or PM run succeeded.
+
+**Instrument-scoped venue identity.** IB described one holding as `HODLUSD` on
+`EBS` while the portfolio source reported the same instrument as `HODL` on
+`EURONEXT`. A venue-scoped key is still correct — the same ticker on two
+exchanges is two instruments — so the two spellings are joined only through a
+reviewed, instrument-scoped entry in `claude/xuan-ib-venue-identity-v1.json`,
+bound to the strong identifier each raw payload already carries (the IB contract
+id and the portfolio source's `instrument.id`). `scripts/xuan-ib-venue-identity.mjs`
+is the single supported reader. Never declare two venues synonyms: a blanket
+alias would silently merge every future instrument listed on both. Never infer a
+venue from another custodian's portfolio; that book is not evidence about this
+account's instrument, and a run-local script must not reintroduce it. An
+unreviewed cross-venue pairing stays fail-closed and is disclosed by name.
+A new equivalence is a separately reviewed maintenance change under the
+publication lock, never something a report candidate adds.
+
+**Three-valued daily-change presence.** A reading of exactly zero is still not
+publishable on its own, because it cannot be told apart from a price a source
+carried forward for a session it never loaded. It publishes as `0.00%` only when
+an independent same-run reading of the same completed session agrees with it,
+and the published row names the corroborating method. When the two readings
+disagree the row is withheld and disclosed by name as contradicted; nothing is
+averaged, preferred or arbitrated. Every unmeasured row carries an enumerated
+machine-readable reason, and the holdings section declares measured and total
+coverage, so a dropped row is arithmetic rather than a matter of trust. The
+trusted guard enforces both.
+
+**AM per-row fallback `am-session-pnl-v1`.** A position can be live in the
+broker's book before the portfolio source has synced it into the single-day
+window, which is a gap in one row of one source. AM may fill exactly such a row
+from the completed-session reading of the positions payload it already holds.
+This is a distinct method, not PM's `session-pnl-v1` renamed: PM's method,
+rules and timestamp labelling are unchanged and PM has no fallback at all. All
+of the following must be proven before this method publishes a row: the
+intended session is the completed session one day before the Hong Kong data
+date; the venue's session for that date is provably finished; the reading's
+`observedAtHkt` falls on the report date; `mark × quantity` reproduces the
+payload's own `market_value`; and no trade or corporate action in the same
+window touched the position. The portfolio source's own nonzero window reading
+is still what publishes whenever it exists.
+
+**Structural AI-tier coverage, and the new-position `AUTO` policy.** A position
+appeared with no approved rule and was dropped from the AI-pressure numerator
+while staying in the denominator, which understates the reported risk. The guard
+no longer names particular tickers: any instrument the risk pane shows as
+carrying no approved tier, or as excluded from the numerator, fails unless the
+page carries a machine-readable `WU`, `DELEG` or `AUTO` record for it, and an
+excluded instrument must name an enumerated reason. BE / Bloom Energy is
+recorded as delegated standard T1 (`DELEG-20260911-BE-T1`) with the approval
+record `claude/xuan-ib-be-t1-approval-2026-09-11.md`.
+
+`claude/xuan-ib-auto-classification-v1.json`, read only through
+`scripts/xuan-ib-auto-classification.mjs`, covers the general case. It applies
+only to a first-ever-seen position whose source identity is verified, which no
+`WU`- or `DELEG`-namespaced rule already covers, and whose asset type is
+unambiguously ordinary stock; ETF, fund, bond, cash, commodity and every other
+known non-stock type are excluded explicitly, and an unknown or ambiguous type
+is fail-visible, named and disclosed with its reason. Such a position takes the
+most conservative approved tier, standard T1, as this period's effective
+classification in its own `AUTO` namespace with its own policy revision id and
+one stable `notifyId` per identity and revision, notified once and closed only
+after a verified public read-back. It is a real classification, not a
+placeholder: never describe it as 临时, 待确认 or 待裁决. It never creates an
+`awaiting_user` item, never mints a `WU` or `DELEG` receipt, never adopts a
+coefficient, never widens account scope and never touches any order, transfer or
+financial write. `calculateDelegatedTier` is unchanged and still refuses an
+instrument it has no approved rule for; the automatic policy is a separate
+module and is never reachable through it. Changing either policy file, its
+reader or its tests needs a separately reviewed maintenance PR under the
+publication lock.
+
 ## Owner retirement override (2026-09-06)
 
 Read `claude/xuan-ib-four-bucket-retirement-20260906.md` first. The owner has

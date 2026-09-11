@@ -50,7 +50,8 @@ const finite = (value, label, { negative = false, nullable = true } = {}) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e12
       || (!negative && value < 0)) fail(`invalid ${label}`);
 };
-import { DAILY_CHANGE_METHODS } from './xuan-ib-daily-change.mjs';
+import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, UNAVAILABLE_REASONS } from './xuan-ib-daily-change.mjs';
+const DAILY_CHANGE_REASONS = Object.values(UNAVAILABLE_REASONS);
 const number = (value, digits = 2) => value === null ? '未取得' : value.toLocaleString('en-US', {maximumFractionDigits:digits});
 const money = value => value === null ? '未取得' : `$${number(Math.round(value),0)}`;
 const direction = value => value === null || value === 0 ? '' : value > 0 ? 'up' : 'dn';
@@ -113,7 +114,13 @@ export function validateReportView(view) {
     // that claims a number cannot omit them.
     const LEGACY=['symbol','market','quantity','price','priceCurrency','marketValueUsd','changePct','changeAsOfHkt','quoteStatus'];
     const keys=Object.keys(row).sort().join('|');
-    if(keys!==[...LEGACY].sort().join('|')&&keys!==[...LEGACY,'changeMethod','changeSessionDate'].sort().join('|'))fail('holding has missing or unknown fields');
+    // An unmeasured row may carry the enumerated reason it was not measured,
+    // and a measured one may carry the independent method that corroborated it.
+    // Both stay optional so an existing producer, and already published
+    // history, keep validating unchanged.
+    const SHAPES=[LEGACY,[...LEGACY,'changeReason'],[...LEGACY,'changeMethod','changeSessionDate'],
+      [...LEGACY,'changeMethod','changeSessionDate','changeCorroboratedBy']];
+    if(!SHAPES.some(shape=>keys===[...shape].sort().join('|')))fail('holding has missing or unknown fields');
     text(row.symbol,30);text(row.market,30);
     const identity=row.market+':'+row.symbol;if(identities.has(identity))fail('duplicate holding');identities.add(identity);
     finite(row.quantity,'quantity',{negative:true,nullable:false});finite(row.price,'price');finite(row.marketValueUsd,'holding value',{negative:true});
@@ -121,8 +128,13 @@ export function validateReportView(view) {
     finite(row.changePct,'daily change',{negative:true});
     if(!['ok','delayed','unavailable'].includes(row.quoteStatus))fail('invalid quote status');
     if(row.changePct===null){if(row.changeAsOfHkt!==null || row.quoteStatus!=='unavailable')fail('missing change must be explicitly unavailable');
-      if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate'))fail('unavailable change cannot carry measurement evidence');}
+      if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate'))fail('unavailable change cannot carry measurement evidence');
+      // A stated reason must be one of the enumerated codes, never free text:
+      // an unclassified absence is exactly what the coverage check exists to
+      // make impossible.
+      if(Object.hasOwn(row,'changeReason')&&!DAILY_CHANGE_REASONS.includes(row.changeReason))fail('unavailable change needs an enumerated reason');}
     else {
+      if(Object.hasOwn(row,'changeReason'))fail('a measured change cannot carry an unavailable reason');
       if(row.quoteStatus==='unavailable')fail('unavailable quote has a change');
       // Measurement evidence stays optional here so an existing producer such
       // as the historical archive keeps validating and its already published
@@ -132,10 +144,25 @@ export function validateReportView(view) {
       // cannot be told apart from a price a source carried forward for a
       // session it never loaded.
       if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate')){
-        if(row.changePct===0)fail('a zero change is not distinguishable from a carried-forward price');
         if(!DAILY_CHANGE_METHODS.includes(row.changeMethod))fail('measured change needs a known method');
+        // Exactly zero stays refused unless the row names the independent
+        // method that corroborated it. One source reading zero is still
+        // indistinguishable from a price it carried forward; two independent
+        // readings of the same completed session agreeing at zero are not.
+        if(row.changePct===0&&(!Object.hasOwn(row,'changeCorroboratedBy')
+          ||!DAILY_CHANGE_METHODS.includes(row.changeCorroboratedBy)
+          ||row.changeCorroboratedBy===row.changeMethod))fail('a zero change is not distinguishable from a carried-forward price');
+        if(Object.hasOwn(row,'changeCorroboratedBy')&&(!DAILY_CHANGE_METHODS.includes(row.changeCorroboratedBy)
+          ||row.changeCorroboratedBy===row.changeMethod))fail('corroboration must name a different known method');
         if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.changeSessionDate)))fail('measured change needs its session date');
-        if(typeof row.changeAsOfHkt!=='string'||!row.changeAsOfHkt.startsWith(row.changeSessionDate))fail('change label must name its own session');
+        // Which day the label belongs to is the method's own rule: a completed
+        // session is named by its date, an intraday reading by a minute inside
+        // that session, and the completed-session fallback by a minute on the
+        // report date, hours after that session closed.
+        const labelRule=DAILY_CHANGE_METHOD_RULES[row.changeMethod];
+        const expected=labelRule.label!=='instant'?row.changeSessionDate
+          :labelRule.instantOn==='dataDate'?view.dataDate:row.changeSessionDate;
+        if(typeof row.changeAsOfHkt!=='string'||!row.changeAsOfHkt.startsWith(expected))fail('change label must name its own session');
       }
       asOf(row.changeAsOfHkt,view.dataDate);
     }
@@ -200,11 +227,27 @@ function holdingsView(holdings, reportDate, edition) {
   const rows = items => `<div class="tblwrap"><table class="mobile-holdings"><thead><tr><th>标的</th><th>市值 $</th><th>日涨跌</th><th>估值价</th><th>行情时点</th></tr></thead><tbody>${[...items].sort((a,b)=>(b.marketValueUsd??-Infinity)-(a.marketValueUsd??-Infinity)).map(row=>{
     // Invisible evidence lets the trusted publication guard verify the exact
     // method/session behind every displayed percentage.
+    const corroborated=Object.hasOwn(row,'changeCorroboratedBy');
     const evidence=Object.hasOwn(row,'changeMethod')
-      ?` data-daily-change-v1="1" data-change-method="${esc(row.changeMethod)}" data-change-session="${esc(row.changeSessionDate)}" data-change-as-of="${esc(row.changeAsOfHkt)}" data-change-pct="${esc(row.changePct)}"`:'';
-    return `<tr${evidence}><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${direction(usable(row)?row.changePct:null)}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${change(row.changePct)}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`;
+      ?` data-daily-change-v1="1" data-change-method="${esc(row.changeMethod)}" data-change-session="${esc(row.changeSessionDate)}" data-change-as-of="${esc(row.changeAsOfHkt)}" data-change-pct="${esc(row.changePct)}"${corroborated?` data-change-corroborated-by="${esc(row.changeCorroboratedBy)}"`:''}`
+      // A row with no measurement states which enumerated reason applies, so a
+      // dropped row cannot hide inside an undifferentiated 未取得 column.
+      :Object.hasOwn(row,'changeReason')
+        ?` data-change-unavailable-v1="1" data-change-reason="${esc(row.changeReason)}"`:'';
+    // A corroborated zero has a real measurement and no direction to colour.
+    const cls=row.changePct===0&&corroborated?'flat':direction(usable(row)?row.changePct:null);
+    // A corroborated zero is shown with both decimals so it reads as a measured
+    // result rather than as a placeholder.
+    const shown=row.changePct===0&&corroborated?'0.00':change(row.changePct??0);
+    return `<tr${evidence}><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${cls}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${shown}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`;
   }).join('')}</tbody></table></div>`;
-  return `<section class="card"><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
+  // Declaring measured and total makes an omitted row arithmetic rather than a
+  // matter of trust: the publication gate recomputes both from the rendered
+  // rows and refuses a column that claims more coverage than it carries.
+  const counted=holdings.rows.filter(row=>Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeReason'));
+  const coverage=counted.length
+    ? ` data-daily-change-coverage-v1="${counted.filter(row=>Object.hasOwn(row,'changeMethod')).length}/${counted.length}"` : '';
+  return `<section class="card"${coverage}><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
 }
 
 function decisionGroup(state, views, group, originalCards) {

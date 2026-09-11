@@ -22,6 +22,13 @@
 /claude/xuan-ib-ai-tier-overrides-v1.json @huanwujoy-crypto
 /claude/xuan-ib-mrvl-t1-approval-2026-08-31.md @huanwujoy-crypto
 /claude/xuan-ib-classification-delegation-v1.json @huanwujoy-crypto
+/claude/xuan-ib-be-t1-approval-2026-09-11.md @huanwujoy-crypto
+/claude/xuan-ib-auto-classification-v1.json @huanwujoy-crypto
+/claude/xuan-ib-venue-identity-v1.json @huanwujoy-crypto
+/scripts/xuan-ib-auto-classification.mjs @huanwujoy-crypto
+/scripts/xuan-ib-auto-classification.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-venue-identity.mjs @huanwujoy-crypto
+/scripts/xuan-ib-venue-identity.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-delegated-tier.mjs @huanwujoy-crypto
 /scripts/xuan-ib-delegated-tier.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-aaoi-t1.mjs @huanwujoy-crypto
