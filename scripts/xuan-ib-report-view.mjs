@@ -12,6 +12,8 @@ import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
 import { parseEtfSummary } from './xuan-ib-etf-summary-transport.mjs';
+import { renderAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
+import { renderAiPressureKpi, renderAiPressureSection } from './xuan-ib-ai-pressure.mjs';
 import { parseEtfAbcPublicRuntimeStateJson, renderEtfAbcPublicRuntimeCard,
   ETF_ABC_RUNTIME_START, ETF_ABC_RUNTIME_END } from './xuan-ib-etf-abc.mjs';
 
@@ -50,7 +52,8 @@ const finite = (value, label, { negative = false, nullable = true } = {}) => {
   if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > 1e12
       || (!negative && value < 0)) fail(`invalid ${label}`);
 };
-import { DAILY_CHANGE_METHODS } from './xuan-ib-daily-change.mjs';
+import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, UNAVAILABLE_REASONS } from './xuan-ib-daily-change.mjs';
+const DAILY_CHANGE_REASONS = Object.values(UNAVAILABLE_REASONS);
 const number = (value, digits = 2) => value === null ? '未取得' : value.toLocaleString('en-US', {maximumFractionDigits:digits});
 const money = value => value === null ? '未取得' : `$${number(Math.round(value),0)}`;
 const direction = value => value === null || value === 0 ? '' : value > 0 ? 'up' : 'dn';
@@ -113,7 +116,13 @@ export function validateReportView(view) {
     // that claims a number cannot omit them.
     const LEGACY=['symbol','market','quantity','price','priceCurrency','marketValueUsd','changePct','changeAsOfHkt','quoteStatus'];
     const keys=Object.keys(row).sort().join('|');
-    if(keys!==[...LEGACY].sort().join('|')&&keys!==[...LEGACY,'changeMethod','changeSessionDate'].sort().join('|'))fail('holding has missing or unknown fields');
+    // An unmeasured row may carry the enumerated reason it was not measured,
+    // and a measured one may carry the independent method that corroborated it.
+    // Both stay optional so an existing producer, and already published
+    // history, keep validating unchanged.
+    const SHAPES=[LEGACY,[...LEGACY,'changeReason'],[...LEGACY,'changeMethod','changeSessionDate'],
+      [...LEGACY,'changeMethod','changeSessionDate','changeCorroboratedBy']];
+    if(!SHAPES.some(shape=>keys===[...shape].sort().join('|')))fail('holding has missing or unknown fields');
     text(row.symbol,30);text(row.market,30);
     const identity=row.market+':'+row.symbol;if(identities.has(identity))fail('duplicate holding');identities.add(identity);
     finite(row.quantity,'quantity',{negative:true,nullable:false});finite(row.price,'price');finite(row.marketValueUsd,'holding value',{negative:true});
@@ -121,8 +130,13 @@ export function validateReportView(view) {
     finite(row.changePct,'daily change',{negative:true});
     if(!['ok','delayed','unavailable'].includes(row.quoteStatus))fail('invalid quote status');
     if(row.changePct===null){if(row.changeAsOfHkt!==null || row.quoteStatus!=='unavailable')fail('missing change must be explicitly unavailable');
-      if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate'))fail('unavailable change cannot carry measurement evidence');}
+      if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate'))fail('unavailable change cannot carry measurement evidence');
+      // A stated reason must be one of the enumerated codes, never free text:
+      // an unclassified absence is exactly what the coverage check exists to
+      // make impossible.
+      if(Object.hasOwn(row,'changeReason')&&!DAILY_CHANGE_REASONS.includes(row.changeReason))fail('unavailable change needs an enumerated reason');}
     else {
+      if(Object.hasOwn(row,'changeReason'))fail('a measured change cannot carry an unavailable reason');
       if(row.quoteStatus==='unavailable')fail('unavailable quote has a change');
       // Measurement evidence stays optional here so an existing producer such
       // as the historical archive keeps validating and its already published
@@ -132,10 +146,25 @@ export function validateReportView(view) {
       // cannot be told apart from a price a source carried forward for a
       // session it never loaded.
       if(Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeSessionDate')){
-        if(row.changePct===0)fail('a zero change is not distinguishable from a carried-forward price');
         if(!DAILY_CHANGE_METHODS.includes(row.changeMethod))fail('measured change needs a known method');
+        // Exactly zero stays refused unless the row names the independent
+        // method that corroborated it. One source reading zero is still
+        // indistinguishable from a price it carried forward; two independent
+        // readings of the same completed session agreeing at zero are not.
+        if(row.changePct===0&&(!Object.hasOwn(row,'changeCorroboratedBy')
+          ||!DAILY_CHANGE_METHODS.includes(row.changeCorroboratedBy)
+          ||row.changeCorroboratedBy===row.changeMethod))fail('a zero change is not distinguishable from a carried-forward price');
+        if(Object.hasOwn(row,'changeCorroboratedBy')&&(!DAILY_CHANGE_METHODS.includes(row.changeCorroboratedBy)
+          ||row.changeCorroboratedBy===row.changeMethod))fail('corroboration must name a different known method');
         if(!/^\d{4}-\d{2}-\d{2}$/.test(String(row.changeSessionDate)))fail('measured change needs its session date');
-        if(typeof row.changeAsOfHkt!=='string'||!row.changeAsOfHkt.startsWith(row.changeSessionDate))fail('change label must name its own session');
+        // Which day the label belongs to is the method's own rule: a completed
+        // session is named by its date, an intraday reading by a minute inside
+        // that session, and the completed-session fallback by a minute on the
+        // report date, hours after that session closed.
+        const labelRule=DAILY_CHANGE_METHOD_RULES[row.changeMethod];
+        const expected=labelRule.label!=='instant'?row.changeSessionDate
+          :labelRule.instantOn==='dataDate'?view.dataDate:row.changeSessionDate;
+        if(typeof row.changeAsOfHkt!=='string'||!row.changeAsOfHkt.startsWith(expected))fail('change label must name its own session');
       }
       asOf(row.changeAsOfHkt,view.dataDate);
     }
@@ -185,7 +214,11 @@ const cardBody = card => {
 const card = value => `<section class="card"><h2>${esc(value.title)}</h2>${cardBody(value)}</section>`;
 const fold = (title,body,open=false,right='') => `<details${open?' open':''}><summary>${esc(title)}${right?` <span class="rt">${esc(right)}</span>`:''}</summary><div class="dbody">${body}</div></details>`;
 
-function holdingsView(holdings, reportDate, edition) {
+// `declareUniverse` emits the machine-readable constituent markers the AI-tier
+// records are reconciled against. They ship with the records and only with
+// them: a historical archive replays an already published page byte for byte
+// and must not acquire markup that page never had.
+function holdingsView(holdings, reportDate, edition, { declareUniverse = false } = {}) {
   // AM summarizes the previous close: European quotes can precede HKT midnight.
   // Preserve the actual quote date and delayed label. This display window is
   // NOT source authorization or an exchange-calendar freshness proof. Older
@@ -200,11 +233,37 @@ function holdingsView(holdings, reportDate, edition) {
   const rows = items => `<div class="tblwrap"><table class="mobile-holdings"><thead><tr><th>标的</th><th>市值 $</th><th>日涨跌</th><th>估值价</th><th>行情时点</th></tr></thead><tbody>${[...items].sort((a,b)=>(b.marketValueUsd??-Infinity)-(a.marketValueUsd??-Infinity)).map(row=>{
     // Invisible evidence lets the trusted publication guard verify the exact
     // method/session behind every displayed percentage.
+    const corroborated=Object.hasOwn(row,'changeCorroboratedBy');
     const evidence=Object.hasOwn(row,'changeMethod')
-      ?` data-daily-change-v1="1" data-change-method="${esc(row.changeMethod)}" data-change-session="${esc(row.changeSessionDate)}" data-change-as-of="${esc(row.changeAsOfHkt)}" data-change-pct="${esc(row.changePct)}"`:'';
-    return `<tr${evidence}><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${direction(usable(row)?row.changePct:null)}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${change(row.changePct)}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`;
+      ?` data-daily-change-v1="1" data-change-method="${esc(row.changeMethod)}" data-change-session="${esc(row.changeSessionDate)}" data-change-as-of="${esc(row.changeAsOfHkt)}" data-change-pct="${esc(row.changePct)}"${corroborated?` data-change-corroborated-by="${esc(row.changeCorroboratedBy)}"`:''}`
+      // A row with no measurement states which enumerated reason applies, so a
+      // dropped row cannot hide inside an undifferentiated 未取得 column.
+      :Object.hasOwn(row,'changeReason')
+        ?` data-change-unavailable-v1="1" data-change-reason="${esc(row.changeReason)}"`:'';
+    // A corroborated zero has a real measurement and no direction to colour.
+    const cls=row.changePct===0&&corroborated?'flat':direction(usable(row)?row.changePct:null);
+    // A corroborated zero is shown with both decimals so it reads as a measured
+    // result rather than as a placeholder.
+    const shown=row.changePct===0&&corroborated?'0.00':change(row.changePct??0);
+    // The constituent's own name, in machine-readable form. Without it the
+    // publication gate can only reconcile AI-tier coverage against prose, which
+    // means it can only catch a problem the report already confessed to in
+    // matching wording. With it, a symbol that is in the table and missing from
+    // the records is arithmetic.
+    const constituent=declareUniverse?` data-holding-symbol="${esc(String(row.symbol).trim().toUpperCase())}"`:'';
+    return `<tr${constituent}${evidence}><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${cls}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${shown}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`;
   }).join('')}</tbody></table></div>`;
-  return `<section class="card"><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
+  // Declaring measured and total makes an omitted row arithmetic rather than a
+  // matter of trust: the publication gate recomputes both from the rendered
+  // rows and refuses a column that claims more coverage than it carries.
+  const counted=holdings.rows.filter(row=>Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeReason'));
+  const coverage=counted.length
+    ? ` data-daily-change-coverage-v1="${counted.filter(row=>Object.hasOwn(row,'changeMethod')).length}/${counted.length}"` : '';
+  // The size of the constituent universe this table declares, so the gate can
+  // prove no row was dropped between the table and the AI-tier records rather
+  // than trusting that both were written from the same list.
+  const universe=declareUniverse&&holdings.rows.length?` data-holdings-universe-v1="${holdings.rows.length}"`:'';
+  return `<section class="card"${coverage}${universe}><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
 }
 
 function decisionGroup(state, views, group, originalCards) {
@@ -255,7 +314,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   if(associationReceipt){
     if(manualAccountConsent)fail('account scope modes are mutually exclusive');
@@ -302,24 +361,61 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   }
   const summary=template(previousHtml,'xuan-etf-open-summary-v3');
   if(summary){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
+  // Complete AI-tier coverage for this run's constituents, built by the trusted
+  // module from the run's own holdings. The manifest is inert and the
+  // disclosures carry no amount; both are refused unless every constituent is
+  // either classified or excluded with an enumerated reason.
+  if(aiTierCoverage!==null&&(!aiTierCoverage||!Array.isArray(aiTierCoverage.entries)))fail('invalid AI tier coverage');
+  const aiTier=aiTierCoverage===null?null:renderAiTierCoverage(aiTierCoverage);
+  // The risk universe is NOT the holdings table. The holdings table is one
+  // custodian's book; the AI-pressure universe spans three accounts and holds
+  // positions that table never lists, including the same company under two
+  // custodians. Requiring the two to be equal — as this did — would have refused
+  // every correct three-account report and accepted one that dropped two whole
+  // accounts. The coverage is reconciled against the computation instead.
+  if(aiPressure!==null){
+    if(!aiPressure||!Array.isArray(aiPressure.rows)||!aiPressure.rows.length)fail('invalid AI pressure computation');
+    if(aiTier===null)fail('an AI pressure computation requires its own resolved tier coverage');
+    const computed=aiPressure.rows.map(row=>row.key).sort().join('|');
+    const recorded=aiTierCoverage.entries.map(entry=>entry.key).sort().join('|');
+    if(computed!==recorded)fail('AI pressure rows do not cover exactly the resolved risk constituents');
+  }
+  // The §0-C section is generated from the computation, never accepted as a
+  // pre-computed table. A caller that still supplies its own AI-pressure card is
+  // refused rather than silently rendered beside the derived one: two totals on
+  // one page is how a hand-typed numerator survives a correct calculation.
+  const aiSection=aiPressure===null?'':renderAiPressureSection(aiPressure,{
+    title:'AI 压力敞口 · §0-C（三账户）',asOfHkt:view.asOfHkt,
+    note:'系数取自已批准规则与已发布取值登记表，逐仓计算；分母为三账户含现金合计。'});
+  if(aiPressure!==null){
+    for(const item of view.risk){
+      if(/§0-C|AI\s*压力/.test(String(item.title)))fail('the AI pressure section is derived and must not also be supplied as a risk card');
+    }
+    // The headline tile too. It sits outside the risk pane, so an independently
+    // authored one could disagree with the table beneath it indefinitely.
+    for(const item of view.kpis){
+      if(/AI\s*压力/.test(String(item.label)))fail('the AI pressure KPI is derived and must not also be supplied as a view KPI');
+    }
+  }
   const cash=renderCashPlan(view.cashPlan), pending=state.decisions.filter(item=>item.status==='awaiting_user').length;
   const classificationDisclosure=renderClassificationDisclosure(fourBucket);
   const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
-  const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi;
+  const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi
+    +(aiPressure===null?'':renderAiPressureKpi(aiPressure,{asOfHkt:view.asOfHkt}));
   const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head><body><!-- xuan-ib-handover:v1 -->
 <input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary>${GUIDE_BODY}</details><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
-<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition)}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
-<div class="pane p2">${view.risk.map(card).join('')}</div>
+<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
+<div class="pane p2">${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
-${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}\n</body></html>\n`;
+${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}${aiTier?`\n${aiTier.template}`:''}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.
   // Full source envelopes and private account observations never enter HTML.
   const output=associationReceipt?html

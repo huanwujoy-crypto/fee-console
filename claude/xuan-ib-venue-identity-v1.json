@@ -1,0 +1,706 @@
+{
+  "schemaVersion": 1,
+  "policyId": "xuan-ib-venue-identity-v1",
+  "effectiveDate": "2026-09-11",
+  "purpose": "instrument-scoped-venue-identity-only",
+  "authority": "reviewed-maintenance-under-publication-lock",
+  "blanketVenueAliases": false,
+  "crossCustodianVenueInference": false,
+  "financialWrites": false,
+  "instruments": [
+    {
+      "instrumentRef": "VENUE-20260911-APO",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "APO"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "535288388",
+          "venue": null,
+          "code": "APO"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "2262313",
+          "portfolioId": "936247",
+          "venue": "NYSE",
+          "code": "APO"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-BRK.B",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "BRK.B"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "72063691",
+          "venue": null,
+          "code": "BRK B"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "21531",
+          "portfolioId": "936247",
+          "venue": "NYSE",
+          "code": "BRK/B"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-CSPX",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "LSE",
+        "code": "CSPX"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "76023663",
+          "venue": "LSEETF",
+          "code": "CSPX"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1310832",
+          "portfolioId": "936247",
+          "venue": "LSE",
+          "code": "CSPX"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-EIMI",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "LSE",
+        "code": "EIMI"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "153454131",
+          "venue": "LSEETF",
+          "code": "EIMI"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1311122",
+          "portfolioId": "936247",
+          "venue": "LSE",
+          "code": "EIMI"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-EQAC",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "SWX",
+        "code": "EQAC"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "335610851",
+          "venue": "EBS",
+          "code": "EQAC"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1983054",
+          "portfolioId": "936247",
+          "venue": "SWX",
+          "code": "EQAC"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-EXUS",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "LSE",
+        "code": "EXUS"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "691133189",
+          "venue": "LSEETF",
+          "code": "EXUS"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "2767340",
+          "portfolioId": "936247",
+          "venue": "LSE",
+          "code": "EXUS"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-GLD",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "GLD"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "51529211",
+          "venue": null,
+          "code": "GLD"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "22272",
+          "portfolioId": "936247",
+          "venue": "NYSE",
+          "code": "GLD"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-GOOG",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "GOOG"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "208813720",
+          "venue": null,
+          "code": "GOOG"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "670422",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "GOOG"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-HODL",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "EURONEXT",
+        "code": "HODL"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "343126962",
+          "venue": "EBS",
+          "code": "HODLUSD"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "2751250",
+          "portfolioId": "936247",
+          "venue": "EURONEXT",
+          "code": "HODL"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-INDA",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "BATS",
+        "code": "INDA"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "101484826",
+          "venue": null,
+          "code": "INDA"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1975404",
+          "portfolioId": "936247",
+          "venue": "BATS",
+          "code": "INDA"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-IVAI",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "LSE",
+        "code": "IVAI"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "739040289",
+          "venue": "LSEETF",
+          "code": "IVAI"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "2992325",
+          "portfolioId": "936247",
+          "venue": "LSE",
+          "code": "IVAI"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-KKR",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "KKR"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "321328198",
+          "venue": null,
+          "code": "KKR"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1889982",
+          "portfolioId": "936247",
+          "venue": "NYSE",
+          "code": "KKR"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-META",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "META"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "107113386",
+          "venue": null,
+          "code": "META"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "186452",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "META"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-MSFT",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "MSFT"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "272093",
+          "venue": null,
+          "code": "MSFT"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "24651",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "MSFT"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-MSTR",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "MSTR"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "272110",
+          "venue": null,
+          "code": "MSTR"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "34421",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "MSTR"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-MXUS",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "LSE",
+        "code": "MXUS"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "92814016",
+          "venue": "LSEETF",
+          "code": "MXUS"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "391602",
+          "portfolioId": "936247",
+          "venue": "LSE",
+          "code": "MXUS"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-ORCL",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "ORCL"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "272800",
+          "venue": null,
+          "code": "ORCL"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "516542",
+          "portfolioId": "936247",
+          "venue": "NYSE",
+          "code": "ORCL"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-SGOV",
+      "basis": "reviewed-single-source",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "SGOV"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "424099317",
+          "venue": null,
+          "code": "SGOV"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-SLV",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NYSE",
+        "code": "SLV"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "39039301",
+          "venue": null,
+          "code": "SLV"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "49187",
+          "portfolioId": "936247",
+          "venue": "NYSE",
+          "code": "SLV"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-SMH",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "SMH"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "229725622",
+          "venue": null,
+          "code": "SMH"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1965968",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "SMH"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-TLT",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "TLT"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "15547841",
+          "venue": null,
+          "code": "TLT"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1703456",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "TLT"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-TSLA",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "TSLA"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "76792991",
+          "venue": null,
+          "code": "TSLA"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "24977",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "TSLA"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-USSC",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "LSE",
+        "code": "USSC"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "184281747",
+          "venue": "LSEETF",
+          "code": "USSC"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "792072",
+          "portfolioId": "936247",
+          "venue": "LSE",
+          "code": "USSC"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-VCN",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "TSE",
+        "code": "VCN"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "132666194",
+          "venue": "TSE",
+          "code": "VCN"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "1028072",
+          "portfolioId": "936247",
+          "venue": "TSE",
+          "code": "VCN"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-VGIT",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "VGIT"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "70363079",
+          "venue": null,
+          "code": "VGIT"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "432472",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "VGIT"
+        }
+      ]
+    },
+    {
+      "instrumentRef": "VENUE-20260911-VGSH",
+      "basis": "dual-source-identity",
+      "reviewedOn": "2026-09-11",
+      "evidenceRef": "xuan-am-20260911-r2",
+      "canonical": {
+        "venue": "NASDAQ",
+        "code": "VGSH"
+      },
+      "endpoints": [
+        {
+          "source": "ib",
+          "identityField": "contract_id",
+          "identityValue": "70363044",
+          "venue": null,
+          "code": "VGSH"
+        },
+        {
+          "source": "sharesight",
+          "identityField": "instrument.id",
+          "identityValue": "432502",
+          "portfolioId": "936247",
+          "venue": "NASDAQ",
+          "code": "VGSH"
+        }
+      ]
+    }
+  ]
+}

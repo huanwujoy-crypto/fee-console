@@ -68,11 +68,26 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
   const input = {
     edition, dataDate, previousSourceSha: previousMeta.sourceSha,
     ib: Object.fromEntries(IB_ENDPOINTS.map((name, index) => [name, captured(raws[name], 5100 + index * 900, 5200 + index * 900)])),
-    sharesight: registry.portfolios.filter(item => item.requiredEachReport).map(item => captured({ result: {
-      mode: 'read_only', portfolio: { id: item.portfolioId, currency_code: 'USD' },
-      data: { report: { portfolio_id: item.portfolioId, value: 100, end_date: dataDate,
-        currency: { code: 'USD' }, holdings: [], cash_accounts: [] } },
-    } }, 11_100, 11_200)),
+    sharesight: registry.portfolios.filter(item => item.requiredEachReport).map(item => {
+      const selected = [936247, 936249, 1350094].includes(item.portfolioId);
+      const webull = item.portfolioId === 1350094;
+      const holdings = webull ? [{ id: 99000001, portfolio: { id: item.portfolioId }, instrument: {
+        id: 99000001, code: 'SYNTH', market_code: 'TEST', name: 'Synthetic stock',
+        currency_code: 'USD', friendly_instrument_description_code: 'ordinary_shares' },
+      instrument_currency: { code: 'USD' }, valid_position: true, quantity: 1, value: 100,
+      instrument_price: 100, labels: [], group_name: 'Ordinary Shares',
+      number_of_unconfirmed_transactions: 0 }] : [];
+      const cash_accounts = selected && !webull ? [{ id: item.portfolioId,
+        portfolio: { id: item.portfolioId }, name: 'USD Cash', value: 100,
+        currency: { code: 'USD' } }] : [];
+      return captured({ result: {
+        mode: 'read_only', portfolio: { id: item.portfolioId, currency_code: 'USD' },
+        data: { report: { portfolio_id: item.portfolioId, value: selected ? 100 : 0,
+          start_date: dataDate, end_date: dataDate, percentages_annualised: false,
+          include_sales: false, currency: { code: 'USD' }, holdings, cash_accounts },
+        links: { self: 'https://example.invalid/performance?consolidated=false&include_sales=false&report_combined=false' } },
+      } }, 11_100, 11_200);
+    }),
   };
   if(positionsFallback){
     const raw={isError:true,error:'SYNTHETIC_UNAVAILABLE'};
@@ -99,8 +114,17 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
     cashPlan: { schemaVersion: 2, status: 'unavailable' },
   };
   if(positionsFallback)view.holdings.status='fallback';
+  // Exactly the constituents the view shows, carrying the identity the approved
+  // rules are written against.
+  const riskConstituents = [{ symbol: 'SYNTH', custodian: 'Webull', venue: 'TEST',
+    portfolioId: '1350094', holdingId: '99000001',
+    instrumentId: '99000001', currency: 'USD', assetType: 'STK', marketValueUsd: 100, valueDate: dataDate,
+    identityVerified: true, firstSeen: true }];
+  // Source-bound account totals, supplied by the caller; never fetched here.
+  const riskDenominator = { components: [
+    { key: 'synthetic-account', label: '合成账户', valueMicro: '1000000000' }] };
   const options = { previousHtml, previousMeta, policy: etfPolicy, registry, journalPath, associationSnapshot, now };
-  return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options };
+  return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options, riskConstituents, riskDenominator };
 }
 
 test('recurring prepare runs the actual guard, preserves old receipts and publishes only minimal association evidence', async t => {
@@ -183,8 +207,15 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   const outputFile = path.join(f.directory, 'synthetic-candidate.html');
   fs.writeFileSync(viewFile, JSON.stringify(f.view), { mode: 0o600 });
   fs.writeFileSync(sourcesFile, JSON.stringify(f.evidence), { mode: 0o600 });
+  // The run's own risk constituents, resolved through the real classification
+  // path by prepare itself. SYNTH reaches no WU or DELEG rule, so an ordinary
+  // scheduled edition has to classify it rather than let it drop out of the
+  // AI-pressure numerator while remaining in the denominator.
+  const sourceInputFile = path.join(f.directory, 'synthetic-source-input.json');
+  fs.writeFileSync(sourceInputFile, JSON.stringify(f.input), { mode: 0o600 });
   let reads = 0;
-  const result = runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath], {
+  const result = runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
+    '--risk-source-capture', fs.realpathSync(sourceInputFile)], {
     loadAssociationPolicy(options) {
       reads += 1;
       assert.equal(options.cwd, repoRoot);
@@ -197,5 +228,16 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   assert.deepEqual(extractAssociationReceipt(fs.readFileSync(outputFile, 'utf8')), f.receipt);
   assert.equal(showRunJournal(f.journalPath).stages.find(item => item.name === 'candidate-prep').status, 'ok');
   assert.equal(fs.statSync(outputFile).mode & 0o777, 0o600);
-  assert.throws(() => runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath]), /already exists/);
+  assert.throws(() => runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
+    '--risk-source-capture', fs.realpathSync(sourceInputFile)]), /already exists/);
+  // The candidate carries complete, machine-readable coverage of exactly the
+  // constituents it shows, which is what the publication gate reconciles.
+  const candidate = fs.readFileSync(outputFile, 'utf8');
+  assert.match(candidate, /data-holding-symbol="SYNTH"/);
+  assert.match(candidate, /data-holdings-universe-v1="1"/);
+  const records = candidate.match(
+    /<template id="xuan-ib-ai-tier-records-v1" type="application\/json">([\s\S]*?)<\/template>/);
+  assert.ok(records, 'candidate must publish the AI tier records manifest');
+  assert.deepEqual(JSON.parse(records[1]).map(entry => [entry.symbol, entry.namespace, entry.status]),
+    [['SYNTH', 'AUTO', 'classified']]);
 });

@@ -215,10 +215,12 @@ export function familyPortfolioIds(registry) {
   if (!ids.length || new Set(ids).size !== ids.length) fail('INVALID_REGISTRY');
   return ids.sort((a, b) => a - b);
 }
-function familyEntry(registry, portfolioId) {
+function scopedEntry(registry, portfolioId, roles = ['family']) {
   familyPortfolioIds(registry);
+  if (!Array.isArray(roles) || !roles.length
+    || roles.some(role => !['family', 'ai_only'].includes(role))) fail('INVALID_PORTFOLIO_ROLES');
   const entry = registry.portfolios.find(item => item.portfolioId === portfolioId);
-  if (!entry || entry.role !== 'family') fail('PORTFOLIO_NOT_IN_SCOPE', portfolioId);
+  if (!entry || !roles.includes(entry.role)) fail('PORTFOLIO_NOT_IN_SCOPE', portfolioId);
   return entry;
 }
 
@@ -317,9 +319,10 @@ function reportParameters(raw, report) {
  * reconciliation against the report value. Returns exact micro-unit strings.
  * The report must be the open-positions snapshot (include_sales false); any
  * listing-only identity is returned as an unvalued diagnostic. */
-export function normalizeSharesightReport(raw, { registry, portfolioId, readStartedAt, readCompletedAt, listing, fields = SHARESIGHT_FIELDS } = {}) {
+export function normalizeSharesightReport(raw, { registry, portfolioId, readStartedAt, readCompletedAt,
+  listing, fields = SHARESIGHT_FIELDS, portfolioRoles = ['family'] } = {}) {
   const expectedId = toId(portfolioId, 'PORTFOLIO');
-  const entry = familyEntry(registry, expectedId);
+  const entry = scopedEntry(registry, expectedId, portfolioRoles);
   let shell;
   try { shell = unwrapSource('sharesight', raw); } catch (error) { fail('SOURCE_SHAPE_INVALID', error.message); }
   const { portfolio, data: { report } } = shell.result;
@@ -357,6 +360,11 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
     const unitPrice = pick(row, fields.holding.unitPrice, 'HOLDING_PRICE', { required: false });
     const instrumentId = pick(row, fields.holding.instrumentId, 'INSTRUMENT', { required: false });
     const symbol = pick(row, fields.holding.symbol, 'HOLDING_SYMBOL', { required: false });
+    // The listing venue the source itself publishes, preserved verbatim. It is
+    // read here and nowhere else: the four-bucket classification never uses it,
+    // and the AI-risk input needs the source's own market code rather than a
+    // venue something upstream decided to attach. Absent stays null.
+    const marketCode = pick(row, fields.holding.marketCode, 'HOLDING_MARKET_CODE', { required: false });
     const navDate = pick(row, fields.holding.navDate, 'HOLDING_NAV_DATE', { required: false });
     if (navDate !== undefined && (!isCalendarDate(navDate) || navDate > report.end_date)) fail('HOLDING_NAV_DATE_INVALID', holdingId);
     const securityType = pick(row, fields.holding.securityType, 'HOLDING_SECURITY_TYPE', { required: false });
@@ -364,6 +372,7 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
       portfolioId: expectedId, holdingId, ...flags,
       instrumentId: instrumentId === undefined ? null : toId(instrumentId, 'INSTRUMENT'),
       symbol: symbol === undefined ? null : text(symbol, 'HOLDING_SYMBOL', 120),
+      venue: marketCode === undefined ? null : text(marketCode, 'HOLDING_MARKET_CODE', 40),
       name, recordType: 'holding', assetClass, sourceLabels, labelStatus,
       // Preserved verbatim for review only; never used to decide cash or bucket.
       sourceSecurityType: securityType === undefined ? null : text(securityType, 'HOLDING_SECURITY_TYPE', 60),

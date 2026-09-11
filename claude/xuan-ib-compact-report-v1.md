@@ -471,7 +471,14 @@ supported independently verified modules may use current-value language.
    stays immutable and cannot be reopened. Then, with trusted main helpers and
    matched `latest.html/latest.meta.json`:
 
-   `node scripts/xuan-ib-report-prepare.mjs /tmp/RUN.view.json /tmp/RUN.sources.json /tmp/RUN.candidate.html --journal /tmp/RUN.clock.jsonl`
+   `node scripts/xuan-ib-report-prepare.mjs /tmp/RUN.view.json /tmp/RUN.sources.json /tmp/RUN.candidate.html --journal /tmp/RUN.clock.jsonl --risk-source-capture /tmp/RUN/input.json`
+
+   For an ordinary scheduled report, the risk universe, `firstSeen` state,
+   market values and the three-account cash-inclusive denominator must be
+   derived inside this command from the same immutable source capture. Do not
+   hand-write separate constituent or denominator files. A prior `AUTO`
+   classification is continued from the last trusted public manifest and is
+   not notified a second time.
 
    This checks source scope/readiness, creates a complete escaped report, runs
    the **unchanged** trusted guard once and writes a new staging HTML only after

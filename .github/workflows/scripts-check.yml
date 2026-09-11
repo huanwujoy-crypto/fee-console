@@ -85,3 +85,7 @@ jobs:
       - name: Verify source-bound Saturday historical layout
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-ib-saturday-archive.test.mjs scripts/xuan-ib-mobile-display.test.mjs scripts/xuan-ib-order-cards.test.mjs scripts/xuan-ib-allocation-cards.test.mjs scripts/xuan-ib-delegated-tier.test.mjs scripts/xuan-ib-aaoi-t1.test.mjs scripts/xuan-ib-aaoi-snapshot.test.mjs scripts/xuan-ib-routine-reading.test.mjs
+
+      - name: Test instrument-scoped venue identity and first-seen classification
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/xuan-ib-venue-identity.test.mjs scripts/xuan-ib-auto-classification.test.mjs scripts/xuan-ib-ai-tier-coverage.test.mjs scripts/xuan-ib-ai-coefficient-resolver.test.mjs scripts/xuan-ib-ai-risk-input.test.mjs scripts/xuan-ib-ai-pressure.test.mjs scripts/xuan-ib-ai-risk-three-account.test.mjs

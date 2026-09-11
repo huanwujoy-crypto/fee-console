@@ -50,6 +50,24 @@ export function unwrapSource(kind,raw){
 // `daily_pnl` is preserved when the payload carries it because it is part of
 // the same authoritative positions read; it is passed through unchanged and is
 // never itself a displayed change. Absent/unusable stays null, not zero.
+// The identifier this source publishes for the instrument itself, preserved
+// verbatim. It is the whole point of the reviewed venue-identity registry: a
+// contract id is what the payload actually asserts about the instrument, while
+// a venue label is something the payload often omits entirely (IB publishes no
+// exchange for most US listings). Carrying it through means downstream identity
+// resolution can look the instrument up directly instead of needing something
+// upstream to have already decided which exchange string to attach.
+const contractIdentity=position=>{
+  if(!Object.hasOwn(position,'contract_id')||position.contract_id===null)return null;
+  const value=position.contract_id;
+  const usable=(typeof value==='number'&&Number.isSafeInteger(value)&&value>0)
+    ||(typeof value==='string'&&/^\d{1,18}$/.test(value));
+  // A malformed identifier is refused rather than dropped: silently continuing
+  // without it would resolve the row by venue guesswork and look identical to a
+  // payload that never carried one.
+  if(!usable)fail('INVALID_POSITION_CONTRACT_ID');
+  return String(value);
+};
 export function normalizePositions(raw){
   return unwrapSource('positions',raw).positions.map(position=>{
     need(position,['contract_description','position','market_price','market_value','currency']);
@@ -58,7 +76,7 @@ export function normalizePositions(raw){
     const carriesDailyPnl=Object.hasOwn(position,'daily_pnl')&&position.daily_pnl!==null;
     if(carriesDailyPnl&&!num(position.daily_pnl))fail('INVALID_POSITION_DAILY_PNL');
     return {description:position.contract_description,quantity:position.position,price:position.market_price,
-      marketValueNative:position.market_value,currency:position.currency,
+      marketValueNative:position.market_value,currency:position.currency,contractId:contractIdentity(position),
       dailyPnlNative:carriesDailyPnl?position.daily_pnl:null,changePct:null,quoteStatus:'unavailable'};
   });
 }
@@ -85,6 +103,13 @@ const sessionPhase=(venue,open,complete)=>{
 // option, a future) never reconciles, so no multiplier is ever assumed, and a
 // mark the payload carried forward beside a fresh value is caught rather than
 // turned into a percentage. The tolerance covers cent rounding only.
+// The strong identity a measurement row carries to the daily-change builder,
+// taken verbatim from the normalized position and never re-derived here. A row
+// whose payload published no contract id says so with `null`; that is the only
+// case in which downstream resolution falls back to the venue+code key.
+const positionIdentity=position=>({identitySource:'ib',
+  identityValue:typeof position.contractId==='string'&&position.contractId?position.contractId:null});
+
 const markReconciled=position=>{
   if(!num(position.price)||!num(position.quantity)||!num(position.marketValueNative))return false;
   const implied=position.price*position.quantity;
@@ -101,8 +126,30 @@ const markReconciled=position=>{
 // it belongs to, and two readings inside one session must never be reconciled.
 export function measurePositionSessionChange(position,{venue=null,code=null,sessionDate=null,venuesOpen=[],venuesComplete=[],observedAtHkt=null}={}){
   if(!object(position)||!Object.hasOwn(position,'dailyPnlNative')||!Object.hasOwn(position,'marketValueNative'))fail('INVALID_DAILY_CHANGE_INPUT');
-  const row={method:'session-pnl-v1',code,venue,changePct:null,currencyChangePct:null,sessionDate,
+  const row={method:'session-pnl-v1',code,venue,...positionIdentity(position),changePct:null,currencyChangePct:null,sessionDate,
     sessionPhase:sessionPhase(venue,venuesOpen,venuesComplete),observedAtHkt,markReconciled:markReconciled(position)};
+  if(position.dailyPnlNative===null)return row;
+  if(!num(position.dailyPnlNative)||!num(position.marketValueNative))fail('INVALID_DAILY_CHANGE_INPUT');
+  const base=position.marketValueNative-position.dailyPnlNative;
+  if(!num(base)||base<=0)return row;
+  const changePct=position.dailyPnlNative/base*100;
+  if(!Number.isFinite(changePct))return row;
+  return {...row,changePct};
+}
+
+// (A2) The SAME positions payload, read after the session it reports has
+// already closed. This is a separate method from (A), not the same reading
+// under another edition's name: it requires the venue's session to be proven
+// FINISHED rather than merely running, and its `observedAtHkt` belongs to the
+// report's own Hong Kong date rather than to the session date, because an 08:00
+// HKT run reads the previous New York session hours after its close. It exists
+// only to fill a row the portfolio source's single-day window never returned —
+// a position that is live in the broker's book before that source has synced
+// it. It never overrides a window reading, and (A) is left exactly as it was.
+export function measurePositionCompletedSessionChange(position,{venue=null,code=null,sessionDate=null,venuesComplete=[],observedAtHkt=null}={}){
+  if(!object(position)||!Object.hasOwn(position,'dailyPnlNative')||!Object.hasOwn(position,'marketValueNative'))fail('INVALID_DAILY_CHANGE_INPUT');
+  const row={method:'am-session-pnl-v1',code,venue,...positionIdentity(position),changePct:null,currencyChangePct:null,sessionDate,
+    sessionPhase:sessionPhase(venue,[],venuesComplete),observedAtHkt,markReconciled:markReconciled(position)};
   if(position.dailyPnlNative===null)return row;
   if(!num(position.dailyPnlNative)||!num(position.marketValueNative))fail('INVALID_DAILY_CHANGE_INPUT');
   const base=position.marketValueNative-position.dailyPnlNative;
@@ -135,8 +182,14 @@ export function normalizeDailyChangeWindow(raw,{date=null,venuesComplete=[]}={})
     const venue=object(instrument)&&typeof instrument.market_code==='string'?instrument.market_code:null;
     const code=object(instrument)&&typeof instrument.code==='string'?instrument.code:null;
     const usable=object(holding)&&num(holding.capital_gain_percent);
+    const instrumentId=object(instrument)&&Number.isSafeInteger(instrument.id)&&instrument.id>0?instrument.id:null;
     return {method:'window-v1',code,venue,
-      instrumentId:object(instrument)&&Number.isSafeInteger(instrument.id)?instrument.id:null,
+      instrumentId,
+      // The same strong identity the IB side carries, under one shared pair of
+      // field names so the builder never has to know which book a row came from
+      // in order to look its instrument up. The value is the source's own
+      // `instrument.id`, stringified and otherwise untouched.
+      identitySource:'sharesight',identityValue:instrumentId===null?null:String(instrumentId),
       changePct:usable?holding.capital_gain_percent:null,
       currencyChangePct:usable&&num(holding.currency_gain_percent)?holding.currency_gain_percent:null,
       // A completed-session window has no observation instant to publish: it is

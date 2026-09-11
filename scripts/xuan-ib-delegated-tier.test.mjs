@@ -107,6 +107,89 @@ test('only whitelisted coefficients may be applied, and the file is validated wh
   assert.equal(new Set(holdings).size,holdings.length);
 });
 
+// A pinned behavioural snapshot of `calculateDelegatedTier`, captured from the
+// reader as it stood before the 2026-09-11 identity-integrity work. Adding the
+// BE rule beside AAOI and VST, and adding an entirely separate AUTO policy for
+// first-seen positions, must leave this function's inputs, outputs and error
+// codes identical. In particular its fail-closed refusal for an instrument with
+// no approved rule is unchanged: the automatic policy is a different module and
+// is never reachable from here.
+const BEFORE=Object.freeze([
+  {label:'VST resolves to its approved tier',
+    run:()=>calculateDelegatedTier(vst(),{approvalId:VST}),
+    value:{approvalId:VST,tier:'T1',symbol:'VST',portfolioId:'1350094',holdingId:'29098649',
+      instrumentId:'1753523',currency:'USD',valueDate:'2026-09-09',marketValueUsd:12500,
+      low:7500,mid:10000,high:12500,
+      notifyId:'classification:1350094:29098649:DELEG-20260910-VST-T1',notifyOnce:true}},
+  {label:'AAOI resolves through the same generic reader',
+    run:()=>calculateDelegatedTier(aaoi(),{approvalId:'WU-20260906-AAOI-T1'}),
+    value:{approvalId:'WU-20260906-AAOI-T1',tier:'T1',symbol:'AAOI',portfolioId:'1350094',
+      holdingId:'28656360',instrumentId:'523742',currency:'USD',valueDate:'2026-09-05',
+      marketValueUsd:10553,low:6331.8,mid:8442.4,high:10553,
+      notifyId:'classification:1350094:28656360:WU-20260906-AAOI-T1',notifyOnce:true}},
+  // The fail-closed cases, byte for byte. An unknown instrument has no rule and
+  // never acquires one here, however the rest of the repository changes.
+  {label:'an unapproved instrument is refused',
+    run:()=>calculateDelegatedTier(vst(),{approvalId:'WU-20260910-NVDA-T1'}),code:'RULE_NOT_APPROVED'},
+  {label:'a brand new position with no rule at all is refused',
+    run:()=>calculateDelegatedTier({symbol:'NEWCO',portfolioId:'1350094',holdingId:'99000001',
+      instrumentId:'99000002',currency:'USD',marketValueUsd:1000,valueDate:'2026-09-10'},
+    {approvalId:'DELEG-20260911-NEWCO-T1'}),code:'RULE_NOT_APPROVED'},
+  {label:'a near identity match is refused',
+    run:()=>calculateDelegatedTier({...vst(),venue:'NASDAQ'},{approvalId:VST}),code:'IDENTITY_MISMATCH'},
+  {label:'an unverified value is refused',
+    run:()=>calculateDelegatedTier({...vst(),marketValueUsd:null},{approvalId:VST}),
+    code:'VALUE_NOT_VERIFIED_USD_CENTS'},
+  {label:'a malformed input is refused',
+    run:()=>calculateDelegatedTier(null,{approvalId:VST}),code:'INPUT_MALFORMED'},
+]);
+
+test('calculateDelegatedTier behaves identically before and after the identity-integrity change',()=>{
+  for(const item of BEFORE){
+    if(item.value){
+      const actual=item.run();
+      assert.deepEqual(actual,item.value,item.label);
+      // Key order is part of the published shape, not an accident.
+      assert.deepEqual(Object.keys(actual),Object.keys(item.value),item.label);
+      continue;
+    }
+    assert.throws(item.run,error=>{
+      assert.ok(error instanceof DelegatedTierException,item.label);
+      assert.equal(error.code,item.code,item.label);
+      assert.equal(error.owner,'Codex',item.label);
+      assert.equal(error.requiresOwnerDecision,false,item.label);
+      return true;
+    },item.label);
+  }
+  // The reader gained no new entry point and no automatic path.
+  assert.deepEqual(Object.keys(SUPPORTED_TIERS),['T1']);
+});
+
+test('the BE rule is a DELEG record with complete identity and no new coefficient',()=>{
+  const BE='DELEG-20260911-BE-T1';
+  const {rule}=findDelegatedRule(BE);
+  assert.deepEqual([rule.low,rule.mid,rule.high],[0.6,0.8,1]);
+  assert.equal(rule.tier,'T1');
+  // Every identity field the approval records must be matched exactly.
+  const be=()=>({symbol:'BE',custodian:'Webull',venue:'NYSE',
+    instrumentName:'Bloom Energy Corp - Ordinary Shares - Class A',
+    portfolioId:'1350094',holdingId:'29037698',instrumentId:'1893267',currency:'USD',
+    marketValueUsd:5000,valueDate:'2026-09-10'});
+  const value=calculateDelegatedTier(be(),{approvalId:BE});
+  assert.deepEqual([value.low,value.mid,value.high],[3000,4000,5000]);
+  assert.equal(value.notifyId,'classification:1350094:29037698:DELEG-20260911-BE-T1');
+  // One stable identity per rule, across a moved value and date.
+  assert.equal(value.notifyId,
+    calculateDelegatedTier({...be(),marketValueUsd:5100,valueDate:'2026-09-11'},{approvalId:BE}).notifyId);
+  for(const [key,other] of [['custodian','IB-HK'],['venue','NASDAQ'],['instrumentName','Bloom Energy Corp'],
+    ['portfolioId','936247'],['holdingId','29098649'],['instrumentId','1753523']]){
+    assert.throws(()=>calculateDelegatedTier({...be(),[key]:other},{approvalId:BE}),/IDENTITY_MISMATCH/);
+  }
+  // It does not satisfy, and is not satisfied by, another instrument's rule.
+  assert.throws(()=>calculateDelegatedTier(be(),{approvalId:VST}),/IDENTITY_MISMATCH/);
+  assert.throws(()=>calculateDelegatedTier(vst(),{approvalId:BE}),/IDENTITY_MISMATCH/);
+});
+
 test('the historical AAOI approval keeps its exact result through the generic reader',()=>{
   const value=calculateAaoiT1(aaoi());
   assert.deepEqual([value.low,value.mid,value.high],[6331.8,8442.4,10553]);

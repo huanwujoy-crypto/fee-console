@@ -24,6 +24,10 @@ Before reading financial data or generating a report, read and obey:
 - `claude/xuan-ib-cash-first-plan-v1.md`
 - `claude/xuan-ib-mrvl-t1-approval-2026-08-31.md`
 - `claude/xuan-ib-ai-tier-overrides-v1.json`
+- `claude/xuan-ib-venue-identity-v1.json`
+- `claude/xuan-ib-auto-classification-v1.json`
+- `claude/xuan-ib-be-t1-approval-2026-09-11.md`
+- `claude/xuan-ib-ai-risk-tiers-v1.json`
 
 Use only read operations against Interactive Brokers and Sharesight. Never
 place, modify, or cancel an order; never initiate a transfer; never create,
@@ -53,6 +57,79 @@ the trusted prior snapshot, without fresh reads. It must preserve raw financial
 inputs, dates/as-of and receipts, explicitly disclose the recalculation, and
 must not count as a fresh AM/PM run. Do not expand this into a general cache
 substitute for normal reports or overwrite a later report with the old repair.
+
+## Identity and presence integrity (2026-09-11)
+
+Resolve cross-source instrument identity only through
+`scripts/xuan-ib-venue-identity.mjs` and its reviewed registry
+`claude/xuan-ib-venue-identity-v1.json`, and pass that resolver to the
+daily-change builder and merge. Each entry is scoped to one instrument and bound
+to the identifier each raw payload already carries. Never declare two venues
+synonyms, and never take a venue from another custodian's portfolio because it
+lists the same ticker — that is not evidence about this account's instrument. A
+cross-venue pairing no reviewed entry records is named and refused; adding one is
+a separately reviewed maintenance change, never part of a report run.
+
+A daily-change reading of exactly zero publishes only when an independent
+same-run reading of the same completed session corroborates it, and the row names
+the corroborating method. When two readings disagree, withhold the row and
+disclose it by name as contradicted; do not average, prefer or arbitrate. Give
+every unmeasured row its enumerated reason and declare the holdings coverage.
+
+AM may use the per-row fallback `am-session-pnl-v1` only for a row the
+single-day window never returned, and only with all of its evidence: session
+D−1, the venue's session provably finished, `observedAtHkt` on report date D,
+`mark × quantity` reconciled against the payload's own market value, and no
+trade or corporate action on that position in the same window. It never
+overrides a window reading. PM is unchanged: no fallback, its own method, its
+own instant rule. Do not relax PM to match AM.
+
+A first-seen position that no `WU` or `DELEG` rule covers must not simply drop
+out of the AI-pressure numerator while remaining in the denominator. Use
+`classifyFirstSeenPosition` in `scripts/xuan-ib-auto-classification.mjs` with
+`claude/xuan-ib-auto-classification-v1.json`: verified identity, no existing
+owner rule, unambiguously ordinary stock, standard T1 under the `AUTO`
+namespace as this period's effective classification. Non-stock and unknown or
+ambiguous asset types are fail-visible — named, disclosed with an enumerated
+reason and excluded. This creates no `awaiting_user` item, mints no `WU` or
+`DELEG` receipt, changes no coefficient or account scope, and reaches no
+financial write. Never word an AUTO classification 临时, 待确认 or 待裁决.
+BE / Bloom Energy is a `DELEG` rule (`DELEG-20260911-BE-T1`), not an AUTO record.
+
+Resolve the whole constituent universe through
+`buildAiTierCoverage` in `scripts/xuan-ib-ai-tier-coverage.mjs` and pass the
+result to `prepareReport` as `riskConstituents` (CLI: `--risk-constituents`),
+together with the source-bound three-account cash-inclusive denominator as
+`riskDenominator` (CLI: `--risk-denominator`). Every constituent carries its
+`custodian` alongside `portfolioId`, `holdingId` and `instrumentId`: the risk
+universe is keyed on `(portfolioId, holdingId)`, never on a ticker, because one
+company is legitimately held under more than one custodian and two custodians
+legitimately spell one company differently.
+
+An ordinary AM or PM report dated `2026-09-11` or later that shows holdings
+must carry the resulting `xuan-ib-ai-tier-records-v1` manifest and the risk
+pane's own `data-ai-risk-universe-v1` declaration; the gate reconciles the two
+by identity rather than against prose, so every constituent is classified with a
+`WU`, `DELEG`, `REG` or `AUTO` record id or excluded with an enumerated reason.
+That declaration is the risk pane's own and is never the holdings table's
+`data-holdings-universe-v1`, which covers one custodian's book and keeps its own
+separate check.
+
+Take §0-C coefficients only from `claude/xuan-ib-ai-risk-tiers-v1.json` through
+`scripts/xuan-ib-ai-risk-registry.mjs`, and compute the numerator, the scenario
+totals and the ratio only with `computeAiPressure` in
+`scripts/xuan-ib-ai-pressure.mjs`. Never retype a coefficient, a contribution, a
+numerator or a ratio into a report, an assembly script, a card or a KPI tile:
+the renderer derives the whole section and the headline KPI, refuses a
+hand-supplied AI-pressure card or KPI, and the gate recomputes the total from
+the page's own per-constituent contributions and reconciles the tile against it.
+Where the approved material defines no low or high case, publish that scenario
+as unavailable and named — never the mid case repeated, never zero. Resolve cross-source
+identity by the strong identifier each payload publishes (`contract_id`,
+`instrument.id`) and use the venue+code key only when none exists. Decide
+"notify once" with `decideAutoNotification` against the previous trusted page's
+published records and a verified public read-back; never close a notification
+without one, and never turn it into an owner item.
 
 Classification prose must come from the trusted deterministic disclosure
 module, not the previous latest.html. Run the canonical renderer and preserve

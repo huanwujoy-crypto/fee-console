@@ -62,6 +62,13 @@ jobs:
           protected_re="${protected_re}|^scripts/(xuan-ib-source-capture|xuan-ib-hook-response|xuan-ib-source-hook|xuan-ib-minimal-report|xuan-ib-minimal-prepare)\.(mjs|test\.mjs)$"
           protected_re="${protected_re}|^scripts/xuan-ib-four-bucket[^/]*\.(mjs|test\.mjs)$|^claude/(four-bucket-mapping\.json|xuan-ib-four-bucket[^/]*\.md)$"
           protected_re="${protected_re}|^claude/xuan-ib-classification-delegation-v1\.json$|^scripts/(xuan-ib-delegated-tier|xuan-ib-aaoi-t1|xuan-ib-aaoi-snapshot|xuan-ib-daily-change)\.(mjs|test\.mjs)$"
+          protected_re="${protected_re}|^claude/(xuan-ib-auto-classification-v1|xuan-ib-venue-identity-v1)\.json$|^claude/xuan-ib-be-t1-approval-[0-9-]+\.md$|^scripts/(xuan-ib-auto-classification|xuan-ib-venue-identity|xuan-ib-ai-tier-coverage)\.(mjs|test\.mjs)$"
+          protected_re="${protected_re}|^claude/xuan-ib-ai-risk-tiers-v1\.json$|^claude/xuan-ib-ai-risk-tiers-approval-[0-9-]+\.md$|^scripts/(xuan-ib-ai-risk-registry|xuan-ib-ai-pressure|xuan-ib-ai-risk-three-account)\.(mjs|test\.mjs)$"
+          # The single trusted re-resolver of a published coefficient, and the
+          # one statement of the exact integer arithmetic the gate shares with
+          # the calculation engine. Changing either is a coefficient-authority
+          # change in everything but name.
+          protected_re="${protected_re}|^scripts/(xuan-ib-ai-coefficient-resolver|xuan-ib-ai-risk-input)\.(mjs|test\.mjs)$"
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
             head_sha='${{ github.event.pull_request.head.sha }}'

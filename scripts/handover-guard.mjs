@@ -9,6 +9,14 @@ import { validateFourBucketReportHtml, FOUR_BUCKET_REPORT_ID } from './xuan-ib-f
 import { FOUR_BUCKET_TEMPLATE_ID } from './xuan-ib-four-bucket.mjs';
 import { validateCashPlan } from './xuan-ib-cash-plan.mjs';
 import { validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
+import { listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
+import { listVenueEquivalences } from './xuan-ib-venue-identity.mjs';
+import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
+import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import {
+  AI_DENOMINATOR_TEMPLATE_ID, BASIS_POINTS, DENOMINATOR_COMPONENT_FIELDS, DENOMINATOR_COMPONENT_KEY,
+  AI_RISK_ACCOUNT_KEYS, MICRO_PER_CENT, resolveTrustedMidCoefficientBp, roundMicroBasisToCents,
+} from './xuan-ib-ai-coefficient-resolver.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
@@ -96,6 +104,14 @@ const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\
 const navigationOrder = Object.freeze(['s1', 's2', 's3', 's4', 's5']);
 const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s4: '待办', s5: 'ETF' });
 const DECISION_STATE_TEMPLATE_ID = 'xuan-ib-decision-state-v1';
+// The inert record of which AI-pressure tier covers which instrument, and of
+// any instrument excluded from the numerator with its enumerated reason. It is
+// declared here because the template allowlist below has to know about it.
+const AI_TIER_RECORDS_ID = 'xuan-ib-ai-tier-records-v1';
+// The inert composition of the AI-pressure denominator: one stable key, one
+// label and one integer micro-USD amount per account. Declared here for the same
+// reason, and carrying no holding, no coefficient and no owner artefact.
+const AI_DENOMINATOR_ID = AI_DENOMINATOR_TEMPLATE_ID;
 const ETF_ABC_STATE_TEMPLATE_ID = 'xuan-ib-etf-abc-state-v1';
 const ETF_ABC_STATE_TEMPLATE_OPENING = `<template id="${ETF_ABC_STATE_TEMPLATE_ID}" type="application/json">`;
 
@@ -271,8 +287,8 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID].includes(id)) {
-      fail('only the approved decision, ETF and account-association templates are allowed');
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID, AI_TIER_RECORDS_ID, AI_DENOMINATOR_ID].includes(id)) {
+      fail('only the approved decision, ETF, account-association and AI tier record templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
     byId.set(id, template);
@@ -1204,6 +1220,584 @@ if (!verifiedRecordsUpdate) {
   if (cashPlanErrors.length) fail(cashPlanErrors[0]);
 }
 
+// Symbols the risk pane shows as carrying no approved AI tier, or as excluded
+// from the pressure numerator. This replaces an enumerated blocklist that named
+// AAOI and VST specifically: on 2026-09-11 a new position in exactly the same
+// situation passed the guard untouched because nobody had added its ticker. The
+// rule is now structural — whichever instrument the panel says it could not
+// classify has to carry a machine-readable record — so a name nobody
+// anticipated is covered on the day it first appears.
+// The trigger is an explicit statement that an instrument has no approved tier
+// or is out of the numerator. A bare 不含 is deliberately not one: a numerator
+// subtotal legitimately says which holdings it excludes, and reading that as an
+// unclassified instrument would fail byte-frozen historical repairs that may
+// not be rewritten. The `无已批准 tier` form below covers the same substance
+// whenever a report actually makes that claim about an instrument.
+const AI_TIER_EXCLUSION = /(?:待核验|待分类|未分类|未含|未计入分子|边界未定义|(?:尚无|仍无|没有|未有|无)\s*已?批准\s*tier)/i;
+// The sentence must actually be about AI-pressure tiering. Without this a
+// report could lose its column for an unrelated reason and be read as an
+// unclassified instrument.
+const AI_TIER_CONTEXT = /(?:分子|tier|T[1-9]\b|AI\s*压力|已?批准)/i;
+// Uppercase tokens that are never instrument symbols in this report's prose.
+// A token here is skipped rather than treated as an unclassified holding.
+const NOT_A_SYMBOL = new Set(['AI', 'ETF', 'ETFS', 'IB', 'PM', 'AM', 'US', 'UK', 'HK', 'HKT', 'NY',
+  'NAV', 'USD', 'HKD', 'CAD', 'GBP', 'EUR', 'CHF', 'JPY', 'CNY', 'NYSE', 'NASDAQ', 'BATS', 'LSE',
+  'SWX', 'TSE', 'EBS', 'XETRA', 'EURONEXT', 'LSEETF', 'SIX', 'ARCA', 'AMEX', 'T1', 'T2', 'T3',
+  'WU', 'DELEG', 'AUTO', 'JSON', 'HTML', 'SHA', 'ID', 'IDS', 'PNL', 'FX', 'GDP', 'CPI', 'IPO']);
+// `REG` is the transcribed registry of already-published tier assignments, ETF
+// look-through percentages and named exceptions in
+// `claude/xuan-ib-ai-risk-tiers-v1.json`. It carries no new coefficient: every
+// value in that file was read out of an already-approved artefact.
+const AI_TIER_NAMESPACES = new Set(['WU', 'DELEG', 'REG', 'AUTO']);
+const AI_TIER_RECORD_STATUSES = new Set(['classified', 'excluded']);
+const AUTO_EXCLUSION_REASON_VALUES = new Set(Object.values(AUTO_EXCLUSION_REASONS));
+// Read lazily and once, so a page that carries no REG record never depends on
+// the registry file being present at all.
+let registryCache = null;
+const registryRules = () => (registryCache ??= readAiRiskRegistry());
+
+// Returns both views of the page's own records: `bySymbol`, which the prose
+// backstop needs because prose only ever names a ticker, and `byKey`, the
+// identity-keyed manifest that the blocking reconciliation uses. The two are
+// deliberately different populations — one ticker can carry several identities.
+function aiTierRecordsFromMarkup(documentHtml) {
+  const records = new Map();
+  const byKey = new Map();
+  // Attribute form, written beside the human sentence that explains the record.
+  for (const match of documentHtml.matchAll(/<[a-z][^<>]*\bdata-ai-tier-symbol\s*=\s*(["'])(.*?)\1[^<>]*>/gi)) {
+    const tag = match[0];
+    const symbol = match[2].trim().toUpperCase();
+    const namespace = quotedAttribute(tag, 'data-ai-tier-namespace', 'AI tier record');
+    const recordId = quotedAttribute(tag, 'data-ai-tier-record', 'AI tier record');
+    if (!symbol || !AI_TIER_NAMESPACES.has(namespace) || !recordId) {
+      fail(`AI tier record for ${symbol || 'an unnamed symbol'} needs a WU, DELEG or AUTO namespace and record id`);
+    }
+    const prefix = namespace === 'AUTO' ? 'AUTO:' : `${namespace}-`;
+    if (!recordId.startsWith(prefix)) fail(`AI tier record ${recordId} does not match its declared ${namespace} namespace`);
+    const existing = records.get(symbol);
+    if (existing && (existing.namespace !== namespace || existing.recordId !== recordId)) {
+      fail(`AI tier records for ${symbol} disagree with each other`);
+    }
+    records.set(symbol, { symbol, namespace, recordId, status: 'classified', reason: null });
+  }
+  // Strict inert template, which is also how a genuinely excluded position —
+  // an ETF, a fund, an unreadable asset type — is disclosed by name with its
+  // enumerated reason instead of silently vanishing from the numerator.
+  const template = documentHtml.match(new RegExp(
+    `<template id="${AI_TIER_RECORDS_ID}" type="application/json">([\\s\\S]*?)</template>`, 'i'));
+  if (template) {
+    const entries = parseStrictJson(template[1], AI_TIER_RECORDS_ID);
+    if (!Array.isArray(entries) || entries.length > 500) fail(`${AI_TIER_RECORDS_ID} must be an array of records`);
+    for (const entry of entries) {
+      const expected = ['key', 'symbol', 'custodian', 'portfolioId', 'holdingId', 'instrumentId',
+        'namespace', 'recordId', 'status'];
+      if (isRecord(entry) && Object.hasOwn(entry, 'reason')) expected.push('reason');
+      strictKeys(entry, expected, `${AI_TIER_RECORDS_ID} entry`);
+      const symbol = typeof entry.symbol === 'string' ? entry.symbol.trim().toUpperCase() : '';
+      if (!symbol || !AI_TIER_NAMESPACES.has(entry.namespace) || typeof entry.recordId !== 'string'
+        || !entry.recordId || !AI_TIER_RECORD_STATUSES.has(entry.status)) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol || 'an unnamed symbol'} is incomplete`);
+      }
+      // Identity, not ticker. The manifest is keyed on the pair every source and
+      // every approved rule already publishes, so the same company held in two
+      // accounts is two records and cannot be collapsed into one.
+      for (const field of ['portfolioId', 'holdingId', 'instrumentId']) {
+        if (typeof entry[field] !== 'string' || !/^[A-Za-z0-9_.:-]{1,64}$/.test(entry[field])) {
+          fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} is missing a usable ${field}`);
+        }
+      }
+      if (entry.key !== `${entry.portfolioId}:${entry.holdingId}`) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} declares a key that is not its own portfolio and holding`);
+      }
+      if (typeof entry.custodian !== 'string' || !entry.custodian.trim()) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} must name its custodian`);
+      }
+      const prefix = entry.namespace === 'AUTO' ? 'AUTO:' : `${entry.namespace}-`;
+      if (!entry.recordId.startsWith(prefix)) fail(`AI tier record ${entry.recordId} does not match its declared ${entry.namespace} namespace`);
+      // A `REG` record must name a rule the trusted registry beside this guard
+      // actually records, for this custodian and this symbol. Otherwise a report
+      // could mint a registry-looking id for an instrument no approved document
+      // covers and present it as an already-approved coefficient.
+      if (entry.namespace === 'REG') {
+        const rule = registryRules().lookup(entry.custodian.trim(), symbol);
+        if (!rule) fail(`AI tier record for ${symbol} at ${entry.custodian} claims a REG rule the trusted registry does not record`);
+        if (rule.recordId !== entry.recordId) fail(`AI tier record ${entry.recordId} is not the trusted registry's rule for ${symbol} at ${entry.custodian}`);
+      }
+      // An exclusion must say why, in the module's own enumerated vocabulary.
+      // "Excluded, no reason given" is the failure mode this whole check exists
+      // to prevent.
+      if (entry.status === 'excluded'
+        && (typeof entry.reason !== 'string' || !AUTO_EXCLUSION_REASON_VALUES.has(entry.reason))) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} must name an enumerated exclusion reason`);
+      }
+      if (entry.status === 'classified' && Object.hasOwn(entry, 'reason') && entry.reason !== null) {
+        fail(`${AI_TIER_RECORDS_ID} entry for ${symbol} cannot be classified and carry an exclusion reason`);
+      }
+      const record = { key: entry.key, symbol, custodian: entry.custodian.trim(),
+        portfolioId: entry.portfolioId, holdingId: entry.holdingId, instrumentId: entry.instrumentId,
+        namespace: entry.namespace, recordId: entry.recordId,
+        status: entry.status, reason: entry.reason ?? null };
+      // One identity may appear once. A manifest that repeated an identity could
+      // make a dropped constituent look covered while double-counting another.
+      if (byKey.has(record.key)) fail(`${AI_TIER_RECORDS_ID} names the holding ${record.key} more than once`);
+      // And one instrument inside one account may appear once, independently of
+      // how its holding is keyed.
+      const instrument = `${record.portfolioId}/${record.instrumentId}`;
+      for (const other of byKey.values()) {
+        if (`${other.portfolioId}/${other.instrumentId}` === instrument) {
+          fail(`${AI_TIER_RECORDS_ID} names instrument ${instrument} twice in one account`);
+        }
+      }
+      byKey.set(record.key, record);
+      records.set(symbol, record);
+    }
+  }
+  return { bySymbol: records, byKey };
+}
+
+function approvedTierSymbols() {
+  const symbols = new Map();
+  // Every rule the trusted delegation file records, plus the owner's own
+  // identity-bound overrides. Both are read from the repository beside this
+  // guard, never from the candidate.
+  for (const { rule } of listDelegatedRules()) symbols.set(rule.symbol.toUpperCase(), rule.approvalId);
+  const overridesPath = path.join(path.dirname(fileURLToPath(import.meta.url)),
+    '../claude/xuan-ib-ai-tier-overrides-v1.json');
+  if (fs.existsSync(overridesPath)) {
+    const overrides = JSON.parse(fs.readFileSync(overridesPath, 'utf8'));
+    for (const rule of overrides.overrides || []) {
+      if (typeof rule?.symbol === 'string') symbols.set(rule.symbol.toUpperCase(), rule.approvalId);
+    }
+  }
+  return symbols;
+}
+
+function checkAiTierCoverage(activeRisk, documentHtml) {
+  const candidates = new Set();
+  for (const sentence of activeRisk.split(/[。<>]/)) {
+    if (!AI_TIER_EXCLUSION.test(sentence) || !AI_TIER_CONTEXT.test(sentence)) continue;
+    // Two characters minimum: a single capital in this prose is a section
+    // marker such as §0-C, never a holding.
+    for (const token of sentence.match(/\b[A-Z][A-Z0-9]{1,4}(?:[./][A-Z0-9]{1,3})?\b/g) || []) {
+      if (!NOT_A_SYMBOL.has(token)) candidates.add(token);
+    }
+  }
+  if (!candidates.size) return;
+  const records = aiTierRecordsFromMarkup(documentHtml).bySymbol;
+  const approved = approvedTierSymbols();
+  for (const symbol of [...candidates].sort()) {
+    if (records.has(symbol)) continue;
+    const approvalId = approved.get(symbol);
+    // An instrument the owner or the standing delegation already classified must
+    // not have its classification reopened in prose. This is the AAOI and VST
+    // case, now reached through the general rule rather than by naming them.
+    if (approvalId) {
+      fail(`${symbol} T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen classification`);
+    }
+    // And an instrument nobody has classified may not simply drop out of the
+    // numerator while staying in the denominator, which understates the metric.
+    fail(`${symbol} is shown without an approved AI tier and excluded from the numerator, but carries no machine-readable WU, DELEG or AUTO record; classify it or disclose it by name with an enumerated exclusion reason`);
+  }
+}
+
+// The primary, blocking AI-tier check, and the one that does not depend on the
+// report having phrased anything a particular way.
+//
+// `checkAiTierCoverage` above can only find a problem the page already confessed
+// to in matching Chinese prose: omit the sentence, word it differently, or drop
+// the instrument from the panel altogether, and it sees nothing and passes. It
+// is kept below as a regression backstop — it still pins the AAOI and VST cases
+// and the byte-frozen historical repairs — but it cannot be the real rule.
+//
+// The real rule is arithmetic, and it is reconciled against the AI-risk pane's
+// own declared universe — NOT against the holdings table.
+//
+// Those are two different populations, and conflating them was itself a defect.
+// The holdings table is one custodian's book: the published 2026-09-11 page
+// shows twenty-six IB rows there. The AI-pressure universe spans three accounts,
+// IB-HK, Schwab-HK and Webull together, and contains positions the holdings
+// table never lists. Reconciling the risk manifest against the holdings count
+// would therefore have passed a report that silently dropped every Schwab and
+// Webull constituent, while failing a correct one for naming them.
+//
+// So the risk pane declares its own `data-ai-risk-universe-v1` count and one
+// `data-ai-risk-constituent` identity marker per constituent, and the manifest
+// must cover exactly that set: every entry either classified against a WU,
+// DELEG, REG or AUTO record id, or excluded with an enumerated reason. The
+// holdings table keeps its own, separate, unchanged check below.
+//
+// Ordinary AM/PM reports from this date must carry the records. Earlier pages
+// were published before the requirement existed, and reclassifying historical
+// evidence is exactly what this contract forbids; they keep the prose backstop
+// alone. A page of any date that does carry records is reconciled in full.
+const AI_TIER_COVERAGE_REQUIRED_FROM = '2026-09-11';
+
+function checkAiTierManifestUniverse(pane, documentHtml, { edition, reportDate }) {
+  const declared = [...pane.matchAll(/\bdata-holdings-universe-v1\s*=\s*(["'])(.*?)\1/gi)];
+  if (declared.length > 1) fail('the holdings section may declare its constituent universe only once');
+  const symbols = [...pane.matchAll(/\bdata-holding-symbol\s*=\s*(["'])(.*?)\1/gi)]
+    .map((match) => match[2].trim().toUpperCase());
+  // Staged exactly like the rest of this contract: a page published before the
+  // rollout keeps the prose backstop, because reclassifying historical evidence
+  // is what this contract forbids. From the rollout date an ordinary scheduled
+  // edition must carry the records, and it may not escape that by omitting the
+  // markers as well — the holdings rows themselves are counted independently of
+  // any attribute the producer chose to write.
+  const mandatory = ['am', 'pm'].includes(edition) && String(reportDate) >= AI_TIER_COVERAGE_REQUIRED_FROM;
+  const renderedRows = (pane.match(/<span class="sym">/g) || []).length;
+  if (!declared.length) {
+    // A page that names constituents without declaring how many is refused: the
+    // count is what makes a dropped row detectable at all.
+    if (symbols.length) fail('a holdings table naming its constituents must declare data-holdings-universe-v1');
+    if (mandatory && renderedRows) {
+      fail('an ordinary AM/PM report showing holdings must declare its constituent universe and carry complete AI tier records');
+    }
+    // A legacy page that declares no universe keeps the prose backstop alone.
+    return;
+  }
+  const size = /^\d{1,5}$/.test(declared[0][2]) ? Number(declared[0][2]) : null;
+  if (size === null) fail('declared holdings universe must be a plain count');
+  if (symbols.length !== size) {
+    fail(`holdings table declares ${size} constituents but names ${symbols.length}; a row cannot be dropped silently`);
+  }
+  const universe = new Set(symbols);
+  if (universe.size !== symbols.length) fail('the holdings table names one constituent more than once');
+  // A declared universe must match what the table actually renders, so the
+  // count cannot be satisfied by markers on something that is not a holding row.
+  if (renderedRows !== symbols.length) {
+    fail(`holdings table renders ${renderedRows} rows but marks ${symbols.length} constituents`);
+  }
+  // The holdings table's own integrity check ends here. It is the IB book's
+  // count of its own rows and is deliberately NOT reconciled against the AI-risk
+  // manifest: that manifest describes a three-account universe this table does
+  // not contain. `checkAiRiskUniverse` does that reconciliation instead.
+}
+
+// The AI-risk pane's own universe, reconciled against the manifest by identity.
+function checkAiRiskUniverse(pane, documentHtml, { edition, reportDate }) {
+  const declared = [...pane.matchAll(/\bdata-ai-risk-universe-v1\s*=\s*(["'])(.*?)\1/gi)];
+  if (declared.length > 1) fail('the AI risk section may declare its constituent universe only once');
+  const markers = [...pane.matchAll(/<[a-z][^<>]*\bdata-ai-risk-constituent\s*=\s*(["'])(.*?)\1[^<>]*>/gi)]
+    .map((match) => ({ tag: match[0], key: match[2].trim() }));
+  const keys = markers.map((marker) => marker.key);
+  const mandatory = ['am', 'pm'].includes(edition) && String(reportDate) >= AI_TIER_COVERAGE_REQUIRED_FROM;
+  const { byKey: records } = aiTierRecordsFromMarkup(documentHtml);
+
+  if (!declared.length) {
+    if (keys.length) fail('an AI risk section naming its constituents must declare data-ai-risk-universe-v1');
+    // A page that carries a manifest is reconciled whatever its date, so the
+    // requirement can never be escaped by publishing a partial declaration.
+    if (records.size) fail('a report carrying AI tier records must declare the AI risk constituent universe they cover');
+    if (mandatory) {
+      fail('an ordinary AM/PM report must declare its AI risk constituent universe and carry complete AI tier records');
+    }
+    return;
+  }
+  const size = /^\d{1,5}$/.test(declared[0][2]) ? Number(declared[0][2]) : null;
+  if (size === null) fail('declared AI risk universe must be a plain count');
+  if (keys.length !== size) {
+    fail(`AI risk section declares ${size} constituents but names ${keys.length}; a constituent cannot be dropped silently`);
+  }
+  const universe = new Set(keys);
+  if (universe.size !== keys.length) fail('the AI risk section names one constituent identity more than once');
+  for (const key of [...universe].sort()) {
+    // The whole defect of 2026-09-11, stated structurally: a constituent that is
+    // in the denominator and carries no record at all.
+    if (!records.has(key)) {
+      fail(`${key} is a declared AI risk constituent with no machine-readable AI tier record; every constituent must be classified with a WU, DELEG, REG or AUTO record or excluded with an enumerated reason`);
+    }
+  }
+  for (const key of [...records.keys()].sort()) {
+    // And the reverse: a record for something this report does not carry cannot
+    // be used to make the coverage arithmetic look complete.
+    if (!universe.has(key)) {
+      fail(`AI tier record ${key} does not correspond to any declared AI risk constituent in this report`);
+    }
+  }
+  // The symbol and custodian a constituent marker declares must be the ones its
+  // own record carries. Those two fields are what a `REG` rule is keyed on, so
+  // leaving them unreconciled would let a page keep a correct identity key while
+  // pointing the record at another account's coefficient.
+  for (const marker of markers) {
+    const record = records.get(marker.key);
+    const declaredSymbol = quotedAttribute(marker.tag, 'data-ai-risk-symbol', 'AI risk constituent');
+    const declaredCustodian = quotedAttribute(marker.tag, 'data-ai-risk-custodian', 'AI risk constituent');
+    if (declaredSymbol === null && declaredCustodian === null) continue;
+    if (declaredSymbol !== null && declaredSymbol.trim().toUpperCase() !== record.symbol) {
+      fail(`AI risk constituent ${marker.key} declares a symbol its own AI tier record does not carry`);
+    }
+    if (declaredCustodian !== null && declaredCustodian.trim() !== record.custodian) {
+      fail(`AI risk constituent ${marker.key} declares a custodian its own AI tier record does not carry`);
+    }
+  }
+  return records;
+}
+
+// The denominator's own composition, re-parsed and re-added from the page's own
+// strict machine-readable components.
+//
+// Publishing only the total meant a candidate could move the denominator and
+// the ratio and the tile together and stay self-consistent: there was nothing
+// on the page the total could be compared against. Each account is therefore
+// named once, by a stable key, with its own exact integer micro-USD amount, and
+// the total must be their exact sum. A missing account understates the
+// denominator and overstates the published ratio; a repeated one does the
+// reverse; a changed one moves it silently. All three are arithmetic here.
+//
+// The gate also pins the approved production account set. Otherwise a coherent
+// candidate could add an invented fourth component, recompute the ratio and KPI
+// and pass while understating the three-account pressure percentage.
+function checkAiPressureDenominator(pane, documentHtml, declaredMicro, declaredCents, integer) {
+  const paragraphs = [...pane.matchAll(/<[a-z][^<>]*\bdata-ai-denominator-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
+  const templates = [...String(documentHtml).matchAll(new RegExp(
+    `<template id="${AI_DENOMINATOR_TEMPLATE_ID}" type="application/json">([\\s\\S]*?)</template>`, 'gi'))];
+  if (!paragraphs.length) fail('a computed AI pressure table must publish its denominator composition');
+  if (paragraphs.length > 1) fail('the AI pressure denominator may declare its composition only once');
+  if (templates.length !== 1) {
+    fail(`the AI pressure denominator requires exactly one ${AI_DENOMINATOR_TEMPLATE_ID} composition template`);
+  }
+  // The template is the machine-readable half and must live inside the same
+  // risk pane as the table it belongs to, not somewhere else on the page.
+  if (!pane.includes(templates[0][0])) {
+    fail(`the ${AI_DENOMINATOR_TEMPLATE_ID} composition must sit inside the AI risk section it describes`);
+  }
+  const components = parseStrictJson(templates[0][1], AI_DENOMINATOR_TEMPLATE_ID);
+  if (!Array.isArray(components) || !components.length || components.length > 64) {
+    fail(`${AI_DENOMINATOR_TEMPLATE_ID} must be a non-empty array of denominator components`);
+  }
+  const declaredCount = integer(paragraphs[0][0], 'data-ai-denominator-v1');
+  if (declaredCount !== BigInt(components.length)) {
+    fail(`AI pressure denominator declares ${declaredCount} components but names ${components.length}`);
+  }
+  if (integer(paragraphs[0][0], 'data-ai-denominator-total-micro') !== declaredMicro
+    || integer(paragraphs[0][0], 'data-ai-denominator-total-cents') !== declaredCents) {
+    fail('the AI pressure denominator composition does not declare the total the table uses');
+  }
+  let sum = 0n;
+  const seen = new Set();
+  for (const component of components) {
+    strictKeys(component, DENOMINATOR_COMPONENT_FIELDS, `${AI_DENOMINATOR_TEMPLATE_ID} component`);
+    const key = typeof component.key === 'string' ? component.key : '';
+    if (!DENOMINATOR_COMPONENT_KEY.test(key)) {
+      fail(`AI pressure denominator component ${key || 'with no key'} does not carry a stable component key`);
+    }
+    if (seen.has(key)) fail(`AI pressure denominator names the component ${key} more than once`);
+    seen.add(key);
+    if (typeof component.label !== 'string' || !component.label.trim()) {
+      fail(`AI pressure denominator component ${key} must carry a display label`);
+    }
+    if (typeof component.valueMicro !== 'string' || !/^(?:0|[1-9]\d{0,20})$/.test(component.valueMicro)) {
+      fail(`AI pressure denominator component ${key} must carry an integer micro-USD value`);
+    }
+    const value = BigInt(component.valueMicro);
+    // Verified to the cent, exactly as every other published amount is: a
+    // component finer than a cent could not be shown beside the total it feeds.
+    if (value % MICRO_PER_CENT !== 0n) {
+      fail(`AI pressure denominator component ${key} is not verified to the cent`);
+    }
+    sum += value;
+  }
+  if (seen.size !== AI_RISK_ACCOUNT_KEYS.length
+    || AI_RISK_ACCOUNT_KEYS.some(key => !seen.has(key))) {
+    fail(`AI pressure denominator must contain exactly ${AI_RISK_ACCOUNT_KEYS.join(', ')}`);
+  }
+  if (sum !== declaredMicro) {
+    fail(`AI pressure denominator components sum to ${sum} micro-USD but the table uses ${declaredMicro}`);
+  }
+  if (declaredMicro / MICRO_PER_CENT !== declaredCents) {
+    fail('the AI pressure denominator total in cents is not its own micro-USD total');
+  }
+  return sum;
+}
+
+// Recompute the AI-pressure numerator from the page's own per-constituent
+// contributions and refuse a summary that disagrees with it.
+//
+// The displayed total is never trusted. Until this check existed, the numerator
+// was whatever an assembly script had typed into the summary row, and a report
+// that left a classified position out of the arithmetic looked exactly like a
+// report that had included it. Here the page must publish every contribution it
+// claims to have added up, and the gate adds them up again.
+//
+// Two things this originally got wrong are fixed here.
+//
+// It required every `valueCents x coefficientBp` to divide evenly into whole
+// cents, which is false for ordinary inputs: an ETF look-through of 25.03% or
+// 6.01% of a real cent amount lands between cents far more often than on one.
+// Each row now publishes its market value as exact integer micro-USD and its
+// exact unrounded contribution in micro-basis units (micro-USD x basis points)
+// beside the displayed cents it rounds to; the gate recomputes both, sums the
+// UNROUNDED values, and applies the single round-half-away-from-zero to the
+// total. Summing rounded rows would drift with the number of rows.
+//
+// And it compared a coefficient against nothing at all. A `REG` record id was
+// checked for existence; `WU`, `DELEG` and `AUTO` were checked only for their
+// prefix. So a candidate could raise a coefficient, recompute its own row, its
+// own total, its own ratio and its own headline tile, and pass — a coherent
+// tamper that every self-consistency check accepts by construction. Every
+// classified row's coefficient is now re-resolved from the trusted repository
+// files through the same protected resolver the calculation engine uses.
+function checkAiPressureArithmetic(pane, records, documentHtml, { mandatory = false } = {}) {
+  const summaries = [...pane.matchAll(/<tr[^<>]*\bdata-ai-pressure-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
+  const rows = [...pane.matchAll(/<tr[^<>]*\bdata-ai-risk-row\s*=\s*(["'])(.*?)\1[^<>]*>/gi)];
+  const tiles = [...String(documentHtml).matchAll(/<div[^<>]*\bdata-ai-pressure-kpi-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
+  if (!summaries.length) {
+    // A page may carry no AI-pressure computation at all (a legacy edition), but
+    // it may not show the per-constituent rows while hiding the total, nor show
+    // a headline ratio with no table behind it.
+    if (rows.length) fail('an AI pressure table naming per-constituent contributions must declare its recomputable total');
+    if (tiles.length) fail('an AI pressure KPI must be supported by the table it summarises');
+    if (mandatory) fail('an ordinary report with AI tier records must publish its computed AI pressure table');
+    return;
+  }
+  if (summaries.length > 1) fail('the AI pressure table may declare its total only once');
+  if (!rows.length) fail('the AI pressure total must be supported by per-constituent contribution rows');
+
+  const integer = (tag, name) => {
+    const raw = quotedAttribute(tag, name, 'AI pressure');
+    if (!/^-?\d{1,30}$/.test(String(raw))) fail(`AI pressure ${name} must be a plain integer`);
+    return BigInt(raw);
+  };
+  const BASIS = BigInt(BASIS_POINTS);
+  // Micro-basis units: the exact, unrounded contribution of every row.
+  let numeratorMicroBasis = 0n;
+  const seen = new Set();
+  for (const match of rows) {
+    const tag = match[0];
+    const key = match[2].trim();
+    if (seen.has(key)) fail(`AI pressure table names constituent ${key} more than once`);
+    seen.add(key);
+    // Every contribution row must correspond to a classified or excluded record
+    // in the manifest, so the arithmetic and the classification cannot describe
+    // two different universes.
+    const record = records?.get(key) ?? null;
+    if (!record) fail(`AI pressure row ${key} has no machine-readable AI tier record`);
+    // Money is an integer on this page: micro-USD, verified to the cent, with
+    // the displayed cent figure derived from it rather than asserted beside it.
+    const value = integer(tag, 'data-ai-market-value-micro');
+    if (value < 0n) fail(`AI pressure row ${key} declares a negative market value`);
+    if (value % MICRO_PER_CENT !== 0n) fail(`AI pressure row ${key} declares a market value that is not verified to the cent`);
+    if (integer(tag, 'data-ai-market-value-cents') !== value / MICRO_PER_CENT) {
+      fail(`AI pressure row ${key} shows a market value in cents that is not its own micro-USD value`);
+    }
+    const contribution = integer(tag, 'data-ai-contribution-cents');
+    const status = quotedAttribute(tag, 'data-ai-status', 'AI pressure');
+    if (status !== record.status) fail(`AI pressure row ${key} disagrees with its own AI tier record`);
+    // The row's own symbol must be the record's. Otherwise a row could keep a
+    // correct identity key while displaying another instrument's name beside a
+    // coefficient resolved for that other name.
+    const rowSymbol = quotedAttribute(tag, 'data-ai-risk-symbol', 'AI pressure');
+    if (typeof rowSymbol === 'string' && rowSymbol.trim().toUpperCase() !== record.symbol) {
+      fail(`AI pressure row ${key} names a symbol its own AI tier record does not carry`);
+    }
+    const declaredRowMicroBasis = integer(tag, 'data-ai-contribution-mbp');
+    if (status === 'excluded') {
+      // Out of the numerator, still inside the denominator. A nonzero
+      // contribution on an excluded row would be the opposite error.
+      if (contribution !== 0n || declaredRowMicroBasis !== 0n) {
+        fail(`AI pressure row ${key} is excluded but claims a contribution`);
+      }
+      continue;
+    }
+    const points = integer(tag, 'data-ai-coefficient-bp');
+    if (points < 0n || points > BASIS) fail(`AI pressure row ${key} declares a coefficient outside 0-100%`);
+    // The coefficient, re-resolved from the trusted repository files against the
+    // identity and record id this page publishes. This is the check that makes a
+    // coherent tamper fail: the page can be perfectly self-consistent and still
+    // be applying a coefficient no approved rule records for this instrument.
+    let trusted = null;
+    try {
+      trusted = resolveTrustedMidCoefficientBp({
+        namespace: record.namespace, recordId: record.recordId, symbol: record.symbol,
+        custodian: record.custodian, portfolioId: record.portfolioId,
+        holdingId: record.holdingId, instrumentId: record.instrumentId,
+      });
+    } catch (error) {
+      fail(`AI pressure row ${key} cites ${record.recordId}, which the trusted approvals do not resolve for this identity (${error.code ?? 'UNRESOLVED'})`);
+    }
+    if (BigInt(trusted.midBp) !== points) {
+      fail(`AI pressure row ${key} displays a coefficient of ${points} basis points, but ${record.recordId} records ${trusted.midBp}`);
+    }
+    // The row's own arithmetic. The unrounded product is exact and is NOT
+    // required to be a whole number of cents; the displayed cents must be that
+    // unrounded value rounded half away from zero.
+    const expectedMicroBasis = value * points;
+    if (declaredRowMicroBasis !== expectedMicroBasis) {
+      fail(`AI pressure row ${key} shows an unrounded contribution that is not its market value times its own coefficient`);
+    }
+    if (contribution !== roundMicroBasisToCents(expectedMicroBasis)) {
+      fail(`AI pressure row ${key} shows a displayed contribution that is not its own unrounded value rounded to cents`);
+    }
+    numeratorMicroBasis += expectedMicroBasis;
+  }
+  // Every classified record must have appeared as a row. This is the dropped
+  // constituent, caught as arithmetic rather than as wording.
+  for (const [key, record] of [...records].sort()) {
+    if (!seen.has(key)) fail(`${key} carries an AI tier ${record.status} record but contributes no row to the AI pressure table`);
+  }
+
+  const summary = summaries[0][0];
+  const declaredMicroBasis = integer(summary, 'data-ai-numerator-mbp');
+  const declaredNumerator = integer(summary, 'data-ai-numerator-cents');
+  const denominatorMicro = integer(summary, 'data-ai-denominator-micro');
+  const denominatorCents = integer(summary, 'data-ai-denominator-cents');
+  const declaredRatio = integer(summary, 'data-ai-ratio-bp');
+  const constituents = integer(summary, 'data-ai-constituents');
+  if (constituents !== BigInt(rows.length)) {
+    fail(`AI pressure total claims ${constituents} constituents but the table shows ${rows.length}`);
+  }
+  if (denominatorMicro <= 0n) fail('AI pressure denominator must be positive');
+  // The denominator is not taken from the summary line: it is re-added from the
+  // page's own published components, so moving the total and the ratio together
+  // no longer produces a page that agrees with itself.
+  const recomputedDenominatorMicro = checkAiPressureDenominator(
+    pane, documentHtml, denominatorMicro, denominatorCents, integer);
+  if (declaredMicroBasis !== numeratorMicroBasis) {
+    fail(`AI pressure shows an unrounded numerator of ${declaredMicroBasis} but its own rows sum to ${numeratorMicroBasis}`);
+  }
+  // One rounding, on the total, after the unrounded rows were added.
+  const recomputed = roundMicroBasisToCents(numeratorMicroBasis);
+  if (declaredNumerator !== recomputed) {
+    fail(`AI pressure shows a numerator of ${declaredNumerator} cents but its own rows sum to ${recomputed}`);
+  }
+  // The ratio is recomputed from the unrounded numerator and the recomputed
+  // denominator, never from the displayed figures. A hand-edited percentage
+  // beside a correct table fails here.
+  const denominatorMicroBasis = recomputedDenominatorMicro * BASIS;
+  const expectedRatio = (numeratorMicroBasis * 1_000_000n + denominatorMicroBasis / 2n) / denominatorMicroBasis;
+  const drift = expectedRatio > declaredRatio ? expectedRatio - declaredRatio : declaredRatio - expectedRatio;
+  if (drift > 1n) {
+    fail(`AI pressure shows a ratio that does not follow from its own numerator and denominator`);
+  }
+
+  // And the headline tile, which lives outside the risk pane and is the number
+  // most readers actually see. On the page this repair came from it was authored
+  // independently of the table beneath it, so the two could disagree with
+  // nothing to notice. It must be present and it must agree.
+  if (tiles.length !== 1) fail('a computed AI pressure table requires exactly one headline KPI derived from it');
+  const tile = tiles[0][0];
+  if (integer(tile, 'data-ai-kpi-numerator-mbp') !== numeratorMicroBasis
+    || integer(tile, 'data-ai-kpi-numerator-cents') !== recomputed
+    || integer(tile, 'data-ai-kpi-denominator-micro') !== recomputedDenominatorMicro
+    || integer(tile, 'data-ai-kpi-denominator-cents') !== denominatorCents
+    || integer(tile, 'data-ai-kpi-ratio-bp') !== declaredRatio) {
+    fail('the AI pressure KPI disagrees with the table it summarises');
+  }
+}
+
+function checkVenueIdentityClaims(documentHtml) {
+  const claimed = [...documentHtml.matchAll(/\bdata-venue-identity-ref\s*=\s*(["'])(.*?)\1/gi)]
+    .map((match) => match[2].trim());
+  if (!claimed.length) return;
+  const reviewed = new Set(listVenueEquivalences().map((item) => item.entry.instrumentRef));
+  for (const ref of [...new Set(claimed)].sort()) {
+    // A cross-venue join is only ever as good as the reviewed, instrument-scoped
+    // entry behind it. A reference to an entry the trusted registry does not
+    // carry is named and refused, never accepted on the page's own word.
+    if (!reviewed.has(ref)) fail(`venue identity ${ref} is not a reviewed instrument-scoped equivalence in the trusted registry`);
+  }
+}
+
 try {
   const edition = publicationEdition(html);
   // This exact source-bound correction changes only the approved AAOI risk
@@ -1212,10 +1806,20 @@ try {
     {sourceSha:previousSourceSha,htmlBlob:process.env.XUAN_IB_PREVIOUS_HTML_BLOB});
   if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection) {
     const activeRisk = html.match(/<div class="pane p2">([\s\S]*?)(?=<div class="pane p3">)/)?.[1] || '';
-    if (/不含\s*AAOI|AAOI[^<>。]{0,70}(?:尚无|仍无|没有|未有)已?批准\s*tier/i.test(activeRisk))
-      fail('AAOI T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen tier approval');
-    if (/VST[^<>。]{0,100}(?:待核验|待分类|未分类|未含|未计入分子|边界未定义)/i.test(activeRisk))
-      fail('VST T1 is already delegated: calculate from the dated holding, or disclose a genuine missing-value exception; do not reopen classification');
+    const holdingsPane = html.match(/<div class="pane p1">([\s\S]*?)(?=<div class="pane p2">)/)?.[1] || '';
+    // Structural first: it is the blocking rule and does not need the report to
+    // have described the problem. The prose scan stays as a regression backstop.
+    checkAiTierManifestUniverse(holdingsPane, html, { edition, reportDate: expectedDate });
+    // The AI-risk universe is the risk pane's own, three accounts wide, and is
+    // reconciled against the manifest by identity rather than by ticker.
+    const aiRecords = checkAiRiskUniverse(activeRisk, html, { edition, reportDate: expectedDate });
+    // Then the number itself, recomputed from the page's own contributions.
+    checkAiPressureArithmetic(activeRisk, aiRecords, html, {
+      mandatory: ['am', 'pm'].includes(edition) && expectedDate >= AI_TIER_COVERAGE_REQUIRED_FROM
+        && aiRecords instanceof Map && aiRecords.size > 0,
+    });
+    checkAiTierCoverage(activeRisk, html);
+    checkVenueIdentityClaims(html);
   }
   if (!verifiedRecordsUpdate && !edition) fail('ordinary report requires one recognized edition in its primary header');
   if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection && ['am', 'pm'].includes(edition)) {

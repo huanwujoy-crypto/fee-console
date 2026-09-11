@@ -1345,14 +1345,92 @@ test('candidate validation loads the guard dependency graph from the same truste
   assert.match(promoteWorkflow, /node scripts\/handover-guard\.mjs/);
 });
 
+// The AI-tier coverage check is now structural. These cases keep the original
+// AAOI and VST regressions, and add the general rule that caught neither of
+// them: on 2026-09-11 a position nobody had enumerated was shown as excluded
+// from the numerator while remaining in the denominator, and the guard passed.
+const riskPane = (body) => withPaneLayout(valid(), {
+  p2: `<section>${body}</section>`, p5: approvedPolicySection,
+});
+const runRisk = (body) => run(riskPane(body), '2026-08-25', null, { autoPolicy: false });
+
 test('ordinary reports cannot reopen the delegated VST classification', () => {
-  const html = withPaneLayout(valid(), {
-    p2: '<section><p>Webull VST 待核验，未计入分子。</p></section>',
-    p5: approvedPolicySection,
-  });
-  const result = run(html, '2026-08-25', null, { autoPolicy: false });
+  const result = runRisk('<p>Webull VST 待核验，未计入分子。</p>');
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /VST T1 is already delegated/);
+});
+
+test('ordinary reports cannot reopen the delegated AAOI classification', () => {
+  const result = runRisk('<p>AAOI 尚无已批准 tier，未计入分子。</p>');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /AAOI T1 is already delegated/);
+});
+
+test('an ordinary stock excluded from the AI numerator fails without a machine-readable record', () => {
+  // The exact 2026-09-11 shape, for a ticker no enumerated blocklist named —
+  // which is precisely why the rule may not be an enumeration.
+  const result = runRisk('<p>Webull NEWCO（New Company）· §0-C 无已批准 tier · 未计入分子</p>');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /NEWCO is shown without an approved AI tier and excluded from the numerator/);
+  assert.match(result.stderr, /machine-readable WU, DELEG or AUTO record/);
+  // BE reaches the same structural rule, and now that it carries a DELEG rule
+  // the panel may not describe it as untiered either.
+  assert.match(runRisk('<p>Webull BE（Bloom Energy）· §0-C 无已批准 tier · 未计入分子</p>').stderr,
+    /BE T1 is already delegated/);
+});
+
+test('a machine-readable WU, DELEG or AUTO record satisfies the AI-tier rule', () => {
+  // The attribute form, as the AUTO module renders it beside its sentence.
+  assert.equal(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
+    + '<p data-ai-tier-symbol="NEWCO" data-ai-tier-namespace="AUTO"'
+    + ' data-ai-tier-record="AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001">NEWCO 按标准 T1 计入。</p>').status,
+  0);
+  // The strict template form, which is also how a genuinely excluded non-stock
+  // is disclosed by name with an enumerated reason.
+  // The manifest is identity-keyed, and the risk pane declares the universe it
+  // covers — its own, not the IB-only holdings table's.
+  const identity = { key: '1350094:99000001', custodian: 'Webull', portfolioId: '1350094',
+    holdingId: '99000001', instrumentId: '99000001' };
+  const template = (entries) => `<p data-ai-risk-universe-v1="${entries.length}"></p>`
+    + entries.map(entry => `<span data-ai-risk-constituent="${entry.key}"></span>`).join('')
+    + `<template id="xuan-ib-ai-tier-records-v1" type="application/json">${JSON.stringify(entries)}</template>`;
+  assert.equal(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
+    + template([{ ...identity, symbol: 'NEWCO', namespace: 'AUTO', recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001',
+      status: 'excluded', reason: 'asset-type-not-ordinary-stock' }])).status, 0);
+  // An exclusion with no enumerated reason is the failure mode this exists to
+  // prevent, and a namespace that disagrees with its own id is refused.
+  assert.match(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
+    + template([{ ...identity, symbol: 'NEWCO', namespace: 'AUTO', recordId: 'AUTO:x', status: 'excluded', reason: 'because' }])).stderr,
+  /must name an enumerated exclusion reason/);
+  assert.match(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
+    + template([{ ...identity, symbol: 'NEWCO', namespace: 'DELEG', recordId: 'AUTO:x', status: 'classified' }])).stderr,
+  /does not match its declared DELEG namespace/);
+  // A manifest with no declared universe cannot be reconciled at all, so it is
+  // refused rather than silently accepted as covering whatever is convenient.
+  assert.match(runRisk('<p>x</p><template id="xuan-ib-ai-tier-records-v1" type="application/json">'
+    + JSON.stringify([{ ...identity, symbol: 'NEWCO', namespace: 'AUTO',
+      recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:99000001', status: 'classified' }])
+    + '</template>').stderr, /must declare the AI risk constituent universe/);
+  assert.match(runRisk('<p>NEWCO 无已批准 tier，未计入分子。</p>'
+    + '<p data-ai-tier-symbol="NEWCO" data-ai-tier-namespace="OWNER" data-ai-tier-record="X">x</p>').stderr,
+  /needs a WU, DELEG or AUTO namespace and record id/);
+});
+
+test('ordinary prose about numerator subtotals is not read as an unclassified holding', () => {
+  // A subtotal legitimately says which holdings it excludes, and section
+  // markers such as §0-C are not tickers.
+  assert.equal(runRisk('<p>分子合计（未舍入汇总，不含无已批准 tier 的持仓）</p>').status, 0);
+  assert.equal(runRisk('<p>§0-C 口径未分类项目见下表。</p>').status, 0);
+  assert.equal(runRisk('<p>NYSE、NASDAQ 与 LSE 的持仓未分类计入 AI 压力分子的说明见附注。</p>').status, 0);
+});
+
+test('a venue equivalence a report claims must exist in the trusted registry', () => {
+  const reviewed = JSON.parse(fs.readFileSync(path.join(here, '../claude/xuan-ib-venue-identity-v1.json'), 'utf8'));
+  const known = reviewed.instruments[0].instrumentRef;
+  assert.equal(runRisk(`<p data-venue-identity-ref="${known}">同一标的的跨场所身份已复核。</p>`).status, 0);
+  const result = runRisk('<p data-venue-identity-ref="VENUE-20260911-NOTREVIEWED">x</p>');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /VENUE-20260911-NOTREVIEWED is not a reviewed instrument-scoped equivalence/);
 });
 
 test('trusted guard requires row evidence for each published PM daily change', () => {
