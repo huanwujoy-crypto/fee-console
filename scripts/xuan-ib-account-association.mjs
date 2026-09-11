@@ -12,7 +12,7 @@ export const ASSOCIATION_BASIS = 'owner-attested-recurring-v1';
 export const ASSOCIATION_POLICY_PATH = 'claude/xuan-ib-account-association-v1.json';
 export const ASSOCIATION_RECEIPT_ID = 'xuan-ib-account-association-v1';
 export const ASSOCIATION_DISCLOSURE_ID = 'xuan-ib-account-association-disclosure-v1';
-export const MAX_ASSOCIATION_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+export const MAX_ASSOCIATION_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 export const MAX_POLICY_LOOKUP_AGE_MS = 60_000;
 export const ASSOCIATION_EDITIONS = Object.freeze(['adhoc', 'am', 'pm']);
 const POLICY_ID = 'ib-primary-7day-pilot-v1';
@@ -68,7 +68,7 @@ export function validateAssociationPolicy(policy, { now = Date.now(), edition = 
     if (policy.validFrom !== null || policy.expiresAt !== null) fail('inactive policy must not start a validity clock');
   } else {
     const start = instant(policy.validFrom, 'validFrom'), end = instant(policy.expiresAt, 'expiresAt');
-    if (end <= start || end - start > MAX_ASSOCIATION_WINDOW_MS) fail('policy validity must be positive and at most seven days');
+    if (end <= start || end - start > MAX_ASSOCIATION_WINDOW_MS) fail('policy validity must be positive and at most thirty days');
   }
   if (requireActive) {
     if (policy.status !== 'active') fail(`policy is ${policy.status}`);
@@ -213,7 +213,7 @@ export function renderAssociationDisclosure(receipt, snapshot) {
   validateSnapshot(snapshot, { requireActive: false, requireFresh: false });
   if (receipt.policyBlob !== snapshot.policyBlob || snapshot.policy.expiresAt === null) fail('disclosure policy does not match the receipt');
   const expiry = new Date(Date.parse(snapshot.policy.expiresAt) + 8 * 60 * 60 * 1000).toISOString().slice(0, 16).replace('T', ' ');
-  return `<p id="${ASSOCIATION_DISCLOSURE_ID}">账户关联经所有者确认，有效至 ${expiry} HKT；接口本次未返回账户编号，并非接口身份认证。</p>`;
+  return `<p id="${ASSOCIATION_DISCLOSURE_ID}">账户关联：所有者确认至 ${expiry} HKT；接口未返回账户编号，非身份认证。</p>`;
 }
 
 export function validatePublicationAssociation(html, snapshot, context) {

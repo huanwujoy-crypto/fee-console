@@ -3,8 +3,7 @@ const prepared = new WeakSet();
 const views = new WeakMap();
 const make=(doc,tag,text,cls)=>{const n=doc.createElement(tag);n.textContent=text;if(cls)n.className=cls;return n;};
 const NOTE_RECORDS='template,script,style,[data-decision-id],.dcard,.xuan-work,.xuan-progress-fold,#xuan-aaoi-applied';
-const MATERIAL_NOTE=/读取失败|来源缺失|账户[^。；\n]*不匹配|数据[^。；\n]*冲突|计算失败|无法计算/;
-const LIMITED_NOTE=/待核验|待核实|未核验|数据降级|已过期|未取得|未调用逐票行情|未查询逐票行情|不含 AAOI|尚未计入 AAOI|近似|未逐票重算|非完整逐票/;
+const MATERIAL_NOTE=/读取失败|来源缺失|数据降级|字段级回退|替代源|已过期|账户[^。；\n]*不匹配|数据[^。；\n]*冲突|计算失败|无法计算/;
 const PUBLICATION_BOILERPLATE='发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。';
 
 function sourceNoteText(node){
@@ -39,22 +38,24 @@ function materialNoteContexts(roots) {
 
 export function reportNoteLines(pane,text,{aaoiApplied=false}={}) {
   const lines={
-    1:['价格和市值以报告注明的来源、日期为准；各账户可能有同步时差。'],
-    2:['AI 系数表示压力情景损失比例，不是收益预测；提醒不等于交易指令。'],
-    3:['补仓金额是现金规划，不是券商即时购买力；下单前核对余额、挂单占款和资金到账。'],
-    4:['只处理需要你的事项；分类、计算及技术问题由 Codex 负责。','挂单仅供提醒，本页面不自动买卖、撤单或转账。'],
-    5:['A＝实际投资，B＝协作方案，C＝标普500被动方案；以页面截止日期为准。','同额出入金匹配后比较走势；估算结果不等于实际成交收益。'],
+    1:['价格、市值按页面日期与来源；账户可能有同步时差。'],
+    2:['压力情景不是收益预测；提醒不等于交易指令。'],
+    3:['补仓金额仅供现金规划；下单前核对可用余额。'],
+    4:['只处理明确要求你的事项；挂单仅提醒，不自动操作。'],
+    5:['A 实际／B 协作／C 标普500；同额出入金后比较。'],
   }[pane]||[];
   if(pane===1&&/未查询|未取得|未调用逐票行情/.test(text))lines.push('本报告未取得日涨跌；不以零或未实现盈亏代替。');
   if(pane===2){
     if(/近似|未逐票重算|非完整逐票/.test(text))lines.push('低／高情景仍为近似，不用于精确判断是否越过警戒线。');
-    if(aaoiApplied)lines.push('AAOI 已按 T1 计入原快照：低／中／高 60%／80%／100%；未重新取数。');
-    else if(/不含 AAOI|尚未计入 AAOI/.test(text))lines.push('AAOI 尚未计入该报告；由 Codex 完成计算接入，无需你重复确认分类。');
-    if(/名义敞口待核验/.test(text))lines.push('杠杆产品的市值不等于名义敞口；名义敞口未核验时不判断是否越线。');
+    const scope=[];
+    if(aaoiApplied)scope.push('AAOI 已按 T1 计入原快照，未重新取数');
+    else if(/不含 AAOI|尚未计入 AAOI/.test(text))scope.push('AAOI 尚未计入，由 Codex 接入');
+    if(/名义敞口待核验/.test(text))scope.push('杠杆名义敞口未核验，不判断越线');
+    if(scope.length)lines.push(`范围：${scope.join('；')}。`);
   }
   if(pane===3){
     if(/USSC/.test(text)&&/10%/.test(text))lines.push('USSC 的 10% 是本次现金预算占比；美国底仓 45% 为参考目标，不是强制上限。');
-    lines.push('补后比例包含新增买入金额；不假设卖出回款或跨平台款项已经到账。');
+    if(/补后比例|卖出回款|跨平台/.test(text))lines.push('补后比例含新增买入；不假设卖出或跨平台款项已到账。');
   }
   return lines;
 }
@@ -74,14 +75,16 @@ export function simplifyReportNotes(doc) {
     if(fold.querySelector(':scope > .concise-report-notes'))continue;
     const roots=[...fold.children].filter(child=>child.tagName!=='SUMMARY');
     const text=roots.map(sourceNoteText).join('\n');
-    const hasLimits=MATERIAL_NOTE.test(text)||LIMITED_NOTE.test(text);
-    if(hasLimits)fold.querySelector(':scope > summary')?.append(make(doc,'span',' · 含数据限制','routine-note-limit-label'));
     const body=make(doc,'div','','dbody concise-report-notes');
     const lines=reportNoteLines(pane,text,{aaoiApplied});
-    if(lines.length<2)lines.push('报告内未给出的数据不视为已核实；来源及范围见完整口径。');
     const list=doc.createElement('ul');for(const line of lines)list.append(make(doc,'li',line));
     body.append(list);
     const contexts=materialNoteContexts(roots);
+    // Cash-allocation qualifiers explain interpretation; they are not data
+    // failures. Only actual retained exceptions or pane 1/2 limitations earn
+    // the visible warning label.
+    const hasVisibleLimits=contexts.length>0||((pane===1||pane===2)&&lines.length>1);
+    if(hasVisibleLimits)fold.querySelector(':scope > summary')?.append(make(doc,'span',' · 含数据限制','routine-note-limit-label'));
     if(contexts.length){
       const alert=make(doc,'section','','routine-material-exceptions mobile-metric-caveat');
       alert.append(make(doc,'h3','数据提醒 · 保留来源口径'));
@@ -97,35 +100,24 @@ export function simplifyReportNotes(doc) {
       }
       fold.before(alert);
     }
-    // Preserve original subtrees and their order in the verified display. Do
-    // not flatten list items, deduplicate matching text or discard unrecognized
-    // source limitations. Signed/cached report bytes are never changed here.
-    const extra=make(doc,'details','','routine-data-limits');
-    extra.append(make(doc,'summary',hasLimits?'来源与完整口径 · 含数据限制':'来源与完整口径'));
-    let hasSourceContent=false;
+    // Keep original verified source nodes for diagnostics without displaying
+    // them as a second disclosure layer. The signed/cached report bytes are
+    // unchanged; only the mobile reading DOM is simplified.
+    const records=make(doc,'div','','routine-source-records');
+    records.setAttribute('hidden','');records.setAttribute('aria-hidden','true');
     for(const root of roots){
       if(root.matches('p,li')&&!root.children.length&&root.textContent===PUBLICATION_BOILERPLATE){root.remove();continue;}
       for(const node of root.querySelectorAll('p,li')){
         if(!node.closest(NOTE_RECORDS)&&!node.children.length&&node.textContent===PUBLICATION_BOILERPLATE)node.remove();
       }
-      // Textless images, separators, media and other structures are still
-      // source context. Keep every remaining original node, even when an empty
-      // container alone does not warrant another disclosure.
-      if(root.textContent.trim()||root.children.length||!root.matches('div,p,section,ul,ol')||root.matches(NOTE_RECORDS))hasSourceContent=true;
-      extra.append(root);
-    }
-    if(hasSourceContent)body.append(extra);
-    else {
-      for(const root of [...extra.children].filter(child=>child.tagName!=='SUMMARY'))body.append(root);
-      body.append(make(doc,'p','本页暂无额外来源说明；不代表缺失数据已经核实。'));
+      const rootIsDisclosure=root.matches('#xuan-ib-account-association-disclosure-v1');
+      const disclosures=[...(rootIsDisclosure?[root]:[]),...root.querySelectorAll('#xuan-ib-account-association-disclosure-v1')];
+      for(const disclosure of disclosures)body.append(disclosure);
+      if(!rootIsDisclosure&&!root.textContent.trim()&&!root.children.length&&root.matches('div,p,section,ul,ol')){root.remove();continue;}
+      if(!rootIsDisclosure)records.append(root);
     }
     fold.append(body);
-    if(pane===2&&aaoiApplied){
-      const proof=doc.getElementById('xuan-aaoi-applied');
-      // Keep the source-bound calculation record available, but out of the
-      // risk dashboard and collapsed underneath its concise explanation.
-      if(proof){proof.open=false;body.append(proof);}
-    }
+    if(records.children.length)fold.before(records);
   }
   prepared.add(doc);
 }

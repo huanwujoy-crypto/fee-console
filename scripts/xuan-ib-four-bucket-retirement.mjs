@@ -1,7 +1,7 @@
 // Owner retirement, 2026-09-06. Presentation only, after report verification.
 // Signed reports, source values, decisions and receipts remain unchanged.
 export const RETIREMENT_ID = 'xuan-four-bucket-retired-history';
-export const RETIREMENT_NOTE = '四桶配置管理已取消；以下仅保留历史资料，不再作为当前配置或待办要求。';
+export const RETIREMENT_NOTE = '四桶配置管理已取消；历史来源仅供程序兼容，不在当前报告显示。';
 const topic = /四桶|三层流动性|归桶|four[\s_-]*bucket|HL\s*(?:缺口|当前\s*\/\s*目标)/i;
 const protectedSelector = 'template,script,style,[data-decision-id],#xuan-ib-cash-plan-detail,#xuan-ib-cash-plan-kpi,.pane.p5';
 
@@ -20,12 +20,11 @@ export function retireFourBucketDisplay(doc) {
   if(!doc?.createElement || doc.getElementById(RETIREMENT_ID)) return;
   const pane=doc.querySelector('.pane.p3');
   if(!pane) return;
-  const archive=doc.createElement('details');archive.id=RETIREMENT_ID;
-  archive.className='pane-notes';
-  const summary=doc.createElement('summary');summary.textContent='已取消功能 · 历史资料';
+  const archive=doc.createElement('div');archive.id=RETIREMENT_ID;
+  archive.className='xuan-retired-source-records';archive.setAttribute('hidden','');archive.setAttribute('aria-hidden','true');
   const body=doc.createElement('div');body.className='dbody';
   const note=doc.createElement('p');note.textContent=RETIREMENT_NOTE;
-  archive.append(summary,body);body.append(note);pane.append(archive);
+  archive.append(body);body.append(note);pane.append(archive);
   const excluded=n=>n.closest(protectedSelector)||n.closest(`#${RETIREMENT_ID}`);
   const retain=n=>{n.removeAttribute('open');body.append(n);};
   // A canonical four-bucket-only card is separate from the cash-plan section.

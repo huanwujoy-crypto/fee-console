@@ -303,7 +303,7 @@ test('AM uses the same compact layout without broadening temporary account autho
   const html=renderReport(view,context);
   assert.ok(html.includes('· 早间版 ·'));
   assert.ok(html.includes('<details class="mobile-guide"><summary>使用指南'));
-  assert.ok(html.includes('读取已发布结果，不生成新报告'));
+  assert.ok(html.includes('只读取已发布结果；睡前版在美股开市时启动'));
   assert.ok(!html.includes('<b>临时报告：</b>'));
   assert.ok(html.includes(priorTemplate));
   assert.throws(()=>renderReport(view,{...context,manualAccountConsent:true}),/adhoc only/);

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import assert from 'node:assert/strict';
 import {fileURLToPath} from 'node:url';
 import {renderReport,reportHtmlBlob} from './xuan-ib-report-view.mjs';
+import {GUIDE_BODY} from './xuan-ib-mobile-display.mjs';
 import {validateOpenEtfTrend,renderEtfTrend} from './xuan-ib-etf-trend.mjs';
 const repo=fileURLToPath(new URL('../',import.meta.url));
 export function buildSaturdayArchive() {
@@ -57,6 +58,10 @@ const view={schemaVersion:1,edition:'am',dataDate:meta.dataDate,asOfHkt:stamp,ma
  observations:['原报告记载：IB、Schwab、Webull 无新增成交。'],
  notes:['来源：已发布的周六上午版，数据读取窗口 2026-09-05 07:47–08:10 HKT；本次未读取金融接口。','仅展示层重排。持仓、挂单数量、金额与意见回执取自该历史报告；本页为上线的历史重排，不替代最新报告或证明新运行成功。','折叠下方原报告全文可逐项对照。原文旧日程仅为历史证据。原发布 source SHA：521e0aa5570b00a8a0029535c3558dad8ec7e33c；HTML blob：eec28a0694dcebdb3ca7790b592ceee38a0e4fa2。'],cashPlan};
 let html=renderReport(view,{previousHtml:source,previousMeta:meta,policy:JSON.parse(fs.readFileSync(repo+'claude/xuan-ib-policy-v2.json','utf8'))});
+// Historical artifact bytes stay immutable even when the current guide changes.
+const historicalGuide='<ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒与现金参考，箭头展开详情。</li><li><b>待办</b>：只处理需要你的事项；挂单仅提醒，不自动撤单。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：读取已发布结果，不生成新报告。上午版周二至周六 08:00；睡前版美股开市时启动。</li></ol><p>颜色是提醒，不是交易指令；所有页面均不自动买卖或转账。</p>';
+html=html.replace(GUIDE_BODY,historicalGuide);
+assert.ok(html.includes(historicalGuide),'historical guide replacement must remain pinned');
 // Same promoted archive anchor contains the already approved public summary.
 // Freeze it at build time; no network, new baseline, raw inputs or newer values.
 const trend=validateOpenEtfTrend(JSON.parse(read('xuan-ib/etf-trend.json')));

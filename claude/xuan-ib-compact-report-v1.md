@@ -3,7 +3,7 @@
 ## 2026-09-07 explicit scheduled association approval
 
 The owner subsequently approved the existing account association for AM/PM,
-without extending its September 12 expiry. Follow the September 7 section of
+without extending the current trusted-main policy expiry. Follow the current section of
 `xuan-ib-account-association-v1.md` after controlled merge and Routine rollout.
 It overrides the older association-only restrictions below, NOT the retired
 manual feature, weekly-minimal trial scope, source evidence or publication gates.

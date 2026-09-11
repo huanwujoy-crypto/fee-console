@@ -25,6 +25,9 @@ test('header guide matches shared wording and runs only after verification',()=>
  assert.ok(loader.indexOf('class="header-guide"')<loader.indexOf('id="refresh"'));
  const module=fs.readFileSync(new URL('./xuan-ib-mobile-display.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(module,/fetch\(|localStorage|sessionStorage|innerHTML\s*=/);
+ assert.match(module,/for\(let i=1;i<=5;i\+\+\)/);
+ assert.match(module,/if\(notes\.has\(1\)&&roots\.length\)/);
+ assert.doesNotMatch(module,/cloneNode\(true\)[\s\S]{0,300}数据日期与共同口径/);
 });
 test('critical replenishment amounts remain visible without recomputing or guessing',()=>{
  assert.deepEqual(extractCashGuidance('EXUS $550,579 EIMI $128,701 USSC $75,476'),[['EXUS','$550,579'],['EIMI','$128,701'],['USSC','$75,476']]);

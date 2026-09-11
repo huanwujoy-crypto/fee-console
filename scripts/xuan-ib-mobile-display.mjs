@@ -5,7 +5,7 @@ import {improveAllocationCards,ALLOCATION_CARDS_CSS} from './xuan-ib-allocation-
 import {improveHoldingsCards,HOLDINGS_CARDS_CSS} from './xuan-ib-holdings-cards.mjs';
 import {simplifyReportNotes} from './xuan-ib-routine-reading.mjs';
 export {organizeRoutineRecords} from './xuan-ib-routine-reading.mjs';
-export const GUIDE_BODY = `<ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒与现金参考，箭头展开详情。</li><li><b>待办</b>：只处理需要你的事项；挂单仅提醒，不自动撤单。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：读取已发布结果，不生成新报告。上午版周二至周六 08:00；睡前版美股开市时启动。</li></ol><p>颜色是提醒，不是交易指令；所有页面均不自动买卖或转账。</p>`;
+export const GUIDE_BODY = `<ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒、风险线与现金参考。</li><li><b>待办</b>：只处理明确要求你的事项；挂单仅提醒。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：只读取已发布结果；睡前版在美股开市时启动。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p>`;
 
 export const MOBILE_READING_CSS = `
 .kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important}
@@ -136,9 +136,9 @@ function compactAiRiskStrip(doc,move) {
 
 export function simplifyPaneReading(doc) {
   if(!doc.createElement || doc.getElementById('xuan-pane-notes-p1'))return;
-  const names=['概览','风险','配置','待办'];
+  const names=['概览','风险','配置','待办','ETF'];
   const notes=new Map();
-  for(let i=1;i<=4;i++){
+  for(let i=1;i<=5;i++){
     const pane=doc.querySelector(`.pane.p${i}`);if(!pane)continue;
     const fold=doc.createElement('details');fold.id=`xuan-pane-notes-p${i}`;fold.className='pane-notes';
     const heading=doc.createElement('summary');heading.textContent=`报告说明 · ${names[i-1]}`;fold.append(heading);
@@ -169,6 +169,9 @@ export function simplifyPaneReading(doc) {
     if(status.textContent)kpi.append(status);
   });
   for(const [i,{pane}] of notes){
+    // ETF has a canonical policy/ABC layout. Keep it intact and add only the
+    // compact note fold below; do not migrate its cards or policy text.
+    if(i===5)continue;
     for(const card of [...pane.querySelectorAll(':scope > section.card,:scope > details')]){
       // Decision/receipt DOM is owned by the interaction renderer. Never move it.
       if(card.matches('.dcard,[data-decision-id]')||card.querySelector('[data-decision-id]'))continue;
@@ -180,9 +183,9 @@ export function simplifyPaneReading(doc) {
         const grid=doc.createElement('dl');grid.className='mobile-metrics';
         for(const [label,value] of metrics){const pair=doc.createElement('div'),dt=doc.createElement('dt'),dd=doc.createElement('dd');dt.textContent=label;dd.textContent=value;pair.append(dt,dd);grid.append(pair);}
         const anchor=card.querySelector(':scope > h2,:scope > summary');anchor?.after(grid);
-        if(/沿用|近似|待核实|未查询|不含 AAOI/.test(originalText)){
+        if(!/四桶/.test(originalText)&&/沿用|近似|待核实|未查询|不含 AAOI/.test(originalText)){
           const caveat=doc.createElement('p');caveat.className='mobile-metric-caveat';
-          caveat.textContent=/四桶/.test(originalText)?'四桶沿用旧快照 · 日期见说明':/不含 AAOI/.test(originalText)?'原报告口径 · 尚未计入 AAOI':'含沿用或待核数据 · 见说明';grid.after(caveat);
+          caveat.textContent=/不含 AAOI/.test(originalText)?'原报告口径 · 尚未计入 AAOI':'含沿用或待核数据 · 见说明';grid.after(caveat);
         }
       }
       move(i,title,paragraphs);
@@ -192,7 +195,7 @@ export function simplifyPaneReading(doc) {
         else if(/弹药.*reserve/.test(title))h.textContent='现金与预留款';
       }}
       for(const detail of [...card.querySelectorAll(':scope > details,:scope > .dbody > details')]){
-        if(/详细说明|排序与报价说明|使用前核对/.test(detail.querySelector('summary')?.textContent||''))move(i,title,[detail]);
+        if(/详细说明|排序与报价说明|使用前核对|AAOI 分类与计算记录/.test(detail.querySelector('summary')?.textContent||''))move(i,title,[detail]);
       }
       if(!card.querySelector('table,.kv,.mobile-metrics,.brief-signal,.ai-risk-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
     }
@@ -224,20 +227,18 @@ export function simplifyPaneReading(doc) {
       const body=doc.createElement('tbody');rows.slice(5).forEach(r=>body.append(r));extra.append(body);fold.append(extra);table.parentElement.after(fold);
     }
   }
-  // Each pane also gets the shared provenance/disclaimer, while the original
-  // global fold stays available for the ETF pane and legacy consumers.
+  // Keep the common source nodes once. They are routed through the overview
+  // note and reduced by simplifyReportNotes; never clone them into every pane.
   const common=[...doc.querySelectorAll('details')].find(d=>!d.closest('.pane')&&/^报告说明/.test(d.querySelector('summary')?.textContent||''));
+  if(common){
+    const source=common.querySelector('.dbody')||common;
+    const roots=[...source.children].filter(node=>node.tagName!=='SUMMARY');
+    if(notes.has(1)&&roots.length){move(1,'共同口径',roots);common.remove();}
+  }
   for(const [i,{pane,fold,body}] of notes){
-    if(common){const copy=common.querySelector('.dbody')?.cloneNode(true);if(copy){
-      for(const n of copy.querySelectorAll('[id]'))n.removeAttribute('id');
-      for(const n of copy.querySelectorAll('template,script,style'))n.remove();
-      move(i,'数据日期与共同口径',[copy]);
-    }}
-    if(!body.children.length){const p=doc.createElement('p');p.textContent='金额与日期按本报告来源展示；只读，不自动执行交易。';body.append(p);}
     for(const table of body.querySelectorAll('table'))if(!table.parentElement.classList.contains('tblwrap')){const wrap=doc.createElement('div');wrap.className='tblwrap';table.replaceWith(wrap);wrap.append(table);}
     pane.append(fold);
   }
-  if(common){const etf=doc.querySelector('.pane.p5');if(etf){common.querySelector('summary').textContent='报告说明 · ETF';etf.append(common);}}
 }
 
 export function improveMobileDisplay(doc) {

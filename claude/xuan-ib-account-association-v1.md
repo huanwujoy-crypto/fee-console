@@ -1,4 +1,27 @@
-# Seven-day owner-attested account association
+# Bounded owner-attested account association
+
+## 28-day renewal approved by owner, 2026-09-11
+
+The owner approved a longer but still bounded read-only association to reduce
+repeat approvals after the morning report was approved for retirement. The renewed validity is
+2026-09-12T13:30:00.000Z through (exclusive)
+2026-10-10T13:30:00.000Z, covering four complete PM reporting weeks. The
+mechanical maximum is 30 days; this activation is 28 days and never rolls or
+renews automatically. The legacy `ib-primary-7day-pilot-v1` policy identifier is
+retained only to preserve historical receipt compatibility; it does not describe
+the current duration and does not restore the retired manual-report feature.
+
+All read-only and fail-closed boundaries below remain. A changed IB username or
+account, replaced/reconnected connector, suspected context switch, contradictory
+identifier, revoked policy, or unexplained material source discrepancy requires
+the association to stop and be reviewed before reuse. Connector-change and
+source-discrepancy recognition remain operator obligations rather than native IB
+account-ID proof. No trade, order change, transfer, Sharesight write, permission
+expansion, or automatic reconnection is authorized.
+
+This renewal supersedes only the dates and first-period seven-day ceiling stated
+in the historical sections below. Current-main fetches, fresh same-run receipts,
+publication validation and all source-completeness requirements are unchanged.
 
 ## Scheduled scope approved by owner, 2026-09-07
 
@@ -6,8 +29,8 @@ The owner explicitly approved extending the existing IB-HK association to fixed
 AM and PM reports after the September 7 PM run stopped at ACCOUNT_SCOPE_UNPROVEN.
 This maintenance change selects `adhoc`, `am`, and `pm`; retaining historical
 adhoc compatibility does NOT restore the retired manual-report feature.
-The validity remains 2026-09-05T13:30:00.000Z through (exclusive)
-2026-09-12T13:30:00.000Z. No renewal, extension, new account, connector change,
+The original validity was 2026-09-05T13:30:00.000Z through (exclusive)
+2026-09-12T13:30:00.000Z. That historical period did not authorize a new account, connector change,
 trade or financial write is authorized. Upstream silent account remapping may
 remain undetected: this is owner attestation, not native IB account-ID proof.
 Any changed account/connector, contradictory ID or revoked/expired policy stops
@@ -56,7 +79,7 @@ and inspection of the current Claude connector. Store the actual observer as
 `owner-approved-operator` and keep the observation outside every repository.
 Do not publish account numbers, consent rows, usernames, credentials, or private
 paths. Public policy uses only the existing alias `IB-HK`, fixed enums and dates.
-The first period is at most seven days; no automatic renewal or extension.
+The first period was at most seven days; no automatic renewal or extension was granted then.
 The sole initial edition is expressly requested `adhoc`; AM and PM are unchanged.
 
 ## Runtime and publication
@@ -72,7 +95,7 @@ The sole initial edition is expressly requested `adhoc`; AM and PM are unchanged
 3. The source adapter receives `{associationReceipt, associationSnapshot,
    journalPath}` and checks all actual read intervals against the policy and
    journal. Renew the **read of the same policy** before preparation if its local
-   snapshot is older than 60 seconds; this is not renewing its seven-day validity.
+   snapshot is older than 60 seconds; this is not renewing the policy validity.
    Do not alter any raw response or insert an account ID into it. Missing ID is
    allowed only with the explicit recurring basis; present wrong/null/empty or
    contradictory account identifiers stop the run. An arbitrary matching nested
