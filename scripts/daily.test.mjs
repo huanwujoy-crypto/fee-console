@@ -13,8 +13,8 @@ import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 
 import {
   validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
-  flowId, inKindBusinessKey, buildPoint, buildStatus, nyDate, dayDiff,
-  SPLIT_PROVISIONAL, STYLE_SPLIT_EPS, MAX_LOOKBACK_DAYS
+  flowId, inKindBusinessKey, buildPoint, validateBenchmarkTimeline, buildStatus, nyDate, dayDiff,
+  SPLIT_PROVISIONAL, STYLE_SPLIT_EPS, MAX_LOOKBACK_DAYS, BENCH_MAX_SOURCE_LAG_DAYS
 } from "./daily-core.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -537,12 +537,25 @@ test("an implausible lag still blocks", () => {
   assert.match(r.stderr, /not a plausible lag/);
 });
 
-test("a benchmark priced on another day is 暂估", () => {
+test("a plausible earlier benchmark date is retained as evidence and marked 暂估", () => {
   const t = today();
   const v = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
     { bench: { spy: 747.03, qqq: 687.99 }, benchDate: shift(t, -1) });
   assert.deepEqual(v.errors, []);
   assert.ok(v.provisional.some(n => /benchmark priced on/.test(n)));
+
+  const future = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { spy: 747.03, qqq: 687.99 }, benchDate: shift(t, 1) });
+  assert.ok(future.benchmarkErrors.some(n => /cannot be after/.test(n)), future.benchmarkErrors.join("; "));
+
+  const stale = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { spy: 747.03, qqq: 687.99 }, benchDate: shift(t, -BENCH_MAX_SOURCE_LAG_DAYS - 1) });
+  assert.ok(stale.benchmarkErrors.some(n => /not a plausible lag/.test(n)), stale.benchmarkErrors.join("; "));
+
+  const repeatedDividend = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
+    { bench: { spy: 747.03, qqq: 687.99 }, benchDiv: { spyd: 1.9 }, benchDate: shift(t, -1) });
+  assert.ok(repeatedDividend.benchmarkErrors.some(n => /dividends cannot be repeated/.test(n)),
+    repeatedDividend.benchmarkErrors.join("; "));
 });
 
 /* ---------------- weekend calibration ---------------- */
@@ -1062,7 +1075,22 @@ test("stores the SPY and QQQ benchmarks under their own keys", () => {
   const last = readPayload(dir).daily.at(-1);
   assert.equal(last.spy, 763.47);
   assert.equal(last.qqq, 706.32);
+  assert.equal(last.bd, today(), "the actual benchmark session date must survive serialization");
   assert.equal("cspx" in last, false, "SPY must not be written under the retired European key");
+});
+
+test("benchmark date evidence changes the point and survives calibrated writes", () => {
+  const dir = tmp(), d = today(), prior = shift(d, -1);
+  const first = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": prior });
+  assert.equal(first.status, 0, first.stderr);
+  assert.equal(readPayload(dir).daily.at(-1).bd, prior);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const corrected = run(dir, { spy: "764.10", qqq: "707.20", "src-bench": d }, ["--calibrated"]);
+  assert.equal(corrected.status, 0, corrected.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.bd, d);
+  assert.equal("prov" in point, false);
+  assert.notDeepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
 });
 
 /* 除息日之外不落字段：写 0 会让 samePoint 判定为变化，每天制造一次空 diff。 */
@@ -1081,22 +1109,62 @@ test("a dividend is stored only on the day it goes ex", () => {
 test("SPY and QQQ plus their source date are mandatory as a pair", () => {
   const missingPair = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
     { bench: { spy: 763.47 }, benchDate: today() });
-  assert.ok(missingPair.errors.some(e => /must be supplied as a pair/.test(e)), missingPair.errors.join("; "));
+  assert.ok(missingPair.benchmarkErrors.some(e => /must be supplied as a pair/.test(e)), missingPair.benchmarkErrors.join("; "));
   const missingDate = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
     { bench: { spy: 763.47, qqq: 706.32 } });
-  assert.ok(missingDate.errors.some(e => /--src-bench is required/.test(e)), missingDate.errors.join("; "));
+  assert.ok(missingDate.benchmarkErrors.some(e => /--src-bench is required/.test(e)), missingDate.benchmarkErrors.join("; "));
 });
 
-test("the old Routine can finish during migration, but may not mix benchmark systems", () => {
-  const dir = tmp(), d = today();
-  const legacy = run(dir, { cspx: "825.29", eqac: "497.50", "src-bench": d });
+test("legacy benchmarks remain readable before cutover and are omitted afterwards", () => {
+  const dir = tmp(), d = "2026-09-09", now = new Date("2026-09-11T12:00:00Z");
+  const input = validateInputs({
+    date: d, now, accounts: { schwab: 1, webull: 1 }, sourceDates: { schwab: d, webull: d },
+    splits: { cash: 2, stock: 0, other: 0 }, bench: { cspx: 825.29, eqac: 497.50 }, benchDate: d
+  });
+  assert.deepEqual(input.errors, []); assert.deepEqual(input.benchmarkErrors, []);
+  const legacy = run(dir, { date: d, cspx: "825.29", eqac: "497.50", "src-bench": d });
   assert.equal(legacy.status, 0, legacy.stderr);
   const point = readPayload(dir).daily.at(-1);
   assert.equal(point.cspx, 825.29);
   assert.equal(point.eqac, 497.50);
-  const mixed = run(tmp(), { spy: "763.47", qqq: "706.32", cspx: "825.29", eqac: "497.50", "src-bench": d });
-  assert.notEqual(mixed.status, 0);
-  assert.match(mixed.stderr, /do not mix SPY\/QQQ and legacy benchmark inputs/);
+  const currentDir = tmp(), current = run(currentDir, { cspx: "825.29", eqac: "497.50", "src-bench": today() });
+  assert.equal(current.status, 0, current.stderr);
+  const currentPoint = readPayload(currentDir).daily.at(-1);
+  assert.equal(currentPoint.schwab, 598517.36);
+  assert.equal("cspx" in currentPoint, false);
+  assert.match(current.stderr, /benchmark omitted: legacy benchmark inputs are retired/);
+});
+
+test("a stale benchmark source never blocks an independently valid AUM point", () => {
+  const dir = tmp(), d = today(), stale = shift(d, -BENCH_MAX_SOURCE_LAG_DAYS - 1);
+  const result = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": stale });
+  assert.equal(result.status, 0, result.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.schwab, 598517.36);
+  assert.equal(point.webull, 119026.45);
+  assert.equal("spy" in point, false);
+  assert.equal("qqq" in point, false);
+  assert.equal("bd" in point, false);
+  assert.match(result.stderr, /benchmark omitted: .*not a plausible lag/);
+});
+
+test("a same-session price conflict omits only the new benchmark bundle", () => {
+  const dir = tmp(), d = today(), prior = shift(d, -1);
+  writePayload(dir, {
+    updatedAt: prior + "T12:00:00Z",
+    daily: [{ d: prior, schwab: 598417.36, webull: 119026.45, cash: 263597.83,
+      stock: 453845.98, other: 0, spy: 763.47, qqq: 706.32, bd: prior }],
+    flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: prior, provisional: false, calibrated: true, splitDelta: 0,
+      unresolvedCount: 0, notes: [] }
+  });
+  const result = run(dir, { spy: "764.10", qqq: "707.20", "src-bench": prior });
+  assert.equal(result.status, 0, result.stderr);
+  const point = readPayload(dir).daily.find(entry => entry.d === d);
+  assert.equal(point.schwab, 598517.36);
+  assert.equal("spy" in point, false);
+  assert.equal("qqq" in point, false);
+  assert.equal("bd" in point, false);
 });
 
 test("rerunning an ex-date without an event preserves the verified dividend", () => {
@@ -1106,6 +1174,33 @@ test("rerunning an ex-date without an event preserves the verified dividend", ()
   const second = run(dir, { spy: "768.40", qqq: "706.32", "src-bench": d });
   assert.equal(second.status, 0, second.stderr);
   assert.equal(readPayload(dir).daily.at(-1).spyd, 1.903516);
+});
+
+test("a portfolio-only same-date rerun preserves the complete benchmark bundle", () => {
+  const dir = tmp(), d = today();
+  assert.equal(run(dir, { spy: "768.40", qqq: "706.32", spyd: "1.903516", "src-bench": d }).status, 0);
+  const rerun = run(dir, { schwab: "598617.36", cash: "263797.83" });
+  assert.equal(rerun.status, 0, rerun.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.deepEqual({ spy: point.spy, qqq: point.qqq, spyd: point.spyd, bd: point.bd },
+    { spy: 768.40, qqq: 706.32, spyd: 1.903516, bd: d });
+});
+
+test("a new benchmark session never inherits the prior session dividend", () => {
+  const dir = tmp(), d = today(), prior = shift(d, -1);
+  writePayload(dir, {
+    updatedAt: prior + "T12:00:00Z",
+    daily: [{ d, schwab: 598517.36, webull: 119026.45, cash: 263697.83,
+      stock: 453845.98, other: 0, spy: 768.40, qqq: 706.32, spyd: 1.903516, bd: prior }],
+    flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: d, provisional: true, calibrated: false, splitDelta: 0,
+      unresolvedCount: 0, notes: [`benchmark priced on ${prior}`] }
+  });
+  const result = run(dir, { spy: "769.10", qqq: "707.00", "src-bench": d });
+  assert.equal(result.status, 0, result.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.bd, d);
+  assert.equal("spyd" in point, false);
 });
 
 /* ---------------- deterministic fee calculation receipt ---------------- */
@@ -1648,11 +1743,11 @@ test("receipt status output contains no monetary amount or private input", () =>
 test("a dividend without its price is refused, and a negative one too", () => {
   const orphan = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
     { bench: { qqq: 706.32 }, benchDiv: { spyd: 1.9 } });
-  assert.ok(orphan.errors.some(e => /--spyd needs its price --spy/.test(e)), orphan.errors.join("; "));
+  assert.ok(orphan.benchmarkErrors.some(e => /--spyd needs its price --spy/.test(e)), orphan.benchmarkErrors.join("; "));
 
   const negative = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
     { bench: { spy: 763.47 }, benchDiv: { spyd: -1 } });
-  assert.ok(negative.errors.some(e => /--spyd must be a number of zero or greater/.test(e)), negative.errors.join("; "));
+  assert.ok(negative.benchmarkErrors.some(e => /--spyd must be a number of zero or greater/.test(e)), negative.benchmarkErrors.join("; "));
 });
 
 test("buildPoint omits prov when nothing is provisional", () => {
@@ -1663,7 +1758,33 @@ test("buildPoint omits prov when nothing is provisional", () => {
     splits: { cash: 3, stock: 0, other: 0 }, provisional: ["lag"] });
   assert.equal(est.prov, 1);
   const cal = buildPoint({ date: "2026-08-19", accounts: { schwab: 1, webull: 2 },
-    splits: { cash: 3, stock: 0, other: 0 }, provisional: ["lag"], calibrated: true });
+    splits: { cash: 3, stock: 0, other: 0 }, bench: { spy: 1, qqq: 2 },
+    benchDate: "2026-08-18", provisional: ["lag"], calibrated: true });
   assert.equal("prov" in cal, false);
+  assert.equal(cal.bd, "2026-08-18", "calibration cannot erase benchmark date evidence");
   assert.equal(buildStatus({ date: "2026-08-19", splitDelta: 0, unresolved: [], provisional: ["lag"], calibrated: true }).provisional, false);
+});
+
+test("persisted benchmark dates cannot regress, change prices for one session, or carry dividends", () => {
+  assert.deepEqual(validateBenchmarkTimeline([
+    { d: "2026-09-10", spy: 100, qqq: 200, bd: "2026-09-09" },
+    { d: "2026-09-11", spy: 100, qqq: 200, bd: "2026-09-09" }
+  ]), []);
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-10", spy: 100, qqq: 200, bd: "2026-09-10" },
+    { d: "2026-09-11", spy: 101, qqq: 201, bd: "2026-09-09" }
+  ]).some(message => /regresses/.test(message)));
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-10", spy: 100, qqq: 200, bd: "2026-09-09" },
+    { d: "2026-09-11", spy: 101, qqq: 200, bd: "2026-09-09" }
+  ]).some(message => /changed a persisted benchmark price/.test(message)));
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-10", spy: 100, qqq: 200, spyd: 1, bd: "2026-09-09" }
+  ]).some(message => /repeats a dividend/.test(message)));
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-10", spy: 100, qqq: 200 }
+  ]).some(message => /require bd/.test(message)));
+  assert.deepEqual(validateBenchmarkTimeline([
+    { d: "2026-09-09", spy: 100, qqq: 200 }
+  ]), [], "reviewed pre-cutover history seeds its source date from d");
 });
