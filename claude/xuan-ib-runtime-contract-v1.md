@@ -391,9 +391,9 @@ the deterministic renderer replace the legacy authoring path.
 
 ## 7. Opt-in compact authoring pilot
 
-The separate seven-day owner-attested proposal is implemented **inactive** in
-`claude/xuan-ib-account-association-v1.md`. It does not activate any report or
-change AM/PM. When separately activated, its minimal policy receipt is gating
+The bounded owner-attested proposal was initially implemented **inactive** in
+`claude/xuan-ib-account-association-v1.md`; its current activation is controlled
+by the trusted-main policy and never rolls forward automatically. Its minimal policy receipt is gating
 at trusted Validate/Promote; the older optional full manifest above remains a
 different, non-gating history format. Do not confuse their assurance levels.
 

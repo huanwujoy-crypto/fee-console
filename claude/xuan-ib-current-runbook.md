@@ -39,12 +39,12 @@ contracts, registry/rules and paired previous `latest.html/latest.meta.json`.
 Perform the existing effective Git identity preflight. Keep raw evidence and
 journals in private locations outside Git; never publish credentials or account IDs.
 
-Follow the **September 7 scheduled scope** in
+Follow the **September 11 renewed scheduled scope** in
 [account association](xuan-ib-account-association-v1.md): fresh main policy fetch,
 actual-edition pre-read check, new same-run receipt before either source stage.
-The current owner-attested period ends **2026-09-12 21:30 HKT, exclusive**
-(`2026-09-12T13:30:00.000Z`). Stop on expiry, revocation, changed/conflicting
-account or connector scope. Do not renew it, invent native account IDs, reuse
+The current owner-attested period runs from **2026-09-12 21:30 HKT** through
+**2026-10-10 21:30 HKT, exclusive**. Stop on expiry, revocation, changed/conflicting
+account or connector scope. Do not automatically renew it, invent native account IDs, reuse
 manual-consent proof, change permissions or bypass a safety refusal. Refresh an
 aged policy *read* as specified; that never extends its validity.
 

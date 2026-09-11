@@ -19,5 +19,6 @@ test('retirement is display-only, historical and idempotent at entry',()=>{
   assert.doesNotMatch(source,/fetch\(|localStorage|sessionStorage|innerHTML\s*=/);
   assert.match(source,/\[data-decision-id\]/);
   assert.match(source,/xuan-ib-cash-plan-kpi/);
+  assert.match(source,/archive\.setAttribute\('hidden',''\)/);
   assert.match(RETIREMENT_NOTE,/已取消/);
 });

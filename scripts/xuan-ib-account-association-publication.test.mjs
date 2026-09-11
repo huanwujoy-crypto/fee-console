@@ -98,7 +98,7 @@ test('canonical disclosure must be readable inside the initially folded explanat
     html.replace(disclosure, `<div aria-hidden="true">${disclosure}</div>`),
     html.replace(disclosure, `<div style="display: none">${disclosure}</div>`),
     html.replace(disclosure, disclosure + disclosure),
-    html.replace('并非接口身份认证', '接口已核验'),
+    html.replace('非身份认证', '已核验身份'),
   ]) assert.throws(() => checkAssociationPublication(bad, current, context));
 });
 
@@ -172,7 +172,7 @@ test('handover guard integrates allowlisted inert receipt and trusted local snap
   assert.equal(valid.status, 0, valid.stderr);
   assert.notEqual(execute(html.replace('临时版', '未标出版别')).status, 0);
   assert.notEqual(execute(html.replace(ASSOCIATION_BODY_ATTRIBUTE, '')).status, 0);
-  assert.notEqual(execute(html.replace('并非接口身份认证', '接口身份已验证')).status, 0);
+  assert.notEqual(execute(html.replace('非身份认证', '身份已验证')).status, 0);
   assert.doesNotMatch(html, /manualConsent|rawAccount|financial|net_liquidation|token|cookie/i);
 });
 

@@ -46,8 +46,9 @@ test('checked-in deployment policy is canonical, bounded and contains no private
   }
   assert.doesNotMatch(text, /accountId|token|username|consentRow|observedAt|U\d{6,}/i);
   assert.deepEqual(value.editions, ['adhoc', 'am', 'pm']);
-  assert.equal(value.validFrom, '2026-09-05T13:30:00.000Z');
-  assert.equal(value.expiresAt, '2026-09-12T13:30:00.000Z');
+  assert.equal(MAX_ASSOCIATION_WINDOW_MS, 30 * 24 * 60 * 60 * 1000);
+  assert.equal(value.validFrom, '2026-09-12T13:30:00.000Z');
+  assert.equal(value.expiresAt, '2026-10-10T13:30:00.000Z');
 });
 
 test('fixed synthetic inactive policy has no timer and cannot authorize a run', () => {
@@ -125,11 +126,12 @@ test('scheduled editions require explicit selection and cannot cross-bind receip
   }
 });
 
-test('future, expired, revoked, inactive and over-seven-day policy cannot authorize', () => {
+test('future, expired, revoked, inactive and over-thirty-day policy cannot authorize', () => {
   assert.throws(() => validateAssociationPolicy(policy({ validFrom: iso(NOW + 1) }), context()), /not yet valid/);
   assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(NOW) }), context()), /expired/);
   assert.throws(() => validateAssociationPolicy(policy({ status: 'revoked' }), context()), /revoked/);
-  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(NOW + MAX_ASSOCIATION_WINDOW_MS) }), context()), /seven days/);
+  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(NOW + MAX_ASSOCIATION_WINDOW_MS) }), context()), /thirty days/);
+  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(Date.parse(policy().validFrom) + 31 * 24 * 60 * 60 * 1000) }), context()), /thirty days/);
   assert.throws(() => validateAssociationPolicy(policy({ expiresAt: policy().validFrom }), context()), /positive/);
   assert.throws(() => validateAssociationPolicy(policy({ validFrom: '2026-09-05T05:59:59Z' }), context()), /canonical UTC/);
   assert.throws(() => validateAssociationPolicy(policy({ status: 'inactive' }), { ...context(), requireActive: false }), /must not start/);
@@ -178,8 +180,8 @@ test('canonical receipt roundtrip rejects duplicate markers, changed encoding an
 
 test('publication requires exact public disclosure, avoids raw identity and rejects hidden or duplicate disclosure', () => {
   const saved = receipt(), mark = renderAssociationReceipt(saved), disclosure = renderAssociationDisclosure(saved, snapshot());
-  assert.match(disclosure, /2026-09-12 13:59 HKT/);
-  assert.match(disclosure, /并非接口身份认证/);
+  assert.match(disclosure, /2026-10-05 13:59 HKT/);
+  assert.match(disclosure, /非身份认证/);
   assert.doesNotMatch(disclosure + mark, /U\d{6,}|accountId|token|username/);
   const html = `<details><summary>报告说明</summary>${disclosure}</details>${mark}`;
   assert.deepEqual(validatePublicationAssociation(html, snapshot(), context()), saved);

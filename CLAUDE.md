@@ -5,13 +5,13 @@ AM/PM route and precedence over historical pilot/cadence text. It is a concise
 index, not permission to relax the linked source, receipt or publication gates.
 Merging this file does not update or verify the actual Claude Routines.
 
-## Explicit scheduled account association scope (owner approved 2026-09-07)
+## Explicit scheduled account association scope (owner renewed 2026-09-11)
 
 Read `claude/xuan-ib-account-association-v1.md` first. Its September 7 section
 supersedes the older adhoc-only scope restrictions below for fixed AM and PM
 after exact-head maintenance approval and merge. Use current trusted-main policy
 and a new pre-read run-bound receipt for the actual edition. Do not reuse failed
-run journals, change raw account identity, extend the September 12 expiry or
+run journals, change raw account identity, extend the October 10 expiry or
 reenable retired manual reports. Financial reads and publication remain guarded.
 This does not widen weekly-minimal/adhoc-only collection or manual-consent paths.
 The same section also governs ordinary explanation/cash-plan/ETF-pane corrections:

@@ -67,7 +67,7 @@ function renderGroups(doc, rows) {
     });root.append(group);
   }
   const note=doc.createElement('p');note.className='order-sort-note';
-  note.textContent='各组按距市价由近到远排列；距市价不代表成交概率。仅提醒，不自动撤单。';root.append(note);
+  note.textContent='各组按距市价由近到远；距市价不代表成交概率。';root.append(note);
   return root;
 }
 
