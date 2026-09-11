@@ -147,12 +147,34 @@ function indexByKey(entries, label) {
   return { byKey, ambiguous };
 }
 
+// The strong identifier a normalized row carries from its own book — the IB
+// contract id, the portfolio source's `instrument.id`. Resolving through it is
+// the path that removes venue inference entirely: the registry is asked what
+// instrument this exact identifier is, rather than being asked to reconcile two
+// exchange strings that somebody upstream had to attach first. A source name
+// the registry does not support is a caller mistake and fails the column loudly
+// rather than degrading into a venue guess.
+export function strongIdentityKey(raw, venueIdentity) {
+  if (venueIdentity === null || !plain(raw)) return null;
+  if (typeof venueIdentity.canonicalKeyForSource !== 'function') return null;
+  const source = raw.identitySource, value = raw.identityValue;
+  // Absent is the ordinary case for a payload that publishes no such id, and it
+  // is exactly when the venue+code key is still the best evidence there is.
+  if (typeof source !== 'string' || !source) return null;
+  if (typeof value !== 'string' || !value) return null;
+  return venueIdentity.canonicalKeyForSource(source, value) ?? null;
+}
+
+// `malformed` now means only that the row's numbers are unusable. A missing
+// venue+code key is no longer the same thing, because a row whose book
+// publishes no exchange label can still be identified exactly by its contract
+// id; whether any identity resolved at all is decided by the caller once both
+// paths have been tried.
 function readMeasurement(raw) {
   if (!plain(raw)) return { key: null, malformed: true };
   const key = identityKey({ venue: raw.venue, code: raw.code });
   const ok = num(raw.changePct) && (raw.currencyChangePct === null || num(raw.currencyChangePct));
-  if (!key || !ok) return { key, malformed: true, raw };
-  return { key, malformed: false, raw };
+  return { key, malformed: !ok, raw };
 }
 
 // The evidence a measurement needs must be proven for that row, not asserted
@@ -226,6 +248,12 @@ export function buildDailyChangeColumn({
   // Only a key a reviewed instrument entry actually records is rewritten; every
   // other key is returned untouched, so nothing is ever merged by accident.
   const canon = key => (key === null ? null : (venueIdentity === null ? key : venueIdentity.canonicalKey(key)));
+  // Strong identity first, venue+code only when there is no strong identifier
+  // or the registry does not record it. The order matters: the venue+code path
+  // can only join two books that already agree on an exchange string, or whose
+  // exact pair of strings a reviewed entry happens to record, whereas the
+  // identifier each payload publishes about the instrument itself needs neither.
+  const resolve = entry => strongIdentityKey(entry.raw, venueIdentity) ?? canon(entry.key);
 
   const fallbackMethod = editionFallback(edition);
   if (fallbackMeasurements !== null) {
@@ -243,12 +271,12 @@ export function buildDailyChangeColumn({
   // a caller mistake, not a source gap, and its rows would otherwise be
   // published under a method that did not measure them.
   for (const entry of parsed) if (entry.raw && entry.raw.method !== method) fail('MEASUREMENT_METHOD_MISMATCH');
-  for (const entry of parsed) entry.canonical = canon(entry.key);
+  for (const entry of parsed) entry.canonical = resolve(entry);
   const { byKey, ambiguous } = indexByKey(parsed.map(entry => ({ ...entry, key: entry.canonical })), 'measurement');
 
   const parsedFallback = (fallbackMeasurements ?? []).map(readMeasurement);
   for (const entry of parsedFallback) if (entry.raw && entry.raw.method !== fallbackMethod) fail('MEASUREMENT_METHOD_MISMATCH');
-  for (const entry of parsedFallback) entry.canonical = canon(entry.key);
+  for (const entry of parsedFallback) entry.canonical = resolve(entry);
   const fallbackIndex = indexByKey(parsedFallback.map(entry => ({ ...entry, key: entry.canonical })), 'measurement');
 
   // Events are venue-scoped too. A trade or corporate action whose identity
@@ -385,9 +413,14 @@ export function buildDailyChangeColumn({
 // resolve keeps its unavailable state instead of inheriting a neighbour's
 // move. Passing `column: null` leaves every row exactly as it was, which is
 // the no-regression path for a generator that has no measurement source.
-export function applyDailyChangeColumn(rows, column, { venueOf = null, venueIdentity = null } = {}) {
+// `identityOf` lets a view row be matched by the same strong identifier its
+// source published, returning `{ source, value }` or null. Supplying it is what
+// makes the merge independent of the exchange string the view happens to show:
+// without it a row is still matched by venue+code exactly as before.
+export function applyDailyChangeColumn(rows, column, { venueOf = null, venueIdentity = null, identityOf = null } = {}) {
   if (!Array.isArray(rows)) fail('INVALID_VIEW_ROWS');
   if (column === null) return rows.map(row => ({ ...row }));
+  if (identityOf !== null && typeof identityOf !== 'function') fail('INVALID_VIEW_IDENTITY_RESOLVER');
   if (!plain(column) || !Array.isArray(column.rows) || !DAILY_CHANGE_METHODS.includes(column.method)) fail('INVALID_COLUMN');
   if (typeof venueOf !== 'function') fail('VENUE_RESOLVER_REQUIRED');
   if (venueIdentity !== null && (!venueIdentity || typeof venueIdentity.canonicalKey !== 'function')) {
@@ -407,8 +440,17 @@ export function applyDailyChangeColumn(rows, column, { venueOf = null, venueIden
   const resolved = new Set();
   const unmatchedViewKeys = [];
   let matched = 0;
+  // The same precedence the builder uses, so a column keyed by strong identity
+  // is merged by strong identity rather than falling back to the venue string
+  // the two sides were never guaranteed to spell the same way.
+  const viewKey = row => {
+    const declared = identityOf === null ? null : identityOf(row);
+    const strong = declared === null || declared === undefined ? null
+      : strongIdentityKey({ identitySource: declared.source, identityValue: declared.value }, venueIdentity);
+    return strong ?? canon(identityKey({ venue: venueOf(row), code: row.symbol }));
+  };
   const output = rows.map(row => {
-    const key = canon(identityKey({ venue: venueOf(row), code: row.symbol }));
+    const key = viewKey(row);
     if (key !== null) {
       if (resolved.has(key)) fail('VIEW_IDENTITY_AMBIGUOUS');
       resolved.add(key);

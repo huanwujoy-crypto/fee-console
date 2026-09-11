@@ -29,6 +29,8 @@
 /scripts/xuan-ib-auto-classification.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-venue-identity.mjs @huanwujoy-crypto
 /scripts/xuan-ib-venue-identity.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-ai-tier-coverage.mjs @huanwujoy-crypto
+/scripts/xuan-ib-ai-tier-coverage.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-delegated-tier.mjs @huanwujoy-crypto
 /scripts/xuan-ib-delegated-tier.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-aaoi-t1.mjs @huanwujoy-crypto

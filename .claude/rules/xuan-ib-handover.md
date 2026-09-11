@@ -95,6 +95,20 @@ reason and excluded. This creates no `awaiting_user` item, mints no `WU` or
 financial write. Never word an AUTO classification 临时, 待确认 or 待裁决.
 BE / Bloom Energy is a `DELEG` rule (`DELEG-20260911-BE-T1`), not an AUTO record.
 
+Resolve the whole constituent universe through
+`buildAiTierCoverage` in `scripts/xuan-ib-ai-tier-coverage.mjs` and pass the
+result to `prepareReport` as `riskConstituents` (CLI: `--risk-constituents`).
+An ordinary AM or PM report dated `2026-09-11` or later that shows holdings
+must carry the resulting `xuan-ib-ai-tier-records-v1` manifest; the gate
+reconciles it against the holdings table's own declared universe rather than
+against prose, so every symbol in the table is classified with a `WU`, `DELEG`
+or `AUTO` record id or excluded with an enumerated reason. Resolve cross-source
+identity by the strong identifier each payload publishes (`contract_id`,
+`instrument.id`) and use the venue+code key only when none exists. Decide
+"notify once" with `decideAutoNotification` against the previous trusted page's
+published records and a verified public read-back; never close a notification
+without one, and never turn it into an owner item.
+
 Classification prose must come from the trusted deterministic disclosure
 module, not the previous latest.html. Run the canonical renderer and preserve
 its exact section; keep coverage reasoning only there. A mapping-file read or

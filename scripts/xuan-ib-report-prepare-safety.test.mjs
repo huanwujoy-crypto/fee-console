@@ -142,32 +142,40 @@ const measuredView=(edition,over={})=>{
   return input;
 };
 const measuredEvidence=edition=>Object.assign(evidence(),{edition});
+// The same single constituent the measured view holds, resolved through the
+// real classification path. SYNTH reaches no WU or DELEG rule, so an ordinary
+// scheduled edition must classify it automatically rather than let it fall out
+// of the AI-pressure numerator while staying in the denominator.
+const measuredConstituents=[{symbol:'SYNTH',venue:'TEST',portfolioId:'1350094',holdingId:'99000001',
+  instrumentId:'99000001',currency:'USD',assetType:'STK',marketValueUsd:100,valueDate:dataDate,
+  identityVerified:true,firstSeen:true}];
+const measuredContext={...context,riskConstituents:measuredConstituents};
 
 test('a measured daily change may name only its own edition method, session and label',()=>{
   for(const edition of ['am','pm']){
-    assert.equal(prepareReport(measuredView(edition),measuredEvidence(edition),context).result.status,'prepared-not-published');
+    assert.equal(prepareReport(measuredView(edition),measuredEvidence(edition),measuredContext).result.status,'prepared-not-published');
   }
   // Neither edition may borrow the other's method, whose behaviour in the other
   // edition's session has not been measured.
-  assert.throws(()=>prepareReport(measuredView('am',{changeMethod:'session-pnl-v1'}),measuredEvidence('am'),context),
+  assert.throws(()=>prepareReport(measuredView('am',{changeMethod:'session-pnl-v1'}),measuredEvidence('am'),measuredContext),
     /method this edition may not publish/);
-  assert.throws(()=>prepareReport(measuredView('pm',{changeMethod:'window-v1'}),measuredEvidence('pm'),context),
+  assert.throws(()=>prepareReport(measuredView('pm',{changeMethod:'window-v1'}),measuredEvidence('pm'),measuredContext),
     /method this edition may not publish/);
   // The retired ad-hoc edition has no measured column.
   assert.throws(()=>prepareReport(measuredView('adhoc'),evidence(),context),
     /edition may not publish a measured daily change/);
   // AM may not relabel the running session, and PM may not relabel yesterday's.
-  assert.throws(()=>prepareReport(measuredView('am',{changeAsOfHkt:dataDate,changeSessionDate:dataDate}),measuredEvidence('am'),context),
+  assert.throws(()=>prepareReport(measuredView('am',{changeAsOfHkt:dataDate,changeSessionDate:dataDate}),measuredEvidence('am'),measuredContext),
     /outside the report window/);
-  assert.throws(()=>prepareReport(measuredView('pm',{changeAsOfHkt:`${priorSession} 21:38 HKT`,changeSessionDate:priorSession}),measuredEvidence('pm'),context),
+  assert.throws(()=>prepareReport(measuredView('pm',{changeAsOfHkt:`${priorSession} 21:38 HKT`,changeSessionDate:priorSession}),measuredEvidence('pm'),measuredContext),
     /outside the report window/);
   // An intraday reading must name the minute it was taken; a completed session
   // must not be dressed up as one.
-  assert.throws(()=>prepareReport(measuredView('pm',{changeAsOfHkt:dataDate}),measuredEvidence('pm'),context),
+  assert.throws(()=>prepareReport(measuredView('pm',{changeAsOfHkt:dataDate}),measuredEvidence('pm'),measuredContext),
     /label does not match its measurement method/);
-  assert.throws(()=>prepareReport(measuredView('am',{changeAsOfHkt:`${priorSession} 21:38 HKT`}),measuredEvidence('am'),context),
+  assert.throws(()=>prepareReport(measuredView('am',{changeAsOfHkt:`${priorSession} 21:38 HKT`}),measuredEvidence('am'),measuredContext),
     /label does not match its measurement method/);
-  assert.throws(()=>prepareReport(measuredView('am',{changeMethod:'invented'}),measuredEvidence('am'),context),
+  assert.throws(()=>prepareReport(measuredView('am',{changeMethod:'invented'}),measuredEvidence('am'),measuredContext),
     /known measurement method/);
 });
 

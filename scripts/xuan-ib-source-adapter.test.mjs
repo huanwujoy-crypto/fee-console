@@ -33,8 +33,25 @@ test('missing, duplicate, mismatched or excluded portfolios fail closed',()=>{
 });
 test('normalization never fabricates USD values, quote changes, or converts strings to numbers',()=>{
   const raw={positions:[{contract_description:'TEST @SYNTHETIC',position:2,market_price:10,market_value:20,currency:'EUR'}]};
-  assert.deepEqual(normalizePositions(raw),[{description:'TEST @SYNTHETIC',quantity:2,price:10,marketValueNative:20,currency:'EUR',dailyPnlNative:null,changePct:null,quoteStatus:'unavailable'}]);
+  assert.deepEqual(normalizePositions(raw),[{description:'TEST @SYNTHETIC',quantity:2,price:10,marketValueNative:20,currency:'EUR',contractId:null,dailyPnlNative:null,changePct:null,quoteStatus:'unavailable'}]);
   raw.positions[0].market_value='20';assert.throws(()=>normalizePositions(raw),/INVALID_POSITION/);
+});
+test('the strong contract identity is preserved verbatim and never invented',()=>{
+  const base={contract_description:'HODLUSD',position:100,market_price:20,market_value:2000,currency:'USD'};
+  // The identifier the payload actually publishes about the instrument. It is
+  // what lets downstream identity resolution look the instrument up directly
+  // instead of needing a venue string somebody upstream had to attach first.
+  assert.equal(normalizePositions({positions:[{...base,contract_id:343126962}]})[0].contractId,'343126962');
+  // A payload that carries none says so. That is the only case in which
+  // resolution may fall back to the venue+code key.
+  assert.equal(normalizePositions({positions:[base]})[0].contractId,null);
+  assert.equal(normalizePositions({positions:[{...base,contract_id:null}]})[0].contractId,null);
+  // A malformed identifier is refused rather than silently dropped: continuing
+  // without it would resolve the row by venue guesswork and look identical to a
+  // payload that never published one.
+  for(const bad of [0,-1,1.5,'',' ','abc','12a',{},[],Number.NaN]){
+    assert.throws(()=>normalizePositions({positions:[{...base,contract_id:bad}]}),/INVALID_POSITION_CONTRACT_ID/);
+  }
 });
 test('position daily P&L is preserved unchanged, never coerced and never itself a change',()=>{
   const raw={positions:[{contract_description:'TEST @SYNTHETIC',position:2,market_price:10,market_value:20,currency:'EUR',daily_pnl:-1.5}]};

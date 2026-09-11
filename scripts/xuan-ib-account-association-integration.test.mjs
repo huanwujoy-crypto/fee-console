@@ -99,8 +99,13 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
     cashPlan: { schemaVersion: 2, status: 'unavailable' },
   };
   if(positionsFallback)view.holdings.status='fallback';
+  // Exactly the constituents the view shows, carrying the identity the approved
+  // rules are written against.
+  const riskConstituents = [{ symbol: 'SYNTH', venue: 'TEST', portfolioId: '1350094', holdingId: '99000001',
+    instrumentId: '99000001', currency: 'USD', assetType: 'STK', marketValueUsd: 100, valueDate: dataDate,
+    identityVerified: true, firstSeen: true }];
   const options = { previousHtml, previousMeta, policy: etfPolicy, registry, journalPath, associationSnapshot, now };
-  return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options };
+  return { now, epoch, stamp, directory, journalPath, policy, receipt, associationSnapshot, input, evidence, view, options, riskConstituents };
 }
 
 test('recurring prepare runs the actual guard, preserves old receipts and publishes only minimal association evidence', async t => {
@@ -183,8 +188,15 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   const outputFile = path.join(f.directory, 'synthetic-candidate.html');
   fs.writeFileSync(viewFile, JSON.stringify(f.view), { mode: 0o600 });
   fs.writeFileSync(sourcesFile, JSON.stringify(f.evidence), { mode: 0o600 });
+  // The run's own risk constituents, resolved through the real classification
+  // path by prepare itself. SYNTH reaches no WU or DELEG rule, so an ordinary
+  // scheduled edition has to classify it rather than let it drop out of the
+  // AI-pressure numerator while remaining in the denominator.
+  const constituentsFile = path.join(f.directory, 'synthetic-constituents.json');
+  fs.writeFileSync(constituentsFile, JSON.stringify(f.riskConstituents), { mode: 0o600 });
   let reads = 0;
-  const result = runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath], {
+  const result = runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
+    '--risk-constituents', constituentsFile], {
     loadAssociationPolicy(options) {
       reads += 1;
       assert.equal(options.cwd, repoRoot);
@@ -197,5 +209,16 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepar
   assert.deepEqual(extractAssociationReceipt(fs.readFileSync(outputFile, 'utf8')), f.receipt);
   assert.equal(showRunJournal(f.journalPath).stages.find(item => item.name === 'candidate-prep').status, 'ok');
   assert.equal(fs.statSync(outputFile).mode & 0o777, 0o600);
-  assert.throws(() => runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath]), /already exists/);
+  assert.throws(() => runPrepareCli([viewFile, sourcesFile, outputFile, '--journal', f.journalPath,
+    '--risk-constituents', constituentsFile]), /already exists/);
+  // The candidate carries complete, machine-readable coverage of exactly the
+  // constituents it shows, which is what the publication gate reconciles.
+  const candidate = fs.readFileSync(outputFile, 'utf8');
+  assert.match(candidate, /data-holding-symbol="SYNTH"/);
+  assert.match(candidate, /data-holdings-universe-v1="1"/);
+  const records = candidate.match(
+    /<template id="xuan-ib-ai-tier-records-v1" type="application\/json">([\s\S]*?)<\/template>/);
+  assert.ok(records, 'candidate must publish the AI tier records manifest');
+  assert.deepEqual(JSON.parse(records[1]).map(entry => [entry.symbol, entry.namespace, entry.status]),
+    [['SYNTH', 'AUTO', 'classified']]);
 });

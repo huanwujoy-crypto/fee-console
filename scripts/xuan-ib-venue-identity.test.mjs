@@ -8,7 +8,8 @@ import {
   listVenueEquivalences, readVenueIdentityPolicy, VenueIdentityException,
 } from './xuan-ib-venue-identity.mjs';
 import { applyDailyChangeColumn, buildDailyChangeColumn, identityKey } from './xuan-ib-daily-change.mjs';
-import { normalizeDailyChangeWindow } from './xuan-ib-source-adapter.mjs';
+import { measurePositionCompletedSessionChange, normalizeDailyChangeWindow,
+  normalizePositions } from './xuan-ib-source-adapter.mjs';
 
 const deployed = readVenueIdentityPolicy();
 const resolver = createVenueIdentityResolver();
@@ -176,4 +177,127 @@ test('an empty resolver changes nothing, and pair labels are order independent',
   assert.equal(none.isReviewedPair('EBS:HODLUSD', 'EURONEXT:HODL'), false);
   assert.equal(describeVenuePair('EURONEXT:HODL', 'EBS:HODLUSD'), describeVenuePair('EBS:HODLUSD', 'EURONEXT:HODL'));
   assert.equal(identityKey({ venue: 'EBS', code: 'HODLUSD' }), 'EBS:HODLUSD');
+});
+
+// The strong-identity path, exercised through the production adapters from
+// raw-shaped payloads rather than through hand-built measurement rows.
+//
+// This is the join the whole repair exists for. Before it, pairing HODL needed
+// something upstream to have already decided that this IB row belongs to `EBS`
+// and that `EBS` is the same instrument as the portfolio source's `EURONEXT` —
+// the run-local venue inference the registry refuses to reintroduce. The
+// identifiers both payloads already publish make that decision unnecessary.
+const HODL_SESSION = '2026-09-10';
+const hodlIbPayload = (over = {}) => ({ positions: [{
+  contract_id: 343126962, contract_description: 'HODLUSD',
+  position: 100, market_price: 20, market_value: 2000, currency: 'USD', daily_pnl: 40, ...over }] });
+const hodlWindowPayload = (instrument) => ({ result: { mode: 'read_only',
+  portfolio: { id: 936247, currency_code: 'USD' },
+  data: { report: { portfolio_id: 936247, value: 100, currency: { code: 'USD' },
+    start_date: HODL_SESSION, end_date: HODL_SESSION, percentages_annualised: false, cash_accounts: [],
+    holdings: [{ instrument, capital_gain_percent: 2.04, currency_gain_percent: 0 }] } } } });
+
+test('HODL joins through the identifiers both payloads publish, with no venue string in the match', () => {
+  const [position] = normalizePositions(hodlIbPayload());
+  // Preserved verbatim from the raw payload, which is what makes the rest
+  // possible at all.
+  assert.equal(position.contractId, '343126962');
+  const ibRow = (venue, code) => measurePositionCompletedSessionChange(position, {
+    venue, code, sessionDate: HODL_SESSION, venuesComplete: [venue], observedAtHkt: '2026-09-11 08:00 HKT' });
+  const windowRows = normalizeDailyChangeWindow(
+    hodlWindowPayload({ code: 'HODL', market_code: 'EURONEXT', id: 2751250 }),
+    { date: HODL_SESSION, venuesComplete: ['EURONEXT'] });
+  assert.deepEqual([windowRows[0].identitySource, windowRows[0].identityValue], ['sharesight', '2751250']);
+  const column = (fallback, venueIdentity) => buildDailyChangeColumn({ edition: 'am', method: 'window-v1',
+    dataDate: '2026-09-11', intendedSessionDate: HODL_SESSION, measurements: windowRows,
+    fallbackMeasurements: fallback, venueIdentity });
+
+  // Both books, spelling the instrument differently, resolve to one canonical
+  // identity and corroborate each other.
+  const joined = column([ibRow('EBS', 'HODLUSD')], resolver);
+  assert.equal(joined.rows.length, 1);
+  assert.equal(joined.rows[0].canonicalKey, 'EURONEXT:HODL');
+  assert.equal(joined.rows[0].corroboratedBy, 'am-session-pnl-v1');
+
+  // The decisive case: scramble the venue AND the code on the IB side, so that
+  // no venue+code key on either side could possibly match, and the same join
+  // still happens. Nothing about an exchange string took part in it — only the
+  // contract id and the portfolio source's instrument id.
+  const scrambled = { ...ibRow('ZZZZ', 'HODLUSD'), code: 'NOTATICKER' };
+  const byIdAlone = column([scrambled], resolver);
+  assert.equal(byIdAlone.rows.length, 1);
+  assert.equal(byIdAlone.rows[0].canonicalKey, 'EURONEXT:HODL');
+  assert.equal(byIdAlone.rows[0].corroboratedBy, 'am-session-pnl-v1');
+
+  // Without the reviewed registry the identifiers resolve to nothing and the
+  // two readings stay two separate instruments, exactly as they must.
+  const unreviewed = column([ibRow('EBS', 'HODLUSD')], emptyVenueIdentityResolver());
+  assert.deepEqual(unreviewed.rows.map(row => row.canonicalKey).sort(), ['EBS:HODLUSD', 'EURONEXT:HODL']);
+
+  // The merge onto view rows follows the same precedence: a view row carrying
+  // its source's own identifier matches by that identifier, whatever exchange
+  // string the page happens to show.
+  const view = [{ symbol: 'WRONGSYM', market: 'WRONGVENUE', quantity: 1, price: 10, priceCurrency: 'USD',
+    marketValueUsd: 10, changePct: null, changeAsOfHkt: null, quoteStatus: 'unavailable' }];
+  const merged = applyDailyChangeColumn(view, joined, { venueOf: row => row.market, venueIdentity: resolver,
+    identityOf: () => ({ source: 'sharesight', value: '2751250' }) });
+  assert.equal(merged[0].changePct, 2.04);
+  // And with no identifier supplied, that same deliberately wrong view row
+  // cannot match anything, so the merge stays fail-closed rather than guessing.
+  assert.throws(() => applyDailyChangeColumn(view, joined,
+    { venueOf: row => row.market, venueIdentity: resolver }), /COLUMN_MERGE_INCOMPLETE/);
+});
+
+test('a row with no strong identity still falls back to reviewed venue+code equivalence', () => {
+  // Same instrument, but the IB payload publishes no contract id at all — the
+  // ordinary case for a book that omits it. The venue+code path is then the
+  // best evidence there is, and the reviewed entry is what joins `EBS:HODLUSD`
+  // to `EURONEXT:HODL`.
+  const [position] = normalizePositions(hodlIbPayload({ contract_id: null }));
+  assert.equal(position.contractId, null);
+  const ibRow = measurePositionCompletedSessionChange(position, { venue: 'EBS', code: 'HODLUSD',
+    sessionDate: HODL_SESSION, venuesComplete: ['EBS'], observedAtHkt: '2026-09-11 08:00 HKT' });
+  assert.equal(ibRow.identityValue, null);
+  const column = buildDailyChangeColumn({ edition: 'am', method: 'window-v1', dataDate: '2026-09-11',
+    intendedSessionDate: HODL_SESSION,
+    measurements: normalizeDailyChangeWindow(
+      hodlWindowPayload({ code: 'HODL', market_code: 'EURONEXT', id: 2751250 }),
+      { date: HODL_SESSION, venuesComplete: ['EURONEXT'] }),
+    fallbackMeasurements: [ibRow], venueIdentity: resolver });
+  assert.equal(column.rows.length, 1);
+  assert.equal(column.rows[0].canonicalKey, 'EURONEXT:HODL');
+  assert.equal(column.rows[0].corroboratedBy, 'am-session-pnl-v1');
+
+  // An instrument no reviewed entry records still joins when both books spell
+  // it the same way, which is the plain venue+code case working unchanged.
+  const agreeing = buildDailyChangeColumn({ edition: 'am', method: 'window-v1', dataDate: '2026-09-11',
+    intendedSessionDate: HODL_SESSION,
+    measurements: normalizeDailyChangeWindow(
+      hodlWindowPayload({ code: 'ZZTEST', market_code: 'NASDAQ', id: 99000001 }),
+      { date: HODL_SESSION, venuesComplete: ['NASDAQ'] }),
+    fallbackMeasurements: [measurePositionCompletedSessionChange(position, { venue: 'NASDAQ', code: 'ZZTEST',
+      sessionDate: HODL_SESSION, venuesComplete: ['NASDAQ'], observedAtHkt: '2026-09-11 08:00 HKT' })],
+    venueIdentity: resolver });
+  assert.equal(agreeing.rows.length, 1);
+  assert.equal(agreeing.rows[0].canonicalKey, 'NASDAQ:ZZTEST');
+  assert.equal(agreeing.rows[0].corroboratedBy, 'am-session-pnl-v1');
+});
+
+test('SGOV keeps its reviewed single-source entry once strong identity is primary', () => {
+  // SGOV is the other evidenced case, and it is distinct from HODL: only the
+  // broker's book carried it in the reviewed run, and that book publishes no
+  // exchange for it. Its endpoint therefore contributes NO venue+code key at
+  // all, so the entry is load-bearing in exactly one way — it is the only thing
+  // that maps the contract id to a canonical identity. Removing or weakening it
+  // would leave an SGOV row unresolvable rather than merely redundant.
+  const sgov = listVenueEquivalences(deployed).find(item => item.entry.instrumentRef === 'VENUE-20260911-SGOV');
+  assert.equal(sgov.entry.basis, 'reviewed-single-source');
+  assert.equal(sgov.endpoints.length, 1);
+  assert.equal(sgov.endpoints[0].venue, null);
+  assert.equal(sgov.endpoints[0].key, null, 'a venueless endpoint contributes no venue+code key');
+  assert.equal(resolver.canonicalKeyForSource('ib', sgov.endpoints[0].identityValue), 'NYSE:SGOV');
+  // The portfolio source has no SGOV endpoint here, so its own row still
+  // resolves by the venue+code it publishes, which is the canonical identity.
+  assert.equal(resolver.canonicalKeyForSource('sharesight', sgov.endpoints[0].identityValue), null);
+  assert.equal(resolver.canonicalKey('NYSE:SGOV'), 'NYSE:SGOV');
 });

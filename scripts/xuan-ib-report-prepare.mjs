@@ -18,6 +18,7 @@ import { isWeeklyMode, isWeeklyStage } from './xuan-ib-weekly-snapshot.mjs';
 import { prepareFourBucketReport } from './xuan-ib-four-bucket-report.mjs';
 import { readCaptureJson } from './xuan-ib-source-capture.mjs';
 import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, DAILY_CHANGE_EDITION_RULES } from './xuan-ib-daily-change.mjs';
+import { buildAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -97,7 +98,14 @@ function requireCompactUpstreamJournal(journalPath,readiness,weekly=false){
   }
 }
 
-export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null,fourBucketInput=null}={}){
+// Ordinary AM/PM reports from this date carry complete, machine-readable AI-tier
+// coverage. Before it the requirement cannot be met by pages that were already
+// published, and reclassifying historical evidence is exactly what this contract
+// forbids; from it, every scheduled edition resolves every constituent through
+// the trusted classification path rather than describing the outcome in prose.
+export const AI_TIER_COVERAGE_REQUIRED_FROM='2026-09-11';
+
+export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null,fourBucketInput=null,riskConstituents=null}={}){
   const required=['schemaVersion','edition','dataDate','previousSourceSha','sources'];
   if(!evidence || Object.keys(evidence).sort().join('|')!==required.sort().join('|') || evidence.schemaVersion!==1)fail('invalid source evidence envelope');
   if(evidence.dataDate!==viewInput.dataDate||evidence.edition!==viewInput.edition||evidence.previousSourceSha!==previousMeta.sourceSha)fail('view/evidence/prior publication mismatch');
@@ -187,6 +195,17 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   if(journalPath)requireCompactUpstreamJournal(journalPath,readiness,weekly);
   const fourBucket=fourBucketInput===null?null:prepareFourBucketReport(fourBucketInput,{
     evidence,previousHtml,journal:journalPath?showRunJournal(journalPath):null,now:now??Date.now()});
+  // Every constituent this report shows is resolved through the trusted
+  // classification path — an exact WU/DELEG approval first, then the automatic
+  // policy, then an enumerated exclusion — and the result is published as a
+  // machine-readable manifest. A scheduled edition on or after the rollout date
+  // may not show holdings without it: dropping a position out of the AI-pressure
+  // numerator while keeping it in the denominator is the defect this closes, and
+  // it must be impossible to reach by simply not mentioning the position.
+  const coverageRequired=['am','pm'].includes(view.edition)
+    && view.holdings.rows.length>0 && view.dataDate>=AI_TIER_COVERAGE_REQUIRED_FROM;
+  if(riskConstituents===null&&coverageRequired)fail('ordinary AM/PM holdings require resolved AI-tier risk constituents');
+  const aiTierCoverage=riskConstituents===null?null:buildAiTierCoverage(riskConstituents);
   // Consumption is atomic and precedes render; even a later guard/render
   // failure cannot reopen this observation for a second candidate attempt.
   if(manual)consumeManualConsent({proof:evidence.sources.ib.manualConsent,journalPath,
@@ -197,7 +216,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     try{const value=fn();if(journalPath)finishJournalStage(journalPath,name);return value;}
     catch(error){if(journalPath)finishJournalStage(journalPath,name,{status:'failed',errorCode:'PREPARE_FAILED'});throw error;}
   };
-  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket}));
+  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket,aiTierCoverage}));
   stage('guard',()=>{
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-'));
     try{
@@ -256,12 +275,12 @@ export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociation
   }
   // Pure API rendering remains usable in unit tests. The operational command
   // may never omit the journal and then claim a timed pilot run.
-  if(![5,7,9].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE] [--four-bucket-input FILE]');
+  if(![5,7,9,11].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE] [--four-bucket-input FILE] [--risk-constituents FILE]');
   const [viewFile,evidenceFile,outputFile,flag,journalPath]=args;
   if(flag!=='--journal'||!journalPath)fail('a real run journal is required');
   const options={};
   for(let i=5;i<args.length;i+=2){
-    if(!['--manual-consent-store','--four-bucket-input'].includes(args[i])||!args[i+1]||Object.hasOwn(options,args[i]))fail('invalid or duplicate prepare option');
+    if(!['--manual-consent-store','--four-bucket-input','--risk-constituents'].includes(args[i])||!args[i+1]||Object.hasOwn(options,args[i]))fail('invalid or duplicate prepare option');
     options[args[i]]=args[i+1];
   }
   const manualConsentStore=options['--manual-consent-store'];
@@ -272,6 +291,7 @@ export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociation
     previousHtml:fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8'),previousMeta:read(path.join(root,'xuan-ib/latest.meta.json')),
     policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry:read(path.join(root,'claude/xuan-ib-portfolio-registry.json')),journalPath,manualConsentStore:manualConsentStore??null,
     fourBucketInput:options['--four-bucket-input']?readCaptureJson(options['--four-bucket-input']):null,
+    riskConstituents:options['--risk-constituents']?read(options['--risk-constituents']):null,
     // Never accept a candidate-selected snapshot path in the operational CLI.
     associationSnapshot:loadAssociationPolicy({cwd:root,requireActive:false})});
   if(journalPath)startJournalStage(journalPath,'candidate-prep');

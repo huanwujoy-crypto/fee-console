@@ -12,6 +12,7 @@ import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
 import { parseEtfSummary } from './xuan-ib-etf-summary-transport.mjs';
+import { renderAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 import { parseEtfAbcPublicRuntimeStateJson, renderEtfAbcPublicRuntimeCard,
   ETF_ABC_RUNTIME_START, ETF_ABC_RUNTIME_END } from './xuan-ib-etf-abc.mjs';
 
@@ -212,7 +213,11 @@ const cardBody = card => {
 const card = value => `<section class="card"><h2>${esc(value.title)}</h2>${cardBody(value)}</section>`;
 const fold = (title,body,open=false,right='') => `<details${open?' open':''}><summary>${esc(title)}${right?` <span class="rt">${esc(right)}</span>`:''}</summary><div class="dbody">${body}</div></details>`;
 
-function holdingsView(holdings, reportDate, edition) {
+// `declareUniverse` emits the machine-readable constituent markers the AI-tier
+// records are reconciled against. They ship with the records and only with
+// them: a historical archive replays an already published page byte for byte
+// and must not acquire markup that page never had.
+function holdingsView(holdings, reportDate, edition, { declareUniverse = false } = {}) {
   // AM summarizes the previous close: European quotes can precede HKT midnight.
   // Preserve the actual quote date and delayed label. This display window is
   // NOT source authorization or an exchange-calendar freshness proof. Older
@@ -239,7 +244,13 @@ function holdingsView(holdings, reportDate, edition) {
     // A corroborated zero is shown with both decimals so it reads as a measured
     // result rather than as a placeholder.
     const shown=row.changePct===0&&corroborated?'0.00':change(row.changePct??0);
-    return `<tr${evidence}><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${cls}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${shown}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`;
+    // The constituent's own name, in machine-readable form. Without it the
+    // publication gate can only reconcile AI-tier coverage against prose, which
+    // means it can only catch a problem the report already confessed to in
+    // matching wording. With it, a symbol that is in the table and missing from
+    // the records is arithmetic.
+    const constituent=declareUniverse?` data-holding-symbol="${esc(String(row.symbol).trim().toUpperCase())}"`:'';
+    return `<tr${constituent}${evidence}><td><span class="sym">${esc(row.symbol)}</span><span class="sub">${esc(row.market)} · ${number(row.quantity,6)}</span></td><td>${number(row.marketValueUsd,0)}</td><td class="${cls}">${row.changePct===null?'未取得':`${row.changePct>0?'+':''}${shown}%${usable(row)?'':'（旧值）'}`}</td><td>${esc(row.priceCurrency)} ${number(row.price,4)}</td><td>${row.changeAsOfHkt===null?'未取得':esc(row.changeAsOfHkt)}${row.quoteStatus==='delayed'?' · 延迟':''}</td></tr>`;
   }).join('')}</tbody></table></div>`;
   // Declaring measured and total makes an omitted row arithmetic rather than a
   // matter of trust: the publication gate recomputes both from the rendered
@@ -247,7 +258,11 @@ function holdingsView(holdings, reportDate, edition) {
   const counted=holdings.rows.filter(row=>Object.hasOwn(row,'changeMethod')||Object.hasOwn(row,'changeReason'));
   const coverage=counted.length
     ? ` data-daily-change-coverage-v1="${counted.filter(row=>Object.hasOwn(row,'changeMethod')).length}/${counted.length}"` : '';
-  return `<section class="card"${coverage}><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
+  // The size of the constituent universe this table declares, so the gate can
+  // prove no row was dropped between the table and the AI-tier records rather
+  // than trusting that both were written from the same list.
+  const universe=declareUniverse&&holdings.rows.length?` data-holdings-universe-v1="${holdings.rows.length}"`:'';
+  return `<section class="card"${coverage}${universe}><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
 }
 
 function decisionGroup(state, views, group, originalCards) {
@@ -298,7 +313,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   if(associationReceipt){
     if(manualAccountConsent)fail('account scope modes are mutually exclusive');
@@ -345,6 +360,20 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   }
   const summary=template(previousHtml,'xuan-etf-open-summary-v3');
   if(summary){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
+  // Complete AI-tier coverage for this run's constituents, built by the trusted
+  // module from the run's own holdings. The manifest is inert and the
+  // disclosures carry no amount; both are refused unless every constituent is
+  // either classified or excluded with an enumerated reason.
+  if(aiTierCoverage!==null&&(!aiTierCoverage||!Array.isArray(aiTierCoverage.entries)))fail('invalid AI tier coverage');
+  const aiTier=aiTierCoverage===null?null:renderAiTierCoverage(aiTierCoverage);
+  if(aiTier&&view.holdings.rows.length){
+    // The records describe this report's own table, not a list assembled
+    // somewhere else: a mismatch here is a producer bug and must not reach a
+    // page where only the gate would catch it.
+    const shown=[...new Set(view.holdings.rows.map(row=>String(row.symbol).trim().toUpperCase()))].sort();
+    const recorded=[...new Set(aiTierCoverage.entries.map(entry=>String(entry.symbol).trim().toUpperCase()))].sort();
+    if(shown.join('|')!==recorded.join('|'))fail('AI tier records do not cover exactly the reported holdings');
+  }
   const cash=renderCashPlan(view.cashPlan), pending=state.decisions.filter(item=>item.status==='awaiting_user').length;
   const classificationDisclosure=renderClassificationDisclosure(fourBucket);
   const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
@@ -355,14 +384,14 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
-<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition)}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
-<div class="pane p2">${view.risk.map(card).join('')}</div>
+<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
+<div class="pane p2">${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
-${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}\n</body></html>\n`;
+${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}${aiTier?`\n${aiTier.template}`:''}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.
   // Full source envelopes and private account observations never enter HTML.
   const output=associationReceipt?html

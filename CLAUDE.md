@@ -117,6 +117,25 @@ module and is never reachable through it. Changing either policy file, its
 reader or its tests needs a separately reviewed maintenance PR under the
 publication lock.
 
+**Wired coverage, not available coverage.** These readers are reached from the
+actual assembly path, not merely importable. `scripts/xuan-ib-ai-tier-coverage.mjs`
+resolves every risk constituent of a run — an exact `WU` or `DELEG` rule first,
+then the automatic policy, then an enumerated exclusion — and
+`prepareReport` calls it and publishes the result as the inert
+`xuan-ib-ai-tier-records-v1` manifest beside the holdings table's own
+`data-holding-symbol` / `data-holdings-universe-v1` markers. An ordinary AM or
+PM report dated `2026-09-11` or later may not show holdings without it. The
+guard's blocking check reconciles that manifest against the table's own declared
+universe, so a constituent that is missing, invented or double-counted fails as
+arithmetic; the older prose scan is kept only as a regression backstop and is no
+longer what makes the rule work. Instrument identity resolves through the strong
+identifier each payload publishes — the IB `contract_id`, the portfolio source's
+`instrument.id` — and falls back to the venue+code key only when no such
+identifier exists or the registry does not record it. Notification stays
+"once" against the previous trusted page's own published records and a verified
+public read-back, never against a list a caller supplied; it creates no
+`awaiting_user` item and remains a Codex-owned technical mechanism.
+
 ## Owner retirement override (2026-09-06)
 
 Read `claude/xuan-ib-four-bucket-retirement-20260906.md` first. The owner has

@@ -1339,6 +1339,83 @@ function checkAiTierCoverage(activeRisk, documentHtml) {
   }
 }
 
+// The primary, blocking AI-tier check, and the one that does not depend on the
+// report having phrased anything a particular way.
+//
+// `checkAiTierCoverage` above can only find a problem the page already confessed
+// to in matching Chinese prose: omit the sentence, word it differently, or drop
+// the instrument from the panel altogether, and it sees nothing and passes. It
+// is kept below as a regression backstop — it still pins the AAOI and VST cases
+// and the byte-frozen historical repairs — but it cannot be the real rule.
+//
+// The real rule is arithmetic. The holdings table declares its own constituent
+// universe in machine-readable form; the records manifest must cover exactly
+// that universe, with every entry either classified against a WU, DELEG or AUTO
+// record id or excluded with an enumerated reason. A symbol that is in the table
+// and missing from the manifest fails whether or not the report mentions it, and
+// a manifest naming something the table does not hold fails too.
+// Ordinary AM/PM reports from this date must carry the records. Earlier pages
+// were published before the requirement existed, and reclassifying historical
+// evidence is exactly what this contract forbids; they keep the prose backstop
+// alone. A page of any date that does carry records is reconciled in full.
+const AI_TIER_COVERAGE_REQUIRED_FROM = '2026-09-11';
+
+function checkAiTierManifestUniverse(pane, documentHtml, { edition, reportDate }) {
+  const declared = [...pane.matchAll(/\bdata-holdings-universe-v1\s*=\s*(["'])(.*?)\1/gi)];
+  if (declared.length > 1) fail('the holdings section may declare its constituent universe only once');
+  const symbols = [...pane.matchAll(/\bdata-holding-symbol\s*=\s*(["'])(.*?)\1/gi)]
+    .map((match) => match[2].trim().toUpperCase());
+  // Staged exactly like the rest of this contract: a page published before the
+  // rollout keeps the prose backstop, because reclassifying historical evidence
+  // is what this contract forbids. From the rollout date an ordinary scheduled
+  // edition must carry the records, and it may not escape that by omitting the
+  // markers as well — the holdings rows themselves are counted independently of
+  // any attribute the producer chose to write.
+  const mandatory = ['am', 'pm'].includes(edition) && String(reportDate) >= AI_TIER_COVERAGE_REQUIRED_FROM;
+  const renderedRows = (pane.match(/<span class="sym">/g) || []).length;
+  if (!declared.length) {
+    // A page that names constituents without declaring how many is refused: the
+    // count is what makes a dropped row detectable at all.
+    if (symbols.length) fail('a holdings table naming its constituents must declare data-holdings-universe-v1');
+    if (mandatory && renderedRows) {
+      fail('an ordinary AM/PM report showing holdings must declare its constituent universe and carry complete AI tier records');
+    }
+    // A legacy page that declares no universe keeps the prose backstop alone.
+    return;
+  }
+  const size = /^\d{1,5}$/.test(declared[0][2]) ? Number(declared[0][2]) : null;
+  if (size === null) fail('declared holdings universe must be a plain count');
+  if (symbols.length !== size) {
+    fail(`holdings table declares ${size} constituents but names ${symbols.length}; a row cannot be dropped silently`);
+  }
+  const universe = new Set(symbols);
+  if (universe.size !== symbols.length) fail('the holdings table names one constituent more than once');
+  // A declared universe must match what the table actually renders, so the
+  // count cannot be satisfied by markers on something that is not a holding row.
+  if (renderedRows !== symbols.length) {
+    fail(`holdings table renders ${renderedRows} rows but marks ${symbols.length} constituents`);
+  }
+  if (!universe.size) return;
+  const records = aiTierRecordsFromMarkup(documentHtml);
+  // A page that carries records is reconciled whatever its date, so the
+  // requirement can never be escaped by publishing a partial manifest.
+  if (!records.size && !mandatory) return;
+  for (const symbol of [...universe].sort()) {
+    // The whole defect of 2026-09-11, stated structurally: a constituent that is
+    // in the denominator and carries no record at all.
+    if (!records.has(symbol)) {
+      fail(`${symbol} is a reported holding with no machine-readable AI tier record; every constituent must be classified with a WU, DELEG or AUTO record or excluded with an enumerated reason`);
+    }
+  }
+  for (const symbol of [...records.keys()].sort()) {
+    // And the reverse: a record for something this report does not hold cannot
+    // be used to make the coverage arithmetic look complete.
+    if (!universe.has(symbol)) {
+      fail(`AI tier record ${symbol} does not correspond to any reported holding in this report`);
+    }
+  }
+}
+
 function checkVenueIdentityClaims(documentHtml) {
   const claimed = [...documentHtml.matchAll(/\bdata-venue-identity-ref\s*=\s*(["'])(.*?)\1/gi)]
     .map((match) => match[2].trim());
@@ -1360,6 +1437,10 @@ try {
     {sourceSha:previousSourceSha,htmlBlob:process.env.XUAN_IB_PREVIOUS_HTML_BLOB});
   if (!verifiedRecordsUpdate && !verifiedHistoricalCorrection) {
     const activeRisk = html.match(/<div class="pane p2">([\s\S]*?)(?=<div class="pane p3">)/)?.[1] || '';
+    const holdingsPane = html.match(/<div class="pane p1">([\s\S]*?)(?=<div class="pane p2">)/)?.[1] || '';
+    // Structural first: it is the blocking rule and does not need the report to
+    // have described the problem. The prose scan stays as a regression backstop.
+    checkAiTierManifestUniverse(holdingsPane, html, { edition, reportDate: expectedDate });
     checkAiTierCoverage(activeRisk, html);
     checkVenueIdentityClaims(html);
   }

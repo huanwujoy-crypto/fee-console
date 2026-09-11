@@ -60,6 +60,13 @@ export const AUTO_EXCLUSION_REASONS = Object.freeze({
   VALUE_NOT_VERIFIED: 'value-not-verified-usd-cents',
   VALUE_DATE_MISSING: 'value-date-missing',
   IDENTITY_INCOMPLETE: 'identity-fields-incomplete',
+  // A holding whose portfolio and holding id reach an existing `WU` or `DELEG`
+  // rule, but whose remaining identity fields do not match what that rule
+  // approved. It is neither classified nor automatically classifiable: an
+  // owner's approval may not be stretched onto a near match, and the automatic
+  // path must not shadow it either. Codex-owned technical exception, disclosed
+  // by name.
+  OWNER_RULE_IDENTITY_MISMATCH: 'owner-rule-identity-mismatch',
 });
 
 const plain = value => value !== null && typeof value === 'object'
@@ -293,6 +300,77 @@ export const autoNotificationState = (record, { delivered = [] } = {}) => {
   if (!plain(record) || typeof record.notifyId !== 'string') fail('NOTIFICATION_RECORD_INVALID');
   return delivered.includes(record.notifyId) ? 'delivered' : 'pending';
 };
+
+// An AUTO record id and its notify id are two spellings of the same three
+// facts — policy revision, portfolio, holding — so the id a previous page
+// already published determines, exactly, which notification that page stands
+// for. That is what makes "notify once" durable without a side ledger: the
+// evidence is the published page itself, which is also the only thing a reader
+// could ever have seen.
+const AUTO_RECORD_ID = /^AUTO:(AUTO-\d{8}-[A-Z0-9]{1,16}-T[1-9]-R\d{1,3}):(\d{1,18}):(\d{1,18})$/;
+export function autoNotifyIdFromRecordId(recordId) {
+  const parts = AUTO_RECORD_ID.exec(String(recordId ?? ''));
+  return parts === null ? null : `classification:${parts[2]}:${parts[3]}:${parts[1]}`;
+}
+
+// Every AUTO notify id the trusted previous page carries, read from the page's
+// own machine-readable records rather than from anything this run asserts.
+// Attribute records and the inert manifest are both accepted because both are
+// published forms of the same record.
+export function publishedAutoNotifyIds(previousPageHtml) {
+  const ids = new Set();
+  if (typeof previousPageHtml !== 'string' || !previousPageHtml) return ids;
+  const add = recordId => { const id = autoNotifyIdFromRecordId(recordId); if (id !== null) ids.add(id); };
+  for (const match of previousPageHtml.matchAll(
+    /<[a-z][^<>]*\bdata-ai-tier-record\s*=\s*(["'])(.*?)\1[^<>]*>/gi)) add(match[2].trim());
+  const template = previousPageHtml.match(
+    /<template id="xuan-ib-ai-tier-records-v1" type="application\/json">([\s\S]*?)<\/template>/i);
+  if (template) {
+    let entries = null;
+    // A previous page this run cannot parse is not evidence that nothing was
+    // ever notified. Treating it as empty would re-notify every position on it,
+    // so an unreadable manifest is refused instead.
+    try { entries = JSON.parse(template[1]); } catch { fail('PREVIOUS_RECORDS_UNREADABLE'); }
+    if (!Array.isArray(entries)) fail('PREVIOUS_RECORDS_UNREADABLE');
+    for (const entry of entries) if (plain(entry)) add(entry.recordId);
+  }
+  return ids;
+}
+
+// The first-publication decision. Its inputs are the last verified-published
+// page and this run's own public read-back status — never an array the caller
+// happened to assemble, and never a state this process invented for itself.
+//
+// `notify` means this identity, under this policy revision, does not appear on
+// the page the public last saw. `already-notified` means it does. Closing is a
+// third thing again: it needs a read-back of the page carrying the record to
+// have actually succeeded, so a run that publishes and then cannot verify the
+// public page leaves the notification open rather than recording a delivery
+// nobody can show.
+export function decideAutoNotification(record, {
+  previousPageHtml = null, publicReadBackVerified = false, closedAtHkt = null,
+} = {}) {
+  if (!plain(record) || record.namespace !== AUTO_NAMESPACE || typeof record.notifyId !== 'string'
+    || !record.notifyId) fail('NOTIFICATION_RECORD_INVALID');
+  const published = publishedAutoNotifyIds(previousPageHtml);
+  const decision = published.has(record.notifyId) ? 'already-notified' : 'notify';
+  // Closing is only ever possible for a notification that was actually due on
+  // this run, and only against a verified public read-back.
+  const closed = decision === 'notify' && publicReadBackVerified === true && typeof closedAtHkt === 'string'
+    ? closeAutoNotification(record, { publicReadBackVerified, closedAtHkt })
+    : null;
+  return Object.freeze({
+    notifyId: record.notifyId, decision, notifyOnce: true,
+    // Never `delivered` without a verified read-back, whatever the caller asked
+    // for: an unverified page is not publication.
+    state: closed === null ? (decision === 'already-notified' ? 'closed-earlier' : 'pending') : 'delivered',
+    publicReadBackVerified: publicReadBackVerified === true,
+    closedAtHkt: closed === null ? null : closed.closedAtHkt,
+    // No owner artefact of any kind: this stays a Codex-owned technical
+    // mechanism and never becomes an `awaiting_user` item.
+    createsAwaitingUser: false, requiresOwnerDecision: false,
+  });
+}
 
 // Reject placeholder wording before it can reach a page. An AUTO record states
 // a conservative classification as a fact for the period; describing it as
