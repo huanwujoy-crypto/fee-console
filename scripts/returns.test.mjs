@@ -13,6 +13,8 @@
  * periodReturns 由可信 writer 的纯引擎提供。手机迁移后只消费计算回执，
  * 不再保留或执行这套公式。
  */
+import "./fund-investor-core.test.mjs";
+import "./fund-investor-ui.test.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
