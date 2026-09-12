@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.8.1">
+<meta name="fee-console-build" content="4.8.2">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -229,6 +229,12 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
       <p class="hint">两位投资人的股数合计须等于初始发行股数。股份市值以美元（USD）显示。</p>
       <button class="btn primary" type="submit">保存基金档案</button>
     </form></details>
+    <details class="fund-method"><summary>从基金只读链接载入</summary>
+      <p class="hint">在已有基金档案的页面复制基金只读链接，再回到这里粘贴。载入后保存在当前设备。</p>
+      <form id="fundProfileLinkForm" class="fund-form" autocomplete="off"><label class="f" for="fundProfileLink">基金只读链接</label>
+        <input id="fundProfileLink" type="url" maxlength="40000" autocapitalize="off" autocomplete="off" spellcheck="false" required>
+        <button class="btn primary" type="submit" style="margin-top:8px">载入基金档案</button>
+      </form></details>
     <label class="f" for="fundProfileFile">导入基金档案文件</label><input type="file" id="fundProfileFile" accept=".json,application/json">
     <p class="small" id="fundProfileNotice" role="status"></p><button class="btn" id="fundShare">显示基金只读链接</button></details>
   </div>
@@ -745,7 +751,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.8.1";
+const UI_VERSION_LABEL=" · v4.8.2";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -912,6 +918,24 @@ async function saveFundProfileForm(){
     inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
     investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
   return saveFundProfile(()=>profile);
+}
+async function importFundProfileLink(){
+  const text=document.getElementById("fundProfileLink").value.trim();
+  return saveFundProfile(async()=>{
+    let link;try{if(!text||text.length>40000)throw new Error();link=new URL(text);}catch(_){throw new Error("请粘贴完整的基金只读链接");}
+    const appPath=path=>path.replace(/\/index\.html$/,"/").replace(/\/$/,"")||"/";
+    if(link.origin!==location.origin||appPath(link.pathname)!==appPath(location.pathname)||link.username||link.password)throw new Error("此链接不属于当前基金页面");
+    const params=new URLSearchParams(link.hash.slice(1)),gid=cfg(K.gid),keyValue=cfg(K.key);
+    if(params.getAll("gid").length!==1||params.get("gid")!==gid)throw new Error("此链接的账本与当前账本不一致");
+    const raw=params.get("fund");if(params.getAll("fund").length!==1||!raw||raw.length>16000)throw new Error("此链接未包含有效的基金档案");
+    // Only the fund ciphertext is consumed; URL access keys and tokens are ignored.
+    let saved;try{
+      const outer=JSON.parse(raw);if(!outer||Object.keys(outer).sort().join(",")!=="data,enc,v"||outer.enc!==true||outer.v!==1||typeof outer.data!=="string")throw new Error();
+      saved=JSON.parse(await decTxt(await keyOf(keyValue),outer.data));
+      if(!saved||Object.keys(saved).sort().join(",")!=="gid,profile"||saved.gid!==gid)throw new Error();
+    }catch(_){throw new Error("当前访问无法核验此基金档案，请使用原基金的只读链接");}
+    return saved.profile;
+  });
 }
 /* fund-profile-storage:end */
 
@@ -1594,6 +1618,7 @@ function ledgerInput(e){const T=e.target,k=T.dataset.k,val=T.value;if(!canEdit()
 document.body.addEventListener("input",ledgerInput);
 document.getElementById("fundProfileFile").addEventListener("change",e=>importFundProfile(e.target.files?.[0]));
 document.getElementById("fundProfileForm").addEventListener("submit",e=>{e.preventDefault();saveFundProfileForm();});
+document.getElementById("fundProfileLinkForm").addEventListener("submit",e=>{e.preventDefault();importFundProfileLink();});
 document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonthFromEvent(e);if(historyMonth){_monthHistoryYm=historyMonth;scheduleRender();return;}if(!isMgr())return;const T=e.target;
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
 for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});
