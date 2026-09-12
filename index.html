@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.8.0">
+<meta name="fee-console-build" content="4.8.1">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -157,6 +157,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 @media(max-width:430px){.trend-note,.month-summary{font-size:11px}.month-grid{grid-template-columns:1fr}.month-grid .wide{grid-column:auto}}
 /* fund-investor-style:v1 */
 .fund-title{font-size:19px;line-height:1.4;margin:3px 0 8px;overflow-wrap:anywhere}.fund-switch{display:flex;gap:8px;margin:12px 0}.fund-switch button{flex:1;min-height:48px;overflow-wrap:anywhere}.fund-switch .on{border-color:var(--series-1);background:var(--series-1);color:white}.fund-switch .on .small{color:inherit}.fund-hero .val{font-size:30px;overflow-wrap:anywhere}.fund-chart{width:100%;display:block;height:auto}.fund-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}.fund-table th,.fund-table td{padding:9px 3px;text-align:right;border-bottom:1px solid var(--grid);overflow-wrap:anywhere}.fund-table th:first-child,.fund-table td:first-child{text-align:left}.fund-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px}.fund-meta b{display:block;font-size:15px}.fund-method{margin:10px 0 0;font-size:12px}.fund-method summary{min-height:40px;cursor:pointer}.fund-alert{border-left:3px solid var(--series-2);padding:10px 12px;background:var(--surface-1);font-size:13px;margin-bottom:12px}.fund-label{font-size:12px;color:var(--ink-2)}
+.fund-form{margin:8px 0 16px}.fund-form fieldset{min-width:0;margin:12px 0;padding:10px;border:1px solid var(--border);border-radius:8px}.fund-form legend{font-size:13px;padding:0 5px}.fund-form input{min-width:0;min-height:44px}.fund-form .grid>div{min-width:0}.fund-form button{min-height:44px}
 </style>
 </head>
 <body>
@@ -205,7 +206,29 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div id="fundProfileBox"></div>
   <div id="fundInvestorBox"></div>
   <div class="card"><details class="fund-method"><summary>基金档案设置</summary>
-    <p class="hint">导入已核对的基金名称、成立日与初始份额。档案加密保存在本机，生成只读链接时一并带入。</p>
+    <p class="hint">填写或导入已核对的基金名称、成立日与初始份额。档案加密保存在本机，生成只读链接时一并带入。</p>
+    <details class="fund-method"><summary>直接填写基金档案</summary>
+    <form id="fundProfileForm" class="fund-form" autocomplete="off">
+      <div class="grid">
+        <div class="full"><label class="f" for="fundFormName">基金名称</label><input id="fundFormName" maxlength="120" required></div>
+        <div class="full"><label class="f" for="fundFormManager">投资管理人</label><input id="fundFormManager" maxlength="120" required></div>
+        <div><label class="f" for="fundFormInception">成立估值日</label><input id="fundFormInception" type="date" required></div>
+        <div><label class="f" for="fundFormNotice">到账通知日</label><input id="fundFormNotice" type="date" required></div>
+        <div class="full"><label class="f" for="fundFormShares">初始发行股数</label><input id="fundFormShares" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" required></div>
+      </div>
+      <fieldset><legend>投资人一</legend><div class="grid">
+        <div><label class="f" for="fundFormAId">简称（英文字母）</label><input id="fundFormAId" maxlength="16" pattern="[A-Za-z][A-Za-z0-9_\-]{0,15}" required></div>
+        <div><label class="f" for="fundFormAShares">持有股数</label><input id="fundFormAShares" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" required></div>
+        <div class="full"><label class="f" for="fundFormAName">姓名</label><input id="fundFormAName" maxlength="80" required></div>
+      </div></fieldset>
+      <fieldset><legend>投资人二</legend><div class="grid">
+        <div><label class="f" for="fundFormBId">简称（英文字母）</label><input id="fundFormBId" maxlength="16" pattern="[A-Za-z][A-Za-z0-9_\-]{0,15}" required></div>
+        <div><label class="f" for="fundFormBShares">持有股数</label><input id="fundFormBShares" type="number" min="1" max="9007199254740991" step="1" inputmode="numeric" required></div>
+        <div class="full"><label class="f" for="fundFormBName">姓名</label><input id="fundFormBName" maxlength="80" required></div>
+      </div></fieldset>
+      <p class="hint">两位投资人的股数合计须等于初始发行股数。股份市值以美元（USD）显示。</p>
+      <button class="btn primary" type="submit">保存基金档案</button>
+    </form></details>
     <label class="f" for="fundProfileFile">导入基金档案文件</label><input type="file" id="fundProfileFile" accept=".json,application/json">
     <p class="small" id="fundProfileNotice" role="status"></p><button class="btn" id="fundShare">显示基金只读链接</button></details>
   </div>
@@ -722,7 +745,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.8.0";
+const UI_VERSION_LABEL=" · v4.8.1";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -860,12 +883,12 @@ async function readFundProfile(){
     _fundProfileCipher=raw;if(HASH?.fund&&store)setCfg(FUND_PROFILE_KEY,raw);return {profile:checked.profile,reason:null};
   }catch(_){return {profile:null,reason:"基金档案暂无法核验，请恢复原基金链接或重新导入档案"};}})();return task.promise;
 }
-async function importFundProfile(file){
-  const ticket=++_fundImportGeneration;if(!file)return;const gid=cfg(K.gid),keyValue=cfg(K.key),epoch=_sourceEpoch;
+async function saveFundProfile(readProfile){
+  const ticket=++_fundImportGeneration,gid=cfg(K.gid),keyValue=cfg(K.key),epoch=_sourceEpoch;
   try{
     if(_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)||!gid||!keyValue||!store)throw new Error("先恢复并核验原账本，再导入基金档案");
-    if(file.size>12000)throw new Error("基金档案文件过大");const checked=fundInvestorCore.validateProfile(JSON.parse(await file.text()));
-    if(!checked.ok)throw new Error("基金档案格式或份额合计不正确");
+    const checked=fundInvestorCore.validateProfile(await readProfile());
+    if(!checked.ok)throw new Error(checked.reason||"基金档案格式或份额合计不正确");
     const key=await keyOf(keyValue),data=await encTxt(key,JSON.stringify({gid,profile:checked.profile})),raw=JSON.stringify({enc:true,v:1,data});
     if(JSON.stringify(JSON.parse(await decTxt(key,data)).profile)!==JSON.stringify(checked.profile))throw new Error("档案读回不一致，未保存");
     if(ticket!==_fundImportGeneration)return;
@@ -878,6 +901,17 @@ async function importFundProfile(file){
     _fundProfileMessage="基金档案已加密保存在本机；账户及原账本未修改。";
     await render();
   }catch(e){if(ticket!==_fundImportGeneration)return;_fundProfileMessage=e instanceof SyntaxError?"文件不是有效的基金档案":e.message;document.getElementById("fundProfileNotice").textContent=_fundProfileMessage;}
+}
+async function importFundProfile(file){
+  if(!file){++_fundImportGeneration;return;}
+  return saveFundProfile(async()=>{if(file.size>12000)throw new Error("基金档案文件过大");return JSON.parse(await file.text());});
+}
+async function saveFundProfileForm(){
+  const value=id=>document.getElementById(id).value.trim();
+  const profile={schema:"fee-console.fund-profile.v1",manager:value("fundFormManager"),fundName:value("fundFormName"),
+    inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
+    investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
+  return saveFundProfile(()=>profile);
 }
 /* fund-profile-storage:end */
 
@@ -1559,6 +1593,7 @@ function ledgerInput(e){const T=e.target,k=T.dataset.k,val=T.value;if(!canEdit()
 }
 document.body.addEventListener("input",ledgerInput);
 document.getElementById("fundProfileFile").addEventListener("change",e=>importFundProfile(e.target.files?.[0]));
+document.getElementById("fundProfileForm").addEventListener("submit",e=>{e.preventDefault();saveFundProfileForm();});
 document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonthFromEvent(e);if(historyMonth){_monthHistoryYm=historyMonth;scheduleRender();return;}if(!isMgr())return;const T=e.target;
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
 for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});
