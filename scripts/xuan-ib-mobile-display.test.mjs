@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -111,6 +111,21 @@ test('Thursday-style risk cards copy verified cash values without recomputing th
  assert.match(MOBILE_READING_CSS,/\.thursday-risk-summary/);
  assert.match(MOBILE_READING_CSS,/\.pane\.p2>section\.card/);
  assert.match(MOBILE_READING_CSS,/\.cash-reserve-strip/);
+});
+test('cash dashboard derives four concise metrics only from a reconciled source formula and complete holdings',()=>{
+ const input={
+  planText:'规划预算＝IB $556,709＋NOAH-HK $373,877−预留 $240,000，共 $690,586。',
+  ibCashText:'$556,709',ibNavText:'$5,026,950',
+  holdings:{VGSH:'86,588',VGIT:'137,904',TLT:'56,857',GLD:'120,495',SLV:'18,733',MSTR:'106,357',HODL:'8,971'},
+ };
+ assert.deepEqual(cashDashboardMetrics(input),{
+  pool:'$930,586',coverage:'3.88×',reserve:'$240,000',ammo:'$281,349',themePercent:'4.71%',themeAmount:'$254,556',
+  coverageState:'normal',themeState:'normal',
+ });
+ assert.equal(cashDashboardMetrics({...input,ibCashText:'$556,708'}),null);
+ assert.equal(cashDashboardMetrics({...input,planText:'规划数据未取得'}),null);
+ assert.equal(cashDashboardMetrics({...input,holdings:{...input.holdings,TLT:null}}),null);
+ assert.match(MOBILE_READING_CSS,/\.cash-dashboard\{display:grid/);
 });
 test('AI strip preserves unfamiliar, missing, qualified, mismatched and genuine action states',()=>{
  for(const patch of [{title:'单票集中度'},{title:'历史 AI 压力敞口'},{state:'brief-signal normal'},

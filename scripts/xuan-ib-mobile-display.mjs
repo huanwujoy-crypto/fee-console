@@ -38,6 +38,11 @@ export const MOBILE_READING_CSS = `
 .cash-reserve-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;font-variant-numeric:tabular-nums}
 .cash-reserve-strip>div{padding:12px;border:1px solid var(--line);border-left:4px solid var(--accent,#2563eb);border-radius:12px;background:var(--bg);min-width:0}
 .cash-reserve-strip dt{font-size:13px;color:var(--mut)}.cash-reserve-strip dd{margin:4px 0 0;font-size:20px;font-weight:800;white-space:nowrap}.cash-reserve-strip small{display:block;margin-top:4px;color:var(--mut);font-size:12px;white-space:nowrap}
+.cash-dashboard{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;font-variant-numeric:tabular-nums}
+.cash-dashboard>div{padding:12px;border:1px solid var(--line);border-top:4px solid var(--metric-accent,#2563eb);border-radius:12px;background:var(--bg);min-width:0}
+.cash-dashboard>div[data-state="normal"]{--metric-accent:#15803d}.cash-dashboard>div[data-kind="ammo"]{--metric-accent:#7c3aed}.cash-dashboard>div[data-state="alert"]{--metric-accent:#b42318}
+.cash-dashboard dt{font-size:13px;color:var(--mut);line-height:1.3}.cash-dashboard dd{margin:5px 0 0;font-size:clamp(19px,7cqi,25px);font-weight:800;white-space:nowrap;letter-spacing:-.025em}
+.cash-dashboard small{display:block;margin-top:4px;color:var(--mut);font-size:11px;line-height:1.35;white-space:nowrap}.cash-dashboard-note{margin:8px 0 0;color:var(--mut);font-size:12px;line-height:1.4}
 .pane table th,.pane table td{overflow-wrap:normal!important;word-break:normal!important}
 .pane table td:not(:first-child){white-space:nowrap}.pane table th{font-size:13px}.pane .tblwrap{overflow-x:auto}
 @media(min-width:850px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
@@ -194,6 +199,31 @@ export function reserveRiskSummary(text) {
   return match?match[1]:null;
 }
 
+const centsFromMoney=value=>{
+  const match=String(value??'').trim().replace(/,/g,'').match(/^\$?(\d+)(?:\.(\d{1,2}))?$/);
+  return match?BigInt(match[1])*100n+BigInt((match[2]||'').padEnd(2,'0')):null;
+};
+const roundedMoney=value=>`$${moneyFromCents(((value+50n)/100n)*100n).replace(/\.00$/,'')}`;
+const fixedHundredths=value=>`${value/100n}.${(value%100n).toString().padStart(2,'0')}`;
+
+export function cashDashboardMetrics({planText,ibCashText,ibNavText,holdings}={}) {
+  const plan=String(planText??'').replace(/\s+/g,' ').match(/规划预算\s*[＝=]\s*IB\s*(\$[\d,.]+)\s*[＋+]\s*NOAH-HK(?:\s*现金)?\s*(\$[\d,.]+)\s*[−－-]\s*预留\s*(\$[\d,.]+)\s*[，,]\s*共\s*(\$[\d,.]+)/i);
+  if(!plan||!holdings||typeof holdings!=='object')return null;
+  const [ib,noah,reserve,available]=plan.slice(1).map(centsFromMoney),ibCash=centsFromMoney(ibCashText),ibNav=centsFromMoney(ibNavText);
+  if([ib,noah,reserve,available,ibCash,ibNav].some(value=>value===null)||reserve<=0n||ib!==ibCash||ib+noah-reserve!==available)return null;
+  const amount=symbol=>centsFromMoney(holdings[symbol]);
+  const ammoParts=['VGSH','VGIT','TLT'].map(amount),themeParts=['GLD','SLV','MSTR','HODL'].map(amount);
+  if([...ammoParts,...themeParts].some(value=>value===null))return null;
+  const pool=ib+noah,ammo=ammoParts.reduce((sum,value)=>sum+value,0n),theme=themeParts.reduce((sum,value)=>sum+value,0n),themeBase=ibNav+noah;
+  if(themeBase<=0n)return null;
+  const coverageHundredths=(pool*100n+reserve/2n)/reserve,themePercentHundredths=(theme*10000n+themeBase/2n)/themeBase;
+  return {
+    pool:roundedMoney(pool),coverage:`${fixedHundredths(coverageHundredths)}×`,reserve:roundedMoney(reserve),
+    ammo:roundedMoney(ammo),themePercent:`${fixedHundredths(themePercentHundredths)}%`,themeAmount:roundedMoney(theme),
+    coverageState:coverageHundredths<100n?'alert':'normal',themeState:themePercentHundredths>700n?'alert':'normal',
+  };
+}
+
 function createThursdayRiskSummary(doc,{label,value,detail=''}) {
   const summary=doc.createElement('dl');summary.className='mobile-risk-summary thursday-risk-summary';
   const name=doc.createElement('dt'),amount=doc.createElement('dd');name.textContent=label;amount.textContent=value;summary.append(name,amount);
@@ -254,7 +284,33 @@ function splitConcentrationAndCash(doc) {
   const cashHeading=doc.createElement('h2');cashHeading.textContent='现金';cash.append(cashHeading);
   const cashValue=cashRiskSummary(rows[1].children[1]?.textContent);
   const reserve=reserveRiskSummary(doc.querySelector('.pane.p3')?.textContent||'');
-  if(cashValue||reserve){
+  const planText=doc.querySelector('.pane.p3')?.textContent||'';
+  const navKpi=[...doc.querySelectorAll('.kpis .kpi')].find(item=>item.querySelector('.lab')?.textContent.trim()==='IB 权威 NAV');
+  const holdingValues={};
+  for(const row of doc.querySelectorAll('.pane.p1 tr[data-holding-symbol]')){
+    const symbol=String(row.getAttribute('data-holding-symbol')||'').trim().toUpperCase();
+    if(symbol&&!Object.hasOwn(holdingValues,symbol))holdingValues[symbol]=row.children[1]?.textContent.trim();
+    else if(symbol)holdingValues[symbol]=null;
+  }
+  const dashboard=cashDashboardMetrics({planText,ibCashText:cashValue?.value,ibNavText:navKpi?.querySelector('.big')?.textContent,holdings:holdingValues});
+  if(dashboard){
+    const strip=doc.createElement('dl');strip.className='cash-dashboard';
+    const items=[
+      {label:'现金池',value:dashboard.pool,detail:'IB + NOAH',kind:'pool'},
+      {label:'覆盖待 call',value:dashboard.coverage,detail:`预留 ${dashboard.reserve}`,kind:'coverage',state:dashboard.coverageState},
+      {label:'二线弹药',value:dashboard.ammo,detail:'VGSH · VGIT · TLT',kind:'ammo'},
+      {label:'主题投资',value:dashboard.themePercent,detail:`${dashboard.themeAmount} · 上限 7%`,kind:'theme',state:dashboard.themeState},
+    ];
+    for(const item of items){
+      const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd'),detail=doc.createElement('small');
+      pair.dataset.kind=item.kind;if(item.state)pair.dataset.state=item.state;
+      name.textContent=item.label;value.textContent=item.value;detail.textContent=item.detail;pair.append(name,value,detail);strip.append(pair);
+    }
+    const note=doc.createElement('p');note.className='cash-dashboard-note';note.textContent='现金池为规划口径，不等于 IB 即时购买力。';
+    const detail=doc.createElement('details'),summary=doc.createElement('summary'),body=doc.createElement('div'),formula=doc.createElement('p');
+    summary.textContent='口径';body.className='dbody';formula.textContent='覆盖＝现金池÷预留款；二线＝VGSH＋VGIT＋TLT；主题＝GLD＋SLV＋MSTR＋HODL，占比以 IB NAV＋NOAH 现金为分母。';
+    body.append(formula);detail.append(summary,body);cash.append(strip,note,detail);
+  }else if(cashValue||reserve){
     const strip=doc.createElement('dl');strip.className='cash-reserve-strip';
     for(const item of [cashValue&&{label:'IB 现金',value:cashValue.value,detail:cashValue.detail},reserve&&{label:'预留款',value:reserve,detail:'CALL reserve'}].filter(Boolean)){
       const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd'),detail=doc.createElement('small');
