@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,largestOrdinaryConcentration,familySingleStockConcentration,cashRiskSummary} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,cashRiskSummary,reserveRiskSummary} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -28,6 +28,7 @@ test('header guide matches shared wording and runs only after verification',()=>
  assert.match(module,/for\(let i=1;i<=5;i\+\+\)/);
  assert.match(module,/if\(notes\.has\(1\)&&roots\.length\)/);
  assert.match(module,/querySelectorAll\('\.pane\.p1 \.holdings-source-context'\)/);
+ assert.match(module,/\.cash-reserve-strip,details,li/);
  assert.doesNotMatch(module,/cloneNode\(true\)[\s\S]{0,300}数据日期与共同口径/);
 });
 test('critical replenishment amounts remain visible without recomputing or guessing',()=>{
@@ -60,6 +61,13 @@ test('AI strip copies agreeing source value and labels the two explicit referenc
  assert.match(MOBILE_READING_CSS,/\.ai-risk-strip\{display:flex;flex-wrap:wrap/);
  assert.doesNotMatch(MOBILE_READING_CSS,/\.ai-risk-strip[^}]*overflow:hidden/);
 });
+test('newer bedtime reports keep the Draft three-point AI strip',()=>{
+ assert.deepEqual(aiRiskBandValues('27.82%'),{values:[['提醒','20%'],['当前','27.82%'],['预警','25%']],band:'alert'});
+ assert.equal(aiRiskBandValues('22.02%').band,'attention');
+ assert.equal(aiRiskBandValues('19.99%').band,'normal');
+ for(const value of ['', '27.82', '未取得', '-1%', '101%'])assert.equal(aiRiskBandValues(value),null,value);
+ assert.match(MOBILE_READING_CSS,/data-band="alert"/);
+});
 test('AI KPI uses the primary three-account single-stock view, excludes BRK.B, and retains the IB fallback',()=>{
  const headers=['IB 视图标的','市值 $','占比 / 线','余量 $'];
  const rows=[['BRK.B 专线','228,546','4.24% / 12.8%','461,206'],['META','64,890','1.20% / 5%','204,544'],['TSLA','142,849','2.65% / 5%','126,585'],['GOOG','72,380','1.34% / 5%','197,054']];
@@ -77,8 +85,13 @@ test('current family single-stock value is derived exactly from the published fa
 test('Thursday-style risk cards copy verified cash values without recomputing them',()=>{
  assert.deepEqual(cashRiskSummary('$556,709 · 占 NAV 11.07%'),{label:'IB 现金',value:'$556,709',detail:'占 NAV 11.07%'});
  assert.equal(cashRiskSummary('$556,709 · 未取得'),null);
+ assert.equal(reserveRiskSummary('reserve $240,000，<1.0x 才告警'),'$240,000');
+ assert.equal(reserveRiskSummary('预留 CALL：$240,000'),'$240,000');
+ assert.equal(reserveRiskSummary('规划预算扣除预留 $240,000，共 $690,586'),'$240,000');
+ assert.equal(reserveRiskSummary('预留款未取得'),null);
  assert.match(MOBILE_READING_CSS,/\.thursday-risk-summary/);
  assert.match(MOBILE_READING_CSS,/\.pane\.p2>section\.card/);
+ assert.match(MOBILE_READING_CSS,/\.cash-reserve-strip/);
 });
 test('AI strip preserves unfamiliar, missing, qualified, mismatched and genuine action states',()=>{
  for(const patch of [{title:'单票集中度'},{title:'历史 AI 压力敞口'},{state:'brief-signal normal'},
