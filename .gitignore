@@ -4,3 +4,6 @@
 **/*private_ledger*
 **/*etf*ledger*.json
 !claude/xuan-ib-etf-ledger-public-genesis-v1.json
+
+# Local isolated worktrees created by agent tooling; not repo content.
+.claude/worktrees/
