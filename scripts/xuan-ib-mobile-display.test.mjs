@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,cashRiskSummary,reserveRiskSummary} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -82,6 +82,25 @@ test('current family single-stock value is derived exactly from the published fa
  assert.deepEqual(familySingleStockConcentration(fact,'618529884'),{symbol:'GOOG',percent:4.81,label:'GOOG 4.81%',amount:'297,747.66'});
  for(const [bad,denominator] of [['其它事实','618529884'],[fact,''],[fact,'0'],[fact,'not-a-number']])assert.equal(familySingleStockConcentration(bad,denominator),null);
 });
+test('family concentration lists every reviewed ordinary stock above one percent, grouped and sorted',()=>{
+ const classified=(symbol,marketValueCents,namespace='REG',extra={})=>({symbol,marketValueCents,namespace,status:'classified',...extra});
+ const rows=[
+  classified('GOOG','7407730'),classified('GOOGL','10244746'),classified('GOOG','12121740'),
+  classified('META','6532200'),classified('META','15677280'),classified('TSLA','14205165'),classified('TSLA','619200'),
+  classified('MSTR','10643100','AUTO'),classified('MRVL','7087800','WU'),classified('BE','6860500','DELEG'),
+  classified('APO','6466750'),classified('KKR','6112500'),classified('MXUS','110700800'),
+  classified('BRK/B','22834125','AUTO'),classified('BRK.B','7611375'),classified('UNKNOWN','7000000'),
+  classified('NOT-A-STOCK','7000000','AUTO',{assetType:'ETF'}),
+  {...classified('VST','9999999','DELEG'),status:'excluded'},
+ ];
+ assert.deepEqual(familyOrdinaryConcentrations(rows,'618529884').map(item=>[item.label,item.amount,item.percent]),[
+  ['GOOG / GOOGL','297,742.16',4.81],['META','222,094.80',3.59],['TSLA','148,243.65',2.4],
+  ['MSTR','106,431.00',1.72],['MRVL','70,878.00',1.15],['BE','68,605.00',1.11],['APO','64,667.50',1.05],
+ ]);
+ assert.deepEqual(familyOrdinaryConcentrations([], '618529884'),[]);
+ assert.deepEqual(familyOrdinaryConcentrations(rows, '0'),[]);
+ assert.deepEqual(familyOrdinaryConcentrations([classified('NEWCO','7000000','REG',{assetType:'STK'})], '618529884').map(item=>item.label),['NEWCO']);
+});
 test('Thursday-style risk cards copy verified cash values without recomputing them',()=>{
  assert.deepEqual(cashRiskSummary('$556,709 · 占 NAV 11.07%'),{label:'IB 现金',value:'$556,709',detail:'占 NAV 11.07%'});
  assert.equal(cashRiskSummary('$556,709 · 未取得'),null);
@@ -92,6 +111,36 @@ test('Thursday-style risk cards copy verified cash values without recomputing th
  assert.match(MOBILE_READING_CSS,/\.thursday-risk-summary/);
  assert.match(MOBILE_READING_CSS,/\.pane\.p2>section\.card/);
  assert.match(MOBILE_READING_CSS,/\.cash-reserve-strip/);
+});
+test('cash dashboard derives four concise metrics only from a reconciled source formula and complete holdings',()=>{
+ const input={
+  planText:'规划预算＝IB $556,709＋NOAH-HK $373,877−预留 $240,000，共 $690,586。',
+  ibCashText:'$556,709',ibNavText:'$5,026,950',
+  holdings:{VGSH:'86,588',VGIT:'137,904',TLT:'56,857',GLD:'120,495',SLV:'18,733',MSTR:'106,357',HODL:'8,971'},
+ };
+ assert.deepEqual(cashDashboardMetrics(input),{
+  pool:'$930,586',coverage:'3.88×',reserve:'$240,000',ammo:'$281,349',themePercent:'4.71%',themeAmount:'$254,556',
+  coverageState:'normal',themeState:'normal',
+ });
+ assert.equal(cashDashboardMetrics({...input,ibCashText:'$556,708'}),null);
+ assert.equal(cashDashboardMetrics({...input,planText:'规划数据未取得'}),null);
+ assert.equal(cashDashboardMetrics({...input,holdings:{...input.holdings,TLT:null}}),null);
+ assert.match(MOBILE_READING_CSS,/\.cash-dashboard\{display:grid/);
+});
+test('AI exposure groups by coefficient and ranks each band by pressure value then market value',()=>{
+ const row=(symbol,coefficient,contribution,marketValue)=>({symbol,coefficient,contribution,marketValue});
+ const grouped=groupAiExposureRows([
+  row('H1','80.00%','$90','$100'),row('H2','100.00%','$120','$120'),row('H3','80.00%','$90','$110'),row('H4','80.00%','$80','$200'),
+  row('M1','60.00%','$60','$100'),row('M2','40.00%','$80','$200'),row('L1','25.00%','$25','$100'),
+  row('ZERO','0.00%','$0','$50'),row('NA','不适用','$0','$70'),
+ ]);
+ assert.deepEqual(grouped.map(group=>[group.key,group.items.map(item=>item.symbol)]),[
+  ['high',['H2','H3','H1','H4']],['medium',['M2','M1']],['low',['L1']],['excluded',['NA','ZERO']],
+ ]);
+ assert.equal(groupAiExposureRows([{coefficient:'未知',contribution:'$0',marketValue:'$1'}]),null);
+ assert.equal(groupAiExposureRows([]),null);
+ assert.match(MOBILE_READING_CSS,/\.ai-risk-tiers\{display:grid/);
+ assert.match(fs.readFileSync(new URL('./xuan-ib-mobile-display.mjs',import.meta.url),'utf8'),/tbody tr\[data-ai-risk-row\]/);
 });
 test('AI strip preserves unfamiliar, missing, qualified, mismatched and genuine action states',()=>{
  for(const patch of [{title:'单票集中度'},{title:'历史 AI 压力敞口'},{state:'brief-signal normal'},

@@ -35,9 +35,18 @@ export const MOBILE_READING_CSS = `
 .ai-risk-strip>.ai-risk-current{flex:1.35 1 6rem;background:var(--bg);border-radius:11px}
 .ai-risk-strip .ai-risk-current dt{color:var(--ink);font-weight:650}.ai-risk-strip .ai-risk-current dd{font-size:1.5rem;font-weight:800;color:var(--warn,#9a6500)}
 .ai-risk-strip[data-band="normal"] .ai-risk-current dd{color:#15803d}.ai-risk-strip[data-band="alert"] .ai-risk-current dd{color:#b42318}
+.ai-risk-tiers{display:grid;gap:12px;margin-top:12px}.ai-coeff-tier{border:1px solid var(--line);border-left:4px solid var(--tier-accent,#2563eb);border-radius:12px;padding:9px;background:var(--bg)}
+.ai-coeff-tier[data-band="high"]{--tier-accent:#b42318}.ai-coeff-tier[data-band="medium"]{--tier-accent:#b7791f}.ai-coeff-tier[data-band="low"]{--tier-accent:#2563eb}.ai-coeff-tier[data-band="excluded"]{--tier-accent:#8a8a8a}
+.ai-coeff-tier>h3{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 4px 5px;font-size:15px}.ai-coeff-tier>h3 small{color:var(--mut);font-size:11px;font-weight:500;white-space:nowrap}
+.ai-coeff-tier>.tblwrap{margin:0}.ai-coeff-tier>details{margin-top:5px}.ai-coeff-tier>details>summary{font-size:13px;padding:8px 4px}.ai-coeff-tier .mobile-risk-table th,.ai-coeff-tier .mobile-risk-table td{padding:8px 5px!important}
 .cash-reserve-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;font-variant-numeric:tabular-nums}
 .cash-reserve-strip>div{padding:12px;border:1px solid var(--line);border-left:4px solid var(--accent,#2563eb);border-radius:12px;background:var(--bg);min-width:0}
 .cash-reserve-strip dt{font-size:13px;color:var(--mut)}.cash-reserve-strip dd{margin:4px 0 0;font-size:20px;font-weight:800;white-space:nowrap}.cash-reserve-strip small{display:block;margin-top:4px;color:var(--mut);font-size:12px;white-space:nowrap}
+.cash-dashboard{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;font-variant-numeric:tabular-nums}
+.cash-dashboard>div{padding:12px;border:1px solid var(--line);border-top:4px solid var(--metric-accent,#2563eb);border-radius:12px;background:var(--bg);min-width:0}
+.cash-dashboard>div[data-state="normal"]{--metric-accent:#15803d}.cash-dashboard>div[data-kind="ammo"]{--metric-accent:#7c3aed}.cash-dashboard>div[data-state="alert"]{--metric-accent:#b42318}
+.cash-dashboard dt{font-size:13px;color:var(--mut);line-height:1.3}.cash-dashboard dd{margin:5px 0 0;font-size:clamp(19px,7cqi,25px);font-weight:800;white-space:nowrap;letter-spacing:-.025em}
+.cash-dashboard small{display:block;margin-top:4px;color:var(--mut);font-size:11px;line-height:1.35;white-space:nowrap}.cash-dashboard-note{margin:8px 0 0;color:var(--mut);font-size:12px;line-height:1.4}
 .pane table th,.pane table td{overflow-wrap:normal!important;word-break:normal!important}
 .pane table td:not(:first-child){white-space:nowrap}.pane table th{font-size:13px}.pane .tblwrap{overflow-x:auto}
 @media(min-width:850px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
@@ -148,6 +157,42 @@ export function familySingleStockConcentration(fact,denominatorCents) {
   return {symbol:'GOOG',percent:Number(percent),label:`GOOG ${percent}%`,amount:match[1]};
 }
 
+// The legacy published report does not yet carry assetType on every risk row.
+// Keep that compatibility path fail-closed: AUTO may only classify a verified
+// ordinary stock, while older REG/WU/DELEG rows must name an already-reviewed
+// ordinary-stock symbol. New reports may state STK directly.
+const REVIEWED_ORDINARY_STOCKS=new Set([
+  'AAOI','APO','AVGO','BE','GOOG','GOOGL','IREN','KKR','META','MRVL','MSFT','ORCL','TSEM','TSLA','VST',
+]);
+const normalizeConcentrationSymbol=value=>String(value??'').trim().toUpperCase().replace(/^BRK[./-]B$/,'BRK.B');
+const moneyFromCents=value=>{
+  const cents=BigInt(value),whole=(cents/100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,','),fraction=(cents%100n).toString().padStart(2,'0');
+  return `${whole}.${fraction}`;
+};
+
+export function familyOrdinaryConcentrations(rows,denominatorCents) {
+  const denominator=String(denominatorCents??'').trim();
+  if(!Array.isArray(rows)||!/^\d+$/.test(denominator)||denominator==='0')return [];
+  const base=BigInt(denominator),totals=new Map();
+  for(const row of rows){
+    if(!row||row.status!=='classified'||!/^\d+$/.test(String(row.marketValueCents??'')))continue;
+    const symbol=normalizeConcentrationSymbol(row.symbol),namespace=String(row.namespace??'').trim().toUpperCase();
+    if(!/^[A-Z0-9.]+$/.test(symbol)||symbol==='BRK.B')continue;
+    const assetType=String(row.assetType??'').trim().toUpperCase();
+    const ordinary=assetType?assetType==='STK':namespace==='AUTO'||REVIEWED_ORDINARY_STOCKS.has(symbol);
+    if(!ordinary)continue;
+    const cents=BigInt(row.marketValueCents);if(cents<=0n)continue;
+    const key=symbol==='GOOGL'?'GOOG':symbol;
+    totals.set(key,(totals.get(key)||0n)+cents);
+  }
+  return [...totals].flatMap(([symbol,cents])=>{
+    const hundredths=(cents*10000n+base/2n)/base;
+    if(hundredths<=100n)return [];
+    const percent=Number(hundredths)/100,label=symbol==='GOOG'?'GOOG / GOOGL':symbol;
+    return [{symbol,label,percent,amount:moneyFromCents(cents),marketValueCents:String(cents)}];
+  }).sort((a,b)=>b.percent-a.percent||a.label.localeCompare(b.label));
+}
+
 export function cashRiskSummary(text) {
   const match=String(text??'').trim().match(/^(\$[\d,]+(?:\.\d+)?)\s*·\s*占 NAV\s*(\d+(?:\.\d+)?%)$/);
   return match?{label:'IB 现金',value:match[1],detail:`占 NAV ${match[2]}`}:null;
@@ -156,6 +201,53 @@ export function cashRiskSummary(text) {
 export function reserveRiskSummary(text) {
   const match=String(text??'').match(/(?:reserve|预留(?:\s*CALL|\s*款)?)[^$]{0,24}(\$[\d,]+(?:\.\d+)?)/i);
   return match?match[1]:null;
+}
+
+const centsFromMoney=value=>{
+  const match=String(value??'').trim().replace(/,/g,'').match(/^\$?(\d+)(?:\.(\d{1,2}))?$/);
+  return match?BigInt(match[1])*100n+BigInt((match[2]||'').padEnd(2,'0')):null;
+};
+const roundedMoney=value=>`$${moneyFromCents(((value+50n)/100n)*100n).replace(/\.00$/,'')}`;
+const fixedHundredths=value=>`${value/100n}.${(value%100n).toString().padStart(2,'0')}`;
+
+export function cashDashboardMetrics({planText,ibCashText,ibNavText,holdings}={}) {
+  const plan=String(planText??'').replace(/\s+/g,' ').match(/规划预算\s*[＝=]\s*IB\s*(\$[\d,.]+)\s*[＋+]\s*NOAH-HK(?:\s*现金)?\s*(\$[\d,.]+)\s*[−－-]\s*预留\s*(\$[\d,.]+)\s*[，,]\s*共\s*(\$[\d,.]+)/i);
+  if(!plan||!holdings||typeof holdings!=='object')return null;
+  const [ib,noah,reserve,available]=plan.slice(1).map(centsFromMoney),ibCash=centsFromMoney(ibCashText),ibNav=centsFromMoney(ibNavText);
+  if([ib,noah,reserve,available,ibCash,ibNav].some(value=>value===null)||reserve<=0n||ib!==ibCash||ib+noah-reserve!==available)return null;
+  const amount=symbol=>centsFromMoney(holdings[symbol]);
+  const ammoParts=['VGSH','VGIT','TLT'].map(amount),themeParts=['GLD','SLV','MSTR','HODL'].map(amount);
+  if([...ammoParts,...themeParts].some(value=>value===null))return null;
+  const pool=ib+noah,ammo=ammoParts.reduce((sum,value)=>sum+value,0n),theme=themeParts.reduce((sum,value)=>sum+value,0n),themeBase=ibNav+noah;
+  if(themeBase<=0n)return null;
+  const coverageHundredths=(pool*100n+reserve/2n)/reserve,themePercentHundredths=(theme*10000n+themeBase/2n)/themeBase;
+  return {
+    pool:roundedMoney(pool),coverage:`${fixedHundredths(coverageHundredths)}×`,reserve:roundedMoney(reserve),
+    ammo:roundedMoney(ammo),themePercent:`${fixedHundredths(themePercentHundredths)}%`,themeAmount:roundedMoney(theme),
+    coverageState:coverageHundredths<100n?'alert':'normal',themeState:themePercentHundredths>700n?'alert':'normal',
+  };
+}
+
+export function groupAiExposureRows(rows) {
+  if(!Array.isArray(rows)||!rows.length)return null;
+  const definitions=[
+    {key:'high',label:'高系数',range:'≥80%'},{key:'medium',label:'中系数',range:'40–<80%'},
+    {key:'low',label:'低系数',range:'>0–<40%'},{key:'excluded',label:'未计入',range:'0%／不适用'},
+  ];
+  const buckets=new Map(definitions.map(group=>[group.key,[]]));
+  for(const [index,row] of rows.entries()){
+    const contributionCents=centsFromMoney(row?.contribution),marketValueCents=centsFromMoney(row?.marketValue);
+    if(contributionCents===null||marketValueCents===null)return null;
+    const coefficientText=String(row?.coefficient??'').trim(),match=coefficientText.match(/^(\d+(?:\.\d+)?)%$/);
+    let coefficient=null,key='excluded';
+    if(match){coefficient=Number(match[1]);if(!Number.isFinite(coefficient)||coefficient<0||coefficient>100)return null;
+      key=coefficient>=80?'high':coefficient>=40?'medium':coefficient>0?'low':'excluded';
+    }else if(!/^(?:不适用|未计入|—|-)$/.test(coefficientText))return null;
+    buckets.get(key).push({...row,index,coefficient,contributionCents,marketValueCents});
+  }
+  const descending=(a,b)=>a.contributionCents!==b.contributionCents?(a.contributionCents>b.contributionCents?-1:1)
+    :a.marketValueCents!==b.marketValueCents?(a.marketValueCents>b.marketValueCents?-1:1):a.index-b.index;
+  return definitions.map(group=>({...group,items:buckets.get(group.key).sort(descending)})).filter(group=>group.items.length);
 }
 
 function createThursdayRiskSummary(doc,{label,value,detail=''}) {
@@ -170,16 +262,21 @@ function splitConcentrationAndCash(doc) {
     .filter(card=>card.querySelector(':scope > h2')?.textContent.trim()==='② 集中度与现金（IB 账户内）');
   const kpi=[...doc.querySelectorAll('.kpis .kpi')]
     .find(item=>item.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
-  const decision=doc.querySelector('[data-decision-id="D-20260829-GOOG-FAMILY-LIMIT"]');
-  if(cards.length!==1||!kpi||!decision)return;
+  if(cards.length!==1||!kpi)return;
   const table=cards[0].querySelector(':scope > .tblwrap > table');
   const heads=table?[...table.querySelectorAll('thead th')].map(cell=>cell.textContent.trim()):[];
   const rows=table?[...table.querySelectorAll('tbody tr')]:[];
   if(JSON.stringify(heads)!==JSON.stringify(['项目','本轮数值'])||rows.length!==3)return;
   const labels=rows.map(row=>row.children[0]?.textContent.trim());
   if(!/^最大单仓 /.test(labels[0]||'')||labels[1]!=='IB 现金'||labels[2]!=='已用保证金')return;
-  const concentration=familySingleStockConcentration(decision.textContent,kpi.getAttribute('data-ai-kpi-denominator-cents'));
-  if(!concentration)return;
+  const concentrationRows=[...doc.querySelectorAll('.pane.p2 tr[data-ai-risk-row]')].map(row=>({
+    symbol:row.getAttribute('data-ai-risk-symbol'),namespace:row.getAttribute('data-ai-namespace'),
+    status:row.getAttribute('data-ai-status'),assetType:row.getAttribute('data-ai-asset-type'),
+    marketValueCents:row.getAttribute('data-ai-market-value-cents'),
+  }));
+  const concentrations=familyOrdinaryConcentrations(concentrationRows,kpi.getAttribute('data-ai-kpi-denominator-cents'));
+  if(!concentrations.length)return;
+  const concentration=concentrations[0];
 
   const card=cards[0],heading=card.querySelector(':scope > h2');heading.textContent='单票集中度';
   card.setAttribute('data-family-single-stock',concentration.label);
@@ -189,18 +286,23 @@ function splitConcentrationAndCash(doc) {
   if(oldBrief)sourceBody.append(oldBrief);sourceBody.append(table.parentElement);
   if(oldDetails){const oldBody=oldDetails.querySelector(':scope > .dbody');if(oldBody)sourceBody.append(...oldBody.children);oldDetails.remove();}
 
-  const brief=doc.createElement('div');brief.className=`brief-signal ${concentration.percent<5?'normal':'attention'}`;
-  const state=doc.createElement('span');state.className='signal-label';state.textContent=concentration.percent<5?'✓ 参考线内':'! 超出参考线';
-  const headline=doc.createElement('p'),strong=doc.createElement('b');strong.textContent=`${concentration.symbol} 三账户 ${concentration.percent.toFixed(2)}%`;headline.append(strong);
-  const action=doc.createElement('p');action.textContent='除 BRK.B 外最大';brief.append(state,headline,action);
+  const overLine=concentrations.some(item=>item.percent>=5);
+  const brief=doc.createElement('div');brief.className=`brief-signal ${overLine?'attention':'normal'}`;
+  const state=doc.createElement('span');state.className='signal-label';state.textContent=overLine?'! 有标的超过 5%':'✓ 均低于 5%';
+  const headline=doc.createElement('p'),strong=doc.createElement('b');strong.textContent=`${concentrations.length} 只超过 1%`;headline.append(strong);
+  const action=doc.createElement('p');action.textContent='三账户合计 · 不含 BRK.B';brief.append(state,headline,action);
   const compact=doc.createElement('table');compact.className='mobile-risk-table';
   const compactHead=doc.createElement('thead'),headRow=doc.createElement('tr'),leftHead=doc.createElement('th'),rightHead=doc.createElement('th');
   leftHead.textContent='标的 / 市值 USD';rightHead.textContent='占比 / 参考线';headRow.append(leftHead,rightHead);compactHead.append(headRow);
-  const compactBody=doc.createElement('tbody'),compactRow=doc.createElement('tr'),left=doc.createElement('td'),right=doc.createElement('td');
-  const leftName=doc.createElement('strong'),leftValue=doc.createElement('small'),rightValue=doc.createElement('strong'),rightNote=doc.createElement('small');
-  leftName.textContent='GOOG / GOOGL';leftValue.textContent=`市值 $${concentration.amount}`;left.append(leftName,leftValue);
-  rightValue.textContent=`${concentration.percent.toFixed(2)}% / 5%`;rightNote.textContent='家庭三账户';right.append(rightValue,rightNote);
-  compactRow.append(left,right);compactBody.append(compactRow);compact.append(compactHead,compactBody);
+  const compactBody=doc.createElement('tbody');
+  for(const item of concentrations){
+    const compactRow=doc.createElement('tr'),left=doc.createElement('td'),right=doc.createElement('td');
+    const leftName=doc.createElement('strong'),leftValue=doc.createElement('small'),rightValue=doc.createElement('strong'),rightNote=doc.createElement('small');
+    leftName.textContent=item.label;leftValue.textContent=`市值 $${item.amount}`;left.append(leftName,leftValue);
+    rightValue.textContent=`${item.percent.toFixed(2)}% / 5%`;rightNote.textContent='家庭三账户';right.append(rightValue,rightNote);
+    compactRow.append(left,right);compactBody.append(compactRow);
+  }
+  compact.append(compactHead,compactBody);
   const compactWrap=doc.createElement('div');compactWrap.className='tblwrap';compactWrap.append(compact);
   card.append(brief,compactWrap,source);
 
@@ -208,7 +310,33 @@ function splitConcentrationAndCash(doc) {
   const cashHeading=doc.createElement('h2');cashHeading.textContent='现金';cash.append(cashHeading);
   const cashValue=cashRiskSummary(rows[1].children[1]?.textContent);
   const reserve=reserveRiskSummary(doc.querySelector('.pane.p3')?.textContent||'');
-  if(cashValue||reserve){
+  const planText=doc.querySelector('.pane.p3')?.textContent||'';
+  const navKpi=[...doc.querySelectorAll('.kpis .kpi')].find(item=>item.querySelector('.lab')?.textContent.trim()==='IB 权威 NAV');
+  const holdingValues={};
+  for(const row of doc.querySelectorAll('.pane.p1 tr[data-holding-symbol]')){
+    const symbol=String(row.getAttribute('data-holding-symbol')||'').trim().toUpperCase();
+    if(symbol&&!Object.hasOwn(holdingValues,symbol))holdingValues[symbol]=row.children[1]?.textContent.trim();
+    else if(symbol)holdingValues[symbol]=null;
+  }
+  const dashboard=cashDashboardMetrics({planText,ibCashText:cashValue?.value,ibNavText:navKpi?.querySelector('.big')?.textContent,holdings:holdingValues});
+  if(dashboard){
+    const strip=doc.createElement('dl');strip.className='cash-dashboard';
+    const items=[
+      {label:'现金池',value:dashboard.pool,detail:'IB + NOAH',kind:'pool'},
+      {label:'覆盖待 call',value:dashboard.coverage,detail:`预留 ${dashboard.reserve}`,kind:'coverage',state:dashboard.coverageState},
+      {label:'二线弹药',value:dashboard.ammo,detail:'VGSH · VGIT · TLT',kind:'ammo'},
+      {label:'主题投资',value:dashboard.themePercent,detail:`${dashboard.themeAmount} · 上限 7%`,kind:'theme',state:dashboard.themeState},
+    ];
+    for(const item of items){
+      const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd'),detail=doc.createElement('small');
+      pair.dataset.kind=item.kind;if(item.state)pair.dataset.state=item.state;
+      name.textContent=item.label;value.textContent=item.value;detail.textContent=item.detail;pair.append(name,value,detail);strip.append(pair);
+    }
+    const note=doc.createElement('p');note.className='cash-dashboard-note';note.textContent='现金池为规划口径，不等于 IB 即时购买力。';
+    const detail=doc.createElement('details'),summary=doc.createElement('summary'),body=doc.createElement('div'),formula=doc.createElement('p');
+    summary.textContent='口径';body.className='dbody';formula.textContent='覆盖＝现金池÷预留款；二线＝VGSH＋VGIT＋TLT；主题＝GLD＋SLV＋MSTR＋HODL，占比以 IB NAV＋NOAH 现金为分母。';
+    body.append(formula);detail.append(summary,body);cash.append(strip,note,detail);
+  }else if(cashValue||reserve){
     const strip=doc.createElement('dl');strip.className='cash-reserve-strip';
     for(const item of [cashValue&&{label:'IB 现金',value:cashValue.value,detail:cashValue.detail},reserve&&{label:'预留款',value:reserve,detail:'CALL reserve'}].filter(Boolean)){
       const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd'),detail=doc.createElement('small');
@@ -382,7 +510,14 @@ export function simplifyPaneReading(doc) {
     const concentration=heads.length===4&&/IB 视图标的/.test(heads[0].textContent)&&/余量/.test(heads[3].textContent);
     if(!exposure&&!concentration)continue;
     move(2,'风险逐项原始口径',[table.cloneNode(true)]);
-    for(const row of [...table.querySelectorAll('tbody tr')]){
+    // The source table ends with aggregate formula rows. Rank only the
+    // identity-bound holding rows; the aggregate remains in the KPI/AI strip.
+    const sourceRows=[...table.querySelectorAll(exposure?'tbody tr[data-ai-risk-row]':'tbody tr')];
+    const exposureGroups=exposure?groupAiExposureRows(sourceRows.map(row=>({
+      node:row,identity:row.children[0]?.textContent.trim(),marketValue:row.children[1]?.textContent.trim(),
+      coefficient:row.children[2]?.textContent.trim(),contribution:row.children[3]?.textContent.trim(),
+    }))):null;
+    for(const row of sourceRows){
       const cells=[...row.children];if(cells.length!==4)continue;
       const identity=cells[0].textContent.trim(),match=identity.match(/^(IB-HK|Schwab-HK|Webull)\s+(\S+)/);
       const left=doc.createElement('td'),right=doc.createElement('td');
@@ -394,6 +529,26 @@ export function simplifyPaneReading(doc) {
     }
     const h1=doc.createElement('th'),h2=doc.createElement('th');h1.textContent=exposure?'标的 / 系数':'标的 / 市值 USD';h2.textContent=exposure?'计入 USD / 市值':'占比 / 参考线';
     heads[0].parentElement.replaceChildren(h1,h2);table.classList.add('mobile-risk-table');
+    if(exposureGroups){
+      const tiers=doc.createElement('div');tiers.className='ai-risk-tiers';tiers.setAttribute('aria-label','AI 压力敞口按系数分档，档内按压力市值排序');
+      const makeTable=items=>{
+        const wrap=doc.createElement('div');wrap.className='tblwrap';
+        const ranked=doc.createElement('table');ranked.className='mobile-risk-table';
+        const thead=doc.createElement('thead'),header=doc.createElement('tr'),left=doc.createElement('th'),right=doc.createElement('th');
+        left.textContent='标的 / 系数';right.textContent='压力市值 / 持仓市值';header.append(left,right);thead.append(header);ranked.append(thead);
+        const body=doc.createElement('tbody');items.forEach(item=>body.append(item.node));ranked.append(body);wrap.append(ranked);return wrap;
+      };
+      for(const group of exposureGroups){
+        const section=doc.createElement('section');section.className='ai-coeff-tier';section.dataset.band=group.key;
+        const title=doc.createElement('h3'),name=doc.createElement('span'),range=doc.createElement('small');
+        name.textContent=group.label;range.textContent=`${group.range} · ${group.items.length} 只`;title.append(name,range);section.append(title,makeTable(group.items.slice(0,3)));
+        if(group.items.length>3){
+          const fold=doc.createElement('details'),summary=doc.createElement('summary');summary.textContent=`其余 ${group.items.length-3} 只`;fold.append(summary,makeTable(group.items.slice(3)));section.append(fold);
+        }
+        tiers.append(section);
+      }
+      table.parentElement.replaceWith(tiers);continue;
+    }
     const rows=[...table.querySelectorAll('tbody tr')];
     if(rows.length>5){
       const fold=doc.createElement('details'),heading=doc.createElement('summary');heading.textContent=`其余明细（${rows.length-5} 行）`;fold.append(heading);
