@@ -148,6 +148,42 @@ export function familySingleStockConcentration(fact,denominatorCents) {
   return {symbol:'GOOG',percent:Number(percent),label:`GOOG ${percent}%`,amount:match[1]};
 }
 
+// The legacy published report does not yet carry assetType on every risk row.
+// Keep that compatibility path fail-closed: AUTO may only classify a verified
+// ordinary stock, while older REG/WU/DELEG rows must name an already-reviewed
+// ordinary-stock symbol. New reports may state STK directly.
+const REVIEWED_ORDINARY_STOCKS=new Set([
+  'AAOI','APO','AVGO','BE','GOOG','GOOGL','IREN','KKR','META','MRVL','MSFT','ORCL','TSEM','TSLA','VST',
+]);
+const normalizeConcentrationSymbol=value=>String(value??'').trim().toUpperCase().replace(/^BRK[./-]B$/,'BRK.B');
+const moneyFromCents=value=>{
+  const cents=BigInt(value),whole=(cents/100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,','),fraction=(cents%100n).toString().padStart(2,'0');
+  return `${whole}.${fraction}`;
+};
+
+export function familyOrdinaryConcentrations(rows,denominatorCents) {
+  const denominator=String(denominatorCents??'').trim();
+  if(!Array.isArray(rows)||!/^\d+$/.test(denominator)||denominator==='0')return [];
+  const base=BigInt(denominator),totals=new Map();
+  for(const row of rows){
+    if(!row||row.status!=='classified'||!/^\d+$/.test(String(row.marketValueCents??'')))continue;
+    const symbol=normalizeConcentrationSymbol(row.symbol),namespace=String(row.namespace??'').trim().toUpperCase();
+    if(!/^[A-Z0-9.]+$/.test(symbol)||symbol==='BRK.B')continue;
+    const assetType=String(row.assetType??'').trim().toUpperCase();
+    const ordinary=assetType?assetType==='STK':namespace==='AUTO'||REVIEWED_ORDINARY_STOCKS.has(symbol);
+    if(!ordinary)continue;
+    const cents=BigInt(row.marketValueCents);if(cents<=0n)continue;
+    const key=symbol==='GOOGL'?'GOOG':symbol;
+    totals.set(key,(totals.get(key)||0n)+cents);
+  }
+  return [...totals].flatMap(([symbol,cents])=>{
+    const hundredths=(cents*10000n+base/2n)/base;
+    if(hundredths<=100n)return [];
+    const percent=Number(hundredths)/100,label=symbol==='GOOG'?'GOOG / GOOGL':symbol;
+    return [{symbol,label,percent,amount:moneyFromCents(cents),marketValueCents:String(cents)}];
+  }).sort((a,b)=>b.percent-a.percent||a.label.localeCompare(b.label));
+}
+
 export function cashRiskSummary(text) {
   const match=String(text??'').trim().match(/^(\$[\d,]+(?:\.\d+)?)\s*·\s*占 NAV\s*(\d+(?:\.\d+)?%)$/);
   return match?{label:'IB 现金',value:match[1],detail:`占 NAV ${match[2]}`}:null;
@@ -170,16 +206,21 @@ function splitConcentrationAndCash(doc) {
     .filter(card=>card.querySelector(':scope > h2')?.textContent.trim()==='② 集中度与现金（IB 账户内）');
   const kpi=[...doc.querySelectorAll('.kpis .kpi')]
     .find(item=>item.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
-  const decision=doc.querySelector('[data-decision-id="D-20260829-GOOG-FAMILY-LIMIT"]');
-  if(cards.length!==1||!kpi||!decision)return;
+  if(cards.length!==1||!kpi)return;
   const table=cards[0].querySelector(':scope > .tblwrap > table');
   const heads=table?[...table.querySelectorAll('thead th')].map(cell=>cell.textContent.trim()):[];
   const rows=table?[...table.querySelectorAll('tbody tr')]:[];
   if(JSON.stringify(heads)!==JSON.stringify(['项目','本轮数值'])||rows.length!==3)return;
   const labels=rows.map(row=>row.children[0]?.textContent.trim());
   if(!/^最大单仓 /.test(labels[0]||'')||labels[1]!=='IB 现金'||labels[2]!=='已用保证金')return;
-  const concentration=familySingleStockConcentration(decision.textContent,kpi.getAttribute('data-ai-kpi-denominator-cents'));
-  if(!concentration)return;
+  const concentrationRows=[...doc.querySelectorAll('.pane.p2 tr[data-ai-risk-row]')].map(row=>({
+    symbol:row.getAttribute('data-ai-risk-symbol'),namespace:row.getAttribute('data-ai-namespace'),
+    status:row.getAttribute('data-ai-status'),assetType:row.getAttribute('data-ai-asset-type'),
+    marketValueCents:row.getAttribute('data-ai-market-value-cents'),
+  }));
+  const concentrations=familyOrdinaryConcentrations(concentrationRows,kpi.getAttribute('data-ai-kpi-denominator-cents'));
+  if(!concentrations.length)return;
+  const concentration=concentrations[0];
 
   const card=cards[0],heading=card.querySelector(':scope > h2');heading.textContent='单票集中度';
   card.setAttribute('data-family-single-stock',concentration.label);
@@ -189,18 +230,23 @@ function splitConcentrationAndCash(doc) {
   if(oldBrief)sourceBody.append(oldBrief);sourceBody.append(table.parentElement);
   if(oldDetails){const oldBody=oldDetails.querySelector(':scope > .dbody');if(oldBody)sourceBody.append(...oldBody.children);oldDetails.remove();}
 
-  const brief=doc.createElement('div');brief.className=`brief-signal ${concentration.percent<5?'normal':'attention'}`;
-  const state=doc.createElement('span');state.className='signal-label';state.textContent=concentration.percent<5?'✓ 参考线内':'! 超出参考线';
-  const headline=doc.createElement('p'),strong=doc.createElement('b');strong.textContent=`${concentration.symbol} 三账户 ${concentration.percent.toFixed(2)}%`;headline.append(strong);
-  const action=doc.createElement('p');action.textContent='除 BRK.B 外最大';brief.append(state,headline,action);
+  const overLine=concentrations.some(item=>item.percent>=5);
+  const brief=doc.createElement('div');brief.className=`brief-signal ${overLine?'attention':'normal'}`;
+  const state=doc.createElement('span');state.className='signal-label';state.textContent=overLine?'! 有标的超过 5%':'✓ 均低于 5%';
+  const headline=doc.createElement('p'),strong=doc.createElement('b');strong.textContent=`${concentrations.length} 只超过 1%`;headline.append(strong);
+  const action=doc.createElement('p');action.textContent='三账户合计 · 不含 BRK.B';brief.append(state,headline,action);
   const compact=doc.createElement('table');compact.className='mobile-risk-table';
   const compactHead=doc.createElement('thead'),headRow=doc.createElement('tr'),leftHead=doc.createElement('th'),rightHead=doc.createElement('th');
   leftHead.textContent='标的 / 市值 USD';rightHead.textContent='占比 / 参考线';headRow.append(leftHead,rightHead);compactHead.append(headRow);
-  const compactBody=doc.createElement('tbody'),compactRow=doc.createElement('tr'),left=doc.createElement('td'),right=doc.createElement('td');
-  const leftName=doc.createElement('strong'),leftValue=doc.createElement('small'),rightValue=doc.createElement('strong'),rightNote=doc.createElement('small');
-  leftName.textContent='GOOG / GOOGL';leftValue.textContent=`市值 $${concentration.amount}`;left.append(leftName,leftValue);
-  rightValue.textContent=`${concentration.percent.toFixed(2)}% / 5%`;rightNote.textContent='家庭三账户';right.append(rightValue,rightNote);
-  compactRow.append(left,right);compactBody.append(compactRow);compact.append(compactHead,compactBody);
+  const compactBody=doc.createElement('tbody');
+  for(const item of concentrations){
+    const compactRow=doc.createElement('tr'),left=doc.createElement('td'),right=doc.createElement('td');
+    const leftName=doc.createElement('strong'),leftValue=doc.createElement('small'),rightValue=doc.createElement('strong'),rightNote=doc.createElement('small');
+    leftName.textContent=item.label;leftValue.textContent=`市值 $${item.amount}`;left.append(leftName,leftValue);
+    rightValue.textContent=`${item.percent.toFixed(2)}% / 5%`;rightNote.textContent='家庭三账户';right.append(rightValue,rightNote);
+    compactRow.append(left,right);compactBody.append(compactRow);
+  }
+  compact.append(compactHead,compactBody);
   const compactWrap=doc.createElement('div');compactWrap.className='tblwrap';compactWrap.append(compact);
   card.append(brief,compactWrap,source);
 

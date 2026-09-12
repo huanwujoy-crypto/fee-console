@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,cashRiskSummary,reserveRiskSummary} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -81,6 +81,25 @@ test('current family single-stock value is derived exactly from the published fa
  const fact='本期三账户 GOOG/GOOGL：IB 220.00 股 74,082.80 USD（盘中）、Schwab-HK GOOGL 302.00 股 102,447.46 USD、Webull GOOG 360.00 股 121,217.40 USD，合计 297,747.66 USD；阈值与执行口径不变。';
  assert.deepEqual(familySingleStockConcentration(fact,'618529884'),{symbol:'GOOG',percent:4.81,label:'GOOG 4.81%',amount:'297,747.66'});
  for(const [bad,denominator] of [['其它事实','618529884'],[fact,''],[fact,'0'],[fact,'not-a-number']])assert.equal(familySingleStockConcentration(bad,denominator),null);
+});
+test('family concentration lists every reviewed ordinary stock above one percent, grouped and sorted',()=>{
+ const classified=(symbol,marketValueCents,namespace='REG',extra={})=>({symbol,marketValueCents,namespace,status:'classified',...extra});
+ const rows=[
+  classified('GOOG','7407730'),classified('GOOGL','10244746'),classified('GOOG','12121740'),
+  classified('META','6532200'),classified('META','15677280'),classified('TSLA','14205165'),classified('TSLA','619200'),
+  classified('MSTR','10643100','AUTO'),classified('MRVL','7087800','WU'),classified('BE','6860500','DELEG'),
+  classified('APO','6466750'),classified('KKR','6112500'),classified('MXUS','110700800'),
+  classified('BRK/B','22834125','AUTO'),classified('BRK.B','7611375'),classified('UNKNOWN','7000000'),
+  classified('NOT-A-STOCK','7000000','AUTO',{assetType:'ETF'}),
+  {...classified('VST','9999999','DELEG'),status:'excluded'},
+ ];
+ assert.deepEqual(familyOrdinaryConcentrations(rows,'618529884').map(item=>[item.label,item.amount,item.percent]),[
+  ['GOOG / GOOGL','297,742.16',4.81],['META','222,094.80',3.59],['TSLA','148,243.65',2.4],
+  ['MSTR','106,431.00',1.72],['MRVL','70,878.00',1.15],['BE','68,605.00',1.11],['APO','64,667.50',1.05],
+ ]);
+ assert.deepEqual(familyOrdinaryConcentrations([], '618529884'),[]);
+ assert.deepEqual(familyOrdinaryConcentrations(rows, '0'),[]);
+ assert.deepEqual(familyOrdinaryConcentrations([classified('NEWCO','7000000','REG',{assetType:'STK'})], '618529884').map(item=>item.label),['NEWCO']);
 });
 test('Thursday-style risk cards copy verified cash values without recomputing them',()=>{
  assert.deepEqual(cashRiskSummary('$556,709 · 占 NAV 11.07%'),{label:'IB 现金',value:'$556,709',detail:'占 NAV 11.07%'});
