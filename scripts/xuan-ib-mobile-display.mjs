@@ -20,6 +20,9 @@ export const MOBILE_READING_CSS = `
 .mobile-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.mobile-metrics div{padding:10px;background:var(--bg);border-radius:10px;min-width:0}.mobile-metrics dt{font-size:12px;color:var(--mut)}.mobile-metrics dd{margin:5px 0 0;font-weight:750;font-size:16px;white-space:nowrap}.mobile-metric-caveat{font-size:12px!important;color:#9a6500}
 .mobile-risk-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px 12px;margin:10px 0;padding:12px;background:var(--bg);border-radius:12px;font-variant-numeric:tabular-nums}
 .mobile-risk-summary dt{font-size:13px;color:var(--mut)}.mobile-risk-summary dd{margin:0;font-size:22px;font-weight:800;white-space:nowrap}
+.thursday-risk-summary{border:1px solid var(--line);border-left:4px solid var(--accent,#2563eb);background:var(--bg)}
+.thursday-risk-summary .risk-summary-detail{grid-column:1/-1;margin:0;color:var(--mut);font-size:12px;line-height:1.35}
+.pane.p2>section.card>h2{margin-bottom:4px}.pane.p2>section.card{margin-bottom:14px}
 .mobile-risk-table{table-layout:fixed!important;min-width:0!important;width:100%!important}
 .mobile-risk-table th:first-child,.mobile-risk-table td:first-child{width:42%!important;text-align:left}
 .mobile-risk-table td:last-child{width:58%;text-align:right;white-space:nowrap!important}
@@ -134,6 +137,18 @@ export function familySingleStockConcentration(fact,denominatorCents) {
   return {symbol:'GOOG',percent:Number(percent),label:`GOOG ${percent}%`,amount:match[1]};
 }
 
+export function cashRiskSummary(text) {
+  const match=String(text??'').trim().match(/^(\$[\d,]+(?:\.\d+)?)\s*·\s*占 NAV\s*(\d+(?:\.\d+)?%)$/);
+  return match?{label:'IB 现金',value:match[1],detail:`占 NAV ${match[2]}`}:null;
+}
+
+function createThursdayRiskSummary(doc,{label,value,detail=''}) {
+  const summary=doc.createElement('dl');summary.className='mobile-risk-summary thursday-risk-summary';
+  const name=doc.createElement('dt'),amount=doc.createElement('dd');name.textContent=label;amount.textContent=value;summary.append(name,amount);
+  if(detail){const note=doc.createElement('small');note.className='risk-summary-detail';note.textContent=detail;summary.append(note);}
+  return summary;
+}
+
 function splitConcentrationAndCash(doc) {
   const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
     .filter(card=>card.querySelector(':scope > h2')?.textContent.trim()==='② 集中度与现金（IB 账户内）');
@@ -154,17 +169,32 @@ function splitConcentrationAndCash(doc) {
   card.setAttribute('data-family-single-stock',concentration.label);
   card.querySelector(':scope > .brief-signal')?.remove();
   card.querySelector(':scope > details')?.remove();
-  const summary=doc.createElement('dl');summary.className='mobile-risk-summary';
-  const name=doc.createElement('dt'),value=doc.createElement('dd');name.textContent='除 BRK.B 外最大';value.textContent=concentration.label;
-  summary.setAttribute('aria-label',`除 BRK.B 外最大单票集中度 ${concentration.label}`);summary.append(name,value);
+  const summary=createThursdayRiskSummary(doc,{label:'除 BRK.B 外最大',value:concentration.label,detail:'家庭三账户'});
+  summary.setAttribute('aria-label',`除 BRK.B 外最大单票集中度 ${concentration.label}`);
   card.querySelector(':scope > .sub')?.after(summary);
   table.parentElement.remove();
 
   const cash=doc.createElement('section');cash.className='card';cash.setAttribute('data-mobile-risk-cash','1');
   const cashHeading=doc.createElement('h2');cashHeading.textContent='现金';cash.append(cashHeading);
+  const cashValue=cashRiskSummary(rows[1].children[1]?.textContent);
+  if(cashValue)cash.append(createThursdayRiskSummary(doc,cashValue));
   const cashTable=table.cloneNode(false),thead=table.querySelector('thead').cloneNode(true),tbody=doc.createElement('tbody');
-  rows.slice(1).forEach(row=>tbody.append(row.cloneNode(true)));cashTable.append(thead,tbody);
+  rows.slice(cashValue?2:1).forEach(row=>tbody.append(row.cloneNode(true)));cashTable.append(thead,tbody);
   const wrap=doc.createElement('div');wrap.className='tblwrap';wrap.append(cashTable);cash.append(wrap);card.after(cash);
+}
+
+function addThursdayAiRiskSummary(doc) {
+  const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
+    .filter(card=>/^AI 压力敞口(?:$| ·)/.test(card.querySelector(':scope > h2')?.textContent.trim()||''));
+  const kpis=[...doc.querySelectorAll('.kpis .kpi')]
+    .filter(kpi=>kpi.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
+  if(cards.length!==1||kpis.length!==1||cards[0].querySelector(':scope > .thursday-risk-summary'))return;
+  const value=kpis[0].querySelector('.big')?.textContent.trim();
+  if(!/^\d+(?:\.\d+)?%$/.test(value||''))return;
+  const summary=createThursdayRiskSummary(doc,{label:'中情景',value,detail:'三账户含现金'});
+  summary.setAttribute('aria-label',`AI 压力中情景 ${value}`);
+  const sub=cards[0].querySelector(':scope > .sub');
+  (sub||cards[0].querySelector(':scope > h2'))?.after(summary);
 }
 
 function addConcentrationToAiKpi(doc) {
@@ -243,6 +273,10 @@ export function simplifyPaneReading(doc) {
   for(const context of doc.querySelectorAll('.pane.p1 .holdings-source-context'))context.remove();
   // Restore the three distinct risk meanings before moving their source notes.
   splitConcentrationAndCash(doc);
+  // Preserve Thursday's easy-to-scan rhythm: title, current conclusion, detail.
+  // Values are copied from the already verified report; no browser-side risk
+  // ratio is calculated here.
+  addThursdayAiRiskSummary(doc);
   // Read the agreeing source KPI before its explanatory subtree is moved.
   addConcentrationToAiKpi(doc);
   compactAiRiskStrip(doc,move);

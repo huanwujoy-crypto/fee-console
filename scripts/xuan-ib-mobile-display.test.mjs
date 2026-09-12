@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,largestOrdinaryConcentration,familySingleStockConcentration} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,largestOrdinaryConcentration,familySingleStockConcentration,cashRiskSummary} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -73,6 +73,12 @@ test('current family single-stock value is derived exactly from the published fa
  const fact='本期三账户 GOOG/GOOGL：IB 220.00 股 74,082.80 USD（盘中）、Schwab-HK GOOGL 302.00 股 102,447.46 USD、Webull GOOG 360.00 股 121,217.40 USD，合计 297,747.66 USD；阈值与执行口径不变。';
  assert.deepEqual(familySingleStockConcentration(fact,'618529884'),{symbol:'GOOG',percent:4.81,label:'GOOG 4.81%',amount:'297,747.66'});
  for(const [bad,denominator] of [['其它事实','618529884'],[fact,''],[fact,'0'],[fact,'not-a-number']])assert.equal(familySingleStockConcentration(bad,denominator),null);
+});
+test('Thursday-style risk cards copy verified cash values without recomputing them',()=>{
+ assert.deepEqual(cashRiskSummary('$556,709 · 占 NAV 11.07%'),{label:'IB 现金',value:'$556,709',detail:'占 NAV 11.07%'});
+ assert.equal(cashRiskSummary('$556,709 · 未取得'),null);
+ assert.match(MOBILE_READING_CSS,/\.thursday-risk-summary/);
+ assert.match(MOBILE_READING_CSS,/\.pane\.p2>section\.card/);
 });
 test('AI strip preserves unfamiliar, missing, qualified, mismatched and genuine action states',()=>{
  for(const patch of [{title:'单票集中度'},{title:'历史 AI 压力敞口'},{state:'brief-signal normal'},
