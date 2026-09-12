@@ -37,6 +37,24 @@ const realDate = value => DATE.test(String(value ?? ''))
 // number or presented as the session's result.
 const INSTANT = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}) HKT$/;
 
+// Rendering and the publication guard must use one formatter. JavaScript's
+// Intl formatter and Number#toFixed do not agree at binary midpoint values
+// such as 2.195, which previously let the page show 2.2 while the guard
+// expected 2.19 and blocked an otherwise valid report.
+const PUBLISHED_PERCENT_FORMAT = new Intl.NumberFormat('en-US', {
+  maximumFractionDigits: 2,
+  useGrouping: false,
+});
+
+export function formatPublishedDailyChangePct(value) {
+  if (!num(value)) fail('INVALID_PUBLISHED_PERCENTAGE');
+  const compact = PUBLISHED_PERCENT_FORMAT.format(value);
+  // A value below the 1% section boundary must never display as exactly 1%.
+  // Keep its validated source precision only in this boundary case.
+  if (Math.abs(value) < 1 && Math.abs(Number(compact)) >= 1) return String(value);
+  return compact;
+}
+
 export const DAILY_CHANGE_METHODS = Object.freeze(['window-v1', 'session-pnl-v1', 'am-session-pnl-v1']);
 // Display keeps two decimals, so the stored value keeps four and no more: a
 // wider float would imply a precision the sources do not publish.
@@ -594,7 +612,7 @@ export function validatePublishedDailyChangeHtml(html, { edition = null, dataDat
     // that corroborated it. Without that attribute a zero is still the
     // indistinguishable case and is refused exactly as before.
     if (!num(exactPct) || (exactPct === 0 && corroboratedBy === null)
-      || Number(exactPct.toFixed(2)) !== shownPct) {
+      || Number(formatPublishedDailyChangePct(exactPct)) !== shownPct) {
       fail('PUBLISHED_VALUE_MISMATCH');
     }
   }
