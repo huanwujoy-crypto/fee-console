@@ -237,6 +237,10 @@ export function simplifyPaneReading(doc) {
     nodes.forEach(n=>section.append(n));target.body.append(section);
   };
   compactHoldingsNote(doc);
+  // The responsive holdings cards already retain the count and each position.
+  // Remove their duplicated source-context copy from the main phone view; the
+  // canonical source paragraphs and the concise holdings note remain folded.
+  for(const context of doc.querySelectorAll('.pane.p1 .holdings-source-context'))context.remove();
   // Restore the three distinct risk meanings before moving their source notes.
   splitConcentrationAndCash(doc);
   // Read the agreeing source KPI before its explanatory subtree is moved.
