@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -126,6 +126,21 @@ test('cash dashboard derives four concise metrics only from a reconciled source 
  assert.equal(cashDashboardMetrics({...input,planText:'规划数据未取得'}),null);
  assert.equal(cashDashboardMetrics({...input,holdings:{...input.holdings,TLT:null}}),null);
  assert.match(MOBILE_READING_CSS,/\.cash-dashboard\{display:grid/);
+});
+test('AI exposure groups by coefficient and ranks each band by pressure value then market value',()=>{
+ const row=(symbol,coefficient,contribution,marketValue)=>({symbol,coefficient,contribution,marketValue});
+ const grouped=groupAiExposureRows([
+  row('H1','80.00%','$90','$100'),row('H2','100.00%','$120','$120'),row('H3','80.00%','$90','$110'),row('H4','80.00%','$80','$200'),
+  row('M1','60.00%','$60','$100'),row('M2','40.00%','$80','$200'),row('L1','25.00%','$25','$100'),
+  row('ZERO','0.00%','$0','$50'),row('NA','不适用','$0','$70'),
+ ]);
+ assert.deepEqual(grouped.map(group=>[group.key,group.items.map(item=>item.symbol)]),[
+  ['high',['H2','H3','H1','H4']],['medium',['M2','M1']],['low',['L1']],['excluded',['NA','ZERO']],
+ ]);
+ assert.equal(groupAiExposureRows([{coefficient:'未知',contribution:'$0',marketValue:'$1'}]),null);
+ assert.equal(groupAiExposureRows([]),null);
+ assert.match(MOBILE_READING_CSS,/\.ai-risk-tiers\{display:grid/);
+ assert.match(fs.readFileSync(new URL('./xuan-ib-mobile-display.mjs',import.meta.url),'utf8'),/tbody tr\[data-ai-risk-row\]/);
 });
 test('AI strip preserves unfamiliar, missing, qualified, mismatched and genuine action states',()=>{
  for(const patch of [{title:'单票集中度'},{title:'历史 AI 压力敞口'},{state:'brief-signal normal'},

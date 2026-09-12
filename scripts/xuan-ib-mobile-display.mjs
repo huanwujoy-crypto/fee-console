@@ -35,6 +35,10 @@ export const MOBILE_READING_CSS = `
 .ai-risk-strip>.ai-risk-current{flex:1.35 1 6rem;background:var(--bg);border-radius:11px}
 .ai-risk-strip .ai-risk-current dt{color:var(--ink);font-weight:650}.ai-risk-strip .ai-risk-current dd{font-size:1.5rem;font-weight:800;color:var(--warn,#9a6500)}
 .ai-risk-strip[data-band="normal"] .ai-risk-current dd{color:#15803d}.ai-risk-strip[data-band="alert"] .ai-risk-current dd{color:#b42318}
+.ai-risk-tiers{display:grid;gap:12px;margin-top:12px}.ai-coeff-tier{border:1px solid var(--line);border-left:4px solid var(--tier-accent,#2563eb);border-radius:12px;padding:9px;background:var(--bg)}
+.ai-coeff-tier[data-band="high"]{--tier-accent:#b42318}.ai-coeff-tier[data-band="medium"]{--tier-accent:#b7791f}.ai-coeff-tier[data-band="low"]{--tier-accent:#2563eb}.ai-coeff-tier[data-band="excluded"]{--tier-accent:#8a8a8a}
+.ai-coeff-tier>h3{display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin:0 4px 5px;font-size:15px}.ai-coeff-tier>h3 small{color:var(--mut);font-size:11px;font-weight:500;white-space:nowrap}
+.ai-coeff-tier>.tblwrap{margin:0}.ai-coeff-tier>details{margin-top:5px}.ai-coeff-tier>details>summary{font-size:13px;padding:8px 4px}.ai-coeff-tier .mobile-risk-table th,.ai-coeff-tier .mobile-risk-table td{padding:8px 5px!important}
 .cash-reserve-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;font-variant-numeric:tabular-nums}
 .cash-reserve-strip>div{padding:12px;border:1px solid var(--line);border-left:4px solid var(--accent,#2563eb);border-radius:12px;background:var(--bg);min-width:0}
 .cash-reserve-strip dt{font-size:13px;color:var(--mut)}.cash-reserve-strip dd{margin:4px 0 0;font-size:20px;font-weight:800;white-space:nowrap}.cash-reserve-strip small{display:block;margin-top:4px;color:var(--mut);font-size:12px;white-space:nowrap}
@@ -222,6 +226,28 @@ export function cashDashboardMetrics({planText,ibCashText,ibNavText,holdings}={}
     ammo:roundedMoney(ammo),themePercent:`${fixedHundredths(themePercentHundredths)}%`,themeAmount:roundedMoney(theme),
     coverageState:coverageHundredths<100n?'alert':'normal',themeState:themePercentHundredths>700n?'alert':'normal',
   };
+}
+
+export function groupAiExposureRows(rows) {
+  if(!Array.isArray(rows)||!rows.length)return null;
+  const definitions=[
+    {key:'high',label:'高系数',range:'≥80%'},{key:'medium',label:'中系数',range:'40–<80%'},
+    {key:'low',label:'低系数',range:'>0–<40%'},{key:'excluded',label:'未计入',range:'0%／不适用'},
+  ];
+  const buckets=new Map(definitions.map(group=>[group.key,[]]));
+  for(const [index,row] of rows.entries()){
+    const contributionCents=centsFromMoney(row?.contribution),marketValueCents=centsFromMoney(row?.marketValue);
+    if(contributionCents===null||marketValueCents===null)return null;
+    const coefficientText=String(row?.coefficient??'').trim(),match=coefficientText.match(/^(\d+(?:\.\d+)?)%$/);
+    let coefficient=null,key='excluded';
+    if(match){coefficient=Number(match[1]);if(!Number.isFinite(coefficient)||coefficient<0||coefficient>100)return null;
+      key=coefficient>=80?'high':coefficient>=40?'medium':coefficient>0?'low':'excluded';
+    }else if(!/^(?:不适用|未计入|—|-)$/.test(coefficientText))return null;
+    buckets.get(key).push({...row,index,coefficient,contributionCents,marketValueCents});
+  }
+  const descending=(a,b)=>a.contributionCents!==b.contributionCents?(a.contributionCents>b.contributionCents?-1:1)
+    :a.marketValueCents!==b.marketValueCents?(a.marketValueCents>b.marketValueCents?-1:1):a.index-b.index;
+  return definitions.map(group=>({...group,items:buckets.get(group.key).sort(descending)})).filter(group=>group.items.length);
 }
 
 function createThursdayRiskSummary(doc,{label,value,detail=''}) {
@@ -484,7 +510,14 @@ export function simplifyPaneReading(doc) {
     const concentration=heads.length===4&&/IB 视图标的/.test(heads[0].textContent)&&/余量/.test(heads[3].textContent);
     if(!exposure&&!concentration)continue;
     move(2,'风险逐项原始口径',[table.cloneNode(true)]);
-    for(const row of [...table.querySelectorAll('tbody tr')]){
+    // The source table ends with aggregate formula rows. Rank only the
+    // identity-bound holding rows; the aggregate remains in the KPI/AI strip.
+    const sourceRows=[...table.querySelectorAll(exposure?'tbody tr[data-ai-risk-row]':'tbody tr')];
+    const exposureGroups=exposure?groupAiExposureRows(sourceRows.map(row=>({
+      node:row,identity:row.children[0]?.textContent.trim(),marketValue:row.children[1]?.textContent.trim(),
+      coefficient:row.children[2]?.textContent.trim(),contribution:row.children[3]?.textContent.trim(),
+    }))):null;
+    for(const row of sourceRows){
       const cells=[...row.children];if(cells.length!==4)continue;
       const identity=cells[0].textContent.trim(),match=identity.match(/^(IB-HK|Schwab-HK|Webull)\s+(\S+)/);
       const left=doc.createElement('td'),right=doc.createElement('td');
@@ -496,6 +529,26 @@ export function simplifyPaneReading(doc) {
     }
     const h1=doc.createElement('th'),h2=doc.createElement('th');h1.textContent=exposure?'标的 / 系数':'标的 / 市值 USD';h2.textContent=exposure?'计入 USD / 市值':'占比 / 参考线';
     heads[0].parentElement.replaceChildren(h1,h2);table.classList.add('mobile-risk-table');
+    if(exposureGroups){
+      const tiers=doc.createElement('div');tiers.className='ai-risk-tiers';tiers.setAttribute('aria-label','AI 压力敞口按系数分档，档内按压力市值排序');
+      const makeTable=items=>{
+        const wrap=doc.createElement('div');wrap.className='tblwrap';
+        const ranked=doc.createElement('table');ranked.className='mobile-risk-table';
+        const thead=doc.createElement('thead'),header=doc.createElement('tr'),left=doc.createElement('th'),right=doc.createElement('th');
+        left.textContent='标的 / 系数';right.textContent='压力市值 / 持仓市值';header.append(left,right);thead.append(header);ranked.append(thead);
+        const body=doc.createElement('tbody');items.forEach(item=>body.append(item.node));ranked.append(body);wrap.append(ranked);return wrap;
+      };
+      for(const group of exposureGroups){
+        const section=doc.createElement('section');section.className='ai-coeff-tier';section.dataset.band=group.key;
+        const title=doc.createElement('h3'),name=doc.createElement('span'),range=doc.createElement('small');
+        name.textContent=group.label;range.textContent=`${group.range} · ${group.items.length} 只`;title.append(name,range);section.append(title,makeTable(group.items.slice(0,3)));
+        if(group.items.length>3){
+          const fold=doc.createElement('details'),summary=doc.createElement('summary');summary.textContent=`其余 ${group.items.length-3} 只`;fold.append(summary,makeTable(group.items.slice(3)));section.append(fold);
+        }
+        tiers.append(section);
+      }
+      table.parentElement.replaceWith(tiers);continue;
+    }
     const rows=[...table.querySelectorAll('tbody tr')];
     if(rows.length>5){
       const fold=doc.createElement('details'),heading=doc.createElement('summary');heading.textContent=`其余明细（${rows.length-5} 行）`;fold.append(heading);
