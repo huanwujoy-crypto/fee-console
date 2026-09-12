@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.8.2">
+<meta name="fee-console-build" content="4.8.3">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -209,6 +209,8 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <p class="hint">填写或导入已核对的基金名称、成立日与初始份额。档案加密保存在本机，生成只读链接时一并带入。</p>
     <details class="fund-method"><summary>直接填写基金档案</summary>
     <form id="fundProfileForm" class="fund-form" autocomplete="off">
+      <button class="btn" id="fundProfileFill" type="button">填入当前档案以更正</button>
+      <p class="hint" style="margin-top:8px">更正成立资料会重算投资人的历史股份市值显示。实际增资或股份转让需要事件流水，当前尚不支持。</p>
       <div class="grid">
         <div class="full"><label class="f" for="fundFormName">基金名称</label><input id="fundFormName" maxlength="120" required></div>
         <div class="full"><label class="f" for="fundFormManager">投资管理人</label><input id="fundFormManager" maxlength="120" required></div>
@@ -751,7 +753,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.8.2";
+const UI_VERSION_LABEL=" · v4.8.3";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -875,7 +877,7 @@ const fundInvestorCore=createFundInvestorCore();
 
 /* fund-profile-storage:start */
 const FUND_PROFILE_KEY="feeConsole.fundProfile.v1";
-let _fundProfileCache=null,_fundProfileCipher="",_fundSelection="",_fundProfileMessage="",_fundImportGeneration=0;
+let _fundProfileCache=null,_fundProfileCipher="",_fundSelection="",_fundProfileMessage="",_fundImportGeneration=0,_fundFillGeneration=0;
 async function readFundProfile(){
   const gid=cfg(K.gid),keyValue=cfg(K.key),raw=HASH?.fund||cfg(FUND_PROFILE_KEY);
   if(!raw||!gid||!keyValue){_fundProfileCache=null;_fundProfileCipher="";return {profile:null,reason:null};}
@@ -918,6 +920,21 @@ async function saveFundProfileForm(){
     inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
     investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
   return saveFundProfile(()=>profile);
+}
+async function fillFundProfileForm(){
+  const ticket=++_fundFillGeneration,importTicket=_fundImportGeneration,epoch=_sourceEpoch,gid=cfg(K.gid),keyValue=cfg(K.key),raw=HASH?.fund||cfg(FUND_PROFILE_KEY);
+  const message=text=>{_fundProfileMessage=text;document.getElementById("fundProfileNotice").textContent=text;};
+  if(_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)||!gid||!keyValue){message("先恢复并核验原账本，再填入当前档案");return false;}
+  try{
+    const reading=readFundProfile(),readTask=_fundProfileCache,loaded=await reading;
+    if(ticket!==_fundFillGeneration)return false;
+    if(epoch!==_sourceEpoch||gid!==cfg(K.gid)||keyValue!==cfg(K.key)||importTicket!==_fundImportGeneration||readTask!==_fundProfileCache||raw!==(HASH?.fund||cfg(FUND_PROFILE_KEY))||_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)){message("来源或档案已变化，请重新填入当前档案");return false;}
+    const checked=fundInvestorCore.validateProfile(loaded.profile);if(!checked.ok){message(loaded.reason||"尚无可核验的基金档案，请先载入档案");return false;}
+    const p=checked.profile,fields={fundFormName:p.fundName,fundFormManager:p.manager,fundFormInception:p.inceptionDate,fundFormNotice:p.inceptionNoticeDate,fundFormShares:p.initialShares};
+    p.investors.forEach((investor,i)=>{const prefix="fundForm"+["A","B"][i];fields[prefix+"Id"]=investor.id;fields[prefix+"Name"]=investor.name;fields[prefix+"Shares"]=investor.shares;});
+    for(const [id,value] of Object.entries(fields))document.getElementById(id).value=String(value);
+    message("已填入当前档案；更正后请点“保存基金档案”。");return true;
+  }catch(_){if(ticket===_fundFillGeneration)message("当前档案暂无法读取，请重新载入后再试");return false;}
 }
 async function importFundProfileLink(){
   const text=document.getElementById("fundProfileLink").value.trim();
@@ -1618,6 +1635,7 @@ function ledgerInput(e){const T=e.target,k=T.dataset.k,val=T.value;if(!canEdit()
 document.body.addEventListener("input",ledgerInput);
 document.getElementById("fundProfileFile").addEventListener("change",e=>importFundProfile(e.target.files?.[0]));
 document.getElementById("fundProfileForm").addEventListener("submit",e=>{e.preventDefault();saveFundProfileForm();});
+document.getElementById("fundProfileFill").addEventListener("click",e=>{e.preventDefault();fillFundProfileForm();});
 document.getElementById("fundProfileLinkForm").addEventListener("submit",e=>{e.preventDefault();importFundProfileLink();});
 document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonthFromEvent(e);if(historyMonth){_monthHistoryYm=historyMonth;scheduleRender();return;}if(!isMgr())return;const T=e.target;
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
