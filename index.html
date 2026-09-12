@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.7.6">
+<meta name="fee-console-build" content="4.8.0">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -17,6 +17,7 @@
 body{margin:0;background:var(--plane);color:var(--ink-1);font-family:system-ui,-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;font-size:15px;line-height:1.5}
 .wrap{max-width:820px;margin:0 auto;padding:14px 14px 90px}
 header.top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+header.top>.row{flex-shrink:0}#btnRefresh{white-space:nowrap}
 h1{font-size:19px;margin:0}
 .sub{color:var(--ink-2);font-size:12px}
 .btn{background:var(--surface-1);color:var(--ink-1);border:1px solid var(--border);border-radius:10px;padding:9px 14px;font-size:15px;cursor:pointer;font-family:inherit}
@@ -154,6 +155,8 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .receipt-pending{min-height:52px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--ink-muted);font-size:13px}
 .ledger-bar{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px}.ledger-bar .row{margin-top:8px}.ledger-bar button{min-height:44px}.ledger-diff{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}.ledger-diff th,.ledger-diff td{padding:8px 5px;border-bottom:1px solid var(--grid);text-align:left;overflow-wrap:anywhere}.ledger-reason{margin:12px 0}.ledger-reason input{min-height:44px}.ledger-review-note{font-size:12px;color:var(--ink-2);line-height:1.6}
 @media(max-width:430px){.trend-note,.month-summary{font-size:11px}.month-grid{grid-template-columns:1fr}.month-grid .wide{grid-column:auto}}
+/* fund-investor-style:v1 */
+.fund-title{font-size:19px;line-height:1.4;margin:3px 0 8px;overflow-wrap:anywhere}.fund-switch{display:flex;gap:8px;margin:12px 0}.fund-switch button{flex:1;min-height:48px;overflow-wrap:anywhere}.fund-switch .on{border-color:var(--series-1);background:var(--series-1);color:white}.fund-switch .on .small{color:inherit}.fund-hero .val{font-size:30px;overflow-wrap:anywhere}.fund-chart{width:100%;display:block;height:auto}.fund-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}.fund-table th,.fund-table td{padding:9px 3px;text-align:right;border-bottom:1px solid var(--grid);overflow-wrap:anywhere}.fund-table th:first-child,.fund-table td:first-child{text-align:left}.fund-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px}.fund-meta b{display:block;font-size:15px}.fund-method{margin:10px 0 0;font-size:12px}.fund-method summary{min-height:40px;cursor:pointer}.fund-alert{border-left:3px solid var(--series-2);padding:10px 12px;background:var(--surface-1);font-size:13px;margin-bottom:12px}.fund-label{font-size:12px;color:var(--ink-2)}
 </style>
 </head>
 <body>
@@ -172,6 +175,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 
 <nav class="tabs" id="tabs">
   <button data-p="p-home" class="on">总览</button>
+  <button data-p="p-investors">投资人</button>
   <button data-p="p-fee" class="mgr">付款</button>
   <button data-p="p-set" class="mgr">设置</button>
 </nav>
@@ -194,6 +198,16 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div class="card">
     <h2>应付费用</h2>
     <div class="res" id="balBox"></div>
+  </div>
+</section>
+
+<section class="pane" id="p-investors">
+  <div id="fundProfileBox"></div>
+  <div id="fundInvestorBox"></div>
+  <div class="card"><details class="fund-method"><summary>基金档案设置</summary>
+    <p class="hint">导入已核对的基金名称、成立日与初始份额。档案加密保存在本机，生成只读链接时一并带入。</p>
+    <label class="f" for="fundProfileFile">导入基金档案文件</label><input type="file" id="fundProfileFile" accept=".json,application/json">
+    <p class="small" id="fundProfileNotice" role="status"></p><button class="btn" id="fundShare">显示基金只读链接</button></details>
   </div>
 </section>
 
@@ -708,15 +722,164 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.7.6";
+const UI_VERSION_LABEL=" · v4.8.0";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
-  const h={tok:q.get("tok")||"",gid:q.get("gid")||"",k:q.get("k")||"",seed:q.get("seed")||"",who:q.get("who")||""};
+  const h={tok:q.get("tok")||"",gid:q.get("gid")||"",k:q.get("k")||"",seed:q.get("seed")||"",who:q.get("who")||"",fund:q.get("fund")||""};
   if(h.tok)history.replaceState(null,"",location.pathname+location.search);return h;}catch(_){return null;}})();
 if(HASH){ if(HASH.k) setCfg(K.key,HASH.k); if(HASH.gid) setCfg(K.gid,HASH.gid); }
-window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
+window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
+
+/* fund-investor-core:start */
+function createFundInvestorCore() {
+  const SCHEMA = "fee-console.fund-profile.v1", DAY = 86400000;
+  const PROFILE_KEYS = ["schema", "manager", "fundName", "inceptionDate", "inceptionNoticeDate", "currency", "initialShares", "investors"];
+  const object = value => !!value && typeof value === "object" && !Array.isArray(value)
+    && [Object.prototype, null].includes(Object.getPrototypeOf(value));
+  const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
+  const text = (value, max) => typeof value === "string" && value.length > 0 && value.length <= max
+    && value.trim() === value && !/[\u0000-\u001f\u007f]/.test(value);
+  const date = value => {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const parsed = new Date(value + "T00:00:00Z");
+    return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+  };
+  const integer = value => Number.isSafeInteger(value);
+  const number = value => {
+    if (typeof value === "string" && /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/.test(value.trim())) value = Number(value);
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) throw new Error("daily amount");
+    return value;
+  };
+  function validateProfile(profile) {
+    const invalid = reason => ({ ok: false, profile: null, reason });
+    if (!exact(profile, PROFILE_KEYS) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
+    if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
+    if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
+    if (!integer(profile.initialShares) || profile.initialShares <= 0 || !Array.isArray(profile.investors) || profile.investors.length !== 2) return invalid("初始股份资料待核对");
+    const ids = new Set(); let total = 0n;
+    for (const investor of profile.investors) {
+      if (!exact(investor, ["id", "name", "shares"]) || !text(investor.name, 80) || typeof investor.id !== "string"
+        || !/^[A-Za-z][A-Za-z0-9_-]{0,15}$/.test(investor.id) || ids.has(investor.id) || !integer(investor.shares) || investor.shares <= 0) return invalid("投资人股份资料待核对");
+      ids.add(investor.id); total += BigInt(investor.shares);
+    }
+    if (total !== BigInt(profile.initialShares)) return invalid("投资人股份合计与发行股份不符");
+    return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })) }, reason: null };
+  }
+  function calculate(input = {}) {
+    const { profile, data, feeView } = object(input) ? input : {};
+    const checked = validateProfile(profile);
+    const result = { status: "pending", reason: null, profile: checked.profile, asOf: null,
+      inceptionDate: checked.profile?.inceptionDate || null, initial: null, current: null, lastProved: null,
+      points: [], flowGateDate: null, provisional: false };
+    const pending = reason => ({ ...result, reason });
+    if (!checked.ok) return pending(checked.reason);
+    if (!object(feeView) || feeView.state !== "verified") return pending("计算回执待验证，暂不提供股份估值");
+    if (!date(feeView.start) || !date(feeView.asOf) || feeView.start > feeView.asOf) return pending("计算回执日期待核对");
+    result.asOf = feeView.asOf;
+    const inception = checked.profile.inceptionDate;
+    if (inception < feeView.start || inception > feeView.asOf) return pending("基金成立日未被计算回执覆盖");
+    if (!object(feeView.benchmarkInputs) || !Array.isArray(feeView.benchmarkInputs.flows)) return pending("外部资金流证据待核对，暂不提供股份估值");
+    let flowGateDate = null;
+    for (const flow of feeView.benchmarkInputs.flows) {
+      if (!exact(flow, ["date", "amountCents"]) || !date(flow.date) || !integer(flow.amountCents)
+        || flow.date < feeView.start || flow.date > feeView.asOf) return pending("外部资金流证据待核对，暂不提供股份估值");
+      if (flow.date > inception && (!flowGateDate || flow.date < flowGateDate)) flowGateDate = flow.date;
+    }
+    // The receipt includes effective flows only. An unconfirmed or unresolved
+    // source event can still change ownership; it blocks allocation without
+    // being promoted into an economic flow or being netted against another item.
+    for (const field of ["flowsAuto", "flowsUnresolved"]) {
+      const candidates = data?.[field];
+      if (candidates !== undefined && !Array.isArray(candidates)) return pending("外部资金流候选证据待核对，暂不提供股份估值");
+      for (const event of candidates || []) {
+        if (!object(event) || !date(event.date)) return pending("外部资金流候选证据待核对，暂不提供股份估值");
+        if (event.date > inception && event.date <= feeView.asOf && (!flowGateDate || event.date < flowGateDate)) flowGateDate = event.date;
+      }
+    }
+    let daily;
+    try {
+      if (!object(data) || !Array.isArray(data.daily) || !data.daily.length) throw new Error("daily missing");
+      let previous = "";
+      daily = data.daily.map(raw => {
+        if (!object(raw) || !date(raw.d) || raw.d <= previous) throw new Error("daily order");
+        previous = raw.d;
+        // Earlier rows may contain benchmark prices only; they do not value this fund.
+        if (raw.d < inception) return { date: raw.d };
+        if (!Object.hasOwn(raw, "schwab") || !Object.hasOwn(raw, "webull")) throw new Error("daily account");
+        // Account values already include cash. Match the receipt's total-before-rounding convention.
+        const totalCents = Math.round((number(raw.schwab) + number(raw.webull)) * 100);
+        if (!integer(totalCents) || totalCents < 0) throw new Error("daily total");
+        return { date: raw.d, totalCents, provisional: !!raw.prov };
+      });
+      if (daily.at(-1).date !== feeView.asOf) throw new Error("receipt stale");
+      daily = daily.filter(point => point.date >= inception);
+      if (!daily.length || daily[0].date !== inception || daily[0].totalCents <= 0) throw new Error("inception missing");
+      for (let i = 1; i < daily.length; i++) if (Date.parse(daily[i].date) - Date.parse(daily[i - 1].date) !== DAY) throw new Error("daily gap");
+    } catch (_) { return pending("成立日至回执日期的每日总资产不完整或无效，暂不提供股份估值"); }
+    const shares = checked.profile.initialShares, denominator = BigInt(shares), initialCents = daily[0].totalCents;
+    const allocate = totalCents => {
+      // Round the first allocation half up; assign the remainder to the final
+      // investor, so allocations always reconcile to the portfolio's exact cents.
+      const numerator = BigInt(totalCents) * BigInt(checked.profile.investors[0].shares);
+      const first = Number((2n * numerator + denominator) / (2n * denominator));
+      return [first, totalCents - first];
+    };
+    const initialValues = allocate(initialCents);
+    result.points = daily.filter(point => !flowGateDate || point.date < flowGateDate).map(point => {
+      const values = allocate(point.totalCents), returnRate = point.totalCents / initialCents - 1;
+      return { ...point, unitValue: point.totalCents / 100 / shares, grossPnlCents: point.totalCents - initialCents, returnRate,
+        investors: checked.profile.investors.map((investor, i) => ({ id: investor.id, shares: investor.shares,
+          valueCents: values[i], pnlCents: values[i] - initialValues[i], returnRate })) };
+    });
+    result.initial = result.points[0]; result.lastProved = result.points.at(-1);
+    result.flowGateDate = flowGateDate;
+    result.provisional = feeView.status?.provisional === true || result.points.some(point => point.provisional);
+    if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起存在外部资金流或待核对事件；待确认认购或赎回的股份分配，当前股份市值暂不可用` };
+    return { ...result, status: "ready", current: result.lastProved };
+  }
+  return { validateProfile, calculate };
+}
+const fundInvestorCore=createFundInvestorCore();
+/* fund-investor-core:end */
+
+/* fund-profile-storage:start */
+const FUND_PROFILE_KEY="feeConsole.fundProfile.v1";
+let _fundProfileCache=null,_fundProfileCipher="",_fundSelection="",_fundProfileMessage="",_fundImportGeneration=0;
+async function readFundProfile(){
+  const gid=cfg(K.gid),keyValue=cfg(K.key),raw=HASH?.fund||cfg(FUND_PROFILE_KEY);
+  if(!raw||!gid||!keyValue){_fundProfileCache=null;_fundProfileCipher="";return {profile:null,reason:null};}
+  if(_fundProfileCache?.raw===raw&&_fundProfileCache.gid===gid&&_fundProfileCache.keyValue===keyValue)return _fundProfileCache.promise;
+  const task={raw,gid,keyValue};_fundProfileCache=task;_fundProfileCipher="";
+  task.promise=(async()=>{try{
+    if(raw.length>16000)throw new Error();const outer=JSON.parse(raw);if(outer.enc!==true||outer.v!==1||typeof outer.data!=="string")throw new Error();
+    const saved=JSON.parse(await decTxt(await keyOf(keyValue),outer.data));
+    const checked=fundInvestorCore.validateProfile(saved.profile);if(saved.gid!==gid||!checked.ok)throw new Error();
+    if(_fundProfileCache!==task||cfg(K.gid)!==gid||cfg(K.key)!==keyValue)return {profile:null,reason:"来源已变化，请重新读取"};
+    _fundProfileCipher=raw;if(HASH?.fund&&store)setCfg(FUND_PROFILE_KEY,raw);return {profile:checked.profile,reason:null};
+  }catch(_){return {profile:null,reason:"基金档案暂无法核验，请恢复原基金链接或重新导入档案"};}})();return task.promise;
+}
+async function importFundProfile(file){
+  const ticket=++_fundImportGeneration;if(!file)return;const gid=cfg(K.gid),keyValue=cfg(K.key),epoch=_sourceEpoch;
+  try{
+    if(_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)||!gid||!keyValue||!store)throw new Error("先恢复并核验原账本，再导入基金档案");
+    if(file.size>12000)throw new Error("基金档案文件过大");const checked=fundInvestorCore.validateProfile(JSON.parse(await file.text()));
+    if(!checked.ok)throw new Error("基金档案格式或份额合计不正确");
+    const key=await keyOf(keyValue),data=await encTxt(key,JSON.stringify({gid,profile:checked.profile})),raw=JSON.stringify({enc:true,v:1,data});
+    if(JSON.stringify(JSON.parse(await decTxt(key,data)).profile)!==JSON.stringify(checked.profile))throw new Error("档案读回不一致，未保存");
+    if(ticket!==_fundImportGeneration)return;
+    if(epoch!==_sourceEpoch||cfg(K.gid)!==gid||cfg(K.key)!==keyValue)throw new Error("访问已变化，未保存");
+    const previous=cfg(FUND_PROFILE_KEY);if(previous)setCfg(FUND_PROFILE_KEY+".previous",previous);
+    setCfg(FUND_PROFILE_KEY,raw);if(cfg(FUND_PROFILE_KEY)!==raw)throw new Error("本机未能保存档案");
+    const linkParams=new URLSearchParams((location.hash||"").slice(1));linkParams.delete("fund");
+    history.replaceState(null,"",location.pathname+(location.search||"")+(linkParams.size?"#"+linkParams.toString():""));
+    if(HASH)HASH.fund="";_fundProfileCache=null;_fundSelection="";
+    _fundProfileMessage="基金档案已加密保存在本机；账户及原账本未修改。";
+    await render();
+  }catch(e){if(ticket!==_fundImportGeneration)return;_fundProfileMessage=e instanceof SyntaxError?"文件不是有效的基金档案":e.message;document.getElementById("fundProfileNotice").textContent=_fundProfileMessage;}
+}
+/* fund-profile-storage:end */
 
 /* ============ 数据模型 ============ */
 function seed(){return {v:4,updatedAt:"",
@@ -1019,18 +1182,49 @@ async function render(){
   const generation=++_renderGeneration,sourceEpoch=_sourceEpoch,source=_receiptSource;
   /* fee-receipt-render-call */
   const feeView=feeReceiptRenderProjection(await feeReceiptUiModel({receipt:source.state==="verified"&&sourceMatches(source)?DAILY.feeCalculationReceipt:null,data:DAILY,economicInput:DB,legacySource:source.legacySource}));
+  const fundProfile=await readFundProfile();
   if(generation!==_renderGeneration||sourceEpoch!==_sourceEpoch||source!==_receiptSource)return;
   // An in-flight read has no trusted fee values, but is not a failed validation.
   if(source.state==="loading"){feeView.state="loading";feeView.message="正在读取并核验…";}
   if(source.state==="verified"&&!sourceMatches(source)){invalidateReceiptSource();return;}
   const st=receiptState(feeView),B=receiptBalance(feeView),G=health(feeView,st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
-  document.getElementById("tabs").classList.toggle("hidden",!isMgr());
+  document.getElementById("tabs").classList.remove("hidden");
+  if(!isMgr()&&["p-fee","p-set"].some(id=>document.getElementById(id).classList.contains("on"))){document.querySelectorAll("section.pane").forEach(p=>p.classList.toggle("on",p.id==="p-investors"));document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
-  renderSetup();renderA2hs();renderLedgerControls();
+  renderInvestors(fundProfile,feeView);renderSetup();renderA2hs();renderLedgerControls();
 }
+
+/* fund-investor-render:start */
+function renderInvestors(loaded,feeView){
+  const profileBox=document.getElementById("fundProfileBox"),box=document.getElementById("fundInvestorBox");
+  document.getElementById("fundProfileNotice").textContent=_fundProfileMessage;
+  if(!loaded.profile){profileBox.innerHTML=`<div class="card"><h2>投资人份额</h2><p class="hint">${esc(loaded.reason||"基金档案尚未载入。请使用管理人生成的基金只读链接。")}</p></div>`;box.innerHTML="";return;}
+  const profile=loaded.profile,model=fundInvestorCore.calculate({profile,data:DAILY,feeView});
+  if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
+  const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · 初始 ${fmt(profile.initialShares)} 股</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>`<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(i.shares/profile.initialShares*100).toFixed(0)}%</span></button>`).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。</div></div>`;
+  const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
+  const message=model.reason||"";
+  const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,change=previous&&held?held.valueCents-previous.valueCents:null;
+  const chart=points.length>1?fundValueChart(points,investor.id):'<p class="hint">有两个完整估值日后显示走势。</p>';
+  const tableRows=[...points].reverse().map(p=>{const row=p.investors.find(i=>i.id===investor.id);return `<tr><td>${esc(p.date)}${p.provisional?" *":""}</td><td>${p.unitValue.toFixed(6)}</td><td>${money(row.valueCents)}</td></tr>`;});
+  box.innerHTML=`${message?`<div class="fund-alert" role="status">${esc(message)}${model.flowGateDate?` 首笔日期：${esc(model.flowGateDate)}。`:""}${last?` 下列历史市值仅截至 ${esc(last.date)}。`:""}</div>`:""}
+    <div class="kpis"><div class="kpi wide fund-hero"><div class="lab">${esc(investor.id)} 的${current?"份额市值":"最近可计算市值"} · 费用前</div><div class="val">${money(held?.valueCents)}</div><div class="note">${last?`${esc(last.date)} 收盘${last.provisional||feeView.status?.provisional?" · 来源暂估":""}`:"数据待核验"}${current?"":" · 当前市值待核验"}</div></div>
+    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}${last&&!current?` · 截至 ${esc(last.date)}`:""}</div></div><div class="kpi"><div class="lab">较前一估值日</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${previous&&points.at(-2)?esc(points.at(-2).date)+" → "+esc(last.date):"等待可比日期"}</div></div></div>
+    <div class="card"><h2>我的份额</h2><div class="fund-meta"><div>初始持有份额<b>${fmt(investor.shares)} 股</b></div><div>初始占比<b>${(investor.shares/profile.initialShares*100).toFixed(2)}%</b></div><div>成立时归属资产<b>${money(start?.valueCents)}</b></div><div>初始每股份额市值<b>${initial?usd(initial.unitValue,6):"—"}</b></div><div>基金总资产 · ${last?esc(last.date):"待核验"}<b>${money(last?.totalCents)}</b></div><div>每股份额市值 · 费用前<b>${last?usd(last.unitValue,6):"—"}</b></div></div></div>
+    <div class="card"><h2>${esc(investor.id)} 的市值变化</h2>${chart}<div class="small">${initial&&last?`${esc(initial.date)} → ${esc(last.date)} · 美元 · 费用前`:"成立日以后逐日展示"}</div></div>
+    <div class="card"><h2>估值明细</h2>${tableRows.length?`<table class="fund-table" aria-label="投资人每日份额估值"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 日</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
+    <div class="card"><details class="fund-method"><summary>份额与估值说明</summary><p>成立基准为 ${esc(profile.inceptionDate)} 纽约估值日收盘，转入后 Schwab-HK + Webull 的全部资产与现金。香港到账通知日为 ${esc(profile.inceptionNoticeDate)}。现金已包含在账户总额中。</p><p>每股份额市值＝基金账户总资产 ÷ 基金份额；个人市值＝个人份额 × 每股市值。初始份额合计 ${fmt(profile.initialShares)} 股。成立日收盘作为起点，从次日起计算变化。</p><p>这里的“费用前”指未另扣小程序应计管理费及 Carry；已计入券商资产的实际支出保留在原账户金额内。此页暂不提供扣除全部费用负债后的 NAV。</p><p>新增或提取本金需明确投资人和发行／注销份额，不能当作投资收益；未完成归属时暂停后续个人估值。内部买卖不会增减基金份额。</p><p>* 表示来源暂估。历史未标星不代表独立校准。投资人档案是展示配置，视图切换不提供个人之间的数据隔离。</p></details></div>`;
+}
+function fundValueChart(points,id){
+  const values=points.map(p=>p.investors.find(i=>i.id===id).valueCents/100),min=Math.min(...values),max=Math.max(...values),span=max-min||Math.max(1,max*0.01),lo=min-span*.12,hi=max+span*.12;
+  const x=i=>12+i/(points.length-1)*576,y=v=>172-(v-lo)/(hi-lo)*138,path=values.map((v,i)=>`${i?"L":"M"}${x(i).toFixed(2)},${y(v).toFixed(2)}`).join(" ");
+  return `<svg class="fund-chart" viewBox="0 0 600 206" role="img" aria-label="${esc(id)} 费用前份额市值从 ${esc(points[0].date)} 的 ${usd(values[0],2)} 变化至 ${esc(points.at(-1).date)} 的 ${usd(values.at(-1),2)}"><text x="12" y="19" font-size="13" fill="var(--ink-2)">${usd(max,0)}</text><line x1="12" x2="588" y1="172" y2="172" stroke="var(--grid)"/><path d="${path}" fill="none" stroke="var(--series-1)" stroke-width="3"/><circle cx="588" cy="${y(values.at(-1)).toFixed(2)}" r="4" fill="var(--series-1)"/><text x="12" y="199" font-size="12" fill="var(--ink-2)">${esc(points[0].date)}</text><text x="588" y="199" text-anchor="end" font-size="12" fill="var(--ink-2)">${esc(points.at(-1).date)}</text></svg>`;
+}
+/* fund-investor-render:end */
 function renderKPIs(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
   const lp=st.lastPt;const showAnn=st.spanDays>365;
@@ -1314,10 +1508,10 @@ window.addEventListener("pagehide",()=>{invalidateReceiptSource();lockLedger();}
 setInterval(()=>{if(["editing","review"].includes(EDIT.mode)&&!LG.isEditable(EDIT,Date.now()))lockLedger("5 分钟未操作，编辑已锁定；草稿保留");},1000);
 window.addEventListener("pageshow",e=>{if(e.persisted)pullAll(true);});
 window.addEventListener("online",()=>pullAll(true));
-window.addEventListener("storage",e=>{if([K.gid,K.key,K.tok,K.db].includes(e.key)){invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
+window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
 
 /* ============ 分享（只读） ============ */
-function viewLink(){return location.origin+location.pathname+"#gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key));}
+function viewLink(){return location.origin+location.pathname+"#gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+(_fundProfileCipher&&_fundProfileCache?.gid===cfg(K.gid)&&_fundProfileCache?.keyValue===cfg(K.key)?"&fund="+encodeURIComponent(_fundProfileCipher):"");}
 function showShare(){
   if(!cfg(K.gid)){toast("请先完成一次同步（连接后自动完成）");return;}
   const url=viewLink();document.getElementById("shLink").value=url;const qb=document.getElementById("shQr");
@@ -1342,13 +1536,15 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
   if(T.id==="btnLink"){if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("先处理草稿，再切换原账本链接");return;}const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是原完整链接（缺少 # 后面的参数）");return;}invalidateReceiptSource();location.hash=v.slice(i+1);return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
+  const investorButton=T.closest("button[data-investor]");if(investorButton){_fundSelection=investorButton.dataset.investor;scheduleRender();return;}
+  if(T.id==="fundShare"){if(!_fundProfileCipher){toast("先载入基金档案");return;}showShare();return;}
+  if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
+  if(T.id==="shCopy"){const v=document.getElementById("shLink");navigator.clipboard?.writeText(v.value).then(()=>toast("链接已复制")).catch(()=>{v.select();toast("已全选，请长按复制");});return;}
   if(!isMgr())return;
   if(T.id==="btnAddFee"){changeDraft(d=>d.fees.push({id:crypto.randomUUID(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""}));return;}
   if(T.dataset.delfee){changeDraft(d=>{d.fees=d.fees.filter(f=>f.id!==T.dataset.delfee);});return;}
   if(T.dataset.delflow){changeDraft(d=>d.months.forEach(m=>m.flows=m.flows.filter(f=>f.id!==T.dataset.delflow)));return;}
   if(T.id==="btnShare"){showShare();return;}
-  if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
-  if(T.id==="shCopy"){const v=document.getElementById("shLink");navigator.clipboard?.writeText(v.value).then(()=>toast("链接已复制")).catch(()=>{v.select();toast("已全选，请长按复制");});return;}
   if(T.id==="btnPrepIcon"){history.replaceState(null,"",location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||""));toast("已准备好：现在点 Safari 底部「分享」→「添加到主屏幕」");return;}
   if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败"));return;}
   if(T.id==="btnGhSync"){pullAll(false);return;}
@@ -1362,6 +1558,7 @@ function ledgerInput(e){const T=e.target,k=T.dataset.k,val=T.value;if(!canEdit()
   else{const field={sMgmt:"mgmt",sCarry:"carry",sStart:"start",sWho:"who"}[T.id];if(field)changeDraft(d=>{d.settings[field]=val;},false);}
 }
 document.body.addEventListener("input",ledgerInput);
+document.getElementById("fundProfileFile").addEventListener("change",e=>importFundProfile(e.target.files?.[0]));
 document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonthFromEvent(e);if(historyMonth){_monthHistoryYm=historyMonth;scheduleRender();return;}if(!isMgr())return;const T=e.target;
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
 for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});
