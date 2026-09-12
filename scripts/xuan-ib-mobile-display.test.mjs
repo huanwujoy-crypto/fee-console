@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,MOBILE_READING_CSS,aiRiskStripValues,largestOrdinaryConcentration} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,largestOrdinaryConcentration,familySingleStockConcentration} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -37,11 +37,16 @@ test('critical replenishment amounts remain visible without recomputing or guess
 });
 test('reading metrics copy labelled values exactly, without inferring missing values',()=>{
  assert.deepEqual(extractReadingMetrics('中情景 21.76% · 分母 $6,198,031.57'),[['AI 中情景','21.76%'],['三账户总额','$6,198,031.57']]);
- assert.deepEqual(extractReadingMetrics('26 只 · 权威市值 $4,420,972'),[['持仓数量','26 只'],['持仓市值','$4,420,972']]);
+ assert.deepEqual(extractReadingMetrics('26 只 · 权威市值 $4,420,972'),[['持仓数量','26 只']]);
  assert.deepEqual(extractReadingMetrics('行情未取得，低情景近似 16.20%'),[]);
  assert.deepEqual(extractReadingMetrics('HL 17.75% / 40% · 常青基金 15.93%'),[['HL 当前 / 目标','17.75% / 40%'],['常青基金','15.93%']]);
  assert.match(MOBILE_READING_CSS,/white-space:nowrap!important/);
  assert.match(MOBILE_READING_CSS,/repeat\(2,minmax\(0,1fr\)\)/);
+});
+test('holdings note keeps only the readable calculation basis and verified coverage',()=>{
+ const technical='IB 五端点直读；日涨跌用 session-pnl-v1（daily_pnl ÷ 本轮开盘基准），逐仓经受信 venue resolver 定位，覆盖 26/26。盘中读数与次日早间版收盘读数本就不同，不作对账。';
+ assert.equal(conciseHoldingsNote(technical),'IB 数据直读；日涨跌按本轮开盘基准计算，已覆盖 26/26 只持仓。');
+ assert.equal(conciseHoldingsNote('其它来源说明保持原文。'),'其它来源说明保持原文。');
 });
 
 const risk={title:'AI 压力敞口 · §0-C',state:'brief-signal attention',
@@ -62,6 +67,11 @@ test('AI KPI uses the primary three-account single-stock view, excludes BRK.B, a
  assert.deepEqual(largestOrdinaryConcentration(headers,rows,'BRK.B 三账户 9.99%'),{symbol:'TSLA',percent:2.65,label:'TSLA 2.65%'});
  assert.equal(largestOrdinaryConcentration(['标的','市值','占比','余量'],rows),null);
  assert.match(MOBILE_READING_CSS,/\.kpi-secondary/);
+});
+test('current family single-stock value is derived exactly from the published fact and AI denominator',()=>{
+ const fact='本期三账户 GOOG/GOOGL：IB 220.00 股 74,082.80 USD（盘中）、Schwab-HK GOOGL 302.00 股 102,447.46 USD、Webull GOOG 360.00 股 121,217.40 USD，合计 297,747.66 USD；阈值与执行口径不变。';
+ assert.deepEqual(familySingleStockConcentration(fact,'618529884'),{symbol:'GOOG',percent:4.81,label:'GOOG 4.81%',amount:'297,747.66'});
+ for(const [bad,denominator] of [['其它事实','618529884'],[fact,''],[fact,'0'],[fact,'not-a-number']])assert.equal(familySingleStockConcentration(bad,denominator),null);
 });
 test('AI strip preserves unfamiliar, missing, qualified, mismatched and genuine action states',()=>{
  for(const patch of [{title:'单票集中度'},{title:'历史 AI 压力敞口'},{state:'brief-signal normal'},

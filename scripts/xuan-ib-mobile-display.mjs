@@ -18,6 +18,8 @@ export const MOBILE_READING_CSS = `
 .pane-notes{margin-top:20px!important}.pane-notes>summary{font-size:15px}.pane-notes .notes-section{padding:10px 0;border-bottom:1px solid var(--line)}
 .pane-notes p,.pane-notes li{font-size:14px!important;line-height:1.6}.pane-notes table{min-width:550px}
 .mobile-metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0}.mobile-metrics div{padding:10px;background:var(--bg);border-radius:10px;min-width:0}.mobile-metrics dt{font-size:12px;color:var(--mut)}.mobile-metrics dd{margin:5px 0 0;font-weight:750;font-size:16px;white-space:nowrap}.mobile-metric-caveat{font-size:12px!important;color:#9a6500}
+.mobile-risk-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:end;gap:6px 12px;margin:10px 0;padding:12px;background:var(--bg);border-radius:12px;font-variant-numeric:tabular-nums}
+.mobile-risk-summary dt{font-size:13px;color:var(--mut)}.mobile-risk-summary dd{margin:0;font-size:22px;font-weight:800;white-space:nowrap}
 .mobile-risk-table{table-layout:fixed!important;min-width:0!important;width:100%!important}
 .mobile-risk-table th:first-child,.mobile-risk-table td:first-child{width:42%!important;text-align:left}
 .mobile-risk-table td:last-child{width:58%;text-align:right;white-space:nowrap!important}
@@ -37,7 +39,7 @@ export const MOBILE_READING_CSS = `
 
 export function extractReadingMetrics(text) {
   // Copy explicit labelled figures only; never derive status, prices or ratios.
-  const specs=[['持仓数量',/(\d+) 只/],['持仓市值',/权威市值 (\$[\d,.]+)/],
+  const specs=[['持仓数量',/(\d+) 只/],
     ['AI 中情景',/中情景 (\d+(?:\.\d+)?%)/],['三账户总额',/分母 (\$[\d,.]+)/],
     ['现金池',/现金池 (\$[\d,.]+)/],['预留 CALL',/reserve (\$[\d,.]+)/],
     ['现金覆盖',/现金覆盖待 call 款 ([\d.]+x)/],['可用现金',/可用现金 (\$[\d,.]+)/],
@@ -51,6 +53,41 @@ export function extractReadingMetrics(text) {
 
 export function extractCashGuidance(text){
   return ['EXUS','EIMI','USSC'].flatMap(ticker=>{const match=text.match(new RegExp(`(?:^|[^A-Z])${ticker}\\s*(\\$[\\d,]+(?:\\.\\d+)?|待回款后重算)`));return match?[[ticker,match[1]]]:[];});
+}
+
+export function conciseHoldingsNote(text) {
+  const original=String(text??''),coverage=original.match(/覆盖\s*(\d+)\/(\d+)/);
+  if(!/IB 五端点直读/.test(original)||!/session-pnl-v1/.test(original)||!/venue resolver/.test(original)||!coverage)return original;
+  return `IB 数据直读；日涨跌按本轮开盘基准计算，已覆盖 ${coverage[1]}/${coverage[2]} 只持仓。`;
+}
+
+function compactHoldingsNote(doc) {
+  for(const detail of doc.querySelectorAll('.pane.p1 details')){
+    if(!detail?.querySelector||!detail.querySelectorAll)continue;
+    if(detail.querySelector(':scope > summary')?.textContent?.trim()!=='持仓说明')continue;
+    for(const line of detail.querySelectorAll(':scope > .dbody li,:scope > .dbody p'))line.textContent=conciseHoldingsNote(line.textContent);
+  }
+}
+
+function splitLegacySubPercentLosses(doc) {
+  const details=[...doc.querySelectorAll('.pane.p1 details')].filter(detail=>detail?.querySelector);
+  if(details.some(detail=>/^下跌不足\s*1%/.test(detail.querySelector(':scope > summary')?.textContent?.trim()||'')))return;
+  const other=details.find(detail=>/^其它持仓（\d+）$/.test(detail.querySelector(':scope > summary')?.textContent?.trim()||''));
+  const table=other?.querySelector(':scope > .dbody > .tblwrap > table');
+  if(!table)return;
+  const heads=[...table.querySelectorAll('thead th')],changeIndex=heads.findIndex(head=>head.textContent.trim()==='日涨跌');
+  const body=table.querySelector('tbody');if(changeIndex<0||!body)return;
+  const losses=[...body.children].filter(row=>{
+    const match=row.children[changeIndex]?.textContent.trim().replace(/−/g,'-').match(/^(-\d+(?:\.\d+)?)%/);
+    return match&&Math.abs(Number(match[1]))<1;
+  });
+  if(!losses.length)return;
+  const fold=doc.createElement('details'),summary=doc.createElement('summary');summary.textContent=`下跌不足 1%（${losses.length}）`;fold.append(summary);
+  const foldBody=doc.createElement('div');foldBody.className='dbody';
+  const wrap=doc.createElement('div');wrap.className='tblwrap';
+  const lossTable=table.cloneNode(false);lossTable.append(table.querySelector('thead').cloneNode(true));
+  const lossBody=doc.createElement('tbody');losses.forEach(row=>lossBody.append(row));lossTable.append(lossBody);wrap.append(lossTable);foldBody.append(wrap);fold.append(foldBody);
+  other.before(fold);other.querySelector(':scope > summary').textContent=`其它持仓（${body.children.length}）`;
 }
 
 export function aiRiskStripValues({title,state,takeaway,action,kpiLabel,kpiValue,kpiDetails}={}) {
@@ -86,19 +123,68 @@ export function largestOrdinaryConcentration(headers,rows,headline='') {
   return best;
 }
 
+export function familySingleStockConcentration(fact,denominatorCents) {
+  const clean=String(fact??'').trim().replace(/\s+/g,' '),denominator=String(denominatorCents??'').trim();
+  const match=clean.match(/本期三账户 GOOG\/GOOGL[：:].*?合计 ([\d,]+(?:\.\d{1,2})?) USD/);
+  if(!match||!/^\d+$/.test(denominator)||denominator==='0')return null;
+  const [whole,fraction='']=match[1].replaceAll(',','').split('.');
+  const numerator=BigInt(whole)*100n+BigInt((fraction+'00').slice(0,2)),base=BigInt(denominator);
+  if(numerator<=0n||numerator>=base)return null;
+  const hundredths=Number((numerator*10000n+base/2n)/base),percent=(hundredths/100).toFixed(2);
+  return {symbol:'GOOG',percent:Number(percent),label:`GOOG ${percent}%`,amount:match[1]};
+}
+
+function splitConcentrationAndCash(doc) {
+  const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
+    .filter(card=>card.querySelector(':scope > h2')?.textContent.trim()==='② 集中度与现金（IB 账户内）');
+  const kpi=[...doc.querySelectorAll('.kpis .kpi')]
+    .find(item=>item.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
+  const decision=doc.querySelector('[data-decision-id="D-20260829-GOOG-FAMILY-LIMIT"]');
+  if(cards.length!==1||!kpi||!decision)return;
+  const table=cards[0].querySelector(':scope > .tblwrap > table');
+  const heads=table?[...table.querySelectorAll('thead th')].map(cell=>cell.textContent.trim()):[];
+  const rows=table?[...table.querySelectorAll('tbody tr')]:[];
+  if(JSON.stringify(heads)!==JSON.stringify(['项目','本轮数值'])||rows.length!==3)return;
+  const labels=rows.map(row=>row.children[0]?.textContent.trim());
+  if(!/^最大单仓 /.test(labels[0]||'')||labels[1]!=='IB 现金'||labels[2]!=='已用保证金')return;
+  const concentration=familySingleStockConcentration(decision.textContent,kpi.getAttribute('data-ai-kpi-denominator-cents'));
+  if(!concentration)return;
+
+  const card=cards[0],heading=card.querySelector(':scope > h2');heading.textContent='单票集中度';
+  card.setAttribute('data-family-single-stock',concentration.label);
+  card.querySelector(':scope > .brief-signal')?.remove();
+  card.querySelector(':scope > details')?.remove();
+  const summary=doc.createElement('dl');summary.className='mobile-risk-summary';
+  const name=doc.createElement('dt'),value=doc.createElement('dd');name.textContent='除 BRK.B 外最大';value.textContent=concentration.label;
+  summary.setAttribute('aria-label',`除 BRK.B 外最大单票集中度 ${concentration.label}`);summary.append(name,value);
+  card.querySelector(':scope > .sub')?.after(summary);
+  table.parentElement.remove();
+
+  const cash=doc.createElement('section');cash.className='card';cash.setAttribute('data-mobile-risk-cash','1');
+  const cashHeading=doc.createElement('h2');cashHeading.textContent='现金';cash.append(cashHeading);
+  const cashTable=table.cloneNode(false),thead=table.querySelector('thead').cloneNode(true),tbody=doc.createElement('tbody');
+  rows.slice(1).forEach(row=>tbody.append(row.cloneNode(true)));cashTable.append(thead,tbody);
+  const wrap=doc.createElement('div');wrap.className='tblwrap';wrap.append(cashTable);cash.append(wrap);card.after(cash);
+}
+
 function addConcentrationToAiKpi(doc) {
   const kpis=[...doc.querySelectorAll('.kpis .kpi')].filter(kpi=>kpi.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
   const cards=[...doc.querySelectorAll('.pane.p2 > section.card')].filter(card=>/^单票集中度(?:$|\s*·)/.test(card.querySelector(':scope > h2')?.textContent.trim()||''));
   if(kpis.length!==1||cards.length!==1||kpis[0].querySelector('.kpi-secondary'))return;
+  const direct=cards[0].getAttribute('data-family-single-stock');
   const table=[...cards[0].querySelectorAll('table')].find(candidate=>{
     const heads=[...candidate.querySelectorAll('thead th')].map(cell=>cell.textContent);
     return heads[0]?.trim()==='IB 视图标的';
   });
-  if(!table)return;
-  const headers=[...table.querySelectorAll('thead th')].map(cell=>cell.textContent);
-  const rows=[...table.querySelectorAll('tbody tr')].map(row=>[...row.children].map(cell=>cell.textContent));
-  const headline=cards[0].querySelector(':scope > .brief-signal')?.textContent||'';
-  const largest=largestOrdinaryConcentration(headers,rows,headline);if(!largest)return;
+  let largest=null;
+  if(direct){const match=direct.match(/^([A-Z0-9.]+) (\d+(?:\.\d+)?)%$/);if(match)largest={symbol:match[1],percent:Number(match[2]),label:direct};}
+  if(!largest&&table){
+    const headers=[...table.querySelectorAll('thead th')].map(cell=>cell.textContent);
+    const rows=[...table.querySelectorAll('tbody tr')].map(row=>[...row.children].map(cell=>cell.textContent));
+    const headline=cards[0].querySelector(':scope > .brief-signal')?.textContent||'';
+    largest=largestOrdinaryConcentration(headers,rows,headline);
+  }
+  if(!largest)return;
   const metric=doc.createElement('dl');metric.className='kpi-secondary';
   const name=doc.createElement('dt'),value=doc.createElement('dd');name.textContent='单票集中度';value.textContent=largest.label;
   metric.setAttribute('aria-label',`除 BRK.B 外最大单票集中度 ${largest.label}`);metric.append(name,value);kpis[0].append(metric);
@@ -150,22 +236,26 @@ export function simplifyPaneReading(doc) {
     const h=doc.createElement('h3');h.textContent=title;section.append(h);
     nodes.forEach(n=>section.append(n));target.body.append(section);
   };
+  compactHoldingsNote(doc);
+  // Restore the three distinct risk meanings before moving their source notes.
+  splitConcentrationAndCash(doc);
   // Read the agreeing source KPI before its explanatory subtree is moved.
   addConcentrationToAiKpi(doc);
   compactAiRiskStrip(doc,move);
   // Keep exact original explanations and figures accessible, not deleted.
-  [...doc.querySelectorAll('.kpis .kpi')].forEach((kpi,index)=>{
+  [...doc.querySelectorAll('.kpis .kpi')].forEach(kpi=>{
     const title=kpi.querySelector('.lab')?.textContent||'指标说明';
     const descriptions=[...kpi.children].filter(n=>n.matches('.sub,details'));
     const brief=descriptions.map(n=>n.textContent).join(' ');
-    move(index===2?2:index===3?3:1,title,descriptions);
-    if(index===3){
+    if(title==='IB 当日浮动盈亏'){move(2,title,descriptions);kpi.remove();return;}
+    move(/AI 压力/.test(title)?2:/补仓指引/.test(title)?3:1,title,descriptions);
+    if(/补仓指引/.test(title)){
       const guidance=extractCashGuidance(brief);
       if(guidance.length){const rows=doc.createElement('dl');rows.className='mobile-cash-guidance';
         for(const [ticker,amount] of guidance){const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd');name.textContent=ticker;value.textContent=amount;pair.append(name,value);rows.append(pair);}kpi.append(rows);}
     }
     const status=doc.createElement('small');status.className='mobile-state';
-    status.textContent=index===3?'现金优先 · 非下单':/提醒区间/.test(brief)?'提醒区间':/预警/.test(brief)?'需留意':'';
+    status.textContent=/补仓指引/.test(title)?'现金优先 · 非下单':/提醒区间/.test(brief)?'提醒区间':/预警/.test(brief)?'需留意':'';
     if(status.textContent)kpi.append(status);
   });
   for(const [i,{pane}] of notes){
@@ -190,15 +280,21 @@ export function simplifyPaneReading(doc) {
       }
       move(i,title,paragraphs);
       if(i===2){const h=card.querySelector(':scope > h2');if(h){
-        if(/AI 压力/.test(title))h.textContent='AI 压力敞口';
+        if(/AI 压力/.test(title))h.textContent='AI 压力';
         else if(/单票集中度/.test(title))h.textContent='单票集中度';
+        else if(/^现金$/.test(title))h.textContent='现金';
         else if(/弹药.*reserve/.test(title))h.textContent='现金与预留款';
       }}
       for(const detail of [...card.querySelectorAll(':scope > details,:scope > .dbody > details')]){
         if(/详细说明|排序与报价说明|使用前核对|AAOI 分类与计算记录/.test(detail.querySelector('summary')?.textContent||''))move(i,title,[detail]);
       }
-      if(!card.querySelector('table,.kv,.mobile-metrics,.brief-signal,.ai-risk-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
+      if(!card.querySelector('table,.kv,.mobile-metrics,.mobile-risk-summary,.brief-signal,.ai-risk-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
     }
+  }
+  const riskPane=notes.get(2)?.pane;
+  if(riskPane){
+    const disclosures=[...riskPane.children].filter(node=>node.matches?.('p[data-ai-risk-universe-v1],span[data-ai-risk-constituent],p[data-ai-tier-symbol],p[data-ai-tier-excluded]'));
+    if(disclosures.length)move(2,'AI 口径与自动分类',disclosures);
   }
   // Two-column risk ledger: compact identity/weight left, contribution/value right.
   for(const table of [...doc.querySelectorAll('.pane.p2 table')]){
@@ -243,6 +339,8 @@ export function simplifyPaneReading(doc) {
 
 export function improveMobileDisplay(doc) {
   if (!doc?.querySelectorAll) return;
+  compactHoldingsNote(doc);
+  splitLegacySubPercentLosses(doc);
   // Reorder existing cells intact; never calculate or change their amounts.
   for (const table of doc.querySelectorAll('.pane.p1 table')) {
     const heads = [...table.querySelectorAll('thead th')];
@@ -266,7 +364,7 @@ export function improveMobileDisplay(doc) {
       return match?Number(match[1]):null;
     };
     const ordered=[...body.children];
-    if(/^价格变化\s*≥1%/.test(groupTitle)&&changeIndex>=0&&ordered.every(row=>change(row)!==null&&change(row)!==0)){
+    if(/^(?:价格变化\s*≥1%|下跌不足\s*1%)/.test(groupTitle)&&changeIndex>=0&&ordered.every(row=>change(row)!==null&&change(row)!==0)){
       const original=new Map(ordered.map((row,index)=>[row,index]));
       ordered.sort((a,b)=>{
         const av=change(a),bv=change(b);
