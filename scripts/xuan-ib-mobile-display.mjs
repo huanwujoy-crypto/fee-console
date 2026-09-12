@@ -34,6 +34,10 @@ export const MOBILE_READING_CSS = `
 .ai-risk-strip dd{margin:0;font-size:1.125rem;font-weight:650;line-height:1.4;white-space:nowrap}
 .ai-risk-strip>.ai-risk-current{flex:1.35 1 6rem;background:var(--bg);border-radius:11px}
 .ai-risk-strip .ai-risk-current dt{color:var(--ink);font-weight:650}.ai-risk-strip .ai-risk-current dd{font-size:1.5rem;font-weight:800;color:var(--warn,#9a6500)}
+.ai-risk-strip[data-band="normal"] .ai-risk-current dd{color:#15803d}.ai-risk-strip[data-band="alert"] .ai-risk-current dd{color:#b42318}
+.cash-reserve-strip{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:10px 0;font-variant-numeric:tabular-nums}
+.cash-reserve-strip>div{padding:12px;border:1px solid var(--line);border-left:4px solid var(--accent,#2563eb);border-radius:12px;background:var(--bg);min-width:0}
+.cash-reserve-strip dt{font-size:13px;color:var(--mut)}.cash-reserve-strip dd{margin:4px 0 0;font-size:20px;font-weight:800;white-space:nowrap}.cash-reserve-strip small{display:block;margin-top:4px;color:var(--mut);font-size:12px;white-space:nowrap}
 .pane table th,.pane table td{overflow-wrap:normal!important;word-break:normal!important}
 .pane table td:not(:first-child){white-space:nowrap}.pane table th{font-size:13px}.pane .tblwrap{overflow-x:auto}
 @media(min-width:850px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
@@ -107,6 +111,13 @@ export function aiRiskStripValues({title,state,takeaway,action,kpiLabel,kpiValue
   return [['提醒',band[1]],['当前',`${current}%`],['预警',band[2]]];
 }
 
+export function aiRiskBandValues(value) {
+  const match=String(value??'').trim().match(/^(\d+(?:\.\d+)?)%$/);
+  if(!match)return null;
+  const current=Number(match[1]);if(!Number.isFinite(current)||current<0||current>100)return null;
+  return {values:[['提醒','20%'],['当前',`${match[1]}%`],['预警','25%']],band:current>=25?'alert':current>20?'attention':'normal'};
+}
+
 export function largestOrdinaryConcentration(headers,rows,headline='') {
   const clean=value=>String(value??'').trim().replace(/\s+/g,' ');
   if(JSON.stringify((headers||[]).map(clean))!==JSON.stringify(['IB 视图标的','市值 $','占比 / 线','余量 $'])||!Array.isArray(rows))return null;
@@ -142,6 +153,11 @@ export function cashRiskSummary(text) {
   return match?{label:'IB 现金',value:match[1],detail:`占 NAV ${match[2]}`}:null;
 }
 
+export function reserveRiskSummary(text) {
+  const match=String(text??'').match(/(?:reserve|预留(?:\s*CALL|\s*款)?)[^$]{0,24}(\$[\d,]+(?:\.\d+)?)/i);
+  return match?match[1]:null;
+}
+
 function createThursdayRiskSummary(doc,{label,value,detail=''}) {
   const summary=doc.createElement('dl');summary.className='mobile-risk-summary thursday-risk-summary';
   const name=doc.createElement('dt'),amount=doc.createElement('dd');name.textContent=label;amount.textContent=value;summary.append(name,amount);
@@ -167,34 +183,58 @@ function splitConcentrationAndCash(doc) {
 
   const card=cards[0],heading=card.querySelector(':scope > h2');heading.textContent='单票集中度';
   card.setAttribute('data-family-single-stock',concentration.label);
-  card.querySelector(':scope > .brief-signal')?.remove();
-  card.querySelector(':scope > details')?.remove();
-  const summary=createThursdayRiskSummary(doc,{label:'除 BRK.B 外最大',value:concentration.label,detail:'家庭三账户'});
-  summary.setAttribute('aria-label',`除 BRK.B 外最大单票集中度 ${concentration.label}`);
-  card.querySelector(':scope > .sub')?.after(summary);
-  table.parentElement.remove();
+  const source=doc.createElement('details'),sourceSummary=doc.createElement('summary'),sourceBody=doc.createElement('div');
+  sourceSummary.textContent='详细说明';sourceBody.className='dbody';source.append(sourceSummary,sourceBody);
+  const oldBrief=card.querySelector(':scope > .brief-signal'),oldDetails=card.querySelector(':scope > details');
+  if(oldBrief)sourceBody.append(oldBrief);sourceBody.append(table.parentElement);
+  if(oldDetails){const oldBody=oldDetails.querySelector(':scope > .dbody');if(oldBody)sourceBody.append(...oldBody.children);oldDetails.remove();}
+
+  const brief=doc.createElement('div');brief.className=`brief-signal ${concentration.percent<5?'normal':'attention'}`;
+  const state=doc.createElement('span');state.className='signal-label';state.textContent=concentration.percent<5?'✓ 参考线内':'! 超出参考线';
+  const headline=doc.createElement('p'),strong=doc.createElement('b');strong.textContent=`${concentration.symbol} 三账户 ${concentration.percent.toFixed(2)}%`;headline.append(strong);
+  const action=doc.createElement('p');action.textContent='除 BRK.B 外最大';brief.append(state,headline,action);
+  const compact=doc.createElement('table');compact.className='mobile-risk-table';
+  const compactHead=doc.createElement('thead'),headRow=doc.createElement('tr'),leftHead=doc.createElement('th'),rightHead=doc.createElement('th');
+  leftHead.textContent='标的 / 市值 USD';rightHead.textContent='占比 / 参考线';headRow.append(leftHead,rightHead);compactHead.append(headRow);
+  const compactBody=doc.createElement('tbody'),compactRow=doc.createElement('tr'),left=doc.createElement('td'),right=doc.createElement('td');
+  const leftName=doc.createElement('strong'),leftValue=doc.createElement('small'),rightValue=doc.createElement('strong'),rightNote=doc.createElement('small');
+  leftName.textContent='GOOG / GOOGL';leftValue.textContent=`市值 $${concentration.amount}`;left.append(leftName,leftValue);
+  rightValue.textContent=`${concentration.percent.toFixed(2)}% / 5%`;rightNote.textContent='家庭三账户';right.append(rightValue,rightNote);
+  compactRow.append(left,right);compactBody.append(compactRow);compact.append(compactHead,compactBody);
+  const compactWrap=doc.createElement('div');compactWrap.className='tblwrap';compactWrap.append(compact);
+  card.append(brief,compactWrap,source);
 
   const cash=doc.createElement('section');cash.className='card';cash.setAttribute('data-mobile-risk-cash','1');
   const cashHeading=doc.createElement('h2');cashHeading.textContent='现金';cash.append(cashHeading);
   const cashValue=cashRiskSummary(rows[1].children[1]?.textContent);
-  if(cashValue)cash.append(createThursdayRiskSummary(doc,cashValue));
-  const cashTable=table.cloneNode(false),thead=table.querySelector('thead').cloneNode(true),tbody=doc.createElement('tbody');
-  rows.slice(cashValue?2:1).forEach(row=>tbody.append(row.cloneNode(true)));cashTable.append(thead,tbody);
-  const wrap=doc.createElement('div');wrap.className='tblwrap';wrap.append(cashTable);cash.append(wrap);card.after(cash);
+  const reserve=reserveRiskSummary(doc.querySelector('.pane.p3')?.textContent||'');
+  if(cashValue||reserve){
+    const strip=doc.createElement('dl');strip.className='cash-reserve-strip';
+    for(const item of [cashValue&&{label:'IB 现金',value:cashValue.value,detail:cashValue.detail},reserve&&{label:'预留款',value:reserve,detail:'CALL reserve'}].filter(Boolean)){
+      const pair=doc.createElement('div'),name=doc.createElement('dt'),value=doc.createElement('dd'),detail=doc.createElement('small');
+      name.textContent=item.label;value.textContent=item.value;detail.textContent=item.detail;pair.append(name,value,detail);strip.append(pair);
+    }
+    cash.append(strip);
+  }
+  card.after(cash);
 }
 
-function addThursdayAiRiskSummary(doc) {
+function addDraftAiRiskStrip(doc) {
   const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
     .filter(card=>/^AI 压力敞口(?:$| ·)/.test(card.querySelector(':scope > h2')?.textContent.trim()||''));
   const kpis=[...doc.querySelectorAll('.kpis .kpi')]
     .filter(kpi=>kpi.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
-  if(cards.length!==1||kpis.length!==1||cards[0].querySelector(':scope > .thursday-risk-summary'))return;
+  if(cards.length!==1||kpis.length!==1||cards[0].querySelector(':scope > .ai-risk-strip'))return;
   const value=kpis[0].querySelector('.big')?.textContent.trim();
-  if(!/^\d+(?:\.\d+)?%$/.test(value||''))return;
-  const summary=createThursdayRiskSummary(doc,{label:'中情景',value,detail:'三账户含现金'});
-  summary.setAttribute('aria-label',`AI 压力中情景 ${value}`);
+  const ratio=kpis[0].getAttribute('data-ai-kpi-ratio-bp'),band=aiRiskBandValues(value);
+  if(!band||!/^\d+$/.test(ratio||'')||Math.abs(Number(value.slice(0,-1))-Number(ratio)/10000)>.0051)return;
+  const strip=doc.createElement('dl');strip.className='ai-risk-strip';strip.dataset.band=band.band;strip.setAttribute('aria-label','AI 压力中情景与提醒、预警线');
+  for(const [label,amount] of band.values){
+    const pair=doc.createElement('div'),key=doc.createElement('dt'),number=doc.createElement('dd');
+    if(label==='当前')pair.className='ai-risk-current';key.textContent=label;number.textContent=amount;pair.append(key,number);strip.append(pair);
+  }
   const sub=cards[0].querySelector(':scope > .sub');
-  (sub||cards[0].querySelector(':scope > h2'))?.after(summary);
+  (sub||cards[0].querySelector(':scope > h2'))?.after(strip);
 }
 
 function addConcentrationToAiKpi(doc) {
@@ -273,13 +313,13 @@ export function simplifyPaneReading(doc) {
   for(const context of doc.querySelectorAll('.pane.p1 .holdings-source-context'))context.remove();
   // Restore the three distinct risk meanings before moving their source notes.
   splitConcentrationAndCash(doc);
-  // Preserve Thursday's easy-to-scan rhythm: title, current conclusion, detail.
-  // Values are copied from the already verified report; no browser-side risk
-  // ratio is calculated here.
-  addThursdayAiRiskSummary(doc);
   // Read the agreeing source KPI before its explanatory subtree is moved.
   addConcentrationToAiKpi(doc);
   compactAiRiskStrip(doc,move);
+  // The Draft layout always keeps the three-point AI strip. Newer reports may
+  // omit the old prose band, so fall back only when the signed KPI value agrees
+  // with its machine-readable ratio. No risk amount is recalculated here.
+  addDraftAiRiskStrip(doc);
   // Keep exact original explanations and figures accessible, not deleted.
   [...doc.querySelectorAll('.kpis .kpi')].forEach(kpi=>{
     const title=kpi.querySelector('.lab')?.textContent||'指标说明';
@@ -318,7 +358,7 @@ export function simplifyPaneReading(doc) {
       }
       move(i,title,paragraphs);
       if(i===2){const h=card.querySelector(':scope > h2');if(h){
-        if(/AI 压力/.test(title))h.textContent='AI 压力';
+        if(/AI 压力/.test(title))h.textContent='AI 压力敞口';
         else if(/单票集中度/.test(title))h.textContent='单票集中度';
         else if(/^现金$/.test(title))h.textContent='现金';
         else if(/弹药.*reserve/.test(title))h.textContent='现金与预留款';
@@ -326,7 +366,7 @@ export function simplifyPaneReading(doc) {
       for(const detail of [...card.querySelectorAll(':scope > details,:scope > .dbody > details')]){
         if(/详细说明|排序与报价说明|使用前核对|AAOI 分类与计算记录/.test(detail.querySelector('summary')?.textContent||''))move(i,title,[detail]);
       }
-      if(!card.querySelector('table,.kv,.mobile-metrics,.mobile-risk-summary,.brief-signal,.ai-risk-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
+      if(!card.querySelector('table,.kv,.mobile-metrics,.mobile-risk-summary,.brief-signal,.ai-risk-strip,.cash-reserve-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
     }
   }
   const riskPane=notes.get(2)?.pane;
