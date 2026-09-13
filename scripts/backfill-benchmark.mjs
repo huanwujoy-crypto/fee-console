@@ -52,13 +52,20 @@ for (const a of argv) {
   if (Object.prototype.hasOwnProperty.call(args, m[1])) die(`duplicate --${m[1]}`);
   args[m[1]] = m[2];
 }
-for (const k of Object.keys(args)) if (!["series", "file", "baseline", "from", "to", "backup"].includes(k)) die(`unknown argument --${k}`);
+for (const k of Object.keys(args)) if (!["series", "file", "baseline", "from", "to", "backup", "replace-stale-date"].includes(k)) die(`unknown argument --${k}`);
 for (const f of flags) if (f !== "dry-run") die(`unknown flag --${f}`);
 const dryRun = flags.has("dry-run");
 if (!args.series) die("missing --series=<path to the backfill JSON>");
 for (const k of ["baseline", "from", "to"]) if (!isIsoDate(args[k])) die(`--${k} must be a valid ISO date`);
 if (args.from > args.to) die("--from must not be later than --to");
 if (args.baseline < args.from || args.baseline > args.to) die("--baseline must be inside --from..--to");
+const replaceStaleDate = args["replace-stale-date"];
+if (replaceStaleDate !== undefined) {
+  if (!isIsoDate(replaceStaleDate)) die("--replace-stale-date must be a valid ISO date");
+  if (args.baseline !== replaceStaleDate || args.from !== replaceStaleDate || args.to !== replaceStaleDate) {
+    die("--replace-stale-date requires baseline/from/to to be that same single date");
+  }
+}
 
 /* ---------- series ---------- */
 let series;
@@ -163,10 +170,27 @@ for (const d of targetDates) {
   if (d >= BENCH_DATE_EVIDENCE_FROM && !isIsoDate(fields.bd)) die(`${d}: series is missing bd`);
 }
 for (const d of updates.keys()) if (!byDate.has(d)) die(`${d}: data has no matching daily point`);
+if (replaceStaleDate !== undefined && (updates.size !== 1 || !updates.has(replaceStaleDate))) {
+  die("--replace-stale-date requires exactly one matching series point");
+}
 
 const touched = [], unchanged = [];
 for (const [d, fields] of [...updates].sort((a, b) => a[0].localeCompare(b[0]))) {
   const point = byDate.get(d);
+  const replaceStale = d === replaceStaleDate;
+  if (replaceStale) {
+    const currentBd = point.bd;
+    if (fields.bd !== d) die(`${d}: stale replacement requires same-date bd`);
+    if (currentBd !== undefined && (!isIsoDate(currentBd) || currentBd >= d)) {
+      die(`${d}: stale replacement requires an absent or earlier existing bd`);
+    }
+    if (!BENCH_KEYS.every(k => Number(point[k]) > 0)) {
+      die(`${d}: stale replacement requires an existing benchmark price pair`);
+    }
+    if (BENCH_DIV_KEYS.some(k => point[k] !== undefined)) {
+      die(`${d}: stale replacement refuses an existing dividend field`);
+    }
+  }
   const changed = [];
   for (const [k, v] of Object.entries(fields)) {
     if (BENCH_DIV_KEYS.includes(k) && v === 0) {
@@ -174,7 +198,8 @@ for (const [d, fields] of [...updates].sort((a, b) => a[0].localeCompare(b[0])))
       continue;
     }
     if (Object.is(point[k], v)) continue;
-    if (point[k] !== undefined) die(`${d}: refusing to overwrite existing ${k}`);
+    const replaceable = replaceStale && (BENCH_KEYS.includes(k) || k === "bd");
+    if (point[k] !== undefined && !replaceable) die(`${d}: refusing to overwrite existing ${k}`);
     point[k] = v;
     changed.push(k);
   }

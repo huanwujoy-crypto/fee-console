@@ -171,6 +171,98 @@ test("an existing different benchmark value is never overwritten", () => {
   assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
 });
 
+test("explicit single-date repair replaces only a stale benchmark bundle", () => {
+  const dir = tmp();
+  const before = {
+    updatedAt: "2026-09-13T00:00:00.000Z",
+    daily: [
+      { d: "2026-09-10", schwab: 1, webull: 2, cash: 1, stock: 2, other: 0,
+        spy: 650, qqq: 580, bd: "2026-09-10" },
+      { d: "2026-09-11", schwab: 3, webull: 4, cash: 2, stock: 5, other: 0, prov: 1,
+        spy: 650, qqq: 580, bd: "2026-09-10" },
+      { d: "2026-09-12", schwab: 3, webull: 4, cash: 2, stock: 5, other: 0, prov: 1,
+        spy: 651, qqq: 581, bd: "2026-09-11" },
+    ],
+    flowsAuto: [{ id: "keep" }], flowsUnresolved: [],
+    status: { asOf: "2026-09-12", provisional: true, notes: [] },
+  };
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(before));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-11": 651 }, qqq: { "2026-09-11": 581 },
+    bd: { "2026-09-11": "2026-09-11" },
+  }));
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-11", "--from=2026-09-11", "--to=2026-09-11",
+    "--replace-stale-date=2026-09-11", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.equal(r.status, 0, r.stderr);
+  const after = read(dir);
+  assert.equal(after.daily[1].spy, 651);
+  assert.equal(after.daily[1].qqq, 581);
+  assert.equal(after.daily[1].bd, "2026-09-11");
+  assert.deepEqual(stripBench(after.daily[1]), stripBench(before.daily[1]));
+  assert.deepEqual(after.flowsAuto, before.flowsAuto);
+  assert.deepEqual(after.status, before.status);
+});
+
+test("stale replacement remains fail-closed without the explicit single-date scope", () => {
+  const dir = tmp();
+  const data = {
+    updatedAt: "2026-09-13T00:00:00.000Z",
+    daily: [{ d: "2026-09-11", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+      spy: 650, qqq: 580, bd: "2026-09-10" }],
+    flowsAuto: [], flowsUnresolved: [], status: { asOf: "2026-09-11", provisional: true, notes: [] },
+  };
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(data));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-11": 651 }, qqq: { "2026-09-11": 581 },
+    bd: { "2026-09-11": "2026-09-11" },
+  }));
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-11", "--from=2026-09-11", "--to=2026-09-11", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /refusing to overwrite existing spy/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("stale replacement refuses a current bd, a multi-date scope, or existing dividend evidence", () => {
+  const cases = [
+    { name: "current", bd: "2026-09-11", extra: [], pattern: /absent or earlier existing bd/ },
+    { name: "range", bd: "2026-09-10", extra: ["--to=2026-09-12"], pattern: /same single date/ },
+    { name: "dividend", bd: "2026-09-10", dividend: 1, extra: [], pattern: /existing dividend field/ },
+  ];
+  for (const sample of cases) {
+    const dir = tmp();
+    const point = { d: "2026-09-11", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+      spy: 650, qqq: 580, bd: sample.bd };
+    if (sample.dividend) point.spyd = sample.dividend;
+    fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({
+      updatedAt: "2026-09-13T00:00:00.000Z", daily: [point], flowsAuto: [], flowsUnresolved: [],
+      status: { asOf: "2026-09-11", provisional: true, notes: [] },
+    }));
+    fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+      spy: { "2026-09-11": 651 }, qqq: { "2026-09-11": 581 },
+      bd: { "2026-09-11": "2026-09-11" },
+    }));
+    const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+    const baseArgs = [SCRIPT, "--file=data.json", "--series=series.json", "--baseline=2026-09-11",
+      "--from=2026-09-11", "--to=2026-09-11", "--replace-stale-date=2026-09-11",
+      "--backup=preimage.backup"];
+    for (const replacement of sample.extra) {
+      const key = replacement.slice(0, replacement.indexOf("="));
+      const index = baseArgs.findIndex(arg => arg.startsWith(`${key}=`));
+      baseArgs[index] = replacement;
+    }
+    const r = spawnSync(process.execPath, baseArgs,
+      { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+    assert.notEqual(r.status, 0, sample.name);
+    assert.match(r.stderr, sample.pattern, sample.name);
+    assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw, sample.name);
+  }
+});
+
 test("actual writes require an explicit recoverable backup path", () => {
   const dir = seedDir();
   fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify(SERIES));

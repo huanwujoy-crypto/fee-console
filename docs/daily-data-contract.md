@@ -242,6 +242,9 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
 - 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，2026-09-10 起的每个输入点
   必须同时提供 `bd`；脚本只补公开 benchmark bundle，并在写入前复核整条时间线，不能把
   已取得的较新行情只挂在周末点而漏掉对应工作日。
+- 已存在旧 `bd` 的工作日只能用显式 `--replace-stale-date=YYYY-MM-DD` 修复；该模式仅接受
+  baseline/from/to 完全相同的单日输入、新 `bd` 等于该日、旧 `bd` 缺失或更早且原 price pair
+  完整的情形。普通回补仍禁止覆盖，存在旧股息证据时也拒绝自动替换。
 
 ## 7. 单一费用计算回执（calculation receipt）
 
