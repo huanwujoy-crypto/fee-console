@@ -239,6 +239,9 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
   回执或回执校验失败都必须标红。这样可区分“已运行但数据无变化”与“根本没有运行”。
 - 周五收盘等公共行情首次尚未到齐时，`benchmark-cache` 在随后时段自动重试；每次都要求
   SPY/QQQ 共同通过身份、收盘和股息校验，取得后再由同日 replacement 补齐模拟期末余额。
+- 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，2026-09-10 起的每个输入点
+  必须同时提供 `bd`；脚本只补公开 benchmark bundle，并在写入前复核整条时间线，不能把
+  已取得的较新行情只挂在周末点而漏掉对应工作日。
 
 ## 7. 单一费用计算回执（calculation receipt）
 
