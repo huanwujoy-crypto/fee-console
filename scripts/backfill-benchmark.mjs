@@ -13,6 +13,11 @@
 //     --from=2026-07-31 --to=2026-08-31 [--file=data.json] [--dry-run]
 //   实际写入还必须给 --backup=<preimage path>；dry-run 不需要。
 //
+// 默认永不覆盖已有基准字段。--resolve-carry 只解开一种已证明的情形：某个工作日
+// 当时没等到自己的收盘价，先沿用了上一交易日的 bundle（bd < d 且价格与那一天
+// 逐字节相同），后来行情到齐。此时可用同日证据（bd == d）替换那份 carry，其余
+// 覆盖一律仍旧拒绝。
+//
 // series 文件形如：
 //   { "spy":  { "2026-07-31": 747.03, "2026-08-01": 747.03 },
 //     "qqq":  { "2026-07-31": 687.99, "2026-08-01": 687.99 },
@@ -53,8 +58,9 @@ for (const a of argv) {
   args[m[1]] = m[2];
 }
 for (const k of Object.keys(args)) if (!["series", "file", "baseline", "from", "to", "backup"].includes(k)) die(`unknown argument --${k}`);
-for (const f of flags) if (f !== "dry-run") die(`unknown flag --${f}`);
+for (const f of flags) if (!["dry-run", "resolve-carry"].includes(f)) die(`unknown flag --${f}`);
 const dryRun = flags.has("dry-run");
+const resolveCarry = flags.has("resolve-carry");
 if (!args.series) die("missing --series=<path to the backfill JSON>");
 for (const k of ["baseline", "from", "to"]) if (!isIsoDate(args[k])) die(`--${k} must be a valid ISO date`);
 if (args.from > args.to) die("--from must not be later than --to");
@@ -164,9 +170,41 @@ for (const d of targetDates) {
 }
 for (const d of updates.keys()) if (!byDate.has(d)) die(`${d}: data has no matching daily point`);
 
-const touched = [], unchanged = [];
+/* 判定 carry 必须看这一轮开始前的账本，不能看已被本轮改写过的值。 */
+const priorBench = new Map();
+for (const p of data.daily) {
+  if (!p || typeof p.d !== "string") continue;
+  const before = { bd: p.bd };
+  for (const k of [...BENCH_KEYS, ...BENCH_DIV_KEYS]) before[k] = p[k];
+  priorBench.set(p.d, before);
+}
+const RESOLVABLE = new Set([...BENCH_KEYS, "bd"]);
+
+/**
+ * 只有被证明是 carry 的 bundle 才可以被同日证据替换：该点的 bd 早于自己的日期，
+ * 而且价格与那个 bd 当天自证收盘（bd == d）的点逐字节相同。任何独立读数、任何
+ * 仍旧落后的新 bd、以及带股息的点都不在此列，继续走默认拒绝。
+ */
+const carryResolution = (d, fields) => {
+  if (!resolveCarry) return null;
+  if (d < BENCH_DATE_EVIDENCE_FROM) return null;
+  const before = priorBench.get(d);
+  if (!before || !isIsoDate(before.bd)) return null;
+  if (fields.bd !== d || before.bd >= d) return null;
+  if (BENCH_DIV_KEYS.some(k => before[k] !== undefined)) {
+    die(`${d}: refusing to resolve a carried bundle that already records a dividend`);
+  }
+  const proven = priorBench.get(before.bd);
+  if (!proven || proven.bd !== before.bd || !BENCH_KEYS.every(k => Object.is(proven[k], before[k]))) {
+    die(`${d}: persisted benchmark bundle is not a proven carry of ${before.bd}`);
+  }
+  return before.bd;
+};
+
+const touched = [], replaced = [], unchanged = [];
 for (const [d, fields] of [...updates].sort((a, b) => a[0].localeCompare(b[0]))) {
   const point = byDate.get(d);
+  const carriedFrom = carryResolution(d, fields);
   const changed = [];
   for (const [k, v] of Object.entries(fields)) {
     if (BENCH_DIV_KEYS.includes(k) && v === 0) {
@@ -174,12 +212,15 @@ for (const [d, fields] of [...updates].sort((a, b) => a[0].localeCompare(b[0])))
       continue;
     }
     if (Object.is(point[k], v)) continue;
-    if (point[k] !== undefined) die(`${d}: refusing to overwrite existing ${k}`);
+    if (point[k] !== undefined && !(carriedFrom && RESOLVABLE.has(k))) {
+      die(`${d}: refusing to overwrite existing ${k}`);
+    }
     point[k] = v;
     changed.push(k);
   }
-  if (changed.length) touched.push(`${d} [${changed.join(" ")}]`);
-  else unchanged.push(d);
+  if (!changed.length) unchanged.push(d);
+  else if (carriedFrom) replaced.push(`${d} [${changed.join(" ")}] carried-from=${carriedFrom}`);
+  else touched.push(`${d} [${changed.join(" ")}]`);
 }
 
 const timelineErrors = validateBenchmarkTimeline(data.daily);
@@ -197,13 +238,15 @@ for (let i = 0; i < orderedPoints.length; i += 1) {
   }
 }
 
-if (!touched.length) {
+const changedCount = touched.length + replaced.length;
+if (!changedCount) {
   console.log(`no-op ${file} (${unchanged.length} date(s) already carried these fields)`);
   process.exit(0);
 }
 for (const line of touched) console.log(`set ${line}`);
+for (const line of replaced) console.log(`resolve ${line}`);
 if (dryRun) {
-  console.log(`dry-run: ${touched.length} point(s) would change; ${file} untouched`);
+  console.log(`dry-run: ${changedCount} point(s) would change; ${file} untouched`);
   process.exit(0);
 }
 
@@ -235,4 +278,4 @@ const nextFile = outer.enc
 writeAtomic(file, nextFile);
 const postimageHash = crypto.createHash("sha256").update(nextFile).digest("hex");
 
-console.log(`ok ${file} points-touched=${touched.length} points-unchanged=${unchanged.length} points-total=${data.daily.length} preimage-sha256=${preimageHash} postimage-sha256=${postimageHash} backup=${args.backup}`);
+console.log(`ok ${file} points-touched=${touched.length} points-resolved=${replaced.length} points-unchanged=${unchanged.length} points-total=${data.daily.length} preimage-sha256=${preimageHash} postimage-sha256=${postimageHash} backup=${args.backup}`);

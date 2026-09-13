@@ -285,3 +285,124 @@ test("whole-ledger validation rejects a bd regression introduced by repair", () 
   assert.match(r.stderr, /benchmark timeline invalid: .*regresses/);
   assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
 });
+
+/* ---------- --resolve-carry：把工作日的 carry 换成同日证据 ---------- */
+// 真实形态（2026-09-11）：工作日当时没等到自己的收盘价，先沿用上一交易日的
+// bundle；行情到齐后只挂在了周末点上，那个工作日仍是未证明的缺口。
+const CARRY_SEED = () => ({
+  updatedAt: "2026-09-13T00:00:00.000Z",
+  daily: [
+    { d: "2026-09-10", schwab: 10, webull: 20, cash: 5, stock: 25, other: 0,
+      spy: 650, qqq: 580, bd: "2026-09-10" },
+    { d: "2026-09-11", schwab: 11, webull: 21, cash: 6, stock: 26, other: 0,
+      spy: 650, qqq: 580, bd: "2026-09-10", prov: 1, sourceFingerprint: "a".repeat(64) },
+    { d: "2026-09-12", schwab: 12, webull: 22, cash: 7, stock: 27, other: 0,
+      spy: 651, qqq: 581, bd: "2026-09-11", prov: 1 },
+    { d: "2026-09-13", schwab: 13, webull: 23, cash: 8, stock: 28, other: 0,
+      spy: 651, qqq: 581, bd: "2026-09-11", prov: 1 },
+  ],
+  flowsAuto: [], flowsUnresolved: [],
+  status: { asOf: "2026-09-13", provisional: true, notes: ["benchmark priced on 2026-09-11"] },
+});
+const SAME_DAY_SERIES = {
+  spy: { "2026-09-11": 651 }, qqq: { "2026-09-11": 581 },
+  bd: { "2026-09-11": "2026-09-11" },
+};
+const carryDir = (data = CARRY_SEED(), series = SAME_DAY_SERIES) => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(data));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify(series));
+  return dir;
+};
+const runCarry = (dir, extra = []) => spawnSync(process.execPath,
+  [SCRIPT, "--file=data.json", "--series=series.json", "--baseline=2026-09-11",
+    "--from=2026-09-11", "--to=2026-09-11", "--backup=preimage.backup", ...extra],
+  { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+
+test("resolve-carry replaces a carried workday bundle with same-day evidence only", () => {
+  const dir = carryDir(), before = CARRY_SEED();
+  const r = runCarry(dir, ["--resolve-carry"]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /resolve 2026-09-11 \[spy qqq bd\] carried-from=2026-09-10/);
+  assert.match(r.stdout, /points-resolved=1/);
+  const after = read(dir);
+  assert.equal(after.daily[1].spy, 651);
+  assert.equal(after.daily[1].qqq, 581);
+  assert.equal(after.daily[1].bd, "2026-09-11");
+  // 组合数据、prov、来源凭证与其它每一天都必须逐字节不变。
+  for (let i = 0; i < before.daily.length; i += 1) {
+    assert.deepEqual(stripBench(after.daily[i]), stripBench(before.daily[i]));
+    if (i !== 1) assert.deepEqual(after.daily[i], before.daily[i]);
+  }
+  assert.deepEqual(after.status, before.status);
+  assert.deepEqual(after.flowsAuto, before.flowsAuto);
+  assert.equal(fs.readFileSync(path.join(dir, "preimage.backup"), "utf8"),
+    JSON.stringify(CARRY_SEED()));
+});
+
+test("resolving a carried bundle stays opt-in", () => {
+  const dir = carryDir();
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = runCarry(dir);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /refusing to overwrite existing spy/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("resolve-carry refuses a point that already proves its own session", () => {
+  const data = CARRY_SEED();
+  data.daily[1].spy = 649; data.daily[1].qqq = 579; data.daily[1].bd = "2026-09-11";
+  data.daily[2].spy = 649; data.daily[2].qqq = 579;
+  data.daily[3].spy = 649; data.daily[3].qqq = 579;
+  const dir = carryDir(data);
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = runCarry(dir, ["--resolve-carry"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /refusing to overwrite existing spy/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("resolve-carry refuses a bundle that is not a carry of its own bd", () => {
+  const data = CARRY_SEED();
+  data.daily[1].spy = 649;   // 独立读数，不是 2026-09-10 的 carry
+  const dir = carryDir(data);
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = runCarry(dir, ["--resolve-carry"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /2026-09-11: persisted benchmark bundle is not a proven carry of 2026-09-10/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("resolve-carry refuses to contradict a price already published for that bd", () => {
+  const data = CARRY_SEED();
+  data.daily[2].spy = 652; data.daily[2].qqq = 582;
+  data.daily[3].spy = 652; data.daily[3].qqq = 582;
+  const dir = carryDir(data);
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = runCarry(dir, ["--resolve-carry"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /repeated bd 2026-09-11 changed a persisted benchmark price/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("resolve-carry refuses a carried bundle that already records a dividend", () => {
+  const data = CARRY_SEED();
+  data.daily[1].spyd = 1.9;
+  const dir = carryDir(data);
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = runCarry(dir, ["--resolve-carry"]);
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /refusing to resolve a carried bundle that already records a dividend/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("resolve-carry leaves an untouched ledger byte-identical on a dry run", () => {
+  const dir = carryDir();
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-11", "--from=2026-09-11", "--to=2026-09-11", "--resolve-carry", "--dry-run"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /dry-run: 1 point\(s\) would change/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
