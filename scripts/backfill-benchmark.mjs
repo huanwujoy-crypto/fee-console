@@ -23,7 +23,14 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { BENCH_KEYS, BENCH_DIV_KEYS, isIsoDate } from "./daily-core.mjs";
+import {
+  BENCH_KEYS,
+  BENCH_DIV_KEYS,
+  BENCH_DATE_EVIDENCE_FROM,
+  BENCH_MAX_SOURCE_LAG_DAYS,
+  isIsoDate,
+  validateBenchmarkTimeline,
+} from "./daily-core.mjs";
 
 const die = msg => { console.error("error: " + msg); process.exit(1); };
 
@@ -59,7 +66,7 @@ try { series = JSON.parse(fs.readFileSync(args.series, "utf8")); }
 catch { die(`could not read ${args.series} as JSON`); }
 if (!series || typeof series !== "object" || Array.isArray(series)) die("--series must be a JSON object");
 
-const ALLOWED = new Set([...BENCH_KEYS, ...BENCH_DIV_KEYS]);
+const ALLOWED = new Set([...BENCH_KEYS, ...BENCH_DIV_KEYS, "bd"]);
 const updates = new Map();   // date -> { field: value }
 for (const [field, byDate] of Object.entries(series)) {
   if (!ALLOWED.has(field)) die(`unknown series field ${field} (expected one of ${[...ALLOWED].join(", ")})`);
@@ -67,10 +74,19 @@ for (const [field, byDate] of Object.entries(series)) {
   const isDiv = BENCH_DIV_KEYS.includes(field);
   for (const [d, raw] of Object.entries(byDate)) {
     if (!isIsoDate(d)) die(`series.${field} has a bad date ${JSON.stringify(d)}`);
+    if (!updates.has(d)) updates.set(d, {});
+    if (field === "bd") {
+      if (!isIsoDate(raw)) die(`series.bd.${d} must be a valid ISO date`);
+      const lag = Math.round((Date.parse(`${d}T00:00:00Z`) - Date.parse(`${raw}T00:00:00Z`)) / 86400000);
+      if (lag < 0 || lag > BENCH_MAX_SOURCE_LAG_DAYS) {
+        die(`series.bd.${d} must be on or up to ${BENCH_MAX_SOURCE_LAG_DAYS} days before its point`);
+      }
+      updates.get(d)[field] = raw;
+      continue;
+    }
     const v = Number(raw);
     if (!Number.isFinite(v)) die(`series.${field}.${d} is not a finite number`);
     if (isDiv ? v < 0 : !(v > 0)) die(`series.${field}.${d} is out of range`);
-    if (!updates.has(d)) updates.set(d, {});
     updates.get(d)[field] = v;
   }
 }
@@ -144,6 +160,7 @@ for (const d of targetDates) {
   const fields = updates.get(d);
   if (!fields) die(`${d}: series is missing a daily point`);
   for (const k of BENCH_KEYS) if (!(Number(fields[k]) > 0)) die(`${d}: series is missing ${k}`);
+  if (d >= BENCH_DATE_EVIDENCE_FROM && !isIsoDate(fields.bd)) die(`${d}: series is missing bd`);
 }
 for (const d of updates.keys()) if (!byDate.has(d)) die(`${d}: data has no matching daily point`);
 
@@ -163,6 +180,21 @@ for (const [d, fields] of [...updates].sort((a, b) => a[0].localeCompare(b[0])))
   }
   if (changed.length) touched.push(`${d} [${changed.join(" ")}]`);
   else unchanged.push(d);
+}
+
+const timelineErrors = validateBenchmarkTimeline(data.daily);
+if (timelineErrors.length) die(`benchmark timeline invalid: ${timelineErrors.join("; ")}`);
+const orderedPoints = [...data.daily]
+  .filter(point => point && isIsoDate(point.d) && point.d >= BENCH_DATE_EVIDENCE_FROM)
+  .sort((a, b) => a.d.localeCompare(b.d));
+for (let i = 0; i < orderedPoints.length; i += 1) {
+  const point = orderedPoints[i];
+  const hasPair = BENCH_KEYS.every(k => Number(point[k]) > 0);
+  const laterHasEvidence = orderedPoints.slice(i + 1)
+    .some(later => BENCH_KEYS.every(k => Number(later[k]) > 0) && isIsoDate(later.bd));
+  if (!hasPair && laterHasEvidence) {
+    die(`benchmark timeline invalid: ${point.d} is an unresolved interior gap`);
+  }
 }
 
 if (!touched.length) {

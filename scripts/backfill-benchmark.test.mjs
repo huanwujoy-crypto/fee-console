@@ -52,7 +52,7 @@ const seedDir = () => {
 };
 const read = dir => JSON.parse(fs.readFileSync(path.join(dir, "data.json"), "utf8"));
 
-const BENCH_FIELDS = new Set(["spy", "qqq", "spyd", "qqqd"]);
+const BENCH_FIELDS = new Set(["spy", "qqq", "spyd", "qqqd", "bd"]);
 const stripBench = point => Object.fromEntries(
   Object.entries(point).filter(([k]) => !BENCH_FIELDS.has(k)));
 
@@ -179,4 +179,109 @@ test("actual writes require an explicit recoverable backup path", () => {
     { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /actual write requires --backup/);
+});
+
+test("tail repair adds mandatory benchmark-date evidence without touching portfolio data", () => {
+  const dir = tmp();
+  const before = {
+    updatedAt: "2026-09-12T00:00:00.000Z",
+    daily: [
+      { d: "2026-09-10", schwab: 10, webull: 20, cash: 5, stock: 25, other: 0,
+        spy: 650, qqq: 580, bd: "2026-09-10" },
+      { d: "2026-09-11", schwab: 11, webull: 21, cash: 6, stock: 26, other: 0, prov: 1 },
+    ],
+    flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: "2026-09-11", provisional: true, notes: [] },
+  };
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(before));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-11": 651 },
+    qqq: { "2026-09-11": 581 },
+    bd: { "2026-09-11": "2026-09-11" },
+  }));
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-11", "--from=2026-09-11", "--to=2026-09-11", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.equal(r.status, 0, r.stderr);
+  const after = read(dir);
+  assert.equal(after.daily[1].spy, 651);
+  assert.equal(after.daily[1].qqq, 581);
+  assert.equal(after.daily[1].bd, "2026-09-11");
+  assert.deepEqual(stripBench(after.daily[1]), stripBench(before.daily[1]));
+  assert.deepEqual(after.flowsAuto, before.flowsAuto);
+  assert.deepEqual(after.flowsUnresolved, before.flowsUnresolved);
+  assert.deepEqual(after.status, before.status);
+});
+
+test("post-migration benchmark repair fails closed without bd", () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({
+    updatedAt: "2026-09-12T00:00:00.000Z",
+    daily: [{ d: "2026-09-11", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 }],
+    flowsAuto: [], flowsUnresolved: [], status: { asOf: "2026-09-11", provisional: true, notes: [] },
+  }));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-11": 651 }, qqq: { "2026-09-11": 581 },
+  }));
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-11", "--from=2026-09-11", "--to=2026-09-11", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /missing bd/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("whole-ledger validation refuses an interior benchmark gap outside the requested slice", () => {
+  const dir = tmp();
+  const data = {
+    updatedAt: "2026-09-13T00:00:00.000Z",
+    daily: [
+      { d: "2026-09-10", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+        spy: 650, qqq: 580, bd: "2026-09-10" },
+      { d: "2026-09-11", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 },
+      { d: "2026-09-12", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+        spy: 651, qqq: 581, bd: "2026-09-11" },
+    ], flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: "2026-09-12", provisional: true, notes: [] },
+  };
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(data));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-10": 650 }, qqq: { "2026-09-10": 580 },
+    bd: { "2026-09-10": "2026-09-10" },
+  }));
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-10", "--from=2026-09-10", "--to=2026-09-10", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /2026-09-11 is an unresolved interior gap/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("whole-ledger validation rejects a bd regression introduced by repair", () => {
+  const dir = tmp();
+  const data = {
+    updatedAt: "2026-09-13T00:00:00.000Z",
+    daily: [
+      { d: "2026-09-10", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+        spy: 650, qqq: 580, bd: "2026-09-10" },
+      { d: "2026-09-11", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 },
+      { d: "2026-09-12", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+        spy: 650, qqq: 580, bd: "2026-09-10" },
+    ], flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: "2026-09-12", provisional: true, notes: [] },
+  };
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(data));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-11": 651 }, qqq: { "2026-09-11": 581 },
+    bd: { "2026-09-11": "2026-09-11" },
+  }));
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-11", "--from=2026-09-11", "--to=2026-09-11", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /benchmark timeline invalid: .*regresses/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
 });
