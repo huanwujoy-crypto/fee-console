@@ -13,6 +13,7 @@ on:
       - 'claude/**'
     paths:
       - data.json
+      - fee-data-health.json
 
 permissions:
   contents: read
@@ -51,8 +52,10 @@ jobs:
           fi
 
           mapfile -t changed_files < <(git diff --name-only origin/main..HEAD)
-          if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != 'data.json' ]]; then
-            echo 'Candidate may change only data.json.' >&2
+          if (( ${#changed_files[@]} < 1 || ${#changed_files[@]} > 2 )) ||
+             [[ ! " ${changed_files[*]} " =~ " fee-data-health.json " ]] ||
+             printf '%s\n' "${changed_files[@]}" | grep -Evqx 'data\.json|fee-data-health\.json'; then
+            echo 'Candidate must include the public health receipt and may otherwise change only data.json.' >&2
             printf 'Changed: %s\n' "${changed_files[@]}" >&2
             exit 1
           fi
@@ -68,10 +71,16 @@ jobs:
           fi
 
           data_date=${BASH_REMATCH[1]}
-          today_utc=$(date -u +%F)
-          yesterday_utc=$(date -u -d 'yesterday' +%F)
-          if [[ "$data_date" != "$today_utc" && "$data_date" != "$yesterday_utc" ]]; then
-            echo "Candidate data date is stale or unexpected: $data_date" >&2
+          health_date=$(jq -r '.targetDate // empty' fee-data-health.json)
+          if [[ "$health_date" != "$data_date" ]]; then
+            echo 'Commit subject and health target date differ.' >&2
+            exit 1
+          fi
+          target_epoch=$(date -u -d "$data_date" +%s)
+          today_epoch=$(date -u -d "$(date -u +%F)" +%s)
+          target_age_days=$(( (today_epoch - target_epoch) / 86400 ))
+          if (( target_age_days < 0 || target_age_days > 4 )); then
+            echo "Candidate target date is outside the safe catch-up window: $data_date" >&2
             exit 1
           fi
 
@@ -131,3 +140,29 @@ jobs:
           }
           console.log('envelope ok');
           NODE
+
+      - name: Verify amount-free run receipt and outcome
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/fee-data-health.mjs validate --health=fee-data-health.json --data=data.json
+          outcome=$(jq -r '.outcome' fee-data-health.json)
+          mapfile -t changed_files < <(git diff --name-only origin/main..HEAD)
+          data_changed=false
+          printf '%s\n' "${changed_files[@]}" | grep -qx 'data.json' && data_changed=true
+          case "$outcome" in
+            updated)
+              [[ "$data_changed" == true ]] || { echo 'updated requires a data.json change' >&2; exit 1; }
+              ;;
+            no-op)
+              [[ "$data_changed" == false ]] || { echo 'no-op must leave data.json byte-identical' >&2; exit 1; }
+              ;;
+            failed)
+              echo "Daily producer reported fixed failure code: $(jq -r '.errorCode' fee-data-health.json)" >&2
+              exit 1
+              ;;
+            *)
+              echo 'Unexpected daily producer outcome.' >&2
+              exit 1
+              ;;
+          esac

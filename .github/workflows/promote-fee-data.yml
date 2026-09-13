@@ -14,8 +14,9 @@ on:
     branches:
       - 'claude/**'
   schedule:
-    # Fallback only, in case GitHub delays or drops a workflow_run event.
-    - cron: '15,45 0-2 * * *'
+    # Independent watchdog after the 12:30 HKT producer. It proves that the
+    # producer ran even when the data itself was unchanged.
+    - cron: '15,45 5-7 * * *'
   workflow_dispatch:
 
 permissions:
@@ -76,7 +77,9 @@ jobs:
             fi
 
             mapfile -t changed_files < <(git diff --name-only "origin/main..$candidate_ref")
-            if (( ${#changed_files[@]} != 1 )) || [[ "${changed_files[0]}" != "data.json" ]]; then
+            if (( ${#changed_files[@]} < 1 || ${#changed_files[@]} > 2 )) ||
+               [[ ! " ${changed_files[*]} " =~ " fee-data-health.json " ]] ||
+               printf '%s\n' "${changed_files[@]}" | grep -Evqx 'data\.json|fee-data-health\.json'; then
               continue
             fi
             if [[ $(git rev-list --count --merges "origin/main..$candidate_ref") -ne 0 ]]; then
@@ -95,7 +98,14 @@ jobs:
               continue
             fi
             data_date=${BASH_REMATCH[1]}
-            if [[ "$data_date" != "$yesterday_utc" && "$data_date" != "$today_utc" ]]; then
+            health_date=$(git show "$candidate_ref:fee-data-health.json" | jq -r '.targetDate // empty')
+            if [[ "$health_date" != "$data_date" ]]; then
+              continue
+            fi
+            target_epoch=$(date -u -d "$data_date" +%s)
+            today_epoch=$(date -u -d "$today_utc" +%s)
+            target_age_days=$(( (today_epoch - target_epoch) / 86400 ))
+            if (( target_age_days < 0 || target_age_days > 4 )); then
               continue
             fi
 
@@ -119,6 +129,7 @@ jobs:
             fi
 
             git show "$candidate_ref:data.json" > "$RUNNER_TEMP/candidate-data.json"
+            git show "$candidate_ref:fee-data-health.json" > "$RUNNER_TEMP/candidate-health.json"
             size_bytes=$(wc -c < "$RUNNER_TEMP/candidate-data.json")
             if (( size_bytes >= 2097152 )); then
               continue
@@ -147,13 +158,36 @@ jobs:
               continue
             fi
 
+            if ! node scripts/fee-data-health.mjs validate \
+              --health="$RUNNER_TEMP/candidate-health.json" \
+              --data="$RUNNER_TEMP/candidate-data.json"; then
+              continue
+            fi
+            outcome=$(jq -r '.outcome' "$RUNNER_TEMP/candidate-health.json")
+            data_changed=false
+            printf '%s\n' "${changed_files[@]}" | grep -qx 'data.json' && data_changed=true
+            if [[ "$outcome" == 'updated' && "$data_changed" != true ]] ||
+               [[ "$outcome" == 'no-op' && "$data_changed" != false ]] ||
+               [[ "$outcome" != 'updated' && "$outcome" != 'no-op' ]]; then
+              continue
+            fi
+
             candidates+=("$candidate_ref")
           done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/)
 
           if (( ${#candidates[@]} == 0 )); then
-            echo 'No fresh data update is waiting; nothing to promote.'
-            echo 'sha=' >> "$GITHUB_OUTPUT"
-            exit 0
+            if [[ -f fee-data-health.json ]]; then
+              checked_hkt=$(TZ=Asia/Hong_Kong date -d "$(jq -r '.checkedAt // empty' fee-data-health.json)" +%F 2>/dev/null || true)
+              today_hkt=$(TZ=Asia/Hong_Kong date +%F)
+              if [[ "$checked_hkt" == "$today_hkt" ]] &&
+                 node scripts/fee-data-health.mjs validate --health=fee-data-health.json --data=data.json; then
+                echo 'Today already has a verified producer receipt; no candidate remains.'
+                echo 'sha=' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+            fi
+            echo 'No verified fee-data producer receipt exists for today.' >&2
+            exit 1
           fi
           if (( ${#candidates[@]} != 1 )); then
             echo 'Refusing ambiguous promotion; multiple valid Routine branches are waiting:' >&2

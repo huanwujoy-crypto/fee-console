@@ -28,6 +28,18 @@ fingerprint, then run the same-date replacement and trusted publication path
 defined by the data contract. If the source is still changing, stop without
 writing.
 
+Every run must finish through the amount-free health-receipt contract in
+`docs/daily-data-contract.md` section 6.1. After style preflight, the writer and
+the calculation-receipt read-back all succeed against the same still-current
+private snapshot, use `scripts/fee-data-health.mjs create-success` to bind the
+actual account source dates, actual benchmark source date and final encrypted
+`data.json` bytes. Commit `data.json` plus `fee-data-health.json` for `updated`;
+commit only `fee-data-health.json` for a verified `no-op`. On failure, emit only
+an allowlisted fixed code with `create-failure`; never promote it. Do not make
+an empty commit, invent a source date, or place amounts or raw errors in the
+health receipt. The independent GitHub watchdog, not the Routine itself, owns
+detection of a Routine that never started.
+
 Read SPY/QQQ only from the validated `market-data-cache` row and pass that row's
 actual date as `--src-bench`; never label the cache's last row with the target
 date. If the cache has not reached the target's completed U.S. session, the

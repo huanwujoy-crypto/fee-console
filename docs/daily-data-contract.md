@@ -217,6 +217,29 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
 - 原子写回（临时文件 + fsync + rename）。
 - stdout / stderr 只输出状态与计数，**不打印任何金额或密钥**。
 
+## 6.1 每日运行回执与无人运行检测
+
+`fee-data-health.json` 是不含金额的公开运行回执，只证明受控 producer 是否真正运行；
+它不是 `data.json`、费用回执或行情数据的替代来源。
+
+- 每次 Routine 都必须在同一个 `claude/*` 候选提交中写入运行回执。数据变化时同时提交
+  `data.json` 与运行回执；经完整校验的 byte-for-byte no-op 只提交运行回执。
+- 候选目标日最多允许落后香港当日 4 个日历日，仅用于逐日补齐短期断档；超过窗口必须先人工
+  核查，不能继续放宽或跳日。两条验证／推广工作流必须保持相同边界。
+- 成功回执只允许 `updated` 或 `no-op`，并绑定最终加密 `data.json` 原始字节的 SHA-256。
+  `updated` 必须有数据文件变更；`no-op` 必须没有数据文件变更。禁止空提交。
+- 成功回执必须由 `scripts/fee-data-health.mjs` 在分类预检、writer、同一私密来源的
+  `feeCalculationReceipt` 完整验证通过后产生。它不得重新读取 Sharesight 或另算费用，
+  以免形成第二个真相源。
+- 失败只能使用白名单错误码，不得透传 URL、令牌、Gist id、持仓、金额、原始响应或自由文本。
+  `failed` 候选必须验证失败且绝不推广。
+- 回执中的账户与 benchmark `sourceDate` 必须是本轮实际使用日期，不得伪装成目标日；
+  benchmark 落后时继续按 §1 的暂估与补跑规则处理。
+- 独立 GitHub 定时看门狗在 Routine 截止时间后检查 main 上当日运行回执；没有候选、没有当日
+  回执或回执校验失败都必须标红。这样可区分“已运行但数据无变化”与“根本没有运行”。
+- 周五收盘等公共行情首次尚未到齐时，`benchmark-cache` 在随后时段自动重试；每次都要求
+  SPY/QQQ 共同通过身份、收盘和股息校验，取得后再由同日 replacement 补齐模拟期末余额。
+
 ## 7. 单一费用计算回执（calculation receipt）
 
 管理费、Carry 和毛收益只允许由 `scripts/fee-receipt-core.mjs` 的确定性引擎计算一次。
