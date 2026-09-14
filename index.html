@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.4">
+<meta name="fee-console-build" content="4.9.5">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -786,15 +786,15 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.4";
+const UI_VERSION_LABEL=" · v4.9.5";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
 const HASH=(()=>{try{if(!location.hash||location.hash.length<2)return null;const q=new URLSearchParams(location.hash.slice(1));
-  const h={tok:q.get("tok")||"",gid:q.get("gid")||"",k:q.get("k")||"",seed:q.get("seed")||"",who:q.get("who")||"",fund:q.get("fund")||""};
+  const h={tok:q.get("tok")||"",gid:q.get("gid")||"",k:q.get("k")||"",seed:q.get("seed")||"",who:q.get("who")||"",fund:q.get("fund")||"",docs:q.get("docs")||""};
   if(h.tok)history.replaceState(null,"",location.pathname+location.search);return h;}catch(_){return null;}})();
 if(HASH){ if(HASH.k) setCfg(K.key,HASH.k); if(HASH.gid) setCfg(K.gid,HASH.gid); }
-window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
+window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund|docs)=/.test(location.hash)){invalidateReceiptSource();location.reload();} });
 
 /* fund-investor-core:start */
 function createFundInvestorCore() {
@@ -992,8 +992,8 @@ async function importFundProfileLink(){
 /* fund-document-library:start */
 const FUND_DOCS_KEY="feeConsole.fundDocuments.v2",FUND_DOCS_SCHEMA="fee-console.fund-documents.v2",FUND_DOCS_IMPORT_SCHEMA="fee-console.fund-documents-import.v1";
 const FUND_DOC_CATEGORIES=new Set(["governance","transaction","valuation","other"]),FUND_DOC_STATUSES=new Set(["draft","internal-review","archived"]);
-const FUND_DOC_MAX_CONTENT_BYTES=90000,FUND_DOC_MAX_TOTAL_BYTES=240000,FUND_DOC_MAX_ENVELOPE_BYTES=480000;
-let _fundDocsCache=null,_fundDocsMessage="",_fundDocsGeneration=0,_fundDocEditId="";
+const FUND_DOC_MAX_CONTENT_BYTES=90000,FUND_DOC_MAX_TOTAL_BYTES=240000,FUND_DOC_MAX_ENVELOPE_BYTES=480000,FUND_DOCS_LINK_MAX_BYTES=60000;
+let _fundDocsCache=null,_fundDocsCipher="",_fundDocsMessage="",_fundDocsGeneration=0,_fundDocEditId="";
 const emptyFundDocuments=()=>({schema:FUND_DOCS_SCHEMA,libraryId:"",governance:{managerController:"",guardians:[]},documents:[]});
 const fundDocsBytes=value=>new TextEncoder().encode(String(value)).byteLength;
 const fundDocsObject=value=>!!value&&typeof value==="object"&&!Array.isArray(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value));
@@ -1037,15 +1037,16 @@ async function decodeFundDocumentEnvelope(raw,identity){
   const checked=validateFundDocuments(saved.library);if(!checked.ok)throw new Error(checked.reason);return checked.library;
 }
 async function readFundDocuments(){
-  const gid=cfg(K.gid),keyValue=cfg(K.key),token=cfg(K.tok),raw=cfg(FUND_DOCS_KEY);
-  if(!isMgr()){_fundDocsCache=null;return {library:emptyFundDocuments(),reason:null,raw:""};}
-  if(!managerDocumentsAuthorized()||_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)){_fundDocsCache=null;return {library:emptyFundDocuments(),reason:"管理人文件权限或原账本尚未核验",raw};}
-  if(!raw){_fundDocsCache=null;return {library:emptyFundDocuments(),reason:null,raw:""};}
+  const gid=cfg(K.gid),keyValue=cfg(K.key),token=cfg(K.tok),linked=HASH?.docs||"",raw=linked||cfg(FUND_DOCS_KEY);
+  if(!isMgr()){_fundDocsCache=null;_fundDocsCipher="";return {library:emptyFundDocuments(),reason:null,raw:""};}
+  if(!managerDocumentsAuthorized()||_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)){_fundDocsCache=null;_fundDocsCipher="";return {library:emptyFundDocuments(),reason:"管理人文件权限或原账本尚未核验",raw};}
+  if(!raw){_fundDocsCache=null;_fundDocsCipher="";return {library:emptyFundDocuments(),reason:null,raw:""};}
   if(_fundDocsCache?.raw===raw&&_fundDocsCache.gid===gid&&_fundDocsCache.keyValue===keyValue&&_fundDocsCache.token===token)return _fundDocsCache.promise;
-  const task={raw,gid,keyValue,token};_fundDocsCache=task;
+  const task={raw,gid,keyValue,token};_fundDocsCache=task;_fundDocsCipher="";
   task.promise=(async()=>{try{
     const identity=await currentFundDocumentIdentity(),library=await decodeFundDocumentEnvelope(raw,identity);
-    if(_fundDocsCache!==task||cfg(K.gid)!==gid||cfg(K.key)!==keyValue||cfg(K.tok)!==token||cfg(FUND_DOCS_KEY)!==raw||!managerDocumentsAuthorized())return {library:emptyFundDocuments(),reason:"来源已变化，请重新读取文件库",raw:cfg(FUND_DOCS_KEY)};
+    if(_fundDocsCache!==task||cfg(K.gid)!==gid||cfg(K.key)!==keyValue||cfg(K.tok)!==token||(linked?HASH?.docs!==raw:cfg(FUND_DOCS_KEY)!==raw)||!managerDocumentsAuthorized())return {library:emptyFundDocuments(),reason:"来源已变化，请重新读取文件库",raw:cfg(FUND_DOCS_KEY)};
+    _fundDocsCipher=raw;if(linked&&store){setCfg(FUND_DOCS_KEY,raw);HASH.docs="";}
     return {library,reason:null,raw};
   }catch(_){return {library:emptyFundDocuments(),reason:"本机基金文件库暂无法核验；未显示旧文件",raw};}})();return task.promise;
 }
@@ -1671,11 +1672,24 @@ function renderA2hs(){const el=document.getElementById("a2hs"),text=document.get
   el.style.display=(ios&&!sa&&!cfg(K.a2hs))?"flex":"none";}
 
 /* home-screen-entry:start */
-function prepareManagerHomeScreenEntry(){
-  const token=cfg(K.tok),gid=cfg(K.gid),keyValue=cfg(K.key);
-  if(!token||!gid||!keyValue){toast("原管理人访问尚未完整核验，暂不能准备主屏幕入口");return false;}
+function managerHomeScreenLink(){
+  const token=cfg(K.tok),gid=cfg(K.gid),keyValue=cfg(K.key),storedProfile=cfg(FUND_PROFILE_KEY),storedDocs=cfg(FUND_DOCS_KEY);
+  if(!token||!gid||!keyValue)return {url:"",reason:"原管理人访问尚未完整核验"};
+  const activeProfile=_fundProfileCipher&&_fundProfileCache?.gid===gid&&_fundProfileCache?.keyValue===keyValue?_fundProfileCipher:"";
+  if(storedProfile&&!activeProfile)return {url:"",reason:"基金档案尚未完成核验，请先打开投资人页"};
+  const activeDocs=_fundDocsCipher&&_fundDocsCache?.gid===gid&&_fundDocsCache?.keyValue===keyValue&&_fundDocsCache?.token===token?_fundDocsCipher:"";
+  if(storedDocs&&!activeDocs)return {url:"",reason:"基金文件库尚未完成核验，请先打开设置页"};
+  if(fundDocsBytes(activeDocs)>FUND_DOCS_LINK_MAX_BYTES)return {url:"",reason:"基金文件库较大，请改用管理人加密备份迁移"};
   const q=new URLSearchParams({tok:token,gid,k:keyValue,who:DB.settings.who||""});
-  history.replaceState(null,"",location.pathname+"#"+q.toString());
+  if(activeProfile)q.set("fund",activeProfile);
+  if(activeDocs)q.set("docs",activeDocs);
+  return {url:location.origin+location.pathname+"#"+q.toString(),reason:""};
+}
+function prepareManagerHomeScreenEntry(){
+  const entry=managerHomeScreenLink();
+  if(!entry.url){toast(entry.reason+"，暂不能准备主屏幕入口");return false;}
+  const target=new URL(entry.url);
+  history.replaceState(null,"",target.pathname+target.hash);
   toast("入口已准备：现在点 Safari「分享」→「添加到主屏幕」");
   return true;
 }
@@ -1841,7 +1855,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.dataset.delflow){changeDraft(d=>d.months.forEach(m=>m.flows=m.flows.filter(f=>f.id!==T.dataset.delflow)));return;}
   if(T.id==="btnShare"){showShare();return;}
   if(T.id==="btnPrepIcon"){prepareManagerHomeScreenEntry();return;}
-  if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败"));return;}
+  if(T.id==="btnMgrLink"){const entry=managerHomeScreenLink();if(!entry.url){toast(entry.reason+"，未复制");return;}navigator.clipboard?.writeText(entry.url).then(()=>toast("管理人链接已复制（含令牌与加密基金资料，只给自己用）")).catch(()=>toast("复制失败"));return;}
   if(T.id==="btnGhSync"){pullAll(false);return;}
   if(T.id==="btnGhOff"){if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("草稿保留中，请先处理草稿");return;}confirmBox("断开云同步","本机将不再是管理人设备（数据保留在云端与本机）。",()=>{invalidateReceiptSource();setCfg(K.tok,"");render();setSync("");});return;}
 });
