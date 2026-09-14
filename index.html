@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.6">
+<meta name="fee-console-build" content="4.9.7">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -300,7 +300,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     </details>
     <div id="fundDocsBox" class="fund-doc-list" style="margin-top:10px"></div>
     <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f" for="fundDocsFile">导入管理人加密备份（JSON）</label><p class="hint">用于在同一基金的另一台管理人设备恢复或合并角色说明、文件及历史版本。系统只接受基金身份相同且可用当前原管理人 token 解密的备份；不会上传文件，也不会改变份额或账本。投资人无需使用此功能。</p><input id="fundDocsFile" type="file" accept="application/json,.json"><div class="row" style="margin-top:8px"><button class="btn" id="fundDocsExport" type="button">导出管理人加密备份</button></div></div>
-    <p class="hint" id="fundDocsNotice" style="margin-top:10px">文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。草案只在设置页显示；内部已复核和已归档版本会加密加入新生成的基金只读链接。</p>
+    <p class="hint" id="fundDocsNotice" style="margin-top:10px">文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。全部文件及历史版本会按原状态加密加入新生成的基金只读链接。</p>
   </div>
   <div class="card"><h2>重要设置</h2><p class="hint">期初本金、费率和起算日影响历史计算；只有确认差异后才会保存。</p>
     <div class="grid">
@@ -335,7 +335,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <p class="small" style="margin:0 0 10px;text-align:left">用另一部手机的<b>相机</b>扫下方二维码 → 点弹出的链接 → 打开即可查看。远程的话，点「复制链接」用微信/信息发过去，对方点开即可。</p>
   <div id="shQr" style="display:flex;justify-content:center;margin:0 auto 10px"></div>
   <input id="shLink" readonly style="font-size:11px">
-  <p class="small" style="text-align:left;margin:8px 0 0">这条链接只能看不能改，并包含全部数字及已发布基金文件。只发给获准查看的人。</p>
+  <p class="small" style="text-align:left;margin:8px 0 0">这条链接只能看不能改，并包含全部数字及基金文件。只发给获准查看的人。</p>
   <div class="row" style="margin-top:12px;justify-content:flex-end"><button class="btn" id="shCopy">复制链接</button><button class="btn primary" id="shClose">关闭</button></div>
 </div></div>
 <div class="ovl" id="ledgerReview"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="ledgerReviewTitle">
@@ -796,7 +796,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.6";
+const UI_VERSION_LABEL=" · v4.9.7";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1047,21 +1047,21 @@ async function decodeFundDocumentEnvelope(raw,identity){
   const checked=validateFundDocuments(saved.library);if(!checked.ok)throw new Error(checked.reason);return checked.library;
 }
 function publicFundDocuments(library){
-  const publicLibrary={schema:FUND_DOCS_SCHEMA,libraryId:library.libraryId,governance:{managerController:library.governance.managerController,guardians:library.governance.guardians.map(g=>({...g}))},documents:library.documents.filter(d=>d.status!=="draft").map(d=>({...d}))};
+  const publicLibrary={schema:FUND_DOCS_SCHEMA,libraryId:library.libraryId,governance:{managerController:library.governance.managerController,guardians:library.governance.guardians.map(g=>({...g}))},documents:library.documents.map(d=>({...d}))};
   const checked=validateFundDocuments(publicLibrary,{allowEmptyLibraryId:true,allowVersionGaps:true});if(!checked.ok)throw new Error(checked.reason);return checked.library;
 }
 async function decodeInvestorFundArchive(raw,identity){
   if(!raw||fundDocsBytes(raw)>FUND_DOCS_LINK_MAX_BYTES)throw new Error("投资人文件包大小异常");
   const outer=JSON.parse(raw);if(!fundDocsExact(outer,["enc","v","data"])||outer.enc!==true||outer.v!==1||typeof outer.data!=="string")throw new Error("投资人文件包格式待核对");
   const saved=JSON.parse(await decTxt(await keyOf(cfg(K.key)),outer.data));if(!fundDocsExact(saved,["gid","profileDigest","library"])||saved.gid!==identity.gid||saved.profileDigest!==identity.profileDigest)throw new Error("投资人文件包不属于当前基金");
-  const checked=validateFundDocuments(saved.library,{allowVersionGaps:true});if(!checked.ok||checked.library.documents.some(d=>d.status==="draft"))throw new Error("投资人文件包包含未发布内容或格式异常");return checked.library;
+  const checked=validateFundDocuments(saved.library,{allowVersionGaps:true});if(!checked.ok)throw new Error("投资人文件包格式异常");return checked.library;
 }
 async function publishInvestorFundArchive(library){
   const gid=cfg(K.gid),keyValue=cfg(K.key),identity=await currentFundDocumentIdentity(),publicLibrary=publicFundDocuments(library),canonical=JSON.stringify(publicLibrary),stored=cfg(FUND_ARCHIVE_KEY);
   _fundArchiveCipher="";_fundArchiveGid="";_fundArchiveKey="";
   if(stored)try{const decoded=await decodeInvestorFundArchive(stored,identity);if(JSON.stringify(decoded)===canonical){_fundArchiveCache={raw:stored,gid,keyValue,profileDigest:identity.profileDigest,library:decoded};_fundArchiveCipher=stored;_fundArchiveGid=gid;_fundArchiveKey=keyValue;return stored;}}catch(_){}
   const data=await encTxt(await keyOf(keyValue),JSON.stringify({...identity,library:publicLibrary})),raw=JSON.stringify({enc:true,v:1,data});
-  if(fundDocsBytes(raw)>FUND_DOCS_LINK_MAX_BYTES)throw new Error("已发布文件较多，只读链接暂不能携带全部正文；请减少正文长度后再共享");
+  if(fundDocsBytes(raw)>FUND_DOCS_LINK_MAX_BYTES)throw new Error("基金文件较多，只读链接暂不能携带全部正文；请减少正文长度后再共享");
   const verified=await decodeInvestorFundArchive(raw,identity);if(JSON.stringify(verified)!==canonical)throw new Error("投资人文件包读回不一致");
   if(!store)throw new Error("当前浏览器不能保存投资人文件包");setCfg(FUND_ARCHIVE_KEY,raw);if(cfg(FUND_ARCHIVE_KEY)!==raw)throw new Error("投资人文件包未能保存在本机");
   _fundArchiveCache={raw,gid,keyValue,profileDigest:identity.profileDigest,library:verified};_fundArchiveCipher=raw;_fundArchiveGid=gid;_fundArchiveKey=keyValue;return raw;
@@ -1073,7 +1073,7 @@ async function readInvestorFundArchive(){
     const identity=await currentFundDocumentIdentity();if(_fundArchiveCache?.raw===raw&&_fundArchiveCache.gid===gid&&_fundArchiveCache.keyValue===keyValue&&_fundArchiveCache.profileDigest===identity.profileDigest)return {library:_fundArchiveCache.library,reason:null,raw};
     const library=await decodeInvestorFundArchive(raw,identity);if(cfg(K.gid)!==gid||cfg(K.key)!==keyValue||(linked?HASH?.archive!==raw:cfg(FUND_ARCHIVE_KEY)!==raw))return {library:emptyFundDocuments(),reason:"来源已变化，请重新读取基金文件",raw:""};
     _fundArchiveCache={raw,gid,keyValue,profileDigest:identity.profileDigest,library};_fundArchiveCipher=raw;_fundArchiveGid=gid;_fundArchiveKey=keyValue;if(linked&&store)setCfg(FUND_ARCHIVE_KEY,raw);return {library,reason:null,raw};
-  }catch(_){_fundArchiveCache=null;_fundArchiveCipher="";return {library:emptyFundDocuments(),reason:"已发布基金文件暂无法核验，请让管理人重新生成只读链接",raw};}
+  }catch(_){_fundArchiveCache=null;_fundArchiveCipher="";return {library:emptyFundDocuments(),reason:"基金文件暂无法核验，请让管理人重新生成只读链接",raw};}
 }
 async function readFundDocuments(){
   const gid=cfg(K.gid),keyValue=cfg(K.key),token=cfg(K.tok),linked=HASH?.docs||"",raw=linked||cfg(FUND_DOCS_KEY);
@@ -1502,7 +1502,7 @@ function renderInvestors(loaded,feeView){
   const profile=loaded.profile,model=fundInvestorCore.calculate({profile,data:DAILY,feeView});
   if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
   const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · 初始 ${fmt(profile.initialShares)} 股</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>`<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(i.shares/profile.initialShares*100).toFixed(0)}%</span></button>`).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。已发布的基金文件在本页下方只读展示。</div></div>`;
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · 初始 ${fmt(profile.initialShares)} 股</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>`<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(i.shares/profile.initialShares*100).toFixed(0)}%</span></button>`).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,change=previous&&held?held.valueCents-previous.valueCents:null;
@@ -1516,26 +1516,26 @@ function renderInvestors(loaded,feeView){
     <div class="card"><h2>估值明细</h2>${tableRows.length?`<table class="fund-table" aria-label="投资人每日份额估值"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 日</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
     <div class="card"><details class="fund-method"><summary>份额与估值说明</summary><p>成立基准为 ${esc(profile.inceptionDate)} 纽约估值日收盘，转入后 Schwab-HK + Webull 的全部资产与现金。香港到账通知日为 ${esc(profile.inceptionNoticeDate)}。现金已包含在账户总额中。</p><p>每股份额市值＝基金账户总资产 ÷ 基金份额；个人市值＝个人份额 × 每股市值。初始份额合计 ${fmt(profile.initialShares)} 股。成立日收盘作为起点，从次日起计算变化。</p><p>这里的“费用前”指未另扣小程序应计管理费及 Carry；已计入券商资产的实际支出保留在原账户金额内。此页暂不提供扣除全部费用负债后的 NAV。</p><p>新增或提取本金需明确投资人和发行／注销份额，不能当作投资收益；未完成归属时暂停后续个人估值。内部买卖不会增减基金份额。</p><p>* 表示来源暂估。历史未标星不代表独立校准。投资人档案是展示配置，视图切换不提供个人之间的数据隔离。</p></details></div>`;
 }
-const fundDocumentStatusLabel={draft:"草案", "internal-review":"内部已复核（仍非签署）",archived:"已归档"};
+const fundDocumentStatusLabel={draft:"草案（未签署）", "internal-review":"内部已复核（仍非签署）",archived:"已归档"};
 const fundDocumentCategoryLabel={governance:"治理规则",transaction:"交易文件",valuation:"估值依据",other:"其它"};
 function renderInvestorFundArchive(profileLoaded,loaded){
   const box=document.getElementById("fundArchiveBox");if(!profileLoaded.profile){box.innerHTML="";return;}
   const profile=profileLoaded.profile,library=loaded.library||emptyFundDocuments(),groups=new Map();for(const d of library.documents){if(!groups.has(d.id))groups.set(d.id,[]);groups.get(d.id).push(d);}
   const latest=[...groups.values()].map(v=>v.sort((a,b)=>b.version-a.version)[0]).sort((a,b)=>b.asOf.localeCompare(a.asOf)||a.title.localeCompare(b.title));
   const roles=`<div class="fund-role-list"><div class="fund-role"><span>投资管理人实际控制人</span><b>${esc(library.governance.managerController||"尚未发布")}</b></div>${library.governance.guardians.map(g=>`<div class="fund-role"><span>${esc(g.investorId)} 的管理联系人</span><b>${esc(g.guardianName)} · ${esc(g.relationship)}</b></div>${g.note?`<div class="small">${esc(g.note)}</div>`:""}`).join("")}</div>`;
-  const files=latest.length?`<div class="fund-doc-list">${latest.map(d=>{const versions=groups.get(d.id).sort((a,b)=>b.version-a.version);return `<details><summary>${esc(d.title)}</summary><div class="fund-doc-meta">${esc(fundDocumentCategoryLabel[d.category])} · ${esc(fundDocumentStatusLabel[d.status])} · ${esc(d.asOf)} · 最新第 ${d.version} 版</div>${versions.map(v=>`<details><summary>第 ${v.version} 版 · ${esc(fundDocumentStatusLabel[v.status])}</summary><div class="fund-doc-meta">${esc(v.asOf)}${v.fileName?` · 附件 ${esc(v.fileName)}`:""}${v.fileSha256?` · SHA-256 ${esc(v.fileSha256)}`:""}</div><pre class="fund-doc-body">${esc(v.content)}</pre><div class="fund-doc-actions"><button class="btn sm" data-archive-print="${esc(v.id)}" data-doc-version="${v.version}">生成 PDF / 打印</button></div></details>`).join("")}</details>`;}).join("")}</div>`:`<div class="fund-archive-empty">${esc(loaded.reason||"尚无已发布文件。管理人草案不会在投资人页面显示。")}</div>`;
-  box.innerHTML=`<div class="card"><div class="fund-archive-head"><div><h2>基金资料与文件</h2><p class="hint">投资人只读查看；此处不能修改。仅显示管理人标为“内部已复核”或“已归档”的版本。</p></div>${library.documents.length?'<button class="btn sm primary" data-archive-print="all">导出全部 PDF</button>':""}</div>${roles}${files}<p class="small" style="margin:10px 0 0">本页用于模拟基金的记录与监测，不代表已签署的法律文件或真实资产权属登记。</p></div>`;
+  const files=latest.length?`<div class="fund-doc-list">${latest.map(d=>{const versions=groups.get(d.id).sort((a,b)=>b.version-a.version);return `<details><summary>${esc(d.title)}</summary><div class="fund-doc-meta">${esc(fundDocumentCategoryLabel[d.category])} · ${esc(fundDocumentStatusLabel[d.status])} · ${esc(d.asOf)} · 最新第 ${d.version} 版</div>${versions.map(v=>`<details><summary>第 ${v.version} 版 · ${esc(fundDocumentStatusLabel[v.status])}</summary><div class="fund-doc-meta">${esc(v.asOf)}${v.fileName?` · 附件 ${esc(v.fileName)}`:""}${v.fileSha256?` · SHA-256 ${esc(v.fileSha256)}`:""}</div><pre class="fund-doc-body">${esc(v.content)}</pre><div class="fund-doc-actions"><button class="btn sm" data-archive-print="${esc(v.id)}" data-doc-version="${v.version}">生成 PDF / 打印</button></div></details>`).join("")}</details>`;}).join("")}</div>`:`<div class="fund-archive-empty">${esc(loaded.reason||"尚无基金文件。")}</div>`;
+  box.innerHTML=`<div class="card"><div class="fund-archive-head"><div><h2>基金资料与文件</h2><p class="hint">投资人只读查看；此处不能修改。所有文件及历史版本均按原状态显示，包括未签署草案。</p></div>${library.documents.length?'<button class="btn sm primary" data-archive-print="all">导出全部 PDF</button>':""}</div>${roles}${files}<p class="small" style="margin:10px 0 0">本页用于模拟基金的记录与监测，不代表已签署的法律文件或真实资产权属登记。</p></div>`;
   box._fundProfile=profile;box._fundArchive=library;
 }
 function printFundMaterial(profile,library,selection){
   const sheet=document.getElementById("fundPrintSheet"),all=selection?.id?library.documents.filter(d=>d.id===selection.id&&d.version===selection.version):library.documents,documents=[...all].sort((a,b)=>b.asOf.localeCompare(a.asOf)||a.title.localeCompare(b.title)||b.version-a.version);if(!profile||!documents.length){toast("没有可导出的基金文件");return;}
   const generated=new Intl.DateTimeFormat("zh-HK",{timeZone:"Asia/Hong_Kong",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hour12:false}).format(new Date()),shares=profile.investors.map(i=>`${esc(i.name)}（${esc(i.id)}）${(i.shares/profile.initialShares*100).toFixed(2)}%`).join("；"),roles=[library.governance.managerController?`投资管理人实际控制人：${esc(library.governance.managerController)}`:"",...library.governance.guardians.map(g=>`${esc(g.investorId)} 的管理联系人：${esc(g.guardianName)}（${esc(g.relationship)}）${g.note?`；${esc(g.note)}`:""}`)].filter(Boolean);
-  sheet.innerHTML=`<div class="print-cover"><div class="print-kicker">FUND RECORDS · 投资人只读副本</div><div class="print-title">${esc(profile.fundName)}</div><div class="print-subtitle">基金资料与已发布文件</div></div><div class="print-meta"><div><span>投资管理人</span><b>${esc(profile.manager)}</b></div><div><span>计价币种</span><b>${esc(profile.currency)}</b></div><div><span>成立日</span><b>${esc(profile.inceptionDate)}</b></div><div><span>初始份额</span><b>${profile.initialShares.toLocaleString("zh-CN")} 股</b></div><div><span>投资人初始比例</span><b>${shares}</b></div><div><span>导出时间（香港）</span><b>${esc(generated)}</b></div></div>${roles.length?`<section class="print-section"><h2>角色说明</h2><ul class="print-role">${roles.map(r=>`<li>${r}</li>`).join("")}</ul></section>`:""}${documents.map(d=>`<article class="print-document"><h2>${esc(d.title)}</h2><div class="print-doc-meta">${esc(fundDocumentCategoryLabel[d.category])} · ${esc(fundDocumentStatusLabel[d.status])} · 文件日期 ${esc(d.asOf)} · 第 ${d.version} 版${d.fileName?` · 附件 ${esc(d.fileName)}`:""}${d.fileSha256?`<br>附件 SHA-256：${esc(d.fileSha256)}`:""}</div><pre class="print-doc-body">${esc(d.content)}</pre><div class="print-footer">${esc(profile.fundName)} · 模拟基金记录与监测用途 · 本打印件不构成签署文件、法律意见或真实资产权属登记。</div></article>`).join("")}`;
-  const oldTitle=document.title,clean=documents.length===1?documents[0].title:"基金资料与已发布文件";document.title=clean.replace(/[\\/:*?"<>|]/g,"_");sheet.setAttribute("aria-hidden","false");const cleanup=()=>{document.title=oldTitle;sheet.setAttribute("aria-hidden","true");};window.addEventListener("afterprint",cleanup,{once:true});requestAnimationFrame(()=>{try{window.print();}catch(_){cleanup();toast("当前浏览器未能打开打印预览");}});
+  sheet.innerHTML=`<div class="print-cover"><div class="print-kicker">FUND RECORDS · 投资人只读副本</div><div class="print-title">${esc(profile.fundName)}</div><div class="print-subtitle">基金资料与文件</div></div><div class="print-meta"><div><span>投资管理人</span><b>${esc(profile.manager)}</b></div><div><span>计价币种</span><b>${esc(profile.currency)}</b></div><div><span>成立日</span><b>${esc(profile.inceptionDate)}</b></div><div><span>初始份额</span><b>${profile.initialShares.toLocaleString("zh-CN")} 股</b></div><div><span>投资人初始比例</span><b>${shares}</b></div><div><span>导出时间（香港）</span><b>${esc(generated)}</b></div></div>${roles.length?`<section class="print-section"><h2>角色说明</h2><ul class="print-role">${roles.map(r=>`<li>${r}</li>`).join("")}</ul></section>`:""}${documents.map(d=>`<article class="print-document"><h2>${esc(d.title)}</h2><div class="print-doc-meta">${esc(fundDocumentCategoryLabel[d.category])} · ${esc(fundDocumentStatusLabel[d.status])} · 文件日期 ${esc(d.asOf)} · 第 ${d.version} 版${d.fileName?` · 附件 ${esc(d.fileName)}`:""}${d.fileSha256?`<br>附件 SHA-256：${esc(d.fileSha256)}`:""}</div><pre class="print-doc-body">${esc(d.content)}</pre><div class="print-footer">${esc(profile.fundName)} · 模拟基金记录与监测用途 · 本打印件不构成签署文件、法律意见或真实资产权属登记。</div></article>`).join("")}`;
+  const oldTitle=document.title,clean=documents.length===1?documents[0].title:"基金资料与文件";document.title=clean.replace(/[\\/:*?"<>|]/g,"_");sheet.setAttribute("aria-hidden","false");const cleanup=()=>{document.title=oldTitle;sheet.setAttribute("aria-hidden","true");};window.addEventListener("afterprint",cleanup,{once:true});requestAnimationFrame(()=>{try{window.print();}catch(_){cleanup();toast("当前浏览器未能打开打印预览");}});
 }
 function renderFundDocuments(loaded){
   const library=loaded.library||emptyFundDocuments(),summary=document.getElementById("fundGovSummary"),box=document.getElementById("fundDocsBox"),notice=document.getElementById("fundDocsNotice"),status=fundDocumentStatusLabel,category=fundDocumentCategoryLabel;
-  notice.textContent=_fundDocsMessage||loaded.reason||_fundArchiveMessage||"文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。草案只在设置页显示；内部已复核和已归档版本会加密加入新生成的基金只读链接。";
+  notice.textContent=_fundDocsMessage||loaded.reason||_fundArchiveMessage||"文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。全部文件及历史版本会按原状态加密加入新生成的基金只读链接。";
   const locked=!!loaded.reason;for(const node of document.querySelectorAll("#fundGovForm input,#fundGovForm textarea,#fundGovForm button,#fundDocForm input,#fundDocForm select,#fundDocForm textarea,#fundDocForm button,#fundDocsFile"))node.disabled=locked;document.getElementById("fundDocsExport").disabled=locked||!loaded.raw;
   summary.innerHTML=library.governance.managerController||library.governance.guardians.length?`<div class="res"><div class="line"><span>投资管理人实际控制人</span><b>${esc(library.governance.managerController||"待填")}</b></div>${library.governance.guardians.map(g=>`<div class="line"><span>${esc(g.investorId)} 的模拟资产管理联系人</span><b>${esc(g.guardianName)} · ${esc(g.relationship)}</b></div>`).join("")}<p class="hint" style="margin:8px 0 0">角色说明只描述模拟监测安排，不改变底层资产的法律或受益所有权。</p></div>`:'<p class="hint">尚未保存实际控制人与模拟资产管理联系人。</p>';
   const active=document.activeElement;if(!document.getElementById("fundGovForm").contains(active)){const g=library.governance.guardians[0]||{investorId:"",guardianName:"",relationship:"",note:""};for(const [id,value] of Object.entries({fundGovController:library.governance.managerController||"",fundGovGuardianInvestor:g.investorId,fundGovGuardianName:g.guardianName,fundGovRelationship:g.relationship,fundGovNote:g.note}))document.getElementById(id).value=value;}
@@ -1876,7 +1876,7 @@ window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileC
 function viewLink(){return location.origin+location.pathname+"#gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+(_fundProfileCipher&&_fundProfileCache?.gid===cfg(K.gid)&&_fundProfileCache?.keyValue===cfg(K.key)?"&fund="+encodeURIComponent(_fundProfileCipher):"")+(typeof _fundArchiveCipher!=="undefined"&&_fundArchiveCipher&&_fundArchiveGid===cfg(K.gid)&&_fundArchiveKey===cfg(K.key)?"&archive="+encodeURIComponent(_fundArchiveCipher):"");}
 function showShare(){
   if(!cfg(K.gid)){toast("请先完成一次同步（连接后自动完成）");return;}
-  const managerLibrary=document.getElementById("fundDocsBox")._fundDocumentLibrary;if(isMgr()&&managerLibrary?.documents.some(d=>d.status!=="draft")&&!(_fundArchiveCipher&&_fundArchiveGid===cfg(K.gid)&&_fundArchiveKey===cfg(K.key))){toast(_fundArchiveMessage||"已发布基金文件尚未完成只读封装，请刷新后重试");return;}
+  const managerLibrary=document.getElementById("fundDocsBox")._fundDocumentLibrary;if(isMgr()&&managerLibrary?.documents.length&&!(_fundArchiveCipher&&_fundArchiveGid===cfg(K.gid)&&_fundArchiveKey===cfg(K.key))){toast(_fundArchiveMessage||"基金文件尚未完成只读封装，请刷新后重试");return;}
   const url=viewLink();document.getElementById("shLink").value=url;const qb=document.getElementById("shQr");
   try{const q=qrcode(0,"M");q.addData(url);q.make();qb.innerHTML=q.createSvgTag({cellSize:5,margin:2,scalable:true});const svg=qb.querySelector("svg");svg.style.width="min(260px,80vw)";svg.style.height="auto";}
   catch(e){qb.innerHTML='<div class="empty">文件较多，二维码容量不足，请复制链接</div>';}
