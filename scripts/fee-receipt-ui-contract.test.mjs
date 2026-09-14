@@ -508,6 +508,7 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     return; // Support PR first; the index-only PR activates the frozen contract below.
   }
   const explicitEvidence = html.includes("/* benchmark-state-evidence:start */");
+  const referenceEstimate = html.includes("/* benchmark-reference-estimate:start */");
   if (!explicitEvidence) {
     assert.equal(html.includes("BENCH_STATE_EVIDENCE_FROM"), false,
       "unmarked partial benchmark-state rollout cannot pass");
@@ -515,13 +516,27 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.equal(html.split("/* benchmark-state-evidence:start */").length, 2);
     assert.equal(html.split("/* benchmark-state-evidence:end */").length, 2);
   }
+  if (referenceEstimate) {
+    assert.equal(html.split("/* benchmark-reference-estimate:start */").length, 2);
+    assert.equal(html.split("/* benchmark-reference-estimate:end */").length, 2);
+    assert.match(html, /参考估算/, "short benchmark gaps must be visibly labelled as reference estimates");
+    assert.match(html, /benchmarkComparisonNav/, "reference comparisons must use the fund NAV from the same covered day");
+    assert.match(html, /comparisonNav==null\?"—":usd\(comparisonNav,0\)/,
+      "a missing same-day fund NAV must render as unavailable instead of falling back to the current NAV");
+    assert.match(html, /flow-after-coverage/, "an uncovered flow must have a cause-specific display reason");
+  } else {
+    assert.equal(html.includes("benchmarkReferenceEstimate"), false,
+      "the support PR must not partially activate reference estimates on the old page");
+  }
   assert.equal(html.split("/* benchmark-date-integrity:start */").length, 2);
   assert.equal(html.split("/* benchmark-date-integrity:end */").length, 2);
   assert.match(html, /bench-date-pending/, "the DOM must distinguish a pending benchmark date from missing flows");
   assert.match(html, /基准截至 \$\{st\.benchAsOf\}/, "the benchmark section must disclose its actual coverage date");
   let points = [];
   const context = vm.createContext({ crypto: crypto.webcrypto, TextEncoder, TextDecoder, structuredClone,
-    num: x => Number.parseFloat(x) || 0, dailySorted: () => points });
+    num: x => Number.parseFloat(x) || 0, totOf: point => (Number(point?.schwab) || 0) + (Number(point?.webull) || 0),
+    DB: { accounts: [{ id: "schwab" }, { id: "webull" }] },
+    dailySorted: () => points });
   for (const [start, end] of [[START, END], [RENDER_START, RENDER_END]]) {
     vm.runInContext(html.slice(html.indexOf(start) + start.length, html.indexOf(end)), context);
   }
@@ -576,7 +591,7 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.equal(result.bench[0].val, null); assert.equal(result.bench[0].valueReason, "withdrawal-exceeds-value");
     assert.ok(Math.abs(result.bench[0].twr + .3) < 1e-12); assert.equal(result.bench[1].val, 20);
   });
-  await t.test("a stale weekday tail clamps returns and hides cross-date simulated balances", () => {
+  await t.test("a stale weekday tail clamps returns and follows the active display policy", () => {
     points = [
       { d: "2026-09-08", spy: 100, qqq: 100, cspx: 80, eqac: 80 },
       { d: "2026-09-09", spy: 110, qqq: 105, cspx: 81, eqac: 81 },
@@ -590,7 +605,14 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.equal(result.benchmarkPending, true);
     assert.equal(result.bench[0].k, "spy", "a SPY tail gap must never fall back to CSPX");
     assert.ok(Math.abs(result.bench[0].twr - .1) < 1e-12);
-    assert.ok(result.bench.every(item => item.val === null && item.valueReason === "bench-date-pending"));
+    if (referenceEstimate) {
+      assert.equal(result.benchmarkReferenceEstimate, true);
+      assert.equal(result.benchLagDays, 1);
+      assert.ok(result.bench.every(item => Math.abs(item.val - (item.k === "spy" ? 110 : 105)) < 1e-12
+        && item.valueReason === "bench-reference-estimate"));
+    } else {
+      assert.ok(result.bench.every(item => item.val === null && item.valueReason === "bench-date-pending"));
+    }
   });
   await t.test("a weekend carry remains current while preserving the last real price date", () => {
     points = [
@@ -603,6 +625,79 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     [{ ym: "2026-09", from: "2026-09-11", to: "2026-09-12", days: 2 }]));
     assert.equal(result.benchAsOf, "2026-09-12"); assert.equal(result.benchPriceAsOf, "2026-09-11");
     assert.equal(result.benchmarkPending, false); assert.ok(Math.abs(result.bench[0].val - 110) < 1e-12);
+  });
+  if (referenceEstimate) await t.test("a short pending tail shows a dated reference estimate and compares the same covered day", () => {
+    points = [
+      { d: "2026-09-10", schwab: 600, webull: 400, spy: 100, qqq: 100, bd: "2026-09-10", bstate: "session" },
+      { d: "2026-09-11", schwab: 650, webull: 350, spy: 110, qqq: 110, bd: "2026-09-11", bstate: "session" },
+      { d: "2026-09-12", schwab: 650, webull: 350, spy: 110, qqq: 110, bd: "2026-09-11", bstate: "closed" },
+      { d: "2026-09-13", schwab: 650, webull: 350, spy: 110, qqq: 110, bd: "2026-09-11", bstate: "closed" },
+      { d: "2026-09-14", schwab: 900, webull: 400, spy: 110, qqq: 110, bd: "2026-09-11" }
+    ];
+    const benchmarkView = { state: "verified", start: "2026-09-11", asOf: "2026-09-14",
+      benchmarkInputs: { openingCents: 10_000, flows: [] } };
+    const rows = [{ ym: "2026-09", from: "2026-09-11", to: "2026-09-14", days: 4 }];
+    const result = plain(context.benchmarkView(benchmarkView, rows));
+    assert.equal(result.benchAsOf, "2026-09-13");
+    assert.equal(result.benchPriceAsOf, "2026-09-11");
+    assert.equal(result.benchmarkPending, true);
+    assert.equal(result.benchmarkReferenceEstimate, true);
+    assert.equal(result.benchLagDays, 1);
+    assert.equal(result.benchmarkComparisonNav, 1_000,
+      "the 09-14 fund movement must not be compared with a benchmark that stops on 09-13");
+    assert.equal(result.byMonth["2026-09"], undefined, "a partial benchmark month remains unpublished");
+    assert.deepEqual(result.verifiedClosures, ["2026-09-12", "2026-09-13"]);
+    assert.ok(result.bench.every(item => Math.abs(item.val - 110) < 1e-12
+      && item.valueReason === "bench-reference-estimate"));
+    assert.match(context.benchmarkPendingText(benchmarkView, result), /参考估算/);
+    assert.match(context.benchmarkPendingText(benchmarkView, result), /2026-09-13/);
+    assert.match(context.benchmarkPendingText(benchmarkView, result), /2026-09-11/);
+
+    const coveredFlow = plain(context.benchmarkView({ ...benchmarkView,
+      benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-09-13", amountCents: 10_000 }] } }, rows));
+    assert.ok(coveredFlow.bench.every(item => Math.abs(item.val - 210) < 1e-12));
+
+    const uncoveredFlow = plain(context.benchmarkView({ ...benchmarkView,
+      benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-09-14", amountCents: 10_000 }] } }, rows));
+    assert.equal(uncoveredFlow.benchmarkReferenceEstimate, false);
+    assert.ok(uncoveredFlow.bench.every(item => item.val === null && item.valueReason === "flow-after-coverage"));
+
+    const overWithdrawal = plain(context.benchmarkView({ ...benchmarkView,
+      benchmarkInputs: { openingCents: 10_000, flows: [{ date: "2026-09-13", amountCents: -20_000 }] } }, rows));
+    assert.equal(overWithdrawal.benchmarkReferenceEstimate, false);
+    assert.ok(overWithdrawal.bench.every(item => item.val === null && item.valueReason === "withdrawal-exceeds-value"));
+
+    points = points.map(point => ({ ...point })); delete points[3].webull;
+    const missingComparison = plain(context.benchmarkView(benchmarkView, rows));
+    assert.equal(missingComparison.benchmarkReferenceEstimate, true);
+    assert.equal(missingComparison.benchmarkComparisonNav, null);
+    assert.ok(missingComparison.bench.every(item => Math.abs(item.val - 110) < 1e-12));
+
+    const missingInputs = plain(context.benchmarkView({ ...benchmarkView, benchmarkInputs: null }, rows));
+    assert.equal(missingInputs.benchmarkReferenceEstimate, false);
+    assert.ok(missingInputs.bench.every(item => item.val === null && item.valueReason === "flows-unavailable"));
+  });
+  if (referenceEstimate) await t.test("the three-day estimate boundary does not publish a four-day stale balance", () => {
+    points = [
+      { d: "2026-09-10", schwab: 60, webull: 40, spy: 100, qqq: 100, bd: "2026-09-10", bstate: "session" },
+      { d: "2026-09-11", schwab: 60, webull: 40, spy: 110, qqq: 110, bd: "2026-09-11", bstate: "session" },
+      { d: "2026-09-12", schwab: 60, webull: 40 },
+      { d: "2026-09-13", schwab: 60, webull: 40 },
+      { d: "2026-09-14", schwab: 60, webull: 40 },
+      { d: "2026-09-15", schwab: 60, webull: 40 }
+    ];
+    const base = { state: "verified", start: "2026-09-11", benchmarkInputs: { openingCents: 10_000, flows: [] } };
+    const short = plain(context.benchmarkView({ ...base, asOf: "2026-09-14" },
+      [{ ym: "2026-09", from: "2026-09-11", to: "2026-09-14", days: 4 }]));
+    assert.equal(short.benchLagDays, 3); assert.equal(short.benchmarkReferenceEstimate, true);
+    assert.ok(short.bench.every(item => Math.abs(item.val - 110) < 1e-12));
+
+    const staleView = { ...base, asOf: "2026-09-15" };
+    const stale = plain(context.benchmarkView(staleView,
+      [{ ym: "2026-09", from: "2026-09-11", to: "2026-09-15", days: 5 }]));
+    assert.equal(stale.benchLagDays, 4); assert.equal(stale.benchmarkReferenceEstimate, false);
+    assert.ok(stale.bench.every(item => item.val === null && item.valueReason === "bench-source-stale"));
+    assert.match(context.benchmarkPendingText(staleView, stale), /已停更 4 天/);
   });
   if (explicitEvidence) await t.test("an explicit closed state permits a zero-return day and applies its flow at EOD", () => {
     points = [
@@ -639,7 +734,8 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.equal(pending.byMonth["2026-09"], undefined,
       "an incomplete month must not publish a benchmark return");
     assert.deepEqual(pending.verifiedClosures, []);
-    assert.ok(pending.bench.every(item => item.val === null && item.valueReason === "bench-date-pending"));
+    assert.ok(pending.bench.every(item => item.val === null
+      && item.valueReason === (referenceEstimate ? "flow-after-coverage" : "bench-date-pending")));
 
     points[2] = { d: "2026-09-30", spy: 105, qqq: 105, bd: "2026-09-30", bstate: "session" };
     const corrected = plain(context.benchmarkView(benchmarkView, rows));
@@ -729,7 +825,8 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.equal(missing.benchAsOf, "2026-08-01");
     assert.equal(missing.benchmarkPending, true);
     assert.equal(missing.bench.length, 2);
-    assert.ok(missing.bench.every(item => item.val === null && item.valueReason === "bench-date-pending"));
+    assert.ok(missing.bench.every(item => item.val === null
+      && item.valueReason === (referenceEstimate ? "flow-after-coverage" : "bench-date-pending")));
     for (const change of [p => { p[2].qqqd = "invalid"; }, p => { p[2].spyd = -1; }]) {
       points = data.daily.map(p => ({ ...p })); change(points);
       assert.equal(context.benchmarkView(view, rowsOf(view)).bench.length, 0);
