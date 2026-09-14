@@ -320,7 +320,11 @@ function reportParameters(raw, report) {
  * The report must be the open-positions snapshot (include_sales false); any
  * listing-only identity is returned as an unvalued diagnostic. */
 export function normalizeSharesightReport(raw, { registry, portfolioId, readStartedAt, readCompletedAt,
-  listing, fields = SHARESIGHT_FIELDS, portfolioRoles = ['family'] } = {}) {
+  listing, fields = SHARESIGHT_FIELDS, portfolioRoles = ['family'],
+  unconfirmedTransactionMode = 'reject' } = {}) {
+  if (!['reject', 'risk-read-only'].includes(unconfirmedTransactionMode)) {
+    fail('UNCONFIRMED_TRANSACTION_MODE_INVALID');
+  }
   const expectedId = toId(portfolioId, 'PORTFOLIO');
   const entry = scopedEntry(registry, expectedId, portfolioRoles);
   let shell;
@@ -350,7 +354,13 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
     if (validPosition !== undefined && validPosition !== true) fail('INVALID_POSITION_ROW', holdingId);
     const unconfirmed = pick(row, fields.holding.unconfirmedTransactions, 'HOLDING_UNCONFIRMED', { required: false });
     if (unconfirmed !== undefined && (!Number.isSafeInteger(unconfirmed) || unconfirmed < 0)) fail('HOLDING_UNCONFIRMED_INVALID', holdingId);
-    if (unconfirmed > 0) fail('UNCONFIRMED_TRANSACTIONS', holdingId);
+    // Accounting/classification consumers remain fail-closed by default.  The
+    // AI-risk adapter has one narrower read-only mode: it may preserve a
+    // source-declared pending count after the whole report has reconciled, but
+    // it does not confirm, infer or write the transaction.
+    if (unconfirmed > 0 && unconfirmedTransactionMode === 'reject') {
+      fail('UNCONFIRMED_TRANSACTIONS', holdingId);
+    }
     const name = sourceName(row, fields);
     const { assetClass, sourceLabels, labelStatus } = sourceLabel(row, fields, holdingId);
     const valueMicro = toMicro(pick(row, fields.holding.value, 'HOLDING_VALUE'), 'HOLDING_VALUE');
@@ -381,6 +391,8 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
       quantity: quantity === undefined ? null : quantity,
       valueMicro: String(valueMicro),
       navDate: navDate === undefined ? null : navDate,
+      ...(unconfirmedTransactionMode === 'risk-read-only'
+        ? { unconfirmedTransactions: unconfirmed ?? null } : {}),
     });
   }
 
@@ -509,6 +521,10 @@ export function aggregateFourBucket({ reports, registry, mapping, cashIdentities
   const byId = new Map();
   for (const report of reports) {
     if (!isObject(report) || report.schemaVersion !== 1) fail('INVALID_REPORTS');
+    const pending = Array.isArray(report.holdings)
+      ? report.holdings.find(row => Number.isSafeInteger(row?.unconfirmedTransactions)
+        && row.unconfirmedTransactions > 0) : null;
+    if (pending) fail('UNCONFIRMED_TRANSACTIONS', pending.holdingId);
     if (byId.has(report.portfolioId)) fail('DUPLICATE_REPORT', report.portfolioId);
     if (!familyIds.includes(report.portfolioId)) fail('SCOPE_UNEXPECTED_PORTFOLIO', report.portfolioId);
     if (report.reconciliation?.withinTolerance !== true) fail('RECONCILIATION_MISMATCH', report.portfolioId);

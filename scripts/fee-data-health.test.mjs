@@ -34,5 +34,6 @@ test("failed receipts require an allowlisted fixed code", () => {
 });
 
 test("builder emits the exact public schema", () => {
-  assert.deepEqual(buildHealth(base()), base());
+  const current = { ...base(), checkedAt: new Date().toISOString() };
+  assert.deepEqual(buildHealth(current), current);
 });

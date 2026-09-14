@@ -206,11 +206,13 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   // it must be impossible to reach by simply not mentioning the position.
   const coverageRequired=['am','pm'].includes(view.edition)
     && view.holdings.rows.length>0 && view.dataDate>=AI_TIER_COVERAGE_REQUIRED_FROM;
+  let riskDiagnostics=null;
   if(riskInput!==null){
     if(riskConstituents!==null||riskDenominator!==null)fail('risk input envelope and separate risk inputs are mutually exclusive');
     const bound=readBoundAiRiskInput(riskInput,{previousTrustedHtml:previousHtml,evidence});
     riskConstituents=bound.riskConstituents;
     riskDenominator=bound.riskDenominator;
+    riskDiagnostics=bound.diagnostics;
   }
   if(riskConstituents===null&&coverageRequired)fail('ordinary AM/PM holdings require resolved AI-tier risk constituents');
   const aiTierCoverage=riskConstituents===null?null:buildAiTierCoverage(riskConstituents);
@@ -232,7 +234,7 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     try{const value=fn();if(journalPath)finishJournalStage(journalPath,name);return value;}
     catch(error){if(journalPath)finishJournalStage(journalPath,name,{status:'failed',errorCode:'PREPARE_FAILED'});throw error;}
   };
-  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket,aiTierCoverage,aiPressure}));
+  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket,aiTierCoverage,aiPressure,riskDiagnostics}));
   stage('guard',()=>{
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-'));
     try{

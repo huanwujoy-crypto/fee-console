@@ -22,13 +22,13 @@ const previousHtml = `<template id="xuan-ib-ai-tier-records-v1" type="applicatio
     namespace: 'AUTO', recordId: autoRecordId, status: 'classified' },
 ])}</template>`;
 
-const reportRaw = (portfolioId, { holding = false } = {}) => {
+const reportRaw = (portfolioId, { holding = false, unconfirmed = 0 } = {}) => {
   const holdings = holding ? [{ id: 99000001, portfolio: { id: portfolioId }, instrument: {
     id: 99000001, code: 'SYNTH', market_code: 'TEST', name: 'Synthetic stock',
     currency_code: 'USD', friendly_instrument_description_code: 'ordinary_shares' },
   instrument_currency: { code: 'USD' }, valid_position: true, quantity: 1,
   value: 100.01, instrument_price: 100.01, labels: [], group_name: 'Ordinary Shares',
-  number_of_unconfirmed_transactions: 0 }] : [];
+  number_of_unconfirmed_transactions: unconfirmed }] : [];
   const cash_accounts = holding ? [] : [{ id: portfolioId, portfolio: { id: portfolioId },
     name: 'USD Cash', value: 100.01, currency: { code: 'USD' } }];
   return { result: { mode: 'read_only', portfolio: { id: portfolioId, currency_code: 'USD' },
@@ -73,7 +73,8 @@ test('a hand-edited first-seen state or mismatched source evidence is refused', 
   envelope.riskConstituents[0].firstSeen = true;
   envelope.bindingFingerprint = fingerprint({
     kind: envelope.kind, accounts: envelope.accounts,
-    previousManifest: envelope.previousManifest, provenance: envelope.provenance,
+    previousManifest: envelope.previousManifest, diagnostics: envelope.diagnostics,
+    provenance: envelope.provenance,
     riskConstituents: envelope.riskConstituents,
     riskDenominator: envelope.riskDenominator,
   });
@@ -108,4 +109,67 @@ test('a prior exclusion is never mistaken for a carried AUTO classification', ()
   assert.equal(coverage.entries[0].status, 'excluded');
   assert.equal(coverage.entries[0].reason, 'not-first-seen-position');
   assert.deepEqual(coverage.autoRecords, []);
+});
+
+test('risk-only capture preserves pending transactions without weakening reconciliation or identity', () => {
+  const pending = { sharesight: [936247, 936249, 1350094]
+    .map(portfolioId => receipt(reportRaw(portfolioId, { holding: true, unconfirmed: 1 }))) };
+  const envelope = buildAiRiskInputFromCapture(pending, {
+    previousTrustedHtml: previousHtml, registry,
+  });
+  assert.equal(envelope.riskConstituents.length, 3);
+  assert.equal(envelope.riskConstituents.every(item => item.symbol === 'SYNTH'), true);
+  assert.equal(envelope.diagnostics.unconfirmedTransactionRows, 3);
+  assert.equal(envelope.diagnostics.unconfirmedTransactionCount, 3);
+  assert.deepEqual(envelope.diagnostics.unconfirmedTransactions.map(item => [
+    item.custodian, item.portfolioId, item.symbol, item.count,
+  ]), [
+    ['IB-HK', '936247', 'SYNTH', 1],
+    ['Schwab-HK', '936249', 'SYNTH', 1],
+    ['Webull', '1350094', 'SYNTH', 1],
+  ]);
+
+  // Diagnostics are covered by the same drift-detection fingerprint as the
+  // rest of this intermediate envelope; it is not a source attestation.
+  envelope.diagnostics.unconfirmedTransactions[0].symbol = 'EDITED';
+  assert.throws(() => readBoundAiRiskInput(envelope, {
+    previousTrustedHtml: previousHtml,
+    evidence: { sources: { sharesight: pending.sharesight.map(item => ({
+      portfolioId: item.raw.result.portfolio.id, status: 'ok', asOf: item.completedAt,
+      fingerprint: item.rawFingerprint,
+    })) } },
+  }), /ENVELOPE_FINGERPRINT_MISMATCH/);
+
+  envelope.bindingFingerprint = fingerprint({
+    kind: envelope.kind, accounts: envelope.accounts,
+    previousManifest: envelope.previousManifest, diagnostics: envelope.diagnostics,
+    provenance: envelope.provenance, riskConstituents: envelope.riskConstituents,
+    riskDenominator: envelope.riskDenominator,
+  });
+  assert.throws(() => readBoundAiRiskInput(envelope, {
+    previousTrustedHtml: previousHtml,
+    evidence: { sources: { sharesight: pending.sharesight.map(item => ({
+      portfolioId: item.raw.result.portfolio.id, status: 'ok', asOf: item.completedAt,
+      fingerprint: item.rawFingerprint,
+    })) } },
+  }), /ENVELOPE_DIAGNOSTICS_INVALID/);
+});
+
+test('risk-only pending mode still refuses incomplete or unreconciled source reports', () => {
+  const altered = mutate => {
+    const item = reportRaw(1350094, { holding: true, unconfirmed: 1 });
+    mutate(item.result.data.report, item.result.data);
+    return { sharesight: [
+      receipt(reportRaw(936247)), receipt(reportRaw(936249)), receipt(item),
+    ] };
+  };
+  assert.throws(() => buildAiRiskInputFromCapture(altered(report => {
+    report.value = 99;
+  }), { previousTrustedHtml: previousHtml, registry }), /RECONCILIATION_MISMATCH/);
+  assert.throws(() => buildAiRiskInputFromCapture(altered((report, data) => {
+    data.links.next = 'page-2';
+  }), { previousTrustedHtml: previousHtml, registry }), /PAGINATED_RESPONSE/);
+  assert.throws(() => buildAiRiskInputFromCapture(altered(report => {
+    report.holdings[0].instrument.id = null;
+  }), { previousTrustedHtml: previousHtml, registry }), /HOLDING_INSTRUMENT_MISSING/);
 });

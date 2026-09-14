@@ -140,6 +140,40 @@ test('duplicate rows, labels and unregistered cash never classify by guess', () 
   assert.equal(code(() => normalizeAll(data => { data[936240].holdings[0].number_of_unconfirmed_transactions = 1; })), 'UNCONFIRMED_TRANSACTIONS');
 });
 
+test('pending transactions are preserved only for risk-read-only and still cannot enter four-bucket aggregation', () => {
+  const items = reads(data => {
+    data[936247].holdings[0].number_of_unconfirmed_transactions = 2;
+  });
+  const selected = items.find(item => item.portfolioId === 936247);
+  assert.equal(code(() => normalizeSharesightReport(selected.raw, {
+    ...trusted, ...selected, unconfirmedTransactionMode: 'invented',
+  })), 'UNCONFIRMED_TRANSACTION_MODE_INVALID');
+  const normalized = items.map(item => normalizeSharesightReport(item.raw, {
+    ...trusted, ...item,
+    ...(item.portfolioId === 936247
+      ? { unconfirmedTransactionMode: 'risk-read-only' } : {}),
+  }));
+  assert.equal(normalized.find(item => item.portfolioId === 936247)
+    .holdings[0].unconfirmedTransactions, 2);
+  assert.equal(code(() => aggregateFourBucket({
+    ...trusted, reports: normalized, now: NOW,
+  })), 'UNCONFIRMED_TRANSACTIONS');
+
+  const malformed = reads(data => {
+    data[936247].holdings[0].number_of_unconfirmed_transactions = 1.5;
+  }).find(item => item.portfolioId === 936247);
+  assert.equal(code(() => normalizeSharesightReport(malformed.raw, {
+    ...trusted, ...malformed, unconfirmedTransactionMode: 'risk-read-only',
+  })), 'HOLDING_UNCONFIRMED_INVALID');
+
+  const missing = reads(data => {
+    delete data[936247].holdings[0].number_of_unconfirmed_transactions;
+  }).find(item => item.portfolioId === 936247);
+  assert.equal(normalizeSharesightReport(missing.raw, {
+    ...trusted, ...missing, unconfirmedTransactionMode: 'risk-read-only',
+  }).holdings[0].unconfirmedTransactions, null);
+});
+
 test('label precedence: approved portfolio or holding rules decide without a label; no rule plus no label stays unresolved', () => {
   // IB-HK has the portfolio-wide rule `all`; HSBC-HK has `all_non_cash`; NOAH-US has no rule.
   const unlabeled = normalizeAll(data => {
