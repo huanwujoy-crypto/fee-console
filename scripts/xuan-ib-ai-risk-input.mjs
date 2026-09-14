@@ -305,7 +305,11 @@ export function buildAiRiskInput({ reports, previousTrustedHtml = null, registry
   const previous = publishedRiskUniverse(previousTrustedHtml);
   const riskConstituents = [];
   const components = [];
-  const diagnostics = { unmappedSecurityTypes: [], cashAccountRows: 0, holdingRows: 0 };
+  const diagnostics = {
+    unmappedSecurityTypes: [], cashAccountRows: 0, holdingRows: 0,
+    unconfirmedTransactionRows: 0, unconfirmedTransactionCount: 0,
+    unconfirmedTransactions: [],
+  };
   const provenance = [];
   const instrumentSeen = new Set();
 
@@ -342,6 +346,19 @@ export function buildAiRiskInput({ reports, previousTrustedHtml = null, registry
       instrumentSeen.add(instrument);
       if (typeof row.venue !== 'string' || !row.venue.trim()) fail('HOLDING_VENUE_MISSING', where);
       if (typeof row.currency !== 'string' || !/^[A-Z]{3}$/.test(row.currency)) fail('HOLDING_CURRENCY_MISSING', where);
+      const unconfirmedTransactions = row.unconfirmedTransactions;
+      if (unconfirmedTransactions !== null && unconfirmedTransactions !== undefined
+        && (!Number.isSafeInteger(unconfirmedTransactions) || unconfirmedTransactions < 0)) {
+        fail('HOLDING_UNCONFIRMED_INVALID', where);
+      }
+      if (unconfirmedTransactions > 0) {
+        diagnostics.unconfirmedTransactionRows += 1;
+        diagnostics.unconfirmedTransactionCount += unconfirmedTransactions;
+        diagnostics.unconfirmedTransactions.push({
+          custodian: account.custodian, portfolioId: account.portfolioId,
+          holdingId, symbol: row.symbol.trim(), count: unconfirmedTransactions,
+        });
+      }
       const type = mapSourceSecurityType(row.sourceSecurityType);
       if (!type.mapped) {
         diagnostics.unmappedSecurityTypes.push({ custodian: account.custodian, symbol: row.symbol.trim(),
@@ -389,7 +406,8 @@ export function buildAiRiskInput({ reports, previousTrustedHtml = null, registry
   // a hash of this module's own output, not proof that a connector was called.
   envelope.bindingFingerprint = fingerprint({
     kind: envelope.kind, accounts: envelope.accounts, previousManifest: envelope.previousManifest,
-    provenance: envelope.provenance, riskConstituents, riskDenominator: envelope.riskDenominator,
+    diagnostics: envelope.diagnostics, provenance: envelope.provenance,
+    riskConstituents, riskDenominator: envelope.riskDenominator,
   });
   return envelope;
 }
@@ -397,6 +415,56 @@ export function buildAiRiskInput({ reports, previousTrustedHtml = null, registry
 const ENVELOPE_KEYS = Object.freeze(['schemaVersion', 'kind', 'generatedFrom', 'accounts',
   'previousManifest', 'diagnostics', 'provenance', 'riskConstituents', 'riskDenominator',
   'bindingFingerprint']);
+
+const DIAGNOSTIC_KEYS = Object.freeze(['unmappedSecurityTypes', 'cashAccountRows', 'holdingRows',
+  'unconfirmedTransactionRows', 'unconfirmedTransactionCount', 'unconfirmedTransactions']);
+
+export function validateAiRiskDiagnostics(diagnostics, { constituents = null } = {}) {
+  if (!plain(diagnostics)
+    || Object.keys(diagnostics).sort().join('|') !== [...DIAGNOSTIC_KEYS].sort().join('|')
+    || !Array.isArray(diagnostics.unmappedSecurityTypes)
+    || !Array.isArray(diagnostics.unconfirmedTransactions)
+    || !Number.isSafeInteger(diagnostics.cashAccountRows)
+    || !Number.isSafeInteger(diagnostics.holdingRows)
+    || !Number.isSafeInteger(diagnostics.unconfirmedTransactionRows)
+    || !Number.isSafeInteger(diagnostics.unconfirmedTransactionCount)
+    || diagnostics.cashAccountRows < 0 || diagnostics.holdingRows < 0
+    || diagnostics.unconfirmedTransactionRows < 0
+    || diagnostics.unconfirmedTransactionCount < 0
+    || diagnostics.unconfirmedTransactionRows > diagnostics.holdingRows
+    || diagnostics.unconfirmedTransactionCount < diagnostics.unconfirmedTransactionRows
+    || diagnostics.unconfirmedTransactions.length !== diagnostics.unconfirmedTransactionRows) {
+    fail('ENVELOPE_DIAGNOSTICS_INVALID');
+  }
+  const keys = new Set();
+  for (const item of diagnostics.unconfirmedTransactions) {
+    if (!plain(item)
+      || Object.keys(item).sort().join('|')
+        !== ['count', 'custodian', 'holdingId', 'portfolioId', 'symbol'].sort().join('|')
+      || typeof item.custodian !== 'string' || !item.custodian.trim()
+      || typeof item.portfolioId !== 'string' || !/^\d{1,18}$/.test(item.portfolioId)
+      || typeof item.holdingId !== 'string' || !/^\d{1,18}$/.test(item.holdingId)
+      || typeof item.symbol !== 'string' || !item.symbol.trim() || item.symbol.length > 120
+      || !Number.isSafeInteger(item.count) || item.count < 1) {
+      fail('ENVELOPE_DIAGNOSTICS_INVALID');
+    }
+    const key = `${item.portfolioId}:${item.holdingId}`;
+    if (keys.has(key)) fail('ENVELOPE_DIAGNOSTICS_INVALID');
+    keys.add(key);
+  }
+  const count = diagnostics.unconfirmedTransactions.reduce((sum, item) => sum + item.count, 0);
+  if (count !== diagnostics.unconfirmedTransactionCount) fail('ENVELOPE_DIAGNOSTICS_INVALID');
+  if (constituents !== null) {
+    if (!Array.isArray(constituents)) fail('ENVELOPE_DIAGNOSTICS_INVALID');
+    const byKey = new Map(constituents.map(item => [`${item.portfolioId}:${item.holdingId}`, item]));
+    for (const item of diagnostics.unconfirmedTransactions) {
+      const constituent = byKey.get(`${item.portfolioId}:${item.holdingId}`);
+      if (!constituent || constituent.custodian !== item.custodian
+        || constituent.symbol !== item.symbol) fail('ENVELOPE_DIAGNOSTICS_INVALID');
+    }
+  }
+  return diagnostics;
+}
 
 /**
  * Validate one envelope and return the two inputs the assembly path consumes.
@@ -412,6 +480,7 @@ export function readAiRiskInput(envelope) {
   if (envelope.schemaVersion !== 1 || envelope.kind !== AI_RISK_INPUT_KIND
     || envelope.generatedFrom !== 'normalizeSharesightReport') fail('ENVELOPE_KIND_MISMATCH');
   if (!Array.isArray(envelope.riskConstituents) || !envelope.riskConstituents.length) fail('ENVELOPE_CONSTITUENTS_INVALID');
+  validateAiRiskDiagnostics(envelope.diagnostics);
   if (!Array.isArray(envelope.accounts) || !Array.isArray(envelope.provenance)
     || envelope.accounts.length !== 3 || envelope.provenance.length !== 3) fail('ENVELOPE_ACCOUNT_SET_INVALID');
   if (!plain(envelope.riskDenominator) || !Array.isArray(envelope.riskDenominator.components)) {
@@ -419,7 +488,8 @@ export function readAiRiskInput(envelope) {
   }
   const expected = fingerprint({
     kind: envelope.kind, accounts: envelope.accounts, previousManifest: envelope.previousManifest,
-    provenance: envelope.provenance, riskConstituents: envelope.riskConstituents,
+    diagnostics: envelope.diagnostics, provenance: envelope.provenance,
+    riskConstituents: envelope.riskConstituents,
     riskDenominator: envelope.riskDenominator,
   });
   if (expected !== envelope.bindingFingerprint) fail('ENVELOPE_FINGERPRINT_MISMATCH');
@@ -459,6 +529,7 @@ export function readAiRiskInput(envelope) {
     if (seen.has(key)) fail('ENVELOPE_DUPLICATE_CONSTITUENT', key);
     seen.add(key);
   }
+  validateAiRiskDiagnostics(envelope.diagnostics, { constituents: envelope.riskConstituents });
   return { riskConstituents: envelope.riskConstituents, riskDenominator: envelope.riskDenominator,
     previousManifest: envelope.previousManifest, diagnostics: envelope.diagnostics };
 }
@@ -519,6 +590,11 @@ export function buildAiRiskInputFromCapture(input, {
       registry, portfolioId, readStartedAt: receipt.startedAt,
       readCompletedAt: receipt.completedAt,
       portfolioRoles: ['family', 'ai_only'],
+      // A pending source transaction is not a write instruction and does not
+      // invalidate an otherwise complete, reconciled valuation for read-only
+      // exposure measurement.  The count is preserved and bound into the
+      // intermediate envelope diagnostics; all other consumers still reject.
+      unconfirmedTransactionMode: 'risk-read-only',
       listing: { source: LISTING_SOURCE, portfolioId,
         readCompletedAt: receipt.completedAt, holdingIds },
     });
@@ -596,6 +672,8 @@ export function runAiRiskInputCli(args, { cwd = root } = {}) {
     firstSeen: envelope.riskConstituents.filter(item => item.firstSeen).length,
     previousManifest: envelope.previousManifest,
     unmappedSecurityTypes: envelope.diagnostics.unmappedSecurityTypes.length,
+    unconfirmedTransactionRows: envelope.diagnostics.unconfirmedTransactionRows,
+    unconfirmedTransactionCount: envelope.diagnostics.unconfirmedTransactionCount,
     bindingFingerprint: envelope.bindingFingerprint,
   };
 }

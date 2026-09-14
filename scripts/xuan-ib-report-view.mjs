@@ -14,6 +14,7 @@ import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragment
 import { parseEtfSummary } from './xuan-ib-etf-summary-transport.mjs';
 import { renderAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 import { renderAiPressureKpi, renderAiPressureSection } from './xuan-ib-ai-pressure.mjs';
+import { validateAiRiskDiagnostics } from './xuan-ib-ai-risk-input.mjs';
 import { parseEtfAbcPublicRuntimeStateJson, renderEtfAbcPublicRuntimeCard,
   ETF_ABC_RUNTIME_START, ETF_ABC_RUNTIME_END } from './xuan-ib-etf-abc.mjs';
 
@@ -312,7 +313,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null, riskDiagnostics = null }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   if(associationReceipt){
     if(manualAccountConsent)fail('account scope modes are mutually exclusive');
@@ -385,6 +386,15 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   const aiSection=aiPressure===null?'':renderAiPressureSection(aiPressure,{
     title:'AI 压力敞口 · §0-C（三账户）',asOfHkt:view.asOfHkt,
     note:'系数取自已批准规则与已发布取值登记表，逐仓计算；分母为三账户含现金合计。'});
+  let riskSourceNotice='';
+  if(riskDiagnostics!==null){
+    const diagnostics=validateAiRiskDiagnostics(riskDiagnostics);
+    if(diagnostics.unconfirmedTransactionRows>0){
+      const items=diagnostics.unconfirmedTransactions
+        .map(item=>`${esc(item.custodian)} ${esc(item.symbol)} ×${item.count}`).join(' · ');
+      riskSourceNotice=`<details data-ai-risk-source-warning-v1="${diagnostics.unconfirmedTransactionRows}" open><summary>Sharesight 未确认交易 ${diagnostics.unconfirmedTransactionCount} 笔</summary><div class="dbody"><p>AI 风险按当前可见持仓估算。本报告未确认、也未修改这些交易。</p><p class="sub">${items}</p></div></details>`;
+    }
+  }
   if(aiPressure!==null){
     for(const item of view.risk){
       if(/§0-C|AI\s*压力/.test(String(item.title)))fail('the AI pressure section is derived and must not also be supplied as a risk card');
@@ -407,7 +417,7 @@ ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">$
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
-<div class="pane p2">${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
+<div class="pane p2">${riskSourceNotice}${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>

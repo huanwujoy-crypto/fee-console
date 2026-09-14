@@ -104,6 +104,15 @@ same-scope denominators. Missing daily changes are unavailable, not zero.
 Use only the documented eligible positions fallback, with its dated disclosure;
 never weaken preparation/guard checks to meet the time target.
 
+For read-only AI-risk measurement only, a reconciled Sharesight performance
+report may retain rows whose source says transactions are still unconfirmed.
+Preserve the nonnegative source count, bind its account alias and holding
+identity into the run envelope, and show one concise risk-pane disclosure. This
+does not confirm a trade or make its quantity/value final. Four-bucket,
+accounting and every other consumer keep the default fail-closed rule; missing
+scope, source, identity, pagination or reconciliation evidence still stops the
+report.
+
 Keep EXUS/EIMI/USSC specific cash-plan amounts visible, but never equate pooled
 planning cash with immediate broker buying power. Retain the original ETF
 policy and approved A/B/C summary with its true baseline/cutoff; do not rebuild

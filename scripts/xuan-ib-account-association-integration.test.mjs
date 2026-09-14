@@ -14,6 +14,7 @@ import {
   extractAssociationReceipt, renderAssociationDisclosure, renderAssociationReceipt,
 } from './xuan-ib-account-association.mjs';
 import { checkAssociationPublication } from './xuan-ib-account-association-publication.mjs';
+import { buildAiRiskInputFromCapture } from './xuan-ib-ai-risk-input.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const previousHtml = fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.html'), 'utf8');
@@ -29,7 +30,7 @@ const priorTemplate = template(previousHtml);
 const priorState = parseDecisionJson(priorTemplate[1], 2_000_000);
 const clone = value => JSON.parse(JSON.stringify(value));
 
-async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
+async function fixture(t,{positionsFallback=false,edition='adhoc',unconfirmedTransactions=0}={}) {
   const now = Date.now(), epoch = now - 30_000;
   const stamp = offset => new Date(epoch + offset).toISOString();
   const clock = offset => ({ wallNow: () => epoch + offset, monotonicNowMs: () => offset });
@@ -76,7 +77,7 @@ async function fixture(t,{positionsFallback=false,edition='adhoc'}={}) {
         currency_code: 'USD', friendly_instrument_description_code: 'ordinary_shares' },
       instrument_currency: { code: 'USD' }, valid_position: true, quantity: 1, value: 100,
       instrument_price: 100, labels: [], group_name: 'Ordinary Shares',
-      number_of_unconfirmed_transactions: 0 }] : [];
+      number_of_unconfirmed_transactions: unconfirmedTransactions }] : [];
       const cash_accounts = selected && !webull ? [{ id: item.portfolioId,
         portfolio: { id: item.portfolioId }, name: 'USD Cash', value: 100,
         currency: { code: 'USD' } }] : [];
@@ -160,6 +161,21 @@ test('recurring preparation retains the existing fresh Sharesight positions fall
   assert.ok(prepared.html.includes('持仓使用获批替代源'));
   assert.equal(template(prepared.html)[0],priorTemplate[0]);
   assert.equal(showRunJournal(f.journalPath).stages.find(item=>item.name==='ib-read').status,'degraded');
+});
+
+test('scheduled report names pending Sharesight rows without confirming them or blocking read-only AI risk',async t=>{
+  const f=await fixture(t,{edition:'pm',unconfirmedTransactions:2});
+  const riskInput=buildAiRiskInputFromCapture(f.input,{
+    previousTrustedHtml:previousHtml,registry,
+  });
+  const prepared=prepareReport(f.view,f.evidence,{...f.options,riskInput});
+  assert.equal(prepared.result.status,'prepared-not-published');
+  assert.match(prepared.html,/data-ai-risk-source-warning-v1="1"/);
+  assert.match(prepared.html,/Sharesight 未确认交易 2 笔/);
+  assert.match(prepared.html,/AI 风险按当前可见持仓估算。本报告未确认、也未修改这些交易。/);
+  assert.match(prepared.html,/Webull SYNTH ×2/);
+  const notice=prepared.html.match(/<details data-ai-risk-source-warning-v1="1"[\s\S]*?<\/details>/)[0];
+  assert.doesNotMatch(notice,/\$|USD|portfolioId|holdingId/);
 });
 
 test('current policy cannot be stripped, changed, expired or revoked after successful preparation', async t => {
