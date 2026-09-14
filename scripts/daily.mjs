@@ -70,7 +70,7 @@ const num = (name, raw) => {
 };
 
 const known = new Set([
-  "date", "flows", "file", "src-bench", "source-fetched-at", "source-fingerprint",
+  "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint",
   ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
   ...ACCOUNTS.map(a => `acct-cash-${a}`),
@@ -115,7 +115,7 @@ if (date === undefined) die("missing --date");
 
 let check = validateInputs({
   date, accounts, splits, styleSplits, sourceDates, bench, benchDiv,
-  benchDate: args["src-bench"] ?? null, calibrated, now: new Date()
+  benchDate: args["src-bench"] ?? null, benchState: args["bench-state"] ?? null, calibrated, now: new Date()
 });
 if (check.errors.length) dieAll([...check.errors, "nothing written"]);
 
@@ -273,7 +273,7 @@ if (styleFile) {
     die(`${code} — nothing written`);
   }
   check = validateInputs({ date, accounts, splits, styleSplits, sourceDates, bench, benchDiv,
-    benchDate: args['src-bench'] ?? null, calibrated, now: new Date() });
+    benchDate: args['src-bench'] ?? null, benchState: args["bench-state"] ?? null, calibrated, now: new Date() });
   if (check.errors.length) dieAll([...check.errors, 'nothing written']);
 }
 if (flags.has('style-preflight')) {
@@ -340,7 +340,8 @@ const benchmarkRejected = check.benchmarkErrors.length > 0;
 const acceptedBench = benchmarkRejected ? {} : bench;
 const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
 const point = buildPoint({ date, accounts, splits, styleSplits, bench: acceptedBench, benchDiv: acceptedBenchDiv,
-  benchDate: args["src-bench"] ?? null, provisional: check.provisional, calibrated });
+  benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
+  provisional: check.provisional, calibrated });
 const existingPoint = data.daily.find(x => x && x.d === date);
 // A read-only correction that leaves `stock` unchanged must not erase a style
 // look-through already verified for the same day.  If stock changes materially,
@@ -360,12 +361,15 @@ const incomingLegacyBench = BENCH_LEGACY_KEYS.some(k => Number.isFinite(point[k]
 const existingNewBench = BENCH_KEYS.every(k => Number.isFinite(existingPoint?.[k]));
 const suppliedAnyBench = [...BENCH_KEYS, ...BENCH_LEGACY_KEYS].some(k => args[k] !== undefined);
 const priorTimelineErrors = new Set(validateBenchmarkTimeline(data.daily));
-const existingBenchmarkValid = existingNewBench && validateBenchmarkTimeline([existingPoint]).length === 0;
+const existingBenchmarkValid = existingNewBench && !validateBenchmarkTimeline(
+  data.daily.filter(p => p && typeof p.d === "string" && p.d <= date)
+).some(message => message.startsWith(`${date}:`));
 const preserveExistingBenchmark = !incomingNewBench && !incomingLegacyBench && existingNewBench
   && ((!benchmarkRejected && !suppliedAnyBench) || (benchmarkRejected && existingBenchmarkValid));
 if (preserveExistingBenchmark) {
   for (const k of BENCH_KEYS) point[k] = Number(existingPoint[k]);
   if (isIsoDate(existingPoint.bd)) point.bd = existingPoint.bd;
+  if (["session", "closed"].includes(existingPoint.bstate)) point.bstate = existingPoint.bstate;
   for (const k of BENCH_DIV_KEYS) {
     if (Number(existingPoint[k]) > 0) point[k] = Number(existingPoint[k]);
   }
@@ -385,7 +389,7 @@ const timelineCandidate = data.daily.filter(x => x && x.d !== date).concat(point
 const introducedTimelineErrors = validateBenchmarkTimeline(timelineCandidate)
   .filter(message => !priorTimelineErrors.has(message));
 if (introducedTimelineErrors.length) {
-  for (const k of [...BENCH_KEYS, ...BENCH_DIV_KEYS, "bd"]) delete point[k];
+  for (const k of [...BENCH_KEYS, ...BENCH_DIV_KEYS, "bd", "bstate"]) delete point[k];
   if (!check.provisional.some(note => /benchmark omitted/.test(note))) {
     check.provisional.push("benchmark omitted pending source-date repair");
   }
@@ -421,6 +425,7 @@ if (sourceFetchedAt) {
   const canonicalIncoming = [...incoming].sort((a, b) => stableJson(a).localeCompare(stableJson(b)));
   const sourceFingerprint = suppliedSourceFingerprint || crypto.createHash("sha256").update(stableJson({
     point: withoutSourceMeta(point), sourceDates, benchDate: args["src-bench"] ?? null,
+    benchState: point.bstate ?? null,
     acctCash, prevAcctCash, flows: canonicalIncoming
   })).digest("hex");
   point.sourceFingerprint = sourceFingerprint;

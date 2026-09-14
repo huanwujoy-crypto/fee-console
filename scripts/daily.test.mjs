@@ -235,6 +235,7 @@ const ok = (accounts, splits, extra = {}) => validateInputs({
   date: extra.date ?? today(), accounts, splits,
   sourceDates: extra.sourceDates ?? { schwab: extra.date ?? today(), webull: extra.date ?? today() },
   bench: extra.bench ?? {}, benchDiv: extra.benchDiv ?? {}, benchDate: extra.benchDate ?? null,
+  benchState: extra.benchState ?? null,
   calibrated: !!extra.calibrated, now: extra.now ?? new Date()
 });
 
@@ -452,6 +453,19 @@ test("a later read of the same source fingerprint remains byte-for-byte no-op", 
   assert.equal(readPayload(dir).daily.at(-1).sourceFetchedAt, "2026-08-28T04:30:00.000Z");
 });
 
+test("implicit and explicit session evidence have one semantic source fingerprint", () => {
+  const dir = tmp(), d = today();
+  const first = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": d,
+    "source-fetched-at": "2026-08-28T04:30:00Z" });
+  assert.equal(first.status, 0, first.stderr);
+  const before = fs.readFileSync(path.join(dir, "data.json"));
+  const second = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": d,
+    "bench-state": "session", "source-fetched-at": "2026-08-28T04:35:00Z" });
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
+});
+
 test("a same-day source revision replaces the old point and provenance", () => {
   const dir = tmp();
   assert.equal(run(dir, { "source-fetched-at": "2026-08-28T04:30:00Z" }).status, 0);
@@ -540,8 +554,9 @@ test("an implausible lag still blocks", () => {
 test("a plausible earlier benchmark date is retained as evidence and marked 暂估", () => {
   const t = today();
   const v = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
-    { bench: { spy: 747.03, qqq: 687.99 }, benchDate: shift(t, -1) });
+    { bench: { spy: 747.03, qqq: 687.99 }, benchDate: shift(t, -1), benchState: "closed" });
   assert.deepEqual(v.errors, []);
+  assert.deepEqual(v.benchmarkErrors, []);
   assert.ok(v.provisional.some(n => /benchmark priced on/.test(n)));
 
   const future = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
@@ -553,7 +568,7 @@ test("a plausible earlier benchmark date is retained as evidence and marked 暂�
   assert.ok(stale.benchmarkErrors.some(n => /not a plausible lag/.test(n)), stale.benchmarkErrors.join("; "));
 
   const repeatedDividend = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
-    { bench: { spy: 747.03, qqq: 687.99 }, benchDiv: { spyd: 1.9 }, benchDate: shift(t, -1) });
+    { bench: { spy: 747.03, qqq: 687.99 }, benchDiv: { spyd: 1.9 }, benchDate: shift(t, -1), benchState: "closed" });
   assert.ok(repeatedDividend.benchmarkErrors.some(n => /dividends cannot be repeated/.test(n)),
     repeatedDividend.benchmarkErrors.join("; "));
 });
@@ -1076,19 +1091,30 @@ test("stores the SPY and QQQ benchmarks under their own keys", () => {
   assert.equal(last.spy, 763.47);
   assert.equal(last.qqq, 706.32);
   assert.equal(last.bd, today(), "the actual benchmark session date must survive serialization");
+  assert.equal(last.bstate, "session", "same-date benchmark evidence must persist as a session");
   assert.equal("cspx" in last, false, "SPY must not be written under the retired European key");
 });
 
 test("benchmark date evidence changes the point and survives calibrated writes", () => {
   const dir = tmp(), d = today(), prior = shift(d, -1);
-  const first = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": prior });
+  writePayload(dir, {
+    updatedAt: prior + "T12:00:00Z",
+    daily: [{ d: prior, schwab: 598417.36, webull: 119026.45, cash: 263597.83,
+      stock: 453845.98, other: 0, spy: 763.47, qqq: 706.32, bd: prior, bstate: "session" }],
+    flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: prior, provisional: false, calibrated: true, splitDelta: 0,
+      unresolvedCount: 0, notes: [] }
+  });
+  const first = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": prior, "bench-state": "closed" });
   assert.equal(first.status, 0, first.stderr);
   assert.equal(readPayload(dir).daily.at(-1).bd, prior);
+  assert.equal(readPayload(dir).daily.at(-1).bstate, "closed");
   const before = fs.readFileSync(path.join(dir, "data.json"));
   const corrected = run(dir, { spy: "764.10", qqq: "707.20", "src-bench": d }, ["--calibrated"]);
   assert.equal(corrected.status, 0, corrected.stderr);
   const point = readPayload(dir).daily.at(-1);
   assert.equal(point.bd, d);
+  assert.equal(point.bstate, "session");
   assert.equal("prov" in point, false);
   assert.notDeepEqual(fs.readFileSync(path.join(dir, "data.json")), before);
 });
@@ -1113,6 +1139,49 @@ test("SPY and QQQ plus their source date are mandatory as a pair", () => {
   const missingDate = ok({ schwab: 1, webull: 1 }, { cash: 2, stock: 0, other: 0 },
     { bench: { spy: 763.47, qqq: 706.32 } });
   assert.ok(missingDate.benchmarkErrors.some(e => /--src-bench is required/.test(e)), missingDate.benchmarkErrors.join("; "));
+});
+
+test("lagged benchmark prices require explicit closed evidence without blocking AUM", () => {
+  const dir = tmp(), d = today(), prior = shift(d, -1);
+  const seed = {
+    updatedAt: prior + "T12:00:00Z",
+    daily: [{ d: prior, schwab: 598417.36, webull: 119026.45, cash: 263597.83,
+      stock: 453845.98, other: 0, spy: 763.47, qqq: 706.32, bd: prior, bstate: "session" }],
+    flowsAuto: [], flowsUnresolved: [],
+    status: { asOf: prior, provisional: false, calibrated: true, splitDelta: 0,
+      unresolvedCount: 0, notes: [] }
+  };
+  writePayload(dir, seed);
+  const missing = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": prior });
+  assert.equal(missing.status, 0, missing.stderr);
+  const aumOnly = readPayload(dir).daily.at(-1);
+  assert.equal(aumOnly.schwab, 598517.36);
+  assert.equal("spy" in aumOnly, false);
+  assert.match(missing.stderr, /explicit --bench-state=closed/);
+
+  // The first AUM-only run changed the ledger's latest status; reset to the same
+  // anchored preimage so the accepted case isolates benchmark state handling.
+  writePayload(dir, seed);
+  const accepted = run(dir, {
+    spy: "763.47", qqq: "706.32", "src-bench": prior, "bench-state": "closed"
+  });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  const point = readPayload(dir).daily.at(-1);
+  assert.equal(point.bd, prior);
+  assert.equal(point.bstate, "closed");
+});
+
+test("same-date benchmark state is derived and conflicting state is omitted", () => {
+  const dir = tmp(), d = today();
+  const accepted = run(dir, { spy: "763.47", qqq: "706.32", "src-bench": d });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(readPayload(dir).daily.at(-1).bstate, "session");
+
+  const wrong = run(tmp(), {
+    spy: "763.47", qqq: "706.32", "src-bench": d, "bench-state": "closed"
+  });
+  assert.equal(wrong.status, 0, wrong.stderr);
+  assert.match(wrong.stderr, /same-date benchmark evidence must use --bench-state=session/);
 });
 
 test("legacy benchmarks remain readable before cutover and are omitted afterwards", () => {
@@ -1153,7 +1222,7 @@ test("a same-session price conflict omits only the new benchmark bundle", () => 
   writePayload(dir, {
     updatedAt: prior + "T12:00:00Z",
     daily: [{ d: prior, schwab: 598417.36, webull: 119026.45, cash: 263597.83,
-      stock: 453845.98, other: 0, spy: 763.47, qqq: 706.32, bd: prior }],
+      stock: 453845.98, other: 0, spy: 763.47, qqq: 706.32, bd: prior, bstate: "session" }],
     flowsAuto: [], flowsUnresolved: [],
     status: { asOf: prior, provisional: false, calibrated: true, splitDelta: 0,
       unresolvedCount: 0, notes: [] }
@@ -1182,8 +1251,8 @@ test("a portfolio-only same-date rerun preserves the complete benchmark bundle",
   const rerun = run(dir, { schwab: "598617.36", cash: "263797.83" });
   assert.equal(rerun.status, 0, rerun.stderr);
   const point = readPayload(dir).daily.at(-1);
-  assert.deepEqual({ spy: point.spy, qqq: point.qqq, spyd: point.spyd, bd: point.bd },
-    { spy: 768.40, qqq: 706.32, spyd: 1.903516, bd: d });
+  assert.deepEqual({ spy: point.spy, qqq: point.qqq, spyd: point.spyd, bd: point.bd, bstate: point.bstate },
+    { spy: 768.40, qqq: 706.32, spyd: 1.903516, bd: d, bstate: "session" });
 });
 
 test("a new benchmark session never inherits the prior session dividend", () => {
@@ -1191,7 +1260,8 @@ test("a new benchmark session never inherits the prior session dividend", () => 
   writePayload(dir, {
     updatedAt: prior + "T12:00:00Z",
     daily: [{ d, schwab: 598517.36, webull: 119026.45, cash: 263697.83,
-      stock: 453845.98, other: 0, spy: 768.40, qqq: 706.32, spyd: 1.903516, bd: prior }],
+      stock: 453845.98, other: 0, spy: 768.40, qqq: 706.32, spyd: 1.903516,
+      bd: prior, bstate: "closed" }],
     flowsAuto: [], flowsUnresolved: [],
     status: { asOf: d, provisional: true, calibrated: false, splitDelta: 0,
       unresolvedCount: 0, notes: [`benchmark priced on ${prior}`] }
@@ -1200,6 +1270,7 @@ test("a new benchmark session never inherits the prior session dividend", () => 
   assert.equal(result.status, 0, result.stderr);
   const point = readPayload(dir).daily.at(-1);
   assert.equal(point.bd, d);
+  assert.equal(point.bstate, "session");
   assert.equal("spyd" in point, false);
 });
 
@@ -1766,10 +1837,38 @@ test("buildPoint omits prov when nothing is provisional", () => {
 });
 
 test("persisted benchmark dates cannot regress, change prices for one session, or carry dividends", () => {
-  assert.deepEqual(validateBenchmarkTimeline([
+  assert.ok(validateBenchmarkTimeline([
     { d: "2026-09-10", spy: 100, qqq: 200, bd: "2026-09-09" },
     { d: "2026-09-11", spy: 100, qqq: 200, bd: "2026-09-09" }
+  ]).some(message => /require bstate/.test(message)), "pre-cutover weekday carry is not grandfathered");
+  assert.deepEqual(validateBenchmarkTimeline([
+    { d: "2026-09-11", spy: 100, qqq: 200, bd: "2026-09-11", bstate: "session" },
+    { d: "2026-09-12", spy: 100, qqq: 200, bd: "2026-09-11" },
+    { d: "2026-09-13", spy: 100, qqq: 200, bd: "2026-09-11" }
+  ]), [], "pre-cutover weekend carry remains readable");
+  assert.deepEqual(validateBenchmarkTimeline([
+    { d: "2026-09-14", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "session" },
+    { d: "2026-09-15", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "closed" }
   ]), []);
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-14", spy: 100, qqq: 200, bd: "2026-09-14" }
+  ]).some(message => /require bstate/.test(message)), "cutover and later always persist explicit state");
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-15", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "closed" }
+  ]).some(message => /not anchored to the prior proven session/.test(message)),
+  "a closed point cannot invent an absent source-session anchor");
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-14", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "session" },
+    { d: "2026-09-15", spy: 101, qqq: 201, bd: "2026-09-15", bstate: "session" },
+    { d: "2026-09-16", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "closed" }
+  ]).some(message => /not anchored to the prior proven session/.test(message)),
+  "closed evidence must carry exactly the immediately prior proven source session");
+  assert.ok(validateBenchmarkTimeline([
+    { d: "2026-09-14", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "session" },
+    { d: "2026-09-15" },
+    { d: "2026-09-16", spy: 100, qqq: 200, bd: "2026-09-14", bstate: "closed" }
+  ]).some(message => /not anchored to the prior proven session/.test(message)),
+  "closed evidence cannot bridge an AUM-only benchmark gap");
   assert.ok(validateBenchmarkTimeline([
     { d: "2026-09-10", spy: 100, qqq: 200, bd: "2026-09-10" },
     { d: "2026-09-11", spy: 101, qqq: 201, bd: "2026-09-09" }

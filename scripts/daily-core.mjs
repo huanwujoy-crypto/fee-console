@@ -31,6 +31,8 @@ export const BENCH_MAX_SOURCE_LAG_DAYS = 3;
 // Points before this date predate per-point benchmark-date evidence.  They are
 // retained as reviewed migration history; new SPY/QQQ writes always carry `bd`.
 export const BENCH_DATE_EVIDENCE_FROM = "2026-09-10";
+export const BENCH_STATE_EVIDENCE_FROM = "2026-09-14";
+export const BENCH_STATES = Object.freeze(["session", "closed"]);
 export const CASH_EPS = 0.01;
 
 export const ACCOUNTS = ["schwab", "webull"];
@@ -81,12 +83,12 @@ export function validateInputs(input) {
   const errors = [], provisional = [], benchmarkErrors = [];
   const {
     date, accounts = {}, splits = {}, styleSplits = {}, sourceDates = {}, bench = {}, benchDiv = {},
-    benchDate = null, calibrated = false, now
+    benchDate = null, benchState = null, calibrated = false, now
   } = input;
 
   if (!isIsoDate(date)) {
     errors.push(`--date must be a valid ISO calendar date (got ${JSON.stringify(date)})`);
-    return { errors, provisional, benchmarkErrors, total: NaN, splitTotal: NaN, splitDelta: NaN };
+    return { errors, provisional, benchmarkErrors, benchmarkState: null, total: NaN, splitTotal: NaN, splitDelta: NaN };
   }
 
   // The clock only guards against nonsense, not against a one-day broker lag.
@@ -147,6 +149,11 @@ export function validateInputs(input) {
   }
   const hasNewBench = BENCH_KEYS.some(k => bench[k] !== undefined);
   const hasLegacyBench = BENCH_LEGACY_KEYS.some(k => bench[k] !== undefined);
+  let benchmarkState = null;
+  if (benchState !== null && benchState !== undefined && !BENCH_STATES.includes(benchState)) {
+    benchmarkErrors.push(`--bench-state must be one of ${BENCH_STATES.join(" or ")}`);
+  }
+  if (benchState !== null && benchState !== undefined && !hasNewBench) benchmarkErrors.push("--bench-state requires a SPY/QQQ price pair");
   if (hasNewBench && BENCH_KEYS.some(k => bench[k] === undefined)) {
     benchmarkErrors.push(`benchmark prices must be supplied as a pair: ${BENCH_KEYS.join(" and ")}`);
   }
@@ -174,6 +181,13 @@ export function validateInputs(input) {
       else if (lag > BENCH_MAX_SOURCE_LAG_DAYS) {
         benchmarkErrors.push(`--src-bench=${benchDate} is not a plausible lag behind ${date}`);
         provisional.push(`benchmark source is ${lag} day(s) behind ${date}; benchmark omitted`);
+      } else if (hasNewBench && lag === 0) {
+        if (benchState && benchState !== "session") benchmarkErrors.push("same-date benchmark evidence must use --bench-state=session");
+        else benchmarkState = "session";
+      } else if (hasNewBench) {
+        if (benchState !== "closed") benchmarkErrors.push("carried benchmark prices require explicit --bench-state=closed evidence");
+        else benchmarkState = "closed";
+        provisional.push(`benchmark priced on ${benchDate}, ${lag} day(s) behind ${date}`);
       } else if (lag > 0) {
         provisional.push(`benchmark priced on ${benchDate}, ${lag} day(s) behind ${date}`);
       }
@@ -201,7 +215,7 @@ export function validateInputs(input) {
     // A calibrated run outside the weekend is fine; nothing to say.
   }
 
-  return { errors, provisional, benchmarkErrors, total, splitTotal, splitDelta };
+  return { errors, provisional, benchmarkErrors, benchmarkState, total, splitTotal, splitDelta };
 }
 
 /**
@@ -456,13 +470,16 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {}, benchDiv = {}, benchDate = null, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
   for (const s of STYLE_SPLITS) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
-  if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) point.bd = benchDate;
+  if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) {
+    point.bd = benchDate;
+    if (BENCH_STATES.includes(benchState)) point.bstate = benchState;
+  }
   // 只在真有除息时落字段：绝大多数日子为 0，写进去会让 samePoint 与每日 diff 变噪。
   for (const k of BENCH_DIV_KEYS) if (Number(benchDiv[k]) > 0) point[k] = benchDiv[k];
   const prov = !calibrated && provisional.length > 0;
@@ -478,12 +495,15 @@ export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {
  */
 export function validateBenchmarkTimeline(points = []) {
   const errors = [];
-  let priorBd = null;
+  let priorBd = null, priorPointDate = null, gapSincePrior = false;
   const pricesByBd = new Map();
   for (const point of [...points].sort((a, b) => String(a?.d || "").localeCompare(String(b?.d || "")))) {
     if (!point || !isIsoDate(point.d)) continue;
+    if (priorBd && priorPointDate && dayDiff(priorPointDate, point.d) > 1) gapSincePrior = true;
+    priorPointDate = point.d;
     const present = BENCH_KEYS.filter(k => point[k] !== undefined);
     const hasPair = present.length === BENCH_KEYS.length;
+    if (!hasPair && priorBd) gapSincePrior = true;
     if (present.length && !hasPair) {
       errors.push(`${point.d}: persisted benchmark prices must remain a SPY/QQQ pair`);
     }
@@ -494,11 +514,13 @@ export function validateBenchmarkTimeline(points = []) {
       }
     }
     if (point.bd === undefined) {
+      if (point.bstate !== undefined) errors.push(`${point.d}: persisted bstate requires bd and a SPY/QQQ pair`);
       if (hasPair && point.d >= BENCH_DATE_EVIDENCE_FROM) {
         errors.push(`${point.d}: persisted SPY/QQQ prices require bd`);
       } else if (hasPair) {
         priorBd = point.d;
         pricesByBd.set(point.d, BENCH_KEYS.map(k => point[k]));
+        gapSincePrior = false;
       }
       continue;
     }
@@ -515,8 +537,21 @@ export function validateBenchmarkTimeline(points = []) {
     else if (lag > BENCH_MAX_SOURCE_LAG_DAYS) {
       errors.push(`${point.d}: persisted bd ${point.bd} is too far behind`);
     }
+    const legacyStateAllowed = point.bstate === undefined && point.d < BENCH_STATE_EVIDENCE_FROM
+      && (lag === 0 || isWeekend(point.d));
+    if (!BENCH_STATES.includes(point.bstate) && !legacyStateAllowed) {
+      errors.push(`${point.d}: persisted SPY/QQQ prices require bstate=session or bstate=closed`);
+    } else if (point.bstate === "session" && lag !== 0) {
+      errors.push(`${point.d}: persisted session evidence must use the same benchmark date`);
+    } else if (point.bstate === "closed" && !(lag > 0)) {
+      errors.push(`${point.d}: persisted closed evidence must carry an earlier benchmark date`);
+    }
     if (priorBd && point.bd < priorBd) {
       errors.push(`${point.d}: persisted bd ${point.bd} regresses behind ${priorBd}`);
+    }
+    const closed = point.bstate === "closed" || (legacyStateAllowed && lag > 0);
+    if (closed && (gapSincePrior || !priorBd || point.bd !== priorBd || !pricesByBd.has(point.bd))) {
+      errors.push(`${point.d}: persisted closed evidence is not anchored to the prior proven session`);
     }
     const prices = BENCH_KEYS.map(k => point[k]);
     const priorPrices = pricesByBd.get(point.bd);
@@ -526,6 +561,7 @@ export function validateBenchmarkTimeline(points = []) {
     if (point.bd !== point.d && BENCH_DIV_KEYS.some(k => Number(point[k]) > 0)) {
       errors.push(`${point.d}: carried benchmark date ${point.bd} repeats a dividend`);
     }
+    if (point.bstate === "session" || (legacyStateAllowed && lag === 0)) gapSincePrior = false;
     priorBd = point.bd;
   }
   return errors;

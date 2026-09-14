@@ -21,8 +21,11 @@
 // series 文件形如：
 //   { "spy":  { "2026-07-31": 747.03, "2026-08-01": 747.03 },
 //     "qqq":  { "2026-07-31": 687.99, "2026-08-01": 687.99 },
+//     "bd":   { "2026-08-01": "2026-07-31" },
+//     "bstate": { "2026-08-01": "closed" },
 //     "spyd": { "2026-09-18": 1.9 } }
-// 非交易日沿用最近收盘价（与每日任务同规则），所以周末也要给值。
+// `bd == d` 自动派生并持久化 bstate=session；lagged price 只有逐日显式
+// bstate=closed 才能写入。已发布旧行的只读兼容不授权本脚本新造无状态 carry。
 //
 // 输出只含日期与字段名，绝不打印价格或密钥。
 import fs from "node:fs";
@@ -32,7 +35,9 @@ import {
   BENCH_KEYS,
   BENCH_DIV_KEYS,
   BENCH_DATE_EVIDENCE_FROM,
+  BENCH_STATES,
   BENCH_MAX_SOURCE_LAG_DAYS,
+  dayDiff,
   isIsoDate,
   validateBenchmarkTimeline,
 } from "./daily-core.mjs";
@@ -72,7 +77,7 @@ try { series = JSON.parse(fs.readFileSync(args.series, "utf8")); }
 catch { die(`could not read ${args.series} as JSON`); }
 if (!series || typeof series !== "object" || Array.isArray(series)) die("--series must be a JSON object");
 
-const ALLOWED = new Set([...BENCH_KEYS, ...BENCH_DIV_KEYS, "bd"]);
+const ALLOWED = new Set([...BENCH_KEYS, ...BENCH_DIV_KEYS, "bd", "bstate"]);
 const updates = new Map();   // date -> { field: value }
 for (const [field, byDate] of Object.entries(series)) {
   if (!ALLOWED.has(field)) die(`unknown series field ${field} (expected one of ${[...ALLOWED].join(", ")})`);
@@ -86,6 +91,13 @@ for (const [field, byDate] of Object.entries(series)) {
       const lag = Math.round((Date.parse(`${d}T00:00:00Z`) - Date.parse(`${raw}T00:00:00Z`)) / 86400000);
       if (lag < 0 || lag > BENCH_MAX_SOURCE_LAG_DAYS) {
         die(`series.bd.${d} must be on or up to ${BENCH_MAX_SOURCE_LAG_DAYS} days before its point`);
+      }
+      updates.get(d)[field] = raw;
+      continue;
+    }
+    if (field === "bstate") {
+      if (!BENCH_STATES.includes(raw)) {
+        die(`series.bstate.${d} must be one of ${BENCH_STATES.join(" or ")}`);
       }
       updates.get(d)[field] = raw;
       continue;
@@ -104,6 +116,20 @@ for (const [d, fields] of updates) {
     if (fields[k] === undefined) continue;
     const priceKey = k.slice(0, -1);
     if (fields[priceKey] === undefined) die(`${d}: ${k} needs its price ${priceKey} in the same series file`);
+  }
+  // 旧账本可以继续读取没有逐点 bd 的迁移历史；本脚本的任何新写入都必须
+  // 带来源日期，不能把未知历史价格伪装成同日 session。
+  if (!isIsoDate(fields.bd)) die(`${d}: series is missing bd`);
+  const lag = dayDiff(fields.bd, d);
+  if (lag === 0) {
+    if (fields.bstate && fields.bstate !== "session") {
+      die(`${d}: same-date benchmark evidence must use bstate=session`);
+    }
+    // 同日收盘本身就是 session 证据；写入时始终把派生状态持久化。
+    fields.bstate = "session";
+  } else if (fields.bstate !== "closed") {
+    // 历史兼容只允许 consumer 读取已经发布的旧行；backfill 不能借此新造 carry。
+    die(`${d}: lagged benchmark prices require explicit bstate=closed evidence`);
   }
 }
 if (!updates.size) die("--series contains no values");
@@ -166,7 +192,7 @@ for (const d of targetDates) {
   const fields = updates.get(d);
   if (!fields) die(`${d}: series is missing a daily point`);
   for (const k of BENCH_KEYS) if (!(Number(fields[k]) > 0)) die(`${d}: series is missing ${k}`);
-  if (d >= BENCH_DATE_EVIDENCE_FROM && !isIsoDate(fields.bd)) die(`${d}: series is missing bd`);
+  if (!isIsoDate(fields.bd)) die(`${d}: series is missing bd`);
 }
 for (const d of updates.keys()) if (!byDate.has(d)) die(`${d}: data has no matching daily point`);
 
@@ -174,11 +200,11 @@ for (const d of updates.keys()) if (!byDate.has(d)) die(`${d}: data has no match
 const priorBench = new Map();
 for (const p of data.daily) {
   if (!p || typeof p.d !== "string") continue;
-  const before = { bd: p.bd };
+  const before = { bd: p.bd, bstate: p.bstate };
   for (const k of [...BENCH_KEYS, ...BENCH_DIV_KEYS]) before[k] = p[k];
   priorBench.set(p.d, before);
 }
-const RESOLVABLE = new Set([...BENCH_KEYS, "bd"]);
+const RESOLVABLE = new Set([...BENCH_KEYS, "bd", "bstate"]);
 
 /**
  * 只有被证明是 carry 的 bundle 才可以被同日证据替换：该点的 bd 早于自己的日期，

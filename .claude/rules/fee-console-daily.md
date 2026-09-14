@@ -42,12 +42,16 @@ detection of a Routine that never started.
 
 Read SPY/QQQ only from the validated `market-data-cache` row and pass that row's
 actual date as `--src-bench`; never label the cache's last row with the target
-date. If the cache has not reached the target's completed U.S. session, the
-portfolio AUM may still be written with the older row and its true date so the
-phone clamps the benchmark window and labels it pending. Retry the same target
+date. A same-date completed close is persisted as `bstate=session`. If the cache
+has not reached the target date, do not pass the older price bundle unless an
+independent controlled market-status source explicitly proves that exact target
+date was closed; only then pass the unchanged prior-session pair with
+`--bench-state=closed`. Otherwise omit the benchmark arguments, publish the
+independently verified portfolio AUM, and leave the benchmark pending. A later
+price date never retroactively proves an earlier closure. Retry the same target
 date after the cache advances, using the normal same-date replacement path.
-Never fill the gap from IBKR, an intraday quote, `adjclose`, or a hand-copied
-price, and do not add or infer a separate market-holiday calendar.
+Never fill the gap from IBKR, an intraday quote, `adjclose`, a hand-copied price,
+weekday arithmetic, or an inferred market-holiday calendar.
 
 Financial systems remain read-only. Never place, modify, or cancel orders, and
 never initiate transfers or write to IB, Sharesight, or another financial

@@ -1,12 +1,11 @@
 /**
  * 收益率口径 v4.6.1 的回归测试。
  *
- * 本文件用完全合成、不对应任何账户的数字钉住三件事：
+ * 本文件用完全合成、不对应任何账户的数字钉住两件事：
  *   1. 口径 §9 写「时间加权」，实现就必须是逐日 TWR，不能回退成
  *      逐月 Modified Dietz。合成场景故意把较多收益放在流入后，使两种方法明显分开。
  *   2. 出入金的在场天数差一天：转入按 8/20 收盘价计价，当天吃不到行情，只在场
  *      8/21–8/24 共 4 天；旧代码曾按 5 天计权，系统性低估流入月的收益率。
- *   3. 基准按欧洲收盘取价，与组合的美股收盘估值错位 0.9pp，大于当期跑赢幅度。
  *
  * 合成数字只服务于方法回归，不表示任何实际组合、持仓、交易或市场快照。
  *
@@ -51,33 +50,14 @@ const TOTALS = DATES.map(d => {
   return [d, syntheticNav];
 });
 
-// 两条合成基准序列仅使用 SPY / QQQ 作为方法标签。
-// 第 11/12 天分别模拟除息：价格下调与现金分红恰好抵消。
-const SPY_PREV = 500;
-const QQQ_PREV = 400;
-const syntheticBenchmark = d => {
-  const day = Number(d.slice(-2));
-  const spy = day < 11 ? 500 : day < 24 ? 498 : 510;
-  const qqq = day < 3 ? 400 : day < 12 ? 404 : day < 24 ? 402 : 412;
-  return { spy, qqq, spyd: day === 11 ? 2 : 0, qqqd: day === 12 ? 2 : 0 };
-};
+const points = TOTALS.map(([d, tot]) => ({ d, tot }));
 
-const BENCH = [{ k: "spy", dk: "spyd" }, { k: "qqq", dk: "qqqd" }];
-
-const points = TOTALS.map(([d, tot]) => ({ d, tot, ...syntheticBenchmark(d) }));
-
-const august = (over = {}) => {
-  const bPrev = { spy: SPY_PREV, qqq: QQQ_PREV };
-  const bVal = { spy: OPEN, qqq: OPEN };
-  const bHas = { spy: false, qqq: false };
-  const out = periodReturns({
+const august = (over = {}) => periodReturns({
     points, openT: OPEN, from: "2026-08-01", to: "2026-08-24", days: 24,
     flowByDate: { "2026-08-20": TRANSFER },
     rate: 0.02, cr: 0.20, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: BENCH, bPrev, bVal, bHas, ...over,
+    ...over,
   });
-  return { ...out, bVal, bHas };
-};
 
 const near = (actual, expected, tol, label) =>
   assert.ok(Math.abs(actual - expected) <= tol,
@@ -89,6 +69,20 @@ test("invalid returns never annualise to a real-looking zero", () => {
   assert.equal(annualise(Number.NaN, 366), null);
   assert.equal(annualise(0.10, 0), null);
   near(annualise(0.10, 365), 0.10, 1e-12, "有效年化");
+});
+
+test("the writer return engine contains no duplicate benchmark implementation", () => {
+  assert.doesNotMatch(block, /benchmark|bPrev|bVal|bHas|\brB\b/);
+  assert.equal((html.match(/function benchmarkView\s*\(/g) || []).length, 1,
+    "index.html must have exactly one benchmarkView implementation");
+  if (!html.includes("/* benchmark-state-evidence:start */")) {
+    assert.doesNotMatch(html, /BENCH_STATE_EVIDENCE_FROM|\bbstate\b/,
+      "an unmarked partial benchmark-state rollout cannot pass");
+    return;
+  }
+  assert.equal(html.split("/* benchmark-state-evidence:start */").length, 2);
+  assert.equal(html.split("/* benchmark-state-evidence:end */").length, 2);
+  assert.doesNotMatch(html, /laterProvesClosed|benchmarkWeekend|推定休市/);
 });
 
 /* ---------------- 费用链条：逐日 EOD pre-flow NAV 与口径 §3 / §4 一致 ---------------- */
@@ -115,7 +109,7 @@ test("an EOD contribution starts accruing management fees on the following day",
     ],
     openT: 100, from: "2026-09-01", to: "2026-09-03", days: 3,
     flowByDate: { "2026-09-02": 50 }, rate: 0.0365, cr: 0,
-    cumBefore: 0, hwmBefore: 0, bench: [], bPrev: {}, bVal: {}, bHas: {},
+    cumBefore: 0, hwmBefore: 0,
   });
   // 基数 100 + (150−50) + 150；日费率 0.0365/365 = 0.0001。
   near(r.mgmt, usesDailyEodFee ? 0.035 : 0.0375, 1e-12, "EOD 入金版本门槛");
@@ -130,7 +124,7 @@ test("an EOD withdrawal still accrues on the pre-withdrawal NAV that day", () =>
     ],
     openT: 100, from: "2026-09-01", to: "2026-09-03", days: 3,
     flowByDate: { "2026-09-02": -40 }, rate: 0.0365, cr: 0,
-    cumBefore: 0, hwmBefore: 0, bench: [], bPrev: {}, bVal: {}, bHas: {},
+    cumBefore: 0, hwmBefore: 0,
   });
   // 基数 100 + (60−(−40)) + 60。
   near(r.mgmt, usesDailyEodFee ? 0.026 : 0.024, 1e-12, "EOD 出金版本门槛");
@@ -193,191 +187,17 @@ test("a flow on the last day earns nothing at all", () => {
   near(r.den, OPEN, 0.01, "末日流入的分母");
 });
 
-/* ---------------- 3. 基准：美股收盘、含息逐日链 ---------------- */
-
-test("benchmarks chain daily on US closes", () => {
-  const r = august();
-  near(r.rB.spy, (500 / 500) * ((498 + 2) / 500) * (510 / 498) - 1,
-    1e-12, "S&P 500（SPY）");
-  near(r.rB.qqq, (404 / 400) * ((402 + 2) / 404) * (412 / 402) - 1,
-    1e-12, "纳斯达克100（QQQ）");
-  near(r.rB.spy, 0.024096385542168752, 1e-12, "SPY 合成同期");
-  near(r.rB.qqq, 0.03512437810945279, 1e-12, "QQQ 合成同期");
-});
-
-test("the synthetic outperformance is measured on a single valuation time", () => {
-  const r = august();
-  // 两条基准都使用与组合一致的收盘时点。
-  assert.ok(r.rG - r.rB.spy > 0.015, "vs S&P 500");
-  assert.ok(r.rG - r.rB.qqq > 0.005, "vs NASDAQ-100");
-});
-
-test("a dividend on its ex-date lifts the chain by exactly that amount", () => {
-  const withDiv = periodReturns({
-    points: [
-      { d: "2026-09-17", tot: 100, spy: 100, spyd: 0 },
-      { d: "2026-09-18", tot: 100, spy: 99, spyd: 1.5 },
-    ],
-    openT: 100, from: "2026-09-17", to: "2026-09-18", days: 2, flowByDate: {},
-    rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }],
-    bPrev: { spy: 100 }, bVal: { spy: 100 }, bHas: { spy: false },
-  });
-  // 除息日价格掉了 1，加回 1.5 的合成分红才是总回报。
-  near(withDiv.rB.spy, (99 + 1.5) / 100 - 1, 1e-12, "含息链");
-  assert.ok(withDiv.rB.spy > 0, "the total-return chain must survive the price drop");
-});
-
-test("a missing benchmark price makes the benchmark unavailable, never guessed", () => {
-  const gap = periodReturns({
-    points: [
-      { d: "2026-08-01", tot: 100, spy: 100 },
-      { d: "2026-08-02", tot: 100, spy: 0 },
-      { d: "2026-08-03", tot: 100, spy: 101 },
-    ],
-    openT: 100, from: "2026-08-01", to: "2026-08-03", days: 3, flowByDate: {},
-    rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }],
-    bPrev: { spy: 100 }, bVal: { spy: 100 }, bHas: { spy: false },
-  });
-  assert.equal(gap.rB.spy, null);
-  assert.ok(gap.benchIssues.some(x=>/缺少价格 2026-08-02/.test(x)), gap.benchIssues.join("; "));
-});
-
-test("a benchmark with no data at all reports null, not zero", () => {
-  const none = periodReturns({
-    points: [{ d: "2026-08-01", tot: 100 }],
-    openT: 100, from: "2026-08-01", to: "2026-08-01", days: 1, flowByDate: {},
-    rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }],
-    bPrev: { spy: 0 }, bVal: { spy: 100 }, bHas: { spy: false },
-  });
-  assert.equal(none.rB.spy, null);
-});
-
-test("a benchmark gap is a one-way fuse and later prices cannot bridge it", () => {
-  const bPrev = { spy: 100 }, bVal = { spy: 100 }, bHas = { spy: false };
-  const missing = periodReturns({
-    points: [{ d: "2026-08-01", tot: 100, spy: 0 }],
-    openT: 100, from: "2026-08-01", to: "2026-08-01", days: 1, flowByDate: {},
-    rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }], bPrev, bVal, bHas, benchmarkValid: true,
-  });
-  assert.equal(missing.benchmarkValid, false);
-  assert.equal(missing.rB.spy, null);
-
-  const later = periodReturns({
-    points: [{ d: "2026-08-02", tot: 100, spy: 101 }],
-    openT: 100, from: "2026-08-02", to: "2026-08-02", days: 1, flowByDate: {},
-    rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }], bPrev, bVal, bHas,
-    benchmarkValid: missing.benchmarkValid,
-  });
-  assert.equal(later.benchmarkValid, false);
-  assert.equal(later.rB.spy, null);
-  assert.equal(bHas.spy, false);
-  assert.equal(bPrev.spy, 100, "the chain must not jump across the missing date");
-});
-
-/* ---------------- 现值对照：两侧对 flow 的处理必须对称 ---------------- */
-
-test("the what-if-I-had-bought-the-index figure rolls the flow from its own date", () => {
-  const r = august();
-  // 流入按第 20 天收盘入账，之后才跟着基准涨跌。
-  const spyFactor = (500 / 500) * ((498 + 2) / 500) * (510 / 498);
-  const rolled = OPEN * spyFactor + TRANSFER * (510 / 498);
-  const monthEnd = OPEN * spyFactor + TRANSFER; // 旧写法：flow 整月不吃基准收益
-  near(r.bVal.spy, rolled, 1.0, "现金流匹配的 S&P 500 被动账户");
-  assert.ok(Math.abs(rolled - monthEnd) > 300,
-    "this month the two conventions must differ enough for the test to bite");
-  assert.ok(Math.abs(r.bVal.spy - monthEnd) > 300,
-    "the flow must not sit out the whole month on the benchmark side");
-  const qqqFactor = (404 / 400) * ((402 + 2) / 404) * (412 / 402);
-  near(r.bVal.qqq, OPEN * qqqFactor + TRANSFER * (412 / 402), 1.0,
-    "现金流匹配的纳斯达克100被动账户");
-});
-
-test("the passive benchmark account matches an inflow and a later withdrawal across months", () => {
-  if (!usesDailyEodFee) return;
-  const bPrev = { spy: 100 }, bVal = { spy: 100 }, bHas = { spy: false };
-  const september = periodReturns({
-    points: [
-      { d: "2026-09-29", tot: 100, spy: 100 },
-      { d: "2026-09-30", tot: 150, spy: 110 },
-    ],
-    openT: 100, from: "2026-09-29", to: "2026-09-30", days: 2,
-    flowByDate: { "2026-09-30": 50 }, rate: 0, cr: 0,
-    cumBefore: 0, hwmBefore: 0, bench: [{ k: "spy", dk: "spyd", account: "S&P 500（SPY）" }],
-    bPrev, bVal, bHas, benchmarkValid: true, benchmarkValueValid: true,
-  });
-  near(bVal.spy, 160, 1e-12, "期初 100 上涨 10% 后 EOD 入金 50");
-  assert.equal(september.benchmarkValueValid, true);
-
-  const october = periodReturns({
-    points: [
-      { d: "2026-10-01", tot: 110, spy: 121 },
-      { d: "2026-10-02", tot: 110, spy: 133.1 },
-    ],
-    openT: 150, from: "2026-10-01", to: "2026-10-02", days: 2,
-    flowByDate: { "2026-10-01": -40 }, rate: 0, cr: 0,
-    cumBefore: 0, hwmBefore: 0, bench: [{ k: "spy", dk: "spyd", account: "S&P 500（SPY）" }],
-    bPrev, bVal, bHas, benchmarkValid: september.benchmarkValid,
-    benchmarkValueValid: september.benchmarkValueValid,
-  });
-  // 160 × 1.10 − 40，再从次日起取得 10% 收益。
-  near(bVal.spy, 149.6, 1e-10, "跨月现金流匹配期末值");
-  assert.equal(october.benchmarkValueValid, true);
-});
-
-test("an oversized withdrawal disables only the passive-account value, not benchmark TWR", () => {
-  if (!usesDailyEodFee) return;
-  const bVal = { spy: 70 };
-  const r = periodReturns({
-    points: [{ d: "2026-10-03", tot: 20, spy: 100 }],
-    openT: 100, from: "2026-10-03", to: "2026-10-03", days: 1,
-    flowByDate: { "2026-10-03": -80 }, rate: 0, cr: 0,
-    cumBefore: 0, hwmBefore: 0, bench: [{ k: "spy", dk: "spyd", account: "S&P 500（SPY）" }],
-    bPrev: { spy: 100 }, bVal, bHas: { spy: false },
-    benchmarkValid: true, benchmarkValueValid: true,
-  });
-  assert.equal(r.benchmarkValid, true);
-  assert.equal(r.benchmarkValueValid, false);
-  near(r.rB.spy, 0, 1e-12, "基准 TWR 继续可用");
-  near(bVal.spy, 70, 1e-12, "不自动借款或做空");
-  assert.ok(r.benchValueIssues.some(x=>/提款超过被动账户价值/.test(x)), r.benchValueIssues.join("; "));
-});
-
-test("the benchmark side and the portfolio side treat the flow the same way", () => {
-  // 组合侧 (tot−f)/prev 让转入当天零收益；基准侧「先滚后加」也一样。
-  const flat = periodReturns({
-    points: [
-      { d: "2026-08-01", tot: 100, spy: 100 },
-      { d: "2026-08-02", tot: 1100, spy: 100 },   // 只有转入，行情没动
-      { d: "2026-08-03", tot: 1210, spy: 110 },   // 基准 +10%，组合也 +10%
-    ],
-    openT: 100, from: "2026-08-01", to: "2026-08-03", days: 3, flowByDate: { "2026-08-02": 1000 },
-    rate: 0, cr: 0, cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }],
-    bPrev: { spy: 100 }, bVal: { spy: 100 }, bHas: { spy: false },
-  });
-  near(flat.rG, 0.10, 1e-12, "组合 TWR");
-  near(flat.rB.spy, 0.10, 1e-12, "基准");
-});
-
 test("a flow date without a same-day valuation disables returns instead of creating a false gain", () => {
   const broken = periodReturns({
     points: [
-      { d: "2026-08-01", tot: 100, spy: 100 },
-      { d: "2026-08-03", tot: 1100, spy: 100 },
+      { d: "2026-08-01", tot: 100 },
+      { d: "2026-08-03", tot: 1100 },
     ],
     openT: 100, from: "2026-08-01", to: "2026-08-03", days: 3,
     flowByDate: { "2026-08-02": 1000 }, rate: 0, cr: 0,
     cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [{ k: "spy", dk: "spyd" }],
-    bPrev: { spy: 100 }, bVal: { spy: 100 }, bHas: { spy: false },
   });
   assert.equal(broken.rG, null);
-  assert.equal(broken.rB.spy, null);
   assert.ok(broken.issues.some(x=>/出入金当日缺少估值 2026-08-02/.test(x)), broken.issues.join("; "));
 });
 
@@ -387,7 +207,6 @@ test("a same-month flow outside the requested interval is refused", () => {
     openT: 100, from: "2026-08-10", to: "2026-08-10", days: 1,
     flowByDate: { "2026-08-05": 50 }, rate: 0, cr: 0,
     cumBefore: 0, hwmBefore: 0, feesBefore: 0,
-    bench: [], bPrev: {}, bVal: {}, bHas: {},
   });
   assert.equal(broken.rG, null);
   assert.equal(broken.flowT, 0);
