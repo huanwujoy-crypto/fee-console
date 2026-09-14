@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.8.3">
+<meta name="fee-console-build" content="4.9.1">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -91,12 +91,13 @@ section.pane{display:none} section.pane.on{display:block}
 .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
 .card h2{font-size:15px;margin:0 0 4px}
 .card .hint{font-size:12px;color:var(--ink-2);margin:0 0 10px}
+.fund-doc-list{display:grid;gap:10px}.fund-doc-list details{border:1px solid var(--border);border-radius:10px;padding:10px}.fund-doc-list summary{cursor:pointer;font-weight:650}.fund-doc-meta{font-size:12px;color:var(--ink-2);margin:4px 0 8px}.fund-doc-body{white-space:pre-wrap;word-break:break-word;font:inherit;font-size:13px;max-height:320px;overflow:auto;background:var(--lockbg);border-radius:8px;padding:10px}.fund-doc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
 .feeCard{border:1px solid var(--border);border-radius:12px;padding:10px;margin-top:10px;background:var(--lockbg)}
 .feeCard .fr{display:flex;gap:8px;align-items:center;margin-top:8px}.feeCard .fr:first-child{margin-top:0}
 .feeCard input,.feeCard select{min-width:0;font-size:16px;padding:8px}
 .feeSum{display:flex;justify-content:space-between;margin-top:12px;font-weight:600;font-size:14px}.feeSum .l{font-weight:400;color:var(--ink-muted)}
-input,select{background:var(--plane);color:var(--ink-1);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:16px;font-family:inherit;width:100%;font-variant-numeric:tabular-nums}
-input:disabled,select:disabled{background:var(--lockbg);color:var(--ink-2);border-style:dashed}
+input,select,textarea{background:var(--plane);color:var(--ink-1);border:1px solid var(--border);border-radius:8px;padding:9px 10px;font-size:16px;font-family:inherit;width:100%;font-variant-numeric:tabular-nums}
+input:disabled,select:disabled,textarea:disabled{background:var(--lockbg);color:var(--ink-2);border-style:dashed}
 input[type=number]{text-align:right}
 label.f{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px}
 .grid{display:grid;gap:10px;grid-template-columns:1fr 1fr}
@@ -261,6 +262,36 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <p class="hint" style="margin-top:12px">添加到主屏幕后仍默认只读；需要修改时主动进入编辑。</p>
     <button class="btn big" id="btnPrepIcon">① 准备主屏幕图标</button>
     <button class="btn big" id="btnMgrLink" style="margin-top:8px">复制管理人链接（备用）</button>
+  </div>
+  <div class="card" id="fundDocsCard" style="display:none"><h2>基金文件</h2>
+    <p class="hint">管理人本机加密保存治理规则、交易草案和修订历史。这里不签署文件、不付款，也不改变基金份额或原金融账本。</p>
+    <div id="fundGovSummary"></div>
+    <details class="fund-method"><summary>角色说明</summary>
+      <form id="fundGovForm" class="grid" style="margin-top:10px">
+        <div class="full"><label class="f" for="fundGovController">投资管理人实际控制人</label><input id="fundGovController" maxlength="80" required></div>
+        <div><label class="f" for="fundGovGuardianInvestor">模拟权益显示人简称</label><input id="fundGovGuardianInvestor" maxlength="16" pattern="[A-Za-z][A-Za-z0-9_\-]{0,15}" required></div>
+        <div><label class="f" for="fundGovGuardianName">管理联系人</label><input id="fundGovGuardianName" maxlength="80" required></div>
+        <div><label class="f" for="fundGovRelationship">关系</label><input id="fundGovRelationship" maxlength="40" required></div>
+        <div class="full"><label class="f" for="fundGovNote">身份边界</label><textarea id="fundGovNote" maxlength="500" rows="3" required></textarea></div>
+        <div class="full"><button class="btn primary" type="submit">保存角色说明</button></div>
+      </form>
+    </details>
+    <details class="fund-method"><summary>新增文件或追加版本</summary>
+      <form id="fundDocForm" style="margin-top:10px">
+        <div class="grid"><div class="full"><label class="f" for="fundDocTitle">文件名称</label><input id="fundDocTitle" maxlength="160" required></div>
+          <div><label class="f" for="fundDocCategory">类别</label><select id="fundDocCategory"><option value="governance">治理规则</option><option value="transaction">交易文件</option><option value="valuation">估值依据</option><option value="other">其它</option></select></div>
+          <div><label class="f" for="fundDocStatus">状态</label><select id="fundDocStatus"><option value="draft">草案</option><option value="internal-review">内部已复核</option><option value="archived">已归档</option></select></div>
+          <div><label class="f" for="fundDocAsOf">文件日期</label><input id="fundDocAsOf" type="date" required></div>
+          <div><label class="f" for="fundDocFileName">对应附件名称</label><input id="fundDocFileName" maxlength="180"></div>
+          <div class="full"><label class="f" for="fundDocFileSha">对应附件 SHA-256</label><input id="fundDocFileSha" maxlength="64" pattern="[A-Fa-f0-9]{64}"></div>
+          <div class="full"><label class="f" for="fundDocContent">正文</label><textarea id="fundDocContent" maxlength="60000" rows="10" required></textarea></div></div>
+        <p class="hint" id="fundDocEditNotice">保存时创建新文件；修改已有文件时只追加版本，不覆盖旧版本。</p>
+        <div class="row"><button class="btn primary" type="submit">保存文件版本</button><button class="btn" id="fundDocClear" type="button">清空表单</button></div>
+      </form>
+    </details>
+    <div id="fundDocsBox" class="fund-doc-list" style="margin-top:10px"></div>
+    <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f" for="fundDocsFile">导入同一基金的文件库 JSON</label><input id="fundDocsFile" type="file" accept="application/json,.json"><div class="row" style="margin-top:8px"><button class="btn" id="fundDocsExport" type="button">导出管理人加密备份</button></div></div>
+    <p class="hint" id="fundDocsNotice" style="margin-top:10px">文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。同源页面或 XSS 仍可读取本机资料，请只在受控设备使用并保留离线副本。基金只读链接不包含文件密钥、正文或联系人资料。</p>
   </div>
   <div class="card"><h2>重要设置</h2><p class="hint">期初本金、费率和起算日影响历史计算；只有确认差异后才会保存。</p>
     <div class="grid">
@@ -749,6 +780,8 @@ const K={db:"feeConsole.v3.db",tok:"feeConsole.gh.token",gid:"feeConsole.gh.gist
 const cfg=k=>store?(store.getItem(k)||""):"";
 const setCfg=(k,v)=>{if(store){v?store.setItem(k,v):store.removeItem(k);}};
 const isMgr=()=>!!cfg(K.tok);
+let _managerCapability={state:"unverified"};
+const managerDocumentsAuthorized=()=>isMgr()&&_managerCapability.state==="verified"&&_managerCapability.gid===cfg(K.gid)&&_managerCapability.token===cfg(K.tok);
 const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
@@ -956,6 +989,116 @@ async function importFundProfileLink(){
 }
 /* fund-profile-storage:end */
 
+/* fund-document-library:start */
+const FUND_DOCS_KEY="feeConsole.fundDocuments.v2",FUND_DOCS_SCHEMA="fee-console.fund-documents.v2",FUND_DOCS_IMPORT_SCHEMA="fee-console.fund-documents-import.v1";
+const FUND_DOC_CATEGORIES=new Set(["governance","transaction","valuation","other"]),FUND_DOC_STATUSES=new Set(["draft","internal-review","archived"]);
+const FUND_DOC_MAX_CONTENT_BYTES=90000,FUND_DOC_MAX_TOTAL_BYTES=240000,FUND_DOC_MAX_ENVELOPE_BYTES=480000;
+let _fundDocsCache=null,_fundDocsMessage="",_fundDocsGeneration=0,_fundDocEditId="";
+const emptyFundDocuments=()=>({schema:FUND_DOCS_SCHEMA,libraryId:"",governance:{managerController:"",guardians:[]},documents:[]});
+const fundDocsBytes=value=>new TextEncoder().encode(String(value)).byteLength;
+const fundDocsObject=value=>!!value&&typeof value==="object"&&!Array.isArray(value)&&[Object.prototype,null].includes(Object.getPrototypeOf(value));
+const fundDocsExact=(value,keys)=>fundDocsObject(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
+const fundDocsDate=value=>{if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return false;const d=new Date(value+"T00:00:00Z");return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===value;};
+const fundDocsInstant=value=>typeof value==="string"&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
+const fundDocsToday=()=>{const parts=Object.fromEntries(new Intl.DateTimeFormat("en-GB",{timeZone:"Asia/Hong_Kong",year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(new Date()).filter(p=>p.type!=="literal").map(p=>[p.type,p.value]));return `${parts.year}-${parts.month}-${parts.day}`;};
+async function fundDocsHash(value){const digest=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(value));return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,"0")).join("");}
+function validateFundDocuments(input,{allowEmptyLibraryId=false}={}){
+  const bad=reason=>({ok:false,library:null,reason});
+  const text=(value,maxBytes,{empty=false,trim=true}={})=>typeof value==="string"&&(empty||value.length>0)&&fundDocsBytes(value)<=maxBytes&&(!trim||value===value.trim())&&!/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value);
+  if(!fundDocsExact(input,["schema","libraryId","governance","documents"])||input.schema!==FUND_DOCS_SCHEMA||!(allowEmptyLibraryId&&input.libraryId===""||typeof input.libraryId==="string"&&/^[A-Za-z0-9_-]{8,80}$/.test(input.libraryId))||!fundDocsExact(input.governance,["managerController","guardians"])||!text(input.governance.managerController,240,{empty:true})||!Array.isArray(input.governance.guardians)||input.governance.guardians.length>8||!Array.isArray(input.documents)||input.documents.length>40)return bad("基金文件库格式待核对");
+  const guardians=[],guardianIds=new Set();
+  for(const g of input.governance.guardians){
+    if(!fundDocsExact(g,["investorId","guardianName","relationship","note"])||typeof g.investorId!=="string"||!/^[A-Za-z][A-Za-z0-9_-]{0,15}$/.test(g.investorId)||guardianIds.has(g.investorId)||!text(g.guardianName,240)||!text(g.relationship,120)||!text(g.note,1500))return bad("管理联系人资料待核对");
+    guardianIds.add(g.investorId);guardians.push({...g});
+  }
+  const documents=[],versions=new Set(),perDocument=new Map();let contentBytes=0;
+  for(const d of input.documents){
+    if(!fundDocsExact(d,["id","version","title","category","status","asOf","createdAt","content","fileName","fileSha256"])||typeof d.id!=="string"||!/^[A-Za-z0-9_-]{8,80}$/.test(d.id)||!Number.isSafeInteger(d.version)||d.version<1||!text(d.title,480)||!FUND_DOC_CATEGORIES.has(d.category)||!FUND_DOC_STATUSES.has(d.status)||!fundDocsDate(d.asOf)||!fundDocsInstant(d.createdAt)||!text(d.content,FUND_DOC_MAX_CONTENT_BYTES,{trim:false})||!text(d.fileName,540,{empty:true})||!(d.fileSha256===""||/^[a-f0-9]{64}$/i.test(d.fileSha256)))return bad("基金文件资料待核对");
+    const versionKey=d.id+":"+d.version;if(versions.has(versionKey))return bad("文件版本重复");versions.add(versionKey);if(!perDocument.has(d.id))perDocument.set(d.id,[]);perDocument.get(d.id).push(d.version);contentBytes+=fundDocsBytes(d.content);documents.push({...d,fileSha256:d.fileSha256.toLowerCase()});
+  }
+  if(contentBytes>FUND_DOC_MAX_TOTAL_BYTES)return bad("基金文件正文合计过大");
+  for(const values of perDocument.values()){values.sort((a,b)=>a-b);if(values.some((value,index)=>value!==index+1))return bad("文件版本必须从第 1 版连续追加");}
+  return {ok:true,library:{schema:FUND_DOCS_SCHEMA,libraryId:input.libraryId,governance:{managerController:input.governance.managerController,guardians},documents},reason:null};
+}
+async function currentFundDocumentIdentity(){
+  const loaded=await readFundProfile(),gid=cfg(K.gid);if(!gid||!loaded.profile)throw new Error("先核验当前基金档案");
+  const profile=loaded.profile,stable={schema:profile.schema,manager:profile.manager,fundName:profile.fundName,inceptionDate:profile.inceptionDate,currency:profile.currency,initialShares:profile.initialShares,investors:profile.investors.map(i=>({id:i.id,name:i.name,shares:i.shares})).sort((a,b)=>a.id.localeCompare(b.id))};
+  return {gid,profileDigest:await fundDocsHash(JSON.stringify(stable))};
+}
+async function managerFundDocumentKey(){
+  if(!managerDocumentsAuthorized())throw new Error("管理人文件权限尚未核验");
+  const material=JSON.stringify(["fee-console.manager-documents-key.v2",cfg(K.gid),cfg(K.key),cfg(K.tok)]),raw=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(material));
+  return crypto.subtle.importKey("raw",raw,"AES-GCM",false,["encrypt","decrypt"]);
+}
+async function decodeFundDocumentEnvelope(raw,identity){
+  if(!raw||fundDocsBytes(raw)>FUND_DOC_MAX_ENVELOPE_BYTES)throw new Error("加密文件库大小异常");
+  const outer=JSON.parse(raw);if(!fundDocsExact(outer,["enc","v","data"])||outer.enc!==true||outer.v!==2||typeof outer.data!=="string")throw new Error("加密文件库格式待核对");
+  const saved=JSON.parse(await decTxt(await managerFundDocumentKey(),outer.data));if(!fundDocsExact(saved,["gid","profileDigest","library"])||saved.gid!==identity.gid||saved.profileDigest!==identity.profileDigest)throw new Error("文件库不属于当前基金或当前管理人访问");
+  const checked=validateFundDocuments(saved.library);if(!checked.ok)throw new Error(checked.reason);return checked.library;
+}
+async function readFundDocuments(){
+  const gid=cfg(K.gid),keyValue=cfg(K.key),token=cfg(K.tok),raw=cfg(FUND_DOCS_KEY);
+  if(!isMgr()){_fundDocsCache=null;return {library:emptyFundDocuments(),reason:null,raw:""};}
+  if(!managerDocumentsAuthorized()||_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)){_fundDocsCache=null;return {library:emptyFundDocuments(),reason:"管理人文件权限或原账本尚未核验",raw};}
+  if(!raw){_fundDocsCache=null;return {library:emptyFundDocuments(),reason:null,raw:""};}
+  if(_fundDocsCache?.raw===raw&&_fundDocsCache.gid===gid&&_fundDocsCache.keyValue===keyValue&&_fundDocsCache.token===token)return _fundDocsCache.promise;
+  const task={raw,gid,keyValue,token};_fundDocsCache=task;
+  task.promise=(async()=>{try{
+    const identity=await currentFundDocumentIdentity(),library=await decodeFundDocumentEnvelope(raw,identity);
+    if(_fundDocsCache!==task||cfg(K.gid)!==gid||cfg(K.key)!==keyValue||cfg(K.tok)!==token||cfg(FUND_DOCS_KEY)!==raw||!managerDocumentsAuthorized())return {library:emptyFundDocuments(),reason:"来源已变化，请重新读取文件库",raw:cfg(FUND_DOCS_KEY)};
+    return {library,reason:null,raw};
+  }catch(_){return {library:emptyFundDocuments(),reason:"本机基金文件库暂无法核验；未显示旧文件",raw};}})();return task.promise;
+}
+async function saveFundDocuments(input,message,expectedRaw){
+  const ticket=++_fundDocsGeneration,gid=cfg(K.gid),keyValue=cfg(K.key),token=cfg(K.tok),epoch=_sourceEpoch,libraryInput={...input,libraryId:input.libraryId||crypto.randomUUID()},checked=validateFundDocuments(libraryInput);let wrote=false,raw="",previous="";
+  const fail=e=>{if(wrote&&cfg(FUND_DOCS_KEY)===raw)setCfg(FUND_DOCS_KEY,previous);_fundDocsCache=null;if(ticket===_fundDocsGeneration){_fundDocsMessage=e.message;const notice=document.getElementById("fundDocsNotice");if(notice)notice.textContent=e.message;}return false;};
+  if(!navigator.locks?.request)return fail(new Error("当前浏览器不支持基金文件的安全并发保存；请改用最新版 Chrome"));
+  return navigator.locks.request(`fee-console.fund-documents:${gid}`,{mode:"exclusive"},async()=>{try{
+      if(!managerDocumentsAuthorized()||_receiptSource.state!=="verified"||!sourceMatches(_receiptSource)||!gid||!keyValue||!token||!store)throw new Error("先以经核验的管理人身份读取原账本，再保存基金文件");if(!checked.ok)throw new Error(checked.reason);
+      if(ticket!==_fundDocsGeneration||epoch!==_sourceEpoch||gid!==cfg(K.gid)||keyValue!==cfg(K.key)||token!==cfg(K.tok)||!managerDocumentsAuthorized())throw new Error("访问或来源已变化，文件未保存");
+      if(cfg(FUND_DOCS_KEY)!==String(expectedRaw||""))throw new Error("另一页面已更新文件库；当前表单保留，请重新读取后追加");
+      const identity=await currentFundDocumentIdentity(),key=await managerFundDocumentKey(),data=await encTxt(key,JSON.stringify({...identity,library:checked.library}));raw=JSON.stringify({enc:true,v:2,data});
+      if(fundDocsBytes(raw)>FUND_DOC_MAX_ENVELOPE_BYTES)throw new Error("加密文件库超过本机安全上限，未保存");
+      const roundTrip=await decodeFundDocumentEnvelope(raw,identity);if(JSON.stringify(roundTrip)!==JSON.stringify(checked.library))throw new Error("文件库加密读回不一致，未保存");
+      if(ticket!==_fundDocsGeneration||epoch!==_sourceEpoch||gid!==cfg(K.gid)||keyValue!==cfg(K.key)||token!==cfg(K.tok)||!managerDocumentsAuthorized()||cfg(FUND_DOCS_KEY)!==String(expectedRaw||""))throw new Error("另一页面已更新文件库或来源已变化，未保存");
+      previous=cfg(FUND_DOCS_KEY);setCfg(FUND_DOCS_KEY,raw);wrote=true;if(cfg(FUND_DOCS_KEY)!==raw)throw new Error("本机未能保存基金文件");
+      _fundDocsCache=null;const verified=await readFundDocuments();if(verified.reason||JSON.stringify(verified.library)!==JSON.stringify(checked.library))throw new Error("保存后的完整读回不一致，原文件库已恢复");
+      if(previous)setCfg(FUND_DOCS_KEY+".previous",previous);_fundDocsMessage=message||"基金文件已使用管理人专用密钥加密保存在本机；未修改份额、付款或原金融账本。";await render();return true;
+    }catch(e){return fail(e);}
+  }).catch(fail);
+}
+async function importFundDocuments(file){
+  if(!file){++_fundDocsGeneration;return;}try{
+    if(file.size>FUND_DOC_MAX_ENVELOPE_BYTES)throw new Error("文件库 JSON 过大");const parsed=JSON.parse(await file.text()),identity=await currentFundDocumentIdentity();let incomingLibrary;
+    if(fundDocsExact(parsed,["enc","v","data"]))incomingLibrary=await decodeFundDocumentEnvelope(JSON.stringify(parsed),identity);
+    else{
+      if(!fundDocsExact(parsed,["schema","binding","library"])||parsed.schema!==FUND_DOCS_IMPORT_SCHEMA||!fundDocsExact(parsed.binding,["gid","profileDigest"])||parsed.binding.gid!==identity.gid||parsed.binding.profileDigest!==identity.profileDigest)throw new Error("导入包不属于当前基金");
+      const checked=validateFundDocuments(parsed.library);if(!checked.ok)throw new Error(checked.reason);incomingLibrary=checked.library;
+    }
+    const current=await readFundDocuments();if(current.reason)throw new Error(current.reason);if(current.library.libraryId&&current.library.libraryId!==incomingLibrary.libraryId)throw new Error("文件库编号不同，未合并");
+    const currentHasGovernance=!!(current.library.governance.managerController||current.library.governance.guardians.length),incomingHasGovernance=!!(incomingLibrary.governance.managerController||incomingLibrary.governance.guardians.length);
+    if(currentHasGovernance&&incomingHasGovernance&&JSON.stringify(current.library.governance)!==JSON.stringify(incomingLibrary.governance))throw new Error("角色说明与当前文件库冲突，未覆盖");
+    const byVersion=new Map(current.library.documents.map(d=>[d.id+":"+d.version,d]));for(const d of incomingLibrary.documents){const key=d.id+":"+d.version,old=byVersion.get(key);if(old&&JSON.stringify(old)!==JSON.stringify(d))throw new Error("同一文件版本内容冲突，未导入");if(!old)byVersion.set(key,d);}
+    const merged={schema:FUND_DOCS_SCHEMA,libraryId:current.library.libraryId||incomingLibrary.libraryId,governance:currentHasGovernance?current.library.governance:incomingLibrary.governance,documents:[...byVersion.values()]};await saveFundDocuments(merged,"文件库已合并、完整读回并加密保存在本机；旧版本均保留。",current.raw);
+  }catch(e){_fundDocsMessage=e instanceof SyntaxError?"文件不是有效的基金文件库 JSON":e.message;document.getElementById("fundDocsNotice").textContent=_fundDocsMessage;}finally{document.getElementById("fundDocsFile").value="";}
+}
+async function saveFundGovernance(){
+  const [loaded,profileLoaded]=await Promise.all([readFundDocuments(),readFundProfile()]);if(loaded.reason){_fundDocsMessage=loaded.reason;return render();}const value=id=>document.getElementById(id).value.trim(),g={investorId:value("fundGovGuardianInvestor"),guardianName:value("fundGovGuardianName"),relationship:value("fundGovRelationship"),note:value("fundGovNote")};
+  if(!profileLoaded.profile?.investors.some(i=>i.id===g.investorId)){_fundDocsMessage="模拟权益显示人简称必须与当前基金档案一致";return render();}
+  const guardians=loaded.library.governance.guardians.filter(x=>x.investorId!==g.investorId);guardians.push(g);return saveFundDocuments({...loaded.library,governance:{managerController:value("fundGovController"),guardians}},"角色说明已保存；模拟管理不改变真实受益归属。",loaded.raw);
+}
+async function saveFundDocumentForm(){
+  const loaded=await readFundDocuments();if(loaded.reason){_fundDocsMessage=loaded.reason;return render();}const value=id=>document.getElementById(id).value.trim(),id=_fundDocEditId||crypto.randomUUID(),versions=loaded.library.documents.filter(d=>d.id===id),version=versions.length?Math.max(...versions.map(d=>d.version))+1:1;
+  const documentVersion={id,version,title:value("fundDocTitle"),category:value("fundDocCategory"),status:value("fundDocStatus"),asOf:value("fundDocAsOf"),createdAt:new Date().toISOString(),content:value("fundDocContent"),fileName:value("fundDocFileName"),fileSha256:value("fundDocFileSha")};
+  if(await saveFundDocuments({...loaded.library,documents:[...loaded.library.documents,documentVersion]},`“${documentVersion.title}”第 ${version} 版已保存并完整读回；旧版本保留。`,loaded.raw))clearFundDocumentForm();
+}
+function clearFundDocumentForm(){_fundDocEditId="";const form=document.getElementById("fundDocForm");if(typeof form?.reset==="function")form.reset();const asOf=document.getElementById("fundDocAsOf"),notice=document.getElementById("fundDocEditNotice");if(asOf)asOf.value=fundDocsToday();if(notice)notice.textContent="保存时创建新文件；修改已有文件时只追加版本，不覆盖旧版本。";}
+function clearFundDocumentPlaintext(){clearFundDocumentForm();const form=document.getElementById("fundGovForm");if(typeof form?.reset==="function")form.reset();const file=document.getElementById("fundDocsFile");if(file)file.value="";}
+function reviseFundDocument(id,library){const versions=library.documents.filter(d=>d.id===id).sort((a,b)=>b.version-a.version),d=versions[0];if(!d)return;_fundDocEditId=id;for(const [field,value] of Object.entries({fundDocTitle:d.title,fundDocCategory:d.category,fundDocStatus:d.status,fundDocAsOf:fundDocsToday(),fundDocFileName:d.fileName,fundDocFileSha:d.fileSha256,fundDocContent:d.content}))document.getElementById(field).value=value;document.getElementById("fundDocEditNotice").textContent=`将为“${d.title}”追加第 ${d.version+1} 版；第 ${d.version} 版不会覆盖。`;document.getElementById("fundDocForm").scrollIntoView({behavior:"smooth",block:"start"});}
+function saveBlob(name,content,type="text/plain;charset=utf-8"){const url=URL.createObjectURL(new Blob([content],{type})),a=document.createElement("a");a.href=url;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),0);}
+function exportFundDocuments(){const raw=cfg(FUND_DOCS_KEY);if(!managerDocumentsAuthorized()||!raw){toast("当前经核验的管理人访问没有基金文件库");return;}saveBlob(`兔菲特基金文件库_管理人加密备份_${fundDocsToday()}.json`,raw,"application/json");toast("已导出管理人加密备份；恢复必须使用创建备份时的原管理人 token");}
+/* fund-document-library:end */
+
 /* ============ 数据模型 ============ */
 function seed(){return {v:4,updatedAt:"",
   settings:{start:"2026-08-01",mgmt:2.0,carry:20,who:"",openingAt:"2026-07-31",fx:{USD:1,HKD:0.1282,CNY:0.14,EUR:1.09,SGD:0.745,GBP:1.27,JPY:0.0065}},
@@ -968,7 +1111,7 @@ let _sourceEpoch=0,_receiptSource={state:"unverified"};
 const sourceIdentity=()=>({gid:cfg(K.gid),keyValue:cfg(K.key)});
 const sourceMatches=source=>source?.gid===cfg(K.gid)&&source?.keyValue===cfg(K.key);
 /* fee-receipt-loading:v1 */
-function invalidateReceiptSource(loading=false){const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};++_renderGeneration;render();return epoch;}
+function invalidateReceiptSource(loading=false){const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};_managerCapability={state:"unverified"};_fundDocsCache=null;clearFundDocumentPlaintext();for(const id of ["fundDocsBox","fundGovSummary"]){const node=document.getElementById(id);if(typeof node?.replaceChildren==="function")node.replaceChildren();else if(node)node.innerHTML="";}const card=document.getElementById("fundDocsCard");if(card)card.style.display="none";++_renderGeneration;render();return epoch;}
 function acceptReceiptSource(snapshot,epoch){if(epoch!==_sourceEpoch||!sourceMatches(snapshot))throw new Error("来源已变化，请重新读取");_receiptSource={state:"verified",...sourceIdentity(),legacySource:snapshot.legacySource};}
 let DB=seed();
 let _localLedgerPresent=!!cfg(K.db);
@@ -1257,19 +1400,21 @@ async function render(){
   const generation=++_renderGeneration,sourceEpoch=_sourceEpoch,source=_receiptSource;
   /* fee-receipt-render-call */
   const feeView=feeReceiptRenderProjection(await feeReceiptUiModel({receipt:source.state==="verified"&&sourceMatches(source)?DAILY.feeCalculationReceipt:null,data:DAILY,economicInput:DB,legacySource:source.legacySource}));
-  const fundProfile=await readFundProfile();
+  const documentsAuthorized=managerDocumentsAuthorized()&&source.state==="verified"&&sourceMatches(source);
+  const [fundProfile,fundDocuments]=await Promise.all([readFundProfile(),documentsAuthorized?readFundDocuments():Promise.resolve({library:emptyFundDocuments(),reason:null,raw:""})]);
   if(generation!==_renderGeneration||sourceEpoch!==_sourceEpoch||source!==_receiptSource)return;
   // An in-flight read has no trusted fee values, but is not a failed validation.
   if(source.state==="loading"){feeView.state="loading";feeView.message="正在读取并核验…";}
   if(source.state==="verified"&&!sourceMatches(source)){invalidateReceiptSource();return;}
   const st=receiptState(feeView),B=receiptBalance(feeView),G=health(feeView,st);
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
+  const fundDocsCard=document.getElementById("fundDocsCard");if(fundDocsCard)fundDocsCard.style.display=documentsAuthorized?"":"none";if(!documentsAuthorized)clearFundDocumentPlaintext();
   document.getElementById("tabs").classList.remove("hidden");
   if(!isMgr()&&["p-fee","p-set"].some(id=>document.getElementById(id).classList.contains("on"))){document.querySelectorAll("section.pane").forEach(p=>p.classList.toggle("on",p.id==="p-investors"));document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
-  renderInvestors(fundProfile,feeView);renderSetup();renderA2hs();renderLedgerControls();
+  renderInvestors(fundProfile,feeView);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();
 }
 
 /* fund-investor-render:start */
@@ -1280,7 +1425,7 @@ function renderInvestors(loaded,feeView){
   const profile=loaded.profile,model=fundInvestorCore.calculate({profile,data:DAILY,feeView});
   if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
   const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · 初始 ${fmt(profile.initialShares)} 股</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>`<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(i.shares/profile.initialShares*100).toFixed(0)}%</span></button>`).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。</div></div>`;
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · 初始 ${fmt(profile.initialShares)} 股</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>`<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(i.shares/profile.initialShares*100).toFixed(0)}%</span></button>`).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。治理文件与联系人资料仅在经核验的管理人设置页显示。</div></div>`;
   const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,change=previous&&held?held.valueCents-previous.valueCents:null;
@@ -1293,6 +1438,17 @@ function renderInvestors(loaded,feeView){
     <div class="card"><h2>${esc(investor.id)} 的市值变化</h2>${chart}<div class="small">${initial&&last?`${esc(initial.date)} → ${esc(last.date)} · 美元 · 费用前`:"成立日以后逐日展示"}</div></div>
     <div class="card"><h2>估值明细</h2>${tableRows.length?`<table class="fund-table" aria-label="投资人每日份额估值"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 日</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
     <div class="card"><details class="fund-method"><summary>份额与估值说明</summary><p>成立基准为 ${esc(profile.inceptionDate)} 纽约估值日收盘，转入后 Schwab-HK + Webull 的全部资产与现金。香港到账通知日为 ${esc(profile.inceptionNoticeDate)}。现金已包含在账户总额中。</p><p>每股份额市值＝基金账户总资产 ÷ 基金份额；个人市值＝个人份额 × 每股市值。初始份额合计 ${fmt(profile.initialShares)} 股。成立日收盘作为起点，从次日起计算变化。</p><p>这里的“费用前”指未另扣小程序应计管理费及 Carry；已计入券商资产的实际支出保留在原账户金额内。此页暂不提供扣除全部费用负债后的 NAV。</p><p>新增或提取本金需明确投资人和发行／注销份额，不能当作投资收益；未完成归属时暂停后续个人估值。内部买卖不会增减基金份额。</p><p>* 表示来源暂估。历史未标星不代表独立校准。投资人档案是展示配置，视图切换不提供个人之间的数据隔离。</p></details></div>`;
+}
+function renderFundDocuments(loaded){
+  const library=loaded.library||emptyFundDocuments(),summary=document.getElementById("fundGovSummary"),box=document.getElementById("fundDocsBox"),notice=document.getElementById("fundDocsNotice"),status={draft:"草案", "internal-review":"内部已复核（仍非签署）",archived:"已归档"},category={governance:"治理规则",transaction:"交易文件",valuation:"估值依据",other:"其它"};
+  notice.textContent=_fundDocsMessage||loaded.reason||"文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。同源页面或 XSS 仍可读取本机资料，请只在受控设备使用并保留离线副本。基金只读链接不包含文件密钥、正文或联系人资料。";
+  const locked=!!loaded.reason;for(const node of document.querySelectorAll("#fundGovForm input,#fundGovForm textarea,#fundGovForm button,#fundDocForm input,#fundDocForm select,#fundDocForm textarea,#fundDocForm button,#fundDocsFile"))node.disabled=locked;document.getElementById("fundDocsExport").disabled=locked||!loaded.raw;
+  summary.innerHTML=library.governance.managerController||library.governance.guardians.length?`<div class="res"><div class="line"><span>投资管理人实际控制人</span><b>${esc(library.governance.managerController||"待填")}</b></div>${library.governance.guardians.map(g=>`<div class="line"><span>${esc(g.investorId)} 的模拟资产管理联系人</span><b>${esc(g.guardianName)} · ${esc(g.relationship)}</b></div>`).join("")}<p class="hint" style="margin:8px 0 0">角色说明只描述模拟监测安排，不改变底层资产的法律或受益所有权。</p></div>`:'<p class="hint">尚未保存实际控制人与模拟资产管理联系人。</p>';
+  const active=document.activeElement;if(!document.getElementById("fundGovForm").contains(active)){const g=library.governance.guardians[0]||{investorId:"",guardianName:"",relationship:"",note:""};for(const [id,value] of Object.entries({fundGovController:library.governance.managerController||"",fundGovGuardianInvestor:g.investorId,fundGovGuardianName:g.guardianName,fundGovRelationship:g.relationship,fundGovNote:g.note}))document.getElementById(id).value=value;}
+  const groups=new Map();for(const d of library.documents){if(!groups.has(d.id))groups.set(d.id,[]);groups.get(d.id).push(d);}const latest=[...groups.values()].map(v=>v.sort((a,b)=>b.version-a.version)[0]).sort((a,b)=>b.asOf.localeCompare(a.asOf)||a.title.localeCompare(b.title));
+  box.innerHTML=latest.length?latest.map(d=>{const versions=groups.get(d.id).sort((a,b)=>b.version-a.version);return `<details><summary>${esc(d.title)}</summary><div class="fund-doc-meta">${esc(category[d.category])} · ${esc(status[d.status])} · ${esc(d.asOf)} · 最新第 ${d.version} 版</div>${versions.map(v=>`<details><summary>第 ${v.version} 版 · ${esc(status[v.status])}</summary><div class="fund-doc-meta">${esc(v.asOf)}${v.fileName?` · 附件 ${esc(v.fileName)}`:""}${v.fileSha256?` · SHA-256 ${esc(v.fileSha256)}`:""}</div><pre class="fund-doc-body">${esc(v.content)}</pre><div class="fund-doc-actions"><button class="btn sm" data-doc-download="${esc(v.id)}" data-doc-version="${v.version}">下载明文正文</button></div></details>`).join("")}<div class="fund-doc-actions"><button class="btn sm primary" data-doc-revise="${esc(d.id)}">追加版本</button></div></details>`;}).join(""):'<p class="hint">尚无基金文件。可以导入已准备的文件库，或在上方新增。</p>';
+  box._fundDocumentLibrary=library;
+  if(!document.getElementById("fundDocAsOf").value)document.getElementById("fundDocAsOf").value=fundDocsToday();
 }
 function fundValueChart(points,id){
   const values=points.map(p=>p.investors.find(i=>i.id===id).valueCents/100),min=Math.min(...values),max=Math.max(...values),span=max-min||Math.max(1,max*0.01),lo=min-span*.12,hi=max+span*.12;
@@ -1484,6 +1640,13 @@ async function ghApi(path,opt={},auth=true){
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
   const r=await fetch("https://api.github.com"+path,{...request,headers:h});
   if(!r.ok){let t="";try{t=(await r.json()).message||"";}catch(_){}throw new Error(r.status+(t?" "+t:""));}return r.status===204?null:r.json();}
+async function verifyManagerCapability(snapshot,epoch){
+  const token=cfg(K.tok),gid=cfg(K.gid);if(!token||!gid||snapshot?.gid!==gid||!snapshot.ownerLogin)throw new Error("目标账本所有者资料缺失");
+  if(managerDocumentsAuthorized()&&_managerCapability.ownerLogin===snapshot.ownerLogin)return true;
+  const user=await ghApi("/user");if(epoch!==_sourceEpoch||token!==cfg(K.tok)||gid!==cfg(K.gid))throw new Error("管理人访问在核验期间变化");
+  if(!user?.login||user.login!==snapshot.ownerLogin)throw new Error("当前令牌不是目标账本所有者");
+  _managerCapability={state:"verified",gid,token,ownerLogin:user.login};return true;
+}
 async function ghFind(epoch){const token=cfg(K.tok);for(let p=1;p<=5;p++){const l=await ghApi(`/gists?per_page=100&page=${p}`);if(epoch!==_sourceEpoch||token!==cfg(K.tok))throw new Error("访问已变化");const hit=l.find(g=>g.files&&g.files[GH_FILE]);if(hit){setCfg(K.gid,hit.id);return hit.id;}if(l.length<100)break;}return "";}
 async function ghReadSnapshot({epoch}={}){
   const sourceEpoch=epoch===undefined?invalidateReceiptSource():epoch,{gid,keyValue}=sourceIdentity();
@@ -1503,7 +1666,7 @@ async function ghReadSnapshot({epoch}={}){
     legacySource={envelopeBytes,payloadBytes};lockLedger("旧版账本只读；保留原记录，不直接保存");
   }else{db=JSON.parse(await decTxt(await keyOf(keyValue),o.data));if(!db||typeof db!=="object"||Array.isArray(db)||db.v!==4)throw new Error("原 v4 账本内容无效");}
   if(sourceEpoch!==_sourceEpoch||gid!==cfg(K.gid)||keyValue!==cfg(K.key))throw new Error("读取期间来源已变化，请重新读取");
-  const snapshot={gid,revision,content,db,envelopeVersion:o.v,sourceEpoch,projection,legacySource};
+  const snapshot={gid,revision,content,db,envelopeVersion:o.v,sourceEpoch,projection,legacySource,ownerLogin:g.owner?.login||""};
   Object.defineProperty(snapshot,"keyValue",{value:keyValue});return snapshot;
 }
 async function ghPull(epoch){return ghReadSnapshot({epoch});}
@@ -1567,7 +1730,7 @@ async function pullAll(quiet,opt={}){
   if(!cfg(K.gid)&&isMgr()){try{await ghFind(epoch);}catch(_){}}
   if(!current())return;
   if(cfg(K.gid)&&!_ledgerBusy){
-    _busy=true;try{const snapshot=await ghPull(epoch);if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
+    _busy=true;try{const snapshot=await ghPull(epoch);if(!current())return;if(isMgr())try{await verifyManagerCapability(snapshot,epoch);}catch(e){_managerCapability={state:"denied"};_fundDocsMessage="基金文件管理身份未核验："+e.message;}if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
       if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
       else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setSync(dailyReady?"已读取 "+hhmm():"每日数据读取失败，费用暂不可用",!dailyReady);if(!quiet)toast("已重新读取，不会上传账本");}
     }catch(e){if(current()){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";setSync("读取失败："+e.message,true);}}finally{_busy=false;}
@@ -1583,7 +1746,7 @@ window.addEventListener("pagehide",()=>{invalidateReceiptSource();lockLedger();}
 setInterval(()=>{if(["editing","review"].includes(EDIT.mode)&&!LG.isEditable(EDIT,Date.now()))lockLedger("5 分钟未操作，编辑已锁定；草稿保留");},1000);
 window.addEventListener("pageshow",e=>{if(e.persisted)pullAll(true);});
 window.addEventListener("online",()=>pullAll(true));
-window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
+window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;scheduleRender();return;}if(e.key===FUND_DOCS_KEY){_fundDocsCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){_fundDocsCache=null;invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
 
 /* ============ 分享（只读） ============ */
 function viewLink(){return location.origin+location.pathname+"#gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+(_fundProfileCipher&&_fundProfileCache?.gid===cfg(K.gid)&&_fundProfileCache?.keyValue===cfg(K.key)?"&fund="+encodeURIComponent(_fundProfileCipher):"");}
@@ -1616,6 +1779,11 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
   if(T.id==="shCopy"){const v=document.getElementById("shLink");navigator.clipboard?.writeText(v.value).then(()=>toast("链接已复制")).catch(()=>{v.select();toast("已全选，请长按复制");});return;}
   if(!isMgr())return;
+  const docLibrary=document.getElementById("fundDocsBox")._fundDocumentLibrary;
+  if(T.dataset.docRevise&&docLibrary){reviseFundDocument(T.dataset.docRevise,docLibrary);return;}
+  if(T.dataset.docDownload&&docLibrary){const d=docLibrary.documents.find(x=>x.id===T.dataset.docDownload&&x.version===Number(T.dataset.docVersion));if(d)confirmBox("下载明文正文","下载目录或 iCloud Drive 可能保留未加密副本。确认后将使用中性文件名下载。",()=>{saveBlob(`基金文件_${d.id}_v${d.version}.txt`,d.content);toast("已下载明文正文");});return;}
+  if(T.id==="fundDocClear"){clearFundDocumentForm();return;}
+  if(T.id==="fundDocsExport"){exportFundDocuments();return;}
   if(T.id==="btnAddFee"){changeDraft(d=>d.fees.push({id:crypto.randomUUID(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""}));return;}
   if(T.dataset.delfee){changeDraft(d=>{d.fees=d.fees.filter(f=>f.id!==T.dataset.delfee);});return;}
   if(T.dataset.delflow){changeDraft(d=>d.months.forEach(m=>m.flows=m.flows.filter(f=>f.id!==T.dataset.delflow)));return;}
@@ -1637,6 +1805,9 @@ document.getElementById("fundProfileFile").addEventListener("change",e=>importFu
 document.getElementById("fundProfileForm").addEventListener("submit",e=>{e.preventDefault();saveFundProfileForm();});
 document.getElementById("fundProfileFill").addEventListener("click",e=>{e.preventDefault();fillFundProfileForm();});
 document.getElementById("fundProfileLinkForm").addEventListener("submit",e=>{e.preventDefault();importFundProfileLink();});
+document.getElementById("fundDocsFile").addEventListener("change",e=>importFundDocuments(e.target.files?.[0]));
+document.getElementById("fundGovForm").addEventListener("submit",e=>{e.preventDefault();saveFundGovernance();});
+document.getElementById("fundDocForm").addEventListener("submit",e=>{e.preventDefault();saveFundDocumentForm();});
 document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonthFromEvent(e);if(historyMonth){_monthHistoryYm=historyMonth;scheduleRender();return;}if(!isMgr())return;const T=e.target;
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
 for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});
