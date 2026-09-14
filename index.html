@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.3">
+<meta name="fee-console-build" content="4.9.4">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -172,7 +172,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 <!-- ledger-settings-entry:v1 — routine read-only status belongs in Settings. -->
 <div id="ledgerNotice" class="info" role="status" style="display:none"></div>
 <div id="a2hs" class="info" style="display:none;justify-content:space-between;align-items:center;gap:10px">
-  <span>📲 点 Safari 底部<b>分享</b> → <b>添加到主屏幕</b>，以后像 App 一样打开。</span><button class="btn sm" id="a2hsOff">知道了</button>
+  <span id="a2hsText"></span><button class="btn sm" id="a2hsOff">知道了</button>
 </div>
 
 <nav class="tabs" id="tabs">
@@ -260,7 +260,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <p class="hint">生成一个只读链接/二维码，其他手机打开后只能查看，不能修改。</p>
     <button class="btn primary big" id="btnShare">📱 显示只读二维码 / 链接</button>
     <p class="hint" style="margin-top:12px">添加到主屏幕后仍默认只读；需要修改时主动进入编辑。</p>
-    <button class="btn big" id="btnPrepIcon">① 准备主屏幕图标</button>
+    <button class="btn big" id="btnPrepIcon">① 准备主屏幕入口</button>
     <button class="btn big" id="btnMgrLink" style="margin-top:8px">复制管理人链接（备用）</button>
   </div>
   <div class="card" id="fundDocsCard" style="display:none"><h2>基金文件</h2>
@@ -786,7 +786,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.3";
+const UI_VERSION_LABEL=" · v4.9.4";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1660,13 +1660,26 @@ function renderSetup(){
   if(cfg(K.gid)&&cfg(K.key)){el.innerHTML="";return;}
   el.innerHTML=`<div class="card" style="border-color:rgba(42,120,214,.5)">
     <h2>恢复原账本</h2>
-    <p class="hint">请打开原有主屏幕入口或使用原只读链接。此页不会创建或覆盖账本，不必生成新令牌。</p>
+    <p class="hint">${navigator.standalone?"这个主屏幕入口没有带入原账本访问。可把原完整链接粘贴到下方恢复当前图标；或者回到 Safari 原管理人页面，在设置中先点“准备主屏幕入口”，再重新添加。":"请打开原有主屏幕入口或使用原只读链接。此页不会创建或覆盖账本，不必生成新令牌。"}</p>
     <details><summary>已有管理人访问</summary><label class="f">已有 GitHub 令牌（只在本机输入）</label><input type="password" id="tokIn" placeholder="已有令牌" autocomplete="off"><button class="btn primary big" id="btnConnect" style="margin-top:8px">连接已有访问（先只读）</button></details>
     <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f">原完整链接（不要发送到聊天）</label>
       <input id="linkIn" placeholder="https://…#…" autocomplete="off"><button class="btn big" id="btnLink" style="margin-top:8px">应用链接</button></div>
   </div>`;
 }
-function renderA2hs(){const el=document.getElementById("a2hs");const ios=/iPhone|iPad|iPod/.test(navigator.userAgent),sa=!!navigator.standalone;el.style.display=(ios&&!sa&&!cfg(K.a2hs))?"flex":"none";}
+function renderA2hs(){const el=document.getElementById("a2hs"),text=document.getElementById("a2hsText");const ios=/iPhone|iPad|iPod/.test(navigator.userAgent),sa=!!navigator.standalone;
+  text.innerHTML=isMgr()?"📲 管理人请先到<b>设置</b>点<b>准备主屏幕入口</b>，再用 Safari 的<b>分享</b> → <b>添加到主屏幕</b>。":"📲 点 Safari 的<b>分享</b> → <b>添加到主屏幕</b>，以后可直接打开只读页面。";
+  el.style.display=(ios&&!sa&&!cfg(K.a2hs))?"flex":"none";}
+
+/* home-screen-entry:start */
+function prepareManagerHomeScreenEntry(){
+  const token=cfg(K.tok),gid=cfg(K.gid),keyValue=cfg(K.key);
+  if(!token||!gid||!keyValue){toast("原管理人访问尚未完整核验，暂不能准备主屏幕入口");return false;}
+  const q=new URLSearchParams({tok:token,gid,k:keyValue,who:DB.settings.who||""});
+  history.replaceState(null,"",location.pathname+"#"+q.toString());
+  toast("入口已准备：现在点 Safari「分享」→「添加到主屏幕」");
+  return true;
+}
+/* home-screen-entry:end */
 
 /* ============ 云同步：Gist（管理人写 / 所有人读，内容加密） ============ */
 let _busy=false;
@@ -1827,7 +1840,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.dataset.delfee){changeDraft(d=>{d.fees=d.fees.filter(f=>f.id!==T.dataset.delfee);});return;}
   if(T.dataset.delflow){changeDraft(d=>d.months.forEach(m=>m.flows=m.flows.filter(f=>f.id!==T.dataset.delflow)));return;}
   if(T.id==="btnShare"){showShare();return;}
-  if(T.id==="btnPrepIcon"){history.replaceState(null,"",location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||""));toast("已准备好：现在点 Safari 底部「分享」→「添加到主屏幕」");return;}
+  if(T.id==="btnPrepIcon"){prepareManagerHomeScreenEntry();return;}
   if(T.id==="btnMgrLink"){const u=location.origin+location.pathname+"#tok="+encodeURIComponent(cfg(K.tok))+"&gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key))+"&who="+encodeURIComponent(DB.settings.who||"");navigator.clipboard?.writeText(u).then(()=>toast("管理人链接已复制（含令牌，只给自己用）")).catch(()=>toast("复制失败"));return;}
   if(T.id==="btnGhSync"){pullAll(false);return;}
   if(T.id==="btnGhOff"){if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("草稿保留中，请先处理草稿");return;}confirmBox("断开云同步","本机将不再是管理人设备（数据保留在云端与本机）。",()=>{invalidateReceiptSource();setCfg(K.tok,"");render();setSync("");});return;}
