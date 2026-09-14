@@ -51,13 +51,23 @@ profile is retained. Concurrent imports use a generation check; account/key
 changes abort the import. Import removes any old profile from the URL fragment
 so a refresh cannot silently restore an older version.
 
-The existing read-only share URL may include the encrypted profile in its
-fragment. No profile is uploaded, no new origin is contacted, and no write token
-is shared. A reader retains the authenticated encrypted profile locally for
-standalone use. X/Z-style view selection is display only: anyone with the
-existing read-only link can see both investors and the full underlying report.
-Separate private investor accounts would require separately reviewed access
-control and are not claimed by this tab.
+From shell version 4.9.8, the read-only URL contains only the Gist identity and
+the existing data decryption key. It does not carry `fund`, `docs`, or `archive`
+snapshots. The manager publishes one encrypted `fee-console-fund.json` file in
+the same Gist after the manager identity and source ledger have been verified.
+The application reads that file together with the ledger on every refresh, so
+an old iOS Home Screen URL cannot override the latest fund profile or document
+library. A compare-before-PATCH check and exact read-back prevent a stale
+manager page from silently replacing a newer remote fund record.
+
+Legacy links containing encrypted profile or archive snapshots remain readable
+only as a migration fallback while the remote fund file is absent. New share
+and manager links never include those snapshots. The remote fund file remains
+AES-GCM encrypted with the existing data key; the manager token is required only
+for publishing and is never included in a read-only link. X/Z-style view
+selection is display only: anyone with the read-only link can see both investors
+and the full underlying report. Separate private investor accounts would
+require separately reviewed access control and are not claimed by this tab.
 
 ## Verification and release
 
