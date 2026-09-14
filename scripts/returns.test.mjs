@@ -14,6 +14,7 @@
  */
 import "./fund-investor-core.test.mjs";
 import "./fund-investor-ui.test.mjs";
+import "./fund-remote-storage.test.mjs";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
