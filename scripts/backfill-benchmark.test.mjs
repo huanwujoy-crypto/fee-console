@@ -52,13 +52,14 @@ const seedDir = () => {
 };
 const read = dir => JSON.parse(fs.readFileSync(path.join(dir, "data.json"), "utf8"));
 
-const BENCH_FIELDS = new Set(["spy", "qqq", "spyd", "qqqd", "bd"]);
+const BENCH_FIELDS = new Set(["spy", "qqq", "spyd", "qqqd", "bd", "bstate"]);
 const stripBench = point => Object.fromEntries(
   Object.entries(point).filter(([k]) => !BENCH_FIELDS.has(k)));
 
 const SERIES = {
   spy: { "2026-07-31": 747.03, "2026-08-19": 769.06, "2026-08-24": 763.47 },
   qqq: { "2026-07-31": 687.99, "2026-08-19": 716.08, "2026-08-24": 706.32 },
+  bd: { "2026-07-31": "2026-07-31", "2026-08-19": "2026-08-19", "2026-08-24": "2026-08-24" },
 };
 
 test("everything that is not a benchmark field survives byte-identical", () => {
@@ -126,6 +127,7 @@ test("a date with no daily point fails closed and is never created", () => {
   const r = run(dir, {
     spy: { ...SERIES.spy, "2026-08-20": 999 },
     qqq: { ...SERIES.qqq, "2026-08-20": 999 },
+    bd: { ...SERIES.bd, "2026-08-20": "2026-08-20" },
   });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /2026-08-20/);
@@ -154,7 +156,7 @@ test("an unknown field is refused before anything is written", () => {
 test("a dividend without its price is refused before anything is written", () => {
   const dir = seedDir();
   const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
-  const r = run(dir, { spy: SERIES.spy, qqq: SERIES.qqq, spyd: { "2026-08-20": 1.9 } });
+  const r = run(dir, { spy: SERIES.spy, qqq: SERIES.qqq, bd: SERIES.bd, spyd: { "2026-08-20": 1.9 } });
   assert.notEqual(r.status, 0);
   assert.match(r.stderr, /paired benchmark price spy/);
   assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
@@ -232,6 +234,133 @@ test("post-migration benchmark repair fails closed without bd", () => {
   assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
 });
 
+test("pre-cutover backfill cannot create a state-less weekend benchmark point", () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({
+    updatedAt: "2026-09-06T00:00:00.000Z",
+    daily: [
+      { d: "2026-09-04", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+        spy: 650, qqq: 580, bd: "2026-09-04", bstate: "session" },
+      { d: "2026-09-05", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 },
+    ],
+    flowsAuto: [], flowsUnresolved: [], status: { asOf: "2026-09-05", provisional: true, notes: [] },
+  }));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-05": 650 }, qqq: { "2026-09-05": 580 },
+  }));
+  const raw = fs.readFileSync(path.join(dir, "data.json"), "utf8");
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-05", "--from=2026-09-05", "--to=2026-09-05", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.notEqual(r.status, 0);
+  assert.match(r.stderr, /2026-09-05: series is missing bd/);
+  assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
+});
+
+test("same-date backfill derives and persists bstate=session", () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({
+    updatedAt: "2026-09-15T00:00:00.000Z",
+    daily: [{ d: "2026-09-14", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 }],
+    flowsAuto: [], flowsUnresolved: [], status: { asOf: "2026-09-14", provisional: false, notes: [] },
+  }));
+  fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+    spy: { "2026-09-14": 660 }, qqq: { "2026-09-14": 590 },
+    bd: { "2026-09-14": "2026-09-14" },
+  }));
+  const r = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-14", "--from=2026-09-14", "--to=2026-09-14", "--backup=preimage.backup"],
+    { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(read(dir).daily[0].bstate, "session");
+});
+
+test("lagged backfill requires explicit bstate=closed after cutover", () => {
+  const base = {
+    updatedAt: "2026-09-16T00:00:00.000Z",
+    daily: [
+      { d: "2026-09-14", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+        spy: 660, qqq: 590, bd: "2026-09-14", bstate: "session" },
+      { d: "2026-09-15", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 },
+    ], flowsAuto: [], flowsUnresolved: [], status: { asOf: "2026-09-15", provisional: true, notes: [] },
+  };
+  const make = bstate => {
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify(base));
+    const series = {
+      spy: { "2026-09-15": 660 }, qqq: { "2026-09-15": 590 },
+      bd: { "2026-09-15": "2026-09-14" },
+    };
+    if (bstate !== undefined) series.bstate = { "2026-09-15": bstate };
+    fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify(series));
+    return dir;
+  };
+  const refused = make();
+  const raw = fs.readFileSync(path.join(refused, "data.json"), "utf8");
+  const bad = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-15", "--from=2026-09-15", "--to=2026-09-15", "--backup=preimage.backup"],
+    { cwd: refused, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.notEqual(bad.status, 0);
+  assert.match(bad.stderr, /explicit bstate=closed/);
+  assert.equal(fs.readFileSync(path.join(refused, "data.json"), "utf8"), raw);
+
+  const accepted = make("closed");
+  const good = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+    "--baseline=2026-09-15", "--from=2026-09-15", "--to=2026-09-15", "--backup=preimage.backup"],
+    { cwd: accepted, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  assert.equal(good.status, 0, good.stderr);
+  assert.equal(read(accepted).daily[1].bstate, "closed");
+});
+
+test("backfill validates bstate values and same-date consistency", () => {
+  const dir = tmp();
+  fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({
+    updatedAt: "2026-09-15T00:00:00.000Z",
+    daily: [{ d: "2026-09-14", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 }],
+    flowsAuto: [], flowsUnresolved: [], status: { asOf: "2026-09-14", provisional: false, notes: [] },
+  }));
+  const invoke = state => {
+    fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+      spy: { "2026-09-14": 660 }, qqq: { "2026-09-14": 590 },
+      bd: { "2026-09-14": "2026-09-14" }, bstate: { "2026-09-14": state },
+    }));
+    return spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+      "--baseline=2026-09-14", "--from=2026-09-14", "--to=2026-09-14", "--backup=preimage.backup"],
+      { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+  };
+  assert.match(invoke("unknown").stderr, /must be one of session or closed/);
+  assert.match(invoke("closed").stderr, /same-date benchmark evidence must use bstate=session/);
+});
+
+test("backfill cannot use the read-only legacy exception to create a state-less carry", () => {
+  const invoke = (d, bd) => {
+    const dir = tmp();
+    fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({
+      updatedAt: "2026-09-13T00:00:00.000Z",
+      daily: [
+        { d: bd, schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
+          spy: 650, qqq: 580, bd, bstate: "session" },
+        { d, schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 },
+      ],
+      flowsAuto: [], flowsUnresolved: [], status: { asOf: d, provisional: true, notes: [] },
+    }));
+    fs.writeFileSync(path.join(dir, "series.json"), JSON.stringify({
+      spy: { [d]: 650 }, qqq: { [d]: 580 }, bd: { [d]: bd },
+    }));
+    const result = spawnSync(process.execPath, [SCRIPT, "--file=data.json", "--series=series.json",
+      `--baseline=${d}`, `--from=${d}`, `--to=${d}`, "--backup=preimage.backup"],
+      { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
+    return { dir, result };
+  };
+  const weekday = invoke("2026-09-11", "2026-09-10");
+  assert.notEqual(weekday.result.status, 0);
+  assert.match(weekday.result.stderr, /explicit bstate=closed/);
+
+  const weekend = invoke("2026-09-12", "2026-09-11");
+  assert.notEqual(weekend.result.status, 0);
+  assert.match(weekend.result.stderr, /explicit bstate=closed/);
+});
+
 test("whole-ledger validation refuses an interior benchmark gap outside the requested slice", () => {
   const dir = tmp();
   const data = {
@@ -241,7 +370,7 @@ test("whole-ledger validation refuses an interior benchmark gap outside the requ
         spy: 650, qqq: 580, bd: "2026-09-10" },
       { d: "2026-09-11", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0 },
       { d: "2026-09-12", schwab: 1, webull: 1, cash: 1, stock: 1, other: 0,
-        spy: 651, qqq: 581, bd: "2026-09-11" },
+        spy: 650, qqq: 580, bd: "2026-09-10" },
     ], flowsAuto: [], flowsUnresolved: [],
     status: { asOf: "2026-09-12", provisional: true, notes: [] },
   };
@@ -255,7 +384,7 @@ test("whole-ledger validation refuses an interior benchmark gap outside the requ
     "--baseline=2026-09-10", "--from=2026-09-10", "--to=2026-09-10", "--backup=preimage.backup"],
     { cwd: dir, encoding: "utf8", env: { ...process.env, FEE_DATA_KEY: "A".repeat(43) + "=" } });
   assert.notEqual(r.status, 0);
-  assert.match(r.stderr, /2026-09-11 is an unresolved interior gap/);
+  assert.match(r.stderr, /2026-09-12: persisted closed evidence is not anchored to the prior proven session/);
   assert.equal(fs.readFileSync(path.join(dir, "data.json"), "utf8"), raw);
 });
 
@@ -323,12 +452,13 @@ test("resolve-carry replaces a carried workday bundle with same-day evidence onl
   const dir = carryDir(), before = CARRY_SEED();
   const r = runCarry(dir, ["--resolve-carry"]);
   assert.equal(r.status, 0, r.stderr);
-  assert.match(r.stdout, /resolve 2026-09-11 \[spy qqq bd\] carried-from=2026-09-10/);
+  assert.match(r.stdout, /resolve 2026-09-11 \[spy qqq bd bstate\] carried-from=2026-09-10/);
   assert.match(r.stdout, /points-resolved=1/);
   const after = read(dir);
   assert.equal(after.daily[1].spy, 651);
   assert.equal(after.daily[1].qqq, 581);
   assert.equal(after.daily[1].bd, "2026-09-11");
+  assert.equal(after.daily[1].bstate, "session");
   // 组合数据、prov、来源凭证与其它每一天都必须逐字节不变。
   for (let i = 0; i < before.daily.length; i += 1) {
     assert.deepEqual(stripBench(after.daily[i]), stripBench(before.daily[i]));

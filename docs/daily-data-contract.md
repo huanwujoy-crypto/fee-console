@@ -25,13 +25,15 @@
   - 落后超过 3 天或早于目标日 → 明显不对，阻断。
 - `--src-bench` 是基准价实际对应的纽约交易时段日期。写入 SPY/QQQ 时该日期以 `bd`
   永久保存在每日点上，不受 `--calibrated` 清除；页面不得只凭点的 `d` 猜测价格日期。
-  - `bd == d` → 同日价格证据完整。
-  - `bd < d` 且相差 1–3 个日历日 → AUM 点可写并标暂估；页面只把 benchmark 计算到
-    已证明的日期。周末 carry 可由日历算术直接接受；工作日尾部在后续价格证据到达前保持待补。
+  - `bd == d` → writer 自动派生并持久化 `bstate: "session"`；可显式传
+    `--bench-state=session`，但不得传 `closed`。
+  - `bd < d` 且相差 1–3 个日历日 → 只有调用方已有该目标日的明确闭市证据，且显式传
+    `--bench-state=closed` 时才写入，持久化为 `bstate: "closed"` 并标暂估。价格只是较早
+    一天、后续日期已有新价格或日历上恰逢工作日，都不能自行证明目标日闭市。
   - `bd > d` 或落后超过 3 天 → 拒绝本轮 benchmark bundle 并告警；独立核实的 AUM
     仍照常写入。页面只显示到先前已证明的 benchmark 截止日。
-  不维护一份需要年度更新的美股假日日历；后续 `bd` 越过某工作日且从未等于该日时，才将其
-  识别为已证明的非交易日。
+  `bstate` 是公开 benchmark ledger 的证据字段，不是行情状态猜测。没有明确 `session` 或
+  `closed` 证据的日期保持 pending；系统不从后续 `bd`、周几或缺失价格反推美股假日。
 - `--spy` / `--qqq` 是实际 `bd` 的**原始收盘价**（美股收盘），`--spyd` / `--qqqd`
   是当日**除息金额**，绝大多数日子为 `0`（为 0 时不落字段）。
   **不要传 Yahoo 的 `adjclose`**：它每逢除息回溯改写全部历史值，而这里每天只写一次
@@ -42,9 +44,13 @@
   如果一次响应没有股息事件，脚本会保留先前已核实的 `spyd` / `qqqd`，不会静默擦除。
   迁移窗口内旧 Routine 仍可成对传入 `--cspx` / `--eqac`，避免部署瞬间中断；
   不得在同一次运行混用新旧两套字段。新 Routine 验证后即只传 SPY / QQQ。
-- 同一 `bd` 重复出现时，SPY/QQQ 价格必须完全相同且 `bd` 不得回退；carry 日不得重复除息。
+- 同一 `bd` 重复出现时，SPY/QQQ 价格必须完全相同且 `bd` 不得回退；`closed` 日不得重复除息。
   同日只修订账户数据而省略 benchmark 参数时，writer 保留已有的完整
-  `spy`/`qqq`/`spyd`/`qqqd`/`bd` bundle，不能留下孤儿股息。切换到新的 `bd` 时不继承旧日股息。
+  `spy`/`qqq`/`spyd`/`qqqd`/`bd`/`bstate` bundle，不能留下孤儿股息。切换到新的 `bd`
+  时不继承旧日股息。
+- 兼容边界固定为 `2026-09-14`：此前已发布且没有 `bstate` 的同日价格，以及周六／周日
+  carry，继续只读；此前无 `bstate` 的工作日 carry 不受保护。`2026-09-14` 起每个 SPY/QQQ
+  点都必须持久化 `session` 或 `closed`。该兼容规则只解释旧账本，不授权新写入省略状态。
 - 目标日晚于纽约当日 → 阻断；早于纽约当日超过 `MAX_LOOKBACK_DAYS`（10 天）→ 阻断。
   这 10 天就是周末回看校准的活动范围。
 
@@ -117,17 +123,30 @@ benchmark bundle 并告警，不得阻断独立的 AUM 写入或费用回执。�
 ### Benchmark 页面消费规则
 
 - `2026-09-10` 起的 SPY/QQQ 点必须用逐点 `bd` 解释；更早的已复核迁移历史可按 `d` 读取。
-- 当最新工作日只有旧 `bd` 或缺少日期证据时，TWR 与月度 benchmark 只计算至最后已证明日期，
+- `2026-09-14` 起的点还必须有逐点 `bstate`；此前只兼容同日价格和周末 carry。缺失或矛盾的
+  `bstate` 使该日及后续依赖日期保持 pending。
+- 当最新日期只有旧 `bd`、缺少状态证据或状态互相矛盾时，TWR 与月度 benchmark 只计算至
+  最后已证明日期，
   页面明确显示“基准截至 …”；不得把缺口变成 0% 的一天。
 - 当 benchmark 截止日早于账户 `asOf` 时，不显示跨日期的模拟余额或领先／落后金额。
-- 周末 carry 可保持模拟余额可用，同时显示最近真实收盘日。后续同日 replacement 到齐后，
+- 有显式 `closed` 证据的 carry 可保持模拟余额可用，同时显示最近真实收盘日。后续同日
+  replacement 到齐后，
   页面从完整日链重新计算，不会永久断链或把两日涨跌合并成一天。
-- 不维护美股假日日历。只有更晚的 `bd` 已越过某个工作日时，页面才暂按闭市日处理；这类
-  推断日期必须在月度明细与计算说明中列出，便于发现真正漏补的交易日并纠正。
+- 每个 `closed` 点必须锚定到链上紧邻的已证明 `session`：其 `bd` 必须等于前一有效点的
+  benchmark source date，SPY/QQQ 价格必须与该 session 完全相同，且不得重复股息。起算日前
+  baseline 若为 `closed`，也必须能在完整 daily ledger 中找到对应的真实 session anchor；
+  anchor 到 baseline 之间每个日点都必须是同一 `bd` 的连续、有效 `closed` 证据，不能跨过
+  AUM-only 缺口或较新的 session。找不到、价格不符或链条不连续时整段 benchmark fail closed，
+  不得用该数作为分母。
+- 不维护或推断美股假日日历。只有逐点 `bstate: "closed"` 才表示该目标日已核验闭市；后续
+  新价格不能补造此前缺失的闭市证据。
 - 只要窗口中出现任何 SPY/QQQ 数据，就不得因尾部缺口静默降级到 CSPX/EQAC；旧欧洲基准仅供
   完全没有 SPY/QQQ 的迁移前窗口回放。
-- `bd` 只属于公开 benchmark ledger，不进入 management fee / Carry 计算回执的
+- `bd` 与 `bstate` 只属于公开 benchmark ledger，不进入 management fee / Carry 计算回执的
   `dataInputsHash`。
+- SPY/QQQ TWR、月度回报及相同资金路径余额只由页面的 `benchmarkView` 逐日引擎计算；
+  writer 的费用引擎不再保留第二套 benchmark 算法。每日顺序固定为先应用含息收益因子，
+  再加入当日 EOD 外部资金流。
 
 ### 重复/陈旧现金的检查
 
@@ -239,14 +258,17 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
   回执或回执校验失败都必须标红。这样可区分“已运行但数据无变化”与“根本没有运行”。
 - 周五收盘等公共行情首次尚未到齐时，`benchmark-cache` 在随后时段自动重试；每次都要求
   SPY/QQQ 共同通过身份、收盘和股息校验，取得后再由同日 replacement 补齐模拟期末余额。
-- 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，2026-09-10 起的每个输入点
-  必须同时提供 `bd`；脚本只补公开 benchmark bundle，并在写入前复核整条时间线，不能把
-  已取得的较新行情只挂在周末点而漏掉对应工作日。
-- 工作日当时没等到自己的收盘价而先沿用上一交易日 bundle 时，补跑用 `--resolve-carry`
+- 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，每个新输入点（包括切换日前的
+  历史点）都必须同时提供 `bd`；旧账本的无证据迁移行只允许继续读取。`bd == d` 时脚本自动
+  写入 `bstate: "session"`；`bd < d` 时 series
+  必须逐日提供 `bstate: "closed"`，否则停止且不写。脚本只补公开 benchmark bundle，并在
+  写入前复核整条时间线，不能把已取得的较新行情只挂在后续点而漏掉对应交易日。
+- 旧账本中工作日当时没等到自己的收盘价而沿用上一交易日 bundle 时，补跑用 `--resolve-carry`
   把那份 carry 换成同日证据。默认仍然拒绝一切覆盖；只有同时满足「该点 `bd` 早于自己的
   日期」「价格与那个 `bd` 自证收盘（`bd == d`）的点逐字节相同」「新 `bd` 正好等于该点自己
   的日期」「该点没有已落地的股息」时才放行，且写入前整条时间线仍须通过，与其它点已发布的
-  同 `bd` 价格必须一致。独立读数、仍旧落后的新 `bd` 一律不得替换，先取证再决定。
+  同 `bd` 价格必须一致；替换后的点写入 `bstate: "session"`。独立读数、仍旧落后的新 `bd`
+  一律不得替换，先取证再决定。
 
 ## 7. 单一费用计算回执（calculation receipt）
 

@@ -145,7 +145,6 @@ export function effectiveFlows({ months = [], flowsAuto = [] } = {}) {
 
 export function periodReturns(input) {
   const points = (input.points || []).slice().sort((a, b) => String(a.d).localeCompare(String(b.d)));
-  const benchmark = input.bench || [];
   const flowByDate = input.flowByDate || {};
   const to = input.to;
   const opening = input.openT;
@@ -154,9 +153,6 @@ export function periodReturns(input) {
   const carryRate = input.cr;
   const cumulativeBefore = input.cumBefore;
   const highWaterBefore = input.hwmBefore;
-  const benchmarkPrevious = input.bPrev || {};
-  const benchmarkValues = input.bVal || {};
-  const benchmarkHas = input.bHas || {};
   const issues = [], pointDates = new Set();
 
   for (const point of points) {
@@ -185,8 +181,6 @@ export function periodReturns(input) {
   }
   if (!(dietzDenominator > 0)) issues.push("Modified Dietz 分母不为正");
 
-  const benchmarkIndex = {}, benchmarkSeen = {};
-  for (const item of benchmark) { benchmarkIndex[item.k] = 1; benchmarkSeen[item.k] = false; }
   let grossIndex = 1, grossPrevious = opening;
   const closing = points.length ? points.at(-1).tot : opening;
   const grossPnl = closing - opening - flowTotal;
@@ -215,46 +209,6 @@ export function periodReturns(input) {
     }
   }
 
-  const benchmarkIssues = [];
-  for (const item of benchmark) {
-    if (!(benchmarkPrevious[item.k] > 0)) benchmarkIssues.push(item.k + " 缺少起算日前基准");
-    for (const point of points) {
-      if (!(point[item.k] > 0)) benchmarkIssues.push(item.k + " 缺少价格 " + point.d);
-      if (item.dk && point[item.dk] !== undefined && (!(Number.isFinite(point[item.dk])) || point[item.dk] < 0)) {
-        benchmarkIssues.push(item.dk + " 无效 " + point.d);
-      }
-    }
-  }
-
-  const benchmarkValid = input.benchmarkValid !== false && portfolioReady && benchmarkIssues.length === 0;
-  let benchmarkValueValid = input.benchmarkValueValid !== false && benchmarkValid;
-  const benchmarkValueIssues = [];
-  if (benchmarkValid) {
-    for (const point of points) {
-      const flow = flowByDate[point.d] || 0;
-      for (const item of benchmark) {
-        const price = point[item.k], dividend = item.dk ? (point[item.dk] || 0) : 0;
-        const dailyReturn = (price + dividend) / benchmarkPrevious[item.k] - 1;
-        benchmarkIndex[item.k] *= 1 + dailyReturn;
-        if (benchmarkValueValid) benchmarkValues[item.k] *= 1 + dailyReturn;
-        benchmarkSeen[item.k] = true;
-        benchmarkHas[item.k] = true;
-        benchmarkPrevious[item.k] = price;
-      }
-      if (flow && benchmarkValueValid) {
-        const bad = benchmark.find(item => !(Number.isFinite(benchmarkValues[item.k] + flow) && benchmarkValues[item.k] + flow >= 0));
-        if (bad) {
-          benchmarkValueIssues.push((bad.account || bad.k) + " 的提款超过被动账户价值 " + point.d);
-          benchmarkValueValid = false;
-        } else {
-          for (const item of benchmark) benchmarkValues[item.k] += flow;
-        }
-      }
-    }
-  }
-  const benchmarkReturns = {};
-  for (const item of benchmark) benchmarkReturns[item.k] = benchmarkSeen[item.k] ? benchmarkIndex[item.k] - 1 : null;
-
   return {
     closeT: closing,
     flowT: flowTotal,
@@ -270,12 +224,7 @@ export function periodReturns(input) {
     mgmtValid,
     rG: portfolioReady ? grossIndex - 1 : null,
     rD: portfolioReady && fees != null ? (grossPnl - fees) / dietzDenominator : null,
-    rB: benchmarkReturns,
-    benchmarkValid,
-    benchmarkValueValid,
-    issues: [...new Set(issues)],
-    benchIssues: [...new Set(benchmarkIssues)],
-    benchValueIssues: [...new Set(benchmarkValueIssues)]
+    issues: [...new Set(issues)]
   };
 }
 
@@ -333,11 +282,7 @@ export function computeFeeStatement({ daily = [], flowsAuto = [], econ, asOf }) 
       rate,
       cr: carryRate,
       cumBefore: cumulative,
-      hwmBefore: highWater,
-      bench: [],
-      bPrev: {},
-      bVal: {},
-      bHas: {}
+      hwmBefore: highWater
     });
     if (result.issues.length || !result.mgmtValid || result.mgmt == null || result.fees == null) {
       throw new Error(`fee calculation failed for ${ym}: ${result.issues.join("; ") || "management fee unavailable"}`);

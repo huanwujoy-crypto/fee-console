@@ -281,10 +281,13 @@ test("the receipt contains derived results and commitments, never raw private re
   assert.match(receipt.dataInputsHash, /^[a-f0-9]{64}$/);
 });
 
-test("benchmark date evidence is public display metadata, not a fee-receipt input", () => {
+test("benchmark date and state evidence are public display metadata, not fee-receipt inputs", () => {
   const { data, economicInput } = fixture();
   const withBenchmarkDates = structuredClone(data);
-  for (const point of withBenchmarkDates.daily) point.bd = point.d;
+  for (const point of withBenchmarkDates.daily) {
+    point.bd = point.d;
+    point.bstate = "session";
+  }
   const options = { start: "2026-08-01", asOf: "2026-08-24", accountIds: ["schwab", "webull"] };
   assert.deepEqual(normalizeDataInputs(withBenchmarkDates, options), normalizeDataInputs(data, options));
   assert.equal(buildFeeCalculationReceipt({ data: withBenchmarkDates, economicInput }).dataInputsHash,
