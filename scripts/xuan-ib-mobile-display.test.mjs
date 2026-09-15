@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitConcentrationLabel,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -76,7 +76,13 @@ test('AI KPI uses the primary three-account single-stock view, excludes BRK.B, a
  assert.deepEqual(largestOrdinaryConcentration(headers,rows,'BRK.B 三账户 9.99%'),{symbol:'TSLA',percent:2.65,label:'TSLA 2.65%'});
  assert.equal(largestOrdinaryConcentration(['标的','市值','占比','余量'],rows),null);
  assert.match(MOBILE_READING_CSS,/\.kpi-secondary/);
- assert.match(MOBILE_READING_CSS,/\.kpi-secondary dd\{[^}]*max-width:100%[^}]*font-size:clamp\(13px,9cqi,16px\)[^}]*white-space:normal!important[^}]*overflow-wrap:anywhere!important/);
+ assert.match(MOBILE_READING_CSS,/\.kpi-secondary dd\{[^}]*display:grid[^}]*max-width:100%[^}]*white-space:normal!important/);
+ assert.match(MOBILE_READING_CSS,/\.kpi-secondary-ratio\{[^}]*font-size:16px[^}]*white-space:nowrap/);
+});
+test('concentration KPI separates the combined symbol from its ratio for narrow phones',()=>{
+ assert.deepEqual(splitConcentrationLabel('GOOG / GOOGL 4.94%'),['GOOG / GOOGL','4.94%']);
+ assert.deepEqual(splitConcentrationLabel('META 3.59%'),['META','3.59%']);
+ assert.equal(splitConcentrationLabel('未取得'),null);
 });
 test('current family single-stock value is derived exactly from the published fact and AI denominator',()=>{
  const fact='本期三账户 GOOG/GOOGL：IB 220.00 股 74,082.80 USD（盘中）、Schwab-HK GOOGL 302.00 股 102,447.46 USD、Webull GOOG 360.00 股 121,217.40 USD，合计 297,747.66 USD；阈值与执行口径不变。';
