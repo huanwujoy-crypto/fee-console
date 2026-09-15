@@ -4,6 +4,8 @@ import {improveOrderCards,ORDER_CARDS_CSS} from './xuan-ib-order-cards.mjs';
 import {improveAllocationCards,ALLOCATION_CARDS_CSS} from './xuan-ib-allocation-cards.mjs';
 import {improveHoldingsCards,HOLDINGS_CARDS_CSS} from './xuan-ib-holdings-cards.mjs';
 import {simplifyReportNotes} from './xuan-ib-routine-reading.mjs';
+import {familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
+export {familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
 export {organizeRoutineRecords} from './xuan-ib-routine-reading.mjs';
 export const GUIDE_BODY = `<ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒、风险线与现金参考。</li><li><b>待办</b>：只处理明确要求你的事项；挂单仅提醒。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：只读取已发布结果；睡前版在美股开市时启动。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p>`;
 
@@ -13,7 +15,7 @@ export const MOBILE_READING_CSS = `
 .kpi .big{font-size:clamp(18px,14cqi,32px)!important;white-space:nowrap!important;overflow-wrap:normal!important;letter-spacing:-.04em}
 .kpi .lab{font-size:13px!important;line-height:1.3}.mobile-state{display:block;font-size:12px;color:var(--mut);margin-top:5px}
 .kpi-secondary{display:block;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
-.kpi-secondary dt{font-size:12px;color:var(--mut);white-space:nowrap}.kpi-secondary dd{margin:2px 0 0;font-size:16px;font-weight:750;white-space:nowrap}
+.kpi-secondary dt{font-size:12px;color:var(--mut);white-space:nowrap}.kpi-secondary dd{margin:2px 0 0;font-size:16px;font-weight:750;white-space:normal;overflow-wrap:anywhere}
 .mobile-cash-guidance{margin:8px 0 0;font-size:12px}.mobile-cash-guidance div{display:flex;justify-content:space-between;gap:4px;padding:3px 0}.mobile-cash-guidance dt,.mobile-cash-guidance dd{margin:0;white-space:nowrap}.mobile-cash-guidance dd{font-weight:750}
 .pane-notes{margin-top:20px!important}.pane-notes>summary{font-size:15px}.pane-notes .notes-section{padding:10px 0;border-bottom:1px solid var(--line)}
 .pane-notes p,.pane-notes li{font-size:14px!important;line-height:1.6}.pane-notes table{min-width:550px}
@@ -161,37 +163,10 @@ export function familySingleStockConcentration(fact,denominatorCents) {
 // Keep that compatibility path fail-closed: AUTO may only classify a verified
 // ordinary stock, while older REG/WU/DELEG rows must name an already-reviewed
 // ordinary-stock symbol. New reports may state STK directly.
-const REVIEWED_ORDINARY_STOCKS=new Set([
-  'AAOI','APO','AVGO','BE','GOOG','GOOGL','IREN','KKR','META','MRVL','MSFT','ORCL','TSEM','TSLA','VST',
-]);
-const normalizeConcentrationSymbol=value=>String(value??'').trim().toUpperCase().replace(/^BRK[./-]B$/,'BRK.B');
 const moneyFromCents=value=>{
   const cents=BigInt(value),whole=(cents/100n).toString().replace(/\B(?=(\d{3})+(?!\d))/g,','),fraction=(cents%100n).toString().padStart(2,'0');
   return `${whole}.${fraction}`;
 };
-
-export function familyOrdinaryConcentrations(rows,denominatorCents) {
-  const denominator=String(denominatorCents??'').trim();
-  if(!Array.isArray(rows)||!/^\d+$/.test(denominator)||denominator==='0')return [];
-  const base=BigInt(denominator),totals=new Map();
-  for(const row of rows){
-    if(!row||row.status!=='classified'||!/^\d+$/.test(String(row.marketValueCents??'')))continue;
-    const symbol=normalizeConcentrationSymbol(row.symbol),namespace=String(row.namespace??'').trim().toUpperCase();
-    if(!/^[A-Z0-9.]+$/.test(symbol)||symbol==='BRK.B')continue;
-    const assetType=String(row.assetType??'').trim().toUpperCase();
-    const ordinary=assetType?assetType==='STK':namespace==='AUTO'||REVIEWED_ORDINARY_STOCKS.has(symbol);
-    if(!ordinary)continue;
-    const cents=BigInt(row.marketValueCents);if(cents<=0n)continue;
-    const key=symbol==='GOOGL'?'GOOG':symbol;
-    totals.set(key,(totals.get(key)||0n)+cents);
-  }
-  return [...totals].flatMap(([symbol,cents])=>{
-    const hundredths=(cents*10000n+base/2n)/base;
-    if(hundredths<=100n)return [];
-    const percent=Number(hundredths)/100,label=symbol==='GOOG'?'GOOG / GOOGL':symbol;
-    return [{symbol,label,percent,amount:moneyFromCents(cents),marketValueCents:String(cents)}];
-  }).sort((a,b)=>b.percent-a.percent||a.label.localeCompare(b.label));
-}
 
 export function cashRiskSummary(text) {
   const match=String(text??'').trim().match(/^(\$[\d,]+(?:\.\d+)?)\s*·\s*占 NAV\s*(\d+(?:\.\d+)?%)$/);

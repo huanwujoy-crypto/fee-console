@@ -51,6 +51,7 @@
 // writes to any financial account or repository file.
 import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
 import { constituentKey } from './xuan-ib-ai-tier-coverage.mjs';
+import { largestOrdinaryStockConcentration } from './xuan-ib-single-stock-concentration.mjs';
 import {
   AI_DENOMINATOR_TEMPLATE_ID, BASIS_POINTS, DENOMINATOR_COMPONENT_KEY,
   basisPointsOf, centsFromMicroUsd, contributionMicroBasis, microUsdFromUsdNumber, microUsdOf,
@@ -218,7 +219,7 @@ export function computeAiPressure(constituents, coverage, { denominator } = {}) 
     const resolved = resolvedByKey.get(key);
     if (!resolved) fail('COVERAGE_RESOLUTION_MISSING', key);
     const value = amountMicro(constituent, 'marketValueMicro', 'marketValueUsd', key);
-    const identity = { key, symbol: entry.symbol, custodian: entry.custodian,
+    const identity = { key, symbol: entry.symbol, custodian: entry.custodian, assetType: constituent.assetType,
       recordId: entry.recordId, namespace: entry.namespace, basis: resolved.basis,
       marketValueUsd: usdFromMicro(value), marketValueMicro: String(value),
       marketValueCents: String(centsFromMicroUsd(value, key)) };
@@ -331,6 +332,7 @@ const percentOf = millionths => `${(Number(millionths) / 10_000).toFixed(2)}%`;
 const coefficientText = value => `${(value * 100).toFixed(2)}%`;
 
 export const AI_PRESSURE_KPI_MARKER = 'data-ai-pressure-kpi-v1';
+export const SINGLE_STOCK_KPI_MARKER = 'data-ai-single-stock-kpi-v1';
 
 /**
  * The headline AI-pressure KPI, derived from the same computation as the table.
@@ -344,6 +346,7 @@ export function renderAiPressureKpi(pressure, { asOfHkt } = {}) {
   if (!plain(pressure) || !Array.isArray(pressure.rows) || !pressure.rows.length) fail('PRESSURE_INVALID');
   if (typeof asOfHkt !== 'string' || !asOfHkt.trim()) fail('AS_OF_REQUIRED');
   const excluded = pressure.excludedKeys.length;
+  const concentration=largestOrdinaryStockConcentration(pressure.rows,pressure.denominatorCents);
   return `<div class="kpi" ${AI_PRESSURE_KPI_MARKER}="1"`
     + ` data-ai-kpi-numerator-mbp="${pressure.numeratorMicroBasis}"`
     + ` data-ai-kpi-numerator-cents="${pressure.numeratorCents}"`
@@ -354,7 +357,14 @@ export function renderAiPressureKpi(pressure, { asOfHkt } = {}) {
     + `<div class="big num">${percentOf(pressure.ratioMillionths)}</div>`
     + `<div class="sub">${money(pressure.numeratorUsd)} / ${money(pressure.denominatorUsd)} `
     + `${escape(pressure.denominator.components.map(item => item.label).join(' + '))}，含现金`
-    + `${excluded ? ` · ${excluded} 项无可用系数未计入分子，仍在分母内` : ''}<br>${escape(asOfHkt)}</div></div>`;
+    + `${excluded ? ` · ${excluded} 项无可用系数未计入分子，仍在分母内` : ''}<br>${escape(asOfHkt)}</div>`
+    + (concentration?`<dl class="kpi-secondary" ${SINGLE_STOCK_KPI_MARKER}="1"`
+      +` data-single-stock-symbol="${escape(concentration.symbol)}"`
+      +` data-single-stock-market-value-cents="${concentration.marketValueCents}"`
+      +` data-single-stock-denominator-cents="${pressure.denominatorCents}"`
+      +` data-single-stock-ratio-hundredths="${concentration.hundredths}">`
+      +`<dt>单票集中度</dt><dd>${escape(concentration.label)} ${concentration.percent.toFixed(2)}%</dd></dl>`:'')
+    +`</div>`;
 }
 
 /**
@@ -383,6 +393,7 @@ export function renderAiPressureSection(pressure, { title, asOfHkt, note = '' } 
       + ` data-ai-risk-custodian="${escape(row.custodian)}"`
       + ` data-ai-market-value-micro="${row.marketValueMicro}"`
       + ` data-ai-market-value-cents="${row.marketValueCents}"`
+      + ` data-ai-asset-type="${escape(row.assetType)}"`
       + ` data-ai-namespace="${escape(row.namespace)}"`
       + ` data-ai-record="${escape(row.recordId)}"`;
     if (row.status === 'excluded') {
