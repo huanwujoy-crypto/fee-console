@@ -76,6 +76,7 @@ test('AI KPI uses the primary three-account single-stock view, excludes BRK.B, a
  assert.deepEqual(largestOrdinaryConcentration(headers,rows,'BRK.B 三账户 9.99%'),{symbol:'TSLA',percent:2.65,label:'TSLA 2.65%'});
  assert.equal(largestOrdinaryConcentration(['标的','市值','占比','余量'],rows),null);
  assert.match(MOBILE_READING_CSS,/\.kpi-secondary/);
+ assert.match(MOBILE_READING_CSS,/\.kpi-secondary dd\{[^}]*max-width:100%[^}]*font-size:clamp\(13px,9cqi,16px\)[^}]*white-space:normal!important[^}]*overflow-wrap:anywhere!important/);
 });
 test('current family single-stock value is derived exactly from the published fact and AI denominator',()=>{
  const fact='本期三账户 GOOG/GOOGL：IB 220.00 股 74,082.80 USD（盘中）、Schwab-HK GOOGL 302.00 股 102,447.46 USD、Webull GOOG 360.00 股 121,217.40 USD，合计 297,747.66 USD；阈值与执行口径不变。';
