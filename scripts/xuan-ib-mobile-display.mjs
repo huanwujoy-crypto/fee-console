@@ -15,7 +15,7 @@ export const MOBILE_READING_CSS = `
 .kpi .big{font-size:clamp(18px,14cqi,32px)!important;white-space:nowrap!important;overflow-wrap:normal!important;letter-spacing:-.04em}
 .kpi .lab{font-size:13px!important;line-height:1.3}.mobile-state{display:block;font-size:12px;color:var(--mut);margin-top:5px}
 .kpi-secondary{display:block;margin-top:8px;padding-top:8px;border-top:1px solid var(--line);font-variant-numeric:tabular-nums}
-.kpi-secondary dt{font-size:12px;color:var(--mut);white-space:nowrap}.kpi-secondary dd{margin:2px 0 0;font-size:16px;font-weight:750;white-space:normal;overflow-wrap:anywhere}
+.kpi-secondary dt{font-size:12px;color:var(--mut);white-space:nowrap}.kpi-secondary dd{margin:2px 0 0;max-width:100%;min-width:0;font-size:clamp(13px,9cqi,16px);font-weight:750;line-height:1.25;white-space:normal!important;overflow-wrap:anywhere!important}
 .mobile-cash-guidance{margin:8px 0 0;font-size:12px}.mobile-cash-guidance div{display:flex;justify-content:space-between;gap:4px;padding:3px 0}.mobile-cash-guidance dt,.mobile-cash-guidance dd{margin:0;white-space:nowrap}.mobile-cash-guidance dd{font-weight:750}
 .pane-notes{margin-top:20px!important}.pane-notes>summary{font-size:15px}.pane-notes .notes-section{padding:10px 0;border-bottom:1px solid var(--line)}
 .pane-notes p,.pane-notes li{font-size:14px!important;line-height:1.6}.pane-notes table{min-width:550px}
