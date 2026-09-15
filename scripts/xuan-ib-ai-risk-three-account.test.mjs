@@ -368,6 +368,9 @@ test('a hand-tampered numerator, ratio, row or coefficient is caught by the real
     /KPI disagrees with the table it summarises/);
   fails(built.html.replace(kpi, kpi.replace(/data-ai-kpi-numerator-cents="\d+"/,
     'data-ai-kpi-numerator-cents="1"')), /KPI disagrees with the table it summarises/);
+  const concentration=built.html.match(/<dl class="kpi-secondary" data-ai-single-stock-kpi-v1[^<>]*>/)[0];
+  fails(built.html.replace(concentration,concentration.replace(/data-single-stock-ratio-hundredths="\d+"/,
+    'data-single-stock-ratio-hundredths="1"')),/largest single-stock KPI does not follow/);
   // 9. And removing it entirely is not an escape either.
   fails(built.html.replace(/<div class="kpi" data-ai-pressure-kpi-v1[\s\S]*?<\/div><\/div>/, ''),
     /requires exactly one headline KPI derived from it/);

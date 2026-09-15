@@ -7,7 +7,7 @@ import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import { renderClassificationDisclosure } from './xuan-ib-classification-disclosure.mjs';
 import { renderFourBucketCard, renderFourBucketReportTransport } from './xuan-ib-four-bucket-report.mjs';
 import { validateAssociationReceipt, renderAssociationReceipt, renderAssociationDisclosure } from './xuan-ib-account-association.mjs';
-import { groupOrders } from './xuan-ib-order-view.mjs';
+import { buildOrderTrends, groupOrders, orderTrendKey } from './xuan-ib-order-view.mjs';
 import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
@@ -199,7 +199,8 @@ export function validateReportView(view) {
 
 const table = (columns,rows) => !columns.length?'':`<div class="tblwrap"><table data-columns="${columns.length}"><thead><tr>${columns.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(x=>`<td>${esc(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
 const numberedLines = lines => lines.length?`<ol class="brief-lines">${lines.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`:'';
-const orderTables = orders => groupOrders(orders).map(group=>`<h3>${group.side==='buy'?'买入':'卖出'} <small>${group.orders.length} 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody>${group.orders.map((order,index)=>`<tr><td><b>${index+1}. ${esc(order.symbol)}</b> ×${number(order.quantity,6)}<span class="sub">${order.ageDays===null?'年龄未核':`${order.ageDays}天`} · ${esc(order.status)}${order.cancelReview?' · <strong class="order-review">待撤复核</strong>':''}</span></td><td>${number(order.limitPrice,4)}<span class="sub">${esc(order.currency)}</span></td><td>${order.distancePct===null?'未取得':`${order.distancePct>0?'+':''}${number(order.distancePct)}%`}</td></tr>`).join('')}</tbody></table></div>`).join('')+fold('排序与报价说明',`<p>买卖分组，各组按绝对价格距离由近到远；同距保持原顺序，缺价置后。距离不代表成交概率；待撤仅提醒，不执行撤单。</p>${numberedLines(orders.filter(order=>order.marketAsOfHkt!==null).map(order=>`${order.symbol}：${order.marketAsOfHkt}`))}`);
+const legacyOrderTables = orders => groupOrders(orders).map(group=>`<h3>${group.side==='buy'?'买入':'卖出'} <small>${group.orders.length} 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody>${group.orders.map((order,index)=>`<tr><td><b>${index+1}. ${esc(order.symbol)}</b> ×${number(order.quantity,6)}<span class="sub">${order.ageDays===null?'年龄未核':`${order.ageDays}天`} · ${esc(order.status)}${order.cancelReview?' · <strong class="order-review">待撤复核</strong>':''}</span></td><td>${number(order.limitPrice,4)}<span class="sub">${esc(order.currency)}</span></td><td>${order.distancePct===null?'未取得':`${order.distancePct>0?'+':''}${number(order.distancePct)}%`}</td></tr>`).join('')}</tbody></table></div>`).join('')+fold('排序与报价说明',`<p>买卖分组，各组按绝对价格距离由近到远；同距保持原顺序，缺价置后。距离不代表成交概率；待撤仅提醒，不执行撤单。</p>${numberedLines(orders.filter(order=>order.marketAsOfHkt!==null).map(order=>`${order.symbol}：${order.marketAsOfHkt}`))}`);
+const orderTables = (orders,trends=new Map()) => trends===null?legacyOrderTables(orders):groupOrders(orders).map(group=>`<h3>${group.side==='buy'?'买入':'卖出'} <small>${group.orders.length} 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody>${group.orders.map((order,index)=>{const trend=trends.get(orderTrendKey(order));return `<tr${trend?.attributes??''}><td><b>${index+1}. ${esc(order.symbol)}</b> ×${number(order.quantity,6)}<span class="sub order-meta">${order.ageDays===null?'已挂天数未核':`${order.ageDays}天`} · ${esc(order.status)}${order.cancelReview?' · <strong class="order-review">待撤复核</strong>':''}</span>${trend?.label?`<span class="sub order-trend-text ${trend.kind==='up'?'up':trend.kind==='down'?'dn':''}">${esc(trend.label)}</span>`:''}</td><td>${number(order.limitPrice,4)}<span class="sub">${esc(order.currency)}</span></td><td>${order.distancePct===null?'未取得':`${order.distancePct>0?'+':''}${number(order.distancePct)}%`}</td></tr>`;}).join('')}</tbody></table></div>`).join('')+fold('排序与报价说明',`<p>买卖分组，各组按绝对价格距离由近到远；同距保持原顺序，缺价置后。期间趋势是首次观察价至当前价的近似变化，不新增行情调用、也不影响报告输出；距离不代表成交概率。</p>${numberedLines(orders.filter(order=>order.marketAsOfHkt!==null).map(order=>`${order.symbol}：${order.marketAsOfHkt}`))}`);
 const briefView = brief => {
   const label={normal:'✓ 本期未触发',attention:'! 需留意',unverified:'? 待核验',unavailable:'— 未取得'}[brief.state];
   const action={observe:'观察', 'owner-review':'待你裁决',verify:'待核实'}[brief.action];
@@ -313,7 +314,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null, riskDiagnostics = null }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null, riskDiagnostics = null, enableOrderTrend = true }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   if(associationReceipt){
     if(manualAccountConsent)fail('account scope modes are mutually exclusive');
@@ -406,6 +407,8 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
     }
   }
   const cash=renderCashPlan(view.cashPlan), pending=state.decisions.filter(item=>item.status==='awaiting_user').length;
+  if(typeof enableOrderTrend!=='boolean')fail('enableOrderTrend must be boolean');
+  const orderTrends=!enableOrderTrend?null:view.rotation.orders?buildOrderTrends(view.rotation.orders,{previousHtml,dataDate:view.dataDate}):new Map();
   const classificationDisclosure=renderClassificationDisclosure(fourBucket);
   const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
@@ -419,7 +422,7 @@ ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).joi
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
 <div class="pane p2">${riskSourceNotice}${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
-<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
+<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>

@@ -95,7 +95,7 @@ test('family concentration lists every reviewed ordinary stock above one percent
  ];
  assert.deepEqual(familyOrdinaryConcentrations(rows,'618529884').map(item=>[item.label,item.amount,item.percent]),[
   ['GOOG / GOOGL','297,742.16',4.81],['META','222,094.80',3.59],['TSLA','148,243.65',2.4],
-  ['MSTR','106,431.00',1.72],['MRVL','70,878.00',1.15],['BE','68,605.00',1.11],['APO','64,667.50',1.05],
+  ['MSTR','106,431.00',1.72],['VST','99,999.99',1.62],['MRVL','70,878.00',1.15],['BE','68,605.00',1.11],['APO','64,667.50',1.05],
  ]);
  assert.deepEqual(familyOrdinaryConcentrations([], '618529884'),[]);
  assert.deepEqual(familyOrdinaryConcentrations(rows, '0'),[]);

@@ -13,6 +13,7 @@ import { listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import { listVenueEquivalences } from './xuan-ib-venue-identity.mjs';
 import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
 import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import { largestOrdinaryStockConcentration } from './xuan-ib-single-stock-concentration.mjs';
 import {
   AI_DENOMINATOR_TEMPLATE_ID, BASIS_POINTS, DENOMINATOR_COMPONENT_FIELDS, DENOMINATOR_COMPONENT_KEY,
   AI_RISK_ACCOUNT_KEYS, MICRO_PER_CENT, resolveTrustedMidCoefficientBp, roundMicroBasisToCents,
@@ -1662,6 +1663,7 @@ function checkAiPressureArithmetic(pane, records, documentHtml, { mandatory = fa
   // Micro-basis units: the exact, unrounded contribution of every row.
   let numeratorMicroBasis = 0n;
   const seen = new Set();
+  const concentrationRows = [];
   for (const match of rows) {
     const tag = match[0];
     const key = match[2].trim();
@@ -1690,6 +1692,9 @@ function checkAiPressureArithmetic(pane, records, documentHtml, { mandatory = fa
     if (typeof rowSymbol === 'string' && rowSymbol.trim().toUpperCase() !== record.symbol) {
       fail(`AI pressure row ${key} names a symbol its own AI tier record does not carry`);
     }
+    concentrationRows.push({symbol:record.symbol,namespace:record.namespace,status,
+      assetType:quotedAttribute(tag,'data-ai-asset-type','AI pressure'),
+      marketValueCents:String(value / MICRO_PER_CENT)});
     const declaredRowMicroBasis = integer(tag, 'data-ai-contribution-mbp');
     if (status === 'excluded') {
       // Out of the numerator, still inside the denominator. A nonzero
@@ -1782,6 +1787,20 @@ function checkAiPressureArithmetic(pane, records, documentHtml, { mandatory = fa
     || integer(tile, 'data-ai-kpi-denominator-cents') !== denominatorCents
     || integer(tile, 'data-ai-kpi-ratio-bp') !== declaredRatio) {
     fail('the AI pressure KPI disagrees with the table it summarises');
+  }
+  const stockTiles=[...String(documentHtml).matchAll(/<dl[^<>]*\bdata-ai-single-stock-kpi-v1\s*=\s*(["']).*?\1[^<>]*>/gi)];
+  const concentration=largestOrdinaryStockConcentration(concentrationRows,String(denominatorCents));
+  if(!concentration){
+    if(stockTiles.length)fail('a single-stock KPI is present without a supported ordinary-stock concentration');
+  }else{
+    if(stockTiles.length!==1)fail('a computed AI pressure report requires exactly one largest single-stock KPI');
+    const stock=stockTiles[0][0];
+    if(quotedAttribute(stock,'data-single-stock-symbol','single-stock KPI')!==concentration.symbol
+      ||integer(stock,'data-single-stock-market-value-cents')!==BigInt(concentration.marketValueCents)
+      ||integer(stock,'data-single-stock-denominator-cents')!==denominatorCents
+      ||integer(stock,'data-single-stock-ratio-hundredths')!==BigInt(concentration.hundredths)){
+      fail('the largest single-stock KPI does not follow from the three-account risk rows');
+    }
   }
 }
 

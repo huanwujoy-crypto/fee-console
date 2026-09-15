@@ -17,12 +17,13 @@ export const ORDER_CARDS_CSS = `
 .order-card dl>div{min-width:0}.order-card dt{font-size:14px;color:var(--mut)}
 .order-card dd{margin:3px 0 0;font-size:16px;font-weight:650;line-height:1.4;overflow-wrap:anywhere}
 .order-card .order-status dd{font-size:14px;font-weight:400}
+.order-card .order-trend-metric{grid-column:1/-1}.order-card .order-trend-metric dd{font-size:15px}.order-card .order-trend-metric.up dd{color:#15803d}.order-card .order-trend-metric.down dd{color:#dc2626}
 .order-card .order-source-warning{color:var(--warn,#a16207);font-weight:650}
 .order-sort-note{font-size:14px!important;color:var(--mut);line-height:1.5}
 @media(min-width:720px){.order-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 `;
 
-export function orderDisplayFields(identity, limit, distance, ageStatus, sideHint='unknown') {
+export function orderDisplayFields(identity, limit, distance, ageStatus, sideHint='unknown',trend='') {
   const match=identity.trim().match(/^(.*?)\s+(买|卖|BUY|SELL)\s+(.+)$/i);
   const age=ageStatus.trim().match(/^(\d+\s*(?:天|日|days?))\s*(?:[·|/]\s*)?(.*)$/i);
   const signed=distance.trim().match(/^[+\-−]?\d+(?:\.\d+)?\s*%$/);
@@ -30,7 +31,7 @@ export function orderDisplayFields(identity, limit, distance, ageStatus, sideHin
     identity:match?match[1]:identity.trim(),quantity:match?match[3]:'',
     side:match?(/买|BUY/i.test(match[2])?'buy':'sell'):sideHint,
     limit:limit.trim(),distance:distance.trim(),age:age?age[1]:'未核实',
-    status:age?age[2]:ageStatus.trim().replace(/年龄未核/g,'已挂天数未核实'),
+    status:age?age[2]:ageStatus.trim().replace(/年龄未核/g,'已挂天数未核实'),trend:String(trend??'').trim(),
     distanceRank:signed?Math.abs(Number(signed[0].replace('−','-').replace('%',''))):Infinity,
   };
 }
@@ -56,10 +57,12 @@ function renderGroups(doc, rows) {
       name.append(direction,doc.createTextNode(`${index+1}. ${item.identity}`));title.append(name);
       if(item.quantity){const qty=doc.createElement('span');qty.className='order-quantity';qty.textContent=`数量 ${item.quantity}`;title.append(qty);}
       card.append(title);const values=doc.createElement('dl');
-      for(const [label,value] of [['限价',item.limit],['距市价',item.distance],['已挂天数',item.age],['状态',item.status]]){
+      for(const [label,value] of [['限价',item.limit],['距市价',item.distance],['已挂天数',item.age],['状态',item.status],['期间趋势',item.trend]]){
+        if(label==='期间趋势'&&!value)continue;
         if(label==='状态'&&!value)continue;
         const pair=doc.createElement('div'),key=doc.createElement('dt'),val=doc.createElement('dd');
         if(label==='状态')pair.className='order-status';key.textContent=label;val.textContent=value||'未取得';
+        if(label==='期间趋势')pair.className=`order-trend-metric ${/↑/.test(value)?'up':/↓/.test(value)?'down':''}`;
         if(label==='状态'&&/待撤|复核/.test(value))val.className='order-source-warning';
         pair.append(key,val);values.append(pair);
       }
@@ -87,11 +90,11 @@ export function improveOrderCards(doc) {
       const cells=[...row.children];
       if(heads.length===4)return orderDisplayFields(...cells.map(c=>c.textContent));
       // Structured report tables have the age/status inside the identity cell.
-      const copy=cells[0].cloneNode(true),meta=copy.querySelector('.sub'),ageStatus=meta?.textContent||'';meta?.remove();
+      const copy=cells[0].cloneNode(true),meta=copy.querySelector('.order-meta')||copy.querySelector('.sub'),trend=copy.querySelector('.order-trend-text')?.textContent||'',ageStatus=meta?.textContent||'';meta?.remove();copy.querySelector('.order-trend-text')?.remove();
       const identity=copy.textContent.trim().replace(/^\d+\.\s*/,''),match=identity.match(/^(.*?)\s*×\s*(.+)$/);
       const limit=cells[1].cloneNode(true),currency=limit.querySelector('.sub')?.textContent.trim()||'';
       limit.querySelector('.sub')?.remove();
-      const item=orderDisplayFields(match?match[1]:identity,`${limit.textContent.trim()}${currency?' '+currency:''}`,cells[2].textContent,ageStatus,hint);
+      const item=orderDisplayFields(match?match[1]:identity,`${limit.textContent.trim()}${currency?' '+currency:''}`,cells[2].textContent,ageStatus,hint,trend);
       if(match)item.quantity=match[2];return item;
     });
     wrap.replaceWith(renderGroups(doc,items));

@@ -8,7 +8,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { buildAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 import {
-  AI_DENOMINATOR_TEMPLATE_ID, computeAiPressure, renderAiPressureSection,
+  AI_DENOMINATOR_TEMPLATE_ID, computeAiPressure, renderAiPressureKpi, renderAiPressureSection,
 } from './xuan-ib-ai-pressure.mjs';
 import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 
@@ -35,6 +35,19 @@ test('the calculation is pure: identical inputs give byte-identical output', () 
   assert.equal(first.ratio, 0.055);
   assert.equal(first.rows[0].marketValueMicro, '1000000000');
   assert.equal(first.numeratorMicroBasis, '5500000000000');
+});
+
+test('headline KPI includes the largest non-BRK.B ordinary-stock concentration',()=>{
+  const pressure=compute([
+    constituent({symbol:'BRK.B',marketValueUsd:4000}),
+    constituent({symbol:'GOOG',holdingId:'60000002',instrumentId:'60000002',marketValueUsd:1200}),
+    constituent({symbol:'GOOGL',holdingId:'60000003',instrumentId:'60000003',marketValueUsd:800}),
+  ]);
+  const html=renderAiPressureKpi(pressure,{asOfHkt:`${dataDate} 08:00 HKT`});
+  assert.match(html,/data-ai-single-stock-kpi-v1="1"/);
+  assert.match(html,/data-single-stock-symbol="GOOG"/);
+  assert.match(html,/<dt>单票集中度<\/dt><dd>GOOG \/ GOOGL 20\.00%<\/dd>/);
+  assert.doesNotMatch(html,/<dd>BRK\.B/);
 });
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {orderDisplayFields,groupOrderDisplayRows,ORDER_CARDS_CSS} from './xuan-ib-order-cards.mjs';
 test('legacy rows preserve exact quantities, prices, distances, duration and sourced flags',()=>{
   const row=orderDisplayFields('EXUS 买 1000','42.00','-10.95%','92 天 · REPLACED · 待撤');
-  assert.deepEqual(row,{identity:'EXUS',quantity:'1000',side:'buy',limit:'42.00',distance:'-10.95%',age:'92 天',status:'REPLACED · 待撤',distanceRank:10.95});
+  assert.deepEqual(row,{identity:'EXUS',quantity:'1000',side:'buy',limit:'42.00',distance:'-10.95%',age:'92 天',status:'REPLACED · 待撤',trend:'',distanceRank:10.95});
   assert.equal(orderDisplayFields('SLV 卖 160','82.00','+36.96%','141 天 · NEW').status,'NEW');
 });
 test('unknown duration and direction are not inferred; unavailable price is last',()=>{
@@ -23,4 +23,9 @@ test('mobile cards have no horizontal table and wrap enlarged content without cl
   assert.match(ORDER_CARDS_CSS,/repeat\(2,minmax\(0,1fr\)\)/);
   assert.match(ORDER_CARDS_CSS,/overflow-wrap:anywhere/);
   assert.doesNotMatch(ORDER_CARDS_CSS,/overflow(?:-x)?:hidden|[;{]min-width:\d+px/);
+});
+test('optional approximate trend is copied as a full-width visual metric',()=>{
+  const row=orderDisplayFields('EXUS 买 1000','42.00','-10.95%','92 天 · NEW','buy','约 ↓ 3.2% · 观察7天');
+  assert.equal(row.trend,'约 ↓ 3.2% · 观察7天');
+  assert.match(ORDER_CARDS_CSS,/order-trend-metric\{grid-column:1\/-1\}/);
 });

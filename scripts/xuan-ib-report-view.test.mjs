@@ -268,6 +268,7 @@ test('structured orders are grouped, escaped, fresh-quoted and do not infer canc
   view.rotation.orders=[order('SELL','sell',110),order('FAR','buy',80),order('NEAR','buy',99)];
   const html=renderReport(view,context);assert.ok(html.indexOf('1. NEAR')<html.indexOf('2. FAR'));assert.ok(html.indexOf('2. FAR')<html.indexOf('1. SELL'));
   assert.ok(!html.includes('order-review">待撤复核'));assert.ok(html.includes('距离不代表成交概率'));
+  assert.ok(html.includes('趋势建立中'));assert.ok(html.includes('data-order-trend-v1="1"'));
   const result=runGuard(html);assert.equal(result.status,0,result.stderr);
   view.rotation.orders[0].marketAsOfHkt='2026-08-24 10:00 HKT';assert.throws(()=>renderReport(view,context),/quote must be current/);
 });
