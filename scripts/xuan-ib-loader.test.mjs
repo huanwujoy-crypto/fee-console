@@ -33,6 +33,7 @@ const uiPrCheck = fs.readFileSync(new URL('../.github/workflows/ui-pr-check.yml'
 const policyLock = fs.readFileSync(new URL('../.github/workflows/xuan-ib-policy-lock.yml', import.meta.url), 'utf8');
 const scriptsCheck = fs.readFileSync(new URL('../.github/workflows/scripts-check.yml', import.meta.url), 'utf8');
 const metadata = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
+const appBuild = JSON.parse(fs.readFileSync(new URL('../xuan-ib/app-build.json', import.meta.url), 'utf8'));
 
 test('promotion commits the derived decision menu with its paired report and metadata', () => {
   assert.match(promotion, /xuan-ib-decision-menu\.mjs publish-manifest/);
@@ -276,7 +277,7 @@ function todoDocument(srcdoc, decisions, {url = 'about:srcdoc', token, duplicate
 function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:00Z', displayDom = false,
   privateEtfImport = null, confirm = () => true, storageBlocked = false, handoffBlocked = false,
   headerGuide = true, headerGuideBody = true, mobileDisplayImport = null}) {
-  const listeners = {adhoc: {}, stopAdhoc: {}, decision: {}, button: {}, window: {}, document: {}};
+  const listeners = {adhoc: {}, stopAdhoc: {}, decision: {}, button: {}, appUpdate: {}, window: {}, document: {}};
   const progressTasks = new Map();
   const confirmations = [];
   const navigations = [];
@@ -306,6 +307,10 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   const button = {
     disabled: false,
     addEventListener: (name, callback) => { listeners.button[name] = callback; },
+  };
+  const appUpdate = {
+    hidden: true,
+    addEventListener: (name, callback) => { listeners.appUpdate[name] = callback; },
   };
   const outerDocument = displayDom ? new DisplayDocument('https://example.test/xuan-ib/') : null;
   const decision = displayDom ? outerDocument.createElement('button') : {
@@ -337,6 +342,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     ['#decision-count', decisionCount],
     ['#handover', frame],
     ['#refresh', button],
+    ['#app-update', appUpdate],
     ['#status', status],
     ['#warning', warning],
   ]);
@@ -448,6 +454,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     navigations,
     advanceTime: (milliseconds) => { nowEpoch += milliseconds; },
     button,
+    appUpdate,
     decision,
     decisionAttributes,
     decisionCount,
@@ -672,14 +679,18 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /lastSuccess = verifiedAt;/);
   assert.match(loader, /if \(request !== requestSequence\) return/);
   assert.match(loader, /lastAttempt = Date\.now\(\)/);
-  assert.match(loader, /Date\.now\(\) - lastAttempt > 5 \* 60_000/);
+  assert.match(loader, /Date\.now\(\) - lastAttempt > \(inDeliveryWindow \? 30_000 : 5 \* 60_000\)/);
   assert.match(loader, /visibilitychange/);
   assert.match(loader, /button\.addEventListener\("click", \(\) => loadLatest\(\{retryLayout: true\}\)\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-16\.1"/);
+  assert.match(loader, /loaderBuild = "2026-09-16\.2"/);
+  assert.equal(appBuild.build, '2026-09-16.2');
+  assert.equal(appBuild.schemaVersion, 1);
+  assert.match(loader, /new URL\("app-build\.json", location\.href\)/);
+  assert.match(loader, /新版可用 · 点此更新页面/);
   assert.match(loader, /<button id="refresh"[^>]*hidden[^>]*aria-hidden="true"/);
-  assert.match(loader, /更新中，请稍候/);
+  assert.match(loader, /正在检查已发布报告/);
   assert.doesNotMatch(loader, /history-link|href="history\/2026-09-05-am\.html"|周六上午版\s*·\s*新排版/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
@@ -698,6 +709,61 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.doesNotMatch(loader, /内容未校验/);
   assert.doesNotMatch(loader, /serviceWorker/);
   assert.doesNotMatch(loader, /<!--\s*xuan-ib-handover:v1\s*-->/);
+});
+
+test('a newer app build offers one deliberate update without touching the verified report', async () => {
+  const html = reportHtml('2026-09-16', '睡前版', 'verified-report');
+  const meta = metaFor(html);
+  const app = loaderHarness({fetchImpl: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith('/app-build.json')) return response({json:{schemaVersion:1,build:'2026-09-16.3'}});
+    return path.endsWith('/latest.meta.json')
+      ? response({json:meta,bytes:[]}) : response({bytes:Buffer.from(html)});
+  }});
+  await app.listeners.window.pageshow({persisted:false});
+  await settlePrivateLoader();
+  assert.match(app.frame.srcdoc,/verified-report/);
+  assert.equal(app.appUpdate.hidden,false);
+  assert.equal(app.navigations.length,0,'detecting a release cannot interrupt reading');
+  app.location.href = 'https://example.test/xuan-ib/?release=old';
+  app.listeners.appUpdate.click();
+  assert.equal(app.navigations.at(-1),'https://example.test/xuan-ib/?app=2026-09-16.3');
+});
+
+test('same or unavailable app build remains quiet and never blocks report verification', async () => {
+  const html = reportHtml('2026-09-16', '睡前版', 'verified-report');
+  const meta = metaFor(html);
+  for (const manifest of [{schemaVersion:1,build:'2026-09-16.2'},
+    {schemaVersion:1,build:'2026-09-16.1'}, {schemaVersion:1,build:'broken'}]) {
+    const app = loaderHarness({fetchImpl: async url => {
+      const path = new URL(String(url)).pathname;
+      if (path.endsWith('/app-build.json')) return response({json:manifest});
+      return path.endsWith('/latest.meta.json')
+        ? response({json:meta,bytes:[]}) : response({bytes:Buffer.from(html)});
+    }});
+    await app.listeners.window.pageshow({persisted:false});
+    await settlePrivateLoader();
+    assert.equal(app.appUpdate.hidden,true);
+    assert.match(app.frame.srcdoc,/verified-report/);
+  }
+});
+
+test('delivery-window polling checks published bytes sooner without starting a generator', async () => {
+  const html = reportHtml('2026-09-15', '睡前版', 'verified-report');
+  const meta = metaFor(html);
+  let reportFetches = 0;
+  const app = loaderHarness({now:'2026-09-16T13:30:00Z',fetchImpl:async url => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith('/latest.meta.json')) { reportFetches++; return response({json:meta,bytes:[]}); }
+    return response({bytes:Buffer.from(html)});
+  }});
+  await app.listeners.button.click();
+  const tick = app.intervals.find(({delay})=>delay===30_000);
+  assert.ok(tick);
+  app.advanceTime(31_000); tick.callback(); await settlePrivateLoader();
+  assert.equal(reportFetches,2);
+  assert.match(app.warning.textContent,/等待今晚睡前版/);
+  assert.doesNotMatch(app.warning.textContent,/正在生成/);
 });
 
 test('the decision control uses one fixed Shortcut URL and never embeds report or user data', () => {
@@ -1347,7 +1413,7 @@ test('A to B to C completes only when C carries a new target receipt bound to ve
   await poll.callback();
 
   assert.match(app.frame.srcdoc, /receipt-completed-publication/);
-  assert.equal(app.status.textContent, '回应已记录，报告已自动刷新');
+  assert.match(app.status.textContent, /回应已记录 · 已检查/);
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1411,7 +1477,7 @@ test('a decision first introduced in B can complete when C binds its receipt to 
   };
   await poll.callback();
   assert.match(app.frame.srcdoc, /C-binds-B-new-decision/);
-  assert.equal(app.status.textContent, '回应已记录，报告已自动刷新');
+  assert.match(app.status.textContent, /回应已记录 · 已检查/);
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1457,7 +1523,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，系统将自动重试 · L 2026-09-16.1');
+  assert.equal(app.status.textContent, '尚未收到回应回执，系统将自动重试 · L 2026-09-16.2');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1577,8 +1643,8 @@ test('a schema-v1 metadata and HTML pair is rendered only after its exact Git bl
 
   assert.match(app.frame.srcdoc, /fresh-pair/);
   assert.match(app.frame.srcdoc, /Content-Security-Policy/);
-  assert.match(app.status.textContent, /^已同步 \d{2}:\d{2}$/);
-  assert.doesNotMatch(app.status.textContent, /报告|睡前版|\bL\b/);
+  assert.match(app.status.textContent, /^报告 08-28 睡前版\n已检查 \d{2}:\d{2}$/);
+  assert.doesNotMatch(app.status.textContent, /\bL\b|2026-09-16\.2/);
   assert.equal(app.status.classList.contains('error'), false);
   assert.equal(app.warning.hidden, true);
   assert.equal(app.button.disabled, false);
@@ -1715,7 +1781,7 @@ test('Saturday retains Friday PM but clearly warns when only Thursday PM is publ
 
   assert.match(app.frame.srcdoc, /trusted-thursday/);
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /今晚报告更新延迟/);
+  assert.match(app.warning.textContent, /今晚睡前版发布延迟/);
   assert.match(app.warning.textContent, /当前继续显示 2026-08-27 睡前版/);
   assert.equal(app.status.classList.contains('error'), true);
 });
@@ -1736,7 +1802,7 @@ test('refresh preserves a delayed warning until the current PM pair has passed v
   const refresh = app.listeners.button.click(); await settlePrivateLoader();
   assert.equal(app.warning.hidden, false); assert.equal(app.warning.textContent, warning);
   assert.equal(app.status.classList.contains('error'), true);
-  assert.match(app.status.textContent, /更新中，请稍候/);
+  assert.match(app.status.textContent, /正在检查已发布报告/);
   currentHtml = freshHtml; gate.resolve(); await refresh;
   assert.equal(app.warning.hidden, true); assert.equal(app.status.classList.contains('error'), false);
   assert.match(app.frame.srcdoc, /fresh-verified/);
@@ -1753,13 +1819,13 @@ test('the PM window changes from a blue updating notice to a delayed warning at 
   }});
   await app.listeners.button.click();
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /今晚报告更新中/);
+  assert.match(app.warning.textContent, /等待今晚睡前版/);
   assert.equal(app.warning.classList.contains('info'), true);
   assert.equal(app.status.classList.contains('error'), false);
   app.advanceTime(61_000); gate = privateDeferred();
   const refresh = app.listeners.button.click(); await settlePrivateLoader();
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /今晚报告更新延迟/);
+  assert.match(app.warning.textContent, /今晚睡前版发布延迟/);
   assert.equal(app.warning.classList.contains('info'), false);
   assert.equal(app.status.classList.contains('error'), true);
   gate.resolve(); await refresh;
@@ -1840,9 +1906,25 @@ test('a newer ad-hoc report is an informational preview before T+20', async () =
   await app.listeners.button.click();
   assert.match(app.frame.srcdoc, /trusted-adhoc/);
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /今晚报告更新中/);
+  assert.match(app.warning.textContent, /等待今晚睡前版/);
   assert.equal(app.warning.classList.contains('info'), true);
   assert.equal(app.status.classList.contains('error'), false);
+});
+
+test('only a verified priority publication claims holdings and orders have updated', async () => {
+  const html = reportHtml('2026-09-16', '临时版 · 睡前速览',
+    '<section data-xuan-delivery="sleep-priority-v1">priority-published</section>');
+  const meta = metaFor(html, {sourceCommitEpoch: Date.parse('2026-09-16T13:40:00Z') / 1000});
+  for (const [now, expected] of [
+    ['2026-09-16T13:40:00Z',/睡前速览已更新（持仓与挂单）；完整版待发布/],
+    ['2026-09-16T13:50:00Z',/睡前速览已更新（持仓与挂单）；完整版发布延迟/],
+  ]) {
+    const app = loaderHarness({now,fetchImpl:async url => String(url).includes('latest.meta.json')
+      ? response({json:meta,bytes:[]}) : response({bytes:Buffer.from(html)})});
+    await app.listeners.button.click();
+    assert.match(app.frame.srcdoc,/priority-published/);
+    assert.match(app.warning.textContent,expected);
+  }
 });
 
 test('an ad-hoc report cannot impersonate the full PM after T+20', async () => {
@@ -1856,7 +1938,7 @@ test('an ad-hoc report cannot impersonate the full PM after T+20', async () => {
   });
   await app.listeners.button.click();
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /今晚报告更新延迟/);
+  assert.match(app.warning.textContent, /今晚睡前版发布延迟/);
   assert.equal(app.status.classList.contains('error'), true);
 });
 
@@ -1881,7 +1963,7 @@ test('mixed metadata and HTML fail closed to the locally stored verified report'
   assert.doesNotMatch(app.frame.srcdoc, /unpaired-upstream/);
   assert.equal(app.warning.hidden, false);
   assert.match(app.warning.textContent, /上游暂不一致，正在显示上一份已验证版本/);
-  assert.equal(app.status.textContent, '显示上一份已验证版本 · 2026-08-27 睡前版');
+  assert.equal(app.status.textContent, '报告 08-27 睡前版\n显示上一份已验证报告');
   assert.equal(app.status.classList.contains('error'), true);
   assert.equal(app.button.disabled, false);
 });
@@ -1977,7 +2059,7 @@ test('network failure retains the verified cache and never opens an unverified d
 
   assert.match(app.frame.srcdoc, /offline-cache/);
   assert.equal(app.warning.hidden, false);
-  assert.equal(app.status.textContent, '显示上一份已验证版本 · 2026-08-27 早间版');
+  assert.equal(app.status.textContent, '报告 08-27 早间版\n显示上一份已验证报告');
   assert.equal(app.status.classList.contains('error'), true);
 });
 
@@ -2351,7 +2433,7 @@ test('wrong receipt and malformed progress fail closed independently',async()=>{
     const {doc}=todoDocument(app.frame.srcdoc,publishedState.decisions);app.loadFrame(doc);await settleProgress(app);
     assert.match(doc.getElementById('xuan-progress-status').textContent,/暂不可用/);
     assert.equal(doc.querySelectorAll('.xuan-work').length,0);
-    assert.match(app.status.textContent,/已同步/);
+    assert.match(app.status.textContent,/已检查/);
   }
 });
 test('a stalled progress request neither blocks the report nor lets late earlier results overwrite a newer ledger',async()=>{
