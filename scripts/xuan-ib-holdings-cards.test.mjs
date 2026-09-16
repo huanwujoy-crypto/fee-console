@@ -90,7 +90,7 @@ test('current compact report authoring header contract remains recognized withou
   const labels=[...header.matchAll(/<th>(.*?)<\/th>/g)].map(m=>m[1]);
   assert.ok(holdingsHeaderContract(labels),'new renderer headers need explicit card support or unmodified fallback');
 });
-test('current cards preserve source table bytes and core values while omitting quote/time clutter',()=>{
+test('current cards preserve source table bytes and show the source unit price without horizontal table scrolling',()=>{
   const f=fixture();const identity=f.tbody.children[0].children[0];identity.textContent='';
   identity.append(element('span','SYNTH','sym'),element('span','TSX · −10.5000','sub'));
   f.tbody.children[0].children[2].className='dn';
@@ -98,8 +98,9 @@ test('current cards preserve source table bytes and core values while omitting q
   improveHoldingsCards(f.doc);
   assert.equal(signature(f.table),before);assert.equal(f.group.parentElement,groupParent);
   const card=f.doc.querySelector('.holdings-mobile-card');
-  for(const text of ['SYNTH','TSX · −10.5000','市值 $','1,200','日涨跌','−1.50%（旧值）'])assert.ok(card.textContent.includes(text),text);
-  for(const text of ['CAD 12.2500','2026-09-07 16:00 HKT · 延迟','报价详情'])assert.ok(!card.textContent.includes(text),text);
+  for(const text of ['SYNTH','TSX · −10.5000','市值 $','1,200','日涨跌','−1.50%（旧值）','单价','CAD 12.2500','报价时点：2026-09-07 16:00 HKT · 延迟'])assert.ok(card.textContent.includes(text),text);
+  assert.ok(!card.textContent.includes('报价详情'));
+  assert.match(HOLDINGS_CARDS_CSS,/holdings-unit-price>div\{display:flex;flex-wrap:wrap/);
   assert.ok(card.querySelector('dd.dn'));
   assert.equal(f.doc.querySelectorAll('.holdings-source-context').length,1);
   assert.ok(f.doc.querySelector('.holdings-source-context').textContent.includes('权威市值 $9,876 · 替代源'));
@@ -142,14 +143,14 @@ test('totals retain visible change while current quote/time stay only in the sou
   assert.equal(total.querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,3);
   assert.equal(total.querySelector('.holdings-flags'),null);
 });
-test('current phone cards omit quote values while the verified source table keeps them intact',()=>{
+test('current phone cards show quote values, including qualified prices, while the verified source table stays intact',()=>{
   for(const cls of ['wv','or'])for(const nested of [false,true]){
     const f=fixture(),quote=f.tbody.children[0].children[3];
     if(nested){quote.textContent='';quote.append(element('span','CAD 12.2500',cls));}else quote.className=cls;
     const before=signature(f.table);improveHoldingsCards(f.doc);const card=f.doc.querySelector('.holdings-mobile-card');
     assert.equal(signature(f.table),before);assert.equal(card.querySelector('details.holdings-quote'),null);
     assert.equal(card.querySelector('.holdings-quote'),null);
-    assert.ok(!card.textContent.includes('CAD 12.2500'));
+    assert.ok(card.querySelector('.holdings-unit-price').textContent.includes('单价CAD 12.2500'));
   }
 });
 test('retry is idempotent, source qualifications survive later note moves and cloned IDs do not repeat',()=>{
@@ -176,7 +177,7 @@ test('nested quote and identity tooltip qualifications remain visible outside cl
     assert.ok(flags.some(n=>n.textContent===expected&&n.closest('details')===f.group),expected);
   }
   assert.equal(card.querySelector('details.holdings-quote'),null);
-  assert.ok(!card.textContent.includes('CAD 12.2500'));
+  assert.ok(card.querySelector('.holdings-unit-price').textContent.includes('CAD 12.2500'));
 });
 test('header tooltip warnings are visible with their original column labels and preserve source header bytes',()=>{
   const f=fixture(),heads=f.table.querySelectorAll('thead th');

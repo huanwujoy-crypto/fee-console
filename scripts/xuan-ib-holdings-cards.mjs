@@ -20,6 +20,10 @@ export const HOLDINGS_CARDS_CSS = `
   .holdings-mobile-card dt{font-size:12px;color:var(--mut);font-weight:400}
   .holdings-mobile-card dd{margin:2px 0 8px;font-size:16px;font-weight:650;font-variant-numeric:tabular-nums}
   .holdings-mobile-card .holdings-primary-values{text-align:right}
+  .holdings-mobile-card .holdings-unit-price{margin:4px 0 0;font-variant-numeric:tabular-nums}
+  .holdings-mobile-card .holdings-unit-price>div{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
+  .holdings-mobile-card .holdings-unit-price dd{margin:0;font-size:15px}
+  .holdings-mobile-card .holdings-quote-time{display:block;font-size:12px;color:var(--mut);margin:2px 0 0}
   .holdings-mobile-card :is(.holdings-identity,dd,.sub,.holdings-flags){white-space:normal!important;overflow-wrap:anywhere!important;word-break:normal!important;min-width:0;max-width:100%}
   .holdings-mobile-card .holdings-flags{font-size:12px;font-weight:650;color:var(--warn,#a16207);margin:6px 0}
   .holdings-mobile-card.holdings-total{border-top:3px solid var(--ink);background:var(--card)}
@@ -149,6 +153,7 @@ export function improveHoldingsCards(doc) {
     const rows=[...table.querySelectorAll('tbody tr')];
     if(!rows.length || rows.some(row=>row.parentElement.tagName!=='TBODY' || row.children.length!==heads.length
       || [...row.children].some(cell=>cell.tagName!=='TD') || !normalize(row.children[0].textContent)))continue;
+    const groupTitle=normalize(table.closest('details')?.querySelector(':scope > summary')?.textContent);
     const entries=[];
     for(const row of rows){
       const cells=[...row.children],identity=cells[contract.identity];
@@ -159,10 +164,17 @@ export function improveHoldingsCards(doc) {
       values.append(field(doc,contract.headers[contract.value],cells[contract.value]));
       values.append(field(doc,'日涨跌',contract.change===null?null:cells[contract.change],'',isTotal?'不适用':contract.change===null?'未取得（原表未提供）':'未取得'));
       main.append(name,values);card.append(main);
-      // The verified source table and report notes retain quote/time evidence.
-      // A current generated holding already has an explicit daily-change field,
-      // so its phone card intentionally omits row-level quote/time clutter.
-      // Legacy price-only tables keep their sole useful price and time fields.
+      // The phone card shows the existing source unit price without deriving a
+      // new quote. Keep the source table intact for publication evidence.
+      if(contract.change!==null&&!isTotal){
+        const price=el(doc,'dl','holdings-unit-price');
+        price.append(field(doc,'单价',cells[contract.quote]));card.append(price);
+        const quoteTime=contract.time===null?'':normalize(cells[contract.time].textContent);
+        if(quoteTime&&(CAUTION.test(quoteTime)||/^涨跌数据待核验/.test(groupTitle))){
+          card.append(el(doc,'span','holdings-quote-time',`报价时点：${quoteTime}`));
+        }
+      }
+      // Legacy price-only tables retain their quote and time fields.
       if(contract.change===null){
         const time=el(doc,'dl','holdings-time');
         time.append(field(doc,'行情时点',contract.time===null?null:cells[contract.time],'',isTotal?'不适用':contract.time===null?'原表未提供':'未取得'));card.append(time);
@@ -194,7 +206,6 @@ export function improveHoldingsCards(doc) {
     }
     sourceContext(doc,table);
     const wrapper=el(doc,'div','holdings-responsive');
-    const groupTitle=normalize(table.closest('details')?.querySelector(':scope > summary')?.textContent);
     const split=/^价格变化\s*≥1%/.test(groupTitle)?splitDailyChangeEntries(entries):null;
     if(split){
       const groups=el(doc,'div','holdings-mobile-groups');
