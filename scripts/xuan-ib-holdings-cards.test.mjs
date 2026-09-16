@@ -90,7 +90,7 @@ test('current compact report authoring header contract remains recognized withou
   const labels=[...header.matchAll(/<th>(.*?)<\/th>/g)].map(m=>m[1]);
   assert.ok(holdingsHeaderContract(labels),'new renderer headers need explicit card support or unmodified fallback');
 });
-test('current cards preserve source table bytes and show the source unit price without horizontal table scrolling',()=>{
+test('current cards put unit price and daily change in aligned mobile columns without changing source values',()=>{
   const f=fixture();const identity=f.tbody.children[0].children[0];identity.textContent='';
   identity.append(element('span','SYNTH','sym'),element('span','TSX · −10.5000','sub'));
   f.tbody.children[0].children[2].className='dn';
@@ -100,7 +100,11 @@ test('current cards preserve source table bytes and show the source unit price w
   const card=f.doc.querySelector('.holdings-mobile-card');
   for(const text of ['SYNTH','TSX · −10.5000','市值 $','1,200','日涨跌','−1.50%（旧值）','单价','CAD 12.2500','报价时点：2026-09-07 16:00 HKT · 延迟'])assert.ok(card.textContent.includes(text),text);
   assert.ok(!card.textContent.includes('报价详情'));
-  assert.match(HOLDINGS_CARDS_CSS,/holdings-unit-price>div\{display:flex;flex-wrap:wrap/);
+  const metrics=card.querySelector('.holdings-secondary-values');
+  assert.deepEqual(metrics.children.map(n=>n.querySelector('dt').textContent),['单价','日涨跌']);
+  assert.deepEqual(metrics.children.map(n=>n.querySelector('dd').textContent),['CAD 12.2500','−1.50%（旧值）']);
+  assert.equal(card.querySelector('.holdings-primary-values').textContent,'市值 $1,200');
+  assert.match(HOLDINGS_CARDS_CSS,/holdings-secondary-values\{display:grid;grid-template-columns:repeat\(2,minmax\(0,1fr\)\)/);
   assert.ok(card.querySelector('dd.dn'));
   assert.equal(f.doc.querySelectorAll('.holdings-source-context').length,1);
   assert.ok(f.doc.querySelector('.holdings-source-context').textContent.includes('权威市值 $9,876 · 替代源'));
@@ -124,7 +128,7 @@ test('blank change never becomes blank or zero, and totals stay distinct from ho
   const f=fixture({rows:[['FIRST','20','','USD 1',''],['SECOND','20','+0.00%','USD 2','2026-09-08 08:30 HKT'],['合计','40','','','']]});
   improveHoldingsCards(f.doc);const cards=f.doc.querySelectorAll('.holdings-mobile-card');
   assert.deepEqual(cards.map(c=>c.querySelector('.holdings-identity').textContent),['FIRST','SECOND','合计']);
-  assert.ok(cards[0].querySelector('.holdings-primary-values').textContent.includes('日涨跌未取得'));
+  assert.ok(cards[0].querySelector('.holdings-secondary-values').textContent.includes('日涨跌未取得'));
   assert.ok(cards[1].textContent.includes('+0.00%'));
   assert.ok(cards[2].classList.contains('holdings-total'));
   assert.equal(cards[2].querySelectorAll('dd').filter(n=>n.textContent==='不适用').length,1);

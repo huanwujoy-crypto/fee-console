@@ -20,9 +20,11 @@ export const HOLDINGS_CARDS_CSS = `
   .holdings-mobile-card dt{font-size:12px;color:var(--mut);font-weight:400}
   .holdings-mobile-card dd{margin:2px 0 8px;font-size:16px;font-weight:650;font-variant-numeric:tabular-nums}
   .holdings-mobile-card .holdings-primary-values{text-align:right}
-  .holdings-mobile-card .holdings-unit-price{margin:4px 0 0;font-variant-numeric:tabular-nums}
-  .holdings-mobile-card .holdings-unit-price>div{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px}
-  .holdings-mobile-card .holdings-unit-price dd{margin:0;font-size:15px}
+  .holdings-mobile-card .holdings-primary-values dd{margin-bottom:0}
+  .holdings-mobile-card .holdings-secondary-values{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:8px 0 0}
+  .holdings-mobile-card .holdings-secondary-values>div{min-width:0}
+  .holdings-mobile-card .holdings-secondary-values>div:last-child{text-align:right}
+  .holdings-mobile-card .holdings-secondary-values dd{margin:2px 0 0}
   .holdings-mobile-card .holdings-quote-time{display:block;font-size:12px;color:var(--mut);margin:2px 0 0}
   .holdings-mobile-card :is(.holdings-identity,dd,.sub,.holdings-flags){white-space:normal!important;overflow-wrap:anywhere!important;word-break:normal!important;min-width:0;max-width:100%}
   .holdings-mobile-card .holdings-flags{font-size:12px;font-weight:650;color:var(--warn,#a16207);margin:6px 0}
@@ -162,13 +164,17 @@ export function improveHoldingsCards(doc) {
       const main=el(doc,'div','holdings-main'),name=el(doc,'div','holdings-identity');copyContents(identity,name);
       const values=el(doc,'dl','holdings-primary-values');
       values.append(field(doc,contract.headers[contract.value],cells[contract.value]));
-      values.append(field(doc,'日涨跌',contract.change===null?null:cells[contract.change],'',isTotal?'不适用':contract.change===null?'未取得（原表未提供）':'未取得'));
+      if(contract.change===null||isTotal){
+        values.append(field(doc,'日涨跌',contract.change===null?null:cells[contract.change],'',isTotal?'不适用':'未取得（原表未提供）'));
+      }
       main.append(name,values);card.append(main);
-      // The phone card shows the existing source unit price without deriving a
-      // new quote. Keep the source table intact for publication evidence.
+      // Unit price and daily change share a two-column label/value grid on
+      // phones. Both values are copied from the verified source row unchanged.
       if(contract.change!==null&&!isTotal){
-        const price=el(doc,'dl','holdings-unit-price');
-        price.append(field(doc,'单价',cells[contract.quote]));card.append(price);
+        const metrics=el(doc,'dl','holdings-secondary-values');
+        metrics.append(field(doc,'单价',cells[contract.quote],'holdings-unit-price'));
+        metrics.append(field(doc,'日涨跌',cells[contract.change],'holdings-daily-change'));
+        card.append(metrics);
         const quoteTime=contract.time===null?'':normalize(cells[contract.time].textContent);
         if(quoteTime&&(CAUTION.test(quoteTime)||/^涨跌数据待核验/.test(groupTitle))){
           card.append(el(doc,'span','holdings-quote-time',`报价时点：${quoteTime}`));
