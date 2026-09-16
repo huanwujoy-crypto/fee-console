@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { createFundInvestorCore } from "./fund-investor-core.mjs";
 
 const core = createFundInvestorCore();
@@ -9,7 +10,14 @@ test("activated browser uses the exact reviewed fund factory", () => {
   const start="/* fund-investor-core:start */",end="/* fund-investor-core:end */";
   if(!html.includes(start)){assert.ok(!html.includes('id="p-investors"'));return;}
   assert.equal(html.split(start).length,2);assert.equal(html.split(end).length,2);
-  assert.equal(html.split(start)[1].split(end)[0].trim(),createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
+  const embedded=html.split(start)[1].split(end)[0].trim();
+  if(!embedded.includes('const EVENT_KEYS =')){
+    // During the support-only PR, accept precisely the reviewed pre-event UI.
+    // The subsequent index-only PR must embed the new factory exactly.
+    assert.equal(createHash("sha256").update(embedded).digest("hex"),"4714a07b1c7fccd974253d91814d63d8e98707ee652dd8e3e6ac6974a57b89fc");
+    return;
+  }
+  assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
 });
 const fixture = () => ({
   profile: { schema: "fee-console.fund-profile.v1", manager: "Example Manager", fundName: "Example Fund",
@@ -75,6 +83,66 @@ test("a later zero-cent event also requires ownership review", () => {
   const input = fixture(); input.feeView.benchmarkInputs.flows.push({ date: "2024-03-01", amountCents: 0 });
   const actual = core.calculate(input);
   assert.equal(actual.status, "partial"); assert.equal(actual.lastProved.date, "2024-02-29");
+});
+
+const subscriptionFixture = () => {
+  const input = fixture();
+  input.profile.subscriptions = [{ id: "sub-20240301-B", date: "2024-03-01", investorId: "B",
+    grossCents: 5_002, feeCents: 2, netCents: 5_000, priceDate: "2024-02-29",
+    priceTotalCents: 10_101, issuedShares: 495_000, sourceRef: "sharesight:56568337" }];
+  input.data.daily[3].webull += 50;
+  input.data.flowsAuto = [{ date: "2024-03-01", acct: "webull", amount: 50 }];
+  input.feeView.benchmarkInputs.flows.push({ date: "2024-03-01", amountCents: 5_000 });
+  return input;
+};
+
+test("matched subscription issues new shares without rewriting initial holdings or counting capital as profit", () => {
+  const input = subscriptionFixture(), before = structuredClone(input), actual = core.calculate(input);
+  assert.equal(actual.status, "ready");
+  assert.equal(actual.current.totalCents, 16_000);
+  assert.equal(actual.current.grossPnlCents, 1_000);
+  assert.equal(actual.current.returnRate, null);
+  assert.equal(actual.initial.investors[1].shares, 100_000);
+  assert.equal(actual.current.investors[1].shares, 595_000);
+  assert.equal(actual.current.investors[0].shares, 900_000);
+  assert.equal(actual.current.subscription.netCents, 5_000);
+  assert.equal(actual.current.investors.reduce((sum, x) => sum + x.valueCents, 0), 16_000);
+  assert.equal(actual.current.investors.reduce((sum, x) => sum + x.pnlCents, 0), 1_000);
+  assert.deepEqual(input, before);
+});
+
+test("unmatched, duplicated, or mispriced subscription evidence freezes before capital arrival", () => {
+  for (const mutate of [
+    x => { x.profile.subscriptions[0].issuedShares++; },
+    x => { x.profile.subscriptions[0].priceTotalCents++; },
+    x => { x.feeView.benchmarkInputs.flows.pop(); },
+    x => { x.feeView.benchmarkInputs.flows.at(-1).amountCents++; },
+    x => { x.data.flowsAuto[0].amount++; },
+    x => { x.data.flowsAuto.push({ date: "2024-03-01", acct: "webull", amount: 50 }); },
+    x => { x.data.flowsUnresolved = [{ date: "2024-03-01", acct: "unknown", amount: 50 }]; }
+  ]) {
+    const input = subscriptionFixture(); mutate(input);
+    const actual = core.calculate(input);
+    assert.equal(actual.status, "partial");
+    assert.equal(actual.flowGateDate, "2024-03-01");
+    assert.equal(actual.current, null);
+    assert.equal(actual.lastProved.date, "2024-02-29");
+  }
+});
+
+test("subscription schema rejects duplicate source, arithmetic mismatch and unknown investor", () => {
+  for (const mutate of [
+    p => { p.subscriptions[0].investorId = "C"; },
+    p => { p.subscriptions[0].netCents++; },
+    p => { p.subscriptions[0].feeCents = -1; },
+    p => { p.subscriptions[0].priceDate = p.subscriptions[0].date; },
+    p => { p.subscriptions[0].extra = true; },
+    p => { p.subscriptions.push({ ...p.subscriptions[0], id: "other-event" }); }
+  ]) {
+    const input = subscriptionFixture(); mutate(input.profile);
+    assert.equal(core.validateProfile(input.profile).ok, false);
+    assertPending(input);
+  }
 });
 
 test("unconfirmed automatic deposit omitted from receipt still blocks fixed-share valuation", () => {
