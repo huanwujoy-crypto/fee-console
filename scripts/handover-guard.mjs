@@ -103,6 +103,7 @@ const attributeValueCount = (source, name, value) => (source.match(new RegExp(
 )) || []).length;
 const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\s*=\s*(?:"[^"]*&[^"]*"|'[^']*&[^']*'|[^\s>]*&[^\s>]*)/i.test(source);
 const navigationOrder = Object.freeze(['s1', 's2', 's3', 's4', 's5']);
+const navigationLabelOrder = Object.freeze(['s1', 's4', 's3', 's2', 's5']);
 const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s4: '待办', s5: 'ETF' });
 const DECISION_STATE_TEMPLATE_ID = 'xuan-ib-decision-state-v1';
 // The inert record of which AI-pressure tier covers which instrument, and of
@@ -188,7 +189,8 @@ const validateEtfNavigation = (source) => {
   const panes = divRangesWithClass(source, 'pane');
   if (tabbars.length !== 1) fail('ETF navigation requires exactly one tabbar');
   const orderedInputs = [];
-  const orderedLabels = [];
+  const inputsById = new Map();
+  const labelsById = new Map();
   for (const id of navigationOrder) {
     if (attributeValueCount(source, 'id', id) !== 1
         || attributeValueCount(source, 'for', id) !== 1) {
@@ -208,16 +210,22 @@ const validateEtfNavigation = (source) => {
       fail(`navigation label ${id} has the wrong visible text`);
     }
     orderedInputs.push(inputs[0]);
-    orderedLabels.push(labels[0]);
+    inputsById.set(id,inputs[0]);
+    labelsById.set(id,labels[0]);
   }
-  if (orderedInputs.some((match, index) => index > 0 && orderedInputs[index - 1].index >= match.index)
-      || orderedLabels.some((match, index) => index > 0 && orderedLabels[index - 1].index >= match.index)
+  const inputOrders=[navigationLabelOrder,navigationOrder].map(order=>order.map(id=>inputsById.get(id)));
+  const inputsAreOrdered=inputOrders.some(items=>items.every((match,index)=>index===0||items[index-1].index<match.index));
+  const labelOrders=[navigationLabelOrder,navigationOrder].map(order=>order.map(id=>labelsById.get(id)));
+  const labelsAreOrdered=labelOrders.some(items=>items.every((match,index)=>index===0||items[index-1].index<match.index));
+  const orderedLabels=navigationOrder.map(id=>labelsById.get(id));
+  if (!inputsAreOrdered
+      || !labelsAreOrdered
       || orderedInputs.some(match => match.index >= tabbars[0].start)
       || orderedLabels.some(match => match.index < tabbars[0].openEnd
         || match.index + match[0].length > tabbars[0].closeStart)
       || panes.length === 0
       || panes.some(pane => tabbars[0].end > pane.start)) {
-    fail('navigation must appear as 概览 / 风险 / 配置 / 待办 / ETF before all panes');
+    fail('navigation must appear as 概览 / 待办 / 配置 / 风险 / ETF (or the trusted prior order during transition) before all panes');
   }
 };
 

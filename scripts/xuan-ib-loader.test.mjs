@@ -492,7 +492,7 @@ test('explicit refresh retries a failed layout import without replacing the veri
   const {app, doc, html} = await mobileLoaderFixture(url => {
     urls.push(url); return urls.length === 1 ? Promise.reject(new Error('offline')) : Promise.resolve(view);
   });
-  assert.match(doc.getElementById('xuan-mobile-layout-status').textContent, /点“刷新”重试/);
+  assert.match(doc.getElementById('xuan-mobile-layout-status').textContent, /系统将自动重试/);
   const writes = app.frame.srcdocWrites;
   const radio = doc.getElementById('s4'); radio.checked = true;
   await app.listeners.button.click(); await settlePrivateLoader();
@@ -504,7 +504,7 @@ test('explicit refresh retries a failed layout import without replacing the veri
   assert.equal(urls.length, 2); assert.deepEqual(applied, [doc], 'successful mutation is never repeated');
 });
 
-test('background refresh never retries failed layout and pending imports are single flight', async () => {
+test('background refresh automatically retries a failed layout and pending imports are single flight', async () => {
   const gate = privateDeferred(); let imports = 0, applies = 0;
   const {app} = await mobileLoaderFixture(() => { imports++; return gate.promise; });
   await app.listeners.button.click(); await settlePrivateLoader();
@@ -512,7 +512,7 @@ test('background refresh never retries failed layout and pending imports are sin
   gate.reject(new Error('blocked')); await settlePrivateLoader();
   app.advanceTime(6 * 60_000);
   await app.listeners.document.visibilitychange(); await settlePrivateLoader();
-  assert.equal(imports, 1, 'existing background polls do not create a retry loop');
+  assert.equal(imports, 2, 'the next background poll performs one bounded automatic retry');
   assert.equal(applies, 0);
 });
 
@@ -637,7 +637,7 @@ test('loader transient module import failure is retryable by ordinary refresh', 
     ? Promise.reject(new Error('SYNTHETIC NETWORK FAILURE')) : Promise.resolve(view)});
   assert.equal(view.runs.length, 0);
   const note = f.doc.getElementById('xuan-etf-load-status'); assert.ok(note);
-  assert.match(note.textContent, /刷新/); assert.doesNotMatch(note.textContent, /SYNTHETIC NETWORK FAILURE/);
+  assert.match(note.textContent, /自动重试/); assert.doesNotMatch(note.textContent, /SYNTHETIC NETWORK FAILURE/);
   await f.app.listeners.button.click(); await settlePrivateLoader();
   assert.equal(f.imports(), 2); assert.ok(view.runs.length > 0); assert.ok(f.doc.privateText);
   assert.equal(f.doc.getElementById('xuan-etf-load-status'), null);
@@ -677,7 +677,9 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", \(\) => loadLatest\(\{retryLayout: true\}\)\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-15\.2"/);
+  assert.match(loader, /loaderBuild = "2026-09-16\.1"/);
+  assert.match(loader, /<button id="refresh"[^>]*hidden[^>]*aria-hidden="true"/);
+  assert.match(loader, /更新中，请稍候/);
   assert.doesNotMatch(loader, /history-link|href="history\/2026-09-05-am\.html"|周六上午版\s*·\s*新排版/);
   assert.match(loader, /requestSequence/);
   assert.match(loader, /xuan-ib:last-verified:v1/);
@@ -1269,7 +1271,7 @@ test('decision launch fails closed without a verified report and suppresses dupl
   app.listeners.decision.click({preventDefault: () => {}});
   assert.equal(app.location.href, 'https://example.test/xuan-ib/');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
-  assert.match(app.status.textContent, /^请先刷新并确认当前待办/);
+  assert.match(app.status.textContent, /^正在自动确认当前待办/);
 
   await app.listeners.button.click();
   app.listeners.decision.click({preventDefault: () => {}});
@@ -1455,7 +1457,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，请稍后刷新 · L 2026-09-15.2');
+  assert.equal(app.status.textContent, '尚未收到回应回执，系统将自动重试 · L 2026-09-16.1');
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 
@@ -1736,7 +1738,7 @@ test('refresh preserves stale warning until a fresh pair has passed verification
   const refresh = app.listeners.button.click(); await settlePrivateLoader();
   assert.equal(app.warning.hidden, false); assert.equal(app.warning.textContent, warning);
   assert.equal(app.status.classList.contains('error'), true);
-  assert.match(app.status.textContent, /正在核对最新版/);
+  assert.match(app.status.textContent, /更新中，请稍候/);
   currentHtml = freshHtml; gate.resolve(); await refresh;
   assert.equal(app.warning.hidden, true); assert.equal(app.status.classList.contains('error'), false);
   assert.match(app.frame.srcdoc, /fresh-verified/);

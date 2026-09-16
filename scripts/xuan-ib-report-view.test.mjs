@@ -259,7 +259,7 @@ test('compact cards show source-backed status/action, short tables, folded detai
   const html=renderReport(view,context);
   assert.ok(html.includes('— 未取得'));assert.ok(html.includes('下一步：待核实'));
   assert.ok(html.includes('<details><summary>详细说明'));assert.ok(html.includes('更多数据（2 行）'));
-  assert.ok(html.includes('<details class="mobile-guide"><summary>使用指南'));assert.ok(html.includes('先看数据日期'));
+  assert.ok(html.includes('<details class="mobile-guide"><summary>使用指南'));assert.ok(html.includes('先看持仓变化'));
   view.risk[0].brief.action='buy';assert.throws(()=>renderReport(view,context),/brief action/);
 });
 test('structured orders are grouped, escaped, fresh-quoted and do not infer cancellation',()=>{
@@ -304,7 +304,7 @@ test('AM uses the same compact layout without broadening temporary account autho
   const html=renderReport(view,context);
   assert.ok(html.includes('· 早间版 ·'));
   assert.ok(html.includes('<details class="mobile-guide"><summary>使用指南'));
-  assert.ok(html.includes('只读取已发布结果；睡前版在美股开市时启动'));
+  assert.ok(html.includes('页面自动读取已发布结果，无需反复操作'));
   assert.ok(!html.includes('<b>临时报告：</b>'));
   assert.ok(html.includes(priorTemplate));
   assert.throws(()=>renderReport(view,{...context,manualAccountConsent:true}),/adhoc only/);
@@ -318,7 +318,10 @@ test('AM previous-HKT-day closing quotes keep their timestamps; older and PM quo
   view.holdings.rows[0].quoteStatus='delayed';
   let html=renderReport(view,context);
   assert.ok(html.includes('价格变化 ≥1%（1）'));assert.ok(html.includes(prior+' 23:35 HKT'));
-  assert.ok(html.includes('③ 接下来会发生什么'));
+  assert.ok(!html.includes('③ 接下来会发生什么'));
+  assert.ok(!html.includes('③ 今夜你睡着时会发生什么'));
+  assert.match(html,/<div class="tabs"><input[^>]+id="s1"[^>]*><input[^>]+id="s4"[^>]*><input[^>]+id="s3"[^>]*><input[^>]+id="s2"/);
+  assert.match(html,/<div class="tabbar"><label for="s1">概览<\/label><label for="s4"[^>]*>待办/);
   view.holdings.rows[0].changeAsOfHkt=older+' 23:35 HKT';
   assert.ok(renderReport(view,context).includes('价格变化 ≥1%（0）'));
   view.edition='pm';view.holdings.rows[0].changeAsOfHkt=prior+' 23:35 HKT';

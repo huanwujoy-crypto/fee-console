@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitConcentrationLabel,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,SLEEP_TAB_ORDER,isLowValueEventTitle,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitConcentrationLabel,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -23,6 +23,9 @@ test('header guide matches shared wording and runs only after verification',()=>
  assert.match(loader,/renderedDocument === doc && lastVerified\?\.blob === record\.blob/);
   assert.match(loader,/if \(!current\(\)\) return;\s*try \{\s*doc\.getElementById\('xuan-mobile-layout-status'\)\?\.remove\(\);\s*view\.improveMobileDisplay\(doc\)/);
  assert.ok(loader.indexOf('class="header-guide"')<loader.indexOf('id="refresh"'));
+ assert.match(loader,/id="refresh"[^>]*hidden/);
+ assert.doesNotMatch(GUIDE_BODY,/<b>刷新<\/b>/);
+ assert.match(GUIDE_BODY,/<b>更新<\/b>/);
  const module=fs.readFileSync(new URL('./xuan-ib-mobile-display.mjs',import.meta.url),'utf8');
  assert.doesNotMatch(module,/fetch\(|localStorage|sessionStorage|innerHTML\s*=/);
  assert.match(module,/for\(let i=1;i<=5;i\+\+\)/);
@@ -49,6 +52,13 @@ test('holdings note keeps only the readable calculation basis and verified cover
  const technical='IB 五端点直读；日涨跌用 session-pnl-v1（daily_pnl ÷ 本轮开盘基准），逐仓经受信 venue resolver 定位，覆盖 26/26。盘中读数与次日早间版收盘读数本就不同，不作对账。';
  assert.equal(conciseHoldingsNote(technical),'IB 数据直读；日涨跌按本轮开盘基准计算，已覆盖 26/26 只持仓。');
  assert.equal(conciseHoldingsNote('其它来源说明保持原文。'),'其它来源说明保持原文。');
+});
+test('sleep-first navigation keeps semantic IDs while moving todo beside overview',()=>{
+ assert.deepEqual(SLEEP_TAB_ORDER,['s1','s4','s3','s2','s5']);
+ assert.equal(isLowValueEventTitle('③ 今夜你睡着时会发生什么'),true);
+ assert.equal(isLowValueEventTitle('接下来会发生什么'),true);
+ assert.equal(isLowValueEventTitle('持仓说明'),false);
+ assert.match(MOBILE_READING_CSS,/grid-template-columns:1fr minmax\(86px,1\.3fr\) 1fr 1fr 1fr!important/);
 });
 
 const risk={title:'AI 压力敞口 · §0-C',state:'brief-signal attention',

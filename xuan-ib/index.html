@@ -112,11 +112,11 @@
     <header class="bar">
       <div class="title">
         <strong>XUAN-投资管理</strong>
-        <span id="status" role="status" aria-live="polite">正在读取最新版…</span>
+        <span id="status" role="status" aria-live="polite">更新中，请稍候…</span>
       </div>
       <div class="header-actions">
-        <details class="header-guide"><summary>使用指南</summary><div class="guide-body"><ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒、风险线与现金参考。</li><li><b>待办</b>：只处理明确要求你的事项；挂单仅提醒。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：只读取已发布结果；睡前版在美股开市时启动。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p></div></details>
-        <button id="refresh" type="button">刷新</button>
+        <details class="header-guide"><summary>使用指南</summary><div class="guide-body"><ol><li><b>概览</b>：先看持仓变化；市值大的排前面。</li><li><b>待办</b>：重点看挂单；只处理明确要求你的事项。</li><li><b>配置 / 风险</b>：随后查看现金参考、提醒与风险线。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>更新</b>：页面自动读取已发布结果，无需反复操作。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p></div></details>
+        <button id="refresh" type="button" hidden tabindex="-1" aria-hidden="true">刷新</button>
       </div>
     </header>
     <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
@@ -138,7 +138,7 @@
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-15.2";
+      const loaderBuild = "2026-09-16.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -398,7 +398,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         let message = "";
         if (decisionWait && now > decisionWait.deadline) {
           clearDecisionWait();
-          message = `尚未收到回应回执，请稍后刷新 · L ${loaderBuild}`;
+          message = `尚未收到回应回执，系统将自动重试 · L ${loaderBuild}`;
         }
         if (!message) return false;
         status.classList.add("error");
@@ -478,7 +478,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             awaitingDecisionIds.length === 0) {
           clearDecisionWait();
           status.classList.add("error");
-          status.textContent = `请先刷新并确认当前待办 · L ${loaderBuild}`;
+          status.textContent = `正在自动确认当前待办 · L ${loaderBuild}`;
           return;
         }
         const now = Date.now();
@@ -861,7 +861,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
 
       const statusFor = (record, prefix) => {
         if (prefix === "回应已记录") return "回应已记录，报告已自动刷新";
-        if (prefix === "显示上一份已验证版本" || prefix === "正在核对最新版") {
+        if (prefix === "显示上一份已验证版本" || prefix === "更新中，请稍候") {
           return `${prefix} · ${record.info.dataDate} ${record.info.edition}`;
         }
         return prefix;
@@ -1196,7 +1196,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const key = `${progressFingerprint || 'unavailable'}:${record.meta.sourceSha}:${record.blob}:${event?.eventId || 'missing'}:${progressMessage}`;
           if (owned.key === key) continue;
           const panel = make("div", "", "xuan-work-current");
-          if (!event) panel.append(make("p", "当前进度未核实；请稍后刷新。原决定保留在下方。"));
+          if (!event) panel.append(make("p", "当前进度未核实；系统将自动重试。原决定保留在下方。"));
           else {
             const matched = matchesReport(event);
             panel.append(make("h3", `${index + 1} · ${event.title}`));
@@ -1255,7 +1255,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         } catch (_) {
           if (request !== requestSequence) return;
           // Keep the previous ledger only as an anti-rollback high-water mark.
-          progressMessage = "落实进度暂不可用；原决定和报告仍保留，请稍后刷新。";
+          progressMessage = "落实进度暂不可用；原决定和报告仍保留，系统将自动重试。";
           progressFingerprint = null;
         } finally {
           window.clearTimeout(timeout);
@@ -1300,7 +1300,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             note = doc.createElement('p'); note.id = 'xuan-etf-load-status';
             doc.querySelector('.pane.p5').prepend(note);
           }
-          note.textContent = 'ABC 比较暂未加载，请点“刷新”重试。';
+          note.textContent = 'ABC 比较暂未加载，系统将自动重试。';
           /* Optional private comparison never blocks the trusted report. */
         }
       }
@@ -1339,7 +1339,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           view = await mobileDisplayModule;
         } catch (_) {
           mobileDisplayStates.set(doc, 'import-failed');
-          notice('简洁排版暂未加载，点“刷新”重试；仍未恢复请重新打开页面。当前显示已验证报告。');
+          notice('简洁排版暂未加载，系统将自动重试；仍未恢复请重新打开页面。当前显示已验证报告。');
           return;
         }
         if (!current()) return;
@@ -1434,7 +1434,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
           const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
           if (request !== requestSequence) return false;
-          renderVerified(record, "正在核对最新版", staleMessage(record));
+          renderVerified(record, "更新中，请稍候", staleMessage(record));
           return true;
         } catch (error) {
           try { storage.removeItem(storageKey); } catch (_) {}
@@ -1443,7 +1443,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         }
       }
 
-      async function loadLatest({retryLayout = false} = {}) {
+      async function loadLatest({retryLayout = true} = {}) {
         const request = ++requestSequence;
         const controller = new AbortController();
         const timeout = window.setTimeout(() => controller.abort(), 10_000);
@@ -1461,9 +1461,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             warning.textContent = stale;
           }
           status.classList.toggle("error", !warning.hidden);
-          status.textContent = statusFor(lastVerified, "正在核对最新版");
+          status.textContent = statusFor(lastVerified, "更新中，请稍候");
         } else if (!restored) {
-          status.textContent = "正在读取最新版…";
+          status.textContent = "更新中，请稍候…";
         }
         try {
           const token = `${loaderBuild}-${Date.now()}`;
@@ -1509,7 +1509,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             status.textContent = "暂时无法读取已验证报告";
             decisionButton.hidden = true;
             frame.setAttribute("sandbox", "");
-            frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}button{font:inherit}</style><p>暂时无法读取最新交接页，请稍后点击上方“刷新”。</p>";
+            frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}</style><p>暂时无法读取最新交接页，系统将自动重试。</p>";
           }
           if (activeWait() && !expireWaits()) {
             if (decisionWait) showDecisionPending();
