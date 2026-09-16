@@ -244,7 +244,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <details class="fund-method"><summary>直接填写基金档案</summary>
     <form id="fundProfileForm" class="fund-form" autocomplete="off">
       <button class="btn" id="fundProfileFill" type="button">填入当前档案以更正</button>
-      <p class="hint" style="margin-top:8px">更正成立资料会重算历史估值；已登记的增资事件不会因更正表单被删除。新增份额须以到账、计价日和投资人身份核验后追加，不能直接改初始股数。</p>
+      <p class="hint" style="margin-top:8px">更正成立资料会重算投资人的历史股份市值显示。实际增资或股份转让需要事件流水，当前尚不支持。</p>
       <div class="grid">
         <div class="full"><label class="f" for="fundFormName">基金名称</label><input id="fundFormName" maxlength="120" required></div>
         <div class="full"><label class="f" for="fundFormManager">投资管理人</label><input id="fundFormManager" maxlength="120" required></div>
@@ -812,7 +812,6 @@ window.addEventListener("hashchange",()=>{ if(/(^|[#&])(tok|gid|k|fund|docs|arch
 function createFundInvestorCore() {
   const SCHEMA = "fee-console.fund-profile.v1", DAY = 86400000;
   const PROFILE_KEYS = ["schema", "manager", "fundName", "inceptionDate", "inceptionNoticeDate", "currency", "initialShares", "investors"];
-  const EVENT_KEYS = ["id", "date", "investorId", "grossCents", "feeCents", "netCents", "priceDate", "priceTotalCents", "issuedShares", "sourceRef"];
   const object = value => !!value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
   const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -831,7 +830,7 @@ function createFundInvestorCore() {
   };
   function validateProfile(profile) {
     const invalid = reason => ({ ok: false, profile: null, reason });
-    if (!(exact(profile, PROFILE_KEYS) || exact(profile, [...PROFILE_KEYS, "subscriptions"])) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
+    if (!exact(profile, PROFILE_KEYS) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
     if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
     if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
     if (!integer(profile.initialShares) || profile.initialShares <= 0 || !Array.isArray(profile.investors) || profile.investors.length !== 2) return invalid("初始股份资料待核对");
@@ -842,26 +841,7 @@ function createFundInvestorCore() {
       ids.add(investor.id); total += BigInt(investor.shares);
     }
     if (total !== BigInt(profile.initialShares)) return invalid("投资人股份合计与发行股份不符");
-    const subscriptions = profile.subscriptions || [];
-    if (!Array.isArray(subscriptions) || subscriptions.length > 12) return invalid("增资事件资料待核对");
-    const eventIds = new Set(), sourceRefs = new Set(); let previousDate = "";
-    for (const event of subscriptions) {
-      if (!exact(event, EVENT_KEYS) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
-        || !date(event.date) || event.date <= profile.inceptionDate || event.date <= previousDate
-        || !ids.has(event.investorId) || !integer(event.grossCents) || event.grossCents <= 0
-        || !integer(event.feeCents) || event.feeCents < 0 || event.feeCents >= event.grossCents
-        || !integer(event.netCents) || event.netCents !== event.grossCents - event.feeCents
-        || !date(event.priceDate) || event.priceDate >= event.date
-        || !integer(event.priceTotalCents) || event.priceTotalCents <= 0
-        || !integer(event.issuedShares) || event.issuedShares <= 0
-        || typeof event.sourceRef !== "string" || !/^[A-Za-z0-9:._-]{8,120}$/.test(event.sourceRef)
-        || sourceRefs.has(event.sourceRef)) return invalid("增资事件资料待核对");
-      eventIds.add(event.id); sourceRefs.add(event.sourceRef); previousDate = event.date;
-      total += BigInt(event.issuedShares);
-      if (total > BigInt(Number.MAX_SAFE_INTEGER)) return invalid("增资后发行份额超出安全范围");
-    }
-    return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
-      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}) }, reason: null };
+    return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })) }, reason: null };
   }
   function calculate(input = {}) {
     const { profile, data, feeView } = object(input) ? input : {};
@@ -877,25 +857,21 @@ function createFundInvestorCore() {
     const inception = checked.profile.inceptionDate;
     if (inception < feeView.start || inception > feeView.asOf) return pending("基金成立日未被计算回执覆盖");
     if (!object(feeView.benchmarkInputs) || !Array.isArray(feeView.benchmarkInputs.flows)) return pending("外部资金流证据待核对，暂不提供股份估值");
-    const receiptFlows = [];
+    let flowGateDate = null;
     for (const flow of feeView.benchmarkInputs.flows) {
       if (!exact(flow, ["date", "amountCents"]) || !date(flow.date) || !integer(flow.amountCents)
         || flow.date < feeView.start || flow.date > feeView.asOf) return pending("外部资金流证据待核对，暂不提供股份估值");
-      if (flow.date > inception) receiptFlows.push(flow);
+      if (flow.date > inception && (!flowGateDate || flow.date < flowGateDate)) flowGateDate = flow.date;
     }
     // The receipt includes effective flows only. An unconfirmed or unresolved
     // source event can still change ownership; it blocks allocation without
     // being promoted into an economic flow or being netted against another item.
-    const candidatesByDate = new Map();
     for (const field of ["flowsAuto", "flowsUnresolved"]) {
       const candidates = data?.[field];
       if (candidates !== undefined && !Array.isArray(candidates)) return pending("外部资金流候选证据待核对，暂不提供股份估值");
       for (const event of candidates || []) {
         if (!object(event) || !date(event.date)) return pending("外部资金流候选证据待核对，暂不提供股份估值");
-        if (event.date > inception && event.date <= feeView.asOf) {
-          const rows = candidatesByDate.get(event.date) || [];
-          rows.push({ field, event }); candidatesByDate.set(event.date, rows);
-        }
+        if (event.date > inception && event.date <= feeView.asOf && (!flowGateDate || event.date < flowGateDate)) flowGateDate = event.date;
       }
     }
     let daily;
@@ -918,57 +894,25 @@ function createFundInvestorCore() {
       if (!daily.length || daily[0].date !== inception || daily[0].totalCents <= 0) throw new Error("inception missing");
       for (let i = 1; i < daily.length; i++) if (Date.parse(daily[i].date) - Date.parse(daily[i - 1].date) !== DAY) throw new Error("daily gap");
     } catch (_) { return pending("成立日至回执日期的每日总资产不完整或无效，暂不提供股份估值"); }
-    const initialShares = checked.profile.investors.map(investor => investor.shares);
-    const initialCents = daily[0].totalCents;
-    const subscriptions = (checked.profile.subscriptions || []).filter(event => event.date <= feeView.asOf);
-    const accepted = new Map(); let outstanding = BigInt(checked.profile.initialShares), flowGateDate = null;
-    const gate = eventDate => { if (!flowGateDate || eventDate < flowGateDate) flowGateDate = eventDate; };
-    for (const event of subscriptions) {
-      const pricePoint = daily.find(point => point.date === event.priceDate);
-      const flows = receiptFlows.filter(flow => flow.date === event.date);
-      const candidates = candidatesByDate.get(event.date) || [];
-      const matchingCandidate = candidates.length === 0 || candidates.length === 1 &&
-        candidates[0].field === "flowsAuto" && candidates[0].event.acct === "webull" &&
-        Number.isFinite(Number(candidates[0].event.amount)) &&
-        Math.round(Number(candidates[0].event.amount) * 100) === event.netCents;
-      const expectedShares = pricePoint && pricePoint.totalCents === event.priceTotalCents
-        ? Number((BigInt(event.netCents) * outstanding * 2n + BigInt(event.priceTotalCents)) /
-          (2n * BigInt(event.priceTotalCents))) : null;
-      if (!pricePoint || pricePoint.date >= event.date || pricePoint.totalCents !== event.priceTotalCents
-        || flows.length !== 1 || flows[0].amountCents !== event.netCents
-        || !matchingCandidate || expectedShares !== event.issuedShares) gate(event.date);
-      else accepted.set(event.date, event);
-      outstanding += BigInt(event.issuedShares);
-    }
-    for (const flow of receiptFlows) if (!accepted.has(flow.date)) gate(flow.date);
-    for (const [candidateDate] of candidatesByDate) if (!accepted.has(candidateDate)) gate(candidateDate);
-    const allocate = (totalCents, shares) => {
+    const shares = checked.profile.initialShares, denominator = BigInt(shares), initialCents = daily[0].totalCents;
+    const allocate = totalCents => {
       // Round the first allocation half up; assign the remainder to the final
       // investor, so allocations always reconcile to the portfolio's exact cents.
-      const denominator = BigInt(shares[0]) + BigInt(shares[1]);
-      const numerator = BigInt(totalCents) * BigInt(shares[0]);
+      const numerator = BigInt(totalCents) * BigInt(checked.profile.investors[0].shares);
       const first = Number((2n * numerator + denominator) / (2n * denominator));
       return [first, totalCents - first];
     };
-    const initialValues = allocate(initialCents, initialShares), shares = [...initialShares], contributions = [0, 0];
+    const initialValues = allocate(initialCents);
     result.points = daily.filter(point => !flowGateDate || point.date < flowGateDate).map(point => {
-      const event = accepted.get(point.date);
-      if (event) {
-        const investorIndex = checked.profile.investors.findIndex(investor => investor.id === event.investorId);
-        shares[investorIndex] += event.issuedShares; contributions[investorIndex] += event.netCents;
-      }
-      const values = allocate(point.totalCents, shares), totalShares = shares[0] + shares[1];
-      const returnRate = contributions.some(Boolean) ? null : point.totalCents / initialCents - 1;
-      return { ...point, unitValue: point.totalCents / 100 / totalShares,
-        grossPnlCents: point.totalCents - initialCents - contributions[0] - contributions[1], returnRate,
-        subscription: event ? { id: event.id, investorId: event.investorId, netCents: event.netCents, issuedShares: event.issuedShares } : null,
-        investors: checked.profile.investors.map((investor, i) => ({ id: investor.id, shares: shares[i],
-          valueCents: values[i], pnlCents: values[i] - initialValues[i] - contributions[i], returnRate })) };
+      const values = allocate(point.totalCents), returnRate = point.totalCents / initialCents - 1;
+      return { ...point, unitValue: point.totalCents / 100 / shares, grossPnlCents: point.totalCents - initialCents, returnRate,
+        investors: checked.profile.investors.map((investor, i) => ({ id: investor.id, shares: investor.shares,
+          valueCents: values[i], pnlCents: values[i] - initialValues[i], returnRate })) };
     });
     result.initial = result.points[0]; result.lastProved = result.points.at(-1);
     result.flowGateDate = flowGateDate;
     result.provisional = feeView.status?.provisional === true || result.points.some(point => point.provisional);
-    if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起有尚未匹配的外部资金流或增资证据；当前份额市值暂不可用` };
+    if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起存在外部资金流或待核对事件；待确认认购或赎回的股份分配，当前股份市值暂不可用` };
     return { ...result, status: "ready", current: result.lastProved };
   }
   return { validateProfile, calculate };
@@ -1031,7 +975,7 @@ async function saveFundProfileForm(){
   const profile={schema:"fee-console.fund-profile.v1",manager:value("fundFormManager"),fundName:value("fundFormName"),
     inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
     investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
-  return saveFundProfile(async()=>{const current=await readFundProfile();if(current.profile?.subscriptions?.length)profile.subscriptions=current.profile.subscriptions;return profile;});
+  return saveFundProfile(()=>profile);
 }
 async function fillFundProfileForm(){
   const ticket=++_fundFillGeneration,importTicket=_fundImportGeneration,epoch=_sourceEpoch,gid=cfg(K.gid),keyValue=cfg(K.key),raw=HASH?.fund||cfg(FUND_PROFILE_KEY);
@@ -1124,15 +1068,6 @@ async function writeRemoteFundBundle(profile,library,expectedRaw=currentRemoteFu
   const latest=await ghApi("/gists/"+gid),latestFile=latest.files&&latest.files[GH_FUND_FILE];let latestRaw="";
   if(latestFile){latestRaw=latestFile.content;if(latestFile.truncated){const r=await freshFetch(latestFile.raw_url,{cache:"no-store"});if(!r.ok)throw new Error("远端基金档案读取失败");latestRaw=new TextDecoder("utf-8",{fatal:true}).decode(await r.arrayBuffer());}}
   if(latestRaw!==String(expectedRaw||""))throw new Error("另一页面已更新投资人档案，请先刷新");
-  if(latestRaw){
-    const previous=await decodeRemoteFundBundle(latestRaw,gid,keyValue),older=previous.profile.subscriptions||[],newer=profileCheck.profile.subscriptions||[];
-    if(older.length&&(
-      previous.profile.inceptionDate!==profileCheck.profile.inceptionDate||
-      previous.profile.initialShares!==profileCheck.profile.initialShares||
-      previous.profile.investors.some((i,index)=>i.id!==profileCheck.profile.investors[index].id||i.shares!==profileCheck.profile.investors[index].shares)||
-      older.length>newer.length||older.some((event,index)=>JSON.stringify(event)!==JSON.stringify(newer[index]))
-    ))throw new Error("已发布增资事件不可删除或重写；如需更正，请先核对原始证据");
-  }
   const bundle={schema:FUND_REMOTE_SCHEMA,gid,updatedAt:new Date().toISOString(),profile:profileCheck.profile,library:libraryCheck.library};
   const data=await encTxt(await keyOf(keyValue),JSON.stringify(bundle)),raw=JSON.stringify({enc:true,v:1,data});
   if(fundDocsBytes(raw)>FUND_DOC_MAX_ENVELOPE_BYTES)throw new Error("远端基金档案超过大小上限");
@@ -1626,19 +1561,16 @@ function renderInvestors(loaded,feeView){
   const profile=loaded.profile,model=fundInvestorCore.calculate({profile,data:DAILY,feeView});
   if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
   const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · 初始 ${fmt(profile.initialShares)} 股</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>`<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(i.shares/profile.initialShares*100).toFixed(0)}%</span></button>`).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
-  const latestShares=last?.investors.reduce((sum,i)=>sum+i.shares,0),shareLabel=last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>{const currentShares=last?.investors.find(row=>row.id===i.id)?.shares||i.shares,ratio=latestShares?currentShares/latestShares:i.shares/profile.initialShares;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(ratio*100).toFixed(2)}%</span></button>`;}).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
-  const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
-    capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
-    change=previous&&held?held.valueCents-previous.valueCents-capitalToday:null;
+  const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,change=previous&&held?held.valueCents-previous.valueCents:null;
   const chart=points.length>1?fundValueChart(points,investor.id):'<p class="hint">有两个完整估值日后显示走势。</p>';
   const tableRows=[...points].reverse().map(p=>{const row=p.investors.find(i=>i.id===investor.id);return `<tr><td>${esc(p.date)}${p.provisional?" *":""}</td><td>${p.unitValue.toFixed(6)}</td><td>${money(row.valueCents)}</td></tr>`;});
   box.innerHTML=`${message?`<div class="fund-alert" role="status">${esc(message)}${model.flowGateDate?` 首笔日期：${esc(model.flowGateDate)}。`:""}${last?` 下列历史市值仅截至 ${esc(last.date)}。`:""}</div>`:""}
     <div class="kpis"><div class="kpi wide fund-hero"><div class="lab">${esc(investor.id)} 的${current?"份额市值":"最近可计算市值"} · 费用前</div><div class="val">${money(held?.valueCents)}</div><div class="note">${last?`${esc(last.date)} 收盘${last.provisional||feeView.status?.provisional?" · 来源暂估":""}`:"数据待核验"}${current?"":" · 当前市值待核验"}</div></div>
-    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}${last&&!current?` · 截至 ${esc(last.date)}`:""}</div></div><div class="kpi"><div class="lab">较前一估值日 · 已剔除增资</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${previous&&points.at(-2)?esc(points.at(-2).date)+" → "+esc(last.date):"等待可比日期"}</div></div></div>
-    <div class="card"><h2>我的份额</h2><div class="fund-meta"><div>最新可核验份额<b>${held?fmt(held.shares)+" 股":"—"}</b></div><div>最新可核验占比<b>${held&&latestShares?(held.shares/latestShares*100).toFixed(2)+"%":"—"}</b></div><div>初始持有份额<b>${fmt(investor.shares)} 股</b></div><div>成立时归属资产<b>${money(start?.valueCents)}</b></div><div>基金总资产 · ${last?esc(last.date):"待核验"}<b>${money(last?.totalCents)}</b></div><div>每股份额市值 · 费用前<b>${last?usd(last.unitValue,6):"—"}</b></div></div></div>
+    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}${last&&!current?` · 截至 ${esc(last.date)}`:""}</div></div><div class="kpi"><div class="lab">较前一估值日</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${previous&&points.at(-2)?esc(points.at(-2).date)+" → "+esc(last.date):"等待可比日期"}</div></div></div>
+    <div class="card"><h2>我的份额</h2><div class="fund-meta"><div>初始持有份额<b>${fmt(investor.shares)} 股</b></div><div>初始占比<b>${(investor.shares/profile.initialShares*100).toFixed(2)}%</b></div><div>成立时归属资产<b>${money(start?.valueCents)}</b></div><div>初始每股份额市值<b>${initial?usd(initial.unitValue,6):"—"}</b></div><div>基金总资产 · ${last?esc(last.date):"待核验"}<b>${money(last?.totalCents)}</b></div><div>每股份额市值 · 费用前<b>${last?usd(last.unitValue,6):"—"}</b></div></div></div>
     <div class="card"><h2>${esc(investor.id)} 的市值变化</h2>${chart}<div class="small">${initial&&last?`${esc(initial.date)} → ${esc(last.date)} · 美元 · 费用前`:"成立日以后逐日展示"}</div></div>
     <div class="card"><h2>估值明细</h2>${tableRows.length?`<table class="fund-table" aria-label="投资人每日份额估值"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 日</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
     <div class="card"><details class="fund-method"><summary>份额与估值说明</summary><p>成立基准为 ${esc(profile.inceptionDate)} 纽约估值日收盘，转入后 Schwab-HK + Webull 的全部资产与现金。香港到账通知日为 ${esc(profile.inceptionNoticeDate)}。现金已包含在账户总额中。</p><p>每股份额市值＝基金账户总资产 ÷ 基金份额；个人市值＝个人份额 × 每股市值。初始份额合计 ${fmt(profile.initialShares)} 股。成立日收盘作为起点，从次日起计算变化。</p><p>这里的“费用前”指未另扣小程序应计管理费及 Carry；已计入券商资产的实际支出保留在原账户金额内。此页暂不提供扣除全部费用负债后的 NAV。</p><p>新增或提取本金需明确投资人和发行／注销份额，不能当作投资收益；未完成归属时暂停后续个人估值。内部买卖不会增减基金份额。</p><p>* 表示来源暂估。历史未标星不代表独立校准。投资人档案是展示配置，视图切换不提供个人之间的数据隔离。</p></details></div>`;
