@@ -87,3 +87,20 @@ remoteTest("a stale manager page cannot replace a newer remote fund record", asy
   assert.equal(run(ctx, "patchCalls"), 0);
   assert.equal(run(ctx, "remoteFile"), "newer-remote-content");
 });
+
+remoteTest("published capital events cannot be erased, rewritten or retrospectively change founding shares", async () => {
+  const ctx = context();
+  const event = { id: "synthetic-sub-1", date: "2026-08-22", investorId: "Z",
+    grossCents: 9_002, feeCents: 2, netCents: 9_000,
+    priceDate: "2026-08-21", priceTotalCents: 18_000,
+    issuedShares: 500, sourceRef: "sharesight:synthetic-1" };
+  const subscribed = { ...profile, subscriptions: [event] };
+  await run(ctx, `writeRemoteFundBundle(${JSON.stringify(subscribed)},${JSON.stringify(library)},'')`);
+  const raw = run(ctx, "_remoteFund.raw");
+  for (const altered of [profile,
+    { ...subscribed, subscriptions: [{ ...event, netCents: event.netCents + 1 }] },
+    { ...subscribed, initialShares: subscribed.initialShares + 1 }]) {
+    await assert.rejects(run(ctx, `writeRemoteFundBundle(${JSON.stringify(altered)},${JSON.stringify(library)},${JSON.stringify(raw)})`), /不可删除或重写/);
+    assert.equal(run(ctx, "patchCalls"), 1);
+  }
+});

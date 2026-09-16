@@ -77,6 +77,66 @@ test("a later zero-cent event also requires ownership review", () => {
   assert.equal(actual.status, "partial"); assert.equal(actual.lastProved.date, "2024-02-29");
 });
 
+const subscriptionFixture = () => {
+  const input = fixture();
+  input.profile.subscriptions = [{ id: "sub-20240301-B", date: "2024-03-01", investorId: "B",
+    grossCents: 5_002, feeCents: 2, netCents: 5_000, priceDate: "2024-02-29",
+    priceTotalCents: 10_101, issuedShares: 495_000, sourceRef: "sharesight:56568337" }];
+  input.data.daily[3].webull += 50;
+  input.data.flowsAuto = [{ date: "2024-03-01", acct: "webull", amount: 50 }];
+  input.feeView.benchmarkInputs.flows.push({ date: "2024-03-01", amountCents: 5_000 });
+  return input;
+};
+
+test("matched subscription issues new shares without rewriting initial holdings or counting capital as profit", () => {
+  const input = subscriptionFixture(), before = structuredClone(input), actual = core.calculate(input);
+  assert.equal(actual.status, "ready");
+  assert.equal(actual.current.totalCents, 16_000);
+  assert.equal(actual.current.grossPnlCents, 1_000);
+  assert.equal(actual.current.returnRate, null);
+  assert.equal(actual.initial.investors[1].shares, 100_000);
+  assert.equal(actual.current.investors[1].shares, 595_000);
+  assert.equal(actual.current.investors[0].shares, 900_000);
+  assert.equal(actual.current.subscription.netCents, 5_000);
+  assert.equal(actual.current.investors.reduce((sum, x) => sum + x.valueCents, 0), 16_000);
+  assert.equal(actual.current.investors.reduce((sum, x) => sum + x.pnlCents, 0), 1_000);
+  assert.deepEqual(input, before);
+});
+
+test("unmatched, duplicated, or mispriced subscription evidence freezes before capital arrival", () => {
+  for (const mutate of [
+    x => { x.profile.subscriptions[0].issuedShares++; },
+    x => { x.profile.subscriptions[0].priceTotalCents++; },
+    x => { x.feeView.benchmarkInputs.flows.pop(); },
+    x => { x.feeView.benchmarkInputs.flows.at(-1).amountCents++; },
+    x => { x.data.flowsAuto[0].amount++; },
+    x => { x.data.flowsAuto.push({ date: "2024-03-01", acct: "webull", amount: 50 }); },
+    x => { x.data.flowsUnresolved = [{ date: "2024-03-01", acct: "unknown", amount: 50 }]; }
+  ]) {
+    const input = subscriptionFixture(); mutate(input);
+    const actual = core.calculate(input);
+    assert.equal(actual.status, "partial");
+    assert.equal(actual.flowGateDate, "2024-03-01");
+    assert.equal(actual.current, null);
+    assert.equal(actual.lastProved.date, "2024-02-29");
+  }
+});
+
+test("subscription schema rejects duplicate source, arithmetic mismatch and unknown investor", () => {
+  for (const mutate of [
+    p => { p.subscriptions[0].investorId = "C"; },
+    p => { p.subscriptions[0].netCents++; },
+    p => { p.subscriptions[0].feeCents = -1; },
+    p => { p.subscriptions[0].priceDate = p.subscriptions[0].date; },
+    p => { p.subscriptions[0].extra = true; },
+    p => { p.subscriptions.push({ ...p.subscriptions[0], id: "other-event" }); }
+  ]) {
+    const input = subscriptionFixture(); mutate(input.profile);
+    assert.equal(core.validateProfile(input.profile).ok, false);
+    assertPending(input);
+  }
+});
+
 test("unconfirmed automatic deposit omitted from receipt still blocks fixed-share valuation", () => {
   const input = fixture();
   input.data.flowsAuto = [{ date: "2024-02-29", acct: "webull", amount: 25, effective: false }];

@@ -18,10 +18,19 @@ total includes the founding asset transfer and cash. Do not add either again.
   so the two investors always sum to the composite's exact cents.
 - Performance starts after inception close. The inception day's own return and
   the founding transfer are not counted again.
-- Shares remain fixed only while there is no later external event. Effective
-  receipt flows, unconfirmed automatic flow candidates and unresolved flows all
-  stop the series before the earliest later event, including net-zero pairs.
-  The engine does not turn a candidate into an economic flow or issue shares.
+- Shares remain fixed only while there is no later external event. An optional
+  `subscriptions` array records independently reviewed contributions without
+  rewriting founding shares. Each event names the investor, gross amount,
+  investor-borne fee, net amount, source reference, prior valuation date and
+  total, and whole shares issued at the prior closing unit price. The engine
+  requires a matching effective receipt flow and, if present, one matching
+  Webull source candidate. Only then does it increase that investor's shares;
+  the contribution is excluded from gain/loss. Return percentage remains
+  unavailable after a contribution until a flow-adjusted return method is
+  separately reviewed.
+- Any unmatched effective flow, unconfirmed automatic candidate or unresolved
+  candidate still stops the series before the earliest event, including
+  net-zero pairs. No source candidate alone authorizes a share issue.
 - Missing exact inception values, account fields, dates, complete receipt or
   flow evidence give a pending state. It never takes a nearby date or treats
   missing accounts as zero. Current values are hidden after a flow boundary;
@@ -42,6 +51,11 @@ The `fee-console.fund-profile.v1` file supplies `manager`, `fundName`,
 exactly two investors with `id`, `name`, `shares`. Unknown fields and incorrect
 share totals are rejected. The file contains display configuration, not a
 financial instruction or an independently authenticated share register.
+The optional `subscriptions` list is bounded, date ordered and source-unique;
+the remote publish path prevents deletion or rewriting of previously published
+events or founding share counts. It is an internal monitoring record, not a
+substitute for executed legal fund or ownership documents. Identity mismatches
+between a person's name and investor ID must be resolved before publishing.
 
 Import requires the existing source to be verified. It changes only local
 display configuration, so a read-only user can import without a manager token.
