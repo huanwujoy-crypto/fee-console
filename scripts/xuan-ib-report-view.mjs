@@ -310,7 +310,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 .brief-signal.attention{border-color:#b7791f}.attention .signal-label{color:#a16207}
 .brief-signal.unverified,.brief-signal.unavailable{border-color:#777}.unverified .signal-label,.unavailable .signal-label{color:var(--mut)}
 @media(max-width:900px){.kpis{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media(max-width:640px){.tabbar{grid-template-columns:1fr 1fr 1fr minmax(86px,1.3fr) 1fr}}
+@media(max-width:640px){.tabbar{grid-template-columns:1fr minmax(86px,1.3fr) 1fr 1fr 1fr}}
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
@@ -418,8 +418,8 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
 <input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary>${GUIDE_BODY}</details><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
-<div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s2"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s4">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s2">风险</label><label for="s3">配置</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label>${ETF_TAB_LABEL_V1}</div>
-<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}${fold(view.edition==='am'?'③ 接下来会发生什么':'③ 今夜你睡着时会发生什么',cardBody(view.events))}</div>
+<div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s4"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s2">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label><label for="s3">配置</label><label for="s2">风险</label>${ETF_TAB_LABEL_V1}</div>
+<div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}</div>
 <div class="pane p2">${riskSourceNotice}${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>

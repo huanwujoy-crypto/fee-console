@@ -77,7 +77,14 @@ assert.doesNotMatch(html,/<!-- xuan-ib-handover:v1 -->/);
 assert.doesNotMatch(html,/<script|shortcuts:\/\//i);
 assert.ok(html.includes('class="history-header"'));
 assert.doesNotMatch(html, /未发布至正式手机页|仅本地历史预览|不是正式发布版本/);
-return {html,audit:{kind:'historical-layout-only',dataDate:meta.dataDate,sourceCommit:'65c846fb342a9fd14285979ab0fd37424a19e3ff',sourceSha:meta.sourceSha,sourceBlob:meta.htmlBlob,holdings:rows.length,orders:orders.length,receipts:decisionState.receipts.length,newFinancialReads:0}};
+// The published archive is a frozen historical artifact, not a consumer of
+// current navigation or report-card presentation. Keep exercising the current
+// parser above against its pinned source, then return the reviewed public bytes
+// so an unrelated live-layout maintenance change cannot rewrite history.
+const pinnedHtml=fs.readFileSync(repo+'xuan-ib/history/2026-09-05-am.html','utf8');
+assert.match(pinnedHtml,/<!-- xuan-ib-historical-layout:20260905 -->/);
+assert.ok(pinnedHtml.includes(escape(source)),'pinned archive must retain the exact escaped source report');
+return {html:pinnedHtml,audit:{kind:'historical-layout-only',dataDate:meta.dataDate,sourceCommit:'65c846fb342a9fd14285979ab0fd37424a19e3ff',sourceSha:meta.sourceSha,sourceBlob:meta.htmlBlob,holdings:rows.length,orders:orders.length,receipts:decisionState.receipts.length,newFinancialReads:0}};
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
  const {html,audit}=buildSaturdayArchive();

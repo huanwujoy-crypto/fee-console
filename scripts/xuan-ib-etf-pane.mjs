@@ -30,6 +30,7 @@ const attributeValueCount = (source, name, value) => (source.match(new RegExp(
 )) || []).length;
 const identityAttributeHasCharacterReference = source => /(?:^|[\s<])(?:id|for)\s*=\s*(?:"[^"]*&[^"]*"|'[^']*&[^']*'|[^\s>]*&[^\s>]*)/i.test(source);
 const navigationOrder = Object.freeze(['s1', 's2', 's3', 's4', 's5']);
+const sleepNavigationOrder = Object.freeze(['s1', 's4', 's3', 's2', 's5']);
 const legacyEtfFirstNavigationOrder = Object.freeze(['s1', 's2', 's3', 's5', 's4']);
 const navigationText = Object.freeze({ s1: '概览', s2: '风险', s3: '配置', s4: '待办', s5: 'ETF' });
 
@@ -73,10 +74,15 @@ function assertIntegratedEtfPane(source, canonicalSection, { etfBeforeTodo = fal
   const config = paneRanges(source, 'p3');
   const etf = paneRanges(source, 'p5');
   const todo = paneRanges(source, 'p4');
-  const expectedNavigationOrder = etfBeforeTodo ? legacyEtfFirstNavigationOrder : navigationOrder;
+  const expectedInputOrders = etfBeforeTodo
+    ? [legacyEtfFirstNavigationOrder]
+    : [sleepNavigationOrder,navigationOrder];
+  const expectedLabelOrders = etfBeforeTodo
+    ? [legacyEtfFirstNavigationOrder]
+    : [sleepNavigationOrder,navigationOrder];
   const expectedNavigationText = etfBeforeTodo
     ? '概览 / 风险 / 配置 / ETF / 待办'
-    : '概览 / 风险 / 配置 / 待办 / ETF';
+    : '概览 / 待办 / 配置 / 风险 / ETF';
   const expectedPaneOrder = etfBeforeTodo ? 'p3, p5 and p4' : 'p3, p4 and p5';
   if (config.length !== 1 || etf.length !== 1 || todo.length !== 1
       || !(etfBeforeTodo
@@ -109,9 +115,9 @@ function assertIntegratedEtfPane(source, canonicalSection, { etfBeforeTodo = fal
   if (exactInputs.length !== 1 || exactLabels.length !== 1 || tabbars.length !== 1) {
     throw new Error('integrated handover must contain the exact ETF controls in one tabbar');
   }
-  const orderedInputs = [];
-  const orderedLabels = [];
-  for (const id of expectedNavigationOrder) {
+  const inputsById = new Map();
+  const labelsById = new Map();
+  for (const id of navigationOrder) {
     if (attributeValueCount(structural, 'id', id) !== 1
         || attributeValueCount(structural, 'for', id) !== 1) {
       throw new Error(`navigation must reserve id=${id} and for=${id} exactly once`);
@@ -129,12 +135,17 @@ function assertIntegratedEtfPane(source, canonicalSection, { etfBeforeTodo = fal
     if (id === 's4' ? !/^待办(?:\s+\d+)?$/.test(text) : text !== navigationText[id]) {
       throw new Error(`navigation label ${id} has the wrong visible text`);
     }
-    orderedInputs.push(inputs[0]);
-    orderedLabels.push(labels[0]);
+    inputsById.set(id,inputs[0]);
+    labelsById.set(id,labels[0]);
   }
-  if (orderedInputs.some((match, index) => index > 0 && orderedInputs[index - 1].index >= match.index)
-      || orderedLabels.some((match, index) => index > 0 && orderedLabels[index - 1].index >= match.index)
-      || orderedInputs.some(match => match.index >= tabbars[0].start)
+  const inputOrders=expectedInputOrders.map(order=>order.map(id=>inputsById.get(id)));
+  const inputsAreOrdered=inputOrders.some(items=>items.every((match,index)=>index===0||items[index-1].index<match.index));
+  const labelOrders=expectedLabelOrders.map(order=>order.map(id=>labelsById.get(id)));
+  const labelsAreOrdered=labelOrders.some(items=>items.every((match,index)=>index===0||items[index-1].index<match.index));
+  const orderedLabels=navigationOrder.map(id=>labelsById.get(id));
+  if (!inputsAreOrdered
+      || !labelsAreOrdered
+      || [...inputsById.values()].some(match => match.index >= tabbars[0].start)
       || orderedLabels.some(match => match.index < tabbars[0].openEnd
         || match.index + match[0].length > tabbars[0].closeStart)
       || allPanes.length === 0

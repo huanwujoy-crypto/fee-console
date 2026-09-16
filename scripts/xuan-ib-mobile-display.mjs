@@ -7,7 +7,8 @@ import {simplifyReportNotes} from './xuan-ib-routine-reading.mjs';
 import {familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
 export {familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
 export {organizeRoutineRecords} from './xuan-ib-routine-reading.mjs';
-export const GUIDE_BODY = `<ol><li><b>概览</b>：先看数据日期，再看持仓变化；市值大的排前面。</li><li><b>风险 / 配置</b>：看提醒、风险线与现金参考。</li><li><b>待办</b>：只处理明确要求你的事项；挂单仅提醒。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>刷新</b>：只读取已发布结果；睡前版在美股开市时启动。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p>`;
+export const SLEEP_TAB_ORDER=Object.freeze(['s1','s4','s3','s2','s5']);
+export const GUIDE_BODY = `<ol><li><b>概览</b>：先看持仓变化；市值大的排前面。</li><li><b>待办</b>：重点看挂单；只处理明确要求你的事项。</li><li><b>配置 / 风险</b>：随后查看现金参考、提醒与风险线。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>更新</b>：页面自动读取已发布结果，无需反复操作。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p>`;
 
 export const MOBILE_READING_CSS = `
 .kpis{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:10px!important}
@@ -52,6 +53,7 @@ export const MOBILE_READING_CSS = `
 .pane table th,.pane table td{overflow-wrap:normal!important;word-break:normal!important}
 .pane table td:not(:first-child){white-space:nowrap}.pane table th{font-size:13px}.pane .tblwrap{overflow-x:auto}
 @media(min-width:850px){.kpis{grid-template-columns:repeat(4,minmax(0,1fr))!important}}
+@media(max-width:640px){.tabbar{grid-template-columns:1fr minmax(86px,1.3fr) 1fr 1fr 1fr!important}}
 @media(max-width:360px){.wrap{padding:8px!important}.kpi{padding:10px!important}.kpi .big{font-size:clamp(17px,14cqi,25px)!important}}
 `;
 
@@ -100,6 +102,24 @@ function compactHoldingsNote(doc) {
     if(!detail?.querySelector||!detail.querySelectorAll)continue;
     if(detail.querySelector(':scope > summary')?.textContent?.trim()!=='持仓说明')continue;
     for(const line of detail.querySelectorAll(':scope > .dbody li,:scope > .dbody p'))line.textContent=conciseHoldingsNote(line.textContent);
+  }
+}
+
+function prioritizeSleepTabs(doc) {
+  const bar=doc.querySelector('.tabbar');if(!bar)return;
+  const labels=new Map([...bar.querySelectorAll(':scope > label[for]')].map(label=>[label.getAttribute('for'),label]));
+  if(['s1','s2','s3','s4','s5'].some(id=>!labels.has(id)))return;
+  for(const id of SLEEP_TAB_ORDER)bar.append(labels.get(id));
+}
+
+export function isLowValueEventTitle(title) {
+  return /^(?:③\s*)?(?:今夜你睡着时会发生什么|接下来会发生什么)$/.test(String(title??'').trim());
+}
+
+function removeLowValueEventCard(doc) {
+  for(const detail of doc.querySelectorAll('.pane.p1 > details')){
+    const title=detail.querySelector(':scope > summary')?.textContent?.trim()||'';
+    if(isLowValueEventTitle(title))detail.remove();
   }
 }
 
@@ -563,6 +583,8 @@ export function simplifyPaneReading(doc) {
 
 export function improveMobileDisplay(doc) {
   if (!doc?.querySelectorAll) return;
+  prioritizeSleepTabs(doc);
+  removeLowValueEventCard(doc);
   compactHoldingsNote(doc);
   splitLegacySubPercentLosses(doc);
   // Reorder existing cells intact; never calculate or change their amounts.
