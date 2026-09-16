@@ -325,7 +325,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
     outerDocument.body.append(decision);
   }
   const status = {textContent: '', classList: classList()};
-  const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本'};
+  const warning = {hidden: true, textContent: '上游暂不一致，正在显示上一份已验证版本', classList: classList()};
   const elements = new Map([
     ['.header-guide > summary', headerGuide ? {} : null],
     ['.header-guide .guide-body', headerGuideBody ? {} : null],
@@ -1715,18 +1715,16 @@ test('Saturday retains Friday PM but clearly warns when only Thursday PM is publ
 
   assert.match(app.frame.srcdoc, /trusted-thursday/);
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /报告已过期/);
-  assert.match(app.warning.textContent, /应至少为 2026-08-28 睡前版/);
-  assert.match(app.warning.textContent, /当前为 2026-08-27 睡前版/);
-  assert.match(app.warning.textContent, /未伪造新数据/);
+  assert.match(app.warning.textContent, /今晚报告更新延迟/);
+  assert.match(app.warning.textContent, /当前继续显示 2026-08-27 睡前版/);
   assert.equal(app.status.classList.contains('error'), true);
 });
 
-test('refresh preserves stale warning until a fresh pair has passed verification', async () => {
-  const oldHtml = reportHtml('2026-08-27', '睡前版', 'old-verified');
-  const freshHtml = reportHtml('2026-08-29', '早间版', 'fresh-verified');
+test('refresh preserves a delayed warning until the current PM pair has passed verification', async () => {
+  const oldHtml = reportHtml('2026-09-15', '睡前版', 'old-verified');
+  const freshHtml = reportHtml('2026-09-16', '睡前版', 'fresh-verified');
   let currentHtml = oldHtml, gate = null;
-  const app = loaderHarness({now: '2026-08-29T00:40:00Z', fetchImpl: async url => {
+  const app = loaderHarness({now: '2026-09-16T13:51:00Z', fetchImpl: async url => {
     if (gate) await gate.promise;
     return String(url).includes('latest.meta.json')
       ? response({json: metaFor(currentHtml), bytes: []})
@@ -1744,27 +1742,34 @@ test('refresh preserves stale warning until a fresh pair has passed verification
   assert.match(app.frame.srcdoc, /fresh-verified/);
 });
 
-test('a report crossing its deadline becomes visibly stale while refresh is still pending', async () => {
-  const html = reportHtml('2026-09-08', '早间版', 'crossing-deadline');
+test('the PM window changes from a blue updating notice to a delayed warning at T+20', async () => {
+  const html = reportHtml('2026-09-15', '睡前版', 'crossing-deadline');
   let gate = null;
-  const app = loaderHarness({now: '2026-09-08T13:49:00Z', fetchImpl: async url => {
+  const app = loaderHarness({now: '2026-09-16T13:49:00Z', fetchImpl: async url => {
     if (gate) await gate.promise;
     return String(url).includes('latest.meta.json')
       ? response({json: metaFor(html), bytes: []})
       : response({json: null, bytes: Buffer.from(html)});
   }});
-  await app.listeners.button.click(); assert.equal(app.warning.hidden, true);
+  await app.listeners.button.click();
+  assert.equal(app.warning.hidden, false);
+  assert.match(app.warning.textContent, /今晚报告更新中/);
+  assert.equal(app.warning.classList.contains('info'), true);
+  assert.equal(app.status.classList.contains('error'), false);
   app.advanceTime(61_000); gate = privateDeferred();
   const refresh = app.listeners.button.click(); await settlePrivateLoader();
-  assert.equal(app.warning.hidden, false); assert.match(app.warning.textContent, /报告已过期/);
+  assert.equal(app.warning.hidden, false);
+  assert.match(app.warning.textContent, /今晚报告更新延迟/);
+  assert.equal(app.warning.classList.contains('info'), false);
+  assert.equal(app.status.classList.contains('error'), true);
   gate.resolve(); await refresh;
   assert.equal(app.warning.hidden, false, 'the same old pair cannot clear the warning');
 });
 
 test('refresh does not clear a transport warning or accept mismatched fresh-looking bytes', async () => {
-  const html = reportHtml('2026-08-29', '早间版', 'trusted');
+  const html = reportHtml('2026-09-15', '睡前版', 'trusted');
   let failed = false, gate = null;
-  const app = loaderHarness({now: '2026-08-29T00:40:00Z', fetchImpl: async url => {
+  const app = loaderHarness({now: '2026-09-16T01:40:00Z', fetchImpl: async url => {
     if (gate) await gate.promise;
     return String(url).includes('latest.meta.json')
       ? response({json: metaFor(html), bytes: []})
@@ -1778,10 +1783,10 @@ test('refresh does not clear a transport warning or accept mismatched fresh-look
   assert.equal(app.warning.hidden, false); assert.doesNotMatch(app.frame.srcdoc, /untrusted/);
 });
 
-test('Saturday AM remains current through Sunday and Monday before the PM deadline', async () => {
-  const html = reportHtml('2026-08-29', '早间版', 'trusted-saturday-am');
+test('Friday PM remains current through the weekend and Monday before the PM window', async () => {
+  const html = reportHtml('2026-09-18', '睡前版', 'trusted-friday-pm');
   const meta = metaFor(html);
-  for (const now of ['2026-08-29T00:35:00Z', '2026-08-30T12:00:00Z', '2026-08-31T13:24:00Z']) {
+  for (const now of ['2026-09-19T01:00:00Z', '2026-09-20T12:00:00Z', '2026-09-21T13:29:59Z']) {
     const app = loaderHarness({
       now,
       fetchImpl: async (url) => String(url).includes('latest.meta.json')
@@ -1789,30 +1794,25 @@ test('Saturday AM remains current through Sunday and Monday before the PM deadli
         : response({json: null, bytes: Buffer.from(html)}),
     });
     await app.listeners.button.click();
-    assert.equal(app.warning.hidden, true, `${now} must accept the last Saturday AM report`);
+    assert.equal(app.warning.hidden, true, `${now} must accept the last Friday PM report`);
     assert.equal(app.status.classList.contains('error'), false);
   }
 });
 
-test('Hong Kong deadlines preserve history and apply opening plus twenty minutes after cutover', async () => {
+test('bedtime-only notices follow start, T+20, full-PM and priority boundaries', async () => {
   const cases = [
-    ['2026-09-01T00:34:00Z', '2026-08-31', '睡前版', false], // Tue 08:34 HKT
-    ['2026-09-01T00:35:00Z', '2026-08-31', '睡前版', true],  // Tue 08:35 HKT
-    ['2026-09-01T00:35:00Z', '2026-09-01', '早间版', false],
-    ['2026-09-01T13:25:00Z', '2026-09-01', '早间版', true],  // Tue 21:25 HKT
-    ['2026-09-01T13:25:00Z', '2026-09-01', '睡前版', false],
-    ['2026-09-05T00:34:00Z', '2026-09-04', '睡前版', false], // Sat 08:34 HKT
-    ['2026-09-05T00:35:00Z', '2026-09-04', '睡前版', true],
-    ['2026-09-05T00:35:00Z', '2026-09-05', '早间版', false],
-    ['2026-09-04T13:44:00Z', '2026-09-04', '早间版', false], // new PM not due yet
-    ['2026-09-04T13:45:00Z', '2026-09-04', '早间版', true],
-    ['2026-09-07T13:49:59Z', '2026-09-05', '早间版', false],
-    ['2026-09-07T13:50:00Z', '2026-09-05', '早间版', true],
-    ['2026-11-02T14:45:00Z', '2026-10-31', '早间版', false], // old winter deadline must not warn
-    ['2026-11-02T14:49:59Z', '2026-10-31', '早间版', false],
-    ['2026-11-02T14:50:00Z', '2026-10-31', '早间版', true],
+    ['2026-09-16T01:35:00Z', '2026-09-15', '睡前版', null],
+    ['2026-09-16T13:29:59Z', '2026-09-15', '睡前版', null],
+    ['2026-09-16T13:30:00Z', '2026-09-15', '睡前版', 'info'],
+    ['2026-09-16T13:49:59Z', '2026-09-15', '睡前版', 'info'],
+    ['2026-09-16T13:50:00Z', '2026-09-15', '睡前版', 'error'],
+    ['2026-09-16T13:40:00Z', '2026-09-16', '临时版 · 睡前速览', 'info'],
+    ['2026-09-16T13:50:00Z', '2026-09-16', '临时版 · 睡前速览', 'error'],
+    ['2026-09-16T13:35:00Z', '2026-09-16', '睡前版', null],
+    ['2026-11-02T14:30:00Z', '2026-10-30', '睡前版', 'info'],
+    ['2026-11-02T14:50:00Z', '2026-10-30', '睡前版', 'error'],
   ];
-  for (const [now, date, edition, stale] of cases) {
+  for (const [now, date, edition, level] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);
     const meta = metaFor(html);
     const app = loaderHarness({
@@ -1822,26 +1822,30 @@ test('Hong Kong deadlines preserve history and apply opening plus twenty minutes
         : response({json: null, bytes: Buffer.from(html)}),
     });
     await app.listeners.button.click();
-    assert.equal(!app.warning.hidden, stale, `${now} / ${date} / ${edition}`);
+    assert.equal(app.warning.hidden, level === null, `${now} / ${date} / ${edition}`);
+    assert.equal(app.warning.classList.contains('info'), level === 'info', `${now} / ${date} / ${edition}`);
+    assert.equal(app.status.classList.contains('error'), level === 'error', `${now} / ${date} / ${edition}`);
   }
 });
 
-test('a newer ad-hoc report can be the phone page without impersonating the scheduled history', async () => {
-  const html = reportHtml('2026-09-01', '计划外加跑（常规 21:00）', 'trusted-adhoc');
-  const meta = metaFor(html, {sourceCommitEpoch: Date.parse('2026-09-01T13:05:00Z') / 1000});
+test('a newer ad-hoc report is an informational preview before T+20', async () => {
+  const html = reportHtml('2026-09-16', '临时版 · 睡前速览', 'trusted-adhoc');
+  const meta = metaFor(html, {sourceCommitEpoch: Date.parse('2026-09-16T13:40:00Z') / 1000});
   const app = loaderHarness({
-    now: '2026-09-01T13:25:00Z',
+    now: '2026-09-16T13:40:00Z',
     fetchImpl: async (url) => String(url).includes('latest.meta.json')
       ? response({json: meta, bytes: []})
       : response({json: null, bytes: Buffer.from(html)}),
   });
   await app.listeners.button.click();
   assert.match(app.frame.srcdoc, /trusted-adhoc/);
-  assert.equal(app.warning.hidden, true);
+  assert.equal(app.warning.hidden, false);
+  assert.match(app.warning.textContent, /今晚报告更新中/);
+  assert.equal(app.warning.classList.contains('info'), true);
   assert.equal(app.status.classList.contains('error'), false);
 });
 
-test('an ad-hoc report created before a newly due slot is marked stale after that deadline', async () => {
+test('an ad-hoc report cannot impersonate the full PM after T+20', async () => {
   const html = reportHtml('2026-09-01', '临时版', 'pre-slot-adhoc');
   const meta = metaFor(html, {sourceCommitEpoch: Date.parse('2026-09-01T12:30:00Z') / 1000});
   const app = loaderHarness({
@@ -1852,7 +1856,8 @@ test('an ad-hoc report created before a newly due slot is marked stale after tha
   });
   await app.listeners.button.click();
   assert.equal(app.warning.hidden, false);
-  assert.match(app.warning.textContent, /应至少为 2026-09-01 睡前版/);
+  assert.match(app.warning.textContent, /今晚报告更新延迟/);
+  assert.equal(app.status.classList.contains('error'), true);
 });
 
 test('mixed metadata and HTML fail closed to the locally stored verified report', async () => {

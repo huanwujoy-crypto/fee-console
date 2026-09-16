@@ -95,6 +95,11 @@
       text-align: center;
     }
     #warning[hidden] { display: none; }
+    #warning.info {
+      border-color: #8ab7e8;
+      background: #eef6ff;
+      color: #145da0;
+    }
     #handover { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #f9f9f7; }
     @media (prefers-color-scheme: dark) {
       html, body, #handover { background: #0d0d0d; }
@@ -104,6 +109,7 @@
       #decision-count { background: #8ed09b; color: #102315; }
       #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
       #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
+      #warning.info { border-color: #315f8f; background: #10253d; color: #9ac8f6; }
     }
   </style>
 </head>
@@ -763,16 +769,16 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           throw new Error("unrecognized watcher schedule");
         }
 
-        return {hktContext, expectedEditionAt};
+        return {hktContext, expectedEditionAt, slotStartEpoch, slotDueEpoch};
       })();
       // report-schedule-generated:end
       const hktContext = reportSchedule.hktContext;
       const expectedBusinessEdition = (now = new Date()) => {
-        const expected = reportSchedule.expectedEditionAt(now);
-        if (!expected.expectedEdition) throw new Error("无法确定最近应完成的香港报告版次");
+        const expected = reportSchedule.expectedEditionAt(now, "pm");
+        if (!expected.expectedEdition) throw new Error("无法确定最近应完成的睡前版");
         return {dataDate:expected.expectedDate,edition:expected.expectedEdition,
           startEpoch:expected.startEpoch,dueEpoch:expected.dueEpoch,
-          label:expected.expectedEdition==="am"?"早间版":"睡前版"};
+          label:"睡前版"};
       };
 
       const classifyEdition = (edition) => {
@@ -783,21 +789,29 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         return "unknown";
       };
 
-      const staleMessage = (record, now = new Date()) => {
-        const expected = expectedBusinessEdition(now);
+      const freshnessNotice = (record, now = new Date()) => {
         const actualEdition = classifyEdition(record.info.edition);
-        const dateBehind = record.info.dataDate < expected.dataDate;
-        const editionRank = {am: 1, pm: 2};
-        const adHocBeforeSlot = actualEdition === "adhoc" &&
-          record.meta.sourceCommitEpoch < expected.startEpoch;
-        const scheduledBehind = (editionRank[actualEdition] ?? 0) < editionRank[expected.edition];
-        const slotBehind = record.info.dataDate === expected.dataDate &&
-          (actualEdition === "unknown" || adHocBeforeSlot ||
-            (actualEdition !== "adhoc" && scheduledBehind));
-        if (!dateBehind && !slotBehind) return "";
-        return `报告已过期：应至少为 ${expected.dataDate} ${expected.label}，` +
-          `当前为 ${record.info.dataDate} ${record.info.edition}。` +
-          "现继续显示最后一份已验证报告，未伪造新数据。";
+        const context = hktContext(now), nowEpoch = now.getTime() / 1000;
+        const businessDay = context.weekday >= 1 && context.weekday <= 5;
+        if (businessDay) {
+          const startEpoch = reportSchedule.slotStartEpoch(context.date, "pm");
+          const dueEpoch = reportSchedule.slotDueEpoch(context.date, "pm");
+          if (nowEpoch >= startEpoch && nowEpoch < dueEpoch &&
+              !(record.info.dataDate === context.date && actualEdition === "pm")) {
+            const current = record.info.dataDate === context.date && actualEdition === "adhoc"
+              ? "当前先显示睡前速览"
+              : `当前继续显示 ${record.info.dataDate} ${record.info.edition}`;
+            return {message:`今晚报告更新中，${current}。`, error:false};
+          }
+        }
+        const expected = expectedBusinessEdition(now);
+        const satisfiesExpected = actualEdition === "pm" &&
+          record.info.dataDate >= expected.dataDate;
+        if (satisfiesExpected) return {message:"", error:false};
+        return {
+          message:`今晚报告更新延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。`,
+          error:true
+        };
       };
 
       const validateMeta = (meta) => {
@@ -1400,14 +1414,24 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         renderedBlob = record.blob;
       }
 
-      function renderVerified(record, prefix, warningMessage = "") {
+      const normalizeNotice = (notice) => typeof notice === "string"
+        ? {message:notice, error:Boolean(notice)}
+        : {message:notice?.message || "", error:Boolean(notice?.error)};
+
+      function applyNotice(notice) {
+        const value = normalizeNotice(notice);
+        warning.hidden = !value.message;
+        warning.textContent = value.message;
+        warning.classList.toggle("info", Boolean(value.message) && !value.error);
+        status.classList.toggle("error", Boolean(value.message) && value.error);
+      }
+
+      function renderVerified(record, prefix, notice = "") {
         lastVerified = record;
         updateDecisionControl(record);
         displayVerified(record);
         if (renderedDocument && frame.contentDocument === renderedDocument) refreshPrivateEtf(record);
-        warning.hidden = !warningMessage;
-        warning.textContent = warningMessage;
-        status.classList.toggle("error", Boolean(warningMessage));
+        applyNotice(notice);
         status.textContent = statusFor(record, prefix);
       }
 
@@ -1434,7 +1458,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
           const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
           if (request !== requestSequence) return false;
-          renderVerified(record, "更新中，请稍候", staleMessage(record));
+          renderVerified(record, "更新中，请稍候", freshnessNotice(record));
           return true;
         } catch (error) {
           try { storage.removeItem(storageKey); } catch (_) {}
@@ -1455,12 +1479,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         if (lastVerified) {
           // Checking is additive: neither starting a fetch nor receiving bytes
           // proves freshness. Preserve an existing warning until pair verification.
-          const stale = staleMessage(lastVerified);
-          if (stale) {
-            warning.hidden = false;
-            warning.textContent = stale;
-          }
-          status.classList.toggle("error", !warning.hidden);
+          const freshness = freshnessNotice(lastVerified);
+          if (freshness.message && (warning.hidden || warning.classList.contains("info"))) applyNotice(freshness);
+          else status.classList.toggle("error", !warning.hidden && !warning.classList.contains("info"));
           status.textContent = statusFor(lastVerified, "更新中，请稍候");
         } else if (!restored) {
           status.textContent = "更新中，请稍候…";
@@ -1488,7 +1509,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           );
           if (request !== requestSequence) return;
           const verifiedAt = Date.now();
-          renderVerified(record, `已同步 ${clock()}`, staleMessage(record));
+          renderVerified(record, `已同步 ${clock()}`, freshnessNotice(record));
           saveVerified(record);
           lastSuccess = verifiedAt;
           updateActiveWait(record, verifiedAt);
@@ -1500,9 +1521,10 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (request !== requestSequence) return;
           status.classList.add("error");
           if (lastVerified) {
-            const stale = staleMessage(lastVerified);
+            const freshness = freshnessNotice(lastVerified);
             const fallback = "上游暂不一致，正在显示上一份已验证版本";
-            renderVerified(lastVerified, "显示上一份已验证版本", stale ? `${stale} ${fallback}` : fallback);
+            renderVerified(lastVerified, "显示上一份已验证版本",
+              {message:freshness.message ? `${freshness.message} ${fallback}` : fallback, error:true});
             void refreshProgress(lastVerified, request);
           } else {
             warning.hidden = true;
