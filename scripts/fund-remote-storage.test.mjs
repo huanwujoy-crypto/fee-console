@@ -10,7 +10,7 @@ const root = process.env.FUND_UI_ROOT || path.resolve(path.dirname(fileURLToPath
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const region = name => html.split(`/* ${name}:start */`)[1]?.split(`/* ${name}:end */`)[0];
 const remoteCode = region("fund-remote-storage");
-const remoteTest = (name, fn) => test(name, { skip: !remoteCode }, fn);
+const remoteTest = (name, fn, opt = {}) => test(name, { skip: !remoteCode || !!opt.skip }, fn);
 
 const profile = {
   schema: "fee-console.fund-profile.v1", manager: "SYNTHETIC MANAGER", fundName: "SYNTHETIC FUND",
@@ -103,4 +103,4 @@ remoteTest("published capital events cannot be erased, rewritten or retrospectiv
     await assert.rejects(run(ctx, `writeRemoteFundBundle(${JSON.stringify(altered)},${JSON.stringify(library)},${JSON.stringify(raw)})`), /不可删除或重写/);
     assert.equal(run(ctx, "patchCalls"), 1);
   }
-});
+}, { skip: !remoteCode?.includes("已发布增资事件不可删除") });

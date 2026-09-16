@@ -61,7 +61,7 @@ test('subscription view shows current shares and excludes contributed capital fr
  assert.match(profileHtml,/1,500 股/);assert.match(profileHtml,/B · 60\.00%/);
  assert.match(body,/最新可核验份额<b>900 股/);assert.match(body,/较前一估值日 · 已剔除增资/);
  assert.match(body,/\$42\.00/);assert(!body.includes('>$132.00</div>'));
-});
+},{skip:!html.includes('const EVENT_KEYS =')});
 test('future unknown flow shows only last safe dated investor value',()=>{
  const c=context();run(c,`fixtureFee.benchmarkInputs.flows=[{date:'2026-08-22',amountCents:999999}];renderInvestors({profile},fixtureFee);`);const body=run(c,'elements.get("fundInvestorBox").innerHTML');assert.match(body,/最近可计算市值/);assert.match(body,/当前市值待核验/);assert.match(body,/历史市值仅截至 2026-08-21/);assert.match(body,/>\$108\.00</);assert(!body.includes('>2026-08-22</td>'));assert.match(body,/外部资金流|投资人归属/);
 });

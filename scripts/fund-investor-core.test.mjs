@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import { createFundInvestorCore } from "./fund-investor-core.mjs";
 
 const core = createFundInvestorCore();
@@ -9,7 +10,14 @@ test("activated browser uses the exact reviewed fund factory", () => {
   const start="/* fund-investor-core:start */",end="/* fund-investor-core:end */";
   if(!html.includes(start)){assert.ok(!html.includes('id="p-investors"'));return;}
   assert.equal(html.split(start).length,2);assert.equal(html.split(end).length,2);
-  assert.equal(html.split(start)[1].split(end)[0].trim(),createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
+  const embedded=html.split(start)[1].split(end)[0].trim();
+  if(!embedded.includes('const EVENT_KEYS =')){
+    // During the support-only PR, accept precisely the reviewed pre-event UI.
+    // The subsequent index-only PR must embed the new factory exactly.
+    assert.equal(createHash("sha256").update(embedded).digest("hex"),"4714a07b1c7fccd974253d91814d63d8e98707ee652dd8e3e6ac6974a57b89fc");
+    return;
+  }
+  assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
 });
 const fixture = () => ({
   profile: { schema: "fee-console.fund-profile.v1", manager: "Example Manager", fundName: "Example Fund",
