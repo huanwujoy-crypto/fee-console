@@ -29,7 +29,7 @@
     }
     .title { min-width: 0; }
     .title strong { display: block; font-size: 18px; line-height: 1.25; }
-    #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; }
+    #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; white-space: pre-line; }
     #status.error { color: #b3261e; }
     .header-actions {
       flex: 0 0 auto;
@@ -100,6 +100,20 @@
       background: #eef6ff;
       color: #145da0;
     }
+    #app-update {
+      flex: 0 0 auto;
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      border-bottom: 1px solid #8ab7e8;
+      background: #eef6ff;
+      color: #145da0;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    #app-update[hidden] { display: none; }
     #handover { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #f9f9f7; }
     @media (prefers-color-scheme: dark) {
       html, body, #handover { background: #0d0d0d; }
@@ -110,6 +124,7 @@
       #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
       #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
       #warning.info { border-color: #315f8f; background: #10253d; color: #9ac8f6; }
+      #app-update { border-color: #315f8f; background: #10253d; color: #9ac8f6; }
     }
   </style>
 </head>
@@ -118,13 +133,14 @@
     <header class="bar">
       <div class="title">
         <strong>XUAN-投资管理</strong>
-        <span id="status" role="status" aria-live="polite">更新中，请稍候…</span>
+        <span id="status" role="status" aria-live="polite">正在检查已发布报告…</span>
       </div>
       <div class="header-actions">
         <details class="header-guide"><summary>使用指南</summary><div class="guide-body"><ol><li><b>概览</b>：先看持仓变化；市值大的排前面。</li><li><b>待办</b>：重点看挂单；只处理明确要求你的事项。</li><li><b>配置 / 风险</b>：随后查看现金参考、提醒与风险线。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>更新</b>：页面自动读取已发布结果，无需反复操作。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p></div></details>
         <button id="refresh" type="button" hidden tabindex="-1" aria-hidden="true">刷新</button>
       </div>
     </header>
+    <button id="app-update" type="button" hidden>新版可用 · 点此更新页面</button>
     <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
     <div id="decision-parking" hidden>
       <button id="decision" type="button"
@@ -143,8 +159,10 @@
       const decisionButton = document.querySelector("#decision");
       const decisionCount = document.querySelector("#decision-count");
       const status = document.querySelector("#status");
+      const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
-      const loaderBuild = "2026-09-16.1";
+      // Bump together with app-build.json whenever this shell or its mobile display code changes.
+      const loaderBuild = "2026-09-16.2";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -153,6 +171,9 @@
       const waitTimeoutMs = 20 * 60_000;
       let lastSuccess = 0;
       let lastAttempt = 0;
+      let lastBuildCheck = 0;
+      let buildCheckInFlight = false;
+      let availableBuild = null;
       let lastVerified = null;
       let requestSequence = 0;
       let decisionWait = null;
@@ -552,7 +573,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         const date = text.match(/^(\d{4}-\d{2}-\d{2})\b/);
         const parts = text.split("·").map((part) => part.trim()).filter(Boolean);
         if (!date || parts.length < 2) throw new Error("报告日期或版次无法识别");
-        return { dataDate: date[1], edition: parts[1], label: text };
+        const foot = html.match(/<div\s+class=["']foot["'][^>]*>([\s\S]*?)<\/div>/i);
+        const asOf = foot?.[1].match(/数据截至\s+\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2})(?:[–-](\d{2}:\d{2}))?\s*HKT/);
+        return { dataDate: date[1], edition: parts[1], label: text, asOfHkt: asOf?.[2] || asOf?.[1] || null };
       };
 
       const requireExactKeys = (value, keys, label) => {
@@ -789,6 +812,10 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         return "unknown";
       };
 
+      const isSleepPriority = (record) =>
+        classifyEdition(record.info.edition) === "adhoc" &&
+        record.html.includes('data-xuan-delivery="sleep-priority-v1"');
+
       const freshnessNotice = (record, now = new Date()) => {
         const actualEdition = classifyEdition(record.info.edition);
         const context = hktContext(now), nowEpoch = now.getTime() / 1000;
@@ -798,18 +825,21 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const dueEpoch = reportSchedule.slotDueEpoch(context.date, "pm");
           if (nowEpoch >= startEpoch && nowEpoch < dueEpoch &&
               !(record.info.dataDate === context.date && actualEdition === "pm")) {
-            const current = record.info.dataDate === context.date && actualEdition === "adhoc"
-              ? "当前先显示睡前速览"
-              : `当前继续显示 ${record.info.dataDate} ${record.info.edition}`;
-            return {message:`今晚报告更新中，${current}。`, error:false};
+            if (record.info.dataDate === context.date && isSleepPriority(record)) {
+              return {message:"睡前速览已更新（持仓与挂单）；完整版待发布。", error:false};
+            }
+            return {message:`等待今晚睡前版；当前继续显示 ${record.info.dataDate} ${record.info.edition}。`, error:false};
           }
         }
         const expected = expectedBusinessEdition(now);
         const satisfiesExpected = actualEdition === "pm" &&
           record.info.dataDate >= expected.dataDate;
         if (satisfiesExpected) return {message:"", error:false};
+        if (record.info.dataDate === expected.dataDate && isSleepPriority(record)) {
+          return {message:"睡前速览已更新（持仓与挂单）；完整版发布延迟。", error:true};
+        }
         return {
-          message:`今晚报告更新延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。`,
+          message:`今晚睡前版发布延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。`,
           error:true
         };
       };
@@ -874,11 +904,13 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       }
 
       const statusFor = (record, prefix) => {
-        if (prefix === "回应已记录") return "回应已记录，报告已自动刷新";
-        if (prefix === "显示上一份已验证版本" || prefix === "更新中，请稍候") {
-          return `${prefix} · ${record.info.dataDate} ${record.info.edition}`;
-        }
-        return prefix;
+        const report = `报告 ${record.info.dataDate.slice(5)} ${record.info.edition}` +
+          (record.info.asOfHkt ? ` · 数据至 ${record.info.asOfHkt}` : "");
+        if (prefix === "回应已记录") return `${report}\n回应已记录 · 已检查 ${clock()}`;
+        if (prefix === "显示上一份已验证版本") return `${report}\n显示上一份已验证报告`;
+        if (prefix === "正在检查已发布报告") return `${report}\n正在检查已发布报告…`;
+        if (prefix === "已检查") return `${report}\n已检查 ${clock()}`;
+        return `${report}\n${prefix}`;
       };
 
       function updateDecisionControl(record) {
@@ -1449,6 +1481,44 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         }
       }
 
+      const buildParts = (value) => {
+        const match = /^(\d{4})-(\d{2})-(\d{2})\.(\d{1,4})$/.exec(value || "");
+        if (!match || !Number.isFinite(Date.parse(`${match[1]}-${match[2]}-${match[3]}T00:00:00Z`))) {
+          throw new Error("程序版本格式无效");
+        }
+        return [Number(`${match[1]}${match[2]}${match[3]}`), Number(match[4])];
+      };
+
+      async function checkAppBuild() {
+        if (document.hidden || buildCheckInFlight) return;
+        buildCheckInFlight = true;
+        lastBuildCheck = Date.now();
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 5_000);
+        try {
+          const url = new URL("app-build.json", location.href);
+          url.searchParams.set("v", String(Date.now()));
+          const response = await fetch(url, {cache:"no-store", credentials:"omit", signal:controller.signal});
+          if (!response.ok) throw new Error("程序版本暂不可读");
+          const manifest = await response.json();
+          if (!manifest || Object.keys(manifest).sort().join("|") !== "build|schemaVersion" ||
+              manifest.schemaVersion !== 1 || typeof manifest.build !== "string") {
+            throw new Error("程序版本清单无效");
+          }
+          const remote = buildParts(manifest.build), current = buildParts(loaderBuild);
+          if (remote[0] > current[0] || (remote[0] === current[0] && remote[1] > current[1])) {
+            availableBuild = manifest.build;
+            appUpdate.hidden = false;
+          }
+        } catch (error) {
+          // This optional check must never delay or invalidate a verified report.
+          console.warn("XUAN-IB app-version check failed", error);
+        } finally {
+          window.clearTimeout(timeout);
+          buildCheckInFlight = false;
+        }
+      }
+
       async function restoreVerified(request) {
         if (lastVerified || !storage) return Boolean(lastVerified);
         try {
@@ -1458,7 +1528,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
           const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
           if (request !== requestSequence) return false;
-          renderVerified(record, "更新中，请稍候", freshnessNotice(record));
+          renderVerified(record, "正在检查已发布报告", freshnessNotice(record));
           return true;
         } catch (error) {
           try { storage.removeItem(storageKey); } catch (_) {}
@@ -1482,9 +1552,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const freshness = freshnessNotice(lastVerified);
           if (freshness.message && (warning.hidden || warning.classList.contains("info"))) applyNotice(freshness);
           else status.classList.toggle("error", !warning.hidden && !warning.classList.contains("info"));
-          status.textContent = statusFor(lastVerified, "更新中，请稍候");
+          status.textContent = statusFor(lastVerified, "正在检查已发布报告");
         } else if (!restored) {
-          status.textContent = "更新中，请稍候…";
+          status.textContent = "正在检查已发布报告…";
         }
         try {
           const token = `${loaderBuild}-${Date.now()}`;
@@ -1509,7 +1579,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           );
           if (request !== requestSequence) return;
           const verifiedAt = Date.now();
-          renderVerified(record, `已同步 ${clock()}`, freshnessNotice(record));
+          renderVerified(record, "已检查", freshnessNotice(record));
           saveVerified(record);
           lastSuccess = verifiedAt;
           updateActiveWait(record, verifiedAt);
@@ -1552,6 +1622,13 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       if (decisionWait) showDecisionPending();
       decisionButton.addEventListener("click", beginDecisionWait);
       button.addEventListener("click", () => loadLatest({retryLayout: true}));
+      appUpdate.addEventListener("click", () => {
+        if (!availableBuild) return;
+        const url = new URL(location.href);
+        url.searchParams.delete("release");
+        url.searchParams.set("app", availableBuild);
+        location.href = url.href;
+      });
       window.addEventListener("pagehide", () => {
         privateEtfPageActive = false;
         clearPrivateEtf();
@@ -1560,6 +1637,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         privateEtfPageActive = true;
         if (lastVerified) refreshPrivateEtf(lastVerified);
         expireWaits();
+        void checkAppBuild();
         return loadLatest();
       });
       window.addEventListener("focus", () => {
@@ -1569,6 +1647,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         if (document.hidden) {
           clearPrivateEtf();
         } else if (lastVerified) refreshPrivateEtf(lastVerified);
+        if (!document.hidden) void checkAppBuild();
         if (!document.hidden && activeWait() && !expireWaits()) return loadLatest();
         if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
       });
@@ -1576,8 +1655,15 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         if (activeWait() && !expireWaits()) return loadLatest();
       }, waitPollMs);
       window.setInterval(() => {
-        if (!document.hidden && Date.now() - lastAttempt > 5 * 60_000) loadLatest();
-      }, 60_000);
+        if (document.hidden) return;
+        const now = new Date(), context = hktContext(now), epoch = now.getTime() / 1000;
+        const businessDay = context.weekday >= 1 && context.weekday <= 5;
+        const inDeliveryWindow = businessDay &&
+          epoch >= reportSchedule.slotStartEpoch(context.date, "pm") &&
+          epoch <= reportSchedule.slotDueEpoch(context.date, "pm");
+        if (Date.now() - lastAttempt > (inDeliveryWindow ? 30_000 : 5 * 60_000)) loadLatest();
+        if (Date.now() - lastBuildCheck > 5 * 60_000) void checkAppBuild();
+      }, 30_000);
     })();
   </script>
 </body>
