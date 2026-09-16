@@ -14,12 +14,15 @@ const published = {
   dataDate: "2026-08-26",
   htmlBlob: sha("b")
 };
+const publication = dataDate => ({kind: 'other', dataDate, priorityKey: null, eligibleAtEpoch: null});
+const publishedState = publication(published.dataDate);
 const candidate = (overrides = {}) => ({
   ref: "origin/claude/handover-20260826-abc123",
   sha: sha("c"),
   commitEpoch: 101,
   dataDate: "2026-08-26",
   htmlBlob: sha("d"),
+  publication: publication(overrides.dataDate ?? "2026-08-26"),
   ...overrides
 });
 
@@ -47,10 +50,10 @@ test("cross-checks published metadata against the trusted source commit", () => 
 });
 
 test("returns null when no unpublished candidate is eligible", () => {
-  assert.equal(selectNewestCandidate([], published), null);
-  assert.equal(selectNewestCandidate([candidate({htmlBlob: sha("b")})], published), null);
-  assert.equal(selectNewestCandidate([candidate({commitEpoch: 100})], published), null);
-  assert.equal(selectNewestCandidate([candidate({dataDate: "2026-08-25"})], published), null);
+  assert.equal(selectNewestCandidate([], published, publishedState), null);
+  assert.equal(selectNewestCandidate([candidate({htmlBlob: sha("b")})], published, publishedState), null);
+  assert.equal(selectNewestCandidate([candidate({commitEpoch: 100})], published, publishedState), null);
+  assert.equal(selectNewestCandidate([candidate({dataDate: "2026-08-25"})], published, publishedState), null);
 });
 
 test("chooses the newest of several valid candidates", () => {
@@ -58,7 +61,7 @@ test("chooses the newest of several valid candidates", () => {
     candidate({ref: "origin/claude/handover-20260826-old111", commitEpoch: 101, htmlBlob: sha("d")}),
     candidate({ref: "origin/claude/handover-20260826-new222", commitEpoch: 103, htmlBlob: sha("e")}),
     candidate({ref: "origin/claude/handover-20260826-mid333", commitEpoch: 102, htmlBlob: sha("f")})
-  ], published);
+  ], published, publishedState);
   assert.equal(selected.commitEpoch, 103);
   assert.equal(selected.ref, "origin/claude/handover-20260826-new222");
 });
@@ -67,7 +70,7 @@ test("a newer data date wins over a later correction to the older date", () => {
   const selected = selectNewestCandidate([
     candidate({ref: "origin/claude/handover-20260827-new111", dataDate: "2026-08-27", commitEpoch: 200, htmlBlob: sha("e")}),
     candidate({ref: "origin/claude/handover-20260826-late22", dataDate: "2026-08-26", commitEpoch: 300, htmlBlob: sha("f")})
-  ], published);
+  ], published, publishedState);
   assert.equal(selected.dataDate, "2026-08-27");
   assert.equal(selected.ref, "origin/claude/handover-20260827-new111");
 });
@@ -77,14 +80,14 @@ test("allows a next-day candidate and deterministically collapses identical ties
     candidate({ref: "origin/claude/handover-20260827-bbb222", commitEpoch: 200, dataDate: "2026-08-27"}),
     candidate({ref: "origin/claude/handover-20260827-aaa111", commitEpoch: 200, dataDate: "2026-08-27"})
   ];
-  assert.equal(selectNewestCandidate(tied, published).ref, "origin/claude/handover-20260827-aaa111");
+  assert.equal(selectNewestCandidate(tied, published, publishedState).ref, "origin/claude/handover-20260827-aaa111");
 });
 
 test("fails closed when different pages share the newest source timestamp", () => {
   assert.throws(() => selectNewestCandidate([
     candidate({commitEpoch: 200, htmlBlob: sha("d")}),
     candidate({ref: "origin/claude/handover-20260826-def456", commitEpoch: 200, htmlBlob: sha("e")})
-  ], published), /share the newest source timestamp/);
+  ], published, publishedState), /share the newest source timestamp/);
 });
 
 test("creates canonical metadata from the selected candidate", () => {
@@ -96,4 +99,31 @@ test("creates canonical metadata from the selected candidate", () => {
     dataDate: "2026-08-27",
     htmlBlob: selected.htmlBlob
   });
+});
+
+test('priority cannot publish before T+10 and cannot duplicate or replace same-day full pm', () => {
+  const priority = candidate({ commitEpoch: 200, publication: {
+    kind: 'priority', dataDate: '2026-08-26', priorityKey: 'pm:2026-08-26', eligibleAtEpoch: 201,
+  }});
+  assert.equal(selectNewestCandidate([priority], published, publishedState), null);
+  const eligible = { ...priority, commitEpoch: 201 };
+  assert.equal(selectNewestCandidate([eligible], published, publishedState), eligible);
+  assert.equal(selectNewestCandidate([eligible], published, {
+    kind: 'priority', dataDate: published.dataDate, priorityKey: `pm:${published.dataDate}`, eligibleAtEpoch: 150,
+  }), null);
+  assert.equal(selectNewestCandidate([eligible], published, {
+    kind: 'complete-pm', dataDate: published.dataDate, priorityKey: null, eligibleAtEpoch: null,
+  }), null);
+});
+
+test('complete pm beats same-date priority and replaces a published priority', () => {
+  const priority = candidate({ commitEpoch: 300, htmlBlob: sha('e'), publication: {
+    kind: 'priority', dataDate: '2026-08-26', priorityKey: 'pm:2026-08-26', eligibleAtEpoch: 150,
+  }});
+  const full = candidate({ ref: 'origin/claude/handover-20260826-full11', commitEpoch: 250,
+    htmlBlob: sha('f'), publication: { kind: 'complete-pm', dataDate: '2026-08-26', priorityKey: null, eligibleAtEpoch: null } });
+  assert.equal(selectNewestCandidate([priority, full], published, publishedState), full);
+  assert.equal(selectNewestCandidate([full], published, {
+    kind: 'priority', dataDate: published.dataDate, priorityKey: `pm:${published.dataDate}`, eligibleAtEpoch: 150,
+  }), full);
 });

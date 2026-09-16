@@ -14,6 +14,7 @@ import { runPrepareCli } from './xuan-ib-report-prepare.mjs';
 import { WEEKLY_SNAPSHOT_KIND, WEEKLY_STAGE_ERROR, mondayOfHktInstant } from './xuan-ib-weekly-snapshot.mjs';
 import { createPublishedMeta, validatePublishedMeta, selectNewestCandidate } from './xuan-ib-promotion.mjs';
 import { buildPublishedDecisionMenu } from './xuan-ib-decision-menu.mjs';
+import { classifySleepPublication, extractSleepPriorityDelivery } from './xuan-ib-sleep-priority.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const previousHtml = fs.readFileSync(path.join(root, 'xuan-ib/latest.html'), 'utf8');
@@ -187,8 +188,10 @@ for (const kind of ['missing', 'current', 'stale', 'invalid']) {
     // offline synthetic identity only, never a Git commit/tag/owner approval.
     const candidate = { ref: 'origin/claude/synthetic-weekly-test', sha: 'c'.repeat(40),
       commitEpoch: Math.max(previousMeta.sourceCommitEpoch + 1, Math.floor(Date.now() / 1000)),
-      dataDate: input.dataDate, htmlBlob: result.htmlBlob };
-    assert.deepEqual(selectNewestCandidate([candidate], previousMeta), candidate);
+      dataDate: input.dataDate, htmlBlob: result.htmlBlob,
+      publication: { kind: 'other', dataDate: input.dataDate, priorityKey: null, eligibleAtEpoch: null } };
+    const publishedState = { kind: 'other', dataDate: previousMeta.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    assert.deepEqual(selectNewestCandidate([candidate], previousMeta, publishedState), candidate);
     const meta = createPublishedMeta(candidate);
     assert.deepEqual(validatePublishedMeta(meta, result.htmlBlob, { sourceSha: candidate.sha,
       sourceCommitEpoch: candidate.commitEpoch, sourceHtmlBlob: candidate.htmlBlob, sourceDataDate: candidate.dataDate }), meta);
@@ -209,6 +212,28 @@ for (const kind of ['missing', 'current', 'stale', 'invalid']) {
     assert.deepEqual(fs.readFileSync(f.journalPath), before);
   });
 }
+
+test('weekly five-source run can prepare a guarded sleep-priority page without claiming pm completion', async t => {
+  const f = await fixture(t, { weekly: true, weeklySnapshot: weeklyMetadata() });
+  const runStartedAt = f.input.ib.accountSummary.startedAt;
+  const ready = Date.parse(runStartedAt) + 6_000;
+  const result = prepareMinimalRun(f.dir, { ...f.options,
+    sleepPriority: { runId: f.association.runId, runStartedAt }, wallNow: () => ready,
+    loadPolicy: () => f.snapshot(new Date(ready).toISOString()),
+    prepareCandidate: args => runPrepareCli(args, { loadAssociationPolicy: () => f.snapshot() }),
+  });
+  assert.equal(result.status, 'prepared-not-published');
+  const html = fs.readFileSync(path.join(f.dir, 'candidate.html'), 'utf8');
+  const delivery = extractSleepPriorityDelivery(html);
+  assert.equal(delivery.publishEligibleAt, new Date(Date.parse(runStartedAt) + 10 * 60_000).toISOString());
+  assert.equal(classifySleepPublication(html).kind, 'priority');
+  assert.match(html, /临时版 · 睡前速览/);
+  assert.match(html, /完整报告更新中/);
+  assert.doesNotMatch(html, /睡前版 ·/);
+  assert.doesNotMatch(html, /xuan-etf-open-summary-v3/);
+  assert.match(html, /id="xuan-ib-policy-v2"/);
+  assert.match(html, /其它待办沿用上一份已核验状态/);
+});
 
 test('weekly mode cannot retrofit a completed full-live journal', async t => {
   const f = await fixture(t);

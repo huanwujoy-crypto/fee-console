@@ -94,6 +94,8 @@ jobs:
           candidates_file="$RUNNER_TEMP/candidates.json"
           selected_file="$RUNNER_TEMP/selected.json"
           printf '[]\n' > "$candidates_file"
+          node scripts/xuan-ib-sleep-priority.mjs classify xuan-ib/latest.html \
+            > "$RUNNER_TEMP/published-publication.json"
 
           while IFS= read -r candidate_ref; do
             branch_name=${candidate_ref#origin/}
@@ -243,19 +245,26 @@ jobs:
               echo "Skipping $branch_name: its handover page failed validation."
               continue
             fi
+            if ! node scripts/xuan-ib-sleep-priority.mjs classify "$RUNNER_TEMP/handover.html" \
+                > "$RUNNER_TEMP/candidate-publication.json"; then
+              echo "Skipping $branch_name: its delivery state is invalid."
+              continue
+            fi
             jq \
               --arg ref "$candidate_ref" \
               --arg sha "$candidate_sha" \
               --arg dataDate "$data_date" \
               --arg htmlBlob "$candidate_blob" \
               --argjson commitEpoch "$commit_epoch" \
-              '. + [{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob}]' \
+              --slurpfile publication "$RUNNER_TEMP/candidate-publication.json" \
+              '. + [{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob, publication: $publication[0]}]' \
               "$candidates_file" > "$RUNNER_TEMP/candidates.next.json"
             mv "$RUNNER_TEMP/candidates.next.json" "$candidates_file"
           done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/)
 
           node scripts/xuan-ib-promotion.mjs select \
-            "$candidates_file" xuan-ib/latest.meta.json "$published_blob" > "$selected_file"
+            "$candidates_file" xuan-ib/latest.meta.json "$published_blob" \
+            "$RUNNER_TEMP/published-publication.json" > "$selected_file"
           candidate_sha=$(jq -r '.sha // empty' "$selected_file")
 
           if [[ -z "$candidate_sha" ]]; then
@@ -322,6 +331,8 @@ jobs:
             echo 'Candidate blob changed while preparing the publication.' >&2
             exit 1
           fi
+          node scripts/xuan-ib-sleep-priority.mjs classify xuan-ib/latest.html \
+            > "$RUNNER_TEMP/final-publication.json"
 
           source_tag="refs/tags/xuan-ib-published/${DATA_DATE}-${CANDIDATE_SHA:0:12}"
           remote_source_sha=$(git ls-remote origin "$source_tag" | awk '{print $1}')
@@ -338,7 +349,8 @@ jobs:
             --arg dataDate "$DATA_DATE" \
             --arg htmlBlob "$CANDIDATE_BLOB" \
             --argjson commitEpoch "$CANDIDATE_COMMIT_EPOCH" \
-            '{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob}' \
+            --slurpfile publication "$RUNNER_TEMP/final-publication.json" \
+            '{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob, publication: $publication[0]}' \
             > "$RUNNER_TEMP/selected-candidate.json"
           node scripts/xuan-ib-promotion.mjs create-meta \
             "$RUNNER_TEMP/selected-candidate.json" > xuan-ib/latest.meta.json

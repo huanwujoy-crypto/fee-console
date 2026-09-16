@@ -151,9 +151,12 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
   if(readiness.blocked)fail(`publication blocked: ${readiness.issues.join(',')}`);
   requireCompactFreshSources(evidence,registry,readiness);
   const view=copy(viewInput);
+  const weeklyKpiLabels=view.kpis.map(k=>k.label).join('|');
+  const weeklyKpisAllowed=weeklyKpiLabels==='IB NAV|IB 账面现金|IB 股票市值'
+    || (view.delivery?.kind==='sleep-priority' && weeklyKpiLabels==='持仓数量|持仓市值|挂单数量');
   if(weekly && (view.cashPlan?.status!=='unavailable'
     || [...view.risk,...view.allocation].some(card=>card.brief?.state!=='unavailable'||card.rows.length)
-    || view.kpis.length!==3 || view.kpis.map(k=>k.label).join('|')!=='IB NAV|IB 账面现金|IB 股票市值')){
+    || view.kpis.length!==3 || !weeklyKpisAllowed)){
     fail('weekly metadata-only mode cannot expose unverified dependent metrics');
   }
   const expected=({ib:'ok','sharesight-ib-hk':'fallback',unavailable:'unavailable'})[readiness.positionSource];

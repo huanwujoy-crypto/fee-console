@@ -17,6 +17,8 @@ import { renderAiPressureKpi, renderAiPressureSection } from './xuan-ib-ai-press
 import { validateAiRiskDiagnostics } from './xuan-ib-ai-risk-input.mjs';
 import { parseEtfAbcPublicRuntimeStateJson, renderEtfAbcPublicRuntimeCard,
   ETF_ABC_RUNTIME_START, ETF_ABC_RUNTIME_END } from './xuan-ib-etf-abc.mjs';
+import { SLEEP_PRIORITY_BODY_ATTRIBUTE, renderSleepPriorityTransport,
+  validateSleepPriorityDelivery } from './xuan-ib-sleep-priority.mjs';
 
 const fail = message => { throw new Error(`Compact report: ${message}`); };
 const exact = (object, keys, label) => {
@@ -91,10 +93,16 @@ function validateCard(card, reportDate, allowOrders=false) {
 }
 
 export function validateReportView(view) {
+  const hasDelivery=Object.hasOwn(view||{},'delivery');
   exact(view, ['schemaVersion','edition','dataDate','asOfHkt','marketContext','alerts','summary',
-    'kpis','holdings','risk','allocation','rotation','events','decisions','observations','notes','cashPlan'], 'view');
+    'kpis','holdings','risk','allocation','rotation','events','decisions','observations','notes','cashPlan',
+    ...(hasDelivery?['delivery']:[])], 'view');
   if (view.schemaVersion !== 1 || !['am','pm','adhoc'].includes(view.edition)) fail('invalid compact report edition');
   date(view.dataDate); asOf(view.asOfHkt,view.dataDate);
+  if(hasDelivery){
+    validateSleepPriorityDelivery(view.delivery);
+    if(view.edition!=='adhoc'||view.delivery.dataDate!==view.dataDate)fail('sleep priority delivery must be same-date adhoc');
+  }
   if (!view.asOfHkt.startsWith(view.dataDate+' ')) fail('run read window must include report date and time');
   text(view.marketContext,120);
   list(view.alerts,0,3,'alerts'); view.alerts.forEach(item=>{exact(item,['level','text'],'alert'); if(!['warning','error'].includes(item.level))fail('invalid alert');text(item.text,160);});
@@ -321,6 +329,7 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
     validateAssociationReceipt(associationReceipt,associationSnapshot,{edition:view.edition,previousSourceSha:previousMeta.sourceSha,runId:associationReceipt.runId});
   }
   validateReportView(view);
+  const sleepPriority=Object.hasOwn(view,'delivery');
   // This validates the exact previous pair and its existing machine state. A
   // mismatched/unparseable history is not grounds to bootstrap empty receipts.
   buildDecisionMenu({html:previousHtml,meta:previousMeta});
@@ -349,7 +358,7 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   }
   let etf='';
   const legacy=template(previousHtml,'xuan-ib-etf-abc-state-v1');
-  if(legacy){
+  if(legacy&&!sleepPriority){
     const prior=parseEtfAbcPublicRuntimeStateJson(legacy[1]);
     // This is only the existing incomplete runtime marker, not ABC valuation.
     if(prior.comparisonStatus!=='incomplete'||prior.baselineStatus!=='pending')fail('established legacy ABC requires its own reviewed producer');
@@ -360,7 +369,7 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
     etf=`${ETF_ABC_RUNTIME_START}\n<template id="xuan-ib-etf-abc-state-v1" type="application/json">${JSON.stringify(runtime)}</template>\n${renderEtfAbcPublicRuntimeCard(runtime)}\n${ETF_ABC_RUNTIME_END}`;
   }
   const summary=template(previousHtml,'xuan-etf-open-summary-v3');
-  if(summary){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
+  if(summary&&!sleepPriority){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
   // Complete AI-tier coverage for this run's constituents, built by the trusted
   // module from the run's own holdings. The manifest is inert and the
   // disclosures carry no amount; both are refused unless every constituent is
@@ -410,11 +419,12 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   if(typeof enableOrderTrend!=='boolean')fail('enableOrderTrend must be boolean');
   const orderTrends=!enableOrderTrend?null:view.rotation.orders?buildOrderTrends(view.rotation.orders,{previousHtml,dataDate:view.dataDate}):new Map();
   const classificationDisclosure=renderClassificationDisclosure(fourBucket);
-  const edition={am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
+  const edition=sleepPriority?'临时版 · 睡前速览':{am:'早间版',pm:'睡前版',adhoc:'临时版'}[view.edition];
   const day='日一二三四五六'[new Date(`${view.dataDate}T00:00:00Z`).getUTCDay()];
   const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi
     +(aiPressure===null?'':renderAiPressureKpi(aiPressure,{asOfHkt:view.asOfHkt}));
-  const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head><body><!-- xuan-ib-handover:v1 -->
+  const bodyOpen=`<body${sleepPriority?` ${SLEEP_PRIORITY_BODY_ATTRIBUTE}`:''}>`;
+  const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head>${bodyOpen}<!-- xuan-ib-handover:v1 -->
 <input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary>${GUIDE_BODY}</details><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
@@ -422,15 +432,15 @@ ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).joi
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}</div>
 <div class="pane p2">${riskSourceNotice}${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
-<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):table(view.rotation.columns,view.rotation.rows)}`,true)}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
-<div class="pane p5">${renderPolicySection(policy)}${etf}</div></div>
-${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为手动临时版，不替代定时版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
+<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):table(view.rotation.columns,view.rotation.rows)}`,true)}${sleepPriority?'<div class="alert">其它待办沿用上一份已核验状态；完整睡前版将再核对。</div>':''}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
+<div class="pane p5">${renderPolicySection(policy)}${sleepPriority?'<div class="alert">ETF 随完整睡前版更新。</div>':etf}</div></div>
+${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为临时版，不替代定时睡前版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
-${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}${aiTier?`\n${aiTier.template}`:''}\n</body></html>\n`;
+${stateTemplate}\n${cash.template}${fourBucket?`\n${renderFourBucketReportTransport(fourBucket)}`:''}${aiTier?`\n${aiTier.template}`:''}${sleepPriority?`\n${renderSleepPriorityTransport(view.delivery)}`:''}\n</body></html>\n`;
   // The public receipt contains only fixed aliases, hashes and timestamps.
   // Full source envelopes and private account observations never enter HTML.
   const output=associationReceipt?html
-    .replace('<body>','<body data-account-scope-basis="owner-attested-recurring-v1">')
+    .replace(bodyOpen,bodyOpen.slice(0,-1)+' data-account-scope-basis="owner-attested-recurring-v1">')
     .replace(classificationDisclosure,renderAssociationDisclosure(associationReceipt,associationSnapshot)+classificationDisclosure)
     .replace('</body>',renderAssociationReceipt(associationReceipt)+'\n</body>'):html;
   // Also prove that the rebuilt native decision menu remains functional.

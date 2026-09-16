@@ -9,6 +9,7 @@ import { spawnSync } from 'node:child_process';
 import { validateCaptureDirectory, validateCaptureFile, readCaptureJson, writeCaptureJson } from './xuan-ib-source-capture.mjs';
 import { buildSourceEvidence } from './xuan-ib-source-adapter.mjs';
 import { buildMinimalReport } from './xuan-ib-minimal-report.mjs';
+import { buildSleepPriorityReport } from './xuan-ib-sleep-priority-report.mjs';
 import { validateReportView } from './xuan-ib-report-view.mjs';
 import { runPrepareCli } from './xuan-ib-report-prepare.mjs';
 import { loadTrustedAssociationPolicy } from './xuan-ib-account-association.mjs';
@@ -37,7 +38,7 @@ function currentBaseline(snapshot) {
 // supplied policy snapshot, clock, baseline, fallback or publication override.
 export function prepareMinimalRun(dir, { journalPath,
   loadPolicy = loadTrustedAssociationPolicy, readBaseline = currentBaseline,
-  prepareCandidate = runPrepareCli, wallNow = () => Date.now(),
+  prepareCandidate = runPrepareCli, wallNow = () => Date.now(), sleepPriority = null,
 } = {}) {
   dir = validateCaptureDirectory(dir);
   journalPath = validateCaptureFile(journalPath);
@@ -71,8 +72,13 @@ export function prepareMinimalRun(dir, { journalPath,
     sourceOptions = { associationReceipt, associationSnapshot, journalPath };
     buildSourceEvidence(input, baseline.registry, { ...sourceOptions, now: wallNow() });
   });
-  const prepared = stage('derive', () => buildMinimalReport(input,
-    { ...baseline, ...sourceOptions, now: wallNow() }));
+  if (sleepPriority !== null && !weekly) fail('SLEEP_PRIORITY_REQUIRES_WEEKLY_MODE');
+  const prepared = stage('derive', () => {
+    const now = wallNow();
+    const buildOptions = { ...baseline, ...sourceOptions, now };
+    return sleepPriority === null ? buildMinimalReport(input, buildOptions)
+      : buildSleepPriorityReport(input, { ...buildOptions, ...sleepPriority });
+  });
   stage('narrative', () => {
     validateReportView(prepared.view);
     writeCaptureJson(dir, 'view.json', prepared.view);
@@ -85,8 +91,10 @@ export function prepareMinimalRun(dir, { journalPath,
 }
 
 export function runMinimalPrepareCli(args) {
-  if (args.length !== 3 || args[1] !== '--journal') fail('USAGE_PRIVATE_DIR_JOURNAL');
-  return prepareMinimalRun(args[0], { journalPath: args[2] });
+  if (args[1] !== '--journal' || ![3, 6].includes(args.length)
+      || (args.length === 6 && args[3] !== '--sleep-priority')) fail('USAGE_PRIVATE_DIR_JOURNAL');
+  const sleepPriority = args.length === 6 ? { runId: args[4], runStartedAt: args[5] } : null;
+  return prepareMinimalRun(args[0], { journalPath: args[2], sleepPriority });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
