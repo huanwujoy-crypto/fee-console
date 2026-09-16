@@ -91,6 +91,11 @@
 /scripts/xuan-ib-minimal-report.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-minimal-prepare.mjs @huanwujoy-crypto
 /scripts/xuan-ib-minimal-prepare.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-sleep-priority.mjs @huanwujoy-crypto
+/scripts/xuan-ib-sleep-priority.test.mjs @huanwujoy-crypto
+/scripts/xuan-ib-sleep-priority-report.mjs @huanwujoy-crypto
+/claude/xuan-ib-sleep-priority-delivery-v1.md @huanwujoy-crypto
+/claude/xuan-ib-current-runbook.md @huanwujoy-crypto
 /scripts/xuan-ib-manual-consent.mjs @huanwujoy-crypto
 /scripts/xuan-ib-manual-consent.test.mjs @huanwujoy-crypto
 /scripts/xuan-ib-manual-consent-integration.test.mjs @huanwujoy-crypto

@@ -1,4 +1,15 @@
-# Current XUAN-IB AM/PM runbook — 2026-09-08
+# Current XUAN-IB fixed-report runbook — updated 2026-09-16
+
+The owner has retired the recurring AM edition. The only fixed report is PM;
+historical AM references below describe legacy contracts and do not reactivate
+an AM Routine.
+
+The protected [sleep-priority delivery](xuan-ib-sleep-priority-delivery-v1.md)
+may publish a same-run, visibly incomplete holdings/orders page at T+10 only
+when full PM is not ready. Its `adhoc` marker never completes the PM slot. The
+original PM Routine must not use this route until the protected code is merged,
+the saved prompt is updated/read back and the rollout gates in that document
+are completed.
 
 This is the entrypoint for the existing fixed, **full-live** AM/PM route. It
 resolves historical wording; it does not grant new permissions or loosen the

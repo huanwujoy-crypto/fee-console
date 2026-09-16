@@ -77,18 +77,50 @@ const validateCandidate = candidate => {
   if (!Number.isInteger(candidate.commitEpoch) || candidate.commitEpoch <= 0) {
     throw new Error("candidate commitEpoch must be a positive integer");
   }
+  validatePublicationState(candidate.publication, candidate.dataDate, true);
   return candidate;
 };
 
-export function selectNewestCandidate(candidates, publishedMeta) {
+const validatePublicationState = (state, expectedDate, candidate = false) => {
+  if (!state || typeof state !== 'object' || Array.isArray(state)
+      || Object.keys(state).sort().join('|') !== ['dataDate','eligibleAtEpoch','kind','priorityKey'].sort().join('|')) {
+    throw new Error(`${candidate ? 'candidate' : 'published'} publication state is invalid`);
+  }
+  if (!['priority', 'complete-pm', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
+  requireDate('publication dataDate', state.dataDate);
+  if (state.dataDate !== expectedDate) throw new Error('publication data date does not match metadata');
+  if (state.kind === 'priority') {
+    if (state.priorityKey !== `pm:${state.dataDate}` || !Number.isInteger(state.eligibleAtEpoch) || state.eligibleAtEpoch <= 0) {
+      throw new Error('priority publication state is invalid');
+    }
+  } else if (state.priorityKey !== null || state.eligibleAtEpoch !== null) {
+    throw new Error('ordinary publication cannot carry priority fields');
+  }
+  return state;
+};
+
+export function selectNewestCandidate(candidates, publishedMeta, publishedState) {
   if (!Array.isArray(candidates)) throw new Error("candidates must be an array");
-  const eligible = candidates.map(validateCandidate).filter(candidate => {
+  validatePublicationState(publishedState, publishedMeta.dataDate);
+  let eligible = candidates.map(validateCandidate).filter(candidate => {
     if (candidate.htmlBlob.toLowerCase() === publishedMeta.htmlBlob.toLowerCase()) return false;
     if (candidate.dataDate < publishedMeta.dataDate) return false;
     if (candidate.dataDate === publishedMeta.dataDate &&
         candidate.commitEpoch <= publishedMeta.sourceCommitEpoch) return false;
+    if (candidate.publication.kind === 'priority') {
+      if (candidate.commitEpoch < candidate.publication.eligibleAtEpoch) return false;
+      if (candidate.dataDate === publishedState.dataDate
+          && ['priority', 'complete-pm'].includes(publishedState.kind)) return false;
+    }
     return true;
-  }).sort((left, right) => {
+  });
+  if (eligible.length) {
+    const newestDate = eligible.reduce((value, item) => item.dataDate > value ? item.dataDate : value, eligible[0].dataDate);
+    if (eligible.some(item => item.dataDate === newestDate && item.publication.kind === 'complete-pm')) {
+      eligible = eligible.filter(item => item.dataDate !== newestDate || item.publication.kind !== 'priority');
+    }
+  }
+  eligible.sort((left, right) => {
     if (right.dataDate !== left.dataDate) return right.dataDate.localeCompare(left.dataDate);
     if (right.commitEpoch !== left.commitEpoch) return right.commitEpoch - left.commitEpoch;
     if (left.htmlBlob !== right.htmlBlob) return left.htmlBlob.localeCompare(right.htmlBlob);
@@ -130,13 +162,13 @@ if (import.meta.url === `file://${process.argv[1]}`) {
       } : null;
       validatePublishedMeta(readJson(args[0]), args[1], sourceTruth);
       console.log("published metadata is valid");
-    } else if (command === "select" && args.length === 3) {
+    } else if (command === "select" && args.length === 4) {
       const published = validatePublishedMeta(readJson(args[1]), args[2]);
-      console.log(JSON.stringify(selectNewestCandidate(readJson(args[0]), published)));
+      console.log(JSON.stringify(selectNewestCandidate(readJson(args[0]), published, readJson(args[3]))));
     } else if (command === "create-meta" && args.length === 1) {
       console.log(`${JSON.stringify(createPublishedMeta(readJson(args[0])), null, 2)}\n`);
     } else {
-      console.error("usage: xuan-ib-promotion.mjs validate-meta META CURRENT_BLOB [SOURCE_SHA SOURCE_EPOCH SOURCE_BLOB SOURCE_DATE] | select CANDIDATES META CURRENT_BLOB | create-meta CANDIDATE");
+      console.error("usage: xuan-ib-promotion.mjs validate-meta META CURRENT_BLOB [SOURCE_SHA SOURCE_EPOCH SOURCE_BLOB SOURCE_DATE] | select CANDIDATES META CURRENT_BLOB PUBLISHED_STATE | create-meta CANDIDATE");
       process.exit(2);
     }
   } catch (error) {

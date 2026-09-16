@@ -24,6 +24,7 @@ import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xua
 import {
   ASSOCIATION_TEMPLATE_ID, checkAssociationPublication, hasAssociationMarker, publicationEdition,
 } from './xuan-ib-account-association-publication.mjs';
+import { SLEEP_PRIORITY_TEMPLATE_ID, checkSleepPriorityPublication } from './xuan-ib-sleep-priority.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -296,8 +297,8 @@ const validatePublicationTemplates = (source, policyContext) => {
   const byId = new Map();
   for (const template of templates) {
     const id = quotedAttribute(template.attributes, 'id', 'publication template');
-    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID, AI_TIER_RECORDS_ID, AI_DENOMINATOR_ID].includes(id)) {
-      fail('only the approved decision, ETF, account-association and AI tier record templates are allowed');
+    if (![DECISION_STATE_TEMPLATE_ID, ETF_ABC_STATE_TEMPLATE_ID, ETF_SUMMARY_ID, ASSOCIATION_TEMPLATE_ID, FOUR_BUCKET_REPORT_ID, FOUR_BUCKET_TEMPLATE_ID, AI_TIER_RECORDS_ID, AI_DENOMINATOR_ID, SLEEP_PRIORITY_TEMPLATE_ID].includes(id)) {
+      fail('only approved decision, ETF, account-association, AI tier and delivery templates are allowed');
     }
     if (byId.has(id)) fail(`${id} template must be unique`);
     byId.set(id, template);
@@ -1827,6 +1828,7 @@ function checkVenueIdentityClaims(documentHtml) {
 
 try {
   const edition = publicationEdition(html);
+  checkSleepPriorityPublication(html, { edition, expectedDate });
   // This exact source-bound correction changes only the approved AAOI risk
   // derivation. It is not fresh collection or a new adhoc authorization.
   const verifiedHistoricalCorrection = !verifiedRecordsUpdate && verifyAaoiSnapshotCorrection(html, trustedPreviousHtml,

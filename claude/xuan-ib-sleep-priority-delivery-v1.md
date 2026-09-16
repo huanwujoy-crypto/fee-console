@@ -1,4 +1,4 @@
-# XUAN-IB sleep-priority delivery v1 — proposed, not active
+# XUAN-IB sleep-priority delivery v1 — protected code candidate, Routine not active
 
 This design records the owner request dated 2026-09-16: at bedtime, current
 holdings and existing open orders matter before the rest of the report. Merely
@@ -41,11 +41,12 @@ actually needed.
 - Holdings come only from the validated direct positions source. Open orders
   come only from the validated orders source. Missing/unusable inputs fail the
   priority checkpoint; they do not become zero or “no orders”.
-- The page exposes `概览 → 持仓一览` and `待办 → 挂单提醒`. Other tabs say only
-  `完整报告更新中`; they must not copy stale risk, allocation or ETF numbers into
-  a current-dated priority page.
-- Keep stable decision IDs and immutable receipts, but do not introduce or
-  resolve decisions from the priority checkpoint.
+- The page exposes `概览 → 持仓一览` and `待办 → 挂单提醒`. Risk, allocation and
+  ETF must not copy stale numerical results into a current-dated priority page;
+  they show `完整报告更新中`. The canonical policy disclosure remains visible.
+- Keep stable decision IDs, cards and immutable receipts, clearly labelled as
+  the prior verified state; do not introduce or resolve decisions from the
+  priority checkpoint.
 - Use a machine-readable edition/state distinct from ordinary `pm`. The fixed
   freshness watchdog continues to require the complete PM report for the slot.
 - Publication remains atomic and integrity checked. A private checkpoint, local
@@ -63,20 +64,47 @@ actually needed.
 - The fixed loader keeps the last verified bytes on any mismatch and polls in
   the background. There is no user-facing Refresh control.
 
-## Required implementation before activation
+## Protected implementation in this maintenance change
 
-1. Add and test a `sleep-priority` schema/renderer/guard that accepts only the
-   two source-backed sections above.
-2. Add an atomic publication state that distinguishes priority from complete
-   PM and prevents cross-run or same-epoch replacement.
-3. Extend the run journal with `priorityReadyAt`, `priorityPublishedAt` and
-   `fullPublishedAt`; compute all durations from the original PM start.
-4. Update the original PM Routine only after the protected code lands; read the
+- `xuan-ib-sleep-priority.mjs` defines the exact ten-minute threshold, delivery
+  marker, coordinator decisions and public-page classifier. The timer starts at
+  the original run start and cannot be reset by retries.
+- `xuan-ib-sleep-priority-report.mjs` converts the validated weekly-mode
+  five-IB-source minimal report into a visibly incomplete priority page. It
+  does not copy old risk/configuration values into the new date.
+- The trusted guard requires the marker, body attribute, `adhoc` edition and
+  visible `临时版 · 睡前速览 · 完整报告更新中` wording together.
+- Promote classifies both the current public page and every candidate. It
+  blocks publication before T+10, duplicate same-slot priority pages and a
+  priority downgrade after complete PM. A complete PM candidate wins over a
+  same-date priority candidate and may replace an earlier priority page.
+- The ordinary PM watchdog remains unchanged: only a real `pm` page completes
+  the fixed sleep slot.
+
+Operational CLI after the protected change is merged:
+
+```sh
+node scripts/xuan-ib-minimal-prepare.mjs PRIVATE_DIR --journal JOURNAL \
+  --sleep-priority RUN_ID RUN_STARTED_AT
+```
+
+`PRIVATE_DIR/input.json` must be the supported weekly-mode, five-IB-source
+capture with `edition: adhoc`; the separate `adhoc` association receipt and
+the eventual `pm` receipt must be created before financial reads from the same
+fresh policy lookup/journal bootstrap. Both receipts bind the same journal run
+ID and previous source SHA. This does not permit replaying or retyping data.
+
+## Remaining rollout gates before activation
+
+1. Persist `priorityReadyAt`, `priorityPublishedAt` and `fullPublishedAt` in the
+   original PM run's private operational state; compute all durations from the
+   original PM start. The pure coordinator is present, but its output is not a
+   durable journal receipt by itself.
+2. Update the original PM Routine only after the protected code lands; read the
    saved prompt back without changing schedule, model, permissions or account
    scope.
-5. Test: fast-full (one release), slow-full (priority then full), missing IB
+3. Test the saved Routine paths: fast-full (one release), slow-full (priority then full), missing IB
    input (no priority), failed full (priority stays incomplete), duplicate run,
    out-of-order publish, public HTML/meta mismatch and phone auto-update.
-6. Observe one real PM slot and prove exact public bytes/times before calling
+4. Observe one real PM slot and prove exact public bytes/times before calling
    the staged route operational.
-
