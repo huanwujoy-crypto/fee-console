@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.9">
+<meta name="fee-console-build" content="4.9.10">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -265,6 +265,15 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
       <p class="hint">两位投资人的股数合计须等于初始发行股数。股份市值以美元（USD）显示。</p>
       <button class="btn primary" type="submit">保存基金档案</button>
     </form></details>
+    <details class="fund-method"><summary>登记新增投资与份额</summary>
+      <p class="hint">只从已读取的外部净入金候选登记模拟份额。按入金前一估值日的基金总资产计算发行股数；到账金额若有银行扣差，以实际入账净额作为本次认购本金，不推定费用。估值仍须等待资金流计算回执核验。</p>
+      <form id="fundSubscriptionForm" class="fund-form" autocomplete="off">
+        <div class="grid"><div class="full"><label class="f" for="fundSubscriptionFlow">已读取的净入金</label><select id="fundSubscriptionFlow" required></select></div>
+          <div class="full"><label class="f" for="fundSubscriptionInvestor">归属投资人</label><select id="fundSubscriptionInvestor" required></select></div></div>
+        <p class="small" id="fundSubscriptionPreview" role="status">请先载入基金档案及外部资金流。</p>
+        <button class="btn primary" type="submit">核对并登记新增份额</button>
+      </form>
+    </details>
     <details class="fund-method"><summary>从基金只读链接载入</summary>
       <p class="hint">在已有基金档案的页面复制基金只读链接，再回到这里粘贴。载入后保存在当前设备。</p>
       <form id="fundProfileLinkForm" class="fund-form" autocomplete="off"><label class="f" for="fundProfileLink">基金只读链接</label>
@@ -800,7 +809,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.9";
+const UI_VERSION_LABEL=" · v4.9.10";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1034,6 +1043,43 @@ async function saveFundProfileForm(){
     inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
     investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
   return saveFundProfile(async()=>{const current=await readFundProfile();if(current.profile?.subscriptions?.length)profile.subscriptions=current.profile.subscriptions;return profile;});
+}
+function subscriptionDraft(profile,flow,investorId){
+  if(!profile||!flow||flow.acct!=="webull"||!/^[A-Za-z0-9_-]{8,45}$/.test(String(flow.id||""))||!profile.investors.some(i=>i.id===investorId))throw new Error("请选择已核验身份的投资人和 Webull 入金");
+  const netCents=Math.round(Number(flow.amount)*100),events=profile.subscriptions||[];
+  if(!Number.isSafeInteger(netCents)||netCents<=0||events.some(e=>e.date>=flow.date||e.sourceRef===`flow:${flow.id}`))throw new Error("此入金已登记，或登记日期需复核");
+  const points=(DAILY.daily||[]).filter(p=>p.d<flow.date&&Number.isFinite(Number(p.schwab))&&Number.isFinite(Number(p.webull)));
+  const previous=points.at(-1),priceTotalCents=previous?Math.round((Number(previous.schwab)+Number(previous.webull))*100):0;
+  if(!previous||!Number.isSafeInteger(priceTotalCents)||priceTotalCents<=0||!(DAILY.daily||[]).some(p=>p.d===flow.date))throw new Error("入金前一估值日或到账日资产缺失");
+  const outstanding=BigInt(profile.initialShares)+events.reduce((sum,e)=>sum+BigInt(e.issuedShares),0n),issued=Number((BigInt(netCents)*outstanding*2n+BigInt(priceTotalCents))/(2n*BigInt(priceTotalCents)));
+  if(!Number.isSafeInteger(issued)||issued<=0)throw new Error("发行份额无法安全计算");
+  return {id:`sub-${flow.date.replaceAll("-","")}-${investorId}-${flow.id}`,date:flow.date,investorId,grossCents:netCents,feeCents:0,netCents,
+    priceDate:previous.d,priceTotalCents,issuedShares:issued,sourceRef:`flow:${flow.id}`};
+}
+function renderSubscriptionEditor(profile){
+  const flowEl=document.getElementById("fundSubscriptionFlow"),investorEl=document.getElementById("fundSubscriptionInvestor"),preview=document.getElementById("fundSubscriptionPreview");
+  if(!flowEl||!investorEl||!preview)return;
+  const selectedFlow=flowEl.value,selectedInvestor=investorEl.value,existing=new Set((profile?.subscriptions||[]).map(e=>e.sourceRef));
+  const candidates=profile?(DAILY.flowsAuto||[]).filter(f=>f.acct==="webull"&&Number(f.amount)>0&&!existing.has(`flow:${f.id}`)):[];
+  flowEl.innerHTML=candidates.length?candidates.map(f=>`<option value="${esc(f.id)}">${esc(f.date)} · Webull · ${usd(Number(f.amount),2)} 净入金</option>`).join(""):'<option value="">尚无未登记的 Webull 净入金</option>';
+  investorEl.innerHTML=profile?profile.investors.map(i=>`<option value="${esc(i.id)}">${esc(i.name)}（${esc(i.id)}）</option>`).join(""):'<option value="">先载入基金档案</option>';
+  if(candidates.some(f=>f.id===selectedFlow))flowEl.value=selectedFlow;
+  if(profile?.investors.some(i=>i.id===selectedInvestor))investorEl.value=selectedInvestor;
+  try{const draft=subscriptionDraft(profile,candidates.find(f=>f.id===flowEl.value),investorEl.value);
+    const total=profile.initialShares+(profile.subscriptions||[]).reduce((sum,e)=>sum+e.issuedShares,0)+draft.issuedShares;
+    preview.textContent=`${draft.date} 入金 $${(draft.netCents/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}；按 ${draft.priceDate} 基金总资产 $${(draft.priceTotalCents/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} 发行 ${draft.issuedShares.toLocaleString("zh-CN")} 股给 ${draft.investorId}。登记后总份额 ${total.toLocaleString("zh-CN")} 股。`;
+  }catch(e){preview.textContent=e.message;}
+}
+async function saveFundSubscription(){
+  const flowId=document.getElementById("fundSubscriptionFlow").value,investorId=document.getElementById("fundSubscriptionInvestor").value;
+  return saveFundProfile(async()=>{
+    const loaded=await readFundProfile(),profile=loaded.profile;
+    if(!profile)throw new Error(loaded.reason||"先载入基金档案");
+    const flow=(DAILY.flowsAuto||[]).find(f=>f.id===flowId),draft=subscriptionDraft(profile,flow,investorId);
+    const updated={...profile,subscriptions:[...(profile.subscriptions||[]),draft]};
+    const checked=fundInvestorCore.validateProfile(updated);if(!checked.ok)throw new Error(checked.reason);
+    return checked.profile;
+  });
 }
 async function fillFundProfileForm(){
   const ticket=++_fundFillGeneration,importTicket=_fundImportGeneration,epoch=_sourceEpoch,gid=cfg(K.gid),keyValue=cfg(K.key),raw=HASH?.fund||cfg(FUND_PROFILE_KEY);
@@ -1627,13 +1673,16 @@ async function render(){
 function renderInvestors(loaded,feeView){
   const profileBox=document.getElementById("fundProfileBox"),box=document.getElementById("fundInvestorBox");
   document.getElementById("fundProfileNotice").textContent=_fundProfileMessage;
-  if(!loaded.profile){profileBox.innerHTML=`<div class="card"><h2>投资人份额</h2><p class="hint">${esc(loaded.reason||"基金档案尚未载入。请使用管理人生成的基金只读链接。")}</p></div>`;box.innerHTML="";return;}
+  if(!loaded.profile){profileBox.innerHTML=`<div class="card"><h2>投资人份额</h2><p class="hint">${esc(loaded.reason||"基金档案尚未载入。请使用管理人生成的基金只读链接。")}</p></div>`;box.innerHTML="";if(isMgr())renderSubscriptionEditor(null);return;}
   const profile=loaded.profile,model=fundInvestorCore.calculate({profile,data:DAILY,feeView});
+  if(isMgr())renderSubscriptionEditor(profile);
   if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
   const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
   const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
   const latestShares=last?.investors.reduce((sum,i)=>sum+i.shares,0),shareLabel=last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>{const currentShares=last?.investors.find(row=>row.id===i.id)?.shares||i.shares,ratio=latestShares?currentShares/latestShares:i.shares/profile.initialShares;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(ratio*100).toFixed(2)}%</span></button>`;}).join("")}</div><div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
+  const registeredShares=profile.investors.map(i=>i.shares+(profile.subscriptions||[]).filter(e=>e.investorId===i.id).reduce((sum,e)=>sum+e.issuedShares,0));
+  const registeredTotal=registeredShares.reduce((sum,n)=>sum+n,0),registeredText=profile.subscriptions?.length?`<div class="small">基金档案已登记模拟份额：${profile.investors.map((i,index)=>`${esc(i.id)} ${fmt(registeredShares[index])} 股（${(registeredShares[index]/registeredTotal*100).toFixed(2)}%）`).join(" · ")}。${current?"已由计算回执核验":"当前估值和份额计算回执仍待核验"}。</div>`:"";
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>{const currentShares=last?.investors.find(row=>row.id===i.id)?.shares||i.shares,ratio=latestShares?currentShares/latestShares:i.shares/profile.initialShares;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(ratio*100).toFixed(2)}%</span></button>`;}).join("")}</div>${registeredText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
     capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
@@ -2060,6 +2109,8 @@ function ledgerInput(e){const T=e.target,k=T.dataset.k,val=T.value;if(!canEdit()
 document.body.addEventListener("input",ledgerInput);
 document.getElementById("fundProfileFile").addEventListener("change",e=>importFundProfile(e.target.files?.[0]));
 document.getElementById("fundProfileForm").addEventListener("submit",e=>{e.preventDefault();saveFundProfileForm();});
+document.getElementById("fundSubscriptionForm").addEventListener("submit",e=>{e.preventDefault();saveFundSubscription();});
+for(const id of ["fundSubscriptionFlow","fundSubscriptionInvestor"])document.getElementById(id).addEventListener("change",async()=>renderSubscriptionEditor((await readFundProfile()).profile));
 document.getElementById("fundProfileFill").addEventListener("click",e=>{e.preventDefault();fillFundProfileForm();});
 document.getElementById("fundProfileLinkForm").addEventListener("submit",e=>{e.preventDefault();importFundProfileLink();});
 document.getElementById("fundDocsFile").addEventListener("change",e=>importFundDocuments(e.target.files?.[0]));
