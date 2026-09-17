@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {allocationMetrics,compactAllocationCategory,ALLOCATION_CARDS_CSS,improveAllocationCards} from './xuan-ib-allocation-cards.mjs';
+import {allocationMetrics,compactAllocationCategory,portfolioTableKind,ALLOCATION_CARDS_CSS,improveAllocationCards} from './xuan-ib-allocation-cards.mjs';
 test('copy only explicit category ratios without recalculating rounded financial values',()=>{
   assert.deepEqual(allocationMetrics('$550,579EXUS＋VCN 类别合计当前 12.01% → 补后约 21.94% / 目标 23%'),[['当前','12.01%'],['补后约','21.94%'],['参考目标','23%']]);
   assert.deepEqual(allocationMetrics('51.43% → 补后约 44.68%45% 为参考目标，非强制上限'),[['当前','51.43%'],['补后约','44.68%'],['参考目标','45%']]);
@@ -24,4 +24,14 @@ test('presentation-only migration keeps warnings and source artifacts separate f
   assert.match(source,/券商可立即用于本次补仓/);
   assert.match(source,/待核实/);
   assert.match(ALLOCATION_CARDS_CSS,/#xuan-four-bucket-retired-history\{display:none!important\}/);
+});
+test('portfolio cards accept the current report columns without relabelling source values',()=>{
+  assert.equal(portfolioTableKind(['组合','本次计入值 $','Sharesight 读数 $']),'source-compare');
+  assert.equal(portfolioTableKind(['组合','本次读取值 $','备注']),'legacy');
+  assert.equal(portfolioTableKind(['组合','本次计入值 $','备注']),null);
+  assert.match(ALLOCATION_CARDS_CSS,/allocation-account-list dd small/);
+  const source=fs.readFileSync(new URL('./xuan-ib-allocation-cards.mjs',import.meta.url),'utf8');
+  assert.match(source,/tables\.flatMap/);
+  assert.match(source,/raw\.append\(fold\)/);
+  assert.match(source,/source\.append\(raw\)/);
 });

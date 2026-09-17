@@ -14,6 +14,7 @@ export const ALLOCATION_CARDS_CSS = `
 .allocation-account-list{padding:0;margin:10px 0;display:grid;gap:8px}
 .allocation-account-list>div{display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:6px 12px;padding:12px;border:1px solid var(--line);border-radius:10px;background:var(--bg);min-width:0}
 .allocation-account-list dt{font-size:15px;overflow-wrap:anywhere}.allocation-account-list dd{margin:0;font-size:17px;font-weight:650;font-variant-numeric:tabular-nums;overflow-wrap:anywhere;max-width:100%}
+.allocation-account-list dd small{display:block;margin-top:3px;font-size:12px;font-weight:400;color:var(--mut)}
 .allocation-category-list{display:none}
 .allocation-original .kv{display:block!important;font-size:14px}.allocation-original .kv .k,.allocation-original .kv .v{display:block!important;text-align:left!important;font-weight:400!important;font-size:14px!important;white-space:normal!important;width:auto!important}
 .allocation-original .kv .k{font-weight:650!important;margin-bottom:4px}
@@ -45,6 +46,13 @@ export function allocationMetrics(text) {
   const target=text.match(/目标\s*(\d+(?:\.\d+)?%)/)||text.match(/(\d+(?:\.\d+)?%)\s*为参考目标/);
   const budget=text.match(/本次现金预算\s*(\d+(?:\.\d+)?%)/);
   return [current&&['当前',current[1]],after&&['补后约',after[1]],target&&['参考目标',target[1]],budget&&['预算占比',budget[1]]].filter(Boolean);
+}
+
+export function portfolioTableKind(heads) {
+  if(!Array.isArray(heads)||heads.length!==3||heads[0]!=='组合')return null;
+  if(/^本次读取值\s*\$$/.test(heads[1])&&heads[2]==='备注')return 'legacy';
+  if(/^本次计入值\s*\$$/.test(heads[1])&&/^Sharesight 读数\s*\$$/.test(heads[2]))return 'source-compare';
+  return null;
 }
 
 export function improveAllocationCards(doc) {
@@ -109,17 +117,34 @@ export function improveAllocationCards(doc) {
       }
       continue;
     }
-    if(heads.length!==3||heads[0]!=='组合'||!/^本次读取值\s*\$$/.test(heads[1])||heads[2]!=='备注')continue;
-    const rows=[...table.querySelectorAll('tbody tr')];if(!rows.length||rows.some(row=>row.children.length!==3))continue;
+    const kind=portfolioTableKind(heads);if(!kind)continue;
     const card=table.closest('section.card'),heading=card?.querySelector(':scope > h2');
+    if(!card||card.dataset.allocationAccounts==='1')continue;
+    const tables=[...card.querySelectorAll('table')].filter(candidate=>portfolioTableKind(
+      [...candidate.querySelectorAll('thead th')].map(node=>node.textContent.trim()))===kind);
+    const rows=tables.flatMap(candidate=>[...candidate.querySelectorAll('tbody tr')]);
+    if(!rows.length||rows.some(row=>row.children.length!==3))continue;
     const source=el('section','allocation-account-source');source.append(el('h3',null,heading?.textContent||'组合来源与差异'));
     const list=el('dl','allocation-account-list');
-    for(const row of rows){const pair=el('div');pair.append(el('dt',null,row.children[0].textContent.trim()),el('dd',null,row.children[1].textContent.trim()));list.append(pair);
-      const note=el('p');note.append(el('b',null,row.children[0].textContent.trim()+'：'),doc.createTextNode(row.children[2].textContent.trim()));source.append(note);}
+    const asUsd=value=>/^\$?[\d,]+(?:\.\d+)?$/.test(value)?(value.startsWith('$')?value:'$'+value):value;
+    for(const row of rows){
+      const name=row.children[0].textContent.trim(),primary=row.children[1].textContent.trim(),comparison=row.children[2].textContent.trim();
+      const pair=el('div'),value=el('dd',null,asUsd(primary));
+      if(kind==='source-compare'&&primary!==comparison)value.append(el('small',null,`Sharesight ${asUsd(comparison)}`));
+      pair.append(el('dt',null,name),value);list.append(pair);
+      if(kind==='legacy'){const note=el('p');note.append(el('b',null,name+'：'),doc.createTextNode(comparison));source.append(note);}
+    }
     const wrap=table.parentElement.matches('.tblwrap')?table.parentElement:table;wrap.replaceWith(list);
-    // Preserve the exact original table in a secondary notes fold for audit.
-    const raw=el('details');raw.append(el('summary',null,'原始组合明细'),wrap);source.append(raw);notes.append(source);
+    // Preserve both the visible and the folded source rows, without duplicating values in the phone cards.
+    const raw=el('details');raw.append(el('summary',null,'原始组合明细'),wrap);
+    for(const other of tables.slice(1)){
+      const fold=other.closest('details');
+      if(fold&&fold.closest('section.card')===card)raw.append(fold);
+    }
+    const signal=card.querySelector(':scope > .brief-signal');if(signal)source.append(signal);
+    source.append(raw);notes.append(source);
     if(heading)heading.textContent='组合资产（USD）';
+    card.dataset.allocationAccounts='1';
   }
   const archive=doc.getElementById('xuan-four-bucket-retired-history');
   if(archive){archive.hidden=true;archive.setAttribute('aria-hidden','true');}
