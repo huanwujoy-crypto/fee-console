@@ -274,6 +274,16 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
         <button class="btn primary" type="submit">核对并登记新增份额</button>
       </form>
     </details>
+    <details class="fund-method"><summary>更正认购归属</summary>
+      <p class="hint">仅更正已登记认购的投资人归属；原入金、发行股数和原记录保留。更正会留下原因与时间，基金总份额不变。</p>
+      <form id="fundCorrectionForm" class="fund-form" autocomplete="off">
+        <div class="grid"><div class="full"><label class="f" for="fundCorrectionEvent">已登记认购</label><select id="fundCorrectionEvent" required></select></div>
+          <div class="full"><label class="f" for="fundCorrectionOwner">正确归属投资人</label><select id="fundCorrectionOwner" required></select></div>
+          <div class="full"><label class="f" for="fundCorrectionReason">更正原因</label><input id="fundCorrectionReason" maxlength="300" required value="更正 2026-09-16 Webull 净入金认购归属：应为 Jenny Z（X）"></div></div>
+        <p class="small" id="fundCorrectionPreview" role="status">请先载入基金档案。</p>
+        <button class="btn primary" type="submit">核对并保存归属更正</button>
+      </form>
+    </details>
     <details class="fund-method"><summary>从基金只读链接载入</summary>
       <p class="hint">在已有基金档案的页面复制基金只读链接，再回到这里粘贴。载入后保存在当前设备。</p>
       <form id="fundProfileLinkForm" class="fund-form" autocomplete="off"><label class="f" for="fundProfileLink">基金只读链接</label>
@@ -824,6 +834,7 @@ function createFundInvestorCore() {
   const SCHEMA = "fee-console.fund-profile.v1", DAY = 86400000;
   const PROFILE_KEYS = ["schema", "manager", "fundName", "inceptionDate", "inceptionNoticeDate", "currency", "initialShares", "investors"];
   const EVENT_KEYS = ["id", "date", "investorId", "grossCents", "feeCents", "netCents", "priceDate", "priceTotalCents", "issuedShares", "sourceRef"];
+  const CORRECTION_KEYS = ["id", "subscriptionId", "fromInvestorId", "toInvestorId", "reason", "correctedAt"];
   const object = value => !!value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
   const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -842,7 +853,8 @@ function createFundInvestorCore() {
   };
   function validateProfile(profile) {
     const invalid = reason => ({ ok: false, profile: null, reason });
-    if (!(exact(profile, PROFILE_KEYS) || exact(profile, [...PROFILE_KEYS, "subscriptions"])) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
+    if (!(exact(profile, PROFILE_KEYS) || exact(profile, [...PROFILE_KEYS, "subscriptions"]) ||
+      exact(profile, [...PROFILE_KEYS, "subscriptions", "subscriptionCorrections"])) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
     if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
     if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
     if (!integer(profile.initialShares) || profile.initialShares <= 0 || !Array.isArray(profile.investors) || profile.investors.length !== 2) return invalid("初始股份资料待核对");
@@ -855,7 +867,7 @@ function createFundInvestorCore() {
     if (total !== BigInt(profile.initialShares)) return invalid("投资人股份合计与发行股份不符");
     const subscriptions = profile.subscriptions || [];
     if (!Array.isArray(subscriptions) || subscriptions.length > 12) return invalid("增资事件资料待核对");
-    const eventIds = new Set(), sourceRefs = new Set(); let previousDate = "";
+    const eventIds = new Set(), sourceRefs = new Set(), eventsById = new Map(); let previousDate = "";
     for (const event of subscriptions) {
       if (!exact(event, EVENT_KEYS) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
         || !date(event.date) || event.date <= profile.inceptionDate || event.date <= previousDate
@@ -867,13 +879,30 @@ function createFundInvestorCore() {
         || !integer(event.issuedShares) || event.issuedShares <= 0
         || typeof event.sourceRef !== "string" || !/^[A-Za-z0-9:._-]{8,120}$/.test(event.sourceRef)
         || sourceRefs.has(event.sourceRef)) return invalid("增资事件资料待核对");
-      eventIds.add(event.id); sourceRefs.add(event.sourceRef); previousDate = event.date;
+      eventIds.add(event.id); sourceRefs.add(event.sourceRef); eventsById.set(event.id, event); previousDate = event.date;
       total += BigInt(event.issuedShares);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) return invalid("增资后发行份额超出安全范围");
     }
+    const corrections = profile.subscriptionCorrections || [];
+    if (!Array.isArray(corrections) || corrections.length > subscriptions.length) return invalid("认购归属更正资料待核对");
+    const correctionIds = new Set(), correctedEvents = new Set();
+    for (const correction of corrections) {
+      if (!exact(correction, CORRECTION_KEYS)) return invalid("认购归属更正资料待核对");
+      const original = eventsById.get(correction.subscriptionId);
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(correction.id) || correctionIds.has(correction.id)
+        || !original || correctedEvents.has(correction.subscriptionId)
+        || correction.fromInvestorId !== original.investorId || !ids.has(correction.toInvestorId)
+        || correction.toInvestorId === correction.fromInvestorId || !text(correction.reason, 300) || correction.reason.length < 2
+        || typeof correction.correctedAt !== "string" || !Number.isFinite(Date.parse(correction.correctedAt))
+        || new Date(correction.correctedAt).toISOString() !== correction.correctedAt
+        || correction.correctedAt.slice(0, 10) < original.date) return invalid("认购归属更正资料待核对");
+      correctionIds.add(correction.id); correctedEvents.add(correction.subscriptionId);
+    }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
-      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}) }, reason: null };
+      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
+      ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}) }, reason: null };
   }
+  const subscriptionOwner = (profile, event) => (profile.subscriptionCorrections || []).find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
   function calculate(input = {}) {
     const { profile, data, feeView } = object(input) ? input : {};
     const checked = validateProfile(profile);
@@ -965,14 +994,14 @@ function createFundInvestorCore() {
     result.points = daily.filter(point => !flowGateDate || point.date < flowGateDate).map(point => {
       const event = accepted.get(point.date);
       if (event) {
-        const investorIndex = checked.profile.investors.findIndex(investor => investor.id === event.investorId);
+        const investorIndex = checked.profile.investors.findIndex(investor => investor.id === subscriptionOwner(checked.profile, event));
         shares[investorIndex] += event.issuedShares; contributions[investorIndex] += event.netCents;
       }
       const values = allocate(point.totalCents, shares), totalShares = shares[0] + shares[1];
       const returnRate = contributions.some(Boolean) ? null : point.totalCents / initialCents - 1;
       return { ...point, unitValue: point.totalCents / 100 / totalShares,
         grossPnlCents: point.totalCents - initialCents - contributions[0] - contributions[1], returnRate,
-        subscription: event ? { id: event.id, investorId: event.investorId, netCents: event.netCents, issuedShares: event.issuedShares } : null,
+        subscription: event ? { id: event.id, investorId: subscriptionOwner(checked.profile, event), netCents: event.netCents, issuedShares: event.issuedShares } : null,
         investors: checked.profile.investors.map((investor, i) => ({ id: investor.id, shares: shares[i],
           valueCents: values[i], pnlCents: values[i] - initialValues[i] - contributions[i], returnRate })) };
     });
@@ -982,7 +1011,7 @@ function createFundInvestorCore() {
     if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起有尚未匹配的外部资金流或增资证据；当前份额市值暂不可用` };
     return { ...result, status: "ready", current: result.lastProved };
   }
-  return { validateProfile, calculate };
+  return { validateProfile, calculate, subscriptionOwner };
 }
 const fundInvestorCore=createFundInvestorCore();
 /* fund-investor-core:end */
@@ -1042,7 +1071,7 @@ async function saveFundProfileForm(){
   const profile={schema:"fee-console.fund-profile.v1",manager:value("fundFormManager"),fundName:value("fundFormName"),
     inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
     investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
-  return saveFundProfile(async()=>{const current=await readFundProfile();if(current.profile?.subscriptions?.length)profile.subscriptions=current.profile.subscriptions;return profile;});
+  return saveFundProfile(async()=>{const current=await readFundProfile();if(current.profile?.subscriptions?.length)profile.subscriptions=current.profile.subscriptions;if(current.profile?.subscriptionCorrections?.length)profile.subscriptionCorrections=current.profile.subscriptionCorrections;return profile;});
 }
 function subscriptionDraft(profile,flow,investorId){
   if(!profile||!flow||flow.acct!=="webull"||!/^[A-Za-z0-9_-]{8,45}$/.test(String(flow.id||""))||!profile.investors.some(i=>i.id===investorId))throw new Error("请选择已核验身份的投资人和 Webull 入金");
@@ -1077,6 +1106,34 @@ async function saveFundSubscription(){
     if(!profile)throw new Error(loaded.reason||"先载入基金档案");
     const flow=(DAILY.flowsAuto||[]).find(f=>f.id===flowId),draft=subscriptionDraft(profile,flow,investorId);
     const updated={...profile,subscriptions:[...(profile.subscriptions||[]),draft]};
+    const checked=fundInvestorCore.validateProfile(updated);if(!checked.ok)throw new Error(checked.reason);
+    return checked.profile;
+  });
+}
+function renderCorrectionEditor(profile){
+  const eventEl=document.getElementById("fundCorrectionEvent"),ownerEl=document.getElementById("fundCorrectionOwner"),preview=document.getElementById("fundCorrectionPreview");
+  if(!eventEl||!ownerEl||!preview)return;
+  const selectedEvent=eventEl.value,selectedOwner=ownerEl.value,corrected=new Set((profile?.subscriptionCorrections||[]).map(c=>c.subscriptionId));
+  const events=(profile?.subscriptions||[]).filter(event=>!corrected.has(event.id));
+  eventEl.innerHTML=events.length?events.map(event=>`<option value="${esc(event.id)}">${esc(event.date)} · ${esc(event.investorId)} · ${usd(event.netCents/100,2)} · ${event.issuedShares.toLocaleString("zh-CN")} 股</option>`).join(""):'<option value="">没有待更正的认购</option>';
+  ownerEl.innerHTML=profile?profile.investors.map(i=>`<option value="${esc(i.id)}">${esc(i.name)}（${esc(i.id)}）</option>`).join(""):'<option value="">先载入基金档案</option>';
+  if(events.some(event=>event.id===selectedEvent))eventEl.value=selectedEvent;
+  const event=events.find(row=>row.id===eventEl.value);
+  if(event){const other=profile.investors.find(i=>i.id!==event.investorId);ownerEl.value=profile.investors.some(i=>i.id===selectedOwner&&i.id!==event.investorId)?selectedOwner:other?.id||"";
+    preview.textContent=`原登记 ${event.investorId} → 正确归属 ${ownerEl.value}；${event.issuedShares.toLocaleString("zh-CN")} 股及净本金 ${usd(event.netCents/100,2)} 改记给正确投资人，基金总份额不变。`;
+  }else preview.textContent="没有可更正的认购；已更正记录不可再次更改。";
+}
+async function saveFundCorrection(){
+  const subscriptionId=document.getElementById("fundCorrectionEvent").value,toInvestorId=document.getElementById("fundCorrectionOwner").value,
+    reason=document.getElementById("fundCorrectionReason").value.trim();
+  return saveFundProfile(async()=>{
+    const loaded=await readFundProfile(),profile=loaded.profile;if(!profile)throw new Error(loaded.reason||"先载入基金档案");
+    const event=(profile.subscriptions||[]).find(row=>row.id===subscriptionId);
+    if(!event||(profile.subscriptionCorrections||[]).some(c=>c.subscriptionId===subscriptionId))throw new Error("认购已更正或来源已变化，请刷新");
+    if(!profile.investors.some(i=>i.id===toInvestorId&&i.id!==event.investorId))throw new Error("请选择与原登记不同的正确投资人");
+    const correction={id:`corr-${event.date.replaceAll("-","")}-${toInvestorId}-${crypto.randomUUID()}`,subscriptionId,
+      fromInvestorId:event.investorId,toInvestorId,reason,correctedAt:new Date().toISOString()};
+    const updated={...profile,subscriptionCorrections:[...(profile.subscriptionCorrections||[]),correction]};
     const checked=fundInvestorCore.validateProfile(updated);if(!checked.ok)throw new Error(checked.reason);
     return checked.profile;
   });
@@ -1173,13 +1230,16 @@ async function writeRemoteFundBundle(profile,library,expectedRaw=currentRemoteFu
   if(latestFile){latestRaw=latestFile.content;if(latestFile.truncated){const r=await freshFetch(latestFile.raw_url,{cache:"no-store"});if(!r.ok)throw new Error("远端基金档案读取失败");latestRaw=new TextDecoder("utf-8",{fatal:true}).decode(await r.arrayBuffer());}}
   if(latestRaw!==String(expectedRaw||""))throw new Error("另一页面已更新投资人档案，请先刷新");
   if(latestRaw){
-    const previous=await decodeRemoteFundBundle(latestRaw,gid,keyValue),older=previous.profile.subscriptions||[],newer=profileCheck.profile.subscriptions||[];
+    const previous=await decodeRemoteFundBundle(latestRaw,gid,keyValue),older=previous.profile.subscriptions||[],newer=profileCheck.profile.subscriptions||[],
+      olderCorrections=previous.profile.subscriptionCorrections||[],newerCorrections=profileCheck.profile.subscriptionCorrections||[];
     if(older.length&&(
       previous.profile.inceptionDate!==profileCheck.profile.inceptionDate||
       previous.profile.initialShares!==profileCheck.profile.initialShares||
       previous.profile.investors.some((i,index)=>i.id!==profileCheck.profile.investors[index].id||i.shares!==profileCheck.profile.investors[index].shares)||
       older.length>newer.length||older.some((event,index)=>JSON.stringify(event)!==JSON.stringify(newer[index]))
     ))throw new Error("已发布增资事件不可删除或重写；如需更正，请先核对原始证据");
+    if(olderCorrections.length>newerCorrections.length||olderCorrections.some((correction,index)=>JSON.stringify(correction)!==JSON.stringify(newerCorrections[index])))
+      throw new Error("已发布归属更正不可删除或重写");
   }
   const bundle={schema:FUND_REMOTE_SCHEMA,gid,updatedAt:new Date().toISOString(),profile:profileCheck.profile,library:libraryCheck.library};
   const data=await encTxt(await keyOf(keyValue),JSON.stringify(bundle)),raw=JSON.stringify({enc:true,v:1,data});
@@ -1673,17 +1733,18 @@ async function render(){
 function renderInvestors(loaded,feeView){
   const profileBox=document.getElementById("fundProfileBox"),box=document.getElementById("fundInvestorBox");
   document.getElementById("fundProfileNotice").textContent=_fundProfileMessage;
-  if(!loaded.profile){profileBox.innerHTML=`<div class="card"><h2>投资人份额</h2><p class="hint">${esc(loaded.reason||"基金档案尚未载入。请使用管理人生成的基金只读链接。")}</p></div>`;box.innerHTML="";if(isMgr())renderSubscriptionEditor(null);return;}
+  if(!loaded.profile){profileBox.innerHTML=`<div class="card"><h2>投资人份额</h2><p class="hint">${esc(loaded.reason||"基金档案尚未载入。请使用管理人生成的基金只读链接。")}</p></div>`;box.innerHTML="";if(isMgr()){renderSubscriptionEditor(null);renderCorrectionEditor(null);}return;}
   const profile=loaded.profile,model=fundInvestorCore.calculate({profile,data:DAILY,feeView});
-  if(isMgr())renderSubscriptionEditor(profile);
+  if(isMgr()){renderSubscriptionEditor(profile);renderCorrectionEditor(profile);}
   if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
   const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
   const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
   const latestShares=last?.investors.reduce((sum,i)=>sum+i.shares,0);
-  const registeredShares=profile.investors.map(i=>i.shares+(profile.subscriptions||[]).filter(e=>e.investorId===i.id).reduce((sum,e)=>sum+e.issuedShares,0));
+  const registeredShares=profile.investors.map(i=>i.shares+(profile.subscriptions||[]).filter(e=>fundInvestorCore.subscriptionOwner(profile,e)===i.id).reduce((sum,e)=>sum+e.issuedShares,0));
   const registeredTotal=registeredShares.reduce((sum,n)=>sum+n,0),registeredText=profile.subscriptions?.length?`<div class="small">基金档案已登记模拟份额：${profile.investors.map((i,index)=>`${esc(i.id)} ${fmt(registeredShares[index])} 股（${(registeredShares[index]/registeredTotal*100).toFixed(2)}%）`).join(" · ")}。${current?"已由计算回执核验":"当前估值和份额计算回执仍待核验"}。</div>`:"";
+  const correctionText=(profile.subscriptionCorrections||[]).map(c=>`<div class="small">归属更正：${esc(c.fromInvestorId)} → ${esc(c.toInvestorId)} · ${esc(c.correctedAt.slice(0,10))} · ${esc(c.reason)}</div>`).join("");
   const shareLabel=current?`截至 ${last.date} · ${fmt(latestShares)} 股`:profile.subscriptions?.length?`档案登记 ${fmt(registeredTotal)} 股 · 估值待核验`:last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const shownShares=current?last.investors.find(row=>row.id===i.id).shares:registeredShares[index],shownTotal=current?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${current?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const shownShares=current?last.investors.find(row=>row.id===i.id).shares:registeredShares[index],shownTotal=current?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${current?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}${correctionText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
     capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
@@ -2112,6 +2173,8 @@ document.getElementById("fundProfileFile").addEventListener("change",e=>importFu
 document.getElementById("fundProfileForm").addEventListener("submit",e=>{e.preventDefault();saveFundProfileForm();});
 document.getElementById("fundSubscriptionForm").addEventListener("submit",e=>{e.preventDefault();saveFundSubscription();});
 for(const id of ["fundSubscriptionFlow","fundSubscriptionInvestor"])document.getElementById(id).addEventListener("change",async()=>renderSubscriptionEditor((await readFundProfile()).profile));
+document.getElementById("fundCorrectionForm").addEventListener("submit",e=>{e.preventDefault();saveFundCorrection();});
+for(const id of ["fundCorrectionEvent","fundCorrectionOwner"])document.getElementById(id).addEventListener("change",async()=>renderCorrectionEditor((await readFundProfile()).profile));
 document.getElementById("fundProfileFill").addEventListener("click",e=>{e.preventDefault();fillFundProfileForm();});
 document.getElementById("fundProfileLinkForm").addEventListener("submit",e=>{e.preventDefault();importFundProfileLink();});
 document.getElementById("fundDocsFile").addEventListener("change",e=>importFundDocuments(e.target.files?.[0]));
