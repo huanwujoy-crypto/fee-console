@@ -81,6 +81,11 @@ export function conciseHoldingsNote(text) {
   return `IB 数据直读；日涨跌按本轮开盘基准计算，已覆盖 ${coverage[1]}/${coverage[2]} 只持仓。`;
 }
 
+export function splitRoutineHeader(text) {
+  const match=String(text??'').trim().match(/^(.*?)\s*(IB 五端点与\s*\d+\s*个 Sharesight 组合本轮全部直读。)$/);
+  return match?.[1]?.trim()?{headline:match[1].trim(),reading:match[2]}:null;
+}
+
 export function splitConcentrationLabel(text) {
   const match=String(text??'').trim().match(/^(.+?)\s+(\d+(?:\.\d+)?%)$/);
   return match?[match[1],match[2]]:null;
@@ -445,6 +450,12 @@ export function simplifyPaneReading(doc) {
     const h=doc.createElement('h3');h.textContent=title;section.append(h);
     nodes.forEach(n=>section.append(n));target.body.append(section);
   };
+  const date=doc.querySelector('.hdr .date'),header=splitRoutineHeader(date?.textContent);
+  if(header){
+    date.textContent=header.headline;
+    const explanation=doc.createElement('p');explanation.textContent=header.reading;
+    move(1,'取数核验',[explanation]);
+  }
   compactHoldingsNote(doc);
   // The responsive holdings cards already retain the count and each position.
   // Remove their duplicated source-context copy from the main phone view; the

@@ -44,7 +44,11 @@ export function reportNoteLines(pane,text,{aaoiApplied=false}={}) {
     4:['只处理明确要求你的事项；挂单仅提醒，不自动操作。'],
     5:['A 实际／B 协作／C 标普500；同额出入金后比较。'],
   }[pane]||[];
-  if(pane===1&&/未查询|未取得|未调用逐票行情/.test(text))lines.push('本报告未取得日涨跌；不以零或未实现盈亏代替。');
+  if(pane===1){
+    const provenance=text.match(/IB 五端点与\s*\d+\s*个 Sharesight 组合本轮全部直读。/);
+    if(provenance)lines.push(provenance[0]);
+    if(/未查询|未取得|未调用逐票行情/.test(text))lines.push('本报告未取得日涨跌；不以零或未实现盈亏代替。');
+  }
   if(pane===2){
     if(/近似|未逐票重算|非完整逐票/.test(text))lines.push('低／高情景仍为近似，不用于精确判断是否越过警戒线。');
     const scope=[];

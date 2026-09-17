@@ -26,6 +26,13 @@ test('cash planning and daily-quote availability keep only applicable qualificat
   assert.match(reportNoteLines(3,'补后比例含新增买入；不假设卖出回款').join(' '),/不假设卖出/);
   assert.match(reportNoteLines(1,'日涨跌未取得').join(' '),/不以零或未实现盈亏代替/);
 });
+test('verified source count appears only in the overview report note',()=>{
+ const source='IB 五端点与 9 个 Sharesight 组合本轮全部直读。';
+ assert.deepEqual(reportNoteLines(1,source),[
+  '价格、市值按页面日期与来源；账户可能有同步时差。',source]);
+ assert.doesNotMatch(reportNoteLines(3,source).join(''),/五端点/);
+ assert.doesNotMatch(reportNoteLines(1,'部分来源未取得').join(''),/本轮全部直读/);
+});
 
 test('ordinary configuration qualifiers do not claim a data limitation',()=>{
   const f=fixture(3),source=add(f.doc,f.body,'p','USSC 10% 补后比例含新增买入；不假设卖出回款。');
