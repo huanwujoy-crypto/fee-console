@@ -1,0 +1,6 @@
+{
+  "schemaVersion": 1,
+  "purpose": "xuan-etf-owner-declared-flows",
+  "note": "Owner-declared external cash flows for the ABC comparison (v2.1 simplified daily mode). One entry per movement across the comparison boundary, append-only: never edit or delete a recorded entry. Amounts are USD. direction is 'in' (into the IB-HK account from outside) or 'out' (from the IB-HK account to outside). Movements between IB-HK and NOAH-HK, purchases, sales, dividends, fees and interest are not flows.",
+  "flows": []
+}

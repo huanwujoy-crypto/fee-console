@@ -11,7 +11,7 @@ import { buildOrderTrends, groupOrders, orderTrendKey } from './xuan-ib-order-vi
 import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
-import { parseEtfSummary } from './xuan-ib-etf-summary-transport.mjs';
+import { parseEtfSummary, renderEtfSummaryTemplate } from './xuan-ib-etf-summary-transport.mjs';
 import { renderAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 import { renderAiPressureKpi, renderAiPressureSection } from './xuan-ib-ai-pressure.mjs';
 import { validateAiRiskDiagnostics } from './xuan-ib-ai-risk-input.mjs';
@@ -322,7 +322,7 @@ export const COMPACT_RESPONSIVE_CSS = `
 @media(max-width:360px){.kpis{grid-template-columns:1fr}}
 `;
 
-export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null, riskDiagnostics = null, enableOrderTrend = true }) {
+export function renderReport(view, { previousHtml, previousMeta, policy, manualAccountConsent = false, associationReceipt = null, associationSnapshot = null, fourBucket = null, aiTierCoverage = null, aiPressure = null, riskDiagnostics = null, enableOrderTrend = true, etfSummary = null }) {
   if(typeof manualAccountConsent!=='boolean'||(manualAccountConsent&&view.edition!=='adhoc'))fail('manual account consent is adhoc only');
   if(associationReceipt){
     if(manualAccountConsent)fail('account scope modes are mutually exclusive');
@@ -369,7 +369,21 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
     etf=`${ETF_ABC_RUNTIME_START}\n<template id="xuan-ib-etf-abc-state-v1" type="application/json">${JSON.stringify(runtime)}</template>\n${renderEtfAbcPublicRuntimeCard(runtime)}\n${ETF_ABC_RUNTIME_END}`;
   }
   const summary=template(previousHtml,'xuan-etf-open-summary-v3');
-  if(summary&&!sleepPriority){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
+  if(etfSummary!==null){
+    // A fresh daily summary from the trusted producer replaces the carried
+    // template. It may only extend the published comparison: same baseline,
+    // never an earlier complete date. The guard re-checks this against the
+    // trusted previous page, so a candidate cannot restart the series.
+    if(sleepPriority)fail('a priority page carries no fresh ABC summary');
+    const fresh=renderEtfSummaryTemplate(etfSummary);
+    if(summary){
+      const old=parseEtfSummary(summary[1]);
+      if(etfSummary.startDate!==old.startDate||etfSummary.frozenDate!==old.frozenDate||etfSummary.latestCompleteDate<old.latestCompleteDate
+        ||etfSummary.rows.at(-1).date<old.rows.at(-1).date)fail('fresh ABC summary cannot restart or roll back the published comparison');
+    }
+    if(etfSummary.rows.at(-1).date>view.dataDate)fail('ABC summary cannot run past the report date');
+    etf+=`\n${fresh}`;
+  }else if(summary&&!sleepPriority){parseEtfSummary(summary[1]);etf+=`\n${summary[0]}`;} // preserve baseline/date and bytes
   // Complete AI-tier coverage for this run's constituents, built by the trusted
   // module from the run's own holdings. The manifest is inert and the
   // disclosures carry no amount; both are refused unless every constituent is

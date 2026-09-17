@@ -1,5 +1,36 @@
 # ETF ABC 简化趋势 v2
 
+## 2026-09-17 补充：简化每日生产模式 v2.1（业主批准）
+
+业主于 2026-09-17 确认：这是只读监控卡，无资金风险，不要求精确结算，并要求
+不需要业主参与的工作模式；出入金以业主通知为准；流水账明文存放于仓库。据此：
+
+- **新起点** 为 2026-09-17 收盘，记录在 `claude/xuan-ib-etf-baseline-v2.json`
+  （只记日期，不记任何金额）。09-01〜09-03 的原摘要与 `xuan-ib/etf-trend.json`
+  保留为历史，不再延伸；手机卡片优先显示报告内嵌的新摘要。
+- **A 改为 IB 账户官方日终 NAV**（PortfolioAnalyst `get_pa_performance_all_periods`
+  日频序列，USD 基准），不再剔除 GLD/SLV/MSTR/HODL，也不含 NOAH-HK 现金。
+  B/C 的定义、权重与 240,000 美元留存不变。
+- **外部流量以业主申报为准**：`claude/xuan-ib-etf-flows-v1.json` 明文流水账
+  （日期、账户、方向、金额、备注），只追加、不改不删；只有跨出 IB-HK 账户边界
+  的资金才是流量，IB-HK 与 NOAH-HK 之间的挪动、买卖、股息、费用、利息都不是。
+- **安全网**：TWR 序列本身给出无收益的净值变动。某日隐含流量与申报之差超过
+  max(10,000 USD, 0.25% × 前一日 NAV) 时，该日 `flowsComplete=false`，比较停在
+  该日并注明"现金流待核"，申报后下一次运行自动续算。不猜、不填零。
+- **唯一生产者改为睡前版（PM）运行**：取截止到伦敦日期前一日的 IB 日终 NAV 与
+  四只 LSE 挂牌 USD 交易线的日收盘（`get_price_history` 日线，身份见
+  `claude/xuan-ib-etf-instruments-v1.json`）。曲线因此永远"数据至前一交易日"。
+  开放摘要不加密、不用专属 key、不用计数根；下面的旧密文路径保留为历史。
+- **组装**：`node scripts/xuan-ib-etf-daily.mjs build --performance FILE --bars FILE --out FILE`
+  从起点完整重放并产出 schema3 摘要；`xuan-ib-report-prepare.mjs --etf-summary FILE`
+  经 `renderReport` 放入 p5 末尾模板。guard 继续检查放置、日期、不倒退、记录
+  更新逐字节保留；睡前速览（T+10 优先页）不带模板，也不受连续性检查约束，下一
+  份完整睡前版恢复摘要。生产模块输出只含日期与计数，不打印金额。
+- 这两项额外只读读取不进 run manifest 的五端点契约，由生产模块以响应指纹记入
+  `sourceRef`（不公开）。不改账户范围，不新增调度，不写任何金融系统。
+- 只改显示的 ABC 卡片改动按业主既定工作模式由会话自行处理；流水账、起点与
+  标的文件在发布锁之外，便于业主通知后即时追加。
+
 ## 2026-09-04 补充：用户取消 ABC 访问码
 
 用户明确表示 ABC 比较并非私密事项，可取消该访问码功能；保留 ABC 比较。
