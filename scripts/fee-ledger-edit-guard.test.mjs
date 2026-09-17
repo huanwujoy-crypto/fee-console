@@ -47,8 +47,11 @@ const legacyLedger = () => {
 test("a local difference consisting only of an empty expense placeholder is neutral", () => {
   const html = fs.readFileSync(uiFile, "utf8");
   const start = "/* ledger-neutral-diff:start */", end = "/* ledger-neutral-diff:end */";
-  if (!html.includes('<meta name="fee-console-build" content="4.9.9">')) {
-    assert.equal(html.includes(start), false, "the neutral-diff UI must launch with v4.9.9");
+  const build = html.match(/<meta name="fee-console-build" content="(\d+)\.(\d+)\.(\d+)">/);
+  const hasNeutralDiff = build && (Number(build[1]) > 4 ||
+    Number(build[1]) === 4 && (Number(build[2]) > 9 || Number(build[2]) === 9 && Number(build[3]) >= 9));
+  if (!hasNeutralDiff) {
+    assert.equal(html.includes(start), false, "the neutral-diff UI starts with v4.9.9");
     return;
   }
   const block = html.slice(html.indexOf(start) + start.length, html.indexOf(end));
