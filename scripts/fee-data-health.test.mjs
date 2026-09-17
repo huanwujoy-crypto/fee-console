@@ -17,6 +17,23 @@ test("accepts a current amount-free weekend no-op receipt", () => {
   assert.deepEqual(validateHealth(base(), { now: new Date("2026-09-13T06:00:00Z") }), []);
 });
 
+test("a New York day cannot be published as a close before the close or from prior-day accounts", () => {
+  const candidate = {
+    ...base(), checkedAt: "2026-09-17T04:54:54Z", targetDate: "2026-09-17",
+    sourceDates: { schwab: "2026-09-16", webull: "2026-09-16", benchmark: null },
+    outcome: "updated"
+  };
+  const now = new Date("2026-09-17T05:00:00Z");
+  const reason = "health target precedes New York close or lacks same-day account sources";
+  assert.ok(validateHealth(candidate, { now }).includes(reason));
+  const afterClose = { ...candidate, checkedAt: "2026-09-17T20:30:00Z" };
+  assert.ok(validateHealth(afterClose, { now: new Date("2026-09-17T20:31:00Z") }).includes(reason));
+  const currentSources = { ...afterClose, sourceDates: {
+    schwab: "2026-09-17", webull: "2026-09-17", benchmark: null
+  } };
+  assert.deepEqual(validateHealth(currentSources, { now: new Date("2026-09-17T20:31:00Z") }), []);
+});
+
 test("rejects extra fields and private-looking detail", () => {
   assert.deepEqual(validateHealth({ ...base(), amount: 1 }, { now: new Date("2026-09-13T06:00:00Z") }), ["health receipt shape"]);
 });

@@ -475,9 +475,9 @@ if (styleResult) nextData.classificationRegistry = styleResult.registry;
 
 let receiptState = "unchanged";
 if (economicInput) {
-  // An unresolved cash movement makes fees and Carry non-authoritative, but it
-  // must not prevent the read-only AUM point from being recorded.  Remove any
-  // prior receipt and publish no replacement until the flow ledger is resolved.
+  // An unresolved or identified-but-unconfirmed cash movement makes fees and
+  // Carry non-authoritative.  Keep the read-only AUM point, but remove the
+  // receipt until the external-flow ledger has been confirmed.
   if (nextData.flowsUnresolved.length > 0) {
     if (data.feeCalculationReceipt) {
       delete nextData.feeCalculationReceipt;
@@ -486,9 +486,16 @@ if (economicInput) {
   } else {
     let receipt;
     try { receipt = buildFeeCalculationReceipt({ data: nextData, economicInput }); }
-    catch (error) { die(`fee calculation receipt failed: ${error.message} — nothing written`); }
-    if (!sameFeeCalculationReceipt(data.feeCalculationReceipt, receipt)) receiptState = "updated";
-    nextData.feeCalculationReceipt = receipt;
+    catch (error) {
+      if (error.code !== "UNCONFIRMED_EXTERNAL_CASH_FLOW") {
+        die(`fee calculation receipt failed: ${error.message} — nothing written`);
+      }
+      receiptState = data.feeCalculationReceipt ? "unavailable-removed" : "unavailable";
+    }
+    if (receipt) {
+      if (!sameFeeCalculationReceipt(data.feeCalculationReceipt, receipt)) receiptState = "updated";
+      nextData.feeCalculationReceipt = receipt;
+    } else delete nextData.feeCalculationReceipt;
   }
 } else if (data.feeCalculationReceipt) {
   const validation = validateFeeCalculationReceipt(data.feeCalculationReceipt, nextData);

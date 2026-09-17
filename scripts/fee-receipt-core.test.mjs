@@ -91,6 +91,31 @@ const fixture = ({ flowsAuto = [fopFlow()], econOver = {}, dataOver = {} } = {})
   return { data, economicInput };
 };
 
+test("an external cash candidate cannot inflate profit or Carry before confirmation", () => {
+  const base = fixture();
+  const candidate = {
+    id: "settled-wire-20260824", date: "2026-08-24", acct: "webull",
+    amount: 299998.08, desc: "External bank transfer settled",
+    reason: "description shows an external transfer", effective: false
+  };
+  const data = structuredClone(base.data);
+  data.flowsAuto.push(candidate);
+  data.daily.at(-1).webull += candidate.amount;
+  assert.throws(() => buildFeeCalculationReceipt({ data, economicInput: base.economicInput }),
+    /external cash flow .* awaits confirmation/);
+
+  const economicInput = structuredClone(base.economicInput);
+  economicInput.months = [{ ym: "2026-08", flows: [{
+    id: "confirmed-wire", src: candidate.id, date: candidate.date,
+    acct: candidate.acct, amount: candidate.amount, note: candidate.desc
+  }] }];
+  const receipt = buildFeeCalculationReceipt({ data, economicInput });
+  assert.equal(receipt.effectiveFlowNetCents,
+    Math.round((24000 + candidate.amount) * 100));
+  assert.equal(receipt.totals.grossPnlCents,
+    buildFeeCalculationReceipt(base).totals.grossPnlCents);
+});
+
 const encryptedEnvelopeFile = ({ payload, version, key, dir, name }) => {
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);

@@ -179,7 +179,7 @@ Webull 走邮件导入的买卖会被 Sharesight 记成 `DEPOSIT` / `WITHDRAWAL`
 | 描述含 wire / ACH / external transfer | 外部资金 |
 | 裸 `DEPOSIT` / `WITHDRAWAL`，无任何证据 | unresolved |
 
-- 普通现金"外部资金"进入 `flowsAuto` 后仍然只是**候选**，需管理人在设置里确认。
+- 普通现金"外部资金"进入 `flowsAuto` 后仍然只是**候选**，需管理人在设置里确认。候选未确认时，原始 AUM 可显示，但收益、Carry、应付费用及相同资金路径比较不能沿用未扣除这笔本金的计算回执；本轮回执应保持待更新。
 - 唯一自动生效的例外是证据完整的**跨管理边界实物转仓**：组合外来源 trade 与组合内
   目标 trade 必须在证券、数量和市场日期上逐项相等，并同时提供两端 trade id、目标 holding id、
   非零持仓变化。它按目标账户的 `transaction_date` 和当日市场价值计入，

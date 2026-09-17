@@ -1424,6 +1424,26 @@ test("an unresolved flow records AUM but removes the fee receipt", () => {
   assert.equal(Object.hasOwn(payload, "feeCalculationReceipt"), false);
 });
 
+test("an identified external deposit records AUM but withholds profit and fees until confirmed", () => {
+  const dir = tmp();
+  const econFile = writeEconEnvelope(dir, econForToday());
+  assert.equal(run(dir, {}, [], { FEE_ECON_FILE: econFile }).status, 0);
+  const flows = JSON.stringify([{
+    id: "synthetic-wire", date: today(), acct: "schwab", amount: 299998.08,
+    type: "DEPOSIT", desc: "External bank transfer settled",
+    evidence: "external_transfer", externalRef: "synthetic-bank-ref"
+  }]);
+  const result = run(dir, {
+    "acct-cash-schwab": "300206.42", "prev-acct-cash-schwab": "208.34"
+  }, [`--flows=${flows}`], { FEE_ECON_FILE: econFile });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /receipt=unavailable-removed/);
+  const payload = readPayload(dir);
+  assert.equal(payload.flowsAuto.length, 1);
+  assert.equal(payload.flowsAuto[0].effective, false);
+  assert.equal(Object.hasOwn(payload, "feeCalculationReceipt"), false);
+});
+
 test("identical public and private inputs remain byte-for-byte no-op", () => {
   const dir = tmp();
   const econFile = writeEconEnvelope(dir, econForToday());
@@ -1601,8 +1621,8 @@ test(`historical unresolved reconciliation retains latest calibrated=${latestCal
   assert.deepEqual(after.status, before.status);
   assert.equal(after.flowsUnresolved.length, 0);
   assert.equal(after.flowsAuto.length, 1);
-  assert.equal(after.feeCalculationReceipt.asOf, t);
-  assert.equal(after.feeCalculationReceipt.status.valid, true);
+  assert.equal(Object.hasOwn(after, "feeCalculationReceipt"), false,
+    "classification identifies a candidate; private confirmation is still required");
 });
 
 test("historical writes reject inconsistent latest status without changing any bytes", () => {

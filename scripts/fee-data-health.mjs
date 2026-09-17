@@ -41,6 +41,12 @@ const isDate = value => {
 };
 const dayDiff = (from, to) => Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / DAY_MS);
 const sha256 = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
+const NY_CLOCK = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+  hour: "2-digit", minute: "2-digit", hourCycle: "h23"
+});
+const nyParts = instant => Object.fromEntries(NY_CLOCK.formatToParts(instant)
+  .filter(part => part.type !== "literal").map(part => [part.type, part.value]));
 
 export function validateHealth(value, { now = new Date(), maxAgeHours = 36 } = {}) {
   const errors = [];
@@ -65,6 +71,18 @@ export function validateHealth(value, { now = new Date(), maxAgeHours = 36 } = {
     }
   }
   if (![...SUCCESS_OUTCOMES, "failed"].includes(value.outcome)) errors.push("health outcome");
+  if (SUCCESS_OUTCOMES.includes(value.outcome) && isDate(value.targetDate)
+      && Number.isFinite(Date.parse(value.checkedAt)) && exactKeys(value.sourceDates, SOURCE_KEYS)) {
+    const ny = nyParts(new Date(value.checkedAt));
+    const checkedNyDate = `${ny.year}-${ny.month}-${ny.day}`;
+    const checkedNyMinute = Number(ny.hour) * 60 + Number(ny.minute);
+    if (value.targetDate > checkedNyDate || (value.targetDate === checkedNyDate
+        && (checkedNyMinute < 16 * 60 + 15
+          || value.sourceDates.schwab !== value.targetDate
+          || value.sourceDates.webull !== value.targetDate))) {
+      errors.push("health target precedes New York close or lacks same-day account sources");
+    }
+  }
   if (typeof value.dataSha256 !== "string" || !SHA_RE.test(value.dataSha256)) errors.push("health data hash");
   if (value.outcome === "failed") {
     if (!FAILURE_CODES.includes(value.errorCode)) errors.push("health failure code");

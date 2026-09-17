@@ -44,6 +44,31 @@ const legacyLedger = () => {
   return raw;
 };
 
+test("a local difference consisting only of an empty expense placeholder is neutral", () => {
+  const html = fs.readFileSync(uiFile, "utf8");
+  const start = "/* ledger-neutral-diff:start */", end = "/* ledger-neutral-diff:end */";
+  if (!html.includes('<meta name="fee-console-build" content="4.9.9">')) {
+    assert.equal(html.includes(start), false, "the neutral-diff UI must launch with v4.9.9");
+    return;
+  }
+  const block = html.slice(html.indexOf(start) + start.length, html.indexOf(end));
+  assert.ok(html.includes(start) && html.includes(end) && block.length > 0);
+  const context = vm.createContext({ structuredClone, LG: { canonical: JSON.stringify } });
+  vm.runInContext(block + "\nglobalThis.compare=sameLedger;", context);
+  const remote = ledger(), local = ledger();
+  remote.fees.push({ id: "empty-draft", type: "exp", date: "2026-08-17",
+    amount: "", ccy: "USD", fx: "", deduct: true, note: "" });
+  assert.equal(context.compare(local, remote), true);
+  remote.fees[0].amount = "1.00";
+  assert.equal(context.compare(local, remote), false);
+  remote.fees[0].amount = "";
+  remote.fees[0].note = "intended payment";
+  assert.equal(context.compare(local, remote), false);
+  remote.fees[0].note = "";
+  local.settings.carry = 21;
+  assert.equal(context.compare(local, remote), false);
+});
+
 function extractBlock(html, start = START, end = END) {
   const starts = html.split(start).length - 1, ends = html.split(end).length - 1;
   if (starts === 0 && ends === 0) return null;

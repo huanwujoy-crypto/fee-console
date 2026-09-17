@@ -416,6 +416,16 @@ const validateFlowLedger = (econ, normalizedData) => {
       throw new Error("confirmed flow src disagrees with automatic flow date, account, or amount");
     }
   }
+  // A cash transfer changes NAV without creating investment profit.  An
+  // unconfirmed external candidate must not be silently treated as P&L.
+  const confirmedSources = new Set(confirmed.map(flow => flow.src).filter(Boolean));
+  const pendingCash = normalizedData.flowsAuto.find(flow =>
+    !flow.effective && !flow.businessKey && !confirmedSources.has(flow.id));
+  if (pendingCash) {
+    const error = new Error(`external cash flow ${pendingCash.date} ${pendingCash.acct} awaits confirmation`);
+    error.code = "UNCONFIRMED_EXTERNAL_CASH_FLOW";
+    throw error;
+  }
 };
 
 const effectiveFlowDigest = flows => flows.map((flow, index) => {
