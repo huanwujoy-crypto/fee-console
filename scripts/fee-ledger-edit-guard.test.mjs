@@ -34,6 +34,46 @@ const ledger = () => ({
   months: [],
   fees: []
 });
+
+test("a reviewed v3 migration preserves the exact encrypted source and never retries an uncertain write", async t => {
+  const html=fs.readFileSync(uiFile,"utf8");
+  if(!html.includes('id="ledgerMigrationCheck"')&&!html.includes('async function migrateLegacyLedger('))return;
+
+  await t.test("one confirmed migration writes native v4 and a byte-identical encrypted backup",async()=>{
+    const h=await browserHarness(html,{legacy:true,manager:true}),original=h.remote.content;
+    await h.run("pullAll(true,{skipShell:true})");
+    await h.run("beginLegacyMigration()");
+    assert.equal(typeof h.run("_cfmCb"),"function");assert.equal(h.writes().length,0);
+    await h.run("_cfmCb()");
+    assert.equal(h.writes().length,1);assert.equal(h.writes()[0].method,"PATCH");
+    assert.equal(h.remote.backupContent,original);
+    assert.equal(JSON.parse(h.remote.content).v,4);assert.equal(h.run("DB.v"),4);
+    assert.equal(h.run("DB.fees.length"),0,"blank legacy expense stays only in the backup");
+    assert.equal(h.run("DB.editAudit.length"),1);
+    assert.equal(h.run("_legacyMigrationPending"),null);
+  });
+
+  await t.test("changed source revision or pre-existing backup blocks submission",async()=>{
+    const changed=await browserHarness(html,{legacy:true,manager:true});
+    await changed.run("pullAll(true,{skipShell:true})");await changed.run("beginLegacyMigration()");
+    changed.remote.revision="fixture-newer-revision";
+    await changed.run("_cfmCb()");assert.equal(changed.writes().length,0);
+    const backed=await browserHarness(html,{legacy:true,manager:true});
+    backed.remote.backupContent="pre-existing-encrypted-backup";
+    await backed.run("pullAll(true,{skipShell:true})");await backed.run("beginLegacyMigration()");
+    assert.equal(backed.run("_cfmCb"),null);assert.equal(backed.writes().length,0);
+  });
+
+  await t.test("lost acknowledgement checks readback without sending a second PATCH",async()=>{
+    const h=await browserHarness(html,{legacy:true,manager:true}),original=h.remote.content;
+    await h.run("pullAll(true,{skipShell:true})");await h.run("beginLegacyMigration()");
+    h.network.loseWriteResponse=true;await h.run("_cfmCb()");
+    assert.equal(h.writes().length,1);assert.ok(h.run("_legacyMigrationPending"));
+    await h.run("checkLegacyMigrationOutcome()");
+    assert.equal(h.writes().length,1);assert.equal(h.remote.backupContent,original);
+    assert.equal(h.run("DB.v"),4);assert.equal(h.run("_legacyMigrationPending"),null);
+  });
+});
 const snapshot = (over = {}) => ({
   revision: "fixture-revision-1", content: "fixture-encrypted-content-1", db: ledger(), ...over
 });
@@ -127,7 +167,7 @@ function bound(g, source = snapshot()) {
 // This is a synthetic browser, not a connection to a browser profile.  All
 // localStorage, timers and fetches below are in-memory fixtures.  No real Gist,
 // token, private ledger, filesystem browser store or outbound network is used.
-async function browserHarness(html, { stored = null, legacy = false } = {}) {
+async function browserHarness(html, { stored = null, legacy = false, manager = false } = {}) {
   const inline = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].at(-1)?.[1];
   const boot = inline?.indexOf("/* ============ 启动 ============ */");
   assert.ok(boot > 0, "the main inline script must have an explicit startup boundary");
@@ -186,18 +226,18 @@ async function browserHarness(html, { stored = null, legacy = false } = {}) {
           toggle(name, force) { const wanted = force ?? !classes.has(name); wanted ? classes.add(name) : classes.delete(name); return wanted; }
         },
         querySelectorAll: () => [], querySelector: selector => element(id + " " + selector), setAttribute() {}, removeAttribute() {},
-        addEventListener() {}, select() {}, closest: () => null
+        addEventListener() {}, select() {}, closest: () => null, contains: () => false
       });
     }
     return elements.get(id);
   };
   const document = {
-    visibilityState: "visible", body: { addEventListener: (event, fn) => add(bodyListeners, event, fn) },
+    visibilityState: "visible", activeElement: null, body: { addEventListener: (event, fn) => add(bodyListeners, event, fn) },
     getElementById: element,
     querySelector: selector => selector === 'meta[name="fee-console-build"]' ? { content: build } : null,
     querySelectorAll: () => [], addEventListener: (event, fn) => add(docListeners, event, fn)
   };
-  const remote = { revision: "fixture-revision-1", content: initialContent };
+  const remote = { revision: "fixture-revision-1", content: initialContent, backupContent: null };
   const network = { loseWriteResponse: false, rejectWrite: false, corruptReadbackAfterWrite: false,
     failGistRead: false, missingGistFile: false, failDaily: false, invalidDaily: false };
   const readGates = new Map();
@@ -257,19 +297,24 @@ async function browserHarness(html, { stored = null, legacy = false } = {}) {
       if (method === "GET" && network.failGistRead) throw new Error("fixture source unavailable");
       if (method === "PATCH") {
         if (network.rejectWrite) return { ok: false, status: 403, json: async () => ({ message: "fixture rejected" }) };
-        remote.content = JSON.parse(options.body).files["fee-console-db.json"].content;
+        const files = JSON.parse(options.body).files;
+        remote.content = files["fee-console-db.json"].content;
+        if (files["fee-console-db-v3-backup.json"]) remote.backupContent = files["fee-console-db-v3-backup.json"].content;
         remote.revision = "fixture-revision-2";
         if (network.loseWriteResponse) throw new Error("fixture lost acknowledgement");
       } else assert.equal(method, "GET", "test reached an unexpected economic write method");
       const readContent = method === "GET" && remote.revision === "fixture-revision-2" && network.corruptReadbackAfterWrite
         ? "fixture-corrupt-readback" : remote.content;
-      const result = ok({ id: "fixture-gist", history: [{ version: remote.revision }], files: network.missingGistFile ? {} : { "fee-console-db.json": { content: readContent, truncated: false } } });
+      const files=network.missingGistFile ? {} : { "fee-console-db.json": { content: readContent, truncated: false } };
+      if(remote.backupContent!==null)files["fee-console-db-v3-backup.json"]={content:remote.backupContent,truncated:false};
+      const result = ok({ id: "fixture-gist", owner: manager?{login:"fixture-owner"}:undefined, history: [{ version: remote.revision }], files });
       if (method === "GET") await passReadGate("gist");
       return result;
     }
     if (url.includes("api.github.com/gists?")) {
       assert.equal(method, "GET"); return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
     }
+    if (url === "https://api.github.com/user" && manager) return ok({login:"fixture-owner"});
     if (/^(?:data\.json|https:\/\/fixture\.invalid\/fee-console\/data\.json)(?:\?|$)/.test(url)) {
       if (network.failDaily) throw new Error("fixture daily unavailable");
       const result = ok(structuredClone(network.invalidDaily ? { invalid: true } : data));
