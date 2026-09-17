@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.8">
+<meta name="fee-console-build" content="4.9.9">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -704,7 +704,9 @@ globalThis.feeLegacyPolicy=createLegacyPolicy();
       }else if(legacySource!==undefined||Object.hasOwn(economicInput,"legacyV3Copy"))throw new Error("legacy receipt required");
       const econ=normalizeEcon(economicInput),normalized=await normalizeData(data,{start:receipt.start,asOf:receipt.asOf,accountIds:receipt.accountIds});
       if(normalized.status.unresolvedCount>0||econ.settings.start!==receipt.start||ratePpm(econ.settings.mgmt)!==receipt.managementRatePpm||ratePpm(econ.settings.carry)!==receipt.carryRatePpm)throw new Error("inputs");
-      const autoById=new Map(normalized.flowsAuto.map(flow=>[flow.id,flow]));for(const flow of econ.months.flatMap(month=>month.flows).filter(flow=>flow.date>=receipt.start&&flow.date<=receipt.asOf)){if(!flow.src)continue;const automatic=autoById.get(flow.src);if(!automatic||flow.date!==automatic.date||flow.acct!==automatic.acct||cents(flow.amount)!==cents(automatic.amount))throw new Error("flow link");}
+      const confirmed=econ.months.flatMap(month=>month.flows).filter(flow=>flow.date>=receipt.start&&flow.date<=receipt.asOf),autoById=new Map(normalized.flowsAuto.map(flow=>[flow.id,flow]));for(const flow of confirmed){if(!flow.src)continue;const automatic=autoById.get(flow.src);if(!automatic||flow.date!==automatic.date||flow.acct!==automatic.acct||cents(flow.amount)!==cents(automatic.amount))throw new Error("flow link");}
+      const confirmedSources=new Set(confirmed.map(flow=>flow.src).filter(Boolean));
+      if(normalized.flowsAuto.some(flow=>!flow.effective&&!flow.businessKey&&!confirmedSources.has(flow.id)))return {ok:false,reason:"unconfirmed external cash flow"};
       const publicHash=await semanticHash("public-calculation-inputs",normalized),econHash=await semanticHash("private-economic-inputs",econ);
       const payments=econ.fees.filter(fee=>fee.date>=receipt.start&&fee.date<=receipt.asOf).map(fee=>({date:fee.date,amountCents:cents(fee.amount),ccy:fee.ccy,fxPpb:integer(Math.round(fee.fx*1000000000))})).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
       const flows=effectiveFlows(econ,normalized),flowDigest=[];for(const flow of flows){const identity={id:String(flow.id||""),src:String(flow.src||""),reason:String(flow.reason||""),note:String(flow.note||"")};flowDigest.push({date:String(flow.date||""),acct:String(flow.acct||""),amountCents:cents(flow.amount),eventKeyHash:await semanticHash("effective-flow-event",identity)});}flowDigest.sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
@@ -721,7 +723,7 @@ globalThis.feeLegacyPolicy=createLegacyPolicy();
 /* fee-receipt-consumer:end */
 
 /* fee-receipt-render:start */
-(()=>{globalThis.feeReceiptRenderProjection=model=>model&&model.ok===true?{state:"verified",message:null,receiptId:model.receiptId,asOf:model.asOf,start:model.start,managementRatePpm:model.managementRatePpm,carryRatePpm:model.carryRatePpm,status:model.status,periods:model.periods,totals:model.totals,balance:model.balance,benchmarkInputs:model.benchmarkInputs}:{state:"pending",message:"计算回执待更新",receiptId:null,asOf:null,start:null,managementRatePpm:null,carryRatePpm:null,status:null,periods:[],totals:null,balance:null,benchmarkInputs:null};})();
+(()=>{globalThis.feeReceiptRenderProjection=model=>model&&model.ok===true?{state:"verified",message:null,receiptId:model.receiptId,asOf:model.asOf,start:model.start,managementRatePpm:model.managementRatePpm,carryRatePpm:model.carryRatePpm,status:model.status,periods:model.periods,totals:model.totals,balance:model.balance,benchmarkInputs:model.benchmarkInputs}:{state:"pending",message:model?.reason==="unconfirmed external cash flow"?"外部资金流待确认，收益与费用暂不显示":"计算回执待更新",receiptId:null,asOf:null,start:null,managementRatePpm:null,carryRatePpm:null,status:null,periods:[],totals:null,balance:null,benchmarkInputs:null};})();
 /* fee-receipt-render:end */
 
 /* month-history-view:start */
@@ -798,7 +800,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.8";
+const UI_VERSION_LABEL=" · v4.9.9";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1319,7 +1321,10 @@ function changeDraft(mutator,rerender=true){if(!canEdit()){lockLedger();return;}
 async function beginLedgerEdit(){
   await restoreDraft();if(!isMgr()||_ledgerBusy||_draftBlocked)return;_ledgerBusy=true;renderLedgerControls();try{const snapshot=await ghReadSnapshot();if(document.visibilityState!=="visible")throw new Error("页面已离开，编辑保持锁定");if(!EDIT.draft&&_localLedgerPresent&&!sameLedger(DB,snapshot.db)){_ledgerConflict=LG.diffLedger(snapshot.db,DB);throw new Error("本机与云端账本不同，原记录均保留；请先刷新复核，未进入编辑");}_ledgerConflict=EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)?LG.diffLedger(snapshot.db,EDIT.draft):[];EDIT=LG.begin(EDIT,snapshot,Date.now());_ledgerConflict=[];_ledgerMessage="5 分钟不操作或离开页面将自动锁定；草稿不会自动上传";await persistDraft();}catch(e){EDIT=LG.lock(EDIT);_ledgerMessage=e.message;}finally{_ledgerBusy=false;render();}
 }
-const sameLedger=(a,b)=>{const clean=x=>{const d=structuredClone(x);delete d.updatedAt;return d;};return LG.canonical(clean(a))===LG.canonical(clean(b));};
+/* ledger-neutral-diff:start */
+const blankExpensePlaceholder=fee=>fee&&fee.type==="exp"&&String(fee.amount??"").trim()===""&&String(fee.fx??"").trim()===""&&String(fee.note??"").trim()===""&&Object.keys(fee).every(key=>["id","type","date","amount","ccy","fx","deduct","note"].includes(key));
+const sameLedger=(a,b)=>{const clean=x=>{const d=structuredClone(x);delete d.updatedAt;d.fees=(d.fees||[]).filter(fee=>!blankExpensePlaceholder(fee));return d;};return LG.canonical(clean(a))===LG.canonical(clean(b));};
+/* ledger-neutral-diff:end */
 const fieldLabel=field=>field.replace(/^settings\.mgmt$/,"管理费率 (%)").replace(/^settings\.carry$/,"Carry (%)").replace(/^settings\.start$/,"起算日").replace(/^settings\.who$/,"管理人").replace(/^accounts\.([^.]*)\.opening$/,"$1 期初本金").replace(/^accounts\.([^.]*)\.name$/,"$1 名称").replace(/^fees\./,"付款 ").replace(/^months\./,"出入金 ");
 function ledgerDiffTable(changes){const value=x=>x===null?"—":typeof x==="object"?JSON.stringify(x):String(x);return `<table class="ledger-diff"><thead><tr><th>项目</th><th>原值</th><th>新值</th></tr></thead><tbody>${changes.map(c=>`<tr><td>${esc(fieldLabel(c.field))}</td><td>${esc(value(c.before))}</td><td>${esc(value(c.after))}</td></tr>`).join("")}</tbody></table>`;}
 function showLedgerReview(){
@@ -1980,7 +1985,7 @@ async function pullAll(quiet,opt={}){
   if(!current())return;
   if(cfg(K.gid)&&!_ledgerBusy){
     _busy=true;try{const snapshot=await ghPull(epoch);if(!current())return;if(isMgr())try{await verifyManagerCapability(snapshot,epoch);}catch(e){_managerCapability={state:"denied"};_fundDocsMessage="基金文件管理身份未核验："+e.message;}if(!current())return;try{await acceptRemoteFundSnapshot(snapshot);}catch(e){_fundProfileMessage="远端基金档案读取失败："+e.message;_fundDocsMessage=_fundProfileMessage;}if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
-      if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
+      if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()&&!sameLedger(DB,remote)){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
       else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setSync(dailyReady?"已读取 "+hhmm():"每日数据读取失败，费用暂不可用",!dailyReady);if(!quiet)toast("已重新读取，不会上传账本");}
     }catch(e){if(current()){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";setSync("读取失败："+e.message,true);}}finally{_busy=false;}
   }else if(!cfg(K.gid))setSync(isMgr()?"请恢复原账本链接；不会新建":"");
