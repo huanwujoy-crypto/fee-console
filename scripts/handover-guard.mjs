@@ -24,7 +24,7 @@ import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xua
 import {
   ASSOCIATION_TEMPLATE_ID, checkAssociationPublication, hasAssociationMarker, publicationEdition,
 } from './xuan-ib-account-association-publication.mjs';
-import { SLEEP_PRIORITY_TEMPLATE_ID, checkSleepPriorityPublication } from './xuan-ib-sleep-priority.mjs';
+import { SLEEP_PRIORITY_TEMPLATE_ID, checkSleepPriorityPublication, extractSleepPriorityDelivery } from './xuan-ib-sleep-priority.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -332,7 +332,11 @@ const validatePublicationTemplates = (source, policyContext) => {
     try { prior=publicationTemplates(fs.readFileSync(previousFile,'utf8'))
       .find(t=>quotedAttribute(t.attributes,'id','previous template')===ETF_SUMMARY_ID); }
     catch(error){fail(`cannot read prior ETF summary: ${error.message}`);}
-    if(prior){
+    // A priority (T+10) page is a visibly incomplete adhoc delivery that never
+    // carries the comparison; the next complete report restores it from the
+    // producer. Exempting it keeps the protected fallback route usable once a
+    // summary has been published. Every other candidate must carry it forward.
+    if(prior && !extractSleepPriorityDelivery(source)){
       try{
         const old=parseEtfSummary(prior.body);
         if(!openData || openData.startDate!==old.startDate || openData.frozenDate!==old.frozenDate

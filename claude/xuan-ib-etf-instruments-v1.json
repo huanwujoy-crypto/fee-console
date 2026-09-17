@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "purpose": "xuan-etf-daily-instruments",
+  "note": "Interactive Brokers contract identity of the four LSE-listed USD trading lines that price the B and C arms. Resolved with search_contracts on 2026-09-17: the exchange is the LSE ETF segment and every line is the USD line. Changing an identity here is a method change.",
+  "instruments": {
+    "CSPX": { "contractId": 76023663, "exchange": "LSEETF", "isin": "IE00B5BMR087", "currency": "USD", "description": "ISHARES CORE S&P 500" },
+    "EXUS": { "contractId": 691133189, "exchange": "LSEETF", "isin": null, "currency": "USD", "description": "X MSCI WORLD EX USA 1C" },
+    "EIMI": { "contractId": 153454131, "exchange": "LSEETF", "isin": null, "currency": "USD", "description": "ISHARES CORE EM IMI ACC" },
+    "USSC": { "contractId": 184281747, "exchange": "LSEETF", "isin": null, "currency": "USD", "description": "SS SPD MSCI US SCVW UC ETF-U" }
+  }
+}

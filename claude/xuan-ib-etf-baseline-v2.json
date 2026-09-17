@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "purpose": "xuan-etf-daily-baseline",
+  "methodId": "xuan-etf-indicative-v2",
+  "startDate": "2026-09-17",
+  "frozenDate": "2026-09-17",
+  "reserveUsd": 240000,
+  "note": "Baseline of the v2.1 simplified daily comparison: the 2026-09-17 close. This file records dates only; the baseline wealth and prices are re-read from the same official sources on every run, so it never carries a financial value. Once a report has published a summary with this start date, the trusted guard refuses any later start date."
+}

@@ -366,6 +366,15 @@ it load the approved legacy `etf-trend.json`; an invalid template is not a
 reason to silently serve the older file. Never publish the original result,
 source records or keys. Once present, preserve the summary and its fixed
 baseline on later reports; receipt-only updates must preserve it byte for byte.
+From 2026-09-17 the v2.1 simplified daily mode in `claude/xuan-ib-etf-trend-v2.md`
+produces that template on every fixed PM run: `scripts/xuan-ib-etf-daily.mjs`
+replays from the dated baseline `claude/xuan-ib-etf-baseline-v2.json` using the
+IB PortfolioAnalyst daily NAV, the four LSE ETF daily closes and the
+owner-declared, append-only flow ledger `claude/xuan-ib-etf-flows-v1.json`, and
+`prepareReport` takes the result as `etfSummary` (`--etf-summary`). An
+undeclared account movement stops the comparison at that day by name rather
+than guessing. A priority (T+10) page carries no summary and is exempt from the
+continuity check; the next complete PM report restores it.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,
