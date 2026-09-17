@@ -101,7 +101,7 @@ test("creates canonical metadata from the selected candidate", () => {
   });
 });
 
-test('priority cannot publish before T+10 and cannot duplicate or replace same-day full pm', () => {
+test('priority cannot publish before its versioned eligibility instant or replace same-day full pm', () => {
   const priority = candidate({ commitEpoch: 200, publication: {
     kind: 'priority', dataDate: '2026-08-26', priorityKey: 'pm:2026-08-26', eligibleAtEpoch: 201,
   }});
