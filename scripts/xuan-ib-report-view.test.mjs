@@ -6,12 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
-import { renderReport, validateReportView, reportHtmlBlob } from './xuan-ib-report-view.mjs';
+import { renderReport, renderRiskCards, validateReportView, reportHtmlBlob } from './xuan-ib-report-view.mjs';
 import { buildDecisionMenu } from './xuan-ib-decision-menu.mjs';
 import { prepareReport, runPrepareCli } from './xuan-ib-report-prepare.mjs';
 import { APPROVED_IB_ACCOUNT_ID, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { initRunJournal, startJournalStage, finishJournalStage, showRunJournal } from './xuan-ib-run-clock.mjs';
 import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.mjs';
+import { buildAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
+import { computeAiPressure } from './xuan-ib-ai-pressure.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Existing public history is read, never rewritten or copied into a new fixture.
@@ -57,6 +59,46 @@ test('synthetic compact report passes unchanged trusted guard and native menu',(
   assert.ok(!/<script\b|<form\b|<button\b/i.test(html));
   assert.ok(html.includes('<details open><summary>⑥ 挂单提醒'));
   assert.ok(html.includes('<details><summary>三行摘要'));
+});
+test('new raw reports render the verified risk table as separate concentration and cash cards',()=>{
+  const view=fixture();view.risk=[{title:'集中度与现金（IB 账户内）',asOfHkt:stamp,
+    lines:['IB 账户内原始口径。'],columns:['项目','本轮数值'],
+    rows:[['最大单仓','MXUS $400 · 占 IB 股票 20%'],['IB 现金','$300 · 占 NAV 30%'],['已用保证金','$0 · 杠杆 1']] }];
+  view.cashPlan={schemaVersion:2,status:'snapshot',ibCash:300,noahCash:200,reserve:100};
+  view.holdings={authoritativeValueUsd:1000,rows:[
+    ...['VGSH','VGIT','TLT','GLD','SLV','MSTR','HODL'].map(symbol=>({symbol,marketValueUsd:10})),
+  ]};
+  const ai={denominatorCents:'100000',rows:[
+    {symbol:'GOOG',namespace:'REG',status:'classified',assetType:'STK',marketValueCents:'3000'},
+    {symbol:'GOOGL',namespace:'REG',status:'classified',assetType:'STK',marketValueCents:'2000'},
+  ]};
+  const html=renderRiskCards(view,ai);
+  assert.match(html,/<h2>单票集中度<\/h2>/);
+  assert.match(html,/<h2>现金<\/h2>/);
+  for(const value of ['GOOG / GOOGL','5.00% / 5%','现金池','$500','覆盖待 call','5.00×','二线弹药','$30','主题投资','3.33%'])assert.ok(html.includes(value),value);
+  assert.doesNotMatch(html,/<h2>集中度与现金/);
+  assert.match(html,/<summary>原始读数<\/summary>/);
+  view.risk[0].title='② 集中度与现金（IB 账户内）';
+  assert.equal(renderRiskCards(view,ai).match(/<h2>现金<\/h2>/g)?.length,1);
+  assert.match(renderRiskCards(view,null),/<h2>② 集中度与现金/);
+});
+test('native risk split survives the compact report guard, not only the mobile loader',()=>{
+  const view=fixture();view.risk=[{title:'集中度与现金（IB 账户内）',asOfHkt:stamp,
+    lines:['合成测试风险读数。'],columns:['项目','本轮数值'],
+    rows:[['最大单仓','GOOG $10 · 占 IB 股票 10%'],['IB 现金','$20 · 占 NAV 20%'],['已用保证金','$0 · 杠杆 1']] }];
+  const source=[{symbol:'GOOG',custodian:'IB-HK',venue:'NASDAQ',portfolioId:'936247',
+    holdingId:'60000001',instrumentId:'60000001',currency:'USD',assetType:'STK',
+    marketValueUsd:10,valueDate:fixtureDate,identityVerified:true,firstSeen:false}];
+  const aiTierCoverage=buildAiTierCoverage(source);
+  const aiPressure=computeAiPressure(source,aiTierCoverage,{denominator:{components:[
+    {key:'ib-hk',label:'IB-HK 合成',valueMicro:'600000000'},
+    {key:'schwab-hk',label:'Schwab-HK 合成',valueMicro:'200000000'},
+    {key:'webull',label:'Webull 合成',valueMicro:'200000000'}]}});
+  const html=renderReport(view,{...context,aiTierCoverage,aiPressure});
+  assert.match(html,/<h2>单票集中度<\/h2>/);
+  assert.match(html,/<h2>现金<\/h2>/);
+  assert.doesNotMatch(html,/<h2>集中度与现金/);
+  const result=runGuard(html);assert.equal(result.status,0,result.stderr+result.stdout);
 });
 test('known >=1%, small changes and missing quotes are disjoint and counted',()=>{
   const html=renderReport(fixture(),context);

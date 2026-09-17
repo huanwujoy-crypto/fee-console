@@ -139,6 +139,11 @@ Read the relevant [cash plan](xuan-ib-cash-first-plan-v1.md),
 and immutable receipt history. Use the compact contract's full-view preflight
 and `xuan-ib-report-prepare.mjs` path; prose-only correction stays within its
 bounded preflight retry, not a new financial run or edited generated HTML.
+The compact renderer now emits separate `单票集中度` and `现金` risk cards from
+the validated source rows. Do not hand-assemble or copy forward the old
+`集中度与现金（IB 账户内）` card. Before publishing a full PM candidate, check its
+raw HTML has the separate headings; the mobile app's compatibility transform
+is only for already published legacy reports, not the routine authoring path.
 
 ## 5. Publish and prove delivery
 
