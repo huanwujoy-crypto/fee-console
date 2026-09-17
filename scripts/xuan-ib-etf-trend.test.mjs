@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {TREND_METHOD, ETF_WEIGHTS, simulateEtfTrend, projectEtfTrend, validateTrendProjection, renderEtfTrend, projectOpenEtfTrend, validateOpenEtfTrend} from './xuan-ib-etf-trend.mjs';
+import {TREND_METHOD, ETF_WEIGHTS, ETF_STALE_AFTER_DAYS, simulateEtfTrend, projectEtfTrend, validateTrendProjection, renderEtfTrend, projectOpenEtfTrend, validateOpenEtfTrend, etfTrendAgeDays, zoneDate} from './xuan-ib-etf-trend.mjs';
 const syms=Object.keys(ETF_WEIGHTS), clone=v=>structuredClone(v);
 const day=(date,actualUsd=1200000,price=100,flows=[])=>({date,actualUsd,actualComplete:true,flowsComplete:true,sourceRef:'synthetic source',flows,
   quotes:Object.fromEntries(syms.map(s=>[s,{status:'close',date,usd:price,source:'synthetic USD close'}]))});
@@ -145,4 +145,39 @@ test('source caveat appears once inside folded calculation notes without changin
     assert.ok(!html.replace(folded[0],'').includes(caveat));
   }
   assert.deepEqual({r,p},before);
+});
+test('a comparison that stopped updating states its age instead of showing a stale balance as current',()=>{
+  const open=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02'),day('2026-09-03')]),{now:openNow});
+  assert.equal(open.latestCompleteDate,'2026-09-03');
+  const frozen=renderEtfTrend(open);
+  // A frozen historical artifact states no reading date and keeps its bytes.
+  assert.equal(renderEtfTrend(open,{}),frozen);
+  assert.doesNotMatch(frozen,/没有更新|数值<\/small>/);
+  // A weekend plus one market holiday is still an ordinary gap between closes.
+  for(const viewDate of ['2026-09-03','2026-09-08']){
+    const html=renderEtfTrend(open,{viewDate});
+    assert.doesNotMatch(html,/没有更新/);
+    assert.match(html,/估算余额 USD<br><small[^>]*>2026-09-03 数值<\/small>/);
+  }
+  const stale=renderEtfTrend(open,{viewDate:'2026-09-16'});
+  assert.match(stale,/本比较自 2026-09-03 起没有更新，已落后 13 天/);
+  assert.match(stale,/之后的转入、转出与行情都没有计入，不能当作当前余额/);
+  assert.equal(stale.split('已落后').length-1,1);
+  assert.match(renderEtfTrend(open,{viewDate:'2026-09-09'}),/已落后 6 天/);
+  assert.equal(etfTrendAgeDays(open,'2026-09-16'),13);
+  assert.equal(ETF_STALE_AFTER_DAYS,5);
+  // The age is measured against a stated date, never guessed or run backwards.
+  assert.throws(()=>renderEtfTrend(open,{viewDate:'2026-09-02'}),/View date precedes/);
+  for(const bad of ['2026-9-16','2026-02-30','',null,20260916])assert.throws(()=>etfTrendAgeDays(open,bad),/Invalid view date/);
+});
+test('the staleness notice adds no value, changes no amount and stays escaped',()=>{
+  const result=run([day('2026-09-01'),day('2026-09-02',1300000,100,[flow('2026-09-02',-300000)])]);
+  const open=projectOpenEtfTrend(result,{now:openNow}),before=JSON.stringify(open);
+  const stale=renderEtfTrend(open,{viewDate:'2026-09-16'});
+  assert.equal(JSON.stringify(open),before);
+  for(const arm of ['A','B','C'])assert.ok(stale.includes(new Intl.NumberFormat('zh-HK',{maximumFractionDigits:0}).format(open.latestBalances.usd[arm])),arm);
+  assert.equal(stale.split('估算余额 USD').length-1,1);
+  assert.doesNotMatch(stale,/<script|javascript:/i);
+  assert.equal(zoneDate('Asia/Hong_Kong',new Date('2026-09-16T20:00:00Z')),'2026-09-17');
+  assert.equal(zoneDate('America/New_York',new Date('2026-09-16T20:00:00Z')),'2026-09-16');
 });

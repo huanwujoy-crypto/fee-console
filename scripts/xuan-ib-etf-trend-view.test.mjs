@@ -390,3 +390,21 @@ test('ambiguous or absent ETF pane is untouched and does not fetch', async () =>
     assert.equal(calls, 0); assert.equal(panel(doc), null);
   }
 });
+
+test('the mounted card tells the reader how far behind the comparison is', async () => {
+  const f = documentFixture(), storage = storageFixture();
+  await mountEtfTrend(options(f, storage, async () => response(key())));
+  assert.match(panel(f.doc).innerHTML, /本比较自 2020-09-02 起没有更新，已落后 \d+ 天/);
+  assert.match(panel(f.doc).innerHTML, /2020-09-02 数值/);
+});
+
+test('unchanged bytes read on a later day are re-rendered with the new age', async () => {
+  const f = documentFixture(), storage = storageFixture();
+  const fetchFn = async () => response(key());
+  await mountEtfTrend(options(f, storage, fetchFn));
+  const first = panel(f.doc).innerHTML.match(/已落后 (\d+) 天/);
+  assert.ok(first);
+  await mountEtfTrend(options(f, storage, fetchFn, { now: new Date(now.getTime() + 3 * 86400000) }));
+  const later = panel(f.doc).innerHTML.match(/已落后 (\d+) 天/);
+  assert.equal(Number(later[1]), Number(first[1]) + 3);
+});
