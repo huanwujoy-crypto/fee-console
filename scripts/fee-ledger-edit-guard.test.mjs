@@ -50,7 +50,17 @@ test("a reviewed v3 migration preserves the exact encrypted source and never ret
     assert.equal(JSON.parse(h.remote.content).v,4);assert.equal(h.run("DB.v"),4);
     assert.equal(h.run("DB.fees.length"),0,"blank legacy expense stays only in the backup");
     assert.equal(h.run("DB.editAudit.length"),1);
+    assert.equal(h.run('DB.editAudit[0].changes.find(row=>row.field==="legacyEmptyExpenseIds").before[0]'),"fixture-legacy-empty");
+    assert.equal(h.run('DB.editAudit[0].changes.find(row=>row.field==="legacyPaymentMetadata").before.length'),0);
     assert.equal(h.run("_legacyMigrationPending"),null);
+  });
+
+  await t.test("a key change during migration encryption prevents PATCH",async()=>{
+    const h=await browserHarness(html,{legacy:true,manager:true});
+    await h.run("pullAll(true,{skipShell:true})");await h.run("beginLegacyMigration()");
+    const gate=h.pauseNextEncryption(),action=h.run("_cfmCb()");
+    await gate.entered;h.store.set("feeConsole.key",Buffer.alloc(32,9).toString("base64url"));gate.release();
+    await action;assert.equal(h.writes().length,0);assert.equal(h.run("_legacyMigrationPending"),null);
   });
 
   await t.test("changed source revision or pre-existing backup blocks submission",async()=>{

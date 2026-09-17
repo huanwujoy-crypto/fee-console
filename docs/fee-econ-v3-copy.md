@@ -97,7 +97,18 @@ the receipt, prove a repeat-run no-op, use the existing protected publication pa
 and verify the phone separately. Conversion success is not publication or phone
 acceptance. Replacing the source Gist requires separate explicit authorization.
 
-For the named legacy exception, retain the verified original encrypted snapshot
+After an explicitly authorized and read-back-verified in-place migration, the
+current named Gist file is native encrypted v4. Keep its exact original v3
+envelope in `fee-console-db-v3-backup.json` in the same Gist for audit and
+recovery; do not feed that backup to the daily writer or reclassify it as a
+new active source. The next fee run must freshly acquire the current v4 file,
+use it as `FEE_ECON_FILE`, omit `FEE_ECON_V3_FILE`, validate the new receipt,
+prove a repeat-run no-op, and follow normal protected publication and phone
+readback. Never republish the old legacy-v2 receipt as if it were generated
+from the new v4 source. If migration/readback is uncertain, stop the run and
+reconcile the Gist before any writer invocation.
+
+For a still-active v3 source under the named legacy exception, retain the verified original encrypted snapshot
 as `FEE_ECON_V3_FILE` for both writer and reporter. Each requires it to match the
 provenance bytes, checks two local reads, and rechecks before output (including
 no-op). This protects use-time stability, **not remote freshness**. Every run must
