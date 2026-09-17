@@ -1,5 +1,5 @@
 // Optional owner-approved open comparison. Never reads a key or the original ledger.
-import {validateOpenEtfTrend,renderEtfTrend} from './xuan-ib-etf-trend.mjs';
+import {validateOpenEtfTrend,renderEtfTrend,zoneDate} from './xuan-ib-etf-trend.mjs';
 import {ETF_SUMMARY_ID,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 export const ETF_SEEN_DATE='xuan-etf:last-source-date:open-v3';
 export const MAX_ETF_DISPLAY_BYTES=512000;
@@ -55,10 +55,13 @@ export async function mountEtfTrend({doc,storage,baseUrl,fetchFn=globalThis.fetc
     if(controller.signal.aborted)throw new Error('aborted');
     validateOpenEtfTrend(data,{now,maxSeenDate:readSeen()});
     const saveSeen=()=>{try{storage?.setItem(ETF_SEEN_DATE,data.rows.at(-1).date);}catch{}};
+    // The card states how far behind the comparison is, so the reading date is
+    // part of its display identity: unchanged bytes on a later day still age.
+    const viewDate=zoneDate('Asia/Hong_Kong',now);
     const previous=displayed.get(doc);
-    if(previous?.panel===panel&&previous.fingerprint===fingerprint){saveSeen();return;}
-    const template=doc.createElement('template');template.innerHTML=renderEtfTrend(data);
-    panel.replaceChildren(template.content.cloneNode(true));displayed.set(doc,{panel,fingerprint});saveSeen();
+    if(previous?.panel===panel&&previous.fingerprint===fingerprint&&previous.viewDate===viewDate){saveSeen();return;}
+    const template=doc.createElement('template');template.innerHTML=renderEtfTrend(data,{viewDate});
+    panel.replaceChildren(template.content.cloneNode(true));displayed.set(doc,{panel,fingerprint,viewDate});saveSeen();
     for(const node of [...pane.children]){
       if(node===panel||node.id==='xuan-etf-original-history')continue;
       let history=doc.getElementById('xuan-etf-original-history');
