@@ -51,7 +51,9 @@ helper on that run's trusted main. Importing alone does not access the network.
 1. Call `fetchEconomicSnapshot()` before the writer. A successful snapshot exposes
    `sourcePath`, `envelopeVersion`, `checkCurrent()` and `cleanup()`. Keep the path
    in the private runtime, not ordinary task output.
-2. A native v4 snapshot supplies `FEE_ECON_FILE`. For original v3, apply only the
+2. A native v4 snapshot supplies `FEE_ECON_FILE` directly, including after an
+   explicitly reviewed, read-back-verified Gist migration. The archived v3
+   backup is not an active economic source. For a still-active original v3, apply only the
    approved `fee-console.legacy-empty-expense.v1` copy policy, then supply the new
    encrypted v4 copy as `FEE_ECON_FILE` and the unchanged original snapshot as
    `FEE_ECON_V3_FILE`. Both stay in new repository-external 0700/0600 temp storage.

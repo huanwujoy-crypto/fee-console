@@ -74,11 +74,15 @@ calculation path. Before publishing any of those values:
    Gist visibility, exact named file, and two identical remote reads of the
    revision, ETag and encrypted bytes. A missing configuration or failed acquisition
    stops this run before the writer; never omit the economic input and continue.
-   Native v4 supplies `FEE_ECON_FILE`. The only v3 exception is the explicit
+   Native v4 supplies `FEE_ECON_FILE`. After an explicitly reviewed manager
+   migration, fetch the current native v4 file from the same Gist; the archived
+   encrypted v3 backup is audit evidence, not `FEE_ECON_V3_FILE` and not a
+   second economic input. Confirm the v4 source and the backup were read back
+   before the first run after migration. The only still-active v3 exception is the explicit
    copy-only `fee-console.legacy-empty-expense.v1` policy in
    `docs/fee-econ-v3-copy.md`: read that runbook and the receipt runbook first,
    validate original-source identity independently, and make a new encrypted v4
-   computation copy without changing the original Gist. Keep the verified
+   computation copy without changing that run's v3 source. Keep the verified
    snapshots temporary and outside the repository. The scripts' two local file
    reads do not replace the remote-stability check.
    In legacy mode, retain the original encrypted snapshot as `FEE_ECON_V3_FILE`
