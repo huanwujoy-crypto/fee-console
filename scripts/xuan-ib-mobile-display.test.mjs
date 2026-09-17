@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,SLEEP_TAB_ORDER,isLowValueEventTitle,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitRoutineHeader,splitConcentrationLabel,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,SLEEP_TAB_ORDER,isLowValueEventTitle,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitRoutineHeader,splitConcentrationLabel,matchesConcentrationCashRows,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -41,6 +41,11 @@ test('source verification moves from report headline into the overview note',()=
   reading:'IB 五端点与 9 个 Sharesight 组合本轮全部直读。',
  });
  assert.equal(splitRoutineHeader('本轮部分来源缺失；请注意。'),null);
+});
+test('current report risk rows can split concentration from cash',()=>{
+ assert.equal(matchesConcentrationCashRows(['最大单仓','IB 现金','已用保证金']),true);
+ assert.equal(matchesConcentrationCashRows(['最大单仓 MXUS','IB 现金','已用保证金']),true);
+ assert.equal(matchesConcentrationCashRows(['最大单仓','IB 现金','未知项']),false);
 });
 test('critical replenishment amounts remain visible without recomputing or guessing',()=>{
  assert.deepEqual(extractCashGuidance('EXUS $550,579 EIMI $128,701 USSC $75,476'),[['EXUS','$550,579'],['EIMI','$128,701'],['USSC','$75,476']]);
