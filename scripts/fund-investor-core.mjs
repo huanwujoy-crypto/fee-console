@@ -4,6 +4,7 @@ export function createFundInvestorCore() {
   const SCHEMA = "fee-console.fund-profile.v1", DAY = 86400000;
   const PROFILE_KEYS = ["schema", "manager", "fundName", "inceptionDate", "inceptionNoticeDate", "currency", "initialShares", "investors"];
   const EVENT_KEYS = ["id", "date", "investorId", "grossCents", "feeCents", "netCents", "priceDate", "priceTotalCents", "issuedShares", "sourceRef"];
+  const CORRECTION_KEYS = ["id", "subscriptionId", "fromInvestorId", "toInvestorId", "reason", "correctedAt"];
   const object = value => !!value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
   const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -22,7 +23,8 @@ export function createFundInvestorCore() {
   };
   function validateProfile(profile) {
     const invalid = reason => ({ ok: false, profile: null, reason });
-    if (!(exact(profile, PROFILE_KEYS) || exact(profile, [...PROFILE_KEYS, "subscriptions"])) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
+    if (!(exact(profile, PROFILE_KEYS) || exact(profile, [...PROFILE_KEYS, "subscriptions"]) ||
+      exact(profile, [...PROFILE_KEYS, "subscriptions", "subscriptionCorrections"])) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
     if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
     if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
     if (!integer(profile.initialShares) || profile.initialShares <= 0 || !Array.isArray(profile.investors) || profile.investors.length !== 2) return invalid("初始股份资料待核对");
@@ -35,7 +37,7 @@ export function createFundInvestorCore() {
     if (total !== BigInt(profile.initialShares)) return invalid("投资人股份合计与发行股份不符");
     const subscriptions = profile.subscriptions || [];
     if (!Array.isArray(subscriptions) || subscriptions.length > 12) return invalid("增资事件资料待核对");
-    const eventIds = new Set(), sourceRefs = new Set(); let previousDate = "";
+    const eventIds = new Set(), sourceRefs = new Set(), eventsById = new Map(); let previousDate = "";
     for (const event of subscriptions) {
       if (!exact(event, EVENT_KEYS) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
         || !date(event.date) || event.date <= profile.inceptionDate || event.date <= previousDate
@@ -47,13 +49,30 @@ export function createFundInvestorCore() {
         || !integer(event.issuedShares) || event.issuedShares <= 0
         || typeof event.sourceRef !== "string" || !/^[A-Za-z0-9:._-]{8,120}$/.test(event.sourceRef)
         || sourceRefs.has(event.sourceRef)) return invalid("增资事件资料待核对");
-      eventIds.add(event.id); sourceRefs.add(event.sourceRef); previousDate = event.date;
+      eventIds.add(event.id); sourceRefs.add(event.sourceRef); eventsById.set(event.id, event); previousDate = event.date;
       total += BigInt(event.issuedShares);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) return invalid("增资后发行份额超出安全范围");
     }
+    const corrections = profile.subscriptionCorrections || [];
+    if (!Array.isArray(corrections) || corrections.length > subscriptions.length) return invalid("认购归属更正资料待核对");
+    const correctionIds = new Set(), correctedEvents = new Set();
+    for (const correction of corrections) {
+      if (!exact(correction, CORRECTION_KEYS)) return invalid("认购归属更正资料待核对");
+      const original = eventsById.get(correction.subscriptionId);
+      if (!/^[A-Za-z0-9_-]{8,80}$/.test(correction.id) || correctionIds.has(correction.id)
+        || !original || correctedEvents.has(correction.subscriptionId)
+        || correction.fromInvestorId !== original.investorId || !ids.has(correction.toInvestorId)
+        || correction.toInvestorId === correction.fromInvestorId || !text(correction.reason, 300) || correction.reason.length < 2
+        || typeof correction.correctedAt !== "string" || !Number.isFinite(Date.parse(correction.correctedAt))
+        || new Date(correction.correctedAt).toISOString() !== correction.correctedAt
+        || correction.correctedAt.slice(0, 10) < original.date) return invalid("认购归属更正资料待核对");
+      correctionIds.add(correction.id); correctedEvents.add(correction.subscriptionId);
+    }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
-      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}) }, reason: null };
+      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
+      ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}) }, reason: null };
   }
+  const subscriptionOwner = (profile, event) => (profile.subscriptionCorrections || []).find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
   function calculate(input = {}) {
     const { profile, data, feeView } = object(input) ? input : {};
     const checked = validateProfile(profile);
@@ -145,14 +164,14 @@ export function createFundInvestorCore() {
     result.points = daily.filter(point => !flowGateDate || point.date < flowGateDate).map(point => {
       const event = accepted.get(point.date);
       if (event) {
-        const investorIndex = checked.profile.investors.findIndex(investor => investor.id === event.investorId);
+        const investorIndex = checked.profile.investors.findIndex(investor => investor.id === subscriptionOwner(checked.profile, event));
         shares[investorIndex] += event.issuedShares; contributions[investorIndex] += event.netCents;
       }
       const values = allocate(point.totalCents, shares), totalShares = shares[0] + shares[1];
       const returnRate = contributions.some(Boolean) ? null : point.totalCents / initialCents - 1;
       return { ...point, unitValue: point.totalCents / 100 / totalShares,
         grossPnlCents: point.totalCents - initialCents - contributions[0] - contributions[1], returnRate,
-        subscription: event ? { id: event.id, investorId: event.investorId, netCents: event.netCents, issuedShares: event.issuedShares } : null,
+        subscription: event ? { id: event.id, investorId: subscriptionOwner(checked.profile, event), netCents: event.netCents, issuedShares: event.issuedShares } : null,
         investors: checked.profile.investors.map((investor, i) => ({ id: investor.id, shares: shares[i],
           valueCents: values[i], pnlCents: values[i] - initialValues[i] - contributions[i], returnRate })) };
     });
@@ -162,5 +181,5 @@ export function createFundInvestorCore() {
     if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起有尚未匹配的外部资金流或增资证据；当前份额市值暂不可用` };
     return { ...result, status: "ready", current: result.lastProved };
   }
-  return { validateProfile, calculate };
+  return { validateProfile, calculate, subscriptionOwner };
 }

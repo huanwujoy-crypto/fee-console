@@ -17,6 +17,11 @@ test("activated browser uses the exact reviewed fund factory", () => {
     assert.equal(createHash("sha256").update(embedded).digest("hex"),"4714a07b1c7fccd974253d91814d63d8e98707ee652dd8e3e6ac6974a57b89fc");
     return;
   }
+  if(!embedded.includes('const CORRECTION_KEYS =')){
+    // Support-only PR: preserve the exact published pre-correction factory.
+    assert.equal(createHash("sha256").update(embedded).digest("hex"),"b53dd552718319f220fc0ba57a7055a3fd5eb0de7781910d226848fa0705c92a");
+    return;
+  }
   assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
 });
 const fixture = () => ({
@@ -109,6 +114,35 @@ test("matched subscription issues new shares without rewriting initial holdings 
   assert.equal(actual.current.investors.reduce((sum, x) => sum + x.valueCents, 0), 16_000);
   assert.equal(actual.current.investors.reduce((sum, x) => sum + x.pnlCents, 0), 1_000);
   assert.deepEqual(input, before);
+});
+
+test("an append-only attribution correction changes only the recipient of issued shares", () => {
+  const input = subscriptionFixture(), original = structuredClone(input.profile.subscriptions[0]);
+  input.profile.subscriptionCorrections = [{ id: "corr-20240302-A", subscriptionId: original.id,
+    fromInvestorId: "B", toInvestorId: "A", reason: "Manager corrected the original investor attribution",
+    correctedAt: "2024-03-02T00:00:00.000Z" }];
+  const result = core.calculate(input);
+  assert.equal(result.status, "ready");
+  assert.equal(result.current.investors[0].shares, 1_395_000);
+  assert.equal(result.current.investors[1].shares, 100_000);
+  assert.equal(result.current.subscription.investorId, "A");
+  assert.equal(result.current.totalCents, 16_000);
+  assert.deepEqual(input.profile.subscriptions[0], original);
+});
+
+test("correction rejects unknown, duplicate, mismatched, and economic-changing records", () => {
+  const valid = () => { const p = subscriptionFixture().profile; p.subscriptionCorrections = [{
+    id: "corr-20240302-A", subscriptionId: p.subscriptions[0].id, fromInvestorId: "B", toInvestorId: "A",
+    reason: "Original recipient was recorded incorrectly", correctedAt: "2024-03-02T00:00:00.000Z" }]; return p; };
+  for (const mutate of [
+    p => { p.subscriptionCorrections[0].subscriptionId = "missing-event"; },
+    p => { p.subscriptionCorrections[0].fromInvestorId = "A"; },
+    p => { p.subscriptionCorrections[0].toInvestorId = "B"; },
+    p => { p.subscriptionCorrections[0].correctedAt = "2024-02-29T00:00:00.000Z"; },
+    p => { p.subscriptionCorrections.push({ ...p.subscriptionCorrections[0], id: "another-correction" }); },
+    p => { p.subscriptionCorrections[0].netCents = 100; },
+    p => { p.subscriptionCorrections[0] = null; }
+  ]) { const p = valid(); mutate(p); assert.equal(core.validateProfile(p).ok, false); }
 });
 
 test("unmatched, duplicated, or mispriced subscription evidence freezes before capital arrival", () => {
