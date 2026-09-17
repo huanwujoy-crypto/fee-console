@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.12">
+<meta name="fee-console-build" content="4.9.13">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -816,10 +816,10 @@ const isMgr=()=>!!cfg(K.tok);
 let _managerCapability={state:"unverified"};
 const managerDocumentsAuthorized=()=>isMgr()&&_managerCapability.state==="verified"&&_managerCapability.gid===cfg(K.gid)&&_managerCapability.token===cfg(K.tok);
 const DATA_URL="data.json";
-const GH_FILE="fee-console-db.json";
+const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.12";
+const UI_VERSION_LABEL=" · v4.9.13";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1385,7 +1385,7 @@ const sourceIdentity=()=>({gid:cfg(K.gid),keyValue:cfg(K.key)});
 const sourceMatches=source=>source?.gid===cfg(K.gid)&&source?.keyValue===cfg(K.key);
 /* fee-receipt-loading:v1 */
 function invalidateReceiptSource(loading=false){const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};_managerCapability={state:"unverified"};_fundDocsCache=null;clearFundDocumentPlaintext();for(const id of ["fundDocsBox","fundGovSummary"]){const node=document.getElementById(id);if(typeof node?.replaceChildren==="function")node.replaceChildren();else if(node)node.innerHTML="";}const card=document.getElementById("fundDocsCard");if(card)card.style.display="none";++_renderGeneration;render();return epoch;}
-function acceptReceiptSource(snapshot,epoch){if(epoch!==_sourceEpoch||!sourceMatches(snapshot))throw new Error("来源已变化，请重新读取");_receiptSource={state:"verified",...sourceIdentity(),legacySource:snapshot.legacySource};}
+function acceptReceiptSource(snapshot,epoch){if(epoch!==_sourceEpoch||!sourceMatches(snapshot))throw new Error("来源已变化，请重新读取");_receiptSource={state:"verified",...sourceIdentity(),envelopeVersion:snapshot.envelopeVersion,legacySource:snapshot.legacySource};}
 let DB=seed();
 let _localLedgerPresent=!!cfg(K.db);
 try{const s=cfg(K.db);if(s){const raw=JSON.parse(s);if(raw?.v===4){DB=raw;_receiptSource={state:"verified",...sourceIdentity()};}else if(raw?.v===3)DB=projectLegacyLedger(raw);}}catch(_){}
@@ -1393,7 +1393,7 @@ let DAILY={updatedAt:"",daily:[],flowsAuto:[]};
 try{const s=cfg(K.daily);if(s)DAILY=JSON.parse(s);}catch(_){}
 // Link hints never modify the committed ledger. Restore only an existing cloud ledger.
 const LG=feeLedgerEditGuard,DRAFT_KEY="feeConsole.editDraft.v1",BASELINE_KEY="feeConsole.verifiedLedger.v1";
-let EDIT=LG.createSession(),_draftWrite=Promise.resolve(),_ledgerBusy=false,_ledgerMessage="",_draftRestoreDone=false,_draftRestoreTask=null,_draftBlocked=false,_ledgerConflict=[],_verifiedLocal=null,_baselineRestoreDone=false,_baselineRestoreTask=null;
+let EDIT=LG.createSession(),_draftWrite=Promise.resolve(),_ledgerBusy=false,_ledgerMessage="",_draftRestoreDone=false,_draftRestoreTask=null,_draftBlocked=false,_ledgerConflict=[],_verifiedLocal=null,_baselineRestoreDone=false,_baselineRestoreTask=null,_legacyMigrationPending=null;
 const editDB=()=>EDIT.draft||DB,canEdit=()=>isMgr()&&!_ledgerBusy&&!_draftBlocked&&LG.isEditable(EDIT,Date.now());
 function localBlank(){return DB.accounts.every(a=>!(num(a.opening)>0))&&DB.months.every(m=>!(m.flows||[]).length)&&!DB.fees.length;}
 const strip=o=>JSON.stringify({...o,updatedAt:0});
@@ -1418,7 +1418,8 @@ function renderLedgerControls(){
   const note=EDIT.pending?"保存结果待核对，请勿重复提交":_draftBlocked?"草稿暂无法读取，原记录已保留":_ledgerConflict.length?"账本版本有差异，请到设置复核":EDIT.draft?"草稿未保存，正式报告未改变":"";
   notice.textContent=note?(note+" · 请查看「设置 → 账本管理」"):"";
   notice.style.display=note?"block":"none";
-  bar.innerHTML=`<b>${active?"修改草稿 · 尚未保存":"只读查看 · 编辑已锁定"}</b><div class="small">${esc(_ledgerMessage||(EDIT.draft?"草稿保留，正式报告未改变":"查看与刷新不会修改账本"))}</div>${isMgr()&&!_draftBlocked?`<div class="row">${EDIT.pending?'<button class="btn" id="ledgerCheck">核对上次保存结果</button>':active?'<button class="btn primary" id="ledgerReviewOpen">核对并保存</button><button class="btn" id="ledgerLock">锁定编辑</button>':`<button class="btn" id="ledgerEdit">${EDIT.draft?"继续编辑草稿":"修改账本"}</button>`}${EDIT.draft&&!EDIT.pending?'<button class="btn" id="ledgerDiscard">丢弃草稿</button>':""}</div>`:""}`;
+  const legacyReady=isMgr()&&_receiptSource.state==="verified"&&_receiptSource.envelopeVersion===3&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
+  bar.innerHTML=`<b>${active?"修改草稿 · 尚未保存":"只读查看 · 编辑已锁定"}</b><div class="small">${esc(_ledgerMessage||(EDIT.draft?"草稿保留，正式报告未改变":"查看与刷新不会修改账本"))}</div>${isMgr()&&!_draftBlocked?`<div class="row">${_legacyMigrationPending?'<button class="btn" id="ledgerMigrationCheck">核对迁移结果</button>':EDIT.pending?'<button class="btn" id="ledgerCheck">核对上次保存结果</button>':legacyReady?'<button class="btn primary" id="ledgerMigrate">备份并迁移原账本至 v4</button>':active?'<button class="btn primary" id="ledgerReviewOpen">核对并保存</button><button class="btn" id="ledgerLock">锁定编辑</button>':`<button class="btn" id="ledgerEdit">${EDIT.draft?"继续编辑草稿":"修改账本"}</button>`}${EDIT.draft&&!EDIT.pending?'<button class="btn" id="ledgerDiscard">丢弃草稿</button>':""}</div>`:""}`;
   if(_ledgerConflict.length)bar.innerHTML+=`<details><summary>查看冲突：云端 → 我的草稿（${_ledgerConflict.length} 项）</summary>${ledgerDiffTable(_ledgerConflict)}</details>`;
   for(const el of document.querySelectorAll('[data-open],[data-acct],[data-fee],[data-flow],#sMgmt,#sCarry,#sStart,#sWho,#btnAddFee,[data-delfee],[data-delflow]'))el.disabled=!active||(!!el.dataset.flow&&(DAILY.flowsAuto||[]).some(f=>f.id===el.dataset.flow&&f.effective===true));
   bar.querySelectorAll("button").forEach(b=>b.disabled=_ledgerBusy);
@@ -1996,11 +1997,13 @@ function setSync(msg,err){const b=document.getElementById("syncBadge");if(!store
   if(!msg){b.style.display=(isMgr()||cfg(K.gid))?"":"none";b.textContent=isMgr()?"☁ 已连接":"👁 只读";b.className="badge";return;}
   b.style.display="";b.textContent="☁ "+msg;b.className="badge "+(err?"hwm":(/中/.test(msg)?"est":"ok"));const s=document.getElementById("ghStatus");if(s)s.textContent=msg;}
 async function ghApi(path,opt={},auth=true){
-  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,...request}=opt;
+  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,...request}=opt;
   const ledgerWrite=method==="PATCH"&&_ledgerBusy&&!_draftBlocked&&EDIT.mode==="saving"&&EDIT.base?.envelopeVersion===4&&EDIT.base.db.v===4&&reviewedLedger===EDIT.pending&&EDIT.pending?.content&&path==="/gists/"+EDIT.base?.gid&&cfg(K.gid)===EDIT.base?.gid;
   const expectedFundBody=reviewedFund?JSON.stringify({files:{[GH_FUND_FILE]:{content:reviewedFund.raw}}}):"";
   const fundWrite=method==="PATCH"&&reviewedFund&&reviewedFund===_fundRemoteWrite&&reviewedFund.gid===cfg(K.gid)&&reviewedFund.token===cfg(K.tok)&&reviewedFund.raw&&path==="/gists/"+reviewedFund.gid&&request.body===expectedFundBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized();
-  if(method!=="GET"&&!ledgerWrite&&!fundWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
+  const expectedMigrationBody=reviewedMigration?JSON.stringify({files:{[GH_FILE]:{content:reviewedMigration.content},[GH_LEGACY_BACKUP_FILE]:{content:reviewedMigration.original}}}):"";
+  const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.keyValue===cfg(K.key)&&reviewedMigration?.sourceEpoch===_sourceEpoch&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
+  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
   const r=await fetch("https://api.github.com"+path,{...request,headers:h});
   if(!r.ok){let t="";try{t=(await r.json()).message||"";}catch(_){}throw new Error(r.status+(t?" "+t:""));}return r.status===204?null:r.json();}
@@ -2039,6 +2042,57 @@ async function ghPush(commit){
   if(!isMgr()||!_ledgerBusy||_draftBlocked||EDIT.mode!=="saving"||EDIT.base?.envelopeVersion!==4||EDIT.base.db.v!==4||commit!==EDIT.pending||!commit?.content||!EDIT.base?.gid||EDIT.base.gid!==cfg(K.gid))throw new Error("保存未经确认，未写入");
   await ghApi("/gists/"+EDIT.base.gid,{method:"PATCH",reviewedLedger:commit,body:JSON.stringify({files:{[GH_FILE]:{content:commit.content}}})});
 }
+async function readGistFileExact(file){
+  if(!file)return null;
+  if(!file.truncated)return file.content;
+  const response=await freshFetch(file.raw_url,{cache:"no-store"});if(!response.ok)throw new Error("加密备份读取失败");
+  return new TextDecoder("utf-8",{fatal:true}).decode(await response.arrayBuffer());
+}
+async function verifyLegacyMigrationReadback(pending){
+  const snapshot=await ghReadSnapshot();
+  if(snapshot.envelopeVersion!==4||snapshot.content!==pending.content||snapshot.gid!==pending.gid||snapshot.fundContent!==pending.fundContent||LG.canonical(snapshot.db)!==LG.canonical(pending.db))throw new Error("迁移后的原账本尚未完成一致性核验");
+  await verifyManagerCapability(snapshot,snapshot.sourceEpoch);
+  const detail=await ghApi("/gists/"+pending.gid),backup=await readGistFileExact(detail.files?.[GH_LEGACY_BACKUP_FILE]);
+  if(backup!==pending.original||detail.history?.[0]?.version!==snapshot.revision)throw new Error("原加密备份或版本尚未完成一致性核验");
+  LG.validateLedger(snapshot.db);await recordBaseline(snapshot);setCfg(K.db,JSON.stringify(snapshot.db));DB=structuredClone(snapshot.db);_last=strip(DB);_localLedgerPresent=true;
+  acceptReceiptSource(snapshot,snapshot.sourceEpoch);_legacyMigrationPending=null;_ledgerConflict=[];_ledgerMessage="原 v3 加密账本已备份；v4 原账本已保存并读回。计算回执待重新生成。";setSync("迁移已核验 "+hhmm());await render();
+}
+async function migrateLegacyLedger(reviewed){
+  if(_ledgerBusy||_legacyMigrationPending||EDIT.draft||_draftBlocked||!isMgr())return;
+  _ledgerBusy=true;let dispatched=false;renderLedgerControls();
+  try{
+    const snapshot=await ghReadSnapshot();
+    if(snapshot.envelopeVersion!==3||snapshot.content!==reviewed.content||snapshot.revision!==reviewed.revision||snapshot.gid!==reviewed.gid||snapshot.keyValue!==reviewed.keyValue||snapshot.fundContent!==reviewed.fundContent)throw new Error("原账本版本或访问密钥已变化，未迁移");
+    await verifyManagerCapability(snapshot,snapshot.sourceEpoch);
+    const detail=await ghApi("/gists/"+snapshot.gid);
+    if(detail.history?.[0]?.version!==snapshot.revision||detail.files?.[GH_LEGACY_BACKUP_FILE]||await readGistFileExact(detail.files?.[GH_FILE])!==snapshot.content)throw new Error("源版本或备份状态已变化，未迁移");
+    const projected=feeLegacyPolicy.projectV3(snapshot.db,"fee-console.legacy-empty-expense.v1"),db=structuredClone(projected.economic);LG.validateLedger(db);
+    const paymentMetadata=snapshot.db.fees.filter(fee=>fee.type==="pay").map(fee=>({id:fee.id,fields:["type",...(Object.hasOwn(fee,"cat")?["cat"]:[])]}));
+    const at=new Date().toISOString();db.updatedAt=at;db.editAudit=[{id:crypto.randomUUID(),at,reason:"经复核将原 v3 账本迁移至 v4；原加密源文件保留为同一 Gist 的备份",baseRevision:snapshot.revision,changes:[
+      {field:"schema",before:"v3",after:"v4"},
+      {field:"legacyEmptyExpenseIds",before:projected.legacyRecords.map(row=>row.id),after:"原加密备份保留"},
+      {field:"legacyPaymentMetadata",before:paymentMetadata,after:"原加密备份保留"}
+    ]}];LG.validateLedger(db);
+    const content=JSON.stringify({enc:true,v:4,data:await encTxt(await keyOf(snapshot.keyValue),JSON.stringify(db))});
+    const pending={gid:snapshot.gid,token:cfg(K.tok),keyValue:snapshot.keyValue,sourceEpoch:snapshot.sourceEpoch,original:snapshot.content,content,db,fundContent:snapshot.fundContent};
+    if(document.visibilityState!=="visible"||cfg(K.gid)!==pending.gid||cfg(K.tok)!==pending.token||cfg(K.key)!==pending.keyValue||_sourceEpoch!==pending.sourceEpoch)throw new Error("页面或管理人访问已变化，未迁移");
+    _legacyMigrationPending=pending;dispatched=true;
+    await ghApi("/gists/"+pending.gid,{method:"PATCH",reviewedMigration:pending,body:JSON.stringify({files:{[GH_FILE]:{content},[GH_LEGACY_BACKUP_FILE]:{content:pending.original}}})});
+    await verifyLegacyMigrationReadback(pending);
+  }catch(e){if(!dispatched)_legacyMigrationPending=null;_ledgerMessage=dispatched?"迁移提交结果待核对；不要重复提交，请点“核对迁移结果”":"迁移未提交："+e.message;renderLedgerControls();}
+  finally{_ledgerBusy=false;render();}
+}
+async function beginLegacyMigration(){
+  if(_ledgerBusy||_legacyMigrationPending||EDIT.draft||_draftBlocked||!isMgr())return;
+  _ledgerBusy=true;renderLedgerControls();
+  try{const snapshot=await ghReadSnapshot();if(snapshot.envelopeVersion!==3||!snapshot.projection)throw new Error("原账本不是可迁移的 v3 版本");await verifyManagerCapability(snapshot,snapshot.sourceEpoch);LG.validateLedger(snapshot.projection);
+    const detail=await ghApi("/gists/"+snapshot.gid);if(detail.history?.[0]?.version!==snapshot.revision||detail.files?.[GH_LEGACY_BACKUP_FILE]||await readGistFileExact(detail.files?.[GH_FILE])!==snapshot.content)throw new Error("源版本或备份状态待复核");
+    acceptReceiptSource(snapshot,snapshot.sourceEpoch);
+    const projected=feeLegacyPolicy.projectV3(snapshot.db,"fee-console.legacy-empty-expense.v1"),archived=projected.legacyRecords.map(row=>row.id),paymentFields=snapshot.db.fees.filter(row=>row.type==="pay").map(row=>`${row.id}：type${Object.hasOwn(row,"cat")?"、cat":""}`);
+    confirmBox("备份并迁移原账本",`原加密 v3 文件将保留为同一 Gist 的备份；当前账本改为严格投影的 v4。旧版空白费用行 ${archived.length} 条（${archived.join("、")||"无"}）及付款旧字段 ${paymentFields.join("；")||"无"} 留在备份中，并写入迁移审计。不会新增资金流、付款或交易。迁移后旧计算回执需要重新生成。`,()=>migrateLegacyLedger(snapshot));
+  }catch(e){_ledgerMessage="迁移准备未完成："+e.message;}finally{_ledgerBusy=false;renderLedgerControls();}
+}
+async function checkLegacyMigrationOutcome(){if(!_legacyMigrationPending||_ledgerBusy)return;_ledgerBusy=true;renderLedgerControls();try{await verifyLegacyMigrationReadback(_legacyMigrationPending);}catch(_){_ledgerMessage="迁移结果仍待核对；请勿再次提交";}finally{_ledgerBusy=false;render();}}
 const hhmm=()=>new Date().toTimeString().slice(0,5);
 let _shellCheck=null;
 async function ensureLatestShell(){
@@ -2131,6 +2185,8 @@ document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;docume
 document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnRefresh"){manualRefresh();return;}
   if(T.id==="ledgerEdit"){beginLedgerEdit();return;}
+  if(T.id==="ledgerMigrate"){beginLegacyMigration();return;}
+  if(T.id==="ledgerMigrationCheck"){checkLegacyMigrationOutcome();return;}
   if(T.id==="ledgerLock"){lockLedger();return;}
   if(T.id==="ledgerReviewOpen"){showLedgerReview();return;}
   if(T.id==="ledgerReviewConfirm"){confirmLedgerReview();return;}
