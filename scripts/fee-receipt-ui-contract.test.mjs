@@ -218,6 +218,17 @@ test("the future index-only UI migration must satisfy the frozen receipt-consume
     balance: receipt.balance,
     ...(html.includes("/* benchmark-account-view:start */") ? { benchmarkInputs: { openingCents: 10_000_000, flows: [{ date: "2026-08-02", amountCents: 2_400_000 }] } } : {})
   });
+  if (html.includes('<meta name="fee-console-build" content="4.9.9">')) {
+    const pendingCashData = structuredClone(data);
+    pendingCashData.flowsAuto.push({ id: "settled-wire", date: receipt.asOf,
+      acct: "webull", amount: 299998.08, desc: "External transfer settled",
+      reason: "description shows an external transfer", effective: false });
+    pendingCashData.daily.at(-1).webull += 299998.08;
+    assert.deepEqual(plain(await sandbox.feeReceiptUiModel({
+      receipt, data: pendingCashData, economicInput
+    })), { ok: false, reason: "unconfirmed external cash flow" },
+    "an old signed receipt must not display transfer principal as profit");
+  }
   const withBenchmarkDates = structuredClone(data);
   for (const point of withBenchmarkDates.daily) {
     point.bd = point.d;
