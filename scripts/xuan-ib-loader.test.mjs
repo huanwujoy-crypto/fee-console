@@ -684,8 +684,7 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
   assert.match(loader, /button\.addEventListener\("click", \(\) => loadLatest\(\{retryLayout: true\}\)\)/);
   assert.match(loader, /record\.info\.dataDate/);
   assert.match(loader, /record\.info\.edition/);
-  assert.match(loader, /loaderBuild = "2026-09-16\.2"/);
-  assert.equal(appBuild.build, '2026-09-16.2');
+  assert.ok(loader.includes(`loaderBuild = "${appBuild.build}"`));
   assert.equal(appBuild.schemaVersion, 1);
   assert.match(loader, /new URL\("app-build\.json", location\.href\)/);
   assert.match(loader, /新版可用 · 点此更新页面/);
@@ -714,9 +713,10 @@ test('the fixed XUAN-IB URL is a stable cache-busting loader', () => {
 test('a newer app build offers one deliberate update without touching the verified report', async () => {
   const html = reportHtml('2026-09-16', '睡前版', 'verified-report');
   const meta = metaFor(html);
+  const newerBuild = appBuild.build.replace(/\.(\d+)$/, (_, revision) => `.${Number(revision) + 1}`);
   const app = loaderHarness({fetchImpl: async url => {
     const path = new URL(String(url)).pathname;
-    if (path.endsWith('/app-build.json')) return response({json:{schemaVersion:1,build:'2026-09-16.3'}});
+    if (path.endsWith('/app-build.json')) return response({json:{schemaVersion:1,build:newerBuild}});
     return path.endsWith('/latest.meta.json')
       ? response({json:meta,bytes:[]}) : response({bytes:Buffer.from(html)});
   }});
@@ -727,13 +727,13 @@ test('a newer app build offers one deliberate update without touching the verifi
   assert.equal(app.navigations.length,0,'detecting a release cannot interrupt reading');
   app.location.href = 'https://example.test/xuan-ib/?release=old';
   app.listeners.appUpdate.click();
-  assert.equal(app.navigations.at(-1),'https://example.test/xuan-ib/?app=2026-09-16.3');
+  assert.equal(app.navigations.at(-1),`https://example.test/xuan-ib/?app=${newerBuild}`);
 });
 
 test('same or unavailable app build remains quiet and never blocks report verification', async () => {
   const html = reportHtml('2026-09-16', '睡前版', 'verified-report');
   const meta = metaFor(html);
-  for (const manifest of [{schemaVersion:1,build:'2026-09-16.2'},
+  for (const manifest of [{schemaVersion:1,build:appBuild.build},
     {schemaVersion:1,build:'2026-09-16.1'}, {schemaVersion:1,build:'broken'}]) {
     const app = loaderHarness({fetchImpl: async url => {
       const path = new URL(String(url)).pathname;
@@ -1523,7 +1523,7 @@ test('a mismatched, old, or pre-click receipt never completes the decision wait'
 
   app.advanceTime(20 * 60_000 + 1);
   await poll.callback();
-  assert.equal(app.status.textContent, '尚未收到回应回执，系统将自动重试 · L 2026-09-16.2');
+  assert.equal(app.status.textContent, `尚未收到回应回执，系统将自动重试 · L ${appBuild.build}`);
   assert.equal(app.stored.has('xuan-ib:decision-wait:v1'), false);
 });
 

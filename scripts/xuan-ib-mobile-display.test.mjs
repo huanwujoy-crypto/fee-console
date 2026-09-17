@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {improveMobileDisplay,GUIDE_BODY,SLEEP_TAB_ORDER,isLowValueEventTitle,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitConcentrationLabel,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
+import {improveMobileDisplay,GUIDE_BODY,SLEEP_TAB_ORDER,isLowValueEventTitle,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitRoutineHeader,splitConcentrationLabel,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
 test('verified display reorders intact cells with stable descending amounts and missing values last',()=>{
@@ -33,6 +33,14 @@ test('header guide matches shared wording and runs only after verification',()=>
  assert.match(module,/querySelectorAll\('\.pane\.p1 \.holdings-source-context'\)/);
  assert.match(module,/\.cash-reserve-strip,details,li/);
  assert.doesNotMatch(module,/cloneNode\(true\)[\s\S]{0,300}数据日期与共同口径/);
+});
+test('source verification moves from report headline into the overview note',()=>{
+ const header='2026-09-16 周三 · 睡前版 · 美股常规交易日，纽约 09:30 已开盘；本版为开盘后盘中读数。IB 五端点与 9 个 Sharesight 组合本轮全部直读。';
+ assert.deepEqual(splitRoutineHeader(header),{
+  headline:'2026-09-16 周三 · 睡前版 · 美股常规交易日，纽约 09:30 已开盘；本版为开盘后盘中读数。',
+  reading:'IB 五端点与 9 个 Sharesight 组合本轮全部直读。',
+ });
+ assert.equal(splitRoutineHeader('本轮部分来源缺失；请注意。'),null);
 });
 test('critical replenishment amounts remain visible without recomputing or guessing',()=>{
  assert.deepEqual(extractCashGuidance('EXUS $550,579 EIMI $128,701 USSC $75,476'),[['EXUS','$550,579'],['EIMI','$128,701'],['USSC','$75,476']]);
