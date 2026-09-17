@@ -126,4 +126,10 @@ test('complete pm beats same-date priority and replaces a published priority', (
   assert.equal(selectNewestCandidate([full], published, {
     kind: 'priority', dataDate: published.dataDate, priorityKey: `pm:${published.dataDate}`, eligibleAtEpoch: 150,
   }), full);
+  const priorityMeta={...published,sourceCommitEpoch:300,htmlBlob:priority.htmlBlob};
+  const priorityState={kind:'priority',dataDate:published.dataDate,
+    priorityKey:`pm:${published.dataDate}`,eligibleAtEpoch:150};
+  assert.equal(selectNewestCandidate([full],priorityMeta,priorityState),full);
+  assert.equal(selectNewestCandidate([candidate({commitEpoch:250,htmlBlob:sha('d')})],
+    priorityMeta,priorityState),null);
 });

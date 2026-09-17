@@ -279,16 +279,27 @@ export function matchesConcentrationCashRows(labels) {
     && labels[1]==='IB 现金'&&labels[2]==='已用保证金';
 }
 
+export function matchesConcentrationCashTable(heads,labels) {
+  return Array.isArray(heads)&&heads.length===2&&heads[0]==='项目'&&heads[1]==='本轮数值'
+    && matchesConcentrationCashRows(labels);
+}
+
 function splitConcentrationAndCash(doc) {
-  const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
-    .filter(card=>card.querySelector(':scope > h2')?.textContent.trim()==='② 集中度与现金（IB 账户内）');
+  // Match the verified table contract, not the presentation heading: the
+  // report generator has emitted both numbered and unnumbered headings.
+  const cards=[...doc.querySelectorAll('.pane.p2 > section.card')].filter(card=>{
+    const table=card.querySelector(':scope > .tblwrap > table');
+    const heads=table?[...table.querySelectorAll('thead th')].map(cell=>cell.textContent.trim()):[];
+    const labels=table?[...table.querySelectorAll('tbody tr')].map(row=>row.children[0]?.textContent.trim()):[];
+    return matchesConcentrationCashTable(heads,labels);
+  });
   const kpi=[...doc.querySelectorAll('.kpis .kpi')]
     .find(item=>item.querySelector('.lab')?.textContent.trim()==='AI 压力中情景');
   if(cards.length!==1||!kpi)return;
   const table=cards[0].querySelector(':scope > .tblwrap > table');
   const heads=table?[...table.querySelectorAll('thead th')].map(cell=>cell.textContent.trim()):[];
   const rows=table?[...table.querySelectorAll('tbody tr')]:[];
-  if(JSON.stringify(heads)!==JSON.stringify(['项目','本轮数值'])||rows.length!==3)return;
+  if(heads.length!==2||heads[0]!=='项目'||heads[1]!=='本轮数值'||rows.length!==3)return;
   const labels=rows.map(row=>row.children[0]?.textContent.trim());
   if(!matchesConcentrationCashRows(labels))return;
   const concentrationRows=[...doc.querySelectorAll('.pane.p2 tr[data-ai-risk-row]')].map(row=>({
@@ -675,4 +686,10 @@ export function improveMobileDisplay(doc) {
   retireFourBucketDisplay(doc);
   improveAllocationCards(doc);
   simplifyReportNotes(doc);
+  // Never report a successful mobile enhancement if the old combined risk
+  // card survived a source-format change. The loader will show a visible
+  // layout warning while retaining the verified financial report.
+  if([...doc.querySelectorAll('.pane.p2 > section.card > h2')]
+    .some(heading=>/集中度与现金/.test(heading.textContent||'')))
+    throw new Error('legacy risk card survived mobile enhancement');
 }
