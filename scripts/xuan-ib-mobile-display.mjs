@@ -273,6 +273,12 @@ function createThursdayRiskSummary(doc,{label,value,detail=''}) {
   return summary;
 }
 
+export function matchesConcentrationCashRows(labels) {
+  return Array.isArray(labels)&&labels.length===3
+    && /^最大单仓(?:\s+\S+)?$/.test(labels[0]||'')
+    && labels[1]==='IB 现金'&&labels[2]==='已用保证金';
+}
+
 function splitConcentrationAndCash(doc) {
   const cards=[...doc.querySelectorAll('.pane.p2 > section.card')]
     .filter(card=>card.querySelector(':scope > h2')?.textContent.trim()==='② 集中度与现金（IB 账户内）');
@@ -284,7 +290,7 @@ function splitConcentrationAndCash(doc) {
   const rows=table?[...table.querySelectorAll('tbody tr')]:[];
   if(JSON.stringify(heads)!==JSON.stringify(['项目','本轮数值'])||rows.length!==3)return;
   const labels=rows.map(row=>row.children[0]?.textContent.trim());
-  if(!/^最大单仓 /.test(labels[0]||'')||labels[1]!=='IB 现金'||labels[2]!=='已用保证金')return;
+  if(!matchesConcentrationCashRows(labels))return;
   const concentrationRows=[...doc.querySelectorAll('.pane.p2 tr[data-ai-risk-row]')].map(row=>({
     symbol:row.getAttribute('data-ai-risk-symbol'),namespace:row.getAttribute('data-ai-namespace'),
     status:row.getAttribute('data-ai-status'),assetType:row.getAttribute('data-ai-asset-type'),
