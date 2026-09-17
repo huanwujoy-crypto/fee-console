@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.10">
+<meta name="fee-console-build" content="4.9.11">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -809,7 +809,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.10";
+const UI_VERSION_LABEL=" · v4.9.11";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1047,7 +1047,7 @@ async function saveFundProfileForm(){
 function subscriptionDraft(profile,flow,investorId){
   if(!profile||!flow||flow.acct!=="webull"||!/^[A-Za-z0-9_-]{8,45}$/.test(String(flow.id||""))||!profile.investors.some(i=>i.id===investorId))throw new Error("请选择已核验身份的投资人和 Webull 入金");
   const netCents=Math.round(Number(flow.amount)*100),events=profile.subscriptions||[];
-  if(!Number.isSafeInteger(netCents)||netCents<=0||events.some(e=>e.date>=flow.date||e.sourceRef===`flow:${flow.id}`))throw new Error("此入金已登记，或登记日期需复核");
+  if(!Number.isSafeInteger(netCents)||netCents<=0||flow.date<=profile.inceptionDate||events.some(e=>e.date>=flow.date||e.sourceRef===`flow:${flow.id}`))throw new Error("此入金已登记，或登记日期需复核");
   const points=(DAILY.daily||[]).filter(p=>p.d<flow.date&&Number.isFinite(Number(p.schwab))&&Number.isFinite(Number(p.webull)));
   const previous=points.at(-1),priceTotalCents=previous?Math.round((Number(previous.schwab)+Number(previous.webull))*100):0;
   if(!previous||!Number.isSafeInteger(priceTotalCents)||priceTotalCents<=0||!(DAILY.daily||[]).some(p=>p.d===flow.date))throw new Error("入金前一估值日或到账日资产缺失");
@@ -1060,7 +1060,7 @@ function renderSubscriptionEditor(profile){
   const flowEl=document.getElementById("fundSubscriptionFlow"),investorEl=document.getElementById("fundSubscriptionInvestor"),preview=document.getElementById("fundSubscriptionPreview");
   if(!flowEl||!investorEl||!preview)return;
   const selectedFlow=flowEl.value,selectedInvestor=investorEl.value,existing=new Set((profile?.subscriptions||[]).map(e=>e.sourceRef));
-  const candidates=profile?(DAILY.flowsAuto||[]).filter(f=>f.acct==="webull"&&Number(f.amount)>0&&!existing.has(`flow:${f.id}`)):[];
+  const candidates=profile?(DAILY.flowsAuto||[]).filter(f=>f.acct==="webull"&&f.date>profile.inceptionDate&&Number(f.amount)>0&&!existing.has(`flow:${f.id}`)):[];
   flowEl.innerHTML=candidates.length?candidates.map(f=>`<option value="${esc(f.id)}">${esc(f.date)} · Webull · ${usd(Number(f.amount),2)} 净入金</option>`).join(""):'<option value="">尚无未登记的 Webull 净入金</option>';
   investorEl.innerHTML=profile?profile.investors.map(i=>`<option value="${esc(i.id)}">${esc(i.name)}（${esc(i.id)}）</option>`).join(""):'<option value="">先载入基金档案</option>';
   if(candidates.some(f=>f.id===selectedFlow))flowEl.value=selectedFlow;
@@ -1679,10 +1679,11 @@ function renderInvestors(loaded,feeView){
   if(!profile.investors.some(i=>i.id===_fundSelection))_fundSelection=profile.investors[0].id;
   const investor=profile.investors.find(i=>i.id===_fundSelection),fmt=n=>n.toLocaleString("zh-CN"),money=c=>Number.isSafeInteger(c)?usd(c/100,2):"—";
   const last=model.lastProved,initial=model.initial,current=model.current,held=last?.investors.find(i=>i.id===investor.id),start=initial?.investors.find(i=>i.id===investor.id);
-  const latestShares=last?.investors.reduce((sum,i)=>sum+i.shares,0),shareLabel=last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
+  const latestShares=last?.investors.reduce((sum,i)=>sum+i.shares,0);
   const registeredShares=profile.investors.map(i=>i.shares+(profile.subscriptions||[]).filter(e=>e.investorId===i.id).reduce((sum,e)=>sum+e.issuedShares,0));
   const registeredTotal=registeredShares.reduce((sum,n)=>sum+n,0),registeredText=profile.subscriptions?.length?`<div class="small">基金档案已登记模拟份额：${profile.investors.map((i,index)=>`${esc(i.id)} ${fmt(registeredShares[index])} 股（${(registeredShares[index]/registeredTotal*100).toFixed(2)}%）`).join(" · ")}。${current?"已由计算回执核验":"当前估值和份额计算回执仍待核验"}。</div>`:"";
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map(i=>{const currentShares=last?.investors.find(row=>row.id===i.id)?.shares||i.shares,ratio=latestShares?currentShares/latestShares:i.shares/profile.initialShares;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(ratio*100).toFixed(2)}%</span></button>`;}).join("")}</div>${registeredText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
+  const shareLabel=current?`截至 ${last.date} · ${fmt(latestShares)} 股`:profile.subscriptions?.length?`档案登记 ${fmt(registeredTotal)} 股 · 估值待核验`:last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const shownShares=current?last.investors.find(row=>row.id===i.id).shares:registeredShares[index],shownTotal=current?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${current?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
     capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
