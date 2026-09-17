@@ -2002,7 +2002,7 @@ async function ghApi(path,opt={},auth=true){
   const expectedFundBody=reviewedFund?JSON.stringify({files:{[GH_FUND_FILE]:{content:reviewedFund.raw}}}):"";
   const fundWrite=method==="PATCH"&&reviewedFund&&reviewedFund===_fundRemoteWrite&&reviewedFund.gid===cfg(K.gid)&&reviewedFund.token===cfg(K.tok)&&reviewedFund.raw&&path==="/gists/"+reviewedFund.gid&&request.body===expectedFundBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized();
   const expectedMigrationBody=reviewedMigration?JSON.stringify({files:{[GH_FILE]:{content:reviewedMigration.content},[GH_LEGACY_BACKUP_FILE]:{content:reviewedMigration.original}}}):"";
-  const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
+  const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.keyValue===cfg(K.key)&&reviewedMigration?.sourceEpoch===_sourceEpoch&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
   if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
   const r=await fetch("https://api.github.com"+path,{...request,headers:h});
@@ -2062,15 +2062,20 @@ async function migrateLegacyLedger(reviewed){
   _ledgerBusy=true;let dispatched=false;renderLedgerControls();
   try{
     const snapshot=await ghReadSnapshot();
-    if(snapshot.envelopeVersion!==3||snapshot.content!==reviewed.content||snapshot.revision!==reviewed.revision||snapshot.gid!==reviewed.gid||snapshot.fundContent!==reviewed.fundContent)throw new Error("原账本版本已变化，未迁移");
+    if(snapshot.envelopeVersion!==3||snapshot.content!==reviewed.content||snapshot.revision!==reviewed.revision||snapshot.gid!==reviewed.gid||snapshot.keyValue!==reviewed.keyValue||snapshot.fundContent!==reviewed.fundContent)throw new Error("原账本版本或访问密钥已变化，未迁移");
     await verifyManagerCapability(snapshot,snapshot.sourceEpoch);
     const detail=await ghApi("/gists/"+snapshot.gid);
     if(detail.history?.[0]?.version!==snapshot.revision||detail.files?.[GH_LEGACY_BACKUP_FILE]||await readGistFileExact(detail.files?.[GH_FILE])!==snapshot.content)throw new Error("源版本或备份状态已变化，未迁移");
-    const db=structuredClone(snapshot.projection);LG.validateLedger(db);
-    const at=new Date().toISOString();db.updatedAt=at;db.editAudit=[{id:crypto.randomUUID(),at,reason:"经复核将原 v3 账本迁移至 v4；原加密源文件保留为同一 Gist 的备份",baseRevision:snapshot.revision,changes:[{field:"schema",before:"v3",after:"v4"}]}];LG.validateLedger(db);
-    const content=JSON.stringify({enc:true,v:4,data:await encTxt(await keyOf(cfg(K.key)),JSON.stringify(db))});
-    const pending={gid:snapshot.gid,token:cfg(K.tok),original:snapshot.content,content,db,fundContent:snapshot.fundContent};
-    if(document.visibilityState!=="visible"||cfg(K.gid)!==pending.gid||cfg(K.tok)!==pending.token)throw new Error("页面或管理人访问已变化，未迁移");
+    const projected=feeLegacyPolicy.projectV3(snapshot.db,"fee-console.legacy-empty-expense.v1"),db=structuredClone(projected.economic);LG.validateLedger(db);
+    const paymentMetadata=snapshot.db.fees.filter(fee=>fee.type==="pay").map(fee=>({id:fee.id,fields:["type",...(Object.hasOwn(fee,"cat")?["cat"]:[])]}));
+    const at=new Date().toISOString();db.updatedAt=at;db.editAudit=[{id:crypto.randomUUID(),at,reason:"经复核将原 v3 账本迁移至 v4；原加密源文件保留为同一 Gist 的备份",baseRevision:snapshot.revision,changes:[
+      {field:"schema",before:"v3",after:"v4"},
+      {field:"legacyEmptyExpenseIds",before:projected.legacyRecords.map(row=>row.id),after:"原加密备份保留"},
+      {field:"legacyPaymentMetadata",before:paymentMetadata,after:"原加密备份保留"}
+    ]}];LG.validateLedger(db);
+    const content=JSON.stringify({enc:true,v:4,data:await encTxt(await keyOf(snapshot.keyValue),JSON.stringify(db))});
+    const pending={gid:snapshot.gid,token:cfg(K.tok),keyValue:snapshot.keyValue,sourceEpoch:snapshot.sourceEpoch,original:snapshot.content,content,db,fundContent:snapshot.fundContent};
+    if(document.visibilityState!=="visible"||cfg(K.gid)!==pending.gid||cfg(K.tok)!==pending.token||cfg(K.key)!==pending.keyValue||_sourceEpoch!==pending.sourceEpoch)throw new Error("页面或管理人访问已变化，未迁移");
     _legacyMigrationPending=pending;dispatched=true;
     await ghApi("/gists/"+pending.gid,{method:"PATCH",reviewedMigration:pending,body:JSON.stringify({files:{[GH_FILE]:{content},[GH_LEGACY_BACKUP_FILE]:{content:pending.original}}})});
     await verifyLegacyMigrationReadback(pending);
@@ -2083,7 +2088,8 @@ async function beginLegacyMigration(){
   try{const snapshot=await ghReadSnapshot();if(snapshot.envelopeVersion!==3||!snapshot.projection)throw new Error("原账本不是可迁移的 v3 版本");await verifyManagerCapability(snapshot,snapshot.sourceEpoch);LG.validateLedger(snapshot.projection);
     const detail=await ghApi("/gists/"+snapshot.gid);if(detail.history?.[0]?.version!==snapshot.revision||detail.files?.[GH_LEGACY_BACKUP_FILE]||await readGistFileExact(detail.files?.[GH_FILE])!==snapshot.content)throw new Error("源版本或备份状态待复核");
     acceptReceiptSource(snapshot,snapshot.sourceEpoch);
-    confirmBox("备份并迁移原账本","原加密 v3 文件将保留为同一 Gist 的备份；当前账本改为严格投影的 v4。不会新增资金流、付款或交易。迁移后旧计算回执需要重新生成。",()=>migrateLegacyLedger(snapshot));
+    const projected=feeLegacyPolicy.projectV3(snapshot.db,"fee-console.legacy-empty-expense.v1"),archived=projected.legacyRecords.map(row=>row.id),paymentFields=snapshot.db.fees.filter(row=>row.type==="pay").map(row=>`${row.id}：type${Object.hasOwn(row,"cat")?"、cat":""}`);
+    confirmBox("备份并迁移原账本",`原加密 v3 文件将保留为同一 Gist 的备份；当前账本改为严格投影的 v4。旧版空白费用行 ${archived.length} 条（${archived.join("、")||"无"}）及付款旧字段 ${paymentFields.join("；")||"无"} 留在备份中，并写入迁移审计。不会新增资金流、付款或交易。迁移后旧计算回执需要重新生成。`,()=>migrateLegacyLedger(snapshot));
   }catch(e){_ledgerMessage="迁移准备未完成："+e.message;}finally{_ledgerBusy=false;renderLedgerControls();}
 }
 async function checkLegacyMigrationOutcome(){if(!_legacyMigrationPending||_ledgerBusy)return;_ledgerBusy=true;renderLedgerControls();try{await verifyLegacyMigrationReadback(_legacyMigrationPending);}catch(_){_ledgerMessage="迁移结果仍待核对；请勿再次提交";}finally{_ledgerBusy=false;render();}}
