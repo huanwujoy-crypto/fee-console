@@ -54,13 +54,18 @@ const context = {
 // holdings table; the other two are risk constituents and nothing else, which
 // is exactly why the manifest cannot be reconciled against that table.
 const PORTFOLIO = { 'IB-HK': '936247', 'Schwab-HK': '936249', Webull: '1350094' };
+// The registry binds each rule to the Sharesight instrument id the payload
+// publishes, so a fixture naming a registered symbol carries that instrument.
+const INSTRUMENT = { MXUS: '391602', GOOG: '670422', 'BRK.B': '21531', 'BRK/B': '21531',
+  AVGO: '1879420', METU: '2845720', ORCL: '516542', MSTR: '34421' };
 let nextHolding = 70000000;
 const at = (custodian, symbol, marketValueUsd, over = {}) => ({
   symbol, custodian, venue: over.venue ?? 'NASDAQ', portfolioId: PORTFOLIO[custodian],
   holdingId: over.holdingId ?? String(++nextHolding),
-  instrumentId: over.instrumentId ?? String(10000000 + nextHolding),
+  instrumentId: over.instrumentId ?? INSTRUMENT[symbol] ?? String(10000000 + nextHolding),
   currency: 'USD', assetType: over.assetType ?? 'STK', marketValueUsd, valueDate: dataDate,
   identityVerified: over.identityVerified ?? true, firstSeen: over.firstSeen ?? false,
+  ...(over.previousAutoRecordId ? { previousAutoRecordId: over.previousAutoRecordId } : {}),
 });
 
 // One universe, deliberately covering every resolution path there is.
@@ -649,5 +654,118 @@ test('the existing delegated and override coefficients are untouched', () => {
   assert.deepEqual(reg.lookup('IB-HK', 'CSPX').ladder, { low: null, mid: 0.2579, high: null });
   // Nothing the registry does not record is resolved by it.
   assert.equal(reg.lookup('IB-HK', 'NOTREAL'), null);
-  assert.equal(reg.lookup('Webull', 'AVGO'), null, 'a registry rule is bound to its own custodian');
+  assert.equal(reg.lookup('Webull', 'AVGO'), null, 'a registry rule is bound to its own custodian by symbol');
+  // The instrument id resolves before the custodian's spelling of the ticker:
+  // the IB-HK book spells BRK.B as BRK/B and reaches the same T3 rule.
+  const brk = reg.lookup('IB-HK', 'BRK/B', '21531');
+  assert.equal(brk.recordId, reg.lookup('IB-HK', 'BRK.B').recordId);
+  assert.equal(brk.tier, 'T3');
+  assert.equal(reg.lookup('IB-HK', 'BRK/B'), null, 'without the instrument id the spelling still resolves nothing');
+  // The same instrument under a custodian the registry has no entry for resolves
+  // to the rule another custodian records for it, and says so.
+  const orcl = reg.lookup('Webull', 'ORCL', '516542');
+  assert.equal(orcl.tier, 'T2');
+  assert.equal(orcl.matchedBy, 'instrument-cross-custodian');
+  assert.equal(orcl.via, 'IB-HK');
+  assert.equal(orcl.recordId, reg.lookup('IB-HK', 'ORCL').recordId);
+  assert.equal(reg.lookup('Webull', 'ORCL', '99999999'), null, 'a different instrument is not ORCL');
+  // A transcribed "not applicable" row is an exclusion with a reason, not a tier.
+  const mstr = reg.lookup('IB-HK', 'MSTR', '34421');
+  assert.equal(mstr.excluded, true);
+  assert.equal(mstr.reason, 'published-not-applicable');
+  assert.equal(mstr.ladder, null);
+  assert.equal(mstr.recordId, 'REG-SPECIAL-MSTR-NOT-APPLICABLE');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-18: the spelling, the carried AUTO record and the cross-account
+// instrument. From 2026-09-11 PM to 2026-09-17 the IB-HK position the registry
+// records as BRK.B (T3) arrived as BRK/B, missed the symbol lookup, and was
+// classified T1 by the automatic policy on a page whose predecessor carried no
+// manifest; MSTR, published as 不适用 before that, went the same way; ORCL at
+// Webull took T1 while ORCL at IB-HK was T2.
+// ---------------------------------------------------------------------------
+
+test('a registered instrument reaches its rule under any spelling, in any account, over a carried AUTO record', t => {
+  nextHolding = 70000000;
+  const previousAuto = (custodian, holdingId) =>
+    `AUTO:AUTO-20260911-NEWSTK-T1-R1:${PORTFOLIO[custodian]}:${holdingId}`;
+  const constituents = [
+    at('IB-HK', 'MXUS', 1000000, { assetType: 'ETF' }),
+    at('IB-HK', 'GOOG', 100000),
+    // The Sharesight spelling of the registry's BRK.B, on the instrument id
+    // both share, carrying the AUTO record the previous editions published.
+    at('IB-HK', 'BRK/B', 233910, { holdingId: '21617153', previousAutoRecordId: previousAuto('IB-HK', '21617153') }),
+    // Published as 不适用 before 2026-09-11 PM, then carried as AUTO T1.
+    at('IB-HK', 'MSTR', 100666.8, { holdingId: '26863964', previousAutoRecordId: previousAuto('IB-HK', '26863964') }),
+    at('IB-HK', 'ORCL', 42948),
+    at('Schwab-HK', 'BRK/B', 77970),
+    // The same instrument as IB-HK ORCL, in an account the registry has no
+    // ORCL entry for, carrying the AUTO record that stood since 2026-09-15.
+    at('Webull', 'ORCL', 100212, { holdingId: '29145773', previousAutoRecordId: previousAuto('Webull', '29145773') }),
+    // A registered ticker on an instrument the registry does not record for it
+    // is a mismatch: disclosed and excluded, never that ticker's coefficient.
+    at('Webull', 'GOOG', 5000, { instrumentId: '88888888' }),
+  ];
+  const coverage = buildAiTierCoverage(constituents);
+  const entry = (custodian, symbol) => coverage.entries.find(item => item.custodian === custodian && item.symbol === symbol);
+  const resolved = (custodian, symbol) => coverage.resolved.find(item => item.key === entry(custodian, symbol).key);
+
+  assert.equal(entry('IB-HK', 'BRK/B').namespace, 'REG');
+  assert.equal(entry('IB-HK', 'BRK/B').recordId, readAiRiskRegistry().lookup('IB-HK', 'BRK.B').recordId);
+  assert.equal(resolved('IB-HK', 'BRK/B').tier, 'T3');
+  assert.equal(resolved('IB-HK', 'BRK/B').basis, 'registry');
+  assert.equal(resolved('IB-HK', 'BRK/B').supersededAutoRecordId, previousAuto('IB-HK', '21617153'));
+
+  assert.equal(entry('IB-HK', 'MSTR').namespace, 'REG');
+  assert.equal(entry('IB-HK', 'MSTR').status, 'excluded');
+  assert.equal(entry('IB-HK', 'MSTR').reason, 'published-not-applicable');
+  assert.equal(entry('IB-HK', 'MSTR').recordId, 'REG-SPECIAL-MSTR-NOT-APPLICABLE');
+
+  assert.equal(entry('Webull', 'ORCL').namespace, 'REG');
+  assert.equal(entry('Webull', 'ORCL').recordId, readAiRiskRegistry().lookup('IB-HK', 'ORCL').recordId);
+  assert.equal(resolved('Webull', 'ORCL').tier, 'T2');
+  assert.equal(resolved('Webull', 'ORCL').matchedBy, 'instrument-cross-custodian');
+  assert.equal(resolved('Webull', 'ORCL').via, 'IB-HK');
+
+  assert.equal(entry('Webull', 'GOOG').status, 'excluded');
+  assert.equal(entry('Webull', 'GOOG').reason, AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
+
+  // No AUTO classification survives where a registry rule applies, and nothing
+  // is notified: these are supersessions, not first appearances.
+  assert.deepEqual(coverage.autoRecords, []);
+  assert.deepEqual(coverage.supersededAutoRecords.map(item => `${item.custodian}:${item.symbol}:${item.status}`),
+    ['IB-HK:BRK/B:classified', 'IB-HK:MSTR:excluded', 'Webull:ORCL:classified']);
+  assert.deepEqual(coverage.instrumentMatches.map(item => `${item.custodian}:${item.symbol}:${item.via}`),
+    ['Webull:ORCL:IB-HK']);
+
+  // The arithmetic follows: BRK/B at 5%, MSTR at nothing, Webull ORCL at 55%.
+  const pressure = computeAiPressure(constituents, coverage, { denominator: denominator() });
+  const row = (symbol, custodian) => pressure.rows.find(item => item.symbol === symbol && item.custodian === custodian);
+  assert.equal(row('BRK/B', 'IB-HK').coefficients.mid, 0.05);
+  assert.equal(row('BRK/B', 'IB-HK').contributions.mid, 11695.5);
+  assert.equal(row('MSTR', 'IB-HK').contributions.mid, 0);
+  assert.equal(row('ORCL', 'Webull').coefficients.mid, 0.55);
+  assert.equal(row('ORCL', 'Webull').contributions.mid, 55116.6);
+
+  // The page says what changed and why, and the real guard accepts the whole
+  // candidate: a REG exclusion, an instrument-matched rule and a superseded AUTO
+  // record all reconcile.
+  const built = prepareReport(view(), evidence(),
+    { ...context, riskConstituents: constituents, riskDenominator: denominator() });
+  assert.equal(built.result.status, 'prepared-not-published');
+  const pane = riskPane(built.html);
+  assert.match(pane, /data-ai-tier-superseded="936247:21617153"[^>]*data-ai-tier-previous-record="AUTO:AUTO-20260911-NEWSTK-T1-R1:936247:21617153"/);
+  assert.match(pane, /BRK\/B（IB-HK）：上一期页面的自动分类记录 [^<]*取代，按 T3 计算；此前按该自动分类系数发布的各期页面不改写。/);
+  assert.match(pane, /MSTR（IB-HK）：上一期页面的自动分类记录 [^<]*取代，不进分子，全部计入分母/);
+  assert.match(pane, /data-ai-tier-instrument-match="1350094:29145773" data-ai-tier-via="IB-HK"/);
+  assert.match(pane, /MSTR：已发布口径为不适用，不进分子（published-not-applicable）/);
+  assert.doesNotMatch(pane, /临时|待确认|待裁决/);
+  const guard = runGuard(t, built.html);
+  assert.equal(guard.status, 0, guard.stderr);
+  const manifest = manifestOf(built.html);
+  assert.deepEqual(manifest.find(item => item.key === '936247:26863964'),
+    { key: '936247:26863964', symbol: 'MSTR', custodian: 'IB-HK', portfolioId: '936247', holdingId: '26863964',
+      instrumentId: '34421', namespace: 'REG', recordId: 'REG-SPECIAL-MSTR-NOT-APPLICABLE',
+      status: 'excluded', reason: 'published-not-applicable' });
 });

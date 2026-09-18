@@ -120,7 +120,7 @@ test('a denominator component key is stable, lowercase and machine-readable', ()
 const REG_GOOG = () => {
   const rule = readAiRiskRegistry().lookup('IB-HK', 'GOOG');
   return { namespace: 'REG', recordId: rule.recordId, symbol: 'GOOG', custodian: 'IB-HK',
-    portfolioId: '936247', holdingId: '70000002', instrumentId: '70000002' };
+    portfolioId: '936247', holdingId: '70000002', instrumentId: '670422' };
 };
 const DELEG_VST = () => ({ namespace: 'DELEG', recordId: 'DELEG-20260910-VST-T1', symbol: 'VST',
   custodian: 'Webull', portfolioId: '1350094', holdingId: '29098649', instrumentId: '1753523' });
@@ -181,10 +181,27 @@ test('an identity that is not the approved one is refused rather than stretched'
     { ...DELEG_VST(), instrumentId: '1753524' }), /RECORD_IDENTITY_MISMATCH/);
   assert.throws(() => resolveTrustedMidCoefficientBp(
     { ...WU_MRVL(), symbol: 'AVGO' }), /RECORD_IDENTITY_MISMATCH/);
-  // A registry rule is bound to its own custodian: this is what keeps `GOOG` at
-  // IB-HK and `GOOG` at Webull two rules rather than one.
+  // A registry rule is bound to the instrument it records: a registered ticker
+  // carried by a different instrument is a mismatch, never that instrument's
+  // coefficient.
   assert.throws(() => resolveTrustedMidCoefficientBp(
-    { ...REG_GOOG(), custodian: 'Schwab-HK' }), /REG_RULE_NOT_RECORDED/);
+    { ...REG_GOOG(), instrumentId: '70000002' }), /RECORD_IDENTITY_MISMATCH/);
+  // And bound to its own custodian by symbol: a ticker the registry does not
+  // record for this custodian, on an instrument it does not record anywhere,
+  // resolves nothing. `GOOG` at IB-HK and `GOOG` at Webull stay two rules.
+  assert.throws(() => resolveTrustedMidCoefficientBp(
+    { ...REG_GOOG(), custodian: 'Schwab-HK', instrumentId: '70000002' }), /REG_RULE_NOT_RECORDED/);
+  // The same instrument held under a custodian the registry has no entry for
+  // resolves to the rule another custodian records for it — a coefficient is a
+  // fact about the company, and one company does not get two of them.
+  const viaInstrument = resolveTrustedMidCoefficientBp({ ...REG_GOOG(), custodian: 'Schwab-HK' });
+  assert.equal(viaInstrument.midBp, 5500);
+  assert.equal(viaInstrument.recordId, REG_GOOG().recordId);
+  // The custodian's own spelling of the ticker is display text once the
+  // instrument id is known: the 2026-09-11 defect in one line.
+  const brk = readAiRiskRegistry().lookup('IB-HK', 'BRK.B');
+  assert.equal(resolveTrustedMidCoefficientBp({ namespace: 'REG', recordId: brk.recordId, symbol: 'BRK/B',
+    custodian: 'IB-HK', portfolioId: '936247', holdingId: '21617153', instrumentId: '21531' }).midBp, 500);
   // A registry-looking id minted for an instrument the registry does record,
   // but under another rule's name.
   assert.throws(() => resolveTrustedMidCoefficientBp(
@@ -205,6 +222,16 @@ test('an AUTO record may not stand where an owner or registry rule already does'
   /AUTO_SHADOWS_OWNER_RULE/);
   assert.throws(() => resolveTrustedMidCoefficientBp({ ...AUTO_NEW(),
     custodian: 'IB-HK', symbol: 'GOOG' }), /AUTO_SHADOWS_REGISTRY_RULE/);
+  // Nor on a registered instrument under a spelling the registry does not use:
+  // an AUTO record for IB-HK `BRK/B` on instrument 21531 is the record that
+  // stood on every edition from 2026-09-11 PM to 2026-09-17, and it is refused.
+  assert.throws(() => resolveTrustedMidCoefficientBp({ ...AUTO_NEW(),
+    recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:936247:21617153', custodian: 'IB-HK', symbol: 'BRK/B',
+    portfolioId: '936247', holdingId: '21617153', instrumentId: '21531' }), /AUTO_SHADOWS_REGISTRY_RULE/);
+  // And on a registered instrument held under another custodian.
+  assert.throws(() => resolveTrustedMidCoefficientBp({ ...AUTO_NEW(),
+    recordId: 'AUTO:AUTO-20260911-NEWSTK-T1-R1:1350094:29145773', symbol: 'ORCL',
+    holdingId: '29145773', instrumentId: '516542' }), /AUTO_SHADOWS_REGISTRY_RULE/);
   // The record id is three facts, not a name: the policy revision this
   // repository actually carries, and the identity actually presented.
   assert.throws(() => resolveTrustedMidCoefficientBp({ ...AUTO_NEW(),

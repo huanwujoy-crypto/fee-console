@@ -50,6 +50,7 @@
 // Nothing here places, modifies or cancels an order, initiates a transfer, or
 // writes to any financial account or repository file.
 import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
+import { REG_EXCLUSION_REASONS } from './xuan-ib-ai-risk-registry.mjs';
 import { constituentKey } from './xuan-ib-ai-tier-coverage.mjs';
 import { largestOrdinaryStockConcentration } from './xuan-ib-single-stock-concentration.mjs';
 import {
@@ -229,7 +230,8 @@ export function computeAiPressure(constituents, coverage, { denominator } = {}) 
       // enumerated reason put it there. This row is the whole point: an excluded
       // constituent that vanished from the page instead of appearing here with a
       // zero contribution is exactly the understatement being prevented.
-      if (!Object.values(AUTO_EXCLUSION_REASONS).includes(entry.reason)) {
+      if (!Object.values(AUTO_EXCLUSION_REASONS).includes(entry.reason)
+        && !Object.values(REG_EXCLUSION_REASONS).includes(entry.reason)) {
         fail('EXCLUSION_REASON_UNENUMERATED', key);
       }
       return { ...identity, status: 'excluded', reason: entry.reason, tier: null,

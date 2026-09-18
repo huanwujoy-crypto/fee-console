@@ -12,7 +12,7 @@ import { validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
 import { listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import { listVenueEquivalences } from './xuan-ib-venue-identity.mjs';
 import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
-import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import { REG_EXCLUSION_REASONS, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 import { largestOrdinaryStockConcentration } from './xuan-ib-single-stock-concentration.mjs';
 import {
   AI_DENOMINATOR_TEMPLATE_ID, BASIS_POINTS, DENOMINATOR_COMPONENT_FIELDS, DENOMINATOR_COMPONENT_KEY,
@@ -1264,7 +1264,10 @@ const NOT_A_SYMBOL = new Set(['AI', 'ETF', 'ETFS', 'IB', 'PM', 'AM', 'US', 'UK',
 // value in that file was read out of an already-approved artefact.
 const AI_TIER_NAMESPACES = new Set(['WU', 'DELEG', 'REG', 'AUTO']);
 const AI_TIER_RECORD_STATUSES = new Set(['classified', 'excluded']);
-const AUTO_EXCLUSION_REASON_VALUES = new Set(Object.values(AUTO_EXCLUSION_REASONS));
+// The enumerated exclusion vocabulary: the automatic policy's own reasons, plus
+// the registry's transcription of an already-published "not applicable" row.
+const AUTO_EXCLUSION_REASON_VALUES = new Set([
+  ...Object.values(AUTO_EXCLUSION_REASONS), ...Object.values(REG_EXCLUSION_REASONS)]);
 // Read lazily and once, so a page that carries no REG record never depends on
 // the registry file being present at all.
 let registryCache = null;
@@ -1329,13 +1332,27 @@ function aiTierRecordsFromMarkup(documentHtml) {
       const prefix = entry.namespace === 'AUTO' ? 'AUTO:' : `${entry.namespace}-`;
       if (!entry.recordId.startsWith(prefix)) fail(`AI tier record ${entry.recordId} does not match its declared ${entry.namespace} namespace`);
       // A `REG` record must name a rule the trusted registry beside this guard
-      // actually records, for this custodian and this symbol. Otherwise a report
-      // could mint a registry-looking id for an instrument no approved document
-      // covers and present it as an already-approved coefficient.
+      // actually records, for this custodian and this instrument — by the
+      // instrument id first, so a custodian's spelling of the ticker cannot hide
+      // or invent a rule, and by symbol only for an entry that records no id.
+      // Otherwise a report could mint a registry-looking id for an instrument no
+      // approved document covers and present it as an already-approved
+      // coefficient.
       if (entry.namespace === 'REG') {
-        const rule = registryRules().lookup(entry.custodian.trim(), symbol);
+        const rule = registryRules().lookup(entry.custodian.trim(), symbol, entry.instrumentId);
         if (!rule) fail(`AI tier record for ${symbol} at ${entry.custodian} claims a REG rule the trusted registry does not record`);
         if (rule.recordId !== entry.recordId) fail(`AI tier record ${entry.recordId} is not the trusted registry's rule for ${symbol} at ${entry.custodian}`);
+        // Every identity field the rule records must be the one this record
+        // carries. This is what stops a registered ticker on a different
+        // instrument from citing that ticker's rule — for a classified row the
+        // coefficient check below would catch it too, but an excluded row has
+        // no coefficient to check and would otherwise drop out of the numerator
+        // on the strength of a spelling.
+        for (const field of ['portfolioId', 'holdingId', 'instrumentId']) {
+          if (Object.hasOwn(rule, field) && String(rule[field]) !== String(entry[field])) {
+            fail(`AI tier record ${entry.recordId} for ${symbol} at ${entry.custodian} is bound to another ${field}`);
+          }
+        }
       }
       // An exclusion must say why, in the module's own enumerated vocabulary.
       // "Excluded, no reason given" is the failure mode this whole check exists

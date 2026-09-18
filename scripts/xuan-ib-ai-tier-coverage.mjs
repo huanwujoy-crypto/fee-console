@@ -30,7 +30,7 @@ import {
   classifyFirstSeenPosition, continueAutoClassification, readAutoClassificationPolicy,
   renderAutoClassificationRecord,
 } from './xuan-ib-auto-classification.mjs';
-import { AI_RISK_NAMESPACE, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import { AI_RISK_NAMESPACE, REG_EXCLUSION_REASONS, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 import { calculateDelegatedTier, listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import fs from 'node:fs';
 
@@ -154,7 +154,8 @@ function resolveOne(constituent, { rules, overrides, registry, policy, autoPolic
     return { entry: { ...identity, namespace: delegated.rule.approvalId.startsWith('WU-') ? 'WU' : 'DELEG',
       recordId: calculated.approvalId, status: 'classified' }, record: null, basis: 'delegated', calculated,
       ladder: { low: delegated.rule.low, mid: delegated.rule.mid, high: delegated.rule.high },
-      tier: delegated.rule.tier };
+      tier: delegated.rule.tier,
+      supersededAutoRecordId: typeof constituent.previousAutoRecordId === 'string' ? constituent.previousAutoRecordId : null };
   }
 
   // (1b) The owner's own identity-bound override, which records symbol,
@@ -166,26 +167,47 @@ function resolveOne(constituent, { rules, overrides, registry, policy, autoPolic
     }
     return { entry: { ...identity, namespace: 'WU', recordId: override.approvalId, status: 'classified' },
       record: null, basis: 'owner-override',
-      ladder: { low: override.low, mid: override.mid, high: override.high }, tier: override.tier };
+      ladder: { low: override.low, mid: override.mid, high: override.high }, tier: override.tier,
+      supersededAutoRecordId: typeof constituent.previousAutoRecordId === 'string' ? constituent.previousAutoRecordId : null };
   }
 
   // (1c) The transcribed registry of already-published tier assignments, ETF
   // look-through percentages and named exceptions. This is the step that used to
   // exist only as a coefficient retyped into a throwaway assembly script. It is
-  // matched on custodian and symbol because that is exactly the granularity the
-  // published report itself discloses — `IB-HK GOOG T2` and `Webull GOOG T2` are
-  // two rows there and two rules here — and an entry may additionally pin a
-  // portfolio, holding or instrument, in which case that binding must match too.
-  const registered = registry.lookup(constituent.custodian, symbol);
+  // resolved by the strong identifier the payload publishes first — the
+  // instrument id — and by custodian and symbol second, because a ticker is
+  // spelled by each custodian: from 2026-09-11 PM to 2026-09-17 the IB-HK
+  // position the registry recorded as `BRK.B` (T3) arrived from the Sharesight
+  // book as `BRK/B`, missed a symbol-only lookup, and was handed to the
+  // automatic policy as a "first-seen stock" at T1. The same instrument recorded
+  // under another custodian resolves third, so one company never carries two
+  // coefficients across the three accounts. `IB-HK GOOG T2` and `Webull GOOG T2`
+  // remain two rows and two contributions. An entry that pins a portfolio,
+  // holding or instrument must match that binding when it is reached by symbol.
+  const registered = registry.lookup(constituent.custodian, symbol, constituent.instrumentId);
+  // A carried AUTO record that a registry rule now supersedes is named in the
+  // disclosure rather than silently replaced: the coefficient changes on the
+  // page, and the reader is told which record it changed from.
+  const supersededAutoRecordId = typeof constituent.previousAutoRecordId === 'string'
+    ? constituent.previousAutoRecordId : null;
   if (registered) {
     for (const field of ['portfolioId', 'holdingId', 'instrumentId']) {
       if (Object.hasOwn(registered, field) && registered[field] !== constituent[field]) {
         return excluded(AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
       }
     }
+    if (registered.excluded === true) {
+      // An already-published "not applicable" treatment: out of the numerator,
+      // inside the denominator, with the registry's own enumerated reason and
+      // record id — never re-decided by the automatic policy.
+      return { entry: { ...identity, namespace: AI_RISK_NAMESPACE, recordId: registered.recordId,
+        status: 'excluded', reason: registered.reason }, record: null, basis: 'registry-excluded',
+        ladder: null, tier: null, registered, supersededAutoRecordId };
+    }
     return { entry: { ...identity, namespace: AI_RISK_NAMESPACE, recordId: registered.recordId,
       status: 'classified' }, record: null, basis: 'registry', ladder: registered.ladder,
-      tier: registered.tier, registered };
+      tier: registered.tier, registered, supersededAutoRecordId,
+      matchedBy: registered.matchedBy ?? 'custodian', via: registered.via ?? null };
   }
 
   // A conservative AUTO classification is a real effective classification,
@@ -292,11 +314,29 @@ export function buildAiTierCoverage(constituents, {
     // module. Kept out of `entries` so the published manifest stays identity and
     // classification only.
     resolved: resolved.map((item, index) => ({ key: entries[index].key, basis: item.basis,
-      tier: item.tier ?? null, ladder: item.ladder ?? null })),
+      tier: item.tier ?? null, ladder: item.ladder ?? null,
+      matchedBy: item.matchedBy ?? null, via: item.via ?? null,
+      supersededAutoRecordId: item.supersededAutoRecordId ?? null })),
     // The records that need a human sentence beside them on the page. Only the
     // automatic path produces one: a `WU` or `DELEG` classification is already
     // disclosed by its own approval record.
     autoRecords: resolved.filter(item => item.basis === 'auto').map(item => item.record),
+    // A previously published AUTO classification that an approved rule now
+    // supersedes. The coefficient on the page changes, so the page says from
+    // which record and to which rule; the editions that published the AUTO
+    // coefficient are history and are not rewritten.
+    supersededAutoRecords: resolved.filter(item => typeof item.supersededAutoRecordId === 'string')
+      .map(item => ({ key: item.entry.key, symbol: item.entry.symbol, custodian: item.entry.custodian,
+        previousRecordId: item.supersededAutoRecordId, recordId: item.entry.recordId,
+        namespace: item.entry.namespace, status: item.entry.status, tier: item.tier ?? null,
+        ladder: item.ladder ?? null })),
+    // A constituent resolved to another custodian's rule for the same instrument.
+    // The rule is that custodian's own, unchanged; the page names it so the
+    // reader can see why a Webull position cites an IB-HK record id.
+    instrumentMatches: resolved.filter(item => item.matchedBy === 'instrument-cross-custodian')
+      .map(item => ({ key: item.entry.key, symbol: item.entry.symbol, custodian: item.entry.custodian,
+        via: item.via, recordId: item.entry.recordId, instrumentId: item.entry.instrumentId,
+        tier: item.tier ?? null, ladder: item.ladder ?? null })),
     // The universe is identities, not tickers. This is the declaration the gate
     // reconciles the manifest against, and it belongs to the AI-risk pane — it
     // is not, and must not be confused with, the IB-only holdings table's own
@@ -332,7 +372,12 @@ const EXCLUSION_TEXT = Object.freeze({
   [AUTO_EXCLUSION_REASONS.VALUE_DATE_MISSING]: '缺少市值日期',
   [AUTO_EXCLUSION_REASONS.IDENTITY_INCOMPLETE]: '身份字段不完整',
   [AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH]: '与既有规则身份不一致',
+  // A registry transcription of an already-published "not applicable" row.
+  [REG_EXCLUSION_REASONS.PUBLISHED_NOT_APPLICABLE]: '已发布口径为不适用，不进分子',
 });
+
+const TIER_TEXT = (tier, ladder) => (typeof tier === 'string' ? tier
+  : typeof ladder?.mid === 'number' ? `中情景 ${(ladder.mid * 100).toFixed(2)}%` : '不进分子');
 
 /**
  * The page fragments for one coverage result.
@@ -370,5 +415,28 @@ export function renderAiTierCoverage(coverage) {
     + ` data-ai-tier-coverage-v1="${coverage.coverage.classified}/${coverage.coverage.total}">`
     + `AI 压力口径覆盖：共 ${coverage.coverage.total} 项，已分类 ${coverage.coverage.classified} 项计入分子，`
     + `${coverage.coverage.excluded} 项按列名原因排除但仍在分母内。</p>`;
-  return { template, disclosures: `${summary}${constituents}${auto}${excluded}` };
+  // A coefficient that changed because an approved rule superseded a carried
+  // AUTO record is stated on the page, from which record to which rule. The
+  // editions that published the AUTO coefficient are history and stay as they
+  // were; the sentence is measurement disclosure, not a new permission.
+  const superseded = (coverage.supersededAutoRecords ?? []).map(item => {
+    const to = item.status === 'excluded' ? '不进分子，全部计入分母'
+      : `按 ${TIER_TEXT(item.tier, item.ladder)} 计算`;
+    const text = `${item.symbol}（${item.custodian}）：上一期页面的自动分类记录 ${item.previousRecordId}（T1）`
+      + `自本期起由已批准规则 ${item.recordId} 取代，${to}；此前按该自动分类系数发布的各期页面不改写。`;
+    assertNoProvisionalWording(text, `superseded AUTO disclosure for ${item.symbol}`);
+    return `<p data-ai-tier-superseded="${escape(item.key)}" data-ai-tier-symbol-superseded="${escape(item.symbol)}"`
+      + ` data-ai-tier-previous-record="${escape(item.previousRecordId)}"`
+      + ` data-ai-tier-record-now="${escape(item.recordId)}">${escape(text)}</p>`;
+  }).join('');
+  // A constituent that resolved to another custodian's rule for the same
+  // instrument cites that rule's own record id; the page says why.
+  const instrument = (coverage.instrumentMatches ?? []).map(item => {
+    const text = `${item.symbol}（${item.custodian}）：与 ${item.via} 同一标的（instrumentId ${item.instrumentId}），`
+      + `沿用其已发布规则 ${item.recordId}，按 ${TIER_TEXT(item.tier, item.ladder)} 计算；不是新的分类决定。`;
+    assertNoProvisionalWording(text, `instrument match disclosure for ${item.symbol}`);
+    return `<p data-ai-tier-instrument-match="${escape(item.key)}" data-ai-tier-via="${escape(item.via)}">`
+      + `${escape(text)}</p>`;
+  }).join('');
+  return { template, disclosures: `${summary}${constituents}${auto}${excluded}${superseded}${instrument}` };
 }

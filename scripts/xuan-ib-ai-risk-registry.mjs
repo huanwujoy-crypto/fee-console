@@ -59,6 +59,20 @@ function validateLadder(ladder, where) {
 }
 
 const key = (custodian, symbol) => `${String(custodian).trim()}:${String(symbol).trim().toUpperCase()}`;
+// The strong identifier a Sharesight payload publishes for one instrument. A
+// registry entry that records it is bound to it; a constituent that carries it
+// is resolved by it before its ticker spelling is consulted at all.
+const INSTRUMENT_ID = /^\d{1,18}$/;
+
+// Why a registry entry keeps a position out of the numerator. A `REG` exclusion
+// is a transcription of an already-published "not applicable" treatment, never
+// a judgement this module makes, and it is disclosed by name like every other
+// enumerated exclusion.
+export const REG_EXCLUSION_REASONS = Object.freeze({
+  PUBLISHED_NOT_APPLICABLE: 'published-not-applicable',
+});
+
+const sameLadder = (a, b) => ['low', 'mid', 'high'].every(name => (a?.[name] ?? null) === (b?.[name] ?? null));
 
 let cached = null;
 
@@ -92,20 +106,50 @@ export function readAiRiskRegistry() {
   if (Object.keys(file.ladders).length !== TIERS.length) fail('LADDER_UNKNOWN_TIER');
 
   const entries = new Map();
-  const claim = (custodian, symbol, value) => {
+  // The same rules, keyed on the identity a payload actually publishes. One
+  // custodian's spelling of a ticker (`BRK.B` at IB, `BRK/B` at Schwab and in
+  // the Sharesight IB-HK book) is display text; the instrument id is not.
+  const byCustodianInstrument = new Map();
+  const byInstrument = new Map();
+  const claim = (custodian, symbol, instrumentId, value) => {
     if (typeof custodian !== 'string' || !custodian.trim()) fail('ENTRY_CUSTODIAN_REQUIRED', symbol);
     if (typeof symbol !== 'string' || !symbol.trim()) fail('ENTRY_SYMBOL_REQUIRED', custodian);
     const id = key(custodian, symbol);
     // One custodian-and-symbol holds exactly one coefficient rule. Two rules for
     // one position would make the published number depend on file order.
     if (entries.has(id)) fail('ENTRY_DUPLICATE', id);
-    entries.set(id, Object.freeze({ ...value, custodian: custodian.trim(), symbol: symbol.trim().toUpperCase(), id }));
+    const entry = { ...value, custodian: custodian.trim(), symbol: symbol.trim().toUpperCase(), id };
+    if (instrumentId !== undefined) {
+      if (typeof instrumentId !== 'string' || !INSTRUMENT_ID.test(instrumentId)) fail('ENTRY_INSTRUMENT_INVALID', id);
+      entry.instrumentId = instrumentId;
+      const instrumentKey = `${entry.custodian}:${instrumentId}`;
+      // One instrument inside one account holds exactly one rule, independently
+      // of how its ticker is spelled.
+      if (byCustodianInstrument.has(instrumentKey)) fail('ENTRY_INSTRUMENT_DUPLICATE', instrumentKey);
+      // And one instrument carries one coefficient rule across accounts. A
+      // ladder is a fact about the company or fund, not about the custodian, so
+      // two custodians recording different ladders for one instrument is a
+      // transcription error this module refuses rather than resolves by order.
+      const elsewhere = byInstrument.get(instrumentId) ?? [];
+      for (const other of elsewhere) {
+        if (other.kind !== entry.kind || !sameLadder(other.ladder, entry.ladder)
+          || (other.excluded ?? false) !== (entry.excluded ?? false)) {
+          fail('INSTRUMENT_RULE_CONFLICT', `${other.id} vs ${id}`);
+        }
+      }
+      const frozen = Object.freeze(entry);
+      byCustodianInstrument.set(instrumentKey, frozen);
+      byInstrument.set(instrumentId, [...elsewhere, frozen]);
+      entries.set(id, frozen);
+      return;
+    }
+    entries.set(id, Object.freeze(entry));
   };
 
   if (!Array.isArray(file.stocks)) fail('POLICY_MISMATCH');
   for (const stock of file.stocks) {
     if (!plain(stock) || !TIERS.includes(stock.tier)) fail('STOCK_ENTRY_INVALID', String(stock?.symbol ?? '?'));
-    claim(stock.custodian, stock.symbol, {
+    claim(stock.custodian, stock.symbol, stock.instrumentId, {
       kind: 'stock-tier', tier: stock.tier, ladder: ladders.get(stock.tier),
       recordId: `${AI_RISK_NAMESPACE}-${file.policyRevision}-${key(stock.custodian, stock.symbol).replace(/[^A-Za-z0-9:.\/-]/g, '')}`,
       publishedLabel: typeof stock.publishedLabel === 'string' ? stock.publishedLabel : stock.tier,
@@ -120,7 +164,7 @@ export function readAiRiskRegistry() {
     // and high are therefore unavailable rather than equal to the mid case or
     // zero — filling them in would be inventing a coefficient.
     if (etf.scenario !== 'mid-only') fail('ETF_SCENARIO_UNSUPPORTED', String(etf.symbol));
-    claim(etf.custodian, etf.symbol, {
+    claim(etf.custodian, etf.symbol, etf.instrumentId, {
       kind: 'etf-look-through', tier: null,
       ladder: Object.freeze({ low: null, mid: etf.mid, high: null }),
       recordId: `${AI_RISK_NAMESPACE}-${file.policyRevision}-${key(etf.custodian, etf.symbol).replace(/[^A-Za-z0-9:.\/-]/g, '')}`,
@@ -135,7 +179,14 @@ export function readAiRiskRegistry() {
     }
     let ladder = null;
     let tier = null;
-    if (special.kind === 'leveraged-etf') {
+    let excluded = false;
+    if (special.kind === 'published-not-applicable') {
+      // A position the published report already stated is out of the numerator
+      // and inside the denominator. Recording that keeps the automatic policy
+      // from re-deciding it as a "first-seen stock" the day a manifest is
+      // missing; it assigns no coefficient and is not a tier.
+      excluded = true;
+    } else if (special.kind === 'leveraged-etf') {
       // min(leverage x underlying coefficient, cap), applied scenario by
       // scenario. The cap is what stops a levered position from contributing
       // more than its own market value to the numerator.
@@ -159,11 +210,46 @@ export function readAiRiskRegistry() {
       // never approximated onto the nearest standard tier.
       fail('SPECIAL_KIND_UNSUPPORTED', `${special.id}:${String(special.kind)}`);
     }
-    claim(special.custodian, special.symbol, {
+    claim(special.custodian, special.symbol, special.instrumentId, {
       kind: special.kind, tier, ladder, recordId: special.id,
+      ...(excluded ? { excluded: true, reason: REG_EXCLUSION_REASONS.PUBLISHED_NOT_APPLICABLE } : {}),
       publishedLabel: typeof special.publishedLabel === 'string' ? special.publishedLabel : special.kind,
     });
   }
+
+  /**
+   * The registry rule for one constituent, or null when unrecorded.
+   *
+   * Resolution order, and why: (1) the same custodian's entry for this exact
+   * instrument id, which is how a ticker one custodian spells differently
+   * still reaches its own already-published rule; (2) the same custodian's entry
+   * for this symbol, which is the granularity the published report discloses
+   * and remains the only path for a caller that carries no instrument id;
+   * (3) an entry another custodian records for the same instrument id. A
+   * coefficient is a fact about the company or fund, so an instrument already
+   * tiered in one account is not a "first-seen stock" in another, and handing it
+   * to the automatic policy would give one company two coefficients. The rule
+   * returned in case (3) is the other custodian's own rule, unchanged, and says
+   * so in `matchedBy` / `via` so the disclosure can name it.
+   */
+  const lookup = (custodian, symbol, instrumentId = null) => {
+    const who = String(custodian).trim();
+    const instrument = instrumentId === null || instrumentId === undefined ? null : String(instrumentId).trim();
+    if (instrument !== null && INSTRUMENT_ID.test(instrument)) {
+      const own = byCustodianInstrument.get(`${who}:${instrument}`);
+      if (own) return own;
+    }
+    const spelled = entries.get(key(who, symbol));
+    if (spelled) return spelled;
+    if (instrument !== null && INSTRUMENT_ID.test(instrument)) {
+      const elsewhere = byInstrument.get(instrument) ?? [];
+      if (elsewhere.length) {
+        const base = elsewhere[0];
+        return Object.freeze({ ...base, matchedBy: 'instrument-cross-custodian', via: base.custodian });
+      }
+    }
+    return null;
+  };
 
   cached = Object.freeze({
     policyRevision: file.policyRevision,
@@ -172,8 +258,7 @@ export function readAiRiskRegistry() {
     entries,
     /** The standard ladder for one tier name, or null. */
     ladderFor: tier => ladders.get(tier) ?? null,
-    /** The registry rule for one custodian-and-symbol, or null when unrecorded. */
-    lookup: (custodian, symbol) => entries.get(key(custodian, symbol)) ?? null,
+    lookup,
   });
   return cached;
 }

@@ -13,7 +13,14 @@
     "assignmentSource": "xuan-ib/latest.html, the published 2026-09-11 AM edition, pane p2 table 'AI 压力敞口 · §0-C'",
     "note": "Every number in this file was read out of an already-published, already-approved artefact. The three standard ladders are transcribed from the owner-reviewed §0-C table in the authority review; every per-instrument assignment and every ETF look-through percentage is transcribed from the AI-pressure table of the published report named above. Nothing here is a new financial judgement, a new coefficient, a new tier, a new account scope or a trading authority.",
     "effective": "This file has no effect until the repository owner posts the exact-head-SHA approval comment on the pull request that introduces it and that pull request merges. Until then it is a reviewed proposal only.",
-    "unresolved": "The published report states a low/mid/high ladder only for the three standard tiers and for the named IREN exception. It publishes a single composition percentage for each ETF look-through and a single mid-scenario ratio. Low and high are therefore genuinely undefined for ETF look-through, and this file records that as unresolved rather than filling it with a guess or a zero."
+    "unresolved": "The published report states a low/mid/high ladder only for the three standard tiers and for the named IREN exception. It publishes a single composition percentage for each ETF look-through and a single mid-scenario ratio. Low and high are therefore genuinely undefined for ETF look-through, and this file records that as unresolved rather than filling it with a guess or a zero.",
+    "instrumentBinding": {
+      "recordedOn": "2026-09-18",
+      "record": "claude/xuan-ib-ai-risk-tiers-approval-2026-09-18.md",
+      "source": "the instrumentId each constituent carries in the published 2026-09-17 PM edition manifest (xuan-ib-ai-tier-records-v1); the same values were published for the same positions on every edition since 2026-09-11 PM",
+      "note": "Every stock, ETF look-through and special-case entry is bound to the Sharesight instrument id its raw payload publishes. The reader resolves a constituent by (custodian, instrumentId) first, by (custodian, symbol) second, and by the same instrument recorded under another custodian third, so one custodian's spelling of a ticker (BRK.B versus BRK/B) can no longer hide an already-published tier from a run, and a company already tiered in one account does not receive a different coefficient in another. No coefficient changed.",
+      "activation": "No effect until the repository owner posts the exact-head-SHA approval comment on the pull request that introduces it and that pull request merges."
+    }
   },
   "ladders": {
     "T1": {
@@ -39,38 +46,47 @@
     }
   },
   "stocks": [
-    { "custodian": "IB-HK", "symbol": "IVAI", "tier": "T1", "publishedLabel": "纯 T1" },
-    { "custodian": "IB-HK", "symbol": "SMH", "tier": "T1", "publishedLabel": "纯 T1" },
-    { "custodian": "IB-HK", "symbol": "GOOG", "tier": "T2", "publishedLabel": "T2" },
-    { "custodian": "IB-HK", "symbol": "META", "tier": "T2", "publishedLabel": "T2" },
-    { "custodian": "IB-HK", "symbol": "MSFT", "tier": "T2", "publishedLabel": "T2" },
-    { "custodian": "IB-HK", "symbol": "ORCL", "tier": "T2", "publishedLabel": "T2" },
-    { "custodian": "IB-HK", "symbol": "APO", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "IB-HK", "symbol": "BRK.B", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "IB-HK", "symbol": "INDA", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "IB-HK", "symbol": "KKR", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "IB-HK", "symbol": "TSLA", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "IB-HK", "symbol": "USSC", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "IB-HK", "symbol": "VCN", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "Schwab-HK", "symbol": "AVGO", "tier": "T1", "publishedLabel": "T1" },
-    { "custodian": "Schwab-HK", "symbol": "GOOGL", "tier": "T2", "publishedLabel": "T2" },
-    { "custodian": "Schwab-HK", "symbol": "META", "tier": "T2", "publishedLabel": "T2" },
-    { "custodian": "Schwab-HK", "symbol": "BRK/B", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "Schwab-HK", "symbol": "TSLA", "tier": "T3", "publishedLabel": "T3" },
-    { "custodian": "Webull", "symbol": "GOOG", "tier": "T2", "publishedLabel": "T2" }
+    { "custodian": "IB-HK", "symbol": "IVAI", "instrumentId": "2992325", "tier": "T1", "publishedLabel": "纯 T1" },
+    { "custodian": "IB-HK", "symbol": "SMH", "instrumentId": "1965968", "tier": "T1", "publishedLabel": "纯 T1" },
+    { "custodian": "IB-HK", "symbol": "GOOG", "instrumentId": "670422", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "META", "instrumentId": "186452", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "MSFT", "instrumentId": "24651", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "ORCL", "instrumentId": "516542", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "IB-HK", "symbol": "APO", "instrumentId": "2262313", "tier": "T3", "publishedLabel": "T3" },
+    {
+      "custodian": "IB-HK",
+      "symbol": "BRK.B",
+      "instrumentId": "21531",
+      "sourceSymbol": "BRK/B",
+      "tier": "T3",
+      "publishedLabel": "T3",
+      "note": "The published 2026-09-11 AM edition printed this IB-HK position as BRK.B (IB spelling); the Sharesight IB-HK book that feeds the risk universe spells the same instrument BRK/B. From 2026-09-11 PM to 2026-09-17 PM the symbol lookup therefore missed this entry and the position was automatically classified T1 (80%) instead of the published T3 (5%). The binding is the instrument id, which both spellings share with the Schwab-HK entry, so neither spelling can fall through to the automatic policy again."
+    },
+    { "custodian": "IB-HK", "symbol": "INDA", "instrumentId": "1975404", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "KKR", "instrumentId": "1889982", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "TSLA", "instrumentId": "24977", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "USSC", "instrumentId": "792072", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "IB-HK", "symbol": "VCN", "instrumentId": "1028072", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "Schwab-HK", "symbol": "AVGO", "instrumentId": "1879420", "tier": "T1", "publishedLabel": "T1" },
+    { "custodian": "Schwab-HK", "symbol": "GOOGL", "instrumentId": "24449", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "Schwab-HK", "symbol": "META", "instrumentId": "186452", "tier": "T2", "publishedLabel": "T2" },
+    { "custodian": "Schwab-HK", "symbol": "BRK/B", "instrumentId": "21531", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "Schwab-HK", "symbol": "TSLA", "instrumentId": "24977", "tier": "T3", "publishedLabel": "T3" },
+    { "custodian": "Webull", "symbol": "GOOG", "instrumentId": "670422", "tier": "T2", "publishedLabel": "T2" }
   ],
   "etfLookThrough": [
-    { "custodian": "IB-HK", "symbol": "MXUS", "mid": 0.2503, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 25.03%" },
-    { "custodian": "IB-HK", "symbol": "CSPX", "mid": 0.2579, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 25.79%" },
-    { "custodian": "IB-HK", "symbol": "EQAC", "mid": 0.4107, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 41.07%" },
-    { "custodian": "IB-HK", "symbol": "EXUS", "mid": 0.0601, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 6.01%" },
-    { "custodian": "IB-HK", "symbol": "EIMI", "mid": 0.2655, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 26.55%" }
+    { "custodian": "IB-HK", "symbol": "MXUS", "instrumentId": "391602", "mid": 0.2503, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 25.03%" },
+    { "custodian": "IB-HK", "symbol": "CSPX", "instrumentId": "1310832", "mid": 0.2579, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 25.79%" },
+    { "custodian": "IB-HK", "symbol": "EQAC", "instrumentId": "1983054", "mid": 0.4107, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 41.07%" },
+    { "custodian": "IB-HK", "symbol": "EXUS", "instrumentId": "2767340", "mid": 0.0601, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 6.01%" },
+    { "custodian": "IB-HK", "symbol": "EIMI", "instrumentId": "1311122", "mid": 0.2655, "scenario": "mid-only", "publishedLabel": "ETF 穿透沿用 26.55%" }
   ],
   "specialCases": [
     {
       "id": "REG-SPECIAL-METU-LEVERAGED-T2",
       "custodian": "Schwab-HK",
       "symbol": "METU",
+      "instrumentId": "2845720",
       "kind": "leveraged-etf",
       "underlyingTier": "T2",
       "leverage": 2,
@@ -82,6 +98,7 @@
       "id": "REG-SPECIAL-TSEM-T2",
       "custodian": "Schwab-HK",
       "symbol": "TSEM",
+      "instrumentId": "28132",
       "kind": "named-tier-exception",
       "tier": "T2",
       "publishedLabel": "特例沿用归 T2",
@@ -91,12 +108,22 @@
       "id": "REG-SPECIAL-IREN-LADDER",
       "custodian": "Webull",
       "symbol": "IREN",
+      "instrumentId": "2240178",
       "kind": "explicit-ladder",
       "low": 0.6,
       "mid": 1,
       "high": 1,
       "publishedLabel": "特例沿用中情景 100%",
       "note": "Named in the owner-reviewed §0-C exception row with the explicit ladder 60% / 100% / 100%; the published report shows its mid scenario as 100%."
+    },
+    {
+      "id": "REG-SPECIAL-MSTR-NOT-APPLICABLE",
+      "custodian": "IB-HK",
+      "symbol": "MSTR",
+      "instrumentId": "34421",
+      "kind": "published-not-applicable",
+      "publishedLabel": "不适用（不进分子，全部计入分母）",
+      "note": "Transcribed from the published 2026-09-10 and 2026-09-11 AM editions, which stated 不进分子（全部计入分母）：MSTR 判「不适用」 and grouped it with GLD/SLV/HODL as 主题投资. The 2026-09-11 PM edition was the first run of the coverage module; its previous page carried no manifest, so every position counted as first-seen, and MSTR, absent from this file, was automatically classified T1 and carried forward on every edition to 2026-09-17. This entry records the already-published treatment: out of the numerator, inside the denominator, no coefficient. It assigns no coefficient and is not a new tier; a T1/T2/T3 assignment for MSTR remains a separate owner decision."
     }
   ]
 }
