@@ -152,6 +152,11 @@ the validated source rows. Do not hand-assemble or copy forward the old
 `集中度与现金（IB 账户内）` card. Before publishing a full PM candidate, check its
 raw HTML has the separate headings; the mobile app's compatibility transform
 is only for already published legacy reports, not the routine authoring path.
+For owner-facing mobile layout review, open the canonical public app at
+`https://huanwujoy-crypto.github.io/fee-console/xuan-ib/` and verify its build
+and report date. Do not present raw `latest.html`, a candidate HTML file, or a
+historical snapshot as the current phone UI; those paths may lack the app's
+compatibility transform.
 
 ## 5. Publish and prove delivery
 
