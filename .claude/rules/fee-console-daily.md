@@ -53,6 +53,23 @@ date after the cache advances, using the normal same-date replacement path.
 Never fill the gap from IBKR, an intraday quote, `adjclose`, a hand-copied price,
 weekday arithmetic, or an inferred market-holiday calendar.
 
+If the cache's newest row is older than the target date when the run starts,
+do not give up on that row yet. Dispatch the `Refresh public benchmark closes`
+workflow (`.github/workflows/benchmark-cache.yml`, `workflow_dispatch` on
+`main`) once through the GitHub Actions tool, wait for that run to complete,
+and re-read the `market-data-cache` branch before deciding. The workflow keeps
+every identity, close and dividend validation; the dispatch only moves its
+timing, because GitHub delivers the scheduled slots late or not at all. If the
+tool or the dispatch is unavailable, or the refreshed cache is still behind,
+continue exactly as above: omit the benchmark arguments and leave the benchmark
+pending. Never fetch Yahoo or any other price source from the run itself.
+
+Take `--spyd` / `--qqqd` only from the same cache row's `div` field, which the
+cache records on the ex-date after its own adjusted-close cross-check. A row
+that carries `div` must be passed with that dividend; a row without `div`
+passes no dividend argument. Never look a dividend up elsewhere, never type
+one in, and never drop one because the row's price alone looks complete.
+
 Financial systems remain read-only. Never place, modify, or cancel orders, and
 never initiate transfers or write to IB, Sharesight, or another financial
 account.

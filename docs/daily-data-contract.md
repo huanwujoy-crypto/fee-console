@@ -35,7 +35,9 @@
   `bstate` 是公开 benchmark ledger 的证据字段，不是行情状态猜测。没有明确 `session` 或
   `closed` 证据的日期保持 pending；系统不从后续 `bd`、周几或缺失价格反推美股假日。
 - `--spy` / `--qqq` 是实际 `bd` 的**原始收盘价**（美股收盘），`--spyd` / `--qqqd`
-  是当日**除息金额**，绝大多数日子为 `0`（为 0 时不落字段）。
+  是当日**除息金额**，绝大多数日子为 `0`（为 0 时不落字段）。两者都只取自同一条
+  `market-data-cache` 行：价格取 `p`，除息取该行的 `div`（缓存在除息日经 adjusted-close
+  交叉校验后记录）；该行有 `div` 就必须一同传入，没有就不传。
   **不要传 Yahoo 的 `adjclose`**：它每逢除息回溯改写全部历史值，而这里每天只写一次
   且永不重述，两者不兼容，混用会静默丢掉每一次股息。含息由页面按
   `r = (P + D) / P_prev − 1` 自己链式得出。
@@ -258,6 +260,10 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
   回执或回执校验失败都必须标红。这样可区分“已运行但数据无变化”与“根本没有运行”。
 - 周五收盘等公共行情首次尚未到齐时，`benchmark-cache` 在随后时段自动重试；每次都要求
   SPY/QQQ 共同通过身份、收盘和股息校验，取得后再由同日 replacement 补齐模拟期末余额。
+  定时槽位由 GitHub 延后甚至丢弃（2026-09-14 至 09-18 每天只实际运行两次），Yahoo 也
+  可能在 01:30 UTC 尚未提供前一收盘；因此 producer 开跑时若缓存最新行早于目标日，
+  应先按 `.claude/rules/fee-console-daily.md` 用 `workflow_dispatch` 触发一次
+  `benchmark-cache` 并等待完成、重新读取缓存分支，仍落后才按 §1 留空 benchmark。
 - 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，每个新输入点（包括切换日前的
   历史点）都必须同时提供 `bd`；旧账本的无证据迁移行只允许继续读取。`bd == d` 时脚本自动
   写入 `bstate: "session"`；`bd < d` 时 series
