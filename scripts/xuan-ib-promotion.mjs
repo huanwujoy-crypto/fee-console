@@ -105,8 +105,14 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
   let eligible = candidates.map(validateCandidate).filter(candidate => {
     if (candidate.htmlBlob.toLowerCase() === publishedMeta.htmlBlob.toLowerCase()) return false;
     if (candidate.dataDate < publishedMeta.dataDate) return false;
+    // Independent routines can commit the full report before the fast-lane
+    // report even when the fast lane publishes first. The same-day full report
+    // is the one permitted exception to monotonic commit order; the guarded
+    // publication state and source association still have to validate it.
+    const replacesSameDayPriority = candidate.dataDate === publishedMeta.dataDate
+      && publishedState.kind === 'priority' && candidate.publication.kind === 'complete-pm';
     if (candidate.dataDate === publishedMeta.dataDate &&
-        candidate.commitEpoch <= publishedMeta.sourceCommitEpoch) return false;
+        candidate.commitEpoch <= publishedMeta.sourceCommitEpoch && !replacesSameDayPriority) return false;
     if (candidate.publication.kind === 'priority') {
       if (candidate.commitEpoch < candidate.publication.eligibleAtEpoch) return false;
       if (candidate.dataDate === publishedState.dataDate

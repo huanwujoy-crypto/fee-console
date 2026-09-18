@@ -101,7 +101,7 @@ test("creates canonical metadata from the selected candidate", () => {
   });
 });
 
-test('priority cannot publish before T+10 and cannot duplicate or replace same-day full pm', () => {
+test('priority cannot publish before its versioned eligibility instant or replace same-day full pm', () => {
   const priority = candidate({ commitEpoch: 200, publication: {
     kind: 'priority', dataDate: '2026-08-26', priorityKey: 'pm:2026-08-26', eligibleAtEpoch: 201,
   }});
@@ -126,4 +126,10 @@ test('complete pm beats same-date priority and replaces a published priority', (
   assert.equal(selectNewestCandidate([full], published, {
     kind: 'priority', dataDate: published.dataDate, priorityKey: `pm:${published.dataDate}`, eligibleAtEpoch: 150,
   }), full);
+  const priorityMeta={...published,sourceCommitEpoch:300,htmlBlob:priority.htmlBlob};
+  const priorityState={kind:'priority',dataDate:published.dataDate,
+    priorityKey:`pm:${published.dataDate}`,eligibleAtEpoch:150};
+  assert.equal(selectNewestCandidate([full],priorityMeta,priorityState),full);
+  assert.equal(selectNewestCandidate([candidate({commitEpoch:250,htmlBlob:sha('d')})],
+    priorityMeta,priorityState),null);
 });

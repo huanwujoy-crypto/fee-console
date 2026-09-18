@@ -20,11 +20,11 @@ import {
 } from './xuan-ib-ai-coefficient-resolver.mjs';
 import { POLICY_ID, renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {ETF_SUMMARY_ID,ETF_SUMMARY_OPEN,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
-import { loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
+import { extractAssociationReceipt, loadTrustedAssociationPolicy, validateAssociationSnapshot } from './xuan-ib-account-association.mjs';
 import {
   ASSOCIATION_TEMPLATE_ID, checkAssociationPublication, hasAssociationMarker, publicationEdition,
 } from './xuan-ib-account-association-publication.mjs';
-import { SLEEP_PRIORITY_TEMPLATE_ID, checkSleepPriorityPublication, extractSleepPriorityDelivery } from './xuan-ib-sleep-priority.mjs';
+import { SLEEP_PRIORITY_TEMPLATE_ID, associationAnchorAfterPriority, checkSleepPriorityPublication, extractSleepPriorityDelivery } from './xuan-ib-sleep-priority.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -1832,7 +1832,11 @@ function checkVenueIdentityClaims(documentHtml) {
 
 try {
   const edition = publicationEdition(html);
-  checkSleepPriorityPublication(html, { edition, expectedDate });
+  const priorityDelivery = checkSleepPriorityPublication(html, { edition, expectedDate });
+  const priorityAssociationReceipt = priorityDelivery ? extractAssociationReceipt(html) : null;
+  if (priorityAssociationReceipt && priorityAssociationReceipt.previousSourceSha !== priorityDelivery.previousSourceSha) {
+    fail('priority marker and pre-read association receipt must bind the same previous source');
+  }
   // This exact source-bound correction changes only the approved AAOI risk
   // derivation. It is not fresh collection or a new adhoc authorization.
   const verifiedHistoricalCorrection = !verifiedRecordsUpdate && verifyAaoiSnapshotCorrection(html, trustedPreviousHtml,
@@ -1870,8 +1874,15 @@ try {
       : loadTrustedAssociationPolicy({ cwd: process.cwd(), requireActive: false });
     validateAssociationSnapshot(snapshot, { now: Date.now(), requireActive: false });
   }
+  const candidateReceipt = extractAssociationReceipt(html);
+  const associationPreviousSourceSha = previousSourceSha
+    ? associationAnchorAfterPriority({ candidateEdition: edition,
+      candidatePreviousSourceSha: candidateReceipt?.previousSourceSha,
+      publishedHtml: trustedPreviousHtml, publishedSourceSha: previousSourceSha, dataDate: expectedDate })
+    : previousSourceSha;
   checkAssociationPublication(html, snapshot, {
-    edition, previousHtml: trustedPreviousHtml, previousSourceSha, verifiedRecordsUpdate, verifiedHistoricalCorrection,
+    edition, previousHtml: trustedPreviousHtml, previousSourceSha: associationPreviousSourceSha,
+    verifiedRecordsUpdate, verifiedHistoricalCorrection,
   });
 } catch (error) { fail(error.message); }
 

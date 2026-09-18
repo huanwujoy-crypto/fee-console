@@ -1,15 +1,14 @@
-# Current XUAN-IB fixed-report runbook — updated 2026-09-16
+# Current XUAN-IB fixed-report runbook — updated 2026-09-17
 
 The owner has retired the recurring AM edition. The only fixed report is PM;
 historical AM references below describe legacy contracts and do not reactivate
 an AM Routine.
 
 The protected [sleep-priority delivery](xuan-ib-sleep-priority-delivery-v1.md)
-may publish a same-run, visibly incomplete holdings/orders page at T+10 only
-when full PM is not ready. Its `adhoc` marker never completes the PM slot. The
-original PM Routine must not use this route until the protected code is merged,
-the saved prompt is updated/read back and the rollout gates in that document
-are completed.
+defines an independent, bounded holdings/orders Routine. Its `adhoc` marker
+never completes the PM slot; the full-live PM Routine remains separate and
+must not try to publish a same-run T+10 checkpoint. Repository code, saved
+Routine configuration and live public read-back are separate activation gates.
 
 This is the entrypoint for the existing fixed, **full-live** AM/PM route. It
 resolves historical wording; it does not grant new permissions or loosen the
@@ -148,6 +147,16 @@ Read the relevant [cash plan](xuan-ib-cash-first-plan-v1.md),
 and immutable receipt history. Use the compact contract's full-view preflight
 and `xuan-ib-report-prepare.mjs` path; prose-only correction stays within its
 bounded preflight retry, not a new financial run or edited generated HTML.
+The compact renderer now emits separate `单票集中度` and `现金` risk cards from
+the validated source rows. Do not hand-assemble or copy forward the old
+`集中度与现金（IB 账户内）` card. Before publishing a full PM candidate, check its
+raw HTML has the separate headings; the mobile app's compatibility transform
+is only for already published legacy reports, not the routine authoring path.
+For owner-facing mobile layout review, open the canonical public app at
+`https://huanwujoy-crypto.github.io/fee-console/xuan-ib/` and verify its build
+and report date. Do not present raw `latest.html`, a candidate HTML file, or a
+historical snapshot as the current phone UI; those paths may lack the app's
+compatibility transform.
 
 ## 5. Publish and prove delivery
 

@@ -8,7 +8,8 @@ import { renderClassificationDisclosure } from './xuan-ib-classification-disclos
 import { renderFourBucketCard, renderFourBucketReportTransport } from './xuan-ib-four-bucket-report.mjs';
 import { validateAssociationReceipt, renderAssociationReceipt, renderAssociationDisclosure } from './xuan-ib-account-association.mjs';
 import { buildOrderTrends, groupOrders, orderTrendKey } from './xuan-ib-order-view.mjs';
-import { GUIDE_BODY } from './xuan-ib-mobile-display.mjs';
+import { GUIDE_BODY, matchesConcentrationCashTable } from './xuan-ib-mobile-display.mjs';
+import { familyOrdinaryConcentrations } from './xuan-ib-single-stock-concentration.mjs';
 import { ETF_TAB_CSS_V1, ETF_TAB_RADIO_V1, ETF_TAB_LABEL_V1 } from './xuan-ib-etf-pane.mjs';
 import { buildDecisionMenu, parseDecisionJson, extractPairedDecisionCardFragments } from './xuan-ib-decision-menu.mjs';
 import { parseEtfSummary, renderEtfSummaryTemplate } from './xuan-ib-etf-summary-transport.mjs';
@@ -225,6 +226,52 @@ const cardBody = card => {
 const card = value => `<section class="card"><h2>${esc(value.title)}</h2>${cardBody(value)}</section>`;
 const fold = (title,body,open=false,right='') => `<details${open?' open':''}><summary>${esc(title)}${right?` <span class="rt">${esc(right)}</span>`:''}</summary><div class="dbody">${body}</div></details>`;
 
+const NATIVE_RISK_CSS = `
+.native-risk-table{width:100%;min-width:0!important;table-layout:fixed}
+.native-risk-table th,.native-risk-table td{padding:9px 6px;overflow-wrap:anywhere}
+.native-risk-table th:last-child,.native-risk-table td:last-child{text-align:right}
+.native-risk-table td small{display:block;color:var(--mut);font-size:12px}
+.native-risk-cash{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:12px 0}
+.native-risk-cash>div{min-width:0;padding:12px;border:1px solid var(--line);border-radius:12px}
+.native-risk-cash dt{font-size:13px;color:var(--mut)}
+.native-risk-cash dd{margin:5px 0 0;font-size:clamp(18px,6vw,25px);font-weight:800;white-space:nowrap}
+.native-risk-cash small{display:block;color:var(--mut);font-size:11px}
+`;
+
+export function renderRiskCards(view,aiPressure) {
+  const rendered=[];
+  for(const source of view.risk){
+    if(!aiPressure||!matchesConcentrationCashTable(source.columns,source.rows.map(row=>row[0]))){
+      rendered.push(card(source));continue;
+    }
+    const concentration=familyOrdinaryConcentrations(aiPressure.rows,aiPressure.denominatorCents);
+    const rows=concentration.map(item=>`<tr><td><b>${esc(item.label)}</b><small>市值 $${esc(item.amount)}</small></td><td><b>${item.percent.toFixed(2)}% / 5%</b><small>家庭三账户</small></td></tr>`).join('');
+    rendered.push(`<section class="card"><h2>单票集中度</h2><p class="sub">${concentration.length} 只超过 1% · 不含 BRK.B</p>${rows?`<div class="tblwrap"><table class="native-risk-table"><thead><tr><th>标的 / 市值 USD</th><th>占比 / 参考线</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}</section>`);
+
+    const plan=view.cashPlan;
+    const holdings=new Map(view.holdings.rows.filter(row=>row.marketValueUsd!==null).map(row=>[row.symbol,row.marketValueUsd]));
+    const sumSymbols=symbols=>symbols.every(symbol=>holdings.has(symbol))
+      ?symbols.reduce((sum,symbol)=>sum+holdings.get(symbol),0):null;
+    const pool=plan.status==='snapshot'?plan.ibCash+plan.noahCash:null;
+    const coverage=pool!==null&&plan.reserve>0?pool/plan.reserve:null;
+    const ammo=sumSymbols(['VGSH','VGIT','TLT']);
+    const theme=sumSymbols(['GLD','SLV','MSTR','HODL']);
+    const themeBase=plan.status==='snapshot'&&view.holdings.authoritativeValueUsd!==null
+      ?view.holdings.authoritativeValueUsd+plan.noahCash:null;
+    const themePercent=theme!==null&&themeBase>0?`${(theme/themeBase*100).toFixed(2)}%`:'未取得';
+    const metric=(label,value,detail)=>`<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd><small>${esc(detail)}</small></div>`;
+    const metrics=[
+      metric('现金池',pool===null?'未取得':money(pool),'IB + NOAH'),
+      metric('覆盖待 call',coverage===null?'未取得':`${coverage.toFixed(2)}×`,plan.status==='snapshot'?`预留 ${money(plan.reserve)}`:'预留未取得'),
+      metric('二线弹药',ammo===null?'未取得':money(ammo),'VGSH · VGIT · TLT'),
+      metric('主题投资',themePercent,theme===null?'GLD · SLV · MSTR · HODL':`${money(theme)} · 上限 7%`),
+    ];
+    const original=table(source.columns,source.rows);
+    rendered.push(`<section class="card"><h2>现金</h2><dl class="native-risk-cash">${metrics.join('')}</dl><p class="sub">现金池为规划口径，不等于 IB 即时购买力。</p>${fold('原始读数',original+numberedLines(source.lines))}</section>`);
+  }
+  return rendered.join('');
+}
+
 // `declareUniverse` emits the machine-readable constituent markers the AI-tier
 // records are reconciled against. They ship with the records and only with
 // them: a historical archive replays an already published page byte for byte
@@ -438,13 +485,13 @@ export function renderReport(view, { previousHtml, previousMeta, policy, manualA
   const kpis=view.kpis.map(item=>`<div class="kpi"><div class="lab">${esc(item.label)}</div><div class="big num">${item.value===null?'待核实':item.format==='usd'?money(item.value):`${number(item.value)}${item.format==='percent'?'%':''}`}</div><div class="sub">${[...item.note].length<=80?esc(item.note)+'<br>':''}${esc(item.asOfHkt)}</div>${[...item.note].length>80?fold('说明',numberedLines([item.note])):''}</div>`).join('')+cash.kpi
     +(aiPressure===null?'':renderAiPressureKpi(aiPressure,{asOfHkt:view.asOfHkt}));
   const bodyOpen=`<body${sleepPriority?` ${SLEEP_PRIORITY_BODY_ATTRIBUTE}`:''}>`;
-  const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}</style></head>${bodyOpen}<!-- xuan-ib-handover:v1 -->
+  const html=`<!doctype html>\n<html lang="zh-Hant"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN-投资管理</title><style>${STYLE}\n${COMPACT_RESPONSIVE_CSS}\n${NATIVE_RISK_CSS}</style></head>${bodyOpen}<!-- xuan-ib-handover:v1 -->
 <input type="radio" name="th" id="tl" checked><input type="radio" name="th" id="td"><div class="page"><div class="wrap"><details class="mobile-guide"><summary>使用指南 · 30 秒上手</summary>${GUIDE_BODY}</details><div class="hdr"><span class="date">${view.dataDate} 周${day} · ${edition} · ${esc(view.marketContext)}</span><div class="tgl"><label for="tl">浅</label><label for="td">深</label></div></div>
 ${view.alerts.map(item=>`<div class="alert ${item.level==='error'?'error':''}">${esc(item.text)}</div>`).join('')}
 ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,'最重要的排第一')}<div class="kpis">${kpis}</div>
 <div class="tabs"><input type="radio" name="sec" id="s1" checked><input type="radio" name="sec" id="s4"><input type="radio" name="sec" id="s3"><input type="radio" name="sec" id="s2">${ETF_TAB_RADIO_V1}<div class="tabbar"><label for="s1">概览</label><label for="s4" aria-label="待办 ${pending} 项">待办${pending?` <span class="dot" aria-hidden="true">${pending}</span>`:''}</label><label for="s3">配置</label><label for="s2">风险</label>${ETF_TAB_LABEL_V1}</div>
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}</div>
-<div class="pane p2">${riskSourceNotice}${aiSection}${view.risk.map(card).join('')}${aiTier?aiTier.disclosures:''}</div>
+<div class="pane p2">${riskSourceNotice}${aiSection}${renderRiskCards(view,aiPressure)}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
 <div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):table(view.rotation.columns,view.rotation.rows)}`,true)}${sleepPriority?'<div class="alert">其它待办沿用上一份已核验状态；完整睡前版将再核对。</div>':''}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${sleepPriority?'<div class="alert">ETF 随完整睡前版更新。</div>':etf}</div></div>

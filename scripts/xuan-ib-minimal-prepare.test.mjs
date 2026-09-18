@@ -225,7 +225,8 @@ test('weekly five-source run can prepare a guarded sleep-priority page without c
   assert.equal(result.status, 'prepared-not-published');
   const html = fs.readFileSync(path.join(f.dir, 'candidate.html'), 'utf8');
   const delivery = extractSleepPriorityDelivery(html);
-  assert.equal(delivery.publishEligibleAt, new Date(Date.parse(runStartedAt) + 10 * 60_000).toISOString());
+  assert.equal(delivery.schemaVersion, 2);
+  assert.equal(delivery.publishEligibleAt, new Date(runStartedAt).toISOString());
   assert.equal(classifySleepPublication(html).kind, 'priority');
   assert.match(html, /临时版 · 睡前速览/);
   assert.match(html, /完整报告更新中/);

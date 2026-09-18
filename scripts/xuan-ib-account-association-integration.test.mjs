@@ -14,6 +14,8 @@ import {
   extractAssociationReceipt, renderAssociationDisclosure, renderAssociationReceipt,
 } from './xuan-ib-account-association.mjs';
 import { checkAssociationPublication } from './xuan-ib-account-association-publication.mjs';
+import { associationAnchorAfterPriority, createSleepPriorityDelivery, renderSleepPriorityTransport,
+  SLEEP_PRIORITY_BODY_ATTRIBUTE } from './xuan-ib-sleep-priority.mjs';
 import { buildAiRiskInputFromCapture } from './xuan-ib-ai-risk-input.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -149,6 +151,25 @@ test('recurring prepare runs the actual guard, preserves old receipts and publis
   const journal = showRunJournal(f.journalPath);
   assert.equal(journal.stages.find(item => item.name === 'render').status, 'ok');
   assert.equal(journal.stages.find(item => item.name === 'guard').status, 'ok');
+});
+
+test('a full PM receipt remains bound to its pre-read source when an independent same-day priority publishes first', async t => {
+  const f = await fixture(t, { edition: 'pm' });
+  const riskInput = buildAiRiskInputFromCapture(f.input, { previousTrustedHtml: previousHtml, registry });
+  const prepared = prepareReport(f.view, f.evidence, { ...f.options, riskInput });
+  const delivery = createSleepPriorityDelivery({ dataDate: f.input.dataDate,
+    runId: 'independent-priority-run-20260917', runStartedAt: f.stamp(1000),
+    priorityReadyAt: f.stamp(3000), previousSourceSha: previousMeta.sourceSha });
+  const priorityHtml = `<!doctype html><html><body ${SLEEP_PRIORITY_BODY_ATTRIBUTE}><span class="date">${f.input.dataDate} · 临时版 · 睡前速览 · 完整报告更新中</span>${renderSleepPriorityTransport(delivery)}</body></html>`;
+  const prioritySourceSha = 'b'.repeat(40);
+  const anchor = associationAnchorAfterPriority({ candidateEdition: 'pm',
+    candidatePreviousSourceSha: extractAssociationReceipt(prepared.html).previousSourceSha,
+    publishedHtml: priorityHtml, publishedSourceSha: prioritySourceSha, dataDate: f.input.dataDate });
+  assert.equal(anchor, previousMeta.sourceSha);
+  assert.equal(checkAssociationPublication(prepared.html, f.associationSnapshot,
+    { now: Date.now(), previousSourceSha: anchor, previousHtml: priorityHtml }).freshRead, true);
+  assert.throws(() => checkAssociationPublication(prepared.html, f.associationSnapshot,
+    { now: Date.now(), previousSourceSha: prioritySourceSha, previousHtml: priorityHtml }), /bind/);
 });
 
 test('recurring preparation retains the existing fresh Sharesight positions fallback without inventing a successful IB read',async t=>{

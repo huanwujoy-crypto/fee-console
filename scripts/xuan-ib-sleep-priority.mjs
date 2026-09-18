@@ -6,7 +6,11 @@ import { publicationEdition } from './xuan-ib-account-association-publication.mj
 export const SLEEP_PRIORITY_KIND = 'sleep-priority';
 export const SLEEP_PRIORITY_BODY_ATTRIBUTE = 'data-xuan-delivery="sleep-priority-v1"';
 export const SLEEP_PRIORITY_TEMPLATE_ID = 'xuan-ib-sleep-priority-v1';
-export const SLEEP_PRIORITY_DELAY_MS = 10 * 60 * 1000;
+// V1 was an adaptive ten-minute checkpoint inside the full PM run. V2 is an
+// independent fast lane: publish as soon as its own verified IB capture is
+// ready. Keep V1 readable so an older published priority page remains valid.
+export const SLEEP_PRIORITY_DELAY_MS = 0;
+const LEGACY_PRIORITY_DELAY_MS = 10 * 60 * 1000;
 
 const fail = message => { throw new Error(`sleep priority: ${message}`); };
 const exact = (value, keys, label) => {
@@ -35,7 +39,7 @@ const sha = (value, label = 'previousSourceSha') => {
 export function validateSleepPriorityDelivery(delivery) {
   exact(delivery, ['schemaVersion', 'kind', 'slotEdition', 'dataDate', 'runId', 'runStartedAt',
     'priorityReadyAt', 'publishEligibleAt', 'previousSourceSha'], 'delivery');
-  if (delivery.schemaVersion !== 1 || delivery.kind !== SLEEP_PRIORITY_KIND || delivery.slotEdition !== 'pm') {
+  if (![1, 2].includes(delivery.schemaVersion) || delivery.kind !== SLEEP_PRIORITY_KIND || delivery.slotEdition !== 'pm') {
     fail('unsupported delivery contract');
   }
   date(delivery.dataDate); runId(delivery.runId); sha(delivery.previousSourceSha);
@@ -43,14 +47,15 @@ export function validateSleepPriorityDelivery(delivery) {
   const ready = instant(delivery.priorityReadyAt, 'priorityReadyAt');
   const eligible = instant(delivery.publishEligibleAt, 'publishEligibleAt');
   if (ready < started) fail('priorityReadyAt precedes runStartedAt');
-  if (eligible !== started + SLEEP_PRIORITY_DELAY_MS) fail('publishEligibleAt must be exactly ten minutes after runStartedAt');
+  const delay = delivery.schemaVersion === 1 ? LEGACY_PRIORITY_DELAY_MS : SLEEP_PRIORITY_DELAY_MS;
+  if (eligible !== started + delay) fail('publishEligibleAt does not match the delivery version');
   return delivery;
 }
 
 export function createSleepPriorityDelivery({ dataDate, runId: id, runStartedAt, priorityReadyAt, previousSourceSha }) {
   const started = instant(runStartedAt, 'runStartedAt');
   const delivery = {
-    schemaVersion: 1, kind: SLEEP_PRIORITY_KIND, slotEdition: 'pm', dataDate: date(dataDate),
+    schemaVersion: 2, kind: SLEEP_PRIORITY_KIND, slotEdition: 'pm', dataDate: date(dataDate),
     runId: runId(id), runStartedAt: new Date(started).toISOString(),
     priorityReadyAt: new Date(instant(priorityReadyAt, 'priorityReadyAt')).toISOString(),
     publishEligibleAt: new Date(started + SLEEP_PRIORITY_DELAY_MS).toISOString(),
@@ -108,6 +113,22 @@ export function classifySleepPublication(html) {
   if (!match) fail('primary report date is unavailable');
   date(match[1]);
   return { kind: edition === 'pm' ? 'complete-pm' : 'other', dataDate: match[1], priorityKey: null, eligibleAtEpoch: null };
+}
+
+// A full PM run may start against the last complete report while a separate
+// priority run publishes in the meantime. The PM receipt was necessarily
+// minted before its financial reads, so its anchor can be the priority page's
+// verified prior source, but only for the same date and only for a full PM.
+// All other continuity checks still use the actual current published page.
+export function associationAnchorAfterPriority({ candidateEdition, candidatePreviousSourceSha,
+  publishedHtml, publishedSourceSha, dataDate }) {
+  const current = sha(publishedSourceSha, 'publishedSourceSha');
+  if (candidateEdition !== 'pm' || candidatePreviousSourceSha === current) return current;
+  if (!extractSleepPriorityDelivery(publishedHtml)) return current;
+  const published = checkSleepPriorityPublication(publishedHtml);
+  if (!published || published.dataDate !== date(dataDate)) return current;
+  const prior = sha(published.previousSourceSha);
+  return candidatePreviousSourceSha === prior ? prior : current;
 }
 
 export function nextSleepPriorityAction(state) {
