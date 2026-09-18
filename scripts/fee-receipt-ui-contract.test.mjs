@@ -574,11 +574,21 @@ test("passive-account balances use only receipt-verified dated flows and indepen
     assert.ok(Math.abs(result.bench[0].twr - 0.21) < 1e-12);
     assert.notEqual(result.bench[0].val, 100_000 * 1.21 + 24_000);
   });
-  await t.test("same-day dividends are reinvested before an EOD flow", () => {
+  await t.test("same-day dividends are reinvested net of the declared US withholding before an EOD flow", () => {
+    // The ledger and the market-data cache always carry the gross ex-dividend
+    // amount. The page declares the withholding rate it applies (30% for a
+    // non-treaty holder); an older page that declares none reinvests gross.
+    const declared = html.match(/const BENCH_DIVIDEND_WITHHOLDING=([0-9.]+);/);
+    const withholding = declared ? Number(declared[1]) : 0;
+    assert.ok(withholding >= 0 && withholding < 1, "a declared withholding rate must be a fraction below 1");
+    assert.equal((html.match(/BENCH_DIVIDEND_WITHHOLDING=/g) || []).length, declared ? 1 : 0,
+      "the withholding rate is declared exactly once");
     points = data.daily.map(p => ({ ...p }));
     points[2].spy = 108; points[2].spyd = 2; points[3].spy = 118.8;
     const result = plain(context.benchmarkView(view, rowsOf(view)));
-    assert.ok(Math.abs(result.bench[0].val - 147_400) < 1e-7);
+    const expected = (100_000 * (1.08 + 0.02 * (1 - withholding)) + 24_000) * 1.1;
+    assert.ok(Math.abs(result.bench[0].val - expected) < 1e-7);
+    if (withholding > 0) assert.ok(result.bench[0].val < 147_400, "withholding must reduce the reinvested dividend");
   });
   await t.test("cross-month inflow and withdrawal preserve the same daily path", () => {
     points = [
