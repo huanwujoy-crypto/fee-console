@@ -127,7 +127,15 @@ the page's own per-constituent contributions and reconciles the tile against it.
 Where the approved material defines no low or high case, publish that scenario
 as unavailable and named — never the mid case repeated, never zero. Resolve cross-source
 identity by the strong identifier each payload publishes (`contract_id`,
-`instrument.id`) and use the venue+code key only when none exists. Decide
+`instrument.id`) and use the venue+code key only when none exists. The registry
+is read the same way: each entry is bound to its Sharesight `instrumentId`, the
+lookup takes (custodian, symbol, instrumentId) and resolves the instrument
+before the custodian's spelling of the ticker, then the same instrument another
+custodian records; a registry hit supersedes a carried `AUTO` record, is
+disclosed on the page, and an `AUTO` record on a registered instrument fails
+the gate. MSTR at IB-HK is the owner's standard T2 (`REG-SPECIAL-MSTR-T2`,
+`claude/xuan-ib-mstr-t2-approval-2026-09-18.md`). Read
+`claude/xuan-ib-ai-risk-tiers-approval-2026-09-18.md` first. Decide
 "notify once" with `decideAutoNotification` against the previous trusted page's
 published records and a verified public read-back; never close a notification
 without one, and never turn it into an owner item.

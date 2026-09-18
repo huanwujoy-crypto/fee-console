@@ -161,6 +161,23 @@ test('the output is a real classification, never worded as provisional or pendin
   assert.equal(assertNoProvisionalWording('NEWCO 按标准 T1 计入'), 'NEWCO 按标准 T1 计入');
 });
 
+test('a non-stock held for months is refused for what it is, not for not being new', () => {
+  // The reason a refusal reports is published beside the position. A gold ETF
+  // or a Treasury fund the reports have carried for weeks is excluded because
+  // it is not an ordinary stock; "not a first-seen position" was true of it too
+  // but said nothing about why it carries no single-stock tier.
+  for (const assetType of ['ETF', 'COMMODITY', 'BOND', 'CASH']) {
+    assert.throws(() => classify(fresh({ assetType, firstSeen: false })), (error) => {
+      assert.equal(error.code, 'ASSET_TYPE_NOT_ORDINARY_STOCK');
+      assert.equal(error.reason, AUTO_EXCLUSION_REASONS.ASSET_TYPE_NOT_ORDINARY_STOCK);
+      return true;
+    });
+  }
+  assert.throws(() => classify(fresh({ assetType: 'STRUCTURED', firstSeen: false })), /ASSET_TYPE_UNKNOWN/);
+  // An ordinary stock that is not first-seen is still exactly that.
+  assert.throws(() => classify(fresh({ firstSeen: false })), /NOT_FIRST_SEEN/);
+});
+
 test('the automatic policy never becomes a path into the delegated owner reader', () => {
   // An AUTO record's identity is not an approval id, so it cannot be fed back
   // into the reader that applies owner approvals.

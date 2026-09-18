@@ -222,20 +222,16 @@ function classifyUnderAutoPolicy(input, {
   if (input.identityVerified !== true) {
     fail('SOURCE_IDENTITY_UNVERIFIED', { symbol, reason: AUTO_EXCLUSION_REASONS.IDENTITY_UNVERIFIED });
   }
-  // First-ever-seen only. A position the reports have carried for weeks without
-  // a rule is a different question and is not silently settled here.
-  if (requireFirstSeen && input.firstSeen !== true) {
-    fail('NOT_FIRST_SEEN', { symbol, reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
-  }
-  if (!requireFirstSeen && input.firstSeen !== false) {
-    fail('PERSISTED_RECORD_NOT_PREVIOUSLY_SEEN', { symbol,
-      reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
-  }
   const keys = ownerRuleKeys ?? existingOwnerRuleKeys();
   const existing = keys.get(`${input.portfolioId}:${input.holdingId}`) ?? null;
   if (existing !== null) {
     fail('EXISTING_OWNER_RULE', { detail: existing, symbol, reason: AUTO_EXCLUSION_REASONS.EXISTING_OWNER_RULE });
   }
+  // Asset type is decided before first-seen-ness, because the reason a refusal
+  // reports is the first check that fails and the reason is published. A gold
+  // ETF or a Treasury fund held for months was being disclosed as "not a
+  // first-seen position" — true, but not why it carries no single-stock tier.
+  // The stable, informative reason is that it is not an ordinary stock.
   const assetType = normalizeAssetType(input.assetType);
   // Unknown or unreadable is not "probably a stock". It is excluded and named.
   if (assetType === null) {
@@ -250,6 +246,15 @@ function classifyUnderAutoPolicy(input, {
   }
   if (!ordinary.includes(assetType)) {
     fail('ASSET_TYPE_UNKNOWN', { detail: assetType, symbol, reason: AUTO_EXCLUSION_REASONS.ASSET_TYPE_UNKNOWN });
+  }
+  // First-ever-seen only. A position the reports have carried for weeks without
+  // a rule is a different question and is not silently settled here.
+  if (requireFirstSeen && input.firstSeen !== true) {
+    fail('NOT_FIRST_SEEN', { symbol, reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
+  }
+  if (!requireFirstSeen && input.firstSeen !== false) {
+    fail('PERSISTED_RECORD_NOT_PREVIOUSLY_SEEN', { symbol,
+      reason: AUTO_EXCLUSION_REASONS.NOT_FIRST_SEEN });
   }
   if (input.currency !== 'USD') {
     fail('CURRENCY_UNSUPPORTED', { detail: input.currency, symbol,

@@ -329,7 +329,10 @@ export function resolveTrustedMidCoefficientBp(record) {
   const holdingKey = `${record.portfolioId}:${record.holdingId}`;
 
   if (record.namespace === AI_RISK_NAMESPACE) {
-    const rule = rules.registry.lookup(record.custodian.trim(), symbol);
+    // Resolved by the instrument id the record carries first, and by the
+    // custodian's spelling of the symbol second: the rule for `BRK.B` at IB-HK
+    // is the rule for the instrument the Sharesight book spells `BRK/B`.
+    const rule = rules.registry.lookup(record.custodian.trim(), symbol, record.instrumentId);
     if (!rule) fail('REG_RULE_NOT_RECORDED', `${record.custodian}:${symbol}`);
     if (rule.recordId !== record.recordId) fail('REG_RULE_ID_MISMATCH', record.recordId);
     // A registry entry may additionally pin a portfolio, holding or instrument;
@@ -378,7 +381,10 @@ export function resolveTrustedMidCoefficientBp(record) {
   if (rules.delegatedByHolding.has(holdingKey) || rules.overridesByHolding.has(holdingKey)) {
     fail('AUTO_SHADOWS_OWNER_RULE', holdingKey);
   }
-  if (rules.registry.lookup(record.custodian.trim(), symbol)) {
+  // Checked by instrument as well as by symbol, so an AUTO record standing on
+  // a differently spelled ticker of a registered instrument — the 2026-09-11
+  // `BRK/B` defect — is refused here too.
+  if (rules.registry.lookup(record.custodian.trim(), symbol, record.instrumentId)) {
     fail('AUTO_SHADOWS_REGISTRY_RULE', `${record.custodian}:${symbol}`);
   }
   return { midBp: basisPointsOf(policy.mid, record.recordId), namespace: AUTO_NAMESPACE,

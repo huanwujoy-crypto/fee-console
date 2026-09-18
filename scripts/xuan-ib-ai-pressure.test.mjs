@@ -13,9 +13,14 @@ import {
 import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 
 const dataDate = '2026-09-11';
+// The registry binds each of its rules to the Sharesight instrument id the
+// payload publishes, so a fixture that names a registered symbol carries that
+// symbol's real instrument id: a registered ticker on a different instrument is
+// an identity mismatch, disclosed and excluded, not a coefficient.
+const INSTRUMENT = { GOOG: '670422', 'BRK.B': '21531', MXUS: '391602', EXUS: '2767340' };
 const constituent = (over = {}) => ({ symbol: 'GOOG', custodian: 'IB-HK', venue: 'NASDAQ',
-  portfolioId: '936247', holdingId: '60000001', instrumentId: '60000001', currency: 'USD',
-  assetType: 'STK', marketValueUsd: 1000, valueDate: dataDate, identityVerified: true,
+  portfolioId: '936247', holdingId: '60000001', instrumentId: INSTRUMENT[over.symbol ?? 'GOOG'] ?? '60000001',
+  currency: 'USD', assetType: 'STK', marketValueUsd: 1000, valueDate: dataDate, identityVerified: true,
   firstSeen: false, ...over });
 // A synthetic single-account denominator, named by a stable key. The production
 // three-account set is bound where the run's source reports are read; what the
@@ -40,7 +45,9 @@ test('the calculation is pure: identical inputs give byte-identical output', () 
 test('headline KPI includes the largest non-BRK.B ordinary-stock concentration',()=>{
   const pressure=compute([
     constituent({symbol:'BRK.B',marketValueUsd:4000}),
-    constituent({symbol:'GOOG',holdingId:'60000002',instrumentId:'60000002',marketValueUsd:1200}),
+    // The same instrument held again is another account's position, never a
+    // second holding of it inside one account.
+    constituent({symbol:'GOOG',custodian:'Webull',portfolioId:'1350094',holdingId:'60000002',marketValueUsd:1200}),
     constituent({symbol:'GOOGL',holdingId:'60000003',instrumentId:'60000003',marketValueUsd:800}),
   ]);
   const html=renderAiPressureKpi(pressure,{asOfHkt:`${dataDate} 08:00 HKT`});
@@ -92,8 +99,12 @@ test('rows are summed unrounded and the total is rounded exactly once', () => {
   // Three rows whose exact contributions each end in half a cent. Rounding each
   // row first and adding the rounded rows drifts with the number of rows; the
   // contract sums the exact products and rounds the total once.
+  // One fund, three accounts: the IB-HK rule resolves by its own instrument id
+  // and the other two by the same instrument recorded under IB-HK.
+  const accounts = [['IB-HK', '936247'], ['Schwab-HK', '936249'], ['Webull', '1350094']];
   const rows = [0, 1, 2].map(index => constituent({ symbol: 'MXUS', assetType: 'ETF',
-    marketValueUsd: 1000.01, holdingId: `6000010${index}`, instrumentId: `6000010${index}` }));
+    custodian: accounts[index][0], portfolioId: accounts[index][1],
+    marketValueUsd: 1000.01, holdingId: `6000010${index}` }));
   const pressure = compute(rows);
   const single = 1_000_010_000n * 2503n;
   assert.equal(pressure.numeratorMicroBasis, String(single * 3n));
@@ -172,7 +183,7 @@ test('an unavailable scenario is reported as unavailable, never as the mid case 
   // scenario only, mixed with an ordinary tiered position.
   const pressure = compute([
     constituent({ symbol: 'MXUS', assetType: 'ETF', marketValueUsd: 1000 }),
-    constituent({ symbol: 'BRK.B', holdingId: '60000002', instrumentId: '60000002', marketValueUsd: 1000 }),
+    constituent({ symbol: 'BRK.B', holdingId: '60000002', marketValueUsd: 1000 }),
   ]);
   assert.equal(pressure.scenarios.mid.available, true);
   assert.equal(pressure.scenarios.mid.numeratorUsd, 250.3 + 50);
@@ -263,6 +274,8 @@ test('the registry reader refuses a policy that widens its own scope', () => {
   assert.equal(reg.namespace, 'REG');
   // Every recorded coefficient is a real coefficient in [0,1].
   for (const entry of reg.entries.values()) {
+    // Every entry is bound to the instrument id its payload publishes.
+    assert.match(entry.instrumentId, /^\d{1,18}$/, entry.id);
     for (const scenario of ['low', 'mid', 'high']) {
       const value = entry.ladder[scenario];
       if (value === null) continue;
