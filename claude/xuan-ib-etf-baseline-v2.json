@@ -2,8 +2,9 @@
   "schemaVersion": 1,
   "purpose": "xuan-etf-daily-baseline",
   "methodId": "xuan-etf-indicative-v2",
+  "poolVersion": 2,
   "startDate": "2026-09-17",
   "frozenDate": "2026-09-17",
-  "reserveUsd": 240000,
-  "note": "Baseline of the v2.1 simplified daily comparison: the 2026-09-17 close. This file records dates only; the baseline wealth and prices are re-read from the same official sources on every run, so it never carries a financial value. Once a report has published a summary with this start date, the trusted guard refuses any later start date."
+  "reserveUsd": 0,
+  "note": "Baseline of the daily ABC comparison: the 2026-09-17 close. poolVersion 2 (owner decision of 2026-09-18): the compared wealth is IB-HK official daily NAV + NOAH-HK Sharesight cash balance − owner-declared pending calls, so B holds no separate reserve (reserveUsd 0) and invests the whole pool by the fixed weights. This file records dates only; the baseline wealth, balances and prices are re-read from the same official sources on every run, so it never carries a financial value. Once a report has published a summary with this start date, the trusted guard refuses any later start date."
 }

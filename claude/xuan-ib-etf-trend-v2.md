@@ -1,5 +1,50 @@
 # ETF ABC 简化趋势 v2
 
+## 2026-09-18 补充：合并现金池 v2.2（业主决定，优先于下方 v2.1 的 A 线定义与流量范围）
+
+业主于 2026-09-18 决定：比较的财富范围改为 **IB-HK 全部资产加 NOAH-HK 现金，再减去
+待 CALL 款**，因为 NOAH-HK 现金扣除待 CALL 款后原则上用于二级市场补仓；NOAH-HK
+现金以 Sharesight 现金账户余额为准；待 CALL 款目前为 240,000 美元，变化时由业主
+通知；重新起算。据此，v2.1 的以下条目被本节取代，其余（B/C 权重、行情来源、
+截止日、生产者、组装、门禁）不变：
+
+- **池子（A 线）** = IB-HK 官方日终 NAV（PortfolioAnalyst，同 v2.1）+ NOAH-HK
+  Sharesight 现金账户余额（账户身份见 `claude/xuan-ib-etf-instruments-v1.json`
+  的 `cashAccounts`，单一美元账户）− 业主申报的待 CALL 款。IB-HK 与 NOAH-HK
+  之间的划转在池子内部，不改变池子。
+- **起点**仍为 2026-09-17 收盘（`claude/xuan-ib-etf-baseline-v2.json`，
+  `poolVersion: 2`，`reserveUsd: 0`）：IB 净值、NOAH-HK 余额都已可读，且不触发
+  门禁的"起点变更"拒绝。09-11 晚间版至本节生效前若已发布 v2.1 摘要，下一份完整
+  睡前版从同一起点按 v2.2 完整重放并覆盖（门禁只要求不倒退最新完整日）。
+- **B 不再单独留存 24 万美元**：待 CALL 款已在池子边界扣除，B 把同一池子全额按
+  CSPX 60% / EXUS 23% / EIMI 12% / USSC 5% 投入；C 全部 CSPX。计算器接受
+  `reserveUsd` 为 0（v2.2）或 240,000（v2.1 及 09-01 历史序列）。
+- **待 CALL 款账本** `claude/xuan-ib-etf-pending-calls-v1.json`：业主申报，只追加；
+  每条记"自某日起水平为 X"，某日的水平取该日及之前最后一条。水平变化按池子边界
+  调整计入（上升为 scope-out，下降为 scope-in），不进收益曲线。实际缴款当天
+  NOAH-HK 现金减少、水平同额减少，池子不变；业主以缴款日申报新水平即可。
+- **NOAH-HK 现金进出以 Sharesight 现金账户交易记录为准，自动认定（方案甲）**：
+  DEPOSIT / WITHDRAWAL / OPENING_BALANCE 为池子外部流量（基金分红回款为入金，
+  提取到外部为出金）；INTEREST_PAYMENT / FEE / FEE_REIMBURSEMENT 为收益或成本，
+  不是流量；其它类型本模块不认识，该日 `flowsComplete=false`、比较停在该日并
+  具名，不猜。每日余额由清单余额按交易逐笔倒推；交易的逐笔余额必须成链并落在
+  清单余额上；交易请求窗口（响应 `links.self` 的 from/to）必须覆盖起点至清单日。
+- **业主流水账** `claude/xuan-ib-etf-flows-v1.json` 只申报 IB-HK 一侧：
+  `kind: external` 为 IB-HK 与池外之间的出入金；`kind: transfer` 为 NOAH-HK 现金
+  与 IB-HK 之间的划转（`in` = NOAH-HK→IB-HK），它在池内相互抵消，只用于告诉
+  IB 侧安全网这笔净值跳动的来源。Sharesight 记录与 IB 净值跳动落在不同日期时，
+  两侧各按自己的日期计入，曲线仍剔除流量。
+- **安全网**只作用于 IB 侧：TWR 反推的隐含流量与（IB 外部申报 + 划转申报）之差
+  超过 max(10,000 美元, 0.25% × 前一日 NAV) 时停在该日并注明"现金流待核"。
+- **睡前版增加两项只读读取**：`sharesight_list_cash_accounts`（当日清单）与
+  `sharesight_get_cash_transactions`（NOAH-HK 账户，from ≤ 起点日，to ≥ 清单日），
+  原始响应 0600 私有保存，指纹进 `sourceRef`，不进五端点 run manifest。生产命令
+  增加 `--noah-cash FILE`（清单与交易两个原始响应组成的 JSON），可选
+  `--pending-calls FILE`。
+- 显示：摘要结构不变；渲染器按起点日期（≥ 2026-09-17）使用 v2.2 说明文字。
+  不改账户范围、日程、通知；不写任何金融系统；不构成任何定时运行成功的证据。
+  批准记录：`claude/xuan-ib-etf-pool-v2-2-approval-2026-09-18.md`。
+
 ## 2026-09-17 补充：简化每日生产模式 v2.1（业主批准）
 
 业主于 2026-09-17 确认：这是只读监控卡，无资金风险，不要求精确结算，并要求
