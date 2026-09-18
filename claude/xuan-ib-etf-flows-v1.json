@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
   "purpose": "xuan-etf-owner-declared-flows",
-  "note": "Owner-declared external cash flows for the ABC comparison (v2.1 simplified daily mode). One entry per movement across the comparison boundary, append-only: never edit or delete a recorded entry. Amounts are USD. direction is 'in' (into the IB-HK account from outside) or 'out' (from the IB-HK account to outside). Movements between IB-HK and NOAH-HK, purchases, sales, dividends, fees and interest are not flows.",
+  "note": "Owner-declared cash movements on the IB-HK side of the v2.2 ABC comparison pool (pool = IB-HK official daily NAV + NOAH-HK cash balance − pending calls). Two kinds, both on account IB-HK, amounts in USD, append-only (never edit or delete a recorded entry): kind 'external' is money entering IB-HK from outside the pool ('in') or leaving it to outside ('out'); kind 'transfer' is a movement between NOAH-HK cash and IB-HK ('in' = NOAH-HK to IB-HK, 'out' = IB-HK to NOAH-HK), which is internal to the pool and only tells the IB-side check where the money came from. NOAH-HK cash movements are not declared here: they are taken from the Sharesight cash-account transactions themselves (DEPOSIT and WITHDRAWAL are pool flows; interest and fees are return). Purchases, sales, dividends, fees and interest inside IB-HK are not flows.",
   "flows": []
 }

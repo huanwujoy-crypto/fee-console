@@ -125,16 +125,24 @@ report.
 
 Keep EXUS/EIMI/USSC specific cash-plan amounts visible, but never equate pooled
 planning cash with immediate broker buying power. Retain the original ETF
-policy. The A/B/C comparison follows the v2.1 daily mode in
-`claude/xuan-ib-etf-trend-v2.md`: after the five IB reads, the PM run also reads
-`get_pa_performance_all_periods` and the four `get_price_history` daily series
-named in `claude/xuan-ib-etf-instruments-v1.json`, saves the raw responses
+policy. The A/B/C comparison follows the v2.2 pooled daily mode in
+`claude/xuan-ib-etf-trend-v2.md` (2026-09-18 section; the compared wealth is
+IB-HK NAV + NOAH-HK cash − pending calls): after the five IB reads, the PM run
+also reads `get_pa_performance_all_periods`, the four `get_price_history` daily
+series named in `claude/xuan-ib-etf-instruments-v1.json`,
+`sharesight_list_cash_accounts` and `sharesight_get_cash_transactions` for the
+NOAH-HK cash account named in the same file (from a date on or before the
+baseline, to a date on or after the listing date), saves every raw response
 privately, runs `node scripts/xuan-ib-etf-daily.mjs build --performance FILE
---bars FILE --out FILE`, and passes the output as `--etf-summary FILE` to
-`xuan-ib-report-prepare.mjs`. If the producer stops (baseline not yet closed,
-missing reading, undeclared flow), omit the flag: the previous summary is
-carried forward and the reason is recorded, never a typed value. Never hand-edit
-summary values, the baseline or the instrument identities. AI risk tiers, ETF comparison and the
+--bars FILE --noah-cash FILE --out FILE` (the noah-cash file is a JSON object
+`{accounts, transactions}` holding the two raw responses), and passes the output
+as `--etf-summary FILE` to `xuan-ib-report-prepare.mjs`. If the producer stops
+(baseline not yet closed, missing reading, undeclared IB-side flow, unknown
+cash-transaction type), omit the flag: the previous summary is carried forward
+and the reason is recorded, never a typed value. Never hand-edit summary values,
+the baseline, the pending-call ledger or the instrument identities; a
+pending-call change is an owner notification appended to
+`claude/xuan-ib-etf-pending-calls-v1.json`. AI risk tiers, ETF comparison and the
 fee console's growth/value classification are **separate systems**, not
 interchangeable mappings or calculations. Routine supported classification
 follows existing delegated rules: verify, calculate, publish/read back, notify

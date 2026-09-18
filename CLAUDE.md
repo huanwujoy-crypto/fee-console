@@ -390,7 +390,7 @@ it load the approved legacy `etf-trend.json`; an invalid template is not a
 reason to silently serve the older file. Never publish the original result,
 source records or keys. Once present, preserve the summary and its fixed
 baseline on later reports; receipt-only updates must preserve it byte for byte.
-From 2026-09-17 the v2.1 simplified daily mode in `claude/xuan-ib-etf-trend-v2.md`
+From 2026-09-17 the simplified daily mode in `claude/xuan-ib-etf-trend-v2.md`
 produces that template on every fixed PM run: `scripts/xuan-ib-etf-daily.mjs`
 replays from the dated baseline `claude/xuan-ib-etf-baseline-v2.json` using the
 IB PortfolioAnalyst daily NAV, the four LSE ETF daily closes and the
@@ -399,6 +399,18 @@ owner-declared, append-only flow ledger `claude/xuan-ib-etf-flows-v1.json`, and
 undeclared account movement stops the comparison at that day by name rather
 than guessing. A priority (T+10) page carries no summary and is exempt from the
 continuity check; the next complete PM report restores it.
+From 2026-09-18 (owner decision, v2.2 pooled mode, `poolVersion: 2`) the
+compared wealth is IB-HK NAV plus the NOAH-HK Sharesight cash balance minus the
+owner-declared pending calls in the append-only ledger
+`claude/xuan-ib-etf-pending-calls-v1.json`; B keeps no separate reserve. NOAH-HK
+cash movements are taken from the Sharesight cash-account transactions
+themselves (deposits and withdrawals are pool flows, interest and fees are
+return, an unknown type stops the day by name); the owner declares only the
+IB-HK side, as `external` money or a `transfer` with NOAH-HK cash. The PM run
+therefore also reads `sharesight_list_cash_accounts` and
+`sharesight_get_cash_transactions` for the account named in
+`claude/xuan-ib-etf-instruments-v1.json` and passes both raw responses as
+`--noah-cash`. Record: `claude/xuan-ib-etf-pool-v2-2-approval-2026-09-18.md`.
 
 Keep policy-v2 distinct from the existing operational-v1 cash-plan contract.
 The static page may describe approved targets, reserve logic, staged funding,

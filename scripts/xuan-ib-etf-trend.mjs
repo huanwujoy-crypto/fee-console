@@ -1,5 +1,11 @@
 // Read-only indicative simulation. No account API, filesystem or trade capability.
 export const TREND_METHOD = 'xuan-etf-indicative-v2';
+// Comparisons starting on or after this close use poolVersion 2 (owner
+// decision 2026-09-18): A = IB-HK NAV + NOAH-HK cash − pending calls, B with no
+// separate reserve. The public summary carries no pool field, so the start
+// date is what the renderers key their method wording on.
+export const POOL_V2_FROM = '2026-09-17';
+const poolV2 = data => data.startDate >= POOL_V2_FROM;
 export const ETF_WEIGHTS = Object.freeze({ CSPX: .60, EXUS: .23, EIMI: .12, USSC: .05 });
 const symbols = Object.keys(ETF_WEIGHTS);
 const EPS = 1e-7;
@@ -15,7 +21,10 @@ function validateInput(input) {
   check(object(input) && input.methodId === TREND_METHOD, 'Unsupported trend method');
   check(validDate(input.startDate) && validDate(input.frozenDate) && input.frozenDate >= input.startDate, 'Invalid baseline/freeze date');
   check(finite(input.initialUsd) && input.initialUsd > 0, 'Initial wealth must be positive');
-  check(input.reserveUsd === 240000, 'The approved provisional reserve is USD 240,000');
+  // v2.1 kept USD 240,000 of the compared wealth as B's uninvested reserve.
+  // From poolVersion 2 (2026-09-18) the pending calls are deducted at the pool
+  // boundary for all three arms, so B keeps no separate reserve.
+  check([240000, 0].includes(input.reserveUsd), 'The reserve is USD 240,000 (v2.1) or 0 (poolVersion 2)');
   check(Array.isArray(input.days) && input.days.length > 0 && input.days.length <= 10000, 'Daily observations required');
   check(input.days[0].date === input.startDate, 'First observation must be the baseline');
   const events = new Set();
@@ -31,7 +40,10 @@ function validateInput(input) {
     for (const f of day.flows) {
       check(object(f) && typeof f.id === 'string' && f.id.length > 0 && !events.has(f.id), 'Duplicate or missing flow identity');
       check(f.date === day.date && finite(f.usd), 'Flow must retain its economic date and amount');
-      check(['external', 'scope-in', 'scope-out'].includes(f.kind), 'Internal trades/income are not external flows');
+      // `internal-transfer` is a declared movement between two accounts inside
+      // the pool; it carries the sign that offsets the other account's own
+      // recorded movement, so a pool-internal transfer nets to zero.
+      check(['external', 'scope-in', 'scope-out', 'internal-transfer'].includes(f.kind), 'Internal trades/income are not external flows');
       check(f.kind !== 'scope-in' || f.usd >= 0, 'Scope inflow sign');
       check(f.kind !== 'scope-out' || f.usd <= 0, 'Scope outflow sign');
       events.add(f.id);
@@ -306,8 +318,12 @@ export function renderEtfTrendCompact(data, { viewDate = null } = {}) {
     '<li>曲线剔除出入金影响；余额含后续资金增减。仅用于趋势观察，不含账户明细，不是审计结算。</li>',
     data.startDate === '2026-09-01'
       ? `<li>B 为纸上目标组合；${esc(data.frozenDate)} 前是回溯模拟（虚线），并非实际调仓。</li>`
-      : '<li>每日自动更新：A 为 IB 账户官方日终 NAV，出入金按业主申报的流水账计入；出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>',
-    '<li>B 留存 24 万美元，其余 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5%；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息。</li>',
+      : poolV2(data)
+        ? '<li>每日自动更新：A 为 IB 账户官方日终 NAV 加 NOAH-HK 现金余额，再减去业主申报的待 CALL 款；NOAH-HK 现金进出按 Sharesight 账户记录计入，IB 侧出入金与两账户间划转按业主申报计入。出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>'
+        : '<li>每日自动更新：A 为 IB 账户官方日终 NAV，出入金按业主申报的流水账计入；出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>',
+    poolV2(data)
+      ? '<li>B 将同一池子全额按 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5% 投入（待 CALL 款已在池子边界扣除，不另留存）；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息。</li>'
+      : '<li>B 留存 24 万美元，其余 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5%；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息。</li>',
     `<li>价格日 ${symbols.map(s => `${s} ${esc(last.quoteDates[s])}`).join('，')}。</li>`,
     rows.some(r => r.reserveUsed) ? '<li>模拟提款已触及假设现金留存，需另核 CALL；没有实际交易。</li>' : '',
   ].filter(Boolean).join('');
@@ -343,5 +359,5 @@ export function renderEtfTrend(data, { privateResult = null, viewDate = null } =
   const latest = open ? {endingUsd:data.latestBalances.usd} : privateResult?.rows.find(r => r.date === full.date);
   const fmt = v => new Intl.NumberFormat('zh-HK', { maximumFractionDigits: 0 }).format(v);
   const pct = v => `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
-  return `<section id="xuan-etf-trend-v2" class="card" style="font-size:16px;line-height:1.6"><h2 style="margin:0">ABC 表现比较</h2><p style="color:#68717d;margin:4px 0">${esc(data.startDate)} 收盘起算 · 数据至 ${esc(data.latestCompleteDate)}</p>${ageDays !== null && ageDays > ETF_STALE_AFTER_DAYS ? `<p style="color:#8a1f1f;margin:4px 0"><b>本比较自 ${esc(data.latestCompleteDate)} 起没有更新，已落后 ${ageDays} 天。</b>下面的曲线和余额都停在该日：之后的转入、转出与行情都没有计入，不能当作当前余额。</p>` : ''}<div style="display:flex;gap:14px;flex-wrap:wrap">${['A', 'B', 'C'].map(a => `<span style="color:${colors[a]}">● ${names[a]}</span>`).join('')}</div><svg viewBox="0 0 380 205" role="img" aria-label="ABC 累计表现，起点为100；虚线为历史模拟或暂估" style="display:block;width:100%;max-width:760px"><line x1="32" y1="${y(100).toFixed(2)}" x2="350" y2="${y(100).toFixed(2)}" stroke="#bdc4cc" stroke-dasharray="2 3"/><text x="0" y="${(y(100) + 4).toFixed(2)}" font-size="12" fill="#647080">100</text>${segments.join('')}<text x="32" y="197" font-size="12" fill="#647080">${esc(data.startDate.slice(5))}</text><text x="350" y="197" text-anchor="end" font-size="12" fill="#647080">${esc(last.date.slice(5))}</text></svg>${last.estimated ? '<p style="color:#925800">虚线含暂估；下表保留最后完整数据。</p>' : ''}${data.stoppedAt ? `<p style="color:#925800">${esc(data.stoppedAt)} 起数据待补，已有历史保留。</p>` : ''}<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left">方案</th><th style="text-align:right">累计表现</th><th style="text-align:right">${latest ? `估算余额 USD${ageDays === null ? '' : `<br><small style="font-weight:400;color:#68717d">${esc(data.latestCompleteDate)} 数值</small>`}` : '相对余额'}</th></tr></thead><tbody>${['A', 'B', 'C'].map(a => `<tr><th style="text-align:left;padding:10px 0;border-top:1px solid #dde1e6;color:${colors[a]}">${names[a]}</th><td style="text-align:right;border-top:1px solid #dde1e6">${pct(full.index[a] - 100)}</td><td style="text-align:right;border-top:1px solid #dde1e6">${latest ? fmt(latest.endingUsd[a]) : full.relativeWealth[a].toFixed(2)}</td></tr>`).join('')}</tbody></table><details style="margin-top:12px"><summary>计算说明与回撤</summary><ol style="padding-left:24px"><li>曲线剔除出入金影响；余额含后续资金增减。${open ? '比较结果直接展示，仅用于趋势观察；不含账户明细。' : '比较数据属于私密信息，仅用于趋势观察。'}</li>${data.startDate === '2026-09-01' ? '' : '<li>本比较自起点起每日自动更新：A 为 IB 账户官方日终 NAV（PortfolioAnalyst），出入金按业主申报的流水账计入；账户出现未申报的资金变动时，比较停在该日并注明，待申报后自动续算。</li>'}<li>B 为纸上目标组合；${esc(data.frozenDate)} 前是回溯模拟，虚线并非实际调仓。原逐步换仓版本保留。</li><li>B 假设留存24万美元，其余股票部分：CSPX60%、EXUS23%、EIMI12%、USSC5%。留存未证明CALL足额或资金可用。C全股票，两者风险不同。</li><li>无每日再平衡；B/C 不另估交易成本、个人税费和现金利息；A保留实际费用。基金价格内费用不重复扣除。</li><li>日终近似，市场收盘时间不同。${symbols.map(s=>`${s} 价格日 ${esc(last.quoteDates[s])}`).join('；')}。不作短期胜负或年化判断。</li><li>流量按可得账表核对；来源更正后从起点重算。本比较不是审计结算。</li><li>最大回撤：${['A', 'B', 'C'].map(a => `${a} ${(full.maxDrawdown[a] * 100).toFixed(2)}%`).join(' / ')}。</li>${rows.some(r => r.reserveUsed) ? '<li>模拟提款已触及假设现金留存，需另核CALL；没有实际交易。</li>' : ''}</ol></details></section>`;
+  return `<section id="xuan-etf-trend-v2" class="card" style="font-size:16px;line-height:1.6"><h2 style="margin:0">ABC 表现比较</h2><p style="color:#68717d;margin:4px 0">${esc(data.startDate)} 收盘起算 · 数据至 ${esc(data.latestCompleteDate)}</p>${ageDays !== null && ageDays > ETF_STALE_AFTER_DAYS ? `<p style="color:#8a1f1f;margin:4px 0"><b>本比较自 ${esc(data.latestCompleteDate)} 起没有更新，已落后 ${ageDays} 天。</b>下面的曲线和余额都停在该日：之后的转入、转出与行情都没有计入，不能当作当前余额。</p>` : ''}<div style="display:flex;gap:14px;flex-wrap:wrap">${['A', 'B', 'C'].map(a => `<span style="color:${colors[a]}">● ${names[a]}</span>`).join('')}</div><svg viewBox="0 0 380 205" role="img" aria-label="ABC 累计表现，起点为100；虚线为历史模拟或暂估" style="display:block;width:100%;max-width:760px"><line x1="32" y1="${y(100).toFixed(2)}" x2="350" y2="${y(100).toFixed(2)}" stroke="#bdc4cc" stroke-dasharray="2 3"/><text x="0" y="${(y(100) + 4).toFixed(2)}" font-size="12" fill="#647080">100</text>${segments.join('')}<text x="32" y="197" font-size="12" fill="#647080">${esc(data.startDate.slice(5))}</text><text x="350" y="197" text-anchor="end" font-size="12" fill="#647080">${esc(last.date.slice(5))}</text></svg>${last.estimated ? '<p style="color:#925800">虚线含暂估；下表保留最后完整数据。</p>' : ''}${data.stoppedAt ? `<p style="color:#925800">${esc(data.stoppedAt)} 起数据待补，已有历史保留。</p>` : ''}<table style="width:100%;border-collapse:collapse"><thead><tr><th style="text-align:left">方案</th><th style="text-align:right">累计表现</th><th style="text-align:right">${latest ? `估算余额 USD${ageDays === null ? '' : `<br><small style="font-weight:400;color:#68717d">${esc(data.latestCompleteDate)} 数值</small>`}` : '相对余额'}</th></tr></thead><tbody>${['A', 'B', 'C'].map(a => `<tr><th style="text-align:left;padding:10px 0;border-top:1px solid #dde1e6;color:${colors[a]}">${names[a]}</th><td style="text-align:right;border-top:1px solid #dde1e6">${pct(full.index[a] - 100)}</td><td style="text-align:right;border-top:1px solid #dde1e6">${latest ? fmt(latest.endingUsd[a]) : full.relativeWealth[a].toFixed(2)}</td></tr>`).join('')}</tbody></table><details style="margin-top:12px"><summary>计算说明与回撤</summary><ol style="padding-left:24px"><li>曲线剔除出入金影响；余额含后续资金增减。${open ? '比较结果直接展示，仅用于趋势观察；不含账户明细。' : '比较数据属于私密信息，仅用于趋势观察。'}</li>${data.startDate === '2026-09-01' ? '' : (poolV2(data) ? '<li>本比较自起点起每日自动更新：A 为 IB 账户官方日终 NAV（PortfolioAnalyst）加 NOAH-HK 现金余额（Sharesight），再减去业主申报的待 CALL 款；NOAH-HK 现金进出按账户记录计入，IB 侧出入金与两账户间划转按业主申报计入；出现未申报的资金变动时，比较停在该日并注明，待申报后自动续算。</li>' : '<li>本比较自起点起每日自动更新：A 为 IB 账户官方日终 NAV（PortfolioAnalyst），出入金按业主申报的流水账计入；账户出现未申报的资金变动时，比较停在该日并注明，待申报后自动续算。</li>')}<li>B 为纸上目标组合；${esc(data.frozenDate)} 前是回溯模拟，虚线并非实际调仓。原逐步换仓版本保留。</li>${poolV2(data) ? '<li>B 将同一池子全额按 CSPX60%、EXUS23%、EIMI12%、USSC5% 投入；待CALL款已在池子边界扣除，不另留存。C全股票，两者风险不同。</li>' : '<li>B 假设留存24万美元，其余股票部分：CSPX60%、EXUS23%、EIMI12%、USSC5%。留存未证明CALL足额或资金可用。C全股票，两者风险不同。</li>'}<li>无每日再平衡；B/C 不另估交易成本、个人税费和现金利息；A保留实际费用。基金价格内费用不重复扣除。</li><li>日终近似，市场收盘时间不同。${symbols.map(s=>`${s} 价格日 ${esc(last.quoteDates[s])}`).join('；')}。不作短期胜负或年化判断。</li><li>流量按可得账表核对；来源更正后从起点重算。本比较不是审计结算。</li><li>最大回撤：${['A', 'B', 'C'].map(a => `${a} ${(full.maxDrawdown[a] * 100).toFixed(2)}%`).join(' / ')}。</li>${rows.some(r => r.reserveUsed) ? '<li>模拟提款已触及假设现金留存，需另核CALL；没有实际交易。</li>' : ''}</ol></details></section>`;
 }

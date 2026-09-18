@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "purpose": "xuan-etf-owner-declared-pending-calls",
+  "note": "Owner-declared level of pending private-fund capital calls (待 CALL 款), USD, for the v2.2 ABC comparison pool: pool = IB-HK official daily NAV + NOAH-HK cash balance − pending calls. Each entry states the level in force from its date onward; the latest entry dated on or before a day is that day's level. Append-only: never edit or delete a recorded entry; a correction is a new entry. A change of level is a boundary adjustment of the pool (scope-in when the level falls, scope-out when it rises) and never a return. Paying a call reduces NOAH-HK cash and the level by the same amount, so the pool does not move; declare the new level with the payment date.",
+  "entries": [
+    {
+      "id": "CALL-20260917-A1",
+      "date": "2026-09-17",
+      "usd": 240000,
+      "note": "Owner statement of 2026-09-18: pending calls are USD 240,000 at the 2026-09-17 baseline close; the owner notifies every change. Same figure as the cash plan's 预留."
+    }
+  ]
+}
