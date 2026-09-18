@@ -11,6 +11,7 @@ import { renderClassificationDisclosure } from './xuan-ib-classification-disclos
 import { renderPolicySection } from './xuan-ib-policy-page.mjs';
 import {TREND_METHOD,simulateEtfTrend,projectOpenEtfTrend} from './xuan-ib-etf-trend.mjs';
 import {renderEtfSummaryTemplate,ETF_SUMMARY_ID} from './xuan-ib-etf-summary-transport.mjs';
+import {SLEEP_PRIORITY_BODY_ATTRIBUTE,createSleepPriorityDelivery,renderSleepPriorityTransport} from './xuan-ib-sleep-priority.mjs';
 import {
   ETF_TAB_CSS_V1,
   ETF_TAB_LABEL_V1,
@@ -120,6 +121,20 @@ test('a published open comparison cannot disappear, restart or roll back in a la
   const previous=withOpenSummary(openSummary(2));
   for(const candidate of [withPolicySection(valid()),withOpenSummary(openSummary(1))])
     assert.notEqual(run(candidate,'2026-08-25',{previousHtml:previous,sourceSha,htmlBlob}).status,0);
+});
+test('the daily producer may extend a published comparison, and a priority page is exempt from carrying it',()=>{
+  const previous=withOpenSummary(openSummary(2));
+  const extended=run(withOpenSummary(openSummary(3)),'2026-08-25',{previousHtml:previous,sourceSha,htmlBlob});
+  assert.equal(extended.status,0,extended.stderr);
+  const delivery=createSleepPriorityDelivery({dataDate:'2026-08-25',runId:'synthetic-priority-run',runStartedAt:'2026-08-25T13:30:00.000Z',
+    priorityReadyAt:'2026-08-25T13:35:00.000Z',previousSourceSha:sourceSha});
+  const priority=withPolicySection(valid(`<p>临时版 · 睡前速览 · 完整报告更新中</p>${renderSleepPriorityTransport(delivery)}`))
+    .replace('<p class="edition">睡前版</p>','<p class="edition">临时版</p>').replace('<body>',`<body ${SLEEP_PRIORITY_BODY_ATTRIBUTE}>`);
+  const withoutSummary=run(priority,'2026-08-25',{previousHtml:previous,sourceSha,htmlBlob});
+  assert.equal(withoutSummary.status,0,withoutSummary.stderr);
+  // The exemption is for the priority delivery only: the same page without its marker still fails continuity.
+  const ordinary=priority.replace(renderSleepPriorityTransport(delivery),'').replace(` ${SLEEP_PRIORITY_BODY_ATTRIBUTE}`,'').replace('临时版 · 睡前速览 · 完整报告更新中','');
+  assert.notEqual(run(ordinary,'2026-08-25',{previousHtml:previous,sourceSha,htmlBlob}).status,0);
 });
 const decision = (decisionId, status) => ({ decisionId, status });
 const receipt = (overrides = {}) => ({

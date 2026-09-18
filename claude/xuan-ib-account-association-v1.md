@@ -126,6 +126,11 @@ check observes it; it is not instantaneous cancellation of in-flight work.
 - Keep all five IB and nine required Sharesight reads, bounded parallelism,
   actual journal times, source fingerprints, existing decision/receipt history
   and Validate → Promote → Pages → exact public read-back.
+- The ABC v2.1 daily mode (2026-09-17, `claude/xuan-ib-etf-trend-v2.md`) adds
+  two read-only reads to the fixed PM edition: the PortfolioAnalyst performance
+  series of the same approved account and the four LSE ETF daily bars. They
+  feed only `scripts/xuan-ib-etf-daily.mjs`, publish only the open summary
+  allowlist, and add no account, scope, write or notification.
 - Sharesight's roughly one-day sync lag and small interest/cash discrepancies
   are owner-provided operating expectations, not guarantees or numeric tolerances.
   Compare actual dates, intervening trades, valuation times and currencies. Do

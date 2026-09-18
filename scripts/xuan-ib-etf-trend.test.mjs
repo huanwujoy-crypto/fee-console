@@ -181,3 +181,12 @@ test('the staleness notice adds no value, changes no amount and stays escaped',(
   assert.equal(zoneDate('Asia/Hong_Kong',new Date('2026-09-16T20:00:00Z')),'2026-09-17');
   assert.equal(zoneDate('America/New_York',new Date('2026-09-16T20:00:00Z')),'2026-09-16');
 });
+test('a comparison on the v2.1 daily baseline explains its A definition and flow rule; the 09-01 series is unchanged',()=>{
+  const legacy=projectOpenEtfTrend(run([day('2026-09-01')]),{now:openNow});
+  assert.doesNotMatch(renderEtfTrend(legacy),/每日自动更新|PortfolioAnalyst/);
+  const daily=simulateEtfTrend({...input([day('2020-09-01'),day('2020-09-02',1210000,101)]),startDate:'2020-09-01',frozenDate:'2020-09-01'});
+  const html=renderEtfTrend(projectOpenEtfTrend(daily,{now:openNow}));
+  assert.match(html,/A 为 IB 账户官方日终 NAV（PortfolioAnalyst）/);
+  assert.match(html,/比较停在该日并注明，待申报后自动续算/);
+  assert.equal(html.split('每日自动更新').length-1,1);
+});

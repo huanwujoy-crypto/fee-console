@@ -21,6 +21,7 @@ import { DAILY_CHANGE_METHODS, DAILY_CHANGE_METHOD_RULES, DAILY_CHANGE_EDITION_R
 import { buildAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 import { computeAiPressure } from './xuan-ib-ai-pressure.mjs';
 import { buildAiRiskInputFromCapture, readBoundAiRiskInput } from './xuan-ib-ai-risk-input.mjs';
+import { validateOpenEtfTrend } from './xuan-ib-etf-trend.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Strict parser first rejects duplicate keys/depth abuse; normalize its
@@ -107,7 +108,7 @@ function requireCompactUpstreamJournal(journalPath,readiness,weekly=false){
 // the trusted classification path rather than describing the outcome in prose.
 export const AI_TIER_COVERAGE_REQUIRED_FROM='2026-09-11';
 
-export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null,fourBucketInput=null,riskInput=null,riskConstituents=null,riskDenominator=null}={}){
+export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,policy,registry,journalPath=null,manualConsentStore=null,associationSnapshot=null,now=null,fourBucketInput=null,riskInput=null,riskConstituents=null,riskDenominator=null,etfSummary=null}={}){
   const required=['schemaVersion','edition','dataDate','previousSourceSha','sources'];
   if(!evidence || Object.keys(evidence).sort().join('|')!==required.sort().join('|') || evidence.schemaVersion!==1)fail('invalid source evidence envelope');
   if(evidence.dataDate!==viewInput.dataDate||evidence.edition!==viewInput.edition||evidence.previousSourceSha!==previousMeta.sourceSha)fail('view/evidence/prior publication mismatch');
@@ -237,7 +238,10 @@ export function prepareReport(viewInput,evidence,{previousHtml,previousMeta,poli
     try{const value=fn();if(journalPath)finishJournalStage(journalPath,name);return value;}
     catch(error){if(journalPath)finishJournalStage(journalPath,name,{status:'failed',errorCode:'PREPARE_FAILED'});throw error;}
   };
-  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket,aiTierCoverage,aiPressure,riskDiagnostics}));
+  // The daily ABC summary is an already replayed public allowlist from the
+  // trusted producer; it is validated again here and by the guard below.
+  if(etfSummary!==null)validateOpenEtfTrend(etfSummary,{now:now===null?new Date():new Date(now)});
+  const html=stage('render',()=>renderReport(view,{previousHtml,previousMeta,policy,manualAccountConsent:manual,associationReceipt:association,associationSnapshot,fourBucket,aiTierCoverage,aiPressure,riskDiagnostics,etfSummary}));
   stage('guard',()=>{
     const temporary=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-'));
     try{
@@ -296,12 +300,12 @@ export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociation
   }
   // Pure API rendering remains usable in unit tests. The operational command
   // may never omit the journal and then claim a timed pilot run.
-  if(![5,7,9,11].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE] [--four-bucket-input FILE] [--risk-source-capture FILE]');
+  if(![5,7,9,11,13].includes(args.length))fail('Usage: VIEW.json SOURCES.json OUTPUT.html --journal FILE (required) [--manual-consent-store FILE] [--four-bucket-input FILE] [--risk-source-capture FILE] [--etf-summary FILE]');
   const [viewFile,evidenceFile,outputFile,flag,journalPath]=args;
   if(flag!=='--journal'||!journalPath)fail('a real run journal is required');
   const options={};
   for(let i=5;i<args.length;i+=2){
-    if(!['--manual-consent-store','--four-bucket-input','--risk-source-capture'].includes(args[i])||!args[i+1]||Object.hasOwn(options,args[i]))fail('invalid or duplicate prepare option');
+    if(!['--manual-consent-store','--four-bucket-input','--risk-source-capture','--etf-summary'].includes(args[i])||!args[i+1]||Object.hasOwn(options,args[i]))fail('invalid or duplicate prepare option');
     options[args[i]]=args[i+1];
   }
   const manualConsentStore=options['--manual-consent-store'];
@@ -318,6 +322,8 @@ export function runPrepareCli(args,{loadAssociationPolicy=loadTrustedAssociation
     policy:read(path.join(root,'claude/xuan-ib-policy-v2.json')),registry,journalPath,manualConsentStore:manualConsentStore??null,
     fourBucketInput:options['--four-bucket-input']?readCaptureJson(options['--four-bucket-input']):null,
     riskInput,
+    // The open summary file is what scripts/xuan-ib-etf-daily.mjs wrote for this run.
+    etfSummary:options['--etf-summary']?read(options['--etf-summary']):null,
     // Never accept a candidate-selected snapshot path in the operational CLI.
     associationSnapshot:loadAssociationPolicy({cwd:root,requireActive:false})});
   if(journalPath)startJournalStage(journalPath,'candidate-prep');

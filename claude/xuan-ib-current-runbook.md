@@ -125,8 +125,16 @@ report.
 
 Keep EXUS/EIMI/USSC specific cash-plan amounts visible, but never equate pooled
 planning cash with immediate broker buying power. Retain the original ETF
-policy and approved A/B/C summary with its true baseline/cutoff; do not rebuild
-ABC history on the report critical path. AI risk tiers, ETF comparison and the
+policy. The A/B/C comparison follows the v2.1 daily mode in
+`claude/xuan-ib-etf-trend-v2.md`: after the five IB reads, the PM run also reads
+`get_pa_performance_all_periods` and the four `get_price_history` daily series
+named in `claude/xuan-ib-etf-instruments-v1.json`, saves the raw responses
+privately, runs `node scripts/xuan-ib-etf-daily.mjs build --performance FILE
+--bars FILE --out FILE`, and passes the output as `--etf-summary FILE` to
+`xuan-ib-report-prepare.mjs`. If the producer stops (baseline not yet closed,
+missing reading, undeclared flow), omit the flag: the previous summary is
+carried forward and the reason is recorded, never a typed value. Never hand-edit
+summary values, the baseline or the instrument identities. AI risk tiers, ETF comparison and the
 fee console's growth/value classification are **separate systems**, not
 interchangeable mappings or calculations. Routine supported classification
 follows existing delegated rules: verify, calculate, publish/read back, notify
