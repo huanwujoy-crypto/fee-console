@@ -68,7 +68,9 @@ Take `--spyd` / `--qqqd` only from the same cache row's `div` field, which the
 cache records on the ex-date after its own adjusted-close cross-check. A row
 that carries `div` must be passed with that dividend; a row without `div`
 passes no dividend argument. Never look a dividend up elsewhere, never type
-one in, and never drop one because the row's price alone looks complete.
+one in, and never drop one because the row's price alone looks complete. The
+ledger keeps the gross amount; the page applies the US withholding rate it
+declares (30%) when it reinvests the dividend, so never net it in the writer.
 
 Financial systems remain read-only. Never place, modify, or cancel orders, and
 never initiate transfers or write to IB, Sharesight, or another financial
