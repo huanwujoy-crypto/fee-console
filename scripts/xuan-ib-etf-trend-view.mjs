@@ -1,5 +1,5 @@
 // Optional owner-approved open comparison. Never reads a key or the original ledger.
-import {validateOpenEtfTrend,renderEtfTrend,zoneDate} from './xuan-ib-etf-trend.mjs';
+import {validateOpenEtfTrend,renderEtfTrendCompact,zoneDate} from './xuan-ib-etf-trend.mjs';
 import {ETF_SUMMARY_ID,parseEtfSummary} from './xuan-ib-etf-summary-transport.mjs';
 export const ETF_SEEN_DATE='xuan-etf:last-source-date:open-v3';
 export const MAX_ETF_DISPLAY_BYTES=512000;
@@ -60,13 +60,17 @@ export async function mountEtfTrend({doc,storage,baseUrl,fetchFn=globalThis.fetc
     const viewDate=zoneDate('Asia/Hong_Kong',now);
     const previous=displayed.get(doc);
     if(previous?.panel===panel&&previous.fingerprint===fingerprint&&previous.viewDate===viewDate){saveSeen();return;}
-    const template=doc.createElement('template');template.innerHTML=renderEtfTrend(data,{viewDate});
+    const template=doc.createElement('template');template.innerHTML=renderEtfTrendCompact(data,{viewDate});
     panel.replaceChildren(template.content.cloneNode(true));displayed.set(doc,{panel,fingerprint,viewDate});saveSeen();
+    // Owner request (2026-09-18): the ETF tab shows the comparison card alone.
+    // The canonical policy section and the legacy baseline card stay in the
+    // verified document, hidden rather than removed; the standalone policy
+    // page remains the place to read the policy.
     for(const node of [...pane.children]){
-      if(node===panel||node.id==='xuan-etf-original-history')continue;
-      let history=doc.getElementById('xuan-etf-original-history');
-      if(!history){history=doc.createElement('details');history.id='xuan-etf-original-history';const s=doc.createElement('summary');s.textContent='原方案与历史基线记录';history.append(s);pane.append(history);}
-      history.append(node);
+      if(node===panel)continue;
+      node.hidden=true;node.setAttribute('data-xuan-etf-hidden','policy-history');
+      // The policy section sets its own display, which would beat the hidden attribute.
+      if(typeof node.style?.setProperty==='function')node.style.setProperty('display','none','important');
     }
   }catch{message('ABC 比较暂不可用，请稍后刷新；其它报告保留。');}
   finally{clearTimeout(timeout);}

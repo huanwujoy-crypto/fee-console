@@ -251,6 +251,75 @@ export function projectOpenEtfTrend(result, options = {}) {
 const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const names = { A: 'A 实际', B: 'B 建议模拟', C: 'C 标普500' };
 const colors = { A: '#246ac4', B: '#8b4ab8', C: '#555f6d' };
+
+// Owner-requested compact phone card (2026-09-18): three glyph tiles, one
+// status pill, a sparkline and a folded note. Series colours are the first
+// three slots of the validated categorical palette (blue / orange / aqua), which
+// clear the colour-vision checks that the legacy blue / purple / grey did not.
+// The legacy renderEtfTrend above is untouched so frozen archives keep their bytes.
+const COMPACT = Object.freeze({
+  colors: { A: '#2a78d6', B: '#eb6834', C: '#1baf7a' },
+  names: { A: '实际', B: '建议', C: '标普500' },
+  ink: '#1c1f24', muted: '#68717d', line: '#dde1e6', up: '#008300', down: '#c93a3a', warn: '#925800', stale: '#b42318', ok: '#1f7a3a',
+});
+export function renderEtfTrendCompact(data, { viewDate = null } = {}) {
+  check(data?.schemaVersion === 3, 'Compact card renders the open summary only');
+  validateOpenEtfTrend(data);
+  const ageDays = viewDate === null ? null : etfTrendAgeDays(data, viewDate);
+  const rows = data.rows, last = rows.at(-1), full = rows.find(r => r.date === data.latestCompleteDate);
+  const md = d => esc(d.slice(5));
+  const stale = ageDays !== null && ageDays > ETF_STALE_AFTER_DAYS;
+  const pill = stale
+    ? { color: COMPACT.stale, text: `停在 ${md(data.latestCompleteDate)} · 落后 ${ageDays} 天` }
+    : data.stoppedAt ? { color: COMPACT.warn, text: `${md(data.stoppedAt)} 起待补` }
+    : { color: COMPACT.ok, text: `数据至 ${md(data.latestCompleteDate)}` };
+  const fmt = v => new Intl.NumberFormat('zh-HK', { maximumFractionDigits: 0 }).format(v);
+  const tile = arm => {
+    const ret = full.index[arm] - 100, dd = full.maxDrawdown[arm] * 100;
+    const arrow = ret > 0.005 ? ['▲', COMPACT.up] : ret < -0.005 ? ['▼', COMPACT.down] : ['■', COMPACT.muted];
+    return `<div style="flex:1 1 0;min-width:0;padding:10px 6px;border:1px solid ${COMPACT.line};border-radius:14px;text-align:center">`
+      + `<span aria-hidden="true" style="display:inline-block;width:26px;height:26px;line-height:26px;border-radius:50%;background:${COMPACT.colors[arm]};color:#fff;font-weight:700;font-size:14px">${arm}</span>`
+      + `<div style="font-size:12px;color:${COMPACT.muted};margin-top:4px">${esc(COMPACT.names[arm])}</div>`
+      + `<div style="font-size:20px;font-weight:700;color:${COMPACT.ink};font-variant-numeric:tabular-nums;white-space:nowrap"><span style="color:${arrow[1]};font-size:14px" aria-hidden="true">${arrow[0]}</span> ${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%</div>`
+      + `<div style="font-size:12px;color:${COMPACT.ink};font-variant-numeric:tabular-nums;white-space:nowrap">$${fmt(data.latestBalances.usd[arm])}</div>`
+      + `<div style="font-size:11px;color:${COMPACT.muted};white-space:nowrap">回撤 ${dd.toFixed(2)}%</div>`
+      + `</div>`;
+  };
+  const values = rows.flatMap(r => Object.values(r.index));
+  const lo = Math.min(100, ...values) - .25, hi = Math.max(100, ...values) + .25;
+  const x = i => 28 + (rows.length > 1 ? i / (rows.length - 1) : 0) * 332;
+  const y = v => 92 - (v - lo) / (hi - lo) * 78;
+  const paths = [];
+  for (const arm of ['C', 'B', 'A']) {
+    const color = COMPACT.colors[arm];
+    for (let i = 1; i < rows.length; i++) {
+      const dashed = rows[i].estimated || arm === 'B' && rows[i - 1].retrospective;
+      paths.push(`<path d="M${x(i - 1).toFixed(1)},${y(rows[i - 1].index[arm]).toFixed(1)} L${x(i).toFixed(1)},${y(rows[i].index[arm]).toFixed(1)}" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round"${dashed ? ' stroke-dasharray="5 4"' : ''}/>`);
+    }
+    paths.push(`<circle cx="${x(rows.length - 1).toFixed(1)}" cy="${y(last.index[arm]).toFixed(1)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`);
+  }
+  const chart = `<svg viewBox="0 0 380 112" role="img" aria-label="A、B、C 累计表现曲线，起点为 100" style="display:block;width:100%;margin-top:10px"><line x1="28" y1="${y(100).toFixed(1)}" x2="360" y2="${y(100).toFixed(1)}" stroke="${COMPACT.line}" stroke-dasharray="2 3"/><text x="0" y="${(y(100) + 4).toFixed(1)}" font-size="11" fill="${COMPACT.muted}">100</text>${paths.join('')}<text x="28" y="108" font-size="11" fill="${COMPACT.muted}">${md(data.startDate)}</text><text x="360" y="108" text-anchor="end" font-size="11" fill="${COMPACT.muted}">${md(last.date)}</text></svg>`;
+  const notes = [
+    stale ? `<li>自 ${esc(data.latestCompleteDate)} 起没有更新；之后的出入金与行情都没有计入，不能当作当前余额。</li>` : '',
+    data.stoppedAt ? `<li>${esc(data.stoppedAt)} 起数据待补，已有历史保留。</li>` : '',
+    last.estimated ? '<li>虚线含暂估；数字取最后完整日。</li>' : '',
+    '<li>曲线剔除出入金影响；余额含后续资金增减。仅用于趋势观察，不含账户明细，不是审计结算。</li>',
+    data.startDate === '2026-09-01'
+      ? `<li>B 为纸上目标组合；${esc(data.frozenDate)} 前是回溯模拟（虚线），并非实际调仓。</li>`
+      : '<li>每日自动更新：A 为 IB 账户官方日终 NAV，出入金按业主申报的流水账计入；出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>',
+    '<li>B 留存 24 万美元，其余 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5%；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息。</li>',
+    `<li>价格日 ${symbols.map(s => `${s} ${esc(last.quoteDates[s])}`).join('，')}。</li>`,
+    rows.some(r => r.reserveUsed) ? '<li>模拟提款已触及假设现金留存，需另核 CALL；没有实际交易。</li>' : '',
+  ].filter(Boolean).join('');
+  return `<section id="xuan-etf-trend-v2" class="card" style="font-size:15px;line-height:1.45;color:${COMPACT.ink}">`
+    + `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><h2 style="margin:0;font-size:18px">ABC 表现比较</h2>`
+    + `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:${pill.color}14;color:${pill.color};font-size:12px;font-weight:600;white-space:nowrap"><span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:${pill.color};display:inline-block"></span>${pill.text}</span></div>`
+    + `<div style="display:flex;gap:8px;margin-top:12px">${['A', 'B', 'C'].map(tile).join('')}</div>`
+    + chart
+    + `<p style="margin:6px 0 0;font-size:12px;color:${COMPACT.muted}">${esc(data.startDate)} 收盘起算 · 余额为 ${esc(data.latestCompleteDate)} 数值</p>`
+    + `<details style="margin-top:8px;font-size:13px;color:${COMPACT.muted}"><summary style="cursor:pointer">ⓘ 说明与回撤</summary><ol style="padding-left:20px;margin:6px 0 0">${notes}</ol></details>`
+    + `</section>`;
+}
 export function renderEtfTrend(data, { privateResult = null, viewDate = null } = {}) {
   const open = data?.schemaVersion === 3;
   if (open) validateOpenEtfTrend(data); else validateTrendProjection(data);

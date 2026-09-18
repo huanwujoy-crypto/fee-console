@@ -153,16 +153,19 @@ test('validated open data renders published summary amounts and stores only sour
   assert.equal(request[0].includes(secret), false);
 });
 
-test('original ETF policy/history is folded, not deleted or duplicated', async () => {
+test('original ETF policy/history is hidden in place, not deleted, duplicated or folded', async () => {
   const f = documentFixture(), secret = key(), storage = storageFixture({ [ETF_DEVICE_KEY]: secret });
   const received = await response(secret);
   const mount = () => mountEtfTrend(options(f, storage, async () => received));
   await mount(); await mount();
-  const folded = f.doc.getElementById('xuan-etf-original-history');
-  assert.equal(folded.tagName, 'DETAILS'); assert.notEqual(folded.attributes.open, '');
-  assert.equal(f.original.parentNode, folded); assert.equal(f.history.parentNode, folded);
-  assert.equal(folded.children[0].tagName, 'SUMMARY');
-  assert.equal(f.doc.all().filter(n => n.id === 'xuan-etf-original-history').length, 1);
+  assert.equal(f.doc.getElementById('xuan-etf-original-history'), null);
+  for (const node of [f.original, f.history]) {
+    assert.equal(node.parentNode, f.pane); assert.equal(node.hidden, true);
+    assert.equal(node.getAttribute('data-xuan-etf-hidden'), 'policy-history');
+  }
+  assert.equal(f.doc.all().filter(n => n.id === 'original-policy').length, 1);
+  assert.equal(panel(f.doc).hidden, undefined);
+  assert.doesNotMatch(panel(f.doc).innerHTML, /原方案与历史基线记录/);
 });
 
 test('network failure and oversized declared data render no comparison DOM', async () => {
@@ -394,17 +397,17 @@ test('ambiguous or absent ETF pane is untouched and does not fetch', async () =>
 test('the mounted card tells the reader how far behind the comparison is', async () => {
   const f = documentFixture(), storage = storageFixture();
   await mountEtfTrend(options(f, storage, async () => response(key())));
-  assert.match(panel(f.doc).innerHTML, /本比较自 2020-09-02 起没有更新，已落后 \d+ 天/);
-  assert.match(panel(f.doc).innerHTML, /2020-09-02 数值/);
+  assert.match(panel(f.doc).innerHTML, /停在 09-02 · 落后 \d+ 天/);
+  assert.match(panel(f.doc).innerHTML, /余额为 2020-09-02 数值/);
 });
 
 test('unchanged bytes read on a later day are re-rendered with the new age', async () => {
   const f = documentFixture(), storage = storageFixture();
   const fetchFn = async () => response(key());
   await mountEtfTrend(options(f, storage, fetchFn));
-  const first = panel(f.doc).innerHTML.match(/已落后 (\d+) 天/);
+  const first = panel(f.doc).innerHTML.match(/落后 (\d+) 天/);
   assert.ok(first);
   await mountEtfTrend(options(f, storage, fetchFn, { now: new Date(now.getTime() + 3 * 86400000) }));
-  const later = panel(f.doc).innerHTML.match(/已落后 (\d+) 天/);
+  const later = panel(f.doc).innerHTML.match(/落后 (\d+) 天/);
   assert.equal(Number(later[1]), Number(first[1]) + 3);
 });

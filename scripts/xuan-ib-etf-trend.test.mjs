@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {TREND_METHOD, ETF_WEIGHTS, ETF_STALE_AFTER_DAYS, simulateEtfTrend, projectEtfTrend, validateTrendProjection, renderEtfTrend, projectOpenEtfTrend, validateOpenEtfTrend, etfTrendAgeDays, zoneDate} from './xuan-ib-etf-trend.mjs';
+import {TREND_METHOD, ETF_WEIGHTS, ETF_STALE_AFTER_DAYS, simulateEtfTrend, projectEtfTrend, validateTrendProjection, renderEtfTrend, renderEtfTrendCompact, projectOpenEtfTrend, validateOpenEtfTrend, etfTrendAgeDays, zoneDate} from './xuan-ib-etf-trend.mjs';
 const syms=Object.keys(ETF_WEIGHTS), clone=v=>structuredClone(v);
 const day=(date,actualUsd=1200000,price=100,flows=[])=>({date,actualUsd,actualComplete:true,flowsComplete:true,sourceRef:'synthetic source',flows,
   quotes:Object.fromEntries(syms.map(s=>[s,{status:'close',date,usd:price,source:'synthetic USD close'}]))});
@@ -180,6 +180,28 @@ test('the staleness notice adds no value, changes no amount and stays escaped',(
   assert.doesNotMatch(stale,/<script|javascript:/i);
   assert.equal(zoneDate('Asia/Hong_Kong',new Date('2026-09-16T20:00:00Z')),'2026-09-17');
   assert.equal(zoneDate('America/New_York',new Date('2026-09-16T20:00:00Z')),'2026-09-16');
+});
+test('compact phone card: three glyph tiles, one status pill, sparkline, folded notes, no script',()=>{
+  const open=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02',1210000,101),day('2026-09-03',1188000,99)]),{now:openNow});
+  const fresh=renderEtfTrendCompact(open,{viewDate:'2026-09-03'});
+  assert.match(fresh,/id="xuan-etf-trend-v2"/);assert.match(fresh,/ABC 表现比较/);
+  assert.match(fresh,/数据至 09-03/);assert.doesNotMatch(fresh,/停在|落后/);
+  for(const arm of ['A','B','C'])assert.match(fresh,new RegExp(`>${arm}</span>`));
+  assert.match(fresh,/实际/);assert.match(fresh,/建议/);assert.match(fresh,/标普500/);
+  assert.match(fresh,/▼<\/span> -1\.00%/);assert.match(fresh,/\$1,188,000/);assert.match(fresh,/回撤 1\.82%/);
+  assert.equal((fresh.match(/<path /g)||[]).length,6);assert.equal((fresh.match(/<circle /g)||[]).length,3);
+  assert.match(fresh,/<details[^>]*><summary[^>]*>ⓘ 说明与回撤<\/summary>/);
+  assert.doesNotMatch(fresh,/<script|<form|<button|<a /i);
+  assert.doesNotMatch(fresh,/#246ac4|#8b4ab8|#555f6d/);
+  const stale=renderEtfTrendCompact(open,{viewDate:'2026-09-18'});
+  assert.match(stale,/停在 09-03 · 落后 15 天/);assert.match(stale,/之后的出入金与行情都没有计入/);
+  assert.equal(renderEtfTrendCompact(open),renderEtfTrendCompact(open,{viewDate:null}));
+  assert.match(renderEtfTrendCompact(open),/数据至 09-03/);
+  const stopped=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02'),{...day('2026-09-03'),flowsComplete:false}]),{now:openNow});
+  assert.match(renderEtfTrendCompact(stopped,{viewDate:'2026-09-03'}),/09-03 起待补/);
+  assert.throws(()=>renderEtfTrendCompact(projectEtfTrend(run([day('2026-09-01')]))),/open summary only/);
+  // The legacy renderer is untouched so the frozen archive keeps its bytes.
+  assert.match(renderEtfTrend(open),/#246ac4/);
 });
 test('a comparison on the v2.1 daily baseline explains its A definition and flow rule; the 09-01 series is unchanged',()=>{
   const legacy=projectOpenEtfTrend(run([day('2026-09-01')]),{now:openNow});
