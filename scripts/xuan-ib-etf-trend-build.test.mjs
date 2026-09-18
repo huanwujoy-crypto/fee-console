@@ -300,6 +300,34 @@ test('concurrent processes allocate distinct immutable attempt sequence numbers'
   assert.deepEqual(audit(f).records.map(row => row.record.sequence), [1, 2, 3, 4, 5, 6]);
 });
 
+test('a lock released between the existence check and its inspection is a retry, not a failure', async t => {
+  const f = fixture(t);
+  // Another process holds the lock when this one arrives, and releases it
+  // exactly between exists() and the privateRoot() inspection.
+  const fingerprintDir = () => fs.readdirSync(f.keyUsageRoot).find(name => name.startsWith('.allocate-'));
+  const realLstat = fs.lstatSync; let lockPath = null, lstatCalls = 0;
+  const original = fs.mkdirSync;
+  fs.mkdirSync = (target, options) => {
+    if (typeof target === 'string' && target.includes('.allocate-') && lockPath === null) {
+      lockPath = target; original(target, options); // pre-create as the other process, then let the caller hit EEXIST
+    }
+    return original(target, options);
+  };
+  fs.lstatSync = (target, ...rest) => {
+    if (target === lockPath) {
+      lstatCalls += 1;
+      if (lstatCalls === 2) { fs.rmdirSync(lockPath); const error = new Error('ENOENT'); error.code = 'ENOENT'; throw error; }
+    }
+    return realLstat(target, ...rest);
+  };
+  try {
+    const result = await buildTrend(f);
+    assert.equal(result.encrypted, true);
+    assert.ok(lstatCalls >= 2, 'the inspection window was exercised');
+    assert.equal(fingerprintDir(), undefined, 'no lock is left behind');
+  } finally { fs.lstatSync = realLstat; fs.mkdirSync = original; }
+});
+
 test('a real encryption failure burns its reserved quota without writing outputs', async t => {
   const f = fixture(t), descriptor = Object.getOwnPropertyDescriptor(globalThis, 'crypto');
   Object.defineProperty(globalThis, 'crypto', { configurable: true, value: {

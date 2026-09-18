@@ -432,7 +432,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   // Execute the real loader and its actual event wiring. Substitute only the
   // dynamic network imports and observe fire-and-forget progress promises;
   // no production validation, rendering or concurrency logic is reimplemented.
-  const importExpression = "import(new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href).href)";
+  const importExpression = "import(etfUrl.href)";
   if (privateEtfImport) assert.equal(inlineScript.split(importExpression).length, 2);
   let testScript = privateEtfImport ? inlineScript.replace(importExpression, '__importPrivateEtf()') : inlineScript;
   if (mobileDisplayImport) {

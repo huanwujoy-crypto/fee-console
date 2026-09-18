@@ -53,8 +53,10 @@ async function usageLock(root,fingerprint){
   for(let i=0;i<500;i++){
     try{fs.mkdirSync(lock,{mode:0o700});return lock;}catch(error){if(error.code!=='EEXIST')throw error;}
     // Never break/reclaim another process's lock automatically. A crash leaves
-    // a fail-closed lock; inspect it or deliberately rotate the key.
-    if(exists(lock))privateRoot(lock);
+    // a fail-closed lock; inspect it or deliberately rotate the key. The holder
+    // may release between the existence check and the inspection; that is the
+    // normal path to the next attempt, not a broken lock.
+    try{if(exists(lock))privateRoot(lock);}catch(error){if(error.code!=='ENOENT')throw error;}
     await new Promise(resolve=>setTimeout(resolve,10));
   }
   fail('Key usage allocation is busy; no encryption attempted');

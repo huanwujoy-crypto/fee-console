@@ -162,7 +162,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-09-17.3";
+      const loaderBuild = "2026-09-18.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -1325,7 +1325,11 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           renderedDocument === doc && lastVerified?.blob === record.blob;
         try {
           if (!privateEtfModule) {
-            const pending = import(new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href).href);
+            // Versioned like the mobile-display import: a shell bump must fetch the
+            // current card module, not the copy a phone cached last week.
+            const etfUrl = new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href);
+            etfUrl.searchParams.set('v', loaderBuild);
+            const pending = import(etfUrl.href);
             privateEtfModule = pending;
             pending.then(view => {
               if (privateEtfModule === pending) privateEtfView = view;
