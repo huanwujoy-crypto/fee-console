@@ -12,7 +12,7 @@ import { validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
 import { listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import { listVenueEquivalences } from './xuan-ib-venue-identity.mjs';
 import { AUTO_EXCLUSION_REASONS } from './xuan-ib-auto-classification.mjs';
-import { REG_EXCLUSION_REASONS, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import { readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 import { largestOrdinaryStockConcentration } from './xuan-ib-single-stock-concentration.mjs';
 import {
   AI_DENOMINATOR_TEMPLATE_ID, BASIS_POINTS, DENOMINATOR_COMPONENT_FIELDS, DENOMINATOR_COMPONENT_KEY,
@@ -1264,10 +1264,7 @@ const NOT_A_SYMBOL = new Set(['AI', 'ETF', 'ETFS', 'IB', 'PM', 'AM', 'US', 'UK',
 // value in that file was read out of an already-approved artefact.
 const AI_TIER_NAMESPACES = new Set(['WU', 'DELEG', 'REG', 'AUTO']);
 const AI_TIER_RECORD_STATUSES = new Set(['classified', 'excluded']);
-// The enumerated exclusion vocabulary: the automatic policy's own reasons, plus
-// the registry's transcription of an already-published "not applicable" row.
-const AUTO_EXCLUSION_REASON_VALUES = new Set([
-  ...Object.values(AUTO_EXCLUSION_REASONS), ...Object.values(REG_EXCLUSION_REASONS)]);
+const AUTO_EXCLUSION_REASON_VALUES = new Set(Object.values(AUTO_EXCLUSION_REASONS));
 // Read lazily and once, so a page that carries no REG record never depends on
 // the registry file being present at all.
 let registryCache = null;

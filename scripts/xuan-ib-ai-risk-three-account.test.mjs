@@ -669,12 +669,11 @@ test('the existing delegated and override coefficients are untouched', () => {
   assert.equal(orcl.via, 'IB-HK');
   assert.equal(orcl.recordId, reg.lookup('IB-HK', 'ORCL').recordId);
   assert.equal(reg.lookup('Webull', 'ORCL', '99999999'), null, 'a different instrument is not ORCL');
-  // A transcribed "not applicable" row is an exclusion with a reason, not a tier.
+  // The owner's 2026-09-18 MSTR decision is the standard T2 ladder, unchanged.
   const mstr = reg.lookup('IB-HK', 'MSTR', '34421');
-  assert.equal(mstr.excluded, true);
-  assert.equal(mstr.reason, 'published-not-applicable');
-  assert.equal(mstr.ladder, null);
-  assert.equal(mstr.recordId, 'REG-SPECIAL-MSTR-NOT-APPLICABLE');
+  assert.equal(mstr.tier, 'T2');
+  assert.deepEqual(mstr.ladder, { low: 0.4, mid: 0.55, high: 0.7 });
+  assert.equal(mstr.recordId, 'REG-SPECIAL-MSTR-T2');
 });
 
 // ---------------------------------------------------------------------------
@@ -696,7 +695,8 @@ test('a registered instrument reaches its rule under any spelling, in any accoun
     // The Sharesight spelling of the registry's BRK.B, on the instrument id
     // both share, carrying the AUTO record the previous editions published.
     at('IB-HK', 'BRK/B', 233910, { holdingId: '21617153', previousAutoRecordId: previousAuto('IB-HK', '21617153') }),
-    // Published as 不适用 before 2026-09-11 PM, then carried as AUTO T1.
+    // Published as 不适用 before 2026-09-11 PM, carried as AUTO T1 after it, and
+    // assigned T2 by the owner on 2026-09-18.
     at('IB-HK', 'MSTR', 100666.8, { holdingId: '26863964', previousAutoRecordId: previousAuto('IB-HK', '26863964') }),
     at('IB-HK', 'ORCL', 42948),
     at('Schwab-HK', 'BRK/B', 77970),
@@ -718,9 +718,10 @@ test('a registered instrument reaches its rule under any spelling, in any accoun
   assert.equal(resolved('IB-HK', 'BRK/B').supersededAutoRecordId, previousAuto('IB-HK', '21617153'));
 
   assert.equal(entry('IB-HK', 'MSTR').namespace, 'REG');
-  assert.equal(entry('IB-HK', 'MSTR').status, 'excluded');
-  assert.equal(entry('IB-HK', 'MSTR').reason, 'published-not-applicable');
-  assert.equal(entry('IB-HK', 'MSTR').recordId, 'REG-SPECIAL-MSTR-NOT-APPLICABLE');
+  assert.equal(entry('IB-HK', 'MSTR').status, 'classified');
+  assert.equal(entry('IB-HK', 'MSTR').recordId, 'REG-SPECIAL-MSTR-T2');
+  assert.equal(resolved('IB-HK', 'MSTR').tier, 'T2');
+  assert.equal(resolved('IB-HK', 'MSTR').supersededAutoRecordId, previousAuto('IB-HK', '26863964'));
 
   assert.equal(entry('Webull', 'ORCL').namespace, 'REG');
   assert.equal(entry('Webull', 'ORCL').recordId, readAiRiskRegistry().lookup('IB-HK', 'ORCL').recordId);
@@ -735,16 +736,17 @@ test('a registered instrument reaches its rule under any spelling, in any accoun
   // is notified: these are supersessions, not first appearances.
   assert.deepEqual(coverage.autoRecords, []);
   assert.deepEqual(coverage.supersededAutoRecords.map(item => `${item.custodian}:${item.symbol}:${item.status}`),
-    ['IB-HK:BRK/B:classified', 'IB-HK:MSTR:excluded', 'Webull:ORCL:classified']);
+    ['IB-HK:BRK/B:classified', 'IB-HK:MSTR:classified', 'Webull:ORCL:classified']);
   assert.deepEqual(coverage.instrumentMatches.map(item => `${item.custodian}:${item.symbol}:${item.via}`),
     ['Webull:ORCL:IB-HK']);
 
-  // The arithmetic follows: BRK/B at 5%, MSTR at nothing, Webull ORCL at 55%.
+  // The arithmetic follows: BRK/B at 5%, MSTR at 55%, Webull ORCL at 55%.
   const pressure = computeAiPressure(constituents, coverage, { denominator: denominator() });
   const row = (symbol, custodian) => pressure.rows.find(item => item.symbol === symbol && item.custodian === custodian);
   assert.equal(row('BRK/B', 'IB-HK').coefficients.mid, 0.05);
   assert.equal(row('BRK/B', 'IB-HK').contributions.mid, 11695.5);
-  assert.equal(row('MSTR', 'IB-HK').contributions.mid, 0);
+  assert.equal(row('MSTR', 'IB-HK').coefficients.mid, 0.55);
+  assert.equal(row('MSTR', 'IB-HK').contributions.mid, 55366.74);
   assert.equal(row('ORCL', 'Webull').coefficients.mid, 0.55);
   assert.equal(row('ORCL', 'Webull').contributions.mid, 55116.6);
 
@@ -757,15 +759,15 @@ test('a registered instrument reaches its rule under any spelling, in any accoun
   const pane = riskPane(built.html);
   assert.match(pane, /data-ai-tier-superseded="936247:21617153"[^>]*data-ai-tier-previous-record="AUTO:AUTO-20260911-NEWSTK-T1-R1:936247:21617153"/);
   assert.match(pane, /BRK\/B（IB-HK）：上一期页面的自动分类记录 [^<]*取代，按 T3 计算；此前按该自动分类系数发布的各期页面不改写。/);
-  assert.match(pane, /MSTR（IB-HK）：上一期页面的自动分类记录 [^<]*取代，不进分子，全部计入分母/);
+  assert.match(pane, /MSTR（IB-HK）：上一期页面的自动分类记录 [^<]*取代，按 T2 计算/);
   assert.match(pane, /data-ai-tier-instrument-match="1350094:29145773" data-ai-tier-via="IB-HK"/);
-  assert.match(pane, /MSTR：已发布口径为不适用，不进分子（published-not-applicable）/);
   assert.doesNotMatch(pane, /临时|待确认|待裁决/);
   const guard = runGuard(t, built.html);
   assert.equal(guard.status, 0, guard.stderr);
   const manifest = manifestOf(built.html);
   assert.deepEqual(manifest.find(item => item.key === '936247:26863964'),
     { key: '936247:26863964', symbol: 'MSTR', custodian: 'IB-HK', portfolioId: '936247', holdingId: '26863964',
-      instrumentId: '34421', namespace: 'REG', recordId: 'REG-SPECIAL-MSTR-NOT-APPLICABLE',
-      status: 'excluded', reason: 'published-not-applicable' });
+      instrumentId: '34421', namespace: 'REG', recordId: 'REG-SPECIAL-MSTR-T2', status: 'classified' });
+  // And the row on the page carries the T2 mid coefficient the registry records.
+  assert.match(built.html, /data-ai-risk-row="936247:26863964"[^>]*data-ai-record="REG-SPECIAL-MSTR-T2"[^>]*data-ai-coefficient-bp="5500"/);
 });

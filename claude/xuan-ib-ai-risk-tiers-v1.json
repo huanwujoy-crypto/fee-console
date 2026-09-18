@@ -117,13 +117,15 @@
       "note": "Named in the owner-reviewed §0-C exception row with the explicit ladder 60% / 100% / 100%; the published report shows its mid scenario as 100%."
     },
     {
-      "id": "REG-SPECIAL-MSTR-NOT-APPLICABLE",
+      "id": "REG-SPECIAL-MSTR-T2",
       "custodian": "IB-HK",
       "symbol": "MSTR",
       "instrumentId": "34421",
-      "kind": "published-not-applicable",
-      "publishedLabel": "不适用（不进分子，全部计入分母）",
-      "note": "Transcribed from the published 2026-09-10 and 2026-09-11 AM editions, which stated 不进分子（全部计入分母）：MSTR 判「不适用」 and grouped it with GLD/SLV/HODL as 主题投资. The 2026-09-11 PM edition was the first run of the coverage module; its previous page carried no manifest, so every position counted as first-seen, and MSTR, absent from this file, was automatically classified T1 and carried forward on every edition to 2026-09-17. This entry records the already-published treatment: out of the numerator, inside the denominator, no coefficient. It assigns no coefficient and is not a new tier; a T1/T2/T3 assignment for MSTR remains a separate owner decision."
+      "kind": "named-tier-exception",
+      "tier": "T2",
+      "publishedLabel": "所有者 2026-09-18 归 T2",
+      "approvalRecord": "claude/xuan-ib-mstr-t2-approval-2026-09-18.md",
+      "note": "Owner decision of 2026-09-18, recorded in the approval record named above: MSTR (MicroStrategy, IB-HK, Sharesight instrument 34421) takes the standard T2 ladder 40% / 55% / 70%, unchanged. Before 2026-09-11 PM the published reports carried it as 不进分子（全部计入分母）: 判「不适用」; from 2026-09-11 PM to 2026-09-17 the coverage module's first run, whose previous page carried no manifest, counted it as first-seen and classified it T1 automatically, then carried that forward. This entry supersedes both. It uses an existing standard ladder and adds no coefficient; it takes effect only once the owner posts the exact-head-SHA approval comment on the pull request that introduces it and that pull request merges."
     }
   ]
 }

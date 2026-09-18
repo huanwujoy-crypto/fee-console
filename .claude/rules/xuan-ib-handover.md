@@ -133,8 +133,8 @@ lookup takes (custodian, symbol, instrumentId) and resolves the instrument
 before the custodian's spelling of the ticker, then the same instrument another
 custodian records; a registry hit supersedes a carried `AUTO` record, is
 disclosed on the page, and an `AUTO` record on a registered instrument fails
-the gate. A registry `published-not-applicable` entry (MSTR) is an enumerated
-exclusion, not a tier. Read
+the gate. MSTR at IB-HK is the owner's standard T2 (`REG-SPECIAL-MSTR-T2`,
+`claude/xuan-ib-mstr-t2-approval-2026-09-18.md`). Read
 `claude/xuan-ib-ai-risk-tiers-approval-2026-09-18.md` first. Decide
 "notify once" with `decideAutoNotification` against the previous trusted page's
 published records and a verified public read-back; never close a notification

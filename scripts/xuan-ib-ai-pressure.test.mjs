@@ -276,12 +276,6 @@ test('the registry reader refuses a policy that widens its own scope', () => {
   for (const entry of reg.entries.values()) {
     // Every entry is bound to the instrument id its payload publishes.
     assert.match(entry.instrumentId, /^\d{1,18}$/, entry.id);
-    if (entry.excluded === true) {
-      // A transcribed "not applicable" row carries a reason and no coefficient.
-      assert.equal(entry.ladder, null, entry.id);
-      assert.equal(entry.reason, 'published-not-applicable', entry.id);
-      continue;
-    }
     for (const scenario of ['low', 'mid', 'high']) {
       const value = entry.ladder[scenario];
       if (value === null) continue;

@@ -30,7 +30,7 @@ import {
   classifyFirstSeenPosition, continueAutoClassification, readAutoClassificationPolicy,
   renderAutoClassificationRecord,
 } from './xuan-ib-auto-classification.mjs';
-import { AI_RISK_NAMESPACE, REG_EXCLUSION_REASONS, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
+import { AI_RISK_NAMESPACE, readAiRiskRegistry } from './xuan-ib-ai-risk-registry.mjs';
 import { calculateDelegatedTier, listDelegatedRules } from './xuan-ib-delegated-tier.mjs';
 import fs from 'node:fs';
 
@@ -195,14 +195,6 @@ function resolveOne(constituent, { rules, overrides, registry, policy, autoPolic
       if (Object.hasOwn(registered, field) && registered[field] !== constituent[field]) {
         return excluded(AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH);
       }
-    }
-    if (registered.excluded === true) {
-      // An already-published "not applicable" treatment: out of the numerator,
-      // inside the denominator, with the registry's own enumerated reason and
-      // record id — never re-decided by the automatic policy.
-      return { entry: { ...identity, namespace: AI_RISK_NAMESPACE, recordId: registered.recordId,
-        status: 'excluded', reason: registered.reason }, record: null, basis: 'registry-excluded',
-        ladder: null, tier: null, registered, supersededAutoRecordId };
     }
     return { entry: { ...identity, namespace: AI_RISK_NAMESPACE, recordId: registered.recordId,
       status: 'classified' }, record: null, basis: 'registry', ladder: registered.ladder,
@@ -372,8 +364,6 @@ const EXCLUSION_TEXT = Object.freeze({
   [AUTO_EXCLUSION_REASONS.VALUE_DATE_MISSING]: '缺少市值日期',
   [AUTO_EXCLUSION_REASONS.IDENTITY_INCOMPLETE]: '身份字段不完整',
   [AUTO_EXCLUSION_REASONS.OWNER_RULE_IDENTITY_MISMATCH]: '与既有规则身份不一致',
-  // A registry transcription of an already-published "not applicable" row.
-  [REG_EXCLUSION_REASONS.PUBLISHED_NOT_APPLICABLE]: '已发布口径为不适用，不进分子',
 });
 
 const TIER_TEXT = (tier, ladder) => (typeof tier === 'string' ? tier

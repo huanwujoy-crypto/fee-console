@@ -64,14 +64,6 @@ const key = (custodian, symbol) => `${String(custodian).trim()}:${String(symbol)
 // is resolved by it before its ticker spelling is consulted at all.
 const INSTRUMENT_ID = /^\d{1,18}$/;
 
-// Why a registry entry keeps a position out of the numerator. A `REG` exclusion
-// is a transcription of an already-published "not applicable" treatment, never
-// a judgement this module makes, and it is disclosed by name like every other
-// enumerated exclusion.
-export const REG_EXCLUSION_REASONS = Object.freeze({
-  PUBLISHED_NOT_APPLICABLE: 'published-not-applicable',
-});
-
 const sameLadder = (a, b) => ['low', 'mid', 'high'].every(name => (a?.[name] ?? null) === (b?.[name] ?? null));
 
 let cached = null;
@@ -132,8 +124,7 @@ export function readAiRiskRegistry() {
       // transcription error this module refuses rather than resolves by order.
       const elsewhere = byInstrument.get(instrumentId) ?? [];
       for (const other of elsewhere) {
-        if (other.kind !== entry.kind || !sameLadder(other.ladder, entry.ladder)
-          || (other.excluded ?? false) !== (entry.excluded ?? false)) {
+        if (other.kind !== entry.kind || !sameLadder(other.ladder, entry.ladder)) {
           fail('INSTRUMENT_RULE_CONFLICT', `${other.id} vs ${id}`);
         }
       }
@@ -179,14 +170,7 @@ export function readAiRiskRegistry() {
     }
     let ladder = null;
     let tier = null;
-    let excluded = false;
-    if (special.kind === 'published-not-applicable') {
-      // A position the published report already stated is out of the numerator
-      // and inside the denominator. Recording that keeps the automatic policy
-      // from re-deciding it as a "first-seen stock" the day a manifest is
-      // missing; it assigns no coefficient and is not a tier.
-      excluded = true;
-    } else if (special.kind === 'leveraged-etf') {
+    if (special.kind === 'leveraged-etf') {
       // min(leverage x underlying coefficient, cap), applied scenario by
       // scenario. The cap is what stops a levered position from contributing
       // more than its own market value to the numerator.
@@ -212,7 +196,6 @@ export function readAiRiskRegistry() {
     }
     claim(special.custodian, special.symbol, special.instrumentId, {
       kind: special.kind, tier, ladder, recordId: special.id,
-      ...(excluded ? { excluded: true, reason: REG_EXCLUSION_REASONS.PUBLISHED_NOT_APPLICABLE } : {}),
       publishedLabel: typeof special.publishedLabel === 'string' ? special.publishedLabel : special.kind,
     });
   }

@@ -204,10 +204,11 @@ instrument the entry does not record is an identity mismatch, excluded and named
 never that ticker's coefficient. A registry hit supersedes a carried `AUTO`
 record and the page says from which record to which rule; an `AUTO` record
 standing on a registered instrument fails the gate under any spelling or account.
-MSTR's already-published 不适用 treatment is transcribed as the named special
-case `REG-SPECIAL-MSTR-NOT-APPLICABLE` (`published-not-applicable`: out of the
-numerator, inside the denominator, no coefficient); a tier for it remains a
-separate owner decision. The automatic classifier reports asset type before
+The owner assigned MSTR the standard T2 ladder on 2026-09-18, recorded as the
+named special case `REG-SPECIAL-MSTR-T2` with its approval record
+`claude/xuan-ib-mstr-t2-approval-2026-09-18.md`; it supersedes both the earlier
+published 不适用 treatment and the carried AUTO T1 record, and adds no
+coefficient. The automatic classifier reports asset type before
 first-seen-ness, so a non-stock is excluded as `asset-type-not-ordinary-stock`.
 The editions that published the AUTO coefficients are history and are not
 rewritten; none of this changes a coefficient, a tier or any account scope.
