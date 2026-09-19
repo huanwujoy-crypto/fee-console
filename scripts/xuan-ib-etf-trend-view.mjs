@@ -66,8 +66,13 @@ export async function mountEtfTrend({doc,storage,baseUrl,fetchFn=globalThis.fetc
     // The canonical policy section and the legacy baseline card stay in the
     // verified document, hidden rather than removed; the standalone policy
     // page remains the place to read the policy.
+    // Only the report's own rendered siblings are hidden. The inert summary
+    // template (and any other non-rendering element) must keep exactly the
+    // attributes the identity check above requires, or the next mount after a
+    // clear would refuse its own data; the mobile layout's note fold is added
+    // after the first mount and stays visible on every mount alike.
     for(const node of [...pane.children]){
-      if(node===panel)continue;
+      if(node===panel||['TEMPLATE','SCRIPT','STYLE'].includes(node.tagName)||/\bpane-notes\b/.test(node.className||''))continue;
       node.hidden=true;node.setAttribute('data-xuan-etf-hidden','policy-history');
       // The policy section sets its own display, which would beat the hidden attribute.
       if(typeof node.style?.setProperty==='function')node.style.setProperty('display','none','important');
