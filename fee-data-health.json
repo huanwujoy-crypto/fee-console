@@ -1,1 +1,13 @@
-/home/user/fee-console/fee-data-health.json
+{
+  "schema": "fee-console.daily-health.v1",
+  "checkedAt": "2026-09-19T04:47:50.203Z",
+  "targetDate": "2026-09-18",
+  "sourceDates": {
+    "schwab": "2026-09-18",
+    "webull": "2026-09-18",
+    "benchmark": null
+  },
+  "outcome": "updated",
+  "dataSha256": "4ee163613b7f75c45d28204cf8bc0e8e8df4bdf89e67e7502e41713605b63912",
+  "errorCode": null
+}
