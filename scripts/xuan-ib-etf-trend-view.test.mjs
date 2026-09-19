@@ -23,6 +23,9 @@ class Node {
     this.children = []; this.text = ''; this.append(...nodes); }
   set textContent(text) { this.replaceChildren(); this.text = String(text); }
   get textContent() { return this.text + this.children.map(child => child.textContent).join(''); }
+  // As in a real DOM, the hidden property and setAttribute both add attributes.
+  set hidden(value) { this._hidden = value; if (value) this.attributes.hidden = ''; else delete this.attributes.hidden; }
+  get hidden() { return this._hidden; }
   setAttribute(name, value) { this.attributes[name] = value; }
   getAttribute(name) { return this.attributes[name] ?? null; }
   contains(node) { for(let n=node;n;n=n.parentNode)if(n===this)return true;return false; }
@@ -93,7 +96,8 @@ function deferred() { let resolve, reject; const promise = new Promise((a, b) =>
 const options = (f, storage, fetchFn, extra = {}) => ({ doc: f.doc, storage, baseUrl, fetchFn, now, ...extra });
 function embedSummary(f,text=JSON.stringify(projectOpenEtfTrend(payload().result,{now}))) {
   const template=f.doc.createElement('template');template.id=ETF_SUMMARY_ID;
-  template.attributes={id:ETF_SUMMARY_ID,type:'application/json',length:2};
+  template.attributes={id:ETF_SUMMARY_ID,type:'application/json'};
+  Object.defineProperty(template.attributes,'length',{get(){return Object.keys(template.attributes).length;}});
   template.content.textContent=text;f.pane.append(template);return template;
 }
 function pauseNextDigest() {
@@ -133,7 +137,7 @@ test('invalid, duplicate, misplaced or forged embedded summary cannot fall back 
     if(mode==='duplicate')embedSummary(f);
     if(mode==='misplaced')f.doc.body.append(summary);
     if(mode==='tag')summary.tagName='DIV';
-    if(mode==='attributes')summary.attributes.length=3;
+    if(mode==='attributes')summary.attributes.hidden='';
     if(mode==='type')summary.attributes.type='text/plain';
     await mountEtfTrend(options(f,storage,async()=>{calls++;return response(key());}));
     assert.equal(calls,0);assert.equal(privateHtml(f.doc),false);assert.deepEqual(storage.writes,[]);
@@ -151,6 +155,20 @@ test('validated open data renders published summary amounts and stores only sour
   assert.equal(new URL(request[0]).origin, new URL(baseUrl).origin);
   assert.equal(request[1].credentials, 'omit'); assert.equal(request[1].redirect, 'error'); assert.equal(request[1].cache, 'no-store');
   assert.equal(request[0].includes(secret), false);
+});
+
+test('hiding the pane leaves the inert summary template untouched, so a clear and remount renders the card again', async () => {
+  const f=documentFixture(),storage=storageFixture();const template=embedSummary(f);
+  const mount=()=>mountEtfTrend(options(f,storage,async()=>{throw new Error('must not fetch');}));
+  await mount();assert.equal(privateHtml(f.doc),true);
+  assert.equal(f.original.hidden,true);
+  assert.deepEqual(Object.keys(template.attributes).sort(),['id','type']);
+  assert.equal(template.hidden,undefined);assert.equal(template.style.display,undefined);
+  const notes=f.doc.createElement('details');notes.className='pane-notes';f.pane.append(notes);
+  clearEtfTrend(f.doc);assert.equal(privateHtml(f.doc),false);
+  await mount();assert.equal(privateHtml(f.doc),true);
+  assert.doesNotMatch(panel(f.doc).innerHTML,/暂不可用/);
+  assert.equal(notes.hidden,undefined);assert.equal(f.original.hidden,true);
 });
 
 test('original ETF policy/history is hidden in place, not deleted, duplicated or folded', async () => {
