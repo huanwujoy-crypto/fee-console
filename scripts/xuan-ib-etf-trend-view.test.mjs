@@ -398,7 +398,7 @@ test('the mounted card tells the reader how far behind the comparison is', async
   const f = documentFixture(), storage = storageFixture();
   await mountEtfTrend(options(f, storage, async () => response(key())));
   assert.match(panel(f.doc).innerHTML, /停在 09-02 · 落后 \d+ 天/);
-  assert.match(panel(f.doc).innerHTML, /余额为 2020-09-02 数值/);
+  assert.match(panel(f.doc).innerHTML, /相同资金路径 · 期末金额（2020-09-02 数值）/);
 });
 
 test('unchanged bytes read on a later day are re-rendered with the new age', async () => {

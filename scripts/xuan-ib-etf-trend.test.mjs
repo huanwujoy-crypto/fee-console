@@ -181,16 +181,26 @@ test('the staleness notice adds no value, changes no amount and stays escaped',(
   assert.equal(zoneDate('Asia/Hong_Kong',new Date('2026-09-16T20:00:00Z')),'2026-09-17');
   assert.equal(zoneDate('America/New_York',new Date('2026-09-16T20:00:00Z')),'2026-09-16');
 });
-test('compact phone card: three glyph tiles, one status pill, sparkline, folded notes, no script',()=>{
+test('compact phone card mirrors the fee console: period line, return rows, same-cash-path table with gaps, folded method, no script',()=>{
   const open=projectOpenEtfTrend(run([day('2026-09-01'),day('2026-09-02',1210000,101),day('2026-09-03',1188000,99)]),{now:openNow});
   const fresh=renderEtfTrendCompact(open,{viewDate:'2026-09-03'});
   assert.match(fresh,/id="xuan-etf-trend-v2"/);assert.match(fresh,/ABC 表现比较/);
-  assert.match(fresh,/数据至 09-03/);assert.doesNotMatch(fresh,/停在|落后/);
-  for(const arm of ['A','B','C'])assert.match(fresh,new RegExp(`>${arm}</span>`));
-  assert.match(fresh,/实际/);assert.match(fresh,/建议/);assert.match(fresh,/标普500/);
-  assert.match(fresh,/▼<\/span> -1\.00%/);assert.match(fresh,/\$1,188,000/);assert.match(fresh,/回撤 1\.82%/);
+  assert.match(fresh,/数据至 09-03/);assert.doesNotMatch(fresh,/停在|落后 \d+ 天/);
+  assert.match(fresh,/收益率 · 2026-09-01 → 2026-09-03（2 天）/);
+  for(const arm of ['A','B','C'])assert.equal((fresh.match(new RegExp(`>${arm}</span>`,'g'))||[]).length,2,arm);
+  assert.match(fresh,/实际 <span[^>]*>· 实际持仓 · 剔除出入金<\/span>/);assert.match(fresh,/建议 <span[^>]*>· 模拟<\/span>/);assert.match(fresh,/标普500 <span[^>]*>· 模拟 · CSPX<\/span>/);
+  assert.match(fresh,/>-1\.00%<\/b>/);
+  assert.match(fresh,/相同资金路径 · 期末金额（2026-09-03 数值）/);
+  assert.match(fresh,/<th[^>]*>方案<\/th><th[^>]*>期末金额<\/th><th[^>]*>实际相对模拟<\/th>/);
+  assert.match(fresh,/09-03 同日数值/);assert.match(fresh,/\$1,188,000/);
+  // 实际相对模拟 = A − simulated, per row, with the fee console's 领先 / 落后 wording.
+  const {A,B,C}=open.latestBalances.usd,usd=v=>`$${new Intl.NumberFormat('zh-HK',{maximumFractionDigits:0}).format(Math.abs(v))}`;
+  for(const v of [A-B,A-C])assert.match(fresh,new RegExp(`>${Math.abs(v)<0.5?'持平':v>0?'领先':'落后'}</span><span[^>]*>\\${usd(v)}<`));
+  assert.ok(A<B&&Math.abs(A-C)<0.5,'fixture: B leads, C ties');assert.match(fresh,/>落后<\/span>/);assert.match(fresh,/>持平<\/span>/);
+  assert.equal((fresh.match(/<tr>/g)||[]).length,4);
   assert.equal((fresh.match(/<path /g)||[]).length,6);assert.equal((fresh.match(/<circle /g)||[]).length,3);
-  assert.match(fresh,/<details[^>]*><summary[^>]*>ⓘ 说明与回撤<\/summary>/);
+  assert.match(fresh,/<details[^>]*><summary[^>]*>查看计算方法与重要说明<\/summary>/);
+  assert.match(fresh,/金额差＝实际资产－模拟余额/);assert.match(fresh,/最大回撤：A 1\.82% \/ B/);
   assert.doesNotMatch(fresh,/<script|<form|<button|<a /i);
   assert.doesNotMatch(fresh,/#246ac4|#8b4ab8|#555f6d/);
   const stale=renderEtfTrendCompact(open,{viewDate:'2026-09-18'});
@@ -202,6 +212,11 @@ test('compact phone card: three glyph tiles, one status pill, sparkline, folded 
   assert.throws(()=>renderEtfTrendCompact(projectEtfTrend(run([day('2026-09-01')]))),/open summary only/);
   // The legacy renderer is untouched so the frozen archive keeps its bytes.
   assert.match(renderEtfTrend(open),/#246ac4/);
+  // A daily-mode comparison names its A definition once, in the folded method.
+  const daily=simulateEtfTrend({...input([day('2020-09-01'),day('2020-09-02',1210000,101)]),startDate:'2020-09-01',frozenDate:'2020-09-01'});
+  const dailyHtml=renderEtfTrendCompact(projectOpenEtfTrend(daily,{now:openNow}));
+  assert.match(dailyHtml,/实际 <span[^>]*>· IB 账户 · 剔除出入金<\/span>/);assert.equal(dailyHtml.split('每日自动更新').length-1,1);
+  assert.match(dailyHtml,/收益率 · 2020-09-01 → 2020-09-02（1 天）/);
 });
 test('a comparison on the v2.1 daily baseline explains its A definition and flow rule; the 09-01 series is unchanged',()=>{
   const legacy=projectOpenEtfTrend(run([day('2026-09-01')]),{now:openNow});

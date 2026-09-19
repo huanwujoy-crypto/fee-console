@@ -15,7 +15,7 @@ import { inactiveAssociationSnapshot } from './xuan-ib-association-test-fixture.
 import { buildAiTierCoverage } from './xuan-ib-ai-tier-coverage.mjs';
 import { computeAiPressure } from './xuan-ib-ai-pressure.mjs';
 import { TREND_METHOD, simulateEtfTrend, projectOpenEtfTrend } from './xuan-ib-etf-trend.mjs';
-import { renderEtfSummaryTemplate, ETF_SUMMARY_ID } from './xuan-ib-etf-summary-transport.mjs';
+import { renderEtfSummaryTemplate, parseEtfSummary, ETF_SUMMARY_ID } from './xuan-ib-etf-summary-transport.mjs';
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Existing public history is read, never rewritten or copied into a new fixture.
@@ -243,41 +243,54 @@ test('operational CLI writes guarded candidate once and completes all nine measu
 });
 
 // v2.1 daily ABC mode: the producer's open summary rides the ordinary candidate.
-const dailySummary=(count=2,startDate='2020-09-01')=>projectOpenEtfTrend(simulateEtfTrend({methodId:TREND_METHOD,startDate,frozenDate:startDate,initialUsd:1000000,reserveUsd:240000,
-  days:Array.from({length:count},(_,i)=>{const date=new Date(Date.parse(`${startDate}T00:00:00Z`)+i*86400000).toISOString().slice(0,10);
+// The trusted latest page may already publish a real comparison, and both the
+// renderer and the guard rightly refuse a summary that restarts or rolls it
+// back, so the synthetic series continues the live baseline when one exists.
+const liveSummaryTemplate=previousHtml.match(/<template id="xuan-etf-open-summary-v3" type="application\/json">([\s\S]*?)<\/template>/);
+const liveSummary=liveSummaryTemplate?parseEtfSummary(liveSummaryTemplate[1]):null;
+const shiftDate=(date,days)=>new Date(Date.parse(`${date}T00:00:00Z`)+days*86400000).toISOString().slice(0,10);
+const summaryStart=liveSummary?liveSummary.startDate:'2020-09-01';
+const summaryDays=liveSummary?Math.round((Date.parse(`${liveSummary.rows.at(-1).date}T00:00:00Z`)-Date.parse(`${summaryStart}T00:00:00Z`))/86400000)+1:2;
+const dailySummary=(count=summaryDays,startDate=summaryStart)=>projectOpenEtfTrend(simulateEtfTrend({methodId:TREND_METHOD,startDate,frozenDate:startDate,initialUsd:1000000,reserveUsd:240000,
+  days:Array.from({length:count},(_,i)=>{const date=shiftDate(startDate,i);
     return {date,actualUsd:1000000+i*1000,actualComplete:true,flowsComplete:true,flows:[],sourceRef:'synthetic-private',
       quotes:Object.fromEntries(['CSPX','EXUS','EIMI','USSC'].map(s=>[s,{status:'close',usd:10+i,date,source:'synthetic'}]))};})}));
+// A report dated one day after the trusted page, so a one-day extension of the
+// live series never runs past the report date.
+const nextDayView=()=>{const view=fixture();view.dataDate=shiftDate(fixtureDate,1);view.asOfHkt=`${view.dataDate} 08:01–08:04 HKT`;return view;};
 test('a fresh daily ABC summary is emitted as the final ETF-pane template, passes the guard, and can only extend',()=>{
-  const first=renderReport(fixture(),{...context,etfSummary:dailySummary(2)});
-  const tag=renderEtfSummaryTemplate(dailySummary(2));
+  const first=renderReport(fixture(),{...context,etfSummary:dailySummary()});
+  const tag=renderEtfSummaryTemplate(dailySummary());
   assert.ok(first.includes(tag));
   const pane=first.match(/<div class="pane p5">([\s\S]*?)<\/div><\/div>\n/)[1];
   assert.ok(pane.endsWith(tag),'summary is the last child of p5');
   assert.equal(first.split(ETF_SUMMARY_ID).length-1,1);
   const guarded=runGuard(first);assert.equal(guarded.status,0,guarded.stderr+guarded.stdout);
   const nextContext={...context,previousHtml:first,previousMeta:{...previousMeta,htmlBlob:reportHtmlBlob(first)}};
-  const carried=renderReport(fixture(),nextContext);
+  const carried=renderReport(nextDayView(),nextContext);
   assert.ok(carried.includes(tag),'without a fresh summary the previous one is carried forward byte for byte');
-  const extended=renderReport(fixture(),{...nextContext,etfSummary:dailySummary(3)});
-  assert.ok(extended.includes(renderEtfSummaryTemplate(dailySummary(3))));assert.ok(!extended.includes(tag));
-  assert.throws(()=>renderReport(fixture(),{...nextContext,etfSummary:dailySummary(1)}),/restart or roll back/);
-  assert.throws(()=>renderReport(fixture(),{...nextContext,etfSummary:dailySummary(2,'2020-09-02')}),/restart or roll back/);
+  const extended=renderReport(nextDayView(),{...nextContext,etfSummary:dailySummary(summaryDays+1)});
+  assert.ok(extended.includes(renderEtfSummaryTemplate(dailySummary(summaryDays+1))));assert.ok(!extended.includes(tag));
+  assert.throws(()=>renderReport(fixture(),{...nextContext,etfSummary:dailySummary(summaryDays+2)}),/run past the report date/);
+  const extendedContext={...context,previousHtml:extended,previousMeta:{...previousMeta,dataDate:shiftDate(fixtureDate,1),htmlBlob:reportHtmlBlob(extended)}};
+  assert.throws(()=>renderReport(nextDayView(),{...extendedContext,etfSummary:dailySummary(summaryDays)}),/restart or roll back/);
+  assert.throws(()=>renderReport(nextDayView(),{...nextContext,etfSummary:dailySummary(summaryDays,shiftDate(summaryStart,1))}),/restart or roll back/);
 });
 test('prepare accepts the daily summary in the API and as --etf-summary, and rejects a corrupted file',()=>{
-  const prepared=prepareReport(fixture(),evidence(),{...context,registry,etfSummary:dailySummary(2)});
-  assert.ok(prepared.html.includes(renderEtfSummaryTemplate(dailySummary(2))));
-  assert.throws(()=>prepareReport(fixture(),evidence(),{...context,registry,etfSummary:{...dailySummary(2),schemaVersion:2}}),/Invalid public method/);
+  const prepared=prepareReport(fixture(),evidence(),{...context,registry,etfSummary:dailySummary()});
+  assert.ok(prepared.html.includes(renderEtfSummaryTemplate(dailySummary())));
+  assert.throws(()=>prepareReport(fixture(),evidence(),{...context,registry,etfSummary:{...dailySummary(),schemaVersion:2}}),/Invalid public method/);
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-etf-'));
   const journalPath=path.join(dir,'clock.jsonl'),viewFile=path.join(dir,'view.json'),sourceFile=path.join(dir,'sources.json'),output=path.join(dir,'candidate.html'),summaryFile=path.join(dir,'summary.json');
   try{
     fs.writeFileSync(viewFile,JSON.stringify(fixture()),{mode:0o600});
     fs.writeFileSync(sourceFile,JSON.stringify(evidence()),{mode:0o600});
-    fs.writeFileSync(summaryFile,JSON.stringify(dailySummary(2)),{mode:0o600});
+    fs.writeFileSync(summaryFile,JSON.stringify(dailySummary()),{mode:0o600});
     initRunJournal(journalPath);
     for(const name of ['bootstrap','ib-read','sharesight-read','validate','derive','narrative']){startJournalStage(journalPath,name);finishJournalStage(journalPath,name);}
     const result=runPrepareCli([viewFile,sourceFile,output,'--journal',journalPath,'--etf-summary',summaryFile],{loadAssociationPolicy:()=>inactiveAssociationSnapshot()});
     assert.equal(result.status,'prepared-not-published');
-    assert.ok(fs.readFileSync(output,'utf8').includes(renderEtfSummaryTemplate(dailySummary(2))));
+    assert.ok(fs.readFileSync(output,'utf8').includes(renderEtfSummaryTemplate(dailySummary())));
     assert.throws(()=>runPrepareCli([viewFile,sourceFile,output+'.2','--journal',journalPath,'--etf-summary',summaryFile,'--etf-summary',summaryFile]),/invalid or duplicate/);
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

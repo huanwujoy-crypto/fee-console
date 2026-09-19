@@ -264,8 +264,10 @@ const esc = v => String(v).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const names = { A: 'A 实际', B: 'B 建议模拟', C: 'C 标普500' };
 const colors = { A: '#246ac4', B: '#8b4ab8', C: '#555f6d' };
 
-// Owner-requested compact phone card (2026-09-18): three glyph tiles, one
-// status pill, a sparkline and a folded note. Series colours are the first
+// Owner-requested compact phone card (2026-09-18), restyled 2026-09-19 to
+// mirror the fee console's 收益率 card: a dated period line, one comparable
+// return row per arm, a sparkline, the 相同资金路径 · 期末金额 table with
+// 实际相对模拟 gaps, and the folded 查看计算方法与重要说明. Series colours are the first
 // three slots of the validated categorical palette (blue / orange / aqua), which
 // clear the colour-vision checks that the legacy blue / purple / grey did not.
 // The legacy renderEtfTrend above is untouched so frozen archives keep their bytes.
@@ -286,17 +288,39 @@ export function renderEtfTrendCompact(data, { viewDate = null } = {}) {
     : data.stoppedAt ? { color: COMPACT.warn, text: `${md(data.stoppedAt)} 起待补` }
     : { color: COMPACT.ok, text: `数据至 ${md(data.latestCompleteDate)}` };
   const fmt = v => new Intl.NumberFormat('zh-HK', { maximumFractionDigits: 0 }).format(v);
-  const tile = arm => {
-    const ret = full.index[arm] - 100, dd = full.maxDrawdown[arm] * 100;
-    const arrow = ret > 0.005 ? ['▲', COMPACT.up] : ret < -0.005 ? ['▼', COMPACT.down] : ['■', COMPACT.muted];
-    return `<div style="flex:1 1 0;min-width:0;padding:10px 6px;border:1px solid ${COMPACT.line};border-radius:14px;text-align:center">`
-      + `<span aria-hidden="true" style="display:inline-block;width:26px;height:26px;line-height:26px;border-radius:50%;background:${COMPACT.colors[arm]};color:#fff;font-weight:700;font-size:14px">${arm}</span>`
-      + `<div style="font-size:12px;color:${COMPACT.muted};margin-top:4px">${esc(COMPACT.names[arm])}</div>`
-      + `<div style="font-size:20px;font-weight:700;color:${COMPACT.ink};font-variant-numeric:tabular-nums;white-space:nowrap"><span style="color:${arrow[1]};font-size:14px" aria-hidden="true">${arrow[0]}</span> ${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%</div>`
-      + `<div style="font-size:12px;color:${COMPACT.ink};font-variant-numeric:tabular-nums;white-space:nowrap">$${fmt(data.latestBalances.usd[arm])}</div>`
-      + `<div style="font-size:11px;color:${COMPACT.muted};white-space:nowrap">回撤 ${dd.toFixed(2)}%</div>`
-      + `</div>`;
+  const usd = v => `$${fmt(v)}`;
+  const spanDays = Math.round((Date.parse(`${data.latestCompleteDate}T00:00:00Z`) - Date.parse(`${data.startDate}T00:00:00Z`)) / 86400000);
+  const pool = poolV2(data), daily = data.startDate !== '2026-09-01';
+  const tone = v => v > 0.005 ? COMPACT.up : v < -0.005 ? COMPACT.down : COMPACT.ink;
+  const badge = arm => `<span aria-hidden="true" style="display:inline-block;width:20px;height:20px;line-height:20px;border-radius:50%;background:${COMPACT.colors[arm]};color:#fff;font-weight:700;font-size:12px;text-align:center;vertical-align:middle;margin-right:6px">${arm}</span>`;
+  const armTag = { A: `${pool ? 'IB + NOAH 现金池' : daily ? 'IB 账户' : '实际持仓'} · 剔除出入金`, B: '模拟', C: '模拟 · CSPX' };
+  // Comparable-return rows, laid out like the fee console's 收益率 card: label
+  // left, one big tabular figure right. Every arm is the flow-adjusted daily
+  // chained return from the same start close, so the three figures compare.
+  const rateRow = arm => {
+    const ret = full.index[arm] - 100;
+    return `<div style="display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;font-size:14px">`
+      + `<span style="color:${COMPACT.muted};min-width:0">${badge(arm)}${esc(COMPACT.names[arm])} <span style="font-size:12px">· ${esc(armTag[arm])}</span></span>`
+      + `<b style="font-size:19px;font-weight:600;color:${tone(ret)};font-variant-numeric:tabular-nums;white-space:nowrap">${ret >= 0 ? '+' : ''}${ret.toFixed(2)}%</b></div>`;
   };
+  // Same-cash-path ending balances: the actual pool first, then each simulated
+  // account with 实际相对模拟 = actual − simulated, as the fee console shows SPY / QQQ.
+  const actual = data.latestBalances.usd.A;
+  const cell = (inner, align = 'left', extra = '') => `<td style="padding:8px 7px;border-top:1px solid ${COMPACT.line};vertical-align:middle;text-align:${align};${extra}">${inner}</td>`;
+  const scenario = (arm, tag) => `<span style="font-weight:600;color:${COMPACT.ink};white-space:nowrap">${badge(arm)}${esc(COMPACT.names[arm])}</span><span style="display:block;color:${COMPACT.muted};font-size:10px">${esc(tag)}</span>`;
+  const gapCell = arm => {
+    const gap = actual - data.latestBalances.usd[arm];
+    const dir = Math.abs(gap) < 0.5 ? '持平' : gap > 0 ? '领先' : '落后';
+    return `<span style="display:block;color:${COMPACT.muted};font-size:10px">${dir}</span><span style="display:block;font-weight:600;white-space:nowrap;color:${tone(gap)}">${usd(Math.abs(gap))}</span>`;
+  };
+  const th = (t, align) => `<th style="padding:8px 7px;text-align:${align};color:${COMPACT.muted};font-size:10px;font-weight:600;background:#f3f5f7">${t}</th>`;
+  const table = `<div style="font-size:12px;font-weight:600;color:${COMPACT.muted};margin:12px 0 6px">相同资金路径 · 期末金额（${esc(data.latestCompleteDate)} 数值）</div>`
+    + `<div style="overflow:hidden;border:1px solid ${COMPACT.line};border-radius:10px"><table aria-label="A 实际与 B、C 模拟账户期末金额比较" style="width:100%;border-collapse:collapse;table-layout:fixed;font-size:12px;font-variant-numeric:tabular-nums">`
+    + `<colgroup><col style="width:31%"><col style="width:27%"><col style="width:42%"></colgroup>`
+    + `<thead><tr>${th('方案', 'left')}${th('期末金额', 'right')}${th('实际相对模拟', 'right')}</tr></thead><tbody>`
+    + `<tr>${cell(scenario('A', `${md(data.latestCompleteDate)} 同日数值`))}${cell(`<span style="font-weight:600;color:${COMPACT.ink}">${usd(actual)}</span>`, 'right', 'white-space:nowrap')}${cell('—', 'right')}</tr>`
+    + ['B', 'C'].map(arm => `<tr>${cell(scenario(arm, '模拟'))}${cell(`<span style="font-weight:600;color:${COMPACT.ink}">${usd(data.latestBalances.usd[arm])}</span>`, 'right', 'white-space:nowrap')}${cell(gapCell(arm), 'right')}</tr>`).join('')
+    + `</tbody></table></div>`;
   const values = rows.flatMap(r => Object.values(r.index));
   const lo = Math.min(100, ...values) - .25, hi = Math.max(100, ...values) + .25;
   const x = i => 28 + (rows.length > 1 ? i / (rows.length - 1) : 0) * 332;
@@ -310,30 +334,33 @@ export function renderEtfTrendCompact(data, { viewDate = null } = {}) {
     }
     paths.push(`<circle cx="${x(rows.length - 1).toFixed(1)}" cy="${y(last.index[arm]).toFixed(1)}" r="3.5" fill="${color}" stroke="#fff" stroke-width="1.5"/>`);
   }
-  const chart = `<svg viewBox="0 0 380 112" role="img" aria-label="A、B、C 累计表现曲线，起点为 100" style="display:block;width:100%;margin-top:10px"><line x1="28" y1="${y(100).toFixed(1)}" x2="360" y2="${y(100).toFixed(1)}" stroke="${COMPACT.line}" stroke-dasharray="2 3"/><text x="0" y="${(y(100) + 4).toFixed(1)}" font-size="11" fill="${COMPACT.muted}">100</text>${paths.join('')}<text x="28" y="108" font-size="11" fill="${COMPACT.muted}">${md(data.startDate)}</text><text x="360" y="108" text-anchor="end" font-size="11" fill="${COMPACT.muted}">${md(last.date)}</text></svg>`;
+  const chart = `<svg viewBox="0 0 380 112" role="img" aria-label="A、B、C 累计表现曲线，起点为 100" style="display:block;width:100%;margin-top:6px"><line x1="28" y1="${y(100).toFixed(1)}" x2="360" y2="${y(100).toFixed(1)}" stroke="${COMPACT.line}" stroke-dasharray="2 3"/><text x="0" y="${(y(100) + 4).toFixed(1)}" font-size="11" fill="${COMPACT.muted}">100</text>${paths.join('')}<text x="28" y="108" font-size="11" fill="${COMPACT.muted}">${md(data.startDate)}</text><text x="360" y="108" text-anchor="end" font-size="11" fill="${COMPACT.muted}">${md(last.date)}</text></svg>`;
   const notes = [
     stale ? `<li>自 ${esc(data.latestCompleteDate)} 起没有更新；之后的出入金与行情都没有计入，不能当作当前余额。</li>` : '',
     data.stoppedAt ? `<li>${esc(data.stoppedAt)} 起数据待补，已有历史保留。</li>` : '',
     last.estimated ? '<li>虚线含暂估；数字取最后完整日。</li>' : '',
-    '<li>曲线剔除出入金影响；余额含后续资金增减。仅用于趋势观察，不含账户明细，不是审计结算。</li>',
-    data.startDate === '2026-09-01'
+    `<li><b>相同资金路径：</b>B、C 以 ${esc(data.startDate)} 收盘时与 A 相同的金额起步；之后 A 的每笔出入金都按同日同额加入或取出模拟账户，不用收益率乘本金代替。金额差＝实际资产－模拟余额。</li>`,
+    '<li><b>可比收益率：</b>三条收益率都剔除出入金影响，按每日收益几何链接后与起点比较，同一期间直接对比；余额则含后续资金增减。仅用于趋势观察，不含账户明细，不是审计结算，不作短期胜负或年化判断。</li>',
+    !daily
       ? `<li>B 为纸上目标组合；${esc(data.frozenDate)} 前是回溯模拟（虚线），并非实际调仓。</li>`
-      : poolV2(data)
-        ? '<li>每日自动更新：A 为 IB 账户官方日终 NAV 加 NOAH-HK 现金余额，再减去业主申报的待 CALL 款；NOAH-HK 现金进出按 Sharesight 账户记录计入，IB 侧出入金与两账户间划转按业主申报计入。出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>'
-        : '<li>每日自动更新：A 为 IB 账户官方日终 NAV，出入金按业主申报的流水账计入；出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>',
-    poolV2(data)
-      ? '<li>B 将同一池子全额按 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5% 投入（待 CALL 款已在池子边界扣除，不另留存）；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息。</li>'
-      : '<li>B 留存 24 万美元，其余 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5%；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息。</li>',
-    `<li>价格日 ${symbols.map(s => `${s} ${esc(last.quoteDates[s])}`).join('，')}。</li>`,
+      : pool
+        ? '<li><b>A 的口径：</b>IB 账户官方日终 NAV（PortfolioAnalyst）加 NOAH-HK 现金余额（Sharesight），再减去业主申报的待 CALL 款；NOAH-HK 现金进出按 Sharesight 账户记录计入，IB 侧出入金与两账户间划转按业主申报计入。每日自动更新；出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>'
+        : '<li><b>A 的口径：</b>IB 账户官方日终 NAV（PortfolioAnalyst），出入金按业主申报的流水账计入。每日自动更新；出现未申报的资金变动时比较停在该日并注明，申报后自动续算。</li>',
+    pool
+      ? '<li><b>B、C 的口径：</b>B 将同一池子全额按 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5% 投入（待 CALL 款已在池子边界扣除，不另留存）；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息；A 保留实际费用。</li>'
+      : '<li><b>B、C 的口径：</b>B 留存 24 万美元，其余 CSPX 60% / EXUS 23% / EIMI 12% / USSC 5%；C 全部 CSPX。不做每日再平衡，不另估交易成本、税费与现金利息；A 保留实际费用。</li>',
+    `<li>日终近似，市场收盘时间不同。价格日 ${symbols.map(s => `${s} ${esc(last.quoteDates[s])}`).join('，')}。</li>`,
+    `<li>最大回撤：${['A', 'B', 'C'].map(a => `${a} ${(full.maxDrawdown[a] * 100).toFixed(2)}%`).join(' / ')}。</li>`,
     rows.some(r => r.reserveUsed) ? '<li>模拟提款已触及假设现金留存，需另核 CALL；没有实际交易。</li>' : '',
   ].filter(Boolean).join('');
   return `<section id="xuan-etf-trend-v2" class="card" style="font-size:15px;line-height:1.45;color:${COMPACT.ink}">`
     + `<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap"><h2 style="margin:0;font-size:18px">ABC 表现比较</h2>`
     + `<span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:${pill.color}14;color:${pill.color};font-size:12px;font-weight:600;white-space:nowrap"><span aria-hidden="true" style="width:8px;height:8px;border-radius:50%;background:${pill.color};display:inline-block"></span>${pill.text}</span></div>`
-    + `<div style="display:flex;gap:8px;margin-top:12px">${['A', 'B', 'C'].map(tile).join('')}</div>`
+    + `<div style="font-size:12px;color:${COMPACT.muted};margin-top:10px">收益率 · ${esc(data.startDate)} → ${esc(data.latestCompleteDate)}（${spanDays} 天）</div>`
+    + `<div style="margin-top:2px">${['A', 'B', 'C'].map(rateRow).join('')}</div>`
     + chart
-    + `<p style="margin:6px 0 0;font-size:12px;color:${COMPACT.muted}">${esc(data.startDate)} 收盘起算 · 余额为 ${esc(data.latestCompleteDate)} 数值</p>`
-    + `<details style="margin-top:8px;font-size:13px;color:${COMPACT.muted}"><summary style="cursor:pointer">ⓘ 说明与回撤</summary><ol style="padding-left:20px;margin:6px 0 0">${notes}</ol></details>`
+    + table
+    + `<details style="margin-top:10px;font-size:13px;color:${COMPACT.muted}"><summary style="cursor:pointer">查看计算方法与重要说明</summary><ol style="padding-left:20px;margin:6px 0 0">${notes}</ol></details>`
     + `</section>`;
 }
 export function renderEtfTrend(data, { privateResult = null, viewDate = null } = {}) {
