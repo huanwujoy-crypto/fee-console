@@ -5,7 +5,7 @@
 // This module is pure. It reads nothing, writes nothing, fetches nothing and
 // prints no amount. It is not reached from the daily producer: wiring it into
 // `xuan-ib-etf-daily.mjs` is a separate, owner-approved change, and until then
-// the owner-declared ledgers remain the only source the comparison consumes.
+// the existing NOAH cash input and owner-declared IB/call ledgers remain in use.
 //
 // Contract (claude/xuan-ib-etf-cash-tags-v1.md):
 //   * a tag is one bracketed group anywhere in the description,
@@ -45,9 +45,12 @@ export const PENDING_REASONS = Object.freeze([
   'transfer-mismatch',      // legs found but amounts, signs, count or custodians do not fit
   'call-unmatched',         // a CALL whose commitment id does not identify one open commitment covering it
   'call-level-pending',     // a matched CALL the owner has not yet reflected as a level decrease that day
-  'adjustment-pending',     // a NOAH-HK ADJ: its meaning for the pool is the owner's to state
+  'adjustment-pending',     // a NOAH-HK ADJ requires source-evidence review by the sync operator
   'fx-on-pool-account',     // an FX tag on the single-currency NOAH-HK account
   'duplicate-event-ref',    // one ev on more than one row of a non-transfer kind
+  'usd-on-usd-account',     // a second USD amount cannot override the source row
+  'currency-mismatch',      // a row currency contradicts its verified account
+  'call-opening-balance-pending', // a pre-baseline commitment needs opening remaining evidence
 ]);
 
 const fail = message => { throw new Error(message); };
@@ -99,8 +102,9 @@ export function parseAbcTag(description) {
 // identity, and `planDescriptionUpdate` turns that into a description-only
 // update for one transaction id, never a create (rows without a
 // foreign_identifier are de-duplicated by their full description, so a
-// re-created row would double-book). Free text is truncated to the
-// 255-character limit; the tag never is. Re-tagging with the identical tag is
+// re-created row would double-book). Free text is never truncated; overflow
+// is a technical exception for the sync operator, not an owner chore.
+// Re-tagging with the identical tag is
 // a no-op; a different tag on an already tagged row is refused.
 export function formatAbcTag({ kind, ev, usd = null, commit = null, fund = null }) {
   check(TAG_KINDS.includes(kind), `unknown kind ${kind}`);
@@ -115,16 +119,20 @@ export function formatAbcTag({ kind, ev, usd = null, commit = null, fund = null 
 }
 export function tagDescription(description, tag) {
   const raw = typeof tag === 'string' ? tag : formatAbcTag(tag);
-  parseAbcTag(raw);
+  const parsed = parseAbcTag(raw);
+  check(parsed && parsed.raw === raw, 'expected exactly one standalone ABC tag');
+  check(description == null || typeof description === 'string', 'invalid original description');
   const original = typeof description === 'string' ? description : '';
   const existing = parseAbcTag(original); // throws on a malformed existing tag
   if (existing) { check(existing.raw === raw, 'row already carries a different ABC tag'); return original; }
-  const room = MAX_DESCRIPTION_LENGTH - raw.length - 1;
-  check(room >= 0, 'tag leaves no room in the description');
-  return original ? `${raw} ${original.slice(0, room)}` : raw;
+  const result = original ? `${raw} ${original}` : raw;
+  check(result.length <= MAX_DESCRIPTION_LENGTH
+    && new TextEncoder().encode(result).length <= MAX_DESCRIPTION_LENGTH,
+  'description-too-long: preserve the original; technical pending, never truncate');
+  return result;
 }
 export function planDescriptionUpdate(row, tag) {
-  check(object(row) && Number.isSafeInteger(row.id), 'invalid transaction');
+  check(object(row) && Number.isSafeInteger(row.id) && row.id > 0, 'invalid transaction');
   const description = tagDescription(row.description, tag);
   return { transactionId: row.id, description, changed: description !== (row.description ?? ''), mode: 'description-only' };
 }
@@ -135,7 +143,7 @@ export function classifyCashRow(row, account) {
   check(object(row) && Number.isSafeInteger(row.id) && typeof row.date_time === 'string'
     && Number.isFinite(Date.parse(row.date_time)) && finite(row.amount), 'invalid cash transaction');
   check(object(account) && account.id === row.cash_account_id && CUSTODIANS.includes(account.custodian)
-    && typeof account.currency === 'string', 'transaction is not on a declared pool account');
+    && typeof account.currency === 'string' && /^[A-Z]{3}$/.test(account.currency), 'transaction is not on a declared pool account');
   const type = row.cash_account_transaction_type?.name;
   const base = {
     id: `SS-${row.id}`, rowId: row.id, foreignIdentifier: row.foreign_identifier ?? null,
@@ -145,6 +153,10 @@ export function classifyCashRow(row, account) {
   };
   let tag = null, malformed = false;
   try { tag = parseAbcTag(row.description); } catch { malformed = true; }
+  base.tag = tag;
+  if (Object.hasOwn(row, 'currency') && row.currency !== account.currency) {
+    base.category = 'unknown'; base.pending = 'currency-mismatch'; return base;
+  }
   if (TRADE_TYPES.includes(type) || RETURN_TYPES.includes(type)) {
     base.category = 'return';
     if (tag || malformed) base.pending = 'tag-on-return-row';
@@ -155,6 +167,7 @@ export function classifyCashRow(row, account) {
   if (malformed) { base.pending = 'malformed-tag'; return base; }
   if (!tag) { base.pending = 'untagged-cash-event'; return base; }
   base.tag = tag;
+  if (account.currency === 'USD' && tag.usd !== null) { base.pending = 'usd-on-usd-account'; return base; }
   if (tag.kind === 'FX' && account.custodian === 'NOAH-HK') { base.pending = 'fx-on-pool-account'; return base; }
   if (['EXT', 'XFER', 'CALL', 'INKIND'].includes(tag.kind)) {
     if (account.currency === 'USD') base.usd = round2(row.amount);
@@ -184,25 +197,30 @@ export function resolveCashEvents(rows, { baselineDate, endDate, commitments = [
   // One event reference names one event. Two rows of a non-transfer kind with
   // the same ev are a double booking or a copied tag, never two events; two
   // distinct rows on one day with one amount and their own evs are two events.
-  const evCount = new Map();
-  for (const r of inWindow) if (r.tag?.ev && r.tag.kind !== 'XFER' && !r.pending) evCount.set(r.tag.ev, (evCount.get(r.tag.ev) || 0) + 1);
-  const duplicateEv = new Set([...evCount].filter(([, n]) => n > 1).map(([ev]) => ev));
+  const rowsByEvent = new Map();
+  for (const r of inWindow) if (r.tag?.ev) rowsByEvent.set(r.tag.ev, [...(rowsByEvent.get(r.tag.ev) || []), r]);
+  // Only an all-XFER group may reuse ev. A mixed group is a conflict for
+  // every member, including a member already pending for another reason.
+  const duplicateEv = new Set([...rowsByEvent].filter(([, group]) =>
+    group.length > 1 && group.some(r => r.tag.kind !== 'XFER')).map(([ev]) => ev));
   const flows = [], pending = [], inTransit = [], calls = [];
   const hold = (r, reason) => pending.push({ id: r.id, date: r.date, reason, ev: r.tag?.ev ?? null });
   const legsByEvent = new Map();
-  const remaining = new Map(commitments.map(c => [c.id, c.usd]));
+  // No opening remaining-balance evidence exists in this draft contract.
+  // An older commitment's original amount must not become new capacity.
+  const remaining = new Map(commitments.filter(c => c.date > baselineDate).map(c => [c.id, c.usd]));
   const ledgerDecreases = levelChanges.filter(c => c.deltaUsd < 0).map(c => ({ ...c, used: false }));
   for (const r of inWindow) {
+    if (r.tag?.ev && duplicateEv.has(r.tag.ev)) { hold(r, 'duplicate-event-ref'); continue; }
     if (r.pending) { hold(r, r.pending); continue; }
     if (r.category !== 'event') continue;
     const { kind } = r.tag;
-    if (duplicateEv.has(r.tag.ev)) { hold(r, 'duplicate-event-ref'); continue; }
     if (kind === 'EXT' || kind === 'INKIND') { flows.push({ id: r.id, date: r.date, usd: r.usd, kind: 'external', custodian: r.custodian, ev: r.tag.ev }); continue; }
     if (kind === 'FX') continue; // a conversion inside one custodian: the IB NAV already carries it
     if (kind === 'ADJ') {
       // The official IB NAV never contained a bookkeeping row, so an IB-side
       // correction is not a pool event. On NOAH-HK the balance is the source
-      // itself; what a correction means for the pool is the owner's to state.
+      // itself; the sync operator must establish its meaning from evidence.
       if (r.custodian === 'NOAH-HK') hold(r, 'adjustment-pending');
       continue;
     }
@@ -213,8 +231,10 @@ export function resolveCashEvents(rows, { baselineDate, endDate, commitments = [
       // The commitment is named, not chosen: exactly the id the tag carries,
       // declared on or before the call, with enough left to cover it.
       const commitment = commitments.find(c => c.id === r.tag.commit);
-      if (!commitment || commitment.date > r.date || remaining.get(commitment.id) + CENTS < amount
+      if (!commitment || commitment.date > r.date
           || (r.tag.fund !== null && r.tag.fund !== commitment.fund)) { hold(r, 'call-unmatched'); continue; }
+      if (commitment.date <= baselineDate) { hold(r, 'call-opening-balance-pending'); continue; }
+      if (remaining.get(commitment.id) + CENTS < amount) { hold(r, 'call-unmatched'); continue; }
       // The cash leaving NOAH-HK is a pool outflow only together with the
       // owner's same-day level decrease of the same amount; until the ledger
       // carries that decrease the day stays pending rather than being netted.
@@ -267,25 +287,40 @@ export function inTransitOn(inTransit, date) {
 }
 
 // The owner's IB-side ledger stays as the fallback for an event no Sharesight
-// row describes. A ledger entry that a tagged IB-HK row already covers — same
-// posting date, same signed USD amount, same kind family — is superseded one
-// for one, so one event is never counted twice; every other ledger entry is
-// kept. Two distinct rows on one day with one amount each consume their own
-// ledger entry: matching is one to one, never by amount alone.
+// row describes. Superseding requires the same explicit ev, posting date,
+// signed USD amount and kind family, with a unique row on each side. Legacy
+// entries without ev stay in kept; an economic match is only a pending
+// candidate, never proof that the two records describe the same transaction.
 export function reconcileWithLedger(flows, ledgerFlows) {
   check(Array.isArray(flows) && Array.isArray(ledgerFlows), 'invalid reconciliation input');
+  const ids = new Set();
   const pool = ledgerFlows.map(f => {
     check(object(f) && typeof f.id === 'string' && validDate(f.date) && ['in', 'out'].includes(f.direction)
-      && finite(f.usd) && f.usd > 0 && ['external', 'transfer'].includes(f.kind), `invalid ledger flow ${f?.id}`);
+      && finite(f.usd) && f.usd > 0 && ['external', 'transfer'].includes(f.kind) && f.account === 'IB-HK'
+      && (f.ev === undefined || typeof f.ev === 'string' && REF_RE.test(f.ev)), `invalid ledger flow ${f?.id}`);
+    check(!ids.has(f.id), `duplicate ledger flow ${f.id}`); ids.add(f.id);
     return { ...f, signed: f.direction === 'in' ? f.usd : -f.usd, used: false };
   });
-  const superseded = [];
-  for (const flow of flows) {
-    if (flow.custodian !== 'IB-HK') continue;
+  const superseded = [], pending = [];
+  const ibFlows = flows.filter(f => f.custodian === 'IB-HK' && ['external', 'internal-transfer'].includes(f.kind));
+  const eventCounts = new Map();
+  for (const f of ibFlows) if (f.ev) eventCounts.set(f.ev, (eventCounts.get(f.ev) || 0) + 1);
+  const hold = (flow, entry, reason) => pending.push({
+    ledgerId: entry.id, rowId: flow.id, date: flow.date, ledgerDate: entry.date, ev: flow.ev ?? null, reason,
+  });
+  for (const flow of ibFlows) {
     const family = flow.kind === 'internal-transfer' ? 'transfer' : flow.kind === 'external' ? 'external' : null;
-    if (!family) continue;
-    const match = pool.find(l => !l.used && l.kind === family && l.date === flow.date && Math.abs(l.signed - flow.usd) <= CENTS);
-    if (match) { match.used = true; superseded.push({ ledgerId: match.id, rowId: flow.id, ev: flow.ev ?? null }); }
+    const economicMatch = l => l.kind === family && l.date === flow.date && Math.abs(l.signed - flow.usd) <= CENTS;
+    for (const entry of pool.filter(l => !l.used && l.ev === undefined && economicMatch(l))) {
+      hold(flow, entry, 'manual-event-ref-pending');
+    }
+    const referenced = flow.ev ? pool.filter(l => !l.used && l.ev === flow.ev) : [];
+    if (referenced.length === 1 && eventCounts.get(flow.ev) === 1 && economicMatch(referenced[0])) {
+      referenced[0].used = true;
+      superseded.push({ ledgerId: referenced[0].id, rowId: flow.id, ev: flow.ev });
+    } else {
+      for (const entry of referenced) hold(flow, entry, 'manual-event-ref-conflict');
+    }
   }
-  return { kept: pool.filter(l => !l.used).map(({ signed, used, ...l }) => l), superseded };
+  return { kept: pool.filter(l => !l.used).map(({ signed, used, ...l }) => l), superseded, pending };
 }
