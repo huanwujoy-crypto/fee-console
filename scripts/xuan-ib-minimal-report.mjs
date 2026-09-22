@@ -92,6 +92,47 @@ function holdingsFromRaw(raw, authoritativeValueUsd, asOfHkt, aggregateAsOfHkt) 
   return { status: 'ok', asOfHkt, authoritativeValueUsd, note, rows };
 }
 
+function familyPortfolioSnapshot(receipts, registry, dataDate) {
+  const family = registry.portfolios.filter(item => item.role === 'family' && item.requiredEachReport);
+  if (family.length !== 7) fail('FAMILY_SCOPE_NOT_SEVEN');
+  const byId = new Map();
+  for (const receipt of receipts) {
+    const result = unwrapSource('sharesight', receipt.raw).result;
+    if (byId.has(result.portfolio.id)) fail('DUPLICATE_SHARESIGHT_PORTFOLIO');
+    byId.set(result.portfolio.id, { report: result.data.report, completedAt: receipt.completedAt });
+  }
+  let total = 0;
+  const rows = family.map(item => {
+    const source = byId.get(item.portfolioId);
+    const valuationDate=source?.report?.end_date;
+    const valuationMs=Date.parse(`${valuationDate}T00:00:00Z`);
+    if (!source || source.report?.currency?.code !== 'USD' || !finite(source.report.value) || source.report.value < 0
+      || !/^\d{4}-\d{2}-\d{2}$/.test(valuationDate)
+      || !Number.isFinite(valuationMs) || new Date(valuationMs).toISOString().slice(0,10)!==valuationDate
+      || valuationDate > dataDate || !Number.isFinite(Date.parse(source.completedAt))) fail('FAMILY_VALUE_UNVERIFIED');
+    total += source.report.value;
+    return [item.portfolioName, `$${amount(source.report.value)} · ${source.report.end_date}`];
+  });
+  if (!finite(total)) fail('FAMILY_TOTAL_OUT_OF_RANGE');
+  const latest = Math.max(...family.map(item => Date.parse(byId.get(item.portfolioId).completedAt)));
+  return { total, rows, asOfHkt: sourceTime(new Date(latest).toISOString()) };
+}
+
+function nativeCashRisk(summary, asOfHkt) {
+  const cashRatio = summary.net_liquidation > 0
+    ? ` · 占 NAV ${(summary.total_cash_value / summary.net_liquidation * 100).toFixed(2)}%` : '';
+  const margin = finite(summary.initial_margin)&&summary.initial_margin>=0 ? `$${amount(summary.initial_margin)}` : '未取得';
+  const leverage = finite(summary.leverage)&&summary.leverage>=0 ? ` · 杠杆 ${amount(summary.leverage)}` : '';
+  return {
+    title: '集中度与现金（本轮）', asOfHkt,
+    lines: ['单票集中度按本轮三账户持仓计算；现金为 IB 账面读数，不等于可用购买力。'],
+    columns: ['项目', '本轮数值'],
+    rows: [['最大单仓', '按下方已核验三账户持仓计算'],
+      ['IB 现金', `$${amount(summary.total_cash_value)}${cashRatio}`],
+      ['已用保证金', `${margin}${leverage}`]],
+  };
+}
+
 const ORDER_KEYS = ['order_id', 'order_status', 'order_type', 'side', 'limit_price',
   'total_shares_qty', 'cum_shares_qty', 'remaining_shares_qty', 'primary_description',
   'secondary_description', 'order_time'];
@@ -174,6 +215,7 @@ export function buildMinimalReport(input, {
   if (evidence.sources.ib.positions.status !== 'ok') fail('DIRECT_POSITIONS_REQUIRED');
   const summaryTime = sourceTime(input.ib.accountSummary.completedAt), balancesTime = sourceTime(input.ib.balances.completedAt);
   const holdings = holdingsFromRaw(input.ib.positions.raw, equityTotal, sourceTime(input.ib.positions.completedAt), balancesTime);
+  const family = recordPm ? familyPortfolioSnapshot(input.sharesight, registry, input.dataDate) : null;
   const orders = unwrapSource('orders', input.ib.orders.raw).orders;
   const rotation = orderCardFromRaw(orders, sourceTime(input.ib.orders.completedAt));
   const trades = unwrapSource('trades', input.ib.trades.raw).trades;
@@ -193,12 +235,16 @@ export function buildMinimalReport(input, {
       { label: 'IB NAV', value: summary.net_liquidation, format: 'usd', asOfHkt: summaryTime, note: 'IB 账户摘要直读，不代表当日收益。' },
       { label: 'IB 账面现金', value: summary.total_cash_value, format: 'usd', asOfHkt: summaryTime, note: '不是可投资余额；未扣 CALL 预留，也未加入 NOAH 现金。' },
       { label: 'IB 股票市值', value: equityTotal, format: 'usd', asOfHkt: balancesTime, note: 'IB 余额表 BASE 汇总直读；BASE 对应 USD，不累加币种分项。' },
+      ...(recordPm ? [{ label: '家庭七组合合计', value: family.total, format: 'usd', asOfHkt: family.asOfHkt,
+        note: 'Sharesight 七个家庭组合本轮读数；各组合估值日见配置，私募不是当日重估。' }] : []),
     ],
     holdings,
     risk: [recordPm
-      ? unavailableCard('② 其它风险', asOfHkt, '其它风险指标未重算', 'AI 压力见本轮计算；其它触发指标不沿用旧数。')
+      ? nativeCashRisk(summary, summaryTime)
       : unavailableCard('② 风险', asOfHkt, '风险指标本次未重算', 'AI 压力、集中度及触发指标待核验；不将历史数值当本期结果。')],
-    allocation: [unavailableCard('④ 配置', asOfHkt, '四桶及补仓金额待核验', '本次未重算四桶、类别缺口及现金分配；不生成股数、限价或交易指令。')],
+    allocation: [unavailableCard('④ 配置', asOfHkt, '四类及补仓金额待核验', '本次未重算股票四类、类别缺口及现金分配；不生成股数、限价或交易指令。'),
+      ...(recordPm ? [{ title: '家庭七组合', asOfHkt: family.asOfHkt, lines: ['Sharesight 本轮直读；各组合估值日原样显示。'],
+        columns: ['组合', '价值 USD · 估值日'], rows: family.rows }] : [])],
     rotation,
     events: unavailableCard('事件日历', asOfHkt, '事件日历未查询', '未查询不代表没有事件；本次不作事件风险判断。'),
     decisions: previousDecisions.map(item => ({

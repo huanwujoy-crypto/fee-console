@@ -218,6 +218,14 @@ test('native LIMIT orders preserve original descriptions and decimal strings, gr
     associationSnapshot: inactiveAssociationSnapshot() });
   assert.equal(prepared.result.status, 'prepared-not-published');
   assert.ok(prepared.html.includes('70.5000（币种未返回）'));
+  assert.ok(prepared.html.includes('价格变化（未取得）'));
+  assert.ok(!prepared.html.includes('价格变化 ≥1%（0）'));
+  const todo = prepared.html.split('<div class="pane p4">')[1].split('<div class="pane p5">')[0];
+  assert.match(todo, /<h3 class="raw-order-heading">买入 <small>2 张<\/small><\/h3>/);
+  assert.match(todo, /<h3 class="raw-order-heading">卖出 <small>1 张<\/small><\/h3>/);
+  assert.ok(todo.indexOf('BUY 30 native instrument B') < todo.indexOf('SELL 30 native instrument A'));
+  assert.match(todo, /class="raw-order-cards"/);
+  assert.doesNotMatch(todo, /data-columns="5"/);
   assert.ok(prepared.html.includes(priorTemplate[0]));
 });
 
@@ -270,9 +278,29 @@ test('a USD account summary and same-day real source receipts are required for e
   const pm = buildMinimalReport(scheduled, options()).view;
   assert.equal(pm.edition, 'pm');
   assert.match(pm.marketContext, /睡前记录/);
+  assert.equal(pm.kpis[3].label, '家庭七组合合计');
+  assert.equal(pm.kpis[3].value, 7 * 999);
+  assert.equal(pm.allocation[1].title, '家庭七组合');
+  assert.equal(pm.allocation[1].rows.length, 7);
+  assert.ok(pm.allocation[1].rows.every(row => row[1].includes('2026-08-24')));
+  assert.deepEqual(pm.risk[0].rows.map(row => row[0]), ['最大单仓', 'IB 现金', '已用保证金']);
+  assert.match(pm.risk[0].rows[1][1], /占 NAV/);
+  assert.match(pm.risk[0].rows[2][1], /未取得/);
   assert.doesNotMatch(JSON.stringify(pm), /手动精简试跑|临时版/);
   const am = fixture(); am.edition = 'am';
   assert.throws(() => buildMinimalReport(am, options()), /UNSUPPORTED_RECORD_EDITION/);
+});
+
+test('seven-family total excludes AI-only portfolios and rejects future valuation dates', () => {
+  const input = fixture(); input.edition = 'pm';
+  const aiOnly = registry.portfolios.find(item => item.role === 'ai_only');
+  const receipt = input.sharesight.find(item => item.raw.result.portfolio.id === aiOnly.portfolioId);
+  receipt.raw.result.data.report.value = 100_000; receipt.rawFingerprint = fingerprint(receipt.raw);
+  assert.equal(buildMinimalReport(input, options()).view.kpis[3].value, 7 * 999);
+  const family = registry.portfolios.find(item => item.role === 'family');
+  const familyReceipt = input.sharesight.find(item => item.raw.result.portfolio.id === family.portfolioId);
+  familyReceipt.raw.result.data.report.end_date = '2026-09-06'; familyReceipt.rawFingerprint = fingerprint(familyReceipt.raw);
+  assert.throws(() => buildMinimalReport(input, options()), /FAMILY_VALUE_UNVERIFIED/);
 });
 
 test('nonempty trades are counted without pretending they are newly executed orders', () => {
