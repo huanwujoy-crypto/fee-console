@@ -216,9 +216,10 @@ export function finishSourceCapture(dir, key, rawFile, { journalPath, wallNow = 
 }
 
 export function assembleSourceCaptures(dir, { journalPath, previousSourceSha, dataDate, weekly = false,
-  weeklySnapshotFile = null, wallNow = () => Date.now() } = {}) {
+  weeklySnapshotFile = null, edition = 'adhoc', wallNow = () => Date.now() } = {}) {
   dir = privatePath(dir, { directory: true }); journalPath = privatePath(journalPath);
   if (typeof weekly !== 'boolean' || (!weekly && weeklySnapshotFile !== null)) fail('INVALID_WEEKLY_OPTIONS');
+  if (!['adhoc', 'pm'].includes(edition) || (weekly && edition !== 'adhoc')) fail('INVALID_CAPTURE_EDITION');
   const keys = weekly ? CAPTURE_SOURCE_KEYS.filter(key => key.startsWith('ib.')) : CAPTURE_SOURCE_KEYS;
   if (fs.existsSync(path.join(dir, 'input.json'))) fail('OUTPUT_ALREADY_EXISTS');
   const hasHookBegin = CAPTURE_SOURCE_KEYS.some(key => {
@@ -258,7 +259,7 @@ export function assembleSourceCaptures(dir, { journalPath, previousSourceSha, da
     if (hktDate(receipt.startedAt) !== dataDate || hktDate(receipt.completedAt) !== dataDate) fail('CAPTURE_DATE_MISMATCH');
     collected.set(key, receipt);
   }
-  const input = { edition: 'adhoc', dataDate, previousSourceSha,
+  const input = { edition, dataDate, previousSourceSha,
     ib: Object.fromEntries(IB_ENDPOINTS.map(endpoint => [endpoint, collected.get(`ib.${endpoint}`)])),
     sharesight: weekly ? [] : requiredIds.map(id => collected.get(`sharesight.${id}`)) };
   if (weekly) {

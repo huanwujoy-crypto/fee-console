@@ -260,14 +260,19 @@ test('overlong descriptions, duplicate source order IDs and too many rows stop r
   }
 });
 
-test('a USD account summary, same-day real source receipts and adhoc scope are required', () => {
+test('a USD account summary and same-day real source receipts are required for either record edition', () => {
   const foreign = fixture(); foreign.ib.accountSummary.raw.currency = 'EUR'; recapture(foreign, 'accountSummary');
   assert.throws(() => buildMinimalReport(foreign, options()), /USD_ACCOUNT_SUMMARY_REQUIRED/);
   const stale = fixture(); stale.ib.positions.startedAt = '2026-08-24T02:00:00Z'; stale.ib.positions.completedAt = '2026-08-24T02:00:01Z';
   assert.throws(() => buildMinimalReport(stale, options()), /READ_DATE_MISMATCH/);
   assert.throws(() => buildMinimalReport(fixture(), { ...options(), now: Date.parse(`${dataDate}T01:59:59Z`) }), /INVALID_READ_WINDOW/);
   const scheduled = fixture(); scheduled.edition = 'pm';
-  assert.throws(() => buildMinimalReport(scheduled, options()), /ADHOC_TRIAL_ONLY/);
+  const pm = buildMinimalReport(scheduled, options()).view;
+  assert.equal(pm.edition, 'pm');
+  assert.match(pm.marketContext, /睡前记录/);
+  assert.doesNotMatch(JSON.stringify(pm), /手动精简试跑|临时版/);
+  const am = fixture(); am.edition = 'am';
+  assert.throws(() => buildMinimalReport(am, options()), /UNSUPPORTED_RECORD_EDITION/);
 });
 
 test('nonempty trades are counted without pretending they are newly executed orders', () => {

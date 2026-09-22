@@ -157,7 +157,8 @@ export function buildMinimalReport(input, {
   registry, previousHtml, previousMeta, associationReceipt = null,
   associationSnapshot = null, journalPath = null, now = Date.now(),
 } = {}) {
-  if (input?.edition !== 'adhoc') fail('ADHOC_TRIAL_ONLY');
+  if (!['adhoc', 'pm'].includes(input?.edition)) fail('UNSUPPORTED_RECORD_EDITION');
+  const recordPm = input.edition === 'pm';
   const evidence = buildSourceEvidence(input, registry, {
     associationReceipt, associationSnapshot, journalPath, now,
   });
@@ -177,13 +178,16 @@ export function buildMinimalReport(input, {
   const rotation = orderCardFromRaw(orders, sourceTime(input.ib.orders.completedAt));
   const trades = unwrapSource('trades', input.ib.trades.raw).trades;
   const view = {
-    schemaVersion: 1, edition: 'adhoc', dataDate: input.dataDate, asOfHkt,
-    marketContext: '精简试跑 · 市场日历未查询，不判断休市或开盘状态',
-    alerts: [{ level: 'warning', text: '精简试跑：风险、四桶与补仓金额待核验；历史意见及原有 ABC 日期保留。' }],
+    schemaVersion: 1, edition: input.edition, dataDate: input.dataDate, asOfHkt,
+    marketContext: recordPm ? '睡前记录 · 市场日历未查询' : '精简试跑 · 市场日历未查询，不判断休市或开盘状态',
+    alerts: [{ level: 'warning', text: recordPm
+      ? '持仓与挂单为本轮直读；四桶、补仓金额及未列出的项目未重算。'
+      : '精简试跑：风险、四桶与补仓金额待核验；历史意见及原有 ABC 日期保留。' }],
     summary: [
       `IB 净资产 $${amount(summary.net_liquidation)}；账面现金 $${amount(summary.total_cash_value)}。`,
       `持仓 ${holdings.rows.length} 行；挂单端点返回 ${orders.length} 张；日涨跌未查询。`,
-      '风险、四桶及补仓金额本次不重算；原有 ABC 仅作历史比较。',
+      recordPm ? 'AI 压力另由三账户本轮持仓计算；其余风险、四桶及补仓金额未重算。'
+        : '风险、四桶及补仓金额本次不重算；原有 ABC 仅作历史比较。',
     ],
     kpis: [
       { label: 'IB NAV', value: summary.net_liquidation, format: 'usd', asOfHkt: summaryTime, note: 'IB 账户摘要直读，不代表当日收益。' },
@@ -191,7 +195,9 @@ export function buildMinimalReport(input, {
       { label: 'IB 股票市值', value: equityTotal, format: 'usd', asOfHkt: balancesTime, note: 'IB 余额表 BASE 汇总直读；BASE 对应 USD，不累加币种分项。' },
     ],
     holdings,
-    risk: [unavailableCard('② 风险', asOfHkt, '风险指标本次未重算', 'AI 压力、集中度及触发指标待核验；不将历史数值当本期结果。')],
+    risk: [recordPm
+      ? unavailableCard('② 其它风险', asOfHkt, '其它风险指标未重算', 'AI 压力见本轮计算；其它触发指标不沿用旧数。')
+      : unavailableCard('② 风险', asOfHkt, '风险指标本次未重算', 'AI 压力、集中度及触发指标待核验；不将历史数值当本期结果。')],
     allocation: [unavailableCard('④ 配置', asOfHkt, '四桶及补仓金额待核验', '本次未重算四桶、类别缺口及现金分配；不生成股数、限价或交易指令。')],
     rotation,
     events: unavailableCard('事件日历', asOfHkt, '事件日历未查询', '未查询不代表没有事件；本次不作事件风险判断。'),
@@ -201,8 +207,10 @@ export function buildMinimalReport(input, {
     })),
     observations: [`成交端点返回 ${trades.length} 条；本次未判定其中的新成交。`],
     notes: [
-      `版次与时点：手动精简试跑，${asOfHkt}。显示读取时间，不把历史估值日改成本日。`,
-      weeklyNote ?? '数据与口径：5 个 IB 端点及 9 个必读 Sharesight 组合均经原始回执校验。Sharesight 数值未用于本次现金、风险或配置汇总。风险、四桶及补仓未重算；原有 ABC 保留原始日期，不是本次刷新。',
+      `版次与时点：${recordPm ? '睡前只读记录' : '手动精简试跑'}，${asOfHkt}。显示读取时间，不把历史估值日改成本日。`,
+      weeklyNote ?? (recordPm
+        ? '数据与口径：5 个 IB 端点及 9 个 Sharesight 组合均经原始回执校验。AI 压力单独使用本轮三账户数据；四桶、补仓及其它风险未重算。原有 ABC 保留原始日期。'
+        : '数据与口径：5 个 IB 端点及 9 个必读 Sharesight 组合均经原始回执校验。Sharesight 数值未用于本次现金、风险或配置汇总。风险、四桶及补仓未重算；原有 ABC 保留原始日期，不是本次刷新。'),
       '只读边界：不下单、撤单、改单或转账。历史意见与回执完整继承；生成候选页不等于发布成功，也不证明二十分钟目标达成。',
     ],
     cashPlan: { schemaVersion: 2, status: 'unavailable' },
