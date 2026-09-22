@@ -53,7 +53,7 @@ export function prepareMinimalRun(dir, { journalPath,
     fail('EXACT_COMPLETED_READ_STAGES_REQUIRED');
   }
   const associationReceipt = readCaptureJson(path.join(dir, 'association.json'), 16_384);
-  if (input.edition !== 'adhoc') fail('ADHOC_TRIAL_ONLY');
+  if (!['adhoc', 'pm'].includes(input.edition) || (weekly && input.edition !== 'adhoc')) fail('UNSUPPORTED_RECORD_EDITION');
   const stage = (name, action) => {
     startJournalStage(journalPath, name);
     try {
@@ -87,7 +87,8 @@ export function prepareMinimalRun(dir, { journalPath,
   // This separately refreshes main policy and retains all existing source,
   // history, journal, renderer and trusted-guard checks. No hand-written HTML.
   return prepareCandidate([path.join(dir, 'view.json'), path.join(dir, 'sources.json'),
-    path.join(dir, 'candidate.html'), '--journal', journalPath]);
+    path.join(dir, 'candidate.html'), '--journal', journalPath,
+    ...(input.edition === 'pm' ? ['--risk-source-capture', path.join(dir, 'input.json')] : [])]);
 }
 
 export function runMinimalPrepareCli(args) {

@@ -37,17 +37,17 @@ const time = value => {
 };
 const keyCheck = key => { if (!CAPTURE_SOURCE_KEYS.includes(key)) fail('INVALID_SOURCE_KEY'); };
 export const SOURCE_HOOK_TOOLS = Object.freeze({
-  'ib.accountSummary': 'mcp__Interactive_Brokers__get_account_summary',
-  'ib.balances': 'mcp__Interactive_Brokers__get_account_balances',
-  'ib.positions': 'mcp__Interactive_Brokers__get_account_positions',
-  'ib.orders': 'mcp__Interactive_Brokers__get_account_orders',
-  'ib.trades': 'mcp__Interactive_Brokers__get_account_trades',
+  'ib.accountSummary': 'mcp__ibkr__get_account_summary',
+  'ib.balances': 'mcp__ibkr__get_account_balances',
+  'ib.positions': 'mcp__ibkr__get_account_positions',
+  'ib.orders': 'mcp__ibkr__get_account_orders',
+  'ib.trades': 'mcp__ibkr__get_account_trades',
   sharesight: 'mcp__Family_Portfolio_Sharesight__sharesight_get_performance',
 });
 const expectedTool = key => SOURCE_HOOK_TOOLS[key.startsWith('sharesight.') ? 'sharesight' : key];
 
-// Exact tool names/input keys were loaded from the actual Claude runtime on
-// 2026-09-05. This first path deliberately uses only the minimal read variants.
+// IBKR tool names were verified in the Codex runtime on 2026-09-22.
+// This path deliberately uses only the minimal read variants.
 // A schema definition confirms input syntax, not response completeness.
 export function validateHookInput(key, input) {
   keyCheck(key);

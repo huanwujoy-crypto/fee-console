@@ -66,6 +66,15 @@ test("chooses the newest of several valid candidates", () => {
   assert.equal(selected.ref, "origin/claude/handover-20260826-new222");
 });
 
+test('accepts a Codex report candidate while retaining legacy published metadata', () => {
+  const codex = candidate({ ref: 'origin/codex/xuan-ib-pm-20260922-abc123',
+    dataDate: '2026-09-22', commitEpoch: 200, htmlBlob: sha('e') });
+  assert.equal(selectNewestCandidate([codex], published, publishedState), codex);
+  assert.throws(() => selectNewestCandidate([
+    candidate({ ref: 'origin/untrusted/report-abc123' })
+  ], published, publishedState), /approved report branch/);
+});
+
 test("a newer data date wins over a later correction to the older date", () => {
   const selected = selectNewestCandidate([
     candidate({ref: "origin/claude/handover-20260827-new111", dataDate: "2026-08-27", commitEpoch: 200, htmlBlob: sha("e")}),

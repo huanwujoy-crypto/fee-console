@@ -68,8 +68,9 @@ const validateCandidate = candidate => {
   if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
     throw new Error("candidate must be an object");
   }
-  if (typeof candidate.ref !== "string" || !candidate.ref.startsWith("origin/claude/")) {
-    throw new Error("candidate ref must be an origin/claude branch");
+  if (typeof candidate.ref !== "string" ||
+      (!candidate.ref.startsWith("origin/codex/xuan-ib-") && !candidate.ref.startsWith("origin/claude/"))) {
+    throw new Error("candidate ref must be an approved report branch");
   }
   requireSha("candidate sha", candidate.sha);
   requireSha("candidate htmlBlob", candidate.htmlBlob);

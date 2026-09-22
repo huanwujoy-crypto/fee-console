@@ -23,7 +23,7 @@ const registry = JSON.parse(fs.readFileSync(path.join(root, 'claude/xuan-ib-port
 const priorTemplate = previousHtml.match(/<template id="xuan-ib-decision-state-v1" type="application\/json">[\s\S]*?<\/template>/)[0];
 
 async function fixture(t, { missingAssociation = false, failedRead = false, activeRead = false, mutate = null,
-  weekly = false, weeklySnapshot = null } = {}) {
+  weekly = false, weeklySnapshot = null, edition = 'adhoc' } = {}) {
   // Synthetic times stay in this process's real monotonic domain so the
   // wrapper can append genuine local stage times without a clock workaround.
   const epoch = Date.now() - 10_000;
@@ -39,13 +39,13 @@ async function fixture(t, { missingAssociation = false, failedRead = false, acti
   finishJournalStage(journalPath, 'bootstrap', {}, clock(200));
   const policy = { schemaVersion: 1, policyId: 'ib-primary-7day-pilot-v1', accountAlias: 'IB-HK',
     basis: 'owner-attested-recurring-v1', status: 'active', purpose: 'xuan-ib-read-only-report',
-    editions: ['adhoc'], publisher: 'claude-verified-candidate-v1', validFrom: stamp(-1000),
+    editions: ['adhoc', 'pm'], publisher: 'claude-verified-candidate-v1', validFrom: stamp(-1000),
     expiresAt: stamp(7 * 86_400_000 - 1000) };
   const snapshot = (checkedAt = new Date().toISOString(), selected = policy) => ({
     policy: selected, policyCommit: 'a'.repeat(40), policyBlob: associationPolicyBlob(selected), checkedAt,
   });
   const association = await createPreReadAssociationReceipt(snapshot(stamp(400)), {
-    journalPath, now: epoch + 400, edition: 'adhoc', previousSourceSha: previousMeta.sourceSha,
+    journalPath, now: epoch + 400, edition, previousSourceSha: previousMeta.sourceSha,
   });
   startJournalStage(journalPath, 'ib-read', clock(1000));
   if (!weekly) {
@@ -64,7 +64,7 @@ async function fixture(t, { missingAssociation = false, failedRead = false, acti
       position: 2, market_price: 50, market_value: 100, currency: 'USD' }] },
     orders: { orders: [] }, trades: { trades: [] },
   };
-  const input = { edition: 'adhoc', dataDate, previousSourceSha: previousMeta.sourceSha,
+  const input = { edition, dataDate, previousSourceSha: previousMeta.sourceSha,
     ib: Object.fromEntries(IB_ENDPOINTS.map((endpoint, i) => [endpoint, captured(raw[endpoint], 1100 + i * 100, 1150 + i * 100)])),
     sharesight: registry.portfolios.filter(item => item.requiredEachReport).map(item => captured({
       result: { mode: 'read_only', portfolio: { id: item.portfolioId, currency_code: 'USD' },
@@ -126,6 +126,15 @@ test('one command derives private fixed outputs then hands the exact journal and
   assert.deepEqual(evidence.sources.ib.accountAssociation, f.association);
   assert.equal(fs.readFileSync(path.join(f.dir, 'input.json'), 'utf8'), originalInput);
   assert.equal(fs.readFileSync(path.join(f.dir, 'association.json'), 'utf8'), originalAssociation);
+});
+
+test('a fixed PM record binds risk derivation to the same captured source file', async t => {
+  const f = await fixture(t, { edition: 'pm' });
+  prepareMinimalRun(f.dir, f.options);
+  const args = f.calls.find(item => item[0] === 'candidate')[1];
+  assert.deepEqual(args.slice(-2), ['--risk-source-capture', path.join(f.dir, 'input.json')]);
+  assert.equal(readCaptureJson(path.join(f.dir, 'view.json')).edition, 'pm');
+  assert.equal(readCaptureJson(path.join(f.dir, 'sources.json')).edition, 'pm');
 });
 
 test('actual recurring build -> existing prepare CLI -> real trusted guard -> private candidate completes all nine stages', async t => {

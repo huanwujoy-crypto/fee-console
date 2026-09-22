@@ -232,7 +232,7 @@ explicit AAOI T1 approval, without changing trading or publication authority.
 Any complete XUAN-IB handover produced from this repository—scheduled, Run now,
 manual, recovery, or ad hoc—must enter the same trusted publication path.
 
-1. Create a branch named `claude/<descriptive-name>-<six-lowercase-alphanumeric>`.
+1. Create a branch named `codex/xuan-ib-<descriptive-name>-<six-lowercase-alphanumeric>`.
 2. Base it on `main` or a current ancestor of `main`.
 3. Create exactly one non-merge commit that changes only `xuan-ib/index.html`.
 4. Use the commit subject `handover YYYY-MM-DD`, matching the page data date.
