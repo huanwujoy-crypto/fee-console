@@ -278,9 +278,29 @@ test('a USD account summary and same-day real source receipts are required for e
   const pm = buildMinimalReport(scheduled, options()).view;
   assert.equal(pm.edition, 'pm');
   assert.match(pm.marketContext, /睡前记录/);
+  assert.equal(pm.kpis[3].label, '家庭七组合合计');
+  assert.equal(pm.kpis[3].value, 7 * 999);
+  assert.equal(pm.allocation[1].title, '家庭七组合');
+  assert.equal(pm.allocation[1].rows.length, 7);
+  assert.ok(pm.allocation[1].rows.every(row => row[1].includes('2026-08-24')));
+  assert.deepEqual(pm.risk[0].rows.map(row => row[0]), ['最大单仓', 'IB 现金', '已用保证金']);
+  assert.match(pm.risk[0].rows[1][1], /占 NAV/);
+  assert.match(pm.risk[0].rows[2][1], /未取得/);
   assert.doesNotMatch(JSON.stringify(pm), /手动精简试跑|临时版/);
   const am = fixture(); am.edition = 'am';
   assert.throws(() => buildMinimalReport(am, options()), /UNSUPPORTED_RECORD_EDITION/);
+});
+
+test('seven-family total excludes AI-only portfolios and rejects future valuation dates', () => {
+  const input = fixture(); input.edition = 'pm';
+  const aiOnly = registry.portfolios.find(item => item.role === 'ai_only');
+  const receipt = input.sharesight.find(item => item.raw.result.portfolio.id === aiOnly.portfolioId);
+  receipt.raw.result.data.report.value = 100_000; receipt.rawFingerprint = fingerprint(receipt.raw);
+  assert.equal(buildMinimalReport(input, options()).view.kpis[3].value, 7 * 999);
+  const family = registry.portfolios.find(item => item.role === 'family');
+  const familyReceipt = input.sharesight.find(item => item.raw.result.portfolio.id === family.portfolioId);
+  familyReceipt.raw.result.data.report.end_date = '2026-09-06'; familyReceipt.rawFingerprint = fingerprint(familyReceipt.raw);
+  assert.throws(() => buildMinimalReport(input, options()), /FAMILY_VALUE_UNVERIFIED/);
 });
 
 test('nonempty trades are counted without pretending they are newly executed orders', () => {

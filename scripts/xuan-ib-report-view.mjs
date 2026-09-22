@@ -108,7 +108,8 @@ export function validateReportView(view) {
   text(view.marketContext,120);
   list(view.alerts,0,3,'alerts'); view.alerts.forEach(item=>{exact(item,['level','text'],'alert'); if(!['warning','error'].includes(item.level))fail('invalid alert');text(item.text,160);});
   list(view.summary,3,3,'summary'); view.summary.forEach((line,index)=>text(line,150,`summary[${index}]`));
-  list(view.kpis,3,3,'KPI');
+  list(view.kpis,3,4,'KPI');
+  if(view.kpis.length===4 && (view.edition!=='pm'||view.kpis[3]?.label!=='家庭七组合合计'))fail('unsupported fourth KPI');
   view.kpis.forEach(item=>{
     exact(item,['label','value','format','asOfHkt','note'],'KPI');text(item.label,50);text(item.note,160);asOf(item.asOfHkt,view.dataDate);
     if(!['usd','percent','number'].includes(item.format))fail('invalid KPI format');finite(item.value,'KPI',{negative:true});

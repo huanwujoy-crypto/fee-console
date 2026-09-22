@@ -6,7 +6,7 @@
 
 1. Codex 中的 IBKR 官方 MCP 仅授予 `mcp.read`；实测账户身份、持仓、挂单及时间戳。2026-09-22 已确认 `mcp__ibkr__get_account_positions` 与 `mcp__ibkr__get_account_orders` 可读，但这不是一次完整报告的证据。若授权页要求 `mcp.write` 或账户不符，停止。不要读取或记录密码、验证码、完整账户编号。
 2. Sharesight 使用本机固定 Native Direct 只读程序。2026-09-22 已读回组合清单及 IB-HK performance 的完整字段；每次仍需核对来源、日期和账户身份。`scripts/xuan-ib-sharesight-direct-capture.mjs` 在已有私密 journal 的 `sharesight-read` 阶段调用固定程序、保留原响应并生成现有采集回执。缺失项写“未取得”，不填旧值或零。
-3. 2026-09-22 私有试跑已完成同日 5 项 IB、9 个 Sharesight 来源与正式睡前版候选页校验；全过程约 57 秒，九个 journal 阶段全部通过。候选并未发布；仍须完成代码 PR 的受保护合并、候选发布和公网 HTML/元数据读回。在这些发布门槛通过前，不启用 Codex 定时任务，也不撤销现有任务。
+3. 2026-09-22 同日 5 项 IB、9 个 Sharesight 来源经原始回执及九个 journal 阶段校验；该次私有准备约 57 秒。受保护 PR #260 合并后，当晚的精简睡前版已通过公网 HTML/元数据和手机读回。它不是自动任务的成功证明：Codex 固定任务仍未启用。精简生成器缺少完整版的部分风险、配置与价格变化，本次样式修复须经独立 PR、受保护合并及公网回读；缺少本轮计算的数值不得复制旧版。
 
 ## 每晚流程
 
