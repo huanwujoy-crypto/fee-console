@@ -207,6 +207,14 @@ export function validateReportView(view) {
 }
 
 const table = (columns,rows) => !columns.length?'':`<div class="tblwrap"><table data-columns="${columns.length}"><thead><tr>${columns.map(x=>`<th>${esc(x)}</th>`).join('')}</tr></thead><tbody>${rows.map(row=>`<tr>${row.map(x=>`<td>${esc(x)}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+const rawOrderCards = card => {
+  if (card.columns.join('|') !== '原始说明|买卖|限价|数量|状态') return table(card.columns,card.rows);
+  return ['买入','卖出'].map(side => {
+    const orders=card.rows.filter(row=>row[1]===side);
+    if (!orders.length) return '';
+    return `<h3 class="raw-order-heading">${side} <small>${orders.length} 张</small></h3><div class="raw-order-cards">${orders.map((row,index)=>`<article class="raw-order-card"><div class="raw-order-title"><b>${index+1}. ${esc(row[0])}</b><span>${esc(row[4])}</span></div><dl><div><dt>限价</dt><dd>${esc(row[2])}</dd></div><div><dt>数量</dt><dd>${esc(row[3])}</dd></div></dl></article>`).join('')}</div>`;
+  }).join('');
+};
 const numberedLines = lines => lines.length?`<ol class="brief-lines">${lines.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`:'';
 const legacyOrderTables = orders => groupOrders(orders).map(group=>`<h3>${group.side==='buy'?'买入':'卖出'} <small>${group.orders.length} 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody>${group.orders.map((order,index)=>`<tr><td><b>${index+1}. ${esc(order.symbol)}</b> ×${number(order.quantity,6)}<span class="sub">${order.ageDays===null?'年龄未核':`${order.ageDays}天`} · ${esc(order.status)}${order.cancelReview?' · <strong class="order-review">待撤复核</strong>':''}</span></td><td>${number(order.limitPrice,4)}<span class="sub">${esc(order.currency)}</span></td><td>${order.distancePct===null?'未取得':`${order.distancePct>0?'+':''}${number(order.distancePct)}%`}</td></tr>`).join('')}</tbody></table></div>`).join('')+fold('排序与报价说明',`<p>买卖分组，各组按绝对价格距离由近到远；同距保持原顺序，缺价置后。距离不代表成交概率；待撤仅提醒，不执行撤单。</p>${numberedLines(orders.filter(order=>order.marketAsOfHkt!==null).map(order=>`${order.symbol}：${order.marketAsOfHkt}`))}`);
 const orderTables = (orders,trends=new Map()) => trends===null?legacyOrderTables(orders):groupOrders(orders).map(group=>`<h3>${group.side==='buy'?'买入':'卖出'} <small>${group.orders.length} 张</small></h3><div class="tblwrap order-table"><table><thead><tr><th>挂单</th><th>限价</th><th>距市价</th></tr></thead><tbody>${group.orders.map((order,index)=>{const trend=trends.get(orderTrendKey(order));return `<tr${trend?.attributes??''}><td><b>${index+1}. ${esc(order.symbol)}</b> ×${number(order.quantity,6)}<span class="sub order-meta">${order.ageDays===null?'已挂天数未核':`${order.ageDays}天`} · ${esc(order.status)}${order.cancelReview?' · <strong class="order-review">待撤复核</strong>':''}</span>${trend?.label?`<span class="sub order-trend-text ${trend.kind==='up'?'up':trend.kind==='down'?'dn':''}">${esc(trend.label)}</span>`:''}</td><td>${number(order.limitPrice,4)}<span class="sub">${esc(order.currency)}</span></td><td>${order.distancePct===null?'未取得':`${order.distancePct>0?'+':''}${number(order.distancePct)}%`}</td></tr>`;}).join('')}</tbody></table></div>`).join('')+fold('排序与报价说明',`<p>买卖分组，各组按绝对价格距离由近到远；同距保持原顺序，缺价置后。期间趋势是首次观察价至当前价的近似变化，不新增行情调用、也不影响报告输出；距离不代表成交概率。</p>${numberedLines(orders.filter(order=>order.marketAsOfHkt!==null).map(order=>`${order.symbol}：${order.marketAsOfHkt}`))}`);
@@ -236,6 +244,10 @@ const NATIVE_RISK_CSS = `
 .native-risk-cash dt{font-size:13px;color:var(--mut)}
 .native-risk-cash dd{margin:5px 0 0;font-size:clamp(18px,6vw,25px);font-weight:800;white-space:nowrap}
 .native-risk-cash small{display:block;color:var(--mut);font-size:11px}
+.raw-order-heading{margin:16px 0 8px}.raw-order-heading small{color:var(--mut);font-size:13px}
+.raw-order-cards{display:grid;gap:8px}.raw-order-card{min-width:0;border:1px solid var(--line);border-radius:12px;padding:12px}
+.raw-order-title{display:flex;justify-content:space-between;gap:8px}.raw-order-title b{font-size:14px;white-space:pre-line;overflow-wrap:anywhere}.raw-order-title span{flex:none;color:var(--mut);font-size:12px}
+.raw-order-card dl{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:10px 0 0}.raw-order-card dt{font-size:12px;color:var(--mut)}.raw-order-card dd{margin:3px 0 0;font-size:13px;font-weight:650;overflow-wrap:anywhere}
 `;
 
 export function renderRiskCards(view,aiPressure) {
@@ -493,7 +505,7 @@ ${fold('三行摘要',`<ol>${view.summary.map(line=>`<li>${esc(line)}</li>`).joi
 <div class="pane p1">${holdingsView(view.holdings,view.dataDate,view.edition,{declareUniverse:aiTier!==null})}</div>
 <div class="pane p2">${riskSourceNotice}${aiSection}${renderRiskCards(view,aiPressure)}${aiTier?aiTier.disclosures:''}</div>
 <div class="pane p3">${cash.detail}${fourBucket?renderFourBucketCard(fourBucket):''}${view.allocation.map(card).join('')}</div>
-<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):table(view.rotation.columns,view.rotation.rows)}`,true)}${sleepPriority?'<div class="alert">其它待办沿用上一份已核验状态；完整睡前版将再核对。</div>':''}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
+<div class="pane p4">${fold('⑥ 挂单提醒',`<p class="sub">${esc(view.rotation.asOfHkt)}</p><p>仅供查看已有挂单；是否处理由你决定，不作换仓触发判定。</p>${view.rotation.orders?orderTables(view.rotation.orders,orderTrends):rawOrderCards(view.rotation)}`,true)}${sleepPriority?'<div class="alert">其它待办沿用上一份已核验状态；完整睡前版将再核对。</div>':''}${decisionGroup(state,view.decisions,'awaiting_user',oldCards,previousMeta.dataDate)}${decisionGroup(state,view.decisions,'resolved',oldCards,previousMeta.dataDate)}${fold('已结案 / 只读观察',`<ol>${view.observations.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>`,false,`最近 ${view.observations.length} 项`)}</div>
 <div class="pane p5">${renderPolicySection(policy)}${sleepPriority?'<div class="alert">ETF 随完整睡前版更新。</div>':etf}</div></div>
 ${fold('报告说明',`<ol>${view.notes.map(line=>`<li>${esc(line)}</li>`).join('')}</ol>${manualAccountConsent?'<p>人工核验账户授权，仅限本次临时报告，不代表接口自动核验。</p>':''}${view.edition==='adhoc'?'<p>本次为临时版，不替代定时睡前版成功证据。</p>':''}<p>发布仍须通过 Validate → Promote → Pages，并核对公开版本；生成候选不等于已发布。</p>${classificationDisclosure}`,false,'版别 · 取数时点 · 数据日 · 只读')}
 <div class="foot">只读报告 · 数据截至 ${esc(view.asOfHkt)} · 不是交易指令</div></div></div>
