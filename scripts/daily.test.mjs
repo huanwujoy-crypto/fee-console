@@ -1185,17 +1185,15 @@ test("same-date benchmark state is derived and conflicting state is omitted", ()
 });
 
 test("legacy benchmarks remain readable before cutover and are omitted afterwards", () => {
-  const dir = tmp(), d = "2026-09-09", now = new Date("2026-09-11T12:00:00Z");
+  const d = "2026-09-09", now = new Date("2026-09-11T12:00:00Z");
   const input = validateInputs({
     date: d, now, accounts: { schwab: 1, webull: 1 }, sourceDates: { schwab: d, webull: d },
     splits: { cash: 2, stock: 0, other: 0 }, bench: { cspx: 825.29, eqac: 497.50 }, benchDate: d
   });
   assert.deepEqual(input.errors, []); assert.deepEqual(input.benchmarkErrors, []);
-  const legacy = run(dir, { date: d, cspx: "825.29", eqac: "497.50", "src-bench": d });
-  assert.equal(legacy.status, 0, legacy.stderr);
-  const point = readPayload(dir).daily.at(-1);
-  assert.equal(point.cspx, 825.29);
-  assert.equal(point.eqac, 497.50);
+  // The live writer deliberately refuses dates outside its ten-day lookback.
+  // Historical acceptance is tested against the pure validator with a pinned
+  // clock; do not run an old date through today's CLI.
   const currentDir = tmp(), current = run(currentDir, { cspx: "825.29", eqac: "497.50", "src-bench": today() });
   assert.equal(current.status, 0, current.stderr);
   const currentPoint = readPayload(currentDir).daily.at(-1);
