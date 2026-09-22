@@ -258,7 +258,7 @@ jobs:
               '. + [{ref: $ref, sha: $sha, commitEpoch: $commitEpoch, dataDate: $dataDate, htmlBlob: $htmlBlob, publication: $publication[0]}]' \
               "$candidates_file" > "$RUNNER_TEMP/candidates.next.json"
             mv "$RUNNER_TEMP/candidates.next.json" "$candidates_file"
-          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/codex/xuan-ib-)
+          done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/codex/xuan-ib-*')
 
           node scripts/xuan-ib-promotion.mjs select \
             "$candidates_file" xuan-ib/latest.meta.json "$published_blob" \
