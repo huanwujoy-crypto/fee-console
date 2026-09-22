@@ -2117,6 +2117,9 @@ test('the integrity check accepts both titles for the length of the rename', () 
 });
 
 test('validation and promotion accept a verified single-file candidate based on a trusted main ancestor', () => {
+  // git for-each-ref treats a bare partial refname as a path component, not a prefix.
+  // Keep the glob or the promoter silently sees zero Codex report branches.
+  assert.ok(promotion.includes("'refs/remotes/origin/codex/xuan-ib-*'"));
   assert.match(validation, /git merge-base --is-ancestor "\$candidate_parent" origin\/main/);
   assert.match(validation, /git diff --name-only "\$candidate_parent\.\.HEAD"/);
   assert.match(validation, /git rev-list --first-parent --count/);
