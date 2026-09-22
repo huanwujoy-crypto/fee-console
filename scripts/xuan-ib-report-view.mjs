@@ -330,7 +330,10 @@ function holdingsView(holdings, reportDate, edition, { declareUniverse = false }
   // prove no row was dropped between the table and the AI-tier records rather
   // than trusting that both were written from the same list.
   const universe=declareUniverse&&holdings.rows.length?` data-holdings-universe-v1="${holdings.rows.length}"`:'';
-  return `<section class="card"${coverage}${universe}><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(`价格变化 ≥1%（${groups[0].length}）`,groups[0].length?rows(groups[0]):'<p>暂无已核实的 ≥1% 变化；缺行情不等于无变化。</p>',true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
+  const noMeasuredChange=holdings.rows.length>0&&groups[2].length===holdings.rows.length;
+  const changeTitle=noMeasuredChange?'价格变化（未取得）':`价格变化 ≥1%（${groups[0].length}）`;
+  const noChangeNote=noMeasuredChange?'本轮未取得日涨跌，不能判断是否超过 1%。':'暂无已核实的 ≥1% 变化；缺行情不等于无变化。';
+  return `<section class="card"${coverage}${universe}><h2>① 持仓一览</h2><p class="sub">${esc(holdings.asOfHkt)} · ${holdings.rows.length} 只</p><p><b>权威市值 ${money(holdings.authoritativeValueUsd)}</b> · ${esc({ok:'直读',fallback:'替代源',unavailable:'未取得'}[holdings.status])}</p>${fold(changeTitle,groups[0].length?rows(groups[0]):`<p>${noChangeNote}</p>`,true)}${fold(`其它持仓（${groups[1].length}）`,rows(groups[1]))}${fold(`涨跌数据待核验（${groups[2].length}）`,rows(groups[2]))}${fold('持仓说明',numberedLines([holdings.note]))}</section>`;
 }
 
 function decisionGroup(state, views, group, originalCards) {

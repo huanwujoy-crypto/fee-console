@@ -218,6 +218,8 @@ test('native LIMIT orders preserve original descriptions and decimal strings, gr
     associationSnapshot: inactiveAssociationSnapshot() });
   assert.equal(prepared.result.status, 'prepared-not-published');
   assert.ok(prepared.html.includes('70.5000（币种未返回）'));
+  assert.ok(prepared.html.includes('价格变化（未取得）'));
+  assert.ok(!prepared.html.includes('价格变化 ≥1%（0）'));
   const todo = prepared.html.split('<div class="pane p4">')[1].split('<div class="pane p5">')[0];
   assert.match(todo, /<h3 class="raw-order-heading">买入 <small>2 张<\/small><\/h3>/);
   assert.match(todo, /<h3 class="raw-order-heading">卖出 <small>1 张<\/small><\/h3>/);
