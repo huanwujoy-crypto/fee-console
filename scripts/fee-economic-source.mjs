@@ -1,5 +1,5 @@
-// Read-only acquisition of one authorized encrypted Gist with its dedicated PAT.
-// No other credential lookup, decryption, source write, logging, or automatic execution.
+// Read-only acquisition of one encrypted secret Gist by its exact ID.
+// No credential lookup, decryption, source write, logging, or automatic execution.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -92,7 +92,7 @@ async function readOnce(id, token, options) {
       referrerPolicy: "no-referrer", signal: controller.signal,
       headers: {
         Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
-        Authorization: `Bearer ${token}`,
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
     });
     if (!response || response.redirected || response.type === "opaqueredirect"
@@ -149,7 +149,8 @@ function checkedRoot(requested) {
 }
 
 /**
- * Locator comes ONLY from FEE_ECON_GIST_ID; dedicated PAT ONLY from FEE_ECON_GITHUB_TOKEN.
+ * Locator comes ONLY from FEE_ECON_GIST_ID. A PAT is optional; secret-Gist GET
+ * works by exact ID. The encrypted payload still needs the separate local key.
  * Pass mock fetchImpl for synthetic tests. No fallback credentials or anonymous retry.
  * sourcePath is private runtime metadata, not a notification or public log field.
  * checkCurrent performs two new remote reads plus a local ciphertext integrity check.
@@ -165,10 +166,9 @@ export async function fetchEconomicSnapshot(options = {}) {
   const id = process.env.FEE_ECON_GIST_ID;
   if (typeof id !== "string" || !/^(?:[a-f0-9]{20}|[a-f0-9]{32})$/.test(id)) fail("SOURCE_LOCATOR");
   let token = process.env.FEE_ECON_GITHUB_TOKEN;
-  // Syntax is not proof of ownership, permission scope, or expiry. The approved
-  // 30-day fine-grained PAT must be provisioned separately with no added permissions.
-  if (typeof token !== "string"
-      || !/^github_pat_[A-Za-z0-9_]{20,255}$/.test(token)) fail("SOURCE_AUTH_CONFIG");
+  // If a legacy dedicated read token is configured, reject malformed values.
+  // Never fall back to gh auth or a manager write token.
+  if (token !== undefined && !/^github_pat_[A-Za-z0-9_]{20,255}$/.test(token)) fail("SOURCE_AUTH_CONFIG");
   const root = checkedRoot(opts.tempRoot);
   const expected = await stableRead(id, token, opts);
   let directory, sourcePath, directoryIdentity, closed = false;

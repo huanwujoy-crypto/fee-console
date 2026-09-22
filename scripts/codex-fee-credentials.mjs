@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Local, one-time Codex credential handoff.  No manager write token is retained.
+// Local, one-time Codex source handoff. No manager write token is retained.
 import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -12,10 +12,8 @@ const ACCOUNT = "huanwujoy-crypto";
 const SERVICES = Object.freeze({
   key: "fee-console.codex.FEE_DATA_KEY",
   gist: "fee-console.codex.FEE_ECON_GIST_ID",
-  token: "fee-console.codex.FEE_ECON_GITHUB_TOKEN",
 });
 const GIST_RE = /^(?:[a-f0-9]{20}|[a-f0-9]{32})$/;
-const TOKEN_RE = /^github_pat_[A-Za-z0-9_]{20,255}$/;
 const KEY_RE = /^[A-Za-z0-9_+/-]{43}={0,2}$/;
 
 export function parseManagerLink(input) {
@@ -33,11 +31,6 @@ export function parseManagerLink(input) {
   const decoded = Buffer.from(key.replace(/-/g, "+").replace(/_/g, "/"), "base64");
   if (decoded.length !== 32) throw new Error("MANAGER_LINK_INVALID");
   return { gist, key }; // Deliberately excludes the manager write token.
-}
-
-export function validateReadToken(token) {
-  if (!TOKEN_RE.test(token)) throw new Error("READ_TOKEN_INVALID");
-  return token;
 }
 
 function readHidden(label) {
@@ -92,13 +85,12 @@ function load(service) {
 }
 
 async function sourceCheck() {
-  const key = load(SERVICES.key), gist = load(SERVICES.gist), token = load(SERVICES.token);
+  const key = load(SERVICES.key), gist = load(SERVICES.gist);
   if (!KEY_RE.test(key) || Buffer.from(key.replace(/-/g, "+").replace(/_/g, "/"), "base64").length !== 32
       || !GIST_RE.test(gist)) throw new Error("KEYCHAIN_VALUE_INVALID");
-  validateReadToken(token);
   process.env.FEE_DATA_KEY = key;
   process.env.FEE_ECON_GIST_ID = gist;
-  process.env.FEE_ECON_GITHUB_TOKEN = token;
+  delete process.env.FEE_ECON_GITHUB_TOKEN;
   let snapshot;
   try {
     snapshot = await fetchEconomicSnapshot();
@@ -119,11 +111,9 @@ async function sourceCheck() {
 async function main() {
   if (process.argv.length !== 3) throw new Error("USAGE: setup | check");
   if (process.argv[2] === "setup") {
-    const { gist, key } = parseManagerLink(await readHidden("粘贴原管理人完整链接（输入不显示）"));
-    const token = validateReadToken(await readHidden("粘贴新的专用只读 GitHub PAT（输入不显示）"));
+    const { gist, key } = parseManagerLink(await readHidden("粘贴迁移后的新管理人完整链接（输入不显示）"));
     save(SERVICES.key, key);
     save(SERVICES.gist, gist);
-    save(SERVICES.token, token);
     console.log("CODEX_FEE_CREDENTIALS_STORED");
   } else if (process.argv[2] === "check") {
     await sourceCheck();
@@ -132,7 +122,7 @@ async function main() {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main().catch(error => {
-    const known = new Set(["MANAGER_LINK_INVALID", "READ_TOKEN_INVALID", "INTERACTIVE_TERMINAL_REQUIRED",
+    const known = new Set(["MANAGER_LINK_INVALID", "INTERACTIVE_TERMINAL_REQUIRED",
       "CANCELLED", "INPUT_INVALID", "KEYCHAIN_STORE_FAILED", "KEYCHAIN_READ_FAILED",
       "KEYCHAIN_VALUE_INVALID", "ECON_V4_REQUIRED"]);
     console.error(`CODEX_FEE_SETUP_FAILED:${known.has(error.message) ? error.message : "SOURCE_CHECK_FAILED"}`);
