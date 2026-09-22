@@ -177,7 +177,7 @@ function bound(g, source = snapshot()) {
 // This is a synthetic browser, not a connection to a browser profile.  All
 // localStorage, timers and fetches below are in-memory fixtures.  No real Gist,
 // token, private ledger, filesystem browser store or outbound network is used.
-async function browserHarness(html, { stored = null, legacy = false, manager = false } = {}) {
+async function browserHarness(html, { stored = null, legacy = false, manager = false, hash = "" } = {}) {
   const inline = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].at(-1)?.[1];
   const boot = inline?.indexOf("/* ============ 启动 ============ */");
   assert.ok(boot > 0, "the main inline script must have an explicit startup boundary");
@@ -297,11 +297,11 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
   };
   const location = {
     href: "https://fixture.invalid/fee-console/", origin: "https://fixture.invalid",
-    pathname: "/fee-console/", search: "", hash: "", reload() {}
+    pathname: "/fee-console/", search: "", hash, reload() {}
   };
   const fetch = async (input, options = {}) => {
     const url = String(input), method = String(options.method || "GET").toUpperCase();
-    requests.push({ url, method });
+    requests.push({ url, method, authorized: !!options.headers?.Authorization });
     const ok = body => ({ ok: true, status: 200, json: async () => structuredClone(body), text: async () => typeof body === "string" ? body : JSON.stringify(body) });
     if (url.includes("api.github.com/gists/fixture-gist")) {
       if (method === "GET" && network.failGistRead) throw new Error("fixture source unavailable");
@@ -363,6 +363,25 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
   return { context, run, element, document, store, requests, remote, network, seal, emit, settle, data, committed, pauseNextEncryption, pauseNextDecryption, pauseNextRead, paints,
     writes: () => requests.filter(request => request.method !== "GET") };
 }
+
+test("a shared viewer link ignores a cached manager token on the same browser origin", async () => {
+  const html = fs.readFileSync(uiFile, "utf8");
+  if (!html.includes("/* viewer-link-auth:v1 */")) {
+    assert.doesNotMatch(html, /_readOnlyEntry/, "reject a partial viewer-link auth change");
+    return;
+  }
+  const h = await browserHarness(html, { hash: "#gid=fixture-gist&k=" + Buffer.alloc(32, 7).toString("base64url") });
+  assert.equal(h.run("isMgr()"), false);
+  assert.equal(h.store.get("feeConsole.gh.token"), "fixture-manager-token", "opening a viewer tab must not erase the manager device's access");
+  await h.run("pullAll(true,{skipShell:true})");
+  const gist = h.requests.find(request => request.url.endsWith("/gists/fixture-gist"));
+  assert.ok(gist);
+  assert.equal(gist.authorized, false, "viewer GET must not send a revoked token");
+  assert.equal(h.run("_receiptSource.state"), "verified");
+  const shared = new URL(h.run("viewLink()"));
+  assert.deepEqual([...new URLSearchParams(shared.hash.slice(1)).keys()], ["gid", "k"]);
+  assert.deepEqual(h.writes(), []);
+});
 
 test("stage-one contract allows complete absence but rejects partial or unmarked editor code", () => {
   assert.equal(loadGuard("<!doctype html><html><body>pre-migration shell</body></html>"), null);
