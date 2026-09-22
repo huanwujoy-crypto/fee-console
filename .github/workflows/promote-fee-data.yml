@@ -171,7 +171,7 @@ jobs:
             fi
 
             candidates+=("$candidate_ref")
-          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/codex/fee-daily-)
+          done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/codex/fee-daily-*')
 
           if (( ${#candidates[@]} == 0 )); then
             if [[ -f fee-data-health.json ]]; then
