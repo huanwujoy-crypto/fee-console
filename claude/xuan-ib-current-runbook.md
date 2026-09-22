@@ -60,6 +60,12 @@ aged policy *read* as specified; that never extends its validity.
 
 ## 3. Plan 5 IB + 9 Sharesight reads; then execute real tools
 
+Codex migration note: the plan below describes the historical Claude MCP
+binding. For new Codex work, follow `docs/codex-xuan-ib.md`: IBKR's five
+read-only tools are named `mcp__ibkr__get_account_*`, and Sharesight uses the
+fixed Native Direct read-only client with its private capture helper. Do not
+pretend the old Sharesight MCP tool was called by Codex.
+
 With the reviewed helper available in trusted main, print the deterministic
 intent for the actual edition (replace `am` with `pm` only for that PM run):
 

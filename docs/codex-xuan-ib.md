@@ -4,14 +4,15 @@
 
 ## 启用条件
 
-1. Codex 中的 IBKR 官方 MCP 仅授予 `mcp.read`；实测账户身份、持仓、挂单及时间戳。若授权页要求 `mcp.write` 或账户不符，停止。不要读取或记录密码、验证码、完整账户编号。
-2. Codex 只读取得所需 Sharesight 组合；仅在来源、日期和账户身份明确时显示。缺失项写“未取得”，不填旧值或零。
+1. Codex 中的 IBKR 官方 MCP 仅授予 `mcp.read`；实测账户身份、持仓、挂单及时间戳。2026-09-22 已确认 `mcp__ibkr__get_account_positions` 与 `mcp__ibkr__get_account_orders` 可读，但这不是一次完整报告的证据。若授权页要求 `mcp.write` 或账户不符，停止。不要读取或记录密码、验证码、完整账户编号。
+2. Sharesight 使用本机固定 Native Direct 只读程序。2026-09-22 已读回组合清单及 IB-HK performance 的完整字段；每次仍需核对来源、日期和账户身份。`scripts/xuan-ib-sharesight-direct-capture.mjs` 在已有私密 journal 的 `sharesight-read` 阶段调用固定程序、保留原响应并生成现有采集回执。缺失项写“未取得”，不填旧值或零。
 3. 在隔离环境完成一次同日真实取数、报告校验和候选验证；发布后核对公网 HTML 与元数据。上述三步完成前，不启用 Codex 定时任务，也不撤销现有任务。
 
 ## 每晚流程
 
 - 纽约常规交易日开盘时（09:30 America/New_York）启动独立速览：IB 持仓和挂单。以 20 分钟内公网可见为目标，记录实际起止时间；过时或取数失败则显示上份报告与显眼的日期，不显示“实时挂单”。
 - 随后生成完整记录。Sharesight、ETF 和风险计算可晚到；仅使用本轮可验证来源，绝不阻塞速览或拿旧数补缺口。同日期完整版本可替换速览，旧候选不得回盖新候选。
+- `scripts/xuan-ib-codex-mcp-capture.mjs` 已提供 Codex CLI JSON 事件到五份私密 IB 回执的适配，离线安全测试已通过；真实整轮采集和报告发布尚未验证。它只接受五种已核对的只读调用，发现写入或缺失调用即停止。不得因单次工具可读或离线测试通过，就宣称完整报告已接管；金额不得手工重输。
 - 只在受保护的 `codex/xuan-ib-*` 候选分支提交 `xuan-ib/index.html`，跑现有 guard、Validate、Promote、Pages，最后核对公网版本。受保护规则、账户关联与 OWNER 批准仍有效；不得直接改 `latest.html`、`latest.meta.json`。
 
 ## 权限和故障

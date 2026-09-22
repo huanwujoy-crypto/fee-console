@@ -70,7 +70,7 @@ test('arm precedes the actual capture and binds only exact tool/input/session me
   assert.equal(armed.status, 'armed-not-authorized'); assert.match(armed.nonce, /^[a-f0-9]{48}$/);
   assert.equal(Date.parse(stored.expiresAt) - Date.parse(stored.createdAt), HOOK_ARM_TTL_MS);
   assert.equal(HOOK_ARM_TTL_MS, 300000);
-  assert.equal(stored.toolName, 'mcp__Interactive_Brokers__get_account_positions');
+  assert.equal(stored.toolName, 'mcp__ibkr__get_account_positions');
   assert.equal(stored.inputFingerprint, fingerprint({}));
   assert.equal(Object.hasOwn(stored, 'toolInput'), false);
   assert.equal(fs.statSync(armed.path).mode & 0o777, 0o600);

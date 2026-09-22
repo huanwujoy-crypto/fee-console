@@ -2147,7 +2147,7 @@ test('validation and promotion accept a verified single-file candidate based on 
   );
   assert.match(promotion, /Skipping \$branch_name: its handover page failed validation/);
   assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json/);
-  assert.match(promotion, /Published metadata source is not a verified Claude commit/);
+  assert.match(promotion, /Published metadata source is not a verified approved report commit/);
   assert.match(promotion, /contents\/xuan-ib\/index\.html\?ref=\$meta_source_sha/);
   assert.match(promotion, /refs\/tags\/xuan-ib-published\/\$\{source_data_date\}/);
   assert.match(promotion, /refs\/tags\/xuan-ib-published\/\$\{DATA_DATE\}/);
