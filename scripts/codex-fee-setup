@@ -1,0 +1,8 @@
+#!/bin/zsh
+set -eu
+fee_node="/Users/huanwu/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node"
+if [[ ! -x "$fee_node" ]]; then
+  print -u2 'CODEX_FEE_SETUP_FAILED:NODE_UNAVAILABLE'
+  exit 1
+fi
+exec "$fee_node" "${0:A:h}/codex-fee-credentials.mjs" "$@"

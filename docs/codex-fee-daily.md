@@ -21,6 +21,30 @@
 - 若目标日尚无完整 SPY/QQQ 同日收盘资料，按合同只发布可独立验证的 AUM，
   留下 benchmark pending，随后同日 replacement。不能用较早价格假装当日价格。
 
+### 本机一次性接入
+
+1. 基金管理人在 GitHub 自己创建一个 **30 天、fine-grained、无额外权限**的
+   专用 PAT。GitHub 的 `Get a gist` 接口支持这种无额外权限的 token；不要使用
+   原管理人链接中的 Gist **写入** token，也不要借用 `gh auth` 的广权限凭据。
+   创建凭据、核对权限和最终确认由管理人本人完成。
+2. 在 Mac 自己的 Terminal 中进入本仓库，运行
+   `./scripts/codex-fee-setup setup`。程序分别提示粘贴
+   原管理人完整链接和新 PAT，输入时不会显示。程序仅从链接中取出原账本
+   Gist ID 与原 32-byte 加密 key，**不保存或使用管理人写入 token**；
+   三个只读运行所需值写入本机登录 Keychain，服务名前缀
+   `fee-console.codex.`。链接和 PAT 不进入聊天、命令参数、shell history
+   或仓库文件。若输入被取消或格式不符，程序拒绝写入。
+3. 运行 `./scripts/codex-fee-setup check`；它从 Keychain
+   读取凭据，用受限 GET 连续核对原 Gist 两次、解密核对 v4，再重读两次，
+   成功只输出 `CODEX_FEE_SOURCE_READY_V4`。这只证明独立来源可用，
+   不能代替 Sharesight、资金流、费用回执和手机发布验收。若当前原账本仍为
+   v3，按既有迁移规则单独处理，不能在接入程序里静默改写原账本。
+4. Codex 每次运行在受控进程里用 `/usr/bin/security find-generic-password`
+   分别读取上述三个 Keychain 服务并捕获到内存环境变量，绝不打印值。
+   只让固定的 `fee-economic-source.mjs` 和原 writer/reporter 看到这些变量。
+   Keychain 弹出访问确认、Mac 锁定、PAT 到期或首次读取失败时立即停止，
+   不退回到 Claude、浏览器 token 或明文账本。
+
 ## 每日顺序
 
 1. 读取 `main`、现有健康回执及私密来源，确认目标日期、允许的回补窗口和无并发候选。
@@ -39,8 +63,11 @@
    `codex/fee-daily-YYYYMMDD-xxxxxx`，其中日期无连字符且必须与
    `daily YYYY-MM-DD` 的提交标题及健康回执目标日一致。提交仅允许
    `data.json`（真正变化时）与 `fee-data-health.json`；无变化时只提交健康回执。
-   GitHub 必须把提交标为 verified，author 为 `huanwujoy-crypto`；本地未签名
-   commit 不能作为生产候选。
+   用 GitHub GraphQL `createCommitOnBranch` 一次提交一至两个文件，
+   并要求 `expectedHeadOid` 等于刚核实的 `main`；GitHub 会为支持的账户
+   签署此提交。随后回读 REST commit，必须为 `verified:true`、author 为
+   `huanwujoy-crypto`；本地未签名 commit、两次 Contents API 单文件提交
+   都不能作为生产候选。
 6. `validate-fee-data` 验证候选；受保护的 `promote-fee-data` 从默认分支
    再验证并推广，Codex 不持有推广用 deploy key。推广后回读 `main` 的
    `data.json` hash、健康回执、Pages 页面数据日期，以及 Jenny Z／XiXi Z
