@@ -210,16 +210,15 @@ test("helper emits no logs on success or failure, and formatter is whitelisted",
   assert.equal(new SourceFetchError("TOKEN-SECRET").message, "SOURCE_RESPONSE");
 });
 
-test("missing or malformed dedicated PAT fails before any request or snapshot write", async t => {
+test("malformed optional read PAT fails before any request or snapshot write", async t => {
   const tempRoot = makeRoot();
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
   try {
-    for (const value of [undefined, "", " ", "github_pat_short", "ghp_" + "a".repeat(40),
+    for (const value of ["", " ", "github_pat_short", "ghp_" + "a".repeat(40),
       "gho_" + "a".repeat(40), "Bearer " + TOKEN, TOKEN + "\n", " " + TOKEN,
       TOKEN + "\r\nX-Secret: injected", TOKEN + "\t", TOKEN + "é", TOKEN + '"',
       "github_pat_" + "a".repeat(256)]) {
-      if (value === undefined) delete process.env.FEE_ECON_GITHUB_TOKEN;
-      else process.env.FEE_ECON_GITHUB_TOKEN = value;
+      process.env.FEE_ECON_GITHUB_TOKEN = value;
       let calls = 0;
       await rejected(fetchEconomicSnapshot({ tempRoot, fetchImpl: async () => { calls++; return reply(); } }), "SOURCE_AUTH_CONFIG");
       assert.equal(calls, 0);
@@ -228,7 +227,7 @@ test("missing or malformed dedicated PAT fails before any request or snapshot wr
   } finally { process.env.FEE_ECON_GITHUB_TOKEN = TOKEN; }
 });
 
-test("generic GitHub credentials never substitute for the dedicated PAT", async t => {
+test("anonymous secret-Gist read ignores generic GitHub credentials", async t => {
   // These synthetic decoys must never be inspected by the production helper.
   for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ACCESS_TOKEN", "GH_ENTERPRISE_TOKEN"]) {
     process.env[key] = "github_pat_" + "SYNTHETIC_GENERIC_DECOY_".repeat(3);
@@ -236,8 +235,15 @@ test("generic GitHub credentials never substitute for the dedicated PAT", async 
   delete process.env.FEE_ECON_GITHUB_TOKEN;
   try {
     let calls = 0;
-    await rejected(run(t, async () => { calls++; return reply(); }), "SOURCE_AUTH_CONFIG");
-    assert.equal(calls, 0);
+    const snapshot = await run(t, async (url, init) => {
+      calls++;
+      assert.equal(url, `https://api.github.com/gists/${ID}`);
+      assert.deepEqual(Object.keys(init.headers).sort(), ["Accept", "X-GitHub-Api-Version"]);
+      return reply();
+    });
+    assert.equal(calls, 2);
+    assert.equal(await snapshot.checkCurrent(), true);
+    snapshot.cleanup();
   } finally {
     process.env.FEE_ECON_GITHUB_TOKEN = TOKEN;
     for (const key of ["GITHUB_TOKEN", "GH_TOKEN", "GITHUB_ACCESS_TOKEN", "GH_ENTERPRISE_TOKEN"]) delete process.env[key];

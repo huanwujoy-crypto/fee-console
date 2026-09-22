@@ -245,7 +245,7 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
 `fee-data-health.json` 是不含金额的公开运行回执，只证明受控 producer 是否真正运行；
 它不是 `data.json`、费用回执或行情数据的替代来源。
 
-- 每次 Routine 都必须在同一个 `claude/*` 候选提交中写入运行回执。数据变化时同时提交
+- 每次 Codex 每日生产任务都必须在同一个 `codex/fee-daily-*` 候选提交中写入运行回执。数据变化时同时提交
   `data.json` 与运行回执；经完整校验的 byte-for-byte no-op 只提交运行回执。
 - 候选目标日最多允许落后香港当日 4 个日历日，仅用于逐日补齐短期断档；超过窗口必须先人工
   核查，不能继续放宽或跳日。两条验证／推广工作流必须保持相同边界。
@@ -258,13 +258,13 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
   `failed` 候选必须验证失败且绝不推广。
 - 回执中的账户与 benchmark `sourceDate` 必须是本轮实际使用日期，不得伪装成目标日；
   benchmark 落后时继续按 §1 的暂估与补跑规则处理。
-- 独立 GitHub 定时看门狗在 Routine 截止时间后检查 main 上当日运行回执；没有候选、没有当日
+- 独立 GitHub 定时看门狗在 Codex 生产窗口后检查 main 上当日运行回执；没有候选、没有当日
   回执或回执校验失败都必须标红。这样可区分“已运行但数据无变化”与“根本没有运行”。
 - 周五收盘等公共行情首次尚未到齐时，`benchmark-cache` 在随后时段自动重试；每次都要求
   SPY/QQQ 共同通过身份、收盘和股息校验，取得后再由同日 replacement 补齐模拟期末余额。
   定时槽位由 GitHub 延后甚至丢弃（2026-09-14 至 09-18 每天只实际运行两次），Yahoo 也
   可能在 01:30 UTC 尚未提供前一收盘；因此 producer 开跑时若缓存最新行早于目标日，
-  应先按 `.claude/rules/fee-console-daily.md` 用 `workflow_dispatch` 触发一次
+  应先按 `docs/codex-fee-daily.md` 用 `workflow_dispatch` 触发一次
   `benchmark-cache` 并等待完成、重新读取缓存分支，仍落后才按 §1 留空 benchmark。
 - 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，每个新输入点（包括切换日前的
   历史点）都必须同时提供 `bd`；旧账本的无证据迁移行只允许继续读取。`bd == d` 时脚本自动

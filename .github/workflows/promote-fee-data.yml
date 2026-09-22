@@ -1,7 +1,7 @@
 name: Promote fee-console data
 
 # This workflow deliberately runs only from the trusted default branch.
-# Claude prepares data on a claude/* branch; it never receives the deploy key.
+# Codex prepares data on a codex/fee-daily-* branch; it never receives the deploy key.
 on:
   # Primary path: every no-secret candidate validation wakes this trusted
   # default-branch workflow immediately. The promotion job still performs its
@@ -12,7 +12,7 @@ on:
     types:
       - completed
     branches:
-      - 'claude/**'
+      - 'codex/fee-daily-*'
   schedule:
     # Independent watchdog after the 12:30 HKT producer. It proves that the
     # producer ran even when the data itself was unchanged.
@@ -42,9 +42,9 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PROMOTE_MAIN_DEPLOY_KEY }}
 
-      - name: Fetch Claude Routine branches
+      - name: Fetch Codex daily branches
         shell: bash
-        run: git fetch --no-tags --prune origin '+refs/heads/claude/*:refs/remotes/origin/claude/*'
+        run: git fetch --no-tags --prune origin '+refs/heads/codex/fee-daily-*:refs/remotes/origin/codex/fee-daily-*'
 
       - name: Select one fresh, verified data update
         id: candidate
@@ -62,9 +62,10 @@ jobs:
 
           while IFS= read -r candidate_ref; do
             branch_name=${candidate_ref#origin/}
-            if [[ ! "$branch_name" =~ ^claude/[a-z0-9-]+-[a-z0-9]{6}$ ]]; then
+            if [[ ! "$branch_name" =~ ^codex/fee-daily-([0-9]{8})-[a-z0-9]{6}$ ]]; then
               continue
             fi
+            branch_date=${BASH_REMATCH[1]}
 
             if ! git merge-base --is-ancestor origin/main "$candidate_ref"; then
               continue
@@ -87,17 +88,14 @@ jobs:
             fi
 
             candidate_sha=$(git rev-parse "$candidate_ref")
-            read -r author_email committer_email subject < <(
-              git show -s --format='%ae%x09%ce%x09%s' "$candidate_sha"
-            )
-            if [[ "$author_email" != "noreply@anthropic.com" ]] ||
-               [[ "$committer_email" != "noreply@anthropic.com" ]]; then
-              continue
-            fi
+            subject=$(git show -s --format='%s' "$candidate_sha")
             if [[ ! "$subject" =~ ^daily\ ([0-9]{4}-[0-9]{2}-[0-9]{2})$ ]]; then
               continue
             fi
             data_date=${BASH_REMATCH[1]}
+            if [[ "$branch_date" != "${data_date//-/}" ]]; then
+              continue
+            fi
             health_date=$(git show "$candidate_ref:fee-data-health.json" | jq -r '.targetDate // empty')
             if [[ "$health_date" != "$data_date" ]]; then
               continue
@@ -123,8 +121,8 @@ jobs:
                 jq -r '[.commit.verification.verified, .author.login, .committer.login] | @tsv'
             )
             if [[ "$verified" != "true" ]] ||
-               [[ "$author_login" != "claude" ]] ||
-               [[ "$committer_login" != "claude" ]]; then
+               [[ "$author_login" != "huanwujoy-crypto" ]] ||
+               [[ "$committer_login" != "huanwujoy-crypto" && "$committer_login" != "web-flow" ]]; then
               continue
             fi
 
@@ -173,7 +171,7 @@ jobs:
             fi
 
             candidates+=("$candidate_ref")
-          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/claude/)
+          done < <(git for-each-ref --format='%(refname:short)' refs/remotes/origin/codex/fee-daily-)
 
           if (( ${#candidates[@]} == 0 )); then
             if [[ -f fee-data-health.json ]]; then
@@ -186,7 +184,7 @@ jobs:
                 exit 0
               fi
             fi
-            echo 'No verified fee-data producer receipt exists for today.' >&2
+            echo 'No verified Codex fee-data producer receipt exists for today.' >&2
             exit 1
           fi
           if (( ${#candidates[@]} != 1 )); then
