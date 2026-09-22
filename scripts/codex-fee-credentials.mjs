@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { fetchEconomicSnapshot } from "./fee-economic-source.mjs";
+import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
 
 const ACCOUNT = "huanwujoy-crypto";
 const SERVICES = Object.freeze({
@@ -143,7 +143,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const known = new Set(["MANAGER_LINK_INVALID", "MANAGER_LINK_FILE_UNSAFE", "INTERACTIVE_TERMINAL_REQUIRED",
       "CANCELLED", "INPUT_INVALID", "KEYCHAIN_STORE_FAILED", "KEYCHAIN_READ_FAILED",
       "KEYCHAIN_VALUE_INVALID", "ECON_V4_REQUIRED"]);
-    console.error(`CODEX_FEE_SETUP_FAILED:${known.has(error.message) ? error.message : "SOURCE_CHECK_FAILED"}`);
+    const code = error instanceof SourceFetchError ? sourceFailureCode(error)
+      : known.has(error.message) ? error.message : "SOURCE_CHECK_FAILED";
+    console.error(`CODEX_FEE_SETUP_FAILED:${code}`);
     process.exitCode = 1;
   });
 }
