@@ -26,9 +26,11 @@
 
 1. 先完成一次性换钥匙迁移，取得**新**管理人链接并核对新私密 Gist；
    已泄露的旧链接不能用于日常接入。
-2. 在 Mac 自己的 Terminal 中进入本仓库，运行
-   `./scripts/codex-fee-setup setup`。程序只提示粘贴**新**管理人完整链接，
-   输入时不会显示。它只提取新 Gist ID 与新 32-byte 加密 key，
+2. 若一次性迁移程序已把新链接保存在仅本人可读的本地文件，运行
+   `./scripts/codex-fee-setup setup-file <该文件的绝对路径>`；程序拒绝链接、
+   组或其他用户可读取的文件及符号链接。也可在 Mac 自己的 Terminal 运行
+   `./scripts/codex-fee-setup setup` 并在隐藏提示中粘贴**新**管理人完整链接。
+   它只提取新 Gist ID 与新 32-byte 加密 key，
    **不保存或使用管理人写入 token**；两个只读运行所需值写入本机登录
    Keychain，服务名前缀 `fee-console.codex.`。链接不进入聊天、命令参数、
    shell history 或仓库文件。若输入被取消或格式不符，程序拒绝写入。

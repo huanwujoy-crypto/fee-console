@@ -33,6 +33,18 @@ export function parseManagerLink(input) {
   return { gist, key }; // Deliberately excludes the manager write token.
 }
 
+export function readPrivateManagerLink(filePath) {
+  let fd;
+  try {
+    fd = fs.openSync(filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    const info = fs.fstatSync(fd);
+    if (!info.isFile() || info.uid !== process.getuid() || (info.mode & 0o077) !== 0
+        || info.size < 1 || info.size > 4096) throw new Error("MANAGER_LINK_FILE_UNSAFE");
+    return fs.readFileSync(fd, "utf8");
+  } catch { throw new Error("MANAGER_LINK_FILE_UNSAFE"); }
+  finally { if (fd !== undefined) fs.closeSync(fd); }
+}
+
 function readHidden(label) {
   if (!process.stdin.isTTY || !process.stdin.setRawMode) throw new Error("INTERACTIVE_TERMINAL_REQUIRED");
   process.stdout.write(`${label}: `);
@@ -109,20 +121,26 @@ async function sourceCheck() {
 }
 
 async function main() {
-  if (process.argv.length !== 3) throw new Error("USAGE: setup | check");
-  if (process.argv[2] === "setup") {
-    const { gist, key } = parseManagerLink(await readHidden("粘贴迁移后的新管理人完整链接（输入不显示）"));
+  if ((process.argv[2] === "setup-file" && process.argv.length !== 4)
+      || (process.argv[2] !== "setup-file" && process.argv.length !== 3)) {
+    throw new Error("USAGE: setup | setup-file <private-link-file> | check");
+  }
+  if (process.argv[2] === "setup" || process.argv[2] === "setup-file") {
+    const link = process.argv[2] === "setup-file"
+      ? readPrivateManagerLink(process.argv[3])
+      : await readHidden("粘贴迁移后的新管理人完整链接（输入不显示）");
+    const { gist, key } = parseManagerLink(link);
     save(SERVICES.key, key);
     save(SERVICES.gist, gist);
     console.log("CODEX_FEE_CREDENTIALS_STORED");
   } else if (process.argv[2] === "check") {
     await sourceCheck();
-  } else throw new Error("USAGE: setup | check");
+  } else throw new Error("USAGE: setup | setup-file <private-link-file> | check");
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main().catch(error => {
-    const known = new Set(["MANAGER_LINK_INVALID", "INTERACTIVE_TERMINAL_REQUIRED",
+    const known = new Set(["MANAGER_LINK_INVALID", "MANAGER_LINK_FILE_UNSAFE", "INTERACTIVE_TERMINAL_REQUIRED",
       "CANCELLED", "INPUT_INVALID", "KEYCHAIN_STORE_FAILED", "KEYCHAIN_READ_FAILED",
       "KEYCHAIN_VALUE_INVALID", "ECON_V4_REQUIRED"]);
     console.error(`CODEX_FEE_SETUP_FAILED:${known.has(error.message) ? error.message : "SOURCE_CHECK_FAILED"}`);
