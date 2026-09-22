@@ -168,7 +168,7 @@ compatibility transform.
 
 ## 5. Publish and prove delivery
 
-Follow [the publication contract](../CLAUDE.md): one `claude/...-xxxxxx` branch,
+Follow [the publication contract](../CLAUDE.md): one `codex/xuan-ib-...-xxxxxx` branch,
 one non-merge `handover YYYY-MM-DD` commit changing only `xuan-ib/index.html`,
 current-pair/identity checks and unchanged guard. Never directly edit latest
 HTML/meta, source tags, rules, receipts or protected publication code in a run.

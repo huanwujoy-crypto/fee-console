@@ -3,7 +3,7 @@ name: Validate XUAN-IB candidate
 on:
   push:
     branches:
-      - 'claude/**'
+      - 'codex/xuan-ib-*'
     paths:
       - xuan-ib/index.html
 

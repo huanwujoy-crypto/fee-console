@@ -17,7 +17,9 @@ export const MAX_POLICY_LOOKUP_AGE_MS = 60_000;
 export const ASSOCIATION_EDITIONS = Object.freeze(['adhoc', 'am', 'pm']);
 const POLICY_ID = 'ib-primary-7day-pilot-v1';
 const PURPOSE = 'xuan-ib-read-only-report';
-const PUBLISHER = 'claude-verified-candidate-v1';
+const PUBLISHER = 'codex-verified-candidate-v1';
+const LEGACY_PUBLISHER = 'claude-verified-candidate-v1';
+const APPROVED_PUBLISHERS = [PUBLISHER, LEGACY_PUBLISHER];
 const SHA = /^[a-f0-9]{40}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const POLICY_KEYS = ['schemaVersion', 'policyId', 'accountAlias', 'basis', 'status', 'purpose', 'editions', 'publisher', 'validFrom', 'expiresAt'];
@@ -49,15 +51,15 @@ const instant = (value, label) => {
 };
 const hash = (value, pattern, label) => { if (typeof value !== 'string' || !pattern.test(value)) fail(`${label} is invalid`); };
 const scope = ({ edition = 'adhoc', purpose = PURPOSE, publisher = PUBLISHER } = {}) => {
-  if (!ASSOCIATION_EDITIONS.includes(edition) || purpose !== PURPOSE || publisher !== PUBLISHER) fail('report scope or publisher is not approved');
+  if (!ASSOCIATION_EDITIONS.includes(edition) || purpose !== PURPOSE || !APPROVED_PUBLISHERS.includes(publisher)) fail('report scope or publisher is not approved');
 };
 
-export function validateAssociationPolicy(policy, { now = Date.now(), edition = 'adhoc', purpose = PURPOSE, publisher = PUBLISHER, requireActive = true } = {}) {
+export function validateAssociationPolicy(policy, { now = Date.now(), edition = 'adhoc', purpose = PURPOSE, publisher, requireActive = true } = {}) {
   epoch(now, 'now');
   if (typeof requireActive !== 'boolean') fail('requireActive must be boolean');
-  scope({ edition, purpose, publisher });
+  scope({ edition, purpose, publisher: publisher ?? policy?.publisher });
   exactKeys(policy, POLICY_KEYS, 'policy');
-  if (policy.schemaVersion !== 1 || policy.policyId !== POLICY_ID || policy.accountAlias !== 'IB-HK' || policy.basis !== ASSOCIATION_BASIS || policy.purpose !== PURPOSE || policy.publisher !== PUBLISHER) fail('policy scope is not approved');
+  if (policy.schemaVersion !== 1 || policy.policyId !== POLICY_ID || policy.accountAlias !== 'IB-HK' || policy.basis !== ASSOCIATION_BASIS || policy.purpose !== PURPOSE || !APPROVED_PUBLISHERS.includes(policy.publisher) || (publisher && policy.publisher !== publisher)) fail('policy scope is not approved');
   if (!Array.isArray(policy.editions) || !policy.editions.length
     || new Set(policy.editions).size !== policy.editions.length
     || !policy.editions.includes('adhoc')
@@ -104,7 +106,7 @@ export function validateAssociationReceiptShape(receipt, context = {}) {
   return clone(receipt);
 }
 
-export function validateAssociationReceipt(receipt, snapshot, { now = Date.now(), edition = 'adhoc', previousSourceSha, runId, purpose = PURPOSE, publisher = PUBLISHER } = {}) {
+export function validateAssociationReceipt(receipt, snapshot, { now = Date.now(), edition = 'adhoc', previousSourceSha, runId, purpose = PURPOSE, publisher } = {}) {
   validateAssociationReceiptShape(receipt);
   validateSnapshot(snapshot, { now, edition, purpose, publisher });
   hash(previousSourceSha, SHA, 'context previousSourceSha');
