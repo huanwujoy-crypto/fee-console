@@ -31,7 +31,7 @@ test('header guide matches shared wording and runs only after verification',()=>
  assert.match(module,/for\(let i=1;i<=5;i\+\+\)/);
  assert.match(module,/if\(notes\.has\(1\)&&roots\.length\)/);
  assert.match(module,/querySelectorAll\('\.pane\.p1 \.holdings-source-context'\)/);
- assert.match(module,/\.cash-reserve-strip,details,li/);
+ assert.match(module,/\.cash-reserve-strip,\.raw-order-cards,details,li/);
  assert.doesNotMatch(module,/cloneNode\(true\)[\s\S]{0,300}数据日期与共同口径/);
 });
 test('source verification moves from report headline into the overview note',()=>{
