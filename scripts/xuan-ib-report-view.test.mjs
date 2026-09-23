@@ -274,7 +274,7 @@ test('a fresh daily ABC summary is emitted as the final ETF-pane template, passe
   // The live ABC series can lag the report by more than one day. A fixed
   // two-row extension no longer necessarily reaches beyond its date.
   const pastReportCount=Math.round((Date.parse(`${fixtureDate}T00:00:00Z`)-Date.parse(`${summaryStart}T00:00:00Z`))/86400000)+2;
-  assert.throws(()=>renderReport(fixture(),{...nextContext,etfSummary:dailySummary(pastReportCount)}),/Future ETF date|run past the report date/);
+  assert.throws(()=>renderReport(fixture(),{...nextContext,etfSummary:dailySummary(pastReportCount)}),/Future ETF (?:business )?date|run past the report date/);
   const extendedContext={...context,previousHtml:extended,previousMeta:{...previousMeta,dataDate:shiftDate(fixtureDate,1),htmlBlob:reportHtmlBlob(extended)}};
   assert.throws(()=>renderReport(nextDayView(),{...extendedContext,etfSummary:dailySummary(summaryDays)}),/restart or roll back/);
   assert.throws(()=>renderReport(nextDayView(),{...nextContext,etfSummary:dailySummary(summaryDays,shiftDate(summaryStart,1))}),/restart or roll back/);
