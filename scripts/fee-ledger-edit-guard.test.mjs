@@ -379,7 +379,30 @@ test("a shared viewer link ignores a cached manager token on the same browser or
   assert.equal(gist.authorized, false, "viewer GET must not send a revoked token");
   assert.equal(h.run("_receiptSource.state"), "verified");
   const shared = new URL(h.run("viewLink()"));
+  if (html.includes('id="viewerRecovery"')) {
+    assert.equal(shared.searchParams.get("view"), "1");
+    assert.equal(shared.searchParams.get("v"), /name="fee-console-build" content="([^"]+)"/.exec(html)[1]);
+  } else assert.equal(shared.search, "", "the pre-contract viewer link remains unchanged");
   assert.deepEqual([...new URLSearchParams(shared.hash.slice(1)).keys()], ["gid", "k"]);
+  assert.deepEqual(h.writes(), []);
+});
+
+test("a failed shared viewer read offers a local-only repair and drops only the stale token", async () => {
+  const html = fs.readFileSync(uiFile, "utf8");
+  if (!html.includes('id="viewerRecovery"')) return;
+  const h = await browserHarness(html, { hash: "#gid=fixture-gist&k=" + Buffer.alloc(32, 7).toString("base64url") });
+  h.network.failGistRead = true;
+  await h.run("pullAll(true,{skipShell:true})");
+  assert.equal(h.element("viewerRecovery").style.display, "block");
+  assert.match(h.element("viewerRecovery").innerHTML, /修复只读访问/);
+  assert.equal(h.store.get("feeConsole.gh.token"), "fixture-manager-token");
+  assert.equal(h.run("repairViewerAccess()"), true);
+  assert.equal(h.store.has("feeConsole.gh.token"), false);
+  assert.equal(h.store.get("feeConsole.gh.gist"), "fixture-gist");
+  assert.equal(h.store.get("feeConsole.key"), Buffer.alloc(32, 7).toString("base64url"));
+  assert.equal(h.store.has("feeConsole.v3.db"), true);
+  assert.equal(h.store.has("feeConsole.v3.daily"), true);
+  assert.equal(h.element("viewerRecovery").style.display, "none");
   assert.deepEqual(h.writes(), []);
 });
 
