@@ -7,6 +7,8 @@ const CACHE_PATH = process.env.BENCHMARK_CACHE_PATH || 'benchmark-close.json';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_DAYS = 120;
 const TOTAL_RETURN_TOLERANCE = 5e-4;
+const CLOSE_CROSSCHECK_TOLERANCE = 0.005;
+const CACHE_SOURCE = 'Yahoo Finance chart API; Nasdaq official quote cross-check; issuer/Nasdaq dividend evidence';
 
 export const DEFINITIONS = Object.freeze({
   spy: Object.freeze({
@@ -20,6 +22,14 @@ export const DEFINITIONS = Object.freeze({
     exchange: 'NYSEArca',
     timezone: 'America/New_York',
     closeMinutes: 16 * 60,
+    nasdaqExchangeNames: Object.freeze(['PSE']),
+    nasdaqCompanyNames: Object.freeze(['State Street SPDR S&P 500 ETF Trust']),
+    dividendGuard: Object.freeze({
+      validFrom: '2026-01-01',
+      validThrough: '2026-12-31',
+      exDates: Object.freeze(['2026-03-20', '2026-06-19', '2026-09-18', '2026-12-18']),
+      source: 'State Street SPY distribution calendar',
+    }),
   }),
   qqq: Object.freeze({
     symbol: 'QQQ',
@@ -29,6 +39,8 @@ export const DEFINITIONS = Object.freeze({
     exchange: 'NasdaqGS',
     timezone: 'America/New_York',
     closeMinutes: 16 * 60,
+    nasdaqExchangeNames: Object.freeze(['NASDAQ-GM']),
+    nasdaqCompanyNames: Object.freeze(['Invesco QQQ Trust, Series 1']),
   }),
 });
 
@@ -63,11 +75,18 @@ function isCompletedSession(date, definition, now) {
   return current.minutes >= definition.closeMinutes + 15;
 }
 
+function isCompletedSessionDate(date, definition, now) {
+  const current = localParts(now, definition.timezone);
+  if (date < current.date) return true;
+  if (date > current.date) return false;
+  return current.minutes >= definition.closeMinutes + 15;
+}
+
 function roundPrice(value) {
   return Math.round(Number(value) * 10000) / 10000;
 }
 
-export function extractPrices(payload, definition, now = new Date()) {
+function yahooResult(payload, definition) {
   const result = payload?.chart?.result?.[0];
   if (!result || payload?.chart?.error) throw new Error(`No chart result for ${definition.symbol}`);
 
@@ -81,6 +100,25 @@ export function extractPrices(payload, definition, now = new Date()) {
   if (meta.exchangeTimezoneName !== definition.exchangeTimezoneName) {
     throw new Error(`Unexpected timezone for ${definition.symbol}: ${meta.exchangeTimezoneName}`);
   }
+  return result;
+}
+
+function yahooDividends(result, definition) {
+  const divByDate = new Map();
+  for (const event of Object.values(result.events?.dividends || {})) {
+    const amount = Number(event?.amount);
+    const stamp = Number(event?.date);
+    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(stamp)) {
+      throw new Error(`Malformed dividend event for ${definition.symbol}`);
+    }
+    const exDate = localParts(new Date(stamp * 1000), definition.timezone).date;
+    divByDate.set(exDate, roundPrice((divByDate.get(exDate) || 0) + amount));
+  }
+  return divByDate;
+}
+
+export function extractPrices(payload, definition, now = new Date()) {
+  const result = yahooResult(payload, definition);
 
   const byDate = new Map();
   const rawByDate = new Map();
@@ -104,24 +142,21 @@ export function extractPrices(payload, definition, now = new Date()) {
     rawByDate.set(d, { p: Number(price), adj: Number(adj) });
   }
 
-  // Do not use meta.regularMarketPrice as a fallback.  It has no paired
-  // adjusted-close observation, so an ex-dividend omission could not be
-  // verified.  A one-day stale cache is safer than an unverifiable close.
+  // This primary path still never trusts meta.regularMarketPrice by itself.
+  // appendCrossCheckedClose may add exactly one newer close only after an
+  // independent Nasdaq date/price match and separate dividend evidence.
 
   // Cash dividends, keyed by ex-date in the listing's own timezone. Yahoo only
   // returns these when the request carries `events=div`.
-  const divByDate = new Map();
-  for (const event of Object.values(result.events?.dividends || {})) {
-    const amount = Number(event?.amount);
-    const stamp = Number(event?.date);
-    if (!Number.isFinite(amount) || amount <= 0 || !Number.isFinite(stamp)) {
-      throw new Error(`Malformed dividend event for ${definition.symbol}`);
-    }
-    const exDate = localParts(new Date(stamp * 1000), definition.timezone).date;
-    divByDate.set(exDate, roundPrice((divByDate.get(exDate) || 0) + amount));
-  }
+  const divByDate = yahooDividends(result, definition);
 
+  const observedDates = [...byDate.keys()].sort();
+  const firstObserved = observedDates[0], lastObserved = observedDates.at(-1);
   for (const d of divByDate.keys()) {
+    // Yahoo can include one event just outside a range boundary. It cannot be
+    // paired with a close from this response, so leave it out of this window;
+    // only an event inside the observed close span is required to pair.
+    if (d < firstObserved || d > lastObserved) continue;
     if (!byDate.has(d)) throw new Error(`Dividend on ${d} has no completed close for ${definition.symbol}`);
   }
 
@@ -145,6 +180,109 @@ export function extractPrices(payload, definition, now = new Date()) {
     .sort((a, b) => a.d.localeCompare(b.d));
   if (!series.length) throw new Error(`No completed closes for ${definition.symbol}`);
   return series;
+}
+
+export function extractYahooMetaClose(payload, definition, now = new Date()) {
+  const result = yahooResult(payload, definition);
+  const price = Number(result.meta?.regularMarketPrice);
+  const stamp = Number(result.meta?.regularMarketTime);
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(stamp)) {
+    throw new Error(`Missing Yahoo completed-session meta close for ${definition.symbol}`);
+  }
+  const date = new Date(stamp * 1000);
+  if (!isCompletedSession(date, definition, now)) {
+    throw new Error(`Yahoo meta close is not a completed session for ${definition.symbol}`);
+  }
+  return { d: localParts(date, definition.timezone).date, p: roundPrice(price) };
+}
+
+const NASDAQ_MONTHS = Object.freeze({
+  Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06',
+  Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12',
+});
+
+function nasdaqDate(value) {
+  const match = /^([A-Z][a-z]{2}) (\d{1,2}), (\d{4})$/.exec(String(value || '').trim());
+  if (!match || !NASDAQ_MONTHS[match[1]]) throw new Error(`Malformed Nasdaq session date`);
+  return `${match[3]}-${NASDAQ_MONTHS[match[1]]}-${match[2].padStart(2, '0')}`;
+}
+
+function usdNumber(value, label) {
+  const normalized = String(value || '').replace(/^\$/, '').replace(/,/g, '').trim();
+  const amount = Number(normalized);
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error(`Malformed ${label}`);
+  return amount;
+}
+
+export function extractNasdaqClose(payload, definition, now = new Date()) {
+  const data = payload?.data;
+  if (!data || payload?.status?.rCode !== 200) throw new Error(`No Nasdaq quote for ${definition.symbol}`);
+  if (data.symbol !== definition.symbol) throw new Error(`Unexpected Nasdaq symbol: ${data.symbol}`);
+  if (data.assetClass !== 'ETF') throw new Error(`Unexpected Nasdaq asset class for ${definition.symbol}`);
+  if (!definition.nasdaqExchangeNames.includes(data.exchange)) {
+    throw new Error(`Unexpected Nasdaq exchange for ${definition.symbol}: ${data.exchange}`);
+  }
+  if (!definition.nasdaqCompanyNames.includes(data.companyName)) {
+    throw new Error(`Unexpected Nasdaq issuer for ${definition.symbol}: ${data.companyName}`);
+  }
+  if (data.marketStatus !== 'Closed') throw new Error(`Nasdaq market is not closed for ${definition.symbol}`);
+  const d = nasdaqDate(data.primaryData?.lastTradeTimestamp);
+  if (!isCompletedSessionDate(d, definition, now)) {
+    throw new Error(`Nasdaq quote is not a completed session for ${definition.symbol}`);
+  }
+  return { d, p: roundPrice(usdNumber(data.primaryData?.lastSalePrice, `Nasdaq close for ${definition.symbol}`)) };
+}
+
+export function extractNasdaqDividends(payload, definition) {
+  if (payload?.status?.rCode !== 200 || !payload?.data) {
+    throw new Error(`No Nasdaq dividend evidence for ${definition.symbol}`);
+  }
+  const rows = payload.data?.dividends?.rows;
+  if (!Array.isArray(rows)) throw new Error(`Missing Nasdaq dividend rows for ${definition.symbol}`);
+  const result = new Map();
+  for (const row of rows) {
+    const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(row?.exOrEffDate || ''));
+    if (!match) throw new Error(`Malformed Nasdaq dividend date for ${definition.symbol}`);
+    if (row?.currency !== 'USD' || row?.type !== 'Cash') {
+      throw new Error(`Unexpected Nasdaq dividend type for ${definition.symbol}`);
+    }
+    const d = `${match[3]}-${match[1]}-${match[2]}`;
+    result.set(d, roundPrice((result.get(d) || 0) + usdNumber(row.amount, `Nasdaq dividend for ${definition.symbol}`)));
+  }
+  return result;
+}
+
+export function appendCrossCheckedClose({ yahooPayload, nasdaqInfo, nasdaqDividends, definition, now = new Date() }) {
+  const series = extractPrices(yahooPayload, definition, now);
+  const yahoo = extractYahooMetaClose(yahooPayload, definition, now);
+  const nasdaq = extractNasdaqClose(nasdaqInfo, definition, now);
+  if (yahoo.d !== nasdaq.d) throw new Error(`Cross-check date mismatch for ${definition.symbol}`);
+  if (Math.abs(yahoo.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
+    throw new Error(`Cross-check price mismatch for ${definition.symbol}`);
+  }
+  const latest = series.at(-1)?.d;
+  if (!latest || nasdaq.d <= latest) return series;
+
+  const yahooDivs = yahooDividends(yahooResult(yahooPayload, definition), definition);
+  let div = 0;
+  if (definition.symbol === 'QQQ') {
+    const official = extractNasdaqDividends(nasdaqDividends, definition);
+    div = official.get(nasdaq.d) || 0;
+    const yahooDiv = yahooDivs.get(nasdaq.d) || 0;
+    if (yahooDiv > 0 && Math.abs(yahooDiv - div) > TOTAL_RETURN_TOLERANCE) {
+      throw new Error(`Dividend cross-check mismatch for ${definition.symbol} on ${nasdaq.d}`);
+    }
+  } else {
+    const guard = definition.dividendGuard;
+    if (!guard || nasdaq.d < guard.validFrom || nasdaq.d > guard.validThrough) {
+      throw new Error(`Dividend calendar coverage missing for ${definition.symbol} on ${nasdaq.d}`);
+    }
+    const isExDate = guard.exDates.includes(nasdaq.d);
+    div = yahooDivs.get(nasdaq.d) || 0;
+    if (isExDate && !(div > 0)) throw new Error(`Dividend amount missing for ${definition.symbol} on ${nasdaq.d}`);
+    if (!isExDate && div > 0) throw new Error(`Dividend calendar mismatch for ${definition.symbol} on ${nasdaq.d}`);
+  }
+  return [...series, div > 0 ? { ...nasdaq, div } : nasdaq];
 }
 
 function normalizedSeries(series) {
@@ -191,7 +329,7 @@ export function mergePrices(existing, fetched, now = new Date()) {
   return {
     v: 1,
     generatedAt: now.toISOString(),
-    source: 'Yahoo Finance public chart API',
+    source: CACHE_SOURCE,
     benchmarks,
   };
 }
@@ -225,16 +363,34 @@ async function fetchJson(url) {
 
 async function fetchSymbol(definition, now) {
   const errors = [];
+  let bestPrimary = null;
   for (const host of ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']) {
     const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=3mo&interval=1d&events=div%2Csplits&includeAdjustedClose=true`;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        return extractPrices(await fetchJson(url), definition, now);
+        const yahooPayload = await fetchJson(url);
+        const primary = extractPrices(yahooPayload, definition, now);
+        if (!bestPrimary || primary.at(-1)?.d > bestPrimary.at(-1)?.d) bestPrimary = primary;
+        const yahooLatest = extractYahooMetaClose(yahooPayload, definition, now);
+        if (primary.at(-1)?.d >= yahooLatest.d) return { series: primary, warnings: [] };
+        try {
+          const nasdaqInfo = await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/info?assetclass=etf`);
+          const nasdaqDividends = definition.symbol === 'QQQ'
+            ? await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/dividends?assetclass=etf`)
+            : undefined;
+          return {
+            series: appendCrossCheckedClose({ yahooPayload, nasdaqInfo, nasdaqDividends, definition, now }),
+            warnings: [],
+          };
+        } catch (error) {
+          errors.push(`${host} attempt ${attempt} cross-check fallback unavailable: ${error.message}`);
+        }
       } catch (error) {
         errors.push(`${host} attempt ${attempt}: ${error.message}`);
       }
     }
   }
+  if (bestPrimary) return { series: bestPrimary, warnings: errors };
   throw new Error(`${definition.symbol} fetch failed (${errors.join('; ')})`);
 }
 
@@ -245,7 +401,9 @@ export async function refresh({ path = CACHE_PATH, now = new Date() } = {}) {
 
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
     try {
-      fetched[key] = await fetchSymbol(definition, now);
+      const result = await fetchSymbol(definition, now);
+      fetched[key] = result.series;
+      failures.push(...result.warnings);
     } catch (error) {
       failures.push(error.message);
       if (!existing?.benchmarks?.[key]?.series?.length) throw error;
@@ -253,6 +411,11 @@ export async function refresh({ path = CACHE_PATH, now = new Date() } = {}) {
   }
 
   const next = mergePrices(existing, fetched, now);
+  const spyDate = next.benchmarks.spy.series.at(-1)?.d;
+  const qqqDate = next.benchmarks.qqq.series.at(-1)?.d;
+  if (!spyDate || spyDate !== qqqDate) {
+    throw new Error(`Benchmark latest-date mismatch: spy=${spyDate || 'missing'} qqq=${qqqDate || 'missing'}`);
+  }
   const changed = JSON.stringify(contentIgnoringTimestamp(existing)) !== JSON.stringify(contentIgnoringTimestamp(next));
   if (changed) {
     await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8');

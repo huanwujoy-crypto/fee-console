@@ -12,8 +12,11 @@ on:
     # 06:30 and 09:00 UTC), and Yahoo did not yet serve the previous close at
     # the 01:30 UTC attempt on two of those four days, so the 12:30 HKT
     # producer published 2026-09-15 and 2026-09-17 without a benchmark. More
-    # slots before the producer raise the odds; the producer may also dispatch
-    # this workflow on demand (see .claude/rules/fee-console-daily.md).
+    # slots before the producer raise the odds. The fetcher also has a narrow
+    # Nasdaq cross-check fallback for a one-session-stale Yahoo daily row; it
+    # still fails closed without dividend evidence and a paired SPY/QQQ date.
+    # The producer may also dispatch this workflow on demand (see
+    # docs/codex-fee-daily.md).
     - cron: '35 23,1,2,3,4,5 * * 1-6'
   workflow_dispatch:
 
