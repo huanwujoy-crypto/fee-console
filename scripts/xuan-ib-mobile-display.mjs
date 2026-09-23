@@ -533,7 +533,7 @@ export function simplifyPaneReading(doc) {
       for(const detail of [...card.querySelectorAll(':scope > details,:scope > .dbody > details')]){
         if(/详细说明|排序与报价说明|使用前核对|AAOI 分类与计算记录/.test(detail.querySelector('summary')?.textContent||''))move(i,title,[detail]);
       }
-      if(!card.querySelector('table,.kv,.mobile-metrics,.mobile-risk-summary,.brief-signal,.ai-risk-strip,.cash-reserve-strip,details,li')&&!card.querySelector(':scope > p'))card.remove();
+      if(!card.querySelector('table,.kv,.mobile-metrics,.mobile-risk-summary,.brief-signal,.ai-risk-strip,.cash-reserve-strip,.raw-order-cards,details,li')&&!card.querySelector(':scope > p'))card.remove();
     }
   }
   const riskPane=notes.get(2)?.pane;
