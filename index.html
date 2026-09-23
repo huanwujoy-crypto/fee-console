@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.15">
+<meta name="fee-console-build" content="4.9.16">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -176,6 +176,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </header>
 
 <div id="setupBox"></div>
+<div id="viewerRecovery" class="warn" role="status" style="display:none"></div>
 <!-- ledger-settings-entry:v1 — routine read-only status belongs in Settings. -->
 <div id="ledgerNotice" class="info" role="status" style="display:none"></div>
 <div id="a2hs" class="info" style="display:none;justify-content:space-between;align-items:center;gap:10px">
@@ -821,7 +822,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.15";
+const UI_VERSION_LABEL=" · v4.9.16";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1984,6 +1985,20 @@ function renderA2hs(){const el=document.getElementById("a2hs"),text=document.get
   text.innerHTML=isMgr()?"📲 管理人请先到<b>设置</b>点<b>准备主屏幕入口</b>，再用 Safari 的<b>分享</b> → <b>添加到主屏幕</b>。":"📲 点 Safari 的<b>分享</b> → <b>添加到主屏幕</b>，以后可直接打开只读页面。";
   el.style.display=(ios&&!sa&&!cfg(K.a2hs))?"flex":"none";}
 
+let _viewerRecoveryReason="";
+function renderViewerRecovery(){
+  const el=document.getElementById("viewerRecovery"),eligible=!isMgr()&&!!cfg(K.gid)&&!!cfg(K.key)&&!!_viewerRecoveryReason;
+  if(!eligible){el.style.display="none";el.innerHTML="";return;}
+  el.style.display="block";el.innerHTML=`<b>只读访问未完成</b><div>${esc(_viewerRecoveryReason)}</div><div class="small" style="margin:5px 0 9px">修复只清除此手机保存的旧管理人令牌，并以当前只读入口重新载入；不会修改云端账本或基金数据。</div><button class="btn sm" id="btnRepairViewer" type="button">修复只读访问</button>`;
+}
+function setViewerRecovery(reason=""){_viewerRecoveryReason=String(reason||"");renderViewerRecovery();}
+function repairViewerAccess(){
+  if(isMgr()||!cfg(K.gid)||!cfg(K.key))return false;
+  invalidateReceiptSource(true);setCfg(K.tok,"");_readOnlyEntry=true;_managerCapability={state:"unverified"};setViewerRecovery("");
+  const target=new URL(viewLink());target.searchParams.set("_repair",String(Date.now()));
+  history.replaceState(null,"",target.pathname+target.search+target.hash);location.reload();return true;
+}
+
 /* home-screen-entry:start */
 function managerHomeScreenLink(){
   const token=cfg(K.tok),gid=cfg(K.gid),keyValue=cfg(K.key);
@@ -2161,9 +2176,9 @@ async function pullAll(quiet,opt={}){
   if(cfg(K.gid)&&!_ledgerBusy){
     _busy=true;try{const snapshot=await ghPull(epoch);if(!current())return;if(isMgr())try{await verifyManagerCapability(snapshot,epoch);}catch(e){_managerCapability={state:"denied"};_fundDocsMessage="基金文件管理身份未核验："+e.message;}if(!current())return;try{await acceptRemoteFundSnapshot(snapshot);}catch(e){_fundProfileMessage="远端基金档案读取失败："+e.message;_fundDocsMessage=_fundProfileMessage;}if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
       if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()&&!sameLedger(DB,remote)){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
-      else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setSync(dailyReady?"已读取 "+hhmm():"每日数据读取失败，费用暂不可用",!dailyReady);if(!quiet)toast("已重新读取，不会上传账本");}
-    }catch(e){if(current()){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";setSync("读取失败："+e.message,true);}}finally{_busy=false;}
-  }else if(!cfg(K.gid))setSync(isMgr()?"请恢复原账本链接；不会新建":"");
+      else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setViewerRecovery("");setSync(dailyReady?"已读取 "+hhmm():"每日数据读取失败，费用暂不可用",!dailyReady);if(!quiet)toast("已重新读取，不会上传账本");}
+    }catch(e){if(current()){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";if(!isMgr())setViewerRecovery("读取失败："+e.message);setSync("读取失败："+e.message,true);}}finally{_busy=false;}
+  }else if(!cfg(K.gid)){setViewerRecovery("");setSync(isMgr()?"请恢复原账本链接；不会新建":"");}
   await restoreDraft();
   if(current()){if(_receiptSource.state==="loading")_receiptSource={state:"unverified"};await render();}
 }
@@ -2178,7 +2193,7 @@ window.addEventListener("online",()=>pullAll(true));
 window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;_fundArchiveCache=null;scheduleRender();return;}if(e.key===FUND_DOCS_KEY){_fundDocsCache=null;scheduleRender();return;}if(e.key===FUND_ARCHIVE_KEY){_fundArchiveCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){_remoteFund={state:"unloaded",gid:"",keyValue:"",revision:"",raw:"",bundle:null,reason:""};_fundDocsCache=null;_fundArchiveCache=null;_fundArchiveCipher="";invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
 
 /* ============ 分享（只读） ============ */
-function viewLink(){return location.origin+location.pathname+"#gid="+encodeURIComponent(cfg(K.gid))+"&k="+encodeURIComponent(cfg(K.key));}
+function viewLink(){const target=new URL(location.origin+location.pathname);target.searchParams.set("view","1");target.searchParams.set("v",SHELL_BUILD||"current");target.hash=new URLSearchParams({gid:cfg(K.gid),k:cfg(K.key)}).toString();return target.toString();}
 function showShare(){
   if(!cfg(K.gid)||!cfg(K.key)){toast("请先完成一次同步（连接后自动完成）");return;}
   if(isMgr()&&currentRemoteFund()?.state!=="verified"){toast("请先发布投资人最新版");return;}
@@ -2194,6 +2209,7 @@ document.getElementById("cfmCancel").onclick=()=>{_cfmCb=null;document.getElemen
 document.getElementById("cfmOk").onclick=()=>{const cb=_cfmCb;_cfmCb=null;document.getElementById("cfm").classList.remove("on");if(cb)cb();};
 document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnRefresh"){manualRefresh();return;}
+  if(T.id==="btnRepairViewer"){repairViewerAccess();return;}
   if(T.id==="ledgerEdit"){beginLedgerEdit();return;}
   if(T.id==="ledgerMigrate"){beginLegacyMigration();return;}
   if(T.id==="ledgerMigrationCheck"){checkLegacyMigrationOutcome();return;}
