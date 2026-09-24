@@ -1,4 +1,4 @@
-# Codex 每日基金更新（不依赖 Claude）
+# 每日基金更新（不依赖 Claude）
 
 本流程只负责「投资管理费」的每日 AUM、费用和投资人份额回执。
 `xuan-ib/` 是另一条发布链，不能与此处的 `data.json` 候选合并。
@@ -14,10 +14,12 @@
   `docs/fee-economic-source.md` 和 `docs/fee-calculation-receipt.md` 是计算合同。
   `scripts/daily.mjs` 仍是唯一的 `data.json` writer；投资人份额、管理费和 Carry
   只由该 writer 与同一份 v4 私密经济账本生成，不能由调度提示词重算。
-- `FEE_DATA_KEY` 和 `FEE_ECON_GIST_ID` 只在受控 Codex 运行环境中提供；
-  不得放进仓库、GitHub Actions、参数、日志或聊天。Codex 按精确 Gist ID
+- `FEE_DATA_KEY` 和 `FEE_ECON_GIST_ID` 只在受控本机 Keychain，或经
+  `docs/fee-cloud-producer.md` 验收的专用 GitHub Environment secrets 中提供；
+  不得放进仓库、普通 Actions、参数、日志或聊天。producer 按精确 Gist ID
   匿名读取加密密文，不需要第二个 GitHub PAT；管理人写入令牌不交给每日程序。
-  原 Claude 环境中的凭据不会自动转移。
+  原 Claude 环境中的凭据不会自动转移；云端 Sharesight 使用独立凭据，不能导出
+  本机 Keychain 凭据代替。
   凭据未完成独立配置及实际读回验收时，此流程**未激活**，不能发布候选。
 - 若目标日尚无完整 SPY/QQQ 同日收盘资料，按合同只发布可独立验证的 AUM，
   留下 benchmark pending，随后同日 replacement。不能用较早价格假装当日价格。
@@ -46,6 +48,10 @@
    不退回到 Claude、浏览器 token 或明文账本。
 
 ## 每日顺序
+
+云端主路径与下列数据、计算和发布顺序相同。其固定 GET-only reader、双读、
+shadow/publish 切换、秘密边界和停用方法见 `docs/fee-cloud-producer.md`。
+本机流程在云端完成真实发布回读前继续作为备用，不能与云端 publish 同时运行。
 
 1. 读取 `main`、现有健康回执及私密来源，确认目标日期、允许的回补窗口和无并发候选。
    先核对基金 Gist 的 owner、secret 可见性、文件名、两次相同 revision/ETag/密文；
