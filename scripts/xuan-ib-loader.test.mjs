@@ -2146,8 +2146,10 @@ test('validation and promotion accept a verified single-file candidate based on 
   assert.match(promotion, /if ! commit_api_json=\$\(curl --fail --silent --show-error/);
   assert.match(
     promotion,
-    /if ! env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON\s*\\\s*XUAN_IB_PREVIOUS_SOURCE_SHA="\$meta_source_sha"[\s\S]*?node scripts\/handover-guard\.mjs/
+    /candidate_guard=\(env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON\s*\\\s*XUAN_IB_PREVIOUS_SOURCE_SHA="\$meta_source_sha"[\s\S]*?node scripts\/handover-guard\.mjs/
   );
+  assert.match(promotion, /candidate_guard=\(node scripts\/xuan-ib-night-action-guard\.mjs/);
+  assert.match(promotion, /if ! "\$\{candidate_guard\[@\]\}"/);
   assert.match(promotion, /Skipping \$branch_name: its handover page failed validation/);
   assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json/);
   assert.match(promotion, /Published metadata source is not a verified approved report commit/);
