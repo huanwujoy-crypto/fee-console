@@ -71,18 +71,18 @@ test('five read results produce private captured receipts without financial stdo
   assert.ok(!JSON.stringify(result).includes('net_liquidation'));
 });
 
-test('action-only capture reads exactly summary and orders', async t => {
+test('action-only capture reads exactly summary, positions and orders', async t => {
   const files = setup(t);
-  const events = ['get_account_summary', 'get_account_orders'].map(tool => event(tool));
+  const events = ['get_account_summary', 'get_account_positions', 'get_account_orders'].map(tool => event(tool));
   const result = await captureCodexIbAction({ ...files, spawnCodex: fakeSpawn(events) });
-  assert.deepEqual(new Set(result.sources), new Set(['ib.accountSummary', 'ib.orders']));
+  assert.deepEqual(new Set(result.sources), new Set(['ib.accountSummary', 'ib.positions', 'ib.orders']));
   assert.equal(fs.existsSync(path.join(files.dir, 'ib.balances.native.json')), false);
 });
 
 test('action-only capture rejects even another read endpoint', async t => {
   const files = setup(t);
   await assert.rejects(captureCodexIbAction({ ...files, spawnCodex: fakeSpawn([
-    event('get_account_summary'), event('get_account_orders'), event('get_account_positions'),
+    event('get_account_summary'), event('get_account_positions'), event('get_account_orders'), event('get_account_balances'),
   ]) }), /UNEXPECTED_MCP_TOOL/);
 });
 

@@ -21,8 +21,8 @@ const TOOL_KEYS = Object.freeze({
   get_account_trades: 'ib.trades',
 });
 const PROMPT = 'Use only the configured official ibkr MCP server. Call exactly once each of get_account_summary, get_account_balances, get_account_positions, get_account_orders, and get_account_trades (period TODAY). These are read-only. Do not call any write tool, issue an instruction, or print financial data. Final answer: completed.';
-const ACTION_TOOLS = Object.freeze(['get_account_summary', 'get_account_orders']);
-const ACTION_PROMPT = 'Use only the configured official ibkr MCP server. Call exactly once each of get_account_summary and get_account_orders. These are read-only. Do not call any other tool, issue an instruction, or print financial data. Final answer: completed.';
+const ACTION_TOOLS = Object.freeze(['get_account_summary', 'get_account_positions', 'get_account_orders']);
+const ACTION_PROMPT = 'Use only the configured official ibkr MCP server. Call exactly once each of get_account_summary, get_account_positions, and get_account_orders. These are read-only. Do not call any other tool, issue an instruction, or print financial data. Final answer: completed.';
 
 export function parseCodexIbEvent(event) {
   if (['command_execution', 'file_change', 'web_search'].includes(event?.item?.type))
