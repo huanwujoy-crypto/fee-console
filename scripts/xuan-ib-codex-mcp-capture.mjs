@@ -21,6 +21,8 @@ const TOOL_KEYS = Object.freeze({
   get_account_trades: 'ib.trades',
 });
 const PROMPT = 'Use only the configured official ibkr MCP server. Call exactly once each of get_account_summary, get_account_balances, get_account_positions, get_account_orders, and get_account_trades (period TODAY). These are read-only. Do not call any write tool, issue an instruction, or print financial data. Final answer: completed.';
+const ACTION_TOOLS = Object.freeze(['get_account_summary', 'get_account_orders']);
+const ACTION_PROMPT = 'Use only the configured official ibkr MCP server. Call exactly once each of get_account_summary and get_account_orders. These are read-only. Do not call any other tool, issue an instruction, or print financial data. Final answer: completed.';
 
 export function parseCodexIbEvent(event) {
   if (['command_execution', 'file_change', 'web_search'].includes(event?.item?.type))
@@ -44,11 +46,15 @@ export function parseCodexIbEvent(event) {
   return { sourceKey, raw };
 }
 
-export async function captureCodexIb({ dir, journalPath, spawnCodex = spawn }) {
-  for (const sourceKey of Object.values(TOOL_KEYS)) beginSourceCapture(dir, sourceKey, { journalPath });
+async function captureCodexIbSet({ dir, journalPath, toolNames, prompt, spawnCodex }) {
+  if (!Array.isArray(toolNames) || !toolNames.length || new Set(toolNames).size !== toolNames.length
+    || toolNames.some(tool => !Object.hasOwn(TOOL_KEYS, tool)) || typeof prompt !== 'string')
+    throw new Error('INVALID_IB_CAPTURE_SET');
+  const expected = new Set(toolNames.map(tool => TOOL_KEYS[tool]));
+  for (const sourceKey of expected) beginSourceCapture(dir, sourceKey, { journalPath });
   const child = spawnCodex(CODEX, ['exec', '--json', '--ephemeral', '--sandbox', 'read-only',
     '--skip-git-repo-check', '--ignore-user-config', '-c', `mcp_servers.ibkr={url="${URL}"}`,
-    '-C', '/private/tmp', '-m', 'gpt-5.6-luna', '-c', 'model_reasoning_effort="low"', PROMPT],
+    '-C', '/private/tmp', '-m', 'gpt-5.6-luna', '-c', 'model_reasoning_effort="low"', prompt],
   { stdio: ['ignore', 'pipe', 'pipe'] });
   const seen = new Set();
   let line = '', fatal = null;
@@ -62,6 +68,7 @@ export async function captureCodexIb({ dir, journalPath, spawnCodex = spawn }) {
       try {
         const result = parseCodexIbEvent(JSON.parse(fragment));
         if (!result) continue;
+        if (!expected.has(result.sourceKey)) throw new Error('UNEXPECTED_MCP_TOOL');
         if (seen.has(result.sourceKey)) throw new Error('DUPLICATE_MCP_READ');
         const rawFile = path.join(dir, `${result.sourceKey}.native.json`);
         const fd = fs.openSync(rawFile, fs.constants.O_WRONLY | fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_NOFOLLOW, 0o600);
@@ -78,9 +85,17 @@ export async function captureCodexIb({ dir, journalPath, spawnCodex = spawn }) {
     child.on('close', resolve);
   });
   if (fatal) throw fatal;
-  if (exitCode !== 0 || line.trim() || seen.size !== Object.keys(TOOL_KEYS).length)
+  if (exitCode !== 0 || line.trim() || seen.size !== expected.size)
     throw new Error('INCOMPLETE_IB_MCP_CAPTURE');
   return { status: 'captured', sources: [...seen] };
+}
+
+export function captureCodexIb({ dir, journalPath, spawnCodex = spawn }) {
+  return captureCodexIbSet({ dir, journalPath, toolNames: Object.keys(TOOL_KEYS), prompt: PROMPT, spawnCodex });
+}
+
+export function captureCodexIbAction({ dir, journalPath, spawnCodex = spawn }) {
+  return captureCodexIbSet({ dir, journalPath, toolNames: ACTION_TOOLS, prompt: ACTION_PROMPT, spawnCodex });
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
