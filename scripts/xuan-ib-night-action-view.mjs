@@ -27,9 +27,10 @@ export function validateNightActionModel(model) {
       fail('INVALID_REPLENISHMENT');
     }
   }
-  if (!object(model.orders) || !text(model.orders.asOfHkt)
-    || !Array.isArray(model.orders.buys) || !Array.isArray(model.orders.sells)
-    || model.orders.buys.length + model.orders.sells.length > 60) fail('INVALID_ORDERS');
+  if (!object(model.orders) || !['ready', 'unavailable'].includes(model.orders.status)
+    || !text(model.orders.asOfHkt) || !Array.isArray(model.orders.buys) || !Array.isArray(model.orders.sells)
+    || model.orders.buys.length + model.orders.sells.length > 60
+    || (model.orders.status === 'unavailable' && (model.orders.buys.length || model.orders.sells.length))) fail('INVALID_ORDERS');
   [...model.orders.buys, ...model.orders.sells].forEach(validateOrder);
   if (model.orders.buys.some(order => order.side !== 'BUY')
     || model.orders.sells.some(order => order.side !== 'SELL')) fail('ORDER_GROUP_MISMATCH');
@@ -72,12 +73,15 @@ export function renderNightActionReport(model) {
   const allocation = model.allocation.status === 'ready' ? `<div class="allocation">
 ${model.allocation.categories.map(item => `<div><span>${esc(item.label)}</span><b>${percent(item.currentPct)} <i>→</i> ${percent(item.targetPct)}</b><small>${money(item.marketValue)}</small></div>`).join('')}
 </div>` : '<div class="unavailable">四类数据未齐，本轮不显示旧值</div>';
+  const orders = model.orders.status === 'ready'
+    ? `<div class="orders">${renderOrders('买单', model.orders.buys, 'buy')}${renderOrders('卖单', model.orders.sells, 'sell')}</div>`
+    : '<div class="unavailable">实时挂单尚未接入，本轮显示“未取得”</div>';
   return `<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>XUAN · 睡前行动版</title><style>
 :root{color-scheme:light;--bg:#f6f7f8;--card:#fff;--text:#17191c;--mut:#6c727a;--line:#e4e6e8;--buy:#18794e;--sell:#b42318;--blue:#1769aa}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:720px;margin:auto;padding:calc(16px + env(safe-area-inset-top)) 14px calc(28px + env(safe-area-inset-bottom))}header{padding:4px 2px 10px}h1{font-size:24px;margin:0}header p{margin:4px 0 0;color:var(--mut);font-size:13px}.state{float:right;color:${model.status === 'ready' ? 'var(--buy)' : '#9a6700'};font-weight:700}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0;box-shadow:0 1px 2px #00000008}.card h2{font-size:19px;margin:0 0 12px}.card h2 small{font-size:12px;color:var(--mut);font-weight:500;margin-left:7px}.hero-value{font-size:34px;font-weight:800;letter-spacing:-1px}.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.chips span{display:flex;gap:8px;padding:8px 10px;border-radius:10px;background:#edf6ff;color:#164f79}.orders{display:grid;grid-template-columns:1fr 1fr;gap:12px}.order-group h3{display:flex;justify-content:space-between;margin:0 0 8px;font-size:16px}.order-group h3 small{font-weight:500;color:var(--mut)}.order{border:1px solid var(--line);border-left:4px solid;border-radius:12px;padding:11px;margin:8px 0}.order.buy{border-left-color:var(--buy)}.order.sell{border-left-color:var(--sell)}.order>div{display:flex;justify-content:space-between;gap:8px}.order>div span{color:var(--mut);font-size:12px}.order dl{display:grid;grid-template-columns:1fr 1fr;margin:9px 0 0;gap:8px}.order dl div{min-width:0}.order dt{font-size:12px;color:var(--mut)}.order dd{margin:2px 0 0;font-weight:650;overflow-wrap:anywhere}.empty,.unavailable{color:var(--mut);margin:4px 0}.metrics{display:grid;gap:8px}.metrics.three{grid-template-columns:repeat(3,1fr)}.metrics div,.allocation>div{background:#f7f8f9;border-radius:12px;padding:11px;min-width:0}.metrics span,.allocation span,.allocation small{display:block;color:var(--mut);font-size:12px}.metrics b{display:block;font-size:18px;margin-top:3px;overflow-wrap:anywhere}.allocation{display:grid;grid-template-columns:1fr 1fr;gap:8px}.allocation>div{display:grid;grid-template-columns:1fr auto;align-items:center;gap:2px 8px}.allocation b{white-space:nowrap}.allocation i{font-style:normal;color:var(--mut)}.allocation small{grid-column:1/-1}.notes{font-size:12px;color:var(--mut);padding:2px 4px}.notes p{margin:4px 0}@media(max-width:520px){.orders{grid-template-columns:1fr}.metrics.three{grid-template-columns:1fr 1fr}.metrics.three div:last-child{grid-column:1/-1}.allocation{grid-template-columns:1fr}h1{font-size:22px}.card{padding:14px}.hero-value{font-size:31px}}
 </style></head><body><main>
 <header><span class="state">${model.status === 'ready' ? '已更新' : '部分更新'}</span><h1>XUAN · 睡前行动版</h1><p>${esc(model.dataDate)} · ${esc(model.asOfHkt)}</p></header>
 <section class="card"><h2>今晚补仓<small>规划 · 非下单</small></h2>${plan}</section>
-<section class="card"><h2>挂单提醒<small>${esc(model.orders.asOfHkt)}</small></h2><div class="orders">${renderOrders('买单', model.orders.buys, 'buy')}${renderOrders('卖单', model.orders.sells, 'sell')}</div></section>
+<section class="card"><h2>挂单提醒<small>${esc(model.orders.asOfHkt)}</small></h2>${orders}</section>
 <section class="card"><h2>现金优先补仓参考</h2>${cash}</section>
 <section class="card"><h2>股票四类配置<small>当前 → 参考目标</small></h2>${allocation}</section>
 <footer class="notes">${model.notes.map(note => `<p>${esc(note)}</p>`).join('')}</footer>

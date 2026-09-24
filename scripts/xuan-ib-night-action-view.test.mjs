@@ -7,7 +7,7 @@ const model = {
   replenishment: { status: 'ready', total: 600, items: [
     { symbol: 'EXUS', amount: 400 }, { symbol: 'EIMI', amount: 140 }, { symbol: 'USSC', amount: 60 },
   ] },
-  orders: { asOfHkt: '21:34 HKT', buys: [
+  orders: { status: 'ready', asOfHkt: '21:34 HKT', buys: [
     { side: 'BUY', description: 'EXUS', limit: '50.00 USD', quantity: '100', status: 'NEW' },
   ], sells: [{ side: 'SELL', description: 'ABC', limit: '70.00 USD', quantity: '10', status: 'NEW' }] },
   cash: { status: 'ready', pool: 1000, reserve: 400, planning: 600 },
@@ -35,8 +35,10 @@ test('missing current data is explicit and never reuses old amounts', () => {
   unavailable.replenishment = { status: 'unavailable' };
   unavailable.cash = { status: 'unavailable' };
   unavailable.allocation = { status: 'unavailable' };
+  unavailable.orders = { status: 'unavailable', asOfHkt: '未取得', buys: [], sells: [] };
   const html = renderNightActionReport(unavailable);
   assert.match(html, /不沿用旧金额/);
+  assert.match(html, /实时挂单尚未接入/);
   assert.match(html, /部分更新/);
 });
 

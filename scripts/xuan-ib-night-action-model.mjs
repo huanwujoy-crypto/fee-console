@@ -84,7 +84,7 @@ export function buildNightActionModel({
     schemaVersion: 1, dataDate, asOfHkt,
     status: replenishment.status === 'ready' ? 'ready' : 'partial',
     replenishment,
-    orders: { asOfHkt: ordersAsOfHkt, ...orderGroups },
+    orders: { status: 'ready', asOfHkt: ordersAsOfHkt, ...orderGroups },
     cash: { status: 'ready', pool: cashPool, reserve, planning },
     allocation: { status: 'ready', total: allocation.total, categories: allocation.categories },
     notes: [
