@@ -146,10 +146,14 @@ export function checkProgress({base = null} = {}) {
     const state = parseProgressJson(html.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
     validateProgress(data, state, previous);
   }
-  const source = fs.readFileSync(new URL('./xuan-ib-progress.mjs', import.meta.url), 'utf8').split('// NODE ONLY')[0].trim();
-  const embedded = loader.match(/\/\/ BEGIN PROGRESS VALIDATOR\n([\s\S]*?)\n\/\/ END PROGRESS VALIDATOR/)[1].trim();
-  if (embedded !== source.replace(/^export /gm, '')) throw new Error('loader progress validator drift');
-  new vm.Script(loader.match(/<script>([\s\S]*?)<\/script>/)[1]);
+  if (!actionOnly) {
+    const source = fs.readFileSync(new URL('./xuan-ib-progress.mjs', import.meta.url), 'utf8').split('// NODE ONLY')[0].trim();
+    const embedded = loader.match(/\/\/ BEGIN PROGRESS VALIDATOR\n([\s\S]*?)\n\/\/ END PROGRESS VALIDATOR/)?.[1];
+    if (!embedded || embedded.trim() !== source.replace(/^export /gm, '')) throw new Error('loader progress validator drift');
+    const loaderScript = loader.match(/<script>([\s\S]*?)<\/script>/)?.[1];
+    if (!loaderScript) throw new Error('loader script missing');
+    new vm.Script(loaderScript);
+  }
   return data;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
