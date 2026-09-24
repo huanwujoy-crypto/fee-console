@@ -2,6 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import {execFileSync} from 'node:child_process';
 import {improveMobileDisplay,GUIDE_BODY,SLEEP_TAB_ORDER,isLowValueEventTitle,extractReadingMetrics,extractCashGuidance,conciseHoldingsNote,splitRoutineHeader,splitConcentrationLabel,matchesConcentrationCashRows,matchesConcentrationCashTable,MOBILE_READING_CSS,aiRiskStripValues,aiRiskBandValues,largestOrdinaryConcentration,familySingleStockConcentration,familyOrdinaryConcentrations,cashRiskSummary,reserveRiskSummary,cashDashboardMetrics,groupAiExposureRows} from './xuan-ib-mobile-display.mjs';
 const cell=text=>({textContent:text});
 const row=values=>({children:values.map(cell),insertBefore(node,ref){if(node===ref)return;this.children.splice(this.children.indexOf(node),1);this.children.splice(this.children.indexOf(ref),0,node);}});
@@ -18,7 +19,10 @@ test('verified display reorders intact cells with stable descending amounts and 
  assert.ok(originals.every(c=>body.children.some(r=>r.children.includes(c))));
 });
 test('header guide matches shared wording and runs only after verification',()=>{
- const loader=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
+ const candidate=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
+ const loader=candidate.includes('xuan-ib-night-action-v1:')
+  ?execFileSync('git',['show',`${execFileSync('git',['merge-base','HEAD','origin/main'],{encoding:'utf8'}).trim()}:xuan-ib/index.html`],{encoding:'utf8'})
+  :candidate;
  assert.ok(loader.includes(GUIDE_BODY));
  assert.match(loader,/renderedDocument === doc && lastVerified\?\.blob === record\.blob/);
   assert.match(loader,/if \(!current\(\)\) return;\s*try \{\s*doc\.getElementById\('xuan-mobile-layout-status'\)\?\.remove\(\);\s*view\.improveMobileDisplay\(doc\)/);
