@@ -2,6 +2,7 @@
 
 import fs from 'node:fs';
 import { publicationEdition } from './xuan-ib-account-association-publication.mjs';
+import { NIGHT_ACTION_MARKER, extractNightActionModel } from './xuan-ib-night-action-view.mjs';
 
 export const SLEEP_PRIORITY_KIND = 'sleep-priority';
 export const SLEEP_PRIORITY_BODY_ATTRIBUTE = 'data-xuan-delivery="sleep-priority-v1"';
@@ -101,6 +102,10 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 }
 
 export function classifySleepPublication(html) {
+  if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
+    const model = extractNightActionModel(html);
+    return { kind: 'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+  }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });
   if (delivery) return {

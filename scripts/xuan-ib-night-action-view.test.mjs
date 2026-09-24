@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { renderNightActionReport, validateNightActionModel } from './xuan-ib-night-action-view.mjs';
+import { extractNightActionModel, renderNightActionReport, validateNightActionModel } from './xuan-ib-night-action-view.mjs';
 
 const model = {
   schemaVersion: 1, dataDate: '2026-09-24', asOfHkt: '2026-09-24 21:35 HKT', status: 'ready',
@@ -27,6 +27,7 @@ test('renders only the four approved nightly sections in a tabless mobile page',
   assert.doesNotMatch(html, /role="tab"|class="tabs"/);
   assert.match(html, /买单[\s\S]*EXUS[\s\S]*卖单[\s\S]*ABC/);
   assert.match(html, /45\.0% <i>→<\/i> 45\.0%/);
+  assert.deepEqual(extractNightActionModel(html), model);
 });
 
 test('missing current data is explicit and never reuses old amounts', () => {
