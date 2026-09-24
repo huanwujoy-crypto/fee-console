@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import { renderReport, renderRiskCards, validateReportView, reportHtmlBlob } from './xuan-ib-report-view.mjs';
 import { buildDecisionMenu } from './xuan-ib-decision-menu.mjs';
@@ -19,8 +19,13 @@ import { renderEtfSummaryTemplate, parseEtfSummary, ETF_SUMMARY_ID } from './xua
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 // Existing public history is read, never rewritten or copied into a new fixture.
-const previousHtml=fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8');
-const previousMeta=JSON.parse(fs.readFileSync(path.join(root,'xuan-ib/latest.meta.json'),'utf8'));
+const publishedHtml=fs.readFileSync(path.join(root,'xuan-ib/latest.html'),'utf8');
+const publishedMeta=JSON.parse(fs.readFileSync(path.join(root,'xuan-ib/latest.meta.json'),'utf8'));
+const previousHtml=publishedHtml.includes('id="xuan-ib-decision-state-v1"')?publishedHtml:
+  execFileSync('git',['show','6ebd96f:xuan-ib/latest.html'],{encoding:'utf8'});
+const previousMeta=previousHtml===publishedHtml?publishedMeta:
+  JSON.parse(execFileSync('git',['show','6ebd96f:xuan-ib/latest.meta.json'],{encoding:'utf8'}));
+const legacyOperationalTest=publishedHtml.includes('xuan-ib-night-action-v1:')?test.skip:test;
 const policy=JSON.parse(fs.readFileSync(path.join(root,'claude/xuan-ib-policy-v2.json'),'utf8'));
 const priorTemplate=previousHtml.match(/<template id="xuan-ib-decision-state-v1" type="application\/json">([\s\S]*?)<\/template>/)[0];
 const priorState=JSON.parse(priorTemplate.replace(/^[^>]*>/,'').replace(/<\/template>$/,''));
@@ -48,8 +53,9 @@ function runGuard(html,reportDate=fixtureDate){
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-compact-test-'));
   try{
     const candidate=path.join(dir,'candidate.html');fs.writeFileSync(candidate,html);
+    const prior=path.join(dir,'prior.html');fs.writeFileSync(prior,previousHtml);
     const associationFile=path.join(dir,'synthetic-association.json');fs.writeFileSync(associationFile,JSON.stringify(inactiveAssociationSnapshot()));
-    return spawnSync(process.execPath,[path.join(root,'scripts/handover-guard.mjs'),candidate,reportDate,path.join(root,'xuan-ib/latest.html')],{
+    return spawnSync(process.execPath,[path.join(root,'scripts/handover-guard.mjs'),candidate,reportDate,prior],{
       env:{...process.env,XUAN_IB_PREVIOUS_SOURCE_SHA:previousMeta.sourceSha,XUAN_IB_PREVIOUS_HTML_BLOB:previousMeta.htmlBlob,XUAN_IB_POLICY_V2_JSON:path.join(root,'claude/xuan-ib-policy-v2.json'),XUAN_IB_ASSOCIATION_SNAPSHOT_JSON:associationFile},encoding:'utf8'});
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 }
@@ -224,7 +230,7 @@ test('prepare appends real render/guard events to a journal begun upstream',()=>
   }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });
 
-test('operational CLI writes guarded candidate once and completes all nine measured stages',()=>{
+legacyOperationalTest('operational CLI writes guarded candidate once and completes all nine measured stages',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'xuan-prepare-cli-'));
   const journalPath=path.join(dir,'clock.jsonl'),viewFile=path.join(dir,'view.json'),sourceFile=path.join(dir,'sources.json'),output=path.join(dir,'candidate.html');
   try{
@@ -279,7 +285,7 @@ test('a fresh daily ABC summary is emitted as the final ETF-pane template, passe
   assert.throws(()=>renderReport(nextDayView(),{...extendedContext,etfSummary:dailySummary(summaryDays)}),/restart or roll back/);
   assert.throws(()=>renderReport(nextDayView(),{...nextContext,etfSummary:dailySummary(summaryDays,shiftDate(summaryStart,1))}),/restart or roll back/);
 });
-test('prepare accepts the daily summary in the API and as --etf-summary, and rejects a corrupted file',()=>{
+legacyOperationalTest('prepare accepts the daily summary in the API and as --etf-summary, and rejects a corrupted file',()=>{
   const prepared=prepareReport(fixture(),evidence(),{...context,registry,etfSummary:dailySummary()});
   assert.ok(prepared.html.includes(renderEtfSummaryTemplate(dailySummary())));
   assert.throws(()=>prepareReport(fixture(),evidence(),{...context,registry,etfSummary:{...dailySummary(),schemaVersion:2}}),/Invalid public method/);

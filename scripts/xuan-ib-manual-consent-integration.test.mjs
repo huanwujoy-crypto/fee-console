@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -26,8 +27,13 @@ import {
 import { buildSourceEvidence } from './xuan-ib-source-adapter.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const previousHtml = fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.html'), 'utf8');
-const previousMeta = JSON.parse(fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.meta.json'), 'utf8'));
+const publishedHtml = fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.html'), 'utf8');
+const publishedMeta = JSON.parse(fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.meta.json'), 'utf8'));
+const previousHtml = publishedHtml.includes('id="xuan-ib-decision-state-v1"')
+  ? publishedHtml
+  : execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.html'], { encoding: 'utf8' });
+const previousMeta = previousHtml === publishedHtml ? publishedMeta
+  : JSON.parse(execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.meta.json'], { encoding: 'utf8' }));
 const policy = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/xuan-ib-policy-v2.json'), 'utf8'));
 const registry = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/xuan-ib-portfolio-registry.json'), 'utf8'));
 const dataDate = previousMeta.dataDate;

@@ -5,7 +5,10 @@ import { parseProgressJson, validateProgress, checkProgress } from './xuan-ib-pr
 
 const ledger = JSON.parse(fs.readFileSync(new URL('../xuan-ib/implementation-progress.json', import.meta.url),'utf8'));
 const html = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url),'utf8');
-const state = JSON.parse(html.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
+const legacyHtml = html.includes('id="xuan-ib-decision-state-v1"')
+  ? html
+  : fs.readFileSync(new URL('../xuan-ib/history/2026-09-05-am.html', import.meta.url),'utf8');
+const state = JSON.parse(legacyHtml.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
 const now = Date.parse(ledger.events.at(-1).recordedAtHkt)+120000;
 const followup = new Date(now-60000+28800000).toISOString().slice(0,19)+'+08:00';
 // A copied historical event keeps its immutable provenance, not its expired
