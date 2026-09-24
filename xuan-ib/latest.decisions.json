@@ -1,10 +1,11 @@
 {
   "schemaVersion": 1,
   "kind": "xuan-ib-decision-menu",
-  "sourceSha": "4018395e55d4ed173037b9553e2ae3446a926636",
-  "htmlBlob": "41b34aefbdd42be07c19b65ee422185b9b38afc5",
+  "sourceSha": "31000a4855adc27b0ce826110257a32b711f6114",
+  "htmlBlob": "366c171167bf37fbc2cb6a8d372324ad7ec35323",
   "dataDate": "2026-09-24",
-  "interaction": "enabled",
+  "interaction": "disabled",
   "pending": [],
-  "available": true
+  "available": false,
+  "unavailableReason": "待办菜单暂不可用，请在 Claude 查看；报告仍可阅读。"
 }
