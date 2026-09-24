@@ -330,6 +330,19 @@ test('menu extraction failure returns an explicit disabled same-pair fallback, n
   assert.equal(fallback.unavailableReason.includes('暂无待办'), false);
 });
 
+test('night action publication gets an explicit disabled decision menu', () => {
+  const html = '<!doctype html><html><body><!-- xuan-ib-night-action-v1:eyJvayI6dHJ1ZX0 --><main>行动版</main></body></html>';
+  const input = { html, meta: { schemaVersion: 1, sourceSha: 'b'.repeat(40),
+    sourceCommitEpoch: Math.floor(NOW / 1000), dataDate: DATE, htmlBlob: blob(html) } };
+  const fallback = buildPublishedDecisionMenu(input);
+  assert.equal(fallback.available, false);
+  assert.equal(fallback.interaction, 'disabled');
+  assert.deepEqual(fallback.pending, []);
+  assert.throws(() => buildPublishedDecisionMenu(mutate(fixture(), source => source.replace(
+    '<!-- xuan-ib-handover:v1 -->',
+    '<!-- xuan-ib-handover:v1 --><!-- xuan-ib-night-action-v1:eyJvayI6dHJ1ZX0 -->'))), /marker must be unique/);
+});
+
 test('mismatched pair or malformed metadata cannot create even an unavailable published manifest', () => {
   const base = fixture();
   assert.throws(() => buildPublishedDecisionMenu({ ...base, html: base.html + ' ' }), /same publication/);

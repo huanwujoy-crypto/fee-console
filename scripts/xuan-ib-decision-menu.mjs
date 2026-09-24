@@ -225,7 +225,9 @@ function pairedPublication({ html, meta }) {
       || !calendarDate(meta.dataDate) || !Number.isInteger(meta.sourceCommitEpoch) || meta.sourceCommitEpoch <= 0) fail('invalid publication metadata');
   const blob = crypto.createHash('sha1').update(`blob ${Buffer.byteLength(html)}\0`).update(html).digest('hex');
   if (blob !== meta.htmlBlob.toLowerCase()) fail('metadata and HTML are not the same publication');
-  if ((html.match(/<!--\s*xuan-ib-handover:v1\s*-->/g) || []).length !== 1) fail('publication marker must be unique');
+  const legacyMarkers = (html.match(/<!--\s*xuan-ib-handover:v1\s*-->/g) || []).length;
+  const actionMarkers = (html.match(/<!--\s*xuan-ib-night-action-v1:[A-Za-z0-9_-]+\s*-->/g) || []).length;
+  if (legacyMarkers + actionMarkers !== 1) fail('publication marker must be unique');
   return { html, meta };
 }
 
