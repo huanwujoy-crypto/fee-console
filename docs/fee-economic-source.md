@@ -8,10 +8,12 @@ financial verification, publication, or phone acceptance.
 ## Configuration and fixed boundary
 
 - Configure the migrated, exact Gist ID through `FEE_ECON_GIST_ID`; keep the
-  new 32-byte decryption key separately in the local Keychain. A secret Gist is
+  new 32-byte decryption key separately in the local Keychain, or in the
+  reviewed `fee-cloud-producer` GitHub Environment described by
+  `docs/fee-cloud-producer.md`. A secret Gist is
   readable by exact ID, so the Codex daily reader needs **no GitHub PAT**.
   The manager's Gist write token stays only in the manager app. Do not put the
-  ID or key in prompts, command arguments, the repository, Actions or logs.
+  ID or key in prompts, command arguments, the repository, unreviewed Actions or logs.
 - Requests are GETs to fixed `api.github.com/gists/{id}` only. The helper freezes
   the exact locator for acquisition and `checkCurrent()`. It never borrows
   `GITHUB_TOKEN`, `GH_TOKEN`, `gh`, OAuth, cookies or the manager write token;

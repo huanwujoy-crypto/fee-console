@@ -1,0 +1,94 @@
+name: Fee console cloud producer
+
+on:
+  schedule:
+    # HKT Tue-Sat 12:50 and 13:50. These slots follow the 12:35/13:35
+    # benchmark-cache retries for the completed US session.
+    - cron: '50 4,5 * * 2-6'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fee-cloud-producer
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    if: ${{ vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish' }}
+    runs-on: ubuntu-latest
+    environment: fee-cloud-producer
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read the independent benchmark cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin market-data-cache:refs/remotes/origin/market-data-cache
+          mkdir -m 700 "$RUNNER_TEMP/fee-cloud-private"
+          git show origin/market-data-cache:benchmark-close.json > "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
+          chmod 600 "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
+
+      - name: Read, calculate and validate the encrypted candidate
+        id: producer
+        shell: bash
+        env:
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ secrets.FEE_CLOUD_SHARESIGHT_CLIENT_ID }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ secrets.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET }}
+          FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
+          FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
+        run: |
+          set -euo pipefail
+          summary=$(node scripts/fee-cloud-producer.mjs \
+            --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
+            --out-dir="$RUNNER_TEMP/fee-cloud-private")
+          node - "$summary" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
+          const result = JSON.parse(process.argv[2]);
+          if (result.schema !== 'fee-console.cloud-producer.v1') throw new Error('unexpected producer summary');
+          process.stdout.write([
+            '## Fee cloud producer', '',
+            `- Target: ${result.targetDate}`,
+            `- Outcome: ${result.outcome}`,
+            `- Source dates: Schwab ${result.sourceDates.schwab}; Webull ${result.sourceDates.webull}; benchmark ${result.sourceDates.benchmark}`,
+            '', 'No portfolio amounts or credentials are included in this summary.', ''
+          ].join('\n'));
+          NODE
+          target=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(x.targetDate)' "$summary")
+          outcome=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(x.outcome)' "$summary")
+          echo "target=$target" >> "$GITHUB_OUTPUT"
+          echo "outcome=$outcome" >> "$GITHUB_OUTPUT"
+
+      - name: Create a signed owner candidate
+        id: candidate
+        if: ${{ vars.FEE_CLOUD_MODE == 'publish' }}
+        shell: bash
+        env:
+          FEE_CLOUD_GITHUB_TOKEN: ${{ secrets.FEE_CLOUD_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          node scripts/fee-cloud-commit.mjs \
+            --data="$RUNNER_TEMP/fee-cloud-private/data.json" \
+            --health="$RUNNER_TEMP/fee-cloud-private/fee-data-health.json" \
+            --base-sha="$(git rev-parse HEAD)"
+
+      - name: Explain shadow mode
+        if: ${{ vars.FEE_CLOUD_MODE == 'shadow' }}
+        shell: bash
+        run: echo 'Shadow mode validated the full private calculation and intentionally published nothing.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove private runtime files
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [[ -d "$RUNNER_TEMP/fee-cloud-private" ]]; then
+            find "$RUNNER_TEMP/fee-cloud-private" -type f -exec shred -u {} + 2>/dev/null || true
+            rm -rf "$RUNNER_TEMP/fee-cloud-private"
+          fi
+
