@@ -3,10 +3,17 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { execFileSync } from 'node:child_process';
 
 
 
-const loader = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
+const candidateLoader = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
+// An action-page publication intentionally uses index.html as the candidate.
+// Exercise the unchanged fixed-loader contract against the trusted base copy;
+// the action page itself is covered by its dedicated guard and workflow tests.
+const loader = candidateLoader.includes('xuan-ib-night-action-v1:')
+  ? execFileSync('git', ['show', `${execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8' }).trim()}:xuan-ib/index.html`], { encoding: 'utf8' })
+  : candidateLoader;
 const latestBytes = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url));
 const latest = latestBytes.toString('utf8');
 
