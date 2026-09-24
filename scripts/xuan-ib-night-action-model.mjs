@@ -60,15 +60,19 @@ export function buildNightActionModel({
   const allocation = parseSharesightStockAllocation(ibGroupedPerformance);
   const noahCash = parseSharesightCash(noahPerformance, { portfolioId: 936238 });
   const orderGroups = ordersOf(ibOrders);
-  const cashPool = Math.round((summary.total_cash_value + noahCash.total) * 100) / 100;
+  // Broker and Sharesight sources may retain sub-cent FX precision. This
+  // planning view intentionally works at USD-cent precision.
+  const ibCash = Math.round(summary.total_cash_value * 100) / 100;
+  const noahCashTotal = Math.round(noahCash.total * 100) / 100;
+  const cashPool = Math.round((ibCash + noahCashTotal) * 100) / 100;
   const planning = Math.max(0, Math.round((cashPool - reserve) * 100) / 100);
   let replenishment = { status: 'unavailable' };
   try {
     const plan = calculateCashPlan({
       schemaVersion: 2, status: 'snapshot', sourceAsOfHkt: asOfHkt,
       equityTotal: allocation.total, developed: allocation.developed, emerging: allocation.emerging,
-      usBase: allocation.usBase, ussc: allocation.ussc, ibCash: summary.total_cash_value,
-      noahCash: noahCash.total, reserve, usscBudgetShare: 0.10,
+      usBase: allocation.usBase, ussc: allocation.ussc, ibCash,
+      noahCash: noahCashTotal, reserve, usscBudgetShare: 0.10,
       currency: 'USD', denominator: 'equity-only',
     });
     const [exus, eimi, ussc] = plan.allocations;

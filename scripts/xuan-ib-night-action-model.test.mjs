@@ -45,3 +45,14 @@ test('a cash-plan policy edge stays partial without blocking orders or allocatio
   assert.equal(model.orders.buys.length, 1);
   assert.equal(model.allocation.status, 'ready');
 });
+
+test('sub-cent source precision is rounded only for the planning view', () => {
+  const model = buildNightActionModel({ ...input,
+    ibAccountSummary: { ...input.ibAccountSummary, total_cash_value: 100.0049 },
+    noahPerformance: { report: { ...input.noahPerformance.report,
+      cash_accounts: [{ value: 50.0049 }] } },
+  });
+  assert.equal(model.status, 'ready');
+  assert.equal(model.cash.pool, 150);
+  assert.equal(model.cash.planning, 100);
+});

@@ -6,7 +6,7 @@ import path from 'node:path';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { initRunJournal, startJournalStage, finishJournalStage } from './xuan-ib-run-clock.mjs';
-import { parseCodexIbEvent, captureCodexIb } from './xuan-ib-codex-mcp-capture.mjs';
+import { parseCodexIbEvent, captureCodexIb, captureCodexIbAction } from './xuan-ib-codex-mcp-capture.mjs';
 
 const native = {
   get_account_summary: { currency: 'USD', net_liquidation: 100, total_cash_value: 20 },
@@ -69,6 +69,21 @@ test('five read results produce private captured receipts without financial stdo
   assert.equal(fs.statSync(path.join(files.dir, 'ib.orders.native.json')).mode & 0o777, 0o600);
   assert.ok(fs.existsSync(path.join(files.dir, 'ib.orders.receipt.json')));
   assert.ok(!JSON.stringify(result).includes('net_liquidation'));
+});
+
+test('action-only capture reads exactly summary and orders', async t => {
+  const files = setup(t);
+  const events = ['get_account_summary', 'get_account_orders'].map(tool => event(tool));
+  const result = await captureCodexIbAction({ ...files, spawnCodex: fakeSpawn(events) });
+  assert.deepEqual(new Set(result.sources), new Set(['ib.accountSummary', 'ib.orders']));
+  assert.equal(fs.existsSync(path.join(files.dir, 'ib.balances.native.json')), false);
+});
+
+test('action-only capture rejects even another read endpoint', async t => {
+  const files = setup(t);
+  await assert.rejects(captureCodexIbAction({ ...files, spawnCodex: fakeSpawn([
+    event('get_account_summary'), event('get_account_orders'), event('get_account_positions'),
+  ]) }), /UNEXPECTED_MCP_TOOL/);
 });
 
 test('missing or duplicate tool result fails closed', async t => {
