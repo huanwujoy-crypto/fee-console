@@ -16,15 +16,16 @@
 | 显示 | 必需数据 | 数据源 | 处理 |
 |---|---|---|---|
 | 挂单提醒 | 当前 LIMIT orders | IB orders | 每晚实时只读，不取消、不改单 |
-| 股票四类 | 当前持仓及可审计分类规则 | IB positions + 受控分类表 | 同一轮按 USD 市值汇总 |
+| 股票四类 | 当前持仓及业主分类 | Sharesight IB-HK Custom group `83569`（资产类别） | 按 Sharesight USD 市值汇总，显示数据日 |
 | 现金池 | IB 现金、NOAH-HK 现金 | IB account summary + Sharesight NOAH-HK cash | Sharesight 只读，允许同步延迟，显示数据日 |
 | 补仓指引 | 四类市值、现金池、待 CALL 预留 | 上述同轮数据 + 受控预留流水 | 调用已有确定性现金优先模型 |
 
 ## 取数简化
 
-- 保留 IB `accountSummary` / `balances` / `positions` / `orders`。
+- 正常生成只需 IB `accountSummary` / `orders`。股票四类与市值直接读取 Sharesight 的业主分类；不再为页面额外读取 `balances` / `positions` / `trades`。
 - 睡前行动版不需要 IB `trades`。
-- 不再读取 9 个 Sharesight 组合；只读 NOAH-HK 现金必需数据。
+- 不再读取 9 个 Sharesight 组合；只读 IB-HK `资产类别` 及 NOAH-HK 现金必需数据。
+- 官方只读 API 已验证返回 `custom_group.id=83569`、`name=资产类别`；2026-09-24 的 IB-HK 读取中未分类数为 0。类别为美国底仓、美国科技、非美发达、新兴市场、主题投资及防御资产。后两类不进入股票四类分母。
 - 若 NOAH-HK 或待 CALL 预留未取得，挂单照常发布；补仓与现金栏明确显示“本轮未取得”，不复制旧数。
 
 ## 本轮实施边界
