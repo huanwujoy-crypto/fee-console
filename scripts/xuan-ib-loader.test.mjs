@@ -23,7 +23,8 @@ const gitBlobSha = (bytes) => crypto
 // it still tolerates while previously published pages age out.
 const approvedTitles = [...loader.matchAll(/"(<title>[^"]*<\/title>)"/g)].map((match) => match[1]);
 const primaryDate = (html) => {
-  const match = html.match(/<span class="date">(\d{4}-\d{2}-\d{2})\b/);
+  const match = html.match(/<span class="date">(\d{4}-\d{2}-\d{2})\b/)
+    || html.match(/<header>[^]*?<p>(\d{4}-\d{2}-\d{2})\s*·/i);
   assert.ok(match, 'the published handover must carry a primary data date');
   return match[1];
 };
@@ -2095,25 +2096,32 @@ test('the phone page is branded XUAN-投资管理 everywhere the reader sees it'
   assert.doesNotMatch(branding, /title="XUAN-IB 最新睡前交接"/);
 });
 
-test('the integrity check accepts both titles for the length of the rename', () => {
+test('the integrity check accepts legacy reports and the canonical action page', () => {
   // The check must stay a whole-title comparison: a bare product-name substring
   // would let an unrelated page satisfy it.
-  assert.match(loader, /!approvedTitles\.some\(\(title\) => html\.includes\(title\)\)/);
-  assert.match(loader, /!html\.includes\("xuan-ib-handover:v1"\)/);
+  assert.match(loader, /approvedTitles\.slice\(0, 2\)\.some\(\(title\) => html\.includes\(title\)\)/);
+  assert.match(loader, /Number\(legacyMarker\) \+ Number\(actionMarker\) !== 1/);
   assert.deepEqual(approvedTitles, [
     '<title>XUAN-投资管理</title>',
     '<title>XUAN-IB 睡前交接</title>',
+    '<title>XUAN · 睡前行动版</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
-  const accepts = (html) =>
-    html.includes('xuan-ib-handover:v1') &&
-    approvedTitles.some((title) => html.includes(title));
+  const accepts = (html) => {
+    const legacyMarker = html.includes('xuan-ib-handover:v1');
+    const actionMarker = html.includes('xuan-ib-night-action-v1:');
+    const legacy = legacyMarker && approvedTitles.slice(0, 2).some((title) => html.includes(title));
+    const action = actionMarker && html.includes(approvedTitles[2]);
+    return Number(legacyMarker) + Number(actionMarker) === 1 && (legacy || action);
+  };
   const marker = '<!-- xuan-ib-handover:v1 -->';
   assert.equal(accepts(`${marker}<title>XUAN-投资管理</title>`), true);
   assert.equal(accepts(`${marker}<title>XUAN-IB 睡前交接</title>`), true);
   assert.equal(accepts(`${marker}<title>XUAN-投资管理 摘要</title>`), false);
   assert.equal(accepts('<title>XUAN-投资管理</title>'), false);
+  assert.equal(accepts('<!-- xuan-ib-night-action-v1:abc --><title>XUAN · 睡前行动版</title>'), true);
+  assert.equal(accepts(`${marker}<!-- xuan-ib-night-action-v1:abc --><title>XUAN · 睡前行动版</title>`), false);
 });
 
 test('validation and promotion accept a verified single-file candidate based on a trusted main ancestor', () => {
@@ -2208,18 +2216,26 @@ test('draft pull requests stay quiet until ready, then every blocking check runs
   assert.match(scriptsCheck, /Run the script test suite[\s\S]*draft == false/);
 });
 
-test('the variable handover stays separate from the fixed loader', () => {
-  assert.match(latest, /<!--\s*xuan-ib-handover:v1\s*-->/);
+test('the variable report stays separate from the fixed loader', () => {
+  assert.match(latest, /<!--\s*(?:xuan-ib-handover:v1\s*|xuan-ib-night-action-v1:[A-Za-z0-9_-]+\s*)-->/);
   const publishedTitle = latest.match(/<title>[^<]*<\/title>/);
   assert.ok(publishedTitle, 'the published handover must carry a title');
   assert.ok(
     approvedTitles.includes(publishedTitle[0]),
     `the published title ${publishedTitle[0]} is not one the loader accepts`
   );
-  assert.match(latest, /apple-mobile-web-app-capable/);
+  if (!latest.includes('xuan-ib-night-action-v1:')) assert.match(latest, /apple-mobile-web-app-capable/);
 });
 
-const liveProgressPublication = {html: latest, meta: metadata};
+const progressSourceHtml = latest.includes('id="xuan-ib-decision-state-v1"')
+  ? latest
+  : fs.readFileSync(new URL('../xuan-ib/history/2026-09-05-am.html', import.meta.url), 'utf8')
+    .replace(/<title>[^<]*<\/title>/, '<title>XUAN-投资管理</title>')
+    .replace(/<body([^>]*)>/, '<body$1><!-- xuan-ib-handover:v1 -->')
+    .replace(/<span class="date">[\s\S]*?<\/span>/, `<span class="date">${metadata.dataDate} 周四 · 睡前版 · 美股开盘后</span>`);
+const liveProgressPublication = { html: progressSourceHtml, meta: {
+  ...metadata, dataDate: primaryDate(progressSourceHtml), htmlBlob: gitBlobSha(Buffer.from(progressSourceHtml)),
+} };
 // Historical progress scenarios model the original three resolved decisions,
 // not the live report's changing pending queue. Keep a separate live smoke test
 // below: a new real awaiting_user item must remain visible in production.

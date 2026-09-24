@@ -120,14 +120,14 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { buildDecisionMenu } from './xuan-ib-decision-menu.mjs';
+import { buildPublishedDecisionMenu } from './xuan-ib-decision-menu.mjs';
 
 export function checkProgress({base = null} = {}) {
   const loader = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
   const html = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url), 'utf8');
   const meta = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
-  buildDecisionMenu({html, meta});
-  const state = parseProgressJson(html.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
+  buildPublishedDecisionMenu({html, meta});
+  const actionOnly = html.includes('xuan-ib-night-action-v1:');
   const data = parseProgressJson(fs.readFileSync(new URL('../xuan-ib/implementation-progress.json', import.meta.url), 'utf8'));
   let previous = null;
   if (base) {
@@ -135,7 +135,17 @@ export function checkProgress({base = null} = {}) {
     const exists = execFileSync('git', ['ls-tree', base, 'xuan-ib/implementation-progress.json'], {encoding:'utf8'}).trim();
     if (exists) previous = parseProgressJson(execFileSync('git', ['show', base + ':xuan-ib/implementation-progress.json'], {encoding:'utf8'}));
   }
-  validateProgress(data, state, previous);
+  if (actionOnly) {
+    // The compact action page deliberately retired the public decision ledger.
+    // Keep its historical progress file immutable rather than pretending the
+    // missing receipts can authorize new public progress events.
+    if (previous && JSON.stringify(data) !== JSON.stringify(previous)) {
+      throw new Error('action-only publication cannot change retired implementation progress');
+    }
+  } else {
+    const state = parseProgressJson(html.match(/<template id="xuan-ib-decision-state-v1"[^>]*>([\s\S]*?)<\/template>/)[1]);
+    validateProgress(data, state, previous);
+  }
   const source = fs.readFileSync(new URL('./xuan-ib-progress.mjs', import.meta.url), 'utf8').split('// NODE ONLY')[0].trim();
   const embedded = loader.match(/\/\/ BEGIN PROGRESS VALIDATOR\n([\s\S]*?)\n\/\/ END PROGRESS VALIDATOR/)[1].trim();
   if (embedded !== source.replace(/^export /gm, '')) throw new Error('loader progress validator drift');

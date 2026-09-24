@@ -162,7 +162,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-09-19.2";
+      const loaderBuild = "2026-09-24.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -314,7 +314,8 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       // live in latest.html and is dropped once that page has been republished.
       const approvedTitles = [
         "<title>XUAN-投资管理</title>",
-        "<title>XUAN-IB 睡前交接</title>"
+        "<title>XUAN-IB 睡前交接</title>",
+        "<title>XUAN · 睡前行动版</title>"
       ];
 
       const clock = () => new Intl.DateTimeFormat("zh-HK", {
@@ -562,6 +563,12 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       };
 
       const reportInfo = (html) => {
+        if (html.includes("xuan-ib-night-action-v1:")) {
+          const action = html.match(/<header>[^]*?<p>(\d{4}-\d{2}-\d{2})\s*·\s*([^<]+)<\/p><\/header>/i);
+          if (!action) throw new Error("行动版缺少报告日期与时点");
+          const times = [...action[2].matchAll(/\b(\d{2}:\d{2})\b/g)].map((match) => match[1]);
+          return { dataDate: action[1], edition: "睡前版", label: `${action[1]} · 睡前行动版`, asOfHkt: times.at(-1) || null };
+        }
         const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
         if (!match) throw new Error("页面缺少报告日期与版次");
         const text = match[1]
@@ -877,8 +884,13 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           console.warn("XUAN-IB removed a transport-injected external script before verification");
         }
         const html = decodeUtf8(verifiedBytes);
-        if (!html.includes("xuan-ib-handover:v1") ||
-            !approvedTitles.some((title) => html.includes(title))) {
+        const legacyMarker = html.includes("xuan-ib-handover:v1");
+        const actionMarker = html.includes("xuan-ib-night-action-v1:");
+        const legacy = legacyMarker &&
+          approvedTitles.slice(0, 2).some((title) => html.includes(title));
+        const action = actionMarker &&
+          html.includes(approvedTitles[2]);
+        if (Number(legacyMarker) + Number(actionMarker) !== 1 || !legacy && !action) {
           throw new Error("页面完整性标记不符");
         }
         const info = reportInfo(html);

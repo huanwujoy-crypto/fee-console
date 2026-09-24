@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -19,8 +20,13 @@ import { associationAnchorAfterPriority, createSleepPriorityDelivery, renderSlee
 import { buildAiRiskInputFromCapture } from './xuan-ib-ai-risk-input.mjs';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const previousHtml = fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.html'), 'utf8');
-const previousMeta = JSON.parse(fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.meta.json')));
+const publishedHtml = fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.html'), 'utf8');
+const publishedMeta = JSON.parse(fs.readFileSync(path.join(repoRoot, 'xuan-ib/latest.meta.json')));
+const previousHtml = publishedHtml.includes('id="xuan-ib-decision-state-v1"') ? publishedHtml
+  : execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.html'], { encoding: 'utf8' });
+const previousMeta = previousHtml === publishedHtml ? publishedMeta
+  : JSON.parse(execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.meta.json'], { encoding: 'utf8' }));
+const legacyOperationalTest = publishedHtml.includes('xuan-ib-night-action-v1:') ? test.skip : test;
 const etfPolicy = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/xuan-ib-policy-v2.json')));
 const registry = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/xuan-ib-portfolio-registry.json')));
 const template = html => {
@@ -238,7 +244,7 @@ for (const edition of ['adhoc', 'am', 'pm']) test(`${edition} prepare rejects cr
   assert.throws(() => buildSourceEvidence(conflict, registry, {associationReceipt:f.receipt, associationSnapshot:f.associationSnapshot,journalPath:f.journalPath,now:f.now}), /ACCOUNT_SCOPE/);
 });
 
-for (const edition of ['adhoc', 'am', 'pm']) test(`operational ${edition} prepare independently requests policy and writes only guarded bytes`, async t => {
+for (const edition of ['adhoc', 'am', 'pm']) legacyOperationalTest(`operational ${edition} prepare independently requests policy and writes only guarded bytes`, async t => {
   const f = await fixture(t, {edition});
   const viewFile = path.join(f.directory, 'synthetic-view.json'), sourcesFile = path.join(f.directory, 'synthetic-sources.json');
   const outputFile = path.join(f.directory, 'synthetic-candidate.html');

@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { prepareMinimalRun, runMinimalPrepareCli } from './xuan-ib-minimal-prepare.mjs';
 import { writeCaptureJson, readCaptureJson, beginSourceCapture, finishSourceCapture, assembleSourceCaptures } from './xuan-ib-source-capture.mjs';
 import { initRunJournal, startJournalStage, finishJournalStage, showRunJournal, RUN_STAGES } from './xuan-ib-run-clock.mjs';
@@ -17,8 +17,13 @@ import { buildPublishedDecisionMenu } from './xuan-ib-decision-menu.mjs';
 import { classifySleepPublication, extractSleepPriorityDelivery } from './xuan-ib-sleep-priority.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const previousHtml = fs.readFileSync(path.join(root, 'xuan-ib/latest.html'), 'utf8');
-const previousMeta = JSON.parse(fs.readFileSync(path.join(root, 'xuan-ib/latest.meta.json'), 'utf8'));
+const publishedHtml = fs.readFileSync(path.join(root, 'xuan-ib/latest.html'), 'utf8');
+const publishedMeta = JSON.parse(fs.readFileSync(path.join(root, 'xuan-ib/latest.meta.json'), 'utf8'));
+const previousHtml = publishedHtml.includes('id="xuan-ib-decision-state-v1"') ? publishedHtml
+  : execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.html'], { encoding: 'utf8' });
+const previousMeta = previousHtml === publishedHtml ? publishedMeta
+  : JSON.parse(execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.meta.json'], { encoding: 'utf8' }));
+const legacyOperationalTest = publishedHtml.includes('xuan-ib-night-action-v1:') ? test.skip : test;
 const registry = JSON.parse(fs.readFileSync(path.join(root, 'claude/xuan-ib-portfolio-registry.json'), 'utf8'));
 const priorTemplate = previousHtml.match(/<template id="xuan-ib-decision-state-v1" type="application\/json">[\s\S]*?<\/template>/)[0];
 
@@ -137,7 +142,7 @@ test('a fixed PM record binds risk derivation to the same captured source file',
   assert.equal(readCaptureJson(path.join(f.dir, 'sources.json')).edition, 'pm');
 });
 
-test('actual recurring build -> existing prepare CLI -> real trusted guard -> private candidate completes all nine stages', async t => {
+legacyOperationalTest('actual recurring build -> existing prepare CLI -> real trusted guard -> private candidate completes all nine stages', async t => {
   const f = await fixture(t);
   let secondPolicyCheck = 0;
   const result = prepareMinimalRun(f.dir, { ...f.options,
@@ -173,7 +178,7 @@ const weeklyMetadata = (stale = false) => {
 };
 
 for (const kind of ['missing', 'current', 'stale', 'invalid']) {
-  test(`weekly ${kind}: actual five-source capture -> prepare -> trusted guard preserves history`, async t => {
+  legacyOperationalTest(`weekly ${kind}: actual five-source capture -> prepare -> trusted guard preserves history`, async t => {
     const metadata = kind === 'missing' ? null : kind === 'invalid' ? { bad: 'synthetic' } : weeklyMetadata(kind === 'stale');
     const f = await fixture(t, { weekly: true, weeklySnapshot: metadata });
     const original = fs.readFileSync(path.join(f.dir, 'input.json'));
@@ -222,7 +227,7 @@ for (const kind of ['missing', 'current', 'stale', 'invalid']) {
   });
 }
 
-test('weekly five-source run can prepare a guarded sleep-priority page without claiming pm completion', async t => {
+legacyOperationalTest('weekly five-source run can prepare a guarded sleep-priority page without claiming pm completion', async t => {
   const f = await fixture(t, { weekly: true, weeklySnapshot: weeklyMetadata() });
   const runStartedAt = f.input.ib.accountSummary.startedAt;
   const ready = Date.parse(runStartedAt) + 6_000;

@@ -27,6 +27,7 @@ test('renders only the four approved nightly sections in a tabless mobile page',
   assert.doesNotMatch(html, /role="tab"|class="tabs"/);
   assert.match(html, /买单[\s\S]*EXUS[\s\S]*卖单[\s\S]*ABC/);
   assert.match(html, /45\.0% <i>→<\/i> 45\.0%/);
+  assert.match(html, /apple-mobile-web-app-capable/);
   assert.deepEqual(extractNightActionModel(html), model);
 });
 

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,10 +13,14 @@ import { buildDailyChangeColumn, applyDailyChangeColumn, canonicalCode, identity
   validatePublishedDailyChangeHtml } from './xuan-ib-daily-change.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const previousMeta = JSON.parse(fs.readFileSync(path.join(root, 'xuan-ib/latest.meta.json'), 'utf8'));
+const publishedMeta = JSON.parse(fs.readFileSync(path.join(root, 'xuan-ib/latest.meta.json'), 'utf8'));
 // Existing published history is read, never rewritten: the renderer needs the
 // trusted previous page to carry decisions forward.
-const previousHtml = fs.readFileSync(path.join(root, 'xuan-ib/latest.html'), 'utf8');
+const publishedHtml = fs.readFileSync(path.join(root, 'xuan-ib/latest.html'), 'utf8');
+const previousHtml = publishedHtml.includes('id="xuan-ib-decision-state-v1"') ? publishedHtml
+  : execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.html'], { encoding: 'utf8' });
+const previousMeta = previousHtml === publishedHtml ? publishedMeta
+  : JSON.parse(execFileSync('git', ['show', '6ebd96f:xuan-ib/latest.meta.json'], { encoding: 'utf8' }));
 const priorState = JSON.parse(previousHtml
   .match(/<template id="xuan-ib-decision-state-v1" type="application\/json">([\s\S]*?)<\/template>/)[1]);
 const policy = JSON.parse(fs.readFileSync(path.join(root, 'claude/xuan-ib-policy-v2.json'), 'utf8'));

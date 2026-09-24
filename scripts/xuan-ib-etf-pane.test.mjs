@@ -78,6 +78,10 @@ test('ordinary migration creates an independent compact ETF tab without changing
 
 test('migration accepts the current checked-in production report and changes only the three moved ETF chunks', () => {
   const current = fs.readFileSync(path.join(repo, 'xuan-ib/latest.html'), 'utf8');
+  if(current.includes('<!-- xuan-ib-night-action-v1:')){
+    assert.throws(()=>migratePolicyToEtfPane(current,policy),/canonical policy section/);
+    return;
+  }
   if(current.includes('<!-- xuan-ib-records-update:v1 -->')){
     assert.throws(()=>migratePolicyToEtfPane(current,policy),/records-update cannot migrate/);
     return;
