@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-// One bounded, local-only action-page run. It reads two IB endpoints and two
+// One bounded, local-only action-page run. It reads three IB endpoints and two
 // Sharesight portfolios, builds the four approved cards, and never publishes.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -38,7 +38,7 @@ function currentReserve(date) {
   return eligible.at(-1).usd;
 }
 
-export async function runNightActionLivePreview({ out, date = dateHkt() }) {
+export async function runNightActionLivePreview({ out, date = dateHkt(), previousHtml = null }) {
   if (typeof out !== 'string' || !path.isAbsolute(out) || !/^\d{4}-\d{2}-\d{2}$/.test(date)
     || date !== dateHkt()) throw new Error('INVALID_LIVE_PREVIEW_SCOPE');
   const started = Date.now();
@@ -52,7 +52,7 @@ export async function runNightActionLivePreview({ out, date = dateHkt() }) {
   startJournalStage(journalPath, 'ib-read');
   try {
     const result = await captureCodexIbAction({ dir, journalPath });
-    if (result.status !== 'captured' || result.sources.length !== 2) throw new Error('ACTION_IB_INCOMPLETE');
+    if (result.status !== 'captured' || result.sources.length !== 3) throw new Error('ACTION_IB_INCOMPLETE');
     finishJournalStage(journalPath, 'ib-read');
   } catch (error) {
     try { finishJournalStage(journalPath, 'ib-read', { status: 'failed', errorCode: 'ACTION_IB_FAILED' }); } catch {}
@@ -68,8 +68,13 @@ export async function runNightActionLivePreview({ out, date = dateHkt() }) {
   const model = buildNightActionModel({
     dataDate: date, asOfHkt: sourceAsOfHkt, ordersAsOfHkt: `${date} ${completedHkt} HKT`,
     ibAccountSummary: readJson(path.join(dir, 'ib.accountSummary.native.json')),
+    ibPositions: readJson(path.join(dir, 'ib.positions.native.json')),
     ibOrders: readJson(path.join(dir, 'ib.orders.native.json')),
     ibGroupedPerformance: grouped, noahPerformance: noah, reserve: currentReserve(date),
+    previousHtml: previousHtml ?? (() => {
+      const file = path.join(checkout, 'xuan-ib/latest.html');
+      return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+    })(),
   });
   fs.writeFileSync(out, renderNightActionReport(model), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
   return { status: model.status, dataDate: model.dataDate, out,

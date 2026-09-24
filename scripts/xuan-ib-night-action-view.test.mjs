@@ -44,6 +44,22 @@ test('missing current data is explicit and never reuses old amounts', () => {
   assert.match(html, /部分更新/);
 });
 
+test('schema v2 renders the compact legacy-style order facts without a missing-currency warning', () => {
+  const detailed = structuredClone(model); detailed.schemaVersion = 2;
+  detailed.orders.buys[0] = { side: 'BUY', description: 'EXUS', limit: '44', quantity: '300', status: 'NEW',
+    currency: 'USD', ageDays: 73, distancePct: -4.39, trend: { key: 'a'.repeat(64), firstDate: '2026-09-18',
+      firstPrice: 45.81, ageDays: 73, kind: 'up', label: '约 ↑ 0.5% · 观察6天' } };
+  detailed.orders.sells[0] = { side: 'SELL', description: 'ABC', limit: '70', quantity: '10', status: 'NEW',
+    currency: null, ageDays: null, distancePct: null, trend: null };
+  const html = renderNightActionReport(detailed);
+  assert.match(html, /1\. EXUS ×300/);
+  assert.match(html, /73天 · NEW/);
+  assert.match(html, /约 ↑ 0\.5% · 观察6天/);
+  assert.match(html, /-4\.39%/);
+  assert.doesNotMatch(html, /币种未返回|趋势建立中/);
+  assert.deepEqual(extractNightActionModel(html), detailed);
+});
+
 test('model rejects duplicated or inconsistent planning arithmetic', () => {
   assert.throws(() => validateNightActionModel({ ...model, replenishment: { ...model.replenishment, total: 601 } }), /INVALID_REPLENISHMENT/);
   assert.throws(() => validateNightActionModel({ ...model, cash: { ...model.cash, planning: 599 } }), /INVALID_CASH/);

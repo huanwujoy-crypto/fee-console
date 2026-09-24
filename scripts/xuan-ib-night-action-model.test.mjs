@@ -14,11 +14,15 @@ const classes = [
 ];
 const order = (id, side) => ({ order_id: id, order_status: 'NEW', order_type: 'LIMIT', side,
   limit_price: '10.50', total_shares_qty: '100', cum_shares_qty: '0', remaining_shares_qty: '100',
-  primary_description: side === 'BUY' ? 'EXUS' : 'ABC', secondary_description: 'description',
-  order_time: '2026-09-24T13:30:00Z' });
+  primary_description: side === 'BUY' ? 'Buy 100 EXUS' : 'Sell 100 ABC', secondary_description: 'description',
+  order_time: '2026-09-20T13:30:00Z' });
 const input = {
   dataDate: '2026-09-24', asOfHkt: '2026-09-24 21:30–21:35 HKT', ordersAsOfHkt: '2026-09-24 21:32 HKT',
   ibAccountSummary: { currency: 'USD', net_liquidation: 1000, total_cash_value: 100 },
+  ibPositions: { positions: [
+    { contract_description: 'EXUS', position: 100, market_price: 10, market_value: 1000, currency: 'USD' },
+    { contract_description: 'ABC', position: 10, market_price: 12, market_value: 120, currency: 'USD' },
+  ] },
   ibOrders: { orders: [order(1, 'SELL'), order(2, 'BUY')] },
   ibGroupedPerformance: performance(936247, classes),
   noahPerformance: { report: { portfolio_id: 936238, currency: { code: 'USD' }, end_date: '2026-09-24',
@@ -26,16 +30,35 @@ const input = {
   reserve: 50,
 };
 
-test('builds the entire nightly model from two IB and two Sharesight reads', () => {
+test('builds the entire nightly model from three IB and two Sharesight reads', () => {
   const model = buildNightActionModel(input);
   assert.equal(model.status, 'ready');
   assert.equal(model.cash.pool, 150);
   assert.equal(model.cash.planning, 100);
   assert.equal(model.orders.buys.length, 1);
   assert.equal(model.orders.sells.length, 1);
+  assert.equal(model.schemaVersion, 2);
+  assert.equal(model.orders.buys[0].currency, 'USD');
+  assert.equal(model.orders.buys[0].ageDays, 4);
+  assert.equal(model.orders.buys[0].distancePct, 5);
+  assert.equal(model.orders.buys[0].trend.label, null);
   assert.equal(model.allocation.total, 1000);
   assert.equal(model.replenishment.items.reduce((sum, item) => sum + item.amount, 0), model.replenishment.total);
   assert.match(model.notes[0], /2026-09-24/);
+});
+
+test('carries the prior verified price baseline without another history read', async () => {
+  const first = buildNightActionModel(input);
+  const { renderNightActionReport } = await import('./xuan-ib-night-action-view.mjs');
+  const secondInput = structuredClone(input);
+  secondInput.dataDate = '2026-09-25'; secondInput.asOfHkt = '2026-09-25 21:30 HKT';
+  secondInput.ordersAsOfHkt = '2026-09-25 21:30 HKT';
+  secondInput.ibPositions.positions[0].market_price = 10.5;
+  secondInput.ibGroupedPerformance.report.end_date = '2026-09-25';
+  secondInput.noahPerformance.report.end_date = '2026-09-25';
+  secondInput.previousHtml = renderNightActionReport(first);
+  const second = buildNightActionModel(secondInput);
+  assert.equal(second.orders.buys[0].trend.label, '约 ↑ 5.0% · 观察1天');
 });
 
 test('a cash-plan policy edge stays partial without blocking orders or allocation', () => {
