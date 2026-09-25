@@ -48,8 +48,16 @@ function run(script, cli, env) {
   const result = spawnSync(NODE, [path.join(ROOT, "scripts", script), ...cli], {
     cwd: ROOT, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000,
   });
-  if (result.status !== 0) fail(script === "daily.mjs" ? "WRITER" : "HEALTH");
+  if (result.status !== 0) fail(script === "daily.mjs" ? "WRITER"
+    : script === "fee-receipt-report.mjs" ? "RECEIPT" : "HEALTH");
   return String(result.stdout || "").trim();
+}
+
+export function verifyWriterOutcome(beforeHash, afterHash, output, targetDate) {
+  const outcome = beforeHash === afterHash ? "no-op" : "updated";
+  const prefix = outcome === "updated" ? "ok" : "no-op";
+  if (!new RegExp(`^${prefix}\\s+${targetDate}\\b`).test(String(output || ""))) fail("WRITER_OUTCOME");
+  return outcome;
 }
 
 function writerArgs(input, file) {
@@ -101,8 +109,8 @@ export async function produce(options = {}) {
     const before = sha256(fs.readFileSync(dataFile));
     const writer = run("daily.mjs", baseArgs, env);
     const after = sha256(fs.readFileSync(dataFile));
-    const outcome = before === after ? "no-op" : "updated";
-    if (!new RegExp(`^${outcome}\\s+${targetDate}\\b`).test(writer)) fail("WRITER_OUTCOME");
+    const outcome = verifyWriterOutcome(before, after, writer, targetDate);
+    run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=json"], env);
     run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
       `--target-date=${targetDate}`, `--source-schwab=${input.sourceDates.schwab}`,
       `--source-webull=${input.sourceDates.webull}`, `--source-benchmark=${input.benchmark.sourceDate}`,
@@ -132,4 +140,3 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     process.exitCode = 1;
   });
 }
-
