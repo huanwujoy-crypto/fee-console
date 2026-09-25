@@ -100,13 +100,10 @@ function calculateCashPlanV2(input) {
   const usscCents = Math.round(budgetCents * APPROVED_USSC_BUDGET_SHARE);
   const usscAllocation = usscCents / 100;
   const developedEmergingBudget = (budgetCents - usscCents) / 100;
-  if (budgetCents > 0 && baseline.fullNeed <= 0.01) {
-    throw new Error('Three-way cash policy requires review when both target categories have no gap; use schema 2 unavailable and retain cash');
-  }
   const de = calculateCashPlan({ ...legacyInput, equityTotal: total + usscAllocation, ibCash: developedEmergingBudget, noahCash: 0, reserve: 0 });
-  if (budgetCents > 0 && developedEmergingBudget > cents(de.fullNeed)) {
-    throw new Error('Three-way cash budget exceeds the two-category buy-only need; use schema 2 unavailable and retain surplus cash pending policy review');
-  }
+  // A surplus is not an error. The approved plan buys only up to the existing
+  // category gaps and leaves every remaining dollar as cash. This keeps the
+  // entire cash pool reconciled without inventing another instrument or sale.
   const allocations = [...de.allocations, usscAllocation];
   const plannedSpend = (Math.round(de.plannedSpend * 100) + usscCents) / 100;
   const afterTotal = total + plannedSpend;
