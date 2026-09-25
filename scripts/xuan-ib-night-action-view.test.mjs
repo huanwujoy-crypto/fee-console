@@ -31,6 +31,21 @@ test('renders only the four approved nightly sections in a tabless mobile page',
   assert.deepEqual(extractNightActionModel(html), model);
 });
 
+test('shows public-update state and automatically replaces a stale open page', () => {
+  const html = renderNightActionReport(model);
+  assert.match(html, /id="report-state"/);
+  assert.match(html, /id="report-state-detail"[^>]*aria-live="polite"/);
+  assert.match(html, /更新中 · 21:30 开始/);
+  assert.match(html, /更新延迟 · 仍显示上次报告/);
+  assert.match(html, /setInterval\(check,30000\)/);
+  assert.match(html, /fetch\(url,\{cache:'no-store'/);
+  assert.match(html, /location\.replace\(fresh\)/);
+  assert.doesNotMatch(html, /<button/i);
+  const script = html.match(/<script>([\s\S]+)<\/script>/)?.[1];
+  assert.ok(script);
+  assert.doesNotThrow(() => new Function(script));
+});
+
 test('missing current data is explicit and never reuses old amounts', () => {
   const unavailable = structuredClone(model);
   unavailable.status = 'partial';
