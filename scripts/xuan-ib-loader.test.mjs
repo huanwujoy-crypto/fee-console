@@ -2245,6 +2245,10 @@ test('the variable report stays separate from the fixed loader', () => {
     `the published title ${publishedTitle[0]} is not one the loader accepts`
   );
   if (!latest.includes('xuan-ib-night-action-v1:')) assert.match(latest, /apple-mobile-web-app-capable/);
+  assert.match(policyLock, /proposed-xuan-index\.html/);
+  assert.match(policyLock, /A variable XUAN-IB report cannot replace the stable phone loader/);
+  assert.match(policyLock, /new URL\(\"latest\.meta\.json\", location\.href\)/);
+  assert.match(policyLock, /new URL\(\"latest\.html\", location\.href\)/);
 });
 
 const progressSourceHtml = latest.includes('id="xuan-ib-decision-state-v1"')
