@@ -1,7 +1,7 @@
 {
   "v": 1,
-  "generatedAt": "2026-09-25T01:48:01.551Z",
-  "source": "Yahoo Finance chart API; Nasdaq official quote cross-check; issuer/Nasdaq dividend evidence",
+  "generatedAt": "2026-09-25T05:44:40.913Z",
+  "source": "Yahoo Finance chart API; Nasdaq official quote and historical close cross-check; issuer/Nasdaq dividend evidence",
   "benchmarks": {
     "spy": {
       "symbol": "SPY",
