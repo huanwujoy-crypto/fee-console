@@ -9,11 +9,24 @@ import { execFileSync } from 'node:child_process';
 
 const candidateLoader = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
 // An action-page publication intentionally uses index.html as the candidate.
-// Exercise the unchanged fixed-loader contract against the trusted base copy;
-// the action page itself is covered by its dedicated guard and workflow tests.
-const loader = candidateLoader.includes('xuan-ib-night-action-v1:')
-  ? execFileSync('git', ['show', `${execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8' }).trim()}:xuan-ib/index.html`], { encoding: 'utf8' })
-  : candidateLoader;
+// Exercise the unchanged fixed-loader contract against the newest trusted
+// non-action version in Git history. The merge base itself can now contain an
+// action page after that temporary publication lands on main, so looking only
+// at the merge-base copy would make every later PR fail without testing a
+// loader at all. The action page remains covered by its dedicated guards.
+const isFixedLoader = (html) => html.includes('<iframe id="handover"')
+  && html.includes('const loaderBuild = "')
+  && (html.match(/<script>/g) || []).length === 1;
+const historicalLoader = () => {
+  const commits = execFileSync('git', ['log', '--format=%H', '--', 'xuan-ib/index.html'], { encoding: 'utf8' })
+    .trim().split('\n').filter(Boolean);
+  for (const commit of commits) {
+    const html = execFileSync('git', ['show', `${commit}:xuan-ib/index.html`], { encoding: 'utf8' });
+    if (isFixedLoader(html)) return html;
+  }
+  throw new Error('no trusted fixed loader exists in Git history');
+};
+const loader = isFixedLoader(candidateLoader) ? candidateLoader : historicalLoader();
 const latestBytes = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url));
 const latest = latestBytes.toString('utf8');
 

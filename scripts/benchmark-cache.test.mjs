@@ -6,6 +6,7 @@ import {
   appendCrossCheckedClose,
   extractNasdaqClose,
   extractNasdaqDividends,
+  extractNasdaqHistoricalClose,
   extractPrices,
   mergePrices,
 } from './refresh-benchmark-cache.mjs';
@@ -52,6 +53,13 @@ function nasdaqInfo(definition, { date = 'Sep 22, 2026', price, marketStatus = '
 
 function nasdaqDividends(rows = []) {
   return { data: { dividends: { rows } }, status: { rCode: 200 } };
+}
+
+function nasdaqHistorical(definition, rows = []) {
+  return {
+    data: { symbol: definition.symbol, tradesTable: { rows } },
+    status: { rCode: 200 },
+  };
 }
 
 test('accepts a completed, identity-verified daily close', () => {
@@ -184,6 +192,7 @@ test('uses a Nasdaq close only when Yahoo meta independently agrees on date and 
   const result = appendCrossCheckedClose({
     yahooPayload: yahoo,
     nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { price: 773.38 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '09/22/2026', close: '773.38' }]),
     definition: DEFINITIONS.spy,
     now: new Date('2026-09-23T02:00:00Z'),
   });
@@ -202,10 +211,14 @@ test('rejects a mismatched fallback date or close', () => {
   });
   const options = { yahooPayload: yahoo, definition: DEFINITIONS.spy, now: new Date('2026-09-23T02:00:00Z') };
   assert.throws(() => appendCrossCheckedClose({
-    ...options, nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { date: 'Sep 21, 2026', price: 773.38 }),
+    ...options,
+    nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { date: 'Sep 21, 2026', price: 773.38 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '09/22/2026', close: '773.38' }]),
   }), /date mismatch/);
   assert.throws(() => appendCrossCheckedClose({
-    ...options, nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { price: 773.40 }),
+    ...options,
+    nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { price: 773.40 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '09/22/2026', close: '773.38' }]),
   }), /price mismatch/);
 });
 
@@ -219,6 +232,54 @@ test('Nasdaq identity and closed-session gates fail closed', () => {
   assert.throws(() => extractNasdaqClose(nasdaqInfo(DEFINITIONS.qqq, {
     price: 747.46, marketStatus: 'Open',
   }), DEFINITIONS.qqq, new Date('2026-09-23T02:00:00Z')), /not closed/);
+});
+
+test('Nasdaq historical close accepts only completed, symbol-matched rows', () => {
+  const good = nasdaqHistorical(DEFINITIONS.qqq, [
+    { date: '09/21/2026', close: '741.47' },
+    { date: '09/22/2026', close: '$747.46' },
+  ]);
+  assert.deepEqual(
+    extractNasdaqHistoricalClose(good, DEFINITIONS.qqq, new Date('2026-09-23T02:00:00Z')),
+    { d: '2026-09-22', p: 747.46 },
+  );
+  const wrong = nasdaqHistorical(DEFINITIONS.qqq, [{ date: '09/22/2026', close: '747.46' }]);
+  wrong.data.symbol = 'TQQQ';
+  assert.throws(() => extractNasdaqHistoricalClose(
+    wrong, DEFINITIONS.qqq, new Date('2026-09-23T02:00:00Z'),
+  ), /Unexpected Nasdaq historical symbol/);
+});
+
+test('uses dual Nasdaq completed-close evidence when Yahoo meta is one session behind', () => {
+  const prior = epoch('2026-09-23T13:30:00Z');
+  const yahoo = payload(DEFINITIONS.spy, {
+    timestamps: [prior], closes: [767.81],
+    meta: { regularMarketTime: prior, regularMarketPrice: 767.81 },
+  });
+  const result = appendCrossCheckedClose({
+    yahooPayload: yahoo,
+    nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { date: 'Sep 24, 2026', price: 767.18 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '09/24/2026', close: '767.18' }]),
+    definition: DEFINITIONS.spy,
+    now: new Date('2026-09-25T08:00:00Z'),
+  });
+  assert.deepEqual(result.at(-1), { d: '2026-09-24', p: 767.18 });
+});
+
+test('uses dual Nasdaq completed-close evidence when Yahoo meta is unavailable', () => {
+  const prior = epoch('2026-09-23T13:30:00Z');
+  const yahoo = payload(DEFINITIONS.qqq, {
+    timestamps: [prior], closes: [741.21], meta: {},
+  });
+  const result = appendCrossCheckedClose({
+    yahooPayload: yahoo,
+    nasdaqInfo: nasdaqInfo(DEFINITIONS.qqq, { date: 'Sep 24, 2026', price: 741.10 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.qqq, [{ date: '09/24/2026', close: '741.10' }]),
+    nasdaqDividends: nasdaqDividends([]),
+    definition: DEFINITIONS.qqq,
+    now: new Date('2026-09-25T08:00:00Z'),
+  });
+  assert.deepEqual(result.at(-1), { d: '2026-09-24', p: 741.1 });
 });
 
 test('QQQ fallback uses Nasdaq dividend evidence and validates Yahoo if both report it', () => {
@@ -235,6 +296,7 @@ test('QQQ fallback uses Nasdaq dividend evidence and validates Yahoo if both rep
   const result = appendCrossCheckedClose({
     yahooPayload: yahoo,
     nasdaqInfo: nasdaqInfo(DEFINITIONS.qqq, { date: 'Sep 21, 2026', price: 741.47 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.qqq, [{ date: '09/21/2026', close: '741.47' }]),
     nasdaqDividends: dividends,
     definition: DEFINITIONS.qqq,
     now: new Date('2026-09-22T02:00:00Z'),
@@ -252,6 +314,7 @@ test('SPY fallback refuses an uncovered year or a scheduled ex-date without an a
   assert.throws(() => appendCrossCheckedClose({
     yahooPayload: yahoo,
     nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { date: 'Sep 18, 2026', price: 761.69 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '09/18/2026', close: '761.69' }]),
     definition: DEFINITIONS.spy,
     now: new Date('2026-09-19T02:00:00Z'),
   }), /Dividend amount missing/);
@@ -263,6 +326,7 @@ test('SPY fallback refuses an uncovered year or a scheduled ex-date without an a
   assert.throws(() => appendCrossCheckedClose({
     yahooPayload: future,
     nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { date: 'Jan 5, 2027', price: 801 }),
+    nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '01/05/2027', close: '801' }]),
     definition: DEFINITIONS.spy,
     now: new Date('2027-01-06T02:00:00Z'),
   }), /calendar coverage missing/);
@@ -277,6 +341,6 @@ test('merge source describes the cross-checked fallback and paired tail dates st
     spy: [{ d: '2026-09-22', p: 773.38 }],
     qqq: [{ d: '2026-09-22', p: 747.46 }],
   }, new Date('2026-09-23T02:00:00Z'));
-  assert.match(merged.source, /Nasdaq official quote cross-check/);
+  assert.match(merged.source, /Nasdaq official quote and historical close cross-check/);
   assert.equal(merged.benchmarks.spy.series.at(-1).d, merged.benchmarks.qqq.series.at(-1).d);
 });
