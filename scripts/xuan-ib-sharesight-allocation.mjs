@@ -22,6 +22,11 @@ function instrumentCode(holding) {
   return typeof code === 'string' && code.trim() ? code.trim().toUpperCase() : null;
 }
 
+function baseSymbol(holding) {
+  const code = instrumentCode(holding);
+  return code ? code.split('.')[0] : null;
+}
+
 function cashLikeSymbol(holding) {
   const code = instrumentCode(holding);
   if (!code) return null;
@@ -44,6 +49,7 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
   const sums = new Map([...STOCK_CLASS_TARGETS.keys()].map(name => [name, 0]));
   let excludedValue = 0, ussc = 0;
   const cashLikeSums = new Map([...CASH_LIKE_SYMBOLS].map(symbol => [symbol, 0]));
+  const symbolGroups = new Map();
   const seen = new Set();
   for (const holding of report.holdings) {
     if (!object(holding) || !Number.isSafeInteger(holding.id) || holding.id <= 0
@@ -51,6 +57,8 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
       || !finite(holding.value)) fail('INVALID_HOLDING');
     seen.add(holding.id);
     const group = holding.group_name.trim();
+    const symbol = baseSymbol(holding);
+    if (!symbol) fail('INSTRUMENT_CODE_REQUIRED');
     if (STOCK_CLASS_TARGETS.has(group)) sums.set(group, sums.get(group) + holding.value);
     else if (NON_STOCK_CLASSES.has(group)) excludedValue += holding.value;
     else fail(group ? 'UNKNOWN_ASSET_CLASS' : 'UNGROUPED_HOLDING');
@@ -63,6 +71,8 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
       if (group !== '防御资产') fail('CASH_LIKE_CLASS_MISMATCH');
       cashLikeSums.set(cashLike, cashLikeSums.get(cashLike) + holding.value);
     }
+    if (symbolGroups.has(symbol) && symbolGroups.get(symbol) !== group) fail('SYMBOL_CLASS_CONFLICT');
+    symbolGroups.set(symbol, group);
   }
   const total = [...sums.values()].reduce((sum, value) => sum + value, 0);
   if (total <= 0 || ussc > sums.get('美国底仓')) fail('ALLOCATION_RECONCILIATION_FAILED');
@@ -76,6 +86,7 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
     usBase: sums.get('美国底仓'), technology: sums.get('美国科技'),
     developed: sums.get('非美发达'), emerging: sums.get('新兴市场'),
     excludedValue, holdingCount: report.holdings.length,
+    symbolGroups: Object.fromEntries([...symbolGroups].sort(([a], [b]) => a.localeCompare(b))),
     cashLike: {
       total: [...cashLikeSums.values()].reduce((sum, value) => sum + value, 0),
       items: [...cashLikeSums].filter(([, value]) => value > 0)

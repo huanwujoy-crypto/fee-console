@@ -1896,8 +1896,8 @@ test('bedtime-only notices follow start, T+20, full-PM and priority boundaries',
     ['2026-09-16T13:40:00Z', '2026-09-16', '临时版 · 睡前速览', 'info'],
     ['2026-09-16T13:50:00Z', '2026-09-16', '临时版 · 睡前速览', 'error'],
     ['2026-09-16T13:35:00Z', '2026-09-16', '睡前版', null],
-    ['2026-11-02T14:30:00Z', '2026-10-30', '睡前版', 'info'],
-    ['2026-11-02T14:50:00Z', '2026-10-30', '睡前版', 'error'],
+    ['2026-11-02T05:00:00Z', '2026-10-30', '开市前版', 'info'],
+    ['2026-11-02T05:20:00Z', '2026-10-30', '开市前版', 'error'],
   ];
   for (const [now, date, edition, level] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);

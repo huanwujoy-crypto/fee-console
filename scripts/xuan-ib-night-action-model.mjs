@@ -111,13 +111,37 @@ function ordersOf(raw, positionsRaw, { dataDate, previousHtml }) {
   };
 }
 
+function projectOpenBuys(allocation, buys) {
+  const values = new Map(allocation.categories.map(item => [item.label, item.marketValue]));
+  let reserved = 0, usscAdded = 0;
+  for (const order of buys) {
+    const symbol = order.description.trim().toUpperCase().split('.')[0];
+    const group = allocation.symbolGroups[symbol];
+    const limit = orderNumber(order.limit), quantity = orderNumber(order.quantity);
+    if (order.currency !== 'USD') fail('BUY_ORDER_USD_REQUIRED');
+    if (!group) fail('BUY_ORDER_CLASS_REQUIRED');
+    const amount = Math.round(limit * quantity * 100) / 100;
+    reserved = Math.round((reserved + amount) * 100) / 100;
+    if (values.has(group)) values.set(group, Math.round((values.get(group) + amount) * 100) / 100);
+    if (symbol === 'USSC') usscAdded = Math.round((usscAdded + amount) * 100) / 100;
+  }
+  const total = [...values.values()].reduce((sum, value) => sum + value, 0);
+  const categories = allocation.categories.map(item => ({ ...item,
+    projectedMarketValue: values.get(item.label),
+    projectedPct: values.get(item.label) / total * 100,
+  }));
+  return { reserved, total, categories,
+    usBase: values.get('美国底仓'), developed: values.get('非美发达'),
+    emerging: values.get('新兴市场'), ussc: allocation.ussc + usscAdded };
+}
+
 /** Build the entire action-only page from five read-only responses:
  * IB account summary, positions and orders, grouped IB-HK Sharesight performance, and
  * NOAH-HK Sharesight performance. No positions/trades/all-family reads.
  */
 export function buildNightActionModel({
   dataDate, asOfHkt, ordersAsOfHkt, ibAccountSummary, ibOrders,
-  ibPositions, ibGroupedPerformance, noahPerformance, reserve, previousHtml = '',
+  ibPositions, ibGroupedPerformance, noahPerformance, reserve, expectedSourceDate = null, previousHtml = '',
 }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dataDate || '') || typeof asOfHkt !== 'string'
     || typeof ordersAsOfHkt !== 'string' || !finite(reserve)) fail('INVALID_INPUT');
@@ -125,20 +149,23 @@ export function buildNightActionModel({
   if (summary.currency !== 'USD' || !finite(summary.total_cash_value)) fail('USD_ACCOUNT_SUMMARY_REQUIRED');
   const allocation = parseSharesightStockAllocation(ibGroupedPerformance);
   const noahCash = parseSharesightCash(noahPerformance, { portfolioId: 936238 });
+  if (expectedSourceDate !== null && (!/^\d{4}-\d{2}-\d{2}$/.test(expectedSourceDate)
+    || allocation.dataDate !== expectedSourceDate || noahCash.dataDate !== expectedSourceDate)) fail('SOURCE_DATE_NOT_READY');
   const orderGroups = ordersOf(ibOrders, ibPositions, { dataDate, previousHtml });
+  const projected = projectOpenBuys(allocation, orderGroups.buys);
   // Broker and Sharesight sources may retain sub-cent FX precision. This
   // planning view intentionally works at USD-cent precision.
   const ibCash = Math.round(summary.total_cash_value * 100) / 100;
   const noahCashTotal = Math.round(noahCash.total * 100) / 100;
   const cashPool = Math.round((ibCash + noahCashTotal) * 100) / 100;
-  const planning = Math.max(0, Math.round((cashPool - reserve) * 100) / 100);
+  const planning = Math.max(0, Math.round((cashPool - reserve - projected.reserved) * 100) / 100);
   let replenishment = { status: 'unavailable' };
   try {
     const plan = calculateCashPlan({
       schemaVersion: 2, status: 'snapshot', sourceAsOfHkt: cashPlanTime(asOfHkt),
-      equityTotal: allocation.total, developed: allocation.developed, emerging: allocation.emerging,
-      usBase: allocation.usBase, ussc: allocation.ussc, ibCash,
-      noahCash: noahCashTotal, reserve, usscBudgetShare: 0.10,
+      equityTotal: projected.total, developed: projected.developed, emerging: projected.emerging,
+      usBase: projected.usBase, ussc: projected.ussc, ibCash,
+      noahCash: noahCashTotal, reserve: reserve + projected.reserved, usscBudgetShare: 0.10,
       currency: 'USD', denominator: 'equity-only',
     });
     const [exus, eimi, ussc] = plan.allocations;
@@ -152,17 +179,18 @@ export function buildNightActionModel({
     replenishment = { status: 'unavailable' };
   }
   const model = {
-    schemaVersion: 3, dataDate, asOfHkt,
+    schemaVersion: 4, dataDate, asOfHkt,
     status: replenishment.status === 'ready' ? 'ready' : 'partial',
     replenishment,
     orders: { status: 'ready', asOfHkt: ordersAsOfHkt, ...orderGroups },
     cash: { status: 'ready', ib: ibCash, noah: noahCashTotal, pool: cashPool,
-      reserve, planning, cashLike: allocation.cashLike,
+      reserve, orderReserve: projected.reserved, planning, cashLike: allocation.cashLike,
       totalCapacity: Math.round((planning + allocation.cashLike.total) * 100) / 100 },
-    allocation: { status: 'ready', total: allocation.total, categories: allocation.categories },
+    allocation: { status: 'ready', total: allocation.total, projectedTotal: projected.total,
+      categories: projected.categories },
     notes: [
       `四类：Sharesight 资产类别，数据日 ${allocation.dataDate}。`,
-      `现金：IB＋NOAH-HK；类现金：VGSH、VGIT、TLT，数据日 ${noahCash.dataDate}。`,
+      `现金：IB＋NOAH-HK，已扣现有买单预占；类现金：VGSH、VGIT、TLT，数据日 ${noahCash.dataDate}。`,
       '只读规划：不下单、撤单、改单或转账。',
     ],
   };
