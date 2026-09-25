@@ -8,7 +8,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_DAYS = 120;
 const TOTAL_RETURN_TOLERANCE = 5e-4;
 const CLOSE_CROSSCHECK_TOLERANCE = 0.005;
-const CACHE_SOURCE = 'Yahoo Finance chart API; Nasdaq official quote cross-check; issuer/Nasdaq dividend evidence';
+const CACHE_SOURCE = 'Yahoo Finance chart API; Nasdaq official quote and historical close cross-check; issuer/Nasdaq dividend evidence';
 
 export const DEFINITIONS = Object.freeze({
   spy: Object.freeze({
@@ -207,6 +207,12 @@ function nasdaqDate(value) {
   return `${match[3]}-${NASDAQ_MONTHS[match[1]]}-${match[2].padStart(2, '0')}`;
 }
 
+function nasdaqHistoricalDate(value) {
+  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(value || '').trim());
+  if (!match) throw new Error('Malformed Nasdaq historical session date');
+  return `${match[3]}-${match[1]}-${match[2]}`;
+}
+
 function usdNumber(value, label) {
   const normalized = String(value || '').replace(/^\$/, '').replace(/,/g, '').trim();
   const amount = Number(normalized);
@@ -233,6 +239,25 @@ export function extractNasdaqClose(payload, definition, now = new Date()) {
   return { d, p: roundPrice(usdNumber(data.primaryData?.lastSalePrice, `Nasdaq close for ${definition.symbol}`)) };
 }
 
+export function extractNasdaqHistoricalClose(payload, definition, now = new Date()) {
+  const data = payload?.data;
+  if (!data || payload?.status?.rCode !== 200) {
+    throw new Error(`No Nasdaq historical close for ${definition.symbol}`);
+  }
+  if (data.symbol !== definition.symbol) throw new Error(`Unexpected Nasdaq historical symbol: ${data.symbol}`);
+  const rows = data.tradesTable?.rows;
+  if (!Array.isArray(rows) || !rows.length) {
+    throw new Error(`Missing Nasdaq historical rows for ${definition.symbol}`);
+  }
+  const completed = rows.map(row => ({
+    d: nasdaqHistoricalDate(row?.date),
+    p: roundPrice(usdNumber(row?.close, `Nasdaq historical close for ${definition.symbol}`)),
+  })).filter(({ d }) => isCompletedSessionDate(d, definition, now))
+    .sort((a, b) => a.d.localeCompare(b.d));
+  if (!completed.length) throw new Error(`No completed Nasdaq historical close for ${definition.symbol}`);
+  return completed.at(-1);
+}
+
 export function extractNasdaqDividends(payload, definition) {
   if (payload?.status?.rCode !== 200 || !payload?.data) {
     throw new Error(`No Nasdaq dividend evidence for ${definition.symbol}`);
@@ -252,13 +277,29 @@ export function extractNasdaqDividends(payload, definition) {
   return result;
 }
 
-export function appendCrossCheckedClose({ yahooPayload, nasdaqInfo, nasdaqDividends, definition, now = new Date() }) {
+export function appendCrossCheckedClose({
+  yahooPayload, nasdaqInfo, nasdaqHistorical, nasdaqDividends, definition, now = new Date(),
+}) {
   const series = extractPrices(yahooPayload, definition, now);
-  const yahoo = extractYahooMetaClose(yahooPayload, definition, now);
   const nasdaq = extractNasdaqClose(nasdaqInfo, definition, now);
-  if (yahoo.d !== nasdaq.d) throw new Error(`Cross-check date mismatch for ${definition.symbol}`);
-  if (Math.abs(yahoo.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
-    throw new Error(`Cross-check price mismatch for ${definition.symbol}`);
+  const historical = extractNasdaqHistoricalClose(nasdaqHistorical, definition, now);
+  if (historical.d !== nasdaq.d) throw new Error(`Nasdaq cross-check date mismatch for ${definition.symbol}`);
+  if (Math.abs(historical.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
+    throw new Error(`Nasdaq cross-check price mismatch for ${definition.symbol}`);
+  }
+
+  // Yahoo meta is a third price check when it has reached the target session.
+  // It may legitimately lag both Nasdaq completed-close endpoints for hours;
+  // an older Yahoo date must not block the independently verified close.
+  let yahoo = null;
+  try {
+    yahoo = extractYahooMetaClose(yahooPayload, definition, now);
+  } catch (error) {
+    if (!String(error?.message).startsWith('Missing Yahoo completed-session meta close')) throw error;
+  }
+  if (yahoo?.d > nasdaq.d) throw new Error(`Yahoo/Nasdaq date order mismatch for ${definition.symbol}`);
+  if (yahoo?.d === nasdaq.d && Math.abs(yahoo.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
+    throw new Error(`Yahoo/Nasdaq price mismatch for ${definition.symbol}`);
   }
   const latest = series.at(-1)?.d;
   if (!latest || nasdaq.d <= latest) return series;
@@ -371,19 +412,33 @@ async function fetchSymbol(definition, now) {
         const yahooPayload = await fetchJson(url);
         const primary = extractPrices(yahooPayload, definition, now);
         if (!bestPrimary || primary.at(-1)?.d > bestPrimary.at(-1)?.d) bestPrimary = primary;
-        const yahooLatest = extractYahooMetaClose(yahooPayload, definition, now);
-        if (primary.at(-1)?.d >= yahooLatest.d) return { series: primary, warnings: [] };
+        let yahooLatest = null;
+        try {
+          yahooLatest = extractYahooMetaClose(yahooPayload, definition, now);
+        } catch (error) {
+          errors.push(`${host} attempt ${attempt} Yahoo meta unavailable: ${error.message}`);
+        }
         try {
           const nasdaqInfo = await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/info?assetclass=etf`);
+          const nasdaqLatest = extractNasdaqClose(nasdaqInfo, definition, now);
+          if (primary.at(-1)?.d >= nasdaqLatest.d) return { series: primary, warnings: [] };
+          const current = localParts(now, definition.timezone).date;
+          const from = new Date(now.getTime() - 10 * DAY_MS).toISOString().slice(0, 10);
+          const nasdaqHistorical = await fetchJson(
+            `https://api.nasdaq.com/api/quote/${definition.symbol}/historical?assetclass=etf&fromdate=${from}&todate=${current}&limit=20`,
+          );
           const nasdaqDividends = definition.symbol === 'QQQ'
             ? await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/dividends?assetclass=etf`)
             : undefined;
           return {
-            series: appendCrossCheckedClose({ yahooPayload, nasdaqInfo, nasdaqDividends, definition, now }),
+            series: appendCrossCheckedClose({
+              yahooPayload, nasdaqInfo, nasdaqHistorical, nasdaqDividends, definition, now,
+            }),
             warnings: [],
           };
         } catch (error) {
           errors.push(`${host} attempt ${attempt} cross-check fallback unavailable: ${error.message}`);
+          if (!yahooLatest || primary.at(-1)?.d >= yahooLatest.d) return { series: primary, warnings: errors };
         }
       } catch (error) {
         errors.push(`${host} attempt ${attempt}: ${error.message}`);

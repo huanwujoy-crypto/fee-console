@@ -267,12 +267,15 @@ UI 读这个块决定是否给数字加"暂估"标签。`prov: 1` 也写在当�
   应先按 `docs/codex-fee-daily.md` 用 `workflow_dispatch` 触发一次
   `benchmark-cache` 并等待完成、重新读取缓存分支，仍落后才按 §1 留空 benchmark。
 - `benchmark-cache` 的常规历史序列仍由 Yahoo daily chart 提供，并用 raw close、现金股息和
-  adjusted-close 因子互相验证。若 daily chart 只落后最后一个已完成交易日，程序可使用 Yahoo
-  的 completed-session meta close，但必须同时取得 Nasdaq 官方 quote 页的相同交易日期和相同
-  收盘价；SPY 还必须处于 State Street 官方年度除息日历覆盖范围内，QQQ 必须成功读取 Nasdaq
+  adjusted-close 因子互相验证。若 Yahoo daily chart 或 completed-session meta 尚未前进，程序可
+  使用 Nasdaq 官方 quote 与 historical 两个 completed-close 端点的相同交易日期和相同收盘价；
+  Yahoo meta 已覆盖该日时再作为第三项交叉验证，仍落后时不阻断已由双端点确认的收盘价。SPY
+  还必须处于 State Street 官方年度除息日历覆盖范围内，QQQ 必须成功读取 Nasdaq
   的现金分红记录。任一日期、价格、ETF 身份、交易所、市场关闭状态或股息证据不一致即保留旧
   缓存，不采用备用值。SPY 官方日历覆盖到期或落在已列除息日但缺少金额时同样停止，不能把
   “未发现事件”当成零股息。SPY 与 QQQ 最新有效日期必须完全一致，缓存才允许写入。
+- 自动缓存重试延长到香港时间 17:35；cloud producer 在 15:50 和 17:50 增加幂等补跑，使较晚
+  到达的已验证行情可在同日生成 replacement，不依赖 Mac 开机。
 - 同日 replacement 使用 `scripts/backfill-benchmark.mjs` 时，每个新输入点（包括切换日前的
   历史点）都必须同时提供 `bd`；旧账本的无证据迁移行只允许继续读取。`bd == d` 时脚本自动
   写入 `bstate: "session"`；`bd < d` 时 series

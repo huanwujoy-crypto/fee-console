@@ -2,7 +2,7 @@ name: Refresh public benchmark closes
 
 on:
   schedule:
-    # HKT 07:35 and then hourly 09:35-13:35 retries after each Mon-Fri US
+    # HKT 07:35 and then hourly 09:35-17:35 retries after each Mon-Fri US
     # session. The final Friday-session retry lands on HKT Sunday because the
     # schedule is expressed in UTC. Every attempt is idempotent and changes the
     # cache only when both ETFs validate.
@@ -14,7 +14,7 @@ on:
     # producer published 2026-09-15 and 2026-09-17 without a benchmark. More
     # slots before the producer raise the odds; the producer may also dispatch
     # this workflow on demand (see .claude/rules/fee-console-daily.md).
-    - cron: '35 23,1,2,3,4,5 * * 1-6'
+    - cron: '35 23,1-9 * * 1-6'
   workflow_dispatch:
 
 permissions:
