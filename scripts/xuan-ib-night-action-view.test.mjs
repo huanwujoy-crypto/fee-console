@@ -60,6 +60,21 @@ test('schema v2 renders the compact legacy-style order facts without a missing-c
   assert.deepEqual(extractNightActionModel(html), detailed);
 });
 
+test('schema v3 renders reconciled cash composition, cash-like reserves and retained budget', () => {
+  const detailed = structuredClone(model); detailed.schemaVersion = 3;
+  detailed.replenishment = { ...detailed.replenishment, budget: 1000, total: 600, retained: 400 };
+  detailed.cash = { status: 'ready', ib: 700, noah: 300, pool: 1000, reserve: 400, planning: 600,
+    cashLike: { total: 300, items: [{ symbol: 'VGIT', amount: 200 }, { symbol: 'TLT', amount: 100 }] },
+    totalCapacity: 900 };
+  detailed.orders.buys[0] = { side: 'BUY', description: 'EXUS', limit: '44', quantity: '300', status: 'NEW',
+    currency: 'USD', ageDays: 5, distancePct: -1, trend: null };
+  detailed.orders.sells[0] = { side: 'SELL', description: 'ABC', limit: '70', quantity: '10', status: 'NEW',
+    currency: 'USD', ageDays: 1, distancePct: 2, trend: null };
+  const html = renderNightActionReport(detailed);
+  for (const value of ['IB $700', 'NOAH-HK $300', '类现金', 'VGIT $200', 'TLT $100', '全部弹药', '$900', '暂留 $400']) assert.match(html, new RegExp(value.replace('$', '\\$')));
+  assert.deepEqual(extractNightActionModel(html), detailed);
+});
+
 test('model rejects duplicated or inconsistent planning arithmetic', () => {
   assert.throws(() => validateNightActionModel({ ...model, replenishment: { ...model.replenishment, total: 601 } }), /INVALID_REPLENISHMENT/);
   assert.throws(() => validateNightActionModel({ ...model, cash: { ...model.cash, planning: 599 } }), /INVALID_CASH/);

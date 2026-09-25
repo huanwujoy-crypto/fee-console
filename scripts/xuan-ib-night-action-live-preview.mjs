@@ -18,6 +18,9 @@ const SHARESIGHT = '/Users/huanwu/.codex/skills/sharesight-portfolio-api/scripts
 const dateHkt = () => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date());
+const dateMarket = () => new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+}).format(new Date());
 const timeHkt = () => new Date(Date.now() + 8 * 3_600_000).toISOString().slice(11, 16);
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 
@@ -38,9 +41,9 @@ function currentReserve(date) {
   return eligible.at(-1).usd;
 }
 
-export async function runNightActionLivePreview({ out, date = dateHkt(), previousHtml = null }) {
+export async function runNightActionLivePreview({ out, date = dateMarket(), previousHtml = null }) {
   if (typeof out !== 'string' || !path.isAbsolute(out) || !/^\d{4}-\d{2}-\d{2}$/.test(date)
-    || date !== dateHkt()) throw new Error('INVALID_LIVE_PREVIEW_SCOPE');
+    || date !== dateMarket()) throw new Error('INVALID_LIVE_PREVIEW_SCOPE');
   const started = Date.now();
   const startedHkt = timeHkt();
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'xuan-action-'));
@@ -70,7 +73,7 @@ export async function runNightActionLivePreview({ out, date = dateHkt(), previou
     ibAccountSummary: readJson(path.join(dir, 'ib.accountSummary.native.json')),
     ibPositions: readJson(path.join(dir, 'ib.positions.native.json')),
     ibOrders: readJson(path.join(dir, 'ib.orders.native.json')),
-    ibGroupedPerformance: grouped, noahPerformance: noah, reserve: currentReserve(date),
+    ibGroupedPerformance: grouped, noahPerformance: noah, reserve: currentReserve(dateHkt()),
     previousHtml: previousHtml ?? (() => {
       const file = path.join(checkout, 'xuan-ib/latest.html');
       return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';

@@ -10,7 +10,8 @@ const performance = (portfolio_id, holdings, cash_accounts = []) => ({ report: {
 const classes = [
   holding(1, '美国底仓', 450, 'CSPX'), holding(2, '美国底仓', 50, 'USSC'),
   holding(3, '美国科技', 250, 'GOOG'), holding(4, '非美发达', 180, 'EXUS'),
-  holding(5, '新兴市场', 70, 'EIMI'),
+  holding(5, '新兴市场', 70, 'EIMI'), holding(6, '防御资产', 40, 'VGSH'),
+  holding(7, '防御资产', 30, 'VGIT'), holding(8, '防御资产', 20, 'TLT'),
 ];
 const order = (id, side) => ({ order_id: id, order_status: 'NEW', order_type: 'LIMIT', side,
   limit_price: '10.50', total_shares_qty: '100', cum_shares_qty: '0', remaining_shares_qty: '100',
@@ -37,12 +38,17 @@ test('builds the entire nightly model from three IB and two Sharesight reads', (
   assert.equal(model.cash.planning, 100);
   assert.equal(model.orders.buys.length, 1);
   assert.equal(model.orders.sells.length, 1);
-  assert.equal(model.schemaVersion, 2);
+  assert.equal(model.schemaVersion, 3);
   assert.equal(model.orders.buys[0].currency, 'USD');
   assert.equal(model.orders.buys[0].ageDays, 4);
   assert.equal(model.orders.buys[0].distancePct, 5);
   assert.equal(model.orders.buys[0].trend.label, null);
   assert.equal(model.allocation.total, 1000);
+  assert.deepEqual(model.cash.cashLike, { total: 90, items: [
+    { symbol: 'VGSH', amount: 40 }, { symbol: 'VGIT', amount: 30 }, { symbol: 'TLT', amount: 20 },
+  ] });
+  assert.equal(model.cash.totalCapacity, 190);
+  assert.equal(model.replenishment.budget, model.replenishment.total + model.replenishment.retained);
   assert.equal(model.replenishment.items.reduce((sum, item) => sum + item.amount, 0), model.replenishment.total);
   assert.match(model.notes[0], /2026-09-24/);
 });
@@ -61,12 +67,20 @@ test('carries the prior verified price baseline without another history read', a
   assert.equal(second.orders.buys[0].trend.label, '约 ↑ 5.0% · 观察1天');
 });
 
-test('a cash-plan policy edge stays partial without blocking orders or allocation', () => {
+test('surplus cash remains ready and is explicitly retained', () => {
   const model = buildNightActionModel({ ...input, ibAccountSummary: { ...input.ibAccountSummary, total_cash_value: 1_000_000 } });
-  assert.equal(model.status, 'partial');
-  assert.deepEqual(model.replenishment, { status: 'unavailable' });
+  assert.equal(model.status, 'ready');
+  assert.ok(model.replenishment.retained > 0);
+  assert.equal(model.replenishment.budget, model.replenishment.total + model.replenishment.retained);
   assert.equal(model.orders.buys.length, 1);
   assert.equal(model.allocation.status, 'ready');
+});
+
+test('a display suffix does not invalidate the underlying source timestamp', () => {
+  const model = buildNightActionModel({ ...input,
+    asOfHkt: '2026-09-25 06:57 HKT · 美股 2026-09-24',
+  });
+  assert.equal(model.status, 'ready');
 });
 
 test('sub-cent source precision is rounded only for the planning view', () => {

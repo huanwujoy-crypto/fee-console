@@ -11,9 +11,16 @@ const candidateLoader = fs.readFileSync(new URL('../xuan-ib/index.html', import.
 // An action-page publication intentionally uses index.html as the candidate.
 // Exercise the unchanged fixed-loader contract against the trusted base copy;
 // the action page itself is covered by its dedicated guard and workflow tests.
-const loader = candidateLoader.includes('xuan-ib-night-action-v1:')
-  ? execFileSync('git', ['show', `${execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8' }).trim()}:xuan-ib/index.html`], { encoding: 'utf8' })
-  : candidateLoader;
+function trustedLoader(candidate) {
+  if (!candidate.includes('<!-- xuan-ib-night-action-v1:')) return candidate;
+  const commits = execFileSync('git', ['log', '--format=%H', 'origin/main', '--', 'xuan-ib/index.html'], { encoding: 'utf8' }).trim().split('\n');
+  for (const commit of commits) {
+    const source = execFileSync('git', ['show', `${commit}:xuan-ib/index.html`], { encoding: 'utf8' });
+    if (!source.includes('<!-- xuan-ib-night-action-v1:') && source.includes('<script>')) return source;
+  }
+  throw new Error('trusted fixed loader not found in main history');
+}
+const loader = trustedLoader(candidateLoader);
 const latestBytes = fs.readFileSync(new URL('../xuan-ib/latest.html', import.meta.url));
 const latest = latestBytes.toString('utf8');
 

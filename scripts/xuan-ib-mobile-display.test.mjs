@@ -20,9 +20,13 @@ test('verified display reorders intact cells with stable descending amounts and 
 });
 test('header guide matches shared wording and runs only after verification',()=>{
  const candidate=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
- const loader=candidate.includes('xuan-ib-night-action-v1:')
-  ?execFileSync('git',['show',`${execFileSync('git',['merge-base','HEAD','origin/main'],{encoding:'utf8'}).trim()}:xuan-ib/index.html`],{encoding:'utf8'})
-  :candidate;
+ let loader=candidate;
+ if(candidate.includes('<!-- xuan-ib-night-action-v1:')){
+  loader='';
+  const commits=execFileSync('git',['log','--format=%H','origin/main','--','xuan-ib/index.html'],{encoding:'utf8'}).trim().split('\n');
+  for(const commit of commits){const source=execFileSync('git',['show',`${commit}:xuan-ib/index.html`],{encoding:'utf8'});if(!source.includes('<!-- xuan-ib-night-action-v1:')&&source.includes('<script>')){loader=source;break;}}
+  assert.ok(loader,'trusted fixed loader not found in main history');
+ }
  assert.ok(loader.includes(GUIDE_BODY));
  assert.match(loader,/renderedDocument === doc && lastVerified\?\.blob === record\.blob/);
   assert.match(loader,/if \(!current\(\)\) return;\s*try \{\s*doc\.getElementById\('xuan-mobile-layout-status'\)\?\.remove\(\);\s*view\.improveMobileDisplay\(doc\)/);

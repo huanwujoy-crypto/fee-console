@@ -123,9 +123,14 @@ test('schema 2 recalculates smaller budgets and exactly conserves cents', () => 
   assert.deepEqual(zero.allocations, [0, 0, 0]); assert.deepEqual(zero.afterWeights, zero.currentWeights);
 });
 
-test('schema 2 does not invent policy for surplus, no-gap or current-overweight edge cases', () => {
-  assert.throws(() => calculateCashPlan({ ...threeWaySnapshot, ibCash: 1000000 }), /exceeds.*need|policy review/);
-  assert.throws(() => calculateCashPlan({ ...threeWaySnapshot, equityTotal: 1000, developed: 400, emerging: 200, usBase: 400, ussc: 20, ibCash: 100, noahCash: 0, reserve: 0 }), /both target categories have no gap/);
+test('schema 2 retains surplus and no-gap cash without inventing another purchase', () => {
+  const surplus = calculateCashPlan({ ...threeWaySnapshot, ibCash: 1000000 });
+  assert.ok(surplus.budgetUnused > 0);
+  assert.equal(Math.round((surplus.plannedSpend + surplus.budgetUnused) * 100), Math.round(surplus.budget * 100));
+  const noGap = calculateCashPlan({ ...threeWaySnapshot, equityTotal: 1000, developed: 400, emerging: 200, usBase: 400, ussc: 20, ibCash: 100, noahCash: 0, reserve: 0 });
+  assert.deepEqual(noGap.allocations.slice(0, 2), [0, 0]);
+  assert.equal(noGap.usscAllocation, 10);
+  assert.equal(noGap.budgetUnused, 90);
   assert.throws(() => calculateCashPlan({ ...threeWaySnapshot, equityTotal: 100, developed: 24, emerging: 0, usBase: 70, ussc: 1, ibCash: 1, noahCash: 0, reserve: 0 }), /already overweight/);
   const unavailable = renderCashPlan({ schemaVersion: 2, status: 'unavailable' });
   assert.match(unavailable.detail, /暂不分配现金/); assert.doesNotMatch(unavailable.kpi + unavailable.detail, /\$[\d,]|待回款后重算|不占本次现金预算/);

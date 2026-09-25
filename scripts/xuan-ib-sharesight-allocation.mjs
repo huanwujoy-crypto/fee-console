@@ -7,6 +7,7 @@ export const STOCK_CLASS_TARGETS = Object.freeze(new Map([
   ['美国底仓', 45], ['美国科技', 20], ['非美发达', 23], ['新兴市场', 12],
 ]));
 const NON_STOCK_CLASSES = new Set(['主题投资', '防御资产']);
+const CASH_LIKE_SYMBOLS = new Set(['VGSH', 'VGIT', 'TLT']);
 
 function reportOf(raw) {
   const report = object(raw?.report) ? raw.report
@@ -19,6 +20,13 @@ function reportOf(raw) {
 function instrumentCode(holding) {
   const code = holding?.instrument?.code;
   return typeof code === 'string' && code.trim() ? code.trim().toUpperCase() : null;
+}
+
+function cashLikeSymbol(holding) {
+  const code = instrumentCode(holding);
+  if (!code) return null;
+  const symbol = code.split('.')[0];
+  return CASH_LIKE_SYMBOLS.has(symbol) ? symbol : null;
 }
 
 /** Parse the owner's existing Sharesight Custom group as the classification
@@ -35,6 +43,7 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
     || !Array.isArray(report.holdings) || report.holdings.length > 5_000) fail('REPORT_SCOPE_MISMATCH');
   const sums = new Map([...STOCK_CLASS_TARGETS.keys()].map(name => [name, 0]));
   let excludedValue = 0, ussc = 0;
+  const cashLikeSums = new Map([...CASH_LIKE_SYMBOLS].map(symbol => [symbol, 0]));
   const seen = new Set();
   for (const holding of report.holdings) {
     if (!object(holding) || !Number.isSafeInteger(holding.id) || holding.id <= 0
@@ -49,6 +58,11 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
       if (group !== '美国底仓') fail('USSC_CLASS_MISMATCH');
       ussc += holding.value;
     }
+    const cashLike = cashLikeSymbol(holding);
+    if (cashLike) {
+      if (group !== '防御资产') fail('CASH_LIKE_CLASS_MISMATCH');
+      cashLikeSums.set(cashLike, cashLikeSums.get(cashLike) + holding.value);
+    }
   }
   const total = [...sums.values()].reduce((sum, value) => sum + value, 0);
   if (total <= 0 || ussc > sums.get('美国底仓')) fail('ALLOCATION_RECONCILIATION_FAILED');
@@ -62,6 +76,11 @@ export function parseSharesightStockAllocation(raw, { portfolioId = 936247 } = {
     usBase: sums.get('美国底仓'), technology: sums.get('美国科技'),
     developed: sums.get('非美发达'), emerging: sums.get('新兴市场'),
     excludedValue, holdingCount: report.holdings.length,
+    cashLike: {
+      total: [...cashLikeSums.values()].reduce((sum, value) => sum + value, 0),
+      items: [...cashLikeSums].filter(([, value]) => value > 0)
+        .map(([symbol, amount]) => ({ symbol, amount })),
+    },
   };
 }
 

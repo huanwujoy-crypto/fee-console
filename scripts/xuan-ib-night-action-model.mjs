@@ -12,6 +12,12 @@ const ORDER_KEYS = ['order_id', 'order_status', 'order_type', 'side', 'limit_pri
 const exactKeys = (value, keys) => value && Object.getPrototypeOf(value) === Object.prototype
   && Object.keys(value).sort().join('|') === [...keys].sort().join('|');
 
+function cashPlanTime(value) {
+  const match = typeof value === 'string' && value.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?:–\d{2}:\d{2})? HKT/);
+  if (!match) fail('INVALID_SOURCE_TIME');
+  return match[0];
+}
+
 function orderNumber(value) {
   if (typeof value !== 'string' || !/^(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value)
     || !Number.isFinite(Number(value))) fail('INVALID_ORDER_NUMBER');
@@ -129,14 +135,15 @@ export function buildNightActionModel({
   let replenishment = { status: 'unavailable' };
   try {
     const plan = calculateCashPlan({
-      schemaVersion: 2, status: 'snapshot', sourceAsOfHkt: asOfHkt,
+      schemaVersion: 2, status: 'snapshot', sourceAsOfHkt: cashPlanTime(asOfHkt),
       equityTotal: allocation.total, developed: allocation.developed, emerging: allocation.emerging,
       usBase: allocation.usBase, ussc: allocation.ussc, ibCash,
       noahCash: noahCashTotal, reserve, usscBudgetShare: 0.10,
       currency: 'USD', denominator: 'equity-only',
     });
     const [exus, eimi, ussc] = plan.allocations;
-    replenishment = { status: 'ready', total: plan.plannedSpend, items: [
+    replenishment = { status: 'ready', budget: plan.budget, total: plan.plannedSpend,
+      retained: plan.budgetUnused, items: [
       { symbol: 'EXUS', amount: exus }, { symbol: 'EIMI', amount: eimi }, { symbol: 'USSC', amount: ussc },
     ] };
   } catch {
@@ -145,15 +152,17 @@ export function buildNightActionModel({
     replenishment = { status: 'unavailable' };
   }
   const model = {
-    schemaVersion: 2, dataDate, asOfHkt,
+    schemaVersion: 3, dataDate, asOfHkt,
     status: replenishment.status === 'ready' ? 'ready' : 'partial',
     replenishment,
     orders: { status: 'ready', asOfHkt: ordersAsOfHkt, ...orderGroups },
-    cash: { status: 'ready', pool: cashPool, reserve, planning },
+    cash: { status: 'ready', ib: ibCash, noah: noahCashTotal, pool: cashPool,
+      reserve, planning, cashLike: allocation.cashLike,
+      totalCapacity: Math.round((planning + allocation.cashLike.total) * 100) / 100 },
     allocation: { status: 'ready', total: allocation.total, categories: allocation.categories },
     notes: [
       `四类：Sharesight 资产类别，数据日 ${allocation.dataDate}。`,
-      `NOAH-HK 现金数据日 ${noahCash.dataDate}；IB 挂单为本轮直读。`,
+      `现金：IB＋NOAH-HK；类现金：VGSH、VGIT、TLT，数据日 ${noahCash.dataDate}。`,
       '只读规划：不下单、撤单、改单或转账。',
     ],
   };
