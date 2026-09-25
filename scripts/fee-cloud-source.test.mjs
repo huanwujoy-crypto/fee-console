@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { verifyWriterOutcome } from "./fee-cloud-producer.mjs";
 
 const D = "2026-09-23";
 const benchmarkCache = { v: 1, benchmarks: {
@@ -49,6 +50,32 @@ test("normalization reconciles cash, SGOV, stock, flow evidence and style input"
   assert.match(result.sourceFingerprint, /^[a-f0-9]{64}$/);
 });
 
+test("controlled Webull principal cash legs remain internal trades", () => {
+  const fixture = raw();
+  const foreignIdentifier = "webullhk-10205226-email-946332324153d3d2466a2cf7a2ccfcda-cash";
+  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
+    amount: -125, balance: 400, cash_account_id: 150591, date_time: `${D}T00:00:00.000Z`,
+    description: `Webull AAOI BUY securities principal; NOT external funding; ${foreignIdentifier}`,
+    cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
+    foreign_identifier: foreignIdentifier,
+  });
+  const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
+  const flow = result.flows.find(row => row.foreignIdentifier === foreignIdentifier);
+  assert.equal(flow.evidence, "internal_trade");
+});
+
+test("a generic Webull withdrawal is not promoted to internal without the controlled evidence", () => {
+  const fixture = raw();
+  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
+    amount: -125, balance: 400, cash_account_id: 150591, date_time: `${D}T00:00:00.000Z`,
+    description: "manual withdrawal", cash_account_transaction_type: { name: "WITHDRAWAL" },
+    trade_id: null, holding_id: null, foreign_identifier: "manual-1",
+  });
+  const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
+  const flow = result.flows.find(row => row.foreignIdentifier === "manual-1");
+  assert.equal(Object.hasOwn(flow, "evidence"), false);
+});
+
 test("unlisted performance holding and non-USD movement fail closed", () => {
   const missing = raw(); missing.schwab.holdings.holdings.pop();
   assert.throws(() => normalizeRead(missing, D, selectBenchmark(benchmarkCache, D)), /HOLDING_IDENTITY/);
@@ -79,4 +106,12 @@ test("reader allows only fixed GET routes and proves two identical reads", async
   const result = await reader.readStable(D, selectBenchmark(benchmarkCache, D));
   assert.equal(result.targetDate, D);
   assert.equal(calls, 24);
+});
+
+test("cloud producer accepts the real updated and no-op writer contracts", () => {
+  assert.equal(verifyWriterOutcome("a".repeat(64), "b".repeat(64),
+    "ok 2026-09-24 points=56 status-as-of=2026-09-24 provisional", "2026-09-24"), "updated");
+  assert.equal(verifyWriterOutcome("a".repeat(64), "a".repeat(64), "no-op 2026-09-24", "2026-09-24"), "no-op");
+  assert.throws(() => verifyWriterOutcome("a".repeat(64), "b".repeat(64),
+    "no-op 2026-09-24", "2026-09-24"), /FEE_CLOUD_WRITER_OUTCOME/);
 });

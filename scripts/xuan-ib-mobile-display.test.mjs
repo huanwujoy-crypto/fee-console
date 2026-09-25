@@ -20,13 +20,19 @@ test('verified display reorders intact cells with stable descending amounts and 
 });
 test('header guide matches shared wording and runs only after verification',()=>{
  const candidate=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
+ const isFixedLoader=html=>html.includes('<iframe id="handover"')
+  &&html.includes('const loaderBuild = "')
+  &&(html.match(/<script>/g)||[]).length===1;
  let loader=candidate;
- if(candidate.includes('<!-- xuan-ib-night-action-v1:')){
+ if(!isFixedLoader(loader)){
+  const commits=execFileSync('git',['log','--format=%H','--','xuan-ib/index.html'],{encoding:'utf8'}).trim().split('\n').filter(Boolean);
   loader='';
-  const commits=execFileSync('git',['log','--format=%H','origin/main','--','xuan-ib/index.html'],{encoding:'utf8'}).trim().split('\n');
-  for(const commit of commits){const source=execFileSync('git',['show',`${commit}:xuan-ib/index.html`],{encoding:'utf8'});if(!source.includes('<!-- xuan-ib-night-action-v1:')&&source.includes('<script>')){loader=source;break;}}
-  assert.ok(loader,'trusted fixed loader not found in main history');
+  for(const commit of commits){
+   const historical=execFileSync('git',['show',`${commit}:xuan-ib/index.html`],{encoding:'utf8'});
+   if(isFixedLoader(historical)){loader=historical;break;}
+  }
  }
+ assert.ok(isFixedLoader(loader),'a trusted fixed loader must exist in Git history');
  assert.ok(loader.includes(GUIDE_BODY));
  assert.match(loader,/renderedDocument === doc && lastVerified\?\.blob === record\.blob/);
   assert.match(loader,/if \(!current\(\)\) return;\s*try \{\s*doc\.getElementById\('xuan-mobile-layout-status'\)\?\.remove\(\);\s*view\.improveMobileDisplay\(doc\)/);

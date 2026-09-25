@@ -43,8 +43,8 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The benchmark cache remains independent. It retries through 13:35 HKT; this
-producer runs at 12:50 and 13:50 HKT Tuesday through Saturday. A run proceeds
+The benchmark cache remains independent. It retries through 17:35 HKT; this
+producer runs at 12:50, 13:50, 15:50 and 17:50 HKT Tuesday through Saturday. A run proceeds
 only when SPY and QQQ have one complete common session with validated dividend
 fields. Missing benchmark data remains pending rather than publishing an
 earlier price as the target session.
@@ -55,9 +55,12 @@ transactions and trades twice. The normalized reads must be byte-equivalent.
 Cash accounts form `cash`, SGOV forms `other`, and remaining USD holdings form
 `stock`; the three buckets must reconcile to the two portfolio totals. Style
 classification continues through the existing static and encrypted learned
-registry. Cash transactions linked to a trade remain internal; a bare deposit
-or withdrawal becomes unresolved unless the existing private ledger already
-contains its reviewed classification.
+registry. Cash transactions linked to a trade remain internal. The fixed Webull
+writer's exact account-bound principal-cash identity and its explicit `NOT
+external funding` description are also retained as `internal_trade`; similar
+free text or a generic deposit/withdrawal does not pass that rule. A remaining
+bare deposit or withdrawal becomes unresolved unless the existing private
+ledger already contains its reviewed classification.
 
 The normal writer, fee receipt validator, amount-free health receipt, private
 source recheck, signed candidate validation, protected promotion and Pages

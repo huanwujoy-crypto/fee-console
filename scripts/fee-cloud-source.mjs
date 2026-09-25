@@ -130,13 +130,20 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       if (movementDate !== targetDate || id(row.cash_account_id) !== cashId) fail("CASH_TRANSACTION_IDENTITY");
       const movement = amount(row.amount);
       movementTotal += movement;
+      const description = typeof row.description === "string" ? row.description.slice(0, 300) : "";
+      const foreignIdentifier = typeof row.foreign_identifier === "string" ? row.foreign_identifier : "";
+      const controlledWebullPrincipal = account === "webull"
+        && /^(?:DEPOSIT|WITHDRAWAL)$/i.test(String(row.cash_account_transaction_type?.name || ""))
+        && /^webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(foreignIdentifier)
+        && /^Webull [A-Z0-9./^-]+ (?:BUY|SELL) securities principal; NOT external funding; webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(description);
       flows.push({
         date: targetDate, acct: account, amount: movement,
-        desc: typeof row.description === "string" ? row.description.slice(0, 300) : "",
+        desc: description,
         type: typeof row.cash_account_transaction_type?.name === "string" ? row.cash_account_transaction_type.name : "",
         tradeId: row.trade_id == null ? null : id(row.trade_id),
         holdingId: row.holding_id == null ? null : id(row.holding_id),
-        foreignIdentifier: typeof row.foreign_identifier === "string" ? row.foreign_identifier : "",
+        foreignIdentifier,
+        ...(controlledWebullPrincipal ? { evidence: "internal_trade" } : {}),
       });
     }
   }

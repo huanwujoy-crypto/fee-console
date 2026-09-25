@@ -2,9 +2,9 @@ name: Fee console cloud producer
 
 on:
   schedule:
-    # HKT Tue-Sat 12:50 and 13:50. These slots follow the 12:35/13:35
-    # benchmark-cache retries for the completed US session.
-    - cron: '50 4,5 * * 2-6'
+    # HKT Tue-Sat 12:50, 13:50, 15:50 and 17:50. The later idempotent slots
+    # pick up a delayed public close without requiring the Mac to be online.
+    - cron: '50 4,5,7,9 * * 2-6'
   workflow_dispatch:
 
 permissions:
@@ -91,4 +91,3 @@ jobs:
             find "$RUNNER_TEMP/fee-cloud-private" -type f -exec shred -u {} + 2>/dev/null || true
             rm -rf "$RUNNER_TEMP/fee-cloud-private"
           fi
-
