@@ -1,36 +1,1686 @@
-<!doctype html><html lang="zh-Hans"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="XUAN-投资管理"><title>XUAN · 睡前行动版</title><style>
-:root{color-scheme:light;--bg:#f6f7f8;--card:#fff;--text:#17191c;--mut:#6c727a;--line:#e4e6e8;--buy:#18794e;--sell:#b42318;--blue:#1769aa}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}main{max-width:720px;margin:auto;padding:calc(16px + env(safe-area-inset-top)) 14px calc(28px + env(safe-area-inset-bottom))}header{padding:4px 2px 10px}h1{font-size:24px;margin:0}header p{margin:4px 0 0;color:var(--mut);font-size:13px}.state{float:right;color:var(--buy);font-weight:700}.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:16px;margin:12px 0;box-shadow:0 1px 2px #00000008}.card h2{font-size:19px;margin:0 0 12px}.card h2 small{font-size:12px;color:var(--mut);font-weight:500;margin-left:7px}.hero-value{font-size:34px;font-weight:800;letter-spacing:-1px}.chips{display:flex;flex-wrap:wrap;gap:7px;margin-top:12px}.chips span{display:flex;gap:8px;padding:8px 10px;border-radius:10px;background:#edf6ff;color:#164f79}.plan-balance{color:var(--mut);font-size:12px;margin:9px 0 0}.orders{display:grid;grid-template-columns:1fr 1fr;gap:12px}.order-group h3{display:flex;justify-content:space-between;margin:0 0 8px;font-size:16px}.order-group h3 small{font-weight:500;color:var(--mut)}.order{border:1px solid var(--line);border-left:4px solid;border-radius:12px;padding:11px;margin:8px 0}.order.buy{border-left-color:var(--buy)}.order.sell{border-left-color:var(--sell)}.order>div{display:flex;justify-content:space-between;gap:8px}.order>div span{color:var(--mut);font-size:12px}.order dl{display:grid;grid-template-columns:1fr 1fr;margin:9px 0 0;gap:8px}.order dl div{min-width:0}.order dt{font-size:12px;color:var(--mut)}.order dd{margin:2px 0 0;font-weight:650;overflow-wrap:anywhere}.order.detailed{border-left-width:1px}.order .order-main{display:grid;grid-template-columns:minmax(0,1fr) 58px 64px;align-items:start;gap:8px}.order-main>div:first-child{min-width:0}.order-main>div:first-child span,.order-main .trend{display:block}.order-main .trend{font-style:normal;color:var(--mut);font-size:12px;margin-top:2px}.order-main .trend.up{color:var(--buy)}.order-main .trend.down{color:var(--sell)}.quote{text-align:center}.quote b,.quote span{display:block}.distance{text-align:right}.empty,.unavailable{color:var(--mut);margin:4px 0}.metrics{display:grid;gap:8px}.metrics.three{grid-template-columns:repeat(3,1fr)}.metrics div,.allocation>div{background:#f7f8f9;border-radius:12px;padding:11px;min-width:0}.metrics span,.allocation span,.allocation small{display:block;color:var(--mut);font-size:12px}.metrics b{display:block;font-size:18px;margin-top:3px;overflow-wrap:anywhere}.cash-detail{margin-top:10px;border-top:1px solid var(--line);padding-top:7px}.cash-detail p{display:flex;justify-content:space-between;gap:12px;margin:7px 0}.cash-detail p b{white-space:nowrap}.cash-detail p span{text-align:right}.cash-detail .capacity{font-size:18px}.cash-detail small{display:block;color:var(--mut);font-size:11px}.allocation{display:grid;grid-template-columns:1fr 1fr;gap:8px}.allocation>div{display:grid;grid-template-columns:1fr auto;align-items:center;gap:2px 8px}.allocation b{white-space:nowrap}.allocation i{font-style:normal;color:var(--mut)}.allocation small{grid-column:1/-1}.notes{font-size:12px;color:var(--mut);padding:2px 4px}.notes p{margin:4px 0}@media(max-width:520px){.orders{grid-template-columns:1fr}.metrics.three{grid-template-columns:1fr 1fr}.metrics.three div:last-child{grid-column:1/-1}.allocation{grid-template-columns:1fr}h1{font-size:22px}.card{padding:14px}.hero-value{font-size:31px}.cash-detail p{font-size:13px}}
-</style></head><body><!-- xuan-ib-night-action-v1:eyJzY2hlbWFWZXJzaW9uIjozLCJkYXRhRGF0ZSI6IjIwMjYtMDktMjUiLCJhc09mSGt0IjoiMjAyNi0wOS0yNSAxODo1OOKAkzE4OjU5IEhLVCIsInN0YXR1cyI6InJlYWR5IiwicmVwbGVuaXNobWVudCI6eyJzdGF0dXMiOiJyZWFkeSIsImJ1ZGdldCI6MjQ2ODI3LjI3LCJ0b3RhbCI6MjQ2ODI3LjI3LCJyZXRhaW5lZCI6MCwiaXRlbXMiOlt7InN5bWJvbCI6IkVYVVMiLCJhbW91bnQiOjE4NjY0Ny4wOH0seyJzeW1ib2wiOiJFSU1JIiwiYW1vdW50IjozNTQ5Ny40Nn0seyJzeW1ib2wiOiJVU1NDIiwiYW1vdW50IjoyNDY4Mi43M31dfSwib3JkZXJzIjp7InN0YXR1cyI6InJlYWR5IiwiYXNPZkhrdCI6IjIwMjYtMDktMjUgMTg6NTkgSEtUIiwiYnV5cyI6W3sic2lkZSI6IkJVWSIsImRlc2NyaXB0aW9uIjoiRVhVUyIsImxpbWl0IjoiNDUuMiIsInF1YW50aXR5IjoiMzAwIiwic3RhdHVzIjoiTkVXIiwiY3VycmVuY3kiOiJVU0QiLCJhZ2VEYXlzIjo3LCJkaXN0YW5jZVBjdCI6LTEuMDk0MSwidHJlbmQiOnsia2V5IjoiMzc0ZWFjYmM2ODU5ODdhNzk0NGJiNDkxMGYwZDVmZTRjYTJkYzViMzNlM2Q4NDA1Y2RmNGU1OWMyMWI0MmY5ZCIsImZpcnN0RGF0ZSI6IjIwMjYtMDktMjEiLCJmaXJzdFByaWNlIjo0Ni4wMjAwMDA0NSwiYWdlRGF5cyI6Nywia2luZCI6ImRvd24iLCJsYWJlbCI6Iue6piDihpMgMC43JSDCtyDop4Llr5805aSpIn19LHsic2lkZSI6IkJVWSIsImRlc2NyaXB0aW9uIjoiRVhVUyIsImxpbWl0IjoiNDUiLCJxdWFudGl0eSI6IjMwMCIsInN0YXR1cyI6Ik5FVyIsImN1cnJlbmN5IjoiVVNEIiwiYWdlRGF5cyI6MTAsImRpc3RhbmNlUGN0IjotMS41MzE3LCJ0cmVuZCI6eyJrZXkiOiI5OTBmMWNlZmZkM2Q0MGEyM2QzOGU5MGFlNTViZjZjNjQ3OTIzZmQzYThkMjRiODA3MDViYWM3NTA2ZTgyYzVkIiwiZmlyc3REYXRlIjoiMjAyNi0wOS0xNSIsImZpcnN0UHJpY2UiOjQ1LjgxMDAwMTM1LCJhZ2VEYXlzIjoxMCwia2luZCI6ImRvd24iLCJsYWJlbCI6Iue6piDihpMgMC4yJSDCtyDop4Llr58xMOWkqSJ9fSx7InNpZGUiOiJCVVkiLCJkZXNjcmlwdGlvbiI6IlVTU0MiLCJsaW1pdCI6Ijg4LjMiLCJxdWFudGl0eSI6IjIwMCIsInN0YXR1cyI6IlJFUExBQ0VEIiwiY3VycmVuY3kiOiJVU0QiLCJhZ2VEYXlzIjo3LCJkaXN0YW5jZVBjdCI6LTEuOTcwMiwidHJlbmQiOnsia2V5IjoiODM2YjA5NGFlZDEyOGU2YWRlZWM4MTViZDYxNWVjY2NkZWUyNWY1ZGJkMjg1YTBkOTFmN2JkOGQ4NmQzZThlOSIsImZpcnN0RGF0ZSI6IjIwMjYtMDktMjEiLCJmaXJzdFByaWNlIjo5MS4xNjAwMDM2NSwiYWdlRGF5cyI6Nywia2luZCI6ImRvd24iLCJsYWJlbCI6Iue6piDihpMgMS4yJSDCtyDop4Llr5805aSpIn19LHsic2lkZSI6IkJVWSIsImRlc2NyaXB0aW9uIjoiRVhVUyIsImxpbWl0IjoiNDQiLCJxdWFudGl0eSI6IjMwMCIsInN0YXR1cyI6Ik5FVyIsImN1cnJlbmN5IjoiVVNEIiwiYWdlRGF5cyI6NzgsImRpc3RhbmNlUGN0IjotMy43MTk5LCJ0cmVuZCI6eyJrZXkiOiI0MjRmMDUxZTFjMjU1YjBlZGExYTk2MzZkNzFiYzRlNGJjNzI5ZjlhMzgyYjI2MjA5ZDZlYWQ4NDg0ZmE2YmJkIiwiZmlyc3REYXRlIjoiMjAyNi0wOS0xNSIsImZpcnN0UHJpY2UiOjQ1LjgxMDAwMTM1LCJhZ2VEYXlzIjo3OCwia2luZCI6ImRvd24iLCJsYWJlbCI6Iue6piDihpMgMC4yJSDCtyDop4Llr58xMOWkqSJ9fSx7InNpZGUiOiJCVVkiLCJkZXNjcmlwdGlvbiI6IkVYVVMiLCJsaW1pdCI6IjQyIiwicXVhbnRpdHkiOiIxMDAwIiwic3RhdHVzIjoiUkVQTEFDRUQiLCJjdXJyZW5jeSI6IlVTRCIsImFnZURheXMiOjExMywiZGlzdGFuY2VQY3QiOi04LjA5NjMsInRyZW5kIjp7ImtleSI6IjZiMGMyZDE0NTQzNGRiZmI5NmI1MzhjNDFmZDEyYmY3YjY0NDA2ZjIxZGJiZGVjMjFlYTU5ZTc1Yzk0ZGRmODciLCJmaXJzdERhdGUiOiIyMDI2LTA5LTE1IiwiZmlyc3RQcmljZSI6NDUuODEwMDAxMzUsImFnZURheXMiOjExMywia2luZCI6ImRvd24iLCJsYWJlbCI6Iue6piDihpMgMC4yJSDCtyDop4Llr58xMOWkqSJ9fSx7InNpZGUiOiJCVVkiLCJkZXNjcmlwdGlvbiI6IkVYVVMiLCJsaW1pdCI6IjQxLjUiLCJxdWFudGl0eSI6IjEwMDAiLCJzdGF0dXMiOiJORVciLCJjdXJyZW5jeSI6IlVTRCIsImFnZURheXMiOjExMywiZGlzdGFuY2VQY3QiOi05LjE5MDQsInRyZW5kIjp7ImtleSI6IjZjNDU5MTdlYjg5MmIyNDAxM2Y4NjE5NDU3OWQyNmYzNmI5MDJhYmE1YzY2ZjdkYzgwZjUwNDAyMGIyYzlkMDgiLCJmaXJzdERhdGUiOiIyMDI2LTA5LTE1IiwiZmlyc3RQcmljZSI6NDUuODEwMDAxMzUsImFnZURheXMiOjExMywia2luZCI6ImRvd24iLCJsYWJlbCI6Iue6piDihpMgMC4yJSDCtyDop4Llr58xMOWkqSJ9fSx7InNpZGUiOiJCVVkiLCJkZXNjcmlwdGlvbiI6IkVJTUkiLCJsaW1pdCI6IjQ5LjUiLCJxdWFudGl0eSI6IjUwMCIsInN0YXR1cyI6Ik5FVyIsImN1cnJlbmN5IjoiVVNEIiwiYWdlRGF5cyI6NzIsImRpc3RhbmNlUGN0IjotMTAuODgxNSwidHJlbmQiOnsia2V5IjoiMzQ5N2YzZGRkODdlODJiYzgzOTZlNGQ5YjJiN2Y1MTBhMTZiZmFhOWNlZGE3YzIxMjMyY2UwZTNiOTYzNTdlZSIsImZpcnN0RGF0ZSI6IjIwMjYtMDktMTUiLCJmaXJzdFByaWNlIjo1NC4wNjk5OTk3LCJhZ2VEYXlzIjo3Miwia2luZCI6InVwIiwibGFiZWwiOiLnuqYg4oaRIDIuNyUgwrcg6KeC5a-fMTDlpKkifX0seyJzaWRlIjoiQlVZIiwiZGVzY3JpcHRpb24iOiJNWFVTIiwibGltaXQiOiIxOTkiLCJxdWFudGl0eSI6IjEwMCIsInN0YXR1cyI6Ik5FVyIsImN1cnJlbmN5IjoiVVNEIiwiYWdlRGF5cyI6MTIyLCJkaXN0YW5jZVBjdCI6LTEyLjU3MjksInRyZW5kIjp7ImtleSI6IjM1NDVlMDQ0NTNhMGYxMGRmMGZmNDY4N2VlODg5ZDEwZWUyMGE2NGE4NDQzY2FhNjcyYjJjMGE0YjE4NDkzOTkiLCJmaXJzdERhdGUiOiIyMDI2LTA5LTE1IiwiZmlyc3RQcmljZSI6MjIzLjk5MDAwNTUsImFnZURheXMiOjEyMiwia2luZCI6InVwIiwibGFiZWwiOiLnuqYg4oaRIDEuNiUgwrcg6KeC5a-fMTDlpKkifX0seyJzaWRlIjoiQlVZIiwiZGVzY3JpcHRpb24iOiJFSU1JIiwibGltaXQiOiI0Ny4xMiIsInF1YW50aXR5IjoiMTAwMCIsInN0YXR1cyI6Ik5FVyIsImN1cnJlbmN5IjoiVVNEIiwiYWdlRGF5cyI6MTEzLCJkaXN0YW5jZVBjdCI6LTE1LjE2NjQsInRyZW5kIjp7ImtleSI6ImI0Mzg1MGFjNzFlZTcxZjY3MWRmZmM3OGZmYTZhYzhhN2ViNjc1ZmZjY2E1YmQwNzMyYjk3NDZlMzk0MTYwOWMiLCJmaXJzdERhdGUiOiIyMDI2LTA5LTE1IiwiZmlyc3RQcmljZSI6NTQuMDY5OTk5NywiYWdlRGF5cyI6MTEzLCJraW5kIjoidXAiLCJsYWJlbCI6Iue6piDihpEgMi43JSDCtyDop4Llr58xMOWkqSJ9fV0sInNlbGxzIjpbeyJzaWRlIjoiU0VMTCIsImRlc2NyaXB0aW9uIjoiU0xWIiwibGltaXQiOiI4MiIsInF1YW50aXR5IjoiMTYwIiwic3RhdHVzIjoiTkVXIiwiY3VycmVuY3kiOiJVU0QiLCJhZ2VEYXlzIjoxNjIsImRpc3RhbmNlUGN0IjozOS42Njk2LCJ0cmVuZCI6eyJrZXkiOiIwNTQ3MmUwZmFlY2QyNDYzODhiNTcxNjRjMWFlNDkwNDkwZDQyZTIwNTExNmIyZWM4MjZmYTViY2QyYWMxN2Q1IiwiZmlyc3REYXRlIjoiMjAyNi0wOS0xNSIsImZpcnN0UHJpY2UiOjU3LjYzMDAwMTA1LCJhZ2VEYXlzIjoxNjIsImtpbmQiOiJ1cCIsImxhYmVsIjoi57qmIOKGkSAxLjklIMK3IOinguWvnzEw5aSpIn19XX0sImNhc2giOnsic3RhdHVzIjoicmVhZHkiLCJpYiI6Mzk5MzU5LjA1LCJub2FoIjo4NzQ2OC4yMiwicG9vbCI6NDg2ODI3LjI3LCJyZXNlcnZlIjoyNDAwMDAsInBsYW5uaW5nIjoyNDY4MjcuMjcsImNhc2hMaWtlIjp7InRvdGFsIjoyNzc5MzMsIml0ZW1zIjpbeyJzeW1ib2wiOiJWR1NIIiwiYW1vdW50Ijo4NjIzNX0seyJzeW1ib2wiOiJWR0lUIiwiYW1vdW50IjoxMzYxMDR9LHsic3ltYm9sIjoiVExUIiwiYW1vdW50Ijo1NTU5NH1dfSwidG90YWxDYXBhY2l0eSI6NTI0NzYwLjI3fSwiYWxsb2NhdGlvbiI6eyJzdGF0dXMiOiJyZWFkeSIsInRvdGFsIjo0MDI1OTEzLjYyLCJjYXRlZ29yaWVzIjpbeyJsYWJlbCI6Iue-juWbveW6leS7kyIsIm1hcmtldFZhbHVlIjoyMDM0MDA4LjQsImN1cnJlbnRQY3QiOjUwLjUyMjkwMjE3NzkxNjA3LCJ0YXJnZXRQY3QiOjQ1fSx7ImxhYmVsIjoi576O5Zu956eR5oqAIiwibWFya2V0VmFsdWUiOjEwMDk0NTIuOSwiY3VycmVudFBjdCI6MjUuMDczODgzNzI2Mjk4MTI4LCJ0YXJnZXRQY3QiOjIwfSx7ImxhYmVsIjoi6Z2e576O5Y-R6L6-IiwibWFya2V0VmFsdWUiOjUyMzAyOC4xMiwiY3VycmVudFBjdCI6MTIuOTkxNTM4NTUxNjg5MDQ1LCJ0YXJnZXRQY3QiOjIzfSx7ImxhYmVsIjoi5paw5YW05biC5Zy6IiwibWFya2V0VmFsdWUiOjQ1OTQyNC4yLCJjdXJyZW50UGN0IjoxMS40MTE2NzU1NDQwOTY3NDUsInRhcmdldFBjdCI6MTJ9XX0sIm5vdGVzIjpbIuWbm-exu--8mlNoYXJlc2lnaHQg6LWE5Lqn57G75Yir77yM5pWw5o2u5pelIDIwMjYtMDktMjXjgIIiLCLnjrDph5HvvJpJQu-8i05PQUgtSEvvvJvnsbvnjrDph5HvvJpWR1NI44CBVkdJVOOAgVRMVO-8jOaVsOaNruaXpSAyMDI2LTA5LTI144CCIiwi5Y-q6K-76KeE5YiS77ya5LiN5LiL5Y2V44CB5pKk5Y2V44CB5pS55Y2V5oiW6L2s6LSm44CCIl19 --><main>
-<header><span class="state">已更新</span><h1>XUAN · 睡前行动版</h1><p>2026-09-25 · 2026-09-25 18:58–18:59 HKT</p></header>
-<section class="card"><h2>今晚补仓<small>规划 · 非下单</small></h2><div class="hero-value">$246,827</div><div class="chips"><span><b>EXUS</b>$186,647</span><span><b>EIMI</b>$35,497</span><span><b>USSC</b>$24,683</span></div><p class="plan-balance">现金预算 $246,827 · 已全部规划</p></section>
-<section class="card"><h2>挂单提醒<small>2026-09-25 18:59 HKT</small></h2><div class="orders"><section class="order-group"><h3>买单<small>9 张</small></h3><article class="order buy detailed" data-order-trend-v1="1" data-order-key="374eacbc685987a7944bb4910f0d5fe4ca2dc5b33e3d8405cdf4e59c21b42f9d" data-order-first-date="2026-09-21" data-order-first-price="46.02000045" data-order-age-days="7">
-<div class="order-main"><div><b>1. EXUS ×300</b><span>7天 · NEW</span><em class="trend down">约 ↓ 0.7% · 观察4天</em></div><div class="quote"><b>45.2</b><span>USD</span></div><b class="distance">-1.09%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="990f1ceffd3d40a23d38e90ae55bf6c647923fd3a8d24b80705bac7506e82c5d" data-order-first-date="2026-09-15" data-order-first-price="45.81000135" data-order-age-days="10">
-<div class="order-main"><div><b>2. EXUS ×300</b><span>10天 · NEW</span><em class="trend down">约 ↓ 0.2% · 观察10天</em></div><div class="quote"><b>45</b><span>USD</span></div><b class="distance">-1.53%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="836b094aed128e6adeec815bd615ecccdee25f5dbd285a0d91f7bd8d86d3e8e9" data-order-first-date="2026-09-21" data-order-first-price="91.16000365" data-order-age-days="7">
-<div class="order-main"><div><b>3. USSC ×200</b><span>7天 · REPLACED</span><em class="trend down">约 ↓ 1.2% · 观察4天</em></div><div class="quote"><b>88.3</b><span>USD</span></div><b class="distance">-1.97%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="424f051e1c255b0eda1a9636d71bc4e4bc729f9a382b26209d6ead8484fa6bbd" data-order-first-date="2026-09-15" data-order-first-price="45.81000135" data-order-age-days="78">
-<div class="order-main"><div><b>4. EXUS ×300</b><span>78天 · NEW</span><em class="trend down">约 ↓ 0.2% · 观察10天</em></div><div class="quote"><b>44</b><span>USD</span></div><b class="distance">-3.72%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="6b0c2d145434dbfb96b538c41fd12bf7b64406f21dbbdec21ea59e75c94ddf87" data-order-first-date="2026-09-15" data-order-first-price="45.81000135" data-order-age-days="113">
-<div class="order-main"><div><b>5. EXUS ×1000</b><span>113天 · REPLACED</span><em class="trend down">约 ↓ 0.2% · 观察10天</em></div><div class="quote"><b>42</b><span>USD</span></div><b class="distance">-8.10%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="6c45917eb892b24013f86194579d26f36b902aba5c66f7dc80f504020b2c9d08" data-order-first-date="2026-09-15" data-order-first-price="45.81000135" data-order-age-days="113">
-<div class="order-main"><div><b>6. EXUS ×1000</b><span>113天 · NEW</span><em class="trend down">约 ↓ 0.2% · 观察10天</em></div><div class="quote"><b>41.5</b><span>USD</span></div><b class="distance">-9.19%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="3497f3ddd87e82bc8396e4d9b2b7f510a16bfaa9ceda7c21232ce0e3b96357ee" data-order-first-date="2026-09-15" data-order-first-price="54.0699997" data-order-age-days="72">
-<div class="order-main"><div><b>7. EIMI ×500</b><span>72天 · NEW</span><em class="trend up">约 ↑ 2.7% · 观察10天</em></div><div class="quote"><b>49.5</b><span>USD</span></div><b class="distance">-10.88%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="3545e04453a0f10df0ff4687ee889d10ee20a64a8443caa672b2c0a4b1849399" data-order-first-date="2026-09-15" data-order-first-price="223.9900055" data-order-age-days="122">
-<div class="order-main"><div><b>8. MXUS ×100</b><span>122天 · NEW</span><em class="trend up">约 ↑ 1.6% · 观察10天</em></div><div class="quote"><b>199</b><span>USD</span></div><b class="distance">-12.57%</b></div>
-</article><article class="order buy detailed" data-order-trend-v1="1" data-order-key="b43850ac71ee71f671dffc78ffa6ac8a7eb675ffcca5bd0732b9746e3941609c" data-order-first-date="2026-09-15" data-order-first-price="54.0699997" data-order-age-days="113">
-<div class="order-main"><div><b>9. EIMI ×1000</b><span>113天 · NEW</span><em class="trend up">约 ↑ 2.7% · 观察10天</em></div><div class="quote"><b>47.12</b><span>USD</span></div><b class="distance">-15.17%</b></div>
-</article></section><section class="order-group"><h3>卖单<small>1 张</small></h3><article class="order sell detailed" data-order-trend-v1="1" data-order-key="05472e0faecd246388b57164c1ae490490d42e205116b2ec826fa5bcd2ac17d5" data-order-first-date="2026-09-15" data-order-first-price="57.63000105" data-order-age-days="162">
-<div class="order-main"><div><b>1. SLV ×160</b><span>162天 · NEW</span><em class="trend up">约 ↑ 1.9% · 观察10天</em></div><div class="quote"><b>82</b><span>USD</span></div><b class="distance">+39.67%</b></div>
-</article></section></div></section>
-<section class="card"><h2>现金优先补仓参考</h2><div class="metrics three">
-<div><span>现金池</span><b>$486,827</b></div>
-<div><span>预留待 CALL</span><b>$240,000</b></div>
-<div><span>可补仓现金</span><b>$246,827</b></div>
-</div><div class="cash-detail"><p><b>组成</b><span>IB $399,359 · NOAH-HK $87,468</span></p><p><b>类现金</b><span>$277,933 · VGSH $86,235 · VGIT $136,104 · TLT $55,594</span></p><p class="capacity"><b>全部弹药</b><span>$524,760</span></p><small>全部弹药＝可补仓现金＋类现金；类现金不默认卖出。</small></div></section>
-<section class="card"><h2>股票四类配置<small>当前 → 参考目标</small></h2><div class="allocation">
-<div><span>美国底仓</span><b>50.5% <i>→</i> 45.0%</b><small>$2,034,008</small></div><div><span>美国科技</span><b>25.1% <i>→</i> 20.0%</b><small>$1,009,453</small></div><div><span>非美发达</span><b>13.0% <i>→</i> 23.0%</b><small>$523,028</small></div><div><span>新兴市场</span><b>11.4% <i>→</i> 12.0%</b><small>$459,424</small></div>
-</div></section>
-<footer class="notes"><p>四类：Sharesight 资产类别，数据日 2026-09-25。</p><p>现金：IB＋NOAH-HK；类现金：VGSH、VGIT、TLT，数据日 2026-09-25。</p><p>只读规划：不下单、撤单、改单或转账。</p></footer>
-</main></body></html>
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="XUAN-投资管理">
+  <meta name="theme-color" content="#f9f9f7">
+  <title>XUAN-投资管理</title>
+  <style>
+    :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; background: #f9f9f7; }
+    .app { height: 100%; display: flex; flex-direction: column; }
+    .bar {
+      flex: 0 0 auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 64px;
+      padding: calc(10px + env(safe-area-inset-top)) 18px 10px;
+      border-bottom: 1px solid #deddd8;
+      background: rgba(249, 249, 247, .96);
+      color: #111;
+    }
+    .title { min-width: 0; }
+    .title strong { display: block; font-size: 18px; line-height: 1.25; }
+    #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; white-space: pre-line; }
+    #status.error { color: #b3261e; }
+    .header-actions {
+      flex: 0 0 auto;
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-left: auto;
+    }
+    #decision,
+    #refresh {
+      flex: 0 0 auto;
+      min-height: 44px;
+      appearance: none;
+      border-radius: 999px;
+      font: inherit;
+      font-weight: 650;
+    }
+    #decision {
+      border: 1px solid #63a170;
+      padding: 8px 11px;
+      background: #eef8f0;
+      color: #246c35;
+      line-height: 1;
+      text-align: center;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    #decision[hidden] { display: none; }
+    #decision-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      min-height: 20px;
+      margin-left: 4px;
+      padding: 0 5px;
+      border-radius: 999px;
+      background: #246c35;
+      color: #fff;
+      font-size: 12px;
+    }
+    #refresh {
+      border: 1px solid #80afe6;
+      padding: 8px 13px;
+      background: #eef5fc;
+      color: #216ec8;
+    }
+    #refresh:disabled { opacity: .55; }
+    .header-guide { position:relative; font-size:14px; }
+    .header-guide summary { list-style:none; cursor:pointer; padding:11px 14px; min-height:44px; border:1px solid #9b7fe1; border-radius:999px; color:#6941ba; background:#f3efff; font-weight:650; }
+    .header-guide summary::-webkit-details-marker { display:none; }
+    .header-guide .guide-body { position:absolute; z-index:50; top:50px; right:-65px; width:min(340px,calc(100vw - 32px)); padding:16px; border:1px solid #ccc; border-radius:14px; background:Canvas; color:CanvasText; box-shadow:0 8px 24px #0002; line-height:1.5; }
+    .guide-body ol { padding-left:22px; margin:0; }.guide-body li { margin-bottom:9px; }
+    #warning {
+      flex: 0 0 auto;
+      padding: 10px 18px;
+      border-bottom: 1px solid #e0a33a;
+      background: #fff1cf;
+      color: #6f4200;
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.4;
+      text-align: center;
+    }
+    #warning[hidden] { display: none; }
+    #warning.info {
+      border-color: #8ab7e8;
+      background: #eef6ff;
+      color: #145da0;
+    }
+    #app-update {
+      flex: 0 0 auto;
+      width: 100%;
+      min-height: 44px;
+      border: 0;
+      border-bottom: 1px solid #8ab7e8;
+      background: #eef6ff;
+      color: #145da0;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 650;
+      cursor: pointer;
+    }
+    #app-update[hidden] { display: none; }
+    #handover { flex: 1 1 auto; min-height: 0; width: 100%; border: 0; background: #f9f9f7; }
+    @media (prefers-color-scheme: dark) {
+      html, body, #handover { background: #0d0d0d; }
+      .bar { background: rgba(13, 13, 13, .96); border-color: #2c2c2a; color: #fff; }
+      #status { color: #aaa8a2; }
+      #decision { border-color: #4f8c5d; background: #142b19; color: #8ed09b; }
+      #decision-count { background: #8ed09b; color: #102315; }
+      #refresh { border-color: #397fcf; background: #10253d; color: #68a8ee; }
+      #warning { border-color: #7b5820; background: #3b2b0e; color: #ffd98c; }
+      #warning.info { border-color: #315f8f; background: #10253d; color: #9ac8f6; }
+      #app-update { border-color: #315f8f; background: #10253d; color: #9ac8f6; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header class="bar">
+      <div class="title">
+        <strong>XUAN-投资管理</strong>
+        <span id="status" role="status" aria-live="polite">正在检查已发布报告…</span>
+      </div>
+      <div class="header-actions">
+        <details class="header-guide"><summary>使用指南</summary><div class="guide-body"><ol><li><b>概览</b>：先看持仓变化；市值大的排前面。</li><li><b>待办</b>：重点看挂单；只处理明确要求你的事项。</li><li><b>配置 / 风险</b>：随后查看现金参考、提醒与风险线。</li><li><b>ETF</b>：A 实际、B 协作方案、C 标普500；看趋势与截止日期。</li><li><b>更新</b>：页面自动读取已发布结果，无需反复操作。</li></ol><p>只读：不自动买卖、撤单、转账或写入账户。</p></div></details>
+        <button id="refresh" type="button" hidden tabindex="-1" aria-hidden="true">刷新</button>
+      </div>
+    </header>
+    <button id="app-update" type="button" hidden>新版可用 · 点此更新页面</button>
+    <div id="warning" role="alert" hidden>上游暂不一致，正在显示上一份已验证版本</div>
+    <div id="decision-parking" hidden>
+      <button id="decision" type="button"
+              aria-label="通过 Claude 回应当前待决定事项；只记录意见，不执行交易" hidden>
+        回应待办 <span id="decision-count" aria-hidden="true">0</span>
+      </button>
+    </div>
+    <!-- Same-origin lets only the trusted parent place its own controls.
+         Report scripts, forms, popups and top-navigation remain forbidden. -->
+    <iframe id="handover" title="XUAN-投资管理 最新简报" sandbox="" referrerpolicy="no-referrer"></iframe>
+  </div>
+  <script>
+    (() => {
+      const frame = document.querySelector("#handover");
+      const button = document.querySelector("#refresh");
+      const decisionButton = document.querySelector("#decision");
+      const decisionCount = document.querySelector("#decision-count");
+      const status = document.querySelector("#status");
+      const appUpdate = document.querySelector("#app-update");
+      const warning = document.querySelector("#warning");
+      // Bump together with app-build.json whenever this shell or its mobile display code changes.
+      const loaderBuild = "2026-09-24.1";
+      const storageKey = "xuan-ib:last-verified:v1";
+      const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
+      const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
+      const decisionShortcutUrl = "shortcuts://run-shortcut?name=XUAN-IB%20%E5%9B%9E%E5%BA%94%E5%BE%85%E5%8A%9E";
+      const waitPollMs = 15_000;
+      const waitTimeoutMs = 20 * 60_000;
+      let lastSuccess = 0;
+      let lastAttempt = 0;
+      let lastBuildCheck = 0;
+      let buildCheckInFlight = false;
+      let availableBuild = null;
+      let lastVerified = null;
+      let requestSequence = 0;
+      let decisionWait = null;
+      let renderedBlob = null;
+      let renderSequence = 0;
+      let decisionDocument = null;
+      let decisionDocumentBlob = null;
+      let renderedDocument = null;
+      let renderedToken = null;
+      let progressLedger = null;
+      let progressFingerprint = null;
+      let progressMessage = "落实进度正在读取…";
+      let progressView = null;
+      let progressPrintState = null;
+
+// BEGIN PROGRESS VALIDATOR
+// Shared with the trusted loader; keep its marked copy byte-for-byte in sync.
+function parseProgressJson(source) {
+  if (typeof source !== "string" || source.length > 250000) throw new Error("进度文件过大");
+  let i = 0;
+  const ws = () => { while (/[ \t\r\n]/.test(source[i] || "")) i++; };
+  const string = () => {
+    const start = i++;
+    let escaped = false;
+    while (i < source.length) {
+      const c = source[i++];
+      if (!escaped && c === '"') return JSON.parse(source.slice(start, i));
+      if (!escaped && c.charCodeAt(0) < 32) throw new Error("无效字符");
+      escaped = !escaped && c === "\\";
+    }
+    throw new Error("字符串未结束");
+  };
+  const value = (depth = 0) => {
+    if (depth > 20) throw new Error("进度层数过深");
+    ws();
+    if (source[i] === '"') return string();
+    if (source[i] === "{") {
+      i++; ws(); const out = Object.create(null);
+      if (source[i] === "}") { i++; return out; }
+      while (i < source.length) {
+        ws(); if (source[i] !== '"') throw new Error("无效键");
+        const key = string();
+        if (Object.hasOwn(out, key)) throw new Error("重复键");
+        ws(); if (source[i++] !== ":") throw new Error("缺少冒号");
+        out[key] = value(depth + 1); ws();
+        if (source[i] === "}") { i++; return out; }
+        if (source[i++] !== ",") throw new Error("缺少逗号");
+      }
+    } else if (source[i] === "[") {
+      i++; ws(); const out = [];
+      if (source[i] === "]") { i++; return out; }
+      while (i < source.length) {
+        out.push(value(depth + 1)); ws();
+        if (source[i] === "]") { i++; return out; }
+        if (source[i++] !== ",") throw new Error("缺少逗号");
+      }
+    } else {
+      const t = source.slice(i).match(/^(?:true|false|null|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?)/)?.[0];
+      if (t) { i += t.length; return JSON.parse(t); }
+    }
+    throw new Error("进度 JSON 无效");
+  };
+  const out = value(); ws();
+  if (i !== source.length) throw new Error("多余内容");
+  return out;
+}
+
+function validateProgress(data, state, previous = null, now = Date.now()) {
+  const fail = (s) => { throw new Error("落实进度：" + s); };
+  const keys = (v, expected) => {
+    if (!v || typeof v !== "object" || Array.isArray(v) ||
+        Object.keys(v).length !== expected.length ||
+        Object.keys(v).sort().some((key, index) => key !== expected.slice().sort()[index])) fail("未知或缺失字段");
+  };
+  const text = (v, max = 180, empty = false) => {
+    if (typeof v !== "string" || v.trim() !== v || (!empty && !v) || [...v].length > max ||
+        /[<>&\u0000-\u001f\u007f-\u009f\u200b-\u200f\u202a-\u202e\u2060-\u2069]/u.test(v) ||
+        /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/u.test(v) ||
+        /(?:https?:|www\.|[a-z][a-z0-9+.-]*:\/\/|mailto:|github_pat_|gh[pousr]_|\bBearer\s|\bsk-[A-Za-z0-9_-]{12,}|(?:token|password|secret|api[_ -]?key)\s*[:=])/iu.test(v) ||
+        /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}|\b[UF]\d{6,}\b|\b\d{8,}\b/iu.test(v)) fail("不安全的公开文字");
+  };
+  const stamp = (v) => {
+    if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?\+08:00$/.test(v)) fail("时间格式");
+    const n = Date.parse(v);
+    if (!Number.isFinite(n) || new Date(n + 28800000).toISOString().slice(0, 19) !== v.slice(0, 19)) fail("无效时间");
+    return n;
+  };
+  const pair = (v) => {
+    keys(v, ["sourceSha", "htmlBlob"]);
+    if (![v.sourceSha, v.htmlBlob].every(s => typeof s === "string" && /^[0-9a-f]{40}$/.test(s))) fail("证据指纹");
+  };
+  const canonical = (v) => Array.isArray(v) ? "[" + v.map(canonical).join(",") + "]" :
+    v && typeof v === "object" ? "{" + Object.keys(v).sort().map(k => JSON.stringify(k) + ":" + canonical(v[k])).join(",") + "}" : JSON.stringify(v);
+  keys(data, ["schemaVersion", "revision", "events"]);
+  if (data.schemaVersion !== 1 || !Number.isSafeInteger(data.revision) || data.revision < 1 ||
+      !Array.isArray(data.events) || data.events.length < 1 || data.events.length > 300) fail("版本或清单无效");
+  if (!state || !Array.isArray(state.receipts) || !Array.isArray(state.decisions)) fail("没有可信回执");
+  const ids = new Set();
+  let lastTime = 0;
+  for (const e of data.events) {
+    keys(e, ["eventId", "decisionId", "receiptId", "responseToSourceSha", "responseToHtmlBlob",
+      "recordedAtHkt", "observedPair", "title", "status", "owner", "summary", "nextAction",
+      "reviewAfterHkt", "blocker", "evidence"]);
+    if (typeof e.eventId !== "string" || !/^P-[A-Z0-9-]{1,70}$/.test(e.eventId) || ids.has(e.eventId)) fail("事件编号");
+    ids.add(e.eventId);
+    const receipt = state.receipts.find(r => r.receiptId === e.receiptId);
+    if (!receipt || !["accepted", "modified"].includes(receipt.action) ||
+        receipt.decisionId !== e.decisionId || receipt.responseToSourceSha !== e.responseToSourceSha ||
+        receipt.responseToHtmlBlob !== e.responseToHtmlBlob ||
+        !state.decisions.some(d => d.decisionId === e.decisionId)) fail("决定回执不匹配");
+    pair(e.observedPair);
+    const time = stamp(e.recordedAtHkt);
+    if (time < lastTime || time < stamp(receipt.recordedAtHkt) || time > now + 60000) fail("事件时间倒退或在未来");
+    lastTime = time;
+    if (stamp(e.reviewAfterHkt) < time) fail("复核日早于记录日");
+    if (!["not_started", "in_progress", "blocked", "awaiting_approval", "user_action_required", "evidence_recorded"].includes(e.status)) fail("进度状态");
+    for (const k of ["title", "owner"]) text(e[k], 70);
+    for (const k of ["summary", "nextAction"]) text(e[k]);
+    text(e.blocker, 180, true);
+    if (["blocked", "awaiting_approval", "user_action_required"].includes(e.status) && !e.blocker) fail("缺少阻碍说明");
+    if (!Array.isArray(e.evidence) || e.evidence.length > 5) fail("证据清单");
+    for (const evidence of e.evidence) text(evidence);
+    if (e.status === "evidence_recorded" && e.evidence.length === 0) fail("没有落实证据");
+  }
+  if (previous) {
+    if (data.revision < previous.revision || data.events.length < previous.events.length ||
+        previous.events.some((e, i) => canonical(e) !== canonical(data.events[i])) ||
+        (data.revision === previous.revision && canonical(data) !== canonical(previous)) ||
+        (data.revision > previous.revision && data.events.length === previous.events.length)) fail("历史事件不可重写或删除");
+  }
+  return data;
+}
+// END PROGRESS VALIDATOR
+
+      // Migration window: the phone page must keep working while published
+      // handovers still carry the previous product name. The first entry is the
+      // title every future candidate must use; the second is the title already
+      // live in latest.html and is dropped once that page has been republished.
+      const approvedTitles = [
+        "<title>XUAN-投资管理</title>",
+        "<title>XUAN-IB 睡前交接</title>",
+        "<title>XUAN · 睡前行动版</title>"
+      ];
+
+      const clock = () => new Intl.DateTimeFormat("zh-HK", {
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+        timeZone: "Asia/Hong_Kong"
+      }).format(new Date());
+
+      const storage = (() => {
+        try {
+          localStorage.setItem("__xuan_ib_probe", "1");
+          localStorage.removeItem("__xuan_ib_probe");
+          return localStorage;
+        } catch (_) {
+          return null;
+        }
+      })();
+
+      const reportVersion = (record) => ({
+        dataDate: record.meta.dataDate,
+        sourceSha: record.meta.sourceSha.toLowerCase(),
+        sourceCommitEpoch: record.meta.sourceCommitEpoch,
+        htmlBlob: record.meta.htmlBlob.toLowerCase()
+      });
+
+      const validReportVersion = (version) => version &&
+        /^\d{4}-\d{2}-\d{2}$/.test(version.dataDate || "") &&
+        /^[0-9a-f]{40}$/i.test(version.sourceSha || "") &&
+        Number.isInteger(version.sourceCommitEpoch) && version.sourceCommitEpoch > 0 &&
+        /^[0-9a-f]{40}$/i.test(version.htmlBlob || "");
+
+      const reportIsNewerThan = (record, baseline) =>
+        record.meta.dataDate > baseline.dataDate ||
+        (record.meta.dataDate === baseline.dataDate &&
+          record.meta.sourceCommitEpoch > baseline.sourceCommitEpoch);
+
+      const receiptIdPattern = /^R-[0-9]{8}-[0-9]{6}-[A-Z0-9]{8}$/;
+
+      const activeWait = () => decisionWait;
+
+      function persistWait(key, value, label) {
+        if (!storage || !value) return;
+        try {
+          storage.setItem(key, JSON.stringify(value));
+        } catch (error) {
+          console.warn(`XUAN-IB ${label} wait backup failed`, error);
+        }
+      }
+
+      function persistDecisionWait() {
+        persistWait(decisionWaitStorageKey, decisionWait, "decision");
+      }
+
+      function clearDecisionWait() {
+        decisionWait = null;
+        if (!storage) return;
+        try { storage.removeItem(decisionWaitStorageKey); } catch (_) {}
+      }
+
+      const validWaitHeader = (saved) => saved &&
+        Number.isInteger(saved.startedAt) && saved.startedAt > 0 &&
+        Number.isInteger(saved.deadline) && saved.deadline > saved.startedAt;
+
+      const decisionIdPattern = /^D-[0-9]{8}-[A-Z0-9-]{1,64}$/;
+      const responsePairKey = (version) =>
+        `${version.sourceSha.toLowerCase()}:${version.htmlBlob.toLowerCase()}`;
+
+      const validUniqueIds = (values, pattern) => Array.isArray(values) &&
+        values.length <= 1_000 &&
+        values.every((id) => pattern.test(id)) &&
+        new Set(values).size === values.length;
+
+      const validDecisionBaseline = (baseline) => validReportVersion(baseline) &&
+        validUniqueIds(baseline.awaitingDecisionIds, decisionIdPattern);
+
+      const validDecisionWait = (saved) => validWaitHeader(saved) &&
+        saved.cacheVersion === 2 &&
+        validUniqueIds(saved.awaitingDecisionIds, decisionIdPattern) &&
+        saved.awaitingDecisionIds.length > 0 &&
+        validUniqueIds(saved.initialReceiptIds, receiptIdPattern) &&
+        Array.isArray(saved.baselines) &&
+        saved.baselines.length > 0 && saved.baselines.length <= 100 &&
+        saved.baselines.every(validDecisionBaseline) &&
+        new Set(saved.baselines.map(responsePairKey)).size === saved.baselines.length;
+
+      function restoreDecisionWait() {
+        if (!storage) return;
+        try {
+          const raw = storage.getItem(decisionWaitStorageKey);
+          if (!raw) return;
+          const saved = JSON.parse(raw);
+          if (!validDecisionWait(saved)) throw new Error("saved decision wait is invalid");
+          decisionWait = saved;
+        } catch (error) {
+          clearDecisionWait();
+          console.warn("XUAN-IB saved decision wait was rejected", error);
+        }
+      }
+
+      function showDecisionPending() {
+        status.classList.remove("error");
+        status.textContent = `请在手机菜单中选择；提交后等待回应回执 · L ${loaderBuild}`;
+      }
+
+      function expireWaits() {
+        const now = Date.now();
+        let message = "";
+        if (decisionWait && now > decisionWait.deadline) {
+          clearDecisionWait();
+          message = `尚未收到回应回执，系统将自动重试 · L ${loaderBuild}`;
+        }
+        if (!message) return false;
+        status.classList.add("error");
+        status.textContent = message;
+        return true;
+      }
+
+      function updateDecisionWait(record) {
+        if (!decisionWait || expireWaits()) return false;
+        const state = record.decisionState;
+        const latestBaseline = decisionWait.baselines[decisionWait.baselines.length - 1];
+        if (!reportIsNewerThan(record, latestBaseline)) {
+          showDecisionPending();
+          return false;
+        }
+        const initialReceiptIds = new Set(decisionWait.initialReceiptIds);
+        const acceptableBaselines = new Map(decisionWait.baselines.map((baseline) => [
+          responsePairKey(baseline),
+          new Set(baseline.awaitingDecisionIds)
+        ]));
+        const earliestReceiptEpoch = decisionWait.startedAt - 1_000;
+        const matchingReceipt = state && state.receipts.find((receipt) => {
+          const awaitingAtResponseBaseline = acceptableBaselines.get(responsePairKey({
+            sourceSha: receipt.responseToSourceSha,
+            htmlBlob: receipt.responseToHtmlBlob
+          }));
+          return !initialReceiptIds.has(receipt.receiptId) &&
+            Boolean(awaitingAtResponseBaseline) &&
+            awaitingAtResponseBaseline.has(receipt.decisionId) &&
+            Date.parse(receipt.recordedAtHkt) >= earliestReceiptEpoch;
+        });
+        if (!matchingReceipt) {
+          decisionWait.baselines.push({
+            ...reportVersion(record),
+            awaitingDecisionIds: state
+              ? state.decisions
+                .filter((decision) => decision.status === "awaiting_user")
+                .map((decision) => decision.decisionId)
+              : []
+          });
+          if (decisionWait.baselines.length > 100) decisionWait.baselines.shift();
+          persistDecisionWait();
+          showDecisionPending();
+          return false;
+        }
+        clearDecisionWait();
+        status.classList.toggle("error", !warning.hidden);
+        status.textContent = statusFor(record, "回应已记录");
+        return true;
+      }
+
+      function updateActiveWait(record, verifiedAt) {
+        if (decisionWait) return updateDecisionWait(record);
+        return false;
+      }
+
+      function beginDecisionWait(event) {
+        event.preventDefault();
+        if (decisionButton.ownerDocument && (!decisionDocument ||
+            decisionButton.ownerDocument !== decisionDocument ||
+            frame.contentDocument !== decisionDocument ||
+            decisionDocument.URL !== "about:srcdoc" ||
+            renderedDocument !== decisionDocument || !renderedToken ||
+            decisionDocument.querySelector('meta[name="xuan-loader-render"]')?.content !== renderedToken ||
+            decisionDocumentBlob !== lastVerified?.blob)) return;
+        if (decisionWait && !expireWaits()) {
+          showDecisionPending();
+          return;
+        }
+        const state = lastVerified && lastVerified.decisionState;
+        const awaitingDecisionIds = state
+          ? state.decisions
+            .filter((decision) => decision.status === "awaiting_user")
+            .map((decision) => decision.decisionId)
+          : [];
+        if (!lastVerified || !state || state.interaction !== "enabled" ||
+            awaitingDecisionIds.length === 0) {
+          clearDecisionWait();
+          status.classList.add("error");
+          status.textContent = `正在自动确认当前待办 · L ${loaderBuild}`;
+          return;
+        }
+        const now = Date.now();
+        decisionWait = {
+          cacheVersion: 2,
+          startedAt: now,
+          deadline: now + waitTimeoutMs,
+          awaitingDecisionIds,
+          initialReceiptIds: state.receipts.map((receipt) => receipt.receiptId),
+          baselines: [{
+            ...reportVersion(lastVerified),
+            awaitingDecisionIds: [...awaitingDecisionIds]
+          }]
+        };
+        persistDecisionWait();
+        showDecisionPending();
+        location.href = decisionShortcutUrl;
+      }
+
+      const hex = (buffer) => Array.from(new Uint8Array(buffer), (byte) =>
+        byte.toString(16).padStart(2, "0")
+      ).join("");
+
+      async function gitBlobSha(bytes) {
+        const body = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+        const header = new TextEncoder().encode(`blob ${body.byteLength}\0`);
+        const payload = new Uint8Array(header.byteLength + body.byteLength);
+        payload.set(header, 0);
+        payload.set(body, header.byteLength);
+        return hex(await crypto.subtle.digest("SHA-1", payload));
+      }
+
+      const decodeUtf8 = (bytes) =>
+        new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+
+      const canonicalizeTransportInjection = (bytes) => {
+        const maxPublishedBytes = 2_000_000;
+        const maxTransportOverhead = 64 * 1024;
+        if (bytes.byteLength >= maxPublishedBytes + maxTransportOverhead) return null;
+        const html = decodeUtf8(bytes);
+        const externalScript = /<script\b(?=[^>]*[\t\n\f\r ]src[\t\n\f\r ]*=)[^>]*>[\s\S]*?<\/script[\t\n\f\r ]*>/gi;
+        const injected = html.match(externalScript) || [];
+        if (!injected.length || injected.length > 4) return null;
+        const encoder = new TextEncoder();
+        const removedBytes = injected.reduce(
+          (total, script) => total + encoder.encode(script).byteLength,
+          0
+        );
+        if (removedBytes > maxTransportOverhead) return null;
+        const canonicalBytes = encoder.encode(html.replace(externalScript, ""));
+        if (canonicalBytes.byteLength >= maxPublishedBytes ||
+            bytes.byteLength - canonicalBytes.byteLength !== removedBytes) return null;
+        return canonicalBytes;
+      };
+
+      const reportInfo = (html) => {
+        if (html.includes("xuan-ib-night-action-v1:")) {
+          const action = html.match(/<header>[^]*?<p>(\d{4}-\d{2}-\d{2})\s*·\s*([^<]+)<\/p><\/header>/i);
+          if (!action) throw new Error("行动版缺少报告日期与时点");
+          const times = [...action[2].matchAll(/\b(\d{2}:\d{2})\b/g)].map((match) => match[1]);
+          return { dataDate: action[1], edition: "睡前版", label: `${action[1]} · 睡前行动版`, asOfHkt: times.at(-1) || null };
+        }
+        const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
+        if (!match) throw new Error("页面缺少报告日期与版次");
+        const text = match[1]
+          .replace(/<[^>]*>/g, " ")
+          .replace(/&nbsp;|&#160;/gi, " ")
+          .replace(/&middot;|&#183;/gi, "·")
+          .replace(/\s+/g, " ")
+          .trim();
+        const date = text.match(/^(\d{4}-\d{2}-\d{2})\b/);
+        const parts = text.split("·").map((part) => part.trim()).filter(Boolean);
+        if (!date || parts.length < 2) throw new Error("报告日期或版次无法识别");
+        const foot = html.match(/<div\s+class=["']foot["'][^>]*>([\s\S]*?)<\/div>/i);
+        const asOf = foot?.[1].match(/数据截至\s+\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2})(?:[–-](\d{2}:\d{2}))?\s*HKT/);
+        return { dataDate: date[1], edition: parts[1], label: text, asOfHkt: asOf?.[2] || asOf?.[1] || null };
+      };
+
+      const requireExactKeys = (value, keys, label) => {
+        if (!value || typeof value !== "object" || Array.isArray(value)) {
+          throw new Error(`${label} 必须是对象`);
+        }
+        const actual = Object.keys(value).sort();
+        const expected = [...keys].sort();
+        if (actual.length !== expected.length ||
+            actual.some((key, index) => key !== expected[index])) {
+          throw new Error(`${label} 含未知或缺失字段`);
+        }
+      };
+
+      const validHktTimestamp = (value) => {
+        if (typeof value !== "string") return false;
+        const match = value.match(
+          /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,3}))?\+08:00$/
+        );
+        if (!match) return false;
+        const [, year, month, day, hour, minute, second, fraction = ""] = match;
+        const milliseconds = Number(fraction.padEnd(3, "0"));
+        const instant = new Date(Date.UTC(
+          Number(year), Number(month) - 1, Number(day), Number(hour) - 8,
+          Number(minute), Number(second), milliseconds
+        ));
+        if (Number.isNaN(instant.valueOf())) return false;
+        const hkt = new Date(instant.valueOf() + 8 * 60 * 60 * 1000);
+        return hkt.getUTCFullYear() === Number(year) &&
+          hkt.getUTCMonth() + 1 === Number(month) &&
+          hkt.getUTCDate() === Number(day) &&
+          hkt.getUTCHours() === Number(hour) &&
+          hkt.getUTCMinutes() === Number(minute) &&
+          hkt.getUTCSeconds() === Number(second) &&
+          hkt.getUTCMilliseconds() === milliseconds;
+      };
+
+      function parseDecisionState(html) {
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const templates = parsed.querySelectorAll("template#xuan-ib-decision-state-v1");
+        if (templates.length === 0) return null;
+        if (templates.length !== 1) throw new Error("回应状态模板必须恰好一个");
+        const template = templates[0];
+        const raw = (template.content ? template.content.textContent : template.textContent).trim();
+        if (!raw) throw new Error("回应状态模板为空");
+        const state = JSON.parse(raw);
+        requireExactKeys(
+          state,
+          ["schemaVersion", "interaction", "decisions", "receipts"],
+          "回应状态"
+        );
+        if (state.schemaVersion !== 1) throw new Error("回应状态版本不兼容");
+        if (!new Set(["disabled", "enabled"]).has(state.interaction)) {
+          throw new Error("回应入口状态无效");
+        }
+        if (!Array.isArray(state.decisions) || !Array.isArray(state.receipts)) {
+          throw new Error("回应状态清单无效");
+        }
+        const decisionIds = new Set();
+        for (const decision of state.decisions) {
+          requireExactKeys(decision, ["decisionId", "status"], "待办状态");
+          if (!/^D-[0-9]{8}-[A-Z0-9-]{1,64}$/.test(decision.decisionId || "")) {
+            throw new Error("待办编号无效");
+          }
+          if (!new Set(["awaiting_user", "accepted", "rejected", "modified", "superseded"])
+            .has(decision.status)) {
+            throw new Error("待办状态无效");
+          }
+          if (decisionIds.has(decision.decisionId)) throw new Error("待办编号重复");
+          decisionIds.add(decision.decisionId);
+        }
+        const receiptIds = new Set();
+        for (const receipt of state.receipts) {
+          requireExactKeys(
+            receipt,
+            [
+              "receiptId", "decisionId", "action", "responseToSourceSha",
+              "responseToHtmlBlob", "recordedAtHkt", "publicSummary"
+            ],
+            "回应回执"
+          );
+          if (!receiptIdPattern.test(receipt.receiptId || "")) throw new Error("回应回执编号无效");
+          if (receiptIds.has(receipt.receiptId)) throw new Error("回应回执编号重复");
+          receiptIds.add(receipt.receiptId);
+          if (!decisionIds.has(receipt.decisionId)) throw new Error("回应回执引用未知待办");
+          if (!new Set(["accepted", "modified", "deferred"]).has(receipt.action)) {
+            throw new Error("回应动作无效");
+          }
+          if (!/^[0-9a-f]{40}$/i.test(receipt.responseToSourceSha || "") ||
+              !/^[0-9a-f]{40}$/i.test(receipt.responseToHtmlBlob || "")) {
+            throw new Error("回应基线无效");
+          }
+          if (!validHktTimestamp(receipt.recordedAtHkt)) throw new Error("回应时间无效");
+          if (typeof receipt.publicSummary !== "string" ||
+              [...receipt.publicSummary].length < 1 ||
+              [...receipt.publicSummary].length > 120 ||
+              /[<>&\u0000-\u001f\u007f-\u009f]/u.test(receipt.publicSummary) ||
+              /(?:https?:\/\/|www\.)/i.test(receipt.publicSummary) ||
+              /\b[0-9]{8,}\b/.test(receipt.publicSummary)) {
+            throw new Error("回应公开摘要无效");
+          }
+        }
+        return state;
+      }
+
+      // report-schedule-generated:start — byte checked against the shared pure module.
+      const reportSchedule = (() => {
+        // Pure shared schedule: safe to import in browsers and Node. No network, DOM,
+        // credentials or financial data. Holidays still receive a short closed-market
+        // report; this module determines delivery slots, not whether markets are open.
+        const PM_RUN_TARGET_MS = 20 * 60 * 1000;
+        const PM_SCHEDULE_CUTOVER_HKT_DATE = "2026-09-04";
+        const PM_OPENING_CUTOVER_HKT_DATE = "2026-09-06";
+        const AM_WATCH_CRON = "35 0 * * 2-6";
+        const PM_WATCH_CRONS = Object.freeze(["55 13 * * 1-5", "55 14 * * 1-5"]);
+        const LEGACY_PM_WATCH_CRONS = Object.freeze(["50 13 * * 1-5", "50 14 * * 1-5"]);
+
+        const HKT_OFFSET_MS = 8 * 60 * 60 * 1000;
+        const EDITIONS = ["am", "pm"];
+        const newYorkClock = new Intl.DateTimeFormat("en-GB", {
+          timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit",
+          hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23"
+        });
+
+        const dateEpoch = date => {
+          if (typeof date !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new Error("invalid report date");
+          const epoch = Date.parse(`${date}T00:00:00Z`);
+          if (!Number.isFinite(epoch) || new Date(epoch).toISOString().slice(0, 10) !== date) throw new Error("invalid report date");
+          return epoch;
+        };
+        const instant = now => {
+          if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error("invalid schedule instant");
+          return now.getTime();
+        };
+        const checkEdition = edition => {
+          if (!EDITIONS.includes(edition)) throw new Error(`unsupported edition: ${edition}`);
+        };
+        const newYorkWallEpoch = epoch => {
+          const parts = Object.fromEntries(newYorkClock.formatToParts(new Date(epoch)).map(p => [p.type, p.value]));
+          return Date.parse(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`);
+        };
+
+        function hktContext(now = new Date()) {
+          const shifted = new Date(instant(now) + HKT_OFFSET_MS);
+          return {
+            date: shifted.toISOString().slice(0, 10), weekday: shifted.getUTCDay(),
+            minuteOfDay: shifted.getUTCHours() * 60 + shifted.getUTCMinutes()
+          };
+        }
+
+        const newYorkStartEpoch = (dataDate, minute = dataDate < PM_OPENING_CUTOVER_HKT_DATE ? 35 : 30) => {
+          const midnight = dateEpoch(dataDate);
+          const desiredWall = midnight + (9 * 60 + minute) * 60 * 1000;
+          let epoch = desiredWall;
+          // Resolve the named timezone, never infer DST from a month or fixed offset.
+          for (let n = 0; n < 3; n += 1) epoch += desiredWall - newYorkWallEpoch(epoch);
+          if (!Number.isFinite(epoch) || newYorkWallEpoch(epoch) !== desiredWall) throw new Error("New York report slot is unresolved");
+          return epoch / 1000;
+        };
+
+        function slotStartEpoch(dataDate, edition) {
+          const midnight = dateEpoch(dataDate);
+          checkEdition(edition);
+          if (edition === "am") return midnight / 1000; // 08:00 HKT = 00:00 UTC.
+          // Historical PM evidence keeps the contract that actually applied that day.
+          if (dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE) return midnight / 1000 + 12 * 3600 + 55 * 60;
+          return newYorkStartEpoch(dataDate);
+        }
+
+        function slotDueEpoch(dataDate, edition) {
+          const start = slotStartEpoch(dataDate, edition);
+          const budget = edition === "am" ? 35 * 60
+            : dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE ? 30 * 60
+            : dataDate < PM_OPENING_CUTOVER_HKT_DATE ? 10 * 60
+            : PM_RUN_TARGET_MS / 1000;
+          return start + budget;
+        }
+
+        function expectedEditionAt(now = new Date(), editionFilter = null) {
+          if (editionFilter !== null) checkEdition(editionFilter);
+          const context = hktContext(now), nowEpoch = instant(now) / 1000;
+          let latest = null;
+          for (let offset = 0; offset <= 8; offset += 1) {
+            const day = new Date(dateEpoch(context.date) - offset * 86400000);
+            const date = day.toISOString().slice(0, 10), weekday = day.getUTCDay();
+            for (const edition of EDITIONS) {
+              if (editionFilter !== null && edition !== editionFilter) continue;
+              if (edition === "am" ? weekday < 2 || weekday > 6 : weekday < 1 || weekday > 5) continue;
+              const dueEpoch = slotDueEpoch(date, edition);
+              if (dueEpoch <= nowEpoch && (!latest || dueEpoch > latest.dueEpoch)) latest = {date, edition, dueEpoch};
+            }
+          }
+          if (!latest) return {...context, expectedEdition: null, reason: "no-due-slot"};
+          return {...context, expectedEdition: latest.edition, expectedDate: latest.date,
+            startEpoch: slotStartEpoch(latest.date, latest.edition), dueEpoch: latest.dueEpoch, reason: "latest-due-slot"};
+        }
+
+        // GitHub cron uses UTC. Two seasonal candidates avoid a manual clock change;
+        // only the candidate matching 09:55 New York is enabled. A delayed job is still
+        // audited, not silently skipped for missing an exact wall-clock minute.
+        function scheduledWatchEnabled(expression, now = new Date()) {
+          const context = hktContext(now);
+          if (!expression || expression === AM_WATCH_CRON) return true;
+          if (![...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) throw new Error("unrecognized watcher schedule");
+          const minute = context.date < PM_OPENING_CUTOVER_HKT_DATE ? 50 : 55;
+          const watch = new Date(newYorkStartEpoch(context.date, minute) * 1000);
+          return expression === `${minute} ${watch.getUTCHours()} * * 1-5`;
+        }
+
+        function scheduledWatchEdition(expression) {
+          if (!expression) return null;
+          if (expression === AM_WATCH_CRON) return "am";
+          if ([...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
+          throw new Error("unrecognized watcher schedule");
+        }
+
+        return {hktContext, expectedEditionAt, slotStartEpoch, slotDueEpoch};
+      })();
+      // report-schedule-generated:end
+      const hktContext = reportSchedule.hktContext;
+      const expectedBusinessEdition = (now = new Date()) => {
+        const expected = reportSchedule.expectedEditionAt(now, "pm");
+        if (!expected.expectedEdition) throw new Error("无法确定最近应完成的睡前版");
+        return {dataDate:expected.expectedDate,edition:expected.expectedEdition,
+          startEpoch:expected.startEpoch,dueEpoch:expected.dueEpoch,
+          label:"睡前版"};
+      };
+
+      const classifyEdition = (edition) => {
+        const value = String(edition).toLowerCase();
+        if (/计划外|加跑|补跑|临时|ad[ -]?hoc/.test(value)) return "adhoc";
+        if (/睡前|晚间|定时正式版|\bpm\b/.test(value)) return "pm";
+        if (/早间|上午|早班|\bam\b/.test(value)) return "am";
+        return "unknown";
+      };
+
+      const isSleepPriority = (record) =>
+        classifyEdition(record.info.edition) === "adhoc" &&
+        record.html.includes('data-xuan-delivery="sleep-priority-v1"');
+
+      const freshnessNotice = (record, now = new Date()) => {
+        const actualEdition = classifyEdition(record.info.edition);
+        const context = hktContext(now), nowEpoch = now.getTime() / 1000;
+        const businessDay = context.weekday >= 1 && context.weekday <= 5;
+        if (businessDay) {
+          const startEpoch = reportSchedule.slotStartEpoch(context.date, "pm");
+          const dueEpoch = reportSchedule.slotDueEpoch(context.date, "pm");
+          if (nowEpoch >= startEpoch && nowEpoch < dueEpoch &&
+              !(record.info.dataDate === context.date && actualEdition === "pm")) {
+            if (record.info.dataDate === context.date && isSleepPriority(record)) {
+              return {message:"睡前速览已更新（持仓与挂单）；完整版待发布。", error:false};
+            }
+            return {message:`等待今晚睡前版；当前继续显示 ${record.info.dataDate} ${record.info.edition}。`, error:false};
+          }
+        }
+        const expected = expectedBusinessEdition(now);
+        const satisfiesExpected = actualEdition === "pm" &&
+          record.info.dataDate >= expected.dataDate;
+        if (satisfiesExpected) return {message:"", error:false};
+        if (record.info.dataDate === expected.dataDate && isSleepPriority(record)) {
+          return {message:"睡前速览已更新（持仓与挂单）；完整版发布延迟。", error:true};
+        }
+        return {
+          message:`今晚睡前版发布延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。`,
+          error:true
+        };
+      };
+
+      const validateMeta = (meta) => {
+        if (!meta || meta.schemaVersion !== 1) throw new Error("发布信息版本不兼容");
+        if (!/^[0-9a-f]{40}$/i.test(meta.sourceSha || "")) throw new Error("发布来源无效");
+        if (!Number.isInteger(meta.sourceCommitEpoch) || meta.sourceCommitEpoch <= 0) {
+          throw new Error("发布时间无效");
+        }
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(meta.dataDate || "")) throw new Error("数据日期无效");
+        if (!/^[0-9a-f]{40}$/i.test(meta.htmlBlob || "")) throw new Error("页面指纹无效");
+        return meta;
+      };
+
+      const protect = (html) => {
+        const csp = '<meta http-equiv="Content-Security-Policy" content="default-src &apos;none&apos;; style-src &apos;unsafe-inline&apos;; script-src &apos;none&apos;; img-src &apos;none&apos;; font-src &apos;none&apos;; media-src &apos;none&apos;; connect-src &apos;none&apos;; frame-src &apos;none&apos;; object-src &apos;none&apos;; base-uri &apos;none&apos;; form-action &apos;none&apos;">';
+        const protectedHtml = html.replace(/<head[^>]*>/i, (head) => head + csp);
+        if (protectedHtml === html) throw new Error("页面缺少安全头");
+        return protectedHtml;
+      };
+
+      async function verifyPair(bytes, meta) {
+        validateMeta(meta);
+        let verifiedBytes = bytes;
+        let blob = await gitBlobSha(verifiedBytes);
+        if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
+          const canonicalBytes = canonicalizeTransportInjection(bytes);
+          if (!canonicalBytes) throw new Error("发布信息与页面不是同一版本");
+          blob = await gitBlobSha(canonicalBytes);
+          if (blob.toLowerCase() !== meta.htmlBlob.toLowerCase()) {
+            throw new Error("发布信息与页面不是同一版本");
+          }
+          verifiedBytes = canonicalBytes;
+          console.warn("XUAN-IB removed a transport-injected external script before verification");
+        }
+        const html = decodeUtf8(verifiedBytes);
+        const legacyMarker = html.includes("xuan-ib-handover:v1");
+        const actionMarker = html.includes("xuan-ib-night-action-v1:");
+        const legacy = legacyMarker &&
+          approvedTitles.slice(0, 2).some((title) => html.includes(title));
+        const action = actionMarker &&
+          html.includes(approvedTitles[2]);
+        if (Number(legacyMarker) + Number(actionMarker) !== 1 || !legacy && !action) {
+          throw new Error("页面完整性标记不符");
+        }
+        const info = reportInfo(html);
+        if (info.dataDate !== meta.dataDate) throw new Error("发布日期与页面日期不一致");
+        const decisionState = parseDecisionState(html);
+        return { html, protectedHtml: protect(html), meta, info, decisionState, blob };
+      }
+
+      function requireMonotonic(record, previous) {
+        if (!previous) return record;
+        if (record.meta.dataDate < previous.meta.dataDate) {
+          throw new Error("上游报告日期早于本机已验证版本");
+        }
+        if (record.meta.dataDate > previous.meta.dataDate) return record;
+        if (record.meta.sourceCommitEpoch < previous.meta.sourceCommitEpoch) {
+          throw new Error("上游同日报告版本早于本机已验证版本");
+        }
+        if (record.meta.sourceCommitEpoch === previous.meta.sourceCommitEpoch &&
+            record.meta.htmlBlob.toLowerCase() !== previous.meta.htmlBlob.toLowerCase()) {
+          throw new Error("同一发布版本出现不同页面指纹");
+        }
+        return record;
+      }
+
+      const statusFor = (record, prefix) => {
+        const report = `报告 ${record.info.dataDate.slice(5)} ${record.info.edition}` +
+          (record.info.asOfHkt ? ` · 数据至 ${record.info.asOfHkt}` : "");
+        if (prefix === "回应已记录") return `${report}\n回应已记录 · 已检查 ${clock()}`;
+        if (prefix === "显示上一份已验证版本") return `${report}\n显示上一份已验证报告`;
+        if (prefix === "正在检查已发布报告") return `${report}\n正在检查已发布报告…`;
+        if (prefix === "已检查") return `${report}\n已检查 ${clock()}`;
+        return `${report}\n${prefix}`;
+      };
+
+      function updateDecisionControl(record) {
+        const state = record.decisionState;
+        const count = state
+          ? state.decisions.filter((decision) => decision.status === "awaiting_user").length
+          : 0;
+        const available = Boolean(state && state.interaction === "enabled");
+        const enabled = available && count > 0;
+        decisionButton.hidden = !available;
+        decisionButton.disabled = !enabled;
+        decisionButton.setAttribute("aria-disabled", String(!enabled));
+        decisionCount.textContent = String(count);
+        decisionCount.hidden = count === 0;
+        decisionButton.setAttribute(
+          "aria-label",
+          enabled
+            ? `通过 Claude 回应 ${count} 项待决定事项；只记录意见，不执行交易`
+            : "当前没有可回应的待决定事项"
+        );
+      }
+
+      // Display-only enhancement of already verified bytes. Neither the
+      // canonical report/hash nor the receipt/decision ledger is rewritten.
+      function installTodoControls(doc, record) {
+        const panes = doc.querySelectorAll(".pane.p4");
+        if (panes.length !== 1) return;
+        const todo = panes[0];
+        const trigger = Array.from(todo.children).find((node) =>
+          node.tagName === "DETAILS" &&
+          node.querySelector("summary")?.textContent.includes("换仓触发检查")
+        );
+        if (trigger) {
+          todo.prepend(trigger);
+          trigger.setAttribute("open", "");
+        }
+        if (!record.decisionState) return;
+        const groupHeadings = Array.from(todo.querySelectorAll('[data-decision-group-title]'));
+        const headings = groupHeadings.filter((node) =>
+          node.getAttribute("data-decision-group-title") === "awaiting_user");
+        const legacyHeadings = Array.from(todo.querySelectorAll("h2")).filter((node) =>
+          !node.hasAttribute("data-decision-group-title") && /^⑤\s*待决定事项(?:\s|$)/.test(node.textContent.trim()));
+        // Ordinary AM/PM reports may still use the original, unmarked H2.
+        // Never use that fallback to repair ambiguous or incomplete v1 groups.
+        const hasDisplayGroups = groupHeadings.length > 0 ||
+          record.html.includes("<!-- xuan-ib-decision-group:v1:");
+        if (hasDisplayGroups ? headings.length !== 1 || legacyHeadings.length !== 0 : legacyHeadings.length !== 1) return;
+        const heading = hasDisplayGroups ? headings[0] : legacyHeadings[0];
+        if (heading.tagName !== "H2") return;
+        const siblings = Array.from(heading.parentElement.children);
+        const headingIndex = siblings.indexOf(heading);
+        const nextHeadingIndex = siblings.findIndex((node, index) => index > headingIndex && node.tagName === "H2");
+        const pending = record.decisionState.decisions.filter((item) => item.status === "awaiting_user");
+        const cards = pending.map((item) => doc.getElementById(item.decisionId));
+        if (todo.querySelectorAll('[data-decision-status="awaiting_user"]').length !== cards.length ||
+            cards.some((card, index) => !card || card.tagName !== "DETAILS" || !todo.contains(card) ||
+            card.parentElement !== heading.parentElement || siblings.indexOf(card) <= headingIndex ||
+            (nextHeadingIndex >= 0 && siblings.indexOf(card) >= nextHeadingIndex) ||
+            doc.querySelectorAll(`[id="${pending[index].decisionId}"]`).length !== 1 ||
+            doc.querySelectorAll(`[data-decision-id="${pending[index].decisionId}"]`).length !== 1 ||
+            card.getAttribute("data-decision-id") !== pending[index].decisionId ||
+            card.getAttribute("data-decision-status") !== "awaiting_user")) return;
+
+        const style = doc.createElement("style");
+        style.textContent = `
+          .xuan-decision-row{position:relative;margin:0 0 12px}
+          .xuan-decision-fold{display:block;margin:0;border:0;background:transparent}
+          .xuan-decision-fold>summary{width:calc(100% - 108px);box-sizing:border-box;min-height:44px;display:flex;align-items:center;gap:7px;padding:9px 10px;border:1px solid var(--line,#deddd8);border-radius:12px;font-size:14px;white-space:nowrap;cursor:pointer}
+          .xuan-decision-fold>summary::before{content:'▸';font-size:12px}
+          .xuan-decision-fold[open]>summary::before{content:'▾'}
+          .xuan-decision-fold>summary::after{display:none}
+          .xuan-decision-fold>summary::-webkit-details-marker{display:none}
+          .xuan-decision-fold>summary small{margin-left:auto;font-size:12px;color:var(--mut,#777)}
+          .xuan-decision-fold>summary.xuan-decision-attention{border-color:#b7791f;background:#fff3d6;color:#754600}
+          .xuan-decision-fold>summary.xuan-decision-attention small{color:inherit}
+          .xuan-decision-body{width:100%;min-width:0}
+          .xuan-decision-fold:not([open])>.xuan-decision-body{display:none}
+          .xuan-decision-empty{margin:8px 0;color:var(--ink2,#666);font-size:13px}
+          #decision{position:absolute;top:0;right:0;width:100px;box-sizing:border-box;min-height:44px;padding:9px 8px;border:1px solid #63a170;border-radius:12px;background:#eef8f0;color:#246c35;font:inherit;font-size:13px;font-weight:650;white-space:nowrap;cursor:pointer}
+          #decision:disabled{opacity:.5;cursor:default}
+          #decision[hidden],#decision-count[hidden]{display:none}
+          #decision-count{display:inline-block;margin-left:3px;min-width:18px;padding:1px 4px;border-radius:99px;background:#246c35;color:white;font-size:11px}
+          @media(prefers-color-scheme:dark){#decision{border-color:#4f8c5d;background:#142b19;color:#8ed09b}.xuan-decision-fold>summary.xuan-decision-attention{background:#3a2b0d;color:#ffd58a;border-color:#ca9b43}}
+        `;
+        doc.head.append(style);
+        const row = doc.createElement("div");
+        row.className = "xuan-decision-row";
+        const fold = doc.createElement("details");
+        fold.className = "xuan-decision-fold";
+        const summary = doc.createElement("summary");
+        summary.textContent = "待决定事项";
+        if (pending.length) {
+          summary.className = "xuan-decision-attention";
+          summary.setAttribute("aria-label", `待决定事项，${pending.length} 项待你确认`);
+        }
+        const count = doc.createElement("small");
+        count.textContent = `${pending.length ? '⚠ ' : ''}${pending.length} 项`;
+        summary.append(count);
+        const body = doc.createElement("div");
+        body.className = "xuan-decision-body";
+        if (cards.length) body.append(...cards);
+        else {
+          const empty = doc.createElement("p");
+          empty.className = "xuan-decision-empty";
+          empty.textContent = "暂无待决定事项；已采纳意见的负责人、下一步及证据见下方落实进度。";
+          body.append(empty);
+        }
+        fold.append(summary, body);
+        row.append(fold, decisionButton);
+        const oldHint = heading.nextElementSibling;
+        if (oldHint?.tagName === "P" && oldHint.textContent.startsWith("当前为只读清单")) oldHint.remove();
+        heading.replaceWith(row);
+        decisionDocument = doc;
+        decisionDocumentBlob = record.blob;
+        if (pending.length === 0) {
+          const badge = doc.querySelector('label[for="s4"] .dot');
+          if (badge) badge.remove();
+        }
+      }
+
+      // An independent, main-owned maintenance ledger. HTTPS and the protected
+      // maintenance PR establish its provenance; its digest only detects change.
+      // It never signs a report, changes a decision or authorizes an investment.
+      let routineReadingModule = null;
+      function organizeProgressReading(record) {
+        if (!routineReadingModule || !progressView?.fold || progressView.doc !== renderedDocument || lastVerified?.blob !== record.blob) return;
+        const events = new Map();
+        let dataAvailable = false;
+        if (progressLedger && progressFingerprint) {
+          try {
+            validateProgress(progressLedger, record.decisionState);
+            for (const event of progressLedger.events) {
+              const receipt = record.decisionState.receipts.filter(r => r.decisionId === event.decisionId).at(-1);
+              if (receipt?.receiptId === event.receiptId) events.set(event.decisionId, event);
+            }
+            dataAvailable = true;
+          } catch (_) {}
+        }
+        routineReadingModule.organizeRoutineRecords(renderedDocument, {...progressView,events:[...events.values()],dataAvailable,record});
+      }
+      function renderProgress(record) {
+        const doc = renderedDocument;
+        if (!doc || frame.contentDocument !== doc || doc.URL !== "about:srcdoc" ||
+            lastVerified?.blob !== record.blob ||
+            doc.querySelector('meta[name="xuan-loader-render"]')?.content !== renderedToken) return;
+        const headings = doc.querySelectorAll('[data-decision-group-title="resolved"]');
+        if (headings.length !== 1 || headings[0].tagName !== "H2") return;
+        const heading = headings[0];
+        const panes = doc.querySelectorAll(".pane.p4");
+        if (panes.length !== 1 || !panes[0].contains(heading)) return;
+        const resolved = (record.decisionState?.decisions || []).filter(d => ["accepted", "modified"].includes(d.status));
+        const make = (tag, text, className) => {
+          const node = doc.createElement(tag);
+          if (text) node.textContent = text;
+          if (className) node.className = className;
+          return node;
+        };
+        if (progressView?.doc !== doc) {
+          // Never adopt or replace candidate-supplied elements by a class or
+          // reserved ID. Only this private map owns enhancement nodes.
+          const collision = ["xuan-progress-style", "xuan-progress-status", "xuan-progress-fold",
+            "xuan-progress-attention", "xuan-progress-nav-attention",
+            ...(record.decisionState?.decisions || []).map(d => `progress-${d.decisionId}`)]
+            .some(id => doc.getElementById(id));
+          const siblings = Array.from(heading.parentElement.children);
+          const headingIndex = siblings.indexOf(heading);
+          const nextHeadingIndex = siblings.findIndex((node, index) => index > headingIndex && node.tagName === "H2");
+          const originalCards = resolved.map(d => doc.getElementById(d.decisionId));
+          const invalidCards = originalCards.some((card, index) => !card || card.tagName !== "DETAILS" ||
+            card.parentElement !== heading.parentElement || siblings.indexOf(card) <= headingIndex ||
+            (nextHeadingIndex >= 0 && siblings.indexOf(card) >= nextHeadingIndex) ||
+            doc.querySelectorAll(`[id="${resolved[index].decisionId}"]`).length !== 1 ||
+            doc.querySelectorAll(`[data-decision-id="${resolved[index].decisionId}"]`).length !== 1 ||
+            card.getAttribute("data-decision-id") !== resolved[index].decisionId ||
+            card.getAttribute("data-decision-status") !== resolved[index].status);
+          const notice = make("p", "", "xuan-progress-status");
+          notice.setAttribute("role", "status");
+          heading.parentElement.append(notice);
+          progressView = {doc, notice, cards:new Map(), blocked:collision || invalidCards};
+          if (progressView.blocked) {
+            notice.textContent = "报告含冲突的进度标记；为保留原文，暂不增强此版。";
+            return;
+          }
+          notice.id = "xuan-progress-status";
+          const fold = make("details", "", "xuan-progress-fold"); fold.id = "xuan-progress-fold";
+          const summary = make("summary");
+          const title = make("span", "", "xuan-progress-title");
+          const attention = make("span", "", "xuan-progress-attention"); attention.id = "xuan-progress-attention";
+          attention.hidden = true;
+          const body = make("div", "", "xuan-progress-body");
+          heading.replaceWith(fold);
+          heading.textContent = "";
+          heading.append(title, attention);
+          summary.append(heading);
+          body.append(notice, ...originalCards);
+          fold.append(summary, body);
+          // A new report starts closed. Never set `open` during an ordinary
+          // refresh; the user's disclosure state belongs to this document.
+          Object.assign(progressView, {fold, summary, title, attention, body});
+          const navs = doc.querySelectorAll('label[for="s4"]');
+          if (navs.length === 1) {
+            const nav = navs[0];
+            const navAttention = make("span", "⚠", "xuan-progress-nav-attention");
+            navAttention.id = "xuan-progress-nav-attention"; navAttention.hidden = true;
+            navAttention.setAttribute("aria-hidden", "true");
+            nav.append(navAttention);
+            const inputs = doc.querySelectorAll('[id="s4"]');
+            const navInput = inputs.length === 1 && inputs[0].tagName === "INPUT" ? inputs[0] : null;
+            Object.assign(progressView, {nav, navAttention, navInput,
+              navOriginalLabel:nav.getAttribute("aria-label"), navInputOriginalLabel:navInput?.getAttribute("aria-label")});
+          }
+          const style = make("style"); style.id = "xuan-progress-style";
+          style.textContent = `
+            .xuan-progress-fold{margin:12px 0;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0}
+            .xuan-progress-fold>summary{min-height:48px;box-sizing:border-box;padding:12px;display:flex;align-items:center;gap:8px;cursor:pointer;list-style:none}
+            .xuan-progress-fold>summary::before{content:'▸';font-size:12px}
+            .xuan-progress-fold[open]>summary::before{content:'▾'}
+            .xuan-progress-fold>summary::after{display:none}
+            .xuan-progress-fold>summary::-webkit-details-marker{display:none}
+            .xuan-progress-fold>summary h2{font-size:15px;line-height:1.5;margin:0;flex:1;min-width:0;display:flex;align-items:center;flex-wrap:wrap;gap:6px 8px}
+            .xuan-progress-title{flex:1 1 180px;min-width:0}
+            .xuan-progress-fold>summary:focus-visible{outline:2px solid #876018;outline-offset:3px;border-radius:12px}
+            .xuan-progress-body{padding:0 10px 10px;min-width:0}
+            .xuan-progress-fold:not([open])>.xuan-progress-body{display:none}
+            .xuan-progress-attention{font-size:12px;line-height:1.5;color:var(--mut,#777);overflow-wrap:anywhere}
+            .xuan-needs-user{color:#754600!important;background:#fff3d6;border:1px solid #b7791f;border-radius:8px;padding:3px 7px}
+            .xuan-progress-nav-attention{font-size:12px;line-height:1.3;color:#754600;background:#fff3d6;border:1px solid #b7791f;border-radius:50%;padding:0 3px;flex:0 0 auto}
+            .xuan-progress-attention[hidden],.xuan-progress-nav-attention[hidden]{display:none}
+            .xuan-work{margin:12px 0;padding:12px;border:1px solid var(--line,#deddd8);border-radius:14px;min-width:0;overflow-wrap:anywhere}
+            .xuan-work h3{font-size:16px;margin:0 0 6px;line-height:1.5}
+            .xuan-work p{font-size:13px;line-height:1.6;margin:6px 0}
+            .xuan-work summary{min-height:44px;box-sizing:border-box;padding:11px 8px;font-size:13px;cursor:pointer}
+            .xuan-work details{margin:8px 0 0}
+            .xuan-work .xuan-work-meta,.xuan-progress-status{font-size:12px;color:var(--mut,#777);line-height:1.5}
+            .xuan-work-badge{display:inline-block;padding:2px 8px;border:1px solid var(--line,#999);border-radius:8px;font-size:12px;margin-bottom:4px}
+            .xuan-work-fields{padding:0 10px 10px}
+            @media(prefers-color-scheme:dark){.xuan-needs-user,.xuan-progress-nav-attention{color:#ffd58a!important;background:#3a2b0d;border-color:#ca9b43}}
+            @media print{.xuan-progress-body{display:block!important}.xuan-progress-fold,.xuan-work{break-inside:auto}.xuan-progress-nav-attention{display:none!important}}
+          `;
+          doc.head.append(style);
+        }
+        if (progressView.blocked) return;
+        const notice = progressView.notice;
+        notice.textContent = resolved.length ? progressMessage : "暂无需要跟进的已决定事项。";
+        const events = new Map();
+        if (progressLedger && progressFingerprint) {
+          try {
+            validateProgress(progressLedger, record.decisionState);
+            for (const event of progressLedger.events) {
+              const latestReceipt = record.decisionState.receipts.filter(r => r.decisionId === event.decisionId)
+                .sort((a,b) => Date.parse(a.recordedAtHkt)-Date.parse(b.recordedAtHkt) || a.receiptId.localeCompare(b.receiptId)).at(-1);
+              if (latestReceipt?.receiptId === event.receiptId) events.set(event.decisionId, event);
+            }
+          } catch (_) { notice.textContent = "落实进度暂不可用；原决定和报告仍保留。"; }
+        }
+        const matchesReport = event => event?.observedPair.sourceSha === record.meta.sourceSha && event?.observedPair.htmlBlob === record.blob;
+        const currentEvents = resolved.map(d => events.get(d.decisionId)).filter(matchesReport);
+        const approvals = currentEvents.filter(e => e.status === "awaiting_approval").length;
+        const actions = currentEvents.filter(e => e.status === "user_action_required").length;
+        const needsUser = approvals + actions;
+        const attentionText = [approvals ? `待你确认 ${approvals} 项` : '', actions ? `待你处理 ${actions} 项` : ''].filter(Boolean).join(' · ');
+        const historical = resolved.filter(d => events.has(d.decisionId) && !matchesReport(events.get(d.decisionId))).length;
+        const missing = resolved.filter(d => !events.has(d.decisionId)).length;
+        // Count the latest receipt-bound evidence only for this exact report.
+        // “已核验” covers the scope named by that event, not every future task;
+        // older evidence and missing records must never inflate this count.
+        const progressParts = [
+          ["evidence_recorded", "已核验"], ["in_progress", "核验中"],
+          ["not_started", "待安排"], ["blocked", "受阻"],
+          ["awaiting_approval", "待你确认"], ["user_action_required", "待你处理"]
+        ].flatMap(([status, label]) => {
+          const count = currentEvents.filter(event => event.status === status).length;
+          return count ? [`${label} ${count} 项`] : [];
+        });
+        if (currentEvents.length) {
+          if (historical) progressParts.push(`待复核 ${historical} 项`);
+          if (missing) progressParts.push(`未核实 ${missing} 项`);
+        }
+        progressView.title.textContent = progressParts.join(" · ") || `落实进度 ${resolved.length} 项`;
+        const attention = progressView.attention;
+        attention.className = "xuan-progress-attention" + (needsUser ? " xuan-needs-user" : "");
+        attention.textContent = !resolved.length ? "" : needsUser ? `⚠ ${attentionText}` : missing || !progressFingerprint ? "进度未核实" : historical ? "历史进度待复核" : "";
+        attention.hidden = !attention.textContent;
+        progressView.summary.setAttribute("aria-label", `${progressView.title.textContent}${attention.textContent ? '；'+attention.textContent : ''}`);
+        if (approvals) notice.textContent += `；另有 ${approvals} 项后续规则待你确认（不重复原决定，详见卡片）`;
+        if (actions) notice.textContent += `；另有 ${actions} 项需要你处理（不执行交易，详见卡片）`;
+        // Initial decisions and subsequent implementation requests remain
+        // separate counts. A technical blocker or stale evidence is not a
+        // new request for the user, even if its prose happens to mention Wu.
+        const pendingCount = (record.decisionState?.decisions || []).filter(d => d.status === "awaiting_user").length;
+        if (progressView.navAttention) {
+          progressView.navAttention.hidden = !(pendingCount || needsUser);
+          if (pendingCount || needsUser) {
+            const parts = [pendingCount ? `待决定 ${pendingCount} 项` : '', attentionText].filter(Boolean);
+            const navLabel = `待办：${parts.join('；')}；请选择待办查看`;
+            progressView.nav.setAttribute("aria-label", navLabel);
+            progressView.navInput?.setAttribute("aria-label", navLabel);
+            progressView.navAttention.setAttribute("title", parts.join('；'));
+          } else {
+            if (progressView.navOriginalLabel === null) progressView.nav.removeAttribute("aria-label");
+            else progressView.nav.setAttribute("aria-label", progressView.navOriginalLabel);
+            if (progressView.navInputOriginalLabel === null) progressView.navInput?.removeAttribute("aria-label");
+            else if (progressView.navInput) progressView.navInput.setAttribute("aria-label", progressView.navInputOriginalLabel);
+          }
+        }
+        const labels = {not_started:"待安排",in_progress:"处理中",blocked:"受阻 · 临时处理保留",awaiting_approval:"待你确认规则",user_action_required:"待你处理",evidence_recorded:"已有落实证据 · 持续观察"};
+        for (const [index, decision] of resolved.entries()) {
+          const card = doc.getElementById(decision.decisionId);
+          if (!card || card.tagName !== "DETAILS" ||
+              doc.querySelectorAll(`[id="${decision.decisionId}"]`).length !== 1 ||
+              card.getAttribute("data-decision-id") !== decision.decisionId ||
+              card.getAttribute("data-decision-status") !== decision.status) continue;
+          const event = events.get(decision.decisionId);
+          let owned = progressView.cards.get(decision.decisionId);
+          let wrapper = owned?.wrapper;
+          if (!wrapper && event) {
+            wrapper = make("section", "", "xuan-work"); wrapper.id = `progress-${decision.decisionId}`;
+            card.replaceWith(wrapper);
+            const original = make("details", "", "xuan-work-original");
+            original.append(make("summary", "原决定与回执（历史记录）"), card);
+            wrapper.append(original);
+            owned = {wrapper, panel:null, key:null};
+            progressView.cards.set(decision.decisionId, owned);
+          }
+          if (!wrapper) continue;
+          const old = owned.panel;
+          if (old && old.parentElement !== wrapper) continue;
+          // Keep open/scroll state if the ledger and observed report did not change.
+          const key = `${progressFingerprint || 'unavailable'}:${record.meta.sourceSha}:${record.blob}:${event?.eventId || 'missing'}:${progressMessage}`;
+          if (owned.key === key) continue;
+          const panel = make("div", "", "xuan-work-current");
+          if (!event) panel.append(make("p", "当前进度未核实；系统将自动重试。原决定保留在下方。"));
+          else {
+            const matched = matchesReport(event);
+            panel.append(make("h3", `${index + 1} · ${event.title}`));
+            panel.append(make("span", matched ? labels[event.status] : "历史进度 · 本期尚未复核", "xuan-work-badge" +
+              (matched && ["awaiting_approval", "user_action_required"].includes(event.status) ? " xuan-needs-user" : "")));
+            panel.append(make("p", event.summary));
+            const details = make("details");
+            if (old?.querySelector("details")?.hasAttribute("open")) details.setAttribute("open", "");
+            details.append(make("summary", "负责人 · 下一步 · 核对依据"));
+            const fields = make("div", "", "xuan-work-fields");
+            fields.append(make("p", `1. 负责人：${event.owner}`));
+            fields.append(make("p", `2. 下一步：${event.nextAction}`));
+            fields.append(make("p", `3. 阻碍／待确认：${event.blocker || '暂无'}`));
+            fields.append(make("p", `4. 核对依据：${event.evidence.join('；') || '尚无'}`));
+            fields.append(make("p", `5. 最近核对：${event.recordedAtHkt.replace('T',' ').replace('+08:00',' HKT')}；目标复核：${event.reviewAfterHkt.replace('T',' ').replace('+08:00',' HKT')}（不是自动运行承诺）`, "xuan-work-meta"));
+            fields.append(make("p", `对应回执：${event.receiptId}；事件：${event.eventId}`, "xuan-work-meta"));
+            if (!matched) fields.append(make("p", "证据对应较早报告；不代表本期数据已经复核。"));
+            details.append(fields); panel.append(details);
+          }
+          if (old) old.replaceWith(panel); else wrapper.prepend(panel);
+          owned.key = key; owned.panel = panel;
+        }
+        organizeProgressReading(record);
+      }
+
+      // Native closed details are opened only for printing, then restored.
+      // The report and receipt bytes remain untouched, and normal refreshes
+      // never expand disclosures on the user's behalf.
+      window.addEventListener("beforeprint", () => {
+        if (!progressView?.fold || progressView.doc !== renderedDocument || progressPrintState) return;
+        const nodes = [progressView.fold, ...progressView.fold.querySelectorAll("details")];
+        progressPrintState = nodes.map(node => [node, node.hasAttribute("open")]);
+        for (const [node] of progressPrintState) node.setAttribute("open", "");
+      });
+      window.addEventListener("afterprint", () => {
+        for (const [node, wasOpen] of progressPrintState || []) if (!wasOpen) node.removeAttribute("open");
+        progressPrintState = null;
+      });
+
+      async function refreshProgress(record, request) {
+        if (!record.decisionState?.decisions.some(d => ["accepted", "modified"].includes(d.status))) return;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 8000);
+        try {
+          const url = new URL("implementation-progress.json", location.href);
+          url.searchParams.set("v", `${loaderBuild}-${Date.now()}-${request}`);
+          const response = await fetch(url, {cache:"no-store",credentials:"omit",signal:controller.signal,redirect:"error"});
+          if (!response.ok) throw new Error("progress HTTP");
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          if (bytes.byteLength > 250000) throw new Error("progress size");
+          const data = validateProgress(parseProgressJson(decodeUtf8(bytes)), record.decisionState, progressLedger);
+          const fingerprint = await gitBlobSha(bytes);
+          if (request !== requestSequence || lastVerified?.blob !== record.blob) return;
+          progressLedger = data; progressFingerprint = fingerprint;
+          progressMessage = `落实进度已读取 · 版本 ${data.revision} · 只跟进规则与数据，不执行交易`;
+        } catch (_) {
+          if (request !== requestSequence) return;
+          // Keep the previous ledger only as an anti-rollback high-water mark.
+          progressMessage = "落实进度暂不可用；原决定和报告仍保留，系统将自动重试。";
+          progressFingerprint = null;
+        } finally {
+          window.clearTimeout(timeout);
+          if (request === requestSequence) renderProgress(record);
+        }
+      }
+
+      let privateEtfModule = null, privateEtfView = null, privateEtfSequence = 0;
+      let privateEtfPageActive = true;
+      function clearPrivateEtf() {
+        privateEtfSequence += 1;
+        // pagehide must clear synchronously, before a BFCache snapshot. If an
+        // import is still pending no mount has run, and its sequence is stale.
+        try { privateEtfView?.clearEtfTrend(renderedDocument); } catch (_) {}
+      }
+      async function refreshPrivateEtf(record) {
+        const doc = renderedDocument;
+        if (!doc?.querySelector('.pane.p5') || document.hidden || !privateEtfPageActive) return;
+        const sequence = ++privateEtfSequence;
+        const current = () => sequence === privateEtfSequence && !document.hidden && privateEtfPageActive &&
+          renderedDocument === doc && lastVerified?.blob === record.blob;
+        try {
+          if (!privateEtfModule) {
+            // Versioned like the mobile-display import: a shell bump must fetch the
+            // current card module, not the copy a phone cached last week.
+            const etfUrl = new URL('../scripts/xuan-ib-etf-trend-view.mjs', location.href);
+            etfUrl.searchParams.set('v', loaderBuild);
+            const pending = import(etfUrl.href);
+            privateEtfModule = pending;
+            pending.then(view => {
+              if (privateEtfModule === pending) privateEtfView = view;
+            }, () => {
+              // A transient module-fetch failure must not poison all later polls.
+              if (privateEtfModule === pending) privateEtfModule = null;
+            });
+          }
+          const view = await privateEtfModule;
+          if (current()) {
+            doc.getElementById('xuan-etf-load-status')?.remove();
+            await view.mountEtfTrend({doc,storage,baseUrl:location.href,isCurrent:current});
+          }
+        } catch (_) {
+          if (!current()) return;
+          let note = doc.getElementById('xuan-etf-load-status');
+          if (!note) {
+            note = doc.createElement('p'); note.id = 'xuan-etf-load-status';
+            doc.querySelector('.pane.p5').prepend(note);
+          }
+          note.textContent = 'ABC 比较暂未加载，系统将自动重试。';
+          /* Optional private comparison never blocks the trusted report. */
+        }
+      }
+      let mobileDisplayModule = null, mobileImportAttempt = 0;
+      const mobileDisplayStates = new WeakMap();
+      async function refreshMobileDisplay(record, {retry = false} = {}) {
+        const doc = renderedDocument;
+        const current = () => doc && renderedDocument === doc && lastVerified?.blob === record.blob &&
+          frame.contentDocument === doc && doc.URL === "about:srcdoc" &&
+          doc.querySelector('meta[name="xuan-loader-render"]')?.content === renderedToken;
+        if (!current()) return;
+        const prior = mobileDisplayStates.get(doc);
+        // Never double-apply a completed or partially failed DOM transformation.
+        // Only an import failure (which touched no report DOM) can retry here.
+        if (prior && !(retry && prior === 'import-failed')) return;
+        mobileDisplayStates.set(doc, 'loading');
+        const notice = text => {
+          if (!current()) return;
+          let node = doc.getElementById('xuan-mobile-layout-status');
+          if (!node) {
+            node = doc.createElement('p'); node.id = 'xuan-mobile-layout-status'; node.className = 'alert';
+            (doc.querySelector('.wrap') || doc.body).prepend(node);
+          }
+          node.textContent = text;
+        };
+        let view;
+        try {
+          if (!mobileDisplayModule) {
+            const mobileUrl = new URL('../scripts/xuan-ib-mobile-display.mjs', location.href);
+            mobileUrl.searchParams.set('v', loaderBuild);
+            mobileUrl.searchParams.set('attempt', String(++mobileImportAttempt));
+            const pending = import(mobileUrl.href);
+            mobileDisplayModule = pending;
+            pending.catch(() => { if (mobileDisplayModule === pending) mobileDisplayModule = null; });
+          }
+          view = await mobileDisplayModule;
+        } catch (_) {
+          mobileDisplayStates.set(doc, 'import-failed');
+          notice('简洁排版暂未加载，系统将自动重试；仍未恢复请重新打开页面。当前显示已验证报告。');
+          return;
+        }
+        if (!current()) return;
+        try {
+          doc.getElementById('xuan-mobile-layout-status')?.remove();
+          view.improveMobileDisplay(doc);
+          routineReadingModule = view;
+          mobileDisplayStates.set(doc, 'applied');
+          organizeProgressReading(record);
+        } catch (_) {
+          // A new document from a full page reload may start from canonical
+          // bytes. This partially modified document is never mutated twice.
+          mobileDisplayStates.set(doc, 'apply-failed');
+          notice('简洁排版未完成，请重新打开页面；已验证报告仍保留。');
+          console.warn('XUAN-IB display enhancement failed; reopen the page to retry safely');
+        }
+      }
+
+      function displayVerified(record) {
+        // Polling an unchanged publication must not collapse open cards,
+        // reset the active tab or interrupt the user's place in the report.
+        if (renderedBlob === record.blob && renderedDocument &&
+            frame.contentDocument === renderedDocument && renderedDocument.URL === "about:srcdoc" &&
+            renderedDocument.querySelector('meta[name="xuan-loader-render"]')?.content === renderedToken) return;
+        let section = null;
+        try { section = frame.contentDocument?.querySelector('input[name="sec"]:checked')?.id; } catch (_) {}
+        const sequence = ++renderSequence;
+        const token = `xuan-render-${sequence}`;
+        frame.onload = () => {
+          const doc = frame.contentDocument;
+          if (sequence !== renderSequence || lastVerified?.blob !== record.blob || !doc ||
+              doc.URL !== "about:srcdoc" ||
+              doc.querySelector('meta[name="xuan-loader-render"]')?.content !== token) {
+            if (sequence === renderSequence) renderedBlob = null;
+            return;
+          }
+          installTodoControls(doc, record);
+          renderedDocument = doc;
+          renderedToken = token;
+          renderProgress(record);
+          refreshPrivateEtf(record);
+          void refreshMobileDisplay(record);
+          if (/^s[1-5]$/.test(section || "")) {
+            const radio = doc.getElementById(section);
+            if (radio?.getAttribute("name") === "sec") radio.checked = true;
+          }
+        };
+        frame.setAttribute("sandbox", "allow-same-origin");
+        // The fixed page already owns the guide. Suppress only the embedded
+        // duplicate before first paint, even if optional layout imports fail.
+        // Standalone reports and the canonical/cached bytes stay unchanged.
+        const guideStyle = document.querySelector('.header-guide > summary') &&
+          document.querySelector('.header-guide .guide-body')
+          ? '<style id="xuan-embedded-guide-style">.page > .wrap > details.mobile-guide{display:none!important}</style>'
+          : '';
+        frame.srcdoc = record.protectedHtml.replace(/<head[^>]*>/i,
+          (head) => `${head}<meta name="xuan-loader-render" content="${token}">${guideStyle}`);
+        renderedBlob = record.blob;
+      }
+
+      const normalizeNotice = (notice) => typeof notice === "string"
+        ? {message:notice, error:Boolean(notice)}
+        : {message:notice?.message || "", error:Boolean(notice?.error)};
+
+      function applyNotice(notice) {
+        const value = normalizeNotice(notice);
+        warning.hidden = !value.message;
+        warning.textContent = value.message;
+        warning.classList.toggle("info", Boolean(value.message) && !value.error);
+        status.classList.toggle("error", Boolean(value.message) && value.error);
+      }
+
+      function renderVerified(record, prefix, notice = "") {
+        lastVerified = record;
+        updateDecisionControl(record);
+        displayVerified(record);
+        if (renderedDocument && frame.contentDocument === renderedDocument) refreshPrivateEtf(record);
+        applyNotice(notice);
+        status.textContent = statusFor(record, prefix);
+      }
+
+      function saveVerified(record) {
+        if (!storage) return;
+        try {
+          storage.setItem(storageKey, JSON.stringify({
+            cacheVersion: 1,
+            html: record.html,
+            meta: record.meta,
+            verifiedAt: Date.now()
+          }));
+        } catch (error) {
+          console.warn("XUAN-IB verified-page backup failed", error);
+        }
+      }
+
+      const buildParts = (value) => {
+        const match = /^(\d{4})-(\d{2})-(\d{2})\.(\d{1,4})$/.exec(value || "");
+        if (!match || !Number.isFinite(Date.parse(`${match[1]}-${match[2]}-${match[3]}T00:00:00Z`))) {
+          throw new Error("程序版本格式无效");
+        }
+        return [Number(`${match[1]}${match[2]}${match[3]}`), Number(match[4])];
+      };
+
+      async function checkAppBuild() {
+        if (document.hidden || buildCheckInFlight) return;
+        buildCheckInFlight = true;
+        lastBuildCheck = Date.now();
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 5_000);
+        try {
+          const url = new URL("app-build.json", location.href);
+          url.searchParams.set("v", String(Date.now()));
+          const response = await fetch(url, {cache:"no-store", credentials:"omit", signal:controller.signal});
+          if (!response.ok) throw new Error("程序版本暂不可读");
+          const manifest = await response.json();
+          if (!manifest || Object.keys(manifest).sort().join("|") !== "build|schemaVersion" ||
+              manifest.schemaVersion !== 1 || typeof manifest.build !== "string") {
+            throw new Error("程序版本清单无效");
+          }
+          const remote = buildParts(manifest.build), current = buildParts(loaderBuild);
+          if (remote[0] > current[0] || (remote[0] === current[0] && remote[1] > current[1])) {
+            availableBuild = manifest.build;
+            appUpdate.hidden = false;
+          }
+        } catch (error) {
+          // This optional check must never delay or invalidate a verified report.
+          console.warn("XUAN-IB app-version check failed", error);
+        } finally {
+          window.clearTimeout(timeout);
+          buildCheckInFlight = false;
+        }
+      }
+
+      async function restoreVerified(request) {
+        if (lastVerified || !storage) return Boolean(lastVerified);
+        try {
+          const raw = storage.getItem(storageKey);
+          if (!raw) return false;
+          const saved = JSON.parse(raw);
+          if (saved.cacheVersion !== 1 || typeof saved.html !== "string") return false;
+          const record = await verifyPair(new TextEncoder().encode(saved.html), saved.meta);
+          if (request !== requestSequence) return false;
+          renderVerified(record, "正在检查已发布报告", freshnessNotice(record));
+          return true;
+        } catch (error) {
+          try { storage.removeItem(storageKey); } catch (_) {}
+          console.warn("XUAN-IB saved verified page was rejected", error);
+          return false;
+        }
+      }
+
+      async function loadLatest({retryLayout = true} = {}) {
+        const request = ++requestSequence;
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 10_000);
+        lastAttempt = Date.now();
+        button.disabled = true;
+        if (retryLayout && lastVerified) void refreshMobileDisplay(lastVerified, {retry: true});
+        const restored = await restoreVerified(request);
+        if (request !== requestSequence) return;
+        if (lastVerified) {
+          // Checking is additive: neither starting a fetch nor receiving bytes
+          // proves freshness. Preserve an existing warning until pair verification.
+          const freshness = freshnessNotice(lastVerified);
+          if (freshness.message && (warning.hidden || warning.classList.contains("info"))) applyNotice(freshness);
+          else status.classList.toggle("error", !warning.hidden && !warning.classList.contains("info"));
+          status.textContent = statusFor(lastVerified, "正在检查已发布报告");
+        } else if (!restored) {
+          status.textContent = "正在检查已发布报告…";
+        }
+        try {
+          const token = `${loaderBuild}-${Date.now()}`;
+          const metaUrl = new URL("latest.meta.json", location.href);
+          const htmlUrl = new URL("latest.html", location.href);
+          metaUrl.searchParams.set("v", token);
+          htmlUrl.searchParams.set("v", token);
+          const options = { cache: "no-store", credentials: "omit", signal: controller.signal };
+          const [metaResponse, htmlResponse] = await Promise.all([
+            fetch(metaUrl, options),
+            fetch(htmlUrl, options)
+          ]);
+          if (!metaResponse.ok) throw new Error(`metadata HTTP ${metaResponse.status}`);
+          if (!htmlResponse.ok) throw new Error(`page HTTP ${htmlResponse.status}`);
+          const [meta, bytes] = await Promise.all([
+            metaResponse.json(),
+            htmlResponse.arrayBuffer()
+          ]);
+          const record = requireMonotonic(
+            await verifyPair(new Uint8Array(bytes), meta),
+            lastVerified
+          );
+          if (request !== requestSequence) return;
+          const verifiedAt = Date.now();
+          renderVerified(record, "已检查", freshnessNotice(record));
+          saveVerified(record);
+          lastSuccess = verifiedAt;
+          updateActiveWait(record, verifiedAt);
+          // Deliberately not awaited: a progress outage must never delay or
+          // invalidate a verified financial report, even on an unchanged blob.
+          void refreshProgress(record, request);
+          return record;
+        } catch (error) {
+          if (request !== requestSequence) return;
+          status.classList.add("error");
+          if (lastVerified) {
+            const freshness = freshnessNotice(lastVerified);
+            const fallback = "上游暂不一致，正在显示上一份已验证版本";
+            renderVerified(lastVerified, "显示上一份已验证版本",
+              {message:freshness.message ? `${freshness.message} ${fallback}` : fallback, error:true});
+            void refreshProgress(lastVerified, request);
+          } else {
+            warning.hidden = true;
+            status.textContent = "暂时无法读取已验证报告";
+            decisionButton.hidden = true;
+            frame.setAttribute("sandbox", "");
+            frame.srcdoc = "<!doctype html><meta name=viewport content='width=device-width,initial-scale=1'><style>body{font:16px -apple-system,sans-serif;padding:28px;color:#555}</style><p>暂时无法读取最新交接页，系统将自动重试。</p>";
+          }
+          if (activeWait() && !expireWaits()) {
+            if (decisionWait) showDecisionPending();
+          }
+          console.warn("XUAN-IB latest-page refresh failed", error);
+          return null;
+        } finally {
+          window.clearTimeout(timeout);
+          if (request === requestSequence) button.disabled = false;
+        }
+      }
+
+      // Retired on owner request: discard only obsolete ad-hoc wait state.
+      // Keep the verified report, decision responses and their polling intact.
+      try { storage?.removeItem(adhocWaitStorageKey); } catch (_) {}
+      restoreDecisionWait();
+      expireWaits();
+      if (decisionWait) showDecisionPending();
+      decisionButton.addEventListener("click", beginDecisionWait);
+      button.addEventListener("click", () => loadLatest({retryLayout: true}));
+      appUpdate.addEventListener("click", () => {
+        if (!availableBuild) return;
+        const url = new URL(location.href);
+        url.searchParams.delete("release");
+        url.searchParams.set("app", availableBuild);
+        location.href = url.href;
+      });
+      window.addEventListener("pagehide", () => {
+        privateEtfPageActive = false;
+        clearPrivateEtf();
+      });
+      window.addEventListener("pageshow", (event) => {
+        privateEtfPageActive = true;
+        if (lastVerified) refreshPrivateEtf(lastVerified);
+        expireWaits();
+        void checkAppBuild();
+        return loadLatest();
+      });
+      window.addEventListener("focus", () => {
+        if (activeWait() && !expireWaits()) return loadLatest();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) {
+          clearPrivateEtf();
+        } else if (lastVerified) refreshPrivateEtf(lastVerified);
+        if (!document.hidden) void checkAppBuild();
+        if (!document.hidden && activeWait() && !expireWaits()) return loadLatest();
+        if (!document.hidden && Date.now() - lastAttempt > 60_000) return loadLatest();
+      });
+      window.setInterval(() => {
+        if (activeWait() && !expireWaits()) return loadLatest();
+      }, waitPollMs);
+      window.setInterval(() => {
+        if (document.hidden) return;
+        const now = new Date(), context = hktContext(now), epoch = now.getTime() / 1000;
+        const businessDay = context.weekday >= 1 && context.weekday <= 5;
+        const inDeliveryWindow = businessDay &&
+          epoch >= reportSchedule.slotStartEpoch(context.date, "pm") &&
+          epoch <= reportSchedule.slotDueEpoch(context.date, "pm");
+        if (Date.now() - lastAttempt > (inDeliveryWindow ? 30_000 : 5 * 60_000)) loadLatest();
+        if (Date.now() - lastBuildCheck > 5 * 60_000) void checkAppBuild();
+      }, 30_000);
+    })();
+  </script>
+</body>
+</html>

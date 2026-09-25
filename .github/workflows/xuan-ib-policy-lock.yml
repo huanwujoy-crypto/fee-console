@@ -55,6 +55,23 @@ jobs:
             echo 'The pull-request file list is incomplete or exceeds the approved review size.' >&2
             exit 1
           fi
+          # `xuan-ib/index.html` is the stable phone loader. Report candidates
+          # also use that path on their unmerged candidate branches, but a PR
+          # must never merge those variable report bytes over the fixed entry.
+          if jq -e '.[][] | select(.filename == "xuan-ib/index.html")' "$files_json" >/dev/null; then
+            proposed_index="$RUNNER_TEMP/proposed-xuan-index.html"
+            gh api \
+              -H 'Accept: application/vnd.github.raw+json' \
+              "repos/$GITHUB_REPOSITORY/contents/xuan-ib/index.html?ref=${{ github.event.pull_request.head.sha }}" \
+              > "$proposed_index"
+            grep -Fq 'const loaderBuild = "' "$proposed_index"
+            grep -Fq 'new URL("latest.meta.json", location.href)' "$proposed_index"
+            grep -Fq 'new URL("latest.html", location.href)' "$proposed_index"
+            if grep -Eq '<!--[[:space:]]*xuan-ib-(handover:v1|night-action-v1:)' "$proposed_index"; then
+              echo 'A variable XUAN-IB report cannot replace the stable phone loader in a pull request.' >&2
+              exit 1
+            fi
+          fi
           protected_re='^(\.gitignore$|CLAUDE\.md|\.claude/rules/xuan-ib-handover\.md|claude/xuan-ib-etf-ledger-[^/]+\.json$|claude/(nightly-handover-spec-ADDENDUM-v916|xuan-ib-runtime-contract-v1|xuan-ib-compact-report-v1|xuan-ib-cash-first-plan-v1|xuan-ib-etf-abc-v1|xuan-ib-etf-trend-v2|xuan-ib-report-schedule-HKT-v1|xuan-ib-classification-authority-review-2026-08-31|xuan-ib-mrvl-t1-approval-2026-08-31|xuan-ib-policy-v2-approval-2026-09-01)\.md|claude/(xuan-ib-cash-identities-v1|xuan-ib-ai-tier-overrides-v1|xuan-ib-policy-v2)\.json$|\.github/(CODEOWNERS$|workflows/|actions/)|scripts/(handover-guard|xuan-ib-promotion|xuan-ib-loader|xuan-ib-decision-menu|build-xuan-decision-shortcut|xuan-ib-progress|xuan-ib-classification-audit|xuan-ib-classification-disclosure|xuan-ib-classification-correction|xuan-ib-cash-plan|xuan-ib-cash-plan-correction|xuan-ib-cash-identity|xuan-ib-mrvl-t1|xuan-ib-policy-page|xuan-ib-etf-pane|xuan-ib-etf-abc|xuan-ib-etf-ledger|xuan-ib-etf-ledger-leak-guard|xuan-ib-etf-trend|xuan-ib-etf-trend-envelope|xuan-ib-etf-trend-build|xuan-ib-etf-trend-view|xuan-ib-etf-summary-transport|xuan-ib-report-view|xuan-ib-report-prepare|xuan-ib-report-prepare-safety|xuan-ib-run-clock|xuan-ib-run-manifest|xuan-ib-report-schedule|xuan-ib-publish-health)\.(mjs|test\.mjs)$|xuan-ib/)'
           protected_re="${protected_re}|^scripts/(xuan-ib-git-identity-preflight|xuan-ib-source-adapter|xuan-ib-manual-consent|xuan-ib-manual-consent-integration|xuan-ib-order-view)\.(mjs|test\.mjs)$"
           protected_re="${protected_re}|^claude/xuan-ib-account-association[^/]*\.(json|md)$|^scripts/(xuan-ib-account-association|xuan-ib-account-association-publication|xuan-ib-account-association-integration)\.(mjs|test\.mjs)$"
