@@ -162,7 +162,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-09-24.1";
+      const loaderBuild = "2026-09-25.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -567,7 +567,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const action = html.match(/<header>[^]*?<p>(\d{4}-\d{2}-\d{2})\s*·\s*([^<]+)<\/p><\/header>/i);
           if (!action) throw new Error("行动版缺少报告日期与时点");
           const times = [...action[2].matchAll(/\b(\d{2}:\d{2})\b/g)].map((match) => match[1]);
-          return { dataDate: action[1], edition: "睡前版", label: `${action[1]} · 睡前行动版`, asOfHkt: times.at(-1) || null };
+          const preopen = action[1] >= "2026-09-28";
+          return { dataDate: action[1], edition: preopen ? "开市前版" : "睡前版",
+            label: `${action[1]} · ${preopen ? '开市前行动版' : '睡前行动版'}`, asOfHkt: times.at(-1) || null };
         }
         const match = html.match(/<span\s+class=["']date["'][^>]*>([\s\S]*?)<\/span>/i);
         if (!match) throw new Error("页面缺少报告日期与版次");
@@ -696,7 +698,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         const PM_RUN_TARGET_MS = 20 * 60 * 1000;
         const PM_SCHEDULE_CUTOVER_HKT_DATE = "2026-09-04";
         const PM_OPENING_CUTOVER_HKT_DATE = "2026-09-06";
+        const PREOPEN_CUTOVER_HKT_DATE = "2026-09-28";
         const AM_WATCH_CRON = "35 0 * * 2-6";
+        const PREOPEN_WATCH_CRON = "20 5 * * 1-5";
         const PM_WATCH_CRONS = Object.freeze(["55 13 * * 1-5", "55 14 * * 1-5"]);
         const LEGACY_PM_WATCH_CRONS = Object.freeze(["50 13 * * 1-5", "50 14 * * 1-5"]);
 
@@ -749,6 +753,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (edition === "am") return midnight / 1000; // 08:00 HKT = 00:00 UTC.
           // Historical PM evidence keeps the contract that actually applied that day.
           if (dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE) return midnight / 1000 + 12 * 3600 + 55 * 60;
+          if (dataDate >= PREOPEN_CUTOVER_HKT_DATE) return midnight / 1000 + 5 * 3600; // 13:00 HKT.
           return newYorkStartEpoch(dataDate);
         }
 
@@ -770,6 +775,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
             const date = day.toISOString().slice(0, 10), weekday = day.getUTCDay();
             for (const edition of EDITIONS) {
               if (editionFilter !== null && edition !== editionFilter) continue;
+              if (edition === "am" && date >= PREOPEN_CUTOVER_HKT_DATE) continue;
               if (edition === "am" ? weekday < 2 || weekday > 6 : weekday < 1 || weekday > 5) continue;
               const dueEpoch = slotDueEpoch(date, edition);
               if (dueEpoch <= nowEpoch && (!latest || dueEpoch > latest.dueEpoch)) latest = {date, edition, dueEpoch};
@@ -785,8 +791,11 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         // audited, not silently skipped for missing an exact wall-clock minute.
         function scheduledWatchEnabled(expression, now = new Date()) {
           const context = hktContext(now);
-          if (!expression || expression === AM_WATCH_CRON) return true;
+          if (!expression) return true;
+          if (expression === AM_WATCH_CRON) return context.date < PREOPEN_CUTOVER_HKT_DATE;
+          if (expression === PREOPEN_WATCH_CRON) return context.date >= PREOPEN_CUTOVER_HKT_DATE;
           if (![...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) throw new Error("unrecognized watcher schedule");
+          if (context.date >= PREOPEN_CUTOVER_HKT_DATE) return false;
           const minute = context.date < PM_OPENING_CUTOVER_HKT_DATE ? 50 : 55;
           const watch = new Date(newYorkStartEpoch(context.date, minute) * 1000);
           return expression === `${minute} ${watch.getUTCHours()} * * 1-5`;
@@ -795,7 +804,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         function scheduledWatchEdition(expression) {
           if (!expression) return null;
           if (expression === AM_WATCH_CRON) return "am";
-          if ([...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
+          if (expression === PREOPEN_WATCH_CRON || [...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
           throw new Error("unrecognized watcher schedule");
         }
 
@@ -805,16 +814,17 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       const hktContext = reportSchedule.hktContext;
       const expectedBusinessEdition = (now = new Date()) => {
         const expected = reportSchedule.expectedEditionAt(now, "pm");
-        if (!expected.expectedEdition) throw new Error("无法确定最近应完成的睡前版");
+        if (!expected.expectedEdition) throw new Error("无法确定最近应完成的行动版");
+        const preopen = expected.expectedDate >= "2026-09-28";
         return {dataDate:expected.expectedDate,edition:expected.expectedEdition,
           startEpoch:expected.startEpoch,dueEpoch:expected.dueEpoch,
-          label:"睡前版"};
+          label:preopen ? "开市前版" : "睡前版"};
       };
 
       const classifyEdition = (edition) => {
         const value = String(edition).toLowerCase();
         if (/计划外|加跑|补跑|临时|ad[ -]?hoc/.test(value)) return "adhoc";
-        if (/睡前|晚间|定时正式版|\bpm\b/.test(value)) return "pm";
+        if (/开市前|睡前|晚间|定时正式版|\bpm\b/.test(value)) return "pm";
         if (/早间|上午|早班|\bam\b/.test(value)) return "am";
         return "unknown";
       };
@@ -826,6 +836,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       const freshnessNotice = (record, now = new Date()) => {
         const actualEdition = classifyEdition(record.info.edition);
         const context = hktContext(now), nowEpoch = now.getTime() / 1000;
+        const preopen = context.date >= "2026-09-28";
         const businessDay = context.weekday >= 1 && context.weekday <= 5;
         if (businessDay) {
           const startEpoch = reportSchedule.slotStartEpoch(context.date, "pm");
@@ -833,9 +844,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if (nowEpoch >= startEpoch && nowEpoch < dueEpoch &&
               !(record.info.dataDate === context.date && actualEdition === "pm")) {
             if (record.info.dataDate === context.date && isSleepPriority(record)) {
-              return {message:"睡前速览已更新（持仓与挂单）；完整版待发布。", error:false};
+              return {message:preopen ? "行动速览已更新；完整版待发布。" : "睡前速览已更新（持仓与挂单）；完整版待发布。", error:false};
             }
-            return {message:`等待今晚睡前版；当前继续显示 ${record.info.dataDate} ${record.info.edition}。`, error:false};
+            return {message:preopen ? `正在生成开市前行动版；当前继续显示 ${record.info.dataDate} ${record.info.edition}。` : `等待今晚睡前版；当前继续显示 ${record.info.dataDate} ${record.info.edition}。`, error:false};
           }
         }
         const expected = expectedBusinessEdition(now);
@@ -843,10 +854,10 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           record.info.dataDate >= expected.dataDate;
         if (satisfiesExpected) return {message:"", error:false};
         if (record.info.dataDate === expected.dataDate && isSleepPriority(record)) {
-          return {message:"睡前速览已更新（持仓与挂单）；完整版发布延迟。", error:true};
+          return {message:preopen ? "行动速览已更新；完整版发布延迟。" : "睡前速览已更新（持仓与挂单）；完整版发布延迟。", error:true};
         }
         return {
-          message:`今晚睡前版发布延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。`,
+          message:preopen ? `开市前行动版发布延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。` : `今晚睡前版发布延迟，当前继续显示 ${record.info.dataDate} ${record.info.edition}（已验证）。`,
           error:true
         };
       };

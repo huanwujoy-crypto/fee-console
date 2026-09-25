@@ -14,8 +14,8 @@ const classes = [
   holding(7, '防御资产', 30, 'VGIT'), holding(8, '防御资产', 20, 'TLT'),
 ];
 const order = (id, side) => ({ order_id: id, order_status: 'NEW', order_type: 'LIMIT', side,
-  limit_price: '10.50', total_shares_qty: '100', cum_shares_qty: '0', remaining_shares_qty: '100',
-  primary_description: side === 'BUY' ? 'Buy 100 EXUS' : 'Sell 100 ABC', secondary_description: 'description',
+  limit_price: '10.50', total_shares_qty: '1', cum_shares_qty: '0', remaining_shares_qty: '1',
+  primary_description: side === 'BUY' ? 'Buy 1 EXUS' : 'Sell 1 ABC', secondary_description: 'description',
   order_time: '2026-09-20T13:30:00Z' });
 const input = {
   dataDate: '2026-09-24', asOfHkt: '2026-09-24 21:30–21:35 HKT', ordersAsOfHkt: '2026-09-24 21:32 HKT',
@@ -35,19 +35,22 @@ test('builds the entire nightly model from three IB and two Sharesight reads', (
   const model = buildNightActionModel(input);
   assert.equal(model.status, 'ready');
   assert.equal(model.cash.pool, 150);
-  assert.equal(model.cash.planning, 100);
+  assert.equal(model.cash.planning, 89.5);
+  assert.equal(model.cash.orderReserve, 10.5);
   assert.equal(model.orders.buys.length, 1);
   assert.equal(model.orders.sells.length, 1);
-  assert.equal(model.schemaVersion, 3);
+  assert.equal(model.schemaVersion, 4);
   assert.equal(model.orders.buys[0].currency, 'USD');
   assert.equal(model.orders.buys[0].ageDays, 4);
   assert.equal(model.orders.buys[0].distancePct, 5);
   assert.equal(model.orders.buys[0].trend.label, null);
   assert.equal(model.allocation.total, 1000);
+  assert.equal(model.allocation.projectedTotal, 1010.5);
+  assert.equal(model.allocation.categories.find(item => item.label === '非美发达').projectedMarketValue, 190.5);
   assert.deepEqual(model.cash.cashLike, { total: 90, items: [
     { symbol: 'VGSH', amount: 40 }, { symbol: 'VGIT', amount: 30 }, { symbol: 'TLT', amount: 20 },
   ] });
-  assert.equal(model.cash.totalCapacity, 190);
+  assert.equal(model.cash.totalCapacity, 179.5);
   assert.equal(model.replenishment.budget, model.replenishment.total + model.replenishment.retained);
   assert.equal(model.replenishment.items.reduce((sum, item) => sum + item.amount, 0), model.replenishment.total);
   assert.match(model.notes[0], /2026-09-24/);
@@ -91,5 +94,10 @@ test('sub-cent source precision is rounded only for the planning view', () => {
   });
   assert.equal(model.status, 'ready');
   assert.equal(model.cash.pool, 150);
-  assert.equal(model.cash.planning, 100);
+  assert.equal(model.cash.planning, 89.5);
+});
+
+test('requires the completed Sharesight source date selected by the pre-open run', () => {
+  assert.equal(buildNightActionModel({ ...input, expectedSourceDate: '2026-09-24' }).status, 'ready');
+  assert.throws(() => buildNightActionModel({ ...input, expectedSourceDate: '2026-09-23' }), /SOURCE_DATE_NOT_READY/);
 });

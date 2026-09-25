@@ -24,6 +24,8 @@ test('reads the exact owner custom group and excludes theme and defensive assets
   assert.equal(allocation.emerging, 120);
   assert.equal(allocation.ussc, 50);
   assert.equal(allocation.excludedValue, 170);
+  assert.equal(allocation.symbolGroups.EXUS, '非美发达');
+  assert.equal(allocation.symbolGroups.TLT, '防御资产');
   assert.deepEqual(allocation.cashLike, { total: 90, items: [
     { symbol: 'VGIT', amount: 70 }, { symbol: 'TLT', amount: 20 },
   ] });
@@ -45,4 +47,5 @@ test('unknown, ungrouped, duplicate and misplaced USSC rows fail closed', () => 
   assert.throws(() => parseSharesightStockAllocation(withHolding(holding(1, '美国底仓', 1, 'NEW'))), /INVALID_HOLDING/);
   assert.throws(() => parseSharesightStockAllocation({ report: { ...report, holdings: [holding(1, '美国科技', 1, 'USSC')] } }), /USSC_CLASS_MISMATCH/);
   assert.throws(() => parseSharesightStockAllocation(withHolding(holding(9, '主题投资', 1, 'TLT'))), /CASH_LIKE_CLASS_MISMATCH/);
+  assert.throws(() => parseSharesightStockAllocation(withHolding(holding(9, '新兴市场', 1, 'EXUS.NASDAQ'))), /SYMBOL_CLASS_CONFLICT/);
 });

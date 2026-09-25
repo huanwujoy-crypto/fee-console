@@ -18,9 +18,6 @@ const SHARESIGHT = '/Users/huanwu/.codex/skills/sharesight-portfolio-api/scripts
 const dateHkt = () => new Intl.DateTimeFormat('en-CA', {
   timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit',
 }).format(new Date());
-const dateMarket = () => new Intl.DateTimeFormat('en-CA', {
-  timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
-}).format(new Date());
 const timeHkt = () => new Date(Date.now() + 8 * 3_600_000).toISOString().slice(11, 16);
 const readJson = file => JSON.parse(fs.readFileSync(file, 'utf8'));
 
@@ -41,9 +38,10 @@ function currentReserve(date) {
   return eligible.at(-1).usd;
 }
 
-export async function runNightActionLivePreview({ out, date = dateMarket(), previousHtml = null }) {
+export async function runNightActionLivePreview({ out, date = dateHkt(), sourceDate, previousHtml = null }) {
   if (typeof out !== 'string' || !path.isAbsolute(out) || !/^\d{4}-\d{2}-\d{2}$/.test(date)
-    || date !== dateMarket()) throw new Error('INVALID_LIVE_PREVIEW_SCOPE');
+    || date !== dateHkt() || !/^\d{4}-\d{2}-\d{2}$/.test(sourceDate || '')
+    || sourceDate >= date) throw new Error('INVALID_LIVE_PREVIEW_SCOPE');
   const started = Date.now();
   const startedHkt = timeHkt();
   const root = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'xuan-action-'));
@@ -63,24 +61,25 @@ export async function runNightActionLivePreview({ out, date = dateMarket(), prev
   }
   const sharesightStarted = Date.now();
   const [grouped, noah] = await Promise.all([
-    Promise.resolve().then(() => sharesightPerformance('IB-HK', date, '83569')),
-    Promise.resolve().then(() => sharesightPerformance('NOAH-HK', date, 'investment_type')),
+    Promise.resolve().then(() => sharesightPerformance('IB-HK', sourceDate, '83569')),
+    Promise.resolve().then(() => sharesightPerformance('NOAH-HK', sourceDate, 'investment_type')),
   ]);
   const completedHkt = timeHkt();
-  const sourceAsOfHkt = `${date} ${startedHkt}–${completedHkt} HKT`;
+  const sourceAsOfHkt = `${date} ${startedHkt}–${completedHkt} HKT · 数据至 ${sourceDate}`;
   const model = buildNightActionModel({
     dataDate: date, asOfHkt: sourceAsOfHkt, ordersAsOfHkt: `${date} ${completedHkt} HKT`,
     ibAccountSummary: readJson(path.join(dir, 'ib.accountSummary.native.json')),
     ibPositions: readJson(path.join(dir, 'ib.positions.native.json')),
     ibOrders: readJson(path.join(dir, 'ib.orders.native.json')),
     ibGroupedPerformance: grouped, noahPerformance: noah, reserve: currentReserve(dateHkt()),
+    expectedSourceDate: sourceDate,
     previousHtml: previousHtml ?? (() => {
       const file = path.join(checkout, 'xuan-ib/latest.html');
       return fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
     })(),
   });
   fs.writeFileSync(out, renderNightActionReport(model), { encoding: 'utf8', flag: 'wx', mode: 0o600 });
-  return { status: model.status, dataDate: model.dataDate, out,
+  return { status: model.status, dataDate: model.dataDate, sourceDate, out,
     orderCount: model.orders.buys.length + model.orders.sells.length,
     replenishmentStatus: model.replenishment.status,
     elapsedSeconds: Math.round((Date.now() - started) / 100) / 10,
@@ -88,8 +87,9 @@ export async function runNightActionLivePreview({ out, date = dateMarket(), prev
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const [flag, out] = process.argv.slice(2);
-  if (flag !== '--out' || !out || process.argv.length !== 4) throw new Error('USAGE: --out ABSOLUTE_FILE');
-  const result = await runNightActionLivePreview({ out });
+  const [sourceFlag, sourceDate, outFlag, out] = process.argv.slice(2);
+  if (sourceFlag !== '--source-date' || !sourceDate || outFlag !== '--out' || !out || process.argv.length !== 6)
+    throw new Error('USAGE: --source-date YYYY-MM-DD --out ABSOLUTE_FILE');
+  const result = await runNightActionLivePreview({ sourceDate, out });
   process.stdout.write(`${JSON.stringify(result)}\n`);
 }

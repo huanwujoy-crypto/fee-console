@@ -4,7 +4,9 @@
 export const PM_RUN_TARGET_MS = 20 * 60 * 1000;
 export const PM_SCHEDULE_CUTOVER_HKT_DATE = "2026-09-04";
 export const PM_OPENING_CUTOVER_HKT_DATE = "2026-09-06";
+export const PREOPEN_CUTOVER_HKT_DATE = "2026-09-28";
 export const AM_WATCH_CRON = "35 0 * * 2-6";
+export const PREOPEN_WATCH_CRON = "20 5 * * 1-5";
 export const PM_WATCH_CRONS = Object.freeze(["55 13 * * 1-5", "55 14 * * 1-5"]);
 export const LEGACY_PM_WATCH_CRONS = Object.freeze(["50 13 * * 1-5", "50 14 * * 1-5"]);
 
@@ -57,6 +59,7 @@ export function slotStartEpoch(dataDate, edition) {
   if (edition === "am") return midnight / 1000; // 08:00 HKT = 00:00 UTC.
   // Historical PM evidence keeps the contract that actually applied that day.
   if (dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE) return midnight / 1000 + 12 * 3600 + 55 * 60;
+  if (dataDate >= PREOPEN_CUTOVER_HKT_DATE) return midnight / 1000 + 5 * 3600; // 13:00 HKT.
   return newYorkStartEpoch(dataDate);
 }
 
@@ -78,6 +81,7 @@ export function expectedEditionAt(now = new Date(), editionFilter = null) {
     const date = day.toISOString().slice(0, 10), weekday = day.getUTCDay();
     for (const edition of EDITIONS) {
       if (editionFilter !== null && edition !== editionFilter) continue;
+      if (edition === "am" && date >= PREOPEN_CUTOVER_HKT_DATE) continue;
       if (edition === "am" ? weekday < 2 || weekday > 6 : weekday < 1 || weekday > 5) continue;
       const dueEpoch = slotDueEpoch(date, edition);
       if (dueEpoch <= nowEpoch && (!latest || dueEpoch > latest.dueEpoch)) latest = {date, edition, dueEpoch};
@@ -93,8 +97,11 @@ export function expectedEditionAt(now = new Date(), editionFilter = null) {
 // audited, not silently skipped for missing an exact wall-clock minute.
 export function scheduledWatchEnabled(expression, now = new Date()) {
   const context = hktContext(now);
-  if (!expression || expression === AM_WATCH_CRON) return true;
+  if (!expression) return true;
+  if (expression === AM_WATCH_CRON) return context.date < PREOPEN_CUTOVER_HKT_DATE;
+  if (expression === PREOPEN_WATCH_CRON) return context.date >= PREOPEN_CUTOVER_HKT_DATE;
   if (![...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) throw new Error("unrecognized watcher schedule");
+  if (context.date >= PREOPEN_CUTOVER_HKT_DATE) return false;
   const minute = context.date < PM_OPENING_CUTOVER_HKT_DATE ? 50 : 55;
   const watch = new Date(newYorkStartEpoch(context.date, minute) * 1000);
   return expression === `${minute} ${watch.getUTCHours()} * * 1-5`;
@@ -103,6 +110,6 @@ export function scheduledWatchEnabled(expression, now = new Date()) {
 export function scheduledWatchEdition(expression) {
   if (!expression) return null;
   if (expression === AM_WATCH_CRON) return "am";
-  if ([...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
+  if (expression === PREOPEN_WATCH_CRON || [...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
   throw new Error("unrecognized watcher schedule");
 }
