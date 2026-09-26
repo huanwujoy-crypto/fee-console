@@ -124,8 +124,8 @@ test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight se
   assert.match(workflow, /workloadIdentityPools\/fee-console-github\/providers\/fee-console-main/);
   assert.match(workflow, /service_account: fee-cloud-producer@family-portfolio-gateway\.iam\.gserviceaccount\.com/);
   assert.match(workflow, /google-github-actions\/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262/);
-  assert.match(workflow, /sharesight-broker-sync-client-id\/versions\/1/);
-  assert.match(workflow, /sharesight-broker-sync-client-secret\/versions\/1/);
+  assert.match(workflow, /sharesight-broker-sync-client-id\/1/);
+  assert.match(workflow, /sharesight-broker-sync-client-secret\/1/);
   assert.match(workflow, /steps\.sharesight_credentials\.outputs\.client_id/);
   assert.match(workflow, /steps\.sharesight_credentials\.outputs\.client_secret/);
   assert.doesNotMatch(workflow, /secrets\.FEE_CLOUD_SHARESIGHT_CLIENT_/);
