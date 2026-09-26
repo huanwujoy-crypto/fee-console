@@ -23,14 +23,27 @@ Keep the local heartbeat active until one real cloud candidate has been
 validated, promoted and read back from Pages; then pause it to avoid two
 producers.
 
-## Environment secrets
+## Cloud identity and environment secrets
 
-The environment contains exactly these values:
+The workflow does not keep a Google service-account key or a Sharesight client
+credential in GitHub. GitHub OIDC is exchanged for the dedicated
+`fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com` identity.
+The Workload Identity provider accepts only this repository ID, owner ID,
+trusted workflow path, `main` ref and the `schedule` / `workflow_dispatch`
+events. That identity has Secret Manager accessor on exactly two version-pinned
+resources:
+
+- `sharesight-broker-sync-client-id:1`
+- `sharesight-broker-sync-client-secret:1`
+
+The pair is the second cloud Sharesight application already isolated from the
+Mac Direct API credential. The workflow reads it only after OIDC authentication
+and passes it to the fixed GET-only adapter for the duration of one job.
+
+The protected GitHub Environment therefore contains only these three values:
 
 | Secret | Purpose |
 | --- | --- |
-| `FEE_CLOUD_SHARESIGHT_CLIENT_ID` | Dedicated Sharesight API application ID |
-| `FEE_CLOUD_SHARESIGHT_CLIENT_SECRET` | Dedicated Sharesight API secret |
 | `FEE_DATA_KEY` | Existing 32-byte fee-console encryption key |
 | `FEE_ECON_GIST_ID` | Exact secret economic-ledger Gist locator |
 | `FEE_CLOUD_GITHUB_TOKEN` | Owner fine-grained token restricted to this repository and Contents write; used only in publish mode |
@@ -69,8 +82,10 @@ hashes; no amounts or credentials.
 
 ## One-time activation
 
-1. Create the protected environment and add the five secrets without printing
-   them in a terminal or chat.
+1. Create the protected environment with the three GitHub secrets above. Create
+   the repository- and workflow-bound Google Workload Identity provider and
+   grant its dedicated service account accessor only on the two version-pinned
+   Sharesight Secret Manager resources. Do not copy their values into GitHub.
 2. Set `FEE_CLOUD_MODE=shadow` and dispatch the workflow twice on completed US
    sessions. Compare dates, encrypted output hash and investor share results
    with the local producer.

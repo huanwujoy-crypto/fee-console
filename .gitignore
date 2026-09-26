@@ -4,3 +4,5 @@
 **/*private_ledger*
 **/*etf*ledger*.json
 !claude/xuan-ib-etf-ledger-public-genesis-v1.json
+# Short-lived Google credentials created and removed by google-github-actions/auth.
+gha-creds-*.json
