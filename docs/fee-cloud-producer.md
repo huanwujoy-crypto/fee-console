@@ -75,7 +75,7 @@ free text or a generic deposit/withdrawal does not pass that rule. A remaining
 bare deposit or withdrawal becomes unresolved unless the existing private
 ledger already contains its reviewed classification.
 
-The normal writer, fee receipt validator, amount-free health receipt, private
+The normal writer, fee receipt validator in amount-free `validate` mode, amount-free health receipt, private
 source recheck, signed candidate validation, protected promotion and Pages
 deployment are unchanged. Workflow summaries contain only dates, outcome and
 hashes; no amounts or credentials.

@@ -29,7 +29,10 @@ them; they are outside v1.
 4. The writer stores the receipt inside the existing encrypted v3 `data.json`
    payload. It does not copy the private ledger.
 5. `fee-receipt-report.mjs` and, in the separate UI phase, `index.html` validate and
-   consume that receipt. They do not recalculate it.
+   consume that receipt. They do not recalculate it. GitHub Actions may use only
+   the exact `--format=validate` mode, whose output is limited to a fixed success
+   label and the public ledger date; amount-bearing JSON and Markdown remain
+   refused there.
 
 ## Receipt contents
 

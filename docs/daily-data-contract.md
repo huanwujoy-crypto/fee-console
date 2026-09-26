@@ -360,7 +360,9 @@ writer/reporter 会认证 provenance 内原封套、比对原 payload 准确字�
 
 `scripts/fee-receipt-report.mjs` 是 Scheduled task 的只读出口。它只解密并验证回执，
 绝不重新计算。它必须读取同一份仍然有效的 private snapshot，完成 public + private 双重
-校验；在 `GITHUB_ACTIONS=true` 时于读取任何文件或 secret 前直接拒绝。回执缺失、hash
+校验；在 `GITHUB_ACTIONS=true` 时，JSON／Markdown 报告仍于读取任何文件或 secret 前直接
+拒绝。云端 producer 只能调用精确的 `--format=validate`，成功时仅输出固定状态和公开数据日，
+不得输出费用、收益或任何金额。回执缺失、hash
 不匹配、版本未知或数据不完整时以非零状态退出，且不输出任何费用数字。此时任务可报告
 原始 AUM/来源状态，但管理费、Carry、已付／应付及费用后收益必须显示“计算回执待更新”，
 不得用 endpoint average、旧截图、memory 或人工 override 补数。

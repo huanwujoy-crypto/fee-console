@@ -14,9 +14,12 @@ import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 const die = message => { console.error("error: " + message); process.exit(1); };
 const MAX_ECON_SNAPSHOT_BYTES = 5 * 1024 * 1024;
 
-// Never risk printing portfolio amounts to a GitHub Actions log.  This gate is
-// deliberately evaluated before arguments, secrets, or files are inspected.
-if (/^(?:1|true)$/i.test(String(process.env.GITHUB_ACTIONS || "").trim())) {
+// Never risk printing portfolio amounts to a GitHub Actions log. The one
+// exception is an exact validation-only request, which emits only a static
+// success label and the already-public ledger date. This gate is deliberately
+// evaluated before arguments, secrets, or files are inspected.
+const inGitHubActions = /^(?:1|true)$/i.test(String(process.env.GITHUB_ACTIONS || "").trim());
+if (inGitHubActions && !process.argv.slice(2).includes("--format=validate")) {
   die("fee receipt reporting is refused in GitHub Actions; no fee figures emitted");
 }
 
@@ -34,7 +37,7 @@ for (const arg of argv) {
 for (const key of Object.keys(args)) if (!new Set(["file", "format"]).has(key)) die(`unknown argument --${key}`);
 const file = args.file || "data.json";
 const format = args.format || "json";
-if (!new Set(["json", "markdown"]).has(format)) die("--format must be json or markdown");
+if (!new Set(["json", "markdown", "validate"]).has(format)) die("--format must be json, markdown or validate");
 
 const rawKey = String(process.env.FEE_DATA_KEY || "").trim();
 if (!/^[A-Za-z0-9_+/-]{43}={0,2}$/.test(rawKey)) die("FEE_DATA_KEY is unavailable or invalid");
@@ -132,7 +135,9 @@ const output = {
   balance: pick(receipt.balance, ["accruedCents", "paidCents", "dueCents"])
 };
 
-if (format === "json") {
+if (format === "validate") {
+  console.log(`receipt valid ${receipt.asOf}`);
+} else if (format === "json") {
   console.log(JSON.stringify(output));
 } else {
   const money = amount => `$${(amount / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
