@@ -20,12 +20,12 @@ def run():
     result=normalize(data,os.environ['IB_ACCOUNT_SHA256'])
     sha=result['coverage']['sha256']
     for suffix,body,ctype in [('xml',data,'application/xml'),
-        ('json',json.dumps(result).encode(),'application/json')]:
+        ('normalized-v2.json',json.dumps(result).encode(),'application/json')]:
         blob=bucket.blob(f'ib-source/{sha}.{suffix}')
         try:blob.upload_from_string(body,content_type=ctype,if_generation_match=0,timeout=60)
         except PreconditionFailed:pass # Content-addressed immutable object already exists.
     stamp=dt.datetime.now(dt.timezone.utc).isoformat()
-    receipt={'schemaVersion':1,'stage':'ib-source-verified','completedAt':stamp,
+    receipt={'schemaVersion':2,'normalizerVersion':'ib-only-assets-v2','stage':'ib-source-verified','completedAt':stamp,
         'dataThrough':result['coverage']['to'],'sourceSha256':sha,
         'elapsedSeconds':round(time.monotonic()-start,2),**result['diagnostics'],
         'weeklyReportComplete':False,'abcComplete':False}

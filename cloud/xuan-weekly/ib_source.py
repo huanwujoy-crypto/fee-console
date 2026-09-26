@@ -145,8 +145,14 @@ def normalize(data, account_hash):
         total = sum((v['usd'] for v in events.values() if v['date'] == day), Decimal(0))
         if abs(total - change['depositsWithdrawals']) > Decimal('1'):
             unresolved.add(day)
-        # In-kind and unexplained adjustments require source review, not a guessed cash flow.
-        if any(change[k] != 0 for k in ('assetTransfers','internalCashTransfers','paxosTransfers',
+        # Owner-approved IB-only boundary: official daily net in-kind value is
+        # external capital too. Do not add transfer-detail rows again.
+        if change['assetTransfers'] != 0:
+            unique(events, 'asset-transfer-'+day, {'date':day,
+                'usd':change['assetTransfers'], 'kind':'external',
+                'sourceKind':'asset-transfer-daily-net'}, 'conflicting_asset_transfer')
+        # Other unexplained adjustments still require source review.
+        if any(change[k] != 0 for k in ('internalCashTransfers','paxosTransfers',
               'excessFundSweep','debitCardActivity','billPay','donations','grantActivity','linkingAdjustments','other')):
             unresolved.add(day)
     for event in events.values():
@@ -157,5 +163,7 @@ def normalize(data, account_hash):
         'coverage':{'source':'ib-flex','currency':'USD','from':BASELINE,'to':cutoff,'verified':True,
                     'sha256':hashlib.sha256(data).hexdigest(),'unresolvedDates':sorted(unresolved),
                     'closedDates':[]},
-        'diagnostics':{'navDates':len(retained_nav),'externalFlows':len(events),'unresolvedDates':sorted(unresolved),
+        'diagnostics':{'navDates':len(retained_nav),'externalFlows':len(events),
+                       'assetTransferDays':sum(v.get('sourceKind')=='asset-transfer-daily-net' for v in events.values()),
+                       'unresolvedDates':sorted(unresolved),
                        'unknownTypes':sorted(unknown_types)}}

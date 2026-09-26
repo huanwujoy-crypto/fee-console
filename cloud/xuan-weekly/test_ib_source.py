@@ -26,7 +26,21 @@ class Tests(unittest.TestCase):
         self.assertEqual(normalize(sample(amount='99'),HASH)['diagnostics']['unresolvedDates'],[])
         self.assertEqual(normalize(sample(amount='90'),HASH)['diagnostics']['unresolvedDates'],['2026-08-03'])
     def test_asset_transfer(self):
-        self.assertEqual(normalize(sample(asset='40'),HASH)['diagnostics']['unresolvedDates'],['2026-08-03'])
+        for value in ('40','-40'):
+            r=normalize(sample(asset=value),HASH)
+            self.assertEqual(r['diagnostics']['unresolvedDates'],[])
+            self.assertEqual(r['diagnostics']['assetTransferDays'],1)
+            self.assertEqual(sum(f['usd'] for f in r['flows']),100+float(value))
+    def test_asset_transfer_duplicate_statements(self):
+        data=sample(asset='-40')
+        statement=data.split(b'<FlexStatement accountId=')[1].split(b'</FlexStatement>')[0]
+        data=data.replace(b'</FlexStatements>',b'<FlexStatement accountId='+statement+b'</FlexStatement></FlexStatements>')
+        r=normalize(data,HASH)
+        self.assertEqual(r['diagnostics']['assetTransferDays'],1)
+        self.assertEqual(sum(f['usd'] for f in r['flows']),60)
+    def test_other_adjustment_still_unresolved(self):
+        data=sample().replace(b'internalCashTransfers="0"',b'internalCashTransfers="40"')
+        self.assertEqual(normalize(data,HASH)['diagnostics']['unresolvedDates'],['2026-08-03'])
     def test_account(self):
         with self.assertRaisesRegex(SourceError,'wrong_account'):normalize(sample(),'a'*64)
     def test_nonfinite(self):
