@@ -1,0 +1,5 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'cloud/xuan-weekly/weekly.Dockerfile', '-t', 'asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/xuan-weekly-report:acceptance', '.']
+images:
+  - asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/xuan-weekly-report:acceptance

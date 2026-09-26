@@ -64,7 +64,16 @@ def fetch_quotes(cutoff):
             except Exception:
                 if attempt: raise SourceError('quote_network_'+symbol) from None
                 time.sleep(3)
-        parsed=parse(json.loads(raw),symbol,cutoff)
-        for day,item in parsed.items(): quotes[day][symbol]=item
         evidence[symbol]={'sha256':hashlib.sha256(raw).hexdigest(),'payload':json.loads(raw)}
-    return quotes,evidence
+    # Latest common verified close, never a made-up price for the requested day.
+    # Only a trailing gap of at most three calendar days is tolerated.
+    target=dt.date.fromisoformat(cutoff)
+    for lag in range(4):
+        actual=(target-dt.timedelta(days=lag)).isoformat()
+        try:
+            parsed={s:parse(evidence[s]['payload'],s,actual) for s in SYMBOLS}
+            quotes={d:{s:parsed[s][d] for s in SYMBOLS} for d in parsed[SYMBOLS[0]]}
+            return quotes,evidence,actual
+        except SourceError as e:
+            if not str(e).startswith('missing_close_') or not str(e).endswith(actual): raise
+    raise SourceError('quotes_stale_over_three_days')
