@@ -110,7 +110,7 @@ export async function produce(options = {}) {
     const writer = run("daily.mjs", baseArgs, env);
     const after = sha256(fs.readFileSync(dataFile));
     const outcome = verifyWriterOutcome(before, after, writer, targetDate);
-    run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=json"], env);
+    run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
     run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
       `--target-date=${targetDate}`, `--source-schwab=${input.sourceDates.schwab}`,
       `--source-webull=${input.sourceDates.webull}`, `--source-benchmark=${input.benchmark.sourceDate}`,

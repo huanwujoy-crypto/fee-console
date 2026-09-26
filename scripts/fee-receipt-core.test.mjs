@@ -614,6 +614,14 @@ test("the report refuses GitHub Actions, missing private proof, and changed priv
   assert.equal(actions.stdout, "");
   assert.match(actions.stderr, /refused in GitHub Actions/);
 
+  const validationOnly = spawnSync(process.execPath, [reportCli, `--file=${encrypted.target}`, "--format=validate"], {
+    encoding: "utf8",
+    env: { ...process.env, GITHUB_ACTIONS: "true", FEE_DATA_KEY: encrypted.key, FEE_ECON_FILE: encrypted.econTarget }
+  });
+  assert.equal(validationOnly.status, 0);
+  assert.match(validationOnly.stdout, /^receipt valid \d{4}-\d{2}-\d{2}\n$/);
+  assert.doesNotMatch(validationOnly.stdout, /\$|management|carry|pnl|accrued|paid|due/i);
+
   const noPrivate = spawnSync(process.execPath, [reportCli, `--file=${encrypted.target}`], {
     encoding: "utf8",
     env: { ...process.env, GITHUB_ACTIONS: "", FEE_DATA_KEY: encrypted.key, FEE_ECON_FILE: "" }
