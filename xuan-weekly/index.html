@@ -7,28 +7,20 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="XUAN 周報">
   <meta name="theme-color" content="#f3f7f8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; manifest-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta name="robots" content="noindex, nofollow">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; frame-src https://storage.googleapis.com; manifest-src 'self'; base-uri 'none'; form-action 'none'">
   <link rel="manifest" href="./manifest.webmanifest">
   <title>XUAN 周報</title>
   <style>
     * { box-sizing: border-box; }
-    body { margin: 0; min-height: 100vh; background: #f3f7f8; color: #172329; font: 17px/1.65 -apple-system, BlinkMacSystemFont, sans-serif; padding: calc(28px + env(safe-area-inset-top)) 20px calc(28px + env(safe-area-inset-bottom)); }
-    main { max-width: 480px; margin: 8vh auto 0; padding: 28px 24px; border: 1px solid #dce4e7; border-radius: 24px; background: white; }
-    h1 { margin: 0 0 8px; font-size: 26px; }
-    p { color: #52636b; margin: 12px 0; }
-    .open { display: block; margin: 26px 0 22px; padding: 15px; border-radius: 14px; background: #17634b; color: white; text-align: center; text-decoration: none; font-weight: 700; }
-    .open:focus-visible { outline: 3px solid #ba6b00; outline-offset: 4px; }
-    .hint { font-size: 14px; }
+    body { margin: 0; background: #f3f7f8; font: 14px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+    iframe { display: block; width: 100%; height: calc(100vh - 44px - env(safe-area-inset-top)); height: calc(100dvh - 44px - env(safe-area-inset-top)); margin-top: env(safe-area-inset-top); border: 0; }
+    footer { height: 44px; padding: 10px; text-align: center; }
+    a { color: #225b69; }
   </style>
 </head>
 <body>
-  <main>
-    <h1>XUAN 周報</h1>
-    <p>每週記錄與分析</p>
-    <a class="open" href="https://storage.cloud.google.com/family-portfolio-gateway-xuan-weekly-private/weekly/latest.html" target="_blank" rel="noopener noreferrer">查看最新周報 ↗</a>
-    <p>使用原有 Google 帳號登入。報告是否更新，以報告內的資料日期為準。</p>
-    <p class="hint">安裝：在此頁點 Safari「分享」→「加入主畫面」。請勿在跳轉後的報告頁安裝。</p>
-    <p class="hint">此入口不儲存財務資料，也不會重新產生報告。</p>
-  </main>
+  <iframe title="XUAN 周報" src="https://storage.googleapis.com/family-portfolio-gateway-xuan-weekly-public/weekly/latest.html" sandbox="" referrerpolicy="no-referrer"></iframe>
+  <footer><a href="./">重新載入</a> · <a href="https://storage.googleapis.com/family-portfolio-gateway-xuan-weekly-public/weekly/latest.html" target="_blank" rel="noopener noreferrer">報告未顯示？直接開啟</a></footer>
 </body>
 </html>

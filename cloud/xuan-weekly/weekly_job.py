@@ -11,6 +11,7 @@ import uuid
 from ib_source import fetch, normalize, SourceError, NoRedirect
 from quotes import fetch_quotes,calendar
 from latest import publish_latest
+from public_entry import publish_public
 
 GATEWAY='https://family-portfolio-gateway-6ikas4b3ma-df.a.run.app'
 ACCOUNTS={'IB-HK':936247,'Schwab-HK':936249,'Webull':1350094}
@@ -29,7 +30,8 @@ def run():
     from google.cloud import storage
     start=time.monotonic(); now=lambda:dt.datetime.now(dt.timezone.utc).isoformat()
     if os.environ['WEEKLY_BUCKET']!='family-portfolio-gateway-xuan-weekly-private':raise SourceError('wrong_bucket')
-    bucket=storage.Client().bucket(os.environ['WEEKLY_BUCKET'])
+    client=storage.Client()
+    bucket=client.bucket(os.environ['WEEKLY_BUCKET'])
     stamp=now();prefix='weekly/'+stamp+'-'+uuid.uuid4().hex+'/'
     def save(name,body,kind='application/json'):
         if not isinstance(body,(str,bytes)):body=json.dumps(body)
@@ -76,6 +78,9 @@ def run():
         latest_status=publish_latest(bucket,bundle['html'],started_at=stamp,
             risk_date=cutoff,abc_date=abc_cutoff,source=prefix+'report.html')
         receipt['latestEntryStatus']=latest_status
+        if os.environ.get('WEEKLY_PUBLIC_BUCKET'):
+            receipt['publicEntryStatus']=publish_public(client,os.environ['WEEKLY_PUBLIC_BUCKET'],
+                bundle['html'],started_at=stamp,risk_date=cutoff,abc_date=abc_cutoff)
         save('publication.json',receipt);print(json.dumps(receipt),flush=True)
         return 0
     except Exception as error:
