@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from './xuan-weekly-build.mjs';
+import {ordinaryStockConcentrations,familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
 function fixture(){
   const date='2026-08-03', stamp='2026-08-04T01:00:00Z';
   const sharesight=[936247,936249,1350094].map(id=>({status:'ok',startedAt:stamp,completedAt:stamp,raw:{result:{mode:'read_only',
@@ -17,6 +18,14 @@ function fixture(){
 test('complete weekly artifact has no overview or old method wording',()=>{
   const r=build(fixture());assert.equal(r.receipt.complete,true);assert.equal(r.receipt.abcRows,4);
   assert.match(r.html,/不扣待 CALL/);assert.match(r.html,/ABC · 同资金路径/);assert.doesNotMatch(r.html,/<h2>持仓|<h2>总览/);
+  assert.match(r.html,/href="#concentration"/);assert.match(r.html,/id="concentration"/);
+  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/累计 TWR/);assert.match(r.html,/未加回/);
+});
+test('weekly concentration opt-in includes Berkshire variants and amount without changing daily defaults',()=>{
+ const rows=['BRK-B','BRK.B','BRK/B'].map(symbol=>({symbol,status:'excluded',assetType:'STK',marketValueCents:'20000'}));
+ assert.deepEqual(familyOrdinaryConcentrations(rows,'1000000'),[]);
+ const out=ordinaryStockConcentrations(rows,'1000000',{aboveHundredths:100n,includeBerkshire:true});
+ assert.equal(out.length,1);assert.equal(out[0].label,'BRK.B');assert.equal(out[0].marketValueCents,'60000');assert.equal(out[0].percent,6);
 });
 test('previous private identity records survive subsequent run',()=>{
   const f=fixture(),first=build(f);f.previousRecords=first.records;

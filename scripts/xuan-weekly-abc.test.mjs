@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildWeeklyAbc, METHOD} from './xuan-weekly-abc.mjs';
+import {periodReturns} from './fee-engine.mjs';
 const symbols=['CSPX','EXUS','EIMI','USSC'];
 function fixture(){
   const quotes={};
@@ -30,3 +31,10 @@ test('baseline cannot use a later day',()=>{const f=fixture();f.nav.shift();asse
 test('unresolved cash evidence stops comparison',()=>{const f=fixture();f.coverage.unresolvedDates=['2026-08-03'];assert.equal(buildWeeklyAbc(f).result.stop.date,'2026-08-03');});
 test('missing quote is not a holiday',()=>{const f=fixture();delete f.quotes['2026-08-03'];assert.throws(()=>buildWeeklyAbc(f),/evidence/);});
 test('source window must cover cutoff',()=>{const f=fixture();f.coverage.to='2026-08-02';assert.throws(()=>buildWeeklyAbc(f),/coverage/);});
+test('weekly A matches fee application gross daily TWR for identical NAV and flows',()=>{
+ const f=fixture();f.cutoff='2026-08-04';f.coverage.to=f.cutoff;f.nav[1].usd=1600;f.nav.push({date:f.cutoff,usd:1680});
+ f.quotes[f.cutoff]=Object.fromEntries(symbols.map(s=>[s,{status:'close',date:f.cutoff,usd:105,source:'synthetic'}]));
+ const fee=periodReturns({points:[{d:'2026-08-01',tot:1000},{d:'2026-08-02',tot:1000},{d:'2026-08-03',tot:1600},{d:f.cutoff,tot:1680}],openT:1000,from:'2026-08-01',to:f.cutoff,days:4,flowByDate:{'2026-08-03':500},rate:.02,cr:.2,cumBefore:0,hwmBefore:0,feesBefore:0});
+ const weekly=buildWeeklyAbc(f).result.rows.at(-1).index.A/100-1;
+ assert(Math.abs(weekly-fee.rG)<1e-12);assert(Math.abs(weekly-.155)<1e-12);
+});
