@@ -15,7 +15,8 @@ export function build(input){
   for(const receipt of input.sharesight)receipt.rawFingerprint=fingerprint(receipt.raw);
   const previousTrustedHtml=input.previousRecords
     ?`<template id="xuan-ib-ai-tier-records-v1" type="application/json">${JSON.stringify(input.previousRecords).replace(/</g,'\\u003c')}</template>`:null;
-  const envelope=buildAiRiskInputFromCapture(input,{previousTrustedHtml});
+  const registry=JSON.parse(fs.readFileSync(new URL('../claude/xuan-ib-portfolio-registry.json',import.meta.url),'utf8'));
+  const envelope=buildAiRiskInputFromCapture(input,{previousTrustedHtml,registry});
   if(envelope.provenance.some(p=>p.reportCutoffDate!==input.riskCutoff))throw Error('risk_cutoff_mismatch');
   const coverage=buildAiTierCoverage(envelope.riskConstituents);
   const pressure=computeAiPressure(envelope.riskConstituents,coverage,{denominator:envelope.riskDenominator});

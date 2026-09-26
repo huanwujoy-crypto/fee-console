@@ -49,7 +49,8 @@ def run():
         for name in ACCOUNTS:
             begin=now();raw=get('/v1/performance',{'portfolio':name,'start_date':cutoff,'end_date':cutoff,
                                                 'grouping':'investment_type','include_sales':'false'})
-            receipts.append({'status':'ok','startedAt':begin,'completedAt':now(),'raw':raw})
+            if raw.get('mode')!='read_only':raise SourceError('gateway_not_read_only')
+            receipts.append({'status':'ok','startedAt':begin,'completedAt':now(),'raw':{'result':raw}})
         save('sharesight.json',receipts)
         previous=None
         # Only successful immutable bundles contain records.json. No shared
