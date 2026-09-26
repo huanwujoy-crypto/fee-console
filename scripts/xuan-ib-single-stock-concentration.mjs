@@ -10,7 +10,7 @@ const moneyFromCents=value=>{
   return `${whole}.${fraction}`;
 };
 
-export function ordinaryStockConcentrations(rows,denominatorCents,{aboveHundredths=-1n}={}) {
+export function ordinaryStockConcentrations(rows,denominatorCents,{aboveHundredths=-1n,includeBerkshire=false}={}) {
   const denominator=String(denominatorCents??'').trim();
   if(!Array.isArray(rows)||!/^\d+$/.test(denominator)||denominator==='0'||typeof aboveHundredths!=='bigint')return [];
   const base=BigInt(denominator),totals=new Map();
@@ -20,9 +20,9 @@ export function ordinaryStockConcentrations(rows,denominatorCents,{aboveHundredt
     // explicitly excluded; only non-stock assets and BRK.B are omitted.
     if(!row||!['classified','excluded'].includes(row.status)||!/^\d+$/.test(String(row.marketValueCents??'')))continue;
     const symbol=normalize(row.symbol),namespace=String(row.namespace??'').trim().toUpperCase();
-    if(!/^[A-Z0-9.]+$/.test(symbol)||symbol==='BRK.B')continue;
+    if(!/^[A-Z0-9.]+$/.test(symbol)||(symbol==='BRK.B'&&!includeBerkshire))continue;
     const assetType=String(row.assetType??'').trim().toUpperCase();
-    const ordinary=assetType?assetType==='STK':namespace==='AUTO'||REVIEWED_ORDINARY_STOCKS.has(symbol);
+    const ordinary=assetType?assetType==='STK':namespace==='AUTO'||REVIEWED_ORDINARY_STOCKS.has(symbol)||(includeBerkshire&&symbol==='BRK.B');
     if(!ordinary)continue;
     const cents=BigInt(row.marketValueCents);if(cents<=0n)continue;
     const key=symbol==='GOOGL'?'GOOG':symbol;
