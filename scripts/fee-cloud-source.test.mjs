@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { verifyWriterOutcome } from "./fee-cloud-producer.mjs";
@@ -114,4 +115,18 @@ test("cloud producer accepts the real updated and no-op writer contracts", () =>
   assert.equal(verifyWriterOutcome("a".repeat(64), "a".repeat(64), "no-op 2026-09-24", "2026-09-24"), "no-op");
   assert.throws(() => verifyWriterOutcome("a".repeat(64), "b".repeat(64),
     "no-op 2026-09-24", "2026-09-24"), /FEE_CLOUD_WRITER_OUTCOME/);
+});
+
+test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight secrets", () => {
+  const workflow = fs.readFileSync(new URL("../.github/workflows/fee-cloud-producer.yml", import.meta.url), "utf8");
+  assert.match(workflow, /permissions:\n  contents: read\n  id-token: write/);
+  assert.match(workflow, /google-github-actions\/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093/);
+  assert.match(workflow, /workloadIdentityPools\/fee-console-github\/providers\/fee-console-main/);
+  assert.match(workflow, /service_account: fee-cloud-producer@family-portfolio-gateway\.iam\.gserviceaccount\.com/);
+  assert.match(workflow, /google-github-actions\/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262/);
+  assert.match(workflow, /sharesight-broker-sync-client-id\/versions\/1/);
+  assert.match(workflow, /sharesight-broker-sync-client-secret\/versions\/1/);
+  assert.match(workflow, /steps\.sharesight_credentials\.outputs\.client_id/);
+  assert.match(workflow, /steps\.sharesight_credentials\.outputs\.client_secret/);
+  assert.doesNotMatch(workflow, /secrets\.FEE_CLOUD_SHARESIGHT_CLIENT_/);
 });

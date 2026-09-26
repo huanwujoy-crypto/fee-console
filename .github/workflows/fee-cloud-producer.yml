@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: fee-cloud-producer
@@ -27,6 +28,21 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Exchange the trusted workflow identity for short-lived Google credentials
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+
+      - name: Read the isolated cloud Sharesight credentials
+        id: sharesight_credentials
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/versions/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/versions/1
+
       - name: Read the independent benchmark cache
         shell: bash
         run: |
@@ -40,8 +56,8 @@ jobs:
         id: producer
         shell: bash
         env:
-          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ secrets.FEE_CLOUD_SHARESIGHT_CLIENT_ID }}
-          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ secrets.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.sharesight_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.sharesight_credentials.outputs.client_secret }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
         run: |
