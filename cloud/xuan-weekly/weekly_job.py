@@ -10,6 +10,7 @@ import urllib.request
 import uuid
 from ib_source import fetch, normalize, SourceError, NoRedirect
 from quotes import fetch_quotes,calendar
+from latest import publish_latest
 
 GATEWAY='https://family-portfolio-gateway-6ikas4b3ma-df.a.run.app'
 ACCOUNTS={'IB-HK':936247,'Schwab-HK':936249,'Webull':1350094}
@@ -69,7 +70,13 @@ def run():
         receipt={**bundle['receipt'],'completedAt':now(),'elapsedSeconds':round(time.monotonic()-start,2),
             'requestedCutoff':cutoff,'quotesLagDays':(dt.date.fromisoformat(cutoff)-dt.date.fromisoformat(abc_cutoff)).days,
             'privateReportObject':prefix+'report.html','htmlSha256':hashlib.sha256(bundle['html'].encode()).hexdigest()}
-        save('receipt.json',receipt);print(json.dumps(receipt),flush=True)
+        save('receipt.json',receipt)
+        # Only publish after the immutable successful report and receipt exist.
+        # IAM permits replacement of this exact object, not the archive.
+        latest_status=publish_latest(bucket,bundle['html'],started_at=stamp,
+            risk_date=cutoff,abc_date=abc_cutoff,source=prefix+'report.html')
+        receipt['latestEntryStatus']=latest_status
+        save('publication.json',receipt);print(json.dumps(receipt),flush=True)
         return 0
     except Exception as error:
         code=str(error) if isinstance(error,SourceError) else type(error).__name__

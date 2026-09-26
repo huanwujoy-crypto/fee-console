@@ -37,4 +37,6 @@
 - HTML 只有风险和 ABC 两部分，无总览、持仓列表。数据日分开显示。Google 登录后的对象链接可访问，不能把重定向临时凭据链接作为固定入口。
 - 专用 Cloud Run Job 为 `xuan-weekly-report`；单任务、零重试、600 秒上限。手动验收通过前不启用 Scheduler。
 - 拟用 Cloud Scheduler：`0 10 * * 0`、`Asia/Hong_Kong`；专用触发身份仅允许运行此 Job，不能读源凭据。正式启用须遵守仓库日程审批边界。
+- 固定入口为私密 bucket 的 `weekly/latest.html`，仍须 Google 身份验证。新一期完整 HTML 和成功回执均保存后才更新；使用 generation 条件写入，拒绝较早运行或数据日倒退覆盖。缓存为 private/no-store。失败时不覆盖入口，页面保留上一期实际数据日期；不宣称旧页能实时显示后台故障。
+- 固定入口运行权限仅增加对对象 `projects/_/buckets/family-portfolio-gateway-xuan-weekly-private/objects/weekly/latest.html` 的替换能力；历史目录不得获得覆盖或删除权限。不得设置 public 访问。权限与实际部署须另行读回核验，代码提交不是上线证据。
 - 本轮完整试跑 26.55 秒，风险 38 行，ABC 56 个日记录。风险截止 9 月 25 日，ABC 截止 9 月 24 日。完成计算不等同于已经开启定时任务。
