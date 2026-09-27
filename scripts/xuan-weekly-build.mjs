@@ -1,6 +1,7 @@
 // Private weekly artifact. No broker writes and no public publication.
 import fs from 'node:fs';
 import {buildWeeklyAbc} from './xuan-weekly-abc.mjs';
+import {buildWeeklyAudit,renderWeeklyAudit} from './xuan-weekly-audit.mjs';
 import {buildAiRiskInputFromCapture} from './xuan-ib-ai-risk-input.mjs';
 import {buildAiTierCoverage} from './xuan-ib-ai-tier-coverage.mjs';
 import {computeAiPressure} from './xuan-ib-ai-pressure.mjs';
@@ -12,6 +13,7 @@ const usd=v=>Number(v).toLocaleString('en-US',{maximumFractionDigits:0});
 export function build(input){
   const abc=buildWeeklyAbc(input.abc);
   if(abc.result.stop)throw Error('abc_stopped_'+abc.result.stop.date);
+  const audit=buildWeeklyAudit(input.abc,abc);
   for(const receipt of input.sharesight)receipt.rawFingerprint=fingerprint(receipt.raw);
   const previousTrustedHtml=input.previousRecords
     ?`<template id="xuan-ib-ai-tier-records-v1" type="application/json">${JSON.stringify(input.previousRecords).replace(/</g,'\\u003c')}</template>`:null;
@@ -40,8 +42,12 @@ export function build(input){
   <section id="risk"><h2>AI 压力 · 中情景</h2><div class="big">${(pressure.ratio*100).toFixed(2)}%</div><p class="muted">IB、嘉信及 Webull · 压力金额排序</p>${ai}<details><summary>说明</summary><p>采用现有已批准系数。分母含三账户现金；低、高情景系数未齐，不作推算。此指标不是预测亏损。来源为 Sharesight 已记录数据。</p><p>未纳入 AI 敞口：${pressure.rows.filter(r=>r.status==='excluded').map(r=>esc(r.symbol)).join('、')}</p></details></section>
   <section id="concentration"><h2>单票集中度</h2><p class="muted">三账户合计 · 超过 1% · 含 BRK.B</p>${concentration.map(r=>`<div class="line"><span>${esc(r.label)}<br><small>$${usd(Number(r.marketValueCents)/100)}</small></span><b>${r.percent.toFixed(2)}%</b></div>`).join('')||'<p>没有超过 1% 的单票</p>'}</section>
   <section id="abc"><h2>ABC · 同资金路径</h2><p class="muted">2026-08-01 起 · IB 单账户</p><div class="row3 muted"><span>方案</span><span>累计表现</span><span>期末金额</span></div>${['A','B','C'].map(k=>`<div class="row3 line"><span>${names[k]}</span><b>${(end.index[k]-100).toFixed(2)}%</b><b>$${usd(end.endingUsd[k])}</b></div>`).join('')}<details><summary>计算说明</summary><p>以 7 月 31 日收盘为期初。仅计 IB，不加 NOAH，不扣待 CALL。现金及证券转仓按 IB 记录作同日同额调整；采用日终近似，非结算结果。</p><p>B：CSPX 60%、EXUS 23%、EIMI 12%、USSC 5%；C：CSPX 100%。不每日再平衡。B/C 为事后模拟，行情采用 USD 日收盘价。</p></details></section><p class="muted">私密记录 · 不下单、不转账</p></main></html>`;
-  const displayHtml=html.replace('累计表现','累计 TWR').replace('采用日终近似，非结算结果。','逐日收益＝（当日资产－当日净入金）÷前日资产－1，再逐日连乘；与管理费的组合毛 TWR 使用相同的日终现金流调整方法。用于比较管理表现，非结算结果。').replace('不每日再平衡。B/C 为事后模拟，行情采用 USD 日收盘价。','不每日再平衡。B/C 为事后模拟，行情采用 USD 日收盘价，非保证收益。A 保留 IB 资产中已发生的费用，不另扣模拟管理费；如账户已实扣管理费，本表未加回，故不标为严格毛收益。比较需兼顾风险和观察期长短。');
-  return {html:displayHtml,abc,pressure,records:coverage.entries,diagnostics:envelope.diagnostics,
+  const displayHtml=html.replace('累计表现','累计 TWR')
+    .replace('<style>','<style>.audit-scroll{overflow-x:auto}.audit-table{width:100%;border-collapse:collapse;font-size:14px;font-variant-numeric:tabular-nums}.audit-table th,.audit-table td{text-align:right;white-space:nowrap;padding:9px 8px;border-bottom:1px solid #edf0f2}.audit-table th:first-child,.audit-table td:first-child{text-align:left}')
+    .replace('<details><summary>计算说明</summary>',`${renderWeeklyAudit(audit)}<details><summary>计算说明</summary>`)
+    .replace('采用日终近似，非结算结果。','剔除入出金影响，交易成本已计入。逐日收益＝（当日资产－当日净流入）÷前日资产－1，再逐日连乘；与管理费的组合毛 TWR 使用相同的日终现金流调整方法。用于比较管理表现，非结算结果。')
+    .replace('不每日再平衡。B/C 为事后模拟，行情采用 USD 日收盘价。','不每日再平衡。B/C 为事后模拟，采用 ETF 美元收盘价，不另估佣金、个人税费及现金利息；A 保留 IB 实际成本，不另扣模拟管理费。用户已确认 IB 未实扣管理费或业绩提成。比较需兼顾风险和观察期长短。</p><p>B/C 四只 ETF 均为累积型（Accumulating）：基金内部税后分红再投资已反映在价格中，不重复加分红，也不再扣一次 15%。15% 是用户指定的现金派息模拟税率，不是所有底层市场的统一税率；当前无独立派息可再次计税。若以后改用派息型，须另核对现金分红、扣税及再投资，不能直接沿用此价格口径。');
+  return {html:displayHtml,abc,audit,pressure,records:coverage.entries,diagnostics:envelope.diagnostics,
     receipt:{complete:true,cutoff:input.abc.cutoff,abcRows:abc.result.rows.length,riskRows:pressure.rows.length,
       riskMidAvailable:pressure.scenarios.mid.available,previousManifest:envelope.previousManifest}};
 }

@@ -14,6 +14,27 @@
 
 ## 云端边界
 
+### 2026-09-27 资金记录与可复算展示
+
+用户同意自动展示 IB 出入金和逐日计算，并确认未在 IB 实扣管理费或业绩提成。
+保留累计 TWR；交易成本计入，不另扣模拟管理费。独立核算器逐日核对三方案收益连乘，
+同时从期初价格重放 B/C 份额及资金调整，并要求与现有引擎每日期末误差小于半美分。
+正式页只输出日期、现金/证券分类、金额、ETF 模拟数值；不输出完整账号、交易 ID、
+原始描述或凭据。原 XML、完整流水及来源证据继续只存私密 bucket。
+现金入金/出金与证券每日净转仓分别汇总，不能把证券净转出称为现金提款。
+
+分红：当前 CSPX、EXUS 1C、EIMI、USSC 均为 accumulating/capitalizing share class。
+实际基金价格已经包含内部税后收入再投资，不再叠加现金分红或统一扣一次 15%。
+用户提出的 15% 税率仅作为未来独立现金派息模拟的假设；不是所有国家底层股息的
+统一税率，也不据此伪造基金内部派息流水。现阶段不更换标的或回报定义。
+行情请求包含 dividend/split events；若累积型出现现金派息事件，则要求复核，不能
+忽略分红或直接使用已调整价格再重复计税。官方收入处理依据（2026-09-27 核对）：
+
+- CSPX: https://www.ishares.com/uk/professionals/en/products/253743/ishares-sp-500-b-ucits-etf-acc-fund
+- EIMI: https://www.ishares.com/uk/professionals/en/products/264659/ishares-core-msci-em-imi-ucits-etf
+- EXUS 1C: https://etf.dws.com/download/asset/7abc744c-aaf2-48f8-8e28-6384d2233cc8
+- USSC: https://www.ssga.com/uk/en_gb/institutional/etfs/state-street-spdr-msci-usa-small-cap-value-weighted-ucits-etf-zprv-gy
+
 用户已批准专用运行身份、指定 Secret 读取、私密对象存储及每周日 10:00 Asia/Hong_Kong 调度。先完成手动云端验收再启用调度。无 IB/Sharesight 写入或交易权限，不向公开仓库提交原始数据。
 
 运行凭据须单独验证能力：REST 网关读取凭据不能被认为等同于 MCP OAuth 的写入授权。只有固定 GET 路径进入周报。

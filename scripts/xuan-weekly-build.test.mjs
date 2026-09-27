@@ -19,7 +19,9 @@ test('complete weekly artifact has no overview or old method wording',()=>{
   const r=build(fixture());assert.equal(r.receipt.complete,true);assert.equal(r.receipt.abcRows,4);
   assert.match(r.html,/不扣待 CALL/);assert.match(r.html,/ABC · 同资金路径/);assert.doesNotMatch(r.html,/<h2>持仓|<h2>总览/);
   assert.match(r.html,/href="#concentration"/);assert.match(r.html,/id="concentration"/);
-  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/累计 TWR/);assert.match(r.html,/未加回/);
+  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/累计 TWR/);assert.match(r.html,/未实扣管理费/);
+  assert.match(r.html,/资金记录 · IB 自动读取/);assert.match(r.html,/计算过程与逐日核算/);
+  assert.match(r.html,/不再扣一次 15%/);assert.match(r.html,/现金入金/);
 });
 test('weekly concentration opt-in includes Berkshire variants and amount without changing daily defaults',()=>{
  const rows=['BRK-B','BRK.B','BRK/B'].map(symbol=>({symbol,status:'excluded',assetType:'STK',marketValueCents:'20000'}));
