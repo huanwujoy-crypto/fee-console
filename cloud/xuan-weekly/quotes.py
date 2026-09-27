@@ -25,6 +25,10 @@ def parse(payload, symbol, cutoff):
             or meta['exchangeName']!='LSE' or meta['instrumentType']!='ETF'):
             raise ValueError()
         if result.get('events',{}).get('splits'): raise SourceError('split_review_required')
+        # All four approved share classes accumulate income inside NAV. An
+        # unexpected cash distribution requires review, not silently lost income
+        # or a second 15% tax on dividends already embedded in the ETF price.
+        if result.get('events',{}).get('dividends'): raise SourceError('distribution_review_required')
         times=result['timestamp']; closes=result['indicators']['quote'][0]['close']
         if len(times)!=len(closes): raise ValueError()
         values={}
@@ -52,7 +56,7 @@ def fetch_quotes(cutoff):
     end=int(dt.datetime.combine(days[-1]+dt.timedelta(days=1),dt.time(),dt.timezone.utc).timestamp())
     start=int(dt.datetime(2026,7,30,tzinfo=dt.timezone.utc).timestamp())
     for symbol in SYMBOLS:
-        url=f'https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.L?period1={start}&period2={end}&interval=1d&events=splits'
+        url=f'https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.L?period1={start}&period2={end}&interval=1d&events=div%2Csplits'
         request=urllib.request.Request(url,headers={'User-Agent':'XUAN-Weekly-ReadOnly/1.0'})
         raw=None
         for attempt in range(2):

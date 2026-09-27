@@ -20,4 +20,7 @@ class Tests(unittest.TestCase):
     def test_split(self):
         f=fixture();f['chart']['result'][0]['events']={'splits':{'a':{}}}
         with self.assertRaisesRegex(SourceError,'split_review'):parse(f,'CSPX','2026-08-03')
+    def test_unexpected_distribution_is_not_ignored_or_double_taxed(self):
+        f=fixture();f['chart']['result'][0]['events']={'dividends':{'a':{'amount':1}}}
+        with self.assertRaisesRegex(SourceError,'distribution_review'):parse(f,'CSPX','2026-08-03')
 if __name__=='__main__':unittest.main()
