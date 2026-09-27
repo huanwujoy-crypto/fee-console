@@ -12,6 +12,7 @@ from ib_source import fetch, normalize, SourceError, NoRedirect
 from quotes import fetch_quotes,calendar
 from latest import publish_latest
 from public_entry import publish_public
+from ai_history import select_comparison
 
 GATEWAY='https://family-portfolio-gateway-6ikas4b3ma-df.a.run.app'
 ACCOUNTS={'IB-HK':936247,'Schwab-HK':936249,'Webull':1350094}
@@ -55,21 +56,27 @@ def run():
             if raw.get('mode')!='read_only':raise SourceError('gateway_not_read_only')
             receipts.append({'status':'ok','startedAt':begin,'completedAt':now(),'raw':{'result':raw}})
         save('sharesight.json',receipts)
-        previous=None
-        # Only successful immutable bundles contain records.json. No shared
-        # mutable latest pointer: retries cannot overwrite a newer report.
-        blobs=[b for b in bucket.list_blobs(prefix='weekly/') if b.name.endswith('/bundle.json')]
-        if blobs:
-            prior=json.loads(max(blobs,key=lambda b:b.name).download_as_bytes())
-            previous=prior['records']
+        previous=None;exposure_history=[];history_warning=False
+        # Archive comparison is optional; it must not block current source data.
+        try:blobs=[b for b in bucket.list_blobs(prefix='weekly/') if b.name.endswith('/bundle.json')]
+        except Exception:blobs=[];history_warning=True
+        for index,blob in enumerate(sorted(blobs,key=lambda b:b.name,reverse=True)):
+            # Bound archive reads; missing comparison never blocks this report.
+            if index>=30:break
+            try:prior=json.loads(blob.download_as_bytes())
+            except Exception:history_warning=True;continue
+            if previous is None:previous=prior.get('records')
+            if prior.get('aiExposure'):exposure_history.append(prior['aiExposure'])
+            if select_comparison(cutoff,exposure_history):break
         request={'abc':{**ib,'cutoff':abc_cutoff,'quotes':q},'sharesight':receipts,
-                 'riskCutoff':cutoff,'previousRecords':previous}
+                 'riskCutoff':cutoff,'previousRecords':previous,
+                 'previousExposure':select_comparison(cutoff,exposure_history)}
         result=subprocess.run(['node','scripts/xuan-weekly-build.mjs'],input=json.dumps(request),
                               capture_output=True,text=True,timeout=60,check=False)
         if result.returncode:raise SourceError('weekly_calculation_failed:'+result.stderr[:200])
         bundle=json.loads(result.stdout);save('bundle.json',bundle)
         save('report.html',bundle['html'],'text/html; charset=utf-8')
-        receipt={**bundle['receipt'],'completedAt':now(),'elapsedSeconds':round(time.monotonic()-start,2),
+        receipt={**bundle['receipt'],'comparisonHistoryWarning':history_warning,'completedAt':now(),'elapsedSeconds':round(time.monotonic()-start,2),
             'requestedCutoff':cutoff,'quotesLagDays':(dt.date.fromisoformat(cutoff)-dt.date.fromisoformat(abc_cutoff)).days,
             'privateReportObject':prefix+'report.html','htmlSha256':hashlib.sha256(bundle['html'].encode()).hexdigest()}
         save('receipt.json',receipt)
