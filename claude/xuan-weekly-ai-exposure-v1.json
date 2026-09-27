@@ -1,0 +1,27 @@
+{
+  "methodId": "weekly-ai-related-holdings-v1",
+  "reviewedOn": "2026-09-27",
+  "reviewBy": "2026-12-27",
+  "description": "Weekly-only business classification, not a revenue allocation, shock coefficient or trading rule. Full market value of confirmed related ordinary stocks; ETFs require dated constituent evidence. Unreviewed assets are pending, never automatic T1.",
+  "stocks": [
+    {"id":"523742","symbols":["AAOI"],"issuer":"AAOI","group":"infrastructure","source":"https://appliedoptoelectronics.gcs-web.com/","reason":"Data-centre optical connectivity; also supplies non-AI markets."},
+    {"id":"1879420","symbols":["AVGO"],"issuer":"AVGO","group":"infrastructure","source":"https://investors.broadcom.com/news-releases/news-release-details/broadcom-inc-announces-third-quarter-fiscal-year-2026-financial","reason":"AI semiconductor and networking supplier; not pure AI revenue."},
+    {"id":"1893267","symbols":["BE"],"issuer":"BE","group":"infrastructure","source":"https://www.bloomenergy.com/news/bloom-energy-and-oracle-expand-strategic-partnership-to-deploy-up-to-2-8-gw-to-accelerate-ai-infrastructure-build-out/","reason":"Power supply for AI/cloud data-centre buildout; other customers remain."},
+    {"id":"1753523","symbols":["VST"],"issuer":"VST","group":"infrastructure","source":"https://vistracorp.com/vistra-and-meta-a-smart-scalable-nuclear-partnership/","reason":"AI-related power demand and long-term data-centre contracts; not wholly dependent on AI."},
+    {"id":"2240178","symbols":["IREN"],"issuer":"IREN","group":"infrastructure","source":"https://iren.gcs-web.com/news-releases/news-release-details/iren-reports-fy26-results","reason":"AI cloud/data-centre capacity buildout; bitcoin activity is not treated as AI revenue."},
+    {"id":"670422","symbols":["GOOG"],"issuer":"GOOG / GOOGL","group":"platform","source":"https://www.sec.gov/Archives/edgar/data/1652044/000165204426000066/googexhibit991q22026.htm","reason":"AI/cloud alongside advertising and other established businesses."},
+    {"id":"24449","symbols":["GOOGL"],"issuer":"GOOG / GOOGL","group":"platform","source":"https://www.sec.gov/Archives/edgar/data/1652044/000165204426000066/googexhibit991q22026.htm","reason":"Same issuer as GOOG; combined across share classes and accounts."},
+    {"id":"24651","symbols":["MSFT"],"issuer":"MSFT","group":"platform","source":"https://www.microsoft.com/en-us/investor/earnings/fy-2026-q4/metrics","reason":"AI/cloud alongside productivity, software and other established businesses."},
+    {"id":"516542","symbols":["ORCL"],"issuer":"ORCL","group":"platform","source":"https://investor.oracle.com/investor-news/news-details/2026/Oracle-Announces-Q1-Results-Driven-by-Triple-Digit-Growth-in-Cloud-Infrastructure-Revenues/default.aspx","reason":"AI/cloud infrastructure alongside database and application businesses; this group is not a low-risk rating."},
+    {"id":"21531","symbols":["BRK.B","BRK/B","BRK-B"],"issuer":"BRK.B","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed diversified-business classification. Still included in single-stock concentration."},
+    {"id":"2262313","symbols":["APO"],"issuer":"APO","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed other-business classification; indirect financing exposure is not a quantified AI allocation."},
+    {"id":"1889982","symbols":["KKR"],"issuer":"KKR","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed other-business classification; indirect financing exposure is not a quantified AI allocation."}
+  ],
+  "etfSnapshots": [],
+  "notes": [
+    "No legacy 80/55/5 coefficients or static ETF percentages are used.",
+    "TSLA, MSTR, TSEM and any other unlisted identity stay pending review; no old tier is silently inherited.",
+    "ETF snapshots must contain issuer source URL, asOf, fund instrumentId and constituent weights in basis points. No snapshots have yet passed that evidence gate.",
+    "Classification is reviewed every three months or on a new holding. Past-review dates produce visible pending coverage, not silent carry-forward."
+  ]
+}
