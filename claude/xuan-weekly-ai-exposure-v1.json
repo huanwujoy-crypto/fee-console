@@ -15,13 +15,90 @@
     {"id":"516542","symbols":["ORCL"],"issuer":"ORCL","group":"platform","source":"https://investor.oracle.com/investor-news/news-details/2026/Oracle-Announces-Q1-Results-Driven-by-Triple-Digit-Growth-in-Cloud-Infrastructure-Revenues/default.aspx","reason":"AI/cloud infrastructure alongside database and application businesses; this group is not a low-risk rating."},
     {"id":"21531","symbols":["BRK.B","BRK/B","BRK-B"],"issuer":"BRK.B","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed diversified-business classification. Still included in single-stock concentration."},
     {"id":"2262313","symbols":["APO"],"issuer":"APO","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed other-business classification; indirect financing exposure is not a quantified AI allocation."},
-    {"id":"1889982","symbols":["KKR"],"issuer":"KKR","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed other-business classification; indirect financing exposure is not a quantified AI allocation."}
+    {"id":"1889982","symbols":["KKR"],"issuer":"KKR","group":"other","source":"claude/xuan-ib-ai-risk-tiers-v1.json","reason":"Prior reviewed other-business classification; indirect financing exposure is not a quantified AI allocation."},
+    {"id":"28132","symbols":["TSEM"],"issuer":"TSEM","group":"infrastructure","source":"https://towersemi.com/2026/02/05/02052026/","reason":"Silicon photonics for NVIDIA AI data-centre networking; whole-company sensitivity, not pure AI revenue."},
+    {"id":"24977","symbols":["TSLA"],"issuer":"TSLA","group":"platform","source":"https://www.sec.gov/Archives/edgar/data/1318605/000162828026049270/tsla-20260630.htm","reason":"Real-world AI in autonomous driving and robotics alongside automotive and energy; not an infrastructure supplier or low-risk classification."},
+    {"id":"34421","symbols":["MSTR"],"issuer":"MSTR","group":"other","source":"https://www.strategy.com/investor-relations","reason":"Bitcoin treasury is the principal investment exposure. The analytics software business does not justify treating the entire company as AI. Not a zero-risk assessment."},
+    {"id":"2751250","symbols":["HODL"],"assetTypes":["COMMODITY"],"issuer":"21shares HODL","group":"other","source":"https://www.21shares.com/en-eu/product/hodl","reason":"21shares Crypto Basket Index ETP, CH0445689208, matched to the reviewed EURONEXT/SIX HODL identity. Not the US VanEck HODL fund. Crypto basket, not AI company equity."},
+    {"id":"1984796","symbols":["SGOV"],"assetTypes":["ETF"],"issuer":"SGOV","group":"other","source":"https://www.blackrock.com/us/individual/products/314116/ishares-0-3-month-treasury-bond-etf","reason":"US Treasury 0-3 month mandate, not AI equity. Interest-rate and market risks remain."},
+    {"id":"1703456","symbols":["TLT"],"assetTypes":["ETF"],"issuer":"TLT","group":"other","source":"https://www.ishares.com/us/products/239454/ishares-20-year-treasury-bond-etf","reason":"US Treasury 20+ year mandate, not AI equity; material duration risk is not erased."},
+    {"id":"432472","symbols":["VGIT"],"assetTypes":["ETF"],"issuer":"VGIT","group":"other","source":"https://advisors.vanguard.com/investments/products/vgit/vanguard-intermediate-term-treasury-etf.html","reason":"Intermediate US Treasury mandate, not AI equity."},
+    {"id":"432502","symbols":["VGSH"],"assetTypes":["ETF"],"issuer":"VGSH","group":"other","source":"https://advisors.vanguard.com/investments/products/vgsh/vanguard-short-term-treasury-etf","reason":"Short-term US Treasury mandate, not AI equity."},
+    {"id":"22272","symbols":["GLD"],"assetTypes":["ETF"],"issuer":"GLD","group":"other","source":"https://www.spdrgoldshares.com/usa/gld/","reason":"Physical gold price less expenses; not gold-miner equity or AI equity."},
+    {"id":"49187","symbols":["SLV"],"assetTypes":["ETF"],"issuer":"SLV","group":"other","source":"https://www.ishares.com/us/products/239855/ishares-silver-trust-fund","reason":"Physical silver trust, not AI equity. Industrial correlation is not a measured AI-stock allocation."}
   ],
-  "etfSnapshots": [],
+  "underlyingIssuers": [
+    {"key":"nvidia","issuer":"NVDA","group":"infrastructure","source":"https://investor.nvidia.com/news/press-release-details/2026/NVIDIA-Announces-Financial-Results-for-Fourth-Quarter-and-Fiscal-2026/","reason":"AI accelerators and data-centre systems; whole issuer, not an AI revenue estimate."},
+    {"key":"amd","issuer":"AMD","group":"infrastructure","source":"https://ir.amd.com/news-events/press-releases/detail/1295/amd-reports-second-quarter-2026-financial-results","reason":"AI accelerator and server CPU supplier, with other chip markets."},
+    {"key":"micron","issuer":"MU","group":"infrastructure","source":"https://investors.micron.com/financials/quarterly-results/","reason":"Memory and HBM demand from AI infrastructure; also non-AI memory markets."},
+    {"key":"tsmc","issuer":"TSMC","group":"infrastructure","source":"https://pr.tsmc.com/english/news/3302","reason":"Foundry and advanced packaging for AI/HPC plus mobile and other markets; Taiwan shares and US ADR combined by issuer."},
+    {"key":"samsung","issuer":"Samsung Electronics","group":"infrastructure","source":"https://news.samsung.com/global/samsung-electronics-announces-second-quarter-2026-results","reason":"HBM and advanced memory exposure to AI investment; diversified devices remain. Common and preferred issuer stakes combined."},
+    {"key":"sk-hynix","issuer":"SK hynix","group":"infrastructure","source":"https://news.skhynix.com/en/q2-2026-business-results/","reason":"AI/HBM and server memory supplier with broader memory activity."},
+    {"key":"asml","issuer":"ASML","group":"infrastructure","source":"https://www.asml.com/en/news/press-releases/2026/q2-2026-financial-results","reason":"Lithography capex exposure to AI-related advanced logic and memory capacity."},
+    {"key":"dell","issuer":"DELL","group":"infrastructure","source":"https://www.dell.com/en-us/lp/nvidia-ai","reason":"AI server/data-centre systems, with established PC and other infrastructure businesses."},
+    {"key":"netapp","issuer":"NTAP","group":"infrastructure","source":"https://www.netapp.com/aff-series/","reason":"AI data-centre storage supplier with other enterprise storage workloads."},
+    {"key":"apple","issuer":"AAPL","group":"platform","source":"https://www.apple.com/apple-intelligence/","reason":"AI applications and device ecosystem; full issuer value is not AI revenue."},
+    {"key":"amazon","issuer":"AMZN","group":"platform","source":"https://aws.amazon.com/ai/services/","reason":"AI/cloud platforms within diversified Amazon; not low risk or wholly AI."},
+    {"key":"meta","issuer":"META","group":"platform","source":"https://ai.meta.com/llama/get-started/","reason":"AI model/application platform alongside advertising and social applications."},
+    {"key":"alphabet","issuer":"GOOG / GOOGL","group":"platform","source":"https://www.sec.gov/Archives/edgar/data/1652044/000165204426000066/googexhibit991q22026.htm","reason":"EQAC factsheet lists two Alphabet lines without share-class names; combine the issuer weights, never invent an A/C assignment."},
+    {"key":"uipath","issuer":"PATH","group":"platform","source":"https://www.uipath.com/automation/agentic-automation","reason":"Enterprise agentic automation and software applications."},
+    {"key":"snowflake","issuer":"SNOW","group":"platform","source":"https://www.snowflake.com/en/why-snowflake/what-is-data-cloud/","reason":"Data and AI platform, not a hardware capex classification."}
+  ],
+  "etfSnapshots": [
+    {
+      "instrumentId":"391602","symbol":"MXUS","fundName":"Invesco MSCI USA UCITS ETF Acc","isin":"IE00B60SX170","basis":"economic-exposure","asOf":"2026-08-31","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf",
+      "sourceSha256":"1a8057bde4649e88a841c0b5f6ecb6a4742782217bd48defdf87c305e2dfada6",
+      "evidence":"Page 2 Top exposures; synthetic replication, not the collateral basket. Top ten only.",
+      "holdings":[{"issuerKey":"nvidia","weightBp":766},{"issuerKey":"apple","weightBp":702},{"instrumentId":"24651","symbol":"MSFT","weightBp":540},{"issuerKey":"amazon","weightBp":380},{"instrumentId":"24449","symbol":"GOOGL","weightBp":301},{"instrumentId":"1879420","symbol":"AVGO","weightBp":253},{"instrumentId":"670422","symbol":"GOOG","weightBp":237},{"issuerKey":"meta","weightBp":190},{"issuerKey":"micron","weightBp":163},{"instrumentId":"24977","symbol":"TSLA","weightBp":159}]
+    },
+    {
+      "instrumentId":"1983054","symbol":"EQAC","fundName":"Invesco EQQQ NASDAQ-100 UCITS ETF Acc","isin":"IE00BFZXGZ54","basis":"physical-holdings","asOf":"2026-08-31","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00BFZXGZ54_factsheet_en.pdf",
+      "sourceSha256":"d36122103b2bce0b1c6765e8ca797baaa0499f1f89719ec9f84264907be8b38c",
+      "evidence":"Page 2 top ten; Alphabet 3.15% + 2.92% combined without assuming share-class order.",
+      "holdings":[{"issuerKey":"nvidia","weightBp":852},{"issuerKey":"apple","weightBp":742},{"instrumentId":"24651","symbol":"MSFT","weightBp":601},{"issuerKey":"micron","weightBp":476},{"issuerKey":"amazon","weightBp":446},{"issuerKey":"amd","weightBp":338},{"issuerKey":"alphabet","weightBp":607},{"instrumentId":"24977","symbol":"TSLA","weightBp":293},{"instrumentId":"1879420","symbol":"AVGO","weightBp":280}]
+    },
+    {
+      "instrumentId":"2992325","symbol":"IVAI","fundName":"Invesco AI Enablers UCITS ETF Acc","isin":"IE000LGWDNE5","basis":"physical-holdings","asOf":"2026-08-31","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE000LGWDNE5_factsheet_en.pdf",
+      "sourceSha256":"fb15c2b0c5eeaf0f4bfa40c9a5f28bda7ac1a014fef466a6533a88761a7cdac4",
+      "evidence":"Page 2 top ten, only independently classified issuers used; fund name alone does not make 100% classified.",
+      "holdings":[{"issuerKey":"dell","weightBp":426},{"issuerKey":"uipath","weightBp":394},{"issuerKey":"netapp","weightBp":354},{"issuerKey":"snowflake","weightBp":341},{"instrumentId":"24651","symbol":"MSFT","weightBp":274}]
+    },
+    {
+      "instrumentId":"2767340","symbol":"EXUS","fundName":"Xtrackers MSCI World ex USA UCITS ETF 1C","isin":"IE0006WW1TQ4","basis":"physical-holdings","asOf":"2026-08-31","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://etf.dws.com/download/asset/7abc744c-aaf2-48f8-8e28-6384d2233cc8",
+      "sourceSha256":"2c758d76a326619c4af095928a9e323a1bd08d7b3603b665402102ceb8a2f23b",
+      "evidence":"Page 2 Top 10 ETF constituents; ASML ISIN NL0010273215 verified. Remaining unreviewed businesses are not classified as zero AI.",
+      "holdings":[{"issuerKey":"asml","weightBp":261}]
+    },
+    {
+      "instrumentId":"1310832","symbol":"CSPX","fundName":"iShares Core S&P 500 UCITS ETF","isin":"IE00B5BMR087","basis":"physical-holdings","asOf":"2026-09-24","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?appSubType=ISHARES&appType=PRODUCT_PAGE&component=holdings.all&locale=en_GB&portfolioId=253743&targetSite=ishares-uk&userType=individual&excludeContent=true&asOfDate=20260924&includeConfig=true",
+      "sourceSha256":"11b22656df4a6a60c488af24298941834cea59b44e17c2b0b4dd8d52cc2eee52",
+      "evidence":"Issuer public product-data response productId 253743, fundName and asOfDate verified; selected reviewed constituents, each holdingPercent floored to basis points. Omitted names and rounding remain unknown.",
+      "holdings":[{"issuerKey":"nvidia","weightBp":816},{"issuerKey":"apple","weightBp":736},{"instrumentId":"24651","symbol":"MSFT","weightBp":555},{"issuerKey":"amazon","weightBp":367},{"instrumentId":"24449","symbol":"GOOGL","weightBp":301},{"issuerKey":"meta","weightBp":257},{"instrumentId":"1879420","symbol":"AVGO","weightBp":250},{"instrumentId":"670422","symbol":"GOOG","weightBp":242},{"issuerKey":"micron","weightBp":183},{"instrumentId":"24977","symbol":"TSLA","weightBp":160},{"issuerKey":"amd","weightBp":154},{"instrumentId":"516542","symbol":"ORCL","weightBp":36},{"issuerKey":"dell","weightBp":24},{"instrumentId":"1889982","symbol":"KKR","weightBp":9},{"instrumentId":"2262313","symbol":"APO","weightBp":8},{"instrumentId":"1753523","symbol":"VST","weightBp":6},{"issuerKey":"netapp","weightBp":5}]
+    },
+    {
+      "instrumentId":"1311122","symbol":"EIMI","fundName":"iShares Core MSCI EM IMI UCITS ETF","isin":"IE00BKM4GZ66","basis":"physical-holdings","asOf":"2026-09-24","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?appSubType=ISHARES&appType=PRODUCT_PAGE&component=holdings.all&locale=en_GB&portfolioId=264659&targetSite=ishares-uk&userType=individual&excludeContent=true&asOfDate=20260924&includeConfig=true",
+      "sourceSha256":"b7c28ccdf2640a1a18b12ed813b13a414ac80bf9e2af1bf0ef1ebcf8463e8e15",
+      "evidence":"ProductId 264659 and asOfDate verified. TSMC TW0002330008, Samsung common KR7005930003 6.85695% plus preferred KR7005931001 0.90484%, SK hynix KR7000660001. Each line floored to basis points before combining Samsung (685+90).",
+      "holdings":[{"issuerKey":"tsmc","weightBp":1347},{"issuerKey":"samsung","weightBp":775},{"issuerKey":"sk-hynix","weightBp":528}]
+    },
+    {
+      "instrumentId":"1965968","symbol":"SMH","fundName":"VanEck Semiconductor ETF (US)","basis":"physical-holdings","asOf":"2026-09-24","retrievedOn":"2026-09-27","partial":true,
+      "source":"https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/holdings/",
+      "evidence":"Daily Holdings 09/24/2026. US Nasdaq identity confirmed in xuan-ib-venue-identity-v1.json, not the UCITS fund. Reviewed subset of disclosed holdings, not blanket classification of all semiconductor firms.",
+      "holdings":[{"issuerKey":"nvidia","weightBp":1928},{"issuerKey":"tsmc","weightBp":926},{"issuerKey":"amd","weightBp":580},{"instrumentId":"1879420","symbol":"AVGO","weightBp":525},{"issuerKey":"micron","weightBp":505},{"issuerKey":"sk-hynix","weightBp":450},{"issuerKey":"asml","weightBp":430}]
+    }
+  ],
   "notes": [
     "No legacy 80/55/5 coefficients or static ETF percentages are used.",
-    "TSLA, MSTR, TSEM and any other unlisted identity stay pending review; no old tier is silently inherited.",
-    "ETF snapshots must contain issuer source URL, asOf, fund instrumentId and constituent weights in basis points. No snapshots have yet passed that evidence gate.",
+    "TSLA, MSTR and TSEM explicitly reviewed on 2026-09-27. All other unlisted direct identities remain pending; ETF-only issuer keys never classify an unknown direct holding.",
+    "ETF snapshots bind exact fund instrumentId, symbol, fund name, exposure basis, issuer URL, asOf and basis-point weights. Only reviewed subsets are included, never normalized to 100%.",
+    "Source files were retrieved and checked on 2026-09-27. Dated weights are reviewed snapshots, not an automatic live issuer-feed; expiry returns to unknown and does not block the weekly report.",
     "Classification is reviewed every three months or on a new holding. Past-review dates produce visible pending coverage, not silent carry-forward."
   ]
 }
