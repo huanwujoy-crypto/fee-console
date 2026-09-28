@@ -33,17 +33,22 @@
 
 | 基金 | 成分日期 | 本次已分类权重 | 证据与注意事项 |
 |---|---|---:|---|
-| MXUS | 2026-08-31 | 36.91% | Invesco 月报第 2 页 Top exposures；合成复制，使用经济敞口而非抵押品 |
-| EQAC | 2026-08-31 | 46.35% | Invesco 前十大；两行 Alphabet 合计 6.07%，不猜其 A/C 顺序 |
+| MXUS | 2026-08-31 | 36.91% | Invesco 月报第 2 页 Top exposures 已用尽；合成复制，使用经济敞口而非抵押品，不凭抵押品填补余量 |
+| EQAC | 2026-08-31 | 46.35% | Invesco 前十大已用尽；两行 Alphabet 合计 6.07%，不猜其 A/C 顺序 |
 | IVAI | 2026-08-31 | 17.89% | Invesco AI Enablers，核实其中五家业务；不凭基金名认定 100% |
-| EXUS | 2026-08-31 | 2.61% | DWS 官方前十大中的 ASML；其他公司尚未按本口径复核 |
-| CSPX | 2026-09-24 | 41.09% | iShares productId 253743 官方数据，按 ISIN/名称核对选定成分 |
-| EIMI | 2026-09-24 | 26.50% | iShares productId 264659；台积电、三星普通/优先股、SK hynix |
+| EXUS | 2026-08-31 | 9.24% | DWS 官方前十大中的 ASML 及 6 家非 AI 主题主业；RBC、Siemens、BHP 与其余成分仍未知 |
+| CSPX | 2026-09-24 | 47.72% | iShares productId 253743 官方数据，新增 Intel、Palantir、Cisco、Applied Materials 及 3 家非 AI 主题主业；按 ISIN/名称核对 |
+| EIMI | 2026-09-24 | 33.75% | iShares productId 264659；新增 Tencent、MediaTek、Alibaba、Delta、Hon Hai；三星普通/优先股仍合并 |
 | SMH | 2026-09-24 | 53.44% | VanEck US Daily Holdings；既有身份登记确认 Nasdaq 美国基金，不混 UCITS |
 
 表中是该基金**已完成业务分类**的比例，剩余仍未知，不把前十大归一化为 100%。
 iShares 原百分比逐项向下取整为 basis points，舍入余量也留在未知。相同发行人
 跨基金及直接持股合并展示，不把同一基金本金与其成分同时计入分子。
+2026-09-28 增量复核只新增有发行商成分权重和公司业务证据的项目：前五只中
+MXUS、EQAC 无新的可核实成分；EXUS、CSPX、EIMI 的已分类权重分别增加
+6.63、6.63、7.25 个百分点。按 2026-09-25 旧报告的基金金额估算，ETF 未分类
+金额约减少 $9.5 万，约占三账户含现金总值 1.45 个百分点；这是改进覆盖率，
+不是持仓涨跌，也不能与旧方法结果当作真实周变化。发布后以同轮周报计算为准。
 
 SGOV、VGSH、VGIT、TLT 按已核实美国国债产品类别归其他；GLD、SLV 为实物贵金属。
 HODL 是既有 Euronext/SIX 身份对应的 **21shares Crypto Basket Index ETP**
