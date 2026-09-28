@@ -10,7 +10,7 @@ import { beginSourceCapture, finishSourceCapture } from './xuan-ib-source-captur
 import { decodeHookResponse } from './xuan-ib-hook-response.mjs';
 import { validateHookInput } from './xuan-ib-source-hook.mjs';
 
-const CODEX = '/Applications/ChatGPT.app/Contents/Resources/codex';
+const CODEX = '/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex';
 const SERVER = 'ibkr';
 const URL = 'https://api.ibkr.com/v1/api/mcp-public';
 const TOOL_KEYS = Object.freeze({
