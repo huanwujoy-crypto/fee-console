@@ -36,9 +36,9 @@
 | MXUS | 2026-08-31 | 36.91% | Invesco 月报第 2 页 Top exposures 已用尽；合成复制，使用经济敞口而非抵押品，不凭抵押品填补余量 |
 | EQAC | 2026-08-31 | 46.35% | Invesco 前十大已用尽；两行 Alphabet 合计 6.07%，不猜其 A/C 顺序 |
 | IVAI | 2026-08-31 | 17.89% | Invesco AI Enablers，核实其中五家业务；不凭基金名认定 100% |
-| EXUS | 2026-08-31 | 9.24% | DWS 官方前十大中的 ASML 及 6 家非 AI 主题主业；RBC、Siemens、BHP 与其余成分仍未知 |
-| CSPX | 2026-09-24 | 47.72% | iShares productId 253743 官方数据，新增 Intel、Palantir、Cisco、Applied Materials 及 3 家非 AI 主题主业；按 ISIN/名称核对 |
-| EIMI | 2026-09-24 | 33.75% | iShares productId 264659；新增 Tencent、MediaTek、Alibaba、Delta、Hon Hai；三星普通/优先股仍合并 |
+| EXUS | 2026-08-31 | 11.29% | DWS 官方前十大中的 ASML 及 8 家非 AI 主题主业；Siemens 与其余成分仍未知 |
+| CSPX | 2026-09-24 | 54.26% | iShares productId 253743 官方数据；本轮再核实 JPMorgan、J&J、Visa、Walmart、AbbVie、Mastercard、Chevron 为其他，Lam Research 为 AI 基建；按 ISIN/名称核对 |
+| EIMI | 2026-09-24 | 36.00% | iShares productId 264659；本轮再核实 CCB、HDFC、ICICI、ICBC 四家银行为其他；三星普通/优先股仍合并 |
 | SMH | 2026-09-24 | 53.44% | VanEck US Daily Holdings；既有身份登记确认 Nasdaq 美国基金，不混 UCITS |
 
 表中是该基金**已完成业务分类**的比例，剩余仍未知，不把前十大归一化为 100%。
@@ -49,6 +49,13 @@ MXUS、EQAC 无新的可核实成分；EXUS、CSPX、EIMI 的已分类权重分�
 6.63、6.63、7.25 个百分点。按 2026-09-25 旧报告的基金金额估算，ETF 未分类
 金额约减少 $9.5 万，约占三账户含现金总值 1.45 个百分点；这是改进覆盖率，
 不是持仓涨跌，也不能与旧方法结果当作真实周变化。发布后以同轮周报计算为准。
+
+2026-09-28 再次增量复核：EXUS、CSPX、EIMI 分类覆盖分别新增 2.05、6.54、
+2.25 个百分点。这里的“其他”只表示该公司主业不属于本指标定义的 AI
+基础设施或平台，绝不表示股价不会受 AI 市场情绪牵连。Siemens 涉及工业 AI，
+Reliance 业务含数字服务，EIMI 内嵌的巴西 ETF 还需二次穿透；这些与未列出的
+成分继续保留未知。MXUS 是合成 ETF，不能拿抵押品篮子冒充指数经济敞口。
+剩余未知是**分类覆盖缺口**，不是资产市值取数缺失，也不是零 AI 风险。
 
 SGOV、VGSH、VGIT、TLT 按已核实美国国债产品类别归其他；GLD、SLV 为实物贵金属。
 HODL 是既有 Euronext/SIX 身份对应的 **21shares Crypto Basket Index ETP**

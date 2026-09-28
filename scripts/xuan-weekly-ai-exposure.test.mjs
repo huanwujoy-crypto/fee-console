@@ -92,9 +92,9 @@ test('all shipped ETF snapshots allocate positive amounts without overcounting',
  const r=buildAiExposure(fixture(DEFAULT_POLICY.etfSnapshots.map(s=>row(s.instrumentId,s.symbol,100,'ETF'))),{cutoff});
  assert.equal(r.rows.length,7);assert.equal(r.rows.every(r=>r.coveredBp>0&&r.coveredBp<10000),true);
  assert.equal(r.coverageComplete,false);
- assert.equal(r.rows.find(r=>r.symbol==='EXUS').coveredBp,924);
- assert.equal(r.rows.find(r=>r.symbol==='EIMI').coveredBp,3375);
- assert.equal(r.rows.find(r=>r.symbol==='CSPX').coveredBp,4772);
+ assert.equal(r.rows.find(r=>r.symbol==='EXUS').coveredBp,1129);
+ assert.equal(r.rows.find(r=>r.symbol==='EIMI').coveredBp,3600);
+ assert.equal(r.rows.find(r=>r.symbol==='CSPX').coveredBp,5426);
  assert.equal(r.rows.find(r=>r.symbol==='SMH').coveredBp,5344);
  const expired=structuredClone(DEFAULT_POLICY);expired.reviewBy='2027-03-01';
  const futureRows=fixture(DEFAULT_POLICY.etfSnapshots.map(s=>({...row(s.instrumentId,s.symbol,100,'ETF'),valueDate:'2027-01-04'})));
@@ -110,12 +110,12 @@ test('dated top-five additions classify only reviewed constituents and preserve 
   row('1983054','EQAC',100,'ETF')
  ]),{cutoff});
  const bySymbol=Object.fromEntries(r.rows.map(x=>[x.symbol,x]));
- assert.equal(bySymbol.EXUS.uncoveredCents,'9076');
- assert.equal(bySymbol.CSPX.uncoveredCents,'5228');
- assert.equal(bySymbol.EIMI.uncoveredCents,'6625');
+ assert.equal(bySymbol.EXUS.uncoveredCents,'8871');
+ assert.equal(bySymbol.CSPX.uncoveredCents,'4574');
+ assert.equal(bySymbol.EIMI.uncoveredCents,'6400');
  assert.equal(bySymbol.MXUS.coveredBp,3691);
  assert.equal(bySymbol.EQAC.coveredBp,4635);
- assert.equal(group(r,'other').marketValueCents,'1063');
+ assert.equal(group(r,'other').marketValueCents,'2090');
  const allocated=r.groups.reduce((n,g)=>n+BigInt(g.marketValueCents),0n)+BigInt(r.cash.marketValueCents);
  assert.equal(allocated,BigInt(r.denominatorCents));
  assert.equal(r.comparisonDate,null);
