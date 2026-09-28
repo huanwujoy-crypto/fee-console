@@ -2147,6 +2147,27 @@ test('the integrity check accepts legacy reports and the canonical action page',
   assert.equal(accepts(`${marker}<!-- xuan-ib-night-action-v1:abc --><title>XUAN · 睡前行动版</title>`), false);
 });
 
+test('the phone loader accepts an action header with a separate live status paragraph', async () => {
+  const html = `<!doctype html><html><head><title>XUAN · 开市前行动版</title></head><body>
+<!-- xuan-ib-night-action-v1:abc -->
+<header><span class="state">已更新</span><h1>XUAN · 开市前行动版</h1><p>2026-09-28 · 2026-09-28 20:47–20:47 HKT · 数据至 2026-09-25 · 晚间版式预览，非定时发布</p><p class="state-detail" hidden></p></header>
+<main>current-preopen-report</main></body></html>`;
+  const meta = metaFor(html);
+  const app = loaderHarness({
+    now: '2026-09-28T13:47:00Z',
+    fetchImpl: async (url) => String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []})
+      : response({json: null, bytes: Buffer.from(html)}),
+  });
+
+  await app.listeners.button.click();
+
+  assert.match(app.frame.srcdoc, /current-preopen-report/);
+  assert.match(app.status.textContent, /报告 09-28 开市前版 · 数据至 20:47/);
+  assert.equal(app.warning.hidden, true);
+  assert.equal(app.status.classList.contains('error'), false);
+});
+
 test('validation and promotion accept a verified single-file candidate based on a trusted main ancestor', () => {
   // git for-each-ref treats a bare partial refname as a path component, not a prefix.
   // Keep the glob or the promoter silently sees zero Codex report branches.
