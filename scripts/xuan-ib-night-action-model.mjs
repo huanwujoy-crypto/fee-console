@@ -158,14 +158,16 @@ export function buildNightActionModel({
   const ibCash = Math.round(summary.total_cash_value * 100) / 100;
   const noahCashTotal = Math.round(noahCash.total * 100) / 100;
   const cashPool = Math.round((ibCash + noahCashTotal) * 100) / 100;
-  const planning = Math.max(0, Math.round((cashPool - reserve - projected.reserved) * 100) / 100);
+  const callOriginal = Math.round(reserve * 100) / 100;
+  const callApplied = Math.round(callOriginal * 50) / 100;
+  const planning = Math.max(0, Math.round((cashPool - callApplied - projected.reserved) * 100) / 100);
   let replenishment = { status: 'unavailable' };
   try {
     const plan = calculateCashPlan({
       schemaVersion: 2, status: 'snapshot', sourceAsOfHkt: cashPlanTime(asOfHkt),
       equityTotal: projected.total, developed: projected.developed, emerging: projected.emerging,
       usBase: projected.usBase, ussc: projected.ussc, ibCash,
-      noahCash: noahCashTotal, reserve: reserve + projected.reserved, usscBudgetShare: 0.10,
+      noahCash: noahCashTotal, reserve: callApplied + projected.reserved, usscBudgetShare: 0.10,
       currency: 'USD', denominator: 'equity-only',
     });
     const [exus, eimi, ussc] = plan.allocations;
@@ -179,18 +181,18 @@ export function buildNightActionModel({
     replenishment = { status: 'unavailable' };
   }
   const model = {
-    schemaVersion: 4, dataDate, asOfHkt,
+    schemaVersion: 5, dataDate, asOfHkt,
     status: replenishment.status === 'ready' ? 'ready' : 'partial',
     replenishment,
     orders: { status: 'ready', asOfHkt: ordersAsOfHkt, ...orderGroups },
     cash: { status: 'ready', ib: ibCash, noah: noahCashTotal, pool: cashPool,
-      reserve, orderReserve: projected.reserved, planning, cashLike: allocation.cashLike,
+      reserve: callOriginal, callApplied, orderReserve: projected.reserved, planning, cashLike: allocation.cashLike,
       totalCapacity: Math.round((planning + allocation.cashLike.total) * 100) / 100 },
     allocation: { status: 'ready', total: allocation.total, projectedTotal: projected.total,
       categories: projected.categories },
     notes: [
       `四类：Sharesight 资产类别，数据日 ${allocation.dataDate}。`,
-      `现金：IB＋NOAH-HK，已扣现有买单预占；类现金：VGSH、VGIT、TLT，数据日 ${noahCash.dataDate}。`,
+      `现金：IB＋NOAH-HK；待 CALL 原额仅按 50% 预留，另扣现有买单预占；类现金：VGSH、VGIT、TLT，数据日 ${noahCash.dataDate}。`,
       '只读规划：不下单、撤单、改单或转账。',
     ],
   };

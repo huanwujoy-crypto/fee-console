@@ -29,7 +29,7 @@ function validateOrder(order, schemaVersion) {
 }
 
 export function validateNightActionModel(model) {
-  if (!object(model) || ![1, 2, 3, 4].includes(model.schemaVersion)
+  if (!object(model) || ![1, 2, 3, 4, 5].includes(model.schemaVersion)
     || !/^\d{4}-\d{2}-\d{2}$/.test(model.dataDate)
     || !text(model.asOfHkt) || !['ready', 'partial'].includes(model.status)) fail('INVALID_HEADER');
   const plan = model.replenishment;
@@ -64,8 +64,12 @@ export function validateNightActionModel(model) {
       || Math.abs(cash.cashLike.items.reduce((sum, item) => sum + item.amount, 0) - cash.cashLike.total) > 0.011
       || Math.abs(cash.planning + cash.cashLike.total - cash.totalCapacity) > 0.011) fail('INVALID_CASH');
   }
-  if (cash.status === 'ready' && model.schemaVersion >= 4 && (!finite(cash.orderReserve)
+  if (cash.status === 'ready' && model.schemaVersion === 4 && (!finite(cash.orderReserve)
     || Math.abs(Math.max(0, cash.pool - cash.reserve - cash.orderReserve) - cash.planning) > 0.011)) fail('INVALID_CASH');
+  if (cash.status === 'ready' && model.schemaVersion >= 5 && (!finite(cash.orderReserve)
+    || !finite(cash.callApplied)
+    || Math.abs(Math.round(cash.reserve * 50) / 100 - cash.callApplied) > 0.001
+    || Math.abs(Math.max(0, cash.pool - cash.callApplied - cash.orderReserve) - cash.planning) > 0.011)) fail('INVALID_CASH');
   if (!object(model.allocation) || !['ready', 'unavailable'].includes(model.allocation.status)) fail('INVALID_ALLOCATION');
   if (model.allocation.status === 'ready') {
     if (!finite(model.allocation.total) || model.allocation.total <= 0
@@ -120,11 +124,17 @@ export function renderNightActionReport(model) {
   const plan = model.replenishment.status === 'ready'
     ? `<div class="hero-value">${money(model.replenishment.total)}</div><div class="chips">${model.replenishment.items.map(item => `<span><b>${esc(item.symbol)}</b>${money(item.amount)}</span>`).join('')}</div>${model.schemaVersion >= 3 ? `<p class="plan-balance">现金预算 ${money(model.replenishment.budget)}${model.replenishment.retained > 0.01 ? ` · 暂留 ${money(model.replenishment.retained)}` : ' · 已全部规划'}</p>` : ''}`
     : '<div class="unavailable">本轮未取得，不沿用旧金额</div>';
+  const callLabel = model.schemaVersion >= 5 ? '待 CALL 预留（50%）' : '预留待 CALL';
+  const callAmount = model.schemaVersion >= 5 ? model.cash.callApplied : model.cash.reserve;
+  const callOriginal = model.schemaVersion >= 5 ? `<p><b>待 CALL 原额</b><span>${money(model.cash.reserve)}</span></p>` : '';
+  const cashNote = model.schemaVersion >= 5
+    ? '全部弹药＝现金池扣除待 CALL 原额的 50% 及买单预占后的非负余额＋类现金；类现金不默认卖出。'
+    : '全部弹药＝扣除待 CALL 及现有买单后的现金＋类现金；类现金不默认卖出。';
   const cash = model.cash.status === 'ready' && model.schemaVersion >= 3 ? `<div class="metrics three">
 <div><span>现金池</span><b>${money(model.cash.pool)}</b></div>
-<div><span>预留待 CALL</span><b>${money(model.cash.reserve)}</b></div>
+<div><span>${callLabel}</span><b>${money(callAmount)}</b></div>
 <div><span>可补仓现金</span><b>${money(model.cash.planning)}</b></div>
-</div><div class="cash-detail"><p><b>组成</b><span>IB ${money(model.cash.ib)} · NOAH-HK ${money(model.cash.noah)}</span></p>${model.schemaVersion >= 4 ? `<p><b>买单预占</b><span>${money(model.cash.orderReserve)}</span></p>` : ''}<p><b>类现金</b><span>${model.cash.cashLike.total > 0 ? `${money(model.cash.cashLike.total)} · ${model.cash.cashLike.items.map(item => `${item.symbol} ${money(item.amount)}`).join(' · ')}` : '$0'}</span></p><p class="capacity"><b>全部弹药</b><span>${money(model.cash.totalCapacity)}</span></p><small>全部弹药＝扣除待 CALL 及现有买单后的现金＋类现金；类现金不默认卖出。</small></div>`
+</div><div class="cash-detail"><p><b>组成</b><span>IB ${money(model.cash.ib)} · NOAH-HK ${money(model.cash.noah)}</span></p>${callOriginal}${model.schemaVersion >= 4 ? `<p><b>买单预占</b><span>${money(model.cash.orderReserve)}</span></p>` : ''}<p><b>类现金</b><span>${model.cash.cashLike.total > 0 ? `${money(model.cash.cashLike.total)} · ${model.cash.cashLike.items.map(item => `${item.symbol} ${money(item.amount)}`).join(' · ')}` : '$0'}</span></p><p class="capacity"><b>全部弹药</b><span>${money(model.cash.totalCapacity)}</span></p><small>${cashNote}</small></div>`
     : model.cash.status === 'ready' ? `<div class="metrics three">
 <div><span>现金池</span><b>${money(model.cash.pool)}</b></div>
 <div><span>预留待 CALL</span><b>${money(model.cash.reserve)}</b></div>

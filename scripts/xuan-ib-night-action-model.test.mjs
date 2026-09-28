@@ -35,11 +35,13 @@ test('builds the entire nightly model from three IB and two Sharesight reads', (
   const model = buildNightActionModel(input);
   assert.equal(model.status, 'ready');
   assert.equal(model.cash.pool, 150);
-  assert.equal(model.cash.planning, 89.5);
+  assert.equal(model.cash.planning, 114.5);
+  assert.equal(model.cash.reserve, 50);
+  assert.equal(model.cash.callApplied, 25);
   assert.equal(model.cash.orderReserve, 10.5);
   assert.equal(model.orders.buys.length, 1);
   assert.equal(model.orders.sells.length, 1);
-  assert.equal(model.schemaVersion, 4);
+  assert.equal(model.schemaVersion, 5);
   assert.equal(model.orders.buys[0].currency, 'USD');
   assert.equal(model.orders.buys[0].ageDays, 4);
   assert.equal(model.orders.buys[0].distancePct, 5);
@@ -50,10 +52,12 @@ test('builds the entire nightly model from three IB and two Sharesight reads', (
   assert.deepEqual(model.cash.cashLike, { total: 90, items: [
     { symbol: 'VGSH', amount: 40 }, { symbol: 'VGIT', amount: 30 }, { symbol: 'TLT', amount: 20 },
   ] });
-  assert.equal(model.cash.totalCapacity, 179.5);
+  assert.equal(model.cash.totalCapacity, 204.5);
+  assert.equal(model.replenishment.budget, 114.5);
   assert.equal(model.replenishment.budget, model.replenishment.total + model.replenishment.retained);
   assert.equal(model.replenishment.items.reduce((sum, item) => sum + item.amount, 0), model.replenishment.total);
   assert.match(model.notes[0], /2026-09-24/);
+  assert.match(model.notes[1], /待 CALL 原额仅按 50% 预留/);
 });
 
 test('carries the prior verified price baseline without another history read', async () => {
@@ -94,7 +98,18 @@ test('sub-cent source precision is rounded only for the planning view', () => {
   });
   assert.equal(model.status, 'ready');
   assert.equal(model.cash.pool, 150);
-  assert.equal(model.cash.planning, 89.5);
+  assert.equal(model.cash.planning, 114.5);
+});
+
+test('half of pending CALL is reserved while an open BUY is fully reserved and SELL proceeds are excluded', () => {
+  const withSell = buildNightActionModel(input);
+  const withoutSell = buildNightActionModel({ ...input, ibOrders: { orders: [order(2, 'BUY')] } });
+  assert.equal(withSell.cash.planning, 114.5);
+  assert.equal(withSell.replenishment.budget, withoutSell.replenishment.budget);
+  assert.equal(withSell.cash.orderReserve, 10.5);
+  const overReserved = buildNightActionModel({ ...input, reserve: 300 });
+  assert.equal(overReserved.cash.planning, 0);
+  assert.equal(overReserved.replenishment.budget, 0);
 });
 
 test('requires the completed Sharesight source date selected by the pre-open run', () => {
