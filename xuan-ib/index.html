@@ -162,7 +162,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-09-25.1";
+      const loaderBuild = "2026-09-28.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -315,7 +315,8 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       const approvedTitles = [
         "<title>XUAN-投资管理</title>",
         "<title>XUAN-IB 睡前交接</title>",
-        "<title>XUAN · 睡前行动版</title>"
+        "<title>XUAN · 睡前行动版</title>",
+        "<title>XUAN · 开市前行动版</title>"
       ];
 
       const clock = () => new Intl.DateTimeFormat("zh-HK", {
@@ -900,7 +901,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         const legacy = legacyMarker &&
           approvedTitles.slice(0, 2).some((title) => html.includes(title));
         const action = actionMarker &&
-          html.includes(approvedTitles[2]);
+          approvedTitles.slice(2).some((title) => html.includes(title));
         if (Number(legacyMarker) + Number(actionMarker) !== 1 || !legacy && !action) {
           throw new Error("页面完整性标记不符");
         }
