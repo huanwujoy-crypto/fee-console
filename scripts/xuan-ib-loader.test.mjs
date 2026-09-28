@@ -2120,11 +2120,13 @@ test('the integrity check accepts legacy reports and the canonical action page',
   // The check must stay a whole-title comparison: a bare product-name substring
   // would let an unrelated page satisfy it.
   assert.match(loader, /approvedTitles\.slice\(0, 2\)\.some\(\(title\) => html\.includes\(title\)\)/);
+  assert.match(loader, /approvedTitles\.slice\(2\)\.some\(\(title\) => html\.includes\(title\)\)/);
   assert.match(loader, /Number\(legacyMarker\) \+ Number\(actionMarker\) !== 1/);
   assert.deepEqual(approvedTitles, [
     '<title>XUAN-投资管理</title>',
     '<title>XUAN-IB 睡前交接</title>',
     '<title>XUAN · 睡前行动版</title>',
+    '<title>XUAN · 开市前行动版</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
@@ -2132,7 +2134,7 @@ test('the integrity check accepts legacy reports and the canonical action page',
     const legacyMarker = html.includes('xuan-ib-handover:v1');
     const actionMarker = html.includes('xuan-ib-night-action-v1:');
     const legacy = legacyMarker && approvedTitles.slice(0, 2).some((title) => html.includes(title));
-    const action = actionMarker && html.includes(approvedTitles[2]);
+    const action = actionMarker && approvedTitles.slice(2).some((title) => html.includes(title));
     return Number(legacyMarker) + Number(actionMarker) === 1 && (legacy || action);
   };
   const marker = '<!-- xuan-ib-handover:v1 -->';
@@ -2141,6 +2143,7 @@ test('the integrity check accepts legacy reports and the canonical action page',
   assert.equal(accepts(`${marker}<title>XUAN-投资管理 摘要</title>`), false);
   assert.equal(accepts('<title>XUAN-投资管理</title>'), false);
   assert.equal(accepts('<!-- xuan-ib-night-action-v1:abc --><title>XUAN · 睡前行动版</title>'), true);
+  assert.equal(accepts('<!-- xuan-ib-night-action-v1:abc --><title>XUAN · 开市前行动版</title>'), true);
   assert.equal(accepts(`${marker}<!-- xuan-ib-night-action-v1:abc --><title>XUAN · 睡前行动版</title>`), false);
 });
 
