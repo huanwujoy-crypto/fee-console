@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from './xuan-weekly-build.mjs';
 import {ordinaryStockConcentrations,familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
+import {buildWeeklyConcentration,renderWeeklyConcentration} from './xuan-weekly-concentration.mjs';
 function fixture(){
   const date='2026-08-03', stamp='2026-08-04T01:00:00Z';
   const sharesight=[936247,936249,1350094].map(id=>({status:'ok',startedAt:stamp,completedAt:stamp,raw:{result:{mode:'read_only',
@@ -19,7 +20,8 @@ test('complete weekly artifact has no overview or old method wording',()=>{
   const r=build(fixture());assert.equal(r.receipt.complete,true);assert.equal(r.receipt.abcRows,4);
   assert.match(r.html,/不扣待 CALL/);assert.match(r.html,/ABC · 同资金路径/);assert.doesNotMatch(r.html,/<h2>持仓|<h2>总览/);
   assert.match(r.html,/href="#concentration"/);assert.match(r.html,/id="concentration"/);
-  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/累计 TWR/);assert.match(r.html,/未实扣管理费/);
+  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/ETF 前十大股票/);assert.match(r.html,/计算过程与资料日期/);
+  assert.match(r.html,/累计 TWR/);assert.match(r.html,/未实扣管理费/);
   assert.match(r.html,/资金记录 · IB 自动读取/);assert.match(r.html,/计算过程与逐日核算/);
   assert.match(r.html,/不再扣一次 15%/);assert.match(r.html,/现金入金/);
   assert.match(r.html,/AI 相关集中度/);assert.match(r.html,/AI 投资周期敏感/);assert.match(r.html,/综合平台与应用/);
@@ -31,6 +33,30 @@ test('weekly concentration opt-in includes Berkshire variants and amount without
  assert.deepEqual(familyOrdinaryConcentrations(rows,'1000000'),[]);
  const out=ordinaryStockConcentrations(rows,'1000000',{aboveHundredths:100n,includeBerkshire:true});
  assert.equal(out.length,1);assert.equal(out[0].label,'BRK.B');assert.equal(out[0].marketValueCents,'60000');assert.equal(out[0].percent,6);
+});
+test('weekly issuer candidates combine direct stock with top-ten ETF share classes before the 1% screen',()=>{
+ const cutoff='2026-09-25';
+ const holding=(holdingId,symbol,assetType,marketValueMicro,instrumentId=holdingId)=>({portfolioId:'1',holdingId:String(holdingId),instrumentId:String(instrumentId),symbol,custodian:'IB-HK',assetType,marketValueMicro:String(marketValueMicro),valueDate:cutoff,identityVerified:true});
+ const envelope={riskDenominator:{components:[{key:'a',valueMicro:'34000000000'},{key:'b',valueMicro:'33000000000'},{key:'c',valueMicro:'33000000000'}]},
+  riskConstituents:[holding(1,'GOOG','STK',400000000),holding(2,'GOOGL','STK',300000000),holding(3,'BRK-B','STK',1000000000),holding(4,'CSPX','ETF',20000000000,'1310832'),holding(5,'UNKNOWN','ETF',1000000000,'999999')]};
+ const result=buildWeeklyConcentration(envelope,{cutoff});
+ const alphabet=result.rows.find(r=>r.issuer==='ALPHABET');
+ assert.equal(alphabet.directCents,'70000');assert.equal(alphabet.etfCents,'108600');
+ assert.equal(alphabet.marketValueCents,'178600');assert.equal(alphabet.percent,1.79);
+ assert.equal(alphabet.parts.filter(p=>p.kind==='etf').length,2);
+ assert.equal(result.rows.find(r=>r.issuer==='NVDA').etfCents,'163200');
+ assert.equal(result.rows.find(r=>r.issuer==='BERKSHIRE').percent,1);
+ assert.deepEqual(result.missingFunds.map(f=>f.symbol),['UNKNOWN']);
+ const html=renderWeeklyConcentration(result);
+ assert.match(html,/CSPX.*20,000.*3\.01%/);assert.match(html,/未计入：UNKNOWN/);
+ assert.match(html,/可见下限/);assert.match(html,/发行方资料/);
+});
+test('outdated ETF top ten are not silently reused',()=>{
+ const cutoff='2026-11-20';
+ const envelope={riskDenominator:{components:[{key:'a',valueMicro:'1000000000'},{key:'b',valueMicro:'1000000000'},{key:'c',valueMicro:'1000000000'}]},
+ riskConstituents:[{portfolioId:'1',holdingId:'1',instrumentId:'1310832',symbol:'CSPX',custodian:'IB-HK',assetType:'ETF',marketValueMicro:'1000000000',valueDate:cutoff,identityVerified:true}]};
+ const result=buildWeeklyConcentration(envelope,{cutoff});
+ assert.equal(result.rows.length,0);assert.equal(result.missingFunds[0].reason,'前十资料过期或身份不符');
 });
 test('previous private identity records survive subsequent run',()=>{
   const f=fixture(),first=build(f);f.previousRecords=first.records;
