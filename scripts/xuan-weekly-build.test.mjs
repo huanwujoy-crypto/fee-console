@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {build} from './xuan-weekly-build.mjs';
 import {ordinaryStockConcentrations,familyOrdinaryConcentrations} from './xuan-ib-single-stock-concentration.mjs';
-import {buildWeeklyConcentration,renderWeeklyConcentration} from './xuan-weekly-concentration.mjs';
+import {DEFAULT_TOP10_POLICY,buildWeeklyConcentration,renderWeeklyConcentration} from './xuan-weekly-concentration.mjs';
 function fixture(){
   const date='2026-08-03', stamp='2026-08-04T01:00:00Z';
   const sharesight=[936247,936249,1350094].map(id=>({status:'ok',startedAt:stamp,completedAt:stamp,raw:{result:{mode:'read_only',
@@ -20,7 +20,7 @@ test('complete weekly artifact has no overview or old method wording',()=>{
   const r=build(fixture());assert.equal(r.receipt.complete,true);assert.equal(r.receipt.abcRows,4);
   assert.match(r.html,/不扣待 CALL/);assert.match(r.html,/ABC · 同资金路径/);assert.doesNotMatch(r.html,/<h2>持仓|<h2>总览/);
   assert.match(r.html,/href="#concentration"/);assert.match(r.html,/id="concentration"/);
-  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/ETF 前十大股票/);assert.match(r.html,/计算过程与资料日期/);
+  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/ETF 同名穿透／前十大股票/);assert.match(r.html,/计算过程与资料日期/);
   assert.match(r.html,/累计 TWR/);assert.match(r.html,/未实扣管理费/);
   assert.match(r.html,/资金记录 · IB 自动读取/);assert.match(r.html,/计算过程与逐日核算/);
   assert.match(r.html,/不再扣一次 15%/);assert.match(r.html,/现金入金/);
@@ -34,7 +34,7 @@ test('weekly concentration opt-in includes Berkshire variants and amount without
  const out=ordinaryStockConcentrations(rows,'1000000',{aboveHundredths:100n,includeBerkshire:true});
  assert.equal(out.length,1);assert.equal(out[0].label,'BRK.B');assert.equal(out[0].marketValueCents,'60000');assert.equal(out[0].percent,6);
 });
-test('weekly issuer candidates combine direct stock with top-ten ETF share classes before the 1% screen',()=>{
+test('weekly issuer candidate union combines direct stocks with ETF matches beyond top ten before the 1% screen',()=>{
  const cutoff='2026-09-25';
  const holding=(holdingId,symbol,assetType,marketValueMicro,instrumentId=holdingId)=>({portfolioId:'1',holdingId:String(holdingId),instrumentId:String(instrumentId),symbol,custodian:'IB-HK',assetType,marketValueMicro:String(marketValueMicro),valueDate:cutoff,identityVerified:true});
  const envelope={riskDenominator:{components:[{key:'a',valueMicro:'34000000000'},{key:'b',valueMicro:'33000000000'},{key:'c',valueMicro:'33000000000'}]},
@@ -45,11 +45,28 @@ test('weekly issuer candidates combine direct stock with top-ten ETF share class
  assert.equal(alphabet.marketValueCents,'178600');assert.equal(alphabet.percent,1.79);
  assert.equal(alphabet.parts.filter(p=>p.kind==='etf').length,2);
  assert.equal(result.rows.find(r=>r.issuer==='NVDA').etfCents,'163200');
- assert.equal(result.rows.find(r=>r.issuer==='BERKSHIRE').percent,1);
+ const berkshire=result.rows.find(r=>r.issuer==='BERKSHIRE');
+ assert.equal(berkshire.directCents,'100000');assert.equal(berkshire.etfCents,'28200');
+ assert.equal(berkshire.marketValueCents,'128200');assert.equal(berkshire.percent,1.28);
+ assert.equal(berkshire.parts.find(p=>p.kind==='etf').scope,'directMatch');
+ assert.deepEqual(result.candidateSources,{direct:2,etfTopTen:9});
+ assert.equal(result.candidateCount,10);
  assert.deepEqual(result.missingFunds.map(f=>f.symbol),['UNKNOWN']);
  const html=renderWeeklyConcentration(result);
  assert.match(html,/CSPX.*20,000.*3\.01%/);assert.match(html,/未计入：UNKNOWN/);
- assert.match(html,/可见下限/);assert.match(html,/发行方资料/);
+ assert.match(html,/可见下限/);assert.match(html,/发行方资料/);assert.match(html,/两组候选/);
+ assert.match(html,/直接持股同名、非前十/);
+});
+test('non-top-ten matches never create new ETF-only candidates or double count a top-ten issuer',()=>{
+ const cutoff='2026-09-25';
+ const envelope={riskDenominator:{components:[{key:'a',valueMicro:'1000000000'},{key:'b',valueMicro:'1000000000'},{key:'c',valueMicro:'1000000000'}]},
+  riskConstituents:[{portfolioId:'1',holdingId:'1',instrumentId:'1310832',symbol:'CSPX',custodian:'IB-HK',assetType:'ETF',marketValueMicro:'1000000000',valueDate:cutoff,identityVerified:true}]};
+ const result=buildWeeklyConcentration(envelope,{cutoff});
+ assert.equal(result.candidateCount,9);
+ assert.equal(result.rows.some(r=>r.issuer==='BERKSHIRE'),false);
+ const policy=structuredClone(DEFAULT_TOP10_POLICY);
+ policy.funds.find(f=>f.symbol==='CSPX').directIssuerMatches.push(['NVDA',1]);
+ assert.throws(()=>buildWeeklyConcentration(envelope,{cutoff,policy}),/direct_match_invalid/);
 });
 test('outdated ETF top ten are not silently reused',()=>{
  const cutoff='2026-11-20';
