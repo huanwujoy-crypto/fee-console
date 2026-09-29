@@ -630,6 +630,46 @@ test("--calibrated clears the 暂估 flag and the point stays clean", () => {
   assert.match(second.stdout, /calibrated/);
 });
 
+test("a Monday candidate can add its missing weekend carry without a Sunday run", () => {
+  const dir = tmp();
+  const friday = run(dir, { date: "2026-09-25", growth: "253845.98", value: "200000",
+    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "session" });
+  assert.equal(friday.status, 0, friday.stderr);
+  const saturday = run(dir, { date: "2026-09-26", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
+    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "closed", flows: "[]" },
+  ["--weekend-carry"]);
+  assert.equal(saturday.status, 0, saturday.stderr);
+  const sunday = run(dir, { date: "2026-09-27", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
+    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "closed", flows: "[]" },
+  ["--weekend-carry"]);
+  assert.equal(sunday.status, 0, sunday.stderr);
+  const points = readPayload(dir).daily.filter(point => point.d >= "2026-09-25");
+  assert.deepEqual(points.map(point => point.d), ["2026-09-25", "2026-09-26", "2026-09-27"]);
+  assert.equal(points[1].growth, points[0].growth);
+  assert.equal(points[2].value, points[0].value);
+  assert.equal(points[2].bd, "2026-09-25");
+  assert.equal(points[2].bstate, "closed");
+  assert.equal(points[2].prov, 1);
+});
+
+test("weekend carry rejects changed values, skipped dates and weekday gaps", () => {
+  const seed = dir => {
+    const first = run(dir, { date: "2026-09-25", spy: "700", qqq: "600",
+      "src-bench": "2026-09-25", "bench-state": "session" });
+    assert.equal(first.status, 0, first.stderr);
+  };
+  const changed = tmp(); seed(changed);
+  const changedRun = run(changed, { date: "2026-09-26", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
+    cash: "263696.83", stock: "453846.98", spy: "700", qqq: "600", "src-bench": "2026-09-25",
+    "bench-state": "closed", flows: "[]" }, ["--weekend-carry"]);
+  assert.notEqual(changedRun.status, 0); assert.match(changedRun.stderr, /WEEKEND_CARRY_VALUE/);
+  const skipped = tmp(); seed(skipped);
+  const skippedRun = run(skipped, { date: "2026-09-27", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
+    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "closed", flows: "[]" },
+  ["--weekend-carry"]);
+  assert.notEqual(skippedRun.status, 0); assert.match(skippedRun.stderr, /WEEKEND_CARRY_SEQUENCE/);
+});
+
 test("the calibration window reaches back but not indefinitely", () => {
   const now = new Date("2026-08-24T02:00:00Z");          // New York 2026-08-23 (Sunday)
   assert.equal(nyDate(now), "2026-08-23");

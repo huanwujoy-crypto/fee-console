@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { verifyWriterOutcome } from "./fee-cloud-producer.mjs";
+import { verifyWriterOutcome, weekendGapDates } from "./fee-cloud-producer.mjs";
 
 const D = "2026-09-23";
 const benchmarkCache = { v: 1, benchmarks: {
@@ -115,6 +115,15 @@ test("cloud producer accepts the real updated and no-op writer contracts", () =>
   assert.equal(verifyWriterOutcome("a".repeat(64), "a".repeat(64), "no-op 2026-09-24", "2026-09-24"), "no-op");
   assert.throws(() => verifyWriterOutcome("a".repeat(64), "b".repeat(64),
     "no-op 2026-09-24", "2026-09-24"), /FEE_CLOUD_WRITER_OUTCOME/);
+  assert.equal(verifyWriterOutcome("a".repeat(64), "b".repeat(64),
+    "no-op 2026-09-28", "2026-09-28", true), "updated");
+});
+
+test("cloud producer bridges only a contiguous weekend before the next market session", () => {
+  assert.deepEqual(weekendGapDates([{ d: "2026-09-25" }], "2026-09-28"),
+    ["2026-09-26", "2026-09-27"]);
+  assert.deepEqual(weekendGapDates([{ d: "2026-09-27" }], "2026-09-28"), []);
+  assert.throws(() => weekendGapDates([{ d: "2026-09-25" }], "2026-09-29"), /WEEKEND_GAP/);
 });
 
 test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight secrets", () => {

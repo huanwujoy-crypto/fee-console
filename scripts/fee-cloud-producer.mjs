@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
 import { latestCommonBenchmarkDate, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { isIsoDate, isWeekend } from "./daily-core.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -53,11 +54,69 @@ function run(script, cli, env) {
   return String(result.stdout || "").trim();
 }
 
-export function verifyWriterOutcome(beforeHash, afterHash, output, targetDate) {
+export function verifyWriterOutcome(beforeHash, afterHash, output, targetDate, priorWrites = false) {
   const outcome = beforeHash === afterHash ? "no-op" : "updated";
-  const prefix = outcome === "updated" ? "ok" : "no-op";
-  if (!new RegExp(`^${prefix}\\s+${targetDate}\\b`).test(String(output || ""))) fail("WRITER_OUTCOME");
+  const accepted = outcome === "updated" && priorWrites ? "(?:ok|no-op)" : outcome === "updated" ? "ok" : "no-op";
+  if (!new RegExp(`^(?:${accepted})\\s+${targetDate}\\b`).test(String(output || ""))) fail("WRITER_OUTCOME");
   return outcome;
+}
+
+const addDays = (date, count) => new Date(Date.parse(`${date}T00:00:00Z`) + count * 86400000)
+  .toISOString().slice(0, 10);
+
+export function weekendGapDates(points, targetDate) {
+  if (!Array.isArray(points) || !isIsoDate(targetDate)) fail("WEEKEND_GAP");
+  const latest = points.filter(point => point && isIsoDate(point.d) && point.d < targetDate)
+    .sort((a, b) => a.d.localeCompare(b.d)).at(-1);
+  if (!latest) return [];
+  const gap = [];
+  for (let date = addDays(latest.d, 1); date < targetDate; date = addDays(date, 1)) gap.push(date);
+  if (gap.some(date => !isWeekend(date))) fail("WEEKEND_GAP");
+  return gap;
+}
+
+function decryptCandidate(filename, keyText) {
+  let envelope;
+  try { envelope = JSON.parse(fs.readFileSync(filename, "utf8")); } catch { fail("CANDIDATE"); }
+  if (!envelope || envelope.enc !== true || envelope.v !== 3 || typeof envelope.data !== "string") fail("CANDIDATE");
+  const key = Buffer.from(String(keyText || "").replace(/-/g, "+").replace(/_/g, "/"), "base64");
+  const bytes = Buffer.from(envelope.data, "base64");
+  if (key.length !== 32 || bytes.length < 29) fail("CANDIDATE");
+  try {
+    const decipher = crypto.createDecipheriv("aes-256-gcm", key, bytes.subarray(0, 12));
+    decipher.setAuthTag(bytes.subarray(bytes.length - 16));
+    return JSON.parse(Buffer.concat([decipher.update(bytes.subarray(12, bytes.length - 16)), decipher.final()]).toString("utf8"));
+  } catch { fail("CANDIDATE"); }
+}
+
+export function carryWeekendGap(dataFile, targetDate, env) {
+  let payload = decryptCandidate(dataFile, env.FEE_DATA_KEY);
+  const gap = weekendGapDates(payload.daily, targetDate);
+  if (!gap.length) return 0;
+  let prior = payload.daily.filter(point => point && isIsoDate(point.d) && point.d < targetDate)
+    .sort((a, b) => a.d.localeCompare(b.d)).at(-1);
+  const sourceDate = prior.d;
+  for (const date of gap) {
+    if (!["schwab", "webull", "cash", "stock", "other", "spy", "qqq"].every(key => Number.isFinite(prior[key]))
+        || !isIsoDate(prior.bd)) fail("WEEKEND_GAP");
+    const cli = [
+      `--date=${date}`, `--file=${dataFile}`,
+      `--schwab=${prior.schwab}`, `--webull=${prior.webull}`,
+      `--src-schwab=${sourceDate}`, `--src-webull=${sourceDate}`,
+      `--cash=${prior.cash}`, `--stock=${prior.stock}`, `--other=${prior.other}`,
+      `--spy=${prior.spy}`, `--qqq=${prior.qqq}`, `--src-bench=${prior.bd}`,
+      "--bench-state=closed", "--flows=[]", "--weekend-carry",
+    ];
+    if (typeof prior.sourceFetchedAt === "string" && typeof prior.sourceFingerprint === "string") {
+      cli.push(`--source-fetched-at=${prior.sourceFetchedAt}`, `--source-fingerprint=${prior.sourceFingerprint}`);
+    }
+    const output = run("daily.mjs", cli, { ...env, FEE_STYLE_INPUT_FILE: "" });
+    if (!new RegExp(`^(?:ok|no-op)\\s+${date}\\b`).test(output)) fail("WEEKEND_GAP");
+    payload = decryptCandidate(dataFile, env.FEE_DATA_KEY);
+    prior = payload.daily.find(point => point && point.d === date);
+    if (!prior) fail("WEEKEND_GAP");
+  }
+  return gap.length;
 }
 
 function writerArgs(input, file) {
@@ -104,12 +163,13 @@ export async function produce(options = {}) {
     fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
     fs.chmodSync(dataFile, 0o600);
     const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile };
+    const original = sha256(fs.readFileSync(dataFile));
+    const weekendCarries = carryWeekendGap(dataFile, input.targetDate, env);
     const baseArgs = writerArgs(input, dataFile);
     run("daily.mjs", [...baseArgs, "--style-preflight"], env);
-    const before = sha256(fs.readFileSync(dataFile));
     const writer = run("daily.mjs", baseArgs, env);
     const after = sha256(fs.readFileSync(dataFile));
-    const outcome = verifyWriterOutcome(before, after, writer, targetDate);
+    const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
     run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
     run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
       `--target-date=${targetDate}`, `--source-schwab=${input.sourceDates.schwab}`,
