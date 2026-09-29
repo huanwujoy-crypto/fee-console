@@ -63,6 +63,15 @@ only when SPY and QQQ have one complete common session with validated dividend
 fields. Missing benchmark data remains pending rather than publishing an
 earlier price as the target session.
 
+The workflow does not publish on Sunday or Monday HKT. When the next completed
+New York session follows a weekend, the same private candidate first adds the
+missing Saturday and Sunday calendar-day carry points from the last published
+Friday point, then writes the new session. The carry path accepts only consecutive
+weekend dates, identical account/split/benchmark values, the prior source
+provenance, an explicit closed benchmark state, and no cash movements. A missing
+weekday remains blocked. This keeps calendar-day fee accrual complete without
+creating a separate weekend publication or requiring the Mac to be online.
+
 For the selected session, the reader resolves and pins both live portfolio
 identities, then reads performance, holdings, cash accounts, target-day cash
 transactions and trades twice. The normalized reads must be byte-equivalent.

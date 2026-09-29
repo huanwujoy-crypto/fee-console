@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import {
   ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows,
-  buildPoint, validateBenchmarkTimeline, samePoint, buildLatestStatus, sameStatus, isIsoDate
+  buildPoint, validateBenchmarkTimeline, samePoint, buildLatestStatus, sameStatus, isIsoDate, isWeekend, dayDiff
 } from "./daily-core.mjs";
 import {
   buildFeeCalculationReceipt,
@@ -77,8 +77,12 @@ const known = new Set([
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
 ]);
 for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${k}`);
-for (const f of flags) if (!["calibrated", "style-preflight"].includes(f)) die(`unknown flag --${f}`);
+for (const f of flags) if (!["calibrated", "style-preflight", "weekend-carry"].includes(f)) die(`unknown flag --${f}`);
 const calibrated = flags.has("calibrated");
+const weekendCarry = flags.has("weekend-carry");
+if (weekendCarry && (calibrated || flags.has("style-preflight"))) {
+  die("--weekend-carry cannot be combined with another mode flag");
+}
 
 /* Optional source provenance.  Older callers may omit both fields. */
 let sourceFetchedAt = null;
@@ -249,12 +253,63 @@ if (Object.hasOwn(data, "status")) {
     die("decrypted payload status.notes must be an array of strings — nothing written");
   }
 }
+
+let weekendCarryPrior = null;
+if (weekendCarry) {
+  const forbidden = [
+    ...ACCOUNTS.map(a => `acct-cash-${a}`),
+    ...ACCOUNTS.map(a => `prev-acct-cash-${a}`),
+    ...STYLE_SPLITS,
+    ...BENCH_DIV_KEYS,
+  ];
+  if (!isWeekend(date) || args.flows !== "[]" || forbidden.some(keyName => args[keyName] !== undefined)
+      || String(process.env.FEE_STYLE_INPUT_FILE || "").trim()) {
+    die("WEEKEND_CARRY_INPUT — nothing written");
+  }
+  if (data.daily.some(row => row && isIsoDate(row.d) && row.d > date)) {
+    die("WEEKEND_CARRY_HISTORICAL — nothing written");
+  }
+  weekendCarryPrior = data.daily
+    .filter(row => row && isIsoDate(row.d) && row.d < date)
+    .sort((a, b) => a.d.localeCompare(b.d)).at(-1);
+  if (!weekendCarryPrior || dayDiff(weekendCarryPrior.d, date) !== 1
+      || data.daily.filter(row => row && row.d === date).length > 1) {
+    die("WEEKEND_CARRY_SEQUENCE — nothing written");
+  }
+  const exactAmount = (actual, expected) => Number.isFinite(actual) && Number.isFinite(expected)
+    && Math.abs(actual - expected) <= 0.005;
+  if (![...ACCOUNTS, ...SPLITS, ...BENCH_KEYS].every(keyName =>
+    exactAmount(keyName in accounts ? accounts[keyName] : keyName in splits ? splits[keyName] : bench[keyName],
+      weekendCarryPrior[keyName]))) {
+    die("WEEKEND_CARRY_VALUE — nothing written");
+  }
+  if (!isIsoDate(weekendCarryPrior.bd) || args["src-bench"] !== weekendCarryPrior.bd
+      || args["bench-state"] !== "closed"
+      || !ACCOUNTS.every(account => isIsoDate(sourceDates[account])
+        && sourceDates[account] <= weekendCarryPrior.d && dayDiff(sourceDates[account], date) <= 3)
+      || [...BENCH_LEGACY_KEYS].some(keyName => args[keyName] !== undefined)) {
+    die("WEEKEND_CARRY_EVIDENCE — nothing written");
+  }
+  const priorFetchedAt = typeof weekendCarryPrior.sourceFetchedAt === "string"
+    && Number.isFinite(Date.parse(weekendCarryPrior.sourceFetchedAt))
+    ? new Date(weekendCarryPrior.sourceFetchedAt).toISOString() : null;
+  const priorFingerprint = SOURCE_FINGERPRINT_RE.test(String(weekendCarryPrior.sourceFingerprint || ""))
+    ? String(weekendCarryPrior.sourceFingerprint).toLowerCase() : null;
+  if ((priorFetchedAt || priorFingerprint)
+      ? sourceFetchedAt !== priorFetchedAt || suppliedSourceFingerprint !== priorFingerprint
+      : sourceFetchedAt !== null || suppliedSourceFingerprint !== null) {
+    die("WEEKEND_CARRY_PROVENANCE — nothing written");
+  }
+  for (const keyName of STYLE_SPLITS) {
+    if (Number.isFinite(weekendCarryPrior[keyName])) styleSplits[keyName] = Number(weekendCarryPrior[keyName]);
+  }
+}
 // Ordinary learned classifications travel only inside the encrypted payload.
 // Legacy callers remain supported until the registry is first activated.
 let styleResult = null, topHoldings, verifyStyleInput = () => {};
 const styleFile = (process.env.FEE_STYLE_INPUT_FILE || '').trim();
 if (flags.has('style-preflight') && !styleFile) die('STYLE_INPUT_REQUIRED — nothing written');
-if (data.classificationRegistry !== undefined && !styleFile) {
+if (data.classificationRegistry !== undefined && !styleFile && !weekendCarry) {
   die('STYLE_INPUT_REQUIRED for an activated registry — nothing written');
 }
 if (styleFile) {
@@ -344,6 +399,9 @@ const point = buildPoint({ date, accounts, splits, styleSplits, topHoldings, ben
   benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
   provisional: check.provisional, calibrated });
 const existingPoint = data.daily.find(x => x && x.d === date);
+if (weekendCarry && Array.isArray(weekendCarryPrior?.topHoldings)) {
+  point.topHoldings = structuredClone(weekendCarryPrior.topHoldings);
+}
 // A read-only correction that leaves `stock` unchanged must not erase a style
 // look-through already verified for the same day.  If stock changes materially,
 // the old style pair is deliberately dropped so the UI falls back to
