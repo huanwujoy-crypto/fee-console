@@ -25,17 +25,26 @@ const stripMarkup = value => value
   .trim();
 
 export function extractPrimaryDateLine(html) {
-  const match = String(html).match(/<span\b[^>]*class=["'][^"']*\bdate\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
-  return match ? stripMarkup(match[1]) : "";
+  const source = String(html);
+  const legacy = source.match(/<span\b[^>]*class=["'][^"']*\bdate\b[^"']*["'][^>]*>([\s\S]*?)<\/span>/i);
+  if (legacy) return stripMarkup(legacy[1]);
+  // The compact action page moved its date from span.date to the first header
+  // paragraph. Bind it to the named report heading, not arbitrary body text.
+  const header = source.match(/<header\b[^>]*>([\s\S]*?)<\/header>/i)?.[1] ?? "";
+  const compact = header.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>\s*<p\b[^>]*>([\s\S]*?)<\/p>/i);
+  if (!compact) return "";
+  const title = stripMarkup(compact[1]);
+  return title === "XUAN · 开市前行动版" ? `${title} · ${stripMarkup(compact[2])}` : "";
 }
 
 export function classifyEdition(dateLine) {
   const value = String(dateLine).toLowerCase();
   // Ad-hoc pages can contain wording such as "计划外加跑（常规 21:00）".
   // It must win over every AM/PM token so it can never prove a scheduled run.
-  if (/计划外|加跑|补跑|临时|ad[ -]?hoc/.test(value)) return "adhoc";
+  if (/计划外|加跑|补跑|临时|预览|非定时|ad[ -]?hoc/.test(value)) return "adhoc";
   const am = /早间|上午|早班|(?:^|[\s·])am(?:$|[\s·])/.test(value);
-  const pm = /睡前|晚间|定时正式版|(?:^|[\s·])pm(?:$|[\s·])/.test(value);
+  // "pm" remains the internal slot key for the post-cutover pre-open report.
+  const pm = /睡前|晚间|定时正式版|开市前行动版|(?:^|[\s·])pm(?:$|[\s·])/.test(value);
   if (am && pm) return "ambiguous";
   if (am) return "am";
   if (pm) return "pm";

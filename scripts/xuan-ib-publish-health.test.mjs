@@ -6,6 +6,7 @@ import {
   classifyEdition,
   evaluateFreshness,
   expectedEditionAt,
+  extractPrimaryDateLine,
   gitBlobSha,
   probePublication,
   runWatcher,
@@ -17,6 +18,7 @@ import {AM_WATCH_CRON, PM_RUN_TARGET_MS, PM_SCHEDULE_CUTOVER_HKT_DATE, PM_OPENIN
 
 const sha = character => character.repeat(40);
 const html = (date, label) => `<!doctype html><title>XUAN-投资管理</title><!-- xuan-ib-handover:v1 --><span class="date">${date} 周四 · ${label}</span>`;
+const compactHtml = (date, note = "") => `<!doctype html><title>XUAN · 开市前行动版</title><header><span class="state">已更新</span><h1>XUAN · 开市前行动版</h1><p>${date} · ${date} 13:04–13:04 HKT · 数据至 2026-09-28${note}</p></header>`;
 const loaderBytes = Buffer.from("<!doctype html><script>fetch('latest.html')</script>");
 
 test("computes a Git blob SHA over the exact published bytes", () => {
@@ -29,6 +31,27 @@ test("classifies AM, PM, and ad-hoc pages with ad-hoc precedence", () => {
   assert.equal(classifyEdition("2026-08-27 · 21:00 HKT 定时正式版"), "pm");
   assert.equal(classifyEdition("2026-08-27 · 计划外加跑（常规 21:00）"), "adhoc");
   assert.equal(classifyEdition("2026-08-27 · 市场简报"), "unknown");
+  assert.equal(classifyEdition("XUAN · 开市前行动版 · 2026-09-29"), "pm");
+  assert.equal(classifyEdition("XUAN · 开市前行动版 · 2026-09-29 · 版式预览，非定时发布"), "adhoc");
+});
+
+test("compact pre-open header supplies the dated scheduled publication evidence", () => {
+  const bytes = Buffer.from(compactHtml("2026-09-29"));
+  const line = extractPrimaryDateLine(bytes.toString());
+  assert.match(line, /^XUAN · 开市前行动版 · 2026-09-29/);
+  assert.equal(classifyEdition(line), "pm");
+  const meta = {schemaVersion: 1, sourceSha: sha("a"),
+    sourceCommitEpoch: slotStartEpoch("2026-09-29", "pm") + 240,
+    dataDate: "2026-09-29", htmlBlob: gitBlobSha(bytes)};
+  const result = evaluateFreshness({indexHtml: loaderBytes, mainIndexHtml: loaderBytes,
+    onlineHtml: bytes, mainHtml: bytes, onlineMeta: meta, mainMeta: meta,
+    expectedEdition: "pm", expectedDate: "2026-09-29",
+    publicationHistory: [{...meta, commit: sha("b"), valid: true, edition: "pm"}],
+    now: new Date("2026-09-29T11:25:00Z")});
+  assert.equal(result.ok, true);
+  assert.equal(result.primaryDate, "2026-09-29");
+  assert.equal(classifyEdition(extractPrimaryDateLine(compactHtml("2026-09-29", " · 非定时预览"))), "adhoc");
+  assert.equal(extractPrimaryDateLine('<header><h1>别的页面</h1><p>2026-09-29</p></header>'), "");
 });
 
 test("selects AM and PM across the week without retroactively changing historical deadlines", () => {
@@ -565,15 +588,11 @@ test("the non-gating Pages probe retries stale data and reports timeout as data"
   assert.equal(timedOut.attempts, 2);
 });
 
-test("workflows keep the shared DST schedule, read-only watcher, and post-push non-gating probe", () => {
+test("workflow keeps only the pre-open cron, read-only watcher, and post-push non-gating probe", () => {
   const watcher = fs.readFileSync(".github/workflows/watch-xuan-ib-freshness.yml", "utf8");
-  assert.match(watcher, /cron: '35 0 \* \* 2-6'/);
   assert.match(watcher, /cron: '20 5 \* \* 1-5'/);
-  assert.match(watcher, /cron: '55 13 \* \* 1-5'/);
-  assert.match(watcher, /cron: '55 14 \* \* 1-5'/);
-  assert.doesNotMatch(watcher, /cron: '25 13/);
-  assert.match(watcher, /AM is due Tuesday-Saturday/);
-  assert.match(watcher, /PM targets 09:30 New York/);
+  assert.doesNotMatch(watcher, /cron: '(?:35 0|55 13|55 14|50 13|50 14) /);
+  assert.match(watcher, /Retired AM\/PM crons must not dispatch/);
   assert.match(watcher, /--schedule "\$\{SCHEDULE_EXPRESSION:-\}"/);
   assert.match(watcher, /--main-index xuan-ib\/index\.html/);
   assert.match(watcher, /--attempts 4/);

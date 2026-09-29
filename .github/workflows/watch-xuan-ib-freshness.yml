@@ -2,18 +2,13 @@ name: Watch XUAN-IB fixed page freshness
 
 on:
   schedule:
-    # AM is due Tuesday-Saturday historically; PM targets 09:30 New York historically.
-    # Since 2026-09-28 the action report is due at 13:20 HKT. Retired AM/PM
-    # candidates remain listed only to preserve historical dispatch evidence;
-    # the shared schedule gate disables them after cutover.
+    # Since 2026-09-28 only the pre-open action report is due at 13:20 HKT.
+    # Retired AM/PM crons must not dispatch: GitHub may run them hours late.
     - cron: '20 5 * * 1-5'
-    - cron: '35 0 * * 2-6'
-    - cron: '55 13 * * 1-5'
-    - cron: '55 14 * * 1-5'
   workflow_dispatch:
     inputs:
       expected_edition:
-        description: Expected scheduled edition (auto uses the shared AM/PM delivery slots)
+        description: Expected edition (auto uses the current pre-open slot; AM/PM are historical)
         type: choice
         required: true
         default: auto
