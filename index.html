@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.16">
+<meta name="fee-console-build" content="4.9.17">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -38,6 +38,11 @@ h1{font-size:19px;margin:0}
 .mix .k{font-size:11px;color:var(--ink-2)}
 .mix .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
 .mix .p{font-size:11px;color:var(--ink-muted);margin-left:3px;font-weight:400}
+.top-holdings{margin:9px 0 0;padding:8px 0 2px;border-top:1px solid var(--grid)}
+.top-holdings-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:2px;font-size:11px;color:var(--ink-2)}
+.top-holdings-row{display:grid;grid-template-columns:18px minmax(0,1fr) auto auto;align-items:baseline;gap:7px;padding:3px 0;font-size:12px;font-variant-numeric:tabular-nums}
+.top-holdings-rank{color:var(--ink-muted)}.top-holdings-ticker{font-weight:650;overflow-wrap:anywhere}.top-holdings-value{font-weight:600;white-space:nowrap}.top-holdings-weight{min-width:43px;text-align:right;color:var(--ink-2);white-space:nowrap}
+.top-holdings+.mix{border-top:0;margin-top:2px;padding-top:4px}
 .rr{display:flex;justify-content:space-between;align-items:baseline;gap:10px;padding:5px 0;font-size:14px}
 .rr span{color:var(--ink-2)}
 .rr b{font-size:19px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
@@ -822,7 +827,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.16";
+const UI_VERSION_LABEL=" · v4.9.17";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1806,6 +1811,21 @@ function fundValueChart(points,id){
   return `<svg class="fund-chart" viewBox="0 0 600 206" role="img" aria-label="${esc(id)} 费用前份额市值从 ${esc(points[0].date)} 的 ${usd(values[0],2)} 变化至 ${esc(points.at(-1).date)} 的 ${usd(values.at(-1),2)}"><text x="12" y="19" font-size="13" fill="var(--ink-2)">${usd(max,0)}</text><line x1="12" x2="588" y1="172" y2="172" stroke="var(--grid)"/><path d="${path}" fill="none" stroke="var(--series-1)" stroke-width="3"/><circle cx="588" cy="${y(values.at(-1)).toFixed(2)}" r="4" fill="var(--series-1)"/><text x="12" y="199" font-size="12" fill="var(--ink-2)">${esc(points[0].date)}</text><text x="588" y="199" text-anchor="end" font-size="12" fill="var(--ink-2)">${esc(points.at(-1).date)}</text></svg>`;
 }
 /* fund-investor-render:end */
+/* top-holdings-view:start */
+function topHoldingsView(lp,nav){
+  const rows=lp?.topHoldings,stock=Number(lp?.stock),total=Number(nav);
+  if(!Array.isArray(rows)||rows.length<1||rows.length>3||!Number.isFinite(stock)||stock<0||!Number.isFinite(total)||total<=0)return "";
+  const seen=new Set(),safe=[];let prior=Infinity,sum=0;
+  for(const row of rows){
+    if(!row||typeof row!=="object"||Array.isArray(row)||Object.keys(row).sort().join("|")!=="ticker|value"
+      ||typeof row.ticker!=="string"||!/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(row.ticker)||seen.has(row.ticker)
+      ||!Number.isFinite(Number(row.value))||Number(row.value)<=0||Number(row.value)>prior+.005)return "";
+    const value=Number(row.value);seen.add(row.ticker);safe.push({ticker:row.ticker,value});prior=value;sum+=value;
+  }
+  if(sum>stock+1)return "";
+  return `<div class="top-holdings" aria-label="前三大持仓，不含现金及其它"><div class="top-holdings-head"><span>前三大持仓</span><span>不含现金及其它</span></div>${safe.map((row,index)=>`<div class="top-holdings-row"><span class="top-holdings-rank">${index+1}</span><span class="top-holdings-ticker">${esc(row.ticker)}</span><span class="top-holdings-value">${usd(row.value,0)}</span><span class="top-holdings-weight">${(row.value/total*100).toFixed(1)}%</span></div>`).join("")}</div>`;
+}
+/* top-holdings-view:end */
 function renderKPIs(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
   const lp=st.lastPt;const showAnn=st.spanDays>365;
@@ -1838,7 +1858,7 @@ function renderKPIs(feeView,st,B,G){
     <li><b>可比收益率：</b>组合毛 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较；基准股息按 30% 美国预扣税净额再投资，与组合实际入账的净股息同口径。</li>
     <li><b>金额与费用：</b>金额差＝实际资产－模拟余额。实际资产未扣尚未支付的应计费用；模拟沿用含息基准（股息税后），除股息预扣税外不计其它个人税费、交易成本或管理费。短期 1–3 天的 benchmark 缺口会显示最近已验证余额作为参考估算，不假设未知市场收益，并只与基准覆盖日的同日基金资产比较；缺口内有资金流或超过 3 天时不显示估算金额。Modified Dietz 与所有费用仍只读取计算回执；本表不是第二套费用计算，也不是投资建议。</li>
   </ol><div class="note">${st.benchAsOf?`基准收益截至 ${st.benchAsOf}${st.benchPriceAsOf&&st.benchPriceAsOf!==st.benchAsOf?`；最近收盘日 ${st.benchPriceAsOf}`:""}。${benchmarkPendingLabel?` ${benchmarkPendingLabel}。`:""}${verifiedClosureLabel?`<br>${verifiedClosureLabel}`:""}<br>`:""}${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,benchmarkDayDiff(feeView.start,st.benchAsOf)+1))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
-  const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${mix}`;
+  const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${topHoldingsView(lp,st.nav)}${mix}`;
   if(feeView.state!=="verified"){
     document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="lab">收益率</div><div class="receipt-pending">${feeView.message}</div></div>`;return;
   }
