@@ -31,7 +31,7 @@ import {
   validateFeeCalculationReceipt
 } from "./fee-receipt-core.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
-import { readStyleInput, resolveStyle } from "./fee-style-registry.mjs";
+import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-registry.mjs";
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -251,7 +251,7 @@ if (Object.hasOwn(data, "status")) {
 }
 // Ordinary learned classifications travel only inside the encrypted payload.
 // Legacy callers remain supported until the registry is first activated.
-let styleResult = null, verifyStyleInput = () => {};
+let styleResult = null, topHoldings, verifyStyleInput = () => {};
 const styleFile = (process.env.FEE_STYLE_INPUT_FILE || '').trim();
 if (flags.has('style-preflight') && !styleFile) die('STYLE_INPUT_REQUIRED — nothing written');
 if (data.classificationRegistry !== undefined && !styleFile) {
@@ -266,6 +266,7 @@ if (styleFile) {
     const staticMap = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/fee-style-mapping.json'), 'utf8'));
     styleResult = resolveStyle({ input: snapshot.input, registry: data.classificationRegistry,
       staticMap, date, sourceDates, stock: splits.stock });
+    topHoldings = summarizeTopHoldings(snapshot.input);
     styleSplits.growth = styleResult.growth;
     styleSplits.value = styleResult.value;
   } catch (error) {
@@ -339,7 +340,7 @@ hard.push(...flows.errors);
 const benchmarkRejected = check.benchmarkErrors.length > 0;
 const acceptedBench = benchmarkRejected ? {} : bench;
 const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
-const point = buildPoint({ date, accounts, splits, styleSplits, bench: acceptedBench, benchDiv: acceptedBenchDiv,
+const point = buildPoint({ date, accounts, splits, styleSplits, topHoldings, bench: acceptedBench, benchDiv: acceptedBenchDiv,
   benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
   provisional: check.provisional, calibrated });
 const existingPoint = data.daily.find(x => x && x.d === date);
@@ -352,6 +353,10 @@ const hasExistingStyle = STYLE_SPLITS.every(k => Number.isFinite(existingPoint?.
 if (noIncomingStyle && hasExistingStyle &&
     Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
   for (const k of STYLE_SPLITS) point[k] = Number(existingPoint[k]);
+}
+if (point.topHoldings === undefined && Array.isArray(existingPoint?.topHoldings)
+    && Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
+  point.topHoldings = structuredClone(existingPoint.topHoldings);
 }
 // Same-date portfolio corrections may omit public benchmark arguments.  Keep
 // the complete price/date/dividend bundle together; never retain an orphaned

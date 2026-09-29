@@ -100,6 +100,10 @@ test('style registry: atomic encrypted integration, next-run reuse and byte no-o
   const r = run(dir, {}, [], f.env); assert.equal(r.status, 0, r.stderr);
   const p = readPayload(dir), before = fs.readFileSync(path.join(dir, 'data.json'));
   assert.equal(p.daily[0].growth, 253845.98); assert.equal(p.daily[0].value, 200000);
+  assert.deepEqual(p.daily[0].topHoldings, [
+    { ticker: 'SYNTHB', value: 253845.98 },
+    { ticker: 'SYNTHA', value: 200000 }
+  ]);
   assert.equal(p.classificationRegistry.entries.length, 2);
   assert.deepEqual(Object.keys(JSON.parse(before)).sort(), ['data', 'enc', 'v']);
   assert.ok(!before.includes(Buffer.from('SYNTHA')));
@@ -429,6 +433,42 @@ test("a changed stock total never carries forward stale style classification", (
   const point = readPayload(dir).daily.at(-1);
   assert.equal(Object.hasOwn(point, "growth"), false);
   assert.equal(Object.hasOwn(point, "value"), false);
+});
+
+test("a same-day correction preserves verified top holdings only while stock is unchanged", () => {
+  const dir = tmp(), d = today();
+  writePayload(dir, {
+    updatedAt: `${d}T00:00:00.000Z`,
+    daily: [{
+      d,
+      schwab: 598517.36,
+      webull: 119026.45,
+      cash: 263697.83,
+      stock: 453845.98,
+      other: 0,
+      topHoldings: [
+        { ticker: "SYNTHB", value: 253845.98 },
+        { ticker: "SYNTHA", value: 200000 },
+      ],
+    }],
+    flowsAuto: [],
+    flowsUnresolved: [],
+    status: {
+      asOf: d,
+      calibrated: false,
+      provisional: false,
+      splitDelta: 0,
+      unresolvedCount: 0,
+      notes: [],
+    },
+  });
+  const top = structuredClone(readPayload(dir).daily.at(-1).topHoldings);
+  const same = run(dir);
+  assert.equal(same.status, 0, same.stderr);
+  assert.deepEqual(readPayload(dir).daily.at(-1).topHoldings, top);
+  const changed = run(dir, { cash: "263597.83", stock: "453945.98" });
+  assert.equal(changed.status, 0, changed.stderr);
+  assert.equal(Object.hasOwn(readPayload(dir).daily.at(-1), "topHoldings"), false);
 });
 
 /* ---------------- source snapshot provenance ---------------- */

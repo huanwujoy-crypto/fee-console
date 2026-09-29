@@ -29,6 +29,34 @@ export const classificationId = e => 'fee-style-' + crypto.createHash('sha256')
   .update(JSON.stringify([e.portfolioId, e.holdingId, e.ticker, e.style, e.effectiveFrom]))
   .digest('hex').slice(0, 24);
 
+/** Aggregate the verified equity universe for the compact mobile summary.
+ * Cash and SGOV never enter this input. Equal values are ordered by ticker so
+ * repeated source reads produce the same encrypted daily point.
+ */
+export function summarizeTopHoldings(input, limit = 3) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10 || !input || !Array.isArray(input.portfolios)) {
+    fail('TOP_HOLDINGS');
+  }
+  const totals = new Map();
+  for (const portfolio of input.portfolios) {
+    if (!portfolio || !Array.isArray(portfolio.holdings)) fail('TOP_HOLDINGS');
+    for (const holding of portfolio.holdings) {
+      const ticker = holding?.ticker;
+      if (typeof ticker !== 'string' || !/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(ticker)
+          || ticker === 'SGOV') fail('TOP_HOLDINGS');
+      amount(holding.valueUsd);
+      const total = (totals.get(ticker) || 0) + holding.valueUsd;
+      if (!Number.isFinite(total) || total > 1e12) fail('TOP_HOLDINGS');
+      totals.set(ticker, total);
+    }
+  }
+  return [...totals.entries()]
+    .map(([ticker, value]) => ({ ticker, value: Math.round(value * 100) / 100 }))
+    .filter(row => row.value > 0)
+    .sort((a, b) => b.value - a.value || (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0))
+    .slice(0, limit);
+}
+
 function validateEntry(e, saved = false) {
   exact(e, saved ? [...ENTRY_KEYS, 'id'] : ENTRY_KEYS);
   identity(e);

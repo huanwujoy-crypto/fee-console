@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveStyle, readStyleInput } from './fee-style-registry.mjs';
+import { resolveStyle, readStyleInput, summarizeTopHoldings } from './fee-style-registry.mjs';
 
 const fixture = () => ({
   date: '2026-09-06', sourceDates: { schwab: '2026-09-04', webull: '2026-09-04' }, stock: 300,
@@ -28,6 +28,16 @@ test('new position computes totals, then persists and reuses immutable decision'
   assert.deepEqual(again.registry, r.registry); assert.deepEqual(again.newEventIds, []);
   f.input.proposals = [];
   assert.equal(resolveStyle({ ...f, registry: r.registry }).growth, 200);
+});
+test('top holdings aggregate matching tickers and use deterministic value order', () => {
+  const f = fixture();
+  f.input.portfolios[0].holdings.push({ holdingId: 3, ticker: 'TESTB', valueUsd: 150 });
+  assert.deepEqual(summarizeTopHoldings(f.input), [
+    { ticker: 'TESTB', value: 350 },
+    { ticker: 'TESTA', value: 100 }
+  ]);
+  assert.throws(() => summarizeTopHoldings({ portfolios: [{ holdings: [{ ticker: 'SGOV', valueUsd: 1 }] }] }),
+    /STYLE_TOP_HOLDINGS/);
 });
 const badCases = [
   ['missing classification has source row index', f => { f.input.proposals = []; }, /MISSING_ROWS_1/],
