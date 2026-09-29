@@ -96,3 +96,25 @@ test('model rejects duplicated or inconsistent planning arithmetic', () => {
   const wrongGroup = structuredClone(model); wrongGroup.orders.buys[0].side = 'SELL';
   assert.throws(() => validateNightActionModel(wrongGroup), /ORDER_GROUP_MISMATCH/);
 });
+
+test('schema v5 discloses full pending CALL and the half used in planning', () => {
+  const current = structuredClone(model);
+  current.schemaVersion = 5;
+  current.replenishment = { ...current.replenishment, budget: 750, retained: 150 };
+  current.cash = { status: 'ready', ib: 700, noah: 300, pool: 1000,
+    reserve: 400, callApplied: 200, orderReserve: 50, planning: 750,
+    cashLike: { total: 100, items: [{ symbol: 'VGSH', amount: 100 }] }, totalCapacity: 850 };
+  current.allocation = { ...current.allocation, projectedTotal: 4000,
+    categories: current.allocation.categories.map(item => ({ ...item,
+      projectedMarketValue: item.marketValue, projectedPct: item.currentPct })) };
+  for (const item of [...current.orders.buys, ...current.orders.sells]) {
+    Object.assign(item, { currency: 'USD', ageDays: 0, distancePct: 0, trend: null });
+  }
+  const html = renderNightActionReport(current);
+  assert.match(html, /待 CALL 预留（50%）<\/span><b>\$200/);
+  assert.match(html, /待 CALL 原额<\/b><span>\$400/);
+  assert.match(html, /现金池扣除待 CALL 原额的 50% 及买单预占/);
+  assert.deepEqual(extractNightActionModel(html), current);
+  assert.throws(() => validateNightActionModel({ ...current,
+    cash: { ...current.cash, callApplied: 400 } }), /INVALID_CASH/);
+});
