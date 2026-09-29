@@ -52,10 +52,24 @@ test('weekly issuer candidate union combines direct stocks with ETF matches beyo
  assert.deepEqual(result.candidateSources,{direct:2,etfTopTen:9});
  assert.equal(result.candidateCount,10);
  assert.deepEqual(result.missingFunds.map(f=>f.symbol),['UNKNOWN']);
+ assert.equal(result.listedMarketValueCents,result.rows.reduce((sum,r)=>sum+BigInt(r.marketValueCents),0n).toString());
+ assert.ok(result.listedPercent>0);
  const html=renderWeeklyConcentration(result);
+ assert.match(html,/已列 \d+ 个单票合计/);
+ assert.match(html,/已列单票合计先汇总/);
  assert.match(html,/CSPX.*20,000.*3\.01%/);assert.match(html,/未计入：UNKNOWN/);
  assert.match(html,/可见下限/);assert.match(html,/发行方资料/);assert.match(html,/两组候选/);
  assert.match(html,/直接持股同名、非前十/);
+});
+test('weekly listed concentration total excludes issuers below 1% and uses the cash-inclusive denominator',()=>{
+ const cutoff='2026-09-25';
+ const envelope={riskDenominator:{components:[{key:'a',valueMicro:'3000000000'},{key:'b',valueMicro:'3000000000'},{key:'c',valueMicro:'4000000000'}]},
+  riskConstituents:[['A',600000000],['B',500000000],['C',50000000]].map(([symbol,micro],i)=>({portfolioId:'1',instrumentId:String(i),symbol,custodian:'IB-HK',assetType:'STK',marketValueMicro:String(micro),valueDate:cutoff,identityVerified:true}))};
+ const result=buildWeeklyConcentration(envelope,{cutoff});
+ assert.equal(result.rows.length,2);
+ assert.equal(result.listedMarketValueCents,'110000');
+ assert.equal(result.listedPercent,11);
+ assert.match(renderWeeklyConcentration(result),/已列 2 个单票合计[\s\S]*\$1,100[\s\S]*11\.00%/);
 });
 test('non-top-ten matches never create new ETF-only candidates or double count a top-ten issuer',()=>{
  const cutoff='2026-09-25';
