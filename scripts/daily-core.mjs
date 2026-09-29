@@ -470,11 +470,12 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, styleSplits = {}, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, styleSplits = {}, topHoldings, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
   for (const s of STYLE_SPLITS) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
+  if (Array.isArray(topHoldings)) point.topHoldings = topHoldings.map(row => ({ ticker: row.ticker, value: row.value }));
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
   if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) {
     point.bd = benchDate;
@@ -567,10 +568,25 @@ export function validateBenchmarkTimeline(points = []) {
   return errors;
 }
 
+const sameStructuredValue = (a, b) => {
+  if (Object.is(a, b)) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length
+      && a.every((value, index) => sameStructuredValue(value, b[index]));
+  }
+  if (a && b && typeof a === "object" && typeof b === "object") {
+    const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
+    return ka.length === kb.length && ka.every((key, index) => key === kb[index])
+      && ka.every(key => sameStructuredValue(a[key], b[key]));
+  }
+  return false;
+};
+
 export const samePoint = (a, b) => {
   if (!a || !b) return false;
   const ka = Object.keys(a).sort(), kb = Object.keys(b).sort();
-  return ka.length === kb.length && ka.every((k, i) => k === kb[i]) && ka.every(k => Object.is(a[k], b[k]));
+  return ka.length === kb.length && ka.every((k, i) => k === kb[i])
+    && ka.every(k => sameStructuredValue(a[k], b[k]));
 };
 
 const round2 = n => {

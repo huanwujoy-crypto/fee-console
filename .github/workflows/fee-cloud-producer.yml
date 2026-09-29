@@ -2,8 +2,9 @@ name: Fee console cloud producer
 
 on:
   schedule:
-    # HKT Tue-Sat 12:50, 13:50, 15:50 and 17:50. The later idempotent slots
+    # HKT Tue-Sat 11:30, 12:50, 13:50, 15:50 and 17:50. The later idempotent slots
     # pick up a delayed public close without requiring the Mac to be online.
+    - cron: '30 3 * * 2-6'
     - cron: '50 4,5,7,9 * * 2-6'
   workflow_dispatch:
 
