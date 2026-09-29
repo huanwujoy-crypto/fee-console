@@ -86,8 +86,11 @@ export function buildWeeklyConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_P
         ...(fundValueMicro===undefined?{}:{fundValueCents:cents(fundValueMicro)})})),
       _total:total};
   }).sort((a,b)=>a._total===b._total?a.label.localeCompare(b.label):a._total>b._total?-1:1);
-  const rows=candidates.filter(r=>r.aboveOnePercent).map(({_total,...row})=>row);
+  const listed=candidates.filter(r=>r.aboveOnePercent);
+  const listedTotal=listed.reduce((sum,r)=>sum+r._total,0n);
+  const rows=listed.map(({_total,...row})=>row);
   return {methodId:policy.methodId,cutoff,denominatorCents:cents(denominator),rows,
+    listedMarketValueCents:cents(listedTotal),listedPercent:percent(listedTotal,denominator),
     candidateCount:candidates.length,candidateSources:{direct:directCandidates.size,etfTopTen:topTenCandidates.size},
     matchedFunds:[...usedFunds.values()].map(f=>({symbol:f.symbol,asOf:f.asOf,source:f.source,basis:f.basis})).sort((a,b)=>a.symbol.localeCompare(b.symbol)),
     missingFunds:[...missingFunds.values()].map(({marketValueMicro,...rest})=>({...rest,marketValueCents:cents(marketValueMicro)})).sort((a,b)=>a.symbol.localeCompare(b.symbol))};
@@ -102,5 +105,5 @@ export function renderWeeklyConcentration(result){
     ?`<li>直接 ${esc(p.custodian)} ${esc(p.symbol)}：${money(p.marketValueCents)}</li>`
     :`<li>${esc(p.fund)} ${money(p.fundValueCents)} × ${(p.weightBp/100).toFixed(2)}% ＝ ${money(p.marketValueCents)}（${p.scope==='topTen'?'前十':'直接持股同名、非前十'}；成分日 ${esc(p.asOf)}，<a href="${esc(p.source)}" rel="noopener noreferrer">发行方资料</a>）</li>`).join('')}</ul>`).join('');
   const sourceList=result.matchedFunds.map(f=>`<li>${esc(f.symbol)}：${esc(f.asOf)} · <a href="${esc(f.source)}" rel="noopener noreferrer">发行方前十</a>${f.basis==='economic-exposure'?'（经济敞口）':''}</li>`).join('');
-  return `<h2>单票集中度</h2><p class="muted">三账户含现金 · 直接个股＋ETF 同名穿透／前十大股票 · 合计至少 1% · 含 BRK.B</p>${rows}${missing}<details><summary>计算过程与资料日期</summary><p>先合并两组候选：①直接持有的个股，加上各 ETF 中已核实的同名金额；②各 ETF 的前十成分股。两组中相同发行人及不同股类只算一个名字，合计后再筛选至少 1%。本轮候选：直接持股 ${result.candidateSources.direct} 个、ETF 前十 ${result.candidateSources.etfTopTen} 个，合并去重 ${result.candidateCount} 个。</p><p>ETF 间接金额＝该 ETF 本轮美元市值 × 已核实的成分权重；加直接持股后，除以三账户含现金总额 ${money(result.denominatorCents)}。权重逐行向下截取至 0.01%，金额只在显示时四舍五入；用未四舍五入的合计值判断是否达到 1%。合成 ETF 用经济敞口，不用抵押品篮子。</p><p>只计入已核实的前十及直接持股同名成分。其余 ETF 成分或缺资料基金仍未知，因此结果是可见下限，不保证列全所有超过 1% 的发行人；ETF 本身不重复计入单票。</p><h3>本轮 ETF 成分资料</h3><ul>${sourceList||'<li>本轮没有可用的 ETF 成分资料</li>'}</ul>${audit}</details>`;
+  return `<h2>单票集中度</h2><p class="muted">三账户含现金 · 直接个股＋ETF 同名穿透／前十大股票 · 合计至少 1% · 含 BRK.B</p><div class="line"><span>已列 ${result.rows.length} 个单票合计<br><small>仅统计下列达到 1% 的发行人</small></span><b>${money(result.listedMarketValueCents)}<br><small>${result.listedPercent.toFixed(2)}%</small></b></div>${rows}${missing}<details><summary>计算过程与资料日期</summary><p>先合并两组候选：①直接持有的个股，加上各 ETF 中已核实的同名金额；②各 ETF 的前十成分股。两组中相同发行人及不同股类只算一个名字，合计后再筛选至少 1%。本轮候选：直接持股 ${result.candidateSources.direct} 个、ETF 前十 ${result.candidateSources.etfTopTen} 个，合并去重 ${result.candidateCount} 个。</p><p>ETF 间接金额＝该 ETF 本轮美元市值 × 已核实的成分权重；加直接持股后，除以三账户含现金总额 ${money(result.denominatorCents)}。权重逐行向下截取至 0.01%，金额只在显示时四舍五入；用未四舍五入的合计值判断是否达到 1%。合成 ETF 用经济敞口，不用抵押品篮子。</p><p>已列单票合计先汇总达到 1% 的发行人未四舍五入金额，再除以相同分母；不包含低于 1% 或资料未核实的敞口。</p><p>只计入已核实的前十及直接持股同名成分。其余 ETF 成分或缺资料基金仍未知，因此结果是可见下限，不保证列全所有超过 1% 的发行人；ETF 本身不重复计入单票。</p><h3>本轮 ETF 成分资料</h3><ul>${sourceList||'<li>本轮没有可用的 ETF 成分资料</li>'}</ul>${audit}</details>`;
 }
