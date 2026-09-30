@@ -128,7 +128,10 @@ test("cloud producer bridges only a contiguous weekend before the next market se
 
 test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight secrets", () => {
   const workflow = fs.readFileSync(new URL("../.github/workflows/fee-cloud-producer.yml", import.meta.url), "utf8");
-  assert.match(workflow, /cron: '30 3 \* \* 2-6'/, "the first cloud attempt must be 11:30 HKT");
+  assert.match(workflow, /cron: '30,40,55 3 \* \* 2-6'/,
+    "the first cloud attempt must be 11:30 HKT with independent early retries");
+  assert.match(workflow, /cron: '20,50 4 \* \* 2-6'/,
+    "the early recovery window must continue through 12:50 HKT");
   assert.match(workflow, /permissions:\n  contents: read\n  id-token: write/);
   assert.match(workflow, /google-github-actions\/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093/);
   assert.match(workflow, /workloadIdentityPools\/fee-console-github\/providers\/fee-console-main/);
