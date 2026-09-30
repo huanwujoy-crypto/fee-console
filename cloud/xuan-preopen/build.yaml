@@ -1,0 +1,7 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'cloud/xuan-preopen/Dockerfile', '-t', 'asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/xuan-preopen-source:${_RELEASE}', '.']
+images:
+  - asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/xuan-preopen-source:${_RELEASE}
+substitutions:
+  _RELEASE: source-check-v1
