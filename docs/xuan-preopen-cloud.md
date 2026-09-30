@@ -16,3 +16,17 @@ IBKR 实际授权页会提示新客户端取代已连接的 Codex 客户端。�
 
 - https://www.interactivebrokers.com/en/general/about/mediaRelations/7-28-26.php
 - https://www.interactivebrokers.com.hk/en/trading/ai-integrations.php
+
+## 完整私有验收（未切换日程）
+
+`report.mjs --report-check --source-date YYYY-MM-DD` 固定读取三项 IB 来源和两项 Sharesight 来源，沿用原四卡模型与确定性 HTML 校验，只向既有私有 bucket 新建证据、页面及回执。CLI 不接受公网、GitHub 或日程写入参数。来源日必须显式指定且早于当日；此手动验收模式不是自动交易日选择器，不可直接挂日程。
+
+取数前与生成后分别从最新 trusted main 核对既有账户关联。过期、撤销、CALL 流水变化、已发布基线变化、资料日不一致或上传不完整均拒绝通过，不复制旧金额。挂单期间趋势只沿用 trusted main 中与 `latest.meta.json` blob 匹配的已发布页面。日志只含时间、状态、哈希和私有对象路径，不含 token、账户号、持仓或订单原始值。
+
+Sharesight 读取拟使用既有 `family-portfolio-gateway-key`，而非 Sharesight OAuth 主凭据。须另获业主批准后，才对 `xuan-preopen-source` 身份增加这一项 secret 的 `secretAccessor`；不授予其修改权限。该现有 REST key 可以查询其它 Sharesight 组合，因此它并非服务端仅限两组合的独立凭据；本生成器严格固定 IB-HK 与 NOAH-HK 两条 GET performance 请求，不访问网关的 MCP 写入面。
+
+当前网关不接受资产类别编号 83569。`Gateway.Dockerfile` 以 2026-09-30 查验的现行镜像 `sha256:88d71cfeb76415c9830829f2e9003f031cfd0e336dd2d248b59888b8d0a0cad9` 为底，仅机械修补已知 `get_performance` 函数。函数 SHA 不符立即构建失败；其它源码、OAuth、现金写入约束和容器启动配置不替换。新编号仅用于 IB-HK 单日只读报告，返回组合、USD、分类与日期还需再次核验。既有其它 grouping 逻辑不变。
+
+部署时先核对 live revision/image 仍与此基线一致，保留 `family-portfolio-gateway-ibcash-6d1038e86516` 回滚基线，以无流量 tagged revision 检查既有接口与新分类接口后才切流。不得直接重新部署历史源码归档以覆盖当前现金同步实现。此处列出的是待批准步骤，不是部署回执。
+
+本次准备不授权新的发布凭据、不延长账户关联有效期，不启用 Scheduler、不暂停本机任务。仍需完整真实五来源验收、受保护发布、公网读回，再单独完成日程交接。
