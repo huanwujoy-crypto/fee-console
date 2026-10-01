@@ -82,12 +82,31 @@ registry. The same verified equity holdings are aggregated by ticker across both
 portfolios; the three largest positive positions are stored in the encrypted
 daily point for the compact mobile summary. Their displayed weights use the
 same day's managed-composite total. Cash and SGOV remain in “现金及其它” and are
-not repeated in the top-three list. Cash transactions linked to a trade remain internal. The fixed Webull
-writer's exact account-bound principal-cash identity and its explicit `NOT
-external funding` description are also retained as `internal_trade`; similar
-free text or a generic deposit/withdrawal does not pass that rule. A remaining
-bare deposit or withdrawal becomes unresolved unless the existing private
-ledger already contains its reviewed classification.
+not repeated in the top-three list. Cash transactions linked to a trade remain
+internal. The fixed Webull writer's exact account-bound principal-cash identity
+and its explicit `NOT external funding` description are also retained as
+`internal_trade`. When Sharesight omits the cash row's `foreign_identifier`,
+the reader requires one unique same-day confirmed trade matching the account,
+order ID, ticker, side, principal amount and referenced Sharesight trade or
+holding ID. Similar free text, a mismatched trade or a generic
+deposit/withdrawal does not pass that rule. A remaining bare deposit or
+withdrawal becomes unresolved unless the existing private ledger already
+contains its reviewed classification.
+
+The producer retries one transient source-network or stable-read mismatch in
+the same run. Identity, schema, permission, amount, reconciliation and receipt
+failures are never retried. If a candidate contains an unresolved cash flow,
+the run reports the amount-free `FEE_CLOUD_UNRESOLVED_FLOW` code before the
+generic receipt validator. The job summary never includes portfolio amounts.
+
+`fee-cloud-supervisor.yml` is a secret-free, read-only observer of completed
+producer runs. One failure is left for the normal independent schedule slots.
+Two consecutive scheduled or manual failures create or refresh a single
+amount-free GitHub repair issue for Codex diagnosis; the next successful run
+closes it. The issue is only a repair candidate: it cannot read source or
+ledger secrets, publish data, edit the economic Gist, or change investor
+shares. Any repair still requires a tested pull request and the existing
+protected release path.
 
 The normal writer, fee receipt validator in amount-free `validate` mode, amount-free health receipt, private
 source recheck, signed candidate validation, protected promotion and Pages

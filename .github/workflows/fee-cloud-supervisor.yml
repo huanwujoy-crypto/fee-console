@@ -1,0 +1,32 @@
+name: Fee cloud deterministic supervisor
+
+on:
+  workflow_run:
+    workflows:
+      - Fee console cloud producer
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+  issues: write
+
+concurrency:
+  group: fee-cloud-supervisor
+  cancel-in-progress: false
+
+jobs:
+  supervise:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Maintain the amount-free Codex repair candidate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/fee-cloud-supervisor.mjs

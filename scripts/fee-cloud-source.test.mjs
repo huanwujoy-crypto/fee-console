@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { verifyWriterOutcome, weekendGapDates } from "./fee-cloud-producer.mjs";
+import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates } from "./fee-cloud-producer.mjs";
+import { SourceFetchError } from "./fee-economic-source.mjs";
 
 const D = "2026-09-23";
 const benchmarkCache = { v: 1, benchmarks: {
@@ -65,6 +66,46 @@ test("controlled Webull principal cash legs remain internal trades", () => {
   assert.equal(flow.evidence, "internal_trade");
 });
 
+test("account-bound Webull principal cash legs match the unique live Sharesight trade", () => {
+  const fixture = raw();
+  const orderId = "0387IJ3B2S80O0K7Q9BC000000";
+  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
+    amount: -9650, balance: 400, cash_account_id: 150591, date_time: `${D}T04:00:00.000Z`,
+    description: `Webull VSTL BUY securities principal; NOT external funding; order ${orderId}; holding 29274212; ${D} 09:55:50 EDT; source fee USD 0.00.`,
+    cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
+    foreign_identifier: null,
+  });
+  fixture.webull.trades.trades.push({
+    id: 138761041, portfolio_id: 1350094, transaction_date: D, state: "confirmed",
+    description_code: "BUY", holding_id: 29274212, value: 9650,
+    instrument: { code: "VSTL" },
+    comments: `Webull account 10205226; ${D} 09:55:50 EDT fill; order ${orderId}; 500 VSTL @ USD 19.30; source commission/fees USD 0.00.`,
+  });
+  const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
+  const flow = result.flows.find(row => row.desc.includes(orderId));
+  assert.equal(flow.evidence, "internal_trade");
+});
+
+test("Webull principal text alone stays unresolved when its trade evidence does not match", () => {
+  const fixture = raw();
+  const orderId = "0387IJ3B2S80O0K7Q9BC000000";
+  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
+    amount: -9650, balance: 400, cash_account_id: 150591, date_time: `${D}T04:00:00.000Z`,
+    description: `Webull VSTL BUY securities principal; NOT external funding; order ${orderId}; holding 29274212; ${D} 09:55:50 EDT; source fee USD 0.00.`,
+    cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
+    foreign_identifier: null,
+  });
+  fixture.webull.trades.trades.push({
+    id: 138761041, portfolio_id: 1350094, transaction_date: D, state: "confirmed",
+    description_code: "BUY", holding_id: 29274212, value: 9651,
+    instrument: { code: "VSTL" },
+    comments: `Webull account 10205226; ${D} 09:55:50 EDT fill; order ${orderId}; 500 VSTL @ USD 19.30; source commission/fees USD 0.00.`,
+  });
+  const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
+  const flow = result.flows.find(row => row.desc.includes(orderId));
+  assert.equal(Object.hasOwn(flow, "evidence"), false);
+});
+
 test("a generic Webull withdrawal is not promoted to internal without the controlled evidence", () => {
   const fixture = raw();
   fixture.webull.cashTransactions[150591].cash_account_transactions.push({
@@ -117,6 +158,40 @@ test("cloud producer accepts the real updated and no-op writer contracts", () =>
     "no-op 2026-09-24", "2026-09-24"), /FEE_CLOUD_WRITER_OUTCOME/);
   assert.equal(verifyWriterOutcome("a".repeat(64), "b".repeat(64),
     "no-op 2026-09-28", "2026-09-28", true), "updated");
+});
+
+test("cloud producer reports unresolved cash before the generic receipt gate", () => {
+  assert.doesNotThrow(() => assertCandidateReceiptable({ flowsUnresolved: [] }));
+  assert.throws(() => assertCandidateReceiptable({ flowsUnresolved: [{ id: "review" }] }),
+    /FEE_CLOUD_UNRESOLVED_FLOW/);
+});
+
+test("cloud producer retries one transient stable-read failure only", async () => {
+  let calls = 0, sleeps = 0;
+  const reader = { readStable: async () => {
+    calls++;
+    if (calls === 1) throw new Error("FEE_CLOUD_SOURCE_UNSTABLE");
+    return { targetDate: D };
+  } };
+  const result = await readStableWithRetry(reader, D, {}, { delayMs: 0, sleep: async () => { sleeps++; } });
+  assert.deepEqual(result, { input: { targetDate: D }, retryCount: 1 });
+  assert.equal(sleeps, 1);
+  const permanent = { readStable: async () => { throw new Error("FEE_CLOUD_IDENTITY"); } };
+  await assert.rejects(readStableWithRetry(permanent, D, {}, { delayMs: 0 }), /FEE_CLOUD_IDENTITY/);
+});
+
+test("cloud producer retries one transient economic-source stability failure only", async () => {
+  let calls = 0, sleeps = 0;
+  const result = await fetchEconomicWithRetry(async () => {
+    calls++;
+    if (calls === 1) throw new SourceFetchError("SOURCE_CHANGED");
+    return { envelopeVersion: 4 };
+  }, { delayMs: 0, sleep: async () => { sleeps++; } });
+  assert.deepEqual(result, { economic: { envelopeVersion: 4 }, retryCount: 1 });
+  assert.equal(sleeps, 1);
+  await assert.rejects(fetchEconomicWithRetry(async () => {
+    throw new SourceFetchError("SOURCE_IDENTITY");
+  }, { delayMs: 0 }), /SOURCE_IDENTITY/);
 });
 
 test("cloud producer bridges only a contiguous weekend before the next market session", () => {
