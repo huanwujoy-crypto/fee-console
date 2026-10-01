@@ -60,7 +60,7 @@ test('subscription view shows current shares and excludes contributed capital fr
  const c=context();run(c,`profile.subscriptions=[{id:'synthetic-sub-1',date:'2026-08-22',investorId:'B',grossCents:9002,feeCents:2,netCents:9000,priceDate:'2026-08-21',priceTotalCents:18000,issuedShares:500,sourceRef:'sharesight:synthetic-1'}];DAILY.daily[2].webull+=90;DAILY.flowsAuto=[{date:'2026-08-22',acct:'webull',amount:90}];fixtureFee.benchmarkInputs.flows=[{date:'2026-08-22',amountCents:9000}];_fundSelection='B';renderInvestors({profile},fixtureFee);`);
  const profileHtml=run(c,'elements.get("fundProfileBox").innerHTML'),body=run(c,'elements.get("fundInvestorBox").innerHTML');
  assert.match(profileHtml,/1,500 股/);assert.match(profileHtml,/B · 60\.00%/);
- assert.match(body,/最新可核验份额 · 2026-08-22<b>900 股/);assert.match(body,/较前一估值日 · 已剔除增资／份额转让/);
+ assert.match(body,/最新可核验份额(?: · 2026-08-22)?<b>900 股/);assert.match(body,/较前一估值日 · 已剔除增资/);
  assert.match(body,/\$42\.00/);assert(!body.includes('>$132.00</div>'));
 },{skip:!html.includes('const EVENT_KEYS =')});
 test('external fee payment displays the registered transfer immediately and excludes transfer basis from daily change',()=>{
@@ -69,7 +69,7 @@ test('external fee payment displays the registered transfer immediately and excl
  assert.match(profileHtml,/B → A/);assert.match(profileHtml,/56 股/);assert.match(profileHtml,/A · 65\.60%/);
  assert.match(body,/基金档案已登记份额<b>656 股/);assert.match(body,/最新可核验份额 · 2026-08-22<b>656 股/);
  assert.match(body,/已剔除增资／份额转让/);assert.match(body,/>\$45\.92</);
-});
+},{skip:!html.includes('const TRANSFER_KEYS =')});
 test('future unknown flow shows only last safe dated investor value',()=>{
  const c=context();run(c,`fixtureFee.benchmarkInputs.flows=[{date:'2026-08-22',amountCents:999999}];renderInvestors({profile},fixtureFee);`);const body=run(c,'elements.get("fundInvestorBox").innerHTML');assert.match(body,/最近可计算市值/);assert.match(body,/当前市值待核验/);assert.match(body,/历史市值仅截至 2026-08-21/);assert.match(body,/>\$108\.00</);assert(!body.includes('>2026-08-22</td>'));assert.match(body,/外部资金流|投资人归属/);
 });

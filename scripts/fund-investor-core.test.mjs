@@ -22,6 +22,12 @@ test("activated browser uses the exact reviewed fund factory", () => {
     assert.equal(createHash("sha256").update(embedded).digest("hex"),"b53dd552718319f220fc0ba57a7055a3fd5eb0de7781910d226848fa0705c92a");
     return;
   }
+  if(!embedded.includes('const TRANSFER_KEYS =')){
+    // Support-only PR: preserve the exact published pre-transfer factory.
+    // The subsequent index-only PR must embed the new factory exactly.
+    assert.equal(createHash("sha256").update(embedded).digest("hex"),"163d6718f4202d96b7e21d151ab3f63c90ca3a8d94e54da13ea5f76e1c90b725");
+    return;
+  }
   assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
 });
 const fixture = () => ({
