@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.18">
+<meta name="fee-console-build" content="4.9.19">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -836,7 +836,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.18";
+const UI_VERSION_LABEL=" · v4.9.19";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2088,6 +2088,9 @@ function renderFees(feeView,st,B,G){
   const DB=editDB();
   G=G||{hold:false,holdReasons:[]};
   const t=document.getElementById("tblFee");
+  const ordered=[...DB.fees].sort((a,b)=>String(a.date||"").localeCompare(String(b.date||""))),latest=ordered.at(-1),
+    pendingCount=feeView.state==="verified"?ordered.filter(f=>String(f.date||"")>feeView.asOf).length:null,
+    registered=`已登记 ${ordered.length} 笔${latest?` · 最新 ${esc(latest.date)}`:""}`;
   t.innerHTML=(DB.fees.length?DB.fees.map(f=>`<div class="feeCard">
     <div class="fr"><input type="date" data-fee="${f.id}" data-k="date" value="${f.date||''}" style="flex:1 1 150px">
       <button class="del" data-delfee="${f.id}">×</button></div>
@@ -2095,7 +2098,7 @@ function renderFees(feeView,st,B,G){
       <select data-fee="${f.id}" data-k="ccy" style="flex:0 0 82px">${CCY.map(c=>`<option ${f.ccy===c?'selected':''}>${c}</option>`).join("")}</select></div>
     <div class="fr"><input data-fee="${f.id}" data-k="note" value="${esc(f.note||'')}" placeholder="备注（如：8 月费用）" style="flex:1"></div>
   </div>`).join(""):`<div class="empty">还没有付款记录</div>`)+
-  `<div class="feeSum">${feeView.state!=="verified"||!B?`<span>${feeView.message}</span>`:`<span>已付款 ${usd(B.paid,0)}</span><span>应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span>`}</div>`;}
+  `<div class="feeSum"><span>${registered}</span>${feeView.state!=="verified"||!B?`<span>${feeView.message}</span>`:`<span>截至 ${esc(feeView.asOf)} 已计入回执 ${usd(B.paid,0)}</span>${pendingCount?`<span>待后续日点计入 ${pendingCount} 笔</span>`:""}<span>截至 ${esc(feeView.asOf)} 应付费用 ${G.hold?'<b class="hold">暂不可用</b>':usd(B.due,0)}</span>`}</div>`;}
 function renderFlows(){
   const DB=editDB();
   const box=document.getElementById("flowBox");const auto=(DAILY.flowsAuto||[]);
