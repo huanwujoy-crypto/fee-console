@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.20">
+<meta name="fee-console-build" content="4.9.21">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -836,7 +836,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.20";
+const UI_VERSION_LABEL=" · v4.9.21";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2338,7 +2338,7 @@ async function pullAll(quiet,opt={}){
   return current()&&_receiptSource.state==="verified";
 }
 async function connect(tok,opt={}){const epoch=invalidateReceiptSource(true);await restoreDraft();if(EDIT.draft||_ledgerBusy||_draftBlocked){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先处理保留的草稿，不能切换访问");return false;}tok=(tok||"").trim();if(!tok){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先粘贴令牌");return false;}if(_readOnlyEntry){_readOnlyEntry=false;history.replaceState(null,"",location.pathname+location.search);}setCfg(K.tok,tok);
-  try{await ghApi("/gists?per_page=1");}catch(e){const rejected=e.status===401||e.status===403;if(rejected)setCfg(K.tok,"");if(epoch===_sourceEpoch&&(rejected||!opt.deferFailure))invalidateReceiptSource();if(rejected||!opt.deferFailure)toast((rejected?"令牌无效：":"连接暂未完成：")+e.message);if(rejected||!opt.deferFailure)render();return false;}
+  try{await ghApi("/gists?per_page=1");}catch(e){const rejected=e.status===401||e.status===403;if(rejected)setCfg(K.tok,"");if(rejected&&opt.anonymousFallback&&cfg(K.gid)&&cfg(K.key)){_readOnlyEntry=true;return pullAll(true,opt);}if(epoch===_sourceEpoch&&(rejected||!opt.deferFailure))invalidateReceiptSource();if(rejected||!opt.deferFailure)toast((rejected?"令牌无效：":"连接暂未完成：")+e.message);if(rejected||!opt.deferFailure)render();return false;}
   const verified=await pullAll(false,opt);if(verified){toast("已连接");render();}return verified;}
 
 /* startup-read-coordinator:start */
@@ -2348,7 +2348,7 @@ async function startInitialRead(){
   if(_startupRead)return _startupRead;
   _startupRead=(async()=>{
     const startupToken=HASH&&HASH.tok&&store?HASH.tok:"";
-    if(startupToken)await connect(startupToken,{deferFailure:true});else await pullAll(true,{deferFailure:true});
+    if(startupToken)await connect(startupToken,{deferFailure:true,anonymousFallback:true});else await pullAll(true,{deferFailure:true});
     if(_receiptSource.state!=="verified"&&cfg(K.gid)&&cfg(K.key)&&navigator.onLine!==false&&(!startupToken||cfg(K.tok)===startupToken)){
       await startupPause();await pullAll(true,{skipShell:true});
     }
