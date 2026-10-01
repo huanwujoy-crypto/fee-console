@@ -65,9 +65,17 @@ jobs:
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
         run: |
           set -euo pipefail
-          summary=$(node scripts/fee-cloud-producer.mjs \
+          error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"
+          if ! summary=$(node scripts/fee-cloud-producer.mjs \
             --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
-            --out-dir="$RUNNER_TEMP/fee-cloud-private")
+            --out-dir="$RUNNER_TEMP/fee-cloud-private" 2>"$error_file"); then
+            code=$(tail -n 1 "$error_file")
+            if [[ ! "$code" =~ ^(FEE_CLOUD|SOURCE)_[A-Z0-9_]+$ ]]; then
+              code=FEE_CLOUD_FAILED
+            fi
+            printf '## Fee cloud producer\n\n- Outcome: failed closed\n- Diagnostic code: `%s`\n\nNo portfolio amounts or credentials are included in this summary.\n' "$code" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
           node - "$summary" >> "$GITHUB_STEP_SUMMARY" <<'NODE'
           const result = JSON.parse(process.argv[2]);
           if (result.schema !== 'fee-console.cloud-producer.v1') throw new Error('unexpected producer summary');
@@ -75,6 +83,7 @@ jobs:
             '## Fee cloud producer', '',
             `- Target: ${result.targetDate}`,
             `- Outcome: ${result.outcome}`,
+            `- Transient source retries: ${result.retryCount}`,
             `- Source dates: Schwab ${result.sourceDates.schwab}; Webull ${result.sourceDates.webull}; benchmark ${result.sourceDates.benchmark}`,
             '', 'No portfolio amounts or credentials are included in this summary.', ''
           ].join('\n'));

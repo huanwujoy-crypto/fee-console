@@ -56,6 +56,34 @@ function exactTicker(value) {
   return value;
 }
 
+const CONTROLLED_WEBULL_PRINCIPAL_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) (BUY|SELL) securities principal; NOT external funding; order ([A-Z0-9]{16,40}); (?:holding ([1-9]\d{0,14})|Sharesight trade ([1-9]\d{0,14})); (\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} EDT; source fee USD (\d+\.\d{2})\.$/;
+
+function isControlledWebullPrincipal({ account, row, movement, targetDate, trades }) {
+  if (account !== "webull" || !/^(?:DEPOSIT|WITHDRAWAL)$/i.test(String(row.cash_account_transaction_type?.name || ""))) {
+    return false;
+  }
+  const description = typeof row.description === "string" ? row.description : "";
+  const match = CONTROLLED_WEBULL_PRINCIPAL_RE.exec(description);
+  if (!match || match[6] !== targetDate) return false;
+  const [, ticker, side, orderId, holdingIdText, tradeIdText] = match;
+  const expectedMovement = side === "BUY" ? -Math.abs(movement) : Math.abs(movement);
+  if (Math.abs(expectedMovement - movement) > 0.01) return false;
+  const matches = trades.filter(trade => {
+    const value = Number(trade.value);
+    const comments = typeof trade.comments === "string" ? trade.comments : "";
+    return id(trade.portfolio_id) === CLOUD_ACCOUNTS.webull.portfolioId
+      && trade.transaction_date === targetDate
+      && trade.state === "confirmed"
+      && trade.description_code === side
+      && exactTicker(trade.instrument?.code) === ticker
+      && finite(value) && Math.abs(Math.abs(value) - Math.abs(movement)) <= 0.01
+      && comments.startsWith("Webull account 10205226;")
+      && comments.includes(`; order ${orderId};`)
+      && (holdingIdText ? id(trade.holding_id) === Number(holdingIdText) : id(trade.id) === Number(tradeIdText));
+  });
+  return matches.length === 1;
+}
+
 export function selectBenchmark(cache, targetDate) {
   if (!object(cache) || cache.v !== 1 || !object(cache.benchmarks)) fail("BENCHMARK_SCHEMA");
   const selected = {};
@@ -114,6 +142,8 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       fail("CASH_IDENTITY");
     }
   }
+  const trades = rows(tradesPayload, "trades");
+  const tradeIds = new Set(trades.map(row => id(row.id)));
   const flows = [];
   let movementTotal = 0;
   for (const [cashIdText, payload] of Object.entries(cashTransactions)) {
@@ -132,10 +162,13 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       movementTotal += movement;
       const description = typeof row.description === "string" ? row.description.slice(0, 300) : "";
       const foreignIdentifier = typeof row.foreign_identifier === "string" ? row.foreign_identifier : "";
-      const controlledWebullPrincipal = account === "webull"
+      const legacyControlledWebullPrincipal = account === "webull"
         && /^(?:DEPOSIT|WITHDRAWAL)$/i.test(String(row.cash_account_transaction_type?.name || ""))
         && /^webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(foreignIdentifier)
         && /^Webull [A-Z0-9./^-]+ (?:BUY|SELL) securities principal; NOT external funding; webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(description);
+      const matchedControlledWebullPrincipal = isControlledWebullPrincipal({
+        account, row: { ...row, description }, movement, targetDate, trades,
+      });
       flows.push({
         date: targetDate, acct: account, amount: movement,
         desc: description,
@@ -143,11 +176,10 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         tradeId: row.trade_id == null ? null : id(row.trade_id),
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
-        ...(controlledWebullPrincipal ? { evidence: "internal_trade" } : {}),
+        ...(legacyControlledWebullPrincipal || matchedControlledWebullPrincipal ? { evidence: "internal_trade" } : {}),
       });
     }
   }
-  const tradeIds = new Set(rows(tradesPayload, "trades").map(row => id(row.id)));
   for (const flow of flows) if (flow.tradeId !== null && !tradeIds.has(flow.tradeId)) fail("TRADE_NOT_LISTED");
   const total = amount(report.value);
   const cash = round2(cashRows.reduce((sum, row) => sum + row.valueUsd, 0));

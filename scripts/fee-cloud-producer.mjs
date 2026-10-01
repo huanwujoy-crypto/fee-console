@@ -89,6 +89,50 @@ function decryptCandidate(filename, keyText) {
   } catch { fail("CANDIDATE"); }
 }
 
+export function assertCandidateReceiptable(payload) {
+  if (!payload || !Array.isArray(payload.flowsUnresolved)) fail("CANDIDATE");
+  if (payload.flowsUnresolved.length > 0) fail("UNRESOLVED_FLOW");
+}
+
+const TRANSIENT_READ_FAILURES = new Set([
+  "FEE_CLOUD_SOURCE_UNAVAILABLE",
+  "FEE_CLOUD_SOURCE_UNSTABLE",
+  "FEE_CLOUD_AUTH_UNAVAILABLE",
+]);
+const TRANSIENT_ECONOMIC_FAILURES = new Set([
+  "SOURCE_NETWORK",
+  "SOURCE_TIMEOUT",
+  "SOURCE_CHANGED",
+]);
+
+export async function fetchEconomicWithRetry(fetchEconomic, options = {}) {
+  const delayMs = options.delayMs ?? 15_000;
+  const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  if (typeof fetchEconomic !== "function" || !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 60_000) fail("CONFIG");
+  try {
+    return { economic: await fetchEconomic(), retryCount: 0 };
+  } catch (error) {
+    if (!(error instanceof SourceFetchError) || !TRANSIENT_ECONOMIC_FAILURES.has(sourceFailureCode(error))) throw error;
+    await sleep(delayMs);
+    return { economic: await fetchEconomic(), retryCount: 1 };
+  }
+}
+
+export async function readStableWithRetry(reader, targetDate, benchmark, options = {}) {
+  const delayMs = options.delayMs ?? 15_000;
+  const sleep = options.sleep || (ms => new Promise(resolve => setTimeout(resolve, ms)));
+  if (!reader || typeof reader.readStable !== "function" || !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 60_000) {
+    fail("CONFIG");
+  }
+  try {
+    return { input: await reader.readStable(targetDate, benchmark), retryCount: 0 };
+  } catch (error) {
+    if (!TRANSIENT_READ_FAILURES.has(String(error?.message))) throw error;
+    await sleep(delayMs);
+    return { input: await reader.readStable(targetDate, benchmark), retryCount: 1 };
+  }
+}
+
 export function carryWeekendGap(dataFile, targetDate, env) {
   let payload = decryptCandidate(dataFile, env.FEE_DATA_KEY);
   const gap = weekendGapDates(payload.daily, targetDate);
@@ -155,9 +199,11 @@ export async function produce(options = {}) {
   const dataFile = path.join(output, "data.json");
   const healthFile = path.join(output, "fee-data-health.json");
   try {
-    economic = options.fetchEconomic ? await options.fetchEconomic() : await fetchEconomicSnapshot();
+    const economicRead = await fetchEconomicWithRetry(options.fetchEconomic || (() => fetchEconomicSnapshot()), options.retry);
+    economic = economicRead.economic;
     if (economic.envelopeVersion !== 4) fail("ECON_VERSION");
-    const input = await reader.readStable(targetDate, benchmark);
+    const stableRead = await readStableWithRetry(reader, targetDate, benchmark, options.retry);
+    const input = stableRead.input;
     input.sourceFetchedAt = checkedAt;
     fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
     fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
@@ -170,6 +216,7 @@ export async function produce(options = {}) {
     const writer = run("daily.mjs", baseArgs, env);
     const after = sha256(fs.readFileSync(dataFile));
     const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
+    assertCandidateReceiptable(decryptCandidate(dataFile, process.env.FEE_DATA_KEY));
     run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
     run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
       `--target-date=${targetDate}`, `--source-schwab=${input.sourceDates.schwab}`,
@@ -177,7 +224,7 @@ export async function produce(options = {}) {
       `--outcome=${outcome}`, "--style-preflight=pass", `--checked-at=${checkedAt}`], env);
     await economic.checkCurrent();
     run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
-    return { targetDate, outcome, dataSha256: after, sourceDates: {
+    return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {
       schwab: input.sourceDates.schwab, webull: input.sourceDates.webull, benchmark: input.benchmark.sourceDate,
     }, dataFile, healthFile };
   } finally {
@@ -189,7 +236,7 @@ export async function produce(options = {}) {
 async function main() {
   const result = await produce();
   console.log(JSON.stringify({ schema: "fee-console.cloud-producer.v1", targetDate: result.targetDate,
-    outcome: result.outcome, sourceDates: result.sourceDates, dataSha256: result.dataSha256 }));
+    outcome: result.outcome, retryCount: result.retryCount, sourceDates: result.sourceDates, dataSha256: result.dataSha256 }));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
