@@ -249,7 +249,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
   };
   const remote = { revision: "fixture-revision-1", content: initialContent, backupContent: null };
   const network = { loseWriteResponse: false, rejectWrite: false, corruptReadbackAfterWrite: false,
-    failGistRead: false, failGistReads: 0, failTokenProbeOnce: false,
+    failGistRead: false, failGistReads: 0, failTokenProbeOnce: false, rejectTokenProbe: false,
     missingGistFile: false, failDaily: false, invalidDaily: false };
   const readGates = new Map();
   const pauseNextRead = kind => {
@@ -325,6 +325,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
     if (url.includes("api.github.com/gists?")) {
       assert.equal(method, "GET");
       if (network.failTokenProbeOnce) { network.failTokenProbeOnce = false; throw new Error("fixture network unavailable"); }
+      if (network.rejectTokenProbe) return { ok: false, status: 401, json: async () => ({ message: "Bad credentials" }) };
       return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
     }
     if (url === "https://api.github.com/user" && manager) return ok({login:"fixture-owner"});
@@ -1376,6 +1377,23 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
     assert.equal(h.store.get("feeConsole.gh.token"), "fixture-manager-token",
       "a network error must not be mislabeled as an invalid manager token");
     await h.runTimers(); await startup; await complete(h); noRedPaint(h);
+  });
+
+  await t.test("an old shared entry with a revoked token falls back to verified anonymous read-only access", async () => {
+    const key = Buffer.alloc(32, 7).toString("base64url");
+    const h = await browserHarness(html, { manager: true,
+      hash: `#tok=revoked-manager-token&gid=fixture-gist&k=${key}` });
+    h.context.Date = class extends Date {
+      constructor(...args) { super(...(args.length ? args : ["2026-08-03T04:00:00Z"])); }
+      static now() { return Date.parse("2026-08-03T04:00:00Z"); }
+    };
+    h.network.rejectTokenProbe = true;
+    await h.run("startInitialRead()"); await complete(h); noRedPaint(h);
+    assert.equal(h.store.has("feeConsole.gh.token"), false);
+    assert.equal(h.run("isMgr()"), false);
+    const gistReads = h.requests.filter(request => request.url.endsWith("/gists/fixture-gist"));
+    assert.equal(gistReads.length, 1);
+    assert.equal(gistReads[0].authorized, false, "fallback must never resend the revoked token");
   });
 
   await t.test("foreground and online events during cold start coalesce behind the in-flight read", async () => {
