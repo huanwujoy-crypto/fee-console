@@ -18,8 +18,8 @@ GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 
 
 - 新身份 `xuan-preopen-delivery@family-portfolio-gateway.iam.gserviceaccount.com`：仅指定报告 job 上的 `run.jobs.run` 与 `run.executions.get`，不允许执行 overrides、修改/删除 job 或操作其它任务。
 - 同一身份：私有 bucket 上仅 `storage.objects.get`，并以 IAM 条件限定 `delivery/` 前缀。不允许列举、读取 `report-check/` 原始取数、写文件或访问任何密钥。
-- 新 WIF provider `xuan-preopen-main`：仅本仓库、`main`、这个完整 workflow 路径和 `xuan-preopen-cloud-producer` environment。使用短期 Google token；不创建服务账号 key，不扩大已有管理费 provider。
-- 经明确批准后，新工作流复用仓库现有 `FEE_CLOUD_GITHUB_TOKEN`，仅交给候选提交步骤。它不上传 GCP，不进镜像，不交给 IB/现金取数身份；管理费原任务不改。
+- 新 WIF provider `xuan-preopen-main`：仅本仓库、`main`、这个完整 workflow 路径和既有 `fee-cloud-producer` environment。OIDC subject 按仓库实际不可变编号匹配 `repo:huanwujoy-crypto@283054367/fee-console@1334738755:environment:fee-cloud-producer`；不修改已有管理费 provider，专用发布身份和权限不变。
+- 经明确批准后，新工作流复用既有 `fee-cloud-producer` environment 内的 `FEE_CLOUD_GITHUB_TOKEN`，仅交给候选提交步骤。该密钥不是仓库级密钥，不能由新 environment 直接继承；不读取、复制或重新保存其值，不改变原环境的 main-only 限制。它不上传 GCP，不进镜像，不交给 IB/现金取数身份；管理费原任务不改。
 - 候选仅一个文件 `xuan-ib/index.html`、一个 GitHub 签名提交，标题 `handover YYYY-MM-DD`。加载当前 main，复核账户关联、待 CALL 款、前一正式源 SHA、成品哈希和 30 分钟新鲜度；正式文件仍仅由既有受保护 Promote 写入。
 
 ## 验收及切换
@@ -30,5 +30,7 @@ GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 
 2. shadow 云端运行：核验单次执行成功及成品回执，不发布。
 3. publish：复用这份成品，经原有受保护通道上线；核对 main、固定入口 meta/HTML 的 SHA 和资料日，并检查手机宽度排版。
 4. 只有公网核验通过，再确认 13:00/13:10 云端日程及模式，暂停原本机 `xuan-ib-codex`。保留旧配置供回退。
+
+2026-10-01 接线验收：专用 cloud job 已成功取五项来源（13.581 秒生成），但新 environment 读不到原环境内的发布密钥，发布以 `PREOPEN_PUBLISH_TOKEN_REQUIRED` 拒绝。此修正只更正环境引用；须 OWNER 批准精确新 head 后，才将专用 WIF 条件的 environment subject 等值改为上列实际格式，并继续验收。既有管理费工作流、环境、密钥和 provider 均不改。当天成品只创建一次；若批准时成品已超过 30 分钟，不降低新鲜度要求、不删除启动标记、不再读 IB，保留现有正式报告，改在下一个交易日验收新成品。
 
 回退先将 mode 设为 `off`，停止新候选；原正式报告保留。由于 IB 已切换至云端只读连接，不能盲目重新开启旧本机任务，必须先确认其 IB 连接可用。
