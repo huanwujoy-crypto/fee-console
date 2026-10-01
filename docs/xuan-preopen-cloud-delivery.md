@@ -1,0 +1,34 @@
+# 开市前行动版：云端发布接线
+
+本变更不改补仓算法、四张卡片排版、Sharesight 记录、IB 挂单或交易；周报和管理费任务保持不变。
+
+## 固定流程
+
+GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 → OWNER 签名候选 → 既有 Validate → Promote → Pages → 公网字节核验。
+
+每个交易日计划 13:00 HKT；13:10 仅作幂等补查。GitHub 定时事件可能延迟，不能把 20 分钟目标写成无条件保证。每天 `start.json` 在取数前只创建一次；补查跟随已启动执行，或复用成品，绝不重新读 IB。失败保留旧正式报告，不伪造零数或新日期。
+
+来源仍为 IB 三项实时只读，以及 Sharesight 的 IB-HK 四类配置和 NOAH-HK 现金。原始五项证据保留在私有 `report-check/`；交付身份只能读取 `delivery/` 内 HTML、完成回执和无金融数值的启动标记。
+
+交易日已独立核对 [NYSE](https://www.nyse.com/trade/hours-calendars)、[Nasdaq](https://www.nasdaqtrader.com/trader.aspx?id=Calendar)、[Xetra](https://cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours)、[LSE](https://www.londonstockexchange.com/equities-trading/business-days) 及 [Euronext](https://www.euronext.com/en/trading/trading-hours-holidays) 官方表（2026-10-01 核对）。LSE 全年表同时以其明示采用的 [England/Wales bank holidays](https://www.gov.uk/bank-holidays) 补齐历史部分。Euronext 表示七个现金市场中至少一个开市，不把某一场所放假当成全部休市。任一开市才生成；半日市仍生成。源数据日取上一已结束美股交易日。完整五组覆盖为 2026 年；NYSE/Xetra 另有 2027–2028 表，但未独立补齐其它市场前，日程在新年拒绝运行，不按工作日猜测。特殊临时休市仍需更新官方日历。现有账户关联 2026-10-10 到期闸门保留，不自动延期。
+
+## 单独批准的最小权限
+
+只有 OWNER 批准这个精确 head 后才部署或启用。涉及 `.github/`、身份与日程，必须由 OWNER 本人在 PR 留下批准评论，不得代发。
+
+- 新身份 `xuan-preopen-delivery@family-portfolio-gateway.iam.gserviceaccount.com`：仅指定报告 job 上的 `run.jobs.run` 与 `run.executions.get`，不允许执行 overrides、修改/删除 job 或操作其它任务。
+- 同一身份：私有 bucket 上仅 `storage.objects.get`，并以 IAM 条件限定 `delivery/` 前缀。不允许列举、读取 `report-check/` 原始取数、写文件或访问任何密钥。
+- 新 WIF provider `xuan-preopen-main`：仅本仓库、`main`、这个完整 workflow 路径和 `xuan-preopen-cloud-producer` environment。使用短期 Google token；不创建服务账号 key，不扩大已有管理费 provider。
+- 经明确批准后，新工作流复用仓库现有 `FEE_CLOUD_GITHUB_TOKEN`，仅交给候选提交步骤。它不上传 GCP，不进镜像，不交给 IB/现金取数身份；管理费原任务不改。
+- 候选仅一个文件 `xuan-ib/index.html`、一个 GitHub 签名提交，标题 `handover YYYY-MM-DD`。加载当前 main，复核账户关联、待 CALL 款、前一正式源 SHA、成品哈希和 30 分钟新鲜度；正式文件仍仅由既有受保护 Promote 写入。
+
+## 验收及切换
+
+`XUAN_PREOPEN_CLOUD_MODE` 默认未设置，自动发布关闭。合并不等于切换。
+
+1. 经批准部署不可变镜像、专用 job 和最小 IAM/WIF；读回实际配置。
+2. shadow 云端运行：核验单次执行成功及成品回执，不发布。
+3. publish：复用这份成品，经原有受保护通道上线；核对 main、固定入口 meta/HTML 的 SHA 和资料日，并检查手机宽度排版。
+4. 只有公网核验通过，再确认 13:00/13:10 云端日程及模式，暂停原本机 `xuan-ib-codex`。保留旧配置供回退。
+
+回退先将 mode 设为 `off`，停止新候选；原正式报告保留。由于 IB 已切换至云端只读连接，不能盲目重新开启旧本机任务，必须先确认其 IB 连接可用。

@@ -1,0 +1,88 @@
+name: XUAN preopen cloud producer
+
+on:
+  schedule:
+    # HKT 13:00, plus one idempotent 13:10 catch-up if the first event is delayed.
+    # Exchange calendars inside the producer decide whether this is a trading day.
+    - cron: '0,10 5 * * 1-5'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: xuan-preopen-cloud-producer
+  cancel-in-progress: false
+
+jobs:
+  produce:
+    # Off until separately authorized, deployed, and independently read back.
+    if: ${{ github.ref == 'refs/heads/main' && (vars.XUAN_PREOPEN_CLOUD_MODE == 'shadow' || vars.XUAN_PREOPEN_CLOUD_MODE == 'publish') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: xuan-preopen-cloud-producer
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Verify the cloud bridge and publication tests
+        run: node --test cloud/xuan-preopen/*.test.mjs
+
+      - name: Obtain the dedicated short-lived delivery identity
+        id: google
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-main
+          service_account: xuan-preopen-delivery@family-portfolio-gateway.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 1800s
+          create_credentials_file: false
+
+      - name: Run once or reuse the completed delivery
+        id: delivery
+        env:
+          XUAN_PREOPEN_GOOGLE_TOKEN: ${{ steps.google.outputs.access_token }}
+        run: node cloud/xuan-preopen/delivery.mjs "$RUNNER_TEMP/xuan-preopen-private"
+
+      - name: Submit the signed candidate to the existing protected pipeline
+        id: candidate
+        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused') }}
+        env:
+          # Reuse only after explicit OWNER approval. This token is never sent
+          # to GCP, put in an image, or made available to the broker-reading job.
+          XUAN_PREOPEN_GITHUB_TOKEN: ${{ secrets.FEE_CLOUD_GITHUB_TOKEN }}
+        run: node cloud/xuan-preopen/publish.mjs "$RUNNER_TEMP/xuan-preopen-private/report.html" "$RUNNER_TEMP/xuan-preopen-private/receipt.json"
+
+      - name: Independently verify the public fixed page
+        if: steps.candidate.outputs.sha != ''
+        env:
+          CANDIDATE_SHA: ${{ steps.candidate.outputs.sha }}
+          CANDIDATE_BLOB: ${{ steps.candidate.outputs.html_blob }}
+          DATA_DATE: ${{ steps.candidate.outputs.data_date }}
+        run: |
+          node scripts/xuan-ib-publish-health.mjs probe \
+            --base-url https://huanwujoy-crypto.github.io/fee-console/xuan-ib/ \
+            --expected-sha "$CANDIDATE_SHA" --expected-blob "$CANDIDATE_BLOB" \
+            --expected-date "$DATA_DATE" --attempts 40 --interval-ms 15000
+
+      - name: Explain outcome without financial values
+        if: always()
+        env:
+          OUTCOME: ${{ steps.delivery.outputs.outcome }}
+          DATA_DATE: ${{ steps.delivery.outputs.data_date }}
+          MODE: ${{ vars.XUAN_PREOPEN_CLOUD_MODE }}
+        run: |
+          printf 'Date: %s; outcome: %s; mode: %s\n' "$DATA_DATE" "$OUTCOME" "$MODE" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove private runtime files
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/xuan-preopen-private" ]]; then
+            find "$RUNNER_TEMP/xuan-preopen-private" -type f -exec shred -u {} +
+            rmdir "$RUNNER_TEMP/xuan-preopen-private"
+          fi
