@@ -2862,3 +2862,19 @@ test('obsolete generation wait is removed without dropping verified data or deci
     assert.equal(app.navigations.length,1);
   }
 });
+
+test('hidden wrapper retains verified report loading and background-check status without generating data', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', '<p>Verified report remains visible</p>');
+  const meta = metaFor(html), requests = [];
+  const app = loaderHarness({fetchImpl: async url => {
+    requests.push(String(url));
+    return String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)});
+  }});
+  await app.listeners.button.click();
+  assert.match(app.frame.srcdoc, /Verified report remains visible/);
+  assert.match(app.status.textContent, /已检查/);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
+  assert.ok(requests.every(url => /latest\.(?:meta\.json|html)/.test(url)));
+  assert.equal(app.navigations.length, 0);
+});
