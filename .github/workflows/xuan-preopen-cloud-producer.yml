@@ -21,7 +21,10 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' && (vars.XUAN_PREOPEN_CLOUD_MODE == 'shadow' || vars.XUAN_PREOPEN_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    environment: xuan-preopen-cloud-producer
+    # Existing OWNER publication secret is environment-scoped, not a repo secret.
+    # Keep its value in place; the dedicated WIF provider still restricts this
+    # exact workflow on main, independently of the other fee workflow.
+    environment: fee-cloud-producer
     steps:
       - name: Check out trusted main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
