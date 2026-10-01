@@ -10,7 +10,7 @@ GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 
 
 来源仍为 IB 三项实时只读，以及 Sharesight 的 IB-HK 四类配置和 NOAH-HK 现金。原始五项证据保留在私有 `report-check/`；交付身份只能读取 `delivery/` 内 HTML、完成回执和无金融数值的启动标记。
 
-交易日采用 [NYSE 官方日历](https://www.nyse.com/trade/hours-calendars) 和 [Xetra 官方日历](https://cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours) 的已核对 2026–2028 休市表。任一开市才生成；半日市仍生成。源数据日取上一已结束美股交易日。现仅覆盖 NYSE/Xetra，不声称已完成所有场所日历验收；LSE/Nasdaq/Euronext 的独立核对仍需在启用前完成。未知年份拒绝运行，不按工作日猜测；特殊临时休市仍需更新官方日历。现有账户关联 2026-10-10 到期闸门保留，不自动延期。
+交易日已独立核对 [NYSE](https://www.nyse.com/trade/hours-calendars)、[Nasdaq](https://www.nasdaqtrader.com/trader.aspx?id=Calendar)、[Xetra](https://cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours)、[LSE](https://www.londonstockexchange.com/equities-trading/business-days) 及 [Euronext](https://www.euronext.com/en/trading/trading-hours-holidays) 官方表（2026-10-01 核对）。LSE 全年表同时以其明示采用的 [England/Wales bank holidays](https://www.gov.uk/bank-holidays) 补齐历史部分。Euronext 表示七个现金市场中至少一个开市，不把某一场所放假当成全部休市。任一开市才生成；半日市仍生成。源数据日取上一已结束美股交易日。完整五组覆盖为 2026 年；NYSE/Xetra 另有 2027–2028 表，但未独立补齐其它市场前，日程在新年拒绝运行，不按工作日猜测。特殊临时休市仍需更新官方日历。现有账户关联 2026-10-10 到期闸门保留，不自动延期。
 
 ## 单独批准的最小权限
 

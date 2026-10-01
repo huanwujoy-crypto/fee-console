@@ -11,10 +11,28 @@ const holidays = {
     2027: ['01-01','03-26','03-29','05-01','12-24','12-25','12-26','12-31'],
     2028: ['01-01','04-14','04-17','05-01','12-24','12-25','12-26','12-31'],
   },
+  // Independently checked Nasdaq table; future years are not inferred from NYSE.
+  NASDAQ: {
+    2026: ['01-01','01-19','02-16','04-03','05-25','06-19','07-03','09-07','11-26','12-25'],
+  },
+  LSE: {
+    // LSE recognises England/Wales bank holidays; 24 and 31 Dec are open half days.
+    2026: ['01-01','04-03','04-06','05-04','05-25','08-31','12-25','12-28'],
+  },
+  EURONEXT: {
+    // Group means ANY of Amsterdam, Brussels, Dublin, Lisbon, Milan, Oslo,
+    // Paris is open. The official seven-column table closes ALL on these days.
+    // Individual-venue holidays never imply the entire group is closed.
+    2026: ['01-01','04-03','04-06','05-01','12-25'],
+  },
 };
 export const calendarSources = Object.freeze([
   'https://www.nyse.com/trade/hours-calendars',
   'https://cashmarket.deutsche-boerse.com/cash-en/trading/trading-calendar-and-trading-hours',
+  'https://www.nasdaqtrader.com/trader.aspx?id=Calendar',
+  'https://www.londonstockexchange.com/equities-trading/business-days',
+  'https://www.gov.uk/bank-holidays',
+  'https://www.euronext.com/en/trading/trading-hours-holidays',
 ]);
 export function hktDate(now = Date.now()) {
   return new Intl.DateTimeFormat('en-CA', {timeZone: 'Asia/Hong_Kong', year: 'numeric', month: '2-digit', day: '2-digit'}).format(new Date(now));
@@ -27,8 +45,8 @@ export function marketOpen(date, market) {
 }
 export function planPreopen(now = Date.now()) {
   const dataDate = hktDate(now);
-  const openMarkets = ['NYSE','XETRA'].filter(market => marketOpen(dataDate, market));
-  if (!openMarkets.length) return {status: 'no-action', dataDate, reason: 'NYSE_AND_XETRA_CLOSED', calendarSources};
+  const openMarkets = ['NYSE','NASDAQ','XETRA','LSE','EURONEXT'].filter(market => marketOpen(dataDate, market));
+  if (!openMarkets.length) return {status: 'no-action', dataDate, reason: 'ALL_REVIEWED_MARKETS_CLOSED', calendarSources};
   // At 13:00 HKT all prior US regular sessions have closed. Never request
   // today's uncompleted valuation or mistake a missing response for a holiday.
   let previous = Date.parse(`${dataDate}T00:00:00Z`) - 86_400_000;
