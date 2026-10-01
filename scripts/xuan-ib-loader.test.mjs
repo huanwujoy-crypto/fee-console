@@ -56,6 +56,17 @@ const scriptsCheck = fs.readFileSync(new URL('../.github/workflows/scripts-check
 const metadata = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
 const appBuild = JSON.parse(fs.readFileSync(new URL('../xuan-ib/app-build.json', import.meta.url), 'utf8'));
 
+test('the duplicate wrapper header is absent from layout while loading controls remain available', () => {
+  assert.match(loader, /<header class="bar" hidden>/);
+  assert.match(loader, /\.bar\[hidden\]\s*\{\s*display:\s*none;\s*\}/);
+  const header = loader.match(/<header\b[^]*?<\/header>/)?.[0] || '';
+  assert.match(header, /id="status"/);
+  assert.match(header, /id="refresh"[^>]*hidden/);
+  assert.match(loader, /<iframe id="handover"[^>]*sandbox=""/);
+  assert.match(loader, /<div id="warning" role="alert" hidden>/);
+  assert.match(loader, /<button id="app-update" type="button" hidden>/);
+});
+
 test('promotion commits the derived decision menu with its paired report and metadata', () => {
   assert.match(promotion, /xuan-ib-decision-menu\.mjs publish-manifest/);
   assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json xuan-ib\/latest\.decisions\.json/);
