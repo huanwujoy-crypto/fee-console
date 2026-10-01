@@ -27,6 +27,17 @@ test('reviewed static mapping effective date cannot advance and invalidate histo
   assert.equal(mapping.effectiveDate, '2026-08-28');
 });
 
+test('reviewed 2026-09-30 Webull holdings have exact identity-bound style classifications', () => {
+  const mapping = JSON.parse(fs.readFileSync(styleMapPath, 'utf8'));
+  const byIdentity = new Map(mapping.holdings.map(row => [`${row.portfolioId}:${row.holdingId}`, row]));
+  assert.deepEqual(byIdentity.get('1350094:29274212'), {
+    portfolioId: 1350094, portfolioName: 'Webull', holdingId: 29274212, ticker: 'VSTL', style: 'growth'
+  });
+  assert.deepEqual(byIdentity.get('1350094:29274215'), {
+    portfolioId: 1350094, portfolioName: 'Webull', holdingId: 29274215, ticker: 'CBRS', style: 'growth'
+  });
+});
+
 /* A throwaway key: never the production one. */
 const TEST_KEY = crypto.randomBytes(32).toString("base64url");
 

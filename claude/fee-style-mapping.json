@@ -46,6 +46,20 @@
       "style": "growth"
     },
     {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "holdingId": 29274212,
+      "ticker": "VSTL",
+      "style": "growth"
+    },
+    {
+      "portfolioId": 1350094,
+      "portfolioName": "Webull",
+      "holdingId": 29274215,
+      "ticker": "CBRS",
+      "style": "growth"
+    },
+    {
       "portfolioId": 936249,
       "portfolioName": "Schwab-HK",
       "holdingId": 26135015,
