@@ -94,3 +94,9 @@ accounts are unchanged by this release.
 
 No SPY/QQQ fund-inception benchmark is introduced. The current fee-period
 benchmark is a separate view and must not be relabelled as inception performance.
+
+## 基金外管理费与模拟份额补偿
+
+管理人可以把已经保存的 USD 管理费付款登记为基金外付款。该事件必须同时记录付款人、付款日、付款金额，以及付款前最后一个已完成估值日。系统按另一位投资人在付款前的已登记份额比例计算其应承担金额，再按该估值日的每股份额市值四舍五入为整数份额，由另一位投资人转给付款人。
+
+这种登记不减少基金资产，也不增减基金总份额；它只改变两位投资人的模拟份额归属。付款记录与份额转让通过唯一 `paymentId` 绑定。已发布的付款和份额转让均采用 append-only 记录，不能删除或改写。若付款、估值日、金额或份额计算不能完全匹配，投资人当前市值停止在最后一个可核验日期。页面同时显示“基金档案已登记份额”和“最新可核验份额”，避免在付款日的基金估值尚未发布时误称已经完成当日估值验证。

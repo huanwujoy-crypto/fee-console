@@ -22,6 +22,12 @@ test("activated browser uses the exact reviewed fund factory", () => {
     assert.equal(createHash("sha256").update(embedded).digest("hex"),"b53dd552718319f220fc0ba57a7055a3fd5eb0de7781910d226848fa0705c92a");
     return;
   }
+  if(!embedded.includes('const TRANSFER_KEYS =')){
+    // Support-only PR: preserve the exact published pre-transfer factory.
+    // The subsequent index-only PR must embed the new factory exactly.
+    assert.equal(createHash("sha256").update(embedded).digest("hex"),"163d6718f4202d96b7e21d151ab3f63c90ca3a8d94e54da13ea5f76e1c90b725");
+    return;
+  }
   assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
 });
 const fixture = () => ({
@@ -143,6 +149,58 @@ test("correction rejects unknown, duplicate, mismatched, and economic-changing r
     p => { p.subscriptionCorrections[0].netCents = 100; },
     p => { p.subscriptionCorrections[0] = null; }
   ]) { const p = valid(); mutate(p); assert.equal(core.validateProfile(p).ok, false); }
+});
+
+const feeTransferFixture = () => {
+  const input = fixture();
+  input.profile.shareTransfers = [{
+    id: "transfer-20240301-B-A", date: "2024-03-01", fromInvestorId: "B", toInvestorId: "A",
+    paymentId: "payment-20240301-A", feeAmountCents: 2_500, compensationCents: 250,
+    priceDate: "2024-02-29", priceTotalCents: 10_101, outstandingShares: 1_000_000,
+    transferredShares: 24_750, reason: "A paid the fee outside the fund; B transfers its proportional compensation"
+  }];
+  input.payments = [{ id: "payment-20240301-A", date: "2024-03-01", amount: 25, ccy: "USD", fx: 1,
+    note: "Paid outside the fund by A" }];
+  return input;
+};
+
+test("off-fund fee payment transfers only the sender's proportional whole shares and preserves total shares", () => {
+  const input = feeTransferFixture(), before = structuredClone(input), actual = core.calculate(input);
+  assert.equal(actual.status, "ready");
+  assert.deepEqual(core.registeredShares(input.profile), [924_750, 75_250]);
+  assert.deepEqual(actual.current.investors.map(row => row.shares), [924_750, 75_250]);
+  assert.equal(actual.current.investors.reduce((sum, row) => sum + row.shares, 0), 1_000_000);
+  assert.equal(actual.current.shareTransfer.transferredShares, 24_750);
+  assert.equal(actual.current.shareTransfer.basisCents, 250);
+  assert.equal(actual.current.investors.reduce((sum, row) => sum + row.pnlCents, 0), actual.current.grossPnlCents);
+  assert.deepEqual(input, before);
+});
+
+test("a registered next-day transfer changes the profile ratio but waits for that day's verified valuation", () => {
+  const input = feeTransferFixture(); input.profile.shareTransfers[0].date = "2024-03-02";
+  input.payments[0].date = "2024-03-02";
+  const actual = core.calculate(input);
+  assert.equal(actual.status, "ready");
+  assert.deepEqual(actual.current.investors.map(row => row.shares), [900_000, 100_000]);
+  assert.deepEqual(core.registeredShares(input.profile), [924_750, 75_250]);
+});
+
+test("fee compensation rejects missing payment, wrong math, duplicates and rewritten economics", () => {
+  const valid = () => feeTransferFixture();
+  for (const mutate of [
+    x => { x.payments = []; },
+    x => { x.payments[0].amount = 24.99; },
+    x => { x.payments[0].ccy = "HKD"; }
+  ]) { const input = valid(); mutate(input); const actual = core.calculate(input); assert.equal(actual.status, "partial"); assert.equal(actual.flowGateDate, "2024-03-01"); }
+  for (const mutate of [
+    p => { p.shareTransfers[0].compensationCents++; },
+    p => { p.shareTransfers[0].transferredShares++; },
+    p => { p.shareTransfers[0].outstandingShares++; },
+    p => { p.shareTransfers[0].fromInvestorId = "A"; },
+    p => { p.shareTransfers[0].toInvestorId = "B"; },
+    p => { p.shareTransfers[0].extra = true; },
+    p => { p.shareTransfers.push({ ...p.shareTransfers[0], id: "transfer-duplicate-event" }); }
+  ]) { const input = valid(); mutate(input.profile); assert.equal(core.validateProfile(input.profile).ok, false); assertPending(input); }
 });
 
 test("unmatched, duplicated, or mispriced subscription evidence freezes before capital arrival", () => {

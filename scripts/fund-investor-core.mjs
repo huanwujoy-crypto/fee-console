@@ -5,6 +5,8 @@ export function createFundInvestorCore() {
   const PROFILE_KEYS = ["schema", "manager", "fundName", "inceptionDate", "inceptionNoticeDate", "currency", "initialShares", "investors"];
   const EVENT_KEYS = ["id", "date", "investorId", "grossCents", "feeCents", "netCents", "priceDate", "priceTotalCents", "issuedShares", "sourceRef"];
   const CORRECTION_KEYS = ["id", "subscriptionId", "fromInvestorId", "toInvestorId", "reason", "correctedAt"];
+  const TRANSFER_KEYS = ["id", "date", "fromInvestorId", "toInvestorId", "paymentId", "feeAmountCents",
+    "compensationCents", "priceDate", "priceTotalCents", "outstandingShares", "transferredShares", "reason"];
   const object = value => !!value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
   const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -23,8 +25,8 @@ export function createFundInvestorCore() {
   };
   function validateProfile(profile) {
     const invalid = reason => ({ ok: false, profile: null, reason });
-    if (!(exact(profile, PROFILE_KEYS) || exact(profile, [...PROFILE_KEYS, "subscriptions"]) ||
-      exact(profile, [...PROFILE_KEYS, "subscriptions", "subscriptionCorrections"])) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
+    const optional = ["subscriptions", "subscriptionCorrections", "shareTransfers"].filter(key => Object.hasOwn(profile || {}, key));
+    if (!exact(profile, [...PROFILE_KEYS, ...optional]) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
     if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
     if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
     if (!integer(profile.initialShares) || profile.initialShares <= 0 || !Array.isArray(profile.investors) || profile.investors.length !== 2) return invalid("初始股份资料待核对");
@@ -68,13 +70,68 @@ export function createFundInvestorCore() {
         || correction.correctedAt.slice(0, 10) < original.date) return invalid("认购归属更正资料待核对");
       correctionIds.add(correction.id); correctedEvents.add(correction.subscriptionId);
     }
+    const ownerOf = event => corrections.find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
+    const transfers = profile.shareTransfers || [];
+    if (!Array.isArray(transfers) || transfers.length > 48) return invalid("份额转让资料待核对");
+    const transferIds = new Set(), paymentIds = new Set(), validatedTransfers = []; let previousTransferDate = "";
+    const sharesAt = priceDate => {
+      const shares = new Map(profile.investors.map(investor => [investor.id, BigInt(investor.shares)]));
+      let outstanding = BigInt(profile.initialShares);
+      for (const event of subscriptions) if (event.date <= priceDate) {
+        const owner = ownerOf(event); shares.set(owner, shares.get(owner) + BigInt(event.issuedShares));
+        outstanding += BigInt(event.issuedShares);
+      }
+      for (const transfer of validatedTransfers) if (transfer.date <= priceDate) {
+        const amount = BigInt(transfer.transferredShares);
+        shares.set(transfer.fromInvestorId, shares.get(transfer.fromInvestorId) - amount);
+        shares.set(transfer.toInvestorId, shares.get(transfer.toInvestorId) + amount);
+      }
+      return { shares, outstanding };
+    };
+    for (const transfer of transfers) {
+      if (!exact(transfer, TRANSFER_KEYS) || !/^[A-Za-z0-9_-]{8,80}$/.test(transfer.id) || transferIds.has(transfer.id)
+        || !date(transfer.date) || transfer.date <= profile.inceptionDate || transfer.date <= previousTransferDate
+        || !ids.has(transfer.fromInvestorId) || !ids.has(transfer.toInvestorId) || transfer.fromInvestorId === transfer.toInvestorId
+        || typeof transfer.paymentId !== "string" || !/^[A-Za-z0-9_-]{8,80}$/.test(transfer.paymentId) || paymentIds.has(transfer.paymentId)
+        || !integer(transfer.feeAmountCents) || transfer.feeAmountCents <= 0
+        || !integer(transfer.compensationCents) || transfer.compensationCents <= 0 || transfer.compensationCents >= transfer.feeAmountCents
+        || !date(transfer.priceDate) || transfer.priceDate >= transfer.date || previousTransferDate > transfer.priceDate
+        || subscriptions.some(event => event.date > transfer.priceDate && event.date <= transfer.date)
+        || !integer(transfer.priceTotalCents) || transfer.priceTotalCents <= 0
+        || !integer(transfer.outstandingShares) || transfer.outstandingShares <= 0
+        || !integer(transfer.transferredShares) || transfer.transferredShares <= 0
+        || !text(transfer.reason, 300) || transfer.reason.length < 2) return invalid("份额转让资料待核对");
+      const at = sharesAt(transfer.priceDate), senderShares = at.shares.get(transfer.fromInvestorId);
+      const expectedCompensation = Number((BigInt(transfer.feeAmountCents) * senderShares * 2n + at.outstanding) /
+        (2n * at.outstanding));
+      const expectedTransfer = Number((BigInt(transfer.compensationCents) * at.outstanding * 2n + BigInt(transfer.priceTotalCents)) /
+        (2n * BigInt(transfer.priceTotalCents)));
+      if (at.outstanding !== BigInt(transfer.outstandingShares) || senderShares < BigInt(transfer.transferredShares)
+        || transfer.compensationCents !== expectedCompensation || transfer.transferredShares !== expectedTransfer) {
+        return invalid("份额转让计算待核对");
+      }
+      transferIds.add(transfer.id); paymentIds.add(transfer.paymentId); validatedTransfers.push(transfer);
+      previousTransferDate = transfer.date;
+    }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
       ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
-      ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}) }, reason: null };
+      ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}),
+      ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}) }, reason: null };
   }
   const subscriptionOwner = (profile, event) => (profile.subscriptionCorrections || []).find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
+  function registeredShares(profile) {
+    const checked = validateProfile(profile); if (!checked.ok) return null;
+    const shares = new Map(checked.profile.investors.map(investor => [investor.id, investor.shares]));
+    for (const event of checked.profile.subscriptions || []) shares.set(subscriptionOwner(checked.profile, event),
+      shares.get(subscriptionOwner(checked.profile, event)) + event.issuedShares);
+    for (const transfer of checked.profile.shareTransfers || []) {
+      shares.set(transfer.fromInvestorId, shares.get(transfer.fromInvestorId) - transfer.transferredShares);
+      shares.set(transfer.toInvestorId, shares.get(transfer.toInvestorId) + transfer.transferredShares);
+    }
+    return checked.profile.investors.map(investor => shares.get(investor.id));
+  }
   function calculate(input = {}) {
-    const { profile, data, feeView } = object(input) ? input : {};
+    const { profile, data, feeView, payments } = object(input) ? input : {};
     const checked = validateProfile(profile);
     const result = { status: "pending", reason: null, profile: checked.profile, asOf: null,
       inceptionDate: checked.profile?.inceptionDate || null, initial: null, current: null, lastProved: null,
@@ -131,7 +188,8 @@ export function createFundInvestorCore() {
     const initialShares = checked.profile.investors.map(investor => investor.shares);
     const initialCents = daily[0].totalCents;
     const subscriptions = (checked.profile.subscriptions || []).filter(event => event.date <= feeView.asOf);
-    const accepted = new Map(); let outstanding = BigInt(checked.profile.initialShares), flowGateDate = null;
+    const activeTransfers = (checked.profile.shareTransfers || []).filter(event => event.date <= feeView.asOf);
+    const accepted = new Map(), acceptedTransfers = new Map(); let outstanding = BigInt(checked.profile.initialShares), flowGateDate = null;
     const gate = eventDate => { if (!flowGateDate || eventDate < flowGateDate) flowGateDate = eventDate; };
     for (const event of subscriptions) {
       const pricePoint = daily.find(point => point.date === event.priceDate);
@@ -150,6 +208,14 @@ export function createFundInvestorCore() {
       else accepted.set(event.date, event);
       outstanding += BigInt(event.issuedShares);
     }
+    for (const transfer of activeTransfers) {
+      const pricePoint = daily.find(point => point.date === transfer.priceDate);
+      const matches = Array.isArray(payments) ? payments.filter(payment => object(payment)
+        && payment.id === transfer.paymentId && payment.date === transfer.date && String(payment.ccy || "").toUpperCase() === "USD"
+        && Math.round(Number(payment.amount) * 100) === transfer.feeAmountCents) : [];
+      if (!pricePoint || pricePoint.totalCents !== transfer.priceTotalCents || matches.length !== 1) gate(transfer.date);
+      else acceptedTransfers.set(transfer.date, transfer);
+    }
     for (const flow of receiptFlows) if (!accepted.has(flow.date)) gate(flow.date);
     for (const [candidateDate] of candidatesByDate) if (!accepted.has(candidateDate)) gate(candidateDate);
     const allocate = (totalCents, shares) => {
@@ -167,19 +233,30 @@ export function createFundInvestorCore() {
         const investorIndex = checked.profile.investors.findIndex(investor => investor.id === subscriptionOwner(checked.profile, event));
         shares[investorIndex] += event.issuedShares; contributions[investorIndex] += event.netCents;
       }
+      const transfer = acceptedTransfers.get(point.date); let transferBasisCents = 0;
+      if (transfer) {
+        const fromIndex = checked.profile.investors.findIndex(investor => investor.id === transfer.fromInvestorId);
+        const toIndex = checked.profile.investors.findIndex(investor => investor.id === transfer.toInvestorId);
+        transferBasisCents = Number((BigInt(transfer.priceTotalCents) * BigInt(transfer.transferredShares) * 2n
+          + BigInt(transfer.outstandingShares)) / (2n * BigInt(transfer.outstandingShares)));
+        shares[fromIndex] -= transfer.transferredShares; shares[toIndex] += transfer.transferredShares;
+        contributions[fromIndex] -= transferBasisCents; contributions[toIndex] += transferBasisCents;
+      }
       const values = allocate(point.totalCents, shares), totalShares = shares[0] + shares[1];
       const returnRate = contributions.some(Boolean) ? null : point.totalCents / initialCents - 1;
       return { ...point, unitValue: point.totalCents / 100 / totalShares,
         grossPnlCents: point.totalCents - initialCents - contributions[0] - contributions[1], returnRate,
         subscription: event ? { id: event.id, investorId: subscriptionOwner(checked.profile, event), netCents: event.netCents, issuedShares: event.issuedShares } : null,
+        shareTransfer: transfer ? { id: transfer.id, fromInvestorId: transfer.fromInvestorId,
+          toInvestorId: transfer.toInvestorId, transferredShares: transfer.transferredShares, basisCents: transferBasisCents } : null,
         investors: checked.profile.investors.map((investor, i) => ({ id: investor.id, shares: shares[i],
           valueCents: values[i], pnlCents: values[i] - initialValues[i] - contributions[i], returnRate })) };
     });
     result.initial = result.points[0]; result.lastProved = result.points.at(-1);
     result.flowGateDate = flowGateDate;
     result.provisional = feeView.status?.provisional === true || result.points.some(point => point.provisional);
-    if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起有尚未匹配的外部资金流或增资证据；当前份额市值暂不可用` };
+    if (flowGateDate) return { ...result, status: "partial", reason: `${flowGateDate} 起有尚未匹配的外部资金流、增资或费用补偿证据；当前份额市值暂不可用` };
     return { ...result, status: "ready", current: result.lastProved };
   }
-  return { validateProfile, calculate, subscriptionOwner };
+  return { validateProfile, calculate, subscriptionOwner, registeredShares };
 }
