@@ -111,7 +111,12 @@
 - 页面把 `cash + other` 合并显示为“现金及其它”；这只改变展示，不改变账户总额、
   收益率或费用计算。
 - 当固定任务提供通过持仓身份和风格预检的 `FEE_STYLE_INPUT_FILE` 时，writer 同时按 ticker
-  合并两账户股票市值，按金额降序保存最多三项 `topHoldings`。每项只含 ticker 和美元市值；
+  合并两账户股票市值，按金额降序保存最多三项 `topHoldings`。受审映射明确指定杠杆产品的
+  underlying 和 multiplier 时，该持仓只在 `topHoldings` 中按 `市值 × multiplier` 汇入
+  underlying ticker，并与直接持仓相加；不得从 ticker 名称猜测倍数或标的。每项只含 ticker
+  和美元风险暴露；这种集中度暴露可以高于原持仓市值，但不会改写 stock、账户总额、费用、
+  投资人份额或原始 Sharesight 记录。映射以 portfolio + holding ID 为主键、ticker 交叉核对，
+  并从明确的 effective date 起生效；
   页面比例以同一日两账户总资产为分母。现金及 SGOV 不重复进入该列表。没有完整持仓输入的
   历史日保持不显示，不用当前持仓反推历史；同日修订只有在 `stock` 未变化时才能保留原列表。
 - 拆分与两账户之和的差额：

@@ -321,7 +321,7 @@ if (styleFile) {
     const staticMap = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/fee-style-mapping.json'), 'utf8'));
     styleResult = resolveStyle({ input: snapshot.input, registry: data.classificationRegistry,
       staticMap, date, sourceDates, stock: splits.stock });
-    topHoldings = summarizeTopHoldings(snapshot.input);
+    topHoldings = summarizeTopHoldings(snapshot.input, 3, staticMap.topHoldingExposureMappings || []);
     styleSplits.growth = styleResult.growth;
     styleSplits.value = styleResult.value;
   } catch (error) {

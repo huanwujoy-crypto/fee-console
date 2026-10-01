@@ -36,6 +36,10 @@ test('reviewed 2026-09-30 Webull holdings have exact identity-bound style classi
   assert.deepEqual(byIdentity.get('1350094:29274215'), {
     portfolioId: 1350094, portfolioName: 'Webull', holdingId: 29274215, ticker: 'CBRS', style: 'growth'
   });
+  assert.deepEqual(mapping.topHoldingExposureMappings, [{
+    portfolioId: 1350094, holdingId: 29274212, ticker: 'VSTL', targetTicker: 'VST', multiplier: 2,
+    effectiveFrom: '2026-09-30', basis: 'Owner confirmed VSTL is 2x VST exposure on 2026-10-01'
+  }]);
 });
 
 /* A throwaway key: never the production one. */
@@ -122,6 +126,36 @@ test('style registry: atomic encrypted integration, next-run reuse and byte no-o
   const again = run(dir, {}, [], f.env); assert.equal(again.status, 0, again.stderr);
   assert.match(again.stdout, /no-op/);
   assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+});
+
+test('style registry: daily writer publishes VSTL as twice its VST exposure without changing stock', () => {
+  const dir = tmp(), source = path.join(dir, 'style-input.json');
+  const makeEntry = (portfolioId, holdingId, ticker, style) => ({
+    portfolioId, holdingId, ticker, style, firstHeldOn: today(), effectiveFrom: today(),
+    classifiedAt: new Date().toISOString(), classifier: 'Codex-A', reviewer: 'Codex-B',
+    evidenceRef: 'owner-directive-2026-10-01', rationale: 'Synthetic integration evidence',
+    reviewNote: 'Independent synthetic integration review'
+  });
+  const input = { schemaVersion: 1, date: today(), portfolios: [
+    { account: 'schwab', portfolioId: 936249, sourceDate: today(), stockTotalUsd: 200000,
+      holdings: [{ holdingId: 901, ticker: 'SYNTHA', valueUsd: 200000 }] },
+    { account: 'webull', portfolioId: 1350094, sourceDate: today(), stockTotalUsd: 253845.98,
+      holdings: [
+        { holdingId: 29274212, ticker: 'VSTL', valueUsd: 100000 },
+        { holdingId: 902, ticker: 'SYNTHB', valueUsd: 153845.98 }
+      ] }
+  ], proposals: [makeEntry(936249, 901, 'SYNTHA', 'value'),
+    makeEntry(1350094, 902, 'SYNTHB', 'growth')] };
+  fs.writeFileSync(source, JSON.stringify(input), { mode: 0o600 });
+  const result = run(dir, {}, [], { FEE_STYLE_INPUT_FILE: source });
+  assert.equal(result.status, 0, result.stderr);
+  const point = readPayload(dir).daily[0];
+  assert.equal(point.stock, 453845.98);
+  assert.deepEqual(point.topHoldings, [
+    { ticker: 'SYNTHA', value: 200000 },
+    { ticker: 'VST', value: 200000 },
+    { ticker: 'SYNTHB', value: 153845.98 }
+  ]);
 });
 
 test('style registry: missing new holding never writes or reuses old split', () => {

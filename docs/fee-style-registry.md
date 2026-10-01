@@ -86,6 +86,11 @@ Wu 已授权 Codex / Claude 对新增仓位的 growth / value 报告分类作决
   可单独报告已核实 AUM，但不得把它称为本次已发布数据。异常归 Codex 跟进。
 - 分类记录不进入费用回执的经济输入投影；同一 AUM 的分类变化不应改费用结果。
   没有变动的重复运行必须保持加密文件字节不变。
+- `topHoldingExposureMappings` 只处理集中度展示的明确穿透规则。每条规则固定绑定
+  portfolio ID、holding ID、源 ticker、underlying ticker、multiplier 和 effective date；
+  writer 先核对身份，再把该持仓的原始市值乘以倍数汇入 underlying。它不改变 growth/value
+  分类、stock、NAV、费用或投资人份额。未来类似杠杆产品必须取得明确的 underlying 和倍数
+  证据后新增映射，禁止按 ticker 名称自动推断。
 
 ## 上线验收（不能以代码提交代替）
 

@@ -39,6 +39,26 @@ test('top holdings aggregate matching tickers and use deterministic value order'
   assert.throws(() => summarizeTopHoldings({ portfolios: [{ holdings: [{ ticker: 'SGOV', valueUsd: 1 }] }] }),
     /STYLE_TOP_HOLDINGS/);
 });
+test('identity-bound leveraged exposure folds VSTL into VST without changing raw holdings', () => {
+  const input = { date: '2026-09-30', portfolios: [
+    { portfolioId: 936249, sourceDate: '2026-09-30', holdings: [
+      { holdingId: 10, ticker: 'VST', valueUsd: 100 },
+      { holdingId: 11, ticker: 'OTHER', valueUsd: 80 }
+    ] },
+    { portfolioId: 1350094, sourceDate: '2026-09-30', holdings: [
+      { holdingId: 29274212, ticker: 'VSTL', valueUsd: 30 }
+    ] }
+  ] };
+  const rules = [{ portfolioId: 1350094, holdingId: 29274212, ticker: 'VSTL', targetTicker: 'VST',
+    multiplier: 2, effectiveFrom: '2026-09-30', basis: 'Owner-confirmed 2x underlying exposure' }];
+  assert.deepEqual(summarizeTopHoldings(input, 3, rules), [
+    { ticker: 'VST', value: 160 },
+    { ticker: 'OTHER', value: 80 }
+  ]);
+  assert.equal(input.portfolios[1].holdings[0].valueUsd, 30, 'raw market value remains unchanged');
+  assert.throws(() => summarizeTopHoldings(input, 3, [{ ...rules[0], ticker: 'WRONG' }]), /STYLE_TOP_HOLDINGS/);
+  assert.throws(() => summarizeTopHoldings(input, 3, [{ ...rules[0], multiplier: 0 }]), /STYLE_TOP_HOLDINGS/);
+});
 const badCases = [
   ['missing classification has source row index', f => { f.input.proposals = []; }, /MISSING_ROWS_1/],
   ['duplicate stock identity', f => { f.input.portfolios[1].holdings.push({ ...f.input.portfolios[1].holdings[0] }); }, /HOLDING_DUPLICATE/],
