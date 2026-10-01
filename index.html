@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.19">
+<meta name="fee-console-build" content="4.9.20">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -836,7 +836,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.19";
+const UI_VERSION_LABEL=" · v4.9.20";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2183,8 +2183,9 @@ async function ghApi(path,opt={},auth=true){
   const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.keyValue===cfg(K.key)&&reviewedMigration?.sourceEpoch===_sourceEpoch&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
   if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
-  const r=await fetch("https://api.github.com"+path,{...request,headers:h});
-  if(!r.ok){let t="";try{t=(await r.json()).message||"";}catch(_){}throw new Error(r.status+(t?" "+t:""));}return r.status===204?null:r.json();}
+  let r;try{r=await fetch("https://api.github.com"+path,{...request,headers:h});}
+  catch(cause){const e=new Error("网络暂不可用");e.transient=true;e.cause=cause;throw e;}
+  if(!r.ok){let t="";try{t=(await r.json()).message||"";}catch(_){}const e=new Error(r.status+(t?" "+t:""));e.status=r.status;e.transient=r.status===408||r.status===429||r.status>=500;throw e;}return r.status===204?null:r.json();}
 async function verifyManagerCapability(snapshot,epoch){
   const token=cfg(K.tok),gid=cfg(K.gid);if(!token||!gid||snapshot?.gid!==gid||!snapshot.ownerLogin)throw new Error("目标账本所有者资料缺失");
   if(managerDocumentsAuthorized()&&_managerCapability.ownerLogin===snapshot.ownerLogin)return true;
@@ -2329,20 +2330,42 @@ async function pullAll(quiet,opt={}){
   if(cfg(K.gid)&&!_ledgerBusy){
     _busy=true;try{const snapshot=await ghPull(epoch);if(!current())return;if(isMgr())try{await verifyManagerCapability(snapshot,epoch);}catch(e){_managerCapability={state:"denied"};_fundDocsMessage="基金文件管理身份未核验："+e.message;}if(!current())return;try{await acceptRemoteFundSnapshot(snapshot);}catch(e){_fundProfileMessage="远端基金档案读取失败："+e.message;_fundDocsMessage=_fundProfileMessage;}if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
       if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()&&!sameLedger(DB,remote)){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
-      else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setViewerRecovery("");setSync(dailyReady?"已读取 "+hhmm():"每日数据读取失败，费用暂不可用",!dailyReady);if(!quiet)toast("已重新读取，不会上传账本");}
-    }catch(e){if(current()){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";if(!isMgr())setViewerRecovery("读取失败："+e.message);setSync("读取失败："+e.message,true);}}finally{_busy=false;}
-  }else if(!cfg(K.gid)){setViewerRecovery("");setSync(isMgr()?"请恢复原账本链接；不会新建":"");}
+      else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setViewerRecovery("");setSync(dailyReady?"已读取 "+hhmm():opt.deferFailure?"正在读取并核验":"每日数据读取失败，费用暂不可用",!dailyReady&&!opt.deferFailure);if(!quiet&&dailyReady)toast("已重新读取，不会上传账本");}
+    }catch(e){if(current()&&!opt.deferFailure){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";if(!isMgr())setViewerRecovery("读取失败："+e.message);setSync("读取失败："+e.message,true);}}finally{_busy=false;}
+  }else if(!cfg(K.gid)&&!opt.deferFailure){setViewerRecovery("");setSync(isMgr()?"请恢复原账本链接；不会新建":"");}
   await restoreDraft();
-  if(current()){if(_receiptSource.state==="loading")_receiptSource={state:"unverified"};await render();}
+  if(current()){if(_receiptSource.state==="loading"&&!opt.deferFailure)_receiptSource={state:"unverified"};if(!opt.deferFailure||_receiptSource.state==="verified")await render();}
+  return current()&&_receiptSource.state==="verified";
 }
-async function connect(tok){const epoch=invalidateReceiptSource(true);await restoreDraft();if(EDIT.draft||_ledgerBusy||_draftBlocked){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先处理保留的草稿，不能切换访问");return;}tok=(tok||"").trim();if(!tok){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先粘贴令牌");return;}if(_readOnlyEntry){_readOnlyEntry=false;history.replaceState(null,"",location.pathname+location.search);}setCfg(K.tok,tok);
-  try{await ghApi("/gists?per_page=1");}catch(e){setCfg(K.tok,"");if(epoch===_sourceEpoch)invalidateReceiptSource();toast("令牌无效："+e.message);render();return;}
-  await pullAll(false);toast("已连接");render();}
-document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")pullAll(true);else{invalidateReceiptSource();lockLedger("已离开页面，编辑锁定；草稿保留");}});
+async function connect(tok,opt={}){const epoch=invalidateReceiptSource(true);await restoreDraft();if(EDIT.draft||_ledgerBusy||_draftBlocked){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先处理保留的草稿，不能切换访问");return false;}tok=(tok||"").trim();if(!tok){if(epoch===_sourceEpoch)invalidateReceiptSource();toast("请先粘贴令牌");return false;}if(_readOnlyEntry){_readOnlyEntry=false;history.replaceState(null,"",location.pathname+location.search);}setCfg(K.tok,tok);
+  try{await ghApi("/gists?per_page=1");}catch(e){const rejected=e.status===401||e.status===403;if(rejected)setCfg(K.tok,"");if(epoch===_sourceEpoch&&(rejected||!opt.deferFailure))invalidateReceiptSource();if(rejected||!opt.deferFailure)toast((rejected?"令牌无效：":"连接暂未完成：")+e.message);if(rejected||!opt.deferFailure)render();return false;}
+  const verified=await pullAll(false,opt);if(verified){toast("已连接");render();}return verified;}
+
+/* startup-read-coordinator:start */
+let _startupRead=null,_startupRefreshQueued=false,_automaticRead=null;
+const startupPause=()=>new Promise(resolve=>setTimeout(resolve,450));
+async function startInitialRead(){
+  if(_startupRead)return _startupRead;
+  _startupRead=(async()=>{
+    const startupToken=HASH&&HASH.tok&&store?HASH.tok:"";
+    if(startupToken)await connect(startupToken,{deferFailure:true});else await pullAll(true,{deferFailure:true});
+    if(_receiptSource.state!=="verified"&&cfg(K.gid)&&cfg(K.key)&&navigator.onLine!==false&&(!startupToken||cfg(K.tok)===startupToken)){
+      await startupPause();await pullAll(true,{skipShell:true});
+    }
+  })().finally(()=>{_startupRead=null;const rerun=_startupRefreshQueued&&_receiptSource.state!=="verified";_startupRefreshQueued=false;if(rerun)requestAutomaticPull();});
+  return _startupRead;
+}
+function requestAutomaticPull(){
+  if(_startupRead){_startupRefreshQueued=true;return _startupRead;}
+  if(_automaticRead)return _automaticRead;
+  _automaticRead=pullAll(true).finally(()=>{_automaticRead=null;});return _automaticRead;
+}
+/* startup-read-coordinator:end */
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="visible")requestAutomaticPull();else{invalidateReceiptSource();lockLedger("已离开页面，编辑锁定；草稿保留");}});
 window.addEventListener("pagehide",()=>{invalidateReceiptSource();lockLedger();});
 setInterval(()=>{if(["editing","review"].includes(EDIT.mode)&&!LG.isEditable(EDIT,Date.now()))lockLedger("5 分钟未操作，编辑已锁定；草稿保留");},1000);
-window.addEventListener("pageshow",e=>{if(e.persisted)pullAll(true);});
-window.addEventListener("online",()=>pullAll(true));
+window.addEventListener("pageshow",e=>{if(e.persisted)requestAutomaticPull();});
+window.addEventListener("online",()=>requestAutomaticPull());
 window.addEventListener("storage",e=>{if(e.key===FUND_PROFILE_KEY){_fundProfileCache=null;_fundArchiveCache=null;scheduleRender();return;}if(e.key===FUND_DOCS_KEY){_fundDocsCache=null;scheduleRender();return;}if(e.key===FUND_ARCHIVE_KEY){_fundArchiveCache=null;scheduleRender();return;}if([K.gid,K.key,K.tok,K.db].includes(e.key)){_remoteFund={state:"unloaded",gid:"",keyValue:"",revision:"",raw:"",bundle:null,reason:""};_fundDocsCache=null;_fundArchiveCache=null;_fundArchiveCipher="";invalidateReceiptSource();lockLedger("其它页面已改变来源，编辑锁定；请重新读取");if(!EDIT.draft)pullAll(true);}});
 
 /* ============ 分享（只读） ============ */
@@ -2425,7 +2448,7 @@ for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=
 _last=strip(DB);
 render();setSync("");
 try{const u=new URL(location.href);if(u.searchParams.get("_refreshed")==="1"){u.searchParams.delete("_refreshed");history.replaceState(null,"",u.pathname+u.search+u.hash);setTimeout(()=>toast("已重新读取最新页面和数据"),250);}}catch(_){}
-if(HASH&&HASH.tok&&store){connect(HASH.tok);}else pullAll(true);
+startInitialRead();
 </script>
 </body>
 </html>
