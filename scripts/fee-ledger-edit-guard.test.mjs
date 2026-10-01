@@ -249,7 +249,8 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
   };
   const remote = { revision: "fixture-revision-1", content: initialContent, backupContent: null };
   const network = { loseWriteResponse: false, rejectWrite: false, corruptReadbackAfterWrite: false,
-    failGistRead: false, missingGistFile: false, failDaily: false, invalidDaily: false };
+    failGistRead: false, failGistReads: 0, failTokenProbeOnce: false,
+    missingGistFile: false, failDaily: false, invalidDaily: false };
   const readGates = new Map();
   const pauseNextRead = kind => {
     let entered, release;
@@ -304,7 +305,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
     requests.push({ url, method, authorized: !!options.headers?.Authorization });
     const ok = body => ({ ok: true, status: 200, json: async () => structuredClone(body), text: async () => typeof body === "string" ? body : JSON.stringify(body) });
     if (url.includes("api.github.com/gists/fixture-gist")) {
-      if (method === "GET" && network.failGistRead) throw new Error("fixture source unavailable");
+      if (method === "GET" && (network.failGistRead || network.failGistReads-- > 0)) throw new Error("fixture source unavailable");
       if (method === "PATCH") {
         if (network.rejectWrite) return { ok: false, status: 403, json: async () => ({ message: "fixture rejected" }) };
         const files = JSON.parse(options.body).files;
@@ -322,7 +323,9 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
       return result;
     }
     if (url.includes("api.github.com/gists?")) {
-      assert.equal(method, "GET"); return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
+      assert.equal(method, "GET");
+      if (network.failTokenProbeOnce) { network.failTokenProbeOnce = false; throw new Error("fixture network unavailable"); }
+      return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
     }
     if (url === "https://api.github.com/user" && manager) return ok({login:"fixture-owner"});
     if (/^(?:data\.json|https:\/\/fixture\.invalid\/fee-console\/data\.json)(?:\?|$)/.test(url)) {
@@ -360,7 +363,12 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
     for (const listener of listeners.get(event) || []) await listener({ type: event, ...extra });
     await settle();
   };
-  return { context, run, element, document, store, requests, remote, network, seal, emit, settle, data, committed, pauseNextEncryption, pauseNextDecryption, pauseNextRead, paints,
+  const runTimers = async () => {
+    const queued = [...timers.values()]; timers.clear();
+    for (const timer of queued) await timer.fn();
+    await settle();
+  };
+  return { context, run, element, document, store, requests, remote, network, seal, emit, settle, runTimers, data, committed, pauseNextEncryption, pauseNextDecryption, pauseNextRead, paints,
     writes: () => requests.filter(request => request.method !== "GET") };
 }
 
@@ -1352,6 +1360,39 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
     await daily.entered; await loading(h); daily.release(); await connect; await complete(h); noRedPaint(h);
     await h.run('connect("")'); await failure(h);
     assert.notEqual(h.run("_receiptSource.state"), "loading");
+  });
+
+  await t.test("a cold manager launch keeps the token through one transient probe failure and recovers without red error paint", async () => {
+    const key = Buffer.alloc(32, 7).toString("base64url");
+    const h = await browserHarness(html, { manager: true,
+      hash: `#tok=fixture-manager-token&gid=fixture-gist&k=${key}` });
+    h.context.Date = class extends Date {
+      constructor(...args) { super(...(args.length ? args : ["2026-08-03T04:00:00Z"])); }
+      static now() { return Date.parse("2026-08-03T04:00:00Z"); }
+    };
+    h.network.failTokenProbeOnce = true;
+    const startup = h.run("startInitialRead()");
+    await h.settle(); await loading(h);
+    assert.equal(h.store.get("feeConsole.gh.token"), "fixture-manager-token",
+      "a network error must not be mislabeled as an invalid manager token");
+    await h.runTimers(); await startup; await complete(h); noRedPaint(h);
+  });
+
+  await t.test("foreground and online events during cold start coalesce behind the in-flight read", async () => {
+    const key = Buffer.alloc(32, 7).toString("base64url");
+    const h = await browserHarness(html, { manager: true,
+      hash: `#tok=fixture-manager-token&gid=fixture-gist&k=${key}` });
+    h.context.Date = class extends Date {
+      constructor(...args) { super(...(args.length ? args : ["2026-08-03T04:00:00Z"])); }
+      static now() { return Date.parse("2026-08-03T04:00:00Z"); }
+    };
+    const daily = h.pauseNextRead("daily"), startup = h.run("startInitialRead()");
+    await daily.entered; await loading(h);
+    const foreground = h.run("requestAutomaticPull()"), online = h.run("requestAutomaticPull()");
+    daily.release(); await Promise.all([startup, foreground, online]);
+    await complete(h); noRedPaint(h);
+    assert.equal(h.requests.filter(request => request.url.endsWith("/gists/fixture-gist")).length, 1,
+      "startup lifecycle events must not cancel or duplicate the verified Gist read");
   });
 
   await t.test("final source failure and a mismatched receipt remain red and fail closed, then recover on a fresh read", async () => {
