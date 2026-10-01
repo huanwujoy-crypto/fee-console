@@ -33,19 +33,43 @@ export const classificationId = e => 'fee-style-' + crypto.createHash('sha256')
  * Cash and SGOV never enter this input. Equal values are ordered by ticker so
  * repeated source reads produce the same encrypted daily point.
  */
-export function summarizeTopHoldings(input, limit = 3) {
-  if (!Number.isInteger(limit) || limit < 1 || limit > 10 || !input || !Array.isArray(input.portfolios)) {
+const EXPOSURE_KEYS = ['portfolioId', 'holdingId', 'ticker', 'targetTicker', 'multiplier', 'effectiveFrom', 'basis'];
+
+export function summarizeTopHoldings(input, limit = 3, exposureMappings = []) {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 10 || !input || !Array.isArray(input.portfolios)
+      || !Array.isArray(exposureMappings) || exposureMappings.length > 1000) {
     fail('TOP_HOLDINGS');
+  }
+  const exposureByHolding = new Map();
+  for (const rule of exposureMappings) {
+    exact(rule, EXPOSURE_KEYS);
+    const key = identity(rule);
+    if (exposureByHolding.has(key)
+        || typeof rule.targetTicker !== 'string'
+        || !/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(rule.targetTicker)
+        || rule.targetTicker === 'SGOV'
+        || typeof rule.multiplier !== 'number' || !Number.isFinite(rule.multiplier)
+        || rule.multiplier <= 0 || rule.multiplier > 5 || !text(rule.basis, 300)) fail('TOP_HOLDINGS');
+    iso(rule.effectiveFrom);
+    exposureByHolding.set(key, rule);
   }
   const totals = new Map();
   for (const portfolio of input.portfolios) {
     if (!portfolio || !Array.isArray(portfolio.holdings)) fail('TOP_HOLDINGS');
     for (const holding of portfolio.holdings) {
-      const ticker = holding?.ticker;
+      let ticker = holding?.ticker, value = holding?.valueUsd;
       if (typeof ticker !== 'string' || !/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(ticker)
           || ticker === 'SGOV') fail('TOP_HOLDINGS');
-      amount(holding.valueUsd);
-      const total = (totals.get(ticker) || 0) + holding.valueUsd;
+      amount(value);
+      const rule = exposureByHolding.get(`${portfolio.portfolioId}:${holding.holdingId}`);
+      if (rule) {
+        if (rule.ticker !== ticker || !isIsoDate(portfolio.sourceDate)) fail('TOP_HOLDINGS');
+        if (rule.effectiveFrom <= portfolio.sourceDate) {
+          ticker = rule.targetTicker;
+          value *= rule.multiplier;
+        }
+      }
+      const total = (totals.get(ticker) || 0) + value;
       if (!Number.isFinite(total) || total > 1e12) fail('TOP_HOLDINGS');
       totals.set(ticker, total);
     }

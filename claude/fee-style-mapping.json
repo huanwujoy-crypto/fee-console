@@ -9,6 +9,18 @@
   ],
   "secondaryCheck": "ticker",
   "unknownHoldingPolicy": "fail_closed",
+  "topHoldingExposurePolicy": "explicit identity-bound underlying exposure; raw NAV, stock, fees and investor shares remain unchanged",
+  "topHoldingExposureMappings": [
+    {
+      "portfolioId": 1350094,
+      "holdingId": 29274212,
+      "ticker": "VSTL",
+      "targetTicker": "VST",
+      "multiplier": 2,
+      "effectiveFrom": "2026-09-30",
+      "basis": "Owner confirmed VSTL is 2x VST exposure on 2026-10-01"
+    }
+  ],
   "holdings": [
     {
       "portfolioId": 1350094,
