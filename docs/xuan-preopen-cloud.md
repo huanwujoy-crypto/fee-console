@@ -33,9 +33,9 @@ Sharesight 读取拟使用既有 `family-portfolio-gateway-key`，而非 Sharesi
 
 ## 自动接线候选（2026-10-01，默认关闭）
 
-`Daily.Dockerfile` 的固定入口 `daily.mjs` 按已核对的 NYSE 与 Xetra 2026–2028 日历选择上一已完成美股来源日。日历来源见 `calendar.mjs`；未覆盖年份拒绝运行。当前日历门仅覆盖 NYSE/Xetra，不能称为全部交易场所日历验收，LSE/Nasdaq/Euronext 的独立核对仍是启用前待办。
+`Daily.Dockerfile` 的固定入口 `daily.mjs` 按独立核对的 NYSE、Nasdaq、Xetra、LSE 与 Euronext 2026 年日历选择上一已完成美股来源日。日历来源及覆盖说明见 `calendar.mjs` 和 `docs/xuan-preopen-cloud-delivery.md`；五组日历未全部覆盖的年份拒绝运行，不按工作日猜测。
 
-每日私有输出只新增 `delivery/YYYY-MM-DD/report.html` 与最后写入的 `receipt.json`；原始五来源仍在 `report-check/`。专用 `xuan-preopen-delivery` 身份拟仅获固定 `xuan-preopen-report` job 的运行及执行状态读取，以及上述 delivery 前缀的对象 GET；不授予对象 list、写入、原始证据读取、Secret Manager 或交易权限。GitHub OIDC provider 必须同时限制本仓库、main、固定 workflow 与独立 environment，避免其它 workflow 借用身份。这些 IAM/环境变更尚未执行。
+每日先创建不可覆盖的 `delivery/YYYY-MM-DD/start.json` 再取数，随后新增 `report.html` 与最后写入的 `receipt.json`；原始五来源仍在 `report-check/`。专用 `xuan-preopen-delivery` 身份拟仅获固定 `xuan-preopen-report` job 的运行及执行状态读取，以及上述 delivery 前缀的对象 GET；不授予对象 list、写入、原始证据读取、Secret Manager 或交易权限。GitHub OIDC provider 必须同时限制本仓库、main、固定 workflow 与独立 environment，避免其它 workflow 借用身份。这些 IAM/环境变更尚未执行。
 
 GitHub 固定 workflow 仅在 `XUAN_PREOPEN_CLOUD_MODE=shadow|publish` 时运行，变量不存在则关闭。拟定时点为周一至五 13:00/13:10 HKT。重复触发复用完整回执，只发一次 run 请求；失败不自动重跑。`shadow` 不提交报告，`publish` 拟使用既有 repository secret `FEE_CLOUD_GITHUB_TOKEN`，token 不进入云端容器。专用身份、既有 token 的新用途与日程切换需业主批准。
 
