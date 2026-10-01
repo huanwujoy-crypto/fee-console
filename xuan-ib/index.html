@@ -27,6 +27,9 @@
       background: rgba(249, 249, 247, .96);
       color: #111;
     }
+    /* The action report has its own title and state. Keep loader controls
+       available to the existing runtime without showing a duplicate top bar. */
+    .bar[hidden] { display: none; }
     .title { min-width: 0; }
     .title strong { display: block; font-size: 18px; line-height: 1.25; }
     #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; white-space: pre-line; }
@@ -130,7 +133,7 @@
 </head>
 <body>
   <div class="app">
-    <header class="bar">
+    <header class="bar" hidden>
       <div class="title">
         <strong>XUAN-投资管理</strong>
         <span id="status" role="status" aria-live="polite">正在检查已发布报告…</span>
@@ -162,7 +165,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-09-28.2";
+      const loaderBuild = "2026-10-01.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";

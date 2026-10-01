@@ -56,6 +56,17 @@ const scriptsCheck = fs.readFileSync(new URL('../.github/workflows/scripts-check
 const metadata = JSON.parse(fs.readFileSync(new URL('../xuan-ib/latest.meta.json', import.meta.url), 'utf8'));
 const appBuild = JSON.parse(fs.readFileSync(new URL('../xuan-ib/app-build.json', import.meta.url), 'utf8'));
 
+test('the duplicate wrapper header is absent from layout while loading controls remain available', () => {
+  assert.match(loader, /<header class="bar" hidden>/);
+  assert.match(loader, /\.bar\[hidden\]\s*\{\s*display:\s*none;\s*\}/);
+  const header = loader.match(/<header\b[^]*?<\/header>/)?.[0] || '';
+  assert.match(header, /id="status"/);
+  assert.match(header, /id="refresh"[^>]*hidden/);
+  assert.match(loader, /<iframe id="handover"[^>]*sandbox=""/);
+  assert.match(loader, /<div id="warning" role="alert" hidden>/);
+  assert.match(loader, /<button id="app-update" type="button" hidden>/);
+});
+
 test('promotion commits the derived decision menu with its paired report and metadata', () => {
   assert.match(promotion, /xuan-ib-decision-menu\.mjs publish-manifest/);
   assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json xuan-ib\/latest\.decisions\.json/);
@@ -2850,4 +2861,20 @@ test('obsolete generation wait is removed without dropping verified data or deci
     assert.ok(stored.has('xuan-ib:decision-wait:v1'));
     assert.equal(app.navigations.length,1);
   }
+});
+
+test('hidden wrapper retains verified report loading and background-check status without generating data', async () => {
+  const html = reportHtml('2026-08-28', '睡前版', '<p>Verified report remains visible</p>');
+  const meta = metaFor(html), requests = [];
+  const app = loaderHarness({fetchImpl: async url => {
+    requests.push(String(url));
+    return String(url).includes('latest.meta.json')
+      ? response({json: meta, bytes: []}) : response({bytes: Buffer.from(html)});
+  }});
+  await app.listeners.button.click();
+  assert.match(app.frame.srcdoc, /Verified report remains visible/);
+  assert.match(app.status.textContent, /已检查/);
+  assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
+  assert.ok(requests.every(url => /latest\.(?:meta\.json|html)/.test(url)));
+  assert.equal(app.navigations.length, 0);
 });
