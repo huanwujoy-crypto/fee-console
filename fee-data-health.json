@@ -1,6 +1,6 @@
 {
   "schema": "fee-console.daily-health.v1",
-  "checkedAt": "2026-10-01T07:16:37.574Z",
+  "checkedAt": "2026-10-01T09:27:10.314Z",
   "targetDate": "2026-09-30",
   "sourceDates": {
     "schwab": "2026-09-30",
@@ -8,6 +8,6 @@
     "benchmark": "2026-09-30"
   },
   "outcome": "updated",
-  "dataSha256": "9c7d10d27189a753946b143e45cd0a9659a0b3ba946637437e7f13933c4c422f",
+  "dataSha256": "101a8ec7d7dc278a980b3297bb12dddc1d85ad2ea3aafcc3cdc90fdda33a90f7",
   "errorCode": null
 }
