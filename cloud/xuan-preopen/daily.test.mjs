@@ -9,15 +9,21 @@ test('joint holiday never loads credentials or reads financial sources', async (
 });
 test('delivery exposes only HTML and completion receipt, written in that order', async () => {
   const saved = [], io = {savePrivate: async (name,value) => {saved.push({name,value}); return {sha256: 'a'.repeat(64), generation: '1'};}};
-  await runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), io, generate: async ({sourceDate,io: wrapped}) => {
+  await runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), execution: 'xuan-preopen-report-test', io, generate: async ({sourceDate,io: wrapped}) => {
     assert.equal(sourceDate,'2026-09-30'); await wrapped.savePrivate('report-check/id/report.html','private html');
     return {status: 'ready', artifact: {}, dataDate: '2026-10-01', sourceDate};
   }});
-  assert.deepEqual(saved.map(x => x.name), ['report-check/id/report.html','delivery/2026-10-01/report.html','delivery/2026-10-01/receipt.json']);
+  assert.deepEqual(saved.map(x => x.name), ['delivery/2026-10-01/start.json','report-check/id/report.html','delivery/2026-10-01/report.html','delivery/2026-10-01/receipt.json']);
 });
 test('partial generation does not create a delivery completion marker', async () => {
   const saved = [];
-  await assert.rejects(runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), io: {savePrivate: async name => saved.push(name)},
+  await assert.rejects(runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), execution: 'xuan-preopen-report-test', io: {savePrivate: async name => saved.push(name)},
     generate: async () => ({status: 'partial'})}), /INCOMPLETE/);
-  assert.equal(saved.length,0);
+  assert.deepEqual(saved,['delivery/2026-10-01/start.json']);
+});
+test('an existing daily start marker blocks duplicate financial generation', async () => {
+  let generated = false;
+  await assert.rejects(runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), execution: 'xuan-preopen-report-test',
+    io: {savePrivate: async () => {throw new Error('CLOUD_HTTP_412');}}, generate: async () => {generated = true;}}), /412/);
+  assert.equal(generated,false);
 });

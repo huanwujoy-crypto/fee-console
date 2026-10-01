@@ -59,7 +59,7 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
     },
     async savePrivate(name, value) {
       if (!/^report-check\/[a-zA-Z0-9:._-]+\/[a-zA-Z0-9._-]+$/.test(name)
-          && !/^delivery\/\d{4}-\d{2}-\d{2}\/(report\.html|receipt\.json)$/.test(name)) throw new Error('PRIVATE_OBJECT_PATH_INVALID');
+          && !/^delivery\/\d{4}-\d{2}-\d{2}\/(report\.html|receipt\.json|start\.json)$/.test(name)) throw new Error('PRIVATE_OBJECT_PATH_INVALID');
       const data = Buffer.from(typeof value === 'string' ? value : JSON.stringify(value));
       const url = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o`);
       url.searchParams.set('uploadType', 'media'); url.searchParams.set('name', name); url.searchParams.set('ifGenerationMatch', '0');
