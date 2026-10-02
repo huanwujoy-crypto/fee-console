@@ -595,6 +595,32 @@ function createLegacyPolicy() {
 globalThis.feeLegacyPolicy=createLegacyPolicy();
 
 /* fee-receipt-consumer:start */
+function createIncomeDatePolicy() {
+  const fail=()=>{throw new Error('invalid owner-estimated income date audit');};
+  const date=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+  const ref=s=>typeof s==='string'&&s.trim().length>0&&s.length<=1024;
+  const positive=n=>Number.isSafeInteger(n)&&n>0;
+  const normalize=(audit,postingDate)=>{
+    if(!audit||!date(postingDate))fail();
+    const {eventKey,proof}=audit,c=proof?.condition,s=proof?.scope;
+    const m=/^webull\.dividend:([1-9]\d{0,14}):([A-Z0-9][A-Z0-9./^-]{0,31}):(\d{4}-\d{2}-\d{2}):([1-9]\d{0,14})$/.exec(eventKey||'');
+    if(!m||!date(m[3])||proof.authority!=='owner-estimated-cash-posting'||proof.verified!==false||proof.cashDate!==postingDate||!ref(proof.sourceRef)
+      ||!c||c.statementDate!==m[3]||!ref(c.statementRef)||!ref(c.reviewedBy)||![c.reviewed,c.complete,c.dividendAbsent,c.feeAbsent,c.netCashMovementAbsent].every(v=>v===true)
+      ||new Date(Date.parse(c.statementDate+'T00:00:00Z')+86400000).toISOString().slice(0,10)!==postingDate
+      ||!s||s.portfolioId!==1350094||s.payoutId!==Number(m[4])||!positive(s.cashAccountId)||!Array.isArray(s.cashRecordIds)||s.cashRecordIds.length!==2||!s.cashRecordIds.every(positive)||s.cashRecordIds[0]===s.cashRecordIds[1]
+      ||proof.followup?.status!=='awaiting-official-record'||proof.followup.actualBrokerDate!==null)fail();
+    return {eventKey,proof:{authority:proof.authority,verified:false,cashDate:postingDate,sourceRef:proof.sourceRef,scope:{portfolioId:s.portfolioId,payoutId:s.payoutId,cashAccountId:s.cashAccountId,cashRecordIds:[...s.cashRecordIds].sort((a,b)=>a-b)},condition:{statementDate:c.statementDate,statementRef:c.statementRef,reviewedBy:c.reviewedBy,reviewed:true,complete:true,dividendAbsent:true,feeAbsent:true,netCashMovementAbsent:true},followup:{status:'awaiting-official-record',actualBrokerDate:null}}};
+  };
+  const point=p=>{
+    if(p.incomeDateAudits===undefined)return {};
+    if(!Array.isArray(p.incomeDateAudits)||!p.incomeDateAudits.length)fail();
+    const rows=p.incomeDateAudits.map(a=>normalize(a,p.d)).sort((a,b)=>a.eventKey<b.eventKey?-1:a.eventKey>b.eventKey?1:0);
+    if(new Set(rows.map(a=>a.eventKey)).size!==rows.length)fail();
+    return {incomeDateAudits:rows};
+  };
+  return {normalize,point};
+}
+const incomeDatePolicy=createIncomeDatePolicy();
 (()=>{
   const SCHEMA="fee-console.calculation-receipt.v1",LEGACY_SCHEMA="fee-console.calculation-receipt.v2",LEGACY_ID="fee-console.legacy-empty-expense.v1",ENGINE="fee-v4.6.2",ACCOUNTS=["schwab","webull"];
   const DATE=/^(\d{4})-(\d{2})-(\d{2})$/,YM=/^\d{4}-(?:0[1-9]|1[0-2])$/,NUMBER=/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -603,7 +629,7 @@ globalThis.feeLegacyPolicy=createLegacyPolicy();
   const PERIOD=["ym","from","to","state","openingCents","closingCents","flowNetCents","grossPnlCents","feeBaseSumCents","averageFeeBaseCents","managementFeeCents","carryCents","totalFeeCents","dietzDenominatorCents","grossTwrPpm","investorDietzPpm","feeBasisDayCount","calendarDayCount","mgmtValid","cumulativePnlBeforeCents","cumulativePnlAfterCents","highWaterBeforeCents","highWaterAfterCents"];
   const TOTAL=["grossPnlCents","managementFeeCents","carryCents","totalFeeCents","netPnlCents","grossTwrPpm","investorDietzPpm","dietzDenominatorCents","spanDays"];
   const BALANCE=["accruedCents","paidCents","dueCents"],STATUS=["valid","provisional","provisionalCodes"];
-  const PROVISIONAL=new Set(["daily-provisional","status-provisional"]);
+  const PROVISIONAL=new Set(["daily-provisional","status-provisional","owner-estimated-cash-date"]);
   const canonical=value=>JSON.stringify((function walk(input){
     if(Array.isArray(input))return input.map(walk);
     if(!input||typeof input!=="object")return input;
@@ -698,7 +724,7 @@ globalThis.feeLegacyPolicy=createLegacyPolicy();
     const unresolved=data.flowsUnresolved||[];for(const flow of unresolved)if(!flow||typeof flow!=="object"||Array.isArray(flow))throw new Error("unresolved");
     const allDaily=data.daily||[];for(const point of allDaily)if(!point||typeof point!=="object"||Array.isArray(point)||!calendarDate(String(point.d||"")))throw new Error("daily");unique(allDaily,p=>String(p.d));
     const managementExemptionRegistry=normalizeManagementRegistry(data.managementExemptionRegistry);
-    const daily=allDaily.filter(p=>p.d>=start&&p.d<=asOf).map(point=>({d:point.d,accounts:ids.map(id=>{const value=finite(point[id]);if(value<0)throw new Error("nav");return {id,value};}),provisional:point.prov?true:false,...managementPoint(point,managementExemptionRegistry)})).sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:0);
+    const daily=allDaily.filter(p=>p.d>=start&&p.d<=asOf).map(point=>({d:point.d,accounts:ids.map(id=>{const value=finite(point[id]);if(value<0)throw new Error("nav");return {id,value};}),provisional:point.prov?true:false,...incomeDatePolicy.point(point),...managementPoint(point,managementExemptionRegistry)})).sort((a,b)=>a.d<b.d?-1:a.d>b.d?1:0);
     const flowsAuto=(data.flowsAuto||[]).map(normalizeAuto).filter(flow=>flow.date>=start&&flow.date<=asOf).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
     if(flowsAuto.some(f=>!f.id||!ids.includes(f.acct)))throw new Error("auto flow");
     for(const flow of flowsAuto)if(flow.businessKey){const expected=(await rawHash(`external_asset_transfer ${flow.businessKey}`)).slice(0,16);if(!flow.effective||flow.id!==expected||flow.reason!==`verified external asset transfer ${flow.businessKey}`)throw new Error("business identity");}else if(flow.effective)throw new Error("business identity");
@@ -754,7 +780,7 @@ globalThis.feeLegacyPolicy=createLegacyPolicy();
         if(!same(projected,economicInput)||await bytesHash(legacySource.envelopeBytes)!==receipt.legacySource.sourceEnvelopeSha256||await bytesHash(legacySource.payloadBytes)!==receipt.legacySource.sourcePayloadSha256)throw new Error("legacy source commitment");
       }else if(legacySource!==undefined||Object.hasOwn(economicInput,"legacyV3Copy"))throw new Error("legacy receipt required");
       const econ=normalizeEcon(economicInput),normalized=await normalizeData(data,{start:receipt.start,asOf:receipt.asOf,accountIds:receipt.accountIds});
-      if(receipt.engineVersion==="fee-v4.6.1"&&(data.managementExemptionRegistry!==undefined||(data.daily||[]).some(p=>p.managementExemptions!==undefined)))throw new Error("old fee engine");
+      if(receipt.engineVersion==="fee-v4.6.1"&&(data.managementExemptionRegistry!==undefined||(data.daily||[]).some(p=>p.managementExemptions!==undefined||p.incomeDateAudits!==undefined)))throw new Error("old fee engine");
       if(normalized.status.unresolvedCount>0||econ.settings.start!==receipt.start||ratePpm(econ.settings.mgmt)!==receipt.managementRatePpm||ratePpm(econ.settings.carry)!==receipt.carryRatePpm)throw new Error("inputs");
       const confirmed=econ.months.flatMap(month=>month.flows).filter(flow=>flow.date>=receipt.start&&flow.date<=receipt.asOf),autoById=new Map(normalized.flowsAuto.map(flow=>[flow.id,flow]));for(const flow of confirmed){if(!flow.src)continue;const automatic=autoById.get(flow.src);if(!automatic||flow.date!==automatic.date||flow.acct!==automatic.acct||cents(flow.amount)!==cents(automatic.amount))throw new Error("flow link");}
       const confirmedSources=new Set(confirmed.map(flow=>flow.src).filter(Boolean));
@@ -762,7 +788,7 @@ globalThis.feeLegacyPolicy=createLegacyPolicy();
       const publicHash=await semanticHash("public-calculation-inputs",normalized),econHash=await semanticHash("private-economic-inputs",econ);
       const payments=econ.fees.filter(fee=>fee.date>=receipt.start&&fee.date<=receipt.asOf).map(fee=>({date:fee.date,amountCents:cents(fee.amount),ccy:fee.ccy,fxPpb:integer(Math.round(fee.fx*1000000000))})).sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
       const flows=effectiveFlows(econ,normalized),flowDigest=[];for(const flow of flows){const identity={id:String(flow.id||""),src:String(flow.src||""),reason:String(flow.reason||""),note:String(flow.note||"")};flowDigest.push({date:String(flow.date||""),acct:String(flow.acct||""),amountCents:cents(flow.amount),eventKeyHash:await semanticHash("effective-flow-event",identity)});}flowDigest.sort((a,b)=>canonical(a)<canonical(b)?-1:canonical(a)>canonical(b)?1:0);
-      const codes=[];if(normalized.daily.some(point=>point.provisional))codes.push("daily-provisional");if(normalized.status.provisional)codes.push("status-provisional");
+      const codes=[];if(normalized.daily.some(point=>point.provisional))codes.push("daily-provisional");if(normalized.status.provisional)codes.push("status-provisional");if(normalized.daily.some(p=>p.incomeDateAudits?.length))codes.push("owner-estimated-cash-date");
       if(publicHash!==receipt.dataInputsHash||econHash!==receipt.econInputsHash||await semanticHash("payment-inputs",payments)!==receipt.paymentInputsHash||await semanticHash("effective-flows",flowDigest)!==receipt.effectiveFlowsHash||flowDigest.length!==receipt.effectiveFlowCount||flowDigest.reduce((sum,flow)=>sum+flow.amountCents,0)!==receipt.effectiveFlowNetCents||!same(codes,receipt.status.provisionalCodes))throw new Error("commitment");
       const openingCents=cents(econ.accounts.reduce((sum,account)=>sum+account.opening,0));if(openingCents!==receipt.periods[0].openingCents)throw new Error("opening commitment");
       // Only this successful validation gate exposes dated flows to the separate,
@@ -2012,7 +2038,7 @@ function renderKPIs(feeView,st,B,G){
   }
   document.getElementById("kpis").innerHTML=`
   ${assetCard}
-    <div class="note">${st.live?`本月毛收益 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · ${feeView.status.provisional?"暂计":"本月"}费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}${feeView.status.provisional?'<br>含暂估数据，费用非最终结算。':""}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
+    <div class="note">${st.live?`本月毛收益 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · ${feeView.status.provisional?"暂计":"本月"}费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}${feeView.status.provisional?`<br>含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}`:""}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
     <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${feeView.start} → ${feeView.asOf}（${st.spanDays} 天）</div>
@@ -2092,7 +2118,7 @@ function renderMonths(feeView,st){
   const net=r.pnl-r.fees,status=r.inProgress?"进行中":r.excess>0?"超高水位":r.cum<r.hwm?"补亏中":"完整月";
   const monthVerifiedClosures=(st.verifiedClosures||[]).filter(date=>date.slice(0,7)===r.ym);
   box.innerHTML=`<div class="history-tools"><label for="monthHistoryMonth">月份</label><select id="monthHistoryMonth" aria-label="选择月份，全部历史均保留">${model.months.map(row=>`<option value="${row.ym}"${row.ym===r.ym?" selected":""}>${ymLabel(row.ym)}</option>`).join("")}</select><span class="badge ${r.inProgress?"est":r.excess>0?"ok":r.cum<r.hwm?"hwm":""}">${status}</span></div>
-    <div class="month-totals" aria-live="polite"><span>毛收益<b class="${sgn(r.pnl)}">${usd(r.pnl,0)}</b></span><span>费用<b>${usd(r.fees,0)}</b></span><span>净收益<b class="${sgn(net)}">${usd(net,0)}</b></span></div>${feeView.status.provisional?'<div class="small" style="margin:0 0 6px">本回执含暂估数据，费用非最终结算。</div>':""}
+    <div class="month-totals" aria-live="polite"><span>毛收益<b class="${sgn(r.pnl)}">${usd(r.pnl,0)}</b></span><span>费用<b>${usd(r.fees,0)}</b></span><span>净收益<b class="${sgn(net)}">${usd(net,0)}</b></span></div>${feeView.status.provisional?`<div class="small" style="margin:0 0 6px">本回执含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}</div>`:""}
     <details class="month-detail" id="monthCalculation" data-ym="${r.ym}"${open?" open":""}><summary>计算及组成 <span class="month-summary">${r.from} → ${r.to}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt)}</b></span><span>Carry <b>${usd(r.carry)}</b></span><span>组合毛 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)}${st.benchmarkPending?`（截至 ${st.benchAsOf}）`:""} <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}${monthVerifiedClosures.length?`<span class="wide">基准已核验休市 <b>${monthVerifiedClosures.join("、")}</b></span>`:""}</div><div class="hint" style="margin-top:8px">管理费：逐日收盘总资产扣除当日外部出入金及已核验获授权赠股的免收费市值（如有），按年费率 ${feeView.managementRatePpm/10000}% ÷ 365 累加。<br>Carry：累计毛收益超过历史高水位的部分 × ${feeView.carryRatePpm/10000}%；亏损先补齐。<br>净收益＝毛收益－管理费－Carry；以上读取已验证计算回执。</div></div></details>`;
 }
 function renderBal(feeView,st,B,G){
