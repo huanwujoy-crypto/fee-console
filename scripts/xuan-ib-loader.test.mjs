@@ -1907,8 +1907,8 @@ test('bedtime-only notices follow start, T+20, full-PM and priority boundaries',
     ['2026-09-16T13:40:00Z', '2026-09-16', '临时版 · 睡前速览', 'info'],
     ['2026-09-16T13:50:00Z', '2026-09-16', '临时版 · 睡前速览', 'error'],
     ['2026-09-16T13:35:00Z', '2026-09-16', '睡前版', null],
-    ['2026-11-02T05:00:00Z', '2026-10-30', '开市前版', 'info'],
-    ['2026-11-02T05:20:00Z', '2026-10-30', '开市前版', 'error'],
+    ['2026-11-02T07:00:00Z', '2026-10-30', '开市前版', 'info'],
+    ['2026-11-02T07:30:00Z', '2026-10-30', '开市前版', 'error'],
   ];
   for (const [now, date, edition, level] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);
@@ -2877,4 +2877,14 @@ test('hidden wrapper retains verified report loading and background-check status
   assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
   assert.ok(requests.every(url => /latest\.(?:meta\.json|html)/.test(url)));
   assert.equal(app.navigations.length, 0);
+});
+
+test('same-day PM label published before the European slot cannot prove current action run', async () => {
+  const html=reportHtml('2026-10-05','开市前版','early acceptance');
+  const meta=metaFor(html,{sourceCommitEpoch:Date.parse('2026-10-05T05:00:00Z')/1000});
+  const app=loaderHarness({now:'2026-10-05T06:30:00Z',fetchImpl:async url=>String(url).includes('latest.meta.json')
+    ?response({json:meta,bytes:[]}):response({json:null,bytes:Buffer.from(html)})});
+  await app.listeners.button.click();
+  assert.equal(app.warning.hidden,false);assert.equal(app.status.classList.contains('error'),true);
+  assert.match(app.warning.textContent,/未完成来源覆盖核验与发布验收/);
 });

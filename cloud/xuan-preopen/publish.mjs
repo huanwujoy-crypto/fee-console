@@ -1,3 +1,5 @@
+import {validateReadinessReceipt} from './source_readiness.mjs';
+import {planPreopen} from './calendar.mjs';
 // Only submit a signed one-file candidate. Validate -> Promote -> Pages still
 // exclusively owns latest.html and publication metadata. No main write exists.
 import fs from 'node:fs';
@@ -25,14 +27,17 @@ export async function githubRequest(payload, token = process.env.XUAN_PREOPEN_GI
   return result;
 }
 export async function publishPrepared({html, receipt, request = githubRequest, loadContext = loadTrustedContext, now = Date.now} = {}) {
-  const time = now(), dataDate = hktDate(time);
+  const time = now(), dataDate = hktDate(time), plan = planPreopen(time);
+  if (!plan.windowEnabled || receipt?.slotId !== plan.slotId || receipt.sourceDate !== plan.sourceDate
+      || receipt.readiness?.status !== 'ready') fail('SLOT_OR_SOURCE_UNVERIFIED');
   if (receipt?.schemaVersion !== 1 || receipt.mode !== 'private_report_check' || receipt.status !== 'ready'
-      || receipt.dataDate !== dataDate || receipt.sourceDate >= dataDate || receipt.sourceCount !== 5
-      || receipt.publication !== 'none' || !Array.isArray(receipt.sources) || receipt.sources.length !== 5) fail('RECEIPT');
+      || receipt.dataDate !== dataDate || receipt.sourceDate >= dataDate || receipt.sourceCount !== 6
+      || receipt.publication !== 'none' || !Array.isArray(receipt.sources) || receipt.sources.length !== 6) fail('RECEIPT');
+  if (!validateReadinessReceipt(receipt.readiness, receipt.sources || [], {sourceDate: plan.sourceDate, now: now()})) fail('SOURCES');
   const started = Date.parse(receipt.startedAt), completed = Date.parse(receipt.completedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started || completed > time
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || started < plan.startEpoch * 1000 || completed < started || completed > time
       || completed-started > 300_000 || time-started > 30*60_000) fail('STALE');
-  const required = ['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
+  const required = ['ib.accountSummary','ib.positions','ib.orders','ib.trades','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
   if (required.some(key => receipt.sources.filter(s => s.sourceKey === key && HASH.test(s.sha256 || '')).length !== 1)) fail('SOURCES');
   if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
   validateNightActionHtml(html, dataDate);

@@ -34,3 +34,58 @@ GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 
 2026-10-01 接线验收：专用 cloud job 已成功取五项来源（13.581 秒生成），但新 environment 读不到原环境内的发布密钥，发布以 `PREOPEN_PUBLISH_TOKEN_REQUIRED` 拒绝。此修正只更正环境引用；须 OWNER 批准精确新 head 后，才将专用 WIF 条件的 environment subject 等值改为上列实际格式，并继续验收。既有管理费工作流、环境、密钥和 provider 均不改。当天成品只创建一次；若批准时成品已超过 30 分钟，不降低新鲜度要求、不删除启动标记、不再读 IB，保留现有正式报告，改在下一个交易日验收新成品。
 
 回退先将 mode 设为 `off`，停止新候选；原正式报告保留。由于 IB 已切换至云端只读连接，不能盲目重新开启旧本机任务，必须先确认其 IB 连接可用。
+
+## 欧洲开市前窗口候选（2026-10-02，尚未上线）
+
+本次候选以 LSE 08:00 Europe/London 与 Xetra **核心常规时段** 09:00
+Europe/Berlin 的同一开市时刻倒推：T−60 分钟开始，T−30 分钟为公网完成目标。
+夏令时为香港 14:00/14:30，冬令时 15:00/15:30。使用 IANA，独立解析两个
+欧洲时区并核对结果；美国 DST 的错位周不移动此窗口。不采用零售延长时段。
+共享 schedule 的历史合同截至 2026-10-02 保留；新切换日为 2026-10-03。
+跨市场官方休市表和未覆盖年份拒收仍有效，全部休市不取金融来源。
+
+两个季节的 UTC 候选 `0,10 6,7 * * 1-5` 在获取 WIF 身份之前检查真实窗口；
+delivery 和 cloud job 也分别检查，开市后延迟运行不取数、不占锁。
+正式对象前缀为 `delivery/日期/europe-regular-v1-日期-startEpoch/`，其中 start
+仍为 create-only；旧日期根对象完整保留，手动 report-check 不进入正式前缀。
+正式 receipt 绑定 slot/source-date/start，禁止早跑回执或根目录旧锁充当正式版。
+生成与发布仍保留 30 分钟新鲜度、五分钟生成预算、账户关联、哈希、签名和
+Validate → Promote → Pages；同 HTML 只有本轮正式 receipt、新鲜时间和
+meta/date/edition/sourceSha/blob 均一致时才能返回 already-published。
+
+### 真实来源门槛尚缺的证据
+
+2026-10-02 只读检查 2026-10-01 cloud receipt 与三份原始 IB 证据，未输出
+账户号或金额。该回执五个来源为 IB 摘要/持仓/挂单和两项 Sharesight；没有
+成交来源或 readiness。IB 摘要与 positions 没有 upstream as-of/coverage 字段；
+orders 的 order_time 是订单时间，不能证明成交扫描已完整。
+本候选加入既有 mcp.read 范围的 get_account_trades，但尚未做真实云端接口验收。
+
+`source_readiness.mjs` 是**待上游适配验收的证据合同**，不是官方 IB 返回字段
+声明。要求摘要（现金）、持仓、挂单、成交各自有目标交易日、覆盖终点、全量/
+分页完成、上游 as-of 和一致 snapshot；transport 不生成这些字段。
+仅有 HTTP 请求时间、空 trades、Sharesight 三账户同步结果均拒收。无法通过时
+只写无金额的 data-not-ready 私有 receipt，绝不出行动 HTML、复制旧金额或重标
+旧报告日期；workflow 明确“数据未齐，未生成行动建议”。
+现有 raw 不满足此合同，因此**此候选不能直接启用生产**，更不能把它称为已完成
+来源完整性验收。下一步需在既有只读范围验证真实 upstream mapping，独立证明
+XUAN MCP 与拟用 Flex 来源账户 scope 相同，再检查真实持仓全量与现金/成交覆盖。
+Flex toDate 和现金核对证据不能单独证明 positions 全量，也不能仅凭 IB-HK 名称
+把三账户任务接进报告。若需新凭据或权限，必须另行批准。
+
+当前无行动 receipt 只在私有区，未接入签名的公开状态发布通道；因此用户页面
+可显示更新延迟和未完成覆盖核验，但不能区分某轮具体失败原因。可验证、无金融
+值的公开状态通道及晚到数据的受控新尝试（仍不删 immutable 锁）尚待设计验收。
+这些是上线阻塞，不由私有 receipt 或单元测试代替。
+
+### 调度与上线边界
+
+GitHub [官方说明](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#scheduled-workflows-running-at-unexpected-times)
+指出 schedule 可能延迟或丢弃，整点尤甚。因此 cron 改动只提供尽力触发和
+异常检测，无法保证 T−30 准时。端到端还经过 source job、签名候选、Promote、
+Pages 和公网读回。需要在已有授权配置内核对可靠调度入口；新增 Scheduler/IAM/
+凭据不在本次授权内，不能悄悄增加。首次独立运行须记录真实起止/目标偏差。
+
+待完成：真实来源 mapping、只读 trades 验收、公开失败状态、晚到来源尝试方案、
+可靠调度验证、OWNER 对精确 PR head 亲自审批、不可变镜像部署/配置读回、shadow
+与公网回证。未改生产 job、模式、IAM、OAuth、密钥、其他三账户流程或金融账本。

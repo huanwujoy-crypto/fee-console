@@ -311,6 +311,7 @@ async function main() {
     // A slow Pages rollout is evidence to report, not a reason to undo a valid
     // promotion or change the promotion job's exit code.
     console.log(JSON.stringify(result));
+    if (!result.ok) process.exitCode = 1;
   } else {
     throw new Error("usage: xuan-ib-publish-health.mjs watch|probe --base-url URL ...");
   }

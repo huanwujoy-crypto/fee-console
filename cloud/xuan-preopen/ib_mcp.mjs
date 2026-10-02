@@ -9,6 +9,7 @@ const SOURCES = Object.freeze({
   get_account_summary: 'ib.accountSummary',
   get_account_positions: 'ib.positions',
   get_account_orders: 'ib.orders',
+  get_account_trades: 'ib.trades',
 });
 const fail = code => { throw new Error(code); };
 const exactReadScope = scope => typeof scope === 'string' && scope.trim() === 'mcp.read';

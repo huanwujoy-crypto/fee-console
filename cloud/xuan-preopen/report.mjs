@@ -1,3 +1,4 @@
+import {assessIbReadiness} from './source_readiness.mjs';
 // A private report acceptance job: no GitHub mutation or schedule activation.
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -40,7 +41,7 @@ export async function loadTrustedContext({fetchImpl = fetch, now = Date.now} = {
   if (gitBlob(previousHtml) !== meta.htmlBlob) throw new Error('PREVIOUS_PUBLIC_HTML_MISMATCH');
   const association = {policy, policyCommit: commit, policyBlob: gitBlob(policyText), checkedAt: new Date(now()).toISOString()};
   validateAssociationSnapshot(association, {now: now(), edition: 'am'});
-  return {association, reserveLedger: json(reserveText), reserveHash: hash(reserveText), previousSourceSha: meta.sourceSha, previousHtml};
+  return {association, reserveLedger: json(reserveText), reserveHash: hash(reserveText), previousMeta: meta, previousSourceSha: meta.sourceSha, previousHtml};
 }
 
 export function currentReserve(ledger, date) {
@@ -79,11 +80,20 @@ export async function runPrivateReport({sourceDate, io, now = Date.now, loadCont
   const association = createAssociationReceipt(context.association, {now: now(), edition: 'am', previousSourceSha: context.previousSourceSha, runId});
   const reserve = currentReserve(context.reserveLedger, date);
   const [ib, sharesight] = await Promise.all([captureIb(io.ibStore), readSharesight(sourceDate, token, {now})]);
-  const required = ['ib.accountSummary', 'ib.positions', 'ib.orders'];
-  if (ib?.status !== 'captured' || ib.sources?.length !== 3 || required.some(key => ib.sources.filter(s => s.sourceKey === key).length !== 1)
+  const required = ['ib.accountSummary', 'ib.positions', 'ib.orders', 'ib.trades'];
+  if (ib?.status !== 'captured' || ib.sources?.length !== 4 || required.some(key => ib.sources.filter(s => s.sourceKey === key).length !== 1)
     || sharesight?.length !== 2 || !sharesight.some(s => s.sourceKey === 'sharesight.ibGroupedPerformance')
     || !sharesight.some(s => s.sourceKey === 'sharesight.noahPerformance')) throw new Error('ACTION_SOURCES_INCOMPLETE');
   const sources = [...ib.sources, ...sharesight];
+  const readiness = assessIbReadiness(ib.sources, {sourceDate, now: now()});
+  if (readiness.status !== 'ready') {
+    // Private status only, with no amounts, account identifiers or action HTML.
+    const receipt = {schemaVersion: 1, status: 'data-not-ready', mode: 'private_report_check',
+      dataDate: date, sourceDate, startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(),
+      readiness, sourceCount: sources.length, publication: 'none', scheduler: 'none'};
+    await io.savePrivate(`report-check/${new Date(started).toISOString()}-${runId}/receipt.json`, receipt);
+    return receipt;
+  }
   const raw = key => sources.find(source => source.sourceKey === key).raw;
   const completed = now();
   if (dateHkt(completed) !== date) throw new Error('REPORT_CROSSED_HKT_DATE');
@@ -105,7 +115,7 @@ export async function runPrivateReport({sourceDate, io, now = Date.now, loadCont
   }
   const artifact = {privateObject: prefix + 'report.html', ...await io.savePrivate(prefix + 'report.html', html)};
   const receipt = {schemaVersion: 1, status: model.status, mode: 'private_report_check', dataDate: date, sourceDate,
-    startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(), association, sourceCount: sources.length,
+    startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(), readiness, association, sourceCount: sources.length,
     sources: evidence, artifact, publication: 'none', scheduler: 'none'};
   await io.savePrivate(prefix + 'receipt.json', receipt);
   // Caller may only log this receipt, not the raw sources/model/HTML.

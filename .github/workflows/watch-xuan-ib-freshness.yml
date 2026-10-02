@@ -2,9 +2,10 @@ name: Watch XUAN-IB fixed page freshness
 
 on:
   schedule:
-    # Since 2026-09-28 only the pre-open action report is due at 13:20 HKT.
+    # European regular open minus 30m; inactive season is ignored.
     # Retired AM/PM crons must not dispatch: GitHub may run them hours late.
-    - cron: '20 5 * * 1-5'
+    - cron: '30 6 * * 1-5'
+    - cron: '30 7 * * 1-5'
   workflow_dispatch:
     inputs:
       expected_edition:

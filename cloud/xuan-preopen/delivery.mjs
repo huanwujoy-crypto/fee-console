@@ -1,3 +1,4 @@
+import {validateReadinessReceipt} from './source_readiness.mjs';
 // GitHub -> one Cloud Run job -> private completed files. This identity can
 // neither read broker credentials/raw captures nor mutate report storage.
 import fs from 'node:fs';
@@ -7,6 +8,7 @@ import {fileURLToPath} from 'node:url';
 import {BUCKET, boundedText} from './cloud_io.mjs';
 import {planPreopen} from './calendar.mjs';
 import {loadTrustedContext} from './report.mjs';
+import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {gitBlobSha} from '../../scripts/xuan-ib-publish-health.mjs';
 const JOB = 'projects/family-portfolio-gateway/locations/asia-east2/jobs/xuan-preopen-report';
 const RUN = 'https://run.googleapis.com/v2/';
@@ -21,18 +23,20 @@ export function deliveryTransport(token = process.env.XUAN_PREOPEN_GOOGLE_TOKEN)
     return boundedText(response, 500_000);
   };
 }
-export async function collectDelivery({request = deliveryTransport(), now = Date.now, wait = ms => new Promise(r => setTimeout(r,ms)),
+export async function collectDelivery({request = null, now = Date.now, wait = ms => new Promise(r => setTimeout(r,ms)),
   loadContext = loadTrustedContext} = {}) {
   const plan = planPreopen(now());
   if (plan.status === 'no-action') return {...plan, outcome: 'no-action'};
-  const objectUrl = file => `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${encodeURIComponent(`delivery/${plan.dataDate}/${file}`)}?alt=media`;
+  if (!plan.windowEnabled) return {outcome: 'outside-window', dataDate: plan.dataDate};
+  request ||= deliveryTransport();
+  const objectUrl = file => `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${encodeURIComponent(`delivery/${plan.dataDate}/${plan.slotId}/${file}`)}?alt=media`;
   const parse = value => {try {return JSON.parse(value);} catch {fail('JSON');}};
   let raw = await request(objectUrl('receipt.json'), {missing: true}), execution = null;
   if (raw === null) {
     const startRaw = await request(objectUrl('start.json'), {missing: true});
     if (startRaw !== null) {
       const start = parse(startRaw);
-      if (start.dataDate !== plan.dataDate || !/^xuan-preopen-report-[a-z0-9-]+$/.test(start.execution || '')) fail('START_MARKER');
+      if (start.dataDate !== plan.dataDate || start.slotId !== plan.slotId || start.sourceDate !== plan.sourceDate || !/^xuan-preopen-report-[a-z0-9-]+$/.test(start.execution || '')) fail('START_MARKER');
       execution = JOB+'/executions/'+start.execution;
     } else {
       // ONE run request, never a timeout/retry loop that launches another run.
@@ -55,12 +59,29 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
     if (raw === null) fail('COMPLETION_RECEIPT_MISSING');
   }
   const receipt = parse(raw);
-  if (receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate || receipt.status !== 'ready'
-      || receipt.artifact?.privateObject !== `delivery/${plan.dataDate}/report.html`) fail('RECEIPT');
+  if (receipt.status === 'data-not-ready' && receipt.dataDate === plan.dataDate
+      && receipt.sourceDate === plan.sourceDate && receipt.slotId === plan.slotId)
+    return {outcome: 'data-not-ready', dataDate: plan.dataDate, message: '数据未齐，未生成行动建议'};
+  if (receipt.dataDate !== plan.dataDate || receipt.slotId !== plan.slotId || receipt.sourceDate !== plan.sourceDate || receipt.status !== 'ready' || receipt.readiness?.status !== 'ready'
+      || receipt.artifact?.privateObject !== `delivery/${plan.dataDate}/${plan.slotId}/report.html`) fail('RECEIPT');
   const html = await request(objectUrl('report.html'));
   if (crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact.sha256) fail('HASH');
   const context = await loadContext({now});
-  if (gitBlobSha(context.previousHtml) === gitBlobSha(html)) return {outcome: 'already-published', dataDate: plan.dataDate};
+  if (!validateReadinessReceipt(receipt.readiness, receipt.sources || [], {sourceDate: plan.sourceDate, now: now()})) fail('SOURCE_COVERAGE');
+  const started = Date.parse(receipt.startedAt), completed = Date.parse(receipt.completedAt), time = now();
+  if (!Number.isFinite(started) || !Number.isFinite(completed) || started < plan.startEpoch * 1000
+      || completed < started || completed > time || completed - started > 300_000
+      || time - started > 30 * 60_000) fail('STALE');
+  const model = extractNightActionModel(html);
+  if (model.dataDate !== plan.dataDate || model.status !== 'ready'
+      || !model.asOfHkt.endsWith(`数据至 ${plan.sourceDate}`)) fail('MODEL');
+  if (gitBlobSha(context.previousHtml) === gitBlobSha(html)) {
+    const meta = context.previousMeta;
+    if (meta?.dataDate !== plan.dataDate || model.schemaVersion < 4 || meta.sourceCommitEpoch < plan.startEpoch
+        || meta.htmlBlob !== gitBlobSha(html) || meta.sourceSha !== context.previousSourceSha) fail('PUBLICATION_CONFLICT');
+    // Same bytes plus a current, fresh, exact-slot receipt prove idempotency.
+    return {outcome: 'already-published', dataDate: plan.dataDate, slotId: plan.slotId};
+  }
   return {outcome: execution ? 'generated' : 'reused', dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, html, receipt};
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
@@ -76,6 +97,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `outcome=${result.outcome}\ndata_date=${result.dataDate}\n`);
     const {html, receipt, ...summary} = result;
     process.stdout.write(JSON.stringify(summary)+'\n');
+    if (result.outcome === 'data-not-ready') process.exitCode = 1;
   } catch (error) {
     process.stderr.write((/^PREOPEN_DELIVERY_[A-Z_0-9]+$/.test(error.message) ? error.message : 'PREOPEN_DELIVERY_FAILED')+'\n'); process.exitCode = 1;
   }

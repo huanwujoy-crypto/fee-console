@@ -1,10 +1,11 @@
+import {IB_READINESS_KEYS} from './source_readiness.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import {publishPrepared} from './publish.mjs';
 import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {associationPolicyBlob, createAssociationReceipt} from '../../scripts/xuan-ib-account-association.mjs';
-const now = () => Date.parse('2026-10-01T05:01:00Z');
+const now = () => Date.parse('2026-10-01T06:01:00Z');
 function fixture() {
   const policy = {schemaVersion: 1, policyId: 'ib-primary-7day-pilot-v1', accountAlias: 'IB-HK', basis: 'owner-attested-recurring-v1',
     status: 'active', purpose: 'xuan-ib-read-only-report', editions: ['adhoc','am','pm'], publisher: 'codex-verified-candidate-v1',
@@ -12,17 +13,17 @@ function fixture() {
   const association = {policy, policyCommit: 'a'.repeat(40), policyBlob: associationPolicyBlob(policy), checkedAt: new Date(now()).toISOString()};
   const context = {association, previousSourceSha: 'c'.repeat(40), reserveLedger: {schemaVersion: 1,
     purpose: 'xuan-etf-owner-declared-pending-calls', entries: [{date: '2026-09-17', usd: 400}]}};
-  const model = {schemaVersion: 5, dataDate: '2026-10-01', status: 'ready', asOfHkt: '2026-10-01 13:01 HKT · 数据至 2026-09-30',
+  const model = {schemaVersion: 5, dataDate: '2026-10-01', status: 'ready', asOfHkt: '2026-10-01 14:01 HKT · 数据至 2026-09-30',
     replenishment: {status: 'ready', total: 600, budget: 800, retained: 200, items: [{symbol: 'EXUS', amount: 600}]},
-    orders: {status: 'ready', asOfHkt: '13:01 HKT', buys: [], sells: []},
+    orders: {status: 'ready', asOfHkt: '14:01 HKT', buys: [], sells: []},
     cash: {status: 'ready', ib: 700, noah: 300, pool: 1000, reserve: 400, callApplied: 200, planning: 800,
       orderReserve: 0, cashLike: {total: 0, items: []}, totalCapacity: 800},
     allocation: {status: 'ready', total: 1000, projectedTotal: 1000, categories: ['美国底仓','美国科技','非美发达','新兴市场'].map(label =>
       ({label, marketValue: 250, projectedMarketValue: 250, currentPct: 25, projectedPct: 25, targetPct: 25}))}, notes: []};
   const html = renderNightActionReport(model);
   const receipt = {schemaVersion: 1, mode: 'private_report_check', status: 'ready', dataDate: model.dataDate, sourceDate: '2026-09-30',
-    startedAt: new Date(now()).toISOString(), completedAt: new Date(now()).toISOString(), publication: 'none', sourceCount: 5,
-    sources: ['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'].map(sourceKey => ({sourceKey, sha256: 'f'.repeat(64)})),
+    startedAt: new Date(now()).toISOString(), completedAt: new Date(now()).toISOString(), publication: 'none', sourceCount: 6, slotId: 'europe-regular-v1-2026-10-01-1790834400', readiness: {status:'ready',targetTradeDate:'2026-09-30',issues:[],evidence:IB_READINESS_KEYS.map(sourceKey=>({sourceKey,targetTradeDate:'2026-09-30',coveredThroughDate:'2026-09-30',asOf:new Date(now()).toISOString(),snapshotId:'synthetic'}))},
+    sources: ['ib.accountSummary','ib.positions','ib.orders','ib.trades','sharesight.ibGroupedPerformance','sharesight.noahPerformance'].map(sourceKey => ({sourceKey, sha256: 'f'.repeat(64)})),
     association: createAssociationReceipt(association, {now: now(), edition: 'am', previousSourceSha: context.previousSourceSha, runId: 'b'.repeat(64)}),
     artifact: {sha256: crypto.createHash('sha256').update(html).digest('hex')}};
   const calls = [];

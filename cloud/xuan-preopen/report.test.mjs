@@ -14,11 +14,13 @@ const context = () => ({association: {policy: structuredClone(policy), policyCom
   checkedAt: new Date(now()).toISOString()}, reserveLedger: structuredClone(ledger), reserveHash: 'b'.repeat(64), previousSourceSha: 'c'.repeat(40), previousHtml: ''});
 const holding = (id, group_name, value, code) => ({id, group_name, value, instrument: {code}});
 const source = (sourceKey, raw) => ({sourceKey, raw, startedAt: new Date(now()).toISOString(), completedAt: new Date(now()).toISOString()});
+const coverage = {origin: 'IBKR', schemaVersion: 1, complete: true, paginationComplete: true, targetTradeDate: '2026-09-29', coveredThroughDate: '2026-09-29', snapshotId: 'synthetic', asOf: new Date(now()).toISOString()};
 const ib = () => ({status: 'captured', sources: [
-  source('ib.accountSummary', {currency: 'USD', net_liquidation: 1000, total_cash_value: 100}),
-  source('ib.positions', {positions: [{contract_description: 'EXUS', position: 100, market_price: 10, market_value: 1000, currency: 'USD'}]}),
-  source('ib.orders', {orders: [{order_id: 1, order_status: 'NEW', order_type: 'LIMIT', side: 'BUY', limit_price: '10.50', total_shares_qty: '1',
+  source('ib.accountSummary', {coverage, currency: 'USD', net_liquidation: 1000, total_cash_value: 100}),
+  source('ib.positions', {coverage, positions: [{contract_description: 'EXUS', position: 100, market_price: 10, market_value: 1000, currency: 'USD'}]}),
+  source('ib.orders', {coverage, orders: [{order_id: 1, order_status: 'NEW', order_type: 'LIMIT', side: 'BUY', limit_price: '10.50', total_shares_qty: '1',
     cum_shares_qty: '0', remaining_shares_qty: '1', primary_description: 'Buy 1 EXUS', secondary_description: 'description', order_time: '2026-09-20T13:30:00Z'}]}),
+  source('ib.trades', {coverage, trades: []}),
 ]});
 const sharesight = () => [
   source('sharesight.ibGroupedPerformance', {report: {portfolio_id: 936247, currency: {code: 'USD'}, grouping: 'custom_group_category',
@@ -36,9 +38,9 @@ function harness(overrides = {}) {
 }
 test('five sources produce only a private deterministic four-card artifact', async () => {
   const h = harness(), receipt = await runPrivateReport(h.options);
-  assert.equal(receipt.status, 'ready'); assert.equal(receipt.sourceCount, 5);
+  assert.equal(receipt.status, 'ready'); assert.equal(receipt.sourceCount, 6);
   assert.equal(receipt.publication, 'none'); assert.equal(receipt.scheduler, 'none');
-  assert.equal(h.objects.length, 7); assert.deepEqual(h.calls, ['key', 'context', 'ib', 'context']);
+  assert.equal(h.objects.length, 8); assert.deepEqual(h.calls, ['key', 'context', 'ib', 'context']);
   const html = h.objects.find(item => item.name.endsWith('report.html')).value;
   const model = extractNightActionModel(html);
   assert.equal(model.cash.pool, 150); assert.equal(model.cash.callApplied, 25);
@@ -114,4 +116,11 @@ test('trusted context is pinned to current main and checks the previous publishe
   const c = await loadTrustedContext({fetchImpl, now});
   assert.equal(c.previousHtml, html); assert.equal(c.previousSourceSha, 'c'.repeat(40));
   assert.ok(urls.slice(1).every(url => url.includes('/' + 'a'.repeat(40) + '/')));
+});
+test('real existing MCP shapes without coverage do not generate action suggestions', async () => {
+  const h=harness({captureIb:async()=>{const s=ib();for(const source of s.sources)delete source.raw.coverage;return s;}});
+  const receipt=await runPrivateReport(h.options);
+  assert.equal(receipt.status,'data-not-ready');assert.equal(receipt.readiness.issues.length,4);
+  assert.ok(h.objects.every(x=>!x.name.endsWith('report.html')));
+  assert.ok(!JSON.stringify(receipt).includes('net_liquidation'));
 });
