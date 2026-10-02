@@ -2138,6 +2138,8 @@ test('the integrity check accepts legacy reports and the canonical action page',
     '<title>XUAN-IB 睡前交接</title>',
     '<title>XUAN · 睡前行动版</title>',
     '<title>XUAN · 开市前行动版</title>',
+    '<title>XUAN · 有限核实补读</title>',
+    '<title>XUAN · 盘中数据更新</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
@@ -2211,7 +2213,7 @@ test('validation and promotion accept a verified single-file candidate based on 
     promotion,
     /candidate_guard=\(env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON\s*\\\s*XUAN_IB_PREVIOUS_SOURCE_SHA="\$meta_source_sha"[\s\S]*?node scripts\/handover-guard\.mjs/
   );
-  assert.match(promotion, /candidate_guard=\(node scripts\/xuan-ib-night-action-guard\.mjs/);
+  assert.match(promotion, /candidate_guard=\(env XUAN_IB_PREVIOUS_SOURCE_SHA="\$meta_source_sha" node scripts\/xuan-ib-night-action-guard\.mjs/);
   assert.match(promotion, /if ! "\$\{candidate_guard\[@\]\}"/);
   assert.match(promotion, /Skipping \$branch_name: its handover page failed validation/);
   assert.match(promotion, /git add xuan-ib\/latest\.html xuan-ib\/latest\.meta\.json/);

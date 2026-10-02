@@ -6,6 +6,12 @@ on:
     # Exchange calendars inside the producer decide whether this is a trading day.
     - cron: '0,10 5 * * 1-5'
   workflow_dispatch:
+    inputs:
+      private_limited_readback_prefix:
+        description: 'Already prepared private verified report; never runs sources'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -48,13 +54,22 @@ jobs:
 
       - name: Run once or reuse the completed delivery
         id: delivery
+        if: ${{ inputs.private_limited_readback_prefix == '' }}
         env:
           XUAN_PREOPEN_GOOGLE_TOKEN: ${{ steps.google.outputs.access_token }}
         run: node cloud/xuan-preopen/delivery.mjs "$RUNNER_TEMP/xuan-preopen-private"
 
+      - name: Read the existing verified private report without running sources
+        id: limited
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.private_limited_readback_prefix != '' }}
+        env:
+          XUAN_PREOPEN_GOOGLE_TOKEN: ${{ steps.google.outputs.access_token }}
+          LIMITED_PREFIX: ${{ inputs.private_limited_readback_prefix }}
+        run: node cloud/xuan-preopen/limited_delivery.mjs "$LIMITED_PREFIX" "$RUNNER_TEMP/xuan-preopen-private"
+
       - name: Submit the signed candidate to the existing protected pipeline
         id: candidate
-        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused') }}
+        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.limited.outputs.outcome == 'limited-readback' || steps.limited.outputs.outcome == 'intraday-update') }}
         env:
           # Reuse only after explicit OWNER approval. This token is never sent
           # to GCP, put in an image, or made available to the broker-reading job.
@@ -76,8 +91,8 @@ jobs:
       - name: Explain outcome without financial values
         if: always()
         env:
-          OUTCOME: ${{ steps.delivery.outputs.outcome }}
-          DATA_DATE: ${{ steps.delivery.outputs.data_date }}
+          OUTCOME: ${{ steps.delivery.outputs.outcome || steps.limited.outputs.outcome }}
+          DATA_DATE: ${{ steps.delivery.outputs.data_date || steps.limited.outputs.data_date }}
           MODE: ${{ vars.XUAN_PREOPEN_CLOUD_MODE }}
         run: |
           printf 'Date: %s; outcome: %s; mode: %s\n' "$DATA_DATE" "$OUTCOME" "$MODE" >> "$GITHUB_STEP_SUMMARY"

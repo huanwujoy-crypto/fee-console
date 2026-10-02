@@ -9,7 +9,11 @@ const SOURCES = Object.freeze({
   get_account_summary: 'ib.accountSummary',
   get_account_positions: 'ib.positions',
   get_account_orders: 'ib.orders',
+  get_account_balances: 'ib.balances',
+  get_account_trades: 'ib.trades',
 });
+const argumentsFor=tool=>tool==='get_account_trades'?{period:'DAYS_7'}:{};
+const argumentsAllowed=(tool,args)=>args&&Object.keys(args).length===(tool==='get_account_trades'?1:0)&&(tool!=='get_account_trades'||args.period==='DAYS_7');
 const fail = code => { throw new Error(code); };
 const exactReadScope = scope => typeof scope === 'string' && scope.trim() === 'mcp.read';
 
@@ -90,7 +94,7 @@ export class IbReadSession {
   async request(method, params, notification = false) {
     if (!['initialize', 'notifications/initialized', 'tools/call'].includes(method)) fail('IB_MCP_METHOD_FORBIDDEN');
     if (method === 'tools/call' && (!Object.hasOwn(SOURCES, params?.name)
-      || Object.keys(params.arguments || {}).length)) fail('IB_MCP_TOOL_FORBIDDEN');
+      || !argumentsAllowed(params.name,params.arguments))) fail('IB_MCP_TOOL_FORBIDDEN');
     const id = ++this.id;
     const payload = { jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }), ...(notification ? {} : { id }) };
     const headers = { Authorization: `Bearer ${this.credential.access_token}`,
@@ -123,7 +127,7 @@ export class IbReadSession {
   async read(tool) {
     if (!this.initialized) fail('IB_MCP_NOT_INITIALIZED');
     if (!Object.hasOwn(SOURCES, tool)) fail('IB_MCP_TOOL_FORBIDDEN');
-    const result = await this.request('tools/call', { name: tool, arguments: {} });
+    const result = await this.request('tools/call', { name: tool, arguments: argumentsFor(tool) });
     if (!result || result.isError === true) fail('IB_MCP_SOURCE_FAILED');
     const sourceKey = SOURCES[tool];
     const transport = result.structuredContent ?? (() => {
@@ -138,14 +142,17 @@ export class IbReadSession {
 
 // Raw results remain in memory for the existing report controller to place in
 // its private evidence store and verify against account-association policy.
-export async function captureCloudIbAction(store, options = {}) {
+async function captureSelected(store, options = {}, tools) {
   const credential = await loadReadCredential(store, options);
   const session = new IbReadSession(credential, options);
   await session.initialize();
   const sources = [];
-  for (const tool of Object.keys(SOURCES)) {
+  for (const tool of tools) {
     const startedAt = new Date().toISOString();
     sources.push({ ...await session.read(tool), startedAt, completedAt: new Date().toISOString() });
   }
   return { status: 'captured', sources };
 }
+
+export const captureCloudIbAction=(store,options)=>captureSelected(store,options,['get_account_summary','get_account_positions','get_account_orders']);
+export const captureCloudIbFull=(store,options)=>captureSelected(store,options,Object.keys(SOURCES));

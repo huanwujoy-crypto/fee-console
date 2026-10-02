@@ -40,7 +40,7 @@ export async function loadTrustedContext({fetchImpl = fetch, now = Date.now} = {
   if (gitBlob(previousHtml) !== meta.htmlBlob) throw new Error('PREVIOUS_PUBLIC_HTML_MISMATCH');
   const association = {policy, policyCommit: commit, policyBlob: gitBlob(policyText), checkedAt: new Date(now()).toISOString()};
   validateAssociationSnapshot(association, {now: now(), edition: 'am'});
-  return {association, reserveLedger: json(reserveText), reserveHash: hash(reserveText), previousSourceSha: meta.sourceSha, previousHtml};
+  return {association, previousMeta:meta, reserveLedger: json(reserveText), reserveHash: hash(reserveText), previousSourceSha: meta.sourceSha, previousHtml};
 }
 
 export function currentReserve(ledger, date) {
