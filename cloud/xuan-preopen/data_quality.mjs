@@ -25,12 +25,12 @@ export function gradeActionEvidence(evidence,{targetDate,now=Date.now(),approved
     completeReads[key]=complete;
     if(!complete)blockers.push(`${key.toUpperCase()}_READ_NOT_VERIFIED`);
     else{
-      verified.push(`${key.toUpperCase()}_READ_COMPLETE`);
       if(source.upstreamAsOf==null)warnings.push(`${key.toUpperCase()}_UPSTREAM_UPDATE_TIME_UNAVAILABLE`);
       else{
         const asOf=Date.parse(source.upstreamAsOf);
         if(!Number.isFinite(asOf)||asOf>readAt||now-asOf>30*60_000){completeReads[key]=false;blockers.push(`${key.toUpperCase()}_UPSTREAM_STALE_OR_CONFLICTING`);}
       }
+      if(completeReads[key])verified.push(`${key.toUpperCase()}_READ_COMPLETE`);
     }
   }
   const coverage={};
