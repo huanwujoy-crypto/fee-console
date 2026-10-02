@@ -153,3 +153,44 @@ approvedAccountMatches=false，accountsContainsApproved=false。以
 可复用schema与字段缺失证据；剩余身份适配须有已验证的实际对象语义/身份来源，
 且仅在明确批准范围内取得。禁止据金额相似、可选schema字段或本地请求时间
 补造绑定/覆盖。当前仍不部署，不继续自动IB调用或续期。
+
+## 离线复核与最小分阶段范围（停止在线试探）
+
+完整工具schema只定义 `accounts: {type: object}`，没有properties、items、
+additionalProperties或required；description仅说明各period的cps/nav/dates
+平行数组，并未定义账户identifier嵌套。included_accounts同样没有required。
+因此不能把该可选字段设为正式必要闸门，也不能推断accounts键或某个嵌套值
+就是账户编号。仓库与已合法保存的历史三类MCP raw没有PA嵌套响应可复核。
+当前没有已验证机器identity端点；不继续在线找字段，不反复续期。
+
+既有 `xuan-ib-account-association.mjs` 的owner-attested-recurring-v1是
+有时限的所有者来源关联声明，不是账户身份认证。它每阶段从最新main重验
+active/有效期/用途/edition/policyBlob，receipt绑定run与前版，政策变化/撤销/
+过期即止；公开披露固定为“接口未返回账户编号，非身份认证”。保留该既有机制，
+不延长政策、不升级其证明等级，也不新增一个不存在的机器identity硬门槛。
+本轮PA探针失败不能推翻业主声明，但也不能证明实时接口与Flex自动同账户。
+Flex覆盖仍要正规来源内容及关联证据，不能由三账户任务成功或金额相似替代。
+
+最小安全分期：
+
+1. **独立调度/幂等修复候选**：提取IANA常规开市倒推、跨市场日历、WIF前
+   window gate、正式slot及旧验收隔离、当前receipt+HTML时间+公开meta/blob
+   幂等证明、UI实际窗口/历史日期与延迟文字。保留原关联、真实性、签名与发布
+   流程。不得把草案raw.coverage/same-snapshot或可选included_accounts一并
+   切进生产，也不得将此阶段描述为“来源已核实行动版上线”。当前PR仍混有来源
+   草案，不能直接合并；先分离后再做既有aggregate和protected exact-head审批。
+2. **真实状态回证**：公开只允许固定无金融值的日期/slot/状态/原因码，不含账号、
+   持仓、金额、token或raw。进入既有签名/Promote/Pages校验链后才显示某轮
+   “数据未齐”；链路未完成时仅显示已核实的旧报告日期和延迟，不伪称具体原因。
+   晚到数据保留旧immutable锁，以有界新attempt和已验收evidence指纹做CAS，
+   最终发布去重及提醒仍按slot；不能删锁或无限自动重试。需独立设计/test/readback。
+3. **真实来源适配**：待用户Portal/Flex正规内容后验收from/to-date、whenGenerated、
+   账户关联、execution身份和逐币种现金口径。MCP真实持仓/挂单/成交查询契约
+   与覆盖证据分级，不伪造as-of、snapshotId或finality；upstream时间缺失明确
+   未提供。目标日覆盖或关键挂单/现金不足仅有限非行动状态，不能给补仓金额。
+   新模块接线前先移除错误草案假设，shadow验收真实允许/拒绝两路径，再经批准
+   精确head部署、不可变镜像/配置及公网读回。
+
+上述是未执行的分期方案，不是第二份已完成PR或已部署状态通道。无需再次
+授权同类scope探针；下一项准确动作是分离已验证修复及取得正规Flex内容。
+生产、金融账本及其他三账户流程保持不变。
