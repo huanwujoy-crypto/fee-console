@@ -14,6 +14,10 @@ test("writer diagnostics expose fixed categories and stage without private child
     "FEE_CLOUD_WRITER_CASH_RECONCILIATION");
   assert.equal(writerFailureCode("error: fee calculation receipt failed: private amount 98765"),
     "FEE_CLOUD_WRITER_FEE_RECEIPT");
+  assert.equal(writerFailureCode("error: STYLE_MISSING_ROWS_0_12 — nothing written\n", true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_STYLE_MISSING_CLASSIFICATION");
+  assert.equal(writerFailureCode("error: STYLE_MISSING_ROWS_private — nothing written", true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_UNKNOWN");
   for (const stderr of ["private account U123456 secret=abc 123456.78", "error: STYLE_secret=abc", "", null]) {
     assert.equal(writerFailureCode(stderr), "FEE_CLOUD_WRITER_UNKNOWN");
   }
