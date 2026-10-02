@@ -56,6 +56,8 @@ function exactTicker(value) {
   return value;
 }
 
+import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
+
 const CONTROLLED_WEBULL_PRINCIPAL_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) (BUY|SELL) securities principal; NOT external funding; order ([A-Z0-9]{16,40}); (?:holding ([1-9]\d{0,14})|Sharesight trade ([1-9]\d{0,14})); (\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} EDT; source fee USD (\d+\.\d{2})\.$/;
 
 function isControlledWebullPrincipal({ account, row, movement, targetDate, trades }) {
@@ -111,7 +113,7 @@ export function latestCommonBenchmarkDate(cache) {
   return common.at(-1);
 }
 
-function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate) {
+function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}) {
   const expected = CLOUD_ACCOUNTS[account];
   const report = performancePayload?.report;
   if (!object(report) || id(report.portfolio_id) !== expected.portfolioId
@@ -142,6 +144,9 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       fail("CASH_IDENTITY");
     }
   }
+  const incomeEvidence = resolveDividendCashEvidence({account,portfolioId:expected.portfolioId,targetDate,
+    cashRows:Object.values(cashTransactions).flatMap(p => rows(p,'cash_account_transactions')),
+    payouts:incomePayouts,dateEvidence:incomeDateEvidence});
   const trades = rows(tradesPayload, "trades");
   const tradeIds = new Set(trades.map(row => id(row.id)));
   const flows = [];
@@ -177,6 +182,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
         ...(legacyControlledWebullPrincipal || matchedControlledWebullPrincipal ? { evidence: "internal_trade" } : {}),
+        ...(incomeEvidence.get(row.id) || {}),
       });
     }
   }
@@ -195,6 +201,35 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   };
 }
 
+export function monthlyGiftEvidence(trade) {
+  const marker = /^Webull HK monthly promotional gifted ([A-Z0-9][A-Z0-9./^-]{0,31}) shares, not a cash purchase: (\d+(?:\.\d+)?) share acquired for USD 0, brokerage USD 0, no cash movement\. Award date (\d{4}-\d{2}-\d{2}) per account holder confirmation of first-day-of-month gifts\./.exec(String(trade.comments || ''));
+  return !!marker && trade.description_code === 'BUY' && trade.state === 'confirmed'
+    && trade.price === 0 && trade.value === 0 && trade.brokerage === 0
+    && marker[1] === trade.instrument?.code && marker[3] === String(trade.transaction_date).slice(0,10)
+    && marker[3].endsWith('-01') && Number(marker[2]) === trade.quantity;
+}
+
+export function managementSourceInput(raw, targetDate) {
+  if (!raw.webull?.managementTrades) return undefined;
+  if (raw.webull.managementTrades.links?.next
+      || raw.webull.managementTrades.pagination?.next_page
+      || raw.webull.managementTrades.meta?.pagination?.next_page) fail('MANAGEMENT_HISTORY_INCOMPLETE');
+  const pid = CLOUD_ACCOUNTS.webull.portfolioId;
+  const holdings = rows(raw.webull.performance.report.holdings || [], 'holdings').map(h => ({
+    account:'webull', portfolioId:pid, holdingId:id(h.id), ticker:exactTicker(h.instrument?.code),
+    sourceDate:targetDate, quantity:h.quantity, valueUsd:amount(h.value),
+  }));
+  const trades = rows(raw.webull.managementTrades, 'trades').map(t => ({
+    id:id(t.id), portfolioId:id(t.portfolio_id), holdingId:id(t.holding_id),
+    date:String(t.transaction_date || '').slice(0,10), type:t.description_code,
+    quantity:t.quantity, confirmed:t.state === 'confirmed',
+    zeroPrice:t.price === 0,
+    monthlyGiftEvidence:monthlyGiftEvidence(t),
+    giftEvidence:typeof t.comments === 'string' && /(?:promotional gifted|gifted|gift)\b/i.test(t.comments),
+  }));
+  return {schemaVersion:1,date:targetDate,holdings,trades,historyComplete:true,proposals:[]};
+}
+
 export function normalizeRead(raw, targetDate, benchmark) {
   date(targetDate);
   const portfolios = [];
@@ -202,7 +237,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     const source = raw[account];
     if (!object(source)) fail("SOURCE_MISSING");
     portfolios.push(normalizePortfolio(account, source.performance, source.holdings, source.cashAccounts,
-      source.cashTransactions, source.trades, targetDate));
+      source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence));
   }
   const accounts = Object.fromEntries(portfolios.map(p => [p.account, p.total]));
   const splits = {
@@ -221,7 +256,9 @@ export function normalizeRead(raw, targetDate, benchmark) {
     acctCash[p.account] = p.cashCheck.current;
     prevAcctCash[p.account] = p.cashCheck.previous;
   }
+  const managementInput = managementSourceInput(raw, targetDate);
   const normalized = { targetDate, accounts, splits, sourceDates, styleInput, flows, acctCash, prevAcctCash,
+    ...(managementInput ? {managementInput} : {}),
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
   return { ...normalized, sourceFingerprint: sha256(normalized) };
 }
@@ -236,6 +273,7 @@ class FixedHttp {
   }
   async json(url, init) {
     const allowed = url === TOKEN_URL || url === PORTFOLIOS_URL
+      || /^https:\/\/api\.sharesight\.com\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v3\/portfolios\/(?:936249|1350094)\/(?:performance|holdings|trades\.json)(?:\?.*)?$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/portfolios\/(?:936249|1350094)\/cash_accounts\.json$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/cash_accounts\/[1-9]\d{0,14}\/cash_account_transactions\.json\?.*$/.test(url);
@@ -255,7 +293,8 @@ class FixedHttp {
 }
 
 export class SharesightCloudReader {
-  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs } = {}) {
+  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {} } = {}) {
+    this.incomeDateEvidence=incomeDateEvidence;
     if (![clientId, clientSecret].every(value => typeof value === "string" && value.length >= 1 && value.length <= 8192
         && !/[\r\n\0]/.test(value))) fail("CREDENTIALS");
     this.clientId = clientId; this.clientSecret = clientSecret;
@@ -298,7 +337,18 @@ export class SharesightCloudReader {
         const cashId = id(cash.id);
         cashTransactions[cashId] = await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`, token);
       }
-      raw[account] = { performance: performancePayload, holdings: holdingsPayload,
+      const incomePayouts = {};
+      if (account === 'webull') {
+        const keys=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))
+          .map(row=>dividendCashKey(row.description)).filter(Boolean);
+        for (const payoutId of new Set(keys.map(k=>k.payoutId)))
+          incomePayouts[payoutId]=await this.get(`${API}/api/v2/payouts/${payoutId}.json`,token);
+      }
+      // Entire Webull history, not just today's trades, is required to bound
+      // owner-authorized gift lots and retain a chargeable paid-lot balance.
+      const managementTrades = account === 'webull'
+        ? await this.get(`${base3}/trades.json?consolidated=false&end_date=${targetDate}`, token) : undefined;
+      raw[account] = { incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), performance: performancePayload, holdings: holdingsPayload,
         cashAccounts: cashAccountsPayload, cashTransactions, trades: tradesPayload };
     }
     return raw;

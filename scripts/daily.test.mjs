@@ -7,6 +7,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import "./fee-economic-source.test.mjs";
+import "./fee-management-exemption.test.mjs";
+import "./fee-income-evidence.test.mjs";
 import "./fee-style-registry.test.mjs";
 import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";

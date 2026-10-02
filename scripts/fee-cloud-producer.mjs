@@ -4,6 +4,7 @@
 // caller-owned private output directory; publication is a separate step.
 
 import crypto from "node:crypto";
+import { incomeDateEvidenceFromData } from './fee-income-date-policy.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -225,6 +226,7 @@ export async function produce(options = {}) {
   const reader = options.reader || new SharesightCloudReader({
     clientId: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,
     clientSecret: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
+    incomeDateEvidence:incomeDateEvidenceFromData(decryptCandidate(path.join(ROOT,"data.json"),process.env.FEE_DATA_KEY),targetDate),
   });
   let economic;
   const styleFile = path.join(output, "style-input.json");
@@ -238,9 +240,11 @@ export async function produce(options = {}) {
     const input = stableRead.input;
     input.sourceFetchedAt = checkedAt;
     fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
+    const managementFile = path.join(output, 'management-input.json');
+    if (input.managementInput) fs.writeFileSync(managementFile, JSON.stringify(input.managementInput), {mode:0o600,flag:'wx'});
     fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
     fs.chmodSync(dataFile, 0o600);
-    const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile };
+    const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile, FEE_MANAGEMENT_INPUT_FILE: input.managementInput ? managementFile : '' };
     const original = sha256(fs.readFileSync(dataFile));
     const weekendCarries = carryWeekendGap(dataFile, input.targetDate, env);
     const baseArgs = writerArgs(input, dataFile);
@@ -261,6 +265,7 @@ export async function produce(options = {}) {
     }, dataFile, healthFile };
   } finally {
     try { fs.unlinkSync(styleFile); } catch { /* best effort */ }
+    try { fs.unlinkSync(path.join(output, "management-input.json")); } catch { /* best effort */ }
     economic?.cleanup();
   }
 }

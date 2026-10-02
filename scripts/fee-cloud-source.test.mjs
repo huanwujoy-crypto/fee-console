@@ -40,7 +40,7 @@ function raw() {
       { id: 1, ticker: "SGOV", value: 100 }, { id: 2, ticker: "BRK/B", value: 500 },
     ], [{ amount: 50, balance: 400, cash_account_id: 142251, date_time: `${D}T00:00:00.000Z`, description: "Sell trade",
       cash_account_transaction_type: { name: "Sell Trade" }, trade_id: 9, holding_id: 2, foreign_identifier: null }]),
-    webull: portfolio("Webull", 1350094, 150591, [
+    webull: portfolio("Webull", 1350094, 90250, [
       { id: 3, ticker: "SGOV", value: 50 }, { id: 4, ticker: "GOOG", value: 550 },
     ]),
   };
@@ -67,8 +67,8 @@ test("normalization reconciles cash, SGOV, stock, flow evidence and style input"
 test("controlled Webull principal cash legs remain internal trades", () => {
   const fixture = raw();
   const foreignIdentifier = "webullhk-10205226-email-946332324153d3d2466a2cf7a2ccfcda-cash";
-  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
-    amount: -125, balance: 400, cash_account_id: 150591, date_time: `${D}T00:00:00.000Z`,
+  fixture.webull.cashTransactions[90250].cash_account_transactions.push({
+    amount: -125, balance: 400, cash_account_id: 90250, date_time: `${D}T00:00:00.000Z`,
     description: `Webull AAOI BUY securities principal; NOT external funding; ${foreignIdentifier}`,
     cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
     foreign_identifier: foreignIdentifier,
@@ -81,8 +81,8 @@ test("controlled Webull principal cash legs remain internal trades", () => {
 test("account-bound Webull principal cash legs match the unique live Sharesight trade", () => {
   const fixture = raw();
   const orderId = "0387IJ3B2S80O0K7Q9BC000000";
-  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
-    amount: -9650, balance: 400, cash_account_id: 150591, date_time: `${D}T04:00:00.000Z`,
+  fixture.webull.cashTransactions[90250].cash_account_transactions.push({
+    amount: -9650, balance: 400, cash_account_id: 90250, date_time: `${D}T04:00:00.000Z`,
     description: `Webull VSTL BUY securities principal; NOT external funding; order ${orderId}; holding 29274212; ${D} 09:55:50 EDT; source fee USD 0.00.`,
     cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
     foreign_identifier: null,
@@ -101,8 +101,8 @@ test("account-bound Webull principal cash legs match the unique live Sharesight 
 test("Webull principal text alone stays unresolved when its trade evidence does not match", () => {
   const fixture = raw();
   const orderId = "0387IJ3B2S80O0K7Q9BC000000";
-  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
-    amount: -9650, balance: 400, cash_account_id: 150591, date_time: `${D}T04:00:00.000Z`,
+  fixture.webull.cashTransactions[90250].cash_account_transactions.push({
+    amount: -9650, balance: 400, cash_account_id: 90250, date_time: `${D}T04:00:00.000Z`,
     description: `Webull VSTL BUY securities principal; NOT external funding; order ${orderId}; holding 29274212; ${D} 09:55:50 EDT; source fee USD 0.00.`,
     cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
     foreign_identifier: null,
@@ -120,8 +120,8 @@ test("Webull principal text alone stays unresolved when its trade evidence does 
 
 test("a generic Webull withdrawal is not promoted to internal without the controlled evidence", () => {
   const fixture = raw();
-  fixture.webull.cashTransactions[150591].cash_account_transactions.push({
-    amount: -125, balance: 400, cash_account_id: 150591, date_time: `${D}T00:00:00.000Z`,
+  fixture.webull.cashTransactions[90250].cash_account_transactions.push({
+    amount: -125, balance: 400, cash_account_id: 90250, date_time: `${D}T00:00:00.000Z`,
     description: "manual withdrawal", cash_account_transaction_type: { name: "WITHDRAWAL" },
     trade_id: null, holding_id: null, foreign_identifier: "manual-1",
   });
@@ -159,7 +159,8 @@ test("reader allows only fixed GET routes and proves two identical reads", async
   const reader = new SharesightCloudReader({ clientId: "id", clientSecret: "secret", fetchImpl });
   const result = await reader.readStable(D, selectBenchmark(benchmarkCache, D));
   assert.equal(result.targetDate, D);
-  assert.equal(calls, 24);
+  assert.equal(calls, 26);
+  assert.equal(result.managementInput.historyComplete, true);
 });
 
 test("cloud producer accepts the real updated and no-op writer contracts", () => {
@@ -229,4 +230,22 @@ test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight se
   assert.match(workflow, /steps\.sharesight_credentials\.outputs\.client_id/);
   assert.match(workflow, /steps\.sharesight_credentials\.outputs\.client_secret/);
   assert.doesNotMatch(workflow, /secrets\.FEE_CLOUD_SHARESIGHT_CLIENT_/);
+});
+
+
+test('normalized dividend legs use confirmed payout economics and retain the posting-date gate', () => {
+  const fixture=raw(),key='webull.dividend:12345678:GOOG:2026-09-22:900';
+  fixture.webull.cashTransactions[90250].cash_account_transactions=[
+    {id:901,cash_account_id:90250,date_time:D+'T04:00:00Z',amount:70,balance:400,cash_account_transaction_type:{name:'DEPOSIT'},description:`GOOG dividend: gross100.00 WHT30.00 net70.00; fee0.40 separately. INTERNAL_DIVIDEND_CASH, not external funding. Notice; ledger date unverified. key=${key}:net`},
+    {id:902,cash_account_id:90250,date_time:D+'T04:00:00Z',amount:-0.4,balance:400,cash_account_transaction_type:{name:'FEE'},description:`GOOG dividend collection fee: gross100.00 x0.4%, min0.30, rounded0.40. NOT WHT. Official Webull schedule + exact net69.60 cash match; rule-authorized. key=${key}:fee`},
+  ];
+  fixture.webull.incomePayouts={900:{id:900,portfolio_id:1350094,holding_id:4,symbol:'GOOG',paid_on:'2026-09-22',currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:100,resident_withholding_tax:30,amount:70}};
+  let result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
+  assert.equal(result.flows.filter(f=>f.evidence==='internal_income_pending_date').length,2);
+  fixture.webull.incomeDateEvidence={[key]:{cashDate:D,verified:true,authority:'broker-cash-ledger',sourceRef:'synthetic ledger'}};
+  result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
+  assert.equal(result.flows.filter(f=>f.evidence==='internal_income').length,2);
+  fixture.webull.incomePayouts[900].portfolio_id=936249;
+  result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
+  assert.equal(result.flows.some(f=>f.evidence==='internal_income'),false);
 });

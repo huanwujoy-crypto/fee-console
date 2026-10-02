@@ -20,6 +20,7 @@
 //   3. a missing account
 //   4. an impossible amount
 
+import { incomeDatePolicy } from './fee-income-date-policy.mjs';
 import crypto from "node:crypto";
 
 export const SPLIT_PROVISIONAL = 1;      // USD — above this the day is 暂估
@@ -352,6 +353,23 @@ export function classifyFlow(raw) {
       reason: `verified external asset transfer ${businessKey}` };
   }
 
+  if (['internal_income','internal_income_pending_date','internal_income_estimated'].includes(raw.evidence)) {
+    const valid = raw.acct === 'webull' && Number.isSafeInteger(raw.sourcePayoutId) && raw.sourcePayoutId > 0
+      && raw.cashPostingDate === raw.date
+      && ((raw.incomeRole === 'dividend' && raw.type === 'DEPOSIT' && raw.amount > 0)
+        || (raw.incomeRole === 'collection_fee' && raw.type === 'FEE' && raw.amount < 0));
+    if(valid && raw.evidence==='internal_income_estimated' && raw.incomeDateVerified===false) {
+      try { const audit=incomeDatePolicy.normalize(raw.incomeDateAudit,raw.date);
+        if(audit.proof.scope.payoutId===raw.sourcePayoutId && audit.proof.scope.cashAccountId===raw.sourceCashAccountId && audit.proof.scope.cashRecordIds.includes(raw.sourceCashRecordId))
+          return {kind:'internal',reason:'owner-estimated dividend cash date; awaiting official record'};
+      } catch {}
+    }
+    if (valid && raw.evidence === 'internal_income'  && raw.incomeDateVerified === true)
+      return {kind:'internal',reason:'verified dividend payout and cash-posting evidence'};
+    return {kind:'unresolved',effective:false,reason:valid
+      ? 'verified dividend cash/collection fee awaits cash-posting date evidence'
+      : 'dividend cash evidence is incomplete or inconsistent'};
+  }
   if (raw.evidence === "internal_trade") return { kind: "internal", reason: "explicit evidence: internal_trade" };
   if (raw.evidence === "external_transfer") {
     if (trade) {
@@ -407,7 +425,13 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
     const id = businessKey ? flowId(raw)
       : (raw.id != null && raw.id !== "" ? String(raw.id) : flowId(raw));
     if (kind === "misfiled") { errors.push(`flow ${raw.date} ${raw.acct}: ${reason}`); continue; }
-    if (kind === "internal") continue;
+    if (kind === "internal") {
+      if (['internal_income','internal_income_estimated'].includes(raw.evidence) && unresolvedIds.has(id)) {
+        const i=unresolved.findIndex(row=>row.id===id);if(i>=0)unresolved.splice(i,1);
+        unresolvedIds.delete(id);promoted++;
+      }
+      continue;
+    }
 
     const record = { id, date: raw.date, acct: raw.acct, amount: raw.amount,
       desc: typeof raw.desc === "string" ? raw.desc : "", reason,
