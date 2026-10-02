@@ -194,3 +194,19 @@ Flex覆盖仍要正规来源内容及关联证据，不能由三账户任务成�
 上述是未执行的分期方案，不是第二份已完成PR或已部署状态通道。无需再次
 授权同类scope探针；下一项准确动作是分离已验证修复及取得正规Flex内容。
 生产、金融账本及其他三账户流程保持不变。
+
+## 候选分离结果
+
+A+B现已实现，主分支 `codex/xuan-preopen-action-window` 删除raw.coverage/
+snapshot早期合同，未接线的data_quality/schema_probe/account_scope_diagnostic/
+trade_session探索材料移出主候选，保存在独立
+[`codex/xuan-preopen-source-research`](https://github.com/huanwujoy-crypto/fee-console/tree/codex/xuan-preopen-source-research)
+（研究快照，非合并/部署候选）。只读transport在主候选仍只允许原固定sources，
+trades显式DAYS_7，无tools/list扩展或线上identity探针入口。
+
+研究分支新增按已核实CSV列名的Trade Confirmation纯函数与synthetic测试，
+没有真实财务行授权或集成；CSV时区、生成时间、覆盖终点均未知，cancelpairs
+未含，空报表不是零成交证明。C需可用正规来源覆盖与实际接口映射再接正式
+行动路径。A+B SOURCE_ADAPTER_NOT_CONFIGURED仅为未完成阶段的准确测试状态，
+不是可上线永久方案；父线程须在合并前完成C或取得用户准确范围决定。
+目前未改生产，不追加online scope尝试或续期。

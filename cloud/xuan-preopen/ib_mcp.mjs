@@ -88,14 +88,12 @@ function rpcMessage(text, contentType, id) {
 }
 
 export class IbReadSession {
-  constructor(credential, { fetchImpl = fetch, schemaOnly = false } = {}) {
+  constructor(credential, { fetchImpl = fetch } = {}) {
     this.credential = validateCredential(credential); this.fetchImpl = fetchImpl;
-    this.schemaOnly = schemaOnly; this.id = 0; this.sessionId = null; this.initialized = false;
+    this.id = 0; this.sessionId = null; this.initialized = false;
   }
   async request(method, params, notification = false) {
-    if (!['initialize', 'notifications/initialized', ...(this.schemaOnly ? ['tools/list'] : ['tools/call'])].includes(method)) fail('IB_MCP_METHOD_FORBIDDEN');
-    if (method === 'tools/list' && (params !== undefined && (Object.keys(params).some(key => key !== 'cursor')
-      || typeof params.cursor !== 'string' || params.cursor.length > 4096))) fail('IB_MCP_SCHEMA_PARAMS_FORBIDDEN');
+    if (!['initialize', 'notifications/initialized', 'tools/call'].includes(method)) fail('IB_MCP_METHOD_FORBIDDEN');
     if (method === 'tools/call' && (!Object.hasOwn(SOURCES, params?.name)
       || !allowedArguments(params.name, params.arguments))) fail('IB_MCP_TOOL_FORBIDDEN');
     const id = ++this.id;
