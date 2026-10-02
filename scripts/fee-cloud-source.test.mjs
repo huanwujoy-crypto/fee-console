@@ -2,10 +2,22 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates } from "./fee-cloud-producer.mjs";
+import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode } from "./fee-cloud-producer.mjs";
 import { SourceFetchError } from "./fee-economic-source.mjs";
 
 const D = "2026-09-23";
+
+test("writer diagnostics expose fixed categories and stage without private child stderr", () => {
+  assert.equal(writerFailureCode("error: STYLE_EVIDENCE_REQUIRED — nothing written\n", true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_STYLE_EVIDENCE_REQUIRED");
+  assert.equal(writerFailureCode("error: duplicate/stale cash in webull on 2026-10-01: balance 123456.78 ignores private movement"),
+    "FEE_CLOUD_WRITER_CASH_RECONCILIATION");
+  assert.equal(writerFailureCode("error: fee calculation receipt failed: private amount 98765"),
+    "FEE_CLOUD_WRITER_FEE_RECEIPT");
+  for (const stderr of ["private account U123456 secret=abc 123456.78", "error: STYLE_secret=abc", "", null]) {
+    assert.equal(writerFailureCode(stderr), "FEE_CLOUD_WRITER_UNKNOWN");
+  }
+});
 const benchmarkCache = { v: 1, benchmarks: {
   spy: { series: [{ d: "2026-09-22", p: 700 }, { d: D, p: 701, div: 1.5 }] },
   qqq: { series: [{ d: "2026-09-22", p: 600 }, { d: D, p: 602 }] },
