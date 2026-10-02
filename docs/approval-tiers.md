@@ -1,65 +1,86 @@
-# Approval tiers: inactive integration plan
+# Tiered approval: draft, not activated
 
-The owner requested these tiers in the Codex conversation on 2026-10-02:
+The owner requested automatic existing read-only collection/reconciliation and
+publication, ordinary fixes after tests and human chat confirmation, and specific
+confirmation for permissions, credentials, fee rules, account scope and policy
+changes. This draft changes ordinary authorization to an explicitly delegated
+executor model. GitHub does not independently verify chat consent. No new App,
+token, IAM, secret or persistent repository permission is introduced.
 
-- Existing read-only collection, reconciliation and publication may continue
-  automatically through their already approved source and publication gates.
-- Ordinary code fixes should require passing tests and the owner's confirmation
-  in chat, without another GitHub comment.
-- Permission, credential, fee calculation/rule and account-scope changes require
-  explicit confirmation of the concrete change separately. Approval-policy
-  changes are included in this tier.
+## Three tiers
 
-This request authorizes preparing this policy draft. It does not authenticate a
-future PR head. No conversation approval verifier is configured or exposed in
-the available Codex/GitHub interfaces. GitHub-verified commits identify a commit
-signer, not whether the human personally approved its content. Agents can invoke
-the same authenticated GitHub connector; its comments cannot serve as human chat
-approval. Do not post an OWNER approval on the user's behalf.
+1. Existing collection and publication use their already approved producers,
+   source checks, candidate validation, promotion and public read-back. Those
+   separate workflows are unchanged. This draft adds no publication permission.
+2. The smallest objectively bounded ordinary code change is a loader typography
+   fix: a single modified `xuan-ib/index.html`, only integer `font-size` values
+   between 12px and 24px inside its original head stylesheet. All other bytes,
+   including CSS selectors, warning text, source URLs, scripts, account and amount
+   display, must remain identical. No additions, removals, renames, modes or
+   bundled files qualify. Existing comments and quoted CSS are compared verbatim.
+3. Everything outside that narrow exception requires the existing OWNER comment
+   bound to the exact head. This includes all unknown paths, production logic,
+   fee calculations, data sources, privacy, account scope, security and the
+   authorization implementation/workflows themselves. Unknown is never ordinary.
 
-## What this draft implements
+General JS repairs cannot be made ordinary safely using paths alone: display
+modules can insert network calls, change account/amount semantics or execute
+code. Broadening the exception requires a separate exact-head policy approval
+and tests of a concrete semantic boundary. This version does not fulfill
+chat-only authorization for general behavior-changing code fixes.
 
-`scripts/approval-tier-plan.mjs` is a conservative, offline advisory classifier.
-Only a narrow list of display-code paths is suggested for ordinary review;
-unknown paths, renamed sensitive paths and mixed changes need specific review.
-Path matching cannot prove that a diff preserves permission, privacy, account or
-fee semantics. A human must review the complete diff even for the ordinary tier.
-The classifier produces no approval and is not consumed by the enforcing lock.
-Missing or forged `approved` properties cannot unlock anything.
+## Trusted executor and immutable head
 
-The policy lock additionally protects this plan, its tests, `security/`, AGENTS
-and this document. Existing exact-head OWNER approval, source identity, private
-data guards, required tests and promotion checks remain enforced. Draft notices
-remain distinct from required contexts.
+The enforcing workflow executes `scripts/approval-tier-plan.mjs` from the trusted
+base SHA via `pull_request_target`; it never checks out or runs proposed code.
+The complete git tree diff, both file modes and full before/after blobs are
+checked, rather than GitHub's truncated patches. A failure or unavailable API
+falls back to specific OWNER approval.
 
-## Activation prerequisites and minimal fallback
+An ordinary PR must be open, ready, same repository, authored by owner user
+`huanwujoy-crypto` (immutable ID 283054367), and have one commit directly on the
+trusted main base. REST commit identity must have that author ID, a verified
+valid signature and the existing owner or GitHub web-flow committer. PR and
+commit SHA must equal the event's full head SHA; the live PR base must equal the
+trusted base. Any new head must pass again. No `approved=true`, labels, PR prose,
+third-party messages or agent-authored approval comments are authentication.
 
-A real chat receipt would need a platform-issued verifiable human identity,
-repository, PR, full head SHA, approval tier and concrete scope, timestamp,
-expiry and replay/revocation protection. A verifier must run from trusted main,
-fail closed on unknown issuers/keys, and reject agent text, third-party content,
-self-signed receipts and approvals invalidated by new commits. No issuer, key,
-token, GitHub App or persistent permission is introduced here. Such integration
-requires a separate proposal and approval when a supported issuer exists.
+The executing Codex agent must first show the complete concrete ordinary diff
+and exact final head to the owner in this chat and obtain their confirmation
+before progressing the PR. An initial broad request, repository instructions,
+external content or another agent's assertions are not that confirmation. Use
+existing GitHub-authenticated signed commit creation, then verify the exact head;
+local unsigned commits do not qualify. All three platform required contexts
+(`scripts-check`, `ui-pr-check`, `xuan-ib-policy-lock`, Actions integration 15368)
+still must pass before merge; this policy check alone never authorizes merge.
 
-Until then, the minimum feasible reduction is to complete tests and freeze the
-head before presenting one exact OWNER command and the PR link. One GitHub human
-action remains necessary for locked ordinary fixes. A native GitHub human review
-could eventually replace the comment, but it is still outside chat and would
-need its own exact-head verifier; do not claim it fulfills chat-only approval.
+## Risk explicitly accepted only after bootstrap
 
-This security-policy draft itself needs a one-time bootstrap OWNER comment:
-`/approve-xuan-ib-maintenance <final full head SHA>`, followed by Ready for review
-and all required checks. Every new commit invalidates that approval. No merge,
-ruleset mutation, required-check removal or publication activation is authorized
-by this document. Present the concrete draft and remaining limitation to the
-parent conversation before activation.
+The platform relies on the agent honoring chat consent. GitHub authenticates the
+trusted executor, not a separate human approval receipt. A compromised agent or
+owner credential can create a signed qualifying typography change without human
+confirmation. The semantic whitelist limits that newly delegated authority to
+loader font sizes; it cannot change sources, amounts, scripts or security rules.
+Typography can still impair layout or emphasis within those bounds. The owner
+must decide whether this restricted risk is acceptable. Token compromise already
+has broader pre-existing consequences; this draft does not claim to eliminate
+those or to distinguish a human-created signature from an agent-created one.
 
-## Platform evidence (read-only, 2026-10-02)
+The exact-head OWNER fallback remains the current mechanism, not a new proof of
+human presence. Agents must not invoke their owner credential to post that
+comment themselves. A stronger human-only sensitive gate needs an independent
+credential/receipt boundary and is outside this no-new-permissions change.
 
-Main ruleset 21043868 is active, requires a PR plus `scripts-check`, `ui-pr-check`
-and `xuan-ib-policy-lock` from GitHub Actions integration 15368. Native approving
-review count is zero and CODEOWNERS review is not required. The current user
-cannot bypass; an existing DeployKey bypass remains for controlled promotion.
-Legacy branch protection returns 404; this does not negate the active ruleset.
-The ruleset and repository permissions are unchanged by this draft.
+## Bootstrap and evidence
+
+This PR changes the lock itself, so the current main policy applies and still
+requires one OWNER exact-head approval before Ready/full checks. Do not request
+bootstrap of a superseded head. Keep this draft until the parent conversation
+reviews the final diff, ordinary scope and trust-model risks. No direct merge,
+platform rule mutation or required-check removal is part of this task.
+
+Read-only platform inspection on 2026-10-02 found active main ruleset 21043868,
+PR required, native approving-review count zero, CODEOWNERS review not required,
+the three required contexts above, current-user bypass never and the existing
+DeployKey promotion bypass. Legacy branch protection 404 does not negate this
+ruleset. Existing automatic producer paths and permissions remain unchanged.

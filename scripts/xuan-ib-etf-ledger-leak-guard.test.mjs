@@ -185,7 +185,9 @@ test('ETF trend and shared schedule paths require the existing exact-head OWNER 
   assert.match(policyLock, /\.filename, \(\.previous_filename \/\/ empty\)/);
   assert.match(policyLock, /returned_file_count.*EXPECTED_FILE_COUNT/);
   assert.match(policyLock, /returned_file_count > 1000/);
-  assert.doesNotMatch(policyLock, /actions\/checkout|contents: write|pull-requests: write/);
+  assert.doesNotMatch(policyLock, /contents: write|pull-requests: write/);
+  assert.match(policyLock, /ref: \$\{\{ github.event.pull_request.base.sha \}\}/);
+  assert.doesNotMatch(policyLock, /ref: \$\{\{ github.event.pull_request.head/);
 });
 
 test('ETF trend suites run in required CI and schedule stays covered by the health suite', () => {

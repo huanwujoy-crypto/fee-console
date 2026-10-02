@@ -36,8 +36,36 @@ jobs:
             echo 'No publication permission has been granted.'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Refuse pull requests that alter the trusted publication boundary
+      - name: Check out the trusted policy implementation
         if: ${{ github.event.pull_request.draft == false }}
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Verify the narrow ordinary change and signed executor
+        id: ordinary
+        if: ${{ github.event.pull_request.draft == false }}
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ && "$HEAD_SHA" =~ ^[a-f0-9]{40}$ ]]
+          gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" > "$RUNNER_TEMP/ordinary-pr.json"
+          gh api "repos/$GITHUB_REPOSITORY/commits/$HEAD_SHA" > "$RUNNER_TEMP/ordinary-commit.json"
+          # Fetch object bytes only; never check out or execute proposed code.
+          git fetch --no-tags origin "$HEAD_SHA"
+          node scripts/approval-tier-plan.mjs "$BASE_SHA" "$HEAD_SHA" \
+            "$RUNNER_TEMP/ordinary-pr.json" "$RUNNER_TEMP/ordinary-commit.json"
+
+      - name: Require specific owner approval outside the ordinary exception
+        if: ${{ github.event.pull_request.draft == false && steps.ordinary.outcome != 'success' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -86,9 +114,10 @@ jobs:
           # the calculation engine. Changing either is a coefficient-authority
           # change in everything but name.
           protected_re="${protected_re}|^scripts/(xuan-ib-ai-coefficient-resolver|xuan-ib-ai-risk-input)\.(mjs|test\.mjs)$"
-          # Approval policy is itself a trusted boundary. Advisory tier labels
-          # never authenticate a human or replace the existing OWNER/SHA gate.
+          # Approval policy itself and all unknown changes fail closed.
+          # Ordinary authorization above never claims to verify chat consent.
           protected_re="${protected_re}|^security/|^AGENTS\\.md$|^docs/approval-tiers\\.md$|^scripts/approval-tier-plan\\.(mjs|test\\.mjs)$"
+          protected_re="${protected_re}|^"
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
             head_sha='${{ github.event.pull_request.head.sha }}'
