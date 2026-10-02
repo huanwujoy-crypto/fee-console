@@ -60,9 +60,19 @@ job spec 上述 SHA-256 前后相同，没有新 OAuth/IAM/secret 引用。
 获准的默认上下文身份探针 execution `xuan-preopen-source-check-v7cdk`
 于 `02:06:56Z` 启动时，短期访问 token 已不满足 freshness 余量，
 以 `DIAG_EXPIRED_NO_REFRESH` 取数前停止。没有第二次轮换或 PA 金融调用。
-当前身份尚未核实，不能部署。连续探针已准备：原 refresh→先安全保存→
-身份唯一且匹配→同账户只读 sources；等待再次续期批准，不自动重试。
-若生命周期或结构仍不支持，给出正式运行时生命周期适配方案，不反复拆分续期。
+用户再次明确批准后，连续探针 `xuan-preopen-source-check-rpfpj` 于
+`2026-10-02T02:29:27.713Z`–`02:29:38.780Z` 执行：原 refresh 安全保存
+成功（原 secret 版本6→7，新增版本时间 `02:29:32.566Z`），随后只调用
+默认上下文 PA performance 一次核验身份。解析后“included_accounts 单账户且
+匹配 approved”联合条件未通过，以 `DIAG_SCOPE_UNVERIFIED` 停止。
+后续 summary/positions/orders/trades/balances 全未调用，金融写入0；没有新
+secret 引用、OAuth/IAM/job 配置变更，job spec 哈希前后仍相同。
+
+该次失败日志没有分别保留 unique/matches 的布尔，不能区分结构不符合、
+多账户或不匹配，更不能宣称实际账户错误。未导出/保存 PA 账号或金额。
+不重跑或继续反复续期；待身份诊断返回严格脱敏形状/计数/匹配证据，并在正式
+运行时统一管理短 token 生命周期及先绑定后读取。当前身份尚未核实，不能部署。
+云浏览器新 OAuth 不会自动解决 scope 证据，也不作为本轮绕行路径。
 
 ## 可实现的分级 data-quality 门槛
 
@@ -90,7 +100,7 @@ Flex `whenGenerated` 是报表生成时间，`toDate` 是覆盖日期，读取�
 ## 两条最小实施路径
 
 **A：保留 MCP 实时读取，Flex 补账务覆盖。**
-schema 已取得；当前等待连续身份/来源探针的再次续期批准。确认账户绑定后，
+schema 已取得；连续身份/来源探针已执行，但默认上下文身份未通过核验。确认账户绑定后，
 验收真实只读取数、字段语义、全量/分页和上游更新时间限制。
 交易/现金覆盖复用同账户已验证 Flex 内容，不复制 token，不把三账户状态当输入。
 如果自动 source 身份需要新增档案 GET 权限，先列明固定 bucket/prefix/身份再批准；
