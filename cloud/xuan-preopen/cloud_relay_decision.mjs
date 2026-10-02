@@ -4,7 +4,7 @@ import {planPreopen} from './calendar.mjs';import {attemptFor} from './attempts.
 export const RELAY_DISPATCH_TARGET=Object.freeze({repository:'huanwujoy-crypto/fee-console',workflow:'xuan-preopen-cloud-producer.yml',ref:'main'});
 export function decideCloudRelay({now,mainConfigured=false,publicProof=false,runs=[],claims=[]}){
  const plan=planPreopen(now);if(!plan.windowEnabled)return{action:'none',reason:'OUTSIDE_REGULAR_WINDOW'};
- if(!mainConfigured)return{action:'blocked',reason:'FORMAL_SOURCE_ADAPTER_NOT_CONFIGURED'};
+ if(mainConfigured!==true)return{action:'blocked',reason:'FORMAL_SOURCE_ADAPTER_NOT_CONFIGURED'};
  if(publicProof===true)return{action:'done',reason:'FORMAL_PUBLIC_PROOF_VERIFIED'};
  const bucket=attemptFor(plan,now),key=`state/${plan.slotId}/attempt-${bucket}.json`;
  const current=runs.filter(r=>r.workflow===RELAY_DISPATCH_TARGET.workflow&&r.branch==='main'&&Number.isFinite(Date.parse(r.createdAt))&&Date.parse(r.createdAt)>=plan.startEpoch*1000&&Date.parse(r.createdAt)<=now);
