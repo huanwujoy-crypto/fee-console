@@ -135,3 +135,21 @@ accounts键名或金额。测试覆盖字段缺失、类型异常、空集合、
 当前没有再次调用IB。下次必须有明确执行批准，在单次连续运行内保存上述
 脱敏分支证据，再按真实契约验证来源绑定；多账户/不匹配或结构不支持仍停止，
 不传任意账户参数、不降级为金额相似就视为同账户。
+
+## 更新版单次连续核验回证
+
+用户明确批准后，更新版 execution `xuan-preopen-source-check-9w8ml` 于
+`2026-10-02T03:02:03.727Z`–`03:02:16.978Z` 执行。原机制续期安全存回
+原 secret（版本7→8）；job spec SHA-256 仍为上述值。金融只读1（默认PA
+身份），金融写入0；后续summary/positions/trades/orders/balances未调用。
+
+实际脱敏响应：顶层字段 `portfolio_measure,currency_type,accounts`；
+accounts为对象，included_accounts数组未提供，计数null；unique=false，
+approvedAccountMatches=false，accountsContainsApproved=false。以
+`DIAG_SCOPE_UNVERIFIED` 停止。当前schema的可选字段未实际返回，不能作为
+唯一账户证明；accounts顶层不含approved也不能单独宣称实际账户错误，其内部
+语义尚未验收。本次未保存账号或金额，因此没有可离线解析的accounts内部原文。
+
+可复用schema与字段缺失证据；剩余身份适配须有已验证的实际对象语义/身份来源，
+且仅在明确批准范围内取得。禁止据金额相似、可选schema字段或本地请求时间
+补造绑定/覆盖。当前仍不部署，不继续自动IB调用或续期。
