@@ -160,6 +160,9 @@ export function periodReturns(input) {
     if (pointDates.has(point.d)) issues.push("估值日期重复 " + point.d);
     pointDates.add(point.d);
     if (!(Number.isFinite(point.tot) && point.tot > 0)) issues.push("总资产无效 " + point.d);
+    if (point.managementExemptUsd !== undefined && (!Number.isFinite(point.managementExemptUsd)
+        || point.managementExemptUsd < 0 || point.managementExemptUsd > point.tot))
+      issues.push("管理费豁免市值无效 " + point.d);
   }
   for (let date = input.from; date <= to; date = nextDate(date)) {
     if (!pointDates.has(date)) issues.push("缺少每日估值 " + date);
@@ -187,7 +190,7 @@ export function periodReturns(input) {
   const feeBases = points.map(point => ({
     point,
     flow: flowByDate[point.d] || 0,
-    basis: point.tot - (flowByDate[point.d] || 0)
+    basis: point.tot - (flowByDate[point.d] || 0) - (point.managementExemptUsd || 0)
   }));
   const mgmtValid = feeBases.length === days && feeBases.every(value => Number.isFinite(value.basis) && value.basis >= 0);
   for (const value of feeBases) {
@@ -255,7 +258,8 @@ export function computeFeeStatement({ daily = [], flowsAuto = [], econ, asOf }) 
     .filter(point => point && isCalendarDate(String(point.d)) && point.d >= start && point.d <= asOf)
     .map(point => ({
       d: point.d,
-      tot: accountIds.reduce((sum, id) => sum + number(point[id]), 0)
+      tot: accountIds.reduce((sum, id) => sum + number(point[id]), 0),
+      managementExemptUsd: (point.managementExemptions || []).reduce((sum,row) => sum+row.valueUsd,0)
     }))
     .sort((left, right) => left.d.localeCompare(right.d));
   if (!points.length || points.at(-1).d !== asOf) throw new Error("daily input does not cover asOf");

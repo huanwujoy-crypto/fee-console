@@ -13,6 +13,7 @@
 //
 // 幂等：数据点、flow 与 status 均无变化时打印 "no-op <date>" 并以 0 退出。
 // 输出只含状态与计数，绝不打印金额或密钥。
+import { incomeDatePolicy } from './fee-income-date-policy.mjs';
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -32,6 +33,8 @@ import {
 } from "./fee-receipt-core.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-registry.mjs";
+
+import { resolveManagementExemptions } from './fee-management-exemption.mjs';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -332,8 +335,22 @@ if (styleFile) {
     benchDate: args['src-bench'] ?? null, benchState: args["bench-state"] ?? null, calibrated, now: new Date() });
   if (check.errors.length) dieAll([...check.errors, 'nothing written']);
 }
+let managementResult = null, verifyManagementInput = () => {};
+const managementFile = (process.env.FEE_MANAGEMENT_INPUT_FILE || '').trim();
+if (managementFile && !weekendCarry) {
+  try {
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+    const snapshot = readStyleInput(managementFile, repoRoot);
+    verifyManagementInput = snapshot.verify;
+    const { proposals = [], ...input } = snapshot.input;
+    managementResult = resolveManagementExemptions({ registry: data.managementExemptionRegistry,
+      proposals, input, date, accounts });
+  } catch { die('MANAGEMENT_EXEMPTION_INVALID — nothing written'); }
+} else if (data.managementExemptionRegistry && !weekendCarry) {
+  die('MANAGEMENT_EXEMPTION_INPUT_REQUIRED — nothing written');
+}
 if (flags.has('style-preflight')) {
-  try { verifyStyleInput(); } catch { die('STYLE_FILE_CHANGED — nothing written'); }
+  try { verifyStyleInput(); verifyManagementInput(); } catch { die('SOURCE_FILE_CHANGED — nothing written'); }
   console.log(`style-preflight pass new-classifications=${styleResult.newEventIds.length}; no data written; not a publication or delivery receipt`);
   process.exit(0);
 }
@@ -362,7 +379,7 @@ if (args.flows !== undefined) {
     const desc = f.desc == null ? "" : String(f.desc);
     if (desc.length > 300) die(`flow #${i} desc is too long`);
     if (f.id != null && f.id !== "" && !ID_RE.test(String(f.id))) die(`flow #${i} has a bad id`);
-    if (f.evidence != null && !["external_transfer", "external_asset_transfer", "internal_trade"].includes(f.evidence))
+    if (f.evidence != null && !["external_transfer", "external_asset_transfer", "internal_trade", "internal_income", "internal_income_pending_date", "internal_income_estimated"].includes(f.evidence))
       die(`flow #${i} has an unknown evidence value`);
     return {
       id: f.id == null || f.id === "" ? "" : String(f.id),
@@ -379,6 +396,13 @@ if (args.flows !== undefined) {
       destinationQuantity: Number.isFinite(f.destinationQuantity) ? f.destinationQuantity : 0,
       foreignIdentifier: f.foreignIdentifier == null ? "" : String(f.foreignIdentifier),
       holdingDelta: Number.isFinite(f.holdingDelta) ? f.holdingDelta : 0,
+      sourcePayoutId:f.sourcePayoutId ?? null,
+      sourceCashRecordId:f.sourceCashRecordId ?? null,
+      sourceCashAccountId:f.sourceCashAccountId ?? null,
+      incomeRole:f.incomeRole ?? null,
+      cashPostingDate:f.cashPostingDate ?? null,
+      incomeDateVerified:f.incomeDateVerified === true,
+      ...(f.incomeDateAudit ? {incomeDateAudit:incomeDatePolicy.normalize(f.incomeDateAudit,f.date)} : {}),
       evidence: f.evidence ?? null,
       externalRef: f.externalRef == null ? "" : String(f.externalRef)
     };
@@ -398,7 +422,17 @@ const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
 const point = buildPoint({ date, accounts, splits, styleSplits, topHoldings, bench: acceptedBench, benchDiv: acceptedBenchDiv,
   benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
   provisional: check.provisional, calibrated });
+if (managementResult?.rows !== undefined) point.managementExemptions = managementResult.rows;
+if (weekendCarry && weekendCarryPrior?.managementExemptions !== undefined)
+  point.managementExemptions = structuredClone(weekendCarryPrior.managementExemptions);
 const existingPoint = data.daily.find(x => x && x.d === date);
+const incomeAudits=new Map((incomeDatePolicy.point(existingPoint||{d:date}).incomeDateAudits||[]).map(a=>[a.eventKey,a]));
+for(const flow of incoming)if(flow.evidence==='internal_income_estimated') {
+  const audit=incomeDatePolicy.normalize(flow.incomeDateAudit,date);
+  if(incomeAudits.has(audit.eventKey)&&JSON.stringify(incomeAudits.get(audit.eventKey))!==JSON.stringify(audit))die('income date audit conflict');
+  incomeAudits.set(audit.eventKey,audit);
+}
+if(incomeAudits.size)Object.assign(point,incomeDatePolicy.point({d:date,incomeDateAudits:[...incomeAudits.values()]}));
 if (weekendCarry && Array.isArray(weekendCarryPrior?.topHoldings)) {
   point.topHoldings = structuredClone(weekendCarryPrior.topHoldings);
 }
@@ -535,6 +569,7 @@ const nextData = {
   status
 };
 if (styleResult) nextData.classificationRegistry = styleResult.registry;
+if (managementResult?.registry) nextData.managementExemptionRegistry = managementResult.registry;
 
 let receiptState = "unchanged";
 if (economicInput) {
@@ -571,11 +606,12 @@ if (economicInput) {
 // No-op is also an output claim: recheck the original source before either exit.
 try { verifyLegacySourceUnchanged(); }
 catch { die("private legacy source changed before output — nothing written"); }
-try { verifyStyleInput(); }
+try { verifyStyleInput(); verifyManagementInput(); }
 catch { die('STYLE_FILE_CHANGED — nothing written'); }
 const receiptUnchanged = sameFeeCalculationReceipt(data.feeCalculationReceipt, nextData.feeCalculationReceipt);
 const registryUnchanged = stableJson(data.classificationRegistry) === stableJson(nextData.classificationRegistry);
-if (baseUnchanged && receiptUnchanged && registryUnchanged) {
+const exemptionRegistryUnchanged = stableJson(data.managementExemptionRegistry) === stableJson(nextData.managementExemptionRegistry);
+if (baseUnchanged && receiptUnchanged && registryUnchanged && exemptionRegistryUnchanged) {
   for (const message of check.benchmarkErrors) console.warn(`benchmark omitted: ${message}`);
   console.log(`no-op ${date}`);
   process.exit(0);

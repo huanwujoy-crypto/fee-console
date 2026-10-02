@@ -60,8 +60,11 @@ consumer-facing output may show only a shortened receipt id.
 
 ### Legacy source binding (receipt schema v2)
 
-Native v4 inputs retain schema `fee-console.calculation-receipt.v1` and engine
-`fee-v4.6.1`. The approved legacy-empty-expense copy uses schema
+Native v4 inputs retain schema `fee-console.calculation-receipt.v1`. Inputs
+without an enrolled management exemption retain engine `fee-v4.6.1` byte
+compatibility; enrolled inputs use `fee-v4.6.2`, commit the private registry and
+daily exemption rows, and reduce only the management basis. See
+`fee-management-exemption.md`. The approved legacy-empty-expense copy uses schema
 `fee-console.calculation-receipt.v2` with the same mathematical engine and one
 additional exact-key field `legacySource`:
 
