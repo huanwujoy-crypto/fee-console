@@ -165,7 +165,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-10-02.3";
+      const loaderBuild = "2026-10-02.4";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -576,6 +576,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const times = [...action[2].matchAll(/\b(\d{2}:\d{2})\b/g)].map((match) => match[1]);
           if(html.includes('<title>XUAN · 盘中数据更新</title>'))return {dataDate:action[1],edition:'临时盘中更新',label:`${action[1]} · 盘中数据更新`,asOfHkt:times.at(-1)||null,statusOnly:true,contentUpdate:true};
           if(html.includes('<title>XUAN · 有限核实补读</title>'))return {dataDate:action[1],edition:'临时补读',label:`${action[1]} · 有限核实补读`,asOfHkt:times.at(-1)||null,statusOnly:true};
+          if(action[2].includes('盘中修订'))return {dataDate:action[1],edition:'行动版盘中修订',label:`${action[1]} · 行动版盘中修订`,asOfHkt:times[0]||null,actionRepair:true};
           const preopen = action[1] >= "2026-09-28";
           return { dataDate: action[1], edition: preopen ? "开市前版" : "睡前版",
             label: `${action[1]} · ${preopen ? '开市前行动版' : '睡前行动版'}`, asOfHkt: times.at(-1) || null };
@@ -936,6 +937,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       }
 
       const statusFor = (record, prefix) => {
+        if(record.info.actionRepair)return `行动版盘中修订 ${record.info.dataDate.slice(5)} · IB原读取 ${record.info.asOfHkt}\nSharesight独立读取，来源时间见报告 · 已检查 ${clock()}`;
         if(record.info.contentUpdate)return `盘中数据更新 ${record.info.dataDate.slice(5)} · 实数已读取\n读取 ${record.info.asOfHkt}，现金与动作限制见报告 · 已检查 ${clock()}`;
         if(record.info.statusOnly)return `有限核实补读 ${record.info.dataDate.slice(5)} · 数据部分核实\n读取 ${record.info.asOfHkt}，无行动建议 · 已检查 ${clock()}`;
         const report = `报告 ${record.info.dataDate.slice(5)} ${record.info.edition}` +

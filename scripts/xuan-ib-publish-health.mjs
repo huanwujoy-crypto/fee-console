@@ -43,7 +43,7 @@ export function classifyEdition(dateLine) {
   const value = String(dateLine).toLowerCase();
   // Ad-hoc pages can contain wording such as "计划外加跑（常规 21:00）".
   // It must win over every AM/PM token so it can never prove a scheduled run.
-  if (/计划外|加跑|补跑|临时|预览|非定时|ad[ -]?hoc/.test(value)) return "adhoc";
+  if (/盘中修订|计划外|加跑|补跑|临时|预览|非定时|ad[ -]?hoc/.test(value)) return "adhoc";
   const am = /早间|上午|早班|(?:^|[\s·])am(?:$|[\s·])/.test(value);
   // "pm" remains the internal slot key for the post-cutover pre-open report.
   const pm = /睡前|晚间|定时正式版|开市前行动版|(?:^|[\s·])pm(?:$|[\s·])/.test(value);

@@ -69,7 +69,7 @@ jobs:
 
       - name: Submit the signed candidate to the existing protected pipeline
         id: candidate
-        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.limited.outputs.outcome == 'limited-readback' || steps.limited.outputs.outcome == 'intraday-update') }}
+        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.limited.outputs.outcome == 'limited-readback' || steps.limited.outputs.outcome == 'intraday-update' || steps.limited.outputs.outcome == 'action-repair') }}
         env:
           # Reuse only after explicit OWNER approval. This token is never sent
           # to GCP, put in an image, or made available to the broker-reading job.

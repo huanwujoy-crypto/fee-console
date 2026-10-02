@@ -87,7 +87,7 @@ const validatePublicationState = (state, expectedDate, candidate = false) => {
       || Object.keys(state).sort().join('|') !== ['dataDate','eligibleAtEpoch','kind','priorityKey'].sort().join('|')) {
     throw new Error(`${candidate ? 'candidate' : 'published'} publication state is invalid`);
   }
-  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
+  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'action-repair', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
   requireDate('publication dataDate', state.dataDate);
   if (state.dataDate !== expectedDate) throw new Error('publication data date does not match metadata');
   if (state.kind === 'priority') {

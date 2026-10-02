@@ -1,3 +1,4 @@
+import {fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
 // Only submit a signed one-file candidate. Validate -> Promote -> Pages still
 // exclusively owns latest.html and publication metadata. No main write exists.
 import fs from 'node:fs';
@@ -26,24 +27,27 @@ export async function githubRequest(payload, token = process.env.XUAN_PREOPEN_GI
 }
 export async function publishPrepared({html, receipt, request = githubRequest, loadContext = loadTrustedContext, now = Date.now} = {}) {
   const time = now(), dataDate = hktDate(time);
+  const repair=receipt?.mode==='private_action_repair';
   const intraday=receipt?.mode==='private_intraday_update',limited=intraday||receipt?.mode==='private_limited_readback';
   if (receipt?.schemaVersion !== 1 || receipt.dataDate!==dataDate || receipt.sourceDate>=dataDate || receipt.publication!=='none' || !Array.isArray(receipt.sources)
-    || (limited?(receipt.status!=='partial'||receipt.sourceCount!==(intraday?5:3)||receipt.sources.length!==(intraday?5:3)):(receipt.mode!=='private_report_check'||receipt.status!=='ready'||receipt.sourceCount!==5||receipt.sources.length!==5)))fail('RECEIPT');
+    || (repair?(receipt.status!=='ready'||receipt.sourceCount!==7||receipt.sources.length!==7):limited?(receipt.status!=='partial'||receipt.sourceCount!==(intraday?5:3)||receipt.sources.length!==(intraday?5:3)):(receipt.mode!=='private_report_check'||receipt.status!=='ready'||receipt.sourceCount!==5||receipt.sources.length!==5)))fail('RECEIPT');
   const started = Date.parse(receipt.startedAt), completed = Date.parse(receipt.completedAt);
   if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started || completed > time
       || completed-started > 300_000 || time-started > 30*60_000) fail('STALE');
-  const required = intraday?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades']:limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
+  const required = repair?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades','sharesight.ibGroupedPerformance','sharesight.noahPerformance']:intraday?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades']:limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
   if (required.some(key => receipt.sources.filter(s => s.sourceKey === key && HASH.test(s.sha256 || '')).length !== 1)) fail('SOURCES');
   if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
-  if(!limited)validateNightActionHtml(html, dataDate);
+  if(!limited&&!repair)validateNightActionHtml(html, dataDate);
   const model = extractNightActionModel(html);
-  if(limited){if(model.schemaVersion!==(intraday?8:7)||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
+  if(repair){const r=model.actionRepair;if(model.schemaVersion!==5||model.status!=='ready'||!r||r.sourceDate!==receipt.sourceDate||r.sharesightStartedAt!==receipt.startedAt||r.sharesightCompletedAt!==receipt.completedAt||fingerprint(r)!==receipt.evidenceSha256||JSON.stringify(r.sources)!==JSON.stringify(receipt.sources)||JSON.stringify(r.association)!==JSON.stringify(receipt.association))fail('MODEL');}
+  else if(limited){if(model.schemaVersion!==(intraday?8:7)||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
   else if (model.schemaVersion !== 5 || model.status !== 'ready' || !model.asOfHkt.endsWith(`数据至 ${receipt.sourceDate}`)) fail('MODEL');
   const verifyContext = async () => {
     const context = await loadContext({now});
     validateAssociationReceipt(receipt.association, context.association, {now: now(), edition: 'am',
       previousSourceSha: context.previousSourceSha, runId: receipt.association?.runId});
-    if(limited)validateNightActionHtml(html,dataDate,{snapshot:context.association,previousSourceSha:context.previousSourceSha,now:now()});
+    if(repair){if(context.reserveHash!==model.actionRepair.reserveHash||model.cash.reserve!==currentReserve(context.reserveLedger,dataDate))fail('RESERVE_CHANGED');validateNightActionHtml(html,dataDate,{snapshot:context.association,previousSourceSha:context.previousSourceSha,previousHtml:context.previousHtml,now:now()});}
+    else if(limited)validateNightActionHtml(html,dataDate,{snapshot:context.association,previousSourceSha:context.previousSourceSha,now:now()});
     else if (model.cash.reserve !== currentReserve(context.reserveLedger, dataDate)) fail('RESERVE_CHANGED');
     return context;
   };
