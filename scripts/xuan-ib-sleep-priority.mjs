@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {preopenActionSlot,PREOPEN_ACTION_CUTOVER_HKT_DATE} from './xuan-ib-report-schedule.mjs';
 
 import fs from 'node:fs';
 import { publicationEdition } from './xuan-ib-account-association-publication.mjs';
@@ -104,7 +105,12 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 export function classifySleepPublication(html) {
   if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
     const model = extractNightActionModel(html);
-    return { kind: model.schemaVersion===6?'other':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    let kind=model.schemaVersion===6?'preopen-status':'complete-pm';
+    if(kind==='complete-pm'&&model.dataDate>=PREOPEN_ACTION_CUTOVER_HKT_DATE){
+      const time=model.asOfHkt.match(/\b(\d{2}:\d{2})\b/)?.[1],epoch=Date.parse(model.dataDate+'T'+time+':00+08:00')/1000,slot=preopenActionSlot(model.dataDate);
+      if(model.status!=='ready'||!Number.isFinite(epoch)||epoch<slot.startEpoch||epoch>=slot.endEpoch)kind='other';
+    }
+    return { kind, dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
   }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });

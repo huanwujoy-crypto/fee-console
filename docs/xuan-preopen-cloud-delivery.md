@@ -112,7 +112,7 @@ A/B 最小决策和真实停止回证见 `docs/xuan-preopen-source-feasibility.m
 业主关联receipt；无账号、金额、持仓、动作或自由文本错误。通过既有OWNER签名
 单文件index候选→Validate→Promote→Pages，status guard从trusted main独立重验
 政策/期限/receipt/run/前版及30分钟状态新鲜度。签名和公开SHA/blob读回沿用。
-分类为other/临时状态，不能计作complete-PM或通过正式slot健康验收；手机入口
+分类为preopen-status/临时状态，不能计作complete-PM或通过正式slot健康验收；手机入口
 显示数据未齐，既有旧报告原日期/指针单独保留，状态时间不表示上游完整。
 未通过发布链路时UI只显示延迟，不自行宣称某轮私有失败原因。
 
@@ -129,3 +129,7 @@ acceptance保留既有源读取/业主政策，不能通过正式publisher变成
 C真实财务文件不在本任务内；CSV纯header与字段语义仅用于synthetic离线适配。
 Trade Confirmation无整体whenGenerated/coverage终点且没有撤销配对，不能单独
 证明目标日最终账务或固定早间时限。当前候选仍draft，未改变生产mode/job。
+
+Promote选择器另有独立防降级：preopen-status不能替代同日已完成报告，
+同日合格complete-PM候选优先于更晚状态候选。新版切换后，采集时点在
+正式窗口前/后的验收页分类为other，不得占用同日complete-PM保护位。

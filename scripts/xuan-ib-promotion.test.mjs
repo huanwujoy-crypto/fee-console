@@ -142,3 +142,12 @@ test('complete pm beats same-date priority and replaces a published priority', (
   assert.equal(selectNewestCandidate([candidate({commitEpoch:250,htmlBlob:sha('d')})],
     priorityMeta,priorityState),null);
 });
+test('protected preopen status cannot downgrade a same-day complete report and complete candidates outrank later statuses',()=>{
+ const status=candidate({publication:{kind:'preopen-status',dataDate:published.dataDate,priorityKey:null,eligibleAtEpoch:null}});
+ const completeState={kind:'complete-pm',dataDate:published.dataDate,priorityKey:null,eligibleAtEpoch:null};
+ assert.equal(selectNewestCandidate([status],published,completeState),null);
+ const full=candidate({commitEpoch:102,htmlBlob:sha('e'),publication:completeState});
+ const later={...status,commitEpoch:103};
+ assert.equal(selectNewestCandidate([later,full],published,publishedState).sha,full.sha);
+ assert.equal(selectNewestCandidate([status],published,publishedState).publication.kind,'preopen-status');
+});

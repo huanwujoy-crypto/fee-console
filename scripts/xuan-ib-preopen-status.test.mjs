@@ -6,7 +6,7 @@ import {classifySleepPublication} from './xuan-ib-sleep-priority.mjs';
 import {extractPrimaryDateLine,classifyEdition} from './xuan-ib-publish-health.mjs';
 test('canonical value-free status has no amounts/actions and cannot prove scheduled completion',()=>{
  const f=statusFixture();assert.deepEqual(validateNightActionHtml(f.html,f.plan.dataDate,{snapshot:f.context.association,previousSourceSha:f.context.previousSourceSha,now:f.now()}),{dataDate:f.plan.dataDate,status:'data-not-ready',orderCount:0});
- assert.equal(classifySleepPublication(f.html).kind,'other');assert.equal(classifyEdition(extractPrimaryDateLine(f.html)),'adhoc');assert.ok(!f.html.includes('补仓金额 $'));assert.ok(!f.html.includes('<script'));assert.match(f.html,/非身份认证/);assert.match(f.html,/上一份报告原日期：2026-10-01/);
+ assert.equal(classifySleepPublication(f.html).kind,'preopen-status');assert.equal(classifyEdition(extractPrimaryDateLine(f.html)),'adhoc');assert.ok(!f.html.includes('补仓金额 $'));assert.ok(!f.html.includes('<script'));assert.match(f.html,/非身份认证/);assert.match(f.html,/上一份报告原日期：2026-10-01/);
 });
 test('extra financial field, arbitrary reason, fake identity and wrong slot cannot enter canonical marker',()=>{
  for(const modify of [m=>m.cash=100,m=>m.reasonCodes=['RAW_SECRET'],m=>m.association.accountId='fictional',m=>m.slotId='old',m=>m.attempt=3]){const f=statusFixture();modify(f.model);assert.throws(()=>renderNightActionReport(f.model));}

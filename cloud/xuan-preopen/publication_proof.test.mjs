@@ -8,3 +8,9 @@ test('formal publication needs exact date/source/meta/blob and real acquisition 
  }
  const s=statusFixture();assert.equal(provesFormalAction({...fixture(),html:s.html}),false);
 });
+test('new-cutover early/late acceptance remains other, genuine in-window ready is complete, status is separate',async()=>{
+ const {classifySleepPublication}=await import('../../scripts/xuan-ib-sleep-priority.mjs');
+ const f=fixture();assert.equal(classifySleepPublication(f.html).kind,'complete-pm');
+ for(const time of ['13:59','15:00']){f.model.asOfHkt=`2026-10-05 ${time} HKT · 数据至 2026-10-02`;assert.equal(classifySleepPublication(renderNightActionReport(f.model)).kind,'other');}
+ assert.equal(classifySleepPublication(statusFixture().html).kind,'preopen-status');
+});
