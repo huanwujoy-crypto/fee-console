@@ -26,6 +26,13 @@ const candidate = (overrides = {}) => ({
   ...overrides
 });
 
+test('limited readback cannot downgrade same-day complete report and complete wins among candidates',()=>{
+ const limited=candidate({publication:{...publication(published.dataDate),kind:'limited-readback'}});
+ assert.equal(selectNewestCandidate([limited],published,{...publishedState,kind:'complete-pm'}),null);
+ const complete=candidate({sha:sha('e'),htmlBlob:sha('f'),publication:{...publication(published.dataDate),kind:'complete-pm'}});
+ assert.equal(selectNewestCandidate([{...limited,commitEpoch:102},complete],published,publishedState).sha,complete.sha);
+});
+
 test("validates published metadata against the current latest.html blob", () => {
   assert.equal(validatePublishedMeta(published, sha("b")), published);
   assert.throws(() => validatePublishedMeta({...published, schemaVersion: 2}, sha("b")), /schemaVersion/);

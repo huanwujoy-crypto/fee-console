@@ -1,3 +1,4 @@
+import {validateLimitedStatus,renderLimitedStatus} from './xuan-ib-limited-status.mjs';
 const fail = code => { throw new Error(`Night action view: ${code}`); };
 const object = value => value && Object.getPrototypeOf(value) === Object.prototype;
 const finite = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1e12;
@@ -29,6 +30,7 @@ function validateOrder(order, schemaVersion) {
 }
 
 export function validateNightActionModel(model) {
+  if(model?.schemaVersion===7)return validateLimitedStatus(model);
   if (!object(model) || ![1, 2, 3, 4, 5].includes(model.schemaVersion)
     || !/^\d{4}-\d{2}-\d{2}$/.test(model.dataDate)
     || !text(model.asOfHkt) || !['ready', 'partial'].includes(model.status)) fail('INVALID_HEADER');
@@ -118,6 +120,7 @@ function renderOrders(title, rows, kind, schemaVersion) {
 }
 
 export function renderNightActionReport(model) {
+  if(model?.schemaVersion===7)return renderLimitedStatus(model);
   validateNightActionModel(model);
   const preopen = model.schemaVersion >= 4;
   const marker = Buffer.from(JSON.stringify(model), 'utf8').toString('base64url');

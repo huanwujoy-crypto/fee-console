@@ -165,7 +165,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-10-01.1";
+      const loaderBuild = "2026-10-02.2";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -319,7 +319,8 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         "<title>XUAN-投资管理</title>",
         "<title>XUAN-IB 睡前交接</title>",
         "<title>XUAN · 睡前行动版</title>",
-        "<title>XUAN · 开市前行动版</title>"
+        "<title>XUAN · 开市前行动版</title>",
+        "<title>XUAN · 有限核实补读</title>"
       ];
 
       const clock = () => new Intl.DateTimeFormat("zh-HK", {
@@ -572,6 +573,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const action = header?.[1].match(/<p>(\d{4}-\d{2}-\d{2})\s*·\s*([^<]+)<\/p>/i);
           if (!action) throw new Error("行动版缺少报告日期与时点");
           const times = [...action[2].matchAll(/\b(\d{2}:\d{2})\b/g)].map((match) => match[1]);
+          if(html.includes('<title>XUAN · 有限核实补读</title>'))return {dataDate:action[1],edition:'临时补读',label:`${action[1]} · 有限核实补读`,asOfHkt:times.at(-1)||null,statusOnly:true};
           const preopen = action[1] >= "2026-09-28";
           return { dataDate: action[1], edition: preopen ? "开市前版" : "睡前版",
             label: `${action[1]} · ${preopen ? '开市前行动版' : '睡前行动版'}`, asOfHkt: times.at(-1) || null };
@@ -932,6 +934,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       }
 
       const statusFor = (record, prefix) => {
+        if(record.info.statusOnly)return `有限核实补读 ${record.info.dataDate.slice(5)} · 数据部分核实\n读取 ${record.info.asOfHkt}，无行动建议 · 已检查 ${clock()}`;
         const report = `报告 ${record.info.dataDate.slice(5)} ${record.info.edition}` +
           (record.info.asOfHkt ? ` · 数据至 ${record.info.asOfHkt}` : "");
         if (prefix === "回应已记录") return `${report}\n回应已记录 · 已检查 ${clock()}`;
