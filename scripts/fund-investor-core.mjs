@@ -7,6 +7,8 @@ export function createFundInvestorCore() {
   const CORRECTION_KEYS = ["id", "subscriptionId", "fromInvestorId", "toInvestorId", "reason", "correctedAt"];
   const TRANSFER_KEYS = ["id", "date", "fromInvestorId", "toInvestorId", "paymentId", "feeAmountCents",
     "compensationCents", "priceDate", "priceTotalCents", "outstandingShares", "transferredShares", "reason"];
+  const PRICE_CORRECTION_KEYS = ["id", "transferId", "originalPriceDate", "originalPriceTotalCents", "originalTransferredShares",
+    "priceDate", "priceTotalCents", "transferredShares", "correctedAt", "reason", "sourceDataSha256", "authorizationRef"];
   const object = value => !!value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
   const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -25,7 +27,7 @@ export function createFundInvestorCore() {
   };
   function validateProfile(profile) {
     const invalid = reason => ({ ok: false, profile: null, reason });
-    const optional = ["subscriptions", "subscriptionCorrections", "shareTransfers"].filter(key => Object.hasOwn(profile || {}, key));
+    const optional = ["subscriptions", "subscriptionCorrections", "shareTransfers", "shareTransferPriceCorrections"].filter(key => Object.hasOwn(profile || {}, key));
     if (!exact(profile, [...PROFILE_KEYS, ...optional]) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
     if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
     if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
@@ -73,6 +75,25 @@ export function createFundInvestorCore() {
     const ownerOf = event => corrections.find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
     const transfers = profile.shareTransfers || [];
     if (!Array.isArray(transfers) || transfers.length > 48) return invalid("份额转让资料待核对");
+    const priceCorrections = profile.shareTransferPriceCorrections || [];
+    if (!Array.isArray(priceCorrections) || priceCorrections.length > transfers.length) return invalid("份额转让定价更正资料待核对");
+    const priceCorrectionIds = new Set(), priceCorrectionByTransfer = new Map();
+    for (const correction of priceCorrections) {
+      const original = transfers.find(transfer => transfer?.id === correction?.transferId);
+      if (!exact(correction, PRICE_CORRECTION_KEYS) || !original || !/^[A-Za-z0-9_-]{8,80}$/.test(correction.id)
+        || priceCorrectionIds.has(correction.id) || priceCorrectionByTransfer.has(correction.transferId)
+        || correction.originalPriceDate !== original.priceDate || correction.originalPriceTotalCents !== original.priceTotalCents
+        || correction.originalTransferredShares !== original.transferredShares || correction.priceDate !== original.priceDate
+        || !integer(correction.priceTotalCents) || correction.priceTotalCents <= 0 || correction.priceTotalCents === original.priceTotalCents
+        || !integer(correction.transferredShares) || correction.transferredShares <= 0
+        || !text(correction.reason, 300) || correction.reason.length < 2 || !text(correction.authorizationRef, 300)
+        || typeof correction.sourceDataSha256 !== "string" || !/^[a-f0-9]{64}$/.test(correction.sourceDataSha256)
+        || typeof correction.correctedAt !== "string" || !Number.isFinite(Date.parse(correction.correctedAt))
+        || new Date(correction.correctedAt).toISOString() !== correction.correctedAt || correction.correctedAt.slice(0,10) < original.date) {
+        return invalid("份额转让定价更正资料待核对");
+      }
+      priceCorrectionIds.add(correction.id); priceCorrectionByTransfer.set(correction.transferId, correction);
+    }
     const transferIds = new Set(), paymentIds = new Set(), validatedTransfers = []; let previousTransferDate = "";
     const sharesAt = priceDate => {
       const shares = new Map(profile.investors.map(investor => [investor.id, BigInt(investor.shares)]));
@@ -110,13 +131,22 @@ export function createFundInvestorCore() {
         || transfer.compensationCents !== expectedCompensation || transfer.transferredShares !== expectedTransfer) {
         return invalid("份额转让计算待核对");
       }
-      transferIds.add(transfer.id); paymentIds.add(transfer.paymentId); validatedTransfers.push(transfer);
+      const correction = priceCorrectionByTransfer.get(transfer.id);
+      let effective = transfer;
+      if (correction) {
+        const expected = Number((BigInt(transfer.compensationCents) * at.outstanding * 2n + BigInt(correction.priceTotalCents)) /
+          (2n * BigInt(correction.priceTotalCents)));
+        if (correction.transferredShares !== expected || senderShares < BigInt(expected)) return invalid("份额转让定价更正计算待核对");
+        effective = { ...transfer, priceTotalCents: correction.priceTotalCents, transferredShares: correction.transferredShares };
+      }
+      transferIds.add(transfer.id); paymentIds.add(transfer.paymentId); validatedTransfers.push(effective);
       previousTransferDate = transfer.date;
     }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
       ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
       ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}),
-      ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}) }, reason: null };
+      ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}),
+      ...(Object.hasOwn(profile, "shareTransferPriceCorrections") ? { shareTransferPriceCorrections: priceCorrections.map(correction => ({ ...correction })) } : {}) }, reason: null, effectiveTransfers: validatedTransfers.map(transfer => ({ ...transfer })) };
   }
   const subscriptionOwner = (profile, event) => (profile.subscriptionCorrections || []).find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
   function registeredShares(profile) {
@@ -124,7 +154,7 @@ export function createFundInvestorCore() {
     const shares = new Map(checked.profile.investors.map(investor => [investor.id, investor.shares]));
     for (const event of checked.profile.subscriptions || []) shares.set(subscriptionOwner(checked.profile, event),
       shares.get(subscriptionOwner(checked.profile, event)) + event.issuedShares);
-    for (const transfer of checked.profile.shareTransfers || []) {
+    for (const transfer of checked.effectiveTransfers || []) {
       shares.set(transfer.fromInvestorId, shares.get(transfer.fromInvestorId) - transfer.transferredShares);
       shares.set(transfer.toInvestorId, shares.get(transfer.toInvestorId) + transfer.transferredShares);
     }
@@ -188,7 +218,7 @@ export function createFundInvestorCore() {
     const initialShares = checked.profile.investors.map(investor => investor.shares);
     const initialCents = daily[0].totalCents;
     const subscriptions = (checked.profile.subscriptions || []).filter(event => event.date <= feeView.asOf);
-    const activeTransfers = (checked.profile.shareTransfers || []).filter(event => event.date <= feeView.asOf);
+    const activeTransfers = (checked.effectiveTransfers || []).filter(event => event.date <= feeView.asOf);
     const accepted = new Map(), acceptedTransfers = new Map(); let outstanding = BigInt(checked.profile.initialShares), flowGateDate = null;
     const gate = eventDate => { if (!flowGateDate || eventDate < flowGateDate) flowGateDate = eventDate; };
     for (const event of subscriptions) {

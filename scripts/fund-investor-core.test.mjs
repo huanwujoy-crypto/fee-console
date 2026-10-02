@@ -6,7 +6,7 @@ import { createFundInvestorCore } from "./fund-investor-core.mjs";
 
 const core = createFundInvestorCore();
 test("activated browser uses the exact reviewed fund factory", () => {
-  const html=fs.readFileSync(new URL("../index.html",import.meta.url),"utf8");
+  const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX || new URL("../index.html",import.meta.url),"utf8");
   const start="/* fund-investor-core:start */",end="/* fund-investor-core:end */";
   if(!html.includes(start)){assert.ok(!html.includes('id="p-investors"'));return;}
   assert.equal(html.split(start).length,2);assert.equal(html.split(end).length,2);
@@ -27,6 +27,9 @@ test("activated browser uses the exact reviewed fund factory", () => {
     // The subsequent index-only PR must embed the new factory exactly.
     assert.equal(createHash("sha256").update(embedded).digest("hex"),"163d6718f4202d96b7e21d151ab3f63c90ca3a8d94e54da13ea5f76e1c90b725");
     return;
+  }
+  if(!embedded.includes('const PRICE_CORRECTION_KEYS =')) {
+    assert.equal(createHash("sha256").update(embedded).digest("hex"),"a849201b27f0f25742c87526d6a821b451eb092534c7ad98d761553cc8315bc5");return;
   }
   assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
 });
@@ -349,4 +352,29 @@ test("calculation neither mutates nor leaks references to input data or profile"
   assert.deepEqual(input, before);
   const checked = core.validateProfile(input.profile); checked.profile.investors[0].shares = 7;
   assert.deepEqual(input, before);
+});
+
+const priceCorrectionFixture=()=>{
+ const input=fixture();input.profile.investors=[{id:'A',name:'Example Alpha',shares:600},{id:'B',name:'Example Beta',shares:400}];input.profile.initialShares=1000;
+ input.data.daily[2]={d:'2024-02-29',schwab:90,webull:91};
+ input.profile.shareTransfers=[{id:'transfer-price-synthetic',date:'2024-03-01',fromInvestorId:'B',toInvestorId:'A',paymentId:'payment-price-synthetic',feeAmountCents:2500,compensationCents:1000,priceDate:'2024-02-29',priceTotalCents:18000,outstandingShares:1000,transferredShares:56,reason:'synthetic off-fund compensation'}];
+ input.payments=[{id:'payment-price-synthetic',date:'2024-03-01',amount:25,ccy:'USD'}];return input;
+};
+const priceCorrection=()=>({id:'correction-price-synthetic',transferId:'transfer-price-synthetic',originalPriceDate:'2024-02-29',originalPriceTotalCents:18000,originalTransferredShares:56,priceDate:'2024-02-29',priceTotalCents:18100,transferredShares:55,correctedAt:'2024-03-02T08:00:00.000Z',reason:'synthetic same-day valuation replacement; retain original record',sourceDataSha256:'a'.repeat(64),authorizationRef:'synthetic owner approval of one-share pricing correction'});
+test('append-only price correction restores exact-point valuation with original records and all prior points intact',()=>{
+ const input=priceCorrectionFixture(),old=structuredClone(input),before=core.calculate(input);assert.equal(before.status,'partial');input.profile.shareTransferPriceCorrections=[priceCorrection()];const actual=core.calculate(input);
+ assert.equal(actual.status,'ready');assert.deepEqual(actual.current.investors.map(i=>i.shares),[655,345]);assert.deepEqual(core.registeredShares(input.profile),[655,345]);assert.equal(actual.current.investors.reduce((s,i)=>s+i.shares,0),1000);
+ assert.deepEqual(input.profile.shareTransfers,old.profile.shareTransfers);assert.deepEqual(input.payments,old.payments);assert.deepEqual(input.data,old.data);assert.deepEqual(input.feeView,old.feeView);assert.deepEqual(actual.points.slice(0,-1),before.points);
+ assert.equal(actual.current.investors.reduce((s,i)=>s+i.valueCents,0),actual.current.totalCents);
+});
+test('pricing correction binds one original transfer, approved evidence and exact integer arithmetic',()=>{
+ for(const mutate of [c=>c.transferId='missing-transfer',c=>c.originalPriceTotalCents++,c=>c.originalTransferredShares++,c=>c.originalPriceDate='2024-02-28',c=>c.priceDate='2024-02-28',c=>c.transferredShares++,c=>c.authorizationRef='',c=>c.sourceDataSha256='bad',c=>c.correctedAt='2024-02-28T08:00:00.000Z',c=>c.feeAmountCents=2500]){
+ const input=priceCorrectionFixture(),c=priceCorrection();mutate(c);input.profile.shareTransferPriceCorrections=[c];assert.equal(core.validateProfile(input.profile).ok,false);assert.equal(core.calculate(input).status,'pending');
+ }
+ const input=priceCorrectionFixture();input.profile.shareTransferPriceCorrections=[priceCorrection(),{...priceCorrection(),id:'second-correction-synthetic'}];assert.equal(core.validateProfile(input.profile).ok,false);
+});
+test('corrected math cannot bypass a mismatched valuation point, missing payment or unverified fee receipt',()=>{
+ for(const mutate of [x=>x.data.daily[2].webull++,x=>x.payments=[],x=>x.feeView.state='pending']){
+ const input=priceCorrectionFixture();input.profile.shareTransferPriceCorrections=[priceCorrection()];mutate(input);assert.notEqual(core.calculate(input).status,'ready');
+ }
 });
