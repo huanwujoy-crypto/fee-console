@@ -521,7 +521,7 @@ const provisionalCodesFor = normalizedData => {
   const codes = [];
   if (normalizedData.daily.some(point => point.provisional)) codes.push("daily-provisional");
   if (normalizedData.status.provisional) codes.push("status-provisional");
-  if (normalizedData.daily.some(point => point.incomeDateAudits?.length)) codes.push("owner-estimated-cash-date");
+  if (normalizedData.daily.some(point => point.incomeDateAudits?.some(audit=>!audit.proof.resolution))) codes.push("owner-estimated-cash-date");
   return codes;
 };
 

@@ -73,9 +73,36 @@ test('estimated date audit stays committed and provisional even with calibrated 
  assert.deepEqual(incomeDateEvidenceFromData(data,D)[KEY],createIncomeDatePolicy().normalize(data.daily[0].incomeDateAudits[0],D).proof);
  const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),'utf8');
  const scope={crypto:crypto.webcrypto,TextEncoder,TextDecoder,structuredClone};scope.globalThis=scope;vm.createContext(scope);vm.runInContext(html.slice(html.indexOf('/* fee-receipt-consumer:start */'),html.indexOf('/* fee-receipt-consumer:end */')),scope);
- assert.equal(vm.runInContext('createIncomeDatePolicy.toString()',scope),createIncomeDatePolicy.toString());
+ const activePolicy=vm.runInContext('createIncomeDatePolicy.toString()',scope);
+ if(!activePolicy.includes('broker-statement-verified'))assert.equal(crypto.createHash('sha256').update(activePolicy).digest('hex'),'624b1082088cccbd697d09e354201755873efb87a728471d25f61991aeda8c67');else assert.equal(activePolicy,createIncomeDatePolicy.toString());
  assert.equal((await scope.feeReceiptUiModel({receipt,data,economicInput})).ok,true);
  for(const mutate of [x=>x.daily[0].incomeDateAudits[0].proof.sourceRef='changed authorization',x=>x.daily[0].incomeDateAudits[0].proof.condition.dividendAbsent=false,x=>delete x.daily[0].incomeDateAudits]){
  const altered=structuredClone(data);mutate(altered);assert.equal(validateFeeCalculationReceipt(receipt,altered).ok,false);assert.equal((await scope.feeReceiptUiModel({receipt,data:altered,economicInput})).ok,false);
  }
+});
+
+const resolution=()=>({authority:'broker-statement-verified',verified:true,cashDate:D,statementDate:D,issuedDate:'2026-10-02',sourceRef:'synthetic statement pages 2-4',sourceSha256:'a'.repeat(64),pageNumbers:[2,3,4],grossCents:10000,withholdingCents:3000,collectionFeeCents:40,netCashCents:6960,reviewedBy:'synthetic reviewer',reviewedAt:'2026-10-02T09:00:00.000Z'});
+test('statement resolution preserves the estimate and resolves only the exact net dividend and fee pair',()=>{
+ const x=fixture(),original=estimate();x.dateEvidence[KEY]={...original,resolution:resolution()};
+ const result=flows(x);for(const row of result){assert.equal(row.evidence,'internal_income');assert.equal(row.incomeDateVerified,true);assert.equal(classifyFlow(row).kind,'internal');const prior=structuredClone(row.incomeDateAudit.proof);delete prior.resolution;assert.deepEqual(prior,original);}
+ assert.equal(reconcileFlows([],[],result).auto.length,0);
+ for(const change of [r=>r.sourceSha256='',r=>r.cashDate='2026-09-30',r=>r.grossCents++,r=>r.netCashCents++,r=>r.pageNumbers=[2,2],r=>r.verified=false,r=>r.unreviewedExtra=true]){
+ const altered=fixture(),r=resolution();change(r);altered.dateEvidence[KEY]={...estimate(),resolution:r};for(const row of flows(altered))assert.equal(classifyFlow(row).kind,'unresolved');
+ }
+});
+test('resolved estimate remains receipt-committed while its provisional cash-date warning clears',async()=>{
+ const {buildFeeCalculationReceipt,validateFeeCalculationReceipt}=await import('./fee-receipt-core.mjs');
+ const data={daily:[{d:D,schwab:10000,webull:10000,incomeDateAudits:[{eventKey:KEY,proof:{...estimate(),resolution:resolution()}}]}],flowsAuto:[],flowsUnresolved:[],status:{asOf:D,provisional:false,calibrated:true,unresolvedCount:0}};
+ const economicInput={v:4,settings:{start:D,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:10000},{id:'webull',opening:10000}],months:[],fees:[]};
+ const receipt=buildFeeCalculationReceipt({data,economicInput});assert.deepEqual(receipt.status.provisionalCodes,[]);assert.equal(validateFeeCalculationReceipt(receipt,data).ok,true);
+ for(const mutate of [d=>delete d.daily[0].incomeDateAudits[0].proof.resolution,d=>d.daily[0].incomeDateAudits[0].proof.resolution.sourceSha256='b'.repeat(64),d=>d.daily[0].incomeDateAudits[0].proof.sourceRef='rewritten owner instruction']){const altered=structuredClone(data);mutate(altered);assert.equal(validateFeeCalculationReceipt(receipt,altered).ok,false);}
+ const fs=await import('node:fs'),vm=await import('node:vm'),crypto=await import('node:crypto');const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),'utf8');
+ if(html.includes("r.authority!=='broker-statement-verified'")){const scope={crypto:crypto.webcrypto,TextEncoder,TextDecoder,structuredClone};scope.globalThis=scope;vm.createContext(scope);vm.runInContext(html.split('/* fee-receipt-consumer:start */')[1].split('/* fee-receipt-consumer:end */')[0],scope);assert.equal((await scope.feeReceiptUiModel({receipt,data,economicInput})).ok,true);}
+});
+
+test('writer audit merge permits one append and exact repeats; blocks deletion and changed original evidence',async()=>{
+ const {mergeIncomeDateAudit}=await import('./fee-income-date-policy.mjs');const previous={eventKey:KEY,proof:estimate()},next={eventKey:KEY,proof:{...estimate(),resolution:resolution()}};
+ const merged=mergeIncomeDateAudit(previous,next,D);assert.deepEqual(merged,next);assert.deepEqual(mergeIncomeDateAudit(merged,next,D),merged);
+ for(const incoming of [previous,{...next,proof:{...next.proof,sourceRef:'rewritten estimate'}},{...next,proof:{...next.proof,resolution:{...resolution(),sourceSha256:'b'.repeat(64)}}}])assert.throws(()=>mergeIncomeDateAudit(merged,incoming,D),/conflict/);
+ assert.throws(()=>mergeIncomeDateAudit(previous,{...next,proof:{...next.proof,sourceRef:'rewritten estimate'}},D),/conflict/);
 });

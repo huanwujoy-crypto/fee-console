@@ -13,7 +13,7 @@
 //
 // 幂等：数据点、flow 与 status 均无变化时打印 "no-op <date>" 并以 0 退出。
 // 输出只含状态与计数，绝不打印金额或密钥。
-import { incomeDatePolicy } from './fee-income-date-policy.mjs';
+import { incomeDatePolicy, mergeIncomeDateAudit } from './fee-income-date-policy.mjs';
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
@@ -427,10 +427,9 @@ if (weekendCarry && weekendCarryPrior?.managementExemptions !== undefined)
   point.managementExemptions = structuredClone(weekendCarryPrior.managementExemptions);
 const existingPoint = data.daily.find(x => x && x.d === date);
 const incomeAudits=new Map((incomeDatePolicy.point(existingPoint||{d:date}).incomeDateAudits||[]).map(a=>[a.eventKey,a]));
-for(const flow of incoming)if(flow.evidence==='internal_income_estimated') {
+for(const flow of incoming)if(flow.incomeDateAudit&&(flow.evidence==='internal_income_estimated'||flow.evidence==='internal_income')) {
   const audit=incomeDatePolicy.normalize(flow.incomeDateAudit,date);
-  if(incomeAudits.has(audit.eventKey)&&JSON.stringify(incomeAudits.get(audit.eventKey))!==JSON.stringify(audit))die('income date audit conflict');
-  incomeAudits.set(audit.eventKey,audit);
+  try{incomeAudits.set(audit.eventKey,mergeIncomeDateAudit(incomeAudits.get(audit.eventKey),audit,date));}catch{die('income date audit conflict');}
 }
 if(incomeAudits.size)Object.assign(point,incomeDatePolicy.point({d:date,incomeDateAudits:[...incomeAudits.values()]}));
 if (weekendCarry && Array.isArray(weekendCarryPrior?.topHoldings)) {

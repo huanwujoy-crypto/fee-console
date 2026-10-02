@@ -55,7 +55,7 @@ export function resolveDividendCashEvidence({account, portfolioId, targetDate, c
     const expectedFee=Math.max(Number(feeText[4]),Math.round(payout.gross_amount*Number(feeText[3]))/100);
     if (cents(expectedFee)!==-cents(fee.row.amount)) continue;
     const proof=dateEvidence[key];
-    const dateReady=proof?.verified===true && proof.cashDate===targetDate
+    let dateReady=proof?.verified===true && proof.cashDate===targetDate
       && ['broker-cash-ledger','owner-approved-cash-posting'].includes(proof.authority)
       && typeof proof.sourceRef==='string' && proof.sourceRef.trim().length>0;
     let audit;
@@ -65,6 +65,11 @@ export function resolveDividendCashEvidence({account, portfolioId, targetDate, c
         if(audit.proof.scope.payoutId!==payout.id || audit.proof.scope.cashAccountId!==net.row.cash_account_id
           || JSON.stringify(audit.proof.scope.cashRecordIds)!==JSON.stringify([net.row.id,fee.row.id].sort((a,b)=>a-b)))audit=undefined;
       } catch { audit=undefined; }
+    }
+    if(audit?.proof.resolution) {
+      const resolution=audit.proof.resolution;
+      if(resolution.grossCents!==cents(payout.gross_amount)||resolution.withholdingCents!==cents(payout.resident_withholding_tax)||resolution.collectionFeeCents!==-cents(fee.row.amount)||resolution.netCashCents!==cents(net.row.amount+fee.row.amount))audit=undefined;
+      else dateReady=true;
     }
     for (const item of group) result.set(item.row.id, {
       evidence:dateReady?'internal_income':audit?'internal_income_estimated':'internal_income_pending_date',
