@@ -75,9 +75,13 @@ export async function collectDelivery({request = null, now = Date.now, wait = ms
   const model = extractNightActionModel(html);
   if (model.dataDate !== plan.dataDate || model.status !== 'ready'
       || !model.asOfHkt.endsWith(`数据至 ${plan.sourceDate}`)) fail('MODEL');
+  const capturedTime = model.asOfHkt.match(/\b(\d{2}:\d{2})\b/)?.[1];
+  const capturedEpoch = Date.parse(`${plan.dataDate}T${capturedTime}:00+08:00`);
+  if (!Number.isFinite(capturedEpoch) || capturedEpoch < plan.startEpoch * 1000
+      || Math.abs(capturedEpoch - started) >= 60_000) fail('MODEL_SOURCE_TIME');
   if (gitBlobSha(context.previousHtml) === gitBlobSha(html)) {
     const meta = context.previousMeta;
-    if (meta?.dataDate !== plan.dataDate || model.schemaVersion < 4 || meta.sourceCommitEpoch < plan.startEpoch
+    if (meta?.dataDate !== plan.dataDate || model.schemaVersion < 4 || !Number.isInteger(meta.sourceCommitEpoch) || meta.sourceCommitEpoch < plan.startEpoch
         || meta.htmlBlob !== gitBlobSha(html) || meta.sourceSha !== context.previousSourceSha) fail('PUBLICATION_CONFLICT');
     // Same bytes plus a current, fresh, exact-slot receipt prove idempotency.
     return {outcome: 'already-published', dataDate: plan.dataDate, slotId: plan.slotId};

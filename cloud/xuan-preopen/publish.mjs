@@ -42,6 +42,10 @@ export async function publishPrepared({html, receipt, request = githubRequest, l
   if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
   validateNightActionHtml(html, dataDate);
   const model = extractNightActionModel(html);
+  const capturedTime = model.asOfHkt.match(/\b(\d{2}:\d{2})\b/)?.[1];
+  const capturedEpoch = Date.parse(`${dataDate}T${capturedTime}:00+08:00`);
+  if (!Number.isFinite(capturedEpoch) || capturedEpoch < plan.startEpoch * 1000
+      || Math.abs(capturedEpoch - started) >= 60_000) fail('MODEL_SOURCE_TIME');
   if (model.schemaVersion !== 5 || model.status !== 'ready' || !model.asOfHkt.endsWith(`数据至 ${receipt.sourceDate}`)) fail('MODEL');
   const verifyContext = async () => {
     const context = await loadContext({now});

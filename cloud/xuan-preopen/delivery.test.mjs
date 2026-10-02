@@ -1,5 +1,5 @@
 import {IB_READINESS_KEYS} from './source_readiness.mjs';
-import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
+import {renderNightActionReport,extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -70,4 +70,12 @@ test('old root receipts never satisfy formal slot; stale or mismatched slot rece
     await assert.rejects(collectDelivery({now,request:async url=>url.includes('receipt.json')?JSON.stringify(r):html,
       loadContext:async()=>({previousHtml:html})}));
   }
+});
+
+test('fresh wrapper receipt cannot relabel early acceptance HTML as formal action report', async()=>{
+  const model=extractNightActionModel(html);model.asOfHkt='2026-10-01 13:59 HKT · 数据至 2026-09-30';
+  const early=renderNightActionReport(model),r=JSON.parse(receipt);
+  r.artifact.sha256=crypto.createHash('sha256').update(early).digest('hex');
+  await assert.rejects(collectDelivery({now,request:async url=>url.includes('receipt.json')?JSON.stringify(r):early,
+    loadContext:async()=>({previousHtml:early})}),/MODEL_SOURCE_TIME/);
 });
