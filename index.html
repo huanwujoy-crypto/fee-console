@@ -903,6 +903,8 @@ function createFundInvestorCore() {
   const CORRECTION_KEYS = ["id", "subscriptionId", "fromInvestorId", "toInvestorId", "reason", "correctedAt"];
   const TRANSFER_KEYS = ["id", "date", "fromInvestorId", "toInvestorId", "paymentId", "feeAmountCents",
     "compensationCents", "priceDate", "priceTotalCents", "outstandingShares", "transferredShares", "reason"];
+  const PRICE_CORRECTION_KEYS = ["id", "transferId", "originalPriceDate", "originalPriceTotalCents", "originalTransferredShares",
+    "priceDate", "priceTotalCents", "transferredShares", "correctedAt", "reason", "sourceDataSha256", "authorizationRef"];
   const object = value => !!value && typeof value === "object" && !Array.isArray(value)
     && [Object.prototype, null].includes(Object.getPrototypeOf(value));
   const exact = (value, keys) => object(value) && Object.keys(value).length === keys.length && keys.every(key => Object.hasOwn(value, key));
@@ -921,7 +923,7 @@ function createFundInvestorCore() {
   };
   function validateProfile(profile) {
     const invalid = reason => ({ ok: false, profile: null, reason });
-    const optional = ["subscriptions", "subscriptionCorrections", "shareTransfers"].filter(key => Object.hasOwn(profile || {}, key));
+    const optional = ["subscriptions", "subscriptionCorrections", "shareTransfers", "shareTransferPriceCorrections"].filter(key => Object.hasOwn(profile || {}, key));
     if (!exact(profile, [...PROFILE_KEYS, ...optional]) || profile.schema !== SCHEMA || profile.currency !== "USD") return invalid("基金资料格式待核对");
     if (!text(profile.manager, 120) || !text(profile.fundName, 120)) return invalid("管理人与基金名称待核对");
     if (!date(profile.inceptionDate) || !date(profile.inceptionNoticeDate) || profile.inceptionNoticeDate < profile.inceptionDate) return invalid("成立日与通知日期待核对");
@@ -969,6 +971,25 @@ function createFundInvestorCore() {
     const ownerOf = event => corrections.find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
     const transfers = profile.shareTransfers || [];
     if (!Array.isArray(transfers) || transfers.length > 48) return invalid("份额转让资料待核对");
+    const priceCorrections = profile.shareTransferPriceCorrections || [];
+    if (!Array.isArray(priceCorrections) || priceCorrections.length > transfers.length) return invalid("份额转让定价更正资料待核对");
+    const priceCorrectionIds = new Set(), priceCorrectionByTransfer = new Map();
+    for (const correction of priceCorrections) {
+      const original = transfers.find(transfer => transfer?.id === correction?.transferId);
+      if (!exact(correction, PRICE_CORRECTION_KEYS) || !original || !/^[A-Za-z0-9_-]{8,80}$/.test(correction.id)
+        || priceCorrectionIds.has(correction.id) || priceCorrectionByTransfer.has(correction.transferId)
+        || correction.originalPriceDate !== original.priceDate || correction.originalPriceTotalCents !== original.priceTotalCents
+        || correction.originalTransferredShares !== original.transferredShares || correction.priceDate !== original.priceDate
+        || !integer(correction.priceTotalCents) || correction.priceTotalCents <= 0 || correction.priceTotalCents === original.priceTotalCents
+        || !integer(correction.transferredShares) || correction.transferredShares <= 0
+        || !text(correction.reason, 300) || correction.reason.length < 2 || !text(correction.authorizationRef, 300)
+        || typeof correction.sourceDataSha256 !== "string" || !/^[a-f0-9]{64}$/.test(correction.sourceDataSha256)
+        || typeof correction.correctedAt !== "string" || !Number.isFinite(Date.parse(correction.correctedAt))
+        || new Date(correction.correctedAt).toISOString() !== correction.correctedAt || correction.correctedAt.slice(0,10) < original.date) {
+        return invalid("份额转让定价更正资料待核对");
+      }
+      priceCorrectionIds.add(correction.id); priceCorrectionByTransfer.set(correction.transferId, correction);
+    }
     const transferIds = new Set(), paymentIds = new Set(), validatedTransfers = []; let previousTransferDate = "";
     const sharesAt = priceDate => {
       const shares = new Map(profile.investors.map(investor => [investor.id, BigInt(investor.shares)]));
@@ -1006,13 +1027,22 @@ function createFundInvestorCore() {
         || transfer.compensationCents !== expectedCompensation || transfer.transferredShares !== expectedTransfer) {
         return invalid("份额转让计算待核对");
       }
-      transferIds.add(transfer.id); paymentIds.add(transfer.paymentId); validatedTransfers.push(transfer);
+      const correction = priceCorrectionByTransfer.get(transfer.id);
+      let effective = transfer;
+      if (correction) {
+        const expected = Number((BigInt(transfer.compensationCents) * at.outstanding * 2n + BigInt(correction.priceTotalCents)) /
+          (2n * BigInt(correction.priceTotalCents)));
+        if (correction.transferredShares !== expected || senderShares < BigInt(expected)) return invalid("份额转让定价更正计算待核对");
+        effective = { ...transfer, priceTotalCents: correction.priceTotalCents, transferredShares: correction.transferredShares };
+      }
+      transferIds.add(transfer.id); paymentIds.add(transfer.paymentId); validatedTransfers.push(effective);
       previousTransferDate = transfer.date;
     }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
       ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
       ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}),
-      ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}) }, reason: null };
+      ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}),
+      ...(Object.hasOwn(profile, "shareTransferPriceCorrections") ? { shareTransferPriceCorrections: priceCorrections.map(correction => ({ ...correction })) } : {}) }, reason: null, effectiveTransfers: validatedTransfers.map(transfer => ({ ...transfer })) };
   }
   const subscriptionOwner = (profile, event) => (profile.subscriptionCorrections || []).find(correction => correction.subscriptionId === event.id)?.toInvestorId || event.investorId;
   function registeredShares(profile) {
@@ -1020,7 +1050,7 @@ function createFundInvestorCore() {
     const shares = new Map(checked.profile.investors.map(investor => [investor.id, investor.shares]));
     for (const event of checked.profile.subscriptions || []) shares.set(subscriptionOwner(checked.profile, event),
       shares.get(subscriptionOwner(checked.profile, event)) + event.issuedShares);
-    for (const transfer of checked.profile.shareTransfers || []) {
+    for (const transfer of checked.effectiveTransfers || []) {
       shares.set(transfer.fromInvestorId, shares.get(transfer.fromInvestorId) - transfer.transferredShares);
       shares.set(transfer.toInvestorId, shares.get(transfer.toInvestorId) + transfer.transferredShares);
     }
@@ -1084,7 +1114,7 @@ function createFundInvestorCore() {
     const initialShares = checked.profile.investors.map(investor => investor.shares);
     const initialCents = daily[0].totalCents;
     const subscriptions = (checked.profile.subscriptions || []).filter(event => event.date <= feeView.asOf);
-    const activeTransfers = (checked.profile.shareTransfers || []).filter(event => event.date <= feeView.asOf);
+    const activeTransfers = (checked.effectiveTransfers || []).filter(event => event.date <= feeView.asOf);
     const accepted = new Map(), acceptedTransfers = new Map(); let outstanding = BigInt(checked.profile.initialShares), flowGateDate = null;
     const gate = eventDate => { if (!flowGateDate || eventDate < flowGateDate) flowGateDate = eventDate; };
     for (const event of subscriptions) {
@@ -1214,7 +1244,7 @@ async function saveFundProfileForm(){
   const profile={schema:"fee-console.fund-profile.v1",manager:value("fundFormManager"),fundName:value("fundFormName"),
     inceptionDate:value("fundFormInception"),inceptionNoticeDate:value("fundFormNotice"),currency:"USD",initialShares:Number(value("fundFormShares")),
     investors:["A","B"].map(id=>({id:value("fundForm"+id+"Id"),name:value("fundForm"+id+"Name"),shares:Number(value("fundForm"+id+"Shares"))}))};
-  return saveFundProfile(async()=>{const current=await readFundProfile();if(current.profile?.subscriptions?.length)profile.subscriptions=current.profile.subscriptions;if(current.profile?.subscriptionCorrections?.length)profile.subscriptionCorrections=current.profile.subscriptionCorrections;if(current.profile?.shareTransfers?.length)profile.shareTransfers=current.profile.shareTransfers;return profile;});
+  return saveFundProfile(async()=>{const current=await readFundProfile();if(current.profile?.subscriptions?.length)profile.subscriptions=current.profile.subscriptions;if(current.profile?.subscriptionCorrections?.length)profile.subscriptionCorrections=current.profile.subscriptionCorrections;if(current.profile?.shareTransfers?.length)profile.shareTransfers=current.profile.shareTransfers;if(current.profile?.shareTransferPriceCorrections?.length)profile.shareTransferPriceCorrections=current.profile.shareTransferPriceCorrections;return profile;});
 }
 function subscriptionDraft(profile,flow,investorId){
   if(!profile||!flow||flow.acct!=="webull"||!/^[A-Za-z0-9_-]{8,45}$/.test(String(flow.id||""))||!profile.investors.some(i=>i.id===investorId))throw new Error("请选择已核验身份的投资人和 Webull 入金");
@@ -1413,7 +1443,8 @@ async function writeRemoteFundBundle(profile,library,expectedRaw=currentRemoteFu
   if(latestRaw){
     const previous=await decodeRemoteFundBundle(latestRaw,gid,keyValue),older=previous.profile.subscriptions||[],newer=profileCheck.profile.subscriptions||[],
       olderCorrections=previous.profile.subscriptionCorrections||[],newerCorrections=profileCheck.profile.subscriptionCorrections||[],
-      olderTransfers=previous.profile.shareTransfers||[],newerTransfers=profileCheck.profile.shareTransfers||[];
+      olderTransfers=previous.profile.shareTransfers||[],newerTransfers=profileCheck.profile.shareTransfers||[],
+      olderPriceCorrections=previous.profile.shareTransferPriceCorrections||[],newerPriceCorrections=profileCheck.profile.shareTransferPriceCorrections||[];
     if(older.length&&(
       previous.profile.inceptionDate!==profileCheck.profile.inceptionDate||
       previous.profile.initialShares!==profileCheck.profile.initialShares||
@@ -1424,6 +1455,8 @@ async function writeRemoteFundBundle(profile,library,expectedRaw=currentRemoteFu
       throw new Error("已发布归属更正不可删除或重写");
     if(olderTransfers.length>newerTransfers.length||olderTransfers.some((transfer,index)=>JSON.stringify(transfer)!==JSON.stringify(newerTransfers[index])))
       throw new Error("已发布份额转让不可删除或重写");
+    if(olderPriceCorrections.length>newerPriceCorrections.length||olderPriceCorrections.some((event,index)=>JSON.stringify(event)!==JSON.stringify(newerPriceCorrections[index])))throw new Error("已发布份额转让定价更正不可删除或重写");
+    if(JSON.stringify(previous.profile)===JSON.stringify(profileCheck.profile)&&JSON.stringify(previous.library)===JSON.stringify(libraryCheck.library)){_remoteFund={state:"verified",gid,keyValue,revision:latest.history?.[0]?.version||"",raw:latestRaw,bundle:previous,reason:""};return previous;}
   }
   const bundle={schema:FUND_REMOTE_SCHEMA,gid,updatedAt:new Date().toISOString(),profile:profileCheck.profile,library:libraryCheck.library};
   const data=await encTxt(await keyOf(keyValue),JSON.stringify(bundle)),raw=JSON.stringify({enc:true,v:1,data});
@@ -1933,8 +1966,9 @@ function renderInvestors(loaded,feeView){
     registeredText=(profile.subscriptions?.length||profile.shareTransfers?.length)?`<div class="small">基金档案已登记模拟份额：${profile.investors.map((i,index)=>`${esc(i.id)} ${fmt(registeredShares[index])} 股（${(registeredShares[index]/registeredTotal*100).toFixed(2)}%）`).join(" · ")}。${registeredVerified?"已由最新计算回执核验":`最新估值${last?`截至 ${esc(last.date)}`:"尚未生成"}，尚未覆盖最新份额事件`}。</div>`:"";
   const correctionText=(profile.subscriptionCorrections||[]).map(c=>`<div class="small">归属更正：${esc(c.fromInvestorId)} → ${esc(c.toInvestorId)} · ${esc(c.correctedAt.slice(0,10))} · ${esc(c.reason)}</div>`).join("");
   const transferText=(profile.shareTransfers||[]).map(event=>`<div class="small">费用补偿份额转让：${esc(event.fromInvestorId)} → ${esc(event.toInvestorId)} · ${esc(event.date)} · ${fmt(event.transferredShares)} 股 · 对应付款 ${money(event.feeAmountCents)} · 定价日 ${esc(event.priceDate)}</div>`).join("");
+  const priceCorrectionText=(profile.shareTransferPriceCorrections||[]).map(c=>`<div class="small">补偿份额定价更正：${esc(c.correctedAt.slice(0,10))} · ${fmt(c.originalTransferredShares)} → ${fmt(c.transferredShares)} 股 · 定价日 ${esc(c.priceDate)} · 原转让记录保留</div>`).join("");
   const shareLabel=registeredVerified?`截至 ${last.date} · ${fmt(registeredTotal)} 股`:(profile.subscriptions?.length||profile.shareTransfers?.length)?`档案登记 ${fmt(registeredTotal)} 股 · 最新估值待覆盖`:last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const verified=last?.investors.find(row=>row.id===i.id),shownShares=registeredVerified?verified.shares:registeredShares[index],shownTotal=registeredVerified?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${registeredVerified?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}${correctionText}${transferText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const verified=last?.investors.find(row=>row.id===i.id),shownShares=registeredVerified?verified.shares:registeredShares[index],shownTotal=registeredVerified?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${registeredVerified?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}${correctionText}${transferText}${priceCorrectionText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
     capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
