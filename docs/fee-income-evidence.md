@@ -55,3 +55,12 @@ Same-day cloud reads restore only these scoped audits from authenticated encrypt
 data. A later official record requires reviewed reconciliation: confirm the date
 or correct it through the existing controlled backfill process; this change does
 not automatically change broker payout dates or erase the estimate provenance.
+
+A reviewed official statement may append a `resolution` to the original estimated
+audit. It binds the same cash date and source pair to statement identity, SHA-256,
+pages, issue date, reviewer and the gross/withholding/separate collection fee
+reconciliation. The original estimate, absence checks and original follow-up stay
+intact as historical provenance. Only a fully matching resolution clears the
+owner-estimated cash-date provisional code; other provisional causes remain.
+The writer permits only this additive transition once and rejects changed or
+removed published resolutions. No cash record or payout is created or edited.
