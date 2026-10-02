@@ -1,5 +1,8 @@
 # 10/5正式恢复：准确授权设计（未部署）
 
+**更新：主方案为真正云端独立触发，不依赖Mac开机。** 详见
+`xuan-cloud-independent-trigger-design.md`；下面Mac方案仅可选临时兜底。
+
 PR329只接入有限补读，不能当正式行动报告完成。PR323已有窗口/正式slot/CAS/
 already-published证明修复；不合并其未配置来源适配路径作为永久日程。
 本研究分支新增纯action evidence adapter与独立Mac触发计划测试，不取金融源。
