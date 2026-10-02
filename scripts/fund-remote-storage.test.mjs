@@ -104,3 +104,19 @@ remoteTest("published capital events cannot be erased, rewritten or retrospectiv
     assert.equal(run(ctx, "patchCalls"), 1);
   }
 }, { skip: !remoteCode?.includes("已发布增资事件不可删除") });
+
+remoteTest("published price corrections remain append-only and an exact repeat performs no PATCH", async () => {
+  const ctx=context();
+  const original={id:"transfer-one",date:"2026-10-01",transferredShares:56};
+  const correction={id:"correction-one",transferId:original.id,originalTransferredShares:56,transferredShares:55};
+  const corrected={...profile,shareTransfers:[original],shareTransferPriceCorrections:[correction]};
+  await run(ctx, `writeRemoteFundBundle(${JSON.stringify(corrected)},${JSON.stringify(library)},'')`);
+  const raw=run(ctx,"_remoteFund.raw"), timestamp=run(ctx,"_remoteFund.bundle.updatedAt");
+  await run(ctx, `writeRemoteFundBundle(${JSON.stringify(corrected)},${JSON.stringify(library)},${JSON.stringify(raw)})`);
+  assert.equal(run(ctx,"patchCalls"),1);assert.equal(run(ctx,"_remoteFund.raw"),raw);assert.equal(run(ctx,"_remoteFund.bundle.updatedAt"),timestamp);
+  for(const altered of [{...corrected,shareTransferPriceCorrections:[]},{...corrected,shareTransferPriceCorrections:[{...correction,transferredShares:54}]}]){
+    await assert.rejects(run(ctx,`writeRemoteFundBundle(${JSON.stringify(altered)},${JSON.stringify(library)},${JSON.stringify(raw)})`),/定价更正不可删除或重写/);
+    assert.equal(run(ctx,"patchCalls"),1);
+  }
+  assert.deepEqual(JSON.parse(run(ctx,"JSON.stringify(_remoteFund.bundle.profile.shareTransfers)")),[original]);
+},{skip:!remoteCode?.includes("已发布份额转让定价更正不可删除或重写")});
