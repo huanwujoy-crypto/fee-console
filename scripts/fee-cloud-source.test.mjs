@@ -4,6 +4,7 @@ import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode } from "./fee-cloud-producer.mjs";
 import { SourceFetchError } from "./fee-economic-source.mjs";
+import { resolveStyle } from "./fee-style-registry.mjs";
 
 const D = "2026-09-23";
 
@@ -49,6 +50,18 @@ function raw() {
     ]),
   };
 }
+
+test("the actual registry missing-row gate maps to an amount-free cloud diagnostic", () => {
+  const normalized = normalizeRead(raw(), D, selectBenchmark(benchmarkCache, D));
+  let failure;
+  try {
+    resolveStyle({ input: normalized.styleInput, date: D, sourceDates: normalized.sourceDates,
+      stock: normalized.splits.stock, staticMap: { schemaVersion: 1, effectiveDate: D, holdings: [] } });
+  } catch (error) { failure = error; }
+  assert.equal(failure?.message, "STYLE_MISSING_ROWS_0_1");
+  assert.equal(writerFailureCode(`error: ${failure.message} — nothing written\n`, true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_STYLE_MISSING_CLASSIFICATION");
+});
 
 test("benchmark requires a complete same-date pair", () => {
   assert.equal(latestCommonBenchmarkDate(benchmarkCache), D);
