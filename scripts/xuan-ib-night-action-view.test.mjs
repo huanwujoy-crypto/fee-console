@@ -35,7 +35,7 @@ test('shows public-update state and automatically replaces a stale open page', (
   const html = renderNightActionReport(model);
   assert.match(html, /id="report-state"/);
   assert.match(html, /id="report-state-detail"[^>]*aria-live="polite"/);
-  assert.match(html, /更新中 · 21:30 开始/);
+  assert.match(html, /更新中 · '\+startLabel\+' 开始/);
   assert.match(html, /更新延迟 · 仍显示上次报告/);
   assert.match(html, /setInterval\(check,30000\)/);
   assert.match(html, /fetch\(url,\{cache:'no-store'/);

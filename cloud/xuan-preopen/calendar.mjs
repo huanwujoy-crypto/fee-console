@@ -1,3 +1,4 @@
+import {preopenActionSlot, preopenWindow} from '../../scripts/xuan-ib-report-schedule.mjs';
 // Reviewed exchange calendars, not a weekday-only market-open assumption.
 // Official annual tables checked 2026-10-01; unsupported years fail closed.
 const holidays = {
@@ -44,15 +45,15 @@ export function marketOpen(date, market) {
   return ![0,6].includes(value.getUTCDay()) && !holidays[market][date.slice(0,4)].includes(date.slice(5));
 }
 export function planPreopen(now = Date.now()) {
-  const dataDate = hktDate(now);
+  const dataDate = hktDate(now), slot = preopenActionSlot(dataDate);
   const openMarkets = ['NYSE','NASDAQ','XETRA','LSE','EURONEXT'].filter(market => marketOpen(dataDate, market));
-  if (!openMarkets.length) return {status: 'no-action', dataDate, reason: 'ALL_REVIEWED_MARKETS_CLOSED', calendarSources};
-  // At 13:00 HKT all prior US regular sessions have closed. Never request
+  if (!openMarkets.length) return {status: 'no-action', ...slot, dataDate, reason: 'ALL_REVIEWED_MARKETS_CLOSED', calendarSources};
+  // Before the European regular open all prior US regular sessions have closed. Never request
   // today's uncompleted valuation or mistake a missing response for a holiday.
   let previous = Date.parse(`${dataDate}T00:00:00Z`) - 86_400_000;
   for (let count = 0; count < 10; count++, previous -= 86_400_000) {
     const sourceDate = new Date(previous).toISOString().slice(0,10);
-    if (marketOpen(sourceDate, 'NYSE')) return {status: 'generate', dataDate, sourceDate, openMarkets, calendarSources};
+    if (marketOpen(sourceDate, 'NYSE')) return {status: 'generate', ...slot, windowEnabled: preopenWindow(new Date(now)).enabled, dataDate, sourceDate, openMarkets, calendarSources};
   }
   throw new Error('COMPLETED_SESSION_UNAVAILABLE');
 }

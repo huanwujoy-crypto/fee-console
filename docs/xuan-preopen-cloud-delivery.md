@@ -34,3 +34,102 @@ GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 
 2026-10-01 接线验收：专用 cloud job 已成功取五项来源（13.581 秒生成），但新 environment 读不到原环境内的发布密钥，发布以 `PREOPEN_PUBLISH_TOKEN_REQUIRED` 拒绝。此修正只更正环境引用；须 OWNER 批准精确新 head 后，才将专用 WIF 条件的 environment subject 等值改为上列实际格式，并继续验收。既有管理费工作流、环境、密钥和 provider 均不改。当天成品只创建一次；若批准时成品已超过 30 分钟，不降低新鲜度要求、不删除启动标记、不再读 IB，保留现有正式报告，改在下一个交易日验收新成品。
 
 回退先将 mode 设为 `off`，停止新候选；原正式报告保留。由于 IB 已切换至云端只读连接，不能盲目重新开启旧本机任务，必须先确认其 IB 连接可用。
+
+## 欧洲开市前窗口候选（2026-10-02，尚未上线）
+
+本次候选以 LSE 08:00 Europe/London 与 Xetra **核心常规时段** 09:00
+Europe/Berlin 的同一开市时刻倒推：T−60 分钟开始，T−30 分钟为公网完成目标。
+夏令时为香港 14:00/14:30，冬令时 15:00/15:30。使用 IANA，独立解析两个
+欧洲时区并核对结果；美国 DST 的错位周不移动此窗口。不采用零售延长时段。
+共享 schedule 的历史合同截至 2026-10-02 保留；新切换日为 2026-10-03。
+跨市场官方休市表和未覆盖年份拒收仍有效，全部休市不取金融来源。
+
+两个季节的 UTC 候选 `0,10 6,7 * * 1-5` 在获取 WIF 身份之前检查真实窗口；
+delivery 和 cloud job 也分别检查，开市后延迟运行不取数、不占锁。
+正式对象前缀为 `delivery/日期/europe-regular-v1-日期-startEpoch/`，其中 start
+仍为 create-only；旧日期根对象完整保留，手动 report-check 不进入正式前缀。
+正式 receipt 绑定 slot/source-date/start，禁止早跑回执或根目录旧锁充当正式版。
+生成与发布仍保留 30 分钟新鲜度、五分钟生成预算、账户关联、哈希、签名和
+Validate → Promote → Pages；同 HTML 只有本轮正式 receipt、新鲜时间和
+meta/date/edition/sourceSha/blob 均一致时才能返回 already-published。
+
+### 真实来源门槛尚缺的证据
+
+2026-10-02 只读检查 2026-10-01 cloud receipt 与三份原始 IB 证据，未输出
+账户号或金额。该回执五个来源为 IB 摘要/持仓/挂单和两项 Sharesight；没有
+成交来源或 readiness。IB 摘要与 positions 没有 upstream as-of/coverage 字段；
+orders 的 order_time 是订单时间，不能证明成交扫描已完整。
+本候选加入既有 mcp.read 范围的 get_account_trades，但尚未做真实云端接口验收。
+
+`source_readiness.mjs` 是**待上游适配验收的证据合同**，不是官方 IB 返回字段
+声明。要求摘要（现金）、持仓、挂单、成交各自有目标交易日、覆盖终点、全量/
+分页完成、上游 as-of 和一致 snapshot；transport 不生成这些字段。
+仅有 HTTP 请求时间、空 trades、Sharesight 三账户同步结果均拒收。无法通过时
+只写无金额的 data-not-ready 私有 receipt，绝不出行动 HTML、复制旧金额或重标
+旧报告日期；workflow 明确“数据未齐，未生成行动建议”。
+现有 raw 不满足此合同，因此**此候选不能直接启用生产**，更不能把它称为已完成
+来源完整性验收。下一步需在既有只读范围验证真实 upstream mapping，独立证明
+XUAN MCP 与拟用 Flex 来源账户 scope 相同，再检查真实持仓全量与现金/成交覆盖。
+Flex toDate 和现金核对证据不能单独证明 positions 全量，也不能仅凭 IB-HK 名称
+把三账户任务接进报告。若需新凭据或权限，必须另行批准。
+
+当前无行动 receipt 只在私有区，未接入签名的公开状态发布通道；因此用户页面
+可显示更新延迟和未完成覆盖核验，但不能区分某轮具体失败原因。可验证、无金融
+值的公开状态通道及晚到数据的受控新尝试（仍不删 immutable 锁）尚待设计验收。
+这些是上线阻塞，不由私有 receipt 或单元测试代替。
+
+### 调度与上线边界
+
+GitHub [官方说明](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows#scheduled-workflows-running-at-unexpected-times)
+指出 schedule 可能延迟或丢弃，整点尤甚。因此 cron 改动只提供尽力触发和
+异常检测，无法保证 T−30 准时。端到端还经过 source job、签名候选、Promote、
+Pages 和公网读回。需要在已有授权配置内核对可靠调度入口；新增 Scheduler/IAM/
+凭据不在本次授权内，不能悄悄增加。首次独立运行须记录真实起止/目标偏差。
+
+待完成：真实来源 mapping、只读 trades 验收、公开失败状态、晚到来源尝试方案、
+可靠调度验证、OWNER 对精确 PR head 亲自审批、不可变镜像部署/配置读回、shadow
+与公网回证。未改生产 job、模式、IAM、OAuth、密钥、其他三账户流程或金融账本。
+
+2026-10-02 后续有界能力核验：首次 schema-only 过期即止；用户明确批准一次
+原机制续期后已安全轮换至原存储并取得实际 schema，金融读取/写入0，配置哈希
+前后相同。之后身份探针遇到短期 token freshness 不足，在账户查询前停止，
+未擅自第二次轮换。之后用户再次批准，连续探针安全保存轮换后在
+默认账户身份联合条件未通过处停止，未读其余金融来源或写账本。身份仍未核实。
+历史 XUAN↔Flex 固定账户在内存比对相同，但当前 OAuth 未独立绑定。已知 Flex
+sections 仅成交/现金，未证明 OpenPositions 或当前挂单。原 raw.coverage/
+same-snapshotId 是早期草案，不作为最终现实接口要求；替代的分级读取/账务门槛、
+A/B 最小决策和真实停止回证见 `docs/xuan-preopen-source-feasibility.md`。
+
+### A+B 实际候选实现（覆盖前文草案；未上线）
+
+已移除早期source_readiness及raw.coverage/snapshotId要求；可选included_accounts
+不参与正式闸门。原owner-attested policy/期限/披露不改。IANA窗口/日历、旧根锁
+隔离、真实采集时点及meta/blob证明继续。SOURCE_ADAPTER_NOT_CONFIGURED是明确
+的未完成阶段状态，不等于用户可靠行动报告目标已完成；此配置禁止合并/部署成
+每日永久状态方案，保留现有生产，须先完成C可用适配或取得用户明确范围决定。
+
+新增schema6状态页只有固定原因码、slot/日期/时间、原报告日期/签名来源指针及
+业主关联receipt；无账号、金额、持仓、动作或自由文本错误。通过既有OWNER签名
+单文件index候选→Validate→Promote→Pages，status guard从trusted main独立重验
+政策/期限/receipt/run/前版及30分钟状态新鲜度。签名和公开SHA/blob读回沿用。
+分类为preopen-status/临时状态，不能计作complete-PM或通过正式slot健康验收；手机入口
+显示数据未齐，既有旧报告原日期/指针单独保留，状态时间不表示上游完整。
+未通过发布链路时UI只显示延迟，不自行宣称某轮私有失败原因。
+
+晚到尝试限定三个不可变命名空间：T0、T+10、T+20，第三桶持续至开市；每桶
+start/report/receipt create-only。旧验收根锁不删除，旧receipt不复用正式slot。
+delivery已ready则关闭重试；pending执行被跟随；已结束失败旧桶可在后续桶
+尝试，单次controller最多一次run，无CloudRun override权限或额外IAM。跨
+时间桶启动只读三个有限完成路径，不重启。并发同桶仍由CAS拒绝，不忽略412。
+重复固定原因状态按slot/reason指纹去重，避免重复候选与提醒；完整已验收正式
+行动不会被状态候选降级，旧早跑/仅重标日期/缺meta/blob证明不能当已发布。
+
+C未完成前正式路径在IB/SS取数及refresh之前生成明确适配未配置状态；private
+acceptance保留既有源读取/业主政策，不能通过正式publisher变成已核实行动。
+C真实财务文件不在本任务内；CSV纯header与字段语义仅用于synthetic离线适配。
+Trade Confirmation无整体whenGenerated/coverage终点且没有撤销配对，不能单独
+证明目标日最终账务或固定早间时限。当前候选仍draft，未改变生产mode/job。
+
+Promote选择器另有独立防降级：preopen-status不能替代同日已完成报告，
+同日合格complete-PM候选优先于更晚状态候选。新版切换后，采集时点在
+正式窗口前/后的验收页分类为other，不得占用同日complete-PM保护位。

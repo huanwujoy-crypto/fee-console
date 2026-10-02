@@ -34,6 +34,7 @@ export function extractPrimaryDateLine(html) {
   const compact = header.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>\s*<p\b[^>]*>([\s\S]*?)<\/p>/i);
   if (!compact) return "";
   const title = stripMarkup(compact[1]);
+  if(title==="XUAN · 本轮状态")return `临时状态 · ${stripMarkup(compact[2])}`;
   return title === "XUAN · 开市前行动版" ? `${title} · ${stripMarkup(compact[2])}` : "";
 }
 
@@ -311,6 +312,7 @@ async function main() {
     // A slow Pages rollout is evidence to report, not a reason to undo a valid
     // promotion or change the promotion job's exit code.
     console.log(JSON.stringify(result));
+    if (!result.ok) process.exitCode = 1;
   } else {
     throw new Error("usage: xuan-ib-publish-health.mjs watch|probe --base-url URL ...");
   }

@@ -39,3 +39,19 @@ test('misrouted or incomplete upload metadata is not accepted', async () => {
   const fetchImpl = async url => String(url).includes('metadata.google') ? Response.json({access_token: 'test-google-identity'}) : Response.json({name: 'wrong-object', size: '1', generation: '1'});
   await assert.rejects(privateCloudIo({fetchImpl}).savePrivate('report-check/id/report.html', 'private'), /UPLOAD_NOT_CONFIRMED/);
 });
+test('formal-slot delivery objects retain create-only CAS and bounded path', async () => {
+  const name='delivery/2026-10-05/europe-regular-v1-2026-10-05-1791180000/start.json';
+  const fetchImpl=async(url,options)=>{
+    if(String(url).includes('metadata.google'))return Response.json({access_token:'test-google-identity'});
+    assert.equal(new URL(url).searchParams.get('ifGenerationMatch'),'0');
+    return Response.json({name,size:options.body.length,generation:'1'});
+  };
+  const io=privateCloudIo({fetchImpl});await io.savePrivate(name,{});
+  await assert.rejects(io.savePrivate('delivery/2026-10-05/manual/report.html','bad'),/PATH_INVALID/);
+});
+test('later attempts stay inside a formal slot and remain immutable, never raw evidence paths',async()=>{
+ for(const name of ['delivery/2026-10-05/europe-regular-v1-2026-10-05-1791180000/retry-1/receipt.json','delivery/2026-10-05/europe-regular-v1-2026-10-05-1791180000/retry-2/report.html']){
+ const io=privateCloudIo({fetchImpl:async(url,options)=>{if(String(url).includes('metadata.google'))return Response.json({access_token:'fixture'});assert.equal(new URL(url).searchParams.get('ifGenerationMatch'),'0');return Response.json({name,size:options.body.length,generation:'1'});}});await io.savePrivate(name,{});
+ for(const bad of ['delivery/2026-10-05/retry-1/receipt.json','delivery/2026-10-05/europe-regular-v1-2026-10-05-1791180000/retry-3/receipt.json','delivery/2026-10-05/europe-regular-v1-2026-10-05-1791180000/retry-1/ib.positions.json'])await assert.rejects(io.savePrivate(bad,{}),/PATH_INVALID/);
+ }
+});

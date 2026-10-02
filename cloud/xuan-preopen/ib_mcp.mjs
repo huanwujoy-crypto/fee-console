@@ -9,7 +9,12 @@ const SOURCES = Object.freeze({
   get_account_summary: 'ib.accountSummary',
   get_account_positions: 'ib.positions',
   get_account_orders: 'ib.orders',
+  get_account_trades: 'ib.trades',
 });
+export const TRADE_READ_ARGUMENTS = Object.freeze({ period: 'DAYS_7' });
+const allowedArguments = (tool, args) => tool === 'get_account_trades'
+  ? args && Object.keys(args).length === 1 && args.period === 'DAYS_7'
+  : args && Object.keys(args).length === 0;
 const fail = code => { throw new Error(code); };
 const exactReadScope = scope => typeof scope === 'string' && scope.trim() === 'mcp.read';
 
@@ -90,7 +95,7 @@ export class IbReadSession {
   async request(method, params, notification = false) {
     if (!['initialize', 'notifications/initialized', 'tools/call'].includes(method)) fail('IB_MCP_METHOD_FORBIDDEN');
     if (method === 'tools/call' && (!Object.hasOwn(SOURCES, params?.name)
-      || Object.keys(params.arguments || {}).length)) fail('IB_MCP_TOOL_FORBIDDEN');
+      || !allowedArguments(params.name, params.arguments))) fail('IB_MCP_TOOL_FORBIDDEN');
     const id = ++this.id;
     const payload = { jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }), ...(notification ? {} : { id }) };
     const headers = { Authorization: `Bearer ${this.credential.access_token}`,
@@ -123,7 +128,7 @@ export class IbReadSession {
   async read(tool) {
     if (!this.initialized) fail('IB_MCP_NOT_INITIALIZED');
     if (!Object.hasOwn(SOURCES, tool)) fail('IB_MCP_TOOL_FORBIDDEN');
-    const result = await this.request('tools/call', { name: tool, arguments: {} });
+    const result = await this.request('tools/call', { name: tool, arguments: tool === 'get_account_trades' ? TRADE_READ_ARGUMENTS : {} });
     if (!result || result.isError === true) fail('IB_MCP_SOURCE_FAILED');
     const sourceKey = SOURCES[tool];
     const transport = result.structuredContent ?? (() => {

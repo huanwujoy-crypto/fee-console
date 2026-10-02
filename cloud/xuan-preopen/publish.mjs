@@ -1,17 +1,18 @@
+import {provesFormalAction} from './publication_proof.mjs';
+import {planPreopen} from './calendar.mjs';
 // Only submit a signed one-file candidate. Validate -> Promote -> Pages still
 // exclusively owns latest.html and publication metadata. No main write exists.
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {loadTrustedContext, currentReserve} from './report.mjs';
-import {validateAssociationReceipt} from '../../scripts/xuan-ib-account-association.mjs';
+import {loadTrustedContext} from './report.mjs';
 import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
 import {gitBlobSha} from '../../scripts/xuan-ib-publish-health.mjs';
 import {hktDate} from './calendar.mjs';
 const OWNER = 'huanwujoy-crypto', REPO = `${OWNER}/fee-console`, GRAPH = 'https://api.github.com/graphql';
-const SHA = /^[a-f0-9]{40}$/, HASH = /^[a-f0-9]{64}$/;
+const SHA = /^[a-f0-9]{40}$/;
 const fail = code => { throw new Error(`PREOPEN_PUBLISH_${code}`); };
 export async function githubRequest(payload, token = process.env.XUAN_PREOPEN_GITHUB_TOKEN) {
   if (!token || /[\r\n\0]/.test(token)) fail('TOKEN_REQUIRED');
@@ -25,27 +26,28 @@ export async function githubRequest(payload, token = process.env.XUAN_PREOPEN_GI
   return result;
 }
 export async function publishPrepared({html, receipt, request = githubRequest, loadContext = loadTrustedContext, now = Date.now} = {}) {
-  const time = now(), dataDate = hktDate(time);
-  if (receipt?.schemaVersion !== 1 || receipt.mode !== 'private_report_check' || receipt.status !== 'ready'
-      || receipt.dataDate !== dataDate || receipt.sourceDate >= dataDate || receipt.sourceCount !== 5
-      || receipt.publication !== 'none' || !Array.isArray(receipt.sources) || receipt.sources.length !== 5) fail('RECEIPT');
-  const started = Date.parse(receipt.startedAt), completed = Date.parse(receipt.completedAt);
-  if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started || completed > time
-      || completed-started > 300_000 || time-started > 30*60_000) fail('STALE');
-  const required = ['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
-  if (required.some(key => receipt.sources.filter(s => s.sourceKey === key && HASH.test(s.sha256 || '')).length !== 1)) fail('SOURCES');
-  if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
-  validateNightActionHtml(html, dataDate);
-  const model = extractNightActionModel(html);
-  if (model.schemaVersion !== 5 || model.status !== 'ready' || !model.asOfHkt.endsWith(`数据至 ${receipt.sourceDate}`)) fail('MODEL');
-  const verifyContext = async () => {
-    const context = await loadContext({now});
-    validateAssociationReceipt(receipt.association, context.association, {now: now(), edition: 'am',
-      previousSourceSha: context.previousSourceSha, runId: receipt.association?.runId});
-    if (model.cash.reserve !== currentReserve(context.reserveLedger, dataDate)) fail('RESERVE_CHANGED');
+  const time=now(),dataDate=hktDate(time),plan=planPreopen(time);
+  if(!plan.windowEnabled||receipt?.slotId!==plan.slotId||receipt.sourceDate!==plan.sourceDate)fail('SLOT_OR_SOURCE_UNVERIFIED');
+  if(receipt?.schemaVersion!==1||receipt.mode!=='private_report_check'||receipt.status!=='data-not-ready'||receipt.dataDate!==dataDate||receipt.publication!=='none')fail('ACTION_ADAPTER_NOT_CONFIGURED');
+  if(typeof html!=='string'||crypto.createHash('sha256').update(html).digest('hex')!==receipt.artifact?.sha256)fail('HASH');
+  const model=extractNightActionModel(html);
+  if(model.schemaVersion!==6||model.slotId!==plan.slotId||model.sourceDate!==plan.sourceDate||model.attempt!==receipt.attempt
+    ||JSON.stringify(model.reasonCodes)!==JSON.stringify(receipt.reasonCodes)||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('STATUS_RECEIPT');
+  const started=Date.parse(receipt.startedAt),completed=Date.parse(receipt.completedAt);
+  if(!Number.isFinite(started)||!Number.isFinite(completed)||started<plan.startEpoch*1000||completed<started||completed>time||time-started>1800000||completed-started>300000)fail('STALE');
+  if(Math.abs(Date.parse(model.asOfHkt.replace(' HKT','')+'+08:00')-started)>=60000)fail('STATUS_SOURCE_TIME');
+  const verifyContext=async()=>{
+    const context=await loadContext({now});
+    validateNightActionHtml(html,dataDate,{snapshot:context.association,previousSourceSha:context.previousSourceSha,now:now()});
     return context;
   };
-  const context = await verifyContext(), baseSha = context.association.policyCommit;
+  const context = await loadContext({now}), baseSha = context.association.policyCommit;
+  try{
+    const previous=extractNightActionModel(context.previousHtml);
+    if(previous.schemaVersion===6&&previous.slotId===model.slotId&&JSON.stringify(previous.reasonCodes)===JSON.stringify(model.reasonCodes))return {publication:'already-published-status',dataDate,slotId:model.slotId};
+    if(provesFormalAction({html:context.previousHtml,meta:context.previousMeta,sourceSha:context.previousSourceSha,plan}))return {publication:'already-published-action',dataDate,slotId:model.slotId};
+  }catch{}
+  if((await verifyContext()).association.policyCommit!==baseSha)fail('BASE_CHANGED');
   const query = {query: 'query { viewer { login } repository(owner: "huanwujoy-crypto", name: "fee-console") { id ref(qualifiedName: "refs/heads/main") { target { oid } } } }'};
   const repo = (await request(query))?.data;
   if (repo?.viewer?.login !== OWNER) fail('OWNER');
@@ -69,7 +71,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const [htmlFile, receiptFile] = process.argv.slice(2);
     if (!htmlFile || !receiptFile || process.argv.length !== 4) fail('ARGUMENTS');
     const result = await publishPrepared({html: fs.readFileSync(htmlFile, 'utf8'), receipt: JSON.parse(fs.readFileSync(receiptFile,'utf8'))});
-    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${result.sha}\nhtml_blob=${result.htmlBlob}\ndata_date=${result.dataDate}\n`);
+    if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `sha=${result.sha||''}\nhtml_blob=${result.htmlBlob||''}\ndata_date=${result.dataDate}\n`);
     process.stdout.write(JSON.stringify(result)+'\n');
   } catch(error) {
     process.stderr.write((/^PREOPEN_PUBLISH_[A-Z_]+$/.test(error.message) ? error.message : 'PREOPEN_PUBLISH_VALIDATION_FAILED')+'\n');

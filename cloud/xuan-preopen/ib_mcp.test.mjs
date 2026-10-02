@@ -51,6 +51,21 @@ test('real-time source HTTP failure hides upstream financial diagnostics', async
   await assert.rejects(session.read('get_account_orders'), /^Error: IB_REAUTHORIZE_REQUIRED$/);
 });
 
+test('trade transport requires explicit seven-day period and forbids default TODAY or account overrides', async () => {
+  const requests = [];
+  const session = new IbReadSession(credential(), { fetchImpl: async (_, options) => {
+    const request = JSON.parse(options.body); requests.push(request);
+    return response({ jsonrpc: '2.0', id: request.id,
+      result: { structuredContent: { trades: [] } } });
+  } });
+  session.initialized = true;
+  for (const args of [{}, { period: 'TODAY' }, { period: 'DAYS_7', account: 'another' }])
+    await assert.rejects(session.request('tools/call', { name: 'get_account_trades', arguments: args }), /TOOL_FORBIDDEN/);
+  await session.read('get_account_trades');
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].params.arguments, { period: 'DAYS_7' });
+});
+
 test('JSON and SSE handshakes preserve the server session ID', async () => {
   const requests = [];
   const session = new IbReadSession(credential(), { fetchImpl: async (_, options) => {

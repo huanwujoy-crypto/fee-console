@@ -1907,8 +1907,8 @@ test('bedtime-only notices follow start, T+20, full-PM and priority boundaries',
     ['2026-09-16T13:40:00Z', '2026-09-16', '临时版 · 睡前速览', 'info'],
     ['2026-09-16T13:50:00Z', '2026-09-16', '临时版 · 睡前速览', 'error'],
     ['2026-09-16T13:35:00Z', '2026-09-16', '睡前版', null],
-    ['2026-11-02T05:00:00Z', '2026-10-30', '开市前版', 'info'],
-    ['2026-11-02T05:20:00Z', '2026-10-30', '开市前版', 'error'],
+    ['2026-11-02T07:00:00Z', '2026-10-30', '开市前版', 'info'],
+    ['2026-11-02T07:30:00Z', '2026-10-30', '开市前版', 'error'],
   ];
   for (const [now, date, edition, level] of cases) {
     const html = reportHtml(date, edition, `${date}-${edition}`);
@@ -2138,6 +2138,7 @@ test('the integrity check accepts legacy reports and the canonical action page',
     '<title>XUAN-IB 睡前交接</title>',
     '<title>XUAN · 睡前行动版</title>',
     '<title>XUAN · 开市前行动版</title>',
+    '<title>XUAN · 本轮状态</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
@@ -2877,4 +2878,20 @@ test('hidden wrapper retains verified report loading and background-check status
   assert.equal(JSON.parse(app.stored.get('xuan-ib:last-verified:v1')).html, html);
   assert.ok(requests.every(url => /latest\.(?:meta\.json|html)/.test(url)));
   assert.equal(app.navigations.length, 0);
+});
+
+test('same-day PM label published before the European slot cannot prove current action run', async () => {
+  const html=reportHtml('2026-10-05','开市前版','early acceptance');
+  const meta=metaFor(html,{sourceCommitEpoch:Date.parse('2026-10-05T05:00:00Z')/1000});
+  const app=loaderHarness({now:'2026-10-05T06:30:00Z',fetchImpl:async url=>String(url).includes('latest.meta.json')
+    ?response({json:meta,bytes:[]}):response({json:null,bytes:Buffer.from(html)})});
+  await app.listeners.button.click();
+  assert.equal(app.warning.hidden,false);assert.equal(app.status.classList.contains('error'),true);
+  assert.match(app.warning.textContent,/未完成来源覆盖核验与发布验收/);
+});
+
+test('verified non-action status cannot satisfy formal completion or relabel previous report',async()=>{
+ const {statusFixture}=await import('../cloud/xuan-preopen/test_fixtures.mjs');const f=statusFixture();const meta=metaFor(f.html);
+ const app=loaderHarness({now:'2026-10-05T06:35:00Z',fetchImpl:async url=>String(url).includes('latest.meta.json')?response({json:meta,bytes:[]}):response({json:null,bytes:Buffer.from(f.html)})});
+ await app.listeners.button.click();assert.match(app.frame.srcdoc,/暂无行动建议/);assert.match(app.frame.srcdoc,/上一份报告原日期：2026-10-01/);assert.match(app.status.textContent,/本轮状态.*数据未齐/);assert.match(app.warning.textContent,/暂无新的行动建议/);assert.equal(app.status.classList.contains('error'),true);assert.doesNotMatch(app.status.textContent,/数据至/);
 });

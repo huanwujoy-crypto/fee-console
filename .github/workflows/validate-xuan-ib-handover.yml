@@ -143,7 +143,7 @@ jobs:
           # Never allow candidate/runtime environment to supply a policy. The
           # trusted guard independently fetches current main for eligible runs.
           if grep -Fq '<!-- xuan-ib-night-action-v1:' xuan-ib/index.html; then
-            node "$RUNNER_TEMP/xuan-ib-trusted/scripts/xuan-ib-night-action-guard.mjs" \
+            XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" node "$RUNNER_TEMP/xuan-ib-trusted/scripts/xuan-ib-night-action-guard.mjs" \
               xuan-ib/index.html "$data_date"
           else
             env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON \

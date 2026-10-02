@@ -236,6 +236,7 @@ jobs:
             # Selection never inherits a runtime/candidate policy snapshot.
             # Its trusted guard performs its own fresh current-main lookup.
             if grep -Fq '<!-- xuan-ib-night-action-v1:' "$RUNNER_TEMP/handover.html"; then
+              export XUAN_IB_PREVIOUS_SOURCE_SHA="$meta_source_sha"
               candidate_guard=(node scripts/xuan-ib-night-action-guard.mjs \
                 "$RUNNER_TEMP/handover.html" "$data_date")
             else
@@ -326,7 +327,7 @@ jobs:
           # Re-fetch through the guard after selection, immediately before
           # creating publication metadata; expiry/revocation/hash changes fail.
           if grep -Fq '<!-- xuan-ib-night-action-v1:' xuan-ib/latest.html; then
-            node scripts/xuan-ib-night-action-guard.mjs \
+            XUAN_IB_PREVIOUS_SOURCE_SHA="$previous_source_sha" node scripts/xuan-ib-night-action-guard.mjs \
               xuan-ib/latest.html "$DATA_DATE"
           else
             env -u XUAN_IB_ASSOCIATION_SNAPSHOT_JSON \

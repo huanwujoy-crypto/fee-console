@@ -14,7 +14,7 @@ import {
   slotDueEpoch,
   slotStartEpoch
 } from "./xuan-ib-publish-health.mjs";
-import {AM_WATCH_CRON, PM_RUN_TARGET_MS, PM_SCHEDULE_CUTOVER_HKT_DATE, PM_OPENING_CUTOVER_HKT_DATE, PREOPEN_CUTOVER_HKT_DATE, PREOPEN_WATCH_CRON, PM_WATCH_CRONS, LEGACY_PM_WATCH_CRONS, hktContext, scheduledWatchEdition, scheduledWatchEnabled} from "./xuan-ib-report-schedule.mjs";
+import {AM_WATCH_CRON, PM_RUN_TARGET_MS, PM_SCHEDULE_CUTOVER_HKT_DATE, PM_OPENING_CUTOVER_HKT_DATE, PREOPEN_CUTOVER_HKT_DATE, PREOPEN_WATCH_CRON, PREOPEN_ACTION_WATCH_CRONS, preopenActionSlot, PM_WATCH_CRONS, LEGACY_PM_WATCH_CRONS, hktContext, scheduledWatchEdition, scheduledWatchEnabled} from "./xuan-ib-report-schedule.mjs";
 
 const sha = character => character.repeat(40);
 const html = (date, label) => `<!doctype html><title>XUAN-投资管理</title><!-- xuan-ib-handover:v1 --><span class="date">${date} 周四 · ${label}</span>`;
@@ -100,21 +100,21 @@ test("named New York timezone resolves both DST transitions while AM remains Hon
   for (const date of ["2026-10-30", "2026-11-02", "2027-03-12", "2027-03-15",
     "2027-11-05", "2027-11-08", "2028-03-10", "2028-03-13"]) {
     const start = slotStartEpoch(date, "pm");
-    assert.equal(start, Date.parse(`${date}T05:00:00Z`) / 1000, date);
-    assert.equal(hktContext(new Date(start * 1000)).minuteOfDay, 13 * 60);
-    assert.equal(slotDueEpoch(date, "pm") - start, PM_RUN_TARGET_MS / 1000);
+    assert.equal(start, preopenActionSlot(date).startEpoch, date);
+    assert.equal(hktContext(new Date(start * 1000)).minuteOfDay, 15 * 60);
+    assert.equal(slotDueEpoch(date, "pm") - start, 1800);
     assert.equal(slotStartEpoch(date, "am"), Date.parse(`${date}T00:00:00Z`) / 1000);
     assert.equal(slotDueEpoch(date, "am"), Date.parse(`${date}T00:35:00Z`) / 1000);
   }
   assert.equal(expectedEditionAt(new Date("2026-11-02T04:59:59Z")).expectedDate, "2026-10-30");
   assert.equal(expectedEditionAt(new Date("2026-11-02T05:19:59Z")).expectedDate, "2026-10-30");
-  assert.equal(expectedEditionAt(new Date("2026-11-02T05:20:00Z")).expectedDate, "2026-11-02");
+  assert.equal(expectedEditionAt(new Date("2026-11-02T07:30:00Z")).expectedDate, "2026-11-02");
 });
 
 test("holidays retain the required short PM report and early closes do not move the opening slot", () => {
-  for (const [date, start] of [["2026-09-07", "13:30"], ["2026-11-27", "05:00"], ["2026-12-24", "05:00"], ["2026-12-25", "05:00"]]) {
+  for (const [date, start] of [["2026-09-07", "13:30"], ["2026-11-27", "07:00"], ["2026-12-24", "07:00"], ["2026-12-25", "07:00"]]) {
     assert.equal(slotStartEpoch(date, "pm"), Date.parse(`${date}T${start}:00Z`) / 1000);
-    const due = expectedEditionAt(new Date(`${date}T${start === '05:00' ? '05:20' : '13:50'}:00Z`));
+    const due = expectedEditionAt(new Date(`${date}T${start === '07:00' ? '07:30' : '13:50'}:00Z`));
     assert.equal(due.expectedDate, date);
     assert.equal(due.expectedEdition, "pm");
   }
@@ -128,7 +128,7 @@ test("UTC watcher candidates select exactly one New York seasonal slot, includin
     assert.equal(scheduledWatchEnabled("", new Date(iso)), true);
   }
   for (const iso of ["2026-10-30T05:20:00Z", "2026-11-02T05:25:00Z"]) {
-    assert.equal(scheduledWatchEnabled(PREOPEN_WATCH_CRON, new Date(iso)), true);
+    assert.equal(scheduledWatchEnabled(PREOPEN_WATCH_CRON, new Date(iso)), false);
     assert.deepEqual(PM_WATCH_CRONS.map(c => scheduledWatchEnabled(c, new Date(iso))), [false, false]);
     assert.equal(scheduledWatchEnabled(AM_WATCH_CRON, new Date(iso)), false);
   }
@@ -590,7 +590,7 @@ test("the non-gating Pages probe retries stale data and reports timeout as data"
 
 test("workflow keeps only the pre-open cron, read-only watcher, and post-push non-gating probe", () => {
   const watcher = fs.readFileSync(".github/workflows/watch-xuan-ib-freshness.yml", "utf8");
-  assert.match(watcher, /cron: '20 5 \* \* 1-5'/);
+  assert.match(watcher, /cron: '30 6 \* \* 1-5'/);
   assert.doesNotMatch(watcher, /cron: '(?:35 0|55 13|55 14|50 13|50 14) /);
   assert.match(watcher, /Retired AM\/PM crons must not dispatch/);
   assert.match(watcher, /--schedule "\$\{SCHEDULE_EXPRESSION:-\}"/);

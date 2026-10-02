@@ -5,6 +5,8 @@ export const PM_RUN_TARGET_MS = 20 * 60 * 1000;
 export const PM_SCHEDULE_CUTOVER_HKT_DATE = "2026-09-04";
 export const PM_OPENING_CUTOVER_HKT_DATE = "2026-09-06";
 export const PREOPEN_CUTOVER_HKT_DATE = "2026-09-28";
+export const PREOPEN_ACTION_CUTOVER_HKT_DATE = "2026-10-03";
+export const PREOPEN_ACTION_WATCH_CRONS = Object.freeze(["30 6 * * 1-5", "30 7 * * 1-5"]);
 export const AM_WATCH_CRON = "35 0 * * 2-6";
 export const PREOPEN_WATCH_CRON = "20 5 * * 1-5";
 export const PM_WATCH_CRONS = Object.freeze(["55 13 * * 1-5", "55 14 * * 1-5"]);
@@ -53,18 +55,53 @@ const newYorkStartEpoch = (dataDate, minute = dataDate < PM_OPENING_CUTOVER_HKT_
   return epoch / 1000;
 };
 
+// Resolve regular sessions in both independently named European zones.
+export function europeRegularOpenEpoch(dataDate) {
+  const midnight = Date.parse(`${dataDate}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dataDate) || !Number.isFinite(midnight)
+      || new Date(midnight).toISOString().slice(0,10) !== dataDate) throw new Error("invalid report date");
+  const wall = (epoch, zone) => {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-GB', {timeZone: zone,
+      year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit',
+      second: '2-digit', hourCycle: 'h23'}).formatToParts(new Date(epoch)).map(p => [p.type, p.value]));
+    return Date.parse(`${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}Z`);
+  };
+  const resolve = (zone, hour) => {
+    const desired = midnight + hour * 3600000;
+    let epoch = desired;
+    for (let n = 0; n < 4; n++) epoch += desired - wall(epoch, zone);
+    if (wall(epoch, zone) !== desired) throw new Error('European regular open unresolved');
+    return epoch / 1000;
+  };
+  const london = resolve('Europe/London', 8), berlin = resolve('Europe/Berlin', 9);
+  if (london !== berlin) throw new Error('European regular opens conflict');
+  return london;
+}
+export function preopenActionSlot(dataDate) {
+  const openEpoch = europeRegularOpenEpoch(dataDate), startEpoch = openEpoch - 3600;
+  return {slotId: `europe-regular-v1-${dataDate}-${startEpoch}`, startEpoch,
+    dueEpoch: openEpoch - 1800, endEpoch: openEpoch, openEpoch};
+}
+export function preopenWindow(now = new Date()) {
+  const context = hktContext(now), slot = preopenActionSlot(context.date), epoch = instant(now) / 1000;
+  return {...slot, dataDate: context.date, enabled: context.weekday >= 1 && context.weekday <= 5
+    && epoch >= slot.startEpoch && epoch < slot.endEpoch};
+}
+
 export function slotStartEpoch(dataDate, edition) {
   const midnight = dateEpoch(dataDate);
   checkEdition(edition);
   if (edition === "am") return midnight / 1000; // 08:00 HKT = 00:00 UTC.
   // Historical PM evidence keeps the contract that actually applied that day.
   if (dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE) return midnight / 1000 + 12 * 3600 + 55 * 60;
+  if (dataDate >= PREOPEN_ACTION_CUTOVER_HKT_DATE) return preopenActionSlot(dataDate).startEpoch;
   if (dataDate >= PREOPEN_CUTOVER_HKT_DATE) return midnight / 1000 + 5 * 3600; // 13:00 HKT.
   return newYorkStartEpoch(dataDate);
 }
 
 export function slotDueEpoch(dataDate, edition) {
   const start = slotStartEpoch(dataDate, edition);
+  if (edition === "pm" && dataDate >= PREOPEN_ACTION_CUTOVER_HKT_DATE) return preopenActionSlot(dataDate).dueEpoch;
   const budget = edition === "am" ? 35 * 60
     : dataDate < PM_SCHEDULE_CUTOVER_HKT_DATE ? 30 * 60
     : dataDate < PM_OPENING_CUTOVER_HKT_DATE ? 10 * 60
@@ -99,7 +136,12 @@ export function scheduledWatchEnabled(expression, now = new Date()) {
   const context = hktContext(now);
   if (!expression) return true;
   if (expression === AM_WATCH_CRON) return context.date < PREOPEN_CUTOVER_HKT_DATE;
-  if (expression === PREOPEN_WATCH_CRON) return context.date >= PREOPEN_CUTOVER_HKT_DATE;
+  if (PREOPEN_ACTION_WATCH_CRONS.includes(expression)) {
+    const slot = preopenActionSlot(context.date);
+    return context.date >= PREOPEN_ACTION_CUTOVER_HKT_DATE
+      && expression === `30 ${new Date(slot.dueEpoch * 1000).getUTCHours()} * * 1-5`;
+  }
+  if (expression === PREOPEN_WATCH_CRON) return context.date >= PREOPEN_CUTOVER_HKT_DATE && context.date < PREOPEN_ACTION_CUTOVER_HKT_DATE;
   if (![...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) throw new Error("unrecognized watcher schedule");
   if (context.date >= PREOPEN_CUTOVER_HKT_DATE) return false;
   const minute = context.date < PM_OPENING_CUTOVER_HKT_DATE ? 50 : 55;
@@ -110,6 +152,6 @@ export function scheduledWatchEnabled(expression, now = new Date()) {
 export function scheduledWatchEdition(expression) {
   if (!expression) return null;
   if (expression === AM_WATCH_CRON) return "am";
-  if (expression === PREOPEN_WATCH_CRON || [...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
+  if (expression === PREOPEN_WATCH_CRON || PREOPEN_ACTION_WATCH_CRONS.includes(expression) || [...PM_WATCH_CRONS, ...LEGACY_PM_WATCH_CRONS].includes(expression)) return "pm";
   throw new Error("unrecognized watcher schedule");
 }

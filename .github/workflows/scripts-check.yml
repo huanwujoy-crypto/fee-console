@@ -75,7 +75,7 @@ jobs:
 
       - name: Test private cloud delivery and candidate-only publication
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test cloud/xuan-preopen/*.test.mjs scripts/xuan-ib-night-action*.test.mjs
+        run: node --test cloud/xuan-preopen/*.test.mjs scripts/xuan-ib-night-action*.test.mjs scripts/xuan-ib-preopen-window.test.mjs scripts/xuan-ib-preopen-status.test.mjs
 
       - name: Run the script test suite
         if: ${{ github.event.pull_request.draft == false }}
