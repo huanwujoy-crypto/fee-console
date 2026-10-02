@@ -21,3 +21,8 @@ fully-covered及zero-executions-certified均false。ReportDate不是覆盖终点
 原owner-attested政策及期限继续，不能升为机器身份认证。后续以可取得真实契约
 重构、明确当前读取完整与历史覆盖两层，再按授权集成真实来源。当前停止在线
 IB试探及续期，不新增IAM/OAuth，也不交易或写账本。
+
+补充synthetic验收：保留原经济十进制文本，避免数值转换丢失精度；佣金币种
+独立，不做隐式换汇，缺失则null并明确warning。AssetClass/Symbol/两交易所/
+LevelOfDetail及OrderTime文本保留，仅是来源字段，OrderTime不是upstream as-of。
+BOM、RFC4180多行/双引号支持；坏引号以固定错误码拒绝，不泄露行内容。

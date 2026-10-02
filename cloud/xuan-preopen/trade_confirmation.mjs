@@ -43,11 +43,13 @@ export function adaptTradeConfirmationCsv(csv,{expectedAccount,targetTradeDate}=
   executions.push({executionId,tradeId:id(row.TradeID),orderId:id(row.OrderID),contractId:id(row.Conid),reportedTradeDate,reportDate,settleDate,
     executedLocalDate,executedLocalTime:`${time[2]}:${time[3]}:${time[4]}`,timezone:null,executedAtUtc:null,
     currency:row.CurrencyPrimary,commissionCurrency:row.CommissionCurrency||null,side,economics,
+    economicText:Object.fromEntries(['Quantity','Price','Amount','Proceeds','Commission','Tax','NetCash'].map(k=>[k,row[k]])),
+    assetClass:row.AssetClass,symbol:row.Symbol,listingExchange:row.ListingExchange,exchange:row.Exchange,levelOfDetail:row.LevelOfDetail,orderTimeText:row.OrderTime||null,
     correction:{originalTradeId:row.OrigTradeID||null,originalTradeDate:date(row.OrigTradeDate,true),originalTradePrice:row.OrigTradePrice?number(row.OrigTradePrice):null,transactionType:row.TransactionType||null,code:row.Code||null},rawRowSha256:fingerprint});
  }
  return {source:'trade-confirmation-csv',rawSha256:crypto.createHash('sha256').update(csv).digest('hex'),executionCount:executions.length,duplicateRows,
    accountScope:{rowsMatchApprovedAccount:rows.length>0,uniqueAccount:identities.size===1},executions,
    targetTradeDate,reportedTargetDateExecutionCount:executions.filter(r=>r.reportedTradeDate===targetTradeDate).length,
    completeness:{generatedAt:null,coveredThroughDate:null,timezone:null,cancelPairsIncluded:false,cancellationsVerified:false,targetSessionFullyCovered:false,zeroExecutionsCertified:false,ledgerFinality:'not-certified'},
-   warnings:['CSV_TIMEZONE_NOT_DECLARED','REPORT_DATE_NOT_OVERALL_COVERAGE_END','CANCEL_PAIRS_NOT_INCLUDED']};
+   warnings:['CSV_TIMEZONE_NOT_DECLARED','REPORT_DATE_NOT_OVERALL_COVERAGE_END','CANCEL_PAIRS_NOT_INCLUDED',...(executions.some(r=>r.commissionCurrency===null)?['COMMISSION_CURRENCY_NOT_PROVIDED']:[])]};
 }

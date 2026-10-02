@@ -19,3 +19,10 @@ test('unapproved/multiple accounts, invalid time/date, missing ExecID, malformed
 test('correction reference is preserved, absence of cancelpairs never means no cancellations',()=>{
  const r=adaptTradeConfirmationCsv(csv([row({OrigTradeID:'trade-original',OrigTradeDate:'09/30/2026',OrigTradePrice:'2',TransactionType:'CORRECTION',Code:'fixture'})]),options);assert.equal(r.executions[0].correction.originalTradeDate,'2026-09-30');assert.equal(r.completeness.cancelPairsIncluded,false);assert.equal(r.completeness.cancellationsVerified,false);
 });
+test('economic decimal text stays exact and fee currency is never silently converted',()=>{
+ const r=adaptTradeConfirmationCsv(csv([row({CurrencyPrimary:'EUR',CommissionCurrency:'USD',Price:'2.000000000000000001'})]),options).executions[0];assert.equal(r.currency,'EUR');assert.equal(r.commissionCurrency,'USD');assert.equal(r.economicText.Price,'2.000000000000000001');assert.equal(r.orderTimeText,'10/01/2026;230000');assert.equal(r.assetClass,'STK');assert.equal(r.levelOfDetail,'EXECUTION');
+ const missing=adaptTradeConfirmationCsv(csv([row({CommissionCurrency:''})]),options);assert.equal(missing.executions[0].commissionCurrency,null);assert.ok(missing.warnings.includes('COMMISSION_CURRENCY_NOT_PROVIDED'));
+});
+test('RFC4180 multiline fields and BOM parse safely, malformed quoting is rejected with no row disclosure',()=>{
+ const text='\uFEFF'+csv([row({Symbol:'fixture\nmultiline'})]);assert.equal(adaptTradeConfirmationCsv(text,options).executions[0].symbol,'fixture\nmultiline');assert.throws(()=>adaptTradeConfirmationCsv(headers.join(',')+'\n"unclosed',options),/^Error: TC_CSV_QUOTE$/);
+});
