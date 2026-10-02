@@ -97,3 +97,7 @@ jobs:
       - name: Test weekly report calculations and ETF top-ten issuer concentration
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/xuan-weekly-*.test.mjs
+
+      - name: Test delegated approval identity and path tiers
+        if: ${{ github.event.pull_request.draft == false }}
+        run: node --test scripts/approval-tier-plan.test.mjs

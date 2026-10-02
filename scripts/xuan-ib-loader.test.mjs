@@ -2256,14 +2256,36 @@ test('a base-controlled policy lock protects the publication code itself', () =>
   assert.match(policyLock, /\/approve-xuan-ib-maintenance \$head_sha/);
   assert.match(policyLock, /author_association == "OWNER"/);
   assert.match(policyLock, /approval is invalidated automatically by every new commit/);
-  assert.doesNotMatch(policyLock, /actions\/checkout/);
+  const steps = policyLock.split(/^      - name: /m).slice(1);
+  const checkout = steps.filter(step => step.includes('uses: actions/checkout@'));
+  assert.equal(checkout.length, 1, 'exactly one trusted-base checkout is allowed');
+  assert.match(checkout[0], /^Check out the trusted policy implementation\n/);
+  assert.match(checkout[0], /uses: actions\/checkout@11bd71901bbe5b1630ceea73d27597364c9af683/);
+  assert.match(checkout[0], /ref: \$\{\{ github\.event\.pull_request\.base\.sha \}\}/);
+  assert.doesNotMatch(checkout[0], /ref:.*(?:head|refs\/pull|FETCH_HEAD)/i);
+  assert.doesNotMatch(policyLock, /git\s+(?:checkout|switch|reset)|write-all|id-token: write/);
+  const permissions = policyLock.match(/^permissions:\n((?:  [^\n]+\n)+)/m)?.[1];
+  assert.equal(permissions, '  contents: read\n  issues: read\n  pull-requests: read\n');
+  const ordinary = steps.find(step => step.startsWith('Verify registered ordinary changes and signed executor\n'));
+  assert.ok(ordinary, 'trusted-base verifier must enforce the delegated lane');
+  assert.match(ordinary, /git fetch --no-tags origin "\$HEAD_SHA"/);
+  assert.match(ordinary, /node scripts\/approval-tier-plan\.mjs "\$BASE_SHA" "\$HEAD_SHA"/);
+  assert.doesNotMatch(ordinary, /(?:git show|git cat-file)[^\n]*\|\s*(?:node|bash|sh|python)/);
+  assert.doesNotMatch(ordinary, /(?:node|bash|sh|python)\s+[^\n]*(?:FETCH_HEAD|HEAD_SHA[:/])/);
 });
 
 test('draft pull requests stay quiet until ready, then every blocking check runs', () => {
   assert.match(policyLock, /name: \$\{\{ github\.event\.pull_request\.draft && 'xuan-ib-policy-lock-draft-notice' \|\| 'xuan-ib-policy-lock' \}\}/);
   assert.match(scriptsCheck, /name: \$\{\{ github\.event\.pull_request\.draft && 'scripts-check-draft-notice' \|\| 'scripts-check' \}\}/);
   assert.match(policyLock, /Explain deferred enforcement for draft pull requests[\s\S]*draft == true/);
-  assert.match(policyLock, /Refuse pull requests that alter the trusted publication boundary[\s\S]*draft == false/);
+  const ownerFallback = policyLock.split(/^      - name: /m)
+    .find(step => step.startsWith('Require specific owner approval outside the ordinary exception\n'));
+  assert.ok(ownerFallback, 'non-ordinary or failed verification must run OWNER fallback');
+  assert.match(ownerFallback, /if: \$\{\{ github\.event\.pull_request\.draft == false && steps\.ordinary\.outcome != 'success' \}\}/);
+  assert.match(ownerFallback, /approval_line="\/approve-xuan-ib-maintenance \$head_sha"/);
+  assert.match(ownerFallback, /author_association == "OWNER"/);
+  assert.match(ownerFallback, /\.user\.id == 283054367/);
+  assert.match(ownerFallback, /index\(\$approval_line\)/);
   assert.match(policyLock, /ready_for_review/);
   assert.match(scriptsCheck, /ready_for_review/);
   assert.match(scriptsCheck, /Explain deferred validation for draft pull requests[\s\S]*draft == true/);
