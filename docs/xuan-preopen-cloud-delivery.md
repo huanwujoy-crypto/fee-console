@@ -89,3 +89,12 @@ Pages 和公网读回。需要在已有授权配置内核对可靠调度入口�
 待完成：真实来源 mapping、只读 trades 验收、公开失败状态、晚到来源尝试方案、
 可靠调度验证、OWNER 对精确 PR head 亲自审批、不可变镜像部署/配置读回、shadow
 与公网回证。未改生产 job、模式、IAM、OAuth、密钥、其他三账户流程或金融账本。
+
+2026-10-02 后续有界能力核验：首次 schema-only 过期即止；用户明确批准一次
+原机制续期后已安全轮换至原存储并取得实际 schema，金融读取/写入0，配置哈希
+前后相同。之后身份探针遇到短期 token freshness 不足，在账户查询前停止，
+未擅自第二次轮换。连续身份/来源探针等待再次续期批准。
+历史 XUAN↔Flex 固定账户在内存比对相同，但当前 OAuth 未独立绑定。已知 Flex
+sections 仅成交/现金，未证明 OpenPositions 或当前挂单。原 raw.coverage/
+same-snapshotId 是早期草案，不作为最终现实接口要求；替代的分级读取/账务门槛、
+A/B 最小决策和真实停止回证见 `docs/xuan-preopen-source-feasibility.md`。
