@@ -86,6 +86,9 @@ jobs:
           # the calculation engine. Changing either is a coefficient-authority
           # change in everything but name.
           protected_re="${protected_re}|^scripts/(xuan-ib-ai-coefficient-resolver|xuan-ib-ai-risk-input)\.(mjs|test\.mjs)$"
+          # Approval policy is itself a trusted boundary. Advisory tier labels
+          # never authenticate a human or replace the existing OWNER/SHA gate.
+          protected_re="${protected_re}|^security/|^AGENTS\\.md$|^docs/approval-tiers\\.md$|^scripts/approval-tier-plan\\.(mjs|test\\.mjs)$"
           if jq -r '.[][] | .filename, (.previous_filename // empty)' "$files_json" |
              grep -Eq "$protected_re"; then
             head_sha='${{ github.event.pull_request.head.sha }}'
