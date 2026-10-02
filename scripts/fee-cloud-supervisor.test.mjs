@@ -30,3 +30,6 @@ test("supervisor workflow has no source or ledger secrets", () => {
   assert.match(workflow, /issues: write/);
   assert.doesNotMatch(workflow, /FEE_DATA_KEY|FEE_ECON_GIST_ID|SHARESIGHT|id-token: write/);
 });
+
+// Public-only observation must also detect a producer that never started.
+import './fee-observation.test.mjs';
