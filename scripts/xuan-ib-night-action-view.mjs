@@ -1,3 +1,4 @@
+import {validatePreopenStatus,renderPreopenStatus} from './xuan-ib-preopen-status.mjs';
 import {europeRegularOpenEpoch, PREOPEN_ACTION_CUTOVER_HKT_DATE} from './xuan-ib-report-schedule.mjs';
 const fail = code => { throw new Error(`Night action view: ${code}`); };
 const object = value => value && Object.getPrototypeOf(value) === Object.prototype;
@@ -30,6 +31,7 @@ function validateOrder(order, schemaVersion) {
 }
 
 export function validateNightActionModel(model) {
+  if(model?.schemaVersion===6)return validatePreopenStatus(model);
   if (!object(model) || ![1, 2, 3, 4, 5].includes(model.schemaVersion)
     || !/^\d{4}-\d{2}-\d{2}$/.test(model.dataDate)
     || !text(model.asOfHkt) || !['ready', 'partial'].includes(model.status)) fail('INVALID_HEADER');
@@ -119,6 +121,7 @@ function renderOrders(title, rows, kind, schemaVersion) {
 }
 
 export function renderNightActionReport(model) {
+  if(model?.schemaVersion===6)return renderPreopenStatus(model);
   validateNightActionModel(model);
   const preopen = model.schemaVersion >= 4;
   const marker = Buffer.from(JSON.stringify(model), 'utf8').toString('base64url');

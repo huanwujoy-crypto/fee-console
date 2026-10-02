@@ -1,4 +1,3 @@
-import {assessIbReadiness} from './source_readiness.mjs';
 // A private report acceptance job: no GitHub mutation or schedule activation.
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -6,7 +5,7 @@ import {fileURLToPath} from 'node:url';
 import {captureCloudIbAction} from './ib_mcp.mjs';
 import {boundedText, privateCloudIo} from './cloud_io.mjs';
 import {buildNightActionModel} from '../../scripts/xuan-ib-night-action-model.mjs';
-import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
+import {extractNightActionModel,renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
 import {ASSOCIATION_POLICY_PATH, validateAssociationSnapshot,
   createAssociationReceipt, validateAssociationReceipt} from '../../scripts/xuan-ib-account-association.mjs';
@@ -67,10 +66,22 @@ export async function readSharesightAction(sourceDate, token, {fetchImpl = fetch
 }
 
 export async function runPrivateReport({sourceDate, io, now = Date.now, loadContext = loadTrustedContext,
-  captureIb = captureCloudIbAction, readSharesight = readSharesightAction} = {}) {
+  captureIb = captureCloudIbAction, readSharesight = readSharesightAction, requireActionEvidence = false} = {}) {
   const started = now(), date = dateHkt(started);
   if (!validDate(sourceDate) || sourceDate >= date) throw new Error('COMPLETED_SOURCE_DATE_REQUIRED');
   if (!io?.ibStore || !io.loadGatewayToken || !io.savePrivate) throw new Error('PRIVATE_CLOUD_IO_REQUIRED');
+  if(requireActionEvidence){
+    const context=await loadContext({now});
+    validateAssociationSnapshot(context.association,{now:now(),edition:'am'});
+    let prior=null;try{const model=extractNightActionModel(context.previousHtml);if(model.schemaVersion===6)prior=model;}catch{}
+    const runId=hash(crypto.randomUUID());
+    const association=createAssociationReceipt(context.association,{now:now(),edition:'am',previousSourceSha:context.previousSourceSha,runId});
+    return {schemaVersion:1,status:'data-not-ready',mode:'private_report_check',dataDate:date,sourceDate,
+      startedAt:new Date(started).toISOString(),completedAt:new Date(now()).toISOString(),
+      reasonCodes:['SOURCE_ADAPTER_NOT_CONFIGURED'],association,expiresAt:context.association.policy.expiresAt,
+      previousDataDate:prior?.previousDataDate||context.previousMeta.dataDate,previousReportSha:prior?.previousReportSha||context.previousSourceSha,previousSourceSha:context.previousSourceSha,
+      sourceCount:0,sources:[],publication:'none',scheduler:'none'};
+  }
   // Load Sharesight access before IB refresh so a missing grant does not rotate
   // the IB credential or capture a partial source set unnecessarily.
   const token = await io.loadGatewayToken();
@@ -85,15 +96,6 @@ export async function runPrivateReport({sourceDate, io, now = Date.now, loadCont
     || sharesight?.length !== 2 || !sharesight.some(s => s.sourceKey === 'sharesight.ibGroupedPerformance')
     || !sharesight.some(s => s.sourceKey === 'sharesight.noahPerformance')) throw new Error('ACTION_SOURCES_INCOMPLETE');
   const sources = [...ib.sources, ...sharesight];
-  const readiness = assessIbReadiness(ib.sources, {sourceDate, now: now()});
-  if (readiness.status !== 'ready') {
-    // Private status only, with no amounts, account identifiers or action HTML.
-    const receipt = {schemaVersion: 1, status: 'data-not-ready', mode: 'private_report_check',
-      dataDate: date, sourceDate, startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(),
-      readiness, sourceCount: sources.length, publication: 'none', scheduler: 'none'};
-    await io.savePrivate(`report-check/${new Date(started).toISOString()}-${runId}/receipt.json`, receipt);
-    return receipt;
-  }
   const raw = key => sources.find(source => source.sourceKey === key).raw;
   const completed = now();
   if (dateHkt(completed) !== date) throw new Error('REPORT_CROSSED_HKT_DATE');
@@ -115,7 +117,7 @@ export async function runPrivateReport({sourceDate, io, now = Date.now, loadCont
   }
   const artifact = {privateObject: prefix + 'report.html', ...await io.savePrivate(prefix + 'report.html', html)};
   const receipt = {schemaVersion: 1, status: model.status, mode: 'private_report_check', dataDate: date, sourceDate,
-    startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(), readiness, association, sourceCount: sources.length,
+    startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(), association, sourceCount: sources.length,
     sources: evidence, artifact, publication: 'none', scheduler: 'none'};
   await io.savePrivate(prefix + 'receipt.json', receipt);
   // Caller may only log this receipt, not the raw sources/model/HTML.

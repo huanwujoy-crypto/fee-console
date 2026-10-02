@@ -104,7 +104,7 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 export function classifySleepPublication(html) {
   if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
     const model = extractNightActionModel(html);
-    return { kind: 'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    return { kind: model.schemaVersion===6?'other':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
   }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });

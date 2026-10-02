@@ -1,3 +1,5 @@
+import {attemptFor,attemptPrefix} from './attempts.mjs';
+import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 // Cloud job entry point. It has no GitHub credential or public-write ability.
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -6,17 +8,19 @@ import {privateCloudIo} from './cloud_io.mjs';
 import {runPrivateReport} from './report.mjs';
 export async function runDaily({io = privateCloudIo(), now = Date.now, generate = runPrivateReport,
   execution = process.env.CLOUD_RUN_EXECUTION} = {}) {
-  const plan = planPreopen(now()), prefix = `delivery/${plan.dataDate}/${plan.slotId}/`;
+  const time=now(),plan = planPreopen(time);
+  let prefix = `delivery/${plan.dataDate}/${plan.slotId}/`;
   if (plan.status === 'no-action') {
     const receipt = {...plan, publication: 'none', sourceCount: 0};
     await io.savePrivate(prefix+'receipt.json', receipt);
     return receipt;
   }
   if (!plan.windowEnabled) return {...plan, status: 'outside-window', publication: 'none'};
+  const attempt=attemptFor(plan,time);prefix=attemptPrefix(plan,attempt);
   if (!/^xuan-preopen-report-[a-z0-9-]+$/.test(execution || '')) throw new Error('DAILY_EXECUTION_REQUIRED');
   // Acquire the immutable daily start marker BEFORE any financial read. A
   // restarted job loses this create-only race and cannot refresh IB twice.
-  await io.savePrivate(prefix+'start.json', {dataDate: plan.dataDate, slotId: plan.slotId, sourceDate: plan.sourceDate, execution, startedAt: new Date(now()).toISOString()});
+  await io.savePrivate(prefix+'start.json', {dataDate: plan.dataDate, slotId: plan.slotId, attempt, sourceDate: plan.sourceDate, execution, startedAt: new Date(now()).toISOString()});
   // All raw financial sources remain under report-check/, inaccessible to the
   // delivery identity. Only the two completed delivery files can be read by it.
   let html;
@@ -24,15 +28,21 @@ export async function runDaily({io = privateCloudIo(), now = Date.now, generate 
     if (name.endsWith('/report.html')) html = value;
     return io.savePrivate(name, value);
   }};
-  const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now});
+  const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now,requireActionEvidence:true});
   if (receipt.status === 'data-not-ready') {
-    const delivery = {...receipt, slotId: plan.slotId, calendar: plan};
+    const model={schemaVersion:6,status:'data-not-ready',dataDate:plan.dataDate,
+      asOfHkt:plan.dataDate+' '+new Date(time+28800000).toISOString().slice(11,16)+' HKT',
+      sourceDate:plan.sourceDate,slotId:plan.slotId,attempt,reasonCodes:receipt.reasonCodes,
+      association:receipt.association,expiresAt:receipt.expiresAt,previousDataDate:receipt.previousDataDate,previousReportSha:receipt.previousReportSha,previousSourceSha:receipt.previousSourceSha};
+    const statusHtml=renderNightActionReport(model);
+    const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',statusHtml)};
+    const delivery = {...receipt, slotId: plan.slotId,attempt,artifact, calendar: plan};
     await io.savePrivate(prefix+'receipt.json', delivery);
     return {status: delivery.status, dataDate: plan.dataDate, publication: 'none'};
   }
   if (receipt.status !== 'ready' || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
   const artifact = {privateObject: prefix+'report.html', ...await io.savePrivate(prefix+'report.html', html)};
-  const delivery = {...receipt, slotId: plan.slotId, artifact, calendar: plan};
+  const delivery = {...receipt, slotId: plan.slotId,attempt, artifact, calendar: plan};
   await io.savePrivate(prefix+'receipt.json', delivery); // Completion marker LAST.
   return {status: delivery.status, dataDate: delivery.dataDate, sourceDate: delivery.sourceDate,
     startedAt: delivery.startedAt, completedAt: delivery.completedAt, publication: 'none'};

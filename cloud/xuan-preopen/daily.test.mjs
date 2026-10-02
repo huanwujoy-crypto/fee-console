@@ -34,11 +34,13 @@ test('early acceptance and wrong-season runs cannot occupy the formal slot', asy
     assert.equal(result.status,'outside-window'); assert.equal(called,false);
   }
 });
-test('missing upstream coverage produces status receipt and no action HTML', async () => {
-  const saved=[];
-  const result=await runDaily({now:()=>Date.parse('2026-10-05T06:00:00Z'),execution:'xuan-preopen-report-test',
-    io:{savePrivate:async (name,value)=>{saved.push({name,value});}},
-    generate:async()=>({status:'data-not-ready',dataDate:'2026-10-05',sourceDate:'2026-10-02'})});
-  assert.equal(result.status,'data-not-ready'); assert.equal(saved.length,2);
-  assert.ok(saved.every(s=>!s.name.endsWith('report.html')));
+test('formal unconfigured source coverage creates only protected non-action status',async()=>{
+ const {statusFixture}=await import('./test_fixtures.mjs');const f=statusFixture();const saved=[];
+ const result=await runDaily({now:f.now,execution:'xuan-preopen-report-test',io:{savePrivate:async(name,value)=>{saved.push({name,value});return{sha256:'a'.repeat(64),generation:'1'};}},generate:async options=>{assert.equal(options.requireActionEvidence,true);return{...f.receipt,expiresAt:f.model.expiresAt,previousDataDate:f.model.previousDataDate,previousReportSha:f.model.previousReportSha,previousSourceSha:f.model.previousSourceSha};}});
+ assert.equal(result.status,'data-not-ready');assert.equal(saved.length,3);assert.ok(saved[1].value.includes('暂无行动建议'));assert.ok(saved[1].value.includes('上一份报告原日期：2026-10-01'));assert.equal(saved[2].value.artifact.privateObject,saved[1].name);
+});
+test('each later immutable attempt has a finite private path; a same-bucket CAS loser does no source work',async()=>{
+ const {statusFixture}=await import('./test_fixtures.mjs');
+ for(const instant of ['2026-10-05T06:11:00Z','2026-10-05T06:21:00Z']){const f=statusFixture(Date.parse(instant)),saved=[];await runDaily({now:f.now,execution:'xuan-preopen-report-test',io:{savePrivate:async(name,value)=>{saved.push(name);return{sha256:'a'.repeat(64),generation:'1'};}},generate:async()=>({...f.receipt,expiresAt:f.model.expiresAt,previousDataDate:f.model.previousDataDate,previousReportSha:f.model.previousReportSha,previousSourceSha:f.model.previousSourceSha})});assert.ok(saved.every(name=>name.includes(`/retry-${f.attempt}/`)));}
+ let generated=0;await assert.rejects(runDaily({now:()=>Date.parse('2026-10-05T06:21:00Z'),execution:'xuan-preopen-report-test',io:{savePrivate:async()=>{throw Error('CLOUD_HTTP_412');}},generate:async()=>{generated++;}}),/412/);assert.equal(generated,0);
 });

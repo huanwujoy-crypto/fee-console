@@ -4,7 +4,7 @@ on:
   schedule:
     # European regular open minus 60m; seasonal candidates are gated before identity.
     # Exchange calendars inside the producer decide whether this is a trading day.
-    - cron: '0,10 6,7 * * 1-5'
+    - cron: '0,10,20 6,7 * * 1-5'
   workflow_dispatch:
 
 permissions:
@@ -60,7 +60,7 @@ jobs:
 
       - name: Submit the signed candidate to the existing protected pipeline
         id: candidate
-        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused') }}
+        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.delivery.outputs.outcome == 'data-not-ready') }}
         env:
           # Reuse only after explicit OWNER approval. This token is never sent
           # to GCP, put in an image, or made available to the broker-reading job.
@@ -87,7 +87,7 @@ jobs:
           MODE: ${{ vars.XUAN_PREOPEN_CLOUD_MODE }}
         run: |
           if [[ "$OUTCOME" == 'data-not-ready' ]]; then
-            echo '数据未齐，未生成行动建议；当前页面保留原报告日期。' >> "$GITHUB_STEP_SUMMARY"
+            echo '数据未齐，未生成行动建议；受保护状态页保留上一份报告原日期，公开读回后才确认上线。' >> "$GITHUB_STEP_SUMMARY"
           fi
           printf '日期：%s；结果：%s；模式：%s\n' "$DATA_DATE" "$OUTCOME" "$MODE" >> "$GITHUB_STEP_SUMMARY"
 

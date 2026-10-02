@@ -117,10 +117,13 @@ test('trusted context is pinned to current main and checks the previous publishe
   assert.equal(c.previousHtml, html); assert.equal(c.previousSourceSha, 'c'.repeat(40));
   assert.ok(urls.slice(1).every(url => url.includes('/' + 'a'.repeat(40) + '/')));
 });
-test('real existing MCP shapes without coverage do not generate action suggestions', async () => {
-  const h=harness({captureIb:async()=>{const s=ib();for(const source of s.sources)delete source.raw.coverage;return s;}});
-  const receipt=await runPrivateReport(h.options);
-  assert.equal(receipt.status,'data-not-ready');assert.equal(receipt.readiness.issues.length,4);
-  assert.ok(h.objects.every(x=>!x.name.endsWith('report.html')));
-  assert.ok(!JSON.stringify(receipt).includes('net_liquidation'));
+test('formal mode reports adapter absence without broker access, refresh or fabricated coverage',async()=>{
+ const h=harness({requireActionEvidence:true,loadContext:async()=>{const c=context();c.previousMeta={dataDate:'2026-09-28'};return c;}});
+ const receipt=await runPrivateReport(h.options);assert.equal(receipt.status,'data-not-ready');assert.deepEqual(receipt.reasonCodes,['SOURCE_ADAPTER_NOT_CONFIGURED']);assert.equal(receipt.sourceCount,0);assert.equal(h.objects.length,0);assert.equal(h.calls.length,0);
+});
+test('later status retains original report provenance rather than relabeling yesterday or the previous status',async()=>{
+ const {statusFixture}=await import('./test_fixtures.mjs');const f=statusFixture();
+ const objects=[],io={ibStore:{},loadGatewayToken:async()=>{throw Error('must not read');},savePrivate:async(...args)=>objects.push(args)};
+ const result=await runPrivateReport({sourceDate:f.plan.sourceDate,io,now:()=>Date.parse('2026-10-05T06:11:00Z'),requireActionEvidence:true,loadContext:async()=>({...f.context,previousHtml:f.html,previousSourceSha:'e'.repeat(40),previousMeta:{dataDate:f.plan.dataDate},association:{...f.context.association,checkedAt:'2026-10-05T06:11:00.000Z'}})});
+ assert.equal(result.previousDataDate,'2026-10-01');assert.equal(result.previousReportSha,'c'.repeat(40));assert.equal(result.previousSourceSha,'e'.repeat(40));assert.equal(objects.length,0);
 });

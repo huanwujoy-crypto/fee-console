@@ -2138,6 +2138,7 @@ test('the integrity check accepts legacy reports and the canonical action page',
     '<title>XUAN-IB 睡前交接</title>',
     '<title>XUAN · 睡前行动版</title>',
     '<title>XUAN · 开市前行动版</title>',
+    '<title>XUAN · 本轮状态</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
@@ -2887,4 +2888,10 @@ test('same-day PM label published before the European slot cannot prove current 
   await app.listeners.button.click();
   assert.equal(app.warning.hidden,false);assert.equal(app.status.classList.contains('error'),true);
   assert.match(app.warning.textContent,/未完成来源覆盖核验与发布验收/);
+});
+
+test('verified non-action status cannot satisfy formal completion or relabel previous report',async()=>{
+ const {statusFixture}=await import('../cloud/xuan-preopen/test_fixtures.mjs');const f=statusFixture();const meta=metaFor(f.html);
+ const app=loaderHarness({now:'2026-10-05T06:35:00Z',fetchImpl:async url=>String(url).includes('latest.meta.json')?response({json:meta,bytes:[]}):response({json:null,bytes:Buffer.from(f.html)})});
+ await app.listeners.button.click();assert.match(app.frame.srcdoc,/暂无行动建议/);assert.match(app.frame.srcdoc,/上一份报告原日期：2026-10-01/);assert.match(app.status.textContent,/本轮状态.*数据未齐/);assert.match(app.warning.textContent,/暂无新的行动建议/);assert.equal(app.status.classList.contains('error'),true);assert.doesNotMatch(app.status.textContent,/数据至/);
 });

@@ -34,6 +34,7 @@ export function extractPrimaryDateLine(html) {
   const compact = header.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>\s*<p\b[^>]*>([\s\S]*?)<\/p>/i);
   if (!compact) return "";
   const title = stripMarkup(compact[1]);
+  if(title==="XUAN · 本轮状态")return `临时状态 · ${stripMarkup(compact[2])}`;
   return title === "XUAN · 开市前行动版" ? `${title} · ${stripMarkup(compact[2])}` : "";
 }
 

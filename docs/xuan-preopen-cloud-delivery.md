@@ -99,3 +99,33 @@ Pages 和公网读回。需要在已有授权配置内核对可靠调度入口�
 sections 仅成交/现金，未证明 OpenPositions 或当前挂单。原 raw.coverage/
 same-snapshotId 是早期草案，不作为最终现实接口要求；替代的分级读取/账务门槛、
 A/B 最小决策和真实停止回证见 `docs/xuan-preopen-source-feasibility.md`。
+
+### A+B 实际候选实现（覆盖前文草案；未上线）
+
+已移除早期source_readiness及raw.coverage/snapshotId要求；可选included_accounts
+不参与正式闸门。原owner-attested policy/期限/披露不改。IANA窗口/日历、旧根锁
+隔离、真实采集时点及meta/blob证明继续。SOURCE_ADAPTER_NOT_CONFIGURED是明确
+的未完成阶段状态，不等于用户可靠行动报告目标已完成；此配置禁止合并/部署成
+每日永久状态方案，保留现有生产，须先完成C可用适配或取得用户明确范围决定。
+
+新增schema6状态页只有固定原因码、slot/日期/时间、原报告日期/签名来源指针及
+业主关联receipt；无账号、金额、持仓、动作或自由文本错误。通过既有OWNER签名
+单文件index候选→Validate→Promote→Pages，status guard从trusted main独立重验
+政策/期限/receipt/run/前版及30分钟状态新鲜度。签名和公开SHA/blob读回沿用。
+分类为other/临时状态，不能计作complete-PM或通过正式slot健康验收；手机入口
+显示数据未齐，既有旧报告原日期/指针单独保留，状态时间不表示上游完整。
+未通过发布链路时UI只显示延迟，不自行宣称某轮私有失败原因。
+
+晚到尝试限定三个不可变命名空间：T0、T+10、T+20，第三桶持续至开市；每桶
+start/report/receipt create-only。旧验收根锁不删除，旧receipt不复用正式slot。
+delivery已ready则关闭重试；pending执行被跟随；已结束失败旧桶可在后续桶
+尝试，单次controller最多一次run，无CloudRun override权限或额外IAM。跨
+时间桶启动只读三个有限完成路径，不重启。并发同桶仍由CAS拒绝，不忽略412。
+重复固定原因状态按slot/reason指纹去重，避免重复候选与提醒；完整已验收正式
+行动不会被状态候选降级，旧早跑/仅重标日期/缺meta/blob证明不能当已发布。
+
+C未完成前正式路径在IB/SS取数及refresh之前生成明确适配未配置状态；private
+acceptance保留既有源读取/业主政策，不能通过正式publisher变成已核实行动。
+C真实财务文件不在本任务内；CSV纯header与字段语义仅用于synthetic离线适配。
+Trade Confirmation无整体whenGenerated/coverage终点且没有撤销配对，不能单独
+证明目标日最终账务或固定早间时限。当前候选仍draft，未改变生产mode/job。
