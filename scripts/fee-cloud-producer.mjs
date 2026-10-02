@@ -45,12 +45,44 @@ function readJson(file, max = 5 * 1024 * 1024) {
   try { return JSON.parse(bytes.toString("utf8")); } catch { fail("INPUT_FILE"); }
 }
 
+// Return only fixed categories. Child stderr can contain private amounts,
+// account identities or paths and must never be forwarded to Actions output.
+export function writerFailureCode(stderr, preflight = false) {
+  const text = String(stderr || "");
+  const styleCodes = new Set(["ACCOUNT", "ACCOUNT_STOCK_SUM", "AMOUNT", "BEFORE_FIRST_HOLDING",
+    "CLASSIFIED_AT", "DATE", "DIRECTORY_PERMISSIONS", "EFFECTIVE_FIRST_HOLDING", "ENTRY_ID",
+    "EVIDENCE_REQUIRED", "FILE_ABSOLUTE", "FILE_CHANGED", "FILE_IN_REPO", "FILE_PERMISSIONS",
+    "FILE_SIZE", "FUTURE_CLASSIFICATION", "HOLDINGS", "HOLDING_DUPLICATE", "IDENTITY",
+    "INDEPENDENT_REVIEW", "INPUT_DATE", "PROPOSAL_DUPLICATE", "PROPOSAL_NOT_HELD", "REGISTRY",
+    "REGISTRY_CAPACITY", "REGISTRY_DUPLICATE", "REGISTRY_IMMUTABLE", "SCHEMA", "SOURCE_DATE",
+    "STATIC_CONFLICT", "STATIC_IMMUTABLE", "STATIC_LEARNED_CONFLICT", "STATIC_MAP", "STOCK_SUM",
+    "STYLE", "TICKER_CONFLICT", "TOP_HOLDINGS", "INPUT_REQUIRED", "INPUT_INVALID", "MANUAL_TOTALS_REFUSED"]);
+  const style = /^error: STYLE_([A-Z0-9_]+) — nothing written$/m.exec(text)?.[1];
+  const categories = [
+    [/^error: STYLE_[A-Z0-9_]+(?: — nothing written)?$/m, "STYLE"],
+    [/^error: duplicate\/stale cash in /m, "CASH_RECONCILIATION"],
+    [/^error: --acct-cash-.* are required:/m, "CASH_EVIDENCE"],
+    [/^error: (?:schwab|webull) moved .*refusing an impossible amount/m, "ACCOUNT_MOVE"],
+    [/^error: fee calculation receipt failed:/m, "FEE_RECEIPT"],
+    [/^error: FEE_ECON_FILE /m, "ECONOMIC_INPUT"],
+    [/^error: (?:private legacy source|current legacy economic input)/m, "ECONOMIC_SOURCE"],
+    [/^error: flow /m, "FLOW"],
+    [/^error: (?:split is impossible|growth\/value split is incomplete)/m, "SPLIT"],
+    [/^error: --(?:date|src-|schwab|webull|cash|stock|other|spy|qqq)/m, "INPUT"],
+  ];
+  const category = styleCodes.has(style) ? `STYLE_${style}`
+    : categories.find(([pattern]) => pattern.test(text))?.[1] || "UNKNOWN";
+  return `FEE_CLOUD_WRITER_${preflight ? "PREFLIGHT_" : ""}${category}`;
+}
+
 function run(script, cli, env) {
   const result = spawnSync(NODE, [path.join(ROOT, "scripts", script), ...cli], {
     cwd: ROOT, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000,
   });
-  if (result.status !== 0) fail(script === "daily.mjs" ? "WRITER"
-    : script === "fee-receipt-report.mjs" ? "RECEIPT" : "HEALTH");
+  if (result.status !== 0) {
+    if (script === "daily.mjs") throw new Error(writerFailureCode(result.stderr, cli.includes("--style-preflight")));
+    fail(script === "fee-receipt-report.mjs" ? "RECEIPT" : "HEALTH");
+  }
   return String(result.stdout || "").trim();
 }
 
