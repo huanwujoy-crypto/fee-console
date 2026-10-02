@@ -26,18 +26,18 @@ export async function githubRequest(payload, token = process.env.XUAN_PREOPEN_GI
 }
 export async function publishPrepared({html, receipt, request = githubRequest, loadContext = loadTrustedContext, now = Date.now} = {}) {
   const time = now(), dataDate = hktDate(time);
-  const limited=receipt?.mode==='private_limited_readback';
+  const intraday=receipt?.mode==='private_intraday_update',limited=intraday||receipt?.mode==='private_limited_readback';
   if (receipt?.schemaVersion !== 1 || receipt.dataDate!==dataDate || receipt.sourceDate>=dataDate || receipt.publication!=='none' || !Array.isArray(receipt.sources)
-    || (limited?(receipt.status!=='partial'||receipt.sourceCount!==3||receipt.sources.length!==3):(receipt.mode!=='private_report_check'||receipt.status!=='ready'||receipt.sourceCount!==5||receipt.sources.length!==5)))fail('RECEIPT');
+    || (limited?(receipt.status!=='partial'||receipt.sourceCount!==(intraday?5:3)||receipt.sources.length!==(intraday?5:3)):(receipt.mode!=='private_report_check'||receipt.status!=='ready'||receipt.sourceCount!==5||receipt.sources.length!==5)))fail('RECEIPT');
   const started = Date.parse(receipt.startedAt), completed = Date.parse(receipt.completedAt);
   if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started || completed > time
       || completed-started > 300_000 || time-started > 30*60_000) fail('STALE');
-  const required = limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
+  const required = intraday?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades']:limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
   if (required.some(key => receipt.sources.filter(s => s.sourceKey === key && HASH.test(s.sha256 || '')).length !== 1)) fail('SOURCES');
   if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
   if(!limited)validateNightActionHtml(html, dataDate);
   const model = extractNightActionModel(html);
-  if(limited){if(model.schemaVersion!==7||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
+  if(limited){if(model.schemaVersion!==(intraday?8:7)||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
   else if (model.schemaVersion !== 5 || model.status !== 'ready' || !model.asOfHkt.endsWith(`数据至 ${receipt.sourceDate}`)) fail('MODEL');
   const verifyContext = async () => {
     const context = await loadContext({now});
@@ -48,7 +48,7 @@ export async function publishPrepared({html, receipt, request = githubRequest, l
     return context;
   };
   const context = await verifyContext(), baseSha = context.association.policyCommit;
-  if(limited){try{const old=extractNightActionModel(context.previousHtml);if(old.schemaVersion===7&&old.evidenceSha256===model.evidenceSha256)return {publication:'already-published-status',dataDate};if(old.status==='ready'&&old.dataDate===dataDate)fail('COMPLETE_REPORT_EXISTS');}catch(e){if(e.message==='PREOPEN_PUBLISH_COMPLETE_REPORT_EXISTS')throw e;}}
+  if(limited){try{const old=extractNightActionModel(context.previousHtml);if([7,8].includes(old.schemaVersion)&&old.evidenceSha256===model.evidenceSha256)return {publication:'already-published-status',dataDate};if(!intraday&&old.status==='ready'&&old.dataDate===dataDate)fail('COMPLETE_REPORT_EXISTS');}catch(e){if(e.message==='PREOPEN_PUBLISH_COMPLETE_REPORT_EXISTS')throw e;}}
   const query = {query: 'query { viewer { login } repository(owner: "huanwujoy-crypto", name: "fee-console") { id ref(qualifiedName: "refs/heads/main") { target { oid } } } }'};
   const repo = (await request(query))?.data;
   if (repo?.viewer?.login !== OWNER) fail('OWNER');

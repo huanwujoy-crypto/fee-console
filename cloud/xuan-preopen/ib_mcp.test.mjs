@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { RESOURCE, validateCredential, loadReadCredential, IbReadSession } from './ib_mcp.mjs';
+import { RESOURCE, validateCredential, loadReadCredential, IbReadSession,captureCloudIbFull,captureCloudIbAction } from './ib_mcp.mjs';
 
 const credential = () => ({ client_id: 'test-client', access_token: 'test-access', refresh_token: 'test-refresh',
   token_type: 'Bearer', scope: 'mcp.read', resource: RESOURCE, expires_at: 1_000_000 });
@@ -68,3 +68,7 @@ test('JSON and SSE handshakes preserve the server session ID', async () => {
   assert.deepEqual(result.raw, { orders: [] });
   assert.deepEqual(requests.map(value => value.method), ['initialize', 'notifications/initialized', 'tools/call']);
 });
+test('full capture reads five fixed tools after at most one saved read-only refresh; legacy capture stays three',async()=>{
+ for(const [capture,count]of [[captureCloudIbFull,5],[captureCloudIbAction,3]]){let refresh=0,saves=0;const tools=[];const fetchImpl=async(url,options)=>{if(url.includes('/token')){refresh++;return response({access_token:'next',token_type:'Bearer',expires_in:3600,scope:'mcp.read'});}const q=JSON.parse(options.body);if(q.method==='initialize')return response({jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}}}});if(q.method==='notifications/initialized')return new Response(null,{status:202});tools.push(q.params);const data={get_account_summary:{currency:'USD',net_liquidation:100,total_cash_value:100},get_account_positions:{positions:[]},get_account_orders:{orders:[]},get_account_balances:{balances:[]},get_account_trades:{trades:[]}}[q.params.name];return response({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(data)}]}});};const r=await capture({load:async()=>credential(),save:async()=>{saves++;}},{now:()=>950000,fetchImpl});assert.equal(r.sources.length,count);assert.equal(refresh,1);assert.equal(saves,1);assert.equal(tools.length,count);for(const t of tools)assert.deepEqual(t.arguments,t.name==='get_account_trades'?{period:'DAYS_7'}:{});}
+});
+test('trade defaults and alternate periods/account arguments cannot bypass the fixed full capture',async()=>{let calls=0;const s=new IbReadSession(credential(),{fetchImpl:async()=>{calls++;}});s.initialized=true;for(const args of [{},{period:'TODAY'},{period:'DAYS_7',account:'other'}])await assert.rejects(s.request('tools/call',{name:'get_account_trades',arguments:args}),/FORBIDDEN/);assert.equal(calls,0);});

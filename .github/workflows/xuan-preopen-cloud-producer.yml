@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       private_limited_readback_prefix:
-        description: 'Already prepared immutable value-free limited receipt; never runs sources'
+        description: 'Already prepared private verified report; never runs sources'
         required: false
         default: ''
         type: string
@@ -59,7 +59,7 @@ jobs:
           XUAN_PREOPEN_GOOGLE_TOKEN: ${{ steps.google.outputs.access_token }}
         run: node cloud/xuan-preopen/delivery.mjs "$RUNNER_TEMP/xuan-preopen-private"
 
-      - name: Read the existing private limited report without running sources
+      - name: Read the existing verified private report without running sources
         id: limited
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.private_limited_readback_prefix != '' }}
         env:
@@ -69,7 +69,7 @@ jobs:
 
       - name: Submit the signed candidate to the existing protected pipeline
         id: candidate
-        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.limited.outputs.outcome == 'limited-readback') }}
+        if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.limited.outputs.outcome == 'limited-readback' || steps.limited.outputs.outcome == 'intraday-update') }}
         env:
           # Reuse only after explicit OWNER approval. This token is never sent
           # to GCP, put in an image, or made available to the broker-reading job.

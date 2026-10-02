@@ -31,6 +31,7 @@ jobs:
           git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json claude/xuan-ib-classification-delegation-v1.json claude/xuan-ib-ai-tier-overrides-v1.json claude/xuan-ib-auto-classification-v1.json claude/xuan-ib-venue-identity-v1.json claude/xuan-ib-ai-risk-tiers-v1.json | tar -x -C "$trusted_root"
           for required in \
             scripts/handover-guard.mjs \
+            scripts/xuan-ib-intraday-update.mjs \
             scripts/xuan-ib-limited-status.mjs \
             scripts/xuan-ib-night-action-view.mjs \
             scripts/xuan-ib-night-action-guard.mjs \

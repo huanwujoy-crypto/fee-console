@@ -15,7 +15,7 @@ export function validateNightActionHtml(html, expectedDate, {snapshot=null,previ
   const model = extractNightActionModel(html);
   if (model.dataDate !== expectedDate) fail('DATE_MISMATCH');
   if (renderNightActionReport(model) !== html) fail('NONDETERMINISTIC_OR_MODIFIED_HTML');
-  if(model.schemaVersion===7){
+  if([7,8].includes(model.schemaVersion)){
     const started=Date.parse(model.captureStartedAt),completed=Date.parse(model.captureCompletedAt);
     if(completed>now||now-started>1800000)fail("LIMITED_CAPTURE_STALE");
     if(!snapshot||previousSourceSha!==model.previousSourceSha||model.expiresAt!==snapshot.policy.expiresAt)fail("LIMITED_CONTEXT");
@@ -31,7 +31,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const [file, expectedDate] = process.argv.slice(2);
     if (!file || !expectedDate || process.argv.length !== 4) fail('USAGE');
     const html=fs.readFileSync(file,'utf8'),model=extractNightActionModel(html);
-    const options=model.schemaVersion===7?{snapshot:loadTrustedAssociationPolicy(),previousSourceSha:process.env.XUAN_IB_PREVIOUS_SOURCE_SHA}:{};
+    const options=[7,8].includes(model.schemaVersion)?{snapshot:loadTrustedAssociationPolicy(),previousSourceSha:process.env.XUAN_IB_PREVIOUS_SOURCE_SHA}:{};
     const result = validateNightActionHtml(html, expectedDate,options);
     process.stdout.write(`${JSON.stringify(result)}\n`);
   } catch (error) {

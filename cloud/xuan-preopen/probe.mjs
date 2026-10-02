@@ -1,7 +1,7 @@
 // Run once to prove a standalone cloud source connection. No report rendering,
 // publishing, GitHub mutation, source fallback, or scheduling is implemented.
 import crypto from 'node:crypto';
-import { captureCloudIbAction } from './ib_mcp.mjs';
+import { captureCloudIbAction,captureCloudIbFull } from './ib_mcp.mjs';
 
 const PROJECT = 'family-portfolio-gateway';
 const SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
@@ -47,9 +47,10 @@ async function savePrivate(name, value) {
 }
 
 async function main() {
-  if (process.argv.slice(2).join(' ') !== '--source-check') throw new Error('SOURCE_CHECK_ONLY');
+  const mode=process.argv.slice(2).join(' ');
+  if (!['--source-check','--full-source-check'].includes(mode)) throw new Error('SOURCE_CHECK_ONLY');
   const startedAt = new Date().toISOString();
-  const result = await captureCloudIbAction(store);
+  const result = await (mode==='--full-source-check'?captureCloudIbFull:captureCloudIbAction)(store);
   const prefix = `source-check/${startedAt}-${crypto.randomUUID()}/`;
   const sources = [];
   for (const source of result.sources) {

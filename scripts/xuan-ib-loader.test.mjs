@@ -2139,6 +2139,7 @@ test('the integrity check accepts legacy reports and the canonical action page',
     '<title>XUAN · 睡前行动版</title>',
     '<title>XUAN · 开市前行动版</title>',
     '<title>XUAN · 有限核实补读</title>',
+    '<title>XUAN · 盘中数据更新</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
