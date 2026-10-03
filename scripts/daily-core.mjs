@@ -39,7 +39,7 @@ export const CASH_EPS = 0.01;
 export const ACCOUNTS = ["schwab", "webull"];
 export const SPLITS = ["cash", "stock", "other"];
 // Optional style look-through.  Keep `stock` as the authoritative equity total:
-// growth/value are only accepted as a complete, reconciling pair.
+// growth/value remain a complete pair; optional independent gold joins the stock reconciliation.
 export const STYLE_SPLITS = ["growth", "value"];
 /* 基准（口径 v4.6）：美股收盘、含息。存的是当日原始收盘价 + 当日除息金额，
    两者都写一次就永不重述——这是不用 Yahoo adjclose 的原因。
@@ -136,12 +136,18 @@ export function validateInputs(input) {
       if (!Number.isFinite(v)) errors.push(`--${s} must be a finite number`);
       else if (v < 0) errors.push(`--${s} must be zero or greater`);
     }
-    const styleTotal = STYLE_SPLITS.reduce((sum, s) => sum + styleSplits[s], 0);
+    const gold = styleSplits.gold ?? 0;
+    if (!Number.isFinite(gold) || gold < 0) errors.push("--gold must be a finite number of zero or greater");
+    const styleTotal = STYLE_SPLITS.reduce((sum, s) => sum + styleSplits[s], gold);
     if (Number.isFinite(styleTotal) && Number.isFinite(splits.stock) &&
         Math.abs(styleTotal - splits.stock) > STYLE_SPLIT_EPS) {
-      errors.push(`growth/value split is incomplete: growth+value differs from stock by ` +
+      errors.push(`growth/value split is incomplete: growth+value+gold differs from stock by ` +
         `${(splits.stock - styleTotal).toFixed(2)} (> ${STYLE_SPLIT_EPS.toFixed(2)})`);
     }
+  }
+
+  if (styleSplits.gold !== undefined && stylePresent.length !== STYLE_SPLITS.length) {
+    errors.push("--gold requires a complete growth/value split");
   }
 
   for (const [k, v] of Object.entries(bench)) {
@@ -498,7 +504,7 @@ export function buildPoint({ date, accounts, splits, styleSplits = {}, topHoldin
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
-  for (const s of STYLE_SPLITS) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
+  for (const s of [...STYLE_SPLITS, "gold"]) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
   if (Array.isArray(topHoldings)) point.topHoldings = topHoldings.map(row => ({ ticker: row.ticker, value: row.value }));
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
   if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) {

@@ -74,7 +74,7 @@ const num = (name, raw) => {
 
 const known = new Set([
   "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint",
-  ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
+  ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, "gold", ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
   ...ACCOUNTS.map(a => `acct-cash-${a}`),
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
@@ -112,7 +112,7 @@ for (const a of ACCOUNTS) {
   if (args[`prev-acct-cash-${a}`] !== undefined) prevAcctCash[a] = num(`prev-acct-cash-${a}`, args[`prev-acct-cash-${a}`]);
 }
 for (const s of SPLITS) if (args[s] !== undefined) splits[s] = num(s, args[s]);
-for (const s of STYLE_SPLITS) if (args[s] !== undefined) styleSplits[s] = num(s, args[s]);
+for (const s of [...STYLE_SPLITS, "gold"]) if (args[s] !== undefined) styleSplits[s] = num(s, args[s]);
 for (const b of BENCH_KEYS) if (args[b] !== undefined) bench[b] = num(b, args[b]);
 for (const b of BENCH_LEGACY_KEYS) if (args[b] !== undefined) bench[b] = num(b, args[b]);
 for (const b of BENCH_DIV_KEYS) if (args[b] !== undefined) benchDiv[b] = num(b, args[b]);
@@ -262,7 +262,7 @@ if (weekendCarry) {
   const forbidden = [
     ...ACCOUNTS.map(a => `acct-cash-${a}`),
     ...ACCOUNTS.map(a => `prev-acct-cash-${a}`),
-    ...STYLE_SPLITS,
+    ...STYLE_SPLITS, "gold",
     ...BENCH_DIV_KEYS,
   ];
   if (!isWeekend(date) || args.flows !== "[]" || forbidden.some(keyName => args[keyName] !== undefined)
@@ -303,7 +303,7 @@ if (weekendCarry) {
       : sourceFetchedAt !== null || suppliedSourceFingerprint !== null) {
     die("WEEKEND_CARRY_PROVENANCE — nothing written");
   }
-  for (const keyName of STYLE_SPLITS) {
+  for (const keyName of [...STYLE_SPLITS, "gold"]) {
     if (Number.isFinite(weekendCarryPrior[keyName])) styleSplits[keyName] = Number(weekendCarryPrior[keyName]);
   }
 }
@@ -316,7 +316,7 @@ if (data.classificationRegistry !== undefined && !styleFile && !weekendCarry) {
   die('STYLE_INPUT_REQUIRED for an activated registry — nothing written');
 }
 if (styleFile) {
-  if (STYLE_SPLITS.some(k => args[k] !== undefined)) die('STYLE_MANUAL_TOTALS_REFUSED — nothing written');
+  if ([...STYLE_SPLITS, "gold"].some(k => args[k] !== undefined)) die('STYLE_MANUAL_TOTALS_REFUSED — nothing written');
   try {
     const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
     const snapshot = readStyleInput(styleFile, repoRoot);
@@ -327,6 +327,7 @@ if (styleFile) {
     topHoldings = summarizeTopHoldings(snapshot.input, 3, staticMap.topHoldingExposureMappings || []);
     styleSplits.growth = styleResult.growth;
     styleSplits.value = styleResult.value;
+    if (styleResult.gold !== undefined) styleSplits.gold = styleResult.gold;
   } catch (error) {
     const code = /^STYLE_[A-Z0-9_]+$/.test(error.message) ? error.message : 'STYLE_INPUT_INVALID';
     die(`${code} — nothing written`);
@@ -436,14 +437,14 @@ if (weekendCarry && Array.isArray(weekendCarryPrior?.topHoldings)) {
   point.topHoldings = structuredClone(weekendCarryPrior.topHoldings);
 }
 // A read-only correction that leaves `stock` unchanged must not erase a style
-// look-through already verified for the same day.  If stock changes materially,
-// the old style pair is deliberately dropped so the UI falls back to
-// “股票（未拆分）” instead of presenting stale classification.
-const noIncomingStyle = STYLE_SPLITS.every(k => point[k] === undefined);
+// report allocation already verified for the same day, including independent gold.
+// If stock changes materially, drop the old allocation so the UI shows
+// “证券（未拆分）” instead of presenting stale classification.
+const noIncomingStyle = [...STYLE_SPLITS, "gold"].every(k => point[k] === undefined);
 const hasExistingStyle = STYLE_SPLITS.every(k => Number.isFinite(existingPoint?.[k]));
 if (noIncomingStyle && hasExistingStyle &&
     Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
-  for (const k of STYLE_SPLITS) point[k] = Number(existingPoint[k]);
+  for (const k of [...STYLE_SPLITS, "gold"]) if (existingPoint[k] !== undefined) point[k] = Number(existingPoint[k]);
 }
 if (point.topHoldings === undefined && Array.isArray(existingPoint?.topHoldings)
     && Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
