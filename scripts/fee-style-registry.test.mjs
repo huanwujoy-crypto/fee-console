@@ -137,3 +137,19 @@ test('private input path guards repository files, symlinks, changed bytes and si
   assert.throws(() => readStyleInput(source, repo), /DIRECTORY_PERMISSIONS/);
   fs.chmodSync(d, 0o700);
 });
+
+
+test('independently reviewed gold is isolated from both equity styles and reused immutably', () => {
+  const f = fixture();
+  f.input.proposals[0].style = 'gold';
+  const result = resolveStyle(f);
+  assert.equal(result.growth, 0); assert.equal(result.value, 100); assert.equal(result.gold, 200);
+  assert.equal(result.growth + result.value + result.gold, f.stock);
+  const again = resolveStyle({ ...f, registry: result.registry });
+  assert.deepEqual(again.registry, result.registry); assert.deepEqual(again.newEventIds, []);
+  f.input.proposals[0].style = 'value';
+  assert.throws(() => resolveStyle({ ...f, registry: result.registry }), /REGISTRY_IMMUTABLE/);
+});
+test('legacy reviewed holdings keep original totals and omit zero gold', () => {
+  assert.equal(Object.hasOwn(resolveStyle(fixture()), 'gold'), false);
+});

@@ -84,7 +84,7 @@ export function summarizeTopHoldings(input, limit = 3, exposureMappings = []) {
 function validateEntry(e, saved = false) {
   exact(e, saved ? [...ENTRY_KEYS, 'id'] : ENTRY_KEYS);
   identity(e);
-  if (!['growth', 'value'].includes(e.style)) fail('STYLE');
+  if (!['growth', 'value', 'gold'].includes(e.style)) fail('STYLE');
   iso(e.effectiveFrom); iso(e.firstHeldOn);
   if (e.firstHeldOn > e.effectiveFrom) fail('BEFORE_FIRST_HOLDING');
   // An immutable initial decision must also cover subsequent weekend lookbacks.
@@ -115,7 +115,7 @@ export function resolveStyle({ input, registry, staticMap, date, sourceDates, st
   const known = new Map();
   for (const e of staticMap.holdings) {
     const key = identity(e);
-    if (known.has(key) || !['growth', 'value'].includes(e.style)) fail('STATIC_CONFLICT');
+    if (known.has(key) || !['growth', 'value', 'gold'].includes(e.style)) fail('STATIC_CONFLICT');
     known.set(key, e);
   }
   const saved = registry === undefined ? { schemaVersion: 1, entries: [] } : registry;
@@ -168,7 +168,7 @@ export function resolveStyle({ input, registry, staticMap, date, sourceDates, st
     learned.set(key, candidate); appended.push(candidate);
   }
   if (saved.entries.length + appended.length > 10000) fail('REGISTRY_CAPACITY');
-  let growth = 0, value = 0;
+  let growth = 0, value = 0, gold = 0;
   const missing = [];
   for (const [i, h] of holdings.entries()) {
     const key = identity(h), fixed = known.get(key), learnedEntry = learned.get(key);
@@ -176,11 +176,14 @@ export function resolveStyle({ input, registry, staticMap, date, sourceDates, st
     const e = fixed && staticMap.effectiveDate <= h.sourceDate ? fixed
       : learnedEntry && learnedEntry.effectiveFrom <= h.sourceDate ? learnedEntry : null;
     if (!e) { missing.push(i); continue; }
-    if (e.style === 'growth') growth += h.valueUsd; else value += h.valueUsd;
+    if (e.style === 'growth') growth += h.valueUsd;
+    else if (e.style === 'value') value += h.valueUsd;
+    else gold += h.valueUsd;
   }
   if (missing.length) fail('MISSING_ROWS_' + missing.join('_'));
   return {
     growth: Math.round(growth * 100) / 100, value: Math.round(value * 100) / 100,
+    ...(gold > 0 ? { gold: Math.round(gold * 100) / 100 } : {}),
     registry: { schemaVersion: 1, entries: [...saved.entries, ...appended.sort((a, b) => a.id.localeCompare(b.id))] },
     newEventIds: appended.map(e => e.id).sort()
   };

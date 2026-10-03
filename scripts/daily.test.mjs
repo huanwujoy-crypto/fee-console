@@ -2032,3 +2032,45 @@ test("persisted benchmark dates cannot regress, change prices for one session, o
     { d: "2026-09-09", spy: 100, qqq: 200 }
   ]), [], "reviewed pre-cutover history seeds its source date from d");
 });
+
+
+test('gold registry writer preserves full NAV, isolates gold, and repeats byte no-op', () => {
+  const dir = tmp(), f = styleFixture(dir);
+  f.input.proposals[0].style = 'gold'; f.save();
+  const result = run(dir, {}, [], f.env);
+  assert.equal(result.status, 0, result.stderr);
+  const point = readPayload(dir).daily[0], before = fs.readFileSync(path.join(dir, 'data.json'));
+  assert.equal(point.gold, 200000); assert.equal(point.value, 0);
+  assert.equal(point.growth, 253845.98);
+  assert.equal(point.growth + point.value + point.gold, point.stock);
+  assert.ok(Math.abs(point.cash + point.stock + point.other - point.schwab - point.webull) < 0.005);
+  f.input.proposals = []; f.save();
+  assert.match(run(dir, {}, [], f.env).stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), before);
+});
+test('gold requires full styles, reconciles once, and rejects negative or duplicate allocation', () => {
+  const dir = tmp();
+  assert.notEqual(run(dir, { gold: 100 }).status, 0);
+  assert.notEqual(run(dir, { growth: 250000, value: 203845.98, gold: 100 }).status, 0);
+  assert.notEqual(run(dir, { growth: 250000, value: 203845.98, gold: -1 }).status, 0);
+  assert.equal(run(dir, { growth: 250000, value: 153845.98, gold: 50000 }).status, 0);
+  const before = readPayload(dir).daily[0];
+  assert.equal(run(dir).status, 0);
+  assert.deepEqual(readPayload(dir).daily[0], before, 'same-stock read-only correction preserves gold');
+});
+
+
+test('weekend carry retains independent gold and rejects explicit gold override', () => {
+  const dir = tmp();
+  const friday = run(dir, { date:'2026-09-25',growth:253845.98,value:150000,gold:50000,
+    spy:700,qqq:600,'src-bench':'2026-09-25','bench-state':'session' });
+  assert.equal(friday.status,0,friday.stderr);
+  const carried = {date:'2026-09-26','src-schwab':'2026-09-25','src-webull':'2026-09-25',
+    spy:700,qqq:600,'src-bench':'2026-09-25','bench-state':'closed',flows:'[]'};
+  assert.notEqual(run(dir,{...carried,gold:50000},['--weekend-carry']).status,0);
+  const result = run(dir,carried,['--weekend-carry']); assert.equal(result.status,0,result.stderr);
+  assert.equal(readPayload(dir).daily.at(-1).gold,50000);
+  const bytes=fs.readFileSync(path.join(dir,'data.json'));
+  assert.match(run(dir,carried,['--weekend-carry']).stdout,/no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir,'data.json')),bytes);
+});
