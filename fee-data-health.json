@@ -1,6 +1,6 @@
 {
   "schema": "fee-console.daily-health.v1",
-  "checkedAt": "2026-10-03T09:18:09.878Z",
+  "checkedAt": "2026-10-03T09:52:11.107Z",
   "targetDate": "2026-10-02",
   "sourceDates": {
     "schwab": "2026-10-02",
