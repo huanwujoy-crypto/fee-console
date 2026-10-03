@@ -35,6 +35,7 @@ h1{font-size:19px;margin:0}
 .kpi .note{font-size:11px;color:var(--ink-muted);margin-top:3px}
 .mix{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0 4px;padding:8px 0 6px;border-top:1px solid var(--grid)}
 .mix.two{grid-template-columns:repeat(2,1fr)}
+.mix.gold{grid-template-columns:repeat(2,minmax(0,1fr))}
 .mix .k{font-size:11px;color:var(--ink-2)}
 .mix .v{font-size:15px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em;white-space:nowrap}
 .mix .p{font-size:11px;color:var(--ink-muted);margin-left:3px;font-weight:400}
@@ -1926,9 +1927,11 @@ function health(feeView,st){
     const ms=num(lp.cash)+num(lp.stock)+num(lp.other);
     if(ms>0&&Math.abs(ms-st.nav)>st.nav*0.02)hold.push("资产拆分与账户总额相差过大");
     const styleFields=[lp.growth,lp.value].filter(v=>v!=null&&v!=="");
+    const gold=lp.gold==null?0:Number(lp.gold);
+    if(!Number.isFinite(gold)||gold<0||(lp.gold!=null&&styleFields.length!==2))hold.push("黄金分类金额无效或证券分类不完整");
     if(styleFields.length===1)hold.push("成长股 / 价值股拆分只有一项，暂按股票未拆分显示");
-    else if(styleFields.length===2&&Math.abs(num(lp.growth)+num(lp.value)-num(lp.stock))>1)
-      hold.push("成长股 + 价值股与股票总额不一致，暂按股票未拆分显示");
+    else if(styleFields.length===2&&Math.abs(num(lp.growth)+num(lp.value)+gold-num(lp.stock))>1)
+      hold.push("成长股 + 价值股 + 黄金与证券总额不一致，暂按证券未拆分显示");
   }
   if(unresolved>0)hold.push(unresolved+" 笔资金变动尚未判定内部交易或外部出入金");
   return {hold:hold.length>0,holdReasons:hold};}
@@ -2048,15 +2051,16 @@ function renderKPIs(feeView,st,B,G){
   gateBox.innerHTML=G.loading?'<div class="note" role="status">正在读取并核验，请稍候…</div>':G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
     <ul>${G.holdReasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>`:"";
   const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
-  /* 展示合并 cash+other；只有经核实且与 stock 对账的 style pair 才拆为成长/价值。 */
+  /* 展示合并 cash+other；经核实的成长/价值及独立黄金与 stock 对账；旧点缺少黄金等于零。 */
   const hasMix=!!(lp&&(lp.cash!=null||lp.stock!=null||lp.other!=null));
   const mixV={cash:num(lp&&lp.cash),stock:num(lp&&lp.stock),other:num(lp&&lp.other)};
   const mixSum=mixV.cash+mixV.stock+mixV.other;
   const hasStyle=!!(lp&&lp.growth!=null&&lp.value!=null&&isFinite(Number(lp.growth))&&isFinite(Number(lp.value))&&Number(lp.growth)>=0&&Number(lp.value)>=0);
-  const styleReady=hasStyle&&Math.abs(num(lp.growth)+num(lp.value)-mixV.stock)<=1;
+  const gold=lp?.gold==null?0:Number(lp.gold);
+  const styleReady=hasStyle&&Number.isFinite(gold)&&gold>=0&&Math.abs(num(lp.growth)+num(lp.value)+gold-mixV.stock)<=1;
   const mixCell=(lab,v)=>`<div><div class="k">${lab}</div><div class="v">${usd(v,0)}<span class="p">${st.nav>0?(v/st.nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
-  const mixCells=styleReady?`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("成长股",num(lp.growth))}${mixCell("价值股",num(lp.value))}`:`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("股票（未拆分）",mixV.stock)}`;
-  const mix=hasMix?`<div class="mix${styleReady?"":" two"}">${mixCells}</div>${!styleReady?`<div class="note">尚无经核实的成长股 / 价值股持仓级拆分</div>`:""}${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
+  const mixCells=styleReady?`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("成长股",num(lp.growth))}${mixCell("价值股",num(lp.value))}${gold>0?mixCell("黄金",gold):""}`:`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("证券（未拆分）",mixV.stock)}`;
+  const mix=hasMix?`<div class="mix${styleReady?(gold>0?" gold":""):" two"}">${mixCells}</div>${!styleReady?`<div class="note">尚无经核实的成长股 / 价值股 / 黄金持仓级拆分</div>`:""}${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
   /* 分账户：总资产下方列出各账户当日数值（与起始基准页的账户名一致） */
   const acctLine=lp?`<div class="small" style="margin-top:2px">${DB.accounts.map(a=>`${esc(a.name)} <b style="font-weight:600;font-variant-numeric:tabular-nums">${usd(num(lp[a.id]),0)}</b>`).join(" · ")}</div>`:"";
   const passive=st.bench.filter(b=>["spy","qqq"].includes(b.k));
