@@ -1,0 +1,42 @@
+[
+  {
+    "fund": "CSPX",
+    "productId": 253743,
+    "fundName": "iShares Core S&P 500 UCITS ETF",
+    "asOf": "2026-09-24",
+    "originalCaptureSha256": "b109145088c7a17de94d6adcba37fdffd056464c13dbf3f0d9ad433c761ba4fb",
+    "publicCompositionAuditSha256": "653483ca6cac0ac0276885b1ed2f4cb6d51f0bcdada4af797d891f6caa93c12e",
+    "originalCaptureLocation": "Local audit only; full response excluded from public repository because price/share-count fields are unnecessary",
+    "publicFields": [
+      "isin",
+      "ticker",
+      "issueName",
+      "holdingPercent",
+      "assetClass",
+      "kind",
+      "weightBp",
+      "classificationBound"
+    ],
+    "sourceRowCount": 510
+  },
+  {
+    "fund": "EIMI",
+    "productId": 264659,
+    "fundName": "iShares Core MSCI EM IMI UCITS ETF",
+    "asOf": "2026-09-24",
+    "originalCaptureSha256": "c95f1ee685a5980635b19ff1ce3cafcadd21c8d03afb249a248ff35e468f14cf",
+    "publicCompositionAuditSha256": "78b6b5ab7b22caff7482697c6fe3cd23f284e745d5e04478384efcfd3a6989c5",
+    "originalCaptureLocation": "Local audit only; full response excluded from public repository because price/share-count fields are unnecessary",
+    "publicFields": [
+      "isin",
+      "ticker",
+      "issueName",
+      "holdingPercent",
+      "assetClass",
+      "kind",
+      "weightBp",
+      "classificationBound"
+    ],
+    "sourceRowCount": 3001
+  }
+]

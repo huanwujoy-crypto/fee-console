@@ -1,0 +1,80 @@
+[
+  {
+    "key": "costco",
+    "issuer": "Costco Wholesale",
+    "group": "other",
+    "source": "https://investor.costco.com/company-profile/",
+    "reason": "Membership warehouse retailer selling merchandise, not an AI platform or compute supplier.",
+    "identityEvidence": {
+      "fund": "CSPX",
+      "asOf": "2026-09-24",
+      "isin": "US22160K1051",
+      "sourceName": "COSTCO WHOLESALE CORP"
+    }
+  },
+  {
+    "key": "merck-us",
+    "issuer": "Merck & Co (US)",
+    "group": "other",
+    "source": "https://www.merck.com/company-overview/",
+    "reason": "Medicines, vaccines and biopharmaceutical research; internal AI-assisted research does not make drug sales an AI platform. This is US Merck & Co, not German Merck KGaA.",
+    "identityEvidence": {
+      "fund": "CSPX",
+      "asOf": "2026-09-24",
+      "isin": "US58933Y1055",
+      "sourceName": "MERCK & CO INC"
+    }
+  },
+  {
+    "key": "bofa",
+    "issuer": "Bank of America Corporation",
+    "group": "other",
+    "source": "https://about.bankofamerica.com/en/our-company",
+    "reason": "Banking, lending and financial services; internal AI assistant is not external AI-platform supply, consistent with reviewed bank policy.",
+    "identityEvidence": {
+      "fund": "CSPX",
+      "asOf": "2026-09-24",
+      "isin": "US0605051046",
+      "sourceName": "BANK OF AMERICA"
+    }
+  },
+  {
+    "key": "coca-cola",
+    "issuer": "The Coca-Cola Company",
+    "group": "other",
+    "source": "https://www.coca-colacompany.com/about-us",
+    "reason": "Beverage brands and distribution; operational AI adoption is not an AI equity business classification.",
+    "identityEvidence": {
+      "fund": "CSPX",
+      "asOf": "2026-09-24",
+      "isin": "US1912161007",
+      "sourceName": "COCA-COLA"
+    }
+  },
+  {
+    "key": "pg",
+    "issuer": "Procter & Gamble",
+    "group": "other",
+    "source": "https://us.pg.com/who-we-are/",
+    "reason": "Household and personal consumer-product brands; marketing AI use is not an AI-platform business.",
+    "identityEvidence": {
+      "fund": "CSPX",
+      "asOf": "2026-09-24",
+      "isin": "US7427181091",
+      "sourceName": "PROCTER & GAMBLE"
+    }
+  },
+  {
+    "key": "home-depot",
+    "issuer": "The Home Depot",
+    "group": "other",
+    "source": "https://corporate.homedepot.com/page/about-us",
+    "reason": "Home-improvement retailer and installation services; operational AI use does not change the customer product business.",
+    "identityEvidence": {
+      "fund": "CSPX",
+      "asOf": "2026-09-24",
+      "isin": "US4370761029",
+      "sourceName": "HOME DEPOT"
+    }
+  }
+]

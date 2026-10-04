@@ -1,0 +1,491 @@
+[
+  {
+    "fund": "CSPX",
+    "isin": "US67066G1040",
+    "name": "NVIDIA",
+    "target": {
+      "issuerKey": "nvidia"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US0378331005",
+    "name": "APPLE",
+    "target": {
+      "issuerKey": "apple"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US5949181045",
+    "name": "MICROSOFT",
+    "target": {
+      "instrumentId": "24651",
+      "symbol": "MSFT"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US0231351067",
+    "name": "AMAZON.COM INC",
+    "target": {
+      "issuerKey": "amazon"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US02079K3059",
+    "name": "ALPHABET CLASS A",
+    "target": {
+      "instrumentId": "24449",
+      "symbol": "GOOGL"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US30303M1027",
+    "name": "META PLATFORMS CLASS A",
+    "target": {
+      "issuerKey": "meta"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US11135F1012",
+    "name": "BROADCOM INC",
+    "target": {
+      "instrumentId": "1879420",
+      "symbol": "AVGO"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US02079K1079",
+    "name": "ALPHABET CLASS C",
+    "target": {
+      "instrumentId": "670422",
+      "symbol": "GOOG"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US5951121038",
+    "name": "MICRON TECHNOLOGY",
+    "target": {
+      "issuerKey": "micron"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US88160R1014",
+    "name": "TESLA INC",
+    "target": {
+      "instrumentId": "24977",
+      "symbol": "TSLA"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US0079031078",
+    "name": "ADVANCED MICRO DEVICES",
+    "target": {
+      "issuerKey": "amd"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US5324571083",
+    "name": "ELI LILLY",
+    "target": {
+      "issuerKey": "lilly"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US0846707026",
+    "name": "BERKSHIRE HATHAWAY INC CLASS B",
+    "target": {
+      "issuerKey": "berkshire"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US46625H1005",
+    "name": "JPMORGAN CHASE & CO",
+    "target": {
+      "issuerKey": "jpmorgan"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US30233Q1085",
+    "name": "EXXONMOBIL HOLDINGS CORP",
+    "target": {
+      "issuerKey": "exxon"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US4781601046",
+    "name": "JOHNSON & JOHNSON",
+    "target": {
+      "issuerKey": "jnj"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US4581401001",
+    "name": "INTEL CORPORATION",
+    "target": {
+      "issuerKey": "intel"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US92826C8394",
+    "name": "VISA CLASS A",
+    "target": {
+      "issuerKey": "visa"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US9311421039",
+    "name": "WALMART",
+    "target": {
+      "issuerKey": "walmart"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US00287Y1091",
+    "name": "ABBVIE",
+    "target": {
+      "issuerKey": "abbvie"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US57636Q1040",
+    "name": "MASTERCARD CLASS A",
+    "target": {
+      "issuerKey": "mastercard"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US69608A1088",
+    "name": "PALANTIR TECHNOLOGIES CLASS A",
+    "target": {
+      "issuerKey": "palantir"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US17275R1023",
+    "name": "CISCO SYSTEMS INC",
+    "target": {
+      "issuerKey": "cisco"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US1667641005",
+    "name": "CHEVRON",
+    "target": {
+      "issuerKey": "chevron"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US5128073062",
+    "name": "LAM RESEARCH",
+    "target": {
+      "issuerKey": "lam"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US0382221051",
+    "name": "APPLIED MATERIAL INC",
+    "target": {
+      "issuerKey": "applied-materials"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US68389X1054",
+    "name": "ORACLE",
+    "target": {
+      "instrumentId": "516542",
+      "symbol": "ORCL"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US24703L2025",
+    "name": "DELL TECHNOLOGIES INC CLASS C",
+    "target": {
+      "issuerKey": "dell"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US48251W1045",
+    "name": "KKR AND CO INC",
+    "target": {
+      "instrumentId": "1889982",
+      "symbol": "KKR"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US03769M1062",
+    "name": "APOLLO GLOBAL MANAGEMENT",
+    "target": {
+      "instrumentId": "2262313",
+      "symbol": "APO"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US92840M1027",
+    "name": "VISTRA",
+    "target": {
+      "instrumentId": "1753523",
+      "symbol": "VST"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US64110D1046",
+    "name": "NETAPP INC",
+    "target": {
+      "issuerKey": "netapp"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "TW0002330008",
+    "name": "TAIWAN SEMICONDUCTOR MANUFACTURING",
+    "target": {
+      "issuerKey": "tsmc"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "KR7005930003",
+    "name": "SAMSUNG ELECTRONICS LTD",
+    "target": {
+      "issuerKey": "samsung"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "KR7005931001",
+    "name": "SAMSUNG ELECTRONICS NON VOTING PRE",
+    "target": {
+      "issuerKey": "samsung"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "KR7000660001",
+    "name": "SK HYNIX",
+    "target": {
+      "issuerKey": "sk-hynix"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "KYG875721634",
+    "name": "TENCENT HOLDINGS",
+    "target": {
+      "issuerKey": "tencent"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "TW0002454006",
+    "name": "MEDIATEK",
+    "target": {
+      "issuerKey": "mediatek"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "KYG017191142",
+    "name": "ALIBABA GROUP HOLDING",
+    "target": {
+      "issuerKey": "alibaba"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "TW0002308004",
+    "name": "DELTA ELECTRONICS",
+    "target": {
+      "issuerKey": "delta"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "CNE1000002H1",
+    "name": "CHINA CONSTRUCTION BANK CORP H",
+    "target": {
+      "issuerKey": "ccb"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "TW0002317005",
+    "name": "HON HAI PRECISION INDUSTRY",
+    "target": {
+      "issuerKey": "honhai"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE040A01034",
+    "name": "HDFC BANK",
+    "target": {
+      "issuerKey": "hdfc"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE090A01021",
+    "name": "ICICI BANK",
+    "target": {
+      "issuerKey": "icici"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "CNE1000003G1",
+    "name": "INDUSTRIAL AND COMMERCIAL BANK OF",
+    "target": {
+      "issuerKey": "icbc"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US8825081040",
+    "name": "TEXAS INSTRUMENT INC",
+    "target": {
+      "issuerKey": "txn"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US4824801009",
+    "name": "KLA",
+    "target": {
+      "issuerKey": "kla"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US5738741041",
+    "name": "MARVELL TECHNOLOGY",
+    "target": {
+      "issuerKey": "marvell"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE009A01021",
+    "name": "INFOSYS",
+    "target": {
+      "issuerKey": "infy"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE238A01034",
+    "name": "AXIS BANK",
+    "target": {
+      "issuerKey": "axisbank"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE296A01032",
+    "name": "BAJAJ FINANCE LTD",
+    "target": {
+      "issuerKey": "bajaj"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE237A01036",
+    "name": "KOTAK MAHINDRA BANK LTD",
+    "target": {
+      "issuerKey": "kotak"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE002A01018",
+    "name": "RELIANCE INDUSTRIES LTD",
+    "target": {
+      "issuerKey": "unreviewed-reliance"
+    }
+  },
+  {
+    "fund": "EIMI",
+    "isin": "INE397D01024",
+    "name": "BHARTI AIRTEL LTD",
+    "target": {
+      "issuerKey": "unreviewed-bhartiartl"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US22160K1051",
+    "name": "COSTCO WHOLESALE CORP",
+    "target": {
+      "issuerKey": "costco"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US58933Y1055",
+    "name": "MERCK & CO INC",
+    "target": {
+      "issuerKey": "merck-us"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US0605051046",
+    "name": "BANK OF AMERICA",
+    "target": {
+      "issuerKey": "bofa"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US1912161007",
+    "name": "COCA-COLA",
+    "target": {
+      "issuerKey": "coca-cola"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US7427181091",
+    "name": "PROCTER & GAMBLE",
+    "target": {
+      "issuerKey": "pg"
+    }
+  },
+  {
+    "fund": "CSPX",
+    "isin": "US4370761029",
+    "name": "HOME DEPOT",
+    "target": {
+      "issuerKey": "home-depot"
+    }
+  }
+]
