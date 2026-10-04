@@ -59,9 +59,17 @@ jobs:
           today_utc=$(date -u +%F)
           yesterday_utc=$(date -u -d 'yesterday' +%F)
           candidates=()
+          recent_unpromoted_candidate=false
 
           while IFS= read -r candidate_ref; do
             branch_name=${candidate_ref#origin/}
+            # A rejected recent outstanding candidate is an anomaly, even off-day.
+            # Already promoted branches and old abandoned branches do not count.
+            if ! git merge-base --is-ancestor "$candidate_ref" origin/main &&
+               (( $(git show -s --format='%ct' "$candidate_ref") >= cutoff_epoch )); then
+              recent_unpromoted_candidate=true
+            fi
+
             if [[ ! "$branch_name" =~ ^codex/fee-daily-([0-9]{8})-[a-z0-9]{6}$ ]]; then
               continue
             fi
@@ -174,6 +182,22 @@ jobs:
           done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/codex/fee-daily-*')
 
           if (( ${#candidates[@]} == 0 )); then
+            # Producer cron is UTC Tue-Sat at 03:30-09:50, also HKT Tue-Sat.
+            # A scheduled watchdog has no same-day receipt to require on Sun/Mon.
+            # Manual and workflow_run promotion retain their existing guards.
+            producer_weekday=$(TZ=Asia/Hong_Kong date +%u)
+            if [[ "$GITHUB_EVENT_NAME" == 'schedule' ]] &&
+               [[ "$producer_weekday" == '7' || "$producer_weekday" == '1' ]]; then
+              if [[ "$recent_unpromoted_candidate" == true ]] ||
+                 [[ ! -f fee-data-health.json ]] ||
+                 ! node scripts/fee-data-health.mjs validate --health=fee-data-health.json --data=data.json; then
+                echo 'Non-production-day no-op refused: outstanding candidate or invalid published receipt.' >&2
+                exit 1
+              fi
+              echo 'No producer is scheduled today (Asia/Hong_Kong); published receipt remains valid.'
+              echo 'sha=' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
             if [[ -f fee-data-health.json ]]; then
               checked_hkt=$(TZ=Asia/Hong_Kong date -d "$(jq -r '.checkedAt // empty' fee-data-health.json)" +%F 2>/dev/null || true)
               today_hkt=$(TZ=Asia/Hong_Kong date +%F)
