@@ -905,6 +905,440 @@
       "group": "other",
       "source": "https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?appSubType=ISHARES&appType=PRODUCT_PAGE&component=holdings.all&locale=en_GB&portfolioId=264659&targetSite=ishares-uk&userType=individual&excludeContent=true&asOfDate=20260924&includeConfig=true",
       "reason": "Issuer source explicitly labels Cash; actual fund cash allocation, not stock, not zero-risk claim. Negative cash, MMF, collateral and derivatives retained separately without classification."
+    },
+    {
+      "key": "unreviewed-isin-US0937121079",
+      "issuer": "BLOOM ENERGY CLASS A",
+      "group": "infrastructure",
+      "source": "https://www.bloomenergy.com/news/bloom-energy-and-oracle-expand-strategic-partnership-to-deploy-up-to-2-8-gw-to-accelerate-ai-infrastructure-build-out/",
+      "reason": "Existing reviewed Bloom Energy business evidence; only CSPX unknown subpart is newly classified.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US0937121079",
+        "sourceName": "BLOOM ENERGY CLASS A",
+        "sourceTicker": "BE"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US1491231015",
+      "issuer": "CATERPILLAR INC",
+      "group": "infrastructure",
+      "source": "https://www.caterpillar.com/en/news/caterpillarNews/2026/world-needs-more-energy.html",
+      "reason": "Issuer identifies AI power demand and gigawatts of generator sets delivered to data centers; construction and mining remain.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US1491231015",
+        "sourceName": "CATERPILLAR INC",
+        "sourceTicker": "CAT"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US91324P1021",
+      "issuer": "UNITEDHEALTH GROUP",
+      "group": "other",
+      "source": "https://www.unitedhealthgroup.com/uhg/people-and-culture.html",
+      "reason": "Health benefits and healthcare delivery through UnitedHealthcare and Optum; healthcare workflow AI is not an external general AI platform.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US91324P1021",
+        "sourceName": "UNITEDHEALTH GROUP",
+        "sourceTicker": "UNH"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US3696043013",
+      "issuer": "GE AEROSPACE",
+      "group": "other",
+      "source": "https://www.geaerospace.com/company/about-us/leadership",
+      "reason": "Aircraft engines and aerospace services; not GE Vernova power-generation equity.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US3696043013",
+        "sourceName": "GE AEROSPACE",
+        "sourceTicker": "GE"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US6974351057",
+      "issuer": "PALO ALTO NETWORKS",
+      "group": "platform",
+      "source": "https://www.paloaltonetworks.com/",
+      "reason": "External Precision AI security platforms and security operations products, not only internal AI use.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US6974351057",
+        "sourceName": "PALO ALTO NETWORKS",
+        "sourceTicker": "PANW"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US64110L1061",
+      "issuer": "NETFLIX",
+      "group": "other",
+      "source": "https://about.netflix.com/en",
+      "reason": "Entertainment streaming, films and games; recommendations support the entertainment product rather than an external AI platform.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US64110L1061",
+        "sourceName": "NETFLIX",
+        "sourceTicker": "NFLX"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US7181721090",
+      "issuer": "PHILIP MORRIS INTERNATIONAL",
+      "group": "other",
+      "source": "https://www.pmi.com/who-we-are/who-we-are-overview",
+      "reason": "Tobacco, nicotine and smoke-free consumer goods; not an AI supplier.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US7181721090",
+        "sourceName": "PHILIP MORRIS INTERNATIONAL",
+        "sourceTicker": "PM"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-TW0003711008",
+      "issuer": "ASE TECHNOLOGY HOLDING",
+      "group": "infrastructure",
+      "source": "https://www.aseglobal.com/",
+      "reason": "ASE, SPIL and USI advanced packaging and system integration explicitly support AI semiconductor technology.",
+      "identityEvidence": {
+        "fund": "EIMI",
+        "asOf": "2026-09-24",
+        "isin": "TW0003711008",
+        "sourceName": "ASE TECHNOLOGY HOLDING",
+        "sourceTicker": "3711"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US38141G1040",
+      "issuer": "GOLDMAN SACHS GROUP",
+      "group": "other",
+      "source": "https://www.goldmansachs.com/what-we-do/our-businesses",
+      "reason": "Banking, advisory and asset/wealth management; AI financing or internal productivity does not alone classify an AI supplier.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US38141G1040",
+        "sourceName": "GOLDMAN SACHS GROUP",
+        "sourceTicker": "GS"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US22788C1053",
+      "issuer": "CROWDSTRIKE HOLDINGS CLASS A",
+      "group": "platform",
+      "source": "https://www.crowdstrike.com/en-us/platform/",
+      "reason": "External Falcon AI-native security and agent security platform.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US22788C1053",
+        "sourceName": "CROWDSTRIKE HOLDINGS CLASS A",
+        "sourceTicker": "CRWD"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US80004C2008",
+      "issuer": "SANDISK",
+      "group": "infrastructure",
+      "source": "https://www.sandisk.com/company/about-us",
+      "reason": "Flash and data-center storage serving AI capabilities, alongside consumer and other markets; separate Sandisk issuer identity.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US80004C2008",
+        "sourceName": "SANDISK",
+        "sourceTicker": "SNDK"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US75513E1010",
+      "issuer": "RTX",
+      "group": "other",
+      "source": "https://www.rtx.com/who-we-are",
+      "reason": "Collins, Pratt & Whitney and Raytheon aerospace/defense products; technology use is not a general AI supply classification.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US75513E1010",
+        "sourceName": "RTX",
+        "sourceTicker": "RTX"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US36828A1016",
+      "issuer": "GE VERNOVA",
+      "group": "infrastructure",
+      "source": "https://www.gevernova.com/gas-power/industries/data-centers",
+      "reason": "Explicit AI data-center onsite power, hybrid backup and gas-turbine supply; not GE Aerospace equity.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US36828A1016",
+        "sourceName": "GE VERNOVA",
+        "sourceTicker": "GEV"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US8835561023",
+      "issuer": "THERMO FISHER SCIENTIFIC INC",
+      "group": "other",
+      "source": "https://corporate.thermofisher.com/us/en/index/about.html",
+      "reason": "Scientific instruments, diagnostics, laboratory and biopharma services; consistent with reviewed medicine/laboratory business classification.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US8835561023",
+        "sourceName": "THERMO FISHER SCIENTIFIC INC",
+        "sourceTicker": "TMO"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US9497461015",
+      "issuer": "WELLS FARGO",
+      "group": "other",
+      "source": "https://www.wellsfargo.com/about/",
+      "reason": "Banking and financial services; digital banking is not by itself an external AI platform.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US9497461015",
+        "sourceName": "WELLS FARGO",
+        "sourceTicker": "WFC"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US6174464486",
+      "issuer": "MORGAN STANLEY",
+      "group": "other",
+      "source": "https://www.morganstanley.com/about-us",
+      "reason": "Wealth management, investment banking, capital markets and investment management; consistent financial-service policy.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US6174464486",
+        "sourceName": "MORGAN STANLEY",
+        "sourceTicker": "MS"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-KR7009150004",
+      "issuer": "SAMSUNG ELECTRO MECHANICS LTD",
+      "group": "infrastructure",
+      "source": "https://www.samsungsem.com/global/product/application/ai-server.do",
+      "reason": "Issuer supplies MLCC, package substrates and capacitors for CPU/GPU, memory and AI-server networking; not Samsung Electronics equity.",
+      "identityEvidence": {
+        "fund": "EIMI",
+        "asOf": "2026-09-24",
+        "isin": "KR7009150004",
+        "sourceName": "SAMSUNG ELECTRO MECHANICS LTD",
+        "sourceTicker": "009150"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US1729674242",
+      "issuer": "CITIGROUP",
+      "group": "other",
+      "source": "https://www.citigroup.com/global",
+      "reason": "Banking and financial services; internal AI and transaction technology do not alone make an AI supplier.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US1729674242",
+        "sourceName": "CITIGROUP",
+        "sourceTicker": "C"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US0311621009",
+      "issuer": "AMGEN INC",
+      "group": "other",
+      "source": "https://www.amgen.com/about",
+      "reason": "External medicines and biotechnology; issuer says AI is used to discover medicines, consistent with reviewed Merck policy.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US0311621009",
+        "sourceName": "AMGEN INC",
+        "sourceTicker": "AMGN"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-KYG9830T1067",
+      "issuer": "XIAOMI",
+      "group": "platform",
+      "source": "https://www.mi.com/global/about/",
+      "reason": "Issuer identifies customer product foundation AI × OS × Chips alongside smartphone, connected-device and automotive businesses; whole-company related-business classification, not pure AI revenue.",
+      "identityEvidence": {
+        "fund": "EIMI",
+        "asOf": "2026-09-24",
+        "isin": "KYG9830T1067",
+        "sourceName": "XIAOMI",
+        "sourceTicker": "1810"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-US0404132054",
+      "issuer": "ARISTA NETWORKS",
+      "group": "infrastructure",
+      "source": "https://www.arista.com/en/solutions/ai-networking",
+      "reason": "External Ethernet AI/ML fabrics, switches and network software for accelerator/storage systems.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "US0404132054",
+        "sourceName": "ARISTA NETWORKS",
+        "sourceTicker": "ANET"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-KR7402340004",
+      "issuer": "SK SQUARE",
+      "group": "other",
+      "source": "https://www.sksquare.com/eng/ir/nav.do",
+      "reason": "Investment-company equity, not the separately listed semiconductor operating company SK hynix. Official 2026-10-01 NAV is dominated by its SK hynix investment; other under this existing operating-business classification does not mean low semiconductor or AI investment risk.",
+      "identityEvidence": {
+        "fund": "EIMI",
+        "asOf": "2026-09-24",
+        "isin": "KR7402340004",
+        "sourceName": "SK SQUARE",
+        "sourceTicker": "402340"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-INE101A01026",
+      "issuer": "MAHINDRA AND MAHINDRA LTD",
+      "group": "other",
+      "source": "https://www.mahindra.com/annual-report-FY2026/489/",
+      "reason": "Listed Mahindra & Mahindra auto/farm operating issuer. FY2026 annual report page 486 identifies Tech Mahindra as a 28.06% associate investment, not an operating subsidiary. Internal mGenAI and repair tools do not by themselves qualify as an external AI platform; no classification inherited from Tech Mahindra.",
+      "identityEvidence": {
+        "fund": "EIMI",
+        "asOf": "2026-09-24",
+        "isin": "INE101A01026",
+        "sourceName": "MAHINDRA AND MAHINDRA LTD",
+        "sourceTicker": "M&M"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-INE018A01030",
+      "issuer": "LARSEN AND TOUBRO LTD",
+      "group": "platform",
+      "source": "https://www.larsentoubro.com/pressreleases/2025-11-26-lt-rebrands-data-centre-business-as-larsen-toubro-vyoma",
+      "reason": "Larsen & Toubro operates external cloud and AI services through its own Cloudfiniti / Vyoma business and consolidated technology-service segment. Mixed engineering and semiconductor businesses remain; whole-issuer related-business category, not pure AI revenue or subsidiary weight allocation.",
+      "identityEvidence": {
+        "fund": "EIMI",
+        "asOf": "2026-09-24",
+        "isin": "INE018A01030",
+        "sourceName": "LARSEN AND TOUBRO LTD",
+        "sourceTicker": "LT"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-isin-IE000S9YS762",
+      "issuer": "LINDE PLC",
+      "group": "infrastructure",
+      "source": "https://www.linde.com/news-and-media/2026/linde-to-invest-$1-billion-to-support-major-u,-d-,s,-d-,-semiconductor-facility-expansion",
+      "reason": "Linde builds, owns and operates ultra-pure gas supply assets for advanced semiconductor fabs and advanced packaging, per its 2026-07-31 contract announcement. Infrastructure relevance is an inference from this operating advanced-chip supply role; the source does not identify all output as AI. Its other industrial-gas end markets remain.",
+      "identityEvidence": {
+        "fund": "CSPX",
+        "asOf": "2026-09-24",
+        "isin": "IE000S9YS762",
+        "sourceName": "LINDE PLC",
+        "sourceTicker": "LIN"
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-lt",
+      "issuer": "LARSEN AND TOUBRO LTD",
+      "group": "platform",
+      "source": "https://www.larsentoubro.com/pressreleases/2025-11-26-lt-rebrands-data-centre-business-as-larsen-toubro-vyoma",
+      "reason": "Larsen & Toubro operates external cloud and AI services through its own Cloudfiniti / Vyoma business and consolidated technology-service segment. Mixed engineering and semiconductor businesses remain; whole-issuer related-business category, not pure AI revenue or subsidiary weight allocation.",
+      "identityEvidence": {
+        "fund": "INDA",
+        "asOf": "2026-09-24",
+        "sourceTicker": "LT",
+        "sourceName": "LARSEN AND TOUBRO LTD",
+        "legacySourceKey": "unreviewed-lt",
+        "evidenceMethod": "Existing protected partial snapshot identity; no new ISIN binding asserted for this legacy row."
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
+    },
+    {
+      "key": "unreviewed-m_and_m",
+      "issuer": "MAHINDRA AND MAHINDRA LTD",
+      "group": "other",
+      "source": "https://www.mahindra.com/annual-report-FY2026/489/",
+      "reason": "Listed Mahindra & Mahindra auto/farm operating issuer. FY2026 annual report page 486 identifies Tech Mahindra as a 28.06% associate investment, not an operating subsidiary. Internal mGenAI and repair tools do not by themselves qualify as an external AI platform; no classification inherited from Tech Mahindra.",
+      "identityEvidence": {
+        "fund": "INDA",
+        "asOf": "2026-09-24",
+        "sourceTicker": "M&M",
+        "sourceName": "MAHINDRA AND MAHINDRA LTD",
+        "legacySourceKey": "unreviewed-m_and_m",
+        "evidenceMethod": "Existing protected partial snapshot identity; no new ISIN binding asserted for this legacy row."
+      },
+      "reviewedOn": "2026-10-04",
+      "reviewBy": "2027-01-04"
     }
   ],
   "etfSnapshots": [
@@ -914,57 +1348,121 @@
       "fundName": "Invesco MSCI USA UCITS ETF Acc",
       "isin": "IE00B60SX170",
       "basis": "economic-exposure",
-      "asOf": "2026-08-31",
-      "retrievedOn": "2026-09-27",
+      "asOf": "2026-09-30",
+      "retrievedOn": "2026-10-04",
       "partial": true,
-      "source": "https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf",
-      "sourceSha256": "1a8057bde4649e88a841c0b5f6ecb6a4742782217bd48defdf87c305e2dfada6",
-      "evidence": "Page 2 Top exposures; synthetic replication, not the collateral basket. Top ten only.",
+      "source": "https://www.msci.com/indexes/index/984000/msci-usa-index",
+      "sourceSha256": "ce52da4168834c0b3015277ff42549f5b371665d1bfcaa279e4e729d17388f42",
+      "evidence": "Entire single-date official MSCI USA index top-ten version replaces previous top ten; 513 total index constituents, only ten recorded. Economic index exposures, never swap collateral. No weights merged from August.",
       "holdings": [
         {
           "issuerKey": "nvidia",
-          "weightBp": 766
+          "weightBp": 796
         },
         {
           "issuerKey": "apple",
-          "weightBp": 702
+          "weightBp": 742
         },
         {
           "instrumentId": "24651",
           "symbol": "MSFT",
-          "weightBp": 540
+          "weightBp": 549
         },
         {
           "issuerKey": "amazon",
-          "weightBp": 380
+          "weightBp": 366
         },
         {
           "instrumentId": "24449",
           "symbol": "GOOGL",
-          "weightBp": 301
-        },
-        {
-          "instrumentId": "1879420",
-          "symbol": "AVGO",
-          "weightBp": 253
+          "weightBp": 306
         },
         {
           "instrumentId": "670422",
           "symbol": "GOOG",
-          "weightBp": 237
+          "weightBp": 242
         },
         {
           "issuerKey": "meta",
-          "weightBp": 190
+          "weightBp": 241
+        },
+        {
+          "instrumentId": "1879420",
+          "symbol": "AVGO",
+          "weightBp": 241
         },
         {
           "issuerKey": "micron",
-          "weightBp": 163
+          "weightBp": 182
         },
         {
           "instrumentId": "24977",
           "symbol": "TSLA",
-          "weightBp": 159
+          "weightBp": 154
+        }
+      ],
+      "sourceHashKind": "Repository top-ten public audit artifact, not full page capture",
+      "sourceCompositionComplete": false,
+      "sourceHistory": [
+        {
+          "instrumentId": "391602",
+          "symbol": "MXUS",
+          "fundName": "Invesco MSCI USA UCITS ETF Acc",
+          "isin": "IE00B60SX170",
+          "basis": "economic-exposure",
+          "asOf": "2026-08-31",
+          "retrievedOn": "2026-09-27",
+          "partial": true,
+          "source": "https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf",
+          "sourceSha256": "1a8057bde4649e88a841c0b5f6ecb6a4742782217bd48defdf87c305e2dfada6",
+          "evidence": "Page 2 Top exposures; synthetic replication, not the collateral basket. Top ten only.",
+          "holdings": [
+            {
+              "issuerKey": "nvidia",
+              "weightBp": 766
+            },
+            {
+              "issuerKey": "apple",
+              "weightBp": 702
+            },
+            {
+              "instrumentId": "24651",
+              "symbol": "MSFT",
+              "weightBp": 540
+            },
+            {
+              "issuerKey": "amazon",
+              "weightBp": 380
+            },
+            {
+              "instrumentId": "24449",
+              "symbol": "GOOGL",
+              "weightBp": 301
+            },
+            {
+              "instrumentId": "1879420",
+              "symbol": "AVGO",
+              "weightBp": 253
+            },
+            {
+              "instrumentId": "670422",
+              "symbol": "GOOG",
+              "weightBp": 237
+            },
+            {
+              "issuerKey": "meta",
+              "weightBp": 190
+            },
+            {
+              "issuerKey": "micron",
+              "weightBp": 163
+            },
+            {
+              "instrumentId": "24977",
+              "symbol": "TSLA",
+              "weightBp": 159
+            }
+          ]
         }
       ]
     },
@@ -53759,7 +54257,8 @@
     "ETF snapshots bind exact fund instrumentId, symbol, fund name, exposure basis, issuer URL, asOf and basis-point weights. Only reviewed subsets are included, never normalized to 100%.",
     "Added top-five-fund constituents were checked against issuer data on 2026-09-28; fund asOf dates remain 2026-08-31 or 2026-09-24. Dated weights are reviewed snapshots, not an automatic live issuer-feed; expiry returns to unknown and does not block the weekly report.",
     "Classification is reviewed every three months or on a new holding. Past-review dates produce visible pending coverage, not silent carry-forward.",
-    "2026-10-04 review binds two direct holdings by verified portfolio/holding reference and VSTL by exact reviewed source holding. SIVEF exact OTC security-to-issuer identity verified from OTC Markets company profile; business evidence from Sivers official AI photonics page. New INDA/USSC/VCN partial snapshots reuse existing dated top-ten evidence; SMH uses the entire consistent 2026-09-23 top-ten snapshot instead of mixing it with 2026-09-24 weights."
+    "2026-10-04 review binds two direct holdings by verified portfolio/holding reference and VSTL by exact reviewed source holding. SIVEF exact OTC security-to-issuer identity verified from OTC Markets company profile; business evidence from Sivers official AI photonics page. New INDA/USSC/VCN partial snapshots reuse existing dated top-ten evidence; SMH uses the entire consistent 2026-09-23 top-ten snapshot instead of mixing it with 2026-09-24 weights.",
+    "Local follow-up candidate: 25 business groups / 27 exact ETF source keys have explicit official business evidence. Nested Brazil ETF remains an additional unknown layer. No source dates, weights, complete flags, direct identities or nested ETF treatment changed. Separate protected approval required before production."
   ],
   "directHoldings": [
     {

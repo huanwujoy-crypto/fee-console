@@ -4,7 +4,9 @@ import {buildAiReviewPriority,renderAiReviewPriority,REVIEW_POLICY,summarizeAiRe
 const cutoff='2026-10-02';
 const row=(id,symbol,type,value,p='synthetic')=>({portfolioId:p,holdingId:id,instrumentId:id,symbol,assetType:type,custodian:'Synthetic',identityVerified:true,valueDate:cutoff,marketValueMicro:String(Math.round(value*1000000))});
 const fund=(id,holdings,complete=true)=>({instrumentId:id,symbol:id.toUpperCase(),fundName:'Synthetic',basis:'physical-holdings',asOf:cutoff,source:'https://issuer.example/',sourceCompositionComplete:complete,holdings});
-function build(rows,snapshots,nav=1000){const policy=structuredClone(DEFAULT_POLICY);policy.etfSnapshots=snapshots;const e={riskConstituents:rows,riskDenominator:{components:[{key:'a',valueMicro:String(nav*800000)},{key:'b',valueMicro:String(nav*100000)},{key:'c',valueMicro:String(nav*100000)}]}};const a=buildAiExposure(e,{cutoff,policy});return {e,a,policy,p:buildAiReviewPriority(e,{cutoff,actualAllocation:a,policy})};}
+function build(rows,snapshots,nav=1000){const policy=structuredClone(DEFAULT_POLICY);policy.etfSnapshots=snapshots;
+ // This synthetic fixture models the baseline unclassified BE part; the newly reviewed production policy has a separate regression test.
+ policy.underlyingIssuers=policy.underlyingIssuers.filter(d=>!['unreviewed-isin-US0937121079','unreviewed-isin-INE018A01030','unreviewed-lt'].includes(d.key));const e={riskConstituents:rows,riskDenominator:{components:[{key:'a',valueMicro:String(nav*800000)},{key:'b',valueMicro:String(nav*100000)},{key:'c',valueMicro:String(nav*100000)}]}};const a=buildAiExposure(e,{cutoff,policy});return {e,a,policy,p:buildAiReviewPriority(e,{cutoff,actualAllocation:a,policy})};}
 test('whole issuer across two direct accounts and funds determines priority; only unknown subparts count improvement',()=>{
  const h={issuerKey:'unreviewed-isin-US0937121079',weightBp:10000,sourceRows:[{name:'Bloom Energy'}]};
  // Use existing explicit business classification for BE direct via its registered id.
