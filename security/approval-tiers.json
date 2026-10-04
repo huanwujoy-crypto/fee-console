@@ -403,6 +403,10 @@
     "claude/xuan-weekly-leveraged-products-v1.json",
     "docs/xuan-weekly-content-review-20261004.md",
     "scripts/xuan-weekly-content.test.mjs",
-    "scripts/xuan-weekly-leveraged-products.mjs"
+    "scripts/xuan-weekly-leveraged-products.mjs",
+    "cloud/xuan-weekly/recovery.py",
+    "cloud/xuan-weekly/test_recovery.py",
+    "docs/xuan-weekly-runtime-permission-evidence-20261004.json",
+    "docs/xuan-weekly-silent-recovery-draft-20261004.md"
   ]
 }
