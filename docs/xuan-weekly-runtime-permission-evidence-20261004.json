@@ -1,0 +1,59 @@
+{
+  "checkedAtUtc": "2026-10-04T09:27:15Z",
+  "purpose": "read-only existing permission evidence; no execution or IAM write",
+  "runtimeIdentity": "xuan-weekly-reader@family-portfolio-gateway.iam.gserviceaccount.com",
+  "runtimeBucketBindings": [
+    {
+      "bucket": "family-portfolio-gateway-xuan-weekly-private",
+      "role": "roles/storage.objectCreator",
+      "condition": null
+    },
+    {
+      "bucket": "family-portfolio-gateway-xuan-weekly-private",
+      "role": "roles/storage.objectUser",
+      "condition": "resource.name == 'projects/_/buckets/family-portfolio-gateway-xuan-weekly-private/objects/weekly/latest.html'"
+    },
+    {
+      "bucket": "family-portfolio-gateway-xuan-weekly-private",
+      "role": "roles/storage.objectViewer",
+      "condition": null
+    },
+    {
+      "bucket": "family-portfolio-gateway-xuan-weekly-public",
+      "role": "roles/storage.objectUser",
+      "condition": "resource.name == 'projects/_/buckets/family-portfolio-gateway-xuan-weekly-public/objects/weekly/latest.html'"
+    }
+  ],
+  "scheduler": {
+    "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/xuan-weekly-sunday",
+    "state": "ENABLED",
+    "schedule": "0 10 * * 0",
+    "timeZone": "Asia/Hong_Kong",
+    "target": "https://run.googleapis.com/v2/projects/family-portfolio-gateway/locations/asia-east2/jobs/xuan-weekly-report:run",
+    "bodyDecoded": {},
+    "identity": "xuan-weekly-trigger@family-portfolio-gateway.iam.gserviceaccount.com",
+    "jobRole": "roles/run.invoker",
+    "proposedSchedule": "0,15,30,45 10 * * 0",
+    "changed": false
+  },
+  "authorizedCliIdentity": {
+    "identity": "redacted existing execution identity",
+    "verifiedBy": "Run v2 testIamPermissions",
+    "httpStatus": 200,
+    "permissions": [
+      "run.jobs.run",
+      "run.jobs.runWithOverrides"
+    ]
+  },
+  "newIamRequired": false,
+  "noNewIamReason": "Create/read control objects use existing private objectCreator/objectViewer; guarded latest writes retain exact objectUser conditions; existing CLI identity already has runWithOverrides; Scheduler uses unchanged empty body and inherited scheduled mode.",
+  "existingJobBounds": {
+    "generation": 13,
+    "taskCount": 1,
+    "parallelism": 1,
+    "maxRetries": 0,
+    "timeoutSeconds": 600,
+    "runtimeIdentity": "xuan-weekly-reader@family-portfolio-gateway.iam.gserviceaccount.com",
+    "changed": false
+  }
+}

@@ -71,12 +71,14 @@ def safe_network(error):
     if type(status) is int and 100<=status<=599:safe['httpStatus']=status
     return safe
 
-def run():
+def run(*, stamp=None, prefix=None, outer_deadline=None):
     start=time.monotonic(); now=lambda:dt.datetime.now(dt.timezone.utc).isoformat()
     # Reserve time in the existing 600-second job for calculation and publication.
     network_deadline=start+360
+    if outer_deadline is not None:
+        network_deadline=min(network_deadline,outer_deadline-180)
     stage='configuration';bucket=None
-    stamp=now();prefix='weekly/'+stamp+'-'+uuid.uuid4().hex+'/'
+    stamp=stamp or now();prefix=prefix or 'weekly/'+stamp+'-'+uuid.uuid4().hex+'/'
     def save(name,body,kind='application/json'):
         nonlocal stage
         stage='archive_'+name.replace('.','_')

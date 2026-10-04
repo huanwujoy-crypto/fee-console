@@ -6,4 +6,5 @@ COPY scripts/ ./scripts/
 COPY claude/ ./claude/
 COPY cloud/xuan-weekly/*.py ./cloud/xuan-weekly/
 USER node
-CMD ["/opt/runtime/bin/python", "cloud/xuan-weekly/weekly_job.py"]
+ENTRYPOINT ["/opt/runtime/bin/python", "cloud/xuan-weekly/recovery.py"]
+CMD ["--mode=scheduled"]
