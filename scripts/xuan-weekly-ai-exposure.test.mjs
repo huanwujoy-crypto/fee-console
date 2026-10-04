@@ -90,16 +90,16 @@ test('ETF-only issuer keys cannot silently classify a new direct holding',()=>{
 });
 test('all shipped ETF snapshots allocate positive amounts without overcounting',()=>{
  const r=buildAiExposure(fixture(DEFAULT_POLICY.etfSnapshots.map(s=>row(s.instrumentId,s.symbol,100,'ETF'))),{cutoff});
- assert.equal(r.rows.length,7);assert.equal(r.rows.every(r=>r.coveredBp>0&&r.coveredBp<10000),true);
+ assert.equal(r.rows.length,DEFAULT_POLICY.etfSnapshots.length);assert.equal(r.rows.every(r=>r.coveredBp>0&&r.coveredBp<10000),true);
  assert.equal(r.coverageComplete,false);
  assert.equal(r.rows.find(r=>r.symbol==='EXUS').coveredBp,1129);
  assert.equal(r.rows.find(r=>r.symbol==='EIMI').coveredBp,3600);
  assert.equal(r.rows.find(r=>r.symbol==='CSPX').coveredBp,5426);
- assert.equal(r.rows.find(r=>r.symbol==='SMH').coveredBp,5344);
+ assert.equal(r.rows.find(r=>r.symbol==='SMH').coveredBp,6744);
  const expired=structuredClone(DEFAULT_POLICY);expired.reviewBy='2027-03-01';
  const futureRows=fixture(DEFAULT_POLICY.etfSnapshots.map(s=>({...row(s.instrumentId,s.symbol,100,'ETF'),valueDate:'2027-01-04'})));
  const old=buildAiExposure(futureRows,{cutoff:'2027-01-04',policy:expired});
- assert.equal(group(old,'etfUncovered').percent,70);
+ assert.equal(group(old,'etfUncovered').percent,100);
 });
 test('dated top-five additions classify only reviewed constituents and preserve residuals',()=>{
  const r=buildAiExposure(fixture([

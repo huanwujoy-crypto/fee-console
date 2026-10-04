@@ -86,6 +86,15 @@ export function renderWeeklyAudit(a){
   const flowType=f=>f.category==='securities'?(f.usd>=0?'证券净转入':'证券净转出'):(f.usd>=0?'入金':'出金');
   const table=(heads,body)=>`<div class="audit-scroll" tabindex="0"><table class="audit-table"><thead><tr>${heads.map(h=>`<th>${h}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table></div>`;
   const row=values=>`<tr>${values.map(v=>`<td>${v}</td>`).join('')}</tr>`;
+  const history=[...a.daily].sort((x,y)=>y.date.localeCompare(x.date));
+  const start=new Date(Date.parse(a.cutoff+'T00:00:00Z')-6*86400000).toISOString().slice(0,10);
+  const recent=history.filter(d=>d.date>=start),older=new Map();
+  for(const d of history.filter(d=>d.date<start)){
+    const day=new Date(d.date+'T00:00:00Z');day.setUTCDate(day.getUTCDate()-(day.getUTCDay()+6)%7);
+    const key=day.toISOString().slice(0,10);if(!older.has(key))older.set(key,[]);older.get(key).push(d);
+  }
+  const dailyTable=days=>table(['日期／方案','期初 USD','净流入 USD','期末 USD','日收益','累计 TWR'],days.flatMap(d=>arms.map(k=>row([`${d.date} ${k}`,num(d[k].beginning),num(d.flow),num(d[k].ending),num(d[k].dailyReturn*100,6)+'%',num(d[k].cumulativeReturn*100,6)+'%']))).join(''));
+  const dailyHtml=`<p class="muted">最新日期在前，默认展开截至 ${esc(a.cutoff)} 的最近七个日历日；更早历史按周折叠，累计结果仍使用全部历史。</p>${dailyTable(recent)}${[...older].map(([week,days])=>`<details class="abc-history-week"><summary>${esc(week)} 当周 · ${days.length} 日</summary>${dailyTable(days)}</details>`).join('')}`;
   return `<div id="cashflows"><h3>资金记录 · IB 自动读取</h3><p>现金入金 ${dollars(t.cashIn)} · 出金 ${dollars(t.cashOut)}<br>证券净转入 ${dollars(t.securitiesIn)} · 净转出 ${dollars(t.securitiesOut)}<br><b>资本净流入 ${dollars(t.net)}</b></p>
   <details><summary>查看资金记录（${a.flows.length} 条）</summary><p class="muted">截至 ${esc(a.cutoff)}。证券转仓按 IB 每日净额记录，不冒充现金出入；买卖、股息、利息和费用不列为外部资金。</p>${a.flows.length?table(['日期','类型','USD'],a.flows.map(f=>row([esc(f.date),flowType(f),dollars(f.usd)])).join('')):'<p>本区间没有外部资金变动。</p>'}</details></div>
   <details><summary>计算过程与逐日核算</summary><p>期初（${esc(a.baselineDate)}）${dollars(a.summary.A.initial)}；从 8 月 1 日起计算。损益＝期末－期初－资本净流入。</p>
@@ -95,5 +104,5 @@ export function renderWeeklyAudit(a){
   <h3>② 模拟期末核对</h3><p class="muted">份额×价格＝市值；分项合计应等于上表期末金额。入金按目标比例投入，出金先现金、不足按市值比例减仓；不每日再平衡。</p>
   ${table(['方案／ETF','期末份额','单价 USD','市值 USD'],a.simulation.map(r=>row([`${r.arm} · ${r.symbol}`,r.units===null?'—':num(r.units,6),r.price===null?'—':num(r.price,4),num(r.value)])).join(''))}
   <h3>③ 逐日核算</h3><p class="muted">日收益＝（期末－净流入）÷期初－1。累计 TWR＝每日（1＋日收益）连乘－1。金额显示至分、收益至六位小数，内部不逐日舍入。周末按已核验休市记录承接资产；行情日期可能因市场休市不同。</p>
-  ${table(['日期／方案','期初 USD','净流入 USD','期末 USD','日收益','累计 TWR'],a.daily.flatMap(d=>arms.map(k=>row([`${d.date} ${k}`,num(d[k].beginning),num(d.flow),num(d[k].ending),num(d[k].dailyReturn*100,6)+'%',num(d[k].cumulativeReturn*100,6)+'%']))).join(''))}</details>`;
+  ${dailyHtml}</details>`;
 }
