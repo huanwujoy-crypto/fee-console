@@ -3,7 +3,8 @@ import fs from 'node:fs';
 import {buildWeeklyAbc} from './xuan-weekly-abc.mjs';
 import {buildWeeklyAudit,renderWeeklyAudit} from './xuan-weekly-audit.mjs';
 import {buildAiRiskInputFromCapture} from './xuan-ib-ai-risk-input.mjs';
-import {buildAiExposure,renderAiExposure} from './xuan-weekly-ai-exposure.mjs';
+import {buildAiExposure} from './xuan-weekly-ai-exposure.mjs';
+import {buildAiDualExposure,renderAiDualExposure} from './xuan-weekly-ai-dual-exposure.mjs';
 import {buildWeeklyConcentration,renderWeeklyConcentration} from './xuan-weekly-concentration.mjs';
 import {fingerprint} from './xuan-ib-run-manifest.mjs';
 
@@ -20,10 +21,11 @@ export function build(input){
   const envelope=buildAiRiskInputFromCapture(input,{previousTrustedHtml,registry});
   if(envelope.provenance.some(p=>p.reportCutoffDate!==input.riskCutoff))throw Error('risk_cutoff_mismatch');
   const aiExposure=buildAiExposure(envelope,{cutoff:input.riskCutoff,previous:input.previousExposure});
+  const aiDualExposure=buildAiDualExposure(envelope,{cutoff:input.riskCutoff,actualAllocation:aiExposure,previous:input.previousAiDualExposure});
   const concentration=buildWeeklyConcentration(envelope,{cutoff:input.riskCutoff});
   const records=envelope.riskConstituents.map(r=>({key:r.portfolioId+':'+r.holdingId,symbol:r.symbol,custodian:r.custodian,status:'observed',namespace:'WEEKLY'}));
   const end=abc.result.rows.at(-1);
-  const ai=renderAiExposure(aiExposure);
+  const ai=renderAiDualExposure(aiExposure,aiDualExposure);
   const names={A:'A · IB 实际',B:'B · 四 ETF',C:'C · CSPX'};
   const html=`<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>XUAN · 周末记录</title>
   <style>body{font:17px system-ui;margin:0;background:#f3f6f7;color:#152129}main{max-width:760px;margin:auto;padding:20px}h1{font-size:25px}h2{font-size:21px}h3{font-size:16px;color:#53616a;margin:22px 0 5px}.muted,small,summary{color:#64737c}section{background:white;border:1px solid #e0e5e8;border-radius:18px;padding:20px;margin:18px 0}.line{display:flex;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid #edf0f2}.line span{min-width:0}.line b{text-align:right;white-space:nowrap}.big{font-size:32px;font-weight:750}summary{padding:12px 0;cursor:pointer}.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;text-align:right}.row3>:first-child{text-align:left}nav a{color:#225b69;margin-right:20px}p{line-height:1.6}small{font-size:13px}</style>
@@ -37,9 +39,9 @@ export function build(input){
     .replace('<details><summary>计算说明</summary>',`${renderWeeklyAudit(audit)}<details><summary>计算说明</summary>`)
     .replace('采用日终近似，非结算结果。','剔除入出金影响，交易成本已计入。逐日收益＝（当日资产－当日净流入）÷前日资产－1，再逐日连乘；与管理费的组合毛 TWR 使用相同的日终现金流调整方法。用于比较管理表现，非结算结果。')
     .replace('不每日再平衡。B/C 为事后模拟，行情采用 USD 日收盘价。','不每日再平衡。B/C 为事后模拟，采用 ETF 美元收盘价，不另估佣金、个人税费及现金利息；A 保留 IB 实际成本，不另扣模拟管理费。用户已确认 IB 未实扣管理费或业绩提成。比较需兼顾风险和观察期长短。</p><p>B/C 四只 ETF 均为累积型（Accumulating）：基金内部税后分红再投资已反映在价格中，不重复加分红，也不再扣一次 15%。15% 是用户指定的现金派息模拟税率，不是所有底层市场的统一税率；当前无独立派息可再次计税。若以后改用派息型，须另核对现金分红、扣税及再投资，不能直接沿用此价格口径。');
-  return {html:displayHtml,abc,audit,aiExposure,concentration,records,diagnostics:envelope.diagnostics,
+  return {html:displayHtml,abc,audit,aiExposure,aiDualExposure,concentration,records,diagnostics:envelope.diagnostics,
     receipt:{complete:true,cutoff:input.abc.cutoff,abcRows:abc.result.rows.length,riskRows:aiExposure.rows.length,
-      aiMethodId:aiExposure.methodId,aiCoverageComplete:aiExposure.coverageComplete,
+      aiMethodId:aiExposure.methodId,aiPrimaryMethodId:aiDualExposure.methodId,aiCoverageComplete:aiExposure.coverageComplete,
       concentrationMethodId:concentration.methodId,concentrationIssuers:concentration.rows.length,
       concentrationEtfSources:concentration.matchedFunds.length,concentrationEtfMissing:concentration.missingFunds.length,
       previousManifest:envelope.previousManifest}};
