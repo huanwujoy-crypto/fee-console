@@ -92,9 +92,9 @@ test('all shipped ETF snapshots allocate positive amounts without overcounting',
  const r=buildAiExposure(fixture(DEFAULT_POLICY.etfSnapshots.map(s=>row(s.instrumentId,s.symbol,100,'ETF'))),{cutoff});
  assert.equal(r.rows.length,DEFAULT_POLICY.etfSnapshots.length);assert.equal(r.rows.every(r=>r.coveredBp>0&&r.coveredBp<10000),true);
  assert.equal(r.coverageComplete,false);
- assert.equal(r.rows.find(r=>r.symbol==='EXUS').coveredBp,1129);
- assert.equal(r.rows.find(r=>r.symbol==='EIMI').coveredBp,3600);
- assert.equal(r.rows.find(r=>r.symbol==='CSPX').coveredBp,5426);
+ assert.equal(r.rows.find(r=>r.symbol==='EXUS').coveredBp,1225);
+ assert.ok(Math.abs(r.rows.find(r=>r.symbol==='EIMI').coveredBp-3802.509)<1e-8);
+ assert.ok(Math.abs(r.rows.find(r=>r.symbol==='CSPX').coveredBp-5887.099)<1e-8);
  assert.equal(r.rows.find(r=>r.symbol==='SMH').coveredBp,6744);
  const expired=structuredClone(DEFAULT_POLICY);expired.reviewBy='2027-03-01';
  const futureRows=fixture(DEFAULT_POLICY.etfSnapshots.map(s=>({...row(s.instrumentId,s.symbol,100,'ETF'),valueDate:'2027-01-04'})));
@@ -110,15 +110,25 @@ test('dated top-five additions classify only reviewed constituents and preserve 
   row('1983054','EQAC',100,'ETF')
  ]),{cutoff});
  const bySymbol=Object.fromEntries(r.rows.map(x=>[x.symbol,x]));
- assert.equal(bySymbol.EXUS.uncoveredCents,'8871');
- assert.equal(bySymbol.CSPX.uncoveredCents,'4574');
- assert.equal(bySymbol.EIMI.uncoveredCents,'6400');
+ assert.equal(bySymbol.EXUS.uncoveredCents,'8775');
+ assert.equal(bySymbol.CSPX.uncoveredCents,'4113');
+ assert.equal(bySymbol.EIMI.uncoveredCents,'6197');
  assert.equal(bySymbol.MXUS.coveredBp,3691);
  assert.equal(bySymbol.EQAC.coveredBp,4635);
- assert.equal(group(r,'other').marketValueCents,'2090');
+ assert.equal(group(r,'other').marketValueCents,'2523');
  const allocated=r.groups.reduce((n,g)=>n+BigInt(g.marketValueCents),0n)+BigInt(r.cash.marketValueCents);
- assert.equal(allocated,BigInt(r.denominatorCents));
+ assert.equal(allocated+BigInt(r.displayRoundingResidualCents),BigInt(r.denominatorCents));
  assert.equal(r.comparisonDate,null);
+});
+test('sub-basis-point public weights are allocated without normalization or floor loss',()=>{
+ const policy=structuredClone(DEFAULT_POLICY);
+ policy.etfSnapshots=[{instrumentId:'10',symbol:'FUND',fundName:'Synthetic',basis:'physical-holdings',asOf:cutoff,
+  source:'https://issuer.example/dated',holdings:[{instrumentId:'24651',symbol:'MSFT',weightBp:0,weightMicroPercent:5000}]}];
+ const r=buildAiExposure(fixture([row('10','FUND',500,'ETF')]),{cutoff,policy});
+ assert.equal(group(r,'platform').marketValueCents,'3');assert.equal(r.rows[0].coveredBp,0.5);
+ assert.equal(r.rows[0].uncoveredCents,'49998');
+ const bad=structuredClone(policy);bad.etfSnapshots[0].holdings[0].weightMicroPercent=100000001;
+ assert.throws(()=>buildAiExposure(fixture([row('10','FUND',500,'ETF')]),{cutoff,policy:bad}),/weights_invalid/);
 });
 test('invalid duplicate issuer components and overlapping definition channels are rejected',()=>{
  const policy=structuredClone(DEFAULT_POLICY);policy.etfSnapshots[0].holdings.push({...policy.etfSnapshots[0].holdings[0]});
