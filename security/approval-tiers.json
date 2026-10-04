@@ -407,6 +407,8 @@
     "cloud/xuan-weekly/recovery.py",
     "cloud/xuan-weekly/test_recovery.py",
     "docs/xuan-weekly-runtime-permission-evidence-20261004.json",
-    "docs/xuan-weekly-silent-recovery-draft-20261004.md"
+    "docs/xuan-weekly-silent-recovery-draft-20261004.md",
+    "scripts/xuan-weekly-ai-dual-exposure.mjs",
+    "scripts/xuan-weekly-ai-dual-exposure.test.mjs"
   ]
 }

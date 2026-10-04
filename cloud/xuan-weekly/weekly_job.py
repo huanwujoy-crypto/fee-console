@@ -115,7 +115,7 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
             if raw.get('mode')!='read_only':raise SourceError('gateway_not_read_only')
             receipts.append({'status':'ok','startedAt':begin,'completedAt':now(),'raw':{'result':raw}})
         save('sharesight.json',receipts)
-        previous=None;exposure_history=[];history_warning=False
+        previous=None;exposure_history=[];dual_history=[];history_warning=False
         # Archive comparison is optional; it must not block current source data.
         try:blobs=[b for b in bucket.list_blobs(prefix='weekly/') if b.name.endswith('/bundle.json')]
         except Exception:blobs=[];history_warning=True
@@ -126,10 +126,12 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
             except Exception:history_warning=True;continue
             if previous is None:previous=prior.get('records')
             if prior.get('aiExposure'):exposure_history.append(prior['aiExposure'])
+            if prior.get('aiDualExposure'):dual_history.append(prior['aiDualExposure'])
             if select_comparison(cutoff,exposure_history):break
         request={'abc':{**ib,'cutoff':abc_cutoff,'quotes':q},'sharesight':receipts,
                  'riskCutoff':cutoff,'previousRecords':previous,
-                 'previousExposure':select_comparison(cutoff,exposure_history)}
+                 'previousExposure':select_comparison(cutoff,exposure_history),
+                 'previousAiDualExposure':select_comparison(cutoff,dual_history)}
         stage='calculation'
         result=subprocess.run(['node','scripts/xuan-weekly-build.mjs'],input=json.dumps(request),
                               capture_output=True,text=True,timeout=60,check=False)
