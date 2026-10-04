@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode } from "./fee-cloud-producer.mjs";
@@ -248,4 +251,103 @@ test('normalized dividend legs use confirmed payout economics and retain the pos
   fixture.webull.incomePayouts[900].portfolio_id=936249;
   result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
   assert.equal(result.flows.some(f=>f.evidence==='internal_income'),false);
+});
+
+// Execute the actual trusted-workflow no-candidate branch with bounded local
+// clock/receipt stubs; no git, network, credential or financial source calls.
+function scheduledReceiptDecision(iso, event = "schedule", receipt = null, {recentCandidate = false, candidateCount = 0} = {}) {
+  const workflow = fs.readFileSync(new URL("../.github/workflows/promote-fee-data.yml", import.meta.url), "utf8");
+  const start = workflow.indexOf("          if (( ${#candidates[@]} == 0 )); then");
+  const end = workflow.indexOf("          if (( ${#candidates[@]} != 1 )); then", start);
+  assert.ok(start >= 0 && end > start);
+  const hkt = new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(iso));
+  const weekday = new Intl.DateTimeFormat("en-US", {timeZone: "Asia/Hong_Kong", weekday: "short"}).format(new Date(iso));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fee-watchdog-test-"));
+  try {
+    if (receipt) fs.writeFileSync(path.join(directory, "fee-data-health.json"), "{}");
+    const script = `set -euo pipefail
+candidates=(${candidateCount ? "verified-candidate" : ""})
+recent_unpromoted_candidate=${recentCandidate}
+date() {
+  if [[ "$*" == '+%u' ]]; then echo "$TEST_WEEKDAY";
+  elif [[ "$*" == *'-d '* ]]; then echo "$TEST_RECEIPT_DATE";
+  else echo "$TEST_TODAY"; fi
+}
+jq() { echo ignored; }
+node() { echo receipt-validation >&2; [[ "$TEST_RECEIPT_VALID" == true ]]; }
+${workflow.slice(start, end)}
+echo candidate-path`;
+    const result = spawnSync("bash", ["-c", script], {cwd: directory, encoding: "utf8", env: {...process.env,
+      GITHUB_EVENT_NAME: event, GITHUB_OUTPUT: path.join(directory, "output"), TEST_TODAY: hkt,
+      TEST_WEEKDAY: String(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(weekday) + 1),
+      TEST_RECEIPT_DATE: receipt?.date || "", TEST_RECEIPT_VALID: String(receipt?.valid === true)}});
+    return {...result, output: fs.existsSync(path.join(directory, "output")) ? fs.readFileSync(path.join(directory, "output"), "utf8") : ""};
+  } finally { fs.rmSync(directory, {recursive: true, force: true}); }
+}
+
+test("scheduled watchdog skips only Hong Kong non-production Sun/Mon with no candidate", () => {
+  for (const iso of ["2026-10-04T11:06:24Z", "2026-10-04T16:00:00Z", "2026-10-05T07:45:00Z"]) {
+    const result = scheduledReceiptDecision(iso, "schedule", {date: "2026-10-03", valid: true});
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /No producer is scheduled today/);
+    assert.equal(result.output, "sha=\n");
+    assert.match(result.stderr, /receipt-validation/);
+  }
+});
+
+test("all Hong Kong Tue-Sat production days still fail without a verified same-day receipt", () => {
+  for (const iso of ["2026-10-05T16:00:00Z", "2026-10-06T05:15:00Z", "2026-10-07T05:15:00Z", "2026-10-08T05:15:00Z", "2026-10-09T05:15:00Z", "2026-10-10T07:45:00Z"]) {
+    const result = scheduledReceiptDecision(iso);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /No verified Codex fee-data producer receipt exists for today/);
+    assert.equal(result.output, "");
+  }
+});
+
+test("same-day validation and manual/event receipt protections remain enforced", () => {
+  for (const event of ["workflow_dispatch", "workflow_run"]) {
+    const missing = scheduledReceiptDecision("2026-10-04T11:06:24Z", event);
+    assert.equal(missing.status, 1);
+    assert.match(missing.stderr, /No verified Codex fee-data producer receipt/);
+  }
+  const valid = scheduledReceiptDecision("2026-10-06T05:15:00Z", "schedule", {date: "2026-10-06", valid: true});
+  assert.equal(valid.status, 0);
+  assert.match(valid.stderr, /receipt-validation/);
+  assert.match(valid.stdout, /verified producer receipt/);
+  for (const receipt of [{date: "2026-10-05", valid: true}, {date: "2026-10-06", valid: false}]) {
+    assert.equal(scheduledReceiptDecision("2026-10-06T05:15:00Z", "schedule", receipt).status, 1);
+  }
+});
+
+
+test("non-production no-op cannot hide recent rejected candidates or an invalid published receipt", () => {
+  for (const [receipt, options] of [[null, {}], [{date: "2026-10-03", valid: false}, {}], [{date: "2026-10-03", valid: true}, {recentCandidate: true}]]) {
+    const result = scheduledReceiptDecision("2026-10-04T11:06:24Z", "schedule", receipt, options);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Non-production-day no-op refused/);
+    assert.equal(result.output, "");
+  }
+  const candidate = scheduledReceiptDecision("2026-10-04T11:06:24Z", "schedule", null, {candidateCount: 1});
+  assert.equal(candidate.status, 0);
+  assert.equal(candidate.stdout, "candidate-path\n");
+  assert.doesNotMatch(candidate.stderr, /receipt-validation/);
+  assert.equal(candidate.output, "");
+});
+
+test("recent outstanding branch detection separates rejected attempts from promoted and old branches", () => {
+  const workflow = fs.readFileSync(new URL("../.github/workflows/promote-fee-data.yml", import.meta.url), "utf8");
+  const start = workflow.indexOf("            # A rejected recent outstanding candidate");
+  const end = workflow.indexOf('            if [[ ! "$branch_name"', start);
+  assert.ok(start > 0 && end > start);
+  for (const [promoted, timestamp, expected] of [[false, 100, "true"], [false, 99, "false"], [true, 101, "false"]]) {
+    const result = spawnSync("bash", ["-c", `set -euo pipefail
+recent_unpromoted_candidate=false
+candidate_ref=origin/codex/fee-daily-20261002-abcdef
+cutoff_epoch=100
+git() { if [[ "$1" == merge-base ]]; then return ${promoted ? 0 : 1}; else echo ${timestamp}; fi; }
+${workflow.slice(start, end)}
+echo "$recent_unpromoted_candidate"`], {encoding: "utf8"});
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.trim(), expected);
+  }
 });
