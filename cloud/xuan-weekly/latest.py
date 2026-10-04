@@ -16,7 +16,12 @@ def publish_latest(bucket, html, *, started_at, risk_date, abc_date, source):
             # Refuse unknown existing objects and data-date regression.
             if not all(old.get(k) for k in ('started_at', 'risk_date', 'abc_date')):
                 raise ValueError('unknown_latest_metadata')
-            if (old['started_at'] >= started_at or old['risk_date'] > risk_date
+            if old['started_at'] == started_at:
+                if (old['risk_date'] != risk_date or old['abc_date'] != abc_date
+                        or old.get('sha256') != hashlib.sha256(html.encode()).hexdigest()):
+                    raise ValueError('latest_run_conflict')
+                return 'already_current'
+            if (old['started_at'] > started_at or old['risk_date'] > risk_date
                     or old['abc_date'] > abc_date):
                 return 'kept_newer'
             generation = int(blob.generation)

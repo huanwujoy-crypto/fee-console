@@ -1,4 +1,5 @@
 import sys
+import hashlib
 import types
 import unittest
 from unittest.mock import MagicMock
@@ -46,5 +47,29 @@ class LatestTests(unittest.TestCase):
         self.blob.upload_from_string.side_effect=PreconditionFailed()
         with self.assertRaises(RuntimeError):publish_latest(self.bucket,'html',**self.args)
         self.assertEqual(self.blob.upload_from_string.call_count,3)
+    def test_same_run_same_bytes_is_idempotent(self):
+        self.blob.metadata={**self.args,'sha256':hashlib.sha256(b'html').hexdigest()}
+        self.assertEqual(publish_latest(self.bucket,'html',**self.args),'already_current')
+        self.blob.upload_from_string.assert_not_called()
+    def test_same_run_different_bytes_or_dates_fails_closed(self):
+        self.blob.metadata={**self.args,'sha256':hashlib.sha256(b'html').hexdigest()}
+        for field,value in (('sha256','different'),('risk_date','2026-09-24'),('abc_date','2026-09-23')):
+            with self.subTest(field=field):
+                old=self.blob.metadata[field];self.blob.metadata[field]=value
+                with self.assertRaisesRegex(ValueError,'latest_run_conflict'):
+                    publish_latest(self.bucket,'html',**self.args)
+                self.blob.metadata[field]=old
+        self.blob.upload_from_string.assert_not_called()
+    def test_concurrent_newer_writer_wins_generation_race(self):
+        def race(*args,**kwargs):
+            self.blob.metadata['started_at']='2026-09-27T10:00:00+00:00'
+            raise PreconditionFailed()
+        self.blob.upload_from_string.side_effect=race
+        self.assertEqual(publish_latest(self.bucket,'html',**self.args),'kept_newer')
+        self.assertEqual(self.blob.upload_from_string.call_count,1)
+    def test_duplicate_writer_race_is_idempotent(self):
+        self.blob.upload_from_string.side_effect=PreconditionFailed()
+        self.assertEqual(publish_latest(self.bucket,'html',**self.args),'already_current')
+        self.assertEqual(self.blob.upload_from_string.call_count,1)
 
 if __name__=='__main__':unittest.main()

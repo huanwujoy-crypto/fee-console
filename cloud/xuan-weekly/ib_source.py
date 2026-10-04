@@ -8,13 +8,11 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from decimal import Decimal, InvalidOperation
+from network import SourceError, read_get
 
 QUERY = '1650083'
 BASELINE = '2026-07-31'
 MAX_BYTES = 10 * 1024 * 1024
-
-class SourceError(Exception):
-    pass
 
 def require(ok, code):
     if not ok:
@@ -59,11 +57,9 @@ def fetch(token, timeout=150):
         require(remaining > 0, 'deadline')
         url = 'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/' + operation
         url += '?' + urllib.parse.urlencode({'t': token, 'q': query, 'v': '3'})
-        try:
-            with opener.open(url, timeout=min(30, remaining)) as response:
-                data = response.read(MAX_BYTES + 1)
-        except Exception:
-            raise SourceError('ib_network_error') from None
+        data = read_get(opener, url, operation='ib_send_request' if operation == 'SendRequest'
+                        else 'ib_get_statement', code='ib_network_error', deadline=deadline,
+                        max_bytes=MAX_BYTES)
         return data, xml(data)
     _, root = get('SendRequest', QUERY)
     ref = root.findtext('ReferenceCode')
