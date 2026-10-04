@@ -1,0 +1,20 @@
+{
+  "schema": "weekly-leveraged-products.v1",
+  "reviewedOn": "2026-10-04",
+  "reviewBy": "2027-01-04",
+  "products": [
+    {
+      "symbol": "VSTL",
+      "assetType": "ETF",
+      "holdingRefs": [
+        "936247:29282953",
+        "1350094:29274212"
+      ],
+      "underlying": "VST",
+      "underlyingInstrumentId": "1753523",
+      "dailyMultiplierBp": 20000,
+      "source": "https://www.defianceetfs.com/vstl/",
+      "basis": "daily-target"
+    }
+  ]
+}
