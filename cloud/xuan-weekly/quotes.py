@@ -7,6 +7,7 @@ import time
 import urllib.request
 from zoneinfo import ZoneInfo
 from ib_source import SourceError, NoRedirect
+from network import read_get
 
 SYMBOLS = ('CSPX','EXUS','EIMI','USSC')
 # Reviewed 2026 London market full closures. Half days still require a close.
@@ -50,7 +51,7 @@ def parse(payload, symbol, cutoff):
         return out
     except SourceError: raise
     except (KeyError,IndexError,TypeError,ValueError): raise SourceError('invalid_quote_'+symbol) from None
-def fetch_quotes(cutoff):
+def fetch_quotes(cutoff, *, deadline=None):
     days=calendar(cutoff); quotes={d.isoformat():{} for d in days}; evidence={}
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
     end=int(dt.datetime.combine(days[-1]+dt.timedelta(days=1),dt.time(),dt.timezone.utc).timestamp())
@@ -58,16 +59,12 @@ def fetch_quotes(cutoff):
     for symbol in SYMBOLS:
         url=f'https://query1.finance.yahoo.com/v8/finance/chart/{symbol}.L?period1={start}&period2={end}&interval=1d&events=div%2Csplits'
         request=urllib.request.Request(url,headers={'User-Agent':'XUAN-Weekly-ReadOnly/1.0'})
-        raw=None
-        for attempt in range(2):
-            try:
-                with opener.open(request,timeout=25) as response: raw=response.read(2_000_001)
-                if len(raw)>2_000_000: raise SourceError('quote_too_large')
-                break
-            except SourceError: raise
-            except Exception:
-                if attempt: raise SourceError('quote_network_'+symbol) from None
-                time.sleep(3)
+        limit=time.monotonic()+50
+        if deadline is not None: limit=min(limit,deadline)
+        raw=read_get(opener,request,operation='quotes_'+symbol.lower(),
+                     code='quote_network_'+symbol,deadline=limit,
+                     max_bytes=2_000_000,request_timeout=25)
+        if len(raw)>2_000_000: raise SourceError('quote_too_large')
         evidence[symbol]={'sha256':hashlib.sha256(raw).hexdigest(),'payload':json.loads(raw)}
     # Latest common verified close, never a made-up price for the requested day.
     # Only a trailing gap of at most three calendar days is tolerated.

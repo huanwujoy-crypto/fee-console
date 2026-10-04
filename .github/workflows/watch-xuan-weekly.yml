@@ -1,0 +1,42 @@
+name: Check XUAN weekly publication
+
+# Manual only. No new schedule, broker access, credentials or notification destination.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: watch-xuan-weekly-publication
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+
+      - name: Check final public metadata through the existing Actions failure channel
+        shell: bash
+        run: |
+          set +e
+          result=$(node scripts/xuan-weekly-publish-health.mjs)
+          status=$?
+          set -e
+          if (( status != 0 )); then
+            {
+              echo '### XUAN weekly publication failure'
+              echo ''
+              echo 'The final public weekly report did not prove this Sunday publication.'
+              echo '```json'
+              printf '%s\n' "$result"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+          printf '%s\n' "$result"
+          exit "$status"
