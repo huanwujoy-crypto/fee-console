@@ -1,0 +1,42 @@
+[
+  {
+    "key": "unreviewed-siemens",
+    "issuer": "Siemens AG",
+    "group": "platform",
+    "source": "https://solidedge.siemens.com/en/",
+    "identitySource": "https://etf.dws.com/download/asset/1c37d140-04f8-4775-9f1d-768c6cfb03fa",
+    "reason": "Siemens sells AI-enabled engineering software to customers; whole-issuer related business, not AI revenue. Broader industrial activities remain."
+  },
+  {
+    "key": "unreviewed-reliance",
+    "issuer": "Reliance Industries Ltd",
+    "group": "platform",
+    "source": "https://www.ril.com/businesses/digital-services-jio",
+    "identitySource": "https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?appSubType=ISHARES&appType=PRODUCT_PAGE&component=holdings.all&locale=en_GB&portfolioId=264659&targetSite=ishares-uk&userType=individual&excludeContent=true&asOfDate=20260924&includeConfig=true",
+    "reason": "Listed parent operates Jio digital services including AI/ML and cloud platforms. Classify related operating business consistently with other diversified issuers; do not substitute Jio equity or quantify AI revenue."
+  },
+  {
+    "key": "unreviewed-bhartiartl",
+    "issuer": "Bharti Airtel Ltd",
+    "group": "platform",
+    "source": "https://www.airtel.in/about-bharti/about-bharti-airtel/",
+    "identitySource": "https://www.ishares.com/varnish-api/uk-retail01-product-data/product-data/api/v2/get-product-data?appSubType=ISHARES&appType=PRODUCT_PAGE&component=holdings.all&locale=en_GB&portfolioId=264659&targetSite=ishares-uk&userType=individual&excludeContent=true&asOfDate=20260924&includeConfig=true",
+    "reason": "Issuer explicitly identifies its Xtelify AI/digital arm and Airtel Cloud external services; telecom activity remains. Platform priority consistent with cloud/application issuers."
+  },
+  {
+    "key": "unreviewed-snx",
+    "issuer": "TD SYNNEX / SNX",
+    "group": "infrastructure",
+    "source": "https://s21.q4cdn.com/109490932/files/content_files/EX99-1-FY26-Q3-Press-Release-vFinal.pdf",
+    "identitySource": "https://s21.q4cdn.com/109490932/files/content_files/EX99-1-FY26-Q3-Press-Release-vFinal.pdf",
+    "reason": "Issuer FY2026 Q3 release identifies TD SYNNEX (NYSE: SNX) and Hyve Solutions external design/manufacturing of accelerated-compute, cloud and network infrastructure. Broader distribution remains; whole-issuer related exposure is not AI revenue."
+  },
+  {
+    "key": "unreviewed-brookfield",
+    "issuer": "Brookfield Corporation / BN",
+    "group": "other",
+    "source": "https://bn.brookfield.com/",
+    "identitySource": "https://www.vanguard.ca/en/product/etf/equity/9561/vanguard-ftse-canada-all-cap-index-etf",
+    "reason": "The source holding is Brookfield Corporation (BN), not Brookfield Asset Management (BAM), BIP or BEP. Asset-management/investment exposure follows existing KKR/APO finance treatment; investment in AI infrastructure does not quantify operating AI business allocation."
+  }
+]

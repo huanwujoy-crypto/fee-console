@@ -407,6 +407,15 @@
     "cloud/xuan-weekly/recovery.py",
     "cloud/xuan-weekly/test_recovery.py",
     "docs/xuan-weekly-runtime-permission-evidence-20261004.json",
-    "docs/xuan-weekly-silent-recovery-draft-20261004.md"
+    "docs/xuan-weekly-silent-recovery-draft-20261004.md",
+    "claude/xuan-weekly-etf-source-evidence/CSPX-20260924-audit.json",
+    "claude/xuan-weekly-etf-source-evidence/EIMI-20260924-audit.json",
+    "claude/xuan-weekly-etf-source-evidence/five-candidate-business-v1.json",
+    "claude/xuan-weekly-etf-source-evidence/identity-bindings-v1.json",
+    "claude/xuan-weekly-etf-source-evidence/new-business-reviewed-v1.json",
+    "claude/xuan-weekly-etf-source-evidence/public-composition-manifest-v1.json",
+    "docs/xuan-weekly-etf-complete-draft-20261004.md",
+    "scripts/xuan-weekly-ishares-import.mjs",
+    "scripts/xuan-weekly-ishares-import.test.mjs"
   ]
 }

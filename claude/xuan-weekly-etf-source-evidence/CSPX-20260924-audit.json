@@ -1,0 +1,5100 @@
+[
+  {
+    "isin": "US67066G1040",
+    "ticker": "NVDA",
+    "issueName": "NVIDIA",
+    "holdingPercent": 8.16588,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 816,
+    "classificationBound": true
+  },
+  {
+    "isin": "US0378331005",
+    "ticker": "AAPL",
+    "issueName": "APPLE",
+    "holdingPercent": 7.36658,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 736,
+    "classificationBound": true
+  },
+  {
+    "isin": "US5949181045",
+    "ticker": "MSFT",
+    "issueName": "MICROSOFT",
+    "holdingPercent": 5.55596,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 555,
+    "classificationBound": true
+  },
+  {
+    "isin": "US0231351067",
+    "ticker": "AMZN",
+    "issueName": "AMAZON.COM INC",
+    "holdingPercent": 3.67771,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 367,
+    "classificationBound": true
+  },
+  {
+    "isin": "US02079K3059",
+    "ticker": "GOOGL",
+    "issueName": "ALPHABET CLASS A",
+    "holdingPercent": 3.01866,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 301,
+    "classificationBound": true
+  },
+  {
+    "isin": "US30303M1027",
+    "ticker": "META",
+    "issueName": "META PLATFORMS CLASS A",
+    "holdingPercent": 2.57599,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 257,
+    "classificationBound": true
+  },
+  {
+    "isin": "US11135F1012",
+    "ticker": "AVGO",
+    "issueName": "BROADCOM INC",
+    "holdingPercent": 2.50462,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 250,
+    "classificationBound": true
+  },
+  {
+    "isin": "US02079K1079",
+    "ticker": "GOOG",
+    "issueName": "ALPHABET CLASS C",
+    "holdingPercent": 2.42127,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 242,
+    "classificationBound": true
+  },
+  {
+    "isin": "US5951121038",
+    "ticker": "MU",
+    "issueName": "MICRON TECHNOLOGY",
+    "holdingPercent": 1.8333,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 183,
+    "classificationBound": true
+  },
+  {
+    "isin": "US88160R1014",
+    "ticker": "TSLA",
+    "issueName": "TESLA INC",
+    "holdingPercent": 1.60013,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 160,
+    "classificationBound": true
+  },
+  {
+    "isin": "US0079031078",
+    "ticker": "AMD",
+    "issueName": "ADVANCED MICRO DEVICES",
+    "holdingPercent": 1.54324,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 154,
+    "classificationBound": true
+  },
+  {
+    "isin": "US5324571083",
+    "ticker": "LLY",
+    "issueName": "ELI LILLY",
+    "holdingPercent": 1.42078,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 142,
+    "classificationBound": true
+  },
+  {
+    "isin": "US0846707026",
+    "ticker": "BRK B",
+    "issueName": "BERKSHIRE HATHAWAY INC CLASS B",
+    "holdingPercent": 1.41359,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 141,
+    "classificationBound": true
+  },
+  {
+    "isin": "US46625H1005",
+    "ticker": "JPM",
+    "issueName": "JPMORGAN CHASE & CO",
+    "holdingPercent": 1.35187,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 135,
+    "classificationBound": true
+  },
+  {
+    "isin": "US30233Q1085",
+    "ticker": "XOM",
+    "issueName": "EXXONMOBIL HOLDINGS CORP",
+    "holdingPercent": 1.00149,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 100,
+    "classificationBound": true
+  },
+  {
+    "isin": "US4781601046",
+    "ticker": "JNJ",
+    "issueName": "JOHNSON & JOHNSON",
+    "holdingPercent": 0.97995,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 97,
+    "classificationBound": true
+  },
+  {
+    "isin": "US4581401001",
+    "ticker": "INTC",
+    "issueName": "INTEL CORPORATION",
+    "holdingPercent": 0.95095,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 95,
+    "classificationBound": true
+  },
+  {
+    "isin": "US92826C8394",
+    "ticker": "V",
+    "issueName": "VISA CLASS A",
+    "holdingPercent": 0.94224,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 94,
+    "classificationBound": true
+  },
+  {
+    "isin": "US9311421039",
+    "ticker": "WMT",
+    "issueName": "WALMART",
+    "holdingPercent": 0.72038,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 72,
+    "classificationBound": true
+  },
+  {
+    "isin": "US00287Y1091",
+    "ticker": "ABBV",
+    "issueName": "ABBVIE",
+    "holdingPercent": 0.70381,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 70,
+    "classificationBound": true
+  },
+  {
+    "isin": "US57636Q1040",
+    "ticker": "MA",
+    "issueName": "MASTERCARD CLASS A",
+    "holdingPercent": 0.68765,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 68,
+    "classificationBound": true
+  },
+  {
+    "isin": "US69608A1088",
+    "ticker": "PLTR",
+    "issueName": "PALANTIR TECHNOLOGIES CLASS A",
+    "holdingPercent": 0.66565,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 66,
+    "classificationBound": true
+  },
+  {
+    "isin": "US17275R1023",
+    "ticker": "CSCO",
+    "issueName": "CISCO SYSTEMS INC",
+    "holdingPercent": 0.63336,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 63,
+    "classificationBound": true
+  },
+  {
+    "isin": "US1667641005",
+    "ticker": "CVX",
+    "issueName": "CHEVRON",
+    "holdingPercent": 0.61063,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 61,
+    "classificationBound": true
+  },
+  {
+    "isin": "US22160K1051",
+    "ticker": "COST",
+    "issueName": "COSTCO WHOLESALE CORP",
+    "holdingPercent": 0.59725,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 59,
+    "classificationBound": true
+  },
+  {
+    "isin": "US5128073062",
+    "ticker": "LRCX",
+    "issueName": "LAM RESEARCH",
+    "holdingPercent": 0.5774,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 57,
+    "classificationBound": true
+  },
+  {
+    "isin": "US0382221051",
+    "ticker": "AMAT",
+    "issueName": "APPLIED MATERIAL INC",
+    "holdingPercent": 0.56611,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 56,
+    "classificationBound": true
+  },
+  {
+    "isin": "US1491231015",
+    "ticker": "CAT",
+    "issueName": "CATERPILLAR INC",
+    "holdingPercent": 0.55609,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 55,
+    "classificationBound": false
+  },
+  {
+    "isin": "US58933Y1055",
+    "ticker": "MRK",
+    "issueName": "MERCK & CO INC",
+    "holdingPercent": 0.54844,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 54,
+    "classificationBound": true
+  },
+  {
+    "isin": "US0605051046",
+    "ticker": "BAC",
+    "issueName": "BANK OF AMERICA",
+    "holdingPercent": 0.54736,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 54,
+    "classificationBound": true
+  },
+  {
+    "isin": "US1912161007",
+    "ticker": "KO",
+    "issueName": "COCA-COLA",
+    "holdingPercent": 0.51248,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 51,
+    "classificationBound": true
+  },
+  {
+    "isin": "US7427181091",
+    "ticker": "PG",
+    "issueName": "PROCTER & GAMBLE",
+    "holdingPercent": 0.50868,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 50,
+    "classificationBound": true
+  },
+  {
+    "isin": "US91324P1021",
+    "ticker": "UNH",
+    "issueName": "UNITEDHEALTH GROUP",
+    "holdingPercent": 0.50563,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 50,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3696043013",
+    "ticker": "GE",
+    "issueName": "GE AEROSPACE",
+    "holdingPercent": 0.49841,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 49,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6974351057",
+    "ticker": "PANW",
+    "issueName": "PALO ALTO NETWORKS",
+    "holdingPercent": 0.4774,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 47,
+    "classificationBound": false
+  },
+  {
+    "isin": "US64110L1061",
+    "ticker": "NFLX",
+    "issueName": "NETFLIX",
+    "holdingPercent": 0.44858,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 44,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7181721090",
+    "ticker": "PM",
+    "issueName": "PHILIP MORRIS INTERNATIONAL",
+    "holdingPercent": 0.44838,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 44,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4370761029",
+    "ticker": "HD",
+    "issueName": "HOME DEPOT",
+    "holdingPercent": 0.43773,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 43,
+    "classificationBound": true
+  },
+  {
+    "isin": "US38141G1040",
+    "ticker": "GS",
+    "issueName": "GOLDMAN SACHS GROUP",
+    "holdingPercent": 0.40379,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 40,
+    "classificationBound": false
+  },
+  {
+    "isin": "US22788C1053",
+    "ticker": "CRWD",
+    "issueName": "CROWDSTRIKE HOLDINGS CLASS A",
+    "holdingPercent": 0.39724,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 39,
+    "classificationBound": false
+  },
+  {
+    "isin": "US80004C2008",
+    "ticker": "SNDK",
+    "issueName": "SANDISK",
+    "holdingPercent": 0.38464,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 38,
+    "classificationBound": false
+  },
+  {
+    "isin": "US75513E1010",
+    "ticker": "RTX",
+    "issueName": "RTX",
+    "holdingPercent": 0.38213,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 38,
+    "classificationBound": false
+  },
+  {
+    "isin": "US36828A1016",
+    "ticker": "GEV",
+    "issueName": "GE VERNOVA",
+    "holdingPercent": 0.38207,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 38,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8835561023",
+    "ticker": "TMO",
+    "issueName": "THERMO FISHER SCIENTIFIC INC",
+    "holdingPercent": 0.3768,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 37,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9497461015",
+    "ticker": "WFC",
+    "issueName": "WELLS FARGO",
+    "holdingPercent": 0.37328,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 37,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8825081040",
+    "ticker": "TXN",
+    "issueName": "TEXAS INSTRUMENT INC",
+    "holdingPercent": 0.37134,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 37,
+    "classificationBound": true
+  },
+  {
+    "isin": "US4824801009",
+    "ticker": "KLAC",
+    "issueName": "KLA",
+    "holdingPercent": 0.36757,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 36,
+    "classificationBound": true
+  },
+  {
+    "isin": "US68389X1054",
+    "ticker": "ORCL",
+    "issueName": "ORACLE",
+    "holdingPercent": 0.36233,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 36,
+    "classificationBound": true
+  },
+  {
+    "isin": "US6174464486",
+    "ticker": "MS",
+    "issueName": "MORGAN STANLEY",
+    "holdingPercent": 0.35202,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 35,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5738741041",
+    "ticker": "MRVL",
+    "issueName": "MARVELL TECHNOLOGY",
+    "holdingPercent": 0.34083,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 34,
+    "classificationBound": true
+  },
+  {
+    "isin": "US1729674242",
+    "ticker": "C",
+    "issueName": "CITIGROUP",
+    "holdingPercent": 0.33283,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 33,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0311621009",
+    "ticker": "AMGN",
+    "issueName": "AMGEN INC",
+    "holdingPercent": 0.32962,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 32,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE000S9YS762",
+    "ticker": "LIN",
+    "issueName": "LINDE PLC",
+    "holdingPercent": 0.32418,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 32,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0404132054",
+    "ticker": "ANET",
+    "issueName": "ARISTA NETWORKS",
+    "holdingPercent": 0.3235,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 32,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4592001014",
+    "ticker": "IBM",
+    "issueName": "INTERNATIONAL BUSINESS MACHINES",
+    "holdingPercent": 0.32136,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 32,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7475251036",
+    "ticker": "QCOM",
+    "issueName": "QUALCOMM",
+    "holdingPercent": 0.3117,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 31,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BKVD2N49",
+    "ticker": "STX",
+    "issueName": "SEAGATE TECHNOLOGY HOLDINGS PLC",
+    "holdingPercent": 0.30847,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 30,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0320951017",
+    "ticker": "APH",
+    "issueName": "AMPHENOL CORP CLASS A",
+    "holdingPercent": 0.30732,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 30,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92343V1044",
+    "ticker": "VZ",
+    "issueName": "VERIZON COMMUNICATIONS INC",
+    "holdingPercent": 0.29532,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 29,
+    "classificationBound": false
+  },
+  {
+    "isin": "US79466L3024",
+    "ticker": "CRM",
+    "issueName": "SALESFORCE",
+    "holdingPercent": 0.29337,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 29,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0326541051",
+    "ticker": "ADI",
+    "issueName": "ANALOG DEVICES",
+    "holdingPercent": 0.27997,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 27,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3755581036",
+    "ticker": "GILD",
+    "issueName": "GILEAD SCIENCES",
+    "holdingPercent": 0.27881,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 27,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2546871060",
+    "ticker": "DIS",
+    "issueName": "WALT DISNEY",
+    "holdingPercent": 0.27379,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 27,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7134481081",
+    "ticker": "PEP",
+    "issueName": "PEPSICO",
+    "holdingPercent": 0.26275,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 26,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0028241000",
+    "ticker": "ABT",
+    "issueName": "ABBOTT LABORATORIES",
+    "holdingPercent": 0.2627,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 26,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2441991054",
+    "ticker": "DE",
+    "issueName": "DEERE",
+    "holdingPercent": 0.26207,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 26,
+    "classificationBound": false
+  },
+  {
+    "isin": "US00206R1023",
+    "ticker": "T",
+    "issueName": "AT&T",
+    "holdingPercent": 0.26193,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 26,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00B8KQN827",
+    "ticker": "ETN",
+    "issueName": "EATON PLC",
+    "holdingPercent": 0.25692,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 25,
+    "classificationBound": false
+  },
+  {
+    "isin": "US95040Q1040",
+    "ticker": "WELL",
+    "issueName": "WELLTOWER",
+    "holdingPercent": 0.25298,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 25,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5801351017",
+    "ticker": "MCD",
+    "issueName": "MCDONALDS CORP",
+    "holdingPercent": 0.25196,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 25,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9078181081",
+    "ticker": "UNP",
+    "issueName": "UNION PACIFIC",
+    "holdingPercent": 0.24499,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 24,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9581021055",
+    "ticker": "WDC",
+    "issueName": "WESTERN DIGITAL CORP",
+    "holdingPercent": 0.24399,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 24,
+    "classificationBound": false
+  },
+  {
+    "isin": "US24703L2025",
+    "ticker": "DELL",
+    "issueName": "DELL TECHNOLOGIES INC CLASS C",
+    "holdingPercent": 0.24348,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 24,
+    "classificationBound": true
+  },
+  {
+    "isin": "US7170811035",
+    "ticker": "PFE",
+    "issueName": "PFIZER",
+    "holdingPercent": 0.24346,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 24,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8085131055",
+    "ticker": "SCHW",
+    "issueName": "CHARLES SCHWAB",
+    "holdingPercent": 0.24294,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 24,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0258161092",
+    "ticker": "AXP",
+    "issueName": "AMERICAN EXPRESS",
+    "holdingPercent": 0.24186,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 24,
+    "classificationBound": false
+  },
+  {
+    "isin": "US65339F1012",
+    "ticker": "NEE",
+    "issueName": "NEXTERA ENERGY",
+    "holdingPercent": 0.23743,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 23,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0970231058",
+    "ticker": "BA",
+    "issueName": "BOEING",
+    "holdingPercent": 0.23353,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 23,
+    "classificationBound": false
+  },
+  {
+    "isin": "US20825C1045",
+    "ticker": "COP",
+    "issueName": "CONOCOPHILLIPS",
+    "holdingPercent": 0.23338,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 23,
+    "classificationBound": false
+  },
+  {
+    "isin": null,
+    "ticker": "USD",
+    "issueName": "USD CASH",
+    "holdingPercent": 0.23262,
+    "assetClass": "Cash",
+    "kind": "cash",
+    "weightBp": 23,
+    "classificationBound": false
+  },
+  {
+    "isin": "US09290D1019",
+    "ticker": "BLK",
+    "issueName": "BLACKROCK",
+    "holdingPercent": 0.23223,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 23,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8725401090",
+    "ticker": "TJX",
+    "issueName": "TJX",
+    "holdingPercent": 0.21843,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 21,
+    "classificationBound": false
+  },
+  {
+    "isin": "US81762P1021",
+    "ticker": "NOW",
+    "issueName": "SERVICENOW",
+    "holdingPercent": 0.21391,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 21,
+    "classificationBound": false
+  },
+  {
+    "isin": "US90353T1007",
+    "ticker": "UBER",
+    "issueName": "UBER TECHNOLOGIES",
+    "holdingPercent": 0.21211,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 21,
+    "classificationBound": false
+  },
+  {
+    "isin": "US46120E6023",
+    "ticker": "ISRG",
+    "issueName": "INTUITIVE SURGICAL",
+    "holdingPercent": 0.21201,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 21,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2358511028",
+    "ticker": "DHR",
+    "issueName": "DANAHER",
+    "holdingPercent": 0.2103,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 21,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92532F1003",
+    "ticker": "VRTX",
+    "issueName": "VERTEX PHARMACEUTICALS",
+    "holdingPercent": 0.19924,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 19,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6516391066",
+    "ticker": "NEM",
+    "issueName": "NEWMONT",
+    "holdingPercent": 0.19198,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 19,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74340W1036",
+    "ticker": "PLD",
+    "issueName": "PROLOGIS REIT",
+    "holdingPercent": 0.19087,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 19,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1101221083",
+    "ticker": "BMY",
+    "issueName": "BRISTOL MYERS SQUIBB",
+    "holdingPercent": 0.18861,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 18,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7010941042",
+    "ticker": "PH",
+    "issueName": "PARKER-HANNIFIN",
+    "holdingPercent": 0.18487,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 18,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2193501051",
+    "ticker": "GLW",
+    "issueName": "CORNING",
+    "holdingPercent": 0.18352,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 18,
+    "classificationBound": false
+  },
+  {
+    "isin": "US78409V1044",
+    "ticker": "SPGI",
+    "issueName": "S&P GLOBAL",
+    "holdingPercent": 0.18294,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 18,
+    "classificationBound": false
+  },
+  {
+    "isin": "US14040H1059",
+    "ticker": "COF",
+    "issueName": "CAPITAL ONE FINANCIAL CORP",
+    "holdingPercent": 0.18117,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 18,
+    "classificationBound": false
+  },
+  {
+    "isin": "US09857L1089",
+    "ticker": "BKNG",
+    "issueName": "BOOKING HOLDINGS",
+    "holdingPercent": 0.17763,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 17,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7433151039",
+    "ticker": "PGR",
+    "issueName": "PROGRESSIVE",
+    "holdingPercent": 0.17655,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 17,
+    "classificationBound": false
+  },
+  {
+    "isin": "CH0044328745",
+    "ticker": "CB",
+    "issueName": "CHUBB",
+    "holdingPercent": 0.17655,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 17,
+    "classificationBound": false
+  },
+  {
+    "isin": "US02209S1033",
+    "ticker": "MO",
+    "issueName": "ALTRIA GROUP INC",
+    "holdingPercent": 0.17315,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 17,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BTN1Y115",
+    "ticker": "MDT",
+    "issueName": "MEDTRONIC PLC",
+    "holdingPercent": 0.17018,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 17,
+    "classificationBound": false
+  },
+  {
+    "isin": "US91913Y1001",
+    "ticker": "VLO",
+    "issueName": "VALERO ENERGY CORP",
+    "holdingPercent": 0.16555,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 16,
+    "classificationBound": false
+  },
+  {
+    "isin": "US34959E1091",
+    "ticker": "FTNT",
+    "issueName": "FORTINET",
+    "holdingPercent": 0.1654,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 16,
+    "classificationBound": false
+  },
+  {
+    "isin": "US56585A1025",
+    "ticker": "MPC",
+    "issueName": "MARATHON PETROLEUM",
+    "holdingPercent": 0.16488,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 16,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00B4BNMY34",
+    "ticker": "ACN",
+    "issueName": "ACCENTURE PLC CLASS A",
+    "holdingPercent": 0.16308,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 16,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1266501006",
+    "ticker": "CVS",
+    "issueName": "CVS HEALTH",
+    "holdingPercent": 0.16302,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 16,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8552441094",
+    "ticker": "SBUX",
+    "issueName": "STARBUCKS CORP",
+    "holdingPercent": 0.16034,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 16,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5398301094",
+    "ticker": "LMT",
+    "issueName": "LOCKHEED MARTIN CORP",
+    "holdingPercent": 0.15981,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5486611073",
+    "ticker": "LOW",
+    "issueName": "LOWES COMPANIES INC",
+    "holdingPercent": 0.1589,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0530151036",
+    "ticker": "ADP",
+    "issueName": "AUTOMATIC DATA PROCESSING INC",
+    "holdingPercent": 0.15701,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US35671D8570",
+    "ticker": "FCX",
+    "issueName": "FREEPORT MCMORAN INC",
+    "holdingPercent": 0.15581,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US29444U7000",
+    "ticker": "EQIX",
+    "issueName": "EQUINIX REIT",
+    "holdingPercent": 0.15357,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7185461040",
+    "ticker": "PSX",
+    "issueName": "PHILLIPS 66",
+    "holdingPercent": 0.15337,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0640581007",
+    "ticker": "BNY",
+    "issueName": "BANK OF NEW YORK MELLON CORP",
+    "holdingPercent": 0.15306,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US58155Q1031",
+    "ticker": "MCK",
+    "issueName": "MCKESSON CORP",
+    "holdingPercent": 0.1522,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 15,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74762E1029",
+    "ticker": "PWR",
+    "issueName": "QUANTA SERVICES INC",
+    "holdingPercent": 0.14529,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US12572Q1058",
+    "ticker": "CME",
+    "issueName": "CME GROUP CLASS A",
+    "holdingPercent": 0.14525,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BK9ZQ967",
+    "ticker": "TT",
+    "issueName": "TRANE TECHNOLOGIES PLC",
+    "holdingPercent": 0.14497,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7707001027",
+    "ticker": "HOOD",
+    "issueName": "ROBINHOOD MARKETS CLASS A",
+    "holdingPercent": 0.14384,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8425871071",
+    "ticker": "SO",
+    "issueName": "SOUTHERN",
+    "holdingPercent": 0.14325,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US00724F1012",
+    "ticker": "ADBE",
+    "issueName": "ADOBE INC",
+    "holdingPercent": 0.14265,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92537N1081",
+    "ticker": "VRT",
+    "issueName": "VERTIV HOLDINGS CLASS A",
+    "holdingPercent": 0.14147,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8636671013",
+    "ticker": "SYK",
+    "issueName": "STRYKER",
+    "holdingPercent": 0.14147,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 14,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4432011082",
+    "ticker": "HWM",
+    "issueName": "HOWMET AEROSPACE",
+    "holdingPercent": 0.13742,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9029733048",
+    "ticker": "USB",
+    "issueName": "US BANCORP",
+    "holdingPercent": 0.13636,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6934751057",
+    "ticker": "PNC",
+    "issueName": "PNC FINANCIAL SERVICES GROUP",
+    "holdingPercent": 0.13383,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1273871087",
+    "ticker": "CDNS",
+    "issueName": "CADENCE DESIGN SYSTEMS",
+    "holdingPercent": 0.13369,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US26441C2044",
+    "ticker": "DUK",
+    "issueName": "DUKE ENERGY CORP",
+    "holdingPercent": 0.13303,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45866F1049",
+    "ticker": "ICE",
+    "issueName": "INTERCONTINENTAL EXCHANGE INC",
+    "holdingPercent": 0.13233,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BY7QL619",
+    "ticker": "JCI",
+    "issueName": "JOHNSON CONTROLS INTERNATIONAL PLC",
+    "holdingPercent": 0.13225,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US09260D1072",
+    "ticker": "BX",
+    "issueName": "BLACKSTONE",
+    "holdingPercent": 0.13217,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2910111044",
+    "ticker": "EMR",
+    "issueName": "EMERSON ELECTRIC",
+    "holdingPercent": 0.13082,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1264081035",
+    "ticker": "CSX",
+    "issueName": "CSX",
+    "holdingPercent": 0.13064,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0367521038",
+    "ticker": "ELV",
+    "issueName": "ELEVANCE HEALTH INC",
+    "holdingPercent": 0.13019,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 13,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9694571004",
+    "ticker": "WMB",
+    "issueName": "WILLIAMS",
+    "holdingPercent": 0.1298,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US88579Y1010",
+    "ticker": "MMM",
+    "issueName": "3M",
+    "holdingPercent": 0.12976,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US21037T1097",
+    "ticker": "CEG",
+    "issueName": "CONSTELLATION ENERGY CORP",
+    "holdingPercent": 0.12954,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US23804L1035",
+    "ticker": "DDOG",
+    "issueName": "DATADOG INC CLASS A",
+    "holdingPercent": 0.12928,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3695501086",
+    "ticker": "GD",
+    "issueName": "GENERAL DYNAMICS CORP",
+    "holdingPercent": 0.12826,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03831W1080",
+    "ticker": "APP",
+    "issueName": "APPLOVIN CLASS A",
+    "holdingPercent": 0.1272,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US42824C1099",
+    "ticker": "HPE",
+    "issueName": "HEWLETT PACKARD ENTERPRISE",
+    "holdingPercent": 0.1266,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US55024U1097",
+    "ticker": "LITE",
+    "issueName": "LUMENTUM HOLDINGS",
+    "holdingPercent": 0.12376,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8716071076",
+    "ticker": "SNPS",
+    "issueName": "SYNOPSYS",
+    "holdingPercent": 0.12247,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5717481023",
+    "ticker": "MRSH",
+    "issueName": "MARSH",
+    "holdingPercent": 0.1218,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 12,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8725901040",
+    "ticker": "TMUS",
+    "issueName": "T MOBILE US INC",
+    "holdingPercent": 0.11992,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0937121079",
+    "ticker": "BE",
+    "issueName": "BLOOM ENERGY CLASS A",
+    "holdingPercent": 0.11785,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US20030N1019",
+    "ticker": "CMCSA",
+    "issueName": "COMCAST CLASS A",
+    "holdingPercent": 0.11763,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03027X1000",
+    "ticker": "AMT",
+    "issueName": "AMERICAN TOWER REIT",
+    "holdingPercent": 0.1173,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US75886F1075",
+    "ticker": "REGN",
+    "issueName": "REGENERON PHARMACEUTICALS",
+    "holdingPercent": 0.11722,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6092071058",
+    "ticker": "MDLZ",
+    "issueName": "MONDELEZ INTERNATIONAL CLASS A",
+    "holdingPercent": 0.11667,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9344231041",
+    "ticker": "WBD",
+    "issueName": "WARNER BROS. DISCOVERY SERIES A",
+    "holdingPercent": 0.11631,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US94106L1098",
+    "ticker": "WM",
+    "issueName": "WASTE MANAGEMENT INC",
+    "holdingPercent": 0.11614,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "AN8068571086",
+    "ticker": "SLB",
+    "issueName": "SLB",
+    "holdingPercent": 0.11464,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4612021034",
+    "ticker": "INTU",
+    "issueName": "INTUIT",
+    "holdingPercent": 0.11387,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US89417E1091",
+    "ticker": "TRV",
+    "issueName": "TRAVELERS COMPANIES",
+    "holdingPercent": 0.11353,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7782961038",
+    "ticker": "ROST",
+    "issueName": "ROSS STORES INC",
+    "holdingPercent": 0.11344,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6200763075",
+    "ticker": "MSI",
+    "issueName": "MOTOROLA SOLUTIONS INC",
+    "holdingPercent": 0.11308,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5719032022",
+    "ticker": "MAR",
+    "issueName": "MARRIOTT INTERNATIONAL CLASS A",
+    "holdingPercent": 0.1129,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US26875P1012",
+    "ticker": "EOG",
+    "issueName": "EOG RESOURCES",
+    "holdingPercent": 0.11255,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 11,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8243481061",
+    "ticker": "SHW",
+    "issueName": "SHERWIN WILLIAMS",
+    "holdingPercent": 0.10982,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US60770K1079",
+    "ticker": "MRNA",
+    "issueName": "MODERNA",
+    "holdingPercent": 0.1087,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2310211063",
+    "ticker": "CMI",
+    "issueName": "CUMMINS INC",
+    "holdingPercent": 0.10775,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US87612E1064",
+    "ticker": "TGT",
+    "issueName": "TARGET CORP",
+    "holdingPercent": 0.10657,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US37045V1008",
+    "ticker": "GM",
+    "issueName": "GENERAL MOTORS",
+    "holdingPercent": 0.10616,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US25809K1051",
+    "ticker": "DASH",
+    "issueName": "DOORDASH CLASS A",
+    "holdingPercent": 0.10598,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4523081093",
+    "ticker": "ITW",
+    "issueName": "ILLINOIS TOOL INC",
+    "holdingPercent": 0.10589,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6558441084",
+    "ticker": "NSC",
+    "issueName": "NORFOLK SOUTHERN CORP",
+    "holdingPercent": 0.10581,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US43300A2033",
+    "ticker": "HLT",
+    "issueName": "HILTON WORLDWIDE HOLDINGS",
+    "holdingPercent": 0.10553,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1255231003",
+    "ticker": "CI",
+    "issueName": "CIGNA",
+    "holdingPercent": 0.1054,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US67103H1077",
+    "ticker": "ORLY",
+    "issueName": "OREILLY AUTOMOTIVE INC",
+    "holdingPercent": 0.10477,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6153691059",
+    "ticker": "MCO",
+    "issueName": "MOODYS CORP",
+    "holdingPercent": 0.10455,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2788651006",
+    "ticker": "ECL",
+    "issueName": "ECOLAB",
+    "holdingPercent": 0.10436,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9113121068",
+    "ticker": "UPS",
+    "issueName": "UNITED PARCEL SERVICE INC CLASS B",
+    "holdingPercent": 0.10339,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6668071029",
+    "ticker": "NOC",
+    "issueName": "NORTHROP GRUMMAN CORP",
+    "holdingPercent": 0.10228,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1729081059",
+    "ticker": "CTAS",
+    "issueName": "CINTAS",
+    "holdingPercent": 0.10221,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1941621039",
+    "ticker": "CL",
+    "issueName": "COLGATE-PALMOLIVE",
+    "holdingPercent": 0.10216,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4385162056",
+    "ticker": "HON",
+    "issueName": "HONEYWELL INTERNATIONAL INC",
+    "holdingPercent": 0.10094,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 10,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8288061091",
+    "ticker": "SPG",
+    "issueName": "SIMON PROPERTY GROUP REIT INC",
+    "holdingPercent": 0.09993,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US48251W1045",
+    "ticker": "KKR",
+    "issueName": "KKR AND CO INC",
+    "holdingPercent": 0.0992,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": true
+  },
+  {
+    "isin": "US6098391054",
+    "ticker": "MPWR",
+    "issueName": "MONOLITHIC POWER SYSTEMS INC",
+    "holdingPercent": 0.09873,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1011371077",
+    "ticker": "BSX",
+    "issueName": "BOSTON SCIENTIFIC CORP",
+    "holdingPercent": 0.09724,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0255371017",
+    "ticker": "AEP",
+    "issueName": "AMERICAN ELECTRIC POWER INC",
+    "holdingPercent": 0.09585,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2538681030",
+    "ticker": "DLR",
+    "issueName": "DIGITAL REALTY TRUST REIT",
+    "holdingPercent": 0.09559,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9113631090",
+    "ticker": "URI",
+    "issueName": "UNITED RENTALS",
+    "holdingPercent": 0.09547,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0091581068",
+    "ticker": "APD",
+    "issueName": "AIR PRODUCTS AND CHEMICALS",
+    "holdingPercent": 0.09542,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0090661010",
+    "ticker": "ABNB",
+    "issueName": "AIRBNB CLASS A",
+    "holdingPercent": 0.09525,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US40412C1018",
+    "ticker": "HCA",
+    "issueName": "HCA HEALTHCARE",
+    "holdingPercent": 0.09364,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE000IVNQZ81",
+    "ticker": "TEL",
+    "issueName": "TE CONNECTIVITY PLC",
+    "holdingPercent": 0.09292,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US31428X1063",
+    "ticker": "FDX",
+    "issueName": "FEDEX CORP",
+    "holdingPercent": 0.09237,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US49456B1017",
+    "ticker": "KMI",
+    "issueName": "KINDER MORGAN",
+    "holdingPercent": 0.09223,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US49338L1035",
+    "ticker": "KEYS",
+    "issueName": "KEYSIGHT TECHNOLOGIES",
+    "holdingPercent": 0.09215,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US61174X1090",
+    "ticker": "MNST",
+    "issueName": "MONSTER BEVERAGE",
+    "holdingPercent": 0.09175,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8936411003",
+    "ticker": "TDG",
+    "issueName": "TRANSDIGM GROUP",
+    "holdingPercent": 0.09173,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US87612G1013",
+    "ticker": "TRGP",
+    "issueName": "TARGA RESOURCES",
+    "holdingPercent": 0.09128,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8807701029",
+    "ticker": "TER",
+    "issueName": "TERADYNE",
+    "holdingPercent": 0.09101,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 9,
+    "classificationBound": false
+  },
+  {
+    "isin": "LR0008862868",
+    "ticker": "RCL",
+    "issueName": "ROYAL CARIBBEAN GROUP",
+    "holdingPercent": 0.08925,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03073E1055",
+    "ticker": "COR",
+    "issueName": "CENCORA",
+    "holdingPercent": 0.08881,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BLP1HW54",
+    "ticker": "AON",
+    "issueName": "AON PLC CLASS A",
+    "holdingPercent": 0.08799,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3635761097",
+    "ticker": "AJG",
+    "issueName": "ARTHUR J GALLAGHER",
+    "holdingPercent": 0.0876,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6937181088",
+    "ticker": "PCAR",
+    "issueName": "PACCAR INC",
+    "holdingPercent": 0.08747,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "NL0009538784",
+    "ticker": "NXPI",
+    "issueName": "NXP SEMICONDUCTORS NV",
+    "holdingPercent": 0.08741,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3119001044",
+    "ticker": "FAST",
+    "issueName": "FASTENAL",
+    "holdingPercent": 0.08721,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1999081045",
+    "ticker": "FIX",
+    "issueName": "COMFORT SYSTEMS USA",
+    "holdingPercent": 0.08681,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US30609A1097",
+    "ticker": "OKE",
+    "issueName": "ONEOK",
+    "holdingPercent": 0.08664,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US89832Q1094",
+    "ticker": "TFC",
+    "issueName": "TRUIST FINANCIAL",
+    "holdingPercent": 0.08656,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0200021014",
+    "ticker": "ALL",
+    "issueName": "ALLSTATE CORP",
+    "holdingPercent": 0.08629,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03769M1062",
+    "ticker": "APO",
+    "issueName": "APOLLO GLOBAL MANAGEMENT",
+    "holdingPercent": 0.08567,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": true
+  },
+  {
+    "isin": "US19247G1076",
+    "ticker": "COHR",
+    "issueName": "COHERENT",
+    "holdingPercent": 0.08559,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US05722G1004",
+    "ticker": "BKR",
+    "issueName": "BAKER HUGHES CLASS A",
+    "holdingPercent": 0.08553,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0311001004",
+    "ticker": "AME",
+    "issueName": "AMETEK INC",
+    "holdingPercent": 0.08548,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6703461052",
+    "ticker": "NUE",
+    "issueName": "NUCOR",
+    "holdingPercent": 0.08452,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE0001827041",
+    "ticker": "CRH",
+    "issueName": "CRH PUBLIC LIMITED PLC",
+    "holdingPercent": 0.0839,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3848021040",
+    "ticker": "GWW",
+    "issueName": "WW GRAINGER INC",
+    "holdingPercent": 0.08316,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US25179M1036",
+    "ticker": "DVN",
+    "issueName": "DEVON ENERGY",
+    "holdingPercent": 0.08076,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 8,
+    "classificationBound": false
+  },
+  {
+    "isin": "US25746U1097",
+    "ticker": "D",
+    "issueName": "DOMINION ENERGY",
+    "holdingPercent": 0.07996,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US22052L1044",
+    "ticker": "CTVA",
+    "issueName": "CORTEVA",
+    "holdingPercent": 0.07946,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7561091049",
+    "ticker": "O",
+    "issueName": "REALTY INCOME REIT",
+    "holdingPercent": 0.07876,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US59156R1086",
+    "ticker": "MET",
+    "issueName": "METLIFE",
+    "holdingPercent": 0.07797,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US14149Y1082",
+    "ticker": "CAH",
+    "issueName": "CARDINAL HEALTH",
+    "holdingPercent": 0.07778,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8168511090",
+    "ticker": "SRE",
+    "issueName": "SEMPRA",
+    "holdingPercent": 0.0764,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0010551028",
+    "ticker": "AFL",
+    "issueName": "AFLAC",
+    "holdingPercent": 0.07639,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1717793095",
+    "ticker": "CIEN",
+    "issueName": "CIENA",
+    "holdingPercent": 0.07621,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US43849R1059",
+    "ticker": "HONA",
+    "issueName": "HONEYWELL AEROSPACE INC",
+    "holdingPercent": 0.07552,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8574771031",
+    "ticker": "STT",
+    "issueName": "STATE STREET",
+    "holdingPercent": 0.07473,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US28176E1082",
+    "ticker": "EW",
+    "issueName": "EDWARDS LIFESCIENCES",
+    "holdingPercent": 0.07431,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3453708600",
+    "ticker": "F",
+    "issueName": "FORD MOTOR CO",
+    "holdingPercent": 0.07409,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2473617023",
+    "ticker": "DAL",
+    "issueName": "DELTA AIR LINES",
+    "holdingPercent": 0.07393,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9297401088",
+    "ticker": "WAB",
+    "issueName": "WESTINGHOUSE AIR BRAKE TECHNOLOGIE",
+    "holdingPercent": 0.07393,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "CH0114405324",
+    "ticker": "GRMN",
+    "issueName": "GARMIN",
+    "holdingPercent": 0.0735,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0758871091",
+    "ticker": "BDX",
+    "issueName": "BECTON DICKINSON",
+    "holdingPercent": 0.07334,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US00846U1016",
+    "ticker": "A",
+    "issueName": "AGILENT TECHNOLOGIES INC",
+    "holdingPercent": 0.07331,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7739031091",
+    "ticker": "ROK",
+    "issueName": "ROCKWELL AUTOMATION INC",
+    "holdingPercent": 0.07251,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74460D1090",
+    "ticker": "PSA",
+    "issueName": "PUBLIC STORAGE REIT",
+    "holdingPercent": 0.0718,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0533321024",
+    "ticker": "AZO",
+    "issueName": "AUTOZONE",
+    "holdingPercent": 0.07027,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 7,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3167731005",
+    "ticker": "FITB",
+    "issueName": "FIFTH THIRD BANCORP",
+    "holdingPercent": 0.0699,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1468691027",
+    "ticker": "CVNA",
+    "issueName": "CARVANA CLASS A",
+    "holdingPercent": 0.06916,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US29364G1031",
+    "ticker": "ETR",
+    "issueName": "ENTERGY CORP",
+    "holdingPercent": 0.06881,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4448591028",
+    "ticker": "HUM",
+    "issueName": "HUMANA",
+    "holdingPercent": 0.06849,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US46266C1053",
+    "ticker": "IQV",
+    "issueName": "IQVIA HOLDINGS",
+    "holdingPercent": 0.06799,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US14448C1045",
+    "ticker": "CARR",
+    "issueName": "CARRIER GLOBAL",
+    "holdingPercent": 0.06796,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US70450Y1038",
+    "ticker": "PYPL",
+    "issueName": "PAYPAL HOLDINGS",
+    "holdingPercent": 0.06757,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0527691069",
+    "ticker": "ADSK",
+    "issueName": "AUTODESK",
+    "holdingPercent": 0.06699,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US19260Q1076",
+    "ticker": "COIN",
+    "issueName": "COINBASE GLOBAL INC CLASS A",
+    "holdingPercent": 0.06698,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92276F1003",
+    "ticker": "VTR",
+    "issueName": "VENTAS REIT",
+    "holdingPercent": 0.06693,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5024311095",
+    "ticker": "LHX",
+    "issueName": "L3HARRIS TECHNOLOGIES",
+    "holdingPercent": 0.06663,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US29476L1070",
+    "ticker": "VMRK",
+    "issueName": "VIVMARK RESIDENTIAL",
+    "holdingPercent": 0.06598,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92840M1027",
+    "ticker": "VST",
+    "issueName": "VISTRA",
+    "holdingPercent": 0.06576,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": true
+  },
+  {
+    "isin": "US98389B1008",
+    "ticker": "XEL",
+    "issueName": "XCEL ENERGY INC",
+    "holdingPercent": 0.06537,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2786421030",
+    "ticker": "EBAY",
+    "issueName": "EBAY",
+    "holdingPercent": 0.06481,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6541061031",
+    "ticker": "NKE",
+    "issueName": "NIKE CLASS B",
+    "holdingPercent": 0.06467,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03076C1062",
+    "ticker": "AMP",
+    "issueName": "AMERIPRISE FINANCE INC",
+    "holdingPercent": 0.06439,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US31488V1070",
+    "ticker": "FERG",
+    "issueName": "FERGUSON ENTERPRISES INC",
+    "holdingPercent": 0.06422,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6745991058",
+    "ticker": "OXY",
+    "issueName": "OCCIDENTAL PETROLEUM CORP",
+    "holdingPercent": 0.06364,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9418481035",
+    "ticker": "WAT",
+    "issueName": "WATERS CORP",
+    "holdingPercent": 0.06344,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US49271V1008",
+    "ticker": "KDP",
+    "issueName": "KEURIG DR PEPPER INC",
+    "holdingPercent": 0.06321,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6311031081",
+    "ticker": "NDAQ",
+    "issueName": "NASDAQ INC",
+    "holdingPercent": 0.06271,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4523271090",
+    "ticker": "ILMN",
+    "issueName": "ILLUMINA INC",
+    "holdingPercent": 0.06262,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7607591002",
+    "ticker": "RSG",
+    "issueName": "REPUBLIC SERVICES INC",
+    "holdingPercent": 0.06261,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8522341036",
+    "ticker": "XYZ",
+    "issueName": "BLOCK CLASS A",
+    "holdingPercent": 0.06234,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "SG9999000020",
+    "ticker": "FLEX",
+    "issueName": "FLEX LTD",
+    "holdingPercent": 0.06221,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US30161N1019",
+    "ticker": "EXC",
+    "issueName": "EXELON CORP",
+    "holdingPercent": 0.06189,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7443201022",
+    "ticker": "PRU",
+    "issueName": "PRUDENTIAL FINANCIAL INC",
+    "holdingPercent": 0.06175,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9224751084",
+    "ticker": "VEEV",
+    "issueName": "VEEVA SYSTEMS CLASS A",
+    "holdingPercent": 0.06169,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74624M1027",
+    "ticker": "P",
+    "issueName": "EVERPURE INC CLASS A",
+    "holdingPercent": 0.06134,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45841N1072",
+    "ticker": "IBKR",
+    "issueName": "INTERACTIVE BROKERS GROUP INC CLAS",
+    "holdingPercent": 0.06114,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45168D1046",
+    "ticker": "IDXX",
+    "issueName": "IDEXX LABORATORIES",
+    "holdingPercent": 0.06097,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5950171042",
+    "ticker": "MCHP",
+    "issueName": "MICROCHIP TECHNOLOGY INC",
+    "holdingPercent": 0.06097,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US55354G1004",
+    "ticker": "MSCI",
+    "issueName": "MSCI",
+    "holdingPercent": 0.06094,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1696561059",
+    "ticker": "CMG",
+    "issueName": "CHIPOTLE MEXICAN GRILL",
+    "holdingPercent": 0.06083,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 6,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0394831020",
+    "ticker": "ADM",
+    "issueName": "ARCHER DANIELS MIDLAND",
+    "holdingPercent": 0.05897,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0268747849",
+    "ticker": "AIG",
+    "issueName": "AMERICAN INTERNATIONAL GROUP",
+    "holdingPercent": 0.05876,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US12504L1098",
+    "ticker": "CBRE",
+    "issueName": "CBRE GROUP CLASS A",
+    "holdingPercent": 0.05844,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US64110D1046",
+    "ticker": "NTAP",
+    "issueName": "NETAPP INC",
+    "holdingPercent": 0.05807,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": true
+  },
+  {
+    "isin": "US25278X1090",
+    "ticker": "FANG",
+    "issueName": "DIAMONDBACK ENERGY",
+    "holdingPercent": 0.05806,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US98138H1014",
+    "ticker": "WDAY",
+    "issueName": "WORKDAY CLASS A",
+    "holdingPercent": 0.05766,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2091151041",
+    "ticker": "ED",
+    "issueName": "CONSOLIDATED EDISON",
+    "holdingPercent": 0.05698,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9884981013",
+    "ticker": "YUM",
+    "issueName": "YUM BRANDS",
+    "holdingPercent": 0.0563,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8718291078",
+    "ticker": "SYY",
+    "issueName": "SYSCO",
+    "holdingPercent": 0.05625,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9100471096",
+    "ticker": "UAL",
+    "issueName": "UNITED AIRLINES HOLDINGS",
+    "holdingPercent": 0.05422,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7766961061",
+    "ticker": "ROP",
+    "issueName": "ROPER TECHNOLOGIES",
+    "holdingPercent": 0.05407,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US05464C1018",
+    "ticker": "AXON",
+    "issueName": "AXON ENTERPRISE",
+    "holdingPercent": 0.05399,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US23331A1097",
+    "ticker": "DHI",
+    "issueName": "D R HORTON",
+    "holdingPercent": 0.05365,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8740541094",
+    "ticker": "TTWO",
+    "issueName": "TAKE TWO INTERACTIVE SOFTWARE",
+    "holdingPercent": 0.0536,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4165151048",
+    "ticker": "HIG",
+    "issueName": "HARTFORD INSURANCE GROUP",
+    "holdingPercent": 0.05114,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US46284V1017",
+    "ticker": "IRM",
+    "issueName": "IRON MOUNTAIN INC",
+    "holdingPercent": 0.05096,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US49177J1025",
+    "ticker": "KVUE",
+    "issueName": "KENVUE",
+    "holdingPercent": 0.05078,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5010441013",
+    "ticker": "KR",
+    "issueName": "KROGER",
+    "holdingPercent": 0.05031,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US09062X1037",
+    "ticker": "BIIB",
+    "issueName": "BIOGEN",
+    "holdingPercent": 0.05028,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 5,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7445731067",
+    "ticker": "PEG",
+    "issueName": "PUBLIC SERVICE ENTERPRISE GROUP",
+    "holdingPercent": 0.04989,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US29084Q1004",
+    "ticker": "EME",
+    "issueName": "EMCOR GROUP",
+    "holdingPercent": 0.04972,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2521311074",
+    "ticker": "DXCM",
+    "issueName": "DEXCOM INC",
+    "holdingPercent": 0.04957,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92939U1060",
+    "ticker": "WEC",
+    "issueName": "WEC ENERGY GROUP",
+    "holdingPercent": 0.04956,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6795801009",
+    "ticker": "ODFL",
+    "issueName": "OLD DOMINION FREIGHT LINE",
+    "holdingPercent": 0.04905,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4663131039",
+    "ticker": "JBL",
+    "issueName": "JABIL",
+    "holdingPercent": 0.0489,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7043261079",
+    "ticker": "PAYX",
+    "issueName": "PAYCHEX",
+    "holdingPercent": 0.04885,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US26884L1098",
+    "ticker": "EQT",
+    "issueName": "EQT",
+    "holdingPercent": 0.04876,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4943681035",
+    "ticker": "KMB",
+    "issueName": "KIMBERLY CLARK",
+    "holdingPercent": 0.04871,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "BMG0450A1053",
+    "ticker": "ACGL",
+    "issueName": "ARCH CAPITAL GROUP",
+    "holdingPercent": 0.04848,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7611521078",
+    "ticker": "RMD",
+    "issueName": "RESMED",
+    "holdingPercent": 0.04808,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6658591044",
+    "ticker": "NTRS",
+    "issueName": "NORTHERN TRUST",
+    "holdingPercent": 0.04796,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8581191009",
+    "ticker": "STLD",
+    "issueName": "STEEL DYNAMICS INC",
+    "holdingPercent": 0.04752,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US55261F1049",
+    "ticker": "MTB",
+    "issueName": "M&T BANK",
+    "holdingPercent": 0.04743,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9291601097",
+    "ticker": "VMC",
+    "issueName": "VULCAN MATERIALS",
+    "holdingPercent": 0.04721,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4461501045",
+    "ticker": "HBAN",
+    "issueName": "HUNTINGTON BANCSHARES INC",
+    "holdingPercent": 0.0466,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5926881054",
+    "ticker": "MTD",
+    "issueName": "METTLER TOLEDO",
+    "holdingPercent": 0.04602,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US15135B1017",
+    "ticker": "CNC",
+    "issueName": "CENTENE CORP",
+    "holdingPercent": 0.04596,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US30212P3038",
+    "ticker": "EXPE",
+    "issueName": "EXPEDIA GROUP",
+    "holdingPercent": 0.04512,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US36266G1076",
+    "ticker": "GEHC",
+    "issueName": "GE HEALTHCARE TECHNOLOGIES",
+    "holdingPercent": 0.04503,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US98978V1035",
+    "ticker": "ZTS",
+    "issueName": "ZOETIS INC CLASS A",
+    "holdingPercent": 0.0436,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5732841060",
+    "ticker": "MLM",
+    "issueName": "MARTIN MARIETTA MATERIALS",
+    "holdingPercent": 0.04358,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US22822V1017",
+    "ticker": "CCI",
+    "issueName": "CROWN CASTLE INC",
+    "holdingPercent": 0.04321,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US40434L1052",
+    "ticker": "HPQ",
+    "issueName": "HP INC",
+    "holdingPercent": 0.0431,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8793601050",
+    "ticker": "TDY",
+    "issueName": "TELEDYNE TECHNOLOGIES INC",
+    "holdingPercent": 0.04267,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6821891057",
+    "ticker": "ON",
+    "issueName": "ON SEMICONDUCTOR CORP",
+    "holdingPercent": 0.04266,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US30225T1025",
+    "ticker": "EXR",
+    "issueName": "EXTRA SPACE STORAGE REIT",
+    "holdingPercent": 0.04203,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US12503M1080",
+    "ticker": "CBOE",
+    "issueName": "CBOE GLOBAL MARKETS",
+    "holdingPercent": 0.04175,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "BMG2004J1036",
+    "ticker": "CCL",
+    "issueName": "CARNIVAL CORP LTD",
+    "holdingPercent": 0.04168,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7547301090",
+    "ticker": "RJF",
+    "issueName": "RAYMOND JAMES",
+    "holdingPercent": 0.04145,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0236081024",
+    "ticker": "AEE",
+    "issueName": "AMEREN",
+    "holdingPercent": 0.04132,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4062161017",
+    "ticker": "HAL",
+    "issueName": "HALLIBURTON",
+    "holdingPercent": 0.0412,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BDB6Q211",
+    "ticker": "WTW",
+    "issueName": "WILLIS TOWERS WATSON",
+    "holdingPercent": 0.04096,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1746101054",
+    "ticker": "CFG",
+    "issueName": "CITIZENS FINANCIAL GROUP INC",
+    "holdingPercent": 0.04094,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US69331C1080",
+    "ticker": "PCG",
+    "issueName": "PG&E CORP",
+    "holdingPercent": 0.04077,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2566771059",
+    "ticker": "DG",
+    "issueName": "DOLLAR GENERAL CORP",
+    "holdingPercent": 0.04074,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9699041011",
+    "ticker": "WSM",
+    "issueName": "WILLIAMS SONOMA INC",
+    "holdingPercent": 0.04052,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03990B1017",
+    "ticker": "ARES",
+    "issueName": "ARES MANAGEMENT CLASS A",
+    "holdingPercent": 0.04043,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5380341090",
+    "ticker": "LYV",
+    "issueName": "LIVE NATION ENTERTAINMENT",
+    "holdingPercent": 0.04039,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 4,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9553061055",
+    "ticker": "WST",
+    "issueName": "WEST PHARMACEUTICAL SERVICES",
+    "holdingPercent": 0.03974,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0495601058",
+    "ticker": "ATO",
+    "issueName": "ATMOS ENERGY",
+    "holdingPercent": 0.03971,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2199481068",
+    "ticker": "CPAY",
+    "issueName": "CORPAY",
+    "holdingPercent": 0.03939,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0304201033",
+    "ticker": "AWK",
+    "issueName": "AMERICAN WATER WORKS",
+    "holdingPercent": 0.03927,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74834L1008",
+    "ticker": "DGX",
+    "issueName": "QUEST DIAGNOSTICS INC",
+    "holdingPercent": 0.03921,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45687V1061",
+    "ticker": "IR",
+    "issueName": "INGERSOLL RAND INC",
+    "holdingPercent": 0.03878,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1924461023",
+    "ticker": "CTSH",
+    "issueName": "COGNIZANT TECHNOLOGY SOLUTIONS CLA",
+    "holdingPercent": 0.03866,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74743L1008",
+    "ticker": "Q",
+    "issueName": "QNITY ELECTRONICS",
+    "holdingPercent": 0.03843,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9256521090",
+    "ticker": "VICI",
+    "issueName": "VICI PPTYS INC",
+    "holdingPercent": 0.03833,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2600031080",
+    "ticker": "DOV",
+    "issueName": "DOVER CORP",
+    "holdingPercent": 0.03821,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US68902V1070",
+    "ticker": "OTIS",
+    "issueName": "OTIS WORLDWIDE",
+    "holdingPercent": 0.03804,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3156161024",
+    "ticker": "FFIV",
+    "issueName": "F5",
+    "holdingPercent": 0.03798,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2333311072",
+    "ticker": "DTE",
+    "issueName": "DTE ENERGY",
+    "holdingPercent": 0.03795,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5049221055",
+    "ticker": "LH",
+    "issueName": "LABCORP HOLDINGS",
+    "holdingPercent": 0.03761,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1720621010",
+    "ticker": "CINF",
+    "issueName": "CINCINNATI FINANCIAL",
+    "holdingPercent": 0.03743,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4435106079",
+    "ticker": "HUBB",
+    "issueName": "HUBBELL INC",
+    "holdingPercent": 0.03726,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4278661081",
+    "ticker": "HSY",
+    "issueName": "HERSHEY FOODS",
+    "holdingPercent": 0.03704,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3377381088",
+    "ticker": "FISV",
+    "issueName": "FISERV INC",
+    "holdingPercent": 0.03683,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US69351T1060",
+    "ticker": "PPL",
+    "issueName": "PPL CORP",
+    "holdingPercent": 0.03619,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00028FXN24",
+    "ticker": "SW",
+    "issueName": "SMURFIT WESTROCK PLC",
+    "holdingPercent": 0.03618,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US30040W1080",
+    "ticker": "ES",
+    "issueName": "EVERSOURCE ENERGY",
+    "holdingPercent": 0.03617,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US15189T1079",
+    "ticker": "CNP",
+    "issueName": "CENTERPOINT ENERGY",
+    "holdingPercent": 0.03617,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3021301094",
+    "ticker": "EXPD",
+    "issueName": "EXPEDITORS INTERNATIONAL OF WASHIN",
+    "holdingPercent": 0.03616,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US98419M1009",
+    "ticker": "XYL",
+    "issueName": "XYLEM INC",
+    "holdingPercent": 0.036,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6935061076",
+    "ticker": "PPG",
+    "issueName": "PPG INDUSTRIES",
+    "holdingPercent": 0.03568,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92343E1029",
+    "ticker": "VRSN",
+    "issueName": "VERISIGN",
+    "holdingPercent": 0.03564,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2172041061",
+    "ticker": "CPRT",
+    "issueName": "COPART INC",
+    "holdingPercent": 0.03547,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US90384S3031",
+    "ticker": "ULTA",
+    "issueName": "ULTA BEAUTY INC",
+    "holdingPercent": 0.03543,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2371941053",
+    "ticker": "DRI",
+    "issueName": "DARDEN RESTAURANTS INC",
+    "holdingPercent": 0.03534,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5184391044",
+    "ticker": "EL",
+    "issueName": "ESTEE LAUDER INC CLASS A",
+    "holdingPercent": 0.03531,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92338C1036",
+    "ticker": "VLTO",
+    "issueName": "VERALTO CORP",
+    "holdingPercent": 0.03523,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US86800U3023",
+    "ticker": "SMCI",
+    "issueName": "SUPER MICRO COMPUTER INC",
+    "holdingPercent": 0.03514,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7591EP1005",
+    "ticker": "RF",
+    "issueName": "REGIONS FINANCIAL",
+    "holdingPercent": 0.03502,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US87165B1035",
+    "ticker": "SYF",
+    "issueName": "SYNCHRONY FINANCIAL",
+    "holdingPercent": 0.03496,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1713401024",
+    "ticker": "CHD",
+    "issueName": "CHURCH AND DWIGHT INC",
+    "holdingPercent": 0.03402,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3379321074",
+    "ticker": "FE",
+    "issueName": "FIRSTENERGY CORP",
+    "holdingPercent": 0.03392,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74144T1088",
+    "ticker": "TROW",
+    "issueName": "T ROWE PRICE GROUP",
+    "holdingPercent": 0.03363,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8760301072",
+    "ticker": "TPR",
+    "issueName": "TAPESTRY",
+    "holdingPercent": 0.03358,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US75734B1008",
+    "ticker": "RDDT",
+    "issueName": "REDDIT CLASS A",
+    "holdingPercent": 0.03355,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US74251V1026",
+    "ticker": "PFG",
+    "issueName": "PRINCIPAL FINANCIAL GROUP INC",
+    "holdingPercent": 0.03352,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1475281036",
+    "ticker": "CASY",
+    "issueName": "CASEYS GENERAL STORES INC",
+    "holdingPercent": 0.0334,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7458671010",
+    "ticker": "PHM",
+    "issueName": "PULTEGROUP",
+    "holdingPercent": 0.03328,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92345Y1064",
+    "ticker": "VRSK",
+    "issueName": "VERISK ANALYTICS",
+    "holdingPercent": 0.03326,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4595061015",
+    "ticker": "IFF",
+    "issueName": "INTERNATIONAL FLAVORS & FRAGRANCES",
+    "holdingPercent": 0.03293,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2567461080",
+    "ticker": "DLTR",
+    "issueName": "DOLLAR TREE INC",
+    "holdingPercent": 0.03278,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45337C1027",
+    "ticker": "INCY",
+    "issueName": "INCYTE CORP",
+    "holdingPercent": 0.03184,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6951561090",
+    "ticker": "PKG",
+    "issueName": "PACKAGING CORP OF AMERICA",
+    "holdingPercent": 0.0318,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6293775085",
+    "ticker": "NRG",
+    "issueName": "NRG ENERGY INC",
+    "holdingPercent": 0.03102,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2605571031",
+    "ticker": "DOW",
+    "issueName": "DOW",
+    "holdingPercent": 0.03097,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1651677353",
+    "ticker": "EXE",
+    "issueName": "EXPAND ENERGY",
+    "holdingPercent": 0.03081,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6819191064",
+    "ticker": "OMC",
+    "issueName": "OMNICOM GROUP INC",
+    "holdingPercent": 0.03078,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8447411088",
+    "ticker": "LUV",
+    "issueName": "SOUTHWEST AIRLINES",
+    "holdingPercent": 0.03078,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5007541064",
+    "ticker": "KHC",
+    "issueName": "KRAFT HEINZ",
+    "holdingPercent": 0.03063,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BFY8C754",
+    "ticker": "STE",
+    "issueName": "STERIS",
+    "holdingPercent": 0.03057,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2810201077",
+    "ticker": "EIX",
+    "issueName": "EDISON INTERNATIONAL",
+    "holdingPercent": 0.03041,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US92556V1061",
+    "ticker": "VTRS",
+    "issueName": "VIATRIS",
+    "holdingPercent": 0.03005,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 3,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1258961002",
+    "ticker": "CMS",
+    "issueName": "CMS ENERGY",
+    "holdingPercent": 0.02958,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US88262P1021",
+    "ticker": "TPL",
+    "issueName": "TEXAS PACIFIC LAND",
+    "holdingPercent": 0.02957,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "JE00BV7DQ550",
+    "ticker": "AMCR",
+    "issueName": "AMCOR PLC",
+    "holdingPercent": 0.02905,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8330341012",
+    "ticker": "SNA",
+    "issueName": "SNAP ON INC",
+    "holdingPercent": 0.0287,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US37940X1028",
+    "ticker": "GPN",
+    "issueName": "GLOBAL PAYMENTS INC",
+    "holdingPercent": 0.02847,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US65473P1057",
+    "ticker": "NI",
+    "issueName": "NISOURCE",
+    "holdingPercent": 0.0282,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US11133T1034",
+    "ticker": "BR",
+    "issueName": "BROADRIDGE FINANCIAL SOLUTIONS INC",
+    "holdingPercent": 0.02817,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3703341046",
+    "ticker": "GIS",
+    "issueName": "GENERAL MILLS INC",
+    "holdingPercent": 0.02806,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3032501047",
+    "ticker": "FICO",
+    "issueName": "FAIR ISAAC",
+    "holdingPercent": 0.02779,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4601461035",
+    "ticker": "IP",
+    "issueName": "INTERNATIONAL PAPER",
+    "holdingPercent": 0.02776,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3364331070",
+    "ticker": "FSLR",
+    "issueName": "FIRST SOLAR",
+    "holdingPercent": 0.0277,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4932671088",
+    "ticker": "KEY",
+    "issueName": "KEYCORP",
+    "holdingPercent": 0.02754,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US31620M1062",
+    "ticker": "FIS",
+    "issueName": "FIDELITY NATIONAL INFORMATION SERV",
+    "holdingPercent": 0.0273,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0865161014",
+    "ticker": "BBY",
+    "issueName": "BEST BUY",
+    "holdingPercent": 0.02709,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3724601055",
+    "ticker": "GPC",
+    "issueName": "GENUINE PARTS",
+    "holdingPercent": 0.02709,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US30034W1062",
+    "ticker": "EVRG",
+    "issueName": "EVERGY",
+    "holdingPercent": 0.02693,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1252691001",
+    "ticker": "CF",
+    "issueName": "CF INDUSTRIES HOLDINGS INC",
+    "holdingPercent": 0.02687,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US26614N2018",
+    "ticker": "DD",
+    "issueName": "DUPONT DE NEMOURS",
+    "holdingPercent": 0.02677,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US78410G1040",
+    "ticker": "SBAC",
+    "issueName": "SBA COMMUNICATIONS REIT CORP CLASS",
+    "holdingPercent": 0.02662,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2944291051",
+    "ticker": "EFX",
+    "issueName": "EQUIFAX",
+    "holdingPercent": 0.02658,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2971781057",
+    "ticker": "ESS",
+    "issueName": "ESSEX PROPERTY TRUST REIT",
+    "holdingPercent": 0.02629,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9892071054",
+    "ticker": "ZBRA",
+    "issueName": "ZEBRA TECHNOLOGIES CORP CLASS A",
+    "holdingPercent": 0.02619,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US12514G1085",
+    "ticker": "CDW",
+    "issueName": "CDW",
+    "holdingPercent": 0.02618,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5404241086",
+    "ticker": "L",
+    "issueName": "LOEWS",
+    "holdingPercent": 0.02613,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "CH1300646267",
+    "ticker": "BG",
+    "issueName": "BUNGE GLOBAL SA",
+    "holdingPercent": 0.02611,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1152361010",
+    "ticker": "BRO",
+    "issueName": "BROWN & BROWN INC",
+    "holdingPercent": 0.02608,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6556631025",
+    "ticker": "NDSN",
+    "issueName": "NORDSON",
+    "holdingPercent": 0.02598,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US21036P1084",
+    "ticker": "STZ",
+    "issueName": "CONSTELLATION BRANDS CLASS A",
+    "holdingPercent": 0.0258,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7140461093",
+    "ticker": "RVTY",
+    "issueName": "REVVITY",
+    "holdingPercent": 0.02569,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US98956P1021",
+    "ticker": "ZBH",
+    "issueName": "ZIMMER BIOMET HOLDINGS",
+    "holdingPercent": 0.02567,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US12541W2098",
+    "ticker": "CHRW",
+    "issueName": "CH ROBINSON WORLDWIDE",
+    "holdingPercent": 0.02566,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4456581077",
+    "ticker": "JBHT",
+    "issueName": "JB HUNT TRANSPORT SERVICES",
+    "holdingPercent": 0.0255,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45167R1041",
+    "ticker": "IEX",
+    "issueName": "IDEX",
+    "holdingPercent": 0.02546,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US34959J1088",
+    "ticker": "FTV",
+    "issueName": "FORTIVE",
+    "holdingPercent": 0.02496,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8923561067",
+    "ticker": "TSCO",
+    "issueName": "TRACTOR SUPPLY",
+    "holdingPercent": 0.02471,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0188021085",
+    "ticker": "LNT",
+    "issueName": "ALLIANT ENERGY CORP",
+    "holdingPercent": 0.02438,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US62944T1051",
+    "ticker": "NVR",
+    "issueName": "NVR",
+    "holdingPercent": 0.02399,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US46982L1089",
+    "ticker": "J",
+    "issueName": "JACOBS SOLUTIONS INC",
+    "holdingPercent": 0.02395,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US00971T1016",
+    "ticker": "AKAM",
+    "issueName": "AKAMAI TECHNOLOGIES INC",
+    "holdingPercent": 0.02379,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5260571048",
+    "ticker": "LEN",
+    "issueName": "LENNAR A CLASS A",
+    "holdingPercent": 0.02368,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "NL0009434992",
+    "ticker": "LYB",
+    "issueName": "LYONDELLBASELL INDUSTRIES CLASS A",
+    "holdingPercent": 0.02343,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US03743Q1085",
+    "ticker": "APA",
+    "issueName": "APA",
+    "holdingPercent": 0.02332,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5253271028",
+    "ticker": "LDOS",
+    "issueName": "LEIDOS HOLDINGS",
+    "holdingPercent": 0.02324,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US44107P1049",
+    "ticker": "HST",
+    "issueName": "HOST HOTELS & RESORTS REIT",
+    "holdingPercent": 0.02287,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0844231029",
+    "ticker": "WRB",
+    "issueName": "WR BERKLEY",
+    "holdingPercent": 0.02284,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US49446R1095",
+    "ticker": "KIM",
+    "issueName": "KIMCO REALTY REIT CORP",
+    "holdingPercent": 0.02274,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US69370C1009",
+    "ticker": "PTC",
+    "issueName": "PTC",
+    "holdingPercent": 0.02239,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0584981064",
+    "ticker": "BALL",
+    "issueName": "BALL CORP",
+    "holdingPercent": 0.02239,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9621661043",
+    "ticker": "WY",
+    "issueName": "WEYERHAEUSER REIT",
+    "holdingPercent": 0.02196,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9024941034",
+    "ticker": "TSN",
+    "issueName": "TYSON FOODS INC CLASS A",
+    "holdingPercent": 0.02187,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US46187W1071",
+    "ticker": "INVH",
+    "issueName": "INVITATION HOMES",
+    "holdingPercent": 0.02133,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1598641074",
+    "ticker": "CRL",
+    "issueName": "CHARLES RIVER LABORATORIES INTERNA",
+    "holdingPercent": 0.02108,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US42250P1030",
+    "ticker": "DOC",
+    "issueName": "HEALTHPEAK PROPERTIES INC",
+    "holdingPercent": 0.02104,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US59522J1034",
+    "ticker": "MAA",
+    "issueName": "MID AMERICA APARTMENT COMMUNITIES",
+    "holdingPercent": 0.02072,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8545021011",
+    "ticker": "SWK",
+    "issueName": "STANLEY BLACK & DECKER",
+    "holdingPercent": 0.02066,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3143521058",
+    "ticker": "FDXF",
+    "issueName": "FEDEX FREIGHT HOLDING COMPANY INC",
+    "holdingPercent": 0.02047,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7512121010",
+    "ticker": "RL",
+    "issueName": "RALPH LAUREN CLASS A",
+    "holdingPercent": 0.02044,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "BMG491BT1088",
+    "ticker": "IVZ",
+    "issueName": "INVESCO LTD",
+    "holdingPercent": 0.02041,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8962391004",
+    "ticker": "TRMB",
+    "issueName": "TRIMBLE INC",
+    "holdingPercent": 0.02024,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 2,
+    "classificationBound": false
+  },
+  {
+    "isin": "US83088M1027",
+    "ticker": "SWKS",
+    "issueName": "SKYWORKS SOLUTIONS",
+    "holdingPercent": 0.01996,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5745991068",
+    "ticker": "MAS",
+    "issueName": "MASCO",
+    "holdingPercent": 0.01993,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "BMG3223R1088",
+    "ticker": "EG",
+    "issueName": "EVEREST GROUP",
+    "holdingPercent": 0.01992,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US16119P1084",
+    "ticker": "CHTR",
+    "issueName": "CHARTER COMMUNICATIONS CLASS A",
+    "holdingPercent": 0.01974,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BFRT3W74",
+    "ticker": "ALLE",
+    "issueName": "ALLEGION PLC",
+    "holdingPercent": 0.01972,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US37959E1029",
+    "ticker": "GL",
+    "issueName": "GLOBE LIFE",
+    "holdingPercent": 0.01956,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US04621X1081",
+    "ticker": "AIZ",
+    "issueName": "ASSURANT INC",
+    "holdingPercent": 0.01952,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8832031012",
+    "ticker": "TXT",
+    "issueName": "TEXTRON INC",
+    "holdingPercent": 0.01949,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8326964058",
+    "ticker": "SJM",
+    "issueName": "JM SMUCKER",
+    "holdingPercent": 0.01947,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0536111091",
+    "ticker": "AVY",
+    "issueName": "AVERY DENNISON CORP",
+    "holdingPercent": 0.01936,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US35137L1052",
+    "ticker": "FOXA",
+    "issueName": "FOX CLASS A",
+    "holdingPercent": 0.01932,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0126531013",
+    "ticker": "ALB",
+    "issueName": "ALBEMARLE CORP",
+    "holdingPercent": 0.01925,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US83444M1018",
+    "ticker": "SOLV",
+    "issueName": "SOLVENTUM",
+    "holdingPercent": 0.0192,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3802371076",
+    "ticker": "GDDY",
+    "issueName": "GODADDY CLASS A",
+    "holdingPercent": 0.01918,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9022521051",
+    "ticker": "TYL",
+    "issueName": "TYLER TECHNOLOGIES",
+    "holdingPercent": 0.01868,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US6687711084",
+    "ticker": "GEN",
+    "issueName": "GEN DIGITAL",
+    "holdingPercent": 0.01866,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2787681061",
+    "ticker": "ECHO",
+    "issueName": "ECHOSTAR CLASS A",
+    "holdingPercent": 0.01835,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0718131099",
+    "ticker": "BAX",
+    "issueName": "BAXTER INTERNATIONAL",
+    "holdingPercent": 0.0182,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5797802064",
+    "ticker": "MKC",
+    "issueName": "MCCORMICK & CO NON-VOTING",
+    "holdingPercent": 0.01815,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7588491032",
+    "ticker": "REG",
+    "issueName": "REGENCY CENTERS REIT CORP",
+    "holdingPercent": 0.01806,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4180561072",
+    "ticker": "HAS",
+    "issueName": "HASBRO",
+    "holdingPercent": 0.01796,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5261071071",
+    "ticker": "LII",
+    "issueName": "LENNOX INTERNATIONAL",
+    "holdingPercent": 0.01757,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3687361044",
+    "ticker": "GNRC",
+    "issueName": "GENERAC HOLDINGS",
+    "holdingPercent": 0.01745,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US09073M1045",
+    "ticker": "TECH",
+    "issueName": "BIO TECHNE",
+    "holdingPercent": 0.01731,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US22160N1090",
+    "ticker": "CSGP",
+    "issueName": "COSTAR GROUP",
+    "holdingPercent": 0.01712,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3666511072",
+    "ticker": "IT",
+    "issueName": "GARTNER",
+    "holdingPercent": 0.017,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": null,
+    "ticker": "MLIFT",
+    "issueName": "CASH COLLATERAL USD MLIFT",
+    "holdingPercent": 0.01693,
+    "assetClass": "Cash Collateral and Margins",
+    "kind": "non-equity-unclassified",
+    "weightBp": 1
+  },
+  {
+    "isin": "US87256C1018",
+    "ticker": "TKO",
+    "issueName": "TKO GROUP HOLDINGS INC CLASS A",
+    "holdingPercent": 0.01666,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7234841010",
+    "ticker": "PNW",
+    "issueName": "PINNACLE WEST",
+    "holdingPercent": 0.01648,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2166485019",
+    "ticker": "COO",
+    "issueName": "COOPER",
+    "holdingPercent": 0.01615,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US2435371073",
+    "ticker": "DECK",
+    "issueName": "DECKERS OUTDOOR",
+    "holdingPercent": 0.01609,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4262811015",
+    "ticker": "JKHY",
+    "issueName": "JACK HENRY AND ASSOCIATES INC",
+    "holdingPercent": 0.01607,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5500211090",
+    "ticker": "LULU",
+    "issueName": "LULULEMON ATHLETICA",
+    "holdingPercent": 0.01602,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US00130H1059",
+    "ticker": "AES",
+    "issueName": "AES",
+    "holdingPercent": 0.01594,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US65249B1098",
+    "ticker": "NWSA",
+    "issueName": "NEWS CLASS A",
+    "holdingPercent": 0.0158,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4464131063",
+    "ticker": "HII",
+    "issueName": "HUNTINGTON INGALLS INDUSTRIES",
+    "holdingPercent": 0.01562,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5178341070",
+    "ticker": "LVS",
+    "issueName": "LAS VEGAS SANDS",
+    "holdingPercent": 0.01502,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1011211018",
+    "ticker": "BXP",
+    "issueName": "BXP",
+    "holdingPercent": 0.01495,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3030751057",
+    "ticker": "FDS",
+    "issueName": "FACTSET RESEARCH SYSTEMS",
+    "holdingPercent": 0.01488,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1890541097",
+    "ticker": "CLX",
+    "issueName": "CLOROX",
+    "holdingPercent": 0.01487,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3546131018",
+    "ticker": "BEN",
+    "issueName": "FRANKLIN TEMPLETON",
+    "holdingPercent": 0.01482,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1331311027",
+    "ticker": "CPT",
+    "issueName": "CAMDEN PROPERTY TRUST REIT",
+    "holdingPercent": 0.01474,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9026531049",
+    "ticker": "UDR",
+    "issueName": "UDR REIT",
+    "holdingPercent": 0.01469,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0162551016",
+    "ticker": "ALGN",
+    "issueName": "ALIGN TECHNOLOGY",
+    "holdingPercent": 0.01465,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US25754A2015",
+    "ticker": "DPZ",
+    "issueName": "DOMINOS PIZZA",
+    "holdingPercent": 0.01457,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US45784P1012",
+    "ticker": "PODD",
+    "issueName": "INSULET",
+    "holdingPercent": 0.01439,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9139031002",
+    "ticker": "UHS",
+    "issueName": "UNIVERSAL HEALTH SERVICES CLASS B",
+    "holdingPercent": 0.01407,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "JE00BTDN8H13",
+    "ticker": "APTV",
+    "issueName": "APTIV PLC",
+    "holdingPercent": 0.01396,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US7757111049",
+    "ticker": "ROL",
+    "issueName": "ROLLINS INC",
+    "holdingPercent": 0.01344,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US3137451015",
+    "ticker": "FRT",
+    "issueName": "FEDERAL REALTY INVESTMENT TRUST RE",
+    "holdingPercent": 0.01283,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "IE00BLS09M33",
+    "ticker": "PNR",
+    "issueName": "PENTAIR",
+    "holdingPercent": 0.0126,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8064071025",
+    "ticker": "HSIC",
+    "issueName": "HENRY SCHEIN",
+    "holdingPercent": 0.01231,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US0152711091",
+    "ticker": "ARE",
+    "issueName": "ALEXANDRIA REAL ESTATE EQUITIES RE",
+    "holdingPercent": 0.01178,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US35137L2043",
+    "ticker": "FOX",
+    "issueName": "FOX CLASS B",
+    "holdingPercent": 0.01154,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "US61945C1036",
+    "ticker": "MOS",
+    "issueName": "MOSAIC",
+    "holdingPercent": 0.01135,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 1,
+    "classificationBound": false
+  },
+  {
+    "isin": "BMG667211046",
+    "ticker": "NCLH",
+    "issueName": "NORWEGIAN CRUISE LINE HOLDINGS",
+    "holdingPercent": 0.00976,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US8318652091",
+    "ticker": "AOS",
+    "issueName": "A O SMITH",
+    "holdingPercent": 0.00943,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US5529531015",
+    "ticker": "MGM",
+    "issueName": "MGM RESORTS INTERNATIONAL",
+    "holdingPercent": 0.00891,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US23918K1088",
+    "ticker": "DVA",
+    "issueName": "DAVITA INC",
+    "holdingPercent": 0.00888,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US9831341071",
+    "ticker": "WYNN",
+    "issueName": "WYNN RESORTS",
+    "holdingPercent": 0.00879,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US4404521001",
+    "ticker": "HRL",
+    "issueName": "HORMEL FOODS CORP",
+    "holdingPercent": 0.00873,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US69932A2042",
+    "ticker": "PSKY",
+    "issueName": "PARAMOUNT SKYDANCE CORP CLASS B",
+    "holdingPercent": 0.00837,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US29530P1021",
+    "ticker": "ERIE",
+    "issueName": "ERIE INDEMNITY CLASS A",
+    "holdingPercent": 0.00824,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US1156372096",
+    "ticker": "BF B",
+    "issueName": "BROWN FORMAN CLASS B",
+    "holdingPercent": 0.0066,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US65249B2088",
+    "ticker": "NWS",
+    "issueName": "NEWS CLASS B",
+    "holdingPercent": 0.00588,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": null,
+    "ticker": "GBP",
+    "issueName": "GBP CASH",
+    "holdingPercent": 0.00168,
+    "assetClass": "Cash",
+    "kind": "cash",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": null,
+    "ticker": "MXN",
+    "issueName": "MXN CASH",
+    "holdingPercent": 0.00107,
+    "assetClass": "Cash",
+    "kind": "cash",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": null,
+    "ticker": "EUR",
+    "issueName": "EUR CASH",
+    "holdingPercent": 0.00023,
+    "assetClass": "Cash",
+    "kind": "cash",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": "US436CVR0216",
+    "ticker": "HOLX",
+    "issueName": "HOLOGIC INC",
+    "holdingPercent": 0,
+    "assetClass": "Equity",
+    "kind": "equity",
+    "weightBp": 0,
+    "classificationBound": false
+  },
+  {
+    "isin": null,
+    "ticker": "ESZ6",
+    "issueName": "S&P500 EMINI DEC 26",
+    "holdingPercent": 0,
+    "assetClass": "Futures",
+    "kind": "non-equity-unclassified",
+    "weightBp": 0
+  }
+]
