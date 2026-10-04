@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildAiExposure,renderAiExposure,DEFAULT_POLICY} from './xuan-weekly-ai-exposure.mjs';
-const cutoff='2026-09-25';
+const cutoff='2026-10-02';
 function row(id,symbol,usd,assetType='STK',portfolioId='1'){
  return {instrumentId:id,symbol,assetType,portfolioId,holdingId:id,custodian:'Synthetic',identityVerified:true,valueDate:cutoff,marketValueMicro:String(BigInt(usd)*1000000n)};
 }
@@ -69,7 +69,7 @@ test('reviewed direct exceptions and non-equity mandates use exact identity and 
  assert.equal(group(mismatch,'pending').percent,30);
 });
 test('ETF identities and economic exposure basis are required; collateral never passes',()=>{
- for(const fields of [{symbol:'OTHER'},{basis:'collateral'},{fundName:''},{source:'http://untrusted.example'}, {asOf:'2026-09-26'}]){
+ for(const fields of [{symbol:'OTHER'},{basis:'collateral'},{fundName:''},{source:'http://untrusted.example'}, {asOf:'2026-10-03'}]){
   const policy=structuredClone(DEFAULT_POLICY);Object.assign(policy.etfSnapshots.find(s=>s.symbol==='MXUS'),fields);
   const r=buildAiExposure(fixture([row('391602','MXUS',100,'ETF')]),{cutoff,policy});
   assert.equal(group(r,'etfUncovered').percent,10);assert.equal(r.rows[0].etfAsOf,null);
@@ -77,9 +77,9 @@ test('ETF identities and economic exposure basis are required; collateral never 
 });
 test('reviewed top holdings are not normalized; direct and indirect issuer values aggregate once',()=>{
  const r=buildAiExposure(fixture([row('391602','MXUS',100,'ETF'),row('1983054','EQAC',100,'ETF'),row('670422','GOOG',100)]),{cutoff});
- assert.equal(r.rows[0].coveredBp,3691);assert.equal(r.rows[0].uncoveredCents,'6309');
+ assert.equal(r.rows[0].coveredBp,3819);assert.equal(r.rows[0].uncoveredCents,'6181');
  assert.equal(r.rows[1].coveredBp,4635);assert.equal(r.rows[1].uncoveredCents,'5365');
- assert.equal(r.contributors.find(c=>c.label==='GOOG / GOOGL').marketValueCents,'11145');
+ assert.equal(r.contributors.find(c=>c.label==='GOOG / GOOGL').marketValueCents,'11155');
  const sum=r.groups.reduce((n,g)=>n+BigInt(g.marketValueCents),0n)+BigInt(r.cash.marketValueCents);
  assert.equal(sum,BigInt(r.denominatorCents));
  assert.match(renderAiExposure(r),/成分 2026-08-31/);assert.match(renderAiExposure(r),/不是实时权重/);
@@ -93,12 +93,12 @@ test('all shipped ETF snapshots allocate positive amounts without overcounting',
  assert.equal(r.rows.length,DEFAULT_POLICY.etfSnapshots.length);assert.equal(r.rows.every(r=>r.coveredBp>0&&r.coveredBp<10000),true);
  assert.equal(r.coverageComplete,false);
  assert.equal(r.rows.find(r=>r.symbol==='EXUS').coveredBp,1225);
- assert.ok(Math.abs(r.rows.find(r=>r.symbol==='EIMI').coveredBp-3802.509)<1e-8);
- assert.ok(Math.abs(r.rows.find(r=>r.symbol==='CSPX').coveredBp-5887.099)<1e-8);
+ assert.ok(Math.abs(r.rows.find(r=>r.symbol==='EIMI').coveredBp-4031.05)<1e-8);
+ assert.ok(Math.abs(r.rows.find(r=>r.symbol==='CSPX').coveredBp-6628.543)<1e-8);
  assert.equal(r.rows.find(r=>r.symbol==='SMH').coveredBp,6744);
  const expired=structuredClone(DEFAULT_POLICY);expired.reviewBy='2027-03-01';
- const futureRows=fixture(DEFAULT_POLICY.etfSnapshots.map(s=>({...row(s.instrumentId,s.symbol,100,'ETF'),valueDate:'2027-01-04'})));
- const old=buildAiExposure(futureRows,{cutoff:'2027-01-04',policy:expired});
+ const futureRows=fixture(DEFAULT_POLICY.etfSnapshots.map(s=>({...row(s.instrumentId,s.symbol,100,'ETF'),valueDate:'2027-02-04'})));
+ const old=buildAiExposure(futureRows,{cutoff:'2027-02-04',policy:expired});
  assert.equal(group(old,'etfUncovered').percent,100);
 });
 test('dated top-five additions classify only reviewed constituents and preserve residuals',()=>{
@@ -111,11 +111,11 @@ test('dated top-five additions classify only reviewed constituents and preserve 
  ]),{cutoff});
  const bySymbol=Object.fromEntries(r.rows.map(x=>[x.symbol,x]));
  assert.equal(bySymbol.EXUS.uncoveredCents,'8775');
- assert.equal(bySymbol.CSPX.uncoveredCents,'4113');
- assert.equal(bySymbol.EIMI.uncoveredCents,'6197');
- assert.equal(bySymbol.MXUS.coveredBp,3691);
+ assert.equal(bySymbol.CSPX.uncoveredCents,'3371');
+ assert.equal(bySymbol.EIMI.uncoveredCents,'5969');
+ assert.equal(bySymbol.MXUS.coveredBp,3819);
  assert.equal(bySymbol.EQAC.coveredBp,4635);
- assert.equal(group(r,'other').marketValueCents,'2523');
+ assert.equal(group(r,'other').marketValueCents,'3043');
  const allocated=r.groups.reduce((n,g)=>n+BigInt(g.marketValueCents),0n)+BigInt(r.cash.marketValueCents);
  assert.equal(allocated+BigInt(r.displayRoundingResidualCents),BigInt(r.denominatorCents));
  assert.equal(r.comparisonDate,null);

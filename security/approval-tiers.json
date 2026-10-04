@@ -420,6 +420,10 @@
     "scripts/xuan-weekly-ai-dual-exposure.mjs",
     "scripts/xuan-weekly-ai-dual-exposure.test.mjs",
     "scripts/xuan-weekly-ai-review-priority.mjs",
-    "scripts/xuan-weekly-ai-review-priority.test.mjs"
+    "scripts/xuan-weekly-ai-review-priority.test.mjs",
+    "claude/xuan-weekly-etf-source-evidence/MXUS-20260930-top10-audit.json",
+    "claude/xuan-weekly-etf-source-evidence/priority-business-reviewed-20261004.json",
+    "docs/xuan-weekly-priority-review-20261004.md",
+    "scripts/xuan-weekly-priority-business.test.mjs"
   ]
 }

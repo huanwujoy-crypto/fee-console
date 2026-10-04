@@ -1,0 +1,71 @@
+{
+  "fund": "MXUS",
+  "fundIsin": "IE00B60SX170",
+  "economicIndex": "MSCI USA Index",
+  "indexCode": "984000",
+  "asOf": "2026-09-30",
+  "source": "https://www.msci.com/indexes/index/984000/msci-usa-index",
+  "sourceType": "Official index provider public Top 10 constituents, not a complete composition",
+  "complete": false,
+  "indexConstituentCount": 513,
+  "reportedHoldings": [
+    {
+      "issuerKey": "nvidia",
+      "weightBp": 796
+    },
+    {
+      "issuerKey": "apple",
+      "weightBp": 742
+    },
+    {
+      "instrumentId": "24651",
+      "symbol": "MSFT",
+      "weightBp": 549
+    },
+    {
+      "issuerKey": "amazon",
+      "weightBp": 366
+    },
+    {
+      "instrumentId": "24449",
+      "symbol": "GOOGL",
+      "weightBp": 306
+    },
+    {
+      "instrumentId": "670422",
+      "symbol": "GOOG",
+      "weightBp": 242
+    },
+    {
+      "issuerKey": "meta",
+      "weightBp": 241
+    },
+    {
+      "instrumentId": "1879420",
+      "symbol": "AVGO",
+      "weightBp": 241
+    },
+    {
+      "issuerKey": "micron",
+      "weightBp": 182
+    },
+    {
+      "instrumentId": "24977",
+      "symbol": "TSLA",
+      "weightBp": 154
+    }
+  ],
+  "sourceNames": [
+    "NVIDIA",
+    "APPLE",
+    "MICROSOFT CORP",
+    "AMAZON.COM",
+    "ALPHABET A",
+    "ALPHABET C",
+    "META PLATFORMS A",
+    "BROADCOM",
+    "MICRON TECHNOLOGY",
+    "TESLA"
+  ],
+  "identityMethod": "All ten reuse explicit identities from the previous protected MXUS economic exposure snapshot; share classes remain separate."
+}

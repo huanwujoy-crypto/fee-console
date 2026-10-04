@@ -50,7 +50,7 @@ test('business category is not fund look-through; IVAI disclosed ten and absent 
 });
 
 test('new issuer business evidence resolves recorded weights without changing snapshot dates or creating direct identity mappings',()=>{
- const expected=[['SMH','1965968',6744,0,3256],['INDA','1975404',2967,404,6629],['USSC','792072',477,51,9472],['VCN','1028072',3820,0,6180]];
+ const expected=[['SMH','1965968',6744,0,3256],['INDA','1975404',3371,0,6629],['USSC','792072',477,51,9472],['VCN','1028072',3820,0,6180]];
  for(const [symbol,id,covered,unclassified,unrecorded] of expected){
   const a=buildAiExposure(envelope([row('synthetic',id,symbol,'ETF',100,id)]),{cutoff});
   assert.equal(a.rows[0].coveredBp,covered,symbol);assert.equal(a.rows[0].unclassifiedBp,unclassified,symbol);assert.equal(a.rows[0].unrecordedBp,unrecorded,symbol);

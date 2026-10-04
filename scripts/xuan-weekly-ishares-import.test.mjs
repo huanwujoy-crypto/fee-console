@@ -44,7 +44,9 @@ test('new captures preserve both old source hashes and selected allocations; old
  }
  for(const fund of ['EXUS','EQAC'])assert.equal(DEFAULT_POLICY.etfSnapshots.find(s=>s.symbol===fund).asOf,'2026-08-31');
  const registered=new Set(DEFAULT_POLICY.underlyingIssuers.map(i=>i.key));
+ const reviewed=JSON.parse(fs.readFileSync(new URL('priority-business-reviewed-20261004.json',root)));
+ const reviewedKeys=new Set(reviewed.map(d=>d.key));
  for(const s of DEFAULT_POLICY.etfSnapshots.filter(s=>['CSPX','EIMI'].includes(s.symbol)))
   for(const h of s.holdings.filter(h=>h.issuerKey?.startsWith('unreviewed-isin-')||h.kind==='equity-identity-unverified'))
-   assert.equal(registered.has(h.issuerKey),false,'unreviewed identity cannot default to other');
+   assert.equal(registered.has(h.issuerKey),reviewedKeys.has(h.issuerKey),'only explicitly evidenced source identities may become classified');
 });
