@@ -21,7 +21,7 @@ for(const [fund,productId,sha256,count] of cases)test(fund+' complete public com
  const fixtureSha256=createHash('sha256').update(raw).digest('hex');
  const options={fund,productId,asOf:'2026-09-24',sha256:fixtureSha256,bindings};
  const r=importHoldings(raw,options);assert.equal(r.sourceRowCount,count);
- assert.deepEqual(r.holdings,DEFAULT_POLICY.etfSnapshots.find(s=>s.symbol===fund).holdings);
+ const expected=structuredClone(DEFAULT_POLICY.etfSnapshots.find(s=>s.symbol===fund).holdings);for(const h of expected)if(h.issuerKey==='unreviewed-isin-IE00BYYR0489')h.kind='nested-etf';assert.deepEqual(r.holdings,expected);
  assert.ok(r.holdings.some(h=>h.issuerKey?.startsWith('unreviewed-isin-')));
  assert.ok(r.holdings.some(h=>h.kind==='cash'));assert.ok(r.audit.some(h=>h.assetClass==='Futures'));
  assert.throws(()=>importHoldings(raw+' ',options),/sha_mismatch/);
@@ -30,7 +30,7 @@ for(const [fund,productId,sha256,count] of cases)test(fund+' complete public com
  const changed=structuredClone(bindings);changed.find(b=>b.fund===fund).name='unrelated issuer';
  assert.throws(()=>importHoldings(raw,{...options,bindings:changed}),/name_conflict/);
  if(fund==='EIMI'){
-  assert.equal(r.holdings.find(h=>h.kind==='nested-etf').issuerKey,'unreviewed-isin-DE000A0Q4R85');
+  assert.deepEqual(r.holdings.filter(h=>h.kind==='nested-etf').map(h=>h.issuerKey).sort(),['unreviewed-isin-DE000A0Q4R85','unreviewed-isin-IE00BYYR0489'].sort());
   assert.equal(r.holdings.filter(h=>h.kind==='equity-identity-unverified').length,4);
   const nested=r.audit.find(h=>h.kind==='nested-etf');
   assert.throws(()=>importHoldings(raw,{...options,bindings:[...bindings,{fund,isin:nested.isin,name:nested.issueName,target:{issuerKey:'nvidia'}}]}),/nested_etf_binding/);

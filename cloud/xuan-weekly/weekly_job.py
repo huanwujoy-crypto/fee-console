@@ -5,6 +5,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 import urllib.parse
 import urllib.request
@@ -15,6 +16,7 @@ from latest import publish_latest
 from public_entry import publish_public
 from ai_history import select_comparison
 from network import read_get, OPERATIONS
+from private_ai_sources import source_config, stage_private_ai_sources
 
 GATEWAY='https://family-portfolio-gateway-6ikas4b3ma-df.a.run.app'
 ACCOUNTS={'IB-HK':936247,'Schwab-HK':936249,'Webull':1350094}
@@ -89,6 +91,7 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
         if os.environ['WEEKLY_BUCKET']!='family-portfolio-gateway-xuan-weekly-private':raise SourceError('wrong_bucket')
         client=storage.Client()
         bucket=client.bucket(os.environ['WEEKLY_BUCKET'])
+        evidence_config=source_config(os.environ)
         stage='ib_fetch'
         raw=fetch(os.environ['IB_FLEX_TOKEN'])
         stage='ib_validate'
@@ -133,8 +136,18 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
                  'previousExposure':select_comparison(cutoff,exposure_history),
                  'previousAiDualExposure':select_comparison(cutoff,dual_history)}
         stage='calculation'
-        result=subprocess.run(['node','scripts/xuan-weekly-build.mjs'],input=json.dumps(request),
-                              capture_output=True,text=True,timeout=60,check=False)
+        with tempfile.TemporaryDirectory(prefix='weekly-evidence-') as evidence_directory:
+            stage='private_evidence'
+            manifest=stage_private_ai_sources(bucket,evidence_directory,config=evidence_config,
+                cutoff=cutoff,deadline=network_deadline,clock=time.monotonic)
+            calculation_env={k:v for k,v in os.environ.items()
+                if k not in ('XUAN_WEEKLY_PRIVATE_SNAPSHOT_DIR','XUAN_WEEKLY_PRIVATE_MANIFEST_PATH')}
+            if manifest:
+                calculation_env.update(XUAN_WEEKLY_PRIVATE_SNAPSHOT_DIR=evidence_directory,
+                    XUAN_WEEKLY_PRIVATE_MANIFEST_PATH=manifest)
+            stage='calculation'
+            result=subprocess.run(['node','scripts/xuan-weekly-build.mjs'],input=json.dumps(request),
+                                  capture_output=True,text=True,timeout=60,check=False,env=calculation_env)
         if result.returncode:raise SourceError('weekly_calculation_failed')
         bundle=json.loads(result.stdout);save('bundle.json',bundle)
         save('report.html',bundle['html'],'text/html; charset=utf-8')
