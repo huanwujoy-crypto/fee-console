@@ -188,10 +188,21 @@ jobs:
             producer_weekday=$(TZ=Asia/Hong_Kong date +%u)
             if [[ "$GITHUB_EVENT_NAME" == 'schedule' ]] &&
                [[ "$producer_weekday" == '7' || "$producer_weekday" == '1' ]]; then
-              if [[ "$recent_unpromoted_candidate" == true ]] ||
-                 [[ ! -f fee-data-health.json ]] ||
-                 ! node scripts/fee-data-health.mjs validate --health=fee-data-health.json --data=data.json; then
-                echo 'Non-production-day no-op refused: outstanding candidate or invalid published receipt.' >&2
+              if [[ "$recent_unpromoted_candidate" == true ]] || [[ ! -f fee-data-health.json ]]; then
+                echo 'Non-production-day no-op refused: outstanding candidate or missing published receipt.' >&2
+                exit 1
+              fi
+              # A Saturday receipt can be almost 72 hours old late Monday.
+              # Require this production cycle, so Friday/older receipts cannot
+              # hide a missing Saturday run. A later genuine receipt is valid too.
+              cycle_start_hkt=$(TZ=Asia/Hong_Kong date -d 'last Saturday' +%F)
+              today_hkt=$(TZ=Asia/Hong_Kong date +%F)
+              checked_hkt=$(TZ=Asia/Hong_Kong date -d "$(jq -r '.checkedAt // empty' fee-data-health.json)" +%F 2>/dev/null || true)
+              receipt_outcome=$(jq -r '.outcome // empty' fee-data-health.json)
+              if [[ -z "$checked_hkt" || "$checked_hkt" < "$cycle_start_hkt" || "$checked_hkt" > "$today_hkt" ]] ||
+                 [[ "$receipt_outcome" != 'updated' && "$receipt_outcome" != 'no-op' ]] ||
+                 ! node scripts/fee-data-health.mjs validate --health=fee-data-health.json --data=data.json --max-age-hours=72; then
+                echo 'Non-production-day no-op refused: invalid receipt for the latest production cycle.' >&2
                 exit 1
               fi
               echo 'No producer is scheduled today (Asia/Hong_Kong); published receipt remains valid.'
