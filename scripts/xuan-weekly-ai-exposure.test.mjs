@@ -136,3 +136,11 @@ test('invalid duplicate issuer components and overlapping definition channels ar
  const p=structuredClone(DEFAULT_POLICY);p.stocks.find(s=>s.id==='1984796').group='infrastructure';
  assert.throws(()=>buildAiExposure(fixture([]),{cutoff,policy:p}),/policy_invalid/);
 });
+
+test('reviewed issuer display alias merges direct and fund contribution once without classifying an unknown broker identity',()=>{
+ const policy=structuredClone(DEFAULT_POLICY);policy.issuerAliases={'Broadcom Inc':'AVGO'};policy.underlyingIssuers.push({key:'synthetic-broadcom',issuer:'Broadcom Inc',group:'infrastructure',source:'https://investors.broadcom.com/',reason:'Synthetic already-reviewed operating-role fixture.'});
+ policy.etfSnapshots=[{instrumentId:'12',symbol:'TESTFUND',fundName:'Synthetic fund',basis:'physical-holdings',asOf:cutoff,source:'https://example.org/official',holdings:[{issuerKey:'synthetic-broadcom',weightBp:5000}]}];
+ const e=fixture([row('1879420','AVGO',100),row('12','TESTFUND',100,'ETF'),row('unknown-broker-id','AVGO',100)]);const a=buildAiExposure(e,{cutoff,policy});
+ assert.equal(a.contributors.length,1);assert.equal(a.contributors[0].label,'AVGO');assert.equal(a.contributors[0].marketValueCents,'15000');assert.deepEqual(a.contributors[0].via,['Synthetic','TESTFUND']);
+ assert.equal(group(a,'pending').marketValueCents,'10000');assert.equal(a.rows[2].group,'pending');assert.equal(a.rows[2].uncoveredCents,'10000');assert.equal(group(a,'etfUncovered').marketValueCents,'5000');
+});

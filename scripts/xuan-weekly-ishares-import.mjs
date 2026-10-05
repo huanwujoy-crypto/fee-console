@@ -18,6 +18,7 @@ export function importHoldings(raw,{fund,productId,asOf,sha256,bindings}){
   let total=0;
   for(let i=0;i<n;i++){
     const row=Object.fromEntries(fields.map(k=>[k,d[k].value[i]]));
+    if(d.currency?.value){if(!Array.isArray(d.currency.value)||d.currency.value.length!==n)throw Error('source_columns_invalid');row.currency=d.currency.value[i];}
     if(typeof row.issueName!=='string'||!Number.isFinite(row.holdingPercent))throw Error('row_invalid');
     total+=row.holdingPercent;
     const bp=Math.floor(row.holdingPercent*100+1e-8);
@@ -25,11 +26,11 @@ export function importHoldings(raw,{fund,productId,asOf,sha256,bindings}){
     if(row.assetClass==='Equity'){
       const identityValid=/^[A-Z]{2}[A-Z0-9]{10}$/.test(row.isin??'');
       const binding=identityValid?rules.get(row.isin):null;
-      if(row.isin==='DE000A0Q4R85'&&binding)throw Error('nested_etf_binding_requires_underlying');
+      if(['DE000A0Q4R85','IE00BYYR0489'].includes(row.isin)&&binding)throw Error('nested_etf_binding_requires_underlying');
       if(binding&&binding.name!==row.issueName)throw Error('binding_name_conflict');
       target=binding?.target??{issuerKey:identityValid?'unreviewed-isin-'+row.isin:
         'unreviewed-source-row-'+createHash('sha256').update(fund+':'+asOf+':'+i+':'+row.issueName).digest('hex')};
-      kind=!identityValid?'equity-identity-unverified':row.isin==='DE000A0Q4R85'?'nested-etf':'equity';
+      kind=!identityValid?'equity-identity-unverified':['DE000A0Q4R85','IE00BYYR0489'].includes(row.isin)?'nested-etf':'equity';
     }else if(row.assetClass==='Cash'){
       if(bp<0){audit.push({...row,kind:'negative-cash-unallocated',weightBp:bp});continue;}
       target={issuerKey:'public-fund-cash-'+fund.toLowerCase()};kind='cash';
@@ -41,7 +42,7 @@ export function importHoldings(raw,{fund,productId,asOf,sha256,bindings}){
     const key=target.issuerKey??target.instrumentId;
     const entry=holdings.get(key)??{...target,weightBp:0,weightMicroPercent:0,sourceRows:[],kind};
     entry.weightBp+=bp;entry.weightMicroPercent+=Math.round(row.holdingPercent*1_000_000);
-    entry.sourceRows.push({isin:row.isin,name:row.issueName,ticker:row.ticker,weightPercent:row.holdingPercent,assetClass:row.assetClass});
+    entry.sourceRows.push({isin:row.isin,name:row.issueName,ticker:row.ticker,weightPercent:row.holdingPercent,assetClass:row.assetClass,...(Object.hasOwn(row,'currency')?{currency:row.currency}:{})});
     holdings.set(key,entry);audit.push({...row,kind,weightBp:bp,classificationBound:Boolean(rules.get(row.isin))});
   }
   if(Math.abs(total-100)>.01||[...holdings.values()].reduce((s,h)=>s+h.weightMicroPercent,0)>100_000_000)throw Error('source_total_invalid');

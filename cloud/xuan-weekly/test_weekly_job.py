@@ -115,5 +115,36 @@ class WeeklyJobTests(unittest.TestCase):
         with self.assertRaisesRegex(SourceError,'gateway_invalid_json'):job.get('/v1/portfolios')
         self.assertEqual(read.call_count,1)
 
+    def test_private_delivery_is_wired_to_calculator_and_temporary_directory_removed(self):
+        from pathlib import Path
+        seen=[]
+        def stage(bucket,directory,**kwargs):
+            self.assertIs(bucket,self.bucket)
+            self.assertIn('deadline',kwargs)
+            manifest=Path(directory)/'manifest.json'
+            manifest.write_text('{"schema":"weekly-private-ai-snapshots.v1","entries":[]}')
+            seen.append(directory)
+            return str(manifest)
+        def calculate(*args,**kwargs):
+            env=kwargs['env']
+            self.assertEqual(env['XUAN_WEEKLY_PRIVATE_SNAPSHOT_DIR'],seen[0])
+            self.assertTrue(Path(env['XUAN_WEEKLY_PRIVATE_MANIFEST_PATH']).is_file())
+            return types.SimpleNamespace(returncode=0,stdout=json.dumps({'html':'<!doctype html><p>SYNTHETIC</p>','receipt':{'complete':True}}))
+        with patch('weekly_job.stage_private_ai_sources',side_effect=stage), patch('weekly_job.subprocess.run',side_effect=calculate):
+            status,lines=self.execute()
+        self.assertEqual(status,0)
+        self.assertFalse(Path(seen[0]).exists())
+        self.assertLess(self.events.index('receipt.json'),self.events.index('public_latest'))
+        self.assertNotIn(seen[0],json.dumps(lines))
+
+    def test_private_integrity_failure_blocks_calculation_and_publication(self):
+        with patch('weekly_job.stage_private_ai_sources',side_effect=ValueError('DO_NOT_LOG')):
+            status,lines=self.execute()
+        self.assertEqual(status,1)
+        self.assertEqual(lines[0]['stage'],'private_evidence')
+        self.mocks[7].assert_not_called()
+        self.mocks[8].assert_not_called()
+        self.mocks[9].assert_not_called()
+
 
 if __name__=='__main__':unittest.main()

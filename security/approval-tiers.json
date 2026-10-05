@@ -420,6 +420,12 @@
     "scripts/xuan-weekly-ai-dual-exposure.mjs",
     "scripts/xuan-weekly-ai-dual-exposure.test.mjs",
     "scripts/xuan-weekly-ai-review-priority.mjs",
-    "scripts/xuan-weekly-ai-review-priority.test.mjs"
+    "scripts/xuan-weekly-ai-review-priority.test.mjs",
+    "scripts/xuan-weekly-private-ai-snapshots.mjs",
+    "scripts/xuan-weekly-private-ai-snapshots.test.mjs",
+    "scripts/xuan-weekly-import-boundaries.test.mjs",
+    "scripts/xuan-weekly-proxy-exposure.test.mjs",
+    "cloud/xuan-weekly/private_ai_sources.py",
+    "cloud/xuan-weekly/test_private_ai_sources.py"
   ]
 }
