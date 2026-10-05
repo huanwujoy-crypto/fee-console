@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.21">
+<meta name="fee-console-build" content="4.9.22">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -170,6 +170,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   :root{color-scheme:light}.wrap,.ovl,.toast{display:none!important}body{background:#fff;color:#111;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei","Noto Sans CJK SC",Arial,sans-serif;font-size:10.5pt;line-height:1.55}.fund-print-sheet{display:block}.print-cover{padding:12mm 0 8mm;border-bottom:1.5pt solid #111}.print-kicker{font-size:9pt;letter-spacing:.08em;color:#555}.print-title{font-size:22pt;line-height:1.25;margin:4mm 0 2mm}.print-subtitle{font-size:11pt;color:#444}.print-meta{display:grid;grid-template-columns:1fr 1fr;gap:0;border:1px solid #bbb;margin:8mm 0}.print-meta div{padding:3mm 4mm;border-bottom:1px solid #ddd}.print-meta div:nth-child(odd){border-right:1px solid #ddd}.print-meta div:nth-last-child(-n+2){border-bottom:0}.print-meta span{display:block;font-size:8.5pt;color:#666}.print-meta b{display:block;margin-top:1mm;font-size:10.5pt}.print-section{margin:7mm 0}.print-section h2{font-size:13pt;margin:0 0 3mm;padding-bottom:2mm;border-bottom:1px solid #bbb}.print-role{margin:0;padding-left:5mm}.print-role li{margin:1.5mm 0}.print-document{break-before:page}.print-document:first-of-type{break-before:auto}.print-document h2{font-size:17pt;line-height:1.35;margin:0 0 3mm}.print-doc-meta{font-size:9pt;color:#555;border-bottom:1px solid #bbb;padding-bottom:3mm;margin-bottom:5mm}.print-doc-body{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0;orphans:3;widows:3}.print-footer{margin-top:9mm;padding-top:3mm;border-top:1px solid #bbb;font-size:8.5pt;color:#666}.print-document,.print-section{break-inside:auto}.print-meta,.print-role li{break-inside:avoid}
 }
 /* fund-investor-style:v1 */
+.fund-records{margin:10px 0;padding-left:26px;font-size:12px;color:var(--ink-2)}.fund-records li{padding:4px 0 4px 3px;line-height:1.65;overflow-wrap:anywhere}.fund-record-toggle{min-height:44px;max-width:100%;white-space:normal;text-align:left;margin-bottom:8px}
 .fund-title{font-size:19px;line-height:1.4;margin:3px 0 8px;overflow-wrap:anywhere}.fund-switch{display:flex;gap:8px;margin:12px 0}.fund-switch button{flex:1;min-height:48px;overflow-wrap:anywhere}.fund-switch .on{border-color:var(--series-1);background:var(--series-1);color:white}.fund-switch .on .small{color:inherit}.fund-hero .val{font-size:30px;overflow-wrap:anywhere}.fund-chart{width:100%;display:block;height:auto}.fund-table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}.fund-table th,.fund-table td{padding:9px 3px;text-align:right;border-bottom:1px solid var(--grid);overflow-wrap:anywhere}.fund-table th:first-child,.fund-table td:first-child{text-align:left}.fund-meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;font-size:12px}.fund-meta b{display:block;font-size:15px}.fund-method{margin:10px 0 0;font-size:12px}.fund-method summary{min-height:40px;cursor:pointer}.fund-alert{border-left:3px solid var(--series-2);padding:10px 12px;background:var(--surface-1);font-size:13px;margin-bottom:12px}.fund-label{font-size:12px;color:var(--ink-2)}
 .fund-form{margin:8px 0 16px}.fund-form fieldset{min-width:0;margin:12px 0;padding:10px;border:1px solid var(--border);border-radius:8px}.fund-form legend{font-size:13px;padding:0 5px}.fund-form input{min-width:0;min-height:44px}.fund-form .grid>div{min-width:0}.fund-form button{min-height:44px}
 </style>
@@ -887,7 +888,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.21";
+const UI_VERSION_LABEL=" · v4.9.22";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1960,6 +1961,19 @@ async function render(){
 }
 
 /* fund-investor-render:start */
+function orderedFundInvestorRecords(records){
+  const date=value=>{if(typeof value!=="string"||!/^\d{4}-\d{2}-\d{2}$/.test(value))return "";const parsed=new Date(value+"T00:00:00Z");return Number.isFinite(parsed.getTime())&&parsed.toISOString().slice(0,10)===value?value:"";};
+  return records.map((record,index)=>({record,index,date:date(record.date)})).sort((a,b)=>a.date&&b.date?b.date.localeCompare(a.date)||a.index-b.index:a.date?-1:b.date?1:a.index-b.index).map(item=>item.record);
+}
+function fundInvestorRecordsHtml(records){
+  const ordered=orderedFundInvestorRecords(records);if(!ordered.length)return "";
+  const rows=items=>items.map(record=>`<li>${record.html}</li>`).join(""),earlier=ordered.length-3;
+  return `<ol class="fund-records" aria-label="份额说明记录，最近在前">${rows(ordered.slice(0,3))}</ol>${earlier>0?`<div id="fundInvestorEarlierRecords" hidden><ol class="fund-records" start="4">${rows(ordered.slice(3))}</ol></div><button class="btn sm fund-record-toggle" type="button" data-fund-record-toggle="${earlier}" aria-expanded="false" aria-controls="fundInvestorEarlierRecords">查看更早记录（共 ${earlier} 项）</button>`:""}`;
+}
+function toggleFundInvestorRecords(button){
+  const records=document.getElementById("fundInvestorEarlierRecords"),count=Number(button.dataset.fundRecordToggle);if(!records||!Number.isSafeInteger(count)||count<1)return;
+  const expanded=button.getAttribute("aria-expanded")!=="true";records.hidden=!expanded;button.setAttribute("aria-expanded",String(expanded));button.textContent=expanded?"收起更早记录":`查看更早记录（共 ${count} 项）`;
+}
 function renderInvestors(loaded,feeView){
   const profileBox=document.getElementById("fundProfileBox"),box=document.getElementById("fundInvestorBox");
   document.getElementById("fundProfileNotice").textContent=_fundProfileMessage;
@@ -1973,11 +1987,14 @@ function renderInvestors(loaded,feeView){
   const registeredShares=fundInvestorCore.registeredShares(profile)||profile.investors.map(investor=>investor.shares);
   const registeredTotal=registeredShares.reduce((sum,n)=>sum+n,0),registeredVerified=!!current&&profile.investors.every((row,index)=>current.investors.find(investor=>investor.id===row.id)?.shares===registeredShares[index]),
     registeredText=(profile.subscriptions?.length||profile.shareTransfers?.length)?`<div class="small">基金档案已登记模拟份额：${profile.investors.map((i,index)=>`${esc(i.id)} ${fmt(registeredShares[index])} 股（${(registeredShares[index]/registeredTotal*100).toFixed(2)}%）`).join(" · ")}。${registeredVerified?"已由最新计算回执核验":`最新估值${last?`截至 ${esc(last.date)}`:"尚未生成"}，尚未覆盖最新份额事件`}。</div>`:"";
-  const correctionText=(profile.subscriptionCorrections||[]).map(c=>`<div class="small">归属更正：${esc(c.fromInvestorId)} → ${esc(c.toInvestorId)} · ${esc(c.correctedAt.slice(0,10))} · ${esc(c.reason)}</div>`).join("");
-  const transferText=(profile.shareTransfers||[]).map(event=>`<div class="small">费用补偿份额转让：${esc(event.fromInvestorId)} → ${esc(event.toInvestorId)} · ${esc(event.date)} · ${fmt(event.transferredShares)} 股 · 对应付款 ${money(event.feeAmountCents)} · 定价日 ${esc(event.priceDate)}</div>`).join("");
-  const priceCorrectionText=(profile.shareTransferPriceCorrections||[]).map(c=>`<div class="small">补偿份额定价更正：${esc(c.correctedAt.slice(0,10))} · ${fmt(c.originalTransferredShares)} → ${fmt(c.transferredShares)} 股 · 定价日 ${esc(c.priceDate)} · 原转让记录保留</div>`).join("");
+  // Presentation copies only: retain original profile arrays and economic order.
+  const explanationRecords=[
+    ...(profile.subscriptionCorrections||[]).map(c=>({date:c.correctedAt.slice(0,10),html:`归属更正：${esc(c.fromInvestorId)} → ${esc(c.toInvestorId)} · ${esc(c.correctedAt.slice(0,10))} · ${esc(c.reason)}`})),
+    ...(profile.shareTransfers||[]).map(event=>({date:event.date,html:`费用补偿份额转让：${esc(event.fromInvestorId)} → ${esc(event.toInvestorId)} · ${esc(event.date)} · ${fmt(event.transferredShares)} 股 · 对应付款 ${money(event.feeAmountCents)} · 定价日 ${esc(event.priceDate)}`})),
+    ...(profile.shareTransferPriceCorrections||[]).map(c=>({date:c.correctedAt.slice(0,10),html:`补偿份额定价更正：${esc(c.correctedAt.slice(0,10))} · ${fmt(c.originalTransferredShares)} → ${fmt(c.transferredShares)} 股 · 定价日 ${esc(c.priceDate)} · 原转让记录保留`}))
+  ];
   const shareLabel=registeredVerified?`截至 ${last.date} · ${fmt(registeredTotal)} 股`:(profile.subscriptions?.length||profile.shareTransfers?.length)?`档案登记 ${fmt(registeredTotal)} 股 · 最新估值待覆盖`:last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
-  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const verified=last?.investors.find(row=>row.id===i.id),shownShares=registeredVerified?verified.shares:registeredShares[index],shownTotal=registeredVerified?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${registeredVerified?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}${correctionText}${transferText}${priceCorrectionText}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
+  profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const verified=last?.investors.find(row=>row.id===i.id),shownShares=registeredVerified?verified.shares:registeredShares[index],shownTotal=registeredVerified?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${registeredVerified?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}${fundInvestorRecordsHtml(explanationRecords)}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
   const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
     capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
@@ -2486,6 +2503,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="btnConnect"){connect(document.getElementById("tokIn").value);return;}
   if(T.id==="btnLink"){if(EDIT.draft||_ledgerBusy||_draftBlocked){toast("先处理草稿，再切换原账本链接");return;}const v=(document.getElementById("linkIn").value||"").trim();const i=v.indexOf("#");if(i<0||!/(^|[#&])(tok|gid|k|seed)=/.test(v.slice(i))){toast("这不像是原完整链接（缺少 # 后面的参数）");return;}invalidateReceiptSource();location.hash=v.slice(i+1);return;}
   if(T.id==="a2hsOff"){setCfg(K.a2hs,"1");renderA2hs();return;}
+  const recordToggle=T.closest("button[data-fund-record-toggle]");if(recordToggle){toggleFundInvestorRecords(recordToggle);return;}
   const investorButton=T.closest("button[data-investor]");if(investorButton){_fundSelection=investorButton.dataset.investor;scheduleRender();return;}
   if(T.id==="fundShare"){showShare();return;}
   if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
