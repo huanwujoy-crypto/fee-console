@@ -3,6 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
+import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode } from "./fee-cloud-producer.mjs";
@@ -253,34 +256,53 @@ test('normalized dividend legs use confirmed payout economics and retain the pos
   assert.equal(result.flows.some(f=>f.evidence==='internal_income'),false);
 });
 
-// Execute the actual trusted-workflow no-candidate branch with bounded local
-// clock/receipt stubs; no git, network, credential or financial source calls.
+// Execute the actual trusted-workflow shell branch and actual validator CLI.
+// Only the clock and git-candidate enumeration are fixed; no financial sources.
 function scheduledReceiptDecision(iso, event = "schedule", receipt = null, {recentCandidate = false, candidateCount = 0} = {}) {
   const workflow = fs.readFileSync(new URL("../.github/workflows/promote-fee-data.yml", import.meta.url), "utf8");
   const start = workflow.indexOf("          if (( ${#candidates[@]} == 0 )); then");
   const end = workflow.indexOf("          if (( ${#candidates[@]} != 1 )); then", start);
   assert.ok(start >= 0 && end > start);
-  const hkt = new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(iso));
-  const weekday = new Intl.DateTimeFormat("en-US", {timeZone: "Asia/Hong_Kong", weekday: "short"}).format(new Date(iso));
+  const day = value => new Intl.DateTimeFormat("en-CA", {timeZone: "Asia/Hong_Kong", year: "numeric", month: "2-digit", day: "2-digit"}).format(new Date(value));
+  const shiftDay = (value, days) => {const date = new Date(value + "T00:00:00Z");date.setUTCDate(date.getUTCDate() + days);return date.toISOString().slice(0,10);};
+  const hkt = day(iso), weekday = new Intl.DateTimeFormat("en-US", {timeZone: "Asia/Hong_Kong", weekday: "short"}).format(new Date(iso));
+  const weekdayNumber = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(weekday) + 1;
+  const cycleStart = shiftDay(hkt, -((weekdayNumber + 1) % 7));
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fee-watchdog-test-"));
   try {
-    if (receipt) fs.writeFileSync(path.join(directory, "fee-data-health.json"), "{}");
+    const data = Buffer.from('{"synthetic":true}'), hash = createHash("sha256").update(data).digest("hex");
+    fs.writeFileSync(path.join(directory, "data.json"), data);
+    let checkedDay = "";
+    if (receipt) {
+      const checkedAt = receipt.checkedAt || `${receipt.date}T06:00:00+08:00`;
+      try { checkedDay = day(checkedAt); } catch {}
+      const targetDate = receipt.targetDate || shiftDay(checkedDay || hkt, -1);
+      const value = {schema: receipt.valid === false ? "invalid" : HEALTH_SCHEMA, checkedAt, targetDate,
+        sourceDates: receipt.sourceDates || {schwab: targetDate, webull: targetDate, benchmark: targetDate},
+        outcome: receipt.outcome || "no-op", dataSha256: receipt.badHash ? "a".repeat(64) : hash,
+        errorCode: receipt.outcome === "failed" ? "SHARESIGHT_UNSTABLE" : null};
+      fs.writeFileSync(path.join(directory, "fee-data-health.json"), JSON.stringify(value));
+    }
+    const clock = path.join(directory, "clock.mjs");
+    fs.writeFileSync(clock, `const OriginalDate=Date, now=OriginalDate.parse(process.env.TEST_NOW);globalThis.Date=class extends OriginalDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`);
     const script = `set -euo pipefail
 candidates=(${candidateCount ? "verified-candidate" : ""})
 recent_unpromoted_candidate=${recentCandidate}
 date() {
+  [[ "$TZ" == Asia/Hong_Kong ]] || return 1
   if [[ "$*" == '+%u' ]]; then echo "$TEST_WEEKDAY";
-  elif [[ "$*" == *'-d '* ]]; then echo "$TEST_RECEIPT_DATE";
+  elif [[ "$*" == *'last Saturday'* ]]; then echo "$TEST_CYCLE_START";
+  elif [[ "$*" == *'-d '* ]]; then [[ -n "$TEST_RECEIPT_DATE" ]] && echo "$TEST_RECEIPT_DATE";
   else echo "$TEST_TODAY"; fi
 }
-jq() { echo ignored; }
-node() { echo receipt-validation >&2; [[ "$TEST_RECEIPT_VALID" == true ]]; }
+jq() { "$TEST_NODE" -e 'const fs=require("fs"),value=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));console.log(value[process.argv[1].includes("checkedAt")?"checkedAt":"outcome"]||"");' "$2" "$3"; }
+node() { echo "receipt-validation $*" >&2; "$TEST_NODE" --import "$TEST_CLOCK" "$TEST_VALIDATOR" "\${@:2}"; }
 ${workflow.slice(start, end)}
 echo candidate-path`;
     const result = spawnSync("bash", ["-c", script], {cwd: directory, encoding: "utf8", env: {...process.env,
-      GITHUB_EVENT_NAME: event, GITHUB_OUTPUT: path.join(directory, "output"), TEST_TODAY: hkt,
-      TEST_WEEKDAY: String(["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].indexOf(weekday) + 1),
-      TEST_RECEIPT_DATE: receipt?.date || "", TEST_RECEIPT_VALID: String(receipt?.valid === true)}});
+      TZ: "America/Los_Angeles", GITHUB_EVENT_NAME: event, GITHUB_OUTPUT: path.join(directory, "output"), TEST_NOW: iso,
+      TEST_TODAY: hkt, TEST_WEEKDAY: String(weekdayNumber), TEST_CYCLE_START: cycleStart, TEST_RECEIPT_DATE: checkedDay,
+      TEST_NODE: process.execPath, TEST_CLOCK: clock, TEST_VALIDATOR: fileURLToPath(new URL("./fee-data-health.mjs", import.meta.url))}});
     return {...result, output: fs.existsSync(path.join(directory, "output")) ? fs.readFileSync(path.join(directory, "output"), "utf8") : ""};
   } finally { fs.rmSync(directory, {recursive: true, force: true}); }
 }
@@ -350,4 +372,63 @@ echo "$recent_unpromoted_candidate"`], {encoding: "utf8"});
     assert.equal(result.status, 0, result.stderr);
     assert.equal(result.stdout.trim(), expected);
   }
+});
+
+
+test("real validator accepts the observed Monday 49-hour receipt only in the scheduled off-day branch", () => {
+  const receipt = {checkedAt: "2026-10-03T10:38:26.828Z", targetDate: "2026-10-02"};
+  const iso = "2026-10-05T12:16:40.904Z", result = scheduledReceiptDecision(iso, "schedule", receipt);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /health ok 2026-10-02 no-op/);
+  assert.match(result.stderr, /--max-age-hours=72/);
+  assert.equal(result.output, "sha=\n");
+  const health = {schema: HEALTH_SCHEMA, checkedAt: receipt.checkedAt, targetDate: receipt.targetDate, sourceDates: {schwab: receipt.targetDate, webull: receipt.targetDate, benchmark: receipt.targetDate}, outcome: "no-op", dataSha256: "a".repeat(64), errorCode: null};
+  assert.deepEqual(validateHealth(health, {now: new Date(iso)}), ["health receipt age"]);
+  for (const event of ["workflow_dispatch", "workflow_run"]) {
+    const strict = scheduledReceiptDecision(iso, event, receipt);
+    assert.equal(strict.status, 1);
+    assert.doesNotMatch(strict.stderr, /--max-age-hours=72/);
+  }
+});
+
+test("latest Saturday cycle is mandatory even when a Friday or older receipt is within 72 hours", () => {
+  for (const checkedAt of ["2026-10-02T15:59:59.999Z", "2026-09-26T10:38:26.828Z"]) {
+    const result = scheduledReceiptDecision("2026-10-05T07:45:00Z", "schedule", {checkedAt});
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /latest production cycle/);
+  }
+  const failed = scheduledReceiptDecision("2026-10-05T07:45:00Z", "schedule", {date: "2026-10-03", outcome: "failed"});
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /latest production cycle/);
+  // A real later successful receipt may resolve the cycle; do not invent one.
+  assert.equal(scheduledReceiptDecision("2026-10-05T07:45:00Z", "schedule", {date: "2026-10-05", outcome: "updated"}).status, 0);
+});
+
+test("earliest Saturday receipt survives late Monday but Tuesday HKT restores strict production freshness", () => {
+  const receipt = {checkedAt: "2026-10-02T16:00:00.000Z", targetDate: "2026-10-01"};
+  const monday = scheduledReceiptDecision("2026-10-05T15:59:59.999Z", "schedule", receipt);
+  assert.equal(monday.status, 0, monday.stderr);
+  assert.match(monday.stderr, /--max-age-hours=72/);
+  const tuesday = scheduledReceiptDecision("2026-10-05T16:00:00.000Z", "schedule", receipt);
+  assert.equal(tuesday.status, 1);
+  assert.doesNotMatch(tuesday.stderr, /--max-age-hours=72/);
+  // UTC Sunday 16:00 is already HKT Monday; UTC Monday 16:00 is HKT Tuesday.
+  assert.equal(scheduledReceiptDecision("2026-10-04T16:00:00Z", "schedule", receipt).status, 0);
+});
+
+test("off-day real CLI still blocks corrupt structure, failed hash, future time and source-date mismatch", () => {
+  const iso = "2026-10-05T12:16:40.904Z";
+  for (const receipt of [{date: "2026-10-03", valid: false}, {date: "2026-10-03", badHash: true},
+    {checkedAt: "2026-10-05T12:22:40.904Z"}, {date: "2026-10-03", sourceDates: {schwab: "2026-10-03", webull: "2026-10-02", benchmark: "2026-10-02"}}]) {
+    const result = scheduledReceiptDecision(iso, "schedule", receipt);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /latest production cycle/);
+  }
+});
+
+test("real validator has an inclusive 72-hour cap; default 36-hour validation stays unchanged", () => {
+  const health = {schema: HEALTH_SCHEMA, checkedAt: "2026-10-02T16:00:00.000Z", targetDate: "2026-10-01", sourceDates: {schwab: "2026-10-01", webull: "2026-10-01", benchmark: "2026-10-01"}, outcome: "no-op", dataSha256: "a".repeat(64), errorCode: null};
+  assert.deepEqual(validateHealth(health, {now: new Date("2026-10-05T16:00:00.000Z"), maxAgeHours: 72}), []);
+  assert.deepEqual(validateHealth(health, {now: new Date("2026-10-05T16:00:00.001Z"), maxAgeHours: 72}), ["health receipt age"]);
+  assert.deepEqual(validateHealth(health, {now: new Date("2026-10-05T16:00:00.000Z")}), ["health receipt age"]);
 });
