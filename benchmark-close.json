@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "generatedAt": "2026-10-04T02:50:24.757Z",
+  "generatedAt": "2026-10-06T03:17:33.024Z",
   "source": "Yahoo Finance chart API; Nasdaq official quote and historical close cross-check; issuer/Nasdaq dividend evidence",
   "benchmarks": {
     "spy": {
@@ -337,6 +337,10 @@
         {
           "d": "2026-10-02",
           "p": 769.64
+        },
+        {
+          "d": "2026-10-05",
+          "p": 774.83
         }
       ]
     },
@@ -674,6 +678,10 @@
         {
           "d": "2026-10-02",
           "p": 749.58
+        },
+        {
+          "d": "2026-10-05",
+          "p": 756.2
         }
       ]
     }
