@@ -1,6 +1,6 @@
 {
   "v": 1,
-  "generatedAt": "2026-10-06T03:17:33.024Z",
+  "generatedAt": "2026-10-07T02:40:29.315Z",
   "source": "Yahoo Finance chart API; Nasdaq official quote and historical close cross-check; issuer/Nasdaq dividend evidence",
   "benchmarks": {
     "spy": {
@@ -8,10 +8,6 @@
       "currency": "USD",
       "exchange": "NYSEArca",
       "series": [
-        {
-          "d": "2026-06-08",
-          "p": 739.22
-        },
         {
           "d": "2026-06-09",
           "p": 737.05
@@ -341,6 +337,10 @@
         {
           "d": "2026-10-05",
           "p": 774.83
+        },
+        {
+          "d": "2026-10-06",
+          "p": 779.09
         }
       ]
     },
@@ -349,10 +349,6 @@
       "currency": "USD",
       "exchange": "NasdaqGS",
       "series": [
-        {
-          "d": "2026-06-08",
-          "p": 716.07
-        },
         {
           "d": "2026-06-09",
           "p": 707.83
@@ -682,6 +678,10 @@
         {
           "d": "2026-10-05",
           "p": 756.2
+        },
+        {
+          "d": "2026-10-06",
+          "p": 759.66
         }
       ]
     }
