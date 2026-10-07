@@ -1,0 +1,8 @@
+import crypto from 'node:crypto';
+import {assertSameBinding} from './fee-completion-policy.mjs';
+const fail=()=>{throw Error('FEE_COMPLETION_BINDING');};
+const aad=({targetDate,dataSha256})=>Buffer.from(`fee.completion-binding.v1\n${targetDate}\n${dataSha256}`);
+export function validBindingEnvelope(v){return v&&Object.keys(v).sort().join()==='ciphertext,schema'&&v.schema==='fee.completion-binding.v1'&&typeof v.ciphertext==='string'&&v.ciphertext.length<16384&&/^[A-Za-z0-9+/]+={0,2}$/.test(v.ciphertext)&&Buffer.from(v.ciphertext,'base64').toString('base64')===v.ciphertext&&Buffer.from(v.ciphertext,'base64').length>28;}
+function keyValid(key){if(!Buffer.isBuffer(key)||key.length!==32)fail();}
+export function sealBinding(bindings,context,key){keyValid(key);assertSameBinding(bindings,bindings);const nonce=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,nonce);c.setAAD(aad(context));const bytes=Buffer.concat([nonce,c.update(JSON.stringify({targetDate:context.targetDate,dataSha256:context.dataSha256,bindings})),c.final(),c.getAuthTag()]);return {schema:'fee.completion-binding.v1',ciphertext:bytes.toString('base64')};}
+export function openBinding(envelope,context,key){keyValid(key);if(!validBindingEnvelope(envelope))fail();try{const b=Buffer.from(envelope.ciphertext,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAAD(aad(context));d.setAuthTag(b.subarray(-16));const value=JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));if(value.targetDate!==context.targetDate||value.dataSha256!==context.dataSha256)fail();assertSameBinding(value.bindings,value.bindings);return value.bindings;}catch{fail();}}

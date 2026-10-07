@@ -167,3 +167,10 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Retain allowlisted failure category
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          printf '%s\n' 'FEE_CHAIN_VALIDATE_FAILED' >&2
+          printf '%s\n' 'Fee chain failed closed; inspect the fixed stage logs. No private financial data is recorded.' >> "$GITHUB_STEP_SUMMARY"

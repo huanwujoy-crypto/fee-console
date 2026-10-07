@@ -73,6 +73,7 @@ jobs:
             if [[ ! "$code" =~ ^(FEE_CLOUD|SOURCE)_[A-Z0-9_]+$ ]]; then
               code=FEE_CLOUD_FAILED
             fi
+            printf '%s\n' "$code" >&2
             printf '## Fee cloud producer\n\n- Outcome: failed closed\n- Diagnostic code: `%s`\n\nNo portfolio amounts or credentials are included in this summary.\n' "$code" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
