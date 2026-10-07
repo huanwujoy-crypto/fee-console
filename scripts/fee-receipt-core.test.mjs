@@ -719,11 +719,11 @@ const resignReceipt = receipt => {
   return { ...body, receiptId: semanticHash("calculation-receipt", body) };
 };
 
-test("native v4 remains byte-compatible with the pinned v1 receipt and unchanged engine", () => {
+test("native v4 without notification audits retains the pinned v1 receipt", () => {
   const input = fixture();
   const receipt = buildFeeCalculationReceipt(input);
   assert.equal(FEE_RECEIPT_SCHEMA, "fee-console.calculation-receipt.v1");
-  assert.equal(FEE_ENGINE_VERSION, "fee-v4.6.2");
+  assert.equal(FEE_ENGINE_VERSION, "fee-v4.6.3");
   assert.equal(receipt.schema, FEE_RECEIPT_SCHEMA);
   assert.equal(receipt.receiptId, "85bd397ce44113a7141ad6897cbf3e6ac846b7f463e9b8d5d12d4ade3d67feb1");
   assert.equal(crypto.createHash("sha256").update(JSON.stringify(receipt)).digest("hex"),
