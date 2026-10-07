@@ -57,6 +57,7 @@ function exactTicker(value) {
 }
 
 import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
+import { notificationIncomeAudits } from './fee-income-date-policy.mjs';
 
 const CONTROLLED_WEBULL_PRINCIPAL_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) (BUY|SELL) securities principal; NOT external funding; order ([A-Z0-9]{16,40}); (?:holding ([1-9]\d{0,14})|Sharesight trade ([1-9]\d{0,14})); (\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} EDT; source fee USD (\d+\.\d{2})\.$/;
 
@@ -185,9 +186,18 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       fail("CASH_IDENTITY");
     }
   }
-  const incomeEvidence = resolveDividendCashEvidence({account,portfolioId:expected.portfolioId,targetDate,
+  let incomeEvidence;
+  try {
+    if(account==='webull')for(const audit of notificationIncomeAudits(incomeDateEvidence,targetDate)) {
+      const cashId=audit.proof.scope.cashAccountId,listed=listedCash.filter(row=>id(row.id)===cashId);
+      const reported=rows(report.cash_accounts||[],'cash_accounts').filter(row=>id(row.id)===cashId);
+      if(listed.length!==1||reported.length!==1||id(listed[0].portfolio_id)!==expected.portfolioId
+        ||listed[0].currency!=='USD'||listed[0].portfolio_currency!=='USD'||reported[0].currency?.code!=='USD')
+        throw new Error('notification cash account identity');
+    }
+    incomeEvidence = resolveDividendCashEvidence({account,portfolioId:expected.portfolioId,targetDate,holdings,
     cashRows:Object.values(cashTransactions).flatMap(p => rows(p,'cash_account_transactions')),
-    payouts:incomePayouts,dateEvidence:incomeDateEvidence});
+    payouts:incomePayouts,dateEvidence:incomeDateEvidence}); } catch { fail('INCOME_EVIDENCE'); }
   const trades = rows(tradesPayload, "trades");
   const tradeIds = new Set(trades.map(row => id(row.id)));
   const flows = [];
@@ -382,7 +392,9 @@ export class SharesightCloudReader {
       if (account === 'webull') {
         const keys=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))
           .map(row=>dividendCashKey(row.description)).filter(Boolean);
-        for (const payoutId of new Set(keys.map(k=>k.payoutId)))
+        let audits;
+        try { audits=notificationIncomeAudits(this.incomeDateEvidence,targetDate); } catch { fail('INCOME_EVIDENCE'); }
+        for (const payoutId of new Set([...keys.map(k=>k.payoutId),...audits.map(a=>a.proof.scope.payoutId)]))
           incomePayouts[payoutId]=await this.get(`${API}/api/v2/payouts/${payoutId}.json`,token);
       }
       // Entire Webull history, not just today's trades, is required to bound

@@ -20,7 +20,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
-  validateInputs, checkCashLedger, checkMove, reconcileFlows,
+  validateInputs, checkCashLedger, checkMove, reconcileFlows, notificationIncomeFlowAudit,
   buildPoint, validateBenchmarkTimeline, samePoint, buildLatestStatus, sameStatus, isIsoDate, isWeekend, dayDiff
 } from "./daily-core.mjs";
 import {
@@ -380,7 +380,7 @@ if (args.flows !== undefined) {
     const desc = f.desc == null ? "" : String(f.desc);
     if (desc.length > 300) die(`flow #${i} desc is too long`);
     if (f.id != null && f.id !== "" && !ID_RE.test(String(f.id))) die(`flow #${i} has a bad id`);
-    if (f.evidence != null && !["external_transfer", "external_asset_transfer", "internal_trade", "internal_income", "internal_income_pending_date", "internal_income_estimated"].includes(f.evidence))
+    if (f.evidence != null && !["external_transfer", "external_asset_transfer", "internal_trade", "internal_income", "internal_income_pending_date", "internal_income_estimated", "internal_income_owner_notification"].includes(f.evidence))
       die(`flow #${i} has an unknown evidence value`);
     return {
       id: f.id == null || f.id === "" ? "" : String(f.id),
@@ -398,11 +398,13 @@ if (args.flows !== undefined) {
       foreignIdentifier: f.foreignIdentifier == null ? "" : String(f.foreignIdentifier),
       holdingDelta: Number.isFinite(f.holdingDelta) ? f.holdingDelta : 0,
       sourcePayoutId:f.sourcePayoutId ?? null,
+      sourcePortfolioId:f.sourcePortfolioId ?? null,
+      sourceHoldingId:f.sourceHoldingId ?? null,
       sourceCashRecordId:f.sourceCashRecordId ?? null,
       sourceCashAccountId:f.sourceCashAccountId ?? null,
       incomeRole:f.incomeRole ?? null,
       cashPostingDate:f.cashPostingDate ?? null,
-      incomeDateVerified:f.incomeDateVerified === true,
+      incomeDateVerified:f.evidence==='internal_income_owner_notification' ? f.incomeDateVerified : f.incomeDateVerified === true,
       ...(f.incomeDateAudit ? {incomeDateAudit:incomeDatePolicy.normalize(f.incomeDateAudit,f.date)} : {}),
       evidence: f.evidence ?? null,
       externalRef: f.externalRef == null ? "" : String(f.externalRef)
@@ -411,6 +413,8 @@ if (args.flows !== undefined) {
 }
 
 /* ---------- 明显错账检查 ---------- */
+for(const flow of incoming)if(incomeDatePolicy.isNotification(flow.incomeDateAudit?.proof)
+  &&flow.evidence!=='internal_income_owner_notification')die('notification income evidence is inconsistent — nothing written');
 const hard = [];
 hard.push(...checkCashLedger({ date, acctCash, prevAcctCash, movements: incoming }));
 
@@ -428,7 +432,8 @@ if (weekendCarry && weekendCarryPrior?.managementExemptions !== undefined)
   point.managementExemptions = structuredClone(weekendCarryPrior.managementExemptions);
 const existingPoint = data.daily.find(x => x && x.d === date);
 const incomeAudits=new Map((incomeDatePolicy.point(existingPoint||{d:date}).incomeDateAudits||[]).map(a=>[a.eventKey,a]));
-for(const flow of incoming)if(flow.incomeDateAudit&&(flow.evidence==='internal_income_estimated'||flow.evidence==='internal_income')) {
+for(const flow of incoming)if(flow.incomeDateAudit&&['internal_income_estimated','internal_income','internal_income_owner_notification'].includes(flow.evidence)) {
+  if(flow.evidence==='internal_income_owner_notification'&&!notificationIncomeFlowAudit(flow))die('notification income evidence is inconsistent — nothing written');
   const audit=incomeDatePolicy.normalize(flow.incomeDateAudit,date);
   try{incomeAudits.set(audit.eventKey,mergeIncomeDateAudit(incomeAudits.get(audit.eventKey),audit,date));}catch{die('income date audit conflict');}
 }
@@ -548,6 +553,7 @@ if (hard.length) dieAll([...hard, "nothing written"]);
 const nextDaily = data.daily.filter(x => x && x.d !== date);
 nextDaily.push(point);
 nextDaily.sort((a, b) => String(a.d).localeCompare(String(b.d)));
+try { incomeDatePolicy.timeline(nextDaily); } catch { die('income date audit conflict — nothing written'); }
 let status;
 try {
   status = buildLatestStatus({
