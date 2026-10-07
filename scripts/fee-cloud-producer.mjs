@@ -4,6 +4,7 @@
 // caller-owned private output directory; publication is a separate step.
 
 import crypto from "node:crypto";
+import {reuseOrSealTradeLinks,openTradeLinks} from "./fee-runtime-evidence.mjs";
 import { incomeDateEvidenceFromData } from './fee-income-date-policy.mjs';
 import fs from "node:fs";
 import os from "node:os";
@@ -272,6 +273,16 @@ export async function produce(options = {}) {
         `--outcome=${outcome}`, "--style-preflight=pass", `--checked-at=${checkedAt}`], env);
       stage = "ECONOMIC_RECHECK";
       await economic.checkCurrent();
+      stage = "ASSOCIATION_RECEIPT";
+      { // Fixed presence and fixed padded length, including an empty association set.
+        const health=readJson(healthFile),key=Buffer.from(String(process.env.FEE_DATA_KEY||""),"base64url");
+        const previous=fs.existsSync(path.join(ROOT,"fee-data-health.json"))?readJson(path.join(ROOT,"fee-data-health.json")):null;
+        const priorBinding=previous?.targetDate===targetDate&&previous?.dataSha256===after?previous.tradeLinkBinding:null;
+        health.tradeLinkBinding=reuseOrSealTradeLinks(input.tradeLinkReceipts||[],{targetDate,dataSha256:after},key,priorBinding);
+        const restored=openTradeLinks(health.tradeLinkBinding,{targetDate,dataSha256:after},key);
+        if(JSON.stringify(restored)!==JSON.stringify(input.tradeLinkReceipts||[]))fail("ASSOCIATION_RECEIPT");
+        fs.writeFileSync(healthFile,JSON.stringify(health)+"\n",{mode:0o600});
+      }
       stage = "HEALTH_VALIDATE";
       run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
       return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {
@@ -292,7 +303,7 @@ export async function produce(options = {}) {
 // Only fixed program stages and exception categories may enter public diagnostics.
 const DIAGNOSTIC_STAGES = new Set(['CONFIG', 'BENCHMARK', 'READER_SETUP', 'ECONOMIC_READ',
   'SOURCE_READ', 'PREPARE', 'WEEKEND_CARRY', 'STYLE_PREFLIGHT', 'WRITER', 'RECEIPT',
-  'HEALTH_CREATE', 'ECONOMIC_RECHECK', 'HEALTH_VALIDATE', 'CLEANUP']);
+  'HEALTH_CREATE', 'ECONOMIC_RECHECK', 'ASSOCIATION_RECEIPT', 'HEALTH_VALIDATE', 'CLEANUP']);
 const SYSTEM_CODES = new Set(['EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'ENOSPC', 'EMFILE', 'EIO']);
 export function producerFailureCode(error, stage) {
   if (error instanceof SourceFetchError) return sourceFailureCode(error);
