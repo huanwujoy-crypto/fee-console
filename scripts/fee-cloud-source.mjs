@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { destinationTradeLink } from './fee-runtime-evidence.mjs';
+import { destinationTradeLink, canonicalTradeId } from './fee-runtime-evidence.mjs';
 
 // Fixed, GET-only Sharesight source used by the fee-console cloud producer.
 // It deliberately exposes no arbitrary URL, method, portfolio, or date range.
@@ -103,7 +103,7 @@ export function isControlledWebullNetProceeds({ account, row, movement, targetDa
   const cash = NET_PROCEEDS_RE.exec(typeof row.description === 'string' ? row.description : '');
   if (!cash || cash[4] !== targetDate) return false;
   const [, ticker, order, tradeId, , grossText, feeText, netText] = cash;
-  const byId = trades.filter(t => String(t.id) === tradeId);
+  const byId = trades.filter(t => canonicalTradeId(t.id) === tradeId);
   const byOrder = trades.filter(t => typeof t.comments === 'string' && t.comments.includes(`; order ${order}.`));
   if (byId.length !== 1 || byOrder.length !== 1 || byId[0] !== byOrder[0]) return false;
   const trade = byId[0], proof = NET_TRADE_RE.exec(trade.comments);
@@ -218,8 +218,8 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         account, row: { ...row, description }, movement, targetDate, trades,
       });
       if (isControlledWebullNetProceeds({account,row:{...row,description},movement,targetDate,trades})) {
-        const tradeId=Number(/Sharesight trade ([1-9]\d*);/.exec(description)[1]);
-        tradeLinkReceipts.push(destinationTradeLink({targetDate,cashRecord:row,trade:trades.find(t=>t.id===tradeId)}));
+        const tradeId=/Sharesight trade ([1-9]\d*);/.exec(description)[1];
+        tradeLinkReceipts.push(destinationTradeLink({targetDate,cashRecord:row,trade:trades.find(t=>canonicalTradeId(t.id)===tradeId)}));
       }
       flows.push({
         date: targetDate, acct: account, amount: movement,

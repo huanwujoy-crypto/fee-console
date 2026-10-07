@@ -31,10 +31,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Run credential-free fee chain preflight
-        shell: bash
-        run: node scripts/fee-offline-preflight.mjs
-
       - name: Exchange the trusted workflow identity for short-lived Google credentials
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:

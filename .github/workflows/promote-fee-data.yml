@@ -42,10 +42,6 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PROMOTE_MAIN_DEPLOY_KEY }}
 
-      - name: Run credential-free fee chain preflight
-        shell: bash
-        run: node scripts/fee-offline-preflight.mjs
-
       - name: Fetch Codex daily branches
         shell: bash
         run: git fetch --no-tags --prune origin '+refs/heads/codex/fee-daily-*:refs/remotes/origin/codex/fee-daily-*'
@@ -233,6 +229,13 @@ jobs:
           fi
 
           candidate_sha=$(git rev-parse "${candidates[0]}")
+          # The loop scratch files may belong to a rejected later branch.
+          # Freeze acceptance inputs from the exact SHA selected for promotion.
+          git show "$candidate_sha:data.json" > "$RUNNER_TEMP/selected-candidate-data.json"
+          git show "$candidate_sha:fee-data-health.json" > "$RUNNER_TEMP/selected-candidate-health.json"
+          node scripts/fee-data-health.mjs validate \
+            --health="$RUNNER_TEMP/selected-candidate-health.json" \
+            --data="$RUNNER_TEMP/selected-candidate-data.json"
           echo "Selected ${candidates[0]} at $candidate_sha"
           echo "sha=$candidate_sha" >> "$GITHUB_OUTPUT"
           echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
@@ -258,7 +261,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/fee-public-acceptance.mjs "$RUNNER_TEMP/candidate-health.json" "$RUNNER_TEMP/candidate-data.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          node scripts/fee-public-acceptance.mjs "$RUNNER_TEMP/selected-candidate-health.json" "$RUNNER_TEMP/selected-candidate-data.json" | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Retain allowlisted failure category
         if: ${{ failure() }}

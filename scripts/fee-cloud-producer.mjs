@@ -274,11 +274,11 @@ export async function produce(options = {}) {
       stage = "ECONOMIC_RECHECK";
       await economic.checkCurrent();
       stage = "ASSOCIATION_RECEIPT";
-      if(input.tradeLinkReceipts?.length){
+      { // Fixed presence and fixed padded length, including an empty association set.
         const health=readJson(healthFile),key=Buffer.from(String(process.env.FEE_DATA_KEY||""),"base64url");
-        health.tradeLinkBinding=sealTradeLinks(input.tradeLinkReceipts,{targetDate,dataSha256:after},key);
+        health.tradeLinkBinding=sealTradeLinks(input.tradeLinkReceipts||[],{targetDate,dataSha256:after},key);
         const restored=openTradeLinks(health.tradeLinkBinding,{targetDate,dataSha256:after},key);
-        if(JSON.stringify(restored)!==JSON.stringify(input.tradeLinkReceipts))fail("ASSOCIATION_RECEIPT");
+        if(JSON.stringify(restored)!==JSON.stringify(input.tradeLinkReceipts||[]))fail("ASSOCIATION_RECEIPT");
         fs.writeFileSync(healthFile,JSON.stringify(health)+"\n",{mode:0o600});
       }
       stage = "HEALTH_VALIDATE";

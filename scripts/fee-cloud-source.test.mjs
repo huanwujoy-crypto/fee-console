@@ -479,8 +479,8 @@ test('strict net-proceeds evidence maps a unique confirmed fee-inclusive sell to
   const result=normalizeRead(source,D,selectBenchmark(benchmarkCache,D));
   assert.equal(result.flows.find(r=>r.acct==='webull').evidence,'internal_trade');
   assert.equal(result.tradeLinkReceipts.length,1);
-  assert.equal(result.tradeLinkReceipts[0].cashRecordId,f.row.id);
-  assert.equal(result.tradeLinkReceipts[0].tradeId,f.trades[0].id);
+  assert.equal(result.tradeLinkReceipts[0].cashRecordId,String(f.row.id));
+  assert.equal(result.tradeLinkReceipts[0].tradeId,String(f.trades[0].id));
   assert.equal(result.tradeLinkReceipts[0].actualFeeStatus,'DESTINATION_MATCHED_ONLY');
   assert.equal(result.tradeLinkReceipts[0].wholeDayComplete,false);
   f.trades[0].price_currency_code='USD';assert.equal(isControlledWebullNetProceeds(f),true);
@@ -513,3 +513,11 @@ import "./fee-publish-readback.test.mjs";
 import "./fee-trade-link-receipt.test.mjs";
 
 import './fee-runtime-evidence.test.mjs';
+
+test('strict association receipt accepts canonical string IDs and rejects imprecise numeric identities',()=>{
+ const f=netProceedsFixture();f.trades[0].id=String(f.trades[0].id);const source=raw();source.webull.cashTransactions[90250].cash_account_transactions=[f.row];source.webull.trades.trades=f.trades;
+ const result=normalizeRead(source,D,selectBenchmark(benchmarkCache,D));assert.equal(result.tradeLinkReceipts[0].tradeId,f.trades[0].id);
+ const big='9007199254740993';f.row.description=f.row.description.replace('trade 222','trade '+big);f.trades[0].id=big;assert.equal(isControlledWebullNetProceeds(f),false); // Original bounded-ID matcher remains fail closed.
+ source.webull.trades.trades=f.trades;assert.throws(()=>normalizeRead(source,D,selectBenchmark(benchmarkCache,D)),/FEE_CLOUD_IDENTITY/); // Preserve existing source safe-ID boundary.
+ f.trades.push({...f.trades[0]});assert.equal(isControlledWebullNetProceeds(f),false);f.trades.pop();f.trades[0].id=Number(big);assert.equal(isControlledWebullNetProceeds(f),false);
+});

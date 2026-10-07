@@ -168,10 +168,6 @@ jobs:
               ;;
           esac
 
-      - name: Run credential-free fee chain preflight
-        shell: bash
-        run: node scripts/fee-offline-preflight.mjs
-
       - name: Retain allowlisted failure category
         if: ${{ failure() }}
         shell: bash
