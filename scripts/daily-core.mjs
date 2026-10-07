@@ -324,12 +324,30 @@ export function inKindBusinessKey(raw) {
   return `sharesight:${sourceTradeId}->${tradeId};holding:${holdingId}`;
 }
 
+export function notificationIncomeFlowAudit(raw) {
+  if(raw.evidence!=='internal_income_owner_notification')return null;
+  try {
+    const audit=incomeDatePolicy.normalize(raw.incomeDateAudit,raw.date),s=audit.proof.scope;
+    if(!incomeDatePolicy.isNotification(audit.proof)||raw.acct!=='webull'||raw.type!=='DEPOSIT'||raw.incomeRole!=='dividend_net'
+      ||raw.incomeDateVerified!==false||raw.cashPostingDate!==raw.date||raw.sourcePortfolioId!==s.portfolioId
+      ||raw.sourceHoldingId!==s.holdingId||raw.sourcePayoutId!==s.payoutId||raw.sourceCashAccountId!==s.cashAccountId
+      ||raw.sourceCashRecordId!==s.cashRecordIds[0]||raw.tradeId!=null||(raw.holdingId!=null&&raw.holdingId!==s.holdingId)
+      ||incomeDatePolicy.cashCents(raw.amount)!==audit.proof.amounts.netCashCents)return null;
+    return audit;
+  } catch { return null; }
+}
+
 export function classifyFlow(raw) {
   const desc = typeof raw.desc === "string" ? raw.desc : "";
   const type = typeof raw.type === "string" ? raw.type : "";
   const trade = hasTradeEvidence(raw);
   const externalRef = typeof raw.externalRef === "string" ? raw.externalRef.trim() : "";
   const businessKey = inKindBusinessKey(raw);
+  if(incomeDatePolicy.isNotification(raw.incomeDateAudit?.proof)&&raw.evidence!=='internal_income_owner_notification')
+    return {kind:'unresolved',effective:false,reason:'notification-date audit requires its own income evidence authority'};
+  if(raw.evidence==='internal_income_owner_notification')return notificationIncomeFlowAudit(raw)
+    ? {kind:'internal',reason:'owner notification-date convention; broker cash date unverified'}
+    : {kind:'unresolved',effective:false,reason:'notification-date dividend evidence is incomplete or inconsistent'};
 
   // A verified in-kind transfer is the one case where a linked trade is also
   // external to the managed composite. Require both sides to agree on market
@@ -401,7 +419,8 @@ export function classifyFlow(raw) {
 /** Stable, idempotent identifier for a cash record. */
 export function flowId(raw) {
   const businessKey = inKindBusinessKey(raw);
-  const canon = businessKey ? `external_asset_transfer ${businessKey}` : [
+  const income=notificationIncomeFlowAudit(raw);
+  const canon = income ? `internal_income ${income.eventKey}` : businessKey ? `external_asset_transfer ${businessKey}` : [
     raw.date ?? "",
     raw.acct ?? "",
     typeof raw.amount === "number" ? raw.amount.toFixed(2) : String(raw.amount ?? ""),
@@ -428,11 +447,22 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
     const businessKey = inKindBusinessKey(raw);
     // A verified in-kind transfer always uses the immutable source identity.
     // Never trust a free-form id supplied by a scheduled prompt for this case.
-    const id = businessKey ? flowId(raw)
+    const id = (businessKey || notificationIncomeFlowAudit(raw)) ? flowId(raw)
       : (raw.id != null && raw.id !== "" ? String(raw.id) : flowId(raw));
     if (kind === "misfiled") { errors.push(`flow ${raw.date} ${raw.acct}: ${reason}`); continue; }
     if (kind === "internal") {
-      if (['internal_income','internal_income_estimated'].includes(raw.evidence) && unresolvedIds.has(id)) {
+      if(raw.evidence==='internal_income_owner_notification'&&autoIds.has(id)) {
+        errors.push('notification income conflicts with an existing external flow');continue;
+      }
+      if(raw.evidence==='internal_income_owner_notification'&&unresolvedIds.has(id)) {
+        const pending=unresolved.filter(row=>row.id===id),fields=['sourcePortfolioId','sourceHoldingId','sourcePayoutId','sourceCashAccountId','sourceCashRecordId'];
+        if(pending.length!==1||pending[0].date!==raw.date||pending[0].acct!==raw.acct
+          ||incomeDatePolicy.cashCents(pending[0].amount)!==incomeDatePolicy.cashCents(raw.amount)
+          ||fields.some(key=>Object.hasOwn(pending[0],key)&&pending[0][key]!==raw[key])) {
+          errors.push('notification income conflicts with an existing unresolved flow');continue;
+        }
+      }
+      if (['internal_income','internal_income_estimated','internal_income_owner_notification'].includes(raw.evidence) && unresolvedIds.has(id)) {
         const i=unresolved.findIndex(row=>row.id===id);if(i>=0)unresolved.splice(i,1);
         unresolvedIds.delete(id);promoted++;
       }

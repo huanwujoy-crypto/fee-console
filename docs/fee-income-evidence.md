@@ -6,7 +6,7 @@ appear as FEE, with null native payout/trade/holding links. Neither is a deposit
 of investor capital. Generic dividend text or a standalone fee remains
 insufficient evidence.
 
-The fixed GET-only source reader recognizes only paired controlled
+For the existing separate-fee convention, the fixed GET-only source reader recognizes paired controlled
 `webull.dividend` cash keys. It reads the exact referenced native payout twice
 with the other source snapshots. Both legs must be unique, belong to the same
 USD cash account and target date, and match the confirmed payout's portfolio,
@@ -64,3 +64,65 @@ intact as historical provenance. Only a fully matching resolution clears the
 owner-estimated cash-date provisional code; other provisional causes remain.
 The writer permits only this additive transition once and rejects changed or
 removed published resolutions. No cash record or payout is created or edited.
+
+## Owner notification date with a single net cash deposit
+
+The separate `owner-notification-cash-posting` authority records an owner-selected
+investment-tracking convention. It requires `verified:false`, an exact notification
+date equal to the target cash date, the original payout date, and
+`awaiting-official-record` with `actualBrokerDate:null`. It does not require the old
+preceding-day absence condition and never asserts that a notification proves the
+broker's actual posting date. The phone displays this distinction and the
+`owner-notification-cash-date` provisional code independently of quote calibration.
+
+The audit binds one existing confirmed USD payout, holding and net DEPOSIT through
+their immutable source identities. It records integer cents for gross, withholding,
+collection fee, combined deduction and net cash. Withholding plus collection fee
+must equal the combined deduction, and gross minus that deduction must equal both
+the payout amount and the one cash deposit. The source's deduction field represents
+the combined amount under this chosen convention; it is not a pure tax figure or
+a tax-reporting calculation. The separate-fee convention continues to require its
+own two legs and cannot reuse this payout or deposit.
+
+The reader fetches the exact scoped payout through the existing GET allowlist in
+both stable snapshots. It rejects missing or duplicate records, cross-account or
+holding mismatches, changed cents, trade links and extra payout-linked cash legs.
+Generic text supplies no evidence. An unmatched additional fee remains unresolved.
+Classification adds no external capital, subscription, investor shares, second fee
+or payment. Flow identity excludes dates and free-form descriptions; replaying the
+same source identity is idempotent. Reusing a payout or deposit across audited days,
+including between the old and new conventions, fails closed. Ambiguous old pending
+flows require separate review rather than being silently removed.
+
+For the first private import, the existing local producer accepts
+`--income-date-evidence-file` with a strict `fee-console.income-date-evidence.v1`
+envelope containing only `schema`, `targetDate` and `audits`. This transport records
+a separately reviewed owner decision; it grants no consent itself. It accepts only
+this new authority, with an absolute regular non-symlink file outside the repository,
+owned by the current user in a private directory, both without group/other access.
+The input is checked for changes around reading, writing and final validation.
+Conflicting published audits cannot be replaced. Import is refused in GitHub Actions;
+there is no new workflow input, secret, financial endpoint or source write.
+
+The writer persists the normalized audit only in the authenticated encrypted target
+daily point. Later same-day reads reload it from that point, and the receipt and
+phone consumer commit and validate the same projection. The new authority requires
+receipt engine `fee-v4.6.3`; older receipts remain valid for their existing inputs
+but cannot be used to downgrade a new audit. Removing or changing the provenance
+invalidates its receipt. No official-date resolution is inferred or appended by
+this change; that reconciliation remains a separate reviewed operation.
+
+The release requires two separately reviewed candidates because the existing UI
+guard permits an `index.html` PR to change that file only. The backend candidate
+retains the exact current phone consumer: offline tests pin its full index,
+consumer and factory hashes and prove that it accepts existing audits while
+rejecting a new notification audit, including attempted receipt downgrades. The
+following UI-only candidate installs the matching factory and receipt consumer.
+Private first import must wait until that consumer is deployed and read back.
+Neither candidate imports real records or authorizes a financial operation.
+
+The writer preserves other daily points. This alone cannot establish whether an
+earlier source NAV changed when the upstream payout date was edited; that needs a
+separately authorized historical source read. The cash-balance freshness gate also
+remains unchanged. An already published target-day receipt does not prove that a
+later producer run succeeded.

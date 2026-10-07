@@ -1,6 +1,6 @@
 // Verified income is internal to the managed portfolio, never investor funding.
 // A deposited notification alone does not prove the broker's cash posting day.
-import { incomeDatePolicy } from './fee-income-date-policy.mjs';
+import { incomeDatePolicy, notificationIncomeAudits } from './fee-income-date-policy.mjs';
 import { isCalendarDate } from './fee-engine.mjs';
 
 export const dividendCashKey = description => {
@@ -13,9 +13,32 @@ const cents = n => typeof n === 'number' && Number.isFinite(n) ? Math.round(n*10
  * dates remain unresolved. A caller must independently verify date authority;
  * neither a comment nor the payout's paid_on date supplies it automatically.
  */
-export function resolveDividendCashEvidence({account, portfolioId, targetDate, cashRows, payouts={}, dateEvidence={}}) {
+export function resolveDividendCashEvidence({account, portfolioId, targetDate, cashRows, payouts={}, dateEvidence={}, holdings=[]}) {
   const result = new Map();
   if (account !== 'webull' || portfolioId !== 1350094) return result;
+  for(const audit of notificationIncomeAudits(dateEvidence,targetDate)) {
+    const {scope:s,amounts:a}=audit.proof,payout=payouts[s.payoutId];
+    const matches=cashRows.filter(row=>row.id===s.cashRecordIds[0]),net=matches[0];
+    const linked=cashRows.filter(row=>row.payout_id===s.payoutId||dividendCashKey(row.description)?.payoutId===s.payoutId);
+    const sourceMatches=Object.values(payouts).filter(row=>row?.id===s.payoutId);
+    if(s.portfolioId!==portfolioId||matches.length!==1||sourceMatches.length!==1||!payout
+      ||payout.id!==s.payoutId||payout.portfolio_id!==portfolioId||payout.holding_id!==s.holdingId||payout.symbol!==s.ticker
+      ||payout.paid_on!==targetDate||payout.currency!=='USD'||payout.confirmed!==true||payout.state!=='confirmed'
+      ||payout.non_taxable!==false||payout.tax_credit!==0
+      ||holdings.filter(h=>h.holdingId===s.holdingId&&h.ticker===s.ticker).length!==1
+      ||net.cash_account_id!==s.cashAccountId||net.cash_account_transaction_type?.name!=='DEPOSIT'
+      ||String(net.date_time).slice(0,10)!==targetDate||net.trade_id!=null
+      ||(net.holding_id!=null&&net.holding_id!==s.holdingId)||(net.payout_id!=null&&net.payout_id!==s.payoutId)
+      ||linked.some(row=>row!==net)
+      ||incomeDatePolicy.cashCents(payout.gross_amount)!==a.grossCents
+      ||incomeDatePolicy.cashCents(payout.resident_withholding_tax)!==a.combinedDeductionCents
+      ||incomeDatePolicy.cashCents(payout.amount)!==a.netCashCents||incomeDatePolicy.cashCents(net.amount)!==a.netCashCents)
+      throw new Error('invalid notification income source evidence');
+    result.set(net.id,{evidence:'internal_income_owner_notification',incomeDateAudit:audit,
+      sourcePortfolioId:portfolioId,sourceHoldingId:s.holdingId,sourcePayoutId:payout.id,
+      sourceCashRecordId:net.id,sourceCashAccountId:net.cash_account_id,incomeRole:'dividend_net',
+      cashPostingDate:targetDate,incomeDateVerified:false});
+  }
   const groups = new Map();
   for (const row of cashRows) {
     const source = dividendCashKey(row.description);
@@ -23,6 +46,7 @@ export function resolveDividendCashEvidence({account, portfolioId, targetDate, c
     const group=groups.get(source.key)||[];group.push({row,source});groups.set(source.key,group);
   }
   for (const [key,group] of groups) {
+    if(group.some(item=>result.has(item.row.id)))continue;
     if (group.length!==2 || group.filter(x=>x.source.role==='net').length!==1
         || group.filter(x=>x.source.role==='fee').length!==1) continue;
     const net=group.find(x=>x.source.role==='net'),fee=group.find(x=>x.source.role==='fee');

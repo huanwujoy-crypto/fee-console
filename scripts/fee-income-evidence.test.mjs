@@ -74,7 +74,16 @@ test('estimated date audit stays committed and provisional even with calibrated 
  const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),'utf8');
  const scope={crypto:crypto.webcrypto,TextEncoder,TextDecoder,structuredClone};scope.globalThis=scope;vm.createContext(scope);vm.runInContext(html.slice(html.indexOf('/* fee-receipt-consumer:start */'),html.indexOf('/* fee-receipt-consumer:end */')),scope);
  const activePolicy=vm.runInContext('createIncomeDatePolicy.toString()',scope);
- if(!activePolicy.includes('broker-statement-verified'))assert.equal(crypto.createHash('sha256').update(activePolicy).digest('hex'),'624b1082088cccbd697d09e354201755873efb87a728471d25f61991aeda8c67');else assert.equal(activePolicy,createIncomeDatePolicy.toString());
+ if(!activePolicy.includes('broker-statement-verified'))assert.equal(crypto.createHash('sha256').update(activePolicy).digest('hex'),'624b1082088cccbd697d09e354201755873efb87a728471d25f61991aeda8c67');
+ else if(!activePolicy.includes('owner-notification-cash-posting')) {
+   // Backend-first release: allow only the exact current-main consumer. It must
+   // continue validating the existing authority, while new audits remain closed.
+   const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
+   const consumer=html.split('/* fee-receipt-consumer:start */')[1].split('/* fee-receipt-consumer:end */')[0];
+   assert.equal(hash(html),'1c11cd9a4988b82b903eb2366ba2cf97805278a263be6b7138e042cbfff424ce');
+   assert.equal(hash(consumer),'c9d0733a4968aa29d483a3b8dcb741fa912be23a2619ac69aa3acde928fe759e');
+   assert.equal(hash(activePolicy),'2b7854d5e8ee3d20c835cd2b2d4c2810d9f1702df71e58b53eeda2768fd00d3e');
+ } else assert.equal(activePolicy,createIncomeDatePolicy.toString());
  assert.equal((await scope.feeReceiptUiModel({receipt,data,economicInput})).ok,true);
  for(const mutate of [x=>x.daily[0].incomeDateAudits[0].proof.sourceRef='changed authorization',x=>x.daily[0].incomeDateAudits[0].proof.condition.dividendAbsent=false,x=>delete x.daily[0].incomeDateAudits]){
  const altered=structuredClone(data);mutate(altered);assert.equal(validateFeeCalculationReceipt(receipt,altered).ok,false);assert.equal((await scope.feeReceiptUiModel({receipt,data:altered,economicInput})).ok,false);
