@@ -12,7 +12,7 @@ import {
 export const FEE_RECEIPT_SCHEMA = "fee-console.calculation-receipt.v1";
 export const FEE_LEGACY_RECEIPT_SCHEMA = "fee-console.calculation-receipt.v2";
 import { incomeDatePolicy } from './fee-income-date-policy.mjs';
-export const FEE_ENGINE_VERSION = "fee-v4.6.2";
+export const FEE_ENGINE_VERSION = "fee-v4.6.3";
 
 const legacyPolicy = createLegacyPolicy();
 const MAX_LEGACY_BYTES = 5 * 1024 * 1024;
@@ -23,7 +23,7 @@ const YM_RE = /^\d{4}-(?:0[1-9]|1[0-2])$/;
 const NUMBER_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 const RATE_MAX_PPM = 1_000_000;
 const ACCOUNT_IDS = ["schwab", "webull"];
-const ALLOWED_PROVISIONAL_CODES = new Set(["daily-provisional", "status-provisional", "owner-estimated-cash-date"]);
+const ALLOWED_PROVISIONAL_CODES = new Set(["daily-provisional", "status-provisional", "owner-estimated-cash-date", "owner-notification-cash-date"]);
 const codeUnitCompare = (left, right) => left < right ? -1 : left > right ? 1 : 0;
 
 const finite = (value, label) => {
@@ -337,6 +337,7 @@ export function normalizeDataInputs(data, { start, asOf, accountIds }) {
     }
   }
   requireUnique(allDaily, point => String(point.d), "daily date");
+  incomeDatePolicy.timeline(allDaily);
   const managementExemptionRegistry = validateManagementRegistry(data.managementExemptionRegistry);
   const daily = allDaily
     .filter(point => point.d >= start && point.d <= asOf)
@@ -521,7 +522,7 @@ const provisionalCodesFor = normalizedData => {
   const codes = [];
   if (normalizedData.daily.some(point => point.provisional)) codes.push("daily-provisional");
   if (normalizedData.status.provisional) codes.push("status-provisional");
-  if (normalizedData.daily.some(point => point.incomeDateAudits?.some(audit=>!audit.proof.resolution))) codes.push("owner-estimated-cash-date");
+  codes.push(...incomeDatePolicy.codes(normalizedData.daily));
   return codes;
 };
 
@@ -573,7 +574,8 @@ export function buildFeeCalculationReceipt({ data, economicInput, asOf }) {
   const provisionalCodes = provisionalCodesFor(normalizedData);
   const body = {
     schema: legacySource ? FEE_LEGACY_RECEIPT_SCHEMA : FEE_RECEIPT_SCHEMA,
-    engineVersion: (normalizedData.managementExemptionRegistry || normalizedData.daily.some(p=>p.incomeDateAudits?.length)) ? FEE_ENGINE_VERSION : "fee-v4.6.1",
+    engineVersion: (data.daily||[]).some(p=>p.incomeDateAudits?.some(a=>incomeDatePolicy.isNotification(a.proof))) ? FEE_ENGINE_VERSION
+      : (normalizedData.managementExemptionRegistry || normalizedData.daily.some(p=>p.incomeDateAudits?.length)) ? "fee-v4.6.2" : "fee-v4.6.1",
     asOf: finalAsOf,
     start: econ.settings.start,
     accountIds: [...accountIds].sort(),
@@ -664,6 +666,7 @@ function validateFeeCalculationReceiptUnsafe(receipt, data) {
   }
   if (receipt.schema !== FEE_RECEIPT_SCHEMA && !legacy) errors.push("receipt schema is unsupported");
   if (receipt.engineVersion !== FEE_ENGINE_VERSION
+      && !(receipt.engineVersion === 'fee-v4.6.2' && !(data?.daily || []).some(p=>p.incomeDateAudits?.some(a=>incomeDatePolicy.isNotification(a.proof))))
       && !(receipt.engineVersion === 'fee-v4.6.1' && data?.managementExemptionRegistry === undefined
         && !(data?.daily || []).some(p => p.managementExemptions !== undefined || p.incomeDateAudits !== undefined))) errors.push("receipt engine version is unsupported");
   if (legacy && exactKeys(receipt.legacySource, LEGACY_SOURCE_KEYS, "legacy source", errors)) {

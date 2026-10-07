@@ -4,7 +4,7 @@
 // caller-owned private output directory; publication is a separate step.
 
 import crypto from "node:crypto";
-import { incomeDateEvidenceFromData } from './fee-income-date-policy.mjs';
+import { incomeDateEvidenceFromData, incomeDatePolicy } from './fee-income-date-policy.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,7 +27,7 @@ function args(argv) {
     if (!match || Object.hasOwn(result, match[1])) fail("ARGUMENT");
     result[match[1]] = match[2];
   }
-  if (Object.keys(result).some(key => !["benchmark-file", "out-dir", "target-date", "checked-at"].includes(key))) fail("ARGUMENT");
+  if (Object.keys(result).some(key => !["benchmark-file", "out-dir", "target-date", "checked-at", "income-date-evidence-file"].includes(key))) fail("ARGUMENT");
   return result;
 }
 
@@ -44,6 +44,51 @@ function readJson(file, max = 5 * 1024 * 1024) {
   const bytes = fs.readFileSync(file);
   if (!bytes.length || bytes.length > max) fail("INPUT_FILE");
   try { return JSON.parse(bytes.toString("utf8")); } catch { fail("INPUT_FILE"); }
+}
+
+// This transport records a separately reviewed accounting decision, never grants
+// owner consent. It is local-only; no workflow, secret or source permission changes.
+export function loadIncomeDateEvidence(payload,targetDate,filename) {
+  const persisted=incomeDateEvidenceFromData(payload,targetDate);
+  if(filename===undefined)return {evidence:persisted,checkCurrent(){}};
+  const read=()=>{
+    try {
+      if(process.env.GITHUB_ACTIONS==='true'||!path.isAbsolute(filename))fail('INCOME_INPUT');
+      const stat=fs.lstatSync(filename),directory=fs.statSync(path.dirname(filename));
+      const resolved=fs.realpathSync(filename),relative=path.relative(ROOT,resolved);
+      if(relative===''||(relative!=='..'&&!relative.startsWith(`..${path.sep}`))
+        ||!stat.isFile()||stat.isSymbolicLink()||(stat.mode&0o077)!==0||(directory.mode&0o077)!==0
+        ||stat.uid!==process.getuid()||directory.uid!==process.getuid()||stat.size<=0||stat.size>64*1024)fail('INCOME_INPUT');
+      const fd=fs.openSync(filename,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);
+      try {
+        const before=fs.fstatSync(fd);
+        if(before.ino!==stat.ino||before.dev!==stat.dev||before.size!==stat.size||(before.mode&0o077)!==0)fail('INCOME_INPUT');
+        const bytes=fs.readFileSync(fd),after=fs.fstatSync(fd);
+        if(before.size!==after.size||before.mtimeMs!==after.mtimeMs||before.ctimeMs!==after.ctimeMs||bytes.length!==stat.size)fail('INCOME_INPUT');
+        return bytes;
+      } finally {fs.closeSync(fd);}
+    } catch {fail('INCOME_INPUT');}
+  };
+  const bytes=read();let incoming;
+  try {
+    const file=JSON.parse(bytes.toString('utf8'));
+    if(!file||Object.keys(file).sort().join(',')!=='audits,schema,targetDate'
+      ||file.schema!=='fee-console.income-date-evidence.v1'||file.targetDate!==targetDate
+      ||!Array.isArray(file.audits)||!file.audits.length||file.audits.length>32
+      ||file.audits.some(a=>!incomeDatePolicy.isNotification(a?.proof)))fail('INCOME_INPUT');
+    incoming=incomeDatePolicy.point({d:targetDate,incomeDateAudits:file.audits}).incomeDateAudits;
+  } catch {fail('INCOME_INPUT');}
+  const evidence={...persisted};
+  for(const audit of incoming) {
+    if(Object.hasOwn(evidence,audit.eventKey)&&JSON.stringify(evidence[audit.eventKey])!==JSON.stringify(audit.proof))fail('INCOME_INPUT_CONFLICT');
+    evidence[audit.eventKey]=audit.proof;
+  }
+  try {
+    const point={d:targetDate,incomeDateAudits:Object.entries(evidence).map(([eventKey,proof])=>({eventKey,proof}))};
+    incomeDatePolicy.point(point);
+    incomeDatePolicy.timeline([...(payload.daily||[]).filter(p=>p.d!==targetDate),point]);
+  } catch {fail('INCOME_INPUT_CONFLICT');}
+  return {evidence,checkCurrent(){if(!read().equals(bytes))fail('INCOME_INPUT_CHANGED');}};
 }
 
 // Return only fixed categories. Child stderr can contain private amounts,
@@ -227,10 +272,13 @@ export async function produce(options = {}) {
     const benchmark = selectBenchmark(cache, targetDate);
     const checkedAt = cli["checked-at"] || new Date().toISOString();
     stage = "READER_SETUP";
+    if(options.reader&&cli['income-date-evidence-file']!==undefined)fail('INCOME_INPUT');
+    const incomeInput=options.reader?{checkCurrent(){}}:loadIncomeDateEvidence(
+      decryptCandidate(path.join(ROOT,'data.json'),process.env.FEE_DATA_KEY),targetDate,cli['income-date-evidence-file']);
     const reader = options.reader || new SharesightCloudReader({
       clientId: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,
       clientSecret: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
-      incomeDateEvidence:incomeDateEvidenceFromData(decryptCandidate(path.join(ROOT,"data.json"),process.env.FEE_DATA_KEY),targetDate),
+      incomeDateEvidence:incomeInput.evidence,fetchImpl:options.fetchImpl,
     });
     let economic;
     const styleFile = path.join(output, "style-input.json");
@@ -244,6 +292,7 @@ export async function produce(options = {}) {
       stage = "SOURCE_READ";
       const stableRead = await readStableWithRetry(reader, targetDate, benchmark, options.retry);
       const input = stableRead.input;
+      incomeInput.checkCurrent();
       input.sourceFetchedAt = checkedAt;
       stage = "PREPARE";
       fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
@@ -259,6 +308,7 @@ export async function produce(options = {}) {
       stage = "STYLE_PREFLIGHT";
       run("daily.mjs", [...baseArgs, "--style-preflight"], env);
       stage = "WRITER";
+      incomeInput.checkCurrent();
       const writer = run("daily.mjs", baseArgs, env);
       const after = sha256(fs.readFileSync(dataFile));
       const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
@@ -272,6 +322,7 @@ export async function produce(options = {}) {
         `--outcome=${outcome}`, "--style-preflight=pass", `--checked-at=${checkedAt}`], env);
       stage = "ECONOMIC_RECHECK";
       await economic.checkCurrent();
+      incomeInput.checkCurrent();
       stage = "HEALTH_VALIDATE";
       run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
       return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {
