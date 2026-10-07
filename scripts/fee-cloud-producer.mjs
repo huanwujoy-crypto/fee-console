@@ -216,58 +216,92 @@ function writerArgs(input, file) {
 }
 
 export async function produce(options = {}) {
-  const cli = options.cli || args(process.argv.slice(2));
-  const benchmarkFile = path.resolve(cli["benchmark-file"] || "");
-  const output = safeOutputDir(cli["out-dir"] || "");
-  const cache = readJson(benchmarkFile, 3 * 1024 * 1024);
-  const targetDate = cli["target-date"] || latestCommonBenchmarkDate(cache);
-  const benchmark = selectBenchmark(cache, targetDate);
-  const checkedAt = cli["checked-at"] || new Date().toISOString();
-  const reader = options.reader || new SharesightCloudReader({
-    clientId: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,
-    clientSecret: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
-    incomeDateEvidence:incomeDateEvidenceFromData(decryptCandidate(path.join(ROOT,"data.json"),process.env.FEE_DATA_KEY),targetDate),
-  });
-  let economic;
-  const styleFile = path.join(output, "style-input.json");
-  const dataFile = path.join(output, "data.json");
-  const healthFile = path.join(output, "fee-data-health.json");
+  let stage = "CONFIG";
   try {
-    const economicRead = await fetchEconomicWithRetry(options.fetchEconomic || (() => fetchEconomicSnapshot()), options.retry);
-    economic = economicRead.economic;
-    if (economic.envelopeVersion !== 4) fail("ECON_VERSION");
-    const stableRead = await readStableWithRetry(reader, targetDate, benchmark, options.retry);
-    const input = stableRead.input;
-    input.sourceFetchedAt = checkedAt;
-    fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
-    const managementFile = path.join(output, 'management-input.json');
-    if (input.managementInput) fs.writeFileSync(managementFile, JSON.stringify(input.managementInput), {mode:0o600,flag:'wx'});
-    fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
-    fs.chmodSync(dataFile, 0o600);
-    const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile, FEE_MANAGEMENT_INPUT_FILE: input.managementInput ? managementFile : '' };
-    const original = sha256(fs.readFileSync(dataFile));
-    const weekendCarries = carryWeekendGap(dataFile, input.targetDate, env);
-    const baseArgs = writerArgs(input, dataFile);
-    run("daily.mjs", [...baseArgs, "--style-preflight"], env);
-    const writer = run("daily.mjs", baseArgs, env);
-    const after = sha256(fs.readFileSync(dataFile));
-    const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
-    assertCandidateReceiptable(decryptCandidate(dataFile, process.env.FEE_DATA_KEY));
-    run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
-    run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
-      `--target-date=${targetDate}`, `--source-schwab=${input.sourceDates.schwab}`,
-      `--source-webull=${input.sourceDates.webull}`, `--source-benchmark=${input.benchmark.sourceDate}`,
-      `--outcome=${outcome}`, "--style-preflight=pass", `--checked-at=${checkedAt}`], env);
-    await economic.checkCurrent();
-    run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
-    return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {
-      schwab: input.sourceDates.schwab, webull: input.sourceDates.webull, benchmark: input.benchmark.sourceDate,
-    }, dataFile, healthFile };
-  } finally {
-    try { fs.unlinkSync(styleFile); } catch { /* best effort */ }
-    try { fs.unlinkSync(path.join(output, "management-input.json")); } catch { /* best effort */ }
-    economic?.cleanup();
+    const cli = options.cli || args(process.argv.slice(2));
+    const benchmarkFile = path.resolve(cli["benchmark-file"] || "");
+    const output = safeOutputDir(cli["out-dir"] || "");
+    stage = "BENCHMARK";
+    const cache = readJson(benchmarkFile, 3 * 1024 * 1024);
+    const targetDate = cli["target-date"] || latestCommonBenchmarkDate(cache);
+    const benchmark = selectBenchmark(cache, targetDate);
+    const checkedAt = cli["checked-at"] || new Date().toISOString();
+    stage = "READER_SETUP";
+    const reader = options.reader || new SharesightCloudReader({
+      clientId: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,
+      clientSecret: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
+      incomeDateEvidence:incomeDateEvidenceFromData(decryptCandidate(path.join(ROOT,"data.json"),process.env.FEE_DATA_KEY),targetDate),
+    });
+    let economic;
+    const styleFile = path.join(output, "style-input.json");
+    const dataFile = path.join(output, "data.json");
+    const healthFile = path.join(output, "fee-data-health.json");
+    try {
+      stage = "ECONOMIC_READ";
+      const economicRead = await fetchEconomicWithRetry(options.fetchEconomic || (() => fetchEconomicSnapshot()), options.retry);
+      economic = economicRead.economic;
+      if (economic.envelopeVersion !== 4) fail("ECON_VERSION");
+      stage = "SOURCE_READ";
+      const stableRead = await readStableWithRetry(reader, targetDate, benchmark, options.retry);
+      const input = stableRead.input;
+      input.sourceFetchedAt = checkedAt;
+      stage = "PREPARE";
+      fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
+      const managementFile = path.join(output, 'management-input.json');
+      if (input.managementInput) fs.writeFileSync(managementFile, JSON.stringify(input.managementInput), {mode:0o600,flag:'wx'});
+      fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
+      fs.chmodSync(dataFile, 0o600);
+      const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile, FEE_MANAGEMENT_INPUT_FILE: input.managementInput ? managementFile : '' };
+      const original = sha256(fs.readFileSync(dataFile));
+      stage = "WEEKEND_CARRY";
+      const weekendCarries = carryWeekendGap(dataFile, input.targetDate, env);
+      const baseArgs = writerArgs(input, dataFile);
+      stage = "STYLE_PREFLIGHT";
+      run("daily.mjs", [...baseArgs, "--style-preflight"], env);
+      stage = "WRITER";
+      const writer = run("daily.mjs", baseArgs, env);
+      const after = sha256(fs.readFileSync(dataFile));
+      const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
+      stage = "RECEIPT";
+      assertCandidateReceiptable(decryptCandidate(dataFile, process.env.FEE_DATA_KEY));
+      run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
+      stage = "HEALTH_CREATE";
+      run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
+        `--target-date=${targetDate}`, `--source-schwab=${input.sourceDates.schwab}`,
+        `--source-webull=${input.sourceDates.webull}`, `--source-benchmark=${input.benchmark.sourceDate}`,
+        `--outcome=${outcome}`, "--style-preflight=pass", `--checked-at=${checkedAt}`], env);
+      stage = "ECONOMIC_RECHECK";
+      await economic.checkCurrent();
+      stage = "HEALTH_VALIDATE";
+      run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
+      return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {
+        schwab: input.sourceDates.schwab, webull: input.sourceDates.webull, benchmark: input.benchmark.sourceDate,
+      }, dataFile, healthFile };
+    } finally {
+      try { fs.unlinkSync(styleFile); } catch { /* best effort */ }
+      try { fs.unlinkSync(path.join(output, "management-input.json")); } catch { /* best effort */ }
+      try { economic?.cleanup(); } catch (error) {
+        throw new Error(producerFailureCode(error, "CLEANUP"));
+      }
+    }
+  } catch (error) {
+    throw new Error(producerFailureCode(error, stage));
   }
+}
+
+// Only fixed program stages and exception categories may enter public diagnostics.
+const DIAGNOSTIC_STAGES = new Set(['CONFIG', 'BENCHMARK', 'READER_SETUP', 'ECONOMIC_READ',
+  'SOURCE_READ', 'PREPARE', 'WEEKEND_CARRY', 'STYLE_PREFLIGHT', 'WRITER', 'RECEIPT',
+  'HEALTH_CREATE', 'ECONOMIC_RECHECK', 'HEALTH_VALIDATE', 'CLEANUP']);
+const SYSTEM_CODES = new Set(['EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'ENOSPC', 'EMFILE', 'EIO']);
+export function producerFailureCode(error, stage) {
+  if (error instanceof SourceFetchError) return sourceFailureCode(error);
+  const message = typeof error?.message === 'string' ? error.message : '';
+  if (/^FEE_CLOUD_[A-Z0-9_]{1,80}$/.test(message)) return message;
+  const category = error instanceof TypeError ? 'TYPE' : error instanceof RangeError ? 'RANGE'
+    : error instanceof SyntaxError ? 'SYNTAX' : error instanceof ReferenceError ? 'REFERENCE'
+    : SYSTEM_CODES.has(error?.code) ? `SYSTEM_${error.code}` : 'UNKNOWN';
+  return `FEE_CLOUD_STAGE_${DIAGNOSTIC_STAGES.has(stage) ? stage : 'UNKNOWN'}_${category}`;
 }
 
 async function main() {
@@ -278,8 +312,7 @@ async function main() {
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main().catch(error => {
-    const code = error instanceof SourceFetchError ? sourceFailureCode(error)
-      : /^FEE_CLOUD_[A-Z0-9_]+$/.test(String(error?.message)) ? error.message : "FEE_CLOUD_FAILED";
+    const code = producerFailureCode(error, "UNKNOWN");
     console.error(code);
     process.exitCode = 1;
   });

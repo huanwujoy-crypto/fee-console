@@ -678,41 +678,45 @@ test("--calibrated clears the 暂估 flag and the point stays clean", () => {
 });
 
 test("a Monday candidate can add its missing weekend carry without a Sunday run", () => {
+  const weekday = new Date(today() + "T00:00:00Z").getUTCDay();
+  const fixtureFriday = shift(today(), -((weekday + 2) % 7) - (weekday >= 5 ? 7 : 0));
   const dir = tmp();
-  const friday = run(dir, { date: "2026-09-25", growth: "253845.98", value: "200000",
-    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "session" });
+  const friday = run(dir, { date: shift(fixtureFriday, 0), growth: "253845.98", value: "200000",
+    spy: "700", qqq: "600", "src-bench": shift(fixtureFriday, 0), "bench-state": "session" });
   assert.equal(friday.status, 0, friday.stderr);
-  const saturday = run(dir, { date: "2026-09-26", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
-    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "closed", flows: "[]" },
+  const saturday = run(dir, { date: shift(fixtureFriday, 1), "src-schwab": shift(fixtureFriday, 0), "src-webull": shift(fixtureFriday, 0),
+    spy: "700", qqq: "600", "src-bench": shift(fixtureFriday, 0), "bench-state": "closed", flows: "[]" },
   ["--weekend-carry"]);
   assert.equal(saturday.status, 0, saturday.stderr);
-  const sunday = run(dir, { date: "2026-09-27", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
-    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "closed", flows: "[]" },
+  const sunday = run(dir, { date: shift(fixtureFriday, 2), "src-schwab": shift(fixtureFriday, 0), "src-webull": shift(fixtureFriday, 0),
+    spy: "700", qqq: "600", "src-bench": shift(fixtureFriday, 0), "bench-state": "closed", flows: "[]" },
   ["--weekend-carry"]);
   assert.equal(sunday.status, 0, sunday.stderr);
-  const points = readPayload(dir).daily.filter(point => point.d >= "2026-09-25");
-  assert.deepEqual(points.map(point => point.d), ["2026-09-25", "2026-09-26", "2026-09-27"]);
+  const points = readPayload(dir).daily.filter(point => point.d >= shift(fixtureFriday, 0));
+  assert.deepEqual(points.map(point => point.d), [shift(fixtureFriday, 0), shift(fixtureFriday, 1), shift(fixtureFriday, 2)]);
   assert.equal(points[1].growth, points[0].growth);
   assert.equal(points[2].value, points[0].value);
-  assert.equal(points[2].bd, "2026-09-25");
+  assert.equal(points[2].bd, shift(fixtureFriday, 0));
   assert.equal(points[2].bstate, "closed");
   assert.equal(points[2].prov, 1);
 });
 
 test("weekend carry rejects changed values, skipped dates and weekday gaps", () => {
+  const weekday = new Date(today() + "T00:00:00Z").getUTCDay();
+  const fixtureFriday = shift(today(), -((weekday + 2) % 7) - (weekday >= 5 ? 7 : 0));
   const seed = dir => {
-    const first = run(dir, { date: "2026-09-25", spy: "700", qqq: "600",
-      "src-bench": "2026-09-25", "bench-state": "session" });
+    const first = run(dir, { date: shift(fixtureFriday, 0), spy: "700", qqq: "600",
+      "src-bench": shift(fixtureFriday, 0), "bench-state": "session" });
     assert.equal(first.status, 0, first.stderr);
   };
   const changed = tmp(); seed(changed);
-  const changedRun = run(changed, { date: "2026-09-26", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
-    cash: "263696.83", stock: "453846.98", spy: "700", qqq: "600", "src-bench": "2026-09-25",
+  const changedRun = run(changed, { date: shift(fixtureFriday, 1), "src-schwab": shift(fixtureFriday, 0), "src-webull": shift(fixtureFriday, 0),
+    cash: "263696.83", stock: "453846.98", spy: "700", qqq: "600", "src-bench": shift(fixtureFriday, 0),
     "bench-state": "closed", flows: "[]" }, ["--weekend-carry"]);
   assert.notEqual(changedRun.status, 0); assert.match(changedRun.stderr, /WEEKEND_CARRY_VALUE/);
   const skipped = tmp(); seed(skipped);
-  const skippedRun = run(skipped, { date: "2026-09-27", "src-schwab": "2026-09-25", "src-webull": "2026-09-25",
-    spy: "700", qqq: "600", "src-bench": "2026-09-25", "bench-state": "closed", flows: "[]" },
+  const skippedRun = run(skipped, { date: shift(fixtureFriday, 2), "src-schwab": shift(fixtureFriday, 0), "src-webull": shift(fixtureFriday, 0),
+    spy: "700", qqq: "600", "src-bench": shift(fixtureFriday, 0), "bench-state": "closed", flows: "[]" },
   ["--weekend-carry"]);
   assert.notEqual(skippedRun.status, 0); assert.match(skippedRun.stderr, /WEEKEND_CARRY_SEQUENCE/);
 });
@@ -2061,12 +2065,14 @@ test('gold requires full styles, reconciles once, and rejects negative or duplic
 
 
 test('weekend carry retains independent gold and rejects explicit gold override', () => {
+  const weekday = new Date(today() + "T00:00:00Z").getUTCDay();
+  const fixtureFriday = shift(today(), -((weekday + 2) % 7) - (weekday >= 5 ? 7 : 0));
   const dir = tmp();
-  const friday = run(dir, { date:'2026-09-25',growth:253845.98,value:150000,gold:50000,
-    spy:700,qqq:600,'src-bench':'2026-09-25','bench-state':'session' });
+  const friday = run(dir, { date:shift(fixtureFriday, 0),growth:253845.98,value:150000,gold:50000,
+    spy:700,qqq:600,'src-bench':shift(fixtureFriday, 0),'bench-state':'session' });
   assert.equal(friday.status,0,friday.stderr);
-  const carried = {date:'2026-09-26','src-schwab':'2026-09-25','src-webull':'2026-09-25',
-    spy:700,qqq:600,'src-bench':'2026-09-25','bench-state':'closed',flows:'[]'};
+  const carried = {date:shift(fixtureFriday, 1),'src-schwab':shift(fixtureFriday, 0),'src-webull':shift(fixtureFriday, 0),
+    spy:700,qqq:600,'src-bench':shift(fixtureFriday, 0),'bench-state':'closed',flows:'[]'};
   assert.notEqual(run(dir,{...carried,gold:50000},['--weekend-carry']).status,0);
   const result = run(dir,carried,['--weekend-carry']); assert.equal(result.status,0,result.stderr);
   assert.equal(readPayload(dir).daily.at(-1).gold,50000);
