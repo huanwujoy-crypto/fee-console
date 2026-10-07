@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
 import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode } from "./fee-cloud-producer.mjs";
+import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce } from "./fee-cloud-producer.mjs";
 import { SourceFetchError } from "./fee-economic-source.mjs";
 
 const D = "2026-09-23";
@@ -431,4 +431,32 @@ test("real validator has an inclusive 72-hour cap; default 36-hour validation st
   assert.deepEqual(validateHealth(health, {now: new Date("2026-10-05T16:00:00.000Z"), maxAgeHours: 72}), []);
   assert.deepEqual(validateHealth(health, {now: new Date("2026-10-05T16:00:00.001Z"), maxAgeHours: 72}), ["health receipt age"]);
   assert.deepEqual(validateHealth(health, {now: new Date("2026-10-05T16:00:00.000Z")}), ["health receipt age"]);
+});
+
+
+test('producer diagnostics expose fixed stages and exception categories only', () => {
+  const hidden = 'account PRIVATE_ACCOUNT amount 987654.32 /private/path https://secret.example/token';
+  for (const [error, category] of [[new TypeError(hidden), 'TYPE'], [new RangeError(hidden), 'RANGE'],
+    [new SyntaxError(hidden), 'SYNTAX'], [new ReferenceError(hidden), 'REFERENCE'], [new Error(hidden), 'UNKNOWN']]) {
+    assert.equal(producerFailureCode(error, 'SOURCE_READ'), `FEE_CLOUD_STAGE_SOURCE_READ_${category}`);
+    assert.equal(producerFailureCode(error, hidden), `FEE_CLOUD_STAGE_UNKNOWN_${category}`);
+  }
+  assert.equal(producerFailureCode(Object.assign(new Error(hidden), {code:'ENOENT'}), 'PREPARE'), 'FEE_CLOUD_STAGE_PREPARE_SYSTEM_ENOENT');
+  assert.equal(producerFailureCode(Object.assign(new Error(hidden), {code:hidden}), 'PREPARE'), 'FEE_CLOUD_STAGE_PREPARE_UNKNOWN');
+  assert.equal(producerFailureCode(new Error('FEE_CLOUD_CASH_BALANCE_STALE'), 'SOURCE_READ'), 'FEE_CLOUD_CASH_BALANCE_STALE');
+  assert.equal(producerFailureCode(new Error('FEE_CLOUD_' + 'A'.repeat(81)), 'SOURCE_READ'), 'FEE_CLOUD_STAGE_SOURCE_READ_UNKNOWN');
+});
+
+test('real producer source exception reports its stage and cleans up without any network', async () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-diagnostic-')); fs.chmodSync(dir,0o700);
+  const cache=path.join(dir,'benchmark.json');fs.writeFileSync(cache,JSON.stringify(benchmarkCache));
+  let cleaned=false, reads=0;
+  try {
+    await assert.rejects(produce({cli:{'benchmark-file':cache,'out-dir':dir},
+      fetchEconomic:async()=>({envelopeVersion:4,cleanup(){cleaned=true;}}),
+      reader:{async readStable(){reads++;throw new TypeError('private account amount URL /path');}}}),
+      {message:'FEE_CLOUD_STAGE_SOURCE_READ_TYPE'});
+    assert.equal(reads,1);assert.equal(cleaned,true);
+    assert.equal(fs.existsSync(path.join(dir,'data.json')),false);
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
