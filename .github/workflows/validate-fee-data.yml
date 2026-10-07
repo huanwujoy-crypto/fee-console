@@ -167,3 +167,14 @@ jobs:
               exit 1
               ;;
           esac
+
+      - name: Run credential-free fee chain preflight
+        shell: bash
+        run: node scripts/fee-offline-preflight.mjs
+
+      - name: Retain allowlisted failure category
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          printf '%s\n' 'FEE_CHAIN_VALIDATE_FAILED' >&2
+          printf '%s\n' 'Fee chain failed closed; inspect the fixed stage logs. No private financial data is recorded.' >> "$GITHUB_STEP_SUMMARY"

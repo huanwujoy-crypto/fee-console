@@ -42,6 +42,10 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PROMOTE_MAIN_DEPLOY_KEY }}
 
+      - name: Run credential-free fee chain preflight
+        shell: bash
+        run: node scripts/fee-offline-preflight.mjs
+
       - name: Fetch Codex daily branches
         shell: bash
         run: git fetch --no-tags --prune origin '+refs/heads/codex/fee-daily-*:refs/remotes/origin/codex/fee-daily-*'
@@ -247,3 +251,18 @@ jobs:
             exit 1
           fi
           git push origin "$CANDIDATE_SHA:refs/heads/main"
+
+      - name: Verify Pages health and encrypted bytes after promotion
+        if: steps.candidate.outputs.sha != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/fee-public-acceptance.mjs "$RUNNER_TEMP/candidate-health.json" "$RUNNER_TEMP/candidate-data.json" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Retain allowlisted failure category
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          printf '%s\n' 'FEE_CHAIN_PROMOTE_FAILED' >&2
+          printf '%s\n' 'Fee chain failed closed; inspect the fixed stage logs. No private financial data is recorded.' >> "$GITHUB_STEP_SUMMARY"

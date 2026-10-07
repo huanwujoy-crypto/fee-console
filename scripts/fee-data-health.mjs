@@ -6,6 +6,7 @@
 // receipt; successful receipts are emitted only after both have been checked.
 
 import crypto from "node:crypto";
+import {validTradeLinksEnvelope} from "./fee-runtime-evidence.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -50,7 +51,9 @@ const nyParts = instant => Object.fromEntries(NY_CLOCK.formatToParts(instant)
 
 export function validateHealth(value, { now = new Date(), maxAgeHours = 36 } = {}) {
   const errors = [];
-  if (!exactKeys(value, EXACT_KEYS)) return ["health receipt shape"];
+  const keys=Object.hasOwn(value||{},"tradeLinkBinding")?[...EXACT_KEYS,"tradeLinkBinding"]:EXACT_KEYS;
+  if (!exactKeys(value, keys)) return ["health receipt shape"];
+  if(Object.hasOwn(value,"tradeLinkBinding")&&!validTradeLinksEnvelope(value.tradeLinkBinding))errors.push("health trade link envelope");
   if (value.schema !== HEALTH_SCHEMA) errors.push("health receipt schema");
   if (typeof value.checkedAt !== "string" || !/(?:Z|[+-]\d{2}:\d{2})$/.test(value.checkedAt)
       || !Number.isFinite(Date.parse(value.checkedAt))) errors.push("health receipt time");

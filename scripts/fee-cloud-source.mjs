@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { destinationTradeLink } from './fee-runtime-evidence.mjs';
 
 // Fixed, GET-only Sharesight source used by the fee-console cloud producer.
 // It deliberately exposes no arbitrary URL, method, portfolio, or date range.
@@ -191,6 +192,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   const trades = rows(tradesPayload, "trades");
   const tradeIds = new Set(trades.map(row => id(row.id)));
   const flows = [];
+  const tradeLinkReceipts = [];
   let movementTotal = 0;
   for (const [cashIdText, payload] of Object.entries(cashTransactions)) {
     const cashId = id(cashIdText), cashAccount = listedCashById.get(cashId);
@@ -215,6 +217,10 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       const matchedControlledWebullPrincipal = isControlledWebullPrincipal({
         account, row: { ...row, description }, movement, targetDate, trades,
       });
+      if (isControlledWebullNetProceeds({account,row:{...row,description},movement,targetDate,trades})) {
+        const tradeId=Number(/Sharesight trade ([1-9]\d*);/.exec(description)[1]);
+        tradeLinkReceipts.push(destinationTradeLink({targetDate,cashRecord:row,trade:trades.find(t=>t.id===tradeId)}));
+      }
       flows.push({
         date: targetDate, acct: account, amount: movement,
         desc: description,
@@ -237,6 +243,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   return {
     account, portfolioId: expected.portfolioId, sourceDate: targetDate, total, cash, other, stock,
     holdings: equity,
+    tradeLinkReceipts:tradeLinkReceipts.sort((a,b)=>a.cashRecordId-b.cashRecordId),
     flows: flows.sort((a, b) => stable(a).localeCompare(stable(b))),
     cashCheck: flows.length ? { current: round2(cash), previous: round2(cash - movementTotal) } : null,
   };
@@ -301,7 +308,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
   const normalized = { targetDate, accounts, splits, sourceDates, styleInput, flows, acctCash, prevAcctCash,
     ...(managementInput ? {managementInput} : {}),
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
-  return { ...normalized, sourceFingerprint: sha256(normalized) };
+  return { ...normalized, sourceFingerprint: sha256(normalized), tradeLinkReceipts:portfolios.flatMap(p=>p.tradeLinkReceipts) };
 }
 
 class FixedHttp {
