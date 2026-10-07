@@ -86,6 +86,47 @@ function isControlledWebullPrincipal({ account, row, movement, targetDate, trade
   return matches.length === 1;
 }
 
+// Strict support for the reviewed net-proceeds format. Text alone is never proof.
+const NET_PROCEEDS_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) SELL net proceeds; NOT external funding\. Order ([A-Z0-9]{16,40}); Sharesight trade ([1-9]\d{0,14}); (\d{4}-\d{2}-\d{2}); gross USD(\d+\.\d{2}) less fee USD(\d+\.\d{2}) = net USD(\d+\.\d{2})\. Fee included, no separate fee debit\.$/;
+const NET_TRADE_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) SELL (\d+(?:\.\d+)?) shares on (\d{4}-\d{2}-\d{2}) at USD(\d+(?:\.\d+)?); order ([A-Z0-9]{16,40})\. Commission USD(\d+(?:\.\d{1,2})?); actual fee USD(\d+\.\d{2}) recorded in trade fees\. Gross USD(\d+\.\d{2}); net USD(\d+\.\d{2})\.$/;
+const exactCents = value => {
+  if (!finite(value) || value < 0 || value > 1e12) return null;
+  const cents = Math.round(value * 100);
+  return Number.isSafeInteger(cents) && Math.abs(value * 100 - cents) < 1e-4 ? cents : null;
+};
+export function isControlledWebullNetProceeds({ account, row, movement, targetDate, trades }) {
+  if (account !== 'webull' || row.cash_account_transaction_type?.name !== 'DEPOSIT'
+      || row.payout_id != null || String(row.date_time || '').slice(0, 10) !== targetDate
+      || !Number.isSafeInteger(row.id) || row.id <= 0
+      || !Number.isSafeInteger(row.cash_account_id) || row.cash_account_id <= 0 || !finite(movement) || movement <= 0 || !Array.isArray(trades)) return false;
+  const cash = NET_PROCEEDS_RE.exec(typeof row.description === 'string' ? row.description : '');
+  if (!cash || cash[4] !== targetDate) return false;
+  const [, ticker, order, tradeId, , grossText, feeText, netText] = cash;
+  const byId = trades.filter(t => String(t.id) === tradeId);
+  const byOrder = trades.filter(t => typeof t.comments === 'string' && t.comments.includes(`; order ${order}.`));
+  if (byId.length !== 1 || byOrder.length !== 1 || byId[0] !== byOrder[0]) return false;
+  const trade = byId[0], proof = NET_TRADE_RE.exec(trade.comments);
+  if (!proof || trade.portfolio_id !== CLOUD_ACCOUNTS.webull.portfolioId
+      || trade.transaction_date !== targetDate || trade.state !== 'confirmed'
+      || trade.description_code !== 'SELL' || trade.instrument?.code !== ticker
+      || !Number.isSafeInteger(trade.holding_id) || trade.holding_id <= 0
+      || !(trade.price_currency_code === 'USD' || (trade.price_currency_code == null && trade.instrument?.currency_code === 'USD'))
+      || trade.brokerage_currency_code !== 'USD'
+      || !finite(trade.price) || trade.price <= 0 || !finite(trade.quantity) || trade.quantity <= 0
+      || !finite(trade.value) || trade.value >= 0
+      || (row.trade_id != null && String(row.trade_id) !== tradeId)
+      || (row.holding_id != null && row.holding_id !== trade.holding_id)) return false;
+  const gross = exactCents(Number(grossText)), fee = exactCents(Number(feeText)), net = exactCents(Number(netText));
+  return gross !== null && fee !== null && net !== null && gross > 0 && net > 0
+    && gross - fee === net && exactCents(movement) === net && exactCents(Math.abs(trade.value)) === net
+    && exactCents(trade.brokerage) === fee && Math.abs(trade.price * trade.quantity * 100 - gross) < 0.5
+    && proof[1] === ticker && proof[3] === targetDate && proof[5] === order
+    && Number(proof[2]) === trade.quantity && Number(proof[4]) === trade.price
+    && exactCents(Number(proof[6])) !== null && Number(proof[6]) <= Number(feeText)
+    && exactCents(Number(proof[7])) === fee && exactCents(Number(proof[8])) === gross
+    && exactCents(Number(proof[9])) === net;
+}
+
 export function selectBenchmark(cache, targetDate) {
   if (!object(cache) || cache.v !== 1 || !object(cache.benchmarks)) fail("BENCHMARK_SCHEMA");
   const selected = {};
@@ -181,7 +222,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         tradeId: row.trade_id == null ? null : id(row.trade_id),
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
-        ...(legacyControlledWebullPrincipal || matchedControlledWebullPrincipal ? { evidence: "internal_trade" } : {}),
+        ...(legacyControlledWebullPrincipal || matchedControlledWebullPrincipal || isControlledWebullNetProceeds({ account, row: { ...row, description }, movement, targetDate, trades }) ? { evidence: "internal_trade" } : {}),
         ...(incomeEvidence.get(row.id) || {}),
       });
     }

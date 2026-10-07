@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
-import { latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { isControlledWebullNetProceeds, latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce } from "./fee-cloud-producer.mjs";
 import { SourceFetchError } from "./fee-economic-source.mjs";
 
@@ -459,4 +459,41 @@ test('real producer source exception reports its stage and cleans up without any
     assert.equal(reads,1);assert.equal(cleaned,true);
     assert.equal(fs.existsSync(path.join(dir,'data.json')),false);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+
+function netProceedsFixture() {
+  const order='ABCDEF0123456789ABCD';
+  const row={id:77,amount:99.75,balance:400,cash_account_id:90250,date_time:`${D}T00:00:00.000Z`,
+    cash_account_transaction_type:{name:'DEPOSIT'},trade_id:null,holding_id:null,payout_id:null,foreign_identifier:null,
+    description:`Webull GOOG SELL net proceeds; NOT external funding. Order ${order}; Sharesight trade 222; ${D}; gross USD100.00 less fee USD0.25 = net USD99.75. Fee included, no separate fee debit.`};
+  const trade={id:222,portfolio_id:1350094,holding_id:4,transaction_date:D,state:'confirmed',description_code:'SELL',
+    instrument:{code:'GOOG',currency_code:'USD'},quantity:10,price:10,price_currency_code:null,brokerage:0.25,brokerage_currency_code:'USD',value:-99.75,
+    comments:`Webull GOOG SELL 10 shares on ${D} at USD10.00; order ${order}. Commission USD0; actual fee USD0.25 recorded in trade fees. Gross USD100.00; net USD99.75.`};
+  return {account:'webull',row,movement:row.amount,targetDate:D,trades:[trade]};
+}
+
+test('strict net-proceeds evidence maps a unique confirmed fee-inclusive sell to internal trade', () => {
+  const f=netProceedsFixture();assert.equal(isControlledWebullNetProceeds(f),true);
+  const source=raw();source.webull.cashTransactions[90250].cash_account_transactions=[f.row];source.webull.trades.trades=f.trades;
+  const result=normalizeRead(source,D,selectBenchmark(benchmarkCache,D));
+  assert.equal(result.flows.find(r=>r.acct==='webull').evidence,'internal_trade');
+  f.trades[0].price_currency_code='USD';assert.equal(isControlledWebullNetProceeds(f),true);
+});
+
+test('net-proceeds mapping rejects mismatched identity, money, currency, links and duplicates', () => {
+  const changes=[f=>f.account='schwab',f=>f.row.cash_account_transaction_type.name='WITHDRAWAL',
+    f=>f.row.payout_id=7,f=>f.movement=-99.75,f=>f.movement=99.76,f=>f.targetDate='2026-09-22',
+    f=>f.row.description=f.row.description.replace('GOOG','OTHER'),f=>f.row.description=f.row.description.replace('trade 222','trade 223'),
+    f=>f.row.description=f.row.description.replace('100.00','100.01'),f=>f.row.description=f.row.description.replace('fee USD0.25','fee USD0.26'),
+    f=>f.row.description='bare deposit',f=>f.trades[0].portfolio_id=936249,f=>f.trades[0].state='pending',
+    f=>f.trades[0].description_code='BUY',f=>f.trades[0].transaction_date='2026-09-22',
+    f=>f.trades[0].instrument.code='OTHER',f=>f.trades[0].instrument.currency_code='HKD',
+    f=>f.trades[0].price_currency_code='HKD',f=>f.trades[0].brokerage_currency_code='HKD',
+    f=>f.trades[0].quantity=11,f=>f.trades[0].price=11,f=>f.trades[0].brokerage=0.24,
+    f=>f.trades[0].value=-100,f=>f.trades[0].value=99.75,f=>f.row.trade_id=223,f=>f.row.holding_id=5,
+    f=>f.trades[0].comments=f.trades[0].comments.replace('ABCDEF0123456789ABCD','ABCDEF0123456789ABCE'),
+    f=>f.trades[0].comments=f.trades[0].comments.replace('Commission USD0','Commission USD1'),
+    f=>f.trades.push({...f.trades[0]}),f=>f.trades.push({...f.trades[0],id:223})];
+  for(const change of changes){const f=netProceedsFixture();change(f);assert.equal(isControlledWebullNetProceeds(f),false,change.toString());}
 });
