@@ -53,15 +53,22 @@ GitHub run `37730194423` 在 05:00:12 UTC 以 `workflow_dispatch`
 
 此修复仅补足失败原因的私有交付：成功抢到当天启动标记后，如果生成失败，
 在既有 create-only `receipt.json` 写入无金融数值的 `status=failed` 回执。
-仅允许 `IB_REAUTHORIZE_REQUIRED`，其它错误归为 `DAILY_REPORT_FAILED`，
-不转发原始错误文字。交付端严格检查日期、执行名称、完整字段和固定错误码，
+旧 v1 回执仅允许 `IB_REAUTHORIZE_REQUIRED` 和 `DAILY_REPORT_FAILED`；前者仍是旧客户端的歧义码，不证明必须重新授权。
+新 v2 仅附带重新构造的固定 `diagnostic={phase,httpStatus,oauthError}`，严格验证完整字段及错误码相容性。
+refresh 临时故障、invalid_grant、client/scope 拒绝及其它 HTTP 失败分别为
+`IB_REFRESH_TRANSIENT_FAILED`、`IB_REFRESH_INVALID_GRANT`、`IB_REFRESH_CLIENT_REJECTED`、
+`IB_REFRESH_SCOPE_REJECTED`、`IB_REFRESH_HTTP_FAILED`；MCP 401/403 分别为
+`IB_MCP_ACCESS_TOKEN_REJECTED`、`IB_MCP_ACCESS_FORBIDDEN`，其它 MCP HTTP 失败为 `IB_MCP_HTTP_FAILED`。
+未知错误或畸形诊断写入端归为 `DAILY_REPORT_FAILED`，读取端拒绝非法回执。
+Daily/delivery CLI 只输出固定安全字段，不转发描述、原始响应或凭据。分类不产生重试、新授权或扩大 scope 指令；
+invalid_grant 只说明所呈 grant 被拒绝，不证明唯一恢复办法。本补丁不能追补 10 月 8 日未保存的历史 HTTP 细节。交付端严格检查日期、执行名称、完整字段和固定错误码，
 在执行失败时最多补读一次回执；旧镜像没有失败回执时仍返回原泛化失败码。
 失败回执不是 ready 成品，不读取 HTML、不提交候选、不自动再次取数。
 未抢到启动标记的执行不得写失败回执；诊断写入失败不得覆盖原失败原因。
 
 待完成：精确 head 的 OWNER 审批、必需检查、受保护合并及单独批准的固定
 Daily 镜像构建/部署。合并代码不会自动更新现有 Cloud Run 镜像。
-授权恢复须由业主在 IBKR 官方 OAuth 页面完成原单账户 `mcp.read` 授权，
+若后续证据与业主决定要求重新授权，须由业主在 IBKR 官方 OAuth 页面完成原单账户 `mcp.read` 授权，
 凭据只进入既有私有存储；代理不得记录授权码、token 或扩大 scope。
 恢复可能替代当前 IBKR 客户端连接，须先说明该影响。不能删除或覆盖当天
 `start.json`，不能重触发当天生成来测试；重新授权后默认在下一 eligible

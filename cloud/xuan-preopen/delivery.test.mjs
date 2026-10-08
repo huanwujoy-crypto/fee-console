@@ -92,3 +92,26 @@ test('permission failure never masquerades as a missing delivery', async () => {
   try {await assert.rejects(deliveryTransport('test-identity')('https://storage.googleapis.com/', {missing: true}), /HTTP_403/);}
   finally {global.fetch = oldFetch;}
 });
+
+test('v2 failure diagnostics reject inconsistent semantics and every untrusted field', async () => {
+  const base={...failureReceipt(),schemaVersion:2,errorCode:'IB_REFRESH_INVALID_GRANT',
+    diagnostic:{phase:'refresh',httpStatus:400,oauthError:'invalid_grant'}};
+  for (const patch of [{diagnostic:{phase:'refresh',httpStatus:401,oauthError:'invalid_grant'}},
+    {diagnostic:{phase:'mcp',httpStatus:400,oauthError:'invalid_grant'}},
+    {diagnostic:{phase:'refresh',httpStatus:400,oauthError:'CANARY'}},
+    {diagnostic:{...base.diagnostic,raw:'CANARY'}}, {diagnostic:null}, {diagnostic:[]},
+    {errorCode:'IB_REAUTHORIZE_REQUIRED'}, {errorCode:'CANARY'}, {raw:'CANARY'},
+    {schemaVersion:1}, {dataDate:'2026-09-30'}, {sourceDate:'2026-09-29'}, {execution:'other-job'}]) {
+    let reads=0;
+    await assert.rejects(collectDelivery({now,request:async()=>{reads++;return JSON.stringify({...base,...patch});}}),
+      /^Error: PREOPEN_DELIVERY_RECEIPT$/); assert.equal(reads,1);
+  }
+});
+
+import {deliveryFailureSummary} from './delivery.mjs';
+test('delivery CLI drops arbitrary caller error codes and unsafe diagnostic properties', () => {
+  for (const error of [new Error('PREOPEN_DELIVERY_PRIVATE_CANARY'),new Error('PRIVATE_CANARY'),
+    Object.assign(new Error('PREOPEN_DELIVERY_IB_REFRESH_INVALID_GRANT'),{diagnostic:{phase:'refresh',httpStatus:400,oauthError:'invalid_grant',raw:'CANARY'}}),
+    {get message(){throw new Error('CANARY');}}])
+    assert.deepEqual(deliveryFailureSummary(error),{status:'failed',code:'PREOPEN_DELIVERY_FAILED',publication:'none'});
+});
