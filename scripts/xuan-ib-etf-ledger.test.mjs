@@ -240,6 +240,41 @@ test('public state is value-free and private field injection is rejected', () =>
   }), /at least 32/);
 });
 
+test('canonical public checkpoints allow amount-like hash text while rejecting private values and changed commitments', () => {
+  const pending = createInitialPrivateEtfLedger();
+  const first = projectPublicEtfLedgerCheckpoint(pending, { commitmentSecret: secret, now: NOW });
+  const established = appendEstablishedBaseline(pending, evidence(), { now: NOW });
+  const checkpoint = projectPublicEtfLedgerCheckpoint(established, {
+    commitmentSecret: secret, previousCheckpoint: first, previousPrivateLedger: pending, now: NOW,
+  });
+  const collisionHash = `${'a'.repeat(30)}1250${'b'.repeat(30)}`;
+  for (const field of ['checkpointHash', 'commitmentKeyId', 'privateHeadCommitment',
+    'previousCheckpointHash', 'previousPrivateHeadCommitment']) {
+    const changed = { ...checkpoint, [field]: collisionHash };
+    assert.deepEqual(parseCanonicalPublicEtfLedgerCheckpoint(serializeCanonicalEtfLedger(changed)), changed);
+    assert.throws(() => verifyPublicEtfLedgerCheckpoint(changed, {
+      commitmentSecret: secret, privateLedger: established,
+      previousCheckpoint: first, previousPrivateLedger: pending, now: NOW,
+    }), /HMAC/);
+    for (const value of [1250.50, '1250.50']) {
+      assert.throws(() => parseCanonicalPublicEtfLedgerCheckpoint(
+        serializeCanonicalEtfLedger({ ...checkpoint, [field]: value }),
+      ), /invalid/);
+    }
+  }
+  for (const [field, value] of [['valueUsd', 1250.50], ['records', []],
+    ['payload', { valueUsd: 1250.50 }], ['holdings', []]]) {
+    assert.throws(() => parseCanonicalPublicEtfLedgerCheckpoint(
+      serializeCanonicalEtfLedger({ ...checkpoint, [field]: value }),
+    ), /private field/);
+  }
+  for (const [field, value] of [['entryCount', 1250], ['ledgerId', '1250.50']]) {
+    assert.throws(() => parseCanonicalPublicEtfLedgerCheckpoint(
+      serializeCanonicalEtfLedger({ ...checkpoint, [field]: value }),
+    ), /invalid/);
+  }
+});
+
 test('committed public genesis is canonical, pending and contains only checkpoint fields', () => {
   const bytes = fs.readFileSync(publicGenesisPath, 'utf8');
   const checkpoint = parseCanonicalPublicEtfLedgerCheckpoint(bytes);
@@ -396,7 +431,10 @@ test('bootstrap CLI establishes only from canonical synthetic evidence and verif
   assert.equal(checkpoint.status, 0, checkpoint.stderr);
   assert.equal(checkpoint.stdout, 'ok checkpoint baseline=established entries=2\n');
   assertPrivateFile(establishedCheckpoint);
-  assert.doesNotMatch(fs.readFileSync(establishedCheckpoint, 'utf8'), /1250|records|payload|holdings/i);
+  // Enforce the public field allowlist and types; valid HMAC hex can contain 1250.
+  const publicCheckpoint = parseCanonicalPublicEtfLedgerCheckpoint(fs.readFileSync(establishedCheckpoint, 'utf8'));
+  assert.equal(publicCheckpoint.baselineStatus, 'established');
+  assert.equal(publicCheckpoint.entryCount, 2);
 
   const establishedReady = runCli([
     'readiness', '--private-root', root, '--ledger', establishedLedger,
