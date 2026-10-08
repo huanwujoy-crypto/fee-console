@@ -24,8 +24,18 @@ financial verification, publication, or phone acceptance.
 - Require returned ID, owner `huanwujoy-crypto`, `public:false`, complete
   `fee-console-db.json`, explicit non-truncation, matching size and encrypted
   v3/v4 envelope. Other files are ignored; duplicates in envelope keys fail.
-- Two consecutive reads must have identical revision, ETag and exact source
-  bytes. An old last-modified date is acceptable when freshly read unchanged;
+- Two consecutive reads must have identical revision strings and exact source
+  bytes. ETags must pass the existing single-tag format check and either match
+  exactly or differ solely by one optional, case-sensitive `W/` weak marker.
+  The quoted opaque tag must remain character-for-character identical. This
+  exception applies only while both the revision and the full UTF-8 encrypted
+  envelope bytes are identical; it never permits a changed opaque tag, missing
+  or malformed ETag, changed revision, or changed envelope formatting/payload.
+  Content equality is a direct `Buffer.equals()` check, not a hash, parsed JSON,
+  decoded ciphertext or decrypted-value comparison. This is bounded marker
+  compatibility, not a claim that a weak ETag is a strong validator; see
+  [RFC 9110 section 8.8.3.2](https://www.rfc-editor.org/rfc/rfc9110.html#section-8.8.3.2).
+  An old last-modified date is acceptable when freshly read unchanged;
   a previous attachment, local file date or cached hash is not freshness proof.
 - Each double-read phase has at most four requests / 40 seconds. Retry only a
   network error or timeout once per read; reject every non-200 response, including
@@ -51,7 +61,8 @@ helper on that run's trusted main. Importing alone does not access the network.
    formula or silently change economic inputs to pass validation.
 4. Immediately before the existing protected publication, await
    `snapshot.checkCurrent()`. It performs two **new** remote reads, requires them
-   to match the frozen original version/ETag/bytes, and rechecks local ciphertext.
+   to match each other and the frozen original revision/bytes with the same
+   bounded ETag weak-marker rule above, and rechecks local ciphertext.
    A changed or unavailable source stops publication; the old snapshot is not
    overwritten or treated as current.
 5. Always use `finally` to call `snapshot.cleanup()` and remove the separately

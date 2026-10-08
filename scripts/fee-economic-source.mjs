@@ -126,7 +126,10 @@ async function readWithRetry(id, token, options) {
   }
 }
 function same(a, b) {
-  return a.revision === b.revision && a.etag === b.etag && a.bytes.equals(b.bytes);
+  // inspect() already requires valid single ETags. Only the optional weak
+  // marker may differ, and only with identical revision and full source bytes.
+  return a.revision === b.revision && a.bytes.equals(b.bytes)
+    && (a.etag === b.etag || a.etag === `W/${b.etag}` || b.etag === `W/${a.etag}`);
 }
 async function stableRead(id, token, options) {
   const first = await readWithRetry(id, token, options), second = await readWithRetry(id, token, options);
