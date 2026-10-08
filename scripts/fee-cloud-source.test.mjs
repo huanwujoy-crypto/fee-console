@@ -143,16 +143,31 @@ test('workflow gates all credential, source and candidate steps before authentic
   assert.match(steps.at(-1),/if:.*always\(\)/);
 });
 
-test('real preflight CLI performs only public main GETs and never reads financial credentials or creates a candidate', () => {
+test('real preflight CLI performs only public main GETs and never reads financial credentials or creates a candidate', async t => {
+  const cases = [
+    ['before New York close', '2026-10-08T20:14:59Z', '2026-10-07'],
+    ['at New York close', '2026-10-08T20:15:00Z', '2026-10-08'],
+    ['after New York close', '2026-10-08T22:40:00Z', '2026-10-08'],
+    ['before UTC midnight', '2026-10-08T23:59:59Z', '2026-10-08'],
+    ['after UTC midnight', '2026-10-09T00:00:00Z', '2026-10-08'],
+    ['stale cache after close stays blocked', '2026-10-08T22:40:00Z', '2026-10-08', '2026-10-07'],
+    ['future cache before close stays blocked', '2026-10-08T20:14:59Z', '2026-10-07', '2026-10-08'],
+  ];
+  for (const [name, now, date, cacheDate = date] of cases) await t.test(name, () => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-published-cli-'));fs.chmodSync(dir,0o700);
   try {
-    const date=new Date(Date.now()-86400000).toISOString().slice(0,10),state=publicationFixture();
-    state.health.checkedAt=new Date().toISOString();state.health.targetDate=date;
+    const state=publicationFixture();
+    state.health.checkedAt=now;state.health.targetDate=date;
     state.health.sourceDates={schwab:date,webull:date,benchmark:date};
-    const cache={v:1,benchmarks:{spy:{series:[{d:date,p:100}]},qqq:{series:[{d:date,p:100}]}}};
+    const cache={v:1,benchmarks:{spy:{series:[{d:cacheDate,p:100}]},qqq:{series:[{d:cacheDate,p:100}]}}};
     const benchmarkFile=path.join(dir,'benchmark.json'),preload=path.join(dir,'public-only.mjs');
     fs.writeFileSync(benchmarkFile,JSON.stringify(cache));
-    fs.writeFileSync(preload,`const state=${JSON.stringify({mainSha:state.mainSha,health:state.health,data:state.data.toString('base64')})};
+    fs.writeFileSync(preload,`const NativeDate=globalThis.Date,fixedNow=NativeDate.parse(${JSON.stringify(now)});
+globalThis.Date=class extends NativeDate {
+ constructor(...args){super(...(args.length?args:[fixedNow]));}
+ static now(){return fixedNow;}
+};
+const state=${JSON.stringify({mainSha:state.mainSha,health:state.health,data:state.data.toString('base64')})};
 globalThis.fetch=async(url,init)=>{
  if(init.method||init.body||!url.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/'))throw new Error('non-public request');
  let value;
@@ -166,10 +181,18 @@ globalThis.fetch=async(url,init)=>{
       '--mode=published-preflight',`--benchmark-file=${benchmarkFile}`],{encoding:'utf8',timeout:10_000,
       env:{...process.env,FEE_DATA_KEY:'unusable-synthetic',FEE_ECON_GIST_ID:'unusable-synthetic',
         FEE_CLOUD_SHARESIGHT_CLIENT_ID:'unusable-synthetic',FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:'unusable-synthetic'}});
-    assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).outcome,'already-published');
+    if (cacheDate === date) {
+      assert.equal(result.status,0,result.stderr);
+      const decision=JSON.parse(result.stdout);
+      assert.equal(decision.outcome,'already-published');assert.equal(decision.targetDate,date);
+    } else {
+      assert.equal(result.status,1);assert.equal(result.stderr.trim(),'FEE_CLOUD_BENCHMARK_PENDING');
+      assert.equal(result.stdout,'');
+    }
     assert.equal(fs.existsSync(path.join(dir,'data.json')),false);assert.equal(fs.existsSync(path.join(dir,'fee-data-health.json')),false);
     assert.deepEqual(fs.readdirSync(dir).sort(),['benchmark.json','public-only.mjs']);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+  });
 });
 
 const portfolio = (account, id, cashId, holdings, transactions = []) => ({
@@ -207,6 +230,7 @@ test('target is a completed New York weekday, independent of stale/future cache 
   const cases = [
     ['2026-10-08T14:00:00Z','2026-10-07'], ['2026-10-08T20:14:59Z','2026-10-07'],
     ['2026-10-08T20:15:00Z','2026-10-08'], ['2026-10-12T14:00:00Z','2026-10-09'],
+    ['2026-10-08T23:59:59Z','2026-10-08'], ['2026-10-09T00:00:00Z','2026-10-08'],
     ['2026-11-02T21:14:59Z','2026-10-30'], ['2026-11-02T21:15:00Z','2026-11-02'],
     ['2026-03-09T20:14:59Z','2026-03-06'], ['2026-03-09T20:15:00Z','2026-03-09'],
     ['2027-01-01T14:00:00Z','2026-12-31'],

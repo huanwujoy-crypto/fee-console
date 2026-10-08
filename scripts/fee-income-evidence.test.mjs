@@ -13,7 +13,7 @@ import {loadIncomeDateEvidence} from './fee-cloud-producer.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt,semanticHash} from './fee-receipt-core.mjs';
 import {createFundInvestorCore} from './fund-investor-core.mjs';
 import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
-import { classifyFlow, reconcileFlows, flowId, nyDate } from './daily-core.mjs';
+import { classifyFlow, reconcileFlows, flowId } from './daily-core.mjs';
 
 const D='2026-10-01',KEY='webull.dividend:12345678:SYNTH:2026-09-30:900';
 const fixture=()=>({account:'webull',portfolioId:1350094,targetDate:D,dateEvidence:{},
@@ -437,11 +437,17 @@ test('receipt and actual mobile consumer agree; net NAV appears once with no pri
 
 test('actual producer, writer and reporter bootstrap then reload the encrypted audit with byte-identical no-op',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'income-producer-test-'));fs.chmodSync(dir,0o700);
-  const repo=path.join(dir,'repo'),date=shift(nyDate(new Date()),-1),prior=shift(date,-1),key=crypto.randomBytes(32);
+  const repo=path.join(dir,'repo'),date='2026-09-23',prior=shift(date,-1),key=crypto.randomBytes(32);
+  const fixedNow='2026-09-24T14:00:00Z',clock=path.join(dir,'clock.mjs');
   const payload={updatedAt:prior,daily:[{d:prior,schwab:1000,webull:1000,cash:800,stock:0,other:1200,spy:100,qqq:100,bd:prior,bstate:'session'}],
     flowsAuto:[],flowsUnresolved:[],status:{asOf:prior,provisional:false,calibrated:true,splitDelta:0,unresolvedCount:0,notes:[]}};
   const seal=(data,v=3)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(data)),c.final(),c.getAuthTag()]).toString('base64')});};
   try {
+    fs.writeFileSync(clock,`const NativeDate=globalThis.Date,fixedNow=NativeDate.parse(${JSON.stringify(fixedNow)});
+globalThis.Date=class extends NativeDate {
+ constructor(...args){super(...(args.length?args:[fixedNow]));}
+ static now(){return fixedNow;}
+};`,{mode:0o600});
     fs.mkdirSync(repo,{mode:0o700});fs.cpSync(path.join(ROOT,'scripts'),path.join(repo,'scripts'),{recursive:true});
     fs.mkdirSync(path.join(repo,'claude'));fs.copyFileSync(path.join(ROOT,'claude/fee-style-mapping.json'),path.join(repo,'claude/fee-style-mapping.json'));
     fs.writeFileSync(path.join(repo,'data.json'),seal(payload),{mode:0o600});
@@ -465,7 +471,7 @@ test('actual producer, writer and reporter bootstrap then reload the encrypted a
       `const second=await produce({...options,cli:{'target-date':date,'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out2)}}});\n`+
       `const b=Buffer.from(JSON.parse(bytes).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',Buffer.from(process.env.FEE_DATA_KEY,'base64url'),b.subarray(0,12));d.setAuthTag(b.subarray(-16));const p=JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));\n`+
       `console.log(JSON.stringify({first:first.outcome,second:second.outcome,rejected,same:bytes.equals(fs.readFileSync(second.dataFile)),prior:p.daily[0],audits:p.daily[1].incomeDateAudits.length,auto:p.flowsAuto.length,unresolved:p.flowsUnresolved.length,pnl:p.feeCalculationReceipt.totals.grossPnlCents,verified:p.daily[1].incomeDateAudits[0].proof.verified}));\n`,{mode:0o600});
-    const result=spawnSync(process.execPath,[runner],{encoding:'utf8',timeout:120000,env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',
+    const result=spawnSync(process.execPath,[runner],{encoding:'utf8',timeout:120000,env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',NODE_OPTIONS:`--import=${JSON.stringify(clock)}`,
       FEE_DATA_KEY:key.toString('base64url'),FEE_CLOUD_SHARESIGHT_CLIENT_ID:'synthetic',FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:'synthetic'}});
     assert.equal(result.status,0,result.stderr);const r=JSON.parse(result.stdout);
     assert.equal(r.first,'updated');assert.equal(r.second,'no-op');assert.equal(r.same,true);assert.deepEqual(r.prior,payload.daily[0]);

@@ -15,6 +15,8 @@ from network import SourceError
 class WeeklyJobTests(unittest.TestCase):
     def setUp(self):
         self.events=[];self.fail_archive=None
+        fixed_now=dt.datetime(2026,10,8,22,40,tzinfo=dt.timezone.utc)
+        fixed_day=fixed_now.date().isoformat()
         self.bucket=MagicMock();self.bucket.list_blobs.return_value=[]
         def blob(name):
             b=MagicMock()
@@ -32,9 +34,9 @@ class WeeklyJobTests(unittest.TestCase):
                        'IB_FLEX_TOKEN':'SYNTHETIC_TOKEN','IB_ACCOUNT_SHA256':'SYNTHETIC_BINDING',
                        'GATEWAY_READ_TOKEN':'SYNTHETIC_GATEWAY'}),
                       patch('weekly_job.fetch',return_value=b'SYNTHETIC_XML'),
-                      patch('weekly_job.normalize',return_value={'coverage':{'to':dt.date.today().isoformat(),
+                      patch('weekly_job.normalize',return_value={'coverage':{'to':fixed_day,
                             'unresolvedDates':[]}}),
-                      patch('weekly_job.fetch_quotes',return_value=({}, {}, dt.date.today().isoformat())),
+                      patch('weekly_job.fetch_quotes',return_value=({}, {}, fixed_day)),
                       patch('weekly_job.calendar',return_value=[]),
                       patch('weekly_job.get',side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]
                             +[{'mode':'read_only'}]*3),
@@ -42,8 +44,10 @@ class WeeklyJobTests(unittest.TestCase):
                             stdout=json.dumps({'html':'<!doctype html><p>SYNTHETIC</p>','receipt':{'complete':True}}),
                             stderr='DO_NOT_LOG')),
                       patch('weekly_job.publish_latest',side_effect=lambda *a,**k:self.publish('private_latest')),
-                      patch('weekly_job.publish_public',side_effect=lambda *a,**k:self.publish('public_latest'))]
+                      patch('weekly_job.publish_public',side_effect=lambda *a,**k:self.publish('public_latest')),
+                      patch('weekly_job.dt.datetime',wraps=dt.datetime)]
         self.mocks=[p.start() for p in self.patches]
+        self.mocks[-1].now.return_value=fixed_now
         for p in self.patches:self.addCleanup(p.stop)
 
     def publish(self,name):
