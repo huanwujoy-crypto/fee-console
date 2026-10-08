@@ -4,7 +4,7 @@
 // controller. Decoding is not proof that the response came from a connector.
 import { canonicalJson, fingerprint } from './xuan-ib-run-manifest.mjs';
 import { parseDecisionJson } from './xuan-ib-decision-menu.mjs';
-import { unwrapSource } from './xuan-ib-source-adapter.mjs';
+import { unwrapSource, checkAccountIds } from './xuan-ib-source-adapter.mjs';
 import { CAPTURE_SOURCE_KEYS } from './xuan-ib-source-capture.mjs';
 
 export const MAX_HOOK_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -73,7 +73,7 @@ export function decodeHookResponse(toolResponse, { sourceKey } = {}) {
   if (Object.hasOwn(raw, 'content') || Object.hasOwn(raw, 'structuredContent')
     || Object.hasOwn(raw, 'tool_response')) fail('UNSUPPORTED_RESPONSE_WRAPPER');
   size(raw, 'RAW_RESPONSE_TOO_LARGE');
-  try { unwrapSource(sourceKey.startsWith('ib.') ? sourceKey.slice(3) : 'sharesight', raw); }
+  try { if(sourceKey.startsWith('ib.'))checkAccountIds(raw); unwrapSource(sourceKey.startsWith('ib.') ? sourceKey.slice(3) : 'sharesight', raw); }
   catch { fail('UNSUPPORTED_NATIVE_SOURCE'); }
   if (sourceKey.startsWith('sharesight.') && raw.result.portfolio.id !== Number(sourceKey.slice('sharesight.'.length))) fail('SOURCE_PORTFOLIO_MISMATCH');
   return { raw, transportFingerprint: fingerprint(toolResponse), rawFingerprint: fingerprint(raw), wrapper };

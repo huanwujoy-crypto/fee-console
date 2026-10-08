@@ -1,3 +1,4 @@
+import {bindPublicationEvidence,sourceHash} from '../../scripts/xuan-ib-night-action-evidence.mjs';
 // A private report acceptance job: no GitHub mutation or schedule activation.
 import crypto from 'node:crypto';
 import path from 'node:path';
@@ -78,6 +79,7 @@ export async function runPrivateReport({sourceDate, io, now = Date.now, loadCont
   const runId = hash(crypto.randomUUID());
   const association = createAssociationReceipt(context.association, {now: now(), edition: 'am', previousSourceSha: context.previousSourceSha, runId});
   const reserve = currentReserve(context.reserveLedger, date);
+  const captureStarted=now();
   const [ib, sharesight] = await Promise.all([captureIb(io.ibStore), readSharesight(sourceDate, token, {now})]);
   const required = ['ib.accountSummary', 'ib.positions', 'ib.orders'];
   if (ib?.status !== 'captured' || ib.sources?.length !== 3 || required.some(key => ib.sources.filter(s => s.sourceKey === key).length !== 1)
@@ -87,25 +89,26 @@ export async function runPrivateReport({sourceDate, io, now = Date.now, loadCont
   const raw = key => sources.find(source => source.sourceKey === key).raw;
   const completed = now();
   if (dateHkt(completed) !== date) throw new Error('REPORT_CROSSED_HKT_DATE');
-  const model = buildNightActionModel({dataDate: date, expectedSourceDate: sourceDate,
+  const report = buildNightActionModel({dataDate: date, expectedSourceDate: sourceDate,
     asOfHkt: `${date} ${timeHkt(started)}–${timeHkt(completed)} HKT · 数据至 ${sourceDate}`,
     ordersAsOfHkt: `${date} ${timeHkt(completed)} HKT`, ibAccountSummary: raw('ib.accountSummary'), ibPositions: raw('ib.positions'),
     ibOrders: raw('ib.orders'), ibGroupedPerformance: raw('sharesight.ibGroupedPerformance'), noahPerformance: raw('sharesight.noahPerformance'),
     reserve, previousHtml: context.previousHtml});
+  const model=bindPublicationEvidence(report,{sources,startedAt:new Date(captureStarted).toISOString(),completedAt:new Date(completed).toISOString(),sourceDate,association,associationExpiresAt:context.association.policy.expiresAt,previousSourceSha:context.previousSourceSha});
   const html = renderNightActionReport(model);
-  validateNightActionHtml(html, date);
   const current = await loadContext({now});
   validateAssociationReceipt(association, current.association, {now: now(), edition: 'am', previousSourceSha: context.previousSourceSha, runId});
   if (current.reserveHash !== context.reserveHash || current.previousSourceSha !== context.previousSourceSha) throw new Error('REPORT_BASE_CHANGED');
+  validateNightActionHtml(html,date,{snapshot:current.association,previousSourceSha:current.previousSourceSha,now:now(),requireBound:true});
   const prefix = `report-check/${new Date(started).toISOString()}-${crypto.randomUUID()}/`, evidence = [];
   for (const source of sources) {
     const object = prefix + source.sourceKey + '.json';
     evidence.push({sourceKey: source.sourceKey, startedAt: source.startedAt, completedAt: source.completedAt,
-      privateObject: object, ...await io.savePrivate(object, source)});
+      privateObject: object, rawHash:sourceHash(source.raw), ...await io.savePrivate(object, source)});
   }
   const artifact = {privateObject: prefix + 'report.html', ...await io.savePrivate(prefix + 'report.html', html)};
   const receipt = {schemaVersion: 1, status: model.status, mode: 'private_report_check', dataDate: date, sourceDate,
-    startedAt: new Date(started).toISOString(), completedAt: new Date(now()).toISOString(), association, sourceCount: sources.length,
+    startedAt: new Date(captureStarted).toISOString(), completedAt: new Date(completed).toISOString(), association, evidence:model.evidence, sourceCount: sources.length,
     sources: evidence, artifact, publication: 'none', scheduler: 'none'};
   await io.savePrivate(prefix + 'receipt.json', receipt);
   // Caller may only log this receipt, not the raw sources/model/HTML.

@@ -35,8 +35,12 @@ export async function publishPrepared({html, receipt, request = githubRequest, l
   const required = intraday?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades']:limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
   if (required.some(key => receipt.sources.filter(s => s.sourceKey === key && HASH.test(s.sha256 || '')).length !== 1)) fail('SOURCES');
   if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
-  if(!limited)validateNightActionHtml(html, dataDate);
-  const model = extractNightActionModel(html);
+  const bound = extractNightActionModel(html);
+  const model = limited?bound:bound.report;
+  if(!limited&&(bound.schemaVersion!==10||JSON.stringify(bound.evidence)!==JSON.stringify(receipt.evidence)
+    ||bound.evidence.captureStartedAt!==receipt.startedAt||bound.evidence.captureCompletedAt!==receipt.completedAt
+    ||bound.evidence.sourceDate!==receipt.sourceDate||JSON.stringify(bound.evidence.association)!==JSON.stringify(receipt.association)
+    ||bound.evidence.sources.some(s=>receipt.sources.find(r=>r.sourceKey===s.sourceKey)?.rawHash!==s.rawHash)))fail('MODEL_EVIDENCE');
   if(limited){if(model.schemaVersion!==(intraday?8:7)||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
   else if (model.schemaVersion !== 5 || model.status !== 'ready' || !model.asOfHkt.endsWith(`数据至 ${receipt.sourceDate}`)) fail('MODEL');
   const verifyContext = async () => {
@@ -44,7 +48,8 @@ export async function publishPrepared({html, receipt, request = githubRequest, l
     validateAssociationReceipt(receipt.association, context.association, {now: now(), edition: 'am',
       previousSourceSha: context.previousSourceSha, runId: receipt.association?.runId});
     if(limited)validateNightActionHtml(html,dataDate,{snapshot:context.association,previousSourceSha:context.previousSourceSha,now:now()});
-    else if (model.cash.reserve !== currentReserve(context.reserveLedger, dataDate)) fail('RESERVE_CHANGED');
+    else {validateNightActionHtml(html,dataDate,{snapshot:context.association,previousSourceSha:context.previousSourceSha,now:now(),requireBound:true});}
+    if(!limited && model.cash.reserve !== currentReserve(context.reserveLedger, dataDate)) fail('RESERVE_CHANGED');
     return context;
   };
   const context = await verifyContext(), baseSha = context.association.policyCommit;

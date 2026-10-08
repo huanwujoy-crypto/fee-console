@@ -30,3 +30,11 @@ test('independent venue holidays and half days do not become group closures', ()
   }
   for (const date of ['2026-07-03','2026-09-07']) assert.equal(marketOpen(date,'NASDAQ'),false);
 });
+
+test('cloud and final-guard calendar APIs share one unchanged reviewed authority',async()=>{
+  const cloud=await import('./calendar.mjs'),shared=await import('../../scripts/xuan-ib-preopen-calendar.mjs');
+  for(const key of ['marketOpen','planPreopen','hktDate','calendarSources'])assert.equal(cloud[key],shared[key]);
+  const {readFileSync}=await import('node:fs'),{createHash}=await import('node:crypto');
+  // Exact original b54ff48 calendar bytes, moved without changing tables or logic.
+  assert.equal(createHash('sha256').update(readFileSync(new URL('../../scripts/xuan-ib-preopen-calendar.mjs',import.meta.url))).digest('hex'),'be7c9e4e1baa41a5a6a4deb4e593976154514e07e88d0af51e80e34a41c33ab7');
+});

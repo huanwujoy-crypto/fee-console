@@ -1,3 +1,4 @@
+import {bindPublicationEvidence} from '../../scripts/xuan-ib-night-action-evidence.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -19,10 +20,12 @@ function fixture() {
       orderReserve: 0, cashLike: {total: 0, items: []}, totalCapacity: 800},
     allocation: {status: 'ready', total: 1000, projectedTotal: 1000, categories: ['美国底仓','美国科技','非美发达','新兴市场'].map(label =>
       ({label, marketValue: 250, projectedMarketValue: 250, currentPct: 25, projectedPct: 25, targetPct: 25}))}, notes: []};
-  const html = renderNightActionReport(model);
+  const associationReceipt=createAssociationReceipt(association,{now:now(),edition:'am',previousSourceSha:context.previousSourceSha,runId:'b'.repeat(64)});
+  const bound=bindPublicationEvidence(model,{sources:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'].map(sourceKey=>({sourceKey,raw:{synthetic:true},startedAt:new Date(now()).toISOString(),completedAt:new Date(now()).toISOString()})),startedAt:new Date(now()).toISOString(),completedAt:new Date(now()).toISOString(),sourceDate:'2026-09-30',association:associationReceipt,associationExpiresAt:association.policy.expiresAt,previousSourceSha:context.previousSourceSha});
+  const html = renderNightActionReport(bound);
   const receipt = {schemaVersion: 1, mode: 'private_report_check', status: 'ready', dataDate: model.dataDate, sourceDate: '2026-09-30',
     startedAt: new Date(now()).toISOString(), completedAt: new Date(now()).toISOString(), publication: 'none', sourceCount: 5,
-    sources: ['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'].map(sourceKey => ({sourceKey, sha256: 'f'.repeat(64)})),
+    sources: bound.evidence.sources.map(s=>({...s,sha256:'f'.repeat(64)})), evidence:bound.evidence,
     association: createAssociationReceipt(association, {now: now(), edition: 'am', previousSourceSha: context.previousSourceSha, runId: 'b'.repeat(64)}),
     artifact: {sha256: crypto.createHash('sha256').update(html).digest('hex')}};
   const calls = [];
@@ -65,4 +68,36 @@ test('a concurrent base change after branch creation does not write a report com
   const f = fixture(); let reads = 0;
   f.loadContext = async () => {const c = structuredClone(f.context); if (++reads === 2) c.association.policyCommit = 'e'.repeat(40); return c;};
   await assert.rejects(publishPrepared(f), /BASE_CHANGED/); assert.equal(f.calls.length, 2);
+});
+
+test('queue delay between branch creation and commit cannot bypass final freshness validation',async()=>{
+  const f=fixture();let time=now();f.now=()=>time;const request=f.request;
+  f.request=async payload=>{const result=await request(payload);if(payload.query.includes('CreateRef'))time+=1800001;return result;};
+  f.loadContext=async()=>{const c=structuredClone(f.context);c.association.checkedAt=new Date(time).toISOString();return c;};
+  await assert.rejects(publishPrepared(f),/CAPTURE_STALE/);assert.equal(f.calls.length,2);
+});
+test('normal schema5 historical HTML cannot become a new unbound cloud publication candidate',async()=>{
+  const f=fixture();const {extractNightActionModel}=await import('../../scripts/xuan-ib-night-action-view.mjs');
+  const report=extractNightActionModel(f.html).report;f.html=renderNightActionReport(report);
+  f.receipt.artifact.sha256=crypto.createHash('sha256').update(f.html).digest('hex');
+  await assert.rejects(publishPrepared(f),/MODEL_EVIDENCE/);assert.equal(f.calls.length,0);
+});
+test('receipt sourcehash or HTML evidence alteration fails before any candidate mutation',async()=>{
+  for(const mutate of [f=>f.receipt.sources[0].rawHash='e'.repeat(64),f=>f.receipt.evidence={...f.receipt.evidence,sourceHash:'e'.repeat(64)}]){
+    const f=fixture();mutate(f);await assert.rejects(publishPrepared(f));assert.equal(f.calls.length,0);
+  }
+});
+
+test('bound complete page polling compares the outer marker and does not reload its own unchanged artifact',()=>{
+  const f=fixture(),marker=f.html.match(/<!-- xuan-ib-night-action-v1:([A-Za-z0-9_-]+) -->/)[1];
+  assert.ok(f.html.includes(`const marker=${JSON.stringify(marker)}`));
+});
+
+test('normal bound contract independently rejects calendar-target, caption and HKT-capture day mismatches',async()=>{
+  const {extractNightActionModel}=await import('../../scripts/xuan-ib-night-action-view.mjs');
+  const {sourceHash}=await import('../../scripts/xuan-ib-night-action-evidence.mjs');
+  for(const mutate of [m=>m.evidence.sourceDate='2026-00-00',m=>{m.evidence.sourceDate='2026-09-29';m.report.asOfHkt='2026-10-01 13:01 HKT · 数据至 2026-09-29';},m=>m.report.asOfHkt='2026-09-30 13:01 HKT · 数据至 2026-09-30',m=>{m.dataDate='2026-09-30';m.report.dataDate='2026-09-30';}]){
+    const f=fixture(),m=extractNightActionModel(f.html);mutate(m);m.evidence.reportHash=sourceHash(m.report);
+    assert.throws(()=>renderNightActionReport(m),/SHAPE|SOURCE_DATE|CAPTURE_REPORT_DAY_BINDING/);
+  }
 });
