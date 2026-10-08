@@ -54,7 +54,9 @@ shadow/publish 切换、秘密边界和停用方法见 `docs/fee-cloud-producer.
 本机流程在云端完成真实发布回读前继续作为备用，不能与云端 publish 同时运行。
 
 1. 读取 `main`、现有健康回执及私密来源，确认目标日期、允许的回补窗口和无并发候选。
-   先核对基金 Gist 的 owner、secret 可见性、文件名、两次相同 revision/ETag/密文；
+   先核对基金 Gist 的 owner、secret 可见性、文件名；两次 revision 原字符串及完整
+   加密信封原文字节必须完全相同，ETag 按 `docs/fee-economic-source.md` 的唯一受限
+   弱标记兼容规则核对（只允许 `W/` 标记不同，opaque tag 仍须完全相同）；
    只能使用 `scripts/fee-economic-source.mjs` 的固定来源读取路径。
 2. 在仓库外的私密临时目录准备来源快照和 `FEE_STYLE_INPUT_FILE`，用真实持仓身份
    运行 `scripts/daily.mjs --style-preflight`。新持仓按原登记规则取证并独立复核；
@@ -64,7 +66,8 @@ shadow/publish 切换、秘密边界和停用方法见 `docs/fee-cloud-producer.
 4. 在同一稳定来源和私密账本下运行 `scripts/daily.mjs`。随后用
    `scripts/fee-receipt-report.mjs` 验证费用回执，并用
    `scripts/fee-data-health.mjs create-success` 生成不含金额的运行回执。
-   立即重查私密来源仍为原 revision/ETag/密文；任一失败均不得提交。
+   立即按同一规则双读重查来源并与冻结快照比较：revision 原字符串、完整信封原文
+   字节和 ETag opaque tag 必须完全相同，仅允许合法 `W/` 标记不同；任一失败均不得提交。
 5. 只从当时最新的 `main` 创建一个分支
    `codex/fee-daily-YYYYMMDD-xxxxxx`，其中日期无连字符且必须与
    `daily YYYY-MM-DD` 的提交标题及健康回执目标日一致。提交仅允许

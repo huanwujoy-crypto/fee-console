@@ -137,6 +137,100 @@ for (const change of ["revision", "etag", "bytes"]) test(`checkCurrent detects s
   snapshot.cleanup();
 });
 
+test("weak-marker-only differences are accepted at all three comparisons", async t => {
+  for (const v of [3, 4]) for (const [from, to] of [
+    ['"synthetic-opaque"', 'W/"synthetic-opaque"'],
+    ['W/"synthetic-opaque"', '"synthetic-opaque"'],
+  ]) for (const [stage, tags] of [
+    ["initial double read", [from, to, from, from]],
+    ["final double read", [from, from, from, to]],
+    ["frozen versus final", [from, from, to, to]],
+  ]) await t.test(`v${v} ${stage}: ${from} to ${to}`, async t => {
+    let calls = 0, snapshot;
+    try {
+      snapshot = await run(t, async () => {
+        assert.ok(calls < tags.length, "no additional request for a marker difference");
+        return reply(fixture(v), tags[calls++]);
+      });
+      assert.equal(await snapshot.checkCurrent(), true);
+      assert.equal(calls, 4);
+      assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8"), envelope(v));
+    } finally { snapshot?.cleanup(); }
+    assert.equal(fs.existsSync(snapshot.sourcePath), false);
+  });
+});
+
+test("weak-marker compatibility never permits revision, opaque tag or envelope changes", async t => {
+  const from = 'W/"synthetic-opaque"', to = '"synthetic-opaque"';
+  const cases = [
+    ["revision", body => { body.history[0].version = "c".repeat(40); }, to],
+    ["revision letter case", body => { body.history[0].version = "B".repeat(40); }, to],
+    ["opaque tag", () => {}, '"different-opaque"'],
+    ["opaque letter case", () => {}, '"Synthetic-opaque"'],
+    ["opaque percent encoding", () => {}, '"synthetic%2Dopaque"'],
+    ["opaque backslash", () => {}, '"synthetic\\-opaque"'],
+    ["envelope whitespace", body => { body.files[NAME].content += " "; }, to],
+    ["envelope key order", body => {
+      const value = JSON.parse(body.files[NAME].content);
+      body.files[NAME].content = JSON.stringify({ v: value.v, data: value.data, enc: value.enc }, null, 2) + "\n";
+    }, to],
+    ["sealed ciphertext", body => {
+      const value = JSON.parse(body.files[NAME].content);
+      value.data = Buffer.alloc(40, 8).toString("base64");
+      body.files[NAME].content = JSON.stringify(value, null, 2) + "\n";
+    }, to],
+  ];
+  for (const [name, mutate, changedTag] of cases) for (const [stage, changedReads] of [
+    ["initial double read", [false, true]],
+    ["final double read", [false, false, false, true]],
+    ["frozen versus final", [false, false, true, true]],
+  ]) await t.test(`${stage} rejects ${name}`, async t => {
+    const tempRoot = makeRoot(); t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
+    let calls = 0, snapshot;
+    const acquire = fetchEconomicSnapshot({ tempRoot, timeoutMs: 50, attempts: 2, fetchImpl: async () => {
+      assert.ok(calls < changedReads.length, "SOURCE_CHANGED is not retried");
+      const changed = changedReads[calls++], body = fixture(4);
+      if (changed) mutate(body);
+      body.files[NAME].size = Buffer.byteLength(body.files[NAME].content);
+      return reply(body, changed ? changedTag : from);
+    } });
+    try {
+      if (stage === "initial double read") await rejected(acquire, "SOURCE_CHANGED");
+      else {
+        snapshot = await acquire;
+        await rejected(snapshot.checkCurrent(), "SOURCE_CHANGED");
+        assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8"), envelope(4), "frozen source is never overwritten");
+      }
+      assert.equal(calls, changedReads.length);
+    } finally { snapshot?.cleanup(); }
+    assert.deepEqual(fs.readdirSync(tempRoot), []);
+  });
+});
+
+test("missing or malformed ETags still fail before comparison without retry", async t => {
+  for (const etag of [null, "", '""', 'W/""', 'w/"synthetic-opaque"', 'W/W/"synthetic-opaque"',
+    'W/ "synthetic-opaque"', '"one", "two"', '"two words"', '"bad\u0001tag"', '"' + "a".repeat(513) + '"']) {
+    for (const phase of ["initial", "final"]) await t.test(`${phase} ${JSON.stringify(etag)}`, async t => {
+      let calls = 0, snapshot;
+      const acquire = run(t, async () => {
+        const response = reply(fixture(4), 'W/"synthetic-opaque"');
+        const bad = ++calls === (phase === "initial" ? 2 : 4);
+        if (bad) {
+          const get = response.headers.get.bind(response.headers);
+          response.headers.get = name => name === "etag" ? etag : get(name);
+        }
+        return response;
+      });
+      try {
+        if (phase === "initial") await rejected(acquire, "SOURCE_ETAG");
+        else { snapshot = await acquire; await rejected(snapshot.checkCurrent(), "SOURCE_ETAG"); }
+        assert.equal(calls, phase === "initial" ? 2 : 4);
+      } finally { snapshot?.cleanup(); }
+      if (snapshot) assert.equal(fs.existsSync(snapshot.sourcePath), false);
+    });
+  }
+});
+
 test("network errors have at most two attempts and cannot leak their message", async t => {
   let calls = 0;
   await rejected(run(t, async () => { calls++; throw new Error(`${TOKEN} ${ID} https://private.invalid BODY-SECRET`); }), "SOURCE_NETWORK");

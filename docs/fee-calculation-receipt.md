@@ -19,7 +19,10 @@ them; they are outside v1.
 1. Read-only Sharesight data produces a candidate daily point and verified flow set.
 2. The current encrypted v4 private Gist snapshot is copied to a temporary path
    outside the repository. The caller proves remote stability with two consecutive
-   reads of the same Gist revision/ETag and byte-identical encrypted content. The
+   reads with the same Gist revision and byte-identical full encrypted envelope.
+   ETags must match under the fixed helper's bounded weak-marker rule in
+   `docs/fee-economic-source.md`: only `W/` may differ, with an identical opaque
+   tag, revision and full envelope bytes. The
    local double-read performed by the scripts protects against a file changing
    during use; it is not, by itself, proof that the remote Gist was stable.
    The only reviewed v3 exception is the copy-only, explicitly named policy in
@@ -103,7 +106,8 @@ For the legacy exception, both tools also require the fresh original encrypted
 source snapshot through `FEE_ECON_V3_FILE`. They authenticate the original bytes
 preserved in the copy, re-run the strict policy and full projection, compare the
 source file twice, and recheck before output. The caller still owns remote
-revision/ETag and source-identity checks before and after the run. A manual
+revision/ETag and source-identity checks before and after the run, applying only
+the fixed helper's bounded weak-marker rule. A manual
 attachment is not a standing source. The source lifecycle in
 `docs/fee-economic-source.md` obtains the original source afresh on every run.
 Without a current economic snapshot, a writer presented with an existing v2

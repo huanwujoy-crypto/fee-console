@@ -112,8 +112,11 @@ For a still-active v3 source under the named legacy exception, retain the verifi
 as `FEE_ECON_V3_FILE` for both writer and reporter. Each requires it to match the
 provenance bytes, checks two local reads, and rechecks before output (including
 no-op). This protects use-time stability, **not remote freshness**. Every run must
-re-read the authorized original Gist twice at one revision/ETag and re-read it
-before publication. A previous manual attachment is not a permanent data source.
+re-read the authorized original Gist twice with the same revision and full
+encrypted envelope bytes, and re-read it before publication. ETags must match
+under the fixed helper's bounded weak-marker rule in `docs/fee-economic-source.md`;
+only `W/` may differ, never the opaque tag, revision or envelope bytes.
+A previous manual attachment is not a permanent data source.
 
 This mode creates receipt schema v2 with an encrypted `legacySource` binding:
 policy ID plus SHA-256 of exact original envelope and payload bytes. It does not
