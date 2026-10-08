@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runDaily} from './daily.mjs';
+import {collectDelivery} from './delivery.mjs';
 test('joint holiday never loads credentials or reads financial sources', async () => {
   const saved = []; let generated = false;
   const result = await runDaily({now: () => Date.parse('2026-12-25T05:00:00Z'), io: {savePrivate: async (name,value) => saved.push({name,value})},
@@ -15,15 +16,51 @@ test('delivery exposes only HTML and completion receipt, written in that order',
   }});
   assert.deepEqual(saved.map(x => x.name), ['delivery/2026-10-01/start.json','report-check/id/report.html','delivery/2026-10-01/report.html','delivery/2026-10-01/receipt.json']);
 });
-test('partial generation does not create a delivery completion marker', async () => {
+test('partial generation creates only a failed terminal receipt, never a ready delivery', async () => {
   const saved = [];
   await assert.rejects(runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), execution: 'xuan-preopen-report-test', io: {savePrivate: async name => saved.push(name)},
     generate: async () => ({status: 'partial'})}), /INCOMPLETE/);
-  assert.deepEqual(saved,['delivery/2026-10-01/start.json']);
+  assert.deepEqual(saved,['delivery/2026-10-01/start.json','delivery/2026-10-01/receipt.json']);
 });
 test('an existing daily start marker blocks duplicate financial generation', async () => {
   let generated = false;
   await assert.rejects(runDaily({now: () => Date.parse('2026-10-01T05:00:00Z'), execution: 'xuan-preopen-report-test',
     io: {savePrivate: async () => {throw new Error('CLOUD_HTTP_412');}}, generate: async () => {generated = true;}}), /412/);
   assert.equal(generated,false);
+});
+test('source reauthorization failure crosses the private handoff without credentials, retry or publication', async () => {
+  const objects = new Map(), now = () => Date.parse('2026-10-01T05:00:00Z');
+  const failure = new Error('IB_REAUTHORIZE_REQUIRED'); let generations = 0;
+  const io = {savePrivate: async (name,value) => {
+    if (objects.has(name)) throw new Error('CLOUD_HTTP_412');
+    objects.set(name, JSON.stringify(value));
+  }};
+  const generate = async () => {generations++; throw failure;};
+  await assert.rejects(runDaily({now, io, generate, execution: 'xuan-preopen-report-test'}), error => error === failure);
+  const receipt = JSON.parse(objects.get('delivery/2026-10-01/receipt.json'));
+  assert.deepEqual(receipt, {schemaVersion: 1, status: 'failed', dataDate: '2026-10-01', sourceDate: '2026-09-30',
+    execution: 'xuan-preopen-report-test', publication: 'none', errorCode: 'IB_REAUTHORIZE_REQUIRED'});
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await assert.rejects(collectDelivery({now, request: async (url,options = {}) => {
+      assert.notEqual(options.method, 'POST');
+      assert.ok(url.includes('receipt.json'));
+      return objects.get('delivery/2026-10-01/receipt.json');
+    }, loadContext: async () => {assert.fail('must not load old public report');}}), /PREOPEN_DELIVERY_IB_REAUTHORIZE_REQUIRED/);
+  }
+  await assert.rejects(runDaily({now, io, generate, execution: 'xuan-preopen-report-loser'}), /CLOUD_HTTP_412/);
+  assert.equal(generations, 1);
+  assert.equal(objects.size, 2);
+});
+test('unknown source errors are reduced to one fixed code and receipt write errors preserve the original failure', async () => {
+  const failure = new Error('PRIVATE_TOKEN_ACCOUNT_AMOUNT'), now = () => Date.parse('2026-10-01T05:00:00Z');
+  for (const storageFails of [false, true]) {
+    const saved = [];
+    await assert.rejects(runDaily({now, execution: 'xuan-preopen-report-test', generate: async () => {throw failure;},
+      io: {savePrivate: async (name,value) => {
+        saved.push({name,value});
+        if (storageFails && name.endsWith('receipt.json')) throw new Error('CLOUD_HTTP_403');
+      }}}), error => error === failure);
+    assert.equal(saved[1].value.errorCode, 'DAILY_REPORT_FAILED');
+    assert.ok(!JSON.stringify(saved).includes(failure.message));
+  }
 });

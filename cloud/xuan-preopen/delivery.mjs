@@ -27,7 +27,19 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
   if (plan.status === 'no-action') return {...plan, outcome: 'no-action'};
   const objectUrl = file => `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${encodeURIComponent(`delivery/${plan.dataDate}/${file}`)}?alt=media`;
   const parse = value => {try {return JSON.parse(value);} catch {fail('JSON');}};
+  const rejectFailedReceipt = (value, expectedExecution = null) => {
+    const receipt = parse(value);
+    if (receipt?.status !== 'failed') return;
+    const keys = ['schemaVersion', 'status', 'dataDate', 'sourceDate', 'execution', 'publication', 'errorCode'];
+    if (Object.keys(receipt).length !== keys.length || keys.some(key => !Object.hasOwn(receipt, key))
+        || receipt.schemaVersion !== 1 || receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate
+        || receipt.publication !== 'none' || !/^xuan-preopen-report-[a-z0-9-]+$/.test(receipt.execution || '')
+        || (expectedExecution && receipt.execution !== expectedExecution.split('/').at(-1))
+        || !['IB_REAUTHORIZE_REQUIRED', 'DAILY_REPORT_FAILED'].includes(receipt.errorCode)) fail('RECEIPT');
+    fail(receipt.errorCode === 'IB_REAUTHORIZE_REQUIRED' ? 'IB_REAUTHORIZE_REQUIRED' : 'EXECUTION_FAILED');
+  };
   let raw = await request(objectUrl('receipt.json'), {missing: true}), execution = null;
+  if (raw !== null) rejectFailedReceipt(raw);
   if (raw === null) {
     const startRaw = await request(objectUrl('start.json'), {missing: true});
     if (startRaw !== null) {
@@ -43,7 +55,13 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
     const deadline = now()+10*60_000; let done = false;
     while (now() < deadline) {
       const status = parse(await request(RUN+execution));
-      if (status.failedCount || status.cancelledCount) fail('EXECUTION_FAILED');
+      if (status.failedCount || status.cancelledCount) {
+        // Re-read the terminal receipt once, without new execution or source
+        // access. Older images/storage failures keep the generic fail-closed code.
+        const failedRaw = await request(objectUrl('receipt.json'), {missing: true});
+        if (failedRaw !== null) rejectFailedReceipt(failedRaw, execution);
+        fail('EXECUTION_FAILED');
+      }
       if (status.completionTime) {
         if (status.succeededCount !== 1 || status.retriedCount || status.taskCount !== 1) fail('EXECUTION_INCOMPLETE');
         done = true; break;
@@ -54,6 +72,7 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
     raw = await request(objectUrl('receipt.json'), {missing: true});
     if (raw === null) fail('COMPLETION_RECEIPT_MISSING');
   }
+  rejectFailedReceipt(raw, execution);
   const receipt = parse(raw);
   if (receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate || receipt.status !== 'ready'
       || receipt.artifact?.privateObject !== `delivery/${plan.dataDate}/report.html`) fail('RECEIPT');

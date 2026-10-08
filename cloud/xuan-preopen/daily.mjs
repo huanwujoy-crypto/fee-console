@@ -23,13 +23,25 @@ export async function runDaily({io = privateCloudIo(), now = Date.now, generate 
     if (name.endsWith('/report.html')) html = value;
     return io.savePrivate(name, value);
   }};
-  const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now});
-  if (receipt.status !== 'ready' || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
-  const artifact = {privateObject: prefix+'report.html', ...await io.savePrivate(prefix+'report.html', html)};
-  const delivery = {...receipt, artifact, calendar: plan};
-  await io.savePrivate(prefix+'receipt.json', delivery); // Completion marker LAST.
-  return {status: delivery.status, dataDate: delivery.dataDate, sourceDate: delivery.sourceDate,
-    startedAt: delivery.startedAt, completedAt: delivery.completedAt, publication: 'none'};
+  try {
+    const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now});
+    if (receipt.status !== 'ready' || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
+    const artifact = {privateObject: prefix+'report.html', ...await io.savePrivate(prefix+'report.html', html)};
+    const delivery = {...receipt, artifact, calendar: plan};
+    await io.savePrivate(prefix+'receipt.json', delivery); // Completion marker LAST.
+    return {status: delivery.status, dataDate: delivery.dataDate, sourceDate: delivery.sourceDate,
+      startedAt: delivery.startedAt, completedAt: delivery.completedAt, publication: 'none'};
+  } catch (error) {
+    // The delivery identity cannot read source logs. Record only a fixed safe
+    // code in the existing create-only receipt, never raw errors or evidence.
+    // Start acquisition stays outside this catch: a losing run writes nothing.
+    try {
+      await io.savePrivate(prefix+'receipt.json', {schemaVersion: 1, status: 'failed',
+        dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, publication: 'none',
+        errorCode: error?.message === 'IB_REAUTHORIZE_REQUIRED' ? 'IB_REAUTHORIZE_REQUIRED' : 'DAILY_REPORT_FAILED'});
+    } catch { /* Preserve the source failure if diagnostic storage also fails. */ }
+    throw error;
+  }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runDaily().then(result => process.stdout.write(JSON.stringify(result)+'\n')).catch(error => {
