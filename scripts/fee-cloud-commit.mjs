@@ -8,6 +8,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 
 const OWNER = "huanwujoy-crypto";
 const REPO = `${OWNER}/fee-console`;
@@ -27,13 +28,14 @@ function parse(argv) {
   return result;
 }
 
-async function request(url, token, init = {}) {
-  let response;
-  try { response = await fetch(url, { ...init, redirect: "error", headers: { Accept: "application/vnd.github+json",
+export async function request(url, token, init = {}, { fetchImpl = globalThis.fetch, timeoutMs = 20_000 } = {}) {
+  try { return await boundedJson(fetchImpl, url, { ...init, headers: { Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-GitHub-Api-Version": "2022-11-28",
-    ...(init.headers || {}) } }); } catch { fail("NETWORK"); }
-  if (!response || response.status !== 200 || response.url !== url) fail("HTTP");
-  try { return await response.json(); } catch { fail("RESPONSE"); }
+    ...(init.headers || {}) } }, { timeoutMs, maxBytes: 2 * 1024 * 1024 }); }
+  catch (error) {
+    const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
+    fail(['NETWORK', 'TIMEOUT', 'HTTP'].includes(code) ? code : 'RESPONSE');
+  }
 }
 
 export async function commitPrepared({ dataFile, healthFile, baseSha, token = process.env.FEE_CLOUD_GITHUB_TOKEN,

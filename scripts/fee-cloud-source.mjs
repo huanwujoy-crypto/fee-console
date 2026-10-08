@@ -4,6 +4,7 @@
 // It deliberately exposes no arbitrary URL, method, portfolio, or date range.
 
 import crypto from "node:crypto";
+import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 
 const API = "https://api.sharesight.com";
 const TOKEN_URL = `${API}/oauth2/token`;
@@ -29,9 +30,38 @@ const stable = value => {
 const sha256 = value => crypto.createHash("sha256").update(stable(value)).digest("hex");
 
 function rows(payload, key) {
+  assertComplete(payload);
   const result = object(payload) ? payload[key] : payload;
   if (!Array.isArray(result) || result.some(row => !object(row))) fail("SCHEMA");
+  const ids = result.map(row => id(row.id));
+  if (new Set(ids).size !== ids.length) fail('SOURCE_DUPLICATE');
   return result;
+}
+
+function assertComplete(payload) {
+  if (!object(payload)) return;
+  if (payload.links?.next || payload.pagination?.next_page || payload.meta?.pagination?.next_page
+      || payload.next_page || payload.has_more === true || payload.complete === false
+      || payload.restricted === true || payload.limited === true) fail('SOURCE_INCOMPLETE');
+}
+
+export function previousCalendarDate(targetDate) {
+  date(targetDate);
+  return new Date(Date.parse(`${targetDate}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+}
+
+// Independent of cache contents. Holidays remain pending until a reviewed
+// calendar contract supplies positive closed-session evidence.
+export function expectedTargetDate(now = new Date()) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) fail('DATE');
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(now).map(part => [part.type, part.value]));
+  let target = `${parts.year}-${parts.month}-${parts.day}`;
+  if (Number(parts.hour) * 60 + Number(parts.minute) < 16 * 60 + 15) target = previousCalendarDate(target);
+  while ([0, 6].includes(new Date(`${target}T00:00:00Z`).getUTCDay())) target = previousCalendarDate(target);
+  return target;
 }
 
 function id(value) {
@@ -155,9 +185,46 @@ export function latestCommonBenchmarkDate(cache) {
   return common.at(-1);
 }
 
-function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}) {
+function assertCashChain(transactions, previousCash, currentCash) {
+  const cents = value => Math.round(amount(value) * 100);
+  const groups = new Map();
+  for (const row of transactions) {
+    const timestamp = Date.parse(row.date_time);
+    if (!groups.has(timestamp)) groups.set(timestamp, []);
+    groups.get(timestamp).push(row);
+  }
+  let balance = cents(previousCash);
+  for (const timestamp of [...groups.keys()].sort((a,b) => a-b)) {
+    const rows = groups.get(timestamp), edges = new Map();
+    for (const row of rows) {
+      const after = cents(row.balance), before = after - cents(row.amount);
+      if (!edges.has(before)) edges.set(before, new Map());
+      const outgoing = edges.get(before);
+      outgoing.set(after, (outgoing.get(after) || 0) + 1);
+    }
+    let remaining = rows.length;
+    while (remaining) {
+      const outgoing = edges.get(balance);
+      if (!outgoing?.size) fail('CASH_CHAIN');
+      // Zero movements and identical edges are indistinguishable for cash
+      // ordering. Distinct possible next balances are not guessed from IDs.
+      if (outgoing.has(balance)) {
+        remaining -= outgoing.get(balance); outgoing.delete(balance);
+        if (!remaining) break;
+      }
+      if (outgoing.size !== 1) fail(outgoing.size ? 'CASH_CHAIN_AMBIGUOUS' : 'CASH_CHAIN');
+      const after = outgoing.keys().next().value, count = outgoing.get(after);
+      if (count === 1) outgoing.delete(after); else outgoing.set(after, count - 1);
+      balance = after; remaining--;
+    }
+  }
+  if (Math.abs(balance - cents(currentCash)) > 1) fail('CASH_BALANCE_STALE');
+}
+
+function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance) {
   const expected = CLOUD_ACCOUNTS[account];
   const report = performancePayload?.report;
+  assertComplete(performancePayload); assertComplete(report);
   if (!object(report) || id(report.portfolio_id) !== expected.portfolioId
       || date(report.end_date) !== targetDate || report.currency?.code !== "USD") fail("PERFORMANCE_IDENTITY");
   const listing = rows(holdingsPayload, "holdings");
@@ -173,19 +240,25 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || row.instrument_currency?.code !== "USD") fail("HOLDING_IDENTITY");
     return { holdingId, ticker, valueUsd: amount(row.value) };
   }).sort((a, b) => a.holdingId - b.holdingId);
+  if (holdings.length !== listing.length) fail('HOLDING_IDENTITY');
   const cashRows = rows(report.cash_accounts || [], "cash_accounts").map(row => {
     if (id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
         || typeof row.currency?.code !== "string") fail("CASH_CURRENCY");
-    return { id: id(row.id), valueUsd: amount(row.value) };
+    return { id: id(row.id), currency: row.currency.code, valueUsd: amount(row.value) };
   }).sort((a, b) => a.id - b.id);
   const listedCash = rows(cashPayload, "cash_accounts");
   const listedCashById = new Map(listedCash.map(row => [id(row.id), row]));
   for (const row of cashRows) {
     const listed = listedCashById.get(row.id);
-    if (!listed || id(listed.portfolio_id) !== expected.portfolioId || listed.portfolio_currency !== "USD") {
+    if (!listed || id(listed.portfolio_id) !== expected.portfolioId || listed.portfolio_currency !== "USD"
+        || listed.currency !== row.currency) {
       fail("CASH_IDENTITY");
     }
+    if (row.currency === 'USD' && (!finite(listed.balance) || Math.abs(row.valueUsd - listed.balance) > 0.01)) fail('CASH_REPORT_BALANCE');
   }
+  if (listedCash.length !== cashRows.length || Object.keys(cashTransactions).length !== listedCash.length
+      || listedCash.some(row => !Object.hasOwn(cashTransactions, String(id(row.id))))) fail('CASH_IDENTITY');
+  for (const payload of Object.values(cashTransactions)) rows(payload, 'cash_account_transactions');
   let incomeEvidence;
   try {
     if(account==='webull')for(const audit of notificationIncomeAudits(incomeDateEvidence,targetDate)) {
@@ -199,8 +272,11 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     cashRows:Object.values(cashTransactions).flatMap(p => rows(p,'cash_account_transactions')),
     payouts:incomePayouts,dateEvidence:incomeDateEvidence}); } catch { fail('INCOME_EVIDENCE'); }
   const trades = rows(tradesPayload, "trades");
+  if (trades.some(row => id(row.portfolio_id) !== expected.portfolioId || row.transaction_date !== targetDate
+      || row.state !== 'confirmed')) fail('TRADE_IDENTITY');
   const tradeIds = new Set(trades.map(row => id(row.id)));
   const flows = [];
+  const seenTransactions = new Set();
   let movementTotal = 0;
   for (const [cashIdText, payload] of Object.entries(cashTransactions)) {
     const cashId = id(cashIdText), cashAccount = listedCashById.get(cashId);
@@ -209,9 +285,10 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       continue;
     }
     const transactionRows = rows(payload, "cash_account_transactions");
-    if (transactionRows.length && !transactionRows.some(row => finite(row.balance)
-        && Math.abs(row.balance - cashAccount.balance) <= 0.01)) fail("CASH_BALANCE_STALE");
+    if (transactionRows.some(row => !Number.isFinite(Date.parse(row.date_time)) || !finite(row.balance))) fail('CASH_TRANSACTION_IDENTITY');
     for (const row of transactionRows) {
+      if (seenTransactions.has(id(row.id))) fail('SOURCE_DUPLICATE');
+      seenTransactions.add(id(row.id));
       const movementDate = date(String(row.date_time || "").slice(0, 10));
       if (movementDate !== targetDate || id(row.cash_account_id) !== cashId) fail("CASH_TRANSACTION_IDENTITY");
       const movement = amount(row.amount);
@@ -244,11 +321,34 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   const equity = holdings.filter(row => row.ticker !== "SGOV");
   const stock = round2(equity.reduce((sum, row) => sum + row.valueUsd, 0));
   if (Math.abs(total - cash - other - stock) > 1) fail("TOTAL_RECONCILIATION");
+  let previousCash = null;
+  {
+    assertComplete(previousPerformance); assertComplete(previousPerformance?.report);
+    const prior = previousPerformance?.report;
+    if (!object(prior) || id(prior.portfolio_id) !== expected.portfolioId
+        || prior.end_date !== previousCalendarDate(targetDate) || prior.currency?.code !== 'USD') fail('CASH_PREVIOUS_EVIDENCE');
+    const priorRows = rows(prior.cash_accounts, 'cash_accounts');
+    if (priorRows.length !== cashRows.length) fail('CASH_PREVIOUS_EVIDENCE');
+    previousCash = 0;
+    for (const row of priorRows) {
+      const current = cashRows.find(c => c.id === id(row.id));
+      if (!current || current.currency !== row.currency?.code || id(row.portfolio?.id) !== expected.portfolioId
+          || row.portfolio?.name !== expected.name) fail('CASH_PREVIOUS_EVIDENCE');
+      previousCash += amount(row.value);
+      if (current.currency === 'USD') {
+        const moved = rows(cashTransactions[String(current.id)], 'cash_account_transactions').reduce((sum, t) => sum + amount(t.amount), 0);
+        if (Math.abs(amount(row.value) + moved - current.valueUsd) > 0.01) fail('CASH_RECONCILIATION');
+        assertCashChain(rows(cashTransactions[String(current.id)], 'cash_account_transactions'), row.value, current.valueUsd);
+      }
+    }
+    previousCash = round2(previousCash);
+    if (Math.abs(previousCash + movementTotal - cash) > 0.01) fail('CASH_RECONCILIATION');
+  }
   return {
     account, portfolioId: expected.portfolioId, sourceDate: targetDate, total, cash, other, stock,
     holdings: equity,
     flows: flows.sort((a, b) => stable(a).localeCompare(stable(b))),
-    cashCheck: flows.length ? { current: round2(cash), previous: round2(cash - movementTotal) } : null,
+    cashCheck: flows.length ? { current: round2(cash), previous: previousCash } : null,
   };
 }
 
@@ -288,7 +388,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     const source = raw[account];
     if (!object(source)) fail("SOURCE_MISSING");
     portfolios.push(normalizePortfolio(account, source.performance, source.holdings, source.cashAccounts,
-      source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence));
+      source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence, source.previousPerformance));
   }
   const accounts = Object.fromEntries(portfolios.map(p => [p.account, p.total]));
   const splits = {
@@ -329,17 +429,14 @@ class FixedHttp {
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/portfolios\/(?:936249|1350094)\/cash_accounts\.json$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/cash_accounts\/[1-9]\d{0,14}\/cash_account_transactions\.json\?.*$/.test(url);
     if (!allowed) fail("ROUTE_BLOCKED");
-    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), this.timeoutMs);
-    let response;
-    try { response = await this.fetchImpl(url, { ...init, redirect: "error", signal: controller.signal }); }
-    catch { fail(url === TOKEN_URL ? "AUTH_UNAVAILABLE" : "SOURCE_UNAVAILABLE"); }
-    finally { clearTimeout(timer); }
-    if (!response || response.status !== 200 || response.url !== url) fail(url === TOKEN_URL ? "AUTH_REJECTED" : "HTTP_REJECTED");
-    const type = String(response.headers?.get?.("content-type") || "").split(";", 1)[0].trim().toLowerCase();
-    if (type !== "application/json") fail("RESPONSE_TYPE");
-    const text = await response.text();
-    if (!text || Buffer.byteLength(text) > MAX_BODY) fail("RESPONSE_SIZE");
-    try { return JSON.parse(text); } catch { fail("RESPONSE_JSON"); }
+    try { return await boundedJson(this.fetchImpl, url, init, {
+      timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true,
+    }); } catch (error) {
+      const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
+      if (['NETWORK', 'TIMEOUT', 'ABORTED'].includes(code)) fail(url === TOKEN_URL ? 'AUTH_UNAVAILABLE' : 'SOURCE_UNAVAILABLE');
+      if (code === 'HTTP') fail(url === TOKEN_URL ? 'AUTH_REJECTED' : 'HTTP_REJECTED');
+      fail(`RESPONSE_${code}`);
+    }
   }
 }
 
@@ -388,6 +485,9 @@ export class SharesightCloudReader {
         const cashId = id(cash.id);
         cashTransactions[cashId] = await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`, token);
       }
+      const priorDate = previousCalendarDate(targetDate);
+      const previousPerformance = await this.get(
+        `${base3}/performance?consolidated=false&end_date=${priorDate}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${priorDate}`, token);
       const incomePayouts = {};
       if (account === 'webull') {
         const keys=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))
@@ -401,7 +501,7 @@ export class SharesightCloudReader {
       // owner-authorized gift lots and retain a chargeable paid-lot balance.
       const managementTrades = account === 'webull'
         ? await this.get(`${base3}/trades.json?consolidated=false&end_date=${targetDate}`, token) : undefined;
-      raw[account] = { incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), performance: performancePayload, holdings: holdingsPayload,
+      raw[account] = { incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), ...(previousPerformance ? {previousPerformance} : {}), performance: performancePayload, holdings: holdingsPayload,
         cashAccounts: cashAccountsPayload, cashTransactions, trades: tradesPayload };
     }
     return raw;

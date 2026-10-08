@@ -56,12 +56,22 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The benchmark cache remains independent. It retries through 17:35 HKT; this
-producer starts at 11:30 HKT, then retries at 12:50, 13:50, 15:50 and 17:50 HKT
-Tuesday through Saturday. A run proceeds
-only when SPY and QQQ have one complete common session with validated dividend
-fields. Missing benchmark data remains pending rather than publishing an
-earlier price as the target session.
+The benchmark cache remains independent. The producer starts at 11:30 HKT,
+with independent 11:40, 11:55, 12:20, 12:50, 13:50, 15:50 and 17:50 HKT slots
+Tuesday through Saturday. Its default target is computed independently of the
+cache: the latest New York weekday whose 16:15 close boundary has passed.
+SPY and QQQ must both have exactly one complete row for that target, including
+validated dividend fields. Old or future cache rows cannot change that target.
+Holiday and half-day support is not added here: absence of the expected row
+stops the run as benchmark pending; it does not invent a closed-session point.
+Explicit reviewed recovery dates still use the existing writer's backfill
+gates. Publication preflight passes its selected target to calculation, so a
+clock boundary between steps cannot silently change the date.
+
+An unreadable publication state is retried within the bounded preflight, then
+stops before financial credentials or sources are used. It never means that
+there is no candidate. Known pending candidates retain the existing wait and
+main-receipt requirements.
 
 The workflow does not publish on Sunday or Monday HKT. When the next completed
 New York session follows a weekend, the same private candidate first adds the
@@ -75,6 +85,28 @@ creating a separate weekend publication or requiring the Mac to be online.
 For the selected session, the reader resolves and pins both live portfolio
 identities, then reads performance, holdings, cash accounts, target-day cash
 transactions and trades twice. The normalized reads must be byte-equivalent.
+All list envelopes must be complete and have unique record identities. An
+explicit next page, restricted/limited report, duplicate ID, missing cash
+collection or mismatched account/date stops calculation; management history
+retains its existing separate completeness gate. Pagination is not silently
+followed or truncated.
+
+For both portfolios, each A/B read also obtains the fixed previous calendar
+day's performance using the same GET-only endpoint and identity checks. This
+is an additional date scope requiring specific review before release. It is
+read even when no target-day movements are returned, so omission of the only
+cash movement cannot bypass reconciliation. Previous cash comes from that
+independent report, never from current cash minus movements. USD report cash,
+listed account balance, terminal dated movement, per-cash-account movement
+sum and portfolio cash total must agree. Transactions are grouped by timestamp;
+each group must form a balance chain from its independently established opening
+balance and consume every record. IDs and response order cannot determine
+execution order. Contradictory or ambiguous same-time balance paths stop;
+zero movements and identical balance edges are interchangeable for cash proof.
+Missing prior evidence, a changed cash-account set or unexplained currency/
+valuation differences stop automatic publication for review, rather than
+forcing two incompatible balances to match.
+
 Cash accounts form `cash`, SGOV forms `other`, and remaining USD holdings form
 `stock`; the three buckets must reconcile to the two portfolio totals. Style
 classification continues through the existing static and encrypted learned
@@ -93,6 +125,12 @@ deposit/withdrawal does not pass that rule. A remaining bare deposit or
 withdrawal becomes unresolved unless the existing private ledger already
 contains its reviewed classification.
 
+HTTP deadlines cover headers, streamed body, byte limits and JSON decoding.
+The workflow has a 15-minute outer budget. Signing HTTP is also bounded and
+never automatically repeats a mutation after an uncertain response. This
+phase does not yet carry the source session into the separate signing step;
+that remaining boundary still needs the audited follow-up design.
+
 The producer retries one transient source-network or stable-read mismatch in
 the same run. Identity, schema, permission, amount, reconciliation and receipt
 failures are never retried. If a candidate contains an unresolved cash flow,
@@ -102,8 +140,24 @@ generic receipt validator. The job summary never includes portfolio amounts.
 `fee-cloud-supervisor.yml` is a secret-free, read-only observer of completed
 producer runs. One failure is left for the normal independent schedule slots.
 Two consecutive scheduled or manual failures create or refresh a single
-amount-free GitHub repair issue for Codex diagnosis; the next successful run
-closes it. The issue is only a repair candidate: it cannot read source or
+amount-free GitHub repair issue for Codex diagnosis. Failure counting resets
+only at a matching successful run/job whose source/calculation and signed
+candidate steps actually executed successfully. Historical successes are
+checked too; a new failure does not accumulate failures from before such an
+execution. Skipped/already-published, shadow or unreadable job evidence cannot
+reset that execution counter. The existing Actions jobs read permission is
+sufficient; no secret or permission is added.
+An outer job `timed_out` conclusion counts as a failure; cancellation retains
+its existing non-failure semantics.
+
+Automatic issue closure is disabled in this first phase. Even a genuine
+producer execution does not prove its own candidate reached main and Pages.
+A health timestamp in the same run window could belong to an unrelated local
+publication. Existing issues therefore remain open with recovery unverified;
+restoring automatic closure requires a separately reviewed run-bound candidate
+receipt and actual main/Pages proof. No green skip or unrelated publication
+can clear a repair issue.
+The issue is only a repair candidate: it cannot read source or
 ledger secrets, publish data, edit the economic Gist, or change investor
 shares. Any repair still requires a tested pull request and the existing
 protected release path.
@@ -120,8 +174,11 @@ hashes; no amounts or credentials.
    grant its dedicated service account accessor only on the two version-pinned
    Sharesight Secret Manager resources. Do not copy their values into GitHub.
 2. Set `FEE_CLOUD_MODE=shadow` and dispatch the workflow twice on completed US
-   sessions. Compare dates, encrypted output hash and investor share results
-   with the local producer.
+   sessions. Compare canonical business inputs, dates, fees and investor share
+   results with the local producer. Independent changed-data encryption uses
+   fresh nonces, so its ciphertext hashes need not match. Exact byte/hash
+   equality applies to a frozen candidate and its main/Pages read-back, or
+   repeated semantic no-op.
 3. Set `FEE_CLOUD_MODE=publish`, dispatch once, and wait for candidate validation,
    protected promotion, Pages deployment and public/mobile read-back.
 4. Pause the local Codex heartbeat only after the cloud result is proven.

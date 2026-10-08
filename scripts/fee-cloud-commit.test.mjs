@@ -5,9 +5,18 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { commitPrepared } from "./fee-cloud-commit.mjs";
+import { commitPrepared, request } from "./fee-cloud-commit.mjs";
 
 const BASE = "a".repeat(40);
+
+test('signing HTTP body deadline makes one request and never retries an uncertain mutation', async () => {
+  let calls=0,signal;
+  await assert.rejects(request('https://api.github.com/graphql','synthetic-token',{method:'POST',body:'{}'}, {
+    timeoutMs:20,fetchImpl:async(url,init)=>{calls++;signal=init.signal;return {url,status:200,
+      body:{getReader(){return {read:()=>new Promise(()=>{}),cancel(){},releaseLock(){}};}}};}
+  }),/FEE_CLOUD_COMMIT_TIMEOUT/);
+  assert.equal(calls,1);assert.equal(signal.aborted,true);
+});
 
 function files(t, outcome = "updated") {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "fee-cloud-commit-"));

@@ -163,6 +163,7 @@ function rawFixture(date=D) {
     return {performance:{report:{portfolio_id:p.id,end_date:date,currency:{code:'USD'},value,
       cash_accounts:[{id:cashId,value:cash,currency:{code:'USD'},portfolio:p}],
       holdings:[{id:holdingId,value:600,valid_position:true,instrument:{code:'SGOV'},instrument_currency:{code:'USD'},portfolio:p}]}},
+      previousPerformance:{report:{portfolio_id:p.id,end_date:shift(date,-1),currency:{code:'USD'},cash_accounts:[{id:cashId,value:400,currency:{code:'USD'},portfolio:p}]}},
       holdings:{holdings:[{id:holdingId,valid_position:true,portfolio:p}]},
       cashAccounts:{cash_accounts:[{id:cashId,portfolio_id:p.id,currency:'USD',portfolio_currency:'USD',balance:cash}]},
       cashTransactions:{[cashId]:{cash_account_transactions:transactions}},trades:{trades:[]},managementTrades:{trades:[]}};
@@ -181,14 +182,14 @@ function mockFetch(raw,calls=[]) {
       const account=Object.keys(raw).find(k=>u.pathname.includes(`/portfolios/${CLOUD_ACCOUNTS[k].portfolioId}/`)
         ||u.pathname.includes(`/cash_accounts/${k==='webull'?930:950}/`));
       assert.ok(account,'unexpected synthetic route');const r=raw[account];
-      if(u.pathname.endsWith('/performance'))payload=r.performance;
+      if(u.pathname.endsWith('/performance'))payload=u.searchParams.get('end_date')===r.performance.report.end_date?r.performance:r.previousPerformance;
       else if(u.pathname.endsWith('/holdings'))payload=r.holdings;
       else if(u.pathname.endsWith('/cash_accounts.json'))payload=r.cashAccounts;
       else if(u.pathname.endsWith('/cash_account_transactions.json'))payload=Object.values(r.cashTransactions)[0];
       else if(u.pathname.endsWith('/trades.json'))payload=u.searchParams.has('start_date')?r.trades:r.managementTrades;
       else assert.fail('unexpected synthetic route');
     }
-    return {status:200,url,headers:{get:()=> 'application/json'},text:async()=>JSON.stringify(payload)};
+    const response=new Response(JSON.stringify(payload),{headers:{'content-type':'application/json'}});Object.defineProperty(response,'url',{value:url});return response;
   };
 }
 
@@ -266,9 +267,9 @@ test('one new income cannot reuse a legacy two-leg payout or either cash identit
 
 test('target-day cash rows cannot hide a later current balance; the existing freshness guard remains',()=>{
   const raw=rawFixture();raw.webull.cashAccounts.cash_accounts[0].balance+=69.50;
-  assert.throws(()=>normalizeRead(raw,D,benchmark),{message:'FEE_CLOUD_CASH_BALANCE_STALE'});
+  assert.throws(()=>normalizeRead(raw,D,benchmark),{message:'FEE_CLOUD_CASH_REPORT_BALANCE'});
   delete raw.webull.incomeDateEvidence;delete raw.webull.incomePayouts;
-  assert.throws(()=>normalizeRead(raw,D,benchmark),{message:'FEE_CLOUD_CASH_BALANCE_STALE'});
+  assert.throws(()=>normalizeRead(raw,D,benchmark),{message:'FEE_CLOUD_CASH_REPORT_BALANCE'});
 });
 
 test('selected net cash account must uniquely belong to the portfolio and its target report',()=>{
@@ -281,13 +282,13 @@ test('selected net cash account must uniquely belong to the portfolio and its ta
     raw.webull.cashAccounts.cash_accounts.push({...raw.webull.cashAccounts.cash_accounts[0],id:931});
     return raw;
   };
-  const missing=selected();assert.throws(()=>normalizeRead(missing,D,benchmark),{message:'FEE_CLOUD_INCOME_EVIDENCE'});
+  const missing=selected();assert.throws(()=>normalizeRead(missing,D,benchmark),{message:'FEE_CLOUD_CASH_IDENTITY'});
   const foreign=selected();foreign.webull.cashAccounts.cash_accounts[1].portfolio_id=999;
-  assert.throws(()=>normalizeRead(foreign,D,benchmark),{message:'FEE_CLOUD_INCOME_EVIDENCE'});
+  assert.throws(()=>normalizeRead(foreign,D,benchmark),{message:'FEE_CLOUD_CASH_IDENTITY'});
   const duplicate=rawFixture();duplicate.webull.cashAccounts.cash_accounts.push({...duplicate.webull.cashAccounts.cash_accounts[0]});
-  assert.throws(()=>normalizeRead(duplicate,D,benchmark),{message:'FEE_CLOUD_INCOME_EVIDENCE'});
+  assert.throws(()=>normalizeRead(duplicate,D,benchmark),{message:'FEE_CLOUD_SOURCE_DUPLICATE'});
   const reportDuplicate=rawFixture();reportDuplicate.webull.performance.report.cash_accounts.push({...reportDuplicate.webull.performance.report.cash_accounts[0]});
-  assert.throws(()=>normalizeRead(reportDuplicate,D,benchmark),{message:'FEE_CLOUD_INCOME_EVIDENCE'});
+  assert.throws(()=>normalizeRead(reportDuplicate,D,benchmark),{message:'FEE_CLOUD_SOURCE_DUPLICATE'});
 });
 
 test('classifier cannot accept a mismatched cash identity, amount or verification flag',async t=>{
@@ -454,14 +455,14 @@ test('actual producer, writer and reporter bootstrap then reload the encrypted a
       `const root=${JSON.stringify(repo)},raw=${JSON.stringify(rawFixture(date))},date=${JSON.stringify(date)};globalThis.fetch=()=>{throw new Error('NETWORK_FORBIDDEN_IN_SYNTHETIC_TEST');};\n`+
       `const CLOUD_ACCOUNTS=${JSON.stringify(CLOUD_ACCOUNTS)},mockFetch=${mockFetch.toString()};const assert={ok(v){if(!v)throw Error('route');},fail(){throw Error('route');}};\n`+
       `const {produce}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-producer.mjs')));const options={fetchImpl:mockFetch(raw),fetchEconomic:async()=>({envelopeVersion:4,sourcePath:${JSON.stringify(econ)},checkCurrent(){},cleanup(){}})};\n`+
-      `const first=await produce({...options,cli:{'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out1)},'income-date-evidence-file':${JSON.stringify(evidence)}}});\n`+
+      `const first=await produce({...options,cli:{'target-date':date,'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out1)},'income-date-evidence-file':${JSON.stringify(evidence)}}});\n`+
       `const bytes=fs.readFileSync(first.dataFile);fs.copyFileSync(first.dataFile,path.join(root,'data.json'));\n`+
       `const {normalizeRead}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-source.mjs')));const input=normalizeRead(raw,date,{spy:100,qqq:100,spyd:0,qqqd:0});\n`+
       `const style=path.join(${JSON.stringify(dir)},'negative-style.json'),management=path.join(${JSON.stringify(dir)},'negative-management.json');fs.writeFileSync(style,JSON.stringify(input.styleInput),{mode:0o600});fs.writeFileSync(management,JSON.stringify(input.managementInput),{mode:0o600});\n`+
       `let rejected=0;for(const change of [f=>f.sourceHoldingId=911,f=>delete f.incomeDateVerified,f=>f.incomeDateVerified='false',f=>{f.evidence='internal_income_estimated';f.incomeRole='dividend';},f=>{f.evidence='internal_income';f.incomeRole='dividend';f.incomeDateVerified=true;},f=>f.evidence='internal_trade']){const flows=structuredClone(input.flows);change(flows.find(f=>f.acct==='webull'));\n`+
       `const cli=['--date='+date,'--file='+path.join(root,'data.json'),'--schwab=1000','--webull=1069.50','--src-schwab='+date,'--src-webull='+date,'--cash=869.50','--stock=0','--other=1200','--spy=100','--qqq=100','--src-bench='+date,'--bench-state=session','--acct-cash-webull=469.50','--prev-acct-cash-webull=400','--flows='+JSON.stringify(flows)];\n`+
       `const bad=spawnSync(process.execPath,[path.join(root,'scripts/daily.mjs'),...cli],{encoding:'utf8',env:{...process.env,FEE_ECON_FILE:${JSON.stringify(econ)},FEE_STYLE_INPUT_FILE:style,FEE_MANAGEMENT_INPUT_FILE:management}});if(bad.status===0||!bad.stderr.includes('notification income evidence is inconsistent')||!bytes.equals(fs.readFileSync(path.join(root,'data.json'))))throw Error('writer did not reject without writing');rejected++;}\n`+
-      `const second=await produce({...options,cli:{'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out2)}}});\n`+
+      `const second=await produce({...options,cli:{'target-date':date,'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out2)}}});\n`+
       `const b=Buffer.from(JSON.parse(bytes).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',Buffer.from(process.env.FEE_DATA_KEY,'base64url'),b.subarray(0,12));d.setAuthTag(b.subarray(-16));const p=JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));\n`+
       `console.log(JSON.stringify({first:first.outcome,second:second.outcome,rejected,same:bytes.equals(fs.readFileSync(second.dataFile)),prior:p.daily[0],audits:p.daily[1].incomeDateAudits.length,auto:p.flowsAuto.length,unresolved:p.flowsUnresolved.length,pnl:p.feeCalculationReceipt.totals.grossPnlCents,verified:p.daily[1].incomeDateAudits[0].proof.verified}));\n`,{mode:0o600});
     const result=spawnSync(process.execPath,[runner],{encoding:'utf8',timeout:120000,env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',
