@@ -216,6 +216,7 @@
     "scripts/fee-economic-source.mjs",
     "scripts/fee-economic-source.test.mjs",
     "scripts/fee-engine.mjs",
+    "scripts/fee-http-json.mjs",
     "scripts/fee-income-date-policy.mjs",
     "scripts/fee-income-evidence.mjs",
     "scripts/fee-income-evidence.test.mjs",

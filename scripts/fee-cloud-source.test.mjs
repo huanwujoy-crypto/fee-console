@@ -7,8 +7,9 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
-import { isControlledWebullNetProceeds, latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate, latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
+import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
 
 const D = "2026-09-23";
@@ -56,9 +57,9 @@ test('published preflight accepts only stable main with complete same-target hea
   for(const mutate of mutations) {const s=publicationFixture();mutate(s);assert.equal(isPublishedTarget(s,D,gateNow()),false);}
   const future=structuredClone(benchmarkCache);
   for(const key of ['spy','qqq'])future.benchmarks[key].series.push({d:'2026-09-24',p:100});
-  assert.equal((await publishedPreflight({cache:future,now:gateNow,readState:async()=>state})).outcome,'produce');
+  assert.equal((await publishedPreflight({cache:future,now:gateNow,readState:async()=>state})).outcome,'already-published');
   const badDividend=structuredClone(benchmarkCache);badDividend.benchmarks.spy.series.at(-1).div=-1;
-  await assert.rejects(publishedPreflight({cache:badDividend,readState:async()=>{assert.fail('bad cache must not read publication');}}),/BENCHMARK_PENDING/);
+  await assert.rejects(publishedPreflight({cache:badDividend,now:gateNow,readState:async()=>{assert.fail('bad cache must not read publication');}}),/BENCHMARK_PENDING/);
 });
 
 test('preflight waits only for publication, bounds pending candidates, and fails an unverifiable wait', async () => {
@@ -74,8 +75,8 @@ test('preflight waits only for publication, bounds pending candidates, and fails
   calls=0;
   await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:2,delayMs:0,
     sleep:async()=>{},readState:async()=>{if(calls++)throw new Error('private URL');return pending;}}),/PUBLICATION_WAIT_UNVERIFIED/);
-  assert.equal((await publishedPreflight({cache:benchmarkCache,readState:async()=>{throw new Error('private URL');}})).outcome,'produce');
-  await assert.rejects(publishedPreflight({cache:benchmarkCache,readState:async()=>{throw new Error('FEE_CLOUD_PUBLICATION_CANDIDATE_FAILED');}}),/PUBLICATION_CANDIDATE_FAILED/);
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:2,delayMs:0,sleep:async()=>{},readState:async()=>{throw new Error('private URL');}}),/PUBLICATION_UNVERIFIED/);
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,readState:async()=>{throw new Error('FEE_CLOUD_PUBLICATION_CANDIDATE_FAILED');}}),/PUBLICATION_CANDIDATE_FAILED/);
   const moved=publicationFixture();moved.finalMainSha='b'.repeat(40);
   await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:1,readState:async()=>moved}),/PUBLICATION_UNSTABLE/);
 });
@@ -142,16 +143,31 @@ test('workflow gates all credential, source and candidate steps before authentic
   assert.match(steps.at(-1),/if:.*always\(\)/);
 });
 
-test('real preflight CLI performs only public main GETs and never reads financial credentials or creates a candidate', () => {
+test('real preflight CLI performs only public main GETs and never reads financial credentials or creates a candidate', async t => {
+  const cases = [
+    ['before New York close', '2026-10-08T20:14:59Z', '2026-10-07'],
+    ['at New York close', '2026-10-08T20:15:00Z', '2026-10-08'],
+    ['after New York close', '2026-10-08T22:40:00Z', '2026-10-08'],
+    ['before UTC midnight', '2026-10-08T23:59:59Z', '2026-10-08'],
+    ['after UTC midnight', '2026-10-09T00:00:00Z', '2026-10-08'],
+    ['stale cache after close stays blocked', '2026-10-08T22:40:00Z', '2026-10-08', '2026-10-07'],
+    ['future cache before close stays blocked', '2026-10-08T20:14:59Z', '2026-10-07', '2026-10-08'],
+  ];
+  for (const [name, now, date, cacheDate = date] of cases) await t.test(name, () => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-published-cli-'));fs.chmodSync(dir,0o700);
   try {
-    const date=new Date(Date.now()-86400000).toISOString().slice(0,10),state=publicationFixture();
-    state.health.checkedAt=new Date().toISOString();state.health.targetDate=date;
+    const state=publicationFixture();
+    state.health.checkedAt=now;state.health.targetDate=date;
     state.health.sourceDates={schwab:date,webull:date,benchmark:date};
-    const cache={v:1,benchmarks:{spy:{series:[{d:date,p:100}]},qqq:{series:[{d:date,p:100}]}}};
+    const cache={v:1,benchmarks:{spy:{series:[{d:cacheDate,p:100}]},qqq:{series:[{d:cacheDate,p:100}]}}};
     const benchmarkFile=path.join(dir,'benchmark.json'),preload=path.join(dir,'public-only.mjs');
     fs.writeFileSync(benchmarkFile,JSON.stringify(cache));
-    fs.writeFileSync(preload,`const state=${JSON.stringify({mainSha:state.mainSha,health:state.health,data:state.data.toString('base64')})};
+    fs.writeFileSync(preload,`const NativeDate=globalThis.Date,fixedNow=NativeDate.parse(${JSON.stringify(now)});
+globalThis.Date=class extends NativeDate {
+ constructor(...args){super(...(args.length?args:[fixedNow]));}
+ static now(){return fixedNow;}
+};
+const state=${JSON.stringify({mainSha:state.mainSha,health:state.health,data:state.data.toString('base64')})};
 globalThis.fetch=async(url,init)=>{
  if(init.method||init.body||!url.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/'))throw new Error('non-public request');
  let value;
@@ -159,16 +175,24 @@ globalThis.fetch=async(url,init)=>{
  else if(url.endsWith('/contents/data.json?ref='+state.mainSha))value={type:'file',encoding:'base64',size:Buffer.from(state.data,'base64').length,content:state.data};
  else if(url.endsWith('/contents/fee-data-health.json?ref='+state.mainSha)){const b=Buffer.from(JSON.stringify(state.health));value={type:'file',encoding:'base64',size:b.length,content:b.toString('base64')};}
  else throw new Error('unexpected public route');
- return {status:200,url,text:async()=>JSON.stringify(value)};
+ const response=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(response,'url',{value:url});return response;
 };`);
     const result=spawnSync(process.execPath,['--import',preload,new URL('./fee-cloud-producer.mjs',import.meta.url).pathname,
       '--mode=published-preflight',`--benchmark-file=${benchmarkFile}`],{encoding:'utf8',timeout:10_000,
       env:{...process.env,FEE_DATA_KEY:'unusable-synthetic',FEE_ECON_GIST_ID:'unusable-synthetic',
         FEE_CLOUD_SHARESIGHT_CLIENT_ID:'unusable-synthetic',FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:'unusable-synthetic'}});
-    assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).outcome,'already-published');
+    if (cacheDate === date) {
+      assert.equal(result.status,0,result.stderr);
+      const decision=JSON.parse(result.stdout);
+      assert.equal(decision.outcome,'already-published');assert.equal(decision.targetDate,date);
+    } else {
+      assert.equal(result.status,1);assert.equal(result.stderr.trim(),'FEE_CLOUD_BENCHMARK_PENDING');
+      assert.equal(result.stdout,'');
+    }
     assert.equal(fs.existsSync(path.join(dir,'data.json')),false);assert.equal(fs.existsSync(path.join(dir,'fee-data-health.json')),false);
     assert.deepEqual(fs.readdirSync(dir).sort(),['benchmark.json','public-only.mjs']);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
+  });
 });
 
 const portfolio = (account, id, cashId, holdings, transactions = []) => ({
@@ -178,8 +202,9 @@ const portfolio = (account, id, cashId, holdings, transactions = []) => ({
       instrument: { code: h.ticker }, instrument_currency: { code: "USD" }, portfolio: { id, name: account } })) } },
   holdings: { holdings: holdings.map(h => ({ id: h.id, valid_position: true, portfolio: { id, name: account } })) },
   cashAccounts: { cash_accounts: [{ id: cashId, portfolio_id: id, currency: "USD", portfolio_currency: "USD", balance: 400 }] },
-  cashTransactions: { [cashId]: { cash_account_transactions: transactions } },
-  trades: { trades: transactions.filter(t => t.trade_id).map(t => ({ id: t.trade_id })) },
+  previousPerformance: {report:{portfolio_id:id,end_date:'2026-09-22',currency:{code:'USD'},cash_accounts:[{id:cashId,value:400-transactions.reduce((n,t)=>n+t.amount,0),currency:{code:'USD'},portfolio:{id,name:account}}]}},
+  cashTransactions: { [cashId]: { cash_account_transactions: transactions.map((t,i)=>({id:100+i,...t})) } },
+  trades: { trades: transactions.filter(t => t.trade_id).map(t => ({ id: t.trade_id, portfolio_id: id, transaction_date: D, state: "confirmed" })) },
 });
 
 function raw() {
@@ -201,6 +226,116 @@ test("benchmark requires a complete same-date pair", () => {
   assert.throws(() => selectBenchmark(broken, D), /BENCHMARK_PENDING/);
 });
 
+test('target is a completed New York weekday, independent of stale/future cache and DST', async () => {
+  const cases = [
+    ['2026-10-08T14:00:00Z','2026-10-07'], ['2026-10-08T20:14:59Z','2026-10-07'],
+    ['2026-10-08T20:15:00Z','2026-10-08'], ['2026-10-12T14:00:00Z','2026-10-09'],
+    ['2026-10-08T23:59:59Z','2026-10-08'], ['2026-10-09T00:00:00Z','2026-10-08'],
+    ['2026-11-02T21:14:59Z','2026-10-30'], ['2026-11-02T21:15:00Z','2026-11-02'],
+    ['2026-03-09T20:14:59Z','2026-03-06'], ['2026-03-09T20:15:00Z','2026-03-09'],
+    ['2027-01-01T14:00:00Z','2026-12-31'],
+  ];
+  for (const [now, day] of cases) assert.equal(expectedTargetDate(new Date(now)),day);
+  assert.equal(previousCalendarDate('2026-03-01'),'2026-02-28');
+  assert.equal(previousCalendarDate('2028-03-01'),'2028-02-29');
+  assert.throws(()=>expectedTargetDate(new Date('invalid')),/DATE/);
+  let reads=0;
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:()=>new Date('2026-10-08T14:00:00Z'),
+    readState:async()=>{reads++;}}),/BENCHMARK_PENDING/);
+  assert.equal(reads,0);
+  let attempts=0;
+  const result=await publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:2,delayMs:0,sleep:async()=>{},
+    readState:async()=>{if(++attempts===1)throw new Error('private transport detail');return publicationFixture();}});
+  assert.equal(result.outcome,'already-published');assert.equal(attempts,2);
+});
+
+function jsonResponse(url, value) {
+  const response=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});
+  Object.defineProperty(response,'url',{value:url});return response;
+}
+
+test('bounded transport covers stalled headers/body even when abort is ignored', async () => {
+  for (const bodyOnly of [false,true]) {
+    let signal, cancelled=false;
+    const start=Date.now();
+    await assert.rejects(boundedJson(async(url,init)=>{
+      signal=init.signal;
+      if(!bodyOnly)return new Promise(()=>{});
+      return {url,status:200,body:{getReader(){return {read:()=>new Promise(()=>{}),cancel(){cancelled=true;},releaseLock(){}};}}};
+    },'https://synthetic.test/json',{}, {timeoutMs:30}),error=>error instanceof BoundedJsonError&&error.code==='TIMEOUT');
+    assert.ok(Date.now()-start<1000);assert.equal(signal.aborted,true);
+    if(bodyOnly)assert.equal(cancelled,true);
+  }
+});
+
+test('bounded transport stops oversized/slow streams, rejects malformed responses and preserves valid JSON', async () => {
+  const url='https://synthetic.test/json';let pulled=0,cancelled=false;
+  const body={getReader(){return {async read(){pulled++;return {done:false,value:Buffer.alloc(30)};},cancel(){cancelled=true;},releaseLock(){}};}};
+  await assert.rejects(boundedJson(async()=>({url,status:200,body}),url,{}, {maxBytes:50,timeoutMs:100}),/SIZE/);
+  assert.equal(pulled,2);assert.equal(cancelled,true);
+  const slow={getReader(){return {async read(){await new Promise(r=>setTimeout(r,50));return {done:false,value:Buffer.from(' ')};},cancel(){},releaseLock(){}};}};
+  await assert.rejects(boundedJson(async()=>({url,status:200,body:slow}),url,{}, {timeoutMs:10}),/TIMEOUT/);
+  const bad=[['HTTP',()=>({url,status:401})],['HTTP',()=>({url:url+'/redirect',status:200})],
+    ['TYPE',()=>{const r=jsonResponse(url,{});Object.defineProperty(r,'headers',{value:{get:()=> 'text/html'}});return r;}],
+    ['JSON',()=>{const r=new Response('{bad');Object.defineProperty(r,'url',{value:url});return r;}]];
+  for(const [code,create]of bad)await assert.rejects(boundedJson(async()=>create(),url,{}, {requireJsonType:code==='TYPE'}),new RegExp(code));
+  assert.deepEqual(await boundedJson(async()=>jsonResponse(url,{ok:true}),url),{ok:true});
+});
+
+test('every source collection rejects pagination, restricted results and duplicate identities', () => {
+  const paths=[r=>r.schwab.holdings,r=>r.schwab.cashAccounts,r=>r.schwab.cashTransactions[142251],
+    r=>r.schwab.trades,r=>r.schwab.performance,r=>r.schwab.previousPerformance];
+  for(const select of paths)for(const mark of [p=>p.links={next:'synthetic'},p=>p.pagination={next_page:2},
+    p=>p.meta={pagination:{next_page:2}},p=>p.restricted=true,p=>p.complete=false]) {
+    const r=raw();mark(select(r));assert.throws(()=>normalizeRead(r,D,selectBenchmark(benchmarkCache,D)),/SOURCE_INCOMPLETE/);
+  }
+  for(const select of [r=>r.schwab.holdings.holdings,r=>r.schwab.performance.report.holdings,
+    r=>r.schwab.cashAccounts.cash_accounts,r=>r.schwab.cashTransactions[142251].cash_account_transactions,r=>r.schwab.trades.trades]) {
+    const r=raw(),list=select(r);list.push({...list[0]});assert.throws(()=>normalizeRead(r,D,selectBenchmark(benchmarkCache,D)),/SOURCE_DUPLICATE/);
+  }
+  for(const mutate of [r=>r.schwab.trades.trades[0].portfolio_id=1,r=>r.schwab.trades.trades[0].state='pending',
+    r=>delete r.schwab.cashTransactions[142251],r=>r.schwab.performance.report.restricted=true]) {
+    const r=raw();mutate(r);assert.throws(()=>normalizeRead(r,D,selectBenchmark(benchmarkCache,D)));
+  }
+});
+
+test('cash proof is independent: missing, stale, conflicting, omitted and wrong terminal movements stop', () => {
+  const baseline=raw();assert.equal(baseline.schwab.previousPerformance.report.cash_accounts[0].value,350);
+  for(const mutate of [r=>delete r.schwab.previousPerformance,
+    r=>r.schwab.previousPerformance.report.end_date=D,
+    r=>r.schwab.previousPerformance.report.portfolio_id=1,
+    r=>r.schwab.previousPerformance.report.cash_accounts[0].value=400,
+    r=>r.schwab.cashTransactions[142251].cash_account_transactions[0].amount=49,
+    r=>r.schwab.cashTransactions[142251].cash_account_transactions=[],
+    r=>r.schwab.cashTransactions[142251].cash_account_transactions[0].balance=399,
+    r=>{r.schwab.performance.report.cash_accounts[0].value=450;r.schwab.performance.report.value=1050;},
+    r=>r.schwab.cashTransactions[142251].cash_account_transactions.push({id:101,cash_account_id:142251,
+      date_time:D+'T01:00:00Z',amount:0,balance:399,cash_account_transaction_type:{name:'FEE'}})]) {
+    const r=structuredClone(baseline);mutate(r);assert.throws(()=>normalizeRead(r,D,selectBenchmark(benchmarkCache,D)));
+  }
+  const ordered=raw();ordered.schwab.cashTransactions[142251].cash_account_transactions=[
+    {id:111,cash_account_id:142251,date_time:D+'T02:00:00Z',amount:-20,balance:400,cash_account_transaction_type:{name:'FEE'}},
+    {id:110,cash_account_id:142251,date_time:D+'T01:00:00Z',amount:70,balance:420,cash_account_transaction_type:{name:'DEPOSIT'}}];
+  assert.equal(normalizeRead(ordered,D,selectBenchmark(benchmarkCache,D)).prevAcctCash.schwab,350);
+  ordered.schwab.cashTransactions[142251].cash_account_transactions[1].balance=400;
+  assert.throws(()=>normalizeRead(ordered,D,selectBenchmark(benchmarkCache,D)),/CASH_CHAIN/);
+});
+
+test('same-time cash balances prove a chain independently of IDs and reject contradictions or ambiguity', () => {
+  const fixture=raw(),cashId=fixture.schwab.cashAccounts.cash_accounts[0].id;
+  const tx=(id,amount,balance)=>({id,cash_account_id:cashId,date_time:D+'T01:00:00Z',amount,balance,
+    cash_account_transaction_type:{name:'FEE'}});
+  const rows=[tx(110,-20,400),tx(111,70,420)];
+  fixture.schwab.cashTransactions[cashId].cash_account_transactions=rows;
+  assert.equal(normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)).prevAcctCash.schwab,350);
+  fixture.schwab.cashTransactions[cashId].cash_account_transactions=[rows[1],rows[0]];
+  assert.equal(normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)).acctCash.schwab,400);
+  rows[1].balance=999;
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_CHAIN/);
+  fixture.schwab.cashTransactions[cashId].cash_account_transactions=[tx(110,70,420),tx(111,-70,350),tx(112,50,400)];
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_CHAIN_AMBIGUOUS/);
+});
+
 test("normalization reconciles cash, SGOV, stock, flow evidence and style input", () => {
   const result = normalizeRead(raw(), D, selectBenchmark(benchmarkCache, D));
   assert.deepEqual(result.accounts, { schwab: 1000, webull: 1000 });
@@ -216,11 +351,12 @@ test("controlled Webull principal cash legs remain internal trades", () => {
   const fixture = raw();
   const foreignIdentifier = "webullhk-10205226-email-946332324153d3d2466a2cf7a2ccfcda-cash";
   fixture.webull.cashTransactions[90250].cash_account_transactions.push({
-    amount: -125, balance: 400, cash_account_id: 90250, date_time: `${D}T00:00:00.000Z`,
+    id:701, amount: -125, balance: 400, cash_account_id: 90250, date_time: `${D}T00:00:00.000Z`,
     description: `Webull AAOI BUY securities principal; NOT external funding; ${foreignIdentifier}`,
     cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
     foreign_identifier: foreignIdentifier,
   });
+  fixture.webull.previousPerformance.report.cash_accounts[0].value = fixture.webull.cashTransactions[90250].cash_account_transactions[0]?.amount === -9650 ? 10050 : 525;
   const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
   const flow = result.flows.find(row => row.foreignIdentifier === foreignIdentifier);
   assert.equal(flow.evidence, "internal_trade");
@@ -230,7 +366,7 @@ test("account-bound Webull principal cash legs match the unique live Sharesight 
   const fixture = raw();
   const orderId = "0387IJ3B2S80O0K7Q9BC000000";
   fixture.webull.cashTransactions[90250].cash_account_transactions.push({
-    amount: -9650, balance: 400, cash_account_id: 90250, date_time: `${D}T04:00:00.000Z`,
+    id:702, amount: -9650, balance: 400, cash_account_id: 90250, date_time: `${D}T04:00:00.000Z`,
     description: `Webull VSTL BUY securities principal; NOT external funding; order ${orderId}; holding 29274212; ${D} 09:55:50 EDT; source fee USD 0.00.`,
     cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
     foreign_identifier: null,
@@ -241,6 +377,7 @@ test("account-bound Webull principal cash legs match the unique live Sharesight 
     instrument: { code: "VSTL" },
     comments: `Webull account 10205226; ${D} 09:55:50 EDT fill; order ${orderId}; 500 VSTL @ USD 19.30; source commission/fees USD 0.00.`,
   });
+  fixture.webull.previousPerformance.report.cash_accounts[0].value = fixture.webull.cashTransactions[90250].cash_account_transactions[0]?.amount === -9650 ? 10050 : 525;
   const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
   const flow = result.flows.find(row => row.desc.includes(orderId));
   assert.equal(flow.evidence, "internal_trade");
@@ -250,7 +387,7 @@ test("Webull principal text alone stays unresolved when its trade evidence does 
   const fixture = raw();
   const orderId = "0387IJ3B2S80O0K7Q9BC000000";
   fixture.webull.cashTransactions[90250].cash_account_transactions.push({
-    amount: -9650, balance: 400, cash_account_id: 90250, date_time: `${D}T04:00:00.000Z`,
+    id:702, amount: -9650, balance: 400, cash_account_id: 90250, date_time: `${D}T04:00:00.000Z`,
     description: `Webull VSTL BUY securities principal; NOT external funding; order ${orderId}; holding 29274212; ${D} 09:55:50 EDT; source fee USD 0.00.`,
     cash_account_transaction_type: { name: "WITHDRAWAL" }, trade_id: null, holding_id: null,
     foreign_identifier: null,
@@ -261,6 +398,7 @@ test("Webull principal text alone stays unresolved when its trade evidence does 
     instrument: { code: "VSTL" },
     comments: `Webull account 10205226; ${D} 09:55:50 EDT fill; order ${orderId}; 500 VSTL @ USD 19.30; source commission/fees USD 0.00.`,
   });
+  fixture.webull.previousPerformance.report.cash_accounts[0].value = fixture.webull.cashTransactions[90250].cash_account_transactions[0]?.amount === -9650 ? 10050 : 525;
   const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
   const flow = result.flows.find(row => row.desc.includes(orderId));
   assert.equal(Object.hasOwn(flow, "evidence"), false);
@@ -269,10 +407,11 @@ test("Webull principal text alone stays unresolved when its trade evidence does 
 test("a generic Webull withdrawal is not promoted to internal without the controlled evidence", () => {
   const fixture = raw();
   fixture.webull.cashTransactions[90250].cash_account_transactions.push({
-    amount: -125, balance: 400, cash_account_id: 90250, date_time: `${D}T00:00:00.000Z`,
+    id:701, amount: -125, balance: 400, cash_account_id: 90250, date_time: `${D}T00:00:00.000Z`,
     description: "manual withdrawal", cash_account_transaction_type: { name: "WITHDRAWAL" },
     trade_id: null, holding_id: null, foreign_identifier: "manual-1",
   });
+  fixture.webull.previousPerformance.report.cash_accounts[0].value = fixture.webull.cashTransactions[90250].cash_account_transactions[0]?.amount === -9650 ? 10050 : 525;
   const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
   const flow = result.flows.find(row => row.foreignIdentifier === "manual-1");
   assert.equal(Object.hasOwn(flow, "evidence"), false);
@@ -282,13 +421,13 @@ test("unlisted performance holding and non-USD movement fail closed", () => {
   const missing = raw(); missing.schwab.holdings.holdings.pop();
   assert.throws(() => normalizeRead(missing, D, selectBenchmark(benchmarkCache, D)), /HOLDING_IDENTITY/);
   const fx = raw(); fx.schwab.cashAccounts.cash_accounts[0].currency = "HKD";
+  fx.schwab.performance.report.cash_accounts[0].currency.code = 'HKD';
   assert.throws(() => normalizeRead(fx, D, selectBenchmark(benchmarkCache, D)), /NON_USD_MOVEMENT/);
 });
 
 test("reader allows only fixed GET routes and proves two identical reads", async () => {
   const fixtures = raw();
-  const response = (url, value) => ({ status: 200, url, headers: { get: () => "application/json" },
-    text: async () => JSON.stringify(value) });
+  const response = (url, value) => {const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
   let calls = 0;
   const fetchImpl = async (url, init) => {
     calls++;
@@ -297,7 +436,7 @@ test("reader allows only fixed GET routes and proves two identical reads", async
       { id: 936249, name: "Schwab-HK", currency_code: "USD" }, { id: 1350094, name: "Webull", currency_code: "USD" },
     ] });
     const account = url.includes("936249") || url.includes("142251") ? "schwab" : "webull";
-    if (url.includes("/performance?")) return response(url, fixtures[account].performance);
+    if (url.includes("/performance?")) return response(url, new URL(url).searchParams.get("end_date") === D ? fixtures[account].performance : fixtures[account].previousPerformance);
     if (url.includes("/holdings?")) return response(url, fixtures[account].holdings);
     if (url.includes("/cash_accounts.json") && !url.includes("cash_account_transactions")) return response(url, fixtures[account].cashAccounts);
     if (url.includes("cash_account_transactions")) return response(url, Object.values(fixtures[account].cashTransactions)[0]);
@@ -307,7 +446,7 @@ test("reader allows only fixed GET routes and proves two identical reads", async
   const reader = new SharesightCloudReader({ clientId: "id", clientSecret: "secret", fetchImpl });
   const result = await reader.readStable(D, selectBenchmark(benchmarkCache, D));
   assert.equal(result.targetDate, D);
-  assert.equal(calls, 26);
+  assert.equal(calls, 30);
   assert.equal(result.managementInput.historyComplete, true);
 });
 
@@ -384,10 +523,11 @@ test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight se
 test('normalized dividend legs use confirmed payout economics and retain the posting-date gate', () => {
   const fixture=raw(),key='webull.dividend:12345678:GOOG:2026-09-22:900';
   fixture.webull.cashTransactions[90250].cash_account_transactions=[
-    {id:901,cash_account_id:90250,date_time:D+'T04:00:00Z',amount:70,balance:400,cash_account_transaction_type:{name:'DEPOSIT'},description:`GOOG dividend: gross100.00 WHT30.00 net70.00; fee0.40 separately. INTERNAL_DIVIDEND_CASH, not external funding. Notice; ledger date unverified. key=${key}:net`},
+    {id:901,cash_account_id:90250,date_time:D+'T04:00:00Z',amount:70,balance:400.4,cash_account_transaction_type:{name:'DEPOSIT'},description:`GOOG dividend: gross100.00 WHT30.00 net70.00; fee0.40 separately. INTERNAL_DIVIDEND_CASH, not external funding. Notice; ledger date unverified. key=${key}:net`},
     {id:902,cash_account_id:90250,date_time:D+'T04:00:00Z',amount:-0.4,balance:400,cash_account_transaction_type:{name:'FEE'},description:`GOOG dividend collection fee: gross100.00 x0.4%, min0.30, rounded0.40. NOT WHT. Official Webull schedule + exact net69.60 cash match; rule-authorized. key=${key}:fee`},
   ];
   fixture.webull.incomePayouts={900:{id:900,portfolio_id:1350094,holding_id:4,symbol:'GOOG',paid_on:'2026-09-22',currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:100,resident_withholding_tax:30,amount:70}};
+  fixture.webull.previousPerformance.report.cash_accounts[0].value=330.4;
   let result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
   assert.equal(result.flows.filter(f=>f.evidence==='internal_income_pending_date').length,2);
   fixture.webull.incomeDateEvidence={[key]:{cashDate:D,verified:true,authority:'broker-cash-ledger',sourceRef:'synthetic ledger'}};
@@ -594,7 +734,7 @@ test('real producer source exception reports its stage and cleans up without any
   const cache=path.join(dir,'benchmark.json');fs.writeFileSync(cache,JSON.stringify(benchmarkCache));
   let cleaned=false, reads=0;
   try {
-    await assert.rejects(produce({cli:{'benchmark-file':cache,'out-dir':dir},
+    await assert.rejects(produce({cli:{'benchmark-file':cache,'out-dir':dir,'target-date':D},
       fetchEconomic:async()=>({envelopeVersion:4,cleanup(){cleaned=true;}}),
       reader:{async readStable(){reads++;throw new TypeError('private account amount URL /path');}}}),
       {message:'FEE_CLOUD_STAGE_SOURCE_READ_TYPE'});
@@ -618,6 +758,7 @@ function netProceedsFixture() {
 test('strict net-proceeds evidence maps a unique confirmed fee-inclusive sell to internal trade', () => {
   const f=netProceedsFixture();assert.equal(isControlledWebullNetProceeds(f),true);
   const source=raw();source.webull.cashTransactions[90250].cash_account_transactions=[f.row];source.webull.trades.trades=f.trades;
+  source.webull.previousPerformance.report.cash_accounts[0].value=300.25;
   const result=normalizeRead(source,D,selectBenchmark(benchmarkCache,D));
   assert.equal(result.flows.find(r=>r.acct==='webull').evidence,'internal_trade');
   f.trades[0].price_currency_code='USD';assert.equal(isControlledWebullNetProceeds(f),true);

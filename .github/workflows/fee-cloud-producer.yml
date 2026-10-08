@@ -22,6 +22,7 @@ jobs:
   produce:
     if: ${{ vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     environment: fee-cloud-producer
     steps:
       - name: Check out trusted main
@@ -99,11 +100,13 @@ jobs:
           error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"
           if ! summary=$(node scripts/fee-cloud-producer.mjs \
             --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
+            --target-date="${{ steps.published.outputs.target }}" \
             --out-dir="$RUNNER_TEMP/fee-cloud-private" 2>"$error_file"); then
             code=$(tail -n 1 "$error_file")
             if [[ ! "$code" =~ ^(FEE_CLOUD|SOURCE)_[A-Z0-9_]+$ ]]; then
               code=FEE_CLOUD_FAILED
             fi
+            printf '%s\n' "$code"
             printf '## Fee cloud producer\n\n- Outcome: failed closed\n- Diagnostic code: `%s`\n\nNo portfolio amounts or credentials are included in this summary.\n' "$code" >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi

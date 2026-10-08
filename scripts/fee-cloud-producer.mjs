@@ -12,7 +12,8 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
-import { latestCommonBenchmarkDate, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { expectedTargetDate, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { boundedJson } from './fee-http-json.mjs';
 import { isIsoDate, isWeekend } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 
@@ -77,14 +78,8 @@ async function publicationRequest(route, signal) {
   // Actions metadata is public; contents:read must not require a new Actions
   // permission just to observe an earlier candidate's validator.
   if (token && !route.startsWith("actions/")) headers.Authorization = `Bearer ${token}`;
-  let response;
-  try { response = await fetch(url, { headers, redirect: "error",
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) }); }
-  catch { fail("PUBLICATION_READ"); }
-  if (response.status !== 200 || response.url !== url) fail("PUBLICATION_READ");
-  const bytes = await response.text();
-  if (bytes.length > 8 * 1024 * 1024) fail("PUBLICATION_READ");
-  try { return JSON.parse(bytes); } catch { fail("PUBLICATION_READ"); }
+  try { return await boundedJson(fetch, url, { headers, signal }, { timeoutMs: 15_000, maxBytes: 8 * 1024 * 1024 }); }
+  catch { fail('PUBLICATION_READ'); }
 }
 
 export async function readPublicationState(targetDate, startedAt, request = publicationRequest) {
@@ -136,7 +131,7 @@ export async function publishedPreflight({ cache, startedAt = new Date().toISOSt
   readState = (target, start, signal) => readPublicationState(target, start, route => publicationRequest(route, signal)),
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   attempts = 21, delayMs = 15_000 } = {}) {
-  const targetDate = latestCommonBenchmarkDate(cache);
+  const targetDate = expectedTargetDate(now());
   if (!isIsoDate(targetDate)) fail("BENCHMARK_PENDING");
   selectBenchmark(cache, targetDate); // includes exact row and dividend validation
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 21
@@ -150,7 +145,9 @@ export async function publishedPreflight({ cache, startedAt = new Date().toISOSt
     catch (error) {
       if (error?.message === "FEE_CLOUD_PUBLICATION_CANDIDATE_FAILED") throw error;
       if (pending) fail("PUBLICATION_WAIT_UNVERIFIED");
-      return { targetDate, outcome: "produce", reason: "publication-unverified" };
+      if (attempt + 1 === attempts) fail('PUBLICATION_UNVERIFIED');
+      await sleep(delayMs);
+      continue;
     }
     if (isPublishedTarget(state, targetDate, now())) return { targetDate, outcome: "already-published", mainSha: state.mainSha };
     if (state.mainSha !== state.finalMainSha) {
@@ -399,7 +396,7 @@ export async function produce(options = {}) {
     const output = safeOutputDir(cli["out-dir"] || "");
     stage = "BENCHMARK";
     const cache = readJson(benchmarkFile, 3 * 1024 * 1024);
-    const targetDate = cli["target-date"] || latestCommonBenchmarkDate(cache);
+    const targetDate = cli["target-date"] || expectedTargetDate(options.now ? options.now() : new Date());
     const benchmark = selectBenchmark(cache, targetDate);
     const checkedAt = cli["checked-at"] || new Date().toISOString();
     stage = "READER_SETUP";
