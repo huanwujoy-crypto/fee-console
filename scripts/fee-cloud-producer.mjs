@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
 import { latestCommonBenchmarkDate, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { isIsoDate, isWeekend } from "./daily-core.mjs";
+import { validateHealth } from "./fee-data-health.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -27,8 +28,138 @@ function args(argv) {
     if (!match || Object.hasOwn(result, match[1])) fail("ARGUMENT");
     result[match[1]] = match[2];
   }
-  if (Object.keys(result).some(key => !["benchmark-file", "out-dir", "target-date", "checked-at", "income-date-evidence-file"].includes(key))) fail("ARGUMENT");
+  if (Object.keys(result).some(key => !["mode", "benchmark-file", "out-dir", "target-date", "checked-at", "income-date-evidence-file"].includes(key))) fail("ARGUMENT");
+  if (result.mode !== undefined && result.mode !== "published-preflight") fail("ARGUMENT");
   return result;
+}
+
+const PUBLIC_REPO = "huanwujoy-crypto/fee-console";
+const OID_RE = /^[a-f0-9]{40}$/;
+
+// Only a stable, already promoted main receipt can suppress a fresh read. A
+// successful producer or candidate validation alone is never publication proof.
+export function isPublishedTarget({ mainSha, finalMainSha, health, data }, targetDate, now = new Date()) {
+  try {
+    if (!OID_RE.test(mainSha || "") || mainSha !== finalMainSha || !Buffer.isBuffer(data)
+        || !data.length || data.length >= 2 * 1024 * 1024 || !isIsoDate(targetDate)
+        || validateHealth(health, { now }).length || health.targetDate !== targetDate
+        || !["updated", "no-op"].includes(health.outcome) || health.dataSha256 !== sha256(data)
+        || !["schwab", "webull", "benchmark"].every(key => health.sourceDates[key] === targetDate)) return false;
+    const outer = JSON.parse(data.toString("utf8"));
+    return Object.keys(outer).sort().join(",") === "data,enc,v" && outer.enc === true && outer.v === 3
+      && typeof outer.data === "string" && outer.data.length >= 40
+      && /^[A-Za-z0-9+/]+={0,2}$/.test(outer.data)
+      && Buffer.from(outer.data, "base64").toString("base64") === outer.data;
+  } catch { return false; }
+}
+
+// Keep the run-start boundary fixed while waiting. The current/later producer
+// queue must never become a dependency of this single-concurrency producer.
+export function isEarlierCandidate(commit, branch, mainSha, targetDate, startedAt) {
+  if (!isIsoDate(targetDate)) return false;
+  const time = Date.parse(commit?.commit?.committer?.date);
+  const cutoff = Date.parse(startedAt);
+  return new RegExp(`^codex/fee-daily-${targetDate.replaceAll("-", "")}-[a-z0-9]{6}$`).test(branch)
+    && OID_RE.test(commit?.sha || "") && commit?.parents?.length === 1 && commit.parents[0].sha === mainSha
+    && commit?.commit?.message === `daily ${targetDate}` && commit?.commit?.verification?.verified === true
+    && commit?.author?.login === "huanwujoy-crypto"
+    && ["huanwujoy-crypto", "web-flow"].includes(commit?.committer?.login)
+    && Number.isFinite(time) && Number.isFinite(cutoff) && time <= cutoff && time >= cutoff - 36 * 3_600_000
+    && Array.isArray(commit.files) && commit.files.length >= 1 && commit.files.length <= 2
+    && commit.files.some(file => file.filename === "fee-data-health.json")
+    && commit.files.every(file => file.status === "modified" && ["data.json", "fee-data-health.json"].includes(file.filename));
+}
+
+async function publicationRequest(route, signal) {
+  const url = `https://api.github.com/repos/${PUBLIC_REPO}/${route}`;
+  const token = process.env.GITHUB_TOKEN;
+  const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+  // Actions metadata is public; contents:read must not require a new Actions
+  // permission just to observe an earlier candidate's validator.
+  if (token && !route.startsWith("actions/")) headers.Authorization = `Bearer ${token}`;
+  let response;
+  try { response = await fetch(url, { headers, redirect: "error",
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000) }); }
+  catch { fail("PUBLICATION_READ"); }
+  if (response.status !== 200 || response.url !== url) fail("PUBLICATION_READ");
+  const bytes = await response.text();
+  if (bytes.length > 8 * 1024 * 1024) fail("PUBLICATION_READ");
+  try { return JSON.parse(bytes); } catch { fail("PUBLICATION_READ"); }
+}
+
+export async function readPublicationState(targetDate, startedAt, request = publicationRequest) {
+  if (!isIsoDate(targetDate) || !Number.isFinite(Date.parse(startedAt))) fail("CONFIG");
+  const ref = () => request("git/ref/heads/main");
+  const mainSha = (await ref())?.object?.sha;
+  if (!OID_RE.test(mainSha || "")) fail("PUBLICATION_READ");
+  const file = async (name, max) => {
+    const content = await request(`contents/${name}?ref=${mainSha}`);
+    if (content?.type !== "file" || content?.encoding !== "base64" || !Number.isInteger(content.size)
+        || content.size <= 0 || content.size > max || typeof content.content !== "string") fail("PUBLICATION_READ");
+    const encoded = content.content.replaceAll("\n", "");
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.length !== content.size || bytes.toString("base64") !== encoded) fail("PUBLICATION_READ");
+    return bytes;
+  };
+  const [healthBytes, data] = await Promise.all([file("fee-data-health.json", 64 * 1024), file("data.json", 2 * 1024 * 1024 - 1)]);
+  let health;
+  try { health = JSON.parse(healthBytes); } catch { health = null; }
+  const finalMainSha = (await ref())?.object?.sha;
+  const state = { mainSha, finalMainSha, health, data, pending: false };
+  if (mainSha !== finalMainSha || isPublishedTarget(state, targetDate)) return state;
+  const prefix = `codex/fee-daily-${targetDate.replaceAll("-", "")}-`;
+  const refs = await request(`git/matching-refs/heads/${prefix}`);
+  if (!Array.isArray(refs) || refs.length > 32) fail("PUBLICATION_READ");
+  for (const candidate of refs) {
+    const oid = candidate?.object?.sha;
+    const branch = String(candidate?.ref || "").replace(/^refs\/heads\//, "");
+    if (!OID_RE.test(oid || "") || !new RegExp(`^${prefix}[a-z0-9]{6}$`).test(branch) || oid === mainSha) continue;
+    const commit = await request(`commits/${oid}`);
+    if (!isEarlierCandidate(commit, branch, mainSha, targetDate, startedAt)) continue;
+    state.pending = true;
+    let listing;
+    try { listing = await request(`actions/workflows/validate-fee-data.yml/runs?branch=${encodeURIComponent(branch)}&per_page=5`); }
+    catch { continue; } // known candidate remains pending even if metadata is unavailable
+    if (!Array.isArray(listing?.workflow_runs)) continue;
+    const runs = listing.workflow_runs.filter(run => run.head_sha === oid && run.head_branch === branch && run.event === "push")
+      .sort((a, b) => Number(b.id) - Number(a.id));
+    const latest = runs[0];
+    // A new candidate may precede its validator wake-up. A successful validator
+    // may precede promotion. In both cases wait for main, never create a twin.
+    if (latest?.status === "completed" && latest.conclusion !== "success") fail("PUBLICATION_CANDIDATE_FAILED");
+  }
+  state.finalMainSha = (await ref())?.object?.sha;
+  return state;
+}
+
+export async function publishedPreflight({ cache, startedAt = new Date().toISOString(), now = () => new Date(),
+  readState = (target, start, signal) => readPublicationState(target, start, route => publicationRequest(route, signal)),
+  sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
+  attempts = 21, delayMs = 15_000 } = {}) {
+  const targetDate = latestCommonBenchmarkDate(cache);
+  if (!isIsoDate(targetDate)) fail("BENCHMARK_PENDING");
+  selectBenchmark(cache, targetDate); // includes exact row and dividend validation
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 21
+      || !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 15_000) fail("CONFIG");
+  let pending = false;
+  const signal = AbortSignal.timeout(300_000);
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (signal.aborted) fail("PUBLICATION_WAIT_TIMEOUT");
+    let state;
+    try { state = await readState(targetDate, startedAt, signal); }
+    catch (error) {
+      if (error?.message === "FEE_CLOUD_PUBLICATION_CANDIDATE_FAILED") throw error;
+      if (pending) fail("PUBLICATION_WAIT_UNVERIFIED");
+      return { targetDate, outcome: "produce", reason: "publication-unverified" };
+    }
+    if (isPublishedTarget(state, targetDate, now())) return { targetDate, outcome: "already-published", mainSha: state.mainSha };
+    if (state.mainSha !== state.finalMainSha) {
+      if (attempt + 1 === attempts) fail("PUBLICATION_UNSTABLE");
+    } else if (!state.pending && !pending) return { targetDate, outcome: "produce", reason: "target-not-published" };
+    else pending = true;
+    if (attempt + 1 < attempts) await sleep(delayMs);
+  }
+  fail("PUBLICATION_WAIT_TIMEOUT");
 }
 
 function safeOutputDir(value) {
@@ -356,7 +487,14 @@ export function producerFailureCode(error, stage) {
 }
 
 async function main() {
-  const result = await produce();
+  const cli = args(process.argv.slice(2));
+  if (cli.mode === "published-preflight") {
+    if (Object.keys(cli).some(key => !["mode", "benchmark-file"].includes(key))) fail("ARGUMENT");
+    const result = await publishedPreflight({ cache: readJson(path.resolve(cli["benchmark-file"] || ""), 3 * 1024 * 1024) });
+    console.log(JSON.stringify({ schema: "fee-console.published-preflight.v1", ...result }));
+    return;
+  }
+  const result = await produce({ cli });
   console.log(JSON.stringify({ schema: "fee-console.cloud-producer.v1", targetDate: result.targetDate,
     outcome: result.outcome, retryCount: result.retryCount, sourceDates: result.sourceDates, dataSha256: result.dataSha256 }));
 }

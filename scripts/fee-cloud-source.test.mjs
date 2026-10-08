@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
 import { isControlledWebullNetProceeds, latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce } from "./fee-cloud-producer.mjs";
+import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
 import { SourceFetchError } from "./fee-economic-source.mjs";
 
 const D = "2026-09-23";
@@ -28,6 +28,148 @@ const benchmarkCache = { v: 1, benchmarks: {
   spy: { series: [{ d: "2026-09-22", p: 700 }, { d: D, p: 701, div: 1.5 }] },
   qqq: { series: [{ d: "2026-09-22", p: 600 }, { d: D, p: 602 }] },
 } };
+
+const gateNow = () => new Date(`${D}T22:00:00Z`);
+function publicationFixture() {
+  const data = Buffer.from(JSON.stringify({enc:true,v:3,data:Buffer.alloc(64).toString('base64')}));
+  return {mainSha:'a'.repeat(40),finalMainSha:'a'.repeat(40),data,pending:false,health:{
+    schema:HEALTH_SCHEMA,checkedAt:`${D}T21:00:00Z`,targetDate:D,
+    sourceDates:{schwab:D,webull:D,benchmark:D},outcome:'updated',errorCode:null,
+    dataSha256:createHash('sha256').update(data).digest('hex')
+  }};
+}
+
+test('published preflight accepts only stable main with complete same-target health and ciphertext', async () => {
+  const state=publicationFixture(), original=structuredClone(state.health);
+  for(const outcome of ['updated','no-op']) {
+    state.health.outcome=outcome;
+    assert.equal(isPublishedTarget(state,D,gateNow()),true);
+    const result=await publishedPreflight({cache:benchmarkCache,now:gateNow,readState:async()=>state});
+    assert.equal(result.outcome,'already-published');assert.equal(result.targetDate,D);
+  }
+  state.health.outcome=original.outcome;assert.deepEqual(state.health,original);
+  const mutations=[s=>s.health.targetDate='2026-09-22',s=>s.health.sourceDates.webull='2026-09-22',
+    s=>s.health.sourceDates.benchmark=null,s=>s.health.checkedAt='2026-09-20T21:00:00Z',
+    s=>s.health.checkedAt=`${D}T22:06:00Z`,s=>s.health.outcome='failed',s=>s.health.errorCode='RUN_FAILED',
+    s=>s.health.extra='unexpected',s=>s.health.dataSha256='b'.repeat(64),s=>s.finalMainSha='b'.repeat(40),
+    s=>s.data=Buffer.from('{}'),s=>s.mainSha='not-a-sha'];
+  for(const mutate of mutations) {const s=publicationFixture();mutate(s);assert.equal(isPublishedTarget(s,D,gateNow()),false);}
+  const future=structuredClone(benchmarkCache);
+  for(const key of ['spy','qqq'])future.benchmarks[key].series.push({d:'2026-09-24',p:100});
+  assert.equal((await publishedPreflight({cache:future,now:gateNow,readState:async()=>state})).outcome,'produce');
+  const badDividend=structuredClone(benchmarkCache);badDividend.benchmarks.spy.series.at(-1).div=-1;
+  await assert.rejects(publishedPreflight({cache:badDividend,readState:async()=>{assert.fail('bad cache must not read publication');}}),/BENCHMARK_PENDING/);
+});
+
+test('preflight waits only for publication, bounds pending candidates, and fails an unverifiable wait', async () => {
+  let calls=0, waits=0;
+  const result=await publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:3,delayMs:0,
+    sleep:async()=>{waits++;},readState:async()=>{
+      calls++;const state=publicationFixture();if(calls<3){state.health.targetDate='2026-09-22';state.pending=true;}return state;
+    }});
+  assert.equal(result.outcome,'already-published');assert.equal(calls,3);assert.equal(waits,2);
+  const pending=publicationFixture();pending.health.targetDate='2026-09-22';pending.pending=true;
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:2,delayMs:0,
+    sleep:async()=>{},readState:async()=>pending}),/PUBLICATION_WAIT_TIMEOUT/);
+  calls=0;
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:2,delayMs:0,
+    sleep:async()=>{},readState:async()=>{if(calls++)throw new Error('private URL');return pending;}}),/PUBLICATION_WAIT_UNVERIFIED/);
+  assert.equal((await publishedPreflight({cache:benchmarkCache,readState:async()=>{throw new Error('private URL');}})).outcome,'produce');
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,readState:async()=>{throw new Error('FEE_CLOUD_PUBLICATION_CANDIDATE_FAILED');}}),/PUBLICATION_CANDIDATE_FAILED/);
+  const moved=publicationFixture();moved.finalMainSha='b'.repeat(40);
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:1,readState:async()=>moved}),/PUBLICATION_UNSTABLE/);
+});
+
+function earlierCandidateFixture() {
+  return {sha:'b'.repeat(40),parents:[{sha:'a'.repeat(40)}],author:{login:'huanwujoy-crypto'},committer:{login:'web-flow'},
+    commit:{message:`daily ${D}`,committer:{date:`${D}T21:00:00Z`},verification:{verified:true}},
+    files:[{filename:'fee-data-health.json',status:'modified'}]};
+}
+
+test('candidate wait is pinned to an earlier signed same-target candidate, excluding later producer queue', () => {
+  const branch='codex/fee-daily-20260923-abcdef', startedAt=`${D}T22:00:00Z`;
+  assert.equal(isEarlierCandidate(earlierCandidateFixture(),branch,'a'.repeat(40),D,startedAt),true);
+  const changes=[c=>c.commit.committer.date=`${D}T22:00:01Z`,c=>c.commit.committer.date='2026-09-20T22:00:00Z',
+    c=>c.commit.verification.verified=false,c=>c.author.login='another-user',c=>c.parents.push({sha:'c'.repeat(40)}),
+    c=>c.parents[0].sha='c'.repeat(40),c=>c.files.push({filename:'scripts/daily.mjs',status:'modified'}),
+    c=>c.files[0].status='added',c=>c.commit.message='daily 2026-09-22'];
+  for(const change of changes){const c=earlierCandidateFixture();change(c);assert.equal(isEarlierCandidate(c,branch,'a'.repeat(40),D,startedAt),false);}
+  assert.equal(isEarlierCandidate(earlierCandidateFixture(),'codex/fee-daily-20260922-abcdef','a'.repeat(40),D,startedAt),false);
+});
+
+test('public reader pins both encrypted files to main and never trusts candidate validation as publication', async () => {
+  const state=publicationFixture(),branch='codex/fee-daily-20260923-abcdef',routes=[];
+  state.health.targetDate='2026-09-22';
+  const request=async route=>{
+    routes.push(route);
+    if(route==='git/ref/heads/main')return {object:{sha:state.mainSha}};
+    if(route.startsWith('contents/')){
+      assert.match(route,new RegExp(`ref=${state.mainSha}$`));
+      const bytes=route.includes('data.json?')?state.data:Buffer.from(JSON.stringify(state.health));
+      return {type:'file',encoding:'base64',size:bytes.length,content:bytes.toString('base64')};
+    }
+    if(route.startsWith('git/matching-refs/'))return [{ref:`refs/heads/${branch}`,object:{sha:'b'.repeat(40)}}];
+    if(route.startsWith('commits/'))return earlierCandidateFixture();
+    if(route.startsWith('actions/'))return {workflow_runs:[{id:1,head_sha:'b'.repeat(40),head_branch:branch,event:'push',status:'completed',conclusion:'success'}]};
+    assert.fail(route);
+  };
+  const result=await readPublicationState(D,`${D}T22:00:00Z`,request);
+  assert.equal(result.pending,true);assert.equal(isPublishedTarget(result,D,gateNow()),false);
+  assert.equal(routes.filter(r=>r==='git/ref/heads/main').length,3);
+  assert.equal(routes.some(r=>r.includes('fee-cloud-producer.yml/runs')),false);
+  assert.equal((await readPublicationState(D,`${D}T22:00:00Z`,async route=>{
+    if(route.startsWith('actions/'))throw new Error('read-only Actions metadata unavailable');
+    return request(route);
+  })).pending,true);
+  await assert.rejects(readPublicationState(D,`${D}T22:00:00Z`,async route=>{
+    if(route.startsWith('actions/'))return {workflow_runs:[{id:1,head_sha:'b'.repeat(40),head_branch:branch,event:'push',status:'completed',conclusion:'failure'}]};
+    return request(route);
+  }),/PUBLICATION_CANDIDATE_FAILED/);
+});
+
+test('workflow gates all credential, source and candidate steps before authentication and preserves old health', () => {
+  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+  const steps=workflow.split('\n      - name: ').slice(1);
+  const preflight=steps.findIndex(s=>s.startsWith('Check whether this complete target'));
+  const names=['Refresh the producer base','Exchange the trusted workflow identity','Read the isolated cloud Sharesight credentials',
+    'Read, calculate and validate','Create a signed owner candidate','Explain shadow mode'];
+  for(const name of names){const index=steps.findIndex(s=>s.startsWith(name));assert.ok(index>preflight);assert.match(steps[index],/if:.*steps\.published\.outputs\.outcome == 'produce'/);}
+  assert.ok(steps.findIndex(s=>s.startsWith('Read the independent benchmark cache'))<preflight);
+  assert.doesNotMatch(steps[preflight],/secrets\.|create-success|create-failure|fee-data-health\.json|FEE_DATA_KEY|SHARESIGHT/);
+  assert.match(steps[preflight],/already-published/);assert.match(steps[preflight],/source check time is unchanged/);
+  assert.match(workflow,/permissions:\n  contents: read\n  id-token: write/);
+  assert.match(workflow,/group: fee-cloud-producer\n  cancel-in-progress: false/);
+  assert.match(steps.at(-1),/if:.*always\(\)/);
+});
+
+test('real preflight CLI performs only public main GETs and never reads financial credentials or creates a candidate', () => {
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-published-cli-'));fs.chmodSync(dir,0o700);
+  try {
+    const date=new Date(Date.now()-86400000).toISOString().slice(0,10),state=publicationFixture();
+    state.health.checkedAt=new Date().toISOString();state.health.targetDate=date;
+    state.health.sourceDates={schwab:date,webull:date,benchmark:date};
+    const cache={v:1,benchmarks:{spy:{series:[{d:date,p:100}]},qqq:{series:[{d:date,p:100}]}}};
+    const benchmarkFile=path.join(dir,'benchmark.json'),preload=path.join(dir,'public-only.mjs');
+    fs.writeFileSync(benchmarkFile,JSON.stringify(cache));
+    fs.writeFileSync(preload,`const state=${JSON.stringify({mainSha:state.mainSha,health:state.health,data:state.data.toString('base64')})};
+globalThis.fetch=async(url,init)=>{
+ if(init.method||init.body||!url.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/'))throw new Error('non-public request');
+ let value;
+ if(url.endsWith('/git/ref/heads/main'))value={object:{sha:state.mainSha}};
+ else if(url.endsWith('/contents/data.json?ref='+state.mainSha))value={type:'file',encoding:'base64',size:Buffer.from(state.data,'base64').length,content:state.data};
+ else if(url.endsWith('/contents/fee-data-health.json?ref='+state.mainSha)){const b=Buffer.from(JSON.stringify(state.health));value={type:'file',encoding:'base64',size:b.length,content:b.toString('base64')};}
+ else throw new Error('unexpected public route');
+ return {status:200,url,text:async()=>JSON.stringify(value)};
+};`);
+    const result=spawnSync(process.execPath,['--import',preload,new URL('./fee-cloud-producer.mjs',import.meta.url).pathname,
+      '--mode=published-preflight',`--benchmark-file=${benchmarkFile}`],{encoding:'utf8',timeout:10_000,
+      env:{...process.env,FEE_DATA_KEY:'unusable-synthetic',FEE_ECON_GIST_ID:'unusable-synthetic',
+        FEE_CLOUD_SHARESIGHT_CLIENT_ID:'unusable-synthetic',FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:'unusable-synthetic'}});
+    assert.equal(result.status,0,result.stderr);assert.equal(JSON.parse(result.stdout).outcome,'already-published');
+    assert.equal(fs.existsSync(path.join(dir,'data.json')),false);assert.equal(fs.existsSync(path.join(dir,'fee-data-health.json')),false);
+    assert.deepEqual(fs.readdirSync(dir).sort(),['benchmark.json','public-only.mjs']);
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
 
 const portfolio = (account, id, cashId, holdings, transactions = []) => ({
   performance: { report: { portfolio_id: id, end_date: D, currency: { code: "USD" }, value: 1000,

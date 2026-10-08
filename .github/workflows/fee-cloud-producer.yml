@@ -31,21 +31,6 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Exchange the trusted workflow identity for short-lived Google credentials
-        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
-        with:
-          project_id: family-portfolio-gateway
-          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
-          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
-
-      - name: Read the isolated cloud Sharesight credentials
-        id: sharesight_credentials
-        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
-        with:
-          secrets: |-
-            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
-            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
-
       - name: Read the independent benchmark cache
         shell: bash
         run: |
@@ -55,8 +40,54 @@ jobs:
           git show origin/market-data-cache:benchmark-close.json > "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
           chmod 600 "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
 
+      - name: Check whether this complete target is already published
+        id: published
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          summary=$(node scripts/fee-cloud-producer.mjs \
+            --mode=published-preflight \
+            --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json")
+          node - "$summary" <<'NODE'
+          const fs = require('fs'), result = JSON.parse(process.argv[2]);
+          if (result.schema !== 'fee-console.published-preflight.v1'
+              || !['produce', 'already-published'].includes(result.outcome)
+              || !/^\d{4}-\d{2}-\d{2}$/.test(result.targetDate)) throw new Error('unexpected publication decision');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `outcome=${result.outcome}\ntarget=${result.targetDate}\n`);
+          if (result.outcome === 'already-published') fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+            `## Fee cloud producer\n\n- Target: ${result.targetDate}\n- Outcome: already-published\n\nThe existing main receipt and encrypted data were verified. Its source check time is unchanged.\n`);
+          NODE
+
+      - name: Refresh the producer base after publication preflight
+        if: ${{ steps.published.outputs.outcome == 'produce' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git checkout --detach origin/main
+
+      - name: Exchange the trusted workflow identity for short-lived Google credentials
+        if: ${{ steps.published.outputs.outcome == 'produce' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+
+      - name: Read the isolated cloud Sharesight credentials
+        id: sharesight_credentials
+        if: ${{ steps.published.outputs.outcome == 'produce' }}
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+
       - name: Read, calculate and validate the encrypted candidate
         id: producer
+        if: ${{ steps.published.outputs.outcome == 'produce' }}
         shell: bash
         env:
           FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.sharesight_credentials.outputs.client_id }}
@@ -95,7 +126,7 @@ jobs:
 
       - name: Create a signed owner candidate
         id: candidate
-        if: ${{ vars.FEE_CLOUD_MODE == 'publish' }}
+        if: ${{ vars.FEE_CLOUD_MODE == 'publish' && steps.published.outputs.outcome == 'produce' }}
         shell: bash
         env:
           FEE_CLOUD_GITHUB_TOKEN: ${{ secrets.FEE_CLOUD_GITHUB_TOKEN }}
@@ -107,7 +138,7 @@ jobs:
             --base-sha="$(git rev-parse HEAD)"
 
       - name: Explain shadow mode
-        if: ${{ vars.FEE_CLOUD_MODE == 'shadow' }}
+        if: ${{ vars.FEE_CLOUD_MODE == 'shadow' && steps.published.outputs.outcome == 'produce' }}
         shell: bash
         run: echo 'Shadow mode validated the full private calculation and intentionally published nothing.' >> "$GITHUB_STEP_SUMMARY"
 
