@@ -91,6 +91,24 @@ collection or mismatched account/date stops calculation; management history
 retains its existing separate completeness gate. Pagination is not silently
 followed or truncated.
 
+The undated holdings list is an identity catalog and can retain sold positions.
+The dated open-position report must match each catalog holding's instrument ID,
+ticker, market and currency; its start/end date, New York timezone and
+`include_sales=false` scope are checked. A catalog-only row is accepted only
+when complete confirmed history through the target date starts at that holding's
+inception and proves an exactly zero share balance. BUY, SELL and one initial
+OPENING_BALANCE are supported; unknown corporate actions, residual shares or
+missing evidence stop the run. Target-day history and the daily trade list must
+agree, including exact original JSON quantities and corporate-action markers.
+Quantity proof retains raw number text before JSON Number rounding, uses exact
+integer units at up to 18 decimal places, and rejects missing text, unsupported
+precision or quantities outside the positive bounded range. Webull reuses its
+existing full management-history read. Schwab adds the
+same fixed as-of history GET only when catalog-only rows need proof. This extra
+Schwab date range requires specific review before release. Canonical proof rows
+are bound into the private source fingerprint and stable A/B check; this does
+not add a Sharesight recheck at the later signing boundary.
+
 For both portfolios, each A/B read also obtains the fixed previous calendar
 day's performance using the same GET-only endpoint and identity checks. This
 is an additional date scope requiring specific review before release. It is

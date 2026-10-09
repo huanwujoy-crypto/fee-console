@@ -7,12 +7,20 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
-import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate, latestCommonBenchmarkDate, normalizeRead, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
+import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate, latestCommonBenchmarkDate, normalizeRead as normalizeCloudRead, parseTradeJson, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
 
 const D = "2026-09-23";
+// Synthetic direct inputs follow the same raw-JSON path as the cloud transport.
+const normalizeRead = (input, ...args) => normalizeCloudRead(Object.fromEntries(Object.entries(input).map(([account, p]) => {
+  const copy = { ...p };
+  for (const key of ['trades', 'holdingHistory', 'managementTrades']) {
+    if (p[key]) copy[key] = parseTradeJson(JSON.stringify(p[key]));
+  }
+  return [account, copy];
+})), ...args);
 
 test("writer diagnostics expose fixed categories and stage without private child stderr", () => {
   assert.equal(writerFailureCode("error: STYLE_EVIDENCE_REQUIRED — nothing written\n", true),
@@ -195,12 +203,17 @@ globalThis.fetch=async(url,init)=>{
   });
 });
 
+const syntheticInstrument = (holdingId, ticker) => ({ id: 1000 + holdingId, code: ticker,
+  market_code: 'NYSE', currency_code: 'USD' });
 const portfolio = (account, id, cashId, holdings, transactions = []) => ({
-  performance: { report: { portfolio_id: id, end_date: D, currency: { code: "USD" }, value: 1000,
+  performance: { report: { portfolio_id: id, start_date: D, end_date: D,
+    include_sales: false, portfolio_tz_name: 'America/New_York', currency: { code: "USD" }, value: 1000,
     cash_accounts: [{ id: cashId, value: 400, currency: { code: "USD" }, portfolio: { id, name: account } }],
     holdings: holdings.map(h => ({ id: h.id, value: h.value, valid_position: true,
-      instrument: { code: h.ticker }, instrument_currency: { code: "USD" }, portfolio: { id, name: account } })) } },
-  holdings: { holdings: holdings.map(h => ({ id: h.id, valid_position: true, portfolio: { id, name: account } })) },
+      instrument: syntheticInstrument(h.id, h.ticker), instrument_currency: { code: "USD" }, portfolio: { id, name: account } })) } },
+  holdings: { holdings: holdings.map(h => ({ id: h.id, valid_position: true,
+    inception_date: '2026-09-22', instrument: syntheticInstrument(h.id, h.ticker),
+    instrument_currency: { code: 'USD' }, portfolio: { id, name: account } })) },
   cashAccounts: { cash_accounts: [{ id: cashId, portfolio_id: id, currency: "USD", portfolio_currency: "USD", balance: 400 }] },
   previousPerformance: {report:{portfolio_id:id,end_date:'2026-09-22',currency:{code:'USD'},cash_accounts:[{id:cashId,value:400-transactions.reduce((n,t)=>n+t.amount,0),currency:{code:'USD'},portfolio:{id,name:account}}]}},
   cashTransactions: { [cashId]: { cash_account_transactions: transactions.map((t,i)=>({id:100+i,...t})) } },
@@ -218,6 +231,204 @@ function raw() {
     ]),
   };
 }
+
+function closedCatalogFixture(account = 'webull', openingType = 'BUY') {
+  const fixture = raw(), p = fixture[account], pid = account === 'webull' ? 1350094 : 936249;
+  const instrument = syntheticInstrument(700, 'SYNTHC');
+  p.holdings.holdings.push({ id: 700, inception_date: '2026-09-21', valid_position: true,
+    instrument, instrument_currency: { code: 'USD' }, portfolio: { id: pid, name: account === 'webull' ? 'Webull' : 'Schwab-HK' } });
+  const trade = { portfolio_id: pid, holding_id: 700, instrument, quantity: 3,
+    state: 'confirmed', company_event_id: null };
+  p.holdingHistory = { trades: [
+    { ...trade, id: 701, transaction_date: '2026-09-21', description_code: openingType },
+    { ...trade, id: 702, transaction_date: '2026-09-22', description_code: 'SELL' },
+  ] };
+  if (account === 'schwab') {
+    p.trades.trades = [{ id: 9, portfolio_id: pid, holding_id: 2,
+      instrument: syntheticInstrument(2, 'BRK/B'), transaction_date: D,
+      description_code: 'SELL', quantity: 1, state: 'confirmed', company_event_id: null }];
+    p.holdingHistory.trades.push(p.trades.trades[0]);
+  }
+  return fixture;
+}
+
+test('catalog-only historical positions require complete target-bound zero quantity proof for either account', () => {
+  for (const account of ['schwab', 'webull']) for (const opening of ['BUY', 'OPENING_BALANCE']) {
+    const baseline = normalizeRead(raw(), D, selectBenchmark(benchmarkCache, D));
+    const input = closedCatalogFixture(account, opening);
+    const result = normalizeRead(input, D, selectBenchmark(benchmarkCache, D));
+    for (const key of ['accounts', 'splits', 'styleInput', 'flows', 'acctCash', 'prevAcctCash']) {
+      assert.deepEqual(result[key], baseline[key]);
+    }
+    assert.equal(result.styleInput.portfolios.flatMap(p => p.holdings).some(h => h.holdingId === 700), false);
+    delete input[account].holdingHistory;
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_REQUIRED/);
+  }
+});
+
+test('closed catalog proof fails on incomplete, stale, unsupported or contradictory history', () => {
+  const changes = [
+    p => p.holdingHistory.links = { next: 'next-page' },
+    p => p.holdingHistory.trades.push({ ...p.holdingHistory.trades[0] }),
+    p => p.holdingHistory.trades[0].portfolio_id = 999,
+    p => p.holdingHistory.trades[0].state = 'unconfirmed',
+    p => p.holdingHistory.trades[1].transaction_date = '2026-09-24',
+    p => p.holdingHistory.trades.pop(),
+    p => p.holdingHistory.trades.shift(),
+    p => p.holdingHistory.trades[0].description_code = 'SPLIT',
+    p => p.holdingHistory.trades[0].company_event_id = 1,
+    p => delete p.holdingHistory.trades[0].company_event_id,
+    p => p.holdingHistory.trades[1].description_code = 'OPENING_BALANCE',
+    p => p.holdingHistory.trades[0].instrument = { ...p.holdingHistory.trades[0].instrument, market_code: 'OTHER' },
+    p => p.holdingHistory.trades[0].quantity = 0,
+    p => p.holdingHistory.trades[1].quantity = 2.999999999,
+    p => p.holdings.holdings.at(-1).inception_date = '2026-09-20',
+  ];
+  for (const change of changes) {
+    const input = closedCatalogFixture(); change(input.webull);
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)),
+      /SOURCE_(?:INCOMPLETE|DUPLICATE)|HOLDING_HISTORY/);
+  }
+});
+
+test('quantity proof uses exact decimals and groups same-day trades without inferring ID order', () => {
+  const input = closedCatalogFixture(), p = input.webull, first = p.holdingHistory.trades[0];
+  p.holdingHistory.trades = [{ ...first, id: 703, quantity: 0.1 },
+    { ...first, id: 701, quantity: 0.2 }, { ...first, id: 702, quantity: 0.3, description_code: 'SELL' }];
+  assert.doesNotThrow(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)));
+  p.holdingHistory.trades[2].quantity = 0.29999999999999993;
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_QUANTITY/);
+  p.holdingHistory.trades = [{ ...first, quantity: 1e-18 }];
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_QUANTITY/);
+});
+
+test('full history detects an omitted active holding even when the dated report lowers its total', () => {
+  const input = closedCatalogFixture(), p = input.webull;
+  const missing = p.performance.report.holdings.pop();
+  p.performance.report.value -= missing.value;
+  p.holdingHistory.trades.push({ id: 704, portfolio_id: 1350094, holding_id: missing.id,
+    instrument: missing.instrument, transaction_date: '2026-09-22', description_code: 'BUY',
+    quantity: 5, state: 'confirmed', company_event_id: null });
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_QUANTITY/);
+});
+
+test('target-day history and trade listing must agree and a reopened position cannot count as closed', () => {
+  const input = closedCatalogFixture(), p = input.webull;
+  const reopen = { ...p.holdingHistory.trades[0], id: 705, transaction_date: D, quantity: 1 };
+  p.trades.trades = [reopen];
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_CURRENT/);
+  p.holdingHistory.trades.push(reopen);
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_QUANTITY/);
+  p.trades.trades = [];
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_CURRENT/);
+});
+
+test('target-day closed proof rejects conflicting or missing corporate-action markers', () => {
+  for (const marker of [999, undefined]) {
+    const input = closedCatalogFixture(), p = input.webull;
+    p.holdingHistory.trades[1].transaction_date = D;
+    p.trades.trades = [{ ...p.holdingHistory.trades[1], company_event_id: marker }];
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_CURRENT/);
+  }
+});
+
+function quantityLexemeReader(fixtures, historyLexemes, dayLexemes = []) {
+  const response = (url, value, lexemes) => {
+    let body = JSON.stringify(value), index = 0;
+    if (lexemes) body = body.replace(/"quantity":3/g, () => `"quantity":${lexemes[index++]}`);
+    const r = new Response(body, { headers: { 'content-type': 'application/json' } });
+    Object.defineProperty(r, 'url', { value: url }); return r;
+  };
+  const fetchImpl = async (url, init) => {
+    if (url.endsWith('/oauth2/token')) return response(url, { access_token: 'x'.repeat(30), token_type: 'bearer' });
+    assert.equal(init.method, 'GET');
+    if (url.endsWith('/portfolios.json')) return response(url, { portfolios: [
+      { id: 936249, name: 'Schwab-HK', currency_code: 'USD' }, { id: 1350094, name: 'Webull', currency_code: 'USD' },
+    ] });
+    const account = url.includes('936249') || url.includes('142251') ? 'schwab' : 'webull';
+    const p = fixtures[account], params = new URL(url).searchParams;
+    if (url.includes('/performance?')) return response(url, params.get('end_date') === D ? p.performance : p.previousPerformance);
+    if (url.includes('/holdings?')) return response(url, p.holdings);
+    if (url.includes('/cash_accounts.json')) return response(url, p.cashAccounts);
+    if (url.includes('cash_account_transactions')) return response(url, Object.values(p.cashTransactions)[0]);
+    if (url.includes('trades.json')) {
+      return response(url, params.has('start_date') ? p.trades : (p.holdingHistory || p.trades),
+        account === 'webull' ? (params.has('start_date') ? dayLexemes : historyLexemes) : undefined);
+    }
+    assert.fail('unexpected fixed source route');
+  };
+  return new SharesightCloudReader({ clientId: 'id', clientSecret: 'secret', fetchImpl });
+}
+
+test('reader preserves original quantity decimals before Number can erase a residual', async () => {
+  for (const [lexemes, error] of [
+    [['1000000000000', '999999999999.99999'], /HOLDING_HISTORY_QUANTITY/],
+    [['1000000000000.00001', '1000000000000.00001'], /HOLDING_HISTORY_UNSUPPORTED/],
+    [['1e-19', '1e-19'], /HOLDING_HISTORY_UNSUPPORTED/],
+    [['"3"', '"3"'], /HOLDING_HISTORY_UNSUPPORTED/],
+    [['null', 'null'], /HOLDING_HISTORY_UNSUPPORTED/],
+  ]) {
+    const reader = quantityLexemeReader(closedCatalogFixture(), lexemes);
+    await assert.rejects(reader.readStable(D, selectBenchmark(benchmarkCache, D)), error);
+  }
+});
+
+test('closed proof rejects direct Number-only histories without original quantity tokens', () => {
+  assert.throws(() => normalizeCloudRead(closedCatalogFixture(), D, selectBenchmark(benchmarkCache, D)),
+    /HOLDING_HISTORY_UNSUPPORTED/);
+});
+
+test('original quantity tokens handle exponent notation and escaped numeric descriptions canonically', async () => {
+  const input = closedCatalogFixture();
+  for (const trade of input.webull.holdingHistory.trades) {
+    trade.comments = '123 \\ "quantity":999999999999.99999 \\u0033 "quoted"';
+  }
+  const first = await quantityLexemeReader(input, ['3E-1', '0.30'])
+    .readStable(D, selectBenchmark(benchmarkCache, D));
+  const second = await quantityLexemeReader(input, ['0.3', '3e-1'])
+    .readStable(D, selectBenchmark(benchmarkCache, D));
+  assert.equal(first.sourceFingerprint, second.sourceFingerprint);
+});
+
+test('target-day original quantity conflict stops even when both JSON Numbers round to the same value', async () => {
+  const input = closedCatalogFixture(), p = input.webull;
+  p.holdingHistory.trades[1].transaction_date = D;
+  p.trades.trades = [{ ...p.holdingHistory.trades[1] }];
+  const reader = quantityLexemeReader(input, ['1000000000000', '1000000000000'], ['999999999999.99999']);
+  await assert.rejects(reader.readStable(D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_CURRENT/);
+});
+
+test('target-day exact quantity comparison also covers active report holdings', async () => {
+  const input = closedCatalogFixture(), p = input.webull;
+  const active = { ...p.holdingHistory.trades[0], id: 706, holding_id: 4,
+    instrument: syntheticInstrument(4, 'GOOG'), transaction_date: D };
+  p.holdingHistory.trades.push(active); p.trades.trades = [{ ...active }];
+  const reader = quantityLexemeReader(input, ['3', '3', '1000000000000'], ['999999999999.99999']);
+  await assert.rejects(reader.readStable(D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_CURRENT/);
+});
+
+test('source fingerprint binds canonical closed history rather than only its zero result', () => {
+  const input = closedCatalogFixture(), p = input.webull;
+  const before = normalizeRead(input, D, selectBenchmark(benchmarkCache, D));
+  p.holdingHistory.trades.reverse();
+  assert.equal(normalizeRead(input, D, selectBenchmark(benchmarkCache, D)).sourceFingerprint, before.sourceFingerprint);
+  for (const trade of p.holdingHistory.trades) trade.quantity = 4;
+  const after = normalizeRead(input, D, selectBenchmark(benchmarkCache, D));
+  assert.deepEqual(after.accounts, before.accounts);
+  assert.notEqual(after.sourceFingerprint, before.sourceFingerprint);
+});
+
+test('dated holdings must match catalog instrument, market and currency identities', () => {
+  for (const key of ['id', 'code', 'market_code', 'currency_code']) {
+    const input = raw(); input.webull.performance.report.holdings[0].instrument[key] = key === 'id' ? 999 : 'OTHER';
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_IDENTITY/);
+  }
+  for (const change of [r => r.start_date = '2026-09-22', r => r.include_sales = true,
+    r => r.portfolio_tz_name = 'UTC']) {
+    const input = raw(); change(input.webull.performance.report);
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /PERFORMANCE_IDENTITY/);
+  }
+});
 
 test("benchmark requires a complete same-date pair", () => {
   assert.equal(latestCommonBenchmarkDate(benchmarkCache), D);
@@ -448,6 +659,41 @@ test("reader allows only fixed GET routes and proves two identical reads", async
   assert.equal(result.targetDate, D);
   assert.equal(calls, 30);
   assert.equal(result.managementInput.historyComplete, true);
+});
+
+test('reader conditionally obtains Schwab as-of history and reuses the existing Webull history route', async () => {
+  for (const extraAccount of ['schwab', 'webull']) {
+    const fixtures = closedCatalogFixture(extraAccount), historyCalls = { schwab: 0, webull: 0 };
+    const response = (url, value) => {
+      const r = new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+      Object.defineProperty(r, 'url', { value: url }); return r;
+    };
+    const fetchImpl = async (url, init) => {
+      if (url.endsWith('/oauth2/token')) return response(url, { access_token: 'x'.repeat(30), token_type: 'bearer' });
+      assert.equal(init.method, 'GET');
+      if (url.endsWith('/portfolios.json')) return response(url, { portfolios: [
+        { id: 936249, name: 'Schwab-HK', currency_code: 'USD' }, { id: 1350094, name: 'Webull', currency_code: 'USD' },
+      ] });
+      const account = url.includes('936249') || url.includes('142251') ? 'schwab' : 'webull';
+      const p = fixtures[account], params = new URL(url).searchParams;
+      if (url.includes('/performance?')) return response(url, params.get('end_date') === D ? p.performance : p.previousPerformance);
+      if (url.includes('/holdings?')) return response(url, p.holdings);
+      if (url.includes('/cash_accounts.json')) return response(url, p.cashAccounts);
+      if (url.includes('cash_account_transactions')) return response(url, Object.values(p.cashTransactions)[0]);
+      if (url.includes('trades.json')) {
+        assert.equal(params.get('end_date'), D);
+        if (params.has('start_date')) return response(url, p.trades);
+        historyCalls[account]++;
+        return response(url, p.holdingHistory || p.trades);
+      }
+      assert.fail('unexpected fixed source route');
+    };
+    const reader = new SharesightCloudReader({ clientId: 'id', clientSecret: 'secret', fetchImpl });
+    const result = await reader.readStable(D, selectBenchmark(benchmarkCache, D));
+    assert.equal(result.targetDate, D);
+    assert.equal(historyCalls.webull, 2);
+    assert.equal(historyCalls.schwab, extraAccount === 'schwab' ? 2 : 0);
+  }
 });
 
 test("cloud producer accepts the real updated and no-op writer contracts", () => {

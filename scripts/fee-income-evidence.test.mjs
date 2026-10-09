@@ -160,11 +160,14 @@ const flow=input=>{
 function rawFixture(date=D) {
   const input=fixture(date,'SGOV'),make=(account,cashId,holdingId,value,cash,transactions)=>{
     const expected=CLOUD_ACCOUNTS[account],p={id:expected.portfolioId,name:expected.name};
-    return {performance:{report:{portfolio_id:p.id,end_date:date,currency:{code:'USD'},value,
+    const instrument={id:1000+holdingId,code:'SGOV',market_code:'NYSE',currency_code:'USD'};
+    return {performance:{report:{portfolio_id:p.id,start_date:date,end_date:date,include_sales:false,
+      portfolio_tz_name:'America/New_York',currency:{code:'USD'},value,
       cash_accounts:[{id:cashId,value:cash,currency:{code:'USD'},portfolio:p}],
-      holdings:[{id:holdingId,value:600,valid_position:true,instrument:{code:'SGOV'},instrument_currency:{code:'USD'},portfolio:p}]}},
+      holdings:[{id:holdingId,value:600,valid_position:true,instrument,instrument_currency:{code:'USD'},portfolio:p}]}},
       previousPerformance:{report:{portfolio_id:p.id,end_date:shift(date,-1),currency:{code:'USD'},cash_accounts:[{id:cashId,value:400,currency:{code:'USD'},portfolio:p}]}},
-      holdings:{holdings:[{id:holdingId,valid_position:true,portfolio:p}]},
+      holdings:{holdings:[{id:holdingId,valid_position:true,instrument,instrument_currency:{code:'USD'},
+        inception_date:shift(date,-1),portfolio:p}]},
       cashAccounts:{cash_accounts:[{id:cashId,portfolio_id:p.id,currency:'USD',portfolio_currency:'USD',balance:cash}]},
       cashTransactions:{[cashId]:{cash_account_transactions:transactions}},trades:{trades:[]},managementTrades:{trades:[]}};
   };
