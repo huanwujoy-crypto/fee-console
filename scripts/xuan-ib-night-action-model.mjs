@@ -1,5 +1,5 @@
 import { calculateCashPlan } from './xuan-ib-cash-plan.mjs';
-import { normalizePositions, unwrapSource } from './xuan-ib-source-adapter.mjs';
+import { normalizePositions, unwrapSource, checkAccountIds } from './xuan-ib-source-adapter.mjs';
 import { orderTrendKey } from './xuan-ib-order-view.mjs';
 import { parseSharesightCash, parseSharesightStockAllocation } from './xuan-ib-sharesight-allocation.mjs';
 import { validateNightActionModel } from './xuan-ib-night-action-view.mjs';
@@ -145,6 +145,9 @@ export function buildNightActionModel({
 }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dataDate || '') || typeof asOfHkt !== 'string'
     || typeof ordersAsOfHkt !== 'string' || !finite(reserve)) fail('INVALID_INPUT');
+  // Missing identifiers remain governed by the existing pre-read owner
+  // attestation; any explicit contradictory identifier always fails.
+  [ibAccountSummary,ibPositions,ibOrders].forEach(checkAccountIds);
   const summary = unwrapSource('accountSummary', ibAccountSummary);
   if (summary.currency !== 'USD' || !finite(summary.total_cash_value)) fail('USD_ACCOUNT_SUMMARY_REQUIRED');
   const allocation = parseSharesightStockAllocation(ibGroupedPerformance);

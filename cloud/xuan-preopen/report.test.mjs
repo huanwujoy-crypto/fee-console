@@ -40,7 +40,9 @@ test('five sources produce only a private deterministic four-card artifact', asy
   assert.equal(receipt.publication, 'none'); assert.equal(receipt.scheduler, 'none');
   assert.equal(h.objects.length, 7); assert.deepEqual(h.calls, ['key', 'context', 'ib', 'context']);
   const html = h.objects.find(item => item.name.endsWith('report.html')).value;
-  const model = extractNightActionModel(html);
+  const bound = extractNightActionModel(html);
+  assert.equal(bound.schemaVersion,10);
+  const model=bound.report;
   assert.equal(model.cash.pool, 150); assert.equal(model.cash.callApplied, 25);
   assert.equal(model.cash.orderReserve, 10.5); assert.equal(model.cash.planning, 114.5);
   assert.equal(model.cash.cashLike.total, 90); assert.equal(model.schemaVersion, 5);
@@ -114,4 +116,19 @@ test('trusted context is pinned to current main and checks the previous publishe
   const c = await loadTrustedContext({fetchImpl, now});
   assert.equal(c.previousHtml, html); assert.equal(c.previousSourceSha, 'c'.repeat(40));
   assert.ok(urls.slice(1).every(url => url.includes('/' + 'a'.repeat(40) + '/')));
+});
+
+test('normal actual five-source producer binds schema10 and reaches only a mocked candidate publisher',async()=>{
+  const {publishPrepared}=await import('./publish.mjs');
+  const {validateNightActionHtml}=await import('../../scripts/xuan-ib-night-action-guard.mjs');
+  const h=harness();h.options.io.savePrivate=async(name,value)=>{h.objects.push({name,value});return {sha256:crypto.createHash('sha256').update(typeof value==='string'?value:JSON.stringify(value)).digest('hex'),generation:'1'};};
+  const receipt=await runPrivateReport(h.options),html=h.objects.find(o=>o.name===receipt.artifact.privateObject).value;
+  const bound=extractNightActionModel(html),c=context();
+  assert.equal(bound.schemaVersion,10);assert.equal(bound.report.cash.planning,114.5);
+  assert.equal(validateNightActionHtml(html,receipt.dataDate,{snapshot:c.association,previousSourceSha:c.previousSourceSha,now:now(),requireBound:true}).status,'ready');
+  const requests=[];
+  const request=async p=>{requests.push(p);if(p.query.startsWith('query'))return{data:{viewer:{login:'huanwujoy-crypto'},repository:{id:'SYNTHETIC',ref:{target:{oid:'a'.repeat(40)}}}}};if(p.query.includes('CreateRef'))return{data:{createRef:{ref:{name:p.variables.input.name,target:{oid:'a'.repeat(40)}}}}};return{data:{createCommitOnBranch:{commit:{oid:'e'.repeat(40)},ref:{name:p.variables.input.branch.branchName}}}};};
+  const result=await publishPrepared({html,receipt,request,loadContext:h.options.loadContext,now});
+  assert.equal(result.publication,'candidate-only');assert.equal(requests.length,3);
+  assert.deepEqual(requests[2].variables.input.fileChanges.additions.map(a=>a.path),['xuan-ib/index.html']);
 });

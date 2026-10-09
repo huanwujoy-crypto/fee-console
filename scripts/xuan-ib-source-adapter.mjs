@@ -13,13 +13,13 @@ const need=(value,keys)=>{
   return value;
 };
 const array=value=>{if(!Array.isArray(value)||value.length>10_000)fail('INVALID_SOURCE_ARRAY');return value;};
-const checkAccountIds=raw=>{
+export const checkAccountIds=raw=>{
   let visited=0;
   const walk=(value,depth=0)=>{
     if(++visited>50_000||depth>20)fail('ACCOUNT_SCAN_LIMIT');
     if(!value||typeof value!=='object')return;
     for(const [key,child] of Object.entries(value)){
-      if(['account_id','accountId'].includes(key)&&child!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_MISMATCH');
+      if(['account_id','accountId','accountID','account_number','accountNumber'].includes(key)&&child!==APPROVED_IB_ACCOUNT_ID)fail('ACCOUNT_SCOPE_MISMATCH');
       if(child&&typeof child==='object')walk(child,depth+1);
     }
   };

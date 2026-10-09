@@ -116,3 +116,17 @@ test('requires the completed Sharesight source date selected by the pre-open run
   assert.equal(buildNightActionModel({ ...input, expectedSourceDate: '2026-09-24' }).status, 'ready');
   assert.throws(() => buildNightActionModel({ ...input, expectedSourceDate: '2026-09-23' }), /SOURCE_DATE_NOT_READY/);
 });
+
+test('every actual daily IB input rejects explicit top-level and nested identity contradictions',()=>{
+  for(const endpoint of ['ibAccountSummary','ibPositions','ibOrders'])for(const key of ['account_id','accountId','accountID']){
+    const value=structuredClone(input);value[endpoint][key]='U-UNAPPROVED';
+    assert.throws(()=>buildNightActionModel(value),/ACCOUNT_SCOPE_MISMATCH/);
+    delete value[endpoint][key];value[endpoint].nested={rows:[{[key]:null}]};
+    assert.throws(()=>buildNightActionModel(value),/ACCOUNT_SCOPE_MISMATCH/);
+  }
+});
+test('verified empty orders permit zero reserve; missing orders never become empty',()=>{
+  const value=structuredClone(input);value.ibOrders={orders:[]};
+  assert.equal(buildNightActionModel(value).cash.orderReserve,0);
+  value.ibOrders={};assert.throws(()=>buildNightActionModel(value),/INVALID_SOURCE_SHAPE/);
+});
