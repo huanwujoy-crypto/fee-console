@@ -182,7 +182,7 @@ jobs:
           done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/codex/fee-daily-*')
 
           if (( ${#candidates[@]} == 0 )); then
-            # Producer cron is UTC Tue-Sat at 03:30-09:50, also HKT Tue-Sat.
+            # Producer cron is UTC Tue-Sat at 02:00-09:50, also HKT Tue-Sat.
             # A scheduled watchdog has no same-day receipt to require on Sun/Mon.
             # Manual and workflow_run promotion retain their existing guards.
             producer_weekday=$(TZ=Asia/Hong_Kong date +%u)

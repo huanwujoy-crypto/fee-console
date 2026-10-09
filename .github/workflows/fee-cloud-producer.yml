@@ -2,10 +2,11 @@ name: Fee console cloud producer
 
 on:
   schedule:
-    # HKT Tue-Sat 11:30 first attempt. Independent 11:40, 11:55 and 12:20
+    # HKT Tue-Sat 10:00 first attempt. Independent 11:40, 11:55 and 12:20
     # idempotent slots reduce the impact of a delayed or dropped GitHub schedule
     # event; the later slots still pick up delayed source data without a Mac.
-    - cron: '30,40,55 3 * * 2-6'
+    - cron: '0 2 * * 2-6'
+    - cron: '40,55 3 * * 2-6'
     - cron: '20,50 4 * * 2-6'
     - cron: '50 5,7,9 * * 2-6'
   workflow_dispatch:
