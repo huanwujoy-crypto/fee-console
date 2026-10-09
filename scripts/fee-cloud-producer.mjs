@@ -233,6 +233,7 @@ export function writerFailureCode(stderr, preflight = false) {
     "STYLE", "TICKER_CONFLICT", "TOP_HOLDINGS", "INPUT_REQUIRED", "INPUT_INVALID", "MANUAL_TOTALS_REFUSED"]);
   const style = /^error: STYLE_([A-Z0-9_]+) — nothing written$/m.exec(text)?.[1];
   const categories = [
+    [/^error: STYLE_MISSING_ROWS_\d+(?:_\d+)* — nothing written$/m, "STYLE_MISSING_CLASSIFICATION"],
     [/^error: STYLE_[A-Z0-9_]+(?: — nothing written)?$/m, "STYLE"],
     [/^error: duplicate\/stale cash in /m, "CASH_RECONCILIATION"],
     [/^error: --acct-cash-.* are required:/m, "CASH_EVIDENCE"],

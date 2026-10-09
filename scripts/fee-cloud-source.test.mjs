@@ -11,6 +11,7 @@ import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
+import { resolveStyle } from "./fee-style-registry.mjs";
 
 const D = "2026-09-23";
 
@@ -21,6 +22,10 @@ test("writer diagnostics expose fixed categories and stage without private child
     "FEE_CLOUD_WRITER_CASH_RECONCILIATION");
   assert.equal(writerFailureCode("error: fee calculation receipt failed: private amount 98765"),
     "FEE_CLOUD_WRITER_FEE_RECEIPT");
+  assert.equal(writerFailureCode("error: STYLE_MISSING_ROWS_0_12 — nothing written\n", true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_STYLE_MISSING_CLASSIFICATION");
+  assert.equal(writerFailureCode("error: STYLE_MISSING_ROWS_private — nothing written", true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_UNKNOWN");
   for (const stderr of ["private account U123456 secret=abc 123456.78", "error: STYLE_secret=abc", "", null]) {
     assert.equal(writerFailureCode(stderr), "FEE_CLOUD_WRITER_UNKNOWN");
   }
@@ -218,6 +223,18 @@ function raw() {
     ]),
   };
 }
+
+test("the actual registry missing-row gate maps to an amount-free cloud diagnostic", () => {
+  const normalized = normalizeRead(raw(), D, selectBenchmark(benchmarkCache, D));
+  let failure;
+  try {
+    resolveStyle({ input: normalized.styleInput, date: D, sourceDates: normalized.sourceDates,
+      stock: normalized.splits.stock, staticMap: { schemaVersion: 1, effectiveDate: D, holdings: [] } });
+  } catch (error) { failure = error; }
+  assert.equal(failure?.message, "STYLE_MISSING_ROWS_0_1");
+  assert.equal(writerFailureCode(`error: ${failure.message} — nothing written\n`, true),
+    "FEE_CLOUD_WRITER_PREFLIGHT_STYLE_MISSING_CLASSIFICATION");
+});
 
 test("benchmark requires a complete same-date pair", () => {
   assert.equal(latestCommonBenchmarkDate(benchmarkCache), D);
