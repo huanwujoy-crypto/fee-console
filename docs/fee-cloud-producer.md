@@ -91,6 +91,41 @@ collection or mismatched account/date stops calculation; management history
 retains its existing separate completeness gate. Pagination is not silently
 followed or truncated.
 
+The undated holdings list is an identity catalog and can retain sold positions.
+The dated open-position report must match each catalog holding's instrument ID,
+ticker, market and currency; its start/end date, New York timezone and
+`include_sales=false` scope are checked. A catalog-only row is accepted only
+when a complete additional performance report from the earliest catalog
+inception through the target date, with `include_sales=true`, covers the entire
+catalog and reports exactly zero ending quantity and value for that row, with
+zero unconfirmed transactions. Sharesight defines these figures as report-end
+values ([official report contract](https://help.sharesight.com/us/performance_report/)).
+The terminal report must match account, dates, timezone, currency, grouping,
+instrument identities, current active quantities/values, total value and cash
+scope. Original JSON number text supplies exact zero and equality checks;
+underflow to Number zero does not qualify.
+
+Complete confirmed history must still begin at each extra holding's catalog
+inception and include a sale on its latest transaction date. Dates are grouped,
+without inferring intraday order from IDs. BUY, SELL, one initial OPENING_BALANCE and a SPLIT
+with an explicit company-event identity are supported. Unknown types, missing
+history, pagination, identity conflicts and conflicting target-day views stop
+the run. Exact original trade quantities and event IDs are retained in private
+audit proof. BUY/SELL contribution differences are recorded, without assigning
+them a rounding explanation or reconstructing a split ratio. Historical
+arithmetic is not the authoritative ending-position test. This changes the
+closed-position evidence contract; it does not verify broker synchronization.
+Historical instrument codes are preserved as bounded exact strings, including
+custom codes with spaces; active report tickers keep their strict format.
+
+Webull reuses its existing management-history read; Schwab obtains the same
+fixed as-of history GET when catalog-only rows need proof. Both accounts obtain
+the additional inception-to-target terminal report only when needed. The new
+date range, sold-position report and closed-position authority require specific
+owner review before release. Canonical proof is bound into the private stable
+A/B fingerprint. There is no new Sharesight read at the later signing boundary,
+and original management-exemption, income and receipt gates remain independent.
+
 For both portfolios, each A/B read also obtains the fixed previous calendar
 day's performance using the same GET-only endpoint and identity checks. This
 is an additional date scope requiring specific review before release. It is
