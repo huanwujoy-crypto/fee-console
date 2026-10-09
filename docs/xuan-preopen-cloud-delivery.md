@@ -34,3 +34,44 @@ GitHub 固定任务 → 专用 Cloud Run `xuan-preopen-report` → 私有成品 
 2026-10-01 接线验收：专用 cloud job 已成功取五项来源（13.581 秒生成），但新 environment 读不到原环境内的发布密钥，发布以 `PREOPEN_PUBLISH_TOKEN_REQUIRED` 拒绝。此修正只更正环境引用；须 OWNER 批准精确新 head 后，才将专用 WIF 条件的 environment subject 等值改为上列实际格式，并继续验收。既有管理费工作流、环境、密钥和 provider 均不改。当天成品只创建一次；若批准时成品已超过 30 分钟，不降低新鲜度要求、不删除启动标记、不再读 IB，保留现有正式报告，改在下一个交易日验收新成品。
 
 回退先将 mode 设为 `off`，停止新候选；原正式报告保留。由于 IB 已切换至云端只读连接，不能盲目重新开启旧本机任务，必须先确认其 IB 连接可用。
+
+## 2026-10-08 失败诊断与待批准修复
+
+GitHub run `37730194423` 在 05:00:12 UTC 以 `workflow_dispatch`
+请求，79 项云测试与短期身份获取成功；交付步骤返回
+`PREOPEN_DELIVERY_EXECUTION_FAILED`，候选提交与公网核验均未运行。
+官方 Cloud Run 执行 `xuan-preopen-report-thzb4` 的唯一 task 从
+13:00:29 至 13:00:42 HKT，退出码 1、重试 0；其 13:00:32.605 HKT 日志为
+`{"code":"IB_REAUTHORIZE_REQUIRED","publication":"none","status":"failed"}`。
+现有客户端在 refresh 非成功响应或 MCP 401/403 时给出此码；现有日志不能
+区分这两条路径，也不能证明凭据具体失效原因。未读取 secret 或原始金融来源。
+
+公网 `latest.meta.json` 与 `latest.html` 字节已核对：资料日 2026-10-07、
+源 SHA `6691b874448a6271ab27e5af3c0a964cfef85703`、HTML blob
+`c96f69d74823d34ab9d619265d7be06d5bedde3d`；标题是“XUAN · 开市前行动版”，
+页头显示 13:00 HKT 读取、数据至 2026-10-06。
+
+此修复仅补足失败原因的私有交付：成功抢到当天启动标记后，如果生成失败，
+在既有 create-only `receipt.json` 写入无金融数值的 `status=failed` 回执。
+旧 v1 回执仅允许 `IB_REAUTHORIZE_REQUIRED` 和 `DAILY_REPORT_FAILED`；前者仍是旧客户端的歧义码，不证明必须重新授权。
+新 v2 仅附带重新构造的固定 `diagnostic={phase,httpStatus,oauthError}`，严格验证完整字段及错误码相容性。
+refresh 临时故障、invalid_grant、client/scope 拒绝及其它 HTTP 失败分别为
+`IB_REFRESH_TRANSIENT_FAILED`、`IB_REFRESH_INVALID_GRANT`、`IB_REFRESH_CLIENT_REJECTED`、
+`IB_REFRESH_SCOPE_REJECTED`、`IB_REFRESH_HTTP_FAILED`；MCP 401/403 分别为
+`IB_MCP_ACCESS_TOKEN_REJECTED`、`IB_MCP_ACCESS_FORBIDDEN`，其它 MCP HTTP 失败为 `IB_MCP_HTTP_FAILED`。
+未知错误或畸形诊断写入端归为 `DAILY_REPORT_FAILED`，读取端拒绝非法回执。
+Daily/delivery CLI 只输出固定安全字段，不转发描述、原始响应或凭据。分类不产生重试、新授权或扩大 scope 指令；
+invalid_grant 只说明所呈 grant 被拒绝，不证明唯一恢复办法。本补丁不能追补 10 月 8 日未保存的历史 HTTP 细节。交付端严格检查日期、执行名称、完整字段和固定错误码，
+在执行失败时最多补读一次回执；旧镜像没有失败回执时仍返回原泛化失败码。
+失败回执不是 ready 成品，不读取 HTML、不提交候选、不自动再次取数。
+未抢到启动标记的执行不得写失败回执；诊断写入失败不得覆盖原失败原因。
+
+待完成：精确 head 的 OWNER 审批、必需检查、受保护合并及单独批准的固定
+Daily 镜像构建/部署。合并代码不会自动更新现有 Cloud Run 镜像。
+若后续证据与业主决定要求重新授权，须由业主在 IBKR 官方 OAuth 页面完成原单账户 `mcp.read` 授权，
+凭据只进入既有私有存储；代理不得记录授权码、token 或扩大 scope。
+恢复可能替代当前 IBKR 客户端连接，须先说明该影响。不能删除或覆盖当天
+`start.json`，不能重触发当天生成来测试；重新授权后默认在下一 eligible
+交易日的既有流程验证，保留 30 分钟新鲜度、账户关联到期、Validate/Promote/
+Pages 与公网核验全部闸门。若要求同日恢复，须另行给出具体执行和防重复
+方案并获得人类批准；本补丁不提供绕过入口。

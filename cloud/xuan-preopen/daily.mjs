@@ -4,6 +4,11 @@ import {fileURLToPath} from 'node:url';
 import {planPreopen} from './calendar.mjs';
 import {privateCloudIo} from './cloud_io.mjs';
 import {runPrivateReport} from './report.mjs';
+import {safeIbFailure} from './ib_mcp.mjs';
+export function dailyFailureSummary(error) {
+  const {errorCode: code, ...safe} = safeIbFailure(error);
+  return {status: 'failed', code, publication: 'none', ...safe};
+}
 export async function runDaily({io = privateCloudIo(), now = Date.now, generate = runPrivateReport,
   execution = process.env.CLOUD_RUN_EXECUTION} = {}) {
   const plan = planPreopen(now()), prefix = `delivery/${plan.dataDate}/`;
@@ -23,17 +28,29 @@ export async function runDaily({io = privateCloudIo(), now = Date.now, generate 
     if (name.endsWith('/report.html')) html = value;
     return io.savePrivate(name, value);
   }};
-  const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now});
-  if (receipt.status !== 'ready' || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
-  const artifact = {privateObject: prefix+'report.html', ...await io.savePrivate(prefix+'report.html', html)};
-  const delivery = {...receipt, artifact, calendar: plan};
-  await io.savePrivate(prefix+'receipt.json', delivery); // Completion marker LAST.
-  return {status: delivery.status, dataDate: delivery.dataDate, sourceDate: delivery.sourceDate,
-    startedAt: delivery.startedAt, completedAt: delivery.completedAt, publication: 'none'};
+  try {
+    const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now});
+    if (receipt.status !== 'ready' || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
+    const artifact = {privateObject: prefix+'report.html', ...await io.savePrivate(prefix+'report.html', html)};
+    const delivery = {...receipt, artifact, calendar: plan};
+    await io.savePrivate(prefix+'receipt.json', delivery); // Completion marker LAST.
+    return {status: delivery.status, dataDate: delivery.dataDate, sourceDate: delivery.sourceDate,
+      startedAt: delivery.startedAt, completedAt: delivery.completedAt, publication: 'none'};
+  } catch (error) {
+    // The delivery identity cannot read source logs. Record only a fixed safe
+    // code in the existing create-only receipt, never raw errors or evidence.
+    // Start acquisition stays outside this catch: a losing run writes nothing.
+    try {
+      const safe = safeIbFailure(error);
+      await io.savePrivate(prefix+'receipt.json', {schemaVersion: safe.diagnostic ? 2 : 1, status: 'failed',
+        dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, publication: 'none',
+        ...safe});
+    } catch { /* Preserve the source failure if diagnostic storage also fails. */ }
+    throw error;
+  }
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   runDaily().then(result => process.stdout.write(JSON.stringify(result)+'\n')).catch(error => {
-    const code = /^[A-Z_0-9]+$/.test(error.message || '') ? error.message : 'DAILY_REPORT_FAILED';
-    process.stdout.write(JSON.stringify({status: 'failed', code, publication: 'none'})+'\n'); process.exitCode = 1;
+    process.stdout.write(JSON.stringify(dailyFailureSummary(error))+'\n'); process.exitCode = 1;
   });
 }

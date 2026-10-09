@@ -48,7 +48,74 @@ test('forbidden tools never reach the HTTP transport', async () => {
 test('real-time source HTTP failure hides upstream financial diagnostics', async () => {
   const session = new IbReadSession(credential(), { fetchImpl: async () => response({ error: 'test-private-value' }, 401) });
   session.initialized = true;
-  await assert.rejects(session.read('get_account_orders'), /^Error: IB_REAUTHORIZE_REQUIRED$/);
+  await assert.rejects(session.read('get_account_orders'), error => {
+    assert.equal(error.message, 'IB_MCP_ACCESS_TOKEN_REJECTED');
+    assert.deepEqual(error.diagnostic, { phase: 'mcp', httpStatus: 401, oauthError: 'not_applicable' });
+    assert.ok(!JSON.stringify(error).includes('test-private-value'));
+    return true;
+  });
+});
+
+for (const [status, oauthError, code] of [
+  [400, 'invalid_grant', 'IB_REFRESH_INVALID_GRANT'],
+  [400, 'invalid_client', 'IB_REFRESH_CLIENT_REJECTED'],
+  [400, 'unauthorized_client', 'IB_REFRESH_CLIENT_REJECTED'],
+  [400, 'invalid_scope', 'IB_REFRESH_SCOPE_REJECTED'],
+  [400, 'invalid_target', 'IB_REFRESH_SCOPE_REJECTED'],
+  [400, 'invalid_request', 'IB_REFRESH_HTTP_FAILED'],
+  [401, undefined, 'IB_REFRESH_HTTP_FAILED'],
+  [429, undefined, 'IB_REFRESH_TRANSIENT_FAILED'],
+  [500, 'invalid_grant', 'IB_REFRESH_TRANSIENT_FAILED'],
+  [503, 'server_error', 'IB_REFRESH_TRANSIENT_FAILED'],
+  [400, 'temporarily_unavailable', 'IB_REFRESH_TRANSIENT_FAILED'],
+  [400, 'unknown-private-error', 'IB_REFRESH_HTTP_FAILED'],
+]) test(`refresh ${status}/${oauthError || 'no OAuth category'} is classified without retry or persistence`, async () => {
+  let fetches = 0, saves = 0;
+  const store = { load: async () => credential(), save: async () => { saves++; } };
+  await assert.rejects(loadReadCredential(store, { now: () => 950_000, fetchImpl: async () => {
+    fetches++;
+    return response({ error: oauthError, error_description: 'private-description', access_token: 'private-token' }, status);
+  } }), error => {
+    assert.equal(error.message, code);
+    assert.deepEqual(error.diagnostic, { phase: 'refresh', httpStatus: status,
+      oauthError: oauthError === undefined || oauthError === 'unknown-private-error' ? 'unknown' : oauthError });
+    assert.ok(Object.isFrozen(error.diagnostic));
+    assert.ok(!String(error).includes('private'));
+    assert.ok(!JSON.stringify(error).includes('private'));
+    return true;
+  });
+  assert.equal(fetches, 1);
+  assert.equal(saves, 0);
+});
+
+test('malformed or oversized OAuth errors remain unknown and do not expose bodies', async () => {
+  for (const body of ['private-invalid-json', JSON.stringify({ error: 'invalid_grant', error_description: 'private'.repeat(3000) })]) {
+    await assert.rejects(loadReadCredential({ load: async () => credential(), save: async () => assert.fail('must not save') },
+      { now: () => 950_000, fetchImpl: async () => new Response(body, { status: 400 }) }), error => {
+      assert.equal(error.message, 'IB_REFRESH_HTTP_FAILED');
+      assert.deepEqual(error.diagnostic, { phase: 'refresh', httpStatus: 400, oauthError: 'unknown' });
+      assert.ok(!JSON.stringify(error).includes('private'));
+      return true;
+    });
+  }
+});
+
+test('MCP forbidden and server failures are distinct and never trigger refresh', async () => {
+  for (const [status, code] of [[403, 'IB_MCP_ACCESS_FORBIDDEN'], [503, 'IB_MCP_HTTP_FAILED']]) {
+    let calls = 0;
+    const session = new IbReadSession(credential(), { fetchImpl: async url => {
+      assert.equal(url, RESOURCE); calls++;
+      return response({ error: 'private-financial-data' }, status);
+    } });
+    session.initialized = true;
+    await assert.rejects(session.read('get_account_orders'), error => {
+      assert.equal(error.message, code);
+      assert.deepEqual(error.diagnostic, { phase: 'mcp', httpStatus: status, oauthError: 'not_applicable' });
+      assert.ok(!JSON.stringify(error).includes('private'));
+      return true;
+    });
+    assert.equal(calls, 1);
+  }
 });
 
 test('JSON and SSE handshakes preserve the server session ID', async () => {

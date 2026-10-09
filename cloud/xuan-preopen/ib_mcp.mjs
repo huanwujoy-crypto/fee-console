@@ -5,6 +5,8 @@ import { decodeHookResponse } from '../../scripts/xuan-ib-hook-response.mjs';
 export const RESOURCE = 'https://api.ibkr.com/v1/api/mcp-public';
 const TOKEN_ENDPOINT = 'https://api.ibkr.com/oauth2/api/v1/token';
 const MAX_BYTES = 8_000_000;
+const OAUTH_ERRORS = new Set(['invalid_request', 'invalid_client', 'invalid_grant', 'unauthorized_client',
+  'unsupported_grant_type', 'invalid_scope', 'invalid_target', 'access_denied', 'server_error', 'temporarily_unavailable']);
 const SOURCES = Object.freeze({
   get_account_summary: 'ib.accountSummary',
   get_account_positions: 'ib.positions',
@@ -27,7 +29,7 @@ export function validateCredential(value) {
   return value;
 }
 
-async function bodyText(response) {
+async function bodyText(response, limit = MAX_BYTES) {
   if (!response.body) fail('IB_EMPTY_RESPONSE');
   const reader = response.body.getReader();
   const chunks = []; let total = 0;
@@ -36,12 +38,65 @@ async function bodyText(response) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_BYTES) fail('IB_RESPONSE_TOO_LARGE');
+      if (total > limit) fail('IB_RESPONSE_TOO_LARGE');
       chunks.push(Buffer.from(value));
     }
   } finally { await reader.cancel().catch(() => {}); }
   try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
   catch { fail('IB_INVALID_UTF8'); }
+}
+
+function transportFailure(code, phase, httpStatus, oauthError = 'not_applicable') {
+  const error = new Error(code);
+  // Only fixed categories and the HTTP status survive; descriptions and raw
+  // responses may contain credentials or account data and must never escape.
+  error.diagnostic = Object.freeze({ phase, httpStatus, oauthError });
+  return error;
+}
+
+// Shared safe handoff contract: reconstruct fields, never forward an error object.
+const diagnosticCode = (phase, status, oauth) => phase === 'mcp'
+  ? status === 401 ? 'IB_MCP_ACCESS_TOKEN_REJECTED' : status === 403 ? 'IB_MCP_ACCESS_FORBIDDEN' : 'IB_MCP_HTTP_FAILED'
+  : status === 429 || status >= 500 || ['server_error', 'temporarily_unavailable'].includes(oauth)
+    ? 'IB_REFRESH_TRANSIENT_FAILED'
+    : status === 400 && oauth === 'invalid_grant' ? 'IB_REFRESH_INVALID_GRANT'
+    : ['invalid_client', 'unauthorized_client'].includes(oauth) ? 'IB_REFRESH_CLIENT_REJECTED'
+    : ['invalid_scope', 'invalid_target'].includes(oauth) ? 'IB_REFRESH_SCOPE_REJECTED' : 'IB_REFRESH_HTTP_FAILED';
+export function safeTransportDiagnostic(code, value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).length !== 3 || !['phase', 'httpStatus', 'oauthError'].every(key => Object.hasOwn(value, key))) return null;
+  const {phase, httpStatus, oauthError} = value;
+  if (!['refresh', 'mcp'].includes(phase) || !Number.isInteger(httpStatus) || httpStatus < 300 || httpStatus > 599
+    || (phase === 'mcp' ? oauthError !== 'not_applicable' : oauthError !== 'unknown' && !OAUTH_ERRORS.has(oauthError))
+    || diagnosticCode(phase, httpStatus, oauthError) !== code) return null;
+  return Object.freeze({phase, httpStatus, oauthError});
+}
+export function safeIbFailure(error) {
+  try {
+    const code = error?.message;
+    const diagnostic = safeTransportDiagnostic(code, error?.diagnostic);
+    if (diagnostic) return {errorCode: code, diagnostic};
+    if (code === 'IB_REAUTHORIZE_REQUIRED') return {errorCode: 'IB_REAUTHORIZE_REQUIRED'};
+  } catch { /* Untrusted error properties cannot block the original failure. */ }
+  return {errorCode: 'DAILY_REPORT_FAILED'};
+}
+
+async function refreshFailure(response) {
+  let oauthError = 'unknown';
+  try {
+    const value = JSON.parse(await bodyText(response, 16_384));
+    if (OAUTH_ERRORS.has(value?.error)) oauthError = value.error;
+  } catch { /* An unreadable response cannot establish authorization loss. */ }
+  const status = response.status;
+  const code = status === 429 || status >= 500 || ['server_error', 'temporarily_unavailable'].includes(oauthError)
+    ? 'IB_REFRESH_TRANSIENT_FAILED'
+    : status === 400 && oauthError === 'invalid_grant' ? 'IB_REFRESH_INVALID_GRANT'
+    : ['invalid_client', 'unauthorized_client'].includes(oauthError) ? 'IB_REFRESH_CLIENT_REJECTED'
+    : ['invalid_scope', 'invalid_target'].includes(oauthError) ? 'IB_REFRESH_SCOPE_REJECTED'
+    : 'IB_REFRESH_HTTP_FAILED';
+  // invalid_grant means the presented grant was rejected, not that obtaining a
+  // new grant is the only recovery. No failure here retries or changes scope.
+  return transportFailure(code, 'refresh', status, oauthError);
 }
 
 export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now } = {}) {
@@ -56,7 +111,7 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
         refresh_token: original.refresh_token, scope: 'mcp.read', resource: RESOURCE }),
     });
   } catch { fail('IB_REFRESH_NETWORK_FAILED'); }
-  if (!response.ok) fail('IB_REAUTHORIZE_REQUIRED');
+  if (!response.ok) throw await refreshFailure(response);
   let token;
   try { token = JSON.parse(await bodyText(response)); } catch { fail('IB_REFRESH_RESPONSE_INVALID'); }
   if (!token.access_token || token.token_type?.toLowerCase() !== 'bearer'
@@ -105,8 +160,9 @@ export class IbReadSession {
     try { response = await this.fetchImpl(RESOURCE, { method: 'POST', redirect: 'error',
       signal: AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
     catch { fail('IB_MCP_NETWORK_FAILED'); }
-    if (response.status === 401 || response.status === 403) fail('IB_REAUTHORIZE_REQUIRED');
-    if (!response.ok) fail('IB_MCP_HTTP_FAILED');
+    if (response.status === 401) throw transportFailure('IB_MCP_ACCESS_TOKEN_REJECTED', 'mcp', 401);
+    if (response.status === 403) throw transportFailure('IB_MCP_ACCESS_FORBIDDEN', 'mcp', 403);
+    if (!response.ok) throw transportFailure('IB_MCP_HTTP_FAILED', 'mcp', response.status);
     const session = response.headers.get('mcp-session-id');
     if (session) {
       if (session.length > 1024 || /[\r\n]/.test(session)) fail('IB_MCP_SESSION_INVALID');
