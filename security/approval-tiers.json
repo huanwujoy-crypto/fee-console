@@ -432,6 +432,14 @@
     "scripts/xuan-weekly-import-boundaries.test.mjs",
     "scripts/xuan-weekly-proxy-exposure.test.mjs",
     "cloud/xuan-weekly/private_ai_sources.py",
-    "cloud/xuan-weekly/test_private_ai_sources.py"
+    "cloud/xuan-weekly/test_private_ai_sources.py",
+    ".github/workflows/xuan-preopen-image-maintenance.yml",
+    "cloud/xuan-preopen/Maintenance.Dockerfile",
+    "cloud/xuan-preopen/maintenance.mjs",
+    "cloud/xuan-preopen/maintenance.test.mjs",
+    "security/xuan-preopen-maintenance-iam.json",
+    "docs/xuan-preopen-image-maintenance.md",
+    ".github/workflows/xuan-preopen-image-build.yml",
+    ".github/workflows/xuan-preopen-image-deploy.yml"
   ]
 }

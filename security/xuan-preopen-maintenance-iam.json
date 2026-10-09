@@ -1,0 +1,143 @@
+{
+  "schemaVersion": 1,
+  "status": "proposed-not-created-or-granted",
+  "project": "family-portfolio-gateway",
+  "projectNumber": "860729177589",
+  "region": "asia-east2",
+  "workloadIdentityPool": "projects/860729177589/locations/global/workloadIdentityPools/fee-console-github",
+  "serviceAccounts": [
+    "xuan-preopen-image-builder@family-portfolio-gateway.iam.gserviceaccount.com",
+    "xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com"
+  ],
+  "providers": [
+    {
+      "name": "projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-builder",
+      "issuerUri": "https://token.actions.githubusercontent.com",
+      "allowedAudiences": [
+        "https://iam.googleapis.com/projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-builder"
+      ],
+      "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "attribute.xuan_preopen_image_identity": "'builder-v1'"
+      },
+      "attributeCondition": "assertion.repository_id == '1334738755' && assertion.repository_owner_id == '283054367' && assertion.repository == 'huanwujoy-crypto/fee-console' && assertion.ref == 'refs/heads/main' && assertion.event_name == 'workflow_dispatch' && assertion.workflow_ref == 'huanwujoy-crypto/fee-console/.github/workflows/xuan-preopen-image-maintenance.yml@refs/heads/main' && assertion.actor_id == '283054367' && assertion.job_workflow_ref == 'huanwujoy-crypto/fee-console/.github/workflows/xuan-preopen-image-build.yml@refs/heads/main' && assertion.job_workflow_sha == assertion.sha && assertion.job_workflow_sha == assertion.workflow_sha"
+    },
+    {
+      "name": "projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-deployer",
+      "issuerUri": "https://token.actions.githubusercontent.com",
+      "allowedAudiences": [
+        "https://iam.googleapis.com/projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-deployer"
+      ],
+      "attributeMapping": {
+        "google.subject": "assertion.sub",
+        "attribute.xuan_preopen_image_identity": "'deployer-v1'"
+      },
+      "attributeCondition": "assertion.repository_id == '1334738755' && assertion.repository_owner_id == '283054367' && assertion.repository == 'huanwujoy-crypto/fee-console' && assertion.ref == 'refs/heads/main' && assertion.event_name == 'workflow_dispatch' && assertion.workflow_ref == 'huanwujoy-crypto/fee-console/.github/workflows/xuan-preopen-image-maintenance.yml@refs/heads/main' && assertion.actor_id == '283054367' && assertion.job_workflow_ref == 'huanwujoy-crypto/fee-console/.github/workflows/xuan-preopen-image-deploy.yml@refs/heads/main' && assertion.job_workflow_sha == assertion.sha && assertion.job_workflow_sha == assertion.workflow_sha"
+    }
+  ],
+  "artifactRepository": {
+    "name": "projects/family-portfolio-gateway/locations/asia-east2/repositories/xuan-preopen-maintenance",
+    "format": "DOCKER",
+    "mode": "STANDARD_REPOSITORY",
+    "dockerConfig": {
+      "immutableTags": true
+    }
+  },
+  "customRoles": [
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenImagePush",
+      "stage": "GA",
+      "includedPermissions": [
+        "artifactregistry.repositories.downloadArtifacts",
+        "artifactregistry.repositories.uploadArtifacts"
+      ]
+    },
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenImageRead",
+      "stage": "GA",
+      "includedPermissions": [
+        "artifactregistry.repositories.downloadArtifacts"
+      ]
+    },
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenImageDeploy",
+      "stage": "GA",
+      "includedPermissions": [
+        "run.jobs.get",
+        "run.jobs.update"
+      ]
+    },
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenSourceActAs",
+      "stage": "GA",
+      "includedPermissions": [
+        "iam.serviceAccounts.actAs"
+      ]
+    }
+  ],
+  "bindings": [
+    {
+      "resource": "projects/family-portfolio-gateway/serviceAccounts/xuan-preopen-image-builder@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/iam.workloadIdentityUser",
+      "permissions": [
+        "iam.serviceAccounts.getAccessToken",
+        "iam.serviceAccounts.getOpenIdToken"
+      ],
+      "member": "principalSet://iam.googleapis.com/projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/attribute.xuan_preopen_image_identity/builder-v1"
+    },
+    {
+      "resource": "projects/family-portfolio-gateway/serviceAccounts/xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/iam.workloadIdentityUser",
+      "permissions": [
+        "iam.serviceAccounts.getAccessToken",
+        "iam.serviceAccounts.getOpenIdToken"
+      ],
+      "member": "principalSet://iam.googleapis.com/projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/attribute.xuan_preopen_image_identity/deployer-v1"
+    },
+    {
+      "resource": "projects/family-portfolio-gateway/locations/asia-east2/repositories/xuan-preopen-maintenance",
+      "role": "projects/family-portfolio-gateway/roles/xuanPreopenImagePush",
+      "member": "serviceAccount:xuan-preopen-image-builder@family-portfolio-gateway.iam.gserviceaccount.com"
+    },
+    {
+      "resource": "projects/family-portfolio-gateway/locations/asia-east2/repositories/xuan-preopen-maintenance",
+      "role": "projects/family-portfolio-gateway/roles/xuanPreopenImageRead",
+      "member": "serviceAccount:xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com"
+    },
+    {
+      "resource": "projects/family-portfolio-gateway/locations/asia-east2/jobs/xuan-preopen-report",
+      "role": "projects/family-portfolio-gateway/roles/xuanPreopenImageDeploy",
+      "member": "serviceAccount:xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com"
+    },
+    {
+      "resource": "projects/family-portfolio-gateway/serviceAccounts/xuan-preopen-source@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "projects/family-portfolio-gateway/roles/xuanPreopenSourceActAs",
+      "member": "serviceAccount:xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com"
+    }
+  ],
+  "existingCloudRunServiceAgent": {
+    "principal": "service-860729177589@serverless-robot-prod.iam.gserviceaccount.com",
+    "existingProjectRole": "roles/run.serviceAgent",
+    "newBindingRequired": false,
+    "instruction": "Verify existing inherited downloadArtifacts access to this same-project new repository; stop on denied access, never grant automatically."
+  },
+  "neverGrant": [
+    "run.jobs.run",
+    "run.jobs.runWithOverrides",
+    "run.jobs.create",
+    "run.jobs.delete",
+    "run.services.update",
+    "run.operations.get",
+    "secretmanager.versions.access",
+    "storage.objects.get",
+    "storage.objects.create",
+    "artifactregistry.repositories.setIamPolicy",
+    "iam.serviceAccounts.getAccessToken-on-source-SA"
+  ],
+  "bootstrapOnly": "OWNER explicitly creates the two service accounts, providers, four custom roles, dedicated repository and listed bindings; workflow performs no bootstrap API calls and assumes no existing grant.",
+  "githubEnableVariable": {
+    "name": "XUAN_PREOPEN_IMAGE_MAINTENANCE_ENABLED",
+    "value": "true",
+    "setOnlyAfterExplicitOwnerBootstrapApproval": true
+  }
+}

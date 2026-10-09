@@ -1,0 +1,63 @@
+name: XUAN preopen fixed image deploy
+
+on:
+  workflow_call:
+    inputs:
+      approved_sha:
+        required: true
+        type: string
+      approval_pr:
+        required: true
+        type: string
+      built_digest:
+        required: true
+        type: string
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    env:
+      APPROVED_SHA: ${{ inputs.approved_sha }}
+      APPROVAL_PR: ${{ inputs.approval_pr }}
+      GH_TOKEN: ${{ github.token }}
+      BUILT_DIGEST: ${{ inputs.built_digest }}
+    steps:
+      - name: Use the explicitly selected Node 24 runtime
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check out the trusted dispatch commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Recheck current main and exact approval before deploy identity
+        run: node cloud/xuan-preopen/maintenance.mjs preflight
+      - name: Check out the exact approved source tree
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.approved_sha }}
+          persist-credentials: false
+      - name: Obtain only the short-lived dedicated deployer identity
+        id: deployer
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-deployer
+          audience: https://iam.googleapis.com/projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-deployer
+          service_account: xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 600s
+          create_credentials_file: false
+      - name: Verify pushed image, read rollback configuration, PATCH only fixed job image and read back
+        id: deploy
+        env:
+          MAINTENANCE_GOOGLE_TOKEN: ${{ steps.deployer.outputs.access_token }}
+        run: node cloud/xuan-preopen/maintenance.mjs deploy
