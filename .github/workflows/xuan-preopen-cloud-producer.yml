@@ -67,6 +67,12 @@ jobs:
           LIMITED_PREFIX: ${{ inputs.private_limited_readback_prefix }}
         run: node cloud/xuan-preopen/limited_delivery.mjs "$LIMITED_PREFIX" "$RUNNER_TEMP/xuan-preopen-private"
 
+      - name: Diagnose failed delivery without running sources
+        if: ${{ failure() && steps.delivery.outcome == 'failure' }}
+        env:
+          XUAN_PREOPEN_GOOGLE_TOKEN: ${{ steps.google.outputs.access_token }}
+        run: node cloud/xuan-preopen/diagnose.mjs --today
+
       - name: Submit the signed candidate to the existing protected pipeline
         id: candidate
         if: ${{ vars.XUAN_PREOPEN_CLOUD_MODE == 'publish' && (steps.delivery.outputs.outcome == 'generated' || steps.delivery.outputs.outcome == 'reused' || steps.limited.outputs.outcome == 'limited-readback' || steps.limited.outputs.outcome == 'intraday-update') }}
