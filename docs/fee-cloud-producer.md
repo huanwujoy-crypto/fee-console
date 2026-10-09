@@ -56,9 +56,12 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The benchmark cache remains independent. The producer starts at 11:30 HKT,
+The benchmark cache remains independent, with existing 07:35 and 09:35 HKT
+attempts before the first producer slot. From 2026-10-10, the producer starts at 10:00 HKT,
 with independent 11:40, 11:55, 12:20, 12:50, 13:50, 15:50 and 17:50 HKT slots
-Tuesday through Saturday. Its default target is computed independently of the
+Tuesday through Saturday. GitHub may delay a scheduled start; 10:00 is the
+first attempt, not a guaranteed time for completed public publication.
+Its default target is computed independently of the
 cache: the latest New York weekday whose 16:15 close boundary has passed.
 SPY and QQQ must both have exactly one complete row for that target, including
 validated dividend fields. Old or future cache rows cannot change that target.
