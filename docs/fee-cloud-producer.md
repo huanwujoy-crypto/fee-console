@@ -131,16 +131,31 @@ day's performance using the same GET-only endpoint and identity checks. This
 is an additional date scope requiring specific review before release. It is
 read even when no target-day movements are returned, so omission of the only
 cash movement cannot bypass reconciliation. Previous cash comes from that
-independent report, never from current cash minus movements. USD report cash,
-listed account balance, terminal dated movement, per-cash-account movement
-sum and portfolio cash total must agree. Transactions are grouped by timestamp;
+independent report, never from current cash minus movements. Cash lists use the
+fixed target date. If a portfolio has foreign cash, the same existing portfolio
+list endpoint is also requested for the fixed previous date. The
+[official V2 cash-list contract](https://portfolio.sharesight.com/api/2/doc/index.html#api-User_API_Cash_Accounts-CashAccountsList)
+defines the date parameter and original- and portfolio-currency balances. Each
+row must carry the requested date, portfolio and currency identities, and
+two-decimal balances; both dated lists must cover the same complete account set.
+Each day's USD report valuation must agree with its independently listed
+portfolio-currency balance. Foreign original balances must be exactly unchanged
+between those dates, and any target-day foreign cash transaction still stops.
+Missing previous evidence or an ignored date parameter stops. Both dates' original
+balances and USD valuations are bound into the private A/B fingerprint. Foreign
+FX valuation changes remain in total assets and the cash split, and create no
+cash flow or external funding.
+
+USD report cash, listed USD balance, terminal dated movement and per-USD-account
+movement sum must agree. The aggregate movement check and writer's
+`acctCash` / `prevAcctCash` use only USD cash accounts; portfolio totals and
+`splits.cash` retain every currency's USD valuation. Transactions are grouped by timestamp;
 each group must form a balance chain from its independently established opening
 balance and consume every record. IDs and response order cannot determine
 execution order. Contradictory or ambiguous same-time balance paths stop;
 zero movements and identical balance edges are interchangeable for cash proof.
-Missing prior evidence, a changed cash-account set or unexplained currency/
-valuation differences stop automatic publication for review, rather than
-forcing two incompatible balances to match.
+Missing prior evidence, a changed cash-account set or unexplained original-
+currency balance or valuation differences stop automatic publication for review.
 
 Cash accounts form `cash`, SGOV forms `other`, and remaining USD holdings form
 `stock`; the three buckets must reconcile to the two portfolio totals. Style

@@ -11,12 +11,13 @@ import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate
 import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
+import { checkCashLedger } from './daily-core.mjs';
 
 const D = "2026-09-23";
 // Synthetic direct inputs follow the same raw-JSON path as the cloud transport.
 const wireInput = input => Object.fromEntries(Object.entries(input).map(([account, p]) => {
   const copy = { ...p };
-  for (const key of ['trades', 'holdingHistory', 'managementTrades', 'performance', 'terminalPerformance']) {
+  for (const key of ['trades', 'holdingHistory', 'managementTrades', 'performance', 'terminalPerformance', 'cashAccounts', 'previousCashAccounts']) {
     if (p[key]) copy[key] = parseTradeJson(JSON.stringify(p[key]));
   }
   return [account, copy];
@@ -215,7 +216,8 @@ const portfolio = (account, id, cashId, holdings, transactions = []) => ({
   holdings: { holdings: holdings.map(h => ({ id: h.id, valid_position: true,
     inception_date: '2026-09-22', instrument: syntheticInstrument(h.id, h.ticker),
     instrument_currency: { code: 'USD' }, portfolio: { id, name: account } })) },
-  cashAccounts: { cash_accounts: [{ id: cashId, portfolio_id: id, currency: "USD", portfolio_currency: "USD", balance: 400 }] },
+  cashAccounts: { cash_accounts: [{ id: cashId, portfolio_id: id, currency: "USD", portfolio_currency: "USD", date: D,
+    balance: 400, balance_in_portfolio_currency: 400 }] },
   previousPerformance: {report:{portfolio_id:id,end_date:'2026-09-22',currency:{code:'USD'},cash_accounts:[{id:cashId,value:400-transactions.reduce((n,t)=>n+t.amount,0),currency:{code:'USD'},portfolio:{id,name:account}}]}},
   cashTransactions: { [cashId]: { cash_account_transactions: transactions.map((t,i)=>({id:100+i,...t})) } },
   trades: { trades: transactions.filter(t => t.trade_id).map(t => ({ id: t.trade_id, portfolio_id: id, transaction_date: D, state: "confirmed" })) },
@@ -483,7 +485,9 @@ test('reader rejects invalid original history quantity tokens and preserves resi
 });
 
 test('closed proof rejects direct Number-only histories without original quantity tokens', () => {
-  assert.throws(() => normalizeCloudRead(closedCatalogFixture(), D, selectBenchmark(benchmarkCache, D)),
+  const fixture = closedCatalogFixture();
+  for (const p of Object.values(fixture)) p.cashAccounts = parseTradeJson(JSON.stringify(p.cashAccounts));
+  assert.throws(() => normalizeCloudRead(fixture, D, selectBenchmark(benchmarkCache, D)),
     /HOLDING_TERMINAL_PRECISION/);
 });
 
@@ -665,6 +669,174 @@ test("normalization reconciles cash, SGOV, stock, flow evidence and style input"
   assert.deepEqual(result.acctCash, { schwab: 400 });
   assert.deepEqual(result.prevAcctCash, { schwab: 350 });
   assert.match(result.sourceFingerprint, /^[a-f0-9]{64}$/);
+});
+
+function foreignCashFixture(account = 'schwab', fixture = raw()) {
+  const p = fixture[account], cashId = account === 'schwab' ? 142252 : 90251;
+  const portfolio = account === 'schwab' ? { id: 936249, name: 'Schwab-HK' } : { id: 1350094, name: 'Webull' };
+  p.performance.report.cash_accounts.push({ id: cashId, value: 13, currency: { code: 'HKD' },
+    portfolio });
+  p.performance.report.value += 13;
+  p.cashAccounts.cash_accounts.push({ id: cashId, portfolio_id: portfolio.id, currency: 'HKD',
+    portfolio_currency: 'USD', date: D, balance: 100, balance_in_portfolio_currency: 13 });
+  p.cashTransactions[cashId] = { cash_account_transactions: [] };
+  p.previousPerformance.report.cash_accounts.push({ id: cashId, value: 12.85,
+    currency: { code: 'HKD' }, portfolio });
+  const previousUsd = p.previousPerformance.report.cash_accounts[0].value;
+  p.previousCashAccounts = { cash_accounts: p.cashAccounts.cash_accounts.map(row => ({ ...row,
+    date: previousCalendarDate(D), balance: row.currency === 'USD' ? previousUsd : row.balance,
+    balance_in_portfolio_currency: row.currency === 'USD' ? previousUsd : 12.85 })) };
+  return fixture;
+}
+
+test('foreign FX valuation remains in assets while only USD cash reconciles with USD flows and writer', () => {
+  const result = normalizeRead(foreignCashFixture(), D, selectBenchmark(benchmarkCache, D));
+  assert.equal(result.accounts.schwab, 1013);
+  assert.equal(result.splits.cash, 813);
+  assert.deepEqual(result.acctCash, { schwab: 400 });
+  assert.deepEqual(result.prevAcctCash, { schwab: 350 });
+  assert.equal(result.flows.length, 1);
+  assert.deepEqual(checkCashLedger({ date: D, acctCash: result.acctCash,
+    prevAcctCash: result.prevAcctCash, movements: result.flows }), []);
+  // Passing the old all-currency totals would falsely reject the same USD flow.
+  assert.equal(checkCashLedger({ date: D, acctCash: { schwab: 413 },
+    prevAcctCash: { schwab: 362.85 }, movements: result.flows }).length, 1);
+  const noFlow = foreignCashFixture();
+  noFlow.schwab.cashTransactions[142251].cash_account_transactions = [];
+  noFlow.schwab.previousPerformance.report.cash_accounts[0].value = 400;
+  Object.assign(noFlow.schwab.previousCashAccounts.cash_accounts[0], { balance: 400, balance_in_portfolio_currency: 400 });
+  const empty = normalizeRead(noFlow, D, selectBenchmark(benchmarkCache, D));
+  assert.equal(empty.splits.cash, 813); assert.deepEqual(empty.flows, []);
+  assert.deepEqual(empty.acctCash, {});
+});
+
+test('foreign cash rejects omitted movements, missing independent dates and altered identities or values', async t => {
+  const changes = [
+    ['missing prior', p => delete p.previousCashAccounts, /CASH_PREVIOUS_EVIDENCE/],
+    ['empty prior', p => p.previousCashAccounts.cash_accounts = [], /CASH_PREVIOUS_EVIDENCE/],
+    ['omitted foreign movement', p => p.previousCashAccounts.cash_accounts[1].balance = 99.99, /NON_USD_BALANCE_CHANGED/],
+    ['current date missing', p => delete p.cashAccounts.cash_accounts[1].date, /CASH_IDENTITY/],
+    ['current date ignored', p => p.cashAccounts.cash_accounts[1].date = previousCalendarDate(D), /CASH_IDENTITY/],
+    ['prior date ignored', p => p.previousCashAccounts.cash_accounts[1].date = D, /CASH_IDENTITY/],
+    ['prior foreign currency changed', p => p.previousCashAccounts.cash_accounts[1].currency = 'EUR', /CASH_PREVIOUS_EVIDENCE/],
+    ['prior account changed', p => p.previousCashAccounts.cash_accounts[1].portfolio_id = 1350094, /CASH_IDENTITY/],
+    ['current conversion conflicts', p => p.cashAccounts.cash_accounts[1].balance_in_portfolio_currency = 13.02, /CASH_REPORT_BALANCE/],
+    ['prior conversion conflicts', p => p.previousCashAccounts.cash_accounts[1].balance_in_portfolio_currency = 12.87, /CASH_PREVIOUS_EVIDENCE/],
+    ['current raw balance missing', p => delete p.cashAccounts.cash_accounts[1].balance, /CASH_PRECISION/],
+    ['prior raw balance missing', p => delete p.previousCashAccounts.cash_accounts[1].balance, /CASH_PRECISION/],
+    ['non-2dp balance', p => p.previousCashAccounts.cash_accounts[1].balance = 100.001, /CASH_PRECISION/],
+    ['paginated prior', p => p.previousCashAccounts.links = { next: 'synthetic' }, /SOURCE_INCOMPLETE/],
+    ['duplicate prior', p => p.previousCashAccounts.cash_accounts.push({ ...p.previousCashAccounts.cash_accounts[1] }), /SOURCE_DUPLICATE/],
+    ['swapped prior cash ID', p => p.previousCashAccounts.cash_accounts[1].id = 142253, /CASH_PREVIOUS_EVIDENCE/],
+  ];
+  for (const [name, mutate, error] of changes) await t.test(name, () => {
+    const fixture = foreignCashFixture(); mutate(fixture.schwab);
+    assert.throws(() => normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D)), error);
+  });
+  const nonUsd = foreignCashFixture();
+  nonUsd.schwab.cashTransactions[142252].cash_account_transactions = [{ id: 102, cash_account_id: 142252,
+    date_time: D + 'T01:00:00Z', amount: 1, balance: 100, cash_account_transaction_type: { name: 'DEPOSIT' } }];
+  assert.throws(() => normalizeRead(nonUsd, D, selectBenchmark(benchmarkCache, D)), /NON_USD_MOVEMENT/);
+});
+
+test('foreign original balances and both dated conversions remain bound to the A/B fingerprint', () => {
+  const first = foreignCashFixture(), changed = foreignCashFixture();
+  changed.schwab.cashAccounts.cash_accounts[1].balance = 100.01;
+  changed.schwab.previousCashAccounts.cash_accounts[1].balance = 100.01;
+  const a = normalizeRead(first, D, selectBenchmark(benchmarkCache, D));
+  const b = normalizeRead(changed, D, selectBenchmark(benchmarkCache, D));
+  for (const key of ['accounts', 'splits', 'flows', 'acctCash', 'prevAcctCash']) assert.deepEqual(a[key], b[key]);
+  assert.notEqual(a.sourceFingerprint, b.sourceFingerprint);
+  const priorValuation = foreignCashFixture();
+  priorValuation.schwab.previousPerformance.report.cash_accounts[1].value = 12.84;
+  priorValuation.schwab.previousCashAccounts.cash_accounts[1].balance_in_portfolio_currency = 12.84;
+  assert.notEqual(a.sourceFingerprint, normalizeRead(priorValuation, D, selectBenchmark(benchmarkCache, D)).sourceFingerprint);
+  first.schwab.cashAccounts.cash_accounts.reverse(); first.schwab.previousCashAccounts.cash_accounts.reverse();
+  assert.equal(a.sourceFingerprint, normalizeRead(first, D, selectBenchmark(benchmarkCache, D)).sourceFingerprint);
+});
+
+function datedCashReader(fixtures, { ignoredDate = false, unstable = false, unstablePriorValuation = false, cashToken } = {}, calls = []) {
+  let round = 0;
+  const response = (url, value) => {
+    let body = JSON.stringify(value);
+    if (cashToken && url.includes('/cash_accounts.json')) body = body.replace('"balance":100', `"balance":${cashToken}`);
+    const r = new Response(body, { headers: { 'content-type': 'application/json' } });
+    Object.defineProperty(r, 'url', { value: url }); return r;
+  };
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, method: init.method });
+    if (url.endsWith('/oauth2/token')) { round++; return response(url, { access_token: 'x'.repeat(30), token_type: 'bearer' }); }
+    assert.equal(init.method, 'GET');
+    if (url.endsWith('/portfolios.json')) return response(url, { portfolios: [
+      { id: 936249, name: 'Schwab-HK', currency_code: 'USD' }, { id: 1350094, name: 'Webull', currency_code: 'USD' },
+    ] });
+    const u = new URL(url), account = /(?:936249|14225[12])/.test(u.pathname) ? 'schwab' : 'webull', p = fixtures[account];
+    if (u.pathname.endsWith('/performance')) {
+      const prior = u.searchParams.get('end_date') !== D;
+      const value = structuredClone(prior ? p.previousPerformance : p.performance);
+      if (prior && unstablePriorValuation && round === 2)
+        for (const row of value.report.cash_accounts) if (row.currency.code === 'HKD') row.value += 0.01;
+      return response(url, value);
+    }
+    if (u.pathname.endsWith('/holdings')) return response(url, p.holdings);
+    if (u.pathname.endsWith('/cash_accounts.json')) {
+      const day = u.searchParams.get('date'); assert.ok([D, previousCalendarDate(D)].includes(day));
+      const value = structuredClone(day === D || ignoredDate ? p.cashAccounts : p.previousCashAccounts);
+      if (unstable && round === 2) for (const row of value.cash_accounts) if (row.currency === 'HKD') row.balance += 0.01;
+      if (day !== D && unstablePriorValuation && round === 2)
+        for (const row of value.cash_accounts) if (row.currency === 'HKD') row.balance_in_portfolio_currency += 0.01;
+      return response(url, value);
+    }
+    if (u.pathname.endsWith('/cash_account_transactions.json')) return response(url, p.cashTransactions[u.pathname.split('/')[4]]);
+    if (u.pathname.endsWith('/trades.json')) return response(url, p.trades);
+    assert.fail('unexpected synthetic fixed source route');
+  };
+  return new SharesightCloudReader({ clientId: 'id', clientSecret: 'secret', fetchImpl });
+}
+
+test('transport reads fixed target cash dates and a prior list only for foreign cash in both stable rounds', async () => {
+  const calls = [], reader = datedCashReader(foreignCashFixture(), {}, calls);
+  const result = await reader.readStable(D, selectBenchmark(benchmarkCache, D));
+  assert.equal(result.splits.cash, 813);
+  const lists = calls.filter(c => new URL(c.url).pathname.endsWith('/cash_accounts.json'));
+  assert.equal(lists.length, 6);
+  assert.equal(lists.filter(c => c.url.endsWith(`date=${D}`)).length, 4);
+  assert.equal(lists.filter(c => c.url.endsWith(`date=${previousCalendarDate(D)}`)).length, 2);
+  assert.ok(lists.filter(c => c.url.endsWith(`date=${previousCalendarDate(D)}`)).every(c => c.url.includes('/936249/')));
+  await assert.rejects(datedCashReader(foreignCashFixture(), { ignoredDate: true }).readStable(D, selectBenchmark(benchmarkCache, D)), /CASH_IDENTITY/);
+  await assert.rejects(datedCashReader(foreignCashFixture(), { unstable: true }).readStable(D, selectBenchmark(benchmarkCache, D)), /SOURCE_UNSTABLE/);
+});
+
+test('both production reader rounds date cash lists for either or both foreign-cash portfolios', async t => {
+  for (const accounts of [['schwab'], ['webull'], ['schwab', 'webull']]) await t.test(accounts.join('+'), async () => {
+    const fixtures = accounts.reduce((value, account) => foreignCashFixture(account, value), raw());
+    const calls = [];
+    const result = await datedCashReader(fixtures, {}, calls).readStable(D, selectBenchmark(benchmarkCache, D));
+    assert.equal(result.splits.cash, 800 + accounts.length * 13);
+    const lists = calls.filter(c => new URL(c.url).pathname.endsWith('/cash_accounts.json'));
+    assert.equal(lists.length, 4 + accounts.length * 2);
+    for (const [account, portfolioId] of [['schwab', 936249], ['webull', 1350094]]) {
+      const scoped = lists.filter(c => new URL(c.url).pathname.includes(`/portfolios/${portfolioId}/`));
+      assert.equal(scoped.filter(c => new URL(c.url).searchParams.get('date') === D).length, 2);
+      assert.equal(scoped.filter(c => new URL(c.url).searchParams.get('date') === previousCalendarDate(D)).length,
+        accounts.includes(account) ? 2 : 0);
+      assert.ok(scoped.every(c => c.method === 'GET' && new URL(c.url).searchParams.size === 1));
+    }
+    assert.equal(calls.filter(c => c.url.endsWith('/oauth2/token')).length, 2);
+    assert.deepEqual(result.acctCash, { schwab: 400 });
+    assert.deepEqual(result.prevAcctCash, { schwab: 350 });
+    await assert.rejects(datedCashReader(fixtures, { unstablePriorValuation: true })
+      .readStable(D, selectBenchmark(benchmarkCache, D)), /SOURCE_UNSTABLE/);
+  });
+});
+
+test('original cash number tokens reject sub-cent balances and underflow without relaxing the two-decimal contract', async () => {
+  for (const cashToken of ['100.001', '1e-400', '"100"', '1000000000000.01']) {
+    await assert.rejects(datedCashReader(foreignCashFixture(), { cashToken }).readStable(D, selectBenchmark(benchmarkCache, D)), /CASH_PRECISION|AMOUNT/);
+  }
+  const canonical = await datedCashReader(foreignCashFixture(), { cashToken: '1e2' }).readStable(D, selectBenchmark(benchmarkCache, D));
+  const ordinary = await datedCashReader(foreignCashFixture()).readStable(D, selectBenchmark(benchmarkCache, D));
+  assert.equal(canonical.sourceFingerprint, ordinary.sourceFingerprint);
 });
 
 test("controlled Webull principal cash legs remain internal trades", () => {

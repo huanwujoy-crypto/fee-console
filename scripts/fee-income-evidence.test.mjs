@@ -8,12 +8,16 @@ import vm from 'node:vm';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {incomeDatePolicy,createIncomeDatePolicy,incomeDateEvidenceFromData,notificationIncomeAudits,mergeIncomeDateAudit} from './fee-income-date-policy.mjs';
-import {CLOUD_ACCOUNTS,normalizeRead,SharesightCloudReader} from './fee-cloud-source.mjs';
+import {CLOUD_ACCOUNTS,normalizeRead as normalizeCloudRead,parseSourceJson,SharesightCloudReader} from './fee-cloud-source.mjs';
 import {loadIncomeDateEvidence} from './fee-cloud-producer.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt,semanticHash} from './fee-receipt-core.mjs';
 import {createFundInvestorCore} from './fund-investor-core.mjs';
 import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
 import { classifyFlow, reconcileFlows, flowId } from './daily-core.mjs';
+
+// Synthetic direct fixtures use the cash transport's original-number path.
+const normalizeRead=(raw,...args)=>normalizeCloudRead(Object.fromEntries(Object.entries(raw).map(([account,p])=>
+  [account,{...p,cashAccounts:parseSourceJson(JSON.stringify(p.cashAccounts))}])),...args);
 
 const D='2026-10-01',KEY='webull.dividend:12345678:SYNTH:2026-09-30:900';
 const fixture=()=>({account:'webull',portfolioId:1350094,targetDate:D,dateEvidence:{},
@@ -168,7 +172,8 @@ function rawFixture(date=D) {
       previousPerformance:{report:{portfolio_id:p.id,end_date:shift(date,-1),currency:{code:'USD'},cash_accounts:[{id:cashId,value:400,currency:{code:'USD'},portfolio:p}]}},
       holdings:{holdings:[{id:holdingId,valid_position:true,instrument,instrument_currency:{code:'USD'},
         inception_date:shift(date,-1),portfolio:p}]},
-      cashAccounts:{cash_accounts:[{id:cashId,portfolio_id:p.id,currency:'USD',portfolio_currency:'USD',balance:cash}]},
+      cashAccounts:{cash_accounts:[{id:cashId,portfolio_id:p.id,currency:'USD',portfolio_currency:'USD',date,
+        balance:cash,balance_in_portfolio_currency:cash}]},
       cashTransactions:{[cashId]:{cash_account_transactions:transactions}},trades:{trades:[]},managementTrades:{trades:[]}};
   };
   return {schwab:make('schwab',950,960,1000,400,[]),webull:{...make('webull',930,910,1069.50,469.50,input.cashRows),
@@ -183,12 +188,12 @@ function mockFetch(raw,calls=[]) {
     else if(u.pathname==='/api/v2/payouts/920.json')payload=raw.webull.incomePayouts[920];
     else {
       const account=Object.keys(raw).find(k=>u.pathname.includes(`/portfolios/${CLOUD_ACCOUNTS[k].portfolioId}/`)
-        ||u.pathname.includes(`/cash_accounts/${k==='webull'?930:950}/`));
+        ||Object.keys(raw[k].cashTransactions).some(id=>u.pathname.includes(`/cash_accounts/${id}/`)));
       assert.ok(account,'unexpected synthetic route');const r=raw[account];
       if(u.pathname.endsWith('/performance'))payload=u.searchParams.get('end_date')===r.performance.report.end_date?r.performance:r.previousPerformance;
       else if(u.pathname.endsWith('/holdings'))payload=r.holdings;
-      else if(u.pathname.endsWith('/cash_accounts.json'))payload=r.cashAccounts;
-      else if(u.pathname.endsWith('/cash_account_transactions.json'))payload=Object.values(r.cashTransactions)[0];
+      else if(u.pathname.endsWith('/cash_accounts.json'))payload=u.searchParams.get('date')===r.performance.report.end_date?r.cashAccounts:r.previousCashAccounts;
+      else if(u.pathname.endsWith('/cash_account_transactions.json'))payload=r.cashTransactions[u.pathname.split('/')[4]];
       else if(u.pathname.endsWith('/trades.json'))payload=u.searchParams.has('start_date')?r.trades:r.managementTrades;
       else assert.fail('unexpected synthetic route');
     }
@@ -466,7 +471,7 @@ globalThis.Date=class extends NativeDate {
       `const {produce}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-producer.mjs')));const options={fetchImpl:mockFetch(raw),fetchEconomic:async()=>({envelopeVersion:4,sourcePath:${JSON.stringify(econ)},checkCurrent(){},cleanup(){}})};\n`+
       `const first=await produce({...options,cli:{'target-date':date,'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out1)},'income-date-evidence-file':${JSON.stringify(evidence)}}});\n`+
       `const bytes=fs.readFileSync(first.dataFile);fs.copyFileSync(first.dataFile,path.join(root,'data.json'));\n`+
-      `const {normalizeRead}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-source.mjs')));const input=normalizeRead(raw,date,{spy:100,qqq:100,spyd:0,qqqd:0});\n`+
+      `const {normalizeRead,parseSourceJson}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-source.mjs')));const input=normalizeRead(Object.fromEntries(Object.entries(raw).map(([a,p])=>[a,{...p,cashAccounts:parseSourceJson(JSON.stringify(p.cashAccounts))}])),date,{spy:100,qqq:100,spyd:0,qqqd:0});\n`+
       `const style=path.join(${JSON.stringify(dir)},'negative-style.json'),management=path.join(${JSON.stringify(dir)},'negative-management.json');fs.writeFileSync(style,JSON.stringify(input.styleInput),{mode:0o600});fs.writeFileSync(management,JSON.stringify(input.managementInput),{mode:0o600});\n`+
       `let rejected=0;for(const change of [f=>f.sourceHoldingId=911,f=>delete f.incomeDateVerified,f=>f.incomeDateVerified='false',f=>{f.evidence='internal_income_estimated';f.incomeRole='dividend';},f=>{f.evidence='internal_income';f.incomeRole='dividend';f.incomeDateVerified=true;},f=>f.evidence='internal_trade']){const flows=structuredClone(input.flows);change(flows.find(f=>f.acct==='webull'));\n`+
       `const cli=['--date='+date,'--file='+path.join(root,'data.json'),'--schwab=1000','--webull=1069.50','--src-schwab='+date,'--src-webull='+date,'--cash=869.50','--stock=0','--other=1200','--spy=100','--qqq=100','--src-bench='+date,'--bench-state=session','--acct-cash-webull=469.50','--prev-acct-cash-webull=400','--flows='+JSON.stringify(flows)];\n`+
@@ -480,6 +485,55 @@ globalThis.Date=class extends NativeDate {
     assert.equal(r.first,'updated');assert.equal(r.second,'no-op');assert.equal(r.same,true);assert.deepEqual(r.prior,payload.daily[0]);
     assert.equal(r.audits,1);assert.equal(r.auto,0);assert.equal(r.unresolved,0);assert.equal(r.pnl,6950);assert.equal(r.verified,false);
     assert.equal(r.rejected,6);
+  } finally {fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('synthetic FX-only foreign valuation survives the actual producer, writer and receipt without external funding',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'income-fx-producer-test-'));fs.chmodSync(dir,0o700);
+  const repo=path.join(dir,'repo'),date='2026-09-23',prior=shift(date,-1),key=crypto.randomBytes(32);
+  const clock=path.join(dir,'clock.mjs');
+  const raw=rawFixture(date),p=raw.webull,portfolio={id:CLOUD_ACCOUNTS.webull.portfolioId,name:'Webull'};
+  p.performance.report.value+=13;
+  p.performance.report.cash_accounts.push({id:932,value:13,currency:{code:'HKD'},portfolio});
+  p.previousPerformance.report.cash_accounts.push({id:932,value:12.85,currency:{code:'HKD'},portfolio});
+  p.cashAccounts.cash_accounts.push({id:932,portfolio_id:portfolio.id,portfolio_currency:'USD',currency:'HKD',
+    date,balance:100,balance_in_portfolio_currency:13});
+  p.previousCashAccounts={cash_accounts:p.cashAccounts.cash_accounts.map(row=>({...row,date:prior,
+    balance:row.currency==='USD'?400:100,balance_in_portfolio_currency:row.currency==='USD'?400:12.85}))};
+  p.cashTransactions[932]={cash_account_transactions:[]};
+  const payload={updatedAt:prior,daily:[{d:prior,schwab:1000,webull:1012.85,cash:812.85,stock:0,other:1200,
+    spy:100,qqq:100,bd:prior,bstate:'session'}],flowsAuto:[],flowsUnresolved:[],
+    status:{asOf:prior,provisional:false,calibrated:true,splitDelta:0,unresolvedCount:0,notes:[]}};
+  const seal=(data,v=3)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);
+    return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(data)),c.final(),c.getAuthTag()]).toString('base64')});};
+  try {
+    fs.writeFileSync(clock,`const NativeDate=globalThis.Date,fixedNow=NativeDate.parse('2026-09-24T14:00:00Z');
+globalThis.Date=class extends NativeDate {
+ constructor(...args){super(...(args.length?args:[fixedNow]));}
+ static now(){return fixedNow;}
+};`,{mode:0o600});
+    fs.mkdirSync(repo,{mode:0o700});fs.cpSync(path.join(ROOT,'scripts'),path.join(repo,'scripts'),{recursive:true});
+    fs.mkdirSync(path.join(repo,'claude'));fs.copyFileSync(path.join(ROOT,'claude/fee-style-mapping.json'),path.join(repo,'claude/fee-style-mapping.json'));
+    fs.writeFileSync(path.join(repo,'data.json'),seal(payload),{mode:0o600});
+    const evidence=path.join(dir,'evidence.json'),cache=path.join(dir,'benchmark.json'),econ=path.join(dir,'economic.json');
+    fs.writeFileSync(evidence,JSON.stringify({schema:'fee-console.income-date-evidence.v1',targetDate:date,audits:[auditFixture(date,'SGOV')]}),{mode:0o600});
+    fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy:{series:[{d:date,p:100}]},qqq:{series:[{d:date,p:100}]}}}),{mode:0o600});
+    fs.writeFileSync(econ,seal({v:4,settings:{start:prior,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:1000},
+      {id:'webull',opening:1012.85}],months:[],fees:[]},4),{mode:0o600});
+    const out=path.join(dir,'out');fs.mkdirSync(out,{mode:0o700});const runner=path.join(dir,'runner.mjs');
+    fs.writeFileSync(runner,`import fs from 'node:fs';import path from 'node:path';import {pathToFileURL} from 'node:url';import crypto from 'node:crypto';\n`+
+      `const raw=${JSON.stringify(raw)},CLOUD_ACCOUNTS=${JSON.stringify(CLOUD_ACCOUNTS)},mockFetch=${mockFetch.toString()},assert={ok(v){if(!v)throw Error('route');},fail(){throw Error('route');}};globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN');};\n`+
+      `const {produce}=await import(pathToFileURL(${JSON.stringify(path.join(repo,'scripts/fee-cloud-producer.mjs'))}));\n`+
+      `const r=await produce({fetchImpl:mockFetch(raw),fetchEconomic:async()=>({envelopeVersion:4,sourcePath:${JSON.stringify(econ)},checkCurrent(){},cleanup(){}}),cli:{'target-date':${JSON.stringify(date)},'checked-at':'2026-09-24T14:00:00Z','benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out)},'income-date-evidence-file':${JSON.stringify(evidence)}}});\n`+
+      `const bytes=Buffer.from(JSON.parse(fs.readFileSync(r.dataFile)).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',Buffer.from(process.env.FEE_DATA_KEY,'base64url'),bytes.subarray(0,12));d.setAuthTag(bytes.subarray(-16));const p=JSON.parse(Buffer.concat([d.update(bytes.subarray(12,-16)),d.final()]));\n`+
+      `console.log(JSON.stringify({outcome:r.outcome,prior:p.daily[0],point:p.daily[1],auto:p.flowsAuto.length,unresolved:p.flowsUnresolved.length,receipt:p.feeCalculationReceipt}));\n`,{mode:0o600});
+    const result=spawnSync(process.execPath,[runner],{encoding:'utf8',timeout:120000,env:{PATH:path.dirname(process.execPath)+':/usr/bin:/bin',
+      NODE_OPTIONS:`--import=${JSON.stringify(clock)}`,FEE_DATA_KEY:key.toString('base64url'),FEE_CLOUD_SHARESIGHT_CLIENT_ID:'synthetic',FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:'synthetic'}});
+    assert.equal(result.status,0,result.stderr);const r=JSON.parse(result.stdout);
+    assert.equal(r.outcome,'updated');assert.deepEqual(r.prior,payload.daily[0]);
+    assert.equal(r.point.webull,1082.5);assert.equal(r.point.cash,882.5);assert.equal(r.point.incomeDateAudits.length,1);
+    assert.equal(r.auto,0);assert.equal(r.unresolved,0);assert.equal(r.receipt.effectiveFlowCount,0);
+    assert.equal(r.receipt.effectiveFlowNetCents,0);assert.equal(r.receipt.totals.grossPnlCents,6965);
   } finally {fs.rmSync(dir,{recursive:true,force:true});}
 });
 
