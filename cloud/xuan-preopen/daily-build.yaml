@@ -1,0 +1,8 @@
+# Build only the existing report job's replacement; never the gateway/sync image.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-f', 'cloud/xuan-preopen/Daily.Dockerfile', '-t', 'asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/xuan-preopen-report:${_RELEASE}', '.']
+images:
+  - asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/xuan-preopen-report:${_RELEASE}
+substitutions:
+  _RELEASE: proposed-sharesight-ledger-view

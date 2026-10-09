@@ -39,3 +39,15 @@ test('misrouted or incomplete upload metadata is not accepted', async () => {
   const fetchImpl = async url => String(url).includes('metadata.google') ? Response.json({access_token: 'test-google-identity'}) : Response.json({name: 'wrong-object', size: '1', generation: '1'});
   await assert.rejects(privateCloudIo({fetchImpl}).savePrivate('report-check/id/report.html', 'private'), /UPLOAD_NOT_CONFIRMED/);
 });
+
+test('ledger readback exposes only create-only HTML/receipt under computed delivery evidence prefix, never raw sources or arbitrary subpaths',async()=>{
+ const names=[],fetchImpl=async(url,options)=>{
+  if(String(url).includes('metadata.google'))return Response.json({access_token:'synthetic-google'});
+  const u=new URL(url),name=u.searchParams.get('name');names.push(name);assert.equal(u.searchParams.get('ifGenerationMatch'),'0');
+  return Response.json({name,size:options.body.length,generation:'1'});
+ };
+ const io=privateCloudIo({fetchImpl}),prefix='delivery/2026-10-09/ledger-view-'+ 'a'.repeat(64)+'/';
+ await io.savePrivate(prefix+'report.html','synthetic');await io.savePrivate(prefix+'receipt.json',{status:'partial'});
+ for(const suffix of ['source.json','start.json','../receipt.json','nested/report.html'])await assert.rejects(io.savePrivate(prefix+suffix,'invalid'),/PATH_INVALID/);
+ await assert.rejects(io.savePrivate(prefix.replace('a'.repeat(64),'short')+'report.html','invalid'),/PATH_INVALID/);assert.equal(names.length,2);
+});

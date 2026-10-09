@@ -87,7 +87,7 @@ const validatePublicationState = (state, expectedDate, candidate = false) => {
       || Object.keys(state).sort().join('|') !== ['dataDate','eligibleAtEpoch','kind','priorityKey'].sort().join('|')) {
     throw new Error(`${candidate ? 'candidate' : 'published'} publication state is invalid`);
   }
-  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
+  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'sharesight-ledger-view', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
   requireDate('publication dataDate', state.dataDate);
   if (state.dataDate !== expectedDate) throw new Error('publication data date does not match metadata');
   if (state.kind === 'priority') {
@@ -114,6 +114,7 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
       && publishedState.kind === 'priority' && candidate.publication.kind === 'complete-pm';
     if (candidate.dataDate === publishedMeta.dataDate &&
         candidate.commitEpoch <= publishedMeta.sourceCommitEpoch && !replacesSameDayPriority) return false;
+    if(candidate.publication.kind==='sharesight-ledger-view'&&candidate.dataDate===publishedState.dataDate&&['complete-pm','limited-readback','intraday-update','priority'].includes(publishedState.kind))return false;
     if(candidate.publication.kind==='limited-readback'&&candidate.dataDate===publishedState.dataDate&&publishedState.kind==='complete-pm')return false;
     if (candidate.publication.kind === 'priority') {
       if (candidate.commitEpoch < candidate.publication.eligibleAtEpoch) return false;
@@ -124,6 +125,7 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
   });
   if (eligible.length) {
     const newestDate = eligible.reduce((value, item) => item.dataDate > value ? item.dataDate : value, eligible[0].dataDate);
+    if(eligible.some(item=>item.dataDate===newestDate&&['complete-pm','limited-readback','intraday-update','priority'].includes(item.publication.kind)))eligible=eligible.filter(item=>item.dataDate!==newestDate||item.publication.kind!=='sharesight-ledger-view');
     if (eligible.some(item => item.dataDate === newestDate && item.publication.kind === 'complete-pm')) {
       eligible = eligible.filter(item => item.dataDate !== newestDate || !['priority','limited-readback'].includes(item.publication.kind));
     }

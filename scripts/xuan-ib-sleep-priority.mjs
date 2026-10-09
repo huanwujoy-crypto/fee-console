@@ -104,7 +104,7 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 export function classifySleepPublication(html) {
   if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
     const model = extractNightActionModel(html);
-    return { kind: model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    return { kind: model.schemaVersion===10?'sharesight-ledger-view':model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
   }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });

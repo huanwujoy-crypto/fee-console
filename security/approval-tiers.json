@@ -432,6 +432,17 @@
     "scripts/xuan-weekly-import-boundaries.test.mjs",
     "scripts/xuan-weekly-proxy-exposure.test.mjs",
     "cloud/xuan-weekly/private_ai_sources.py",
-    "cloud/xuan-weekly/test_private_ai_sources.py"
+    "cloud/xuan-weekly/test_private_ai_sources.py",
+    "claude/xuan-ib-preopen-report-profile-v1.json",
+    "cloud/xuan-preopen/daily-build.yaml",
+    "cloud/xuan-preopen/diagnose.mjs",
+    "cloud/xuan-preopen/diagnose.test.mjs",
+    "cloud/xuan-preopen/sharesight_ledger_fixtures.mjs",
+    "cloud/xuan-preopen/sharesight_ledger_report.mjs",
+    "cloud/xuan-preopen/sharesight_ledger_report.test.mjs",
+    "docs/xuan-preopen-headless-diagnostics.md",
+    "docs/xuan-preopen-sharesight-ledger-view.md",
+    "scripts/xuan-ib-night-action-ledger-view.mjs",
+    "scripts/xuan-ib-night-action-ledger-view.test.mjs"
   ]
 }

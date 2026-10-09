@@ -6,6 +6,10 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {BUCKET, boundedText} from './cloud_io.mjs';
 import {planPreopen} from './calendar.mjs';
+import {loadProductionProfile} from './sharesight_ledger_report.mjs';
+import {LEDGER_RECEIPT_MODE,validateLedgerReceipt,validateLedgerPublication} from '../../scripts/xuan-ib-night-action-ledger-view.mjs';
+import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
+import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {loadTrustedContext} from './report.mjs';
 import {gitBlobSha} from '../../scripts/xuan-ib-publish-health.mjs';
 const JOB = 'projects/family-portfolio-gateway/locations/asia-east2/jobs/xuan-preopen-report';
@@ -22,7 +26,7 @@ export function deliveryTransport(token = process.env.XUAN_PREOPEN_GOOGLE_TOKEN)
   };
 }
 export async function collectDelivery({request = deliveryTransport(), now = Date.now, wait = ms => new Promise(r => setTimeout(r,ms)),
-  loadContext = loadTrustedContext} = {}) {
+  loadContext = loadTrustedContext,loadProfile=loadProductionProfile} = {}) {
   const plan = planPreopen(now());
   if (plan.status === 'no-action') return {...plan, outcome: 'no-action'};
   const objectUrl = file => `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${encodeURIComponent(`delivery/${plan.dataDate}/${file}`)}?alt=media`;
@@ -55,10 +59,11 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
     if (raw === null) fail('COMPLETION_RECEIPT_MISSING');
   }
   const receipt = parse(raw);
-  if (receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate || receipt.status !== 'ready'
+  if (receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate || (receipt.status !== 'ready' && !(receipt.status==='partial'&&receipt.mode===LEDGER_RECEIPT_MODE))
       || receipt.artifact?.privateObject !== `delivery/${plan.dataDate}/report.html`) fail('RECEIPT');
   const html = await request(objectUrl('report.html'));
   if (crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact.sha256) fail('HASH');
+  if(receipt.mode===LEDGER_RECEIPT_MODE){const profile=await loadProfile({now});const model=extractNightActionModel(html);validateLedgerReceipt(receipt,model);validateNightActionHtml(html,plan.dataDate,{snapshot:profile.context.association,previousSourceSha:profile.context.previousSourceSha,now:now(),profile});}
   const context = await loadContext({now});
   if (gitBlobSha(context.previousHtml) === gitBlobSha(html)) return {outcome: 'already-published', dataDate: plan.dataDate};
   return {outcome: execution ? 'generated' : 'reused', dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, html, receipt};

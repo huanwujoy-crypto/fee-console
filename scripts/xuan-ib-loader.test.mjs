@@ -2902,3 +2902,15 @@ test('hidden wrapper retains verified report loading and background-check status
   assert.ok(requests.every(url => /latest\.(?:meta\.json|html)/.test(url)));
   assert.equal(app.navigations.length, 0);
 });
+
+test('actual Sharesight-only partial report reads as partial and cannot turn source read time into data-asof',async()=>{
+ const {prepared}=await import('../cloud/xuan-preopen/sharesight_ledger_fixtures.mjs');
+ const {html}=await prepared();
+ const loader=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
+ const infoCode=loader.slice(loader.indexOf('const reportInfo ='),loader.indexOf('const requireExactKeys ='));
+ const info=vm.runInNewContext(infoCode+'reportInfo(html)',{html});
+ assert.equal(info.dataDate,'2026-10-09');assert.equal(info.edition,'开市前版（部分）');assert.equal(info.ledgerView,true);assert.equal(info.statusOnly,true);
+ const statusCode=loader.slice(loader.indexOf('const statusFor ='),loader.indexOf('function updateDecisionControl'));
+ const status=vm.runInNewContext(statusCode+'statusFor(record,"已检查")',{record:{info},clock:()=> '13:01'});
+ assert.match(status,/同步完成未核/);assert.match(status,/读取 13:00/);assert.ok(!status.includes('数据至'));
+});
