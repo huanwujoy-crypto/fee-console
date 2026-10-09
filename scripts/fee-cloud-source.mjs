@@ -136,7 +136,10 @@ export function parseSourceJson(text) {
     for (const [index, row] of list.entries()) retain(row, rawList[index], keys);
   };
   const retainPayload = (payload, rawPayload) => {
-    retainRows(object(payload) ? payload.trades : payload, object(rawPayload) ? rawPayload.trades : rawPayload, ['quantity']);
+    retainRows(object(payload) ? payload.trades : payload, object(rawPayload) ? rawPayload.trades : rawPayload,
+      ['quantity', 'balance', 'balance_in_portfolio_currency']);
+    if (object(payload)) retainRows(payload.cash_accounts, rawPayload.cash_accounts,
+      ['balance', 'balance_in_portfolio_currency']);
     if (object(payload?.report)) {
       retain(payload.report, rawPayload.report, ['value']);
       retainRows(payload.report.holdings, rawPayload.report.holdings, ['quantity', 'value']);
@@ -149,18 +152,41 @@ export function parseSourceJson(text) {
 }
 export const parseTradeJson = parseSourceJson;
 
-function exactNumberText(row, key) {
+function exactNumberText(row, key, code = 'HOLDING_TERMINAL_PRECISION') {
   const text = row[NUMBER_TEXT]?.[key];
-  if (!finite(row[key]) || typeof text !== 'string') fail('HOLDING_TERMINAL_PRECISION');
+  if (!finite(row[key]) || typeof text !== 'string') fail(code);
   const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
-  if (!match || text.length > 128) fail('HOLDING_TERMINAL_PRECISION');
+  if (!match || text.length > 128) fail(code);
   let digits = (match[2] + (match[3] || '')).replace(/^0+/, '');
   if (!digits) return '0';
   let exponent = Number(match[4] || 0) - (match[3] || '').length;
-  if (!Number.isSafeInteger(exponent)) fail('HOLDING_TERMINAL_PRECISION');
+  if (!Number.isSafeInteger(exponent)) fail(code);
   const zeros = /0+$/.exec(digits)?.[0].length || 0;
   digits = digits.slice(0, digits.length - zeros); exponent += zeros;
   return `${match[1]}${digits}e${exponent}`;
+}
+
+// The cash-list contract supplies two-decimal original- and portfolio-currency
+// balances. Compare original money tokens, never a USD tolerance or rounded FX.
+function cashCents(row, key) {
+  const text = exactNumberText(row, key, 'CASH_PRECISION');
+  if (text === '0') return 0n;
+  const match = /^(-?)(\d+)e(-?\d+)$/.exec(text), exponent = Number(match?.[3]);
+  if (!match || exponent < -2 || exponent > 12) fail('CASH_PRECISION');
+  const value = BigInt(match[2]) * 10n ** BigInt(exponent + 2) * (match[1] ? -1n : 1n);
+  if (value < -100000000000000n || value > 100000000000000n) fail('AMOUNT');
+  return value;
+}
+
+function datedCashList(payload, expected, targetDate) {
+  const list = rows(payload, 'cash_accounts');
+  for (const row of list) {
+    if (id(row.portfolio_id) !== expected.portfolioId || row.portfolio_currency !== 'USD'
+        || !/^[A-Z]{3}$/.test(row.currency || '') || row.date !== targetDate) fail('CASH_IDENTITY');
+    cashCents(row, 'balance'); cashCents(row, 'balance_in_portfolio_currency');
+    if (row.currency === 'USD' && cashCents(row, 'balance') !== cashCents(row, 'balance_in_portfolio_currency')) fail('CASH_REPORT_BALANCE');
+  }
+  return list;
 }
 
 function quantityUnits(trade) {
@@ -410,7 +436,7 @@ function assertCashChain(transactions, previousCash, currentCash) {
   if (Math.abs(balance - cents(currentCash)) > 1) fail('CASH_BALANCE_STALE');
 }
 
-function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance) {
+function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance, previousCashPayload) {
   const expected = CLOUD_ACCOUNTS[account];
   const report = performancePayload?.report;
   assertComplete(performancePayload); assertComplete(report);
@@ -440,7 +466,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || typeof row.currency?.code !== "string") fail("CASH_CURRENCY");
     return { id: id(row.id), currency: row.currency.code, valueUsd: amount(row.value) };
   }).sort((a, b) => a.id - b.id);
-  const listedCash = rows(cashPayload, "cash_accounts");
+  const listedCash = datedCashList(cashPayload, expected, targetDate);
   const listedCashById = new Map(listedCash.map(row => [id(row.id), row]));
   for (const row of cashRows) {
     const listed = listedCashById.get(row.id);
@@ -448,7 +474,8 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || listed.currency !== row.currency) {
       fail("CASH_IDENTITY");
     }
-    if (row.currency === 'USD' && (!finite(listed.balance) || Math.abs(row.valueUsd - listed.balance) > 0.01)) fail('CASH_REPORT_BALANCE');
+    if (Math.abs(row.valueUsd - listed.balance_in_portfolio_currency) > 0.01
+        || (row.currency === 'USD' && cashCents(listed, 'balance') !== cashCents(listed, 'balance_in_portfolio_currency'))) fail('CASH_REPORT_BALANCE');
   }
   if (listedCash.length !== cashRows.length || Object.keys(cashTransactions).length !== listedCash.length
       || listedCash.some(row => !Object.hasOwn(cashTransactions, String(id(row.id))))) fail('CASH_IDENTITY');
@@ -516,6 +543,9 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   const stock = round2(equity.reduce((sum, row) => sum + row.valueUsd, 0));
   if (Math.abs(total - cash - other - stock) > 1) fail("TOTAL_RECONCILIATION");
   let previousCash = null;
+  const cashEvidence = listedCash.map(row => ({ cashAccountId: id(row.id), currency: row.currency,
+    date: row.date, balanceCents: String(cashCents(row, 'balance')),
+    valueUsdCents: String(cashCents(row, 'balance_in_portfolio_currency')) })).sort((a,b) => a.cashAccountId-b.cashAccountId);
   {
     assertComplete(previousPerformance); assertComplete(previousPerformance?.report);
     const prior = previousPerformance?.report;
@@ -523,27 +553,43 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || prior.end_date !== previousCalendarDate(targetDate) || prior.currency?.code !== 'USD') fail('CASH_PREVIOUS_EVIDENCE');
     const priorRows = rows(prior.cash_accounts, 'cash_accounts');
     if (priorRows.length !== cashRows.length) fail('CASH_PREVIOUS_EVIDENCE');
+    const requiresDatedPrior = cashRows.some(row => row.currency !== 'USD');
+    if (requiresDatedPrior && !previousCashPayload) fail('CASH_PREVIOUS_EVIDENCE');
+    const priorListed = requiresDatedPrior
+      ? datedCashList(previousCashPayload, expected, previousCalendarDate(targetDate)) : [];
+    if (requiresDatedPrior && (priorListed.length !== listedCash.length
+        || priorListed.some(row => !listedCashById.has(id(row.id))))) fail('CASH_PREVIOUS_EVIDENCE');
     previousCash = 0;
     for (const row of priorRows) {
       const current = cashRows.find(c => c.id === id(row.id));
       if (!current || current.currency !== row.currency?.code || id(row.portfolio?.id) !== expected.portfolioId
           || row.portfolio?.name !== expected.name) fail('CASH_PREVIOUS_EVIDENCE');
-      previousCash += amount(row.value);
       if (current.currency === 'USD') {
+        previousCash += amount(row.value);
         const moved = rows(cashTransactions[String(current.id)], 'cash_account_transactions').reduce((sum, t) => sum + amount(t.amount), 0);
         if (Math.abs(amount(row.value) + moved - current.valueUsd) > 0.01) fail('CASH_RECONCILIATION');
         assertCashChain(rows(cashTransactions[String(current.id)], 'cash_account_transactions'), row.value, current.valueUsd);
       }
+      if (requiresDatedPrior) {
+        const before = priorListed.find(item => id(item.id) === current.id), now = listedCashById.get(current.id);
+        if (!before || before.currency !== current.currency
+            || Math.abs(amount(row.value) - before.balance_in_portfolio_currency) > 0.01) fail('CASH_PREVIOUS_EVIDENCE');
+        if (current.currency !== 'USD' && cashCents(before, 'balance') !== cashCents(now, 'balance')) fail('NON_USD_BALANCE_CHANGED');
+        const evidence = cashEvidence.find(item => item.cashAccountId === current.id);
+        evidence.previous = { date: before.date, balanceCents: String(cashCents(before, 'balance')),
+          valueUsdCents: String(cashCents(before, 'balance_in_portfolio_currency')) };
+      }
     }
     previousCash = round2(previousCash);
-    if (Math.abs(previousCash + movementTotal - cash) > 0.01) fail('CASH_RECONCILIATION');
+    const usdCash = round2(cashRows.filter(row => row.currency === 'USD').reduce((sum, row) => sum + row.valueUsd, 0));
+    if (Math.abs(previousCash + movementTotal - usdCash) > 0.01) fail('CASH_RECONCILIATION');
   }
   return {
     account, portfolioId: expected.portfolioId, sourceDate: targetDate, total, cash, other, stock,
     holdings: equity,
     flows: flows.sort((a, b) => stable(a).localeCompare(stable(b))),
-    cashCheck: flows.length ? { current: round2(cash), previous: previousCash } : null,
-    catalogEvidence,
+    cashCheck: flows.length ? { current: round2(cashRows.filter(row => row.currency === 'USD').reduce((sum, row) => sum + row.valueUsd, 0)), previous: previousCash } : null,
+    catalogEvidence, cashEvidence,
   };
 }
 
@@ -585,7 +631,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     portfolios.push(normalizePortfolio(account, source.performance, source.holdings, source.cashAccounts,
       source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence,
       source.previousPerformance, source.holdingHistory || (account === 'webull' ? source.managementTrades : undefined),
-      source.terminalPerformance));
+      source.terminalPerformance, source.previousCashAccounts));
   }
   const accounts = Object.fromEntries(portfolios.map(p => [p.account, p.total]));
   const splits = {
@@ -609,7 +655,8 @@ export function normalizeRead(raw, targetDate, benchmark) {
     ...(managementInput ? {managementInput} : {}),
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
   return { ...normalized, sourceFingerprint: sha256({ ...normalized,
-    catalogEvidence: portfolios.map(p => ({ account: p.account, ...p.catalogEvidence })) }) };
+    catalogEvidence: portfolios.map(p => ({ account: p.account, ...p.catalogEvidence })),
+    cashEvidence: portfolios.map(p => ({ account: p.account, balances: p.cashEvidence })) }) };
 }
 
 class FixedHttp {
@@ -624,12 +671,12 @@ class FixedHttp {
     const allowed = url === TOKEN_URL || url === PORTFOLIOS_URL
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v3\/portfolios\/(?:936249|1350094)\/(?:performance|holdings|trades\.json)(?:\?.*)?$/.test(url)
-      || /^https:\/\/api\.sharesight\.com\/api\/v2\/portfolios\/(?:936249|1350094)\/cash_accounts\.json$/.test(url)
+      || /^https:\/\/api\.sharesight\.com\/api\/v2\/portfolios\/(?:936249|1350094)\/cash_accounts\.json\?date=\d{4}-\d{2}-\d{2}$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/cash_accounts\/[1-9]\d{0,14}\/cash_account_transactions\.json\?.*$/.test(url);
     if (!allowed) fail("ROUTE_BLOCKED");
     try {
       const path = new URL(url).pathname;
-      const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance');
+      const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance') || path.endsWith('/cash_accounts.json');
       const response = await boundedJson(this.fetchImpl, url, init, {
         timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: isPrecisionSource,
       });
@@ -679,7 +726,7 @@ export class SharesightCloudReader {
       const tradesUrl = `${base3}/trades.json?consolidated=false&end_date=${targetDate}&start_date=${targetDate}`;
       const [performancePayload, holdingsPayload, cashAccountsPayload, tradesPayload] = await Promise.all([
         this.get(performanceUrl, token), this.get(`${base3}/holdings?consolidated=false`, token),
-        this.get(`${API}/api/v2/portfolios/${expected.portfolioId}/cash_accounts.json`, token),
+        this.get(`${API}/api/v2/portfolios/${expected.portfolioId}/cash_accounts.json?date=${targetDate}`, token),
         this.get(tradesUrl, token),
       ]);
       const cashAccounts = rows(cashAccountsPayload, "cash_accounts");
@@ -691,6 +738,8 @@ export class SharesightCloudReader {
       const priorDate = previousCalendarDate(targetDate);
       const previousPerformance = await this.get(
         `${base3}/performance?consolidated=false&end_date=${priorDate}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${priorDate}`, token);
+      const previousCashAccounts = cashAccounts.some(cash => cash.currency !== 'USD')
+        ? await this.get(`${API}/api/v2/portfolios/${expected.portfolioId}/cash_accounts.json?date=${priorDate}`, token) : undefined;
       const incomePayouts = {};
       if (account === 'webull') {
         const keys=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))
@@ -712,6 +761,7 @@ export class SharesightCloudReader {
         `${base3}/performance?consolidated=false&end_date=${targetDate}&grouping=investment_type&include_limited=false&include_sales=true&report_combined=false&start_date=${fromDate}`, token) : undefined;
       raw[account] = { incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), ...(previousPerformance ? {previousPerformance} : {}), performance: performancePayload, holdings: holdingsPayload,
         cashAccounts: cashAccountsPayload, cashTransactions, trades: tradesPayload,
+        ...(previousCashAccounts ? { previousCashAccounts } : {}),
         ...(holdingHistory ? { holdingHistory } : {}), ...(terminalPerformance ? { terminalPerformance } : {}) };
     }
     return raw;
