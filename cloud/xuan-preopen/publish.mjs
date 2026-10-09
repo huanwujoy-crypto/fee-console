@@ -1,3 +1,5 @@
+import {canReplaceActionModel} from '../../scripts/xuan-ib-sleep-priority.mjs';
+import {validateEodReceipt} from './eod_report.mjs';
 // Only submit a signed one-file candidate. Validate -> Promote -> Pages still
 // exclusively owns latest.html and publication metadata. No main write exists.
 import fs from 'node:fs';
@@ -26,18 +28,20 @@ export async function githubRequest(payload, token = process.env.XUAN_PREOPEN_GI
 }
 export async function publishPrepared({html, receipt, request = githubRequest, loadContext = loadTrustedContext, now = Date.now} = {}) {
   const time = now(), dataDate = hktDate(time);
+  const eod=receipt?.mode==='private_eod_action';
   const intraday=receipt?.mode==='private_intraday_update',limited=intraday||receipt?.mode==='private_limited_readback';
   if (receipt?.schemaVersion !== 1 || receipt.dataDate!==dataDate || receipt.sourceDate>=dataDate || receipt.publication!=='none' || !Array.isArray(receipt.sources)
-    || (limited?(receipt.status!=='partial'||receipt.sourceCount!==(intraday?5:3)||receipt.sources.length!==(intraday?5:3)):(receipt.mode!=='private_report_check'||receipt.status!=='ready'||receipt.sourceCount!==5||receipt.sources.length!==5)))fail('RECEIPT');
+    || (eod?(receipt.status!=='partial'||receipt.sourceCount!==4||receipt.sources.length!==4):limited?(receipt.status!=='partial'||receipt.sourceCount!==(intraday?5:3)||receipt.sources.length!==(intraday?5:3)):(receipt.mode!=='private_report_check'||receipt.status!=='ready'||receipt.sourceCount!==5||receipt.sources.length!==5)))fail('RECEIPT');
   const started = Date.parse(receipt.startedAt), completed = Date.parse(receipt.completedAt);
   if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started || completed > time
       || completed-started > 300_000 || time-started > 30*60_000) fail('STALE');
-  const required = intraday?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades']:limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
+  const required = eod?['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive']:intraday?['ib.accountSummary','ib.positions','ib.orders','ib.balances','ib.trades']:limited?['ib.accountSummary','ib.positions','ib.orders']:['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
   if (required.some(key => receipt.sources.filter(s => s.sourceKey === key && HASH.test(s.sha256 || '')).length !== 1)) fail('SOURCES');
   if (typeof html !== 'string' || crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact?.sha256) fail('HASH');
   if(!limited)validateNightActionHtml(html, dataDate);
   const model = extractNightActionModel(html);
-  if(limited){if(model.schemaVersion!==(intraday?8:7)||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
+  if(eod)validateEodReceipt(receipt,html,dataDate,receipt.sourceDate);
+  else if(limited){if(model.schemaVersion!==(intraday?8:7)||model.status!=='partial'||model.sourceDate!==receipt.sourceDate||model.captureStartedAt!==receipt.startedAt||model.captureCompletedAt!==receipt.completedAt||model.evidenceSha256!==receipt.evidenceSha256||JSON.stringify(model.association)!==JSON.stringify(receipt.association))fail('MODEL');}
   else if (model.schemaVersion !== 5 || model.status !== 'ready' || !model.asOfHkt.endsWith(`数据至 ${receipt.sourceDate}`)) fail('MODEL');
   const verifyContext = async () => {
     const context = await loadContext({now});
@@ -48,6 +52,8 @@ export async function publishPrepared({html, receipt, request = githubRequest, l
     return context;
   };
   const context = await verifyContext(), baseSha = context.association.policyCommit;
+  const verifyReplacement = context => {if(eod){try{const old=extractNightActionModel(context.previousHtml);if(old.dataDate===dataDate&&!canReplaceActionModel(model,old))fail('COMPLETE_REPORT_EXISTS');}catch(e){if(e.message==='PREOPEN_PUBLISH_COMPLETE_REPORT_EXISTS')throw e;}}};
+  verifyReplacement(context);
   if(limited){try{const old=extractNightActionModel(context.previousHtml);if([7,8].includes(old.schemaVersion)&&old.evidenceSha256===model.evidenceSha256)return {publication:'already-published-status',dataDate};if(!intraday&&old.status==='ready'&&old.dataDate===dataDate)fail('COMPLETE_REPORT_EXISTS');}catch(e){if(e.message==='PREOPEN_PUBLISH_COMPLETE_REPORT_EXISTS')throw e;}}
   const query = {query: 'query { viewer { login } repository(owner: "huanwujoy-crypto", name: "fee-console") { id ref(qualifiedName: "refs/heads/main") { target { oid } } } }'};
   const repo = (await request(query))?.data;
@@ -60,6 +66,7 @@ export async function publishPrepared({html, receipt, request = githubRequest, l
   // An empty candidate branch is harmless if fresh policy/base verification
   // fails here. Never delete a branch or silently retry with a different base.
   const latest = await verifyContext();
+  verifyReplacement(latest);
   if (latest.association.policyCommit !== baseSha) fail('BASE_CHANGED');
   const result = (await request({query: 'mutation($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid } ref { name } } }',
     variables: {input: {branch: {repositoryNameWithOwner: REPO, branchName: branch}, expectedHeadOid: baseSha,

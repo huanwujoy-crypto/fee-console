@@ -53,7 +53,7 @@ function orderSymbol(order, total) {
     ? order.primary_description.trim().toUpperCase() : null;
 }
 
-function ordersOf(raw, positionsRaw, { dataDate, previousHtml }) {
+export function ordersOf(raw, positionsRaw, { dataDate, previousHtml }) {
   const orders = unwrapSource('orders', raw).orders;
   const positions = new Map();
   for (const position of normalizePositions(positionsRaw)) {
@@ -111,7 +111,7 @@ function ordersOf(raw, positionsRaw, { dataDate, previousHtml }) {
   };
 }
 
-function projectOpenBuys(allocation, buys) {
+export function projectOpenBuys(allocation, buys) {
   const values = new Map(allocation.categories.map(item => [item.label, item.marketValue]));
   let reserved = 0, usscAdded = 0;
   for (const order of buys) {

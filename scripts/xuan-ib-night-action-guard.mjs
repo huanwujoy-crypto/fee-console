@@ -23,7 +23,7 @@ export function validateNightActionHtml(html, expectedDate, {snapshot=null,previ
     return {dataDate:model.dataDate,status:"partial",orderCount:0};
   }
   return { dataDate: model.dataDate, status: model.status,
-    orderCount: model.orders.buys.length + model.orders.sells.length };
+    orderCount: model.orders.status === 'unknown' ? null : model.orders.buys.length + model.orders.sells.length };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

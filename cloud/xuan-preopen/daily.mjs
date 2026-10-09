@@ -1,3 +1,4 @@
+import {validateEodReceipt} from './eod_report.mjs';
 // Cloud job entry point. It has no GitHub credential or public-write ability.
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
@@ -24,7 +25,8 @@ export async function runDaily({io = privateCloudIo(), now = Date.now, generate 
     return io.savePrivate(name, value);
   }};
   const receipt = await generate({sourceDate: plan.sourceDate, io: wrapped, now});
-  if (receipt.status !== 'ready' || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
+  if (receipt.mode === 'private_eod_action') validateEodReceipt(receipt, html, plan.dataDate, plan.sourceDate);
+  if ((receipt.mode === 'private_eod_action' ? receipt.status !== 'partial' : receipt.status !== 'ready') || typeof html !== 'string') throw new Error('DAILY_REPORT_INCOMPLETE');
   const artifact = {privateObject: prefix+'report.html', ...await io.savePrivate(prefix+'report.html', html)};
   const delivery = {...receipt, artifact, calendar: plan};
   await io.savePrivate(prefix+'receipt.json', delivery); // Completion marker LAST.

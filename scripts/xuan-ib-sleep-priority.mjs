@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import crypto from 'node:crypto';
+import {validateNightActionHtml} from './xuan-ib-night-action-guard.mjs';
 
 import fs from 'node:fs';
 import { publicationEdition } from './xuan-ib-account-association-publication.mjs';
@@ -104,7 +106,9 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 export function classifySleepPublication(html) {
   if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
     const model = extractNightActionModel(html);
-    return { kind: model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    if(model.schemaVersion===9)validateNightActionHtml(html,model.dataDate);
+    const action=[4,5,9].includes(model.schemaVersion)?{action:actionPublicationDescriptor(model,html)}:{};
+    return { ...action, kind: model.schemaVersion===9?'eod-action':model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
   }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });
@@ -118,6 +122,51 @@ export function classifySleepPublication(html) {
   if (!match) fail('primary report date is unavailable');
   date(match[1]);
   return { kind: edition === 'pm' ? 'complete-pm' : 'other', dataDate: match[1], priorityKey: null, eligibleAtEpoch: null };
+}
+
+// Derived only from the canonical validated report, not a caller's verified flag.
+const actionKeys=['schemaVersion','status','sourceDate','readAtEpoch','orderReadAtEpoch','components','htmlBlob'];
+export function validateActionPublicationDescriptor(a,htmlBlob=null){
+  exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[])],'action publication');
+  if(![4,5,9].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
+  if(a.sourceDate!==null)date(a.sourceDate,'action sourceDate');sha(a.htmlBlob,'action htmlBlob');
+  if(htmlBlob!==null&&a.htmlBlob.toLowerCase()!==htmlBlob.toLowerCase())fail('action publication HTML mismatch');
+  if(a.schemaVersion===9){
+    if(a.status!=='partial'||a.sourceDate===null||!['verified','pending','unknown'].includes(a.reconciliationStatus)||!(a.financialProofSha256===null||typeof a.financialProofSha256==='string'&&/^[a-f0-9]{64}$/.test(a.financialProofSha256))||a.reconciliationStatus!=='unknown'&&a.financialProofSha256===null)fail('EOD action publication facts are invalid');
+  }
+  if(Boolean(a.components&4)!==(a.orderReadAtEpoch!==null))fail('order publication time is invalid');
+  return a;
+}
+export function actionPublicationDescriptor(m,html=null){
+  if(![4,5,9].includes(m?.schemaVersion))return null;
+  if(m.schemaVersion===9&&m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI export is private acceptance only');
+  const time=label=>{const match=label?.match(/(\d{2}:\d{2})(?:–(\d{2}:\d{2}))? HKT/);return match?Math.floor(Date.parse(m.dataDate+'T'+(match[2]||match[1])+':00+08:00')/1000):null;};
+  const orders=m.orders.status==='ready',allocation=m.allocation.status==='ready',cash=m.cash.ib!==null&&m.cash.ib!==undefined&&m.cash.noah!==null&&m.cash.noah!==undefined;
+  const bytes=html===null?null:Buffer.from(html),htmlBlob=bytes?crypto.createHash('sha1').update(Buffer.from('blob '+bytes.length+'\0')).update(bytes).digest('hex'):'0'.repeat(40);
+  return validateActionPublicationDescriptor({schemaVersion:m.schemaVersion,status:m.status,sourceDate:m.schemaVersion===9?m.sourceDate:m.asOfHkt.match(/数据至 (\d{4}-\d{2}-\d{2})$/)?.[1]??null,
+    readAtEpoch:m.schemaVersion===9?Math.floor(Date.parse(m.provenance.flex.readAt)/1000):time(m.asOfHkt),orderReadAtEpoch:orders?(m.schemaVersion===9?Math.floor(Date.parse(m.orders.capturedCompletedAt)/1000):time(m.orders.asOfHkt)):null,
+    ...(m.schemaVersion===9?{reconciliationStatus:m.reconciliation.status,financialProofSha256:m.reconciliation.verificationSha256}:{}),
+    components:(allocation?1:0)|(cash?2:0)|(orders?4:0)|(allocation&&m.allocation.projectedTotal!==null&&m.allocation.projectedTotal!==undefined?8:0)|(m.replenishment.status==='ready'?16:0),htmlBlob});
+}
+export function retainsActionFinancialEvidence(next,old){
+  return !(next.schemaVersion===9&&old.schemaVersion===9&&next.sourceDate===old.sourceDate&&(old.financialProofSha256!==null&&next.financialProofSha256===null||old.reconciliationStatus==='verified'&&next.reconciliationStatus!=='verified'));
+}
+export function canReplaceActionPublication(next,old){
+  validateActionPublicationDescriptor(next);validateActionPublicationDescriptor(old);
+  // Within one EOD cutoff, retain independent financial evidence and a verified
+  // conclusion. A new pending proof cannot automatically invalidate it: until
+  // a real superseding-evidence contract is accepted, fail conservatively.
+  // Later cutoffs and original schema-5 reports keep existing replacement rules.
+  if(!retainsActionFinancialEvidence(next,old))return false;
+  if(old.status==='ready'&&next.status!=='ready'||(next.components&old.components)!==old.components)return false;
+  if(old.sourceDate!==null&&(next.sourceDate===null||next.sourceDate<old.sourceDate))return false;
+  if(next.readAtEpoch<old.readAtEpoch||old.orderReadAtEpoch!==null&&(next.orderReadAtEpoch===null||next.orderReadAtEpoch<old.orderReadAtEpoch))return false;
+  return true;
+}
+export function canReplaceActionModel(next,old){
+  if(next.dataDate!==old.dataDate)return true;
+  const a=actionPublicationDescriptor(next),b=actionPublicationDescriptor(old);
+  return a&&b?canReplaceActionPublication(a,b):old.status!=='ready';
 }
 
 // A full PM run may start against the last complete report while a separate
