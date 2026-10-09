@@ -577,7 +577,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           if(html.includes('<title>XUAN · 盘中数据更新</title>'))return {dataDate:action[1],edition:'临时盘中更新',label:`${action[1]} · 盘中数据更新`,asOfHkt:times.at(-1)||null,statusOnly:true,contentUpdate:true};
           if(html.includes('<title>XUAN · 有限核实补读</title>'))return {dataDate:action[1],edition:'临时补读',label:`${action[1]} · 有限核实补读`,asOfHkt:times.at(-1)||null,statusOnly:true};
           if (html.includes('<title>XUAN · EOD 行动版</title>')) {
-            const markers = [...html.matchAll(/<!-- xuan-ib-night-action-v1:([A-Za-z0-9_-]+) -->/g)];
+            const markers = [...html.matchAll(/\x3c!-- xuan-ib-night-action-v1:([A-Za-z0-9_-]+) -->/g)];
             if (markers.length !== 1) throw new Error("EOD 报告标记无效");
             const encoded = markers[0][1].replace(/-/g, "+").replace(/_/g, "/");
             const model = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), c => c.charCodeAt(0))));
