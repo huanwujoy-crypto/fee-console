@@ -1,0 +1,48 @@
+name: XUAN preopen immutable image maintenance
+
+on:
+  workflow_dispatch:
+    inputs:
+      approved_sha:
+        description: 'Exact signed OWNER-approved head of the merged maintenance PR'
+        required: true
+        type: string
+      approval_pr:
+        description: 'Merged PR containing the existing exact-head OWNER approval'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: read
+
+concurrency:
+  group: xuan-preopen-image-maintenance
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: ${{ vars.XUAN_PREOPEN_IMAGE_MAINTENANCE_ENABLED == 'true' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.repository_id == '1334738755' && github.repository_owner_id == '283054367' && github.actor_id == '283054367' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    uses: huanwujoy-crypto/fee-console/.github/workflows/xuan-preopen-image-build.yml@main
+    with:
+      approved_sha: ${{ inputs.approved_sha }}
+      approval_pr: ${{ inputs.approval_pr }}
+  deploy:
+    needs: build
+    if: ${{ needs.build.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    uses: huanwujoy-crypto/fee-console/.github/workflows/xuan-preopen-image-deploy.yml@main
+    with:
+      approved_sha: ${{ inputs.approved_sha }}
+      approval_pr: ${{ inputs.approval_pr }}
+      built_digest: ${{ needs.build.outputs.image_digest }}

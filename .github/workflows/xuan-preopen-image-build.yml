@@ -1,0 +1,78 @@
+name: XUAN preopen fixed image build
+
+on:
+  workflow_call:
+    inputs:
+      approved_sha:
+        required: true
+        type: string
+      approval_pr:
+        required: true
+        type: string
+    outputs:
+      image_digest:
+        value: ${{ jobs.build.outputs.image_digest }}
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    outputs:
+      image_digest: ${{ steps.build.outputs.image_digest }}
+    env:
+      APPROVED_SHA: ${{ inputs.approved_sha }}
+      APPROVAL_PR: ${{ inputs.approval_pr }}
+      GH_TOKEN: ${{ github.token }}
+      DOCKER_BUILDKIT: '1'
+    steps:
+      - name: Use the explicitly selected Node 24 runtime
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Check out the trusted dispatch commit
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify signed source, merged PR and exact-head OWNER approval before identity
+        run: node cloud/xuan-preopen/maintenance.mjs preflight
+      - name: Check out the exact approved source tree
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.approved_sha }}
+          persist-credentials: false
+      - name: Verify maintenance contracts offline
+        run: node --test cloud/xuan-preopen/maintenance.test.mjs
+      - name: Obtain only the short-lived dedicated builder identity
+        id: builder
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-builder
+          audience: https://iam.googleapis.com/projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-builder
+          service_account: xuan-preopen-image-builder@family-portfolio-gateway.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 1800s
+          create_credentials_file: false
+      - name: Log in only to the dedicated regional registry
+        env:
+          BUILDER_TOKEN: ${{ steps.builder.outputs.access_token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/xuan-preopen-docker
+        run: printf '%s' "$BUILDER_TOKEN" | docker login --username oauth2accesstoken --password-stdin https://asia-east2-docker.pkg.dev
+      - name: Build, push and verify immutable digest and approved source labels
+        id: build
+        env:
+          MAINTENANCE_GOOGLE_TOKEN: ${{ steps.builder.outputs.access_token }}
+          DOCKER_CONFIG: ${{ runner.temp }}/xuan-preopen-docker
+        run: node cloud/xuan-preopen/maintenance.mjs build
+      - name: Remove the temporary Docker login
+        if: ${{ always() }}
+        env:
+          DOCKER_CONFIG: ${{ runner.temp }}/xuan-preopen-docker
+        run: docker logout https://asia-east2-docker.pkg.dev
