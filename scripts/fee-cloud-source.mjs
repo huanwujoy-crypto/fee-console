@@ -12,6 +12,7 @@ const PORTFOLIOS_URL = `${API}/api/v2/portfolios.json`;
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TOKEN_RE = /^[A-Za-z0-9._~+/=-]{20,16384}$/;
 const MAX_BODY = 2 * 1024 * 1024;
+const NUMBER_TEXT = Symbol('Sharesight number text');
 
 export const CLOUD_ACCOUNTS = Object.freeze({
   schwab: Object.freeze({ name: "Schwab-HK", portfolioId: 936249 }),
@@ -84,6 +85,194 @@ function amount(value) {
 function exactTicker(value) {
   if (typeof value !== "string" || !/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(value)) fail("HOLDING");
   return value;
+}
+
+function holdingIdentity(row) {
+  const instrument = row.instrument;
+  if (!object(instrument) || typeof instrument.market_code !== 'string'
+      || !instrument.market_code || instrument.market_code.length > 32
+      || typeof instrument.code !== 'string' || !instrument.code.trim()
+      || instrument.code.length > 128 || /[\u0000-\u001f\u007f]/.test(instrument.code)
+      || !/^[A-Z]{3}$/.test(instrument.currency_code || '')
+      || row.instrument_currency?.code !== instrument.currency_code) fail('HOLDING_IDENTITY');
+  return { instrumentId: id(instrument.id), instrumentCode: instrument.code,
+    market: instrument.market_code, currency: instrument.currency_code };
+}
+
+function sameHoldingInstrument(trade, identity) {
+  const instrument = trade.instrument;
+  return object(instrument) && id(instrument.id) === identity.instrumentId
+    && instrument.code === identity.instrumentCode && instrument.market_code === identity.market
+    && instrument.currency_code === identity.currency;
+}
+
+// Bounded JSON has already validated the document. A parallel parse preserves
+// numeric tokens without relying on Number or runtime-specific reviver context.
+// String tokens are kept intact, including escaped quotes and numeric text.
+export function parseSourceJson(text) {
+  let json, raw;
+  const tokens = /"(?:[^"\\]|\\[\s\S])*"|-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/g;
+  try {
+    json = JSON.parse(text);
+    raw = JSON.parse(text.replace(tokens, token => token.startsWith('"') ? token : JSON.stringify(token)));
+  } catch { throw new BoundedJsonError('JSON'); }
+  const retain = (row, rawRow, keys) => {
+    if (object(row)) {
+      if (!object(rawRow) || (typeof row.id === 'number'
+        ? Number(rawRow.id) !== row.id : rawRow.id !== row.id)) throw new BoundedJsonError('JSON');
+      const numbers = {};
+      for (const key of keys) if (typeof row[key] === 'number') {
+        const lexeme = rawRow[key];
+        if (typeof lexeme !== 'string' || !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(lexeme)
+            || Number(lexeme) !== row[key]) throw new BoundedJsonError('JSON');
+        numbers[key] = lexeme;
+      }
+      Object.defineProperty(row, NUMBER_TEXT, { value: numbers });
+    }
+  };
+  const retainRows = (list, rawList, keys) => {
+    if (!Array.isArray(list)) return;
+    if (!Array.isArray(rawList) || rawList.length !== list.length) throw new BoundedJsonError('JSON');
+    for (const [index, row] of list.entries()) retain(row, rawList[index], keys);
+  };
+  const retainPayload = (payload, rawPayload) => {
+    retainRows(object(payload) ? payload.trades : payload, object(rawPayload) ? rawPayload.trades : rawPayload, ['quantity']);
+    if (object(payload?.report)) {
+      retain(payload.report, rawPayload.report, ['value']);
+      retainRows(payload.report.holdings, rawPayload.report.holdings, ['quantity', 'value']);
+      retainRows(payload.report.cash_accounts, rawPayload.report.cash_accounts, ['value']);
+    }
+  };
+  retainPayload(json, raw);
+  if (object(json?.data)) retainPayload(json.data, raw.data);
+  return json;
+}
+export const parseTradeJson = parseSourceJson;
+
+function exactNumberText(row, key) {
+  const text = row[NUMBER_TEXT]?.[key];
+  if (!finite(row[key]) || typeof text !== 'string') fail('HOLDING_TERMINAL_PRECISION');
+  const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
+  if (!match || text.length > 128) fail('HOLDING_TERMINAL_PRECISION');
+  let digits = (match[2] + (match[3] || '')).replace(/^0+/, '');
+  if (!digits) return '0';
+  let exponent = Number(match[4] || 0) - (match[3] || '').length;
+  if (!Number.isSafeInteger(exponent)) fail('HOLDING_TERMINAL_PRECISION');
+  const zeros = /0+$/.exec(digits)?.[0].length || 0;
+  digits = digits.slice(0, digits.length - zeros); exponent += zeros;
+  return `${match[1]}${digits}e${exponent}`;
+}
+
+function quantityUnits(trade) {
+  const value = trade.quantity;
+  if (!finite(value) || value <= 0 || value > 1e12) fail('HOLDING_HISTORY_UNSUPPORTED');
+  if (typeof trade[NUMBER_TEXT]?.quantity !== 'string') fail('HOLDING_HISTORY_UNSUPPORTED');
+  const match = /^(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(trade[NUMBER_TEXT].quantity);
+  if (!match) fail('HOLDING_HISTORY_UNSUPPORTED');
+  const fraction = match[2] || '', power = 18 + Number(match[3] || 0) - fraction.length;
+  if (power < 0 || power > 30) fail('HOLDING_HISTORY_UNSUPPORTED');
+  const units = BigInt(match[1] + fraction) * 10n ** BigInt(power);
+  if (units <= 0n || units > 10n ** 30n) fail('HOLDING_HISTORY_UNSUPPORTED');
+  return units;
+}
+
+// The undated holdings endpoint is an identity catalog, including sold positions.
+// A complete report including sold positions supplies end-date quantity/value.
+// History remains an identity/event audit; a BUY/SELL sum is not the terminal
+// quantity authority, especially after corporate actions or stored decimal tails.
+export function catalogScopeEvidence(listing, report, historyPayload, targetTrades, expected, targetDate, terminalPayload) {
+  const reportRows = rows(report.holdings || [], 'holdings');
+  const byId = new Map(listing.map(row => [id(row.id), row]));
+  const reportIds = new Set(reportRows.map(row => id(row.id)));
+  const extra = listing.filter(row => !reportIds.has(id(row.id)));
+  const identities = listing.map(row => ({ holdingId: id(row.id), ...holdingIdentity(row) }))
+    .sort((a, b) => a.holdingId - b.holdingId);
+  if (!extra.length) return { identities, closed: [] };
+  const fromDate = listing.map(row => date(row.inception_date)).sort()[0];
+  const terminal = terminalPayload?.report;
+  assertComplete(terminalPayload); assertComplete(terminal);
+  if (!object(terminal) || id(terminal.portfolio_id) !== expected.portfolioId
+      || date(terminal.start_date) !== fromDate || date(terminal.end_date) !== targetDate
+      || terminal.include_sales !== true || terminal.portfolio_tz_name !== 'America/New_York'
+      || terminal.currency?.code !== 'USD' || terminal.grouping !== 'investment_type') fail('HOLDING_TERMINAL_REQUIRED');
+  const terminalRows = rows(terminal.holdings, 'holdings');
+  if (terminalRows.length !== listing.length || terminalRows.some(row => !byId.has(id(row.id)))) {
+    fail('HOLDING_TERMINAL_COVERAGE');
+  }
+  const terminalById = new Map(terminalRows.map(row => [id(row.id), row]));
+  const terminalProof = terminalRows.map(row => {
+    const listed = byId.get(id(row.id));
+    if (row.valid_position !== true || id(row.portfolio?.id) !== expected.portfolioId
+        || row.portfolio?.name !== expected.name || stable(holdingIdentity(row)) !== stable(holdingIdentity(listed))
+        || (row.inception_date != null && row.inception_date !== listed.inception_date)) fail('HOLDING_TERMINAL_IDENTITY');
+    const quantity = exactNumberText(row, 'quantity'), value = exactNumberText(row, 'value');
+    const active = reportRows.find(active => id(active.id) === id(row.id));
+    if (active) {
+      if (quantity !== exactNumberText(active, 'quantity') || value !== exactNumberText(active, 'value')) {
+        fail('HOLDING_TERMINAL_CURRENT');
+      }
+    } else if (quantity !== '0' || value !== '0' || row.number_of_unconfirmed_transactions !== 0) {
+      fail('HOLDING_TERMINAL_OPEN');
+    }
+    return { holdingId: id(row.id), ...holdingIdentity(row), quantity, value };
+  }).sort((a, b) => a.holdingId - b.holdingId);
+  if (exactNumberText(terminal, 'value') !== exactNumberText(report, 'value')) fail('HOLDING_TERMINAL_CURRENT');
+  const cashProof = source => rows(source.cash_accounts || [], 'cash_accounts').map(row => {
+    if (id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
+        || typeof row.currency?.code !== 'string') fail('HOLDING_TERMINAL_IDENTITY');
+    return { id: id(row.id), currency: row.currency.code, value: exactNumberText(row, 'value') };
+  }).sort((a, b) => a.id - b.id);
+  const terminalCash = cashProof(terminal);
+  if (stable(terminalCash) !== stable(cashProof(report))) fail('HOLDING_TERMINAL_CURRENT');
+  if (!historyPayload) fail('HOLDING_HISTORY_REQUIRED');
+  const history = rows(historyPayload, 'trades');
+  for (const trade of history) {
+    if (id(trade.portfolio_id) !== expected.portfolioId || !byId.has(id(trade.holding_id))
+        || date(trade.transaction_date) > targetDate || trade.state !== 'confirmed') fail('HOLDING_HISTORY_IDENTITY');
+  }
+  if (history.filter(trade => trade.transaction_date === targetDate).length !== targetTrades.length) {
+    fail('HOLDING_HISTORY_CURRENT');
+  }
+  const historyById = new Map(history.map(trade => [id(trade.id), trade]));
+  for (const trade of targetTrades) {
+    const full = historyById.get(id(trade.id));
+    if (!full || ['portfolio_id', 'holding_id', 'transaction_date', 'description_code', 'quantity', 'state', 'company_event_id']
+      .some(key => full[key] !== trade[key])
+      || !sameHoldingInstrument(full, holdingIdentity(byId.get(id(trade.holding_id))))
+      || !sameHoldingInstrument(trade, holdingIdentity(byId.get(id(trade.holding_id))))) {
+      fail('HOLDING_HISTORY_CURRENT');
+    }
+    if (quantityUnits(full) !== quantityUnits(trade)) {
+      fail('HOLDING_HISTORY_CURRENT');
+    }
+  }
+  const closed = extra.map(row => {
+    const identity = holdingIdentity(row), inception = date(row.inception_date);
+    const trades = history.filter(trade => id(trade.holding_id) === id(row.id));
+    const latestDate = trades.reduce((last, trade) => trade.transaction_date > last ? trade.transaction_date : last, inception);
+    if (!trades.length || !trades.some(trade => trade.transaction_date === latestDate && trade.description_code === 'SELL')
+        || trades.reduce((first, trade) => trade.transaction_date < first
+      ? trade.transaction_date : first, targetDate) !== inception) fail('HOLDING_HISTORY_INCEPTION');
+    let buySellContributionUnits = 0n;
+    let openingBalances = 0;
+    const proof = trades.map(trade => {
+      if (!sameHoldingInstrument(trade, identity) || !['BUY', 'SELL', 'OPENING_BALANCE', 'SPLIT'].includes(trade.description_code)
+          || !Object.hasOwn(trade, 'company_event_id')
+          || (trade.description_code === 'SPLIT' && trade.company_event_id === null)) fail('HOLDING_HISTORY_UNSUPPORTED');
+      const companyEventId = trade.company_event_id === null ? null : id(trade.company_event_id);
+      if (trade.description_code === 'OPENING_BALANCE'
+          && (trade.transaction_date !== inception || ++openingBalances > 1)) fail('HOLDING_HISTORY_INCEPTION');
+      const units = quantityUnits(trade), delta = trade.description_code === 'SELL' ? -units : units;
+      if (trade.description_code !== 'SPLIT') buySellContributionUnits += delta;
+      return { id: id(trade.id), portfolioId: expected.portfolioId, holdingId: id(row.id), ...identity,
+        date: trade.transaction_date, type: trade.description_code, quantityUnits: units.toString(), companyEventId, confirmed: true };
+    });
+    return { holdingId: id(row.id), inception, terminalQuantity: exactNumberText(terminalById.get(id(row.id)), 'quantity'),
+      terminalValue: exactNumberText(terminalById.get(id(row.id)), 'value'),
+      buySellContributionUnits: buySellContributionUnits.toString(), trades: proof.sort((a, b) => a.id - b.id) };
+  });
+  return { identities, terminal: { fromDate, targetDate, includeSales: true, holdings: terminalProof,
+    cash: terminalCash, total: exactNumberText(terminal, 'value') }, closed: closed.sort((a, b) => a.holdingId - b.holdingId) };
 }
 
 import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
@@ -221,12 +410,14 @@ function assertCashChain(transactions, previousCash, currentCash) {
   if (Math.abs(balance - cents(currentCash)) > 1) fail('CASH_BALANCE_STALE');
 }
 
-function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance) {
+function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance) {
   const expected = CLOUD_ACCOUNTS[account];
   const report = performancePayload?.report;
   assertComplete(performancePayload); assertComplete(report);
   if (!object(report) || id(report.portfolio_id) !== expected.portfolioId
-      || date(report.end_date) !== targetDate || report.currency?.code !== "USD") fail("PERFORMANCE_IDENTITY");
+      || date(report.start_date) !== targetDate || date(report.end_date) !== targetDate
+      || report.currency?.code !== "USD" || report.include_sales !== false
+      || report.portfolio_tz_name !== 'America/New_York') fail("PERFORMANCE_IDENTITY");
   const listing = rows(holdingsPayload, "holdings");
   const listedIds = new Set(listing.map(row => {
     if (id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
@@ -238,9 +429,12 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     if (!listedIds.has(holdingId) || row.valid_position !== true
         || id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
         || row.instrument_currency?.code !== "USD") fail("HOLDING_IDENTITY");
+    const listed = listing.find(item => id(item.id) === holdingId);
+    if (stable(holdingIdentity(row)) !== stable(holdingIdentity(listed))) fail('HOLDING_IDENTITY');
     return { holdingId, ticker, valueUsd: amount(row.value) };
   }).sort((a, b) => a.holdingId - b.holdingId);
-  if (holdings.length !== listing.length) fail('HOLDING_IDENTITY');
+  const catalogEvidence = catalogScopeEvidence(listing, report,
+    holdingHistory, rows(tradesPayload, 'trades'), expected, targetDate, terminalPerformance);
   const cashRows = rows(report.cash_accounts || [], "cash_accounts").map(row => {
     if (id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
         || typeof row.currency?.code !== "string") fail("CASH_CURRENCY");
@@ -349,6 +543,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     holdings: equity,
     flows: flows.sort((a, b) => stable(a).localeCompare(stable(b))),
     cashCheck: flows.length ? { current: round2(cash), previous: previousCash } : null,
+    catalogEvidence,
   };
 }
 
@@ -388,7 +583,9 @@ export function normalizeRead(raw, targetDate, benchmark) {
     const source = raw[account];
     if (!object(source)) fail("SOURCE_MISSING");
     portfolios.push(normalizePortfolio(account, source.performance, source.holdings, source.cashAccounts,
-      source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence, source.previousPerformance));
+      source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence,
+      source.previousPerformance, source.holdingHistory || (account === 'webull' ? source.managementTrades : undefined),
+      source.terminalPerformance));
   }
   const accounts = Object.fromEntries(portfolios.map(p => [p.account, p.total]));
   const splits = {
@@ -411,7 +608,8 @@ export function normalizeRead(raw, targetDate, benchmark) {
   const normalized = { targetDate, accounts, splits, sourceDates, styleInput, flows, acctCash, prevAcctCash,
     ...(managementInput ? {managementInput} : {}),
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
-  return { ...normalized, sourceFingerprint: sha256(normalized) };
+  return { ...normalized, sourceFingerprint: sha256({ ...normalized,
+    catalogEvidence: portfolios.map(p => ({ account: p.account, ...p.catalogEvidence })) }) };
 }
 
 class FixedHttp {
@@ -429,9 +627,14 @@ class FixedHttp {
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/portfolios\/(?:936249|1350094)\/cash_accounts\.json$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/cash_accounts\/[1-9]\d{0,14}\/cash_account_transactions\.json\?.*$/.test(url);
     if (!allowed) fail("ROUTE_BLOCKED");
-    try { return await boundedJson(this.fetchImpl, url, init, {
-      timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true,
-    }); } catch (error) {
+    try {
+      const path = new URL(url).pathname;
+      const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance');
+      const response = await boundedJson(this.fetchImpl, url, init, {
+        timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: isPrecisionSource,
+      });
+      return isPrecisionSource ? parseSourceJson(new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : response;
+    } catch (error) {
       const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
       if (['NETWORK', 'TIMEOUT', 'ABORTED'].includes(code)) fail(url === TOKEN_URL ? 'AUTH_UNAVAILABLE' : 'SOURCE_UNAVAILABLE');
       if (code === 'HTTP') fail(url === TOKEN_URL ? 'AUTH_REJECTED' : 'HTTP_REJECTED');
@@ -499,10 +702,17 @@ export class SharesightCloudReader {
       }
       // Entire Webull history, not just today's trades, is required to bound
       // owner-authorized gift lots and retain a chargeable paid-lot balance.
-      const managementTrades = account === 'webull'
+      const datedHoldingIds = new Set(rows(performancePayload?.report?.holdings || [], 'holdings').map(row => id(row.id)));
+      const needsHistory = rows(holdingsPayload, 'holdings').some(row => !datedHoldingIds.has(id(row.id)));
+      const holdingHistory = account === 'webull' || needsHistory
         ? await this.get(`${base3}/trades.json?consolidated=false&end_date=${targetDate}`, token) : undefined;
+      const managementTrades = account === 'webull' ? holdingHistory : undefined;
+      const fromDate = needsHistory ? rows(holdingsPayload, 'holdings').map(row => date(row.inception_date)).sort()[0] : undefined;
+      const terminalPerformance = needsHistory ? await this.get(
+        `${base3}/performance?consolidated=false&end_date=${targetDate}&grouping=investment_type&include_limited=false&include_sales=true&report_combined=false&start_date=${fromDate}`, token) : undefined;
       raw[account] = { incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), ...(previousPerformance ? {previousPerformance} : {}), performance: performancePayload, holdings: holdingsPayload,
-        cashAccounts: cashAccountsPayload, cashTransactions, trades: tradesPayload };
+        cashAccounts: cashAccountsPayload, cashTransactions, trades: tradesPayload,
+        ...(holdingHistory ? { holdingHistory } : {}), ...(terminalPerformance ? { terminalPerformance } : {}) };
     }
     return raw;
   }
