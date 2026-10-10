@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import {validateActionPublicationDescriptor,canReplaceActionPublication,retainsActionFinancialEvidence} from './xuan-ib-sleep-priority.mjs';
 
 import fs from "node:fs";
 
@@ -78,16 +79,18 @@ const validateCandidate = candidate => {
   if (!Number.isInteger(candidate.commitEpoch) || candidate.commitEpoch <= 0) {
     throw new Error("candidate commitEpoch must be a positive integer");
   }
-  validatePublicationState(candidate.publication, candidate.dataDate, true);
+  validatePublicationState(candidate.publication, candidate.dataDate, true, candidate.htmlBlob);
   return candidate;
 };
 
-const validatePublicationState = (state, expectedDate, candidate = false) => {
+const validatePublicationState = (state, expectedDate, candidate = false, htmlBlob = null) => {
   if (!state || typeof state !== 'object' || Array.isArray(state)
-      || Object.keys(state).sort().join('|') !== ['dataDate','eligibleAtEpoch','kind','priorityKey'].sort().join('|')) {
+      || Object.keys(state).sort().join('|') !== ['dataDate','eligibleAtEpoch','kind','priorityKey',...(Object.hasOwn(state,'action')?['action']:[])].sort().join('|')) {
     throw new Error(`${candidate ? 'candidate' : 'published'} publication state is invalid`);
   }
-  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
+  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'eod-action', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
+  if(state.kind==='eod-action'&&!state.action)throw new Error('EOD publication requires canonical action facts');
+  if(state.action){validateActionPublicationDescriptor(state.action,htmlBlob);if(state.kind==='eod-action'&&state.action.schemaVersion!==9||state.kind!=='eod-action'&&state.action.schemaVersion===9)throw new Error('action publication kind mismatch');}
   requireDate('publication dataDate', state.dataDate);
   if (state.dataDate !== expectedDate) throw new Error('publication data date does not match metadata');
   if (state.kind === 'priority') {
@@ -102,7 +105,7 @@ const validatePublicationState = (state, expectedDate, candidate = false) => {
 
 export function selectNewestCandidate(candidates, publishedMeta, publishedState) {
   if (!Array.isArray(candidates)) throw new Error("candidates must be an array");
-  validatePublicationState(publishedState, publishedMeta.dataDate);
+  validatePublicationState(publishedState, publishedMeta.dataDate, false, publishedMeta.htmlBlob);
   let eligible = candidates.map(validateCandidate).filter(candidate => {
     if (candidate.htmlBlob.toLowerCase() === publishedMeta.htmlBlob.toLowerCase()) return false;
     if (candidate.dataDate < publishedMeta.dataDate) return false;
@@ -114,6 +117,10 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
       && publishedState.kind === 'priority' && candidate.publication.kind === 'complete-pm';
     if (candidate.dataDate === publishedMeta.dataDate &&
         candidate.commitEpoch <= publishedMeta.sourceCommitEpoch && !replacesSameDayPriority) return false;
+    if(candidate.dataDate===publishedState.dataDate){
+      if(candidate.publication.action&&publishedState.action&&!canReplaceActionPublication(candidate.publication.action,publishedState.action))return false;
+      if(candidate.publication.kind==='eod-action'&&publishedState.kind==='complete-pm'&&!publishedState.action)return false;
+    }
     if(candidate.publication.kind==='limited-readback'&&candidate.dataDate===publishedState.dataDate&&publishedState.kind==='complete-pm')return false;
     if (candidate.publication.kind === 'priority') {
       if (candidate.commitEpoch < candidate.publication.eligibleAtEpoch) return false;
@@ -128,6 +135,11 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
       eligible = eligible.filter(item => item.dataDate !== newestDate || !['priority','limited-readback'].includes(item.publication.kind));
     }
   }
+  eligible=eligible.filter(candidate=>!eligible.some(other=>other!==candidate&&other.dataDate===candidate.dataDate&&other.publication.action&&candidate.publication.action&&(other.publication.action.components&candidate.publication.action.components)===candidate.publication.action.components&&other.publication.action.components!==candidate.publication.action.components&&(candidate.publication.action.sourceDate===null||other.publication.action.sourceDate!==null&&other.publication.action.sourceDate>=candidate.publication.action.sourceDate)));
+  // Prefer established same-cutoff EOD financial evidence among eligible
+  // candidates as well as protecting the current publication. Cross-schema
+  // comparisons retain the original component/full-report preference.
+  eligible=eligible.filter(candidate=>!eligible.some(other=>other!==candidate&&other.dataDate===candidate.dataDate&&other.publication.action?.schemaVersion===9&&candidate.publication.action?.schemaVersion===9&&other.publication.action.sourceDate===candidate.publication.action.sourceDate&&(other.publication.action.components&candidate.publication.action.components)===candidate.publication.action.components&&retainsActionFinancialEvidence(other.publication.action,candidate.publication.action)&&!retainsActionFinancialEvidence(candidate.publication.action,other.publication.action)));
   eligible.sort((left, right) => {
     if (right.dataDate !== left.dataDate) return right.dataDate.localeCompare(left.dataDate);
     if (right.commitEpoch !== left.commitEpoch) return right.commitEpoch - left.commitEpoch;

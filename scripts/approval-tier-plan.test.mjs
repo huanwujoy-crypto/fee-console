@@ -77,6 +77,12 @@ test('all registered files, not suffixes, define the delegation boundary', () =>
   assert.equal(classifyChanges([{ ...input().entries[0], status: 'A' }]), 'specific');
   assert.equal(classifyChanges([{ ...input().entries[0], status: 'D' }]), 'specific');
 });
+test('all six EOD additions remain explicitly sensitive under the unchanged classifier',()=>{
+  for(const file of ['cloud/xuan-preopen/eod_report.mjs','cloud/xuan-preopen/eod_report.test.mjs','cloud/xuan-preopen/eod_sources.mjs','docs/xuan-preopen-eod-candidate.md','scripts/xuan-ib-eod-action-model.mjs','scripts/xuan-ib-eod-loader.test.mjs']){
+    assert.ok(approvalRegistry.sensitiveFiles.includes(file));assert.ok(!approvalRegistry.ordinaryFiles.includes(file));
+    assert.equal(classifyChanges([{...input().entries[0],path:file}]),'specific');
+  }
+});
 test('registry corruption, conflicts and incomplete inputs fail closed', () => {
   for (const policy of [null, {}, { ...approvalRegistry, schema: 'untrusted' },
     { ...approvalRegistry, ordinaryFiles: [null] },

@@ -1,3 +1,5 @@
+import {validateEodReceipt} from './eod_report.mjs';
+import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
 // GitHub -> one Cloud Run job -> private completed files. This identity can
 // neither read broker credentials/raw captures nor mutate report storage.
 import fs from 'node:fs';
@@ -55,10 +57,11 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
     if (raw === null) fail('COMPLETION_RECEIPT_MISSING');
   }
   const receipt = parse(raw);
-  if (receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate || receipt.status !== 'ready'
+  if (receipt.dataDate !== plan.dataDate || receipt.sourceDate !== plan.sourceDate || (receipt.mode === 'private_eod_action' ? receipt.status !== 'partial' : receipt.status !== 'ready')
       || receipt.artifact?.privateObject !== `delivery/${plan.dataDate}/report.html`) fail('RECEIPT');
   const html = await request(objectUrl('report.html'));
   if (crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact.sha256) fail('HASH');
+  if (receipt.mode === 'private_eod_action') { validateEodReceipt(receipt, html, plan.dataDate, plan.sourceDate); validateNightActionHtml(html, plan.dataDate); }
   const context = await loadContext({now});
   if (gitBlobSha(context.previousHtml) === gitBlobSha(html)) return {outcome: 'already-published', dataDate: plan.dataDate};
   return {outcome: execution ? 'generated' : 'reused', dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, html, receipt};
