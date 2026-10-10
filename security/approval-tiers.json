@@ -446,6 +446,13 @@
     "security/xuan-preopen-maintenance-iam.json",
     "docs/xuan-preopen-image-maintenance.md",
     ".github/workflows/xuan-preopen-image-build.yml",
-    ".github/workflows/xuan-preopen-image-deploy.yml"
+    ".github/workflows/xuan-preopen-image-deploy.yml",
+    "scripts/benchmark-close-contract.mjs",
+    "scripts/benchmark-close-contract.test.mjs",
+    "scripts/controlled-benchmark-object.mjs",
+    "scripts/controlled-benchmark-object.test.mjs",
+    "scripts/produce-controlled-benchmark.mjs",
+    "scripts/refresh-session-benchmark.mjs",
+    "scripts/refresh-session-benchmark.test.mjs"
   ]
 }
