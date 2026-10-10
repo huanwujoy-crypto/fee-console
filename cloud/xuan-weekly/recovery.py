@@ -138,17 +138,38 @@ def control(store, now, run_report, republish, *, clock=None):
     due, age = window(now)
     week = due.date().isoformat()
     root = 'weekly/control/'+week+'/'
-    # No normal report or recovery outside the fixed Sunday window.
-    if age < 0 or age > 45*60:
+    # Only the same HKT Sunday may check a late final outcome. Source and
+    # publication recovery still stop at 10:45; later checks are read-only.
+    if age < 0 or (now+dt.timedelta(hours=8)).date() != due.date():
         return {'code': 'outside_recovery_window', 'needsAttention': False,
                 'reportRun': False, 'manualModeRequiredForApprovedRepair': True}
     metadata, body = store.public()
     if current(metadata, body, now):
         if not store.consistent(metadata, body):
-            return {'code': 'private_public_receipt_conflict', 'needsAttention': True}
+            if age >= 45*60:
+                return {'code': 'private_public_receipt_conflict', 'needsAttention': True}
+            if store.active_lease(now):
+                return {'code': 'active_lease', 'needsAttention': False}
+            if not store.repair_publication(metadata, body, now, clock=clock):
+                return {'code': 'private_public_receipt_conflict', 'needsAttention': True}
+            latest_metadata, latest_body = store.public()
+            if (latest_metadata != metadata or latest_body != body
+                    or not store.consistent(latest_metadata, latest_body)):
+                return {'code': 'private_public_receipt_conflict', 'needsAttention': True}
+            return {'code': 'publication_receipt_repaired', 'needsAttention': False,
+                    'reportRun': False}
         return {'code': 'public_current', 'needsAttention': False}
     if age >= 45*60:
         return {'code': 'final_publication_missing', 'needsAttention': True}
+    # An advertised current-week publication which fails its own validation
+    # is a conflict, not permission to refetch sources or overwrite HTML.
+    if metadata or body:
+        try:
+            advertised_current = utc(metadata['started_at']) >= due
+        except (KeyError, ValueError, TypeError):
+            advertised_current = True
+        if advertised_current:
+            return {'code': 'private_public_receipt_conflict', 'needsAttention': True}
     normal = store.read(root+'normal.json')
     recovery = store.read(root+'recovery.json')
     if recovery:
@@ -275,6 +296,120 @@ class StorageStore:
                 and receipt.get('htmlSha256')==m.get('sha256')
                 and publication.get('htmlSha256')==m.get('sha256')
                 and publication.get('publicEntryStatus') in ('updated','already_current'))
+
+    def active_lease(self, now):
+        minute = int(now.timestamp()) // 60
+        lease = self.read('weekly/control/leases/'+str(minute)+'.json')
+        return lease is not None and utc(lease['expiresAt']) > now
+
+    def _repair_evidence(self, public_metadata, public_body, now):
+        """Bind both fixed latest generations to one completed immutable HTML.
+
+        Read generated HTML and safe receipts only, never financial raw sources.
+        A public hash differs from the private hash after the approved footer
+        transformation; each must validate against its own bytes.
+        """
+        from google.api_core.exceptions import NotFound
+        if (not current(public_metadata, public_body, now)
+                or public_metadata.get('source') != 'weekly/public/report.html'):
+            return None
+        snapshots = []
+        for bucket in (self.bucket, self.client.bucket(PUBLIC)):
+            blob = bucket.blob('weekly/latest.html')
+            try:
+                blob.reload(timeout=10)
+                generation = int(blob.generation)
+                metadata = dict(blob.metadata or {})
+                raw = blob.download_as_bytes(if_generation_match=generation, timeout=10)
+            except NotFound:
+                return None
+            if len(raw) > 8_000_000:
+                return None
+            snapshots.append((generation, metadata, raw))
+        private_generation, m, raw = snapshots[0]
+        public_generation, p, published = snapshots[1]
+        if (p != public_metadata or published != public_body or not current(m, raw, now)
+                or any(m.get(k) != p.get(k) for k in ('started_at', 'risk_date', 'abc_date'))):
+            return None
+        source = m.get('source', '')
+        match = re.fullmatch(r'weekly/([^/]+)-[a-f0-9]{32}/report\.html', source)
+        if not match or utc(match[1]) != utc(m['started_at']):
+            return None
+        html = raw.decode('utf-8')
+        if (not html.startswith('<!doctype html>') or '<script' in html.lower()
+                or '<iframe' in html.lower()
+                or html.replace('私密记录 · 不下单、不转账',
+                                '记录与分析 · 不下单、不转账').encode() != published):
+            return None
+        archive = self.bucket.blob(source)
+        try:
+            archive.reload(timeout=10)
+            archive_generation = int(archive.generation)
+            archived = archive.download_as_bytes(if_generation_match=archive_generation, timeout=10)
+        except NotFound:
+            return None
+        if archived != raw:
+            return None
+        prefix = source[:-len('report.html')]
+        receipt = self.read(prefix+'receipt.json')
+        if (not isinstance(receipt, dict) or receipt.get('complete') is not True
+                or receipt.get('privateReportObject') != source
+                or receipt.get('requestedCutoff') != m['risk_date']
+                or receipt.get('cutoff') != m['abc_date']
+                or receipt.get('htmlSha256') != m['sha256']):
+            return None
+        return (private_generation, public_generation, archive_generation, m, p, receipt)
+
+    def _publication_matches(self, publication, receipt):
+        # A concurrent original publisher may use "updated" rather than
+        # "already_current". Its immutable receipt fields must still match in
+        # full; the weaker legacy consistent() predicate cannot grant repair.
+        return (isinstance(publication, dict)
+                and all(publication.get(k) == v for k, v in receipt.items())
+                and set(publication) <= set(receipt) | {
+                    'latestEntryStatus', 'publicEntryStatus', 'recoveredPublication'}
+                and publication.get('latestEntryStatus') in ('updated', 'already_current')
+                and publication.get('publicEntryStatus') in ('updated', 'already_current')
+                and ('recoveredPublication' not in publication
+                     or publication['recoveredPublication'] is True))
+
+    def repair_publication(self, public_metadata, public_body, now, *, clock=None):
+        """Complete only a missing receipt; CAS serializes duplicate repairers.
+
+        No source-run counter/lease is consumed or reset: no source or HTML
+        publication occurs. Repeated generation-bound checks stop concurrent
+        latest changes; an existing conflicting receipt is never overwritten.
+        """
+        due, age = window(now)
+        if not 0 <= age < 45*60:
+            return False
+        evidence = self._repair_evidence(public_metadata, public_body, now)
+        if evidence is None:
+            return False
+        receipt = evidence[-1]
+        name = receipt['privateReportObject'][:-len('report.html')]+'publication.json'
+        candidate = {**receipt, 'latestEntryStatus': 'already_current',
+                     'publicEntryStatus': 'already_current', 'recoveredPublication': True}
+        existing = self.read(name)
+        if existing is not None:
+            return (self._publication_matches(existing, receipt)
+                    and self._repair_evidence(public_metadata, public_body, now) == evidence
+                    and self.consistent(public_metadata, public_body))
+        if self._repair_evidence(public_metadata, public_body, now) != evidence:
+            return False
+        lease_time = clock() if clock else now
+        if self.active_lease(lease_time):
+            return False
+        # The remote lease read may cross the final deadline. Read the clock
+        # again afterwards; no further remote read precedes this CAS write.
+        finished = clock() if clock else now
+        final_due, final_age = window(finished)
+        if final_due != due or not 0 <= final_age < 45*60:
+            return False
+        self.claim(name, candidate)  # generation zero; a loser verifies the winner.
+        return (self._publication_matches(self.read(name), receipt)
+                and self._repair_evidence(public_metadata, public_body, now) == evidence
+                and self.consistent(public_metadata, public_body))
 
 
 def parse_args(argv=None):
