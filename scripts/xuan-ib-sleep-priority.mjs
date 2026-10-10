@@ -128,25 +128,28 @@ export function classifySleepPublication(html) {
 const actionKeys=['schemaVersion','status','sourceDate','readAtEpoch','orderReadAtEpoch','components','htmlBlob'];
 export function validateActionPublicationDescriptor(a,htmlBlob=null){
   exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[])],'action publication');
-  if(![4,5,9].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
+  if(![4,5,9].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>127||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
   if(a.sourceDate!==null)date(a.sourceDate,'action sourceDate');sha(a.htmlBlob,'action htmlBlob');
   if(htmlBlob!==null&&a.htmlBlob.toLowerCase()!==htmlBlob.toLowerCase())fail('action publication HTML mismatch');
   if(a.schemaVersion===9){
     if(a.status!=='partial'||a.sourceDate===null||!['verified','pending','unknown'].includes(a.reconciliationStatus)||!(a.financialProofSha256===null||typeof a.financialProofSha256==='string'&&/^[a-f0-9]{64}$/.test(a.financialProofSha256))||a.reconciliationStatus!=='unknown'&&a.financialProofSha256===null)fail('EOD action publication facts are invalid');
   }
   if(Boolean(a.components&4)!==(a.orderReadAtEpoch!==null))fail('order publication time is invalid');
+  if(Boolean(a.components&2)!==(Boolean(a.components&32)&&Boolean(a.components&64)))fail('cash publication components are invalid');
   return a;
 }
 export function actionPublicationDescriptor(m,html=null){
   if(![4,5,9].includes(m?.schemaVersion))return null;
   if(m.schemaVersion===9&&m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI export is private acceptance only');
   const time=label=>{const match=label?.match(/(\d{2}:\d{2})(?:–(\d{2}:\d{2}))? HKT/);return match?Math.floor(Date.parse(m.dataDate+'T'+(match[2]||match[1])+':00+08:00')/1000):null;};
-  const orders=m.orders.status==='ready',allocation=m.allocation.status==='ready',cash=m.cash.ib!==null&&m.cash.ib!==undefined&&m.cash.noah!==null&&m.cash.noah!==undefined;
+  const orders=m.orders.status==='ready',allocation=m.allocation.status==='ready',ibCash=m.cash.ib!==null&&m.cash.ib!==undefined,noahCash=m.cash.noah!==null&&m.cash.noah!==undefined;
   const bytes=html===null?null:Buffer.from(html),htmlBlob=bytes?crypto.createHash('sha1').update(Buffer.from('blob '+bytes.length+'\0')).update(bytes).digest('hex'):'0'.repeat(40);
   return validateActionPublicationDescriptor({schemaVersion:m.schemaVersion,status:m.status,sourceDate:m.schemaVersion===9?m.sourceDate:m.asOfHkt.match(/数据至 (\d{4}-\d{2}-\d{2})$/)?.[1]??null,
     readAtEpoch:m.schemaVersion===9?Math.floor(Date.parse(m.provenance.flex.readAt)/1000):time(m.asOfHkt),orderReadAtEpoch:orders?(m.schemaVersion===9?Math.floor(Date.parse(m.orders.capturedCompletedAt)/1000):time(m.orders.asOfHkt)):null,
     ...(m.schemaVersion===9?{reconciliationStatus:m.reconciliation.status,financialProofSha256:m.reconciliation.verificationSha256}:{}),
-    components:(allocation?1:0)|(cash?2:0)|(orders?4:0)|(allocation&&m.allocation.projectedTotal!==null&&m.allocation.projectedTotal!==undefined?8:0)|(m.replenishment.status==='ready'?16:0),htmlBlob});
+    // Preserve the aggregate cash bit and independently protect either source
+    // in partial reports. Missing IB USD proof must not erase verified NOAH cash.
+    components:(allocation?1:0)|(ibCash&&noahCash?2:0)|(orders?4:0)|(allocation&&m.allocation.projectedTotal!==null&&m.allocation.projectedTotal!==undefined?8:0)|(m.replenishment.status==='ready'?16:0)|(ibCash?32:0)|(noahCash?64:0),htmlBlob});
 }
 export function retainsActionFinancialEvidence(next,old){
   return !(next.schemaVersion===9&&old.schemaVersion===9&&next.sourceDate===old.sourceDate&&(old.financialProofSha256!==null&&next.financialProofSha256===null||old.reconciliationStatus==='verified'&&next.reconciliationStatus!=='verified'));

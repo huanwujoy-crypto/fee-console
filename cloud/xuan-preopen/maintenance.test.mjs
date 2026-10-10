@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {FIXED,COPY_PATHS,createBuildContext,verifyApprovedSource,verifyCheckout,dockerBuildArgs,dockerPushDigest,verifyRegistryImage,jobConfiguration,imageOnlyPatch,runTransport,githubReader,deployImage,main} from './maintenance.mjs';
 const sha='a'.repeat(40),tree='b'.repeat(40),merge='c'.repeat(40),digest='sha256:'+'d'.repeat(64),old='sha256:'+'e'.repeat(64);
 const proof={approvedSha:sha,sourceTree:tree,workflowSha:merge,approvalPr:17};
@@ -100,6 +102,30 @@ test('fixed Docker COPY closure excludes host credentials, git/data/pages and re
   const context=createBuildContext(root,temp,{runGit});assert.ok(!fs.existsSync(path.join(context,'scripts','ignored-credential.txt')));assert.ok(!fs.existsSync(path.join(context,'data.json')));assert.ok(!fs.existsSync(path.join(context,'.git')));assert.ok(!fs.existsSync(path.join(context,'xuan-ib')));assert.ok(!dockerBuildArgs(proof,context).includes(root));assert.ok(dockerBuildArgs(proof,context).includes('--network=none'));
   fs.symlinkSync(path.join(root,'data.json'),path.join(root,'scripts','canary-link'));assert.throws(()=>createBuildContext(root,temp,{runGit:()=>listing+`100644 blob ${'f'.repeat(40)}\tscripts/canary-link\0`}),/BUILD_CONTEXT/);
   fs.writeFileSync(path.join(root,'scripts','synthetic.mjs'),'tampered source');assert.throws(()=>createBuildContext(root,temp,{runGit}),/BUILD_CONTEXT/);
+ }finally{fs.rmSync(temp,{recursive:true,force:true});}
+});
+
+test('isolated Docker COPY context runs the EOD runtime suite with its public policy/proposal dependencies',()=>{
+ const root=fileURLToPath(new URL('../../',import.meta.url)),temp=fs.mkdtempSync(path.join(os.tmpdir(),'maintenance-eod-closure-'));
+ try{
+  const docker=fs.readFileSync(path.join(root,FIXED.dockerfile),'utf8');
+  const copies=[...docker.matchAll(/^COPY (\S+) (\S+)$/gm)].map(([,source,target])=>{assert.equal(source,target);return source.replace(/\/$/,'');});
+  assert.deepEqual(copies,[...COPY_PATHS]);
+  // Model only the already allowlisted public source tree. The committed-tree
+  // production implementation separately checks Git blob identity; this fixture
+  // also runs inside the image, where no Git metadata or executable is copied.
+  const rows=[];
+  function collect(file){const p=path.join(root,file),stat=fs.lstatSync(p);assert.equal(stat.isSymbolicLink(),false);if(stat.isDirectory()){for(const name of fs.readdirSync(p))collect(file+'/'+name);}else{assert.equal(stat.isFile(),true);const bytes=fs.readFileSync(p),blob=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');rows.push(`100644 blob ${blob}\t${file}`);}}
+  for(const file of COPY_PATHS)collect(file);
+  const context=createBuildContext(root,temp,{runGit:()=>rows.join('\0')+'\0'});
+  for(const file of ['claude/xuan-ib-account-association-v1.json','security/xuan-preopen-eod-source-iam.proposed.json','docs/xuan-preopen-eod-association-renewal.patch'])assert.ok(fs.existsSync(path.join(context,file)));
+  assert.equal(fs.existsSync(path.join(context,'.git')),false);
+  assert.equal(fs.existsSync(path.join(context,'data.json')),false);
+  assert.equal(fs.existsSync(path.join(context,'xuan-ib')),false);
+  // No recursive maintenance test: this real subprocess is the suite whose
+  // ENOENT failure escaped the full-repository tests when COPY was incomplete.
+  const output=execFileSync(process.execPath,['--test','--test-reporter=tap','cloud/xuan-preopen/eod_runtime.test.mjs'],{cwd:context,encoding:'utf8',timeout:30_000,maxBuffer:1024*1024,env:{PATH:process.env.PATH,TMPDIR:temp}});
+  assert.match(output,/# fail 0\b/);assert.match(output,/# skipped 0\b/);
  }finally{fs.rmSync(temp,{recursive:true,force:true});}
 });
 

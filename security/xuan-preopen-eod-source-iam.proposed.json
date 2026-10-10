@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "status": "proposed-not-created-or-granted",
+  "project": "family-portfolio-gateway",
+  "bucket": "family-portfolio-gateway-ib-cash-audit",
+  "member": "serviceAccount:xuan-preopen-source@family-portfolio-gateway.iam.gserviceaccount.com",
+  "observed": {
+    "list": "ungranted-in-prior-official-policy-diagnostic",
+    "get": "effective-permission-not-established",
+    "realArchiveRead": "not-tested"
+  },
+  "customRolesToCreate": [
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenCashArchiveList",
+      "stage": "GA",
+      "includedPermissions": ["storage.objects.list"]
+    },
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenCashArchiveGet",
+      "stage": "GA",
+      "includedPermissions": ["storage.objects.get"]
+    }
+  ],
+  "bindingsToAddAfterConcreteApproval": [
+    {
+      "resource": "projects/_/buckets/family-portfolio-gateway-ib-cash-audit",
+      "role": "projects/family-portfolio-gateway/roles/xuanPreopenCashArchiveList",
+      "member": "serviceAccount:xuan-preopen-source@family-portfolio-gateway.iam.gserviceaccount.com",
+      "condition": null,
+      "scope": "All object metadata in this bucket; reports/ prefix and budgets constrain code only, not IAM list permission."
+    },
+    {
+      "resource": "projects/_/buckets/family-portfolio-gateway-ib-cash-audit",
+      "role": "projects/family-portfolio-gateway/roles/xuanPreopenCashArchiveGet",
+      "member": "serviceAccount:xuan-preopen-source@family-portfolio-gateway.iam.gserviceaccount.com",
+      "condition": {
+        "title": "xuan-preopen-original-cash-archives-only",
+        "expression": "resource.type == 'storage.googleapis.com/Object' && resource.name.startsWith('projects/_/buckets/family-portfolio-gateway-ib-cash-audit/objects/reports/')"
+      }
+    }
+  ],
+  "excludedPrincipals": ["xuan-preopen-delivery", "xuan-preopen-image-builder", "xuan-preopen-image-deployer"],
+  "excludedNewPermissions": ["storage.objects.create", "storage.objects.update", "storage.objects.delete", "storage.buckets.setIamPolicy", "run.jobs.run", "run.jobs.runWithOverrides", "secretmanager.versions.access", "secretmanager.versions.add"],
+  "application": "Detached review-only diff. No role/binding has been applied. No new token, secret, OAuth or API request is included. Preserve existing private delivery/evidence writes and other grants."
+}
