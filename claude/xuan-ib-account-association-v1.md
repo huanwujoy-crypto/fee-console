@@ -1,5 +1,19 @@
 # Bounded owner-attested account association
 
+## Fixed 365-day ceiling; activation is separately gated
+
+The mechanical ceiling is 365 elapsed days. Changing this ceiling does not
+change the active policy dates or renew any association. Every new period still
+requires concrete human approval and protected-main activation, with an exclusive
+fixed expiry and no automatic renewal. A calendar anniversary crossing leap day
+may be 366 days and must be refused. Scope, fresh current-main checks, same-run
+receipts, revocation and source-identity requirements remain unchanged.
+
+Deploy the separately approved immutable report image containing this validator
+before activating a policy longer than 30 days. Older images refuse that policy.
+This policy does not extend broker OAuth, secrets or IAM lifetime, restore retired
+manual AM/PM flows, grant trading or authorize weekly report changes.
+
 ## 29-day renewal approved by owner, 2026-09-11
 
 The owner approved a longer but still bounded read-only association to reduce
@@ -7,7 +21,7 @@ repeat approvals after the morning report was approved for retirement. The renew
 2026-09-11T13:30:00.000Z through (exclusive)
 2026-10-10T13:30:00.000Z, covering four complete PM reporting weeks without a
 gap before the 2026-09-11 PM run. The
-mechanical maximum is 30 days; this activation is 29 days and never rolls or
+mechanical maximum at that activation was 30 days; that activation was 29 days and never rolls or
 renews automatically. The legacy `ib-primary-7day-pilot-v1` policy identifier is
 retained only to preserve historical receipt compatibility; it does not describe
 the current duration and does not restore the retired manual-report feature.
