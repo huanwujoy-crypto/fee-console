@@ -14,7 +14,19 @@ before activating a policy longer than 30 days. Older images refuse that policy.
 This policy does not extend broker OAuth, secrets or IAM lifetime, restore retired
 manual AM/PM flows, grant trading or authorize weekly report changes.
 
-## 29-day renewal approved by owner, 2026-09-11
+## Fixed 365-day activation
+
+The concrete protected-main period is 2026-10-10T13:30:00.000Z through
+2027-10-10T13:30:00.000Z, exclusive (365 elapsed days). Implementation requires
+human approval for this exact period and the final signed sensitive head. No
+read before actual approval/application is retrospectively authorized. If
+application is late, preserve the real interruption; do not move the fixed end
+or manufacture an earlier policy check. Stop on expiry or revocation and require
+new concrete approval for any next period. Keep IB-HK, purpose, editions, basis,
+publisher and policyId unchanged. This activation approves no new source, IAM,
+credential, schedule, report execution or publication action.
+
+## Historical 29-day renewal approved by owner, 2026-09-11
 
 The owner approved a longer but still bounded read-only association to reduce
 repeat approvals after the morning report was approved for retirement. The renewed validity is

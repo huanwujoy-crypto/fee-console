@@ -47,8 +47,8 @@ test('checked-in deployment policy is canonical, bounded and contains no private
   assert.doesNotMatch(text, /accountId|token|username|consentRow|observedAt|U\d{6,}/i);
   assert.deepEqual(value.editions, ['adhoc', 'am', 'pm']);
   assert.equal(MAX_ASSOCIATION_WINDOW_MS, 365 * 24 * 60 * 60 * 1000);
-  assert.equal(value.validFrom, '2026-09-11T13:30:00.000Z');
-  assert.equal(value.expiresAt, '2026-10-10T13:30:00.000Z');
+  assert.equal(value.validFrom, '2026-10-10T13:30:00.000Z');
+  assert.equal(value.expiresAt, '2027-10-10T13:30:00.000Z');
 });
 
 test('fixed 365-day policy stops exactly at expiry and never grants automatic renewal', () => {
