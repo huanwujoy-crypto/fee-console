@@ -33,7 +33,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Validate the coordinated price source
+        env:
+          UNIFIED_CLOSE_PRICE_SOURCE: ${{ vars.UNIFIED_CLOSE_PRICE_SOURCE }}
+        run: node scripts/controlled-benchmark-object.mjs --validate-mode
+
       - name: Read the independent benchmark cache
+        if: ${{ vars.UNIFIED_CLOSE_PRICE_SOURCE != 'control-object-v1' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -41,6 +47,26 @@ jobs:
           mkdir -m 700 "$RUNNER_TEMP/fee-cloud-private"
           git show origin/market-data-cache:benchmark-close.json > "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
           chmod 600 "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
+
+      - name: Authenticate the existing reader for the controlled price object
+        id: controlled_price_auth
+        if: ${{ vars.UNIFIED_CLOSE_PRICE_SOURCE == 'control-object-v1' }}
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 300s
+
+      - name: Read the exact controlled benchmark target
+        if: ${{ vars.UNIFIED_CLOSE_PRICE_SOURCE == 'control-object-v1' }}
+        env:
+          UNIFIED_CLOSE_PRICE_SOURCE: ${{ vars.UNIFIED_CLOSE_PRICE_SOURCE }}
+          CONTROL_PRICE_ACCESS_TOKEN: ${{ steps.controlled_price_auth.outputs.access_token }}
+        run: |
+          mkdir -m 700 "$RUNNER_TEMP/fee-cloud-private"
+          node scripts/controlled-benchmark-object.mjs --out="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
 
       - name: Check whether this complete target is already published
         id: published
@@ -71,7 +97,7 @@ jobs:
           git checkout --detach origin/main
 
       - name: Exchange the trusted workflow identity for short-lived Google credentials
-        if: ${{ steps.published.outputs.outcome == 'produce' }}
+        if: ${{ steps.published.outputs.outcome == 'produce' && vars.UNIFIED_CLOSE_PRICE_SOURCE != 'control-object-v1' }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
           project_id: family-portfolio-gateway
