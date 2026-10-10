@@ -46,9 +46,26 @@ test('checked-in deployment policy is canonical, bounded and contains no private
   }
   assert.doesNotMatch(text, /accountId|token|username|consentRow|observedAt|U\d{6,}/i);
   assert.deepEqual(value.editions, ['adhoc', 'am', 'pm']);
-  assert.equal(MAX_ASSOCIATION_WINDOW_MS, 30 * 24 * 60 * 60 * 1000);
+  assert.equal(MAX_ASSOCIATION_WINDOW_MS, 365 * 24 * 60 * 60 * 1000);
   assert.equal(value.validFrom, '2026-09-11T13:30:00.000Z');
   assert.equal(value.expiresAt, '2026-10-10T13:30:00.000Z');
+});
+
+test('fixed 365-day policy stops exactly at expiry and never grants automatic renewal', () => {
+  const start = NOW, end = start + 365 * 24 * 60 * 60 * 1000;
+  const p = policy({validFrom: iso(start), expiresAt: iso(end)});
+  assert.equal(validateAssociationPolicy(p, context({now: start})).expiresAt, iso(end));
+  validateAssociationPolicy(p, context({now: end - 1}));
+  assert.throws(() => validateAssociationPolicy(p, context({now: start - 1})), /not yet valid/);
+  assert.throws(() => validateAssociationPolicy(p, context({now: end})), /expired/);
+  assert.throws(() => validateAssociationPolicy({...p, status: 'revoked'}, context({now: start})), /revoked/);
+  assert.throws(() => validateAssociationPolicy({...p, expiresAt: iso(end + 1)}, context({now: start})), /365 days/);
+  assert.equal(p.expiresAt, iso(end));
+});
+
+test('a calendar anniversary crossing leap day cannot exceed the 365-day elapsed ceiling', () => {
+  const p = policy({validFrom: '2027-10-10T13:30:00.000Z', expiresAt: '2028-10-10T13:30:00.000Z'});
+  assert.throws(() => validateAssociationPolicy(p, context({now: Date.parse(p.validFrom)})), /365 days/);
 });
 
 test('fixed synthetic inactive policy has no timer and cannot authorize a run', () => {
@@ -126,12 +143,12 @@ test('scheduled editions require explicit selection and cannot cross-bind receip
   }
 });
 
-test('future, expired, revoked, inactive and over-thirty-day policy cannot authorize', () => {
+test('future, expired, revoked, inactive and over-365-day policy cannot authorize', () => {
   assert.throws(() => validateAssociationPolicy(policy({ validFrom: iso(NOW + 1) }), context()), /not yet valid/);
   assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(NOW) }), context()), /expired/);
   assert.throws(() => validateAssociationPolicy(policy({ status: 'revoked' }), context()), /revoked/);
-  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(NOW + MAX_ASSOCIATION_WINDOW_MS) }), context()), /thirty days/);
-  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(Date.parse(policy().validFrom) + 31 * 24 * 60 * 60 * 1000) }), context()), /thirty days/);
+  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(NOW + MAX_ASSOCIATION_WINDOW_MS) }), context()), /365 days/);
+  assert.throws(() => validateAssociationPolicy(policy({ expiresAt: iso(Date.parse(policy().validFrom) + 366 * 24 * 60 * 60 * 1000) }), context()), /365 days/);
   assert.throws(() => validateAssociationPolicy(policy({ expiresAt: policy().validFrom }), context()), /positive/);
   assert.throws(() => validateAssociationPolicy(policy({ validFrom: '2026-09-05T05:59:59Z' }), context()), /canonical UTC/);
   assert.throws(() => validateAssociationPolicy(policy({ status: 'inactive' }), { ...context(), requireActive: false }), /must not start/);
@@ -180,7 +197,7 @@ test('canonical receipt roundtrip rejects duplicate markers, changed encoding an
 
 test('publication requires exact public disclosure, avoids raw identity and rejects hidden or duplicate disclosure', () => {
   const saved = receipt(), mark = renderAssociationReceipt(saved), disclosure = renderAssociationDisclosure(saved, snapshot());
-  assert.match(disclosure, /2026-10-05 13:59 HKT/);
+  assert.match(disclosure, /2027-09-05 13:59 HKT/);
   assert.match(disclosure, /非身份认证/);
   assert.doesNotMatch(disclosure + mark, /U\d{6,}|accountId|token|username/);
   const html = `<details><summary>报告说明</summary>${disclosure}</details>${mark}`;
