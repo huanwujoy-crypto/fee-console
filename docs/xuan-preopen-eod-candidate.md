@@ -1,10 +1,13 @@
-# Local EOD action-report candidate — inactive
+# Local EOD action-report candidate — wired, undeployed
 
 This is a sensitive local code candidate, not a deployed report, a real sync
-receipt, or publication approval. The existing report/daily CLI still selects
-`runPrivateReport` and its five-source schema-5 path. Nothing selects the new
-`runPrivateEodReport` by default. No endpoint, schedule, Flex query, credential,
-IAM configuration, signing service, sync writer or security policy is added.
+receipt, or publication approval. `daily.mjs` now selects `runFixedEodReport`
+and its EOD schema-9 path by default in this local tree. The legacy explicit
+`report.mjs --report-check` five-source schema-5 path remains available.
+No endpoint, schedule, Flex query, credential, signing service, sync writer or
+authorization-level rules are changed. Only explicit sensitive path registration
+is added to the existing registry. IAM and renewal proposals below
+are detached review artifacts; no actual grant or association change occurred.
 The complete diff requires exact final-head OWNER approval before activation.
 
 `adaptPrivateNoahUiExport` is a pure, explicitly supplied official UI cash-export
@@ -18,12 +21,151 @@ not locally verified binary hashes. Period/compound or annualised returns are
 not used as daily returns, and the adapter makes no instrument NAV/FX claim.
 
 The private model can show that NOAH cash alongside dated IB facts while keeping
-planning unknown. The API reader and production entry points do not select this
-adapter; both the production EOD receipt validator and canonical publication
-classifier reject UI-export observations. No daily browser dependency is added.
+planning unknown. The API reader and production CLI/default do not select this
+adapter. An explicit supplied-input `privateNoahUiExport` seam, requiring injected
+transport, exercises the actual daily default generator for acceptance. The
+acceptance harness denies real network; injection alone does not prove that.
+It uses only `report-check/` objects and a distinct `private_eod_ui_acceptance`
+receipt, never production delivery markers. Both the production EOD receipt
+validator and canonical publication classifier reject UI-export observations.
+There is no CLI/environment selector or daily browser dependency.
 An unattended authenticated API call remains a separate deployment acceptance
-item. The six added EOD files are listed only in the existing sensitive registry;
-ordinary entries, prefixes, classifier and exact-head OWNER strength are unchanged.
+item. All four new runtime/test/proposal paths are explicitly registered at the
+existing sensitive level. Ordinary entries, prefix/level rules and exact-head
+OWNER approval strength are unchanged; the registry edit is itself sensitive.
+
+## Fixed default source and archive evidence
+
+`daily` -> `runFixedEodReport` -> `runPrivateEodReport` -> immutable private
+sources/HTML/receipt -> delivery HTML/receipt -> existing candidate-only publisher
+is wired in the local tree. Synthetic tests exercise that actual default entry
+without injecting `generate` or replacing cloud IO. Every request is mocked;
+no new financial report, archive, secret or API was requested during implementation.
+The already-authorized privately saved Oct8 XML was read only for offline format
+acceptance; its contents remain outside the repository.
+
+Local verification (2026-10-10): the actual default-entry roundtrip includes both
+successful fixed reads and independent NOAH failure; no `generate` override is
+used. Archive counterexamples cover identity/hash/cutoff/row dates/currency,
+generation/metageneration and enumeration races, unsupported XML, pagination,
+creation-time and byte/candidate/deadline budgets. Detached permission and
+renewal boundary tests also passed. The private-ledger leak guard, retired
+implementation-progress guard, diff whitespace check and renewal patch dry
+applicability check passed. Astra's read-only offline evidence review found no
+blocking local candidate issue in its initial review. Final indexed/committed
+suite counts and final complete-diff review are recorded in the separate private
+acceptance evidence. The three phone states' parser/status checks passed, plus
+the EOD invalid-marker regression. Actual visual screenshots remain blocked:
+local Chrome headless exited 134 without an image or diagnostic output; the
+supported browser rejected local file URLs and forbade alternate paths to the
+same blocked operation. No workaround or rendering-pass claim is made.
+This is not protected CI, successful cash-source acceptance, phone visual
+read-back, OWNER consent or deployment verification.
+
+`privateCloudIo` reads only `family-portfolio-gateway-ib-cash-audit/reports/`
+through fixed GCS JSON list/get routes and the existing source service identity.
+The reader completely enumerates at most 5 pages of 100 entries (500 total) per
+pass. A second complete pass compares the eligible identity/metadata set after
+body reads: at most 10 list calls total. Total list and object-metadata response
+bytes are limited to 2 MB, each metadata response to 250 KB. At most 4 eligible
+bodies of 8 MB each (32 MB total) may be read. The archive operation has a
+90-second overall abort deadline and each transport request a 30-second timeout.
+Overflow, incomplete enumeration, duplicate names/tokens, malformed metadata,
+invalid/future creation times, changed snapshots and ambiguity reject generation.
+
+Eligibility is a conservative **reader policy**: original GCS `timeCreated`
+must fall from source-date New York 16:00 through the captured reader clock.
+DST is resolved explicitly. All eligible bodies are inspected, including late
+uploads of older statements; older objects outside the window require no body
+GET. Exactly one supported original statement must match the source date within
+that window. This does not prove all-history uniqueness, latest revision,
+producer timezone or financial finality. Early-close/early-arrived archives can
+be conservatively excluded. A newly appearing or changed eligible object causes
+rejection on the second pass; the two passes are still not an atomic transaction.
+
+Each read pins both generation and metageneration, uses GET preconditions, and
+compares returned metadata with the listed identity. Raw-byte SHA-256 must match
+the `reports/<sha256>.xml` filename, size must match, and the sole original XML
+account is compared with the independent existing approved-account binding.
+Original statement cutoff and cash/position row reportDate/toDate must agree.
+CashReport fromDate, when present, must equal the statement start. Only
+CashTransactions/ConversionRates may have historical reportDate within the
+declared closed statement interval; other sections retain strict cutoff checks.
+All dates must be valid; future/outside-period historical rows reject. These checks establish content identity
+and dated archive facts within the trusted private bucket boundary. They are
+not an IB signature or independent authentication of its historical producer.
+
+Usable base USD cash requires an explicit supported original FlexStatement `baseCurrency`
+or `currency` declaration of USD, with no conflicting declarations or custom
+metadata. BASE_SUMMARY, native USD rows, rate=1 and reader-supplied USD metadata
+alone cannot establish it. Offline acceptance of the already-authorized original
+Oct8 XML confirmed a single approved account, original 2026-09-09 through
+2026-10-08 statement interval, matching cash start/end dates and within-period
+historical transaction/conversion report dates. Its pinned file hash matches and
+the strict grammar/date inspection succeeds after the section-specific repair.
+Its actual statement header has no baseCurrency or currency declaration.
+The previous frozen default rejected the whole report with `USD_UNVERIFIED`,
+contrary to the approved partial-data design. The repaired default separates
+archive identity from cash capability: every original still undergoes all
+hash/account/date/grammar/numeric/cash-shape checks, while missing base USD leaves
+IB cash null with `FLEX_BASE_CURRENCY_UNVERIFIED`. Conflicting original currency
+declarations or metadata still fail hard. Source identity/date/hash remain
+verified; supplier USD metadata cannot turn cash into a verified USD balance.
+Available Sharesight allocation, cash-like detail and non-cash funding need are
+retained. Pool, cash budget, buying power and executable amounts remain unknown;
+no reconciliation result is deleted, fabricated or upgraded.
+
+The actual `daily` default entry (without injected generator or cloud IO) passed
+offline replay of the already saved Oct8 XML and IB-HK API response. A second
+actual-default replay includes the separately pinned real NOAH UI export through
+the private seam: all four cards remain and the UI receipt/publication boundary
+rejects promotion. The API replay preserves mocked NOAH failure separately;
+the synthetic production roundtrip covers both successful APIs and independent
+NOAH failure through receipt, delivery and candidate-only publication validation.
+All transport/association/GCS metadata and test clocks are explicitly mocked;
+these are not new financial reads, current authorization or cloud acceptance.
+An independent original base-currency declaration is still required before the
+IB USD cash itself can qualify. Earlier inferred-USD private model probes are
+superseded by this replay. No private XML, amounts, full account,
+positions or actual cash values enter the repository or synthetic fixtures.
+
+`configuredQueryId=1630084` is fixed consumer configuration. Historical producer
+query/source-code evidence is unavailable and remains explicitly
+`producerQueryId=null`, `queryProvenance=unknown` in private evidence. XML queryid,
+custom metadata and the expected consumer configuration cannot upgrade that
+claim. Original provider generation text is retained without inferred timezone.
+Producer source-code availability is not required to validate account/date/hash
+or a supported original currency declaration; provenance remains separately unknown.
+
+The two existing fixed Sharesight GET scopes are each called once behind
+independent outcome boundaries, using the existing gateway credential. Failure
+of one retains the other and the valid EOD baseline. No IB secret, OAuth refresh,
+live capture, completion verifier or financial-finality verifier is selected.
+Noah UI exports are never selected. Missing orders, reconciliation, sync proof
+and buying power continue to suppress dependent budgets.
+
+## Detached permission and renewal proposals
+
+`security/xuan-preopen-eod-source-iam.proposed.json` lists only source-SA
+`storage.objects.list` on the fixed cash bucket and prefix-constrained
+`storage.objects.get` for `reports/`. GCS IAM list permission exposes metadata
+for the entire bucket; the prefix, page and byte budgets constrain this reader,
+not the IAM list grant. This exact metadata scope needs explicit review.
+The earlier official policy diagnostic found bucket list ungranted; effective
+GET was not established. The proposed roles/bindings have not been created,
+granted or tested against real objects. Delivery, builder and deployer identities
+gain no archive access. There is no IAM applier or permission-changing command.
+
+`docs/xuan-preopen-eod-association-renewal.patch` is a detached 30-day candidate:
+2026-10-10 13:30 UTC through 2026-11-09 13:30 UTC. The live policy file is unchanged.
+Do not apply before the proposed validFrom, since doing so would invalidate the
+currently valid interval. If approval occurs later, review concrete dates again
+before application and require a currently active association for any report.
+The patch preserves scope, basis, editions, publisher and purpose. It is neither
+approval nor automatic renewal. Formal implementation, protected merge, IAM,
+deployment, report execution/recovery and public read-back each remain pending
+concrete authorization under the existing gates. Start markers remain immutable;
+this candidate does not clear or retry an earlier failed execution.
 
 ## Report and calculation contract
 
@@ -34,7 +176,8 @@ the denominator includes stocks only. VGSH/VGIT/TLT must remain 防御资产 and
 are separate cash-like detail, never assumed sold.
 
 Flex cash has distinct trade-date EndingCash, EndingSettledCash and native
-currency detail. BaseCurrency/BASE_SUMMARY is the one USD base aggregate; native
+currency detail. With independently verified base USD, BaseCurrency/BASE_SUMMARY
+is the one USD base aggregate; native
 Currency rows are shown, never added to that aggregate. Four previously unmapped
 cash categories remain explicit source components, without manufactured
 CashTransactions mappings. They are not proof of cash reconciliation finality.
@@ -66,10 +209,10 @@ The report script and phone loader preserve that status and the source cutoff.
 boundary. `eod_report.mjs` has no default financial reader, network client,
 credential lookup or CLI. To call it, the trusted caller must inject:
 
-- `readArchive` and `verifyArchive`: authenticate the real producer/archive,
-  independently bind approved account, configured query ID, raw-byte SHA-256,
-  immutable object generation and completed source-date cutoff. Configured
-  query ID is not an XML queryid. A callback cannot be treated as independent
+- `readArchive` and `verifyArchive`: bind the trusted private archive's approved
+  account, raw-byte SHA-256, immutable object generation and original source-date
+  cutoff. Configured query ID is consumer configuration, not historical producer
+  proof or an XML queryid. A callback cannot be treated as independent
   production evidence merely because it returns the expected fields.
 - Optional `verifyArchiveFinancial`: this is separate from archive identity.
   The pure archive parser ignores supplier residual, execution-coverage and
@@ -130,19 +273,25 @@ Only the opaque proof digest appears as `reconciliation.verificationSha256` in
 the public marker. Private object names and financial proof contents remain out
 of public markers. Daily, delivery and publisher recompute this binding; modifying
 any source descriptor detaches the manifest and fails acceptance. This is a hash
-binding within the existing trusted private producer boundary, not a new signing
+binding within the existing trusted private archive boundary, not a new signing
 system or independent authentication of a fabricated producer.
 
 Daily and delivery accept only the new explicit EOD receipt mode, immutable
 source evidence and matching canonical schema-9 HTML. The publisher retains its
 existing association/reserve/context/head/owner/hash/age checks and only prepares
 its original one-file candidate. It checks both initial and final refreshed context for same-date loss of verified
-components or source freshness, including richer partial schema-5/schema-9
+components or source freshness, including each independently available IB/NOAH
+cash source and richer partial schema-4/schema-5/schema-9
 reports. The existing protected classifier and promotion selector now recognize
 canonical validated EOD pages, bind derived component/cutoff/read-time facts to
 the actual HTML blob and apply the same downgrade preference. The selector
 prefers a component-complete EOD candidate over a weaker candidate of the same
 source cutoff. Ready same-date reports remain protected. No policy/workflow approval gate is changed.
+
+The maintenance image copies the exact public association, source-IAM proposal
+and detached renewal patch used by the runtime regression suite. Its allowlisted
+build context and Docker COPY list must match; an isolated context executes the
+runtime tests without repository metadata, historical pages or private inputs.
 
 ## Remaining activation gaps
 

@@ -17,7 +17,7 @@ function archive({extra='',cash=true,positions=true,trades='<Trades/>',residual=
   const native=tags({accountId:ACCOUNT,reportDate:DATE,levelOfDetail:'Currency',currency:'USD',endingCash:'100',endingSettledCash:'90'});
   const foreign=tags({accountId:ACCOUNT,reportDate:DATE,levelOfDetail:'Currency',currency:'HKD',endingCash:'780',endingSettledCash:'702'});
   const p=tags({accountId:ACCOUNT,reportDate:DATE,levelOfDetail:'SUMMARY',conid:'SYNTHETIC_CONTRACT',symbol:'EXUS',currency:'USD',position:'10',multiplier:'1',markPrice:'10',positionValue:'100',fxRateToBase:'1'});
-  const bytes=`<AF><FlexStatements><FlexStatement ${tags({accountId:ACCOUNT,fromDate:'2026-10-01',toDate:DATE,whenGenerated:'2026-10-09;00:15:30'})}>${cash?`<CashReport><CashReportCurrency ${row}/><CashReportCurrency ${native}/><CashReportCurrency ${foreign}/></CashReport>`:''}${positions?`<OpenPositions><OpenPosition ${p}/></OpenPositions>`:''}${trades}${extra}</FlexStatement></FlexStatements></AF>`;
+  const bytes=`<AF><FlexStatements><FlexStatement ${tags({accountId:ACCOUNT,fromDate:'2026-10-01',toDate:DATE,whenGenerated:'2026-10-09;00:15:30',baseCurrency:'USD'})}>${cash?`<CashReport><CashReportCurrency ${row}/><CashReportCurrency ${native}/><CashReportCurrency ${foreign}/></CashReport>`:''}${positions?`<OpenPositions><OpenPosition ${p}/></OpenPositions>`:''}${trades}${extra}</FlexStatement></FlexStatements></AF>`;
   return {bytes,metadata:{privateObject:'synthetic/offline/archive.xml',generation:'1',rawSha256:digest(bytes),configuredQueryId:QUERY,baseCurrency:'USD',providerTimezone:null,cashReconciliationResidual:residual,executionsCoveredThrough:DATE,cancellationsVerified:true}};
 }
 // Fixed independent synthetic oracle. It certifies ONLY one predeclared XML
@@ -80,6 +80,17 @@ test('UI cash adapter rejects cutoff/group/currency/cash conflict, malformed row
   const mutations=[x=>x.provenance.report_end='2026-10-07',x=>x.provenance.report_start='2025-01-02',x=>x.provenance.include_closed_positions=true,x=>x.provenance.grouping='Other',x=>x.provenance.source_url='https://example.invalid/',x=>x.provenance.portfolio_id=-1,x=>x.provenance.export_xlsx_utc='2026-10-10T05:00:00Z',x=>x.original_export_cells[1].cells.A2='Showing current performance',x=>x.original_export_cells[3].cells.F5='Value (eur)',x=>x.original_export_cells[12].cells.F7='43.35',x=>x.original_export_cells[4].cells.F6='-1',x=>x.original_export_cells[4].cells.F6='NaN',x=>x.original_export_cells[4].cells.D6='42',x=>x.original_export_cells.splice(4,0,structuredClone(x.original_export_cells[4]))];
   for(const mutate of mutations){const input=uiFixture();mutate(input);assert.throws(()=>uiAdapt(input),/EOD_UI_EXPORT_/);}
   assert.throws(()=>adaptPrivateNoahUiExport({bytes:JSON.stringify(uiFixture()),expectedTransferSha256:'f'.repeat(64)},{sourceDate:DATE,reportStart:'2025-01-01',now:NOW}),/UI_EXPORT_BYTES/);
+});
+test('explicit private UI receipt keeps base-unverified archive and API sibling, and rejects delivery/publication promotion',async()=>{
+  const bytes=JSON.stringify(uiFixture()),a=archive();a.bytes=a.bytes.replace(' baseCurrency="USD"','');a.metadata.rawSha256=digest(a.bytes);
+  const r=await result({privateNoahUiExport:{bytes,expectedTransferSha256:digest(bytes),reportStart:'2025-01-01'},readArchive:async()=>a,verifyArchiveFinancial:null,verifySnapshotCompletion:null});
+  assert.equal(r.receipt.mode,'private_eod_ui_acceptance');assert.equal(r.model.cash.ib,null);assert.equal(r.model.cash.noah,42.35);
+  assert.equal(r.model.cash.eod.reason,'FLEX_BASE_CURRENCY_UNVERIFIED');assert.equal(r.model.cash.pool,null);assert.equal(r.model.cash.planning,null);assert.equal(r.model.cash.executableBudget,null);
+  assert.equal(r.model.reconciliation.status,'unknown');assert.equal(r.model.reconciliation.cashResidual,null);assert.equal(r.model.allocation.status,'ready');
+  assert.deepEqual(r.calls,['sharesight.ibGroupedPerformance']);assert.equal(r.model.sourceOutcomes[2].status,'ui-export-observed');
+  assert.throws(()=>validateEodReceipt(r.receipt,r.html,'2026-10-09',DATE),/EOD_REPORT_RECEIPT/);
+  let requests=0;await assert.rejects(publishPrepared({html:r.html,receipt:r.receipt,now:NOW,loadContext:async()=>r.c,request:async()=>{requests++;}}));assert.equal(requests,0);
+  const forged=structuredClone(r.receipt);forged.mode='private_eod_action';assert.throws(()=>validateEodReceipt(forged,r.html,'2026-10-09',DATE),/UI_EXPORT_PRIVATE_ONLY/);
 });
 test('valid EOD + optional MCP OAuth failure preserves original four cards, unknown orders and safe provenance',async()=>{const r=await result({captureOptionalLive:async()=>{throw new Error('Synthetic OAuth failure');}});assert.deepEqual(r.calls,['sharesight.ibGroupedPerformance','sharesight.noahPerformance']);assert.equal(r.model.schemaVersion,9);assert.equal(r.model.orders.buys,null);assert.equal(r.model.orders.sells,null);assert.equal(r.model.cash.orderReserve,null);assert.equal(r.model.cash.planning,null);assert.equal(r.model.allocation.projectedTotal,null);assert.equal(r.model.cash.pool,250);assert.equal(r.model.cash.ib,200);assert.equal(r.model.cash.eod.settled,180);assert.equal(r.model.cash.cashLike.total,90);assert.equal(r.model.replenishment.status,'unavailable');assert.ok(r.model.allocation.fundingNeed.fullNeed>0);for(const title of ['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置'])assert.ok(r.html.includes(title));assert.ok(r.html.includes('时区未声明'));assert.equal(validateNightActionHtml(r.html,'2026-10-09').orderCount,null);assert.equal(renderNightActionReport(r.model),r.html);const marker=JSON.stringify(r.model);assert.ok(!marker.includes(ACCOUNT)&&!marker.includes('synthetic/offline')&&!marker.includes('accountId'));assert.ok(r.html.includes("show(\"部分更新\""));assert.equal(r.model.cash.executableBudget,null);});
 test('genuine empty orders remain verified empty; BUY reserves remaining limit, SELL never proceeds; EOD wins over live cash',async()=>{const empty=await result({captureOptionalLive:async()=>live()});assert.deepEqual(empty.model.orders.buys,[]);assert.equal(empty.model.cash.orderReserve,0);assert.equal(empty.model.cash.planning,225);assert.equal(empty.model.allocation.projectedTotal,1000);assert.equal(empty.model.replenishment.items[2].amount,22.5);const r=await result({captureOptionalLive:async()=>live([order('BUY'),order('SELL','5')])});assert.equal(r.model.cash.orderReserve,20);assert.equal(r.model.cash.callApplied,25);assert.equal(r.model.cash.planning,205);assert.equal(r.model.allocation.projectedTotal,1020);assert.equal(r.model.orders.sells.length,1);assert.equal(r.model.replenishment.items[2].amount,20.5);assert.equal(r.model.replenishment.executableBudget,null);assert.equal(validateNightActionHtml(r.html,'2026-10-09').orderCount,2);});
@@ -247,4 +258,50 @@ test('R4N1 pending proof is conservative at unchanged cutoff; newer cutoff and o
   const oldState=classifySleepPublication(renderNightActionReport(old)),nextState=classifySleepPublication(unknown.html);assert.equal(canReplaceActionModel(unknown.model,old),true);
   const meta={schemaVersion:1,sourceSha:'c'.repeat(40),sourceCommitEpoch:1,dataDate:'2026-10-09',htmlBlob:oldState.action.htmlBlob};const candidate=state=>({ref:'origin/codex/xuan-ib-synthetic-evidence',sha:'d'.repeat(40),htmlBlob:state.action.htmlBlob,dataDate:'2026-10-09',commitEpoch:3,publication:state});assert.deepEqual(selectNewestCandidate([candidate(nextState)],meta,oldState),candidate(nextState));
   const full=structuredClone((await result({captureOptionalLive:async()=>live()})).model);full.schemaVersion=5;full.status='ready';full.cash.status='ready';full.notes=[];const fullState=classifySleepPublication(renderNightActionReport(full)),verifiedState=classifySleepPublication(verified.html);assert.equal(fullState.kind,'complete-pm');assert.equal(Object.hasOwn(fullState.action,'financialProofSha256'),false);assert.equal(canReplaceActionModel(full,verified.model),true);assert.deepEqual(selectNewestCandidate([candidate(fullState)],{...meta,htmlBlob:verifiedState.action.htmlBlob},verifiedState),candidate(fullState));
+});
+
+test('same-date partial reports retain each cash source through initial/final publisher checks and promotion',async()=>{
+  const {classifySleepPublication,canReplaceActionModel,validateActionPublicationDescriptor}=await import('../../scripts/xuan-ib-sleep-priority.mjs');
+  const {selectNewestCandidate}=await import('../../scripts/xuan-ib-promotion.mjs');
+  const noUsd=archive();noUsd.bytes=noUsd.bytes.replace(' baseCurrency="USD"','');noUsd.metadata.rawSha256=digest(noUsd.bytes);
+  const make=({ib=true,noah=true,later=false}={})=>result({readArchive:async()=>ib?archive():noUsd,verifyArchiveFinancial:null,now:later?()=>NOW()+60000:NOW,snapshotReader:async({sourceKey})=>{if(!noah&&sourceKey==='sharesight.noahPerformance')throw Error('SYNTHETIC_NOAH_UNAVAILABLE');return snapshot(sourceKey);}});
+  const states={both:await make(),ib:await make({noah:false}),noah:await make({ib:false}),none:await make({ib:false,noah:false,later:true})};
+  const publications=Object.fromEntries(Object.entries(states).map(([key,r])=>[key,classifySleepPublication(r.html)]));
+  assert.equal(publications.both.action.components,1|2|32|64);
+  assert.equal(publications.ib.action.components,1|32);
+  assert.equal(publications.noah.action.components,1|64);
+  assert.equal(publications.none.action.components,1);
+  const candidate=(state,epoch=3)=>({ref:'origin/codex/xuan-ib-synthetic-partial-cash',sha:'d'.repeat(40),htmlBlob:state.action.htmlBlob,dataDate:'2026-10-09',commitEpoch:epoch,publication:state});
+  const meta=state=>({schemaVersion:1,sourceSha:'c'.repeat(40),sourceCommitEpoch:1,dataDate:'2026-10-09',htmlBlob:state.action.htmlBlob});
+  for(const [oldKey,nextKey] of [['both','ib'],['both','noah'],['ib','none'],['noah','none'],['ib','noah'],['noah','ib']]){
+    const old=states[oldKey],next=states[nextKey],oldState=publications[oldKey],nextState=publications[nextKey];
+    assert.equal(canReplaceActionModel(next.model,old.model),false,`${oldKey} -> ${nextKey}`);
+    assert.equal(selectNewestCandidate([candidate(nextState,99)],meta(oldState),oldState),null);
+    for(const late of [false,true]){
+      let calls=0,reads=0;
+      await assert.rejects(publishPrepared({html:next.html,receipt:next.receipt,now:next.options.now,loadContext:async()=>({...next.c,previousHtml:!late||++reads>1?old.html:''}),request:async p=>{calls++;if(p.query.startsWith('query'))return {data:{viewer:{login:'huanwujoy-crypto'},repository:{id:'synthetic',ref:{target:{oid:'a'.repeat(40)}}}}};return {data:{createRef:{ref:{name:p.variables.input.name,target:{oid:'a'.repeat(40)}}}}};}}),/COMPLETE_REPORT_EXISTS/);
+      assert.equal(calls,late?2:0);
+    }
+  }
+  const retained=await make({ib:false,later:true}),retainedState=classifySleepPublication(retained.html);
+  assert.equal(canReplaceActionModel(retained.model,states.noah.model),true);
+  assert.deepEqual(selectNewestCandidate([candidate(retainedState)],meta(publications.noah),publications.noah),candidate(retainedState));
+  assert.equal(canReplaceActionModel(states.both.model,states.noah.model),true);
+  const previousMeta={...meta(publications.none),dataDate:'2026-10-08'},previousState={kind:'other',dataDate:'2026-10-08',priorityKey:null,eligibleAtEpoch:null};
+  assert.equal(selectNewestCandidate([candidate(publications.none,99),candidate(publications.noah)],previousMeta,previousState).publication.action.components,1|64);
+  for(const edit of [a=>a.components&=~32,a=>a.components&=~2,a=>a.components=128,a=>a.cash='SYNTHETIC_UNKNOWN_FIELD']){const a=structuredClone(publications.both.action);edit(a);assert.throws(()=>validateActionPublicationDescriptor(a));}
+  const a=structuredClone(publications.noah.action);a.components|=2;assert.throws(()=>validateActionPublicationDescriptor(a));
+  const zero=await result({readArchive:async()=>noUsd,verifyArchiveFinancial:null,snapshotReader:async({sourceKey})=>{const s=snapshot(sourceKey);if(sourceKey==='sharesight.noahPerformance')s.raw.data.report.cash_accounts[0].value=0;return s;}});
+  assert.equal(zero.model.cash.noah,0);assert.equal(classifySleepPublication(zero.html).action.components,1|64);
+});
+
+test('legacy schema4/schema5 canonical classifiers derive the same independent partial cash capabilities',async()=>{
+  const {classifySleepPublication,canReplaceActionModel}=await import('../../scripts/xuan-ib-sleep-priority.mjs');
+  const r=await result({verifyArchiveFinancial:null});
+  for(const schemaVersion of [4,5]){
+    const old=structuredClone(r.model);old.schemaVersion=schemaVersion;old.cash.status='unavailable';old.cash.ib=null;old.cash.pool=null;old.allocation.status='unavailable';old.orders={status:'unavailable',asOfHkt:'2026-10-09 13:00 HKT',buys:[],sells:[]};old.notes=[];
+    const oldState=classifySleepPublication(renderNightActionReport(old));assert.equal(oldState.action.components,64);
+    const weak=structuredClone(old);weak.cash.noah=null;assert.equal(classifySleepPublication(renderNightActionReport(weak)).action.components,0);assert.equal(canReplaceActionModel(weak,old),false);
+    const rich=structuredClone(old);rich.cash.ib=0;assert.equal(classifySleepPublication(renderNightActionReport(rich)).action.components,2|32|64);assert.equal(canReplaceActionModel(rich,old),true);
+  }
 });

@@ -59,7 +59,7 @@ export function verifyCheckout(e,proof,{runGit=git,allowMerge=false}={}){
   return proof;
 }
 const labelNames={approvedSha:'org.opencontainers.image.revision',sourceTree:'fee-console.source-tree',workflowSha:'fee-console.approved-merge',approvalPr:'fee-console.approval-pr'};
-export const COPY_PATHS=Object.freeze(['scripts','.github/workflows/validate-xuan-ib-handover.yml','.github/workflows/promote-xuan-ib-handover.yml','.github/workflows/xuan-preopen-image-maintenance.yml','.github/workflows/xuan-preopen-image-build.yml','.github/workflows/xuan-preopen-image-deploy.yml','claude/xuan-ib-portfolio-registry.json','security/xuan-preopen-maintenance-iam.json','cloud/xuan-preopen']);
+export const COPY_PATHS=Object.freeze(['scripts','.github/workflows/validate-xuan-ib-handover.yml','.github/workflows/promote-xuan-ib-handover.yml','.github/workflows/xuan-preopen-image-maintenance.yml','.github/workflows/xuan-preopen-image-build.yml','.github/workflows/xuan-preopen-image-deploy.yml','claude/xuan-ib-portfolio-registry.json','claude/xuan-ib-account-association-v1.json','security/xuan-preopen-maintenance-iam.json','security/xuan-preopen-eod-source-iam.proposed.json','docs/xuan-preopen-eod-association-renewal.patch','cloud/xuan-preopen']);
 export function createBuildContext(root,temp,{runGit=args=>execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:30_000,maxBuffer:4*1024*1024})}={}){
   if(typeof temp!=='string'||!path.isAbsolute(temp))fail('BUILD_CONTEXT');
   const context=fs.mkdtempSync(path.join(temp,'xuan-preopen-build-'));
