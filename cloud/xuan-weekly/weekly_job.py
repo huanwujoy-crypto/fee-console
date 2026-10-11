@@ -10,7 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from ib_source import fetch, normalize, SourceError, NoRedirect
+from ib_source import fetch, normalize, SourceError, NoRedirect, safe_polling, POLLING_CODE
 from quotes import fetch_quotes,calendar
 from latest import publish_latest
 from public_entry import publish_public
@@ -28,6 +28,7 @@ missing_token deadline ib_request_failed ib_statement_failed wrong_query empty_s
 wrong_account wrong_nav_currency nonpositive_nav conflicting_nav nav_change_not_daily conflicting_daily_change
 cash_not_detail missing_cash_id invalid_fx conflicting_cash_id conflicting_asset_transfer
 missing_baseline_or_daily_changes'''.split())
+FAILURE_CODES.add(POLLING_CODE)
 def get(path,params=None,*,deadline=None):
     if path not in ('/v1/portfolios','/v1/performance'):raise SourceError('forbidden_route')
     url=GATEWAY+path+('?' + urllib.parse.urlencode(params) if params else '')
@@ -93,7 +94,7 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
         bucket=client.bucket(os.environ['WEEKLY_BUCKET'])
         evidence_config=source_config(os.environ)
         stage='ib_fetch'
-        raw=fetch(os.environ['IB_FLEX_TOKEN'])
+        raw=fetch(os.environ['IB_FLEX_TOKEN'],deadline=network_deadline)
         stage='ib_validate'
         ib=normalize(raw,os.environ['IB_ACCOUNT_SHA256'])
         save('ib.xml',raw,'application/xml');save('ib.json',ib)
@@ -173,6 +174,9 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
                  'elapsedSeconds':round(time.monotonic()-start,2)}
         network=safe_network(error)
         if network:receipt['network']=network
+        polling=safe_polling(getattr(error,'polling',None))
+        if stage=='ib_fetch' and receipt['code']==POLLING_CODE and polling:
+            receipt['polling']=polling
         # Emit first: archive trouble must not hide failure from existing logging.
         print(json.dumps(receipt),flush=True)
         if bucket is not None:

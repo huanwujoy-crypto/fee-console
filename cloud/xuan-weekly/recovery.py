@@ -6,6 +6,7 @@ import json
 import re
 import time
 import uuid
+from ib_source import safe_polling, POLLING_CODE
 
 PRIVATE = 'family-portfolio-gateway-xuan-weekly-private'
 PUBLIC = 'family-portfolio-gateway-xuan-weekly-public'
@@ -29,9 +30,16 @@ def window(now):
 
 
 def transient(receipt):
+    if not isinstance(receipt, dict) or receipt.get('complete') is not False:
+        return False
+    if 'polling' in receipt:
+        return (receipt.get('stage') == 'ib_fetch' and receipt.get('code') == POLLING_CODE
+                and 'network' not in receipt and safe_polling(receipt['polling']) is not None)
+    if receipt.get('code') == POLLING_CODE:
+        return False
     n = receipt.get('network', {})
     # Do not trust retryable=true alone or arbitrary exception text.
-    if receipt.get('complete') is not False or n.get('retryable') is not True:
+    if not isinstance(n, dict) or n.get('retryable') is not True:
         return False
     if receipt.get('stage') not in ('ib_fetch', 'quotes_fetch', 'gateway_portfolios', 'gateway_performance'):
         return False
@@ -188,6 +196,8 @@ def control(store, now, run_report, republish, *, clock=None):
             return {'code': 'permanent_or_unclassified_failure', 'needsAttention': True}
     else:
         archived = None
+    if clock and window(clock())[1] >= 45*60:
+        return {'code': 'final_publication_missing', 'needsAttention': True}
     stamp = now.isoformat()
     prefix = 'weekly/'+stamp+'-'+uuid.uuid4().hex+'/'
     claim = {'startedAt': stamp, 'prefix': prefix, 'kind': kind,
@@ -210,6 +220,8 @@ def control(store, now, run_report, republish, *, clock=None):
              'abc_date': archived.get('cutoff'), 'sha256': archived.get('htmlSha256')}
         if not current(m, html.encode(), now):
             return {'code': 'archive_dates_invalid', 'needsAttention': True}
+        if clock and window(clock())[1] >= 45*60:
+            return {'code': 'final_publication_missing', 'needsAttention': True}
         statuses = republish(html, m, source)
         if not isinstance(statuses, dict):
             return {'code': 'publication_result_invalid', 'needsAttention': True}
@@ -217,6 +229,8 @@ def control(store, now, run_report, republish, *, clock=None):
         store.claim(normal['prefix']+'publication.json', {**archived, **statuses,
                     'completedAt': now.isoformat(), 'recoveredPublication': True})
     else:
+        if clock and window(clock())[1] >= 45*60:
+            return {'code': 'final_publication_missing', 'needsAttention': True}
         run_report(stamp, prefix)
     finished = clock() if clock else now
     metadata, body = store.public()

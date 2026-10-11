@@ -1,6 +1,7 @@
 """Fixed-query, read-only IB source. No trading or Sharesight mutation API."""
 import datetime as dt
 import hashlib
+import math
 import os
 import re
 import time
@@ -13,6 +14,41 @@ from network import SourceError, read_get
 QUERY = '1650083'
 BASELINE = '2026-07-31'
 MAX_BYTES = 10 * 1024 * 1024
+POLL_LIMIT = 24
+POLL_INTERVAL = 6.2
+POLLING_CODE = 'ib_statement_not_ready'
+
+
+def safe_polling(detail):
+    """Validate the complete, payload-free statement readiness contract."""
+    fields = {'operation', 'state', 'termination', 'lastErrorCode',
+              'pollCount', 'pollLimit', 'retryable'}
+    if not isinstance(detail, dict) or set(detail) != fields:
+        return None
+    if any(type(detail[k]) is not str for k in ('operation', 'state', 'termination')):
+        return None
+    if detail['operation'] != 'ib_get_statement':
+        return None
+    if any(type(detail[k]) is not int for k in ('lastErrorCode', 'pollCount', 'pollLimit')):
+        return None
+    states = {1019: 'statement_pending', 1009: 'busy'}
+    if detail['lastErrorCode'] not in states or detail['state'] != states[detail['lastErrorCode']]:
+        return None
+    if detail['pollLimit'] != POLL_LIMIT or not 1 <= detail['pollCount'] <= POLL_LIMIT:
+        return None
+    if detail['termination'] not in ('poll_limit', 'budget_exhausted'):
+        return None
+    if detail['termination'] == 'poll_limit' and detail['pollCount'] != POLL_LIMIT:
+        return None
+    if type(detail['retryable']) is not bool or detail['retryable'] is not True:
+        return None
+    return dict(detail)
+
+
+class StatementNotReady(SourceError):
+    def __init__(self, polling):
+        super().__init__(POLLING_CODE)
+        self.polling = polling
 
 def require(ok, code):
     if not ok:
@@ -44,17 +80,36 @@ def xml(data):
     require(sum(1 for _ in root.iter()) < 50000, 'xml_too_large')
     return root
 
+def leaf_text(root, name):
+    elements = root.findall(name)
+    return elements[0].text if len(elements) == 1 and len(elements[0]) == 0 else None
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *args, **kwargs):
         return None
 
-def fetch(token, timeout=150):
+def fetch(token, timeout=150, *, deadline=None):
     require(bool(token) and '\n' not in token, 'missing_token')
+    require(type(timeout) in (int, float) and math.isfinite(timeout) and timeout > 0, 'deadline')
+    require(deadline is None or (type(deadline) in (int, float) and math.isfinite(deadline)), 'deadline')
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-    deadline = time.monotonic() + timeout
+    own_deadline = time.monotonic() + min(timeout, 150)
+    deadline = own_deadline if deadline is None else min(own_deadline, deadline)
+    poll_count = 0
+    last_code = None
+    def exhausted(termination):
+        # Only a numeric SendRequest reference followed by an explicit accepted
+        # pending response can produce readiness evidence. Generic deadlines stay blocked.
+        if last_code is not None:
+            raise StatementNotReady({'operation': 'ib_get_statement',
+                'state': 'statement_pending' if last_code == 1019 else 'busy',
+                'termination': termination, 'lastErrorCode': last_code,
+                'pollCount': poll_count, 'pollLimit': POLL_LIMIT, 'retryable': True})
+        raise SourceError('deadline')
     def get(operation, query):
         remaining = deadline - time.monotonic()
-        require(remaining > 0, 'deadline')
+        if remaining <= 0:
+            exhausted('budget_exhausted')
         url = 'https://ndcdyn.interactivebrokers.com/AccountManagement/FlexWebService/' + operation
         url += '?' + urllib.parse.urlencode({'t': token, 'q': query, 'v': '3'})
         data = read_get(opener, url, operation='ib_send_request' if operation == 'SendRequest'
@@ -62,16 +117,28 @@ def fetch(token, timeout=150):
                         max_bytes=MAX_BYTES)
         return data, xml(data)
     _, root = get('SendRequest', QUERY)
-    ref = root.findtext('ReferenceCode')
-    require(root.findtext('Status') == 'Success' and ref and re.fullmatch(r'\d+', ref), 'ib_request_failed')
-    for _ in range(20):
-        require(time.monotonic() + 6.2 < deadline, 'deadline')
-        time.sleep(6.2)
+    ref = leaf_text(root, 'ReferenceCode')
+    require(root.tag == 'FlexStatementResponse' and not root.findall('ErrorCode')
+            and leaf_text(root, 'Status') == 'Success' and ref and re.fullmatch(r'\d+', ref), 'ib_request_failed')
+    for _ in range(POLL_LIMIT):
+        if time.monotonic() + POLL_INTERVAL >= deadline:
+            exhausted('budget_exhausted')
+        time.sleep(POLL_INTERVAL)
+        if time.monotonic() >= deadline:
+            exhausted('budget_exhausted')
         data, root = get('GetStatement', ref)
+        poll_count += 1
         if root.tag == 'FlexQueryResponse':
+            require(time.monotonic() < deadline, 'deadline')
             return data
-        require(root.findtext('ErrorCode') in ('1019', '1009'), 'ib_statement_failed')
-    raise SourceError('deadline')
+        code = leaf_text(root, 'ErrorCode')
+        require(root.tag == 'FlexStatementResponse' and not root.findall('ReferenceCode')
+                and leaf_text(root, 'Status') == 'Fail'
+                and code in ('1019', '1009'), 'ib_statement_failed')
+        last_code = int(code)
+        if time.monotonic() >= deadline:
+            exhausted('budget_exhausted')
+    exhausted('poll_limit')
 
 def normalize(data, account_hash):
     root = xml(data)

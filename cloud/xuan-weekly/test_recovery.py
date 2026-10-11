@@ -76,6 +76,62 @@ class RecoveryTests(unittest.TestCase):
     def test_auth_flag_cannot_make_failure_retryable(self):
         self.assertFalse(transient({'complete': False, 'stage': 'ib_fetch',
             'network': {'category': 'http', 'httpStatus': 401, 'retryable': True}}))
+    def test_actual_sunday_plain_deadline_receipt_remains_blocked(self):
+        # Exact safe outcome from first-failure-safe-runtime-detail.json, captured
+        # 2026-10-11; no broker response codes/payloads were observed or inferred here.
+        failure={'code':'deadline','complete':False,
+                 'completedAt':'2026-10-11T02:02:28.118341+00:00','elapsedSeconds':135.24,
+                 'event':'xuan_weekly_failed','stage':'ib_fetch'}
+        self.assertFalse(transient(failure))
+        self.normal(failure)
+        for minute in (15,30):
+            self.assertEqual(self.check(minute)['code'],'permanent_or_unclassified_failure')
+        self.assertEqual(self.check(45)['code'],'final_publication_missing')
+        self.assertFalse(self.calls)
+        self.assertNotIn(ROOT+'recovery.json',self.s.objects)
+
+    def test_polling_requires_exact_stage_code_and_excludes_network(self):
+        polling={'operation':'ib_get_statement','state':'statement_pending','termination':'poll_limit',
+                 'lastErrorCode':1019,'pollCount':24,'pollLimit':24,'retryable':True}
+        valid={'complete':False,'stage':'ib_fetch','code':'ib_statement_not_ready','polling':polling}
+        self.assertTrue(transient(valid))
+        for changes in [{'complete':True},{'complete':0},{'stage':'private_latest'},
+                        {'stage':'archive_failure_json'},{'code':'deadline'},{'code':'unknown'},
+                        {'network':FAIL['network']},{'network':None}]:
+            self.assertFalse(transient({**valid,**changes}))
+        for failure in [None,[],{'complete':False,'stage':'ib_fetch','network':[]},
+                        {'complete':False,'stage':'ib_fetch','network':None}]:
+            self.assertFalse(transient(failure))
+
+    def test_polling_normal_lease_then_once_recovery_then_final_attention(self):
+        polling={'operation':'ib_get_statement','state':'busy','termination':'budget_exhausted',
+                 'lastErrorCode':1009,'pollCount':20,'pollLimit':24,'retryable':True}
+        failure={'complete':False,'stage':'ib_fetch','code':'ib_statement_not_ready','polling':polling}
+        def failed_report(stamp,prefix):
+            self.calls.append(('source',prefix));self.s.objects[prefix+'failure.json']=failure
+        self.assertEqual(control(self.s,NOW,failed_report,self.publish)['code'],'await_bounded_recovery')
+        self.assertEqual(self.check(15)['code'],'active_lease')
+        self.assertEqual(control(self.s,NOW+dt.timedelta(minutes=30),failed_report,self.publish)['code'],'recovery_not_verified')
+        self.assertEqual(self.check(31)['code'],'recovery_already_used')
+        self.assertEqual(self.check(45)['code'],'final_publication_missing')
+        self.assertEqual(len(self.calls),2)
+        self.assertEqual(set(k for k in self.s.objects if k.startswith(ROOT)),{ROOT+'normal.json',ROOT+'recovery.json'})
+
+    def test_final_clock_recheck_blocks_slow_source_and_republish_start(self):
+        # Entry is 44:59; a slow private read/claim crosses 45:00. Do not start new work.
+        entry=NOW+dt.timedelta(minutes=44,seconds=59)
+        final=NOW+dt.timedelta(minutes=45)
+        self.normal(FAIL)
+        reads=iter([entry,final])
+        result=control(self.s,entry,self.report,self.publish,clock=lambda:next(reads))
+        self.assertEqual(result['code'],'final_publication_missing');self.assertFalse(self.calls)
+        self.s=Store();self.archive();reads=iter([entry,final])
+        result=control(self.s,entry,self.report,self.publish,clock=lambda:next(reads))
+        self.assertEqual(result['code'],'final_publication_missing');self.assertFalse(self.calls)
+        self.s=Store();self.normal(FAIL)
+        result=control(self.s,entry,self.report,self.publish,clock=lambda:final)
+        self.assertEqual(result['code'],'final_publication_missing');self.assertFalse(self.s.claims)
+
     def test_fresh_public_with_conflicting_private_receipt_stops(self):
         self.s.good=True; self.s.consistent=lambda *args: False
         self.assertTrue(self.check(15)['needsAttention']); self.assertFalse(self.calls)
