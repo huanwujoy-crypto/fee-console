@@ -13,12 +13,15 @@ export function buildAiDualExposure(envelope,{cutoff,actualAllocation,policy=DEF
   const nav=integer(actual.denominatorCents),navMicro=envelope.riskDenominator.components.reduce((s,c)=>s+integer(c.valueMicro),0n);
   if(nav<=0n||cents(navMicro)!==actual.denominatorCents)throw Error('weekly_ai_dual_denominator_invalid');
   const totals=new Map(actual.groups.map(g=>[g.key,integer(g.marketValueCents)*10000n]));
-  const products=new Map();let extra=0n;
+  const products=new Map(),knownProducts=new Map();let extra=0n;
   for(const [index,row] of envelope.riskConstituents.entries()){
     const observed=actual.rows[index];
     if(row.identityVerified!==true||observed.symbol!==row.symbol||observed.assetType!==row.assetType||observed.custodian!==row.custodian||cents(integer(row.marketValueMicro))!==observed.marketValueCents)throw Error('weekly_ai_dual_row_identity_invalid');
     const product=resolveLeveragedProduct(row,{cutoff,policy:leveragePolicy});
     if(!product)continue;
+    const knownKey=product.symbol+':'+product.underlying+':'+product.dailyMultiplierBp;
+    const known=knownProducts.get(knownKey)||{symbol:product.symbol,underlying:product.underlying,multiplierBp:product.dailyMultiplierBp,invested:0n,equivalent:0n};
+    known.invested+=integer(row.marketValueMicro);known.equivalent+=integer(row.marketValueMicro)*BigInt(product.dailyMultiplierBp)/10000n;knownProducts.set(knownKey,known);
     const def=policy.stocks.find(s=>s.id===product.underlyingInstrumentId&&s.symbols.includes(product.underlying)&&(s.assetTypes||['STK']).includes('STK'));
     // A verified leverage multiplier cannot supply missing/expired business classification.
     if(!def||cutoff>policy.reviewBy)continue;
@@ -30,14 +33,18 @@ export function buildAiDualExposure(envelope,{cutoff,actualAllocation,policy=DEF
     entry.invested+=invested;entry.equivalent+=equivalent;products.set(key,entry);
   }
   const policyHash=createHash('sha256').update(JSON.stringify({actualMethodId:actual.methodId,actualPolicyHash:actual.policyHash,leveragePolicy})).digest('hex');
+  const methodVersion=actual.methodVersion+':daily-equivalent:'+createHash('sha256').update(JSON.stringify({methodId:METHOD,products:leveragePolicy.products.map(({source,...p})=>p)})).digest('hex');
+  const sourceSetId=createHash('sha256').update(JSON.stringify({actualSources:actual.sourceSetId,leverageSources:leveragePolicy.products.map(p=>({symbol:p.symbol,source:p.source}))})).digest('hex');
+  const coverageSignature=createHash('sha256').update(JSON.stringify({actualCoverage:actual.coverageSignature,leverageReviewed:cutoff<=leveragePolicy.reviewBy})).digest('hex');
   const age=(day(cutoff)-day(previous?.cutoff))/86400000;
-  const comparable=previous?.methodId===METHOD&&previous.policyHash===policyHash&&age>=7&&age<=14;
+  const comparable=previous?.methodVersion===methodVersion&&previous.sourceSetId===sourceSetId&&previous.coverageSignature===coverageSignature&&previous.accountScopeFingerprint===actual.accountScopeFingerprint&&previous?.methodId===METHOD&&age>=7&&age<=14;
   const groups=actual.groups.map(g=>({key:g.key,label:g.label,marketValueCents:cents(totals.get(g.key)),percent:percent(totals.get(g.key),nav*10000n),changePp:comparable&&Number.isFinite(previous.primaryEquivalent?.groups?.find(p=>p.key===g.key)?.percent)?Math.round((percent(totals.get(g.key),nav*10000n)-previous.primaryEquivalent.groups.find(p=>p.key===g.key).percent)*100)/100:null}));
   const extraCents=cents(extra),gross=nav+BigInt(extraCents);
-  return {schema:'weekly-ai-dual-exposure.v1',methodId:METHOD,policyHash,cutoff,denominatorCents:actual.denominatorCents,
+  return {methodVersion,sourceSetId,coverageSignature,accountScopeFingerprint:actual.accountScopeFingerprint,schema:'weekly-ai-dual-exposure.v1',methodId:METHOD,policyHash,cutoff,denominatorCents:actual.denominatorCents,
     comparisonDate:comparable?previous.cutoff:null,
     primaryEquivalent:{measure:'reviewed-daily-target-equivalent',groups,grossEquivalentCents:String(gross),extraExposureCents:extraCents,displayRoundingResidualCents:String(gross-integer(actual.cash.marketValueCents)-groups.reduce((s,g)=>s+integer(g.marketValueCents),0n))},
     actualAllocation:{methodId:actual.methodId,policyHash:actual.policyHash,groups:actual.groups,cash:actual.cash,denominatorCents:actual.denominatorCents},
+    knownLeverageProducts:[...knownProducts.values()].map(({invested,equivalent,...p})=>({...p,investedCents:cents(invested),equivalentCents:cents(equivalent)})),
     leveragedProducts:[...products.values()].map(({invested,equivalent,...p})=>({...p,investedCents:cents(invested),equivalentCents:cents(equivalent)})),
     historicalNote:'旧报告保留实际配置口径；新等效口径只与同版本、同分类规则的先前周报比较，不倒算旧结果。'};
 }
