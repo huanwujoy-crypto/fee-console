@@ -44,7 +44,7 @@ test('only comparable previous week; method changes reset the comparison',()=>{
  assert.equal(group(buildAiExposure(f,{cutoff,previous:first}),'infrastructure').changePp,null);
  const previous={...first,cutoff:'2026-09-18'};previous.groups=first.groups.map(g=>({...g,percent:0}));
  assert.equal(group(buildAiExposure(f,{cutoff,previous}),'infrastructure').changePp,10);
- previous.policyHash='changed';assert.equal(group(buildAiExposure(f,{cutoff,previous}),'infrastructure').changePp,null);
+ previous.sourceSetId='changed';assert.equal(group(buildAiExposure(f,{cutoff,previous}),'infrastructure').changePp,null);
 });
 test('expired classification becomes pending without hiding amount',()=>{
  const policy=structuredClone(DEFAULT_POLICY);policy.reviewedOn='2026-01-01';policy.reviewBy='2026-09-24';

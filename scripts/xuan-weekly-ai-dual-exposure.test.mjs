@@ -28,7 +28,7 @@ test('future approved multiplier is read from verified registry, not hard-coded 
  leveragePolicy.products[0].dailyMultiplierBp=0;assert.throws(()=>pair(leveraged,{leveragePolicy}),/policy_invalid/);
 });
 test('new risk history is versioned; old allocation, same week and changed classification hash never become comparable',()=>{
- const first=pair(leveraged);for(const previous of [first.actual,{...first.dual,cutoff:'2026-10-01'},{...first.dual,cutoff:'2026-09-25',policyHash:'different'}])assert.equal(pair(leveraged,{previous}).dual.comparisonDate,null);
+ const first=pair(leveraged);for(const previous of [first.actual,{...first.dual,cutoff:'2026-10-01'},{...first.dual,cutoff:'2026-09-25',methodVersion:'different'}])assert.equal(pair(leveraged,{previous}).dual.comparisonDate,null);
  const previous=structuredClone(first.dual);previous.cutoff='2026-09-25';previous.primaryEquivalent.groups.find(g=>g.key==='infrastructure').percent=5;
  const next=pair(leveraged,{previous}).dual;assert.equal(next.comparisonDate,'2026-09-25');assert.equal(next.primaryEquivalent.groups.find(g=>g.key==='infrastructure').changePp,1);
 });
@@ -36,7 +36,7 @@ test('actual row linkage/denominator/business mismatch and expired business clas
  const {e,actual}=pair(leveraged);const bad=structuredClone(actual);bad.rows[0].symbol='OTHER';assert.throws(()=>buildAiDualExposure(e,{cutoff,actualAllocation:bad}),/row_identity_invalid/);
  const changed=structuredClone(e);changed.riskConstituents[0].marketValueMicro='21000000';assert.throws(()=>buildAiDualExposure(changed,{cutoff,actualAllocation:actual}),/row_identity_invalid/);
  bad.rows[0].symbol='VSTL';bad.denominatorCents='99999';assert.throws(()=>buildAiDualExposure(e,{cutoff,actualAllocation:bad}),/denominator_invalid/);
- const p=structuredClone(DEFAULT_POLICY);p.reviewedOn='2026-09-01';p.reviewBy='2026-10-01';const a=buildAiExposure(e,{cutoff,policy:p});const d=buildAiDualExposure(e,{cutoff,actualAllocation:a,policy:p});assert.equal(d.primaryEquivalent.extraExposureCents,'0');assert.equal(a.groups.find(g=>g.key==='etfUncovered').marketValueCents,'3000');
+ const p=structuredClone(DEFAULT_POLICY);p.reviewedOn='2026-09-01';p.reviewBy='2026-10-01';const a=buildAiExposure(e,{cutoff,policy:p});const d=buildAiDualExposure(e,{cutoff,actualAllocation:a,policy:p});assert.equal(d.primaryEquivalent.extraExposureCents,'0');assert.equal(d.knownLeverageProducts[0].equivalentCents,'6000');assert.equal(a.groups.find(g=>g.key==='etfUncovered').marketValueCents,'3000');
 });
 test('public paired display leads with equivalent exposure, keeps actual/unknown/history and hides private holding ids',()=>{
  const {actual,dual}=pair(leveraged);const html=renderAiDualExposure(actual,dual);assert.match(html,/AI 相关等效敞口/);assert.match(html,/实际配置对照/);assert.match(html,/VSTL → VST/);assert.match(html,/2\.0×/);assert.match(html,/不截断、不归一化/);assert.match(html,/旧报告保留实际配置口径/);assert.doesNotMatch(html,/29282953|29274212|936247|1350094/);

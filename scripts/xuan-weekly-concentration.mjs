@@ -98,7 +98,7 @@ export function buildWeeklyConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_P
   const listed=candidates.filter(r=>r.aboveOnePercent);
   const listedTotal=listed.reduce((sum,r)=>sum+r._total,0n);
   const rows=listed.map(({_total,...row})=>row);
-  return {methodId:policy.methodId+'-daily-leverage-v1',measure:'equivalent-exposure',cutoff,denominatorCents:cents(denominator),rows,
+  return {methodId:policy.methodId+'-daily-leverage-v1',measure:'equivalent-exposure',cutoff,denominatorCents:cents(denominator),rows,identifiedTopFive:candidates.slice(0,5).map(({_total,...r})=>r),
     listedEquivalentExposureCents:cents(listedTotal),listedMarketValueCents:cents(listedTotal),listedPercent:percent(listedTotal,denominator),
     candidateCount:candidates.length,candidateSources:{direct:directCandidates.size,etfTopTen:topTenCandidates.size},
     matchedFunds:[...usedFunds.values()].map(f=>({symbol:f.symbol,asOf:f.asOf,source:f.source,basis:f.basis})).sort((a,b)=>a.symbol.localeCompare(b.symbol)),

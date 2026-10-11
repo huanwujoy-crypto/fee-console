@@ -9,6 +9,7 @@ const integer=(v,label)=>{if(!/^\d+$/.test(String(v)))throw Error('ai_exposure_i
 const percent=(value,total)=>Number((value*10000n+total/2n)/total)/100;
 const cents=micro=>String((micro+5000n)/10000n);
 const labels={infrastructure:'AI 投资周期敏感',platform:'综合平台与应用',other:'其他已复核',pending:'待确认',etfUncovered:'ETF 待穿透／待分类'};
+export const riskAccountScopeFingerprint=envelope=>createHash('sha256').update(JSON.stringify({keys:envelope.riskDenominator.components.map(c=>c.key).sort(),accounts:(envelope.provenance||[]).map(p=>({key:p.key,portfolioId:p.portfolioId,custodian:p.custodian})).sort((a,b)=>a.key.localeCompare(b.key))})).digest('hex');
 export function buildAiExposure(envelope,{cutoff,policy=DEFAULT_POLICY,previous=null}={}){
   if(!Number.isFinite(day(cutoff))||!Number.isFinite(day(policy.reviewedOn))||!Number.isFinite(day(policy.reviewBy))||policy.reviewedOn>policy.reviewBy)throw Error('ai_exposure_date_invalid');
   // Review dates are administrative, not price dates (Sunday review can use Friday values).
@@ -60,7 +61,7 @@ export function buildAiExposure(envelope,{cutoff,policy=DEFAULT_POLICY,previous=
     const scopedStock=scoped.get(r.portfolioId+':'+r.holdingId);
     const leveraged=resolveLeveragedProduct(r,{cutoff});
     const s=classify(r.instrumentId,r.symbol,r.assetType)||(reviewed&&scopedStock?.symbol===r.symbol&&scopedStock.assetType===r.assetType?scopedStock:null)||(leveraged?classify(leveraged.underlyingInstrumentId,leveraged.underlying):null);
-    let recordedBp=0,unclassifiedBp=0;
+    let recordedBp=0,unclassifiedBp=0,relatedWeightUnits=0,classifiedWeightUnits=0;
     let group=s?.group||'pending',uncovered=s?0n:micro,etfAsOf=null,coveredBp=0,sourceCompositionComplete=false,economicOverlay=null,derivedWeightObservation=null,evidenceKind=null,proxyEvidence=null;
     // Verified Treasury / physical commodity mandates are not equity look-through.
     if(r.assetType==='ETF'&&!s){
@@ -98,22 +99,36 @@ export function buildAiExposure(envelope,{cutoff,policy=DEFAULT_POLICY,previous=
           if(weight>100000000)throw Error('ai_exposure_etf_weights_invalid');
           const stock=p.issuerKey?underlying.get(p.issuerKey):classify(p.instrumentId,p.symbol);
           if(!stock){unclassifiedBp+=units/10000;continue;} // Unknown business stays visibly uncovered.
-          coveredBp+=units/10000;
+          coveredBp+=units/10000;classifiedWeightUnits+=units;if(['infrastructure','platform'].includes(stock.group))relatedWeightUnits+=units;
           const part=micro*BigInt(units)/100000000n;allocated+=part;
           add(stock.group,part,stock.issuer,r.symbol);
         }
         recordedBp=weight/10000;uncovered=micro-allocated;add('etfUncovered',uncovered,r.symbol,r.symbol);
       }else add(group,micro,r.symbol,r.symbol);
     }else add(group,micro,s?.issuer||r.symbol,r.custodian);
-    rows.push({symbol:r.symbol,custodian:r.custodian,assetType:r.assetType,group,marketValueCents:cents(micro),uncoveredCents:cents(uncovered),etfAsOf,sourceCompositionComplete,evidenceKind,actualCompositionVerified:sourceCompositionComplete,...(proxyEvidence?{proxy:proxyEvidence}:{}),coveredBp,recordedBp,unclassifiedBp,unrecordedBp:etfAsOf?10000-recordedBp:null,...(economicOverlay?{economicUnclassifiedOverlay:economicOverlay}:{}),...(derivedWeightObservation?{derivedWeightObservation}:{}),coverageReason:proxyEvidence?'同基准代理估算；真实基金完整成分未核实':s?null:r.assetType!=='ETF'?'尚缺唯一标的业务分类证据':sourceCompositionComplete?'完整同日成分已取得；业务待复核及非权益项目仍单列':etfAsOf?'仅覆盖有日期资料中的已复核成分':'尚缺可用的发行方成分快照'});
+    const registeredOrdinarySnapshot=snapshots.get(String(r.instrumentId));
+    const complexUnknown=(r.assetType==='ETF'&&!s&&!leveraged&&!(registeredOrdinarySnapshot?.symbol===r.symbol&&registeredOrdinarySnapshot.fundName&&['physical-holdings','economic-exposure'].includes(registeredOrdinarySnapshot.basis)))||!['STK','ETF','COMMODITY'].includes(r.assetType)||(!leveraged&&LEVERAGED_POLICY.products.some(p=>p.holdingRefs.includes(r.portfolioId+':'+r.holdingId)));
+    const allocationCoefficientLower=s?(['infrastructure','platform'].includes(s.group)?1:0):etfAsOf?relatedWeightUnits/100000000:0;
+    const allocationCoefficientUpper=s?allocationCoefficientLower:etfAsOf?(relatedWeightUnits+100000000-classifiedWeightUnits)/100000000:1;
+    rows.push({allocationCoefficientLower,allocationCoefficientUpper,complexUnknown,symbol:r.symbol,custodian:r.custodian,assetType:r.assetType,group,marketValueCents:cents(micro),uncoveredCents:cents(uncovered),etfAsOf,sourceCompositionComplete,evidenceKind,actualCompositionVerified:sourceCompositionComplete,...(proxyEvidence?{proxy:proxyEvidence}:{}),coveredBp,recordedBp,unclassifiedBp,unrecordedBp:etfAsOf?10000-recordedBp:null,...(economicOverlay?{economicUnclassifiedOverlay:economicOverlay}:{}),...(derivedWeightObservation?{derivedWeightObservation}:{}),coverageReason:proxyEvidence?'同基准代理估算；真实基金完整成分未核实':s?null:r.assetType!=='ETF'?'尚缺唯一标的业务分类证据':sourceCompositionComplete?'完整同日成分已取得；业务待复核及非权益项目仍单列':etfAsOf?'仅覆盖有日期资料中的已复核成分':'尚缺可用的发行方成分快照'});
   }
   if(holdingTotal>base)throw Error('ai_exposure_holdings_exceed_nav');
   const serialize=(micro)=>({marketValueCents:cents(micro),percent:percent(micro,base)});
-  const comparable=previous?.methodId===policy.methodId&&previous.policyHash===policyHash
+  const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+  const normalize=(rows,keys)=>(rows||[]).map(r=>Object.fromEntries(keys.filter(k=>r[k]!==undefined).map(k=>[k,r[k]]))).sort((a,b)=>JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const methodVersion='weekly-ai-actual-range-v2:'+hash({methodId:policy.methodId,denominator:'three-account-same-round-cash-nav-v1',allocation:'actual-value-no-top-ten-normalization-v1',snapshotMaxAgeDays:100,
+    stocks:normalize(policy.stocks,['id','symbols','group','assetTypes','issuer']),underlying:normalize(policy.underlyingIssuers,['key','group','issuer']),direct:normalize(policy.directHoldings,['portfolioId','holdingId','symbol','assetType','group','issuer']),aliases:policy.issuerAliases||{},
+    leverage:normalize(LEVERAGED_POLICY.products,['symbol','assetType','underlying','underlyingInstrumentId','dailyMultiplierBp','basis','holdingRefs'])});
+  // Administrative review dates are not new constituent data. Their effective status is below.
+  const sourceSetId=hash({snapshots:normalize(policy.etfSnapshots,Object.keys(Object.assign({},...(policy.etfSnapshots||[])))),stocks:normalize(policy.stocks,['id','source']),underlying:normalize(policy.underlyingIssuers,['key','source']),direct:normalize(policy.directHoldings,['portfolioId','holdingId','source']),leverage:normalize(LEVERAGED_POLICY.products,['symbol','source'])});
+  const accountScopeFingerprint=riskAccountScopeFingerprint(envelope);
+  // Effective classifications, not amounts: crossing TTL/review or fallback resets comparison.
+  const coverageSignature=hash({reviewed,snapshots:[...snapshots.values()].map(s=>({id:s.instrumentId,asOf:s.asOf,active:reviewed&&Number.isFinite(day(s.asOf))&&day(cutoff)>=day(s.asOf)&&(day(cutoff)-day(s.asOf))/86400000<=100})).sort((a,b)=>String(a.id).localeCompare(String(b.id))),leverageReviewed:cutoff<=LEVERAGED_POLICY.reviewBy});
+  const comparable=previous?.methodVersion===methodVersion&&previous.sourceSetId===sourceSetId&&previous.coverageSignature===coverageSignature&&previous.accountScopeFingerprint===accountScopeFingerprint&&previous?.methodId===policy.methodId
     &&Number.isFinite(day(previous.cutoff))&&(day(cutoff)-day(previous.cutoff))/86400000>=7
     &&(day(cutoff)-day(previous.cutoff))/86400000<=14;
   const ranked=[...contributors.values()].sort((a,b)=>a.micro===b.micro?a.label.localeCompare(b.label):a.micro>b.micro?-1:1);
-  return {methodId:policy.methodId,policyHash,cutoff,reviewedOn:policy.reviewedOn,reviewBy:policy.reviewBy,reviewOverdue:!reviewed,
+  return {methodVersion,sourceSetId,coverageSignature,accountScopeFingerprint,methodId:policy.methodId,policyHash,cutoff,reviewedOn:policy.reviewedOn,reviewBy:policy.reviewBy,reviewOverdue:!reviewed,
     displayRoundingResidualCents:String(BigInt(cents(base))-BigInt(cents(base-holdingTotal))-Object.values(totals).reduce((s,m)=>s+BigInt(cents(m)),0n)),
     denominatorCents:cents(base),cash:serialize(base-holdingTotal),
     groups:Object.entries(totals).map(([key,micro])=>({key,label:labels[key],...serialize(micro),
@@ -125,7 +140,7 @@ export function buildAiExposure(envelope,{cutoff,policy=DEFAULT_POLICY,previous=
 }
 const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const usd=c=>'$'+(Number(c)/100).toLocaleString('en-US',{maximumFractionDigits:0});
-export function renderAiExposure(ai){
+export function renderAiExposure(ai,{compactUnverified=false}={}){
   const line=r=>`<div class="line"><span>${esc(r.label)}<br><small>${esc(r.via?.join(' · ')||'')}</small></span><b>${r.percent.toFixed(2)}%<br><small>${usd(r.marketValueCents)}</small></b></div>`;
   const cards=ai.groups.filter(g=>['infrastructure','platform'].includes(g.key)).map(g=>{
     const list=ai.contributors.filter(r=>r.group===g.key);
@@ -141,5 +156,5 @@ export function renderAiExposure(ai){
     ${ai.rows.filter(r=>r.derivedWeightObservation).map(r=>{const d=r.derivedWeightObservation;return `<p class="muted">${esc(r.symbol)} 资料 ${esc(d.sourceAsOf)}：${esc(d.methodNote)} ${esc(d.precisionNote)}</p>`;}).join('')}
     ${ai.rows.filter(r=>r.economicUnclassifiedOverlay).map(r=>{const o=r.economicUnclassifiedOverlay,pct=Number(o.notionalNavPercent??o.notionalNavRatioResearchIntervalPct[0]).toFixed(4);return `<p class="muted">${esc(r.symbol)} 成分资料 ${esc(o.sourceAsOf)} 另有指数期货：资料时点名义敞口${o.notionalNavRatioResearchIntervalPct?'约':''} ${pct}%（占该基金净值），业务穿透仍待确认；${o.notionalNavRatioResearchIntervalPct?'该比例由同源数值推算，':'其名义敞口'}不加进上方市值配置，也不因期货市值为零或负数当成零风险。本期是否持有或滚动尚未核实。${o.mappingCaution?' '+esc(o.mappingCaution):''}</p>`;}).join('')}
     ${ai.rows.some(r=>r.symbol==='IVAI'&&r.etfAsOf==='2026-08-31'&&r.recordedBp===3152)?'<p class="muted">IVAI 当前仅纳入 2026-08-31 前十项 31.52%；剩余 68.48% 的同日完整成分及权重尚未在本流程取得并核对，不能视为已经穿透。</p>':''}
-    ${coverage.map(g=>`<h3>${esc(g.label)}</h3>${ai.rows.filter(r=>r.group===g.key&&BigInt(r.uncoveredCents)>0n).map(r=>`<div class="line"><span>${esc(r.symbol)} <small>${esc(r.custodian)} · ${esc(r.coverageReason||'')}</small></span><b>${usd(r.uncoveredCents)}</b></div>`).join('')||'<p>无</p>'}`).join('')}<p class="muted">来源：Sharesight 已记录数据。分类证据与计算规则随代码保留；账户原始资料不公开。</p></details>`;
+    ${compactUnverified?'<p class="muted">未细分金额已保留在上方合计、基金覆盖率和研究候选中；省略重复的逐项待确认清单，不表示完成分类或穿透。</p>':coverage.map(g=>`<h3>${esc(g.label)}</h3>${ai.rows.filter(r=>r.group===g.key&&BigInt(r.uncoveredCents)>0n).map(r=>`<div class="line"><span>${esc(r.symbol)} <small>${esc(r.custodian)} · ${esc(r.coverageReason||'')}</small></span><b>${usd(r.uncoveredCents)}</b></div>`).join('')||'<p>无</p>'}`).join('')}<p class="muted">来源：Sharesight 已记录数据。分类证据与计算规则随代码保留；账户原始资料不公开。</p></details>`;
 }
