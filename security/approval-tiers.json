@@ -446,6 +446,9 @@
     "security/xuan-preopen-maintenance-iam.json",
     "docs/xuan-preopen-image-maintenance.md",
     ".github/workflows/xuan-preopen-image-build.yml",
-    ".github/workflows/xuan-preopen-image-deploy.yml"
+    ".github/workflows/xuan-preopen-image-deploy.yml",
+    "cloud/xuan-weekly/safe_observation.py",
+    "cloud/xuan-weekly/test_safe_observation.py",
+    "docs/xuan-weekly-safe-diagnostics.md"
   ]
 }
