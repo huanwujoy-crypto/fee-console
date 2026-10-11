@@ -7,7 +7,10 @@ COPY .github/workflows/xuan-preopen-image-maintenance.yml .github/workflows/xuan
 COPY .github/workflows/xuan-preopen-image-build.yml .github/workflows/xuan-preopen-image-build.yml
 COPY .github/workflows/xuan-preopen-image-deploy.yml .github/workflows/xuan-preopen-image-deploy.yml
 COPY claude/xuan-ib-portfolio-registry.json claude/xuan-ib-portfolio-registry.json
+COPY claude/xuan-ib-account-association-v1.json claude/xuan-ib-account-association-v1.json
 COPY security/xuan-preopen-maintenance-iam.json security/xuan-preopen-maintenance-iam.json
+COPY security/xuan-preopen-eod-source-iam.proposed.json security/xuan-preopen-eod-source-iam.proposed.json
+COPY docs/xuan-preopen-eod-association-renewal.patch docs/xuan-preopen-eod-association-renewal.patch
 COPY cloud/xuan-preopen/ cloud/xuan-preopen/
 USER node
 # The two phone integration tests require a historical page that is not a runtime input.

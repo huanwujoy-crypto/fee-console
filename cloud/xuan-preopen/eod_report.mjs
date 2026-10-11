@@ -1,7 +1,7 @@
-// Explicit local/injected capability. Existing production entry points never
-// select this runner. No default financial reader or credential provider.
+// EOD runner. The fixed runtime supplies archive/account/date/hash evidence;
+// independent financial finality and sync-completion verifiers stay optional.
 import crypto from 'node:crypto';
-import {adaptFlexArchive,applyFinancialVerification,digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,validDate} from './eod_sources.mjs';
+import {adaptFlexArchive,adaptPrivateNoahUiExport,applyFinancialVerification,digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,validDate} from './eod_sources.mjs';
 import {currentReserve} from './report.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport,extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
@@ -17,7 +17,7 @@ async function optionalLive(capture,timeoutMs){
   finally{clearTimeout(timer);controller.abort();}
 }
 export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
-  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000}={}){
+  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,privateNoahUiExport=null}={}){
   const started=now(),dataDate=hktDate(started),calendar=planPreopen(started);
   const ny=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(new Date(started));const part=k=>ny.find(p=>p.type===k)?.value;const nyDate=part('year')+'-'+part('month')+'-'+part('day');
   if(!validDate(sourceDate)||nyDate<sourceDate||nyDate===sourceDate&&Number(part('hour'))<16||calendar.status!=='generate'||calendar.sourceDate!==sourceDate)fail('COMPLETED_SESSION_REQUIRED');
@@ -28,11 +28,13 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   // cannot reject a valid EOD archive or either Sharesight snapshot outcome.
   const [archiveResult,snapshotResults,liveResult]=await Promise.all([
     Promise.resolve().then(()=>readArchive({sourceDate})),
-    Promise.all(Object.keys(SNAPSHOT_SCOPES).map(sourceKey=>readVerifiedSnapshot(sourceKey,{reader:snapshotReader,verifyCompletion:verifySnapshotCompletion,sourceDate,now}))),
+    Promise.all(Object.keys(SNAPSHOT_SCOPES).map(sourceKey=>sourceKey==='sharesight.noahPerformance'&&privateNoahUiExport!==null
+      ? adaptPrivateNoahUiExport(privateNoahUiExport,{sourceDate,reportStart:privateNoahUiExport.reportStart,now})
+      : readVerifiedSnapshot(sourceKey,{reader:snapshotReader,verifyCompletion:verifySnapshotCompletion,sourceDate,now}))),
     optionalLive(captureOptionalLive,optionalTimeoutMs),
   ]);
-  // The injected verifier must independently establish approved account,
-  // configured query, immutable object generation/hash and completed cutoff.
+  // Establish approved account, immutable bytes and original source cutoff.
+  // configuredQueryId binds consumer config; it does not prove producer query.
   const archiveProof=await verifyArchive({archive:archiveResult,expectedAccount,expectedQueryId,sourceDate});
   if(archiveProof?.status!=='archive-verified'||archiveProof.rawSha256!==digest(archiveResult.bytes)||archiveProof.account!==expectedAccount||archiveProof.configuredQueryId!==expectedQueryId||archiveProof.sourceDate!==sourceDate||archiveProof.generation!==archiveResult.metadata?.generation)fail('ARCHIVE_UNVERIFIED');
   let flex=adaptFlexArchive(archiveResult,{expectedAccount,expectedQueryId,sourceDate,readAt:new Date(now()).toISOString()}),financialProof=null;
@@ -59,16 +61,26 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   model.evidenceSha256=digest({sourceOutcomes:model.sourceOutcomes,sourceManifestSha256});
   const html=renderNightActionReport(model);validateNightActionHtml(html,dataDate);
   const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',html)};
-  const receipt={schemaVersion:1,mode:'private_eod_action',status:model.status,dataDate,sourceDate,startedAt:new Date(started).toISOString(),completedAt:new Date(now()).toISOString(),association,sourceCount:sources.length,sources,sourceOutcomes:model.sourceOutcomes,sourceManifestSha256,evidenceSha256:model.evidenceSha256,artifact,publication:'none',scheduler:'none'};
-  validateEodReceipt(receipt,html,dataDate,sourceDate);
+  const receipt={schemaVersion:1,mode:privateNoahUiExport===null?'private_eod_action':'private_eod_ui_acceptance',status:model.status,dataDate,sourceDate,startedAt:new Date(started).toISOString(),completedAt:new Date(now()).toISOString(),association,sourceCount:sources.length,sources,sourceOutcomes:model.sourceOutcomes,sourceManifestSha256,evidenceSha256:model.evidenceSha256,artifact,publication:'none',scheduler:'none'};
+  if(privateNoahUiExport===null)validateEodReceipt(receipt,html,dataDate,sourceDate);
+  else validatePrivateEodUiReceipt(receipt,html,dataDate,sourceDate);
   await io.savePrivate(prefix+'receipt.json',receipt);return receipt;
 }
 export function validateEodReceipt(r,html,dataDate,sourceDate){
-  if(r?.schemaVersion!==1||r.mode!=='private_eod_action'||r.status!=='partial'||r.dataDate!==dataDate||r.sourceDate!==sourceDate||r.publication!=='none'||r.scheduler!=='none'||r.sourceCount!==4||r.sources?.length!==4||new Set(r.sources.map(s=>s.sourceKey)).size!==4||r.sources.some(s=>!['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive'].includes(s.sourceKey)||!/^[a-f0-9]{64}$/.test(s.sha256||'')||!/^\d+$/.test(s.generation||'')))fail('RECEIPT');
+  return validateReceipt(r,html,dataDate,sourceDate,false);
+}
+// Explicit supplied-input acceptance only. No CLI/env selector, production
+// delivery marker or API/sync claim; ordinary receipt validation still rejects.
+export function validatePrivateEodUiReceipt(r,html,dataDate,sourceDate){
+  return validateReceipt(r,html,dataDate,sourceDate,true);
+}
+function validateReceipt(r,html,dataDate,sourceDate,privateUi){
+  if(r?.schemaVersion!==1||r.mode!==(privateUi?'private_eod_ui_acceptance':'private_eod_action')||r.status!=='partial'||r.dataDate!==dataDate||r.sourceDate!==sourceDate||r.publication!=='none'||r.scheduler!=='none'||r.sourceCount!==4||r.sources?.length!==4||new Set(r.sources.map(s=>s.sourceKey)).size!==4||r.sources.some(s=>!['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive'].includes(s.sourceKey)||!/^[a-f0-9]{64}$/.test(s.sha256||'')||!/^\d+$/.test(s.generation||'')))fail('RECEIPT');
   if(digest(sourceManifest(r.sources))!==r.sourceManifestSha256||r.sources.some(s=>s.rawFingerprint!==r.sourceOutcomes?.find(o=>o.sourceKey===s.sourceKey)?.rawFingerprint))fail('SOURCE_MANIFEST_BINDING');
   if(digest(html)!==r.artifact?.sha256||digest({sourceOutcomes:r.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256})!==r.evidenceSha256)fail('EVIDENCE_HASH');
   const m=extractNightActionModel(html);if(m.schemaVersion!==9||m.status!==r.status||m.sourceDate!==sourceDate||m.dataDate!==dataDate||m.evidenceSha256!==r.evidenceSha256||m.sourceManifestSha256!==r.sourceManifestSha256||JSON.stringify(m.sourceOutcomes)!==JSON.stringify(r.sourceOutcomes))fail('MODEL_BINDING');
-  if(m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI_EXPORT_PRIVATE_ONLY');
+  if(privateUi){if(m.sourceOutcomes.find(s=>s.sourceKey==='sharesight.noahPerformance')?.status!=='ui-export-observed')fail('UI_EXPORT_REQUIRED');}
+  else if(m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI_EXPORT_PRIVATE_ONLY');
   if(m.sourceOutcomes.find(s=>s.sourceKey==='ib.flexEod')?.status!=='verified'||m.sourceOutcomes.find(s=>s.sourceKey==='ib.flexEod')?.rawFingerprint!==m.provenance.flex.archiveSha256)fail('FLEX_BINDING');
   return m;
 }

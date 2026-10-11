@@ -51,18 +51,21 @@ export function currentReserve(ledger, date) {
   return eligible.at(-1).usd;
 }
 
-export async function readSharesightAction(sourceDate, token, {fetchImpl = fetch, now = Date.now} = {}) {
+export async function readSharesightSnapshot(sourceKey, sourceDate, token, {fetchImpl = fetch, now = Date.now} = {}) {
   if (!validDate(sourceDate) || typeof token !== 'string' || !token || /[\r\n]/.test(token)) throw new Error('SHARESIGHT_READ_SCOPE_INVALID');
   // No arbitrary portfolio, route or grouping is accepted. This token only
   // accesses existing GET REST routes, never the gateway's MCP write surface.
-  const reads = [['sharesight.ibGroupedPerformance', 'IB-HK', '83569'], ['sharesight.noahPerformance', 'NOAH-HK', 'investment_type']];
-  return Promise.all(reads.map(async ([sourceKey, portfolio, grouping]) => {
-    const startedAt = new Date(now()).toISOString(), url = new URL('/v1/performance', GATEWAY);
-    url.search = new URLSearchParams({portfolio, start_date: sourceDate, end_date: sourceDate, grouping, include_sales: 'false'}).toString();
-    const raw = json(await read(url, {fetchImpl, headers: {Authorization: `Bearer ${token}`}}));
-    if (raw.mode !== 'read_only' || raw.source !== 'Sharesight User API') throw new Error('SHARESIGHT_GATEWAY_SCOPE_INVALID');
-    return {sourceKey, raw, startedAt, completedAt: new Date(now()).toISOString(), rawFingerprint: hash(raw)};
-  }));
+  const scopes = {'sharesight.ibGroupedPerformance': ['IB-HK', '83569'], 'sharesight.noahPerformance': ['NOAH-HK', 'investment_type']};
+  if (!Object.hasOwn(scopes, sourceKey)) throw new Error('SHARESIGHT_READ_SCOPE_INVALID');
+  const [portfolio, grouping] = scopes[sourceKey];
+  const startedAt = new Date(now()).toISOString(), url = new URL('/v1/performance', GATEWAY);
+  url.search = new URLSearchParams({portfolio, start_date: sourceDate, end_date: sourceDate, grouping, include_sales: 'false'}).toString();
+  const raw = json(await read(url, {fetchImpl, headers: {Authorization: `Bearer ${token}`}}));
+  if (raw.mode !== 'read_only' || raw.source !== 'Sharesight User API') throw new Error('SHARESIGHT_GATEWAY_SCOPE_INVALID');
+  return {sourceKey, raw, startedAt, completedAt: new Date(now()).toISOString(), rawFingerprint: hash(raw)};
+}
+export async function readSharesightAction(sourceDate, token, options = {}) {
+  return Promise.all(['sharesight.ibGroupedPerformance', 'sharesight.noahPerformance'].map(key => readSharesightSnapshot(key, sourceDate, token, options)));
 }
 
 export async function runPrivateReport({sourceDate, io, now = Date.now, loadContext = loadTrustedContext,

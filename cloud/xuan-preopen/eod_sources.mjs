@@ -1,4 +1,4 @@
-// Inactive, injected EOD codec: no network, credentials, CLI or new endpoint.
+// Pure EOD codec: no network, credentials, CLI or new endpoint.
 import crypto from 'node:crypto';
 export const digest = value => crypto.createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest('hex');
 const fail = code => { throw new Error('EOD_' + code); };
@@ -38,13 +38,36 @@ function documentOf(bytes) {
   return statement;
 }
 function rows(statement,section){const node=statement.children.find(n=>n.name===section);return node?node.children.map(n=>n.attributes):null;}
-/** Query identity is immutable archive configuration, never an XML queryid.
- * Strict supported subset; actual expanded Activity coverage remains unbound. */
+export function inspectFlexArchive(bytes, expectedAccount) {
+  if (typeof bytes !== 'string' || Buffer.byteLength(bytes)>8_000_000 || /<!|<\?|&/.test(bytes.replace(/^<\?xml[^>]*\?>/,''))) fail('XML_UNSUPPORTED');
+  const statement=documentOf(bytes),header=statement.attributes,cutoff=date(header.toDate),from=date(header.fromDate);
+  if (!expectedAccount || header.accountId!==expectedAccount || from>cutoff) fail('ACCOUNT_OR_CUTOFF');
+  for(const section of statement.children)for(const {attributes:r} of section.children){
+    const historical=['CashTransactions','ConversionRates'].includes(section.name);
+    if(r.accountId!==undefined&&r.accountId!==expectedAccount || r.toDate!==undefined&&date(r.toDate)!==cutoff || r.fromDate!==undefined&&(date(r.fromDate)>cutoff||section.name==='CashReport'&&date(r.fromDate)!==from))fail('ROW_SCOPE');
+    if(r.reportDate!==undefined){const reported=date(r.reportDate);if(historical?reported<from||reported>cutoff:reported!==cutoff)fail('ROW_SCOPE');}
+  }
+  const declarations=['baseCurrency','currency'].filter(k=>header[k]!==undefined).map(k=>header[k]);
+  return {account:header.accountId,sourceDate:cutoff,coveredFrom:from,declaredBaseCurrencies:declarations};
+}
+// Currency capability is separate from archive identity. Supplier metadata,
+// BASE_SUMMARY, native USD rows and exchange rates cannot prove base USD.
+export function flexCurrencyCapability(scope, metadata={}) {
+  const declarations=scope.declaredBaseCurrencies;
+  if(declarations.some(c=>! /^[A-Z]{3}$/.test(c))||new Set(declarations).size>1
+    ||declarations.length&&metadata.baseCurrency!=null&&metadata.baseCurrency!==declarations[0])fail('BASE_CURRENCY_CONFLICT');
+  return declarations.length&&declarations.every(c=>c==='USD')
+    ? {baseCurrency:'USD',baseCurrencyEvidence:'original-statement-declaration'}
+    : {baseCurrency:null,baseCurrencyEvidence:null};
+}
+/** Configured query is consumer configuration, never historical producer
+ * attribution. Strict supported subset; expanded Activity coverage is unbound. */
 export function adaptFlexArchive({bytes, metadata}, {expectedAccount, expectedQueryId, sourceDate, readAt}={}) {
   if (typeof bytes !== 'string' || Buffer.byteLength(bytes)>8_000_000 || /<!|<\?|&/.test(bytes.replace(/^<\?xml[^>]*\?>/,''))) fail('XML_UNSUPPORTED');
   if (!expectedAccount || !expectedQueryId || !validDate(sourceDate) || !Number.isFinite(Date.parse(readAt))) fail('SCOPE');
   if (!metadata || metadata.configuredQueryId !== expectedQueryId || !/^\d+$/.test(metadata.generation || '')
     || typeof metadata.privateObject !== 'string' || !metadata.privateObject || metadata.rawSha256 !== digest(bytes)) fail('ARCHIVE_BINDING');
+  const currencyCapability=flexCurrencyCapability(inspectFlexArchive(bytes, expectedAccount),metadata);
   const statement=documentOf(bytes),header=statement.attributes;
   if (header.accountId!==expectedAccount || date(header.toDate)!==sourceDate || date(header.fromDate)>sourceDate) fail('ACCOUNT_OR_CUTOFF');
   const generated = header.whenGenerated;
@@ -55,14 +78,16 @@ export function adaptFlexArchive({bytes, metadata}, {expectedAccount, expectedQu
   for(const section of statement.children)for(const row of section.children){if(row.attributes.accountId!==undefined&&row.attributes.accountId!==expectedAccount)fail('ROW_SCOPE');}
   const checkRow=r=>{if(r.accountId!==expectedAccount || r.reportDate && date(r.reportDate)!==sourceDate)fail('ROW_SCOPE');};
   [cashRows,positionRows,tradeRows].filter(Boolean).flat().forEach(checkRow);
-  let cash=null;
+  let cash=null,cashUnavailableReason='FLEX_CASH_MISSING';
   if(cashRows!==null){
     const base=cashRows.filter(r=>r.levelOfDetail==='BaseCurrency'), native=cashRows.filter(r=>r.levelOfDetail==='Currency');
-    if(base.length!==1 || metadata.baseCurrency!=='USD' || base[0].currency!=='BASE_SUMMARY' || base.length+native.length!==cashRows.length || new Set(native.map(r=>r.currency)).size!==native.length || native.some(r=>! /^[A-Z]{3}$/.test(r.currency)))fail('CASH_CURRENCY_SCOPE');
+    if(base.length!==1 || base[0].currency!=='BASE_SUMMARY' || base.length+native.length!==cashRows.length || new Set(native.map(r=>r.currency)).size!==native.length || native.some(r=>! /^[A-Z]{3}$/.test(r.currency)))fail('CASH_CURRENCY_SCOPE');
     const details=cashRows.map(r=>({currency:r.currency,level:r.levelOfDetail,endingCash:number(r.endingCash),endingSettledCash:number(r.endingSettledCash),
       components:Object.fromEntries(['commissions','fxTranslationGainLoss','netTradesPurchases','netTradesSales'].filter(k=>r[k]!==undefined).map(k=>[k,number(r[k])]))}));
-    cash={currency:'USD',tradeDate:details.find(r=>r.level==='BaseCurrency').endingCash,settled:details.find(r=>r.level==='BaseCurrency').endingSettledCash,native:details.filter(r=>r.level==='Currency')};
-    if(cash.tradeDate<0||cash.settled<0)fail('NEGATIVE_CASH_UNSUPPORTED');
+    const aggregate=details.find(r=>r.level==='BaseCurrency');
+    if(aggregate.endingCash<0||aggregate.endingSettledCash<0)fail('NEGATIVE_CASH_UNSUPPORTED');
+    if(currencyCapability.baseCurrency==='USD')cash={currency:'USD',tradeDate:aggregate.endingCash,settled:aggregate.endingSettledCash,native:details.filter(r=>r.level==='Currency')};
+    else cashUnavailableReason='FLEX_BASE_CURRENCY_UNVERIFIED';
   }
   const positions=positionRows===null?null:positionRows.map(r=>{
     if(r.levelOfDetail!=='SUMMARY' || !r.conid || !r.symbol || !/^[A-Z]{3}$/.test(r.currency) || date(r.reportDate)!==sourceDate)fail('POSITION_SHAPE');
@@ -79,9 +104,9 @@ export function adaptFlexArchive({bytes, metadata}, {expectedAccount, expectedQu
   }}
   // Supplier metadata proves neither reconciliation nor execution/cancel
   // coverage. The pure archive codec never grants financial finality.
-  return {sourceKey:'ib.flexEod',rawFingerprint:digest(bytes),cash,positions,trades,duplicateRows,tradeCoverageProven:false,
+  return {sourceKey:'ib.flexEod',rawFingerprint:digest(bytes),cash,cashUnavailableReason:cash?null:cashUnavailableReason,positions,trades,duplicateRows,tradeCoverageProven:false,
     reconciliation:{status:'unknown',cashResidual:null,cancellationPending,verificationSha256:null},
-    provenance:{sourceDate,coveredFrom:date(header.fromDate),coveredThrough:date(header.toDate),providerGeneratedText:generated,providerTimezone:timezone,readAt,archiveGeneration:metadata.generation,archiveSha256:metadata.rawSha256,configuredQueryId:expectedQueryId}};
+    provenance:{sourceDate,coveredFrom:date(header.fromDate),coveredThrough:date(header.toDate),providerGeneratedText:generated,providerTimezone:timezone,readAt,archiveGeneration:metadata.generation,archiveSha256:metadata.rawSha256,configuredQueryId:expectedQueryId,producerQueryId:null,queryProvenance:'unknown'}};
 }
 /** Internal normalized result of an injected independent financial verifier.
  * Not a claimed production receipt format. No default verifier or new signer.

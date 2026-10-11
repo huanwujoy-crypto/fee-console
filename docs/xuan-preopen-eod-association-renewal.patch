@@ -1,0 +1,17 @@
+diff --git a/claude/xuan-ib-account-association-v1.json b/claude/xuan-ib-account-association-v1.json
+--- a/claude/xuan-ib-account-association-v1.json
++++ b/claude/xuan-ib-account-association-v1.json
+@@ -6,11 +6,11 @@
+     "am",
+     "pm"
+   ],
+-  "expiresAt": "2026-10-10T13:30:00.000Z",
++  "expiresAt": "2026-11-09T13:30:00.000Z",
+   "policyId": "ib-primary-7day-pilot-v1",
+   "publisher": "codex-verified-candidate-v1",
+   "purpose": "xuan-ib-read-only-report",
+   "schemaVersion": 1,
+   "status": "active",
+-  "validFrom": "2026-09-11T13:30:00.000Z"
++  "validFrom": "2026-10-10T13:30:00.000Z"
+ }
