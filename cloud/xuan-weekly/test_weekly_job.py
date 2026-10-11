@@ -238,4 +238,38 @@ class WeeklyJobTests(unittest.TestCase):
             with contextlib.redirect_stdout(io.StringIO()):job.run(outer_deadline=350)
         self.assertEqual(self.mocks[2].call_args.kwargs['deadline'],170)
 
+    def test_terminal_statement_diagnostic_reaches_log_archive_and_safe_observer_only(self):
+        from test_ib_source import SyntheticIB, SEND, pending
+        from ib_source import fetch
+        from recovery import transient
+        from safe_observation import safe_outcome
+        archived = []
+        self.bucket.blob.side_effect = lambda name: types.SimpleNamespace(upload_from_string=lambda body, **kw: archived.append((name, body)))
+        body = pending('1015').replace(b'</FlexStatementResponse>', b'<ErrorMessage>DO_NOT_LOG SYNTHETIC_TOKEN U123456789 https://private.invalid/</ErrorMessage></FlexStatementResponse>')
+        source = SyntheticIB([SEND, body]); self.mocks[2].side_effect = fetch
+        with source.patches()[0], source.patches()[1], source.patches()[2]:
+            status, lines = self.execute()
+        self.assertEqual(status, 1); self.assertEqual(lines[0]['code'], 'ib_statement_failed')
+        self.assertEqual(lines[0]['statement']['upstreamErrorCode'], 1015)
+        self.assertEqual(lines[0]['statement']['reason'], 'error_code_rejected')
+        self.assertFalse(transient(lines[0])); self.assertNotIn('polling', lines[0]); self.assertNotIn('network', lines[0])
+        self.assertEqual(json.loads(archived[0][1]), lines[0]); self.assertTrue(archived[0][0].endswith('/failure.json'))
+        self.assertEqual(safe_outcome(lines[0])['statement'], lines[0]['statement'])
+        self.mocks[3].assert_not_called(); self.mocks[6].assert_not_called(); self.mocks[8].assert_not_called(); self.mocks[9].assert_not_called()
+        text=json.dumps(lines)
+        for value in ['DO_NOT_LOG', 'U123456789', 'private.invalid', 'SYNTHETIC_TOKEN', 'ErrorMessage']:
+            self.assertNotIn(value, text)
+
+    def test_forged_statement_diagnostics_and_wrong_stage_or_operation_are_not_emitted(self):
+        from ib_source import StatementRejected, statement_detail, xml
+        from test_ib_source import pending
+        valid = statement_detail(xml(pending('1003')), 'ib_get_statement', 1)
+        for value in [None, [], {**valid, 'pollCount': True}, {**valid, 'token': 'DO_NOT_LOG'},
+                      {**valid, 'operation': 'ib_send_request', 'pollCount': 0, 'reason': 'reference_rejected'}]:
+            self.mocks[2].side_effect = StatementRejected('ib_statement_failed', value)
+            status, lines = self.execute(); self.assertEqual(status, 1); self.assertNotIn('statement', lines[0])
+        self.mocks[2].side_effect = None
+        self.mocks[3].side_effect = StatementRejected('ib_statement_failed', valid)
+        status, lines = self.execute(); self.assertEqual(lines[0]['stage'], 'ib_validate'); self.assertNotIn('statement', lines[0])
+
 if __name__=='__main__':unittest.main()

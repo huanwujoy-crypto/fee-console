@@ -10,7 +10,7 @@ import time
 import urllib.parse
 import urllib.request
 import uuid
-from ib_source import fetch, normalize, SourceError, NoRedirect, safe_polling, POLLING_CODE
+from ib_source import fetch, normalize, SourceError, NoRedirect, safe_polling, safe_statement, POLLING_CODE
 from quotes import fetch_quotes,calendar
 from latest import publish_latest
 from public_entry import publish_public
@@ -177,6 +177,11 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
         polling=safe_polling(getattr(error,'polling',None))
         if stage=='ib_fetch' and receipt['code']==POLLING_CODE and polling:
             receipt['polling']=polling
+        statement=safe_statement(getattr(error,'statement',None))
+        if (stage=='ib_fetch' and receipt['code'] in ('ib_request_failed','ib_statement_failed')
+                and statement and statement['operation']==('ib_send_request' if receipt['code']=='ib_request_failed'
+                                                         else 'ib_get_statement')):
+            receipt['statement']=statement
         # Emit first: archive trouble must not hide failure from existing logging.
         print(json.dumps(receipt),flush=True)
         if bucket is not None:

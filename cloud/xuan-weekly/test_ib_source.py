@@ -173,4 +173,93 @@ class FetchTests(unittest.TestCase):
             with self.assertRaises(SourceError):source.fetch(**kwargs)
             self.assertFalse(source.calls)
 
+class StatementDiagnosticTests(unittest.TestCase):
+    def rejected(self, body, send=False):
+        from ib_source import safe_statement
+        source = SyntheticIB([body] if send else [SEND, body])
+        with self.assertRaises(SourceError) as caught:
+            source.fetch()
+        error = caught.exception
+        self.assertEqual(str(error), 'ib_request_failed' if send else 'ib_statement_failed')
+        self.assertIsNone(error.network)
+        self.assertFalse(hasattr(error, 'polling'))
+        self.assertEqual(safe_statement(error.statement), error.statement)
+        self.assertEqual(len(source.calls), 1 if send else 2)
+        return error.statement
+
+    def test_official_v3_error_shapes_have_known_numeric_code_without_message(self):
+        for code in ['1001', '1003', '1012', '1015', '1018', '1021']:
+            body = pending(code).replace(b'</FlexStatementResponse>', b'<ErrorMessage>PRIVATE_NEVER_LOG</ErrorMessage></FlexStatementResponse>')
+            for send in (False, True):
+                detail = self.rejected(body, send)
+                self.assertEqual(detail['upstreamErrorCode'], int(code))
+                self.assertEqual(detail['errorCodeShape'], 'known')
+                self.assertEqual(detail['pollCount'], 0 if send else 1)
+                self.assertNotIn('PRIVATE_NEVER_LOG', repr(detail))
+
+    def test_root_namespace_and_field_shapes_are_fixed_enums(self):
+        cases = [
+            (pending('1003').replace(b'FlexStatementResponse', b'PRIVATE_ROOT'), 'unexpected_root', 'known'),
+            (pending('1003').replace(b'<FlexStatementResponse>', b'<FlexStatementResponse xmlns="urn:PRIVATE_NAMESPACE">'), 'unexpected_root', 'qualified'),
+            (b'<FlexQueryResponse xmlns="urn:PRIVATE_NAMESPACE"/>', 'unexpected_root', 'missing'),
+            (b'<FlexStatementResponse><Status>Fail</Status></FlexStatementResponse>', 'error_code_rejected', 'missing'),
+            (pending('1003').replace(b'<ErrorCode>1003</ErrorCode>', b'<Errors><ErrorCode>1003</ErrorCode></Errors>'), 'error_code_rejected', 'nested'),
+            (pending('1003').replace(b'</ErrorCode>', b'</ErrorCode><ErrorCode>1012</ErrorCode>'), 'error_code_rejected', 'ambiguous'),
+            (pending('1003').replace(b'</FlexStatementResponse>', b'<Errors><ErrorCode>1012</ErrorCode></Errors></FlexStatementResponse>'), 'error_code_rejected', 'ambiguous'),
+            (b'<FlexStatementResponse ErrorCode="PRIVATE_ATTRIBUTE"><Status>Fail</Status></FlexStatementResponse>', 'error_code_rejected', 'attribute'),
+            (pending('1003').replace(b'<FlexStatementResponse>', b'<FlexStatementResponse ErrorCode="PRIVATE_ATTRIBUTE">'), 'error_code_rejected', 'ambiguous'),
+            (pending('1003').replace(b'</ErrorCode>', b'<Child>PRIVATE_CHILD</Child></ErrorCode>'), 'error_code_rejected', 'nonleaf'),
+            (pending('1003').replace(b'>Fail<', b'>Success<'), 'status_rejected', 'known'),
+            (pending('1003').replace(b'</Status>', b'</Status><ReferenceCode>PRIVATE_REFERENCE</ReferenceCode>'), 'reference_present', 'known'),
+        ]
+        for body, reason, shape in cases:
+            with self.subTest(reason=reason, shape=shape):
+                detail = self.rejected(body)
+                self.assertEqual(detail['reason'], reason)
+                self.assertEqual(detail['errorCodeShape'], shape)
+                self.assertNotIn('PRIVATE_', repr(detail))
+                if shape != 'known':
+                    self.assertIsNone(detail['upstreamErrorCode'])
+
+    def test_numeric_code_never_normalizes_or_logs_arbitrary_text(self):
+        for code in ['1002', '9999', '01003', ' 1003 ', '+1003', '1e03', '\u0661\u0660\u0660\u0663',
+                     '1003\nPRIVATE_TOKEN', 'U123456789', 'https://private.invalid/?t=PRIVATE_TOKEN', '1' * 20000]:
+            detail = self.rejected(pending(code))
+            self.assertIsNone(detail['upstreamErrorCode'])
+            self.assertNotIn('PRIVATE_', repr(detail))
+            self.assertLess(len(repr(detail)), 400)
+
+    def test_status_shape_does_not_copy_private_values(self):
+        for tag, shape in [(b'<Status>PRIVATE_STATUS</Status>', 'noncanonical'),
+                           (b'<Status>Fail</Status><Status>Success</Status>', 'ambiguous'),
+                           (b'<Status>Fail<Child>PRIVATE_CHILD</Child></Status>', 'nonleaf'),
+                           (b'<Nested><Status>Fail</Status></Nested>', 'nested'),
+                           (b'<s:Status xmlns:s="urn:PRIVATE_NAMESPACE">Fail</s:Status>', 'qualified')]:
+            detail = self.rejected(pending('1003').replace(b'<Status>Fail</Status>', tag))
+            self.assertEqual(detail['statusShape'], shape)
+            self.assertNotIn('PRIVATE_', repr(detail))
+
+    def test_validator_rejects_extra_fields_types_and_inconsistent_codes(self):
+        from ib_source import safe_statement
+        valid = self.rejected(pending('1003'))
+        bad = [{**valid, key: value} for key, value in [
+            ('operation', 'PRIVATE_OPERATION'), ('reason', 'PRIVATE_REASON'), ('rootKind', 'PRIVATE_ROOT'),
+            ('namespacePresent', 1), ('pollCount', True), ('pollCount', 0), ('pollCount', 25),
+            ('pollCount', 1.0), ('upstreamErrorCode', True), ('upstreamErrorCode', '1003'),
+            ('upstreamErrorCode', 9999), ('errorCodeShape', 'PRIVATE_SHAPE'), ('statusShape', 'known'),
+            ('errorCodeShape', 'missing'), ('ErrorMessage', 'PRIVATE_MESSAGE'), ('xml', 'PRIVATE_XML')]]
+        for value in bad + [None, [], {}, {k: v for k, v in valid.items() if k != 'reason'}]:
+            self.assertIsNone(safe_statement(value))
+
+    def test_success_pending_and_invalid_xml_behavior_are_unchanged(self):
+        source = SyntheticIB([SEND, pending(), READY])
+        self.assertEqual(source.fetch(), READY)
+        self.assertEqual(len(source.calls), 3)
+        source = SyntheticIB([SEND, b'<FlexQueryResponse><Status>Fail</Status><ErrorCode>1015</ErrorCode></FlexQueryResponse>'])
+        self.assertEqual(source.fetch(), b'<FlexQueryResponse><Status>Fail</Status><ErrorCode>1015</ErrorCode></FlexQueryResponse>')
+        source = SyntheticIB([SEND, b'bad XML'])
+        with self.assertRaisesRegex(SourceError, 'invalid_xml') as caught:
+            source.fetch()
+        self.assertFalse(hasattr(caught.exception, 'statement'))
+
 if __name__=='__main__':unittest.main()

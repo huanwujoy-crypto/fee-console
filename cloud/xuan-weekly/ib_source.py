@@ -17,6 +17,105 @@ MAX_BYTES = 10 * 1024 * 1024
 POLL_LIMIT = 24
 POLL_INTERVAL = 6.2
 POLLING_CODE = 'ib_statement_not_ready'
+# Numeric diagnostics are restricted to the published v3 error-code table.
+# This list never grants response acceptance or retry eligibility.
+STATEMENT_ERROR_CODES = frozenset([1001] + list(range(1003, 1022)))
+FIELD_SHAPES = frozenset({'missing', 'ambiguous', 'nested', 'qualified',
+                         'attribute', 'nonleaf', 'noncanonical', 'unrecognized',
+                         'known', 'success', 'fail'})
+
+
+def safe_statement(detail):
+    fields = {'operation', 'reason', 'rootKind', 'namespacePresent',
+              'statusShape', 'errorCodeShape', 'upstreamErrorCode', 'pollCount'}
+    if not isinstance(detail, dict) or set(detail) != fields:
+        return None
+    if any(type(detail[k]) is not str for k in
+           ('operation', 'reason', 'rootKind', 'statusShape', 'errorCodeShape')):
+        return None
+    operations = {'ib_send_request': {'unexpected_root', 'error_code_present',
+                    'status_rejected', 'reference_rejected'},
+                  'ib_get_statement': {'unexpected_root', 'reference_present',
+                    'status_rejected', 'error_code_rejected'}}
+    if detail['operation'] not in operations or detail['reason'] not in operations[detail['operation']]:
+        return None
+    if detail['rootKind'] not in ('statement_response', 'query_response', 'other'):
+        return None
+    if type(detail['namespacePresent']) is not bool or type(detail['pollCount']) is not int:
+        return None
+    if not (detail['pollCount'] == 0 if detail['operation'] == 'ib_send_request'
+            else 1 <= detail['pollCount'] <= POLL_LIMIT):
+        return None
+    if detail['statusShape'] not in FIELD_SHAPES - {'known', 'unrecognized'}:
+        return None
+    if detail['errorCodeShape'] not in FIELD_SHAPES - {'success', 'fail'}:
+        return None
+    code = detail['upstreamErrorCode']
+    if detail['errorCodeShape'] == 'known':
+        if type(code) is not int or code not in STATEMENT_ERROR_CODES:
+            return None
+    elif code is not None:
+        return None
+    return dict(detail)
+
+
+def statement_detail(root, operation, poll_count):
+    """Only fixed enums and one canonical known numeric code; no XML text."""
+    def local(tag):
+        return tag.rsplit('}', 1)[-1] if isinstance(tag, str) else ''
+    def field(name):
+        nodes = [node for node in root.iter() if local(node.tag) == name]
+        attributes = sum(local(key) == name for node in root.iter() for key in node.attrib)
+        if len(nodes) + attributes > 1:
+            return 'ambiguous', None
+        if attributes:
+            return 'attribute', None
+        if not nodes:
+            return 'missing', None
+        node = nodes[0]
+        if node not in list(root):
+            return 'nested', None
+        if node.tag != name:
+            return 'qualified', None
+        if len(node):
+            return 'nonleaf', None
+        text = node.text
+        if name == 'Status':
+            return {'Success': 'success', 'Fail': 'fail'}.get(text, 'noncanonical'), None
+        if type(text) is not str or len(text) != 4 or re.fullmatch(r'[0-9]{4}', text) is None:
+            return 'noncanonical', None
+        number = int(text)
+        return ('known', number) if number in STATEMENT_ERROR_CODES else ('unrecognized', None)
+    status, _ = field('Status')
+    code_shape, code = field('ErrorCode')
+    if root.tag != 'FlexStatementResponse':
+        reason = 'unexpected_root'
+    elif operation == 'ib_send_request' and root.findall('ErrorCode'):
+        reason = 'error_code_present'
+    elif operation == 'ib_get_statement' and root.findall('ReferenceCode'):
+        reason = 'reference_present'
+    elif leaf_text(root, 'Status') != ('Success' if operation == 'ib_send_request' else 'Fail'):
+        reason = 'status_rejected'
+    else:
+        reason = 'reference_rejected' if operation == 'ib_send_request' else 'error_code_rejected'
+    detail = {'operation': operation, 'reason': reason,
+              'rootKind': {'FlexStatementResponse': 'statement_response',
+                           'FlexQueryResponse': 'query_response'}.get(local(root.tag), 'other'),
+              'namespacePresent': isinstance(root.tag, str) and root.tag.startswith('{'),
+              'statusShape': status, 'errorCodeShape': code_shape,
+              'upstreamErrorCode': code, 'pollCount': poll_count}
+    return safe_statement(detail)
+
+
+class StatementRejected(SourceError):
+    def __init__(self, code, statement):
+        super().__init__(code)
+        self.statement = statement
+
+
+def require_statement(ok, code, root, operation, poll_count):
+    if not ok:
+        raise StatementRejected(code, statement_detail(root, operation, poll_count))
 
 
 def safe_polling(detail):
@@ -118,8 +217,9 @@ def fetch(token, timeout=150, *, deadline=None):
         return data, xml(data)
     _, root = get('SendRequest', QUERY)
     ref = leaf_text(root, 'ReferenceCode')
-    require(root.tag == 'FlexStatementResponse' and not root.findall('ErrorCode')
-            and leaf_text(root, 'Status') == 'Success' and ref and re.fullmatch(r'\d+', ref), 'ib_request_failed')
+    require_statement(root.tag == 'FlexStatementResponse' and not root.findall('ErrorCode')
+            and leaf_text(root, 'Status') == 'Success' and ref and re.fullmatch(r'\d+', ref),
+            'ib_request_failed', root, 'ib_send_request', 0)
     for _ in range(POLL_LIMIT):
         if time.monotonic() + POLL_INTERVAL >= deadline:
             exhausted('budget_exhausted')
@@ -132,9 +232,9 @@ def fetch(token, timeout=150, *, deadline=None):
             require(time.monotonic() < deadline, 'deadline')
             return data
         code = leaf_text(root, 'ErrorCode')
-        require(root.tag == 'FlexStatementResponse' and not root.findall('ReferenceCode')
+        require_statement(root.tag == 'FlexStatementResponse' and not root.findall('ReferenceCode')
                 and leaf_text(root, 'Status') == 'Fail'
-                and code in ('1019', '1009'), 'ib_statement_failed')
+                and code in ('1019', '1009'), 'ib_statement_failed', root, 'ib_get_statement', poll_count)
         last_code = int(code)
         if time.monotonic() >= deadline:
             exhausted('budget_exhausted')
