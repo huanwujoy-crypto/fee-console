@@ -32,7 +32,7 @@ class WeeklyJobTests(unittest.TestCase):
                       patch.dict(os.environ,{'WEEKLY_BUCKET':'family-portfolio-gateway-xuan-weekly-private',
                        'WEEKLY_PUBLIC_BUCKET':'family-portfolio-gateway-xuan-weekly-public',
                        'IB_FLEX_TOKEN':'SYNTHETIC_TOKEN','IB_ACCOUNT_SHA256':'SYNTHETIC_BINDING',
-                       'GATEWAY_READ_TOKEN':'SYNTHETIC_GATEWAY'}),
+                       'GATEWAY_READ_TOKEN':'SYNTHETIC_GATEWAY'},clear=True),
                       patch('weekly_job.fetch',return_value=b'SYNTHETIC_XML'),
                       patch('weekly_job.normalize',return_value={'coverage':{'to':fixed_day,
                             'unresolvedDates':[]}}),
@@ -150,5 +150,92 @@ class WeeklyJobTests(unittest.TestCase):
         self.mocks[8].assert_not_called()
         self.mocks[9].assert_not_called()
 
+
+    # Exercise the real fetch -> real run() safe receipt -> real recovery predicate.
+    def test_pending_fetch_receipt_recovers_and_is_archived(self):
+        from test_ib_source import SyntheticIB, SEND, pending
+        from ib_source import fetch
+        from recovery import transient
+        from test_recovery import Store, ROOT, NOW, control
+        for bodies,cost in [([SEND]+[pending()]*24,0),([SEND]+[pending('1009')]*20,1)]:
+            self.events.clear()
+            source=SyntheticIB(bodies,cost)
+            self.mocks[2].side_effect=fetch
+            archived={}
+            self.bucket.blob.return_value=None
+            def blob(name):
+                b=MagicMock()
+                def upload(body,**kwargs):
+                    self.events.append(name.rsplit('/',1)[-1]);archived[name]=json.loads(body)
+                b.upload_from_string.side_effect=upload;return b
+            self.bucket.blob.side_effect=blob
+            with source.patches()[0],source.patches()[1],source.patches()[2]:
+                status,lines=self.execute()
+            failure=lines[0]
+            self.assertEqual(status,1);self.assertTrue(transient(failure))
+            self.assertNotIn('network',failure)
+            self.assertEqual(self.events,['failure.json'])
+            self.assertEqual(next(iter(archived.values())),failure)
+            self.mocks[3].assert_not_called();self.mocks[8].assert_not_called();self.mocks[9].assert_not_called()
+            store=Store();store.objects[ROOT+'normal.json']={'prefix':'weekly/synthetic/','startedAt':NOW.isoformat()}
+            store.objects['weekly/synthetic/failure.json']=failure
+            calls=[]
+            def report(*args):calls.append(args);store.good=True
+            result=control(store,NOW+dt.timedelta(minutes=30),report,lambda *a:self.fail('unexpected publish'))
+            self.assertEqual(result['code'],'recovered');self.assertEqual(len(calls),1)
+            store.good=False
+            control(store,NOW+dt.timedelta(minutes=31),report,lambda *a:self.fail('unexpected publish'))
+            self.assertEqual(len(calls),1)
+            self.assertEqual(control(store,NOW+dt.timedelta(minutes=45),report,None)['code'],'final_publication_missing')
+
+    def test_sanitizer_and_write_stage_cannot_emit_forged_polling(self):
+        from ib_source import StatementNotReady
+        from recovery import transient
+        valid={'operation':'ib_get_statement','state':'statement_pending','termination':'poll_limit',
+               'lastErrorCode':1019,'pollCount':24,'pollLimit':24,'retryable':True}
+        cases=[{**valid,'pollCount':True},{**valid,'pollLimit':True},{**valid,'lastErrorCode':True},
+               {**valid,'pollCount':20},{**valid,'pollLimit':20},{**valid,'pollCount':25},
+               {**valid,'pollCount':0},{**valid,'pollCount':-1},{**valid,'pollCount':24.0},
+               {**valid,'pollLimit':'24'},{**valid,'lastErrorCode':'1019'},
+               {**valid,'lastErrorCode':1003},{**valid,'state':'busy'},
+               {**valid,'termination':'deadline'},{**valid,'operation':'ib_send_request'},
+               {**valid,'retryable':1},{**valid,'retryable':False},{**valid,'token':'SYNTHETIC_PRIVATE'},
+               {k:v for k,v in valid.items() if k!='state'},None,[]]
+        for detail in cases:
+            self.mocks[2].side_effect=StatementNotReady(detail)
+            status,lines=self.execute()
+            self.assertEqual(status,1);self.assertNotIn('polling',lines[0]);self.assertFalse(transient(lines[0]))
+            self.assertFalse(transient({'complete':False,'stage':'ib_fetch','code':'ib_statement_not_ready','polling':detail}))
+        self.mocks[2].side_effect=None
+        self.mocks[8].side_effect=StatementNotReady(valid)
+        status,lines=self.execute()
+        self.assertEqual(lines[0]['stage'],'private_latest');self.assertNotIn('polling',lines[0])
+        self.assertFalse(transient(lines[0]))
+
+    def test_pending_then_terminal_error_uses_real_safe_receipt(self):
+        from test_ib_source import SyntheticIB, SEND, pending
+        from ib_source import fetch
+        from recovery import transient
+        cases=[([SEND,pending(),pending('1003')],False,'ib_statement_failed'),
+               ([SEND,pending(),b'bad XML'],False,'invalid_xml'),
+               ([SEND,pending()]+[TimeoutError('DO_NOT_LOG')]*3,True,'ib_network_error')]
+        for bodies,eligible,code in cases:
+            source=SyntheticIB(bodies);self.mocks[2].side_effect=fetch
+            with source.patches()[0],source.patches()[1],source.patches()[2]:
+                status,lines=self.execute()
+            self.assertEqual(status,1);self.assertEqual(lines[0]['code'],code)
+            self.assertNotIn('polling',lines[0]);self.assertEqual(transient(lines[0]),eligible)
+            if eligible:
+                self.assertEqual(lines[0]['network'],{'operation':'ib_get_statement',
+                    'category':'timeout','attempts':3,'retryable':True})
+
+    def test_ib_fetch_receives_caller_absolute_deadline(self):
+        with patch('weekly_job.time.monotonic',return_value=100):
+            self.execute()
+        self.assertEqual(self.mocks[2].call_args.kwargs['deadline'],460)
+        self.events.clear();self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+        with patch('weekly_job.time.monotonic',return_value=100):
+            with contextlib.redirect_stdout(io.StringIO()):job.run(outer_deadline=350)
+        self.assertEqual(self.mocks[2].call_args.kwargs['deadline'],170)
 
 if __name__=='__main__':unittest.main()
