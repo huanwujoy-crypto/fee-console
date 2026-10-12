@@ -1,9 +1,19 @@
 // Fixed private destinations. No filesystem credential, bucket or secret flags.
 import crypto from 'node:crypto';
+import {ibError, inIbPhase, httpCategory, networkCategory} from './ib_diagnostics.mjs';
 export const PROJECT = 'family-portfolio-gateway';
 export const BUCKET = `${PROJECT}-xuan-preopen-private`;
 const IB_SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
 const READ_SECRET = `projects/${PROJECT}/secrets/family-portfolio-gateway-key`;
+
+// Secret Manager can use the fixed project ID or its fixed numeric identifier
+// in a version name. Return metadata only; never read the new payload back.
+export function validateIbRotationReceipt(value) {
+  if (value?.state !== 'ENABLED' || typeof value?.name !== 'string'
+    || !/^projects\/(?:family-portfolio-gateway|860729177589)\/secrets\/xuan-preopen-ib-mcp\/versions\/[1-9]\d{0,29}$/.test(value.name))
+    throw ibError('IB_TOKEN_ROTATION_OUTCOME_UNKNOWN', {phase: 'credential_save', category: 'save_outcome_unknown'});
+  return Object.freeze({name: value.name, state: 'ENABLED'});
+}
 
 export async function boundedText(response, limit = 8_000_000) {
   if (!response.body) throw new Error('CLOUD_EMPTY_RESPONSE');
@@ -25,10 +35,10 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
   async function request(url, options = {}) {
     let response;
     try { response = await fetchImpl(url, {...options, redirect: 'error', signal: AbortSignal.timeout(30_000)}); }
-    catch { throw new Error('CLOUD_NETWORK_FAILED'); }
-    if (!response.ok) throw new Error(`CLOUD_HTTP_${response.status}`);
+    catch (error) { throw ibError('CLOUD_NETWORK_FAILED', {category: networkCategory(error)}); }
+    if (!response.ok) throw ibError(`CLOUD_HTTP_${response.status}`, {httpStatus: response.status, category: httpCategory(response.status)});
     try { return JSON.parse(await boundedText(response)); }
-    catch (error) { if (/^CLOUD_/.test(error.message)) throw error; throw new Error('CLOUD_RESPONSE_INVALID'); }
+    catch (error) { throw inIbPhase(error, 'unknown', 'CLOUD_RESPONSE_INVALID', response.status, 'response_invalid'); }
   }
   async function headers() {
     if (!googleToken) {
@@ -46,10 +56,14 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
   }
   return {
     ibStore: {
-      async load() { try { return JSON.parse(await secret(IB_SECRET)); } catch { throw new Error('CLOUD_IB_CREDENTIAL_UNAVAILABLE'); } },
+      async load() {
+        try { return JSON.parse(await secret(IB_SECRET)); }
+        catch (error) { throw inIbPhase(error, 'credential_load', 'CLOUD_IB_CREDENTIAL_UNAVAILABLE', null, 'response_invalid'); }
+      },
       async save(value) {
-        await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}:addVersion`,
+        const result = await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}:addVersion`,
           {method: 'POST', headers: await headers(), body: JSON.stringify({payload: {data: Buffer.from(JSON.stringify(value)).toString('base64')}})});
+        return validateIbRotationReceipt(result);
       },
     },
     async loadGatewayToken() {

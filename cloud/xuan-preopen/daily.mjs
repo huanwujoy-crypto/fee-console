@@ -5,6 +5,8 @@ import {fileURLToPath} from 'node:url';
 import {planPreopen} from './calendar.mjs';
 import {privateCloudIo} from './cloud_io.mjs';
 import {runPrivateReport} from './report.mjs';
+import {ibError, safeIbFailure} from './ib_diagnostics.mjs';
+import {ordersCheckCli, ORDERS_CHECK_ARGS, isDailyDiagnosticArgs} from './orders_check.mjs';
 export async function runDaily({io = privateCloudIo(), now = Date.now, generate = runPrivateReport,
   execution = process.env.CLOUD_RUN_EXECUTION} = {}) {
   const plan = planPreopen(now()), prefix = `delivery/${plan.dataDate}/`;
@@ -33,9 +35,22 @@ export async function runDaily({io = privateCloudIo(), now = Date.now, generate 
   return {status: delivery.status, dataDate: delivery.dataDate, sourceDate: delivery.sourceDate,
     startedAt: delivery.startedAt, completedAt: delivery.completedAt, publication: 'none'};
 }
+// No arguments retain the normal daily pipeline. Nonempty arguments never
+// fall through to it, including incomplete or unrecognised diagnostic flags.
+export async function dailyCli(args, {daily = runDaily, diagnostic = ordersCheckCli} = {}) {
+  if (Array.isArray(args) && args.length === 0) return daily();
+  if (!isDailyDiagnosticArgs(args)) {
+    return safeIbFailure(ibError('IB_DIAGNOSTIC_REQUEST_INVALID', {phase: 'diagnostic_request', category: 'forbidden'}),
+      {execution: process.env.CLOUD_RUN_EXECUTION});
+  }
+  return diagnostic([...ORDERS_CHECK_ARGS]);
+}
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  runDaily().then(result => process.stdout.write(JSON.stringify(result)+'\n')).catch(error => {
-    const code = /^[A-Z_0-9]+$/.test(error.message || '') ? error.message : 'DAILY_REPORT_FAILED';
-    process.stdout.write(JSON.stringify({status: 'failed', code, publication: 'none'})+'\n'); process.exitCode = 1;
+  dailyCli(process.argv.slice(2)).then(result => {
+    process.stdout.write(JSON.stringify(result)+'\n');
+    if (result.status === 'failed') process.exitCode = 1;
+  }).catch(error => {
+    process.stdout.write(JSON.stringify(safeIbFailure(error, {fallback: 'DAILY_REPORT_FAILED',
+      execution: process.env.CLOUD_RUN_EXECUTION}))+'\n'); process.exitCode = 1;
   });
 }

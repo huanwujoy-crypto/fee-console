@@ -59,19 +59,107 @@ export function verifyCheckout(e,proof,{runGit=git,allowMerge=false}={}){
   return proof;
 }
 const labelNames={approvedSha:'org.opencontainers.image.revision',sourceTree:'fee-console.source-tree',workflowSha:'fee-console.approved-merge',approvalPr:'fee-console.approval-pr'};
-export const COPY_PATHS=Object.freeze(['scripts','.github/workflows/validate-xuan-ib-handover.yml','.github/workflows/promote-xuan-ib-handover.yml','.github/workflows/xuan-preopen-image-maintenance.yml','.github/workflows/xuan-preopen-image-build.yml','.github/workflows/xuan-preopen-image-deploy.yml','claude/xuan-ib-portfolio-registry.json','security/xuan-preopen-maintenance-iam.json','cloud/xuan-preopen']);
+export const COPY_PATHS=Object.freeze([
+  ".github/workflows/promote-xuan-ib-handover.yml",
+  ".github/workflows/validate-xuan-ib-handover.yml",
+  ".github/workflows/xuan-preopen-image-build.yml",
+  ".github/workflows/xuan-preopen-image-deploy.yml",
+  ".github/workflows/xuan-preopen-image-maintenance.yml",
+  "claude/xuan-ib-portfolio-registry.json",
+  "cloud/xuan-preopen/Daily.Dockerfile",
+  "cloud/xuan-preopen/Dockerfile",
+  "cloud/xuan-preopen/Gateway.Dockerfile",
+  "cloud/xuan-preopen/Maintenance.Dockerfile",
+  "cloud/xuan-preopen/Report.Dockerfile",
+  "cloud/xuan-preopen/Trigger.Dockerfile",
+  "cloud/xuan-preopen/build.yaml",
+  "cloud/xuan-preopen/calendar.mjs",
+  "cloud/xuan-preopen/calendar.test.mjs",
+  "cloud/xuan-preopen/cloud_io.mjs",
+  "cloud/xuan-preopen/cloud_io.test.mjs",
+  "cloud/xuan-preopen/daily.mjs",
+  "cloud/xuan-preopen/daily.test.mjs",
+  "cloud/xuan-preopen/delivery.mjs",
+  "cloud/xuan-preopen/delivery.test.mjs",
+  "cloud/xuan-preopen/eod_report.mjs",
+  "cloud/xuan-preopen/eod_report.test.mjs",
+  "cloud/xuan-preopen/eod_sources.mjs",
+  "cloud/xuan-preopen/gateway_classification_patch.py",
+  "cloud/xuan-preopen/gateway_patch_test.py",
+  "cloud/xuan-preopen/ib_diagnostics.mjs",
+  "cloud/xuan-preopen/ib_diagnostics.test.mjs",
+  "cloud/xuan-preopen/ib_mcp.mjs",
+  "cloud/xuan-preopen/ib_mcp.test.mjs",
+  "cloud/xuan-preopen/intraday_report.mjs",
+  "cloud/xuan-preopen/intraday_report.test.mjs",
+  "cloud/xuan-preopen/limited_delivery.mjs",
+  "cloud/xuan-preopen/limited_report.mjs",
+  "cloud/xuan-preopen/limited_report.test.mjs",
+  "cloud/xuan-preopen/maintenance.mjs",
+  "cloud/xuan-preopen/maintenance.test.mjs",
+  "cloud/xuan-preopen/orders_check.mjs",
+  "cloud/xuan-preopen/orders_check.test.mjs",
+  "cloud/xuan-preopen/orders_check_cloud_io.test.mjs",
+  "cloud/xuan-preopen/probe.mjs",
+  "cloud/xuan-preopen/publish.mjs",
+  "cloud/xuan-preopen/publish.test.mjs",
+  "cloud/xuan-preopen/report.mjs",
+  "cloud/xuan-preopen/report.test.mjs",
+  "cloud/xuan-preopen/trade_confirmation.mjs",
+  "cloud/xuan-preopen/trade_confirmation.test.mjs",
+  "cloud/xuan-preopen/trigger-build.yaml",
+  "cloud/xuan-preopen/trigger.mjs",
+  "cloud/xuan-preopen/trigger.test.mjs",
+  "scripts/xuan-ib-account-association-publication.mjs",
+  "scripts/xuan-ib-account-association.mjs",
+  "scripts/xuan-ib-cash-plan.mjs",
+  "scripts/xuan-ib-decision-menu.mjs",
+  "scripts/xuan-ib-eod-action-model.mjs",
+  "scripts/xuan-ib-hook-response.mjs",
+  "scripts/xuan-ib-intraday-update.mjs",
+  "scripts/xuan-ib-limited-status.mjs",
+  "scripts/xuan-ib-manual-consent.mjs",
+  "scripts/xuan-ib-night-action-guard.mjs",
+  "scripts/xuan-ib-night-action-guard.test.mjs",
+  "scripts/xuan-ib-night-action-model.mjs",
+  "scripts/xuan-ib-night-action-model.test.mjs",
+  "scripts/xuan-ib-night-action-view.mjs",
+  "scripts/xuan-ib-night-action-view.test.mjs",
+  "scripts/xuan-ib-night-action-workflow.test.mjs",
+  "scripts/xuan-ib-order-view.mjs",
+  "scripts/xuan-ib-promotion.mjs",
+  "scripts/xuan-ib-publish-health.mjs",
+  "scripts/xuan-ib-report-schedule.mjs",
+  "scripts/xuan-ib-run-clock.mjs",
+  "scripts/xuan-ib-run-manifest.mjs",
+  "scripts/xuan-ib-sharesight-allocation.mjs",
+  "scripts/xuan-ib-sleep-priority.mjs",
+  "scripts/xuan-ib-source-adapter.mjs",
+  "scripts/xuan-ib-source-capture.mjs",
+  "scripts/xuan-ib-source-hook.mjs",
+  "scripts/xuan-ib-weekly-snapshot.mjs",
+  "security/xuan-preopen-maintenance-iam.json"
+]);
+const copyFiles=new Set(COPY_PATHS);
 export function createBuildContext(root,temp,{runGit=args=>execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:30_000,maxBuffer:4*1024*1024})}={}){
   if(typeof temp!=='string'||!path.isAbsolute(temp))fail('BUILD_CONTEXT');
-  const context=fs.mkdtempSync(path.join(temp,'xuan-preopen-build-'));
   const entries=runGit(['ls-tree','-r','-z','--full-tree','HEAD','--',...COPY_PATHS]).split('\0').filter(Boolean);
-  if(!entries.length||entries.length>5000)fail('BUILD_CONTEXT');
+  if(entries.length!==COPY_PATHS.length)fail('BUILD_CONTEXT');
+  const seen=new Set(),verified=[];
   for(const entry of entries){
     const m=/^(100644|100755) blob ([a-f0-9]{40})\t([^\x00-\x1f\x7f]+)$/.exec(entry);
     if(!m)fail('BUILD_CONTEXT');const [,mode,blob,file]=m,parts=file.split('/');
-    if(parts.some(p=>['','.','..','.git'].includes(p))||!COPY_PATHS.some(p=>file===p||file.startsWith(p+'/')))fail('BUILD_CONTEXT');
+    if(parts.some(p=>['','.','..','.git'].includes(p))||!copyFiles.has(file)||seen.has(file))fail('BUILD_CONTEXT');
+    seen.add(file);
     for(let i=1;i<parts.length;i++){const parent=fs.lstatSync(path.join(root,...parts.slice(0,i)));if(parent.isSymbolicLink()||!parent.isDirectory())fail('BUILD_CONTEXT');}
     const source=path.join(root,file),stat=fs.lstatSync(source);if(stat.isSymbolicLink()||!stat.isFile())fail('BUILD_CONTEXT');
     const bytes=fs.readFileSync(source),actual=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');if(actual!==blob)fail('BUILD_CONTEXT');
+    verified.push({mode,file,bytes});
+  }
+  // Verify the complete fixed file set before copying any bytes into a context.
+  if(seen.size!==copyFiles.size)fail('BUILD_CONTEXT');
+  const context=fs.mkdtempSync(path.join(temp,'xuan-preopen-build-'));
+  for(const {mode,file,bytes} of verified){
     const target=path.join(context,file);fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,bytes,{mode:mode==='100755'?0o755:0o644});
   }
   return context;

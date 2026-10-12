@@ -89,18 +89,49 @@ test('workflow/Docker/IAM plan isolate maintenance identity and preserve daily p
  assert.deepEqual(iam.customRoles.find(r=>r.name.endsWith('/xuanPreopenImageDeploy')).includedPermissions,['run.jobs.get','run.jobs.update']);assert.ok(!iam.customRoles.flatMap(r=>r.includedPermissions).some(p=>iam.neverGrant.includes(p)));assert.ok(iam.bindings.every(b=>!b.resource.includes('cloud-run-source-deploy')));assert.equal(iam.existingCloudRunServiceAgent.newBindingRequired,false);
 });
 
-test('fixed Docker COPY closure excludes host credentials, git/data/pages and rejects symlinks',()=>{
+function contextFixture(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'maintenance-context-test-')),root=path.join(temp,'source');fs.mkdirSync(root);
+ const rows=COPY_PATHS.map(file=>{const p=path.join(root,file);fs.mkdirSync(path.dirname(p),{recursive:true});const bytes=Buffer.from('// synthetic '+file);fs.writeFileSync(p,bytes);const blob=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');return `100644 blob ${blob}\t${file}`;});
+ return {temp,root,rows,listing:rows.join('\0')+'\0',clean:()=>fs.rmSync(temp,{recursive:true,force:true})};
+}
+function contextFiles(root,prefix=''){
+ return fs.readdirSync(path.join(root,prefix)).flatMap(name=>{const file=prefix?prefix+'/'+name:name;return fs.lstatSync(path.join(root,file)).isDirectory()?contextFiles(root,file):[file];}).sort();
+}
+test('fixed 79-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
+ assert.equal(COPY_PATHS.length,79);assert.equal(new Set(COPY_PATHS).size,79);
+ assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'a1dcbe57dce61fd86122865d066cccfb95953d5992f91fdc6f3395cdcc174304');
+ const f=contextFixture();
  try{
-  for(const f of COPY_PATHS){const p=path.join(root,f);fs.mkdirSync(path.dirname(p),{recursive:true});if(f==='scripts'||f==='cloud/xuan-preopen'){fs.mkdirSync(p);fs.writeFileSync(path.join(p,'synthetic.mjs'),'// safe synthetic');}else fs.writeFileSync(p,'synthetic');}
-  fs.writeFileSync(path.join(root,'data.json'),'PRIVATE-CANARY');fs.mkdirSync(path.join(root,'.git'));fs.writeFileSync(path.join(root,'.git','config'),'TOKEN-CANARY');fs.mkdirSync(path.join(root,'xuan-ib'));fs.writeFileSync(path.join(root,'xuan-ib','latest.html'),'PRIVATE-PAGE');
-  const rows=[];function collect(f){const p=path.join(root,f);if(fs.statSync(p).isDirectory()){for(const name of fs.readdirSync(p))collect(f+'/'+name);}else{const b=fs.readFileSync(p),sha=crypto.createHash('sha1').update(`blob ${b.length}\0`).update(b).digest('hex');rows.push(`100644 blob ${sha}\t${f}`);}}
-  for(const f of COPY_PATHS)collect(f);const listing=rows.join('\0')+'\0';const runGit=()=>listing;
-  fs.writeFileSync(path.join(root,'scripts','ignored-credential.txt'),'HOST-TOKEN-CANARY');
-  const context=createBuildContext(root,temp,{runGit});assert.ok(!fs.existsSync(path.join(context,'scripts','ignored-credential.txt')));assert.ok(!fs.existsSync(path.join(context,'data.json')));assert.ok(!fs.existsSync(path.join(context,'.git')));assert.ok(!fs.existsSync(path.join(context,'xuan-ib')));assert.ok(!dockerBuildArgs(proof,context).includes(root));assert.ok(dockerBuildArgs(proof,context).includes('--network=none'));
-  fs.symlinkSync(path.join(root,'data.json'),path.join(root,'scripts','canary-link'));assert.throws(()=>createBuildContext(root,temp,{runGit:()=>listing+`100644 blob ${'f'.repeat(40)}\tscripts/canary-link\0`}),/BUILD_CONTEXT/);
-  fs.writeFileSync(path.join(root,'scripts','synthetic.mjs'),'tampered source');assert.throws(()=>createBuildContext(root,temp,{runGit}),/BUILD_CONTEXT/);
- }finally{fs.rmSync(temp,{recursive:true,force:true});}
+  for(const file of ['data.json','.git/config','xuan-ib/latest.html','scripts/repair-brkb-20260820.mjs','scripts/codex-fee-keychain.c','scripts/codex-fee-credentials.mjs','scripts/codex-fee-setup','cloud/xuan-preopen/private-new.mjs']){const p=path.join(f.root,file);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,'PRIVATE-CANARY');}
+  let captured;const context=createBuildContext(f.root,f.temp,{runGit:args=>{captured=args;return f.listing;}});
+  assert.deepEqual(contextFiles(context),[...COPY_PATHS].sort());assert.deepEqual(captured,['ls-tree','-r','-z','--full-tree','HEAD','--',...COPY_PATHS]);
+  assert.ok(!dockerBuildArgs(proof,context).includes(f.root));assert.ok(dockerBuildArgs(proof,context).includes('--network=none'));
+ }finally{f.clean();}
+});
+test('missing, duplicate, extra, malformed, unsafe and unsupported source tree entries fail before any context copy',()=>{
+ const f=contextFixture();
+ try{
+  const variants=[f.rows.slice(1),[...f.rows.slice(1),f.rows[1]], [...f.rows,`100644 blob ${'f'.repeat(40)}\tscripts/repair-brkb-20260820.mjs`],
+   [f.rows[0].replace('100644 blob','120000 blob'),...f.rows.slice(1)], [f.rows[0].replace('100644 blob','160000 commit'),...f.rows.slice(1)],
+   [f.rows[0].replace('100644 blob','040000 tree'),...f.rows.slice(1)], [f.rows[0].split('\t')[0]+'\tscripts/../data.json',...f.rows.slice(1)],
+   [f.rows[0].split('\t')[0]+'\tcloud/xuan-preopen',...f.rows.slice(1)], [f.rows[0].replace(/blob [a-f0-9]+/,'blob invalid'),...f.rows.slice(1)]];
+  for(const rows of variants)assert.throws(()=>createBuildContext(f.root,f.temp,{runGit:()=>rows.join('\0')+'\0'}),/BUILD_CONTEXT/);
+  assert.deepEqual(fs.readdirSync(f.temp),['source']);
+  const selected=COPY_PATHS.find(p=>p.startsWith('scripts/'));fs.writeFileSync(path.join(f.root,selected),'tampered');
+  assert.throws(()=>createBuildContext(f.root,f.temp,{runGit:()=>f.listing}),/BUILD_CONTEXT/);assert.deepEqual(fs.readdirSync(f.temp),['source']);
+ }finally{f.clean();}
+});
+test('selected source leaf/parent symlinks and directories are rejected rather than following them',()=>{
+ for(const kind of ['leaf','parent','directory']){
+  const f=contextFixture();
+  try{
+   const selected=COPY_PATHS.find(p=>p.startsWith('scripts/'));const target=path.join(f.temp,'outside');fs.writeFileSync(target,'PRIVATE-CANARY');
+   if(kind==='parent'){fs.renameSync(path.join(f.root,'scripts'),path.join(f.temp,'real-scripts'));fs.symlinkSync(path.join(f.temp,'real-scripts'),path.join(f.root,'scripts'));}
+   else {fs.unlinkSync(path.join(f.root,selected));if(kind==='leaf')fs.symlinkSync(target,path.join(f.root,selected));else fs.mkdirSync(path.join(f.root,selected));}
+   assert.throws(()=>createBuildContext(f.root,f.temp,{runGit:()=>f.listing}),/BUILD_CONTEXT/);
+   assert.ok(!fs.readdirSync(f.temp).some(p=>p.startsWith('xuan-preopen-build-')));
+  }finally{f.clean();}
+ }
 });
 
 test('provider condition fixtures reject cross-leaf identity exchange and caller/callee/event SHA drift',()=>{
