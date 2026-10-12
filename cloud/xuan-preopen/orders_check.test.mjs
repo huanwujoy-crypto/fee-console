@@ -90,7 +90,7 @@ test('import has no IO; local CLI/runtime refusal precedes any capability creati
 
 const cliEnv = () => ({CLOUD_RUN_JOB: DIAGNOSTIC_JOB, CLOUD_RUN_EXECUTION: `${DIAGNOSTIC_JOB}-test`,
   CLOUD_RUN_TASK_COUNT:'1',CLOUD_RUN_TASK_INDEX:'0',CLOUD_RUN_TASK_ATTEMPT:'0'});
-const cliNow = () => Date.parse('2026-10-12T10:30:00.000Z');
+const cliNow = () => Date.parse('2026-10-12T23:30:00.000Z');
 test('CLI binds the existing report runtime, single task and original fixed attempt', async () => {
   const env = cliEnv();
   let options;
@@ -132,7 +132,7 @@ test('queued or expired starts fail before I/O; window starts inclusive and ends
     assert.equal(out.status,'checked');assert.equal(made,1);
   }
   assert.equal(new Date(start+8*3600000).toISOString().slice(0,10),ORDERS_DIAGNOSTIC_PLAN.dataDate);
-  assert(end<=Date.parse('2026-10-12T16:00:00Z')-600000);
+  assert(end<=Date.parse('2026-10-13T16:00:00Z')-600000);
 });
 
 test('one nonempty orders read validates report rows without any financial output/upload', async () => {
@@ -186,6 +186,58 @@ test('concurrent same-attempt invocations cannot both pass the create-only claim
   const results = await Promise.allSettled([runIbOrdersCheck(a.options), runIbOrdersCheck(b.options)]);
   assert.equal(results.filter(r => r.status === 'fulfilled').length, 1);
   assert.equal(a.state.loads + b.state.loads, 1); assert.equal(markers.size, 1);
+});
+
+test('a previous Hong Kong date claim remains consumed on the new date before credential I/O', async () => {
+  const markers = new Map(), attemptId = ORDERS_DIAGNOSTIC_PLAN.attemptId;
+  const previous = harness({markers});
+  await runIbOrdersCheck({...previous.options, attemptId});
+  const key = `report-check/auth-orders-${attemptId}/attempt.json`;
+  const original = JSON.stringify(markers.get(key));
+  assert.equal(new Date(time + 8 * 3600000).toISOString().slice(0, 10), '2026-10-12');
+  for (const current of [Date.parse(ORDERS_DIAGNOSTIC_PLAN.notBefore) + 60_000,
+    Date.parse('2026-10-13T10:00:00Z')]) {
+    assert.equal(new Date(current + 8 * 3600000).toISOString().slice(0, 10), ORDERS_DIAGNOSTIC_PLAN.dataDate);
+    const repeat = harness({markers});
+    const out = await failure({...repeat.options, attemptId, now: () => current});
+    assert.equal(out.code, 'IB_DIAGNOSTIC_ATTEMPT_CONSUMED');
+    assert.deepEqual(repeat.calls, ['claim']);
+    assert.equal(repeat.state.loads, 0); assert.equal(repeat.state.saves, 0);
+    assert.equal(repeat.state.associationReads, 0); assert.equal(repeat.state.refresh, 0);
+    assert.equal(markers.size, 1); assert.equal(JSON.stringify(markers.get(key)), original);
+  }
+});
+
+test('an unused fixed attempt can be claimed once when UTC and Hong Kong dates differ', async () => {
+  const current = Date.parse(ORDERS_DIAGNOSTIC_PLAN.notBefore) + 60_000;
+  assert.equal(new Date(current).toISOString().slice(0, 10), '2026-10-12');
+  assert.equal(new Date(current + 8 * 3600000).toISOString().slice(0, 10), ORDERS_DIAGNOSTIC_PLAN.dataDate);
+  const h = harness({raw: {orders: []},
+    loadOverride: () => ({client_id: 'synthetic-client', access_token: canary,
+      refresh_token: canary, token_type: 'Bearer', scope: 'mcp.read', resource: RESOURCE,
+      expires_at: current + 3_600_000}),
+    associationOverride: () => ({...association(), checkedAt: new Date(current).toISOString()})});
+  const out = await ordersCheckCli([...ORDERS_CHECK_ARGS], {env: cliEnv(), now: () => current,
+    ioFactory: () => h.options.io,
+    run: options => runIbOrdersCheck({...h.options, ...options})});
+  assert.equal(out.status, 'checked'); assert.equal(out.ordersReadSucceeded, true);
+  assert.equal(out.refreshAttempted, false); assert.equal(h.state.claims, 1);
+  assert.equal(h.state.loads, 1); assert.equal(h.state.refresh, 0); assert.equal(h.state.saves, 0);
+  const key = `report-check/auth-orders-${ORDERS_DIAGNOSTIC_PLAN.attemptId}/attempt.json`;
+  assert.deepEqual([...h.markers.keys()], [key]);
+  assert.equal(h.markers.get(key).startedAt, new Date(current).toISOString());
+});
+
+test('a queued start after the next Hong Kong midnight refuses before any capability I/O', async () => {
+  const midnight = Date.parse(`${ORDERS_DIAGNOSTIC_PLAN.dataDate}T16:00:00Z`);
+  assert.equal(new Date(midnight + 8 * 3600000).toISOString().slice(0, 10), '2026-10-14');
+  let made = 0, runs = 0;
+  for (const current of [midnight, midnight + 60_000]) {
+    const out = await ordersCheckCli([...ORDERS_CHECK_ARGS], {env: cliEnv(), now: () => current,
+      ioFactory: () => {made++; return {};}, run: () => {runs++;}});
+    assert.equal(out.code, 'IB_DIAGNOSTIC_REQUEST_INVALID');
+  }
+  assert.equal(made, 0); assert.equal(runs, 0);
 });
 
 test('unknown claim result stops before loading any credential and never retries', async () => {

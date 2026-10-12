@@ -15,9 +15,9 @@ export const DIAGNOSTIC_JOB = 'xuan-preopen-report';
 // bindings, not authorization; changing the window requires a new review.
 export const ORDERS_DIAGNOSTIC_PLAN = Object.freeze({
   attemptId: '1b2f15a8164980a7084ea84ff040154d',
-  dataDate: '2026-10-12',
-  notBefore: '2026-10-12T10:00:00.000Z',
-  notAfter: '2026-10-12T15:50:00.000Z',
+  dataDate: '2026-10-13',
+  notBefore: '2026-10-12T23:15:00.000Z',
+  notAfter: '2026-10-13T15:50:00.000Z',
 });
 export const ORDERS_CHECK_ARGS = Object.freeze(['--orders-check', '--attempt-id',
   ORDERS_DIAGNOSTIC_PLAN.attemptId, '--claim-attempt', '--with-catalog', '--allow-refresh-save']);
