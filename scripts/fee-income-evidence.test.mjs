@@ -16,8 +16,17 @@ import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evide
 import { classifyFlow, reconcileFlows, flowId } from './daily-core.mjs';
 
 // Synthetic direct fixtures use the cash transport's original-number path.
-const normalizeRead=(raw,...args)=>normalizeCloudRead(Object.fromEntries(Object.entries(raw).map(([account,p])=>
-  [account,{...p,cashAccounts:parseSourceJson(JSON.stringify(p.cashAccounts))}])),...args);
+function cashWireInput(raw) {
+  return Object.fromEntries(Object.entries(raw).map(([account,p])=>{
+    const copy={...p};
+    for(const key of ['performance','previousPerformance','cashAccounts','previousCashAccounts'])
+      if(p[key])copy[key]=parseSourceJson(JSON.stringify(p[key]));
+    for(const key of ['cashTransactions','cashLedgerHistory'])
+      copy[key]=Object.fromEntries(Object.entries(p[key]||{}).map(([id,payload])=>[id,parseSourceJson(JSON.stringify(payload))]));
+    return [account,copy];
+  }));
+}
+const normalizeRead=(raw,...args)=>normalizeCloudRead(cashWireInput(raw),...args);
 
 const D='2026-10-01',KEY='webull.dividend:12345678:SYNTH:2026-09-30:900';
 const fixture=()=>({account:'webull',portfolioId:1350094,targetDate:D,dateEvidence:{},
@@ -174,7 +183,11 @@ function rawFixture(date=D) {
         inception_date:shift(date,-1),portfolio:p}]},
       cashAccounts:{cash_accounts:[{id:cashId,portfolio_id:p.id,currency:'USD',portfolio_currency:'USD',date,
         balance:cash,balance_in_portfolio_currency:cash}]},
-      cashTransactions:{[cashId]:{cash_account_transactions:transactions}},trades:{trades:[]},managementTrades:{trades:[]}};
+      cashTransactions:{[cashId]:{cash_account_transactions:transactions}},
+      // Independently stated synthetic opening, never target closing minus net.
+      cashLedgerHistory:{[cashId]:{cash_account_transactions:[{id:cashId+10000,cash_account_id:cashId,
+        date_time:shift(date,-1)+'T00:00:00Z',amount:0,balance:400,cash_account_transaction_type:{name:'FEE'}},
+        ...structuredClone(transactions)]}},trades:{trades:[]},managementTrades:{trades:[]}};
   };
   return {schwab:make('schwab',950,960,1000,400,[]),webull:{...make('webull',930,910,1069.50,469.50,input.cashRows),
     incomePayouts:input.payouts,incomeDateEvidence:input.dateEvidence}};
@@ -193,7 +206,7 @@ function mockFetch(raw,calls=[]) {
       if(u.pathname.endsWith('/performance'))payload=u.searchParams.get('end_date')===r.performance.report.end_date?r.performance:r.previousPerformance;
       else if(u.pathname.endsWith('/holdings'))payload=r.holdings;
       else if(u.pathname.endsWith('/cash_accounts.json'))payload=u.searchParams.get('date')===r.performance.report.end_date?r.cashAccounts:r.previousCashAccounts;
-      else if(u.pathname.endsWith('/cash_account_transactions.json'))payload=r.cashTransactions[u.pathname.split('/')[4]];
+      else if(u.pathname.endsWith('/cash_account_transactions.json'))payload=(u.searchParams.has('from')?r.cashTransactions:r.cashLedgerHistory)[u.pathname.split('/')[4]];
       else if(u.pathname.endsWith('/trades.json'))payload=u.searchParams.has('start_date')?r.trades:r.managementTrades;
       else assert.fail('unexpected synthetic route');
     }
@@ -336,7 +349,11 @@ test('GET-only reader discovers the exact scoped payout without a legacy cash ke
   let reads=0;const unstable=mockFetch(raw);
   const changing=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',incomeDateEvidence:raw.webull.incomeDateEvidence,
     fetchImpl:async(url,init)=>{if(url.endsWith('/oauth2/token'))reads++;
-      if(reads===2)raw.webull.cashTransactions[930].cash_account_transactions[0].description='changed synthetic source';return unstable(url,init);}});
+      if(reads===2){
+        const description='changed synthetic source';
+        raw.webull.cashTransactions[930].cash_account_transactions[0].description=description;
+        raw.webull.cashLedgerHistory[930].cash_account_transactions.find(row=>row.id===940).description=description;
+      }return unstable(url,init);}});
   await assert.rejects(changing.readStable(D,benchmark),{message:'FEE_CLOUD_SOURCE_UNSTABLE'});
 });
 
@@ -443,12 +460,20 @@ test('receipt and actual mobile consumer agree; net NAV appears once with no pri
   assert.deepEqual(incomeDateEvidenceFromData(data,D),{[data.daily[1].incomeDateAudits[0].eventKey]:data.daily[1].incomeDateAudits[0].proof});
 });
 
-test('actual producer, writer and reporter bootstrap then reload the encrypted audit with byte-identical no-op',()=>{
+test('actual producer, writer and reporter preserve receipt and no-op with income and an already-debited cash report',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'income-producer-test-'));fs.chmodSync(dir,0o700);
   const repo=path.join(dir,'repo'),date='2026-09-23',prior=shift(date,-1),key=crypto.randomBytes(32);
   const fixedNow='2026-09-24T14:00:00Z',clock=path.join(dir,'clock.mjs');
   const payload={updatedAt:prior,daily:[{d:prior,schwab:1000,webull:1000,cash:800,stock:0,other:1200,spy:100,qqq:100,bd:prior,bstate:'session'}],
     flowsAuto:[],flowsUnresolved:[],status:{asOf:prior,provisional:false,calibrated:true,splitDelta:0,unresolvedCount:0,notes:[]}};
+  const raw=rawFixture(date),p=raw.schwab;
+  const buys=[-10,-20,-30,-40].map((amount,i)=>({id:260+i,cash_account_id:950,date_time:date+'T00:00:00Z',amount,
+    balance:[490,470,440,400][i],trade_id:1260+i,holding_id:960,description:`Synthetic Buy trade ${i}`,
+    cash_account_transaction_type:{name:'Buy Trade'}}));
+  p.cashTransactions[950].cash_account_transactions=buys;
+  p.cashLedgerHistory[950].cash_account_transactions[0].balance=500;
+  p.cashLedgerHistory[950].cash_account_transactions.push(...structuredClone(buys));
+  p.trades.trades=buys.map(row=>({id:row.trade_id,portfolio_id:936249,transaction_date:date,state:'confirmed'}));
   const seal=(data,v=3)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(data)),c.final(),c.getAuthTag()]).toString('base64')});};
   try {
     fs.writeFileSync(clock,`const NativeDate=globalThis.Date,fixedNow=NativeDate.parse(${JSON.stringify(fixedNow)});
@@ -466,15 +491,15 @@ globalThis.Date=class extends NativeDate {
     const out1=path.join(dir,'first'),out2=path.join(dir,'second');fs.mkdirSync(out1,{mode:0o700});fs.mkdirSync(out2,{mode:0o700});
     const runner=path.join(dir,'runner.mjs');
     fs.writeFileSync(runner,`import fs from 'node:fs';import path from 'node:path';import {pathToFileURL} from 'node:url';import crypto from 'node:crypto';import {spawnSync} from 'node:child_process';\n`+
-      `const root=${JSON.stringify(repo)},raw=${JSON.stringify(rawFixture(date))},date=${JSON.stringify(date)};globalThis.fetch=()=>{throw new Error('NETWORK_FORBIDDEN_IN_SYNTHETIC_TEST');};\n`+
+      `const root=${JSON.stringify(repo)},raw=${JSON.stringify(raw)},date=${JSON.stringify(date)};globalThis.fetch=()=>{throw new Error('NETWORK_FORBIDDEN_IN_SYNTHETIC_TEST');};\n`+
       `const CLOUD_ACCOUNTS=${JSON.stringify(CLOUD_ACCOUNTS)},mockFetch=${mockFetch.toString()};const assert={ok(v){if(!v)throw Error('route');},fail(){throw Error('route');}};\n`+
       `const {produce}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-producer.mjs')));const options={fetchImpl:mockFetch(raw),fetchEconomic:async()=>({envelopeVersion:4,sourcePath:${JSON.stringify(econ)},checkCurrent(){},cleanup(){}})};\n`+
       `const first=await produce({...options,cli:{'target-date':date,'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out1)},'income-date-evidence-file':${JSON.stringify(evidence)}}});\n`+
       `const bytes=fs.readFileSync(first.dataFile);fs.copyFileSync(first.dataFile,path.join(root,'data.json'));\n`+
-      `const {normalizeRead,parseSourceJson}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-source.mjs')));const input=normalizeRead(Object.fromEntries(Object.entries(raw).map(([a,p])=>[a,{...p,cashAccounts:parseSourceJson(JSON.stringify(p.cashAccounts))}])),date,{spy:100,qqq:100,spyd:0,qqqd:0});\n`+
+      `const {normalizeRead,parseSourceJson}=await import(pathToFileURL(path.join(root,'scripts/fee-cloud-source.mjs')));const cashWireInput=${cashWireInput.toString()};const input=normalizeRead(cashWireInput(raw),date,{spy:100,qqq:100,spyd:0,qqqd:0});\n`+
       `const style=path.join(${JSON.stringify(dir)},'negative-style.json'),management=path.join(${JSON.stringify(dir)},'negative-management.json');fs.writeFileSync(style,JSON.stringify(input.styleInput),{mode:0o600});fs.writeFileSync(management,JSON.stringify(input.managementInput),{mode:0o600});\n`+
       `let rejected=0;for(const change of [f=>f.sourceHoldingId=911,f=>delete f.incomeDateVerified,f=>f.incomeDateVerified='false',f=>{f.evidence='internal_income_estimated';f.incomeRole='dividend';},f=>{f.evidence='internal_income';f.incomeRole='dividend';f.incomeDateVerified=true;},f=>f.evidence='internal_trade']){const flows=structuredClone(input.flows);change(flows.find(f=>f.acct==='webull'));\n`+
-      `const cli=['--date='+date,'--file='+path.join(root,'data.json'),'--schwab=1000','--webull=1069.50','--src-schwab='+date,'--src-webull='+date,'--cash=869.50','--stock=0','--other=1200','--spy=100','--qqq=100','--src-bench='+date,'--bench-state=session','--acct-cash-webull=469.50','--prev-acct-cash-webull=400','--flows='+JSON.stringify(flows)];\n`+
+      `const cli=['--date='+date,'--file='+path.join(root,'data.json'),'--schwab=1000','--webull=1069.50','--src-schwab='+date,'--src-webull='+date,'--cash=869.50','--stock=0','--other=1200','--spy=100','--qqq=100','--src-bench='+date,'--bench-state=session','--acct-cash-schwab=400','--prev-acct-cash-schwab=500','--acct-cash-webull=469.50','--prev-acct-cash-webull=400','--flows='+JSON.stringify(flows)];\n`+
       `const bad=spawnSync(process.execPath,[path.join(root,'scripts/daily.mjs'),...cli],{encoding:'utf8',env:{...process.env,FEE_ECON_FILE:${JSON.stringify(econ)},FEE_STYLE_INPUT_FILE:style,FEE_MANAGEMENT_INPUT_FILE:management}});if(bad.status===0||!bad.stderr.includes('notification income evidence is inconsistent')||!bytes.equals(fs.readFileSync(path.join(root,'data.json'))))throw Error('writer did not reject without writing');rejected++;}\n`+
       `const second=await produce({...options,cli:{'target-date':date,'benchmark-file':${JSON.stringify(cache)},'out-dir':${JSON.stringify(out2)}}});\n`+
       `const b=Buffer.from(JSON.parse(bytes).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',Buffer.from(process.env.FEE_DATA_KEY,'base64url'),b.subarray(0,12));d.setAuthTag(b.subarray(-16));const p=JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));\n`+
