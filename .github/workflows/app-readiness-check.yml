@@ -1,0 +1,23 @@
+name: Check application readiness diagnostics across platforms
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  readiness-fixtures:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify diagnostics and filesystem/browser fixture regressions
+        run: node --test --test-concurrency=2 scripts/app-readiness.test.mjs scripts/app-run-diagnostics.test.mjs scripts/fee-style-registry.test.mjs scripts/fee-ledger-edit-guard.test.mjs
