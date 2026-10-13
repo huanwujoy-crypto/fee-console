@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import {loadStyleProposal,mergeStyleProposal} from './fee-cloud-producer.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -153,3 +155,105 @@ test('independently reviewed gold is isolated from both equity styles and reused
 test('legacy reviewed holdings keep original totals and omit zero gold', () => {
   assert.equal(Object.hasOwn(resolveStyle(fixture()), 'gold'), false);
 });
+
+
+// One-time transport uses the unchanged original resolver (synthetic only).
+{
+
+const D='2026-10-12';
+const proposal=()=>({portfolioId:936249,holdingId:901,ticker:'AMZN',style:'growth',
+  firstHeldOn:'2025-11-04',effectiveFrom:'2025-11-04',classifiedAt:'2026-10-13T00:00:00Z',
+  classifier:'synthetic-A',reviewer:'synthetic-B',evidenceRef:'https://example.test/synthetic',
+  rationale:'Synthetic only',reviewNote:'Synthetic only'});
+const input=()=>({schemaVersion:1,date:D,portfolios:[
+  {account:'schwab',portfolioId:936249,sourceDate:D,stockTotalUsd:100,
+    holdings:[{holdingId:901,ticker:'AMZN',valueUsd:100}]},
+  {account:'webull',portfolioId:1350094,sourceDate:D,stockTotalUsd:0,holdings:[]}
+],proposals:[]});
+const resolve=source=>resolveStyle({input:source,registry:{schemaVersion:1,entries:[]},
+  staticMap:{schemaVersion:1,effectiveDate:'2026-08-28',holdings:[]},date:D,
+  sourceDates:{schwab:D,webull:D},stock:100,now:new Date('2026-10-13T01:00:00Z')});
+const fixture=t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'style-proposal-test-'));fs.chmodSync(dir,0o700);
+  t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const repo=path.join(dir,'repo');fs.mkdirSync(repo);
+  const file=path.join(dir,'proposal.json');
+  const save=value=>fs.writeFileSync(file,JSON.stringify(value),{mode:0o600});
+  save({schema:'fee-console.style-proposal.v1',targetDate:D,proposal:proposal()});
+  const lock=()=>JSON.stringify({schema:'fee-console.style-proposal-lock.v1',targetDate:D,
+    proposalSha256:crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'),
+    portfolioId:936249,holdingId:901,ticker:'AMZN',style:'growth',firstHeldOn:'2025-11-04',effectiveFrom:'2025-11-04'});
+  return {dir,repo,file,save,lock};
+};
+test('absent proposal is unchanged ordinary source input',()=>{
+  const source=input(),loaded=loadStyleProposal(undefined,D,'unused');
+  assert.equal(mergeStyleProposal(source,loaded.proposal),source);loaded.checkCurrent();
+});
+test('one private target-bound proposal merges without changing source holdings or totals',t=>{
+  const f=fixture(t),loaded=loadStyleProposal(f.file,D,f.repo,f.lock()),source=input(),before=structuredClone(source);
+  loaded.checkCurrent();const merged=mergeStyleProposal(source,loaded.proposal);
+  assert.deepEqual(source,before);assert.deepEqual({...merged,proposals:[]},before);
+  assert.equal(resolve(merged).newEventIds.length,1);
+});
+test('wrong date, schema, extra keys and multiple proposals reject',t=>{
+  const f=fixture(t);
+  for(const body of [
+    {schema:'fee-console.style-proposal.v1',targetDate:'2026-10-09',proposal:proposal()},
+    {schema:'wrong',targetDate:D,proposal:proposal()},
+    {schema:'fee-console.style-proposal.v1',targetDate:D,proposal:proposal(),approved:true},
+    {schema:'fee-console.style-proposal.v1',targetDate:D,proposal:[proposal(),proposal()]}
+  ]){f.save(body);assert.throws(()=>loadStyleProposal(f.file,D,f.repo,f.lock()),/^Error: FEE_CLOUD_STYLE_PROPOSAL_INPUT$/);}
+});
+test('original identity, independent review, effective date and amount gates remain enforced',t=>{
+  const f=fixture(t);
+  for(const [change,error]of [
+    [p=>p.reviewer=p.classifier,/INDEPENDENT_REVIEW/],
+    [p=>p.evidenceRef='',/EVIDENCE_REQUIRED/]
+  ]){const p=proposal();change(p);f.save({schema:'fee-console.style-proposal.v1',targetDate:D,proposal:p});
+    assert.throws(()=>resolve(mergeStyleProposal(input(),loadStyleProposal(f.file,D,f.repo,f.lock()).proposal)),error);}
+});
+test('existing source proposals cannot be replaced',()=>{
+  const source=input();source.proposals=[proposal()];
+  assert.throws(()=>mergeStyleProposal(source,proposal()),/CONFLICT/);
+});
+test('file permissions, relative or repository paths and symlinks reject',t=>{
+  const f=fixture(t);assert.throws(()=>loadStyleProposal('relative.json',D,f.repo,f.lock()),/INPUT/);
+  fs.chmodSync(f.file,0o644);assert.throws(()=>loadStyleProposal(f.file,D,f.repo,f.lock()),/INPUT/);fs.chmodSync(f.file,0o600);
+  const inside=path.join(f.repo,'proposal.json');fs.copyFileSync(f.file,inside);fs.chmodSync(inside,0o600);
+  assert.throws(()=>loadStyleProposal(inside,D,f.repo,f.lock()),/INPUT/);
+  const link=path.join(f.dir,'link.json');fs.symlinkSync(f.file,link);
+  assert.throws(()=>loadStyleProposal(link,D,f.repo,f.lock()),/INPUT/);
+  fs.chmodSync(f.dir,0o755);assert.throws(()=>loadStyleProposal(f.file,D,f.repo,f.lock()),/INPUT/);
+});
+test('changed or replaced same-byte proposal stops with fixed private-safe code',t=>{
+  const f=fixture(t),loaded=loadStyleProposal(f.file,D,f.repo,f.lock());
+  const bytes=fs.readFileSync(f.file),replacement=path.join(f.dir,'replacement.json');
+  fs.writeFileSync(replacement,bytes,{mode:0o600});
+  assert.notEqual(fs.statSync(replacement).ino,fs.statSync(f.file).ino);
+  fs.renameSync(replacement,f.file);
+  assert.throws(loaded.checkCurrent,/CHANGED/);
+  const fresh=loadStyleProposal(f.file,D,f.repo,f.lock());f.save({private:'not logged'});
+  assert.throws(fresh.checkCurrent,/^Error: FEE_CLOUD_STYLE_PROPOSAL_CHANGED$/);
+});
+test('oversized, empty and malformed file reject without contents or paths in errors',t=>{
+  const f=fixture(t);
+  for(const bytes of ['', 'private garbage secret=123', 'x'.repeat(65537)]){
+    fs.writeFileSync(f.file,bytes);assert.throws(()=>loadStyleProposal(f.file,D,f.repo,f.lock()),
+      /^Error: FEE_CLOUD_STYLE_PROPOSAL_INPUT$/);}
+});
+test('one-time lock rejects absent/wrong lock, other target/hash/account/holding/style/dates',t=>{
+  const f=fixture(t),lock=JSON.parse(f.lock());
+  assert.throws(()=>loadStyleProposal(f.file,D,f.repo),/LOCK/);
+  assert.throws(()=>loadStyleProposal(f.file,'2026-10-13',f.repo,JSON.stringify(lock)),/LOCK/);
+  for(const change of [x=>x.portfolioId=1350094,x=>x.style='value',x=>x.firstHeldOn=D,x=>x.targetDate='2026-10-13']){
+    const bad={...lock};change(bad);assert.throws(()=>loadStyleProposal(f.file,D,f.repo,JSON.stringify(bad)),/LOCK/);
+  }
+  const hash={...lock,proposalSha256:'a'.repeat(64)};
+  assert.throws(()=>loadStyleProposal(f.file,D,f.repo,JSON.stringify(hash)),/HASH/);
+  for(const change of [p=>p.holdingId=902,p=>p.portfolioId=1350094,p=>p.ticker='OTHER',p=>p.style='value',p=>p.effectiveFrom=D]){
+    const p=proposal();change(p);f.save({schema:'fee-console.style-proposal.v1',targetDate:D,proposal:p});
+    const bound={...lock,proposalSha256:crypto.createHash('sha256').update(fs.readFileSync(f.file)).digest('hex')};
+    assert.throws(()=>loadStyleProposal(f.file,D,f.repo,JSON.stringify(bound)),/INPUT/);
+  }
+});
+}

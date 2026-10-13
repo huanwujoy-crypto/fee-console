@@ -10,6 +10,12 @@ on:
     - cron: '20,50 4 * * 2-6'
     - cron: '50 5,7,9 * * 2-6'
   workflow_dispatch:
+    inputs:
+      apply_style_proposal:
+        description: Apply one separately approved private style proposal
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -96,13 +102,30 @@ jobs:
           FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.sharesight_credentials.outputs.client_secret }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
+          APPLY_STYLE_PROPOSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_style_proposal }}
+          FEE_STYLE_PROPOSAL_JSON: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_style_proposal && secrets.FEE_STYLE_PROPOSAL_JSON || '' }}
+          FEE_STYLE_PROPOSAL_LOCK: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_style_proposal && secrets.FEE_STYLE_PROPOSAL_LOCK || '' }}
         run: |
           set -euo pipefail
+          style_args=()
+          if [[ "$APPLY_STYLE_PROPOSAL" == 'true' ]]; then
+            node <<'NODE'
+            const fs = require('fs'), path = require('path');
+            try {
+              const text = process.env.FEE_STYLE_PROPOSAL_JSON;
+              if (!text || Buffer.byteLength(text) > 64 * 1024) throw new Error();
+              fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'fee-cloud-private', 'style-proposal.json'),
+                text, {mode: 0o600, flag: 'wx'});
+            } catch { console.error('FEE_CLOUD_STYLE_PROPOSAL_INPUT'); process.exit(1); }
+          NODE
+            style_args+=("--style-proposal-file=$RUNNER_TEMP/fee-cloud-private/style-proposal.json")
+          fi
+          unset FEE_STYLE_PROPOSAL_JSON
           error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"
           if ! summary=$(node scripts/fee-cloud-producer.mjs \
             --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
             --target-date="${{ steps.published.outputs.target }}" \
-            --out-dir="$RUNNER_TEMP/fee-cloud-private" 2>"$error_file"); then
+            --out-dir="$RUNNER_TEMP/fee-cloud-private" "${style_args[@]}" 2>"$error_file"); then
             code=$(tail -n 1 "$error_file")
             if [[ ! "$code" =~ ^(FEE_CLOUD|SOURCE)_[A-Z0-9_]+$ ]]; then
               code=FEE_CLOUD_FAILED
