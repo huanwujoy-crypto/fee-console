@@ -132,9 +132,10 @@ and original management-exemption, income and receipt gates remain independent.
 For both portfolios, each A/B read also obtains the fixed previous calendar
 day's performance using the same GET-only endpoint and identity checks. This
 is an additional date scope requiring specific review before release. It is
-read even when no target-day movements are returned, so omission of the only
-cash movement cannot bypass reconciliation. Previous cash comes from that
-independent report, never from current cash minus movements. Cash lists use the
+read even when no target-day movements are returned. The report's USD cash is
+retained as dated evidence, but is not the opening authority for a target batch:
+report cash can already include a debit whose transaction filter assigns it to
+the following day. Cash lists use the
 fixed target date. If a portfolio has foreign cash, the same existing portfolio
 list endpoint is also requested for the fixed previous date. The
 [official V2 cash-list contract](https://portfolio.sharesight.com/api/2/doc/index.html#api-User_API_Cash_Accounts-CashAccountsList)
@@ -149,9 +150,41 @@ balances and USD valuations are bound into the private A/B fingerprint. Foreign
 FX valuation changes remain in total assets and the cash split, and create no
 cash flow or external funding.
 
+Each A/B read also obtains the same cash-transactions endpoint with only `to`
+set to the target date for every verified USD cash account, including accounts
+with no target movement. This extends the existing GET-only date scope and
+requires specific owner review. The complete history's target subset must match
+the original `from=to=target` collection by IDs, raw timestamp, exact cents,
+cash account, trade/holding/payout links, description, type and foreign ID. The
+target must be a complete consecutive timestamp suffix; interleaved dates,
+mixed boundary timestamps or later records stop. Explicit pagination,
+restriction, limitation, truncation and the existing 2 MiB/timeout limits stop;
+the documented endpoint provides no pagination parameters. A server silently
+violating its complete-list contract cannot be proven complete by a balance
+equation, especially when omitted movements net to zero.
+
+The latest complete group strictly before that suffix supplies the independent
+opening from actual predecessor transaction balances. A single row supplies its
+balance directly. A same-time group must have one independent terminal after
+consuming every balance edge; IDs and response ordering are not chronology.
+Multiple-balance zero-net cycles, disconnected paths and missing predecessors
+stop. A one-balance zero-amount group is unambiguous. Neither current cash minus
+target movements nor the first target balance minus its amount establishes the
+opening. With no target rows the history's target subset must also be empty,
+and its independent terminal must still equal target cash. No fallback zero,
+new snapshot store or financial write is introduced.
+
 USD report cash, listed USD balance, terminal dated movement and per-USD-account
 movement sum must agree. The aggregate movement check and writer's
-`acctCash` / `prevAcctCash` use only USD cash accounts; portfolio totals and
+`acctCash` / `prevAcctCash` use only USD cash accounts. The latter is the sum of
+independent balances before the complete target batch, with each predecessor's
+real date retained; it is not labelled as yesterday's report balance. NAV,
+economic flow dates, original writer and fee formulas retain their contracts.
+Linked trade cash is read once into target flows for validation, never written
+back to Sharesight or recorded as a second debit or external subscription.
+Trade/holding IDs retain priority in the existing classification. A UI date
+offset does not change the economic date or permit amount/currency mismatches.
+Portfolio totals and
 `splits.cash` retain every currency's USD valuation. Transactions are grouped by timestamp;
 each group must form a balance chain from its independently established opening
 balance and consume every record. IDs and response order cannot determine
@@ -159,6 +192,11 @@ execution order. Contradictory or ambiguous same-time balance paths stop;
 zero movements and identical balance edges are interchangeable for cash proof.
 Missing prior evidence, a changed cash-account set or unexplained original-
 currency balance or valuation differences stop automatic publication for review.
+Canonical full-history commitments, predecessor groups, target records, old
+USD report evidence and portfolio cash settings enter the existing private A/B
+fingerprint; array order does not churn it. Those records and amounts are never
+included in public health or workflow logs. This implementation does not add a
+dated-list fallback for ambiguous predecessors; those cases remain blocked.
 
 Cash accounts form `cash`, SGOV forms `other`, and remaining USD holdings form
 `stock`; the three buckets must reconcile to the two portfolio totals. Style

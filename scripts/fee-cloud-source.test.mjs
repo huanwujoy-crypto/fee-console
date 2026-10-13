@@ -12,14 +12,33 @@ import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
 import { checkCashLedger } from './daily-core.mjs';
+import { reconcileFlows } from './daily-core.mjs';
+import { buildFeeCalculationReceipt } from './fee-receipt-core.mjs';
+import { createFundInvestorCore } from './fund-investor-core.mjs';
 
 const D = "2026-09-23";
+// Legacy synthetic cases already state an independent opening in their prior
+// fixture. Give those fixtures an explicit predecessor record. New ledger tests
+// supply their own frozen history and never derive it from target or closing.
+function fixtureCashHistory(p, cashId) {
+  if (Object.hasOwn(p, 'cashLedgerHistory')) return p.cashLedgerHistory?.[cashId];
+  const previous = p.previousPerformance?.report?.cash_accounts?.find(row => row.id === Number(cashId));
+  return { cash_account_transactions: previous ? [{ id: 900000 + Number(cashId), cash_account_id: Number(cashId),
+    date_time: `${previousCalendarDate(D)}T00:00:00.000Z`, amount: 0, balance: previous.value,
+    cash_account_transaction_type: { name: 'FEE' } }, ...(p.cashTransactions[cashId]?.cash_account_transactions || [])] : [] };
+}
 // Synthetic direct inputs follow the same raw-JSON path as the cloud transport.
 const wireInput = input => Object.fromEntries(Object.entries(input).map(([account, p]) => {
   const copy = { ...p };
-  for (const key of ['trades', 'holdingHistory', 'managementTrades', 'performance', 'terminalPerformance', 'cashAccounts', 'previousCashAccounts']) {
+  for (const key of ['trades', 'holdingHistory', 'managementTrades', 'performance', 'previousPerformance', 'terminalPerformance', 'cashAccounts', 'previousCashAccounts']) {
     if (p[key]) copy[key] = parseTradeJson(JSON.stringify(p[key]));
   }
+  copy.cashTransactions = Object.fromEntries(Object.entries(p.cashTransactions).map(([key, value]) =>
+    [key, parseTradeJson(JSON.stringify(value))]));
+  copy.cashLedgerHistory = p.cashLedgerHistory === null ? null : Object.fromEntries(
+    (Object.hasOwn(p, 'cashLedgerHistory') ? Object.entries(p.cashLedgerHistory || {})
+      : (p.cashAccounts?.cash_accounts || []).filter(row => row.currency === 'USD').map(row => [row.id, fixtureCashHistory(p, row.id)]))
+      .map(([key, value]) => [key, value === undefined ? undefined : parseTradeJson(JSON.stringify(value))]));
   return [account, copy];
 }));
 const normalizeRead = (input, ...args) => normalizeCloudRead(wireInput(input), ...args);
@@ -455,7 +474,10 @@ function quantityLexemeReader(fixtures, historyLexemes, dayLexemes = []) {
       ? p.terminalPerformance : params.get('end_date') === D ? p.performance : p.previousPerformance);
     if (url.includes('/holdings?')) return response(url, p.holdings);
     if (url.includes('/cash_accounts.json')) return response(url, p.cashAccounts);
-    if (url.includes('cash_account_transactions')) return response(url, Object.values(p.cashTransactions)[0]);
+    if (url.includes('cash_account_transactions')) {
+      const cashId = new URL(url).pathname.split('/')[4];
+      return response(url, params.has('from') ? p.cashTransactions[cashId] : fixtureCashHistory(p, cashId));
+    }
     if (url.includes('trades.json')) {
       return response(url, params.has('start_date') ? p.trades : (p.holdingHistory || p.trades),
         account === 'webull' ? (params.has('start_date') ? dayLexemes : historyLexemes) : undefined);
@@ -485,10 +507,228 @@ test('reader rejects invalid original history quantity tokens and preserves resi
 });
 
 test('closed proof rejects direct Number-only histories without original quantity tokens', () => {
-  const fixture = closedCatalogFixture();
-  for (const p of Object.values(fixture)) p.cashAccounts = parseTradeJson(JSON.stringify(p.cashAccounts));
+  const fixture = wireInput(closedCatalogFixture());
+  fixture.webull.holdingHistory = JSON.parse(JSON.stringify(fixture.webull.holdingHistory));
+  fixture.webull.terminalPerformance = JSON.parse(JSON.stringify(fixture.webull.terminalPerformance));
   assert.throws(() => normalizeCloudRead(fixture, D, selectBenchmark(benchmarkCache, D)),
     /HOLDING_TERMINAL_PRECISION/);
+});
+
+function frozenCashLedgerFixture() {
+  const fixture = raw();
+  for (const p of Object.values(fixture)) p.cashLedgerHistory = Object.fromEntries(
+    p.cashAccounts.cash_accounts.map(row => [row.id, structuredClone(fixtureCashHistory(p, row.id))]));
+  const p = fixture.schwab, cashId = 142251;
+  const amounts = [-10, -20, -30, -40], balances = [490, 470, 440, 400];
+  const target = amounts.map((amount, i) => ({ id: 200 + i, cash_account_id: cashId,
+    date_time: `${D}T00:00:00.000Z`, amount, balance: balances[i], trade_id: 9 + i, holding_id: 2,
+    payout_id: null, foreign_identifier: `synthetic-BUY-${i}`, description: `Buy trade synthetic ${i}`,
+    cash_account_transaction_type: { name: 'Buy Trade' } }));
+  p.cashTransactions[cashId] = { cash_account_transactions: structuredClone(target) };
+  p.trades.trades = target.map(row => ({ id: row.trade_id, portfolio_id: 936249,
+    transaction_date: D, state: 'confirmed' }));
+  // Independently stated predecessor; it is not computed from any target row.
+  p.cashLedgerHistory[cashId] = { cash_account_transactions: [{ id: 40, cash_account_id: cashId,
+    date_time: '2026-09-13T04:00:00.000Z', amount: 30, balance: 500,
+    description: 'Synthetic prior record', cash_account_transaction_type: { name: 'DEPOSIT' } },
+    ...structuredClone(target)] };
+  // The disputed report has already included the four debits.
+  p.previousPerformance.report.cash_accounts[0].value = 400;
+  return fixture;
+}
+
+test('independent predecessor fixes the already-debited prior report without re-dating or recording cash', () => {
+  const fixture = frozenCashLedgerFixture(), result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
+  assert.deepEqual(result.accounts, { schwab: 1000, webull: 1000 });
+  assert.deepEqual(result.splits, { cash: 800, stock: 1050, other: 150 });
+  assert.equal(result.prevAcctCash.schwab, 500); assert.equal(result.acctCash.schwab, 400);
+  assert.equal(result.flows.length, 4); assert.equal(result.flows.reduce((n,row)=>n+row.amount,0), -100);
+  assert.ok(result.flows.every(row => row.date === D && row.tradeId != null));
+  assert.equal(new Intl.DateTimeFormat('en-CA', {timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit'})
+    .format(new Date(fixture.schwab.cashTransactions[142251].cash_account_transactions[0].date_time)), previousCalendarDate(D));
+  assert.deepEqual(checkCashLedger({ date:D, acctCash:result.acctCash, prevAcctCash:result.prevAcctCash, movements:result.flows }), []);
+  const classified = reconcileFlows([], [], result.flows);
+  assert.deepEqual(classified.errors, []); assert.deepEqual(classified.auto, []); assert.deepEqual(classified.unresolved, []);
+  const ordinary = frozenCashLedgerFixture(); ordinary.schwab.previousPerformance.report.cash_accounts[0].value = 500;
+  const baseline = normalizeRead(ordinary, D, selectBenchmark(benchmarkCache, D));
+  for (const key of ['accounts','splits','sourceDates','styleInput','flows','acctCash','prevAcctCash','benchmark'])
+    assert.deepEqual(result[key], baseline[key], key);
+  assert.notEqual(result.sourceFingerprint, baseline.sourceFingerprint);
+});
+
+test('ledger independently detects target omissions, zero-net omissions and conflicting identities', async t => {
+  const cases = [
+    ['missing row', f=>f.schwab.cashTransactions[142251].cash_account_transactions.pop(), /CASH_HISTORY_TARGET/],
+    ['empty target', f=>f.schwab.cashTransactions[142251].cash_account_transactions=[], /CASH_HISTORY_TARGET/],
+    ['missing history', f=>f.schwab.cashLedgerHistory={}, /CASH_HISTORY_EVIDENCE/],
+    ['extra cash key', f=>f.schwab.cashLedgerHistory[999]={cash_account_transactions:[]}, /CASH_HISTORY_EVIDENCE/],
+    ['no predecessor', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions.shift(), /CASH_ANCHOR_MISSING/],
+    ['wrong predecessor', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[0].balance=499, /CASH_RECONCILIATION/],
+    ['amount conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].amount-=0.01, /CASH_HISTORY_TARGET/],
+    ['balance conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].balance-=0.01, /CASH_HISTORY_TARGET/],
+    ['raw time conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].date_time=`${D}T01:00:00Z`, /CASH_HISTORY_TARGET/],
+    ['trade conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].trade_id=99, /CASH_HISTORY_TARGET/],
+    ['holding conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].holding_id=99, /CASH_HISTORY_TARGET/],
+    ['payout conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].payout_id=99, /CASH_HISTORY_TARGET/],
+    ['description conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].description='changed', /CASH_HISTORY_TARGET/],
+    ['foreign ID conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].foreign_identifier='changed', /CASH_HISTORY_TARGET/],
+    ['type conflict', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[1].cash_account_transaction_type.name='FEE', /CASH_HISTORY_TARGET/],
+    ['wrong cash identity', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[0].cash_account_id=999, /CASH_TRANSACTION_IDENTITY/],
+    ['wrong portfolio link', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions[0].links={portfolio:'https://api.sharesight.com/api/v2/portfolios/1350094'}, /CASH_TRANSACTION_IDENTITY/],
+    ['duplicate ID', f=>f.schwab.cashLedgerHistory[142251].cash_account_transactions.push({...f.schwab.cashLedgerHistory[142251].cash_account_transactions[0]}), /SOURCE_DUPLICATE/],
+    ['stale report and list', f=>{f.schwab.performance.report.cash_accounts[0].value=500;f.schwab.performance.report.value=1100;
+      f.schwab.cashAccounts.cash_accounts[0].balance=f.schwab.cashAccounts.cash_accounts[0].balance_in_portfolio_currency=500;}, /CASH_RECONCILIATION/],
+  ];
+  for (const [name, mutate, error] of cases) await t.test(name,()=>{
+    const fixture=frozenCashLedgerFixture();mutate(fixture);
+    assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),error);
+  });
+  const fixture=frozenCashLedgerFixture(), p=fixture.schwab;
+  const zero=[{id:300,cash_account_id:142251,date_time:`${D}T01:00:00Z`,amount:50,balance:450,cash_account_transaction_type:{name:'DEPOSIT'}},
+    {id:301,cash_account_id:142251,date_time:`${D}T02:00:00Z`,amount:-50,balance:400,cash_account_transaction_type:{name:'WITHDRAWAL'}}];
+  p.cashLedgerHistory[142251].cash_account_transactions.push(...zero);
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_HISTORY_TARGET/);
+  p.cashTransactions[142251].cash_account_transactions.push(...structuredClone(zero));
+  assert.equal(normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)).flows.length,6);
+});
+
+test('target cash must be a complete timestamp suffix, including offset and same-time boundaries', async t => {
+  for (const [time,error] of [
+    ['2026-09-22T23:00:00-02:00',/CASH_HISTORY_BOUNDARY/],
+    ['2026-09-22T20:00:00-04:00',/CASH_HISTORY_BOUNDARY/],
+    ['2026-09-24T00:00:00Z',/CASH_TRANSACTION_IDENTITY/],
+  ]) await t.test(time,()=>{
+    const fixture=frozenCashLedgerFixture();fixture.schwab.cashLedgerHistory[142251].cash_account_transactions[0].date_time=time;
+    assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),error);
+  });
+});
+
+test('predecessor group needs an independent unique terminal and consumes all its edges', async t => {
+  const row=(id,amount,balance)=>({id,cash_account_id:142251,date_time:'2026-09-13T04:00:00Z',amount,balance,cash_account_transaction_type:{name:'FEE'}});
+  const cases=[
+    ['reversed unique path',[row(41,-30,500),row(42,60,530)],true],
+    ['one balance self loops',[row(41,0,500),row(42,0,500)],true],
+    ['multi-balance cycle',[row(41,30,530),row(42,-30,500)],false],
+    ['disconnected cycle',[row(41,30,500),row(42,20,700),row(43,-20,680)],false],
+    ['two open paths',[row(41,30,500),row(42,20,700)],false],
+    ['duplicate edges incompatible',[row(41,30,500),row(42,30,500)],false],
+  ];
+  for(const [name,prior,pass]of cases)await t.test(name,()=>{
+    const fixture=frozenCashLedgerFixture(), p=fixture.schwab;
+    p.cashLedgerHistory[142251].cash_account_transactions=[...prior,...p.cashTransactions[142251].cash_account_transactions];
+    if(pass)assert.equal(normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)).prevAcctCash.schwab,500);
+    else assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_ANCHOR_(?:AMBIGUOUS|CHAIN)/);
+  });
+});
+
+test('empty target still requires history and independent terminal balance',()=>{
+  const fixture=frozenCashLedgerFixture();
+  // Webull has no target transactions; the frozen ledger opening is 400.
+  assert.doesNotThrow(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)));
+  fixture.webull.cashLedgerHistory[90250].cash_account_transactions[0].balance=401;
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_RECONCILIATION/);
+  fixture.webull.cashLedgerHistory[90250].cash_account_transactions=[];
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_ANCHOR_MISSING/);
+  const parsed=wireInput(frozenCashLedgerFixture());delete parsed.schwab.cashLedgerHistory;
+  assert.throws(()=>normalizeCloudRead(parsed,D,selectBenchmark(benchmarkCache,D)),/CASH_HISTORY_EVIDENCE/);
+});
+
+test('complete ledger evidence is canonical and bound to stable reads including prior reports and settings',async()=>{
+  const fixture=frozenCashLedgerFixture(), original=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
+  fixture.schwab.cashLedgerHistory[142251].cash_account_transactions.reverse();
+  fixture.schwab.cashTransactions[142251].cash_account_transactions.reverse();
+  assert.equal(normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)).sourceFingerprint,original.sourceFingerprint);
+  fixture.schwab.cashLedgerHistory[142251].cash_account_transactions.find(row=>row.id===40).description='revised predecessor';
+  assert.notEqual(normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)).sourceFingerprint,original.sourceFingerprint);
+  for(const key of ['amount','balance'])for(const token of ['500.001','1e-400','"500"']) {
+    const parsed=wireInput(frozenCashLedgerFixture()), payload=parsed.schwab.cashLedgerHistory[142251];
+    const text=JSON.stringify(payload).replace(new RegExp(`"${key}":(?:30|500)`),`"${key}":${token}`);
+    parsed.schwab.cashLedgerHistory[142251]=parseTradeJson(text);
+    assert.throws(()=>normalizeCloudRead(parsed,D,selectBenchmark(benchmarkCache,D)),/CASH_PRECISION/);
+  }
+  for(const mark of [p=>p.links={next:'https://untrusted.test'},p=>p.pagination={next_page:2},p=>p.has_more=true,
+    p=>p.complete=false,p=>p.limited=true,p=>p.restricted=true,p=>p.truncated=true]) {
+    const f=frozenCashLedgerFixture();mark(f.schwab.cashLedgerHistory[142251]);
+    assert.throws(()=>normalizeRead(f,D,selectBenchmark(benchmarkCache,D)),/SOURCE_INCOMPLETE/);
+  }
+  let round=0;
+  const changedReader=datedCashReader(frozenCashLedgerFixture());
+  const readOnce=changedReader.readOnce.bind(changedReader);
+  changedReader.readOnce=async date=>{const raw=await readOnce(date);if(++round===2)raw.schwab.cashSettings.tz_name='UTC';return raw;};
+  await assert.rejects(changedReader.readStable(D,selectBenchmark(benchmarkCache,D)),/SOURCE_UNSTABLE/);
+  const calls=[];await datedCashReader(frozenCashLedgerFixture(),{},calls).readStable(D,selectBenchmark(benchmarkCache,D));
+  const history=calls.filter(c=>new URL(c.url).pathname.endsWith('/cash_account_transactions.json')&&!new URL(c.url).searchParams.has('from'));
+  assert.equal(history.length,4);assert.ok(history.every(c=>c.method==='GET'&&new URL(c.url).searchParams.size===1&&new URL(c.url).searchParams.get('to')===D));
+});
+
+test('distinct equal-value trades remain four records and currency identity stays strict',()=>{
+  const fixture=frozenCashLedgerFixture(), p=fixture.schwab;
+  for(const [i,row]of p.cashTransactions[142251].cash_account_transactions.entries()) {
+    row.amount=-25;row.balance=500-25*(i+1);
+    Object.assign(p.cashLedgerHistory[142251].cash_account_transactions.find(item=>item.id===row.id),row);
+  }
+  const result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
+  assert.equal(result.flows.length,4);assert.equal(new Set(result.flows.map(row=>row.tradeId)).size,4);
+  assert.deepEqual(checkCashLedger({date:D,acctCash:result.acctCash,prevAcctCash:result.prevAcctCash,movements:result.flows}),[]);
+  p.cashAccounts.cash_accounts[0].currency='HKD';p.performance.report.cash_accounts[0].currency.code='HKD';
+  delete p.cashLedgerHistory[142251];
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/NON_USD_MOVEMENT/);
+});
+
+test('each USD account reconciles before aggregation, even when wrong anchors cancel',()=>{
+  const fixture=frozenCashLedgerFixture(),p=fixture.schwab;
+  const portfolio={id:936249,name:'Schwab-HK'},cashId=142253;
+  p.cashAccounts.cash_accounts.push({id:cashId,portfolio_id:936249,currency:'USD',portfolio_currency:'USD',date:D,balance:300,balance_in_portfolio_currency:300});
+  p.performance.report.cash_accounts.push({id:cashId,value:300,currency:{code:'USD'},portfolio});p.performance.report.value+=300;
+  p.previousPerformance.report.cash_accounts.push({id:cashId,value:300,currency:{code:'USD'},portfolio});
+  const row={id:400,cash_account_id:cashId,date_time:`${D}T00:00:00Z`,amount:10,balance:300,cash_account_transaction_type:{name:'FEE'}};
+  p.cashTransactions[cashId]={cash_account_transactions:[row]};
+  p.cashLedgerHistory[cashId]={cash_account_transactions:[{...row,id:399,date_time:'2026-09-13T00:00:00Z',amount:0,balance:290},structuredClone(row)]};
+  const result=normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D));
+  assert.equal(result.acctCash.schwab,700);assert.equal(result.prevAcctCash.schwab,790);
+  p.cashLedgerHistory[142251].cash_account_transactions[0].balance=499;
+  p.cashLedgerHistory[cashId].cash_account_transactions[0].balance=291;
+  assert.throws(()=>normalizeRead(fixture,D,selectBenchmark(benchmarkCache,D)),/CASH_RECONCILIATION/);
+});
+
+test('history transport failures, oversized responses and changed proofs never become zero cash',async()=>{
+  for(const failure of ['FEE_CLOUD_SOURCE_UNAVAILABLE','FEE_CLOUD_HTTP_REJECTED']) {
+    const reader=datedCashReader(frozenCashLedgerFixture()),get=reader.get.bind(reader);
+    reader.get=async(url,token)=>{if(url.includes('cash_account_transactions.json?to='))throw new Error(failure);return get(url,token);};
+    await assert.rejects(reader.readStable(D,selectBenchmark(benchmarkCache,D)),new RegExp(failure));
+  }
+  const oversized=datedCashReader(frozenCashLedgerFixture()),fetch=oversized.http.fetchImpl;
+  oversized.http.fetchImpl=async(url,init)=>url.includes('cash_account_transactions.json?to=')
+    ? jsonResponse(url,{cash_account_transactions:[],padding:'x'.repeat(2*1024*1024)}) : fetch(url,init);
+  await assert.rejects(oversized.readStable(D,selectBenchmark(benchmarkCache,D)),/RESPONSE_SIZE/);
+  for(const mutate of [raw=>raw.schwab.cashLedgerHistory[142251].cash_account_transactions[0].description='changed proof',
+    raw=>{const payload=JSON.parse(JSON.stringify(raw.schwab.previousPerformance));payload.report.cash_accounts[0].value=401;
+      raw.schwab.previousPerformance=parseTradeJson(JSON.stringify(payload));}]) {
+    let round=0;const reader=datedCashReader(frozenCashLedgerFixture()),readOnce=reader.readOnce.bind(reader);
+    reader.readOnce=async date=>{const raw=await readOnce(date);if(++round===2)mutate(raw);return raw;};
+    await assert.rejects(reader.readStable(D,selectBenchmark(benchmarkCache,D)),/SOURCE_UNSTABLE/);
+  }
+});
+
+test('cash authority change preserves full fee receipt, TWR, Carry/HWM and investor valuation inputs',()=>{
+  const corrected=normalizeRead(frozenCashLedgerFixture(),D,selectBenchmark(benchmarkCache,D));
+  const normal=frozenCashLedgerFixture();normal.schwab.previousPerformance.report.cash_accounts[0].value=500;
+  const baseline=normalizeRead(normal,D,selectBenchmark(benchmarkCache,D));
+  const makeData=input=>({daily:[{d:previousCalendarDate(D),schwab:950,webull:950},
+    {d:D,...input.accounts,...input.splits}],flowsAuto:[],flowsUnresolved:[],
+    status:{asOf:D,provisional:false,calibrated:false,unresolvedCount:0}});
+  const economicInput={v:4,settings:{start:previousCalendarDate(D),mgmt:2,carry:20,who:'Synthetic manager'},
+    accounts:[{id:'schwab',name:'Synthetic Schwab',opening:950},{id:'webull',name:'Synthetic Webull',opening:950}],months:[],fees:[]};
+  const expected=buildFeeCalculationReceipt({data:makeData(baseline),economicInput});
+  const actual=buildFeeCalculationReceipt({data:makeData(corrected),economicInput});
+  assert.deepEqual(actual,expected);assert.ok(actual.totals.managementFeeCents>0);assert.ok(actual.totals.carryCents>0);
+  const profile={schema:'fee-console.fund-profile.v1',manager:'Synthetic manager',fundName:'Synthetic fund',
+    inceptionDate:previousCalendarDate(D),inceptionNoticeDate:previousCalendarDate(D),currency:'USD',initialShares:1000000,
+    investors:[{id:'A',name:'Synthetic A',shares:900000},{id:'B',name:'Synthetic B',shares:100000}]};
+  const core=createFundInvestorCore();
+  const value=input=>core.calculate({profile,data:makeData(input),feeView:{state:'verified',start:previousCalendarDate(D),asOf:D,
+    status:{provisional:false},benchmarkInputs:{openingCents:190000,flows:[]}}});
+  assert.equal(value(corrected).status,'ready');assert.deepEqual(value(corrected),value(baseline));
 });
 
 test('original quantity tokens handle exponent notation and escaped numeric descriptions canonically', async () => {
@@ -787,7 +1027,10 @@ function datedCashReader(fixtures, { ignoredDate = false, unstable = false, unst
         for (const row of value.cash_accounts) if (row.currency === 'HKD') row.balance_in_portfolio_currency += 0.01;
       return response(url, value);
     }
-    if (u.pathname.endsWith('/cash_account_transactions.json')) return response(url, p.cashTransactions[u.pathname.split('/')[4]]);
+    if (u.pathname.endsWith('/cash_account_transactions.json')) {
+      const cashId = u.pathname.split('/')[4];
+      return response(url, u.searchParams.has('from') ? p.cashTransactions[cashId] : fixtureCashHistory(p, cashId));
+    }
     if (u.pathname.endsWith('/trades.json')) return response(url, p.trades);
     assert.fail('unexpected synthetic fixed source route');
   };
@@ -931,14 +1174,17 @@ test("reader allows only fixed GET routes and proves two identical reads", async
     if (url.includes("/performance?")) return response(url, new URL(url).searchParams.get("end_date") === D ? fixtures[account].performance : fixtures[account].previousPerformance);
     if (url.includes("/holdings?")) return response(url, fixtures[account].holdings);
     if (url.includes("/cash_accounts.json") && !url.includes("cash_account_transactions")) return response(url, fixtures[account].cashAccounts);
-    if (url.includes("cash_account_transactions")) return response(url, Object.values(fixtures[account].cashTransactions)[0]);
+    if (url.includes("cash_account_transactions")) {
+      const u = new URL(url), cashId = u.pathname.split('/')[4], p = fixtures[account];
+      return response(url, u.searchParams.has('from') ? p.cashTransactions[cashId] : fixtureCashHistory(p, cashId));
+    }
     if (url.includes("trades.json")) return response(url, fixtures[account].trades);
     throw new Error(`unexpected ${init.method} ${url}`);
   };
   const reader = new SharesightCloudReader({ clientId: "id", clientSecret: "secret", fetchImpl });
   const result = await reader.readStable(D, selectBenchmark(benchmarkCache, D));
   assert.equal(result.targetDate, D);
-  assert.equal(calls, 30);
+  assert.equal(calls, 34);
   assert.equal(result.managementInput.historyComplete, true);
 });
 
@@ -961,7 +1207,10 @@ test('reader conditionally obtains Schwab as-of history and reuses the existing 
         ? p.terminalPerformance : params.get('end_date') === D ? p.performance : p.previousPerformance);
       if (url.includes('/holdings?')) return response(url, p.holdings);
       if (url.includes('/cash_accounts.json')) return response(url, p.cashAccounts);
-      if (url.includes('cash_account_transactions')) return response(url, Object.values(p.cashTransactions)[0]);
+      if (url.includes('cash_account_transactions')) {
+        const u = new URL(url), cashId = u.pathname.split('/')[4];
+        return response(url, u.searchParams.has('from') ? p.cashTransactions[cashId] : fixtureCashHistory(p, cashId));
+      }
       if (url.includes('trades.json')) {
         assert.equal(params.get('end_date'), D);
         if (params.has('start_date')) return response(url, p.trades);

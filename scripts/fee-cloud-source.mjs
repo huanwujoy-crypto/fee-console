@@ -43,7 +43,7 @@ function assertComplete(payload) {
   if (!object(payload)) return;
   if (payload.links?.next || payload.pagination?.next_page || payload.meta?.pagination?.next_page
       || payload.next_page || payload.has_more === true || payload.complete === false
-      || payload.restricted === true || payload.limited === true) fail('SOURCE_INCOMPLETE');
+      || payload.restricted === true || payload.limited === true || payload.truncated === true) fail('SOURCE_INCOMPLETE');
 }
 
 export function previousCalendarDate(targetDate) {
@@ -140,6 +140,8 @@ export function parseSourceJson(text) {
       ['quantity', 'balance', 'balance_in_portfolio_currency']);
     if (object(payload)) retainRows(payload.cash_accounts, rawPayload.cash_accounts,
       ['balance', 'balance_in_portfolio_currency']);
+    if (object(payload)) retainRows(payload.cash_account_transactions, rawPayload.cash_account_transactions,
+      ['amount', 'balance']);
     if (object(payload?.report)) {
       retain(payload.report, rawPayload.report, ['value']);
       retainRows(payload.report.holdings, rawPayload.report.holdings, ['quantity', 'value']);
@@ -436,7 +438,87 @@ function assertCashChain(transactions, previousCash, currentCash) {
   if (Math.abs(balance - cents(currentCash)) > 1) fail('CASH_BALANCE_STALE');
 }
 
-function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance, previousCashPayload) {
+function ledgerRecord(row, cashId, portfolioId, targetDate) {
+  const timestamp = Date.parse(row.date_time), sourceDate = date(String(row.date_time || '').slice(0, 10));
+  if (typeof row.date_time !== 'string' || !Number.isFinite(timestamp) || sourceDate > targetDate
+      || id(row.cash_account_id) !== cashId) fail('CASH_TRANSACTION_IDENTITY');
+  if (row.links?.portfolio !== undefined
+      && row.links.portfolio !== `${API}/api/v2/portfolios/${portfolioId}`) fail('CASH_TRANSACTION_IDENTITY');
+  for (const key of ['description', 'foreign_identifier'])
+    if (row[key] != null && typeof row[key] !== 'string') fail('CASH_TRANSACTION_IDENTITY');
+  const type = row.cash_account_transaction_type?.name;
+  if (type != null && typeof type !== 'string') fail('CASH_TRANSACTION_IDENTITY');
+  return { id: id(row.id), cashAccountId: cashId, sourceDate, dateTime: row.date_time, timestamp,
+    amountCents: String(cashCents(row, 'amount')), balanceCents: String(cashCents(row, 'balance')),
+    tradeId: row.trade_id == null ? null : id(row.trade_id),
+    holdingId: row.holding_id == null ? null : id(row.holding_id),
+    payoutId: row.payout_id == null ? null : id(row.payout_id),
+    description: row.description ?? null, foreignIdentifier: row.foreign_identifier ?? null,
+    type: type ?? null };
+}
+
+// The predecessor group alone must establish its terminal. A multi-balance
+// closed cycle has no independent start, so neither today's first row nor its
+// closing balance may select a terminal. An open Euler path has one terminal.
+function independentLedgerTerminal(group) {
+  const degrees = new Map(), neighbours = new Map(), outgoing = new Map();
+  const add = node => {
+    if (!degrees.has(node)) { degrees.set(node, 0); neighbours.set(node, new Set()); outgoing.set(node, []); }
+  };
+  for (const row of group) {
+    const after = row.balanceCents, before = String(BigInt(after) - BigInt(row.amountCents));
+    add(before); add(after);
+    degrees.set(before, degrees.get(before) + 1); degrees.set(after, degrees.get(after) - 1);
+    neighbours.get(before).add(after); neighbours.get(after).add(before); outgoing.get(before).push(after);
+  }
+  const starts = [...degrees].filter(([, d]) => d === 1), ends = [...degrees].filter(([, d]) => d === -1);
+  let start, terminal;
+  if ([...degrees.values()].every(d => d === 0)) {
+    if (degrees.size !== 1) fail('CASH_ANCHOR_AMBIGUOUS');
+    start = terminal = degrees.keys().next().value;
+  } else {
+    if (starts.length !== 1 || ends.length !== 1 || [...degrees.values()].some(d => Math.abs(d) > 1)) fail('CASH_ANCHOR_CHAIN');
+    start = starts[0][0]; terminal = ends[0][0];
+  }
+  const seen = new Set(), pending = [start];
+  while (pending.length) {
+    const node = pending.pop();
+    if (seen.has(node)) continue;
+    seen.add(node); for (const next of neighbours.get(node)) if (!seen.has(next)) pending.push(next);
+  }
+  if (seen.size !== degrees.size) fail('CASH_ANCHOR_CHAIN');
+  const stack = [start], path = [];
+  while (stack.length) {
+    const edges = outgoing.get(stack.at(-1));
+    if (edges.length) stack.push(edges.pop()); else path.push(stack.pop());
+  }
+  if (path.length !== group.length + 1 || path[0] !== terminal || path.at(-1) !== start) fail('CASH_ANCHOR_CHAIN');
+  return terminal;
+}
+
+function cashLedgerProof(historyPayload, targetPayload, cashId, portfolioId, targetDate) {
+  if (!object(historyPayload)) fail('CASH_HISTORY_EVIDENCE');
+  const canonical = payload => rows(payload, 'cash_account_transactions')
+    .map(row => ledgerRecord(row, cashId, portfolioId, targetDate));
+  const history = canonical(historyPayload).sort((a,b) => a.timestamp - b.timestamp || a.id - b.id);
+  const target = canonical(targetPayload).sort((a,b) => a.id - b.id);
+  const listedTarget = history.filter(row => row.sourceDate === targetDate).sort((a,b) => a.id - b.id);
+  if (target.some(row => row.sourceDate !== targetDate) || stable(target) !== stable(listedTarget)) fail('CASH_HISTORY_TARGET');
+  const targetIds = new Set(target.map(row => row.id));
+  const split = history.length - target.length, prior = history.slice(0, split);
+  if (history.slice(split).some(row => !targetIds.has(row.id)) || prior.some(row => targetIds.has(row.id))) fail('CASH_HISTORY_BOUNDARY');
+  if (!prior.length) fail('CASH_ANCHOR_MISSING');
+  const anchorTime = prior.at(-1).timestamp;
+  if (target.length && anchorTime >= Math.min(...target.map(row => row.timestamp))) fail('CASH_HISTORY_BOUNDARY');
+  const anchorGroup = prior.filter(row => row.timestamp === anchorTime);
+  const openingCents = independentLedgerTerminal(anchorGroup);
+  return { authority: 'sharesight.cash-ledger-predecessor.v1', targetDate, query: { to: targetDate },
+    historyCount: history.length, historyFingerprint: sha256(history),
+    cashAccountId: cashId, portfolioId, currency: 'USD', openingCents,
+    anchor: anchorGroup, target };
+}
+
+function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance, previousCashPayload, cashLedgerHistory, cashSettings) {
   const expected = CLOUD_ACCOUNTS[account];
   const report = performancePayload?.report;
   assertComplete(performancePayload); assertComplete(report);
@@ -480,6 +562,9 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   if (listedCash.length !== cashRows.length || Object.keys(cashTransactions).length !== listedCash.length
       || listedCash.some(row => !Object.hasOwn(cashTransactions, String(id(row.id))))) fail('CASH_IDENTITY');
   for (const payload of Object.values(cashTransactions)) rows(payload, 'cash_account_transactions');
+  const usdIds = listedCash.filter(row => row.currency === 'USD').map(row => String(id(row.id)));
+  if (!object(cashLedgerHistory) || Object.keys(cashLedgerHistory).length !== usdIds.length
+      || usdIds.some(key => !Object.hasOwn(cashLedgerHistory, key))) fail('CASH_HISTORY_EVIDENCE');
   let incomeEvidence;
   try {
     if(account==='webull')for(const audit of notificationIncomeAudits(incomeDateEvidence,targetDate)) {
@@ -565,10 +650,16 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
       if (!current || current.currency !== row.currency?.code || id(row.portfolio?.id) !== expected.portfolioId
           || row.portfolio?.name !== expected.name) fail('CASH_PREVIOUS_EVIDENCE');
       if (current.currency === 'USD') {
-        previousCash += amount(row.value);
+        const proof = cashLedgerProof(cashLedgerHistory[String(current.id)], cashTransactions[String(current.id)],
+          current.id, expected.portfolioId, targetDate);
+        const opening = Number(BigInt(proof.openingCents)) / 100;
+        previousCash += opening;
         const moved = rows(cashTransactions[String(current.id)], 'cash_account_transactions').reduce((sum, t) => sum + amount(t.amount), 0);
-        if (Math.abs(amount(row.value) + moved - current.valueUsd) > 0.01) fail('CASH_RECONCILIATION');
-        assertCashChain(rows(cashTransactions[String(current.id)], 'cash_account_transactions'), row.value, current.valueUsd);
+        if (Math.abs(opening + moved - current.valueUsd) > 0.01) fail('CASH_RECONCILIATION');
+        assertCashChain(rows(cashTransactions[String(current.id)], 'cash_account_transactions'), opening, current.valueUsd);
+        const evidence = cashEvidence.find(item => item.cashAccountId === current.id);
+        evidence.ledger = proof;
+        evidence.priorReport = { date: prior.end_date, valueUsdCents: String(cashCents(row, 'value')) };
       }
       if (requiresDatedPrior) {
         const before = priorListed.find(item => id(item.id) === current.id), now = listedCashById.get(current.id);
@@ -589,7 +680,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     holdings: equity,
     flows: flows.sort((a, b) => stable(a).localeCompare(stable(b))),
     cashCheck: flows.length ? { current: round2(cashRows.filter(row => row.currency === 'USD').reduce((sum, row) => sum + row.valueUsd, 0)), previous: previousCash } : null,
-    catalogEvidence, cashEvidence,
+    catalogEvidence, cashEvidence, cashSettings,
   };
 }
 
@@ -631,7 +722,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     portfolios.push(normalizePortfolio(account, source.performance, source.holdings, source.cashAccounts,
       source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence,
       source.previousPerformance, source.holdingHistory || (account === 'webull' ? source.managementTrades : undefined),
-      source.terminalPerformance, source.previousCashAccounts));
+      source.terminalPerformance, source.previousCashAccounts, source.cashLedgerHistory, source.cashSettings));
   }
   const accounts = Object.fromEntries(portfolios.map(p => [p.account, p.total]));
   const splits = {
@@ -656,7 +747,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
   return { ...normalized, sourceFingerprint: sha256({ ...normalized,
     catalogEvidence: portfolios.map(p => ({ account: p.account, ...p.catalogEvidence })),
-    cashEvidence: portfolios.map(p => ({ account: p.account, balances: p.cashEvidence })) }) };
+    cashEvidence: portfolios.map(p => ({ account: p.account, balances: p.cashEvidence, settings: p.cashSettings })) }) };
 }
 
 class FixedHttp {
@@ -676,7 +767,8 @@ class FixedHttp {
     if (!allowed) fail("ROUTE_BLOCKED");
     try {
       const path = new URL(url).pathname;
-      const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance') || path.endsWith('/cash_accounts.json');
+      const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance') || path.endsWith('/cash_accounts.json')
+        || path.endsWith('/cash_account_transactions.json');
       const response = await boundedJson(this.fetchImpl, url, init, {
         timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: isPrecisionSource,
       });
@@ -730,10 +822,12 @@ export class SharesightCloudReader {
         this.get(tradesUrl, token),
       ]);
       const cashAccounts = rows(cashAccountsPayload, "cash_accounts");
-      const cashTransactions = {};
+      const cashTransactions = {}, cashLedgerHistory = {};
       for (const cash of cashAccounts) {
         const cashId = id(cash.id);
         cashTransactions[cashId] = await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`, token);
+        if (cash.currency === 'USD') cashLedgerHistory[cashId] = await this.get(
+          `${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?to=${targetDate}`, token);
       }
       const priorDate = previousCalendarDate(targetDate);
       const previousPerformance = await this.get(
@@ -759,7 +853,9 @@ export class SharesightCloudReader {
       const fromDate = needsHistory ? rows(holdingsPayload, 'holdings').map(row => date(row.inception_date)).sort()[0] : undefined;
       const terminalPerformance = needsHistory ? await this.get(
         `${base3}/performance?consolidated=false&end_date=${targetDate}&grouping=investment_type&include_limited=false&include_sales=true&report_combined=false&start_date=${fromDate}`, token) : undefined;
-      raw[account] = { incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), ...(previousPerformance ? {previousPerformance} : {}), performance: performancePayload, holdings: holdingsPayload,
+      const cashSettings = Object.fromEntries(['tz_name', 'apply_cash_account_adjustments', 'account_for_delayed_cash_transactions',
+        'buy_trade_settlement_delay', 'sell_trade_settlement_delay'].map(key => [key, matches[0][key] ?? null]));
+      raw[account] = { cashLedgerHistory, cashSettings, incomePayouts, incomeDateEvidence:account==='webull'?this.incomeDateEvidence:{}, ...(managementTrades ? {managementTrades} : {}), ...(previousPerformance ? {previousPerformance} : {}), performance: performancePayload, holdings: holdingsPayload,
         cashAccounts: cashAccountsPayload, cashTransactions, trades: tradesPayload,
         ...(previousCashAccounts ? { previousCashAccounts } : {}),
         ...(holdingHistory ? { holdingHistory } : {}), ...(terminalPerformance ? { terminalPerformance } : {}) };
