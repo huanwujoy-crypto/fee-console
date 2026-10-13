@@ -36,6 +36,12 @@
     "xuan-ib/"
   ],
   "sensitiveFiles": [
+    ".github/workflows/app-readiness-check.yml",
+    "docs/app-readiness.md",
+    "scripts/app-readiness.mjs",
+    "scripts/app-readiness.test.mjs",
+    "scripts/app-run-diagnostics.mjs",
+    "scripts/app-run-diagnostics.test.mjs",
     ".claude/rules/fee-console-daily.md",
     ".claude/rules/xuan-ib-handover.md",
     ".claude/settings.json",
