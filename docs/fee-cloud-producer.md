@@ -40,7 +40,8 @@ The pair is the second cloud Sharesight application already isolated from the
 Mac Direct API credential. The workflow reads it only after OIDC authentication
 and passes it to the fixed GET-only adapter for the duration of one job.
 
-The protected GitHub Environment therefore contains only these three values:
+The protected GitHub Environment contains these three credential/configuration values;
+the optional one-time private data input described below is separate:
 
 | Secret | Purpose |
 | --- | --- |
@@ -276,3 +277,59 @@ hashes; no amounts or credentials.
 
 Removing the variable or setting it to `disabled` is the immediate rollback.
 It does not revoke credentials or alter the published ledger.
+
+
+## One-time private style-proposal transport (requires specific release approval)
+
+A missing learned classification may be supplied as one reviewed proposal via
+`--style-proposal-file`, in an owner-only 0700 directory and 0600 file outside
+the checkout. The file is bounded to 64 KiB, must be a regular non-symlink owned
+by the runtime user, and must have exactly `schema`, `targetDate`, `proposal`.
+Schema is `fee-console.style-proposal.v1`; targetDate must match the independently
+selected producer target. The proposal has the unchanged registry entry format.
+This file grants no user or OWNER approval. Same-holding first-transaction and
+whole-period independent business review remain required external evidence.
+
+The loader merges one proposal into the complete stable two-account source
+input after the original A/B reads. It never replaces holdings, totals, dates,
+flows, benchmark or economic inputs. The original resolver/preflight rejects
+wrong identities, dates, incomplete sums, missing review, static conflicts or
+mutation of an existing learned entry. Proposal bytes/identity are rechecked
+before preflight, writer and candidate validation. Missing/wrong lock, changed
+proposal hash or scope cannot fall back to an unlocked proposal. An exact repeated registry
+entry stays a no-op; an existing source proposal cannot be overwritten.
+
+For the reviewed one-time workflow route, two temporary Environment data input
+secrets supply the envelope and its independently frozen lock:
+`FEE_STYLE_PROPOSAL_JSON` and `FEE_STYLE_PROPOSAL_LOCK`. The lock has exactly
+`schema`, `targetDate`, `proposalSha256`, `portfolioId`, `holdingId`, `ticker`,
+`style`, `firstHeldOn`, `effectiveFrom`; schema is
+`fee-console.style-proposal-lock.v1`. It binds the SHA-256 of the exact proposal
+file bytes and the separately approved holding identity. The code additionally
+permits only target 2026-10-12, Schwab, AMZN/growth and equal dates 2025-11-04;
+all other target/account/style/date scopes fail closed. These values are integrity
+and scope inputs, not human authorization. They contain the one approved record
+and necessary audit fields, no amounts, ledger locator or financial token.
+These are new private data inputs, not new credentials: no OAuth client, key, token, OIDC identity, IAM,
+repository permission or ledger write permission is added. Installing these
+inputs requires explicit approval separate from the classification fields.
+Only an explicitly selected workflow_dispatch boolean `apply_style_proposal`
+(default false) exposes it to the producer step. No IDs or proposal text are
+workflow_dispatch inputs, repository plaintext, command arguments or output.
+The step writes it privately, unsets the transport environment variable, and
+passes only its path. The producer removes both transport variables from child
+environments; only the needed private style-input file reaches the original
+writer. Existing always-cleanup shreds the proposal file with other runtime files.
+Remove both temporary secrets after the one-time attempt and retained private audit,
+including failure. Removal is by the already authorized secret operator, not the
+producer: no Secrets-management permission is added to its Contents-only token.
+A later attempt needs a fresh explicit execution authorization. Ordinary schedule
+and default dispatch behavior remain unchanged.
+
+Successful persistence uses only the original daily writer: registry plus the
+target day's splits are encrypted into data.json atomically. The existing
+published encrypted data therefore remains final storage, but is not a bootstrap
+input for a proposal absent from its registry. The existing economic Gist is not
+repurposed or modified. Financial writer/publication authorization, signed owner
+candidate, Validate, Promote, Pages and read-back remain separate gates. Existing
+weekend carry behavior is unchanged.

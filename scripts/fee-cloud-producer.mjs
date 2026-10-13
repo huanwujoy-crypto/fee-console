@@ -16,11 +16,85 @@ import { expectedTargetDate, selectBenchmark, SharesightCloudReader } from "./fe
 import { boundedJson } from './fee-http-json.mjs';
 import { isIsoDate, isWeekend } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
+import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
 const fail = code => { throw new Error(`FEE_CLOUD_${code}`); };
 const sha256 = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
+
+// Private proposal transport only. The original style resolver and daily writer
+// remain the sole validators/persistors. This file never grants owner consent.
+
+const styleProposalFail = code => { throw new Error(`FEE_CLOUD_STYLE_PROPOSAL_${code}`); };
+const styleProposalOutside = (root, target) => {
+  const relative = path.relative(fs.realpathSync(root), target);
+  return relative === '..' || relative.startsWith('..' + path.sep);
+};
+
+export function loadStyleProposal(filename, targetDate, repoRoot, lockText) {
+  if (filename === undefined) return { proposal: undefined, checkCurrent() {} };
+  let lock;
+  try {
+    lock = JSON.parse(lockText);
+    if (!lock || Object.keys(lock).sort().join(',') !==
+        'effectiveFrom,firstHeldOn,holdingId,portfolioId,proposalSha256,schema,style,targetDate,ticker'
+        || lock.schema !== 'fee-console.style-proposal-lock.v1'
+        || targetDate !== '2026-10-12' || lock.targetDate !== targetDate
+        || !/^[a-f0-9]{64}$/.test(lock.proposalSha256)
+        || lock.portfolioId !== STYLE_ACCOUNTS.schwab
+        || !Number.isSafeInteger(lock.holdingId) || lock.holdingId <= 0
+        || lock.ticker !== 'AMZN' || lock.style !== 'growth'
+        || lock.firstHeldOn !== '2025-11-04' || lock.effectiveFrom !== lock.firstHeldOn) styleProposalFail('LOCK');
+  } catch { styleProposalFail('LOCK'); }
+  const read = () => {
+    try {
+      if (!path.isAbsolute(filename)) styleProposalFail('INPUT');
+      const stat = fs.lstatSync(filename), parent = fs.lstatSync(path.dirname(filename));
+      const target = fs.realpathSync(filename);
+      if (!styleProposalOutside(repoRoot, target) || !stat.isFile() || stat.isSymbolicLink()
+          || !parent.isDirectory() || parent.isSymbolicLink()
+          || (stat.mode & 0o077) !== 0 || (parent.mode & 0o077) !== 0
+          || stat.uid !== process.getuid() || parent.uid !== process.getuid()
+          || stat.size < 1 || stat.size > 64 * 1024) styleProposalFail('INPUT');
+      const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+      try {
+        const before = fs.fstatSync(fd);
+        if (before.ino !== stat.ino || before.dev !== stat.dev || before.size !== stat.size
+            || (before.mode & 0o077) !== 0) styleProposalFail('INPUT');
+        const bytes = fs.readFileSync(fd), after = fs.fstatSync(fd);
+        if (before.size !== after.size || before.mtimeMs !== after.mtimeMs
+            || before.ctimeMs !== after.ctimeMs || bytes.length !== stat.size) styleProposalFail('INPUT');
+        return {bytes, ino: before.ino, dev: before.dev, target};
+      } finally { fs.closeSync(fd); }
+    } catch { styleProposalFail('INPUT'); }
+  };
+  const first = read();
+  if (crypto.createHash('sha256').update(first.bytes).digest('hex') !== lock.proposalSha256) styleProposalFail('HASH');
+  let proposal;
+  try {
+    const input = JSON.parse(first.bytes.toString('utf8'));
+    if (!input || Object.keys(input).sort().join(',') !== 'proposal,schema,targetDate'
+        || input.schema !== 'fee-console.style-proposal.v1'
+        || !isIsoDate(targetDate) || input.targetDate !== targetDate
+        || !input.proposal || typeof input.proposal !== 'object' || Array.isArray(input.proposal)) styleProposalFail('INPUT');
+    proposal = structuredClone(input.proposal);
+    if (['portfolioId', 'holdingId', 'ticker', 'style', 'firstHeldOn', 'effectiveFrom']
+      .some(key => proposal[key] !== lock[key])) styleProposalFail('SCOPE');
+  } catch { styleProposalFail('INPUT'); }
+  return { proposal, checkCurrent() {
+    let current;
+    try { current = read(); } catch { styleProposalFail('CHANGED'); }
+    if (!current.bytes.equals(first.bytes) || current.ino !== first.ino
+        || current.dev !== first.dev || current.target !== first.target) styleProposalFail('CHANGED');
+  }};
+}
+
+export function mergeStyleProposal(styleInput, proposal) {
+  if (proposal === undefined) return styleInput;
+  if (!styleInput || !Array.isArray(styleInput.proposals) || styleInput.proposals.length) styleProposalFail('CONFLICT');
+  return { ...structuredClone(styleInput), proposals: [structuredClone(proposal)] };
+}
 
 function args(argv) {
   const result = {};
@@ -29,7 +103,7 @@ function args(argv) {
     if (!match || Object.hasOwn(result, match[1])) fail("ARGUMENT");
     result[match[1]] = match[2];
   }
-  if (Object.keys(result).some(key => !["mode", "benchmark-file", "out-dir", "target-date", "checked-at", "income-date-evidence-file"].includes(key))) fail("ARGUMENT");
+  if (Object.keys(result).some(key => !["mode", "benchmark-file", "out-dir", "target-date", "checked-at", "income-date-evidence-file", "style-proposal-file"].includes(key))) fail("ARGUMENT");
   if (result.mode !== undefined && result.mode !== "published-preflight") fail("ARGUMENT");
   return result;
 }
@@ -399,6 +473,8 @@ export async function produce(options = {}) {
     const targetDate = cli["target-date"] || expectedTargetDate(options.now ? options.now() : new Date());
     const benchmark = selectBenchmark(cache, targetDate);
     const checkedAt = cli["checked-at"] || new Date().toISOString();
+    if (options.reader && cli["style-proposal-file"] !== undefined) fail("STYLE_PROPOSAL_INPUT");
+    const styleProposal = loadStyleProposal(cli["style-proposal-file"], targetDate, ROOT, process.env.FEE_STYLE_PROPOSAL_LOCK);
     stage = "READER_SETUP";
     if(options.reader&&cli['income-date-evidence-file']!==undefined)fail('INCOME_INPUT');
     const incomeInput=options.reader?{checkCurrent(){}}:loadIncomeDateEvidence(
@@ -423,19 +499,25 @@ export async function produce(options = {}) {
       incomeInput.checkCurrent();
       input.sourceFetchedAt = checkedAt;
       stage = "PREPARE";
+      input.styleInput = mergeStyleProposal(input.styleInput, styleProposal.proposal);
+      styleProposal.checkCurrent();
       fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
       const managementFile = path.join(output, 'management-input.json');
       if (input.managementInput) fs.writeFileSync(managementFile, JSON.stringify(input.managementInput), {mode:0o600,flag:'wx'});
       fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
       fs.chmodSync(dataFile, 0o600);
       const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile, FEE_MANAGEMENT_INPUT_FILE: input.managementInput ? managementFile : '' };
+      delete env.FEE_STYLE_PROPOSAL_JSON;
+      delete env.FEE_STYLE_PROPOSAL_LOCK;
       const original = sha256(fs.readFileSync(dataFile));
       stage = "WEEKEND_CARRY";
       const weekendCarries = carryWeekendGap(dataFile, input.targetDate, env);
       const baseArgs = writerArgs(input, dataFile);
       stage = "STYLE_PREFLIGHT";
+      styleProposal.checkCurrent();
       run("daily.mjs", [...baseArgs, "--style-preflight"], env);
       stage = "WRITER";
+      styleProposal.checkCurrent();
       incomeInput.checkCurrent();
       const writer = run("daily.mjs", baseArgs, env);
       const after = sha256(fs.readFileSync(dataFile));
@@ -451,6 +533,7 @@ export async function produce(options = {}) {
       stage = "ECONOMIC_RECHECK";
       await economic.checkCurrent();
       incomeInput.checkCurrent();
+      styleProposal.checkCurrent();
       stage = "HEALTH_VALIDATE";
       run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
       return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {

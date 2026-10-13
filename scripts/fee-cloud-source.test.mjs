@@ -1561,3 +1561,42 @@ test('net-proceeds mapping rejects mismatched identity, money, currency, links a
     f=>f.trades.push({...f.trades[0]}),f=>f.trades.push({...f.trades[0],id:223})];
   for(const change of changes){const f=netProceedsFixture();change(f);assert.equal(isControlledWebullNetProceeds(f),false,change.toString());}
 });
+
+
+// One-time opt-in integration remains on the formal CI path.
+{
+test('workflow exposes proposal only for explicit manual opt-in and preserves protected runtime identity',()=>{
+  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+  assert.match(workflow,/apply_style_proposal:[\s\S]*?type: boolean[\s\S]*?default: false/);
+  assert.match(workflow,/FEE_STYLE_PROPOSAL_JSON: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.apply_style_proposal && secrets\.FEE_STYLE_PROPOSAL_JSON \|\| '' \}\}/);
+  assert.match(workflow,/permissions:\n  contents: read\n  id-token: write/);
+  assert.match(workflow,/environment: fee-cloud-producer/);
+  assert.match(workflow,/service_account: fee-cloud-producer@family-portfolio-gateway\.iam\.gserviceaccount\.com/);
+  assert.match(workflow,/unset FEE_STYLE_PROPOSAL_JSON/);
+  const producer=fs.readFileSync(new URL('./fee-cloud-producer.mjs',import.meta.url),'utf8');
+  assert.match(producer,/delete env\.FEE_STYLE_PROPOSAL_JSON/);
+  assert.match(producer,/delete env\.FEE_STYLE_PROPOSAL_LOCK/);
+  assert.match(workflow,/Remove private runtime files[\s\S]*if: \$\{\{ always\(\) \}\}[\s\S]*shred -u/);
+});
+test('published-preflight CLI cannot consume proposal or bypass its no-credential stage',()=>{
+  const cli=fileURLToPath(new URL('./fee-cloud-producer.mjs',import.meta.url));
+  const r=spawnSync(process.execPath,[cli,'--mode=published-preflight','--benchmark-file=/nonexistent',
+    '--style-proposal-file=/nonexistent-private'],{encoding:'utf8',env:{PATH:process.env.PATH}});
+  assert.notEqual(r.status,0);assert.equal(r.stderr.trim(),'FEE_CLOUD_ARGUMENT');
+});
+test('all workflow literal shell blocks pass bash syntax without executing them',()=>{
+  const lines=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8').split('\n');
+  for(let i=0;i<lines.length;i++){
+    if(lines[i].trim()!=='run: |')continue;
+    const indent=lines[i].length-lines[i].trimStart().length,body=[];
+    for(const line of lines.slice(i+1)){
+      if(line.trim() && line.length-line.trimStart().length<=indent)break;
+      body.push(line.trim()?line.slice(indent+2):'');
+    }
+    const r=spawnSync('/bin/bash',['-n'],{input:body.join('\n')+'\n',encoding:'utf8',env:{PATH:process.env.PATH}});
+    assert.equal(r.status,0,r.stderr);
+  }
+});
+
+
+}
