@@ -52,18 +52,23 @@ export function currentReserve(ledger, date) {
   return eligible.at(-1).usd;
 }
 
-export async function readSharesightAction(sourceDate, token, {fetchImpl = fetch, now = Date.now} = {}) {
+export async function readSharesightAction(sourceDate, token, {fetchImpl = fetch, now = Date.now, settle = false} = {}) {
   if (!validDate(sourceDate) || typeof token !== 'string' || !token || /[\r\n]/.test(token)) throw new Error('SHARESIGHT_READ_SCOPE_INVALID');
   // No arbitrary portfolio, route or grouping is accepted. This token only
   // accesses existing GET REST routes, never the gateway's MCP write surface.
   const reads = [['sharesight.ibGroupedPerformance', 'IB-HK', '83569'], ['sharesight.noahPerformance', 'NOAH-HK', 'investment_type']];
-  return Promise.all(reads.map(async ([sourceKey, portfolio, grouping]) => {
+  const pending = reads.map(async ([sourceKey, portfolio, grouping]) => {
     const startedAt = new Date(now()).toISOString(), url = new URL('/v1/performance', GATEWAY);
     url.search = new URLSearchParams({portfolio, start_date: sourceDate, end_date: sourceDate, grouping, include_sales: 'false'}).toString();
     const raw = json(await read(url, {fetchImpl, headers: {Authorization: `Bearer ${token}`}}));
     if (raw.mode !== 'read_only' || raw.source !== 'Sharesight User API') throw new Error('SHARESIGHT_GATEWAY_SCOPE_INVALID');
     return {sourceKey, raw, startedAt, completedAt: new Date(now()).toISOString(), rawFingerprint: hash(raw)};
-  }));
+  });
+  if (!settle) return Promise.all(pending);
+  // Explicit EOD callers retain a successful sibling. Legacy callers keep
+  // their original all-or-fail contract; raw transport errors stay private.
+  return (await Promise.allSettled(pending)).map((result, i) => result.status === 'fulfilled'
+    ? result.value : {sourceKey: reads[i][0], status: 'request-failure', code: 'SNAPSHOT_READ_FAILED'});
 }
 
 export async function runPrivateReport({sourceDate, io, now = Date.now, loadContext = loadTrustedContext,

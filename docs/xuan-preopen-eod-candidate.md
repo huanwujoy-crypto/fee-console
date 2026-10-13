@@ -62,6 +62,28 @@ The report script and phone loader preserve that status and the source cutoff.
 
 ## Private sources and injected seams
 
+`eod_adapters.mjs` now composes these seams without selecting a production
+entry point. `createPrivateEodAdapters` requires explicit existing trusted
+context/private IO, trusted noncredential account/query/base-currency
+configuration, a separately sourced object/generation/raw-hash/date/account/query
+binding, and an injected archive read callback. The adapter pins that exact
+object generation, validates the original metadata and XML, and returns identity
+verification only. Supplying matching fields is not authentication of their
+origin; actual existing configuration and producer/object evidence remain
+required. No object name or XML query name establishes query identity.
+
+Its snapshot reader shares one fixed batch across both scopes and preserves raw
+API wrappers. Both response dates must equal the requested single source date;
+`include_sales` must be explicitly false and grouping must match its fixed scope.
+The authorized caller can inject the existing
+`readSharesightAction(date, existingToken, {settle: true})`; this opt-in mode
+retains each sibling independently, while legacy calls keep their default
+all-or-fail behavior. The adapters contain no default financial read, credential
+lookup, optional live capture, sync proof or financial proof. Offline synthetic
+tests exercise the composition with the existing runner and private save path.
+Real original XML bytes and independent query-to-object binding were unavailable
+in this local review; real parser/transport acceptance is still blocked.
+
 `eod_sources.mjs` is a strict pure XML subset codec plus a snapshot reader
 boundary. `eod_report.mjs` has no default financial reader, network client,
 credential lookup or CLI. To call it, the trusted caller must inject:
