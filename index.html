@@ -235,6 +235,13 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </section>
 
 <section class="pane" id="p-set">
+  <div class="card" id="styleDiagnosticCard" hidden><details class="fund-method">
+    <summary>分类登记诊断（只读）</summary>
+    <label class="f" for="styleDiagnosticQuery">七项私密诊断清单</label>
+    <input id="styleDiagnosticQuery" type="file" accept=".json,application/json">
+    <p class="hint">清单仅在当前页面读取，关闭页面即清除。</p>
+    <div id="styleDiagnosticBox" aria-live="polite"></div>
+  </details></div>
   <div class="card"><h2>账本管理</h2>
     <div id="ledgerBar" class="ledger-bar" aria-live="polite"></div>
   </div>
@@ -1660,7 +1667,7 @@ let _sourceEpoch=0,_receiptSource={state:"unverified"};
 const sourceIdentity=()=>({gid:cfg(K.gid),keyValue:cfg(K.key)});
 const sourceMatches=source=>source?.gid===cfg(K.gid)&&source?.keyValue===cfg(K.key);
 /* fee-receipt-loading:v1 */
-function invalidateReceiptSource(loading=false){const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};_managerCapability={state:"unverified"};_fundDocsCache=null;clearFundDocumentPlaintext();for(const id of ["fundDocsBox","fundGovSummary"]){const node=document.getElementById(id);if(typeof node?.replaceChildren==="function")node.replaceChildren();else if(node)node.innerHTML="";}const card=document.getElementById("fundDocsCard");if(card)card.style.display="none";++_renderGeneration;render();return epoch;}
+function invalidateReceiptSource(loading=false){const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};_managerCapability={state:"unverified"};_fundDocsCache=null;clearFundDocumentPlaintext();renderStyleRegistryDiagnostic(false);for(const id of ["fundDocsBox","fundGovSummary"]){const node=document.getElementById(id);if(typeof node?.replaceChildren==="function")node.replaceChildren();else if(node)node.innerHTML="";}const card=document.getElementById("fundDocsCard");if(card)card.style.display="none";++_renderGeneration;render();return epoch;}
 function acceptReceiptSource(snapshot,epoch){if(epoch!==_sourceEpoch||!sourceMatches(snapshot))throw new Error("来源已变化，请重新读取");_receiptSource={state:"verified",...sourceIdentity(),envelopeVersion:snapshot.envelopeVersion,legacySource:snapshot.legacySource};}
 let DB=seed();
 let _localLedgerPresent=!!cfg(K.db);
@@ -2008,7 +2015,7 @@ async function render(){
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
-  renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();
+  renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();renderStyleRegistryDiagnostic(documentsAuthorized);
 }
 
 /* fund-investor-render:start */
@@ -2266,6 +2273,96 @@ function renderFlows(){
     ${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">${verified?'配对核验·自动计入':esc(f.desc||'')}</span></label></div>`;}).join("")
     +manual.map(f=>`<div class="mrow"><span style="font-size:13px">${f.date} ${esc(f.acct)} <b>${fmt(f.amount,0)}</b> <span class="small">手工</span></span><button class="del" data-delflow="${f.id}">×</button></div>`).join("");
 }
+/* fee-style-diagnostic:start — local candidate, normal UI only */
+const STYLE_DIAGNOSTIC_TARGET = "2026-10-12";
+let _styleDiagnosticQuery = null, _styleDiagnosticAuthorized = false, _styleDiagnosticEpoch = 0;
+let _styleDiagnosticQueryNotice = "";
+function validateStyleDiagnosticQuery(query) {
+  const exact = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
+    && Object.keys(value).sort().join("|") === keys.sort().join("|");
+  if (!exact(query, ["schema", "sourceDate", "rows"]) || query.schema !== "fee-console.private-style-ui-query.v1"
+      || query.sourceDate !== STYLE_DIAGNOSTIC_TARGET || !Array.isArray(query.rows) || query.rows.length !== 7) throw new Error("query");
+  const keys = new Set(), tickers = new Set();
+  const rows = query.rows.map(row => {
+    if (!exact(row, ["holdingKey", "ticker"]) || typeof row.holdingKey !== "string"
+        || !/^(936249|1350094):[1-9]\d{0,15}$/.test(row.holdingKey)
+        || !Number.isSafeInteger(Number(row.holdingKey.split(":")[1]))
+        || typeof row.ticker !== "string" || !/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(row.ticker)
+        || row.ticker === "SGOV" || keys.has(row.holdingKey) || tickers.has(row.ticker)) throw new Error("query");
+    keys.add(row.holdingKey); tickers.add(row.ticker);
+    return Object.freeze({holdingKey: row.holdingKey, ticker: row.ticker});
+  });
+  return Object.freeze({sourceDate: query.sourceDate, rows: Object.freeze(rows)});
+}
+function styleDiagnosticDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d\d-\d\d$/.test(value)) return false;
+  const parsed = new Date(value + "T00:00:00Z");
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+function styleRegistryDiagnosticProjection(registry, query) {
+  const valid = registry && registry.schemaVersion === 1 && Array.isArray(registry.entries)
+    && registry.entries.length <= 10000 && registry.entries.every(entry => entry && typeof entry === "object"
+      && !Array.isArray(entry) && [936249, 1350094].includes(entry.portfolioId)
+      && Number.isSafeInteger(entry.holdingId) && entry.holdingId > 0
+      && typeof entry.ticker === "string" && /^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(entry.ticker)
+      && entry.ticker !== "SGOV");
+  return query.rows.map(({holdingKey, ticker}) => {
+    const [portfolioId, holdingId] = holdingKey.split(":").map(Number);
+    const row = {ticker, registryState: "unknown", firstHeldOn: null, effectiveFrom: null, coversTarget: null};
+    if (!valid) return row;
+    const matches = registry.entries.filter(entry => entry && entry.portfolioId === portfolioId && entry.holdingId === holdingId);
+    if (matches.length === 0) return {...row, registryState: "absent", coversTarget: false};
+    if (matches.length !== 1) return {...row, registryState: "invalid"};
+    const entry = matches[0];
+    if (entry.ticker !== ticker || !["growth", "value", "gold"].includes(entry.style)
+        || !styleDiagnosticDate(entry.firstHeldOn) || !styleDiagnosticDate(entry.effectiveFrom)
+        || entry.firstHeldOn !== entry.effectiveFrom) return {...row, registryState: "invalid"};
+    return {...row, registryState: "present", firstHeldOn: entry.firstHeldOn, effectiveFrom: entry.effectiveFrom,
+      coversTarget: entry.firstHeldOn <= STYLE_DIAGNOSTIC_TARGET && entry.effectiveFrom <= STYLE_DIAGNOSTIC_TARGET};
+  });
+}
+function renderStyleRegistryDiagnostic(authorized) {
+  const card = document.getElementById("styleDiagnosticCard"), box = document.getElementById("styleDiagnosticBox");
+  if (!card || !box) return;
+  card.hidden = !authorized; _styleDiagnosticAuthorized = !!authorized;
+  if (!authorized) { _styleDiagnosticEpoch++; _styleDiagnosticQuery = null; _styleDiagnosticQueryNotice = ""; box.textContent = ""; return; }
+  if (!_styleDiagnosticQuery) { box.textContent = _styleDiagnosticQueryNotice || "请载入已核对的七项私密诊断清单。"; return; }
+  const rows = styleRegistryDiagnosticProjection(DAILY.classificationRegistry, _styleDiagnosticQuery);
+  const snapshotDate = (Array.isArray(DAILY.daily) ? DAILY.daily : []).reduce((last, point) =>
+    styleDiagnosticDate(point?.d) && point.d > last ? point.d : last, "");
+  const state = {unknown: "无法确认", absent: "无", invalid: "有，待核对", present: "有"};
+  box.innerHTML = `<p class="hint">目标日 ${STYLE_DIAGNOSTIC_TARGET} · 载入快照截至 ${snapshotDate || "未知"}</p>`
+    + (snapshotDate && snapshotDate < STYLE_DIAGNOSTIC_TARGET
+      ? `<p class="hint">载入快照早于目标日；下表仅说明本快照的登记情况，目标日状态仍待确认。</p>` : "")
+    + `<div style="overflow-x:auto"><table class="ledger-diff" aria-label="七项分类登记诊断"><thead><tr>`
+    + `<th>候选</th><th>登记</th><th>首持日</th><th>生效日</th><th>目标日日期覆盖</th></tr></thead><tbody>`
+    + rows.map(row => `<tr><td>${row.ticker}</td><td>${state[row.registryState]}</td>`
+      + `<td>${row.firstHeldOn || "—"}</td><td>${row.effectiveFrom || "—"}</td>`
+      + `<td>${row.coversTarget === null ? "无法确认" : row.coversTarget ? "覆盖" : "未覆盖"}</td></tr>`).join("")
+    + `</tbody></table></div><p class="hint">仅核对载入登记的日期覆盖；此结果不代表分类复核或生产预检已通过。</p>`;
+}
+async function loadStyleDiagnosticQuery(file) {
+  const epoch = ++_styleDiagnosticEpoch;
+  if (!_styleDiagnosticAuthorized || !file) return;
+  _styleDiagnosticQuery = null; _styleDiagnosticQueryNotice = "正在读取清单…";
+  renderStyleRegistryDiagnostic(true);
+  try {
+    if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > 4096) throw new Error("query");
+    const query = validateStyleDiagnosticQuery(JSON.parse(await file.text()));
+    if (!_styleDiagnosticAuthorized || epoch !== _styleDiagnosticEpoch) return;
+    _styleDiagnosticQuery = query; _styleDiagnosticQueryNotice = "";
+  } catch (_) {
+    if (!_styleDiagnosticAuthorized || epoch !== _styleDiagnosticEpoch) return;
+    _styleDiagnosticQueryNotice = "清单格式不符；未读取登记结果。";
+  }
+  if (_styleDiagnosticAuthorized && epoch === _styleDiagnosticEpoch) renderStyleRegistryDiagnostic(true);
+}
+document.getElementById("styleDiagnosticQuery").addEventListener("change", event => {
+  event.stopPropagation(); const file = event.currentTarget.files?.[0]; event.currentTarget.value = "";
+  loadStyleDiagnosticQuery(file);
+});
+/* fee-style-diagnostic:end */
+
 function renderSettings(){
   const DB=editDB();
   const S=DB.settings;sMgmt.value=S.mgmt;sCarry.value=S.carry;sStart.value=S.start;sWho.value=S.who||"";
