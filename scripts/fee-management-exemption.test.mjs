@@ -116,7 +116,14 @@ test('encrypted writer enrollment is atomic, preserves AUM, and identical source
   const input=fixture();fs.writeFileSync(econFile,encrypt(input.economicInput,4),{mode:0o600});
   fs.writeFileSync(managementFile,JSON.stringify({...source(),proposals:[rule()]}),{mode:0o600});
   const args=[`--date=${d}`,`--file=${file}`,'--schwab=10000','--webull=10000',`--src-schwab=${d}`,`--src-webull=${d}`,'--cash=10000','--stock=10000','--other=0'];
-  const run=()=>spawnSync(process.execPath,[path.join(root,'scripts/daily.mjs'),...args],{encoding:'utf8',env:{...process.env,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econFile,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:managementFile}});
+  // Keep the first-of-month fixture inside the real writer's date window, only in this child.
+  const clockFile=path.join(dir,'test-clock.cjs');
+  fs.writeFileSync(clockFile,`const RealDate=Date,now=Date.parse('${d}T16:00:00Z');
+    globalThis.Date=class extends RealDate {
+      constructor(...args){super(...(args.length?args:[now]));}
+      static now(){return now;}
+    };`,{mode:0o600});
+  const run=()=>spawnSync(process.execPath,['--require',clockFile,path.join(root,'scripts/daily.mjs'),...args],{encoding:'utf8',env:{...process.env,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econFile,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:managementFile}});
   try {
     const first=run();assert.equal(first.status,0,first.stderr);
     const payload=decrypt();assert.equal(payload.daily[0].webull,10000);assert.equal(payload.daily[0].stock,10000);

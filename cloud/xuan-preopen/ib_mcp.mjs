@@ -1,9 +1,10 @@
 // Official IBKR MCP transport for the cloud action report. No model or trading
 // dispatcher is involved. Credentials belong in a private cloud secret store.
 import { decodeHookResponse } from '../../scripts/xuan-ib-hook-response.mjs';
+import { ibError, inIbPhase, networkCategory, httpCategory, bearerError } from './ib_diagnostics.mjs';
 
 export const RESOURCE = 'https://api.ibkr.com/v1/api/mcp-public';
-const TOKEN_ENDPOINT = 'https://api.ibkr.com/oauth2/api/v1/token';
+export const TOKEN_ENDPOINT = 'https://api.ibkr.com/oauth2/api/v1/token';
 const MAX_BYTES = 8_000_000;
 const SOURCES = Object.freeze({
   get_account_summary: 'ib.accountSummary',
@@ -14,7 +15,7 @@ const SOURCES = Object.freeze({
 });
 const argumentsFor=tool=>tool==='get_account_trades'?{period:'DAYS_7'}:{};
 const argumentsAllowed=(tool,args)=>args&&Object.keys(args).length===(tool==='get_account_trades'?1:0)&&(tool!=='get_account_trades'||args.period==='DAYS_7');
-const fail = code => { throw new Error(code); };
+const fail = (code, diagnostic) => { throw ibError(code, diagnostic); };
 const exactReadScope = scope => typeof scope === 'string' && scope.trim() === 'mcp.read';
 
 export function validateCredential(value) {
@@ -27,7 +28,7 @@ export function validateCredential(value) {
   return value;
 }
 
-async function bodyText(response) {
+async function bodyText(response, limit = MAX_BYTES) {
   if (!response.body) fail('IB_EMPTY_RESPONSE');
   const reader = response.body.getReader();
   const chunks = []; let total = 0;
@@ -36,17 +37,29 @@ async function bodyText(response) {
       const { done, value } = await reader.read();
       if (done) break;
       total += value.byteLength;
-      if (total > MAX_BYTES) fail('IB_RESPONSE_TOO_LARGE');
+      if (total > limit) fail('IB_RESPONSE_TOO_LARGE');
       chunks.push(Buffer.from(value));
     }
-  } finally { await reader.cancel().catch(() => {}); }
+  } finally { void reader.cancel().catch(() => {}); }
   try { return new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)); }
   catch { fail('IB_INVALID_UTF8'); }
 }
 
-export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now } = {}) {
-  const original = validateCredential(await store.load());
+export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true } = {}) {
+  let original;
+  try { original = validateCredential(await store.load()); }
+  catch (error) {
+    const match = /^CLOUD_HTTP_([1-5]\d\d)$/.exec(error?.message || '');
+    throw inIbPhase(error, 'credential_load', 'IB_CREDENTIAL_LOAD_FAILED', match ? Number(match[1]) : null,
+      match ? httpCategory(Number(match[1])) : error?.message === 'IB_READ_ONLY_CREDENTIAL_REQUIRED' ? 'scope_invalid'
+        : error?.message === 'CLOUD_NETWORK_FAILED' ? networkCategory(error)
+        : ['TimeoutError', 'AbortError'].includes(error?.name) ? 'timeout' : 'unknown');
+  }
   if (original.expires_at > now() + 120_000) return original;
+  if (allowRefresh !== true) fail('IB_REFRESH_NOT_AUTHORIZED', {phase: 'oauth_refresh', category: 'forbidden'});
+  // A refresh may revoke the old refresh token. Require a persistence capability
+  // before submitting it; never refresh as a purported no-write probe.
+  if (typeof store.save !== 'function') fail('IB_TOKEN_ROTATION_NOT_SAVED', {phase: 'credential_save', category: 'save_failed'});
   let response;
   try {
     response = await fetchImpl(TOKEN_ENDPOINT, {
@@ -55,19 +68,36 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
       body: new URLSearchParams({ grant_type: 'refresh_token', client_id: original.client_id,
         refresh_token: original.refresh_token, scope: 'mcp.read', resource: RESOURCE }),
     });
-  } catch { fail('IB_REFRESH_NETWORK_FAILED'); }
-  if (!response.ok) fail('IB_REAUTHORIZE_REQUIRED');
+  } catch (error) { fail('IB_REFRESH_NETWORK_FAILED', {phase: 'oauth_refresh', category: networkCategory(error)}); }
+  if (!response.ok) {
+    let oauthError = null;
+    try { oauthError = JSON.parse(await bodyText(response, 16_384))?.error; } catch { /* Unknown stays unknown; raw body is never logged. */ }
+    fail('IB_REFRESH_HTTP_FAILED', {phase: 'oauth_refresh', httpStatus: response.status,
+      category: httpCategory(response.status, oauthError)});
+  }
   let token;
-  try { token = JSON.parse(await bodyText(response)); } catch { fail('IB_REFRESH_RESPONSE_INVALID'); }
-  if (!token.access_token || token.token_type?.toLowerCase() !== 'bearer'
+  try { token = JSON.parse(await bodyText(response, 16_384)); }
+  catch { fail('IB_REFRESH_RESPONSE_INVALID', {phase: 'oauth_refresh', httpStatus: response.status, category: 'response_invalid'}); }
+  if (!token || typeof token.access_token !== 'string' || !token.access_token
+    || typeof token.token_type !== 'string' || token.token_type.toLowerCase() !== 'bearer'
     || !Number.isFinite(token.expires_in) || token.expires_in <= 0
-    || (token.scope !== undefined && !exactReadScope(token.scope))) fail('IB_REFRESH_SCOPE_INVALID');
-  const next = validateCredential({ ...original, access_token: token.access_token,
+    || (token.refresh_token !== undefined && (typeof token.refresh_token !== 'string' || !token.refresh_token))
+    || (token.scope !== undefined && !exactReadScope(token.scope))) fail('IB_REFRESH_SCOPE_INVALID',
+      {phase: 'oauth_refresh', httpStatus: response.status, category: 'scope_invalid'});
+  let next;
+  try { next = validateCredential({ ...original, access_token: token.access_token,
     refresh_token: token.refresh_token || original.refresh_token, token_type: token.token_type,
-    expires_at: now() + token.expires_in * 1000, scope: 'mcp.read', obtained_at: new Date(now()).toISOString() });
+    expires_at: now() + token.expires_in * 1000, scope: 'mcp.read', obtained_at: new Date(now()).toISOString() }); }
+  catch { fail('IB_REFRESH_SCOPE_INVALID', {phase: 'oauth_refresh', httpStatus: response.status, category: 'scope_invalid'}); }
   // Persist rotation before any source read. Failure cannot fall back to the old
   // token or leave a report successful while its next run loses authorization.
-  try { await store.save(next); } catch { fail('IB_TOKEN_ROTATION_NOT_SAVED'); }
+  try { await store.save(next); } catch (error) {
+    const match = /^CLOUD_HTTP_([1-5]\d\d)$/.exec(error?.message || '');
+    const rejected = match && Number(match[1]) >= 400 && Number(match[1]) < 500;
+    throw inIbPhase(ibError(rejected ? 'IB_TOKEN_ROTATION_NOT_SAVED' : 'IB_TOKEN_ROTATION_OUTCOME_UNKNOWN',
+      {httpStatus: match ? Number(match[1]) : null, category: rejected ? 'save_failed' : 'save_outcome_unknown'}),
+      'credential_save', 'IB_TOKEN_ROTATION_NOT_SAVED');
+  }
   return next;
 }
 
@@ -95,32 +125,13 @@ export class IbReadSession {
     if (!['initialize', 'notifications/initialized', 'tools/call'].includes(method)) fail('IB_MCP_METHOD_FORBIDDEN');
     if (method === 'tools/call' && (!Object.hasOwn(SOURCES, params?.name)
       || !argumentsAllowed(params.name,params.arguments))) fail('IB_MCP_TOOL_FORBIDDEN');
-    const id = ++this.id;
-    const payload = { jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }), ...(notification ? {} : { id }) };
-    const headers = { Authorization: `Bearer ${this.credential.access_token}`,
-      'content-type': 'application/json', Accept: 'application/json, text/event-stream',
-      'MCP-Protocol-Version': '2025-03-26' };
-    if (this.sessionId) headers['Mcp-Session-Id'] = this.sessionId;
-    let response;
-    try { response = await this.fetchImpl(RESOURCE, { method: 'POST', redirect: 'error',
-      signal: AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
-    catch { fail('IB_MCP_NETWORK_FAILED'); }
-    if (response.status === 401 || response.status === 403) fail('IB_REAUTHORIZE_REQUIRED');
-    if (!response.ok) fail('IB_MCP_HTTP_FAILED');
-    const session = response.headers.get('mcp-session-id');
-    if (session) {
-      if (session.length > 1024 || /[\r\n]/.test(session)) fail('IB_MCP_SESSION_INVALID');
-      if (this.sessionId && this.sessionId !== session) fail('IB_MCP_SESSION_CHANGED');
-      this.sessionId = session;
-    }
-    if (notification && (response.status === 202 || response.status === 204)) return;
-    if (notification) { await bodyText(response); return; }
-    return rpcMessage(await bodyText(response), response.headers.get('content-type') || '', id);
+    return sendRequest(this, method, params, notification);
   }
   async initialize() {
     const result = await this.request('initialize', { protocolVersion: '2025-03-26', capabilities: {},
       clientInfo: { name: 'xuan-preopen-readonly', version: '1.0.0' } });
-    if (!result?.capabilities?.tools || result.protocolVersion !== '2025-03-26') fail('IB_MCP_HANDSHAKE_INVALID');
+    if (!result?.capabilities?.tools || result.protocolVersion !== '2025-03-26') fail('IB_MCP_HANDSHAKE_INVALID',
+      {phase: 'mcp_initialize', category: 'response_invalid'});
     await this.request('notifications/initialized', undefined, true);
     this.initialized = true;
   }
@@ -128,15 +139,64 @@ export class IbReadSession {
     if (!this.initialized) fail('IB_MCP_NOT_INITIALIZED');
     if (!Object.hasOwn(SOURCES, tool)) fail('IB_MCP_TOOL_FORBIDDEN');
     const result = await this.request('tools/call', { name: tool, arguments: argumentsFor(tool) });
-    if (!result || result.isError === true) fail('IB_MCP_SOURCE_FAILED');
+    const phase = readPhase(tool);
+    if (!result || result.isError === true) fail('IB_MCP_SOURCE_FAILED', {phase, category: 'tool_error'});
     const sourceKey = SOURCES[tool];
     const transport = result.structuredContent ?? (() => {
       if (!Array.isArray(result.content) || result.content.length !== 1 || result.content[0].type !== 'text')
-        fail('IB_MCP_SOURCE_WRAPPER_INVALID');
+        fail('IB_MCP_SOURCE_WRAPPER_INVALID', {phase, category: 'response_invalid'});
       return result.content[0].text;
     })();
     try { return { sourceKey, ...decodeHookResponse(transport, { sourceKey }) }; }
-    catch { fail('IB_MCP_SOURCE_SHAPE_INVALID'); }
+    catch { fail('IB_MCP_SOURCE_SHAPE_INVALID', {phase, category: 'contract_invalid'}); }
+  }
+}
+
+const readPhase = tool => ({get_account_summary: 'mcp_summary_read', get_account_positions: 'mcp_positions_read',
+  get_account_orders: 'mcp_orders_read', get_account_balances: 'mcp_balances_read', get_account_trades: 'mcp_trades_read'})[tool] || 'unknown';
+async function sendRequest(session, method, params, notification) {
+    const phase = method === 'initialize' ? 'mcp_initialize' : method === 'notifications/initialized'
+      ? 'mcp_initialized' : method === 'tools/list' ? 'mcp_tools_list' : readPhase(params?.name);
+    const id = ++session.id;
+    const payload = { jsonrpc: '2.0', method, ...(params === undefined ? {} : { params }), ...(notification ? {} : { id }) };
+    const headers = { Authorization: `Bearer ${session.credential.access_token}`,
+      'content-type': 'application/json', Accept: 'application/json, text/event-stream',
+      'MCP-Protocol-Version': '2025-03-26' };
+    if (session.sessionId) headers['Mcp-Session-Id'] = session.sessionId;
+    let response;
+    try { response = await session.fetchImpl(RESOURCE, { method: 'POST', redirect: 'error',
+      signal: AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
+    catch (error) { fail('IB_MCP_NETWORK_FAILED', {phase, category: networkCategory(error)}); }
+    if (!response.ok) {
+      const code = response.status === 401 ? 'IB_MCP_AUTHENTICATION_REJECTED'
+        : response.status === 403 ? 'IB_MCP_PERMISSION_DENIED' : 'IB_MCP_HTTP_FAILED';
+      const category = httpCategory(response.status, bearerError(response.headers));
+      void response.body?.cancel().catch(() => {});
+      fail(code, {phase, httpStatus: response.status, category});
+    }
+    const sessionId = response.headers.get('mcp-session-id');
+    if (sessionId) {
+      if (sessionId.length > 1024 || /[\r\n]/.test(sessionId)) fail('IB_MCP_SESSION_INVALID', {phase, category: 'response_invalid'});
+      if (session.sessionId && session.sessionId !== sessionId) fail('IB_MCP_SESSION_CHANGED', {phase, category: 'response_invalid'});
+      session.sessionId = sessionId;
+    }
+    if (notification && (response.status === 202 || response.status === 204)) return;
+    try {
+      if (notification) { await bodyText(response); return; }
+      return rpcMessage(await bodyText(response), response.headers.get('content-type') || '', id);
+    } catch (error) { throw inIbPhase(error, phase, 'IB_MCP_RESPONSE_INVALID', response.status,
+      error?.message === 'IB_MCP_RPC_FAILED' ? 'rpc_error' : 'response_invalid'); }
+}
+
+// Catalog access is confined to this diagnostic session. Production retains
+// its three-method whitelist; this session can call only the orders tool.
+export class IbOrdersDiagnosticSession extends IbReadSession {
+  async request(method, params, notification = false) {
+    if (!['initialize', 'notifications/initialized', 'tools/list', 'tools/call'].includes(method)) fail('IB_MCP_METHOD_FORBIDDEN');
+    if (method === 'tools/call' && (params?.name !== 'get_account_orders' || !argumentsAllowed(params.name, params.arguments))) fail('IB_MCP_TOOL_FORBIDDEN');
+    if (method === 'tools/list' && (!this.initialized || !params || Object.keys(params).some(key => key !== 'cursor')
+      || (Object.hasOwn(params, 'cursor') && (typeof params.cursor !== 'string' || !params.cursor || params.cursor.length > 1024)))) fail('IB_MCP_METHOD_FORBIDDEN');
+    return sendRequest(this, method, params, notification);
   }
 }
 

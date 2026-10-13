@@ -13,11 +13,12 @@ test('cloud IO only reads the two fixed credentials and saves the one IB credent
     if (String(url).startsWith('http://metadata.')) return Response.json({access_token: 'test-google-identity'});
     if (String(url).includes('family-portfolio-gateway-key')) return Response.json({payload: {data: Buffer.from('test-read-token').toString('base64')}});
     if (String(url).endsWith(':access')) return Response.json({payload: {data: Buffer.from('{"test":true}').toString('base64')}});
-    return Response.json({name: 'version'});
+    return Response.json({name: 'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/15', state: 'ENABLED'});
   };
   const io = privateCloudIo({fetchImpl});
   assert.equal(await io.loadGatewayToken(), 'test-read-token'); assert.deepEqual(await io.ibStore.load(), {test: true});
-  await io.ibStore.save({test: true});
+  assert.deepEqual(await io.ibStore.save({test: true}),
+    {name: 'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/15', state: 'ENABLED'});
   assert.equal(urls.filter(r => r.url.includes('metadata')).length, 1);
   assert.ok(urls.find(r => r.url.endsWith('xuan-preopen-ib-mcp:addVersion')).options.method === 'POST');
   assert.equal(urls.filter(r => r.url.endsWith(':addVersion')).length, 1);

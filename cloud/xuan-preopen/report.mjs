@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {captureCloudIbAction} from './ib_mcp.mjs';
+import {safeIbFailure} from './ib_diagnostics.mjs';
 import {boundedText, privateCloudIo} from './cloud_io.mjs';
 import {buildNightActionModel} from '../../scripts/xuan-ib-night-action-model.mjs';
 import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
@@ -119,8 +120,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     const receipt = await runPrivateReport({sourceDate, io: privateCloudIo()});
     process.stdout.write(JSON.stringify(receipt) + '\n');
   } catch (error) {
-    const code = /^[A-Z_0-9]+$/.test(error?.message || '') ? error.message : 'PRIVATE_REPORT_CHECK_FAILED';
-    process.stdout.write(JSON.stringify({status: 'failed', code, publication: 'none', scheduler: 'none'}) + '\n');
+    process.stdout.write(JSON.stringify({...safeIbFailure(error, {fallback: 'PRIVATE_REPORT_CHECK_FAILED',
+      execution: process.env.CLOUD_RUN_EXECUTION}), scheduler: 'none'}) + '\n');
     process.exitCode = 1;
   }
 }

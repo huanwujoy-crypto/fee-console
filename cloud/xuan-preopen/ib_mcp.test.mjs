@@ -31,7 +31,7 @@ test('rotated refresh token is saved and all refresh requests are scoped read-on
 test('a broader refresh response or unsaved rotation cannot continue', async () => {
   const store = { load: async () => credential(), save: async () => { throw new Error('private secret'); } };
   const options = { now: () => 950_000, fetchImpl: async () => response({ access_token: 'a', token_type: 'Bearer', expires_in: 3600 }) };
-  await assert.rejects(loadReadCredential(store, options), /^Error: IB_TOKEN_ROTATION_NOT_SAVED$/);
+  await assert.rejects(loadReadCredential(store, options), /^Error: IB_TOKEN_ROTATION_OUTCOME_UNKNOWN$/);
   await assert.rejects(loadReadCredential(store, { ...options, fetchImpl: async () => response({ access_token: 'a',
     token_type: 'Bearer', expires_in: 3600, scope: 'mcp.read mcp.write' }) }), /IB_REFRESH_SCOPE_INVALID/);
 });
@@ -48,7 +48,7 @@ test('forbidden tools never reach the HTTP transport', async () => {
 test('real-time source HTTP failure hides upstream financial diagnostics', async () => {
   const session = new IbReadSession(credential(), { fetchImpl: async () => response({ error: 'test-private-value' }, 401) });
   session.initialized = true;
-  await assert.rejects(session.read('get_account_orders'), /^Error: IB_REAUTHORIZE_REQUIRED$/);
+  await assert.rejects(session.read('get_account_orders'), /^Error: IB_MCP_AUTHENTICATION_REJECTED$/);
 });
 
 test('JSON and SSE handshakes preserve the server session ID', async () => {
