@@ -1,0 +1,328 @@
+{
+  "status": "default-off-candidate-final-owner-gate-required",
+  "project": "family-portfolio-gateway",
+  "region": "asia-east2",
+  "repository": "huanwujoy-crypto/fee-console",
+  "workflow": ".github/workflows/fee-cloud-producer.yml",
+  "ref": "main",
+  "workflowDispatchInputs": {
+    "apply_style_proposal": false
+  },
+  "noExtraLaunchSlots": true,
+  "image": "asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/fee-clock@sha256:REQUIRES_VERIFIED_RELEASE_DIGEST",
+  "runJobs": [
+    {
+      "jobId": "fee-clock-launch",
+      "body": {
+        "template": {
+          "taskCount": 1,
+          "parallelism": 1,
+          "template": {
+            "serviceAccount": "fee-clock-launch@family-portfolio-gateway.iam.gserviceaccount.com",
+            "maxRetries": 0,
+            "timeout": "120s",
+            "containers": [
+              {
+                "image": "asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/fee-clock@sha256:REQUIRES_VERIFIED_RELEASE_DIGEST",
+                "args": [
+                  "launch"
+                ],
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "512Mi"
+                  }
+                },
+                "env": [
+                  {
+                    "name": "FEE_CLOCK_ENABLED",
+                    "value": "false"
+                  }
+                ],
+                "volumeMounts": [
+                  {
+                    "name": "github",
+                    "mountPath": "/secrets/github"
+                  }
+                ]
+              }
+            ],
+            "volumes": [
+              {
+                "name": "github",
+                "secret": {
+                  "secret": "fee-clock-github-actions",
+                  "items": [
+                    {
+                      "version": "1",
+                      "path": "token",
+                      "mode": 292
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "jobId": "fee-clock-check-start",
+      "body": {
+        "template": {
+          "taskCount": 1,
+          "parallelism": 1,
+          "template": {
+            "serviceAccount": "fee-clock-check@family-portfolio-gateway.iam.gserviceaccount.com",
+            "maxRetries": 0,
+            "timeout": "120s",
+            "containers": [
+              {
+                "image": "asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/fee-clock@sha256:REQUIRES_VERIFIED_RELEASE_DIGEST",
+                "args": [
+                  "check-start"
+                ],
+                "resources": {
+                  "limits": {
+                    "cpu": "1",
+                    "memory": "512Mi"
+                  }
+                },
+                "env": [
+                  {
+                    "name": "FEE_CLOCK_ENABLED",
+                    "value": "false"
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "schedulerJobs": [
+    {
+      "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch-1000",
+      "schedule": "0 10 * * 2-6",
+      "timeZone": "Asia/Hong_Kong",
+      "attemptDeadline": "30s",
+      "retryConfig": {
+        "retryCount": 0,
+        "maxRetryDuration": "0s"
+      },
+      "httpTarget": {
+        "uri": "https://run.googleapis.com/v2/projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch:run",
+        "httpMethod": "POST",
+        "body": "e30=",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "oauthToken": {
+          "serviceAccountEmail": "fee-clock-scheduler@family-portfolio-gateway.iam.gserviceaccount.com",
+          "scope": "https://www.googleapis.com/auth/cloud-platform"
+        }
+      }
+    },
+    {
+      "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-check-start-1005",
+      "schedule": "5 10 * * 2-6",
+      "timeZone": "Asia/Hong_Kong",
+      "attemptDeadline": "30s",
+      "retryConfig": {
+        "retryCount": 0,
+        "maxRetryDuration": "0s"
+      },
+      "httpTarget": {
+        "uri": "https://run.googleapis.com/v2/projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-check-start:run",
+        "httpMethod": "POST",
+        "body": "e30=",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "oauthToken": {
+          "serviceAccountEmail": "fee-clock-scheduler@family-portfolio-gateway.iam.gserviceaccount.com",
+          "scope": "https://www.googleapis.com/auth/cloud-platform"
+        }
+      }
+    }
+  ],
+  "schedulerCreationSafety": "Create only while both jobs remain FEE_CLOCK_ENABLED=false; immediately pause both Scheduler jobs. state is output-only, not an atomic REST create-paused field. Resume only after exact release and permission/notification approval.",
+  "serviceAccounts": [
+    "fee-clock-launch@family-portfolio-gateway.iam.gserviceaccount.com",
+    "fee-clock-check@family-portfolio-gateway.iam.gserviceaccount.com",
+    "fee-clock-scheduler@family-portfolio-gateway.iam.gserviceaccount.com"
+  ],
+  "bucket": {
+    "name": "family-portfolio-gateway-fee-clock",
+    "location": "asia-east2",
+    "storageClass": "STANDARD",
+    "iamConfiguration": {
+      "uniformBucketLevelAccess": {
+        "enabled": true
+      },
+      "publicAccessPrevention": "enforced"
+    },
+    "lifecycle": {
+      "rule": [
+        {
+          "action": {
+            "type": "Delete"
+          },
+          "condition": {
+            "age": 90
+          }
+        }
+      ]
+    },
+    "allowedContent": "Only clock intent/result metadata; no financial data or credential"
+  },
+  "secret": {
+    "name": "fee-clock-github-actions",
+    "replication": "automatic",
+    "versions": 1,
+    "ownerEntryOnly": true,
+    "githubScope": {
+      "repositories": [
+        "huanwujoy-crypto/fee-console"
+      ],
+      "Actions": "write",
+      "Metadata": "read (implicit)",
+      "Contents": "none",
+      "Administration": "none"
+    },
+    "residualRisk": "GitHub Actions write is repository-wide, not enforceable to one workflow/ref by token permissions. Fixed code narrows normal operation, not token compromise."
+  },
+  "runtimeIam": [
+    {
+      "member": "fee-clock-launch@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/secretmanager.secretAccessor",
+      "resource": "projects/family-portfolio-gateway/secrets/fee-clock-github-actions"
+    },
+    {
+      "member": "fee-clock-launch@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/storage.objectCreator",
+      "resource": "family-portfolio-gateway-fee-clock"
+    },
+    {
+      "member": "fee-clock-launch@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/storage.objectViewer",
+      "resource": "family-portfolio-gateway-fee-clock"
+    },
+    {
+      "member": "fee-clock-check@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/storage.objectViewer",
+      "resource": "family-portfolio-gateway-fee-clock"
+    },
+    {
+      "member": "fee-clock-scheduler@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/run.invoker",
+      "resource": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch"
+    },
+    {
+      "member": "fee-clock-scheduler@family-portfolio-gateway.iam.gserviceaccount.com",
+      "role": "roles/run.invoker",
+      "resource": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-check-start"
+    }
+  ],
+  "alertPolicies": [
+    {
+      "displayName": "Fee independent clock job error",
+      "enabled": false,
+      "combiner": "OR",
+      "conditions": [
+        {
+          "displayName": "Fee independent clock job error",
+          "conditionMatchedLog": {
+            "filter": "resource.type=\"cloud_run_job\" resource.labels.project_id=\"family-portfolio-gateway\" resource.labels.location=\"asia-east2\" resource.labels.job_name=(\"fee-clock-launch\" OR \"fee-clock-check-start\") (severity>=ERROR OR jsonPayload.event=\"FEE_CLOCK_ALERT\")"
+          }
+        }
+      ],
+      "alertStrategy": {
+        "notificationRateLimit": {
+          "period": "300s"
+        },
+        "autoClose": "1800s"
+      },
+      "notificationChannels": []
+    },
+    {
+      "displayName": "Fee independent clock Scheduler target error",
+      "enabled": false,
+      "combiner": "OR",
+      "conditions": [
+        {
+          "displayName": "Fee independent clock Scheduler target error",
+          "conditionMatchedLog": {
+            "filter": "resource.type=\"cloud_scheduler_job\" resource.labels.project_id=\"family-portfolio-gateway\" resource.labels.location=\"asia-east2\" resource.labels.job_id=(\"fee-clock-launch-1000\" OR \"fee-clock-check-start-1005\") (severity>=ERROR OR (jsonPayload.status:* AND jsonPayload.status!=\"OK\"))"
+          }
+        }
+      ],
+      "alertStrategy": {
+        "notificationRateLimit": {
+          "period": "300s"
+        },
+        "autoClose": "1800s"
+      },
+      "notificationChannels": []
+    }
+  ],
+  "notificationActivationBlocker": "Sole existing email channel and new Fee purpose approved by the human; operational channel reference is kept outside public source. Actual safe delivery acceptance and final enablement remain pending.",
+  "liveMetadataState": "Existing SDK 575.0.1 / Python 3.12 / configured CLI identity successfully read the fixed project in asia-east2. Initial ADC discovery failure did not mean expired authorization.",
+  "unchanged": [
+    "financial source readers",
+    "fee calculations",
+    "account/cash scope",
+    "original producer preflight",
+    "original producer concurrency",
+    "Validate",
+    "Promote",
+    "Pages",
+    "GitHub cron",
+    "existing publication token and IAM"
+  ],
+  "approvalRequired": [
+    "exact final GitHub-verified signed code head and complete diff via existing specific OWNER gate",
+    "verified runtime/base image and final release digest",
+    "owner personally creating and entering dedicated repository Actions-write credential through secure interface",
+    "one approved nonfinancial simulation and verified delivery to existing owner channel",
+    "explicit final enable/resume approval and next natural clock/publication acceptance"
+  ],
+  "costEstimateUsd": {
+    "daysPerMonth": 23,
+    "runsPerDay": 2,
+    "runsPerMonth": 46,
+    "vCpu": 1,
+    "memoryGiB": 0.5,
+    "region": "asia-east2",
+    "cpuPerSecond": 2.16e-05,
+    "memoryPerGiBSecond": 2.4e-06,
+    "minimumBillableSecondsPerJob": 60,
+    "jobAt60Seconds": 0.062928,
+    "jobAt120Seconds": 0.125856,
+    "twoSchedulerMonthly": 0.2,
+    "oneActiveSecretVersionMonthly": 0.06,
+    "secretAccessesPerMonth": 23,
+    "secretAccessMonthly": 6.9e-05,
+    "baseAt60Seconds": 0.322997,
+    "baseAt120Seconds": 0.385925,
+    "freeAllowancesApplied": false,
+    "notIncluded": [
+      "image build",
+      "Artifact Registry storage",
+      "GCS storage/operations",
+      "network egress",
+      "Logging ingestion/storage",
+      "any Monitoring ingestion or query charges",
+      "tax"
+    ],
+    "notAHardSpendingCap": true,
+    "sources": [
+      "https://cloud.google.com/run/pricing",
+      "https://cloud.google.com/scheduler/pricing",
+      "https://cloud.google.com/secret-manager/pricing",
+      "https://cloud.google.com/products/observability/pricing"
+    ]
+  },
+  "existingProducerModeActivationGate": "Verify live FEE_CLOUD_MODE=publish without changing it; missing/shadow is not publication acceptance."
+}

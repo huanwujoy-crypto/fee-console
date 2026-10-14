@@ -105,3 +105,7 @@ jobs:
       - name: Test amount-free readiness and incident decisions
         if: ${{ github.event.pull_request.draft == false }}
         run: node --test scripts/app-readiness.test.mjs scripts/app-run-diagnostics.test.mjs
+
+      - name: Test disabled independent fee clock without live services
+        if: ${{ github.event.pull_request.draft == false }}
+        run: python3 -m unittest discover -s cloud/fee-clock -p 'test_*.py' -v
