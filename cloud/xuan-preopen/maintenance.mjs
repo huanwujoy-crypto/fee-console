@@ -135,6 +135,7 @@ export const COPY_PATHS=Object.freeze([
   "scripts/xuan-ib-night-action-workflow.test.mjs",
   "scripts/xuan-ib-order-view.mjs",
   "scripts/xuan-ib-promotion.mjs",
+  "scripts/xuan-ib-public-eod-summary.mjs",
   "scripts/xuan-ib-publish-health.mjs",
   "scripts/xuan-ib-report-schedule.mjs",
   "scripts/xuan-ib-run-clock.mjs",

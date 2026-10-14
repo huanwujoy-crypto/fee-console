@@ -4,7 +4,7 @@ import {validateNightActionHtml} from './xuan-ib-night-action-guard.mjs';
 
 import fs from 'node:fs';
 import { publicationEdition } from './xuan-ib-account-association-publication.mjs';
-import { NIGHT_ACTION_MARKER, extractNightActionModel } from './xuan-ib-night-action-view.mjs';
+import { NIGHT_ACTION_MARKER, extractNightActionModel,renderNightActionReport as renderSummaryForDescriptor } from './xuan-ib-night-action-view.mjs';
 
 export const SLEEP_PRIORITY_KIND = 'sleep-priority';
 export const SLEEP_PRIORITY_BODY_ATTRIBUTE = 'data-xuan-delivery="sleep-priority-v1"';
@@ -106,9 +106,9 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 export function classifySleepPublication(html) {
   if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
     const model = extractNightActionModel(html);
-    if(model.schemaVersion===9)validateNightActionHtml(html,model.dataDate);
-    const action=[4,5,9].includes(model.schemaVersion)?{action:actionPublicationDescriptor(model,html)}:{};
-    return { ...action, kind: model.schemaVersion===9?'eod-action':model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    if([9,10].includes(model.schemaVersion))validateNightActionHtml(html,model.dataDate);
+    const action=[4,5,9,10].includes(model.schemaVersion)?{action:actionPublicationDescriptor(model,html)}:{};
+    return { ...action, kind: model.schemaVersion===10?'eod-public-summary':model.schemaVersion===9?'eod-action':model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
   }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });
@@ -129,7 +129,8 @@ const actionKeys=['schemaVersion','status','sourceDate','readAtEpoch','orderRead
 export function validateActionPublicationDescriptor(a,htmlBlob=null){
   exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[]),...(Object.hasOwn(a||{},'holdingsDetail')?['holdingsDetail']:[])],'action publication');
   if(Object.hasOwn(a,'holdingsDetail')&&(a.schemaVersion!==9||typeof a.holdingsDetail!=='boolean'||a.holdingsDetail&&!(a.components&1)))fail('holding publication facts are invalid');
-  if(![4,5,9].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
+  if(![4,5,9,10].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
+  if(a.schemaVersion===10&&(a.status!=='partial'||a.components!==0||a.orderReadAtEpoch!==null||a.sourceDate===null))fail('public summary cannot claim financial completeness');
   if(a.sourceDate!==null)date(a.sourceDate,'action sourceDate');sha(a.htmlBlob,'action htmlBlob');
   if(htmlBlob!==null&&a.htmlBlob.toLowerCase()!==htmlBlob.toLowerCase())fail('action publication HTML mismatch');
   if(a.schemaVersion===9){
@@ -139,6 +140,12 @@ export function validateActionPublicationDescriptor(a,htmlBlob=null){
   return a;
 }
 export function actionPublicationDescriptor(m,html=null){
+  if(m?.schemaVersion===10){
+    if(typeof html!=='string')html=renderSummaryForDescriptor(m);
+    validateNightActionHtml(html,m.dataDate);
+    const htmlBlob=crypto.createHash('sha1').update(Buffer.from(`blob ${Buffer.byteLength(html)}\0`)).update(html).digest('hex');
+    return validateActionPublicationDescriptor({schemaVersion:10,status:'partial',sourceDate:m.sourceDate,readAtEpoch:Math.floor(Date.parse(m.captureCompletedAt)/1000),orderReadAtEpoch:null,components:0,htmlBlob});
+  }
   if(![4,5,9].includes(m?.schemaVersion))return null;
   if(m.schemaVersion===9&&m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI export is private acceptance only');
   const time=label=>{const match=label?.match(/(\d{2}:\d{2})(?:–(\d{2}:\d{2}))? HKT/);return match?Math.floor(Date.parse(m.dataDate+'T'+(match[2]||match[1])+':00+08:00')/1000):null;};
@@ -155,6 +162,9 @@ export function retainsActionFinancialEvidence(next,old){
 }
 export function canReplaceActionPublication(next,old){
   validateActionPublicationDescriptor(next);validateActionPublicationDescriptor(old);
+  // A saved summary is a one-time partial publication, never a same-day
+  // replacement for existing action facts or another saved summary.
+  if(next.schemaVersion===10)return false;
   // Within one EOD cutoff, retain independent financial evidence and a verified
   // conclusion. A new pending proof cannot automatically invalidate it: until
   // a real superseding-evidence contract is accepted, fail conservatively.
@@ -168,6 +178,7 @@ export function canReplaceActionPublication(next,old){
 }
 export function canReplaceActionModel(next,old){
   if(next.dataDate!==old.dataDate)return true;
+  if(next.schemaVersion===10&&[4,5,7,8,9,10].includes(old.schemaVersion))return false;
   const a=actionPublicationDescriptor(next),b=actionPublicationDescriptor(old);
   return a&&b?canReplaceActionPublication(a,b):old.status!=='ready';
 }

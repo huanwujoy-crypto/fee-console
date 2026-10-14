@@ -100,9 +100,9 @@ function contextFixture(){
 function contextFiles(root,prefix=''){
  return fs.readdirSync(path.join(root,prefix)).flatMap(name=>{const file=prefix?prefix+'/'+name:name;return fs.lstatSync(path.join(root,file)).isDirectory()?contextFiles(root,file):[file];}).sort();
 }
-test('fixed 88-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
- assert.equal(COPY_PATHS.length,88);assert.equal(new Set(COPY_PATHS).size,88);
- assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'5856683d1c5c67042080eff3b01c7f402f73fe3433012fb831661230fa2f3b45');
+test('fixed 89-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
+ assert.equal(COPY_PATHS.length,89);assert.equal(new Set(COPY_PATHS).size,89);
+ assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'a8adeaebd461d908443a2b131d6a5d14d33ce7af92e5178b35addb7546b5a7fa');
  const f=contextFixture();
  try{
   for(const file of ['data.json','.git/config','xuan-ib/latest.html','scripts/repair-brkb-20260820.mjs','scripts/codex-fee-keychain.c','scripts/codex-fee-credentials.mjs','scripts/codex-fee-setup','cloud/xuan-preopen/private-new.mjs']){const p=path.join(f.root,file);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,'PRIVATE-CANARY');}
