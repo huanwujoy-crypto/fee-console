@@ -1,4 +1,5 @@
 import {validateEodActionModel} from './xuan-ib-eod-action-model.mjs';
+import {validatePublicEodSummary,renderPublicEodSummary} from './xuan-ib-public-eod-summary.mjs';
 import {validateIntradayUpdate,renderIntradayUpdate} from './xuan-ib-intraday-update.mjs';
 import {validateLimitedStatus,renderLimitedStatus} from './xuan-ib-limited-status.mjs';
 const fail = code => { throw new Error(`Night action view: ${code}`); };
@@ -32,6 +33,7 @@ function validateOrder(order, schemaVersion) {
 }
 
 export function validateNightActionModel(model) {
+  if(model?.schemaVersion===10)return validatePublicEodSummary(model);
   if(model?.schemaVersion===9)return validateEodActionModel(model);
   if(model?.schemaVersion===8)return validateIntradayUpdate(model);
   if(model?.schemaVersion===7)return validateLimitedStatus(model);
@@ -124,6 +126,7 @@ function renderOrders(title, rows, kind, schemaVersion) {
 }
 
 export function renderNightActionReport(model) {
+  if(model?.schemaVersion===10)return renderPublicEodSummary(model);
   if(model?.schemaVersion===8)return renderIntradayUpdate(model);
   if(model?.schemaVersion===7)return renderLimitedStatus(model);
   validateNightActionModel(model);

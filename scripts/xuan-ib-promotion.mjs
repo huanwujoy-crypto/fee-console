@@ -88,8 +88,9 @@ const validatePublicationState = (state, expectedDate, candidate = false, htmlBl
       || Object.keys(state).sort().join('|') !== ['dataDate','eligibleAtEpoch','kind','priorityKey',...(Object.hasOwn(state,'action')?['action']:[])].sort().join('|')) {
     throw new Error(`${candidate ? 'candidate' : 'published'} publication state is invalid`);
   }
-  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'eod-action', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
-  if(state.kind==='eod-action'&&!state.action)throw new Error('EOD publication requires canonical action facts');
+  if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'eod-action', 'eod-public-summary', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
+  if(['eod-action','eod-public-summary'].includes(state.kind)&&!state.action)throw new Error('EOD publication requires canonical action facts');
+  if(state.kind==='eod-public-summary'&&state.action?.schemaVersion!==10||state.kind!=='eod-public-summary'&&state.action?.schemaVersion===10)throw new Error('public summary kind mismatch');
   if(state.action){validateActionPublicationDescriptor(state.action,htmlBlob);if(state.kind==='eod-action'&&state.action.schemaVersion!==9||state.kind!=='eod-action'&&state.action.schemaVersion===9)throw new Error('action publication kind mismatch');}
   requireDate('publication dataDate', state.dataDate);
   if (state.dataDate !== expectedDate) throw new Error('publication data date does not match metadata');
@@ -118,8 +119,9 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
     if (candidate.dataDate === publishedMeta.dataDate &&
         candidate.commitEpoch <= publishedMeta.sourceCommitEpoch && !replacesSameDayPriority) return false;
     if(candidate.dataDate===publishedState.dataDate){
+      if(candidate.publication.kind==='eod-public-summary'&&publishedState.kind!=='other')return false;
       if(candidate.publication.action&&publishedState.action&&!canReplaceActionPublication(candidate.publication.action,publishedState.action))return false;
-      if(candidate.publication.kind==='eod-action'&&publishedState.kind==='complete-pm'&&!publishedState.action)return false;
+      if(['eod-action','eod-public-summary'].includes(candidate.publication.kind)&&publishedState.kind==='complete-pm'&&!publishedState.action)return false;
     }
     if(candidate.publication.kind==='limited-readback'&&candidate.dataDate===publishedState.dataDate&&publishedState.kind==='complete-pm')return false;
     if (candidate.publication.kind === 'priority') {
@@ -132,10 +134,14 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
   if (eligible.length) {
     const newestDate = eligible.reduce((value, item) => item.dataDate > value ? item.dataDate : value, eligible[0].dataDate);
     if (eligible.some(item => item.dataDate === newestDate && item.publication.kind === 'complete-pm')) {
-      eligible = eligible.filter(item => item.dataDate !== newestDate || !['priority','limited-readback'].includes(item.publication.kind));
+      eligible = eligible.filter(item => item.dataDate !== newestDate || !['priority','limited-readback','eod-public-summary'].includes(item.publication.kind));
     }
   }
   eligible=eligible.filter(candidate=>!eligible.some(other=>other!==candidate&&other.dataDate===candidate.dataDate&&other.publication.action&&candidate.publication.action&&(other.publication.action.components&candidate.publication.action.components)===candidate.publication.action.components&&other.publication.action.components!==candidate.publication.action.components&&(candidate.publication.action.sourceDate===null||other.publication.action.sourceDate!==null&&other.publication.action.sourceDate>=candidate.publication.action.sourceDate)));
+  eligible=eligible.filter(candidate=>candidate.publication.kind!=='eod-public-summary'||!eligible.some(other=>other!==candidate&&other.dataDate===candidate.dataDate&&!['other','eod-public-summary'].includes(other.publication.kind)));
+  // Conflicting anonymous summaries have no financial completeness ordering.
+  // Require a single canonical saved summary instead of choosing a later one.
+  eligible=eligible.filter(candidate=>candidate.publication.kind!=='eod-public-summary'||!eligible.some(other=>other!==candidate&&other.dataDate===candidate.dataDate&&other.publication.kind==='eod-public-summary'&&other.htmlBlob!==candidate.htmlBlob));
   // Prefer established same-cutoff EOD financial evidence among eligible
   // candidates as well as protecting the current publication. Cross-schema
   // comparisons retain the original component/full-report preference.

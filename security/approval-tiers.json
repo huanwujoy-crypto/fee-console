@@ -366,6 +366,8 @@
     "scripts/xuan-ib-progress.test.mjs",
     "scripts/xuan-ib-promotion.mjs",
     "scripts/xuan-ib-promotion.test.mjs",
+    "scripts/xuan-ib-public-eod-summary.mjs",
+    "scripts/xuan-ib-public-eod-summary.test.mjs",
     "scripts/xuan-ib-publish-health.mjs",
     "scripts/xuan-ib-publish-health.test.mjs",
     "scripts/xuan-ib-report-prepare-safety.test.mjs",
