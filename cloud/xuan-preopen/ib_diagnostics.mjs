@@ -3,7 +3,8 @@ const details = new WeakMap();
 const phases = new Set(['unknown', 'credential_load', 'oauth_refresh', 'credential_save',
   'mcp_initialize', 'mcp_initialized', 'mcp_tools_list', 'mcp_summary_read',
   'mcp_positions_read', 'mcp_orders_read', 'mcp_balances_read', 'mcp_trades_read',
-  'orders_decode', 'orders_validate', 'association_validate', 'attempt_claim', 'diagnostic_request']);
+  'orders_decode', 'orders_validate', 'association_validate', 'attempt_claim', 'diagnostic_request',
+  'flex_send_request', 'flex_get_statement']);
 const categories = new Set(['unknown', 'invalid_grant', 'invalid_client', 'invalid_scope',
   'invalid_request', 'unauthorized_client', 'unsupported_grant_type', 'invalid_token',
   'insufficient_scope', 'authentication_rejected', 'permission_denied', 'rate_limited',
@@ -47,10 +48,22 @@ const status = value => Number.isInteger(value) && value >= 100 && value <= 599 
 const safeCode = value => codes.has(value) || (typeof value === 'string'
   && /^(?:CLOUD_HTTP|REPORT_SOURCE_HTTP)_[1-5]\d\d$/.test(value));
 
-export function ibError(code, {phase = 'unknown', category = 'unknown', httpStatus = null} = {}) {
+function safeFlex(value) {
+  const keys=['operation','sendCount','getCount','httpStatus','contentType','rootKind','rootNamespacePresent','statusShape','errorCodeShape','upstreamErrorCode','reason'];
+  if (!value || Object.getPrototypeOf(value)!==Object.prototype || Object.keys(value).sort().join('|')!==keys.sort().join('|')) return null;
+  if (!['send_request','get_statement'].includes(value.operation) || value.sendCount!==1 || !Number.isInteger(value.getCount) || value.getCount<0 || value.getCount>24 || (value.operation==='send_request'?value.getCount!==0:value.getCount<1)) return null;
+  if (value.httpStatus!==null && status(value.httpStatus)!==value.httpStatus || !['missing','xml','html','json','text','other'].includes(value.contentType) || !['unavailable','statement_response','query_response','other'].includes(value.rootKind) || typeof value.rootNamespacePresent!=='boolean') return null;
+  const shapes=['missing','ambiguous','qualified','attribute','nested','noncanonical'];
+  if (![...shapes,'success','fail'].includes(value.statusShape) || ![...shapes,'known','unrecognized'].includes(value.errorCodeShape)) return null;
+  if (!['network_failed','http_failed','empty_body','body_too_large','invalid_utf8','body_read_failed','envelope_invalid','request_rejected','statement_rejected','timeout'].includes(value.reason)) return null;
+  const known=new Set([1001,...Array.from({length:19},(_,i)=>1003+i)]);
+  if (value.errorCodeShape==='known'?!Number.isInteger(value.upstreamErrorCode)||!known.has(value.upstreamErrorCode):value.upstreamErrorCode!==null) return null;
+  return Object.freeze({...value});
+}
+export function ibError(code, {phase = 'unknown', category = 'unknown', httpStatus = null, flex = null} = {}) {
   const error = new Error(safeCode(code) ? code : 'IB_DIAGNOSTIC_FAILED');
   details.set(error, Object.freeze({phase: phases.has(phase) ? phase : 'unknown',
-    category: categories.has(category) ? category : 'unknown', httpStatus: status(httpStatus)}));
+    category: categories.has(category) ? category : 'unknown', httpStatus: status(httpStatus), flex: safeFlex(flex)}));
   return error;
 }
 
@@ -58,7 +71,7 @@ export function inIbPhase(error, phase, fallback, httpStatus = null, category = 
   const prior = details.get(error);
   return ibError(safeCode(error?.message) ? error.message : fallback,
     {phase, httpStatus: prior?.httpStatus ?? httpStatus, category: prior?.category !== 'unknown'
-      && prior?.category ? prior.category : category});
+      && prior?.category ? prior.category : category, flex: prior?.flex});
 }
 
 export const networkCategory = error => ['TimeoutError', 'AbortError'].includes(error?.name) ? 'timeout' : 'network';
@@ -91,5 +104,6 @@ export function safeIbFailure(error, {fallback = 'IB_DIAGNOSTIC_FAILED', executi
   if (typeof execution === 'string' && /^xuan-preopen-(?:report|auth-orders-check)-[a-z0-9-]{1,100}$/.test(execution)) result.execution = execution;
   if (safeDate(dataDate)) result.dataDate = dataDate;
   if (safeDate(sourceDate)) result.sourceDate = sourceDate;
+  if (d?.flex) result.flex = d.flex;
   return result;
 }

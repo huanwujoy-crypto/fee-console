@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ibError, safeIbFailure, bearerError} from './ib_diagnostics.mjs';
+import {ibError, safeIbFailure, bearerError, inIbPhase} from './ib_diagnostics.mjs';
 import {loadReadCredential, IbReadSession, IbOrdersDiagnosticSession, RESOURCE} from './ib_mcp.mjs';
 
 const canary = 'PRIVATE_DIAGNOSTIC_CANARY_928471';
@@ -144,4 +144,27 @@ test('MCP malformed UTF8 and excessive transport are bounded before source decod
     const out = await failure(() => session.read('get_account_orders'));
     assert.equal(out.phase, 'mcp_orders_read'); assert.equal(out.category, 'response_invalid'); noLeak(out);
   }
+});
+
+const flexDetails=()=>({operation:'get_statement',sendCount:1,getCount:1,httpStatus:200,contentType:'xml',rootKind:'statement_response',rootNamespacePresent:false,statusShape:'fail',errorCodeShape:'known',upstreamErrorCode:1015,reason:'statement_rejected'});
+test('Flex diagnostics require exact closed keys, enums and bounded source invocation counts',()=>{
+  for(const value of [
+    {...flexDetails(),body:canary}, {...flexDetails(),operation:canary}, {...flexDetails(),sendCount:2},
+    {...flexDetails(),getCount:25}, {...flexDetails(),getCount:0}, {...flexDetails(),httpStatus:999},
+    {...flexDetails(),contentType:canary}, {...flexDetails(),rootKind:canary},
+    {...flexDetails(),statusShape:canary}, {...flexDetails(),errorCodeShape:canary},
+    {...flexDetails(),upstreamErrorCode:9999}, {...flexDetails(),reason:canary},
+    {...flexDetails(),errorCodeShape:'unrecognized'}, {...flexDetails(),rootNamespacePresent:canary},
+    Object.assign(Object.create({body:canary}),flexDetails()),
+  ]){const out=safeIbFailure(ibError('FLEX_SOURCE_RESPONSE_INVALID',{phase:'flex_get_statement',flex:value}));assert.equal(out.flex,undefined);noLeak(out);}
+});
+test('typed Flex diagnostics are immutable snapshots preserved by phase wrapping',()=>{
+  const input=flexDetails();const error=ibError('FLEX_SOURCE_STATEMENT_REJECTED',{phase:'flex_get_statement',category:'response_invalid',httpStatus:200,flex:input});
+  input.contentType=canary;input.body=canary;
+  const out=safeIbFailure(inIbPhase(error,'flex_get_statement','IB_DIAGNOSTIC_FAILED'));
+  assert.deepEqual(out.flex,flexDetails());assert.equal(out.httpStatus,200);assert.equal(Object.isFrozen(out.flex),true);noLeak(out);
+});
+test('forged Flex members on an upstream error cannot pass the WeakMap serializer',()=>{
+  const error=Error('FLEX_SOURCE_RESPONSE_INVALID');error.flex=flexDetails();error.diagnostic={flex:flexDetails()};error.body=canary;
+  const out=safeIbFailure(error);assert.equal(out.flex,undefined);assert.equal(out.phase,'unknown');noLeak(out);
 });
