@@ -5,6 +5,8 @@ export const PROJECT = 'family-portfolio-gateway';
 export const BUCKET = `${PROJECT}-xuan-preopen-private`;
 const IB_SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
 const READ_SECRET = `projects/${PROJECT}/secrets/family-portfolio-gateway-key`;
+// Existing normal cash-sync/weekly token, pinned to its existing version.
+const FLEX_SECRET = `projects/${PROJECT}/secrets/ib-flex-cash-token`;
 
 // Secret Manager can use the fixed project ID or its fixed numeric identifier
 // in a version name. Return metadata only; never read the new payload back.
@@ -31,7 +33,7 @@ export async function boundedText(response, limit = 8_000_000) {
 }
 
 export function privateCloudIo({fetchImpl = fetch} = {}) {
-  let googleToken;
+  let googleToken, googleTokenPromise;
   async function request(url, options = {}) {
     let response;
     try { response = await fetchImpl(url, {...options, redirect: 'error', signal: AbortSignal.timeout(30_000)}); }
@@ -42,15 +44,17 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
   }
   async function headers() {
     if (!googleToken) {
-      const result = await request('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
-        {headers: {'Metadata-Flavor': 'Google'}});
-      if (!result.access_token) throw new Error('CLOUD_IDENTITY_UNAVAILABLE');
-      googleToken = result.access_token;
+      googleTokenPromise ??= request('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+        {headers: {'Metadata-Flavor': 'Google'}}).then(result=>{
+          if (!result.access_token) throw new Error('CLOUD_IDENTITY_UNAVAILABLE');
+          return result.access_token;
+        });
+      googleToken = await googleTokenPromise;
     }
     return {Authorization: `Bearer ${googleToken}`, 'content-type': 'application/json'};
   }
-  async function secret(name) {
-    const result = await request(`https://secretmanager.googleapis.com/v1/${name}/versions/latest:access`, {headers: await headers()});
+  async function secret(name, version='latest') {
+    const result = await request(`https://secretmanager.googleapis.com/v1/${name}/versions/${version}:access`, {headers: await headers()});
     if (!result.payload?.data) throw new Error('CLOUD_CREDENTIAL_UNAVAILABLE');
     return Buffer.from(result.payload.data, 'base64').toString('utf8');
   }
@@ -69,6 +73,11 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
     async loadGatewayToken() {
       const value = (await secret(READ_SECRET)).trim();
       if (!value || /[\r\n]/.test(value)) throw new Error('CLOUD_GATEWAY_CREDENTIAL_INVALID');
+      return value;
+    },
+    async loadFlexToken() {
+      const value = (await secret(FLEX_SECRET,'1')).trim();
+      if (!value || /[\r\n\0]/.test(value)) throw new Error('FLEX_SOURCE_CONFIGURATION_REQUIRED');
       return value;
     },
     async savePrivate(name, value) {

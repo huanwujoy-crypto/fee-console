@@ -4,10 +4,11 @@ import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {planPreopen} from './calendar.mjs';
 import {privateCloudIo} from './cloud_io.mjs';
-import {runPrivateReport} from './report.mjs';
+import {runEodDailyReport} from './eod_daily.mjs';
+import {validateEodSourceConfiguration} from './eod_source_config.mjs';
 import {ibError, safeIbFailure} from './ib_diagnostics.mjs';
 import {ordersCheckCli, ORDERS_CHECK_ARGS, isDailyDiagnosticArgs} from './orders_check.mjs';
-export async function runDaily({io = privateCloudIo(), now = Date.now, generate = runPrivateReport,
+export async function runDaily({io = privateCloudIo(), now = Date.now, generate = runEodDailyReport,
   execution = process.env.CLOUD_RUN_EXECUTION} = {}) {
   const plan = planPreopen(now()), prefix = `delivery/${plan.dataDate}/`;
   if (plan.status === 'no-action') {
@@ -16,6 +17,9 @@ export async function runDaily({io = privateCloudIo(), now = Date.now, generate 
     return receipt;
   }
   if (!/^xuan-preopen-report-[a-z0-9-]+$/.test(execution || '')) throw new Error('DAILY_EXECUTION_REQUIRED');
+  // Local configuration must be frozen/approved before consuming the daily
+  // marker. This does no credential or financial read and does not unlock it.
+  if (generate === runEodDailyReport) validateEodSourceConfiguration();
   // Acquire the immutable daily start marker BEFORE any financial read. A
   // restarted job loses this create-only race and cannot refresh IB twice.
   await io.savePrivate(prefix+'start.json', {dataDate: plan.dataDate, execution, startedAt: new Date(now()).toISOString()});

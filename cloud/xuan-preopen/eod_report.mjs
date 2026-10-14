@@ -1,5 +1,5 @@
-// Explicit local/injected capability. Existing production entry points never
-// select this runner. No default financial reader or credential provider.
+// Injected EOD core. The B production composition supplies fixed readers;
+// this module itself has no default financial reader or credential provider.
 import crypto from 'node:crypto';
 import {adaptFlexArchive,applyFinancialVerification,digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,validDate} from './eod_sources.mjs';
 import {currentReserve} from './report.mjs';
@@ -16,11 +16,15 @@ async function optionalLive(capture,timeoutMs){
   try{return await Promise.race([Promise.resolve().then(()=>capture({signal:controller.signal})).catch(()=>({status:'failed',code:'OPTIONAL_LIVE_FAILED'})),new Promise(resolve=>{timer=setTimeout(()=>{controller.abort();resolve({status:'timeout',code:'OPTIONAL_LIVE_TIMEOUT'});},timeoutMs);})]);}
   finally{clearTimeout(timer);controller.abort();}
 }
-export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
-  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000}={}){
-  const started=now(),dataDate=hktDate(started),calendar=planPreopen(started);
+export function validateCompletedEodSession(sourceDate, started) {
+  const dataDate=hktDate(started),calendar=planPreopen(started);
   const ny=new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',hourCycle:'h23'}).formatToParts(new Date(started));const part=k=>ny.find(p=>p.type===k)?.value;const nyDate=part('year')+'-'+part('month')+'-'+part('day');
   if(!validDate(sourceDate)||nyDate<sourceDate||nyDate===sourceDate&&Number(part('hour'))<16||calendar.status!=='generate'||calendar.sourceDate!==sourceDate)fail('COMPLETED_SESSION_REQUIRED');
+  return {dataDate,calendar};
+}
+export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
+  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000}={}){
+  const started=now(),{dataDate}=validateCompletedEodSession(sourceDate,started);
   if(!io?.savePrivate||typeof loadContext!=='function'||typeof readArchive!=='function'||typeof verifyArchive!=='function')fail('INACTIVE_ADAPTER_REQUIRED');
   const context=await loadContext({now});validateAssociationSnapshot(context.association,{now:now(),edition:'am'});
   const runId=digest(crypto.randomUUID()),association=createAssociationReceipt(context.association,{now:now(),edition:'am',previousSourceSha:context.previousSourceSha,runId});

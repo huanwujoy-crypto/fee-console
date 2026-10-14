@@ -3,6 +3,8 @@ import crypto from 'node:crypto';
 import {calculateCashPlan} from './xuan-ib-cash-plan.mjs';
 import {ordersOf,projectOpenBuys} from './xuan-ib-night-action-model.mjs';
 import {parseSharesightCash,parseSharesightStockAllocation,STOCK_CLASS_TARGETS} from './xuan-ib-sharesight-allocation.mjs';
+import {buildEodHoldings,validateEodHoldings} from './xuan-ib-eod-holdings.mjs';
+import {validProviderGeneratedText} from '../cloud/xuan-preopen/eod_sources.mjs';
 const fail=code=>{throw new Error('EOD_MODEL_'+code);};
 const finite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;
 const cents=n=>Math.round(n*100)/100;
@@ -85,6 +87,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
       planningBasis:planning!==null?{status:'conditional',assumption:'NO_UNREFLECTED_ACTIVITY_SINCE_EOD',sourceDate}:{status:'unknown',reason:qualifiedEod?'CASH_OR_ORDERS_UNKNOWN':'EOD_RECONCILIATION_UNRESOLVED'},availableFunds:unknown('ACTIVITY_FLEX_HAS_NO_AVAILABLE_FUNDS'),executableBudget:null,
       eod:flex.cash?{status:'verified',currency:'USD',tradeDate:flex.cash.tradeDate,settled:flex.cash.settled,native:flex.cash.native.map(r=>({currency:r.currency,level:r.level,endingCash:r.endingCash,endingSettledCash:r.endingSettledCash,components:Object.fromEntries(Object.entries(r.components).filter(([k])=>['commissions','fxTranslationGainLoss','netTradesPurchases','netTradesSales'].includes(k)))}))}:unknown('FLEX_CASH_MISSING')},
     allocation:a?{status:'ready',total:a.total,projectedTotal:projection?.total??null,categories,fundingNeed}: {status:'unavailable',total:null,projectedTotal:null,categories:null,fundingNeed:null},
+    holdings:buildEodHoldings(get('sharesight.ibGroupedPerformance'),a,sourceDate,Array.isArray(flex.positions)),
     reconciliation:{status:flex.reconciliation.status,cashResidual:flex.reconciliation.cashResidual,cancellationPending:flex.reconciliation.cancellationPending,verificationSha256:flex.reconciliation.verificationSha256??null},
     notes:fixedNotes(sourceDate)};
   return validateEodActionModel(model);
@@ -115,6 +118,7 @@ export function validateEodActionModel(m){
   if(c.eod?.status==='verified'){if(c.eod.currency!=='USD'||!finite(c.eod.tradeDate)||!finite(c.eod.settled)||c.ib!==cents(c.eod.tradeDate)||!Array.isArray(c.eod.native)||c.eod.native.length>100||c.eod.native.some(r=>! /^[A-Z]{3}$/.test(r.currency)||!finite(r.endingCash)||!finite(r.endingSettledCash)))fail('EOD_CASH');}else if(c.eod?.status!=='unknown'||c.ib!==null)fail('EOD_CASH');
   if(c.eod.status==='verified'){exact(c.eod,['status','currency','tradeDate','settled','native']);for(const r of c.eod.native){exact(r,['currency','level','endingCash','endingSettledCash','components']);if(r.level!=='Currency'||!r.components||Object.keys(r.components).some(k=>!['commissions','fxTranslationGainLoss','netTradesPurchases','netTradesSales'].includes(k))||Object.values(r.components).some(n=>typeof n!=='number'||!Number.isFinite(n)))fail('CASH_COMPONENTS');}}else{exact(c.eod,['status','reason']);if(c.eod.reason!=='FLEX_CASH_MISSING')fail('CASH_REASON');}
   const a=m.allocation;if(!a||!['ready','unavailable'].includes(a.status))fail('ALLOCATION');
+  if(Object.hasOwn(m,'holdings')){validateEodHoldings(m.holdings,a,m.sourceDate);if(m.holdings.status==='ready'&&!snapshotUsable(outcome('sharesight.ibGroupedPerformance').status))fail('HOLDINGS_OUTCOME');}
   exact(a,['status','total','projectedTotal','categories','fundingNeed']);
   if(a.status==='unavailable'&&(a.total!==null||a.categories!==null||a.projectedTotal!==null||a.fundingNeed!==null))fail('ALLOCATION_UNKNOWN');
   if(a.status==='ready'){
@@ -141,12 +145,12 @@ export function validateEodActionModel(m){
     if(outcome(s.sourceKey).status==='ui-export-observed'&&(!date(s.uiReportStart)||s.uiReportStart>m.sourceDate||!instant(s.uiExportedAt)||Date.parse(s.uiExportedAt)>Date.parse(s.readAt)))fail('UI_PROVENANCE');
   }
   exact(m.provenance,['flex','sharesight']);exact(m.provenance.flex,['sourceDate','coveredFrom','coveredThrough','providerGeneratedText','providerTimezone','readAt','archiveSha256']);m.provenance.sharesight.forEach(s=>exact(s,['sourceKey','sourceDate','readAt','syncCompletedAt','snapshotGeneration','receiptSha256',...(outcome(s.sourceKey).status==='ui-export-observed'?['uiReportStart','uiExportedAt']:[])]));
-  const f=m.provenance.flex;if(!date(f.coveredFrom)||f.coveredFrom>m.sourceDate||!(/^(?:\d{8};\d{6}|\d{4}-\d{2}-\d{2};\d{2}:\d{2}:\d{2})$/.test(f.providerGeneratedText))||f.providerTimezone!==null&&typeof f.providerTimezone!=='string')fail('PROVENANCE');
+  const f=m.provenance.flex;if(!date(f.coveredFrom)||f.coveredFrom>m.sourceDate||!validProviderGeneratedText(f.providerGeneratedText)||f.providerTimezone!==null&&typeof f.providerTimezone!=='string')fail('PROVENANCE');
   if(f.providerTimezone!==null){try{new Intl.DateTimeFormat('en',{timeZone:f.providerTimezone});}catch{fail('PROVIDER_TIMEZONE');}}
   exact(m.reconciliation,['status','cashResidual','cancellationPending','verificationSha256']);if(!(m.reconciliation.verificationSha256===null||/^[a-f0-9]{64}$/.test(m.reconciliation.verificationSha256||''))||m.reconciliation.status!=='unknown'&&m.reconciliation.verificationSha256===null)fail('FINANCIAL_PROOF');if(!['verified','pending','unknown'].includes(m.reconciliation.status)||typeof m.reconciliation.cancellationPending!=='boolean'||!(m.reconciliation.cashResidual===null||Number.isFinite(m.reconciliation.cashResidual)&&Math.abs(m.reconciliation.cashResidual)<=1e12))fail('RECONCILIATION');
   if(m.reconciliation.status==='verified'&&(m.reconciliation.cashResidual!==0||m.reconciliation.cancellationPending)||m.reconciliation.status==='unknown'&&m.reconciliation.cashResidual!==null||m.reconciliation.cashResidual===null&&m.reconciliation.status!=='unknown')fail('RECONCILIATION');
   // Public marker allowlist excludes account IDs, raw payloads and archive paths.
-  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','reconciliation','notes'];
+  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes'];
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
   return m;
 }

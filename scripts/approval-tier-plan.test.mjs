@@ -77,8 +77,9 @@ test('all registered files, not suffixes, define the delegation boundary', () =>
   assert.equal(classifyChanges([{ ...input().entries[0], status: 'A' }]), 'specific');
   assert.equal(classifyChanges([{ ...input().entries[0], status: 'D' }]), 'specific');
 });
-test('all six EOD additions remain explicitly sensitive under the unchanged classifier',()=>{
-  for(const file of ['cloud/xuan-preopen/eod_report.mjs','cloud/xuan-preopen/eod_report.test.mjs','cloud/xuan-preopen/eod_sources.mjs','docs/xuan-preopen-eod-candidate.md','scripts/xuan-ib-eod-action-model.mjs','scripts/xuan-ib-eod-loader.test.mjs']){
+test('all EOD source and display additions remain explicitly sensitive under the unchanged classifier',()=>{
+  for(const file of ['cloud/xuan-preopen/eod_report.mjs','cloud/xuan-preopen/eod_report.test.mjs','cloud/xuan-preopen/eod_sources.mjs','docs/xuan-preopen-eod-candidate.md','scripts/xuan-ib-eod-action-model.mjs','scripts/xuan-ib-eod-loader.test.mjs',
+    'cloud/xuan-preopen/eod_daily.mjs','cloud/xuan-preopen/eod_daily.test.mjs','cloud/xuan-preopen/eod_source_config.mjs','cloud/xuan-preopen/flex_reader.mjs','cloud/xuan-preopen/flex_reader.test.mjs','scripts/xuan-ib-eod-holdings.mjs','scripts/xuan-ib-eod-holdings.test.mjs']){
     assert.ok(approvalRegistry.sensitiveFiles.includes(file));assert.ok(!approvalRegistry.ordinaryFiles.includes(file));
     assert.equal(classifyChanges([{...input().entries[0],path:file}]),'specific');
   }

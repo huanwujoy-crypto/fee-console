@@ -12,6 +12,6 @@ COPY cloud/xuan-preopen/ cloud/xuan-preopen/
 USER node
 # The two phone integration tests require a historical page that is not a runtime input.
 # They remain mandatory in the full repository suite; every other cloud/guard test runs here.
-RUN --network=none node --test --test-skip-pattern='^phone ' cloud/xuan-preopen/*.test.mjs scripts/xuan-ib-night-action*.test.mjs
+RUN --network=none node --test --test-skip-pattern='^phone ' cloud/xuan-preopen/*.test.mjs scripts/xuan-ib-night-action*.test.mjs scripts/xuan-ib-eod-holdings.test.mjs
 ENTRYPOINT ["node", "cloud/xuan-preopen/daily.mjs"]
 CMD []

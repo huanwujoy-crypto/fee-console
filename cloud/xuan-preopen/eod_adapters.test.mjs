@@ -117,9 +117,9 @@ test('cash-only composed runner uses existing private saves, remains partial and
   assert.equal(receipt.publication,'none');assert.equal(receipt.scheduler,'none');assert.ok([...objects.keys()].at(-1).endsWith('/receipt.json'));
   assert.equal(JSON.stringify(model).includes(config().account),false);assert.equal(JSON.stringify(model).includes(binding().privateObject),false);
 });
-test('default daily stays legacy and retains its start marker before stopping without an IB call',async()=>{
-  const saved=[];let credentials=0;const io={savePrivate:async name=>{saved.push(name);return {sha256:'a'.repeat(64),generation:'1'};},ibStore:new Proxy({}, {get:()=>assert.fail('No IB call')}),loadGatewayToken:async()=>{credentials++;throw new Error('SYNTHETIC_LEGACY_STOP');}};
-  await assert.rejects(runDaily({io,now:NOW,execution:'xuan-preopen-report-offline'}),/SYNTHETIC_LEGACY_STOP/);
-  assert.equal(credentials,1);assert.deepEqual(saved,['delivery/2026-10-09/start.json']);
+test('default daily selects B and stops on absent deployment config before marker, context or credentials',async()=>{
+  const saved=[];let credentials=0;const io={savePrivate:async name=>{saved.push(name);return {sha256:'a'.repeat(64),generation:'1'};},ibStore:new Proxy({}, {get:()=>assert.fail('No IB call')}),loadFlexToken:()=>assert.fail('No Flex credential before context'),loadGatewayToken:async()=>{credentials++;throw new Error('SYNTHETIC_LEGACY_STOP');}};
+  await assert.rejects(runDaily({io,now:NOW,execution:'xuan-preopen-report-offline'}),/EOD_DAILY_CONFIGURATION_REQUIRED/);
+  assert.equal(credentials,0);assert.deepEqual(saved,[]);
   let daily=0;await dailyCli([],{daily:async()=>{daily++;},diagnostic:()=>assert.fail('No diagnostic')});assert.equal(daily,1);
 });

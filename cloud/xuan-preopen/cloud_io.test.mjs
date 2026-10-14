@@ -40,3 +40,26 @@ test('misrouted or incomplete upload metadata is not accepted', async () => {
   const fetchImpl = async url => String(url).includes('metadata.google') ? Response.json({access_token: 'test-google-identity'}) : Response.json({name: 'wrong-object', size: '1', generation: '1'});
   await assert.rejects(privateCloudIo({fetchImpl}).savePrivate('report-check/id/report.html', 'private'), /UPLOAD_NOT_CONFIRMED/);
 });
+test('B reads only its fixed Flex credential reference without token rotation or IB MCP access', async () => {
+  const urls=[];
+  const io=privateCloudIo({fetchImpl:async(url,options={})=>{
+    urls.push({url:String(url),options});
+    if(String(url).includes('metadata.google'))return Response.json({access_token:'SYNTHETIC_GOOGLE_TOKEN'});
+    assert.equal(String(url),'https://secretmanager.googleapis.com/v1/projects/family-portfolio-gateway/secrets/ib-flex-cash-token/versions/1:access');
+    return Response.json({payload:{data:Buffer.from('SYNTHETIC_FLEX_TOKEN').toString('base64')}});
+  }});
+  assert.equal(await io.loadFlexToken(),'SYNTHETIC_FLEX_TOKEN');assert.equal(urls.length,2);
+  assert(urls.every(r=>!r.url.includes('xuan-preopen-ib-mcp')&&!r.url.includes(':addVersion')&&r.options.method!=='POST'));
+});
+test('parallel B credential reads share one metadata identity request and never rotate secrets',async()=>{
+  const calls=[];const io=privateCloudIo({fetchImpl:async url=>{
+    calls.push(String(url));
+    if(String(url).includes('metadata.google')){await new Promise(resolve=>setImmediate(resolve));return Response.json({access_token:'SYNTHETIC_GOOGLE_TOKEN'});}
+    return Response.json({payload:{data:Buffer.from('SYNTHETIC_READ_TOKEN').toString('base64')}});
+  }});
+  await Promise.all([io.loadFlexToken(),io.loadGatewayToken()]);
+  assert.equal(calls.filter(url=>url.includes('metadata.google')).length,1);assert.equal(calls.length,3);
+  assert(calls.some(url=>url.includes('ib-flex-cash-token/versions/1:access')));
+  assert(calls.some(url=>url.includes('family-portfolio-gateway-key/versions/latest:access')));
+  assert(calls.every(url=>!url.includes(':addVersion')));
+});

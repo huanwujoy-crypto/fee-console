@@ -473,6 +473,13 @@
     ".github/workflows/xuan-preopen-image-deploy.yml",
     "cloud/xuan-weekly/safe_observation.py",
     "cloud/xuan-weekly/test_safe_observation.py",
-    "docs/xuan-weekly-safe-diagnostics.md"
+    "docs/xuan-weekly-safe-diagnostics.md",
+    "cloud/xuan-preopen/eod_daily.mjs",
+    "cloud/xuan-preopen/eod_daily.test.mjs",
+    "cloud/xuan-preopen/eod_source_config.mjs",
+    "cloud/xuan-preopen/flex_reader.mjs",
+    "cloud/xuan-preopen/flex_reader.test.mjs",
+    "scripts/xuan-ib-eod-holdings.mjs",
+    "scripts/xuan-ib-eod-holdings.test.mjs"
   ]
 }

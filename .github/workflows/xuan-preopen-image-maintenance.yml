@@ -11,6 +11,11 @@ on:
         description: 'Merged PR containing the existing exact-head OWNER approval'
         required: true
         type: string
+      deploy_image:
+        description: 'Also replace the fixed production job image; keep false for private acceptance'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -35,7 +40,7 @@ jobs:
       approval_pr: ${{ inputs.approval_pr }}
   deploy:
     needs: build
-    if: ${{ needs.build.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ inputs.deploy_image == true && needs.build.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     permissions:
       contents: read
       pull-requests: read
