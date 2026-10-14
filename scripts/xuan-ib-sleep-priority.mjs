@@ -127,7 +127,8 @@ export function classifySleepPublication(html) {
 // Derived only from the canonical validated report, not a caller's verified flag.
 const actionKeys=['schemaVersion','status','sourceDate','readAtEpoch','orderReadAtEpoch','components','htmlBlob'];
 export function validateActionPublicationDescriptor(a,htmlBlob=null){
-  exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[])],'action publication');
+  exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[]),...(Object.hasOwn(a||{},'holdingsDetail')?['holdingsDetail']:[])],'action publication');
+  if(Object.hasOwn(a,'holdingsDetail')&&(a.schemaVersion!==9||typeof a.holdingsDetail!=='boolean'||a.holdingsDetail&&!(a.components&1)))fail('holding publication facts are invalid');
   if(![4,5,9].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
   if(a.sourceDate!==null)date(a.sourceDate,'action sourceDate');sha(a.htmlBlob,'action htmlBlob');
   if(htmlBlob!==null&&a.htmlBlob.toLowerCase()!==htmlBlob.toLowerCase())fail('action publication HTML mismatch');
@@ -146,6 +147,7 @@ export function actionPublicationDescriptor(m,html=null){
   return validateActionPublicationDescriptor({schemaVersion:m.schemaVersion,status:m.status,sourceDate:m.schemaVersion===9?m.sourceDate:m.asOfHkt.match(/数据至 (\d{4}-\d{2}-\d{2})$/)?.[1]??null,
     readAtEpoch:m.schemaVersion===9?Math.floor(Date.parse(m.provenance.flex.readAt)/1000):time(m.asOfHkt),orderReadAtEpoch:orders?(m.schemaVersion===9?Math.floor(Date.parse(m.orders.capturedCompletedAt)/1000):time(m.orders.asOfHkt)):null,
     ...(m.schemaVersion===9?{reconciliationStatus:m.reconciliation.status,financialProofSha256:m.reconciliation.verificationSha256}:{}),
+    ...(m.schemaVersion===9&&Object.hasOwn(m,'holdings')?{holdingsDetail:m.holdings.status==='ready'}:{}),
     components:(allocation?1:0)|(cash?2:0)|(orders?4:0)|(allocation&&m.allocation.projectedTotal!==null&&m.allocation.projectedTotal!==undefined?8:0)|(m.replenishment.status==='ready'?16:0),htmlBlob});
 }
 export function retainsActionFinancialEvidence(next,old){
@@ -158,6 +160,7 @@ export function canReplaceActionPublication(next,old){
   // a real superseding-evidence contract is accepted, fail conservatively.
   // Later cutoffs and original schema-5 reports keep existing replacement rules.
   if(!retainsActionFinancialEvidence(next,old))return false;
+  if(next.schemaVersion===9&&old.schemaVersion===9&&old.holdingsDetail===true&&next.holdingsDetail!==true)return false;
   if(old.status==='ready'&&next.status!=='ready'||(next.components&old.components)!==old.components)return false;
   if(old.sourceDate!==null&&(next.sourceDate===null||next.sourceDate<old.sourceDate))return false;
   if(next.readAtEpoch<old.readAtEpoch||old.orderReadAtEpoch!==null&&(next.orderReadAtEpoch===null||next.orderReadAtEpoch<old.orderReadAtEpoch))return false;

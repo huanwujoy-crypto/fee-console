@@ -3,6 +3,14 @@ import crypto from 'node:crypto';
 export const digest = value => crypto.createHash('sha256').update(typeof value === 'string' || Buffer.isBuffer(value) ? value : JSON.stringify(value)).digest('hex');
 const fail = code => { throw new Error('EOD_' + code); };
 export const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') && Number.isFinite(Date.parse(value+'T00:00:00Z')) && new Date(value+'T00:00:00Z').toISOString().slice(0,10) === value;
+export function validProviderGeneratedText(value) {
+  if(typeof value!=='string')return false;
+  const compact=/^(\d{4})(\d{2})(\d{2});(\d{2})(\d{2})(\d{2})$/.exec(value);
+  const extended=/^(\d{4})-(\d{2})-(\d{2});(\d{2}):(\d{2}):(\d{2})$/.exec(value);
+  const parts=compact||extended;
+  return Boolean(parts&&validDate(`${parts[1]}-${parts[2]}-${parts[3]}`)
+    &&Number(parts[4])<24&&Number(parts[5])<60&&Number(parts[6])<60);
+}
 const date = value => { const d = /^\d{8}$/.test(value || '') ? value.slice(0,4)+'-'+value.slice(4,6)+'-'+value.slice(6) : value; if (!validDate(d)) fail('DATE'); return d; };
 const number = value => { if (typeof value !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(value)) fail('NUMBER'); const n = Number(value); if (!Number.isFinite(n) || Math.abs(n)>1e12) fail('NUMBER'); return n; };
 const attrs = text => {
@@ -48,7 +56,7 @@ export function adaptFlexArchive({bytes, metadata}, {expectedAccount, expectedQu
   const statement=documentOf(bytes),header=statement.attributes;
   if (header.accountId!==expectedAccount || date(header.toDate)!==sourceDate || date(header.fromDate)>sourceDate) fail('ACCOUNT_OR_CUTOFF');
   const generated = header.whenGenerated;
-  if (!/^\d{8};\d{6}$/.test(generated || '') && !/^\d{4}-\d{2}-\d{2};\d{2}:\d{2}:\d{2}$/.test(generated || '')) fail('GENERATION_TIME');
+  if (!validProviderGeneratedText(generated)) fail('GENERATION_TIME');
   const timezone=metadata.providerTimezone ?? null;
   if (timezone!==null) { try { new Intl.DateTimeFormat('en',{timeZone:timezone}); } catch { fail('PROVIDER_TIMEZONE'); } }
   const cashRows=rows(statement,'CashReport'), positionRows=rows(statement,'OpenPositions'), tradeRows=rows(statement,'Trades');

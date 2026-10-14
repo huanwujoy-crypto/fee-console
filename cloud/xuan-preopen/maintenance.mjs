@@ -83,7 +83,14 @@ export const COPY_PATHS=Object.freeze([
   "cloud/xuan-preopen/delivery.test.mjs",
   "cloud/xuan-preopen/eod_report.mjs",
   "cloud/xuan-preopen/eod_report.test.mjs",
+  "cloud/xuan-preopen/eod_adapters.mjs",
+  "cloud/xuan-preopen/eod_adapters.test.mjs",
+  "cloud/xuan-preopen/eod_daily.mjs",
+  "cloud/xuan-preopen/eod_daily.test.mjs",
+  "cloud/xuan-preopen/eod_source_config.mjs",
   "cloud/xuan-preopen/eod_sources.mjs",
+  "cloud/xuan-preopen/flex_reader.mjs",
+  "cloud/xuan-preopen/flex_reader.test.mjs",
   "cloud/xuan-preopen/gateway_classification_patch.py",
   "cloud/xuan-preopen/gateway_patch_test.py",
   "cloud/xuan-preopen/ib_diagnostics.mjs",
@@ -138,6 +145,8 @@ export const COPY_PATHS=Object.freeze([
   "scripts/xuan-ib-source-capture.mjs",
   "scripts/xuan-ib-source-hook.mjs",
   "scripts/xuan-ib-weekly-snapshot.mjs",
+  "scripts/xuan-ib-eod-holdings.mjs",
+  "scripts/xuan-ib-eod-holdings.test.mjs",
   "security/xuan-preopen-maintenance-iam.json"
 ]);
 const copyFiles=new Set(COPY_PATHS);

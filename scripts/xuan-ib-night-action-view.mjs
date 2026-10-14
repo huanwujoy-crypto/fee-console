@@ -165,11 +165,15 @@ ${model.allocation.categories.map(item => `<div><span>${esc(item.label)}</span><
 <section class="card"><h2>${preopen ? '本轮补仓' : '今晚补仓'}<small>规划 · 非下单</small></h2>${plan}${eodCondition}</section>
 <section class="card"><h2>挂单提醒<small>${esc(model.orders.asOfHkt)}</small></h2>${orders}</section>
 <section class="card"><h2>现金优先补仓参考</h2>${cash}</section>
-<section class="card"><h2>股票四类配置<small>${eod && model.allocation.projectedTotal === null ? '当前 → 参考目标；挂单后未取得' : model.schemaVersion >= 4 ? '当前 → 挂单后 → 参考目标' : '当前 → 参考目标'}</small></h2>${allocation}</section>
+<section class="card"><h2>股票四类配置<small>${eod && model.allocation.projectedTotal === null ? '当前 → 参考目标；挂单后未取得' : model.schemaVersion >= 4 ? '当前 → 挂单后 → 参考目标' : '当前 → 参考目标'}</small></h2>${allocation}${eod&&model.holdings?renderEodHoldings(model.holdings):''}</section>
 <footer class="notes">${model.notes.map(note => `<p>${esc(note)}</p>`).join('')}${eod ? renderEodProvenance(model.provenance) : ''}</footer>
 </main>${statusScript}</body></html>`;
 }
 
+function renderEodHoldings(h) {
+  if(h.status!=='ready')return '<div class="cash-detail"><b>Sharesight 记录持仓</b><p class="unavailable">持仓明细未取得；不沿用旧明细。</p></div>';
+  return `<div class="cash-detail"><b>Sharesight 记录持仓 · ${esc(h.sourceDate)}</b><p>最大单项 ${percent(h.concentration.top1Pct)} · 前五项 ${percent(h.concentration.top5Pct)}（股票市值分母）</p><div style="overflow-x:auto"><table style="width:100%;font-size:12px;border-collapse:collapse"><thead><tr><th>标的／分类</th><th>记录数量</th><th>市值 USD</th><th>股票占比</th></tr></thead><tbody>${h.rows.map(r=>`<tr><td>${esc(r.symbol)}<br><small>${esc(r.category)}</small></td><td>${r.quantity===null?'未取得':r.quantity.toLocaleString('en-US')}</td><td>${money(r.marketValueUsd)}</td><td>${percent(r.weightPct)}</td></tr>`).join('')}</tbody></table></div><small>${h.ibEodPositions==='not-provided'?'本轮 Flex 未提供 IB 收盘持仓。':'Flex 含持仓记录，与 Sharesight 持仓一致性尚未核实。'}价格、收益与成本未核实项不作推算；集中度按本轮 Sharesight 分类股票计算。</small></div>`;
+}
 function renderEodCash(c, reconciliation) {
   const amount = n => n === null ? '未取得' : money(n);
   const detail = c.eod.status === 'verified' ? `<p><b>IB EOD 现金（USD）</b><span>交易日 ${money(c.eod.tradeDate)} · 已结算 ${money(c.eod.settled)}</span></p>${c.eod.native.map(r=>`<p><b>${esc(r.currency)} 原币现金</b><span>交易日 ${r.endingCash.toLocaleString('en-US')} · 已结算 ${r.endingSettledCash.toLocaleString('en-US')}</span></p>`).join('')}` : '<p>IB EOD 现金未取得</p>';

@@ -1,11 +1,57 @@
-# Local EOD action-report candidate — inactive
+# EOD action-report candidate — B wiring prepared, not activated
 
 This is a sensitive local code candidate, not a deployed report, a real sync
-receipt, or publication approval. The existing report/daily CLI still selects
-`runPrivateReport` and its five-source schema-5 path. Nothing selects the new
-`runPrivateEodReport` by default. No endpoint, schedule, Flex query, credential,
-IAM configuration, signing service, sync writer or security policy is added.
-The complete diff requires exact final-head OWNER approval before activation.
+receipt, or publication approval. B changes the default `daily.mjs` generator
+to `runEodDailyReport`, which composes the reviewed EOD adapters/runner with a
+fixed official Flex Web Service reader and the existing API-backed Sharesight
+batch. It supplies no optional live MCP capture and never rotates an IB token.
+`eod_source_config.mjs` reads only the fixed private deployment parameter
+`XUAN_PREOPEN_EOD_QUERY_ID`. Its exact approved value remains in the private
+deployment/acceptance plan; no real query ID is published in code or fixtures.
+The normal cash-sync query was discovered through immutable revision metadata;
+it is reused without changing its field profile. Missing or invalid deployment
+configuration blocks before credential/source reads or the daily start marker.
+The fixed Secret reference reuses `ib-flex-cash-token/versions/1`, the same
+reference used by normal cash sync and weekly jobs; no token is read or rotated
+by the agent, and no query fields are changed. Resource metadata confirms the
+version is ENABLED, not that the upstream token is valid. The normal configured
+account matches the existing approved account binding and its cash currency is
+USD. The report identity has gateway-key access and private object creation,
+but is absent from the Flex Secret resource/project access bindings inspected.
+Its narrowly scoped access and one fresh private acceptance still require
+approval. Invalid configuration continues to fail before any source read.
+No Secret, grant, query or cloud resource has been created. Existing schedules,
+immutable marker rules, signing and
+protected publication gates remain in place. The complete sensitive diff and
+any later query/Secret-reference correction need exact final-head approval.
+
+For private acceptance the existing image-maintenance dispatch must explicitly
+use `deploy_image=false` (also its safe default). It then builds/pushes the
+approved image through the existing builder and skips the production image
+replacement entirely. All signed-head, merged-PR, OWNER, exact-main/tree and
+immutable image-label checks remain. A draft PR cannot be built through that
+protected path: separately approve and protectively merge this source first.
+This source merge/build is not publication, report-job deployment, a scheduler
+change or an authorization to run financial reads.
+
+The original four-card layout remains. The allocation card now includes curated
+Sharesight recorded stock holdings and stock-only top-one/top-five concentration,
+reconciled to its original category and total values. Missing quantities stay
+null; duplicate/ambiguous ticker rows or more than 60 instrument rows make the
+detail unavailable without truncation or copying old facts. Cash-only Flex does
+not prove broker positions; that absence is visible. Price/return/cost extensions
+and broker position reconciliation are not claimed. Legacy schema-9 pages without
+the optional holdings member keep the original rendering; old complete schema-5
+priority is unchanged. The new derived schema-9 publication fact prevents dropping
+accepted holding detail on replacement.
+
+Tomorrow's ordinary B delivery can use a new date's original create-only start
+marker after source acceptance and approved deployment. Today's existing failed
+marker is not removed or overwritten. A newly authorized private acceptance can
+prepare independent EOD evidence, but a same-day public recovery still needs a
+separately reviewed completed-EOD readback route: the existing limited collector
+accepts only schema-7/schema-8, not EOD. This candidate adds no such bypass and
+does not resume a prior interrupted context, nonce or allowance.
 
 `adaptPrivateNoahUiExport` is a pure, explicitly supplied official UI cash-export
 adapter for one-time private acceptance only. It checks pinned local transfer

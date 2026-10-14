@@ -11,6 +11,9 @@ const categories = new Set(['unknown', 'invalid_grant', 'invalid_client', 'inval
   'save_failed', 'save_outcome_unknown', 'rpc_error', 'tool_error', 'contract_invalid',
   'forbidden', 'attempt_consumed', 'attempt_outcome_unknown', 'counter_limit', 'policy_invalid']);
 const codes = new Set([
+  'EOD_DAILY_CONFIGURATION_REQUIRED','EOD_DAILY_IO_REQUIRED','EOD_DAILY_ARCHIVE_BINDING',
+  'FLEX_SOURCE_CONFIGURATION_REQUIRED','FLEX_SOURCE_RESPONSE_INVALID','FLEX_SOURCE_NETWORK_FAILED',
+  'FLEX_SOURCE_HTTP_FAILED','FLEX_SOURCE_TIMEOUT','FLEX_SOURCE_REQUEST_REJECTED','FLEX_SOURCE_STATEMENT_REJECTED',
   'IB_READ_ONLY_CREDENTIAL_REQUIRED', 'IB_CREDENTIAL_LOAD_FAILED', 'IB_EMPTY_RESPONSE',
   'IB_RESPONSE_TOO_LARGE', 'IB_INVALID_UTF8', 'IB_REFRESH_NETWORK_FAILED',
   'IB_REFRESH_HTTP_FAILED', 'IB_REFRESH_RESPONSE_INVALID', 'IB_REFRESH_SCOPE_INVALID',

@@ -82,6 +82,9 @@ test('invalid CLI inputs have no source, credential, cloud or Docker action',asy
 });
 test('workflow/Docker/IAM plan isolate maintenance identity and preserve daily production routes',()=>{
  const entry=fs.readFileSync(new URL('../../'+FIXED.workflow,import.meta.url),'utf8'),workflow=entry+fs.readFileSync(new URL('../../.github/workflows/xuan-preopen-image-build.yml',import.meta.url),'utf8')+fs.readFileSync(new URL('../../.github/workflows/xuan-preopen-image-deploy.yml',import.meta.url),'utf8'),docker=fs.readFileSync(new URL('./Maintenance.Dockerfile',import.meta.url),'utf8'),iam=JSON.parse(fs.readFileSync(new URL('../../security/xuan-preopen-maintenance-iam.json',import.meta.url),'utf8'));
+  assert.match(entry,/deploy_image:\n\s+description:.*\n\s+required: true\n\s+type: boolean\n\s+default: false/);
+  assert.match(entry,/if: \$\{\{ inputs\.deploy_image == true && needs\.build\.result == 'success'/);
+  assert.equal((entry.match(/inputs\.deploy_image == true/g)||[]).length,1);
  for(const k of ['build','deploy'])assert.ok(entry.includes(`uses: ${FIXED.repository}/.github/workflows/xuan-preopen-image-${k}.yml@main`));assert.ok(!entry.includes('uses: ./.github/workflows/'));assert.ok(workflow.includes('workflow_dispatch:'));assert.ok(!workflow.includes('schedule:'));assert.ok(!workflow.includes('FEE_CLOUD_GITHUB_TOKEN'));assert.ok(!workflow.includes('xuan-preopen-delivery@'));assert.ok(!workflow.includes('cloud_io.mjs'));assert.ok(workflow.includes('XUAN_PREOPEN_IMAGE_MAINTENANCE_ENABLED'));assert.ok(workflow.indexOf('maintenance.mjs preflight')<workflow.indexOf('id: builder'));assert.equal((workflow.match(/create_credentials_file: false/g)||[]).length,2);assert.equal((workflow.match(/actions\/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903/g)||[]).length,2);assert.equal((workflow.match(/node-version: '24'/g)||[]).length,2);assert.equal((workflow.match(/package-manager-cache: false/g)||[]).length,2);assert.ok(!workflow.includes('gcloud'));assert.ok(!workflow.includes('environment:'));
  assert.ok(docker.includes("RUN --network=none node --test --test-skip-pattern='^phone '"));assert.ok(docker.includes('ENTRYPOINT ["node", "cloud/xuan-preopen/daily.mjs"]'));assert.ok(docker.includes('CMD []'));assert.ok(!/COPY (?:\.git(?:\/| )|data\.json |xuan-ib\/)/.test(docker));
  assert.equal(iam.providers.length,2);assert.equal(iam.bindings.filter(b=>b.role==='roles/iam.workloadIdentityUser').length,2);
@@ -97,9 +100,9 @@ function contextFixture(){
 function contextFiles(root,prefix=''){
  return fs.readdirSync(path.join(root,prefix)).flatMap(name=>{const file=prefix?prefix+'/'+name:name;return fs.lstatSync(path.join(root,file)).isDirectory()?contextFiles(root,file):[file];}).sort();
 }
-test('fixed 79-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
- assert.equal(COPY_PATHS.length,79);assert.equal(new Set(COPY_PATHS).size,79);
- assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'a1dcbe57dce61fd86122865d066cccfb95953d5992f91fdc6f3395cdcc174304');
+test('fixed 88-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
+ assert.equal(COPY_PATHS.length,88);assert.equal(new Set(COPY_PATHS).size,88);
+ assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'5856683d1c5c67042080eff3b01c7f402f73fe3433012fb831661230fa2f3b45');
  const f=contextFixture();
  try{
   for(const file of ['data.json','.git/config','xuan-ib/latest.html','scripts/repair-brkb-20260820.mjs','scripts/codex-fee-keychain.c','scripts/codex-fee-credentials.mjs','scripts/codex-fee-setup','cloud/xuan-preopen/private-new.mjs']){const p=path.join(f.root,file);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,'PRIVATE-CANARY');}
