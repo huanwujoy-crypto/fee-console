@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   DEFINITIONS,
@@ -8,7 +11,9 @@ import {
   extractNasdaqDividends,
   extractNasdaqHistoricalClose,
   extractPrices,
+  expectedBenchmarkTargetDate,
   mergePrices,
+  refresh,
 } from './refresh-benchmark-cache.mjs';
 
 function epoch(iso) {
@@ -343,4 +348,222 @@ test('merge source describes the cross-checked fallback and paired tail dates st
   }, new Date('2026-09-23T02:00:00Z'));
   assert.match(merged.source, /Nasdaq official quote and historical close cross-check/);
   assert.equal(merged.benchmarks.spy.series.at(-1).d, merged.benchmarks.qqq.series.at(-1).d);
+});
+
+const RECOVERY_NOW = new Date('2026-10-15T00:21:31Z');
+const RECOVERY_PRIOR = epoch('2026-10-13T13:30:00Z');
+const RECOVERY_CLOSE = epoch('2026-10-14T20:00:00Z');
+
+function recoveryOptions(definition = DEFINITIONS.spy, overrides = {}) {
+  return {
+    yahooPayload: payload(definition, {
+      timestamps: [RECOVERY_PRIOR], closes: [100],
+      meta: { regularMarketTime: RECOVERY_CLOSE, regularMarketPrice: 103 },
+    }),
+    nasdaqInfo: nasdaqInfo(definition, {
+      date: 'Oct 14, 2026', price: 999, marketStatus: 'After-Hours',
+    }),
+    nasdaqHistorical: nasdaqHistorical(definition, [{ date: '10/14/2026', close: '103' }]),
+    nasdaqDividends: nasdaqDividends(), definition, now: RECOVERY_NOW, ...overrides,
+  };
+}
+
+test('historical fallback ignores extended-session prices and retains strict quote extraction', () => {
+  const options = recoveryOptions();
+  assert.throws(() => extractNasdaqClose(options.nasdaqInfo, DEFINITIONS.spy, RECOVERY_NOW), /not closed/);
+  assert.deepEqual(appendCrossCheckedClose(options).at(-1), { d: '2026-10-14', p: 103 });
+  assert.notEqual(appendCrossCheckedClose(options).at(-1).p, 999);
+});
+
+test('unknown current market status grants no price authority', () => {
+  const info = nasdaqInfo(DEFINITIONS.spy, {
+    marketStatus: 'unknown-provider-state', price: 999, date: 'Oct 14, 2026',
+  });
+  assert.deepEqual(appendCrossCheckedClose(recoveryOptions(DEFINITIONS.spy, { nasdaqInfo: info })).at(-1),
+    { d: '2026-10-14', p: 103 });
+  assert.throws(() => appendCrossCheckedClose(recoveryOptions(DEFINITIONS.spy, {
+    nasdaqInfo: info,
+    yahooPayload: payload(DEFINITIONS.spy, { timestamps: [RECOVERY_PRIOR], closes: [100] }),
+  })), /needs same-date Yahoo regular-market evidence/);
+});
+
+test('non-Closed fallback rejects stale dates, mismatched values, and incomplete sessions', () => {
+  const stale = payload(DEFINITIONS.spy, {
+    timestamps: [RECOVERY_PRIOR], closes: [100],
+    meta: { regularMarketTime: RECOVERY_PRIOR, regularMarketPrice: 100 },
+  });
+  assert.throws(() => appendCrossCheckedClose(recoveryOptions(DEFINITIONS.spy, { yahooPayload: stale })), /same-date/);
+  const mismatch = payload(DEFINITIONS.spy, {
+    timestamps: [RECOVERY_PRIOR], closes: [100],
+    meta: { regularMarketTime: RECOVERY_CLOSE, regularMarketPrice: 104 },
+  });
+  assert.throws(() => appendCrossCheckedClose(recoveryOptions(DEFINITIONS.spy, { yahooPayload: mismatch })), /price mismatch/);
+  assert.throws(() => appendCrossCheckedClose(recoveryOptions(DEFINITIONS.spy, {
+    now: new Date('2026-10-14T20:14:59Z'),
+  })), /No completed Nasdaq historical close/);
+});
+
+test('historical fallback preserves symbol, listing, issuer and dividend verification', () => {
+  for (const data of [{ symbol: 'TQQQ' }, { assetClass: 'STOCK' }, { exchange: 'OTHER' }, { companyName: 'Other issuer' }]) {
+    assert.throws(() => appendCrossCheckedClose(recoveryOptions(DEFINITIONS.spy, {
+      nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { marketStatus: 'After-Hours', price: 999, data }),
+    })), /Unexpected Nasdaq/);
+  }
+  const qqq = recoveryOptions(DEFINITIONS.qqq, {
+    nasdaqDividends: nasdaqDividends([{ exOrEffDate: '10/14/2026', amount: '$0.75', currency: 'USD', type: 'Cash' }]),
+  });
+  assert.deepEqual(appendCrossCheckedClose(qqq).at(-1), { d: '2026-10-14', p: 103, div: 0.75 });
+  const bad = nasdaqDividends([{ exOrEffDate: '10/14/2026', amount: '$0.75', currency: 'HKD', type: 'Cash' }]);
+  assert.throws(() => appendCrossCheckedClose({ ...qqq, nasdaqDividends: bad }), /Unexpected Nasdaq dividend/);
+});
+
+test('expected target uses the fee NY boundary across DST and weekends without inferring holidays', () => {
+  for (const [time, target] of [
+    ['2026-10-14T20:14:59Z', '2026-10-13'], ['2026-10-14T20:15:00Z', '2026-10-14'],
+    ['2026-11-05T21:14:59Z', '2026-11-04'], ['2026-11-05T21:15:00Z', '2026-11-05'],
+    ['2026-10-18T14:00:00Z', '2026-10-16'], ['2026-10-19T18:00:00Z', '2026-10-16'],
+    ['2026-11-27T02:00:00Z', '2026-11-26'],
+  ]) assert.equal(expectedBenchmarkTargetDate(new Date(time)), target);
+  assert.throws(() => expectedBenchmarkTargetDate(new Date('invalid')), /Invalid benchmark clock/);
+});
+
+function recoveryFetch({ freshPrimary = false, staleMeta = false, failedSymbol, failAll = false } = {}) {
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    const parsed = new URL(url);
+    const symbol = /(?:chart|quote)\/(SPY|QQQ)/.exec(parsed.pathname)?.[1];
+    assert.ok(symbol, `Unexpected offline request ${url}`);
+    if (failAll || symbol === failedSymbol) return { ok: false, status: 503 };
+    const definition = DEFINITIONS[symbol.toLowerCase()];
+    let body;
+    if (parsed.hostname.endsWith('finance.yahoo.com')) {
+      body = payload(definition, {
+        timestamps: [freshPrimary ? epoch('2026-10-14T13:30:00Z') : RECOVERY_PRIOR],
+        closes: [freshPrimary ? 103 : 100],
+        meta: { regularMarketTime: staleMeta ? RECOVERY_PRIOR : RECOVERY_CLOSE, regularMarketPrice: staleMeta ? 100 : 103 },
+      });
+    } else if (parsed.pathname.endsWith('/info')) {
+      body = nasdaqInfo(definition, { date: 'Oct 14, 2026', price: 999, marketStatus: 'After-Hours' });
+    } else if (parsed.pathname.endsWith('/historical')) {
+      body = nasdaqHistorical(definition, [{ date: '10/14/2026', close: '103' }]);
+    } else if (parsed.pathname.endsWith('/dividends')) body = nasdaqDividends();
+    else assert.fail(`Unexpected offline request ${url}`);
+    return { ok: true, status: 200, json: async () => body };
+  };
+  return { calls, fetchImpl };
+}
+
+async function offlineCache(t, cache) {
+  const directory = await mkdtemp(join(tmpdir(), 'fee-benchmark-offline-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'benchmark-close.json');
+  const bytes = `${JSON.stringify(cache)}\n  `;
+  await writeFile(path, bytes);
+  return { path, bytes };
+}
+
+function priorCache() {
+  return mergePrices(null, { spy: [{ d: '2026-10-13', p: 100 }], qqq: [{ d: '2026-10-13', p: 100 }] }, RECOVERY_NOW);
+}
+
+test('full refresh recovers two target rows from historical data while ignoring after-hours quotes', async t => {
+  const { path } = await offlineCache(t, priorCache());
+  const source = recoveryFetch();
+  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+  assert.equal(result.changed, true);
+  for (const key of ['spy', 'qqq']) assert.deepEqual(result.cache.benchmarks[key].series.at(-1), { d: '2026-10-14', p: 103 });
+  assert.ok(source.calls.some(url => url.includes('/historical?')));
+  assert.equal(source.calls.filter(url => url.includes('/dividends?')).length, 1);
+  const persisted = JSON.parse(await readFile(path, 'utf8'));
+  assert.deepEqual(persisted, result.cache);
+});
+
+test('verified fresh daily bars do not depend on current Nasdaq market status', async t => {
+  const { path } = await offlineCache(t, priorCache());
+  const source = recoveryFetch({ freshPrimary: true });
+  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+  assert.equal(result.cache.benchmarks.spy.series.at(-1).d, '2026-10-14');
+  assert.equal(source.calls.length, 2);
+  assert.ok(source.calls.every(url => new URL(url).hostname.endsWith('finance.yahoo.com')));
+});
+
+test('valid stale fallback keeps trying the other Yahoo host for the exact target', async t => {
+  const { path } = await offlineCache(t, priorCache());
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    const parsed = new URL(url);
+    const symbol = /(?:chart|quote)\/(SPY|QQQ)/.exec(parsed.pathname)?.[1];
+    const definition = DEFINITIONS[symbol?.toLowerCase()];
+    assert.ok(definition, `Unexpected offline request ${url}`);
+    let body;
+    if (parsed.hostname.endsWith('finance.yahoo.com')) {
+      const fresh = parsed.hostname === 'query1.finance.yahoo.com';
+      body = payload(definition, {
+        timestamps: [fresh ? epoch('2026-10-14T13:30:00Z') : RECOVERY_PRIOR],
+        closes: [fresh ? 103 : 100],
+        meta: { regularMarketTime: RECOVERY_PRIOR, regularMarketPrice: 100 },
+      });
+    } else if (parsed.pathname.endsWith('/info')) {
+      body = nasdaqInfo(definition, { date: 'Oct 13, 2026', price: 100 });
+    } else if (parsed.pathname.endsWith('/historical')) {
+      body = nasdaqHistorical(definition, [{ date: '10/13/2026', close: '100' }]);
+    } else if (parsed.pathname.endsWith('/dividends')) body = nasdaqDividends();
+    else assert.fail(`Unexpected offline request ${url}`);
+    return { ok: true, status: 200, json: async () => body };
+  };
+  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl });
+  for (const key of ['spy', 'qqq']) assert.deepEqual(result.cache.benchmarks[key].series.at(-1), { d: '2026-10-14', p: 103 });
+  assert.equal(calls.filter(url => new URL(url).hostname === 'query1.finance.yahoo.com').length, 2);
+  assert.equal(calls.filter(url => new URL(url).hostname === 'query2.finance.yahoo.com').length, 4);
+  assert.equal(result.failures.filter(message => message.includes('completed close still stale')).length, 4);
+});
+
+test('regular-market metadata timestamp is a witness; only historical daily close supplies the appended price', () => {
+  for (const stamp of ['2026-10-14T13:30:00Z', '2026-10-14T19:00:00Z', '2026-10-14T22:00:00Z']) {
+    const yahooPayload = payload(DEFINITIONS.spy, {
+      timestamps: [RECOVERY_PRIOR], closes: [100],
+      meta: { regularMarketTime: epoch(stamp), regularMarketPrice: 103 },
+    });
+    const options = {
+      yahooPayload, definition: DEFINITIONS.spy, now: RECOVERY_NOW,
+      nasdaqInfo: nasdaqInfo(DEFINITIONS.spy, { date: 'Oct 14, 2026', price: 999, marketStatus: 'After-Hours' }),
+      nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '10/14/2026', close: '103' }]),
+    };
+    assert.deepEqual(appendCrossCheckedClose(options).at(-1), { d: '2026-10-14', p: 103 });
+    yahooPayload.chart.result[0].meta.regularMarketPrice = 100;
+    assert.throws(() => appendCrossCheckedClose(options), /historical close price mismatch/);
+  }
+});
+
+test('all source failures cannot report success or rewrite old cache bytes', async t => {
+  const { path, bytes } = await offlineCache(t, priorCache());
+  const source = recoveryFetch({ failAll: true });
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /target pending: expected=2026-10-14/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+  assert.equal(source.calls.length, 8);
+});
+
+test('one fresh ETF and one stale ETF cannot partially write the cache', async t => {
+  const { path, bytes } = await offlineCache(t, priorCache());
+  const source = recoveryFetch({ failedSymbol: 'QQQ' });
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /latest-date mismatch/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+test('same-date historical data without independent regular-market evidence stays pending', async t => {
+  const { path, bytes } = await offlineCache(t, priorCache());
+  const source = recoveryFetch({ staleMeta: true });
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /target pending/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+test('successful target reuse is a byte-identical no-op', async t => {
+  const cache = mergePrices(null, { spy: [{ d: '2026-10-14', p: 103 }], qqq: [{ d: '2026-10-14', p: 103 }] }, RECOVERY_NOW);
+  const { path, bytes } = await offlineCache(t, cache);
+  const source = recoveryFetch({ freshPrimary: true });
+  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+  assert.equal(result.changed, false);
+  assert.equal(await readFile(path, 'utf8'), bytes);
 });
