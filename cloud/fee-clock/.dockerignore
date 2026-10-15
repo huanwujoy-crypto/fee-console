@@ -2,3 +2,5 @@
 !Dockerfile
 !clock.py
 !runtime.py
+!benchmark.py
+!benchmark-calendar.json

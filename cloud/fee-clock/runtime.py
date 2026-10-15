@@ -1,13 +1,16 @@
 """Fixed-scope HTTP adapters, used only in an explicitly enabled approved job."""
+import base64
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 import re
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from clock import ClockError, REPO, WORKFLOW, fail, run_clock
+from clock import ClockError, REPO, WORKFLOW, fail, run_clock, runtime_route
 
 API = 'https://api.github.com/repos/' + REPO
 BUCKET = 'family-portfolio-gateway-fee-clock'
@@ -164,13 +167,144 @@ class Store:
             fail('RESULT_ALREADY_EXISTS')
 
 
+class BenchmarkGithub(Github):
+    """Only the existing public benchmark workflow; check mode has no token."""
+    def __init__(self, http=None, read_token=None, authenticated=False):
+        super().__init__(http, read_token)
+        self.authenticated = authenticated
+
+    def _get(self, suffix):
+        headers = {'Accept': 'application/vnd.github+json', 'User-Agent': 'fee-console-benchmark-clock',
+                   'X-GitHub-Api-Version': '2026-03-10', 'Cache-Control': 'no-cache'}
+        if self.authenticated:
+            headers['Authorization'] = 'Bearer ' + self.read_token()
+        status, value = self.http.request(API + suffix, headers=headers)
+        if status != 200 or not isinstance(value, dict):
+            fail('BENCHMARK_READ_HTTP_' + str(status))
+        return value
+
+    def workflow(self):
+        return self._get('/actions/workflows/benchmark-cache.yml')
+
+    def runs(self, created=None, status=None):
+        query = {'branch': 'main', 'per_page': '100'}
+        if created is not None and status is None and re.fullmatch(r'\d{4}-\d{2}-\d{2}T16:00:00Z\.\.\d{4}-\d{2}-\d{2}T15:59:59Z', created):
+            query['created'] = created
+        elif status in ('queued', 'in_progress', 'waiting', 'pending', 'requested') and created is None:
+            query['status'] = status
+        else:
+            fail('SCOPE')
+        return self._get('/actions/workflows/benchmark-cache.yml/runs?' + urllib.parse.urlencode(query))
+
+    def run(self, run_id):
+        if type(run_id) is not int or run_id <= 0:
+            fail('SCOPE')
+        return self._get('/actions/runs/' + str(run_id))
+
+    def cache(self):
+        # Public cache reads never carry the Actions-only credential. Pin the
+        # immutable branch SHA before decoding the existing single JSON file.
+        def public(suffix):
+            status, value = self.http.request(API + suffix, headers={
+                'Accept': 'application/vnd.github+json', 'User-Agent': 'fee-console-benchmark-clock',
+                'Cache-Control': 'no-cache', 'X-GitHub-Api-Version': '2026-03-10'})
+            if status != 200 or not isinstance(value, dict):
+                fail('BENCHMARK_CACHE_READ_HTTP_' + str(status))
+            return value
+        head = public('/git/ref/heads/market-data-cache').get('object', {}).get('sha', '')
+        if not re.fullmatch(r'[a-f0-9]{40}', head):
+            fail('BENCHMARK_CACHE_INVALID')
+        value = public('/contents/benchmark-close.json?ref=' + head)
+        try:
+            assert value['type'] == 'file' and value['path'] == 'benchmark-close.json' and value['encoding'] == 'base64'
+            raw = base64.b64decode(''.join(value['content'].split()), validate=True)
+            assert 0 < len(raw) <= LIMIT and len(raw) == value['size']
+            blob = hashlib.sha1(b'blob ' + str(len(raw)).encode() + b'\0' + raw).hexdigest()
+            assert value['sha'] == blob
+            return {'cache': json.loads(raw), 'sha256': hashlib.sha256(raw).hexdigest()}
+        except Exception:
+            fail('BENCHMARK_CACHE_INVALID')
+
+    def dispatch(self):
+        if self.authenticated is not True:
+            fail('SCOPE')
+        status, value = self.http.request(API + '/actions/workflows/benchmark-cache.yml/dispatches',
+            method='POST', body={'ref': 'main'}, uncertain=True,
+            headers={'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
+                     'User-Agent': 'fee-console-benchmark-clock', 'X-GitHub-Api-Version': '2026-03-10',
+                     'Authorization': 'Bearer ' + self.read_token()})
+        if status == 204:
+            return None
+        if status == 200 and isinstance(value, dict):
+            run_id = value.get('workflow_run_id')
+            if (type(run_id) is int and run_id > 0 and value.get('run_url') == f'{API}/actions/runs/{run_id}'
+                    and value.get('html_url') == f'https://github.com/{REPO}/actions/runs/{run_id}'):
+                return run_id
+        if status in (408, 429, 499) or status >= 500 or status in (200, 201, 202):
+            fail('BENCHMARK_DISPATCH_UNCERTAIN')
+        fail('BENCHMARK_DISPATCH_HTTP_' + str(status))
+
+
+class BenchmarkStore(Store):
+    @staticmethod
+    def _benchmark_object(target, attempt, kind):
+        if (not re.fullmatch(r'\d{4}-\d{2}-\d{2}', target or '')
+                or type(attempt) is not int or attempt not in (1, 2) or kind not in ('intent', 'result')):
+            fail('SCOPE')
+        return f'v1/benchmark-{kind}/{target}/{attempt}.json'
+
+    def read_benchmark_intent(self, target, attempt):
+        return self._read_benchmark(target, attempt, 'intent')
+
+    def read_benchmark_result(self, target, attempt):
+        return self._read_benchmark(target, attempt, 'result')
+
+    def _read_benchmark(self, target, attempt, kind):
+        name = urllib.parse.quote(self._benchmark_object(target, attempt, kind), safe='')
+        status, value = self.http.request(f'https://storage.googleapis.com/storage/v1/b/{BUCKET}/o/{name}?alt=media', headers=self._headers())
+        if status == 404:
+            return None
+        if status != 200:
+            fail('BENCHMARK_' + kind.upper() + '_READ_HTTP_' + str(status))
+        return value
+
+    def _create_benchmark(self, value, kind):
+        name = self._benchmark_object(value.get('targetDate'), value.get('attempt'), kind)
+        query = urllib.parse.urlencode({'uploadType': 'media', 'name': name, 'ifGenerationMatch': 0})
+        status, _ = self.http.request(f'https://storage.googleapis.com/upload/storage/v1/b/{BUCKET}/o?{query}',
+                                      method='POST', body=value, headers=self._headers())
+        if status == 412:
+            return False
+        if status not in (200, 201):
+            fail('BENCHMARK_INTENT_WRITE_HTTP_' + str(status))
+        return True
+
+    def claim_benchmark(self, value):
+        return self._create_benchmark(value, 'intent')
+
+    def benchmark_result(self, value):
+        if not self._create_benchmark(value, 'result'):
+            fail('BENCHMARK_RESULT_ALREADY_EXISTS')
+
+
 def main():
     try:
         if len(sys.argv) != 2:
             fail('MODE')
-        value = run_clock(sys.argv[1], datetime.now(timezone.utc), Github(), Store(),
-                          enabled=os.environ.get('FEE_CLOCK_ENABLED') == 'true',
-                          current_time=lambda: datetime.now(timezone.utc))
+        now = datetime.now(timezone.utc)
+        route = runtime_route(sys.argv[1], now, os.environ.get('FEE_BENCHMARK_CLOCK_ENABLED') == 'true')
+        if route == 'fee':
+            value = run_clock(sys.argv[1], now, Github(), Store(),
+                              enabled=os.environ.get('FEE_CLOCK_ENABLED') == 'true',
+                              current_time=lambda: datetime.now(timezone.utc))
+        elif route.startswith('benchmark-') and route != 'benchmark-disabled':
+            from benchmark import run_benchmark
+            launch = route == 'benchmark-launch'
+            value = run_benchmark('launch' if launch else 'check', now,
+                BenchmarkGithub(authenticated=launch), BenchmarkStore(), enabled=True,
+                current_time=lambda: datetime.now(timezone.utc), wait=time.sleep if launch else None)
+        else:
+            value = {'event': 'FEE_BENCHMARK_CLOCK', 'outcome': route, 'benchmarkReady': False}
         print(json.dumps(value, separators=(',', ':')))
         return 0
     except Exception as error:

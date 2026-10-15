@@ -1,0 +1,170 @@
+{
+  "schema": "fee-console.benchmark-clock-proposal.v1",
+  "status": "DEFAULT_OFF_LOCAL_PROPOSAL_NOT_DEPLOYED",
+  "project": "family-portfolio-gateway",
+  "region": "asia-east2",
+  "purpose": "Acquire verified public SPY/QQQ daily-close-plus-dividend cache at NY18:00, with a09:00HKT completeness gate before the unchanged Fee10:00/10:05 cycle.",
+  "acquisition": {
+    "timeZone": "America/New_York",
+    "primaryHour": 18,
+    "retryHour": 19,
+    "summerHkt": [
+      "06:00",
+      "07:00"
+    ],
+    "winterHkt": [
+      "07:00",
+      "08:00"
+    ],
+    "earlyClosePolicy": "Use the reviewed13:00 session for completed-close eligibility and keep the conservativeNY18:00 acquisition target.",
+    "maxCloudDispatchClaimsPerTradingTarget": 2,
+    "retryRequires": "Same target missing, no active benchmark run, one uniquely identified previous cloud run definitively failed, and the second acquisition hour is due.",
+    "unknownDispatchOutcome": "Preserve immutable claim; never retry thePOST or spend the second claim on an unresolved first attempt.",
+    "successfulCacheReuse": "Validate both ETF identities, raw-close/dividend schema, exact independently expected trading date and every actual session from the existing first row through the tail; fetch only incomplete ETF history, reject residual gaps before writing, and never fabricate dates before the first row.",
+    "workflow": ".github/workflows/benchmark-cache.yml",
+    "workflowId": 338411790,
+    "ref": "main",
+    "inputs": {},
+    "publicCacheBranch": "market-data-cache",
+    "publicCacheFile": "benchmark-close.json",
+    "pollSeconds": 15,
+    "pollBudgetSeconds": 360,
+    "actualJobStartDeadlineSeconds": 300,
+    "taskBudget": "600-second task timeout reserves240 seconds outside the360-second polling window for bounded metadata requests and runtime overhead. Extreme network stalls still terminate as a failed task under the existing alert."
+  },
+  "existingResourcesOnly": {
+    "newJobs": 0,
+    "newSchedulers": 0,
+    "newServiceAccounts": 0,
+    "newSecretsOrTokenScopes": 0,
+    "newBuckets": 0,
+    "newIamGrants": 0,
+    "newAlertPoliciesOrRecipients": 0,
+    "metadataBucket": "family-portfolio-gateway-fee-clock",
+    "appendOnlyPaths": [
+      "v1/benchmark-intent/YYYY-MM-DD/1.json",
+      "v1/benchmark-intent/YYYY-MM-DD/2.json",
+      "v1/benchmark-result/YYYY-MM-DD/1.json",
+      "v1/benchmark-result/YYYY-MM-DD/2.json"
+    ],
+    "metadataContainsPricesOrCredentials": false,
+    "launchIdentity": "fee-clock-launch@family-portfolio-gateway.iam.gserviceaccount.com",
+    "checkerIdentity": "fee-clock-check@family-portfolio-gateway.iam.gserviceaccount.com",
+    "schedulerIdentity": "fee-clock-scheduler@family-portfolio-gateway.iam.gserviceaccount.com",
+    "checkerHasSecretOrDispatchAuthority": false
+  },
+  "persistentChangesRequiringSeparateExplicitActivationApproval": {
+    "fee-clock-launch-1000": {
+      "scheduleBefore": "0 10 * * 2-6",
+      "scheduleAfter": "0 6-8,10 * * 2-6",
+      "timeZone": "Asia/Hong_Kong"
+    },
+    "fee-clock-check-start-1005": {
+      "scheduleBefore": "5 10 * * 2-6",
+      "scheduleAfter": "0,5 9,10 * * 2-6",
+      "timeZone": "Asia/Hong_Kong",
+      "repeatDeadlineCheck": "09:05",
+      "intentionalNoOpSlots": [
+        "10:00"
+      ]
+    },
+    "fee-clock-launch": {
+      "image": "REQUIRES_APPROVED_IMMUTABLE_RELEASE_DIGEST",
+      "benchmarkEnabledBefore": false,
+      "benchmarkEnabledAfter": true,
+      "timeoutBeforeSeconds": 120,
+      "timeoutAfterSeconds": 600,
+      "maxRetries": 0,
+      "tasks": 1
+    },
+    "fee-clock-check-start": {
+      "image": "REQUIRES_APPROVED_IMMUTABLE_RELEASE_DIGEST",
+      "benchmarkEnabledBefore": false,
+      "benchmarkEnabledAfter": true,
+      "timeoutSeconds": 120,
+      "maxRetries": 0,
+      "tasks": 1
+    },
+    "unchangedBindings": [
+      "Existing image base trust",
+      "Fee enabled flag",
+      "Run job args",
+      "OAuth identity/scope",
+      "Scheduler retryCount0",
+      "Launch-only existing Secret version1",
+      "Checker no-Secret boundary",
+      "ExistingIAM and metadata bucket90-day lifecycle",
+      "Existing two metric policies and sole approved email channel"
+    ],
+    "githubCronChanged": false
+  },
+  "deadlineAndAlerting": {
+    "deadlineHkt": "09:00",
+    "readyRequires": "Both actual last completed trading-session rows, matching expected identities and complete daily-price/dividend schema; workflow success alone is insufficient.",
+    "secondDefiniteFailure": "Fail the existing launcher task when observed; existing completed_task_attempt_count failed policy handles notification.",
+    "notStartedOrUnobserved": "Five minutes is the job-start age threshold; classify at the next successful metadata read after that threshold, including reused active runs. API delay and metric/email delivery add latency; never duplicate an unresolved request.",
+    "deadlineMissing": "The checker fails on missing, stale, malformed or mismatched cache; it cannot dispatch or alter prices.",
+    "schedulerTargetFailure": "Existing Scheduler ERROR-log metric policy remains in use.",
+    "mailDeliveryTiming": "09:00 is the scheduled check time, not a guaranteed email arrival time; existing300-second metric alignment and provider delivery latency remain.",
+    "jointAbsenceLimit": "If both independent cloud Scheduler paths entirely fail to attempt, the existing later GitHub business-receipt watchdog is still the fallback. This proposal does not claim a strict09:00 whole-platform deadmanSLA."
+  },
+  "calendar": {
+    "file": "cloud/fee-clock/benchmark-calendar.json",
+    "reviewedAt": "2026-10-15",
+    "coverage": [
+      "2026-01-01",
+      "2026-12-31"
+    ],
+    "unsupportedDate": "Fail closed and alert; do not infer future calendars from missing prices or copyNYSE holidays into an unreviewed Nasdaq year.",
+    "renewal": "Review the next official annual tables in one protected update before expiry; the shared manifest serves Python andJS.",
+    "sources": [
+      "https://www.nyse.com/trade/hours-calendars",
+      "https://www.nasdaqtrader.com/Trader.aspx?id=Calendar"
+    ]
+  },
+  "feeBoundary": {
+    "fee1000And1005SlotsPreserved": true,
+    "feeRouteIndependentOfBenchmarkCalendarImport": true,
+    "feeSourceDatesFeesAmountsOrWriterChanged": false,
+    "holidayFeeBehavior": "The existing Fee valuation weekday contract is unchanged. A market holiday may therefore retain benchmark pending for that valuation date; the benchmark clock never relabels the preceding trading close as a holiday close."
+  },
+  "costEstimateUsd": {
+    "rateBasis": "Same Hong Kong unit rates used by the Oct14 approved clock estimate; no free allowance assumed.",
+    "cpuPerSecond": 2.16e-05,
+    "memoryGiB": 0.5,
+    "memoryPerGiBSecond": 2.4e-06,
+    "productionDaysPerMonth": 23,
+    "scheduledJobInvocationsPerDay": 8,
+    "baseAtAllJobs60Seconds": 0.511988,
+    "baseAtAllConfiguredTimeouts": 1.770548,
+    "includes": [
+      "Intended job execution CPU/memory",
+      "Two existingScheduler jobs0.20",
+      "One activeSecret version0.06",
+      "92 Secret accesses0.000276"
+    ],
+    "excludes": [
+      "Build",
+      "Artifact storage",
+      "GCS operations/storage",
+      "Logging andMonitoring",
+      "Network egress",
+      "Taxes",
+      "Unexpected duplicate deliveries or manual invocations"
+    ],
+    "existingAuthorizedMonthlyCeiling": 5,
+    "ceilingIsAutomaticSpendCap": false,
+    "sources": [
+      "https://cloud.google.com/run/pricing",
+      "https://cloud.google.com/scheduler/pricing",
+      "https://cloud.google.com/secret-manager/pricing"
+    ]
+  },
+  "activationGates": [
+    "Freeze complete code diff on latest main, finish offline validation and independent review, create actual signed candidate and obtain the human exact-head OWNER approval plus formal required checks before protected merge.",
+    "Build only the approved fixed source after code approval and record the immutable runtime image digest; no production build or deploy has occurred in this preparation.",
+    "Show the two Scheduler cron changes, both image/flag changes, launcher timeout and actual release digest for explicit activation approval. A goal agreement or code-head approval alone cannot authorize these production mutations.",
+    "Roll out outside the current Fee window, preserving every existing identity/Secret/IAM/alert binding; re-read resourceETags/configuration before controlled updates and after activation.",
+    "Accept the next natural primary/retry/deadline cycle from actual Scheduler, job, run and exact-cache-date/hash receipts. No manual financial or Fee producer run is part of acceptance."
+  ]
+}
