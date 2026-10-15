@@ -165,7 +165,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-10-02.3";
+      const loaderBuild = "2026-10-15.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
@@ -321,7 +321,9 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
         "<title>XUAN · 睡前行动版</title>",
         "<title>XUAN · 开市前行动版</title>",
         "<title>XUAN · 有限核实补读</title>",
-        "<title>XUAN · 盘中数据更新</title>"
+        "<title>XUAN · 盘中数据更新</title>",
+        "<title>XUAN · 已保存 EOD 摘要</title>",
+        "<title>XUAN · Sharesight 记录摘要</title>"
       ];
 
       const clock = () => new Intl.DateTimeFormat("zh-HK", {
@@ -576,6 +578,19 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const times = [...action[2].matchAll(/\b(\d{2}:\d{2})\b/g)].map((match) => match[1]);
           if(html.includes('<title>XUAN · 盘中数据更新</title>'))return {dataDate:action[1],edition:'临时盘中更新',label:`${action[1]} · 盘中数据更新`,asOfHkt:times.at(-1)||null,statusOnly:true,contentUpdate:true};
           if(html.includes('<title>XUAN · 有限核实补读</title>'))return {dataDate:action[1],edition:'临时补读',label:`${action[1]} · 有限核实补读`,asOfHkt:times.at(-1)||null,statusOnly:true};
+          const recordedSummary = html.includes('<title>XUAN · Sharesight 记录摘要</title>');
+          if (recordedSummary || html.includes('<title>XUAN · 已保存 EOD 摘要</title>')) {
+            const markers = [...html.matchAll(/\x3c!-- xuan-ib-night-action-v1:([A-Za-z0-9_-]+) -->/g)];
+            if (markers.length !== 1) throw new Error("记录摘要标记无效");
+            const encoded = markers[0][1].replace(/-/g, "+").replace(/_/g, "/");
+            const model = JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(encoded), c => c.charCodeAt(0))));
+            const started = Date.parse(model.captureStartedAt), completed = Date.parse(model.captureCompletedAt);
+            const instant = value => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+            const sourceDay = typeof model.sourceDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(model.sourceDate) && Number.isFinite(Date.parse(model.sourceDate+'T00:00:00Z')) && new Date(model.sourceDate+'T00:00:00Z').toISOString().slice(0,10) === model.sourceDate;
+            if (model.schemaVersion !== (recordedSummary ? 11 : 10) || model.mode !== (recordedSummary ? 'recorded-sharesight-eod-summary' : 'stored-eod-public-summary') || model.status !== 'partial' || model.dataDate !== action[1] || !sourceDay || model.sourceDate >= model.dataDate || action[2].trim() !== '来源日 '+model.sourceDate || !instant(model.captureStartedAt) || !instant(model.captureCompletedAt) || completed < started || completed-started > 300000 || [started,completed].some(value => new Date(value+28800000).toISOString().slice(0,10) !== model.dataDate)) throw new Error("记录摘要日期或状态无效");
+            if (!model.unknowns || Object.keys(model.unknowns).sort().join('|') !== ['orders','orderReserve','planning','executableBudget','availableFunds'].sort().join('|') || Object.values(model.unknowns).some(value => value !== null) || model.risks?.liveSource !== 'not-called' || recordedSummary && (model.concentration?.basis !== 'sharesight-recorded-four-classes-usd' || model.concentration?.brokerReconciliation !== 'not-verified')) throw new Error("记录摘要不能声明实时或券商完整核实");
+            return {dataDate:model.dataDate,sourceDate:model.sourceDate,edition:'Sharesight 记录摘要',label:`${model.dataDate} · Sharesight 记录摘要（部分信息）`,asOfHkt:new Date(completed+28800000).toISOString().slice(11,16),recordedSummary:true,ordersKnown:false};
+          }
           if (html.includes('<title>XUAN · EOD 行动版</title>')) {
             const markers = [...html.matchAll(/\x3c!-- xuan-ib-night-action-v1:([A-Za-z0-9_-]+) -->/g)];
             if (markers.length !== 1) throw new Error("EOD 报告标记无效");
@@ -859,7 +874,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           const startEpoch = reportSchedule.slotStartEpoch(context.date, "pm");
           const dueEpoch = reportSchedule.slotDueEpoch(context.date, "pm");
           if (nowEpoch >= startEpoch && nowEpoch < dueEpoch &&
-              !(record.info.dataDate === context.date && actualEdition === "pm")) {
+              !(record.info.dataDate === context.date && (actualEdition === "pm" || record.info.recordedSummary))) {
             if (record.info.dataDate === context.date && isSleepPriority(record)) {
               return {message:preopen ? "行动速览已更新；完整版待发布。" : "睡前速览已更新（持仓与挂单）；完整版待发布。", error:false};
             }
@@ -867,6 +882,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
           }
         }
         const expected = expectedBusinessEdition(now);
+        if (record.info.recordedSummary && record.info.dataDate >= expected.dataDate) return {message:"Sharesight 记录摘要已更新；未与券商完整核对，挂单和可执行预算仍待核实。",error:false};
         const satisfiesExpected = actualEdition === "pm" &&
           record.info.dataDate >= expected.dataDate;
         if (satisfiesExpected) return {message:"", error:false};
@@ -944,6 +960,7 @@ function validateProgress(data, state, previous = null, now = Date.now()) {
       }
 
       const statusFor = (record, prefix) => {
+        if(record.info.recordedSummary)return `Sharesight 记录至 ${record.info.sourceDate} · 部分信息\n未与券商完整核对；挂单与可执行预算未知 · 已检查 ${clock()}`;
         if(record.info.eod)return `EOD 数据至 ${record.info.sourceDate} · 部分更新\n挂单${record.info.ordersKnown ? '已独立核实' : '未取得'}，可用资金待核实 · 已检查 ${clock()}`;
         if(record.info.contentUpdate)return `盘中数据更新 ${record.info.dataDate.slice(5)} · 实数已读取\n读取 ${record.info.asOfHkt}，现金与动作限制见报告 · 已检查 ${clock()}`;
         if(record.info.statusOnly)return `有限核实补读 ${record.info.dataDate.slice(5)} · 数据部分核实\n读取 ${record.info.asOfHkt}，无行动建议 · 已检查 ${clock()}`;

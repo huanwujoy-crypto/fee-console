@@ -90,7 +90,7 @@ const validatePublicationState = (state, expectedDate, candidate = false, htmlBl
   }
   if (!['priority', 'complete-pm', 'limited-readback', 'intraday-update', 'eod-action', 'eod-public-summary', 'other'].includes(state.kind)) throw new Error('publication kind is invalid');
   if(['eod-action','eod-public-summary'].includes(state.kind)&&!state.action)throw new Error('EOD publication requires canonical action facts');
-  if(state.kind==='eod-public-summary'&&state.action?.schemaVersion!==10||state.kind!=='eod-public-summary'&&state.action?.schemaVersion===10)throw new Error('public summary kind mismatch');
+  if(state.kind==='eod-public-summary'&&![10,11].includes(state.action?.schemaVersion)||state.kind!=='eod-public-summary'&&[10,11].includes(state.action?.schemaVersion))throw new Error('public summary kind mismatch');
   if(state.action){validateActionPublicationDescriptor(state.action,htmlBlob);if(state.kind==='eod-action'&&state.action.schemaVersion!==9||state.kind!=='eod-action'&&state.action.schemaVersion===9)throw new Error('action publication kind mismatch');}
   requireDate('publication dataDate', state.dataDate);
   if (state.dataDate !== expectedDate) throw new Error('publication data date does not match metadata');
@@ -119,7 +119,7 @@ export function selectNewestCandidate(candidates, publishedMeta, publishedState)
     if (candidate.dataDate === publishedMeta.dataDate &&
         candidate.commitEpoch <= publishedMeta.sourceCommitEpoch && !replacesSameDayPriority) return false;
     if(candidate.dataDate===publishedState.dataDate){
-      if(candidate.publication.kind==='eod-public-summary'&&publishedState.kind!=='other')return false;
+      if(candidate.publication.kind==='eod-public-summary'&&publishedState.kind!=='other'&&!(publishedState.kind==='eod-public-summary'&&candidate.publication.action?.schemaVersion===11&&publishedState.action?.schemaVersion===10&&canReplaceActionPublication(candidate.publication.action,publishedState.action)))return false;
       if(candidate.publication.action&&publishedState.action&&!canReplaceActionPublication(candidate.publication.action,publishedState.action))return false;
       if(['eod-action','eod-public-summary'].includes(candidate.publication.kind)&&publishedState.kind==='complete-pm'&&!publishedState.action)return false;
     }
