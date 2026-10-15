@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "status": "OFFLINE_CANDIDATE_NOT_APPLIED_OR_AUTHORIZED",
+  "purpose": "fixed build-only action-preview image in the existing dedicated repository; no Cloud Build or source execution",
+  "sourceChange": {
+    "kind": "explicit sensitive extension of existing maintenance caller/build callee",
+    "workflowCaller": ".github/workflows/xuan-preopen-image-maintenance.yml",
+    "workflowCallee": ".github/workflows/xuan-preopen-image-build.yml",
+    "dispatchInputs": {
+      "approved_sha": "FINAL_OWNER_SIGNED_40HEX",
+      "approval_pr": "MERGED_APPROVAL_PR",
+      "image_kind": "preview",
+      "deploy_image": false
+    },
+    "exactHeadGate": "existing /approve-xuan-ib-maintenance <final-signed-head>, required checks and equal approved/merge Git tree; broad prior approval or R6 GO alone is insufficient",
+    "normalReportModeDefault": "report; original source/build/deploy guards unchanged; fixed context explicitly extends89to92 for three necessary R6 shared/transitive module dependencies",
+    "previewDeploy": "rejected before cloud identity, and excluded from deploy job",
+    "explicitMaintenanceContextDelta": [
+      "cloud/xuan-preopen/call_record.mjs",
+      "scripts/xuan-ib-action-fields.mjs",
+      "cloud/xuan-preopen/orders_probe.mjs"
+    ]
+  },
+  "selectedIdentityRoute": {
+    "newBuildServiceAccountsRequired": 0,
+    "newProvidersRequired": 0,
+    "newIamBindingsRequired": 0,
+    "newKeysRequired": 0,
+    "reuseConditionalOnCurrentReadback": true,
+    "builder": "xuan-preopen-image-builder@family-portfolio-gateway.iam.gserviceaccount.com",
+    "provider": "projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-builder",
+    "identityPermissions": [
+      "artifactregistry.repositories.uploadArtifacts",
+      "artifactregistry.repositories.downloadArtifacts"
+    ],
+    "permissionResource": "projects/family-portfolio-gateway/locations/asia-east2/repositories/xuan-preopen-maintenance",
+    "workflowIdentityConstraints": "same exact existing caller/callee/ref/SHA/audience/repository/owner manual event claims, unmodified",
+    "credentials": "short-lived existing WIF access token, no credentials file; temporary Docker login outside build context"
+  },
+  "otherExistingIdentities": [
+    {
+      "identity": "configured original operator",
+      "use": "only separately approved metadata verification and later fixed new-job create/run plus original-source-SA actAs, if target-specific effective permission is confirmed",
+      "notProved": "old project permission test is no new specific authorization or exact-source-SA permission proof"
+    },
+    {
+      "identity": "xuan-preopen-source@family-portfolio-gateway.iam.gserviceaccount.com",
+      "use": "unchanged source runtime only; no image-builder role and no new object-reader grant"
+    },
+    {
+      "identity": "xuan-preopen-image-deployer@family-portfolio-gateway.iam.gserviceaccount.com",
+      "use": "not used to create/run the preview; its existing fixed-report job rights are not expanded"
+    },
+    {
+      "identity": "xuan-preopen-delivery@family-portfolio-gateway.iam.gserviceaccount.com",
+      "use": "not used or expanded for report-check reads or preview-job execution"
+    },
+    {
+      "identity": "default compute Cloud Build identity with Editor",
+      "use": "forbidden; no fallback"
+    }
+  ],
+  "freshReadOnlyChecksBeforeBuild": [
+    "existing builder SA enabled and expected",
+    "current WIF provider mapping/condition/audience and builder SA binding exactly match existing fixed caller/callee restriction; no broadened principalSet",
+    "dedicated immutable repository exists and builder has only intended scoped upload/download effective permission; no Editor/financial source access",
+    "same-project Cloud Run service agent can pull the built image; do not add Reader automatically",
+    "existing workflow enable variable and current approved merge/head/tree/checks match; no enable-variable change by this candidate"
+  ],
+  "ifReuseFails": {
+    "action": "STOP_SELECTED_BUILD_ROUTE",
+    "automaticFallback": false,
+    "oneTimeApprovalNeeded": "A newly proposed identity/provider is a separate infrastructure request, not part of this candidate or any prior build approval. Before asking, supply exact new SA/provider/audience/claim namespace, existing-repository-only upload/download binding, WIF SA-only binding, no project-wide role/Secret/GCS/Run permissions, bootstrap actor, expiration/revocation plan and updated exact source head. Never change the existing provider to get past a failure.",
+    "newCloudBuildIdentity": "not necessary for the selected GitHub Docker route; choosing Cloud Build would require a separate dedicated minimum-permission identity, source/log design and review. Default compute Editor is never eligible."
+  },
+  "fixedImage": "asia-east2-docker.pkg.dev/family-portfolio-gateway/xuan-preopen-maintenance/xuan-preopen-action-preview",
+  "fixedDockerfile": "cloud/xuan-preopen/ActionPreviewOnce.Dockerfile",
+  "fixedGitContextFiles": 41,
+  "buildNetwork": "none",
+  "DockerPlatform": "linux/amd64",
+  "maximumBuildMinutes": 30,
+  "maximumDockerBuildMinutes": 15,
+  "maximumPushMinutes": 5,
+  "retries": 0,
+  "verification": [
+    "clean exact approved HEAD/tree before build and immediately before push",
+    "fixed tracked Git blobs/modes; no dirty bytes, leaf/parent symlinks, extra context, .git, host credential or private financial file",
+    "immutable tag approved head only",
+    "two fixed registry GETs validate manifest and config byte SHA256, source labels/head/tree/merge/PR, non-root Linux/amd64, exact controller ENTRYPOINT, empty CMD and base-only environment",
+    "independent verify CLI before a separately approved actual run; byte verification alone does not assert OWNER approval"
+  ],
+  "runtimeProposal": {
+    "job": "xuan-preopen-orders-probe",
+    "serviceAccount": "xuan-preopen-source@family-portfolio-gateway.iam.gserviceaccount.com",
+    "taskCount": 1,
+    "parallelism": 1,
+    "maxRetries": 0,
+    "cpu": 1,
+    "memoryMiB": 512,
+    "taskTimeoutSeconds": 180,
+    "processTransportTargetSeconds": 170,
+    "compositionMaximumSeconds": 100,
+    "originalCredentialExclusiveWindowSeconds": 75,
+    "sourceAdmissionMaximumSeconds": 45,
+    "finalizationMaximumSeconds": 20,
+    "requestExpiry": "reserved T+55s; remaining expiry<=55s",
+    "requestIdMeaning": "immutable duplicate-attempt guard only; not an exclusion lock",
+    "exclusiveProof": "fresh known-client/execution/queue/schedule metadata plus trusted all-client idle attestation and one coordinator. Stop if cancelled EOD context access would be necessary.",
+    "futureExclusiveProofExists": false,
+    "operatorPermissionsStillToVerify": [
+      "run.jobs.create on fixed project/location",
+      "iam.serviceAccounts.actAs on original source SA",
+      "run.jobs.get/run.jobs.run/run.jobs.runWithOverrides on the exact new probe job",
+      "artifactregistry.repositories.downloadArtifacts for independent image-byte verification"
+    ],
+    "runWithOverridesPreviouslyProven": false,
+    "ifMissingExecutionPermission": "Stop and request an explicit resource-specific one-time authorization proposal; do not grant automatically or reuse maintenance deployer/delivery identity. No Cloud Run override permission is added by this source candidate."
+  },
+  "scopeNotIncluded": [
+    "actual build/push/registry upload",
+    "new identity/IAM/WIF/key",
+    "normal report deployment/schedule changes",
+    "Cloud Run job creation/run",
+    "IB/Sharesight/Flex reads",
+    "private source/HTML upload or interactive publication",
+    "cancelled EOD context or old key read"
+  ]
+}
