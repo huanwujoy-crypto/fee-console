@@ -251,3 +251,14 @@ test('R4N1 pending proof is conservative at unchanged cutoff; newer cutoff and o
   const meta={schemaVersion:1,sourceSha:'c'.repeat(40),sourceCommitEpoch:1,dataDate:'2026-10-09',htmlBlob:oldState.action.htmlBlob};const candidate=state=>({ref:'origin/codex/xuan-ib-synthetic-evidence',sha:'d'.repeat(40),htmlBlob:state.action.htmlBlob,dataDate:'2026-10-09',commitEpoch:3,publication:state});assert.deepEqual(selectNewestCandidate([candidate(nextState)],meta,oldState),candidate(nextState));
   const full=structuredClone((await result({captureOptionalLive:async()=>live()})).model);full.schemaVersion=5;full.status='ready';full.cash.status='ready';full.notes=[];const fullState=classifySleepPublication(renderNightActionReport(full)),verifiedState=classifySleepPublication(verified.html);assert.equal(fullState.kind,'complete-pm');assert.equal(Object.hasOwn(fullState.action,'financialProofSha256'),false);assert.equal(canReplaceActionModel(full,verified.model),true);assert.deepEqual(selectNewestCandidate([candidate(fullState)],{...meta,htmlBlob:verifiedState.action.htmlBlob},verifiedState),candidate(fullState));
 });
+
+test('anonymous EOD catch-up recognizes exact projected public bytes without another run or candidate',async()=>{
+ const {buildPublicEodSummary}=await import('../../scripts/xuan-ib-public-eod-summary.mjs');
+ const h=harness();await runDaily({io:h.io,now:NOW,execution:'xuan-preopen-report-synthetic',generate:o=>runPrivateEodReport({...h.options,...o})});
+ const receipt=h.objects.get('delivery/2026-10-09/receipt.json'),html=h.objects.get('delivery/2026-10-09/report.html');
+ const summary=buildPublicEodSummary(extractNightActionModel(html),receipt);h.c.previousHtml=renderNightActionReport(summary);assert.notEqual(h.c.previousHtml,html);
+ let reads=0;const request=async(url,options={})=>{assert.notEqual(options.method,'POST');assert(url.startsWith('https://storage.googleapis.com/'));reads++;return url.includes('receipt.json')?JSON.stringify(receipt):html;};
+ const same=await collectDelivery({now:NOW,loadContext:async()=>h.c,request});assert.equal(same.outcome,'already-published');assert.equal(Object.hasOwn(same,'html'),false);assert.equal(reads,2);
+ h.c.previousHtml=renderNightActionReport({...summary,concentration:{status:'unknown',top1Pct:null,top5Pct:null}});
+ const different=await collectDelivery({now:NOW,loadContext:async()=>h.c,request});assert.equal(different.outcome,'reused');assert.equal(different.html,html);assert.equal(reads,4);
+});

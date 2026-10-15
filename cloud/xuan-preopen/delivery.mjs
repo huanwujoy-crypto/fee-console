@@ -1,5 +1,7 @@
 import {validateEodReceipt} from './eod_report.mjs';
 import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
+import {buildPublicEodSummary} from '../../scripts/xuan-ib-public-eod-summary.mjs';
+import {extractNightActionModel,renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 // GitHub -> one Cloud Run job -> private completed files. This identity can
 // neither read broker credentials/raw captures nor mutate report storage.
 import fs from 'node:fs';
@@ -63,7 +65,10 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
   if (crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact.sha256) fail('HASH');
   if (receipt.mode === 'private_eod_action') { validateEodReceipt(receipt, html, plan.dataDate, plan.sourceDate); validateNightActionHtml(html, plan.dataDate); }
   const context = await loadContext({now});
-  if (gitBlobSha(context.previousHtml) === gitBlobSha(html)) return {outcome: 'already-published', dataDate: plan.dataDate};
+  // Compare the exact outgoing bytes: EOD private delivery is projected by the publisher.
+  const publishedHtml = receipt.mode === 'private_eod_action'
+    ? renderNightActionReport(buildPublicEodSummary(extractNightActionModel(html), receipt)) : html;
+  if (gitBlobSha(context.previousHtml) === gitBlobSha(publishedHtml)) return {outcome: 'already-published', dataDate: plan.dataDate};
   return {outcome: execution ? 'generated' : 'reused', dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, html, receipt};
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
