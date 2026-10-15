@@ -45,7 +45,8 @@ async function bodyText(response, limit = MAX_BYTES) {
   catch { fail('IB_INVALID_UTF8'); }
 }
 
-export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true } = {}) {
+export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true, signal } = {}) {
+  signal?.throwIfAborted();
   let original;
   try { original = validateCredential(await store.load()); }
   catch (error) {
@@ -56,6 +57,7 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
         : ['TimeoutError', 'AbortError'].includes(error?.name) ? 'timeout' : 'unknown');
   }
   if (original.expires_at > now() + 120_000) return original;
+  signal?.throwIfAborted();
   if (allowRefresh !== true) fail('IB_REFRESH_NOT_AUTHORIZED', {phase: 'oauth_refresh', category: 'forbidden'});
   // A refresh may revoke the old refresh token. Require a persistence capability
   // before submitting it; never refresh as a purported no-write probe.
@@ -63,7 +65,7 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
   let response;
   try {
     response = await fetchImpl(TOKEN_ENDPOINT, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000),
+      method: 'POST', redirect: 'error', signal: signal?AbortSignal.any([signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000),
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'refresh_token', client_id: original.client_id,
         refresh_token: original.refresh_token, scope: 'mcp.read', resource: RESOURCE }),
@@ -117,8 +119,9 @@ function rpcMessage(text, contentType, id) {
 }
 
 export class IbReadSession {
-  constructor(credential, { fetchImpl = fetch } = {}) {
+  constructor(credential, { fetchImpl = fetch, signal } = {}) {
     this.credential = validateCredential(credential); this.fetchImpl = fetchImpl;
+    this.signal=signal;
     this.id = 0; this.sessionId = null; this.initialized = false;
   }
   async request(method, params, notification = false) {
@@ -155,6 +158,7 @@ export class IbReadSession {
 const readPhase = tool => ({get_account_summary: 'mcp_summary_read', get_account_positions: 'mcp_positions_read',
   get_account_orders: 'mcp_orders_read', get_account_balances: 'mcp_balances_read', get_account_trades: 'mcp_trades_read'})[tool] || 'unknown';
 async function sendRequest(session, method, params, notification) {
+    session.signal?.throwIfAborted();
     const phase = method === 'initialize' ? 'mcp_initialize' : method === 'notifications/initialized'
       ? 'mcp_initialized' : method === 'tools/list' ? 'mcp_tools_list' : readPhase(params?.name);
     const id = ++session.id;
@@ -165,7 +169,7 @@ async function sendRequest(session, method, params, notification) {
     if (session.sessionId) headers['Mcp-Session-Id'] = session.sessionId;
     let response;
     try { response = await session.fetchImpl(RESOURCE, { method: 'POST', redirect: 'error',
-      signal: AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
+      signal: session.signal?AbortSignal.any([session.signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
     catch (error) { fail('IB_MCP_NETWORK_FAILED', {phase, category: networkCategory(error)}); }
     if (!response.ok) {
       const code = response.status === 401 ? 'IB_MCP_AUTHENTICATION_REJECTED'
@@ -208,11 +212,13 @@ async function captureSelected(store, options = {}, tools) {
   await session.initialize();
   const sources = [];
   for (const tool of tools) {
-    const startedAt = new Date().toISOString();
-    sources.push({ ...await session.read(tool), startedAt, completedAt: new Date().toISOString() });
+    options.signal?.throwIfAborted();const clock=options.now??Date.now,startedAt = new Date(clock()).toISOString();
+    sources.push({ ...await session.read(tool), startedAt, completedAt: new Date(clock()).toISOString() });
   }
   return { status: 'captured', sources };
 }
 
 export const captureCloudIbAction=(store,options)=>captureSelected(store,options,['get_account_summary','get_account_positions','get_account_orders']);
 export const captureCloudIbFull=(store,options)=>captureSelected(store,options,Object.keys(SOURCES));
+// Same original credential/client and fixed source whitelist, one orders read.
+export const captureCloudIbOrders=(store,options)=>captureSelected(store,options,['get_account_orders']);
