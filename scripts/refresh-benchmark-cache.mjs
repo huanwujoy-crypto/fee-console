@@ -82,6 +82,17 @@ function isCompletedSessionDate(date, definition, now) {
   return current.minutes >= definition.closeMinutes + 15;
 }
 
+// Match the fee producer's independent New York weekday boundary. A missing
+// holiday close remains pending; an older cache is never closed-session proof.
+export function expectedBenchmarkTargetDate(now = new Date()) {
+  if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error('Invalid benchmark clock');
+  const current = localParts(now, DEFINITIONS.spy.timezone);
+  let day = new Date(`${current.date}T00:00:00Z`);
+  if (current.minutes < DEFINITIONS.spy.closeMinutes + 15) day = new Date(day.getTime() - DAY_MS);
+  while ([0, 6].includes(day.getUTCDay())) day = new Date(day.getTime() - DAY_MS);
+  return day.toISOString().slice(0, 10);
+}
+
 function roundPrice(value) {
   return Math.round(Number(value) * 10000) / 10000;
 }
@@ -220,7 +231,7 @@ function usdNumber(value, label) {
   return amount;
 }
 
-export function extractNasdaqClose(payload, definition, now = new Date()) {
+function nasdaqIdentity(payload, definition) {
   const data = payload?.data;
   if (!data || payload?.status?.rCode !== 200) throw new Error(`No Nasdaq quote for ${definition.symbol}`);
   if (data.symbol !== definition.symbol) throw new Error(`Unexpected Nasdaq symbol: ${data.symbol}`);
@@ -231,6 +242,11 @@ export function extractNasdaqClose(payload, definition, now = new Date()) {
   if (!definition.nasdaqCompanyNames.includes(data.companyName)) {
     throw new Error(`Unexpected Nasdaq issuer for ${definition.symbol}: ${data.companyName}`);
   }
+  return data;
+}
+
+export function extractNasdaqClose(payload, definition, now = new Date()) {
+  const data = nasdaqIdentity(payload, definition);
   if (data.marketStatus !== 'Closed') throw new Error(`Nasdaq market is not closed for ${definition.symbol}`);
   const d = nasdaqDate(data.primaryData?.lastTradeTimestamp);
   if (!isCompletedSessionDate(d, definition, now)) {
@@ -281,12 +297,8 @@ export function appendCrossCheckedClose({
   yahooPayload, nasdaqInfo, nasdaqHistorical, nasdaqDividends, definition, now = new Date(),
 }) {
   const series = extractPrices(yahooPayload, definition, now);
-  const nasdaq = extractNasdaqClose(nasdaqInfo, definition, now);
+  const info = nasdaqIdentity(nasdaqInfo, definition);
   const historical = extractNasdaqHistoricalClose(nasdaqHistorical, definition, now);
-  if (historical.d !== nasdaq.d) throw new Error(`Nasdaq cross-check date mismatch for ${definition.symbol}`);
-  if (Math.abs(historical.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
-    throw new Error(`Nasdaq cross-check price mismatch for ${definition.symbol}`);
-  }
 
   // Yahoo meta is a third price check when it has reached the target session.
   // It may legitimately lag both Nasdaq completed-close endpoints for hours;
@@ -296,6 +308,25 @@ export function appendCrossCheckedClose({
     yahoo = extractYahooMetaClose(yahooPayload, definition, now);
   } catch (error) {
     if (!String(error?.message).startsWith('Missing Yahoo completed-session meta close')) throw error;
+  }
+  let nasdaq;
+  if (info.marketStatus === 'Closed') {
+    nasdaq = extractNasdaqClose(nasdaqInfo, definition, now);
+    if (historical.d !== nasdaq.d) throw new Error(`Nasdaq cross-check date mismatch for ${definition.symbol}`);
+    if (Math.abs(historical.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
+      throw new Error(`Nasdaq cross-check price mismatch for ${definition.symbol}`);
+    }
+  } else {
+    // Global marketStatus describes the current quote session, not whether a
+    // historical daily close exists. Never read primaryData/secondaryData
+    // prices here: require a same-date independent regular-session witness.
+    if (!yahoo || yahoo.d !== historical.d) {
+      throw new Error(`Historical close needs same-date Yahoo regular-market evidence for ${definition.symbol}`);
+    }
+    if (Math.abs(yahoo.p - historical.p) > CLOSE_CROSSCHECK_TOLERANCE) {
+      throw new Error(`Yahoo/Nasdaq historical close price mismatch for ${definition.symbol}`);
+    }
+    nasdaq = historical;
   }
   if (yahoo?.d > nasdaq.d) throw new Error(`Yahoo/Nasdaq date order mismatch for ${definition.symbol}`);
   if (yahoo?.d === nasdaq.d && Math.abs(yahoo.p - nasdaq.p) > CLOSE_CROSSCHECK_TOLERANCE) {
@@ -390,8 +421,8 @@ function contentIgnoringTimestamp(cache) {
   return rest;
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, {
+async function fetchJson(url, fetchImpl) {
+  const response = await fetchImpl(url, {
     headers: {
       accept: 'application/json',
       'user-agent': 'Mozilla/5.0 fee-console-public-benchmark-cache/1.0',
@@ -402,43 +433,41 @@ async function fetchJson(url) {
   return response.json();
 }
 
-async function fetchSymbol(definition, now) {
+async function fetchSymbol(definition, now, fetchImpl) {
   const errors = [];
   let bestPrimary = null;
+  const target = expectedBenchmarkTargetDate(now);
   for (const host of ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']) {
     const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=3mo&interval=1d&events=div%2Csplits&includeAdjustedClose=true`;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
       try {
-        const yahooPayload = await fetchJson(url);
+        const yahooPayload = await fetchJson(url, fetchImpl);
         const primary = extractPrices(yahooPayload, definition, now);
         if (!bestPrimary || primary.at(-1)?.d > bestPrimary.at(-1)?.d) bestPrimary = primary;
-        let yahooLatest = null;
+        // The original primary daily-bar/adjusted-close/dividend contract
+        // already verifies this path; no current-session quote is needed.
+        if (primary.at(-1)?.d === target) return { series: primary, warnings: errors };
         try {
-          yahooLatest = extractYahooMetaClose(yahooPayload, definition, now);
-        } catch (error) {
-          errors.push(`${host} attempt ${attempt} Yahoo meta unavailable: ${error.message}`);
-        }
-        try {
-          const nasdaqInfo = await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/info?assetclass=etf`);
-          const nasdaqLatest = extractNasdaqClose(nasdaqInfo, definition, now);
-          if (primary.at(-1)?.d >= nasdaqLatest.d) return { series: primary, warnings: [] };
+          const nasdaqInfo = await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/info?assetclass=etf`, fetchImpl);
           const current = localParts(now, definition.timezone).date;
           const from = new Date(now.getTime() - 10 * DAY_MS).toISOString().slice(0, 10);
           const nasdaqHistorical = await fetchJson(
             `https://api.nasdaq.com/api/quote/${definition.symbol}/historical?assetclass=etf&fromdate=${from}&todate=${current}&limit=20`,
+            fetchImpl,
           );
           const nasdaqDividends = definition.symbol === 'QQQ'
-            ? await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/dividends?assetclass=etf`)
+            ? await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/dividends?assetclass=etf`, fetchImpl)
             : undefined;
-          return {
-            series: appendCrossCheckedClose({
-              yahooPayload, nasdaqInfo, nasdaqHistorical, nasdaqDividends, definition, now,
-            }),
-            warnings: [],
-          };
+          const crossChecked = appendCrossCheckedClose({
+            yahooPayload, nasdaqInfo, nasdaqHistorical, nasdaqDividends, definition, now,
+          });
+          if (!bestPrimary || crossChecked.at(-1)?.d > bestPrimary.at(-1)?.d) bestPrimary = crossChecked;
+          if (crossChecked.at(-1)?.d === target) return { series: crossChecked, warnings: errors };
+          // A valid older close is useful evidence, but must not stop the
+          // bounded retries or prevent the other Yahoo host reaching target.
+          errors.push(`${host} attempt ${attempt} completed close still stale: expected=${target} actual=${crossChecked.at(-1)?.d || 'missing'}`);
         } catch (error) {
           errors.push(`${host} attempt ${attempt} cross-check fallback unavailable: ${error.message}`);
-          if (!yahooLatest || primary.at(-1)?.d >= yahooLatest.d) return { series: primary, warnings: errors };
         }
       } catch (error) {
         errors.push(`${host} attempt ${attempt}: ${error.message}`);
@@ -449,14 +478,14 @@ async function fetchSymbol(definition, now) {
   throw new Error(`${definition.symbol} fetch failed (${errors.join('; ')})`);
 }
 
-export async function refresh({ path = CACHE_PATH, now = new Date() } = {}) {
+export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl = fetch } = {}) {
   const existing = await readExisting(path);
   const fetched = {};
   const failures = [];
 
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
     try {
-      const result = await fetchSymbol(definition, now);
+      const result = await fetchSymbol(definition, now, fetchImpl);
       fetched[key] = result.series;
       failures.push(...result.warnings);
     } catch (error) {
@@ -465,11 +494,17 @@ export async function refresh({ path = CACHE_PATH, now = new Date() } = {}) {
     }
   }
 
+  for (const failure of failures) console.warn(`Benchmark source warning: ${failure}`);
+
   const next = mergePrices(existing, fetched, now);
   const spyDate = next.benchmarks.spy.series.at(-1)?.d;
   const qqqDate = next.benchmarks.qqq.series.at(-1)?.d;
   if (!spyDate || spyDate !== qqqDate) {
     throw new Error(`Benchmark latest-date mismatch: spy=${spyDate || 'missing'} qqq=${qqqDate || 'missing'}`);
+  }
+  const target = expectedBenchmarkTargetDate(now);
+  if (spyDate !== target || qqqDate !== target) {
+    throw new Error(`Benchmark target pending: expected=${target} spy=${spyDate || 'missing'} qqq=${qqqDate || 'missing'}`);
   }
   const changed = JSON.stringify(contentIgnoringTimestamp(existing)) !== JSON.stringify(contentIgnoringTimestamp(next));
   if (changed) {
@@ -478,7 +513,6 @@ export async function refresh({ path = CACHE_PATH, now = new Date() } = {}) {
   } else {
     console.log(`No new completed close; ${path} unchanged`);
   }
-  for (const failure of failures) console.warn(`Using last verified cache: ${failure}`);
   return { changed, cache: changed ? next : existing, failures };
 }
 
