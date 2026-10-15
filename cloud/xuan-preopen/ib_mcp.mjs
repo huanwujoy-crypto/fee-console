@@ -1,6 +1,7 @@
 // Official IBKR MCP transport for the cloud action report. No model or trading
 // dispatcher is involved. Credentials belong in a private cloud secret store.
 import { decodeHookResponse } from '../../scripts/xuan-ib-hook-response.mjs';
+import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 import { ibError, inIbPhase, networkCategory, httpCategory, bearerError } from './ib_diagnostics.mjs';
 
 export const RESOURCE = 'https://api.ibkr.com/v1/api/mcp-public';
@@ -45,7 +46,8 @@ async function bodyText(response, limit = MAX_BYTES) {
   catch { fail('IB_INVALID_UTF8'); }
 }
 
-export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true } = {}) {
+export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true, signal, refreshSignal = signal } = {}) {
+  signal?.throwIfAborted();
   let original;
   try { original = validateCredential(await store.load()); }
   catch (error) {
@@ -56,6 +58,7 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
         : ['TimeoutError', 'AbortError'].includes(error?.name) ? 'timeout' : 'unknown');
   }
   if (original.expires_at > now() + 120_000) return original;
+  signal?.throwIfAborted();
   if (allowRefresh !== true) fail('IB_REFRESH_NOT_AUTHORIZED', {phase: 'oauth_refresh', category: 'forbidden'});
   // A refresh may revoke the old refresh token. Require a persistence capability
   // before submitting it; never refresh as a purported no-write probe.
@@ -63,7 +66,10 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
   let response;
   try {
     response = await fetchImpl(TOKEN_ENDPOINT, {
-      method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000),
+      // Admission still uses the source signal above. An already admitted
+      // refresh can finish and persist its rotation in a bounded finalization
+      // window; it must not start another MCP request after source cutoff.
+      method: 'POST', redirect: 'error', signal: refreshSignal?AbortSignal.any([refreshSignal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000),
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({ grant_type: 'refresh_token', client_id: original.client_id,
         refresh_token: original.refresh_token, scope: 'mcp.read', resource: RESOURCE }),
@@ -101,15 +107,38 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
   return next;
 }
 
-function rpcMessage(text, contentType, id) {
+function strictMcpJson(text){
+  // Reject duplicate keys, including escaped equivalents, before JSON.parse
+  // can overwrite an earlier assertion. Restore ordinary JSON prototypes only
+  // after the bounded existing parser has validated the complete input.
+  parseDecisionJson(text,MAX_BYTES);return JSON.parse(text);
+}
+function inspectMcpEnvelope(value,inspectEnvelope){
+  let nodes=0,blocks=0,textBytes=0;
+  const walk=(node,depth)=>{
+    if(++nodes>50000||depth>20)fail('IB_MCP_RESPONSE_INVALID');
+    if(node===null||typeof node!=='object')return;
+    if(node.type==='text'&&Object.hasOwn(node,'text')){
+      if(typeof node.text!=='string'||++blocks>64||(textBytes+=Buffer.byteLength(node.text))>MAX_BYTES)fail('IB_MCP_RESPONSE_INVALID');
+      let decoded;try{decoded=strictMcpJson(node.text);}catch{fail('IB_MCP_RESPONSE_INVALID');}
+      inspectEnvelope?.(decoded);walk(decoded,depth+1);
+    }
+    for(const child of Object.values(node))if(child&&typeof child==='object')walk(child,depth+1);
+  };
+  // Inspect the entire RPC envelope before selecting result/structuredContent,
+  // including metadata, unmatched SSE messages and every parallel text block.
+  inspectEnvelope?.(value);walk(value,0);
+}
+function rpcMessage(text, contentType, id,inspectEnvelope) {
   let messages;
   try {
     messages = contentType.includes('text/event-stream')
       ? text.split(/\r?\n\r?\n/).filter(block => /^data:/m.test(block))
-        .map(block => JSON.parse(block.split(/\r?\n/).filter(line => line.startsWith('data:'))
+        .map(block => strictMcpJson(block.split(/\r?\n/).filter(line => line.startsWith('data:'))
           .map(line => line.slice(5).trimStart()).join('\n')))
-      : [JSON.parse(text)];
+      : [strictMcpJson(text)];
   } catch { fail('IB_MCP_RESPONSE_INVALID'); }
+  for(const message of messages)inspectMcpEnvelope(message,inspectEnvelope);
   const matches = messages.filter(message => message?.id === id);
   if (matches.length !== 1 || matches[0].jsonrpc !== '2.0' || matches[0].error
     || !Object.hasOwn(matches[0], 'result')) fail('IB_MCP_RPC_FAILED');
@@ -117,8 +146,10 @@ function rpcMessage(text, contentType, id) {
 }
 
 export class IbReadSession {
-  constructor(credential, { fetchImpl = fetch } = {}) {
+  constructor(credential, { fetchImpl = fetch, signal, inspectEnvelope } = {}) {
     this.credential = validateCredential(credential); this.fetchImpl = fetchImpl;
+    this.signal=signal;
+    this.inspectEnvelope=inspectEnvelope;
     this.id = 0; this.sessionId = null; this.initialized = false;
   }
   async request(method, params, notification = false) {
@@ -155,6 +186,7 @@ export class IbReadSession {
 const readPhase = tool => ({get_account_summary: 'mcp_summary_read', get_account_positions: 'mcp_positions_read',
   get_account_orders: 'mcp_orders_read', get_account_balances: 'mcp_balances_read', get_account_trades: 'mcp_trades_read'})[tool] || 'unknown';
 async function sendRequest(session, method, params, notification) {
+    session.signal?.throwIfAborted();
     const phase = method === 'initialize' ? 'mcp_initialize' : method === 'notifications/initialized'
       ? 'mcp_initialized' : method === 'tools/list' ? 'mcp_tools_list' : readPhase(params?.name);
     const id = ++session.id;
@@ -165,7 +197,7 @@ async function sendRequest(session, method, params, notification) {
     if (session.sessionId) headers['Mcp-Session-Id'] = session.sessionId;
     let response;
     try { response = await session.fetchImpl(RESOURCE, { method: 'POST', redirect: 'error',
-      signal: AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
+      signal: session.signal?AbortSignal.any([session.signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000), headers, body: JSON.stringify(payload) }); }
     catch (error) { fail('IB_MCP_NETWORK_FAILED', {phase, category: networkCategory(error)}); }
     if (!response.ok) {
       const code = response.status === 401 ? 'IB_MCP_AUTHENTICATION_REJECTED'
@@ -180,10 +212,13 @@ async function sendRequest(session, method, params, notification) {
       if (session.sessionId && session.sessionId !== sessionId) fail('IB_MCP_SESSION_CHANGED', {phase, category: 'response_invalid'});
       session.sessionId = sessionId;
     }
-    if (notification && (response.status === 202 || response.status === 204)) return;
     try {
-      if (notification) { await bodyText(response); return; }
-      return rpcMessage(await bodyText(response), response.headers.get('content-type') || '', id);
+      if (notification) {
+        const text=response.body?await bodyText(response):'';
+        if(text.trim()){let value;try{value=strictMcpJson(text);}catch{fail('IB_MCP_RESPONSE_INVALID');}inspectMcpEnvelope(value,session.inspectEnvelope);}
+        return;
+      }
+      return rpcMessage(await bodyText(response), response.headers.get('content-type') || '', id,session.inspectEnvelope);
     } catch (error) { throw inIbPhase(error, phase, 'IB_MCP_RESPONSE_INVALID', response.status,
       error?.message === 'IB_MCP_RPC_FAILED' ? 'rpc_error' : 'response_invalid'); }
 }
@@ -208,11 +243,13 @@ async function captureSelected(store, options = {}, tools) {
   await session.initialize();
   const sources = [];
   for (const tool of tools) {
-    const startedAt = new Date().toISOString();
-    sources.push({ ...await session.read(tool), startedAt, completedAt: new Date().toISOString() });
+    options.signal?.throwIfAborted();const clock=options.now??Date.now,startedAt = new Date(clock()).toISOString();
+    sources.push({ ...await session.read(tool), startedAt, completedAt: new Date(clock()).toISOString() });
   }
   return { status: 'captured', sources };
 }
 
 export const captureCloudIbAction=(store,options)=>captureSelected(store,options,['get_account_summary','get_account_positions','get_account_orders']);
 export const captureCloudIbFull=(store,options)=>captureSelected(store,options,Object.keys(SOURCES));
+// Same original credential/client and fixed source whitelist, one orders read.
+export const captureCloudIbOrders=(store,options)=>captureSelected(store,options,['get_account_orders']);

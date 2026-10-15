@@ -11,6 +11,12 @@ on:
         description: 'Merged PR containing the existing exact-head OWNER approval'
         required: true
         type: string
+      image_kind:
+        description: 'Fixed image target: report maintenance or build-only action preview'
+        required: true
+        type: choice
+        options: [report, preview]
+        default: report
       deploy_image:
         description: 'Also replace the fixed production job image; keep false for private acceptance'
         required: true
@@ -38,9 +44,11 @@ jobs:
     with:
       approved_sha: ${{ inputs.approved_sha }}
       approval_pr: ${{ inputs.approval_pr }}
+      image_kind: ${{ inputs.image_kind }}
+      deploy_image: ${{ inputs.deploy_image }}
   deploy:
     needs: build
-    if: ${{ inputs.deploy_image == true && needs.build.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    if: ${{ inputs.deploy_image == true && needs.build.result == 'success' && inputs.image_kind != 'preview' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
     permissions:
       contents: read
       pull-requests: read

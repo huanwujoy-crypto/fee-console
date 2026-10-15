@@ -34,14 +34,17 @@ const json = text => { try { return JSON.parse(text); } catch { throw new Error(
 export async function loadTrustedContext({fetchImpl = fetch, now = Date.now} = {}) {
   const commit = json(await read(`${REPO}/commits/main`, {fetchImpl, headers: {'User-Agent': 'xuan-preopen-readonly'}})).sha;
   if (!SHA.test(commit || '')) throw new Error('TRUSTED_MAIN_INVALID');
-  const files = [ASSOCIATION_POLICY_PATH, 'claude/xuan-ib-etf-pending-calls-v1.json', 'xuan-ib/latest.meta.json', 'xuan-ib/latest.html'];
-  const [policyText, reserveText, metaText, previousHtml] = await Promise.all(files.map(file => read(`${RAW}/${commit}/${file}`, {fetchImpl})));
+  const files = [ASSOCIATION_POLICY_PATH, 'xuan-ib/latest.meta.json', 'xuan-ib/latest.html'];
+  const reserveRead=read(`${RAW}/${commit}/claude/xuan-ib-etf-pending-calls-v1.json`,{fetchImpl}).then(text=>{
+    let reserveLedger=null;try{reserveLedger=json(text);}catch{}return {reserveLedger,reserveHash:hash(text)};
+  }).catch(()=>({reserveLedger:null,reserveHash:null}));
+  const [policyText, metaText, previousHtml, reserve] = await Promise.all([...files.map(file => read(`${RAW}/${commit}/${file}`, {fetchImpl})),reserveRead]);
   const policy = json(policyText), meta = json(metaText);
   if (!SHA.test(meta.sourceSha || '') || !SHA.test(meta.htmlBlob || '')) throw new Error('PREVIOUS_PUBLIC_META_INVALID');
   if (gitBlob(previousHtml) !== meta.htmlBlob) throw new Error('PREVIOUS_PUBLIC_HTML_MISMATCH');
   const association = {policy, policyCommit: commit, policyBlob: gitBlob(policyText), checkedAt: new Date(now()).toISOString()};
   validateAssociationSnapshot(association, {now: now(), edition: 'am'});
-  return {association, previousMeta:meta, reserveLedger: json(reserveText), reserveHash: hash(reserveText), previousSourceSha: meta.sourceSha, previousHtml};
+  return {association, previousMeta:meta, ...reserve, previousSourceSha: meta.sourceSha, previousHtml};
 }
 
 export function currentReserve(ledger, date) {

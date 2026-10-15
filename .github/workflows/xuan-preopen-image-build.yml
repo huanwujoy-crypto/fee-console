@@ -9,6 +9,14 @@ on:
       approval_pr:
         required: true
         type: string
+      image_kind:
+        required: false
+        type: string
+        default: report
+      deploy_image:
+        required: false
+        type: boolean
+        default: false
     outputs:
       image_digest:
         value: ${{ jobs.build.outputs.image_digest }}
@@ -29,6 +37,8 @@ jobs:
       APPROVAL_PR: ${{ inputs.approval_pr }}
       GH_TOKEN: ${{ github.token }}
       DOCKER_BUILDKIT: '1'
+      IMAGE_KIND: ${{ inputs.image_kind }}
+      DEPLOY_IMAGE: ${{ inputs.deploy_image }}
     steps:
       - name: Use the explicitly selected Node 24 runtime
         uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
@@ -41,14 +51,21 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
       - name: Verify signed source, merged PR and exact-head OWNER approval before identity
-        run: node cloud/xuan-preopen/maintenance.mjs preflight
+        run: |
+          case "$IMAGE_KIND" in
+            report) node cloud/xuan-preopen/maintenance.mjs preflight ;;
+            preview) node cloud/xuan-preopen/preview_image.mjs preflight ;;
+            *) echo PREVIEW_IMAGE_BUILD_ONLY_MODE >&2; exit 1 ;;
+          esac
       - name: Check out the exact approved source tree
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ inputs.approved_sha }}
           persist-credentials: false
       - name: Verify maintenance contracts offline
-        run: node --test cloud/xuan-preopen/maintenance.test.mjs scripts/xuan-ib-night-action-workflow.test.mjs
+        run: |
+          node --test cloud/xuan-preopen/maintenance.test.mjs scripts/xuan-ib-night-action-workflow.test.mjs
+          node --test cloud/xuan-preopen/preview_image.test.mjs
       - name: Obtain only the short-lived dedicated builder identity
         id: builder
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
@@ -70,7 +87,12 @@ jobs:
         env:
           MAINTENANCE_GOOGLE_TOKEN: ${{ steps.builder.outputs.access_token }}
           DOCKER_CONFIG: ${{ runner.temp }}/xuan-preopen-docker
-        run: node cloud/xuan-preopen/maintenance.mjs build
+        run: |
+          case "$IMAGE_KIND" in
+            report) node cloud/xuan-preopen/maintenance.mjs build ;;
+            preview) node cloud/xuan-preopen/preview_image.mjs build ;;
+            *) echo PREVIEW_IMAGE_BUILD_ONLY_MODE >&2; exit 1 ;;
+          esac
       - name: Remove the temporary Docker login
         if: ${{ always() }}
         env:

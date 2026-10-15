@@ -482,6 +482,24 @@
     "cloud/xuan-preopen/flex_reader.mjs",
     "cloud/xuan-preopen/flex_reader.test.mjs",
     "scripts/xuan-ib-eod-holdings.mjs",
-    "scripts/xuan-ib-eod-holdings.test.mjs"
+    "scripts/xuan-ib-eod-holdings.test.mjs",
+    "cloud/xuan-preopen/OrdersProbe.Dockerfile",
+    "cloud/xuan-preopen/orders_probe.mjs",
+    "cloud/xuan-preopen/orders_probe.test.mjs",
+    "docs/xuan-cloud-orders-probe.md",
+    "cloud/xuan-preopen/action_preview.mjs",
+    "cloud/xuan-preopen/action_preview.test.mjs",
+    "cloud/xuan-preopen/call_record.mjs",
+    "cloud/xuan-preopen/call_record.test.mjs",
+    "scripts/xuan-ib-action-fields.mjs",
+    "docs/xuan-private-action-preview.md",
+    "cloud/xuan-preopen/action_preview_once.mjs",
+    "cloud/xuan-preopen/action_preview_once.test.mjs",
+    "cloud/xuan-preopen/ActionPreviewOnce.Dockerfile",
+    "docs/xuan-private-action-preview-once.md",
+    "cloud/xuan-preopen/preview_image.mjs",
+    "cloud/xuan-preopen/preview_image.test.mjs",
+    "security/xuan-preopen-preview-build-approval.json",
+    "docs/xuan-preopen-preview-image.md"
   ]
 }

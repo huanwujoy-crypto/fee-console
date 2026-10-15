@@ -148,7 +148,11 @@ export const COPY_PATHS=Object.freeze([
   "scripts/xuan-ib-weekly-snapshot.mjs",
   "scripts/xuan-ib-eod-holdings.mjs",
   "scripts/xuan-ib-eod-holdings.test.mjs",
-  "security/xuan-preopen-maintenance-iam.json"
+  "security/xuan-preopen-maintenance-iam.json",
+  // Explicit dependency-only extension for the separately reviewed R6 shared modules.
+  "cloud/xuan-preopen/call_record.mjs",
+  "scripts/xuan-ib-action-fields.mjs",
+  "cloud/xuan-preopen/orders_probe.mjs"
 ]);
 const copyFiles=new Set(COPY_PATHS);
 export function createBuildContext(root,temp,{runGit=args=>execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:30_000,maxBuffer:4*1024*1024})}={}){
