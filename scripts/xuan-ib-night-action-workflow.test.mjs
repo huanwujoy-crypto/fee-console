@@ -21,6 +21,22 @@ test('promotion validates action pages both before selection and before publicat
   assert.match(promote, /node scripts\/xuan-ib-sleep-priority\.mjs classify/);
 });
 
+const trustedCloudDependencies=[
+  'cloud/xuan-preopen/eod_sources.mjs',
+  'cloud/xuan-preopen/orders_probe.mjs',
+  'cloud/xuan-preopen/ib_mcp.mjs',
+  'cloud/xuan-preopen/cloud_io.mjs',
+  'cloud/xuan-preopen/ib_diagnostics.mjs',
+];
+test('trusted archive admits only the fixed main cloud dependency closure and checks every required file',()=>{
+  const cloud=[...validate.matchAll(/git archive ([^\s]+) -- (cloud\/[^|\n]+)\s*\| tar -x -C "\$trusted_root"/g)];
+  assert.equal(cloud.length,1);assert.equal(cloud[0][1],'origin/main');
+  assert.deepEqual(cloud[0][2].trim().split(/\s+/),trustedCloudDependencies);
+  const required=[...validate.matchAll(/^\s+(cloud\/xuan-preopen\/[^\s]+) \\$/gm)].map(m=>m[1]);
+  assert.deepEqual(required,trustedCloudDependencies);
+});
+
+// Preserve this existing test name for the unchanged Docker history-test exclusion.
 test('isolated trusted archive loads the action guard and rejects a missing pure codec dependency', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'trusted-action-archive-'));
   try {
@@ -34,7 +50,7 @@ test('isolated trusted archive loads the action guard and rejects a missing pure
     assert.equal(archive.status, 0, archive.stderr?.toString());
     const extracted = spawnSync('tar', ['-x', '-C', root], {input: archive.stdout, encoding: 'utf8', timeout: 30000});
     assert.equal(extracted.status, 0, extracted.stderr);
-    const program = `globalThis.fetch=()=>{throw Error('OFFLINE_ONLY');};
+    const program = `let networkCalls=0;globalThis.fetch=()=>{networkCalls++;throw Error('OFFLINE_ONLY');};
       const {renderNightActionReport}=await import('./scripts/xuan-ib-night-action-view.mjs');
       const {validateNightActionHtml}=await import('./scripts/xuan-ib-night-action-guard.mjs');
       const {qualifyRecordedPublicSummary}=await import('./scripts/xuan-ib-public-eod-summary.mjs');
@@ -42,14 +58,20 @@ test('isolated trusted archive loads the action guard and rejects a missing pure
       for(const summary of [model,qualifyRecordedPublicSummary(model)]){
         const result=validateNightActionHtml(renderNightActionReport(summary),summary.dataDate,{now:Date.parse('2026-10-09T05:01:00Z'),publication:true});
         if(result.status!=='partial'||result.orderCount!==null)throw Error('INVALID_SUMMARY');
-      }`;
+      }
+      if(networkCalls!==0)throw Error('UNEXPECTED_NETWORK');`;
     const run = () => spawnSync(process.execPath, ['--input-type=module', '-e', program], {cwd: root, encoding: 'utf8', timeout: 30000});
     const complete = run();
     assert.equal(complete.status, 0, complete.stderr);
-    fs.unlinkSync(path.join(root, 'cloud/xuan-preopen/eod_sources.mjs'));
-    const missing = run();
-    assert.notEqual(missing.status, 0);
-    assert.match(missing.stderr, /ERR_MODULE_NOT_FOUND/);
-    assert.match(missing.stderr, /cloud\/xuan-preopen\/eod_sources\.mjs/);
+    for(const dependency of trustedCloudDependencies){
+      const file=path.join(root,dependency),bytes=fs.readFileSync(file);
+      fs.unlinkSync(file);
+      try{
+        const missing=run();
+        assert.notEqual(missing.status,0,dependency);
+        assert.match(missing.stderr,/ERR_MODULE_NOT_FOUND/);
+        assert.ok(missing.stderr.includes(dependency),dependency);
+      }finally{fs.writeFileSync(file,bytes);}
+    }
   } finally { fs.rmSync(root, {recursive: true, force: true}); }
 });
