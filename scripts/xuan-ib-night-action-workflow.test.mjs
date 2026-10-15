@@ -37,9 +37,12 @@ test('isolated trusted archive loads the action guard and rejects a missing pure
     const program = `globalThis.fetch=()=>{throw Error('OFFLINE_ONLY');};
       const {renderNightActionReport}=await import('./scripts/xuan-ib-night-action-view.mjs');
       const {validateNightActionHtml}=await import('./scripts/xuan-ib-night-action-guard.mjs');
+      const {qualifyRecordedPublicSummary}=await import('./scripts/xuan-ib-public-eod-summary.mjs');
       const model={schemaVersion:10,mode:'stored-eod-public-summary',status:'partial',dataDate:'2026-10-09',sourceDate:'2026-10-08',captureStartedAt:'2026-10-09T05:00:00.000Z',captureCompletedAt:'2026-10-09T05:00:00.100Z',risks:{reconciliation:'unknown',liveSource:'not-called'},unknowns:{orders:null,orderReserve:null,planning:null,executableBudget:null,availableFunds:null},concentration:{status:'observed',top1Pct:45,top5Pct:100}};
-      const result=validateNightActionHtml(renderNightActionReport(model),model.dataDate,{now:Date.parse('2026-10-09T05:01:00Z'),publication:true});
-      if(result.status!=='partial'||result.orderCount!==null)throw Error('INVALID_SUMMARY');`;
+      for(const summary of [model,qualifyRecordedPublicSummary(model)]){
+        const result=validateNightActionHtml(renderNightActionReport(summary),summary.dataDate,{now:Date.parse('2026-10-09T05:01:00Z'),publication:true});
+        if(result.status!=='partial'||result.orderCount!==null)throw Error('INVALID_SUMMARY');
+      }`;
     const run = () => spawnSync(process.execPath, ['--input-type=module', '-e', program], {cwd: root, encoding: 'utf8', timeout: 30000});
     const complete = run();
     assert.equal(complete.status, 0, complete.stderr);

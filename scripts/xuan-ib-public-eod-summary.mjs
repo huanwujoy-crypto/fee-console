@@ -1,5 +1,7 @@
 // Public projection only. Never copy private model/receipt/source objects.
 import {validateEodActionModel} from './xuan-ib-eod-action-model.mjs';
+import crypto from 'node:crypto';
+export const RECORDED_CONCENTRATION_BASIS='sharesight-recorded-four-classes-usd';
 const fail=code=>{throw Error('EOD_PUBLIC_SUMMARY_'+code);};
 const exact=(v,keys)=>{if(!v||Object.getPrototypeOf(v)!==Object.prototype||Object.keys(v).sort().join('|')!==[...keys].sort().join('|'))fail('FIELDS');};
 const date=v=>typeof v==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(v)&&Number.isFinite(Date.parse(v+'T00:00:00Z'))&&new Date(v+'T00:00:00Z').toISOString().slice(0,10)===v;
@@ -8,16 +10,34 @@ const hktDate=v=>new Date(Date.parse(v)+28800000).toISOString().slice(0,10);
 const pct=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&v<=100&&Math.abs(v*10-Math.round(v*10))<1e-8;
 export function validatePublicEodSummary(m){
  exact(m,['schemaVersion','mode','status','dataDate','sourceDate','captureStartedAt','captureCompletedAt','risks','unknowns','concentration']);
- if(m.schemaVersion!==10||m.mode!=='stored-eod-public-summary'||m.status!=='partial'||!date(m.dataDate)||!date(m.sourceDate)||m.sourceDate>=m.dataDate||!instant(m.captureStartedAt)||!instant(m.captureCompletedAt)||hktDate(m.captureStartedAt)!==m.dataDate||hktDate(m.captureCompletedAt)!==m.dataDate||Date.parse(m.captureCompletedAt)<Date.parse(m.captureStartedAt)||Date.parse(m.captureCompletedAt)-Date.parse(m.captureStartedAt)>300000)fail('DATES');
+ if(![10,11].includes(m.schemaVersion)||m.mode!==(m.schemaVersion===11?'recorded-sharesight-eod-summary':'stored-eod-public-summary')||m.status!=='partial'||!date(m.dataDate)||!date(m.sourceDate)||m.sourceDate>=m.dataDate||!instant(m.captureStartedAt)||!instant(m.captureCompletedAt)||hktDate(m.captureStartedAt)!==m.dataDate||hktDate(m.captureCompletedAt)!==m.dataDate||Date.parse(m.captureCompletedAt)<Date.parse(m.captureStartedAt)||Date.parse(m.captureCompletedAt)-Date.parse(m.captureStartedAt)>300000)fail('DATES');
  exact(m.risks,['reconciliation','liveSource']);
  if(!['verified','pending','unknown'].includes(m.risks.reconciliation)||m.risks.liveSource!=='not-called')fail('RISKS');
  exact(m.unknowns,['orders','orderReserve','planning','executableBudget','availableFunds']);
  if(Object.values(m.unknowns).some(v=>v!==null))fail('UNKNOWNS');
- exact(m.concentration,['status','top1Pct','top5Pct']);
- if(m.concentration.status==='observed'){
+ exact(m.concentration,['status','top1Pct','top5Pct',...(m.schemaVersion===11?['basis','brokerReconciliation']:[])]);
+ if(m.schemaVersion===11&&(m.concentration.basis!==RECORDED_CONCENTRATION_BASIS||m.concentration.brokerReconciliation!=='not-verified'))fail('RECORDED_BASIS');
+ if(m.concentration.status===(m.schemaVersion===11?'recorded':'observed')){
   if(!pct(m.concentration.top1Pct)||!pct(m.concentration.top5Pct)||m.concentration.top1Pct>m.concentration.top5Pct)fail('PERCENTAGES');
  }else if(m.concentration.status!=='unknown'||m.concentration.top1Pct!==null||m.concentration.top5Pct!==null)fail('PERCENTAGES');
  return m;
+}
+// Qualify only a canonical anonymous public DTO. Never import a private model,
+// source body, new price, cash result or purported broker-verification flag.
+export function qualifyRecordedPublicSummary(m){
+ validatePublicEodSummary(m);if(m.schemaVersion!==10)fail('QUALIFICATION_SOURCE');
+ return validatePublicEodSummary({schemaVersion:11,mode:'recorded-sharesight-eod-summary',status:'partial',dataDate:m.dataDate,sourceDate:m.sourceDate,captureStartedAt:m.captureStartedAt,captureCompletedAt:m.captureCompletedAt,
+  risks:{reconciliation:m.risks.reconciliation,liveSource:'not-called'},unknowns:{orders:null,orderReserve:null,planning:null,executableBudget:null,availableFunds:null},
+  concentration:{status:m.concentration.status==='observed'?'recorded':'unknown',top1Pct:m.concentration.top1Pct,top5Pct:m.concentration.top5Pct,basis:RECORDED_CONCENTRATION_BASIS,brokerReconciliation:'not-verified'}});
+}
+// A description-only schema10 -> schema11 upgrade must retain every original
+// public fact, including millisecond capture times and unknown budget fields.
+export function publicSummaryFactsSha256(m){
+ validatePublicEodSummary(m);
+ const facts={dataDate:m.dataDate,sourceDate:m.sourceDate,captureStartedAt:m.captureStartedAt,captureCompletedAt:m.captureCompletedAt,
+  risks:{reconciliation:m.risks.reconciliation,liveSource:m.risks.liveSource},unknowns:{orders:m.unknowns.orders,orderReserve:m.unknowns.orderReserve,planning:m.unknowns.planning,executableBudget:m.unknowns.executableBudget,availableFunds:m.unknowns.availableFunds},
+  concentration:{status:m.concentration.top1Pct===null?'unknown':'recorded',top1Pct:m.concentration.top1Pct,top5Pct:m.concentration.top5Pct}};
+ return crypto.createHash('sha256').update(JSON.stringify(facts)).digest('hex');
 }
 export function buildPublicEodSummary(model,receipt){
  validateEodActionModel(model);
@@ -30,14 +50,24 @@ export function buildPublicEodSummary(model,receipt){
   // slow uploads may legitimately end in a later minute.
   if(!Number.isFinite(started)||!Number.isFinite(completed)||!Array.isArray(receipt.sources)||receipt.sources.some(s=>!prefix.test(s.privateObject))||originalWindow?.[1]!==minute(started)||!Number.isFinite(modelCompleted)||modelCompleted<Math.floor(started/60000)*60000||modelCompleted>completed||[model.provenance.flex,...model.provenance.sharesight].some(s=>Date.parse(s.readAt)<started||Date.parse(s.readAt)>completed))fail('CAPTURE_BINDING');
  if(receipt?.mode!=='private_eod_action'||receipt.dataDate!==model.dataDate||receipt.sourceDate!==model.sourceDate||model.orders.status!=='unknown'||model.orders.buys!==null||model.orders.sells!==null||model.cash.orderReserve!==null||model.cash.planning!==null||model.cash.executableBudget!==null||model.cash.availableFunds.status!=='unknown'||model.sourceOutcomes.find(s=>s.sourceKey==='ib.optionalLive')?.status!=='not-called')fail('PRIVATE_SCOPE');
- const observed=model.holdings?.status==='ready';
+ const observed=model.holdings?.status==='ready'&&model.holdings.sourceDate===model.sourceDate&&model.holdings.denominator==='classified-stocks-only'&&model.sourceOutcomes.some(s=>s.sourceKey==='sharesight.ibGroupedPerformance'&&['verified','date-verified'].includes(s.status));
  const rounded=v=>Math.max(0,Math.min(100,Math.round(v*10)/10));
- return validatePublicEodSummary({schemaVersion:10,mode:'stored-eod-public-summary',status:'partial',dataDate:model.dataDate,sourceDate:model.sourceDate,captureStartedAt:receipt.startedAt,captureCompletedAt:receipt.completedAt,
+ return qualifyRecordedPublicSummary({schemaVersion:10,mode:'stored-eod-public-summary',status:'partial',dataDate:model.dataDate,sourceDate:model.sourceDate,captureStartedAt:receipt.startedAt,captureCompletedAt:receipt.completedAt,
   risks:{reconciliation:model.reconciliation.status,liveSource:'not-called'},unknowns:{orders:null,orderReserve:null,planning:null,executableBudget:null,availableFunds:null},
   concentration:observed?{status:'observed',top1Pct:rounded(model.holdings.concentration.top1Pct),top5Pct:rounded(model.holdings.concentration.top5Pct)}:{status:'unknown',top1Pct:null,top5Pct:null}});
 }
 export function renderPublicEodSummary(m){
  validatePublicEodSummary(m);
+ if(m.schemaVersion===11){
+  const legacy={...m,schemaVersion:10,mode:'stored-eod-public-summary',concentration:{status:m.concentration.status==='recorded'?'observed':'unknown',top1Pct:m.concentration.top1Pct,top5Pct:m.concentration.top5Pct}};
+  return renderPublicEodSummary(legacy)
+   .replace(Buffer.from(JSON.stringify(legacy)).toString('base64url'),Buffer.from(JSON.stringify(m)).toString('base64url'))
+   .replaceAll('XUAN · 已保存 EOD 摘要','XUAN · Sharesight 记录摘要')
+   .replace('这是已保存的收盘摘要，不是新的实时取数。','Sharesight 记录口径；未与券商完整核对。用于观察记录趋势，不表示实时状态。')
+   .replace('EOD 对账状态：','EOD 现金对账状态：')
+   .replace('<h2>股票四类配置</h2>','<h2>四类证券集中度 · Sharesight 记录</h2>')
+   .replace('仅公开匿名集中度；不公开持仓名称、数量、市值或配置金额。','分母为美国底仓、美国科技、非美发达、新兴市场的记录证券市值合计，不含现金、主题及防御资产。未与券商完整核对；不等于账户净值占比或 ETF 穿透集中度。仅公开匿名比例，不公开持仓名称、数量或金额。');
+ }
  const time=v=>new Date(Date.parse(v)+28800000).toISOString().slice(11,19);
  const label={verified:'已核实',pending:'待核实',unknown:'未核实'}[m.risks.reconciliation];
  const concentration=m.concentration.status==='observed'?`<div class="metrics"><div><span>匿名单票第1名</span><b>${m.concentration.top1Pct.toFixed(1)}%</b></div><div><span>匿名前5名合计</span><b>${m.concentration.top5Pct.toFixed(1)}%</b></div></div>`:'<p class="unknown">集中度比例未知</p>';

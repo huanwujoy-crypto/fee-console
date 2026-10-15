@@ -259,6 +259,6 @@ test('anonymous EOD catch-up recognizes exact projected public bytes without ano
  const summary=buildPublicEodSummary(extractNightActionModel(html),receipt);h.c.previousHtml=renderNightActionReport(summary);assert.notEqual(h.c.previousHtml,html);
  let reads=0;const request=async(url,options={})=>{assert.notEqual(options.method,'POST');assert(url.startsWith('https://storage.googleapis.com/'));reads++;return url.includes('receipt.json')?JSON.stringify(receipt):html;};
  const same=await collectDelivery({now:NOW,loadContext:async()=>h.c,request});assert.equal(same.outcome,'already-published');assert.equal(Object.hasOwn(same,'html'),false);assert.equal(reads,2);
- h.c.previousHtml=renderNightActionReport({...summary,concentration:{status:'unknown',top1Pct:null,top5Pct:null}});
+ h.c.previousHtml=renderNightActionReport({...summary,concentration:{...summary.concentration,status:'unknown',top1Pct:null,top5Pct:null}});
  const different=await collectDelivery({now:NOW,loadContext:async()=>h.c,request});assert.equal(different.outcome,'reused');assert.equal(different.html,html);assert.equal(reads,4);
 });

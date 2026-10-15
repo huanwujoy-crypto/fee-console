@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { execFileSync } from 'node:child_process';
+import {renderPublicEodSummary,qualifyRecordedPublicSummary} from './xuan-ib-public-eod-summary.mjs';
 
 
 
@@ -432,6 +433,7 @@ function loaderHarness({fetchImpl, stored = new Map(), now = '2026-08-28T06:00:0
   }};
   const context = {
     AbortController,
+    atob,
     Array,
     Date: FixedDate,
     DOMParser: TestDOMParser,
@@ -2140,6 +2142,8 @@ test('the integrity check accepts legacy reports and the canonical action page',
     '<title>XUAN · 开市前行动版</title>',
     '<title>XUAN · 有限核实补读</title>',
     '<title>XUAN · 盘中数据更新</title>',
+    '<title>XUAN · 已保存 EOD 摘要</title>',
+    '<title>XUAN · Sharesight 记录摘要</title>',
   ]);
 
   // Exercise the loader's own predicate rather than restating it.
@@ -2179,6 +2183,17 @@ test('the phone loader accepts an action header with a separate live status para
   assert.match(app.status.textContent, /报告 09-28 开市前版 · 数据至 20:47/);
   assert.equal(app.warning.hidden, true);
   assert.equal(app.status.classList.contains('error'), false);
+});
+
+test('phone entry displays legacy and qualified recorded summaries without claiming complete or live data',async()=>{
+ const legacy={schemaVersion:10,mode:'stored-eod-public-summary',status:'partial',dataDate:'2026-10-09',sourceDate:'2026-10-08',captureStartedAt:'2026-10-09T05:00:40.250Z',captureCompletedAt:'2026-10-09T05:00:53.024Z',risks:{reconciliation:'unknown',liveSource:'not-called'},unknowns:{orders:null,orderReserve:null,planning:null,executableBudget:null,availableFunds:null},concentration:{status:'observed',top1Pct:45,top5Pct:100}};
+ for(const model of [legacy,qualifyRecordedPublicSummary(legacy)]){
+  const html=renderPublicEodSummary(model),meta=metaFor(html);
+  const app=loaderHarness({now:'2026-10-09T05:21:00Z',fetchImpl:async url=>String(url).includes('latest.meta.json')?response({json:meta,bytes:[]}):response({json:null,bytes:Buffer.from(html)})});
+  await app.listeners.button.click();
+  assert.equal(app.frame.srcdoc.slice(app.frame.srcdoc.indexOf('<body>')),html.slice(html.indexOf('<body>')));assert.match(app.frame.srcdoc,/Content-Security-Policy/);assert.match(app.frame.srcdoc,/script-src &apos;none&apos;/);
+  assert.match(app.status.textContent,/Sharesight 记录至 2026-10-08/);assert.match(app.status.textContent,/未与券商完整核对/);assert.match(app.warning.textContent,/挂单和可执行预算仍待核实/);assert.equal(app.warning.classList.contains('error'),false);assert.equal(app.status.classList.contains('error'),false);
+ }
 });
 
 test('validation and promotion accept a verified single-file candidate based on a trusted main ancestor', () => {

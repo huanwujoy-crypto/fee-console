@@ -5,6 +5,7 @@ import {validateNightActionHtml} from './xuan-ib-night-action-guard.mjs';
 import fs from 'node:fs';
 import { publicationEdition } from './xuan-ib-account-association-publication.mjs';
 import { NIGHT_ACTION_MARKER, extractNightActionModel,renderNightActionReport as renderSummaryForDescriptor } from './xuan-ib-night-action-view.mjs';
+import {publicSummaryFactsSha256} from './xuan-ib-public-eod-summary.mjs';
 
 export const SLEEP_PRIORITY_KIND = 'sleep-priority';
 export const SLEEP_PRIORITY_BODY_ATTRIBUTE = 'data-xuan-delivery="sleep-priority-v1"';
@@ -106,9 +107,9 @@ export function checkSleepPriorityPublication(html, { edition = publicationEditi
 export function classifySleepPublication(html) {
   if (typeof html === 'string' && html.includes(NIGHT_ACTION_MARKER)) {
     const model = extractNightActionModel(html);
-    if([9,10].includes(model.schemaVersion))validateNightActionHtml(html,model.dataDate);
-    const action=[4,5,9,10].includes(model.schemaVersion)?{action:actionPublicationDescriptor(model,html)}:{};
-    return { ...action, kind: model.schemaVersion===10?'eod-public-summary':model.schemaVersion===9?'eod-action':model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
+    if([9,10,11].includes(model.schemaVersion))validateNightActionHtml(html,model.dataDate);
+    const action=[4,5,9,10,11].includes(model.schemaVersion)?{action:actionPublicationDescriptor(model,html)}:{};
+    return { ...action, kind: [10,11].includes(model.schemaVersion)?'eod-public-summary':model.schemaVersion===9?'eod-action':model.schemaVersion===8?'intraday-update':model.schemaVersion===7?'limited-readback':'complete-pm', dataDate: model.dataDate, priorityKey: null, eligibleAtEpoch: null };
   }
   const edition = publicationEdition(html);
   const delivery = checkSleepPriorityPublication(html, { edition });
@@ -127,10 +128,11 @@ export function classifySleepPublication(html) {
 // Derived only from the canonical validated report, not a caller's verified flag.
 const actionKeys=['schemaVersion','status','sourceDate','readAtEpoch','orderReadAtEpoch','components','htmlBlob'];
 export function validateActionPublicationDescriptor(a,htmlBlob=null){
-  exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[]),...(Object.hasOwn(a||{},'holdingsDetail')?['holdingsDetail']:[])],'action publication');
+  exact(a,[...actionKeys,...(a?.schemaVersion===9?['reconciliationStatus','financialProofSha256']:[]),...(Object.hasOwn(a||{},'holdingsDetail')?['holdingsDetail']:[]),...(a?.schemaVersion===11||Object.hasOwn(a||{},'summaryFactsSha256')?['summaryFactsSha256']:[])],'action publication');
   if(Object.hasOwn(a,'holdingsDetail')&&(a.schemaVersion!==9||typeof a.holdingsDetail!=='boolean'||a.holdingsDetail&&!(a.components&1)))fail('holding publication facts are invalid');
-  if(![4,5,9,10].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
-  if(a.schemaVersion===10&&(a.status!=='partial'||a.components!==0||a.orderReadAtEpoch!==null||a.sourceDate===null))fail('public summary cannot claim financial completeness');
+  if(![4,5,9,10,11].includes(a.schemaVersion)||!['ready','partial'].includes(a.status)||!Number.isInteger(a.components)||a.components<0||a.components>31||!Number.isInteger(a.readAtEpoch)||a.readAtEpoch<=0||!(a.orderReadAtEpoch===null||Number.isInteger(a.orderReadAtEpoch)&&a.orderReadAtEpoch>0))fail('action publication facts are invalid');
+  if([10,11].includes(a.schemaVersion)&&(a.status!=='partial'||a.components!==0||a.orderReadAtEpoch!==null||a.sourceDate===null))fail('public summary cannot claim financial completeness');
+  if(Object.hasOwn(a,'summaryFactsSha256')&&(![10,11].includes(a.schemaVersion)||typeof a.summaryFactsSha256!=='string'||!/^[a-f0-9]{64}$/.test(a.summaryFactsSha256)))fail('summary fact binding is invalid');
   if(a.sourceDate!==null)date(a.sourceDate,'action sourceDate');sha(a.htmlBlob,'action htmlBlob');
   if(htmlBlob!==null&&a.htmlBlob.toLowerCase()!==htmlBlob.toLowerCase())fail('action publication HTML mismatch');
   if(a.schemaVersion===9){
@@ -140,11 +142,11 @@ export function validateActionPublicationDescriptor(a,htmlBlob=null){
   return a;
 }
 export function actionPublicationDescriptor(m,html=null){
-  if(m?.schemaVersion===10){
+  if([10,11].includes(m?.schemaVersion)){
     if(typeof html!=='string')html=renderSummaryForDescriptor(m);
     validateNightActionHtml(html,m.dataDate);
     const htmlBlob=crypto.createHash('sha1').update(Buffer.from(`blob ${Buffer.byteLength(html)}\0`)).update(html).digest('hex');
-    return validateActionPublicationDescriptor({schemaVersion:10,status:'partial',sourceDate:m.sourceDate,readAtEpoch:Math.floor(Date.parse(m.captureCompletedAt)/1000),orderReadAtEpoch:null,components:0,htmlBlob});
+    return validateActionPublicationDescriptor({schemaVersion:m.schemaVersion,status:'partial',sourceDate:m.sourceDate,readAtEpoch:Math.floor(Date.parse(m.captureCompletedAt)/1000),orderReadAtEpoch:null,components:0,htmlBlob,summaryFactsSha256:publicSummaryFactsSha256(m)});
   }
   if(![4,5,9].includes(m?.schemaVersion))return null;
   if(m.schemaVersion===9&&m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI export is private acceptance only');
@@ -162,6 +164,9 @@ export function retainsActionFinancialEvidence(next,old){
 }
 export function canReplaceActionPublication(next,old){
   validateActionPublicationDescriptor(next);validateActionPublicationDescriptor(old);
+  // Only the same original anonymous facts may gain the recorded-source
+  // disclosure. A schema11 summary never replaces another schema11 or live facts.
+  if(next.schemaVersion===11)return old.schemaVersion===10&&typeof old.summaryFactsSha256==='string'&&next.summaryFactsSha256===old.summaryFactsSha256&&next.sourceDate===old.sourceDate&&next.readAtEpoch===old.readAtEpoch;
   // A saved summary is a one-time partial publication, never a same-day
   // replacement for existing action facts or another saved summary.
   if(next.schemaVersion===10)return false;
@@ -178,6 +183,7 @@ export function canReplaceActionPublication(next,old){
 }
 export function canReplaceActionModel(next,old){
   if(next.dataDate!==old.dataDate)return true;
+  if(next.schemaVersion===11&&old.schemaVersion!==10)return false;
   if(next.schemaVersion===10&&[4,5,7,8,9,10].includes(old.schemaVersion))return false;
   const a=actionPublicationDescriptor(next),b=actionPublicationDescriptor(old);
   return a&&b?canReplaceActionPublication(a,b):old.status!=='ready';
