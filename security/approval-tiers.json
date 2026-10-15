@@ -482,6 +482,10 @@
     "cloud/xuan-preopen/flex_reader.mjs",
     "cloud/xuan-preopen/flex_reader.test.mjs",
     "scripts/xuan-ib-eod-holdings.mjs",
-    "scripts/xuan-ib-eod-holdings.test.mjs"
+    "scripts/xuan-ib-eod-holdings.test.mjs",
+    "cloud/xuan-preopen/OrdersProbe.Dockerfile",
+    "cloud/xuan-preopen/orders_probe.mjs",
+    "cloud/xuan-preopen/orders_probe.test.mjs",
+    "docs/xuan-cloud-orders-probe.md"
   ]
 }
