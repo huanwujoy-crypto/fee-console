@@ -1,12 +1,32 @@
 // Fixed private destinations. No filesystem credential, bucket or secret flags.
 import crypto from 'node:crypto';
 import {ibError, inIbPhase, httpCategory, networkCategory} from './ib_diagnostics.mjs';
+import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 export const PROJECT = 'family-portfolio-gateway';
 export const BUCKET = `${PROJECT}-xuan-preopen-private`;
 const IB_SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
 const READ_SECRET = `projects/${PROJECT}/secrets/family-portfolio-gateway-key`;
 // Existing normal cash-sync/weekly token, pinned to its existing version.
 const FLEX_SECRET = `projects/${PROJECT}/secrets/ib-flex-cash-token`;
+
+export function uniqueCloudJson(text,limit=8_000_000) {
+  try { parseDecisionJson(text,limit); return JSON.parse(text); }
+  catch { throw ibError('CLOUD_RESPONSE_INVALID',{category:'response_invalid'}); }
+}
+export function validateIbCredentialBinding(value) {
+  if(!value||Object.getPrototypeOf(value)!==Object.prototype||Object.keys(value).sort().join('|')!=='clientId|version'
+    ||Object.values(Object.getOwnPropertyDescriptors(value)).some(d=>!Object.hasOwn(d,'value'))
+    ||typeof value.version!=='string'||! /^[1-9]\d{0,29}$/.test(value.version)
+    ||typeof value.clientId!=='string'||! /^[A-Za-z0-9._:-]{1,200}$/.test(value.clientId))
+    throw ibError('IB_READ_ONLY_CREDENTIAL_REQUIRED',{phase:'credential_load',category:'scope_invalid'});
+  return Object.freeze({clientId:value.clientId,version:value.version});
+}
+export function validateBoundIbVersionName(name,version) {
+  validateIbCredentialBinding({clientId:'version-check',version});
+  if(typeof name!=='string'||!new RegExp('^projects/(?:family-portfolio-gateway|860729177589)/secrets/xuan-preopen-ib-mcp/versions/'+version+'$').test(name))
+    throw ibError('IB_READ_ONLY_CREDENTIAL_REQUIRED',{phase:'credential_load',category:'scope_invalid'});
+  return name;
+}
 
 // Secret Manager can use the fixed project ID or its fixed numeric identifier
 // in a version name. Return metadata only; never read the new payload back.
@@ -39,7 +59,7 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
     try { response = await fetchImpl(url, {...options, redirect: 'error', signal: AbortSignal.timeout(30_000)}); }
     catch (error) { throw ibError('CLOUD_NETWORK_FAILED', {category: networkCategory(error)}); }
     if (!response.ok) throw ibError(`CLOUD_HTTP_${response.status}`, {httpStatus: response.status, category: httpCategory(response.status)});
-    try { return JSON.parse(await boundedText(response)); }
+    try { return uniqueCloudJson(await boundedText(response)); }
     catch (error) { throw inIbPhase(error, 'unknown', 'CLOUD_RESPONSE_INVALID', response.status, 'response_invalid'); }
   }
   async function headers() {
@@ -63,6 +83,18 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
       async load() {
         try { return JSON.parse(await secret(IB_SECRET)); }
         catch (error) { throw inIbPhase(error, 'credential_load', 'CLOUD_IB_CREDENTIAL_UNAVAILABLE', null, 'response_invalid'); }
+      },
+      async loadBound(binding) {
+        const {version,clientId}=validateIbCredentialBinding(binding);
+        try {
+          const result=await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}/versions/${version}:access`,{headers:await headers()});
+          const versionName=validateBoundIbVersionName(result.name,version),encoded=result.payload?.data;
+          if(typeof encoded!=='string'||!encoded||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded))throw Error('invalid');
+          const credential=uniqueCloudJson(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(encoded,'base64')));
+          if(!credential||Object.getPrototypeOf(credential)!==Object.prototype||credential.client_id!==clientId)
+            throw ibError('IB_READ_ONLY_CREDENTIAL_REQUIRED',{phase:'credential_load',category:'scope_invalid'});
+          return {credential,versionName};
+        }catch(error){throw inIbPhase(error,'credential_load','CLOUD_IB_CREDENTIAL_UNAVAILABLE',null,'response_invalid');}
       },
       async save(value) {
         const result = await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}:addVersion`,
