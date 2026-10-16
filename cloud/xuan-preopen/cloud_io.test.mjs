@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {boundedText, privateCloudIo} from './cloud_io.mjs';
+import {boundedText, privateCloudIo,uniqueCloudJson,validateIbCredentialBinding,validateBoundIbVersionName} from './cloud_io.mjs';
 
 test('bounded responses reject oversized or invalid UTF-8 source bodies', async () => {
   await assert.rejects(boundedText(new Response('12345'), 4), /TOO_LARGE/);
@@ -62,4 +62,46 @@ test('parallel B credential reads share one metadata identity request and never 
   assert(calls.some(url=>url.includes('ib-flex-cash-token/versions/1:access')));
   assert(calls.some(url=>url.includes('family-portfolio-gateway-key/versions/latest:access')));
   assert(calls.every(url=>!url.includes(':addVersion')));
+});
+
+test('bound versions reject aliases, partial pairs, traversal and accessors before any transport',async()=>{
+  let calls=0;const io=privateCloudIo({fetchImpl:async()=>{calls++;throw Error('SYNTHETIC_PRIVATE_CANARY');}});
+  for(const binding of [{version:'latest',clientId:'client'},{version:'01',clientId:'client'},{version:1,clientId:'client'},
+    {version:'../1',clientId:'client'},{version:'1'},{clientId:'client'},{version:'1',clientId:'client',secret:'other'},
+    {version:'1',clientId:null},{version:'1',clientId:'client\n--log-http'}]){
+    await assert.rejects(io.ibStore.loadBound(binding),e=>e.message==='IB_READ_ONLY_CREDENTIAL_REQUIRED');
+  }
+  let accessed=false;assert.throws(()=>validateIbCredentialBinding({version:'1',get clientId(){accessed=true;return 'x';}}));
+  assert.equal(accessed,false);assert.equal(calls,0);
+});
+test('bound access uses exactly one fixed numeric Secret version and checks response name and client',async()=>{
+  for(const project of ['family-portfolio-gateway','860729177589']){
+    const urls=[],credential={client_id:'SYNTHETIC_CLIENT',access_token:'SYNTHETIC_ACCESS_CANARY'};
+    const io=privateCloudIo({fetchImpl:async(url,o)=>{urls.push(String(url));assert.equal(o.redirect,'error');
+      return String(url).includes('metadata.google')?Response.json({access_token:'SYNTHETIC_GOOGLE_CANARY'}):Response.json({
+        name:`projects/${project}/secrets/xuan-preopen-ib-mcp/versions/50`,payload:{data:Buffer.from(JSON.stringify(credential)).toString('base64')}});}});
+    const result=await io.ibStore.loadBound({version:'50',clientId:'SYNTHETIC_CLIENT'});
+    assert.ok(result.credential.access_token===credential.access_token,'INTERNAL_CREDENTIAL_ONLY');
+    assert.equal(result.versionName,`projects/${project}/secrets/xuan-preopen-ib-mcp/versions/50`);
+    assert.equal(urls.length,2);assert.ok(urls[1].endsWith('/xuan-preopen-ib-mcp/versions/50:access'));
+    assert.ok(!urls.some(u=>u.includes('latest')||u.includes(':addVersion')));
+  }
+});
+test('wrong bound access names, duplicate JSON fields and client mismatches never fall back latest',async()=>{
+  const prefix='projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/';
+  for(const entry of [
+    {name:prefix+'51'}, {name:'projects/other/secrets/xuan-preopen-ib-mcp/versions/50'},
+    {name:'projects/family-portfolio-gateway/secrets/other/versions/50'}, {name:prefix+'latest'},
+    {name:prefix+'50',text:'{"client_id":"other","access_token":"SYNTHETIC_ACCESS_CANARY"}'},
+    {name:prefix+'50',text:'{"client_id":"other","client_\\u0069d":"SYNTHETIC_CLIENT"}'},
+    {name:prefix+'50',outerDuplicate:true}, {name:prefix+'50',data:'!!!'},
+  ]){
+    const urls=[],io=privateCloudIo({fetchImpl:async url=>{urls.push(String(url));if(String(url).includes('metadata.google'))return Response.json({access_token:'SYNTHETIC_GOOGLE_CANARY'});
+      const payload={data:entry.data??Buffer.from(entry.text??'{"client_id":"SYNTHETIC_CLIENT"}').toString('base64')};
+      return entry.outerDuplicate?new Response('{"name":"SYNTHETIC_PRIVATE_CANARY","name":'+JSON.stringify(entry.name)+',"payload":'+JSON.stringify(payload)+'}'):Response.json({name:entry.name,payload});}});
+    await assert.rejects(io.ibStore.loadBound({version:'50',clientId:'SYNTHETIC_CLIENT'}),e=>!JSON.stringify({message:e.message}).includes('CANARY'));
+    assert.equal(urls.length,2);assert.ok(!urls.some(u=>u.includes('latest')));
+  }
+  assert.throws(()=>uniqueCloudJson('{"x":1,"\\u0078":2}'));
+  assert.throws(()=>validateBoundIbVersionName(prefix+'50','51'));
 });

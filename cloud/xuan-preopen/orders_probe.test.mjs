@@ -220,3 +220,115 @@ test('matching outer identity is retained as a closed verdict when decoded order
   const source=[...h.objects.entries()].find(([k])=>k.endsWith('/orders.json'))[1];assert.equal(source.accountEvidence.responseAccountEvidence,'matched');assert.equal(source.raw.account_id,undefined);
   assert.ok(!JSON.stringify(r).includes('SYNTHETIC_ACCOUNT'));
 });
+
+function boundTransportHarness(options={}){
+  const h=transportHarness(options),base=h.options.fetchImpl;
+  h.options.request.credentialBinding={clientId:'SYNTHETIC_ORIGINAL_CLIENT',version:'50'};
+  h.options.fetchImpl=async(url,o)=>{
+    const response=await base(url,o);
+    if(String(url).includes(':access'))return Response.json({...await response.json(),name:'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/50'});
+    return response;
+  };
+  return h;
+}
+test('bound actual cloud IO pins the consumed version and never uses latest',async()=>{
+  const h=boundTransportHarness(),r=await runCloudOrdersProbe(h.options);
+  assert.equal(r.status,'passed');assert.equal(r.credentialClientMatched,true);assert.equal(r.credentialVersionMatched,true);
+  assert.equal(r.consumedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/50');
+  assert.equal(r.savedCredentialVersion,null);assert.ok(h.calls.some(c=>c.url.endsWith('/versions/50:access')));
+  assert.ok(!h.calls.some(c=>c.url.includes('latest')));assert.equal([...h.objects.values()].at(-1).ordersCalls,1);
+});
+test('binding pairs, duplicate request keys, wrong version/name/client and missing capability admit zero IB calls',async()=>{
+  for(const binding of [null,{}, {clientId:'x'},{version:'50'},{clientId:'x',version:'latest'},{clientId:'x',version:'50',account:'no'}]){
+    const h=boundTransportHarness();h.options.request.credentialBinding=binding;const r=await runCloudOrdersProbe(h.options);
+    assert.equal(r.status,'failed');assert.equal(h.calls.length,0);
+  }
+  assert.equal((await ordersProbeCli(['--request','{"credentialBinding":{"clientId":"x","clientId":"y","version":"50"}}'])).code,'IB_DIAGNOSTIC_REQUEST_INVALID');
+  for(const mutate of [h=>h.options.request.credentialBinding.clientId='SYNTHETIC_WRONG_CLIENT',h=>h.options.request.credentialBinding.version='51',
+    h=>h.options.io={...harness().options.io,ibStore:{load:async()=>{throw Error('SYNTHETIC_TOKEN_CANARY');}}}]){
+    const h=boundTransportHarness();mutate(h);const r=await runCloudOrdersProbe(h.options);
+    assert.equal(r.status,'failed');assert.equal(r.upstreamAttempted,false);assert.equal(r.credentialClientMatched,false);
+    assert.equal(h.calls.filter(c=>[RESOURCE,TOKEN_ENDPOINT].includes(c.url)).length,0);assert.ok(!h.calls.some(c=>c.url.includes('latest')));
+    assert.ok(!JSON.stringify(r).includes('CANARY'));
+  }
+});
+test('bound refresh records the ack version, rejects wrong ack and keeps late persistence without late IB',async()=>{
+  const valid=boundTransportHarness({expired:true}),ok=await runCloudOrdersProbe(valid.options);
+  assert.equal(ok.status,'passed');assert.equal(ok.savedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/123');
+  for(const ack of [{name:'projects/other/secrets/xuan-preopen-ib-mcp/versions/123',state:'ENABLED'},
+    {name:'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/50',state:'ENABLED'},
+    {name:'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/123',state:'DISABLED'}]){
+    const h=boundTransportHarness({expired:true}),base=h.options.fetchImpl;
+    h.options.fetchImpl=async(url,o)=>{if(String(url).includes(':addVersion')){h.calls.push({url:String(url)});return Response.json(ack);}return base(url,o);};
+    const r=await runCloudOrdersProbe(h.options);assert.equal(r.status,'failed');assert.equal(r.savedCredentialVersion,null);assert.equal(r.credentialPersistence,'outcome-unknown');
+    assert.equal(h.calls.filter(c=>c.url===RESOURCE).length,0);assert.equal(h.calls.filter(c=>c.url.includes(':addVersion')).length,1);
+  }
+  const late=boundTransportHarness({expired:true,refreshDelay:50});late.options.limits={sourceMs:20,finalizeMs:200};
+  const r=await runCloudOrdersProbe(late.options);assert.equal(r.status,'failed');assert.equal(r.credentialPersistence,'saved');
+  assert.equal(r.savedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/123');
+  assert.equal(late.calls.filter(c=>c.url===RESOURCE).length,0);assert.equal(r.receiptSaved,true);
+});
+test('bound refresh rejects duplicate token JSON or changed client/resource before save or orders',async()=>{
+  for(const body of [
+    '{"access_token":"SYNTHETIC_TOKEN_CANARY","access_\\u0074oken":"other","refresh_token":"x","token_type":"Bearer","expires_in":3600}',
+    JSON.stringify({access_token:'SYNTHETIC_TOKEN_CANARY',refresh_token:'x',token_type:'Bearer',expires_in:3600,client_id:'SYNTHETIC_WRONG_CLIENT'}),
+    JSON.stringify({access_token:'SYNTHETIC_TOKEN_CANARY',refresh_token:'x',token_type:'Bearer',expires_in:3600,resource:'https://wrong.invalid'}),
+    ...[null,'','   ',7,{}].map(refresh_token=>JSON.stringify({access_token:'SYNTHETIC_TOKEN_CANARY',refresh_token,token_type:'Bearer',expires_in:3600,scope:'mcp.read'})),
+  ]){
+    const h=boundTransportHarness({expired:true}),base=h.options.fetchImpl;
+    h.options.fetchImpl=async(url,o)=>{if(String(url)===TOKEN_ENDPOINT){h.calls.push({url:String(url)});return new Response(body);}return base(url,o);};
+    const r=await runCloudOrdersProbe(h.options);assert.equal(r.status,'failed');assert.equal(h.calls.filter(c=>c.url===RESOURCE).length,0);
+    assert.equal(h.calls.filter(c=>c.url.includes(':addVersion')).length,0);assert.ok(!JSON.stringify([...h.objects.values()]).includes('CANARY'));
+  }
+});
+test('synthetic exact-version chain advances only from the confirmed rotation ack',async()=>{
+  let time=NOW,nextVersion=50,refreshes=0,orders=0;const versions=new Map([['50',{client_id:'SYNTHETIC_CHAIN_CLIENT',access_token:'SYNTHETIC_CHAIN_ACCESS',refresh_token:'SYNTHETIC_CHAIN_REFRESH',token_type:'Bearer',scope:'mcp.read',resource:RESOURCE,expires_at:NOW+3600000}]]),objects=new Map(),urls=[];
+  const fetchImpl=async(url,o)=>{const u=String(url);urls.push(u);o.signal.throwIfAborted();
+    if(u.includes('metadata.google'))return Response.json({access_token:'SYNTHETIC_GOOGLE_CANARY'});
+    if(u.includes(':access')){const v=u.match(/\/versions\/(\d+):access$/)?.[1];assert.ok(versions.has(v),'EXPLICIT_VERSION_ONLY');return Response.json({name:'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/'+v,payload:{data:Buffer.from(JSON.stringify(versions.get(v))).toString('base64')}});}
+    if(u===TOKEN_ENDPOINT){refreshes++;return Response.json({access_token:'SYNTHETIC_NEW_ACCESS',refresh_token:'SYNTHETIC_NEW_REFRESH',token_type:'Bearer',scope:'mcp.read',expires_in:3600});}
+    if(u.includes(':addVersion')){const v=String(++nextVersion);versions.set(v,JSON.parse(Buffer.from(JSON.parse(o.body).payload.data,'base64').toString()));return Response.json({name:'projects/860729177589/secrets/xuan-preopen-ib-mcp/versions/'+v,state:'ENABLED'});}
+    if(u.startsWith('https://storage.googleapis.com/upload/')){const name=new URL(u).searchParams.get('name');if(objects.has(name))return Response.json({},{status:412});objects.set(name,JSON.parse(Buffer.from(o.body).toString()));return Response.json({name,size:String(o.body.length),generation:'1'});}
+    assert.equal(u,RESOURCE);const q=JSON.parse(o.body);if(q.method==='initialize')return Response.json({jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}}}});
+    if(q.method==='notifications/initialized')return new Response(null,{status:202});orders++;assert.deepEqual(q.params,{name:'get_account_orders',arguments:{}});return Response.json({jsonrpc:'2.0',id:q.id,result:{structuredContent:{orders:[]}}});};
+  const run=async(v,id)=>runCloudOrdersProbe({request:{...request(),requestId:`11111111-2222-4333-8444-55555555555${id}`,expiresAt:new Date(time+600000).toISOString(),credentialBinding:{clientId:'SYNTHETIC_CHAIN_CLIENT',version:v}},env:env(),now:()=>time,fetchImpl,expectedAccount:'SYNTHETIC_ACCOUNT',loadContext:async()=>{const c=context();c.association.checkedAt=new Date(time).toISOString();return c;}});
+  const first=await run('50',1);assert.equal(first.status,'passed');assert.equal(first.savedCredentialVersion,null);assert.equal(refreshes,0);
+  time+=3480001;const second=await run('50',2);assert.equal(second.status,'passed');assert.equal(second.savedCredentialVersion,'projects/860729177589/secrets/xuan-preopen-ib-mcp/versions/51');assert.equal(refreshes,1);
+  const third=await run(second.savedCredentialVersion.split('/').at(-1),3);assert.equal(third.status,'passed');assert.equal(third.consumedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/51');
+  assert.equal(refreshes,1);assert.equal(orders,3);assert.ok(!urls.some(u=>u.includes('/versions/latest')));
+});
+test('binding cannot be bypassed by an injected capture calling IB before loading its bound version',async()=>{
+  const h=boundTransportHarness();h.options.capture=async(_store,o)=>o.fetchImpl(RESOURCE,{method:'POST',body:JSON.stringify({method:'initialize'})});
+  const r=await runCloudOrdersProbe(h.options);assert.equal(r.status,'failed');assert.equal(r.upstreamAttempted,false);
+  assert.equal(h.calls.filter(c=>[RESOURCE,TOKEN_ENDPOINT].includes(c.url)).length,0);
+});
+test('orders arguments must be the exact empty object and refresh cannot inject scopes/accounts or a different token',async()=>{
+  for(const params of [{name:'get_account_orders',arguments:[]},{name:'get_account_orders',arguments:{},account:'other'}]){
+    const h=harness();h.options.capture=async(_store,o)=>o.fetchImpl(RESOURCE,{method:'POST',body:JSON.stringify({method:'tools/call',params})});
+    const r=await runCloudOrdersProbe(h.options);assert.equal(r.status,'failed');assert.equal(h.calls.length,0);
+  }
+  for(const extra of ['account-ids','scope','refresh_token']){
+    const h=harness();h.options.capture=async(store,o)=>{await store.load();const body=new URLSearchParams({grant_type:'refresh_token',client_id:h.credential.client_id,refresh_token:h.credential.refresh_token,scope:'mcp.read',resource:RESOURCE});body.append(extra,'SYNTHETIC_PRIVATE_CANARY');return o.fetchImpl(TOKEN_ENDPOINT,{method:'POST',body});};
+    const r=await runCloudOrdersProbe(h.options);assert.equal(r.status,'failed');assert.equal(h.calls.length,0);assert.ok(!JSON.stringify(r).includes('CANARY'));
+  }
+});
+
+test('a bound non-rotating refresh preserves only that exact version token and saves before its sole orders call',async()=>{
+  const h=boundTransportHarness({expired:true}),base=h.options.fetchImpl;let refreshes=0,saves=0;const sequence=[];
+  h.options.fetchImpl=async(url,o)=>{
+    if(String(url)===TOKEN_ENDPOINT){refreshes++;sequence.push('refresh');h.calls.push({url:String(url)});
+      assert.ok(o.body.get('refresh_token')==='SYNTHETIC_REFRESH','BOUND_REFRESH_ONLY');
+      return Response.json({access_token:'SYNTHETIC_NONROTATING_ACCESS',token_type:'Bearer',expires_in:3600,scope:'mcp.read'});}
+    if(String(url).includes(':addVersion')){saves++;sequence.push('save');
+      const saved=JSON.parse(Buffer.from(JSON.parse(o.body).payload.data,'base64').toString());
+      assert.ok(saved.refresh_token==='SYNTHETIC_REFRESH','PRESERVE_BOUND_VERSION_REFRESH');
+      assert.ok(saved.access_token==='SYNTHETIC_NONROTATING_ACCESS','SAVE_NEW_ACCESS');}
+    if(String(url)===RESOURCE&&JSON.parse(o.body).method==='tools/call')sequence.push('orders');
+    return base(url,o);
+  };
+  const result=await runCloudOrdersProbe(h.options);assert.equal(result.status,'passed');
+  assert.equal(result.consumedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/50');
+  assert.equal(result.savedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/123');
+  assert.deepEqual(sequence,['refresh','save','orders']);assert.equal(refreshes,1);assert.equal(saves,1);
+  assert.ok(!h.calls.some(call=>call.url.includes('/versions/latest')));assert.ok(!JSON.stringify(result).includes('SYNTHETIC_'));
+});
