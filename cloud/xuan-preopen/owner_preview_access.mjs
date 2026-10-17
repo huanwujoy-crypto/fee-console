@@ -6,7 +6,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
-import {LATEST_TARGET,LATEST_HEADERS} from './owner_latest.mjs';
+import {LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
 import {requireProtectedOwnerCheckout} from './owner_latest_delivery.mjs';
 import {createOwnerSdkTransport} from './owner_sdk_transport.mjs';
 export const CANARY_TARGET=Object.freeze({bucket:LATEST_TARGET.bucket,object:'delivery/owner-phone-canary-v1.html'});
@@ -25,6 +25,7 @@ const hash=x=>crypto.createHash('sha256').update(typeof x==='string'||x instance
 const instant=x=>typeof x==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(x)&&Number.isFinite(Date.parse(x))&&new Date(x).toISOString()===x;
 function strictJson(source){try{parseDecisionJson(source,2000000);return JSON.parse(source);}catch{fail('JSON');}}
 const FIXED_APPROVED=Object.freeze(strictJson(fs.readFileSync(new URL('../../security/xuan-owner-approved-audience.json',import.meta.url),'utf8')));
+const FIXED_REGISTERED_CANARY=Object.freeze(strictJson(fs.readFileSync(new URL('../../security/xuan-owner-registered-canary.json',import.meta.url),'utf8')));
 function normalizePolicy(policy,{bucket=false}={}){
   const allowed=bucket?['bindings','etag','version','kind','resourceId']:['bindings','etag','version'];
   if(!object(policy)||Object.keys(policy).some(k=>!allowed.includes(k))||!Array.isArray(policy.bindings)
@@ -196,9 +197,35 @@ async function readCanary(requestCanary,pin,signal){
   validateOwnerCanaryMetadata(m,pin);
   const media=canaryUrl(pin.generation,true),raw=await requestCanary({method:'GET',generation:pin.generation,media:true,signal});response(raw,media);
   if(raw.headers.get('x-goog-generation')!==pin.generation||raw.headers.get('content-length')!==String(m.size)
-    ||raw.headers.get('content-type')!==LATEST_HEADERS.contentType||raw.headers.get('content-disposition')!==LATEST_HEADERS.contentDisposition
-    ||raw.headers.get('cache-control')!==LATEST_HEADERS.cacheControl)fail('CANARY_MEDIA');
-  const bytes=await bounded(raw,MAX_CANARY_BYTES);if(bytes.length!==Number(m.size)||validateOwnerPhoneCanary(bytes,pin)!==pin.sha256)fail('CANARY_HASH');return pin;
+    ||!ownerJsonMediaHeadersMatch({contentType:raw.headers.get('content-type'),contentDisposition:raw.headers.get('content-disposition'),
+      cacheControl:raw.headers.get('cache-control')}))fail('CANARY_MEDIA');
+  const bytes=await bounded(raw,MAX_CANARY_BYTES);if(bytes.length!==Number(m.size)||validateOwnerPhoneCanary(bytes,pin)!==pin.sha256)fail('CANARY_HASH');
+  // The browser entry is unversioned. Reading an older immutable generation is
+  // insufficient if another object now occupies that entry. Check it last.
+  const current=canaryUrl(undefined,true),head=await requestCanary({method:'HEAD',media:true,signal});response(head,current);
+  if(head.headers.get('x-goog-generation')!==pin.generation||head.headers.get('content-length')!==String(m.size)
+    ||head.headers.get('content-encoding')&&!/^identity$/i.test(head.headers.get('content-encoding'))
+    ||!ownerJsonMediaHeadersMatch({contentType:head.headers.get('content-type'),contentDisposition:head.headers.get('content-disposition'),
+      cacheControl:head.headers.get('cache-control')}))fail('CANARY_CURRENT');
+  return pin;
+}
+export function validateRegisteredOwnerCanary(registration,candidateSha256){
+  exact(registration,'schema target pin');exact(registration.target,'bucket object');
+  const pin=registration.pin;exact(pin,'uuid createdAt candidateSha256 generation sha256');
+  if(registration.schema!=='xuan.owner-registered-canary.v1'||registration.target.bucket!==CANARY_TARGET.bucket
+    ||registration.target.object!==CANARY_TARGET.object||typeof candidateSha256!=='string'||!HEX.test(candidateSha256)||pin.candidateSha256!==candidateSha256
+    ||typeof pin.generation!=='string'||!GEN.test(pin.generation)||typeof pin.sha256!=='string'||!HEX.test(pin.sha256)
+    ||hash(renderOwnerPhoneCanary(pin))!==pin.sha256)fail('REGISTERED_CANARY');
+  return structuredClone(pin);
+}
+// Pure, read-only verifier for synthetic tests. A returned descriptor is not a
+// publication capability: only the fixed protected production session below
+// can install its private pin after fresh actor/IAM and actual SDK reads.
+export async function readRegisteredOwnerCanary({requestCanary,registration,candidateSha256,signal}={}){
+  const pin=validateRegisteredOwnerCanary(registration,candidateSha256);
+  if(typeof requestCanary!=='function'||signal?.aborted)fail('REGISTERED_CANARY_READ');
+  await readCanary(requestCanary,pin,signal);
+  if(signal?.aborted)fail('ABORTED');return pin;
 }
 export function validateOwnerCanaryMetadata(m,pin){
   exact(pin,'uuid createdAt candidateSha256 generation sha256');renderOwnerPhoneCanary(pin);
@@ -216,11 +243,13 @@ export async function createOwnerPreviewAccess(){
   validApproved(FIXED_APPROVED);
   const registration=strictJson(fs.readFileSync(new URL('../../security/xuan-owner-accepted-preview.json',import.meta.url),'utf8'));
   const candidateSha256=registration.displaySha256;if(!HEX.test(candidateSha256||''))fail('REGISTERED_CANDIDATE');
+  validateRegisteredOwnerCanary(FIXED_REGISTERED_CANARY,candidateSha256);
   const sdk=createOwnerSdkTransport();
   if(!sdk||typeof sdk.readLiveBoundary!=='function'||typeof sdk.request!=='function'
     ||typeof sdk.requestCanary!=='function'||typeof sdk.createCanary!=='function'||typeof sdk.close!=='function')fail('SDK_CAPABILITIES');
   let canaryClosed=false,canaryPin=null,sessionClosed=false;const lease=createOwnerPreflightLease();
   const guard=()=>{if(sessionClosed)fail('SESSION_CLOSED');};
+  const close=()=>{sessionClosed=true;lease.invalidate();sdk.close();};
   const full=async()=>{
     guard();lease.invalidate();
     const start=Date.now(),boundary=await sdk.readLiveBoundary({includeRoleDefinitions:true});validateOwnerBoundaryWindow(boundary,Date.now());
@@ -255,36 +284,51 @@ export async function createOwnerPreviewAccess(){
       if(canaryPin.candidateSha256!==candidateSha256)fail('REGISTERED_CANDIDATE');
       lease.mintAdmission(Date.now());
     },
+    async verifyRegisteredCanary(){
+      guard();if(canaryClosed)fail('CANARY_CLOSED');canaryClosed=true;
+      const signal=AbortSignal.timeout(30000);
+      try{
+        await requireProtectedOwnerCheckout();await live(signal);
+        const pin=await readRegisteredOwnerCanary({requestCanary:sdk.requestCanary,registration:FIXED_REGISTERED_CANARY,candidateSha256,signal});
+        guard();lease.current(Date.now());if(signal.aborted)fail('ABORTED');
+        canaryPin=Object.freeze(pin);
+        return {status:'existing-verified',code:'REGISTERED_CANARY_READBACK_VERIFIED',pin:structuredClone(pin)};
+      }catch(error){close();return {status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED',
+        reason:/^[A-Z][A-Z0-9_]{1,99}$/.test(error?.safeCode||'')?error.safeCode:'CANARY_VALIDATION_FAILED'};}
+    },
     async createCanary(){
       guard();if(canaryClosed)fail('CANARY_CLOSED');canaryClosed=true;
-      let writing=false;const signal=AbortSignal.timeout(30000);
+      let writing=false,stage='protected-checkout';const signal=AbortSignal.timeout(30000);
       try{
         // The first write independently checks actual protected source before
         // its live identity/policy read; no caller can assert this approval.
-        await requireProtectedOwnerCheckout();await live(signal);
+        await requireProtectedOwnerCheckout();stage='initial-boundary';await live(signal);
+        stage='presence';
         const url=canaryUrl(undefined,true),head=await sdk.requestCanary({method:'HEAD',media:true,signal});
         if(response(head,url,{missing:true}))fail('CANARY_EXISTS');
-        await live(signal);
+        stage='write-boundary';await live(signal);
         const fields={uuid:crypto.randomUUID(),createdAt:new Date().toISOString(),candidateSha256};
         const bytes=renderOwnerPhoneCanary(fields),sha256=hash(bytes),custom={schema:'xuan.owner-phone-canary.v1',...fields,canarySha256:sha256};
-        if(signal.aborted)fail('ABORTED');writing=true;
+        if(signal.aborted)fail('ABORTED');writing=true;stage='write';
         // The bridge reconstructs exactly the fixed nonfinancial document and
         // metadata. It does not accept arbitrary HTML, metadata or a CAS value.
         const ack=await sdk.createCanary({...fields,signal});
+        stage='ack';
         const upload='https://storage.googleapis.com/upload/storage/v1/b/'+CANARY_TARGET.bucket+'/o?uploadType=multipart&ifGenerationMatch=0';response(ack,upload);
         if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(ack.headers.get('content-type')||''))fail('CANARY_METADATA_TYPE');
         const m=strictJson(decoder.decode(await bounded(ack,16000)));
         if(m.bucket!==CANARY_TARGET.bucket||m.name!==CANARY_TARGET.object||!GEN.test(m.generation)||String(m.size)!==String(bytes.length)
           ||m.contentType!==LATEST_HEADERS.contentType||m.contentDisposition!==LATEST_HEADERS.contentDisposition
           ||m.cacheControl!==LATEST_HEADERS.cacheControl||text(m.metadata)!==text(custom))fail('CANARY_ACK');
-        const pin={...fields,generation:m.generation,sha256};await readCanary(sdk.requestCanary,pin,signal);
+        const pin={...fields,generation:m.generation,sha256};stage='readback';await readCanary(sdk.requestCanary,pin,signal);
         guard();lease.current(Date.now());if(signal.aborted)fail('ABORTED');
         canaryPin=Object.freeze(pin);
         return {status:'published-verified',code:'CANARY_PINNED_READBACK_VERIFIED',pin:structuredClone(pin)};
-      }catch(error){return {status:writing&&error?.status===412?'conflict':writing?'unknown':'blocked',
+      }catch(error){close();return {status:writing&&error?.status===412?'conflict':writing?'unknown':'blocked',stage,
+        reason:/^[A-Z][A-Z0-9_]{1,99}$/.test(error?.safeCode||'')?error.safeCode:'CANARY_VALIDATION_FAILED',
         code:writing&&error?.status===412?'CANARY_CAS_CONFLICT_NO_RETRY':writing?'CANARY_WRITE_OUTCOME_UNKNOWN':
           error?.safeCode==='OWNER_ACCESS_CANARY_EXISTS'?'CANARY_EXISTS':'CANARY_ACCESS_OR_VALIDATION_FAILED'};}
     },
-    close(){sessionClosed=true;lease.invalidate();sdk.close();},
+    close,
   });
 }

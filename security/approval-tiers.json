@@ -536,6 +536,7 @@
     "cloud/xuan-preopen/owner_sdk_transport.py",
     "cloud/xuan-preopen/owner_sdk_transport.test.mjs",
     "cloud/xuan-preopen/owner_sdk_transport.test.py",
-    "security/xuan-owner-approved-audience.json"
+    "security/xuan-owner-approved-audience.json",
+    "security/xuan-owner-registered-canary.json"
   ]
 }

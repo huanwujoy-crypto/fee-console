@@ -2,10 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
+import vm from 'node:vm';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {describeOwnerBoundary,evaluateOwnerBoundary,renderOwnerPhoneCanary,validateOwnerPhoneCanary,
   validateOwnerCanaryMetadata,validateOwnerBoundaryWindow,validateOwnerPreflightAge,FULL_PREFLIGHT_TTL_MS,
-  MAX_CANARY_BYTES,CANARY_TARGET,createOwnerPreflightLease} from './owner_preview_access.mjs';
-import {LATEST_TARGET,LATEST_HEADERS} from './owner_latest.mjs';
+  MAX_CANARY_BYTES,CANARY_TARGET,createOwnerPreflightLease,validateRegisteredOwnerCanary,
+  readRegisteredOwnerCanary} from './owner_preview_access.mjs';
+import {LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const NOW=Date.parse('2026-10-17T12:00:00.000Z');
 const approved=JSON.parse(fs.readFileSync(new URL('../../security/xuan-owner-approved-audience.json',import.meta.url),'utf8'));
@@ -155,4 +159,219 @@ test('production source has no injected SDK, expected audience, canary receipt, 
   assert.ok(source.includes('async createCanary(){'));assert.ok(source.includes('lease.consumeAdmission(Date.now()); // Every possible write consumes admission.'));
   assert.equal(/approved\s*[:=]\s*true|process\.env|print-access-token|setIamPolicy|signIn|login\(/.test(source),false);
   const serialized=JSON.stringify(approved);assert.equal(/@|"projectNumber"/.test(serialized),false);
+});
+
+// Native-shaped synthetic responses exercise the verifier's real stream, URL,
+// metadata and current-entry checks. No SDK or HTTP implementation is involved.
+function registeredCanaryFixture({editMetadata,editMedia,editHead,onRequest}={}){
+  const f=fields(),bytes=renderOwnerPhoneCanary(f),pin={...f,generation:'91',sha256:hash(bytes)};
+  const registration={schema:'xuan.owner-registered-canary.v1',target:{...CANARY_TARGET},pin};
+  const calls=[],metadata={bucket:CANARY_TARGET.bucket,name:CANARY_TARGET.object,generation:pin.generation,
+    size:String(bytes.length),...LATEST_HEADERS,metadata:{schema:'xuan.owner-phone-canary.v1',...f,canarySha256:pin.sha256}};
+  const base='https://storage.googleapis.com/storage/v1/b/'+CANARY_TARGET.bucket+'/o/'+encodeURIComponent(CANARY_TARGET.object);
+  const wire={'content-type':LATEST_HEADERS.contentType,'content-disposition':'attachment',
+    'cache-control':'no-cache, no-store, max-age=0, must-revalidate','content-length':String(bytes.length),'x-goog-generation':pin.generation};
+  const requestCanary=async options=>{
+    const {method='GET',generation,media=true}=options;
+    assert.ok(['GET','HEAD'].includes(method),'registered-canary reads must never write');
+    if(method==='GET')assert.equal(generation,pin.generation,'both GETs must pin the registered generation');
+    else assert.equal(generation,undefined,'the last HEAD checks the current browser entry');
+    calls.push({method,generation,media});await onRequest?.(options,calls.length);
+    const url=new URL(base);if(generation!==undefined)url.searchParams.set('generation',generation);if(media)url.searchParams.set('alt','media');
+    const value={status:200,url:url.href,redirected:false,headers:{...wire},body:new Uint8Array(bytes)};
+    if(method==='HEAD'){value.body=null;editHead?.(value);}
+    else if(!media){const m=structuredClone(metadata);editMetadata?.(m);value.body=JSON.stringify(m);
+      value.headers={'content-type':'application/json; charset=utf-8'};}
+    else editMedia?.(value);
+    const response=new Response(value.body,{status:value.status,headers:value.headers});
+    Object.defineProperty(response,'url',{value:value.url});Object.defineProperty(response,'redirected',{value:value.redirected});return response;
+  };
+  return {registration,pin,bytes,calls,requestCanary};
+}
+test('registered canary verifies native metadata and bytes before current HEAD, without any write',async()=>{
+  const f=registeredCanaryFixture(),pin=await readRegisteredOwnerCanary({requestCanary:f.requestCanary,
+    registration:f.registration,candidateSha256:fields().candidateSha256});
+  assert.deepEqual(pin,f.pin);assert.notEqual(pin,f.registration.pin);
+  assert.deepEqual(f.calls.map(x=>[x.method,x.media]),[['GET',false],['GET',true],['HEAD',true]]);
+  pin.generation='92';assert.equal(f.registration.pin.generation,'91');
+});
+test('registered canary cannot select a caller target, candidate, body or approval flag',async t=>{
+  for(const [name,edit] of [
+    ['approval JSON',r=>{r.approved=true;}],['other object',r=>{r.target.object=LATEST_TARGET.object;}],
+    ['other bucket',r=>{r.target.bucket='synthetic-other-bucket';}],['candidate',r=>{r.pin.candidateSha256='b'.repeat(64);}],
+    ['body hash',r=>{r.pin.sha256='f'.repeat(64);}],['generation number',r=>{r.pin.generation=91;}],
+    ['zero generation',r=>{r.pin.generation='0';}],['caller HTML',r=>{r.pin.html='<p>synthetic</p>';}],
+  ])await t.test(name,async()=>{
+    const f=registeredCanaryFixture();edit(f.registration);
+    assert.throws(()=>validateRegisteredOwnerCanary(f.registration,fields().candidateSha256));
+    await assert.rejects(readRegisteredOwnerCanary({requestCanary:f.requestCanary,registration:f.registration,
+      candidateSha256:fields().candidateSha256}));assert.equal(f.calls.length,0);
+  });
+});
+test('registered canary rejects stored metadata drift and corrupt media before accepting a current entry',async t=>{
+  const cases=[
+    ['metadata generation',{editMetadata:m=>{m.generation='92';}}],
+    ['metadata disposition',{editMetadata:m=>{m.contentDisposition='attachment';}}],
+    ['metadata cache',{editMetadata:m=>{m.cacheControl='public';}}],
+    ['extra custom field',{editMetadata:m=>{m.metadata.approved=true;}}],
+    ['body tampering',{editMedia:r=>{r.body[0]^=1;}}],
+    ['media generation',{editMedia:r=>{r.headers['x-goog-generation']='92';}}],
+    ['media length missing',{editMedia:r=>{delete r.headers['content-length'];}}],
+    ['media public cache',{editMedia:r=>{r.headers['cache-control']='public, max-age=600';}}],
+    ['media encoding',{editMedia:r=>{r.headers['content-encoding']='gzip';}}],
+    ['redirected response',{editMedia:r=>{r.redirected=true;}}],
+  ];
+  for(const [name,options] of cases)await t.test(name,async()=>{
+    const f=registeredCanaryFixture(options);await assert.rejects(readRegisteredOwnerCanary({requestCanary:f.requestCanary,
+      registration:f.registration,candidateSha256:fields().candidateSha256}));
+    assert.equal(f.calls.some(x=>x.method==='HEAD'),false);
+  });
+});
+test('an intact historical generation cannot hide changed, missing or unsafe current browser content',async t=>{
+  for(const [name,editHead] of [
+    ['replacement',r=>{r.headers['x-goog-generation']='92';}],['missing generation',r=>{delete r.headers['x-goog-generation'];}],
+    ['not found',r=>{r.status=404;}],['forbidden',r=>{r.status=403;}],['redirect',r=>{r.redirected=true;}],
+    ['different size',r=>{r.headers['content-length']='1';}],['public cache',r=>{r.headers['cache-control']='public';}],
+    ['missing disposition',r=>{delete r.headers['content-disposition'];}],['encoding',r=>{r.headers['content-encoding']='gzip';}],
+  ])await t.test(name,async()=>{
+    const f=registeredCanaryFixture({editHead});await assert.rejects(readRegisteredOwnerCanary({requestCanary:f.requestCanary,
+      registration:f.registration,candidateSha256:fields().candidateSha256}));
+    assert.deepEqual(f.calls.map(x=>x.method),['GET','GET','HEAD']);
+  });
+});
+test('registered-canary cancellation before reading or at the final HEAD never returns a pin',async()=>{
+  const a=new AbortController();a.abort();const first=registeredCanaryFixture();
+  await assert.rejects(readRegisteredOwnerCanary({requestCanary:first.requestCanary,registration:first.registration,
+    candidateSha256:fields().candidateSha256,signal:a.signal}));assert.equal(first.calls.length,0);
+  const b=new AbortController(),last=registeredCanaryFixture({onRequest:options=>{if(options.method==='HEAD')b.abort();}});
+  await assert.rejects(readRegisteredOwnerCanary({requestCanary:last.requestCanary,registration:last.registration,
+    candidateSha256:fields().candidateSha256,signal:b.signal}),/ABORTED/);assert.equal(last.calls.length,3);
+});
+
+const FACTORY_TEST='production registered-canary capability enforces real factory state with synthetic dependencies';
+test(FACTORY_TEST,async t=>{
+  // Run this same test in a fresh Node child when VM modules are not enabled.
+  // No source rewrite or production dependency-injection hook is introduced.
+  if(typeof vm.SourceTextModule!=='function'){
+    const childEnv={...process.env};delete childEnv.NODE_TEST_CONTEXT;
+    const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
+      {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
+    assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:8/);return;
+  }
+  let active={now:NOW,abort:new AbortController()},completedScenarios=0;
+  t.mock.method(Date,'now',()=>active.now);
+  t.mock.method(AbortSignal,'timeout',()=>active.abort.signal);
+  t.mock.method(globalThis,'fetch',()=>assert.fail('factory tests must never perform network I/O'));
+  async function harness(options={}){
+    const f=fixture(),canary=registeredCanaryFixture(options),events=options.events??[],control={now:NOW,abort:new AbortController(),
+      boundaryEdit:null,holdBoundary:null,...options};active=control;
+    const source=fs.readFileSync(new URL('./owner_preview_access.mjs',import.meta.url),'utf8');
+    const sdk={
+      async readLiveBoundary({includeRoleDefinitions}){
+        events.push(includeRoleDefinitions?'full-boundary':'quick-boundary');await control.holdBoundary?.();
+        const boundary=structuredClone(f.boundary);boundary.startedAt=new Date(control.now-10).toISOString();
+        boundary.completedAt=new Date(control.now).toISOString();if(!includeRoleDefinitions)boundary.roleDefinitions=[];
+        control.boundaryEdit?.(boundary,includeRoleDefinitions);return boundary;
+      },
+      async requestCanary(value){events.push('canary-'+value.method);return canary.requestCanary(value);},
+      async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
+      async request(){events.push('financial-POST');return new Response(null,{status:200});},
+      close(){events.push('close');},
+    };
+    const files={
+      'xuan-owner-approved-audience.json':f.registry,
+      'xuan-owner-registered-canary.json':canary.registration,
+      'xuan-owner-accepted-preview.json':{displaySha256:fields().candidateSha256},
+    };
+    const dependencies={
+      'node:crypto':{default:crypto},
+      'node:fs':{default:{readFileSync:url=>{const name=new URL(url).pathname.split('/').pop();
+        assert.ok(Object.hasOwn(files,name),'unexpected filesystem access: '+name);return JSON.stringify(files[name]);}}},
+      '../../scripts/xuan-ib-decision-menu.mjs':{parseDecisionJson:value=>JSON.parse(value)},
+      './owner_latest.mjs':{LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch},
+      './owner_latest_delivery.mjs':{requireProtectedOwnerCheckout:async()=>{events.push('protected');
+        if(control.protectedError)throw Error('SYNTHETIC_PROTECTED_CHECKOUT_REJECTED');}},
+      './owner_sdk_transport.mjs':{createOwnerSdkTransport:()=>{events.push('sdk-created');return sdk;}},
+    };
+    const module=new vm.SourceTextModule(source,{initializeImportMeta:meta=>{meta.url=new URL('./owner_preview_access.mjs',import.meta.url).href;}});
+    await module.link(specifier=>{assert.ok(Object.hasOwn(dependencies,specifier),'unexpected production import: '+specifier);
+      const values=dependencies[specifier];return new vm.SyntheticModule(Object.keys(values),function(){
+        for(const [name,value] of Object.entries(values))this.setExport(name,value);
+      });});await module.evaluate();
+    const access=await module.namespace.createOwnerPreviewAccess({pin:{generation:'caller-override'},approved:true});
+    return {access,events,control,canary};
+  }
+  const post=access=>access.request('https://storage.googleapis.com/upload/storage/v1/b/'+LATEST_TARGET.bucket+'/o?uploadType=multipart&ifGenerationMatch=0',{method:'POST'});
+  const verify=access=>access.verifyDestinationAccess({target:{...LATEST_TARGET},operation:'create-accepted-preview'});
+  const scenario=(name,run)=>t.test(name,async st=>{await run(st);completedScenarios++;});
+  await scenario('protected checkout fails before SDK creation; invalid full boundary closes its transport',async()=>{
+    const first=[];await assert.rejects(harness({events:first,protectedError:true}),/SYNTHETIC_PROTECTED_CHECKOUT_REJECTED/);
+    assert.deepEqual(first,['protected']);
+    const second=[];await assert.rejects(harness({events:second,boundaryEdit:b=>{b.actorIdentifier='SYNTHETIC_DIFFERENT_OWNER';}}),/BOUNDARY_CHANGED/);
+    assert.deepEqual(second,['protected','sdk-created','full-boundary','close']);
+  });
+  await scenario('adoption only reads; a returned descriptor cannot mint admission or replace the fixed pin',async()=>{
+    const h=await harness();assert.deepEqual(h.events,['protected','sdk-created','full-boundary']);
+    const adopted=await h.access.verifyRegisteredCanary({pin:{generation:'caller-override'},approved:true});
+    assert.equal(adopted.status,'existing-verified');assert.equal(adopted.pin.generation,'91');
+    assert.equal(h.events.filter(x=>x==='full-boundary').length,1);assert.ok(h.events.includes('quick-boundary'));
+    assert.deepEqual(h.canary.calls.map(x=>x.method),['GET','GET','HEAD']);
+    assert.throws(()=>post(h.access),/FINANCIAL_ADMISSION_REQUIRED/);assert.equal(h.events.includes('financial-POST'),false);
+    adopted.pin.generation='999';await verify(h.access);await post(h.access);
+    assert.equal(h.events.filter(x=>x==='financial-POST').length,1);
+    assert.throws(()=>post(h.access),/FINANCIAL_ADMISSION_REQUIRED/);
+    await assert.rejects(h.access.createCanary(),/CANARY_CLOSED/);await assert.rejects(h.access.verifyRegisteredCanary(),/CANARY_CLOSED/);
+    h.access.close();
+  });
+  await scenario('changed current entry during later access clears any previously minted financial admission',async()=>{
+    let replaced=false;const h=await harness({editHead:r=>{if(replaced)r.headers['x-goog-generation']='92';}});
+    assert.equal((await h.access.verifyRegisteredCanary()).status,'existing-verified');await verify(h.access);replaced=true;
+    await assert.rejects(verify(h.access),/CANARY_CURRENT/);assert.throws(()=>post(h.access),/FINANCIAL_ADMISSION_REQUIRED/);
+    assert.equal(h.events.includes('financial-POST'),false);h.access.close();
+  });
+  await scenario('policy drift, TTL expiry, abort and close cannot install a partly verified pin',async st=>{
+    for(const mode of ['policy','ttl','abort','close'])await st.test(mode,async()=>{
+      let h;h=await harness({onRequest:options=>{if(options.method==='HEAD'){
+        if(mode==='ttl')h.control.now+=FULL_PREFLIGHT_TTL_MS+1;
+        if(mode==='abort')h.control.abort.abort();if(mode==='close')h.access.close();
+      }}});
+      if(mode==='policy')h.control.boundaryEdit=b=>{b.bucketIam.bindings[0].members.push('serviceAccount:synthetic-new-reader');};
+      const result=await h.access.verifyRegisteredCanary();assert.equal(result.status,'blocked');
+      assert.ok(h.events.includes('close'));assert.throws(()=>post(h.access),/SESSION_CLOSED/);
+      await assert.rejects(h.access.verifyRegisteredCanary(),/SESSION_CLOSED/);
+      await assert.rejects(h.access.refreshPreflight(),/SESSION_CLOSED/);
+      assert.equal(h.events.includes('financial-POST'),false);assert.equal(h.events.includes('canary-POST'),false);
+    });
+  });
+  await scenario('existing canary on original create closes the session without writing or falling back to adoption',async()=>{
+    const h=await harness(),result=await h.access.createCanary();assert.equal(result.code,'CANARY_EXISTS');
+    assert.equal(result.status,'blocked');assert.equal(h.events.includes('canary-POST'),false);
+    await assert.rejects(h.access.verifyRegisteredCanary(),/SESSION_CLOSED/);assert.throws(()=>post(h.access),/SESSION_CLOSED/);
+  });
+  await scenario('an uncertain create cannot be adopted or posted again in its closed session',async()=>{
+    const h=await harness({editHead:r=>{r.status=404;}}),result=await h.access.createCanary();
+    assert.equal(result.status,'unknown');assert.equal(result.stage,'write');
+    assert.equal(h.events.filter(x=>x==='canary-POST').length,1);
+    await assert.rejects(h.access.verifyRegisteredCanary(),/SESSION_CLOSED/);
+    await assert.rejects(h.access.createCanary(),/SESSION_CLOSED/);assert.throws(()=>post(h.access),/SESSION_CLOSED/);
+    await assert.rejects(h.access.refreshPreflight(),/SESSION_CLOSED/);
+    assert.equal(h.events.filter(x=>x==='canary-POST').length,1);assert.equal(h.events.includes('financial-POST'),false);
+  });
+  await scenario('create and adoption consume their shared choice before the first awaited check',async()=>{
+    const h=await harness();let release,entered;const waiting=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+    h.control.holdBoundary=async()=>{entered();await waiting;};const adopting=h.access.verifyRegisteredCanary();await started;
+    await assert.rejects(h.access.createCanary(),/CANARY_CLOSED/);release();
+    assert.equal((await adopting).status,'existing-verified');assert.equal(h.events.includes('canary-POST'),false);
+    assert.equal(h.canary.calls.length,3);h.access.close();
+  });
+  await scenario('an in-flight create also excludes adoption before it reaches the existing-object check',async()=>{
+    const h=await harness();let release,entered;const waiting=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});
+    h.control.holdBoundary=async()=>{entered();await waiting;};const creating=h.access.createCanary();await started;
+    await assert.rejects(h.access.verifyRegisteredCanary(),/CANARY_CLOSED/);release();
+    assert.equal((await creating).code,'CANARY_EXISTS');assert.equal(h.events.includes('canary-POST'),false);
+    assert.deepEqual(h.canary.calls.map(x=>x.method),['HEAD']);
+  });
+  assert.equal(completedScenarios,8,'all factory scenarios must execute, including in the child fallback');
+  process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

@@ -26,7 +26,7 @@ function custom(bundle,display=bundle.html){const m=bundle.metadata;return {
   bundleMetadata:JSON.stringify(m),displaySha256:hash(display),artifactObject:m.artifactObject,
   artifactGeneration:m.artifactGeneration,artifactSha256:m.artifactSha256,receiptObject:m.receiptObject,
   receiptGeneration:m.receiptGeneration,receiptSha256:m.receiptSha256};}
-function fake({latest=false,intercept}={}){
+function fake({latest=false,intercept,wireProfile}={}){
   const records=new Map(),heads=new Map(),calls=[],bundle=fixture();let generation=100;
   const add=(name,gen,bytes,latestMetadata)=>{
     const metadata={bucket:LATEST_TARGET.bucket,name,generation:gen,size:String(bytes.length),
@@ -71,7 +71,8 @@ function fake({latest=false,intercept}={}){
     return u.searchParams.get('alt')==='media'?new Response(record.bytes,{headers:mediaHeaders(record)}):jsonResponse(record.metadata);
   };
   function mediaHeaders(record){const m=record.metadata;return {'x-goog-generation':m.generation,'content-length':m.size,
-    'content-type':m.contentType,...(m.contentDisposition?{'content-disposition':m.contentDisposition}:{}),...(m.cacheControl?{'cache-control':m.cacheControl}:{})};}
+    'content-type':m.contentType,...(m.contentDisposition?{'content-disposition':m.contentDisposition}:{}),...(m.cacheControl?{'cache-control':m.cacheControl}:{}),
+    ...(wireProfile&&m.name===LATEST_TARGET.object?{'content-type':wireProfile.contentType,'content-disposition':wireProfile.contentDisposition,'cache-control':wireProfile.cacheControl}:{})};}
   return {request,records,heads,calls,bundle,add,store:createOwnerLatestStore({request})};
 }
 
@@ -335,4 +336,80 @@ test('normal weekday publisher replaces verified accepted preview using actual g
   assert.equal(new URL(posts[0].url).searchParams.get('ifGenerationMatch'),actualGeneration);
   const current=await f.store.readLatest();assert.equal(Object.hasOwn(current,'kind'),false);
   assert.deepEqual(current.bundle.metadata,next.metadata);
+});
+
+const observedJsonMedia={contentType:'text/html; charset=utf-8',contentDisposition:'attachment',cacheControl:'no-cache, no-store, max-age=0, must-revalidate'};
+test('observed JSON API HEAD and media profile reads unchanged stored daily metadata and original bundles',async()=>{
+  const f=fake({latest:true,wireProfile:observedJsonMedia}),current=await f.store.readLatest();
+  assert.equal(current.generation,'7');assert.deepEqual(current.bundle.metadata,f.bundle.metadata);
+  assert.deepEqual(current.bundle.html,f.bundle.html);assert.deepEqual(current.bundle.receipt,f.bundle.receipt);
+  const stored=f.records.get(LATEST_TARGET.object+'@7').metadata;
+  assert.equal(stored.contentDisposition,LATEST_HEADERS.contentDisposition);assert.equal(stored.cacheControl,LATEST_HEADERS.cacheControl);
+  assert.equal(f.calls.filter(c=>c.options.method==='POST').length,0);
+});
+test('new daily write uses original private inline metadata and independently verifies observed wire profile',async()=>{
+  const f=fake({wireProfile:observedJsonMedia});
+  const publisher=createOwnerLatestPublisher({io:f.store,ownerBinding:OWNER,now:()=>NOW,prepareDisplay:bytes=>new Uint8Array(bytes),
+    verifyProtectedReceipt:({metadata:m})=>({scope:m.scope,ownerBinding:m.ownerBinding,sourceIdentitySha256:m.sourceIdentitySha256,
+      artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,policyRevision:'c'.repeat(64),financialStatus:m.financialStatus})});
+  const result=await publisher.publish(f.bundle);assert.equal(result.status,'published-verified');
+  assert.deepEqual(f.calls.map(c=>c.options.method),['HEAD','POST','GET','GET']);
+  const stored=f.records.get(LATEST_TARGET.object+'@'+result.generation).metadata;
+  assert.equal(stored.contentType,LATEST_HEADERS.contentType);assert.equal(stored.contentDisposition,'inline');
+  assert.equal(stored.cacheControl,'private, no-store, max-age=0');assert.equal(f.calls.filter(c=>c.options.method==='POST').length,1);
+});
+test('accepted-preview create and historical read share observed wire validation without changing CAS0 or stored attributes',async()=>{
+  const f=fake({wireProfile:observedJsonMedia}),bytes=previewDisplay(),metadata=previewMetadata();
+  const ack=await f.store.createAcceptedPreview({bytes,metadata});
+  assert.deepEqual(await f.store.readLatestGeneration({generation:ack.generation,sha256:hash(bytes),metadata:{...metadata,displaySha256:hash(bytes)}}),bytes);
+  const current=await f.store.readLatest();assert.equal(current.kind,'accepted-preview');assert.deepEqual(current.preview.metadata,metadata);
+  const posts=f.calls.filter(c=>c.options.method==='POST');assert.equal(posts.length,1);
+  assert.equal(new URL(posts[0].url).searchParams.get('ifGenerationMatch'),'0');
+  await assert.rejects(f.store.createAcceptedPreview({bytes,metadata}),/PREVIEW_CREATE_CLOSED/);
+});
+test('observed response allowance never applies to stored object metadata or upload ACK properties',async()=>{
+  for(const edit of [m=>{m.contentDisposition='attachment';},m=>{m.cacheControl=observedJsonMedia.cacheControl;},m=>{m.cacheControl='public';},m=>{m.contentType='text/html';}]){
+    const f=fake({latest:true,wireProfile:observedJsonMedia});edit(f.records.get(LATEST_TARGET.object+'@7').metadata);
+    await assert.rejects(f.store.readLatest(),/LATEST_HEADERS_INVALID/);assert.equal(f.calls.length,2);
+  }
+  const f=fake({intercept:({options},{bundle})=>options.method==='POST'
+    ?jsonResponse({bucket:LATEST_TARGET.bucket,name:LATEST_TARGET.object,generation:'8',size:String(bundle.html.length),
+      ...observedJsonMedia,metadata:custom(bundle)}):undefined});
+  await assert.rejects(f.store.replaceLatest({ifGenerationMatch:'0',headers:LATEST_HEADERS,bytes:f.bundle.html,
+    metadata:{...f.bundle.metadata,displaySha256:hash(f.bundle.html)}}),/LATEST_HEADERS_INVALID/);
+});
+test('mixed or weaker JSON API wire profiles fail before latest content is read',async()=>{
+  for(const wireProfile of [
+    {...observedJsonMedia,contentDisposition:'inline'},
+    {...LATEST_HEADERS,contentDisposition:'attachment'},
+    {...observedJsonMedia,cacheControl:'no-cache'},
+    {...observedJsonMedia,cacheControl:'no-cache, max-age=0, must-revalidate'},
+    {...observedJsonMedia,cacheControl:'public, no-store, max-age=0'},
+    {...observedJsonMedia,cacheControl:'no-cache, no-store, must-revalidate'},
+  ]){
+    const f=fake({latest:true,wireProfile});await assert.rejects(f.store.readLatest(),/LATEST_HEADERS_INVALID/);
+    assert.deepEqual(f.calls.map(c=>c.options.method),['HEAD']);
+  }
+});
+test('observed media profile still requires identity encoding and exact generation, size, bytes and custom metadata',async t=>{
+  for(const [name,edit] of [
+    ['encoding',r=>{r.headers['content-encoding']='gzip';}],
+    ['generation',r=>{r.headers['x-goog-generation']='999';}],
+    ['size',r=>{r.headers['content-length']=String(r.bytes.length+1);}],
+    ['hash',r=>{r.bytes[0]^=1;}],
+  ])await t.test(name,async()=>{
+    const f=fake({latest:true,wireProfile:observedJsonMedia,intercept:({url,options},{records})=>{
+      if(options.method!=='GET'||new URL(url).searchParams.get('alt')!=='media')return;
+      const stored=records.get(LATEST_TARGET.object+'@7'),response={bytes:new Uint8Array(stored.bytes),headers:{
+        'x-goog-generation':'7','content-length':String(stored.bytes.length),'content-type':observedJsonMedia.contentType,
+        'content-disposition':observedJsonMedia.contentDisposition,'cache-control':observedJsonMedia.cacheControl}};
+      edit(response);return new Response(response.bytes,{headers:response.headers});
+    }});
+    await assert.rejects(f.store.readLatestGeneration({generation:'7',sha256:hash(f.bundle.html),
+      metadata:{...f.bundle.metadata,displaySha256:hash(f.bundle.html)}}));
+  });
+  const f=fake({latest:true,wireProfile:observedJsonMedia});
+  f.records.get(LATEST_TARGET.object+'@7').metadata.metadata.displaySha256='f'.repeat(64);
+  await assert.rejects(f.store.readLatestGeneration({generation:'7',sha256:hash(f.bundle.html),
+    metadata:{...f.bundle.metadata,displaySha256:hash(f.bundle.html)}}),/READBACK_METADATA_MISMATCH/);
 });

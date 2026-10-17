@@ -2,7 +2,7 @@
 // controller injects its existing authorized transport; there is no credential,
 // environment, global fetch, retry, object listing or arbitrary URL fallback.
 import {LATEST_TARGET,LATEST_HEADERS,MAX_BYTES,MAX_RECEIPT_BYTES,sha256,
-  ACCEPTED_PREVIEW_SCHEMA,validateAcceptedPreviewMetadata} from './owner_latest.mjs';
+  ACCEPTED_PREVIEW_SCHEMA,validateAcceptedPreviewMetadata,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 
 export const MAX_METADATA_BYTES=16*1024,MAX_SOURCE_BYTES=8*1024*1024;
@@ -78,10 +78,14 @@ function latestHeaders(value){
   if(value.contentType!==LATEST_HEADERS.contentType||value.contentDisposition!==LATEST_HEADERS.contentDisposition
     ||value.cacheControl!==LATEST_HEADERS.cacheControl)fail('LATEST_HEADERS_INVALID');
 }
+function latestResponseHeaders(response){
+  if(!ownerJsonMediaHeadersMatch({contentType:response.headers.get('content-type'),
+    contentDisposition:response.headers.get('content-disposition'),cacheControl:response.headers.get('cache-control')}))fail('LATEST_HEADERS_INVALID');
+}
 function mediaHeaders(response,{generation,size,latest=false}){
   if(response.headers.get('x-goog-generation')!==generation||lengthHeader(response,latest?MAX_BYTES:MAX_SOURCE_BYTES,{required:true})!==size)
     fail('MEDIA_BINDING_INVALID');
-  if(latest)latestHeaders({contentType:response.headers.get('content-type'),contentDisposition:response.headers.get('content-disposition'),cacheControl:response.headers.get('cache-control')});
+  if(latest)latestResponseHeaders(response);
 }
 function objectMetadata(value,{name,generation,max,latest=false}){
   if(!obj(value)||value.bucket!==LATEST_TARGET.bucket||value.name!==name||!gen(value.generation)
@@ -246,7 +250,7 @@ export function createOwnerLatestStore({request}={}){
       const generation=response.headers.get('x-goog-generation');
       if(!gen(generation))fail('LATEST_GENERATION_REQUIRED');
       const size=lengthHeader(response,MAX_BYTES,{required:true});
-      latestHeaders({contentType:response.headers.get('content-type'),contentDisposition:response.headers.get('content-disposition'),cacheControl:response.headers.get('cache-control')});
+      latestResponseHeaders(response);
       const m=await getMetadata(LATEST_TARGET.object,generation,MAX_BYTES,signal,{latest:true});
       if(m.size!==size)fail('LATEST_SIZE_MISMATCH');
       const custom=parseCustom(m.metadata);

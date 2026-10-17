@@ -178,7 +178,58 @@ designated `delivery/owner-phone-canary-v1.html` and a strict nonfinancial
 template containing a fresh UUID, real creation time and registered candidate
 hash. It cannot accept arbitrary HTML, financial values or extra metadata.
 The immutable canary is independently read back at the acknowledged generation.
-Any existing canary stops; it is not overwritten or silently reused.
+The creation entry stops for any existing canary; it is not overwritten or
+silently reused.
+
+### Stored attributes, API responses and actual browser display
+
+These are separate checks. Stored object metadata and upload-ACK resource
+attributes still require UTF-8 HTML, `Content-Disposition: inline` and
+`Cache-Control: private, no-store, max-age=0`. The fixed authenticated JSON API
+HEAD/media response may instead use the complete observed representation:
+`attachment` with `no-cache, no-store, max-age=0, must-revalidate`. Only these
+two complete response profiles are accepted; their fields cannot be mixed.
+Missing `no-store`, bare `no-cache`, public caching, positive TTLs, unknown
+profiles, encoding, generation/length or byte-hash mismatches still fail.
+
+Google documents that nonpublic JSON API responses use `no-cache` regardless
+of stored metadata; that alone is insufficient for this workflow's no-store
+requirement. The additional observed response directives remain mandatory in
+the second profile. See [JSON API Cache-Control](https://docs.cloud.google.com/storage/docs/json_api/v1/parameters#cache-control).
+An API `attachment` response is not a browser-display result. The cookie-based
+`storage.cloud.google.com` entry uses a separate authenticated browser endpoint;
+it must actually render and be inspected in the existing user browser. The
+October 17 Mac Chrome check did render the canary inline and match its fields,
+but did not expose the specific Google principal, raw byte hash, HTTP status,
+or phone acceptance. None of those missing facts are inferred from it.
+
+Both upload types explicitly request `Accept-Encoding: identity` at the trusted
+transport boundary. Compressed responses remain rejected rather than silently
+decompressed. Canary failures report a bounded stage and symbolic reason;
+unknown writes remain closed and are never retried.
+
+### Explicit read-only use of the one registered existing canary
+
+The original unknown session is closed. `verifyRegisteredCanary()` is a distinct,
+argument-free, read-only entry, bound to the one protected pin in
+`security/xuan-owner-registered-canary.json`. That file is included in committed
+source-byte checks; it grants neither IAM nor caller-asserted browser approval.
+After the real original-actor/full-IAM preflight, the new session must read the
+registered generation's metadata and exact nonfinancial bytes from GCS and
+then confirm that the unversioned entry still has that generation. UUID,
+original creation time, candidate hash, body hash, size and stored metadata are
+checked. The existing canary is not relabelled as freshly created or rewritten.
+
+Create and registered verification share a one-shot choice consumed before the
+first await. Failure closes the session; there is no fallback, caller pin,
+saved-receipt override or revival of the previous unknown write. Successful
+verification returns `existing-verified`, not `published-verified`, and does
+not mint a financial POST admission. Actual user-browser inspection remains a
+separate executor step. The same new session must then refresh the original
+actor/IAM checks, re-read the canary and current generation before its short
+single-use financial admission. The financial target remains first-create
+CAS0 only, followed by independent pinned readback and actual final-page UI
+acceptance. Google principal visibility and device limits remain explicit.
 
 `owner_preview_access.mjs` constructs the production capability from this actual
 SDK transport after protected-checkout admission. It reads the protected
