@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.22">
+<meta name="fee-console-build" content="4.9.23">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -161,6 +161,9 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 .history-tools{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:2px 0 8px}
 .history-tools label{font-size:12px;color:var(--ink-2)}
 .history-tools select{width:auto;min-width:112px;min-height:44px;padding:8px 30px 8px 10px}
+.month-returns{max-height:28rem;overflow:auto;margin:4px 0 10px;border:1px solid var(--border);border-radius:8px}
+.month-returns table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:0;font-size:12px;font-variant-numeric:tabular-nums}
+.month-returns th,.month-returns td{padding:10px 5px;border-bottom:1px solid var(--grid);text-align:right;overflow-wrap:anywhere}.month-returns th:first-child{width:31%;text-align:left}.month-returns thead th{position:sticky;top:0;background:var(--surface-1);font-weight:600;color:var(--ink-2);z-index:1}.month-returns tbody th{font-weight:500}.month-returns td{font-weight:600}.month-returns small{display:block;font-size:10px;color:var(--ink-muted);font-weight:400}.month-returns tr[aria-current]{background:var(--lockbg)}.month-returns tbody tr:last-child>*{border-bottom:0}
 .receipt-pending{min-height:52px;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--ink-muted);font-size:13px}
 .ledger-bar{border:1px solid var(--border);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:13px}.ledger-bar .row{margin-top:8px}.ledger-bar button{min-height:44px}.ledger-diff{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}.ledger-diff th,.ledger-diff td{padding:8px 5px;border-bottom:1px solid var(--grid);text-align:left;overflow-wrap:anywhere}.ledger-reason{margin:12px 0}.ledger-reason input{min-height:44px}.ledger-review-note{font-size:12px;color:var(--ink-2);line-height:1.6}
 @media(max-width:430px){.trend-note,.month-summary{font-size:11px}.month-grid{grid-template-columns:1fr}.month-grid .wide{grid-column:auto}}
@@ -946,7 +949,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.22";
+const UI_VERSION_LABEL=" · v4.9.23";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2229,6 +2232,10 @@ function renderChart3(feeView,st){
       const S=[{v:x.rG,col:"var(--series-1)"}].concat(BB.map(b2=>({v:x.rB?x.rB[b2.k]:null,col:b2.col})));      return S.map((sr,si)=>bar(sr.v,(si-(NS-1)/2)*bw*1.12,sr.col)).join("")+      `<text x="${cx.toFixed(1)}" y="${h-10}" text-anchor="middle" font-size="11" fill="var(--ink-muted)">${Number(x.ym.slice(5))}月${x.inProgress?"*":""}</text>`;}).join("")}
   </svg>${st.benchmarkPending?`<p class="small" style="margin:6px 0 0">${esc(benchmarkPendingText(feeView,st))}。</p>`:""}`;}
 let _monthHistoryYm="";
+function monthlyReturnsTable(model){
+  const cell=value=>typeof value==="number"&&Number.isFinite(value)?`<td class="${sgn(value)}">${pct(value)}</td>`:'<td><span class="small">缺失</span></td>';
+  return `<div class="month-returns" role="region" aria-label="月度收益率比较，全部历史，新到旧" tabindex="0"><table aria-label="组合毛 TWR、SPY 和 QQQ 税后含息 TWR 月度比较"><thead><tr><th scope="col">月份</th><th scope="col">组合毛<br>TWR</th><th scope="col">S&amp;P 500<br>SPY<small>税后含息 TWR</small></th><th scope="col" aria-label="纳斯达克100，QQQ，税后含息 TWR">纳指100<br>QQQ<small>税后含息 TWR</small></th></tr></thead><tbody>${model.months.map(row=>`<tr${row.ym===model.selectedYm?' aria-current="true"':""}><th scope="row">${ymLabel(row.ym)}<small>${esc(row.from.slice(5))} 起<br>${row.inProgress?"月截至":"截至"} ${esc(row.to.slice(5))}</small></th>${cell(row.rG)}${cell(row.rB?.spy)}${cell(row.rB?.qqq)}</tr>`).join("")}</tbody></table></div>`;
+}
 function renderMonths(feeView,st){
   const box=document.getElementById("monthsBox");
   if(feeView.state!=="verified"){box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
@@ -2238,7 +2245,7 @@ function renderMonths(feeView,st){
   const monthVerifiedClosures=(st.verifiedClosures||[]).filter(date=>date.slice(0,7)===r.ym);
   box.innerHTML=`<div class="history-tools"><label for="monthHistoryMonth">月份</label><select id="monthHistoryMonth" aria-label="选择月份，全部历史均保留">${model.months.map(row=>`<option value="${row.ym}"${row.ym===r.ym?" selected":""}>${ymLabel(row.ym)}</option>`).join("")}</select><span class="badge ${r.inProgress?"est":r.excess>0?"ok":r.cum<r.hwm?"hwm":""}">${status}</span></div>
     <div class="month-totals" aria-live="polite"><span>毛收益<b class="${sgn(r.pnl)}">${usd(r.pnl,0)}</b></span><span>费用<b>${usd(r.fees,0)}</b></span><span>净收益<b class="${sgn(net)}">${usd(net,0)}</b></span></div>${feeView.status.provisional?`<div class="small" style="margin:0 0 6px">本回执含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}${feeView.status.provisionalCodes?.includes("owner-notification-cash-date")?"按用户选择的到账通知日记账；券商实际入账日待核。扣减栏含预扣税及代收费，属于投资跟踪口径。":""}</div>`:""}
-    <details class="month-detail" id="monthCalculation" data-ym="${r.ym}"${open?" open":""}><summary>计算及组成 <span class="month-summary">${r.from} → ${r.to}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt)}</b></span><span>Carry <b>${usd(r.carry)}</b></span><span>组合毛 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)}${st.benchmarkPending?`（截至 ${st.benchAsOf}）`:""} <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}${monthVerifiedClosures.length?`<span class="wide">基准已核验休市 <b>${monthVerifiedClosures.join("、")}</b></span>`:""}</div><div class="hint" style="margin-top:8px">管理费：逐日收盘总资产扣除当日外部出入金及已核验获授权赠股的免收费市值（如有），按年费率 ${feeView.managementRatePpm/10000}% ÷ 365 累加。<br>Carry：累计毛收益超过历史高水位的部分 × ${feeView.carryRatePpm/10000}%；亏损先补齐。<br>净收益＝毛收益－管理费－Carry；以上读取已验证计算回执。</div></div></details>`;
+    ${monthlyReturnsTable(model)}<details class="month-detail" id="monthCalculation" data-ym="${r.ym}"${open?" open":""}><summary>计算及组成 <span class="month-summary">${r.from} → ${r.to}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt)}</b></span><span>Carry <b>${usd(r.carry)}</b></span><span>组合毛 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)}（${r.from} → ${r.to}） <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}${monthVerifiedClosures.length?`<span class="wide">基准已核验休市 <b>${monthVerifiedClosures.join("、")}</b></span>`:""}</div></div></details>`;
 }
 function renderBal(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
