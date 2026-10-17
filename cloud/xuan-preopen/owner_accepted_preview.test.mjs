@@ -6,9 +6,10 @@ import crypto from 'node:crypto';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport,NIGHT_ACTION_MARKER} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
+import {readAiRiskAccounts} from '../../scripts/xuan-ib-ai-coefficient-resolver.mjs';
 import {SNAPSHOT_SCOPES,digest} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
-import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
+import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay} from './owner_latest_admission.mjs';
 import {OWNER_SCOPE,LATEST_TARGET,DEADLINE_MS} from './owner_latest.mjs';
 import {createOwnerPreflightLease,FINANCIAL_ADMISSION_TTL_MS,FULL_PREFLIGHT_TTL_MS} from './owner_preview_access.mjs';
 import {acceptedPreviewRegistrationText,buildAcceptedPreviewMetadata,renderAcceptedPreviewDisplay,
@@ -26,7 +27,7 @@ function snapshot(key,readAt){
   return {sourceKey:key,status:'date-verified',raw,rawFingerprint:digest(raw),completion:null,
     provenance:{sourceDate:'2026-10-16',readAt,syncCompletedAt:null,snapshotGeneration:null,receiptSha256:null}};
 }
-function fixture(){
+function fixture({concentrationInput=null,completedAt=DONE}={}){
   const sources=[['ib.accountSummary',START,'2026-10-17T06:00:10.000Z'],['ib.positions','2026-10-17T06:00:01.000Z','2026-10-17T06:00:12.000Z'],['ib.orders',ORDER_START,ORDER_END],
     ['sharesight.ibGroupedPerformance','2026-10-17T06:01:00.000Z','2026-10-17T06:01:30.000Z'],['sharesight.noahPerformance','2026-10-17T06:01:01.000Z',END]]
     .map(([sourceKey,startedAt,completedAt])=>({sourceKey,startedAt,completedAt,sha256:hash(encode('SYNTHETIC '+sourceKey)),
@@ -39,11 +40,11 @@ function fixture(){
   const outcomes=[{sourceKey:'ib.flexEod',status:'not-called',rawFingerprint:null},...snapshots.map(s=>({sourceKey:s.sourceKey,status:s.status,rawFingerprint:s.rawFingerprint})),{sourceKey:'ib.optionalLive',status:'captured',rawFingerprint:digest(live)}];
   const call=resolveCurrentCall({schemaVersion:1,purpose:'xuan-etf-owner-declared-pending-calls',entries:[{date:'2026-09-01',usd:100}]},'2026-10-17');
   const model=buildEodActionModel({fieldMode:true,dataDate:'2026-10-17',sourceDate:'2026-10-16',asOfHkt:'2026-10-17 14:00–14:02 HKT · 数据至 2026-10-16',
-    snapshots,live,reserve:call.amountUsd,callRecord:call,sourceOutcomes:outcomes,captureStartedAt:START,captureCompletedAt:END});
+    snapshots,live,reserve:call.amountUsd,callRecord:call,sourceOutcomes:outcomes,captureStartedAt:START,captureCompletedAt:END,concentrationInput});
   model.sourceManifestSha256=digest(sources);model.evidenceSha256=digest({sourceOutcomes:model.sourceOutcomes,sourceManifestSha256:model.sourceManifestSha256});
   const html=encode(renderNightActionReport(model)),modelBytes=encode(JSON.stringify(model,null,2)+'\n'),manifestBytes=encode(JSON.stringify(manifest,null,2)+'\n');
   const registration={schema:'xuan.owner-accepted-preview-registration.v1',registrationId:'synthetic-saturday-preview',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,
-    dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:START,captureEndedAt:END,completedAt:DONE,ordersCaptureStartedAt:ORDER_START,ordersCaptureEndedAt:ORDER_END,
+    dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:START,captureEndedAt:END,completedAt,ordersCaptureStartedAt:ORDER_START,ordersCaptureEndedAt:ORDER_END,
     sourceHead:manifest.sourceHead,artifactSha256:hash(html),modelSha256:hash(modelBytes),sourceManifestSha256:hash(manifestBytes),sourceManifestContentSha256:digest(sources),displaySha256:'0'.repeat(64),financialStatus:'partial',unknownFields:['cash','orders','prices']};
   const displayBytes=renderAcceptedPreviewDisplay(html,{registration});registration.displaySha256=hash(displayBytes);
   const f={model,html,modelBytes,manifest,manifestBytes,registration,displayBytes};refreshMetadata(f);return f;
@@ -65,6 +66,52 @@ test('exact synthetic local artifacts produce only static visible facts; the ful
   assert.ok(text.includes('2026-10-17 周六验收稿'));assert.ok(text.includes('市场数据日：2026-10-16'));
   assert.ok(text.includes('真实采集：14:00:00.000–14:02:00.000 HKT'));assert.ok(text.includes('挂单读取：14:00:02.000–14:00:15.000 HKT'));
   assert.ok(text.includes('USD·推定'));assert.ok(text.includes('重新打开不会更新取值'));assert.equal(f.model.cash.planning,null);
+});
+test('accepted first screen uses the actual orders snapshot minute; exact provenance and generation time stay folded',()=>{
+  const outputs=[];
+  for(const completedAt of [DONE,'2026-10-17T06:30:00.000Z']){
+    const f=fixture({completedAt}),staticStage=prepareOwnerStaticDisplay(f.html);
+    assert.ok(staticStage.length>0);
+    const canonical=decode(f.html);
+    assert.match(canonical,/<details><summary>口径与来源<\/summary>[\s\S]*挂单读取：14:00:02.000–14:00:15.000 HKT/);
+    const display=renderAcceptedPreviewDisplay(f.html,{registration:f.registration});
+    assert.deepEqual(prepareAcceptedPreviewDisplay(f.html,{modelBytes:f.modelBytes,manifestBytes:f.manifestBytes,registration:f.registration}),display);
+    const text=decode(display),notice=text.match(/<aside class="notes" id="accepted-preview-notice"[\s\S]*?<\/aside>/)?.[0];
+    assert.ok(notice);const visible=notice.replace(/<details>[\s\S]*?<\/details>/g,'');
+    assert.match(visible,/市场数据日：2026-10-16；挂单快照：14:00 HKT/);
+    assert.match(visible,/周六参考 · 非实时/);
+    assert.doesNotMatch(visible,/真实采集|挂单读取|原稿生成|\d\d:\d\d:\d\d/);
+    assert.match(notice,/<details><summary>采集与生成时间<\/summary>[\s\S]*真实采集：14:00:00.000–14:02:00.000 HKT；挂单读取：14:00:02.000–14:00:15.000 HKT/);
+    assert.ok(notice.includes(`原稿生成：${completedAt.includes('06:30')?'14:30:00.000':'14:03:00.000'} HKT`));
+    assert.match(text,/<h1>XUAN · 行动版 · 私有预览 · 周六参考<\/h1>/);
+    outputs.push(visible);
+  }
+  assert.equal(outputs[0],outputs[1]);
+});
+test('concentration-enabled five-card report passes the unchanged pure accepted static export without source links or private identifiers',()=>{
+  const sourceKeys=['sharesight.ibGroupedPerformance','sharesight.schwabPerformance','sharesight.webullPerformance'];
+  const sources=readAiRiskAccounts().map((account,index)=>{
+    const id=Number(account.portfolioId);
+    const rows=index===0?[['NVDA',80,9900001,9000001,'ordinary_shares'],['CSPX',400,9900002,1310832,'etf'],['VSTL',30,29282953,9000003,'etf']]:[];
+    const holdings=rows.map(([code,value,holdingId,instrumentId,type])=>({id:holdingId,portfolio:{id},quantity:1,instrument_price:value,value,labels:[],instrument_currency:{code:'USD'},
+      instrument:{id:instrumentId,code,name:'Synthetic instrument',market_code:'TEST',currency_code:'USD',friendly_instrument_description_code:type}}));
+    const raw={ok:true,mode:'read_only',route:'gateway',portfolio:{id,name:account.custodian,currency_code:'USD'},data:{report:{portfolio_id:id,value:1000,start_date:'2026-10-16',end_date:'2026-10-16',include_sales:false,percentages_annualised:false,currency:{code:'USD'},holdings,
+      cash_accounts:[{id:8800000+index,name:'Synthetic cash',value:1000-rows.reduce((sum,row)=>sum+row[1],0),currency:{code:'USD'}}]}}};
+    const bytes=JSON.stringify(raw);return {bytes,receipt:{sourceKey:sourceKeys[index],route:'gateway',status:'date-verified',sourceDate:'2026-10-16',startedAt:START,completedAt:END,sha256:hash(bytes),bytes:Buffer.byteLength(bytes)}};
+  });
+  const f=fixture({concentrationInput:{sources,cutoff:'2026-10-16'}}),staticStage=prepareOwnerStaticDisplay(f.html);
+  assert.equal(f.model.concentration.status,'recorded');assert.ok(staticStage.length>0);
+  const direct=renderAcceptedPreviewDisplay(f.html,{registration:f.registration});
+  const bound=prepareAcceptedPreviewDisplay(f.html,{modelBytes:f.modelBytes,manifestBytes:f.manifestBytes,registration:f.registration});
+  assert.deepEqual(bound,direct);assert.deepEqual(bound,f.displayBytes);
+  const text=decode(bound);assert.equal((text.match(/<h2>/g)||[]).length,5);
+  for(const title of ['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置','单票集中度'])assert.ok(text.includes(title));
+  for(const label of ['发行方目标','发行方资料','发行方前十'])assert.ok(text.includes(`<span class="concentration-source-label">${label}</span>`));
+  assert.match(text,/原生挂单未返回币种或合约标识/);assert.match(text,/覆盖未核实|全部覆盖未核实/);assert.match(text,/USD·推定/);
+  assert.equal(f.model.cash.planning,null);assert.equal(f.model.cash.orderReserve,null);
+  assert.doesNotMatch(text,/<a\b|(?:href|src)\s*=|<script\b|<iframe\b|\son[a-z]+\s*=|portfolio_?id|account_?id|order_?id|contract_?id/i);
+  assert.ok(!text.includes(NIGHT_ACTION_MARKER));assert.ok(!text.includes(Buffer.from(JSON.stringify(f.model)).toString('base64url')));
+  for(const account of readAiRiskAccounts())assert.ok(!text.includes(account.portfolioId));
 });
 test('local input bytes and protected registration are exact; alternate files or financial registry fields do not confer admission',()=>{
   for(const kind of ['html','model','manifest','display-hash','scope','financial-field']){

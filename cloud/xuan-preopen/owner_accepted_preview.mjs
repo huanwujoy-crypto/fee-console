@@ -111,7 +111,7 @@ export function renderAcceptedPreviewDisplay(originalHtmlBytes,{registration}={}
   if((display.match(/<\/article>/g)||[]).length!==orderCount)fail('STATIC_ORDER_SHAPE');
   display=display.replaceAll('</article>','<small class="local-order-evidence">币种及价差按同名持仓推定，原生挂单未返回币种或合约标识；未验证同一合约。</small></article>');
   display=display.replace('</head>','<style>.local-order-evidence{display:block;font-size:10px;color:#6b7280;line-height:1.4;margin-top:5px}</style></head>');
-  const notice=`<aside class="notes" id="accepted-preview-notice" role="note"><strong>${r.dataDate} 周六验收稿 · 保存的私有参考</strong><p>市场数据日：${r.sourceDate}。真实采集：${hktTime(r.captureStartedAt)}–${hktTime(r.captureEndedAt)} HKT；挂单读取：${hktTime(r.ordersCaptureStartedAt)}–${hktTime(r.ordersCaptureEndedAt)} HKT；原稿生成：${hktTime(r.completedAt)} HKT。</p><p>周末验收，不代表当日开市、当前实时数据、正式工作日报告或同步完成。重新打开不会更新取值；覆盖、原生币种和相关预算仍按原稿保留缺项。</p></aside>`;
+  const notice=`<aside class="notes" id="accepted-preview-notice" role="note"><strong>${r.dataDate} 周六验收稿 · 保存的私有参考</strong><p>市场数据日：${r.sourceDate}；挂单快照：${hkt(r.ordersCaptureEndedAt).slice(11,16)} HKT。</p><p>周六参考 · 非实时。重新打开不会更新取值；覆盖、原生币种和相关预算仍按原稿保留缺项。</p><details><summary>采集与生成时间</summary><p>真实采集：${hktTime(r.captureStartedAt)}–${hktTime(r.captureEndedAt)} HKT；挂单读取：${hktTime(r.ordersCaptureStartedAt)}–${hktTime(r.ordersCaptureEndedAt)} HKT；原稿生成：${hktTime(r.completedAt)} HKT。</p><p>周末验收，不代表当日开市、正式工作日报告或同步完成。挂单快照使用读取完成时间；原稿生成时间不是数据时间。</p></details></aside>`;
   display=display.replace('</header>','</header>'+notice);
   staticDisplayBinding(display,r);return new TextEncoder().encode(display);
 }

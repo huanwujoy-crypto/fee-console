@@ -1,0 +1,99 @@
+{
+  "schemaVersion": 1,
+  "status": "verified_official_issuer_identity",
+  "marketDate": "2026-10-16",
+  "proposedDirectAliases": {
+    "SU": "SUNCOR"
+  },
+  "proposedDisplayNames": {
+    "SUNCOR": "Suncor Energy Inc"
+  },
+  "issuerLegalName": "Suncor Energy Inc.",
+  "ticker": "SU",
+  "stockExchanges": [
+    "Toronto Stock Exchange",
+    "New York Stock Exchange"
+  ],
+  "securityType": "common shares",
+  "sources": [
+    {
+      "url": "https://www.suncor.com/-/media/project/suncor/files/news-releases/2026/2026-10-04-suncor-to-divest-non-core-offshore-assets-and-increase-shareholder-returns-en.pdf?created=20261004200154&modified=20261004200305",
+      "title": "Suncor to divest non-core offshore assets and increase shareholder returns",
+      "publicationDate": "2026-10-04",
+      "page": 1,
+      "sourceLocator": "Original issuer PDF page 1, first paragraph, web extraction line 10",
+      "exactQuote": "Suncor Energy (TSX: SU) (NYSE: SU)",
+      "quoteWordCount": 6,
+      "archive": "web-exact-ticker-evidence.txt",
+      "archiveSha256": "001b1b52dae1723a403a362bffb0f1ceef44c681806ac799c19703804b5a7c22",
+      "archiveType": "Exact web reader response of issuer PDF; not original PDF bytes",
+      "originalPdfSha256": null
+    },
+    {
+      "url": "https://www.suncor.com/-/media/project/suncor/files/news-releases/2026/2026-08-04-news-release-suncor-energy-declares-dividend-en.pdf?created=20260804194251&modified=20260804205343",
+      "title": "Suncor Energy declares dividend",
+      "publicationDate": "2026-08-04",
+      "page": 1,
+      "sourceLocator": "Original issuer PDF page 1, common-shares paragraph, web extraction line 11",
+      "exactQuote": "Suncor’s common shares (symbol: SU) are listed on the Toronto and New York stock exchanges.",
+      "quoteWordCount": 15,
+      "archive": "web-exact-ticker-evidence.txt",
+      "archiveSha256": "001b1b52dae1723a403a362bffb0f1ceef44c681806ac799c19703804b5a7c22",
+      "archiveType": "Exact web reader response of issuer PDF; not original PDF bytes",
+      "originalPdfSha256": null
+    },
+    {
+      "url": "https://www.suncor.com/en-ca/news-and-stories/news-releases",
+      "title": "News releases | Suncor",
+      "publicationDate": null,
+      "sourceLocator": "Official corporate site footer, web extraction line 697",
+      "exactQuote": "© Suncor Energy Inc. 2026. All Rights Reserved.",
+      "quoteWordCount": 8,
+      "additionalTickerLocators": [
+        "web extraction lines 78 and 83: Symbol:TSX:SU and Symbol:NYSE:SU"
+      ],
+      "archive": "web-primary-source-response.txt",
+      "archiveSha256": "171fb5234578f532e734305a75377dd2a577660193378d03509aac4d88ededf8",
+      "archiveType": "Exact web reader response of issuer HTML; not original HTML bytes",
+      "originalHtmlSha256": null
+    }
+  ],
+  "identityCrosswalk": {
+    "vcnEvidenceSha256": "eee4e0b64d04a634f063d34a8007d8bcb88a65d724b4e684252781ecb2127bce",
+    "vcnOriginalHtmlSha256": "476e4a3dc4ca1dc80a1fb43622c9fd145b8fc49e7c3b5497021923787cba6efe",
+    "vcnHoldingsAsOf": "2026-09-30",
+    "vcnHoldingNameAsPrinted": "Suncor Energy Inc",
+    "vcnRank": 10,
+    "vcnRawWeightPct": "2.30904",
+    "vcnFloorWeightUnits": 230,
+    "reasoning": "The Vanguard equity holdings table names Suncor Energy Inc. The Suncor corporate site identifies its legal name as Suncor Energy Inc., and its dated official releases explicitly identify SU common shares on TSX and NYSE. Therefore direct Suncor common-share symbol SU and the VCN Suncor Energy Inc holding should share the existing canonical issuer key SUNCOR. Inc punctuation is normalized at issuer-name level; no individual-security ISIN/CUSIP is guessed.",
+    "sameIssuerConclusion": true,
+    "securityIdentifierClaimed": false,
+    "vcnEvidenceArtifact": "VCN/evidence.json",
+    "vcnOriginalHtmlArtifact": "VCN/product.html"
+  },
+  "safeIdentitySuggestion": {
+    "operation": "Add only the directAliases entry SU -> SUNCOR in the candidate policy after review.",
+    "doNotChangeEtfWeightFromThisAliasEvidence": true,
+    "consolidationLevel": "issuer",
+    "scope": "SU common equity of Suncor Energy on TSX or NYSE",
+    "noPortfolioOrPositionLookupRequired": true,
+    "noMissingExposureSubstitution": true
+  },
+  "archiveLimitation": {
+    "status": "raw_original_download_denied_by_issuer_http_403",
+    "outcome": "known_not_downloaded",
+    "webReaderStatus": "Official issuer PDF and HTML content successfully read; exact returned text response saved with hashes.",
+    "notAnAutomaticApprovalReviewDenial": true,
+    "originalSourceByteHashesAvailable": false,
+    "attemptLogs": [
+      "download-metadata.json",
+      "download-metadata-second-attempt.json"
+    ],
+    "note": "Do not relabel the archived web response SHA256 as an original PDF/HTML SHA256. No further broad source search is necessary."
+  },
+  "privateFinancialSourcesAccessed": false,
+  "repositoryOrPolicyModified": false,
+  "originalIdentityEvidenceSha256": "bea8fba8df65b8708049e61c1d3b6156a25f871eb289f7e26ac93332a5bd4a0e",
+  "retrievedOn": "2026-10-17"
+}

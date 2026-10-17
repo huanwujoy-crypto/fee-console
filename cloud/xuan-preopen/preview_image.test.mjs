@@ -1,3 +1,4 @@
+import {spawnSync} from 'node:child_process';
 // All identities, credentials, repository responses and Docker results are SYNTHETIC.
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import path from 'node:path';import os from 'node:os';import crypto from 'node:crypto';
 import {execFileSync} from 'node:child_process';
@@ -29,7 +30,7 @@ test('same existing signed-head, OWNER, main/tree, repository/actor and workflow
  for(const change of [{event:'schedule'},{actorId:1},{workflowRef:'other'},{ref:'refs/heads/other'}]){const f=sourceFixture();await assert.rejects(verifyPreviewBuildSource({...event,...change},{read:f.read}));assert.equal(f.reads(),0);}
 });
 test('fixed minimal COPY closure excludes unrelated tracked/untracked credentials and private source files',()=>{
- assert.equal(PREVIEW_COPY_PATHS.length,41);assert.equal(new Set(PREVIEW_COPY_PATHS).size,41);const f=contextFixture();
+ assert.equal(PREVIEW_COPY_PATHS.length,54);assert.equal(new Set(PREVIEW_COPY_PATHS).size,54);const f=contextFixture();
  try{for(const name of ['data.json','scripts/codex-fee-credentials.mjs','.git/config','private-snapshot.json','scripts/extra-untracked.mjs']){const p=path.join(f.root,name);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,'SYNTHETIC_PRIVATE_CANARY');}
   const dir=createPreviewBuildContext(f.root,f.temp,{runGit:f.runGit});assert.deepEqual(files(dir),[...PREVIEW_COPY_PATHS].sort());assert.ok(!PREVIEW_COPY_PATHS.some(p=>/credential|private-snapshot|data\.json|\.git\//.test(p)));
  }finally{f.clean();}
@@ -87,4 +88,26 @@ test('workflow extends explicit preview build only, reuses exact existing WIF cl
  assert.ok(caller.includes('options: [report, preview]'));assert.ok(caller.includes("inputs.image_kind != 'preview'"));assert.ok(callee.includes('preview_image.mjs preflight'));assert.ok(callee.indexOf('preview_image.mjs preflight')<callee.indexOf('id: builder'));assert.ok(callee.includes('preview_image.mjs build'));assert.ok(callee.includes('DEPLOY_IMAGE: ${{ inputs.deploy_image }}'));
  for(const part of ['workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/xuan-preopen-image-builder','service_account: '+PREVIEW_BUILD.builder,'create_credentials_file: false'])assert.ok(callee.includes(part));
  const source=fs.readFileSync(new URL('./preview_image.mjs',import.meta.url),'utf8');for(const api of ['cloudbuild.googleapis.com','run.googleapis.com','secretmanager.googleapis.com','iam.googleapis.com','storage.googleapis.com'])assert.ok(!source.includes(api));assert.ok(!callee.includes('gcloud'));
+});
+
+// Real retained source bytes, with only the Git listing injected. This verifies
+// the minimal runtime context without a Docker daemon, Git checkout or network.
+// The complete committed HEAD is checked separately by the trusted archive test.
+test('minimal fixed image context imports its real entrypoint and rejects missing concentration dependencies',()=>{
+  const root=fs.realpathSync('.'),temp=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'concentration-image-closure-')));
+  const dependencies=["claude/xuan-weekly-concentration-top10-v1.json", "claude/xuan-weekly-leveraged-products-v1.json", "scripts/xuan-ib-action-concentration.mjs", "scripts/xuan-ib-ai-coefficient-resolver.mjs", "scripts/xuan-ib-ai-risk-input.mjs", "scripts/xuan-ib-ai-risk-registry.mjs", "scripts/xuan-ib-auto-classification.mjs", "scripts/xuan-ib-cash-identity.mjs", "scripts/xuan-ib-classification-audit.mjs", "scripts/xuan-ib-delegated-tier.mjs", "scripts/xuan-ib-four-bucket.mjs", "scripts/xuan-weekly-concentration.mjs", "scripts/xuan-weekly-leveraged-products.mjs"];
+  try{
+    const rows=PREVIEW_COPY_PATHS.map(file=>{const bytes=fs.readFileSync(path.join(root,file));const blob=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');return `${fs.statSync(path.join(root,file)).mode&0o111?'100755':'100644'} blob ${blob}\t${file}`;});
+    const context=createPreviewBuildContext(root,temp,{runGit:()=>rows.join('\0')+'\0'});
+    const program="globalThis.fetch=()=>{throw Error('OFFLINE_ONLY');};await import('./cloud/xuan-preopen/action_preview_once.mjs');";
+    const run=()=>spawnSync(process.execPath,['--input-type=module','-e',program],{cwd:context,encoding:'utf8',timeout:30000});
+    const complete=run();assert.equal(complete.status,0,complete.stderr);
+    for(const dependency of dependencies){
+      const file=path.join(context,dependency),bytes=fs.readFileSync(file);fs.unlinkSync(file);
+      try{const missing=run();assert.notEqual(missing.status,0,dependency);assert.ok(missing.stderr.includes(dependency),dependency);}
+      finally{fs.writeFileSync(file,bytes);}
+    }
+    const docker=fs.readFileSync(path.join(root,'cloud/xuan-preopen/ActionPreviewOnce.Dockerfile'),'utf8');
+    for(const file of dependencies.filter(p=>p.endsWith('.json')))assert.ok(docker.includes(`COPY ${file} ${file}`),file);
+  }finally{fs.rmSync(temp,{recursive:true,force:true});}
 });

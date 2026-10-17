@@ -5,6 +5,7 @@ import {ordersOf,projectOpenBuys} from './xuan-ib-night-action-model.mjs';
 import {parseSharesightCash,parseSharesightStockAllocation,STOCK_CLASS_TARGETS} from './xuan-ib-sharesight-allocation.mjs';
 import {buildEodHoldings,validateEodHoldings} from './xuan-ib-eod-holdings.mjs';
 import {validProviderGeneratedText} from '../cloud/xuan-preopen/eod_sources.mjs';
+import {buildActionConcentrationCandidate,validateActionConcentration} from './xuan-ib-action-concentration.mjs';
 import {readCurrentActionFields,sharesightBookCash,sharesightOrderCurrencies,fieldState,validateActionFieldState,emptyActionErrors} from './xuan-ib-action-fields.mjs';
 const fail=code=>{throw new Error('EOD_MODEL_'+code);};
 const finite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;
@@ -38,7 +39,7 @@ export function buildEodActionModel(input){
   }
 }
 function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshots,live=null,reserve,evidenceSha256,sourceOutcomes,
-  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null}){
+  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null}){
   if(fieldMode&&!flex)flex={cash:null,positions:null,trades:null,tradeCoverageProven:false,rawFingerprint:null,
     reconciliation:{status:'unknown',cashResidual:null,cancellationPending:false,verificationSha256:null},
     provenance:{sourceDate,coveredFrom:null,coveredThrough:null,providerGeneratedText:null,providerTimezone:null,readAt:null}};
@@ -131,7 +132,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     replenishment,orders,
     cash:{status:ib!==null||noah!==null?'partial':'unavailable',ib,noah,pool,reserve:callAmount,callApplied,orderReserve,planning,
       cashLike,totalCapacity,
-      planningBasis:planning!==null?{status:fieldMode?'reference':'conditional',assumption:fieldMode?'BOOK_CASH_AND_REMAINING_ORDERS':'NO_UNREFLECTED_ACTIVITY_SINCE_EOD',sourceDate}:{status:'unknown',reason:fieldMode||qualifiedEod?'CASH_OR_ORDERS_UNKNOWN':'EOD_RECONCILIATION_UNRESOLVED'},availableFunds:unknown(fieldMode?'BOOK_BALANCE_NOT_AVAILABLE_FUNDS':'ACTIVITY_FLEX_HAS_NO_AVAILABLE_FUNDS'),executableBudget:null,
+      planningBasis:planning!==null?{status:fieldMode?'reference':'conditional',assumption:fieldMode?'BOOK_CASH_AND_REMAINING_ORDERS':'NO_UNREFLECTED_ACTIVITY_SINCE_EOD',sourceDate}:{status:'unknown',reason:fieldMode||qualifiedEod?'CASH_OR_ORDERS_UNKNOWN':'EOD_RECONCILIATION_UNRESOLVED'},availableFunds:fieldMode?currentFields.availableFunds:unknown('ACTIVITY_FLEX_HAS_NO_AVAILABLE_FUNDS'),executableBudget:null,
       eod:flex.cash?{status:'verified',currency:'USD',tradeDate:flex.cash.tradeDate,settled:flex.cash.settled,native:flex.cash.native.map(r=>({currency:r.currency,level:r.level,endingCash:r.endingCash,endingSettledCash:r.endingSettledCash,components:Object.fromEntries(Object.entries(r.components).filter(([k])=>['commissions','fxTranslationGainLoss','netTradesPurchases','netTradesSales'].includes(k)))}))}:unknown('FLEX_CASH_MISSING')},
     allocation:allocationContribution(a,projection,fundingNeed),holdings,
     reconciliation:{status:flex.reconciliation.status,cashResidual:flex.reconciliation.cashResidual,cancellationPending:flex.reconciliation.cancellationPending,verificationSha256:flex.reconciliation.verificationSha256??null},
@@ -141,6 +142,13 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     if(call.status!=='owner-declared')fieldErrors.call='OWNER_DECLARATION_UNAVAILABLE';
     model.fieldErrors=fieldErrors;
     const {amountUsd,...callMeta}=call;model.cash.call=callMeta;model.cash.book={ib:bookIb,sourceDate};
+    if(model.cash.availableFunds.status==='recorded'){
+      // The original optional capture is the immutable hash preimage already
+      // bound by sourceOutcomes. Keep it private so the guard can reconstruct
+      // the observation, including an absent response account identifier.
+      const {previousHtml,...proof}=live;
+      model.cash.availableFundsProof=structuredClone(proof);
+    }
     model.provenance.capture={startedAt:captureStartedAt,completedAt:captureCompletedAt};
     const snapshotState=(key,known)=>{const s=snapshots.find(s=>s.sourceKey===key),o=outcomes.find(o=>o.sourceKey===key);
       return fieldState(key,known?(o?.status==='verified'?'ready':'recorded'):snapshotUsable(o?.status)?'missing-fields':o?.status??'not-called',known?sourceDate:null,known?s?.provenance?.readAt??null:null);};
@@ -150,6 +158,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
       orderReserve:fieldState('derived.buyReserve',orderReserve===null?'blocked':'ready',orderReserve===null?null:dataDate,orderReserve===null?null:orders.capturedCompletedAt),
       planning:fieldState('derived.cashPlan',planning===null?'blocked':'ready',planning===null?null:dataDate,planning===null?null:captureCompletedAt)};
   }
+  if(concentrationInput!==null)model.concentration=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
   return validateEodActionModel(model);
 }
 export function validateEodActionModel(m){
@@ -163,9 +172,18 @@ export function validateEodActionModel(m){
   if(!fields&&outcome('ib.flexEod').status!=='verified')fail('FLEX_OUTCOME');
   const o=m.orders;validateEodOrders(o,{dataDate:m.dataDate,readAt:fields?m.provenance.capture?.completedAt:m.provenance.flex.readAt,startedAt:m.provenance.capture?.startedAt,fieldMode:fields});
   if(!fields&&(o.status==='ready')!==(outcome('ib.optionalLive').status==='captured')||fields&&o.status!=='unknown'&&!['captured','partial'].includes(outcome('ib.optionalLive').status))fail('ORDER_OUTCOME');
-  const c=m.cash;if(!c||!['partial','unavailable'].includes(c.status)||!(fields&&c.reserve===null&&c.callApplied===null)&&(!finite(c.reserve)||!finite(c.callApplied)||Math.abs(cents(c.reserve*.5)-c.callApplied)>.001)||c.executableBudget!==null||c.availableFunds?.status!=='unknown')fail('CASH');
+  const c=m.cash;if(!c||!['partial','unavailable'].includes(c.status)||!(fields&&c.reserve===null&&c.callApplied===null)&&(!finite(c.reserve)||!finite(c.callApplied)||Math.abs(cents(c.reserve*.5)-c.callApplied)>.001)||c.executableBudget!==null)fail('CASH');
   if(c.noah!==null&&!snapshotUsable(outcome('sharesight.noahPerformance').status))fail('CASH_OUTCOME');
-  exact(c,['status','ib','noah','pool','reserve','callApplied','orderReserve','planning','cashLike','totalCapacity','planningBasis','availableFunds','executableBudget','eod',...(fields?['call','book']:[])]);exact(c.availableFunds,['status','reason']);if(c.availableFunds.reason!==(fields?'BOOK_BALANCE_NOT_AVAILABLE_FUNDS':'ACTIVITY_FLEX_HAS_NO_AVAILABLE_FUNDS'))fail('CASH_REASON');
+  exact(c,['status','ib','noah','pool','reserve','callApplied','orderReserve','planning','cashLike','totalCapacity','planningBasis','availableFunds','executableBudget','eod',...(fields?['call','book']:[]),...(c.availableFunds?.status==='recorded'?['availableFundsProof']:[])]);
+  if(fields&&c.availableFunds?.status==='recorded'){
+    const f=c.availableFunds;exact(f,['status','amount','currency','source','readAt','accountBasis']);
+    if(typeof f.amount!=='number'||!Number.isFinite(f.amount)||Math.abs(f.amount)>1e12||! /^[A-Z]{3}$/.test(f.currency)||f.currency==='BASE'
+      ||f.source!=='ib.accountSummary'||!['response-account-id','owner-attested'].includes(f.accountBasis)||!instant(f.readAt)
+      ||f.readAt<m.provenance.capture?.startedAt||f.readAt>m.provenance.capture?.completedAt||!['captured','partial'].includes(outcome('ib.optionalLive').status))fail('BROKER_FUNDS');
+    if(hash(c.availableFundsProof)!==outcome('ib.optionalLive').rawFingerprint)fail('BROKER_FUNDS_SOURCE_BINDING');
+    const rebuilt=readCurrentActionFields({live:c.availableFundsProof,dataDate:m.dataDate,startedAt:m.provenance.capture.startedAt,completedAt:m.provenance.capture.completedAt}).availableFunds;
+    if(JSON.stringify(rebuilt)!==JSON.stringify(f))fail('BROKER_FUNDS_SOURCE_BINDING');
+  }else{exact(c.availableFunds,['status','reason']);if(c.availableFunds.status!=='unknown'||!(fields?['BOOK_BALANCE_NOT_AVAILABLE_FUNDS','BROKER_FUNDS_SOURCE_UNAVAILABLE','BROKER_FUNDS_FIELD_MISSING','BROKER_FUNDS_VALUE_INVALID','BROKER_FUNDS_CURRENCY_UNVERIFIED']:['ACTIVITY_FLEX_HAS_NO_AVAILABLE_FUNDS']).includes(c.availableFunds.reason))fail('CASH_REASON');}
   if(fields&&c.planningBasis?.status==='reference'){exact(c.planningBasis,['status','assumption','sourceDate']);}
   else if(c.planningBasis?.status==='conditional'){exact(c.planningBasis,['status','assumption','sourceDate']);if(c.planningBasis.assumption!=='NO_UNREFLECTED_ACTIVITY_SINCE_EOD'||c.planningBasis.sourceDate!==m.sourceDate||m.reconciliation.status!=='verified'||m.reconciliation.cashResidual!==0||m.reconciliation.cancellationPending)fail('PLANNING_BASIS');}else{exact(c.planningBasis,['status','reason']);if(c.planningBasis.status!=='unknown'||!['CASH_OR_ORDERS_UNKNOWN','EOD_RECONCILIATION_UNRESOLVED'].includes(c.planningBasis.reason)||c.planning!==null)fail('PLANNING_BASIS');}
   for(const k of ['ib','noah','pool','orderReserve','planning','totalCapacity'])if(c[k]!==null&&!finite(c[k]))fail('CASH_NUMBER');
@@ -198,8 +216,13 @@ export function validateEodActionModel(m){
   if(f.providerTimezone!==null){try{new Intl.DateTimeFormat('en',{timeZone:f.providerTimezone});}catch{fail('PROVIDER_TIMEZONE');}}
   exact(m.reconciliation,['status','cashResidual','cancellationPending','verificationSha256']);if(!(m.reconciliation.verificationSha256===null||/^[a-f0-9]{64}$/.test(m.reconciliation.verificationSha256||''))||m.reconciliation.status!=='unknown'&&m.reconciliation.verificationSha256===null)fail('FINANCIAL_PROOF');if(!['verified','pending','unknown'].includes(m.reconciliation.status)||typeof m.reconciliation.cancellationPending!=='boolean'||!(m.reconciliation.cashResidual===null||Number.isFinite(m.reconciliation.cashResidual)&&Math.abs(m.reconciliation.cashResidual)<=1e12))fail('RECONCILIATION');
   if(m.reconciliation.status==='verified'&&(m.reconciliation.cashResidual!==0||m.reconciliation.cancellationPending)||m.reconciliation.status==='unknown'&&m.reconciliation.cashResidual!==null||m.reconciliation.cashResidual===null&&m.reconciliation.status!=='unknown')fail('RECONCILIATION');
-  // Public marker allowlist excludes account IDs, raw payloads and archive paths.
-  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors'];
+  // This schema-9 marker is private. Its source proof and risk envelope never
+  // enter the separate, closed public projection schemas.
+  if(Object.hasOwn(m,'concentration')){
+    validateActionConcentration(m.concentration,m.sourceDate);
+    if(new Date(Date.parse(m.concentration.readWindow.completedAt)+28800000).toISOString().slice(0,10)!==m.dataDate)fail('CONCENTRATION_DATE');
+  }
+  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration'];
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
   if(fields)validateActionFieldState(m);else if(Object.hasOwn(m,'fieldErrors'))fail('PUBLIC_KEYS');
   return m;
