@@ -41,6 +41,7 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           cp scripts/refresh-benchmark-cache.mjs "$RUNNER_TEMP/refresh-benchmark-cache.mjs"
+          cp cloud/fee-clock/benchmark-calendar.json "$RUNNER_TEMP/benchmark-calendar.json"
           cp benchmark-close.json "$RUNNER_TEMP/benchmark-close.seed.json"
           if git ls-remote --exit-code origin refs/heads/market-data-cache >/dev/null 2>&1; then
             git fetch --no-tags origin refs/heads/market-data-cache:refs/remotes/origin/market-data-cache
@@ -53,7 +54,7 @@ jobs:
 
       - name: Fetch and validate completed ETF closes
         shell: bash
-        run: node "$RUNNER_TEMP/refresh-benchmark-cache.mjs"
+        run: BENCHMARK_CALENDAR_PATH="$RUNNER_TEMP/benchmark-calendar.json" node "$RUNNER_TEMP/refresh-benchmark-cache.mjs"
 
       - name: Publish cache when a completed close changed
         shell: bash

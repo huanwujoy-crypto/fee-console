@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { readFile, writeFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const CACHE_PATH = process.env.BENCHMARK_CACHE_PATH || 'benchmark-close.json';
@@ -67,30 +68,77 @@ function localParts(date, timezone) {
   };
 }
 
+let reviewedCalendar;
+function benchmarkCalendar() {
+  if (reviewedCalendar) return reviewedCalendar;
+  try {
+    const path = process.env.BENCHMARK_CALENDAR_PATH || new URL('../cloud/fee-clock/benchmark-calendar.json', import.meta.url);
+    const value = JSON.parse(readFileSync(path, 'utf8'));
+    if (value.schema !== 'fee-console.us-equity-sessions.v1' || value.timeZone !== 'America/New_York'
+        || Object.keys(value.markets).sort().join() !== 'NYSEArca,NasdaqGS') throw new Error();
+    for (const d of [value.validFrom, value.validThrough]) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) !== d) throw new Error();
+    }
+    if (value.validThrough < value.validFrom || Date.parse(value.validThrough) - Date.parse(value.validFrom) > 366 * 3 * DAY_MS) throw new Error();
+    for (const market of Object.values(value.markets)) {
+      if (market.regularCloseMinutes !== 960 || !Array.isArray(market.closedDates)
+          || new Set(market.closedDates).size !== market.closedDates.length
+          || !market.earlyCloses || typeof market.earlyCloses !== 'object') throw new Error();
+      for (const d of [...market.closedDates, ...Object.keys(market.earlyCloses)]) {
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) !== d
+            || d < value.validFrom || d > value.validThrough) throw new Error();
+      }
+      if (Object.values(market.earlyCloses).some(minutes => minutes !== 780)
+          || Object.keys(market.earlyCloses).some(d => market.closedDates.includes(d))) throw new Error();
+    }
+    reviewedCalendar = value;
+    return value;
+  } catch { throw new Error('Benchmark official calendar unavailable'); }
+}
+
+export function benchmarkSessionClose(d, definition) {
+  const value = benchmarkCalendar();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) !== d
+      || d < value.validFrom || d > value.validThrough) throw new Error('Benchmark official calendar unavailable');
+  const market = value.markets[definition.exchange];
+  if (!market) throw new Error('Benchmark official calendar unavailable');
+  if ([0, 6].includes(new Date(`${d}T00:00:00Z`).getUTCDay()) || market.closedDates.includes(d)) return null;
+  return market.earlyCloses[d] ?? market.regularCloseMinutes;
+}
+
 function isCompletedSession(date, definition, now) {
   const point = localParts(date, definition.timezone);
   const current = localParts(now, definition.timezone);
+  const close = benchmarkSessionClose(point.date, definition);
+  if (close === null) return false;
   if (point.date < current.date) return true;
   if (point.date > current.date) return false;
-  return current.minutes >= definition.closeMinutes + 15;
+  return current.minutes >= close + 15;
 }
 
 function isCompletedSessionDate(date, definition, now) {
   const current = localParts(now, definition.timezone);
+  const close = benchmarkSessionClose(date, definition);
+  if (close === null) return false;
   if (date < current.date) return true;
   if (date > current.date) return false;
-  return current.minutes >= definition.closeMinutes + 15;
+  return current.minutes >= close + 15;
 }
 
-// Match the fee producer's independent New York weekday boundary. A missing
-// holiday close remains pending; an older cache is never closed-session proof.
+// Benchmark sessions use positive reviewed exchange-calendar evidence. This
+// never relabels the previous session as a holiday price or changes fee dates.
 export function expectedBenchmarkTargetDate(now = new Date()) {
   if (!(now instanceof Date) || !Number.isFinite(now.getTime())) throw new Error('Invalid benchmark clock');
   const current = localParts(now, DEFINITIONS.spy.timezone);
   let day = new Date(`${current.date}T00:00:00Z`);
-  if (current.minutes < DEFINITIONS.spy.closeMinutes + 15) day = new Date(day.getTime() - DAY_MS);
-  while ([0, 6].includes(day.getUTCDay())) day = new Date(day.getTime() - DAY_MS);
-  return day.toISOString().slice(0, 10);
+  for (let count = 0; count < 10; count += 1) {
+    const d = day.toISOString().slice(0, 10);
+    const closes = [benchmarkSessionClose(d, DEFINITIONS.spy), benchmarkSessionClose(d, DEFINITIONS.qqq)];
+    if ((closes[0] === null) !== (closes[1] === null)) throw new Error('Benchmark official calendar conflict');
+    if (closes[0] !== null && (d < current.date || current.minutes >= Math.max(...closes) + 15)) return d;
+    day = new Date(day.getTime() - DAY_MS);
+  }
+  throw new Error('Benchmark completed session unavailable');
 }
 
 function roundPrice(value) {
@@ -373,6 +421,18 @@ function normalizedSeries(series) {
     .sort((a, b) => a.d.localeCompare(b.d));
 }
 
+function completeSessionSequence(series, definition) {
+  if (!series.length) return false;
+  const actual = series.map(row => row.d);
+  const expected = [];
+  const end = Date.parse(`${actual.at(-1)}T00:00:00Z`);
+  for (let point = Date.parse(`${actual[0]}T00:00:00Z`); point <= end; point += DAY_MS) {
+    const d = new Date(point).toISOString().slice(0, 10);
+    if (benchmarkSessionClose(d, definition) !== null) expected.push(d);
+  }
+  return JSON.stringify(actual) === JSON.stringify(expected);
+}
+
 export function mergePrices(existing, fetched, now = new Date()) {
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS).toISOString().slice(0, 10);
   const benchmarks = {};
@@ -480,10 +540,25 @@ async function fetchSymbol(definition, now, fetchImpl) {
 
 export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl = fetch } = {}) {
   const existing = await readExisting(path);
+  const target = expectedBenchmarkTargetDate(now);
   const fetched = {};
   const failures = [];
 
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
+    if (existing) {
+      const prior = existing.benchmarks?.[key];
+      if (existing.v !== 1 || existing.source !== CACHE_SOURCE || prior?.symbol !== definition.symbol
+          || prior.currency !== definition.currency || prior.exchange !== definition.exchange
+          || !Array.isArray(prior.series)) throw new Error(`Invalid reusable benchmark cache for ${key}`);
+      const normalized = normalizedSeries(prior.series);
+      if (JSON.stringify(normalized) !== JSON.stringify(prior.series)
+          || normalized.some(row => benchmarkSessionClose(row.d, definition) === null)
+          || normalized.at(-1)?.d > target) throw new Error(`Invalid reusable benchmark cache for ${key}`);
+      if (normalized.at(-1)?.d === target && completeSessionSequence(normalized, definition)) {
+        fetched[key] = normalized;
+        continue;
+      }
+    }
     try {
       const result = await fetchSymbol(definition, now, fetchImpl);
       fetched[key] = result.series;
@@ -502,9 +577,13 @@ export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl =
   if (!spyDate || spyDate !== qqqDate) {
     throw new Error(`Benchmark latest-date mismatch: spy=${spyDate || 'missing'} qqq=${qqqDate || 'missing'}`);
   }
-  const target = expectedBenchmarkTargetDate(now);
   if (spyDate !== target || qqqDate !== target) {
     throw new Error(`Benchmark target pending: expected=${target} spy=${spyDate || 'missing'} qqq=${qqqDate || 'missing'}`);
+  }
+  for (const [key, definition] of Object.entries(DEFINITIONS)) {
+    if (!completeSessionSequence(next.benchmarks[key].series, definition)) {
+      throw new Error(`Benchmark session gap for ${definition.symbol}`);
+    }
   }
   const changed = JSON.stringify(contentIgnoringTimestamp(existing)) !== JSON.stringify(contentIgnoringTimestamp(next));
   if (changed) {

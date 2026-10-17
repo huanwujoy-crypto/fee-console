@@ -1,0 +1,21 @@
+{
+  "schema": "fee-console.us-equity-sessions.v1",
+  "reviewedAt": "2026-10-15",
+  "timeZone": "America/New_York",
+  "validFrom": "2026-01-01",
+  "validThrough": "2026-12-31",
+  "markets": {
+    "NYSEArca": {
+      "source": "https://www.nyse.com/trade/hours-calendars",
+      "regularCloseMinutes": 960,
+      "closedDates": ["2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25"],
+      "earlyCloses": {"2026-11-27": 780, "2026-12-24": 780}
+    },
+    "NasdaqGS": {
+      "source": "https://www.nasdaqtrader.com/Trader.aspx?id=Calendar",
+      "regularCloseMinutes": 960,
+      "closedDates": ["2026-01-01", "2026-01-19", "2026-02-16", "2026-04-03", "2026-05-25", "2026-06-19", "2026-07-03", "2026-09-07", "2026-11-26", "2026-12-25"],
+      "earlyCloses": {"2026-11-27": 780, "2026-12-24": 780}
+    }
+  }
+}
