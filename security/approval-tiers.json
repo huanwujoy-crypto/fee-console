@@ -503,6 +503,17 @@
     "docs/xuan-preopen-preview-image.md",
     "docs/xuan-preopen-ib-oauth-bootstrap.md",
     "scripts/xuan-ib-cloud-oauth-bootstrap.mjs",
-    "scripts/xuan-ib-cloud-oauth-bootstrap.test.mjs"
+    "scripts/xuan-ib-cloud-oauth-bootstrap.test.mjs",
+    "cloud/xuan-preopen/fresh_execution.test.mjs",
+    "docs/xuan-ib-fresh-maintenance-bundle.md",
+    "maintenance/ib-orders-fresh-execution-v1/binding.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/renew.py",
+    "maintenance/ib-orders-fresh-execution-v1/source/cloud/xuan-preopen/cloud_io.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/source/cloud/xuan-preopen/ib_diagnostics.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/source/scripts/xuan-ib-cloud-oauth-bootstrap.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/source/scripts/xuan-ib-decision-menu.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/source/scripts/xuan-ib-oauth-registration-audit.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-fresh.mjs",
+    "maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-live-operator.mjs"
   ]
 }
