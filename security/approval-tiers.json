@@ -505,6 +505,7 @@
     "scripts/xuan-ib-cloud-oauth-bootstrap.mjs",
     "scripts/xuan-ib-cloud-oauth-bootstrap.test.mjs",
     "cloud/xuan-preopen/fresh_execution.test.mjs",
+    "cloud/xuan-preopen/fresh_git_identity.test.mjs",
     "docs/xuan-ib-fresh-maintenance-bundle.md",
     "maintenance/ib-orders-fresh-execution-v1/binding.mjs",
     "maintenance/ib-orders-fresh-execution-v1/renew.py",
