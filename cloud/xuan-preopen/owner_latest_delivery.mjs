@@ -1,0 +1,116 @@
+// Explicit protected private-delivery controller. No schedule, identity grant,
+// broker call or public financial projection is activated by importing this file.
+import crypto from 'node:crypto';
+import path from 'node:path';
+import {execFileSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
+import {planPreopen} from './calendar.mjs';
+import {loadTrustedContext} from './report.mjs';
+import {boundedText} from './cloud_io.mjs';
+import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
+import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
+import {OWNER_SCOPE,createOwnerLatestPublisher} from './owner_latest.mjs';
+import {createOwnerLatestStore} from './owner_latest_store.mjs';
+import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay,createProtectedOwnerVerifier} from './owner_latest_admission.mjs';
+import {EOD_SOURCE_CONFIG,validateEodSourceConfiguration} from './eod_source_config.mjs';
+import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
+
+const API='https://api.github.com/repos/huanwujoy-crypto/fee-console';
+const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console';
+const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
+const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').update(Buffer.from('blob '+b.length+'\0')).update(b).digest('hex');};
+const fail=code=>{throw Error('OWNER_DELIVERY_'+code);};
+
+// The historical phase reads the original trusted Git version, never today's
+// context relabelled as yesterday. The current main must still contain it.
+export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
+  const read=async url=>{const r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:AbortSignal.timeout(15000)});if(!r.ok)fail('CONTEXT_HTTP');return boundedText(r,500000);};
+  return async ({phase='candidate-admission',policyCommit,now:clock=now}={})=>{
+    const current=await loadTrustedContext({fetchImpl,now:clock});
+    let eodConfiguration=null;
+    try{eodConfiguration={...validateEodSourceConfiguration(configuration),account:APPROVED_IB_ACCOUNT_ID};}catch{}
+    if(phase==='candidate-admission')return {...current,eodConfiguration};
+    if(phase!=='historical-authenticity'||!/^[a-f0-9]{40}$/.test(policyCommit||''))fail('HISTORICAL_CONTEXT');
+    const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit));
+    if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('HISTORICAL_ANCESTRY');
+    const paths=['claude/xuan-ib-account-association-v1.json','claude/xuan-ib-etf-pending-calls-v1.json','xuan-ib/latest.meta.json','xuan-ib/latest.html'];
+    const [policyText,ledgerText,metaText,previousHtml]=await Promise.all(paths.map(p=>read(RAW+'/'+policyCommit+'/'+p)));
+    const meta=JSON.parse(metaText);
+    if(!/^[a-f0-9]{40}$/.test(meta.sourceSha||'')||gitBlob(previousHtml)!==meta.htmlBlob)fail('HISTORICAL_PUBLIC_BINDING');
+    const association={policy:JSON.parse(policyText),policyCommit,policyBlob:gitBlob(policyText),checkedAt:new Date(clock()).toISOString()};
+    // Time validity is checked at the original receipt time by the verifier.
+    validateAssociationSnapshot(association,{now:clock(),edition:'am',requireActive:false});
+    return {association,reserveLedger:JSON.parse(ledgerText),reserveHash:sha(ledgerText),previousMeta:meta,previousSourceSha:meta.sourceSha,previousHtml,eodConfiguration};
+  };
+}
+
+// Only an existing Google credential is used. No token endpoint, SDK login,
+// Secret Manager, impersonation or arbitrary credential reader exists here.
+export function ownerDeliveryRequest(token,fetchImpl=fetch){
+  if(typeof token!=='string'||!token||/[\r\n\0]/.test(token))fail('EXISTING_IDENTITY_REQUIRED');
+  return async (url,options={})=>{
+    const u=new URL(url);
+    if(u.origin!=='https://storage.googleapis.com')fail('TRANSPORT_ORIGIN');
+    return fetchImpl(url,{...options,redirect:'error',headers:{...options.headers,Authorization:'Bearer '+token}});
+  };
+}
+
+export function ownerBundleMetadata(bundle,receipt){
+  const model=extractNightActionModel(new TextDecoder('utf-8',{fatal:true}).decode(bundle.html));
+  return {schema:'xuan.owner-latest.v1',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,
+    dataDate:receipt.dataDate,sourceDate:receipt.sourceDate,captureStartedAt:receipt.startedAt,captureEndedAt:receipt.completedAt,completedAt:receipt.completedAt,
+    artifactObject:bundle.artifactObject,artifactGeneration:bundle.artifactGeneration,artifactSha256:bundle.artifactSha256,
+    receiptObject:bundle.receiptObject,receiptGeneration:bundle.receiptGeneration,receiptSha256:bundle.receiptSha256,
+    financialStatus:'partial',unknownFields:[...(model.orders.status==='ready'?[]:['orders']),...(model.holdings?.status==='ready'?[]:['holdings']),...(model.allocation.status==='ready'?[]:['allocation']),'cash','prices']};
+}
+
+export async function deliverOwnerLatest({request,now=Date.now,loadContext=createOwnerContextLoader({now}),
+  storeFactory=createOwnerLatestStore,publisherFactory=createOwnerLatestPublisher,expectedArtifactSha256=null,expectedReceiptSha256=null}={}){
+  const plan=planPreopen(now());
+  if(plan.status!=='generate')return {status:'no-action',reason:plan.reason};
+  if(typeof request!=='function')fail('TRANSPORT_REQUIRED');
+  const io=storeFactory({request});
+  const bundle=await io.readDailyBundle({dataDate:plan.dataDate});
+  if(!bundle||!(bundle.html instanceof Uint8Array)||!(bundle.receipt instanceof Uint8Array))fail('BUNDLE_REQUIRED');
+  if(expectedArtifactSha256!==null&&bundle.artifactSha256!==expectedArtifactSha256
+    ||expectedReceiptSha256!==null&&bundle.receiptSha256!==expectedReceiptSha256)fail('COLLECTED_BUNDLE_CHANGED');
+  let receipt;try{receipt=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bundle.receipt));}catch{fail('RECEIPT_JSON');}
+  if(receipt.dataDate!==plan.dataDate||receipt.sourceDate!==plan.sourceDate||receipt.artifact?.privateObject!==bundle.artifactObject
+    ||receipt.artifact?.generation!==bundle.artifactGeneration||receipt.artifact?.sha256!==bundle.artifactSha256)fail('DAILY_BINDING');
+  const verifyProtectedReceipt=createProtectedOwnerVerifier({loadContext,readPinnedSource:pin=>io.readPinnedSource(pin),now});
+  const publisher=publisherFactory({io,ownerBinding:OWNER_BINDING,verifyProtectedReceipt,prepareDisplay:prepareOwnerStaticDisplay,now});
+  return publisher.publish({metadata:ownerBundleMetadata(bundle,receipt),html:bundle.html,receipt:bundle.receipt});
+}
+
+export const createOwnerDeliveryHook=options=>async({html,receiptText})=>{
+  if(typeof html!=='string'||typeof receiptText!=='string')fail('COLLECTED_BYTES_REQUIRED');
+  return deliverOwnerLatest({...options,expectedArtifactSha256:sha(html),expectedReceiptSha256:sha(receiptText)});
+};
+
+// The new publisher cannot run from an unmerged local candidate. The CLI checks
+// actual trusted main before reading its existing credential environment.
+export async function requireProtectedOwnerCheckout({cwd=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'),loadContext=createOwnerContextLoader(),now=Date.now}={}){
+  const context=await loadContext({now});
+  const head=execFileSync('git',['rev-parse','HEAD'],{cwd,encoding:'utf8'}).trim();
+  if(head!==context.association.policyCommit||execFileSync('git',['status','--porcelain','--untracked-files=no'],{cwd,encoding:'utf8'}).trim())fail('PROTECTED_CHECKOUT_REQUIRED');
+  for(const file of ['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs']){
+    const relative='cloud/xuan-preopen/'+file;
+    const committed=execFileSync('git',['rev-parse','HEAD:'+relative],{cwd,encoding:'utf8',stdio:['ignore','pipe','ignore']}).trim();
+    const local=execFileSync('git',['hash-object',relative],{cwd,encoding:'utf8'}).trim();
+    if(committed!==local)fail('PROTECTED_SOURCE_BYTES_REQUIRED');
+  }
+  return head;
+}
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
+  try{
+    if(process.argv.length!==3||process.argv[2]!=='--execute-current-workday')fail('EXPLICIT_EXECUTION_REQUIRED');
+    const plan=planPreopen(Date.now());
+    if(plan.status!=='generate'){process.stdout.write(JSON.stringify({status:'no-action',reason:plan.reason})+'\n');}
+    else{
+      await requireProtectedOwnerCheckout();
+      const result=await deliverOwnerLatest({request:ownerDeliveryRequest(process.env.XUAN_PREOPEN_GOOGLE_TOKEN)});
+      process.stdout.write(JSON.stringify(result)+'\n');
+      if(!['published-verified','no-op','written-verified'].includes(result.status))process.exitCode=1;
+    }
+  }catch{process.stderr.write('OWNER_PRIVATE_DELIVERY_BLOCKED\n');process.exitCode=1;}
+}

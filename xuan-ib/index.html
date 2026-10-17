@@ -30,6 +30,7 @@
     /* The action report has its own title and state. Keep loader controls
        available to the existing runtime without showing a duplicate top bar. */
     .bar[hidden] { display: none; }
+    #private-action-entry { display:block; flex:0 0 auto; padding:10px 18px; min-height:44px; border-bottom:1px solid #deddd8; color:#1769aa; background:#f9f9f7; font-size:13px; font-weight:650; text-align:right; text-decoration:none; }
     .title { min-width: 0; }
     .title strong { display: block; font-size: 18px; line-height: 1.25; }
     #status { display: block; margin-top: 2px; color: #6d6b67; font-size: 12px; white-space: pre-line; }
@@ -133,6 +134,7 @@
 </head>
 <body>
   <div class="app">
+    <a id="private-action-entry" href="./private-action.html">查看完整私有报告</a>
     <header class="bar" hidden>
       <div class="title">
         <strong>XUAN-投资管理</strong>
@@ -165,7 +167,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-10-15.1";
+      const loaderBuild = "2026-10-17.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";

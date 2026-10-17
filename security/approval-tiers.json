@@ -516,6 +516,16 @@
     "maintenance/ib-orders-fresh-execution-v1/source/scripts/xuan-ib-decision-menu.mjs",
     "maintenance/ib-orders-fresh-execution-v1/source/scripts/xuan-ib-oauth-registration-audit.mjs",
     "maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-fresh.mjs",
-    "maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-live-operator.mjs"
+    "maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-live-operator.mjs",
+    "cloud/xuan-preopen/owner_latest.mjs",
+    "cloud/xuan-preopen/owner_latest.test.mjs",
+    "cloud/xuan-preopen/owner_latest_admission.mjs",
+    "cloud/xuan-preopen/owner_latest_admission.test.mjs",
+    "cloud/xuan-preopen/owner_latest_delivery.mjs",
+    "cloud/xuan-preopen/owner_latest_delivery.test.mjs",
+    "cloud/xuan-preopen/owner_latest_store.mjs",
+    "cloud/xuan-preopen/owner_latest_store.test.mjs",
+    "docs/xuan-owner-private-delivery.md",
+    "xuan-ib/private-action.html"
   ]
 }

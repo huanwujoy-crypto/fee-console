@@ -26,7 +26,7 @@ export function deliveryTransport(token = process.env.XUAN_PREOPEN_GOOGLE_TOKEN)
   };
 }
 export async function collectDelivery({request = deliveryTransport(), now = Date.now, wait = ms => new Promise(r => setTimeout(r,ms)),
-  loadContext = loadTrustedContext} = {}) {
+  loadContext = loadTrustedContext, publishPrivate = null} = {}) {
   const plan = planPreopen(now());
   if (plan.status === 'no-action') return {...plan, outcome: 'no-action'};
   const objectUrl = file => `https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${encodeURIComponent(`delivery/${plan.dataDate}/${file}`)}?alt=media`;
@@ -64,12 +64,22 @@ export async function collectDelivery({request = deliveryTransport(), now = Date
   const html = await request(objectUrl('report.html'));
   if (crypto.createHash('sha256').update(html).digest('hex') !== receipt.artifact.sha256) fail('HASH');
   if (receipt.mode === 'private_eod_action') { validateEodReceipt(receipt, html, plan.dataDate, plan.sourceDate); validateNightActionHtml(html, plan.dataDate); }
+  // Explicit controller capability only; the ordinary workflow supplies none.
+  // Run before public projection/equality so an unchanged anonymous summary
+  // cannot suppress a newly admitted private report. Failure never claims that
+  // the old private object survived an uncertain write.
+  let privateDelivery = null;
+  if (publishPrivate !== null) {
+    if (typeof publishPrivate !== 'function' || receipt.mode !== 'private_eod_action') fail('PRIVATE_SCOPE');
+    privateDelivery = await publishPrivate({html, receipt, receiptText: raw});
+    if (!['published-verified','no-op'].includes(privateDelivery?.status)) fail('PRIVATE_DELIVERY_NOT_VERIFIED');
+  }
   const context = await loadContext({now});
   // Compare the exact outgoing bytes: EOD private delivery is projected by the publisher.
   const publishedHtml = receipt.mode === 'private_eod_action'
     ? renderNightActionReport(buildPublicEodSummary(extractNightActionModel(html), receipt)) : html;
-  if (gitBlobSha(context.previousHtml) === gitBlobSha(publishedHtml)) return {outcome: 'already-published', dataDate: plan.dataDate};
-  return {outcome: execution ? 'generated' : 'reused', dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, html, receipt};
+  if (gitBlobSha(context.previousHtml) === gitBlobSha(publishedHtml)) return {outcome: 'already-published', dataDate: plan.dataDate, ...(privateDelivery ? {privateDelivery} : {})};
+  return {outcome: execution ? 'generated' : 'reused', dataDate: plan.dataDate, sourceDate: plan.sourceDate, execution, html, receipt, ...(privateDelivery ? {privateDelivery} : {})};
 }
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
