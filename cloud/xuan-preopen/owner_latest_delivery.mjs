@@ -25,7 +25,7 @@ const fail=code=>{throw Error('OWNER_DELIVERY_'+code);};
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
   ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py'].map(file=>'cloud/xuan-preopen/'+file),
-  OWNER_PREVIEW_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json',
+  OWNER_PREVIEW_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
 // The historical phase reads the original trusted Git version, never today's

@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
   createOwnerLatestPublisher, planOwnerLatest, OWNER_SCOPE,ACCEPTED_PREVIEW_SCHEMA,
-  validateAcceptedPreviewMetadata,previewMetadataSha256,
+  validateAcceptedPreviewMetadata,previewMetadataSha256,LATEST_HEADERS,ownerJsonMediaHeadersMatch,
 } from './owner_latest.mjs';
 
 // Formal regressions from the independent r1 review. All identities, reports,
@@ -14,6 +14,34 @@ const NOW = Date.parse('2026-10-16T12:10:00.000Z');
 const encode = text => new TextEncoder().encode(text);
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const copy = bytes => new Uint8Array(bytes);
+const observedWireHeaders={contentType:'text/html; charset=utf-8',contentDisposition:'attachment',cacheControl:'no-cache, no-store, max-age=0, must-revalidate'};
+test('fixed JSON media headers accept exactly two complete profiles without changing stored defaults',()=>{
+  assert.equal(ownerJsonMediaHeadersMatch({...LATEST_HEADERS}),true);
+  assert.equal(ownerJsonMediaHeadersMatch({...observedWireHeaders}),true);
+  assert.deepEqual(LATEST_HEADERS,{contentType:'text/html; charset=utf-8',contentDisposition:'inline',cacheControl:'private, no-store, max-age=0'});
+  assert.equal(Object.isFrozen(LATEST_HEADERS),true);
+});
+test('fixed JSON media header profiles reject mixing, weaker cache controls, unknown values and malformed inputs',()=>{
+  for(const value of [
+    {...LATEST_HEADERS,contentDisposition:'attachment'},
+    {...observedWireHeaders,contentDisposition:'inline'},
+    {...observedWireHeaders,cacheControl:'no-cache'},
+    {...observedWireHeaders,cacheControl:'no-cache, max-age=0, must-revalidate'},
+    {...observedWireHeaders,cacheControl:'no-cache, no-store, must-revalidate'},
+    {...LATEST_HEADERS,cacheControl:'public, no-store, max-age=0'},
+    {...LATEST_HEADERS,cacheControl:'private, no-store, max-age=600'},
+    {...observedWireHeaders,cacheControl:'no-cache, no-store, max-age=0, must-revalidate, immutable'},
+    {...observedWireHeaders,contentDisposition:'attachment; filename=unknown.html'},
+    {...observedWireHeaders,contentType:'text/html'},
+    {...observedWireHeaders,contentEncoding:'identity'},
+    {contentType:LATEST_HEADERS.contentType,contentDisposition:'inline'},null,undefined,[],
+    Object.assign(Object.create(null),observedWireHeaders),
+  ])assert.equal(ownerJsonMediaHeadersMatch(value),false);
+  const accessor={...observedWireHeaders};Object.defineProperty(accessor,'contentType',{get(){throw Error('must not invoke accessor');}});
+  assert.equal(ownerJsonMediaHeadersMatch(accessor),false);
+  const hidden={...observedWireHeaders};Object.defineProperty(hidden,'unknown',{value:true});assert.equal(ownerJsonMediaHeadersMatch(hidden),false);
+  assert.equal(ownerJsonMediaHeadersMatch({...observedWireHeaders,[Symbol('unknown')]:true}),false);
+});
 const receiptText = day => JSON.stringify({ synthetic: true, receiptFor: day });
 const proof = ({ metadata: m }) => ({
   scope: m.scope, ownerBinding: m.ownerBinding, artifactSha256: m.artifactSha256,

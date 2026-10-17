@@ -1,0 +1,14 @@
+{
+  "schema": "xuan.owner-registered-canary.v1",
+  "target": {
+    "bucket": "family-portfolio-gateway-xuan-preopen-private",
+    "object": "delivery/owner-phone-canary-v1.html"
+  },
+  "pin": {
+    "uuid": "dd4e9949-287f-42a4-a5b1-e5925d618459",
+    "createdAt": "2026-10-17T10:43:23.251Z",
+    "candidateSha256": "8b6a974f0e9d16f6e98818a2651c49c62170877b9bce2c7f33cfe8b13e3f21e7",
+    "generation": "1792233805069122",
+    "sha256": "2b12611b4d399c8a05d23dad9199e1f30a333d58c5d20e2ce691278e715d6f05"
+  }
+}

@@ -1,6 +1,7 @@
 """Synthetic only: no live credential store, SDK calls or network."""
 import base64
 import datetime
+import gzip
 import hashlib
 import importlib.util
 import io
@@ -35,7 +36,7 @@ def write_value():
     body = ('--' + boundary + '\r\nContent-Type: application/json; charset=utf-8\r\n\r\n' + json.dumps(resource)
             + '\r\n--' + boundary + '\r\nContent-Type: text/html; charset=utf-8\r\n\r\n').encode() + display + ('\r\n--' + boundary + '--\r\n').encode()
     return {'op': 'request', 'url': UPLOAD, 'method': 'POST',
-            'headers': {'Content-Type': 'multipart/related; boundary=' + boundary, 'Accept': 'application/json'},
+            'headers': {'Content-Type': 'multipart/related; boundary=' + boundary, 'Accept': 'application/json', 'Accept-Encoding': 'identity'},
             'body': base64.b64encode(body).decode()}
 
 
@@ -118,6 +119,44 @@ class BoundaryTests(unittest.TestCase):
             changed = dict(value, body=base64.b64encode(raw.replace(before, after)).decode())
             with self.assertRaises(m.BoundaryError):
                 m.validate_storage_request(changed)
+
+    def test_raw_post_frames_require_exact_identity_before_any_provider_call(self):
+        provider = Provider()
+        bridge = m.OwnerBridge(provider)
+        for encoding in (None, 'gzip', 'identity, gzip', '*', 'IDENTITY'):
+            value = write_value()
+            if encoding is None:
+                del value['headers']['Accept-Encoding']
+            else:
+                value['headers']['Accept-Encoding'] = encoding
+            self.assertCode('HEADERS_INVALID', lambda: bridge.dispatch(value))
+        self.assertEqual(provider.calls, [])
+
+    def test_canary_and_financial_posts_both_send_fixed_identity(self):
+        provider = Provider([404, 200, 200])
+        bridge = m.OwnerBridge(provider)
+        bridge.dispatch({'op': 'createCanary', 'uuid': '00000000-0000-4000-8000-000000000000',
+                         'createdAt': m.instant(), 'candidateSha256': 'a' * 64})
+        bridge.dispatch(write_value())
+        posts = [call for call in provider.calls if call[1] == 'POST']
+        self.assertEqual(len(posts), 2)
+        for _, _, headers, _ in posts:
+            normalized = {key.lower(): value for key, value in headers.items()}
+            self.assertEqual(set(normalized), {'content-type', 'accept', 'accept-encoding'})
+            self.assertEqual(normalized['accept-encoding'], 'identity')
+
+    def test_raw_gzip_response_is_preserved_for_existing_downstream_rejection(self):
+        encoded = gzip.compress(b'{"synthetic":"ack"}')
+        provider = Provider()
+        response = Response(LATEST, body=encoded, headers={'Content-Type': 'application/json',
+                            'Content-Length': str(len(encoded)), 'Content-Encoding': 'gzip'})
+        read = response.raw.read
+        with patch.object(response.raw, 'read', side_effect=read) as raw_read:
+            provider.request = lambda *_args: response
+            value = m.OwnerBridge(provider).dispatch(read_value())
+            self.assertEqual(base64.b64decode(value['body']), encoded)
+            self.assertEqual(value['headers']['content-encoding'], 'gzip')
+            self.assertIs(raw_read.call_args.kwargs['decode_content'], False)
 
     def test_json_duplicate_key_and_invalid_utf8(self):
         self.assertCode('DUPLICATE_JSON_KEY', lambda: m.json_loads('{"x":1,"x":2}'))
@@ -273,6 +312,52 @@ class SdkSessionSyntheticTests(unittest.TestCase):
                 self.assertEqual(provider.session._max_refresh_attempts, 0)
                 self.assertEqual(provider.session._refresh_status_codes, ())
                 provider.close()
+
+    def test_real_requests_preparation_overrides_default_compression_on_both_posts(self):
+        # Real installed requests preparation, but no credentials, send or HTTP.
+        session = self.requests.Session()
+        session.trust_env = False
+        provider = Provider([404, 200, 200])
+        bridge = m.OwnerBridge(provider)
+        bridge.dispatch({'op': 'createCanary', 'uuid': '00000000-0000-4000-8000-000000000000',
+                         'createdAt': m.instant(), 'candidateSha256': 'a' * 64})
+        bridge.dispatch(write_value())
+        try:
+            for url, method, headers, body in [call for call in provider.calls if call[1] == 'POST']:
+                without_identity = {key: value for key, value in headers.items() if key.lower() != 'accept-encoding'}
+                original = session.prepare_request(self.requests.Request(method, url, headers=without_identity, data=body))
+                self.assertIn('gzip', original.headers['Accept-Encoding'])  # original counterexample
+                prepared = session.prepare_request(self.requests.Request(method, url, headers=headers, data=body))
+                self.assertEqual(prepared.headers['Accept-Encoding'], 'identity')
+                self.assertEqual(prepared.body, body)
+                self.assertEqual(prepared.url, url)
+                self.assertNotIn('Authorization', prepared.headers)
+        finally:
+            session.close()
+
+    def test_real_authorized_session_final_send_has_identity_for_canary_financial_and_iam(self):
+        # Capture final PreparedRequest after real credential/header merging;
+        # Session.send is synthetic, so no transport/refresh HTTP can occur.
+        provider, credential = self.provider()
+        statuses = iter([404, 200, 200, 200, 200, 200, 200, 200])
+        sends = []
+        def send(prepared, **_kwargs):
+            sends.append(prepared)
+            return Response(prepared.url, next(statuses))
+        with patch.object(self.sdk_creds, 'GetCredentialStore', return_value=types.SimpleNamespace(Load=lambda _: credential)), patch.object(self.requests.sessions.Session, 'send', side_effect=send):
+            bridge = m.OwnerBridge(provider)
+            bridge.dispatch({'op': 'createCanary', 'uuid': '00000000-0000-4000-8000-000000000000',
+                             'createdAt': m.instant(), 'candidateSha256': 'a' * 64})
+            bridge.dispatch(write_value())
+            bridge.dispatch({'op': 'boundary', 'includeRoleDefinitions': False})
+            posts = [request for request in sends if request.method == 'POST']
+            self.assertEqual(len(posts), 3)
+            self.assertEqual(sum(request.url == UPLOAD for request in posts), 2)
+            for request in posts:
+                self.assertEqual(request.headers['Accept-Encoding'], 'identity')
+                self.assertEqual(sum(key.lower() == 'accept-encoding' for key in request.headers), 1)
+            self.assertEqual(len(sends), 8)
+            bridge.close()
 
     def test_no_cache_no_fallback_wrong_type_and_expiry_fail_closed(self):
         for value, code in ((None, 'EXISTING_USER_CREDENTIAL_REQUIRED'), (object(), 'EXISTING_USER_CREDENTIAL_REQUIRED')):

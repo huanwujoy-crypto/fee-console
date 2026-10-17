@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 import {uniqueCloudJson} from './cloud_io.mjs';
 import {digest} from './eod_sources.mjs';
 import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay,OWNER_DISPLAY_CSP} from './owner_latest_admission.mjs';
-import {OWNER_SCOPE,LATEST_TARGET,DEADLINE_MS,ACCEPTED_PREVIEW_SCHEMA,
+import {OWNER_SCOPE,LATEST_TARGET,ACCEPTED_PREVIEW_SCHEMA,
   validateAcceptedPreviewMetadata,previewMetadataSha256} from './owner_latest.mjs';
 import {extractNightActionModel,renderNightActionReport,NIGHT_ACTION_MARKER} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
@@ -13,6 +13,9 @@ import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
 export {validateAcceptedPreviewMetadata,previewMetadataSha256};
 export const ACCEPTED_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const ACCEPTED_PREVIEW_REGISTRATION_SCHEMA='xuan.owner-accepted-preview-registration.v1';
+// Fixed budget for this separately admitted static preview. Daily publishing,
+// live write admission and the full access preflight retain their own limits.
+export const ACCEPTED_PREVIEW_DEADLINE_MS=45000;
 const MAX_HTML=100000,MAX_MODEL=100000,MAX_MANIFEST=32768;
 const HASH=/^[a-f0-9]{64}$/,COMMIT=/^[a-f0-9]{40}$/;
 const SOURCE_KEYS=['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
@@ -187,10 +190,10 @@ export function createAcceptedPreviewPublisher({io,verifyProtectedPreview,verify
     try{if(!exact(candidate,'metadata displayBytes'))fail('CANDIDATE');frozen={metadata:JSON.parse(JSON.stringify(candidate.metadata)),displayBytes:copyBytes(candidate.displayBytes,MAX_HTML)};
       validateAcceptedPreviewMetadata(frozen.metadata,{now:now(),ownerBinding:OWNER_BINDING});}catch{return {status:'blocked',code:'PREVIEW_CANDIDATE_INVALID'};}
     closed=true;const controller=new AbortController();let timer,writing=false;
-    const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Error('deadline'));},DEADLINE_MS);});
+    const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Error('deadline'));},ACCEPTED_PREVIEW_DEADLINE_MS);});
     const work=async()=>{
       const started=now();if(!Number.isFinite(started))fail('CLOCK');
-      const guard=()=>{if(controller.signal.aborted||!Number.isFinite(now())||now()-started>=DEADLINE_MS)fail('DEADLINE');};
+      const guard=()=>{if(controller.signal.aborted||!Number.isFinite(now())||now()-started>=ACCEPTED_PREVIEW_DEADLINE_MS)fail('DEADLINE');};
       const access=async()=>{if(await verifyDestinationAccess({target:LATEST_TARGET,operation:'create-accepted-preview',signal:controller.signal})!==undefined)fail('ACCESS_CAPABILITY_RESULT');guard();};
       await access();
       const exists=await io.probeLatestExists({target:LATEST_TARGET,signal:controller.signal});guard();

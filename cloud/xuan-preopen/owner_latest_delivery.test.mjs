@@ -149,7 +149,7 @@ test('protected checkout binds new preview executable and registration bytes eve
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-preview-checkout-'));fs.mkdirSync(path.join(root,'empty-hooks'));
   const git=args=>execFileSync('git',['-c','core.hooksPath='+path.join(root,'empty-hooks'),...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const files=OWNER_PROTECTED_SOURCE_PATHS;
-  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json'])assert.ok(files.includes(required));
+  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json'])assert.ok(files.includes(required));
   try{
     git(['init','-q']);
     for(const relative of files){fs.mkdirSync(path.dirname(path.join(root,relative)),{recursive:true});fs.writeFileSync(path.join(root,relative),'SYNTHETIC '+relative);}
@@ -159,7 +159,7 @@ test('protected checkout binds new preview executable and registration bytes eve
     let privateCalls=0;
     await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext,request:()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PREVIEW_ACCESS_CAPABILITY_REQUIRED/);
     assert.equal(privateCalls,0);
-    for(const relative of ['cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json']){
+    for(const relative of ['cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
       const initial=fs.readFileSync(path.join(root,relative));git(['update-index','--assume-unchanged',relative]);
       fs.appendFileSync(path.join(root,relative),' CHANGED');
       await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext}),/PROTECTED_SOURCE_BYTES_REQUIRED/);

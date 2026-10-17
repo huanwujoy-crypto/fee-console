@@ -46,8 +46,11 @@ function requestValue(input,options={}){
   const keys=Object.keys(normalized).sort().join('|');
   if(method==='POST'){
     if(url.origin+url.pathname!==upload||Object.keys(query).sort().join('|')!=='ifGenerationMatch|uploadType'||query.uploadType!=='multipart'||query.ifGenerationMatch!=='0')throw fail('TARGET_INVALID');
-    if(keys!=='accept|content-type'||normalized.accept!=='application/json'||!/^multipart\/related; boundary=xuan_owner_latest_[a-f0-9]{64}$/.test(normalized['content-type'])
+    if(Object.hasOwn(normalized,'accept-encoding')&&normalized['accept-encoding']!=='identity')throw fail('HEADERS_INVALID');
+    if(!['accept|content-type','accept|accept-encoding|content-type'].includes(keys)||normalized.accept!=='application/json'||!/^multipart\/related; boundary=xuan_owner_latest_[a-f0-9]{64}$/.test(normalized['content-type'])
       ||!(body instanceof Uint8Array)||!body.length||body.length>MAX_BYTES+32768)throw fail('MULTIPART_INVALID');
+    // Preserve the store API; every outgoing POST frame fixes negotiation.
+    normalized['accept-encoding']='identity';
   }else{
     if(url.origin+url.pathname!==latest||body!==undefined)throw fail('TARGET_INVALID');
     if(method==='HEAD'){

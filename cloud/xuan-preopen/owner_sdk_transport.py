@@ -116,7 +116,8 @@ def validate_headers(headers, method):
     if len(normalized) != len(headers):
         reject('HEADERS_INVALID')
     if method == 'POST':
-        if set(normalized) != {'content-type', 'accept'} or normalized['accept'] != 'application/json':
+        if (set(normalized) != {'content-type', 'accept', 'accept-encoding'}
+                or normalized['accept'] != 'application/json' or normalized['accept-encoding'] != 'identity'):
             reject('HEADERS_INVALID')
     elif method == 'HEAD':
         if normalized != {'accept-encoding': 'identity'}:
@@ -405,7 +406,7 @@ class OwnerBridge:
                 reject('CANARY_PRESENCE_UNPROVEN')
             self.mutation_started = True
             return self.raw_request('https://storage.googleapis.com/upload/storage/v1/b/' + BUCKET + '/o?uploadType=multipart&ifGenerationMatch=0',
-                                    'POST', {'Content-Type': 'multipart/related; boundary=' + boundary, 'Accept': 'application/json'}, body)
+                                    'POST', {'Content-Type': 'multipart/related; boundary=' + boundary, 'Accept': 'application/json', 'Accept-Encoding': 'identity'}, body)
         if op == 'requestCanary' and set(value) == {'op', 'method', 'generation', 'media'}:
             method, gen, media = value['method'], value['generation'], value['media']
             if not isinstance(media, bool) or method not in ('GET', 'HEAD'):

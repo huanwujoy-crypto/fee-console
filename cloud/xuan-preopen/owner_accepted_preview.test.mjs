@@ -9,9 +9,10 @@ import {fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
 import {SNAPSHOT_SCOPES,digest} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
 import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
-import {OWNER_SCOPE,LATEST_TARGET} from './owner_latest.mjs';
+import {OWNER_SCOPE,LATEST_TARGET,DEADLINE_MS} from './owner_latest.mjs';
+import {createOwnerPreflightLease,FINANCIAL_ADMISSION_TTL_MS,FULL_PREFLIGHT_TTL_MS} from './owner_preview_access.mjs';
 import {acceptedPreviewRegistrationText,buildAcceptedPreviewMetadata,renderAcceptedPreviewDisplay,
-  prepareAcceptedPreviewDisplay,createProtectedOwnerPreviewVerifier,createAcceptedPreviewPublisher,previewMetadataSha256} from './owner_accepted_preview.mjs';
+  prepareAcceptedPreviewDisplay,createProtectedOwnerPreviewVerifier,createAcceptedPreviewPublisher,previewMetadataSha256,ACCEPTED_PREVIEW_DEADLINE_MS} from './owner_accepted_preview.mjs';
 
 const NOW=Date.parse('2026-10-17T07:00:00.000Z'),LATER=Date.parse('2026-10-19T07:00:00.000Z'),COMMIT='c'.repeat(40);
 const START='2026-10-17T06:00:00.000Z',END='2026-10-17T06:02:00.000Z',DONE='2026-10-17T06:03:00.000Z';
@@ -111,11 +112,11 @@ test('metadata and Buffer inputs are detached before trusted context awaits',asy
   const input={...args(f),metadata:structuredClone(f.metadata),displayBytes:Buffer.from(f.displayBytes)},pending=v.verify(input);
   await started;input.metadata.scope='foreign';input.displayBytes.fill(0);release();assert.equal((await pending).displaySha256,hash(f.displayBytes));
 });
-function publisher(f,{existing=false,access,probe,write,readback,setTimer,clearTimer}={}){
+function publisher(f,{existing=false,access,probe,write,readback,setTimer,clearTimer,now=()=>NOW,publisherOptions={}}={}){
   const events=[];let saved;
-  const p=createAcceptedPreviewPublisher({now:()=>NOW,verifyProtectedPreview:async options=>{events.push('verify');return verifier(f).verify(options);},
+  const p=createAcceptedPreviewPublisher({...publisherOptions,now,verifyProtectedPreview:async options=>{events.push('verify');return verifier(f,{now}).verify(options);},
     verifyDestinationAccess:async options=>{events.push('access');assert.equal(options.target,LATEST_TARGET);if(access)return access(options);},
-    ...(setTimer?{setTimer,clearTimer}:{}),io:{async probeLatestExists(){events.push('head');if(probe)return probe();return {state:existing?'present':'absent'};},
+    ...(setTimer?{setTimer,clearTimer}:{}),io:{async probeLatestExists(options){events.push('head');if(probe)return probe(options);return {state:existing?'present':'absent'};},
       async createAcceptedPreview(options){events.push('create');saved=structuredClone(options);if(write)return write(options);return {...LATEST_TARGET,generation:'1',size:options.bytes.length};},
       async readLatestGeneration(options){events.push('readback');assert.equal(options.generation,'1');assert.equal(options.metadata.displaySha256,hash(f.displayBytes));if(readback)return readback(options);return new Uint8Array(saved.bytes);}}});
   return {p,events};
@@ -146,12 +147,50 @@ test('wrong acknowledgement, altered readback or failed readback is unknown and 
     const f=fixture(),t=publisher(f,options);assert.equal((await t.p.publish(candidate(f))).status,'unknown');assert.equal(t.events.filter(x=>x==='create').length,1);
   }
 });
-test('deadline before create prevents delayed continuation; a deadline during create retains an unknown outcome',async()=>{
-  for(const duringWrite of [false,true]){
-    const f=fixture();let fire,release,entered;
+test('accepted preview has a fixed 45 second budget while daily and access lease limits remain unchanged',async()=>{
+  assert.equal(ACCEPTED_PREVIEW_DEADLINE_MS,45000);assert.equal(DEADLINE_MS,10000);
+  assert.equal(FINANCIAL_ADMISSION_TTL_MS,5000);assert.equal(FULL_PREFLIGHT_TTL_MS,60000);
+  const lease=createOwnerPreflightLease();lease.install({roles:new Map()},NOW);
+  lease.mintAdmission(NOW);lease.consumeAdmission(NOW+5000);
+  lease.mintAdmission(NOW);assert.throws(()=>lease.consumeAdmission(NOW+5001),/FINANCIAL_ADMISSION_REQUIRED/);
+  assert.throws(()=>lease.consumeAdmission(NOW+5002),/FINANCIAL_ADMISSION_REQUIRED/);
+  lease.current(NOW+60000);assert.throws(()=>lease.current(NOW+60001),/PREFLIGHT_EXPIRED/);
+  const f=fixture();let scheduled,cleared;
+  const t=publisher(f,{publisherOptions:{deadlineMs:1,acceptedPreviewDeadlineMs:1},setTimer:(fn,ms)=>{scheduled=ms;return 7;},clearTimer:id=>{cleared=id;}});
+  assert.equal((await t.p.publish(candidate(f))).status,'published-verified');assert.equal(scheduled,45000);assert.equal(cleared,7);
+});
+test('verified preview may exceed the daily ten second budget while retaining the same signal and checks',async()=>{
+  const f=fixture();let time=NOW;const signals=[];
+  const track=(options,elapsed)=>{signals.push(options.signal);assert.equal(options.signal.aborted,false);time+=elapsed;};
+  const t=publisher(f,{now:()=>time,
+    access:options=>{track(options,6000);},probe:options=>{track(options,1000);return {state:'absent'};},
+    write:options=>{track(options,2000);return {...LATEST_TARGET,generation:'1',size:options.bytes.length};},
+    readback:options=>{track(options,3000);return new Uint8Array(f.displayBytes);}});
+  assert.equal((await t.p.publish(candidate(f))).status,'published-verified');assert.equal(time-NOW,18000);
+  assert.ok(time-NOW>DEADLINE_MS&&time-NOW<ACCEPTED_PREVIEW_DEADLINE_MS);
+  assert.deepEqual(t.events,['access','head','verify','access','create','readback']);
+  assert.equal(new Set(signals).size,1);assert.equal(signals[0].aborted,true);
+});
+test('45 second elapsed boundary blocks before create without reopening the transaction',async()=>{
+  for(const elapsed of [45000,45001]){
+    const f=fixture();let time=NOW;
+    const t=publisher(f,{now:()=>time,probe:()=>{time=NOW+elapsed;return {state:'absent'};}});
+    assert.equal((await t.p.publish(candidate(f))).status,'blocked');assert.ok(!t.events.includes('create'));
+    assert.equal((await t.p.publish(candidate(f))).code,'PREVIEW_ONE_SHOT_CLOSED');
+  }
+});
+test('deadline before create prevents delayed continuation; a deadline during create or readback remains unknown',async()=>{
+  for(const phase of ['probe','write','readback']){
+    const f=fixture();let fire,release,entered,signal,cleared;
     const pause=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
-    const t=publisher(f,{setTimer:fn=>{fire=fn;return 1;},clearTimer(){},...(duringWrite?{write:async options=>{entered();await pause;return {...LATEST_TARGET,generation:'1',size:options.bytes.length};}}:{probe:async()=>{entered();await pause;return {state:'absent'};}})});
-    const pending=t.p.publish(candidate(f));await started;fire();assert.equal((await pending).status,duringWrite?'unknown':'blocked');
-    release();await new Promise(r=>setImmediate(r));assert.equal(t.events.filter(x=>x==='create').length,duringWrite?1:0);assert.ok(!t.events.includes('readback'));
+    const delay=async options=>{signal=options.signal;entered();await pause;};
+    const t=publisher(f,{setTimer:(fn,ms)=>{assert.equal(ms,45000);fire=fn;return 1;},clearTimer:id=>{cleared=id;},
+      ...(phase==='write'?{write:async options=>{await delay(options);return {...LATEST_TARGET,generation:'1',size:options.bytes.length};}}:
+        phase==='readback'?{readback:async options=>{await delay(options);return new Uint8Array(f.displayBytes);}}:
+          {probe:async options=>{await delay(options);return {state:'absent'};}})});
+    const pending=t.p.publish(candidate(f));await started;fire();assert.equal((await pending).status,phase==='probe'?'blocked':'unknown');
+    assert.equal(signal.aborted,true);assert.equal(cleared,1);assert.equal((await t.p.publish(candidate(f))).code,'PREVIEW_ONE_SHOT_CLOSED');
+    release();await new Promise(r=>setImmediate(r));assert.equal(t.events.filter(x=>x==='create').length,phase==='probe'?0:1);
+    assert.equal(t.events.filter(x=>x==='readback').length,phase==='readback'?1:0);
   }
 });

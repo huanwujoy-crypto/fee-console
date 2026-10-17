@@ -3,6 +3,19 @@
 export const OWNER_SCOPE='ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1';
 export const LATEST_TARGET=Object.freeze({bucket:'family-portfolio-gateway-xuan-preopen-private',object:'delivery/owner-latest.html'});
 export const LATEST_HEADERS=Object.freeze({contentType:'text/html; charset=utf-8',contentDisposition:'inline',cacheControl:'private, no-store, max-age=0'});
+// Only the wire representation at the already fixed authenticated GCS JSON
+// media endpoint. Stored object metadata must still equal LATEST_HEADERS.
+// A matching API response is byte-delivery proof, not browser-display proof.
+export function ownerJsonMediaHeadersMatch(value){
+  try{
+    if(!value||Object.getPrototypeOf(value)!==Object.prototype
+      ||Reflect.ownKeys(value).sort().join('|')!=='cacheControl|contentDisposition|contentType'
+      ||Object.values(Object.getOwnPropertyDescriptors(value)).some(d=>!Object.hasOwn(d,'value'))
+      ||value.contentType!==LATEST_HEADERS.contentType)return false;
+    return value.contentDisposition===LATEST_HEADERS.contentDisposition&&value.cacheControl===LATEST_HEADERS.cacheControl
+      ||value.contentDisposition==='attachment'&&value.cacheControl==='no-cache, no-store, max-age=0, must-revalidate';
+  }catch{return false;}
+}
 export const MAX_BYTES=2*1024*1024,MAX_RECEIPT_BYTES=128*1024,DEADLINE_MS=10000;
 export const ACCEPTED_PREVIEW_SCHEMA='xuan.owner-accepted-preview.v1';
 const hex=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);

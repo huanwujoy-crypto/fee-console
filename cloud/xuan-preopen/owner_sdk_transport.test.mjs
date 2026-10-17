@@ -4,6 +4,9 @@ import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {existsSync,readFileSync} from 'node:fs';
 import {fileURLToPath} from 'node:url';
+import {syncBuiltinESMExports} from 'node:module';
+import {EventEmitter} from 'node:events';
+import childProcess from 'node:child_process';
 import {createOwnerSdkTransport,OWNER_SDK_PYTHON} from './owner_sdk_transport.mjs';
 import {LATEST_TARGET} from './owner_latest.mjs';
 const execute=promisify(execFile),moduleUrl=new URL('./owner_sdk_transport.mjs',import.meta.url).href;
@@ -40,10 +43,35 @@ test('latest writes have fixed CAS0 multipart and canary has no arbitrary payloa
   const sdk=createOwnerSdkTransport();
   try{
     await rejected('TARGET_INVALID',()=>sdk.request(upload.replace('ifGenerationMatch=0','ifGenerationMatch=1'),{method:'POST',headers:{Accept:'application/json','Content-Type':'multipart/related; boundary=xuan_owner_latest_'+'a'.repeat(64)},body:new Uint8Array([1])}));
+    for(const encoding of ['gzip','identity, gzip','*','IDENTITY'])await rejected('HEADERS_INVALID',()=>sdk.request(upload,{method:'POST',headers:{Accept:'application/json','Content-Type':'multipart/related; boundary=xuan_owner_latest_'+'a'.repeat(64),'Accept-Encoding':encoding},body:new Uint8Array([1])}));
     await rejected('CANARY_INVALID',()=>sdk.createCanary({uuid:'invalid',createdAt:new Date().toISOString(),candidateSha256:'a'.repeat(64)}));
     await rejected('CANARY_REQUEST_INVALID',()=>sdk.requestCanary({method:'GET',media:true}));
     await rejected('CANARY_REQUEST_INVALID',()=>sdk.requestCanary({method:'HEAD',generation:'1'}));
   }finally{sdk.close();}
+});
+
+test('Node IPC fixes financial POST identity and typed canary cannot supply negotiation headers',async t=>{
+  if(!process.env.XUAN_OWNER_EXISTING_SDK_ROOT){t.skip('Exact Mac runtime locator absent');return;}
+  const originalSpawn=childProcess.spawn,frames=[];
+  const pipe=()=>Object.assign(new EventEmitter(),{setEncoding(){},destroy(){}});
+  childProcess.spawn=()=>{
+    const child=new EventEmitter();child.stdout=pipe();child.stderr=pipe();
+    child.stdin={destroy(){},write(line,callback){const frame=JSON.parse(line);frames.push(frame);
+      queueMicrotask(()=>{child.stdout.emit('data',JSON.stringify({id:frame.id,error:'SYNTHETIC_STOP'})+'\n');callback?.();});return true;}};
+    child.kill=()=>true;return child;
+  };syncBuiltinESMExports();
+  const sdk=createOwnerSdkTransport();
+  try{
+    await rejected('SYNTHETIC_STOP',()=>sdk.request(upload,{method:'POST',headers:{Accept:'application/json','Content-Type':'multipart/related; boundary=xuan_owner_latest_'+'a'.repeat(64)},body:new Uint8Array([1])}));
+    const fields={uuid:'00000000-0000-4000-8000-000000000000',createdAt:new Date().toISOString(),candidateSha256:'a'.repeat(64)};
+    await rejected('CANARY_INVALID',()=>sdk.createCanary({...fields,headers:{'Accept-Encoding':'gzip'}}));
+    await rejected('SYNTHETIC_STOP',()=>sdk.createCanary(fields));
+    assert.equal(frames.length,2);
+    assert.equal(frames[0].value.op,'request');assert.equal(frames[0].value.method,'POST');
+    assert.deepEqual(Object.keys(frames[0].value.headers).sort(),['accept','accept-encoding','content-type']);
+    assert.equal(frames[0].value.headers['accept-encoding'],'identity');
+    assert.deepEqual(frames[1].value,{op:'createCanary',...fields}); // worker alone reconstructs fixed identity headers
+  }finally{sdk.close();childProcess.spawn=originalSpawn;syncBuiltinESMExports();}
 });
 
 test('abort closes bridge before any worker/credential operation',async()=>{
