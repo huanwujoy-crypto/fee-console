@@ -31,7 +31,7 @@ function createFreshExecution(binding,{bindingFile=null}={}){
   const EXTERNAL_PINS=binding.externalPins,PREVIOUS_RECORDS=binding.previousRecords,PREVIOUS_NAMES=binding.previousNames,PREVIOUS_DIGEST=binding.previousDigest;
   const PATHS=Object.freeze({claim:FRESH.runtime+'/fresh.claim.safe.json',audit:FRESH.runtime+'/fresh.registration-audit.safe.json',result:FRESH.runtime+'/fresh.result.safe.json',
     renewClaim:FRESH.runtime+'/google-renew-once.claim.safe.json',renewResult:FRESH.runtime+'/google-renew-once.result.safe.json'});
-const CODES=new Set(['REQUEST_INVALID','APPROVAL_REQUIRED','CODE_MISMATCH','HUMAN_EVIDENCE_INVALID','PROOF_INVALID','WINDOW_INVALID',
+const CODES=new Set(['REQUEST_INVALID','APPROVAL_REQUIRED','CODE_MISMATCH','PACKAGE_MANIFEST_INVALID','PACKAGE_PATHS_NOT_FRESH','HUMAN_EVIDENCE_INVALID','PROOF_INVALID','WINDOW_INVALID',
   'CANCELLED','DEADLINE_EXCEEDED','PREVIOUS_RECORDS_MISMATCH','PRIVATE_FILE_INVALID','FRESH_ALREADY_CLAIMED','CLAIM_OUTCOME_UNKNOWN','CLAIM_INVALID','GOOGLE_RENEWAL_STOPPED',
   'GOOGLE_RENEWAL_OUTCOME_UNKNOWN','RESULT_PERSISTENCE_UNCONFIRMED','INTERNAL_FAILED']);
 class Closed extends Error{constructor(c){super(CODES.has(c)?c:'INTERNAL_FAILED');}}
@@ -95,16 +95,22 @@ function validateProof(a,raw,kind){
     ||p.operationId!==FRESH.operationId||p.attestedBy!=='owner'||p.confirmed!==true||p.validFromUtc!==a.validFromUtc||p.validUntilUtc!==a.validUntilUtc
     ||canonical(p.scope)!==canonical(kind==='manual-hold'?a.maintenance.manualHoldScope:a.maintenance.eodQuietScope))fail('PROOF_INVALID');
 }
-async function verifyFresh(a,raw,io,now){
+// Shared local-only package prefix. This helper never grants approval or claims.
+async function verifyPackageSnapshot(io,{native=false}={}){
   const files={};for(const n of CODE_FILES)files[n]=sha(await io.read(HERE+'/'+n));
-  a=validateFreshApproval(a,{now,files,identity:await io.codeIdentity()});
+  const identity=await io.codeIdentity();
   for(const[n,h]of Object.entries(EXTERNAL_PINS)){const b=await io.read(n);if(sha(b)!==h)fail('CODE_MISMATCH');}
   if(!hex(files['renew.py']))fail('CODE_MISMATCH');
-  if(process.versions.node!==DEPENDENCIES.node||nativeIOs.has(io)&&process.execPath!==DEPENDENCIES.nodeExecutable)fail('CODE_MISMATCH');
-  const [human,hold,eod]=await Promise.all(['human-approval.safe.json','manual-hold.safe.json','eod-quiet.safe.json'].map(n=>io.read(APPROVAL_DIRECTORY+'/'+n)));
-  validateHuman(a,human,now);validateProof(a,hold,'manual-hold');validateProof(a,eod,'independent-eod-quiet-no-context-read');
+  if(process.versions.node!==DEPENDENCIES.node||native&&process.execPath!==DEPENDENCIES.nodeExecutable)fail('CODE_MISMATCH');
   for(const[n,h]of Object.entries(PREVIOUS_RECORDS))if(sha(await io.read(n))!==h)fail('PREVIOUS_RECORDS_MISMATCH');
   if(canonical(await io.previousNames())!==canonical(PREVIOUS_NAMES))fail('PREVIOUS_RECORDS_MISMATCH');
+  return {files,identity};
+}
+async function verifyFresh(a,raw,io,now){
+  const {files,identity}=await verifyPackageSnapshot(io,{native:nativeIOs.has(io)});
+  a=validateFreshApproval(a,{now,files,identity});
+  const [human,hold,eod]=await Promise.all(['human-approval.safe.json','manual-hold.safe.json','eod-quiet.safe.json'].map(n=>io.read(APPROVAL_DIRECTORY+'/'+n)));
+  validateHuman(a,human,now);validateProof(a,hold,'manual-hold');validateProof(a,eod,'independent-eod-quiet-no-context-read');
   const admitted={...a,approvalSha256:sha(raw),manualHold:{attested:true},eodQuiet:{attested:true}};if(nativeIOs.has(io))nativeApprovals.add(admitted);return admitted;
 }
 async function privateDirectory(n){const s=await fs.lstat(n);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==process.getuid()||(s.mode&0o777)!==0o700)fail('PRIVATE_FILE_INVALID');return s;}
@@ -153,22 +159,20 @@ async function nativeRenew(a,signal,{clock=Date}={}){
   await fs.writeFile(PATHS.renewResult,JSON.stringify(projected)+'\n',{flag:'wx',mode:0o600});
   if(projected.status!=='GOOGLE_SESSION_READY')fail(projected.renewal.state==='unknown'?'GOOGLE_RENEWAL_OUTCOME_UNKNOWN':'GOOGLE_RENEWAL_STOPPED');return projected;
 }
-async function nativeFreshIO(){
+async function nativePackageReadIO(){
   if(!bindingFile)fail('APPROVAL_REQUIRED');
-  let claimState='not-started',claimHash=null,seq=0;
   const readAllowed=new Set([APPROVAL_PATH,...['human-approval.safe.json','manual-hold.safe.json','eod-quiet.safe.json'].map(n=>APPROVAL_DIRECTORY+'/'+n),
     ...CODE_FILES.map(n=>HERE+'/'+n),...Object.keys(PREVIOUS_RECORDS),...Object.keys(EXTERNAL_PINS)]);
-  const write=async(n,value)=>{await privateDirectory(FRESH.runtime);await fs.writeFile(n,JSON.stringify(value)+'\n',{flag:'wx',mode:0o600});};
   const io={async codeIdentity(){
       const {execFile}=await import('node:child_process');
-      const run=args=>new Promise((resolve,reject)=>execFile('/usr/bin/git',args,{cwd:HERE,env:{PATH:'/usr/bin:/bin'},encoding:'utf8',maxBuffer:2000000},(e,out)=>e?reject(Error('CODE_MISMATCH')):resolve(out.trim())));
+      const run=args=>new Promise((resolve,reject)=>execFile('/usr/bin/git',['-c','core.fsmonitor=false',...args],{cwd:HERE,env:{PATH:'/usr/bin:/bin',GIT_OPTIONAL_LOCKS:'0'},encoding:'utf8',maxBuffer:2000000},(e,out)=>e?reject(Error('CODE_MISMATCH')):resolve(out.trim())));
       const root=await run(['rev-parse','--show-toplevel']);
       if(path.resolve(root,'maintenance/ib-orders-fresh-execution-v1')!==HERE||await run(['status','--porcelain','--untracked-files=all']))fail('CODE_MISMATCH');
       const head=await run(['rev-parse','--verify','HEAD']),tree=await run(['rev-parse','--verify','HEAD^{tree}']);
       for(const n of CODE_FILES){
         const relative='maintenance/ib-orders-fresh-execution-v1/'+n;
-        const row=await run(['ls-tree','HEAD','--',relative]);if(!row.startsWith('100644 blob ')||!row.endsWith('\t'+relative))fail('CODE_MISMATCH');
-        const committed=await new Promise((resolve,reject)=>execFile('/usr/bin/git',['show','HEAD:'+relative],{cwd:HERE,env:{PATH:'/usr/bin:/bin'},encoding:'buffer',maxBuffer:2000000},(e,out)=>e?reject(Error('CODE_MISMATCH')):resolve(out)));
+        const row=await run(['ls-tree','--full-tree','HEAD','--',relative]);if(!row.startsWith('100644 blob ')||!row.endsWith('\t'+relative))fail('CODE_MISMATCH');
+        const committed=await new Promise((resolve,reject)=>execFile('/usr/bin/git',['-c','core.fsmonitor=false','show','HEAD:'+relative],{cwd:HERE,env:{PATH:'/usr/bin:/bin',GIT_OPTIONAL_LOCKS:'0'},encoding:'buffer',maxBuffer:2000000},(e,out)=>e?reject(Error('CODE_MISMATCH')):resolve(out)));
         if(sha(committed)!==sha(await fs.readFile(HERE+'/'+n)))fail('CODE_MISMATCH');
       }
       return {head,tree};
@@ -177,7 +181,14 @@ async function nativeFreshIO(){
         ||!d.isDirectory()||d.isSymbolicLink()||d.uid!==process.getuid())fail('PRIVATE_FILE_INVALID');
       if(CODE_FILES.some(file=>n===HERE+'/'+file)){if(![0o500,0o700,0o755].includes(d.mode&0o777))fail('PRIVATE_FILE_INVALID');}
       else if(![DEPENDENCIES.nodeExecutable,FIXED.python].includes(n)&&!n.startsWith(FIXED.sdkRoot+'/')&&((s.mode&0o777)===0o644||![0o500,0o700].includes(d.mode&0o777)))fail('PRIVATE_FILE_INVALID');return fs.readFile(n);},
-    async previousNames(){const names={};for(const n of Object.keys(PREVIOUS_NAMES))names[n]=(await fs.readdir(n)).sort();return names;},
+    async previousNames(){const names={};for(const n of Object.keys(PREVIOUS_NAMES))names[n]=(await fs.readdir(n)).sort();return names;}};
+  return Object.freeze(io);
+}
+async function nativeFreshIO(){
+  const packageIO=await nativePackageReadIO();
+  let claimState='not-started',claimHash=null,seq=0;
+  const write=async(n,value)=>{await privateDirectory(FRESH.runtime);await fs.writeFile(n,JSON.stringify(value)+'\n',{flag:'wx',mode:0o600});};
+  const io={...packageIO,
     async reserve(a,options={}){if(!nativeApprovals.has(a))fail('APPROVAL_REQUIRED');admit(a,options.signal,options.clock??Date);claimState='attempted-outcome-unknown';try{claimHash=await persistFreshClaim(a,options);claimState='confirmed';}catch(e){if(e.message==='FRESH_ALREADY_CLAIMED')claimState='already-claimed';throw e;}},
     async verifyClaim(a){nativeClaims.delete(a);if(!nativeApprovals.has(a))fail('APPROVAL_REQUIRED');await privateDirectory(FRESH.runtime);const st=await fs.lstat(PATHS.claim);
       if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||st.uid!==process.getuid()||(st.mode&0o777)!==0o600||st.size>65536)fail('CLAIM_INVALID');
@@ -192,6 +203,35 @@ async function nativeFreshIO(){
 function boundOfflinePlan(){return {spec:FRESH.spec,status:'offline',liveActions:0,liveApproved:false,operationId:FRESH.operationId,authorizationId:FRESH.authorizationId,
   currentOldRemainingRegistrationMaximum:0,newRegistrationAuthorization:false,priorPossibleRegistrations:2,futureAdditionalMaximum:1,futureCumulativeMaximum:3,
   manifest:HERE+'/fresh-execution.NOT-APPROVED.json',validFromUtc:null,validUntilUtc:null,automaticRetry:false,automaticMaintenanceResume:false};}
+async function boundVerifyPackage(manifestPath,manifestSha256){
+  try{
+    if(path.dirname(fileURLToPath(import.meta.url))!==HERE||FIXED.source!==HERE+'/source'
+      ||!path.isAbsolute(APPROVAL_DIRECTORY)||!path.isAbsolute(FRESH.runtime)||APPROVAL_DIRECTORY===FRESH.runtime
+      ||APPROVAL_PATH!==APPROVAL_DIRECTORY+'/fresh.approval.json')fail('CODE_MISMATCH');
+    if(!bindingFile||manifestPath!==path.join(path.dirname(bindingFile),'execution-manifest.NOT-APPROVED.json')||!hex(manifestSha256))fail('REQUEST_INVALID');
+    const raw=await readPrivateControlBytes(manifestPath);if(sha(raw)!==manifestSha256)fail('PACKAGE_MANIFEST_INVALID');
+    const supplied=safeJson(raw.toString()),io=await nativePackageReadIO();
+    // Force actual native dependency identity even though this read-only IO is
+    // deliberately never admitted to the native approval/claim WeakSets.
+    const {files,identity}=await verifyPackageSnapshot(io,{native:true});
+    if(canonical(supplied)!==canonical(freshManifest(files,identity)))fail('PACKAGE_MANIFEST_INVALID');
+    for(const[name,pattern]of [['binding.mjs',/^export const PRIVATE_BINDING_SHA256='([a-f0-9]{64})';$/gm],['renew.py',/^PRIVATE_BINDING_SHA256='([a-f0-9]{64})'$/gm]]){
+      const matches=[...(await io.read(HERE+'/'+name)).toString().matchAll(pattern)];
+      if(matches.length!==1||matches[0][1]!==PRIVATE_BINDING_SHA256)fail('CODE_MISMATCH');
+    }
+    // Absence is preparation-only: never add this to the execution prefix,
+    // which must recheck the source after the real durable claim exists.
+    for(const n of [APPROVAL_DIRECTORY,FRESH.runtime]){
+      try{await fs.lstat(n);fail('PACKAGE_PATHS_NOT_FRESH');}catch(e){if(e?.code!=='ENOENT')fail('PACKAGE_PATHS_NOT_FRESH');}
+    }
+    return {spec:'IB-ORDERS-FRESH-PACKAGE-VERIFICATION-v1',status:'verified-package',readOnly:true,liveActions:0,
+      executionAuthorization:false,humanProofVerified:false,claimVerified:false,liveAdmissionVerified:false,signatureVerified:false,
+      code:{head:identity.head,tree:identity.tree,files,privateBindingSha256:PRIVATE_BINDING_SHA256},manifestSha256,
+      checked:{runtimeFiles:CODE_FILES.length,externalPins:Object.keys(EXTERNAL_PINS).length,historicalRecords:Object.keys(PREVIOUS_RECORDS).length,
+        historicalDirectories:Object.keys(PREVIOUS_NAMES).length,nativeNodeIdentity:true,dualBindingPins:true,approvalDirectoryAbsent:true,runtimeAbsent:true},
+      validFromUtc:null,validUntilUtc:null,automaticRetry:false};
+  }catch(e){return {status:'stopped',code:CODES.has(e?.message)?e.message:'PRIVATE_FILE_INVALID',readOnly:true,liveActions:0,automaticRetry:false};}
+}
 async function boundFreshCli(args=[],{io,clock=Date}={}){
   if(args.length===0||canonical(args)===canonical(['--plan']))return boundOfflinePlan();
   if(args.length!==5||args[0]!=='--execute'||args[1]!=='--approval'||args[2]!==APPROVAL_PATH||args[3]!=='--approval-sha256'||!hex(args[4]))return {status:'stopped',code:'REQUEST_INVALID',liveActions:0};
@@ -413,30 +453,34 @@ function createExternalBrowserAdapter(core,a){
 }
 
   return {FRESH,FIXED,PATHS,HERE,APPROVAL_PATH,APPROVAL_DIRECTORY,PREVIOUS_DIGEST,DEPENDENCIES,EXTERNAL_PINS,PREVIOUS_RECORDS,PREVIOUS_NAMES,
-    freshManifest,validateFreshApproval,validateHuman,verifyFresh,persistFreshClaim,projectGoogleRenewal,nativeFreshIO,freshCli:boundFreshCli,offlinePlan:boundOfflinePlan};
+    freshManifest,validateFreshApproval,validateHuman,verifyFresh,persistFreshClaim,projectGoogleRenewal,nativeFreshIO,freshCli:boundFreshCli,verifyPackage:boundVerifyPackage,offlinePlan:boundOfflinePlan};
 }
 // Pure data only: this helper exposes no native IO, approval mint or executor.
 export function buildOfflineManifest(binding,files,identity){return createFreshExecution(binding).freshManifest(files,identity);}
 export function offlinePlan(){return {spec:'IB-ORDERS-FRESH-EXECUTION-v1',status:'offline',liveActions:0,liveApproved:false,
   currentOldRemainingRegistrationMaximum:0,newRegistrationAuthorization:false,priorPossibleRegistrations:2,futureAdditionalMaximum:1,futureCumulativeMaximum:3,
   privateBindingSha256:PRIVATE_BINDING_SHA256,validFromUtc:null,validUntilUtc:null,automaticRetry:false,automaticMaintenanceResume:false};}
-async function readPrivateBinding(filename){
+async function readPrivateControlBytes(filename){
   if(typeof filename!=='string'||!path.isAbsolute(filename))throw Error('PRIVATE_BINDING_INVALID');
   const st=await fs.lstat(filename),dir=await fs.lstat(path.dirname(filename));
   if(!st.isFile()||st.isSymbolicLink()||st.nlink!==1||st.uid!==process.getuid()||(st.mode&0o777)!==0o600||st.size>200000
     ||!dir.isDirectory()||dir.isSymbolicLink()||dir.uid!==process.getuid()||(dir.mode&0o777)!==0o700)throw Error('PRIVATE_BINDING_INVALID');
-  return validatePrivateBinding(await fs.readFile(filename));
+  return fs.readFile(filename);
 }
+async function readPrivateBinding(filename){return validatePrivateBinding(await readPrivateControlBytes(filename));}
 export async function freshCli(args=[]){
   if(args.length===0||canonical(args)===canonical(['--plan']))return offlinePlan();
-  if(args.length!==7||args[0]!=='--execute'||args[1]!=='--binding'||args[3]!=='--approval'||args[5]!=='--approval-sha256'||!hex(args[6]))return {status:'stopped',code:'REQUEST_INVALID',liveActions:0};
+  const readOnly=args[0]==='--verify-package';
+  if(args.length!==7||!['--execute','--verify-package'].includes(args[0])||args[1]!=='--binding'
+    ||args[3]!== (readOnly?'--manifest':'--approval')||args[5]!== (readOnly?'--manifest-sha256':'--approval-sha256')||!hex(args[6]))return {status:'stopped',code:'REQUEST_INVALID',liveActions:0};
   try{
     if(['NODE_OPTIONS','NODE_PATH','NODE_EXTRA_CA_CERTS','NODE_TLS_REJECT_UNAUTHORIZED'].some(k=>process.env?.[k]))throw Error('APPROVAL_REQUIRED');
     const binding=await readPrivateBinding(args[2]);
     if(path.dirname(SELF)!==binding.candidate)throw Error('CODE_MISMATCH');
+    if(readOnly)return await createFreshExecution(binding,{bindingFile:args[2]}).verifyPackage(args[4],args[6]);
     return await createFreshExecution(binding,{bindingFile:args[2]}).freshCli(['--execute','--approval',args[4],'--approval-sha256',args[6]]);
   }catch(e){return {status:'stopped',code:['PRIVATE_BINDING_INVALID','APPROVAL_REQUIRED','CODE_MISMATCH'].includes(e?.message)?e.message:'APPROVAL_REQUIRED',liveActions:0,automaticRetry:false};}
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===SELF)freshCli(process.argv.slice(2)).then(r=>{
-  process.stdout.write(JSON.stringify(r)+'\n');if(!['offline','passed'].includes(r.status))process.exitCode=1;
+  process.stdout.write(JSON.stringify(r)+'\n');if(!['offline','passed','verified-package'].includes(r.status))process.exitCode=1;
 }).catch(()=>{process.stdout.write('{"status":"stopped","code":"INTERNAL_FAILED","automaticRetry":false}\n');process.exitCode=1;});

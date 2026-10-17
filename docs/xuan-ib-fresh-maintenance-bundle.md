@@ -9,13 +9,24 @@ offline; their windows remain null and live approval is false.
 ## Private binding and unchanged allowance
 
 The public `binding.mjs` commits to one exact owner-only private JSON file by
-SHA256. Its bytes contain the previously allocated operation, authorization and
-request identities, the existing unspent runtime and claim path, the same 15
+SHA256, checked independently by JavaScript and the renewal child. Its bytes
+contain a newly allocated offline control identity and planned runtime/claim
+location for this package, the same 15
 historical safe-record hashes and three directory listings, local approval and
 executable locations, resource identities and external dependency pins. These
 values and the generated execution manifest stay outside Git. No historical
 ledger, private manifest, OAuth token, nonce, account response or credential is
 included in this bundle or its test fixtures.
+
+The previous binding and its approval/window are retired for this new operation.
+Their files remain unchanged historical evidence. Old approval flags, human
+proofs, maintenance statements and execution hashes do not transfer to this
+package. The new identity does not increase the remaining registration allowance.
+Unused earlier renewal-artifact dependency hashes are retained in a local
+provenance sidecar, outside the active binding and outside Git. The binding does
+not contain its own public source hashes or future signed head/tree: those are
+added to the later manifest, so the two fixed digest literals cannot form a
+binding/source hash cycle.
 
 A caller cannot select different binding contents through CLI, environment or
 approval JSON: the loader verifies the raw bytes before branding and freezing
@@ -83,6 +94,46 @@ node maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-fresh.mjs \
 
 This command is documentation only; preparation and CI never invoke it.
 
+## Strict read-only package verification
+
+The separate command below performs the native local package checks without
+authorizing execution:
+
+```text
+node maintenance/ib-orders-fresh-execution-v1/xuan-ib-orders-fresh.mjs \
+  --verify-package --binding <private-package>/private-binding.json \
+  --manifest <private-package>/execution-manifest.NOT-APPROVED.json \
+  --manifest-sha256 <manifest-raw-sha256>
+```
+
+It accepts exactly these seven arguments. The manifest must have the fixed
+basename above in the binding file's owner-only directory, and its exact bytes
+must match the supplied hash. Its entire structure must equal the public offline
+manifest built from the actual Git head/tree and nine runtime hashes: approval
+flags stay false and the window, human evidence and maintenance proof hashes
+stay null. Normal existing-Google renewal selection remains the offline default
+zero. There is no normalization that can erase an unauthorized field or flag.
+
+The mode shares the actual runtime-file/stat/Git/blob, external ordinary-file
+pins, Node version/executable and historical 15-file/three-directory checks with
+execution. It also verifies the two binding digest literals, exact local source
+location and absence of the new approval and runtime directories; only `ENOENT`
+establishes absence. Its private IO object contains only read, Git identity and
+directory-listing methods and is never admitted as native execution IO. It does
+not call the human-proof verifier, mint approval or claim brands, reserve a
+claim, renew a session, open native adapters, contact a service or create a
+listener/browser. Default, import and `--plan` still perform no IO.
+
+A successful result reports public source identity/hashes and safe check counts.
+It observes Git identity rather than certifying a commit signature, protected
+checks or an OWNER decision; those remain separate exact-head evidence. Native
+Git reads disable optional locks and filesystem-monitor helpers.
+It explicitly leaves human proof, claim and live metadata admission unverified.
+It does not prove Google credential validity, cloud maintenance or permissions,
+costs, provider consent, financial results or any approved execution window.
+After remote signing, the manifest must be rebuilt for that exact signed head
+and the real read-only command run again at the same fixed checkout location.
+
 ## Relationship to the frozen local R2 package
 
 The original 21-file R2 directory and its evidence are unchanged. It is a local
@@ -129,7 +180,29 @@ The old R2 results of 931 Node tests, 91 Python tests and 66 independent checks
 are historical Mac-only evidence. They are not claimed to run under Linux CI or
 to validate these refactored bytes. The new synthetic suite and existing
 repository suites must pass independently for this candidate. The complete
-native Git/permissions preflight, native OAuth, SDK credentials, actual network
+native permissions preflight, native OAuth, SDK credentials, actual network
 services, financial data and the real once runtime are not exercised by this
 synthetic suite; execution still needs separate explicit approval and live
 admission.
+
+`fresh_git_identity.test.mjs`, discovered by the same workflow glob, separately
+executes the actual private `codeIdentity()` method body against real temporary
+Git repositories containing the nine public runtime files. Its test-only loader
+allows read-only Git commands and reads inside the synthetic repository; it
+does not expose a product export or call the execution entry. The regression
+covers the bundle subdirectory, root and other caller working directories,
+tracked file modes, clean-tree checks and every runtime file's committed bytes.
+It also retains the original failure: without `ls-tree --full-tree`, a
+repository-root pathspec from the bundle directory returns no row. Git blob
+paths use root-relative tree names; `--full-tree` makes both pathspec and output
+independent of the Git command's bundle-directory cwd. This local Git coverage
+does not read the private binding, credentials or real operation records, and
+does not invoke the SDK, network, browser, listener, claim or live entry.
+
+`fresh_package.test.mjs` additionally starts the actual read-only CLI in real
+synthetic temporary repositories. Its fixed test bindings and both digest
+literals are generated only inside those fixtures; no configurable production
+pin or native test mode is added. The fixture uses nine public runtime files,
+ordinary synthetic external pins and synthetic historical records, and tests
+the full manifest, path and identity rejection boundaries. This is separate from
+the real local package's read-only verification; neither invokes `--execute`.
