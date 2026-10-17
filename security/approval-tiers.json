@@ -526,6 +526,16 @@
     "cloud/xuan-preopen/owner_latest_store.mjs",
     "cloud/xuan-preopen/owner_latest_store.test.mjs",
     "docs/xuan-owner-private-delivery.md",
-    "xuan-ib/private-action.html"
+    "xuan-ib/private-action.html",
+    "cloud/xuan-preopen/owner_accepted_preview.mjs",
+    "cloud/xuan-preopen/owner_accepted_preview.test.mjs",
+    "security/xuan-owner-accepted-preview.json",
+    "cloud/xuan-preopen/owner_preview_access.mjs",
+    "cloud/xuan-preopen/owner_preview_access.test.mjs",
+    "cloud/xuan-preopen/owner_sdk_transport.mjs",
+    "cloud/xuan-preopen/owner_sdk_transport.py",
+    "cloud/xuan-preopen/owner_sdk_transport.test.mjs",
+    "cloud/xuan-preopen/owner_sdk_transport.test.py",
+    "security/xuan-owner-approved-audience.json"
   ]
 }

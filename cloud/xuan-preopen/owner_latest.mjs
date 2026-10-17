@@ -4,6 +4,7 @@ export const OWNER_SCOPE='ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib
 export const LATEST_TARGET=Object.freeze({bucket:'family-portfolio-gateway-xuan-preopen-private',object:'delivery/owner-latest.html'});
 export const LATEST_HEADERS=Object.freeze({contentType:'text/html; charset=utf-8',contentDisposition:'inline',cacheControl:'private, no-store, max-age=0'});
 export const MAX_BYTES=2*1024*1024,MAX_RECEIPT_BYTES=128*1024,DEADLINE_MS=10000;
+export const ACCEPTED_PREVIEW_SCHEMA='xuan.owner-accepted-preview.v1';
 const hex=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
 const gen=x=>typeof x==='string'&&/^[1-9][0-9]{0,29}$/.test(x);
 const obj=x=>!!x&&Object.getPrototypeOf(x)===Object.prototype;
@@ -32,6 +33,29 @@ function metadata(m,now,ownerBinding){
   // freshness proof. The trusted existing protected gates must verify receipts.
   return m;
 }
+// Structural validation grants no authority. A live clock and owner binding
+// are supplied by the planner; the storage adapter may check only structure.
+export function validateAcceptedPreviewMetadata(m,{now,ownerBinding}={}){
+  exact(m,'schema scope ownerBinding sourceIdentitySha256 registrationId registrationSha256 registrationPolicyCommit dataDate sourceDate captureStartedAt captureEndedAt completedAt financialStatus unknownFields');
+  if(m.schema!==ACCEPTED_PREVIEW_SCHEMA||m.scope!==OWNER_SCOPE||!hex(m.ownerBinding)||!hex(m.sourceIdentitySha256)
+    ||(ownerBinding!==undefined&&(!hex(ownerBinding)||m.ownerBinding!==ownerBinding)))fail('PREVIEW_SCOPE_MISMATCH');
+  if(typeof m.registrationId!=='string'||!/^[a-z0-9][a-z0-9-]{7,95}$/.test(m.registrationId)
+    ||!hex(m.registrationSha256)||typeof m.registrationPolicyCommit!=='string'||!/^[a-f0-9]{40}$/.test(m.registrationPolicyCommit))fail('PREVIEW_REGISTRATION_INVALID');
+  date(m.dataDate);date(m.sourceDate);
+  const start=stamp(m.captureStartedAt),end=stamp(m.captureEndedAt),completed=stamp(m.completedAt);
+  if((now!==undefined&&!Number.isFinite(now))||start>end||end>completed||(now!==undefined&&completed>now)
+    ||m.dataDate<m.sourceDate||Date.parse(m.sourceDate+'T00:00:00.000Z')>start
+    ||Date.parse(m.dataDate+'T00:00:00.000Z')>completed)fail('PREVIEW_TIME_ORDER');
+  if(m.financialStatus!=='partial'||!Array.isArray(m.unknownFields)||!m.unknownFields.length||m.unknownFields.length>32
+    ||new Set(m.unknownFields).size!==m.unknownFields.length
+    ||m.unknownFields.some(x=>!['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'].includes(x)))fail('PREVIEW_FINANCIAL_STATE');
+  return m;
+}
+const canonical=value=>Array.isArray(value)?value.map(canonical):obj(value)
+  ?Object.fromEntries(Object.keys(value).sort().map(key=>[key,canonical(value[key])])):value;
+export async function previewMetadataSha256(m){
+  return sha256(new TextEncoder().encode(JSON.stringify(canonical(m))));
+}
 function copyBundle(b){
   exact(b,'metadata html receipt');
   if(!(b.html instanceof Uint8Array)||!b.html.length||b.html.length>MAX_BYTES||!(b.receipt instanceof Uint8Array)||!b.receipt.length||b.receipt.length>MAX_RECEIPT_BYTES)fail('SIZE_LIMIT');
@@ -40,9 +64,28 @@ function copyBundle(b){
 function copyCurrent(current){
   if(!obj(current)||!['absent','present'].includes(current.state))fail('LATEST_UNKNOWN');
   if(current.state==='absent'){exact(current,'state');return {state:'absent'};}
+  if(current.kind==='accepted-preview'){
+    exact(current,'state generation kind preview displayBytes');exact(current.preview,'metadata');
+    if(!gen(current.generation)||!(current.displayBytes instanceof Uint8Array)||!current.displayBytes.length||current.displayBytes.length>MAX_BYTES)fail('LATEST_INVALID');
+    return {state:'present',generation:current.generation,kind:'accepted-preview',
+      preview:{metadata:JSON.parse(JSON.stringify(current.preview.metadata))},displayBytes:new Uint8Array(current.displayBytes)};
+  }
   exact(current,'state generation bundle displayBytes');
   if(!gen(current.generation)||!(current.displayBytes instanceof Uint8Array)||!current.displayBytes.length||current.displayBytes.length>MAX_BYTES)fail('LATEST_INVALID');
   return {state:'present',generation:current.generation,bundle:copyBundle(current.bundle),displayBytes:new Uint8Array(current.displayBytes)};
+}
+async function checkedPreview(current,{now,ownerBinding,verifyProtectedPreview,hash}){
+  const m=validateAcceptedPreviewMetadata(current.preview.metadata,{now,ownerBinding});
+  if(typeof verifyProtectedPreview!=='function')fail('PROTECTED_PREVIEW_GATES_UNAVAILABLE');
+  const displaySha256=await hash(current.displayBytes),metadataSha256=await previewMetadataSha256(m);
+  const proof=await verifyProtectedPreview({metadata:structuredClone(m),displayBytes:new Uint8Array(current.displayBytes),
+    now,phase:'historical-authenticity'});
+  exact(proof,'schema scope ownerBinding sourceIdentitySha256 registrationId registrationSha256 registrationPolicyCommit displaySha256 metadataSha256');
+  if(proof.schema!=='xuan.owner-accepted-preview-proof.v1'||proof.scope!==OWNER_SCOPE||proof.ownerBinding!==ownerBinding
+    ||proof.sourceIdentitySha256!==m.sourceIdentitySha256||proof.registrationId!==m.registrationId
+    ||proof.registrationSha256!==m.registrationSha256||proof.registrationPolicyCommit!==m.registrationPolicyCommit
+    ||proof.displaySha256!==displaySha256||proof.metadataSha256!==metadataSha256)fail('PROTECTED_PREVIEW_GATES_REJECTED');
+  return {metadata:m,displaySha256};
 }
 async function checkedBundle(b,{now,ownerBinding,verifyProtectedReceipt,hash,phase}){
   const c=copyBundle(b);metadata(c.metadata,now,ownerBinding);
@@ -66,7 +109,7 @@ function compareChronology(candidate,current){
   // Never refresh displayed source times or freshness merely because of a run.
   return candidate.artifactSha256===current.artifactSha256?'no-op':'replace';
 }
-export async function planOwnerLatest({candidate,current,ownerBinding,now=Date.now(),verifyProtectedReceipt,prepareDisplay,hash=sha256}={}){
+export async function planOwnerLatest({candidate,current,ownerBinding,now=Date.now(),verifyProtectedReceipt,verifyProtectedPreview,prepareDisplay,hash=sha256}={}){
   try{
     if(!Number.isFinite(now)||!hex(ownerBinding))fail('CONFIG_UNAVAILABLE');
     // Snapshot both public API inputs before the first await, not just inside
@@ -82,7 +125,16 @@ export async function planOwnerLatest({candidate,current,ownerBinding,now=Date.n
     const displaySha256=await hash(display);
     let expected='0';
     if(frozenCurrent.state==='absent')exact(frozenCurrent,'state');
-    else{
+    else if(frozenCurrent.kind==='accepted-preview'){
+      const previous=await checkedPreview(frozenCurrent,{now,ownerBinding,verifyProtectedPreview,hash});
+      if(next.metadata.sourceIdentitySha256!==previous.metadata.sourceIdentitySha256)fail('SOURCE_IDENTITY_CHANGED');
+      for(const key of ['dataDate','sourceDate','captureStartedAt','captureEndedAt','completedAt'])
+        if(next.metadata[key]<previous.metadata[key])fail('STALE_CANDIDATE');
+      const sameTime=['sourceDate','captureStartedAt','captureEndedAt'].every(key=>next.metadata[key]===previous.metadata[key]);
+      if(sameTime&&displaySha256!==previous.displaySha256)fail('SAME_SOURCE_CONFLICT');
+      expected=frozenCurrent.generation;
+      if(displaySha256===previous.displaySha256)return {status:'no-op',code:'IDENTICAL_ARTIFACT'};
+    }else{
       const previous=await checkedBundle(frozenCurrent.bundle,{now,ownerBinding,verifyProtectedReceipt,hash,phase:'historical-authenticity'});
       const previousRendered=await prepareDisplay(previous.html.slice());
       if(!(previousRendered instanceof Uint8Array)||!previousRendered.length||previousRendered.length>MAX_BYTES)fail('STATIC_RENDERER_REJECTED');
@@ -97,7 +149,7 @@ export async function planOwnerLatest({candidate,current,ownerBinding,now=Date.n
 // The controller supplies capabilities, not a JSON assertion of approval. This
 // constructor does no I/O, reads no environment and has no default live store.
 // Each instance permits at most one transaction, including an uncertain write.
-export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedReceipt,prepareDisplay,
+export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedReceipt,verifyProtectedPreview,prepareDisplay,
   hash=sha256,now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}={}){
   let closed=false;
   return Object.freeze({async publish(candidate){
@@ -119,7 +171,7 @@ export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedRecei
       const current=copyCurrent(await io.readLatest({target:LATEST_TARGET,signal:controller.signal}));
       if(controller.signal.aborted)fail('DEADLINE');
       const plan=await planOwnerLatest({candidate:frozenCandidate,current,ownerBinding,now:now(),
-        verifyProtectedReceipt,prepareDisplay,hash});
+        verifyProtectedReceipt,verifyProtectedPreview,prepareDisplay,hash});
       if(plan.status!=='ready')return plan;
       if(controller.signal.aborted||now()-started>=DEADLINE_MS)fail('DEADLINE');
       writing=true;

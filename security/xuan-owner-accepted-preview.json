@@ -1,0 +1,26 @@
+{
+  "artifactSha256": "2e5708c7c446d539818f7c14f1cff34de3fbe87f76d97eb67ec5baefccc78c00",
+  "captureEndedAt": "2026-10-17T06:56:47.544Z",
+  "captureStartedAt": "2026-10-17T06:54:46.736Z",
+  "completedAt": "2026-10-17T06:57:57.838Z",
+  "dataDate": "2026-10-17",
+  "displaySha256": "8b6a974f0e9d16f6e98818a2651c49c62170877b9bce2c7f33cfe8b13e3f21e7",
+  "financialStatus": "partial",
+  "modelSha256": "8a30352999212019da92996eb34f0b230e11fb8614a9daaf08c0de29448408fc",
+  "ordersCaptureEndedAt": "2026-10-17T06:54:58.595Z",
+  "ordersCaptureStartedAt": "2026-10-17T06:54:46.744Z",
+  "ownerBinding": "9045a60ddfa0247f7e877e880565dcc5060fbd496b26d1badd659615adf40346",
+  "registrationId": "saturday-acceptance-20261017",
+  "schema": "xuan.owner-accepted-preview-registration.v1",
+  "scope": "ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1",
+  "sourceDate": "2026-10-16",
+  "sourceHead": "7be00075d0be701f51c4f4fedbb25de9f3d6cbe2",
+  "sourceIdentitySha256": "b8be11afb18c0543420c5cf0728fccdbbc229103b82a0a92117f6507b2b5022d",
+  "sourceManifestContentSha256": "c7a786fdbd509f9e10ec239e6e25c321a8017da0965eba63fdf90c9b9287a1c7",
+  "sourceManifestSha256": "d16e8085890e94c8bcb626008770a114e2796a4925653e30f76700e3bc31747d",
+  "unknownFields": [
+    "cash",
+    "orders",
+    "prices"
+  ]
+}
