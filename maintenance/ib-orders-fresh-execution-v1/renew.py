@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import hashlib, json, os, re, sys, time
 
 SOURCE=Path(__file__).with_name('xuan-ib-orders-live-operator.mjs')
-PRIVATE_BINDING_SHA256='379111eba0afcb9adffee7549900d9ce28bbb3fc3da0ffc2555c06be423d4ce5'
+PRIVATE_BINDING_SHA256='92e3df5db06e6ed65a4c82369092fe668fa1f932f109eb7d8ac1bfdc0e8de45c'
 
 EXECUTION_DEADLINE_MS=None
 def admit():
