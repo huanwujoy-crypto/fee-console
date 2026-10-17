@@ -129,7 +129,21 @@ The old R2 results of 931 Node tests, 91 Python tests and 66 independent checks
 are historical Mac-only evidence. They are not claimed to run under Linux CI or
 to validate these refactored bytes. The new synthetic suite and existing
 repository suites must pass independently for this candidate. The complete
-native Git/permissions preflight, native OAuth, SDK credentials, actual network
+native permissions preflight, native OAuth, SDK credentials, actual network
 services, financial data and the real once runtime are not exercised by this
 synthetic suite; execution still needs separate explicit approval and live
 admission.
+
+`fresh_git_identity.test.mjs`, discovered by the same workflow glob, separately
+executes the actual private `codeIdentity()` method body against real temporary
+Git repositories containing the nine public runtime files. Its test-only loader
+allows read-only Git commands and reads inside the synthetic repository; it
+does not expose a product export or call the execution entry. The regression
+covers the bundle subdirectory, root and other caller working directories,
+tracked file modes, clean-tree checks and every runtime file's committed bytes.
+It also retains the original failure: without `ls-tree --full-tree`, a
+repository-root pathspec from the bundle directory returns no row. Git blob
+paths use root-relative tree names; `--full-tree` makes both pathspec and output
+independent of the Git command's bundle-directory cwd. This local Git coverage
+does not read the private binding, credentials or real operation records, and
+does not invoke the SDK, network, browser, listener, claim or live entry.

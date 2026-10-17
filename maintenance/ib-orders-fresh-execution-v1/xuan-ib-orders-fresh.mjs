@@ -167,7 +167,7 @@ async function nativeFreshIO(){
       const head=await run(['rev-parse','--verify','HEAD']),tree=await run(['rev-parse','--verify','HEAD^{tree}']);
       for(const n of CODE_FILES){
         const relative='maintenance/ib-orders-fresh-execution-v1/'+n;
-        const row=await run(['ls-tree','HEAD','--',relative]);if(!row.startsWith('100644 blob ')||!row.endsWith('\t'+relative))fail('CODE_MISMATCH');
+        const row=await run(['ls-tree','--full-tree','HEAD','--',relative]);if(!row.startsWith('100644 blob ')||!row.endsWith('\t'+relative))fail('CODE_MISMATCH');
         const committed=await new Promise((resolve,reject)=>execFile('/usr/bin/git',['show','HEAD:'+relative],{cwd:HERE,env:{PATH:'/usr/bin:/bin'},encoding:'buffer',maxBuffer:2000000},(e,out)=>e?reject(Error('CODE_MISMATCH')):resolve(out)));
         if(sha(committed)!==sha(await fs.readFile(HERE+'/'+n)))fail('CODE_MISMATCH');
       }
