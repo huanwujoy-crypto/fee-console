@@ -84,6 +84,17 @@ test('all EOD source and display additions remain explicitly sensitive under the
     assert.equal(classifyChanges([{...input().entries[0],path:file}]),'specific');
   }
 });
+test('concentration additions remain explicitly sensitive and their regression suite runs in the existing private cloud step',()=>{
+  for(const file of ['scripts/xuan-ib-action-concentration.mjs','scripts/xuan-ib-action-concentration.test.mjs',
+    'claude/xuan-weekly-etf-source-evidence/concentration-20260930-refresh-v1.json','claude/xuan-weekly-etf-source-evidence/suncor-issuer-alias-v1.json']){
+    assert.equal(approvalRegistry.sensitiveFiles.filter(p=>p===file).length,1);assert.ok(!approvalRegistry.ordinaryFiles.includes(file));
+    assert.equal(classifyChanges([{...input().entries[0],path:file}]),'specific');
+  }
+  const workflow=fs.readFileSync(new URL('../.github/workflows/scripts-check.yml',import.meta.url),'utf8');
+  const step=workflow.split('- name: Test private cloud delivery and candidate-only publication')[1].split('\n      - name:')[0];
+  assert.match(step,/if: \$\{\{ github.event.pull_request.draft == false \}\}/);
+  assert.match(step,/run: node --test[^\n]*scripts\/xuan-ib-action-concentration\.test\.mjs/);
+});
 test('registry corruption, conflicts and incomplete inputs fail closed', () => {
   for (const policy of [null, {}, { ...approvalRegistry, schema: 'untrusted' },
     { ...approvalRegistry, ordinaryFiles: [null] },

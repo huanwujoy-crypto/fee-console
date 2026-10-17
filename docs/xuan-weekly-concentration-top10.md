@@ -1,6 +1,6 @@
 # 周报单票集中度：两组候选合并（2026-09-28）
 
-本功能只修改周末记录的“单票集中度”，不改变睡前行动版、AI 分类、ABC、账户取数和调度。它是观察用的**已核实下限**，不是全持仓经济敞口或交易指令。
+原模块为周末记录的“单票集中度”。2026-10-17 受保护候选将相同计算与渲染迁入行动版独立第五卡，三账户仍为 IB-HK／Schwab-HK／Webull；不改变现金池 IB＋NOAH、AI 分类、ABC 或自动调度。它是观察用的**已核实下限**，不是全持仓经济敞口或交易指令。
 
 ## 计算
 
@@ -14,14 +14,20 @@
 
 | 基金 | 前十股票日期 | 发行方证据 |
 |---|---|---|
-| MXUS | 2026-08-31 | [Invesco factsheet](https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf)；经济敞口 |
-| EQAC | 2026-08-31 | [Invesco factsheet](https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00BFZXGZ54_factsheet_en.pdf) |
-| IVAI | 2026-08-31 | [Invesco factsheet](https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE000LGWDNE5_factsheet_en.pdf) |
-| EXUS | 2026-08-31 | [DWS factsheet](https://etf.dws.com/download/asset/7abc744c-aaf2-48f8-8e28-6384d2233cc8) |
+| MXUS | 2026-09-30 | [Invesco factsheet](https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf)；经济敞口 |
+| EQAC | 2026-09-30 | [Invesco factsheet](https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00BFZXGZ54_factsheet_en.pdf) |
+| IVAI | 2026-09-30 | [Invesco factsheet](https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE000LGWDNE5_factsheet_en.pdf) |
+| EXUS | 2026-09-30 | [DWS factsheet](https://etf.dws.com/download/asset/7abc744c-aaf2-48f8-8e28-6384d2233cc8) |
 | CSPX、EIMI | 2026-09-24 | [iShares CSPX](https://www.ishares.com/uk/professionals/en/products/253743/?siteEntryPassthrough=true)、[iShares EIMI](https://www.ishares.com/de/privatanleger/de/produkte/264659/ishares-msci-emerging-markets-imi-ucits-etf?locale=de_DE&siteEntryPassthrough=true&userType=individual) 的当日完整持仓 |
 | SMH | 2026-09-23 | [VanEck 美国 SMH](https://www.vaneck.com/us/en/investments/semiconductor-etf-smh/)；不是欧洲 UCITS 同名基金 |
 | INDA | 2026-09-24 | [iShares INDA](https://www.ishares.com/us/products/239659/ishares-msci-india-etf) 当日完整持仓；货币市场基金不作个股 |
 | USSC | 2026-09-25 | [State Street USSC](https://www.ssga.com/uk/en_gb/institutional/etfs/state-street-spdr-msci-usa-small-cap-value-weighted-ucits-etf-zprv-gy) |
-| VCN | 2026-08-31 | [Vanguard Canada VCN](https://www.vanguard.ca/en/product/etf/equity/9561/vanguard-ftse-canada-all-cap-index-etf) |
+| VCN | 2026-09-30 | [Vanguard Canada VCN](https://www.vanguard.ca/en/product/etf/equity/9561/vanguard-ftse-canada-all-cap-index-etf) |
 
 这些是带日期的静态发行方快照，不会随交易日自动更新。超过有效期会显式列为未覆盖，**需要刷新发行方数据后才能恢复完整前十覆盖**；周报本身不因外部 ETF 页面变化而失败。
+
+
+2026-10-17 候选刷新上述五只基金到 2026-09-30，距 10 月 16 日为 16 天。Invesco 的 10 月 14 日为出版日，不替代持仓日。原 8 月 31 日快照已 46 天、确实过期；本候选使用新取得并经独立复核的发行方资料恢复前十覆盖，未降低 45 天时限。来源名称→既有政策发行人键、逐行截取权重、原文 SHA-256 与证据 SHA-256 完整保存在 `claude/xuan-weekly-etf-source-evidence/concentration-20260930-refresh-v1.json`。这些键不是来源宣称的股票代码；不由基金来源名称推定直接持仓身份。其余成分及未核实同名仍为未知下限。
+
+
+VCN 的 Suncor Energy Inc 成分与直接普通股 `SU` 统一为发行人键 `SUNCOR`。该别名由 Suncor 官方 2026-08-04 股息公告明确的普通股代码及多伦多／纽约上市身份，以及官方公司名称核实；2026-10-04 公告再次明确 TSX／NYSE 的 `SU`。证据和主要来源链接保存在 `claude/xuan-weekly-etf-source-evidence/suncor-issuer-alias-v1.json`。归档为官方页面／PDF 的 web reader 原文响应及其 SHA-256；发行方拒绝原 PDF 下载，故 `originalPdfSha256` 保持 null，不把文本响应哈希冒充 PDF 字节哈希。该改动只修复发行人合并，不改变 VCN 权重或猜测证券 ISIN／CUSIP。

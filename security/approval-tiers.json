@@ -537,6 +537,10 @@
     "cloud/xuan-preopen/owner_sdk_transport.test.mjs",
     "cloud/xuan-preopen/owner_sdk_transport.test.py",
     "security/xuan-owner-approved-audience.json",
-    "security/xuan-owner-registered-canary.json"
+    "security/xuan-owner-registered-canary.json",
+    "scripts/xuan-ib-action-concentration.mjs",
+    "scripts/xuan-ib-action-concentration.test.mjs",
+    "claude/xuan-weekly-etf-source-evidence/concentration-20260930-refresh-v1.json",
+    "claude/xuan-weekly-etf-source-evidence/suncor-issuer-alias-v1.json"
   ]
 }

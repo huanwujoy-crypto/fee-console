@@ -21,6 +21,7 @@ export const ACTION_ERROR_CODES=Object.freeze({
 export const emptyActionErrors=()=>Object.fromEntries(Object.keys(ACTION_ERROR_CODES).map(k=>[k,null]));
 export function readCurrentActionFields({live,dataDate,startedAt,completedAt,previousHtml='',currencyBySymbol={}}={}){
   const sources=Array.isArray(live?.sources)?live.sources:[],states={},accepted={};
+  let brokerFundsReason='BROKER_FUNDS_SOURCE_UNAVAILABLE';
   for(const key of keys){
     const rows=sources.filter(s=>s&&typeof s==='object'&&s.sourceKey===key),row=rows[0];
     let status=live?.status==='not-called'||!live?'not-called':'request-failure';
@@ -29,7 +30,9 @@ export function readCurrentActionFields({live,dataDate,startedAt,completedAt,pre
       try{
         if(!instant(row.startedAt)||!instant(row.completedAt)||row.startedAt>row.completedAt||row.startedAt<startedAt||row.completedAt>completedAt
           ||hkt(row.startedAt)!==dataDate||hkt(row.completedAt)!==dataDate||Date.parse(row.completedAt)-Date.parse(row.startedAt)>300000)throw Error('TIME');
-        const kind=key.split('.')[1];unwrapSource(kind,row.raw);inspectOrdersAccountEvidence(row.raw);if(kind==='positions')normalizePositions(row.raw);
+        const kind=key.split('.')[1];
+        if(kind==='accountSummary'&&row.raw.currency==='BASE')brokerFundsReason='BROKER_FUNDS_CURRENCY_UNVERIFIED';
+        unwrapSource(kind,row.raw);inspectOrdersAccountEvidence(row.raw);if(kind==='positions')normalizePositions(row.raw);
         accepted[key]=row;status='ready';
       }catch{}
     }
@@ -58,7 +61,16 @@ export function readCurrentActionFields({live,dataDate,startedAt,completedAt,pre
       states['ib.orders'].status=coverage==='complete'?'ready':'partial';
     }catch{states['ib.orders']=fieldState('ib.orders','malformed');orders.reason='ORDERS_MALFORMED_OR_UNMATCHED';}
   }
-  return {states,current,orders,coverage};
+  let availableFunds={status:'unknown',reason:brokerFundsReason};
+  if(summary){
+    const raw=summary.raw;
+    if(!Object.hasOwn(raw,'available_funds'))availableFunds.reason='BROKER_FUNDS_FIELD_MISSING';
+    else if(typeof raw.available_funds!=='number'||!Number.isFinite(raw.available_funds)||Math.abs(raw.available_funds)>1e12)availableFunds.reason='BROKER_FUNDS_VALUE_INVALID';
+    else if(!/^[A-Z]{3}$/.test(raw.currency)||raw.currency==='BASE')availableFunds.reason='BROKER_FUNDS_CURRENCY_UNVERIFIED';
+    else availableFunds={status:'recorded',amount:raw.available_funds,currency:raw.currency,source:'ib.accountSummary',readAt:summary.completedAt,
+      accountBasis:inspectOrdersAccountEvidence(raw).responseAccountEvidence==='matched'?'response-account-id':'owner-attested'};
+  }
+  return {states,current,orders,coverage,availableFunds};
 }
 export function sharesightBookCash(snapshot,{portfolioId,sourceDate,onFailure=()=>{}}={}){
   const missing=code=>{onFailure(code);return null;};

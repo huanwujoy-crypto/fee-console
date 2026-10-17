@@ -40,7 +40,7 @@ export function validatePreviewOrdersBundle(bundle,{now=Date.now(),association,e
 }
 
 export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date.now,loadContext=loadTrustedContext,
-  readSharesight=readSharesightAction,expectedAccount=APPROVED_IB_ACCOUNT_ID}={}){
+  readSharesight=readSharesightAction,expectedAccount=APPROVED_IB_ACCOUNT_ID,concentrationInput=null}={}){
   if(typeof io?.savePrivate!=='function'||typeof loadContext!=='function')fail();
   const context=await loadContext({now});validateAssociationSnapshot(context.association,{now:now(),edition:'am'});
   const source=validatePreviewOrdersBundle(bundle,{now:now(),association:context.association,expectedAccount});
@@ -50,5 +50,5 @@ export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date
   }});
   return runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,initialStartedAt:Date.parse(source.startedAt),
     readArchive:null,verifyArchive:null,snapshotReader,
-    captureOptionalLive:async()=>({status:'captured',sources:[source],probeEvidence:{receiptSha256:bundle.receiptSha256,object:bundle.object}})});
+    captureOptionalLive:async()=>({status:'captured',sources:[source],probeEvidence:{receiptSha256:bundle.receiptSha256,object:bundle.object}}),concentrationInput});
 }

@@ -35,7 +35,7 @@ test('daily B completes immutable EOD delivery with one Flex fetch, one API batc
   const names=[...h.objects.keys()];assert.equal(names[0],'delivery/2026-10-09/start.json');assert.equal(names.at(-1),'delivery/2026-10-09/receipt.json');
   assert.equal(validateNightActionHtml(html,'2026-10-09').orderCount,null);assert.equal(JSON.stringify(m).includes(account),false);
   for(const title of ['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置'])assert(html.includes(title));
-  assert(html.includes('Sharesight 记录持仓'));assert(html.includes('本轮 Flex 未提供 IB 收盘持仓'));
+  assert(!html.includes('Sharesight 记录持仓'));assert(!html.includes('股票市值分母'));assert(html.includes('单票集中度'));assert(html.includes('未接入 Schwab-HK／Webull 同日来源'));
   const old=structuredClone(m);delete old.holdings;assert.equal(extractNightActionModel(renderNightActionReport(old)).schemaVersion,9);
   const rich=classifySleepPublication(html).action,weak=classifySleepPublication(renderNightActionReport(old)).action;
   assert.equal(canReplaceActionPublication(weak,rich),false);assert.equal(canReplaceActionPublication(rich,weak),true);
