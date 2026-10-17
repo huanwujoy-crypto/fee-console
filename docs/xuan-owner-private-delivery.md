@@ -231,6 +231,35 @@ single-use financial admission. The financial target remains first-create
 CAS0 only, followed by independent pinned readback and actual final-page UI
 acceptance. Google principal visibility and device limits remain explicit.
 
+### Bounded preview timing
+
+A read-only measurement on October 17 at 11:42 UTC took 14.457 seconds for
+two current-boundary checks, two pinned canary readbacks with current-entry
+checks, and one public admission-context read. That subset already exceeds
+the original ten-second publisher limit. It excludes the second context,
+financial-object presence checks, create and independent financial readback;
+it is not a measurement or successful run of the complete publisher.
+
+The explicitly registered accepted-preview publisher therefore has its own
+fixed 45-second total deadline. Callers cannot extend it. The normal daily
+publisher retains its ten-second deadline. The actual access checks still
+enforce the 60-second full-preflight lifetime and five-second single-use POST
+admission independently; none of those authorization windows is extended.
+Expiry, abort, conflict and uncertain writes still close without retry.
+The larger preview limit remains a finite execution bound, not proof that a
+future complete create/readback will succeed within it.
+
+The reviewed local executor sets Node's native connection-family attempt
+timeout to 1000ms before production imports or public context reads, verifies
+that value, and stops if it drifts before financial execution. The installed
+runtime's 250ms default intermittently produced connection timeouts and IPv6
+unreachability on the immutable public source host; a public protected-context
+probe and the read-only measurement succeeded at 1000ms. This process setting
+does not change endpoints, DNS order, TLS verification, proxies, Python SDK
+HTTP, identity, permissions, authorization lifetimes or the publisher deadline.
+It adds no I/O retry or fallback. Actual private-report UI acceptance remains
+required after independent pinned financial readback.
+
 `owner_preview_access.mjs` constructs the production capability from this actual
 SDK transport after protected-checkout admission. It reads the protected
 `security/xuan-owner-approved-audience.json`, which records hashes rather than
