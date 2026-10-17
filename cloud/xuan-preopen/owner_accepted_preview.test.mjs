@@ -1,0 +1,157 @@
+// Entirely synthetic offline fixtures. Never read the actual private report,
+// registration artifact inputs, credentials, broker, IAM or cloud storage.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
+import {renderNightActionReport,NIGHT_ACTION_MARKER} from '../../scripts/xuan-ib-night-action-view.mjs';
+import {fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
+import {SNAPSHOT_SCOPES,digest} from './eod_sources.mjs';
+import {resolveCurrentCall} from './call_record.mjs';
+import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
+import {OWNER_SCOPE,LATEST_TARGET} from './owner_latest.mjs';
+import {acceptedPreviewRegistrationText,buildAcceptedPreviewMetadata,renderAcceptedPreviewDisplay,
+  prepareAcceptedPreviewDisplay,createProtectedOwnerPreviewVerifier,createAcceptedPreviewPublisher,previewMetadataSha256} from './owner_accepted_preview.mjs';
+
+const NOW=Date.parse('2026-10-17T07:00:00.000Z'),LATER=Date.parse('2026-10-19T07:00:00.000Z'),COMMIT='c'.repeat(40);
+const START='2026-10-17T06:00:00.000Z',END='2026-10-17T06:02:00.000Z',DONE='2026-10-17T06:03:00.000Z';
+const ORDER_START='2026-10-17T06:00:02.000Z',ORDER_END='2026-10-17T06:00:15.000Z';
+const encode=s=>new TextEncoder().encode(s),decode=b=>new TextDecoder().decode(b),hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+globalThis.fetch=()=>assert.fail('Accepted preview tests must never access the network');
+function snapshot(key,readAt){
+  const scope=SNAPSHOT_SCOPES[key],h=(id,group_name,value,code)=>({id,group_name,value,quantity:10,instrument:{code,currency:{code:'USD'}}});
+  const raw={mode:'read_only',source:'Sharesight User API',data:{report:{portfolio_id:scope.portfolioId,currency:{code:'USD'},start_date:'2026-10-16',end_date:'2026-10-16',include_sales:false,
+    ...(key==='sharesight.ibGroupedPerformance'?{grouping:'custom_group_category',custom_group:{id:Number(scope.grouping),name:'资产类别'},holdings:[h(1,'美国底仓',450,'CSPX'),h(2,'美国底仓',50,'USSC'),h(3,'美国科技',250,'GOOG'),h(4,'非美发达',180,'EXUS'),h(5,'新兴市场',70,'EIMI')]}:{grouping:scope.grouping}),cash_accounts:[{value:200}]}}};
+  return {sourceKey:key,status:'date-verified',raw,rawFingerprint:digest(raw),completion:null,
+    provenance:{sourceDate:'2026-10-16',readAt,syncCompletedAt:null,snapshotGeneration:null,receiptSha256:null}};
+}
+function fixture(){
+  const sources=[['ib.accountSummary',START,'2026-10-17T06:00:10.000Z'],['ib.positions','2026-10-17T06:00:01.000Z','2026-10-17T06:00:12.000Z'],['ib.orders',ORDER_START,ORDER_END],
+    ['sharesight.ibGroupedPerformance','2026-10-17T06:01:00.000Z','2026-10-17T06:01:30.000Z'],['sharesight.noahPerformance','2026-10-17T06:01:01.000Z',END]]
+    .map(([sourceKey,startedAt,completedAt])=>({sourceKey,startedAt,completedAt,sha256:hash(encode('SYNTHETIC '+sourceKey)),
+      ...(sourceKey.startsWith('sharesight.')?{sourceDate:'2026-10-16',status:'date-verified',syncCompletion:'not-provided'}:{})}));
+  const manifest={sources,sourceHead:'a'.repeat(40),associationPolicySha256:'b'.repeat(64),callLedgerSha256:'c'.repeat(64)};
+  const rawOrders={orders:[{order_id:1,order_status:'NEW',order_type:'LIMIT',side:'BUY',limit_price:'10',total_shares_qty:'4',cum_shares_qty:'0',remaining_shares_qty:'4',primary_description:'Buy 4 EXUS',secondary_description:'Synthetic instrument',order_time:'2026-10-16T14:00:00Z'}]};
+  const rawByKey={'ib.accountSummary':{currency:'USD',total_cash_value:123},'ib.positions':{positions:[]},'ib.orders':rawOrders};
+  const live={status:'captured',sources:sources.slice(0,3).map(s=>({...s,raw:rawByKey[s.sourceKey],rawFingerprint:fingerprint(rawByKey[s.sourceKey])}))};
+  const snapshots=[snapshot('sharesight.ibGroupedPerformance',sources[3].completedAt),snapshot('sharesight.noahPerformance',END)];
+  const outcomes=[{sourceKey:'ib.flexEod',status:'not-called',rawFingerprint:null},...snapshots.map(s=>({sourceKey:s.sourceKey,status:s.status,rawFingerprint:s.rawFingerprint})),{sourceKey:'ib.optionalLive',status:'captured',rawFingerprint:digest(live)}];
+  const call=resolveCurrentCall({schemaVersion:1,purpose:'xuan-etf-owner-declared-pending-calls',entries:[{date:'2026-09-01',usd:100}]},'2026-10-17');
+  const model=buildEodActionModel({fieldMode:true,dataDate:'2026-10-17',sourceDate:'2026-10-16',asOfHkt:'2026-10-17 14:00–14:02 HKT · 数据至 2026-10-16',
+    snapshots,live,reserve:call.amountUsd,callRecord:call,sourceOutcomes:outcomes,captureStartedAt:START,captureCompletedAt:END});
+  model.sourceManifestSha256=digest(sources);model.evidenceSha256=digest({sourceOutcomes:model.sourceOutcomes,sourceManifestSha256:model.sourceManifestSha256});
+  const html=encode(renderNightActionReport(model)),modelBytes=encode(JSON.stringify(model,null,2)+'\n'),manifestBytes=encode(JSON.stringify(manifest,null,2)+'\n');
+  const registration={schema:'xuan.owner-accepted-preview-registration.v1',registrationId:'synthetic-saturday-preview',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,
+    dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:START,captureEndedAt:END,completedAt:DONE,ordersCaptureStartedAt:ORDER_START,ordersCaptureEndedAt:ORDER_END,
+    sourceHead:manifest.sourceHead,artifactSha256:hash(html),modelSha256:hash(modelBytes),sourceManifestSha256:hash(manifestBytes),sourceManifestContentSha256:digest(sources),displaySha256:'0'.repeat(64),financialStatus:'partial',unknownFields:['cash','orders','prices']};
+  const displayBytes=renderAcceptedPreviewDisplay(html,{registration});registration.displaySha256=hash(displayBytes);
+  const f={model,html,modelBytes,manifest,manifestBytes,registration,displayBytes};refreshMetadata(f);return f;
+}
+function refreshMetadata(f){f.registrationSha256=hash(acceptedPreviewRegistrationText(f.registration));f.metadata=buildAcceptedPreviewMetadata({registration:f.registration,registrationSha256:f.registrationSha256,registrationPolicyCommit:COMMIT});}
+const candidate=f=>({metadata:f.metadata,displayBytes:f.displayBytes});
+function verifier(f,{now=()=>NOW,loadContext}={}){
+  const reads=[];
+  return {reads,verify:createProtectedOwnerPreviewVerifier({now,loadContext:loadContext??(async opts=>{reads.push(opts);assert.equal(typeof opts.now,'function');return {previewRegistration:{registration:structuredClone(f.registration),sha256:f.registrationSha256,policyCommit:COMMIT}};})})};
+}
+const args=(f,phase='candidate-admission')=>({...candidate(f),phase,now:NOW});
+
+test('exact synthetic local artifacts produce only static visible facts; the full model and hidden observation state are absent',()=>{
+  const f=fixture(),before=[f.html.slice(),f.modelBytes.slice(),f.manifestBytes.slice()];
+  const display=prepareAcceptedPreviewDisplay(f.html,{modelBytes:f.modelBytes,manifestBytes:f.manifestBytes,registration:f.registration});
+  assert.deepEqual(display,f.displayBytes);assert.deepEqual([f.html,f.modelBytes,f.manifestBytes],before);
+  const text=decode(display);assert.ok(!text.includes(NIGHT_ACTION_MARKER));assert.ok(!/data-order-(key|first-price)|<script\b|<iframe\b|(?:href|src)=/i.test(text));
+  for(const id of ['card-plan','card-orders','card-cash','card-allocation'])assert.equal(text.split(`id="${id}"`).length,2);
+  assert.ok(text.includes('2026-10-17 周六验收稿'));assert.ok(text.includes('市场数据日：2026-10-16'));
+  assert.ok(text.includes('真实采集：14:00:00.000–14:02:00.000 HKT'));assert.ok(text.includes('挂单读取：14:00:02.000–14:00:15.000 HKT'));
+  assert.ok(text.includes('USD·推定'));assert.ok(text.includes('重新打开不会更新取值'));assert.equal(f.model.cash.planning,null);
+});
+test('local input bytes and protected registration are exact; alternate files or financial registry fields do not confer admission',()=>{
+  for(const kind of ['html','model','manifest','display-hash','scope','financial-field']){
+    const f=fixture();if(kind==='html')f.html=encode(decode(f.html)+' ');if(kind==='model')f.modelBytes=encode(decode(f.modelBytes)+' ');if(kind==='manifest')f.manifestBytes=encode(decode(f.manifestBytes)+' ');
+    if(kind==='display-hash')f.registration.displaySha256='d'.repeat(64);if(kind==='scope')f.registration.scope='foreign-scope';if(kind==='financial-field')f.registration.cash=123;
+    assert.throws(()=>prepareAcceptedPreviewDisplay(f.html,{modelBytes:f.modelBytes,manifestBytes:f.manifestBytes,registration:f.registration}),/OWNER_PREVIEW_/);
+  }
+});
+test('Saturday admission and historical authenticity both read actual trusted registration twice without pretending daily freshness',async()=>{
+  const f=fixture(),v=verifier(f);const proof=await v.verify(args(f));assert.equal(proof.displaySha256,hash(f.displayBytes));
+  assert.equal(proof.metadataSha256,await previewMetadataSha256(f.metadata));assert.equal(v.reads.length,2);
+  assert.ok(v.reads.every(o=>o.phase==='accepted-preview-admission'&&o.policyCommit===COMMIT));
+  const later=verifier(f,{now:()=>LATER});assert.equal((await later.verify({...args(f,'historical-authenticity'),now:LATER})).registrationPolicyCommit,COMMIT);
+  assert.ok(later.reads.every(o=>o.phase==='accepted-preview-historical'));assert.equal(later.reads.length,2);
+});
+test('caller flags, wrong phase, unknown policy, raw registration-byte mismatch and future metadata fail closed',async()=>{
+  for(const kind of ['flag','phase','policy','registration-sha','raw-hash','future']){
+    const f=fixture();if(kind==='flag')f.metadata.approved=true;if(kind==='policy')f.metadata.registrationPolicyCommit='d'.repeat(40);if(kind==='registration-sha')f.metadata.registrationSha256='d'.repeat(64);
+    const v=verifier(f,{...(kind==='future'?{now:()=>Date.parse('2026-10-17T06:01:00.000Z')}:{}),...(kind==='raw-hash'?{loadContext:async()=>({previewRegistration:{registration:f.registration,sha256:'d'.repeat(64),policyCommit:COMMIT}})}:{})});
+    await assert.rejects(v.verify({...args(f),...(kind==='phase'?{phase:'daily-candidate'}:{})}),/OWNER_PREVIEW_/);
+  }
+  assert.throws(()=>createProtectedOwnerPreviewVerifier(),/CAPABILITIES_REQUIRED/);
+});
+test('stored display hashes are independently bound to trusted registration, never to supplied display metadata',async()=>{
+  const f=fixture(),v=verifier(f);f.displayBytes=encode(decode(f.displayBytes)+' ');
+  await assert.rejects(v.verify(args(f)),/DISPLAY_HASH/);
+});
+test('active content, raw identifiers or restored reversible model are rejected even if a context claims their changed display hash',async()=>{
+  for(const extra of ['<script>synthetic()</script>','<a href="https://example.invalid">link</a>','<p>U1234567</p>','<p>account_id</p>',`<!-- ${NIGHT_ACTION_MARKER}:e30 -->`]){
+    const f=fixture();f.displayBytes=encode(decode(f.displayBytes)+extra);f.registration.displaySha256=hash(f.displayBytes);refreshMetadata(f);
+    await assert.rejects(verifier(f).verify(args(f)),/STATIC_DISPLAY/);
+  }
+});
+test('late registration changes, invalid time shapes and provenance relabelling cannot pass',async()=>{
+  const f=fixture();let calls=0;
+  await assert.rejects(verifier(f,{loadContext:async()=>({previewRegistration:{registration:structuredClone(f.registration),sha256:++calls===1?f.registrationSha256:'d'.repeat(64),policyCommit:COMMIT}})}).verify(args(f)),/REGISTRATION/);
+  assert.equal(calls,2);
+  for(const key of ['captureStartedAt','ordersCaptureEndedAt','completedAt']){const other=fixture();other.registration[key]='2026-10-17T06:00:00+00:00';assert.throws(()=>acceptedPreviewRegistrationText(other.registration),/REGISTRATION_TIME/);}
+  const other=fixture();other.registration.dataDate='2026-10-18';assert.throws(()=>acceptedPreviewRegistrationText(other.registration),/REGISTRATION_DATE/);
+});
+test('metadata and Buffer inputs are detached before trusted context awaits',async()=>{
+  const f=fixture();let entered,release,calls=0;
+  const started=new Promise(r=>{entered=r;}),pause=new Promise(r=>{release=r;});
+  const v=verifier(f,{loadContext:async()=>{if(++calls===1){entered();await pause;}return {previewRegistration:{registration:structuredClone(f.registration),sha256:f.registrationSha256,policyCommit:COMMIT}};}});
+  const input={...args(f),metadata:structuredClone(f.metadata),displayBytes:Buffer.from(f.displayBytes)},pending=v.verify(input);
+  await started;input.metadata.scope='foreign';input.displayBytes.fill(0);release();assert.equal((await pending).displaySha256,hash(f.displayBytes));
+});
+function publisher(f,{existing=false,access,probe,write,readback,setTimer,clearTimer}={}){
+  const events=[];let saved;
+  const p=createAcceptedPreviewPublisher({now:()=>NOW,verifyProtectedPreview:async options=>{events.push('verify');return verifier(f).verify(options);},
+    verifyDestinationAccess:async options=>{events.push('access');assert.equal(options.target,LATEST_TARGET);if(access)return access(options);},
+    ...(setTimer?{setTimer,clearTimer}:{}),io:{async probeLatestExists(){events.push('head');if(probe)return probe();return {state:existing?'present':'absent'};},
+      async createAcceptedPreview(options){events.push('create');saved=structuredClone(options);if(write)return write(options);return {...LATEST_TARGET,generation:'1',size:options.bytes.length};},
+      async readLatestGeneration(options){events.push('readback');assert.equal(options.generation,'1');assert.equal(options.metadata.displaySha256,hash(f.displayBytes));if(readback)return readback(options);return new Uint8Array(saved.bytes);}}});
+  return {p,events};
+}
+test('preview publication has no default access capability; construction performs no I/O',async()=>{
+  const f=fixture();let reads=0;const p=createAcceptedPreviewPublisher({approved:true,io:{probeLatestExists(){reads++;}},verifyProtectedPreview:()=>assert.fail()});
+  assert.deepEqual(await p.publish(candidate(f)),{status:'blocked',code:'PREVIEW_CAPABILITIES_REQUIRED'});assert.equal(reads,0);
+});
+test('existing target, denied readers, permission denial or an asserted JSON grant permit zero create calls',async()=>{
+  for(const options of [{existing:true},{access:()=>{throw Error('SYNTHETIC_READERS_DENIED');}},{probe:()=>{throw Object.assign(Error('SYNTHETIC_DENIED'),{status:403});}},{access:()=>({approved:true})}]){
+    const f=fixture(),t=publisher(f,options);assert.equal((await t.p.publish(candidate(f))).status,'blocked');assert.ok(!t.events.includes('create'));
+    assert.equal((await t.p.publish(candidate(f))).code,'PREVIEW_ONE_SHOT_CLOSED');
+  }
+});
+test('one accepted fixed artifact requires access checks and independent generation readback before success',async()=>{
+  const f=fixture(),t=publisher(f);const result=await t.p.publish(candidate(f));assert.equal(result.status,'published-verified');
+  assert.deepEqual(t.events,['access','head','verify','access','create','readback']);assert.equal(result.sha256,hash(f.displayBytes));
+  assert.equal((await t.p.publish(candidate(f))).code,'PREVIEW_ONE_SHOT_CLOSED');
+});
+test('CAS conflict, concurrent existing target and uncertain writes never retry',async()=>{
+  for(const [error,status] of [[Object.assign(Error('race'),{status:412}),'conflict'],[Object.assign(Error('exists'),{safeCode:'LATEST_ALREADY_EXISTS'}),'blocked'],[Error('disconnect'),'unknown']]){
+    const f=fixture(),t=publisher(f,{write:()=>{throw error;}});assert.equal((await t.p.publish(candidate(f))).status,status);
+    assert.equal(t.events.filter(x=>x==='create').length,1);assert.equal((await t.p.publish(candidate(f))).code,'PREVIEW_ONE_SHOT_CLOSED');assert.ok(!t.events.includes('readback'));
+  }
+});
+test('wrong acknowledgement, altered readback or failed readback is unknown and never reported verified',async()=>{
+  for(const options of [{write:()=>({...LATEST_TARGET,generation:'1',size:1})},{readback:()=>encode('wrong')},{readback:()=>{throw Error('denied');}}]){
+    const f=fixture(),t=publisher(f,options);assert.equal((await t.p.publish(candidate(f))).status,'unknown');assert.equal(t.events.filter(x=>x==='create').length,1);
+  }
+});
+test('deadline before create prevents delayed continuation; a deadline during create retains an unknown outcome',async()=>{
+  for(const duringWrite of [false,true]){
+    const f=fixture();let fire,release,entered;
+    const pause=new Promise(r=>{release=r;}),started=new Promise(r=>{entered=r;});
+    const t=publisher(f,{setTimer:fn=>{fire=fn;return 1;},clearTimer(){},...(duringWrite?{write:async options=>{entered();await pause;return {...LATEST_TARGET,generation:'1',size:options.bytes.length};}}:{probe:async()=>{entered();await pause;return {state:'absent'};}})});
+    const pending=t.p.publish(candidate(f));await started;fire();assert.equal((await pending).status,duringWrite?'unknown':'blocked');
+    release();await new Promise(r=>setImmediate(r));assert.equal(t.events.filter(x=>x==='create').length,duringWrite?1:0);assert.ok(!t.events.includes('readback'));
+  }
+});

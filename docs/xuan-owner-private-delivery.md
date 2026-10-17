@@ -1,4 +1,4 @@
-# Protected owner-only action delivery
+# Protected private owner action delivery
 
 This change reuses the frozen `xuan-private-phone-automatic-local-r2` planner,
 chronology, input-copy and conditional-write design. It prepares a real fixed
@@ -89,8 +89,8 @@ only the fixed authenticated read's 404 can plan create-only generation zero.
 
 `owner_latest_delivery.mjs --execute-current-workday` is the explicit controller.
 Before using its existing Google credential environment it requires local HEAD
-to equal live trusted main, a clean tracked tree, and all four new executable
-modules to exist in that commit with matching bytes. An untracked new module on
+to equal live trusted main, a clean tracked tree, and all eight owner-delivery
+source files plus both protected registrations to exist in that commit with matching bytes. An untracked new module on
 an old main checkout cannot pass. It uses only the existing supplied identity;
 it has no token endpoint, login, impersonation, Secret or Keychain reader.
 
@@ -106,6 +106,111 @@ access. This is not a weekend-daily bypass or a Mac-reference receipt adapter.
 The separately collected local weekend preview has its own true dates and is
 kept intact; it cannot be substituted for an immutable daily production bundle.
 
+## Separately accepted Saturday preview
+
+The local review patch adds a separate `xuan.owner-accepted-preview.v1` type.
+Its one registration, `security/xuan-owner-accepted-preview.json`, freezes only
+nonfinancial hashes, scope and actual dates/times of the October 17 Saturday
+reference. It does not contain account numbers, amounts, raw orders or the
+reversible private model. The report date is October 17, the source market date
+is October 16, and the displayed original collection intervals are preserved.
+Running later does not make these facts fresh or turn Saturday into a market day.
+
+`deliverOwnerAcceptedPreview` is an explicit function entry with no automatic
+schedule or preview CLI switch. It first enforces the protected checkout, then
+reproduces the frozen static display from the exact original HTML, model and
+source-manifest bytes. The display removes the private model marker and active
+content while retaining the existing cards, financial facts and unknown states.
+The verifier reads the actual registration bytes from trusted main twice. A
+JSON assertion of approval, a locally modified registry or a hash supplied only
+by the candidate is insufficient.
+
+The entry additionally requires a trusted, real read-only destination-access
+checker; it supplies none by default. Before this checker may pass, the actual
+configured audience must have been disclosed and authorized, the existing
+identity's exact permissions proven, and nonfinancial canary access verified
+using already authorized sessions. Public-access prevention and uniform access
+do not establish that only the owner can read. Do not infer permission from a
+service account's expected system purpose, silently change identities or modify
+IAM. This patch is not evidence that any of these live acceptance steps passed.
+
+The preview publisher probes only the fixed `delivery/owner-latest.html`.
+Any existing object, denied read or uncertain state stops before upload. Only
+an explicit authenticated absence can make one atomic create with
+`ifGenerationMatch=0`; preview metadata cannot be used with a replacement
+generation. No extra receipt, model, raw source or financial test object is
+uploaded. A separate pinned metadata/media readback must match exact bytes,
+headers, registration and generation. Conflict and uncertain outcomes stop
+without retry or rollback.
+
+Future normal working-day candidates still pass the unchanged daily receipt,
+source, calendar and freshness gates. Only the current-latest historical branch
+recognizes this preview. It proves the registration commit is an ancestor of
+current main, reads both versions of the registration and requires identical
+bytes, checks the frozen display and original chronology, then uses the actual
+stored generation for CAS. It never fabricates daily bundle/receipt objects for
+the preview. Removing or changing the registration fails closed; any migration
+would need its own protected review. This preview can never enter the ordinary
+daily candidate lane.
+
+## Existing Mac SDK and actual access capability
+
+`owner_sdk_transport.mjs` and its Python worker supply the previously missing
+real transport using the Mac's existing official Google Cloud SDK. They use only
+the original cached owner identity through the SDK's credential-store API.
+The noncredential `XUAN_OWNER_EXISTING_SDK_ROOT` runtime locator must resolve
+to the already inspected SDK path hash in both bridge processes. Missing or
+different locations fail closed; the private old workspace path is not published
+in source, and no SDK is discovered from PATH or installed by this change.
+No token or credential value leaves the worker, no Keychain/ADC/metadata or
+service-account fallback is used, and auth/endpoint/proxy/credential overrides
+are rejected. An invalid, stale or expiring cached credential fails closed.
+The worker rejects every token request: it does not log in, refresh credentials,
+impersonate, enable a service or call Secret Manager. Authorized HTTP requests
+disable redirect following, automatic refresh/replay and transport retries.
+Node and Python communicate only through bounded memory pipes; financial
+request/response bodies and credential headers are never logged or stored by
+this adapter. Killing a timed-out worker cannot authorize another attempt.
+
+The normal request capability accepts only the literal latest object and a
+single CAS0 upload. A separate canary capability accepts only the already
+designated `delivery/owner-phone-canary-v1.html` and a strict nonfinancial
+template containing a fresh UUID, real creation time and registered candidate
+hash. It cannot accept arbitrary HTML, financial values or extra metadata.
+The immutable canary is independently read back at the acknowledged generation.
+Any existing canary stops; it is not overwritten or silently reused.
+
+`owner_preview_access.mjs` constructs the production capability from this actual
+SDK transport after protected-checkout admission. It reads the protected
+`security/xuan-owner-approved-audience.json`, which records hashes rather than
+the owner's or service accounts' exact identities. Live checks cover the same
+owner, fixed bucket/project boundary, uniform access/public-access prevention,
+bucket and project IAM, conditional/convenience expansion, current object
+permission definitions and the exact seven accepted configured readers. Only
+Storage permissions are fingerprinted; unrelated non-Storage additions to a
+Google-managed role do not purport to be unchanged. The existing Storage
+`testIamPermissions` read must confirm `storage.objects.get` and
+`storage.objects.create`; no grant is added to satisfy it.
+
+The full preflight is short lived. Before the financial write, real checks
+re-read the current actor/IAM and the same session's generation-pinned canary;
+stale, changed or uncertain results stop. The trusted executor must first
+actually open the canary using the existing owner browser session. An empty
+callback, caller-supplied `approved=true`, saved JSON receipt or successful unit
+test cannot stand in for that workflow or the live SDK capability. The same
+session's real checker and request capability are then passed to the explicit
+preview entry. The executor must separately open and verify the final private
+report before claiming delivery. No schedule or automatic preview execution
+is added.
+
+The policy fingerprint compares complete binding/condition/member semantics,
+normalizing only user-email case and explicit versus omitted IAM policy-version
+formatting. It does not claim to exhaust inherited deny policies, non-Storage
+delegation or every reader's actual successful GET. Those limits were retained
+in the disclosed audience review. The original owner SDK identity remains an
+exact hash match, and successful live permission tests plus pinned canary/report
+readback remain separate requirements.
+
 ## Approval and real acceptance still required
 
 The complete sensitive source diff needs its final GitHub-verified signed head,
@@ -120,7 +225,7 @@ prefix restrictions do not establish original `report-check/` source access or
 create/delete on the fixed latest object. Do not extend its permissions, switch
 identities, or treat an absent direct binding as proof of no effective access.
 Use an already authorized identity only after proving the exact effective rights
-and owner-only destination; otherwise return that precise permission blocker.
+and owner-authorized private audience; otherwise return that precise permission blocker.
 
 Real admission requires a fresh normal-workday original completed bundle and the
 existing approved Flex configuration where relevant. Then independently verify

@@ -1,0 +1,97 @@
+{
+  "schema": "xuan.owner-approved-audience.v1",
+  "project": "family-portfolio-gateway",
+  "bucket": "family-portfolio-gateway-xuan-preopen-private",
+  "targets": [
+    "delivery/owner-latest.html",
+    "delivery/owner-phone-canary-v1.html"
+  ],
+  "actorIdentifierSha256": "1f95a16df4e38086493c3447a048fdf375e8402fa4ba709ece794e3b830d49ee",
+  "ownerPrincipalSha256": "fd703b5ec8995ea6d398224b8bdba7d7f598e851bf7222f6189bf6890bc3339c",
+  "approvedReaderPrincipalSha256": [
+    "1209f896cf752ce1820986d4f186aceab4fe58975228e2c31ebf57a4c87394bd",
+    "14194b86168d5c5d98b3032dcc0d85239c131712e99da304a11e11f56295a47b",
+    "3ff7051f49633793b7d906da19d043eee22c2d3ac5a0d5035ef661970a9d4183",
+    "8d07f31f66be454b0fa6ea0ecc00fcae9cd451f07309cb33c5fec58479ed903f",
+    "addda255552d6be9905e6f88bd15149492a09edc892a1bcfcbcdeb0c946d1a78",
+    "e531fc24d468052733a9ecfe7d525833e1596955fa91eb82d6e4776a6cdd8e14",
+    "fd703b5ec8995ea6d398224b8bdba7d7f598e851bf7222f6189bf6890bc3339c"
+  ],
+  "bucketMetadataSha256": "b6ec597ceb8f86bc0b0ec57b464c2760a085c26821871133aece741eb7b38b82",
+  "bucketIamSha256": "60938b00a7804ff4a01cd026d587c5683c5aad03f7c0ec7c5dc5a7af4092c04f",
+  "projectIamSha256": "bbb49c8b7d2d2f033d6978dc903e006f087eca043ac929272c8803d5492aae83",
+  "projectMetadataSha256": "0b88cc6978ff430414d90641b39eaa28b2dccf8866ced4060d2b624e6e0cd75e",
+  "roleDefinitions": [
+    {
+      "name": "projects/family-portfolio-gateway/roles/xuanPreopenDeliveryRead",
+      "sha256": "dcfadd24a4e5d3123a85ac5d8334377a3f156e0cd346bd1021fea69334fcf3b7"
+    },
+    {
+      "name": "roles/artifactregistry.serviceAgent",
+      "sha256": "84f09709b58f172a959c32198b541de677bfc55839912f04f8578b24288c2c0b"
+    },
+    {
+      "name": "roles/cloudbuild.builds.builder",
+      "sha256": "e717f447c6287d53ae958e3aa19069c9269ddc5545d69e95470cc92e77339eeb"
+    },
+    {
+      "name": "roles/cloudbuild.serviceAgent",
+      "sha256": "d8bdb4d380be4046164a645747be30340fcfbb56b48b28ba03cfee0ddb272afb"
+    },
+    {
+      "name": "roles/cloudscheduler.serviceAgent",
+      "sha256": "931b7e58c97262936ab513fd922938069a3eea15de284fc57847792d8f42198b"
+    },
+    {
+      "name": "roles/cloudtasks.serviceAgent",
+      "sha256": "500078f5f27c3d8d5803daab21193db46d572fdc8143614eb7f02d19700487bb"
+    },
+    {
+      "name": "roles/containerregistry.ServiceAgent",
+      "sha256": "b0a2edc483e1b3d5206909074f70e6d9e7859b179afbc20809dc2eb6e39c587f"
+    },
+    {
+      "name": "roles/editor",
+      "sha256": "db9fc0e234d51a16977c30e0b58badcfd074c728e1a577131f8e8bd9c2f56414"
+    },
+    {
+      "name": "roles/logging.viewer",
+      "sha256": "1f566de4ce462e5c20fa7d4fd3225efb1c79a596a8e8ae2f8dcdcb7368a0f6a0"
+    },
+    {
+      "name": "roles/owner",
+      "sha256": "389dcd7a7658cef8828d25cfafa174cac918b743ecfdf54df7b22d8125caec7b"
+    },
+    {
+      "name": "roles/pubsub.serviceAgent",
+      "sha256": "cb637c980925690a5ff7962a86c7afcc1ed4a5ca80a49b3d0a8d3ad7c4a310f4"
+    },
+    {
+      "name": "roles/run.serviceAgent",
+      "sha256": "7eea772ac137746f16d6a06d69945ccca2cabb26dd3bdbd9870704c391654d8b"
+    },
+    {
+      "name": "roles/storage.legacyBucketOwner",
+      "sha256": "f7feb3573ef885ee731b70febf8d2c5faf6150d3356c65451e1e052bd89dd6b5"
+    },
+    {
+      "name": "roles/storage.legacyBucketReader",
+      "sha256": "83bc8c04b14215d9308ca0d221e3cf8680e7c0b09949eea21977c3f1fb7822d3"
+    },
+    {
+      "name": "roles/storage.legacyObjectOwner",
+      "sha256": "cd976472b84c43f16998337f379035c1237ffc41f5c56d5f4a98f6d958ecb359"
+    },
+    {
+      "name": "roles/storage.legacyObjectReader",
+      "sha256": "beea88b6404ae454d7a857a16c6e1040c2a8089c4ca40bd9c2609074fa27cbe9"
+    },
+    {
+      "name": "roles/storage.objectCreator",
+      "sha256": "917ca291b9ed59f0c98f0b73f91848bee329f8cc052b2a29ba4b0f15b2cb85d7"
+    }
+  ],
+  "rolePermissionScope": "storage.*",
+  "projectNumberSha256": "900c481522bbf0463f00fec8bf8f8274692786c6646249032db328968b562b6b",
+  "boundarySha256": "cdf97988bf25cf8c380e812f29090fc097fcac8ed5c4a4be5684f309dc455d64"
+}

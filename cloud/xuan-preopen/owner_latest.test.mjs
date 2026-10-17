@@ -3,7 +3,8 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import {
-  createOwnerLatestPublisher, planOwnerLatest, OWNER_SCOPE,
+  createOwnerLatestPublisher, planOwnerLatest, OWNER_SCOPE,ACCEPTED_PREVIEW_SCHEMA,
+  validateAcceptedPreviewMetadata,previewMetadataSha256,
 } from './owner_latest.mjs';
 
 // Formal regressions from the independent r1 review. All identities, reports,
@@ -274,4 +275,103 @@ test('deadline during write reports uncertain outcome and never retries',async()
   write.resolve({bucket:'family-portfolio-gateway-xuan-preopen-private',object:'delivery/owner-latest.html',generation:'1',size:3});
   await new Promise(resolve=>setImmediate(resolve));assert.deepEqual(calls,['write']);
   assert.equal((await instance.publish(candidate())).code,'ONE_SHOT_CLOSED');
+});
+
+const MONDAY_NOW=Date.parse('2026-10-19T13:00:00.000Z');
+function acceptedPreview(){
+  return {state:'present',kind:'accepted-preview',generation:'7000000000000000001',
+    displayBytes:Buffer.from('SYNTHETIC ACCEPTED SATURDAY STATIC DISPLAY'),preview:{metadata:{
+      schema:ACCEPTED_PREVIEW_SCHEMA,scope:OWNER_SCOPE,ownerBinding:OWNER,sourceIdentitySha256:SOURCE,
+      registrationId:'saturday-acceptance-20261017',registrationSha256:'d'.repeat(64),registrationPolicyCommit:'e'.repeat(40),
+      dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:'2026-10-17T06:54:46.000Z',
+      captureEndedAt:'2026-10-17T06:56:43.000Z',completedAt:'2026-10-17T07:00:00.000Z',
+      financialStatus:'partial',unknownFields:['orders','cash','prices'],
+    }}};
+}
+async function registeredPreviewVerifier(current=acceptedPreview(),seen=[]){
+  const metadataDigest=await previewMetadataSha256(current.preview.metadata),displayDigest=hash(current.displayBytes);
+  return async({metadata:m,displayBytes,phase})=>{
+    seen.push(phase);
+    if(phase!=='historical-authenticity'||await previewMetadataSha256(m)!==metadataDigest||hash(displayBytes)!==displayDigest)
+      throw Object.assign(Error('synthetic protected registration mismatch'),{safeCode:'SYNTHETIC_PREVIEW_REJECTED'});
+    return {schema:'xuan.owner-accepted-preview-proof.v1',scope:m.scope,ownerBinding:m.ownerBinding,
+      sourceIdentitySha256:m.sourceIdentitySha256,registrationId:m.registrationId,registrationSha256:m.registrationSha256,
+      registrationPolicyCommit:m.registrationPolicyCommit,displaySha256:displayDigest,metadataSha256:metadataDigest};
+  };
+}
+const mondayCandidate=()=>bundle('2026-10-19','SYNTHETIC NEW MONDAY DAILY REPORT');
+test('normal weekday admission can replace registered static preview using its actual generation',async()=>{
+  const current=acceptedPreview(),seen=[],normal=[],renders=[];
+  const result=await planOwnerLatest(options({candidate:mondayCandidate(),current,now:MONDAY_NOW,
+    verifyProtectedReceipt:args=>{normal.push(args.phase);return proof(args);},
+    verifyProtectedPreview:await registeredPreviewVerifier(current,seen),prepareDisplay:bytes=>{renders.push(copy(bytes));return copy(bytes);}}));
+  assert.equal(result.status,'ready');assert.equal(result.ifGenerationMatch,current.generation);
+  assert.deepEqual(normal,['candidate-admission']);assert.deepEqual(seen,['historical-authenticity']);
+  assert.equal(renders.length,1,'accepted static preview has no daily original to reconstruct');
+  assert.equal(current.preview.metadata.dataDate,'2026-10-17');
+});
+test('accepted preview cannot enter normal candidate admission or supply JSON trust',async()=>{
+  const current=acceptedPreview();let normal=0;
+  const previewAsBundle={metadata:current.preview.metadata,html:current.displayBytes,receipt:encode('{}')};
+  const rejected=await planOwnerLatest(options({candidate:previewAsBundle,current:{state:'absent'},now:MONDAY_NOW,
+    verifyProtectedReceipt:()=>{normal++;throw Error('not normal');}}));
+  assert.equal(rejected.status,'blocked');assert.equal(normal,0);
+  const result=await planOwnerLatest(options({candidate:mondayCandidate(),current,now:MONDAY_NOW,
+    verifyProtectedPreview:{approved:true},previewProof:{approved:true}}));
+  assert.equal(result.code,'PROTECTED_PREVIEW_GATES_UNAVAILABLE');
+});
+test('preview schema, registration, times and financial shape remain exact',async t=>{
+  for(const [name,edit] of [
+    ['daily original field',m=>{m.artifactObject='delivery/2026-10-17/report.html';}],
+    ['wrong schema',m=>{m.schema='xuan.owner-latest.v1';}],
+    ['bad registration',m=>{m.registrationPolicyCommit='not-a-commit';}],
+    ['future completed',m=>{m.completedAt='2026-10-20T00:00:00.000Z';}],
+    ['wrong owner',m=>{m.ownerBinding='f'.repeat(64);}],
+    ['unbound financial status',m=>{m.financialStatus='complete';m.unknownFields=[];}],
+    ['unknown field',m=>{m.unknownFields.push('unregistered');}],
+  ])await t.test(name,async()=>{
+    const current=acceptedPreview();edit(current.preview.metadata);
+    assert.throws(()=>validateAcceptedPreviewMetadata(current.preview.metadata,{now:MONDAY_NOW,ownerBinding:OWNER}));
+  });
+});
+test('historical preview proof binds all registered metadata and actual static bytes',async t=>{
+  for(const [name,edit] of [
+    ['registered hash',c=>{c.preview.metadata.registrationSha256='f'.repeat(64);}],
+    ['registered commit',c=>{c.preview.metadata.registrationPolicyCommit='f'.repeat(40);}],
+    ['registered unknowns',c=>{c.preview.metadata.unknownFields.push('allocation');}],
+    ['static display',c=>{c.displayBytes[0]^=1;}],
+  ])await t.test(name,async()=>{
+    const current=acceptedPreview(),verifyProtectedPreview=await registeredPreviewVerifier();edit(current);
+    const result=await planOwnerLatest(options({candidate:mondayCandidate(),current,now:MONDAY_NOW,verifyProtectedPreview}));
+    assert.equal(result.code,'SYNTHETIC_PREVIEW_REJECTED');
+  });
+  const verify=await registeredPreviewVerifier();
+  const result=await planOwnerLatest(options({candidate:mondayCandidate(),current:acceptedPreview(),now:MONDAY_NOW,
+    verifyProtectedPreview:async args=>({...await verify(args),displaySha256:'f'.repeat(64)})}));
+  assert.equal(result.code,'PROTECTED_PREVIEW_GATES_REJECTED');
+});
+test('weekday candidate cannot regress source identity or chronology behind accepted preview',async t=>{
+  for(const [name,edit,code] of [
+    ['source identity',m=>{m.sourceIdentitySha256='f'.repeat(64);},'SOURCE_IDENTITY_CHANGED'],
+    ['report date',m=>{m.dataDate='2026-10-16';m.sourceDate='2026-10-16';m.artifactObject='delivery/2026-10-16/report.html';m.receiptObject='delivery/2026-10-16/receipt.json';},'STALE_CANDIDATE'],
+    ['source date',m=>{m.sourceDate='2026-10-15';},'STALE_CANDIDATE'],
+    ['capture start',m=>{m.sourceDate='2026-10-16';m.captureStartedAt='2026-10-16T12:00:00.000Z';},'STALE_CANDIDATE'],
+    ['new report date alone',m=>{m.sourceDate='2026-10-16';m.captureStartedAt='2026-10-17T06:54:46.000Z';m.captureEndedAt='2026-10-17T06:56:43.000Z';},'SAME_SOURCE_CONFLICT'],
+  ])await t.test(name,async()=>{
+    const next=mondayCandidate();edit(next.metadata);
+    const result=await planOwnerLatest(options({candidate:next,current:acceptedPreview(),now:MONDAY_NOW,
+      verifyProtectedPreview:await registeredPreviewVerifier()}));assert.equal(result.code,code);
+  });
+});
+test('planner detaches preview metadata, unknowns and Buffer before first asynchronous admission',async()=>{
+  const current=acceptedPreview(),pause=pauseFirstProof(),verifyProtectedPreview=await registeredPreviewVerifier();
+  const pending=planOwnerLatest(options({candidate:mondayCandidate(),current,now:MONDAY_NOW,
+    verifyProtectedReceipt:pause.verify,verifyProtectedPreview}));await pause.entered.promise;
+  current.generation='999';current.preview.metadata.registrationSha256='f'.repeat(64);
+  current.preview.metadata.unknownFields.push('allocation');current.displayBytes.fill(88);pause.release.resolve();
+  const result=await pending;assert.equal(result.status,'ready');assert.equal(result.ifGenerationMatch,'7000000000000000001');
+});
+test('preview metadata digest is independent of object key insertion order',async()=>{
+  const m=acceptedPreview().preview.metadata,reverse=Object.fromEntries(Object.entries(m).reverse());
+  assert.equal(await previewMetadataSha256(m),await previewMetadataSha256(reverse));
 });

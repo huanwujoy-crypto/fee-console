@@ -8,7 +8,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
-import {deliverOwnerLatest,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout} from './owner_latest_delivery.mjs';
+import {deliverOwnerLatest,deliverOwnerAcceptedPreview,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -45,7 +45,7 @@ test('Saturday is no-action before any store, request, source or publisher capab
 test('controller uses exact generation-pinned bundle bytes and preserves original times and unknown states',async()=>{
   const f=fixture();let candidate;
   const result=await deliverOwnerLatest({now:()=>NOW,request:()=>assert.fail(),loadContext:async()=>assert.fail(),storeFactory:()=>({readDailyBundle:async({dataDate})=>{assert.equal(dataDate,'2026-10-15');return f.bundle;},readPinnedSource:()=>assert.fail()}),
-    publisherFactory:opts=>{assert.equal(typeof opts.verifyProtectedReceipt,'function');assert.equal(typeof opts.prepareDisplay,'function');return {publish:async c=>{candidate=c;return {status:'published-verified'};}};}});
+    publisherFactory:opts=>{assert.equal(typeof opts.verifyProtectedReceipt,'function');assert.equal(typeof opts.verifyProtectedPreview,'function');assert.equal(typeof opts.prepareDisplay,'function');return {publish:async c=>{candidate=c;return {status:'published-verified'};}};}});
   assert.equal(result.status,'published-verified');assert.deepEqual(candidate.html,f.bundle.html);assert.deepEqual(candidate.receipt,f.bundle.receipt);
   assert.equal(candidate.metadata.captureStartedAt,START);assert.equal(candidate.metadata.captureEndedAt,END);assert.equal(candidate.metadata.completedAt,END);
   assert.equal(candidate.metadata.financialStatus,'partial');assert.ok(candidate.metadata.unknownFields.includes('orders'));assert.ok(candidate.metadata.unknownFields.includes('cash'));
@@ -115,6 +115,60 @@ test('historical loader reads original Git blobs after proving ancestry; current
   assert.equal(calls.filter(x=>x.startsWith('https://raw.githubusercontent.com/')&&x.includes('/'+old+'/')).length,4);
   const bad=createOwnerContextLoader({now:()=>NOW,fetchImpl:async url=>url.includes('/compare/')?new Response(JSON.stringify({status:'diverged',merge_base_commit:{sha:'d'.repeat(40)}})):fetchImpl(url)});
   await assert.rejects(bad({phase:'historical-authenticity',policyCommit:old}),/HISTORICAL_ANCESTRY/);
+});
+test('preview loader binds an ancestor registration to identical current-main bytes without relabelling its commit',async()=>{
+  const current='b'.repeat(40),old='a'.repeat(40),calls=[],registrationText='{"syntheticRegistration":true}\n';
+  const policy={schemaVersion:1,policyId:'ib-primary-7day-pilot-v1',accountAlias:'IB-HK',basis:'owner-attested-recurring-v1',status:'active',purpose:'xuan-ib-read-only-report',editions:['adhoc','am','pm'],publisher:'codex-verified-candidate-v1',validFrom:'2026-10-01T00:00:00.000Z',expiresAt:'2026-11-01T00:00:00.000Z'};
+  const previousHtml='SYNTHETIC PUBLIC BASELINE',body=Buffer.from(previousHtml),blob=crypto.createHash('sha1').update(Buffer.from('blob '+body.length+'\0')).update(body).digest('hex');
+  const responseFor=async(url,{registration=registrationText,comparison='ahead'}={})=>{
+    calls.push(url);
+    if(url.endsWith('/commits/main'))return new Response(JSON.stringify({sha:current}));
+    if(url.includes('/compare/'))return new Response(JSON.stringify({status:comparison,merge_base_commit:{sha:comparison==='ahead'?old:'c'.repeat(40)}}));
+    if(url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH))return new Response(url.includes('/'+current+'/')?registration:registrationText);
+    if(url.endsWith('xuan-ib-account-association-v1.json'))return new Response(associationPolicyText(policy));
+    if(url.endsWith('xuan-ib-etf-pending-calls-v1.json'))return new Response(JSON.stringify({schemaVersion:1,purpose:'xuan-etf-owner-declared-pending-calls',entries:[{date:'2026-09-01',usd:100}]}));
+    if(url.endsWith('latest.meta.json'))return new Response(JSON.stringify({sourceSha:'c'.repeat(40),htmlBlob:blob}));
+    if(url.endsWith('latest.html'))return new Response(previousHtml);
+    assert.fail('unexpected context URL');
+  };
+  const loader=fetchImpl=>createOwnerContextLoader({fetchImpl,now:()=>NOW});
+  const result=await loader(responseFor)({phase:'accepted-preview-historical',policyCommit:old});
+  assert.equal(result.association.policyCommit,current);
+  assert.deepEqual(result.previewRegistration,{registration:{syntheticRegistration:true},sha256:digest(registrationText),policyCommit:old});
+  assert.ok(calls.includes('https://api.github.com/repos/huanwujoy-crypto/fee-console/compare/'+old+'...'+current));
+  assert.ok(calls.some(url=>url.includes('/'+old+'/')&&url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)));
+  assert.ok(calls.some(url=>url.includes('/'+current+'/')&&url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)));
+  await assert.rejects(loader(responseFor)({phase:'accepted-preview-admission',policyCommit:old}),/PREVIEW_CURRENT_CONTEXT/);
+  await assert.rejects(loader(url=>responseFor(url,{comparison:'diverged'}))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_ANCESTRY/);
+  await assert.rejects(loader(url=>responseFor(url,{registration:'{"syntheticRegistration":false}'}))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_REGISTRATION_CHANGED/);
+  await assert.rejects(loader(url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('{"x":1,"x":2}'):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/PREVIEW_REGISTRATION_JSON/);
+  await assert.rejects(loader(url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('',{status:404}):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/CONTEXT_HTTP/);
+  await assert.rejects(loader(responseFor)({phase:'accepted-preview-historical',policyCommit:'not-a-commit'}),/PREVIEW_CONTEXT/);
+});
+test('protected checkout binds new preview executable and registration bytes even if git status hides a change',async()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-preview-checkout-'));fs.mkdirSync(path.join(root,'empty-hooks'));
+  const git=args=>execFileSync('git',['-c','core.hooksPath='+path.join(root,'empty-hooks'),...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
+  const files=OWNER_PROTECTED_SOURCE_PATHS;
+  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json'])assert.ok(files.includes(required));
+  try{
+    git(['init','-q']);
+    for(const relative of files){fs.mkdirSync(path.dirname(path.join(root,relative)),{recursive:true});fs.writeFileSync(path.join(root,relative),'SYNTHETIC '+relative);}
+    git(['add',...files]);git(['-c','user.name=Synthetic','-c','user.email=synthetic@example.invalid','-c','commit.gpgsign=false','commit','-qm','Synthetic fixture']);
+    const head=git(['rev-parse','HEAD']),loadContext=async()=>({association:{policyCommit:head}});
+    assert.equal(await requireProtectedOwnerCheckout({cwd:root,loadContext}),head);
+    let privateCalls=0;
+    await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext,request:()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PREVIEW_ACCESS_CAPABILITY_REQUIRED/);
+    assert.equal(privateCalls,0);
+    for(const relative of ['cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json']){
+      const initial=fs.readFileSync(path.join(root,relative));git(['update-index','--assume-unchanged',relative]);
+      fs.appendFileSync(path.join(root,relative),' CHANGED');
+      await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext}),/PROTECTED_SOURCE_BYTES_REQUIRED/);
+      fs.writeFileSync(path.join(root,relative),initial);git(['update-index','--no-assume-unchanged',relative]);
+    }
+    await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext:async()=>({association:{policyCommit:'a'.repeat(40)}})}),/PROTECTED_CHECKOUT_REQUIRED/);
+    await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext:async()=>({association:{policyCommit:'a'.repeat(40)}}),request:()=>{privateCalls++;assert.fail();},verifyDestinationAccess:async()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PROTECTED_CHECKOUT_REQUIRED/);
+    assert.equal(privateCalls,0);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 test('empty public private-entry shell has no financial bytes, APIs, scripts, query redirect or embedding',()=>{
   const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'),html=fs.readFileSync(path.join(root,'xuan-ib/private-action.html'),'utf8');

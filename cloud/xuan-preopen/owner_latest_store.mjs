@@ -1,7 +1,8 @@
 // GCS transport adapter for the private owner latest object. The trusted
 // controller injects its existing authorized transport; there is no credential,
 // environment, global fetch, retry, object listing or arbitrary URL fallback.
-import {LATEST_TARGET,LATEST_HEADERS,MAX_BYTES,MAX_RECEIPT_BYTES,sha256} from './owner_latest.mjs';
+import {LATEST_TARGET,LATEST_HEADERS,MAX_BYTES,MAX_RECEIPT_BYTES,sha256,
+  ACCEPTED_PREVIEW_SCHEMA,validateAcceptedPreviewMetadata} from './owner_latest.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 
 export const MAX_METADATA_BYTES=16*1024,MAX_SOURCE_BYTES=8*1024*1024;
@@ -42,10 +43,11 @@ function urlFor(name,generation,{media=false}={}){
   if(generation!==undefined){if(!gen(generation))fail('GENERATION_INVALID');url.searchParams.set('generation',generation);}
   if(media)url.searchParams.set('alt','media');return url.href;
 }
-function responseOk(response,url,{absent=false}={}){
+function responseOk(response,url,{absent=false,presenceOnly=false}={}){
   if(!(response instanceof Response)||response.redirected||(response.url&&response.url!==url))fail('RESPONSE_INVALID');
   if(absent&&response.status===404)return false;
   if(response.status!==200)fail(response.status===403?'ACCESS_DENIED':response.status===404?'PINNED_OBJECT_MISSING':'HTTP_FAILED',response.status);
+  if(presenceOnly)return true;
   if(response.headers.get('content-encoding')&&!/^identity$/i.test(response.headers.get('content-encoding')))fail('ENCODING_INVALID');
   return true;
 }
@@ -99,9 +101,24 @@ function customMetadata(bundleMetadata,displaySha256){
   if(encoder.encode(JSON.stringify(value)).length>MAX_METADATA_BYTES)fail('METADATA_SIZE_LIMIT');
   return value;
 }
+function previewCustomMetadata(metadata,displaySha256){
+  if(!hex(displaySha256))fail('CUSTOM_METADATA_INVALID');
+  validateAcceptedPreviewMetadata(metadata);
+  const value={previewMetadata:JSON.stringify(Object.fromEntries(Object.keys(metadata).sort().map(key=>[key,metadata[key]]))),displaySha256};
+  if(encoder.encode(JSON.stringify(value)).length>MAX_METADATA_BYTES)fail('METADATA_SIZE_LIMIT');
+  return value;
+}
 function parseCustom(value){
   if(!obj(value)||Object.values(value).some(x=>typeof x!=='string')
-    ||typeof value.bundleMetadata!=='string'||encoder.encode(JSON.stringify(value)).length>MAX_METADATA_BYTES)fail('CUSTOM_METADATA_INVALID');
+    ||encoder.encode(JSON.stringify(value)).length>MAX_METADATA_BYTES)fail('CUSTOM_METADATA_INVALID');
+  if(Object.hasOwn(value,'previewMetadata')){
+    if(Object.keys(value).sort().join('|')!=='displaySha256|previewMetadata')fail('CUSTOM_METADATA_INVALID');
+    let metadata;try{metadata=JSON.parse(value.previewMetadata);}catch{fail('CUSTOM_METADATA_INVALID');}
+    const expected=previewCustomMetadata(metadata,value.displaySha256);
+    if(expected.previewMetadata!==value.previewMetadata)fail('CUSTOM_METADATA_INVALID');
+    return {kind:'accepted-preview',preview:metadata,displaySha256:value.displaySha256};
+  }
+  if(typeof value.bundleMetadata!=='string')fail('CUSTOM_METADATA_INVALID');
   let bundle;
   try{bundle=JSON.parse(value.bundleMetadata);}catch{fail('CUSTOM_METADATA_INVALID');}
   // A single canonical JSON string also rejects duplicated JSON keys.
@@ -118,6 +135,7 @@ function includesBytes(haystack,needle){outer:for(let i=0;i<=haystack.length-nee
 
 export function createOwnerLatestStore({request}={}){
   if(typeof request!=='function')fail('REQUEST_CAPABILITY_REQUIRED');
+  let previewCreateClosed=false,previewWriteStarted=false;
   const send=async(url,{method='GET',headers={},body,signal}={})=>{
     if(signal?.aborted)fail('ABORTED');
     return request(url,{method,headers,...(body===undefined?{}:{body}),signal,redirect:'error'});
@@ -151,7 +169,64 @@ export function createOwnerLatestStore({request}={}){
     const bytes=await getMedia(name,generation,undefined,max,signal,{knownMetadata:metadata,unhashed:true});
     return {bytes,generation,sha256:await sha256(bytes)};
   };
-  return Object.freeze({
+  // This symbol never crosses the public API. Only the create wrapper may
+  // admit one preview write after its own authenticated HEAD returned 404.
+  const previewAdmission=Symbol('private-preview-create-admission');
+  const writeLatest=async({target,ifGenerationMatch,headers,bytes,metadata,signal}={},admission)=>{
+      sameTarget(target);
+      if(ifGenerationMatch!=='0'&&!gen(ifGenerationMatch))fail('CAS_GENERATION_INVALID');
+      if(!obj(headers)||Object.keys(headers).sort().join('|')!==Object.keys(LATEST_HEADERS).sort().join('|'))fail('LATEST_HEADERS_INVALID');
+      latestHeaders(headers);
+      if(!(bytes instanceof Uint8Array)||!bytes.length||bytes.length>MAX_BYTES||!obj(metadata))fail('WRITE_INVALID');
+      const display=new Uint8Array(bytes),frozen=structuredClone(metadata),displaySha256=frozen.displaySha256;
+      delete frozen.displaySha256;
+      const isPreview=frozen.schema===ACCEPTED_PREVIEW_SCHEMA;
+      if(isPreview&&ifGenerationMatch!=='0')fail('PREVIEW_CREATE_ONLY');
+      if(isPreview&&previewWriteStarted)fail('PREVIEW_CREATE_CLOSED');
+      if(isPreview&&admission!==previewAdmission)fail('PREVIEW_CREATE_REQUIRED');
+      try{decoder.decode(display);}catch{fail('DISPLAY_UTF8_INVALID');}
+      if(!hex(displaySha256)||await sha256(display)!==displaySha256)fail('CONTENT_HASH_MISMATCH');
+      const custom=isPreview?previewCustomMetadata(frozen,displaySha256):customMetadata(frozen,displaySha256);
+      const resource={name:LATEST_TARGET.object,contentType:LATEST_HEADERS.contentType,
+        contentDisposition:LATEST_HEADERS.contentDisposition,cacheControl:LATEST_HEADERS.cacheControl,metadata:custom};
+      const resourceBytes=encoder.encode(JSON.stringify(resource));
+      if(resourceBytes.length>MAX_METADATA_BYTES)fail('METADATA_SIZE_LIMIT');
+      const boundary='xuan_owner_latest_'+displaySha256;
+      if(includesBytes(display,encoder.encode('\r\n--'+boundary)))fail('MULTIPART_BOUNDARY_CONFLICT');
+      const body=concat(encoder.encode('--'+boundary+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'),resourceBytes,
+        encoder.encode('\r\n--'+boundary+'\r\nContent-Type: '+LATEST_HEADERS.contentType+'\r\n\r\n'),display,encoder.encode('\r\n--'+boundary+'--\r\n'));
+      const url=new URL(UPLOAD);url.searchParams.set('uploadType','multipart');url.searchParams.set('ifGenerationMatch',ifGenerationMatch);
+      if(isPreview){if(previewWriteStarted)fail('PREVIEW_CREATE_CLOSED');previewWriteStarted=true;}
+      const response=await send(url.href,{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+boundary,Accept:'application/json'},body,signal});
+      responseOk(response,url.href);
+      if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')||''))fail('METADATA_CONTENT_TYPE');
+      const ack=objectMetadata(decodeJson(await boundedBytes(response,MAX_METADATA_BYTES)),{name:LATEST_TARGET.object,max:MAX_BYTES,latest:true});
+      if(BigInt(ack.generation)<=BigInt(ifGenerationMatch)||ack.size!==display.length||!obj(ack.metadata)
+        ||Object.keys(ack.metadata).sort().join('|')!==Object.keys(custom).sort().join('|')
+        ||Object.keys(custom).some(key=>ack.metadata[key]!==custom[key]))fail('WRITE_ACK_UNVERIFIED');
+      return {...LATEST_TARGET,generation:ack.generation,size:ack.size};
+  };
+  const store={
+    async probeLatestExists({target,signal}={}){
+      sameTarget(target);
+      const url=urlFor(LATEST_TARGET.object,undefined,{media:true});
+      const response=await send(url,{method:'HEAD',signal,headers:{'Accept-Encoding':'identity'}});
+      return {state:responseOk(response,url,{absent:true,presenceOnly:true})?'present':'absent'};
+    },
+    async createAcceptedPreview(args){
+      if(previewCreateClosed)fail('PREVIEW_CREATE_CLOSED');
+      previewCreateClosed=true;
+      const {target,bytes,metadata,signal}=args??{};
+      sameTarget(target);
+      if(!(bytes instanceof Uint8Array)||!bytes.length||bytes.length>MAX_BYTES)fail('WRITE_INVALID');
+      const display=new Uint8Array(bytes),frozen=structuredClone(metadata);
+      validateAcceptedPreviewMetadata(frozen);
+      // Even a malformed existing object is a stop: no metadata/media GET and
+      // no POST. Only an authenticated fixed-target HEAD 404 permits CAS0.
+      if((await store.probeLatestExists({signal})).state!=='absent')fail('LATEST_ALREADY_EXISTS');
+      return writeLatest({target:LATEST_TARGET,ifGenerationMatch:'0',headers:LATEST_HEADERS,
+        bytes:display,metadata:{...frozen,displaySha256:await sha256(display)},signal},previewAdmission);
+    },
     async readDailyBundle({dataDate,signal}={}){
       exactDate(dataDate);
       const artifactObject=`delivery/${dataDate}/report.html`,receiptObject=`delivery/${dataDate}/receipt.json`;
@@ -176,6 +251,8 @@ export function createOwnerLatestStore({request}={}){
       if(m.size!==size)fail('LATEST_SIZE_MISMATCH');
       const custom=parseCustom(m.metadata);
       const displayBytes=await getMedia(LATEST_TARGET.object,generation,custom.displaySha256,MAX_BYTES,signal,{latest:true,knownMetadata:m});
+      if(custom.kind==='accepted-preview')return {state:'present',generation,kind:'accepted-preview',
+        preview:{metadata:structuredClone(custom.preview)},displayBytes};
       const html=await getMedia(dailyName(custom.bundle.artifactObject,'report.html'),custom.bundle.artifactGeneration,custom.bundle.artifactSha256,MAX_BYTES,signal);
       const receipt=await getMedia(dailyName(custom.bundle.receiptObject,'receipt.json'),custom.bundle.receiptGeneration,custom.bundle.receiptSha256,MAX_RECEIPT_BYTES,signal);
       return {state:'present',generation,bundle:{metadata:structuredClone(custom.bundle),html,receipt},displayBytes};
@@ -193,39 +270,13 @@ export function createOwnerLatestStore({request}={}){
       if(expected!==null){
         if(!obj(expected)||expected.displaySha256!==expectedHash)fail('READBACK_METADATA_MISMATCH');
         delete expected.displaySha256;
-        const custom=customMetadata(expected,expectedHash);
+        const custom=expected.schema===ACCEPTED_PREVIEW_SCHEMA?previewCustomMetadata(expected,expectedHash):customMetadata(expected,expectedHash);
+        if((expected.schema===ACCEPTED_PREVIEW_SCHEMA)!==(actual.kind==='accepted-preview'))fail('READBACK_METADATA_MISMATCH');
         if(Object.keys(custom).some(key=>custom[key]!==m.metadata[key]))fail('READBACK_METADATA_MISMATCH');
       }
       return getMedia(LATEST_TARGET.object,generation,expectedHash,MAX_BYTES,signal,{latest:true,knownMetadata:m});
     },
-    async replaceLatest({target,ifGenerationMatch,headers,bytes,metadata,signal}={}){
-      sameTarget(target);
-      if(ifGenerationMatch!=='0'&&!gen(ifGenerationMatch))fail('CAS_GENERATION_INVALID');
-      if(!obj(headers)||Object.keys(headers).sort().join('|')!==Object.keys(LATEST_HEADERS).sort().join('|'))fail('LATEST_HEADERS_INVALID');
-      latestHeaders(headers);
-      if(!(bytes instanceof Uint8Array)||!bytes.length||bytes.length>MAX_BYTES||!obj(metadata))fail('WRITE_INVALID');
-      const display=new Uint8Array(bytes),frozen=structuredClone(metadata),displaySha256=frozen.displaySha256;
-      delete frozen.displaySha256;
-      try{decoder.decode(display);}catch{fail('DISPLAY_UTF8_INVALID');}
-      if(!hex(displaySha256)||await sha256(display)!==displaySha256)fail('CONTENT_HASH_MISMATCH');
-      const custom=customMetadata(frozen,displaySha256);
-      const resource={name:LATEST_TARGET.object,contentType:LATEST_HEADERS.contentType,
-        contentDisposition:LATEST_HEADERS.contentDisposition,cacheControl:LATEST_HEADERS.cacheControl,metadata:custom};
-      const resourceBytes=encoder.encode(JSON.stringify(resource));
-      if(resourceBytes.length>MAX_METADATA_BYTES)fail('METADATA_SIZE_LIMIT');
-      const boundary='xuan_owner_latest_'+displaySha256;
-      if(includesBytes(display,encoder.encode('\r\n--'+boundary)))fail('MULTIPART_BOUNDARY_CONFLICT');
-      const body=concat(encoder.encode('--'+boundary+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'),resourceBytes,
-        encoder.encode('\r\n--'+boundary+'\r\nContent-Type: '+LATEST_HEADERS.contentType+'\r\n\r\n'),display,encoder.encode('\r\n--'+boundary+'--\r\n'));
-      const url=new URL(UPLOAD);url.searchParams.set('uploadType','multipart');url.searchParams.set('ifGenerationMatch',ifGenerationMatch);
-      const response=await send(url.href,{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+boundary,Accept:'application/json'},body,signal});
-      responseOk(response,url.href);
-      if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')||''))fail('METADATA_CONTENT_TYPE');
-      const ack=objectMetadata(decodeJson(await boundedBytes(response,MAX_METADATA_BYTES)),{name:LATEST_TARGET.object,max:MAX_BYTES,latest:true});
-      if(BigInt(ack.generation)<=BigInt(ifGenerationMatch)||ack.size!==display.length||!obj(ack.metadata)
-        ||Object.keys(ack.metadata).sort().join('|')!==Object.keys(custom).sort().join('|')
-        ||Object.keys(custom).some(key=>ack.metadata[key]!==custom[key]))fail('WRITE_ACK_UNVERIFIED');
-      return {...LATEST_TARGET,generation:ack.generation,size:ack.size};
-    },
-  });
+    async replaceLatest(args){return writeLatest(args);}
+  };
+  return Object.freeze(store);
 }

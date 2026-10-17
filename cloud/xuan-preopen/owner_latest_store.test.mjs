@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {createOwnerLatestStore,MAX_METADATA_BYTES,MAX_SOURCE_BYTES} from './owner_latest_store.mjs';
-import {createOwnerLatestPublisher,OWNER_SCOPE,LATEST_TARGET,LATEST_HEADERS,MAX_BYTES} from './owner_latest.mjs';
+import {createOwnerLatestPublisher,OWNER_SCOPE,LATEST_TARGET,LATEST_HEADERS,MAX_BYTES,
+  ACCEPTED_PREVIEW_SCHEMA,previewMetadataSha256} from './owner_latest.mjs';
 
 // Synthetic transport only. Every URL terminates in this in-memory fake; tests
 // neither use credentials nor make network, account, source or storage calls.
@@ -222,4 +223,116 @@ test('actual publisher + injected store verifies raw readback and retains origin
   assert.deepEqual(f.calls.map(c=>c.options.method),['HEAD','POST','GET','GET']);
   const current=await f.store.readLatest();assert.deepEqual(current.bundle.metadata,f.bundle.metadata);
   assert.deepEqual(current.bundle.receipt,f.bundle.receipt);assert.equal((await p.publish(f.bundle)).code,'ONE_SHOT_CLOSED');
+});
+
+function previewMetadata(){return {schema:ACCEPTED_PREVIEW_SCHEMA,scope:OWNER_SCOPE,ownerBinding:OWNER,
+  sourceIdentitySha256:'b'.repeat(64),registrationId:'saturday-acceptance-20261017',registrationSha256:'d'.repeat(64),
+  registrationPolicyCommit:'e'.repeat(40),dataDate:'2026-10-17',sourceDate:'2026-10-16',
+  captureStartedAt:'2026-10-17T06:54:46.000Z',captureEndedAt:'2026-10-17T06:56:43.000Z',completedAt:'2026-10-17T07:00:00.000Z',
+  financialStatus:'partial',unknownFields:['orders','cash','prices']};}
+const previewDisplay=()=>encode('<!doctype html><p>Synthetic accepted Saturday preview</p>');
+const previewCustom=(metadata,bytes)=>({previewMetadata:JSON.stringify(Object.fromEntries(Object.keys(metadata).sort().map(key=>[key,metadata[key]]))),displaySha256:hash(bytes)});
+test('presence probe treats every existing object as present without inspecting headers, metadata or body',async()=>{
+  const f=fake({intercept:()=>{
+    const response=new Response('SYNTHETIC INVALID OLD OBJECT');
+    Object.defineProperty(response,'body',{get(){throw Error('must not inspect body');}});return response;
+  }});
+  assert.deepEqual(await f.store.probeLatestExists(),{state:'present'});
+  await assert.rejects(f.store.createAcceptedPreview({bytes:previewDisplay(),metadata:previewMetadata()}),/LATEST_ALREADY_EXISTS/);
+  assert.deepEqual(f.calls.map(c=>c.options.method),['HEAD','HEAD']);
+});
+test('preview first-create uses only CAS0 and stores mutually exclusive canonical preview metadata',async()=>{
+  const f=fake(),bytes=previewDisplay(),metadata=previewMetadata();
+  const ack=await f.store.createAcceptedPreview({bytes,metadata});assert.equal(ack.generation,'101');
+  assert.deepEqual(f.calls.map(c=>c.options.method),['HEAD','POST']);
+  const saved=f.records.get(LATEST_TARGET.object+'@101');
+  assert.deepEqual(Object.keys(saved.metadata.metadata).sort(),['displaySha256','previewMetadata']);
+  assert.equal(JSON.parse(saved.metadata.metadata.previewMetadata).dataDate,'2026-10-17');
+  assert.equal(new URL(f.calls[1].url).searchParams.get('ifGenerationMatch'),'0');
+  assert.deepEqual(await f.store.readLatestGeneration({generation:ack.generation,sha256:hash(bytes),metadata:{...metadata,displaySha256:hash(bytes)}}),bytes);
+  await assert.rejects(f.store.createAcceptedPreview({bytes,metadata}),/PREVIEW_CREATE_CLOSED/);
+});
+test('accepted preview history reads only fixed latest metadata and actual bytes, never nonexistent daily objects',async()=>{
+  const f=fake(),bytes=previewDisplay(),metadata=previewMetadata();f.add(LATEST_TARGET.object,'7',bytes,previewCustom(metadata,bytes));
+  const current=await f.store.readLatest();
+  assert.deepEqual(current,{state:'present',kind:'accepted-preview',generation:'7',preview:{metadata},displayBytes:bytes});
+  assert.equal(f.calls.length,3);assert.ok(f.calls.every(c=>c.url.includes(encodeURIComponent(LATEST_TARGET.object))));
+  assert.equal(Object.hasOwn(current,'bundle'),false);
+});
+test('preview can never overwrite, and existing malformed or daily targets cause zero POST',async()=>{
+  const f=fake();await assert.rejects(f.store.replaceLatest({ifGenerationMatch:'7',headers:LATEST_HEADERS,bytes:previewDisplay(),
+    metadata:{...previewMetadata(),displaySha256:hash(previewDisplay())}}),/PREVIEW_CREATE_ONLY/);assert.equal(f.calls.length,0);
+  const g=fake({latest:true});await assert.rejects(g.store.createAcceptedPreview({bytes:previewDisplay(),metadata:previewMetadata()}),/LATEST_ALREADY_EXISTS/);
+  assert.deepEqual(g.calls.map(c=>c.options.method),['HEAD']);
+});
+test('public replaceLatest cannot admit preview CAS0 or forge the private create capability',async()=>{
+  for(const latest of [false,true]){
+    const f=fake({latest}),input={ifGenerationMatch:'0',headers:LATEST_HEADERS,bytes:previewDisplay(),
+      metadata:{...previewMetadata(),displaySha256:hash(previewDisplay())},previewAdmission:true,admitted:true,token:Symbol('forged')};
+    await assert.rejects(f.store.replaceLatest(input),/PREVIEW_CREATE_REQUIRED/);
+    await assert.rejects(f.store.replaceLatest(input,Symbol('private-preview-create-admission')),/PREVIEW_CREATE_REQUIRED/);
+    assert.equal(f.calls.length,0,'raw preview replacement cannot issue HEAD, GET or POST');
+  }
+});
+test('any exceptional first-create call closes preview admission before a later corrected call',async()=>{
+  for(const invalid of [null,undefined,{bytes:new Uint8Array(),metadata:previewMetadata()}]){
+    const f=fake();await assert.rejects(f.store.createAcceptedPreview(invalid),/WRITE_INVALID/);
+    await assert.rejects(f.store.createAcceptedPreview({bytes:previewDisplay(),metadata:previewMetadata()}),/PREVIEW_CREATE_CLOSED/);
+    assert.equal(f.calls.length,0);
+  }
+});
+test('preview first-create denies unknown/forbidden HEAD, concurrent 412 and uncertain POST without retry',async t=>{
+  for(const [name,intercept,methods] of [
+    ['denied',()=>new Response(null,{status:403}),['HEAD']],
+    ['unknown',()=>{throw Error('SYNTHETIC_HEAD_UNAVAILABLE');},['HEAD']],
+    ['race',({options})=>options.method==='POST'?new Response(null,{status:412}):undefined,['HEAD','POST']],
+    ['lost ACK',({options})=>{if(options.method==='POST')throw Error('SYNTHETIC_WRITE_UNKNOWN');},['HEAD','POST']],
+  ])await t.test(name,async()=>{
+    const f=fake({intercept}),input={bytes:previewDisplay(),metadata:previewMetadata()};
+    await assert.rejects(f.store.createAcceptedPreview(input));assert.deepEqual(f.calls.map(c=>c.options.method),methods);
+    await assert.rejects(f.store.createAcceptedPreview(input),/PREVIEW_CREATE_CLOSED/);assert.equal(f.calls.length,methods.length);
+    if(methods.includes('POST')){
+      await assert.rejects(f.store.replaceLatest({ifGenerationMatch:'0',headers:LATEST_HEADERS,bytes:input.bytes,
+        metadata:{...input.metadata,displaySha256:hash(input.bytes)}}),/PREVIEW_CREATE_CLOSED/);assert.equal(f.calls.length,methods.length);
+    }
+  });
+});
+test('preview custom format rejects mixed daily metadata, unregistered fields, duplicate keys and display tampering',async t=>{
+  for(const [name,edit] of [
+    ['mixed kind',m=>{m.metadata.bundleMetadata='{}';}],
+    ['unregistered field',m=>{const p=JSON.parse(m.metadata.previewMetadata);p.artifactGeneration='1';m.metadata.previewMetadata=JSON.stringify(p);}],
+    ['duplicate key',m=>{m.metadata.previewMetadata=m.metadata.previewMetadata.replace('"schema":','"schema":"duplicate","schema":');}],
+    ['wrong display hash',m=>{m.metadata.displaySha256='f'.repeat(64);}],
+  ])await t.test(name,async()=>{
+    const f=fake(),bytes=previewDisplay();const m=f.add(LATEST_TARGET.object,'7',bytes,previewCustom(previewMetadata(),bytes));edit(m);
+    await assert.rejects(f.store.readLatest());assert.equal(f.calls.filter(c=>c.options.method==='POST').length,0);
+  });
+});
+test('preview pinned readback rejects changed registration metadata after a correct ACK',async()=>{
+  const f=fake(),bytes=previewDisplay(),metadata=previewMetadata(),ack=await f.store.createAcceptedPreview({bytes,metadata});
+  const saved=f.records.get(LATEST_TARGET.object+'@'+ack.generation).metadata;
+  const changed={...metadata,registrationSha256:'f'.repeat(64)};saved.metadata=previewCustom(changed,bytes);
+  await assert.rejects(f.store.readLatestGeneration({generation:ack.generation,sha256:hash(bytes),metadata:{...metadata,displaySha256:hash(bytes)}}),/READBACK_METADATA_MISMATCH/);
+});
+test('normal weekday publisher replaces verified accepted preview using actual generation and original daily path rules',async()=>{
+  const f=fake(),bytes=previewDisplay(),metadata=previewMetadata(),metadataDigest=await previewMetadataSha256(metadata);
+  const actualGeneration='7';
+  f.add(LATEST_TARGET.object,actualGeneration,bytes,previewCustom(metadata,bytes));
+  const next=structuredClone(f.bundle);Object.assign(next.metadata,{dataDate:'2026-10-19',sourceDate:'2026-10-19',
+    captureStartedAt:'2026-10-19T12:00:00.000Z',captureEndedAt:'2026-10-19T12:01:00.000Z',completedAt:'2026-10-19T12:02:00.000Z',
+    artifactObject:'delivery/2026-10-19/report.html',receiptObject:'delivery/2026-10-19/receipt.json'});
+  f.add(next.metadata.artifactObject,next.metadata.artifactGeneration,next.html);f.add(next.metadata.receiptObject,next.metadata.receiptGeneration,next.receipt);
+  const phases=[];
+  const p=createOwnerLatestPublisher({io:f.store,ownerBinding:OWNER,now:()=>Date.parse('2026-10-19T13:00:00.000Z'),prepareDisplay:bytes=>new Uint8Array(bytes),
+    verifyProtectedReceipt:({metadata:m,phase})=>{phases.push(phase);return {scope:m.scope,ownerBinding:m.ownerBinding,
+      sourceIdentitySha256:m.sourceIdentitySha256,artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,policyRevision:'c'.repeat(64),financialStatus:m.financialStatus};},
+    verifyProtectedPreview:({metadata:m,displayBytes,phase})=>{assert.equal(phase,'historical-authenticity');return {
+      schema:'xuan.owner-accepted-preview-proof.v1',scope:m.scope,ownerBinding:m.ownerBinding,sourceIdentitySha256:m.sourceIdentitySha256,
+      registrationId:m.registrationId,registrationSha256:m.registrationSha256,registrationPolicyCommit:m.registrationPolicyCommit,
+      displaySha256:hash(displayBytes),metadataSha256:metadataDigest};}});
+  assert.equal((await p.publish(next)).status,'published-verified');assert.deepEqual(phases,['candidate-admission']);
+  const posts=f.calls.filter(c=>c.options.method==='POST');assert.equal(posts.length,1);
+  assert.equal(new URL(posts[0].url).searchParams.get('ifGenerationMatch'),actualGeneration);
+  const current=await f.store.readLatest();assert.equal(Object.hasOwn(current,'kind'),false);
+  assert.deepEqual(current.bundle.metadata,next.metadata);
 });
