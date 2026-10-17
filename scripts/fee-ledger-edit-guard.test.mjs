@@ -741,7 +741,12 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     assert.match(output, /毛收益/); assert.match(output, /<span>费用<b>/); assert.match(output, /净收益/);
     assert.match(output, /本回执含暂估数据/); assert.doesNotMatch(output, /暂计费用/);
     assert.doesNotMatch(output, /<details[^>]*\bopen(?:\s|>)/);
-    assert.match(output, /Carry：累计毛收益/); assert.doesNotMatch(output, /Carry[^<]*累计净收益/);
+    if (html.includes("function monthlyReturnsTable(")) {
+      assert.match(output, /class="month-returns"/);
+      assert.doesNotMatch(output, /管理费：逐日|Carry：累计毛收益|净收益＝毛收益－管理费－Carry/,
+        "the monthly comparison rollout removes the requested formula explanation");
+    } else assert.match(output, /Carry：累计毛收益/);
+    assert.doesNotMatch(output, /Carry[^<]*累计净收益/);
     const details = h.element("monthCalculation"); details.dataset.ym = "2026-09"; details.open = true;
     h.run("renderMonths(monthView,monthFixture)");
     assert.match(h.element("monthsBox").innerHTML, /id="monthCalculation" data-ym="2026-09" open/,
@@ -760,6 +765,112 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     assert.doesNotMatch(h.element("monthsBox").innerHTML, /本回执含暂估数据/);
     h.run('renderMonths({state:"pending",message:"计算回执待更新"},monthFixture)');
     assert.equal(h.element("monthsBox").innerHTML.includes("1000"), false);
+    assert.match(h.element("monthsBox").innerHTML, /计算回执待更新/);
+  });
+
+  await t.test("monthly comparison displays fixed period returns and keeps selection read-only", async () => {
+    if (!html.includes("function monthlyReturnsTable(")) {
+      assert.doesNotMatch(html, /class="month-returns"|月度收益率比较/,
+        "reject a partial monthly comparison rollout");
+      return;
+    }
+    const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
+    const cells = output => {
+      const table = output.match(/<div class="month-returns"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+      assert.ok(table, "the full-history comparison must be rendered outside the folded calculation");
+      const headers = [...table.matchAll(/<th\b[^>]*scope="col"[^>]*>([\s\S]*?)<\/th>/g)].map(match => match[1]);
+      assert.equal(headers.length, 4, "one month column and exactly three return columns");
+      assert.match(headers[1], /组合毛.*TWR/);
+      assert.match(headers[2], /S&amp;P 500.*SPY.*税后含息 TWR/);
+      assert.match(headers[3], /(?:纳指|纳斯达克)100.*QQQ.*税后含息 TWR/);
+      assert.doesNotMatch(table, /出资方|Dietz|CSPX|EQAC/);
+      const body = table.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1]; assert.ok(body);
+      return [...body.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/g)].map(match => ({
+        selected: /aria-current="true"/.test(match[1]),
+        month: match[2].match(/<th\b[^>]*>([^<]*)/)?.[1],
+        values: [...match[2].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)]
+          .map(cell => cell[1].replace(/<[^>]*>/g, ""))
+      }));
+    };
+    const row = (ym, rG, rB, over = {}) => ({
+      ym, from: ym + "-01", to: ym + "-28", pnl: 1000, fees: 250, mgmt: 50, carry: 200,
+      openT: 100000, closeT: 101000, flowT: 0, averageFeeBase: 100500,
+      rG, rD: .8765, rB, excess: 1000, cum: 9000, hwm: 9000, inProgress: false, ...over
+    });
+    const view = asOf => ({ state: "verified", asOf, managementRatePpm: 20000,
+      carryRatePpm: 200000, status: { provisional: false } });
+    h.run('setCfg(K.tok, "")');
+    const stored = [...h.store];
+    h.context.monthFixture = { rows: [
+      row("2026-08", -.0125, { spy: .025, qqq: -.0375 }),
+      row("2026-09", .015, { spy: -.02, qqq: 0 }, { to: "2026-09-17", inProgress: true }),
+      row("2026-07", 0, { spy: -.01, qqq: .03 }, { from: "2026-07-07", to: "2026-07-31" })
+    ], twrG: .8888, mwrD: .8765, bench: [
+      { k: "spy", name: "SPY", twr: .7777 }, { k: "qqq", name: "QQQ", twr: .6666 }
+    ] };
+    const fixtureBefore = structuredClone(h.context.monthFixture);
+    h.context.monthView = view("2026-09-17");
+    h.run("renderMonths(monthView,monthFixture)");
+    let output = h.element("monthsBox").innerHTML;
+    assert.deepEqual(cells(output), [
+      { selected: true, month: "2026年9月", values: ["+1.50%", "-2.00%", "0.00%"] },
+      { selected: false, month: "2026年8月", values: ["-1.25%", "+2.50%", "-3.75%"] },
+      { selected: false, month: "2026年7月", values: ["0.00%", "-1.00%", "+3.00%"] }
+    ], "the table reads each month's rG/rB, not cumulative TWR, Dietz, money profit or an arithmetic delta");
+    assert.ok(output.indexOf('class="month-returns"') < output.indexOf('<details'),
+      "all return rows stay visible when the calculation details are folded");
+    assert.doesNotMatch(output, /管理费：逐日|Carry：累计毛收益|净收益＝毛收益－管理费－Carry/);
+    const selector = h.element("monthHistoryMonth"); selector.value = "2026-07";
+    await h.emit("body", "change", { target: selector });
+    h.run("renderMonths(monthView,monthFixture)");
+    const selected = cells(h.element("monthsBox").innerHTML);
+    assert.equal(selected.length, 3); assert.equal(selected[2].selected, true);
+    assert.deepEqual(selected.map(row => row.values), cells(output).map(row => row.values),
+      "changing the calculation month does not filter or recalculate return history");
+    assert.equal(h.run("_monthHistoryYm"), "2026-07");
+    assert.equal(h.run("EDIT.mode"), "locked");
+    assert.deepEqual(h.context.monthFixture, fixtureBefore);
+
+    // Non-finite/missing returns remain missing, including old Europe-only rows.
+    const invalid = [undefined, null, NaN, Infinity, -Infinity];
+    h.context.monthFixture = { rows: invalid.map((value, index) =>
+      row(`2026-0${index + 1}`, value, { spy: value, qqq: value }))
+      .concat([row("2026-06", .01, undefined), row("2026-07", -.01, { cspx: .321, eqac: .654 })]),
+      bench: [{ k: "cspx", name: "CSPX", twr: .321 }, { k: "eqac", name: "EQAC", twr: .654 }] };
+    h.context.monthView = view("2026-07-28");
+    h.run("renderMonths(monthView,monthFixture)");
+    const unavailable = cells(h.element("monthsBox").innerHTML);
+    assert.deepEqual(unavailable[0].values, ["-1.00%", "缺失", "缺失"]);
+    assert.deepEqual(unavailable[1].values, ["+1.00%", "缺失", "缺失"]);
+    for (const missing of unavailable.slice(2)) assert.deepEqual(missing.values, ["缺失", "缺失", "缺失"]);
+    assert.doesNotMatch(h.element("monthsBox").innerHTML.match(/<tbody>[\s\S]*?<\/tbody>/)[0], /NaN|Infinity|32\.10%|65\.40%/);
+
+    for (const count of [1, 36, 120]) {
+      const rows = Array.from({ length: count }, (_, index) => {
+        const date = new Date(Date.UTC(2016, index, 1)), ym = date.toISOString().slice(0, 7);
+        const last = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).toISOString().slice(0, 10);
+        return row(ym, .01, { spy: .02, qqq: .03 }, { from: ym + (index === 0 ? "-07" : "-01"),
+          to: index === count - 1 ? ym + "-17" : last, inProgress: index === count - 1 });
+      });
+      h.context.monthFixture = { rows: [...rows].reverse(), bench: [] };
+      h.context.monthView = view(rows.at(-1).to); h.run('_monthHistoryYm="";renderMonths(monthView,monthFixture)');
+      output = h.element("monthsBox").innerHTML;
+      assert.equal(cells(output).length, count, `${count} months must all remain visible`);
+      assert.equal((output.match(/<option /g) || []).length, count);
+      assert.deepEqual(cells(output).map(row => row.month), [...rows].reverse().map(row =>
+        `${row.ym.slice(0, 4)}年${Number(row.ym.slice(5))}月`));
+      assert.match(output, new RegExp(`月截至 ${rows.at(-1).to.slice(5)}`), "the unfinished month names its actual cutoff");
+      assert.match(output, new RegExp(`${rows[0].from.slice(5)} 起`), "the first partial month names its actual start");
+      assert.equal((output.match(/月截至 /g) || []).length, 1);
+      selector.value = rows[0].ym; await h.emit("body", "change", { target: selector });
+      h.run("renderMonths(monthView,monthFixture)");
+      assert.equal(cells(h.element("monthsBox").innerHTML).length, count);
+      assert.equal(cells(h.element("monthsBox").innerHTML).at(-1).selected, true);
+    }
+    assert.equal(h.run("JSON.stringify(DB)"), original); assert.deepEqual(h.writes(), []);
+    assert.deepEqual([...h.store], stored, "rendering and month selection do not persist or rewrite ledger/source data");
+    h.run('renderMonths({state:"pending",message:"计算回执待更新"},monthFixture)');
+    assert.doesNotMatch(h.element("monthsBox").innerHTML, /month-returns|<table|\d\.\d{2}%/);
     assert.match(h.element("monthsBox").innerHTML, /计算回执待更新/);
   });
 
