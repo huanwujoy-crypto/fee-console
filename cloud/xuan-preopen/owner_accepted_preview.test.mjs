@@ -108,7 +108,7 @@ test('concentration-enabled five-card report passes the unchanged pure accepted 
   const text=decode(bound);assert.equal((text.match(/<h2>/g)||[]).length,5);
   for(const title of ['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置','单票集中度'])assert.ok(text.includes(title));
   for(const label of ['发行方目标','发行方资料','发行方前十'])assert.ok(text.includes(`<span class="concentration-source-label">${label}</span>`));
-  assert.match(text,/原生挂单未返回币种或合约标识/);assert.match(text,/覆盖未核实|全部覆盖未核实/);assert.match(text,/USD·推定/);
+  assert.match(text,/原生挂单未返回币种或合约标识/);assert.match(text,/覆盖未核实|全部覆盖未核实|完整范围未核实/);assert.match(text,/USD·推定/);
   assert.equal(f.model.cash.planning,null);assert.equal(f.model.cash.orderReserve,null);
   assert.doesNotMatch(text,/<a\b|(?:href|src)\s*=|<script\b|<iframe\b|\son[a-z]+\s*=|portfolio_?id|account_?id|order_?id|contract_?id/i);
   assert.ok(!text.includes(NIGHT_ACTION_MARKER));assert.ok(!text.includes(Buffer.from(JSON.stringify(f.model)).toString('base64url')));
@@ -301,4 +301,15 @@ test('replacement deadline aborts delayed old read without later write and does 
   const t=replacementPublisher(f,{setTimer:fn=>{fire=fn;return 1;},clearTimer:()=>{},read:async()=>{enter();await pause;return structuredClone(f.previous);}});
   const pending=t.p.publish(candidate(f.next));await entered;fire();assert.equal((await pending).status,'blocked');release();await new Promise(r=>setImmediate(r));
   assert.ok(!t.events.includes('replace'));assert.equal((await t.p.publish(candidate(f.next))).status,'blocked');
+});
+
+test('replacement controller signal reaches every old/candidate context and aborts each blocked phase before CAS',async()=>{
+  const success=replacementFixture(),signals=[];success.verify=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async options=>{assert.ok(options.signal instanceof AbortSignal);assert.equal(options.signal.aborted,false);signals.push(options.signal);return success.loadContext(options);}});
+  const completed=replacementPublisher(success);assert.equal((await completed.p.publish(candidate(success.next))).status,'published-verified');assert.equal(signals.length,6);assert.ok(signals.every(signal=>signal===signals[0]));assert.equal(completed.events.filter(event=>event==='replace').length,1);assert.equal(completed.events.filter(event=>event==='pinned-readback').length,1);
+  const pre=new AbortController();pre.abort();let earlyCalls=0;const early=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async()=>{earlyCalls++;assert.fail();}});await assert.rejects(early({previous:success.previous,candidate:candidate(success.next),signal:pre.signal}));assert.equal(earlyCalls,0);
+  for(let stopAt=1;stopAt<=6;stopAt++){
+    const f=replacementFixture();let calls=0,fire,enter;const entered=new Promise(resolve=>{enter=resolve;});
+    f.verify=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async options=>{assert.ok(options.signal instanceof AbortSignal);assert.equal(options.signal.aborted,false);if(++calls===stopAt){enter(options.signal);return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));}return f.loadContext(options);}});
+    const t=replacementPublisher(f,{setTimer:(fn,ms)=>{assert.equal(ms,45000);fire=fn;return 1;},clearTimer:()=>{}});const pending=t.p.publish(candidate(f.next)),signal=await entered;fire();assert.equal((await pending).status,'blocked');await new Promise(resolve=>setImmediate(resolve));assert.equal(signal.aborted,true);assert.equal(calls,stopAt);assert.deepEqual(t.events,['old']);assert.equal((await t.p.publish(candidate(f.next))).code,'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED');
+  }
 });

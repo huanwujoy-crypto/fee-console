@@ -130,7 +130,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
       providerGeneratedText:flex.provenance.providerGeneratedText,providerTimezone:flex.provenance.providerTimezone,readAt:flex.provenance.readAt,archiveSha256:flex.rawFingerprint},
       sharesight:snapshots.filter(s=>snapshotUsable(outcomes.find(o=>o.sourceKey===s.sourceKey)?.status)).map(s=>({sourceKey:s.sourceKey,sourceDate:s.provenance.sourceDate,readAt:s.provenance.readAt,syncCompletedAt:s.provenance.syncCompletedAt,snapshotGeneration:s.provenance.snapshotGeneration,receiptSha256:s.provenance.receiptSha256,...(s.status==='ui-export-observed'?{uiReportStart:s.provenance.uiReportStart,uiExportedAt:s.provenance.uiExportedAt}:{})}))},
     replenishment,orders,
-    cash:{status:ib!==null||noah!==null?'partial':'unavailable',ib,noah,pool,reserve:callAmount,callApplied,orderReserve,planning,
+    cash:{status:fieldMode&&[ib,noah,pool].every(finite)?'recorded':ib!==null||noah!==null?'partial':'unavailable',ib,noah,pool,reserve:callAmount,callApplied,orderReserve,planning,
       cashLike,totalCapacity,
       planningBasis:planning!==null?{status:fieldMode?'reference':'conditional',assumption:fieldMode?'BOOK_CASH_AND_REMAINING_ORDERS':'NO_UNREFLECTED_ACTIVITY_SINCE_EOD',sourceDate}:{status:'unknown',reason:fieldMode||qualifiedEod?'CASH_OR_ORDERS_UNKNOWN':'EOD_RECONCILIATION_UNRESOLVED'},availableFunds:fieldMode?currentFields.availableFunds:unknown('ACTIVITY_FLEX_HAS_NO_AVAILABLE_FUNDS'),executableBudget:null,
       eod:flex.cash?{status:'verified',currency:'USD',tradeDate:flex.cash.tradeDate,settled:flex.cash.settled,native:flex.cash.native.map(r=>({currency:r.currency,level:r.level,endingCash:r.endingCash,endingSettledCash:r.endingSettledCash,components:Object.fromEntries(Object.entries(r.components).filter(([k])=>['commissions','fxTranslationGainLoss','netTradesPurchases','netTradesSales'].includes(k)))}))}:unknown('FLEX_CASH_MISSING')},
@@ -172,7 +172,7 @@ export function validateEodActionModel(m){
   if(!fields&&outcome('ib.flexEod').status!=='verified')fail('FLEX_OUTCOME');
   const o=m.orders;validateEodOrders(o,{dataDate:m.dataDate,readAt:fields?m.provenance.capture?.completedAt:m.provenance.flex.readAt,startedAt:m.provenance.capture?.startedAt,fieldMode:fields});
   if(!fields&&(o.status==='ready')!==(outcome('ib.optionalLive').status==='captured')||fields&&o.status!=='unknown'&&!['captured','partial'].includes(outcome('ib.optionalLive').status))fail('ORDER_OUTCOME');
-  const c=m.cash;if(!c||!['partial','unavailable'].includes(c.status)||!(fields&&c.reserve===null&&c.callApplied===null)&&(!finite(c.reserve)||!finite(c.callApplied)||Math.abs(cents(c.reserve*.5)-c.callApplied)>.001)||c.executableBudget!==null)fail('CASH');
+  const c=m.cash;if(!c||!['partial','unavailable',...(fields?['recorded']:[])].includes(c.status)||c.status==='recorded'&&![c.ib,c.noah,c.pool].every(finite)||!(fields&&c.reserve===null&&c.callApplied===null)&&(!finite(c.reserve)||!finite(c.callApplied)||Math.abs(cents(c.reserve*.5)-c.callApplied)>.001)||c.executableBudget!==null)fail('CASH');
   if(c.noah!==null&&!snapshotUsable(outcome('sharesight.noahPerformance').status))fail('CASH_OUTCOME');
   exact(c,['status','ib','noah','pool','reserve','callApplied','orderReserve','planning','cashLike','totalCapacity','planningBasis','availableFunds','executableBudget','eod',...(fields?['call','book']:[]),...(c.availableFunds?.status==='recorded'?['availableFundsProof']:[])]);
   if(fields&&c.availableFunds?.status==='recorded'){
