@@ -260,6 +260,37 @@ class WeeklyJobTests(unittest.TestCase):
         for value in ['DO_NOT_LOG', 'U123456789', 'private.invalid', 'SYNTHETIC_TOKEN', 'ErrorMessage']:
             self.assertNotIn(value, text)
 
+    def test_status_subclasses_are_private_nonretryable_log_and_archive_diagnostics(self):
+        from test_ib_source import SyntheticIB, SEND, pending
+        from ib_source import fetch
+        from recovery import transient
+        from safe_observation import safe_outcome
+        archived = []
+        self.bucket.blob.side_effect = lambda name: types.SimpleNamespace(
+            upload_from_string=lambda body, **kw: archived.append((name, body)))
+        for text, shape in [('', 'empty'), (' \t', 'xml_whitespace'),
+                            (' Fail ', 'padded_fail'), (' Success ', 'padded_success'),
+                            ('Warn', 'literal_warn'), ('DO_NOT_LOG', 'noncanonical')]:
+            archived.clear()
+            body = pending().replace(b'>Fail<', ('>' + text + '<').encode()).replace(
+                b'</FlexStatementResponse>',
+                b'<ErrorMessage>DO_NOT_LOG SYNTHETIC_TOKEN U123456789 https://private.invalid/</ErrorMessage></FlexStatementResponse>')
+            source = SyntheticIB([SEND, pending(), body])
+            self.mocks[2].side_effect = fetch
+            with source.patches()[0], source.patches()[1], source.patches()[2]:
+                status, lines = self.execute()
+            self.assertEqual(status, 1)
+            self.assertEqual(lines[0]['statement']['statusShape'], shape)
+            self.assertEqual(lines[0]['statement']['pollCount'], 2)
+            self.assertNotIn('polling', lines[0])
+            self.assertFalse(transient(lines[0]))
+            self.assertEqual(json.loads(archived[0][1]), lines[0])
+            self.assertEqual(safe_outcome(lines[0])['statement'], lines[0]['statement'])
+            for canary in ('DO_NOT_LOG', 'SYNTHETIC_TOKEN', 'U123456789', 'private.invalid'):
+                self.assertNotIn(canary, json.dumps(lines) + archived[0][1])
+        for index in (3, 6, 8, 9):
+            self.mocks[index].assert_not_called()
+
     def test_forged_statement_diagnostics_and_wrong_stage_or_operation_are_not_emitted(self):
         from ib_source import StatementRejected, statement_detail, xml
         from test_ib_source import pending

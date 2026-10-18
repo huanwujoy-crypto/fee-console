@@ -28,6 +28,26 @@ class ObservationTests(unittest.TestCase):
             result = safe_outcome({**value, **mutation})
             self.assertNotIn('statement', result); self.assertNotIn('PRIVATE_', json.dumps(result))
 
+    def test_fixed_status_subclasses_survive_only_valid_context(self):
+        from ib_source import safe_statement
+        for status, expected in [('', 'empty'), (' \t', 'xml_whitespace'),
+                                 (' Fail ', 'padded_fail'), (' Success ', 'padded_success'), ('Warn', 'literal_warn'),
+                                 ('PRIVATE_TOKEN_URL_ACCOUNT_AMOUNT', 'noncanonical')]:
+            body = ('<FlexStatementResponse><Status>' + status +
+                    '</Status><ErrorCode>1019</ErrorCode><ErrorMessage>PRIVATE_MESSAGE</ErrorMessage></FlexStatementResponse>').encode()
+            detail = statement_detail(xml(body), 'ib_get_statement', 1)
+            value = {'code': 'ib_statement_failed', 'stage': 'ib_fetch', 'statement': detail}
+            result = safe_outcome(value)
+            self.assertEqual(result['statement']['statusShape'], expected)
+            self.assertNotIn('PRIVATE_', json.dumps(result))
+            self.assertNotIn('statement', safe_outcome({**value, 'stage': 'private_latest'}))
+            self.assertNotIn('statement', safe_outcome({**value, 'code': 'ib_statement_not_ready'}))
+            if expected != 'noncanonical':
+                self.assertIsNone(safe_statement({**detail, 'errorCodeShape': expected, 'upstreamErrorCode': None}))
+        # The old known-1019/noncanonical receipt remains exactly as observed.
+        old = {**detail, 'statusShape': 'noncanonical'}
+        self.assertEqual(safe_statement(old), old)
+
     def test_existing_real_safe_failure_receipt_is_not_retroactively_enriched(self):
         # Only previously disclosed safe fields; no broker payload or credentials.
         receipt = {'complete': False, 'severity': 'ERROR', 'event': 'xuan_weekly_failed', 'stage': 'ib_fetch',

@@ -108,3 +108,52 @@ and source-call behavior, stdout/archive/projection privacy, and the old safe
 receipt hash. Run existing Python and Node suites and privacy/progress guards.
 Obtain independent Astra review of the complete staged tree. These local checks
 do not grant push, Library upload, cloud build/deploy or another manual run.
+
+## 2026-10-18 offline follow-up: status classification only
+
+This separate local candidate is based on `5c3292b7950c85abc17cd56f5cbcdef8b6301457`.
+It is not a compatibility fix and does not establish recovery. The safe October 18
+receipt proves known numeric 1019 with `status_rejected/noncanonical` at poll 1;
+it does not preserve the actual Status text. It supplies no OAuth invalid_grant
+evidence. Earlier receipts must remain unchanged.
+
+The eight-field contract remains intact. Only `statusShape` gains these fixed
+values after the existing uniqueness/direct/unqualified/leaf checks:
+
+| Enum | Exact classifier condition |
+|---|---|
+| `empty` | ElementTree leaf text is None or empty |
+| `xml_whitespace` | Nonempty text consists only of space, tab, CR, LF |
+| `padded_success` | Removing only surrounding XML whitespace yields Success |
+| `padded_fail` | Removing only surrounding XML whitespace yields Fail |
+| `literal_warn` | Exact text Warn; a diagnostic hypothesis, not an official accepted status |
+
+Exact Success/Fail retain their old classifications. Every other string remains
+`noncanonical`, including Warning, lowercase variants, padded Warn and Unicode
+whitespace. No upstream string, length, hash or ErrorMessage is emitted. Structural
+classifications take priority. These new enums are invalid for `errorCodeShape`.
+`literal_warn` can distinguish a plausible future observation without collecting
+arbitrary text; its existence does not claim today's missing Status was Warn.
+
+Official public documentation reviewed on October 18:
+
+- [Legacy v3 contract](https://www.ibkrguides.com/complianceportal/complianceportal/flexweb3.htm): unsuccessful request examples use Fail, including GetStatement.
+- [Current report generation](https://www.interactivebrokers.com/docs/web-api/flex-web-service/using-flex-web-service/generate-the-report): SendRequest states Success/Fail.
+- [Current retrieval](https://www.interactivebrokers.com/docs/web-api/flex-web-service/using-flex-web-service/retrieve-the-report): describes waiting for generation, without an alternate Status definition.
+- [Current retrieval reference](https://www.interactivebrokers.com/docs/web-api/api-reference/get-statement): failures return XML; no alternate Status definition.
+- [Current error codes](https://www.interactivebrokers.com/docs/web-api/flex-web-service/error-codes): 1019 means generation is in progress. The newly documented 1025 is outside this change.
+
+These reviewed sources provide no support for a new accepted noncanonical Status
+branch. No response-acceptance, retry, 150-second budget, 24-poll/6.2-second pacing,
+query, account, source, recovery or publication rule changes. Existing acceptance
+ignores some extra nested/qualified fields and same-name attributes that stricter
+diagnostics classify as ambiguous; tests preserve and disclose that baseline
+behavior. Tightening it is a separate source-policy proposal, not this diagnostic
+change. Existing source-evidence recovery gates still reject the old failure.
+
+Deployment and any future controlled read-only observation require separate human
+approval. No real invocation or schedule is added here. Unknown noncanonical
+values would still require new official contract evidence or a separately reviewed
+minimal fixed-enum observation proposal; arbitrary raw Status logging is not a
+fallback. A future compatibility proposal needs both supported strict shapes and
+explicit rejection/deadline/privacy tests before protected review.
