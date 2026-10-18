@@ -1,5 +1,6 @@
 // A private report acceptance job: no GitHub mutation or schedule activation.
 import crypto from 'node:crypto';
+import {types as nodeTypes} from 'node:util';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {captureCloudIbAction} from './ib_mcp.mjs';
@@ -22,14 +23,37 @@ const timeHkt = now => new Date(now + 8 * 3_600_000).toISOString().slice(11, 16)
 const validDate = value => /^\d{4}-\d{2}-\d{2}$/.test(value || '') && Number.isFinite(Date.parse(`${value}T00:00:00Z`))
   && new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value;
 
+// Finite origin metadata only. Never inspect messages, stacks, URLs or bodies.
+const ORIGIN_TYPES=new Set(['Error','TypeError','RangeError','SyntaxError','URIError','EvalError','AggregateError','AbortError','TimeoutError']);
+const ORIGIN_CODES=new Set(['ENOTFOUND','EAI_AGAIN','ECONNREFUSED','ECONNRESET','ECONNABORTED','ETIMEDOUT','ENETUNREACH','EHOSTUNREACH','EPIPE','ENOENT','EACCES','EPERM','EBADF','EINVAL','CERT_HAS_EXPIRED','CERT_NOT_YET_VALID','DEPTH_ZERO_SELF_SIGNED_CERT','SELF_SIGNED_CERT_IN_CHAIN','UNABLE_TO_VERIFY_LEAF_SIGNATURE','UNABLE_TO_GET_ISSUER_CERT_LOCALLY','ERR_TLS_CERT_ALTNAME_INVALID','ERR_SSL_WRONG_VERSION_NUMBER','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET','ABORT_ERR']);
+const ownData=(value,key)=>{try{if(!value||!['object','function'].includes(typeof value)||nodeTypes.isProxy(value))return undefined;const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined;}catch{return undefined;}};
+const finiteCode=value=>typeof value==='string'&&ORIGIN_CODES.has(value)?value:null;
+const domName=Object.getOwnPropertyDescriptor(DOMException.prototype,'name').get;
+const responseStatus=Object.getOwnPropertyDescriptor(Response.prototype,'status').get;
+export function safeErrorOrigin(error,httpStatus=null){
+  let type=null,status=typeof httpStatus==='number'?httpStatus:ownData(httpStatus,'status');
+  if(error&&['object','function'].includes(typeof error)&&!nodeTypes.isProxy(error)){
+    const name=ownData(error,'name');
+    if(typeof name==='string'&&ORIGIN_TYPES.has(name))type=name;
+    if(type===null)try{
+      const prototype=Object.getPrototypeOf(error);
+      for(const [ctor,label] of [[TypeError,'TypeError'],[RangeError,'RangeError'],[SyntaxError,'SyntaxError'],[URIError,'URIError'],[EvalError,'EvalError'],[AggregateError,'AggregateError'],[Error,'Error']])if(prototype===ctor.prototype){type=label;break;}
+      if(type===null&&prototype===DOMException.prototype){const nativeName=domName.call(error);if(ORIGIN_TYPES.has(nativeName))type=nativeName;}
+      if(type===null&&nodeTypes.isNativeError(error))type='Error';
+    }catch{}
+  }
+  if(status===undefined&&httpStatus&&!nodeTypes.isProxy(httpStatus))try{status=responseStatus.call(httpStatus);}catch{}
+  return Object.freeze({type,code:finiteCode(ownData(error,'code')),causeCode:finiteCode(ownData(ownData(error,'cause'),'code')),httpStatus:Number.isInteger(status)&&status>=100&&status<=599?status:null});
+}
+
 async function read(url, {fetchImpl = fetch, headers = {}} = {}) {
   let response;
   try { response = await fetchImpl(url, {headers, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30_000)}); }
-  catch { throw new Error('REPORT_SOURCE_NETWORK_FAILED'); }
-  if (!response.ok) throw new Error(`REPORT_SOURCE_HTTP_${response.status}`);
+  catch (error) { throw Object.assign(new Error('REPORT_SOURCE_NETWORK_FAILED'),{safeCode:'REPORT_SOURCE_NETWORK_FAILED',safeOrigin:safeErrorOrigin(error)}); }
+  if (!response.ok) {const status=response.status;throw Object.assign(new Error(`REPORT_SOURCE_HTTP_${status}`),{safeCode:'REPORT_SOURCE_HTTP',safeOrigin:safeErrorOrigin(new Error(),status)});}
   return boundedText(response);
 }
-const json = text => { try { return JSON.parse(text); } catch { throw new Error('REPORT_SOURCE_JSON_INVALID'); } };
+const json = text => { try { return JSON.parse(text); } catch (error) { throw Object.assign(new Error('REPORT_SOURCE_JSON_INVALID'),{safeCode:'REPORT_SOURCE_JSON_INVALID',safeOrigin:safeErrorOrigin(error)}); } };
 
 export async function loadTrustedContext({fetchImpl = fetch, now = Date.now} = {}) {
   const commit = json(await read(`${REPO}/commits/main`, {fetchImpl, headers: {'User-Agent': 'xuan-preopen-readonly'}})).sha;

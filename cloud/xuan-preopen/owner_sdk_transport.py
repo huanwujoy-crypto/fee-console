@@ -66,6 +66,97 @@ def reject(code):
     raise BoundaryError(code)
 
 
+# Finite observations only. HTTP invocation/2xx does not prove socket bytes,
+# business ACK validation, metadata binding or a verified HTML hash.
+SAFE_DIAGNOSTIC_SCHEMA = 'xuan.owner-sdk.safe-diagnostics.v1'
+SAFE_DIAGNOSTIC_STAGES = frozenset(['frame', 'request-validation', 'identity', 'cache', 'metadata-get', 'html-get', 'head', 'boundary', 'canary', 'cas', 'readback-metadata', 'readback-html', 'close'])
+SAFE_ERROR_TYPES = frozenset(['BoundaryError', 'OSError', 'TimeoutError', 'ConnectionError', 'SSLError', 'SSLCertVerificationError', 'CertificateError', 'BrokenPipeError', 'ConnectionResetError', 'ConnectionRefusedError', 'FileNotFoundError', 'PermissionError', 'ImportError', 'ModuleNotFoundError', 'ValueError', 'TypeError', 'RuntimeError', 'RequestException', 'ReadTimeout', 'ConnectTimeout', 'ConnectTimeoutError', 'ReadTimeoutError', 'ProxyError', 'NewConnectionError', 'MaxRetryError', 'TransportError', 'RefreshError', 'gaierror'])
+SAFE_ERROR_CODES = frozenset(['BODY_INVALID', 'BOUNDARY_ACCESS_DENIED', 'BOUNDARY_CONTENT_TYPE', 'BOUNDARY_READ_FAILED', 'CACHED_CREDENTIAL_LIFETIME_INSUFFICIENT', 'CACHED_CREDENTIAL_REFRESH_REQUIRED', 'CANARY_ALREADY_ATTEMPTED', 'CANARY_ALREADY_EXISTS', 'CANARY_INVALID', 'CANARY_PRESENCE_UNPROVEN', 'CANARY_REQUEST_INVALID', 'CANARY_TIME_INVALID', 'CLOSED', 'DISPLAY_UTF8_INVALID', 'DUPLICATE_JSON_KEY', 'EACCES', 'EAI_AGAIN', 'EAI_NONAME', 'ECONNABORTED', 'ECONNREFUSED', 'ECONNRESET', 'EHOSTUNREACH', 'ENCODING_INVALID', 'ENETUNREACH', 'ENOENT', 'ENVIRONMENT_OVERRIDE', 'EPERM', 'EPIPE', 'ETIMEDOUT', 'EXISTING_USER_CREDENTIAL_REQUIRED', 'FRAME_INVALID', 'FRAME_SIZE_LIMIT', 'HEADERS_INVALID', 'JSON_INVALID', 'MULTIPART_INVALID', 'MULTIPART_METADATA_INVALID', 'MULTIPART_RESOURCE_INVALID', 'OPERATION_INVALID', 'ORIGINAL_IDENTITY_CHANGED', 'ORIGINAL_IDENTITY_REQUIRED', 'PIN_REQUIRED', 'QUERY_INVALID', 'READ_FAILED', 'REDIRECT_OR_URL_CHANGED', 'REPLACEMENT_ADMISSION_EXPIRED', 'REPLACEMENT_CANARY_CURRENT', 'REPLACEMENT_CANARY_REGISTRATION', 'REPLACEMENT_CANDIDATE', 'REPLACEMENT_INVALID', 'REPLACEMENT_METADATA', 'REPLACEMENT_OLD_CHANGED', 'REPLACEMENT_OLD_HASH', 'REPLACEMENT_OLD_MEDIA', 'REPLACEMENT_OLD_METADATA', 'REPLACEMENT_REGISTRATION', 'REQUEST_INVALID', 'REQUEST_OUTCOME_UNKNOWN', 'RESPONSE_SIZE_LIMIT', 'SDK_CONFIG_INVALID', 'SDK_FAILED', 'SDK_OVERRIDE', 'SDK_ROOT_INVALID', 'SDK_ROOT_REQUIRED', 'TARGET_INVALID', 'TLS_CERTIFICATE_ERROR', 'TLS_ERROR', 'WRITE_ALREADY_ATTEMPTED'])
+SAFE_COUNTERS = ('casHttpAttempts', 'casHttpAcks', 'readbackMetadataAttempts',
+                 'readbackMetadataSuccesses', 'readbackHtmlAttempts', 'readbackHtmlSuccesses')
+
+
+def safe_exception_fields(error):
+    name = type(error).__name__
+    kind = name if name in SAFE_ERROR_TYPES else None
+    code = None
+    if type(error) is BoundaryError:
+        code = error.code if error.code in SAFE_ERROR_CODES else None
+    elif name in ('SSLCertVerificationError', 'CertificateError'):
+        code = 'TLS_CERTIFICATE_ERROR'
+    elif name == 'SSLError':
+        code = 'TLS_ERROR'
+    elif isinstance(error, OSError):
+        import errno
+        number = OSError.__dict__['errno'].__get__(error, type(error))
+        candidate = errno.errorcode.get(number) if type(number) is int else None
+        if name == 'gaierror':
+            import socket
+            candidate = 'EAI_AGAIN' if number == socket.EAI_AGAIN else 'EAI_NONAME' if number == socket.EAI_NONAME else None
+        code = candidate if candidate in SAFE_ERROR_CODES else None
+    return kind, code
+
+
+class SafeDiagnostics:
+    def __init__(self):
+        self.counts = dict.fromkeys(SAFE_COUNTERS, 0)
+        self.new_generation = None
+        self.http_kind = None
+        self.begin('frame')
+
+    def begin(self, stage):
+        self.stage = stage
+        self.error_type = self.error_code = self.cause_code = self.http_status = None
+        self.primary_recorded = False
+        self.cleanup = []
+
+    def mark(self, stage):
+        if not self.primary_recorded:
+            self.stage = stage
+
+    def error(self, error, stage=None):
+        if self.primary_recorded:
+            return
+        self.primary_recorded = True
+        if stage is not None:
+            self.stage = stage
+        self.error_type, self.error_code = safe_exception_fields(error)
+        cause = BaseException.__dict__['__cause__'].__get__(error, type(error))
+        if cause is None:
+            cause = BaseException.__dict__['__context__'].__get__(error, type(error))
+        if isinstance(cause, BaseException):
+            self.cause_code = safe_exception_fields(cause)[1]
+
+    def snapshot(self):
+        return {'schema': SAFE_DIAGNOSTIC_SCHEMA, 'stage': self.stage,
+                'errorType': self.error_type, 'errorCode': self.error_code,
+                'causeCode': self.cause_code, 'httpStatus': self.http_status, **self.counts}
+
+    def cleanup_error(self, error):
+        if self.cleanup:
+            return
+        entry = self.snapshot()
+        entry.update(stage='close', errorType=safe_exception_fields(error)[0],
+                     errorCode=safe_exception_fields(error)[1], causeCode=None)
+        self.cleanup.append(entry)
+
+    def attempted(self, kind):
+        self.mark(kind)
+        key = {'cas': 'casHttpAttempts', 'readback-metadata': 'readbackMetadataAttempts',
+               'readback-html': 'readbackHtmlAttempts'}.get(kind)
+        if key:
+            self.counts[key] += 1
+
+    def responded(self, kind, status):
+        self.http_status = status if type(status) is int and 100 <= status <= 599 else None
+        if type(status) is int and 200 <= status < 300:
+            key = {'cas': 'casHttpAcks', 'readback-metadata': 'readbackMetadataSuccesses',
+                   'readback-html': 'readbackHtmlSuccesses'}.get(kind)
+            if key:
+                self.counts[key] += 1
+
+
+
 def instant():
     return datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
 
@@ -348,8 +439,11 @@ class LiveSdkProvider:
         self.credential = None
         self.account = None
         self.properties = None
+        self._safe_diagnostics = None
 
     def identity(self):
+        if self._safe_diagnostics is not None:
+            self._safe_diagnostics.mark('identity')
         environment_guard(os.environ)
         # Suppress SDK/request debug logging before any imports or credential use.
         logging.disable(logging.CRITICAL)
@@ -378,6 +472,8 @@ class LiveSdkProvider:
 
     def get_session(self):
         self.identity()
+        if self._safe_diagnostics is not None:
+            self._safe_diagnostics.mark('cache')
         if self.session is not None:
             return self.session
         from googlecloudsdk.core.credentials import creds as sdk_creds
@@ -418,9 +514,21 @@ class LiveSdkProvider:
         session = self.get_session()
         self.require_fresh(self.credential)
         session.cookies.clear()
-        return session.request(method, url, headers=headers, data=body,
-                               timeout=(5, 15), allow_redirects=False, stream=True,
-                               verify=True)
+        diagnostics = self._safe_diagnostics
+        kind = diagnostics.http_kind if diagnostics is not None else None
+        if diagnostics is not None:
+            diagnostics.attempted(kind)
+        try:
+            response = session.request(method, url, headers=headers, data=body,
+                                       timeout=(5, 15), allow_redirects=False, stream=True,
+                                       verify=True)
+        except Exception as error:
+            if diagnostics is not None:
+                diagnostics.error(error)
+            raise
+        if diagnostics is not None:
+            diagnostics.responded(kind, response.status_code)
+        return response
 
     def check_original_identity(self):
         self.get_session()  # proves stored user credential type/freshness, no HTTP
@@ -439,13 +547,39 @@ class OwnerBridge:
         self.write_started = False
         self.canary_attempted = False
         self.mutation_started = False
+        self._operation = None
+        self.safe_diagnostics = SafeDiagnostics()
+        if isinstance(provider, LiveSdkProvider):
+            provider._safe_diagnostics = self.safe_diagnostics
 
     def raw_request(self, url, method, headers, body):
         if self.closed:
             reject('CLOSED')
+        diagnostics = self.safe_diagnostics
+        latest = 'https://storage.googleapis.com/storage/v1/b/' + BUCKET + '/o/' + quote(OBJECT, safe='')
+        parsed = urlsplit(url)
+        query = dict(parse_qsl(parsed.query))
+        is_latest = parsed.scheme + '://' + parsed.netloc + parsed.path == latest
+        is_cas = method == 'POST' and self.mutation_started and self._operation in ('request', 'replaceAcceptedPreview')
+        if is_cas:
+            kind = 'cas'
+        elif is_latest and method == 'GET' and diagnostics.new_generation is not None and query.get('generation') == diagnostics.new_generation:
+            kind = 'readback-html' if query.get('alt') == 'media' else 'readback-metadata'
+        elif self._operation == 'boundary':
+            kind = 'boundary'
+        elif not is_latest:
+            kind = 'canary'
+        else:
+            kind = 'head' if method == 'HEAD' else 'html-get' if query.get('alt') == 'media' else 'metadata-get'
+        diagnostics.http_kind = kind
+        diagnostics.mark(kind)
+        diagnostics.http_status = None  # each HTTP boundary, not the prior read in this RPC
         try:
             response = self.provider.request(url, method, headers, body)
+            primary = None
             try:
+                status = response.status_code
+                diagnostics.http_status = status if type(status) is int and 100 <= status <= 599 else None
                 if response.url != url or response.history:
                     reject('REDIRECT_OR_URL_CHANGED')
                 selected = {k.lower(): v for k, v in response.headers.items() if k.lower() in RESPONSE_HEADERS}
@@ -455,14 +589,39 @@ class OwnerBridge:
                     raw = response.raw.read(MAX_RESPONSE + 1, decode_content=False)
                     if len(raw) > MAX_RESPONSE:
                         reject('RESPONSE_SIZE_LIMIT')
+                if is_cas and 200 <= response.status_code < 300:
+                    # Observe only the existing bounded ACK body. No new read or
+                    # business validation; the publisher still owns those gates.
+                    try:
+                        observed = json_loads(raw)
+                        gen = observed.get('generation') if type(observed) is dict else None
+                        previous = query.get('ifGenerationMatch')
+                        if (isinstance(gen, str) and GEN.fullmatch(gen) and isinstance(previous, str)
+                                and (previous == '0' or GEN.fullmatch(previous)) and int(gen) > int(previous)):
+                            diagnostics.new_generation = gen
+                    except Exception:
+                        pass
                 return {'status': response.status_code, 'url': response.url,
                         'headers': selected, 'body': base64.b64encode(raw).decode('ascii')}
+            except Exception as error:
+                primary = error
+                diagnostics.error(error)
+                raise
             finally:
-                response.close()
-        except BoundaryError:
+                try:
+                    response.close()
+                except Exception as error:
+                    if primary is not None:
+                        diagnostics.cleanup_error(error)
+                    else:
+                        diagnostics.error(error, 'close')
+                        raise
+        except BoundaryError as error:
+            diagnostics.error(error)
             raise
-        except Exception:
-            # Status/error bodies and SDK exception text may contain secrets.
+        except Exception as error:
+            # Preserve only finite exception observations, never SDK/log text.
+            diagnostics.error(error)
             reject('REQUEST_OUTCOME_UNKNOWN' if self.mutation_started else 'READ_FAILED')
 
     def read_json(self, url, method='GET', body=None):
@@ -533,6 +692,15 @@ class OwnerBridge:
             reject('REPLACEMENT_CANARY_CURRENT')
 
     def dispatch(self, value):
+        self.safe_diagnostics.begin('request-validation')
+        self._operation = value.get('op') if isinstance(value, dict) else None
+        try:
+            return self._dispatch(value)
+        except Exception as error:
+            self.safe_diagnostics.error(error)
+            raise
+
+    def _dispatch(self, value):
         if self.closed:
             reject('CLOSED')
         if not isinstance(value, dict):
@@ -563,6 +731,7 @@ class OwnerBridge:
                 self.mutation_started = True
             return self.raw_request(url, method, headers, body)
         if op == 'identity' and set(value) == {'op'}:
+            self.safe_diagnostics.mark('identity')
             return self.provider.check_original_identity()
         if op == 'createCanary':
             body, boundary = canary_content(value)
@@ -594,6 +763,7 @@ class OwnerBridge:
         if (op == 'boundary' and set(value) in ({'op', 'includeRoleDefinitions'}, {'op', 'includeRoleDefinitions', 'requireDeletePermission'})
                 and isinstance(value['includeRoleDefinitions'], bool) and isinstance(value.get('requireDeletePermission', False), bool)):
             started = instant()
+            self.safe_diagnostics.mark('identity')
             actor = self.provider.check_original_identity()
             bucket_url = 'https://storage.googleapis.com/storage/v1/b/' + BUCKET
             bucket = self.read_json(bucket_url)
@@ -629,6 +799,8 @@ def main():
             line = sys.stdin.buffer.readline(MAX_LINE + 1)
             if not line:
                 break
+            bridge.safe_diagnostics.begin('frame')
+            request = None
             try:
                 if len(line) > MAX_LINE or not line.endswith(b'\n'):
                     reject('FRAME_INVALID')
@@ -638,16 +810,25 @@ def main():
                 result = bridge.dispatch(request['value'])
                 answer = {'id': request['id'], 'result': result}
             except BoundaryError as error:
+                bridge.safe_diagnostics.error(error)
                 answer = {'id': request.get('id') if isinstance(locals().get('request'), dict) else None, 'error': error.code}
-            except Exception:
+            except Exception as error:
+                bridge.safe_diagnostics.error(error)
                 answer = {'id': request.get('id') if isinstance(locals().get('request'), dict) else None, 'error': 'SDK_FAILED'}
+            answer['safeDiagnostics'] = bridge.safe_diagnostics.snapshot()
+            answer['safeCleanupDiagnostics'] = list(bridge.safe_diagnostics.cleanup)
             encoded = json.dumps(answer, separators=(',', ':'), ensure_ascii=True).encode('ascii')
             if len(encoded) > MAX_LINE:
-                encoded = b'{"id":null,"error":"FRAME_SIZE_LIMIT"}'
+                bridge.safe_diagnostics.error(BoundaryError('FRAME_SIZE_LIMIT'))
+                encoded = json.dumps({'id': None, 'error': 'FRAME_SIZE_LIMIT', 'safeDiagnostics': bridge.safe_diagnostics.snapshot(), 'safeCleanupDiagnostics': list(bridge.safe_diagnostics.cleanup)}, separators=(',', ':')).encode('ascii')
             sys.stdout.buffer.write(encoded + b'\n')
             sys.stdout.buffer.flush()
     finally:
-        bridge.close()
+        try:
+            bridge.close()
+        except Exception:
+            # No pending RPC after EOF; preserve nonzero exit without traceback.
+            raise SystemExit(1) from None
 
 
 if __name__ == '__main__':

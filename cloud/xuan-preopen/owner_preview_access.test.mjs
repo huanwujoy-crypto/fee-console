@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
+import {types as utilTypes} from 'node:util';
+import {safeErrorOrigin} from './report.mjs';
+import {decodeOwnerSafeDiagnostics,OWNER_SAFE_ERROR_CODES} from './owner_sdk_transport.mjs';
 import {spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {describeOwnerBoundary,evaluateOwnerBoundary,renderOwnerPhoneCanary,validateOwnerPhoneCanary,
@@ -279,7 +282,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:17/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:18/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -294,17 +297,17 @@ test(FACTORY_TEST,async t=>{
     const source=fs.readFileSync(new URL('./owner_preview_access.mjs',import.meta.url),'utf8');
     const sdk={
       async readLiveBoundary({includeRoleDefinitions}){
-        events.push(includeRoleDefinitions?'full-boundary':'quick-boundary');await control.holdBoundary?.();
+        events.push(includeRoleDefinitions?'full-boundary':'quick-boundary');if(control.boundaryError)throw control.boundaryError;await control.holdBoundary?.();
         const boundary=structuredClone(f.boundary);boundary.startedAt=new Date(control.now-10).toISOString();
         boundary.completedAt=new Date(control.now).toISOString();if(!includeRoleDefinitions)boundary.roleDefinitions=[];
         control.boundaryEdit?.(boundary,includeRoleDefinitions);return boundary;
       },
-      async requestCanary(value){events.push('canary-'+value.method);return canary.requestCanary(value);},
+      async requestCanary(value){events.push('canary-'+value.method);if(control.canaryError)throw control.canaryError;return canary.requestCanary(value);},
       async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
       async request(){events.push('financial-POST');return new Response(null,{status:200});},
       async requestPreviewReplacement(url,options,pins,lease){events.push('replacement-POST');assert.equal(pins.previousGeneration,'900719925474099312345');
         assert.equal(lease.admissionExpiresAt,control.now+5000);if(control.postError)throw Error('SYNTHETIC_WRITE_OUTCOME_UNKNOWN');return new Response(null,{status:200});},
-      close(){events.push('close');},
+      close(){events.push('close');if(control.closeError)throw control.closeError;},
     };
     const files={
       'xuan-owner-approved-audience.json':f.registry,
@@ -323,6 +326,8 @@ test(FACTORY_TEST,async t=>{
     }
     const dependencies={
       'node:crypto':{default:crypto},
+      'node:util':{types:utilTypes},
+      './report.mjs':{safeErrorOrigin},
       'node:fs':{default:{readFileSync:url=>{const name=new URL(url).pathname.split('/').pop();
         assert.ok(Object.hasOwn(files,name),'unexpected filesystem access: '+name);
         return name==='xuan-owner-preview-replacement.json'?previewReplacementRegistrationText(files[name]):name==='xuan-owner-accepted-preview.json'&&options.replacing?acceptedPreviewRegistrationText(files[name]):JSON.stringify(files[name]);}}},
@@ -330,7 +335,7 @@ test(FACTORY_TEST,async t=>{
       './owner_latest.mjs':{LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch},
       './owner_latest_delivery.mjs':{requireProtectedOwnerCheckout:async()=>{events.push('protected');
         if(control.protectedError)throw Error('SYNTHETIC_PROTECTED_CHECKOUT_REJECTED');}},
-      './owner_sdk_transport.mjs':{createOwnerSdkTransport:()=>{events.push('sdk-created');return sdk;}},
+      './owner_sdk_transport.mjs':{createOwnerSdkTransport:()=>{events.push('sdk-created');return sdk;},decodeOwnerSafeDiagnostics,OWNER_SAFE_ERROR_CODES},
       './owner_accepted_preview.mjs':{validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText},
     };
     const module=new vm.SourceTextModule(source,{initializeImportMeta:meta=>{meta.url=new URL('./owner_preview_access.mjs',import.meta.url).href;}});
@@ -492,6 +497,53 @@ test(FACTORY_TEST,async t=>{
       assert.equal(h.events.filter(e=>e==='replacement-POST').length,kind==='unknown'?1:0);h.access.close();
     });
   });
-  assert.equal(completedScenarios,17,'all factory scenarios must execute, including in the child fallback');
+  await scenario('canary failures retain finite primary and independent cleanup without inspecting taint',async st=>{
+    const primary={schema:'xuan.owner-sdk.safe-diagnostics.v1',stage:'canary',errorType:'ReadTimeout',errorCode:'ETIMEDOUT',causeCode:'EPIPE',httpStatus:null,
+      casHttpAttempts:0,casHttpAcks:0,readbackMetadataAttempts:0,readbackMetadataSuccesses:0,readbackHtmlAttempts:0,readbackHtmlSuccesses:0};
+    const cleanup={...primary,stage:'close',errorType:'PermissionError',errorCode:'EACCES',causeCode:null};
+    const failure=(extra={})=>{const e=Object.assign(Error('SYNTHETIC_PRIVATE_TOKEN_DO_NOT_EXPORT'),{safeCode:'READ_FAILED'});for(const[k,v]of Object.entries(extra))Object.defineProperty(e,k,{value:v});return e;};
+    await st.test('SDK read and close sidecars pass finite decoder, remain nonenumerable, and admission remains closed',async()=>{
+      const e=failure({ownerSafeDiagnostics:primary,ownerSafeCleanupDiagnostics:[cleanup],ownerSafeLocalCleanupCodes:['SDK_LOCAL_CLOSE_FAILED']});
+      const h=await harness({canaryError:e}),result=await h.access.verifyRegisteredCanary();
+      assert.deepEqual({...result},{status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED',reason:'READ_FAILED'});
+      assert.deepEqual(result.ownerSafeDiagnostics,primary);assert.deepEqual(result.ownerSafeCleanupDiagnostics,[cleanup]);assert.deepEqual(result.ownerSafeLocalCleanupCodes,['SDK_LOCAL_CLOSE_FAILED']);
+      assert.equal(Object.getOwnPropertyDescriptor(result,'ownerSafeDiagnostics').enumerable,false);assert.ok(Object.isFrozen(result.ownerSafeDiagnostics));
+      assert.ok(!JSON.stringify(result).includes('SYNTHETIC_PRIVATE_TOKEN'));await assert.rejects(h.access.verifyRegisteredCanary(),/SESSION_CLOSED/);assert.equal(h.events.filter(x=>x==='canary-GET').length,1);
+    });
+    await st.test('read primary survives a later explicit close failure as secondary',async()=>{
+      const close=failure({ownerSafeDiagnostics:cleanup,ownerSafeLocalCleanupCodes:['SDK_LOCAL_CLOSE_FAILED']});
+      const h=await harness({canaryError:failure({ownerSafeDiagnostics:primary}),closeError:close});const r=await h.access.verifyRegisteredCanary();
+      assert.equal(r.ownerSafeDiagnostics.errorCode,'ETIMEDOUT');assert.deepEqual(r.ownerSafeCleanupDiagnostics,[cleanup]);assert.deepEqual(r.ownerSafeLocalCleanupCodes,['SDK_LOCAL_CLOSE_FAILED']);assert.equal(h.events.filter(x=>x==='close').length,1);
+    });
+    await st.test('boundary failure preserves exact original error and readonly primary across close failure',async()=>{
+      const e=failure({ownerSafeDiagnostics:{...primary,stage:'boundary'},ownerSafeCleanupDiagnostics:[],ownerSafeLocalCleanupCodes:[]});
+      const close=Object.assign(Error('SYNTHETIC_CLOSE_PRIVATE'),{safeCode:'SDK_LOCAL_CLOSE_FAILED'}),events=[];
+      await assert.rejects(harness({boundaryError:e,closeError:close,events}),error=>error===e);
+      assert.equal(e.ownerSafeDiagnostics.stage,'boundary');assert.equal(e.ownerSafeDiagnostics.errorCode,'ETIMEDOUT');assert.deepEqual(e.safeSecondaryCodes,['SDK_LOCAL_CLOSE_FAILED']);assert.equal(events.filter(x=>x==='close').length,1);
+    });
+    await st.test('getters and proxy traps on failures and sidecars never execute',async()=>{
+      let calls=0;const e=Error();for(const key of ['safeCode','ownerSafeDiagnostics','ownerSafeCleanupDiagnostics','ownerSafeLocalCleanupCodes','name','code','cause','message','stack'])Object.defineProperty(e,key,{get(){calls++;throw Error('SYNTHETIC_TAINT');},configurable:true});
+      const h=await harness({canaryError:e}),r=await h.access.verifyRegisteredCanary();assert.equal(r.reason,'CANARY_VALIDATION_FAILED');assert.equal(r.ownerSafeDiagnostics,null);assert.equal(calls,0);
+      const proxy=new Proxy(Error(),{get(){calls++;throw Error();},getOwnPropertyDescriptor(){calls++;throw Error();},getPrototypeOf(){calls++;throw Error();}});
+      const p=await harness({canaryError:proxy}),pr=await p.access.verifyRegisteredCanary();assert.equal(pr.reason,'CANARY_VALIDATION_FAILED');assert.equal(pr.ownerSafeDiagnostics,null);assert.equal(calls,0);
+      const side=new Proxy(primary,{get(){calls++;throw Error();},getOwnPropertyDescriptor(){calls++;throw Error();},getPrototypeOf(){calls++;throw Error();}});
+      const sh=await harness({canaryError:failure({ownerSafeDiagnostics:side})});assert.equal((await sh.access.verifyRegisteredCanary()).ownerSafeDiagnostics,null);assert.equal(calls,0);
+    });
+    await st.test('unknown uppercase and malformed fields cannot be emitted as reasons or diagnostics',async()=>{
+      const e=Object.assign(Error('SYNTHETIC_PRIVATE'),{safeCode:'TOKEN_SYNTHETIC_PRIVATE'});Object.defineProperty(e,'ownerSafeDiagnostics',{value:{...primary,errorCode:'TOKEN_SYNTHETIC_PRIVATE'}});
+      const h=await harness({canaryError:e}),r=await h.access.verifyRegisteredCanary();assert.equal(r.reason,'CANARY_VALIDATION_FAILED');assert.equal(r.ownerSafeDiagnostics,null);assert.ok(!JSON.stringify({...r,diagnostics:r.ownerSafeDiagnostics}).includes('SYNTHETIC_PRIVATE'));
+    });
+    await st.test('previous finite report origin survives wrapping; invalid or getter origins fail closed',async()=>{
+      const origin={type:'TypeError',code:null,causeCode:'ENOTFOUND',httpStatus:null};
+      const e=Object.assign(failure({safeOrigin:origin}),{safeCode:'REPORT_SOURCE_NETWORK_FAILED'});
+      const h=await harness({canaryError:e}),r=await h.access.verifyRegisteredCanary();assert.deepEqual(r.safeOrigin,origin);assert.equal(r.reason,'REPORT_SOURCE_NETWORK_FAILED');
+      const bad=await harness({canaryError:failure({safeOrigin:{...origin,code:'TOKEN_PRIVATE'}})});assert.deepEqual((await bad.access.verifyRegisteredCanary()).safeOrigin,{type:null,code:null,causeCode:null,httpStatus:null});
+      let reads=0;const taint=failure();Object.defineProperty(taint,'safeOrigin',{get(){reads++;throw Error();}});const getter=await harness({canaryError:taint});assert.deepEqual((await getter.access.verifyRegisteredCanary()).safeOrigin,{type:null,code:null,causeCode:null,httpStatus:null});assert.equal(reads,0);
+    });
+    await st.test('nonextensible boundary error remains the primary even when close cannot attach secondary',async()=>{
+      const e=Object.freeze(failure()),close=Object.assign(Error(),{safeCode:'SDK_LOCAL_CLOSE_FAILED'});await assert.rejects(harness({boundaryError:e,closeError:close}),error=>error===e);
+    });
+  });
+  assert.equal(completedScenarios,18,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

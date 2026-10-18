@@ -5,7 +5,8 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {planPreopen} from './calendar.mjs';
-import {loadTrustedContext} from './report.mjs';
+import {loadTrustedContext,safeErrorOrigin} from './report.mjs';
+import {types as nodeTypes} from 'node:util';
 import {boundedText} from './cloud_io.mjs';
 import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
 import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
@@ -23,7 +24,7 @@ const API='https://api.github.com/repos/huanwujoy-crypto/fee-console';
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console';
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').update(Buffer.from('blob '+b.length+'\0')).update(b).digest('hex');};
-const fail=code=>{throw Error('OWNER_DELIVERY_'+code);};
+const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Object.assign(error,{safeCode:error.message,safeOrigin:origin??safeErrorOrigin(error)});};
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
   ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py'].map(file=>'cloud/xuan-preopen/'+file),
@@ -33,7 +34,7 @@ export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
 // The historical phase reads the original trusted Git version, never today's
 // context relabelled as yesterday. The current main must still contain it.
 export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
-  const read=async url=>{const r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:AbortSignal.timeout(15000)});if(!r.ok)fail('CONTEXT_HTTP');return boundedText(r,500000);};
+  const read=async url=>{let r;try{r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,500000);};
   return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now}={})=>{
     const current=await loadTrustedContext({fetchImpl,now:clock});
     let eodConfiguration=null;
@@ -149,14 +150,26 @@ export async function deliverOwnerAcceptedPreview({cwd,request,html,modelBytes,m
 // reached protected main. No CLI, schedule or permission grant is added.
 export async function deliverOwnerAcceptedPreviewReplacement({cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess,
   now=Date.now,loadContext=createOwnerContextLoader({now}),storeFactory=createOwnerLatestStore,publisherFactory=createAcceptedPreviewReplacementPublisher}={}){
+  const diagnostics={schema:'xuan.owner-publication.safe-diagnostics.v1',businessAckValidated:0,independentReadbackAttempts:0,storeReadbackCompleted:0,fullVerification:null};
+  const attach=value=>{try{if(value&&!nodeTypes.isProxy(value))Object.defineProperty(value,'ownerPublicationDiagnostics',{value:Object.freeze({...diagnostics}),enumerable:false});}catch{}return value;};
+  try{
   const head=await requireProtectedOwnerCheckout({cwd,loadContext,now});
   if(typeof request!=='function'||typeof requestPreviewReplacement!=='function'||typeof verifyDestinationAccess!=='function')fail('PREVIEW_REPLACEMENT_ACCESS_REQUIRED');
   const p=(await loadContext({phase:'accepted-preview-replacement',policyCommit:head,now}))?.previewReplacement;
   if(!p||p.policyCommit!==head||sha(previewReplacementRegistrationText(p.revision))!==p.sha256)fail('PREVIEW_REPLACEMENT_CURRENT_CONTEXT');
   const registration=p.revision.registration,displayBytes=prepareAcceptedPreviewDisplay(html,{modelBytes,manifestBytes,registration});
   const metadata=buildAcceptedPreviewMetadata({registration,registrationSha256:sha(acceptedPreviewRegistrationText(registration)),registrationPolicyCommit:head});
-  const io=storeFactory({request,requestPreviewReplacement});
-  return publisherFactory({io,verifyProtectedReplacement:createProtectedPreviewReplacementVerifier({loadContext,now}),verifyDestinationAccess,now}).publish({metadata,displayBytes});
+  const originalIo=storeFactory({request,requestPreviewReplacement});
+  let io=originalIo;
+  if(originalIo&&typeof originalIo==='object'){
+    io=Object.fromEntries(Object.entries(originalIo).map(([key,value])=>[key,typeof value==='function'?value.bind(originalIo):value]));
+    if(typeof originalIo.replaceAcceptedPreview==='function')io.replaceAcceptedPreview=async(...args)=>{const ack=await Reflect.apply(originalIo.replaceAcceptedPreview,originalIo,args);diagnostics.businessAckValidated=1;return ack;};
+    if(typeof originalIo.readLatestGeneration==='function')io.readLatestGeneration=async(...args)=>{if(diagnostics.businessAckValidated)diagnostics.independentReadbackAttempts=1;const bytes=await Reflect.apply(originalIo.readLatestGeneration,originalIo,args);if(diagnostics.businessAckValidated)diagnostics.storeReadbackCompleted=1;return bytes;};
+  }
+  const result=await publisherFactory({io,verifyProtectedReplacement:createProtectedPreviewReplacementVerifier({loadContext,now}),verifyDestinationAccess,now}).publish({metadata,displayBytes});
+  if(result&&!nodeTypes.isProxy(result)&&Object.getOwnPropertyDescriptor(result,'status')?.value==='published-verified')diagnostics.fullVerification=true;
+  return attach(result);
+  }catch(error){attach(error);throw error;}
 }
 
 // Named storage-only result: the original publisher must first finish its
@@ -173,7 +186,11 @@ export async function deliverOwnerAcceptedPreviewReplacementStorage(options={}){
   }catch{reject();}
   const {cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess}=values;
   const result=await deliverOwnerAcceptedPreviewReplacement({cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess});
-  return result.status==='published-verified'?{...result,status:'stored-verified-visual-pending',storageStatus:'verified',visualStatus:'pending',acceptanceComplete:false}:result;
+  if(result.status!=='published-verified')return result;
+  const stored={...result,status:'stored-verified-visual-pending',storageStatus:'verified',visualStatus:'pending',acceptanceComplete:false};
+  const diagnostics=Object.getOwnPropertyDescriptor(result,'ownerPublicationDiagnostics');
+  if(diagnostics&&Object.hasOwn(diagnostics,'value'))Object.defineProperty(stored,'ownerPublicationDiagnostics',{value:diagnostics.value,enumerable:false});
+  return stored;
 }
 
 // The new publisher cannot run from an unmerged local candidate. The CLI checks
