@@ -159,6 +159,23 @@ export async function deliverOwnerAcceptedPreviewReplacement({cwd,request,reques
   return publisherFactory({io,verifyProtectedReplacement:createProtectedPreviewReplacementVerifier({loadContext,now}),verifyDestinationAccess,now}).publish({metadata,displayBytes});
 }
 
+// Named storage-only result: the original publisher must first finish its
+// independent pinned bytes/metadata readback. This never accepts visual UI.
+export async function deliverOwnerAcceptedPreviewReplacementStorage(options={}){
+  const reject=()=>{throw Object.assign(Error('OWNER_DELIVERY_STORAGE_ARGUMENTS_FORBIDDEN'),{safeCode:'STORAGE_DELIVERY_ARGUMENTS_FORBIDDEN'});};
+  const keys=['cwd','request','requestPreviewReplacement','html','modelBytes','manifestBytes','verifyDestinationAccess'];
+  let values;
+  try{
+    if(arguments.length>1||!options||Object.getPrototypeOf(options)!==Object.prototype)reject();
+    const descriptors=Object.getOwnPropertyDescriptors(options);
+    if(Reflect.ownKeys(descriptors).some(key=>!keys.includes(key)||!Object.hasOwn(descriptors[key],'value')))reject();
+    values=Object.fromEntries(keys.map(key=>[key,descriptors[key]?.value]));
+  }catch{reject();}
+  const {cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess}=values;
+  const result=await deliverOwnerAcceptedPreviewReplacement({cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess});
+  return result.status==='published-verified'?{...result,status:'stored-verified-visual-pending',storageStatus:'verified',visualStatus:'pending',acceptanceComplete:false}:result;
+}
+
 // The new publisher cannot run from an unmerged local candidate. The CLI checks
 // actual trusted main before reading its existing credential environment.
 export async function requireProtectedOwnerCheckout({cwd=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'),loadContext=createOwnerContextLoader(),now=Date.now}={}){

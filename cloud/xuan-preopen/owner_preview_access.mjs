@@ -271,7 +271,13 @@ export function createReplacementObservation({revisionSha256,candidateSha256,pin
 // checked before constructing the real SDK bridge or performing live SDK I/O.
 export async function createOwnerPreviewAccess(){return createPreviewAccessSession(false);}
 export async function createOwnerPreviewReplacementAccess(){return createPreviewAccessSession(true);}
-async function createPreviewAccessSession(replacing){
+// Explicit sensitive storage-only policy. Still the same Mac SDK/owner;
+// browser acceptance is independent and cannot be asserted by this capability.
+export async function createOwnerPreviewReplacementStorageAccess(){
+  if(arguments.length)fail('STORAGE_ACCESS_ARGUMENTS_FORBIDDEN');
+  return createPreviewAccessSession(true,true);
+}
+async function createPreviewAccessSession(replacing,storageOnly=false){
   await requireProtectedOwnerCheckout();
   validApproved(FIXED_APPROVED);
   const registration=strictJson(fs.readFileSync(new URL('../../security/xuan-owner-accepted-preview.json',import.meta.url),'utf8'));
@@ -288,7 +294,7 @@ async function createPreviewAccessSession(replacing){
   const sdk=createOwnerSdkTransport();
   if(!sdk||typeof sdk.readLiveBoundary!=='function'||typeof sdk.request!=='function'
     ||typeof sdk.requestCanary!=='function'||typeof sdk.createCanary!=='function'||typeof sdk.close!=='function')fail('SDK_CAPABILITIES');
-  let canaryClosed=false,canaryPin=null,sessionClosed=false,observation=null,replacementPermit=null,replacementExpiresAt=null,replacementMonotonic=null;const lease=createOwnerPreflightLease();
+  let canaryClosed=false,canaryPin=null,sessionClosed=false,observation=null,replacementAdmissionAttempted=false,replacementPermit=null,replacementExpiresAt=null,replacementMonotonic=null;const lease=createOwnerPreflightLease();
   const guard=()=>{if(sessionClosed)fail('SESSION_CLOSED');};
   const close=()=>{sessionClosed=true;lease.invalidate();replacementPermit=null;observation?.close();sdk.close();};
   const full=async()=>{
@@ -325,14 +331,18 @@ async function createPreviewAccessSession(replacing){
     // Refresh is explicit, before the financial publisher's ten-second window.
     // It changes neither identity nor permissions and never refreshes tokens.
     async refreshPreflight(){guard();lease.invalidate();replacementPermit=null;observation?.close();await requireProtectedOwnerCheckout();return full();},
-    async verifyDestinationAccess({target,operation,signal,revisionSha256:requestedRevision,previousGeneration,previousDisplaySha256,candidateSha256:requestedCandidate,registrationSha256}={}){
+    async verifyDestinationAccess(input={}){
+      // Consume before validation or any await. Failed admission, refresh and
+      // a consumed/expired write cannot mint a second replacement permit.
+      if(storageOnly){if(replacementAdmissionAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');replacementAdmissionAttempted=true;}
+      const {target,operation,signal,revisionSha256:requestedRevision,previousGeneration,previousDisplaySha256,candidateSha256:requestedCandidate,registrationSha256}=input;
       lease.clearAdmission();
       if(!object(target)||Object.keys(target).sort().join('|')!=='bucket|object'||target.bucket!==LATEST_TARGET.bucket
         ||target.object!==LATEST_TARGET.object||operation!==(replacing?'replace-accepted-preview':'create-accepted-preview')||!canaryPin)fail('CANARY_REQUIRED');
       if(replacing){replacementPermit=null;
         if(requestedRevision!==revisionSha256||requestedCandidate!==candidateSha256||previousDisplaySha256!==revision.previousDisplaySha256
           ||registrationSha256!==hash(acceptedPreviewRegistrationText(revision.registration))||!GEN.test(previousGeneration||''))fail('REPLACEMENT_BINDING');
-        observation?.consume();if(!observation)fail('OBSERVATION_REQUIRED');}
+        if(!storageOnly){observation?.consume();if(!observation)fail('OBSERVATION_REQUIRED');}}
       await live(signal);await readCanary(sdk.requestCanary,canaryPin,signal);
       guard();lease.current(Date.now());if(signal?.aborted)fail('ABORTED');
       if(canaryPin.candidateSha256!==canaryCandidateSha256)fail('REGISTERED_CANDIDATE');
@@ -340,9 +350,9 @@ async function createPreviewAccessSession(replacing){
       if(replacing){replacementPermit={revisionSha256,previousGeneration,previousDisplaySha256,previousRegistrationSha256:revision.previousRegistrationSha256};replacementExpiresAt=admittedAt+FINANCIAL_ADMISSION_TTL_MS;replacementMonotonic=performance.now();}
       lease.mintAdmission(admittedAt);
     },
-    beginNativeCanaryObservation(){guard();if(!replacing||!canaryPin||observation)fail('OBSERVATION_REQUIRED');
+    beginNativeCanaryObservation(){guard();if(storageOnly)fail('VISUAL_OBSERVATION_NOT_AVAILABLE');if(!replacing||!canaryPin||observation)fail('OBSERVATION_REQUIRED');
       observation=createReplacementObservation({revisionSha256,candidateSha256,pin:canaryPin});return observation.begin();},
-    attestNativeCanaryObservation(value){guard();if(!replacing||!observation)fail('OBSERVATION_REQUIRED');return observation.attest(value);},
+    attestNativeCanaryObservation(value){guard();if(storageOnly)fail('VISUAL_OBSERVATION_NOT_AVAILABLE');if(!replacing||!observation)fail('OBSERVATION_REQUIRED');return observation.attest(value);},
     async verifyRegisteredCanary(){
       guard();if(canaryClosed)fail('CANARY_CLOSED');canaryClosed=true;
       const signal=AbortSignal.timeout(30000);

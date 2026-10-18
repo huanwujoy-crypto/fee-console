@@ -8,7 +8,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
-import {deliverOwnerLatest,deliverOwnerAcceptedPreview,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
+import {deliverOwnerLatest,deliverOwnerAcceptedPreview,deliverOwnerAcceptedPreviewReplacementStorage,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -162,7 +162,7 @@ test('protected checkout binds new preview executable and registration bytes eve
     let privateCalls=0;
     await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext,request:()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PREVIEW_ACCESS_CAPABILITY_REQUIRED/);
     assert.equal(privateCalls,0);
-    for(const relative of ['cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
+    for(const relative of ['cloud/xuan-preopen/owner_latest_delivery.mjs','cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
       const initial=fs.readFileSync(path.join(root,relative));git(['update-index','--assume-unchanged',relative]);
       fs.appendFileSync(path.join(root,relative),' CHANGED');
       await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext}),/PROTECTED_SOURCE_BYTES_REQUIRED/);
@@ -214,4 +214,17 @@ test('fixed replacement resolver preserves original registration and resolves ne
   const drift=createOwnerContextLoader({fetchImpl:url=>source(url,{alterRevision:true}),now:()=>NOW});
   await assert.rejects(drift({phase:'accepted-preview-historical',policyCommit:old,registrationSha256:nextSha}),/REPLACEMENT_CHANGED/);
   await assert.rejects(load({phase:'accepted-preview-historical',policyCommit:old,registrationSha256:'0'.repeat(64)}),/REPLACEMENT_METADATA/);
+});
+
+
+test('named storage delivery rejects caller publisher, context, clock, getters or approval before IO',async()=>{
+  let calls=0;const forbidden=()=>{calls++;assert.fail('No caller override may execute');};
+  for(const key of ['publisherFactory','storeFactory','loadContext','now','approved','result','storageOnly']){
+    await assert.rejects(deliverOwnerAcceptedPreviewReplacementStorage({[key]:forbidden}),error=>error.safeCode==='STORAGE_DELIVERY_ARGUMENTS_FORBIDDEN');
+  }
+  for(const options of [null,[],Object.create({approved:true}),{get html(){calls++;throw Error('SYNTHETIC_GETTER');}},{[Symbol('synthetic')]:true}]){
+    await assert.rejects(deliverOwnerAcceptedPreviewReplacementStorage(options),error=>error.safeCode==='STORAGE_DELIVERY_ARGUMENTS_FORBIDDEN');
+  }
+  await assert.rejects(deliverOwnerAcceptedPreviewReplacementStorage({},'caller-mode'),error=>error.safeCode==='STORAGE_DELIVERY_ARGUMENTS_FORBIDDEN');
+  assert.equal(calls,0);
 });

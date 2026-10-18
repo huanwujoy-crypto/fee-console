@@ -377,3 +377,74 @@ the original five-second admission.
 The real timing of these live reads within five seconds has not been accepted;
 expiry before the final POST produces zero financial upload POSTs. Neither the 45-second
 publisher limit nor the five-second admission is extended to make it pass.
+
+
+## Named storage verification with independent visual acceptance (offline candidate)
+
+This is an explicit sensitive publication-policy change, prepared offline and
+unmerged. It does not authorize any execution, credential refresh, upload,
+identity or IAM change, deployment or schedule. The existing
+`createOwnerPreviewReplacementAccess` native-observation path and
+`deliverOwnerAcceptedPreviewReplacement` result semantics remain unchanged.
+An old executor or grant is not approval to use the new named path.
+
+`createOwnerPreviewReplacementStorageAccess()` is a separate fixed no-argument
+entry. Any argument, including an approval flag, mode, clock, SDK or proof,
+is rejected before SDK construction. It uses the same original Mac SDK,
+original owner identity, protected checkout, unchanged old/new registrations,
+approved audience and fixed target. It is GUI independent; it is not a cloud
+transport and does not establish that any cloud identity has the needed rights.
+No public network endpoint, runtime, key, credential migration or permission is added.
+
+The existing registered canary must still be verified through actual independent
+SDK metadata/media reads and its current HEAD. The storage session's first
+`verifyDestinationAccess` call permanently consumes its private admission
+attempt before parameter inspection or any await. Invalid input, IAM or canary
+failure, cancellation, expiry, concurrent calls, preflight refresh and a failed
+or consumed write cannot reopen that attempt. Binding checks, fresh actor/IAM
+get/create/delete checks and a fresh pinned canary/current-entry read remain
+mandatory before the same five-second wall/monotonic admission is minted.
+`requestPreviewReplacement` still consumes that admission and exact protected
+old-generation pins once. No native observation is fabricated: the storage
+entry's native begin/attest methods reject with a finite code. The original
+native entry continues to require its real fresh observation.
+
+`deliverOwnerAcceptedPreviewReplacementStorage` accepts only the seven existing
+production inputs: cwd, request, requestPreviewReplacement, html, modelBytes,
+manifestBytes and verifyDestinationAccess. Caller-supplied publisher/store,
+context, clock, result JSON or other overrides are rejected. It invokes the
+original delivery's default protected preparation, publisher and store. Only
+after that publisher independently verifies the new generation's actual bytes
+and metadata does the new entry return:
+
+```
+status: stored-verified-visual-pending
+storageStatus: verified
+visualStatus: pending
+acceptanceComplete: false
+```
+
+Conflict, blocked and unknown results retain their original meanings. They do
+not become verified or trigger a retry. The IO callbacks remain explicit
+trusted capabilities, as in the original API; returned JSON is not an
+unforgeable proof of cloud behavior. Deployment source closure, actual trusted
+transport and independent readback remain part of that trust boundary.
+
+Browser and phone layout, logout/cache behavior and actual viewing access are
+separate acceptance items. Storage verification never says those have passed,
+and a later visual failure does not erase a verified storage readback or repeat
+CAS. The frozen October 17 reference, October 16 market date, source/account
+read windows, display hash, unknown facts and budgets, original registrations
+and canary bytes are unchanged. CAS0 creation and the normal weekday lane are
+unchanged. The original 45-second publisher and five-second admission limits
+are not extended; actual live timing remains unaccepted.
+
+A truly Mac-independent cloud executor still needs separate evidence for its
+already authorized identity, existing effective permissions, approved readers,
+protected source/image and a private generation/hash-pinned input channel.
+Absent that evidence, stop; do not substitute an identity, add IAM, export a
+Mac token or run the source-collecting `action_preview_once` pipeline. That
+pipeline's Secret/IB/Gateway activity is not authorized by this static delivery
+policy. Review this concrete sensitive diff, freeze its exact head and complete
+the existing OWNER/check/protected-main gates before separately approving a
+new bounded execution. No old R5 window, marker or budget is reusable.
