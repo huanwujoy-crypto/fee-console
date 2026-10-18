@@ -279,7 +279,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:10/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:17/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -303,7 +303,7 @@ test(FACTORY_TEST,async t=>{
       async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
       async request(){events.push('financial-POST');return new Response(null,{status:200});},
       async requestPreviewReplacement(url,options,pins,lease){events.push('replacement-POST');assert.equal(pins.previousGeneration,'900719925474099312345');
-        assert.equal(lease.admissionExpiresAt,control.now+5000);return new Response(null,{status:200});},
+        assert.equal(lease.admissionExpiresAt,control.now+5000);if(control.postError)throw Error('SYNTHETIC_WRITE_OUTCOME_UNKNOWN');return new Response(null,{status:200});},
       close(){events.push('close');},
     };
     const files={
@@ -338,8 +338,8 @@ test(FACTORY_TEST,async t=>{
       const values=dependencies[specifier];return new vm.SyntheticModule(Object.keys(values),function(){
         for(const [name,value] of Object.entries(values))this.setExport(name,value);
       });});await module.evaluate();
-    const access=await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
-    return {access,events,control,canary,revision:files['xuan-owner-preview-replacement.json']};
+    const access=options.storage?await module.namespace.createOwnerPreviewReplacementStorageAccess():await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
+    return {access,events,control,canary,revision:files['xuan-owner-preview-replacement.json'],storageFactory:module.namespace.createOwnerPreviewReplacementStorageAccess};
   }
   const post=access=>access.request('https://storage.googleapis.com/upload/storage/v1/b/'+LATEST_TARGET.bucket+'/o?uploadType=multipart&ifGenerationMatch=0',{method:'POST'});
   const verify=access=>access.verifyDestinationAccess({target:{...LATEST_TARGET},operation:'create-accepted-preview'});
@@ -433,6 +433,65 @@ test(FACTORY_TEST,async t=>{
       previousGeneration:'900719925474099312345',previousDisplaySha256:h.revision.previousDisplaySha256,candidateSha256:'c'.repeat(64),registrationSha256:hash(acceptedPreviewRegistrationText(h.revision.registration))}),/CANARY_CURRENT/);
     await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},{}),/ADMISSION_REQUIRED/);assert.ok(!h.events.includes('replacement-POST'));h.access.close();
   });
-  assert.equal(completedScenarios,10,'all factory scenarios must execute, including in the child fallback');
+  const storageProof=h=>({target:{...LATEST_TARGET},operation:'replace-accepted-preview',revisionSha256:hash(previewReplacementRegistrationText(h.revision)),
+    previousGeneration:'900719925474099312345',previousDisplaySha256:h.revision.previousDisplaySha256,candidateSha256:'c'.repeat(64),registrationSha256:hash(acceptedPreviewRegistrationText(h.revision.registration))});
+  const storagePins=h=>({revisionSha256:storageProof(h).revisionSha256,previousGeneration:storageProof(h).previousGeneration,
+    previousDisplaySha256:h.revision.previousDisplaySha256,previousRegistrationSha256:h.revision.previousRegistrationSha256});
+  await scenario('named storage access rejects every argument before SDK creation and cannot attest UI',async()=>{
+    const h=await harness({replacing:true,storage:true}),before=[...h.events];
+    for(const value of [undefined,{}, {approved:true}, {storageOnly:false,request:()=>{}}])await assert.rejects(h.storageFactory(value),/STORAGE_ACCESS_ARGUMENTS_FORBIDDEN/);
+    assert.deepEqual(h.events,before);assert.throws(()=>h.access.beginNativeCanaryObservation(),/VISUAL_OBSERVATION_NOT_AVAILABLE/);
+    assert.throws(()=>h.access.attestNativeCanaryObservation({approved:true}),/VISUAL_OBSERVATION_NOT_AVAILABLE/);h.access.close();
+  });
+  await scenario('storage admission still requires the fixed SDK-read canary and fresh IAM, then exactly one named write',async()=>{
+    const h=await harness({replacing:true,storage:true});await h.access.verifyRegisteredCanary();const before=h.events.length;
+    await h.access.verifyDestinationAccess(storageProof(h));assert.deepEqual(h.events.slice(before),['quick-boundary','canary-GET','canary-GET','canary-HEAD']);
+    assert.throws(()=>post(h.access),/NAMED_WRITE_REQUIRED/);await h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h));
+    await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h)),/ADMISSION_REQUIRED/);
+    await h.access.refreshPreflight();await assert.rejects(h.access.verifyDestinationAccess(storageProof(h)),/ADMISSION_CLOSED/);
+    assert.equal(h.events.filter(e=>e==='replacement-POST').length,1);assert.ok(!h.events.includes('canary-POST'));h.access.close();
+  });
+  await scenario('a first invalid storage admission permanently consumes the attempt even before canary verification',async()=>{
+    for(const invalid of [{approved:true},null,{get target(){throw Error('SYNTHETIC_GETTER_FAILED');}}]){
+      const h=await harness({replacing:true,storage:true});await assert.rejects(h.access.verifyDestinationAccess(invalid));
+      await h.access.verifyRegisteredCanary();await h.access.refreshPreflight();await assert.rejects(h.access.verifyDestinationAccess(storageProof(h)),/ADMISSION_CLOSED/);
+      await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h)),/ADMISSION_REQUIRED/);assert.ok(!h.events.includes('replacement-POST'));h.access.close();
+    }
+  });
+  await scenario('failed storage IAM, canary, expiry or abort cannot rearm after refresh',async st=>{
+    for(const kind of ['IAM','delete','canary','expiry','abort'])await st.test(kind,async()=>{
+      let changed=false;const h=await harness({replacing:true,storage:true,editHead:r=>{if(changed)r.headers['x-goog-generation']='92';}});
+      await h.access.verifyRegisteredCanary();const proof=storageProof(h);
+      if(kind==='IAM')h.control.boundaryEdit=b=>{b.actorIdentifier='SYNTHETIC_DIFFERENT_OWNER';};
+      if(kind==='delete')h.control.boundaryEdit=b=>{b.bucketTestPermissions.permissions=b.bucketTestPermissions.permissions.filter(p=>p!=='storage.objects.delete');};
+      if(kind==='canary')changed=true;if(kind==='expiry')h.control.now+=FULL_PREFLIGHT_TTL_MS+1;
+      if(kind==='abort'){const abort=new AbortController();abort.abort();proof.signal=abort.signal;}
+      await assert.rejects(h.access.verifyDestinationAccess(proof));h.control.boundaryEdit=null;changed=false;
+      await h.access.refreshPreflight();await assert.rejects(h.access.verifyDestinationAccess(storageProof(h)),/ADMISSION_CLOSED/);
+      await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h)),/ADMISSION_REQUIRED/);assert.ok(!h.events.includes('replacement-POST'));h.access.close();
+    });
+  });
+  await scenario('concurrent storage admissions consume the private lock before the first live await',async()=>{
+    const h=await harness({replacing:true,storage:true});await h.access.verifyRegisteredCanary();let release,entered;
+    const hold=new Promise(resolve=>{release=resolve;}),started=new Promise(resolve=>{entered=resolve;});h.control.holdBoundary=async()=>{entered();await hold;};
+    const first=h.access.verifyDestinationAccess(storageProof(h));await started;await assert.rejects(h.access.verifyDestinationAccess(storageProof(h)),/ADMISSION_CLOSED/);
+    release();await first;await h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h));assert.equal(h.events.filter(e=>e==='replacement-POST').length,1);h.access.close();
+  });
+  await scenario('refresh after a minted storage admission invalidates the permit without reopening admission',async()=>{
+    const h=await harness({replacing:true,storage:true});await h.access.verifyRegisteredCanary();await h.access.verifyDestinationAccess(storageProof(h));await h.access.refreshPreflight();
+    await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h)),/ADMISSION_REQUIRED/);
+    await assert.rejects(h.access.verifyDestinationAccess(storageProof(h)),/ADMISSION_CLOSED/);assert.ok(!h.events.includes('replacement-POST'));h.access.close();
+  });
+  await scenario('failed or wrong-pin named storage writes consume the permit and never reopen it',async st=>{
+    for(const kind of ['unknown','wrong-pin'])await st.test(kind,async()=>{
+      const h=await harness({replacing:true,storage:true});await h.access.verifyRegisteredCanary();await h.access.verifyDestinationAccess(storageProof(h));
+      const pins=storagePins(h);if(kind==='unknown')h.control.postError=true;else pins.previousGeneration='999';
+      await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},pins));await h.access.refreshPreflight();
+      await assert.rejects(h.access.verifyDestinationAccess(storageProof(h)),/ADMISSION_CLOSED/);
+      await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h)),/ADMISSION_REQUIRED/);
+      assert.equal(h.events.filter(e=>e==='replacement-POST').length,kind==='unknown'?1:0);h.access.close();
+    });
+  });
+  assert.equal(completedScenarios,17,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });
