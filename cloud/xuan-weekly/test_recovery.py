@@ -90,6 +90,29 @@ class RecoveryTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertNotIn(ROOT+'recovery.json',self.s.objects)
 
+    def test_oct18_safe_status_rejection_and_new_diagnostics_do_not_enable_recovery(self):
+        import copy
+        # Disclosed safe fields only; the actual Status literal was not retained.
+        failure = {'complete': False, 'stage': 'ib_fetch', 'code': 'ib_statement_failed',
+                   'statement': {'operation': 'ib_get_statement', 'reason': 'status_rejected',
+                       'rootKind': 'statement_response', 'namespacePresent': False,
+                       'statusShape': 'noncanonical', 'errorCodeShape': 'known',
+                       'upstreamErrorCode': 1019, 'pollCount': 1}}
+        for shape in ('noncanonical', 'empty', 'xml_whitespace', 'padded_success',
+                      'padded_fail', 'literal_warn'):
+            self.s = Store()
+            receipt = copy.deepcopy(failure)
+            receipt['statement']['statusShape'] = shape
+            self.assertFalse(transient(receipt))
+            self.normal(receipt)
+            before = copy.deepcopy(self.s.objects)
+            for minute in (15, 30):
+                self.assertEqual(self.check(minute)['code'], 'permanent_or_unclassified_failure')
+            self.assertEqual(self.check(45)['code'], 'final_publication_missing')
+            self.assertEqual(self.s.objects, before)
+            self.assertFalse(self.calls)
+            self.assertFalse(self.s.claims)
+
     def test_polling_requires_exact_stage_code_and_excludes_network(self):
         polling={'operation':'ib_get_statement','state':'statement_pending','termination':'poll_limit',
                  'lastErrorCode':1019,'pollCount':24,'pollLimit':24,'retryable':True}

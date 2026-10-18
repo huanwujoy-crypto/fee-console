@@ -239,6 +239,55 @@ class StatementDiagnosticTests(unittest.TestCase):
             self.assertEqual(detail['statusShape'], shape)
             self.assertNotIn('PRIVATE_', repr(detail))
 
+    def test_noncanonical_status_subclasses_remain_terminal_and_nonsticky(self):
+        cases = [('', 'empty'), (' \t\n', 'xml_whitespace'),
+                 (' Fail ', 'padded_fail'), ('\nSuccess\t', 'padded_success'),
+                 ('Warn', 'literal_warn'), ('Warning', 'noncanonical'),
+                 (' Warn ', 'noncanonical'), ('warn', 'noncanonical'),
+                 ('fail', 'noncanonical'), ('\u00a0Fail\u00a0', 'noncanonical'),
+                 ('PRIVATE_TOKEN_URL_ACCOUNT_AMOUNT', 'noncanonical'),
+                 ('X' * 20000, 'noncanonical')]
+        for status, shape in cases:
+            for code in ('1019', '1009', '1003', '1012'):
+                for prior in ([], [pending()]):
+                    with self.subTest(shape=shape, code=code, prior=bool(prior)):
+                        body = pending(code).replace(b'>Fail<', ('>' + status + '<').encode())
+                        source = SyntheticIB([SEND] + prior + [body])
+                        with self.assertRaisesRegex(SourceError, 'ib_statement_failed') as caught:
+                            source.fetch()
+                        error = caught.exception
+                        self.assertFalse(hasattr(error, 'polling'))
+                        self.assertEqual(error.statement['statusShape'], shape)
+                        self.assertEqual(error.statement['reason'], 'status_rejected')
+                        self.assertEqual(error.statement['upstreamErrorCode'], int(code))
+                        self.assertEqual(len(source.calls), 2 + len(prior))
+                        self.assertNotIn('PRIVATE_', repr(error.statement))
+                        self.assertLess(len(repr(error.statement)), 400)
+
+    def test_new_status_classes_do_not_override_structural_shapes(self):
+        for status, shape in [
+                ('<Status> Fail </Status><Status/>', 'ambiguous'),
+                ('<Nested><Status> Fail </Status></Nested>', 'nested'),
+                ('<s:Status xmlns:s="urn:PRIVATE_NS"> Fail </s:Status>', 'qualified'),
+                ('<Status> Fail <Child/></Status>', 'nonleaf')]:
+            body = pending().replace(b'<Status>Fail</Status>', status.encode())
+            self.assertEqual(self.rejected(body)['statusShape'], shape)
+        body = b'<FlexStatementResponse Status="PRIVATE_ATTRIBUTE"><ErrorCode>1019</ErrorCode></FlexStatementResponse>'
+        self.assertEqual(self.rejected(body)['statusShape'], 'attribute')
+
+    def test_baseline_ignored_extra_fields_are_not_silently_hardened(self):
+        # Document existing acceptance separately from stricter diagnostic shape checks.
+        extras = [b'<Nested><Status>PRIVATE_STATUS</Status></Nested>',
+                  b'<s:ErrorCode xmlns:s="urn:PRIVATE_NS">1003</s:ErrorCode>',
+                  b'<Nested><ReferenceCode>PRIVATE_REF</ReferenceCode></Nested>']
+        for extra in extras:
+            body = pending().replace(b'</FlexStatementResponse>', extra + b'</FlexStatementResponse>')
+            source = SyntheticIB([SEND, body, READY])
+            self.assertEqual(source.fetch(), READY)
+            self.assertEqual(len(source.calls), 3)
+        body = pending().replace(b'<FlexStatementResponse>', b'<FlexStatementResponse Status="PRIVATE_ATTRIBUTE">')
+        self.assertEqual(SyntheticIB([SEND, body, READY]).fetch(), READY)
+
     def test_validator_rejects_extra_fields_types_and_inconsistent_codes(self):
         from ib_source import safe_statement
         valid = self.rejected(pending('1003'))

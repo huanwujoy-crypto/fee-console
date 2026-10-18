@@ -23,6 +23,9 @@ STATEMENT_ERROR_CODES = frozenset([1001] + list(range(1003, 1022)))
 FIELD_SHAPES = frozenset({'missing', 'ambiguous', 'nested', 'qualified',
                          'attribute', 'nonleaf', 'noncanonical', 'unrecognized',
                          'known', 'success', 'fail'})
+# Observation only; these classifications never grant acceptance or retry.
+STATUS_TEXT_SHAPES = frozenset({'empty', 'xml_whitespace',
+                                'padded_success', 'padded_fail', 'literal_warn'})
 
 
 def safe_statement(detail):
@@ -46,7 +49,7 @@ def safe_statement(detail):
     if not (detail['pollCount'] == 0 if detail['operation'] == 'ib_send_request'
             else 1 <= detail['pollCount'] <= POLL_LIMIT):
         return None
-    if detail['statusShape'] not in FIELD_SHAPES - {'known', 'unrecognized'}:
+    if detail['statusShape'] not in (FIELD_SHAPES - {'known', 'unrecognized'}) | STATUS_TEXT_SHAPES:
         return None
     if detail['errorCodeShape'] not in FIELD_SHAPES - {'success', 'fail'}:
         return None
@@ -81,7 +84,21 @@ def statement_detail(root, operation, poll_count):
             return 'nonleaf', None
         text = node.text
         if name == 'Status':
-            return {'Success': 'success', 'Fail': 'fail'}.get(text, 'noncanonical'), None
+            if text is None or text == '':
+                return 'empty', None
+            # A diagnostic hypothesis, not an officially confirmed status contract.
+            if text == 'Warn':
+                return 'literal_warn', None
+            canonical = {'Success': 'success', 'Fail': 'fail'}
+            if text in canonical:
+                return canonical[text], None
+            # XML whitespace only; do not normalize Unicode or return source text.
+            stripped = text.strip(' \t\r\n')
+            if not stripped:
+                return 'xml_whitespace', None
+            if stripped in canonical:
+                return 'padded_' + canonical[stripped], None
+            return 'noncanonical', None
         if type(text) is not str or len(text) != 4 or re.fullmatch(r'[0-9]{4}', text) is None:
             return 'noncanonical', None
         number = int(text)
