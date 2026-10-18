@@ -118,3 +118,21 @@ test('schema v5 discloses full pending CALL and the half used in planning', () =
   assert.throws(() => validateNightActionModel({ ...current,
     cash: { ...current.cash, callApplied: 400 } }), /INVALID_CASH/);
 });
+
+// Rendering must follow the saved report date, even when opened on another day.
+test('Saturday title follows model dataDate while weekday titles ignore the observation clock', () => {
+  const originalNow = Date.now;
+  try {
+    const saturday = {...structuredClone(model),dataDate:'2026-10-17',asOfHkt:'2026-10-17 14:02 HKT'};
+    Date.now = () => Date.parse('2026-10-19T06:00:00.000Z');
+    const savedSaturday = renderNightActionReport(saturday);
+    assert.match(savedSaturday, /<title>XUAN · 睡前行动版 · 周六参考<\/title>/);
+    assert.match(savedSaturday, /<h1>XUAN · 睡前行动版 · 周六参考<\/h1>/);
+    Date.now = () => Date.parse('2026-10-17T06:00:00.000Z');
+    assert.equal(renderNightActionReport(saturday),savedSaturday);
+    const weekday = renderNightActionReport(model);
+    assert.match(weekday, /<title>XUAN · 睡前行动版<\/title>/);
+    assert.match(weekday, /<h1>XUAN · 睡前行动版<\/h1>/);
+    assert.doesNotMatch(weekday, /周六参考/);
+  } finally {Date.now = originalNow;}
+});

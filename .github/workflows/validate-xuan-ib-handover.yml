@@ -29,13 +29,18 @@ jobs:
           mkdir -p "$trusted_root"
           git archive origin/main -- scripts | tar -x -C "$trusted_root"
           git archive origin/main -- cloud/xuan-preopen/eod_sources.mjs cloud/xuan-preopen/orders_probe.mjs cloud/xuan-preopen/ib_mcp.mjs cloud/xuan-preopen/cloud_io.mjs cloud/xuan-preopen/ib_diagnostics.mjs | tar -x -C "$trusted_root"
-          git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json claude/xuan-ib-classification-delegation-v1.json claude/xuan-ib-ai-tier-overrides-v1.json claude/xuan-ib-auto-classification-v1.json claude/xuan-ib-venue-identity-v1.json claude/xuan-ib-ai-risk-tiers-v1.json | tar -x -C "$trusted_root"
+          git archive origin/main -- claude/xuan-ib-portfolio-registry.json claude/four-bucket-mapping.json claude/xuan-ib-cash-identities-v1.json claude/xuan-ib-classification-delegation-v1.json claude/xuan-ib-ai-tier-overrides-v1.json claude/xuan-ib-auto-classification-v1.json claude/xuan-ib-venue-identity-v1.json claude/xuan-ib-ai-risk-tiers-v1.json claude/xuan-weekly-concentration-top10-v1.json claude/xuan-weekly-leveraged-products-v1.json | tar -x -C "$trusted_root"
           for required in \
             scripts/handover-guard.mjs \
             scripts/xuan-ib-intraday-update.mjs \
             scripts/xuan-ib-limited-status.mjs \
             scripts/xuan-ib-night-action-view.mjs \
             scripts/xuan-ib-night-action-guard.mjs \
+            scripts/xuan-ib-action-concentration.mjs \
+            scripts/xuan-weekly-concentration.mjs \
+            scripts/xuan-weekly-leveraged-products.mjs \
+            claude/xuan-weekly-concentration-top10-v1.json \
+            claude/xuan-weekly-leveraged-products-v1.json \
             cloud/xuan-preopen/eod_sources.mjs \
             cloud/xuan-preopen/orders_probe.mjs \
             cloud/xuan-preopen/ib_mcp.mjs \

@@ -6,13 +6,15 @@ import crypto from 'node:crypto';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport,NIGHT_ACTION_MARKER} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
+import {readAiRiskAccounts} from '../../scripts/xuan-ib-ai-coefficient-resolver.mjs';
 import {SNAPSHOT_SCOPES,digest} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
-import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
+import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay} from './owner_latest_admission.mjs';
 import {OWNER_SCOPE,LATEST_TARGET,DEADLINE_MS} from './owner_latest.mjs';
 import {createOwnerPreflightLease,FINANCIAL_ADMISSION_TTL_MS,FULL_PREFLIGHT_TTL_MS} from './owner_preview_access.mjs';
 import {acceptedPreviewRegistrationText,buildAcceptedPreviewMetadata,renderAcceptedPreviewDisplay,
-  prepareAcceptedPreviewDisplay,createProtectedOwnerPreviewVerifier,createAcceptedPreviewPublisher,previewMetadataSha256,ACCEPTED_PREVIEW_DEADLINE_MS} from './owner_accepted_preview.mjs';
+  prepareAcceptedPreviewDisplay,createProtectedOwnerPreviewVerifier,createAcceptedPreviewPublisher,previewMetadataSha256,ACCEPTED_PREVIEW_DEADLINE_MS,
+  validatePreviewReplacementRegistration,previewReplacementRegistrationText,createProtectedPreviewReplacementVerifier,createAcceptedPreviewReplacementPublisher} from './owner_accepted_preview.mjs';
 
 const NOW=Date.parse('2026-10-17T07:00:00.000Z'),LATER=Date.parse('2026-10-19T07:00:00.000Z'),COMMIT='c'.repeat(40);
 const START='2026-10-17T06:00:00.000Z',END='2026-10-17T06:02:00.000Z',DONE='2026-10-17T06:03:00.000Z';
@@ -26,7 +28,7 @@ function snapshot(key,readAt){
   return {sourceKey:key,status:'date-verified',raw,rawFingerprint:digest(raw),completion:null,
     provenance:{sourceDate:'2026-10-16',readAt,syncCompletedAt:null,snapshotGeneration:null,receiptSha256:null}};
 }
-function fixture(){
+function fixture({concentrationInput=null,completedAt=DONE}={}){
   const sources=[['ib.accountSummary',START,'2026-10-17T06:00:10.000Z'],['ib.positions','2026-10-17T06:00:01.000Z','2026-10-17T06:00:12.000Z'],['ib.orders',ORDER_START,ORDER_END],
     ['sharesight.ibGroupedPerformance','2026-10-17T06:01:00.000Z','2026-10-17T06:01:30.000Z'],['sharesight.noahPerformance','2026-10-17T06:01:01.000Z',END]]
     .map(([sourceKey,startedAt,completedAt])=>({sourceKey,startedAt,completedAt,sha256:hash(encode('SYNTHETIC '+sourceKey)),
@@ -39,11 +41,11 @@ function fixture(){
   const outcomes=[{sourceKey:'ib.flexEod',status:'not-called',rawFingerprint:null},...snapshots.map(s=>({sourceKey:s.sourceKey,status:s.status,rawFingerprint:s.rawFingerprint})),{sourceKey:'ib.optionalLive',status:'captured',rawFingerprint:digest(live)}];
   const call=resolveCurrentCall({schemaVersion:1,purpose:'xuan-etf-owner-declared-pending-calls',entries:[{date:'2026-09-01',usd:100}]},'2026-10-17');
   const model=buildEodActionModel({fieldMode:true,dataDate:'2026-10-17',sourceDate:'2026-10-16',asOfHkt:'2026-10-17 14:00–14:02 HKT · 数据至 2026-10-16',
-    snapshots,live,reserve:call.amountUsd,callRecord:call,sourceOutcomes:outcomes,captureStartedAt:START,captureCompletedAt:END});
+    snapshots,live,reserve:call.amountUsd,callRecord:call,sourceOutcomes:outcomes,captureStartedAt:START,captureCompletedAt:END,concentrationInput});
   model.sourceManifestSha256=digest(sources);model.evidenceSha256=digest({sourceOutcomes:model.sourceOutcomes,sourceManifestSha256:model.sourceManifestSha256});
   const html=encode(renderNightActionReport(model)),modelBytes=encode(JSON.stringify(model,null,2)+'\n'),manifestBytes=encode(JSON.stringify(manifest,null,2)+'\n');
   const registration={schema:'xuan.owner-accepted-preview-registration.v1',registrationId:'synthetic-saturday-preview',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,
-    dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:START,captureEndedAt:END,completedAt:DONE,ordersCaptureStartedAt:ORDER_START,ordersCaptureEndedAt:ORDER_END,
+    dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:START,captureEndedAt:END,completedAt,ordersCaptureStartedAt:ORDER_START,ordersCaptureEndedAt:ORDER_END,
     sourceHead:manifest.sourceHead,artifactSha256:hash(html),modelSha256:hash(modelBytes),sourceManifestSha256:hash(manifestBytes),sourceManifestContentSha256:digest(sources),displaySha256:'0'.repeat(64),financialStatus:'partial',unknownFields:['cash','orders','prices']};
   const displayBytes=renderAcceptedPreviewDisplay(html,{registration});registration.displaySha256=hash(displayBytes);
   const f={model,html,modelBytes,manifest,manifestBytes,registration,displayBytes};refreshMetadata(f);return f;
@@ -65,6 +67,52 @@ test('exact synthetic local artifacts produce only static visible facts; the ful
   assert.ok(text.includes('2026-10-17 周六验收稿'));assert.ok(text.includes('市场数据日：2026-10-16'));
   assert.ok(text.includes('真实采集：14:00:00.000–14:02:00.000 HKT'));assert.ok(text.includes('挂单读取：14:00:02.000–14:00:15.000 HKT'));
   assert.ok(text.includes('USD·推定'));assert.ok(text.includes('重新打开不会更新取值'));assert.equal(f.model.cash.planning,null);
+});
+test('accepted first screen uses the actual orders snapshot minute; exact provenance and generation time stay folded',()=>{
+  const outputs=[];
+  for(const completedAt of [DONE,'2026-10-17T06:30:00.000Z']){
+    const f=fixture({completedAt}),staticStage=prepareOwnerStaticDisplay(f.html);
+    assert.ok(staticStage.length>0);
+    const canonical=decode(f.html);
+    assert.match(canonical,/<details><summary>口径与来源<\/summary>[\s\S]*挂单读取：14:00:02.000–14:00:15.000 HKT/);
+    const display=renderAcceptedPreviewDisplay(f.html,{registration:f.registration});
+    assert.deepEqual(prepareAcceptedPreviewDisplay(f.html,{modelBytes:f.modelBytes,manifestBytes:f.manifestBytes,registration:f.registration}),display);
+    const text=decode(display),notice=text.match(/<aside class="notes" id="accepted-preview-notice"[\s\S]*?<\/aside>/)?.[0];
+    assert.ok(notice);const visible=notice.replace(/<details>[\s\S]*?<\/details>/g,'');
+    assert.match(visible,/市场数据日：2026-10-16；挂单快照：14:00 HKT/);
+    assert.match(visible,/周六参考 · 非实时/);
+    assert.doesNotMatch(visible,/真实采集|挂单读取|原稿生成|\d\d:\d\d:\d\d/);
+    assert.match(notice,/<details><summary>采集与生成时间<\/summary>[\s\S]*真实采集：14:00:00.000–14:02:00.000 HKT；挂单读取：14:00:02.000–14:00:15.000 HKT/);
+    assert.ok(notice.includes(`原稿生成：${completedAt.includes('06:30')?'14:30:00.000':'14:03:00.000'} HKT`));
+    assert.match(text,/<h1>XUAN · 行动版 · 私有预览 · 周六参考<\/h1>/);
+    outputs.push(visible);
+  }
+  assert.equal(outputs[0],outputs[1]);
+});
+test('concentration-enabled five-card report passes the unchanged pure accepted static export without source links or private identifiers',()=>{
+  const sourceKeys=['sharesight.ibGroupedPerformance','sharesight.schwabPerformance','sharesight.webullPerformance'];
+  const sources=readAiRiskAccounts().map((account,index)=>{
+    const id=Number(account.portfolioId);
+    const rows=index===0?[['NVDA',80,9900001,9000001,'ordinary_shares'],['CSPX',400,9900002,1310832,'etf'],['VSTL',30,29282953,9000003,'etf']]:[];
+    const holdings=rows.map(([code,value,holdingId,instrumentId,type])=>({id:holdingId,portfolio:{id},quantity:1,instrument_price:value,value,labels:[],instrument_currency:{code:'USD'},
+      instrument:{id:instrumentId,code,name:'Synthetic instrument',market_code:'TEST',currency_code:'USD',friendly_instrument_description_code:type}}));
+    const raw={ok:true,mode:'read_only',route:'gateway',portfolio:{id,name:account.custodian,currency_code:'USD'},data:{report:{portfolio_id:id,value:1000,start_date:'2026-10-16',end_date:'2026-10-16',include_sales:false,percentages_annualised:false,currency:{code:'USD'},holdings,
+      cash_accounts:[{id:8800000+index,name:'Synthetic cash',value:1000-rows.reduce((sum,row)=>sum+row[1],0),currency:{code:'USD'}}]}}};
+    const bytes=JSON.stringify(raw);return {bytes,receipt:{sourceKey:sourceKeys[index],route:'gateway',status:'date-verified',sourceDate:'2026-10-16',startedAt:START,completedAt:END,sha256:hash(bytes),bytes:Buffer.byteLength(bytes)}};
+  });
+  const f=fixture({concentrationInput:{sources,cutoff:'2026-10-16'}}),staticStage=prepareOwnerStaticDisplay(f.html);
+  assert.equal(f.model.concentration.status,'recorded');assert.ok(staticStage.length>0);
+  const direct=renderAcceptedPreviewDisplay(f.html,{registration:f.registration});
+  const bound=prepareAcceptedPreviewDisplay(f.html,{modelBytes:f.modelBytes,manifestBytes:f.manifestBytes,registration:f.registration});
+  assert.deepEqual(bound,direct);assert.deepEqual(bound,f.displayBytes);
+  const text=decode(bound);assert.equal((text.match(/<h2>/g)||[]).length,5);
+  for(const title of ['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置','单票集中度'])assert.ok(text.includes(title));
+  for(const label of ['发行方目标','发行方资料','发行方前十'])assert.ok(text.includes(`<span class="concentration-source-label">${label}</span>`));
+  assert.match(text,/原生挂单未返回币种或合约标识/);assert.match(text,/覆盖未核实|全部覆盖未核实/);assert.match(text,/USD·推定/);
+  assert.equal(f.model.cash.planning,null);assert.equal(f.model.cash.orderReserve,null);
+  assert.doesNotMatch(text,/<a\b|(?:href|src)\s*=|<script\b|<iframe\b|\son[a-z]+\s*=|portfolio_?id|account_?id|order_?id|contract_?id/i);
+  assert.ok(!text.includes(NIGHT_ACTION_MARKER));assert.ok(!text.includes(Buffer.from(JSON.stringify(f.model)).toString('base64url')));
+  for(const account of readAiRiskAccounts())assert.ok(!text.includes(account.portfolioId));
 });
 test('local input bytes and protected registration are exact; alternate files or financial registry fields do not confer admission',()=>{
   for(const kind of ['html','model','manifest','display-hash','scope','financial-field']){
@@ -193,4 +241,64 @@ test('deadline before create prevents delayed continuation; a deadline during cr
     release();await new Promise(r=>setImmediate(r));assert.equal(t.events.filter(x=>x==='create').length,phase==='probe'?0:1);
     assert.equal(t.events.filter(x=>x==='readback').length,phase==='readback'?1:0);
   }
+});
+
+function replacementFixture(){
+  const old=fixture(),next=fixture();old.metadata.registrationPolicyCommit='a'.repeat(40);
+  next.displayBytes=encode(decode(next.displayBytes)+'<p>Synthetic saved-reference revision.</p>');
+  next.registration.displaySha256=hash(next.displayBytes);refreshMetadata(next);
+  const revision={schema:'xuan.owner-preview-replacement.v1',target:{...LATEST_TARGET},previousRegistrationSha256:old.registrationSha256,
+    previousDisplaySha256:hash(old.displayBytes),canaryRegistrationSha256:'d'.repeat(64),registration:next.registration};
+  const p={revision,sha256:hash(previewReplacementRegistrationText(revision)),policyCommit:COMMIT};
+  const loadContext=async options=>options.phase==='accepted-preview-replacement'?{previewReplacement:structuredClone(p)}:
+    {previewRegistration:{registration:structuredClone(options.registrationSha256===old.registrationSha256?old.registration:next.registration),sha256:options.registrationSha256,policyCommit:options.policyCommit}};
+  const previous={state:'present',generation:'900719925474099312345',kind:'accepted-preview',preview:{metadata:old.metadata},displayBytes:old.displayBytes};
+  return {old,next,revision,p,loadContext,previous,verify:createProtectedPreviewReplacementVerifier({loadContext,now:()=>NOW})};
+}
+test('protected replacement keeps old and new source instants, scope and unknown budgets identical',()=>{
+  const f=replacementFixture(),options={previousRegistration:f.old.registration,previousRegistrationSha256:f.old.registrationSha256,canaryRegistrationSha256:'d'.repeat(64)};
+  assert.equal(validatePreviewReplacementRegistration(f.revision,options),f.revision);
+  for(const key of ['sourceHead','sourceDate','captureStartedAt','ordersCaptureEndedAt','completedAt','unknownFields','sourceManifestSha256']){
+    const changed=structuredClone(f.revision);changed.registration[key]=key==='unknownFields'?['cash','prices']:key.includes('Sha')?'f'.repeat(64):key==='sourceHead'?'f'.repeat(40):key==='sourceDate'?'2026-10-15':'2026-10-17T06:01:00.000Z';
+    assert.throws(()=>validatePreviewReplacementRegistration(changed,options),/OWNER_PREVIEW_/);
+  }
+  for(const key of ['previousRegistrationSha256','previousDisplaySha256','canaryRegistrationSha256']){const changed=structuredClone(f.revision);changed[key]='f'.repeat(64);assert.throws(()=>validatePreviewReplacementRegistration(changed,options));}
+});
+test('replacement verifies both protected versions, preserving string generations beyond Number precision',async()=>{
+  const f=replacementFixture(),proof=await f.verify({previous:f.previous,candidate:candidate(f.next)});
+  assert.equal(proof.previousGeneration,'900719925474099312345');assert.equal(proof.revisionSha256,f.p.sha256);
+  for(const change of [p=>{p.generation='0';},p=>{p.generation=123;},p=>{p.kind='daily';},p=>{p.displayBytes=encode('wrong');},p=>{p.preview.metadata.registrationPolicyCommit='f'.repeat(40);p.preview.metadata.registrationSha256='f'.repeat(64);}]){
+    const old=structuredClone(f.previous);change(old);await assert.rejects(f.verify({previous:old,candidate:candidate(f.next)}));
+  }
+  await assert.rejects(f.verify({previous:{state:'absent'},candidate:candidate(f.next)}));
+});
+function replacementPublisher(f,{write,readback,access,read,now=()=>NOW,setTimer,clearTimer}={}){
+  const events=[];const generation='900719925474099312346';
+  const p=createAcceptedPreviewReplacementPublisher({now,...(setTimer?{setTimer,clearTimer}:{}),verifyProtectedReplacement:f.verify,
+    verifyDestinationAccess:async o=>{events.push('access');assert.equal(o.operation,'replace-accepted-preview');assert.equal(o.revisionSha256,f.p.sha256);return access?.(o);},
+    io:{readLatest:async o=>{events.push('old');return read?read(o):structuredClone(f.previous);},
+      replaceAcceptedPreview:async o=>{events.push('replace');assert.equal(o.previousGeneration,f.previous.generation);return write?write(o):{...LATEST_TARGET,generation,size:f.next.displayBytes.length};},
+      readLatestGeneration:async o=>{events.push('pinned-readback');assert.equal(o.generation,generation);return readback?readback(o):new Uint8Array(f.next.displayBytes);}}});
+  return {p,events};
+}
+test('replacement alone writes one CAS N and independent generation-pinned readback; old CAS0 publisher still refuses existing target',async()=>{
+  const f=replacementFixture(),t=replacementPublisher(f),result=await t.p.publish(candidate(f.next));
+  assert.equal(result.status,'published-verified');assert.equal(result.previousGeneration,f.previous.generation);
+  assert.deepEqual(t.events,['old','access','replace','pinned-readback']);assert.equal((await t.p.publish(candidate(f.next))).status,'blocked');
+  const old=publisher(f.old,{existing:true});assert.equal((await old.p.publish(candidate(f.old))).code,'PREVIEW_TARGET_EXISTS');assert.ok(!old.events.includes('create'));
+});
+test('missing old proof or actual access blocks; CAS conflict, bad ACK and readback remain closed without retry',async()=>{
+  for(const options of [{read:()=>({state:'absent'})},{access:()=>({approved:true})},{access:()=>{throw Error('DENIED');}}]){
+    const f=replacementFixture(),t=replacementPublisher(f,options);assert.equal((await t.p.publish(candidate(f.next))).status,'blocked');assert.ok(!t.events.includes('replace'));
+  }
+  for(const [options,status] of [[{write:()=>{throw Object.assign(Error('race'),{status:412});}},'conflict'],[{write:()=>{throw Error('disconnect');}},'unknown'],[{write:()=>({...LATEST_TARGET,generation:'1',size:1})},'unknown'],[{write:o=>({...LATEST_TARGET,generation:900719925474099400000,size:o.bytes.length})},'unknown'],[{readback:()=>encode('wrong')},'unknown']]){
+    const f=replacementFixture(),t=replacementPublisher(f,options);assert.equal((await t.p.publish(candidate(f.next))).status,status);
+    assert.equal(t.events.filter(e=>e==='replace').length,1);assert.equal((await t.p.publish(candidate(f.next))).code,'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED');
+  }
+});
+test('replacement deadline aborts delayed old read without later write and does not reopen',async()=>{
+  const f=replacementFixture();let fire,release,enter;const entered=new Promise(r=>{enter=r;}),pause=new Promise(r=>{release=r;});
+  const t=replacementPublisher(f,{setTimer:fn=>{fire=fn;return 1;},clearTimer:()=>{},read:async()=>{enter();await pause;return structuredClone(f.previous);}});
+  const pending=t.p.publish(candidate(f.next));await entered;fire();assert.equal((await pending).status,'blocked');release();await new Promise(r=>setImmediate(r));
+  assert.ok(!t.events.includes('replace'));assert.equal((await t.p.publish(candidate(f.next))).status,'blocked');
 });

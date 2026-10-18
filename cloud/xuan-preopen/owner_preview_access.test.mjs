@@ -8,8 +8,10 @@ import {fileURLToPath} from 'node:url';
 import {describeOwnerBoundary,evaluateOwnerBoundary,renderOwnerPhoneCanary,validateOwnerPhoneCanary,
   validateOwnerCanaryMetadata,validateOwnerBoundaryWindow,validateOwnerPreflightAge,FULL_PREFLIGHT_TTL_MS,
   MAX_CANARY_BYTES,CANARY_TARGET,createOwnerPreflightLease,validateRegisteredOwnerCanary,
-  readRegisteredOwnerCanary} from './owner_preview_access.mjs';
-import {LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
+  readRegisteredOwnerCanary,createReplacementObservation} from './owner_preview_access.mjs';
+import {LATEST_TARGET,LATEST_HEADERS,OWNER_SCOPE,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
+import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
+import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const NOW=Date.parse('2026-10-17T12:00:00.000Z');
 const approved=JSON.parse(fs.readFileSync(new URL('../../security/xuan-owner-approved-audience.json',import.meta.url),'utf8'));
@@ -30,6 +32,26 @@ function fixture(){
   return {boundary,registry};
 }
 const fields=()=>({uuid:'11111111-2222-4333-8444-555555555555',createdAt:'2026-10-17T12:00:00.000Z',candidateSha256:'a'.repeat(64)});
+test('replacement requires both readonly delete probe and effective owner delete while audience remains identical',()=>{
+  const f=fixture();assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry,{requireDeletePermission:true}),/DELETE_PERMISSION/);
+  f.boundary.bucketTestPermissions.permissions.push('storage.objects.delete');
+  assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry,{requireDeletePermission:true}),/OWNER_DELETE_PERMISSION/);
+  f.boundary.roleDefinitions.find(r=>r.name==='roles/storage.legacyBucketOwner').includedPermissions.push('storage.objects.delete');
+  const registry=describeOwnerBoundary(f.boundary,{ownerPrincipalSha256:f.registry.ownerPrincipalSha256,approvedReaderPrincipalSha256:f.registry.approvedReaderPrincipalSha256});
+  assert.equal(evaluateOwnerBoundary(f.boundary,registry,{requireDeletePermission:true}).readerCount,7);
+  f.boundary.bucketIam.bindings[0].members.push('user:synthetic-intruder');assert.throws(()=>evaluateOwnerBoundary(f.boundary,registry,{requireDeletePermission:true}));
+});
+test('native observation is explicitly an attestation: fresh exact old canary, revision-bound nonce, one consume only',()=>{
+  const pin={...fields(),generation:'900719925474099312345',sha256:hash(renderOwnerPhoneCanary(fields()))};let time=NOW;
+  const fresh=()=>createReplacementObservation({revisionSha256:'b'.repeat(64),candidateSha256:'c'.repeat(64),pin,now:()=>time,randomUUID:()=> '00000000-0000-4000-8000-000000000000'});
+  const o=fresh(),request=o.begin();assert.equal(request.oldCanaryPin.candidateSha256,'a'.repeat(64));assert.equal(request.candidateSha256,'c'.repeat(64));
+  const attestation={nonce:request.nonce,observedAt:new Date(NOW).toISOString(),...fields()};
+  assert.equal(o.attest(attestation).status,'trusted-native-ui-attested');o.consume();assert.throws(()=>o.consume(),/OBSERVATION_REQUIRED/);
+  for(const edit of [v=>{v.nonce='11111111-2222-4333-8444-555555555555';},v=>{v.observedAt=new Date(NOW+1).toISOString();},v=>{v.candidateSha256='c'.repeat(64);},v=>{v.approved=true;},v=>{time=NOW+60001;},v=>{time=NOW-1;}]){
+    time=NOW;const bad=fresh(),r=bad.begin(),v={...attestation,nonce:r.nonce};edit(v);assert.throws(()=>bad.attest(v));assert.throws(()=>bad.consume());
+  }
+  time=NOW;const missing=fresh();missing.begin();assert.throws(()=>missing.consume());const closed=fresh();closed.begin();closed.close();assert.throws(()=>closed.attest(attestation));
+});
 test('exact synthetic configured audience and all seventeen storage-role definitions pass',()=>{
   const f=fixture(),result=evaluateOwnerBoundary(f.boundary,f.registry);assert.equal(result.readerCount,7);assert.equal(result.roles.size,17);
   assert.equal(result.boundarySha256,f.registry.boundarySha256);assert.equal(f.registry.rolePermissionScope,'storage.*');
@@ -257,7 +279,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:8/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:10/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -266,6 +288,9 @@ test(FACTORY_TEST,async t=>{
   async function harness(options={}){
     const f=fixture(),canary=registeredCanaryFixture(options),events=options.events??[],control={now:NOW,abort:new AbortController(),
       boundaryEdit:null,holdBoundary:null,...options};active=control;
+    if(options.replacing){f.boundary.bucketTestPermissions.permissions.push('storage.objects.delete');
+      f.boundary.roleDefinitions.find(r=>r.name==='roles/storage.legacyBucketOwner').includedPermissions.push('storage.objects.delete');
+      f.registry=describeOwnerBoundary(f.boundary,{ownerPrincipalSha256:f.registry.ownerPrincipalSha256,approvedReaderPrincipalSha256:f.registry.approvedReaderPrincipalSha256});}
     const source=fs.readFileSync(new URL('./owner_preview_access.mjs',import.meta.url),'utf8');
     const sdk={
       async readLiveBoundary({includeRoleDefinitions}){
@@ -277,6 +302,8 @@ test(FACTORY_TEST,async t=>{
       async requestCanary(value){events.push('canary-'+value.method);return canary.requestCanary(value);},
       async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
       async request(){events.push('financial-POST');return new Response(null,{status:200});},
+      async requestPreviewReplacement(url,options,pins,lease){events.push('replacement-POST');assert.equal(pins.previousGeneration,'900719925474099312345');
+        assert.equal(lease.admissionExpiresAt,control.now+5000);return new Response(null,{status:200});},
       close(){events.push('close');},
     };
     const files={
@@ -284,23 +311,35 @@ test(FACTORY_TEST,async t=>{
       'xuan-owner-registered-canary.json':canary.registration,
       'xuan-owner-accepted-preview.json':{displaySha256:fields().candidateSha256},
     };
+    if(options.replacing){const registration={schema:'xuan.owner-accepted-preview-registration.v1',registrationId:'synthetic-saturday',scope:OWNER_SCOPE,
+      ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:'2026-10-17T06:00:00.000Z',
+      captureEndedAt:'2026-10-17T06:02:00.000Z',completedAt:'2026-10-17T06:03:00.000Z',ordersCaptureStartedAt:'2026-10-17T06:00:01.000Z',ordersCaptureEndedAt:'2026-10-17T06:00:15.000Z',
+      sourceHead:'e'.repeat(40),artifactSha256:'e'.repeat(64),modelSha256:'e'.repeat(64),sourceManifestSha256:'e'.repeat(64),sourceManifestContentSha256:'e'.repeat(64),
+      displaySha256:fields().candidateSha256,financialStatus:'partial',unknownFields:['cash','prices']};
+      files['xuan-owner-accepted-preview.json']=registration;
+      files['xuan-owner-preview-replacement.json']={schema:'xuan.owner-preview-replacement.v1',target:{...LATEST_TARGET},
+        previousRegistrationSha256:hash(acceptedPreviewRegistrationText(registration)),previousDisplaySha256:registration.displaySha256,
+        canaryRegistrationSha256:hash(JSON.stringify(canary.registration)),registration:{...registration,displaySha256:'c'.repeat(64)}};
+    }
     const dependencies={
       'node:crypto':{default:crypto},
       'node:fs':{default:{readFileSync:url=>{const name=new URL(url).pathname.split('/').pop();
-        assert.ok(Object.hasOwn(files,name),'unexpected filesystem access: '+name);return JSON.stringify(files[name]);}}},
+        assert.ok(Object.hasOwn(files,name),'unexpected filesystem access: '+name);
+        return name==='xuan-owner-preview-replacement.json'?previewReplacementRegistrationText(files[name]):name==='xuan-owner-accepted-preview.json'&&options.replacing?acceptedPreviewRegistrationText(files[name]):JSON.stringify(files[name]);}}},
       '../../scripts/xuan-ib-decision-menu.mjs':{parseDecisionJson:value=>JSON.parse(value)},
       './owner_latest.mjs':{LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch},
       './owner_latest_delivery.mjs':{requireProtectedOwnerCheckout:async()=>{events.push('protected');
         if(control.protectedError)throw Error('SYNTHETIC_PROTECTED_CHECKOUT_REJECTED');}},
       './owner_sdk_transport.mjs':{createOwnerSdkTransport:()=>{events.push('sdk-created');return sdk;}},
+      './owner_accepted_preview.mjs':{validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText},
     };
     const module=new vm.SourceTextModule(source,{initializeImportMeta:meta=>{meta.url=new URL('./owner_preview_access.mjs',import.meta.url).href;}});
     await module.link(specifier=>{assert.ok(Object.hasOwn(dependencies,specifier),'unexpected production import: '+specifier);
       const values=dependencies[specifier];return new vm.SyntheticModule(Object.keys(values),function(){
         for(const [name,value] of Object.entries(values))this.setExport(name,value);
       });});await module.evaluate();
-    const access=await module.namespace.createOwnerPreviewAccess({pin:{generation:'caller-override'},approved:true});
-    return {access,events,control,canary};
+    const access=await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
+    return {access,events,control,canary,revision:files['xuan-owner-preview-replacement.json']};
   }
   const post=access=>access.request('https://storage.googleapis.com/upload/storage/v1/b/'+LATEST_TARGET.bucket+'/o?uploadType=multipart&ifGenerationMatch=0',{method:'POST'});
   const verify=access=>access.verifyDestinationAccess({target:{...LATEST_TARGET},operation:'create-accepted-preview'});
@@ -372,6 +411,28 @@ test(FACTORY_TEST,async t=>{
     assert.equal((await creating).code,'CANARY_EXISTS');assert.equal(h.events.includes('canary-POST'),false);
     assert.deepEqual(h.canary.calls.map(x=>x.method),['HEAD']);
   });
-  assert.equal(completedScenarios,8,'all factory scenarios must execute, including in the child fallback');
+  await scenario('replacement cannot reuse create, canary creation or old observation and consumes a fresh native attestation once',async()=>{
+    const h=await harness({replacing:true}),revisionSha256=hash(previewReplacementRegistrationText(h.revision));
+    await h.access.verifyRegisteredCanary();await assert.rejects(h.access.createCanary(),/EXISTING_CANARY_ONLY/);
+    const proof={target:{...LATEST_TARGET},operation:'replace-accepted-preview',revisionSha256,previousGeneration:'900719925474099312345',
+      previousDisplaySha256:h.revision.previousDisplaySha256,candidateSha256:'c'.repeat(64),registrationSha256:hash(acceptedPreviewRegistrationText(h.revision.registration))};
+    await assert.rejects(h.access.verifyDestinationAccess(proof),/OBSERVATION_REQUIRED/);assert.throws(()=>post(h.access),/NAMED_WRITE_REQUIRED/);
+    const observation=h.access.beginNativeCanaryObservation();assert.equal(observation.oldCanaryPin.candidateSha256,'a'.repeat(64));
+    h.access.attestNativeCanaryObservation({nonce:observation.nonce,observedAt:new Date(h.control.now).toISOString(),...fields()});
+    await h.access.verifyDestinationAccess(proof);
+    const pins={revisionSha256,previousGeneration:proof.previousGeneration,previousDisplaySha256:proof.previousDisplaySha256,previousRegistrationSha256:h.revision.previousRegistrationSha256};
+    await h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},pins);assert.equal(h.events.filter(e=>e==='replacement-POST').length,1);
+    await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},pins),/ADMISSION_REQUIRED/);
+    await assert.rejects(h.access.verifyDestinationAccess(proof),/OBSERVATION_REQUIRED/);h.access.close();
+  });
+  await scenario('replacement final canary drift clears observation and admission before any POST',async()=>{
+    let changed=false;const h=await harness({replacing:true,editHead:r=>{if(changed)r.headers['x-goog-generation']='92';}});
+    await h.access.verifyRegisteredCanary();const challenge=h.access.beginNativeCanaryObservation();
+    h.access.attestNativeCanaryObservation({nonce:challenge.nonce,observedAt:new Date(h.control.now).toISOString(),...fields()});changed=true;
+    await assert.rejects(h.access.verifyDestinationAccess({target:{...LATEST_TARGET},operation:'replace-accepted-preview',revisionSha256:hash(previewReplacementRegistrationText(h.revision)),
+      previousGeneration:'900719925474099312345',previousDisplaySha256:h.revision.previousDisplaySha256,candidateSha256:'c'.repeat(64),registrationSha256:hash(acceptedPreviewRegistrationText(h.revision.registration))}),/CANARY_CURRENT/);
+    await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},{}),/ADMISSION_REQUIRED/);assert.ok(!h.events.includes('replacement-POST'));h.access.close();
+  });
+  assert.equal(completedScenarios,10,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

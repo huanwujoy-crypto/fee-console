@@ -15,7 +15,9 @@ import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay,createPro
 import {EOD_SOURCE_CONFIG,validateEodSourceConfiguration} from './eod_source_config.mjs';
 import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
-import {createProtectedOwnerPreviewVerifier,prepareAcceptedPreviewDisplay,buildAcceptedPreviewMetadata,createAcceptedPreviewPublisher} from './owner_accepted_preview.mjs';
+import {createProtectedOwnerPreviewVerifier,prepareAcceptedPreviewDisplay,buildAcceptedPreviewMetadata,createAcceptedPreviewPublisher,
+  PREVIEW_REPLACEMENT_REGISTRATION_PATH,validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText,
+  createProtectedPreviewReplacementVerifier,createAcceptedPreviewReplacementPublisher} from './owner_accepted_preview.mjs';
 
 const API='https://api.github.com/repos/huanwujoy-crypto/fee-console';
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console';
@@ -25,22 +27,22 @@ const fail=code=>{throw Error('OWNER_DELIVERY_'+code);};
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
   ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py'].map(file=>'cloud/xuan-preopen/'+file),
-  OWNER_PREVIEW_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
+  OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
 // The historical phase reads the original trusted Git version, never today's
 // context relabelled as yesterday. The current main must still contain it.
 export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
   const read=async url=>{const r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:AbortSignal.timeout(15000)});if(!r.ok)fail('CONTEXT_HTTP');return boundedText(r,500000);};
-  return async ({phase='candidate-admission',policyCommit,now:clock=now}={})=>{
+  return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now}={})=>{
     const current=await loadTrustedContext({fetchImpl,now:clock});
     let eodConfiguration=null;
     try{eodConfiguration={...validateEodSourceConfiguration(configuration),account:APPROVED_IB_ACCOUNT_ID};}catch{}
     if(phase==='candidate-admission')return {...current,eodConfiguration};
-    if(['accepted-preview-admission','accepted-preview-historical'].includes(phase)){
+    if(['accepted-preview-admission','accepted-preview-historical','accepted-preview-replacement'].includes(phase)){
       if(!/^[a-f0-9]{40}$/.test(policyCommit||''))fail('PREVIEW_CONTEXT');
       const currentCommit=current.association.policyCommit;
-      if(phase==='accepted-preview-admission'&&policyCommit!==currentCommit)fail('PREVIEW_CURRENT_CONTEXT');
+      if(phase!=='accepted-preview-historical'&&policyCommit!==currentCommit)fail('PREVIEW_CURRENT_CONTEXT');
       if(policyCommit!==currentCommit){
         const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+currentCommit));
         if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('PREVIEW_ANCESTRY');
@@ -49,6 +51,21 @@ export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configura
       const originalText=policyCommit===currentCommit?currentText:await read(RAW+'/'+policyCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH);
       if(sha(currentText)!==sha(originalText))fail('PREVIEW_REGISTRATION_CHANGED');
       let registration;try{parseDecisionJson(originalText,128*1024);registration=JSON.parse(originalText);}catch{fail('PREVIEW_REGISTRATION_JSON');}
+      if(phase==='accepted-preview-replacement'||registrationSha256!==undefined&&registrationSha256!==sha(originalText)){
+        const revisionText=await read(RAW+'/'+currentCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH);
+        const originalRevisionText=policyCommit===currentCommit?revisionText:await read(RAW+'/'+policyCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH);
+        if(sha(revisionText)!==sha(originalRevisionText))fail('PREVIEW_REPLACEMENT_CHANGED');
+        const canaryText=await read(RAW+'/'+currentCommit+'/security/xuan-owner-registered-canary.json');
+        let revision;try{parseDecisionJson(originalRevisionText,128*1024);revision=JSON.parse(originalRevisionText);
+          validatePreviewReplacementRegistration(revision,{previousRegistration:registration,previousRegistrationSha256:sha(originalText),canaryRegistrationSha256:sha(canaryText)});
+          if(previewReplacementRegistrationText(revision)!==originalRevisionText)fail('PREVIEW_REPLACEMENT_BYTES');
+        }catch{fail('PREVIEW_REPLACEMENT_REGISTRATION');}
+        const previewReplacement={revision,sha256:sha(originalRevisionText),policyCommit};
+        if(phase==='accepted-preview-replacement')return {...current,eodConfiguration,previewReplacement};
+        const nextSha=sha(acceptedPreviewRegistrationText(revision.registration));
+        if(registrationSha256!==nextSha)fail('PREVIEW_REPLACEMENT_METADATA');
+        return {...current,eodConfiguration,previewReplacement,previewRegistration:{registration:revision.registration,sha256:nextSha,policyCommit}};
+      }
       return {...current,eodConfiguration,previewRegistration:{registration,sha256:sha(originalText),policyCommit}};
     }
     if(phase!=='historical-authenticity'||!/^[a-f0-9]{40}$/.test(policyCommit||''))fail('HISTORICAL_CONTEXT');
@@ -126,6 +143,20 @@ export async function deliverOwnerAcceptedPreview({cwd,request,html,modelBytes,m
   const io=storeFactory({request});
   const publisher=publisherFactory({io,verifyProtectedPreview:createProtectedOwnerPreviewVerifier({loadContext,now}),verifyDestinationAccess,now});
   return publisher.publish({metadata,displayBytes});
+}
+
+// Explicit local owner replacement only, after the reviewed transition has
+// reached protected main. No CLI, schedule or permission grant is added.
+export async function deliverOwnerAcceptedPreviewReplacement({cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess,
+  now=Date.now,loadContext=createOwnerContextLoader({now}),storeFactory=createOwnerLatestStore,publisherFactory=createAcceptedPreviewReplacementPublisher}={}){
+  const head=await requireProtectedOwnerCheckout({cwd,loadContext,now});
+  if(typeof request!=='function'||typeof requestPreviewReplacement!=='function'||typeof verifyDestinationAccess!=='function')fail('PREVIEW_REPLACEMENT_ACCESS_REQUIRED');
+  const p=(await loadContext({phase:'accepted-preview-replacement',policyCommit:head,now}))?.previewReplacement;
+  if(!p||p.policyCommit!==head||sha(previewReplacementRegistrationText(p.revision))!==p.sha256)fail('PREVIEW_REPLACEMENT_CURRENT_CONTEXT');
+  const registration=p.revision.registration,displayBytes=prepareAcceptedPreviewDisplay(html,{modelBytes,manifestBytes,registration});
+  const metadata=buildAcceptedPreviewMetadata({registration,registrationSha256:sha(acceptedPreviewRegistrationText(registration)),registrationPolicyCommit:head});
+  const io=storeFactory({request,requestPreviewReplacement});
+  return publisherFactory({io,verifyProtectedReplacement:createProtectedPreviewReplacementVerifier({loadContext,now}),verifyDestinationAccess,now}).publish({metadata,displayBytes});
 }
 
 // The new publisher cannot run from an unmerged local candidate. The CLI checks

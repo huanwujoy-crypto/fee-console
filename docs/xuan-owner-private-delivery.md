@@ -314,3 +314,66 @@ access. Owner phone/Safari/PWA login, four-card scrolling, unknowns, cold/warm
 reopen, later update and unauthenticated/wrong-user denial remain real acceptance
 items. Use existing authorized test sessions; create no identities or grants.
 Offline tests and localhost viewport tests do not substitute for those results.
+# Saved Saturday reference replacement
+
+The explicit Mac-only `deliverOwnerAcceptedPreviewReplacement` entry replaces
+only the existing fixed private `delivery/owner-latest.html`. It is not a daily
+or weekend collection lane. The original CAS0 create entry and normal weekday
+planner retain their existing admission and same-source conflict rules.
+
+`security/xuan-owner-preview-replacement.json` is a sensitive protected
+transition. It binds the unchanged old registration bytes and display hash,
+the unchanged registered old canary file, and the complete new registration.
+The local review marker `synthetic-local-r6-review` is retained solely to match
+the already accepted static bytes. It says nothing about the real source data
+and grants no authorization. Resolution uses complete registration SHA-256 and
+the original protected policy commit, never the marker alone. The old and new
+registrations remain independently verifiable for subsequent weekday history.
+Source identity, market/snapshot dates, source manifest, independent account
+read windows and unknown budgets are not refreshed or relabelled by this entry.
+
+After final exact-head review, protected merge and a clean protected checkout,
+the executor must start a new `createOwnerPreviewReplacementAccess` session.
+Its full and quick read-only boundary checks require the existing effective
+owner `storage.objects.delete` permission as well as get/create; this code
+does not grant permissions or issue a standalone DELETE. The existing cached
+credential must already satisfy its unchanged freshness rules. There is no
+credential refresh or authentication fallback.
+
+The session first independently reads the fixed registered old canary and
+checks its current unversioned entry. `beginNativeCanaryObservation` then emits
+a fresh session challenge explicitly binding the old canary pin, transition
+hash and new candidate. A trusted executor/human must freshly observe the old
+canary in native Mac Chrome and attest its exact visible UUID, creation instant
+and old candidate hash using `attestNativeCanaryObservation`. The nonce is not
+in the immutable old canary HTML: it prevents reusing an old session receipt;
+it is not server proof or cryptographic proof of browser navigation. A lying
+trusted executor can forge this attestation. Synthetic tests cannot establish
+that real UI observation happened. Missing, expired, future, replayed, changed
+or closed-session observations block writing; caller `approved=true` grants
+nothing. No new canary path, overwrite, audience or lasting permission exists.
+
+The publisher reads the real latest HEAD generation and pinned old metadata
+and bytes, verifies old and new protected registrations, and consumes the new
+observation before fresh SDK canary and IAM checks mint a single five-second
+write admission. The store independently rereads the old object; the Node and
+Python named replacement boundary binds the fixed transition and exact new
+candidate. Python independently reads the old current generation and pinned
+metadata/media, rechecks the registered old canary's current HEAD, and checks the original admission deadline again immediately
+before its single CAS N upload. Generations remain decimal strings/BigInt.
+Neither historical receipts nor upload ACKs supply the old object version.
+Only a separate generation-pinned metadata and media readback with the new hash
+can report `published-verified`. A CAS conflict is never retried. Any timeout,
+bad ACK or failed readback remains unknown and closes the one-shot publisher;
+an unknown result can conservatively occur before a POST. Recovery requires
+inspection and a new separately authorized execution, not replaying the nonce
+or extending the write window. Importing these modules does not execute this
+flow, create a canary, activate a schedule or publish anything.
+
+There is no atomic snapshot across the latest and canary objects. The last
+canary HEAD can still race with a later canary change; the latest object's own
+race is enforced by CAS. The final HEAD reduces that window and does not extend
+the original five-second admission.
+The real timing of these live reads within five seconds has not been accepted;
+expiry before the final POST produces zero financial upload POSTs. Neither the 45-second
+publisher limit nor the five-second admission is extended to make it pass.

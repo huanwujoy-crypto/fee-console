@@ -9,6 +9,9 @@ import {associationPolicyBlob} from '../../scripts/xuan-ib-account-association.m
 import {extractNightActionModel,renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
 import {sharesightOrderCurrencies,readCurrentActionFields,ACTION_ERROR_CODES} from '../../scripts/xuan-ib-action-fields.mjs';
+import {readAiRiskAccounts} from '../../scripts/xuan-ib-ai-coefficient-resolver.mjs';
+import {buildPublicEodSummary} from '../../scripts/xuan-ib-public-eod-summary.mjs';
+import {validateEodReceipt} from './eod_report.mjs';
 const NOW=Date.parse('2026-10-15T05:01:00.000Z'),sourceDate='2026-10-14';
 const start='2026-10-15T05:00:00.000Z',end='2026-10-15T05:00:02.000Z';
 globalThis.fetch=()=>assert.fail('Offline only');
@@ -23,10 +26,10 @@ function bundle(raw={orders:[order(),order('SELL')],complete:true}){
 function batch(){const h=(id,group_name,value,code)=>({id,group_name,value,quantity:10,instrument:{code,currency:{code:'USD'}}});return [
   {sourceKey:'sharesight.ibGroupedPerformance',raw:{mode:'read_only',source:'Sharesight User API',data:{report:{portfolio_id:936247,currency:{code:'USD'},start_date:sourceDate,end_date:sourceDate,include_sales:false,grouping:'custom_group_category',custom_group:{id:83569,name:'资产类别'},holdings:[h(1,'美国底仓',450,'CSPX'),h(2,'美国底仓',50,'USSC'),h(3,'美国科技',250,'GOOG'),h(4,'非美发达',180,'EXUS'),h(5,'新兴市场',70,'EIMI'),h(6,'防御资产',90,'TLT')],cash_accounts:[{value:1000}]}}}},
   {sourceKey:'sharesight.noahPerformance',raw:{mode:'read_only',source:'Sharesight User API',data:{report:{portfolio_id:936238,currency:{code:'USD'},start_date:sourceDate,end_date:sourceDate,include_sales:false,grouping:'investment_type',cash_accounts:[{value:200}]}}}}];}
-async function run({raw,editBatch=()=>{},ledger=context().reserveLedger,now=()=>NOW,gatewayFailure=false}={}){
+async function run({raw,editBatch=()=>{},ledger=context().reserveLedger,now=()=>NOW,gatewayFailure=false,concentrationInput=null}={}){
   const objects=new Map(),calls=[],c=context();c.reserveLedger=ledger;
   const io={savePrivate:async(name,value)=>{assert.equal(objects.has(name),false);objects.set(name,value);return {sha256:digest(value),generation:'1'};},loadGatewayToken:async()=>{calls.push('gateway-token');if(gatewayFailure)throw Error('SYNTHETIC_PRIVATE_ERROR');return 'SYNTHETIC_GATEWAY';},ibStore:new Proxy({}, {get:()=>assert.fail('Never contact IB or refresh again')}),loadFlexToken:()=>assert.fail('Never read Flex')};
-  const receipt=await composePrivateActionPreview({bundle:bundle(raw),sourceDate,io,now,loadContext:async()=>c,readSharesight:async(date,token,opts)=>{calls.push('sharesight-batch');assert.equal(date,sourceDate);assert.equal(token,'SYNTHETIC_GATEWAY');assert.equal(opts.settle,true);const b=batch();editBatch(b);return b;}});
+  const receipt=await composePrivateActionPreview({bundle:bundle(raw),sourceDate,io,now,loadContext:async()=>c,concentrationInput,readSharesight:async(date,token,opts)=>{calls.push('sharesight-batch');assert.equal(date,sourceDate);assert.equal(token,'SYNTHETIC_GATEWAY');assert.equal(opts.settle,true);const b=batch();editBatch(b);return b;}});
   const html=objects.get(receipt.artifact.privateObject),model=extractNightActionModel(html);return {receipt,model,html,objects,calls};
 }
 export {run as buildSyntheticPreviewFixture};
@@ -179,4 +182,43 @@ test('account or trusted-context failures remain fatal before source reads; loca
   assert.throws(()=>validatePreviewOrdersBundle(bundle({orders:[],complete:true,account_id:'SYNTHETIC_WRONG'}),{now:NOW,association:context().association}),/IB_DIAGNOSTIC_ACCOUNT_MISMATCH/);
   let reads=0,saves=0;const c=context();c.association.policy.expiresAt='2026-10-14T00:00:00.000Z';c.association.policyBlob=associationPolicyBlob(c.association.policy);
   await assert.rejects(composePrivateActionPreview({bundle:bundle(),sourceDate,io:{loadGatewayToken:async()=>{reads++;},savePrivate:async()=>{saves++;}},now:()=>NOW,loadContext:async()=>c}));assert.equal(reads,0);assert.equal(saves,0);
+});
+test('current broker AvailableFunds survives downstream mapping without changing book planning or executable budget',async()=>{
+  const objects=new Map(),raw={currency:'USD',net_liquidation:2000,total_cash_value:500,available_funds:321.5},summary={sourceKey:'ib.accountSummary',raw,rawFingerprint:fingerprint(raw),startedAt:start,completedAt:end};
+  const receipt=await runPrivateEodReport({sourceDate,io:{savePrivate:async(name,value)=>{objects.set(name,value);return {sha256:digest(value),generation:'1'};}},now:()=>NOW,loadContext:async()=>context(),fieldMode:true,initialStartedAt:Date.parse(start),
+    readArchive:null,verifyArchive:null,snapshotReader:createEodSnapshotReader({sourceDate,readSharesightBatch:async()=>batch()}),
+    captureOptionalLive:async()=>({status:'captured',sources:[bundle().source,summary]})});
+  const html=objects.get(receipt.artifact.privateObject),m=extractNightActionModel(html);
+  assert.deepEqual(m.cash.availableFunds,{status:'recorded',amount:321.5,currency:'USD',source:'ib.accountSummary',readAt:end,accountBasis:'owner-attested'});
+  assert.equal(m.cash.ib,1000);assert.equal(m.cash.planning,1090);assert.equal(m.cash.executableBudget,null);
+  assert.match(html,/券商本轮 AvailableFunds/);assert.match(html,/321.5 USD/);assert.match(html,/响应未提供独立账户标识/);
+  assert.equal(validateNightActionHtml(html,'2026-10-15').orderCount,2);
+  for(const edit of [m=>m.cash.availableFunds.amount=322,m=>m.cash.availableFunds.currency='CAD',m=>m.cash.availableFunds.accountBasis='response-account-id',m=>m.cash.availableFundsProof.sources[1].raw.available_funds=322,m=>m.cash.availableFunds.currency='BASE',m=>m.cash.availableFunds.amount=Infinity,m=>m.cash.availableFunds.readAt='2026-10-15T04:00:00.000Z',m=>m.cash.availableFunds.accountBasis='verified',m=>m.cash.executableBudget=321.5]){const changed=structuredClone(m);edit(changed);assert.throws(()=>renderNightActionReport(changed));}
+});
+test('broker funds preserve explicit currency and missing/invalid facts without guessed USD or zero',()=>{
+  const read=raw=>readCurrentActionFields({live:{status:'captured',sources:[{sourceKey:'ib.accountSummary',raw,startedAt:start,completedAt:end}]},dataDate:'2026-10-15',startedAt:start,completedAt:end}).availableFunds;
+  const base={currency:'USD',net_liquidation:2000,total_cash_value:500,available_funds:321.5};
+  assert.equal(read({...base,currency:'CAD'}).currency,'CAD');assert.equal(read({...base,available_funds:0}).amount,0);
+  assert.equal(read({...base,available_funds:-5}).amount,-5);
+  assert.equal(read({...base,currency:'BASE'}).reason,'BROKER_FUNDS_CURRENCY_UNVERIFIED');
+  const missing={...base};delete missing.available_funds;assert.equal(read(missing).reason,'BROKER_FUNDS_FIELD_MISSING');
+  assert.equal(read({...base,available_funds:'321.5'}).reason,'BROKER_FUNDS_VALUE_INVALID');
+  assert.equal(read({...base,account_id:'SYNTHETIC_WRONG'}).reason,'BROKER_FUNDS_SOURCE_UNAVAILABLE');
+});
+test('private composer binds supplied concentration sources into model renderer guard and private sidecar without another read',async()=>{
+  const keys=['sharesight.ibGroupedPerformance','sharesight.schwabPerformance','sharesight.webullPerformance'];
+  const sources=readAiRiskAccounts().map((account,i)=>{
+    const id=Number(account.portfolioId),holdings=i===0?[{id:9900001,portfolio:{id},instrument:{id:9900001,code:'SYNTH',name:'Synthetic issuer',market_code:'TEST',currency_code:'USD',friendly_instrument_description_code:'ordinary_shares'},instrument_currency:{code:'USD'},quantity:1,instrument_price:1,value:1,labels:[]}]:[];
+    const raw={ok:true,mode:'read_only',route:'gateway',portfolio:{id,name:account.custodian,currency_code:'USD'},data:{report:{portfolio_id:id,value:100,start_date:sourceDate,end_date:sourceDate,include_sales:false,percentages_annualised:false,currency:{code:'USD'},holdings,cash_accounts:[{id:8800000+i,name:'Synthetic cash',value:i===0?99:100,currency:{code:'USD'}}]}}},bytes=JSON.stringify(raw);
+    return {bytes,receipt:{sourceKey:keys[i],route:'gateway',status:'date-verified',sourceDate,startedAt:start,completedAt:end,sha256:digest(bytes),bytes:Buffer.byteLength(bytes)}};
+  });
+  const r=await run({concentrationInput:{sources,cutoff:sourceDate}}),m=r.model;
+  assert.equal(m.concentration.status,'recorded');assert.equal(m.concentration.envelope.riskConstituents.length,1);assert.match(r.html,/单票集中度/);
+  assert.doesNotMatch(r.html,/未接入 Schwab-HK／Webull/);assert.equal(m.provenance.capture.startedAt,start);assert.deepEqual(r.calls,['gateway-token','sharesight-batch']);
+  assert.match(r.html,/\.concentration \.line\{display:flex;justify-content:space-between/);
+  assert.match(r.html,/\.concentration \.line span\{min-width:0;overflow-wrap:anywhere/);
+  assert.match(r.html,/\.concentration \.line b\{text-align:right;white-space:nowrap/);
+  assert(r.objects.has(r.receipt.concentration.privateObject));assert.equal(r.receipt.concentration.modelSha256,digest(m.concentration));
+  assert.equal(validateNightActionHtml(r.html,'2026-10-15').orderCount,2);assert.throws(()=>buildPublicEodSummary(m,r.receipt),/PRIVATE_SCOPE/);
+  const receipt=structuredClone(r.receipt);receipt.concentration.modelSha256='0'.repeat(64);assert.throws(()=>validateEodReceipt(receipt,r.html,'2026-10-15',sourceDate),/CONCENTRATION_BINDING/);
 });

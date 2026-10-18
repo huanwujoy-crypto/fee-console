@@ -16,6 +16,9 @@ import {digest} from './eod_sources.mjs';
 import {collectDelivery} from './delivery.mjs';
 import {buildPublicEodSummary} from '../../scripts/xuan-ib-public-eod-summary.mjs';
 import {associationPolicyText} from '../../scripts/xuan-ib-account-association.mjs';
+import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
+import {OWNER_SCOPE} from './owner_latest.mjs';
+import {acceptedPreviewRegistrationText,previewReplacementRegistrationText,PREVIEW_REPLACEMENT_REGISTRATION_PATH} from './owner_accepted_preview.mjs';
 
 const NOW=Date.parse('2026-10-15T05:01:00.000Z'),START='2026-10-15T05:00:00.000Z',END='2026-10-15T05:00:01.000Z';
 const encode=s=>new TextEncoder().encode(s);
@@ -149,7 +152,7 @@ test('protected checkout binds new preview executable and registration bytes eve
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-preview-checkout-'));fs.mkdirSync(path.join(root,'empty-hooks'));
   const git=args=>execFileSync('git',['-c','core.hooksPath='+path.join(root,'empty-hooks'),...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const files=OWNER_PROTECTED_SOURCE_PATHS;
-  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json'])assert.ok(files.includes(required));
+  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',PREVIEW_REPLACEMENT_REGISTRATION_PATH])assert.ok(files.includes(required));
   try{
     git(['init','-q']);
     for(const relative of files){fs.mkdirSync(path.dirname(path.join(root,relative)),{recursive:true});fs.writeFileSync(path.join(root,relative),'SYNTHETIC '+relative);}
@@ -159,7 +162,7 @@ test('protected checkout binds new preview executable and registration bytes eve
     let privateCalls=0;
     await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext,request:()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PREVIEW_ACCESS_CAPABILITY_REQUIRED/);
     assert.equal(privateCalls,0);
-    for(const relative of ['cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
+    for(const relative of ['cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
       const initial=fs.readFileSync(path.join(root,relative));git(['update-index','--assume-unchanged',relative]);
       fs.appendFileSync(path.join(root,relative),' CHANGED');
       await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext}),/PROTECTED_SOURCE_BYTES_REQUIRED/);
@@ -177,4 +180,38 @@ test('empty public private-entry shell has no financial bytes, APIs, scripts, qu
   assert.ok(!/<script\b|<iframe\b|<input\b|<form\b|\bfetch\s*\(|localStorage|sessionStorage|access_token|cash_accounts|order_id/i.test(html));
   assert.ok(!html.includes('xuan-ib-night-action-v1:'));
   const loader=fs.readFileSync(path.join(root,'xuan-ib/index.html'),'utf8');assert.ok(loader.includes('id="private-action-entry" href="./private-action.html"'));
+});
+test('fixed replacement resolver preserves original registration and resolves new historical SHA for later weekday verification',async()=>{
+  const current='b'.repeat(40),old='a'.repeat(40),hash=b=>crypto.createHash('sha256').update(b).digest('hex'),calls=[];
+  const registration={schema:'xuan.owner-accepted-preview-registration.v1',registrationId:'synthetic-saturday',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,
+    sourceIdentitySha256:SOURCE_IDENTITY_SHA256,dataDate:'2026-10-17',sourceDate:'2026-10-16',captureStartedAt:'2026-10-17T06:00:00.000Z',captureEndedAt:'2026-10-17T06:02:00.000Z',
+    completedAt:'2026-10-17T06:03:00.000Z',ordersCaptureStartedAt:'2026-10-17T06:00:01.000Z',ordersCaptureEndedAt:'2026-10-17T06:00:15.000Z',sourceHead:'e'.repeat(40),
+    artifactSha256:'e'.repeat(64),modelSha256:'e'.repeat(64),sourceManifestSha256:'e'.repeat(64),sourceManifestContentSha256:'e'.repeat(64),displaySha256:'e'.repeat(64),financialStatus:'partial',unknownFields:['cash','prices']};
+  const original=acceptedPreviewRegistrationText(registration),canary='{"syntheticImmutableCanary":true}\n';
+  const revision={schema:'xuan.owner-preview-replacement.v1',target:{bucket:'family-portfolio-gateway-xuan-preopen-private',object:'delivery/owner-latest.html'},
+    previousRegistrationSha256:hash(original),previousDisplaySha256:registration.displaySha256,canaryRegistrationSha256:hash(canary),registration:{...registration,registrationId:'synthetic-revision',displaySha256:'f'.repeat(64)}};
+  const revisionText=previewReplacementRegistrationText(revision),nextSha=hash(acceptedPreviewRegistrationText(revision.registration));
+  const policy={schemaVersion:1,policyId:'ib-primary-7day-pilot-v1',accountAlias:'IB-HK',basis:'owner-attested-recurring-v1',status:'active',purpose:'xuan-ib-read-only-report',editions:['adhoc','am','pm'],publisher:'codex-verified-candidate-v1',validFrom:'2026-10-01T00:00:00.000Z',expiresAt:'2026-11-01T00:00:00.000Z'};
+  const previousHtml='SYNTHETIC PUBLIC',body=Buffer.from(previousHtml),blob=crypto.createHash('sha1').update(Buffer.from('blob '+body.length+'\0')).update(body).digest('hex');
+  const source=async(url,{alterRevision=false}={})=>{calls.push(url);
+    if(url.endsWith('/commits/main'))return new Response(JSON.stringify({sha:current}));
+    if(url.includes('/compare/'))return new Response(JSON.stringify({status:'ahead',merge_base_commit:{sha:old}}));
+    if(url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH))return new Response(original);
+    if(url.endsWith(PREVIEW_REPLACEMENT_REGISTRATION_PATH))return new Response(alterRevision&&url.includes('/'+current+'/')?revisionText+' ':revisionText);
+    if(url.endsWith('security/xuan-owner-registered-canary.json'))return new Response(canary);
+    if(url.endsWith('xuan-ib-account-association-v1.json'))return new Response(associationPolicyText(policy));
+    if(url.endsWith('xuan-ib-etf-pending-calls-v1.json'))return new Response(JSON.stringify({schemaVersion:1,purpose:'xuan-etf-owner-declared-pending-calls',entries:[{date:'2026-09-01',usd:100}]}));
+    if(url.endsWith('latest.meta.json'))return new Response(JSON.stringify({sourceSha:'c'.repeat(40),htmlBlob:blob}));
+    if(url.endsWith('latest.html'))return new Response(previousHtml);assert.fail('unexpected URL');};
+  const load=createOwnerContextLoader({fetchImpl:source,now:()=>NOW});
+  const legacy=await load({phase:'accepted-preview-historical',policyCommit:old,registrationSha256:hash(original)});
+  assert.equal(legacy.previewRegistration.registration.displaySha256,'e'.repeat(64));
+  assert.ok(!calls.some(url=>url.endsWith(PREVIEW_REPLACEMENT_REGISTRATION_PATH)));
+  const next=await load({phase:'accepted-preview-historical',policyCommit:old,registrationSha256:nextSha});
+  assert.equal(next.previewRegistration.policyCommit,old);assert.equal(next.previewRegistration.registration.registrationId,'synthetic-revision');
+  assert.equal(next.previewReplacement.sha256,hash(revisionText));assert.equal(next.previewRegistration.sha256,nextSha);
+  await assert.rejects(load({phase:'accepted-preview-admission',policyCommit:old,registrationSha256:nextSha}),/CURRENT_CONTEXT/);
+  const drift=createOwnerContextLoader({fetchImpl:url=>source(url,{alterRevision:true}),now:()=>NOW});
+  await assert.rejects(drift({phase:'accepted-preview-historical',policyCommit:old,registrationSha256:nextSha}),/REPLACEMENT_CHANGED/);
+  await assert.rejects(load({phase:'accepted-preview-historical',policyCommit:old,registrationSha256:'0'.repeat(64)}),/REPLACEMENT_METADATA/);
 });

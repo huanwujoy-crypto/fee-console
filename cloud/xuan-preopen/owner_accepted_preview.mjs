@@ -13,6 +13,8 @@ import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
 export {validateAcceptedPreviewMetadata,previewMetadataSha256};
 export const ACCEPTED_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const ACCEPTED_PREVIEW_REGISTRATION_SCHEMA='xuan.owner-accepted-preview-registration.v1';
+export const PREVIEW_REPLACEMENT_REGISTRATION_PATH='security/xuan-owner-preview-replacement.json';
+export const PREVIEW_REPLACEMENT_SCHEMA='xuan.owner-preview-replacement.v1';
 // Fixed budget for this separately admitted static preview. Daily publishing,
 // live write admission and the full access preflight retain their own limits.
 export const ACCEPTED_PREVIEW_DEADLINE_MS=45000;
@@ -57,6 +59,31 @@ export function validateAcceptedPreviewRegistration(registration){
 }
 export function acceptedPreviewRegistrationText(registration){
   validateAcceptedPreviewRegistration(registration);return JSON.stringify(canonical(registration),null,2)+'\n';
+}
+// The old registration remains immutable. This separate protected transition
+// admits exactly one revised display and explicitly retains the old canary as
+// old-version evidence; it never relabels that canary as the new candidate.
+export function validatePreviewReplacementRegistration(revision,{previousRegistration,previousRegistrationSha256,canaryRegistrationSha256}={}){
+  if(!exact(revision,'schema target previousRegistrationSha256 previousDisplaySha256 canaryRegistrationSha256 registration')
+    ||revision.schema!==PREVIEW_REPLACEMENT_SCHEMA||!exact(revision.target,'bucket object')
+    ||revision.target.bucket!==LATEST_TARGET.bucket||revision.target.object!==LATEST_TARGET.object
+    ||['previousRegistrationSha256','previousDisplaySha256','canaryRegistrationSha256'].some(k=>!HASH.test(revision[k])))fail('REPLACEMENT_REGISTRATION');
+  const next=validateAcceptedPreviewRegistration(revision.registration);
+  if(next.displaySha256===revision.previousDisplaySha256)fail('REPLACEMENT_UNCHANGED');
+  if(previousRegistration!==undefined){
+    const old=validateAcceptedPreviewRegistration(previousRegistration);
+    if(sha(acceptedPreviewRegistrationText(old))!==revision.previousRegistrationSha256
+      ||previousRegistrationSha256!==revision.previousRegistrationSha256||old.displaySha256!==revision.previousDisplaySha256
+      ||canaryRegistrationSha256!==revision.canaryRegistrationSha256)fail('REPLACEMENT_OLD_BINDING');
+    // This is a saved-reference display revision, never new collection or an
+    // opportunity to alter scope, unknown budgets, market date or timestamps.
+    const changed=new Set(['registrationId','artifactSha256','modelSha256','displaySha256']);
+    for(const key of Object.keys(old))if(!changed.has(key)&&JSON.stringify(canonical(old[key]))!==JSON.stringify(canonical(next[key])))fail('REPLACEMENT_SOURCE_CHANGED');
+  }
+  return revision;
+}
+export function previewReplacementRegistrationText(revision){
+  validatePreviewReplacementRegistration(revision);return JSON.stringify(canonical(revision),null,2)+'\n';
 }
 export function buildAcceptedPreviewMetadata({registration,registrationSha256,registrationPolicyCommit}={}){
   const r=validateAcceptedPreviewRegistration(registration);
@@ -111,7 +138,7 @@ export function renderAcceptedPreviewDisplay(originalHtmlBytes,{registration}={}
   if((display.match(/<\/article>/g)||[]).length!==orderCount)fail('STATIC_ORDER_SHAPE');
   display=display.replaceAll('</article>','<small class="local-order-evidence">币种及价差按同名持仓推定，原生挂单未返回币种或合约标识；未验证同一合约。</small></article>');
   display=display.replace('</head>','<style>.local-order-evidence{display:block;font-size:10px;color:#6b7280;line-height:1.4;margin-top:5px}</style></head>');
-  const notice=`<aside class="notes" id="accepted-preview-notice" role="note"><strong>${r.dataDate} 周六验收稿 · 保存的私有参考</strong><p>市场数据日：${r.sourceDate}。真实采集：${hktTime(r.captureStartedAt)}–${hktTime(r.captureEndedAt)} HKT；挂单读取：${hktTime(r.ordersCaptureStartedAt)}–${hktTime(r.ordersCaptureEndedAt)} HKT；原稿生成：${hktTime(r.completedAt)} HKT。</p><p>周末验收，不代表当日开市、当前实时数据、正式工作日报告或同步完成。重新打开不会更新取值；覆盖、原生币种和相关预算仍按原稿保留缺项。</p></aside>`;
+  const notice=`<aside class="notes" id="accepted-preview-notice" role="note"><strong>${r.dataDate} 周六验收稿 · 保存的私有参考</strong><p>市场数据日：${r.sourceDate}；挂单快照：${hkt(r.ordersCaptureEndedAt).slice(11,16)} HKT。</p><p>周六参考 · 非实时。重新打开不会更新取值；覆盖、原生币种和相关预算仍按原稿保留缺项。</p><details><summary>采集与生成时间</summary><p>真实采集：${hktTime(r.captureStartedAt)}–${hktTime(r.captureEndedAt)} HKT；挂单读取：${hktTime(r.ordersCaptureStartedAt)}–${hktTime(r.ordersCaptureEndedAt)} HKT；原稿生成：${hktTime(r.completedAt)} HKT。</p><p>周末验收，不代表当日开市、正式工作日报告或同步完成。挂单快照使用读取完成时间；原稿生成时间不是数据时间。</p></details></aside>`;
   display=display.replace('</header>','</header>'+notice);
   staticDisplayBinding(display,r);return new TextEncoder().encode(display);
 }
@@ -155,7 +182,7 @@ export function createProtectedOwnerPreviewVerifier({loadContext,now:clock=Date.
         ||!['candidate-admission','historical-authenticity'].includes(phase))fail('PHASE_OR_CLOCK');
       const m=JSON.parse(JSON.stringify(metadata)),bytes=copyBytes(displayBytes,MAX_HTML);
       validateAcceptedPreviewMetadata(m,{now:time,ownerBinding:OWNER_BINDING});
-      const options={phase:phase==='candidate-admission'?'accepted-preview-admission':'accepted-preview-historical',policyCommit:m.registrationPolicyCommit,now:()=>clock()};
+      const options={phase:phase==='candidate-admission'?'accepted-preview-admission':'accepted-preview-historical',policyCommit:m.registrationPolicyCommit,registrationSha256:m.registrationSha256,now:()=>clock()};
       const original=checkedContext(await loadContext(options),m),r=original.registration;
       if(sha(bytes)!==r.displaySha256)fail('DISPLAY_HASH');staticDisplayBinding(decode(bytes),r);
       // No live-freshness assertion is made for this fixed saved reference.
@@ -177,6 +204,67 @@ async function verifiedCandidate(candidate,verify,now){
     ||proof.sourceIdentitySha256!==m.sourceIdentitySha256||proof.registrationId!==m.registrationId
     ||proof.registrationSha256!==m.registrationSha256||proof.registrationPolicyCommit!==m.registrationPolicyCommit
     ||proof.displaySha256!==sha(candidate.displayBytes)||proof.metadataSha256!==await previewMetadataSha256(m))fail('PROTECTED_VERIFIER_REJECTED');
+}
+
+export function createProtectedPreviewReplacementVerifier({loadContext,now=Date.now}={}){
+  if(typeof loadContext!=='function'||typeof now!=='function')fail('CAPABILITIES_REQUIRED');
+  const verify=createProtectedOwnerPreviewVerifier({loadContext,now});
+  return async({previous,candidate}={})=>{
+    const old=structuredClone(previous),next=structuredClone(candidate);
+    if(!exact(old,'state generation kind preview displayBytes')||old.state!=='present'||old.kind!=='accepted-preview'
+      ||typeof old.generation!=='string'||!/^([1-9][0-9]{0,29})$/.test(old.generation)||!exact(old.preview,'metadata')||!exact(next,'metadata displayBytes'))fail('REPLACEMENT_OLD_REQUIRED');
+    const options={phase:'accepted-preview-replacement',policyCommit:next.metadata.registrationPolicyCommit,now};
+    const initial=await loadContext(options),p=initial?.previewReplacement;
+    if(!exact(p,'revision sha256 policyCommit')||p.policyCommit!==next.metadata.registrationPolicyCommit
+      ||sha(previewReplacementRegistrationText(p.revision))!==p.sha256)fail('REPLACEMENT_CONTEXT');
+    const r=validatePreviewReplacementRegistration(p.revision);
+    if(old.preview.metadata.registrationSha256!==r.previousRegistrationSha256||sha(old.displayBytes)!==r.previousDisplaySha256
+      ||next.metadata.registrationSha256!==sha(acceptedPreviewRegistrationText(r.registration))||sha(next.displayBytes)!==r.registration.displaySha256)fail('REPLACEMENT_BINDING');
+    await verify({metadata:old.preview.metadata,displayBytes:old.displayBytes,phase:'historical-authenticity'});
+    await verifiedCandidate(next,verify,now());
+    const final=(await loadContext(options))?.previewReplacement;
+    if(JSON.stringify(canonical(final))!==JSON.stringify(canonical(p)))fail('REPLACEMENT_CHANGED');
+    return {revisionSha256:p.sha256,previousGeneration:old.generation,previousDisplaySha256:r.previousDisplaySha256,
+      candidateSha256:r.registration.displaySha256,registrationSha256:next.metadata.registrationSha256};
+  };
+}
+
+// Independent one-shot replacement lane. No fallback to CAS0 or weekday
+// planning exists. A conflict/timeout requires a fresh protected execution.
+export function createAcceptedPreviewReplacementPublisher({io,verifyProtectedReplacement,verifyDestinationAccess,now=Date.now,
+  setTimer=setTimeout,clearTimer=clearTimeout}={}){
+  let closed=false;
+  return Object.freeze({async publish(candidate){
+    if(closed)return {status:'blocked',code:'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED'};
+    if(!io||typeof io.readLatest!=='function'||typeof io.replaceAcceptedPreview!=='function'||typeof io.readLatestGeneration!=='function'
+      ||typeof verifyProtectedReplacement!=='function'||typeof verifyDestinationAccess!=='function'||typeof now!=='function'
+      ||typeof setTimer!=='function'||typeof clearTimer!=='function')return {status:'blocked',code:'PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED'};
+    let next;try{if(!exact(candidate,'metadata displayBytes'))fail('CANDIDATE');next={metadata:structuredClone(candidate.metadata),displayBytes:copyBytes(candidate.displayBytes,MAX_HTML)};
+      validateAcceptedPreviewMetadata(next.metadata,{now:now(),ownerBinding:OWNER_BINDING});}catch{return {status:'blocked',code:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID'};}
+    closed=true;let timer,writing=false;const controller=new AbortController(),started=now();
+    const guard=()=>{const time=now();if(controller.signal.aborted||!Number.isFinite(started)||!Number.isFinite(time)||time<started||time-started>=ACCEPTED_PREVIEW_DEADLINE_MS)fail('DEADLINE');};
+    const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Error('deadline'));},ACCEPTED_PREVIEW_DEADLINE_MS);});
+    const work=async()=>{
+      guard();const previous=structuredClone(await io.readLatest({target:LATEST_TARGET,signal:controller.signal}));guard();
+      const proof=await verifyProtectedReplacement({previous:structuredClone(previous),candidate:structuredClone(next)});guard();
+      if(!exact(proof,'revisionSha256 previousGeneration previousDisplaySha256 candidateSha256 registrationSha256')
+        ||!HASH.test(proof.revisionSha256)||proof.previousGeneration!==previous.generation||proof.previousDisplaySha256!==sha(previous.displayBytes)
+        ||proof.candidateSha256!==sha(next.displayBytes)||proof.registrationSha256!==next.metadata.registrationSha256)fail('REPLACEMENT_PROOF');
+      if(await verifyDestinationAccess({target:LATEST_TARGET,operation:'replace-accepted-preview',...proof,signal:controller.signal})!==undefined)fail('ACCESS_CAPABILITY_RESULT');guard();
+      writing=true;const ack=await io.replaceAcceptedPreview({target:LATEST_TARGET,previousGeneration:previous.generation,
+        previousDisplaySha256:proof.previousDisplaySha256,previousMetadata:structuredClone(previous.preview.metadata),revisionSha256:proof.revisionSha256,
+        bytes:new Uint8Array(next.displayBytes),metadata:structuredClone(next.metadata),signal:controller.signal});
+      if(!object(ack)||ack.bucket!==LATEST_TARGET.bucket||ack.object!==LATEST_TARGET.object||typeof ack.generation!=='string'||!/^([1-9][0-9]{0,29})$/.test(ack.generation)
+        ||BigInt(ack.generation)<=BigInt(previous.generation)||ack.size!==next.displayBytes.length)return {status:'unknown',code:'PREVIEW_REPLACEMENT_ACK_UNVERIFIED'};
+      guard();const displaySha256=sha(next.displayBytes),bytes=await io.readLatestGeneration({target:LATEST_TARGET,generation:ack.generation,sha256:displaySha256,
+        metadata:{...structuredClone(next.metadata),displaySha256},signal:controller.signal});guard();
+      if(!(bytes instanceof Uint8Array)||bytes.length!==next.displayBytes.length||sha(bytes)!==displaySha256)return {status:'unknown',code:'PREVIEW_REPLACEMENT_READBACK_UNVERIFIED'};
+      return {status:'published-verified',code:'PREVIEW_REPLACEMENT_PINNED_READBACK_VERIFIED',generation:ack.generation,sha256:displaySha256,previousGeneration:previous.generation,revisionSha256:proof.revisionSha256};
+    };
+    try{return await Promise.race([work(),deadline]);}catch(error){return {status:writing&&error?.status===412?'conflict':writing?'unknown':'blocked',
+      code:writing&&error?.status===412?'PREVIEW_REPLACEMENT_CAS_CONFLICT_NO_RETRY':writing?'PREVIEW_REPLACEMENT_OUTCOME_UNKNOWN':'PREVIEW_REPLACEMENT_VALIDATION_FAILED'};}
+    finally{clearTimer(timer);controller.abort();}
+  }});
 }
 
 export function createAcceptedPreviewPublisher({io,verifyProtectedPreview,verifyDestinationAccess,now=Date.now,setTimer=setTimeout,clearTimer=clearTimeout}={}){

@@ -421,5 +421,170 @@ class SdkSessionSyntheticTests(unittest.TestCase):
         self.assertNotIn('p.auth.disable_ssl_validation.Get()', source)
 
 
+class ReplacementTests(unittest.TestCase):
+    """Every byte/policy/version below is synthetic; no live SDK is loaded."""
+    def fixture(self, wire='stored', change=None, after_read=None, post_status=200):
+        old_bytes = b'<p>synthetic saved old reference</p>'
+        new_bytes = b'<p>synthetic revised saved reference</p>'
+        gen = '900719925474099312345'
+        old = {'scope': 'synthetic-scope', 'ownerBinding': 'b' * 64, 'sourceIdentitySha256': 'c' * 64,
+               'registrationId': 'synthetic-saturday', 'dataDate': '2026-10-17', 'sourceDate': '2026-10-16',
+               'captureStartedAt': '2026-10-17T06:00:00.000Z', 'captureEndedAt': '2026-10-17T06:01:00.000Z',
+               'completedAt': '2026-10-17T06:02:00.000Z', 'financialStatus': 'partial', 'unknownFields': ['cash', 'prices'],
+               'displaySha256': hashlib.sha256(old_bytes).hexdigest()}
+        new = dict(old, displaySha256=hashlib.sha256(new_bytes).hexdigest())
+        old_hash = hashlib.sha256(m.canonical_registration(old)).hexdigest()
+        revision = {'schema': 'xuan.owner-preview-replacement.v1', 'target': {'bucket': m.BUCKET, 'object': m.OBJECT},
+                    'previousRegistrationSha256': old_hash, 'previousDisplaySha256': old['displaySha256'],
+                    'canaryRegistrationSha256': 'd' * 64, 'registration': new}
+        revision_hash = hashlib.sha256(m.canonical_registration(revision)).hexdigest()
+        pins = {'revisionSha256': revision_hash, 'previousGeneration': gen, 'previousDisplaySha256': old['displaySha256'],
+                'previousRegistrationSha256': old_hash}
+        metadata = m.registered_preview_metadata(new, hashlib.sha256(m.canonical_registration(new)).hexdigest(), 'a' * 40)
+        resource = {'name': m.OBJECT, 'contentType': 'text/html; charset=utf-8', 'contentDisposition': 'inline',
+                    'cacheControl': 'private, no-store, max-age=0',
+                    'metadata': {'previewMetadata': json.dumps(metadata), 'displaySha256': new['displaySha256']}}
+        boundary = 'xuan_owner_latest_' + new['displaySha256']
+        body = ('--' + boundary + '\r\nContent-Type: application/json; charset=utf-8\r\n\r\n' + json.dumps(resource)
+                + '\r\n--' + boundary + '\r\nContent-Type: text/html; charset=utf-8\r\n\r\n').encode() + new_bytes + ('\r\n--' + boundary + '--\r\n').encode()
+        value = {'op': 'replaceAcceptedPreview', 'url': UPLOAD.replace('ifGenerationMatch=0', 'ifGenerationMatch=' + gen), 'method': 'POST',
+                 'headers': {'Content-Type': 'multipart/related; boundary=' + boundary, 'Accept': 'application/json', 'Accept-Encoding': 'identity'},
+                 'body': base64.b64encode(body).decode(), 'replacement': pins, 'admissionExpiresAt': int(m.time.time() * 1000) + 4900}
+        old_custom = {'displaySha256': old['displaySha256'], 'previewMetadata': json.dumps(m.registered_preview_metadata(old, old_hash, 'f' * 40))}
+        stored = {'bucket': m.BUCKET, 'name': m.OBJECT, 'generation': gen, 'size': str(len(old_bytes)),
+                  'contentType': 'text/html; charset=utf-8', 'contentDisposition': 'inline',
+                  'cacheControl': 'private, no-store, max-age=0', 'metadata': old_custom}
+        headers = {'content-type': 'text/html; charset=utf-8', 'content-length': str(len(old_bytes)), 'x-goog-generation': gen,
+                   'content-disposition': 'inline', 'cache-control': 'private, no-store, max-age=0'}
+        if wire == 'observed':
+            headers.update({'content-disposition': 'attachment', 'cache-control': 'no-cache, no-store, max-age=0, must-revalidate'})
+        if wire == 'mixed':
+            headers['content-disposition'] = 'attachment'
+        class SyntheticProvider(Provider):
+            def request(self, url, method, outgoing, payload):
+                self.calls.append((url, method, outgoing, payload))
+                if method == 'POST':
+                    return Response(url, post_status)
+                if method == 'HEAD':
+                    h = dict(headers)
+                    if m.quote(m.CANARY_OBJECT, safe='') in url:
+                        h.update({'x-goog-generation': '2', 'content-length': '23'})
+                        if change == 'canary':
+                            h['x-goog-generation'] = '3'
+                        return Response(url, headers=h)
+                    if change == 'generation':
+                        h['x-goog-generation'] = '900719925474099312346'
+                    return Response(url, headers=h)
+                if 'alt=media' not in url:
+                    current = json.loads(json.dumps(stored))
+                    if change == 'metadata':
+                        current['metadata']['displaySha256'] = 'f' * 64
+                    return Response(url, body=json.dumps(current).encode())
+                after_read and after_read()
+                return Response(url, body=old_bytes if change != 'bytes' else b'SYNTHETIC WRONG', headers=headers)
+        provider = SyntheticProvider()
+        return value, revision, old, revision_hash, provider
+
+    def run_with(self, f):
+        value, revision, old, revision_hash, provider = f
+        bridge = m.OwnerBridge(provider)
+        with patch.object(m, 'replacement_registration', return_value=(revision, old, revision_hash)), patch.object(m, 'replacement_canary_pin', return_value={'generation': '2', 'size': '23'}):
+            result = bridge.dispatch(value)
+        return bridge, result
+
+    def test_cas_n_uses_real_pinned_old_reads_and_single_post_for_both_exact_wire_profiles(self):
+        for wire in ('stored', 'observed'):
+            f = self.fixture(wire=wire)
+            bridge, result = self.run_with(f)
+            self.assertEqual(result['status'], 200)
+            calls = f[-1].calls
+            self.assertEqual([c[1] for c in calls], ['HEAD', 'GET', 'GET', 'HEAD', 'POST'])
+            self.assertIn('generation=900719925474099312345', calls[1][0])
+            self.assertIn('ifGenerationMatch=900719925474099312345', calls[4][0])
+            with patch.object(m, 'replacement_registration', return_value=(f[1], f[2], f[3])):
+                with self.assertRaises(m.BoundaryError):
+                    bridge.dispatch(f[0])
+            self.assertEqual(sum(c[1] == 'POST' for c in calls), 1)
+
+    def test_old_version_header_hash_and_metadata_failures_make_zero_post_and_close_attempt(self):
+        for options in ({'change': 'generation'}, {'change': 'metadata'}, {'change': 'bytes'}, {'wire': 'mixed'}):
+            f = self.fixture(**options)
+            bridge = m.OwnerBridge(f[-1])
+            with patch.object(m, 'replacement_registration', return_value=(f[1], f[2], f[3])):
+                for _ in range(2):
+                    with self.assertRaises(m.BoundaryError):
+                        bridge.dispatch(f[0])
+            self.assertFalse(any(c[1] == 'POST' for c in f[-1].calls))
+
+    def test_actual_last_post_rechecks_original_lease_without_extending_for_independent_reads(self):
+        for shift in (6, -6):
+            current = [m.time.time()]
+            f = self.fixture(after_read=lambda: current.__setitem__(0, current[0] + shift))
+            with patch.object(m.time, 'time', side_effect=lambda: current[0]):
+                with self.assertRaises(m.BoundaryError) as error:
+                    self.run_with(f)
+            self.assertEqual(error.exception.code, 'REPLACEMENT_ADMISSION_EXPIRED')
+            self.assertFalse(any(c[1] == 'POST' for c in f[-1].calls))
+
+    def test_final_canary_changed_after_old_reads_causes_zero_post(self):
+        f = self.fixture(change='canary')
+        with self.assertRaises(m.BoundaryError) as error:
+            self.run_with(f)
+        self.assertEqual(error.exception.code, 'REPLACEMENT_CANARY_CURRENT')
+        self.assertEqual([c[1] for c in f[-1].calls], ['HEAD', 'GET', 'GET', 'HEAD'])
+
+    def test_near_expiry_uses_remaining_monotonic_budget_and_rejects_small_wall_rollback(self):
+        for mode in ('remaining', 'rollback'):
+            wall, monotonic = [m.time.time()], [100.0]
+            def elapsed():
+                wall[0] += -0.01 if mode == 'rollback' else 0.01
+                monotonic[0] += 0.2
+            f = self.fixture(after_read=elapsed)
+            f[0]['admissionExpiresAt'] = int(wall[0] * 1000) + 100
+            with patch.object(m.time, 'time', side_effect=lambda: wall[0]), patch.object(m.time, 'monotonic', side_effect=lambda: monotonic[0]):
+                with self.assertRaises(m.BoundaryError) as error:
+                    self.run_with(f)
+            self.assertEqual(error.exception.code, 'REPLACEMENT_ADMISSION_EXPIRED')
+            self.assertFalse(any(c[1] == 'POST' for c in f[-1].calls))
+
+    def test_generic_post_still_cas0_only_and_replacement_cannot_choose_other_generation_or_candidate(self):
+        for edit in (lambda v: v.update(url=UPLOAD), lambda v: v['replacement'].update(previousGeneration='1'),
+                     lambda v: v.update(url=v['url'].replace(m.BUCKET, 'synthetic-other-bucket')),
+                     lambda v: v.update(method='DELETE'),
+                     lambda v: v['replacement'].update(revisionSha256='f' * 64),
+                     lambda v: v.update(body=write_value()['body']), lambda v: v.update(admissionExpiresAt=0)):
+            f = self.fixture(); edit(f[0])
+            with patch.object(m, 'replacement_registration', return_value=(f[1], f[2], f[3])):
+                with self.assertRaises(m.BoundaryError):
+                    m.OwnerBridge(f[-1]).dispatch(f[0])
+            self.assertEqual(f[-1].calls, [])
+
+    def test_fixed_registry_keeps_old_bytes_and_source_fields_but_allows_explicit_review_marker_revision(self):
+        f = self.fixture(); revision, old = f[1], f[2]
+        revision['registration']['registrationId'] = 'synthetic-new-review-marker'
+        canary = b'{"syntheticOldCanary":true}\n'
+        revision['canaryRegistrationSha256'] = hashlib.sha256(canary).hexdigest()
+        files = {'xuan-owner-accepted-preview.json': m.canonical_registration(old),
+                 'xuan-owner-preview-replacement.json': m.canonical_registration(revision),
+                 'xuan-owner-registered-canary.json': canary}
+        with patch.object(m.Path, 'read_bytes', lambda path: files[path.name]):
+            actual, _, _ = m.replacement_registration()
+            self.assertEqual(actual['registration']['registrationId'], 'synthetic-new-review-marker')
+            changed = json.loads(files['xuan-owner-preview-replacement.json'])
+            changed['registration']['sourceDate'] = '2026-10-15'
+            files['xuan-owner-preview-replacement.json'] = m.canonical_registration(changed)
+            with self.assertRaises(m.BoundaryError):
+                m.replacement_registration()
+
+    def test_412_is_returned_once_and_never_retried(self):
+        f = self.fixture(post_status=412)
+        bridge, result = self.run_with(f)
+        self.assertEqual(result['status'], 412)
+        self.assertEqual(sum(c[1] == 'POST' for c in f[-1].calls), 1)
+        with patch.object(m, 'replacement_registration', return_value=(f[1], f[2], f[3])):
+            with self.assertRaises(m.BoundaryError):
+                bridge.dispatch(f[0])
+
+
 if __name__ == '__main__':
     unittest.main()

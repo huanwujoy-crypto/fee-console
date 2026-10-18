@@ -7,6 +7,8 @@ COPY .github/workflows/xuan-preopen-image-maintenance.yml .github/workflows/xuan
 COPY .github/workflows/xuan-preopen-image-build.yml .github/workflows/xuan-preopen-image-build.yml
 COPY .github/workflows/xuan-preopen-image-deploy.yml .github/workflows/xuan-preopen-image-deploy.yml
 COPY claude/xuan-ib-portfolio-registry.json claude/xuan-ib-portfolio-registry.json
+COPY claude/xuan-weekly-concentration-top10-v1.json claude/xuan-weekly-concentration-top10-v1.json
+COPY claude/xuan-weekly-leveraged-products-v1.json claude/xuan-weekly-leveraged-products-v1.json
 COPY security/xuan-preopen-maintenance-iam.json security/xuan-preopen-maintenance-iam.json
 COPY cloud/xuan-preopen/ cloud/xuan-preopen/
 USER node

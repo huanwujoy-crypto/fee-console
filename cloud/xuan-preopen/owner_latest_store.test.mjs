@@ -233,6 +233,32 @@ function previewMetadata(){return {schema:ACCEPTED_PREVIEW_SCHEMA,scope:OWNER_SC
   financialStatus:'partial',unknownFields:['orders','cash','prices']};}
 const previewDisplay=()=>encode('<!doctype html><p>Synthetic accepted Saturday preview</p>');
 const previewCustom=(metadata,bytes)=>({previewMetadata:JSON.stringify(Object.fromEntries(Object.keys(metadata).sort().map(key=>[key,metadata[key]]))),displaySha256:hash(bytes)});
+test('named replacement rereads exact old version and uses one fixed CAS N; public preview overwrite remains unavailable',async()=>{
+  const f=fake(),old=previewDisplay(),metadata=previewMetadata(),next=encode('<p>Synthetic revised preview</p>');
+  f.add(LATEST_TARGET.object,'900719925474099312345',old,previewCustom(metadata,old));let writes=0;
+  const store=createOwnerLatestStore({request:f.request,requestPreviewReplacement:async(url,options,pins)=>{
+    writes++;assert.equal(new URL(url).searchParams.get('ifGenerationMatch'),'900719925474099312345');
+    assert.equal(pins.previousRegistrationSha256,metadata.registrationSha256);
+    return jsonResponse({bucket:LATEST_TARGET.bucket,name:LATEST_TARGET.object,generation:'900719925474099312346',size:String(next.length),...LATEST_HEADERS,
+      metadata:previewCustom({...metadata,registrationSha256:'f'.repeat(64)},next)});
+  }});
+  const args={previousGeneration:'900719925474099312345',previousDisplaySha256:hash(old),previousMetadata:metadata,revisionSha256:'c'.repeat(64),bytes:next,metadata:{...metadata,registrationSha256:'f'.repeat(64)}};
+  assert.equal((await store.replaceAcceptedPreview(args)).generation,'900719925474099312346');assert.equal(writes,1);
+  await assert.rejects(store.replaceAcceptedPreview(args),/REPLACEMENT_CLOSED/);assert.equal(writes,1);
+  assert.deepEqual(f.calls.map(c=>c.options.method),['HEAD','GET','GET']);
+});
+test('replacement malformed old object, changed generation/metadata/bytes and missing named transport cause zero POST',async()=>{
+  for(const kind of ['absent','daily','generation','metadata','bytes','transport']){
+    const f=fake({latest:kind==='daily'}),old=previewDisplay(),metadata=previewMetadata();
+    if(!['absent','daily'].includes(kind))f.add(LATEST_TARGET.object,'7',old,previewCustom(metadata,old));
+    const args={previousGeneration:kind==='generation'?'8':'7',previousDisplaySha256:hash(old),previousMetadata:structuredClone(metadata),revisionSha256:'c'.repeat(64),bytes:encode('synthetic revision'),metadata:{...metadata,registrationSha256:'f'.repeat(64)}};
+    if(kind==='metadata')args.previousMetadata.registrationSha256='f'.repeat(64);
+    if(kind==='bytes')f.records.get(LATEST_TARGET.object+'@7').bytes[0]^=1;
+    let writes=0;const store=createOwnerLatestStore({request:f.request,...(kind==='transport'?{}:{requestPreviewReplacement:()=>{writes++;assert.fail('no write');}})});
+    await assert.rejects(store.replaceAcceptedPreview(args));assert.equal(writes,0);assert.ok(f.calls.every(c=>c.options.method!=='POST'));
+    await assert.rejects(store.replaceAcceptedPreview(args),/REPLACEMENT_CLOSED/);
+  }
+});
 test('presence probe treats every existing object as present without inspecting headers, metadata or body',async()=>{
   const f=fake({intercept:()=>{
     const response=new Response('SYNTHETIC INVALID OLD OBJECT');

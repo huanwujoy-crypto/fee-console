@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import re
 import sys
+import time
 import uuid as uuid_module
 from urllib.parse import parse_qsl, quote, urlsplit
 
@@ -163,7 +164,7 @@ def validate_multipart(body, content_type):
         reject('DISPLAY_UTF8_INVALID')
 
 
-def validate_storage_request(value):
+def validate_storage_request(value, expected_generation='0'):
     if not isinstance(value, dict) or set(value) != {'op', 'url', 'method', 'headers', 'body'} or value['op'] != 'request':
         reject('REQUEST_INVALID')
     url, method = value['url'], value['method']
@@ -181,7 +182,7 @@ def validate_storage_request(value):
         reject('QUERY_INVALID')
     headers = validate_headers(value['headers'], method)
     if method == 'POST':
-        if parsed.path != '/upload/storage/v1/b/' + BUCKET + '/o' or query != {'uploadType': 'multipart', 'ifGenerationMatch': '0'}:
+        if parsed.path != '/upload/storage/v1/b/' + BUCKET + '/o' or query != {'uploadType': 'multipart', 'ifGenerationMatch': expected_generation}:
             reject('TARGET_INVALID')
         try:
             body = base64.b64decode(value['body'], validate=True)
@@ -207,6 +208,111 @@ def validate_storage_request(value):
     return url, method, headers, body
 
 
+def canonical_registration(value):
+    return (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=False) + '\n').encode('utf-8')
+
+
+def replacement_registration():
+    # Fixed protected files only; no supplied path, credential or SDK lookup.
+    root = Path(__file__).resolve().parents[2] / 'security'
+    raw = (root / 'xuan-owner-preview-replacement.json').read_bytes()
+    old_raw = (root / 'xuan-owner-accepted-preview.json').read_bytes()
+    canary_raw = (root / 'xuan-owner-registered-canary.json').read_bytes()
+    revision, old = json_loads(raw), json_loads(old_raw)
+    keys = {'schema', 'target', 'previousRegistrationSha256', 'previousDisplaySha256', 'canaryRegistrationSha256', 'registration'}
+    if (not isinstance(revision, dict) or set(revision) != keys
+            or revision['schema'] != 'xuan.owner-preview-replacement.v1'
+            or revision['target'] != {'bucket': BUCKET, 'object': OBJECT}
+            or canonical_registration(revision) != raw
+            or revision['previousRegistrationSha256'] != hashlib.sha256(old_raw).hexdigest()
+            or revision['previousDisplaySha256'] != old['displaySha256']
+            or revision['canaryRegistrationSha256'] != hashlib.sha256(canary_raw).hexdigest()):
+        reject('REPLACEMENT_REGISTRATION')
+    new = revision['registration']
+    if (not isinstance(new, dict) or set(new) != set(old)
+            or new['displaySha256'] == old['displaySha256']
+            or any(new[k] != old[k] for k in old if k not in ('registrationId', 'artifactSha256', 'modelSha256', 'displaySha256'))):
+        reject('REPLACEMENT_REGISTRATION')
+    return revision, old, hashlib.sha256(raw).hexdigest()
+
+
+def registered_preview_metadata(registration, registration_hash, policy_commit):
+    if not isinstance(policy_commit, str) or not re.fullmatch(r'[a-f0-9]{40}', policy_commit):
+        reject('REPLACEMENT_METADATA')
+    keys = ('scope', 'ownerBinding', 'sourceIdentitySha256', 'registrationId', 'dataDate', 'sourceDate',
+            'captureStartedAt', 'captureEndedAt', 'completedAt', 'financialStatus', 'unknownFields')
+    result = {key: registration[key] for key in keys}
+    result.update(schema='xuan.owner-accepted-preview.v1', registrationSha256=registration_hash,
+                  registrationPolicyCommit=policy_commit)
+    return result
+
+
+def validate_replacement_request(value):
+    if not isinstance(value, dict) or set(value) != {'op', 'url', 'method', 'headers', 'body', 'replacement', 'admissionExpiresAt'}:
+        reject('REPLACEMENT_INVALID')
+    pins = value['replacement']
+    if (value['op'] != 'replaceAcceptedPreview' or not isinstance(pins, dict)
+            or set(pins) != {'revisionSha256', 'previousGeneration', 'previousDisplaySha256', 'previousRegistrationSha256'}
+            or not isinstance(pins['previousGeneration'], str) or not GEN.fullmatch(pins['previousGeneration'])):
+        reject('REPLACEMENT_INVALID')
+    revision, old, revision_hash = replacement_registration()
+    if (pins['revisionSha256'] != revision_hash or pins['previousDisplaySha256'] != revision['previousDisplaySha256']
+            or pins['previousRegistrationSha256'] != revision['previousRegistrationSha256']):
+        reject('REPLACEMENT_INVALID')
+    deadline = value['admissionExpiresAt']
+    current = time.time() * 1000
+    if type(deadline) is not int or not deadline - 5000 <= current <= deadline:
+        reject('REPLACEMENT_ADMISSION_EXPIRED')
+    request = {key: item for key, item in value.items() if key not in ('replacement', 'admissionExpiresAt')}
+    request['op'] = 'request'
+    validated = validate_storage_request(request, pins['previousGeneration'])
+    if request['method'] != 'POST':
+        reject('REPLACEMENT_INVALID')
+    body = validated[3]
+    boundary = 'xuan_owner_latest_' + revision['registration']['displaySha256']
+    prefix = ('--' + boundary + '\r\nContent-Type: application/json; charset=utf-8\r\n\r\n').encode()
+    separator = ('\r\n--' + boundary + '\r\nContent-Type: text/html; charset=utf-8\r\n\r\n').encode()
+    suffix = ('\r\n--' + boundary + '--\r\n').encode()
+    if not body.startswith(prefix) or not body.endswith(suffix):
+        reject('REPLACEMENT_CANDIDATE')
+    resource = json_loads(body[len(prefix):-len(suffix)].split(separator)[0])
+    custom = resource['metadata']
+    metadata = json_loads(custom['previewMetadata'])
+    new_hash = hashlib.sha256(canonical_registration(revision['registration'])).hexdigest()
+    if (custom['displaySha256'] != revision['registration']['displaySha256']
+            or metadata != registered_preview_metadata(revision['registration'], new_hash, metadata.get('registrationPolicyCommit'))):
+        reject('REPLACEMENT_CANDIDATE')
+    return validated, revision, old
+
+
+def owner_canary_html(uid, created, candidate):
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer">'
+            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; base-uri \'none\'; form-action \'none\'">'
+            '<title>Private delivery check</title></head><body><!-- xuan.owner-phone-canary.v1 -->'
+            '<h1>Private delivery check</h1><p>Reference: ' + uid + '</p><p>Created at UTC: ' + created
+            + '</p><p>Candidate SHA-256: ' + candidate + '</p></body></html>').encode('utf-8')
+
+
+def replacement_canary_pin(revision):
+    raw = (Path(__file__).resolve().parents[2] / 'security' / 'xuan-owner-registered-canary.json').read_bytes()
+    registration = json_loads(raw)
+    if (hashlib.sha256(raw).hexdigest() != revision['canaryRegistrationSha256'] or not isinstance(registration, dict)
+            or set(registration) != {'schema', 'target', 'pin'} or registration['schema'] != 'xuan.owner-registered-canary.v1'
+            or registration['target'] != {'bucket': BUCKET, 'object': CANARY_OBJECT}):
+        reject('REPLACEMENT_CANARY_REGISTRATION')
+    pin = registration['pin']
+    if (not isinstance(pin, dict) or set(pin) != {'uuid', 'createdAt', 'candidateSha256', 'generation', 'sha256'}
+            or not isinstance(pin['generation'], str) or not GEN.fullmatch(pin['generation'])
+            or not isinstance(pin['uuid'], str) or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}', pin['uuid'])
+            or not isinstance(pin['createdAt'], str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', pin['createdAt'])
+            or pin['candidateSha256'] != revision['previousDisplaySha256']):
+        reject('REPLACEMENT_CANARY_REGISTRATION')
+    raw_html = owner_canary_html(pin['uuid'], pin['createdAt'], pin['candidateSha256'])
+    if hashlib.sha256(raw_html).hexdigest() != pin['sha256']:
+        reject('REPLACEMENT_CANARY_REGISTRATION')
+    return {'generation': pin['generation'], 'size': str(len(raw_html))}
+
+
 def canary_content(value):
     if not isinstance(value, dict) or set(value) != {'op', 'uuid', 'createdAt', 'candidateSha256'}:
         reject('CANARY_INVALID')
@@ -222,11 +328,7 @@ def canary_content(value):
     age = (datetime.datetime.now(datetime.timezone.utc) - parsed).total_seconds()
     if age < 0 or age > 60:
         reject('CANARY_TIME_INVALID')
-    html = ('<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="referrer" content="no-referrer">'
-            '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; base-uri \'none\'; form-action \'none\'">'
-            '<title>Private delivery check</title></head><body><!-- xuan.owner-phone-canary.v1 -->'
-            '<h1>Private delivery check</h1><p>Reference: ' + uid + '</p><p>Created at UTC: ' + created
-            + '</p><p>Candidate SHA-256: ' + candidate + '</p></body></html>').encode('utf-8')
+    html = owner_canary_html(uid, created, candidate)
     metadata = {'schema': 'xuan.owner-phone-canary.v1', 'uuid': uid, 'createdAt': created,
                 'candidateSha256': candidate, 'canarySha256': hashlib.sha256(html).hexdigest()}
     resource = {'name': CANARY_OBJECT, 'contentType': 'text/html; charset=utf-8',
@@ -377,12 +479,81 @@ class OwnerBridge:
             reject('ENCODING_INVALID')
         return json_loads(base64.b64decode(response['body']))
 
+    def verify_replacement_previous(self, pins, revision, old):
+        # Discover the current object independently of the caller and then read
+        # metadata/media pinned to that real generation. No ACK/history pin can
+        # substitute for this HEAD. A later race is stopped by the same CAS.
+        url = 'https://storage.googleapis.com/storage/v1/b/' + BUCKET + '/o/' + quote(OBJECT, safe='')
+        head = self.raw_request(url + '?alt=media', 'HEAD', {'Accept-Encoding': 'identity'}, None)
+        if head['status'] != 200 or head['headers'].get('x-goog-generation') != pins['previousGeneration']:
+            reject('REPLACEMENT_OLD_CHANGED')
+        metadata = self.read_json(url + '?generation=' + pins['previousGeneration'])
+        expected_headers = {'content-type': 'text/html; charset=utf-8', 'content-disposition': 'inline',
+                            'cache-control': 'private, no-store, max-age=0'}
+        if (not isinstance(metadata, dict) or metadata.get('bucket') != BUCKET or metadata.get('name') != OBJECT
+                or metadata.get('generation') != pins['previousGeneration']
+                or metadata.get('contentType') != expected_headers['content-type']
+                or metadata.get('contentDisposition') != 'inline' or metadata.get('cacheControl') != expected_headers['cache-control']
+                or not isinstance(metadata.get('size'), str) or not re.fullmatch(r'[1-9][0-9]{0,8}', metadata['size'])
+                or int(metadata['size']) > MAX_DISPLAY):
+            reject('REPLACEMENT_OLD_METADATA')
+        custom = metadata.get('metadata')
+        if not isinstance(custom, dict) or set(custom) != {'previewMetadata', 'displaySha256'} or custom['displaySha256'] != revision['previousDisplaySha256']:
+            reject('REPLACEMENT_OLD_METADATA')
+        preview = json_loads(custom['previewMetadata'])
+        if not isinstance(preview, dict) or preview != registered_preview_metadata(old, revision['previousRegistrationSha256'], preview.get('registrationPolicyCommit')):
+            reject('REPLACEMENT_OLD_METADATA')
+        media = self.raw_request(url + '?generation=' + pins['previousGeneration'] + '&alt=media', 'GET',
+                                 {'Accept': 'application/octet-stream', 'Accept-Encoding': 'identity'}, None)
+        raw = base64.b64decode(media['body'])
+        for response in (head, media):
+            wire = response['headers']
+            header_pair = (wire.get('content-disposition'), wire.get('cache-control'))
+            if (response['status'] != 200 or response['headers'].get('x-goog-generation') != pins['previousGeneration']
+                    or response['headers'].get('content-length') != metadata['size']
+                    or response['headers'].get('content-encoding', 'identity').lower() != 'identity'
+                    or wire.get('content-type') != expected_headers['content-type']
+                    or header_pair not in (('inline', 'private, no-store, max-age=0'),
+                                           ('attachment', 'no-cache, no-store, max-age=0, must-revalidate'))):
+                reject('REPLACEMENT_OLD_MEDIA')
+        if len(raw) != int(metadata['size']) or hashlib.sha256(raw).hexdigest() != revision['previousDisplaySha256']:
+            reject('REPLACEMENT_OLD_HASH')
+
+    def verify_replacement_canary_current(self, revision):
+        pin = replacement_canary_pin(revision)
+        url = 'https://storage.googleapis.com/storage/v1/b/' + BUCKET + '/o/' + quote(CANARY_OBJECT, safe='') + '?alt=media'
+        result = self.raw_request(url, 'HEAD', {'Accept-Encoding': 'identity'}, None)
+        headers = result['headers']
+        pair = (headers.get('content-disposition'), headers.get('cache-control'))
+        if (result['status'] != 200 or headers.get('x-goog-generation') != pin['generation']
+                or headers.get('content-length') != pin['size'] or headers.get('content-type') != 'text/html; charset=utf-8'
+                or headers.get('content-encoding', 'identity').lower() != 'identity'
+                or pair not in (('inline', 'private, no-store, max-age=0'),
+                                ('attachment', 'no-cache, no-store, max-age=0, must-revalidate'))):
+            reject('REPLACEMENT_CANARY_CURRENT')
+
     def dispatch(self, value):
         if self.closed:
             reject('CLOSED')
         if not isinstance(value, dict):
             reject('REQUEST_INVALID')
         op = value.get('op')
+        if op == 'replaceAcceptedPreview':
+            validated, revision, old = validate_replacement_request(value)
+            if self.write_started:
+                reject('WRITE_ALREADY_ATTEMPTED')
+            self.write_started = True  # one attempt, including pre-write failures
+            initial_wall, admitted = time.time() * 1000, time.monotonic()
+            remaining_ms = value['admissionExpiresAt'] - initial_wall
+            if not 0 <= remaining_ms <= 5000:
+                reject('REPLACEMENT_ADMISSION_EXPIRED')
+            self.verify_replacement_previous(value['replacement'], revision, old)
+            self.verify_replacement_canary_current(revision)
+            current = time.time() * 1000
+            if not initial_wall <= current <= value['admissionExpiresAt'] or (time.monotonic() - admitted) * 1000 > remaining_ms:
+                reject('REPLACEMENT_ADMISSION_EXPIRED')
+            self.mutation_started = True
+            return self.raw_request(*validated)
         if op == 'request':
             url, method, headers, body = validate_storage_request(value)
             if method == 'POST':
@@ -420,7 +591,8 @@ class OwnerBridge:
                 reject('PIN_REQUIRED')
             url += '?generation=' + gen + ('&alt=media' if media else '')
             return self.raw_request(url, 'GET', {'Accept': 'application/octet-stream' if media else 'application/json', 'Accept-Encoding': 'identity'}, None)
-        if op == 'boundary' and set(value) == {'op', 'includeRoleDefinitions'} and isinstance(value['includeRoleDefinitions'], bool):
+        if (op == 'boundary' and set(value) in ({'op', 'includeRoleDefinitions'}, {'op', 'includeRoleDefinitions', 'requireDeletePermission'})
+                and isinstance(value['includeRoleDefinitions'], bool) and isinstance(value.get('requireDeletePermission', False), bool)):
             started = instant()
             actor = self.provider.check_original_identity()
             bucket_url = 'https://storage.googleapis.com/storage/v1/b/' + BUCKET
@@ -429,7 +601,8 @@ class OwnerBridge:
             project = self.read_json('https://cloudresourcemanager.googleapis.com/v1/projects/' + PROJECT)
             project_iam = self.read_json('https://cloudresourcemanager.googleapis.com/v1/projects/' + PROJECT + ':getIamPolicy',
                                          'POST', b'{"options":{"requestedPolicyVersion":3}}')
-            permissions = self.read_json(bucket_url + '/iam/testPermissions?permissions=storage.objects.create&permissions=storage.objects.get')
+            permissions = self.read_json(bucket_url + '/iam/testPermissions?permissions=storage.objects.create&permissions=storage.objects.get'
+                                         + ('&permissions=storage.objects.delete' if value.get('requireDeletePermission') else ''))
             roles = []
             if value['includeRoleDefinitions']:
                 for role in ROLE_NAMES:
