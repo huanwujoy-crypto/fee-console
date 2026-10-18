@@ -49,6 +49,13 @@ test('latest writes have fixed CAS0 multipart and canary has no arbitrary payloa
     await rejected('CANARY_REQUEST_INVALID',()=>sdk.requestCanary({method:'HEAD',generation:'1'}));
   }finally{sdk.close();}
 });
+test('named replacement cannot mint a grant from caller flags, missing pins or CAS0',async()=>{
+  const sdk=createOwnerSdkTransport();
+  try{for(const pins of [undefined,{approved:true},{revisionSha256:'a'.repeat(64),previousGeneration:'0',previousDisplaySha256:'b'.repeat(64),previousRegistrationSha256:'c'.repeat(64)},
+    {revisionSha256:'a'.repeat(64),previousGeneration:'1',previousDisplaySha256:'b'.repeat(64),previousRegistrationSha256:'c'.repeat(64),approved:true}])
+    await rejected('REPLACEMENT_INVALID',()=>sdk.requestPreviewReplacement(upload,{method:'POST'},pins,{admissionExpiresAt:Date.now()+5000}));
+  }finally{sdk.close();}
+});
 
 test('Node IPC fixes financial POST identity and typed canary cannot supply negotiation headers',async t=>{
   if(!process.env.XUAN_OWNER_EXISTING_SDK_ROOT){t.skip('Exact Mac runtime locator absent');return;}

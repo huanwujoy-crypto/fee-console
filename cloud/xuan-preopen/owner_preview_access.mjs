@@ -9,6 +9,7 @@ import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 import {LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
 import {requireProtectedOwnerCheckout} from './owner_latest_delivery.mjs';
 import {createOwnerSdkTransport} from './owner_sdk_transport.mjs';
+import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 export const CANARY_TARGET=Object.freeze({bucket:LATEST_TARGET.bucket,object:'delivery/owner-phone-canary-v1.html'});
 export const FULL_PREFLIGHT_TTL_MS=60000,MAX_BOUNDARY_WINDOW_MS=30000,MAX_BOUNDARY_AGE_MS=5000,MAX_CANARY_BYTES=4096;
 export const FINANCIAL_ADMISSION_TTL_MS=5000;
@@ -59,10 +60,11 @@ function normalizeRole(role){
     ||new Set(role.includedPermissions).size!==role.includedPermissions.length||role.deleted===true||typeof role.stage!=='string')fail('ROLE');
   return {name:role.name,includedPermissions:[...role.includedPermissions].filter(x=>x.startsWith('storage.')).sort(),stage:role.stage,deleted:role.deleted??false};
 }
-function normalizedBase(boundary){
+function normalizedBase(boundary,{requireDeletePermission=false}={}){
   exact(boundary,'schema actorIdentifier bucketMetadata bucketIam projectIam projectMetadata roleDefinitions bucketTestPermissions startedAt completedAt');
   if(!object(boundary.bucketTestPermissions)||!Array.isArray(boundary.bucketTestPermissions.permissions)
     ||!['storage.objects.get','storage.objects.create'].every(p=>boundary.bucketTestPermissions.permissions.includes(p)))fail('TEST_PERMISSIONS');
+  if(requireDeletePermission&&!boundary.bucketTestPermissions.permissions.includes('storage.objects.delete'))fail('REPLACEMENT_DELETE_PERMISSION');
   if(boundary.schema!=='xuan.owner-sdk-live-boundary.v1'||typeof boundary.actorIdentifier!=='string'||!boundary.actorIdentifier
     ||/[\s\0]/.test(boundary.actorIdentifier))fail('ACTOR');
   const b=boundary.bucketMetadata,p=boundary.projectMetadata;
@@ -75,7 +77,7 @@ function normalizedBase(boundary){
   return {actorIdentifierSha256:hash(boundary.actorIdentifier),bucketMetadata,bucketIam:normalizePolicy(boundary.bucketIam,{bucket:true}),
     projectIam:normalizePolicy(boundary.projectIam),projectMetadata:{projectId:PROJECT,projectNumberSha256:hash(String(b.projectNumber)),parent:null}};
 }
-function readerSets(base,roles,ownerHash){
+function readerSets(base,roles,ownerHash,{requireDeletePermission=false}={}){
   const sets=Object.fromEntries(TARGETS.map(t=>[t,new Set()])),owner=Object.fromEntries(TARGETS.map(t=>[t,new Set()]));
   const selectors={projectOwner:'roles/owner',projectEditor:'roles/editor',projectViewer:'roles/viewer'};
   const basic=Object.fromEntries(Object.values(selectors).map(role=>[role,base.projectIam.bindings.filter(b=>b.role===role)]));
@@ -99,6 +101,7 @@ function readerSets(base,roles,ownerHash){
     }
   }
   for(const target of TARGETS)if(!['storage.objects.get','storage.objects.create'].every(p=>owner[target].has(p)))fail('OWNER_ACCESS');
+  if(requireDeletePermission&&!owner[LATEST_TARGET.object].has('storage.objects.delete'))fail('REPLACEMENT_OWNER_DELETE_PERMISSION');
   return Object.fromEntries(TARGETS.map(t=>[t,[...sets[t]].sort()]));
 }
 function validApproved(approved){
@@ -126,8 +129,8 @@ export function describeOwnerBoundary(boundary,{ownerPrincipalSha256,approvedRea
 }
 // Pure comparison helper for synthetic tests. Its return value is not an access
 // capability. Production sessions below always use the fixed protected file.
-export function evaluateOwnerBoundary(boundary,approved,{cachedRoles}={}){
-  validApproved(approved);const b=normalizedBase(boundary);
+export function evaluateOwnerBoundary(boundary,approved,{cachedRoles,requireDeletePermission=false}={}){
+  validApproved(approved);const b=normalizedBase(boundary,{requireDeletePermission});
   for(const [field,value] of [['actorIdentifierSha256',b.actorIdentifierSha256],['bucketMetadataSha256',hash(b.bucketMetadata)],
     ['bucketIamSha256',hash(b.bucketIam)],['projectIamSha256',hash(b.projectIam)],['projectMetadataSha256',hash(b.projectMetadata)]])
     if(value!==approved[field])fail('BOUNDARY_CHANGED');
@@ -136,7 +139,7 @@ export function evaluateOwnerBoundary(boundary,approved,{cachedRoles}={}){
   const names=[...new Set([...b.bucketIam.bindings,...b.projectIam.bindings].map(x=>x.role))].sort();
   if(names.length!==17||text(names)!==text(approved.roleDefinitions.map(r=>r.name).sort())||roles.size!==17)fail('ROLE_SET');
   for(const r of approved.roleDefinitions)if(hash(normalizeRole(roles.get(r.name)))!==r.sha256)fail('ROLE_CHANGED');
-  const readers=readerSets(b,roles,approved.ownerPrincipalSha256),expected=[...approved.approvedReaderPrincipalSha256].sort();
+  const readers=readerSets(b,roles,approved.ownerPrincipalSha256,{requireDeletePermission}),expected=[...approved.approvedReaderPrincipalSha256].sort();
   if(TARGETS.some(t=>text(readers[t])!==text(expected)))fail('READER_SET');
   return {boundarySha256:approved.boundarySha256,roles,readerCount:expected.length};
 }
@@ -236,60 +239,116 @@ export function validateOwnerCanaryMetadata(m,pin){
     ||text(m.metadata)!==text(expectedMeta))fail('CANARY_METADATA');
 }
 
+// Anti-replay state for an explicit trusted executor/human native-browser
+// observation. The nonce is not present in the immutable canary HTML: this is
+// an attestation boundary, not cryptographic proof of browser navigation.
+// This pure helper alone is never an IAM or publication capability.
+export function createReplacementObservation({revisionSha256,candidateSha256,pin,now=Date.now,randomUUID=crypto.randomUUID}={}){
+  if(!HEX.test(revisionSha256||'')||!HEX.test(candidateSha256||'')||typeof now!=='function'||typeof randomUUID!=='function')fail('OBSERVATION_CONTEXT');
+  const old=structuredClone(pin);renderOwnerPhoneCanary(old);if(!GEN.test(old.generation)||!HEX.test(old.sha256))fail('OBSERVATION_CONTEXT');
+  let challenge=null,attested=false,closed=false;
+  const invalidate=()=>{challenge=null;attested=false;};
+  return Object.freeze({
+    begin(){if(closed||challenge)fail('OBSERVATION_CLOSED');const issuedAt=now(),nonce=randomUUID();
+      if(!Number.isFinite(issuedAt)||!UUID.test(nonce))fail('OBSERVATION_CLOCK');
+      challenge={nonce,issuedAt,expiresAt:issuedAt+60000};
+      return {schema:'xuan.owner-native-observation-request.v1',revisionSha256,candidateSha256,oldCanaryPin:structuredClone(old),...challenge};},
+    attest(value){
+      try{exact(value,'nonce observedAt uuid createdAt candidateSha256');const time=now();
+        if(closed||!challenge||attested||value.nonce!==challenge.nonce||!instant(value.observedAt)||!Number.isFinite(time)
+          ||time<challenge.issuedAt||time>challenge.expiresAt||Date.parse(value.observedAt)<challenge.issuedAt||Date.parse(value.observedAt)>time
+          ||value.uuid!==old.uuid||value.createdAt!==old.createdAt||value.candidateSha256!==old.candidateSha256)fail('OBSERVATION_REQUIRED');
+        attested=true;return {status:'trusted-native-ui-attested',revisionSha256,candidateSha256};
+      }catch(error){closed=true;invalidate();throw error;}
+    },
+    consume(){const time=now(),valid=!closed&&attested&&challenge&&Number.isFinite(time)&&time>=challenge.issuedAt&&time<=challenge.expiresAt;
+      closed=true;invalidate();if(!valid)fail('OBSERVATION_REQUIRED');},
+    close(){closed=true;invalidate();},
+  });
+}
+
 // Production has no SDK/audience/clock/proof override. Protected checkout is
 // checked before constructing the real SDK bridge or performing live SDK I/O.
-export async function createOwnerPreviewAccess(){
+export async function createOwnerPreviewAccess(){return createPreviewAccessSession(false);}
+export async function createOwnerPreviewReplacementAccess(){return createPreviewAccessSession(true);}
+async function createPreviewAccessSession(replacing){
   await requireProtectedOwnerCheckout();
   validApproved(FIXED_APPROVED);
   const registration=strictJson(fs.readFileSync(new URL('../../security/xuan-owner-accepted-preview.json',import.meta.url),'utf8'));
-  const candidateSha256=registration.displaySha256;if(!HEX.test(candidateSha256||''))fail('REGISTERED_CANDIDATE');
-  validateRegisteredOwnerCanary(FIXED_REGISTERED_CANARY,candidateSha256);
+  let revision=null,revisionSha256=null;
+  if(replacing){const revisionText=fs.readFileSync(new URL('../../security/xuan-owner-preview-replacement.json',import.meta.url),'utf8');
+    revision=validatePreviewReplacementRegistration(strictJson(revisionText),{previousRegistration:registration,previousRegistrationSha256:hash(acceptedPreviewRegistrationText(registration)),
+      canaryRegistrationSha256:hash(fs.readFileSync(new URL('../../security/xuan-owner-registered-canary.json',import.meta.url)))});
+    if(previewReplacementRegistrationText(revision)!==revisionText)fail('REPLACEMENT_BYTES');revisionSha256=hash(revisionText);
+  }
+  const candidateSha256=replacing?revision.registration.displaySha256:registration.displaySha256;
+  if(!HEX.test(candidateSha256||''))fail('REGISTERED_CANDIDATE');
+  const canaryCandidateSha256=registration.displaySha256;
+  validateRegisteredOwnerCanary(FIXED_REGISTERED_CANARY,canaryCandidateSha256);
   const sdk=createOwnerSdkTransport();
   if(!sdk||typeof sdk.readLiveBoundary!=='function'||typeof sdk.request!=='function'
     ||typeof sdk.requestCanary!=='function'||typeof sdk.createCanary!=='function'||typeof sdk.close!=='function')fail('SDK_CAPABILITIES');
-  let canaryClosed=false,canaryPin=null,sessionClosed=false;const lease=createOwnerPreflightLease();
+  let canaryClosed=false,canaryPin=null,sessionClosed=false,observation=null,replacementPermit=null,replacementExpiresAt=null,replacementMonotonic=null;const lease=createOwnerPreflightLease();
   const guard=()=>{if(sessionClosed)fail('SESSION_CLOSED');};
-  const close=()=>{sessionClosed=true;lease.invalidate();sdk.close();};
+  const close=()=>{sessionClosed=true;lease.invalidate();replacementPermit=null;observation?.close();sdk.close();};
   const full=async()=>{
     guard();lease.invalidate();
-    const start=Date.now(),boundary=await sdk.readLiveBoundary({includeRoleDefinitions:true});validateOwnerBoundaryWindow(boundary,Date.now());
-    const next=evaluateOwnerBoundary(boundary,FIXED_APPROVED),end=Date.now();
+    const start=Date.now(),boundary=await sdk.readLiveBoundary({includeRoleDefinitions:true,...(replacing?{requireDeletePermission:true}:{})});validateOwnerBoundaryWindow(boundary,Date.now());
+    const next=evaluateOwnerBoundary(boundary,FIXED_APPROVED,{requireDeletePermission:replacing}),end=Date.now();
     if(end<start||end-start>MAX_BOUNDARY_WINDOW_MS)fail('PREFLIGHT_CLOCK');guard();lease.install(next,end);
     return {boundarySha256:next.boundarySha256,rolePermissionScope:'storage.*',roleDefinitionsChecked:17,readerCount:7,
       expiresAt:new Date(end+FULL_PREFLIGHT_TTL_MS).toISOString()};
   };
   const live=async signal=>{
     guard();lease.current(Date.now());
-    const quick=await sdk.readLiveBoundary({includeRoleDefinitions:false,signal});validateOwnerBoundaryWindow(quick,Date.now());
-    evaluateOwnerBoundary(quick,FIXED_APPROVED,{cachedRoles:lease.current(Date.now()).roles});
+    const quick=await sdk.readLiveBoundary({includeRoleDefinitions:false,signal,...(replacing?{requireDeletePermission:true}:{})});validateOwnerBoundaryWindow(quick,Date.now());
+    evaluateOwnerBoundary(quick,FIXED_APPROVED,{cachedRoles:lease.current(Date.now()).roles,requireDeletePermission:replacing});
     guard();lease.current(Date.now());
   };
   try{await full();}catch(error){sdk.close();throw error;}
   return Object.freeze({
     request:(url,options={})=>{
       guard();if((options.method??'GET')==='POST'){
+        if(replacing)fail('REPLACEMENT_NAMED_WRITE_REQUIRED');
         lease.consumeAdmission(Date.now()); // Every possible write consumes admission.
         if(options.signal?.aborted||!canaryPin)fail('FINANCIAL_ADMISSION_REQUIRED');
       }return sdk.request(url,options);
     },
+    async requestPreviewReplacement(url,options,pins){
+      guard();if(!replacing||typeof sdk.requestPreviewReplacement!=='function')fail('REPLACEMENT_REQUIRED');
+      const permit=replacementPermit,admissionExpiresAt=replacementExpiresAt,monotonic=replacementMonotonic;
+      replacementPermit=null;replacementExpiresAt=null;replacementMonotonic=null;lease.consumeAdmission(Date.now());
+      if(!permit||options?.signal?.aborted||text(pins)!==text(permit))fail('REPLACEMENT_ADMISSION_REQUIRED');
+      if(!Number.isFinite(monotonic)||performance.now()<monotonic||performance.now()-monotonic>FINANCIAL_ADMISSION_TTL_MS)fail('REPLACEMENT_ADMISSION_EXPIRED');
+      return sdk.requestPreviewReplacement(url,options,pins,{admissionExpiresAt});
+    },
     // Refresh is explicit, before the financial publisher's ten-second window.
     // It changes neither identity nor permissions and never refreshes tokens.
-    async refreshPreflight(){guard();lease.invalidate();await requireProtectedOwnerCheckout();return full();},
-    async verifyDestinationAccess({target,operation,signal}={}){
+    async refreshPreflight(){guard();lease.invalidate();replacementPermit=null;observation?.close();await requireProtectedOwnerCheckout();return full();},
+    async verifyDestinationAccess({target,operation,signal,revisionSha256:requestedRevision,previousGeneration,previousDisplaySha256,candidateSha256:requestedCandidate,registrationSha256}={}){
       lease.clearAdmission();
       if(!object(target)||Object.keys(target).sort().join('|')!=='bucket|object'||target.bucket!==LATEST_TARGET.bucket
-        ||target.object!==LATEST_TARGET.object||operation!=='create-accepted-preview'||!canaryPin)fail('CANARY_REQUIRED');
+        ||target.object!==LATEST_TARGET.object||operation!==(replacing?'replace-accepted-preview':'create-accepted-preview')||!canaryPin)fail('CANARY_REQUIRED');
+      if(replacing){replacementPermit=null;
+        if(requestedRevision!==revisionSha256||requestedCandidate!==candidateSha256||previousDisplaySha256!==revision.previousDisplaySha256
+          ||registrationSha256!==hash(acceptedPreviewRegistrationText(revision.registration))||!GEN.test(previousGeneration||''))fail('REPLACEMENT_BINDING');
+        observation?.consume();if(!observation)fail('OBSERVATION_REQUIRED');}
       await live(signal);await readCanary(sdk.requestCanary,canaryPin,signal);
       guard();lease.current(Date.now());if(signal?.aborted)fail('ABORTED');
-      if(canaryPin.candidateSha256!==candidateSha256)fail('REGISTERED_CANDIDATE');
-      lease.mintAdmission(Date.now());
+      if(canaryPin.candidateSha256!==canaryCandidateSha256)fail('REGISTERED_CANDIDATE');
+      const admittedAt=Date.now();
+      if(replacing){replacementPermit={revisionSha256,previousGeneration,previousDisplaySha256,previousRegistrationSha256:revision.previousRegistrationSha256};replacementExpiresAt=admittedAt+FINANCIAL_ADMISSION_TTL_MS;replacementMonotonic=performance.now();}
+      lease.mintAdmission(admittedAt);
     },
+    beginNativeCanaryObservation(){guard();if(!replacing||!canaryPin||observation)fail('OBSERVATION_REQUIRED');
+      observation=createReplacementObservation({revisionSha256,candidateSha256,pin:canaryPin});return observation.begin();},
+    attestNativeCanaryObservation(value){guard();if(!replacing||!observation)fail('OBSERVATION_REQUIRED');return observation.attest(value);},
     async verifyRegisteredCanary(){
       guard();if(canaryClosed)fail('CANARY_CLOSED');canaryClosed=true;
       const signal=AbortSignal.timeout(30000);
       try{
         await requireProtectedOwnerCheckout();await live(signal);
-        const pin=await readRegisteredOwnerCanary({requestCanary:sdk.requestCanary,registration:FIXED_REGISTERED_CANARY,candidateSha256,signal});
+        const pin=await readRegisteredOwnerCanary({requestCanary:sdk.requestCanary,registration:FIXED_REGISTERED_CANARY,candidateSha256:canaryCandidateSha256,signal});
         guard();lease.current(Date.now());if(signal.aborted)fail('ABORTED');
         canaryPin=Object.freeze(pin);
         return {status:'existing-verified',code:'REGISTERED_CANARY_READBACK_VERIFIED',pin:structuredClone(pin)};
@@ -297,6 +356,7 @@ export async function createOwnerPreviewAccess(){
         reason:/^[A-Z][A-Z0-9_]{1,99}$/.test(error?.safeCode||'')?error.safeCode:'CANARY_VALIDATION_FAILED'};}
     },
     async createCanary(){
+      if(replacing)fail('REPLACEMENT_EXISTING_CANARY_ONLY');
       guard();if(canaryClosed)fail('CANARY_CLOSED');canaryClosed=true;
       let writing=false,stage='protected-checkout';const signal=AbortSignal.timeout(30000);
       try{

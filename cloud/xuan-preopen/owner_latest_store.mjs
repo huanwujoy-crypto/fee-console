@@ -137,9 +137,9 @@ function concat(...parts){const bytes=new Uint8Array(parts.reduce((n,x)=>n+x.len
 function includesBytes(haystack,needle){outer:for(let i=0;i<=haystack.length-needle.length;i++){
   for(let j=0;j<needle.length;j++)if(haystack[i+j]!==needle[j])continue outer;return true;}return false;}
 
-export function createOwnerLatestStore({request}={}){
+export function createOwnerLatestStore({request,requestPreviewReplacement}={}){
   if(typeof request!=='function')fail('REQUEST_CAPABILITY_REQUIRED');
-  let previewCreateClosed=false,previewWriteStarted=false;
+  let previewCreateClosed=false,previewReplacementClosed=false,previewWriteStarted=false;
   const send=async(url,{method='GET',headers={},body,signal}={})=>{
     if(signal?.aborted)fail('ABORTED');
     return request(url,{method,headers,...(body===undefined?{}:{body}),signal,redirect:'error'});
@@ -176,7 +176,8 @@ export function createOwnerLatestStore({request}={}){
   // This symbol never crosses the public API. Only the create wrapper may
   // admit one preview write after its own authenticated HEAD returned 404.
   const previewAdmission=Symbol('private-preview-create-admission');
-  const writeLatest=async({target,ifGenerationMatch,headers,bytes,metadata,signal}={},admission)=>{
+  const replacementAdmission=Symbol('private-preview-replacement-admission');
+  const writeLatest=async({target,ifGenerationMatch,headers,bytes,metadata,signal,replacement}={},admission)=>{
       sameTarget(target);
       if(ifGenerationMatch!=='0'&&!gen(ifGenerationMatch))fail('CAS_GENERATION_INVALID');
       if(!obj(headers)||Object.keys(headers).sort().join('|')!==Object.keys(LATEST_HEADERS).sort().join('|'))fail('LATEST_HEADERS_INVALID');
@@ -185,9 +186,11 @@ export function createOwnerLatestStore({request}={}){
       const display=new Uint8Array(bytes),frozen=structuredClone(metadata),displaySha256=frozen.displaySha256;
       delete frozen.displaySha256;
       const isPreview=frozen.schema===ACCEPTED_PREVIEW_SCHEMA;
-      if(isPreview&&ifGenerationMatch!=='0')fail('PREVIEW_CREATE_ONLY');
+      const replacing=isPreview&&ifGenerationMatch!=='0';
+      if(replacing&&admission!==replacementAdmission)fail('PREVIEW_CREATE_ONLY');
+      if(replacing&&typeof requestPreviewReplacement!=='function')fail('PREVIEW_REPLACEMENT_REQUIRED');
       if(isPreview&&previewWriteStarted)fail('PREVIEW_CREATE_CLOSED');
-      if(isPreview&&admission!==previewAdmission)fail('PREVIEW_CREATE_REQUIRED');
+      if(isPreview&&admission!==(replacing?replacementAdmission:previewAdmission))fail('PREVIEW_CREATE_REQUIRED');
       try{decoder.decode(display);}catch{fail('DISPLAY_UTF8_INVALID');}
       if(!hex(displaySha256)||await sha256(display)!==displaySha256)fail('CONTENT_HASH_MISMATCH');
       const custom=isPreview?previewCustomMetadata(frozen,displaySha256):customMetadata(frozen,displaySha256);
@@ -201,7 +204,9 @@ export function createOwnerLatestStore({request}={}){
         encoder.encode('\r\n--'+boundary+'\r\nContent-Type: '+LATEST_HEADERS.contentType+'\r\n\r\n'),display,encoder.encode('\r\n--'+boundary+'--\r\n'));
       const url=new URL(UPLOAD);url.searchParams.set('uploadType','multipart');url.searchParams.set('ifGenerationMatch',ifGenerationMatch);
       if(isPreview){if(previewWriteStarted)fail('PREVIEW_CREATE_CLOSED');previewWriteStarted=true;}
-      const response=await send(url.href,{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+boundary,Accept:'application/json'},body,signal});
+      const options={method:'POST',headers:{'Content-Type':'multipart/related; boundary='+boundary,Accept:'application/json'},body,signal};
+      if(signal?.aborted)fail('ABORTED');
+      const response=replacing?await requestPreviewReplacement(url.href,options,structuredClone(replacement)):await send(url.href,options);
       responseOk(response,url.href);
       if(!/^application\/json(?:;\s*charset=utf-8)?$/i.test(response.headers.get('content-type')||''))fail('METADATA_CONTENT_TYPE');
       const ack=objectMetadata(decodeJson(await boundedBytes(response,MAX_METADATA_BYTES)),{name:LATEST_TARGET.object,max:MAX_BYTES,latest:true});
@@ -230,6 +235,23 @@ export function createOwnerLatestStore({request}={}){
       if((await store.probeLatestExists({signal})).state!=='absent')fail('LATEST_ALREADY_EXISTS');
       return writeLatest({target:LATEST_TARGET,ifGenerationMatch:'0',headers:LATEST_HEADERS,
         bytes:display,metadata:{...frozen,displaySha256:await sha256(display)},signal},previewAdmission);
+    },
+    async replaceAcceptedPreview(args){
+      if(previewReplacementClosed||previewCreateClosed||previewWriteStarted)fail('PREVIEW_REPLACEMENT_CLOSED');
+      previewReplacementClosed=true;
+      const {target,previousGeneration,previousDisplaySha256,previousMetadata,revisionSha256,bytes,metadata,signal}=args??{};
+      sameTarget(target);
+      if(typeof requestPreviewReplacement!=='function'||!gen(previousGeneration)||!hex(previousDisplaySha256)||!hex(revisionSha256)
+        ||!(bytes instanceof Uint8Array)||!bytes.length||bytes.length>MAX_BYTES)fail('PREVIEW_REPLACEMENT_REQUIRED');
+      const display=new Uint8Array(bytes),next=structuredClone(metadata),oldMetadata=structuredClone(previousMetadata);
+      validateAcceptedPreviewMetadata(next);validateAcceptedPreviewMetadata(oldMetadata);
+      const old=await store.readLatest({target:LATEST_TARGET,signal});
+      if(old.state!=='present'||old.kind!=='accepted-preview'||old.generation!==previousGeneration
+        ||await sha256(old.displayBytes)!==previousDisplaySha256
+        ||previewCustomMetadata(old.preview.metadata,previousDisplaySha256).previewMetadata!==previewCustomMetadata(oldMetadata,previousDisplaySha256).previewMetadata)fail('PREVIEW_REPLACEMENT_OLD_CHANGED');
+      return writeLatest({target:LATEST_TARGET,ifGenerationMatch:previousGeneration,headers:LATEST_HEADERS,bytes:display,
+        metadata:{...next,displaySha256:await sha256(display)},signal,
+        replacement:{revisionSha256,previousGeneration,previousDisplaySha256,previousRegistrationSha256:oldMetadata.registrationSha256}},replacementAdmission);
     },
     async readDailyBundle({dataDate,signal}={}){
       exactDate(dataDate);

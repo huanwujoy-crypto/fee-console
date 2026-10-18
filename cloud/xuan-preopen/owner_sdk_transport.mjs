@@ -1,10 +1,11 @@
 // Existing local owner SDK only. No token/env/Keychain export, credential CLI,
 // global fetch fallback, arbitrary API, automatic retry or startup side effect.
 import {spawn} from 'node:child_process';
-import {realpathSync,statSync} from 'node:fs';
+import {realpathSync,statSync,readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {LATEST_TARGET,MAX_BYTES} from './owner_latest.mjs';
+import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 
 export const OWNER_SDK_PYTHON='/Users/huanwu/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3.12';
 export const OWNER_SDK_CONFIG='/Users/huanwu/.config/gcloud';
@@ -33,7 +34,7 @@ function environment(){
     CLOUDSDK_COMPONENT_MANAGER_DISABLE_UPDATE_CHECK:'true',PYTHONUNBUFFERED:'1',PYTHONDONTWRITEBYTECODE:'1'};
 }
 
-function requestValue(input,options={}){
+function requestValue(input,options={},expectedGeneration='0'){
   if(typeof input!=='string'||!plain(options)||Object.keys(options).some(k=>!['method','headers','body','signal','redirect'].includes(k)))throw fail('REQUEST_INVALID');
   const {method='GET',headers={},body,redirect='error'}=options;
   if(redirect!=='error'||!['HEAD','GET','POST'].includes(method)||!plain(headers))throw fail('REQUEST_INVALID');
@@ -45,7 +46,7 @@ function requestValue(input,options={}){
   if(Object.keys(normalized).length!==Object.keys(headers).length||Object.values(normalized).some(v=>typeof v!=='string'))throw fail('HEADERS_INVALID');
   const keys=Object.keys(normalized).sort().join('|');
   if(method==='POST'){
-    if(url.origin+url.pathname!==upload||Object.keys(query).sort().join('|')!=='ifGenerationMatch|uploadType'||query.uploadType!=='multipart'||query.ifGenerationMatch!=='0')throw fail('TARGET_INVALID');
+    if(url.origin+url.pathname!==upload||Object.keys(query).sort().join('|')!=='ifGenerationMatch|uploadType'||query.uploadType!=='multipart'||query.ifGenerationMatch!==expectedGeneration)throw fail('TARGET_INVALID');
     if(Object.hasOwn(normalized,'accept-encoding')&&normalized['accept-encoding']!=='identity')throw fail('HEADERS_INVALID');
     if(!['accept|content-type','accept|accept-encoding|content-type'].includes(keys)||normalized.accept!=='application/json'||!/^multipart\/related; boundary=xuan_owner_latest_[a-f0-9]{64}$/.test(normalized['content-type'])
       ||!(body instanceof Uint8Array)||!body.length||body.length>MAX_BYTES+32768)throw fail('MULTIPART_INVALID');
@@ -63,6 +64,32 @@ function requestValue(input,options={}){
     }
   }
   return {op:'request',url:input,method,headers:normalized,body:body===undefined?null:Buffer.from(body).toString('base64')};
+}
+
+function replacementValue(url,options,pins){
+  if(!plain(pins)||Object.keys(pins).sort().join('|')!=='previousDisplaySha256|previousGeneration|previousRegistrationSha256|revisionSha256'
+    ||!generation(pins.previousGeneration))throw fail('REPLACEMENT_INVALID');
+  const read=file=>readFileSync(new URL('../../security/'+file,import.meta.url));
+  let revision,revisionBytes;const hash=b=>createHash('sha256').update(b).digest('hex');
+  try{revisionBytes=read('xuan-owner-preview-replacement.json');
+    const oldBytes=read('xuan-owner-accepted-preview.json'),old=JSON.parse(oldBytes.toString('utf8'));
+    revision=validatePreviewReplacementRegistration(JSON.parse(revisionBytes.toString('utf8')),{previousRegistration:old,
+      previousRegistrationSha256:hash(oldBytes),canaryRegistrationSha256:hash(read('xuan-owner-registered-canary.json'))});
+    if(previewReplacementRegistrationText(revision)!==revisionBytes.toString('utf8'))throw Error();
+  }catch{throw fail('REPLACEMENT_REGISTRATION');}
+  if(pins.revisionSha256!==hash(revisionBytes)||pins.previousRegistrationSha256!==revision.previousRegistrationSha256
+    ||pins.previousDisplaySha256!==revision.previousDisplaySha256)throw fail('REPLACEMENT_INVALID');
+  const value=requestValue(url,options,pins.previousGeneration);
+  if(value.method!=='POST')throw fail('REPLACEMENT_INVALID');
+  const raw=Buffer.from(value.body,'base64'),boundary='xuan_owner_latest_'+revision.registration.displaySha256;
+  const prefix=Buffer.from('--'+boundary+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'),separator=Buffer.from('\r\n--'+boundary+'\r\nContent-Type: text/html; charset=utf-8\r\n\r\n'),suffix=Buffer.from('\r\n--'+boundary+'--\r\n');
+  try{const offset=raw.indexOf(separator),resource=JSON.parse(raw.subarray(prefix.length,offset).toString('utf8'));
+    const display=raw.subarray(offset+separator.length,raw.length-suffix.length),metadata=JSON.parse(resource.metadata.previewMetadata);
+    if(!raw.subarray(0,prefix.length).equals(prefix)||!raw.subarray(-suffix.length).equals(suffix)||offset<0
+      ||resource.name!==LATEST_TARGET.object||resource.metadata.displaySha256!==revision.registration.displaySha256
+      ||hash(display)!==revision.registration.displaySha256||metadata.registrationSha256!==hash(acceptedPreviewRegistrationText(revision.registration)))throw Error();
+  }catch{throw fail('REPLACEMENT_CANDIDATE');}
+  return {...value,op:'replaceAcceptedPreview',replacement:structuredClone(pins)};
 }
 
 function nativeResponse(value){
@@ -127,10 +154,16 @@ export function createOwnerSdkTransport(){
       if(value.method==='POST'){if(writeStarted)throw fail('WRITE_ALREADY_ATTEMPTED');writeStarted=true;mutationStarted=true;}
       return nativeResponse(await call(value,{signal:options.signal}));
     },
+    async requestPreviewReplacement(url,options={},pins,{admissionExpiresAt}={}){
+      const value=replacementValue(url,options,pins);
+      const time=Date.now();if(!Number.isSafeInteger(admissionExpiresAt)||time>admissionExpiresAt||time<admissionExpiresAt-5000)throw fail('REPLACEMENT_ADMISSION_EXPIRED');
+      if(writeStarted)throw fail('WRITE_ALREADY_ATTEMPTED');writeStarted=true;mutationStarted=true;
+      return nativeResponse(await call({...value,admissionExpiresAt},{signal:options.signal}));
+    },
     async checkOriginalIdentity({signal}={}){return call({op:'identity'},{signal});},
-    async readLiveBoundary({includeRoleDefinitions=true,signal}={}){
-      if(typeof includeRoleDefinitions!=='boolean')throw fail('REQUEST_INVALID');
-      return call({op:'boundary',includeRoleDefinitions},{signal,timeoutMs:120000});
+    async readLiveBoundary({includeRoleDefinitions=true,requireDeletePermission=false,signal}={}){
+      if(typeof includeRoleDefinitions!=='boolean'||typeof requireDeletePermission!=='boolean')throw fail('REQUEST_INVALID');
+      return call({op:'boundary',includeRoleDefinitions,...(requireDeletePermission?{requireDeletePermission:true}:{})},{signal,timeoutMs:120000});
     },
     // Named alias makes the fixed metadata-only capability explicit to callers.
     async readBucketProjectPolicy({includeRoleDefinitions=true,signal}={}){

@@ -1,0 +1,516 @@
+{
+  "schemaVersion": 1,
+  "candidateOnly": true,
+  "targetPolicy": "claude/xuan-weekly-concentration-top10-v1.json",
+  "marketDate": "2026-10-16",
+  "reportDateHkt": "2026-10-17",
+  "maxSnapshotAgeDays": 45,
+  "priorAsOfForTheseFive": "2026-08-31",
+  "priorAgeDaysAtMarketDate": 46,
+  "weightUnit": "0.01 percentage point",
+  "weightConversion": "floor(Decimal(issuer reported percent) * 100)",
+  "normalizationApplied": false,
+  "zeroFillApplied": false,
+  "allFiveHaveCompleteVerifiedNewTop10": true,
+  "fundUpdates": [
+    {
+      "instrumentId": "391602",
+      "symbol": "MXUS",
+      "isin": "IE00B60SX170",
+      "basis": "economic-exposure",
+      "asOf": "2026-09-30",
+      "source": "https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf",
+      "topTen": [
+        [
+          "NVDA",
+          796
+        ],
+        [
+          "AAPL",
+          742
+        ],
+        [
+          "MSFT",
+          549
+        ],
+        [
+          "AMZN",
+          366
+        ],
+        [
+          "ALPHABET",
+          306
+        ],
+        [
+          "ALPHABET",
+          242
+        ],
+        [
+          "META",
+          242
+        ],
+        [
+          "AVGO",
+          241
+        ],
+        [
+          "MU",
+          182
+        ],
+        [
+          "TSLA",
+          154
+        ]
+      ],
+      "evidence": "MXUS/evidence.json",
+      "evidenceSha256": "cb7235e3dd87a61db6b381b40b38b42b571b9d1f1947961070f5ef51607f4e49",
+      "rawSourceSha256": "1b879186d16941ccfd005dbc5c910cf19a3c93d743a3f5e891f01027bfbbdadd",
+      "publicationDate": "2026-10-14",
+      "ageDays": 16,
+      "sourceNameToPolicyIssuerId": [
+        [
+          "NVIDIA ORD",
+          "NVDA"
+        ],
+        [
+          "APPLE ORD",
+          "AAPL"
+        ],
+        [
+          "MICROSOFT ORD",
+          "MSFT"
+        ],
+        [
+          "AMAZON COM ORD",
+          "AMZN"
+        ],
+        [
+          "ALPHABET CL A ORD",
+          "ALPHABET"
+        ],
+        [
+          "ALPHABET CL C ORD",
+          "ALPHABET"
+        ],
+        [
+          "META PLATFORMS CL A ORD",
+          "META"
+        ],
+        [
+          "BROADCOM ORD",
+          "AVGO"
+        ],
+        [
+          "MICRON TECHNOLOGY ORD",
+          "MU"
+        ],
+        [
+          "TESLA ORD",
+          "TSLA"
+        ]
+      ]
+    },
+    {
+      "instrumentId": "1983054",
+      "symbol": "EQAC",
+      "isin": "IE00BFZXGZ54",
+      "basis": "physical-holdings",
+      "asOf": "2026-09-30",
+      "source": "https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00BFZXGZ54_factsheet_en.pdf",
+      "topTen": [
+        [
+          "NVDA",
+          835
+        ],
+        [
+          "AAPL",
+          738
+        ],
+        [
+          "MSFT",
+          578
+        ],
+        [
+          "MU",
+          504
+        ],
+        [
+          "AMD",
+          419
+        ],
+        [
+          "AMZN",
+          408
+        ],
+        [
+          "META",
+          327
+        ],
+        [
+          "ALPHABET",
+          307
+        ],
+        [
+          "ALPHABET",
+          286
+        ],
+        [
+          "TSLA",
+          283
+        ]
+      ],
+      "evidence": "EQAC/evidence.json",
+      "evidenceSha256": "ce5c6bd993bfd2669dfc741fc0a1742d16d47c73a643b0a3223994a1e2b632f8",
+      "rawSourceSha256": "df4cda011bb73123fbde3539f45738652062cb77adcb211489b85bb5c4fd179b",
+      "publicationDate": "2026-10-14",
+      "ageDays": 16,
+      "sourceNameToPolicyIssuerId": [
+        [
+          "Nvidia",
+          "NVDA"
+        ],
+        [
+          "Apple",
+          "AAPL"
+        ],
+        [
+          "Microsoft",
+          "MSFT"
+        ],
+        [
+          "Micron Technology",
+          "MU"
+        ],
+        [
+          "Advanced Micro Devices",
+          "AMD"
+        ],
+        [
+          "Amazon",
+          "AMZN"
+        ],
+        [
+          "Meta Platforms 'A'",
+          "META"
+        ],
+        [
+          "Alphabet",
+          "ALPHABET"
+        ],
+        [
+          "Alphabet",
+          "ALPHABET"
+        ],
+        [
+          "Tesla",
+          "TSLA"
+        ]
+      ]
+    },
+    {
+      "instrumentId": "2992325",
+      "symbol": "IVAI",
+      "isin": "IE000LGWDNE5",
+      "basis": "physical-holdings",
+      "asOf": "2026-09-30",
+      "source": "https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE000LGWDNE5_factsheet_en.pdf",
+      "topTen": [
+        [
+          "INTC",
+          321
+        ],
+        [
+          "DELL",
+          304
+        ],
+        [
+          "EVERPURE",
+          293
+        ],
+        [
+          "DOCN",
+          287
+        ],
+        [
+          "RXT",
+          282
+        ],
+        [
+          "SMCI",
+          277
+        ],
+        [
+          "LITE",
+          272
+        ],
+        [
+          "NTAP",
+          268
+        ],
+        [
+          "STX",
+          267
+        ],
+        [
+          "NICE",
+          264
+        ]
+      ],
+      "evidence": "IVAI/evidence.json",
+      "evidenceSha256": "3537c3f53f4b6f8bfbdad17bba47196dc2a927f7d05c2c2be52ebfdc105993cd",
+      "rawSourceSha256": "c2fd4f56cafaedf4d459dc80913c4c51d54d4c9f7fa4f3b21396c02c6e54c377",
+      "publicationDate": "2026-10-14",
+      "ageDays": 16,
+      "sourceNameToPolicyIssuerId": [
+        [
+          "INTEL CORP USD0.001",
+          "INTC"
+        ],
+        [
+          "DELL TECHNOLOGIES -C NPV",
+          "DELL"
+        ],
+        [
+          "Everpure Inc CLASS A USD0.0001",
+          "EVERPURE"
+        ],
+        [
+          "DIGITALOCEAN HOLDINGS INC USD 0.0000",
+          "DOCN"
+        ],
+        [
+          "RACKSPACE TECHNOLOGY INC USD 0.0100",
+          "RXT"
+        ],
+        [
+          "SUPER MICRO COMPUTER INC USD0.001",
+          "SMCI"
+        ],
+        [
+          "LUMENTUM HOLDINGS INC USD0.001",
+          "LITE"
+        ],
+        [
+          "NETAPP INC USD0.001",
+          "NTAP"
+        ],
+        [
+          "SEAGATE TECHNOLOGY HOLDINGS USD NPV",
+          "STX"
+        ],
+        [
+          "NICE LTD ILS 1.0000",
+          "NICE"
+        ]
+      ]
+    },
+    {
+      "instrumentId": "2767340",
+      "symbol": "EXUS",
+      "isin": "IE0006WW1TQ4",
+      "basis": "physical-holdings",
+      "asOf": "2026-09-30",
+      "source": "https://etf.dws.com/download/asset/7abc744c-aaf2-48f8-8e28-6384d2233cc8",
+      "topTen": [
+        [
+          "ASML",
+          275
+        ],
+        [
+          "HSBC",
+          140
+        ],
+        [
+          "ROCHE",
+          122
+        ],
+        [
+          "SHELL",
+          114
+        ],
+        [
+          "RBC",
+          113
+        ],
+        [
+          "NOVARTIS",
+          108
+        ],
+        [
+          "MUFG",
+          102
+        ],
+        [
+          "ASTRAZENECA",
+          102
+        ],
+        [
+          "NESTLE",
+          97
+        ],
+        [
+          "SIEMENS",
+          93
+        ]
+      ],
+      "evidence": "EXUS/evidence.json",
+      "evidenceSha256": "63543fe52ac61e54ef773162b2171a2be9b04c35c17dec97c923ed00174bb762",
+      "rawSourceSha256": "3a9a474c4ffd9e49ba9b7434b809c496d88291b01d0086298aec2795c1c975de",
+      "publicationDate": null,
+      "ageDays": 16,
+      "sourceNameToPolicyIssuerId": [
+        [
+          "ASML HOLDING",
+          "ASML"
+        ],
+        [
+          "HSBC HOLDINGS PLC",
+          "HSBC"
+        ],
+        [
+          "ROCHE PS PAR AG",
+          "ROCHE"
+        ],
+        [
+          "SHELL",
+          "SHELL"
+        ],
+        [
+          "ROYAL BANK OF CANADA",
+          "RBC"
+        ],
+        [
+          "NOVARTIS AG",
+          "NOVARTIS"
+        ],
+        [
+          "MITSUBISHI UFJ FINANCIAL GROUP",
+          "MUFG"
+        ],
+        [
+          "ASTRAZENECA PLC",
+          "ASTRAZENECA"
+        ],
+        [
+          "NESTLE SA",
+          "NESTLE"
+        ],
+        [
+          "SIEMENS N AG",
+          "SIEMENS"
+        ]
+      ]
+    },
+    {
+      "instrumentId": "1028072",
+      "symbol": "VCN",
+      "isin": "CA92205P1045",
+      "basis": "physical-holdings",
+      "asOf": "2026-09-30",
+      "source": "https://www.vanguard.ca/en/product/etf/equity/9561/vanguard-ftse-canada-all-cap-index-etf",
+      "topTen": [
+        [
+          "RBC",
+          788
+        ],
+        [
+          "TD_BANK",
+          554
+        ],
+        [
+          "SHOPIFY",
+          520
+        ],
+        [
+          "BMO",
+          338
+        ],
+        [
+          "BNS",
+          321
+        ],
+        [
+          "ENBRIDGE",
+          295
+        ],
+        [
+          "CIBC",
+          290
+        ],
+        [
+          "CNRL",
+          275
+        ],
+        [
+          "AGNICO",
+          267
+        ],
+        [
+          "SUNCOR",
+          230
+        ]
+      ],
+      "evidence": "VCN/evidence.json",
+      "evidenceSha256": "eee4e0b64d04a634f063d34a8007d8bcb88a65d724b4e684252781ecb2127bce",
+      "rawSourceSha256": "476e4a3dc4ca1dc80a1fb43622c9fd145b8fc49e7c3b5497021923787cba6efe",
+      "publicationDate": null,
+      "ageDays": 16,
+      "sourceNameToPolicyIssuerId": [
+        [
+          "Royal Bank of Canada",
+          "RBC"
+        ],
+        [
+          "Toronto-Dominion Bank/The",
+          "TD_BANK"
+        ],
+        [
+          "Shopify Inc",
+          "SHOPIFY"
+        ],
+        [
+          "Bank of Montreal",
+          "BMO"
+        ],
+        [
+          "Bank of Nova Scotia/The",
+          "BNS"
+        ],
+        [
+          "Enbridge Inc",
+          "ENBRIDGE"
+        ],
+        [
+          "Canadian Imperial Bank of Commerce",
+          "CIBC"
+        ],
+        [
+          "Canadian Natural Resources Ltd",
+          "CNRL"
+        ],
+        [
+          "Agnico Eagle Mines Ltd",
+          "AGNICO"
+        ],
+        [
+          "Suncor Energy Inc",
+          "SUNCOR"
+        ]
+      ]
+    }
+  ],
+  "mappingNotes": [
+    "The proposedPolicyIssuerId labels are canonical issuer keys for the existing policy schema, not claims that the ETF source prints a stock ticker. Source names are preserved alongside every mapping.",
+    "ALPHABET source rows remain separate, exactly as in the source and existing policy; issuer aggregation belongs to the downstream method.",
+    "New proposed canonical keys needing reviewer awareness: IVAI INTC/DOCN/RXT/SMCI/LITE/STX, EXUS MUFG, VCN SUNCOR.",
+    "VCN weights have five reported decimal places and are truncated, not rounded; for example 7.88746% becomes 788 units, 7.88%."
+  ],
+  "availabilityCaveats": [
+    "Latest accessible current Invesco and DWS factsheets and Vanguard top-ten HTML were retrieved on 2026-10-17; all holdings dates are 2026-09-30, never future as-of dates.",
+    "Invesco original PDF Keywords explicitly record PublicationDate=2026-10-14. DWS and Vanguard do not explicitly disclose publication date; these fields remain null and no response date or file creation date was substituted.",
+    "No verified later daily Invesco economic-exposure table was obtained from the public role-gated product pages. The current original factsheet Top exposures table is used."
+  ],
+  "sourceUnavailable": [],
+  "noFinancialAccountSourcesAccessed": true,
+  "repositoryOrPolicyModified": false
+}

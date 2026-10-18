@@ -1,0 +1,36 @@
+{
+  "canaryRegistrationSha256": "1d67bc4e08525c7224712d1675bc4ddf91fde4b6cae7f6332a03718cd3eae782",
+  "previousDisplaySha256": "8b6a974f0e9d16f6e98818a2651c49c62170877b9bce2c7f33cfe8b13e3f21e7",
+  "previousRegistrationSha256": "d95318d48916e2ed8ec9e248ecc3357390e92c04d5e288c01e58d8aaa1cdca8b",
+  "registration": {
+    "artifactSha256": "1be1cec3ba4e0eb46d8dba8ed7386d029132520e25d0728af1b96dbdf5147e46",
+    "captureEndedAt": "2026-10-17T06:56:47.544Z",
+    "captureStartedAt": "2026-10-17T06:54:46.736Z",
+    "completedAt": "2026-10-17T06:57:57.838Z",
+    "dataDate": "2026-10-17",
+    "displaySha256": "fd6a7910be7c4b5d94c77fe58dacc9f2f9b12b6c0a502b010a72ac8c7813aa1d",
+    "financialStatus": "partial",
+    "modelSha256": "e85286f22440e7fa40c2dfe05a0f6e282296bea0aaaa402cb532c71e182ec6a2",
+    "ordersCaptureEndedAt": "2026-10-17T06:54:58.595Z",
+    "ordersCaptureStartedAt": "2026-10-17T06:54:46.744Z",
+    "ownerBinding": "9045a60ddfa0247f7e877e880565dcc5060fbd496b26d1badd659615adf40346",
+    "registrationId": "synthetic-local-r6-review",
+    "schema": "xuan.owner-accepted-preview-registration.v1",
+    "scope": "ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1",
+    "sourceDate": "2026-10-16",
+    "sourceHead": "7be00075d0be701f51c4f4fedbb25de9f3d6cbe2",
+    "sourceIdentitySha256": "b8be11afb18c0543420c5cf0728fccdbbc229103b82a0a92117f6507b2b5022d",
+    "sourceManifestContentSha256": "c7a786fdbd509f9e10ec239e6e25c321a8017da0965eba63fdf90c9b9287a1c7",
+    "sourceManifestSha256": "d16e8085890e94c8bcb626008770a114e2796a4925653e30f76700e3bc31747d",
+    "unknownFields": [
+      "cash",
+      "orders",
+      "prices"
+    ]
+  },
+  "schema": "xuan.owner-preview-replacement.v1",
+  "target": {
+    "bucket": "family-portfolio-gateway-xuan-preopen-private",
+    "object": "delivery/owner-latest.html"
+  }
+}

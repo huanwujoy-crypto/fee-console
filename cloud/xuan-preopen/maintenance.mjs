@@ -152,7 +152,21 @@ export const COPY_PATHS=Object.freeze([
   // Explicit dependency-only extension for the separately reviewed R6 shared modules.
   "cloud/xuan-preopen/call_record.mjs",
   "scripts/xuan-ib-action-fields.mjs",
-  "cloud/xuan-preopen/orders_probe.mjs"
+  "cloud/xuan-preopen/orders_probe.mjs",
+  // Fixed transitive imports for the action concentration codec.
+  "claude/xuan-weekly-concentration-top10-v1.json",
+  "claude/xuan-weekly-leveraged-products-v1.json",
+  "scripts/xuan-ib-action-concentration.mjs",
+  "scripts/xuan-ib-ai-coefficient-resolver.mjs",
+  "scripts/xuan-ib-ai-risk-input.mjs",
+  "scripts/xuan-ib-ai-risk-registry.mjs",
+  "scripts/xuan-ib-auto-classification.mjs",
+  "scripts/xuan-ib-cash-identity.mjs",
+  "scripts/xuan-ib-classification-audit.mjs",
+  "scripts/xuan-ib-delegated-tier.mjs",
+  "scripts/xuan-ib-four-bucket.mjs",
+  "scripts/xuan-weekly-concentration.mjs",
+  "scripts/xuan-weekly-leveraged-products.mjs"
 ]);
 const copyFiles=new Set(COPY_PATHS);
 export function createBuildContext(root,temp,{runGit=args=>execFileSync('git',args,{cwd:root,encoding:'utf8',timeout:30_000,maxBuffer:4*1024*1024})}={}){

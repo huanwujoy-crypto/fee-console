@@ -2,6 +2,8 @@ FROM node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e385
 WORKDIR /app
 COPY scripts/ scripts/
 COPY claude/xuan-ib-portfolio-registry.json claude/xuan-ib-portfolio-registry.json
+COPY claude/xuan-weekly-concentration-top10-v1.json claude/xuan-weekly-concentration-top10-v1.json
+COPY claude/xuan-weekly-leveraged-products-v1.json claude/xuan-weekly-leveraged-products-v1.json
 COPY cloud/xuan-preopen/ cloud/xuan-preopen/
 USER node
 RUN --network=none node --test cloud/xuan-preopen/action_preview_once.test.mjs cloud/xuan-preopen/action_preview.test.mjs cloud/xuan-preopen/orders_probe.test.mjs cloud/xuan-preopen/ib_mcp.test.mjs cloud/xuan-preopen/ib_diagnostics.test.mjs

@@ -45,6 +45,9 @@ export const NATIVE_CASH_LABEL = 'Cash';
 export const MISSING_LABEL_MARKER = 'no approved liquidity label';
 export const UNRECOGNIZED_LABEL_MARKER = 'unrecognized liquidity label';
 export const LISTING_SOURCE = 'sharesight_get_holdings';
+// Risk measurement may use the performance report's own membership, without
+// claiming an independent holdings-endpoint read. Accounting keeps its default.
+export const PERFORMANCE_MEMBERSHIP_SOURCE = 'sharesight_performance_report_membership';
 // Missing flags remain missing. A legacy proxy requires the resolver's
 // explicit source proof; absence from a pending-evidence list is not proof.
 // Native cash accounts require no legacy-proxy exception.
@@ -278,10 +281,10 @@ export function listingFromHoldingsResponse(raw, { portfolioId, readCompletedAt 
  * Every valued performance row must carry a listing identity. Listing-only
  * identities are historical or excluded holdings: they are recorded as
  * unvalued membership diagnostics and are never inferred closed or valued. */
-function validateListing(listing, portfolioId, performanceIds) {
+function validateListing(listing, portfolioId, performanceIds, {riskReadOnly=false}={}) {
   if (!isObject(listing)) fail('PAGINATION_UNVERIFIED');
   exactKeys(listing, ['source', 'portfolioId', 'readCompletedAt', 'holdingIds'], 'LISTING');
-  if (listing.source !== LISTING_SOURCE) fail('LISTING_SOURCE_INVALID');
+  if (listing.source !== LISTING_SOURCE && !(riskReadOnly && listing.source === PERFORMANCE_MEMBERSHIP_SOURCE)) fail('LISTING_SOURCE_INVALID');
   if (listing.portfolioId !== portfolioId) fail('LISTING_PORTFOLIO_MISMATCH');
   if (instantMs(listing.readCompletedAt) === null) fail('LISTING_READ_TIME_INVALID');
   if (!Array.isArray(listing.holdingIds) || listing.holdingIds.length > MAX_ROWS) fail('LISTING_IDS_INVALID');
@@ -291,6 +294,7 @@ function validateListing(listing, portfolioId, performanceIds) {
   const unlisted = [...performanceIds].filter(id => !listedSet.has(id));
   if (unlisted.length) fail('HOLDINGS_LISTING_MISMATCH', { unlistedPerformanceIds: unlisted });
   const listingOnlyHoldingIds = listed.filter(id => !performanceIds.has(id)).sort((a, b) => a - b);
+  if(listing.source===PERFORMANCE_MEMBERSHIP_SOURCE&&listingOnlyHoldingIds.length)fail('REPORT_MEMBERSHIP_MISMATCH');
   return { listedHoldingCount: listed.length, valuedHoldingCount: performanceIds.size, listingOnlyHoldingIds, readCompletedAt: listing.readCompletedAt };
 }
 
@@ -415,7 +419,7 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
     });
   }
 
-  const listed = validateListing(listing, expectedId, seen);
+  const listed = validateListing(listing, expectedId, seen, {riskReadOnly:unconfirmedTransactionMode==='risk-read-only'});
   const holdingsSum = holdings.reduce((total, row) => total + BigInt(row.valueMicro), 0n);
   const sum = cashAccounts.reduce((total, row) => total + BigInt(row.valueMicro), holdingsSum);
   const reportValueMicro = toMicro(report.value, 'REPORT_VALUE');
@@ -436,7 +440,7 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
     reportCutoffDate: report.end_date, readStartedAt, readCompletedAt, reportParameters: parameters,
     reportValueMicro: String(reportValueMicro), holdings, cashAccounts,
     listingOnlyHoldingIds: listed.listingOnlyHoldingIds,
-    listing: { source: LISTING_SOURCE, listedHoldingCount: listed.listedHoldingCount, valuedHoldingCount: listed.valuedHoldingCount, readCompletedAt: listed.readCompletedAt },
+    listing: { source: listing.source, listedHoldingCount: listed.listedHoldingCount, valuedHoldingCount: listed.valuedHoldingCount, readCompletedAt: listed.readCompletedAt },
     reconciliation: { sumMicro: String(sum), reportValueMicro: String(reportValueMicro), differenceMicro: String(differenceMicro), toleranceMicro: String(toleranceMicro), withinTolerance: true },
     sourceFingerprint: fingerprint(raw),
     sourceBytes: Buffer.byteLength(JSON.stringify(raw)),
@@ -521,6 +525,7 @@ export function aggregateFourBucket({ reports, registry, mapping, cashIdentities
   const byId = new Map();
   for (const report of reports) {
     if (!isObject(report) || report.schemaVersion !== 1) fail('INVALID_REPORTS');
+    if(report.listing?.source===PERFORMANCE_MEMBERSHIP_SOURCE)fail('RISK_MEMBERSHIP_ACCOUNTING_FORBIDDEN');
     const pending = Array.isArray(report.holdings)
       ? report.holdings.find(row => Number.isSafeInteger(row?.unconfirmedTransactions)
         && row.unconfirmedTransactions > 0) : null;

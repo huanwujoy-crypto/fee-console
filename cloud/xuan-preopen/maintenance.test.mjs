@@ -1,3 +1,4 @@
+import {spawnSync} from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -95,15 +96,15 @@ test('workflow/Docker/IAM plan isolate maintenance identity and preserve daily p
 
 function contextFixture(){
  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'maintenance-context-test-')),root=path.join(temp,'source');fs.mkdirSync(root);
- const rows=COPY_PATHS.map(file=>{const p=path.join(root,file);fs.mkdirSync(path.dirname(p),{recursive:true});const bytes=Buffer.from('// synthetic '+file);fs.writeFileSync(p,bytes);const blob=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');return `100644 blob ${blob}\t${file}`;});
+ const rows=COPY_PATHS.map(file=>{const p=path.join(root,file);fs.mkdirSync(path.dirname(p),{recursive:true});const bytes=Buffer.from('// synthetic '+file);fs.writeFileSync(p,bytes);const blob=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');return `${fs.statSync(path.join(root,file)).mode&0o111?'100755':'100644'} blob ${blob}\t${file}`;});
  return {temp,root,rows,listing:rows.join('\0')+'\0',clean:()=>fs.rmSync(temp,{recursive:true,force:true})};
 }
 function contextFiles(root,prefix=''){
  return fs.readdirSync(path.join(root,prefix)).flatMap(name=>{const file=prefix?prefix+'/'+name:name;return fs.lstatSync(path.join(root,file)).isDirectory()?contextFiles(root,file):[file];}).sort();
 }
-test('fixed 92-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
- assert.equal(COPY_PATHS.length,92);assert.equal(new Set(COPY_PATHS).size,92);
- assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'31c3cc4bbcd329ec5dfb688056f27abb02f227af5d3602e206f9e5901d016d89');
+test('fixed 105-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
+ assert.equal(COPY_PATHS.length,105);assert.equal(new Set(COPY_PATHS).size,105);
+ assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'a653bf89c39f276e9713259fff83ffc9c93dafbf428514f744a72b047b4332db');
  const f=contextFixture();
  try{
   for(const file of ['data.json','.git/config','xuan-ib/latest.html','scripts/repair-brkb-20260820.mjs','scripts/codex-fee-keychain.c','scripts/codex-fee-credentials.mjs','scripts/codex-fee-setup','cloud/xuan-preopen/private-new.mjs']){const p=path.join(f.root,file);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,'PRIVATE-CANARY');}
@@ -164,4 +165,26 @@ test('after one PATCH old ready snapshot may lag; only exact old configuration m
   let reads=0,writes=0;const bad=structuredClone(before);mutate(bad);await assert.rejects(deployImage({image,api:{getJob:async()=>++reads===1?before:bad,patchJob:async()=>{writes++;return {};}},wait:async()=>{}}),/CONFIG_CHANGED/);assert.equal(writes,1);assert.equal(reads,2);
  }
  let reads=0,writes=0;await assert.rejects(deployImage({image,api:{getJob:async()=>{reads++;return before;},patchJob:async()=>{writes++;return {};}},wait:async()=>{}}),/DEPLOYMENT_TIMEOUT/);assert.equal(writes,1);assert.equal(reads,41);
+});
+
+// Real retained source bytes, with only the Git listing injected. This verifies
+// the minimal runtime context without a Docker daemon, Git checkout or network.
+// The complete committed HEAD is checked separately by the trusted archive test.
+test('minimal fixed image context imports its real entrypoint and rejects missing concentration dependencies',()=>{
+  const root=fs.realpathSync('.'),temp=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'concentration-image-closure-')));
+  const dependencies=["claude/xuan-weekly-concentration-top10-v1.json", "claude/xuan-weekly-leveraged-products-v1.json", "scripts/xuan-ib-action-concentration.mjs", "scripts/xuan-ib-ai-coefficient-resolver.mjs", "scripts/xuan-ib-ai-risk-input.mjs", "scripts/xuan-ib-ai-risk-registry.mjs", "scripts/xuan-ib-auto-classification.mjs", "scripts/xuan-ib-cash-identity.mjs", "scripts/xuan-ib-classification-audit.mjs", "scripts/xuan-ib-delegated-tier.mjs", "scripts/xuan-ib-four-bucket.mjs", "scripts/xuan-weekly-concentration.mjs", "scripts/xuan-weekly-leveraged-products.mjs"];
+  try{
+    const rows=COPY_PATHS.map(file=>{const bytes=fs.readFileSync(path.join(root,file));const blob=crypto.createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');return `${fs.statSync(path.join(root,file)).mode&0o111?'100755':'100644'} blob ${blob}\t${file}`;});
+    const context=createBuildContext(root,temp,{runGit:()=>rows.join('\0')+'\0'});
+    const program="globalThis.fetch=()=>{throw Error('OFFLINE_ONLY');};await import('./cloud/xuan-preopen/daily.mjs');";
+    const run=()=>spawnSync(process.execPath,['--input-type=module','-e',program],{cwd:context,encoding:'utf8',timeout:30000});
+    const complete=run();assert.equal(complete.status,0,complete.stderr);
+    for(const dependency of dependencies){
+      const file=path.join(context,dependency),bytes=fs.readFileSync(file);fs.unlinkSync(file);
+      try{const missing=run();assert.notEqual(missing.status,0,dependency);assert.ok(missing.stderr.includes(dependency),dependency);}
+      finally{fs.writeFileSync(file,bytes);}
+    }
+    const docker=fs.readFileSync(path.join(root,'cloud/xuan-preopen/Maintenance.Dockerfile'),'utf8');
+    for(const file of dependencies.filter(p=>p.endsWith('.json')))assert.ok(docker.includes(`COPY ${file} ${file}`),file);
+  }finally{fs.rmSync(temp,{recursive:true,force:true});}
 });

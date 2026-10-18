@@ -54,7 +54,20 @@ export const PREVIEW_COPY_PATHS=Object.freeze([
   "scripts/xuan-ib-source-adapter.mjs",
   "scripts/xuan-ib-source-capture.mjs",
   "scripts/xuan-ib-source-hook.mjs",
-  "scripts/xuan-ib-weekly-snapshot.mjs"
+  "scripts/xuan-ib-weekly-snapshot.mjs",
+  "claude/xuan-weekly-concentration-top10-v1.json",
+  "claude/xuan-weekly-leveraged-products-v1.json",
+  "scripts/xuan-ib-action-concentration.mjs",
+  "scripts/xuan-ib-ai-coefficient-resolver.mjs",
+  "scripts/xuan-ib-ai-risk-input.mjs",
+  "scripts/xuan-ib-ai-risk-registry.mjs",
+  "scripts/xuan-ib-auto-classification.mjs",
+  "scripts/xuan-ib-cash-identity.mjs",
+  "scripts/xuan-ib-classification-audit.mjs",
+  "scripts/xuan-ib-delegated-tier.mjs",
+  "scripts/xuan-ib-four-bucket.mjs",
+  "scripts/xuan-weekly-concentration.mjs",
+  "scripts/xuan-weekly-leveraged-products.mjs"
 ]);
 const labels={approvedSha:'org.opencontainers.image.revision',sourceTree:'fee-console.source-tree',workflowSha:'fee-console.approved-merge',approvalPr:'fee-console.approval-pr'};
 export function validatePreviewBuildMode(e){
