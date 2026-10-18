@@ -1,6 +1,7 @@
 """Isolated private weekly report. Fixed read-only sources, immutable outputs."""
 import datetime as dt
 import hashlib
+import html
 import json
 import os
 import re
@@ -58,7 +59,9 @@ def failure_code(error):
     if isinstance(error,json.JSONDecodeError):return 'invalid_json'
     if isinstance(error,KeyError):return 'missing_configuration_or_field'
     if isinstance(error,ValueError) and str(error) in ('unknown_latest_metadata','latest_run_conflict',
-            'invalid_source','wrong_public_bucket','invalid_report_html','active_report_html'):
+            'invalid_source','wrong_public_bucket','invalid_report_html','active_report_html',
+            'invalid_run_mode','diagnostic_prefix_forbidden','private_diagnostic_request_invalid',
+            'private_diagnostic_report_invalid'):
         return str(error)
     return 'unexpected_error'
 
@@ -75,19 +78,47 @@ def safe_network(error):
     return safe
 
 def run(*, stamp=None, prefix=None, outer_deadline=None):
+    return _run(stamp=stamp, prefix=prefix, outer_deadline=outer_deadline, mode='publish')
+
+
+def run_private_diagnostic(*, stamp, request_id, outer_deadline=None):
+    """One private archive; publication is structurally unavailable in this mode."""
+    return _run(stamp=stamp, request_id=request_id, outer_deadline=outer_deadline,
+                mode='private-diagnostic')
+
+
+def _run(*, mode, stamp=None, prefix=None, request_id=None, outer_deadline=None):
     start=time.monotonic(); now=lambda:dt.datetime.now(dt.timezone.utc).isoformat()
     # Reserve time in the existing 600-second job for calculation and publication.
     network_deadline=start+360
     if outer_deadline is not None:
         network_deadline=min(network_deadline,outer_deadline-180)
     stage='configuration';bucket=None
-    stamp=stamp or now();prefix=prefix or 'weekly/'+stamp+'-'+uuid.uuid4().hex+'/'
+    diagnostic = mode == 'private-diagnostic'
+    if not diagnostic:
+        stamp=stamp or now()
     def save(name,body,kind='application/json'):
         nonlocal stage
         stage='archive_'+name.replace('.','_')
         if not isinstance(body,(str,bytes)):body=json.dumps(body)
         bucket.blob(prefix+name).upload_from_string(body,content_type=kind,if_generation_match=0,timeout=60)
     try:
+        if mode not in ('publish', 'private-diagnostic'):
+            raise ValueError('invalid_run_mode')
+        if diagnostic:
+            try:
+                started = dt.datetime.fromisoformat(stamp)
+                if (str(uuid.UUID(request_id)) != request_id or prefix is not None
+                        or started.tzinfo is None or started.utcoffset() != dt.timedelta()):
+                    raise ValueError()
+            except (ValueError, TypeError, AttributeError):
+                raise ValueError('private_diagnostic_request_invalid') from None
+            prefix = 'private-diagnostic/'+request_id+'/'
+        else:
+            if prefix is not None and (prefix == 'private-diagnostic'
+                                       or prefix.startswith('private-diagnostic/')):
+                raise ValueError('diagnostic_prefix_forbidden')
+            prefix=prefix or 'weekly/'+stamp+'-'+uuid.uuid4().hex+'/'
         from google.cloud import storage
         if os.environ['WEEKLY_BUCKET']!='family-portfolio-gateway-xuan-weekly-private':raise SourceError('wrong_bucket')
         client=storage.Client()
@@ -152,12 +183,37 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
             result=subprocess.run(['node','scripts/xuan-weekly-build.mjs'],input=json.dumps(request),
                                   capture_output=True,text=True,timeout=60,check=False,env=calculation_env)
         if result.returncode:raise SourceError('weekly_calculation_failed')
-        bundle=json.loads(result.stdout);save('bundle.json',bundle)
+        bundle=json.loads(result.stdout)
+        if diagnostic:
+            report = bundle['html']
+            if (not isinstance(report, str) or not report.startswith('<!doctype html>')
+                    or report.count('<main>') != 1 or bundle['receipt'].get('complete') is not True
+                    or bundle['receipt'].get('cutoff') != abc_cutoff):
+                raise ValueError('private_diagnostic_report_invalid')
+            banner = ('<section aria-label="私有诊断" style="border:3px solid #905000">'
+                      '<h2>私有诊断 · 未发布</h2><p>本次运行 '+html.escape(stamp)
+                      +' · 风险日期 '+html.escape(cutoff)+' · ABC 日期 '+html.escape(abc_cutoff)
+                      +'</p></section>')
+            bundle['html'] = report.replace('<main>', '<main>'+banner, 1).replace(
+                '周报已更新', '诊断计算完成 · 未发布')
+            bundle['receipt'].update(kind='private-diagnostic', requestId=request_id,
+                                     startedAt=stamp, publicationAttempted=False)
+        save('bundle.json',bundle)
         save('report.html',bundle['html'],'text/html; charset=utf-8')
         receipt={**bundle['receipt'],'comparisonHistoryWarning':history_warning,'completedAt':now(),'elapsedSeconds':round(time.monotonic()-start,2),
             'requestedCutoff':cutoff,'quotesLagDays':(dt.date.fromisoformat(cutoff)-dt.date.fromisoformat(abc_cutoff)).days,
             'privateReportObject':prefix+'report.html','htmlSha256':hashlib.sha256(bundle['html'].encode()).hexdigest()}
         save('receipt.json',receipt)
+        if diagnostic:
+            manifest = {k:receipt[k] for k in ('complete', 'kind', 'requestId', 'startedAt',
+                'completedAt', 'publicationAttempted', 'requestedCutoff', 'cutoff',
+                'privateReportObject', 'htmlSha256')}
+            manifest.update(schema='xuan-weekly.private-diagnostic.v1',
+                            code='private_diagnostic_archived')
+            save('diagnostic.json', manifest)
+            # Do not log the business receipt, bundle or source payloads.
+            print(json.dumps({**manifest, 'code':'private_diagnostic_generated'}), flush=True)
+            return 0
         # Only publish after the immutable successful report and receipt exist.
         # IAM permits replacement of this exact object, not the archive.
         stage='private_latest'
@@ -174,6 +230,10 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
         receipt={'complete':False,'severity':'ERROR','event':'xuan_weekly_failed',
                  'stage':stage,'completedAt':now(),'code':failure_code(error),
                  'elapsedSeconds':round(time.monotonic()-start,2)}
+        if diagnostic:
+            receipt.update(kind='private-diagnostic', publicationAttempted=False)
+            if receipt['code'] != 'private_diagnostic_request_invalid':
+                receipt['startedAt'] = stamp
         network=safe_network(error)
         if network:receipt['network']=network
         polling=safe_polling(getattr(error,'polling',None))
@@ -191,6 +251,7 @@ def run(*, stamp=None, prefix=None, outer_deadline=None):
             except Exception:
                 print(json.dumps({'complete':False,'severity':'ERROR','event':'xuan_weekly_failed',
                                   'stage':'archive_failure_json','code':'failure_archive_failed',
-                                  'completedAt':now()}),flush=True)
+                                  'completedAt':now(), **({'kind':'private-diagnostic',
+                                  'publicationAttempted':False} if diagnostic else {})}),flush=True)
         return 1
 if __name__=='__main__':raise SystemExit(run())
