@@ -586,5 +586,184 @@ class ReplacementTests(unittest.TestCase):
                 bridge.dispatch(f[0])
 
 
+class DiagnosticSession:
+    def __init__(self, outcomes):
+        self.outcomes, self.calls = list(outcomes), []
+        self.cookies = types.SimpleNamespace(clear=lambda: None)
+
+    def request(self, method, url, **options):
+        self.calls.append((method, url, options))
+        item = self.outcomes.pop(0) if self.outcomes else (200, b'{}')
+        if isinstance(item, Exception):
+            raise item
+        if callable(item):
+            return item(url)
+        return Response(url, item[0], item[1])
+
+
+class DiagnosticLiveProvider(m.LiveSdkProvider):
+    # Exercise the real LiveSdkProvider.request HTTP boundary while replacing
+    # only its cached-session acquisition with an inert synthetic provider.
+    def __init__(self, outcomes=(), cache_error=None):
+        super().__init__()
+        self.fake_session = DiagnosticSession(outcomes)
+        self.cache_error = cache_error
+        self.credential = types.SimpleNamespace(valid=True,
+            token_state=types.SimpleNamespace(name='FRESH'),
+            expiry=datetime.datetime.now(datetime.timezone.utc)+datetime.timedelta(hours=1))
+
+    def get_session(self):
+        if self._safe_diagnostics is not None:
+            self._safe_diagnostics.mark('cache')
+        if self.cache_error is not None:
+            raise self.cache_error
+        return self.fake_session
+
+
+class SafeDiagnosticTests(unittest.TestCase):
+    def run_error(self, bridge, value, code):
+        with self.assertRaises(m.BoundaryError) as result:
+            bridge.dispatch(value)
+        self.assertEqual(result.exception.code, code)
+        return bridge.safe_diagnostics.snapshot()
+
+    def test_cached_identity_failure_does_not_count_http_entry(self):
+        p = DiagnosticLiveProvider(cache_error=m.BoundaryError('CACHED_CREDENTIAL_REFRESH_REQUIRED'))
+        b = m.OwnerBridge(p)
+        d = self.run_error(b, write_value(), 'CACHED_CREDENTIAL_REFRESH_REQUIRED')
+        self.assertEqual((d['stage'], d['casHttpAttempts'], d['casHttpAcks']), ('cache', 0, 0))
+        self.assertEqual(d['errorCode'], 'CACHED_CREDENTIAL_REFRESH_REQUIRED')
+        self.assertEqual(p.fake_session.calls, [])
+
+    def test_transport_exception_counts_invocation_not_response_and_never_logs_text(self):
+        import errno
+        p = DiagnosticLiveProvider([ConnectionResetError(errno.ECONNRESET, 'SECRET_TOKEN_URL_BODY')])
+        b = m.OwnerBridge(p)
+        d = self.run_error(b, write_value(), 'REQUEST_OUTCOME_UNKNOWN')
+        self.assertEqual((d['casHttpAttempts'], d['casHttpAcks']), (1, 0))
+        self.assertEqual((d['errorType'], d['errorCode'], d['httpStatus']), ('ConnectionResetError', 'ECONNRESET', None))
+        self.assertNotIn('SECRET', json.dumps(d))
+        self.assertEqual(len(p.fake_session.calls), 1)
+        options = p.fake_session.calls[0][2]
+        self.assertEqual((options['timeout'], options['allow_redirects'], options['verify'], options['stream']), ((5, 15), False, True, True))
+
+    def test_http_412_is_not_ack_or_retry(self):
+        b = m.OwnerBridge(DiagnosticLiveProvider([(412, b'NO_PRIVATE_ERROR_BODY')]))
+        self.assertEqual(b.dispatch(write_value())['status'], 412)
+        d = b.safe_diagnostics.snapshot()
+        self.assertEqual((d['casHttpAttempts'], d['casHttpAcks'], d['httpStatus'], d['errorType']), (1, 0, 412, None))
+        self.run_error(b, write_value(), 'WRITE_ALREADY_ATTEMPTED')
+        self.assertEqual(b.safe_diagnostics.snapshot()['casHttpAttempts'], 1)
+
+    def test_new_generation_readbacks_are_separate_and_old_canary_reads_excluded(self):
+        p = DiagnosticLiveProvider([(200, b'{"generation":"2"}'), (200, b'{}'), (200, b'{}'), (200, b'{}'), (200, b'SYNTHETIC_HTML')])
+        b = m.OwnerBridge(p)
+        b.dispatch(write_value())
+        b.dispatch(read_value(LATEST+'?generation=1'))
+        canary = {'op':'requestCanary','method':'GET','generation':'2','media':True}
+        b.dispatch(canary)
+        self.assertEqual(b.safe_diagnostics.snapshot()['readbackMetadataAttempts'], 0)
+        b.dispatch(read_value(LATEST+'?generation=2'))
+        b.dispatch(read_value(LATEST+'?alt=media&generation=2', headers={'Accept':'application/octet-stream','Accept-Encoding':'identity'}))
+        d = b.safe_diagnostics.snapshot()
+        self.assertEqual([d[k] for k in m.SAFE_COUNTERS], [1,1,1,1,1,1])
+        self.assertEqual([call[0] for call in p.fake_session.calls], ['POST','GET','GET','GET','GET'])
+        self.assertEqual((d['stage'], d['errorType']), ('readback-html', None))
+
+    def test_ack_without_parseable_generation_does_not_invent_readback_pin(self):
+        b = m.OwnerBridge(DiagnosticLiveProvider([(200, b'NOT_JSON'), (200, b'{}')]))
+        result = b.dispatch(write_value())
+        self.assertEqual(base64.b64decode(result['body']), b'NOT_JSON')
+        b.dispatch(read_value(LATEST+'?generation=2'))
+        d = b.safe_diagnostics.snapshot()
+        self.assertEqual((d['casHttpAcks'], d['readbackMetadataAttempts']), (1,0))
+
+    def test_same_rpc_old_and_canary_200_do_not_become_cas_timeout_status(self):
+        value, revision, old, revision_hash, previous = ReplacementTests().fixture()
+        p = DiagnosticLiveProvider()
+        def send(method, url, **options):
+            if method == 'POST':
+                raise TimeoutError('SECRET_CAS_TIMEOUT')
+            return previous.request(url, method, options['headers'], options['data'])
+        p.fake_session.request = send
+        b = m.OwnerBridge(p)
+        with patch.object(m, 'replacement_registration', return_value=(revision,old,revision_hash)), patch.object(m,'replacement_canary_pin',return_value={'generation':'2','size':'23'}):
+            d = self.run_error(b, value, 'REQUEST_OUTCOME_UNKNOWN')
+        self.assertEqual([c[1] for c in previous.calls], ['HEAD','GET','GET','HEAD'])
+        self.assertEqual((d['stage'],d['httpStatus'],d['casHttpAttempts'],d['casHttpAcks']), ('cas',None,1,0))
+
+    def test_ack_survives_later_metadata_http_failure(self):
+        p = DiagnosticLiveProvider([(200, b'{"generation":"2"}'), TimeoutError('SECRET')])
+        b = m.OwnerBridge(p); b.dispatch(write_value())
+        d = self.run_error(b, read_value(LATEST+'?generation=2'), 'REQUEST_OUTCOME_UNKNOWN')
+        self.assertEqual([d[k] for k in m.SAFE_COUNTERS], [1,1,1,0,0,0])
+        self.assertEqual((d['stage'], d['httpStatus']), ('readback-metadata', None))
+
+    def test_html_2xx_is_only_http_success_not_body_or_hash_verification(self):
+        def unreadable(url):
+            response = Response(url)
+            response.raw.read = lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError('SECRET_BODY'))
+            return response
+        b = m.OwnerBridge(DiagnosticLiveProvider([(200,b'{"generation":"2"}'), unreadable]))
+        b.dispatch(write_value())
+        d = self.run_error(b, read_value(LATEST+'?generation=2&alt=media', headers={'Accept':'application/octet-stream','Accept-Encoding':'identity'}), 'REQUEST_OUTCOME_UNKNOWN')
+        self.assertEqual((d['readbackHtmlAttempts'], d['readbackHtmlSuccesses'], d['httpStatus']), (1,1,200))
+        self.assertNotIn('SECRET', json.dumps(d))
+
+    def test_primary_and_response_close_failure_are_separate(self):
+        import errno
+        def wrong_url(url):
+            response = Response(url+'?UNEXPECTED')
+            response.close = lambda: (_ for _ in ()).throw(BrokenPipeError(errno.EPIPE, 'SECRET_CLOSE'))
+            return response
+        b = m.OwnerBridge(DiagnosticLiveProvider([wrong_url]))
+        d = self.run_error(b, write_value(), 'REDIRECT_OR_URL_CHANGED')
+        self.assertEqual(d['errorCode'], 'REDIRECT_OR_URL_CHANGED')
+        cleanup = b.safe_diagnostics.cleanup
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual((cleanup[0]['stage'], cleanup[0]['errorCode']), ('close','EPIPE'))
+        self.assertNotIn('SECRET', json.dumps([d,cleanup]))
+
+    def test_no_primary_close_failure_retains_original_read_failure(self):
+        def close_error(url):
+            response = Response(url)
+            response.close = lambda: (_ for _ in ()).throw(OSError('SECRET_CLOSE'))
+            return response
+        b = m.OwnerBridge(DiagnosticLiveProvider([close_error]))
+        d = self.run_error(b, read_value(), 'READ_FAILED')
+        self.assertEqual((d['stage'],d['errorType']), ('close','OSError'))
+
+    def test_exception_codec_does_not_read_message_or_custom_properties(self):
+        class Tainted(Exception):
+            def __str__(self): raise AssertionError('MESSAGE_ACCESS')
+            @property
+            def code(self): raise AssertionError('CODE_ACCESS')
+            @property
+            def __cause__(self): raise AssertionError('CAUSE_ACCESS')
+        d = m.SafeDiagnostics();d.error(Tainted('SECRET'))
+        self.assertEqual((d.snapshot()['errorType'],d.snapshot()['errorCode'],d.snapshot()['causeCode']), (None,None,None))
+        self.assertNotIn('SECRET',json.dumps(d.snapshot()))
+
+    def test_rpc_success_and_error_frames_have_only_finite_diagnostics(self):
+        class MainProvider(DiagnosticLiveProvider):
+            pass
+        inp = io.BytesIO((json.dumps({'id':1,'value':read_value()})+'\n'+json.dumps({'id':2,'value':{'op':'INVALID_SECRET'}})+'\n').encode())
+        out = io.BytesIO()
+        with patch.object(m,'LiveSdkProvider',MainProvider), patch.object(m.sys,'stdin',types.SimpleNamespace(buffer=inp)), patch.object(m.sys,'stdout',types.SimpleNamespace(buffer=out)):
+            m.main()
+        frames = [json.loads(x) for x in out.getvalue().splitlines()]
+        self.assertEqual(set(frames[0]), {'id','result','safeDiagnostics','safeCleanupDiagnostics'})
+        self.assertEqual(set(frames[1]), {'id','error','safeDiagnostics','safeCleanupDiagnostics'})
+        self.assertEqual(frames[1]['error'],'OPERATION_INVALID')
+        self.assertNotIn('SECRET', out.getvalue().decode())
+
+    def test_python_and_node_share_exact_finite_enums(self):
+        source = Path(__file__).with_name('owner_sdk_transport.mjs').read_text()
+        for python_name, js_name in [('SAFE_DIAGNOSTIC_STAGES','OWNER_SAFE_DIAGNOSTIC_STAGES'),('SAFE_ERROR_TYPES','OWNER_SAFE_ERROR_TYPES'),('SAFE_ERROR_CODES','OWNER_SAFE_ERROR_CODES')]:
+            import re
+            text = re.search(r'export const '+js_name+r'=Object.freeze\((\[.*?\])\);',source).group(1)
+            self.assertEqual(set(json.loads(text)), getattr(m,python_name))
+
+
 if __name__ == '__main__':
     unittest.main()

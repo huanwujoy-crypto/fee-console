@@ -5,10 +5,12 @@
 // delegation or deny policies, nor proof that every approved machine uses GET.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import {types as utilTypes} from 'node:util';
+import {safeErrorOrigin} from './report.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 import {LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
 import {requireProtectedOwnerCheckout} from './owner_latest_delivery.mjs';
-import {createOwnerSdkTransport} from './owner_sdk_transport.mjs';
+import {createOwnerSdkTransport,decodeOwnerSafeDiagnostics,OWNER_SAFE_ERROR_CODES} from './owner_sdk_transport.mjs';
 import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 export const CANARY_TARGET=Object.freeze({bucket:LATEST_TARGET.bucket,object:'delivery/owner-phone-canary-v1.html'});
 export const FULL_PREFLIGHT_TTL_MS=60000,MAX_BOUNDARY_WINDOW_MS=30000,MAX_BOUNDARY_AGE_MS=5000,MAX_CANARY_BYTES=4096;
@@ -19,6 +21,55 @@ const HEX=/^[a-f0-9]{64}$/,GEN=/^[1-9][0-9]{0,29}$/,UUID=/^[a-f0-9]{8}-[a-f0-9]{
 const encoder=new TextEncoder(),decoder=new TextDecoder('utf-8',{fatal:true});
 const object=x=>!!x&&Object.getPrototypeOf(x)===Object.prototype;
 const fail=code=>{throw Object.assign(Error('OWNER_ACCESS_'+code),{safeCode:'OWNER_ACCESS_'+code});};
+// Only finite own-data diagnostics survive a caught SDK failure. Cleanup never
+// changes the primary canary failure or grants an admission capability.
+const ACCESS_FAILURE_CODES=new Set(["ABORTED","ACTOR","APPROVED_BOUNDARY","BINDING","BOUNDARY_CHANGED","CANARY_ACK","CANARY_BODY","CANARY_BYTES","CANARY_CLOSED","CANARY_CURRENT","CANARY_ENCODING","CANARY_EXISTS","CANARY_FIELDS","CANARY_GENERATION","CANARY_HASH","CANARY_MEDIA","CANARY_METADATA","CANARY_METADATA_TYPE","CANARY_PIN","CANARY_REQUIRED","CANARY_RESPONSE","CANARY_SIZE","CLOCK","CONDITION","FINANCIAL_ADMISSION_REQUIRED","JSON","MEMBER","OBSERVATION_CLOCK","OBSERVATION_CLOSED","OBSERVATION_CONTEXT","OBSERVATION_REQUIRED","OWNER_ACCESS","POLICY","POLICY_RESOURCE","PREFLIGHT_CLOCK","PREFLIGHT_EXPIRED","PREFLIGHT_STATE","PROJECT_OR_BUCKET","READER_SET","REGISTERED_CANARY","REGISTERED_CANARY_READ","REGISTERED_CANDIDATE","REPLACEMENT_ADMISSION_CLOSED","REPLACEMENT_ADMISSION_EXPIRED","REPLACEMENT_ADMISSION_REQUIRED","REPLACEMENT_BINDING","REPLACEMENT_BYTES","REPLACEMENT_DELETE_PERMISSION","REPLACEMENT_EXISTING_CANARY_ONLY","REPLACEMENT_NAMED_WRITE_REQUIRED","REPLACEMENT_OWNER_DELETE_PERMISSION","REPLACEMENT_REQUIRED","ROLE","ROLE_CHANGED","ROLE_MISSING","ROLE_SET","SDK_CAPABILITIES","SELECTOR","SESSION_CLOSED","SHAPE","STALE_BOUNDARY","STORAGE_ACCESS_ARGUMENTS_FORBIDDEN","TEST_PERMISSIONS","UNRESOLVED_PRINCIPAL","VISUAL_OBSERVATION_NOT_AVAILABLE"].map(code=>'OWNER_ACCESS_'+code));
+const diagnosticOwn=(value,key)=>{try{if(!value||!['object','function'].includes(typeof value)||utilTypes.isProxy(value))return undefined;const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined;}catch{return undefined;}};
+function diagnosticList(value,decode){
+  if(utilTypes.isProxy(value)||!Array.isArray(value)||Object.getPrototypeOf(value)!==Array.prototype||value.length>1)return [];
+  const descriptors=Object.getOwnPropertyDescriptors(value);if(Reflect.ownKeys(descriptors).some(k=>k!=='length'&&k!=='0'))return [];
+  if(!value.length)return [];const item=descriptors['0'];if(!item||!Object.hasOwn(item,'value'))return [];
+  const decoded=decode(item.value);return decoded?[decoded]:[];
+}
+function diagnosticOrigin(error){
+  if(!error||!['object','function'].includes(typeof error)||utilTypes.isProxy(error))return safeErrorOrigin(null);
+  const own=Object.getOwnPropertyDescriptor(error,'safeOrigin');if(!own)return safeErrorOrigin(error);
+  const value=Object.hasOwn(own,'value')?own.value:null,keys=['type','code','causeCode','httpStatus'];
+  if(!value||utilTypes.isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)return safeErrorOrigin(null);
+  const descriptors=Object.getOwnPropertyDescriptors(value);
+  if(Reflect.ownKeys(descriptors).length!==4||keys.some(k=>!Object.hasOwn(descriptors,k)||!Object.hasOwn(descriptors[k],'value')))return safeErrorOrigin(null);
+  const fields=Object.fromEntries(keys.map(k=>[k,descriptors[k].value]));
+  if(['type','code','causeCode'].some(k=>fields[k]!==null&&typeof fields[k]!=='string')||fields.httpStatus!==null&&typeof fields.httpStatus!=='number')return safeErrorOrigin(null);
+  const normalized=safeErrorOrigin({name:fields.type,code:fields.code,cause:{code:fields.causeCode}},fields.httpStatus);
+  return keys.every(k=>normalized[k]===fields[k])?normalized:safeErrorOrigin(null);
+}
+function failureDiagnostics(error){
+  const primary=decodeOwnerSafeDiagnostics(diagnosticOwn(error,'ownerSafeDiagnostics'));
+  const cleanup=diagnosticList(diagnosticOwn(error,'ownerSafeCleanupDiagnostics'),value=>{const d=decodeOwnerSafeDiagnostics(value);return d?.stage==='close'?d:null;});
+  const local=diagnosticList(diagnosticOwn(error,'ownerSafeLocalCleanupCodes'),value=>value==='SDK_LOCAL_CLOSE_FAILED'?value:null);
+  return {primary,cleanup,local,origin:diagnosticOrigin(error)};
+}
+function attachFailureDiagnostics(value,first,closeError){
+  if(!value||!['object','function'].includes(typeof value)||utilTypes.isProxy(value))return value;
+  const cleanup=[...first.cleanup],local=[...first.local];
+  if(closeError!==undefined){const next=failureDiagnostics(closeError);if(!cleanup.length){if(next.primary?.stage==='close')cleanup.push(next.primary);else cleanup.push(...next.cleanup);}if(!local.length)local.push(...next.local);if(!local.length&&diagnosticOwn(closeError,'safeCode')==='SDK_LOCAL_CLOSE_FAILED')local.push('SDK_LOCAL_CLOSE_FAILED');}
+  const fields={safeOrigin:first.origin,ownerSafeDiagnostics:first.primary,ownerSafeCleanupDiagnostics:Object.freeze(cleanup),ownerSafeLocalCleanupCodes:Object.freeze(local)};
+  for(const [key,item]of Object.entries(fields))try{Object.defineProperty(value,key,{value:item,enumerable:false,writable:false,configurable:false});}catch{}
+  return value;
+}
+function preserveCloseFailure(error,closeError){
+  if(diagnosticOwn(closeError,'safeCode')!=='SDK_LOCAL_CLOSE_FAILED'||!error||!['object','function'].includes(typeof error)||utilTypes.isProxy(error))return;
+  const prior=diagnosticOwn(error,'safeSecondaryCodes'),codes=[];
+  if(prior!==undefined){
+    if(utilTypes.isProxy(prior)||!Array.isArray(prior)||Object.getPrototypeOf(prior)!==Array.prototype||prior.length>3)return;
+    const descriptors=Object.getOwnPropertyDescriptors(prior);
+    if(Reflect.ownKeys(descriptors).some(k=>k!=='length'&&(typeof k!=='string'||!/^[0-2]$/.test(k))))return;
+    for(let i=0;i<prior.length;i++){const d=descriptors[i];if(!d||!Object.hasOwn(d,'value')||!['ACCESS_CLOSE_FAILED','TTY_CLEANUP_FAILED','PIPE_CLOSE_UNKNOWN','CANCELLATION_DISPOSE_FAILED','SDK_LOCAL_CLOSE_FAILED'].includes(d.value))return;codes.push(d.value);}
+  }else if(error&&Object.getOwnPropertyDescriptor(error,'safeSecondaryCodes'))return;
+  if(!codes.includes('SDK_LOCAL_CLOSE_FAILED')&&codes.length<3)codes.push('SDK_LOCAL_CLOSE_FAILED');
+  try{Object.defineProperty(error,'safeSecondaryCodes',{value:Object.freeze(codes),enumerable:false,writable:false,configurable:false});}catch{}
+}
+const canaryFailureReason=error=>{const code=diagnosticOwn(error,'safeCode');return typeof code==='string'&&(ACCESS_FAILURE_CODES.has(code)||OWNER_SAFE_ERROR_CODES.includes(code)||['REPORT_SOURCE_NETWORK_FAILED','REPORT_SOURCE_HTTP','REPORT_SOURCE_JSON_INVALID'].includes(code))?code:'CANARY_VALIDATION_FAILED';};
 const exact=(x,keys)=>{if(!object(x)||Object.keys(x).sort().join('|')!==keys.split(' ').sort().join('|'))fail('SHAPE');};
 const canonical=x=>Array.isArray(x)?x.map(canonical):object(x)?Object.fromEntries(Object.keys(x).sort().map(k=>[k,canonical(x[k])])):x;
 const text=x=>JSON.stringify(canonical(x));
@@ -311,7 +362,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
     evaluateOwnerBoundary(quick,FIXED_APPROVED,{cachedRoles:lease.current(Date.now()).roles,requireDeletePermission:replacing});
     guard();lease.current(Date.now());
   };
-  try{await full();}catch(error){sdk.close();throw error;}
+  try{await full();}catch(error){try{sdk.close();}catch(closeError){preserveCloseFailure(error,closeError);}throw error;}
   return Object.freeze({
     request:(url,options={})=>{
       guard();if((options.method??'GET')==='POST'){
@@ -362,8 +413,9 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
         guard();lease.current(Date.now());if(signal.aborted)fail('ABORTED');
         canaryPin=Object.freeze(pin);
         return {status:'existing-verified',code:'REGISTERED_CANARY_READBACK_VERIFIED',pin:structuredClone(pin)};
-      }catch(error){close();return {status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED',
-        reason:/^[A-Z][A-Z0-9_]{1,99}$/.test(error?.safeCode||'')?error.safeCode:'CANARY_VALIDATION_FAILED'};}
+      }catch(error){const diagnostics=failureDiagnostics(error),reason=canaryFailureReason(error);let closeError;
+        try{close();}catch(error){closeError=error;}
+        return attachFailureDiagnostics({status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED',reason},diagnostics,closeError);}
     },
     async createCanary(){
       if(replacing)fail('REPLACEMENT_EXISTING_CANARY_ONLY');

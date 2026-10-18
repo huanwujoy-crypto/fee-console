@@ -4,6 +4,7 @@ import {spawn} from 'node:child_process';
 import {realpathSync,statSync,readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
+import {types as utilTypes} from 'node:util';
 import {LATEST_TARGET,MAX_BYTES} from './owner_latest.mjs';
 import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 
@@ -15,9 +16,40 @@ const worker=fileURLToPath(new URL('./owner_sdk_transport.py',import.meta.url));
 const maxFrame=24*1024*1024,base=`https://storage.googleapis.com/storage/v1/b/${LATEST_TARGET.bucket}/o/`;
 const latest=base+encodeURIComponent(LATEST_TARGET.object);
 const upload=`https://storage.googleapis.com/upload/storage/v1/b/${LATEST_TARGET.bucket}/o`;
-const fail=code=>Object.assign(Error(`OWNER_SDK_${code}`),{safeCode:code});
+const fail=(code,diagnostics=null,cleanup=Object.freeze([]),localCodes=[])=>attachDiagnostics(Object.assign(Error(`OWNER_SDK_${code}`),{safeCode:code}),diagnostics,cleanup,localCodes);
 const plain=x=>!!x&&Object.getPrototypeOf(x)===Object.prototype;
 const generation=x=>typeof x==='string'&&/^[1-9][0-9]{0,29}$/.test(x);
+
+export const OWNER_SAFE_DIAGNOSTIC_STAGES=Object.freeze(["frame", "request-validation", "identity", "cache", "metadata-get", "html-get", "head", "boundary", "canary", "cas", "readback-metadata", "readback-html", "close"]);
+export const OWNER_SAFE_ERROR_TYPES=Object.freeze(["BoundaryError", "OSError", "TimeoutError", "ConnectionError", "SSLError", "SSLCertVerificationError", "CertificateError", "BrokenPipeError", "ConnectionResetError", "ConnectionRefusedError", "FileNotFoundError", "PermissionError", "ImportError", "ModuleNotFoundError", "ValueError", "TypeError", "RuntimeError", "RequestException", "ReadTimeout", "ConnectTimeout", "ConnectTimeoutError", "ReadTimeoutError", "ProxyError", "NewConnectionError", "MaxRetryError", "TransportError", "RefreshError", "gaierror"]);
+export const OWNER_SAFE_ERROR_CODES=Object.freeze(["BODY_INVALID", "BOUNDARY_ACCESS_DENIED", "BOUNDARY_CONTENT_TYPE", "BOUNDARY_READ_FAILED", "CACHED_CREDENTIAL_LIFETIME_INSUFFICIENT", "CACHED_CREDENTIAL_REFRESH_REQUIRED", "CANARY_ALREADY_ATTEMPTED", "CANARY_ALREADY_EXISTS", "CANARY_INVALID", "CANARY_PRESENCE_UNPROVEN", "CANARY_REQUEST_INVALID", "CANARY_TIME_INVALID", "CLOSED", "DISPLAY_UTF8_INVALID", "DUPLICATE_JSON_KEY", "EACCES", "EAI_AGAIN", "EAI_NONAME", "ECONNABORTED", "ECONNREFUSED", "ECONNRESET", "EHOSTUNREACH", "ENCODING_INVALID", "ENETUNREACH", "ENOENT", "ENVIRONMENT_OVERRIDE", "EPERM", "EPIPE", "ETIMEDOUT", "EXISTING_USER_CREDENTIAL_REQUIRED", "FRAME_INVALID", "FRAME_SIZE_LIMIT", "HEADERS_INVALID", "JSON_INVALID", "MULTIPART_INVALID", "MULTIPART_METADATA_INVALID", "MULTIPART_RESOURCE_INVALID", "OPERATION_INVALID", "ORIGINAL_IDENTITY_CHANGED", "ORIGINAL_IDENTITY_REQUIRED", "PIN_REQUIRED", "QUERY_INVALID", "READ_FAILED", "REDIRECT_OR_URL_CHANGED", "REPLACEMENT_ADMISSION_EXPIRED", "REPLACEMENT_CANARY_CURRENT", "REPLACEMENT_CANARY_REGISTRATION", "REPLACEMENT_CANDIDATE", "REPLACEMENT_INVALID", "REPLACEMENT_METADATA", "REPLACEMENT_OLD_CHANGED", "REPLACEMENT_OLD_HASH", "REPLACEMENT_OLD_MEDIA", "REPLACEMENT_OLD_METADATA", "REPLACEMENT_REGISTRATION", "REQUEST_INVALID", "REQUEST_OUTCOME_UNKNOWN", "RESPONSE_SIZE_LIMIT", "SDK_CONFIG_INVALID", "SDK_FAILED", "SDK_OVERRIDE", "SDK_ROOT_INVALID", "SDK_ROOT_REQUIRED", "TARGET_INVALID", "TLS_CERTIFICATE_ERROR", "TLS_ERROR", "WRITE_ALREADY_ATTEMPTED"]);
+
+const SAFE_DIAGNOSTIC_KEYS=Object.freeze(['schema','stage','errorType','errorCode','causeCode','httpStatus','casHttpAttempts','casHttpAcks','readbackMetadataAttempts','readbackMetadataSuccesses','readbackHtmlAttempts','readbackHtmlSuccesses']);
+const COUNTERS=SAFE_DIAGNOSTIC_KEYS.slice(6);
+const ownData=(x,keys)=>{if(utilTypes.isProxy(x)||!plain(x))return false;const d=Object.getOwnPropertyDescriptors(x);return Reflect.ownKeys(d).length===keys.length&&keys.every(k=>Object.hasOwn(d,k)&&Object.hasOwn(d[k],'value'));};
+export function decodeOwnerSafeDiagnostics(value){
+  try{
+    if(!ownData(value,SAFE_DIAGNOSTIC_KEYS)||value.schema!=='xuan.owner-sdk.safe-diagnostics.v1'||!OWNER_SAFE_DIAGNOSTIC_STAGES.includes(value.stage)
+      ||!(value.errorType===null||OWNER_SAFE_ERROR_TYPES.includes(value.errorType))||!(value.errorCode===null||OWNER_SAFE_ERROR_CODES.includes(value.errorCode))
+      ||!(value.causeCode===null||OWNER_SAFE_ERROR_CODES.includes(value.causeCode))||!(value.httpStatus===null||(Number.isInteger(value.httpStatus)&&value.httpStatus>=100&&value.httpStatus<=599))
+      ||COUNTERS.some(k=>!Number.isSafeInteger(value[k])||value[k]<0)||value.casHttpAttempts>1||value.casHttpAcks>value.casHttpAttempts
+      ||value.readbackMetadataSuccesses>value.readbackMetadataAttempts||value.readbackHtmlSuccesses>value.readbackHtmlAttempts)return null;
+    return Object.freeze(Object.fromEntries(SAFE_DIAGNOSTIC_KEYS.map(k=>[k,value[k]])));
+  }catch{return null;}
+}
+function decodeCleanup(value,primary){
+  if(utilTypes.isProxy(value)||!Array.isArray(value)||Object.getPrototypeOf(value)!==Array.prototype||value.length>1)return null;
+  const descriptors=Object.getOwnPropertyDescriptors(value);
+  if(Reflect.ownKeys(descriptors).some(k=>k!=='length'&&k!=='0')||(value.length===1&&(!descriptors['0']||!Object.hasOwn(descriptors['0'],'value'))))return null;
+  const result=[];for(const raw of value){const d=decodeOwnerSafeDiagnostics(raw);if(!d||d.stage!=='close'||COUNTERS.some(k=>d[k]!==primary[k]))return null;result.push(d);}return Object.freeze(result);
+}
+function attachDiagnostics(value,diagnostics=null,cleanup=Object.freeze([]),localCodes=[]){
+  if(value!==null&&(typeof value==='object'||typeof value==='function')){
+    Object.defineProperty(value,'ownerSafeDiagnostics',{value:diagnostics,enumerable:false,writable:false,configurable:false});
+    Object.defineProperty(value,'ownerSafeCleanupDiagnostics',{value:cleanup,enumerable:false,writable:false,configurable:false});
+    Object.defineProperty(value,'ownerSafeLocalCleanupCodes',{value:Object.freeze([...localCodes]),enumerable:false,writable:false,configurable:false});
+  }return value;
+}
 
 function environment(){
   const forbidden=/^(?:CLOUDSDK_AUTH_|CLOUDSDK_API_ENDPOINT_OVERRIDES_|CLOUDSDK_CORE_ACCOUNT$|CLOUDSDK_ACTIVE_CONFIG_NAME$|CLOUDSDK_CORE_UNIVERSE_DOMAIN$|GOOGLE_APPLICATION_CREDENTIALS$|GOOGLE_AUTH_ACCESS_TOKEN$|GOOGLE_API_USE_CLIENT_CERTIFICATE$|GOOGLE_API_USE_MTLS_ENDPOINT$|REQUESTS_CA_BUNDLE$|CURL_CA_BUNDLE$|SSL_CERT_FILE$|SSL_CERT_DIR$|(?:HTTPS?|ALL)_PROXY$)/i;
@@ -95,19 +127,22 @@ function replacementValue(url,options,pins){
 function nativeResponse(value){
   if(!plain(value)||Object.keys(value).sort().join('|')!=='body|headers|status|url'||!Number.isInteger(value.status)||value.status<200||value.status>599||typeof value.url!=='string'
     ||!plain(value.headers)||Object.entries(value.headers).some(([k,v])=>!['content-type','content-length','content-disposition','cache-control','content-encoding','x-goog-generation'].includes(k)||typeof v!=='string')
-    ||typeof value.body!=='string'||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.body))throw fail('RESPONSE_INVALID');
-  const bytes=Buffer.from(value.body,'base64');if(bytes.length>4*1024*1024)throw fail('RESPONSE_SIZE_LIMIT');
-  const response=new Response([204,205,304].includes(value.status)||!bytes.length?null:bytes,{status:value.status,headers:value.headers});
-  Object.defineProperty(response,'url',{value:value.url});return response;
+    ||typeof value.body!=='string'||! /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value.body))throw fail('RESPONSE_INVALID',value?.ownerSafeDiagnostics??null,value?.ownerSafeCleanupDiagnostics??Object.freeze([]),value?.ownerSafeLocalCleanupCodes??[]);
+  const bytes=Buffer.from(value.body,'base64');if(bytes.length>4*1024*1024)throw fail('RESPONSE_SIZE_LIMIT',value.ownerSafeDiagnostics,value.ownerSafeCleanupDiagnostics,value.ownerSafeLocalCleanupCodes);
+  try{const response=new Response([204,205,304].includes(value.status)||!bytes.length?null:bytes,{status:value.status,headers:value.headers});
+  Object.defineProperty(response,'url',{value:value.url});return attachDiagnostics(response,value.ownerSafeDiagnostics,value.ownerSafeCleanupDiagnostics,value.ownerSafeLocalCleanupCodes);
+  }catch(error){throw attachDiagnostics(error,value.ownerSafeDiagnostics,value.ownerSafeCleanupDiagnostics,value.ownerSafeLocalCleanupCodes);}
 }
 
 export function createOwnerSdkTransport(){
   // Construction is inert. Even process creation waits for a validated call.
-  let child,closed=false,busy=false,sequence=0,pending,buffer='',writeStarted=false,canaryAttempted=false,mutationStarted=false;
-  const close=(code='CLOSED')=>{
-    if(closed)return;closed=true;
-    pending?.reject(fail(code));pending=null;
-    if(child){child.stdin.destroy();child.stdout.destroy();child.stderr.destroy();child.kill('SIGKILL');}
+  let child,closed=false,busy=false,sequence=0,pending,buffer='',writeStarted=false,canaryAttempted=false,mutationStarted=false,lastCounters=null,localCleanupCodes=[];
+  const close=(code='CLOSED',explicit=false)=>{
+    if(closed){if(explicit&&localCleanupCodes.length)throw fail('SDK_LOCAL_CLOSE_FAILED',null,Object.freeze([]),localCleanupCodes);return;}
+    closed=true;const receiver=pending;pending=null;
+    if(child){for(const stream of [child.stdin,child.stdout,child.stderr]){try{stream.destroy();}catch{if(!localCleanupCodes.length)localCleanupCodes=['SDK_LOCAL_CLOSE_FAILED'];}}try{child.kill('SIGKILL');}catch{if(!localCleanupCodes.length)localCleanupCodes=['SDK_LOCAL_CLOSE_FAILED'];}}
+    if(receiver)receiver.reject(fail(code,null,Object.freeze([]),localCleanupCodes));
+    else if(explicit&&localCleanupCodes.length)throw fail('SDK_LOCAL_CLOSE_FAILED',null,Object.freeze([]),localCleanupCodes);
   };
   const start=()=>{
     if(child)return;
@@ -123,18 +158,22 @@ export function createOwnerSdkTransport(){
       while((newline=buffer.indexOf('\n'))>=0){
         const line=buffer.slice(0,newline);buffer=buffer.slice(newline+1);
         let message;try{message=JSON.parse(line);}catch{close('FRAME_INVALID');return;}
-        if(!pending||!plain(message)||message.id!==pending.id||Object.keys(message).sort().join('|')!==(message.error===undefined?'id|result':'error|id')){close('FRAME_INVALID');return;}
+        if(!pending||!plain(message)||message.id!==pending.id||Object.keys(message).sort().join('|')!==(message.error===undefined?'id|result|safeCleanupDiagnostics|safeDiagnostics':'error|id|safeCleanupDiagnostics|safeDiagnostics')){close('FRAME_INVALID');return;}
+        if(message.error===undefined&&(!plain(message.result)||Object.hasOwn(message.result,'ownerSafeDiagnostics')||Object.hasOwn(message.result,'ownerSafeCleanupDiagnostics')||Object.hasOwn(message.result,'ownerSafeLocalCleanupCodes'))){close('FRAME_INVALID');return;}
+        const diagnostics=decodeOwnerSafeDiagnostics(message.safeDiagnostics),cleanup=diagnostics?decodeCleanup(message.safeCleanupDiagnostics,diagnostics):null;
+        if(!diagnostics||!cleanup||(lastCounters&&COUNTERS.some(k=>diagnostics[k]<lastCounters[k]))){close('FRAME_INVALID');return;}
+        lastCounters=diagnostics;
         const receiver=pending;pending=null;
         if(message.error!==undefined){
-          if(typeof message.error!=='string'||! /^[A-Z][A-Z0-9_]{1,79}$/.test(message.error)){close('FRAME_INVALID');receiver.reject(fail('FRAME_INVALID'));return;}
-          receiver.reject(fail(message.error));
+          if(typeof message.error!=='string'||!OWNER_SAFE_ERROR_CODES.includes(message.error)){close('FRAME_INVALID');receiver.reject(fail('FRAME_INVALID',null,Object.freeze([]),localCleanupCodes));return;}
           if(message.error==='REQUEST_OUTCOME_UNKNOWN')close('REQUEST_OUTCOME_UNKNOWN');
-        }else receiver.resolve(message.result);
+          receiver.reject(fail(message.error,diagnostics,cleanup,localCleanupCodes));
+        }else receiver.resolve(attachDiagnostics(message.result,diagnostics,cleanup));
       }
     });
   };
   const call=async(value,{signal,timeoutMs=60000}={})=>{
-    if(closed)throw fail('CLOSED');if(signal?.aborted){close('ABORTED');throw fail('ABORTED');}if(busy)throw fail('CONCURRENT_OPERATION');
+    if(closed)throw fail('CLOSED',null,Object.freeze([]),localCleanupCodes);if(signal?.aborted){close('ABORTED');throw fail('ABORTED',null,Object.freeze([]),localCleanupCodes);}if(busy)throw fail('CONCURRENT_OPERATION');
     busy=true;
     let timer;const abort=()=>close(mutationStarted?'REQUEST_OUTCOME_UNKNOWN':'ABORTED');
     try{
@@ -183,6 +222,6 @@ export function createOwnerSdkTransport(){
       if(typeof media!=='boolean'||!['HEAD','GET'].includes(method)||(method==='HEAD'?(gen!==undefined||media!==true):!generation(gen)))throw fail('CANARY_REQUEST_INVALID');
       return nativeResponse(await call({op:'requestCanary',method,generation:gen??null,media},{signal}));
     },
-    close
+    close:()=>close('CLOSED',true)
   });
 }
