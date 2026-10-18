@@ -19,14 +19,25 @@ function fixture(){
 test('complete weekly artifact has no overview or old method wording',()=>{
   const r=build(fixture());assert.equal(r.receipt.complete,true);assert.equal(r.receipt.abcRows,4);
   assert.match(r.html,/不扣待 CALL/);assert.match(r.html,/ABC · 同资金路径/);assert.doesNotMatch(r.html,/<h2>持仓|<h2>总览/);
-  assert.match(r.html,/href="#concentration"/);assert.match(r.html,/id="concentration"/);
-  assert.match(r.html,/含 BRK.B/);assert.match(r.html,/ETF 同名穿透／前十大股票/);assert.match(r.html,/计算过程与资料日期/);
+  assert.doesNotMatch(r.html,/#concentration|id="concentration"|单票集中度|集中度完整计算与资料|已识别的集中与重叠|已识别前 \d+ 项合计/);
+  assert.equal(Object.hasOwn(r,'concentration'),false);
+  for(const key of ['concentrationMethodId','concentrationIssuers','concentrationEtfSources','concentrationEtfMissing'])assert.equal(Object.hasOwn(r.receipt,key),false,key);
+  assert.match(r.html,/href="#risk"/);assert.match(r.html,/href="#abc"/);
+  assert.match(r.html,/现金与已知杠杆/);assert.match(r.html,/估算方法、资料日期与有效覆盖/);
   assert.match(r.html,/累计 TWR/);assert.match(r.html,/未实扣管理费/);
   assert.match(r.html,/资金记录 · IB 自动读取/);assert.match(r.html,/计算过程与逐日核算/);
   assert.match(r.html,/不再扣一次 15%/);assert.match(r.html,/现金入金/);
   assert.match(r.html,/AI 相关集中度/);assert.match(r.html,/AI 投资周期敏感/);assert.match(r.html,/综合平台与应用/);
   assert.match(r.html,/ETF 待穿透／待分类/);assert.match(r.html,/待确认/);assert.doesNotMatch(r.html,/中情景|压力金额排序|<h3>系数/);
   assert.equal(r.pressure,undefined);assert.equal(r.aiExposure.groups.find(g=>g.key==='pending').percent,100);
+});
+test('weekly build no longer runs the single-stock calculator or requires its snapshot age policy',()=>{
+ const age=DEFAULT_TOP10_POLICY.maxSnapshotAgeDays;
+ try{
+  DEFAULT_TOP10_POLICY.maxSnapshotAgeDays=0;
+  assert.throws(()=>buildWeeklyConcentration({},{cutoff:'2026-08-03'}),/weekly_concentration_date_invalid/);
+  assert.equal(build(fixture()).receipt.complete,true);
+ }finally{DEFAULT_TOP10_POLICY.maxSnapshotAgeDays=age;}
 });
 test('weekly concentration opt-in includes Berkshire variants and amount without changing daily defaults',()=>{
  const rows=['BRK-B','BRK.B','BRK/B'].map(symbol=>({symbol,status:'excluded',assetType:'STK',marketValueCents:'20000'}));
