@@ -686,4 +686,101 @@ class ReceiptRepairTests(unittest.TestCase):
         with self.assertRaises(PermissionError): self.check()
         self.assert_no_side_effects()
 
+class PrivateDiagnosticControlTests(unittest.TestCase):
+    def setUp(self):
+        self.store=Store()
+        self.request_id='12345678-1234-4234-8234-123456789abc'
+        self.approval='https://github.com/huanwujoy-crypto/fee-console/pull/340#issuecomment-5977909656'
+        self.prefix='private-diagnostic/'+self.request_id+'/'
+        for name in ('public','consistent','repair_publication'):
+            setattr(self.store,name,lambda *a,**k:self.fail('public access forbidden'))
+
+    def check(self, now=NOW, **changes):
+        from recovery import diagnostic_control
+        return diagnostic_control(self.store,now,**{'request_id':self.request_id,
+            'approval_reference':self.approval,'outer_deadline':570,**changes})
+
+    def test_zero_exit_without_manifest_is_not_success_and_consumes_request(self):
+        from unittest.mock import patch
+        with patch('weekly_job.run_private_diagnostic',return_value=0) as runner:
+            self.assertEqual(self.check()['code'],'private_diagnostic_not_verified')
+            self.assertEqual(self.check(NOW+dt.timedelta(minutes=21))['code'],
+                             'private_diagnostic_request_already_used')
+        runner.assert_called_once_with(stamp=NOW.isoformat(),request_id=self.request_id,outer_deadline=570)
+        self.assertTrue(self.store.objects[self.prefix+'health.json']['needsAttention'])
+        self.assertTrue(all(name.startswith((self.prefix,'weekly/control/leases/')) for name in self.store.objects))
+
+    def test_invalid_replayed_or_conflicting_claim_never_calls_runner(self):
+        from unittest.mock import patch
+        with patch('weekly_job.run_private_diagnostic') as runner:
+            self.assertEqual(self.check(request_id='bad')['code'],'private_diagnostic_request_invalid')
+            self.assertEqual(self.check(approval_reference='approved=true')['code'],'private_diagnostic_request_invalid')
+            self.store.objects[self.prefix+'request.json']={}
+            self.assertEqual(self.check()['code'],'private_diagnostic_request_already_used')
+            del self.store.objects[self.prefix+'request.json']
+            self.store.claim=lambda name,value:not name.endswith('/request.json')
+            self.assertEqual(self.check()['code'],'private_diagnostic_claim_lost')
+        runner.assert_not_called()
+
+    def test_health_claim_conflict_is_nonzero_without_overwrite(self):
+        from unittest.mock import patch
+        prior={'code':'DO_NOT_OVERWRITE'}
+        self.store.objects[self.prefix+'health.json']=prior
+        with patch('weekly_job.run_private_diagnostic',return_value=0):
+            self.assertEqual(self.check()['code'],'private_diagnostic_health_conflict')
+        self.assertEqual(self.store.objects[self.prefix+'health.json'],prior)
+
+    def test_existing_normal_or_manual_reservation_blocks_diagnostic(self):
+        from unittest.mock import patch
+        from recovery import reserve
+        for kind in ('normal','manual','recovery'):
+            self.store=Store()
+            reserve(self.store,NOW,{'kind':kind})
+            with patch('weekly_job.run_private_diagnostic') as runner:
+                self.assertEqual(self.check()['code'],'active_lease')
+            runner.assert_not_called()
+            self.assertNotIn(self.prefix+'request.json',self.store.objects)
+
+    def test_diagnostic_reservation_blocks_normal_and_manual(self):
+        from unittest.mock import patch
+        from recovery import control,manual_control
+        with patch('weekly_job.run_private_diagnostic',return_value=1):self.check()
+        # Existing publication controllers retain their own public validation;
+        # once that passes, the diagnostic's shared slots prevent source work.
+        self.store.public=lambda:({},b'')
+        calls=[]
+        self.assertEqual(control(self.store,NOW,lambda *a:calls.append('normal'),None)['code'],'active_lease')
+        result=manual_control(self.store,NOW,lambda *a:calls.append('manual'),
+            request_id='22345678-1234-4234-8234-123456789abc',
+            expected_public_sha256='absent',approval_reference=self.approval)
+        self.assertEqual(result['code'],'active_lease');self.assertEqual(calls,[])
+
+    def test_two_distinct_diagnostic_requests_share_atomic_reservations(self):
+        import concurrent.futures,threading
+        from unittest.mock import patch
+        lock=threading.Lock();original=self.store.claim
+        def atomic(name,value):
+            with lock:return original(name,value)
+        self.store.claim=atomic
+        ids=[self.request_id,'22345678-1234-4234-8234-123456789abc']
+        with patch('weekly_job.run_private_diagnostic',return_value=1) as runner:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+                results=list(pool.map(lambda rid:self.check(request_id=rid),ids))
+        self.assertEqual(runner.call_count,1)
+        self.assertEqual(sorted(r['code'] for r in results),['active_lease','private_diagnostic_not_verified'])
+
+    def test_diagnostic_cli_contract_keeps_existing_defaults(self):
+        from recovery import parse_args
+        import contextlib,io
+        self.assertEqual(parse_args([]).mode,'scheduled')
+        args=parse_args(['--mode=private-diagnostic','--request-id='+self.request_id,
+                         '--approval-reference='+self.approval])
+        self.assertEqual(args.mode,'private-diagnostic')
+        with contextlib.redirect_stderr(io.StringIO()):
+            for argv in (['--mode=private-diagnostic'],['--mode=scheduled','--request-id='+self.request_id],
+                         ['--mode=private-diagnostic','--request-id='+self.request_id,
+                          '--approval-reference='+self.approval,'--expected-public-sha256=absent']):
+                with self.assertRaises(SystemExit):parse_args(argv)
+
+
 if __name__ == '__main__': unittest.main()

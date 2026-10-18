@@ -141,6 +141,83 @@ def manual_control(store, now, run_report, *, request_id, expected_public_sha256
     return result
 
 
+def diagnostic_control(store, now, *, request_id, approval_reference,
+                       outer_deadline, clock=None):
+    """Consume one approved request and verify only its immutable private archive.
+
+    The approval reference is an audit link, not runtime authorization. This
+    controller has no public-state gate or generic publication-capable callback.
+    """
+    from weekly_job import run_private_diagnostic
+    def outcome(code, attention=True):
+        return {'code':code, 'needsAttention':attention, 'kind':'private-diagnostic',
+                'publicationAttempted':False}
+    try:
+        if (str(uuid.UUID(request_id)) != request_id
+                or not re.fullmatch(APPROVAL_REFERENCE, approval_reference)):
+            raise ValueError()
+    except (ValueError, TypeError, AttributeError):
+        return outcome('private_diagnostic_request_invalid')
+    prefix = 'private-diagnostic/'+request_id+'/'
+    if store.read(prefix+'request.json') is not None:
+        return outcome('private_diagnostic_request_already_used')
+    stamp = now.isoformat()
+    claim = {'startedAt':stamp, 'prefix':prefix, 'kind':'private-diagnostic',
+             'expiresAt':(now+dt.timedelta(minutes=LEASE_MINUTES)).isoformat(),
+             'requestId':request_id, 'approvalReference':approval_reference}
+    if not reserve(store, now, claim):
+        return outcome('active_lease')
+    if not store.claim(prefix+'request.json', claim):
+        return outcome('private_diagnostic_claim_lost')
+    result = outcome('private_diagnostic_not_verified')
+    try:
+        status = run_private_diagnostic(stamp=stamp, request_id=request_id,
+                                        outer_deadline=outer_deadline)
+        finished = clock() if clock else now
+        manifest = store.read(prefix+'diagnostic.json')
+        receipt = store.read(prefix+'receipt.json')
+        report = store.report(prefix+'report.html')
+        expected = {'complete':True, 'kind':'private-diagnostic', 'requestId':request_id,
+                    'startedAt':stamp, 'publicationAttempted':False,
+                    'privateReportObject':prefix+'report.html'}
+        # A zero runner exit is not proof of a complete archive. Bind each read
+        # to this claimed request, its exact bytes and the existing date contract.
+        ok = (type(status) is int and status == 0 and isinstance(manifest, dict) and isinstance(receipt, dict)
+              and manifest.get('schema') == 'xuan-weekly.private-diagnostic.v1'
+              and manifest.get('code') == 'private_diagnostic_archived'
+              and manifest.get('complete') is True and receipt.get('complete') is True
+              and manifest.get('publicationAttempted') is False
+              and receipt.get('publicationAttempted') is False
+              and all(manifest.get(k) == v and receipt.get(k) == v for k,v in expected.items())
+              and all(receipt.get(k) == manifest.get(k) for k in
+                      ('requestedCutoff', 'cutoff', 'htmlSha256', 'completedAt')))
+        if ok:
+            risk = dt.date.fromisoformat(manifest['requestedCutoff'])
+            abc = dt.date.fromisoformat(manifest['cutoff'])
+            completed = utc(manifest['completedAt'])
+            ok = (now <= completed <= finished+dt.timedelta(minutes=1)
+                  and 0 <= (now.date()-risk).days <= 3 and 0 <= (risk-abc).days <= 3
+                  and re.fullmatch('[a-f0-9]{64}', manifest['htmlSha256']) is not None
+                  and hashlib.sha256(report.encode()).hexdigest() == manifest['htmlSha256']
+                  and '私有诊断 · 未发布' in report
+                  and manifest['requestedCutoff'] == risk.isoformat()
+                  and manifest['cutoff'] == abc.isoformat()
+                  and ('本次运行 '+stamp+' · 风险日期 '+risk.isoformat()
+                       +' · ABC 日期 '+abc.isoformat()) in report)
+        if ok:
+            result = {**outcome('private_diagnostic_archived', False),
+                      **{k:manifest[k] for k in ('requestId', 'startedAt', 'completedAt',
+                          'requestedCutoff', 'cutoff', 'privateReportObject', 'htmlSha256')}}
+    except Exception:
+        # Keep archive/read errors private. The runner emits its safe source
+        # diagnostics; missing or uncertain evidence never grants another attempt.
+        pass
+    result.setdefault('completedAt', (clock() if clock else now).isoformat())
+    if not store.claim(prefix+'health.json', result):
+        return outcome('private_diagnostic_health_conflict')
+    return result
+
+
 def control(store, now, run_report, republish, *, clock=None):
     """Injected store allows complete offline tests without any cloud/source call."""
     due, age = window(now)
@@ -428,7 +505,7 @@ class StorageStore:
 
 def parse_args(argv=None):
     parser = argparse.ArgumentParser(description='XUAN scheduled checks or explicit approved repair')
-    parser.add_argument('--mode', choices=('scheduled', 'manual'), default='scheduled')
+    parser.add_argument('--mode', choices=('scheduled', 'manual', 'private-diagnostic'), default='scheduled')
     parser.add_argument('--request-id')
     parser.add_argument('--expected-public-sha256')
     parser.add_argument('--approval-reference')
@@ -438,6 +515,15 @@ def parse_args(argv=None):
         parser.error('manual mode requires request-id, expected-public-sha256 and approval-reference')
     if args.mode == 'scheduled' and any(manual):
         parser.error('manual repair arguments cannot select scheduled mode')
+    if args.mode == 'private-diagnostic':
+        if not args.request_id or not args.approval_reference or args.expected_public_sha256 is not None:
+            parser.error('private-diagnostic requires request-id and approval-reference; no public hash')
+        try:
+            if (str(uuid.UUID(args.request_id)) != args.request_id
+                    or not re.fullmatch(APPROVAL_REFERENCE, args.approval_reference)):
+                raise ValueError()
+        except (ValueError, TypeError, AttributeError):
+            parser.error('invalid private-diagnostic request-id or approval-reference')
     return args
 
 
@@ -459,7 +545,10 @@ def main(argv=None):
                            risk_date=metadata['risk_date'], abc_date=metadata['abc_date'])
             return {'latestEntryStatus':private_status,'publicEntryStatus':public_status}
         clock = lambda:dt.datetime.now(dt.timezone.utc)
-        if args.mode == 'manual':
+        if args.mode == 'private-diagnostic':
+            result = diagnostic_control(store, now, request_id=args.request_id,
+                       approval_reference=args.approval_reference, outer_deadline=deadline, clock=clock)
+        elif args.mode == 'manual':
             result = manual_control(store, now, report, request_id=args.request_id,
                        expected_public_sha256=args.expected_public_sha256,
                        approval_reference=args.approval_reference, clock=clock)
@@ -469,6 +558,8 @@ def main(argv=None):
         # Never emit exception messages, URLs, tokens or financial payloads.
         result = {'code': 'permission_denied' if getattr(error,'code',None) in (401,403)
                   else 'health_control_failed', 'needsAttention': True}
+        if args.mode == 'private-diagnostic':
+            result.update(kind='private-diagnostic', publicationAttempted=False)
     print(json.dumps(result), flush=True)
     return 1 if result['needsAttention'] else 0
 

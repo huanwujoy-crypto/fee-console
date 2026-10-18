@@ -303,4 +303,293 @@ class WeeklyJobTests(unittest.TestCase):
         self.mocks[3].side_effect = StatementRejected('ib_statement_failed', valid)
         status, lines = self.execute(); self.assertEqual(lines[0]['stage'], 'ib_validate'); self.assertNotIn('statement', lines[0])
 
+class PrivateDiagnosticEntrypointTests(unittest.TestCase):
+    """Real CLI -> controller -> runner with synthetic sources and strict GCS."""
+    publish = WeeklyJobTests.publish
+
+    def setUp(self):
+        WeeklyJobTests.setUp(self)
+        self.day = '2026-10-08'
+        self.request_id = '12345678-1234-4234-8234-123456789abc'
+        self.prefix = 'private-diagnostic/'+self.request_id+'/'
+        self.approval = 'https://github.com/huanwujoy-crypto/fee-console/pull/340#issuecomment-5977909656'
+        self.latest_bytes=b'SYNTHETIC_UNCHANGED_LATEST'
+        self.objects = {'weekly/latest.html':self.latest_bytes}
+        self.reads=[];self.writes=[];self.forbidden=[];self.fail_write=None;self.fail_read=None
+        self.mutate_read=None
+        class NotFound(Exception): pass
+        class PreconditionFailed(Exception): pass
+        exceptions=types.ModuleType('google.api_core.exceptions')
+        exceptions.NotFound=NotFound;exceptions.PreconditionFailed=PreconditionFailed
+        owner=self
+        class Blob:
+            def __init__(self, name): self.name=name
+            def upload_from_string(self, body, **kwargs):
+                owner.assertEqual(kwargs['if_generation_match'],0)
+                if self.name.endswith('/'+str(owner.fail_write)):
+                    raise PermissionError('DO_NOT_LOG')
+                if self.name in owner.objects:raise PreconditionFailed()
+                owner.writes.append(self.name)
+                owner.objects[self.name]=body.encode() if isinstance(body,str) else body
+            def download_as_bytes(self, **kwargs):
+                owner.reads.append(self.name)
+                if self.name.endswith('/'+str(owner.fail_read)):raise PermissionError('DO_NOT_LOG')
+                if self.name not in owner.objects:raise NotFound()
+                raw=owner.objects[self.name]
+                return owner.mutate_read(self.name,raw) if owner.mutate_read else raw
+        def blob(name):
+            if name=='weekly/latest.html':
+                self.forbidden.append(name);raise AssertionError('latest access forbidden')
+            return Blob(name)
+        def bucket(name):
+            if name!='family-portfolio-gateway-xuan-weekly-private':
+                self.forbidden.append(name);raise AssertionError('public bucket access forbidden')
+            return self.bucket
+        self.bucket.blob.side_effect=blob
+        self.bucket.list_blobs.side_effect=lambda *,prefix:[Blob(n) for n in self.objects if n.startswith(prefix)]
+        self.client.bucket.side_effect=bucket
+        self.mocks[7].return_value.stdout=json.dumps({'html':
+            '<!doctype html><html><main><p>周报已更新</p><p>SYNTHETIC</p></main></html>',
+            'receipt':{'complete':True,'cutoff':self.day,'previousManifest':'BUSINESS_RECEIPT_CANARY'},
+            'records':['BUNDLE_RECORDS_CANARY']})
+        self.mocks[8].side_effect=AssertionError('private publisher forbidden')
+        self.mocks[9].side_effect=AssertionError('public publisher forbidden')
+        extra=[patch.dict(sys.modules,{'google.api_core.exceptions':exceptions}),
+               patch('weekly_job.stage_private_ai_sources',return_value=None),
+               patch('socket.socket',side_effect=AssertionError('real socket forbidden')),
+               patch('urllib.request.urlopen',side_effect=AssertionError('real URL forbidden')),
+               patch('urllib.request.OpenerDirector.open',side_effect=AssertionError('real opener forbidden')),
+               patch('http.client.HTTPConnection.connect',side_effect=AssertionError('real HTTP forbidden')),
+               patch('http.client.HTTPSConnection.connect',side_effect=AssertionError('real HTTPS forbidden'))]
+        self.extra=[p.start() for p in extra]
+        for p in extra:self.addCleanup(p.stop)
+
+    def execute(self, argv=None):
+        from recovery import main
+        argv=argv if argv is not None else ['--mode=private-diagnostic',
+            '--request-id='+self.request_id,'--approval-reference='+self.approval]
+        output=io.StringIO()
+        with contextlib.redirect_stdout(output):status=main(argv)
+        text=output.getvalue()
+        for value in ('DO_NOT_LOG','SYNTHETIC_TOKEN','SYNTHETIC_BINDING',
+                      'BUNDLE_RECORDS_CANARY','BUSINESS_RECEIPT_CANARY'):
+            self.assertNotIn(value,text)
+        self.assertEqual(self.forbidden,[])
+        self.mocks[8].assert_not_called();self.mocks[9].assert_not_called()
+        self.assertEqual(self.objects.get('weekly/latest.html'),self.latest_bytes)
+        return status,[json.loads(line) for line in text.splitlines()]
+
+    def test_real_entrypoint_archives_verifies_and_labels_without_publication(self):
+        status,lines=self.execute()
+        self.assertEqual(status,0)
+        self.assertEqual([line['code'] for line in lines],
+                         ['private_diagnostic_generated','private_diagnostic_archived'])
+        self.assertFalse(lines[-1]['needsAttention'])
+        for line in lines:
+            self.assertEqual(line['kind'],'private-diagnostic')
+            self.assertIs(line['publicationAttempted'],False)
+        expected={'request.json','ib.xml','ib.json','quotes.json','portfolios.json',
+                  'sharesight.json','bundle.json','report.html','receipt.json','diagnostic.json','health.json'}
+        self.assertEqual({n[len(self.prefix):] for n in self.writes if n.startswith(self.prefix)},expected)
+        self.assertTrue(all(n.startswith((self.prefix,'weekly/control/leases/')) for n in self.writes))
+        self.assertEqual(self.writes[-2:], [self.prefix+'diagnostic.json',self.prefix+'health.json'])
+        self.assertTrue({self.prefix+n for n in ('diagnostic.json','receipt.json','report.html')} <= set(self.reads))
+        bundle=json.loads(self.objects[self.prefix+'bundle.json'])
+        report=self.objects[self.prefix+'report.html'].decode()
+        self.assertEqual(bundle['html'],report)
+        self.assertIn('私有诊断 · 未发布',report);self.assertNotIn('周报已更新',report)
+        self.assertIn(lines[-1]['startedAt'],report);self.assertIn(self.day,report)
+        self.assertEqual(lines[-1]['htmlSha256'],__import__('hashlib').sha256(report.encode()).hexdigest())
+        self.assertEqual(self.mocks[2].call_count,1)
+        self.assertEqual([c.args[0] for c in self.mocks[6].call_args_list],
+                         ['/v1/portfolios']+['/v1/performance']*3)
+        self.assertEqual(self.mocks[3].call_args.args[1],'SYNTHETIC_BINDING')
+        self.assertEqual(self.bucket.list_blobs.call_args.kwargs,{'prefix':'weekly/'})
+
+    def test_replay_is_blocked_after_lease_expiry_without_another_source_call(self):
+        self.execute()
+        self.mocks[-1].now.return_value+=dt.timedelta(minutes=21)
+        before=dict(self.objects);status,lines=self.execute()
+        self.assertEqual(status,1);self.assertEqual(lines[-1]['code'],'private_diagnostic_request_already_used')
+        self.assertEqual(self.objects,before);self.assertEqual(self.mocks[2].call_count,1)
+
+    def test_latest_absent_old_or_current_does_not_affect_private_diagnostic(self):
+        for latest in (None,b'SYNTHETIC_OLD_LATEST',b'SYNTHETIC_CURRENT_LATEST'):
+            self.latest_bytes=latest
+            self.objects={'weekly/latest.html':latest} if latest is not None else {}
+            self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+            status,lines=self.execute();self.assertEqual(status,0)
+            self.assertEqual(lines[-1]['code'],'private_diagnostic_archived')
+
+    def test_invalid_cli_stops_before_sdk_or_source(self):
+        invalid=[['--mode=private-diagnostic'],
+            ['--mode=private-diagnostic','--request-id=bad','--approval-reference='+self.approval],
+            ['--mode=private-diagnostic','--request-id='+self.request_id,'--approval-reference=approved=true'],
+            ['--mode=private-diagnostic','--request-id='+self.request_id,
+             '--approval-reference='+self.approval,'--expected-public-sha256=absent']]
+        with patch.object(sys.modules['google.cloud'].storage,'Client',side_effect=AssertionError('SDK forbidden')) as sdk:
+            for argv in invalid:
+                with contextlib.redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+                    self.execute(argv)
+        sdk.assert_not_called();self.mocks[2].assert_not_called();self.assertEqual(self.writes,[])
+
+    def test_normal_runner_rejects_diagnostic_prefix_before_sdk(self):
+        with patch.object(sys.modules['google.cloud'].storage,'Client',side_effect=AssertionError('SDK forbidden')) as sdk:
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(job.run(prefix=self.prefix),1)
+        sdk.assert_not_called();self.mocks[2].assert_not_called()
+
+    def test_diagnostic_runner_rejects_invalid_request_or_stamp_before_sdk(self):
+        with patch.object(sys.modules['google.cloud'].storage,'Client',side_effect=AssertionError('SDK forbidden')) as sdk:
+            for stamp,request_id in ((None,self.request_id),('',self.request_id),
+                    ('2026-10-08T22:40:00',self.request_id),('DO_NOT_LOG',self.request_id),
+                    ('2026-10-08T22:40:00+00:00','bad')):
+                output=io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(job.run_private_diagnostic(stamp=stamp,request_id=request_id),1)
+                self.assertEqual(json.loads(output.getvalue())['code'],'private_diagnostic_request_invalid')
+                self.assertNotIn('DO_NOT_LOG',output.getvalue())
+        sdk.assert_not_called();self.mocks[2].assert_not_called();self.assertEqual(self.writes,[])
+
+    def test_unknown_internal_mode_stops_before_sdk(self):
+        with patch.object(sys.modules['google.cloud'].storage,'Client',side_effect=AssertionError('SDK forbidden')) as sdk:
+            output=io.StringIO()
+            with contextlib.redirect_stdout(output):self.assertEqual(job._run(mode='unknown'),1)
+        self.assertEqual(json.loads(output.getvalue())['code'],'invalid_run_mode')
+        sdk.assert_not_called();self.mocks[2].assert_not_called()
+
+    def test_diagnostic_keeps_real_fetch_statement_sanitizer_without_retry(self):
+        from test_ib_source import SyntheticIB,SEND,pending
+        from ib_source import fetch
+        body=pending().replace(b'>Fail<',b'> Fail <').replace(b'</FlexStatementResponse>',
+            b'<ErrorMessage>DO_NOT_LOG SYNTHETIC_TOKEN U123456789 https://private.invalid/</ErrorMessage></FlexStatementResponse>')
+        source=SyntheticIB([SEND,body]);self.mocks[2].side_effect=fetch
+        with source.patches()[0],source.patches()[1],source.patches()[2]:
+            status,lines=self.execute()
+        self.assertEqual(status,1)
+        self.assertEqual(lines[0]['code'],'ib_statement_failed')
+        self.assertEqual(lines[0]['statement']['statusShape'],'padded_fail')
+        self.assertNotIn('polling',lines[0]);self.assertNotIn('network',lines[0])
+        self.assertNotIn('private.invalid',json.dumps(lines));self.assertNotIn('U123456789',json.dumps(lines))
+        self.assertEqual(json.loads(self.objects[self.prefix+'failure.json']),lines[0])
+        self.assertEqual(self.execute()[1][-1]['code'],'private_diagnostic_request_already_used')
+        self.assertEqual(self.mocks[2].call_count,1)
+
+    def test_all_archive_write_failures_are_nonzero_and_never_published(self):
+        for leaf in ('request.json','ib.xml','ib.json','quotes.json','portfolios.json',
+                     'sharesight.json','bundle.json','report.html','receipt.json','diagnostic.json','health.json'):
+            with self.subTest(leaf=leaf):
+                self.objects={'weekly/latest.html':b'SYNTHETIC_UNCHANGED_LATEST'}
+                self.fail_write=leaf
+                self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+                status,lines=self.execute()
+                self.assertEqual(status,1);self.assertTrue(lines[-1]['needsAttention'])
+                self.assertNotEqual(lines[-1]['code'],'private_diagnostic_archived')
+
+    def test_source_calculation_identity_and_failure_archive_errors_stay_private(self):
+        for index,error in ((2,SourceError('ib_network_error')), (3,SourceError('wrong_account')),
+                            (4,SourceError('quotes_stale_over_three_days')),
+                            (6,SourceError('portfolio_identity_changed')),
+                            (7,SourceError('weekly_calculation_failed'))):
+            with self.subTest(index=index):
+                self.objects={'weekly/latest.html':b'SYNTHETIC_UNCHANGED_LATEST'}
+                original=self.mocks[index].side_effect
+                self.mocks[index].side_effect=error
+                self.fail_write='failure.json'
+                status,lines=self.execute()
+                self.assertEqual(status,1);self.assertTrue(lines[-1]['needsAttention'])
+                self.assertEqual(lines[0]['kind'],'private-diagnostic')
+                self.assertEqual(lines[1]['code'],'failure_archive_failed')
+                self.mocks[index].side_effect=original
+                self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+
+    def test_diagnostic_html_and_calculator_receipt_fail_closed(self):
+        for body in ({'html':'<!doctype html><p>SYNTHETIC</p>','receipt':{'complete':True,'cutoff':self.day}},
+                     {'html':'<!doctype html><main></main>','receipt':{'complete':True,'cutoff':'2026-10-01'}}):
+            self.objects={'weekly/latest.html':b'SYNTHETIC_UNCHANGED_LATEST'}
+            self.mocks[7].return_value.stdout=json.dumps(body)
+            self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+            status,lines=self.execute();self.assertEqual(status,1)
+            self.assertEqual(lines[0]['code'],'private_diagnostic_report_invalid')
+
+    def test_readback_missing_corrupt_date_hash_or_kind_never_claims_success(self):
+        cases=[('diagnostic.json','kind','manual'),('diagnostic.json','requestId','bad'),
+               ('diagnostic.json','privateReportObject','weekly/latest.html'),
+               ('diagnostic.json','publicationAttempted',True),('diagnostic.json','complete',1),
+               ('diagnostic.json','htmlSha256','0'*64),('receipt.json','cutoff','2026-10-01'),
+               ('receipt.json','requestedCutoff','2026-10-01'),
+               ('diagnostic.json','completedAt','2026-10-09T00:00:00+00:00')]
+        for leaf,key,value in cases:
+            with self.subTest(leaf=leaf,key=key):
+                self.objects={'weekly/latest.html':b'SYNTHETIC_UNCHANGED_LATEST'}
+                def mutate(name,raw):
+                    if name==self.prefix+leaf:
+                        body=json.loads(raw);body[key]=value;return json.dumps(body).encode()
+                    return raw
+                self.mutate_read=mutate
+                self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+                status,lines=self.execute();self.assertEqual(status,1)
+                self.assertEqual(lines[-1]['code'],'private_diagnostic_not_verified')
+        self.mutate_read=None
+
+    def test_manifest_receipt_or_report_read_failure_is_nonzero(self):
+        for leaf in ('diagnostic.json','receipt.json','report.html'):
+            self.objects={'weekly/latest.html':b'SYNTHETIC_UNCHANGED_LATEST'};self.fail_read=leaf
+            self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+            status,lines=self.execute();self.assertEqual(status,1)
+            self.assertEqual(lines[-1]['code'],'private_diagnostic_not_verified')
+
+    def test_matching_receipt_and_manifest_still_require_dates_hash_and_visible_binding(self):
+        for changes in ({'requestedCutoff':'2026-10-01'}, {'cutoff':'2026-10-01'},
+                        {'cutoff':'2026-10-07'}, {'completedAt':'2026-10-08T20:00:00+00:00'},
+                        {'htmlSha256':'0'*64}):
+            self.objects={'weekly/latest.html':self.latest_bytes}
+            def mutate(name,raw):
+                if name in (self.prefix+'diagnostic.json',self.prefix+'receipt.json'):
+                    return json.dumps({**json.loads(raw),**changes}).encode()
+                return raw
+            self.mutate_read=mutate
+            self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+            status,lines=self.execute();self.assertEqual(status,1)
+            self.assertEqual(lines[-1]['code'],'private_diagnostic_not_verified')
+
+    def test_private_evidence_failure_and_deadline_remain_existing_contract(self):
+        self.extra[1].side_effect=ValueError('DO_NOT_LOG')
+        with patch('weekly_job.time.monotonic',return_value=100):
+            status,lines=self.execute()
+        self.assertEqual(status,1);self.assertEqual(lines[0]['stage'],'private_evidence')
+        self.assertEqual(self.mocks[2].call_args.kwargs['deadline'],460)
+        self.mocks[7].assert_not_called()
+
+    def test_uncertain_request_write_is_consumed_before_sources(self):
+        original=self.bucket.blob.side_effect
+        def blob(name):
+            b=original(name)
+            if name==self.prefix+'request.json':
+                upload=b.upload_from_string
+                def uncertain(body,**kwargs):
+                    upload(body,**kwargs);raise PermissionError('DO_NOT_LOG')
+                b.upload_from_string=uncertain
+            return b
+        self.bucket.blob.side_effect=blob
+        status,lines=self.execute();self.assertEqual(status,1)
+        self.mocks[2].assert_not_called()
+        self.bucket.blob.side_effect=original
+        status,lines=self.execute();self.assertEqual(status,1)
+        self.assertEqual(lines[-1]['code'],'private_diagnostic_request_already_used')
+        self.mocks[2].assert_not_called()
+
+    def test_diagnostic_bundle_is_excluded_from_next_normal_history(self):
+        self.execute();self.reads.clear()
+        self.mocks[6].side_effect=[{'portfolios':[{'name':n,'id':i} for n,i in job.ACCOUNTS.items()]}]+[{'mode':'read_only'}]*3
+        self.mocks[8].side_effect=None;self.mocks[8].return_value='updated'
+        self.mocks[9].side_effect=None;self.mocks[9].return_value='updated'
+        with contextlib.redirect_stdout(io.StringIO()):self.assertEqual(job.run(),0)
+        request=json.loads(self.mocks[7].call_args.kwargs['input'])
+        self.assertIsNone(request['previousRecords'])
+        self.assertNotIn(self.prefix+'bundle.json',self.reads)
+        self.assertEqual(self.bucket.list_blobs.call_args.kwargs,{'prefix':'weekly/'})
+        self.mocks[8].assert_called_once();self.mocks[9].assert_called_once()
+
+
 if __name__=='__main__':unittest.main()
