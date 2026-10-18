@@ -46,23 +46,25 @@ export function safeErrorOrigin(error,httpStatus=null){
   return Object.freeze({type,code:finiteCode(ownData(error,'code')),causeCode:finiteCode(ownData(ownData(error,'cause'),'code')),httpStatus:Number.isInteger(status)&&status>=100&&status<=599?status:null});
 }
 
-async function read(url, {fetchImpl = fetch, headers = {}} = {}) {
+async function read(url, {fetchImpl = fetch, headers = {}, signal} = {}) {
   let response;
-  try { response = await fetchImpl(url, {headers, redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(30_000)}); }
+  try { signal?.throwIfAborted();response = await fetchImpl(url, {headers, redirect: 'error', cache: 'no-store', signal: signal?AbortSignal.any([signal,AbortSignal.timeout(30_000)]):AbortSignal.timeout(30_000)}); }
   catch (error) { throw Object.assign(new Error('REPORT_SOURCE_NETWORK_FAILED'),{safeCode:'REPORT_SOURCE_NETWORK_FAILED',safeOrigin:safeErrorOrigin(error)}); }
   if (!response.ok) {const status=response.status;throw Object.assign(new Error(`REPORT_SOURCE_HTTP_${status}`),{safeCode:'REPORT_SOURCE_HTTP',safeOrigin:safeErrorOrigin(new Error(),status)});}
   return boundedText(response);
 }
 const json = text => { try { return JSON.parse(text); } catch (error) { throw Object.assign(new Error('REPORT_SOURCE_JSON_INVALID'),{safeCode:'REPORT_SOURCE_JSON_INVALID',safeOrigin:safeErrorOrigin(error)}); } };
 
-export async function loadTrustedContext({fetchImpl = fetch, now = Date.now} = {}) {
-  const commit = json(await read(`${REPO}/commits/main`, {fetchImpl, headers: {'User-Agent': 'xuan-preopen-readonly'}})).sha;
+export async function loadTrustedContext({fetchImpl = fetch, now = Date.now, signal} = {}) {
+  signal?.throwIfAborted();
+  const commit = json(await read(`${REPO}/commits/main`, {fetchImpl, signal, headers: {'User-Agent': 'xuan-preopen-readonly'}})).sha;
   if (!SHA.test(commit || '')) throw new Error('TRUSTED_MAIN_INVALID');
   const files = [ASSOCIATION_POLICY_PATH, 'xuan-ib/latest.meta.json', 'xuan-ib/latest.html'];
-  const reserveRead=read(`${RAW}/${commit}/claude/xuan-ib-etf-pending-calls-v1.json`,{fetchImpl}).then(text=>{
+  const reserveRead=read(`${RAW}/${commit}/claude/xuan-ib-etf-pending-calls-v1.json`,{fetchImpl,signal}).then(text=>{
     let reserveLedger=null;try{reserveLedger=json(text);}catch{}return {reserveLedger,reserveHash:hash(text)};
   }).catch(()=>({reserveLedger:null,reserveHash:null}));
-  const [policyText, metaText, previousHtml, reserve] = await Promise.all([...files.map(file => read(`${RAW}/${commit}/${file}`, {fetchImpl})),reserveRead]);
+  const [policyText, metaText, previousHtml, reserve] = await Promise.all([...files.map(file => read(`${RAW}/${commit}/${file}`, {fetchImpl,signal})),reserveRead]);
+  signal?.throwIfAborted();
   const policy = json(policyText), meta = json(metaText);
   if (!SHA.test(meta.sourceSha || '') || !SHA.test(meta.htmlBlob || '')) throw new Error('PREVIOUS_PUBLIC_META_INVALID');
   if (gitBlob(previousHtml) !== meta.htmlBlob) throw new Error('PREVIOUS_PUBLIC_HTML_MISMATCH');

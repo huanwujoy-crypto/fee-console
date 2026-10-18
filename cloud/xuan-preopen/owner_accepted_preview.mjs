@@ -175,14 +175,15 @@ function checkedContext(context,m){
 }
 export function createProtectedOwnerPreviewVerifier({loadContext,now:clock=Date.now}={}){
   if(typeof loadContext!=='function'||typeof clock!=='function')fail('CAPABILITIES_REQUIRED');
-  return async({metadata,displayBytes,now:suppliedNow,phase}={})=>{
+  return async({metadata,displayBytes,now:suppliedNow,phase,signal}={})=>{
     try{
+      signal?.throwIfAborted();
       const time=clock();
       if(!Number.isFinite(time)||suppliedNow!==undefined&&!Number.isFinite(suppliedNow)
         ||!['candidate-admission','historical-authenticity'].includes(phase))fail('PHASE_OR_CLOCK');
       const m=JSON.parse(JSON.stringify(metadata)),bytes=copyBytes(displayBytes,MAX_HTML);
       validateAcceptedPreviewMetadata(m,{now:time,ownerBinding:OWNER_BINDING});
-      const options={phase:phase==='candidate-admission'?'accepted-preview-admission':'accepted-preview-historical',policyCommit:m.registrationPolicyCommit,registrationSha256:m.registrationSha256,now:()=>clock()};
+      const options={phase:phase==='candidate-admission'?'accepted-preview-admission':'accepted-preview-historical',policyCommit:m.registrationPolicyCommit,registrationSha256:m.registrationSha256,now:()=>clock(),...(signal?{signal}:{})};
       const original=checkedContext(await loadContext(options),m),r=original.registration;
       if(sha(bytes)!==r.displaySha256)fail('DISPLAY_HASH');staticDisplayBinding(decode(bytes),r);
       // No live-freshness assertion is made for this fixed saved reference.
@@ -191,14 +192,15 @@ export function createProtectedOwnerPreviewVerifier({loadContext,now:clock=Date.
       const current=checkedContext(await loadContext(options),m),endTime=clock();
       if(!Number.isFinite(endTime)||endTime<time||r.completedAt>new Date(endTime).toISOString())fail('CLOCK_CHANGED');
       if(JSON.stringify(canonical(current))!==JSON.stringify(canonical(original)))fail('REGISTRATION_CHANGED');
+      signal?.throwIfAborted();
       return {schema:'xuan.owner-accepted-preview-proof.v1',scope:m.scope,ownerBinding:m.ownerBinding,
         sourceIdentitySha256:m.sourceIdentitySha256,registrationId:m.registrationId,registrationSha256:m.registrationSha256,
         registrationPolicyCommit:m.registrationPolicyCommit,displaySha256:r.displaySha256,metadataSha256:await previewMetadataSha256(m)};
     }catch(error){if(error?.safeCode?.startsWith('OWNER_PREVIEW_'))throw error;fail('REJECTED');}
   };
 }
-async function verifiedCandidate(candidate,verify,now){
-  const m=candidate.metadata,proof=await verify({metadata:structuredClone(m),displayBytes:new Uint8Array(candidate.displayBytes),now,phase:'candidate-admission'});
+async function verifiedCandidate(candidate,verify,now,signal){
+  const m=candidate.metadata,proof=await verify({metadata:structuredClone(m),displayBytes:new Uint8Array(candidate.displayBytes),now,phase:'candidate-admission',...(signal?{signal}:{})});
   if(!exact(proof,'schema scope ownerBinding sourceIdentitySha256 registrationId registrationSha256 registrationPolicyCommit displaySha256 metadataSha256')
     ||proof.schema!=='xuan.owner-accepted-preview-proof.v1'||proof.scope!==m.scope||proof.ownerBinding!==m.ownerBinding
     ||proof.sourceIdentitySha256!==m.sourceIdentitySha256||proof.registrationId!==m.registrationId
@@ -209,21 +211,23 @@ async function verifiedCandidate(candidate,verify,now){
 export function createProtectedPreviewReplacementVerifier({loadContext,now=Date.now}={}){
   if(typeof loadContext!=='function'||typeof now!=='function')fail('CAPABILITIES_REQUIRED');
   const verify=createProtectedOwnerPreviewVerifier({loadContext,now});
-  return async({previous,candidate}={})=>{
+  return async({previous,candidate,signal}={})=>{
+    signal?.throwIfAborted();
     const old=structuredClone(previous),next=structuredClone(candidate);
     if(!exact(old,'state generation kind preview displayBytes')||old.state!=='present'||old.kind!=='accepted-preview'
       ||typeof old.generation!=='string'||!/^([1-9][0-9]{0,29})$/.test(old.generation)||!exact(old.preview,'metadata')||!exact(next,'metadata displayBytes'))fail('REPLACEMENT_OLD_REQUIRED');
-    const options={phase:'accepted-preview-replacement',policyCommit:next.metadata.registrationPolicyCommit,now};
+    const options={phase:'accepted-preview-replacement',policyCommit:next.metadata.registrationPolicyCommit,now,...(signal?{signal}:{})};
     const initial=await loadContext(options),p=initial?.previewReplacement;
     if(!exact(p,'revision sha256 policyCommit')||p.policyCommit!==next.metadata.registrationPolicyCommit
       ||sha(previewReplacementRegistrationText(p.revision))!==p.sha256)fail('REPLACEMENT_CONTEXT');
     const r=validatePreviewReplacementRegistration(p.revision);
     if(old.preview.metadata.registrationSha256!==r.previousRegistrationSha256||sha(old.displayBytes)!==r.previousDisplaySha256
       ||next.metadata.registrationSha256!==sha(acceptedPreviewRegistrationText(r.registration))||sha(next.displayBytes)!==r.registration.displaySha256)fail('REPLACEMENT_BINDING');
-    await verify({metadata:old.preview.metadata,displayBytes:old.displayBytes,phase:'historical-authenticity'});
-    await verifiedCandidate(next,verify,now());
+    await verify({metadata:old.preview.metadata,displayBytes:old.displayBytes,phase:'historical-authenticity',...(signal?{signal}:{})});
+    await verifiedCandidate(next,verify,now(),signal);
     const final=(await loadContext(options))?.previewReplacement;
     if(JSON.stringify(canonical(final))!==JSON.stringify(canonical(p)))fail('REPLACEMENT_CHANGED');
+    signal?.throwIfAborted();
     return {revisionSha256:p.sha256,previousGeneration:old.generation,previousDisplaySha256:r.previousDisplaySha256,
       candidateSha256:r.registration.displaySha256,registrationSha256:next.metadata.registrationSha256};
   };
@@ -246,7 +250,7 @@ export function createAcceptedPreviewReplacementPublisher({io,verifyProtectedRep
     const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Error('deadline'));},ACCEPTED_PREVIEW_DEADLINE_MS);});
     const work=async()=>{
       guard();const previous=structuredClone(await io.readLatest({target:LATEST_TARGET,signal:controller.signal}));guard();
-      const proof=await verifyProtectedReplacement({previous:structuredClone(previous),candidate:structuredClone(next)});guard();
+      const proof=await verifyProtectedReplacement({previous:structuredClone(previous),candidate:structuredClone(next),signal:controller.signal});guard();
       if(!exact(proof,'revisionSha256 previousGeneration previousDisplaySha256 candidateSha256 registrationSha256')
         ||!HASH.test(proof.revisionSha256)||proof.previousGeneration!==previous.generation||proof.previousDisplaySha256!==sha(previous.displayBytes)
         ||proof.candidateSha256!==sha(next.displayBytes)||proof.registrationSha256!==next.metadata.registrationSha256)fail('REPLACEMENT_PROOF');

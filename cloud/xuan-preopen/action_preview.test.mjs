@@ -35,7 +35,7 @@ async function run({raw,editBatch=()=>{},ledger=context().reserveLedger,now=()=>
 export {run as buildSyntheticPreviewFixture};
 test('private four cards use Sharesight cash/holdings, persistent CALL and only remaining BUY quantity',async()=>{
   const r=await run(),m=r.model;
-  assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);assert.equal(m.cash.reserve,100);assert.equal(m.cash.call.status,'owner-declared');
+  assert.equal(m.cash.status,'recorded');assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);assert.equal(m.cash.reserve,100);assert.equal(m.cash.call.status,'owner-declared');
   assert.equal(m.cash.orderReserve,60);assert.equal(m.cash.planning,1090);assert.equal(m.cash.planningBasis.status,'reference');assert.equal(m.cash.executableBudget,null);
   assert.equal(m.holdings.status,'ready');assert.equal(m.orders.status,'ready');assert.equal(m.orders.buys[0].quantity,'6');assert.equal(m.orders.sells.length,1);
   assert.equal(m.sourceOutcomes[0].status,'not-called');assert.equal(m.reconciliation.status,'unknown');assert.deepEqual(r.calls,['gateway-token','sharesight-batch']);
@@ -52,8 +52,8 @@ test('missing CALL preserves sourced facts while blocking only dependent budget'
   const r=await run({ledger:null});assert.equal(r.model.cash.reserve,null);assert.equal(r.model.cash.planning,null);assert.equal(r.model.orders.status,'ready');assert.equal(r.model.cash.ib,1000);assert.ok(r.html.includes('待 CALL 原额</b><span>未取得'));
 });
 test('partial order coverage retains rows but cannot claim complete reserve or budget',async()=>{
-  const r=await run({raw:{orders:[order()]}});assert.equal(r.model.orders.status,'partial');assert.equal(r.model.orders.buys.length,1);assert.equal(r.model.cash.orderReserve,null);assert.equal(r.model.cash.planning,null);assert.equal(r.model.allocation.projectedTotal,null);assert.ok(r.html.includes('全部覆盖未核实'));
-  const empty=await run({raw:{orders:[]}});assert.equal(empty.model.orders.status,'partial');assert.equal(empty.model.cash.orderReserve,null);assert.ok(empty.html.includes('本轮未见 · 覆盖未核实'));assert.ok(!empty.html.includes('class="empty">无'));
+  const r=await run({raw:{orders:[order()]}});assert.equal(r.model.orders.status,'partial');assert.equal(r.model.orders.buys.length,1);assert.equal(r.model.cash.orderReserve,null);assert.equal(r.model.cash.planning,null);assert.equal(r.model.allocation.projectedTotal,null);assert.ok(r.html.includes('已读记录，完整范围未核实'));assert.equal(r.model.cash.status,'recorded');
+  const empty=await run({raw:{orders:[]}});assert.equal(empty.model.orders.status,'partial');assert.equal(empty.model.cash.orderReserve,null);assert.ok(empty.html.includes('本次返回未见'));assert.ok(!empty.html.includes('class="empty">无'));
 });
 test('unknown instrument currency or nonUSD reserve never becomes a partial complete USD total',async()=>{
   for(const editBatch of [b=>delete b[0].raw.data.report.holdings[3].instrument.currency,b=>b[0].raw.data.report.holdings[3].instrument.currency.code='CAD']){
@@ -93,7 +93,7 @@ test('every same-code holding participates in currency certainty, including miss
       if(currency===undefined)delete copy.instrument.currency;else copy.instrument.currency=currency;
       if(reverse)rows.unshift(copy);else rows.push(copy);};
     const b=batch();editBatch(b);const map=sharesightOrderCurrencies({status:'date-verified',raw:b[0].raw});assert.equal(map.EXUS,null);
-    const {model:m}=await run({editBatch});assert.equal(m.orders.buys[0].currency,null);assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.planning,null);assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);
+    const {model:m}=await run({editBatch});assert.equal(m.orders.buys[0].currency,null);assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.planning,null);assert.equal(m.cash.status,'recorded');assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);
   }
   const b=batch();b[0].raw.data.report.holdings[3].instrument.currency_code='CAD';assert.equal(sharesightOrderCurrencies({status:'date-verified',raw:b[0].raw}).EXUS,null);
 });
@@ -102,7 +102,7 @@ test('an unsupported order description is isolated before final model validation
     const raw={orders:[{...order(),primary_description:description}],complete:true},r=await run({raw}),m=r.model;
     assert.equal(m.orders.status,'unknown');assert.equal(m.orders.reason,'ORDERS_MALFORMED_OR_UNMATCHED');assert.equal(m.sourceOutcomes[3].status,'malformed');assert.equal(m.fieldState.orders.status,'malformed');
     assert.equal(m.orders.buys,null);assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.planning,null);assert.equal(m.cash.totalCapacity,null);assert.equal(m.allocation.projectedTotal,null);
-    assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);assert.equal(m.cash.reserve,100);assert.equal(m.allocation.status,'ready');assert.equal(m.holdings.status,'ready');
+    assert.equal(m.cash.status,'recorded');assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);assert.equal(m.cash.reserve,100);assert.equal(m.allocation.status,'ready');assert.equal(m.holdings.status,'ready');
     for(const title of ['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置'])assert.ok(r.html.includes(title));assert.equal(validateNightActionHtml(r.html,'2026-10-15').orderCount,null);
   }
 });
@@ -147,10 +147,10 @@ test('reserve and projection overflow are isolated as derived failures while ori
   for(const rows of [[huge('1000000000000')],[{...huge('600000000000'),limit_price:'1'},{...huge('600000000000'),order_id:2,limit_price:'1'}]]){
     const r=await run({raw:{orders:rows,complete:true}});assertSafeErrors(r);const m=r.model;
     assert.equal(m.orders.status,'ready');assert.equal(m.orders.buys.length,rows.length);assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.planning,null);assert.equal(m.allocation.projectedTotal,null);
-    assert.equal(m.fieldErrors.orderReserve,'BUY_RESERVE_OUT_OF_RANGE');assert.equal(m.fieldErrors.allocationProjection,'PROJECTION_INVALID');assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);assert.equal(m.allocation.total,1000);assert.equal(m.holdings.status,'ready');
+    assert.equal(m.fieldErrors.orderReserve,'BUY_RESERVE_OUT_OF_RANGE');assert.equal(m.fieldErrors.allocationProjection,'PROJECTION_INVALID');assert.equal(m.cash.status,'recorded');assert.equal(m.cash.ib,1000);assert.equal(m.cash.noah,200);assert.equal(m.allocation.total,1000);assert.equal(m.holdings.status,'ready');
   }
   const projectionOnly=await run({raw:{orders:[{...huge('1000000000000'),limit_price:'1'}],complete:true}});assertSafeErrors(projectionOnly);
-  assert.equal(projectionOnly.model.cash.orderReserve,1e12);assert.equal(projectionOnly.model.cash.planning,0);assert.equal(projectionOnly.model.allocation.projectedTotal,null);assert.equal(projectionOnly.model.fieldErrors.allocationProjection,'PROJECTION_INVALID');
+  assert.equal(projectionOnly.model.cash.orderReserve,1e12);assert.equal(projectionOnly.model.cash.planning,0);assert.equal(projectionOnly.model.allocation.projectedTotal,null);assert.equal(projectionOnly.model.fieldErrors.allocationProjection,'PROJECTION_INVALID');assert.doesNotMatch(projectionOnly.html,/完整买单预占未核实，本轮补仓金额未计算/);
 });
 test('cash-pool, cash-like and total-capacity ranges have separate local boundaries',async()=>{
   const pool=await run({editBatch:b=>b.forEach(s=>s.raw.data.report.cash_accounts=[{value:1e12}])});assertSafeErrors(pool);assert.equal(pool.model.cash.ib,1e12);assert.equal(pool.model.cash.noah,1e12);assert.equal(pool.model.cash.pool,null);assert.equal(pool.model.fieldErrors.cashPool,'CASH_POOL_OUT_OF_RANGE');assert.equal(pool.model.allocation.status,'ready');
@@ -221,4 +221,18 @@ test('private composer binds supplied concentration sources into model renderer 
   assert(r.objects.has(r.receipt.concentration.privateObject));assert.equal(r.receipt.concentration.modelSha256,digest(m.concentration));
   assert.equal(validateNightActionHtml(r.html,'2026-10-15').orderCount,2);assert.throws(()=>buildPublicEodSummary(m,r.receipt),/PRIVATE_SCOPE/);
   const receipt=structuredClone(r.receipt);receipt.concentration.modelSha256='0'.repeat(64);assert.throws(()=>validateEodReceipt(receipt,r.html,'2026-10-15',sourceDate),/CONCENTRATION_BINDING/);
+});
+
+test('recorded book cash keeps old partial models compatible and every dependent unknown closed',async()=>{
+  const r=await run({raw:{orders:[order()]}}),m=r.model;assert.equal(m.cash.status,'recorded');assert.equal(m.cash.planning,null);assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.totalCapacity,null);assert.equal(m.cash.callApplied,m.cash.reserve*.5);assert.equal(m.cash.executableBudget,null);
+  const legacy=structuredClone(m);legacy.cash.status='partial';assert.equal(extractNightActionModel(renderNightActionReport(legacy)).cash.status,'partial');
+  for(const edit of [x=>x.cash.ib=null,x=>x.cash.noah=null,x=>x.cash.pool=null,x=>x.cash.status='ready',x=>x.cash.pool++,x=>x.cash.callApplied=0,x=>x.cash.orderReserve=0,x=>x.cash.planning=0,x=>x.cash.totalCapacity=0,x=>x.cash.executableBudget=0,x=>x.fieldState.ibCash.status='unavailable']){const changed=structuredClone(m);edit(changed);assert.throws(()=>renderNightActionReport(changed));}
+  const missing=await run({editBatch:b=>b[1]={sourceKey:'sharesight.noahPerformance',status:'request-failure'}});assert.equal(missing.model.cash.status,'partial');const falseRecord=structuredClone(missing.model);falseRecord.cash.status='recorded';assert.throws(()=>renderNightActionReport(falseRecord));
+});
+test('three returned orders and cash facts are shown directly with coverage, inferred USD and sync limitations',async()=>{
+  const orders=[order(),{...order(),order_id:3},{...order(),order_id:4}],r=await run({raw:{orders}});
+  assert.equal(r.model.orders.status,'partial');assert.equal(r.model.cash.status,'recorded');assert.equal(r.model.cash.orderReserve,null);assert.equal(validateNightActionHtml(r.html,'2026-10-15').orderCount,3);
+  assert.equal((r.html.match(/class="order buy detailed"/g)||[]).length,3);assert.match(r.html,/已读记录，完整范围未核实/);assert.match(r.html,/本次返回未见/);assert.equal((r.html.match(/USD·推定/g)||[]).length,3);assert.match(r.html,/USD 按关联持仓推定/);
+  assert.match(r.html,/账面现金与 CALL 已记录/);assert.doesNotMatch(r.html,/现金、CALL、挂单覆盖或币种仍有缺项/);assert.doesNotMatch(r.html,/挂单或现金口径未齐，本轮补仓金额待核实/);assert.match(r.html,/<small>Sharesight 为账面现金；同步完成未核实；/);
+  assert.deepEqual([...r.html.matchAll(/<h2>([^<]*)/g)].slice(0,4).map(x=>x[1]),['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置']);assert.match(r.html,/买单预占<\/b><span>未取得/);assert.equal(r.model.provenance.sharesight[0].syncCompletedAt,null);
 });

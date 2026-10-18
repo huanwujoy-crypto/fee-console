@@ -103,15 +103,33 @@ test('gateway validation failure remains a failure, not default or direct-OAuth 
 test('trusted context is pinned to current main and checks the previous published HTML blob', async () => {
   const html = '<html>verified previous report</html>', bytes = Buffer.from(html);
   const htmlBlob = crypto.createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`)).update(bytes).digest('hex');
-  const urls = [];
-  const fetchImpl = async url => {urls.push(url); let result;
+  const urls = [],signals=[],controller=new AbortController();
+  const fetchImpl = async (url,options) => {urls.push(url);signals.push(options.signal);assert.equal(options.signal.aborted,false);let result;
     if (url.endsWith('/commits/main')) result = {sha: 'a'.repeat(40)};
     else if (url.endsWith('xuan-ib-account-association-v1.json')) return new Response(associationPolicyText(policy));
     else if (url.endsWith('xuan-ib-etf-pending-calls-v1.json')) result = ledger;
     else if (url.endsWith('latest.meta.json')) result = {sourceSha: 'c'.repeat(40), htmlBlob};
     else return new Response(html);
     return new Response(JSON.stringify(result));};
-  const c = await loadTrustedContext({fetchImpl, now});
+  const c = await loadTrustedContext({fetchImpl, now,signal:controller.signal});
   assert.equal(c.previousHtml, html); assert.equal(c.previousSourceSha, 'c'.repeat(40));
   assert.ok(urls.slice(1).every(url => url.includes('/' + 'a'.repeat(40) + '/')));
+  assert.equal(signals.length,5);controller.abort();assert.ok(signals.every(signal=>signal.aborted));
+});
+
+test('trusted source cancellation stops before fetch or reaches an already pending fetch without retry',async()=>{
+  const before=new AbortController();before.abort();let calls=0;
+  await assert.rejects(loadTrustedContext({now,signal:before.signal,fetchImpl:()=>{calls++;assert.fail('pre-aborted fetch');}}));assert.equal(calls,0);
+  const parent=new AbortController();let enter;const entered=new Promise(resolve=>{enter=resolve;});
+  const pending=loadTrustedContext({now,signal:parent.signal,fetchImpl:async(url,{signal})=>{calls++;enter(signal);return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}});
+  const child=await entered;assert.equal(child.aborted,false);parent.abort();await assert.rejects(pending,/REPORT_SOURCE_NETWORK_FAILED/);assert.equal(child.aborted,true);assert.equal(calls,1);
+  const optional=new AbortController(),html='synthetic optional cancellation',bytes=Buffer.from(html);const htmlBlob=crypto.createHash('sha1').update(Buffer.from(`blob ${bytes.length}\0`)).update(bytes).digest('hex');
+  await assert.rejects(loadTrustedContext({now,signal:optional.signal,fetchImpl:async(url,{signal})=>{
+    if(url.endsWith('/commits/main'))return new Response(JSON.stringify({sha:'a'.repeat(40)}));
+    if(url.endsWith('xuan-ib-etf-pending-calls-v1.json')){queueMicrotask(()=>optional.abort());return new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));}
+    if(url.endsWith('xuan-ib-account-association-v1.json'))return new Response(associationPolicyText(policy));
+    if(url.endsWith('latest.meta.json'))return new Response(JSON.stringify({sourceSha:'c'.repeat(40),htmlBlob}));
+    if(url.endsWith('latest.html'))return new Response(html);assert.fail('unexpected synthetic context URL');
+  }}));
+
 });

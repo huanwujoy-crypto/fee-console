@@ -290,7 +290,7 @@ test(FACTORY_TEST,async t=>{
   t.mock.method(globalThis,'fetch',()=>assert.fail('factory tests must never perform network I/O'));
   async function harness(options={}){
     const f=fixture(),canary=registeredCanaryFixture(options),events=options.events??[],control={now:NOW,abort:new AbortController(),
-      boundaryEdit:null,holdBoundary:null,...options};active=control;
+      boundaryEdit:null,holdBoundary:null,protectedSignals:[],...options};active=control;
     if(options.replacing){f.boundary.bucketTestPermissions.permissions.push('storage.objects.delete');
       f.boundary.roleDefinitions.find(r=>r.name==='roles/storage.legacyBucketOwner').includedPermissions.push('storage.objects.delete');
       f.registry=describeOwnerBoundary(f.boundary,{ownerPrincipalSha256:f.registry.ownerPrincipalSha256,approvedReaderPrincipalSha256:f.registry.approvedReaderPrincipalSha256});}
@@ -333,7 +333,7 @@ test(FACTORY_TEST,async t=>{
         return name==='xuan-owner-preview-replacement.json'?previewReplacementRegistrationText(files[name]):name==='xuan-owner-accepted-preview.json'&&options.replacing?acceptedPreviewRegistrationText(files[name]):JSON.stringify(files[name]);}}},
       '../../scripts/xuan-ib-decision-menu.mjs':{parseDecisionJson:value=>JSON.parse(value)},
       './owner_latest.mjs':{LATEST_TARGET,LATEST_HEADERS,ownerJsonMediaHeadersMatch},
-      './owner_latest_delivery.mjs':{requireProtectedOwnerCheckout:async()=>{events.push('protected');
+      './owner_latest_delivery.mjs':{requireProtectedOwnerCheckout:async options=>{events.push('protected');if(options?.signal)control.protectedSignals.push(options.signal);
         if(control.protectedError)throw Error('SYNTHETIC_PROTECTED_CHECKOUT_REJECTED');}},
       './owner_sdk_transport.mjs':{createOwnerSdkTransport:()=>{events.push('sdk-created');return sdk;},decodeOwnerSafeDiagnostics,OWNER_SAFE_ERROR_CODES},
       './owner_accepted_preview.mjs':{validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText},
@@ -359,10 +359,11 @@ test(FACTORY_TEST,async t=>{
     const h=await harness();assert.deepEqual(h.events,['protected','sdk-created','full-boundary']);
     const adopted=await h.access.verifyRegisteredCanary({pin:{generation:'caller-override'},approved:true});
     assert.equal(adopted.status,'existing-verified');assert.equal(adopted.pin.generation,'91');
+    assert.equal(h.events.filter(e=>e==='protected').length,2);assert.deepEqual(h.control.protectedSignals,[h.control.abort.signal]);
     assert.equal(h.events.filter(x=>x==='full-boundary').length,1);assert.ok(h.events.includes('quick-boundary'));
     assert.deepEqual(h.canary.calls.map(x=>x.method),['GET','GET','HEAD']);
     assert.throws(()=>post(h.access),/FINANCIAL_ADMISSION_REQUIRED/);assert.equal(h.events.includes('financial-POST'),false);
-    adopted.pin.generation='999';await verify(h.access);await post(h.access);
+    adopted.pin.generation='999';await h.access.refreshPreflight();assert.equal(h.events.filter(e=>e==='protected').length,3);await verify(h.access);await post(h.access);
     assert.equal(h.events.filter(x=>x==='financial-POST').length,1);
     assert.throws(()=>post(h.access),/FINANCIAL_ADMISSION_REQUIRED/);
     await assert.rejects(h.access.createCanary(),/CANARY_CLOSED/);await assert.rejects(h.access.verifyRegisteredCanary(),/CANARY_CLOSED/);
@@ -449,7 +450,7 @@ test(FACTORY_TEST,async t=>{
     assert.throws(()=>h.access.attestNativeCanaryObservation({approved:true}),/VISUAL_OBSERVATION_NOT_AVAILABLE/);h.access.close();
   });
   await scenario('storage admission still requires the fixed SDK-read canary and fresh IAM, then exactly one named write',async()=>{
-    const h=await harness({replacing:true,storage:true});await h.access.verifyRegisteredCanary();const before=h.events.length;
+    const h=await harness({replacing:true,storage:true});assert.equal(h.events.filter(e=>e==='protected').length,1);await h.access.verifyRegisteredCanary();await h.access.refreshPreflight();assert.equal(h.events.filter(e=>e==='protected').length,1);assert.equal(h.events.filter(e=>e==='full-boundary').length,2);assert.equal(h.events.filter(e=>e==='quick-boundary').length,1);const before=h.events.length;
     await h.access.verifyDestinationAccess(storageProof(h));assert.deepEqual(h.events.slice(before),['quick-boundary','canary-GET','canary-GET','canary-HEAD']);
     assert.throws(()=>post(h.access),/NAMED_WRITE_REQUIRED/);await h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h));
     await assert.rejects(h.access.requestPreviewReplacement('SYNTHETIC',{method:'POST'},storagePins(h)),/ADMISSION_REQUIRED/);

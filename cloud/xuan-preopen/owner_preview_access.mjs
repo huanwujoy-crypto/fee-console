@@ -381,7 +381,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
     },
     // Refresh is explicit, before the financial publisher's ten-second window.
     // It changes neither identity nor permissions and never refreshes tokens.
-    async refreshPreflight(){guard();lease.invalidate();replacementPermit=null;observation?.close();await requireProtectedOwnerCheckout();return full();},
+    async refreshPreflight(){guard();lease.invalidate();replacementPermit=null;observation?.close();if(!storageOnly)await requireProtectedOwnerCheckout();return full();},
     async verifyDestinationAccess(input={}){
       // Consume before validation or any await. Failed admission, refresh and
       // a consumed/expired write cannot mint a second replacement permit.
@@ -408,7 +408,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
       guard();if(canaryClosed)fail('CANARY_CLOSED');canaryClosed=true;
       const signal=AbortSignal.timeout(30000);
       try{
-        await requireProtectedOwnerCheckout();await live(signal);
+        if(!storageOnly)await requireProtectedOwnerCheckout({signal});await live(signal);
         const pin=await readRegisteredOwnerCanary({requestCanary:sdk.requestCanary,registration:FIXED_REGISTERED_CANARY,candidateSha256:canaryCandidateSha256,signal});
         guard();lease.current(Date.now());if(signal.aborted)fail('ABORTED');
         canaryPin=Object.freeze(pin);
@@ -424,7 +424,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
       try{
         // The first write independently checks actual protected source before
         // its live identity/policy read; no caller can assert this approval.
-        await requireProtectedOwnerCheckout();stage='initial-boundary';await live(signal);
+        await requireProtectedOwnerCheckout({signal});stage='initial-boundary';await live(signal);
         stage='presence';
         const url=canaryUrl(undefined,true),head=await sdk.requestCanary({method:'HEAD',media:true,signal});
         if(response(head,url,{missing:true}))fail('CANARY_EXISTS');

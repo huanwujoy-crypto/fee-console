@@ -34,9 +34,11 @@ export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
 // The historical phase reads the original trusted Git version, never today's
 // context relabelled as yesterday. The current main must still contain it.
 export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
-  const read=async url=>{let r;try{r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,500000);};
-  return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now}={})=>{
-    const current=await loadTrustedContext({fetchImpl,now:clock});
+  const read=async (url,signal)=>{let r;try{signal?.throwIfAborted();r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,500000);};
+  return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now,signal}={})=>{
+    signal?.throwIfAborted();
+    const current=await loadTrustedContext({fetchImpl,now:clock,signal});
+    signal?.throwIfAborted();
     let eodConfiguration=null;
     try{eodConfiguration={...validateEodSourceConfiguration(configuration),account:APPROVED_IB_ACCOUNT_ID};}catch{}
     if(phase==='candidate-admission')return {...current,eodConfiguration};
@@ -45,18 +47,18 @@ export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configura
       const currentCommit=current.association.policyCommit;
       if(phase!=='accepted-preview-historical'&&policyCommit!==currentCommit)fail('PREVIEW_CURRENT_CONTEXT');
       if(policyCommit!==currentCommit){
-        const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+currentCommit));
+        const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal));
         if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('PREVIEW_ANCESTRY');
       }
-      const currentText=await read(RAW+'/'+currentCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH);
-      const originalText=policyCommit===currentCommit?currentText:await read(RAW+'/'+policyCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH);
+      const currentText=await read(RAW+'/'+currentCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal);
+      const originalText=policyCommit===currentCommit?currentText:await read(RAW+'/'+policyCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal);
       if(sha(currentText)!==sha(originalText))fail('PREVIEW_REGISTRATION_CHANGED');
       let registration;try{parseDecisionJson(originalText,128*1024);registration=JSON.parse(originalText);}catch{fail('PREVIEW_REGISTRATION_JSON');}
       if(phase==='accepted-preview-replacement'||registrationSha256!==undefined&&registrationSha256!==sha(originalText)){
-        const revisionText=await read(RAW+'/'+currentCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH);
-        const originalRevisionText=policyCommit===currentCommit?revisionText:await read(RAW+'/'+policyCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH);
+        const revisionText=await read(RAW+'/'+currentCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH,signal);
+        const originalRevisionText=policyCommit===currentCommit?revisionText:await read(RAW+'/'+policyCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH,signal);
         if(sha(revisionText)!==sha(originalRevisionText))fail('PREVIEW_REPLACEMENT_CHANGED');
-        const canaryText=await read(RAW+'/'+currentCommit+'/security/xuan-owner-registered-canary.json');
+        const canaryText=await read(RAW+'/'+currentCommit+'/security/xuan-owner-registered-canary.json',signal);
         let revision;try{parseDecisionJson(originalRevisionText,128*1024);revision=JSON.parse(originalRevisionText);
           validatePreviewReplacementRegistration(revision,{previousRegistration:registration,previousRegistrationSha256:sha(originalText),canaryRegistrationSha256:sha(canaryText)});
           if(previewReplacementRegistrationText(revision)!==originalRevisionText)fail('PREVIEW_REPLACEMENT_BYTES');
@@ -70,10 +72,10 @@ export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configura
       return {...current,eodConfiguration,previewRegistration:{registration,sha256:sha(originalText),policyCommit}};
     }
     if(phase!=='historical-authenticity'||!/^[a-f0-9]{40}$/.test(policyCommit||''))fail('HISTORICAL_CONTEXT');
-    const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit));
+    const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit,signal));
     if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('HISTORICAL_ANCESTRY');
     const paths=['claude/xuan-ib-account-association-v1.json','claude/xuan-ib-etf-pending-calls-v1.json','xuan-ib/latest.meta.json','xuan-ib/latest.html'];
-    const [policyText,ledgerText,metaText,previousHtml]=await Promise.all(paths.map(p=>read(RAW+'/'+policyCommit+'/'+p)));
+    const [policyText,ledgerText,metaText,previousHtml]=await Promise.all(paths.map(p=>read(RAW+'/'+policyCommit+'/'+p,signal)));
     const meta=JSON.parse(metaText);
     if(!/^[a-f0-9]{40}$/.test(meta.sourceSha||'')||gitBlob(previousHtml)!==meta.htmlBlob)fail('HISTORICAL_PUBLIC_BINDING');
     const association={policy:JSON.parse(policyText),policyCommit,policyBlob:gitBlob(policyText),checkedAt:new Date(clock()).toISOString()};
@@ -195,8 +197,10 @@ export async function deliverOwnerAcceptedPreviewReplacementStorage(options={}){
 
 // The new publisher cannot run from an unmerged local candidate. The CLI checks
 // actual trusted main before reading its existing credential environment.
-export async function requireProtectedOwnerCheckout({cwd=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'),loadContext=createOwnerContextLoader(),now=Date.now}={}){
-  const context=await loadContext({now});
+export async function requireProtectedOwnerCheckout({cwd=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..'),loadContext=createOwnerContextLoader(),now=Date.now,signal}={}){
+  signal?.throwIfAborted();
+  const context=await loadContext({now,...(signal?{signal}:{})});
+  signal?.throwIfAborted();
   const head=execFileSync('git',['rev-parse','HEAD'],{cwd,encoding:'utf8'}).trim();
   if(head!==context.association.policyCommit||execFileSync('git',['status','--porcelain','--untracked-files=no'],{cwd,encoding:'utf8'}).trim())fail('PROTECTED_CHECKOUT_REQUIRED');
   for(const relative of OWNER_PROTECTED_SOURCE_PATHS){

@@ -8,7 +8,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
-import {deliverOwnerLatest,deliverOwnerAcceptedPreview,deliverOwnerAcceptedPreviewReplacementStorage,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
+import {deliverOwnerLatest,deliverOwnerAcceptedPreview,deliverOwnerAcceptedPreviewReplacement,deliverOwnerAcceptedPreviewReplacementStorage,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -147,6 +147,11 @@ test('preview loader binds an ancestor registration to identical current-main by
   await assert.rejects(loader(url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('{"x":1,"x":2}'):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/PREVIEW_REGISTRATION_JSON/);
   await assert.rejects(loader(url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('',{status:404}):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/CONTEXT_HTTP/);
   await assert.rejects(loader(responseFor)({phase:'accepted-preview-historical',policyCommit:'not-a-commit'}),/PREVIEW_CONTEXT/);
+  const pre=new AbortController();pre.abort();let attempts=0;await assert.rejects(loader(()=>{attempts++;assert.fail();})({phase:'accepted-preview-historical',policyCommit:old,signal:pre.signal}));assert.equal(attempts,0);
+  const controller=new AbortController();let enter;const entered=new Promise(resolve=>{enter=resolve;});
+  const pending=loader(async(url,options)=>{attempts++;if(url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)){enter(options.signal);return new Promise((resolve,reject)=>options.signal.addEventListener('abort',()=>reject(options.signal.reason),{once:true}));}return responseFor(url);})({phase:'accepted-preview-historical',policyCommit:old,signal:controller.signal});
+  const child=await entered;controller.abort();await assert.rejects(pending);assert.equal(child.aborted,true);assert.equal(attempts,7);
+
 });
 test('protected checkout binds new preview executable and registration bytes even if git status hides a change',async()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-preview-checkout-'));fs.mkdirSync(path.join(root,'empty-hooks'));
@@ -170,6 +175,7 @@ test('protected checkout binds new preview executable and registration bytes eve
     }
     await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext:async()=>({association:{policyCommit:'a'.repeat(40)}})}),/PROTECTED_CHECKOUT_REQUIRED/);
     await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext:async()=>({association:{policyCommit:'a'.repeat(40)}}),request:()=>{privateCalls++;assert.fail();},verifyDestinationAccess:async()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PROTECTED_CHECKOUT_REQUIRED/);
+    await assert.rejects(deliverOwnerAcceptedPreviewReplacement({cwd:root,loadContext:async()=>({association:{policyCommit:'a'.repeat(40)}}),request:()=>{privateCalls++;assert.fail();},verifyDestinationAccess:async()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PROTECTED_CHECKOUT_REQUIRED/);
     assert.equal(privateCalls,0);
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
