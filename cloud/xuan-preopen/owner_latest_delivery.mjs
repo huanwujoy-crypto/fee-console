@@ -18,7 +18,8 @@ import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 import {createProtectedOwnerPreviewVerifier,prepareAcceptedPreviewDisplay,buildAcceptedPreviewMetadata,createAcceptedPreviewPublisher,
   PREVIEW_REPLACEMENT_REGISTRATION_PATH,validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText,
-  createProtectedPreviewReplacementVerifier,createAcceptedPreviewReplacementPublisher} from './owner_accepted_preview.mjs';
+  createProtectedPreviewReplacementVerifier,createAcceptedPreviewReplacementPublisher,PREVIEW_REPLACEMENT_RESULT_STATUSES,PREVIEW_REPLACEMENT_RESULT_CODES,
+  PREVIEW_REPLACEMENT_FAILURE_STAGES,PREVIEW_REPLACEMENT_FAILURE_REASONS} from './owner_accepted_preview.mjs';
 
 const API='https://api.github.com/repos/huanwujoy-crypto/fee-console';
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console';
@@ -152,7 +153,8 @@ export async function deliverOwnerAcceptedPreview({cwd,request,html,modelBytes,m
 // reached protected main. No CLI, schedule or permission grant is added.
 export async function deliverOwnerAcceptedPreviewReplacement({cwd,request,requestPreviewReplacement,html,modelBytes,manifestBytes,verifyDestinationAccess,
   now=Date.now,loadContext=createOwnerContextLoader({now}),storeFactory=createOwnerLatestStore,publisherFactory=createAcceptedPreviewReplacementPublisher}={}){
-  const diagnostics={schema:'xuan.owner-publication.safe-diagnostics.v1',businessAckValidated:0,independentReadbackAttempts:0,storeReadbackCompleted:0,fullVerification:null};
+  const diagnostics={schema:'xuan.owner-publication.safe-diagnostics.v1',businessAckValidated:0,independentReadbackAttempts:0,storeReadbackCompleted:0,fullVerification:null,
+    resultStatus:null,resultCode:null,failureStage:null,failureReason:null};
   const attach=value=>{try{if(value&&!nodeTypes.isProxy(value))Object.defineProperty(value,'ownerPublicationDiagnostics',{value:Object.freeze({...diagnostics}),enumerable:false});}catch{}return value;};
   try{
   const head=await requireProtectedOwnerCheckout({cwd,loadContext,now});
@@ -169,7 +171,17 @@ export async function deliverOwnerAcceptedPreviewReplacement({cwd,request,reques
     if(typeof originalIo.readLatestGeneration==='function')io.readLatestGeneration=async(...args)=>{if(diagnostics.businessAckValidated)diagnostics.independentReadbackAttempts=1;const bytes=await Reflect.apply(originalIo.readLatestGeneration,originalIo,args);if(diagnostics.businessAckValidated)diagnostics.storeReadbackCompleted=1;return bytes;};
   }
   const result=await publisherFactory({io,verifyProtectedReplacement:createProtectedPreviewReplacementVerifier({loadContext,now}),verifyDestinationAccess,now}).publish({metadata,displayBytes});
-  if(result&&!nodeTypes.isProxy(result)&&Object.getOwnPropertyDescriptor(result,'status')?.value==='published-verified')diagnostics.fullVerification=true;
+  // Only finite own-data labels from the original publisher survive. An attempt
+  // flag never substitutes for an HTTP write or validated business ACK counter.
+  if(result&&['object','function'].includes(typeof result)&&!nodeTypes.isProxy(result)){
+    const own=key=>{const descriptor=Object.getOwnPropertyDescriptor(result,key);return descriptor&&Object.hasOwn(descriptor,'value')?descriptor.value:undefined;};
+    const status=own('status');
+    if(status==='published-verified')diagnostics.fullVerification=true;
+    else for(const [key,allowed] of [['resultStatus',PREVIEW_REPLACEMENT_RESULT_STATUSES],['resultCode',PREVIEW_REPLACEMENT_RESULT_CODES],
+      ['failureStage',PREVIEW_REPLACEMENT_FAILURE_STAGES],['failureReason',PREVIEW_REPLACEMENT_FAILURE_REASONS]]){
+      const value=own(key==='resultStatus'?'status':key==='resultCode'?'code':key);if(allowed.includes(value))diagnostics[key]=value;
+    }
+  }
   return attach(result);
   }catch(error){attach(error);throw error;}
 }

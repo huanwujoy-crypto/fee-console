@@ -2,6 +2,7 @@
 // performs no I/O, reads no environment and grants no upload or reader access.
 // The normal weekday candidate verifier is deliberately not used or relaxed.
 import crypto from 'node:crypto';
+import {types as nodeTypes} from 'node:util';
 import {uniqueCloudJson} from './cloud_io.mjs';
 import {digest} from './eod_sources.mjs';
 import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay,OWNER_DISPLAY_CSP} from './owner_latest_admission.mjs';
@@ -18,6 +19,39 @@ export const PREVIEW_REPLACEMENT_SCHEMA='xuan.owner-preview-replacement.v1';
 // Fixed budget for this separately admitted static preview. Daily publishing,
 // live write admission and the full access preflight retain their own limits.
 export const ACCEPTED_PREVIEW_DEADLINE_MS=45000;
+// Finite, non-financial failure labels shared with the existing private receipt.
+// These labels carry no exception messages, arbitrary URLs or object contents.
+export const PREVIEW_REPLACEMENT_RESULT_STATUSES=Object.freeze(['blocked','conflict','unknown','published-verified']);
+export const PREVIEW_REPLACEMENT_RESULT_CODES=Object.freeze([
+  'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED','PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED','PREVIEW_REPLACEMENT_CANDIDATE_INVALID',
+  'PREVIEW_REPLACEMENT_ACK_UNVERIFIED','PREVIEW_REPLACEMENT_READBACK_UNVERIFIED','PREVIEW_REPLACEMENT_PINNED_READBACK_VERIFIED',
+  'PREVIEW_REPLACEMENT_CAS_CONFLICT_NO_RETRY','PREVIEW_REPLACEMENT_OUTCOME_UNKNOWN','PREVIEW_REPLACEMENT_VALIDATION_FAILED']);
+export const PREVIEW_REPLACEMENT_FAILURE_STAGES=Object.freeze(['initialization','candidate-validation','previous-read','protected-replacement',
+  'destination-access','replacement-write','ack-validation','pinned-readback','readback-validation']);
+export const PREVIEW_REPLACEMENT_FAILURE_REASONS=Object.freeze([
+  ...PREVIEW_REPLACEMENT_RESULT_CODES.filter(code=>code!=='PREVIEW_REPLACEMENT_PINNED_READBACK_VERIFIED'),
+  'PREVIEW_REPLACEMENT_FAILURE_UNCLASSIFIED','OWNER_PREVIEW_DEADLINE',
+  ...['REPLACEMENT_OLD_REQUIRED','REPLACEMENT_CONTEXT','REPLACEMENT_BINDING','REPLACEMENT_CHANGED','REPLACEMENT_PROOF',
+    'REPLACEMENT_REGISTRATION','REPLACEMENT_OLD_BINDING','REPLACEMENT_SOURCE_CHANGED','REPLACEMENT_UNCHANGED',
+    'TRUSTED_REGISTRATION_REQUIRED','TRUSTED_REGISTRATION_BYTES','METADATA_BINDING','DISPLAY_HASH','STATIC_DISPLAY','STATIC_CARDS',
+    'STATIC_ORDER_SHAPE','MODEL_MARKER','REGISTRATION_SCOPE','REGISTRATION_HASH','REGISTRATION_DATE','REGISTRATION_TIME',
+    'REGISTRATION_FINANCIAL_STATE','PHASE_OR_CLOCK','CLOCK_CHANGED','REGISTRATION_CHANGED','REJECTED','ACCESS_CAPABILITY_RESULT'].map(code=>'OWNER_PREVIEW_'+code),
+  ...['PREVIEW_CONTEXT','PREVIEW_CURRENT_CONTEXT','PREVIEW_ANCESTRY','PREVIEW_REGISTRATION_CHANGED','PREVIEW_REGISTRATION_JSON',
+    'PREVIEW_REPLACEMENT_CHANGED','PREVIEW_REPLACEMENT_BYTES','PREVIEW_REPLACEMENT_REGISTRATION','PREVIEW_REPLACEMENT_METADATA',
+    'CONTEXT_HTTP'].map(code=>'OWNER_DELIVERY_'+code),
+  ...['REPLACEMENT_ADMISSION_REQUIRED','REPLACEMENT_ADMISSION_EXPIRED','REPLACEMENT_ADMISSION_CLOSED','REPLACEMENT_BINDING',
+    'REPLACEMENT_BYTES','PREFLIGHT_EXPIRED','FINANCIAL_ADMISSION_REQUIRED','BOUNDARY_CHANGED','READER_SET','SESSION_CLOSED'].map(code=>'OWNER_ACCESS_'+code),
+  'ABORTED','ACCESS_DENIED','PINNED_OBJECT_MISSING','HTTP_FAILED','RESPONSE_INVALID','ENCODING_INVALID','BODY_REQUIRED','SIZE_INVALID',
+  'SIZE_LIMIT','LENGTH_HEADER_REQUIRED','LENGTH_MISMATCH','LATEST_GENERATION_REQUIRED','LATEST_HEADERS_INVALID','LATEST_SIZE_MISMATCH',
+  'METADATA_CONTENT_TYPE','METADATA_JSON_INVALID','METADATA_BINDING_INVALID','CUSTOM_METADATA_INVALID','METADATA_SIZE_LIMIT',
+  'MEDIA_BINDING_INVALID','CONTENT_HASH_MISMATCH','READBACK_METADATA_MISMATCH','PIN_INVALID','WRITE_ACK_UNVERIFIED',
+  'PREVIEW_REPLACEMENT_OLD_CHANGED','PREVIEW_REPLACEMENT_REQUIRED','PREVIEW_REPLACEMENT_CLOSED','TARGET_INVALID',
+  'REQUEST_OUTCOME_UNKNOWN','REPLACEMENT_OLD_CHANGED','REPLACEMENT_OLD_HASH','REPLACEMENT_OLD_MEDIA','REPLACEMENT_OLD_METADATA',
+  'READ_FAILED','ETIMEDOUT','ECONNRESET','ECONNREFUSED','EHOSTUNREACH','ENETUNREACH','EAI_AGAIN','EAI_NONAME','TLS_ERROR',
+  'TLS_CERTIFICATE_ERROR','REPORT_SOURCE_NETWORK_FAILED','REPORT_SOURCE_HTTP','REPORT_SOURCE_JSON_INVALID']);
+const diagnosticOwn=(value,key)=>{try{if(!value||!['object','function'].includes(typeof value)||nodeTypes.isProxy(value))return undefined;
+  const descriptor=Object.getOwnPropertyDescriptor(value,key);return descriptor&&Object.hasOwn(descriptor,'value')?descriptor.value:undefined;}catch{return undefined;}};
+const replacementFailureReason=error=>{const code=diagnosticOwn(error,'safeCode');return PREVIEW_REPLACEMENT_FAILURE_REASONS.includes(code)?code:'PREVIEW_REPLACEMENT_FAILURE_UNCLASSIFIED';};
 const MAX_HTML=100000,MAX_MODEL=100000,MAX_MANIFEST=32768;
 const HASH=/^[a-f0-9]{64}$/,COMMIT=/^[a-f0-9]{40}$/;
 const SOURCE_KEYS=['ib.accountSummary','ib.positions','ib.orders','sharesight.ibGroupedPerformance','sharesight.noahPerformance'];
@@ -239,34 +273,36 @@ export function createAcceptedPreviewReplacementPublisher({io,verifyProtectedRep
   setTimer=setTimeout,clearTimer=clearTimeout}={}){
   let closed=false;
   return Object.freeze({async publish(candidate){
-    if(closed)return {status:'blocked',code:'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED'};
+    if(closed)return {status:'blocked',code:'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED',failureStage:'initialization',failureReason:'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED'};
     if(!io||typeof io.readLatest!=='function'||typeof io.replaceAcceptedPreview!=='function'||typeof io.readLatestGeneration!=='function'
       ||typeof verifyProtectedReplacement!=='function'||typeof verifyDestinationAccess!=='function'||typeof now!=='function'
-      ||typeof setTimer!=='function'||typeof clearTimer!=='function')return {status:'blocked',code:'PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED'};
+      ||typeof setTimer!=='function'||typeof clearTimer!=='function')return {status:'blocked',code:'PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED',failureStage:'initialization',failureReason:'PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED'};
     let next;try{if(!exact(candidate,'metadata displayBytes'))fail('CANDIDATE');next={metadata:structuredClone(candidate.metadata),displayBytes:copyBytes(candidate.displayBytes,MAX_HTML)};
-      validateAcceptedPreviewMetadata(next.metadata,{now:now(),ownerBinding:OWNER_BINDING});}catch{return {status:'blocked',code:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID'};}
-    closed=true;let timer,writing=false;const controller=new AbortController(),started=now();
+      validateAcceptedPreviewMetadata(next.metadata,{now:now(),ownerBinding:OWNER_BINDING});}catch{return {status:'blocked',code:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID',failureStage:'candidate-validation',failureReason:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID'};}
+    closed=true;let timer,writing=false,stage='previous-read';const controller=new AbortController(),started=now();
     const guard=()=>{const time=now();if(controller.signal.aborted||!Number.isFinite(started)||!Number.isFinite(time)||time<started||time-started>=ACCEPTED_PREVIEW_DEADLINE_MS)fail('DEADLINE');};
-    const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Error('deadline'));},ACCEPTED_PREVIEW_DEADLINE_MS);});
+    const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Object.assign(Error('OWNER_PREVIEW_DEADLINE'),{safeCode:'OWNER_PREVIEW_DEADLINE'}));},ACCEPTED_PREVIEW_DEADLINE_MS);});
     const work=async()=>{
       guard();const previous=structuredClone(await io.readLatest({target:LATEST_TARGET,signal:controller.signal}));guard();
-      const proof=await verifyProtectedReplacement({previous:structuredClone(previous),candidate:structuredClone(next),signal:controller.signal});guard();
+      stage='protected-replacement';const proof=await verifyProtectedReplacement({previous:structuredClone(previous),candidate:structuredClone(next),signal:controller.signal});guard();
       if(!exact(proof,'revisionSha256 previousGeneration previousDisplaySha256 candidateSha256 registrationSha256')
         ||!HASH.test(proof.revisionSha256)||proof.previousGeneration!==previous.generation||proof.previousDisplaySha256!==sha(previous.displayBytes)
         ||proof.candidateSha256!==sha(next.displayBytes)||proof.registrationSha256!==next.metadata.registrationSha256)fail('REPLACEMENT_PROOF');
-      if(await verifyDestinationAccess({target:LATEST_TARGET,operation:'replace-accepted-preview',...proof,signal:controller.signal})!==undefined)fail('ACCESS_CAPABILITY_RESULT');guard();
-      writing=true;const ack=await io.replaceAcceptedPreview({target:LATEST_TARGET,previousGeneration:previous.generation,
+      stage='destination-access';if(await verifyDestinationAccess({target:LATEST_TARGET,operation:'replace-accepted-preview',...proof,signal:controller.signal})!==undefined)fail('ACCESS_CAPABILITY_RESULT');guard();
+      stage='replacement-write';writing=true;const ack=await io.replaceAcceptedPreview({target:LATEST_TARGET,previousGeneration:previous.generation,
         previousDisplaySha256:proof.previousDisplaySha256,previousMetadata:structuredClone(previous.preview.metadata),revisionSha256:proof.revisionSha256,
         bytes:new Uint8Array(next.displayBytes),metadata:structuredClone(next.metadata),signal:controller.signal});
-      if(!object(ack)||ack.bucket!==LATEST_TARGET.bucket||ack.object!==LATEST_TARGET.object||typeof ack.generation!=='string'||!/^([1-9][0-9]{0,29})$/.test(ack.generation)
-        ||BigInt(ack.generation)<=BigInt(previous.generation)||ack.size!==next.displayBytes.length)return {status:'unknown',code:'PREVIEW_REPLACEMENT_ACK_UNVERIFIED'};
-      guard();const displaySha256=sha(next.displayBytes),bytes=await io.readLatestGeneration({target:LATEST_TARGET,generation:ack.generation,sha256:displaySha256,
-        metadata:{...structuredClone(next.metadata),displaySha256},signal:controller.signal});guard();
-      if(!(bytes instanceof Uint8Array)||bytes.length!==next.displayBytes.length||sha(bytes)!==displaySha256)return {status:'unknown',code:'PREVIEW_REPLACEMENT_READBACK_UNVERIFIED'};
+      stage='ack-validation';if(!object(ack)||ack.bucket!==LATEST_TARGET.bucket||ack.object!==LATEST_TARGET.object||typeof ack.generation!=='string'||!/^([1-9][0-9]{0,29})$/.test(ack.generation)
+        ||BigInt(ack.generation)<=BigInt(previous.generation)||ack.size!==next.displayBytes.length)return {status:'unknown',code:'PREVIEW_REPLACEMENT_ACK_UNVERIFIED',failureStage:stage,failureReason:'PREVIEW_REPLACEMENT_ACK_UNVERIFIED'};
+      guard();stage='pinned-readback';const displaySha256=sha(next.displayBytes),bytes=await io.readLatestGeneration({target:LATEST_TARGET,generation:ack.generation,sha256:displaySha256,
+        metadata:{...structuredClone(next.metadata),displaySha256},signal:controller.signal});stage='readback-validation';guard();
+      if(!(bytes instanceof Uint8Array)||bytes.length!==next.displayBytes.length||sha(bytes)!==displaySha256)return {status:'unknown',code:'PREVIEW_REPLACEMENT_READBACK_UNVERIFIED',failureStage:stage,failureReason:'PREVIEW_REPLACEMENT_READBACK_UNVERIFIED'};
       return {status:'published-verified',code:'PREVIEW_REPLACEMENT_PINNED_READBACK_VERIFIED',generation:ack.generation,sha256:displaySha256,previousGeneration:previous.generation,revisionSha256:proof.revisionSha256};
     };
-    try{return await Promise.race([work(),deadline]);}catch(error){return {status:writing&&error?.status===412?'conflict':writing?'unknown':'blocked',
-      code:writing&&error?.status===412?'PREVIEW_REPLACEMENT_CAS_CONFLICT_NO_RETRY':writing?'PREVIEW_REPLACEMENT_OUTCOME_UNKNOWN':'PREVIEW_REPLACEMENT_VALIDATION_FAILED'};}
+    try{return await Promise.race([work(),deadline]);}catch(error){const conflict=writing&&diagnosticOwn(error,'status')===412;
+      return {status:conflict?'conflict':writing?'unknown':'blocked',
+        code:conflict?'PREVIEW_REPLACEMENT_CAS_CONFLICT_NO_RETRY':writing?'PREVIEW_REPLACEMENT_OUTCOME_UNKNOWN':'PREVIEW_REPLACEMENT_VALIDATION_FAILED',
+        failureStage:stage,failureReason:replacementFailureReason(error)};}
     finally{clearTimer(timer);controller.abort();}
   }});
 }
