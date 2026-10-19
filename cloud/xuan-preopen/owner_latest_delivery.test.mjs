@@ -146,6 +146,27 @@ test('preview loader binds an ancestor registration to identical current-main by
   await assert.rejects(loader(url=>responseFor(url,{registration:'{"syntheticRegistration":false}'}))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_REGISTRATION_CHANGED/);
   await assert.rejects(loader(url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('{"x":1,"x":2}'):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/PREVIEW_REGISTRATION_JSON/);
   await assert.rejects(loader(url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('',{status:404}):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/CONTEXT_HTTP/);
+  // Real compare responses carry public file patches as well as ancestry.
+  // The old 89-byte fixture did not exercise their independent body budget.
+  const comparisonBody=(bytes,{status='ahead',mergeBase=old}={})=>{
+    const value={status,merge_base_commit:{sha:mergeBase},files:[{filename:'synthetic-public.mjs',patch:''}]};
+    value.files[0].patch='x'.repeat(bytes-Buffer.byteLength(JSON.stringify(value)));
+    const body=JSON.stringify(value);assert.equal(Buffer.byteLength(body),bytes);return body;
+  };
+  const withComparison=body=>async url=>url.includes('/compare/')?new Response(body):responseFor(url);
+  for(const bytes of [500000,500001,517169,2*1024*1024]){
+    const accepted=await loader(withComparison(comparisonBody(bytes)))({phase:'accepted-preview-historical',policyCommit:old});
+    assert.equal(accepted.previewRegistration.policyCommit,old);
+    assert.equal(accepted.previewRegistration.sha256,digest(registrationText));
+  }
+  await assert.rejects(loader(withComparison(comparisonBody(2*1024*1024+1)))({phase:'accepted-preview-historical',policyCommit:old}),/CLOUD_RESPONSE_TOO_LARGE/);
+  await assert.rejects(loader(withComparison(comparisonBody(500001,{status:'diverged'})))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_ANCESTRY/);
+  await assert.rejects(loader(withComparison(comparisonBody(500001,{mergeBase:'d'.repeat(40)})))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_ANCESTRY/);
+  await assert.rejects(loader(async url=>url.includes('/compare/')?new Response(comparisonBody(500001),{status:403}):responseFor(url))({phase:'accepted-preview-historical',policyCommit:old}),/CONTEXT_HTTP/);
+  // Neither individual protected files nor the ordinary daily lane inherits
+  // the saved-preview comparison allowance.
+  await assert.rejects(loader(async url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('x'.repeat(500001)):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/CLOUD_RESPONSE_TOO_LARGE/);
+  await assert.rejects(loader(withComparison(comparisonBody(500001)))({phase:'historical-authenticity',policyCommit:old}),/CLOUD_RESPONSE_TOO_LARGE/);
   await assert.rejects(loader(responseFor)({phase:'accepted-preview-historical',policyCommit:'not-a-commit'}),/PREVIEW_CONTEXT/);
   const pre=new AbortController();pre.abort();let attempts=0;await assert.rejects(loader(()=>{attempts++;assert.fail();})({phase:'accepted-preview-historical',policyCommit:old,signal:pre.signal}));assert.equal(attempts,0);
   const controller=new AbortController();let enter;const entered=new Promise(resolve=>{enter=resolve;});
