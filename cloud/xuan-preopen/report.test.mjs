@@ -4,6 +4,7 @@ import {currentReserve, loadTrustedContext, readSharesightAction, runPrivateRepo
 import {associationPolicyBlob, associationPolicyText} from '../../scripts/xuan-ib-account-association.mjs';
 import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import crypto from 'node:crypto';
+import {createOwnerFailureEvidence} from './cloud_io.mjs';
 
 const now = () => Date.parse('2026-09-30T05:00:00.000Z');
 const ledger = {schemaVersion: 1, purpose: 'xuan-etf-owner-declared-pending-calls', entries: [{date: '2026-09-17', usd: 50}]};
@@ -132,4 +133,45 @@ test('trusted source cancellation stops before fetch or reaches an already pendi
     if(url.endsWith('latest.html'))return new Response(html);assert.fail('unexpected synthetic context URL');
   }}));
 
+});
+test('trusted-main network failure retains its finite original origin and fixed 30-second read facts',async()=>{
+  let calls=0,clockCalls=0;
+  const original=Object.assign(new TypeError('SYNTHETIC_PRIVATE_URL_CREDENTIAL'),{cause:{code:'ETIMEDOUT'}});
+  await assert.rejects(loadTrustedContext({now:()=>{clockCalls++;return now();},fetchImpl:async()=>{calls++;throw original;}}),error=>{
+    assert.equal(error.message,'REPORT_SOURCE_NETWORK_FAILED');assert.equal(error.safeCode,'REPORT_SOURCE_NETWORK_FAILED');
+    const evidence=createOwnerFailureEvidence(error);
+    assert.equal(evidence.origin.type,'TypeError');assert.equal(evidence.origin.causeCode,'ETIMEDOUT');
+    assert.deepEqual(evidence.read.origin,evidence.origin);assert.equal(evidence.read.requestClass,'github-main');
+    assert.equal(evidence.read.readStage,'fetch');assert.equal(evidence.read.httpStatus,null);
+    assert.equal(evidence.read.observedBodyBytes,null);assert.equal(evidence.read.bodyLimitBytes,8000000);assert.equal(evidence.read.timeoutMs,30000);
+    assert.ok(!JSON.stringify(evidence).includes('PRIVATE'));return true;
+  });
+  assert.equal(calls,1);assert.equal(clockCalls,0);
+});
+test('trusted-main HTTP and malformed JSON retain the original error outcome plus finite read facts',async()=>{
+  for(const malformed of [false,true]){
+    let calls=0;const bytes=Uint8Array.of(239,187,191,123);
+    await assert.rejects(loadTrustedContext({now,fetchImpl:async()=>{calls++;return malformed?new Response(bytes):new Response('SYNTHETIC_PRIVATE_BODY',{status:503});}}),error=>{
+      assert.equal(error.message,malformed?'REPORT_SOURCE_JSON_INVALID':'REPORT_SOURCE_HTTP_503');
+      const evidence=createOwnerFailureEvidence(error);
+      assert.equal(evidence.read.requestClass,'github-main');assert.equal(evidence.read.readStage,malformed?'body':'http');
+      assert.equal(evidence.read.httpStatus,malformed?200:503);assert.equal(evidence.read.observedBodyBytes,malformed?4:null);
+      assert.equal(evidence.read.bodyLimitBytes,8000000);assert.equal(evidence.read.timeoutMs,30000);
+      if(malformed)assert.equal(evidence.read.origin.type,'SyntaxError');
+      assert.ok(!JSON.stringify(evidence).includes('PRIVATE'));return true;
+    });
+    assert.equal(calls,1);
+  }
+});
+test('body error and hostile status or diagnostic getters cannot be replaced by diagnostic collection',async()=>{
+  let traps=0,calls=0;const forbidden=()=>{traps++;throw Error('SYNTHETIC_PRIVATE_TRAP');};
+  const original=Object.defineProperties(new TypeError('SYNTHETIC_BODY_SECRET'),{ownerReadDiagnostics:{get:forbidden,configurable:true},safeOrigin:{get:forbidden},cause:{get:forbidden}});
+  const response={ok:true,body:{getReader:()=>({read:async()=>{throw original;},cancel:async()=>{}})}};
+  Object.defineProperty(response,'status',{get:forbidden});
+  await assert.rejects(loadTrustedContext({now,fetchImpl:async()=>{calls++;return response;}}),error=>{
+    assert.equal(error,original);assert.equal(createOwnerFailureEvidence(error).read.readStage,'body');return true;
+  });
+  const proxy=new Proxy({}, {get:forbidden,getOwnPropertyDescriptor:forbidden,getPrototypeOf:forbidden,defineProperty:forbidden});
+  await assert.rejects(loadTrustedContext({now,fetchImpl:async()=>{throw proxy;}}),error=>error.message==='REPORT_SOURCE_NETWORK_FAILED');
+  assert.equal(calls,1);assert.equal(traps,0);
 });

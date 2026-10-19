@@ -3,7 +3,7 @@
 // The normal weekday candidate verifier is deliberately not used or relaxed.
 import crypto from 'node:crypto';
 import {types as nodeTypes} from 'node:util';
-import {uniqueCloudJson} from './cloud_io.mjs';
+import {uniqueCloudJson,createOwnerFailureEvidence,safeOwnerFailureEvidence} from './cloud_io.mjs';
 import {digest} from './eod_sources.mjs';
 import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay,OWNER_DISPLAY_CSP} from './owner_latest_admission.mjs';
 import {OWNER_SCOPE,LATEST_TARGET,ACCEPTED_PREVIEW_SCHEMA,
@@ -210,27 +210,41 @@ function checkedContext(context,m){
 export function createProtectedOwnerPreviewVerifier({loadContext,now:clock=Date.now}={}){
   if(typeof loadContext!=='function'||typeof clock!=='function')fail('CAPABILITIES_REQUIRED');
   return async({metadata,displayBytes,now:suppliedNow,phase,signal}={})=>{
+    let validatorPoint='entry';
     try{
       signal?.throwIfAborted();
-      const time=clock();
+      validatorPoint='phase-clock';const time=clock();
       if(!Number.isFinite(time)||suppliedNow!==undefined&&!Number.isFinite(suppliedNow)
         ||!['candidate-admission','historical-authenticity'].includes(phase))fail('PHASE_OR_CLOCK');
-      const m=JSON.parse(JSON.stringify(metadata)),bytes=copyBytes(displayBytes,MAX_HTML);
-      validateAcceptedPreviewMetadata(m,{now:time,ownerBinding:OWNER_BINDING});
+      validatorPoint='input-copy';const m=JSON.parse(JSON.stringify(metadata)),bytes=copyBytes(displayBytes,MAX_HTML);
+      validatorPoint='metadata';validateAcceptedPreviewMetadata(m,{now:time,ownerBinding:OWNER_BINDING});
       const options={phase:phase==='candidate-admission'?'accepted-preview-admission':'accepted-preview-historical',policyCommit:m.registrationPolicyCommit,registrationSha256:m.registrationSha256,now:()=>clock(),...(signal?{signal}:{})};
-      const original=checkedContext(await loadContext(options),m),r=original.registration;
-      if(sha(bytes)!==r.displaySha256)fail('DISPLAY_HASH');staticDisplayBinding(decode(bytes),r);
+      validatorPoint='context-first';const original=checkedContext(await loadContext(options),m),r=original.registration;
+      validatorPoint='display';if(sha(bytes)!==r.displaySha256)fail('DISPLAY_HASH');staticDisplayBinding(decode(bytes),r);
       // No live-freshness assertion is made for this fixed saved reference.
       // Both phases still require its original real instants, exact scope and
       // current/original protected registration, freshly re-read by the loader.
-      const current=checkedContext(await loadContext(options),m),endTime=clock();
+      validatorPoint='context-second';const current=checkedContext(await loadContext(options),m);
+      validatorPoint='final-check';const endTime=clock();
       if(!Number.isFinite(endTime)||endTime<time||r.completedAt>new Date(endTime).toISOString())fail('CLOCK_CHANGED');
       if(JSON.stringify(canonical(current))!==JSON.stringify(canonical(original)))fail('REGISTRATION_CHANGED');
       signal?.throwIfAborted();
-      return {schema:'xuan.owner-accepted-preview-proof.v1',scope:m.scope,ownerBinding:m.ownerBinding,
+      validatorPoint='proof';return {schema:'xuan.owner-accepted-preview-proof.v1',scope:m.scope,ownerBinding:m.ownerBinding,
         sourceIdentitySha256:m.sourceIdentitySha256,registrationId:m.registrationId,registrationSha256:m.registrationSha256,
         registrationPolicyCommit:m.registrationPolicyCommit,displaySha256:r.displaySha256,metadataSha256:await previewMetadataSha256(m)};
-    }catch(error){if(error?.safeCode?.startsWith('OWNER_PREVIEW_'))throw error;fail('REJECTED');}
+    }catch(error){
+      const code=diagnosticOwn(error,'safeCode');
+      if(typeof code==='string'&&code.startsWith('OWNER_PREVIEW_')){
+        try{if(!safeOwnerFailureEvidence(diagnosticOwn(error,'failureEvidence')))Object.defineProperty(error,'failureEvidence',{
+          value:createOwnerFailureEvidence(error,{validatorPhase:phase,validatorPoint}),enumerable:false});}catch{}
+        throw error;
+      }
+      // Preserve the legacy rejection and original OWNER_PREVIEW exceptions.
+      // Only the finite sidecar records why a non-preview error was collapsed.
+      const rejected=Object.assign(Error('OWNER_PREVIEW_REJECTED'),{safeCode:'OWNER_PREVIEW_REJECTED'});
+      try{Object.defineProperty(rejected,'failureEvidence',{value:createOwnerFailureEvidence(error,{validatorPhase:phase,validatorPoint}),enumerable:false});}catch{}
+      throw rejected;
+    }
   };
 }
 async function verifiedCandidate(candidate,verify,now,signal){
@@ -277,8 +291,11 @@ export function createAcceptedPreviewReplacementPublisher({io,verifyProtectedRep
     if(!io||typeof io.readLatest!=='function'||typeof io.replaceAcceptedPreview!=='function'||typeof io.readLatestGeneration!=='function'
       ||typeof verifyProtectedReplacement!=='function'||typeof verifyDestinationAccess!=='function'||typeof now!=='function'
       ||typeof setTimer!=='function'||typeof clearTimer!=='function')return {status:'blocked',code:'PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED',failureStage:'initialization',failureReason:'PREVIEW_REPLACEMENT_CAPABILITIES_REQUIRED'};
-    let next;try{if(!exact(candidate,'metadata displayBytes'))fail('CANDIDATE');next={metadata:structuredClone(candidate.metadata),displayBytes:copyBytes(candidate.displayBytes,MAX_HTML)};
-      validateAcceptedPreviewMetadata(next.metadata,{now:now(),ownerBinding:OWNER_BINDING});}catch{return {status:'blocked',code:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID',failureStage:'candidate-validation',failureReason:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID'};}
+    let next,candidatePoint='input-copy';try{if(!exact(candidate,'metadata displayBytes'))fail('CANDIDATE');next={metadata:structuredClone(candidate.metadata),displayBytes:copyBytes(candidate.displayBytes,MAX_HTML)};
+      candidatePoint='metadata';validateAcceptedPreviewMetadata(next.metadata,{now:now(),ownerBinding:OWNER_BINDING});}catch(error){
+      const result={status:'blocked',code:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID',failureStage:'candidate-validation',failureReason:'PREVIEW_REPLACEMENT_CANDIDATE_INVALID'};
+      try{result.failureEvidence=createOwnerFailureEvidence(error,{validatorPhase:'candidate-admission',validatorPoint:candidatePoint});}catch{}return result;
+    }
     closed=true;let timer,writing=false,stage='previous-read';const controller=new AbortController(),started=now();
     const guard=()=>{const time=now();if(controller.signal.aborted||!Number.isFinite(started)||!Number.isFinite(time)||time<started||time-started>=ACCEPTED_PREVIEW_DEADLINE_MS)fail('DEADLINE');};
     const deadline=new Promise((_,reject)=>{timer=setTimer(()=>{controller.abort();reject(Object.assign(Error('OWNER_PREVIEW_DEADLINE'),{safeCode:'OWNER_PREVIEW_DEADLINE'}));},ACCEPTED_PREVIEW_DEADLINE_MS);});
@@ -300,9 +317,14 @@ export function createAcceptedPreviewReplacementPublisher({io,verifyProtectedRep
       return {status:'published-verified',code:'PREVIEW_REPLACEMENT_PINNED_READBACK_VERIFIED',generation:ack.generation,sha256:displaySha256,previousGeneration:previous.generation,revisionSha256:proof.revisionSha256};
     };
     try{return await Promise.race([work(),deadline]);}catch(error){const conflict=writing&&diagnosticOwn(error,'status')===412;
-      return {status:conflict?'conflict':writing?'unknown':'blocked',
+      const result={status:conflict?'conflict':writing?'unknown':'blocked',
         code:conflict?'PREVIEW_REPLACEMENT_CAS_CONFLICT_NO_RETRY':writing?'PREVIEW_REPLACEMENT_OUTCOME_UNKNOWN':'PREVIEW_REPLACEMENT_VALIDATION_FAILED',
-        failureStage:stage,failureReason:replacementFailureReason(error)};}
+        failureStage:stage,failureReason:replacementFailureReason(error)};
+      // Preserve inner evidence before falling back to this outer catch. A
+      // diagnostic failure never changes the original publication outcome.
+      try{result.failureEvidence=safeOwnerFailureEvidence(diagnosticOwn(error,'failureEvidence'))
+        ??createOwnerFailureEvidence(error,{validatorPhase:null,validatorPoint:null});}catch{}return result;
+    }
     finally{clearTimer(timer);controller.abort();}
   }});
 }

@@ -19,6 +19,7 @@ import {associationPolicyText} from '../../scripts/xuan-ib-account-association.m
 import {OWNER_BINDING,SOURCE_IDENTITY_SHA256} from './owner_latest_admission.mjs';
 import {OWNER_SCOPE} from './owner_latest.mjs';
 import {acceptedPreviewRegistrationText,previewReplacementRegistrationText,PREVIEW_REPLACEMENT_REGISTRATION_PATH} from './owner_accepted_preview.mjs';
+import {createOwnerFailureEvidence} from './cloud_io.mjs';
 
 const NOW=Date.parse('2026-10-15T05:01:00.000Z'),START='2026-10-15T05:00:00.000Z',END='2026-10-15T05:00:01.000Z';
 const encode=s=>new TextEncoder().encode(s);
@@ -178,7 +179,7 @@ test('protected checkout binds new preview executable and registration bytes eve
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'owner-preview-checkout-'));fs.mkdirSync(path.join(root,'empty-hooks'));
   const git=args=>execFileSync('git',['-c','core.hooksPath='+path.join(root,'empty-hooks'),...args],{cwd:root,encoding:'utf8',stdio:['ignore','pipe','pipe']}).trim();
   const files=OWNER_PROTECTED_SOURCE_PATHS;
-  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',PREVIEW_REPLACEMENT_REGISTRATION_PATH])assert.ok(files.includes(required));
+  for(const required of ['cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','cloud/xuan-preopen/cloud_io.mjs','cloud/xuan-preopen/report.mjs','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',PREVIEW_REPLACEMENT_REGISTRATION_PATH])assert.ok(files.includes(required));
   try{
     git(['init','-q']);
     for(const relative of files){fs.mkdirSync(path.dirname(path.join(root,relative)),{recursive:true});fs.writeFileSync(path.join(root,relative),'SYNTHETIC '+relative);}
@@ -188,7 +189,7 @@ test('protected checkout binds new preview executable and registration bytes eve
     let privateCalls=0;
     await assert.rejects(deliverOwnerAcceptedPreview({cwd:root,loadContext,request:()=>{privateCalls++;assert.fail();},storeFactory:()=>{privateCalls++;assert.fail();}}),/PREVIEW_ACCESS_CAPABILITY_REQUIRED/);
     assert.equal(privateCalls,0);
-    for(const relative of ['cloud/xuan-preopen/owner_latest_delivery.mjs','cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
+    for(const relative of ['cloud/xuan-preopen/owner_latest_delivery.mjs','cloud/xuan-preopen/owner_accepted_preview.mjs',OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'cloud/xuan-preopen/owner_preview_access.mjs','cloud/xuan-preopen/owner_sdk_transport.mjs','cloud/xuan-preopen/owner_sdk_transport.py','cloud/xuan-preopen/cloud_io.mjs','cloud/xuan-preopen/report.mjs','security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json']){
       const initial=fs.readFileSync(path.join(root,relative));git(['update-index','--assume-unchanged',relative]);
       fs.appendFileSync(path.join(root,relative),' CHANGED');
       await assert.rejects(requireProtectedOwnerCheckout({cwd:root,loadContext}),/PROTECTED_SOURCE_BYTES_REQUIRED/);
@@ -263,8 +264,10 @@ test('replacement pre-publisher exceptions attach frozen null-result diagnostics
     requestPreviewReplacement:forbidden,verifyDestinationAccess:forbidden,storeFactory:forbidden,publisherFactory:forbidden}),caught=>{
     assert.equal(caught,error);const descriptor=Object.getOwnPropertyDescriptor(caught,'ownerPublicationDiagnostics');
     assert.equal(descriptor.enumerable,false);assert.equal(Object.isFrozen(descriptor.value),true);
-    assert.deepEqual(descriptor.value,{schema:'xuan.owner-publication.safe-diagnostics.v1',businessAckValidated:0,
+    const {failureEvidence,...legacy}=descriptor.value;
+    assert.deepEqual(legacy,{schema:'xuan.owner-publication.safe-diagnostics.v1',businessAckValidated:0,
       independentReadbackAttempts:0,storeReadbackCompleted:0,fullVerification:null,resultStatus:null,resultCode:null,failureStage:null,failureReason:null});
+    assert.deepEqual(failureEvidence,createOwnerFailureEvidence(error));
     return true;
   });
   assert.equal(privateCalls,0);
@@ -278,4 +281,114 @@ test('replacement exception attachment does not inspect hostile exception getter
     catch(caught){assert.equal(caught,error);}
   }
   assert.equal(invoked,0);
+});
+
+test('actual pre-publisher main reads retain evidence with null legacy outcomes and no private IO',async()=>{
+  for(const kind of ['network','http','json','oversize']){
+    let reads=0,privateCalls=0,original;
+    const bytes=kind==='oversize'?new Uint8Array(8000001).fill(120):Uint8Array.of(239,187,191,123);
+    const loader=createOwnerContextLoader({now:()=>NOW,fetchImpl:async url=>{
+      reads++;assert.equal(url,'https://api.github.com/repos/huanwujoy-crypto/fee-console/commits/main');
+      if(kind==='network')throw Object.assign(new TypeError('SYNTHETIC_PRIVATE_NETWORK'),{cause:{code:'ETIMEDOUT'}});
+      return kind==='http'?new Response('SYNTHETIC_PRIVATE_BODY',{status:503}):new Response(bytes);
+    }});
+    const loadContext=async options=>{try{return await loader(options);}catch(error){original=error;throw error;}};
+    const forbidden=()=>{privateCalls++;assert.fail('No IO or publisher before protected-source validation');};
+    let caught;try{await deliverOwnerAcceptedPreviewReplacement({loadContext,request:forbidden,requestPreviewReplacement:forbidden,
+      verifyDestinationAccess:forbidden,storeFactory:forbidden,publisherFactory:forbidden});}catch(error){caught=error;}
+    assert.equal(caught,original);assert.equal(reads,1);assert.equal(privateCalls,0);
+    assert.equal(caught.message,kind==='network'?'REPORT_SOURCE_NETWORK_FAILED':kind==='http'?'REPORT_SOURCE_HTTP_503':kind==='json'?'REPORT_SOURCE_JSON_INVALID':'CLOUD_RESPONSE_TOO_LARGE');
+    const descriptor=Object.getOwnPropertyDescriptor(caught,'ownerPublicationDiagnostics'),publication=descriptor.value;
+    assert.equal(descriptor.enumerable,false);assert.equal(Object.isFrozen(publication),true);
+    for(const key of ['resultStatus','resultCode','failureStage','failureReason','fullVerification'])assert.equal(publication[key],null);
+    for(const key of ['businessAckValidated','independentReadbackAttempts','storeReadbackCompleted'])assert.equal(publication[key],0);
+    assert.deepEqual(publication.failureEvidence,createOwnerFailureEvidence(caught));
+    const read=publication.failureEvidence.read;
+    assert.equal(read.requestClass,'github-main');assert.equal(read.readStage,kind==='network'?'fetch':kind==='http'?'http':'body');
+    assert.equal(read.httpStatus,kind==='network'?null:kind==='http'?503:200);
+    assert.equal(read.observedBodyBytes,['json','oversize'].includes(kind)?bytes.length:null);
+    assert.equal(read.bodyLimitBytes,8000000);assert.equal(read.timeoutMs,30000);
+    assert.ok(!JSON.stringify(publication).includes('PRIVATE'));
+  }
+});
+test('pre-publisher evidence prefers an existing strict record and cannot reverse hostile or frozen exceptions',async()=>{
+  const existing=createOwnerFailureEvidence(Object.assign(new TypeError('SYNTHETIC_PRIVATE_CONTEXT'),{safeCode:'REPORT_SOURCE_NETWORK_FAILED'}),
+    {validatorPhase:'historical-authenticity',validatorPoint:'context-second'});
+  const preferred=Object.assign(new Error('SYNTHETIC_PRIVATE_WRAPPER'),{safeCode:'OWNER_PREVIEW_REJECTED',failureEvidence:existing});
+  let traps=0,privateCalls=0;const forbidden=()=>{traps++;throw Error('SYNTHETIC_PRIVATE_GETTER');};
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  const hostile=Object.defineProperties(new TypeError('SYNTHETIC_PRIVATE_ERROR'),{failureEvidence:{get:forbidden},ownerReadDiagnostics:{get:forbidden},
+    safeCode:{get:forbidden},safeOrigin:{get:forbidden},message:{get:forbidden},cause:{get:forbidden}});
+  const frozen=Object.freeze(new Error('SYNTHETIC_PRIVATE_FROZEN'));
+  for(const original of [preferred,hostile,frozen,new Proxy({}, {get:forbidden,getPrototypeOf:forbidden,getOwnPropertyDescriptor:forbidden,defineProperty:forbidden}),revoked.proxy]){
+    const noIo=()=>{privateCalls++;assert.fail('No IO or publisher on a failed context');};
+    let caught;try{await deliverOwnerAcceptedPreviewReplacement({loadContext:async()=>{throw original;},request:noIo,
+      requestPreviewReplacement:noIo,verifyDestinationAccess:noIo,storeFactory:noIo,publisherFactory:noIo});}catch(error){caught=error;}
+    assert.equal(caught,original);
+  }
+  assert.deepEqual(preferred.ownerPublicationDiagnostics.failureEvidence,existing);
+  assert.equal(preferred.ownerPublicationDiagnostics.failureEvidence.validatorPoint,'context-second');
+  assert.equal(Object.hasOwn(frozen,'ownerPublicationDiagnostics'),false);
+  assert.equal(traps,0);assert.equal(privateCalls,0);
+});
+
+function diagnosticContextFetch(compareResponse,calls=[]){
+  const current='b'.repeat(40),html='SYNTHETIC public HTML';
+  const policy={schemaVersion:1,policyId:'ib-primary-7day-pilot-v1',accountAlias:'IB-HK',basis:'owner-attested-recurring-v1',status:'active',purpose:'xuan-ib-read-only-report',
+    editions:['adhoc','am','pm'],publisher:'codex-verified-candidate-v1',validFrom:'2026-10-01T00:00:00.000Z',expiresAt:'2026-11-01T00:00:00.000Z'};
+  const bytes=Buffer.from(html),blob=crypto.createHash('sha1').update(Buffer.from('blob '+bytes.length+'\0')).update(bytes).digest('hex');
+  return async(url,options)=>{
+    calls.push({url,options});
+    if(url.endsWith('/commits/main'))return Response.json({sha:current});
+    if(url.includes('/compare/'))return compareResponse();
+    if(url.endsWith('xuan-ib-account-association-v1.json'))return new Response(associationPolicyText(policy));
+    if(url.endsWith('xuan-ib-etf-pending-calls-v1.json'))return Response.json({schemaVersion:1,purpose:'xuan-etf-owner-declared-pending-calls',entries:[{date:'2026-09-01',usd:100}]});
+    if(url.endsWith('latest.meta.json'))return Response.json({sourceSha:'c'.repeat(40),htmlBlob:blob});
+    if(url.endsWith('latest.html'))return new Response(html);
+    assert.fail('Unexpected synthetic route');
+  };
+}
+test('actual preview comparison failures retain raw request, body and timeout facts without changing request sequence',async()=>{
+  for(const kind of ['network','http','json','oversize']){
+    const calls=[],timeouts=[],originalTimeout=AbortSignal.timeout;
+    AbortSignal.timeout=function(ms){timeouts.push(ms);return originalTimeout(ms);};
+    const bytes=kind==='oversize'?new Uint8Array(2097153).fill(120):Uint8Array.of(239,187,191,123);
+    const original=Object.assign(new TypeError('SYNTHETIC_PRIVATE_NETWORK'),{cause:{code:'ETIMEDOUT'}});
+    try{
+      const loader=createOwnerContextLoader({now:()=>NOW,fetchImpl:diagnosticContextFetch(()=>{
+        if(kind==='network')throw original;
+        return kind==='http'?new Response('SYNTHETIC_PRIVATE_BODY',{status:503}):new Response(bytes);
+      },calls)});
+      await assert.rejects(loader({phase:'accepted-preview-historical',policyCommit:'a'.repeat(40)}),error=>{
+        if(kind==='network')assert.equal(error,original);
+        else if(kind==='http')assert.equal(error.message,'OWNER_DELIVERY_CONTEXT_HTTP');
+        else if(kind==='json')assert.equal(error.name,'SyntaxError');
+        else{assert.equal(error.message,'CLOUD_RESPONSE_TOO_LARGE');assert.equal(Object.hasOwn(error,'safeCode'),false);}
+        const evidence=createOwnerFailureEvidence(error);
+        assert.equal(evidence.read.requestClass,'github-compare');assert.equal(evidence.read.readStage,kind==='network'?'fetch':kind==='http'?'http':'body');
+        assert.equal(evidence.read.httpStatus,kind==='network'?null:kind==='http'?503:200);
+        assert.equal(evidence.read.observedBodyBytes,['json','oversize'].includes(kind)?bytes.length:null);
+        assert.equal(evidence.read.bodyLimitBytes,2097152);assert.equal(evidence.read.timeoutMs,15000);
+        if(kind==='json')assert.equal(evidence.read.origin.type,'SyntaxError');
+        assert.ok(!JSON.stringify(evidence).includes('PRIVATE'));return true;
+      });
+      assert.equal(calls.length,6);assert.equal(calls[0].url.endsWith('/commits/main'),true);
+      assert.equal(calls[1].url.endsWith('xuan-ib-etf-pending-calls-v1.json'),true);
+      assert.equal(calls[5].url.includes('/compare/'),true);
+      assert.deepEqual(timeouts,[30000,30000,30000,30000,30000,15000]);
+    }finally{AbortSignal.timeout=originalTimeout;}
+  }
+});
+test('owner comparison diagnostic collection never invokes hostile error or response accessors',async()=>{
+  let traps=0;const forbidden=()=>{traps++;throw Error('SYNTHETIC_DIAGNOSTIC_SECRET');};
+  const bodyError=Object.defineProperties(new TypeError('SYNTHETIC_BODY_SECRET'),{ownerReadDiagnostics:{get:forbidden,configurable:true},safeOrigin:{get:forbidden,configurable:true}});
+  const response={ok:true,body:{getReader:()=>({read:async()=>{throw bodyError;},cancel:async()=>{}})}};
+  Object.defineProperty(response,'status',{get:forbidden});
+  const proxy=new Proxy({}, {get:forbidden,getOwnPropertyDescriptor:forbidden,getPrototypeOf:forbidden,defineProperty:forbidden});
+  for(const expected of [bodyError,proxy]){
+    const loader=createOwnerContextLoader({now:()=>NOW,fetchImpl:diagnosticContextFetch(()=>{if(expected===proxy)throw proxy;return response;})});
+    let caught;try{await loader({phase:'accepted-preview-historical',policyCommit:'a'.repeat(40)});}catch(error){caught=error;}
+    assert.equal(caught,expected);
+  }
+  assert.equal(traps,0);
 });

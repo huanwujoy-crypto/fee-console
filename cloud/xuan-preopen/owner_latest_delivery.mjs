@@ -8,7 +8,7 @@ import {planPreopen} from './calendar.mjs';
 import {loadTrustedContext,safeErrorOrigin} from './report.mjs';
 import {ownerSourceFetch} from './owner_source_bytes.mjs';
 import {types as nodeTypes} from 'node:util';
-import {boundedText} from './cloud_io.mjs';
+import {boundedText,attachOwnerReadDiagnostics,safeOwnerReadDiagnostics,createOwnerFailureEvidence,safeOwnerFailureEvidence,ownerReadRequestClass} from './cloud_io.mjs';
 import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
 import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {OWNER_SCOPE,createOwnerLatestPublisher} from './owner_latest.mjs';
@@ -32,14 +32,33 @@ const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').
 const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Object.assign(error,{safeCode:error.message,safeOrigin:origin??safeErrorOrigin(error)});};
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
-  ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs'].map(file=>'cloud/xuan-preopen/'+file),
+  ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs','cloud_io.mjs','report.mjs'].map(file=>'cloud/xuan-preopen/'+file),
   OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
 // The historical phase reads the original trusted Git version, never today's
 // context relabelled as yesterday. The current main must still contain it.
 export function createOwnerContextLoader({fetchImpl=ownerSourceFetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
-  const read=async (url,signal,limit=500000)=>{let r;try{signal?.throwIfAborted();r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,limit);};
+  const read=async (url,signal,limit=500000,diagnostics)=>{
+    const started=performance.now();let r,readStage='fetch';
+    try{
+      try{signal?.throwIfAborted();r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});}
+      catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}
+      readStage='http';if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));
+      readStage='body';const body={},text=await boundedText(r,limit,body);
+      if(diagnostics)diagnostics.value=safeOwnerReadDiagnostics({...body.value,requestClass:ownerReadRequestClass(url),elapsedMs:Math.max(0,Math.floor(performance.now()-started)),timeoutMs:15000});
+      return text;
+    }catch(error){
+      try{
+      const evidence=createOwnerFailureEvidence(error);
+      attachOwnerReadDiagnostics(error,{requestClass:ownerReadRequestClass(url),readStage,httpStatus:r?safeErrorOrigin(null,r).httpStatus:null,bodyLimitBytes:limit,
+        elapsedMs:Math.max(0,Math.floor(performance.now()-started)),timeoutMs:15000,origin:evidence.read?.origin??evidence.origin});
+      }catch{}
+      throw error;
+    }
+  };
+  const json=(text,diagnostics)=>{try{return JSON.parse(text);}catch(error){if(diagnostics)attachOwnerReadDiagnostics(error,{...diagnostics,origin:safeErrorOrigin(error,diagnostics.httpStatus)});throw error;}};
+  const parsedFailure=(code,error,diagnostics)=>{try{fail(code);}catch(wrapped){if(diagnostics)attachOwnerReadDiagnostics(wrapped,{...diagnostics,origin:safeErrorOrigin(error,diagnostics.httpStatus)});throw wrapped;}};
   return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now,signal}={})=>{
     signal?.throwIfAborted();
     const current=await loadTrustedContext({fetchImpl,now:clock,signal});
@@ -52,22 +71,25 @@ export function createOwnerContextLoader({fetchImpl=ownerSourceFetch,now=Date.no
       const currentCommit=current.association.policyCommit;
       if(phase!=='accepted-preview-historical'&&policyCommit!==currentCommit)fail('PREVIEW_CURRENT_CONTEXT');
       if(policyCommit!==currentCommit){
-        const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal,PREVIEW_COMPARE_MAX_BYTES));
+        const diagnostics={};
+        const comparison=json(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal,PREVIEW_COMPARE_MAX_BYTES,diagnostics),diagnostics.value);
         if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('PREVIEW_ANCESTRY');
       }
-      const currentText=await read(RAW+'/'+currentCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal);
-      const originalText=policyCommit===currentCommit?currentText:await read(RAW+'/'+policyCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal);
+      const currentDiagnostics={},originalDiagnostics=policyCommit===currentCommit?currentDiagnostics:{};
+      const currentText=await read(RAW+'/'+currentCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal,500000,currentDiagnostics);
+      const originalText=policyCommit===currentCommit?currentText:await read(RAW+'/'+policyCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal,500000,originalDiagnostics);
       if(sha(currentText)!==sha(originalText))fail('PREVIEW_REGISTRATION_CHANGED');
-      let registration;try{parseDecisionJson(originalText,128*1024);registration=JSON.parse(originalText);}catch{fail('PREVIEW_REGISTRATION_JSON');}
+      let registration;try{parseDecisionJson(originalText,128*1024);registration=JSON.parse(originalText);}catch(error){parsedFailure('PREVIEW_REGISTRATION_JSON',error,originalDiagnostics.value);}
       if(phase==='accepted-preview-replacement'||registrationSha256!==undefined&&registrationSha256!==sha(originalText)){
-        const revisionText=await read(RAW+'/'+currentCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH,signal);
-        const originalRevisionText=policyCommit===currentCommit?revisionText:await read(RAW+'/'+policyCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH,signal);
+        const revisionDiagnostics={},originalRevisionDiagnostics=policyCommit===currentCommit?revisionDiagnostics:{};
+        const revisionText=await read(RAW+'/'+currentCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH,signal,500000,revisionDiagnostics);
+        const originalRevisionText=policyCommit===currentCommit?revisionText:await read(RAW+'/'+policyCommit+'/'+PREVIEW_REPLACEMENT_REGISTRATION_PATH,signal,500000,originalRevisionDiagnostics);
         if(sha(revisionText)!==sha(originalRevisionText))fail('PREVIEW_REPLACEMENT_CHANGED');
         const canaryText=await read(RAW+'/'+currentCommit+'/security/xuan-owner-registered-canary.json',signal);
         let revision;try{parseDecisionJson(originalRevisionText,128*1024);revision=JSON.parse(originalRevisionText);
           validatePreviewReplacementRegistration(revision,{previousRegistration:registration,previousRegistrationSha256:sha(originalText),canaryRegistrationSha256:sha(canaryText)});
           if(previewReplacementRegistrationText(revision)!==originalRevisionText)fail('PREVIEW_REPLACEMENT_BYTES');
-        }catch{fail('PREVIEW_REPLACEMENT_REGISTRATION');}
+        }catch(error){parsedFailure('PREVIEW_REPLACEMENT_REGISTRATION',error,originalRevisionDiagnostics.value);}
         const previewReplacement={revision,sha256:sha(originalRevisionText),policyCommit};
         if(phase==='accepted-preview-replacement')return {...current,eodConfiguration,previewReplacement};
         const nextSha=sha(acceptedPreviewRegistrationText(revision.registration));
@@ -77,16 +99,18 @@ export function createOwnerContextLoader({fetchImpl=ownerSourceFetch,now=Date.no
       return {...current,eodConfiguration,previewRegistration:{registration,sha256:sha(originalText),policyCommit}};
     }
     if(phase!=='historical-authenticity'||!/^[a-f0-9]{40}$/.test(policyCommit||''))fail('HISTORICAL_CONTEXT');
-    const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit,signal));
+    const comparisonDiagnostics={};
+    const comparison=json(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit,signal,500000,comparisonDiagnostics),comparisonDiagnostics.value);
     if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('HISTORICAL_ANCESTRY');
     const paths=['claude/xuan-ib-account-association-v1.json','claude/xuan-ib-etf-pending-calls-v1.json','xuan-ib/latest.meta.json','xuan-ib/latest.html'];
-    const [policyText,ledgerText,metaText,previousHtml]=await Promise.all(paths.map(p=>read(RAW+'/'+policyCommit+'/'+p,signal)));
-    const meta=JSON.parse(metaText);
+    const sourceDiagnostics=paths.map(()=>({}));
+    const [policyText,ledgerText,metaText,previousHtml]=await Promise.all(paths.map((p,index)=>read(RAW+'/'+policyCommit+'/'+p,signal,500000,sourceDiagnostics[index])));
+    const meta=json(metaText,sourceDiagnostics[2].value);
     if(!/^[a-f0-9]{40}$/.test(meta.sourceSha||'')||gitBlob(previousHtml)!==meta.htmlBlob)fail('HISTORICAL_PUBLIC_BINDING');
-    const association={policy:JSON.parse(policyText),policyCommit,policyBlob:gitBlob(policyText),checkedAt:new Date(clock()).toISOString()};
+    const association={policy:json(policyText,sourceDiagnostics[0].value),policyCommit,policyBlob:gitBlob(policyText),checkedAt:new Date(clock()).toISOString()};
     // Time validity is checked at the original receipt time by the verifier.
     validateAssociationSnapshot(association,{now:clock(),edition:'am',requireActive:false});
-    return {association,reserveLedger:JSON.parse(ledgerText),reserveHash:sha(ledgerText),previousMeta:meta,previousSourceSha:meta.sourceSha,previousHtml,eodConfiguration};
+    return {association,reserveLedger:json(ledgerText,sourceDiagnostics[1].value),reserveHash:sha(ledgerText),previousMeta:meta,previousSourceSha:meta.sourceSha,previousHtml,eodConfiguration};
   };
 }
 
@@ -181,13 +205,27 @@ export async function deliverOwnerAcceptedPreviewReplacement({cwd,request,reques
     const own=key=>{const descriptor=Object.getOwnPropertyDescriptor(result,key);return descriptor&&Object.hasOwn(descriptor,'value')?descriptor.value:undefined;};
     const status=own('status');
     if(status==='published-verified')diagnostics.fullVerification=true;
-    else for(const [key,allowed] of [['resultStatus',PREVIEW_REPLACEMENT_RESULT_STATUSES],['resultCode',PREVIEW_REPLACEMENT_RESULT_CODES],
+    else {
+    for(const [key,allowed] of [['resultStatus',PREVIEW_REPLACEMENT_RESULT_STATUSES],['resultCode',PREVIEW_REPLACEMENT_RESULT_CODES],
       ['failureStage',PREVIEW_REPLACEMENT_FAILURE_STAGES],['failureReason',PREVIEW_REPLACEMENT_FAILURE_REASONS]]){
       const value=own(key==='resultStatus'?'status':key==='resultCode'?'code':key);if(allowed.includes(value))diagnostics[key]=value;
     }
+    const evidence=safeOwnerFailureEvidence(own('failureEvidence'));if(evidence)diagnostics.failureEvidence=evidence;
+    }
   }
   return attach(result);
-  }catch(error){attach(error);throw error;}
+  }catch(error){
+    try{
+      let existing;
+      if(error&&['object','function'].includes(typeof error)&&!nodeTypes.isProxy(error)){
+        const descriptor=Object.getOwnPropertyDescriptor(error,'failureEvidence');
+        if(descriptor&&Object.hasOwn(descriptor,'value'))existing=safeOwnerFailureEvidence(descriptor.value);
+      }
+      const evidence=existing??createOwnerFailureEvidence(error);
+      if(evidence)diagnostics.failureEvidence=evidence;
+    }catch{}
+    attach(error);throw error;
+  }
 }
 
 // Named storage-only result: the original publisher must first finish its
