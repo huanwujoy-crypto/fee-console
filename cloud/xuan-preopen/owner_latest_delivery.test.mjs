@@ -234,3 +234,27 @@ test('named storage delivery rejects caller publisher, context, clock, getters o
   await assert.rejects(deliverOwnerAcceptedPreviewReplacementStorage({},'caller-mode'),error=>error.safeCode==='STORAGE_DELIVERY_ARGUMENTS_FORBIDDEN');
   assert.equal(calls,0);
 });
+
+test('replacement pre-publisher exceptions attach frozen null-result diagnostics without inventing a write or readback',async()=>{
+  const error=Object.assign(Error('SYNTHETIC_CONTEXT_FAILURE'),{safeCode:'OWNER_DELIVERY_CONTEXT_HTTP'});let privateCalls=0;
+  const forbidden=()=>{privateCalls++;assert.fail('A failed public precondition must never construct private IO');};
+  await assert.rejects(deliverOwnerAcceptedPreviewReplacement({loadContext:async()=>{throw error;},request:forbidden,
+    requestPreviewReplacement:forbidden,verifyDestinationAccess:forbidden,storeFactory:forbidden,publisherFactory:forbidden}),caught=>{
+    assert.equal(caught,error);const descriptor=Object.getOwnPropertyDescriptor(caught,'ownerPublicationDiagnostics');
+    assert.equal(descriptor.enumerable,false);assert.equal(Object.isFrozen(descriptor.value),true);
+    assert.deepEqual(descriptor.value,{schema:'xuan.owner-publication.safe-diagnostics.v1',businessAckValidated:0,
+      independentReadbackAttempts:0,storeReadbackCompleted:0,fullVerification:null,resultStatus:null,resultCode:null,failureStage:null,failureReason:null});
+    return true;
+  });
+  assert.equal(privateCalls,0);
+});
+test('replacement exception attachment does not inspect hostile exception getters or proxy traps',async()=>{
+  let invoked=0;const forbidden=()=>{invoked++;throw Error('PRIVATE_VALUE_MUST_NOT_BE_READ');};
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  for(const error of [Object.defineProperties({}, {safeCode:{get:forbidden},status:{get:forbidden},message:{get:forbidden}}),
+    new Proxy({}, {get:forbidden,getPrototypeOf:forbidden,getOwnPropertyDescriptor:forbidden,defineProperty:forbidden}),revoked.proxy]){
+    try{await deliverOwnerAcceptedPreviewReplacement({loadContext:async()=>{throw error;}});assert.fail('Synthetic context must reject');}
+    catch(caught){assert.equal(caught,error);}
+  }
+  assert.equal(invoked,0);
+});

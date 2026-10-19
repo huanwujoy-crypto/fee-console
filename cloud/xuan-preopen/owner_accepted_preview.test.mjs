@@ -313,3 +313,57 @@ test('replacement controller signal reaches every old/candidate context and abor
     const t=replacementPublisher(f,{setTimer:(fn,ms)=>{assert.equal(ms,45000);fire=fn;return 1;},clearTimer:()=>{}});const pending=t.p.publish(candidate(f.next)),signal=await entered;fire();assert.equal((await pending).status,'blocked');await new Promise(resolve=>setImmediate(resolve));assert.equal(signal.aborted,true);assert.equal(calls,stopAt);assert.deepEqual(t.events,['old']);assert.equal((await t.p.publish(candidate(f.next))).code,'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED');
   }
 });
+
+test('replacement failures retain the exact finite phase and safe own-data reason without another attempt',async()=>{
+  const cases=[
+    ['previous-read','METADATA_BINDING_INVALID','blocked',{read:()=>{throw {safeCode:'METADATA_BINDING_INVALID'};}}],
+    ['protected-replacement','OWNER_PREVIEW_REPLACEMENT_BINDING','blocked',null],
+    ['destination-access','OWNER_ACCESS_READER_SET','blocked',{access:()=>{throw {safeCode:'OWNER_ACCESS_READER_SET'};}}],
+    ['replacement-write','PREVIEW_REPLACEMENT_OLD_CHANGED','unknown',{write:()=>{throw {safeCode:'PREVIEW_REPLACEMENT_OLD_CHANGED'};}}],
+    ['pinned-readback','READBACK_METADATA_MISMATCH','unknown',{readback:()=>{throw {safeCode:'READBACK_METADATA_MISMATCH'};}}],
+    ['ack-validation','PREVIEW_REPLACEMENT_ACK_UNVERIFIED','unknown',{write:()=>({...LATEST_TARGET,generation:'1',size:1})}],
+    ['readback-validation','PREVIEW_REPLACEMENT_READBACK_UNVERIFIED','unknown',{readback:()=>encode('wrong')}],
+  ];
+  for(const [stage,reason,status,options] of cases){
+    const f=replacementFixture();if(options===null)f.verify=()=>{throw {safeCode:reason};};
+    const t=replacementPublisher(f,options??{}),result=await t.p.publish(candidate(f.next));
+    assert.equal(result.status,status);assert.equal(result.failureStage,stage);assert.equal(result.failureReason,reason);
+    assert.equal(t.events.filter(event=>event==='replace').length,['replacement-write','ack-validation','pinned-readback','readback-validation'].includes(stage)?1:0);
+    assert.equal((await t.p.publish(candidate(f.next))).code,'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED');
+  }
+});
+test('replacement diagnostics never invoke thrown getters, proxies, inherited labels or message coercion',async()=>{
+  let invoked=0;const forbidden=()=>{invoked++;throw Error('PRIVATE_DATA_MUST_NOT_BE_READ');};
+  const revoked=Proxy.revocable({},{});revoked.revoke();
+  const errors=[Object.defineProperties({}, {safeCode:{get:forbidden},status:{get:forbidden},message:{get:forbidden}}),
+    new Proxy({}, {get:forbidden,getOwnPropertyDescriptor:forbidden,getPrototypeOf:forbidden}),revoked.proxy,
+    Object.create({safeCode:'READBACK_METADATA_MISMATCH',status:412}),
+    {safeCode:'https://example.invalid/private',status:'412',toString:forbidden},
+    {safeCode:{toString:forbidden},status:{valueOf:forbidden}}];
+  for(const error of errors)for(const phase of ['read','write']){
+    const f=replacementFixture(),t=replacementPublisher(f,{[phase]:()=>{throw error;}}),result=await t.p.publish(candidate(f.next));
+    assert.equal(result.status,phase==='read'?'blocked':'unknown');assert.equal(result.failureStage,phase==='read'?'previous-read':'replacement-write');
+    assert.equal(result.failureReason,'PREVIEW_REPLACEMENT_FAILURE_UNCLASSIFIED');assert.ok(!JSON.stringify(result).includes('https://'));
+  }
+  assert.equal(invoked,0);
+  const f=replacementFixture(),t=replacementPublisher(f,{write:()=>{throw {status:412,safeCode:'HTTP_FAILED'};}}),result=await t.p.publish(candidate(f.next));
+  assert.equal(result.status,'conflict');assert.equal(result.failureReason,'HTTP_FAILED');assert.equal(t.events.filter(event=>event==='replace').length,1);
+});
+test('replacement timer and elapsed guard both preserve the explicit deadline with no delayed continuation',async()=>{
+  for(const phase of ['read','write','readback']){
+    const f=replacementFixture();let fire,enter,release;
+    const entered=new Promise(resolve=>{enter=resolve;}),pause=new Promise(resolve=>{release=resolve;});
+    const t=replacementPublisher(f,{setTimer:(fn,ms)=>{assert.equal(ms,45000);fire=fn;return 1;},clearTimer:()=>{},
+      [phase]:async options=>{enter();await pause;return phase==='read'?structuredClone(f.previous):phase==='write'?{...LATEST_TARGET,generation:'900719925474099312346',size:options.bytes.length}:new Uint8Array(f.next.displayBytes);}});
+    const pending=t.p.publish(candidate(f.next));await entered;fire();const result=await pending;
+    assert.equal(result.status,phase==='read'?'blocked':'unknown');assert.equal(result.failureReason,'OWNER_PREVIEW_DEADLINE');
+    assert.equal(result.failureStage,phase==='read'?'previous-read':phase==='write'?'replacement-write':'pinned-readback');
+    release();await new Promise(resolve=>setImmediate(resolve));
+    assert.equal(t.events.filter(event=>event==='replace').length,phase==='read'?0:1);
+    assert.equal(t.events.filter(event=>event==='pinned-readback').length,phase==='readback'?1:0);
+  }
+  const f=replacementFixture();let time=NOW;
+  const t=replacementPublisher(f,{now:()=>time,read:()=>{time+=45000;return structuredClone(f.previous);}}),result=await t.p.publish(candidate(f.next));
+  assert.equal(result.status,'blocked');assert.equal(result.failureStage,'previous-read');assert.equal(result.failureReason,'OWNER_PREVIEW_DEADLINE');
+  assert.ok(!t.events.includes('replace'));
+});
