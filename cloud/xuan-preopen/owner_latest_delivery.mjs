@@ -6,6 +6,7 @@ import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {planPreopen} from './calendar.mjs';
 import {loadTrustedContext,safeErrorOrigin} from './report.mjs';
+import {ownerSourceFetch} from './owner_source_bytes.mjs';
 import {types as nodeTypes} from 'node:util';
 import {boundedText} from './cloud_io.mjs';
 import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
@@ -31,13 +32,13 @@ const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').
 const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Object.assign(error,{safeCode:error.message,safeOrigin:origin??safeErrorOrigin(error)});};
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
-  ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py'].map(file=>'cloud/xuan-preopen/'+file),
+  ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs'].map(file=>'cloud/xuan-preopen/'+file),
   OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
 // The historical phase reads the original trusted Git version, never today's
 // context relabelled as yesterday. The current main must still contain it.
-export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
+export function createOwnerContextLoader({fetchImpl=ownerSourceFetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
   const read=async (url,signal,limit=500000)=>{let r;try{signal?.throwIfAborted();r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,limit);};
   return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now,signal}={})=>{
     signal?.throwIfAborted();
