@@ -23,6 +23,9 @@ import {createProtectedOwnerPreviewVerifier,prepareAcceptedPreviewDisplay,buildA
 
 const API='https://api.github.com/repos/huanwujoy-crypto/fee-console';
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console';
+// A saved preview's ancestry response includes the intervening public diff.
+// Bound that comparison separately; individual protected files retain 500 kB.
+const PREVIEW_COMPARE_MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').update(Buffer.from('blob '+b.length+'\0')).update(b).digest('hex');};
 const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Object.assign(error,{safeCode:error.message,safeOrigin:origin??safeErrorOrigin(error)});};
@@ -35,7 +38,7 @@ export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
 // The historical phase reads the original trusted Git version, never today's
 // context relabelled as yesterday. The current main must still contain it.
 export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configuration=EOD_SOURCE_CONFIG}={}){
-  const read=async (url,signal)=>{let r;try{signal?.throwIfAborted();r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,500000);};
+  const read=async (url,signal,limit=500000)=>{let r;try{signal?.throwIfAborted();r=await fetchImpl(url,{redirect:'error',cache:'no-store',headers:{'User-Agent':'xuan-owner-private-delivery'},signal:signal?AbortSignal.any([signal,AbortSignal.timeout(15000)]):AbortSignal.timeout(15000)});}catch(error){try{if(error&&!nodeTypes.isProxy(error))Object.defineProperty(error,'safeOrigin',{value:safeErrorOrigin(error),enumerable:true,configurable:true});}catch{}throw error;}if(!r.ok)fail('CONTEXT_HTTP',safeErrorOrigin(new Error(),r));return boundedText(r,limit);};
   return async ({phase='candidate-admission',policyCommit,registrationSha256,now:clock=now,signal}={})=>{
     signal?.throwIfAborted();
     const current=await loadTrustedContext({fetchImpl,now:clock,signal});
@@ -48,7 +51,7 @@ export function createOwnerContextLoader({fetchImpl=fetch,now=Date.now,configura
       const currentCommit=current.association.policyCommit;
       if(phase!=='accepted-preview-historical'&&policyCommit!==currentCommit)fail('PREVIEW_CURRENT_CONTEXT');
       if(policyCommit!==currentCommit){
-        const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal));
+        const comparison=JSON.parse(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal,PREVIEW_COMPARE_MAX_BYTES));
         if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('PREVIEW_ANCESTRY');
       }
       const currentText=await read(RAW+'/'+currentCommit+'/'+OWNER_PREVIEW_REGISTRATION_PATH,signal);
