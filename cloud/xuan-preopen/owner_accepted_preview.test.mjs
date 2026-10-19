@@ -3,6 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import {createOwnerFailureEvidence,safeOwnerFailureEvidence,attachOwnerReadDiagnostics,safeErrorOrigin} from './cloud_io.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport,NIGHT_ACTION_MARKER} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
@@ -10,7 +11,7 @@ import {readAiRiskAccounts} from '../../scripts/xuan-ib-ai-coefficient-resolver.
 import {SNAPSHOT_SCOPES,digest} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
 import {OWNER_BINDING,SOURCE_IDENTITY_SHA256,prepareOwnerStaticDisplay} from './owner_latest_admission.mjs';
-import {OWNER_SCOPE,LATEST_TARGET,DEADLINE_MS} from './owner_latest.mjs';
+import {OWNER_SCOPE,LATEST_TARGET,DEADLINE_MS,validateAcceptedPreviewMetadata} from './owner_latest.mjs';
 import {createOwnerPreflightLease,FINANCIAL_ADMISSION_TTL_MS,FULL_PREFLIGHT_TTL_MS} from './owner_preview_access.mjs';
 import {acceptedPreviewRegistrationText,buildAcceptedPreviewMetadata,renderAcceptedPreviewDisplay,
   prepareAcceptedPreviewDisplay,createProtectedOwnerPreviewVerifier,createAcceptedPreviewPublisher,previewMetadataSha256,ACCEPTED_PREVIEW_DEADLINE_MS,
@@ -366,4 +367,97 @@ test('replacement timer and elapsed guard both preserve the explicit deadline wi
   const t=replacementPublisher(f,{now:()=>time,read:()=>{time+=45000;return structuredClone(f.previous);}}),result=await t.p.publish(candidate(f.next));
   assert.equal(result.status,'blocked');assert.equal(result.failureStage,'previous-read');assert.equal(result.failureReason,'OWNER_PREVIEW_DEADLINE');
   assert.ok(!t.events.includes('replace'));
+});
+
+const legacyReplacementFailure=result=>Object.fromEntries(['status','code','failureStage','failureReason'].map(key=>[key,result[key]]));
+const rejectedReplacement={status:'blocked',code:'PREVIEW_REPLACEMENT_VALIDATION_FAILED',failureStage:'protected-replacement',failureReason:'OWNER_PREVIEW_REJECTED'};
+const finiteNetworkError=()=>Object.assign(Error('PRIVATE_NETWORK_MESSAGE'),{safeCode:'REPORT_SOURCE_NETWORK_FAILED',
+  safeOrigin:safeErrorOrigin(Object.assign(new TypeError('PRIVATE_NATIVE_MESSAGE'),{cause:{code:'ETIMEDOUT'}}))});
+function observedFakeRead(error,{readStage='body',status=200,bytes=1,limit=2097152}={}){
+  return attachOwnerReadDiagnostics(error,{requestClass:'github-compare',readStage,httpStatus:status,observedBodyBytes:bytes,
+    bodyLimitBytes:limit,elapsedMs:7,timeoutMs:15000,origin:error.safeOrigin??safeErrorOrigin(error,status)});
+}
+test('wrong old owner or future time keeps its legacy rejection and records the precise metadata predicate before any inner context read',async()=>{
+  for(const [kind,code] of [['owner','PREVIEW_SCOPE_MISMATCH'],['time','PREVIEW_TIME_ORDER']]){
+    const f=replacementFixture();if(kind==='owner')f.previous.preview.metadata.ownerBinding='f'.repeat(64);
+    else f.previous.preview.metadata.completedAt=new Date(NOW+1000).toISOString();
+    // This is the existing store's structural check, without owner/now options.
+    validateAcceptedPreviewMetadata(f.previous.preview.metadata);let innerReads=0;
+    f.verify=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async options=>{if(options.phase!=='accepted-preview-replacement')innerReads++;return f.loadContext(options);}});
+    const t=replacementPublisher(f),result=await t.p.publish(candidate(f.next));
+    assert.deepEqual(legacyReplacementFailure(result),rejectedReplacement);assert.equal(innerReads,0);assert.deepEqual(t.events,['old']);
+    assert.equal(result.failureEvidence.originalCode,code);assert.equal(result.failureEvidence.validatorPhase,'historical-authenticity');assert.equal(result.failureEvidence.validatorPoint,'metadata');
+    assert.equal(result.failureEvidence.read,null);assert.ok(safeOwnerFailureEvidence(result.failureEvidence));
+  }
+});
+test('all four original inner context calls preserve finite JSON, body-limit, HTTP, native timeout and network evidence through the publisher',async()=>{
+  const factories=[
+    ['json',()=>observedFakeRead(new SyntaxError('PRIVATE_JSON_BODY')),{code:null,type:'SyntaxError',http:200,bytes:1}],
+    ['size',()=>observedFakeRead(Error('CLOUD_RESPONSE_TOO_LARGE'),{bytes:2097153}),{code:'CLOUD_RESPONSE_TOO_LARGE',type:'Error',http:200,bytes:2097153}],
+    ['http',()=>observedFakeRead(Object.assign(Error('PRIVATE_HTTP_URL'),{safeCode:'OWNER_DELIVERY_CONTEXT_HTTP',safeOrigin:safeErrorOrigin(new Error(),403)}),{readStage:'http',status:403,bytes:null}),{code:'OWNER_DELIVERY_CONTEXT_HTTP',type:'Error',http:403,bytes:null}],
+    ['timeout',()=>observedFakeRead(new DOMException('PRIVATE_TIMEOUT_URL','TimeoutError'),{readStage:'fetch',status:null,bytes:null}),{code:null,type:'TimeoutError',http:null,bytes:null}],
+    ['network',()=>observedFakeRead(finiteNetworkError(),{readStage:'fetch',status:null,bytes:null}),{code:'REPORT_SOURCE_NETWORK_FAILED',type:'TypeError',http:null,bytes:null}],
+  ];
+  for(const [phase,loaderPhase] of [['historical-authenticity','accepted-preview-historical'],['candidate-admission','accepted-preview-admission']])for(const occurrence of [1,2])for(const [name,errorFactory,expected] of factories){
+    const f=replacementFixture();let matched=0;const original=errorFactory();
+    f.verify=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async options=>{if(options.phase===loaderPhase&&++matched===occurrence)throw original;return f.loadContext(options);}});
+    const t=replacementPublisher(f),result=await t.p.publish(candidate(f.next)),evidence=result.failureEvidence;
+    assert.deepEqual(legacyReplacementFailure(result),rejectedReplacement,name);assert.deepEqual(t.events,['old']);assert.equal(matched,occurrence);
+    assert.equal(evidence.validatorPhase,phase);assert.equal(evidence.validatorPoint,occurrence===1?'context-first':'context-second');
+    assert.equal(evidence.originalCode,expected.code);assert.equal(evidence.origin.type,expected.type);
+    assert.equal(evidence.read.requestClass,'github-compare');assert.equal(evidence.read.httpStatus,expected.http);assert.equal(evidence.read.observedBodyBytes,expected.bytes);
+    assert.equal(evidence.read.bodyLimitBytes,2097152);assert.equal(evidence.read.elapsedMs,7);assert.equal(evidence.read.timeoutMs,15000);
+    if(name==='network'){assert.equal(evidence.origin.causeCode,'ETIMEDOUT');assert.equal(evidence.read.origin.causeCode,'ETIMEDOUT');}
+    assert.equal(Object.isFrozen(evidence),true);assert.ok(JSON.stringify(result).length<1600);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|https?:|accountId|ownerBinding/);
+    assert.equal((await t.p.publish(candidate(f.next))).code,'PREVIEW_REPLACEMENT_ONE_SHOT_CLOSED');
+  }
+});
+test('already classified preview errors keep their original object and code while adding only the earliest finite point',async()=>{
+  const f=fixture(),original=Object.assign(Error('PRIVATE_ORIGINAL_MESSAGE'),{safeCode:'OWNER_PREVIEW_DISPLAY_HASH'});
+  const verify=createProtectedOwnerPreviewVerifier({now:()=>NOW,loadContext:async()=>{throw original;}});
+  await assert.rejects(verify(args(f)),error=>{
+    assert.equal(error,original);assert.equal(error.safeCode,'OWNER_PREVIEW_DISPLAY_HASH');assert.equal(error.message,'PRIVATE_ORIGINAL_MESSAGE');
+    assert.equal(error.failureEvidence.originalCode,'OWNER_PREVIEW_DISPLAY_HASH');assert.equal(error.failureEvidence.validatorPoint,'context-first');
+    assert.equal(Object.getOwnPropertyDescriptor(error,'failureEvidence').enumerable,false);return true;
+  });
+  const retained=createOwnerFailureEvidence({safeCode:'PREVIEW_TIME_ORDER'},{validatorPhase:'historical-authenticity',validatorPoint:'metadata'});
+  const repeated=Object.assign(Error('PRIVATE_REPEATED'),{safeCode:'OWNER_PREVIEW_REJECTED',failureEvidence:retained});
+  await assert.rejects(createProtectedOwnerPreviewVerifier({now:()=>NOW,loadContext:async()=>{throw repeated;}})(args(f)),error=>{assert.equal(error,repeated);assert.equal(error.failureEvidence,retained);return true;});
+  await assert.rejects(verify({...args(f),phase:'PRIVATE_INVALID_PHASE'}),error=>{assert.equal(error.safeCode,'OWNER_PREVIEW_PHASE_OR_CLOCK');assert.equal(error.failureEvidence.validatorPhase,null);assert.equal(error.failureEvidence.validatorPoint,'phase-clock');return true;});
+});
+test('outer initial/final context, previous read, destination, write and pinned-readback exceptions retain legacy outcomes and finite fallback evidence',async()=>{
+  for(const phase of ['initial-context','final-context','previous-read','destination-access','replacement-write','pinned-readback']){
+    const f=replacementFixture(),original=observedFakeRead(finiteNetworkError(),{readStage:'fetch',status:null,bytes:null});let replacementReads=0;
+    if(phase.endsWith('-context'))f.verify=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async options=>{if(options.phase==='accepted-preview-replacement'&&++replacementReads===(phase==='initial-context'?1:2))throw original;return f.loadContext(options);}});
+    const options=phase==='previous-read'?{read:()=>{throw original;}}:phase==='destination-access'?{access:()=>{throw original;}}:
+      phase==='replacement-write'?{write:()=>{throw original;}}:phase==='pinned-readback'?{readback:()=>{throw original;}}:{};
+    const t=replacementPublisher(f,options),result=await t.p.publish(candidate(f.next));
+    assert.equal(result.status,['replacement-write','pinned-readback'].includes(phase)?'unknown':'blocked');assert.equal(result.failureReason,'REPORT_SOURCE_NETWORK_FAILED');
+    assert.equal(result.failureEvidence.validatorPhase,null);assert.equal(result.failureEvidence.validatorPoint,null);assert.equal(result.failureEvidence.originalCode,'REPORT_SOURCE_NETWORK_FAILED');
+    assert.equal(result.failureEvidence.origin.type,'TypeError');assert.equal(result.failureEvidence.origin.causeCode,'ETIMEDOUT');assert.equal(result.failureEvidence.read.requestClass,'github-compare');
+    assert.equal(t.events.filter(event=>event==='replace').length,['replacement-write','pinned-readback'].includes(phase)?1:0);
+  }
+  const f=replacementFixture(),t=replacementPublisher(f),input=candidate(f.next);input.metadata.ownerBinding='f'.repeat(64);
+  const result=await t.p.publish(input);assert.equal(result.code,'PREVIEW_REPLACEMENT_CANDIDATE_INVALID');assert.deepEqual(t.events,[]);
+  assert.equal(result.failureEvidence.originalCode,'PREVIEW_SCOPE_MISMATCH');assert.equal(result.failureEvidence.validatorPhase,'candidate-admission');assert.equal(result.failureEvidence.validatorPoint,'metadata');
+});
+test('validator failure evidence never invokes proxy/getters or leaks unknown messages, URLs, identity strings or forged fields',async()=>{
+  let invoked=0;const forbidden=()=>{invoked++;throw Error('PRIVATE_GETTER');},revoked=Proxy.revocable({},{});revoked.revoke();
+  const errors=[Object.defineProperties({},Object.fromEntries(['safeCode','message','safeOrigin','ownerReadDiagnostics','failureEvidence'].map(key=>[key,{get:forbidden}]))),
+    new Proxy({}, {get:forbidden,getPrototypeOf:forbidden,getOwnPropertyDescriptor:forbidden}),revoked.proxy,
+    Object.assign(Error('PRIVATE_ACCOUNT_U1234567_TOKEN https://example.invalid/private'),{safeCode:'PRIVATE_IDENTITY',accountId:'U1234567',url:'https://example.invalid/private'}),
+    Object.create({safeCode:'PREVIEW_TIME_ORDER',message:'CLOUD_RESPONSE_TOO_LARGE'}),{safeCode:{toString:forbidden},message:{toString:forbidden}}];
+  for(const original of errors){
+    const f=replacementFixture();f.verify=createProtectedPreviewReplacementVerifier({now:()=>NOW,loadContext:async options=>{if(options.phase==='accepted-preview-historical')throw original;return f.loadContext(options);}});
+    const t=replacementPublisher(f),result=await t.p.publish(candidate(f.next));assert.deepEqual(legacyReplacementFailure(result),rejectedReplacement);
+    assert.equal(result.failureEvidence.originalCode,null);assert.equal(result.failureEvidence.validatorPhase,'historical-authenticity');assert.equal(result.failureEvidence.validatorPoint,'context-first');
+    assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|https?:|U1234567|accountId|ownerBinding/);assert.deepEqual(t.events,['old']);
+  }
+  const valid=createOwnerFailureEvidence(Error('CLOUD_RESPONSE_TOO_LARGE'),{validatorPhase:'historical-authenticity',validatorPoint:'context-first'});
+  for(const forged of [{...valid,url:'https://example.invalid/private'},Object.defineProperty({...valid},'originalCode',{get:forbidden}),new Proxy(valid,{get:forbidden,getPrototypeOf:forbidden,getOwnPropertyDescriptor:forbidden})]){
+    const f=replacementFixture();f.verify=()=>{throw Object.assign(Error('PRIVATE_FORGED'),{safeCode:'OWNER_PREVIEW_REJECTED',failureEvidence:forged});};
+    const result=await replacementPublisher(f).p.publish(candidate(f.next));assert.deepEqual(legacyReplacementFailure(result),rejectedReplacement);
+    assert.equal(result.failureEvidence.originalCode,'OWNER_PREVIEW_REJECTED');assert.equal(result.failureEvidence.validatorPhase,null);assert.equal(result.failureEvidence.validatorPoint,null);assert.doesNotMatch(JSON.stringify(result),/PRIVATE_|https?:/);
+  }
+  assert.equal(invoked,0);
 });

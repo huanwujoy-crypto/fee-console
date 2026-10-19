@@ -1,5 +1,6 @@
 // Fixed private destinations. No filesystem credential, bucket or secret flags.
 import crypto from 'node:crypto';
+import {types as nodeTypes} from 'node:util';
 import {ibError, inIbPhase, httpCategory, networkCategory} from './ib_diagnostics.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 export const PROJECT = 'family-portfolio-gateway';
@@ -8,6 +9,133 @@ const IB_SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
 const READ_SECRET = `projects/${PROJECT}/secrets/family-portfolio-gateway-key`;
 // Existing normal cash-sync/weekly token, pinned to its existing version.
 const FLEX_SECRET = `projects/${PROJECT}/secrets/ib-flex-cash-token`;
+
+// Finite origin metadata only. Never inspect messages, stacks, URLs or bodies.
+const ORIGIN_TYPES=new Set(['Error','TypeError','RangeError','SyntaxError','URIError','EvalError','AggregateError','AbortError','TimeoutError']);
+const ORIGIN_CODES=new Set(['ENOTFOUND','EAI_AGAIN','ECONNREFUSED','ECONNRESET','ECONNABORTED','ETIMEDOUT','ENETUNREACH','EHOSTUNREACH','EPIPE','ENOENT','EACCES','EPERM','EBADF','EINVAL','CERT_HAS_EXPIRED','CERT_NOT_YET_VALID','DEPTH_ZERO_SELF_SIGNED_CERT','SELF_SIGNED_CERT_IN_CHAIN','UNABLE_TO_VERIFY_LEAF_SIGNATURE','UNABLE_TO_GET_ISSUER_CERT_LOCALLY','ERR_TLS_CERT_ALTNAME_INVALID','ERR_SSL_WRONG_VERSION_NUMBER','UND_ERR_CONNECT_TIMEOUT','UND_ERR_HEADERS_TIMEOUT','UND_ERR_BODY_TIMEOUT','UND_ERR_SOCKET','ABORT_ERR']);
+const ownData=(value,key)=>{try{if(!value||!['object','function'].includes(typeof value)||nodeTypes.isProxy(value))return undefined;const d=Object.getOwnPropertyDescriptor(value,key);return d&&Object.hasOwn(d,'value')?d.value:undefined;}catch{return undefined;}};
+const finiteCode=value=>typeof value==='string'&&ORIGIN_CODES.has(value)?value:null;
+const domName=Object.getOwnPropertyDescriptor(DOMException.prototype,'name').get;
+const responseStatus=Object.getOwnPropertyDescriptor(Response.prototype,'status').get;
+export function safeErrorOrigin(error,httpStatus=null){
+  let type=null,status=typeof httpStatus==='number'?httpStatus:ownData(httpStatus,'status');
+  if(error&&['object','function'].includes(typeof error)&&!nodeTypes.isProxy(error)){
+    const name=ownData(error,'name');
+    if(typeof name==='string'&&ORIGIN_TYPES.has(name))type=name;
+    if(type===null)try{
+      const prototype=Object.getPrototypeOf(error);
+      for(const [ctor,label] of [[TypeError,'TypeError'],[RangeError,'RangeError'],[SyntaxError,'SyntaxError'],[URIError,'URIError'],[EvalError,'EvalError'],[AggregateError,'AggregateError'],[Error,'Error']])if(prototype===ctor.prototype){type=label;break;}
+      if(type===null&&prototype===DOMException.prototype){const nativeName=domName.call(error);if(ORIGIN_TYPES.has(nativeName))type=nativeName;}
+      if(type===null&&nodeTypes.isNativeError(error))type='Error';
+    }catch{}
+  }
+  if(status===undefined&&httpStatus&&!nodeTypes.isProxy(httpStatus))try{status=responseStatus.call(httpStatus);}catch{}
+  return Object.freeze({type,code:finiteCode(ownData(error,'code')),causeCode:finiteCode(ownData(ownData(error,'cause'),'code')),httpStatus:Number.isInteger(status)&&status>=100&&status<=599?status:null});
+}
+
+// These diagnostics are a finite failure projection, never response content,
+// URLs, identifiers or arbitrary error messages. Malformed records are dropped.
+export const OWNER_READ_REQUEST_CLASSES=Object.freeze(['github-main','github-association','github-call-ledger','github-public-meta','github-public-html',
+  'github-preview-registration','github-preview-replacement','github-registered-canary','github-compare','other']);
+export const OWNER_READ_STAGES=Object.freeze(['fetch','http','body']);
+export const OWNER_FAILURE_VALIDATOR_PHASES=Object.freeze(['candidate-admission','historical-authenticity']);
+export const OWNER_FAILURE_VALIDATOR_POINTS=Object.freeze(['entry','phase-clock','input-copy','metadata','context-first','display','context-second','final-check','proof']);
+const CLOUD_BODY_CODES=new Set(['CLOUD_EMPTY_RESPONSE','CLOUD_RESPONSE_TOO_LARGE','CLOUD_INVALID_UTF8']);
+const exactData=(value,keys)=>{
+  try{
+    if(!value||typeof value!=='object'||nodeTypes.isProxy(value)||Object.getPrototypeOf(value)!==Object.prototype)return null;
+    const descriptors=Object.getOwnPropertyDescriptors(value),names=Reflect.ownKeys(descriptors);
+    if(names.length!==keys.length||names.some(key=>!keys.includes(key)||!Object.hasOwn(descriptors[key],'value')))return null;
+    return Object.fromEntries(keys.map(key=>[key,descriptors[key].value]));
+  }catch{return null;}
+};
+const nullableEnum=(value,allowed)=>value===null||allowed.includes(value);
+const nullableCount=value=>value===null||Number.isSafeInteger(value)&&value>=0;
+const publishReadDiagnostics=(output,value)=>{
+  try{
+    if(output&&typeof output==='object'&&!nodeTypes.isProxy(output)&&Object.getPrototypeOf(output)===Object.prototype)
+      Object.defineProperty(output,'value',{value,writable:true,enumerable:true,configurable:true});
+  }catch{}
+};
+const finiteOrigin=value=>{
+  const data=exactData(value,['type','code','causeCode','httpStatus']);
+  if(!data||!nullableEnum(data.type,[...ORIGIN_TYPES])||!nullableEnum(data.code,[...ORIGIN_CODES])||!nullableEnum(data.causeCode,[...ORIGIN_CODES])
+    ||data.httpStatus!==null&&(!Number.isInteger(data.httpStatus)||data.httpStatus<100||data.httpStatus>599))return null;
+  return Object.freeze(data);
+};
+export function ownerReadRequestClass(url){
+  if(typeof url!=='string')return 'other';
+  const api='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
+  if(url===api+'commits/main')return 'github-main';
+  if(new RegExp('^'+api.replaceAll('.','\\.')+'compare/[a-f0-9]{40}\\.\\.\\.[a-f0-9]{40}$').test(url))return 'github-compare';
+  const raw='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console/';
+  if(!url.startsWith(raw)||!/^[a-f0-9]{40}\//.test(url.slice(raw.length)))return 'other';
+  return new Map([
+    ['claude/xuan-ib-account-association-v1.json','github-association'],['claude/xuan-ib-etf-pending-calls-v1.json','github-call-ledger'],
+    ['xuan-ib/latest.meta.json','github-public-meta'],['xuan-ib/latest.html','github-public-html'],
+    ['security/xuan-owner-accepted-preview.json','github-preview-registration'],['security/xuan-owner-preview-replacement.json','github-preview-replacement'],
+    ['security/xuan-owner-registered-canary.json','github-registered-canary'],
+  ]).get(url.slice(raw.length+41))??'other';
+}
+export function safeOwnerReadDiagnostics(value){
+  const data=exactData(value,['schema','requestClass','readStage','httpStatus','observedBodyBytes','bodyLimitBytes','elapsedMs','timeoutMs','origin']);
+  if(!data||data.schema!=='xuan.owner-read-diagnostics.v1'||!OWNER_READ_REQUEST_CLASSES.includes(data.requestClass)||!OWNER_READ_STAGES.includes(data.readStage)
+    ||data.httpStatus!==null&&(!Number.isInteger(data.httpStatus)||data.httpStatus<100||data.httpStatus>599)
+    ||!['observedBodyBytes','bodyLimitBytes','elapsedMs'].every(key=>nullableCount(data[key]))||data.elapsedMs!==null&&data.elapsedMs>86400000||![null,15000,30000].includes(data.timeoutMs))return null;
+  const origin=finiteOrigin(data.origin);return origin?Object.freeze({...data,origin}):null;
+}
+export function attachOwnerReadDiagnostics(error,facts={}){
+  try{
+    if(!error||!['object','function'].includes(typeof error)||nodeTypes.isProxy(error))return error;
+    const previous=safeOwnerReadDiagnostics(ownData(error,'ownerReadDiagnostics'));
+    const data={schema:'xuan.owner-read-diagnostics.v1',requestClass:'other',readStage:'body',httpStatus:null,observedBodyBytes:null,bodyLimitBytes:null,elapsedMs:null,timeoutMs:null,
+      origin:safeErrorOrigin(error),...previous};
+    for(const key of Object.keys(data))if(key!=='schema'&&ownData(facts,key)!==undefined)data[key]=ownData(facts,key);
+    const safe=safeOwnerReadDiagnostics(data);
+    if(safe)Object.defineProperty(error,'ownerReadDiagnostics',{value:safe,enumerable:false,configurable:true});
+  }catch{}
+  return error;
+}
+
+
+export const OWNER_FAILURE_ORIGINAL_CODES=Object.freeze([
+  'CLOUD_EMPTY_RESPONSE','CLOUD_INVALID_UTF8','CLOUD_RESPONSE_TOO_LARGE','CONFIG_UNAVAILABLE','DEADLINE',
+  'FINANCIAL_STATE','HASH_MISMATCH','IMMUTABLE_BINDING','INVALID_BYTES','INVALID_DATE',
+  'INVALID_SHAPE','INVALID_TIME','INVALID_VERIFICATION_PHASE','LATEST_BYTES_MISMATCH','LATEST_INVALID',
+  'LATEST_UNKNOWN','OWNER_DELIVERY_BUNDLE_REQUIRED','OWNER_DELIVERY_COLLECTED_BUNDLE_CHANGED','OWNER_DELIVERY_COLLECTED_BYTES_REQUIRED','OWNER_DELIVERY_CONTEXT_HTTP',
+  'OWNER_DELIVERY_DAILY_BINDING','OWNER_DELIVERY_EXISTING_IDENTITY_REQUIRED','OWNER_DELIVERY_EXPLICIT_EXECUTION_REQUIRED','OWNER_DELIVERY_HISTORICAL_ANCESTRY','OWNER_DELIVERY_HISTORICAL_CONTEXT',
+  'OWNER_DELIVERY_HISTORICAL_PUBLIC_BINDING','OWNER_DELIVERY_PREVIEW_ACCESS_CAPABILITY_REQUIRED','OWNER_DELIVERY_PREVIEW_ANCESTRY','OWNER_DELIVERY_PREVIEW_CONTEXT','OWNER_DELIVERY_PREVIEW_CURRENT_CONTEXT',
+  'OWNER_DELIVERY_PREVIEW_REGISTRATION_CHANGED','OWNER_DELIVERY_PREVIEW_REGISTRATION_JSON','OWNER_DELIVERY_PREVIEW_REPLACEMENT_ACCESS_REQUIRED','OWNER_DELIVERY_PREVIEW_REPLACEMENT_BYTES','OWNER_DELIVERY_PREVIEW_REPLACEMENT_CHANGED',
+  'OWNER_DELIVERY_PREVIEW_REPLACEMENT_CURRENT_CONTEXT','OWNER_DELIVERY_PREVIEW_REPLACEMENT_METADATA','OWNER_DELIVERY_PREVIEW_REPLACEMENT_REGISTRATION','OWNER_DELIVERY_PROTECTED_CHECKOUT_REQUIRED','OWNER_DELIVERY_PROTECTED_SOURCE_BYTES_REQUIRED',
+  'OWNER_DELIVERY_RECEIPT_JSON','OWNER_DELIVERY_TRANSPORT_ORIGIN','OWNER_DELIVERY_TRANSPORT_REQUIRED','OWNER_PREVIEW_ACCESS_CAPABILITY_RESULT','OWNER_PREVIEW_BYTES',
+  'OWNER_PREVIEW_CANDIDATE','OWNER_PREVIEW_CANONICAL_HTML','OWNER_PREVIEW_CAPABILITIES_REQUIRED','OWNER_PREVIEW_CLOCK','OWNER_PREVIEW_CLOCK_CHANGED',
+  'OWNER_PREVIEW_DEADLINE','OWNER_PREVIEW_DISPLAY_HASH','OWNER_PREVIEW_JSON','OWNER_PREVIEW_LOCAL_ARTIFACT_HASH','OWNER_PREVIEW_LOCAL_MANIFEST_BINDING',
+  'OWNER_PREVIEW_LOCAL_MANIFEST_SCOPE','OWNER_PREVIEW_LOCAL_MANIFEST_TIME','OWNER_PREVIEW_LOCAL_MODEL_BINDING','OWNER_PREVIEW_METADATA_BINDING','OWNER_PREVIEW_MODEL_BINDING',
+  'OWNER_PREVIEW_MODEL_MARKER','OWNER_PREVIEW_PHASE_OR_CLOCK','OWNER_PREVIEW_PROTECTED_VERIFIER_REJECTED','OWNER_PREVIEW_REGISTRATION_BINDING','OWNER_PREVIEW_REGISTRATION_CHANGED',
+  'OWNER_PREVIEW_REGISTRATION_DATE','OWNER_PREVIEW_REGISTRATION_FINANCIAL_STATE','OWNER_PREVIEW_REGISTRATION_HASH','OWNER_PREVIEW_REGISTRATION_SCOPE','OWNER_PREVIEW_REGISTRATION_TIME',
+  'OWNER_PREVIEW_REJECTED','OWNER_PREVIEW_REPLACEMENT_BINDING','OWNER_PREVIEW_REPLACEMENT_CHANGED','OWNER_PREVIEW_REPLACEMENT_CONTEXT','OWNER_PREVIEW_REPLACEMENT_OLD_BINDING',
+  'OWNER_PREVIEW_REPLACEMENT_OLD_REQUIRED','OWNER_PREVIEW_REPLACEMENT_PROOF','OWNER_PREVIEW_REPLACEMENT_REGISTRATION','OWNER_PREVIEW_REPLACEMENT_SOURCE_CHANGED','OWNER_PREVIEW_REPLACEMENT_UNCHANGED',
+  'OWNER_PREVIEW_STATIC_CARDS','OWNER_PREVIEW_STATIC_DISPLAY','OWNER_PREVIEW_STATIC_ORDER_SHAPE','OWNER_PREVIEW_TARGET_UNKNOWN','OWNER_PREVIEW_TRUSTED_REGISTRATION_BYTES',
+  'OWNER_PREVIEW_TRUSTED_REGISTRATION_REQUIRED','OWNER_PREVIEW_UTF8','PREVIEW_FINANCIAL_STATE','PREVIEW_REGISTRATION_INVALID','PREVIEW_SCOPE_MISMATCH',
+  'PREVIEW_TIME_ORDER','PROTECTED_GATES_REJECTED','PROTECTED_GATES_UNAVAILABLE','PROTECTED_PREVIEW_GATES_REJECTED','PROTECTED_PREVIEW_GATES_UNAVAILABLE',
+  'REPORT_SOURCE_HTTP','REPORT_SOURCE_JSON_INVALID','REPORT_SOURCE_NETWORK_FAILED','SAME_SOURCE_CONFLICT','SCOPE_MISMATCH',
+  'SIZE_LIMIT','SOURCE_IDENTITY_CHANGED','STALE_CANDIDATE','STATIC_RENDERER_REJECTED','STATIC_RENDERER_UNAVAILABLE',
+  'TIME_ORDER',
+]);
+export function safeOwnerFailureEvidence(value){
+  const data=exactData(value,['schema','validatorPhase','validatorPoint','originalCode','origin','read']);
+  if(!data||data.schema!=='xuan.owner-failure-evidence.v1'||!nullableEnum(data.validatorPhase,OWNER_FAILURE_VALIDATOR_PHASES)
+    ||!nullableEnum(data.validatorPoint,OWNER_FAILURE_VALIDATOR_POINTS)||!nullableEnum(data.originalCode,OWNER_FAILURE_ORIGINAL_CODES))return null;
+  const origin=finiteOrigin(data.origin),read=data.read===null?null:safeOwnerReadDiagnostics(data.read);
+  return origin&&(data.read===null||read)?Object.freeze({...data,origin,read}):null;
+}
+export function createOwnerFailureEvidence(error,{validatorPhase=null,validatorPoint=null}={}){
+  const code=ownData(error,'safeCode'),message=ownData(error,'message');
+  const originalCode=OWNER_FAILURE_ORIGINAL_CODES.includes(code)?code:CLOUD_BODY_CODES.has(message)?message:null;
+  return safeOwnerFailureEvidence({schema:'xuan.owner-failure-evidence.v1',validatorPhase:OWNER_FAILURE_VALIDATOR_PHASES.includes(validatorPhase)?validatorPhase:null,
+    validatorPoint:OWNER_FAILURE_VALIDATOR_POINTS.includes(validatorPoint)?validatorPoint:null,originalCode,
+    origin:finiteOrigin(ownData(error,'safeOrigin'))??safeErrorOrigin(error),read:safeOwnerReadDiagnostics(ownData(error,'ownerReadDiagnostics'))});
+}
 
 export function uniqueCloudJson(text,limit=8_000_000) {
   try { parseDecisionJson(text,limit); return JSON.parse(text); }
@@ -37,9 +165,11 @@ export function validateIbRotationReceipt(value) {
   return Object.freeze({name: value.name, state: 'ENABLED'});
 }
 
-export async function boundedText(response, limit = 8_000_000) {
+export async function boundedText(response, limit = 8_000_000,diagnostics) {
+  const started=performance.now();let size=0;
+  try{
   if (!response.body) throw new Error('CLOUD_EMPTY_RESPONSE');
-  const reader = response.body.getReader(), chunks = []; let size = 0;
+  const reader = response.body.getReader(), chunks = [];
   try {
     for (;;) {
       const {done, value} = await reader.read(); if (done) break;
@@ -48,8 +178,18 @@ export async function boundedText(response, limit = 8_000_000) {
       chunks.push(Buffer.from(value));
     }
   } finally { await reader.cancel().catch(() => {}); }
-  try { return new TextDecoder('utf-8', {fatal: true}).decode(Buffer.concat(chunks)); }
+  let text;try { text=new TextDecoder('utf-8', {fatal: true}).decode(Buffer.concat(chunks)); }
   catch { throw new Error('CLOUD_INVALID_UTF8'); }
+  publishReadDiagnostics(diagnostics,safeOwnerReadDiagnostics({schema:'xuan.owner-read-diagnostics.v1',requestClass:'other',readStage:'body',httpStatus:safeErrorOrigin(null,response).httpStatus,
+    observedBodyBytes:size,bodyLimitBytes:limit,elapsedMs:Math.max(0,Math.floor(performance.now()-started)),timeoutMs:null,origin:safeErrorOrigin(null,response)}));
+  return text;
+  }catch(error){
+    try{
+    attachOwnerReadDiagnostics(error,{readStage:'body',httpStatus:safeErrorOrigin(error,response).httpStatus,observedBodyBytes:size,bodyLimitBytes:limit,
+      elapsedMs:Math.max(0,Math.floor(performance.now()-started))});
+    }catch{}
+    throw error;
+  }
 }
 
 export function privateCloudIo({fetchImpl = fetch} = {}) {
