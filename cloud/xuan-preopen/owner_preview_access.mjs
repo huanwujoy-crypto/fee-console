@@ -328,17 +328,23 @@ export async function createOwnerPreviewReplacementStorageAccess(){
   if(arguments.length)fail('STORAGE_ACCESS_ARGUMENTS_FORBIDDEN');
   return createPreviewAccessSession(true,true);
 }
-async function createPreviewAccessSession(replacing,storageOnly=false){
+// Current daily publisher: same owner/audience/canary, no GUI attestation or
+// caller-provided access proof. The SDK derives daily/source pins from reads.
+export async function createOwnerDailyStorageAccess(){
+  if(arguments.length)fail('STORAGE_ACCESS_ARGUMENTS_FORBIDDEN');
+  return createPreviewAccessSession(true,true,true);
+}
+async function createPreviewAccessSession(replacing,storageOnly=false,daily=false){
   await requireProtectedOwnerCheckout();
   validApproved(FIXED_APPROVED);
   const registration=strictJson(fs.readFileSync(new URL('../../security/xuan-owner-accepted-preview.json',import.meta.url),'utf8'));
   let revision=null,revisionSha256=null;
-  if(replacing){const revisionText=fs.readFileSync(new URL('../../security/xuan-owner-preview-replacement.json',import.meta.url),'utf8');
+  if(replacing&&!daily){const revisionText=fs.readFileSync(new URL('../../security/xuan-owner-preview-replacement.json',import.meta.url),'utf8');
     revision=validatePreviewReplacementRegistration(strictJson(revisionText),{previousRegistration:registration,previousRegistrationSha256:hash(acceptedPreviewRegistrationText(registration)),
       canaryRegistrationSha256:hash(fs.readFileSync(new URL('../../security/xuan-owner-registered-canary.json',import.meta.url)))});
     if(previewReplacementRegistrationText(revision)!==revisionText)fail('REPLACEMENT_BYTES');revisionSha256=hash(revisionText);
   }
-  const candidateSha256=replacing?revision.registration.displaySha256:registration.displaySha256;
+  const candidateSha256=replacing&&!daily?revision.registration.displaySha256:registration.displaySha256;
   if(!HEX.test(candidateSha256||''))fail('REGISTERED_CANDIDATE');
   const canaryCandidateSha256=registration.displaySha256;
   validateRegisteredOwnerCanary(FIXED_REGISTERED_CANARY,canaryCandidateSha256);
@@ -346,6 +352,9 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
   if(!sdk||typeof sdk.readLiveBoundary!=='function'||typeof sdk.request!=='function'
     ||typeof sdk.requestCanary!=='function'||typeof sdk.createCanary!=='function'||typeof sdk.close!=='function')fail('SDK_CAPABILITIES');
   let canaryClosed=false,canaryPin=null,sessionClosed=false,observation=null,replacementAdmissionAttempted=false,replacementPermit=null,replacementExpiresAt=null,replacementMonotonic=null;const lease=createOwnerPreflightLease();
+  // The original verifier reads four sources concurrently; the existing SDK
+  // worker admits one RPC at a time. A failed queued read closes this chain.
+  let dailyReads=Promise.resolve();
   const guard=()=>{if(sessionClosed)fail('SESSION_CLOSED');};
   const close=()=>{sessionClosed=true;lease.invalidate();replacementPermit=null;observation?.close();sdk.close();};
   const full=async()=>{
@@ -364,6 +373,22 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
   };
   try{await full();}catch(error){try{sdk.close();}catch(closeError){preserveCloseFailure(error,closeError);}throw error;}
   return Object.freeze({
+    async requestDaily(url,options={}){
+      guard();if(!daily||typeof sdk.requestDaily!=='function')fail('SDK_CAPABILITIES');
+      if((options.method??'GET')!=='POST'){
+        dailyReads=dailyReads.then(()=>{guard();return sdk.requestDaily(url,options);});
+        return dailyReads;
+      }
+      if(replacementAdmissionAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');
+      replacementAdmissionAttempted=true;
+      if(!canaryPin||options.signal?.aborted)fail('CANARY_REQUIRED');
+      await dailyReads;
+      await live(options.signal);await readCanary(sdk.requestCanary,canaryPin,options.signal);
+      guard();lease.current(Date.now());
+      const admittedAt=Date.now();
+      lease.mintAdmission(admittedAt);lease.consumeAdmission(admittedAt);
+      return sdk.requestDaily(url,options,{admissionExpiresAt:admittedAt+FINANCIAL_ADMISSION_TTL_MS});
+    },
     request:(url,options={})=>{
       guard();if((options.method??'GET')==='POST'){
         if(replacing)fail('REPLACEMENT_NAMED_WRITE_REQUIRED');
@@ -372,7 +397,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
       }return sdk.request(url,options);
     },
     async requestPreviewReplacement(url,options,pins){
-      guard();if(!replacing||typeof sdk.requestPreviewReplacement!=='function')fail('REPLACEMENT_REQUIRED');
+      guard();if(daily||!replacing||typeof sdk.requestPreviewReplacement!=='function')fail('REPLACEMENT_REQUIRED');
       const permit=replacementPermit,admissionExpiresAt=replacementExpiresAt,monotonic=replacementMonotonic;
       replacementPermit=null;replacementExpiresAt=null;replacementMonotonic=null;lease.consumeAdmission(Date.now());
       if(!permit||options?.signal?.aborted||text(pins)!==text(permit))fail('REPLACEMENT_ADMISSION_REQUIRED');
@@ -383,6 +408,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false){
     // It changes neither identity nor permissions and never refreshes tokens.
     async refreshPreflight(){guard();lease.invalidate();replacementPermit=null;observation?.close();if(!storageOnly)await requireProtectedOwnerCheckout();return full();},
     async verifyDestinationAccess(input={}){
+      if(daily)fail('REPLACEMENT_NAMED_WRITE_REQUIRED');
       // Consume before validation or any await. Failed admission, refresh and
       // a consumed/expired write cannot mint a second replacement permit.
       if(storageOnly){if(replacementAdmissionAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');replacementAdmissionAttempted=true;}

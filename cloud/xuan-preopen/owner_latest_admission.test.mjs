@@ -3,7 +3,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {prepareOwnerStaticDisplay,createProtectedOwnerVerifier,OWNER_BINDING,SOURCE_IDENTITY_SHA256,OWNER_SCOPE,OWNER_DISPLAY_CSP} from './owner_latest_admission.mjs';
-import {runPrivateEodReport} from './eod_report.mjs';
+import {runPrivateEodReport,saveCompletedDailyReport} from './eod_report.mjs';
+import {ownerBundleMetadata} from './owner_latest_delivery.mjs';
 import {digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {associationPolicyBlob} from '../../scripts/xuan-ib-account-association.mjs';
 import {fingerprint,APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
@@ -59,6 +60,24 @@ test('actual pure runner receipt passes only after four pinned byte reads and co
   assert.equal(f.reads.length,4);assert.equal(new Set(f.reads.map(p=>p.name)).size,4);
   for(const pin of f.reads)assert.deepEqual(Object.keys(pin).sort(),['generation','name','sha256']);
   assert.equal(f.model.orders.status,'partial');assert.equal(f.model.cash.orderReserve,null);assert.equal(f.model.cash.planning,null);
+});
+test('daily completion handoff passes source reconstruction and preserves all five static sections',async()=>{
+  const f=await fixture(),saved=new Map();
+  const io={savePrivate:async(name,value)=>{
+    const bytes=encode(typeof value==='string'?value:JSON.stringify(value)),generation=String(100+saved.size);
+    saved.set(name,{bytes,generation});return {generation,sha256:digest(text(bytes))};
+  }};
+  const receipt=await saveCompletedDailyReport({io,plan:{status:'generate',dataDate:f.receipt.dataDate,sourceDate:SOURCE},receipt:f.receipt,html:f.html});
+  const artifactObject=receipt.artifact.privateObject,receiptObject=`delivery/${receipt.dataDate}/receipt.json`;
+  assert.deepEqual([...saved.keys()],[artifactObject,receiptObject]);
+  const bundle={html:saved.get(artifactObject).bytes,receipt:saved.get(receiptObject).bytes,
+    artifactObject,artifactGeneration:receipt.artifact.generation,artifactSha256:receipt.artifact.sha256,
+    receiptObject,receiptGeneration:saved.get(receiptObject).generation,receiptSha256:digest(text(saved.get(receiptObject).bytes))};
+  const proof=await verifier(f)({metadata:ownerBundleMetadata(bundle,receipt),html:bundle.html,receipt:bundle.receipt,now:NOW,phase:'candidate-admission'});
+  assert.equal(proof.artifactSha256,bundle.artifactSha256);assert.equal(f.reads.length,4);
+  const display=text(prepareOwnerStaticDisplay(bundle.html));
+  assert.equal((display.match(/<section class="card(?: concentration)?"/g)||[]).length,5);
+  assert.equal(extractNightActionModel(display).cash.executableBudget,null);
 });
 test('static export adds exact four IDs/CSP and labels inferred order currency and price distance without changing original model',async()=>{
   const f=await fixture(),before=f.htmlBytes.slice(),out=prepareOwnerStaticDisplay(f.htmlBytes),display=text(out);

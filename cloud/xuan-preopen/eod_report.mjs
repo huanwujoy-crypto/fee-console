@@ -10,6 +10,20 @@ import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.
 import {validateAssociationSnapshot,createAssociationReceipt,validateAssociationReceipt} from '../../scripts/xuan-ib-account-association.mjs';
 import {planPreopen,hktDate} from './calendar.mjs';
 const fail=code=>{throw new Error('EOD_REPORT_'+code);};
+// Completion handoff shared with the current-orders producer. The caller must
+// already own the create-only daily start marker. No source or latest-page IO.
+export async function saveCompletedDailyReport({io,plan,receipt,html}){
+  if(plan?.status!=='generate'||receipt?.dataDate!==plan.dataDate||receipt?.sourceDate!==plan.sourceDate)
+    throw new Error('DAILY_REPORT_INCOMPLETE');
+  if(receipt.mode==='private_eod_action')validateEodReceipt(receipt,html,plan.dataDate,plan.sourceDate);
+  if((receipt.mode==='private_eod_action'?receipt.status!=='partial':receipt.status!=='ready')||typeof html!=='string')
+    throw new Error('DAILY_REPORT_INCOMPLETE');
+  const prefix=`delivery/${plan.dataDate}/`;
+  const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',html)};
+  const delivery={...receipt,artifact,calendar:plan};
+  await io.savePrivate(prefix+'receipt.json',delivery); // Completion marker LAST.
+  return delivery;
+}
 async function optionalLive(capture,timeoutMs){
   if(!capture)return {status:'not-called',code:'OPTIONAL_LIVE_NOT_CALLED'};
   if(!Number.isInteger(timeoutMs)||timeoutMs<1||timeoutMs>30_000)fail('LIVE_BOUND');

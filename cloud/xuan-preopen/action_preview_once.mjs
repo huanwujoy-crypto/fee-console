@@ -7,7 +7,7 @@ import {privateCloudIo,BUCKET,PROJECT} from './cloud_io.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
 import {safeIbFailure} from './ib_diagnostics.mjs';
 import {composePrivateActionPreview} from './action_preview.mjs';
-import {runPrivateEodReport,validateCompletedEodSession} from './eod_report.mjs';
+import {runPrivateEodReport,validateCompletedEodSession,saveCompletedDailyReport} from './eod_report.mjs';
 import {loadTrustedContext,readSharesightAction} from './report.mjs';
 import {createEodSnapshotReader} from './eod_adapters.mjs';
 import {planPreopen} from './calendar.mjs';
@@ -36,7 +36,7 @@ function safeIbSourceFailure(r,receipt){
 }
 const ibSummary=r=>Object.fromEntries(['status','code','phase','category','httpStatus','upstreamAttempted','credentialPersistence'].filter(k=>r[k]!==undefined).map(k=>[k,r[k]]));
 
-export async function runPrivateActionPreviewOnce({request,env=process.env,now=Date.now,fetchImpl=fetch,limits={}}={}){
+export async function runPrivateActionPreviewOnce({request,env=process.env,now=Date.now,fetchImpl=fetch,limits={},dailyDelivery=false}={}){
   const startedAt=new Date(now()).toISOString(),monoStart=performance.now();let phase='preflight',probe=null,source=null,probeReceipt=null,observerFailed=false;
   let uploads=0,uploadBytes=0,sharesightGets=0;const seenScopes=new Set();
   let totalTimer,compositionTimer,compositionController;const totalController=new AbortController();
@@ -46,19 +46,22 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
     // Dispatch window is [expiresAt-55s, expiresAt+20s]. A late container
     // expires before financial IO; a 180s task never extends IB's 75s window.
     if(Date.parse(request.expiresAt)-now()>55000)throw fixedError('PRIVATE_PREVIEW_REQUEST_INVALID');
-    let sourceDate;try{sourceDate=planPreopen(now()).sourceDate;validateCompletedEodSession(sourceDate,now());}
+    if(typeof dailyDelivery!=='boolean')throw fixedError('PRIVATE_PREVIEW_REQUEST_INVALID');
+    const plan=planPreopen(now()),dailyPrefix=`delivery/${plan.dataDate}/`;
+    let sourceDate;try{sourceDate=plan.sourceDate;validateCompletedEodSession(sourceDate,now());}
     catch{throw fixedError('PRIVATE_PREVIEW_CALENDAR_INVALID');}
     const prefix='report-check/orders-probe-'+request.requestId+'/';
     const budgetUpload=(url,options)=>{
       if(options.method!=='POST'||url.origin+url.pathname!==UPLOAD||url.searchParams.get('uploadType')!=='media'||url.searchParams.get('ifGenerationMatch')!=='0'||!Buffer.isBuffer(options.body))throw fixedError('PRIVATE_PREVIEW_NETWORK_FORBIDDEN');
-      if(++uploads>10||options.body.length>9000000||(uploadBytes+=options.body.length)>33554432)throw fixedError('PRIVATE_PREVIEW_UPLOAD_LIMIT');
+      if(++uploads>(dailyDelivery?13:10)||options.body.length>9000000||(uploadBytes+=options.body.length)>33554432)throw fixedError('PRIVATE_PREVIEW_UPLOAD_LIMIT');
       return url.searchParams.get('name');
     };
     const probeFetch=async(url,options={})=>{
       const u=String(url),parsed=new URL(u),method=options.method??'GET';
       if(u===UPLOAD||parsed.origin+parsed.pathname===UPLOAD){
         const name=budgetUpload(parsed,options);
-        if(!['start.json','orders.json','receipt.json'].some(file=>name===prefix+file))throw fixedError('PRIVATE_PREVIEW_NETWORK_FORBIDDEN');
+        if(!['start.json','orders.json','receipt.json'].some(file=>name===prefix+file)
+          &&!(dailyDelivery&&phase==='daily-claim'&&name===dailyPrefix+'start.json'))throw fixedError('PRIVATE_PREVIEW_NETWORK_FORBIDDEN');
         // Provisional request copies only. Never inspect OAuth/Secret bodies,
         // consume/clone responses, inject IO, or weaken R3's AbortSignals.
         if(name===prefix+'orders.json'||name===prefix+'receipt.json'){
@@ -69,6 +72,11 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
         ||method==='POST'&&[RESOURCE,TOKEN_ENDPOINT,IB_SECRET+':addVersion'].includes(u)))throw fixedError('PRIVATE_PREVIEW_NETWORK_FORBIDDEN');
       return fetchImpl(url,options);
     };
+    if(dailyDelivery){
+      phase='daily-claim';
+      await privateCloudIo({fetchImpl:probeFetch}).savePrivate(dailyPrefix+'start.json',
+        {dataDate:plan.dataDate,execution:env.CLOUD_RUN_EXECUTION,startedAt});
+    }
     phase='ib-probe';
     probe=await runCloudOrdersProbe({request,env,now,fetchImpl:probeFetch,limits:{sourceMs:limits.sourceMs,finalizeMs:limits.finalizeMs}});
     const failedSource=safeIbSourceFailure(probe,probeReceipt);
@@ -87,12 +95,13 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
     const compositionDeadline=Math.min(monoStart+totalMs,performance.now()+compositionMs);
     const guardComposition=()=>{if(performance.now()>=compositionDeadline)compositionController.abort(new DOMException('Composition deadline','TimeoutError'));signal.throwIfAborted();};
     const captureStart=probe.status==='passed'?source.startedAt:probe.startedAt;
-    let compositionPrefix=null,mirrorAllowed=false;
+    let compositionPrefix=null,mirrorAllowed=false,dailyCompletionAllowed=false;
     const compositionFetch=async(url,options={})=>{
       guardComposition();const u=String(url),p=new URL(u),method=options.method??'GET';
       if(p.origin+p.pathname===UPLOAD){
         const name=budgetUpload(p,options);
-        if(!(mirrorAllowed&&name===prefix+'preview-receipt.json')){
+        if(!(mirrorAllowed&&name===prefix+'preview-receipt.json')
+          &&!(dailyCompletionAllowed&&['report.html','receipt.json'].some(file=>name===dailyPrefix+file))){
           const match=(name??'').match(/^report-check\/(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)-([a-f0-9-]{36})\/(ib\.flexEod\.json|sharesight\.ibGroupedPerformance\.json|sharesight\.noahPerformance\.json|ib\.optionalLive\.json|report\.html|receipt\.json)$/);
           if(!match||match[1]!==captureStart)throw fixedError('PRIVATE_PREVIEW_NETWORK_FORBIDDEN');
           const directory=name.slice(0,name.lastIndexOf('/')+1);compositionPrefix??=directory;
@@ -105,7 +114,12 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
       }else if(!(method==='GET'&&(u===METADATA||u===GATEWAY_SECRET||publicContextUrl(u))))throw fixedError('PRIVATE_PREVIEW_NETWORK_FORBIDDEN');
       return fetchImpl(url,{...options,signal:options.signal?AbortSignal.any([options.signal,signal]):signal});
     };
-    const cloud=privateCloudIo({fetchImpl:compositionFetch}),io={savePrivate:cloud.savePrivate,loadGatewayToken:cloud.loadGatewayToken};
+    let html;
+    const cloud=privateCloudIo({fetchImpl:compositionFetch}),io={savePrivate:async(name,value)=>{
+      const saved=await cloud.savePrivate(name,value);
+      if(name.endsWith('/report.html'))html=value;
+      return saved;
+    },loadGatewayToken:cloud.loadGatewayToken};
     const loadContext=async options=>{const c=await loadTrustedContext({...options,fetchImpl:compositionFetch});
       if(c.association?.policyBlob!==probeReceipt.association?.policyBlob)throw fixedError('PRIVATE_PREVIEW_ASSOCIATION_CHANGED');return c;};
     const readSharesight=(date,token,options)=>readSharesightAction(date,token,{...options,fetchImpl:compositionFetch});
@@ -128,8 +142,14 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
     const saved=await io.savePrivate(prefix+'preview-receipt.json',receipt);
     guardComposition();
     if(saved.sha256!==digest(receipt))throw fixedError('PRIVATE_PREVIEW_EVIDENCE_UNCONFIRMED');
+    if(dailyDelivery){
+      dailyCompletionAllowed=true;
+      await saveCompletedDailyReport({io,plan,receipt,html});
+      guardComposition();
+    }
     return {status:'generated',mode:'private-action-preview-once',code:'PRIVATE_ACTION_PREVIEW_GENERATED',dataDate:request.dataDate,sourceDate,startedAt,completedAt:new Date(now()).toISOString(),requestId:request.requestId,execution:env.CLOUD_RUN_EXECUTION,
-      ib:ibSummary(probe),sharesightGets,fieldErrors:receipt.fieldErrors,previewReceiptSha256:saved.sha256,reportSha256:receipt.artifact.sha256,financialCompleteness:'not-asserted',interactiveDelivery:'not-published'};
+      ib:ibSummary(probe),sharesightGets,fieldErrors:receipt.fieldErrors,previewReceiptSha256:saved.sha256,reportSha256:receipt.artifact.sha256,financialCompleteness:'not-asserted',interactiveDelivery:'not-published',
+      ...(dailyDelivery?{dailyDelivery:'staged'}:{})};
   }catch(error){
     const timeout=['AbortError','TimeoutError'].includes(error?.name)||totalController.signal.aborted||compositionController?.signal.aborted;
     const sourceSafe=phase==='preflight'?safeIbFailure(error):null;
@@ -137,9 +157,9 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
   }finally{clearTimeout(totalTimer);clearTimeout(compositionTimer);compositionController?.abort();totalController.abort();source=null;probeReceipt=null;}
 }
 export async function privatePreviewOnceCli(args,options={}){
-  if(args.length!==2||args[0]!=='--request')return {status:'failed',code:'PRIVATE_PREVIEW_REQUEST_INVALID',upstreamAttempted:false};
+  if(args.length!==2||!['--request','--daily-request'].includes(args[0]))return {status:'failed',code:'PRIVATE_PREVIEW_REQUEST_INVALID',upstreamAttempted:false};
   let request;try{request=JSON.parse(args[1]);}catch{return {status:'failed',code:'PRIVATE_PREVIEW_REQUEST_INVALID',upstreamAttempted:false};}
-  return runPrivateActionPreviewOnce({...options,request});
+  return runPrivateActionPreviewOnce({...options,request,dailyDelivery:args[0]==='--daily-request'});
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))privatePreviewOnceCli(process.argv.slice(2)).then(result=>{
   process.stdout.write(JSON.stringify(result)+'\n');if(result.status==='failed')process.exitCode=1;

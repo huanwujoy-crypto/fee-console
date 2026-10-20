@@ -15,7 +15,7 @@ import re
 import sys
 import time
 import uuid as uuid_module
-from urllib.parse import parse_qsl, quote, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlsplit
 
 SDK_ROOT_SHA256 = '01686f458b748b5277840da752f9c73b4f29de6ae520151c61a45d784b8bc8fa'
 SDK_CONFIG = '/Users/huanwu/.config/gcloud'
@@ -221,7 +221,7 @@ def validate_headers(headers, method):
     return normalized
 
 
-def validate_multipart(body, content_type):
+def validate_multipart(body, content_type, daily=False):
     match = re.fullmatch(r'multipart/related; boundary=(xuan_owner_latest_[a-f0-9]{64})', content_type)
     if not match or not isinstance(body, bytes) or not 0 < len(body) <= MAX_BODY:
         reject('MULTIPART_INVALID')
@@ -242,20 +242,36 @@ def validate_multipart(body, content_type):
         reject('MULTIPART_RESOURCE_INVALID')
     custom = resource['metadata']
     digest = hashlib.sha256(display).hexdigest()
-    if (not isinstance(custom, dict) or set(custom) != {'previewMetadata', 'displaySha256'}
-            or custom['displaySha256'] != digest or boundary != ('xuan_owner_latest_' + digest).encode('ascii')
-            or not isinstance(custom['previewMetadata'], str)):
+    if (not isinstance(custom, dict) or custom.get('displaySha256') != digest
+            or boundary != ('xuan_owner_latest_' + digest).encode('ascii')):
         reject('MULTIPART_METADATA_INVALID')
-    metadata = json_loads(custom['previewMetadata'])
-    if not isinstance(metadata, dict) or metadata.get('schema') != 'xuan.owner-accepted-preview.v1':
-        reject('MULTIPART_METADATA_INVALID')
+    if daily:
+        keys = {'bundleMetadata', 'displaySha256', 'artifactObject', 'artifactGeneration', 'artifactSha256',
+                'receiptObject', 'receiptGeneration', 'receiptSha256'}
+        if set(custom) != keys or not isinstance(custom['bundleMetadata'], str):
+            reject('MULTIPART_METADATA_INVALID')
+        metadata = json_loads(custom['bundleMetadata'])
+        if (not isinstance(metadata, dict) or metadata.get('schema') != 'xuan.owner-latest.v1'
+                or metadata.get('scope') != 'ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1'
+                or metadata.get('dataDate') != daily_date() or metadata.get('financialStatus') != 'partial'):
+            reject('MULTIPART_METADATA_INVALID')
+        for key in keys - {'bundleMetadata', 'displaySha256'}:
+            if metadata.get(key) != custom[key]:
+                reject('MULTIPART_METADATA_INVALID')
+    else:
+        if set(custom) != {'previewMetadata', 'displaySha256'} or not isinstance(custom['previewMetadata'], str):
+            reject('MULTIPART_METADATA_INVALID')
+        metadata = json_loads(custom['previewMetadata'])
+        if not isinstance(metadata, dict) or metadata.get('schema') != 'xuan.owner-accepted-preview.v1':
+            reject('MULTIPART_METADATA_INVALID')
     try:
         display.decode('utf-8', errors='strict')
     except UnicodeError:
         reject('DISPLAY_UTF8_INVALID')
+    return resource, display
 
 
-def validate_storage_request(value, expected_generation='0'):
+def validate_storage_request(value, expected_generation='0', daily=False):
     if not isinstance(value, dict) or set(value) != {'op', 'url', 'method', 'headers', 'body'} or value['op'] != 'request':
         reject('REQUEST_INVALID')
     url, method = value['url'], value['method']
@@ -279,7 +295,7 @@ def validate_storage_request(value, expected_generation='0'):
             body = base64.b64decode(value['body'], validate=True)
         except (ValueError, TypeError):
             reject('BODY_INVALID')
-        validate_multipart(body, headers['content-type'])
+        validate_multipart(body, headers['content-type'], daily=daily)
     else:
         if value['body'] is not None or parsed.path != '/storage/v1/b/' + BUCKET + '/o/' + quote(OBJECT, safe=''):
             reject('TARGET_INVALID')
@@ -297,6 +313,10 @@ def validate_storage_request(value, expected_generation='0'):
             reject('HEADERS_INVALID')
         body = None
     return url, method, headers, body
+
+
+def daily_date():
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).date().isoformat()
 
 
 def canonical_registration(value):
@@ -547,6 +567,10 @@ class OwnerBridge:
         self.write_started = False
         self.canary_attempted = False
         self.mutation_started = False
+        # Only populated by authenticated responses, never a caller pin list.
+        self.daily_pins = {}
+        self.daily_receipts = {}
+        self.daily_latest_generation = None
         self._operation = None
         self.safe_diagnostics = SafeDiagnostics()
         if isinstance(provider, LiveSdkProvider):
@@ -560,14 +584,14 @@ class OwnerBridge:
         parsed = urlsplit(url)
         query = dict(parse_qsl(parsed.query))
         is_latest = parsed.scheme + '://' + parsed.netloc + parsed.path == latest
-        is_cas = method == 'POST' and self.mutation_started and self._operation in ('request', 'replaceAcceptedPreview')
+        is_cas = method == 'POST' and self.mutation_started and self._operation in ('request', 'replaceAcceptedPreview', 'dailyRequest')
         if is_cas:
             kind = 'cas'
         elif is_latest and method == 'GET' and diagnostics.new_generation is not None and query.get('generation') == diagnostics.new_generation:
             kind = 'readback-html' if query.get('alt') == 'media' else 'readback-metadata'
         elif self._operation == 'boundary':
             kind = 'boundary'
-        elif not is_latest:
+        elif not is_latest and (self._operation != 'dailyRequest' or parsed.path.endswith('/' + quote(CANARY_OBJECT, safe=''))):
             kind = 'canary'
         else:
             kind = 'head' if method == 'HEAD' else 'html-get' if query.get('alt') == 'media' else 'metadata-get'
@@ -691,6 +715,142 @@ class OwnerBridge:
                                 ('attachment', 'no-cache, no-store, max-age=0, must-revalidate'))):
             reject('REPLACEMENT_CANARY_CURRENT')
 
+    def daily_pin(self, name, generation, digest=None):
+        if (not isinstance(name, str) or not isinstance(generation, str) or not GEN.fullmatch(generation)
+                or digest is not None and (not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest))):
+            reject('PIN_REQUIRED')
+        previous = self.daily_pins.get(name)
+        if previous and (previous[0] != generation or previous[1] and digest and previous[1] != digest):
+            reject('PIN_REQUIRED')
+        self.daily_pins[name] = (generation, digest or (previous[1] if previous else None))
+
+    def observe_daily_read(self, name, query, response):
+        if response['status'] != 200:
+            return  # Original publisher owns HTTP/absence handling.
+        raw = base64.b64decode(response['body'], validate=True)
+        if query.get('alt') != 'media':
+            value = json_loads(raw)
+            if value.get('bucket') != BUCKET or value.get('name') != name or not GEN.fullmatch(str(value.get('generation', ''))):
+                reject('PIN_REQUIRED')
+            if (name == OBJECT and value['generation'] == self.safe_diagnostics.new_generation
+                    and self.daily_pins.get(name, (None,))[0] != value['generation']):
+                self.daily_pins.pop(name, None)
+            self.daily_pin(name, value['generation'])
+            if name == OBJECT:
+                self.daily_latest_generation = value['generation']
+                custom = value.get('metadata', {})
+                if 'bundleMetadata' in custom:
+                    old = json_loads(custom['bundleMetadata'])
+                    for kind, file in [('artifact', 'report.html'), ('receipt', 'receipt.json')]:
+                        expected = 'delivery/' + str(old.get('dataDate')) + '/' + file
+                        if not re.fullmatch(r'delivery/\d{4}-\d\d-\d\d/(report\.html|receipt\.json)', expected) or old.get(kind+'Object') != expected:
+                            reject('PIN_REQUIRED')
+                        self.daily_pin(expected, old.get(kind+'Generation'), old.get(kind+'Sha256'))
+            return
+        pin = self.daily_pins.get(name)
+        if (not pin or pin[0] != query.get('generation')
+                or response['headers'].get('x-goog-generation') != pin[0]
+                or pin[1] and hashlib.sha256(raw).hexdigest() != pin[1]):
+            reject('PIN_REQUIRED')
+        self.daily_pin(name, pin[0], hashlib.sha256(raw).hexdigest())
+        if not name.endswith('/receipt.json'):
+            return
+        receipt = json_loads(raw)
+        date = name.split('/')[1]
+        if (receipt.get('mode') != 'private_eod_action' or receipt.get('dataDate') != date
+                or receipt.get('status') != 'partial' or receipt.get('publication') != 'none'
+                or receipt.get('sourceCount') != 4 or not isinstance(receipt.get('sources'), list)
+                or len(receipt['sources']) != 4
+                or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', str(receipt.get('startedAt')))):
+            reject('PIN_REQUIRED')
+        artifact = receipt.get('artifact', {})
+        if artifact.get('privateObject') != 'delivery/' + date + '/report.html':
+            reject('PIN_REQUIRED')
+        self.daily_pin(artifact['privateObject'], artifact.get('generation'), artifact.get('sha256'))
+        keys = {'ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive'}
+        if {s.get('sourceKey') for s in receipt['sources']} != keys:
+            reject('PIN_REQUIRED')
+        for source in receipt['sources']:
+            source_name = source.get('privateObject', '')
+            pattern = re.escape('report-check/' + str(receipt.get('startedAt')) + '-') + r'[a-f0-9-]{36}/' + re.escape(source['sourceKey']) + r'\.json'
+            if not re.fullmatch(pattern, source_name):
+                reject('PIN_REQUIRED')
+            self.daily_pin(source_name, source.get('generation'), source.get('sha256'))
+        self.daily_receipts[date] = receipt
+
+    def daily_request(self, value):
+        posting = value.get('method') == 'POST'
+        keys = {'op', 'url', 'method', 'headers', 'body'} | ({'admissionExpiresAt'} if posting else set())
+        if set(value) != keys:
+            reject('REQUEST_INVALID')
+        request = {k: v for k, v in value.items() if k != 'admissionExpiresAt'}
+        request['op'] = 'request'
+        parsed = urlsplit(str(value.get('url', '')))
+        prefix = '/storage/v1/b/' + BUCKET + '/o/'
+        name = unquote(parsed.path[len(prefix):]) if parsed.path.startswith(prefix) else None
+        if posting:
+            if self.write_started:
+                reject('WRITE_ALREADY_ATTEMPTED')
+            self.write_started = True
+            initial_wall, admitted = time.time() * 1000, time.monotonic()
+            deadline = value['admissionExpiresAt']
+            if type(deadline) is not int or not 0 <= deadline-initial_wall <= 5000:
+                reject('REPLACEMENT_ADMISSION_EXPIRED')
+            generation = self.daily_latest_generation
+            if not generation:
+                reject('PIN_REQUIRED')
+            validated = validate_storage_request(request, generation, daily=True)
+            resource, _ = validate_multipart(validated[3], validated[2]['content-type'], daily=True)
+            metadata = json_loads(resource['metadata']['bundleMetadata'])
+            date = daily_date()
+            receipt = self.daily_receipts.get(date)
+            if not receipt:
+                reject('PIN_REQUIRED')
+            for kind, file in [('artifact', 'report.html'), ('receipt', 'receipt.json')]:
+                object_name = 'delivery/' + date + '/' + file
+                if (metadata.get(kind+'Object') != object_name or self.daily_pins.get(object_name)
+                        != (metadata.get(kind+'Generation'), metadata.get(kind+'Sha256'))):
+                    reject('PIN_REQUIRED')
+            if (metadata.get('captureStartedAt') != receipt.get('startedAt')
+                    or metadata.get('captureEndedAt') != receipt.get('completedAt')
+                    or metadata.get('completedAt') != receipt.get('completedAt')
+                    or metadata.get('sourceDate') != receipt.get('sourceDate')):
+                reject('PIN_REQUIRED')
+            # Repeat the current pointer and registered canary check at the
+            # native boundary; neither a caller pin nor upload ACK supplies it.
+            current = self.raw_request('https://storage.googleapis.com'+prefix+quote(OBJECT, safe='')+'?alt=media',
+                                       'HEAD', {'Accept-Encoding': 'identity'}, None)
+            if current['status'] != 200 or current['headers'].get('x-goog-generation') != generation:
+                reject('REPLACEMENT_OLD_CHANGED')
+            registry = (Path(__file__).resolve().parents[2]/'security'/'xuan-owner-registered-canary.json').read_bytes()
+            self.verify_replacement_canary_current({'canaryRegistrationSha256': hashlib.sha256(registry).hexdigest()})
+            current_time = time.time()*1000
+            if not initial_wall <= current_time <= deadline or (time.monotonic()-admitted)*1000 > deadline-initial_wall:
+                reject('REPLACEMENT_ADMISSION_EXPIRED')
+            self.mutation_started = True
+            return self.raw_request(*validated)
+        if name == OBJECT:
+            validated = validate_storage_request(request)
+        else:
+            if not name or parsed.path != prefix+quote(name, safe='') or value.get('method') != 'GET':
+                reject('TARGET_INVALID')
+            # Run the unchanged strict URL/query/header checks against its
+            # fixed-path surrogate; the original URL is sent only after pins.
+            surrogate = dict(request, url=request['url'].replace(parsed.path, prefix+quote(OBJECT, safe=''), 1))
+            _, method, headers, body = validate_storage_request(surrogate)
+            query = dict(parse_qsl(parsed.query, strict_parsing=True))
+            discover = name in ('delivery/'+daily_date()+'/report.html', 'delivery/'+daily_date()+'/receipt.json')
+            pin = self.daily_pins.get(name)
+            if ('generation' not in query and not discover
+                    or 'generation' in query and (not pin or pin[0] != query['generation'])):
+                reject('PIN_REQUIRED')
+            validated = request['url'], method, headers, body
+        response = self.raw_request(*validated)
+        query = dict(parse_qsl(parsed.query, strict_parsing=True))
+        if value['method'] == 'GET':
+            self.observe_daily_read(name, query, response)
+        return response
+
     def dispatch(self, value):
         self.safe_diagnostics.begin('request-validation')
         self._operation = value.get('op') if isinstance(value, dict) else None
@@ -706,6 +866,8 @@ class OwnerBridge:
         if not isinstance(value, dict):
             reject('REQUEST_INVALID')
         op = value.get('op')
+        if op == 'dailyRequest':
+            return self.daily_request(value)
         if op == 'replaceAcceptedPreview':
             validated, revision, old = validate_replacement_request(value)
             if self.write_started:

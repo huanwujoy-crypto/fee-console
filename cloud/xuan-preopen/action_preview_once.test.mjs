@@ -50,7 +50,7 @@ function harness({expired=false,tokenStatus=200,tokenDelay=0,saveDelay=0,saveSta
       if(ssHang)await wait(0,o.signal,true);return Response.json(portfolio===ssFail?{error:'SYNTHETIC_PRIVATE_ERROR'}:sharesight(portfolio),{status:portfolio===ssFail?500:200});}
     assert.ok(u.startsWith('https://storage.googleapis.com/upload/'),'No object GET, Flex, public write or unknown endpoint');assert.equal(o.method,'POST');const p=new URL(u),name=p.searchParams.get('name');assert.equal(p.searchParams.get('ifGenerationMatch'),'0');
     if(objects.has(name))return Response.json({},{status:412});
-    if(name.endsWith('/'+failUpload))return Response.json({},{status:500});
+    if(name===failUpload||name.endsWith('/'+failUpload))return Response.json({},{status:500});
     const text=o.body.toString(),value=name.endsWith('.html')?text:JSON.parse(text);objects.set(name,value);events.push('saved-'+name.split('/').at(-1));
     return Response.json({name:uploadBad?'SYNTHETIC_WRONG_OBJECT':name,size:String(o.body.length),generation:String(objects.size)});
   };
@@ -66,6 +66,28 @@ test('actual R3/R5/native private IO paths compose one private HTML in-process, 
   assert.ok(h.events.indexOf('gateway-credential')>h.events.indexOf('saved-receipt.json'));
   const {model,receipt,html}=report(h);assert.equal(model.cash.ib,1000);assert.equal(model.cash.noah,200);assert.equal(model.cash.orderReserve,60);assert.equal(model.cash.planning,1090);assert.equal(model.cash.call.status,'owner-declared');
   assert.equal(r.previewReceiptSha256,digest(receipt));assert.equal(r.reportSha256,digest(html));assert.equal(r.interactiveDelivery,'not-published');assert.equal(r.financialCompleteness,'not-asserted');
+});
+test('explicit daily mode claims the day before IB and stages exact report plus completion receipt last',async()=>{
+  const h=harness({ordersRaw:{orders:[order()]}}),r=await runPrivateActionPreviewOnce({...h.options,dailyDelivery:true});
+  assert.equal(r.dailyDelivery,'staged');assert.equal(r.interactiveDelivery,'not-published');
+  const prefix='delivery/2026-10-15/',receipt=h.objects.get(prefix+'receipt.json'),html=h.objects.get(prefix+'report.html');
+  assert.equal(receipt.artifact.privateObject,prefix+'report.html');assert.equal(receipt.artifact.sha256,digest(html));
+  assert.equal([...h.objects.keys()].at(-1),prefix+'receipt.json');assert.equal(h.objects.size,13);
+  assert.equal(h.events[0],'saved-start.json');assert.equal(count(h,RESOURCE),3);assert.equal(r.sharesightGets,2);
+  assert.equal(extractNightActionModel(html).cash.executableBudget,null);
+  const before=count(h,RESOURCE),ss=count(h,'/v1/performance');
+  const second=await runPrivateActionPreviewOnce({...h.options,request:{...request(),requestId:'22222222-2222-4333-8444-555555555555'},dailyDelivery:true});
+  assert.equal(second.status,'failed');assert.equal(count(h,RESOURCE),before);assert.equal(count(h,'/v1/performance'),ss);
+});
+test('failed daily stage never writes completion or the fixed owner page and cannot rerun the day',async()=>{
+  const h=harness({failUpload:'delivery/2026-10-15/report.html'});
+  const r=await runPrivateActionPreviewOnce({...h.options,dailyDelivery:true});
+  assert.equal(r.status,'failed');assert.ok(h.objects.has('delivery/2026-10-15/start.json'));
+  assert.equal(h.objects.has('delivery/2026-10-15/receipt.json'),false);
+  assert.ok(h.calls.every(c=>!c.url.includes('owner-latest')));
+  const before=count(h,RESOURCE);
+  await runPrivateActionPreviewOnce({...h.options,dailyDelivery:true});
+  assert.equal(count(h,RESOURCE),before);
 });
 test('duplicate operation is stopped by the original immutable marker before credentials or a second source attempt',async()=>{
   const h=harness();await runPrivateActionPreviewOnce(h.options);const before=h.calls.length,ib=count(h,RESOURCE),ss=count(h,'/v1/performance'),r=await runPrivateActionPreviewOnce(h.options);
