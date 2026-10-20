@@ -282,7 +282,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:18/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:20/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -305,6 +305,14 @@ test(FACTORY_TEST,async t=>{
       async requestCanary(value){events.push('canary-'+value.method);if(control.canaryError)throw control.canaryError;return canary.requestCanary(value);},
       async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
       async request(){events.push('financial-POST');return new Response(null,{status:200});},
+      async requestDaily(url,options,lease){
+        events.push(options.method==='POST'?'daily-POST':'daily-GET');
+        if(options.method==='POST'){
+          assert.equal(lease.admissionExpiresAt,control.now+5000);
+          if(control.postError)throw Error('SYNTHETIC_WRITE_OUTCOME_UNKNOWN');
+        }else await control.dailyRead?.();
+        return new Response(null,{status:200});
+      },
       async requestPreviewReplacement(url,options,pins,lease){events.push('replacement-POST');assert.equal(pins.previousGeneration,'900719925474099312345');
         assert.equal(lease.admissionExpiresAt,control.now+5000);if(control.postError)throw Error('SYNTHETIC_WRITE_OUTCOME_UNKNOWN');return new Response(null,{status:200});},
       close(){events.push('close');if(control.closeError)throw control.closeError;},
@@ -343,7 +351,7 @@ test(FACTORY_TEST,async t=>{
       const values=dependencies[specifier];return new vm.SyntheticModule(Object.keys(values),function(){
         for(const [name,value] of Object.entries(values))this.setExport(name,value);
       });});await module.evaluate();
-    const access=options.storage?await module.namespace.createOwnerPreviewReplacementStorageAccess():await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
+    const access=options.daily?await module.namespace.createOwnerDailyStorageAccess():options.storage?await module.namespace.createOwnerPreviewReplacementStorageAccess():await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
     return {access,events,control,canary,revision:files['xuan-owner-preview-replacement.json'],storageFactory:module.namespace.createOwnerPreviewReplacementStorageAccess};
   }
   const post=access=>access.request('https://storage.googleapis.com/upload/storage/v1/b/'+LATEST_TARGET.bucket+'/o?uploadType=multipart&ifGenerationMatch=0',{method:'POST'});
@@ -443,6 +451,43 @@ test(FACTORY_TEST,async t=>{
     previousGeneration:'900719925474099312345',previousDisplaySha256:h.revision.previousDisplaySha256,candidateSha256:'c'.repeat(64),registrationSha256:hash(acceptedPreviewRegistrationText(h.revision.registration))});
   const storagePins=h=>({revisionSha256:storageProof(h).revisionSha256,previousGeneration:storageProof(h).previousGeneration,
     previousDisplaySha256:h.revision.previousDisplaySha256,previousRegistrationSha256:h.revision.previousRegistrationSha256});
+  await scenario('daily lane uses original seven-reader preflight/canary and one native CAS; failure never reopens it',async()=>{
+    for(const fail of [false,true]){
+      const h=await harness({replacing:true,daily:true});
+      await h.access.verifyRegisteredCanary();
+      let activeReads=0;
+      h.control.dailyRead=async()=>{assert.equal(activeReads++,0,'the native SDK accepts only one outstanding read');await Promise.resolve();activeReads--;};
+      await Promise.all(Array.from({length:4},()=>h.access.requestDaily('SYNTHETIC',{method:'GET'})));
+      assert.equal(h.events.filter(e=>e==='daily-GET').length,4);
+      h.control.postError=fail;
+      const write=h.access.requestDaily('SYNTHETIC',{method:'POST'});
+      if(fail)await assert.rejects(write);else await write;
+      await h.access.refreshPreflight();
+      await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}),/ADMISSION_CLOSED/);
+      assert.equal(h.events.filter(e=>e==='daily-POST').length,1);
+      assert.equal(h.events.filter(e=>e==='canary-POST').length,0);
+      assert.throws(()=>h.access.beginNativeCanaryObservation(),/VISUAL_OBSERVATION_NOT_AVAILABLE/);
+      h.access.close();
+    }
+    const h=await harness({replacing:true,daily:true});await h.access.verifyRegisteredCanary();
+    h.control.dailyRead=async()=>{throw Error('SYNTHETIC_READ_FAILED');};
+    const reads=await Promise.allSettled(Array.from({length:4},()=>h.access.requestDaily('SYNTHETIC',{method:'GET'})));
+    assert.ok(reads.every(r=>r.status==='rejected'));assert.equal(h.events.filter(e=>e==='daily-GET').length,1);
+    await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}));
+    await h.access.refreshPreflight();await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}),/ADMISSION_CLOSED/);
+    assert.equal(h.events.filter(e=>e==='daily-POST').length,0);h.access.close();
+  });
+  await scenario('daily lane blocks reader-set or current canary drift before CAS',async()=>{
+    for(const kind of ['iam','canary']){
+      let drift=false;const h=await harness({replacing:true,daily:true,editHead:r=>{if(drift)r.headers['x-goog-generation']='92';}});
+      await h.access.verifyRegisteredCanary();
+      if(kind==='iam')h.control.boundaryEdit=b=>b.bucketIam.bindings[0].members.push('user:synthetic-stranger');
+      else drift=true;
+      await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}));
+      assert.equal(h.events.filter(e=>e==='daily-POST').length,0);
+      h.access.close();
+    }
+  });
   await scenario('named storage access rejects every argument before SDK creation and cannot attest UI',async()=>{
     const h=await harness({replacing:true,storage:true}),before=[...h.events];
     for(const value of [undefined,{}, {approved:true}, {storageOnly:false,request:()=>{}}])await assert.rejects(h.storageFactory(value),/STORAGE_ACCESS_ARGUMENTS_FORBIDDEN/);
@@ -545,6 +590,6 @@ test(FACTORY_TEST,async t=>{
       const e=Object.freeze(failure()),close=Object.assign(Error(),{safeCode:'SDK_LOCAL_CLOSE_FAILED'});await assert.rejects(harness({boundaryError:e,closeError:close}),error=>error===e);
     });
   });
-  assert.equal(completedScenarios,18,'all factory scenarios must execute, including in the child fallback');
+  assert.equal(completedScenarios,20,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

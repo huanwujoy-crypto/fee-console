@@ -765,5 +765,118 @@ class SafeDiagnosticTests(unittest.TestCase):
             self.assertEqual(set(json.loads(text)), getattr(m,python_name))
 
 
+class DailyBoundaryTests(unittest.TestCase):
+    def fixture(self):
+        date = m.daily_date()
+        report_name, receipt_name = 'delivery/'+date+'/report.html', 'delivery/'+date+'/receipt.json'
+        report = b'<html>synthetic canonical report</html>'
+        sources = []
+        objects = {report_name: ('10', report), m.OBJECT: ('900', b'{}')}
+        for i, key in enumerate(['ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive']):
+            name = 'report-check/'+date+'T01:00:00.000Z-00000000-0000-4000-8000-000000000000/'+key+'.json'
+            raw = b'{"synthetic":true}'
+            objects[name] = (str(i+1), raw)
+            sources.append({'sourceKey': key, 'privateObject': name, 'generation': str(i+1), 'sha256': hashlib.sha256(raw).hexdigest()})
+        receipt = {'mode': 'private_eod_action', 'status': 'partial', 'publication': 'none', 'dataDate': date,
+                   'sourceDate': date, 'startedAt': date+'T01:00:00.000Z', 'completedAt': date+'T01:01:00.000Z',
+                   'artifact': {'privateObject': report_name, 'generation': '10', 'sha256': hashlib.sha256(report).hexdigest()},
+                   'sourceCount': 4, 'sources': sources}
+        receipt_raw = json.dumps(receipt).encode()
+        objects[receipt_name] = ('11', receipt_raw)
+        calls = []
+        class DailyProvider(Provider):
+            def request(self, url, method, headers, body):
+                calls.append((url, method))
+                if method == 'POST':
+                    objects[m.OBJECT] = ('901', b'<html><body>synthetic preview only</body></html>')
+                    return Response(url, body=b'{"generation":"901"}')
+                if method == 'HEAD':
+                    return Response(url, headers={'x-goog-generation': '900', 'content-length': '2'})
+                parsed = m.urlsplit(url)
+                name = m.unquote(parsed.path.rsplit('/', 1)[1])
+                query = dict(m.parse_qsl(parsed.query))
+                generation, raw = objects[name]
+                if query.get('alt') == 'media':
+                    return Response(url, body=raw, headers={'x-goog-generation': generation, 'content-length': str(len(raw))})
+                metadata = {'bucket': m.BUCKET, 'name': name, 'generation': generation, 'metadata': {}}
+                return Response(url, body=json.dumps(metadata).encode())
+        bridge = m.OwnerBridge(DailyProvider())
+        def read(name, generation=None, media=False):
+            url = 'https://storage.googleapis.com/storage/v1/b/'+m.BUCKET+'/o/'+m.quote(name, safe='')
+            if generation:
+                url += '?generation='+generation+('&alt=media' if media else '')
+            value = read_value(url, headers={'Accept': 'application/octet-stream' if media else 'application/json', 'Accept-Encoding': 'identity'})
+            value['op'] = 'dailyRequest'
+            return bridge.dispatch(value)
+        def prime():
+            for name, gen in [(report_name, '10'), (receipt_name, '11')]:
+                read(name); read(name, gen, True)
+            read(m.OBJECT)
+        def write():
+            value = write_value()
+            raw = base64.b64decode(value['body'])
+            boundary = value['headers']['Content-Type'].split('boundary=')[1]
+            display = b'<html><body>synthetic preview only</body></html>'
+            metadata = {'schema': 'xuan.owner-latest.v1', 'scope': 'ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1',
+                        'dataDate': date, 'sourceDate': date, 'financialStatus': 'partial',
+                        'captureStartedAt': receipt['startedAt'], 'captureEndedAt': receipt['completedAt'], 'completedAt': receipt['completedAt'],
+                        'artifactObject': report_name, 'artifactGeneration': '10', 'artifactSha256': hashlib.sha256(report).hexdigest(),
+                        'receiptObject': receipt_name, 'receiptGeneration': '11', 'receiptSha256': hashlib.sha256(receipt_raw).hexdigest()}
+            custom = {key: metadata[key] for key in ['artifactObject', 'artifactGeneration', 'artifactSha256', 'receiptObject', 'receiptGeneration', 'receiptSha256']}
+            custom.update(bundleMetadata=json.dumps(metadata), displaySha256=hashlib.sha256(display).hexdigest())
+            resource = {'name': m.OBJECT, 'contentType': 'text/html; charset=utf-8', 'contentDisposition': 'inline',
+                        'cacheControl': 'private, no-store, max-age=0', 'metadata': custom}
+            body = ('--'+boundary+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'+json.dumps(resource)
+                    +'\r\n--'+boundary+'\r\nContent-Type: text/html; charset=utf-8\r\n\r\n').encode()+display+('\r\n--'+boundary+'--\r\n').encode()
+            value.update(op='dailyRequest', url=value['url'].replace('=0', '=900'), body=base64.b64encode(body).decode(),
+                         admissionExpiresAt=int(m.time.time()*1000)+5000)
+            return value
+        return bridge, read, prime, write, objects, sources, calls
+
+    def test_receipt_controls_source_read_pins_and_invalid_reads_do_not_reach_provider(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture()
+        source = sources[0]
+        with self.assertRaises(m.BoundaryError):
+            read(source['privateObject'], source['generation'], True)
+        self.assertEqual(calls, [])
+        prime()
+        read(source['privateObject'], source['generation'], True)
+        before = len(calls)
+        for name, gen in [('delivery/1999-01-01/receipt.json', None), (source['privateObject'], '999')]:
+            with self.assertRaises(m.BoundaryError):
+                read(name, gen, gen is not None)
+        self.assertEqual(len(calls), before)
+        gen, raw = objects[source['privateObject']]
+        objects[source['privateObject']] = (gen, b'{"tampered":true}')
+        with self.assertRaises(m.BoundaryError):
+            read(source['privateObject'], gen, True)
+
+    def test_daily_cas_requires_actual_receipt_then_consumes_one_attempt_and_checks_canary(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture()
+        with self.assertRaises(m.BoundaryError):
+            bridge.dispatch(write())
+        self.assertEqual(calls, [])
+        with self.assertRaises(m.BoundaryError):
+            bridge.dispatch(write())
+        bridge, read, prime, write, objects, sources, calls = self.fixture()
+        prime()
+        checked = []
+        bridge.verify_replacement_canary_current = lambda revision: checked.append(revision)
+        result = bridge.dispatch(write())
+        self.assertEqual(result['status'], 200)
+        self.assertEqual(len(checked), 1)
+        self.assertEqual(sum(method == 'POST' for _, method in calls), 1)
+        # The accepted ACK must replace the old latest pin only for independent
+        # reads of the actual new generation, preserving its observed byte hash.
+        self.assertEqual(bridge.safe_diagnostics.new_generation, '901')
+        read(m.OBJECT, '901')
+        result = read(m.OBJECT, '901', True)
+        self.assertEqual(base64.b64decode(result['body']), objects[m.OBJECT][1])
+        self.assertEqual(bridge.daily_pins[m.OBJECT], ('901', hashlib.sha256(objects[m.OBJECT][1]).hexdigest()))
+        with self.assertRaises(m.BoundaryError):
+            bridge.dispatch(write())
+        self.assertEqual(sum(method == 'POST' for _, method in calls), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

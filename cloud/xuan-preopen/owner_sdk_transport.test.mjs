@@ -29,6 +29,29 @@ test('construction and close are inert and permanently closed',async()=>{
   const sdk=createOwnerSdkTransport();sdk.close();sdk.close();
   await rejected('CLOSED',()=>sdk.checkOriginalIdentity());
 });
+test('daily named lane preserves strict paths, pins, methods and auth-header rejection before worker creation',async()=>{
+  const sdk=createOwnerSdkTransport(),prefix=latest.slice(0,latest.lastIndexOf('/')+1);
+  try{
+    for(const name of ['delivery/2026-10-20/start.json','report-check/orders-probe-x/orders.json','other/receipt.json']){
+      await assert.rejects(()=>sdk.requestDaily(prefix+encodeURIComponent(name),{headers:{Accept:'application/json','Accept-Encoding':'identity'}}));
+    }
+    const url=prefix+encodeURIComponent('delivery/2026-10-20/report.html');
+    await rejected('HEADERS_INVALID',()=>sdk.requestDaily(url,{headers:{Accept:'application/json','Accept-Encoding':'identity',Authorization:'synthetic'}}));
+    await assert.rejects(()=>sdk.requestDaily(url,{method:'DELETE'}));
+    await rejected('REPLACEMENT_ADMISSION_EXPIRED',()=>sdk.requestDaily(upload.replace('=0','=1'),{method:'POST'}));
+  }finally{sdk.close();}
+});
+test('daily read protocol uses its own named op without widening the original request method',async()=>{
+  const url=latest.slice(0,latest.lastIndexOf('/')+1)+encodeURIComponent('delivery/2026-10-20/receipt.json');
+  await fakeWorker(frame=>{
+    assert.equal(frame.value.op,'dailyRequest');assert.equal(frame.value.url,url);
+    return {id:frame.id,result:{status:200,url,headers:{'content-type':'application/json'},body:Buffer.from('{}').toString('base64')},
+      safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};
+  },async sdk=>{
+    await rejected('TARGET_INVALID',()=>sdk.request(url,{headers:{Accept:'application/json','Accept-Encoding':'identity'}}));
+    assert.equal((await sdk.requestDaily(url,{headers:{Accept:'application/json','Accept-Encoding':'identity'}})).status,200);
+  });
+});
 
 test('caller cannot widen storage origin/path/method or add auth headers',async()=>{
   const sdk=createOwnerSdkTransport();

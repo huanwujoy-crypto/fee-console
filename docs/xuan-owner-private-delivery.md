@@ -448,3 +448,43 @@ pipeline's Secret/IB/Gateway activity is not authorized by this static delivery
 policy. Review this concrete sensitive diff, freeze its exact head and complete
 the existing OWNER/check/protected-main gates before separately approving a
 new bounded execution. No old R5 window, marker or budget is reusable.
+
+## Explicit current-day handoff
+
+`action_preview_once.mjs --daily-request '<fresh request JSON>'` adds a named
+mode to the existing current-orders producer. Before financial reads it claims
+the original create-only `delivery/YYYY-MM-DD/start.json`; after composition it
+uses `saveCompletedDailyReport` to save that day's `report.html` and then
+`receipt.json` last. The normal preview flag and Flex daily default retain
+their behavior. This mode adds exactly three allowed objects (13 uploads total,
+the same 32 MiB aggregate limit); it never writes `owner-latest.html`.
+A different request ID cannot bypass an occupied daily marker. Failed or
+uncertain staging stops without deleting, overwriting or retrying that marker.
+
+`owner_latest_delivery.mjs --execute-current-workday-sdk` connects this bundle
+to the existing owner publisher using the same Mac SDK identity. The entry
+accepts no caller clock, object paths, source pins, transport or approval JSON.
+The explicit SDK scope addition is GET access to today's two date objects,
+the four canonical sources pinned by their actual completion receipt, and
+historical bundles pinned by actual latest metadata for existing authenticity
+checks. Every content read requires its observed generation and, once known,
+hash. The wrapper serializes source reads for the single-RPC SDK worker; one
+failed read stops the queue. Arbitrary paths and listing remain rejected.
+
+The new named write permits one positive-generation CAS to the original fixed
+latest object, bound to the actually read current-day report and receipt.
+The original seven-principal IAM checks, registered canary reads (zero canary
+writes), source reconstruction, historical verification, metadata/byte readback
+and no-retry behavior remain required. The native worker independently checks
+the old generation and canary before that CAS. Cleanup failure cannot erase an
+already verified storage result. No SDK credential refresh, token export,
+identity/permission change or broker/Sharesight write is added.
+
+The existing five-minute capture, thirty-minute candidate freshness,
+ten-second daily publisher, sixty-second preflight and five-second admission
+limits are unchanged. Storage success leaves `visualStatus: pending` and
+`acceptanceComplete: false`; actual layout/access acceptance remains separate.
+This source patch is not execution approval: it needs the exact-head OWNER
+gate and normal protected checks, then an approved update of the existing
+producer image and a fresh bounded collection/delivery run. Offline tests
+establish no live credentials, data freshness, deployment or visual acceptance.

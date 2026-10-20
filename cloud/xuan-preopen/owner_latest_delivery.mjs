@@ -158,6 +158,31 @@ export const createOwnerDeliveryHook=options=>async({html,receiptText})=>{
   return deliverOwnerLatest({...options,expectedArtifactSha256:sha(html),expectedReceiptSha256:sha(receiptText)});
 };
 
+// Explicit current-workday entry using the existing Mac owner SDK. No token
+// argument/environment export, reader change, collection or automatic retry.
+export async function deliverCurrentOwnerDaily(){
+  if(arguments.length)fail('EXPLICIT_EXECUTION_REQUIRED');
+  const {createOwnerDailyStorageAccess}=await import('./owner_preview_access.mjs');
+  const access=await createOwnerDailyStorageAccess();
+  let result,primary;
+  try{
+    const canary=await access.verifyRegisteredCanary();
+    if(canary.status!=='existing-verified')return result={status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED'};
+    const delivery=await deliverOwnerLatest({request:access.requestDaily});
+    return result={...delivery,storageStatus:delivery.status==='published-verified'?'verified':'not-verified',
+      visualStatus:'pending',acceptanceComplete:false};
+  }catch(error){primary=error;throw error;}
+  finally{
+    try{access.close();}catch(error){
+      // Cleanup cannot erase a known CAS/readback result or replace its primary
+      // failure; it never reopens the consumed publication attempt.
+      if(result)result.cleanupStatus='failed';
+      else if(primary){try{Object.defineProperty(primary,'ownerDeliveryCleanupFailed',{value:true});}catch{}}
+      else throw error;
+    }
+  }
+}
+
 // Explicit review-preview entry only. There is no weekend daily flag or default
 // access assertion. The trusted executor must supply an actual read-only access
 // checker after the separately authorized audience and canary are verified.
@@ -266,12 +291,13 @@ export async function requireProtectedOwnerCheckout({cwd=path.resolve(path.dirna
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   try{
-    if(process.argv.length!==3||process.argv[2]!=='--execute-current-workday')fail('EXPLICIT_EXECUTION_REQUIRED');
+    if(process.argv.length!==3||!['--execute-current-workday','--execute-current-workday-sdk'].includes(process.argv[2]))fail('EXPLICIT_EXECUTION_REQUIRED');
     const plan=planPreopen(Date.now());
     if(plan.status!=='generate'){process.stdout.write(JSON.stringify({status:'no-action',reason:plan.reason})+'\n');}
     else{
       await requireProtectedOwnerCheckout();
-      const result=await deliverOwnerLatest({request:ownerDeliveryRequest(process.env.XUAN_PREOPEN_GOOGLE_TOKEN)});
+      const result=process.argv[2]==='--execute-current-workday-sdk'?await deliverCurrentOwnerDaily()
+        :await deliverOwnerLatest({request:ownerDeliveryRequest(process.env.XUAN_PREOPEN_GOOGLE_TOKEN)});
       process.stdout.write(JSON.stringify(result)+'\n');
       if(!['published-verified','no-op','written-verified'].includes(result.status))process.exitCode=1;
     }

@@ -98,6 +98,30 @@ function requestValue(input,options={},expectedGeneration='0'){
   return {op:'request',url:input,method,headers:normalized,body:body===undefined?null:Buffer.from(body).toString('base64')};
 }
 
+// Separate named lane; request() and the registered-preview lane stay narrow.
+// Python additionally authorizes source pins from the actual receipt read.
+function dailyRequestValue(input,options={},admissionExpiresAt){
+  const method=options.method??'GET';
+  if(method==='POST'){
+    let u;try{u=new URL(input);}catch{throw fail('TARGET_INVALID');}
+    const expected=u.searchParams.get('ifGenerationMatch');
+    if(!generation(expected)||!Number.isSafeInteger(admissionExpiresAt)
+      ||Date.now()>admissionExpiresAt||admissionExpiresAt>Date.now()+5000)throw fail('REPLACEMENT_ADMISSION_EXPIRED');
+    return {...requestValue(input,options,expected),op:'dailyRequest',admissionExpiresAt};
+  }
+  if(input.startsWith(latest))return {...requestValue(input,options),op:'dailyRequest'};
+  let u;try{u=new URL(input);}catch{throw fail('TARGET_INVALID');}
+  const prefix='/storage/v1/b/'+LATEST_TARGET.bucket+'/o/';
+  let name;try{name=decodeURIComponent(u.pathname.slice(prefix.length));}catch{throw fail('TARGET_INVALID');}
+  if(u.origin!=='https://storage.googleapis.com'||!u.pathname.startsWith(prefix)
+    ||u.pathname!==prefix+encodeURIComponent(name)||!(/^(delivery\/\d{4}-\d\d-\d\d\/(?:report\.html|receipt\.json)|report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive)\.json)$/.test(name))
+    ||method!=='GET')throw fail('TARGET_INVALID');
+  // Reuse the existing strict scheme/query/header/body validation.
+  const value=requestValue(input.replace(u.pathname,new URL(latest).pathname),options);
+  if(name.startsWith('report-check/')&&!u.searchParams.has('generation'))throw fail('PIN_REQUIRED');
+  return {...value,op:'dailyRequest',url:input};
+}
+
 function replacementValue(url,options,pins){
   if(!plain(pins)||Object.keys(pins).sort().join('|')!=='previousDisplaySha256|previousGeneration|previousRegistrationSha256|revisionSha256'
     ||!generation(pins.previousGeneration))throw fail('REPLACEMENT_INVALID');
@@ -188,6 +212,14 @@ export function createOwnerSdkTransport(){
     }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);busy=false;}
   };
   return Object.freeze({
+    async requestDaily(url,options={}, {admissionExpiresAt}={}){
+      const value=dailyRequestValue(url,options,admissionExpiresAt);
+      if(value.method==='POST'){
+        if(writeStarted)throw fail('WRITE_ALREADY_ATTEMPTED');
+        writeStarted=true;mutationStarted=true;
+      }
+      return nativeResponse(await call(value,{signal:options.signal}));
+    },
     async request(url,options={}){
       const value=requestValue(url,options);
       if(value.method==='POST'){if(writeStarted)throw fail('WRITE_ALREADY_ATTEMPTED');writeStarted=true;mutationStarted=true;}

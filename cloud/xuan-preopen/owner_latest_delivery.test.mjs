@@ -8,7 +8,7 @@ import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import crypto from 'node:crypto';
-import {deliverOwnerLatest,deliverOwnerAcceptedPreview,deliverOwnerAcceptedPreviewReplacement,deliverOwnerAcceptedPreviewReplacementStorage,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
+import {deliverOwnerLatest,deliverCurrentOwnerDaily,deliverOwnerAcceptedPreview,deliverOwnerAcceptedPreviewReplacement,deliverOwnerAcceptedPreviewReplacementStorage,ownerBundleMetadata,ownerDeliveryRequest,createOwnerDeliveryHook,createOwnerContextLoader,requireProtectedOwnerCheckout,OWNER_PREVIEW_REGISTRATION_PATH,OWNER_PROTECTED_SOURCE_PATHS} from './owner_latest_delivery.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -45,6 +45,31 @@ test('Saturday is no-action before any store, request, source or publisher capab
   let calls=0;const bad=()=>{calls++;throw Error('forbidden');};
   const result=await deliverOwnerLatest({now:()=>Date.parse('2026-10-17T07:00:00Z'),request:bad,storeFactory:bad,publisherFactory:bad});
   assert.equal(result.status,'no-action');assert.equal(calls,0);
+});
+test('named daily SDK entry rejects every caller override before protected lookup or SDK construction',async()=>{
+  for(const value of [undefined,{}, {approved:true}, {request:()=>assert.fail('injected transport')}]){
+    await assert.rejects(()=>deliverCurrentOwnerDaily(value),/EXPLICIT_EXECUTION_REQUIRED/);
+  }
+});
+test('daily entry preserves verified storage or primary failure when SDK cleanup fails',async()=>{
+  // Evaluate the actual entry with only its module import substituted. The
+  // production entry still has no clock, access or publisher override.
+  const source=fs.readFileSync(new URL('./owner_latest_delivery.mjs',import.meta.url),'utf8');
+  const entry=source.slice(source.indexOf('export async function deliverCurrentOwnerDaily(){'),source.indexOf('// Explicit review-preview entry only.'))
+    .replace('export async function','async function').replace("import('./owner_preview_access.mjs')",'loadAccess()');
+  for(const mode of ['verified','blocked','primary']){
+    const primary=Error('SYNTHETIC_PRIMARY');let writes=0,closes=0;
+    const access={verifyRegisteredCanary:async()=>({status:mode==='blocked'?'blocked':'existing-verified'}),
+      requestDaily:()=>assert.fail('entry forwards capability only'),close(){closes++;throw Error('SYNTHETIC_CLEANUP');}};
+    const run=new Function('fail','loadAccess','deliverOwnerLatest','return ('+entry+');')(
+      ()=>assert.fail(),async()=>({createOwnerDailyStorageAccess:async()=>access}),
+      async options=>{assert.equal(options.request,access.requestDaily);writes++;if(mode==='primary')throw primary;return {status:'published-verified',generation:'901'};});
+    if(mode==='primary'){await assert.rejects(run(),error=>error===primary);assert.equal(primary.ownerDeliveryCleanupFailed,true);}
+    else {const result=await run();assert.equal(result.cleanupStatus,'failed');
+      assert.equal(result.status,mode==='verified'?'published-verified':'blocked');
+      if(mode==='verified'){assert.equal(result.storageStatus,'verified');assert.equal(result.visualStatus,'pending');assert.equal(result.acceptanceComplete,false);}}
+    assert.equal(closes,1);assert.equal(writes,mode==='blocked'?0:1);
+  }
 });
 test('controller uses exact generation-pinned bundle bytes and preserves original times and unknown states',async()=>{
   const f=fixture();let candidate;
