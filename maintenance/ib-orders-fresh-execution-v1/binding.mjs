@@ -1,6 +1,6 @@
 // No import-time filesystem, credential, network or SDK access.
 import crypto from 'node:crypto';
-export const PRIVATE_BINDING_SHA256='92e3df5db06e6ed65a4c82369092fe668fa1f932f109eb7d8ac1bfdc0e8de45c';
+export const PRIVATE_BINDING_SHA256='550fa1b2fa3caa13308e34da4c41381e2b610e7e8add65e28e57a281a2c29522';
 const admitted=new WeakSet();
 const deepFreeze=x=>{if(x&&typeof x==='object'){for(const v of Object.values(x))deepFreeze(v);Object.freeze(x);}return x;};
 export function validatePrivateBinding(bytes){

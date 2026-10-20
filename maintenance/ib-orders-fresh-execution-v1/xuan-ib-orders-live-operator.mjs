@@ -19,11 +19,11 @@ function freshClaimRecord(a){
     ||a.previousRecordsDigest!==binding.previousDigest||!hex(a.approvalSha256)||!plain(a.code))fail('APPROVAL_REQUIRED');
   return {spec:FRESH.spec,stage:'initial-orders',operationId:FRESH.operationId,authorizationId:FRESH.authorizationId,
     previousRecordsDigest:a.previousRecordsDigest,approvalSha256:a.approvalSha256,code:a.code,
-    oldRemainingRegistrationMaximum:0,remainingRegistrationMaximum:1,cumulativePossibleRegistrationMaximum:3};
+    oldRemainingRegistrationMaximum:0,remainingRegistrationMaximum:binding.existingClient?0:1,cumulativePossibleRegistrationMaximum:3};
 }
 const SOURCE_HASHES=Object.freeze({
-  "scripts/xuan-ib-oauth-registration-audit.mjs": "1a908701f45b4947975f0cc0ec50a1a4f41a81f516bef3912fc4c6ff8e3b126d",
-  "scripts/xuan-ib-cloud-oauth-bootstrap.mjs": "e484d0427c8142f6f311db60748d645417afa9b9c84d10f42716d53ac6e8578b",
+  "scripts/xuan-ib-oauth-registration-audit.mjs": "02bf0ea153f07732b81fda2cdb2b9f377a08d34fc4977dabb4f1cec3b150d527",
+  "scripts/xuan-ib-cloud-oauth-bootstrap.mjs": "5d279ab4e98c7aafa09f1b2de23e28e5beb7afedf8595a3374e2c3885ac355f3",
   "cloud/xuan-preopen/cloud_io.mjs": "edf0538bb1f2a5ecf63757736b79eb0ee0c47e37606a1eae2291a55da88020cf",
   "cloud/xuan-preopen/ib_diagnostics.mjs": "2c4f889a8b3f2ba11b34aa5f2fea35fa0d9d03d15418850777a15d3c92596669",
   "scripts/xuan-ib-decision-menu.mjs": "f645ad9e06fa1bfa67694a04260cad24eb74ca66a38831aec4ad5ab0d2c9d92c"
@@ -129,6 +129,22 @@ function validateReceipt(r,request,index,execution){
 }
 function safeRegistration(r){
   if(r===null||r===undefined)return null;
+  if(binding.existingClient){
+    const pin=binding.existingClient.expected;
+    if(!exact(r,['mode','clientId','redirectUri','issuer','resource','tokenEndpointAuthMethod','grantTypes','responseTypes','responseTypesEvidence',
+      'registrationScopeEvidence','requestedScope','newRegistrationsMaximum','envelopeSha256','claimSha256','auditSha256','registrationCodeSha256',
+      'registeredAtUtc','historicalProfileAccepted','managementCredentialReturned','managementCredentialPersisted','codeSha256'])
+      ||r.mode!=='existing-client'||r.clientId!==pin.clientId||r.redirectUri!==FIXED.redirectUri||r.tokenEndpointAuthMethod!=='none'
+      ||r.issuer!=='https://api.ibkr.com'||r.resource!=='https://api.ibkr.com/v1/api/mcp-public'
+      ||JSON.stringify(r.grantTypes)!=='["authorization_code","refresh_token"]'||JSON.stringify(r.responseTypes)!=='["code"]'
+      ||!['rfc7591-default-code','registration-response'].includes(r.responseTypesEvidence)
+      ||!['historical-request-match','historical-field-omitted','historical-string-not-retained'].includes(r.registrationScopeEvidence)
+      ||r.requestedScope!=='mcp.read'||r.newRegistrationsMaximum!==0
+      ||['envelopeSha256','claimSha256','auditSha256','registrationCodeSha256'].some(k=>r[k]!==pin[k])
+      ||!iso(r.registeredAtUtc)||typeof r.historicalProfileAccepted!=='boolean'||typeof r.managementCredentialReturned!=='boolean'
+      ||r.managementCredentialPersisted!==false||r.codeSha256!==SOURCE_HASHES['scripts/xuan-ib-cloud-oauth-bootstrap.mjs'])fail('BOOTSTRAP_FAILED');
+    return structuredClone(r);
+  }
   if(!client(r.clientId)||(r.requestedClientName??r.clientName)!=='XUAN Preopen Cloud Read-only v2'||r.redirectUri!==FIXED.redirectUri||r.tokenEndpointAuthMethod!=='none'
     ||JSON.stringify(r.grantTypes)!==JSON.stringify(['authorization_code','refresh_token'])||JSON.stringify(r.responseTypes)!=='["code"]'
     ||r.scope!=='mcp.read'||r.issuer!=='https://api.ibkr.com'||r.resource!=='https://api.ibkr.com/v1/api/mcp-public'||!iso(r.observedAtUtc)
@@ -149,8 +165,8 @@ const EFFECTS=new Set(['not-started','unknown','confirmed','rejected']);
 const TRANSPORT_SPEC='IB-ORDERS-OAUTH-TRANSPORT-DIAGNOSTIC-v1';
 // Fetch reservation means a request MAY have left the process. It is not wire proof.
 // Only fixed metadata is observed; OAuth URLs, headers, bodies and exceptions never enter diagnostics.
-function createObservedOAuthFetch(fetchImpl,{onEvent=async()=>{},beforeFetch=()=>{}}={}){
-  if(typeof fetchImpl!=='function'||typeof onEvent!=='function'||typeof beforeFetch!=='function')fail('BOOTSTRAP_FAILED');
+function createObservedOAuthFetch(fetchImpl,{onEvent=async()=>{},beforeFetch=()=>{},registrationAllowed=true}={}){
+  if(typeof fetchImpl!=='function'||typeof onEvent!=='function'||typeof beforeFetch!=='function'||typeof registrationAllowed!=='boolean')fail('BOOTSTRAP_FAILED');
   const rows={registration:{requestReservations:0,responseReceived:false,httpStatus:null,bodyState:'not-started'},
     exchange:{requestReservations:0,responseReceived:false,httpStatus:null,bodyState:'not-started'}};
   let diagnosticPersistence='confirmed';const pendingDiagnostics=new Set();
@@ -163,7 +179,7 @@ function createObservedOAuthFetch(fetchImpl,{onEvent=async()=>{},beforeFetch=()=
     if(diagnosticPersistence!=='confirmed')fail('BOOTSTRAP_OUTCOME_UNKNOWN');}finally{signal?.removeEventListener('abort',onAbort);}};
   const fetch=async(endpoint,options)=>{
     const kind=endpoint==='https://api.ibkr.com/oauth2/register'?'registration':endpoint==='https://api.ibkr.com/oauth2/api/v1/token'?'exchange':null;
-    if(!kind||rows[kind].requestReservations!==0)fail('BOOTSTRAP_FAILED');
+    if(!kind||kind==='registration'&&!registrationAllowed||rows[kind].requestReservations!==0)fail('BOOTSTRAP_FAILED');
     const row=rows[kind];row.requestReservations=1;
     await emit(); // Persist the possible-side-effect boundary before calling fetch.
     if(options?.signal?.aborted)fail('BOOTSTRAP_OUTCOME_UNKNOWN');beforeFetch(endpoint);
@@ -245,6 +261,9 @@ async function runStagedOperation(a,caps,{clock=Date,signal=new AbortController(
       // Do not present owner consent unless its bounded admission/finalization and
       // first task can fit. This never extends the approved operation deadline.
       if(Date.parse(a.validUntilUtc)-clock.now()<960000)fail('WINDOW_OUTSIDE_APPROVAL');
+      // Reuse reserves the new operation before UI; it never consumes a
+      // registration reservation or reopens the historical operation claim.
+      if(binding.existingClient)await claim();
       app=await caps.bootstrap({onBeforeRegistration:claim,onDiagnostic:async d=>{
         if(!acceptDiagnostics)return;retainBootstrap(state,d.result,d.transport);if(state.stageReserved)await emit();},onSaved:m=>{
         check();if(!acceptSaved||!state.stageReserved||meta||!exact(m,['clientId','expiresAt','versionName'])||!client(m.clientId)

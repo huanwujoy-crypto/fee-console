@@ -1,6 +1,7 @@
 // Pure, closed projection. Never retain an OAuth response or unknown field value.
 import crypto from 'node:crypto';
 import {assertPrivateBinding} from '../../binding.mjs';
+import {uniqueCloudJson} from '../cloud/xuan-preopen/cloud_io.mjs';
 export const REGISTRATION_AUDIT_SPEC='IB-ORDERS-REGISTRATION-AUDIT-v1';
 const plain=x=>x&&Object.getPrototypeOf(x)===Object.prototype&&Reflect.ownKeys(x).every(k=>typeof k==='string'&&Object.hasOwn(Object.getOwnPropertyDescriptor(x,k),'value')&&Object.getOwnPropertyDescriptor(x,k).enumerable);
 const exact=(x,keys)=>plain(x)&&Reflect.ownKeys(x).every(k=>typeof k==='string')&&Reflect.ownKeys(x).sort().join('|')===[...keys].sort().join('|');
@@ -82,6 +83,53 @@ export function validateRegistrationAudit(v){
     managementCredentialPersisted:false,usableForAuthorization:false});
 }
 export const registrationAuditHash=v=>sha(canonical(validateRegistrationAudit(v)));
+
+// Scope is a case-sensitive, SP-separated set. JSON arrays, empty strings and
+// other whitespace are not OAuth scope syntax. Never return an untrusted value.
+export function isReadOnlyScope(value){
+  return typeof value==='string'&&value.length<=4096
+    &&/^[\x21\x23-\x5b\x5d-\x7e]+(?: [\x21\x23-\x5b\x5d-\x7e]+)*$/.test(value)
+    &&value.split(' ').every(token=>token==='mcp.read');
+}
+const existingClients=new WeakSet();
+export function assertExistingClient(client){
+  if(!existingClients.has(client))throw Error('EXISTING_CLIENT_EVIDENCE_INVALID');
+}
+// The v1 audit is historical evidence and remains byte-for-byte unaltered.
+// This separate decision permits only a new, explicit mcp.read authorization
+// attempt; it does not assert what the lost registration.scope string contained.
+export function verifyExistingClientEvidence(bytes,expected){
+  try{
+    if(!Buffer.isBuffer(bytes)||bytes.length>65536
+      ||!exact(expected,['envelopeSha256','claimSha256','auditSha256','clientId','redirectUri','registrationCodeSha256'])
+      ||!['envelopeSha256','claimSha256','auditSha256','registrationCodeSha256'].every(k=>hex(expected[k]))
+      ||!client(expected.clientId)||!URI(expected.redirectUri)||sha(bytes)!==expected.envelopeSha256)fail();
+    const envelope=uniqueCloudJson(new TextDecoder('utf-8',{fatal:true}).decode(bytes),65536);
+    if(!exact(envelope,['spec','claimSha256','registrationAudit'])
+      ||envelope.spec!=='IB-ORDERS-REGISTRATION-AUDIT-ENVELOPE-v1'||envelope.claimSha256!==expected.claimSha256)fail();
+    const audit=validateRegistrationAudit(envelope.registrationAudit);
+    if(registrationAuditHash(audit)!==expected.auditSha256||audit.clientId!==expected.clientId
+      ||audit.redirectUri!==expected.redirectUri||audit.codeSha256!==expected.registrationCodeSha256
+      ||audit.httpStatus!==201||audit.checks.document!=='object'
+      ||['clientId','redirectUris','authMethod','grantTypes'].some(k=>audit.checks[k]!=='match')
+      ||!['match','missing'].includes(audit.checks.responseTypes)||!['match','different','missing'].includes(audit.checks.scope)
+      ||audit.observedAuthMethod!=='none'||audit.clientSecretState!=='absent')fail();
+    const decision=Object.freeze({
+      mode:'existing-client',clientId:audit.clientId,redirectUri:audit.redirectUri,
+      issuer:audit.issuer,resource:audit.resource,tokenEndpointAuthMethod:'none',
+      grantTypes:Object.freeze(['authorization_code','refresh_token']),responseTypes:Object.freeze(['code']),
+      responseTypesEvidence:audit.checks.responseTypes==='missing'?'rfc7591-default-code':'registration-response',
+      registrationScopeEvidence:audit.checks.scope==='match'?'historical-request-match':
+        audit.checks.scope==='missing'?'historical-field-omitted':'historical-string-not-retained',
+      requestedScope:'mcp.read',newRegistrationsMaximum:0,
+      envelopeSha256:expected.envelopeSha256,claimSha256:expected.claimSha256,auditSha256:expected.auditSha256,
+      registrationCodeSha256:audit.codeSha256,registeredAtUtc:audit.observedAtUtc,
+      historicalProfileAccepted:audit.profileAccepted,managementCredentialReturned:audit.managementCredentialReturned,
+      managementCredentialPersisted:false,
+    });
+    existingClients.add(decision);return decision;
+  }catch{throw Error('EXISTING_CLIENT_EVIDENCE_INVALID');}
+}
 
 // The production factory accepts only a byte-committed private binding.
 export function createBoundAudit(binding){

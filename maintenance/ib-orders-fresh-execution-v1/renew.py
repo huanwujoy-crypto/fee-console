@@ -4,7 +4,7 @@ from types import SimpleNamespace
 import hashlib, json, os, re, sys, time
 
 SOURCE=Path(__file__).with_name('xuan-ib-orders-live-operator.mjs')
-PRIVATE_BINDING_SHA256='92e3df5db06e6ed65a4c82369092fe668fa1f932f109eb7d8ac1bfdc0e8de45c'
+PRIVATE_BINDING_SHA256='550fa1b2fa3caa13308e34da4c41381e2b610e7e8add65e28e57a281a2c29522'
 
 EXECUTION_DEADLINE_MS=None
 def admit():
@@ -95,7 +95,7 @@ def live():
             return json.loads(p.read_bytes())
         claim=private_json(runtime/'fresh.claim.safe.json');renew_claim=private_json(runtime/'google-renew-once.claim.safe.json')
         approval=private_json(Path(binding['approvalPath']))
-        if claim['operationId']!=binding['fresh']['operationId'] or claim['authorizationId']!=binding['fresh']['authorizationId'] or claim['previousRecordsDigest']!=binding['previousDigest'] or claim['oldRemainingRegistrationMaximum']!=0 or claim['remainingRegistrationMaximum']!=1 or claim['cumulativePossibleRegistrationMaximum']!=3:raise RuntimeError()
+        if claim['operationId']!=binding['fresh']['operationId'] or claim['authorizationId']!=binding['fresh']['authorizationId'] or claim['previousRecordsDigest']!=binding['previousDigest'] or claim['oldRemainingRegistrationMaximum']!=0 or claim['remainingRegistrationMaximum']!=(0 if binding.get('existingClient') else 1) or claim['cumulativePossibleRegistrationMaximum']!=3:raise RuntimeError()
         if renew_claim!={'spec':binding['fresh']['spec'],'operationId':binding['fresh']['operationId'],'approvalSha256':claim['approvalSha256'],'normalRenewalMaximum':1,'automaticRetry':False}:raise RuntimeError()
         if hashlib.sha256(Path(binding['approvalPath']).read_bytes()).hexdigest()!=claim['approvalSha256'] or approval['googleSession']['normalRenewalMaximum']!=1 or EXECUTION_DEADLINE_MS!=int(__import__('datetime').datetime.fromisoformat(approval['validUntilUtc'].replace('Z','+00:00')).timestamp()*1000):raise RuntimeError()
         if (runtime/'google-renew-once.result.safe.json').exists():raise RuntimeError()

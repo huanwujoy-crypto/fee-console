@@ -78,7 +78,7 @@ globalThis.fetch=deny('fetch');syncBuiltinESMExports();
 process.once('exit',()=>process.stderr.write('PACKAGE_TEST_GUARD '+JSON.stringify(observed)+'\\n'));
 `;}
 
-async function fixture(t,{nodeVersion=process.versions.node,nodeDrift=false,pythonPinMismatch=false,badAbsence=null}={}){
+async function fixture(t,{nodeVersion=process.versions.node,nodeDrift=false,pythonPinMismatch=false,badAbsence=null,reuse=false}={}){
   const root=await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(),'fresh package actual CLI ')));await fs.chmod(root,0o700);
   t.after(()=>fs.rm(root,{recursive:true,force:true}));
   const repo=path.join(root,'synthetic repository with spaces'),here=path.join(repo,PREFIX),pkg=path.join(root,'private package');
@@ -113,6 +113,19 @@ async function fixture(t,{nodeVersion=process.versions.node,nodeDrift=false,pyth
       consumerJobs:['synthetic-probe','synthetic-report','synthetic-check','synthetic-source'],eodJobs:['synthetic-eod-a','synthetic-eod-b'],schedulers:['synthetic-clock','synthetic-watch'],command:['node','synthetic-probe.mjs']},
     dependencies:{node:nodeVersion,python:'synthetic-never-executed',googleCloudSdk:'synthetic-never-imported',nodeExecutable:pinnedNode,pythonExecutable:python,sdkCredentialSourceSha256:externalPins[sdkCredential]},
     externalPins,previousRecords:records,previousNames:names,previousDigest:sha(canonical({records,names}))};
+  if(reuse){
+    const auditModule=await import(new URL('../../maintenance/ib-orders-fresh-execution-v1/source/scripts/xuan-ib-oauth-registration-audit.mjs',import.meta.url));
+    const profile={...auditModule.registrationRequestProfile(binding.fixed.redirectUri),client_id:'SYNTHETIC_EXISTING_CLIENT',scope:'mcp.read mcp.write'};
+    delete profile.response_types;
+    const audit=auditModule.assessRegistration(profile,{attemptId:uuid(80),operationId:uuid(81),approvalSha256:'8'.repeat(64),codeSha256:'7'.repeat(64),
+      redirectUri:binding.fixed.redirectUri,observedAtUtc:'2031-05-05T10:00:00.000Z',httpStatus:201});
+    const filename=path.join(Object.keys(names)[0],'registration-audit.safe.json'),envelope=json({
+      spec:'IB-ORDERS-REGISTRATION-AUDIT-ENVELOPE-v1',claimSha256:'9'.repeat(64),registrationAudit:audit});
+    await write(filename,envelope);records[filename]=sha(envelope);names[path.dirname(filename)].push(path.basename(filename));names[path.dirname(filename)].sort();
+    binding.existingClient={path:filename,expected:{envelopeSha256:sha(envelope),claimSha256:'9'.repeat(64),auditSha256:auditModule.registrationAuditHash(audit),
+      clientId:profile.client_id,redirectUri:binding.fixed.redirectUri,registrationCodeSha256:'7'.repeat(64)}};
+    binding.previousDigest=sha(canonical({records,names}));
+  }
   if(badAbsence){
     const regular=path.join(root,'regular-file-parent');await write(regular,'synthetic non-directory\n');
     if(badAbsence==='approval'){binding.approvalDirectory=regular+'/absent';binding.approvalPath=binding.approvalDirectory+'/fresh.approval.json';}
@@ -171,6 +184,24 @@ test('actual read-only package CLI admits one complete synthetic default package
   for(const n of FILES)assert.ok(r.observed.reads.includes(path.join(f.here,n)),n);
   for(const n of [...Object.keys(f.binding.previousRecords),...Object.keys(f.binding.externalPins)])assert.ok(r.observed.reads.includes(n),n);
   assert.deepEqual([...r.observed.names].sort(),Object.keys(f.binding.previousNames).sort());await f.ensureFresh();
+});
+
+test('actual read-only package CLI validates reuse evidence and DCR zero with native effects denied',async t=>{
+  const f=await fixture(t,{reuse:true}),before=await fs.readFile(f.binding.existingClient.path),r=await f.cli();
+  assert.equal(r.exitCode,0);assert.equal(r.value.status,'verified-package');
+  assert.equal(r.value.executionAuthorization,false);assert.equal(r.value.liveActions,0);
+  assert.equal(f.manifest.registrationMode,'existing-client');assert.equal(f.manifest.limits.registrations,0);
+  assert.equal(f.manifest.registrationBudget.additionalMax,0);assert.equal(f.manifest.registrationBudget.priorPossible,3);
+  assert.equal(r.value.checked.historicalRecords,16);
+  assert.ok(r.observed.reads.includes(f.binding.existingClient.path));
+  assert.ok(before.equals(await fs.readFile(f.binding.existingClient.path)));await f.ensureFresh();
+});
+
+test('actual reuse package CLI rejects registration evidence drift without SDK or authorization',async t=>{
+  const f=await fixture(t,{reuse:true});
+  await write(f.binding.existingClient.path,json({synthetic:true,changed:true}));
+  const r=await f.cli();stopped(r,'PREVIOUS_RECORDS_MISMATCH');
+  assert.equal(r.value.liveActions,0);assert.deepEqual(r.observed.denied,[]);await f.ensureFresh();
 });
 
 test('actual CLI rejects malformed arguments and a wrong manifest byte hash',async t=>{

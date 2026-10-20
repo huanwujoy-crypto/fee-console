@@ -5,7 +5,7 @@ import * as fs from 'node:fs/promises';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {validatePrivateBinding,assertPrivateBinding,PRIVATE_BINDING_SHA256} from './binding.mjs';
 import {createOperator} from './xuan-ib-orders-live-operator.mjs';
-import {createBoundAudit} from './source/scripts/xuan-ib-oauth-registration-audit.mjs';
+import {createBoundAudit,verifyExistingClientEvidence} from './source/scripts/xuan-ib-oauth-registration-audit.mjs';
 const SELF=fileURLToPath(import.meta.url);
 export const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
 const plain=x=>x&&Object.getPrototypeOf(x)===Object.prototype;
@@ -16,12 +16,13 @@ const iso=x=>typeof x==='string'&&Number.isFinite(Date.parse(x))&&new Date(x).to
 export const CODE_FILES=Object.freeze(['binding.mjs','xuan-ib-orders-fresh.mjs','xuan-ib-orders-live-operator.mjs','renew.py',
   'source/cloud/xuan-preopen/cloud_io.mjs','source/cloud/xuan-preopen/ib_diagnostics.mjs','source/scripts/xuan-ib-cloud-oauth-bootstrap.mjs',
   'source/scripts/xuan-ib-decision-menu.mjs','source/scripts/xuan-ib-oauth-registration-audit.mjs']);
-export const LIMITS=Object.freeze({registrations:1,ownerConsents:1,codeExchanges:1,initialVersions:1,runPosts:1,ordersCalls:1,refreshes:0,rotationVersions:0,
+export const LIMITS=Object.freeze({registrations:0,ownerConsents:1,codeExchanges:1,initialVersions:1,runPosts:1,ordersCalls:1,refreshes:0,rotationVersions:0,
   newInfrastructure:0,iamChanges:0,secretServiceChanges:0,deployments:0,schedules:0,productionResume:0,newGoogleLogins:0,newGoogleGrants:0,newGoogleScopes:0});
 const hex40=x=>typeof x==='string'&&/^[a-f0-9]{40}$/.test(x);
 function createFreshExecution(binding,{bindingFile=null}={}){
   assertPrivateBinding(binding);
   const nativeApprovals=new WeakSet(),nativeClaims=new WeakSet(),nativeIOs=new WeakSet();
+  const reusedClients=new WeakMap(),reuse=Boolean(binding.existingClient);
   const assertNativeApproval=a=>{if(!nativeApprovals.has(a)||!nativeClaims.has(a))throw Error('APPROVAL_REQUIRED');};
   const core=createOperator(binding);
   const {persistRegistrationAudit}=createBoundAudit(binding);
@@ -45,7 +46,9 @@ function freshManifest(files,identity={head:null,tree:null}){
   if(!exact(files,CODE_FILES)||!Object.values(files).every(hex))fail('CODE_MISMATCH');
   return {spec:FRESH.spec,approved:false,stage:'initial-orders',operationId:FRESH.operationId,authorizationId:FRESH.authorizationId,
     requestIds:[FRESH.requestId,FRESH.unusedRequestId],unusedSecondRequestNeverExecutable:true,previousRecordsDigest:PREVIOUS_DIGEST,previousRecords:PREVIOUS_RECORDS,previousNames:PREVIOUS_NAMES,
-    oldRemainingRegistrationMaximum:0,registrationBudget:{priorOutcome:'unknown',priorPossible:2,additionalMax:1,cumulativeMax:3},limits:LIMITS,
+    oldRemainingRegistrationMaximum:0,registrationBudget:{priorOutcome:'unknown',priorPossible:reuse?3:2,additionalMax:reuse?0:1,cumulativeMax:3},
+    limits:{...LIMITS,registrations:reuse?0:1},
+    ...(reuse?{registrationMode:'existing-client',existingClientEvidence:binding.existingClient}:{}),
     paths:{candidate:HERE,approval:APPROVAL_PATH,...PATHS},
     code:{executionHead:identity.head,executionTree:identity.tree,privateBindingSha256:PRIVATE_BINDING_SHA256,sourceHead:FIXED.head,sourceTree:FIXED.tree,image:FIXED.image,imageAdmission:'future-fresh-metadata-only-not-verified-this-preparation',files,dependencies:DEPENDENCIES,externalPins:EXTERNAL_PINS},
     profile:{requestedClientName:'XUAN Preopen Cloud Read-only v2',issuer:'https://api.ibkr.com',resource:'https://api.ibkr.com/v1/api/mcp-public',
@@ -55,7 +58,7 @@ function freshManifest(files,identity={head:null,tree:null}){
     resources:{project:FIXED.project,region:FIXED.region,job:FIXED.job,serviceAccount:FIXED.sourceSa,bucket:FIXED.bucket,secret:FIXED.secret,operatorAccountSha256:FIXED.operatorAccountSha256},
     precedingVersion:'14',precedingVersionMetadataOnly:true,driftAction:'stop',
     googleSession:{normalRenewalMaximum:0,maximumSelectable:1,existingIdentityOnly:true,newLogin:false,newGrant:false,newScopes:false,unknownAction:'stop-no-retry'},
-    risk:{acceptUnknownPriorRegistration:true,acceptDuplicateClientRisk:true,acceptMacReplacement:true,restoreProduction:false},
+    risk:reuse?{acceptMacReplacement:true,restoreProduction:false}:{acceptUnknownPriorRegistration:true,acceptDuplicateClientRisk:true,acceptMacReplacement:true,restoreProduction:false},
     cost:{estimateUsd:0.2,reviewAmountUsd:1,estimateIsHardCap:false,reviewAmountIsHardCap:false,higherSpendingApproved:false},
     timing:{ownerAdmissionMs:600000,finalizationMs:40000,minimumRemainingMs:960000,automaticExtension:false,effectAdmission:'current-absolute-window-and-cancellation-before-each-new-effect',childDeadline:'same-approved-absolute-validUntil'},
     maintenance:{manualHoldScope:[...FIXED.consumerJobs,...FIXED.eodJobs,'xuan-preopen-cloud-producer.yml'],eodQuietScope:[...FIXED.eodJobs],
@@ -104,14 +107,25 @@ async function verifyPackageSnapshot(io,{native=false}={}){
   if(process.versions.node!==DEPENDENCIES.node||native&&process.execPath!==DEPENDENCIES.nodeExecutable)fail('CODE_MISMATCH');
   for(const[n,h]of Object.entries(PREVIOUS_RECORDS))if(sha(await io.read(n))!==h)fail('PREVIOUS_RECORDS_MISMATCH');
   if(canonical(await io.previousNames())!==canonical(PREVIOUS_NAMES))fail('PREVIOUS_RECORDS_MISMATCH');
-  return {files,identity};
+  let existingClient=null;
+  if(reuse){
+    try{
+      const {path:filename,expected}=binding.existingClient;
+      if(PREVIOUS_RECORDS[filename]!==expected.envelopeSha256)fail('CODE_MISMATCH');
+      existingClient=verifyExistingClientEvidence(await io.read(filename),expected);
+      if(existingClient.redirectUri!==FIXED.redirectUri)fail('CODE_MISMATCH');
+    }catch{fail('PREVIOUS_RECORDS_MISMATCH');}
+  }
+  return {files,identity,existingClient};
 }
 async function verifyFresh(a,raw,io,now){
-  const {files,identity}=await verifyPackageSnapshot(io,{native:nativeIOs.has(io)});
+  const {files,identity,existingClient}=await verifyPackageSnapshot(io,{native:nativeIOs.has(io)});
   a=validateFreshApproval(a,{now,files,identity});
   const [human,hold,eod]=await Promise.all(['human-approval.safe.json','manual-hold.safe.json','eod-quiet.safe.json'].map(n=>io.read(APPROVAL_DIRECTORY+'/'+n)));
   validateHuman(a,human,now);validateProof(a,hold,'manual-hold');validateProof(a,eod,'independent-eod-quiet-no-context-read');
-  const admitted={...a,approvalSha256:sha(raw),manualHold:{attested:true},eodQuiet:{attested:true}};if(nativeIOs.has(io))nativeApprovals.add(admitted);return admitted;
+  const admitted={...a,approvalSha256:sha(raw),manualHold:{attested:true},eodQuiet:{attested:true}};
+  if(reuse)reusedClients.set(admitted,existingClient);
+  if(nativeIOs.has(io))nativeApprovals.add(admitted);return admitted;
 }
 async function privateDirectory(n){const s=await fs.lstat(n);if(!s.isDirectory()||s.isSymbolicLink()||s.uid!==process.getuid()||(s.mode&0o777)!==0o700)fail('PRIVATE_FILE_INVALID');return s;}
 // Fixed-path durable primitive. Tests may inject a filesystem that maps only this
@@ -201,7 +215,7 @@ async function nativeFreshIO(){
   Object.freeze(io);nativeIOs.add(io);return io;
 }
 function boundOfflinePlan(){return {spec:FRESH.spec,status:'offline',liveActions:0,liveApproved:false,operationId:FRESH.operationId,authorizationId:FRESH.authorizationId,
-  currentOldRemainingRegistrationMaximum:0,newRegistrationAuthorization:false,priorPossibleRegistrations:2,futureAdditionalMaximum:1,futureCumulativeMaximum:3,
+  currentOldRemainingRegistrationMaximum:0,newRegistrationAuthorization:false,priorPossibleRegistrations:reuse?3:2,futureAdditionalMaximum:reuse?0:1,futureCumulativeMaximum:3,
   manifest:HERE+'/fresh-execution.NOT-APPROVED.json',validFromUtc:null,validUntilUtc:null,automaticRetry:false,automaticMaintenanceResume:false};}
 async function boundVerifyPackage(manifestPath,manifestSha256){
   try{
@@ -369,10 +383,14 @@ async function nativeAdapters(a,signal){
     let stageRuns=0;
     return {checkMaintenance,async bootstrap({onSaved,onDiagnostic,onBeforeRegistration}){
       executionAdmission(a,signal);if(a.stage==='natural-refresh')nativeFail('APPROVAL_REQUIRED');
-      let app,reserved=false;const observed=createObservedOAuthFetch(globalThis.fetch,{onEvent:async transport=>{
+      let app,reserved=false;
+      // The actual transport rejects DCR before reserving or issuing a request.
+      const observed=createObservedOAuthFetch(globalThis.fetch,{registrationAllowed:!reuse,onEvent:async transport=>{
         if(a.stage&&!reserved&&transport.registration.requestReservations===1){if(typeof onBeforeRegistration!=='function')nativeFail('APPROVAL_REQUIRED');await onBeforeRegistration();reserved=true;}
         await onDiagnostic({result:app?.snapshot(),transport});},beforeFetch:endpoint=>{executionAdmission(a,signal);if(a.spec===FRESH.spec&&endpoint==='https://api.ibkr.com/oauth2/register'&&Date.parse(a.validUntilUtc)-Date.now()<960000)nativeFail('WINDOW_OUTSIDE_APPROVAL');}});
-      app=core.createBootstrap({admission:()=>executionAdmission(a,signal),registrationContext:{attemptId:crypto.randomUUID(),operationId:a.operationId,approvalSha256:a.approvalSha256},
+      if(reuse&&!reusedClients.has(a))nativeFail('APPROVAL_REQUIRED');
+      app=core.createBootstrap({existingClient:reuse?reusedClients.get(a):null,
+        admission:()=>executionAdmission(a,signal),registrationContext:{attemptId:crypto.randomUUID(),operationId:a.operationId,approvalSha256:a.approvalSha256},
         onRegistrationAudit:async(registrationAudit,{signal:auditSignal})=>{
           // The legacy consumption entry has no approved phase1 claim and remains closed.
           if(a.stage!=='initial-orders'||!reserved||registrationAudit.codeSha256!==SOURCE_HASHES['scripts/xuan-ib-cloud-oauth-bootstrap.mjs']
@@ -458,7 +476,7 @@ function createExternalBrowserAdapter(core,a){
 // Pure data only: this helper exposes no native IO, approval mint or executor.
 export function buildOfflineManifest(binding,files,identity){return createFreshExecution(binding).freshManifest(files,identity);}
 export function offlinePlan(){return {spec:'IB-ORDERS-FRESH-EXECUTION-v1',status:'offline',liveActions:0,liveApproved:false,
-  currentOldRemainingRegistrationMaximum:0,newRegistrationAuthorization:false,priorPossibleRegistrations:2,futureAdditionalMaximum:1,futureCumulativeMaximum:3,
+  registrationMode:'existing-client',currentOldRemainingRegistrationMaximum:0,newRegistrationAuthorization:false,priorPossibleRegistrations:3,futureAdditionalMaximum:0,futureCumulativeMaximum:3,
   privateBindingSha256:PRIVATE_BINDING_SHA256,validFromUtc:null,validUntilUtc:null,automaticRetry:false,automaticMaintenanceResume:false};}
 async function readPrivateControlBytes(filename){
   if(typeof filename!=='string'||!path.isAbsolute(filename))throw Error('PRIVATE_BINDING_INVALID');

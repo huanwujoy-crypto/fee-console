@@ -1,7 +1,7 @@
 // IB-ORDERS-OAUTH-BOOTSTRAP-LOCAL-v1. Import/CLI defaults are strictly offline.
 import crypto from 'node:crypto';
 import {uniqueCloudJson,validateIbRotationReceipt,validateBoundIbVersionName} from '../cloud/xuan-preopen/cloud_io.mjs';
-import {assessRegistration,registrationAuditHash,registrationRequestProfile} from './xuan-ib-oauth-registration-audit.mjs';
+import {assessRegistration,registrationAuditHash,registrationRequestProfile,isReadOnlyScope,assertExistingClient} from './xuan-ib-oauth-registration-audit.mjs';
 
 export const BOOTSTRAP_SPEC='IB-ORDERS-OAUTH-BOOTSTRAP-LOCAL-v1';
 export const BOOTSTRAP=Object.freeze({issuer:'https://api.ibkr.com',register:'https://api.ibkr.com/oauth2/register',
@@ -56,7 +56,7 @@ function registrationReceipt(audit,{redirectUri,codeSha256,now}){
 function credentialFromToken(raw,{registeredClientId,now}){
   if(!object(raw)||typeof raw.access_token!=='string'||!raw.access_token.trim()||typeof raw.refresh_token!=='string'||!raw.refresh_token.trim()
     ||typeof raw.token_type!=='string'||raw.token_type.toLowerCase()!=='bearer'||!Number.isFinite(raw.expires_in)||raw.expires_in<=0||raw.expires_in>31536000
-    ||raw.scope!==undefined&&raw.scope!=='mcp.read'||raw.client_id!==undefined&&raw.client_id!==registeredClientId
+    ||Object.hasOwn(raw,'scope')&&!isReadOnlyScope(raw.scope)||raw.client_id!==undefined&&raw.client_id!==registeredClientId
     ||raw.resource!==undefined&&raw.resource!==BOOTSTRAP.resource||Object.hasOwn(raw,'id_token'))fail('BOOTSTRAP_TOKEN_INVALID');
   const expiresAt=now()+raw.expires_in*1000;if(!Number.isSafeInteger(expiresAt)||expiresAt<=now())fail('BOOTSTRAP_TOKEN_INVALID');
   return {credential:{client_id:registeredClientId,access_token:raw.access_token,refresh_token:raw.refresh_token,
@@ -121,13 +121,17 @@ export async function preflightLoopback({listener}={}){
   }catch{fail('BOOTSTRAP_LISTENER_BINDING_INVALID');}finally{try{await bound?.close();}catch{fail('BOOTSTRAP_LISTENER_BINDING_INVALID');}}
 }
 
-export function createBootstrap({approval,fetchImpl,listener,browser,store,maintenance,registrationContext,onRegistrationAudit,clock=defaultClock,randomBytes=crypto.randomBytes,
+export function createBootstrap({approval,fetchImpl,listener,browser,store,maintenance,registrationContext,onRegistrationAudit,existingClient=null,clock=defaultClock,randomBytes=crypto.randomBytes,
   operatorAccountSha256=BOOTSTRAP.operatorAccountSha256,admission=()=>{}}={}){
   const approved=validateApproval(approval,operatorAccountSha256);
   if(typeof admission!=='function'||typeof fetchImpl!=='function'||typeof listener?.bind!=='function'||typeof browser?.open!=='function'||typeof store?.save!=='function'
     ||typeof maintenance?.check!=='function'||typeof onRegistrationAudit!=='function'||!sameKeys(registrationContext,['attemptId','operationId','approvalSha256']))fail('BOOTSTRAP_APPROVAL_REQUIRED');
   try{assessRegistration({}, {...registrationContext,codeSha256:approved.codeSha256,redirectUri:approved.redirectUri,observedAtUtc:new Date(clock.now()).toISOString(),httpStatus:201});}
   catch{fail('BOOTSTRAP_APPROVAL_REQUIRED');}
+  if(existingClient!==null){
+    try{assertExistingClient(existingClient);}catch{fail('BOOTSTRAP_PROFILE_REVIEW_REQUIRED');}
+    if(existingClient.redirectUri!==approved.redirectUri)fail('BOOTSTRAP_PROFILE_REVIEW_REQUIRED');
+  }
   registrationContext=Object.freeze({...registrationContext});
   let phase='prepared',bound=null,bindPending=null,closePending=null,started=false,used=false,startUsed=false,stopped=false,listenerClosed=true,timer,deadline=0,finalDeadline=0,receipt=null,scopeEvidence=null;
   let sensitive=null;const controller=new AbortController();
@@ -209,6 +213,11 @@ export function createBootstrap({approval,fetchImpl,listener,browser,store,maint
       alive();
       if(bound.host!=='127.0.0.1'||bound.port!==Number(uri.port)||`http://${bound.host}:${bound.port}${BOOTSTRAP.callbackPath}`!==approved.redirectUri)fail('BOOTSTRAP_LISTENER_BINDING_INVALID');
       alive();await verifyMaintenance(maintenance,approved.precedingVersion,{clock,signal:controller.signal});alive();
+      if(existingClient){
+        // No registration request, no old claim replay and no new audit that
+        // pretends to be a registration response. Keep both code hashes distinct.
+        receipt=Object.freeze({...existingClient,codeSha256:approved.codeSha256});
+      }else{
       phase='register';effects.registration='unknown';
       const response=await oauthPost(BOOTSTRAP.register,JSON.stringify(registrationProfile(approved.redirectUri)),{fetchImpl,clock,signal:controller.signal,phase:'register'});
       effects.registration='confirmed';
@@ -224,6 +233,7 @@ export function createBootstrap({approval,fetchImpl,listener,browser,store,maint
         alive();registrationAuditPersistence='confirmed';
       }catch{fail('BOOTSTRAP_REGISTRATION_AUDIT_UNCONFIRMED');}finally{clock.clearTimeout(auditTimer);controller.signal.removeEventListener('abort',onAuditAbort);}
       receipt=registrationReceipt(registrationAudit,{redirectUri:approved.redirectUri,codeSha256:approved.codeSha256,now:clock.now});alive();
+      }
       phase='await-owner';bound.setHandler(handleHttp);
       // Only the non-sensitive loopback start URL reaches a browser adapter.
       // That same browser receives an HttpOnly session cookie before redirect.

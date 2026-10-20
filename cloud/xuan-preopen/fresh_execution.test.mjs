@@ -24,7 +24,7 @@ const clone=x=>JSON.parse(JSON.stringify(x));
 const stable=x=>Array.isArray(x)?'['+x.map(stable).join(',')+']':x&&typeof x==='object'?'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+stable(x[k])).join(',')+'}':JSON.stringify(x);
 const uuid=n=>`10000000-0000-4000-8000-${String(n).padStart(12,'0')}`;
 
-function fixtureBinding(fixed={}){
+function fixtureBinding(fixed={},reuse=false){
   const records={},bytes=new Map(),names={'/synthetic/previous':[]};
   for(let i=0;i<15;i++){
     const name=String(i).padStart(4,'0')+'.safe.json',n='/synthetic/previous/'+name,b=json({synthetic:true,sequence:i});
@@ -41,11 +41,28 @@ function fixtureBinding(fixed={}){
     previousRecords:records,previousNames:names,previousDigest:digest(stable({records,names}))};
   const pin=Buffer.from('synthetic executable bytes');binding.externalPins['/synthetic/node']=digest(pin);bytes.set('/synthetic/node',pin);
   Object.assign(binding.fixed,fixed);
+  if(reuse){
+    const profile={client_name:'XUAN Preopen Cloud Read-only v2',scope:'mcp.read',grant_types:['authorization_code','refresh_token'],
+      response_types:['code'],token_endpoint_auth_method:'none',redirect_uris:[binding.fixed.redirectUri]};
+    const audit={spec:'IB-ORDERS-REGISTRATION-AUDIT-v1',attemptId:uuid(80),operationId:uuid(81),approvalSha256:'8'.repeat(64),
+      codeSha256:'7'.repeat(64),redirectUri:binding.fixed.redirectUri,observedAtUtc:new Date(T-86400000).toISOString(),httpStatus:201,
+      issuer:'https://api.ibkr.com',resource:'https://api.ibkr.com/v1/api/mcp-public',requestProfileSha256:digest(stable(profile)),clientId:'SYNTHETIC_CLIENT',
+      checks:{document:'object',clientId:'match',redirectUris:'match',scope:'different',authMethod:'match',grantTypes:'match',responseTypes:'missing'},
+      profileAccepted:false,reasons:['SCOPE_DIFFERENT','RESPONSE_TYPES_MISSING'],displayNameEvidence:'returned-same',observedAuthMethod:'none',
+      clientSecretState:'absent',signingAlgorithmEvidence:'absent',managementCredentialReturned:false,managementCredentialPersisted:false,usableForAuthorization:false};
+    const claim=Buffer.from('synthetic historical registration claim'),claimSha256=digest(claim),envelope=json({
+      spec:'IB-ORDERS-REGISTRATION-AUDIT-ENVELOPE-v1',claimSha256,registrationAudit:audit});
+    const filename='/synthetic/previous/registration-audit.safe.json';bytes.set(filename,envelope);records[filename]=digest(envelope);
+    names['/synthetic/previous'].push('registration-audit.safe.json');
+    binding.existingClient={path:filename,expected:{envelopeSha256:digest(envelope),claimSha256,auditSha256:digest(stable(audit)),
+      clientId:audit.clientId,redirectUri:audit.redirectUri,registrationCodeSha256:audit.codeSha256}};
+    binding.previousDigest=digest(stable({records,names}));
+  }
   return {binding,bytes};
 }
 
-function graph({fixed={},privateSeams=true}={}){
-  const fixture=fixtureBinding(fixed),bindingBytes=json(fixture.binding),events=[];
+function graph({fixed={},privateSeams=true,reuse=false}={}){
+  const fixture=fixtureBinding(fixed,reuse),bindingBytes=json(fixture.binding),events=[];
   const deny=kind=>new Proxy(Object.create(null),{get(_target,method){return (..._args)=>{events.push(kind+':'+String(method));throw Error('SYNTHETIC_CAPABILITY_DENIED');};}});
   const proc=new EventEmitter();Object.assign(proc,{argv:[],env:{},versions:{node:process.versions.node},getuid:()=>UID,stdout:{write(){throw Error('UNEXPECTED_STDOUT');}}});
   const time={value:T};class ClockDate extends Date{constructor(...args){super(...(args.length?args:[time.value]));}static now(){return time.value;}}
@@ -119,7 +136,7 @@ function approvalFixture(h,{renewal=0}={}){
 test('imports, unbound/bound defaults and plans are offline with forbidden native capabilities',async()=>{
   const h=graph();for(const api of [h.entry,h.fresh])for(const args of [[],['--plan']]){
     const r=await api.freshCli(args);assert.equal(r.status,'offline');assert.equal(r.liveActions,0);assert.equal(r.liveApproved,false);
-    assert.equal(r.currentOldRemainingRegistrationMaximum,0);assert.equal(r.futureAdditionalMaximum,1);assert.equal(r.futureCumulativeMaximum,3);
+    assert.equal(r.currentOldRemainingRegistrationMaximum,0);assert.equal(r.futureAdditionalMaximum,api===h.entry?0:1);assert.equal(r.futureCumulativeMaximum,3);
     assert.equal(r.validFromUtc,null);assert.equal(r.validUntilUtc,null);
   }
   for(const args of [['--execute'],['--resume'],['--natural-refresh'],['--binding','/synthetic/other']])assert.equal((await h.entry.freshCli(args)).code,'REQUEST_INVALID');
@@ -145,7 +162,7 @@ const PRODUCT_EXPORTS={
   [ENTRY]:['sha','canonical','CODE_FILES','LIMITS','buildOfflineManifest','offlinePlan','freshCli'],
   [OPERATOR]:['createOperator'],
   [BOOTSTRAP]:['BOOTSTRAP_SPEC','BOOTSTRAP','bootstrapFailure','validateLoopbackUri','registrationProfile','preflightLoopback','createBootstrap','SDK_BRIDGE_CODE','createSdkWriter'],
-  [AUDIT]:['REGISTRATION_AUDIT_SPEC','registrationRequestProfile','registrationRequestHash','assessRegistration','validateRegistrationAudit','registrationAuditHash','createBoundAudit'],
+  [AUDIT]:['REGISTRATION_AUDIT_SPEC','registrationRequestProfile','registrationRequestHash','assessRegistration','validateRegistrationAudit','registrationAuditHash','isReadOnlyScope','assertExistingClient','verifyExistingClientEvidence','createBoundAudit'],
   'source/scripts/xuan-ib-decision-menu.mjs':['parseDecisionJson'],
   'source/cloud/xuan-preopen/cloud_io.mjs':['uniqueCloudJson','validateIbCredentialBinding','validateBoundIbVersionName','validateIbRotationReceipt'],
   'source/cloud/xuan-preopen/ib_diagnostics.mjs':['ibError','inIbPhase','networkCategory','httpCategory','bearerError','safeIbFailure'],
@@ -441,32 +458,43 @@ for(const [name,mutate]of Object.entries({operation:a=>a.operationId=uuid(70),au
   assert.equal(counts.dcr,0);assert.equal(counts.posts,0);assert.equal(counts.reserve,0);
 });
 
-function bootstrapHarness(h,{unknown=null,stopAt=null,stopMode='cancel',exchangeAdvance=0,writeAdvance=0}={}){
+function bootstrapHarness(h,{unknown=null,stopAt=null,stopMode='cancel',exchangeAdvance=0,writeAdvance=0,tokenPatch={},tokenRaw=null,tokenStatus=200,
+  codeSha256='5'.repeat(64),onSaved=()=>{},existingClientOverride=undefined,writeDeferred=null,fetchWrapper=fn=>fn}={}){
   let now=T,sequence=0,handler,app;const timers=new Map(),counts={listen:0,close:0,maintenance:0,dcr:0,browser:0,audit:0,exchange:0,save:0};
   const clock={now:()=>now,setTimeout(fn,ms){const id=++sequence;timers.set(id,{fn,at:now+ms,ms});return id;},clearTimeout:id=>timers.delete(id)};
   const advance=ms=>{now+=ms;};
   const stop=async at=>{if(stopAt!==at)return;if(stopMode==='cancel')await app.cancel();else now=T+7200000;};
   const admission=()=>{if(now>=T+7200000)throw Error('DEADLINE_EXCEEDED');};
   const core=h.bootstrap,account='synthetic-operator',client='SYNTHETIC_CLIENT';
-  const approval=h.into({spec:core.BOOTSTRAP_SPEC,codeSha256:'5'.repeat(64),redirectUri:h.binding.fixed.redirectUri,operatorAccount:account,precedingVersion:'14',approved:true,acceptMacReplacement:true});
+  const approval=h.into({spec:core.BOOTSTRAP_SPEC,codeSha256,redirectUri:h.binding.fixed.redirectUri,operatorAccount:account,precedingVersion:'14',approved:true,acceptMacReplacement:true});
   const context=h.into({attemptId:uuid(5),operationId:h.binding.fresh.operationId,approvalSha256:'6'.repeat(64)});
   const toResponse=value=>new Response(JSON.stringify(value),{status:200});
-  app=core.createBootstrap({approval,operatorAccountSha256:digest(account),registrationContext:context,clock,admission,
+  const existingClient=existingClientOverride!==undefined?existingClientOverride:h.binding.existingClient?
+    h.audit.verifyExistingClientEvidence(h.fixture.bytes.get(h.binding.existingClient.path),h.binding.existingClient.expected):null;
+  app=core.createBootstrap({approval,existingClient,operatorAccountSha256:digest(account),registrationContext:context,clock,admission,
     randomBytes:()=>Buffer.alloc(32,++sequence),
     listener:{async bind(){counts.listen++;await stop('listen');return {host:'127.0.0.1',port:54868,setHandler(fn){handler=fn;},async close(){counts.close++;}};}},
     browser:{async open(uri){counts.browser++;assert.equal(new URL(uri).pathname,core.BOOTSTRAP.startPath);assert.equal(new URL(uri).search,'');await stop('browser');}},
     maintenance:{async check(){counts.maintenance++;await stop(counts.maintenance===1?'maintenance':'final-maintenance');return h.into({entrypointsPaused:true,executionsDrained:true,manualOldVersionRunsBlocked:true,observedVersion:'14'});}},
     onRegistrationAudit:async audit=>{counts.audit++;await stop('audit');return h.into({persisted:true,auditSha256:h.audit.registrationAuditHash(audit)});},
-    fetchImpl:async(endpoint,options)=>{assert.equal(options.method,'POST');assert.equal(options.redirect,'error');assert.equal(options.credentials,'omit');
+    fetchImpl:fetchWrapper(async(endpoint,options)=>{assert.equal(options.method,'POST');assert.equal(options.redirect,'error');assert.equal(options.credentials,'omit');
       if(endpoint===core.BOOTSTRAP.register){counts.dcr++;if(unknown==='dcr')throw Error(CANARY);await stop('dcr');return toResponse({...core.registrationProfile(approval.redirectUri),client_id:client,registration_access_token:CANARY});}
       assert.equal(endpoint,core.BOOTSTRAP.token);counts.exchange++;if(unknown==='exchange')throw Error(CANARY);advance(exchangeAdvance);await stop('exchange');
-      return toResponse({access_token:CANARY+'_access',refresh_token:CANARY+'_refresh',token_type:'Bearer',expires_in:3600,scope:'mcp.read'});
-    },store:{async save(){counts.save++;advance(writeAdvance);if(unknown==='save')throw Error(CANARY);await stop('save');return h.into({name:core.BOOTSTRAP.secret+'/versions/15',state:'ENABLED'});}}});
+      const payload={access_token:CANARY+'_access',refresh_token:CANARY+'_refresh',token_type:'Bearer',expires_in:3600,scope:'mcp.read',...tokenPatch};
+      return new Response(tokenRaw??JSON.stringify(payload),{status:tokenStatus});
+    }),store:{async save(credential){counts.save++;advance(writeAdvance);if(unknown==='save')throw Error(CANARY);await stop('save');
+      const ack=writeDeferred?await writeDeferred:h.into({name:core.BOOTSTRAP.secret+'/versions/15',state:'ENABLED'});
+      onSaved(h.into({clientId:credential.client_id,expiresAt:credential.expires_at,versionName:ack.name}));return ack;}}});
   const request=(rawUrl,cookie)=>h.into({method:'GET',host:new URL(approval.redirectUri).host,hostCount:1,rawUrl,...(cookie?{cookie}:{})});
-  const authorize=async()=>{
+  const authorize=async(options={})=>{
     assert.equal(typeof handler,'function');const start=await handler(request(core.BOOTSTRAP.startPath));assert.equal(start.statusCode,303);
     const url=new URL(start.headers.Location),cookie=start.headers['Set-Cookie'].split(';')[0];
-    return ()=>handler(request(core.BOOTSTRAP.callbackPath+'?'+new URLSearchParams({code:CANARY+'_code',state:url.searchParams.get('state'),iss:core.BOOTSTRAP.issuer}),cookie));
+    assert.equal(url.searchParams.get('scope'),'mcp.read');assert.equal(url.searchParams.get('resource'),core.BOOTSTRAP.resource);
+    assert.equal(url.searchParams.get('code_challenge_method'),'S256');assert.match(url.searchParams.get('code_challenge'),/^[A-Za-z0-9_-]{43}$/);
+    const params=new URLSearchParams({code:CANARY+'_code',state:url.searchParams.get('state'),iss:core.BOOTSTRAP.issuer,...options.params});
+    if(options.error){params.delete('code');params.set('error','access_denied');}
+    if(options.duplicate)params.append(options.duplicate,params.get(options.duplicate));
+    return ()=>handler(request(core.BOOTSTRAP.callbackPath+'?'+params,options.cookie??cookie));
   };
   return {app,counts,timers,advance,authorize,now:()=>now,async fire(ms){for(const [id,t]of [...timers])if(t.ms===ms){timers.delete(id);t.fn();}await Promise.resolve();await Promise.resolve();}};
 }
@@ -518,8 +546,185 @@ test('actual SDK writer consumes one submission after an unknown fake process re
   await assert.rejects(writer.save(credential,options),/BOOTSTRAP_SECRET_WRITE_OUTCOME_UNKNOWN/);assert.equal(submissions,1);assert.deepEqual(h.events,[]);
 });
 
+function reusableEvidence(h,change=()=>{}){
+  const raw={...clone(h.bootstrap.registrationProfile(h.binding.fixed.redirectUri)),client_id:'SYNTHETIC_CLIENT',scope:'mcp.read mcp.write'};
+  delete raw.response_types;change(raw);
+  const audit=h.audit.assessRegistration(h.into(raw),h.into({attemptId:uuid(80),operationId:uuid(81),approvalSha256:'8'.repeat(64),
+    codeSha256:'7'.repeat(64),redirectUri:h.binding.fixed.redirectUri,observedAtUtc:new Date(T-86400000).toISOString(),httpStatus:201}));
+  const envelope=json({spec:'IB-ORDERS-REGISTRATION-AUDIT-ENVELOPE-v1',claimSha256:'9'.repeat(64),registrationAudit:audit});
+  const expected=h.into({envelopeSha256:digest(envelope),claimSha256:'9'.repeat(64),auditSha256:h.audit.registrationAuditHash(audit),
+    clientId:'SYNTHETIC_CLIENT',redirectUri:h.binding.fixed.redirectUri,registrationCodeSha256:'7'.repeat(64)});
+  return {audit,envelope,expected,verify:()=>h.audit.verifyExistingClientEvidence(envelope,expected)};
+}
+test('reuse separates historical capabilities from a new narrow authorization without rewriting the rejected audit',()=>{
+  const h=graph({reuse:true}),f=reusableEvidence(h),before=Buffer.from(f.envelope),decision=f.verify();
+  assert.equal(decision.newRegistrationsMaximum,0);assert.equal(decision.requestedScope,'mcp.read');
+  assert.equal(decision.registrationScopeEvidence,'historical-string-not-retained');assert.equal(decision.responseTypesEvidence,'rfc7591-default-code');
+  assert.equal(decision.historicalProfileAccepted,false);assert.equal('scope' in decision,false);
+  assert.equal(f.audit.profileAccepted,false);assert.deepEqual(clone(f.audit.reasons),['SCOPE_DIFFERENT','RESPONSE_TYPES_MISSING']);
+  assert.ok(f.envelope.equals(before));assert.equal(JSON.stringify(decision).includes('mcp.write'),false);assert.deepEqual(h.events,[]);
+});
+for(const [name,change,allowed]of [
+  ['response omitted',r=>delete r.response_types,true],['response code',r=>r.response_types=['code'],true],
+  ['response null',r=>r.response_types=null,false],['response empty',r=>r.response_types=[],false],
+  ['response token',r=>r.response_types=['token'],false],['response duplicate',r=>r.response_types=['code','code'],false],
+  ['response string',r=>r.response_types='code',false],['scope omitted',r=>delete r.scope,true],
+  ['scope exact',r=>r.scope='mcp.read',true],['scope broader reversed',r=>r.scope='mcp.write mcp.read',true],
+  ['scope JSON array',r=>r.scope=['mcp.read'],false],['auth missing',r=>delete r.token_endpoint_auth_method,false],
+  ['auth confidential',r=>r.token_endpoint_auth_method='client_secret_basic',false],
+  ['unexpected secret',r=>r.client_secret=CANARY,false],['wrong redirect',r=>r.redirect_uris=['http://127.0.0.1:54869/oauth/ib/callback'],false],
+  ['grant missing',r=>r.grant_types=['authorization_code'],false],
+])test('reuse compatibility: '+name,()=>{
+  const h=graph({reuse:true}),f=reusableEvidence(h,change);
+  if(allowed)assert.equal(f.verify().requestedScope,'mcp.read');
+  else assert.throws(f.verify,/^Error: EXISTING_CLIENT_EVIDENCE_INVALID$/);
+  assert.deepEqual(h.events,[]);
+});
+for(const key of ['envelopeSha256','claimSha256','auditSha256','clientId','redirectUri','registrationCodeSha256'])test('reuse evidence rejects mismatched '+key+' before effects',()=>{
+  const h=graph({reuse:true}),f=reusableEvidence(h);
+  f.expected[key]=key==='clientId'?'SYNTHETIC_WRONG':key==='redirectUri'?'http://127.0.0.1:54869/oauth/ib/callback':'f'.repeat(64);
+  assert.throws(f.verify,/^Error: EXISTING_CLIENT_EVIDENCE_INVALID$/);assert.deepEqual(h.events,[]);
+});
+test('reuse rejects duplicated evidence JSON keys and fabricated verified-client objects',()=>{
+  const h=graph({reuse:true}),f=reusableEvidence(h);
+  const raw=Buffer.from(f.envelope.toString().replace('"claimSha256":','"claimSha256":"'+CANARY+'","claimSha256":'));
+  f.expected.envelopeSha256=digest(raw);
+  assert.throws(()=>h.audit.verifyExistingClientEvidence(raw,f.expected),/^Error: EXISTING_CLIENT_EVIDENCE_INVALID$/);
+  assert.throws(()=>bootstrapHarness(h,{existingClientOverride:h.into({mode:'existing-client',clientId:'SYNTHETIC_CLIENT'})}),/BOOTSTRAP_PROFILE_REVIEW_REQUIRED/);
+  assert.deepEqual(h.events,[]);
+});
+test('reuse manifest and fresh claim bind DCR zero; changing either budget to one is rejected',async()=>{
+  const h=graph({reuse:true}),f=approvalFixture(h),a=await h.fresh.verifyFresh(f.a,json(f.a),f.io,T);
+  assert.equal(a.registrationBudget.additionalMax,0);assert.equal(a.registrationBudget.priorPossible,3);assert.equal(a.limits.registrations,0);
+  const claim=h.operator.freshClaimRecord(a);assert.equal(claim.remainingRegistrationMaximum,0);
+  assert.equal(a.existingClientEvidence.expected.clientId,'SYNTHETIC_CLIENT');
+  for(const field of ['limits','registrationBudget']){
+    const bad=h.into(clone(f.a));bad[field][field==='limits'?'registrations':'additionalMax']=1;
+    await assert.rejects(h.fresh.verifyFresh(bad,json(bad),f.io,T),/CODE_MISMATCH/);
+  }
+  assert.deepEqual(h.events,[]);
+});
+test('actual observed transport denies DCR before reservation and before fetch',async()=>{
+  const h=graph({reuse:true});let fetched=0;
+  const transport=h.operator.createObservedOAuthFetch(async()=>{fetched++;throw Error(CANARY);},{registrationAllowed:false});
+  await assert.rejects(transport.fetch(h.bootstrap.BOOTSTRAP.register,{}),/BOOTSTRAP_FAILED/);
+  assert.equal(transport.snapshot().registration.requestReservations,0);assert.equal(fetched,0);
+  await assert.rejects(transport.fetch(h.bootstrap.BOOTSTRAP.token,{}),/BOOTSTRAP_OUTCOME_UNKNOWN/);
+  await assert.rejects(transport.fetch(h.bootstrap.BOOTSTRAP.token,{}),/BOOTSTRAP_FAILED/);
+  assert.equal(fetched,1);assert.equal(transport.snapshot().exchange.requestReservations,1);assert.deepEqual(h.events,[]);
+});
+for(const [name,tokenPatch,ok]of [
+  ['exact',{scope:'mcp.read'},true],['omitted',{scope:undefined},true],['same set repeated',{scope:'mcp.read mcp.read'},true],
+  ['write',{scope:'mcp.read mcp.write'},false],['order',{scope:'mcp.orders.submit'},false],['openid',{scope:'openid mcp.read'},false],
+  ['array',{scope:['mcp.read']},false],['null',{scope:null},false],['empty',{scope:''},false],['tab',{scope:'mcp.read\t'},false],
+  ['newline',{scope:'mcp.read\n'},false],['case',{scope:'MCP.READ'},false],['leading space',{scope:' mcp.read'},false],
+  ['missing refresh',{refresh_token:undefined},false],['empty refresh',{refresh_token:''},false],['wrong client',{client_id:'SYNTHETIC_OTHER'},false],
+  ['wrong resource',{resource:'https://synthetic.invalid/mcp'},false],['identity token',{id_token:CANARY},false],
+])test('reuse token validation '+name+' keeps DCR zero and rejects expansion before save',async()=>{
+  const h=graph({reuse:true}),b=bootstrapHarness(h,{tokenPatch});assert.equal((await b.app.start()).status,'pending');
+  const submit=await b.authorize(),result=(await submit()).safe;
+  assert.equal(result.code,ok?'BOOTSTRAP_SECRET_VERSION_CONFIRMED':'BOOTSTRAP_TOKEN_INVALID');
+  assert.equal(b.counts.dcr,0);assert.equal(b.counts.audit,0);assert.equal(b.counts.exchange,1);assert.equal(b.counts.save,ok?1:0);
+  assert.equal(result.registration.requestedScope,'mcp.read');assert.notEqual(result.registration.codeSha256,result.registration.registrationCodeSha256);
+  if(ok)assert.equal(result.scopeEvidence,name==='omitted'?'explicit-request-inherited':'token-response');
+  assert.equal(JSON.stringify(result).includes(CANARY),false);assert.equal(result.listenerClosed,true);assert.equal((await submit()).statusCode,409);
+  assert.deepEqual(h.events,[]);
+});
+for(const [name,options]of [
+  ['wrong state',{params:{state:CANARY}}],['wrong issuer',{params:{iss:'https://synthetic.invalid'}}],
+  ['wrong cookie',{cookie:'xuan_ib_session='+CANARY}],['duplicate state',{duplicate:'state'}],
+  ['duplicate code',{duplicate:'code'}],['duplicate issuer',{duplicate:'iss'}],['code and error',{params:{error:'access_denied'}}],
+  ['owner refusal',{error:true}],
+])test('reuse callback '+name+' issues no exchange and no registration',async()=>{
+  const h=graph({reuse:true}),b=bootstrapHarness(h);await b.app.start();const submit=await b.authorize(options),r=(await submit()).safe;
+  assert.equal(b.counts.dcr,0);assert.equal(b.counts.exchange,0);assert.equal(b.counts.save,0);assert.equal(r.listenerClosed,true);
+  assert.equal(JSON.stringify(r).includes(CANARY),false);await b.app.start();assert.equal(b.counts.dcr,0);assert.deepEqual(h.events,[]);
+});
+for(const [name,options]of [
+  ['exchange unknown',{unknown:'exchange'}],['save unknown',{unknown:'save'}],['invalid_scope response',{tokenStatus:400,tokenRaw:'{"error":"invalid_scope","error_description":"'+CANARY+'"}'}],
+  ['server error',{tokenStatus:500,tokenRaw:CANARY}],['duplicate JSON',{tokenRaw:'{"scope":"mcp.read","scope":"'+CANARY+'"}'}],
+  ['cancel before consent',{stopAt:'maintenance'}],['cancel after consent',{stopAt:'browser'}],['cancel after exchange',{stopAt:'exchange'}],
+])test('reuse '+name+' stops without fallback registration or leaked raw error',async()=>{
+  const h=graph({reuse:true}),b=bootstrapHarness(h,options);let r=await b.app.start();
+  if(r.status==='pending')r=(await(await b.authorize())()).safe;
+  assert.notEqual(r.status,'prepared-for-cloud-validation');assert.equal(b.counts.dcr,0);assert.ok(b.counts.exchange<=1);assert.ok(b.counts.save<=1);
+  assert.equal(r.listenerClosed,true);assert.equal(r.automaticRetry,false);assert.equal(JSON.stringify(r).includes(CANARY),false);
+  await b.app.start();assert.equal(b.counts.dcr,0);assert.deepEqual(h.events,[]);
+});
+test('reuse callback boundary, finalization and late write timeout retain original deadlines',async()=>{
+  const h=graph({reuse:true}),b=bootstrapHarness(h,{exchangeAdvance:14900,writeAdvance:19900});
+  await b.app.start();const submit=await b.authorize();b.advance(599990);
+  assert.equal((await submit()).safe.code,'BOOTSTRAP_SECRET_VERSION_CONFIRMED');assert.equal(b.counts.dcr,0);
+  const c=bootstrapHarness(h);await c.app.start();const atLimit=await c.authorize();c.advance(600000);
+  assert.equal((await atLimit()).safe.code,'BOOTSTRAP_SESSION_EXPIRED');assert.equal(c.counts.exchange,0);assert.equal(c.counts.dcr,0);
+  let ack;const pending=new Promise(resolve=>{ack=resolve;}),d=bootstrapHarness(h,{writeDeferred:pending});
+  await d.app.start();const callback=await d.authorize(),response=callback();
+  for(let i=0;i<100&&d.counts.save===0;i++)await Promise.resolve();
+  assert.equal(d.counts.save,1);await d.fire(h.bootstrap.BOOTSTRAP.writerMs);
+  const stopped=(await response).safe;assert.equal(stopped.code,'BOOTSTRAP_SECRET_WRITE_OUTCOME_UNKNOWN');
+  ack(h.into({name:h.bootstrap.BOOTSTRAP.secret+'/versions/15',state:'ENABLED'}));await Promise.resolve();
+  assert.equal((await d.app.finished).code,'BOOTSTRAP_SECRET_WRITE_OUTCOME_UNKNOWN');assert.equal(d.counts.dcr,0);assert.deepEqual(h.events,[]);
+});
+for(const [name,options,passed]of [
+  ['success',{},true],['expanded grant',{tokenPatch:{scope:'mcp.read mcp.write'}},false],
+  ['unknown write',{unknown:'save'},false],['refused scope',{tokenStatus:400,tokenRaw:'{"error":"invalid_scope"}'},false],
+])test('full reuse entry → real bootstrap → exact-version single orders fake flow: '+name,async()=>{
+  const constants=graph().bootstrap.BOOTSTRAP,h=graph({reuse:true,fixed:{secret:constants.secret,job:constants.job}}),f=approvalFixture(h);
+  let claimed=false,claims=0,verifications=0,orders=0,transport,b,finalResult;
+  const snapshots=[],oldBytes=Buffer.from(h.fixture.bytes.get(h.binding.existingClient.path));
+  Object.assign(f.io,{
+    async reserve(a){assert.equal(a.limits.registrations,0);if(claimed)throw Error('FRESH_ALREADY_CLAIMED');claimed=true;claims++;},
+    async verifyClaim(){assert.equal(claimed,true);verifications++;},
+    claimState:()=>claimed?'confirmed':'not-started',
+    async audit(value){snapshots.push(clone(value));assert.equal(JSON.stringify(value).includes(CANARY),false);},
+    async finish(_a,result){finalResult=clone(result);},
+    async openCaps(a){return {
+      async checkMaintenance(){assert.equal(claimed,true);},async close(){},
+      async bootstrap({onSaved}){
+        assert.ok(verifications>=3,'NEW_STAGE_CLAIM_CHECK_PRECEDES_UI');
+        b=bootstrapHarness(h,{...options,onSaved,codeSha256:h.operator.SOURCE_HASHES['scripts/xuan-ib-cloud-oauth-bootstrap.mjs'],
+          fetchWrapper:fetch=>{transport=h.operator.createObservedOAuthFetch(fetch,{registrationAllowed:false});return transport.fetch;}});
+        return {...b.app,networkStatus:transport.snapshot,async start(){
+          const start=await b.app.start();assert.equal(b.counts.dcr,0);
+          if(start.status==='pending')await(await b.authorize())();return start;
+        }};
+      },
+      async probe(request,{index}){
+        orders++;assert.equal(orders,1);assert.equal(index,0);
+        assert.deepEqual(clone(request.credentialBinding),{clientId:'SYNTHETIC_CLIENT',version:'15'});
+        const fixed=h.binding.fixed,short=fixed.job+'-synthetic-reuse',execution=`projects/${fixed.project}/locations/${fixed.region}/jobs/${fixed.job}/executions/${short}`;
+        return h.into({execution,receipt:{status:'passed',mode:'cloud-orders-probe',requestId:request.requestId,dataDate:request.dataDate,expiresAt:request.expiresAt,
+          execution:short,upstreamAttempted:true,ordersCalls:1,refreshCalls:0,credentialClientMatched:true,credentialVersionMatched:true,
+          consumedCredentialVersion:constants.secret+'/versions/15',savedCredentialVersion:null,credentialPersistence:'not-needed',
+          startedAt:new Date(T).toISOString(),completedAt:new Date(T+1).toISOString(),receiptSha256:'8'.repeat(64),
+          associationBasis:'owner-attested',responseAccountEvidence:'not-provided',nativeIdentityEvidence:'not-provided'}});
+      },
+    };},
+  });
+  const r=await h.fresh.freshCli(f.args(),{io:f.io,clock:{now:()=>T}});
+  assert.equal(r.status,passed?'passed':'stopped');assert.equal(claims,1);assert.equal(orders,passed?1:0);
+  assert.equal(b.counts.dcr,0);assert.equal(b.counts.audit,0);assert.equal(transport.snapshot().registration.requestReservations,0);
+  assert.equal(transport.snapshot().exchange.requestReservations,1);assert.equal(r.listenerClosed,true);
+  assert.equal(r.automaticMaintenanceResume,false);assert.equal(JSON.stringify([r,finalResult,...snapshots]).includes(CANARY),false);
+  if(passed){assert.equal(r.confirmed.ordersCalls,1);assert.equal(r.confirmed.refreshCalls,0);assert.equal(r.registration.historicalProfileAccepted,false);}
+  assert.ok(oldBytes.equals(h.fixture.bytes.get(h.binding.existingClient.path)));
+  await h.fresh.freshCli(f.args(),{io:f.io,clock:{now:()=>T}});
+  assert.equal(claims,1);assert.equal(b.counts.exchange,1);assert.equal(orders,passed?1:0);assert.deepEqual(h.events,[]);
+});
+test('reuse mode preserves durable once-only claims and zero registration budget under contention',async()=>{
+  const h=graph({reuse:true}),f=approvalFixture(h),a=await h.fresh.verifyFresh(f.a,json(f.a),f.io,T),dir=await fs.mkdtemp(path.join(os.tmpdir(),'reuse-contention-'));
+  try{
+    const mapped=mappedClaimFs(h,dir),opts={fs:mapped.io,uid:UID,clock:{now:()=>T}};
+    const results=await Promise.allSettled([h.fresh.persistFreshClaim(a,opts),h.fresh.persistFreshClaim(a,opts)]);
+    assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(mapped.calls.filter(x=>x==='claim-write').length,1);
+    const record=JSON.parse(await fs.readFile(path.join(dir,'runtime/fresh.claim.safe.json'),'utf8'));
+    assert.equal(record.remainingRegistrationMaximum,0);assert.equal(record.cumulativePossibleRegistrationMaximum,3);
+    await assert.rejects(h.fresh.persistFreshClaim(a,opts),/FRESH_ALREADY_CLAIMED/);
+  }finally{await fs.rm(dir,{recursive:true,force:true});}
+});
+
 const PYTHON_FAKE_TESTS=String.raw`
-import sys,json,builtins,types,hashlib
+import sys,json,builtins,types,hashlib,ast
 payload=json.loads(sys.stdin.read())
 original_import=builtins.__import__
 forbidden=[]
@@ -544,6 +749,28 @@ def raises(kind,action):
     except kind:return
     raise AssertionError('EXPECTED_CLOSED_FAILURE')
 class Closed(Exception):pass
+# Exercise the actual live admission statement with the JavaScript-generated
+# claims. Never call live(): all inputs are synthetic and only its pure guard
+# AST is compiled, so no file, SDK, credential or transport capability is used.
+live_ast=next(n for n in ast.parse(payload['renew']).body if isinstance(n,ast.FunctionDef) and n.name=='live')
+claim_guards=[n for n in ast.walk(live_ast) if isinstance(n,ast.If)
+              and 'remainingRegistrationMaximum' in ast.dump(n.test)
+              and 'cumulativePossibleRegistrationMaximum' in ast.dump(n.test)]
+assert len(claim_guards)==1
+guard_code=compile(ast.fix_missing_locations(ast.Module(body=claim_guards,type_ignores=[])),'synthetic-actual-live-claim-guard','exec')
+def check_claim(binding,claim):exec(guard_code,{'binding':binding,'claim':claim,'RuntimeError':RuntimeError,'__builtins__':{}})
+for row in payload['renewalAdmissions']:
+    label='reuse' if row['binding'].get('existingClient') else 'legacy'
+    case('actual Python '+label+' admission accepts the JavaScript claim',lambda row=row:check_claim(row['binding'],row['claim']))
+    def wrong_budget(row=row):
+        claim=dict(row['claim'],remainingRegistrationMaximum=1-row['claim']['remainingRegistrationMaximum'])
+        raises(RuntimeError,lambda:check_claim(row['binding'],claim))
+    case('actual Python '+label+' admission rejects the opposite registration budget',wrong_budget)
+    for field in ['operationId','authorizationId','previousRecordsDigest','oldRemainingRegistrationMaximum','cumulativePossibleRegistrationMaximum']:
+        def mismatch(row=row,field=field):
+            claim=dict(row['claim']);claim[field]='SYNTHETIC_WRONG' if isinstance(claim[field],str) else claim[field]+1
+            raises(RuntimeError,lambda:check_claim(row['binding'],claim))
+        case('actual Python '+label+' admission rejects '+field+' drift',mismatch)
 class Reply:
     def __init__(self,url,raw=b'{}',status=200):self.url=url;self.raw=raw;self.status_code=status;self.closed=0
     def iter_content(self,*args,**kwargs):yield self.raw
@@ -692,8 +919,15 @@ print(json.dumps({'passed':passed,'nativeImports':forbidden,'realRequests':0}))
 `;
 
 test('actual Python renewal/control/SDK code executes only against blocked imports and fake transports',async t=>{
+  const renewalAdmissions=[];
+  for(const reuse of [false,true]){
+    const mode=graph({reuse}),f=approvalFixture(mode,{renewal:1});
+    const admitted=await mode.fresh.verifyFresh(f.a,json(f.a),f.io,T);
+    renewalAdmissions.push({binding:clone(mode.binding),claim:clone(mode.operator.freshClaimRecord(admitted))});
+    assert.deepEqual(mode.events,[]);
+  }
   const h=graph(),input={renew:SOURCES.get('renew.py').toString('utf8'),control:h.operator.CONTROL_BRIDGE,sdk:h.bootstrap.SDK_BRIDGE_CODE,
-    ids:[uuid(3),uuid(4)],foreignId:uuid(99),resource:h.bootstrap.BOOTSTRAP.resource};
+    ids:[uuid(3),uuid(4)],foreignId:uuid(99),resource:h.bootstrap.BOOTSTRAP.resource,renewalAdmissions};
   const child=spawnSync('python3',['-I','-c',PYTHON_FAKE_TESTS],{input:JSON.stringify(input),encoding:'utf8',timeout:10000,maxBuffer:262144,
     env:{PATH:process.env.PATH??'/usr/bin:/bin',PYTHONDONTWRITEBYTECODE:'1'}});
   assert.equal(child.error,undefined,'A_STANDARD_PYTHON3_MUST_BE_AVAILABLE');assert.equal(child.status,0,child.stderr);
