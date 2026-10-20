@@ -10,6 +10,7 @@ import {EventEmitter} from 'node:events';
 import childProcess from 'node:child_process';
 import {createOwnerSdkTransport,OWNER_SDK_PYTHON,decodeOwnerSafeDiagnostics,OWNER_SAFE_DIAGNOSTIC_STAGES,OWNER_SAFE_ERROR_TYPES,OWNER_SAFE_ERROR_CODES} from './owner_sdk_transport.mjs';
 import {LATEST_TARGET} from './owner_latest.mjs';
+import {createOwnerLatestStore} from './owner_latest_store.mjs';
 const execute=promisify(execFile),moduleUrl=new URL('./owner_sdk_transport.mjs',import.meta.url).href;
 const latest=`https://storage.googleapis.com/storage/v1/b/${LATEST_TARGET.bucket}/o/${encodeURIComponent(LATEST_TARGET.object)}`;
 const upload=`https://storage.googleapis.com/upload/storage/v1/b/${LATEST_TARGET.bucket}/o?uploadType=multipart&ifGenerationMatch=0`;
@@ -51,6 +52,29 @@ test('daily read protocol uses its own named op without widening the original re
     await rejected('TARGET_INVALID',()=>sdk.request(url,{headers:{Accept:'application/json','Accept-Encoding':'identity'}}));
     assert.equal((await sdk.requestDaily(url,{headers:{Accept:'application/json','Accept-Encoding':'identity'}})).status,200);
   });
+});
+
+test('production daily store discovers with allowed GETs then pins metadata and media through the SDK lane',async()=>{
+  const date='2026-10-21',records=new Map([
+    ['delivery/'+date+'/report.html',{generation:'10',bytes:Buffer.from('<html>synthetic</html>')}],
+    ['delivery/'+date+'/receipt.json',{generation:'11',bytes:Buffer.from('{"synthetic":true}')}],
+  ]),calls=[],pins=new Map();
+  await fakeWorker(frame=>{
+    const v=frame.value,u=new URL(v.url),name=decodeURIComponent(u.pathname.split('/o/')[1]),record=records.get(name);
+    assert.equal(v.op,'dailyRequest');assert.equal(v.method,'GET');assert.ok(record);calls.push(v);
+    const generation=u.searchParams.get('generation'),media=u.searchParams.get('alt')==='media';
+    if(generation){assert.equal(generation,record.generation);assert.equal(pins.get(name),generation);}
+    else{assert.equal(u.search,'');pins.set(name,record.generation);}
+    const bytes=media?record.bytes:Buffer.from(JSON.stringify({bucket:LATEST_TARGET.bucket,name,generation:record.generation,size:String(record.bytes.length)}));
+    return {id:frame.id,result:{status:200,url:v.url,headers:{'content-type':media?'application/octet-stream':'application/json',
+      'content-length':String(bytes.length),'x-goog-generation':record.generation},body:bytes.toString('base64')},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};
+  },async sdk=>{
+    const store=createOwnerLatestStore({request:sdk.requestDaily}),bundle=await store.readDailyBundle({dataDate:date});
+    assert.equal(bundle.artifactGeneration,'10');assert.equal(bundle.receiptGeneration,'11');
+    assert.deepEqual(Buffer.from(bundle.html),records.get(bundle.artifactObject).bytes);
+    assert.deepEqual(Buffer.from(bundle.receipt),records.get(bundle.receiptObject).bytes);
+  });
+  assert.equal(calls.length,6);assert.equal(calls.filter(v=>!new URL(v.url).search).length,2);
 });
 
 test('caller cannot widen storage origin/path/method or add auth headers',async()=>{
