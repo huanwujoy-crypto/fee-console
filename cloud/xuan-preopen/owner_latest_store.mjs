@@ -151,7 +151,7 @@ export function createOwnerLatestStore({request,requestPreviewReplacement}={}){
     const bytes=await boundedBytes(response,MAX_METADATA_BYTES);
     const metadata=objectMetadata(decodeJson(bytes),{name,generation,max,latest});
     const generationHeader=response.headers.get('x-goog-generation');
-    if(generationHeader!==null&&generationHeader!==generation)fail('METADATA_BINDING_INVALID');
+    if(generationHeader!==null&&generationHeader!==metadata.generation)fail('METADATA_BINDING_INVALID');
     return metadata;
   };
   const getMedia=async(name,generation,expectedHash,max,signal,{latest=false,knownMetadata,unhashed=false}={})=>{
@@ -164,10 +164,10 @@ export function createOwnerLatestStore({request,requestPreviewReplacement}={}){
     return bytes;
   };
   const discoverDaily=async(name,max,signal)=>{
-    const url=urlFor(name,undefined,{media:true}),response=await send(url,{method:'HEAD',signal,headers:{'Accept-Encoding':'identity'}});
-    responseOk(response,url);
-    const generation=response.headers.get('x-goog-generation');if(!gen(generation))fail('GENERATION_INVALID');
-    const size=lengthHeader(response,max,{required:true});
+    // Daily SDK discovery permits metadata GET only. Its worker records this
+    // generation before admitting any pinned metadata or media read.
+    const discovered=await getMetadata(name,undefined,max,signal);
+    const generation=discovered.generation,size=discovered.size;
     const metadata=await getMetadata(name,generation,max,signal);
     if(size!==metadata.size)fail('LENGTH_MISMATCH');
     const bytes=await getMedia(name,generation,undefined,max,signal,{knownMetadata:metadata,unhashed:true});

@@ -66,7 +66,9 @@ function fake({latest=false,intercept,wireProfile}={}){
       const gen=heads.get(name),record=records.get(name+'@'+gen);if(!record)return new Response(null,{status:404});
       return new Response(null,{headers:mediaHeaders(record)});
     }
-    assert.equal(method,'GET');const gen=u.searchParams.get('generation');assert.match(gen||'',/^[1-9][0-9]*$/);
+    assert.equal(method,'GET');const requested=u.searchParams.get('generation');
+    if(requested===null){assert.equal(u.search,'');assert.match(name,/^delivery\/\d{4}-\d\d-\d\d\/(report\.html|receipt\.json)$/);}
+    const gen=requested??heads.get(name);assert.match(gen||'',/^[1-9][0-9]*$/);
     const record=records.get(name+'@'+gen);if(!record)return new Response(null,{status:404});
     return u.searchParams.get('alt')==='media'?new Response(record.bytes,{headers:mediaHeaders(record)}):jsonResponse(record.metadata);
   };
@@ -116,6 +118,30 @@ test('daily read discovers and pins the two exact objects without trusting recom
   assert.deepEqual(r.html,f.bundle.html);assert.deepEqual(r.receipt,f.bundle.receipt);
   assert.equal(r.artifactGeneration,'31');assert.equal(r.receiptGeneration,'32');assert.equal(r.receiptSha256,hash(f.bundle.receipt));
   assert.equal(f.calls.length,6);assert.ok(f.calls.every(c=>!c.url.includes('report-check')));
+  assert.ok(f.calls.every(c=>c.options.method==='GET'));
+  assert.deepEqual(f.calls.map(c=>new URL(c.url).search),['','?generation=31','?generation=31&alt=media','','?generation=32','?generation=32&alt=media']);
+});
+test('daily discovery validates metadata generation headers before pinned reads',async()=>{
+  for(const matches of [true,false]){
+    const f=fake({intercept:({url,options},{records,heads})=>{
+      const u=new URL(url);if(options.method!=='GET'||u.search)return;
+      const name=decodeURIComponent(u.pathname.split('/o/')[1]),m=records.get(name+'@'+heads.get(name)).metadata;
+      const response=jsonResponse(m);response.headers.set('x-goog-generation',matches?m.generation:'999');return response;
+    }});
+    if(matches)assert.equal((await f.store.readDailyBundle({dataDate:'2026-10-16'})).artifactGeneration,'31');
+    else{await assert.rejects(f.store.readDailyBundle({dataDate:'2026-10-16'}),/METADATA_BINDING_INVALID/);assert.equal(f.calls.length,1);}
+  }
+});
+test('daily discovery stays pinned when the current object advances after metadata discovery',async()=>{
+  const f=fake({intercept:({url,options},{records,heads,add})=>{
+    const u=new URL(url);if(options.method!=='GET'||u.search)return;
+    const name=decodeURIComponent(u.pathname.split('/o/')[1]),old=records.get(name+'@'+heads.get(name)).metadata;
+    add(name,'999',encode('synthetic later generation'));return jsonResponse(old);
+  }});
+  const bundle=await f.store.readDailyBundle({dataDate:'2026-10-16'});
+  assert.deepEqual(bundle.html,f.bundle.html);assert.deepEqual(bundle.receipt,f.bundle.receipt);
+  assert.equal(bundle.artifactGeneration,'31');assert.equal(bundle.receiptGeneration,'32');
+  assert.ok(f.calls.every(c=>!c.url.includes('generation=999')));
 });
 test('rejects invalid source, date and target inputs before any transport use',async()=>{
   const f=fake();

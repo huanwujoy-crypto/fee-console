@@ -833,6 +833,24 @@ class DailyBoundaryTests(unittest.TestCase):
             return value
         return bridge, read, prime, write, objects, sources, calls
 
+    def test_store_discovery_sequence_uses_metadata_get_before_pinned_metadata_and_media(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture()
+        date = m.daily_date()
+        for name, generation in [('delivery/'+date+'/report.html', '10'), ('delivery/'+date+'/receipt.json', '11')]:
+            read(name)
+            read(name, generation)
+            read(name, generation, True)
+        self.assertEqual(len(calls), 6)
+        self.assertTrue(all(method == 'GET' for _, method in calls))
+        self.assertEqual(set(bridge.daily_receipts), {date})
+        self.assertTrue(all(bridge.daily_pins[s['privateObject']][0] == s['generation'] for s in sources))
+        # Neither unpinned source media nor another date gains discovery rights.
+        before = len(calls)
+        for name in [sources[0]['privateObject'], 'delivery/1999-01-01/report.html']:
+            with self.assertRaises(m.BoundaryError):
+                read(name)
+        self.assertEqual(len(calls), before)
+
     def test_receipt_controls_source_read_pins_and_invalid_reads_do_not_reach_provider(self):
         bridge, read, prime, write, objects, sources, calls = self.fixture()
         source = sources[0]
