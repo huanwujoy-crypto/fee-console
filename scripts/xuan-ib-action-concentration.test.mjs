@@ -120,6 +120,20 @@ test('authenticated browser tables reuse the identical three-account weekly arit
   assert.deepEqual(actionConcentrationResult(result),actionConcentrationResult(buildActionConcentrationCandidate({sources:originals,...window})));
   assert.equal(result.envelope.riskDenominator.components.length,3);
   assert(result.bindings.every(b=>b.route==='authenticated-browser'));
+  const withClosed=structuredClone(browser),closedRaw=JSON.parse(withClosed[2].bytes);
+  closedRaw.observation.positions.push({instrument:'CLOSED | TEST',description:'Closed historical row',price:1,priceCurrency:'USD',quantity:0,marketValueUSD:0,sourcePath:'/holdings/123',priceDate:null});
+  const bindClosed=()=>{withClosed[2].bytes=JSON.stringify(closedRaw);Object.assign(withClosed[2].receipt,{bytes:Buffer.byteLength(withClosed[2].bytes),sha256:sha(withClosed[2].bytes)});};
+  bindClosed();
+  const closedResult=buildActionConcentrationCandidate({sources:withClosed,...window});
+  assert.deepEqual(actionConcentrationResult(closedResult),actionConcentrationResult(result));
+  assert.equal(JSON.parse(withClosed[2].bytes).observation.positions.length,2);
+  assert.equal(closedResult.envelope.provenance[2].holdingRows,1);
+  for(const field of ['quantity','marketValueUSD']){
+    closedRaw.observation.positions.at(-1)[field]=1;
+    if(field==='marketValueUSD')closedRaw.observation.portfolioValue+=1;
+    bindClosed();assert.throws(()=>buildActionConcentrationCandidate({sources:withClosed,...window}));
+    closedRaw.observation.positions.at(-1)[field]=0;
+  }
   for(const edit of [r=>r.observation.portfolioId=936246,r=>r.observation.portfolio='HSBC-HK & Webull',r=>r.observation.positions[0].sourcePath='/holdings/123']){
     const bad=structuredClone(browser),raw=JSON.parse(bad[2].bytes);edit(raw);bad[2].bytes=JSON.stringify(raw);Object.assign(bad[2].receipt,{bytes:Buffer.byteLength(bad[2].bytes),sha256:sha(bad[2].bytes)});
     assert.throws(()=>buildActionConcentrationCandidate({sources:bad,...window}));

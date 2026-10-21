@@ -37,15 +37,18 @@ export function normalizeActionConcentrationSource({bytes,receipt},{accountKey,c
     if(b.readAt!==receipt.completedAt)fail('READ_WINDOW');
     const report=structuredClone(b.raw.data.report),prior=b.raw.classification?.raw;
     const metadata=(prior?.report??prior?.data?.report??prior?.result?.data?.report)?.holdings??[];
-    report.holdings=report.holdings.map((h,i)=>{
+    report.holdings=report.holdings.flatMap((h,i)=>{
+      // The browser also shows closed historical rows. Keep them in the pinned
+      // source, but zero quantity AND zero value contribute no current exposure.
+      if(h.quantity===0&&h.value===0)return [];
       const old=metadata.filter(r=>r.id===h.id&&r.instrument?.id===h.instrument.id&&r.instrument.code===h.instrument.code
         &&r.instrument.market_code===h.instrument.market_code&&(r.instrument.currency_code??r.instrument.currency?.code)===h.instrument.currency_code);
       // Reuse identity/type only after exact account, holding, venue and currency match.
       // Financial values and quantities always come from the current observation.
       if(old.length!==1)fail('BROWSER_INSTRUMENT_IDENTITY_MISSING');
       const securityType=old[0].instrument.friendly_instrument_description_code??old[0].instrument.friendly_instrument_description;
-      return {...h,
-        instrument:{...h.instrument,name:b.raw.observation.positions[i].description??h.instrument.code,...(securityType===undefined?{}:{friendly_instrument_description_code:securityType})}};
+      return [{...h,
+        instrument:{...h.instrument,name:b.raw.observation.positions[i].description??h.instrument.code,...(securityType===undefined?{}:{friendly_instrument_description_code:securityType})}}];
     });
     report.cash_accounts=report.cash_accounts.map((c,i)=>({...c,name:b.raw.observation.cash[i].name}));
     shell={mode:'read_only',source:SHARESIGHT_BROWSER_SOURCE,portfolio:{id:Number(account.portfolioId),name:account.custodian,currency_code:'USD'},data:{report}};
@@ -128,7 +131,7 @@ export function renderActionConcentration(c){
   const result=actionConcentrationResult(c);
   const staticWeekly=renderStaticWeeklyConcentration(result);
   const qualified=staticWeekly.replace('</h2>','</h2><p class="muted concentration-basis">同日账面值 · 来源独立读取 · 已核实下限</p>');
-  return `<section class="card concentration">${qualified}<details><summary>三账户来源与读取时间</summary>${sources}<p>${c.bindings.some(b=>b.route==='authenticated-browser')?'Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成按用户计算前提采用，未独立对账。分母为 IB-HK、Schwab-HK、Webull 全部持仓与现金；不包含 NOAH-HK，也不重复加入旧混合组合。':'Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成未获独立回执，不表示券商实时持仓。'}</p></details></section>`;
+  return `<section class="card concentration">${qualified}<details><summary>三账户来源与读取时间</summary>${sources}<p>${c.bindings.some(b=>b.route==='authenticated-browser')?'Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成按用户计算前提采用，未独立对账。分母为 IB-HK、Schwab-HK、Webull 全部持仓与现金；不包含 NOAH-HK，也不重复加入旧混合组合。数量及市值均为零的历史行保留在来源证据，不计入当前敞口。':'Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成未获独立回执，不表示券商实时持仓。'}</p></details></section>`;
 }
 
 export function renderStaticWeeklyConcentration(result,options){
