@@ -33,4 +33,23 @@
 
 无路由的一次本机执行使用 `createOwnerBrowserEvidenceAccess` 和 `composeBrowserActionEvidence`。新 request 与原先收据锚点在 `security/xuan-owner-source-recovery.json` 一并登记，代码合并不等于运行批准。先核对原身份、既有七名读者、canary、当前入口及新 start 对象未存在，再取得新快照；捕获开始时间必须是实际最早读取时间。所有归一化、金额与 HTML 校验先在内存完成，再由受限桥新建 start、四份来源、HTML、收据及 preview 收据（合计八份；硬上限十份、32 MiB）。固定原桶及原 `report-check/` 前缀，全部 `ifGenerationMatch=0`；错误或结果不确定停止并查明，不能换 request 重试。
 
-此桥只新增固定证据写入能力，不改已安装 SDK、IAM、读者或服务。来源单份限 4 MiB、HTML 2 MiB、收据 128 KiB；五分钟采集与三十分钟鲜度不变。随后沿既有实际页面验收、独立准入、唯一 latest CAS 与逐字节回读；证据能力不能签发 CAS 准入。零构建、零 Cloud Run、零配置改动，调度仍保持原状态。费用及任何必要普通登录刷新必须在本次明确运行批准内，过期或身份不符不得绕过。
+此桥只新增固定证据写入能力，不改已安装 SDK、IAM、读者或服务。来源单份限 4 MiB、HTML 2 MiB、收据 128 KiB；五分钟采集与三十分钟鲜度不变。随后沿既有实际页面验收、独立准入、唯一 latest CAS 与逐字节回读；证据能力不能签发 CAS 准入。报告桥本身不构建或运行 Cloud Run；下面的正常云端挂单入口另需一次构建及原 job 配置更新，不能将完整执行称为零 Cloud Run 变更。调度保持原状态。费用及任何必要普通登录刷新必须在本次明确运行批准内，过期或身份不符不得绕过。
+
+
+## 账面完整展示与周末集中度复用
+
+行动版在原 IB-HK 范围内复用 `scripts/xuan-weekly-concentration.mjs` 的发行人合并、ETF 同名／前十穿透、1% 门槛与已核实每日杠杆等效算法及渲染。周末版三账户入口及分母规则保持独立，行动版不虚构其他账户。浏览器当前持仓金额与原读取时间不变，证券类型只沿用持仓 ID、证券 ID、市场、代码、币种均匹配的既存来源；ETF 成分仍按原资料日期和有效期校验，未知部分明确列出，直接持仓明细保留。
+
+持仓、四类配置、账面现金、CALL 与分类资料齐备时，另行计算扣挂单前的 EXUS／EIMI／USSC 参考分配、暂留及含类现金总参考。页面显示“账面更新完成”，挂单及其依赖结果单独说明；挂单未知不再把已取得现金和当前配置重复列为缺项。净预算、挂单后配置及可执行预算仍受原约束，未知不能填零。私有发布元数据的金融完整性仍为 partial，不能将账面展示完整误称全部金融字段完整。
+
+本候选同时提出新的单次 request 登记，保留旧 claim 和原不可变收据锚点。代码合并不是执行批准；本次修复仅复用已保存快照离线计算，不取数、刷新、上传或 CAS。后续一次发布须统一批准新执行：两组合云端浏览器新快照各一次；正常入口单独取得一次挂单，核对本次执行的收据、对象 generation／SHA256 后，把原始来源作为同一捕获窗口内的 `ordersCapture` 数据传入。报告接入口同时保留原解码器的 `wrapper`／`transportFingerprint`，只接受明确的原生对象或 JSON 字符串形状；私有对象的 generation／SHA256 仍由受保护读取控制器核验，不能把指纹本身当授权。既有保护检查继续核验身份、原始指纹、覆盖和时间，不复用旧 probe 授权或旧运行身份。五分钟采集和三十分钟新鲜度不变；已过期快照只可离线验证。候选、实际页面、唯一 CAS 与独立回读分别验收，不得沿用之前已消费的运行授权。
+
+## 正常云端挂单入口与一次执行范围（待正式批准）
+
+正常入口为 `node cloud/xuan-preopen/orders_read.mjs --orders-request <fresh JSON>`，只接受本次 requestId、香港 dataDate、未来十五分钟以内的 expiresAt 和固定 `credentialBinding {clientId, version}`；version 必须是原 Secret 的明确数字版本，不能退回 latest。拒绝旧 `--request`、旧 nonce 或混合参数。复用 `captureCloudIbOrders`、原身份、`mcp.read`、账户和时间校验，不新增 OAuth grant、客户端、权限或 Secret，也不调用旧 probe 运行器。最多一次 `get_account_orders {}`；必要时同一授权内普通 IB 刷新一次，向原 Secret 保存确认的新版本一次，保存未知或失败则停止，不能再发挂单调用或自动重试。
+
+现有部署镜像没有此 CLI。运行前须将该两文件与报告改动一起正常受保护合并。固定构建白名单只从 105 项增至 107 项，明确加入正常入口及其测试，不放宽目录或任意文件。使用现有受保护 image maintenance 工作流的 build-only 模式（`image_kind=report`、`deploy_image=false`），按 `Maintenance.Dockerfile` 构建及推送一个可核验不可变镜像；只更新原 `xuan-preopen-orders-probe` job 的 image 和 command 为新镜像及 `node cloud/xuan-preopen/orders_read.mjs`，读回核对。保持原 source SA、1 CPU／512 MiB、单 task、parallelism 1、75 秒 timeout、maxRetries 0、其他配置和暂停的调度；不新建 job／service，不部署每日报告 job。镜像／命令更新是本次拟批准的部署，未包含另一次恢复配置写入。构建、配置更新均应在新鲜金融采集开始前完成；真实预检仍要核对其他消费者静止、原身份、准确数字版本、原七名读者、入口／canary、互斥及新 claim 未存在。
+
+这一次完整执行需单独批准：一构建／一镜像推送、一原 job 配置更新、一 execution、IB 挂单一次、两组合浏览器快照各一次；必要 Google 普通刷新及原缓存保存各最多一次、IB 刷新及原 Secret 新版本各最多一次。正常挂单的 `report-check/orders-read-<new-requestId>/` 新建 start、orders、receipt 三份；报告桥新建八份，成功全链共十一份私有证据，故不能沿用旧的全链十份上限。拟申请全链十一份／32 MiB、一次新 latest CAS、原七名读者；构建源码上传及镜像推送另列，不能混入金融证据次数。报告桥本身原十份硬限制及固定路径检查不扩大，无新增 Sharesight API 读取、IAM／读者／账务改动。结果未知先核对，不能换 request 或重复执行。
+
+旧 US$0.10 仅对应零构建的报告发布预算，不能作为新增构建、镜像存储与 Secret 版本费用的总费用保证。现有证据只确定 job 最大 75 vCPU 秒／37.5 GiB 秒；构建时长、镜像增量／扫描费用和 Secret 计费复制位置仍需在获准普通 Google 刷新后的只读预检中确认，不能假设免费额度或声称总额低于 US$1。统一执行批准须明确覆盖这些项目的总费用上限；不能合理保证上限时停止相应收费动作，不擅自超支。

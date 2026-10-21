@@ -102,9 +102,11 @@ function contextFixture(){
 function contextFiles(root,prefix=''){
  return fs.readdirSync(path.join(root,prefix)).flatMap(name=>{const file=prefix?prefix+'/'+name:name;return fs.lstatSync(path.join(root,file)).isDirectory()?contextFiles(root,file):[file];}).sort();
 }
-test('fixed 105-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
- assert.equal(COPY_PATHS.length,105);assert.equal(new Set(COPY_PATHS).size,105);
- assert.equal(crypto.createHash('sha256').update(COPY_PATHS.join('\n')+'\n').digest('hex'),'a653bf89c39f276e9713259fff83ffc9c93dafbf428514f744a72b047b4332db');
+test('fixed 107-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
+ assert.equal(COPY_PATHS.length,107);assert.equal(new Set(COPY_PATHS).size,107);
+ const normal=['cloud/xuan-preopen/orders_read.mjs','cloud/xuan-preopen/orders_read.test.mjs'];
+ assert.ok(normal.every(file=>COPY_PATHS.includes(file)));
+ assert.equal(crypto.createHash('sha256').update(COPY_PATHS.filter(file=>!normal.includes(file)).join('\n')+'\n').digest('hex'),'a653bf89c39f276e9713259fff83ffc9c93dafbf428514f744a72b047b4332db');
  const f=contextFixture();
  try{
   for(const file of ['data.json','.git/config','xuan-ib/latest.html','scripts/repair-brkb-20260820.mjs','scripts/codex-fee-keychain.c','scripts/codex-fee-credentials.mjs','scripts/codex-fee-setup','cloud/xuan-preopen/private-new.mjs']){const p=path.join(f.root,file);fs.mkdirSync(path.dirname(p),{recursive:true});fs.writeFileSync(p,'PRIVATE-CANARY');}
@@ -179,6 +181,13 @@ test('minimal fixed image context imports its real entrypoint and rejects missin
     const program="globalThis.fetch=()=>{throw Error('OFFLINE_ONLY');};await import('./cloud/xuan-preopen/daily.mjs');";
     const run=()=>spawnSync(process.execPath,['--input-type=module','-e',program],{cwd:context,encoding:'utf8',timeout:30000});
     const complete=run();assert.equal(complete.status,0,complete.stderr);
+    // This is the isolated image file set, without Docker, SDK or network.
+    // The exact deployed CLI must load and reject legacy flags before any IO.
+    const normal=spawnSync(process.execPath,['cloud/xuan-preopen/orders_read.mjs','--request','{}'],{cwd:context,encoding:'utf8',timeout:30000});
+    assert.equal(normal.status,1,normal.stderr);assert.equal(JSON.parse(normal.stdout).upstreamAttempted,false);
+    assert.equal(JSON.parse(normal.stdout).code,'IB_DIAGNOSTIC_REQUEST_INVALID');
+    const normalTests=spawnSync(process.execPath,['--test','cloud/xuan-preopen/orders_read.test.mjs'],{cwd:context,encoding:'utf8',timeout:30000});
+    assert.equal(normalTests.status,0,normalTests.stdout+normalTests.stderr);
     for(const dependency of dependencies){
       const file=path.join(context,dependency),bytes=fs.readFileSync(file);fs.unlinkSync(file);
       try{const missing=run();assert.notEqual(missing.status,0,dependency);assert.ok(missing.stderr.includes(dependency),dependency);}

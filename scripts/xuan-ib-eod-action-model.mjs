@@ -22,11 +22,32 @@ const fixedNotes=(d,fields=false)=>[fields?`Sharesight 账面现金与配置记�
 export const SHARESIGHT_BOOK_BASIS='sharesight-book-user-synchronized.v1';
 export function actionUnknownFields(m){
   const book=m.calculationBasis===SHARESIGHT_BOOK_BASIS;
+  if(book&&m.bookPlan)return [...(m.orders.status==='ready'&&m.cash.orderReserve!==null?[]:['orders']),
+    ...(m.holdings?.status==='ready'&&m.bookConcentration?.status==='ready'?[]:['holdings']),
+    ...(m.allocation.status==='ready'&&m.bookPlan.reason!=='BOOK_POLICY_EDGE'?[]:['allocation']),
+    ...(m.cash.preOrderPlanning!==null?[]:['cash'])];
   return [...(m.orders.status==='ready'?[]:['orders']),...(m.holdings?.status==='ready'&&(!book||m.bookConcentration?.status==='ready')?[]:['holdings']),...(m.allocation.status==='ready'&&(!book||m.replenishment.status==='ready')?[]:['allocation']),...(!book||m.cash.planning===null?['cash']:[]),...(!book?['prices']:[])];
 }
+export const bookReportReady=m=>m?.calculationBasis===SHARESIGHT_BOOK_BASIS&&m.bookPlan?.status==='ready'
+  &&m.holdings?.status==='ready'&&m.bookConcentration?.status==='ready'&&m.cash.cashLike!==null;
 const bookStatus=m=>m.cash.planning!==null&&m.replenishment.status==='ready'&&m.holdings.status==='ready'&&m.bookConcentration.status==='ready'?'ready':'partial';
 const unknown=reason=>({status:'unknown',reason});
 const planInput=(a,asOfHkt)=>({schemaVersion:2,status:'snapshot',sourceAsOfHkt:asOfHkt.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}(?:–\d{2}:\d{2})? HKT/)?.[0],equityTotal:a.total,developed:a.developed,emerging:a.emerging,usBase:a.usBase,ussc:a.ussc,ibCash:0,noahCash:0,reserve:0,usscBudgetShare:.10,currency:'USD',denominator:'equity-only'});
+// A separately named book reference, never substituted for the unknown
+// order reserve, after-order allocation or executable/net budget.
+function buildPreOrderBookPlan(m){
+  const a=m.allocation,c=m.cash;
+  if(a.status!=='ready'||m.holdings.status!=='ready'||c.preOrderPlanning===null)return {status:'unavailable',reason:'BOOK_INPUTS_UNAVAILABLE'};
+  try{
+    const p=calculateCashPlan({...planInput({total:a.total,usBase:a.categories[0].marketValue,
+      developed:a.categories[2].marketValue,emerging:a.categories[3].marketValue,
+      ussc:m.holdings.status==='ready'?m.holdings.rows.find(r=>r.symbol==='USSC')?.marketValueUsd??0:0},m.asOfHkt),
+      ibCash:c.preOrderPlanning});
+    return {status:'ready',basis:'pre-order-sharesight-book-reference',budget:p.budget,total:p.plannedSpend,retained:p.budgetUnused,
+      items:['EXUS','EIMI','USSC'].map((symbol,i)=>({symbol,amount:p.allocations[i]})),
+      cashLikeTotal:c.cashLike?.total??null,capacity:c.cashLike===null?null:cents(c.preOrderPlanning+c.cashLike.total),executableBudget:null};
+  }catch{return {status:'unavailable',reason:'BOOK_POLICY_EDGE'};}
+}
 export function buildEodActionModel(input){
   if(input.fieldMode)return buildValidatedEodActionModel(input);
   if(input.live?.status!=='captured')return buildValidatedEodActionModel(input);
@@ -46,7 +67,8 @@ export function buildEodActionModel(input){
   }
 }
 function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshots,live=null,reserve,evidenceSha256,sourceOutcomes,
-  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false}){
+  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2}){
+  if(![1,2].includes(bookDetailVersion))fail('CALCULATION_BASIS');
   if(typeof assumeSharesightSynchronized!=='boolean'||assumeSharesightSynchronized&&(!fieldMode||concentrationInput!==null))fail('CALCULATION_BASIS');
   if(fieldMode&&!flex)flex={cash:null,positions:null,trades:null,tradeCoverageProven:false,rawFingerprint:null,
     reconciliation:{status:'unknown',cashResidual:null,cancellationPending:false,verificationSha256:null},
@@ -170,7 +192,8 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
   if(assumeSharesightSynchronized){
     model.calculationBasis=SHARESIGHT_BOOK_BASIS;
     model.cash.preOrderPlanning=pool!==null&&callApplied!==null?Math.max(0,cents(pool-callApplied)):null;
-    model.bookConcentration=buildBookConcentration(ibSnapshot,sourceDate);
+    model.bookConcentration=buildBookConcentration(ibSnapshot,sourceDate,{issuer:bookDetailVersion===2});
+    if(bookDetailVersion===2)model.bookPlan=buildPreOrderBookPlan(model);
     model.status=bookStatus(model);
   }
   if(concentrationInput!==null)model.concentration=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
@@ -244,10 +267,12 @@ export function validateEodActionModel(m){
   }
   if(book){
     validateBookConcentration(m.bookConcentration,m.sourceDate);
+    if(m.bookConcentration.status==='ready'&&Object.hasOwn(m,'bookPlan')!==Object.hasOwn(m.bookConcentration,'issuerResultFingerprint'))fail('BOOK_VERSION');
+    if(Object.hasOwn(m,'bookPlan')&&JSON.stringify(m.bookPlan)!==JSON.stringify(buildPreOrderBookPlan(m)))fail('BOOK_PLAN');
     if(c.preOrderPlanning!==(c.pool!==null&&c.callApplied!==null?Math.max(0,cents(c.pool-c.callApplied)):null)
       ||m.status!==bookStatus(m))fail('BOOK_BUDGET');
-  }else if(Object.hasOwn(m,'bookConcentration'))fail('CALCULATION_BASIS');
-  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration'];
+  }else if(Object.hasOwn(m,'bookConcentration')||Object.hasOwn(m,'bookPlan'))fail('CALCULATION_BASIS');
+  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan'];
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
   if(fields)validateActionFieldState(m);else if(Object.hasOwn(m,'fieldErrors'))fail('PUBLIC_KEYS');
   return m;

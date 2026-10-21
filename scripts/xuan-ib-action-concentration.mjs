@@ -106,7 +106,15 @@ export function renderActionConcentration(c){
   validateActionConcentration(c,c.sourceDate);
   const esc=s=>String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
   const sources=c.bindings.map(b=>`<p>${esc(readAiRiskAccounts().find(a=>a.key===b.accountKey).custodian)} · 数据至 ${esc(b.sourceDate)} · 读取 ${esc(new Date(Date.parse(b.readCompletedAt)+28800000).toISOString().replace('T',' ').replace('Z',' HKT'))}</p>`).join('');
-  const result=actionConcentrationResult(c),weekly=renderWeeklyConcentration(result);
+  const result=actionConcentrationResult(c);
+  const staticWeekly=renderStaticWeeklyConcentration(result);
+  const qualified=staticWeekly.replace('</h2>','</h2><p class="muted concentration-basis">同日账面值 · 来源独立读取 · 已核实下限</p>');
+  return `<section class="card concentration">${qualified}<details><summary>三账户来源与读取时间</summary>${sources}<p>Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成未获独立回执，不表示券商实时持仓。</p></details></section>`;
+}
+
+export function renderStaticWeeklyConcentration(result,options){
+  const esc=s=>String(s).replace(/[&<>\"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[ch]));
+  const weekly=renderWeeklyConcentration(result,options);
   const sourceUrls=new Set([...result.matchedFunds.map(f=>f.source),...result.rows.flatMap(r=>r.parts.map(p=>p.source).filter(Boolean))].map(esc));
   // The action's accepted private display is deliberately link-free. Transform
   // only the weekly renderer's three fixed source-anchor shapes after binding
@@ -117,8 +125,7 @@ export function renderActionConcentration(c){
     return `<span class="concentration-source-label">${label}</span>`;
   });
   if(/<a\b|(?:href|src)\s*=/i.test(staticWeekly))fail('SOURCE_ANCHOR_SHAPE');
-  const qualified=staticWeekly.replace('</h2>','</h2><p class="muted concentration-basis">同日账面值 · 来源独立读取 · 已核实下限</p>');
-  return `<section class="card concentration">${qualified}<details><summary>三账户来源与读取时间</summary>${sources}<p>Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成未获独立回执，不表示券商实时持仓。</p></details></section>`;
+  return staticWeekly;
 }
 
 // Current EOD sources have IB/NOAH only. This fixed missing-state UI neither

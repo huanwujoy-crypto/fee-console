@@ -212,6 +212,7 @@ function sourceModel(values,r,model,context,call){
   const rebuilt=buildEodActionModel({dataDate:r.dataDate,sourceDate:r.sourceDate,asOfHkt:window.asOfHkt,flex,snapshots,
     live:['captured','partial'].includes(savedLive.status)?{...savedLive,previousHtml:context.previousHtml}:savedLive,
     reserve:call.amountUsd,evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode:!!model.fieldState,assumeSharesightSynchronized:model.calculationBasis===SHARESIGHT_BOOK_BASIS,
+    bookDetailVersion:Object.hasOwn(model,'bookPlan')?2:1,
     callRecord:model.fieldState?call:null,captureStartedAt:model.provenance.capture?.startedAt??null,captureCompletedAt:model.provenance.capture?.completedAt??null});
   rebuilt.sourceManifestSha256=r.sourceManifestSha256;
   rebuilt.evidenceSha256=digest({sourceOutcomes:rebuilt.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256});
@@ -259,8 +260,17 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
         if(sha(raw)!==source.sha256)fail('SOURCE_BYTES_HASH');
         return [source.sourceKey,parsed(raw,MAX_SOURCE)];
       })));
-      if(recoveryId&&['captured','partial'].includes(values['ib.optionalLive']?.status)
-        &&values['ib.optionalLive']?.probeEvidence?.object?.name!==`report-check/orders-probe-${recoveryId}/orders.json`)fail('RECOVERY_SOURCE_BINDING');
+      if(recoveryId&&['captured','partial'].includes(values['ib.optionalLive']?.status)){
+        const live=values['ib.optionalLive'],normal=live.normalMcpEvidence;
+        if(normal){
+          // The same immutable request and pinned ib.optionalLive object bind
+          // normal MCP capture. This is provenance, not an authorization grant.
+          if(!exact(live,['status','sources','normalMcpEvidence'])||live.status!=='captured'||live.sources?.length!==1
+            ||live.sources[0]?.sourceKey!=='ib.orders'||!exact(normal,['schema','requestId','channel'])
+            ||normal.schema!=='xuan.normal-mcp-orders.v1'||normal.requestId!==recoveryId
+            ||!['cloud-mcp','mac-mcp'].includes(normal.channel))fail('RECOVERY_SOURCE_BINDING');
+        }else if(live.probeEvidence?.object?.name!==`report-check/orders-probe-${recoveryId}/orders.json`)fail('RECOVERY_SOURCE_BINDING');
+      }
       sourceModel(values,r,model,context,call);
       signal?.throwIfAborted();validatorPoint='context-second';const current=await loadContext(contextOptions),endTime=clock();
       signal?.throwIfAborted();validatorPoint='final-check';if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');

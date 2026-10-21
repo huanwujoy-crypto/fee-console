@@ -12,6 +12,7 @@ import {sharesightOrderCurrencies,readCurrentActionFields,ACTION_ERROR_CODES} fr
 import {readAiRiskAccounts} from '../../scripts/xuan-ib-ai-coefficient-resolver.mjs';
 import {buildPublicEodSummary} from '../../scripts/xuan-ib-public-eod-summary.mjs';
 import {validateEodReceipt} from './eod_report.mjs';
+import {actionUnknownFields,bookReportReady} from '../../scripts/xuan-ib-eod-action-model.mjs';
 const NOW=Date.parse('2026-10-15T05:01:00.000Z'),sourceDate='2026-10-14';
 const start='2026-10-15T05:00:00.000Z',end='2026-10-15T05:00:02.000Z';
 globalThis.fetch=()=>assert.fail('Offline only');
@@ -250,7 +251,7 @@ test('book assumption exposes full direct concentration and CALL budget with no 
   assert.equal(m.cash.preOrderPlanning,1150);assert.equal(m.cash.orderReserve,60);assert.equal(m.cash.planning,1090);
   assert.equal(m.cash.executableBudget,null);assert.equal(m.cash.reserve,100);assert.equal(m.cash.callApplied,50);
   assert(m.provenance.sharesight.every(s=>s.syncCompletedAt===null&&s.receiptSha256===null));
-  assert.match(html,/IB-HK 直接持仓/);assert.match(html,/CALL 50%/);assert.match(html,/不是券商实时可下单额/);
+  assert.match(html,/复用周末版计算；本行动版范围为 IB-HK/);assert.match(html,/CALL 50%/);assert.match(html,/不是券商实时可下单额/);
   assert.doesNotMatch(html,/Schwab|Webull|现金对账尚未核实|同步完成未核实/);
   for(const change of [x=>x.cash.preOrderPlanning++,x=>x.bookConcentration.total++,x=>x.bookConcentration.rows[0].weightPct++,x=>x.calculationBasis='verified-sync']){
     const bad=structuredClone(m);change(bad);assert.throws(()=>renderNightActionReport(bad));
@@ -261,6 +262,25 @@ test('missing orders or currency preserve pre-order book estimate and concentrat
     const {model:m,html}=await run({raw,editBatch:fullBook});assert.equal(m.status,'partial');assert.equal(m.cash.planning,null);
     assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.preOrderPlanning,1150);assert.equal(m.bookConcentration.status,'ready');
     assert.match(html,/扣挂单前账面可配置上限/);assert.match(html,/账面净补仓估算<\/b><span>未取得/);
+    assert.equal(m.bookPlan.status,'ready');assert.equal(m.bookPlan.budget,1150);
+    assert.equal(m.bookPlan.items[2].amount,115);assert.equal(m.bookPlan.executableBudget,null);
+    assert.equal(Math.round((m.bookPlan.total+m.bookPlan.retained)*100),115000);
+    assert.equal(m.bookPlan.capacity,1240);assert.equal(m.cash.totalCapacity,null);
+    assert.equal(bookReportReady(m),true);assert.deepEqual(actionUnknownFields(m),['orders']);
+    assert.match(html,/账面更新完成 · 挂单待核实/);assert.match(html,/扣挂单前账面分配参考/);
+    assert.doesNotMatch(html,/部分更新|本轮补仓金额未计算|补仓分配条件未齐/);
+    assert.equal(m.allocation.projectedTotal,null);assert.equal(m.replenishment.status,'unavailable');
+    for(const edit of [x=>x.bookPlan.items[0].amount++,x=>x.bookPlan.retained++,x=>x.bookPlan.capacity++,x=>x.cash.orderReserve=0]){
+      const bad=structuredClone(m);edit(bad);assert.throws(()=>renderNightActionReport(bad));
+    }
+  }
+});
+test('book report completion requires independently usable cash, CALL, classes and holdings',async()=>{
+  for(const options of [{ledger:null},{editBatch:b=>{fullBook(b);b[1]={sourceKey:'sharesight.noahPerformance',status:'request-failure'};}},
+    {editBatch:b=>{fullBook(b);b[0].raw.data.report.holdings[0].group_name='';}}]){
+    const r=await run({raw:{orders:[]},editBatch:fullBook,...options});
+    assert.equal(bookReportReady(r.model),false);assert.equal(r.model.bookPlan.status,'unavailable');
+    assert.doesNotMatch(r.html,/账面更新完成/);assert.match(r.html,/部分更新/);
   }
 });
 test('bad whole-portfolio source cannot suppress independent cash and stock-class results or claim concentration',async()=>{
