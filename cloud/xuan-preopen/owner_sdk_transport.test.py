@@ -766,7 +766,7 @@ class SafeDiagnosticTests(unittest.TestCase):
 
 
 class DailyBoundaryTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, book=False):
         date = m.daily_date()
         started = datetime.datetime.fromtimestamp(m.time.time()-60, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
         completed = datetime.datetime.fromtimestamp(m.time.time()-10, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
@@ -783,6 +783,8 @@ class DailyBoundaryTests(unittest.TestCase):
                    'sourceDate': date, 'startedAt': started, 'completedAt': completed,
                    'artifact': {'privateObject': report_name, 'generation': '10', 'sha256': hashlib.sha256(report).hexdigest()},
                    'sourceCount': 4, 'sources': sources}
+        if book:
+            receipt.update(status='ready', calculationBasis='sharesight-book-user-synchronized.v1')
         receipt_raw = json.dumps(receipt).encode()
         objects[receipt_name] = ('11', receipt_raw)
         calls = []
@@ -820,7 +822,7 @@ class DailyBoundaryTests(unittest.TestCase):
             boundary = value['headers']['Content-Type'].split('boundary=')[1]
             display = b'<html><body>synthetic preview only</body></html>'
             metadata = {'schema': 'xuan.owner-latest.v1', 'scope': 'ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1',
-                        'dataDate': date, 'sourceDate': date, 'financialStatus': 'partial',
+                        'dataDate': date, 'sourceDate': date, 'financialStatus': 'complete' if book else 'partial',
                         'captureStartedAt': receipt['startedAt'], 'captureEndedAt': receipt['completedAt'], 'completedAt': receipt['completedAt'],
                         'artifactObject': report_name, 'artifactGeneration': '10', 'artifactSha256': hashlib.sha256(report).hexdigest(),
                         'receiptObject': receipt_name, 'receiptGeneration': '11', 'receiptSha256': hashlib.sha256(receipt_raw).hexdigest()}
@@ -864,6 +866,36 @@ class DailyBoundaryTests(unittest.TestCase):
                     bridge.dispatch(write())
                 with self.assertRaises(m.BoundaryError):
                     bridge.dispatch(write())
+            self.assertEqual(sum(method == 'POST' for _, method in calls), 0)
+
+    def test_book_ready_cas_keeps_one_attempt_and_independent_generation_readback(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture(book=True)
+        prime()
+        bridge.verify_replacement_canary_current = lambda revision: None
+        self.assertEqual(bridge.dispatch(write())['status'], 200)
+        read(m.OBJECT, '901')
+        result = read(m.OBJECT, '901', True)
+        self.assertEqual(base64.b64decode(result['body']), objects[m.OBJECT][1])
+        with self.assertRaises(m.BoundaryError):
+            bridge.dispatch(write())
+        self.assertEqual(sum(method == 'POST' for _, method in calls), 1)
+
+    def test_book_ready_receipt_keeps_original_source_pins_and_rejects_unrecognized_basis(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture(book=True)
+        prime()
+        for source in sources:
+            read(source['privateObject'], source['generation'], True)
+        self.assertEqual(len(bridge.daily_receipts), 1)
+        self.assertTrue(all(method == 'GET' for _, method in calls))
+        for basis in [None, 'sync-verified']:
+            bridge, read, prime, write, objects, sources, calls = self.fixture(book=True)
+            name = 'delivery/'+m.daily_date()+'/receipt.json'
+            gen, raw = objects[name]
+            receipt = json.loads(raw)
+            receipt['calculationBasis'] = basis
+            objects[name] = (gen, json.dumps(receipt).encode())
+            with self.assertRaises(m.BoundaryError):
+                prime()
             self.assertEqual(sum(method == 'POST' for _, method in calls), 0)
 
     def test_store_discovery_sequence_uses_metadata_get_before_pinned_metadata_and_media(self):
@@ -928,6 +960,78 @@ class DailyBoundaryTests(unittest.TestCase):
             bridge.dispatch(write())
         self.assertEqual(sum(method == 'POST' for _, method in calls), 1)
 
+
+
+class EvidenceProvider(Provider):
+    def __init__(self, existing=False, unknown=False):
+        super().__init__(); self.existing=existing; self.unknown=unknown; self.objects={}
+    def request(self,url,method,headers,body):
+        self.calls.append((url,method,headers,body))
+        if method == 'GET':
+            name='report-check/orders-probe-'+m.recovery_registration()['requestId']+'/start.json'
+            return Response(url,200 if self.existing else 404,json.dumps({'bucket':m.BUCKET,'name':name,'generation':'9'}).encode())
+        assert url == UPLOAD and method == 'POST'
+        if self.unknown: raise TimeoutError('synthetic uncertain write')
+        boundary=headers['Content-Type'].split('boundary=')[1].encode()
+        first,second=body.split(b'\r\n--'+boundary+b'\r\n')[0:2]
+        resource=json.loads(first.split(b'\r\n\r\n',1)[1]);raw=second.split(b'\r\n\r\n',1)[1].split(b'\r\n--'+boundary+b'--')[0]
+        assert resource['contentDisposition']=='attachment' and resource['cacheControl']=='private, no-store, max-age=0'
+        assert resource['name'] not in self.objects
+        self.objects[resource['name']]=raw
+        result={'bucket':m.BUCKET,'name':resource['name'],'size':str(len(raw)),'generation':str(len(self.objects)),
+                'md5Hash':base64.b64encode(hashlib.md5(raw).digest()).decode()}
+        return Response(url,200,json.dumps(result).encode())
+
+class BrowserEvidenceTests(unittest.TestCase):
+    assertCode = BoundaryTests.assertCode
+    def begin(self,provider=None):
+        provider=provider or EvidenceProvider();b=m.OwnerBridge(provider)
+        now=m.instant();reg=m.recovery_registration()
+        with patch.object(m,'daily_date',return_value=reg['dataDate']):
+            result=b.dispatch({'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':now})
+        return b,provider,result
+    def write(self,b,name,value):
+        raw=value.encode() if isinstance(value,str) else json.dumps(value).encode()
+        return b.dispatch({'op':'writeEvidence','name':name,'body':base64.b64encode(raw).decode()})
+    def test_evidence_exact_eight_creates_and_pins_close_after_completion(self):
+        reg=m.recovery_registration()
+        with patch.object(m,'daily_date',return_value=reg['dataDate']):
+            b,p,a=self.begin();prefix=b.evidence['prefix'];sources=[]
+            for key,value in [('ib.flexEod',{'status':'not-called','code':'FLEX_NOT_CALLED'}),
+                ('sharesight.ibGroupedPerformance',{'sourceKey':'sharesight.ibGroupedPerformance','status':'date-verified','raw':{'source':'Sharesight authenticated cloud browser visible DOM'}}),
+                ('sharesight.noahPerformance',{'sourceKey':'sharesight.noahPerformance','status':'date-verified','raw':{'source':'Sharesight authenticated cloud browser visible DOM'}}),
+                ('ib.optionalLive',{'status':'not-called','code':'IB_MCP_ROUTES_UNAVAILABLE'})]:
+                name=prefix+key+'.json';pin=self.write(b,name,value);sources.append(dict(sourceKey=key,privateObject=name,**pin))
+            name=prefix+'report.html';pin=self.write(b,name,'<!doctype html><html>synthetic</html>')
+            receipt={'mode':'private_eod_action','publication':'none','calculationBasis':'sharesight-book-user-synchronized.v1',
+                'dataDate':reg['dataDate'],'startedAt':a['captureStartedAt'],'sourceCount':4,'sources':sources,'artifact':dict(privateObject=name,**pin)}
+            self.write(b,prefix+'receipt.json',receipt);self.write(b,reg['receiptObject'],receipt)
+            self.assertEqual(len(p.objects),8);self.assertLess(b.evidence['bytes'],32*1024*1024)
+            self.assertEqual(b.safe_diagnostics.snapshot()['casHttpAttempts'],0)
+            self.assertCode('REQUEST_INVALID',lambda:self.write(b,prefix+'report.html','again'))
+    def test_evidence_claim_existing_and_uncertain_are_not_retried(self):
+        for provider in [EvidenceProvider(existing=True),EvidenceProvider(unknown=True)]:
+            reg=m.recovery_registration();b=m.OwnerBridge(provider);v={'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':m.instant()}
+            with patch.object(m,'daily_date',return_value=reg['dataDate']):
+                with self.assertRaises(Exception): b.dispatch(v)
+                calls=len(provider.calls)
+                self.assertCode('REQUEST_INVALID',lambda:b.dispatch(v));self.assertEqual(len(provider.calls),calls)
+    def test_evidence_forbidden_paths_body_duplicate_budget_clock_and_wrong_day_before_http(self):
+        reg=m.recovery_registration()
+        for change in ['path','body','duplicate','bytes','objects','rollback','expired','day']:
+            with patch.object(m,'daily_date',return_value=reg['dataDate']):
+                b,p,a=self.begin();name=b.evidence['prefix']+'ib.optionalLive.json';value={'status':'not-called','code':'IB_MCP_ROUTES_UNAVAILABLE'}
+                if change=='path':name='delivery/owner-latest.html'
+                if change=='body':value={'status':'captured','sources':[]}
+                if change=='duplicate':self.write(b,name,value)
+                if change=='bytes':b.evidence['bytes']=32*1024*1024
+                if change=='objects':b.evidence['count']=10
+                if change=='rollback':b.evidence['lastWall']=m.time.time()*1000+60000
+                if change=='expired':b.evidence['monotonic']-=301
+                calls=len(p.calls)
+                with patch.object(m,'daily_date',return_value='1900-01-01' if change=='day' else reg['dataDate']):
+                    with self.assertRaises(m.BoundaryError):self.write(b,name,value)
+                self.assertEqual(len(p.calls),calls)
 
 if __name__ == '__main__':
     unittest.main()

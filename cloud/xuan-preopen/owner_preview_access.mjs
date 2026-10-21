@@ -334,7 +334,12 @@ export async function createOwnerDailyStorageAccess(){
   if(arguments.length)fail('STORAGE_ACCESS_ARGUMENTS_FORBIDDEN');
   return createPreviewAccessSession(true,true,true);
 }
-async function createPreviewAccessSession(replacing,storageOnly=false,daily=false){
+// Fixed browser evidence lane only; no latest write permit is exposed here.
+export async function createOwnerBrowserEvidenceAccess(){
+  if(arguments.length)fail('STORAGE_ACCESS_ARGUMENTS_FORBIDDEN');
+  return createPreviewAccessSession(true,true,true,true);
+}
+async function createPreviewAccessSession(replacing,storageOnly=false,daily=false,evidenceMode=false){
   await requireProtectedOwnerCheckout();
   validApproved(FIXED_APPROVED);
   const registration=strictJson(fs.readFileSync(new URL('../../security/xuan-owner-accepted-preview.json',import.meta.url),'utf8'));
@@ -354,7 +359,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
   let canaryClosed=false,canaryPin=null,sessionClosed=false,observation=null,replacementAdmissionAttempted=false,replacementPermit=null,replacementExpiresAt=null,replacementMonotonic=null;const lease=createOwnerPreflightLease();
   // The original verifier reads four sources concurrently; the existing SDK
   // worker admits one RPC at a time. A failed queued read closes this chain.
-  let dailyReads=Promise.resolve(),dailyAdmission=null,dailyWriteAttempted=false;
+  let dailyReads=Promise.resolve(),dailyAdmission=null,dailyWriteAttempted=false,evidenceBegun=false,evidenceClosed=false;
   const guard=()=>{if(sessionClosed)fail('SESSION_CLOSED');};
   const close=()=>{sessionClosed=true;dailyAdmission=null;lease.invalidate();replacementPermit=null;observation?.close();sdk.close();};
   const full=async({signal}={})=>{
@@ -373,12 +378,31 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
   };
   try{await full();}catch(error){try{sdk.close();}catch(closeError){preserveCloseFailure(error,closeError);}throw error;}
   return Object.freeze({
+    async inspectEvidenceAttempt(){
+      guard();if(!evidenceMode||typeof sdk.inspectEvidenceAttempt!=='function')fail('SDK_CAPABILITIES');
+      lease.current(Date.now());return sdk.inspectEvidenceAttempt();
+    },
+    async beginEvidence(input){
+      guard();if(!evidenceMode||typeof sdk.beginEvidence!=='function')fail('SDK_CAPABILITIES');
+      if(evidenceBegun||evidenceClosed)fail('REPLACEMENT_ADMISSION_CLOSED');
+      if(!canaryPin)fail('CANARY_REQUIRED');
+      evidenceBegun=true;
+      try{await live();guard();lease.current(Date.now());return await sdk.beginEvidence(input);}
+      catch(error){evidenceClosed=true;throw error;}
+    },
+    async writeEvidence(name,bytes){
+      guard();if(!evidenceMode||typeof sdk.writeEvidence!=='function')fail('SDK_CAPABILITIES');
+      if(!evidenceBegun||evidenceClosed)fail('REPLACEMENT_ADMISSION_CLOSED');
+      try{lease.current(Date.now());return await sdk.writeEvidence(name,bytes);}
+      catch(error){evidenceClosed=true;throw error;}
+    },
     async requestDaily(url,options={}){
       guard();if(!daily||typeof sdk.requestDaily!=='function')fail('SDK_CAPABILITIES');
       if((options.method??'GET')!=='POST'){
         dailyReads=dailyReads.then(()=>{guard();return sdk.requestDaily(url,options);});
         return dailyReads;
       }
+      if(evidenceMode)fail('REPLACEMENT_NAMED_WRITE_REQUIRED');
       if(dailyWriteAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');
       dailyWriteAttempted=true;
       const permit=dailyAdmission;dailyAdmission=null;
@@ -391,7 +415,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
     // Slow IAM/canary reads belong to bounded preparation, before the ten-second
     // CAS/readback clock. The resulting native admission still expires in 5s.
     async prepareDailyPublication({signal}={}){
-      guard();if(!daily)fail('SDK_CAPABILITIES');
+      guard();if(!daily||evidenceMode)fail('SDK_CAPABILITIES');
       if(replacementAdmissionAttempted||dailyWriteAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');
       replacementAdmissionAttempted=true;dailyAdmission=null;
       if(!canaryPin||signal?.aborted)fail('CANARY_REQUIRED');

@@ -282,7 +282,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:21/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:22/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -305,6 +305,9 @@ test(FACTORY_TEST,async t=>{
       async requestCanary(value){events.push('canary-'+value.method);if(control.canaryError)throw control.canaryError;return canary.requestCanary(value);},
       async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
       async request(){events.push('financial-POST');return new Response(null,{status:200});},
+      async inspectEvidenceAttempt(){events.push('evidence-inspect');return {exists:false};},
+      async beginEvidence(){events.push('evidence-begin');return {synthetic:true};},
+      async writeEvidence(){events.push('evidence-write');return {generation:'1',sha256:'a'.repeat(64)};},
       async requestDaily(url,options,lease){
         events.push(options.method==='POST'?'daily-POST':'daily-GET');
         if(options.method==='POST'){
@@ -351,12 +354,23 @@ test(FACTORY_TEST,async t=>{
       const values=dependencies[specifier];return new vm.SyntheticModule(Object.keys(values),function(){
         for(const [name,value] of Object.entries(values))this.setExport(name,value);
       });});await module.evaluate();
-    const access=options.daily?await module.namespace.createOwnerDailyStorageAccess():options.storage?await module.namespace.createOwnerPreviewReplacementStorageAccess():await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
+    const access=options.evidence?await module.namespace.createOwnerBrowserEvidenceAccess():options.daily?await module.namespace.createOwnerDailyStorageAccess():options.storage?await module.namespace.createOwnerPreviewReplacementStorageAccess():await (options.replacing?module.namespace.createOwnerPreviewReplacementAccess:module.namespace.createOwnerPreviewAccess)({pin:{generation:'caller-override'},approved:true});
     return {access,events,control,canary,revision:files['xuan-owner-preview-replacement.json'],storageFactory:module.namespace.createOwnerPreviewReplacementStorageAccess};
   }
   const post=access=>access.request('https://storage.googleapis.com/upload/storage/v1/b/'+LATEST_TARGET.bucket+'/o?uploadType=multipart&ifGenerationMatch=0',{method:'POST'});
   const verify=access=>access.verifyDestinationAccess({target:{...LATEST_TARGET},operation:'create-accepted-preview'});
   const scenario=(name,run)=>t.test(name,async st=>{await run(st);completedScenarios++;});
+  await scenario('browser evidence lane requires canary and lease; it cannot mint or execute latest CAS',async()=>{
+    const h=await harness({evidence:true,daily:true,replacing:true});
+    assert.deepEqual(await h.access.inspectEvidenceAttempt(),{exists:false});
+    await assert.rejects(h.access.beginEvidence({}),/CANARY_REQUIRED/);
+    assert.equal((await h.access.verifyRegisteredCanary()).status,'existing-verified');
+    await h.access.beginEvidence({});await h.access.writeEvidence('synthetic',new Uint8Array([1]));
+    await assert.rejects(h.access.beginEvidence({}),/ADMISSION_CLOSED/);
+    await assert.rejects(h.access.prepareDailyPublication(),/SDK_CAPABILITIES/);
+    await assert.rejects(h.access.requestDaily('synthetic',{method:'POST'}),/NAMED_WRITE_REQUIRED/);
+    assert.equal(h.events.filter(e=>e==='evidence-begin').length,1);assert.ok(!h.events.includes('daily-POST'));h.access.close();
+  });
   await scenario('protected checkout fails before SDK creation; invalid full boundary closes its transport',async()=>{
     const first=[];await assert.rejects(harness({events:first,protectedError:true}),/SYNTHETIC_PROTECTED_CHECKOUT_REJECTED/);
     assert.deepEqual(first,['protected']);
@@ -613,6 +627,6 @@ test(FACTORY_TEST,async t=>{
       const e=Object.freeze(failure()),close=Object.assign(Error(),{safeCode:'SDK_LOCAL_CLOSE_FAILED'});await assert.rejects(harness({boundaryError:e,closeError:close}),error=>error===e);
     });
   });
-  assert.equal(completedScenarios,21,'all factory scenarios must execute, including in the child fallback');
+  assert.equal(completedScenarios,22,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

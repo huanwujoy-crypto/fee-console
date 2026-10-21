@@ -164,7 +164,7 @@ function nativeResponse(value){
 
 export function createOwnerSdkTransport(){
   // Construction is inert. Even process creation waits for a validated call.
-  let child,closed=false,busy=false,sequence=0,pending,buffer='',writeStarted=false,canaryAttempted=false,mutationStarted=false,lastCounters=null,localCleanupCodes=[];
+  let child,closed=false,busy=false,sequence=0,pending,buffer='',writeStarted=false,canaryAttempted=false,mutationStarted=false,evidenceStarted=false,evidenceClosed=false,lastCounters=null,localCleanupCodes=[];
   const close=(code='CLOSED',explicit=false)=>{
     if(closed){if(explicit&&localCleanupCodes.length)throw fail('SDK_LOCAL_CLOSE_FAILED',null,Object.freeze([]),localCleanupCodes);return;}
     closed=true;const receiver=pending;pending=null;
@@ -216,6 +216,26 @@ export function createOwnerSdkTransport(){
     }finally{clearTimeout(timer);signal?.removeEventListener('abort',abort);busy=false;}
   };
   return Object.freeze({
+    async inspectEvidenceAttempt({signal}={}){return call({op:'inspectEvidence'},{signal});},
+    async beginEvidence({requestId,captureStartedAt,signal}={}){
+      const registration=registeredOwnerRecovery(),start=Date.parse(captureStartedAt);
+      if(requestId!==registration.requestId||typeof captureStartedAt!=='string'||!Number.isFinite(start)
+        ||new Date(start).toISOString()!==captureStartedAt||start>Date.now()||Date.now()-start>300000
+        ||new Date(Date.now()+28800000).toISOString().slice(0,10)!==registration.dataDate)throw fail('REQUEST_INVALID');
+      if(evidenceStarted)throw fail('WRITE_ALREADY_ATTEMPTED');evidenceStarted=true;mutationStarted=true;
+      try{return await call({op:'beginEvidence',requestId,captureStartedAt},{signal});}catch(error){evidenceClosed=true;throw error;}
+    },
+    async writeEvidence(name,bytes,{signal}={}){
+      if(!evidenceStarted||evidenceClosed)throw fail('WRITE_ALREADY_ATTEMPTED');
+      if(typeof name!=='string'||!(bytes instanceof Uint8Array)||!bytes.length||bytes.length>4*1024*1024)throw fail('BODY_INVALID');
+      const registration=registeredOwnerRecovery();
+      if(name!==registration.receiptObject&&!/^report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive|receipt)\.json$/.test(name)
+        &&!/^report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/report\.html$/.test(name))throw fail('TARGET_INVALID');
+      try{const pin=await call({op:'writeEvidence',name,body:Buffer.from(bytes).toString('base64')},{signal});
+        if(!generation(pin.generation)||! /^[a-f0-9]{64}$/.test(pin.sha256)||pin.sha256!==createHash('sha256').update(bytes).digest('hex'))throw fail('PIN_REQUIRED');
+        if(name===registration.receiptObject)evidenceClosed=true;return pin;
+      }catch(error){evidenceClosed=true;throw error;}
+    },
     async requestDaily(url,options={}, {admissionExpiresAt}={}){
       const value=dailyRequestValue(url,options,admissionExpiresAt);
       if(value.method==='POST'){

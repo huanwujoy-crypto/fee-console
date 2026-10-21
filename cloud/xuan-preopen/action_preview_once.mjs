@@ -133,7 +133,7 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
       // stopped above. Sharesight/CALL may still produce truthful partial UI.
       await loadContext({now});
       const snapshotReader=createEodSnapshotReader({sourceDate,readSharesightBatch:async date=>readSharesight(date,await io.loadGatewayToken(),{now,settle:true})});
-      receipt=await runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,initialStartedAt:Date.parse(probe.startedAt),readArchive:null,verifyArchive:null,snapshotReader,
+      receipt=await runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,assumeSharesightSynchronized:true,initialStartedAt:Date.parse(probe.startedAt),readArchive:null,verifyArchive:null,snapshotReader,
         captureOptionalLive:async()=>({...ibSummary(probe),status:'failed'})});
     }
     guardComposition();mirrorAllowed=true;
