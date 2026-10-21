@@ -116,7 +116,7 @@ function dailyRequestValue(input,options={},admissionExpiresAt){
   const prefix='/storage/v1/b/'+LATEST_TARGET.bucket+'/o/';
   let name;try{name=decodeURIComponent(u.pathname.slice(prefix.length));}catch{throw fail('TARGET_INVALID');}
   if(u.origin!=='https://storage.googleapis.com'||!u.pathname.startsWith(prefix)
-    ||u.pathname!==prefix+encodeURIComponent(name)||(!(/^(delivery\/\d{4}-\d\d-\d\d\/(?:report\.html|receipt\.json)|report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive)\.json)$/.test(name))
+    ||u.pathname!==prefix+encodeURIComponent(name)||(!(/^(delivery\/\d{4}-\d\d-\d\d\/(?:report\.html|receipt\.json)|report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive|concentration\.sources)\.json)$/.test(name))
     && !recoveryRequestId(name)&&!originalReportStart(name))
     ||method!=='GET')throw fail('TARGET_INVALID');
   // Reuse the existing strict scheme/query/header/body validation.
@@ -217,6 +217,16 @@ export function createOwnerSdkTransport(){
   };
   return Object.freeze({
     async inspectEvidenceAttempt({signal}={}){return call({op:'inspectEvidence'},{signal});},
+    async inspectEvidenceContinuation({signal}={}){
+      if(!registeredOwnerRecovery().continuation||evidenceStarted||evidenceClosed)throw fail('REQUEST_INVALID');
+      return call({op:'inspectEvidenceContinuation'},{signal});
+    },
+    async resumeEvidence({requestId,signal}={}){
+      const registration=registeredOwnerRecovery();
+      if(!registration.continuation||requestId!==registration.requestId||evidenceStarted||evidenceClosed)throw fail('REQUEST_INVALID');
+      evidenceStarted=true;
+      try{return await call({op:'resumeEvidence',requestId},{signal});}catch(error){evidenceClosed=true;throw error;}
+    },
     async beginEvidence({requestId,captureStartedAt,captureCompletedAt,signal}={}){
       const registration=registeredOwnerRecovery(),start=Date.parse(captureStartedAt),end=Date.parse(captureCompletedAt),savedCapture=captureCompletedAt!==undefined;
       if(requestId!==registration.requestId||typeof captureStartedAt!=='string'||!Number.isFinite(start)
@@ -230,8 +240,9 @@ export function createOwnerSdkTransport(){
       if(!evidenceStarted||evidenceClosed)throw fail('WRITE_ALREADY_ATTEMPTED');
       if(typeof name!=='string'||!(bytes instanceof Uint8Array)||!bytes.length||bytes.length>4*1024*1024)throw fail('BODY_INVALID');
       const registration=registeredOwnerRecovery();
-      if(name!==registration.receiptObject&&!/^report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive|receipt)\.json$/.test(name)
+      if(name!==registration.receiptObject&&!/^report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive|concentration\.sources|receipt)\.json$/.test(name)
         &&!/^report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/report\.html$/.test(name))throw fail('TARGET_INVALID');
+      mutationStarted=true;
       try{const pin=await call({op:'writeEvidence',name,body:Buffer.from(bytes).toString('base64')},{signal});
         if(!generation(pin.generation)||! /^[a-f0-9]{64}$/.test(pin.sha256)||pin.sha256!==createHash('sha256').update(bytes).digest('hex'))throw fail('PIN_REQUIRED');
         if(name===registration.receiptObject)evidenceClosed=true;return pin;

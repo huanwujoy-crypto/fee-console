@@ -282,7 +282,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:22/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:23/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -306,6 +306,8 @@ test(FACTORY_TEST,async t=>{
       async createCanary(){events.push('canary-POST');throw Object.assign(Error('synthetic unknown write'),{safeCode:'REQUEST_OUTCOME_UNKNOWN'});},
       async request(){events.push('financial-POST');return new Response(null,{status:200});},
       async inspectEvidenceAttempt(){events.push('evidence-inspect');return {exists:false};},
+      async inspectEvidenceContinuation(){events.push('continuation-inspect');return {status:'verified'};},
+      async resumeEvidence(){events.push('evidence-resume');if(control.resumeError)throw Error('SYNTHETIC_RESUME_STOPPED');return {existingObjects:6,remainingObjects:3};},
       async beginEvidence(){events.push('evidence-begin');return {synthetic:true};},
       async writeEvidence(){events.push('evidence-write');return {generation:'1',sha256:'a'.repeat(64)};},
       async requestDaily(url,options,lease){
@@ -370,6 +372,22 @@ test(FACTORY_TEST,async t=>{
     await assert.rejects(h.access.prepareDailyPublication(),/SDK_CAPABILITIES/);
     await assert.rejects(h.access.requestDaily('synthetic',{method:'POST'}),/NAMED_WRITE_REQUIRED/);
     assert.equal(h.events.filter(e=>e==='evidence-begin').length,1);assert.ok(!h.events.includes('daily-POST'));h.access.close();
+  });
+  await scenario('continuation retains canary/live-boundary gates, closes on failure and cannot reset evidence or grant CAS',async()=>{
+    const h=await harness({evidence:true,daily:true,replacing:true});
+    assert.deepEqual(await h.access.inspectEvidenceContinuation(),{status:'verified'});
+    await assert.rejects(h.access.resumeEvidence({}),/CANARY_REQUIRED/);
+    assert.equal((await h.access.verifyRegisteredCanary()).status,'existing-verified');
+    assert.deepEqual(await h.access.resumeEvidence({}),{existingObjects:6,remainingObjects:3});
+    await h.access.writeEvidence('synthetic',new Uint8Array([1]));
+    await assert.rejects(h.access.beginEvidence({}),/ADMISSION_CLOSED/);
+    await assert.rejects(h.access.resumeEvidence({}),/ADMISSION_CLOSED/);
+    await assert.rejects(h.access.requestDaily('synthetic',{method:'POST'}),/NAMED_WRITE_REQUIRED/);
+    assert.equal(h.events.filter(e=>e==='evidence-resume').length,1);assert.ok(h.events.includes('quick-boundary'));h.access.close();
+    const failed=await harness({evidence:true,daily:true,replacing:true,resumeError:true});
+    await failed.access.verifyRegisteredCanary();await assert.rejects(failed.access.resumeEvidence({}),/RESUME_STOPPED/);
+    await assert.rejects(failed.access.resumeEvidence({}),/ADMISSION_CLOSED/);
+    assert.equal(failed.events.filter(e=>e==='evidence-resume').length,1);failed.access.close();
   });
   await scenario('protected checkout fails before SDK creation; invalid full boundary closes its transport',async()=>{
     const first=[];await assert.rejects(harness({events:first,protectedError:true}),/SYNTHETIC_PROTECTED_CHECKOUT_REJECTED/);
@@ -627,6 +645,6 @@ test(FACTORY_TEST,async t=>{
       const e=Object.freeze(failure()),close=Object.assign(Error(),{safeCode:'SDK_LOCAL_CLOSE_FAILED'});await assert.rejects(harness({boundaryError:e,closeError:close}),error=>error===e);
     });
   });
-  assert.equal(completedScenarios,22,'all factory scenarios must execute, including in the child fallback');
+  assert.equal(completedScenarios,23,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

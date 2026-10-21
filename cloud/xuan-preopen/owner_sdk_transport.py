@@ -317,7 +317,7 @@ def validate_storage_request(value, expected_generation='0', daily=False):
 
 def recovery_registration():
     value = json_loads((Path(__file__).resolve().parents[2]/'security'/'xuan-owner-source-recovery.json').read_bytes())
-    if (set(value)-{'supersedes'} not in ({'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}, {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256', 'referenceCapture'})
+    if (set(value)-{'supersedes', 'continuation'} not in ({'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}, {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256', 'referenceCapture'})
             or value['schema'] != 'xuan.owner-source-recovery.v1'
             or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', str(value['requestId']))
             or not re.fullmatch(r'\d{4}-\d\d-\d\d', str(value['dataDate']))
@@ -352,7 +352,30 @@ def recovery_registration():
                 or not GEN.fullmatch(str(s.get('latestGeneration')))
                 or any(not re.fullmatch('[a-f0-9]{64}', str(s.get(k))) for k in ('artifactSha256','receiptSha256'))):
             reject('PIN_REQUIRED')
+    if 'continuation' in value:
+        continuation_registration(value)
     return dict(value, receiptObject='report-check/orders-probe-'+value['requestId']+'/preview-receipt.json')
+
+
+def continuation_registration(registration):
+    c = registration.get('continuation'); ref = registration.get('referenceCapture')
+    if (not isinstance(c, dict) or not ref
+            or set(c) != {'schema', 'runId', 'claimGeneration', 'objects', 'maximumObjects', 'maximumBytes'}
+            or c['schema'] != 'xuan.evidence-continuation.v1'
+            or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}', str(c['runId']))
+            or not GEN.fullmatch(str(c['claimGeneration'])) or c['maximumObjects'] != 9 or c['maximumBytes'] != 32*1024*1024
+            or not isinstance(c['objects'], list) or len(c['objects']) != 5):
+        reject('PIN_REQUIRED')
+    prefix = 'report-check/'+ref['captureStartedAt']+'-'+c['runId']+'/'
+    names = ('ib.flexEod.json', 'sharesight.ibGroupedPerformance.json', 'sharesight.noahPerformance.json', 'ib.optionalLive.json', 'report.html')
+    for p, name in zip(c['objects'], names):
+        if (not isinstance(p, dict) or set(p) != {'name', 'generation', 'sha256', 'size'} or p['name'] != prefix+name
+                or not GEN.fullmatch(str(p['generation'])) or not re.fullmatch('[a-f0-9]{64}', str(p['sha256']))
+                or type(p['size']) is not int or not 0 < p['size'] <= 4*1024*1024):
+            reject('PIN_REQUIRED')
+    if sum(p['size'] for p in c['objects'])+4096 > c['maximumBytes']:
+        reject('PIN_REQUIRED')
+    return c
 
 
 def reference_capture(registration, start, end):
@@ -633,6 +656,7 @@ class OwnerBridge:
         self.canary_attempted = False
         self.evidence_attempted = False
         self.evidence = None
+        self.continuation_observation = None
         self.mutation_started = False
         # Only populated by authenticated responses, never a caller pin list.
         self.daily_pins = {}
@@ -796,11 +820,112 @@ class OwnerBridge:
             reject('PIN_REQUIRED')
         return {'exists': True, 'generation': metadata['generation']}
 
+    def read_continuation_object(self, name, generation, expected_hash=None, expected_size=None):
+        # Only called with the six protected registration paths, never caller paths.
+        url = 'https://storage.googleapis.com/storage/v1/b/'+BUCKET+'/o/'+quote(name, safe='')
+        meta = self.read_json(url+'?generation='+generation)
+        content_type = 'text/html; charset=utf-8' if name.endswith('/report.html') else 'application/json; charset=utf-8'
+        if (meta.get('bucket') != BUCKET or meta.get('name') != name or meta.get('generation') != generation
+                or meta.get('contentType') != content_type or meta.get('contentDisposition') != 'attachment'
+                or meta.get('cacheControl') != 'private, no-store, max-age=0'
+                or not re.fullmatch(r'[1-9][0-9]{0,7}', str(meta.get('size')))
+                or int(meta['size']) > 4*1024*1024 or expected_size is not None and int(meta['size']) != expected_size):
+            reject('PIN_REQUIRED')
+        response = self.raw_request(url+'?generation='+generation+'&alt=media', 'GET',
+                                    {'Accept': 'application/octet-stream', 'Accept-Encoding': 'identity'}, None)
+        raw = base64.b64decode(response['body'], validate=True)
+        digest = hashlib.sha256(raw).hexdigest()
+        if (response['status'] != 200 or response['headers'].get('x-goog-generation') != generation
+                or len(raw) != int(meta['size']) or expected_hash is not None and digest != expected_hash
+                or meta.get('md5Hash') != base64.b64encode(hashlib.md5(raw).digest()).decode()):
+            reject('PIN_REQUIRED')
+        return raw, {'name': name, 'generation': generation, 'sha256': digest, 'size': len(raw)}
+
+    def inspect_evidence_continuation(self):
+        self.continuation_observation = None
+        if self.evidence_attempted or self.evidence:
+            reject('WRITE_ALREADY_ATTEMPTED')
+        registration = recovery_registration(); c = continuation_registration(registration); ref = registration['referenceCapture']
+        now = time.time()*1000
+        deadline = datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z', '+00:00')).timestamp()*1000
+        if registration['dataDate'] != daily_date() or now > deadline:
+            reject('REPLACEMENT_ADMISSION_EXPIRED')
+        name = 'report-check/orders-probe-'+registration['requestId']+'/start.json'
+        raw, claim_pin = self.read_continuation_object(name, c['claimGeneration'])
+        if len(raw) > 4096:
+            reject('PIN_REQUIRED')
+        claim = json_loads(raw)
+        expected = {'schema': 'xuan.browser-evidence-attempt.v1', 'requestId': registration['requestId'],
+                    'dataDate': registration['dataDate'], 'captureStartedAt': ref['captureStartedAt'],
+                    'captureCompletedAt': ref['captureCompletedAt'], 'runId': c['runId'],
+                    'maximumObjects': 10, 'maximumBytes': 32*1024*1024,
+                    'sourceMode': 'sharesight-browser-with-optional-normal-orders'}
+        if set(claim) != set(expected) | {'createdAt'} or any(claim.get(k) != v for k,v in expected.items()):
+            reject('PIN_REQUIRED')
+        try:
+            created = datetime.datetime.fromisoformat(claim['createdAt'].replace('Z', '+00:00'))
+            if created.isoformat(timespec='milliseconds').replace('+00:00','Z') != claim['createdAt'] or not ref['captureCompletedAt'] <= claim['createdAt'] <= instant():
+                reject('PIN_REQUIRED')
+        except Exception:
+            reject('PIN_REQUIRED')
+        pins = [claim_pin]
+        for pin in c['objects']:
+            _, verified = self.read_continuation_object(pin['name'], pin['generation'], pin['sha256'], pin['size'])
+            pins.append(verified)
+        total = sum(pin['size'] for pin in pins)
+        if total >= c['maximumBytes']:
+            reject('BODY_INVALID')
+        end = time.time()*1000
+        if end < now or end > deadline:
+            reject('REPLACEMENT_ADMISSION_EXPIRED')
+        self.continuation_observation = {'registration': registration, 'pins': pins, 'bytes': total,
+                                         'wall': end, 'monotonic': time.monotonic()}
+        return {'status': 'verified', 'requestId': registration['requestId'], 'runId': c['runId'],
+                'captureStartedAt': ref['captureStartedAt'], 'captureCompletedAt': ref['captureCompletedAt'],
+                'existingObjects': 6, 'existingBytes': total, 'pins': pins,
+                'expiresAt': datetime.datetime.fromtimestamp((end+60000)/1000, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')}
+
+    def resume_evidence(self, value):
+        registration = recovery_registration(); c = continuation_registration(registration)
+        observed = self.continuation_observation
+        if (set(value) != {'op', 'requestId'} or value.get('requestId') != registration['requestId']
+                or self.evidence_attempted or not observed or observed['registration'] != registration):
+            reject('REQUEST_INVALID')
+        self.evidence_attempted = True  # one continuation admission per process, including failure
+        now = time.time()*1000; ref = registration['referenceCapture']
+        deadline = datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z', '+00:00')).timestamp()*1000
+        if (not 0 <= now-observed['wall'] <= 60000 or time.monotonic()-observed['monotonic'] > 60
+                or now > deadline or daily_date() != registration['dataDate']):
+            reject('REPLACEMENT_ADMISSION_EXPIRED')
+        prefix = 'report-check/'+ref['captureStartedAt']+'-'+c['runId']+'/'
+        remaining = [prefix+'concentration.sources.json', prefix+'receipt.json', registration['receiptObject']]
+        for name in remaining:
+            response = self.raw_request('https://storage.googleapis.com/storage/v1/b/'+BUCKET+'/o/'+quote(name, safe=''),
+                                         'GET', {'Accept': 'application/json', 'Accept-Encoding': 'identity'}, None)
+            if response['status'] != 404:
+                reject('WRITE_ALREADY_ATTEMPTED' if response['status'] == 200 else 'READ_FAILED')
+        end_now = time.time()*1000
+        if not now <= end_now <= min(deadline, observed['wall']+60000) or time.monotonic()-observed['monotonic'] > 60:
+            reject('REPLACEMENT_ADMISSION_EXPIRED')
+        start_ms = datetime.datetime.fromisoformat(ref['captureStartedAt'].replace('Z', '+00:00')).timestamp()*1000
+        end_ms = datetime.datetime.fromisoformat(ref['captureCompletedAt'].replace('Z', '+00:00')).timestamp()*1000
+        pins = observed['pins']
+        self.evidence = {'registration': registration, 'start': ref['captureStartedAt'], 'startMs': start_ms,
+                         'prefix': prefix, 'durationMs': deadline-start_ms, 'reference': ref,
+                         'captureCompletedAt': ref['captureCompletedAt'], 'captureEndMs': end_ms,
+                         'attempted': {p['name'] for p in pins}, 'written': {p['name']: {'generation': p['generation'], 'sha256': p['sha256']} for p in pins},
+                         'count': 6, 'bytes': observed['bytes'], 'maximumObjects': 9, 'maximumBytes': c['maximumBytes'],
+                         'remaining': remaining, 'blocked': False, 'lastWall': end_now, 'initialWall': end_now, 'monotonic': time.monotonic()}
+        self.continuation_observation = None
+        return {'requestId': registration['requestId'], 'dataDate': registration['dataDate'], 'runId': c['runId'],
+                'captureStartedAt': ref['captureStartedAt'], 'captureCompletedAt': ref['captureCompletedAt'],
+                'existingObjects': 6, 'existingBytes': self.evidence['bytes'], 'remainingObjects': 3}
+
     def evidence_upload(self, name, raw, content_type):
         evidence = self.evidence
-        if (not evidence or evidence['blocked'] or evidence['count'] >= 10
+        if (not evidence or evidence['blocked'] or evidence['count'] >= evidence.get('maximumObjects', 10)
                 or not isinstance(raw, bytes) or not 0 < len(raw) <= 4*1024*1024
-                or evidence['bytes']+len(raw) > 32*1024*1024 or name in evidence['attempted']):
+                or evidence['bytes']+len(raw) > evidence.get('maximumBytes', 32*1024*1024) or name in evidence['attempted']):
             reject('WRITE_ALREADY_ATTEMPTED')
         now = time.time()*1000
         start = evidence['startMs']
@@ -934,6 +1059,8 @@ class OwnerBridge:
         if set(value) != {'op', 'name', 'body'} or not self.evidence or self.evidence['blocked']:
             reject('REQUEST_INVALID')
         evidence = self.evidence; prefix = evidence['prefix']; registration = evidence['registration']; name = value['name']
+        if 'remaining' in evidence and (not evidence['remaining'] or name != evidence['remaining'][0]):
+            reject('WRITE_ALREADY_ATTEMPTED')
         keys = ('ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive')
         paths = {prefix+k+'.json': k for k in keys}
         receipt_name = prefix+'receipt.json'; preview_name = registration['receiptObject']; html_name = prefix+'report.html'
@@ -1027,6 +1154,8 @@ class OwnerBridge:
         elif not text.startswith('<!doctype html>') or len(raw) > 2*1024*1024:
             reject('BODY_INVALID')
         result = self.evidence_upload(name, raw, 'text/html; charset=utf-8' if name == html_name else 'application/json; charset=utf-8')
+        if 'remaining' in evidence:
+            evidence['remaining'].pop(0)
         if name == preview_name:
             evidence['blocked'] = True  # completed: no further evidence writes
         return result
@@ -1216,6 +1345,10 @@ class OwnerBridge:
         op = value.get('op')
         if op == 'inspectEvidence' and set(value) == {'op'}:
             return self.inspect_evidence_attempt()
+        if op == 'inspectEvidenceContinuation' and set(value) == {'op'}:
+            return self.inspect_evidence_continuation()
+        if op == 'resumeEvidence':
+            return self.resume_evidence(value)
         if op == 'beginEvidence':
             return self.begin_evidence(value)
         if op == 'writeEvidence':

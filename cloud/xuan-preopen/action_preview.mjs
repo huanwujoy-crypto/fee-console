@@ -57,13 +57,13 @@ export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date
 // No source clients: the parent supplies authenticated browser observations.
 // Validate/model/render every object locally before the one create-only claim.
 // The real access factory is separately protected; tests inject only synthetic IO.
-export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,concentrationInput=null,access,now=Date.now,loadContext=loadTrustedContext}={}){
+export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,concentrationInput=null,access,resume=false,now=Date.now,loadContext=loadTrustedContext}={}){
   // Local-only recovery registration is outside the unchanged cloud image.
   const {registeredOwnerRecovery,registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources}=await import('./owner_source_recovery.mjs');
   const registration=registeredOwnerRecovery(),keys=Object.keys(SNAPSHOT_SCOPES),start=Date.parse(captureStartedAt);
   if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()>(registration.referenceCapture?.captureStartedAt===captureStartedAt?Date.parse(registration.referenceCapture.expiresAt):start+1800000)||hkt(start)!==registration.dataDate
     ||!snapshots||Object.keys(snapshots).sort().join('|')!==keys.sort().join('|')
-    ||typeof access?.beginEvidence!=='function'||typeof access?.writeEvidence!=='function')fail();
+    ||typeof resume!=='boolean'||(resume?(!registration.continuation||typeof access?.inspectEvidenceContinuation!=='function'||typeof access?.resumeEvidence!=='function'):typeof access?.beginEvidence!=='function')||typeof access?.writeEvidence!=='function')fail();
   // Browser sourceDate is the visible book valuation date, not a price date.
   const dateBasis=SHARESIGHT_VALUATION_DATE_BASIS;
   if(sourceDate>hkt(start))fail();
@@ -113,24 +113,43 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   const reference=registeredReferenceCapture(registration.requestId,captureStartedAt,captureCompletedAt);
   validateReferenceSources(reference,{...Object.fromEntries(Object.entries(verified).map(([k,v])=>[k,{rawFingerprint:digest(v)}])),'ib.optionalLive':live});
   const captureOptionalLive=async()=>structuredClone(live);
+  const continuation=resume?registration.continuation:null;
+  const existingPin=(name,value)=>{
+    const p=continuation?.objects.find(p=>p.name===name);if(!p)return null;
+    const bytes=Buffer.from(typeof value==='string'?value:JSON.stringify(value));
+    if(bytes.length!==p.size||digest(bytes)!==p.sha256)fail();
+    return {generation:p.generation,sha256:p.sha256};
+  };
   let stagedBytes=0;
-  await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,
+  await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,sourceRunId:continuation?.runId??null,
     readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,bookDetailVersion:3,concentrationInput,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:async(name,value)=>{const size=Buffer.byteLength(typeof value==='string'?value:JSON.stringify(value));
       const limit=name.endsWith('/report.html')?2*1024*1024:name.endsWith('/receipt.json')?128*1024:4*1024*1024;
-      stagedBytes+=size;if(size>limit||stagedBytes>31*1024*1024)fail();return {generation:'1',sha256:digest(value)};}}});
+      stagedBytes+=size;if(size>limit||stagedBytes>31*1024*1024)fail();return existingPin(name,value)??{generation:'1',sha256:digest(value)};}}});
   // All model, date, CALL, normalization and HTML checks above finish without IO.
   // Native admission chooses the immutable run ID; rebuild from these same
   // verified in-memory values, then upload once with actual generation pins.
-  const attempt=await access.beginEvidence({requestId:registration.requestId,captureStartedAt,captureCompletedAt});
+  if(continuation){
+    const inspected=await access.inspectEvidenceContinuation();
+    if(inspected?.status!=='verified'||inspected.requestId!==registration.requestId||inspected.runId!==continuation.runId
+      ||inspected.captureStartedAt!==captureStartedAt||inspected.captureCompletedAt!==captureCompletedAt||inspected.existingObjects!==6
+      ||inspected.pins?.length!==6||inspected.pins[0].generation!==continuation.claimGeneration
+      ||inspected.pins[0].name!==`report-check/orders-probe-${registration.requestId}/start.json`
+      ||! /^[a-f0-9]{64}$/.test(inspected.pins[0].sha256)||!Number.isSafeInteger(inspected.pins[0].size)||inspected.pins[0].size<1||inspected.pins[0].size>4096
+      ||continuation.objects.some((p,i)=>Object.keys(p).some(k=>p[k]!==inspected.pins[i+1][k]))
+      ||inspected.existingBytes!==inspected.pins.reduce((sum,p)=>sum+p.size,0))fail();
+  }
+  const attempt=continuation?await access.resumeEvidence({requestId:registration.requestId})
+    :await access.beginEvidence({requestId:registration.requestId,captureStartedAt,captureCompletedAt});
+  if(continuation&&(attempt.runId!==continuation.runId||attempt.existingObjects!==6||attempt.remainingObjects!==3))fail();
   if(attempt.requestId!==registration.requestId||attempt.dataDate!==registration.dataDate||attempt.captureStartedAt!==captureStartedAt||attempt.captureCompletedAt!==captureCompletedAt
     ||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(attempt.runId))fail();
   const reportRunId=attempt.runId;
   const saved=await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,sourceRunId:reportRunId,
     readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,bookDetailVersion:3,concentrationInput,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
-    io:{savePrivate:(name,value)=>access.writeEvidence(name,Buffer.from(typeof value==='string'?value:JSON.stringify(value)))}});
+    io:{savePrivate:(name,value)=>existingPin(name,value)??access.writeEvidence(name,Buffer.from(typeof value==='string'?value:JSON.stringify(value)))}});
   const bytes=Buffer.from(JSON.stringify(saved)),pin=await access.writeEvidence(registration.receiptObject,bytes);
   return {requestId:registration.requestId,receipt:saved,receiptObject:registration.receiptObject,...pin};
 }

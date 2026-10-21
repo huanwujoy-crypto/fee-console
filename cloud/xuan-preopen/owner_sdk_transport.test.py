@@ -1096,5 +1096,88 @@ class SavedCaptureEvidenceTests(BrowserEvidenceTests):
                 self.assertCode('REQUEST_INVALID',lambda:b.dispatch({'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':stamp(start),'captureCompletedAt':stamp(end)}))
                 self.assertEqual(len(p.calls),0)
 
+
+# Synthetic immutable storage: native continuation checks actual bytes, not ACK-only mocks.
+class ContinuationProvider(EvidenceProvider):
+    def __init__(self, records):
+        super().__init__();self.records=records;self.extra_posts=[]
+    def request(self,url,method,headers,body):
+        if method=='GET':
+            self.calls.append((url,method,headers,body));u=m.urlsplit(url);q=dict(m.parse_qsl(u.query));name=m.unquote(u.path.split('/o/',1)[1]);item=self.records.get(name)
+            if item is None:return Response(url,404)
+            raw,generation=item
+            if q.get('generation',generation)!=generation:return Response(url,404)
+            if q.get('alt')=='media':return Response(url,200,raw,{'Content-Type':'application/octet-stream','Content-Length':str(len(raw)),'X-Goog-Generation':generation})
+            meta={'bucket':m.BUCKET,'name':name,'generation':generation,'size':str(len(raw)),'md5Hash':base64.b64encode(hashlib.md5(raw).digest()).decode(),'contentType':'text/html; charset=utf-8' if name.endswith('/report.html') else 'application/json; charset=utf-8','contentDisposition':'attachment','cacheControl':'private, no-store, max-age=0'}
+            return Response(url,200,json.dumps(meta).encode())
+        result=super().request(url,method,headers,body)
+        name=list(self.objects)[-1]
+        assert name not in self.records
+        generation=json.loads(result.raw.getvalue())['generation'];self.records[name]=(self.objects[name],generation);self.extra_posts.append(name)
+        return result
+
+class ContinuationEvidenceTests(unittest.TestCase):
+    assertCode=BoundaryTests.assertCode
+    def setUp(self):
+        end=m.recovery_registration()['referenceCapture']['captureCompletedAt']
+        stamp=datetime.datetime.fromisoformat(end.replace('Z','+00:00'))+datetime.timedelta(seconds=60)
+        clock=patch.object(m.time,'time',return_value=stamp.timestamp());clock.start();self.addCleanup(clock.stop)
+        instant=patch.object(m,'instant',return_value=stamp.isoformat(timespec='milliseconds').replace('+00:00','Z'));instant.start();self.addCleanup(instant.stop)
+    def fixture(self):
+        reg=m.recovery_registration();ref=reg['referenceCapture'];c=dict(reg['continuation']);prefix='report-check/'+ref['captureStartedAt']+'-'+c['runId']+'/'
+        claim={'schema':'xuan.browser-evidence-attempt.v1','requestId':reg['requestId'],'dataDate':reg['dataDate'],'captureStartedAt':ref['captureStartedAt'],'captureCompletedAt':ref['captureCompletedAt'],'runId':c['runId'],'createdAt':ref['captureCompletedAt'],'maximumObjects':10,'maximumBytes':33554432,'sourceMode':'sharesight-browser-with-optional-normal-orders'}
+        records={'report-check/orders-probe-'+reg['requestId']+'/start.json':(json.dumps(claim).encode(),c['claimGeneration'])};pins=[]
+        for i,old in enumerate(c['objects']):
+            raw=b'<html>synthetic preserved artifact</html>' if old['name'].endswith('.html') else json.dumps({'synthetic':i}).encode();generation=str(i+20)
+            records[old['name']]=(raw,generation);pins.append(dict(name=old['name'],generation=generation,sha256=hashlib.sha256(raw).hexdigest(),size=len(raw)))
+        c['objects']=pins;reg=dict(reg,continuation=c)
+        return reg,records,prefix
+    def test_existing_six_pins_verified_then_only_three_creates_no_rewrite(self):
+        reg,records,prefix=self.fixture();p=ContinuationProvider(records);b=m.OwnerBridge(p)
+        with patch.object(m,'recovery_registration',return_value=reg),patch.object(m,'daily_date',return_value=reg['dataDate']):
+            proof=b.dispatch({'op':'inspectEvidenceContinuation'});self.assertEqual(proof['existingObjects'],6);self.assertEqual(len(proof['pins']),6)
+            self.assertEqual(p.extra_posts,[])
+            resumed=b.dispatch({'op':'resumeEvidence','requestId':reg['requestId']});self.assertEqual(resumed['remainingObjects'],3);self.assertEqual(b.evidence['count'],6)
+            self.assertCode('WRITE_ALREADY_ATTEMPTED',lambda:b.dispatch({'op':'writeEvidence','name':prefix+'report.html','body':base64.b64encode(b'overwrite').decode()}))
+            self.assertCode('REQUEST_INVALID',lambda:b.dispatch({'op':'resumeEvidence','requestId':reg['requestId']}))
+            sources=[];stamp=m.instant()
+            for key,account,label in [('sharesight.ibGroupedPerformance',936247,'IB-HK'),('sharesight.schwabPerformance',936249,'Schwab-HK'),('sharesight.webullPerformance',1350094,'Webull')]:
+                raw={'mode':'read_only','source':'Sharesight authenticated cloud browser visible DOM','observation':{'portfolio':label,'portfolioId':account,'valuationDate':reg['dataDate'],'retrievedAt':stamp}}
+                text=json.dumps(raw);sources.append({'bytes':text,'receipt':{'sourceKey':key,'route':'authenticated-browser','status':'date-verified','sourceDate':reg['dataDate'],'startedAt':stamp,'completedAt':stamp,'bytes':len(text.encode()),'sha256':hashlib.sha256(text.encode()).hexdigest()}})
+            sidecar={'cutoff':reg['dataDate'],'sources':sources}
+            write=lambda name,payload:b.dispatch({'op':'writeEvidence','name':name,'body':base64.b64encode(json.dumps(payload).encode()).decode()})
+            sidecar_pin=write(prefix+'concentration.sources.json',sidecar)
+            receipt={'mode':'private_eod_action','publication':'none','calculationBasis':'sharesight-book-user-synchronized.v1','dataDate':reg['dataDate'],'startedAt':reg['referenceCapture']['captureStartedAt'],'completedAt':stamp,'captureCompletedAt':reg['referenceCapture']['captureCompletedAt'],'dateBasis':'sharesight-valuation-date.v1','referenceMode':'xuan.registered-reference-capture.v1','sourceCount':4,
+                     'sources':[dict(sourceKey=x['name'].rsplit('/',1)[1][:-5],privateObject=x['name'],generation=x['generation'],sha256=x['sha256']) for x in reg['continuation']['objects'][:4]],
+                     'artifact':dict(privateObject=prefix+'report.html',**b.evidence['written'][prefix+'report.html']),
+                     'concentration':dict(privateObject=prefix+'concentration.sources.json',modelSha256='a'*64,**sidecar_pin)}
+            write(prefix+'receipt.json',receipt);write(reg['receiptObject'],receipt)
+            self.assertEqual(len(p.extra_posts),3);self.assertEqual(b.evidence['count'],9)
+            self.assertCode('WRITE_ALREADY_ATTEMPTED',lambda:b.evidence_upload(prefix+'extra.json',b'{}','application/json; charset=utf-8'))
+            self.assertEqual(b.safe_diagnostics.snapshot()['casHttpAttempts'],0)
+    def test_changed_version_hash_claim_or_existing_remaining_object_stops_without_post(self):
+        for kind in ['hash','generation','claim','already-written','missing']:
+            reg,records,prefix=self.fixture();p=ContinuationProvider(records);b=m.OwnerBridge(p)
+            name=reg['continuation']['objects'][0]['name'];raw,generation=records[name]
+            if kind=='hash':records[name]=(b'changed',generation)
+            if kind=='generation':records[name]=(raw,'999')
+            if kind=='missing':del records[name]
+            if kind=='claim':
+                key='report-check/orders-probe-'+reg['requestId']+'/start.json';v,g=records[key];obj=json.loads(v);obj['runId']='11111111-2222-4333-8444-555555555555';records[key]=(json.dumps(obj).encode(),g)
+            if kind=='already-written':records[prefix+'concentration.sources.json']=(b'{}','999')
+            with patch.object(m,'recovery_registration',return_value=reg),patch.object(m,'daily_date',return_value=reg['dataDate']):
+                with self.assertRaises(m.BoundaryError):
+                    b.dispatch({'op':'inspectEvidenceContinuation'});b.dispatch({'op':'resumeEvidence','requestId':reg['requestId']})
+            self.assertEqual(p.extra_posts,[])
+    def test_inspection_expiry_clock_reverse_and_wrong_request_do_not_reset_claim(self):
+        for kind in ['expired','backwards','wrong-request']:
+            reg,records,prefix=self.fixture();p=ContinuationProvider(records);b=m.OwnerBridge(p)
+            with patch.object(m,'recovery_registration',return_value=reg),patch.object(m,'daily_date',return_value=reg['dataDate']):
+                b.dispatch({'op':'inspectEvidenceContinuation'})
+                if kind=='expired':b.continuation_observation['wall']-=61000
+                if kind=='backwards':b.continuation_observation['wall']+=1e6
+                with self.assertRaises(m.BoundaryError):b.dispatch({'op':'resumeEvidence','requestId':'wrong' if kind=='wrong-request' else reg['requestId']})
+            self.assertEqual(p.extra_posts,[])
+
 if __name__ == '__main__':
     unittest.main()

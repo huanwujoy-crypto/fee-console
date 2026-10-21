@@ -21,5 +21,44 @@
     "artifactSha256": "2f1ca392ac606b624760fd8eb49e4c9775b48f12bb015567f64068b75b4fb339",
     "receiptSha256": "48f9a6886afbe4c1d01633b6a5afe1bd877472cd1eda3ca9fd8823692b8c16c9",
     "latestGeneration": "1792569878989754"
+  },
+  "continuation": {
+    "schema": "xuan.evidence-continuation.v1",
+    "runId": "baf7fa7a-655c-4bd5-b475-abd47a24682c",
+    "claimGeneration": "1792576495720178",
+    "objects": [
+      {
+        "name": "report-check/2026-10-21T06:39:13.531Z-baf7fa7a-655c-4bd5-b475-abd47a24682c/ib.flexEod.json",
+        "generation": "1792576496233067",
+        "sha256": "f91e615197c44fac7e00be9e0db389921023f109d44c7a938a065331d1c86229",
+        "size": 48
+      },
+      {
+        "name": "report-check/2026-10-21T06:39:13.531Z-baf7fa7a-655c-4bd5-b475-abd47a24682c/sharesight.ibGroupedPerformance.json",
+        "generation": "1792576497316163",
+        "sha256": "b0c674f904dd7bbd94845bd5016c37e6f4641047d86eef2ffb57f5307e05d6df",
+        "size": 64682
+      },
+      {
+        "name": "report-check/2026-10-21T06:39:13.531Z-baf7fa7a-655c-4bd5-b475-abd47a24682c/sharesight.noahPerformance.json",
+        "generation": "1792576497993808",
+        "sha256": "78ba2748174b2a937cfd96c1a3175800f5806a859f3d484db5d661be83b9588b",
+        "size": 10509
+      },
+      {
+        "name": "report-check/2026-10-21T06:39:13.531Z-baf7fa7a-655c-4bd5-b475-abd47a24682c/ib.optionalLive.json",
+        "generation": "1792576498529625",
+        "sha256": "29d2bce226cfafc20d80c6eeb405cae374d081d129c33684f5740b1085ec1c3a",
+        "size": 1214
+      },
+      {
+        "name": "report-check/2026-10-21T06:39:13.531Z-baf7fa7a-655c-4bd5-b475-abd47a24682c/report.html",
+        "generation": "1792576499480852",
+        "sha256": "62f268aa62bd107d230891f66ba7bd6dbcca4937f4df4d23065ce4efed796543",
+        "size": 70303
+      }
+    ],
+    "maximumObjects": 9,
+    "maximumBytes": 33554432
   }
 }
