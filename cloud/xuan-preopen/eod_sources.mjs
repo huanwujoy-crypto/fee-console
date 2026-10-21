@@ -188,19 +188,23 @@ const browserReportOf=raw=>raw?.report??raw?.data?.report??raw?.result?.data?.re
 export function normalizeBrowserSnapshot(raw,{portfolioId,sourceDate}){
   if(raw?.mode!=='read_only'||raw.source!==SHARESIGHT_BROWSER_SOURCE)browserFail();
   const o=raw.observation,ib=portfolioId===936247;
+  const scopes={936247:['IB-HK','sharesight.ibGroupedPerformance'],936238:['NOAH-HK','sharesight.noahPerformance'],936249:['Schwab-HK','sharesight.schwabPerformance'],1350094:['Webull','sharesight.webullPerformance']};
+  const scope=scopes[portfolioId];
   if(!validDate(sourceDate)||!browserInstant(o?.retrievedAt)||sourceDate>new Date(Date.parse(o.retrievedAt)+28800000).toISOString().slice(0,10)
-    ||![936247,936238].includes(portfolioId)||o?.portfolio!==(ib?'IB-HK':'NOAH-HK')||o.valuationDate!==sourceDate
+    ||!scope||o?.portfolio!==scope[0]||o.valuationDate!==sourceDate
+    ||o.portfolioId!==undefined&&o.portfolioId!==portfolioId
+    ||![936247,936238].includes(portfolioId)&&o.portfolioId!==portfolioId
     ||o.reportingCurrency!=='USD'||!browserAmount(o.portfolioValue)||!browserInstant(o.retrievedAt)
     ||!Array.isArray(o.positions)||!o.positions.length||o.positions.length>5000
     ||!Array.isArray(o.cash)||!o.cash.length||o.cash.length>100)browserFail();
   const prior=raw.classification??null,groups=new Map();
   if(prior!==null){
     const r=browserReportOf(prior.raw);
-    if(!ib||prior.sourceKey!=='sharesight.ibGroupedPerformance'||!['date-verified','verified'].includes(prior.status)
-      ||prior.raw?.mode!=='read_only'||prior.raw.source!=='Sharesight User API'
+    if(portfolioId===936238||prior.sourceKey!==scope[1]||!['date-verified','verified'].includes(prior.status)
+      ||prior.raw?.mode!=='read_only'||!(prior.raw.source==='Sharesight User API'||prior.raw.ok===true&&['direct','gateway'].includes(prior.raw.route))
       ||prior.rawFingerprint!==crypto.createHash('sha256').update(JSON.stringify(prior.raw)).digest('hex')
-      ||r?.portfolio_id!==portfolioId||r.currency?.code!=='USD'||r.grouping!=='custom_group_category'
-      ||r.custom_group?.id!==83569||r.custom_group?.name!=='资产类别'||!Array.isArray(r.holdings)
+      ||r?.portfolio_id!==portfolioId||r.currency?.code!=='USD'||!Array.isArray(r.holdings)
+      ||ib&&(r.grouping!=='custom_group_category'||r.custom_group?.id!==83569||r.custom_group?.name!=='资产类别')
       ||!browserInstant(prior.provenance?.readAt)||prior.provenance.readAt>new Date(o.retrievedAt).toISOString()
       ||r.end_date!==prior.provenance.sourceDate||!/^\d{4}-\d\d-\d\d$/.test(prior.provenance.sourceDate)||prior.provenance.sourceDate>sourceDate)browserFail();
     for(const h of r.holdings){if(groups.has(h.id))browserFail();groups.set(h.id,h);}
@@ -215,7 +219,7 @@ export function normalizeBrowserSnapshot(raw,{portfolioId,sourceDate}){
       &&(old.instrument.currency_code??old.instrument.currency?.code)===p.priceCurrency;
     // Existing groups are reused only for an exact holding and instrument match;
     // a newly seen or ambiguous row remains unclassified, never guessed.
-    return {id,group_name:matches?old.group_name:'',value:p.marketValueUSD,quantity:p.quantity,instrument_price:p.price,
+    return {id,group_name:matches?(old.group_name??''):'',value:p.marketValueUSD,quantity:p.quantity,instrument_price:p.price,
       instrument:{...(matches?{id:old.instrument.id}:{}),code,market_code:market,currency_code:p.priceCurrency},
       instrument_currency:{code:p.priceCurrency}};
   });

@@ -1,4 +1,4 @@
-import {ownerCaptureDeadline} from './owner_source_recovery.mjs';
+import {ownerCaptureDeadline,registeredReferenceReplacement} from './owner_source_recovery.mjs';
 import {recoveryRequestId} from './owner_bundle_contract.mjs';
 // Fixed-target private latest planner. All I/O and authorization capabilities
 // are injected by the trusted controller; no network or credential defaults.
@@ -122,11 +122,11 @@ async function checkedBundle(b,{now,ownerBinding,verifyProtectedReceipt,hash,pha
   if(proof.scope!==OWNER_SCOPE||proof.ownerBinding!==ownerBinding||proof.artifactSha256!==c.metadata.artifactSha256||proof.receiptSha256!==c.metadata.receiptSha256||proof.sourceIdentitySha256!==c.metadata.sourceIdentitySha256||!hex(proof.policyRevision)||proof.financialStatus!==c.metadata.financialStatus)fail('PROTECTED_GATES_REJECTED');
   return c;
 }
-function compareChronology(candidate,current){
+function compareChronology(candidate,current,generation){
   if(candidate.sourceIdentitySha256!==current.sourceIdentitySha256)fail('SOURCE_IDENTITY_CHANGED');
   for(const key of ['dataDate','sourceDate','captureStartedAt','captureEndedAt'])if(candidate[key]<current[key])fail('STALE_CANDIDATE');
   const sameTime=['sourceDate','captureStartedAt','captureEndedAt'].every(key=>candidate[key]===current[key]);
-  if(sameTime&&candidate.artifactSha256!==current.artifactSha256)fail('SAME_SOURCE_CONFLICT');
+  if(sameTime&&candidate.artifactSha256!==current.artifactSha256&&!registeredReferenceReplacement(candidate,current,generation))fail('SAME_SOURCE_CONFLICT');
   // Never refresh displayed source times or freshness merely because of a run.
   return candidate.artifactSha256===current.artifactSha256?'no-op':'replace';
 }
@@ -162,7 +162,7 @@ export async function planOwnerLatest({candidate,current,ownerBinding,now=Date.n
       const previousDisplay=new Uint8Array(previousRendered);
       if(await hash(frozenCurrent.displayBytes)!==await hash(previousDisplay))fail('LATEST_BYTES_MISMATCH');
       expected=frozenCurrent.generation;
-      if(compareChronology(next.metadata,previous.metadata)==='no-op')return {status:'no-op',code:'IDENTICAL_ARTIFACT'};
+      if(compareChronology(next.metadata,previous.metadata,frozenCurrent.generation)==='no-op')return {status:'no-op',code:'IDENTICAL_ARTIFACT'};
     }
     return {status:'ready',code:'CAS_PLAN_READY',target:LATEST_TARGET,ifGenerationMatch:expected,headers:LATEST_HEADERS,bundle:next,display:display.slice(),displaySha256};
   }catch(e){

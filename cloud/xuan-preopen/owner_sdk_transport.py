@@ -317,7 +317,7 @@ def validate_storage_request(value, expected_generation='0', daily=False):
 
 def recovery_registration():
     value = json_loads((Path(__file__).resolve().parents[2]/'security'/'xuan-owner-source-recovery.json').read_bytes())
-    if (set(value) not in ({'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}, {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256', 'referenceCapture'})
+    if (set(value)-{'supersedes'} not in ({'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}, {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256', 'referenceCapture'})
             or value['schema'] != 'xuan.owner-source-recovery.v1'
             or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', str(value['requestId']))
             or not re.fullmatch(r'\d{4}-\d\d-\d\d', str(value['dataDate']))
@@ -342,6 +342,15 @@ def recovery_registration():
                     or ref['expiresAt'] != value['dataDate']+'T15:59:59.999Z'):
                 reject('PIN_REQUIRED')
         except Exception:
+            reject('PIN_REQUIRED')
+    if 'supersedes' in value:
+        s = value['supersedes']
+        if (not value.get('referenceCapture') or not isinstance(s, dict)
+                or set(s) != {'requestId', 'artifactSha256', 'receiptSha256', 'latestGeneration'}
+                or s.get('requestId') == value['requestId']
+                or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', str(s.get('requestId')))
+                or not GEN.fullmatch(str(s.get('latestGeneration')))
+                or any(not re.fullmatch('[a-f0-9]{64}', str(s.get(k))) for k in ('artifactSha256','receiptSha256'))):
             reject('PIN_REQUIRED')
     return dict(value, receiptObject='report-check/orders-probe-'+value['requestId']+'/preview-receipt.json')
 
@@ -928,7 +937,8 @@ class OwnerBridge:
         keys = ('ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive')
         paths = {prefix+k+'.json': k for k in keys}
         receipt_name = prefix+'receipt.json'; preview_name = registration['receiptObject']; html_name = prefix+'report.html'
-        if name not in {*paths, receipt_name, preview_name, html_name}:
+        concentration_name = prefix+'concentration.sources.json'
+        if name not in {*paths, receipt_name, preview_name, html_name, concentration_name}:
             reject('TARGET_INVALID')
         try:
             raw = base64.b64decode(value['body'], validate=True)
@@ -939,7 +949,40 @@ class OwnerBridge:
             payload = json_loads(raw)
             if not isinstance(payload, dict):
                 reject('BODY_INVALID')
-            if name in paths:
+            if name == concentration_name:
+                if (set(payload) - {'sources', 'cutoff', 'captureStartedAt', 'captureCompletedAt'}
+                        or not re.fullmatch(r'\d{4}-\d\d-\d\d', str(payload.get('cutoff', '')))
+                        or not isinstance(payload.get('sources'), list) or len(payload['sources']) != 3):
+                    reject('BODY_INVALID')
+                expected = {'sharesight.ibGroupedPerformance': (936247, 'IB-HK'), 'sharesight.schwabPerformance': (936249, 'Schwab-HK'), 'sharesight.webullPerformance': (1350094, 'Webull')}
+                if {v.get('receipt', {}).get('sourceKey') for v in payload['sources']} != set(expected):
+                    reject('BODY_INVALID')
+                for item in payload['sources']:
+                    if set(item) != {'bytes', 'receipt'} or not isinstance(item['bytes'], str):
+                        reject('BODY_INVALID')
+                    b = item['bytes'].encode('utf-8'); r = item['receipt']; source = json_loads(b)
+                    account, label = expected[r['sourceKey']]; observation = source.get('observation', {})
+                    if (r.get('route') != 'authenticated-browser' or r.get('status') != 'date-verified'
+                            or r.get('sha256') != hashlib.sha256(b).hexdigest() or r.get('bytes') != len(b)
+                            or r.get('sourceDate') != payload['cutoff'] or source.get('mode') != 'read_only'
+                            or source.get('source') != 'Sharesight authenticated cloud browser visible DOM'
+                            or observation.get('portfolio') != label or observation.get('valuationDate') != payload['cutoff']
+                            or account != 936247 and observation.get('portfolioId') != account):
+                        reject('BODY_INVALID')
+                    for key in ('startedAt', 'completedAt'):
+                        stamp = r.get(key, '')
+                        if not isinstance(stamp, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', stamp):
+                            reject('BODY_INVALID')
+                        try:
+                            t = datetime.datetime.fromisoformat(stamp.replace('Z', '+00:00'))
+                        except (ValueError, AttributeError):
+                            reject('BODY_INVALID')
+                        if (t.tzinfo is None or t.timestamp() > time.time()
+                                or (t + datetime.timedelta(hours=8)).date().isoformat() != registration['dataDate']):
+                            reject('BODY_INVALID')
+                    if r['startedAt'] > r['completedAt'] or observation.get('retrievedAt') != r['completedAt']:
+                        reject('BODY_INVALID')
+            elif name in paths:
                 key = paths[name]
                 if key == 'ib.flexEod' and payload != {'status': 'not-called', 'code': 'FLEX_NOT_CALLED'}:
                     reject('BODY_INVALID')
@@ -968,7 +1011,12 @@ class OwnerBridge:
                     if payload.get('referenceMode') != (evidence['reference']['schema'] if evidence['reference'] else None):
                         reject('BODY_INVALID')
                     self.evidence_source_time(payload.get('completedAt'), processing=True)
-                for source in payload['sources']+[payload.get('artifact', {})]:
+                concentration = payload.get('concentration')
+                if concentration is not None and (not isinstance(concentration, dict)
+                        or set(concentration) != {'privateObject', 'generation', 'sha256', 'modelSha256'}
+                        or concentration.get('privateObject') != concentration_name):
+                    reject('PIN_REQUIRED')
+                for source in payload['sources']+[payload.get('artifact', {})]+([concentration] if concentration else []):
                     n = source.get('privateObject'); pin = evidence['written'].get(n)
                     if not pin or source.get('generation') != pin['generation'] or source.get('sha256') != pin['sha256']:
                         reject('PIN_REQUIRED')
@@ -1045,6 +1093,13 @@ class OwnerBridge:
             if not re.fullmatch(pattern, source_name):
                 reject('PIN_REQUIRED')
             self.daily_pin(source_name, source.get('generation'), source.get('sha256'))
+        concentration = receipt.get('concentration')
+        if concentration is not None:
+            expected = artifact['privateObject'].rsplit('/', 1)[0]+'/concentration.sources.json'
+            if (not isinstance(concentration, dict) or set(concentration) != {'privateObject', 'generation', 'sha256', 'modelSha256'}
+                    or concentration.get('privateObject') != expected or not re.fullmatch('[a-f0-9]{64}', str(concentration.get('modelSha256', '')))):
+                reject('PIN_REQUIRED')
+            self.daily_pin(expected, concentration.get('generation'), concentration.get('sha256'))
         self.daily_receipts[name] = receipt
 
     def daily_request(self, value):
@@ -1077,6 +1132,10 @@ class OwnerBridge:
                 reject('PIN_REQUIRED')
             if recovery_receipt(metadata.get('receiptObject')):
                 registration = recovery_registration()
+                if (registration.get('supersedes') and receipt.get('startedAt') == registration['referenceCapture']['captureStartedAt']
+                        and receipt.get('captureCompletedAt') == registration['referenceCapture']['captureCompletedAt']
+                        and generation != registration['supersedes']['latestGeneration']):
+                    reject('REPLACEMENT_OLD_CHANGED')
                 if (registration['dataDate'] != date or metadata['receiptObject'] != registration['receiptObject']
                         or registration['priorReceiptObject'] not in self.daily_receipts
                         or self.daily_pins.get(registration['priorReceiptObject']) !=

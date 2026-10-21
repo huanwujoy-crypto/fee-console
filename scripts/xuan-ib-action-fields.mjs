@@ -19,7 +19,7 @@ export const ACTION_ERROR_CODES=Object.freeze({
   cashPool:['CASH_POOL_OUT_OF_RANGE'],cashLike:['CASH_LIKE_INVALID'],capacity:['TOTAL_CAPACITY_OUT_OF_RANGE'],
   holdings:['HOLDINGS_SOURCE_UNAVAILABLE','HOLDINGS_DETAIL_UNSUPPORTED'],call:['OWNER_DECLARATION_UNAVAILABLE']});
 export const emptyActionErrors=()=>Object.fromEntries(Object.keys(ACTION_ERROR_CODES).map(k=>[k,null]));
-export function readCurrentActionFields({live,dataDate,startedAt,completedAt,previousHtml='',currencyBySymbol={}}={}){
+export function readCurrentActionFields({live,dataDate,startedAt,completedAt,previousHtml='',currencyBySymbol={},quoteBySymbol={}}={}){
   const sources=Array.isArray(live?.sources)?live.sources:[],states={},accepted={};
   let brokerFundsReason='BROKER_FUNDS_SOURCE_UNAVAILABLE';
   for(const key of keys){
@@ -47,7 +47,7 @@ export function readCurrentActionFields({live,dataDate,startedAt,completedAt,pre
   const orderSource=accepted['ib.orders'];
   if(orderSource){
     try{
-      const raw=orderSource.raw,groups=ordersOf(raw,accepted['ib.positions']?.raw??{positions:[]},{dataDate,previousHtml,currencyBySymbol});
+      const raw=orderSource.raw,groups=ordersOf(raw,accepted['ib.positions']?.raw??{positions:[]},{dataDate,previousHtml,currencyBySymbol,quoteBySymbol});
       const counts=['total_count','order_count'].filter(key=>Object.hasOwn(raw,key));
       const countsAgree=counts.every(key=>Number.isSafeInteger(raw[key])&&raw[key]>=0&&raw[key]===raw.orders.length);
       const flagsAgree=(!Object.hasOwn(raw,'complete')||raw.complete===true)
@@ -103,6 +103,17 @@ export function sharesightOrderCurrencies(snapshot,{onFailure=()=>{}}={}){
     if(map[key]===null)onFailure('CURRENCY_AMBIGUOUS');
   }
   return map;
+}
+// Sharesight prices are reference quotes, not native order-contract evidence.
+export function sharesightOrderQuotes(snapshot){
+  const currencies=sharesightOrderCurrencies(snapshot),r=snapshot?.raw?.data?.report??snapshot?.raw?.report??snapshot?.raw?.result?.data?.report,quotes={};
+  for(const h of r?.holdings??[]){
+    const key=h.instrument?.code?.trim().toUpperCase(),price=h.instrument_price;
+    if(!key)continue;
+    if(Object.hasOwn(quotes,key)){quotes[key]=null;continue;}
+    quotes[key]=currencies[key]&&typeof price==='number'&&Number.isFinite(price)&&price>0&&price<=1e12?{currency:currencies[key],price}:null;
+  }
+  return quotes;
 }
 export function validateActionFieldState(m){
   const fail=()=>{throw Error('EOD_MODEL_FIELD_STATE');},exact=(o,ks)=>o&&Object.keys(o).sort().join('|')===ks.sort().join('|'),finite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;

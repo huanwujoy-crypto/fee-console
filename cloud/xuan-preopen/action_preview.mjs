@@ -1,12 +1,13 @@
 // Private composition after one separately approved cloud orders test. No IB
 // reader, refresh, job dispatch, public write, key or credential creation here.
-import {digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS} from './eod_sources.mjs';
+import {digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS,normalizeBrowserSnapshot} from './eod_sources.mjs';
 import {runPrivateEodReport} from './eod_report.mjs';
 import {loadTrustedContext,readSharesightAction} from './report.mjs';
 import {createEodSnapshotReader} from './eod_adapters.mjs';
 import {inspectOrdersAccountEvidence} from './orders_probe.mjs';
 import {APPROVED_IB_ACCOUNT_ID,fingerprint} from '../../scripts/xuan-ib-run-manifest.mjs';
 import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
+import {buildActionConcentrationCandidate} from '../../scripts/xuan-ib-action-concentration.mjs';
 const fail=()=>{throw Error('PRIVATE_ACTION_PROBE_BINDING_INVALID');};
 const instant=s=>typeof s==='string'&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString()===s;
 const hkt=n=>new Date(n+28800000).toISOString().slice(0,10);
@@ -56,7 +57,7 @@ export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date
 // No source clients: the parent supplies authenticated browser observations.
 // Validate/model/render every object locally before the one create-only claim.
 // The real access factory is separately protected; tests inject only synthetic IO.
-export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,access,now=Date.now,loadContext=loadTrustedContext}={}){
+export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,concentrationInput=null,access,now=Date.now,loadContext=loadTrustedContext}={}){
   // Local-only recovery registration is outside the unchanged cloud image.
   const {registeredOwnerRecovery,registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources}=await import('./owner_source_recovery.mjs');
   const registration=registeredOwnerRecovery(),keys=Object.keys(SNAPSHOT_SCOPES),start=Date.parse(captureStartedAt);
@@ -72,6 +73,13 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
     const value=await readVerifiedSnapshot(key,{reader:async()=>({raw}),sourceDate,now});
     if(value.status!=='date-verified'||Date.parse(value.provenance?.readAt)<start||Date.parse(value.provenance?.readAt)>now())fail();
     verified[key]=structuredClone(value.raw);
+  }
+  if(concentrationInput!==null){
+    concentrationInput=structuredClone(concentrationInput);
+    const c=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
+    if(c.readWindow.completedAt>new Date(now()).toISOString()||hkt(Date.parse(c.readWindow.completedAt))!==registration.dataDate)fail();
+    const ib=concentrationInput.sources.find(s=>s.receipt.sourceKey==='sharesight.ibGroupedPerformance');
+    if(ib?.receipt.route!=='authenticated-browser'||digest(normalizeBrowserSnapshot(JSON.parse(ib.bytes),{portfolioId:936247,sourceDate}).raw)!==digest(verified['sharesight.ibGroupedPerformance']))fail();
   }
   const context=await loadContext({now}),contextReader=async()=>context;
   // Reuse the existing private-runner capture shape for a separately authorized
@@ -107,7 +115,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   const captureOptionalLive=async()=>structuredClone(live);
   let stagedBytes=0;
   await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,
-    readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
+    readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,bookDetailVersion:3,concentrationInput,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:async(name,value)=>{const size=Buffer.byteLength(typeof value==='string'?value:JSON.stringify(value));
       const limit=name.endsWith('/report.html')?2*1024*1024:name.endsWith('/receipt.json')?128*1024:4*1024*1024;
@@ -120,7 +128,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
     ||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(attempt.runId))fail();
   const reportRunId=attempt.runId;
   const saved=await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,sourceRunId:reportRunId,
-    readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
+    readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,bookDetailVersion:3,concentrationInput,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:(name,value)=>access.writeEvidence(name,Buffer.from(typeof value==='string'?value:JSON.stringify(value)))}});
   const bytes=Buffer.from(JSON.stringify(saved)),pin=await access.writeEvidence(registration.receiptObject,bytes);

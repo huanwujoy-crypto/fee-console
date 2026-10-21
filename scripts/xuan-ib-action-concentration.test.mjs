@@ -104,3 +104,25 @@ test('verified SU issuer alias merges direct shares with VCN Suncor exposure bef
   const withoutAlias=structuredClone(DEFAULT_TOP10_POLICY);delete withoutAlias.directAliases.SU;
   assert.equal(buildWeeklyConcentration(c.envelope,{cutoff,policy:withoutAlias}).rows.filter(r=>['SU','SUNCOR'].includes(r.issuer)).length,0);
 });
+
+test('authenticated browser tables reuse the identical three-account weekly arithmetic and current cash denominator',()=>{
+  const originals=[source(0,[['GOOG',45],['CSPX',100,1310832,'etf']]),source(1,[['GOOGL',40]]),source(2,[['VSTL',60,9988251,'etf']])];
+  const browser=originals.map((s,index)=>{
+    const old=JSON.parse(s.bytes),r=old.data.report,a=readAiRiskAccounts()[index];
+    if(index===0)Object.assign(r,{grouping:'custom_group_category',custom_group:{id:83569,name:'资产类别'}});
+    const raw={mode:'read_only',source:'Sharesight authenticated cloud browser visible DOM',observation:{portfolio:a.custodian,portfolioId:Number(a.portfolioId),valuationDate:cutoff,retrievedAt:s.receipt.completedAt,reportingCurrency:'USD',portfolioValue:r.value,
+      positions:r.holdings.map(h=>({instrument:h.instrument.code+' | '+h.instrument.market_code,description:h.instrument.name,price:h.instrument_price,priceCurrency:'USD',quantity:h.quantity,marketValueUSD:h.value,sourcePath:'/holdings/'+h.id,priceDate:null})),
+      cash:r.cash_accounts.map(c=>({name:c.name,marketValueUSD:c.value,sourcePath:'/cash_accounts/'+c.id,nativeCurrency:'USD',nativeBalance:c.value}))},
+      classification:{sourceKey:keys[index],status:'date-verified',raw:old,rawFingerprint:sha(old),provenance:{sourceDate:cutoff,readAt:captureStartedAt}}};
+    const bytes=JSON.stringify(raw);return {bytes,receipt:{...s.receipt,route:'authenticated-browser',bytes:Buffer.byteLength(bytes),sha256:sha(bytes)}};
+  });
+  const result=buildActionConcentrationCandidate({sources:browser,...window});
+  assert.deepEqual(actionConcentrationResult(result),actionConcentrationResult(buildActionConcentrationCandidate({sources:originals,...window})));
+  assert.equal(result.envelope.riskDenominator.components.length,3);
+  assert(result.bindings.every(b=>b.route==='authenticated-browser'));
+  for(const edit of [r=>r.observation.portfolioId=936246,r=>r.observation.portfolio='HSBC-HK & Webull',r=>r.observation.positions[0].sourcePath='/holdings/123']){
+    const bad=structuredClone(browser),raw=JSON.parse(bad[2].bytes);edit(raw);bad[2].bytes=JSON.stringify(raw);Object.assign(bad[2].receipt,{bytes:Buffer.byteLength(bad[2].bytes),sha256:sha(bad[2].bytes)});
+    assert.throws(()=>buildActionConcentrationCandidate({sources:bad,...window}));
+  }
+});
+function sha(v){return crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');}

@@ -318,7 +318,7 @@ import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {createOwnerLatestPublisher,LATEST_HEADERS} from './owner_latest.mjs';
 import {ordersReadCli} from './orders_read.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
-async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,currentBookDate=false,timeOverride=null,processingDelayMs=0}={}){
+async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,currentBookDate=false,timeOverride=null,processingDelayMs=0,threeAccounts=false}={}){
   const reg=registeredOwnerRecovery(),time=timeOverride??Date.parse(reg.dataDate+'T02:25:00.000Z'),sourceDate=currentBookDate?reg.dataDate:new Date(time-86400000).toISOString().slice(0,10),captureStartedAt=new Date(time-60000).toISOString();
   const snapshots={};
   for(const key of Object.keys(SNAPSHOT_SCOPES)){
@@ -329,11 +329,26 @@ async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,cu
       classification:ib?{sourceKey:key,status:'date-verified',raw:prior,rawFingerprint:digest(prior),provenance:{sourceDate:SOURCE,readAt:SOURCE+'T22:00:00.000Z'}}:null};
   }
   edit(snapshots);
+  let concentrationInput=null;
+  if(threeAccounts){
+    const ib=snapshots['sharesight.ibGroupedPerformance'];
+    for(const h of ib.classification.raw.data.report.holdings){h.instrument.id=h.id;h.instrument.friendly_instrument_description_code='ordinary_shares';}
+    ib.classification.rawFingerprint=digest(ib.classification.raw);
+    const sources=[['sharesight.ibGroupedPerformance',936247,'IB-HK'],['sharesight.schwabPerformance',936249,'Schwab-HK'],['sharesight.webullPerformance',1350094,'Webull']].map(([key,id,name])=>{
+      const raw=structuredClone(ib);Object.assign(raw.observation,{portfolio:name,portfolioId:id});
+      raw.classification.sourceKey=key;raw.classification.raw.data.report.portfolio_id=id;
+      raw.classification.rawFingerprint=digest(raw.classification.raw);
+      raw.observation.positions.forEach(p=>p.description='Synthetic instrument');raw.observation.cash.forEach(c=>c.name='Synthetic cash');
+      if(id===936247){ib.observation=raw.observation;}
+      const bytes=JSON.stringify(raw);return {bytes,receipt:{sourceKey:key,route:'authenticated-browser',status:'date-verified',sourceDate,startedAt:raw.observation.retrievedAt,completedAt:raw.observation.retrievedAt,bytes:Buffer.byteLength(bytes),sha256:digest(bytes)}};
+    });
+    concentrationInput={cutoff:sourceDate,sources};
+  }
   const objects=new Map(),events=[];
   const access={beginEvidence:async args=>{events.push('claim');return {...args,dataDate:reg.dataDate,runId:'11111111-2222-4333-8444-555555555555'};},
     writeEvidence:async(name,bytes)=>{events.push('write');if(failWrite)throw Error('SYNTHETIC_UNCERTAIN');assert.ok(!objects.has(name));const generation=String(objects.size+2);objects.set(name,{bytes:Buffer.from(bytes),generation});return {generation,sha256:digest(Buffer.from(bytes).toString())};}};
-  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture,access,now:()=>time+processingDelayMs,loadContext:async()=>context(time+processingDelayMs)});
-  return {reg,time:time+processingDelayMs,sourceDate,objects,events,execute};
+  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture,concentrationInput,access,now:()=>time+processingDelayMs,loadContext:async()=>context(time+processingDelayMs)});
+  return {reg,time:time+processingDelayMs,sourceDate,objects,events,execute,concentrationInput};
 }
 function browserOrdersCapture(raw={orders:[order()],complete:true}){
   const d=registeredOwnerRecovery().dataDate;
@@ -528,4 +543,23 @@ test('reference exception is exact request, times and source fingerprints; all o
   values['ib.optionalLive']={sources:[{rawFingerprint:r.sourceHashes['ib.orders']}]};validateReferenceSources(r,values);
   values['ib.optionalLive'].sources[0].rawFingerprint='0'.repeat(64);assert.throws(()=>validateReferenceSources(r,values),/REFERENCE_SOURCE_BINDING/);
   assert.equal(r.expiresAt,reg.dataDate+'T15:59:59.999Z');
+});
+
+
+test('three browser accounts and observed orders survive pinned admission and one publication, without claiming full coverage',async()=>{
+  const f=await browserAttempt({threeAccounts:true,currentBookDate:true,ordersCapture:browserOrdersCapture({orders:[order()]})});
+  const r=await f.execute(),html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes,model=extractNightActionModel(html.toString());
+  assert.equal(model.concentration.bindings.length,3);assert.equal(model.concentration.envelope.riskDenominator.components.length,3);
+  assert.equal(model.orders.coverage,'unknown');assert.equal(model.cash.orderReserve,null);assert.equal(model.cash.planning,null);
+  assert.equal(model.observedOrderPlan.orderReserve,60);assert.equal(model.observedOrderPlan.budget,290);assert.equal(model.observedOrderPlan.plan.status,'ready');
+  assert.equal(model.observedOrderPlan.executableBudget,null);assert.equal(model.orders.buys[0].distancePct,0);
+  assert.match(html.toString(),/按已取得挂单估算/);assert.doesNotMatch(html.toString(),/本行动版范围为 IB-HK/);
+  assert.equal(f.events.filter(x=>x==='claim').length,1);assert.equal(f.objects.size,8); // plus native claim = nine creates
+  const metadata=ownerBundleMetadata({html,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256},r.receipt);
+  const reads=[];const verifier=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async p=>{reads.push(p.name);return f.objects.get(p.name).bytes;}});
+  let calls=0,stored;const publisher=createOwnerLatestPublisher({ownerBinding:OWNER_BINDING,verifyProtectedReceipt:verifier,prepareDisplay:prepareOwnerStaticDisplay,now:()=>f.time,io:{readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,target})=>{calls++;stored=Buffer.from(bytes);return {...target,generation:'999',size:stored.length};},readLatestGeneration:async()=>stored}});
+  assert.equal((await publisher.publish({metadata,html,receipt})).status,'published-verified');assert.equal(calls,1);
+  assert(reads.includes(r.receipt.concentration.privateObject));assert.equal((await publisher.publish({metadata,html,receipt})).code,'ONE_SHOT_CLOSED');
+  f.objects.get(r.receipt.concentration.privateObject).bytes=encode('{}');
+  await assert.rejects(()=>verifier({metadata,html,receipt,phase:'candidate-admission'}),/CONCENTRATION_BYTES_HASH/);
 });

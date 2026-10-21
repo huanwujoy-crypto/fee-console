@@ -39,7 +39,7 @@ export function validateCompletedEodSession(sourceDate, started) {
   return {dataDate,calendar};
 }
 export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
-  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,initialCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,sourceRunId=null,dateBasis=null}={}){
+  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,initialCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,sourceRunId=null,dateBasis=null}={}){
   const currentTime=now(),started=initialStartedAt??currentTime;
   const savedCapture=initialCompletedAt!==null;
   // The local recovery registration is intentionally outside the cloud image.
@@ -93,7 +93,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const hkt=t=>new Date(t+8*3_600_000).toISOString().slice(11,16);
   const callRecord=fieldMode?resolveCurrentCall(current.reserveLedger,dataDate,{now:completed}):null;
   const model=buildEodActionModel({dataDate,sourceDate,asOfHkt:`${dataDate} ${hkt(started)}–${hkt(completed)} HKT · 数据至 ${sourceDate}`,flex,snapshots:snapshotResults,live,
-    reserve:fieldMode?(callRecord.amountUsd??0):currentReserve(context.reserveLedger,dataDate),evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode,callRecord,captureStartedAt:new Date(started).toISOString(),captureCompletedAt:new Date(completed).toISOString(),concentrationInput,assumeSharesightSynchronized,dateBasis});
+    reserve:fieldMode?(callRecord.amountUsd??0):currentReserve(context.reserveLedger,dataDate),evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode,callRecord,captureStartedAt:new Date(started).toISOString(),captureCompletedAt:new Date(completed).toISOString(),concentrationInput,assumeSharesightSynchronized,bookDetailVersion,dateBasis});
   const prefix=`report-check/${new Date(started).toISOString()}-${sourceRunId??crypto.randomUUID()}/`,sources=[];
   for(const [sourceKey,value] of [['ib.flexEod',flex?{archive:archiveResult,identityProof:archiveProof,financialProof}:{status:archiveState.status,code:archiveState.code}],...snapshotResults.map(s=>[s.sourceKey,s]),['ib.optionalLive',liveResult??{status:'failed'}]]){
     const object=prefix+sourceKey+'.json',saved=await io.savePrivate(object,value);
