@@ -1,4 +1,4 @@
-// Weekly-only issuer concentration. The ETF itself is never added to its constituents.
+// Shared issuer arithmetic. The ETF itself is never added to its constituents.
 import fs from 'node:fs';
 import {resolveLeveragedProduct} from './xuan-weekly-leveraged-products.mjs';
 
@@ -12,6 +12,20 @@ export function buildWeeklyConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_P
   if(!Number.isFinite(dateMs(cutoff))||!Number.isSafeInteger(policy.maxSnapshotAgeDays)||policy.maxSnapshotAgeDays<1)throw Error('weekly_concentration_date_invalid');
   const components=envelope.riskDenominator?.components;
   if(!Array.isArray(components)||components.length!==3||new Set(components.map(c=>c.key)).size!==3)throw Error('weekly_concentration_accounts_invalid');
+  return buildIssuerConcentration(envelope,{cutoff,policy});
+}
+
+// Fixed action scope: never invent two zero accounts or weaken weekly scope.
+export function buildIbBookIssuerConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_POLICY}={}){
+  const components=envelope.riskDenominator?.components;
+  if(components?.length!==1||components[0].key!=='ib-hk'
+    ||!Array.isArray(envelope.riskConstituents)||envelope.riskConstituents.some(r=>String(r.portfolioId)!=='936247'||r.custodian!=='IB-HK'))throw Error('weekly_concentration_accounts_invalid');
+  return buildIssuerConcentration(envelope,{cutoff,policy});
+}
+
+function buildIssuerConcentration(envelope,{cutoff,policy}){
+  if(!Number.isFinite(dateMs(cutoff))||!Number.isSafeInteger(policy.maxSnapshotAgeDays)||policy.maxSnapshotAgeDays<1)throw Error('weekly_concentration_date_invalid');
+  const components=envelope.riskDenominator.components;
   const denominator=components.reduce((sum,c)=>sum+integer(c.valueMicro,'denominator'),0n);
   if(denominator<=0n)throw Error('weekly_concentration_denominator_invalid');
   const funds=new Map();
@@ -107,12 +121,14 @@ export function buildWeeklyConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_P
 
 const esc=value=>String(value).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const money=centsValue=>'$'+(Number(centsValue)/100).toLocaleString('en-US',{maximumFractionDigits:0});
-export function renderWeeklyConcentration(result){
+export function renderWeeklyConcentration(result,{scope='three-account'}={}){
+  if(!['three-account','ib-hk'].includes(scope))throw Error('weekly_concentration_accounts_invalid');
+  const scopeLabel=scope==='ib-hk'?'IB-HK 全部持仓与现金':'三账户含现金';
   const rows=result.rows.map(r=>`<div class="line"><span>${esc(r.label)}<br><small>直接 ${money(r.directCents)} ＋ ETF 穿透 ${money(r.etfCents)}${BigInt(r.leveragedCents||0)>0n?` ＋ 杠杆等效 ${money(r.leveragedCents)}`:''}</small></span><b>${r.percent.toFixed(2)}%<br><small>${money(r.marketValueCents)}</small></b></div>`).join('')||'<p>已核实部分没有达到 1% 的发行人。</p>';
   const missing=result.missingFunds.length?`<p class="ai-coverage">未计入：${result.missingFunds.map(f=>`${esc(f.symbol)} ${money(f.marketValueCents)}（${esc(f.reason)}）`).join('；')}。这些敞口不能视为零。</p>`:'';
   const audit=result.rows.map(r=>`<h3>${esc(r.label)} · ${money(r.marketValueCents)} / ${r.percent.toFixed(2)}%</h3><p>直接 ${money(r.directCents)} ＋ ETF 穿透 ${money(r.etfCents)}${BigInt(r.leveragedCents||0)>0n?` ＋ 杠杆等效 ${money(r.leveragedCents)}（实际投资 ${money(r.leveragedInvestmentCents)}）`:""}</p><ul>${r.parts.map(p=>p.kind==='leveraged'?`<li>${esc(p.custodian)} ${esc(p.symbol)} 投资市值 ${money(p.investmentCents)} × ${p.multiplierBp/10000} ＝ ${money(p.marketValueCents)} 每日目标等效敞口（<a href="${esc(p.source)}" rel="noopener noreferrer">发行方目标</a>）</li>`:p.kind==='direct'
     ?`<li>直接 ${esc(p.custodian)} ${esc(p.symbol)}：${money(p.marketValueCents)}</li>`
     :`<li>${esc(p.fund)} ${money(p.fundValueCents)} × ${(p.weightBp/100).toFixed(2)}% ＝ ${money(p.marketValueCents)}（${p.scope==='topTen'?'前十':'直接持股同名、非前十'}；成分日 ${esc(p.asOf)}，<a href="${esc(p.source)}" rel="noopener noreferrer">发行方资料</a>）</li>`).join('')}</ul>`).join('');
   const sourceList=result.matchedFunds.map(f=>`<li>${esc(f.symbol)}：${esc(f.asOf)} · <a href="${esc(f.source)}" rel="noopener noreferrer">发行方前十</a>${f.basis==='economic-exposure'?'（经济敞口）':''}</li>`).join('');
-  return `<h2>单票集中度</h2><p class="muted">三账户含现金 · 直接个股＋ETF 同名穿透／前十大股票＋已核实杠杆等效敞口 · 合计至少 1% · 含 BRK.B</p><div class="line"><span>已列 ${result.rows.length} 个单票合计<br><small>仅统计下列达到 1% 的发行人等效敞口</small></span><b>${money(result.listedMarketValueCents)}<br><small>${result.listedPercent.toFixed(2)}%</small></b></div>${rows}${missing}<details><summary>计算过程与资料日期</summary><p>先合并两组候选：①直接持有的个股，加上各 ETF 中已核实的同名金额；②各 ETF 的前十成分股。两组中相同发行人及不同股类只算一个名字，合计后再筛选至少 1%。本轮候选：直接持股 ${result.candidateSources.direct} 个、ETF 前十 ${result.candidateSources.etfTopTen} 个，合并去重 ${result.candidateCount} 个。</p><p>ETF 间接金额＝该 ETF 本轮美元市值 × 已核实的成分权重；加直接持股后，除以三账户含现金总额 ${money(result.denominatorCents)}。权重逐行向下截取至 0.01%，金额只在显示时四舍五入；用未四舍五入的合计值判断是否达到 1%。合成 ETF 用经济敞口，不用抵押品篮子。</p><p>VSTL 按投资市值 × 2 归入 VST 每日目标等效敞口，与直接 VST 合并；不是把投资市值或账户净值翻倍，三账户含现金分母不变。每日目标不是多日收益的两倍，也不代表实时衍生品 delta。杠杆等效敞口及其合计可能超过 100%；不截断、不重新归一化，也不把它称为实际投资市值占比。类似产品仅在底层、每日倍数及来源持仓身份均核实后按明确映射计入；未核实仍列缺口。</p><p>已列单票合计先汇总达到 1% 的发行人未四舍五入金额，再除以相同分母；不包含低于 1% 或资料未核实的敞口。</p><p>只计入已核实的前十及直接持股同名成分。其余 ETF 成分或缺资料基金仍未知，因此结果是可见下限，不保证列全所有超过 1% 的发行人；ETF 本身不重复计入单票。</p><h3>本轮 ETF 成分资料</h3><ul>${sourceList||'<li>本轮没有可用的 ETF 成分资料</li>'}</ul>${audit}</details>`;
+  return `<h2>单票集中度</h2><p class="muted">${scopeLabel} · 直接个股＋ETF 同名穿透／前十大股票＋已核实杠杆等效敞口 · 合计至少 1% · 含 BRK.B</p><div class="line"><span>已列 ${result.rows.length} 个单票合计<br><small>仅统计下列达到 1% 的发行人等效敞口</small></span><b>${money(result.listedMarketValueCents)}<br><small>${result.listedPercent.toFixed(2)}%</small></b></div>${rows}${missing}<details><summary>计算过程与资料日期</summary><p>先合并两组候选：①直接持有的个股，加上各 ETF 中已核实的同名金额；②各 ETF 的前十成分股。两组中相同发行人及不同股类只算一个名字，合计后再筛选至少 1%。本轮候选：直接持股 ${result.candidateSources.direct} 个、ETF 前十 ${result.candidateSources.etfTopTen} 个，合并去重 ${result.candidateCount} 个。</p><p>ETF 间接金额＝该 ETF 本轮美元市值 × 已核实的成分权重；加直接持股后，除以${scopeLabel}总额 ${money(result.denominatorCents)}。权重逐行向下截取至 0.01%，金额只在显示时四舍五入；用未四舍五入的合计值判断是否达到 1%。合成 ETF 用经济敞口，不用抵押品篮子。</p><p>VSTL 按投资市值 × 2 归入 VST 每日目标等效敞口，与直接 VST 合并；不是把投资市值或账户净值翻倍，${scopeLabel}分母不变。每日目标不是多日收益的两倍，也不代表实时衍生品 delta。杠杆等效敞口及其合计可能超过 100%；不截断、不重新归一化，也不把它称为实际投资市值占比。类似产品仅在底层、每日倍数及来源持仓身份均核实后按明确映射计入；未核实仍列缺口。</p><p>已列单票合计先汇总达到 1% 的发行人未四舍五入金额，再除以相同分母；不包含低于 1% 或资料未核实的敞口。</p><p>只计入已核实的前十及直接持股同名成分。其余 ETF 成分或缺资料基金仍未知，因此结果是可见下限，不保证列全所有超过 1% 的发行人；ETF 本身不重复计入单票。</p><h3>本轮 ETF 成分资料</h3><ul>${sourceList||'<li>本轮没有可用的 ETF 成分资料</li>'}</ul>${audit}</details>`;
 }

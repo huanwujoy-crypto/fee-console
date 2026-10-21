@@ -155,6 +155,8 @@
     "cloud/xuan-preopen/orders_check.mjs",
     "cloud/xuan-preopen/orders_check.test.mjs",
     "cloud/xuan-preopen/orders_check_cloud_io.test.mjs",
+    "cloud/xuan-preopen/orders_read.mjs",
+    "cloud/xuan-preopen/orders_read.test.mjs",
     "cloud/xuan-preopen/probe.mjs",
     "cloud/xuan-preopen/publish.mjs",
     "cloud/xuan-preopen/publish.test.mjs",

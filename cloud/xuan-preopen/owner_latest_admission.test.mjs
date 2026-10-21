@@ -285,7 +285,7 @@ test('book ready and partial candidates roundtrip through immutable source rebui
     f.metadata=ownerBundleMetadata({html:f.htmlBytes,artifactObject:f.receipt.artifact.privateObject,artifactGeneration:f.receipt.artifact.generation,artifactSha256:digest(f.html),receiptObject:f.metadata.receiptObject,receiptGeneration:'99',receiptSha256:digest(JSON.stringify(f.receipt))},f.receipt);
     const proof=await verifier(f)(args(f));assert.equal(proof.financialStatus,completeOrders?'complete':'partial');
     assert.equal(f.reads.length,4);assert.equal(f.model.status,completeOrders?'ready':'partial');
-    const display=text(prepareOwnerStaticDisplay(f.htmlBytes));assert.match(display,/IB-HK 直接持仓/);assert.match(display,/计算前提/);assert.doesNotMatch(display,/<script/);
+    const display=text(prepareOwnerStaticDisplay(f.htmlBytes));assert.match(display,/复用周末版计算；本行动版范围为 IB-HK/);assert.match(display,/计算前提/);assert.doesNotMatch(display,/<script/);
     assert.equal(f.model.cash.executableBudget,null);assert.equal(f.model.provenance.sharesight[0].syncCompletedAt,null);
     assert.equal(f.model.provenance.sharesight[0].channel,browser?'authenticated-browser':'api');
     if(browser)assert.match(display,/分类沿用此前记录/);
@@ -301,10 +301,24 @@ test('a browser holding without prior class preserves book cash and direct conce
   assert.equal(f.model.status,'partial');assert.equal(f.model.cash.executableBudget,null);
 });
 
+test('previous direct-only book artifacts retain exact legacy source reconstruction during historical checks',async()=>{
+  const f=await fixture({book:true,browser:true,completeOrders:false});
+  delete f.model.bookPlan;delete f.model.bookConcentration.issuerResultFingerprint;
+  for(const row of f.model.bookConcentration.rows){delete row.instrumentId;delete row.assetType;delete row.identitySourceDate;delete row.quantity;delete row.price;}
+  refresh(f);
+  f.metadata=ownerBundleMetadata({html:f.htmlBytes,artifactObject:f.receipt.artifact.privateObject,artifactGeneration:f.receipt.artifact.generation,
+    artifactSha256:digest(f.html),receiptObject:f.metadata.receiptObject,receiptGeneration:'99',receiptSha256:digest(JSON.stringify(f.receipt))},f.receipt);
+  assert.match(f.html,/部分更新|IB-HK 直接持仓/);assert.doesNotMatch(f.html,/账面更新完成/);
+  const proof=await verifier(f)(args(f,'historical-authenticity'));
+  assert.equal(proof.financialStatus,'partial');assert.equal(f.reads.length,4);
+});
+
 import {composeBrowserActionEvidence} from './action_preview.mjs';
 import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {createOwnerLatestPublisher,LATEST_HEADERS} from './owner_latest.mjs';
-async function browserAttempt({edit=()=>{},failWrite=false}={}){
+import {ordersReadCli} from './orders_read.mjs';
+import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
+async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null}={}){
   const reg=registeredOwnerRecovery(),time=Date.parse(reg.dataDate+'T02:25:00.000Z'),sourceDate=new Date(time-86400000).toISOString().slice(0,10),captureStartedAt=new Date(time-60000).toISOString();
   const snapshots={};
   for(const key of Object.keys(SNAPSHOT_SCOPES)){
@@ -318,9 +332,97 @@ async function browserAttempt({edit=()=>{},failWrite=false}={}){
   const objects=new Map(),events=[];
   const access={beginEvidence:async args=>{events.push('claim');return {...args,dataDate:reg.dataDate,runId:'11111111-2222-4333-8444-555555555555'};},
     writeEvidence:async(name,bytes)=>{events.push('write');if(failWrite)throw Error('SYNTHETIC_UNCERTAIN');assert.ok(!objects.has(name));const generation=String(objects.size+2);objects.set(name,{bytes:Buffer.from(bytes),generation});return {generation,sha256:digest(Buffer.from(bytes).toString())};}};
-  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,access,now:()=>time,loadContext:async()=>context(time)});
+  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture,access,now:()=>time,loadContext:async()=>context(time)});
   return {reg,time,sourceDate,objects,events,execute};
 }
+function browserOrdersCapture(raw={orders:[order()],complete:true}){
+  const d=registeredOwnerRecovery().dataDate;
+  return {status:'captured',channel:'cloud-mcp',sources:[{sourceKey:'ib.orders',raw,rawFingerprint:fingerprint(raw),
+    startedAt:d+'T02:24:10.000Z',completedAt:d+'T02:24:20.000Z',
+    accountEvidence:{associationBasis:'owner-attested',nativeIdentityEvidence:'not-provided',responseAccountEvidence:'not-provided'}}]};
+}
+test('normal CLI actual transport -> pinned source -> browser report -> admission -> single CAS and readback',async()=>{
+  for(const complete of [true,false]){
+    const reg=registeredOwnerRecovery(),time=Date.parse(reg.dataDate+'T02:24:10.000Z'),objects=new Map(),events=[];
+    const secret='projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp';
+    const credential={client_id:'SYNTHETIC_CLIENT',access_token:'SYNTHETIC_ACCESS_CANARY',refresh_token:'SYNTHETIC_REFRESH_CANARY',token_type:'Bearer',scope:'mcp.read',resource:RESOURCE,expires_at:time+(complete?0:3600000)};
+    const request={requestId:reg.requestId,dataDate:reg.dataDate,expiresAt:new Date(time+600000).toISOString(),credentialBinding:{clientId:credential.client_id,version:'15'}};
+    const result=await ordersReadCli(['--orders-request',JSON.stringify(request)],{now:()=>time,loadContext:async()=>context(time),
+      env:{CLOUD_RUN_JOB:'xuan-preopen-orders-probe',CLOUD_RUN_EXECUTION:'xuan-preopen-orders-probe-synthetic',CLOUD_RUN_TASK_INDEX:'0',CLOUD_RUN_TASK_ATTEMPT:'0',CLOUD_RUN_TASK_COUNT:'1'},
+      io:{ibStore:{loadBound:async b=>{assert.deepEqual(b,request.credentialBinding);return {versionName:secret+'/versions/15',credential};},
+        save:async c=>{events.push('save');assert.equal(c.client_id,credential.client_id);return {name:secret+'/versions/16',state:'ENABLED'};}},
+        savePrivate:async(name,value)=>{assert.ok(!objects.has(name));objects.set(name,structuredClone(value));return {sha256:digest(value),generation:String(objects.size)};}},
+      fetchImpl:async(url,options)=>{
+        options.signal.throwIfAborted();
+        if(String(url)===TOKEN_ENDPOINT){events.push('refresh');return Response.json({access_token:'SYNTHETIC_NEXT_CANARY',refresh_token:'SYNTHETIC_ROTATED_CANARY',token_type:'Bearer',scope:'mcp.read',expires_in:3600});}
+        assert.equal(String(url),RESOURCE);const rpc=JSON.parse(options.body);
+        if(rpc.method==='initialize')return Response.json({jsonrpc:'2.0',id:rpc.id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}}}});
+        if(rpc.method==='notifications/initialized')return new Response(null,{status:202});
+        assert.equal(rpc.method,'tools/call');assert.deepEqual(rpc.params,{name:'get_account_orders',arguments:{}});events.push('orders');
+        return Response.json({jsonrpc:'2.0',id:rpc.id,result:{content:[{type:'text',text:JSON.stringify({orders:[order()],...(complete?{complete:true}:{})})}]}});
+      }});
+    assert.equal(result.status,'passed');assert.deepEqual(events,complete?['refresh','save','orders']:['orders']);assert.equal(objects.size,3);
+    const prefix='report-check/orders-read-'+reg.requestId+'/',source=objects.get(prefix+'orders.json'),normalReceipt=objects.get(prefix+'receipt.json');
+    assert.equal(normalReceipt.artifact.sha256,digest(source));assert.equal(result.receiptSha256,digest(normalReceipt));
+    const f=await browserAttempt({ordersCapture:{status:'captured',channel:'cloud-mcp',sources:[source]}}),r=await f.execute();
+    const html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes,model=extractNightActionModel(html.toString());
+    assert.equal(model.cash.orderReserve,complete?60:null);assert.equal(model.cash.planning,complete?290:null);assert.equal(model.bookPlan.status,'ready');
+    assert.equal(objects.size+f.objects.size+1,11); // normal three + report seven + native start claim
+    const metadata=ownerBundleMetadata({html,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,
+      artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256},r.receipt);
+    const verify=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async pin=>{
+      const o=f.objects.get(pin.name);assert.equal(o.generation,pin.generation);assert.equal(digest(o.bytes.toString()),pin.sha256);return o.bytes;}});
+    const proof=await verify({metadata,html,receipt,now:f.time,phase:'candidate-admission'});assert.equal(proof.financialStatus,complete?'complete':'partial');
+    let writes=0,readbacks=0,stored;
+    const publisher=createOwnerLatestPublisher({ownerBinding:OWNER_BINDING,verifyProtectedReceipt:verify,prepareDisplay:prepareOwnerStaticDisplay,now:()=>f.time,
+      io:{readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,ifGenerationMatch,target})=>{writes++;assert.equal(ifGenerationMatch,'0');stored=Buffer.from(bytes);return {...target,generation:'999',size:stored.length};},
+        readLatestGeneration:async()=>{readbacks++;return Buffer.from(stored);}}});
+    assert.equal((await publisher.publish({metadata,html,receipt})).status,'published-verified');assert.equal(writes,1);assert.equal(readbacks,1);
+    assert.equal((await publisher.publish({metadata,html,receipt})).code,'ONE_SHOT_CLOSED');
+    assert.doesNotMatch(JSON.stringify({result,objects:[...objects]})+stored.toString(),/SYNTHETIC_(?:ACCESS|REFRESH|NEXT|ROTATED)_CANARY/);
+  }
+});
+test('separately captured normal MCP orders join browser snapshots without a second source call or old probe execution',async()=>{
+  for(const channel of ['cloud-mcp','mac-mcp'])for(const complete of [true,false]){
+    const capture={...browserOrdersCapture({orders:[order()],...(complete?{complete:true}:{})}),channel};
+    if(channel==='mac-mcp')Object.assign(capture.sources[0],{wrapper:'native-object',transportFingerprint:capture.sources[0].rawFingerprint});
+    const f=await browserAttempt({ordersCapture:capture});
+    const r=await f.execute(),html=f.objects.get(r.receipt.artifact.privateObject).bytes,model=extractNightActionModel(html.toString());
+    assert.equal(f.events.filter(e=>e==='claim').length,1);assert.equal(f.objects.size,7);
+    assert.equal(model.orders.buys.length,1);assert.equal(model.cash.orderReserve,complete?60:null);
+    assert.equal(model.cash.planning,complete?290:null);assert.equal(model.cash.preOrderPlanning,350);
+    assert.equal(model.bookPlan.status,'ready');assert.equal(model.replenishment.status,complete?'ready':'unavailable');
+    const receipt=f.objects.get(r.receiptObject).bytes;
+    const metadata=ownerBundleMetadata({html,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,
+      artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256},r.receipt);
+    const verify=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async p=>f.objects.get(p.name).bytes});
+    const proof=await verify({metadata,html,receipt,now:f.time,phase:'candidate-admission'});
+    assert.equal(proof.financialStatus,complete?'complete':'partial');
+    assert.deepEqual(metadata.unknownFields,complete?[]:['orders']);
+    const pin=r.receipt.sources.find(s=>s.sourceKey==='ib.optionalLive');
+    const saved=JSON.parse(f.objects.get(pin.privateObject).bytes.toString());
+    assert.deepEqual(saved.normalMcpEvidence,{schema:'xuan.normal-mcp-orders.v1',requestId:f.reg.requestId,channel});
+    assert.equal(saved.probeEvidence,undefined);
+    let writes=0,readbacks=0,stored;
+    const publisher=createOwnerLatestPublisher({ownerBinding:OWNER_BINDING,verifyProtectedReceipt:verify,prepareDisplay:prepareOwnerStaticDisplay,now:()=>f.time,
+      io:{readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,ifGenerationMatch,target})=>{writes++;assert.equal(ifGenerationMatch,'0');stored=Buffer.from(bytes);return {...target,generation:'999',size:stored.length};},
+        readLatestGeneration:async()=>{readbacks++;return Buffer.from(stored);}}});
+    assert.equal((await publisher.publish({metadata,html,receipt})).status,'published-verified');
+    assert.equal(writes,1);assert.equal(readbacks,1);assert.equal((await publisher.publish({metadata,html,receipt})).code,'ONE_SHOT_CLOSED');
+  }
+});
+test('MCP capture rejects stale times, fingerprints, wrong accounts and extra sources before the immutable claim',async()=>{
+  for(const edit of [c=>c.sources[0].startedAt='2026-10-20T02:24:10.000Z',c=>c.sources[0].rawFingerprint='0'.repeat(64),
+    c=>c.sources.push(structuredClone(c.sources[0])),c=>c.sources[0].sourceKey='ib.positions',c=>c.channel='unverified-probe',
+    c=>c.sources[0].wrapper='json-string',c=>c.sources[0].transportFingerprint='a'.repeat(64),
+    c=>Object.assign(c.sources[0],{wrapper:'native-object',transportFingerprint:'0'.repeat(64)}),
+    c=>Object.assign(c.sources[0],{wrapper:'json-string',transportFingerprint:'invalid'}),
+    c=>Object.assign(c.sources[0],{wrapper:'unverified',transportFingerprint:'a'.repeat(64)}),
+    c=>{c.sources[0].raw.accountId='FOREIGN_ACCOUNT';c.sources[0].rawFingerprint=fingerprint(c.sources[0].raw);}]){
+    const capture=browserOrdersCapture();edit(capture);const f=await browserAttempt({ordersCapture:capture});
+    await assert.rejects(f.execute);assert.equal(f.events.length,0);
+  }
+});
 test('registered browser-only composition -> pinned reads -> static admission -> one CAS -> independent bytes',async()=>{
   const f=await browserAttempt(),result=await f.execute(),r=result.receipt,html=f.objects.get(r.artifact.privateObject).bytes,receipt=f.objects.get(result.receiptObject).bytes;
   assert.equal(f.events.filter(e=>e==='claim').length,1);assert.equal(f.objects.size,7); // plus native start claim = 8
@@ -329,6 +431,9 @@ test('registered browser-only composition -> pinned reads -> static admission ->
   const candidate={html,receipt,metadata},model=extractNightActionModel(html.toString());
   assert.equal(model.orders.reason,'IB_MCP_ROUTES_UNAVAILABLE');assert.equal(model.cash.orderReserve,null);assert.equal(model.cash.planning,null);
   assert.equal(model.cash.preOrderPlanning,350);assert.equal(model.bookConcentration.status,'ready');assert.equal(model.allocation.status,'ready');
+  assert.equal(model.bookPlan.status,'ready');assert.equal(model.bookPlan.budget,350);
+  assert.deepEqual(metadata.unknownFields,['orders']);assert.equal(metadata.financialStatus,'partial');
+  assert.match(html.toString(),/账面更新完成 · 挂单待核实/);
   assert.match(html.toString(),/IB 云端及 Mac MCP 工具当前不可用/);assert.equal(r.startedAt,f.reg.dataDate+'T02:24:00.000Z');
   let writes=0,readbacks=0,stored,verifyNow=f.time;
   const verify=createProtectedOwnerVerifier({now:()=>verifyNow,loadContext:async()=>context(f.time),readPinnedSource:async pin=>{
@@ -338,6 +443,8 @@ test('registered browser-only composition -> pinned reads -> static admission ->
       readLatestGeneration:async()=>{readbacks++;return Buffer.from(stored);}}});
   const published=await publisher.publish(candidate);assert.equal(published.status,'published-verified',JSON.stringify(published));assert.equal(writes,1);assert.equal(readbacks,1);
   assert.equal((await publisher.publish(candidate)).code,'ONE_SHOT_CLOSED');
+  assert.match(stored.toString(),/复用周末版计算|扣挂单前账面分配参考/);
+  assert.doesNotMatch(stored.toString(),/部分更新/);
   verifyNow=f.time+30*60000;
   await assert.rejects(()=>verify({metadata,html,receipt,now:verifyNow,phase:'candidate-admission'}),/CANDIDATE_STALE|CLOCK/);
 });
