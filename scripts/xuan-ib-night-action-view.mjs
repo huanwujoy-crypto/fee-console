@@ -1,5 +1,5 @@
 import {renderActionConcentration} from './xuan-ib-action-concentration.mjs';
-import {validateEodActionModel} from './xuan-ib-eod-action-model.mjs';
+import {validateEodActionModel,SHARESIGHT_BOOK_BASIS} from './xuan-ib-eod-action-model.mjs';
 import {validatePublicEodSummary,renderPublicEodSummary} from './xuan-ib-public-eod-summary.mjs';
 import {validateIntradayUpdate,renderIntradayUpdate} from './xuan-ib-intraday-update.mjs';
 import {validateLimitedStatus,renderLimitedStatus} from './xuan-ib-limited-status.mjs';
@@ -132,6 +132,7 @@ export function renderNightActionReport(model) {
   if(model?.schemaVersion===7)return renderLimitedStatus(model);
   validateNightActionModel(model);
   const eod = model.schemaVersion === 9;
+  const book = model.calculationBasis === SHARESIGHT_BOOK_BASIS;
   const preopen = model.schemaVersion >= 4;
   const marker = Buffer.from(JSON.stringify(model), 'utf8').toString('base64url');
   const recordedCash=Boolean(model.fieldState)&&[model.cash.ib,model.cash.noah,model.cash.pool].every(finite);
@@ -139,14 +140,14 @@ export function renderNightActionReport(model) {
   const plan = model.replenishment.status === 'ready'
     ? `<div class="hero-value">${money(model.replenishment.total)}</div><div class="chips">${model.replenishment.items.map(item => `<span><b>${esc(item.symbol)}</b>${money(item.amount)}</span>`).join('')}</div>${model.schemaVersion >= 3 ? `<p class="plan-balance">现金预算 ${money(model.replenishment.budget)}${model.replenishment.retained > 0.01 ? ` · 暂留 ${money(model.replenishment.retained)}` : ' · 已全部规划'}</p>` : ''}`
     : eod && model.allocation.fundingNeed?.status === 'verified' ? `<div class="unavailable">${recordedCall&&model.cash.orderReserve===null?'完整买单预占未核实，本轮补仓金额未计算':'挂单或现金口径未齐，本轮补仓金额待核实'}</div><p>当前持仓下，补足非美发达／新兴市场需 ${money(model.allocation.fundingNeed.fullNeed)}（仅持仓缺口，非可用预算）</p>` : '<div class="unavailable">本轮未取得，不沿用旧金额</div>';
-  const eodCondition = eod ? `<p class="unavailable">${model.fieldState ? (model.cash.planningBasis.status === 'reference' ? '账面规划参考：按 Sharesight 现金与本轮剩余买单预占计算；不是券商可用资金，不提供可执行预算。' : recordedCall&&model.cash.orderReserve===null?'账面现金与 CALL 已记录；完整买单预占未核实，净补仓规划未计算。':'现金、CALL、挂单覆盖或币种仍有缺项；保留已取得的事实，相关预算待核实。') : model.cash.planningBasis.status === 'conditional' ? 'EOD 条件规划：假设 EOD 后没有未反映的成交、资金或持仓变化；当前挂单仅作情景投影，须重新核实后使用。' : model.reconciliation.status !== 'verified' ? 'EOD 现金对账尚未核实，补仓预算未计算；现金实数与当前配置仍可查看。' : '挂单或现金口径未齐，补仓预算未计算。'}</p>` : '';
+  const eodCondition = book ? '<p class="unavailable">按用户前提：券商与 Sharesight 已同步完成；这是计算前提，未独立对账。账面估算按 CALL 50% 和已核实范围的买单预占计算，不是券商实时可下单额。</p>' : eod ? `<p class="unavailable">${model.fieldState ? (model.cash.planningBasis.status === 'reference' ? '账面规划参考：按 Sharesight 现金与本轮剩余买单预占计算；不是券商可用资金，不提供可执行预算。' : recordedCall&&model.cash.orderReserve===null?'账面现金与 CALL 已记录；完整买单预占未核实，净补仓规划未计算。':'现金、CALL、挂单覆盖或币种仍有缺项；保留已取得的事实，相关预算待核实。') : model.cash.planningBasis.status === 'conditional' ? 'EOD 条件规划：假设 EOD 后没有未反映的成交、资金或持仓变化；当前挂单仅作情景投影，须重新核实后使用。' : model.reconciliation.status !== 'verified' ? 'EOD 现金对账尚未核实，补仓预算未计算；现金实数与当前配置仍可查看。' : '挂单或现金口径未齐，补仓预算未计算。'}</p>` : '';
   const callLabel = model.schemaVersion >= 5 ? '待 CALL 预留（50%）' : '预留待 CALL';
   const callAmount = model.schemaVersion >= 5 ? model.cash.callApplied : model.cash.reserve;
   const callOriginal = model.schemaVersion >= 5 ? `<p><b>待 CALL 原额</b><span>${money(model.cash.reserve)}</span></p>` : '';
   const cashNote = model.schemaVersion >= 5
     ? '全部弹药＝现金池扣除待 CALL 原额的 50% 及买单预占后的非负余额＋类现金；类现金不默认卖出。'
     : '全部弹药＝扣除待 CALL 及现有买单后的现金＋类现金；类现金不默认卖出。';
-  const cash = eod ? renderEodCash(model.cash, model.reconciliation,model.fieldState?model.provenance.sharesight:null) : model.cash.status === 'ready' && model.schemaVersion >= 3 ? `<div class="metrics three">
+  const cash = book ? renderBookCash(model.cash) : eod ? renderEodCash(model.cash, model.reconciliation,model.fieldState?model.provenance.sharesight:null) : model.cash.status === 'ready' && model.schemaVersion >= 3 ? `<div class="metrics three">
 <div><span>现金池</span><b>${money(model.cash.pool)}</b></div>
 <div><span>${callLabel}</span><b>${money(callAmount)}</b></div>
 <div><span>可补仓现金</span><b>${money(model.cash.planning)}</b></div>
@@ -172,8 +173,8 @@ ${model.allocation.categories.map(item => `<div><span>${esc(item.label)}</span><
 <section class="card"><h2>${preopen ? '本轮补仓' : '今晚补仓'}<small>规划 · 非下单</small></h2>${plan}${eodCondition}${model.fieldState?renderFieldEvidence(model,['planning','call','orderReserve']):''}</section>
 <section class="card"><h2>挂单提醒<small>${esc(model.orders.asOfHkt)}</small></h2>${orders}${model.fieldState?renderFieldEvidence(model,['orders']):''}</section>
 <section class="card"><h2>现金优先补仓参考</h2>${cash}${model.fieldState?renderFieldEvidence(model,['ibCash','noahCash','call']):''}</section>
-<section class="card"><h2>股票四类配置<small>${eod && model.allocation.projectedTotal === null ? '当前 → 参考目标；挂单后未取得' : model.schemaVersion >= 4 ? '当前 → 挂单后 → 参考目标' : '当前 → 参考目标'}</small></h2>${allocation}${model.fieldState?renderFieldEvidence(model,['allocation']):''}</section>${eod?'\n'+renderActionConcentration(model.concentration):''}
-<footer class="notes">${model.fieldErrors?renderFieldErrors(model.fieldErrors):''}${eod?'<details><summary>口径与来源</summary>':''}${model.notes.map(note => `<p>${esc(note)}</p>`).join('')}${eod ? renderEodProvenance(model.provenance)+renderOrderCaptureRange(model.orders)+'</details>' : ''}</footer>
+<section class="card"><h2>股票四类配置<small>${eod && model.allocation.projectedTotal === null ? '当前 → 参考目标；挂单后未取得' : model.schemaVersion >= 4 ? '当前 → 挂单后 → 参考目标' : '当前 → 参考目标'}</small></h2>${allocation}${model.fieldState?renderFieldEvidence(model,['allocation']):''}</section>${eod?'\n'+(book?renderBookConcentration(model.bookConcentration):renderActionConcentration(model.concentration)):''}
+<footer class="notes">${model.fieldErrors?renderFieldErrors(model.fieldErrors):''}${eod?'<details><summary>口径与来源</summary>':''}${model.notes.map(note => `<p>${esc(note)}</p>`).join('')}${eod ? (book?renderBookProvenance(model.provenance):renderEodProvenance(model.provenance))+renderOrderCaptureRange(model.orders)+'</details>' : ''}</footer>
 </main>${model.fieldState?'':statusScript}</body></html>`;
 }
 
@@ -210,4 +211,16 @@ function renderFieldErrors(errors){
     fundingNeed:'持仓缺口暂未计算',replenishment:'补仓分配条件未齐',cashPool:'现金池汇总超出支持范围',cashLike:'类现金汇总未通过校验',capacity:'全部弹药汇总超出支持范围',holdings:'持仓明细未齐',call:'用户 CALL 记录未取得或待核实'};
   const messages=Object.entries(errors).filter(([key,code])=>key!=='holdings'&&code!==null).map(([key])=>labels[key]);
   return messages.length?'<p>本轮缺项：'+messages.map(esc).join('；')+'。其余已取得事实保留显示。</p>':'';
+}
+
+function renderBookCash(c){
+  const amount=n=>n===null?'未取得':money(n);
+  return `<div class="metrics three"><div><span>Sharesight 账面现金（USD 折算）</span><b>${amount(c.pool)}</b></div><div><span>待 CALL 预留（50%）</span><b>${amount(c.callApplied)}</b></div><div><span>扣挂单前账面可配置上限</span><b>${amount(c.preOrderPlanning)}</b></div></div><div class="cash-detail"><p><b>IB-HK 账面现金</b><span>${amount(c.ib)}</span></p><p><b>NOAH-HK 账面现金</b><span>${amount(c.noah)}</span></p><p><b>待 CALL 原额</b><span>${amount(c.reserve)}</span></p><p><b>买单预占</b><span>${amount(c.orderReserve)}</span></p><p><b>账面净补仓估算</b><span>${amount(c.planning)}</span></p><p><b>债券类现金（另列）</b><span>${c.cashLike===null?'未取得':c.cashLike.items.map(i=>esc(i.symbol)+' '+money(i.amount)).join(' · ')||'$0'}</span></p><small>以上为 Sharesight 账面 USD 折算值；可能含非 USD 现金、现金等价项或历史折算金额，不代表已结算美元或即时购买力。扣挂单前上限尚未扣除买单；覆盖或币种未知时，净预算保持未取得。类现金不默认卖出，卖单不预计回款。</small></div>`;
+}
+function renderBookConcentration(c){
+  if(c.status!=='ready')return '<section class="card concentration"><h2>单票集中度</h2><p class="unavailable">IB-HK 全部持仓或总值未齐；其他可用字段照常显示。</p></section>';
+  return `<section class="card concentration"><h2>单票集中度<small>IB-HK 直接持仓</small></h2><p>组合总值 ${money(c.total)} · 含现金 ${money(c.cash)} · 报表估值日 ${esc(c.sourceDate)}</p><div class="line"><span>最大单项 / 前五项</span><b>${c.top1Pct.toFixed(2)}% / ${c.top5Pct.toFixed(2)}%</b></div><details open><summary>全部 ${c.rows.length} 项直接持仓</summary>${c.rows.map(r=>`<div class="line"><span>${esc(r.symbol)} · ${esc(r.market)} · ${esc(r.currency)}</span><b>${money(r.marketValueUsd)} · ${r.weightPct.toFixed(2)}%</b></div>`).join('')}</details><small>分母为 IB-HK 全部持仓与现金的账面 USD 总值；与股票四类配置分母不同。ETF 按持仓单项计算，未穿透成分或合并发行人。报表日期不证明每项价格均于当日更新。</small></section>`;
+}
+function renderBookProvenance(p){
+  return '<p>同步完成按用户计算前提采用；没有独立券商对账证明。</p>'+p.sharesight.map(s=>`<p>Sharesight ${s.sourceKey==='sharesight.ibGroupedPerformance'?'IB-HK':'NOAH-HK'} · ${s.channel==='authenticated-browser'?'云端浏览器可见表格':'API'} · 报表估值日 ${esc(s.sourceDate)} · 读取 ${esc(s.readAt)}${s.classificationReadAt?' · 分类沿用此前记录 '+esc(s.classificationReadAt):''} · 单项价格更新时间未取得</p>`).join('');
 }

@@ -766,7 +766,7 @@ class SafeDiagnosticTests(unittest.TestCase):
 
 
 class DailyBoundaryTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self, book=False):
         date = m.daily_date()
         started = datetime.datetime.fromtimestamp(m.time.time()-60, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
         completed = datetime.datetime.fromtimestamp(m.time.time()-10, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
@@ -783,6 +783,8 @@ class DailyBoundaryTests(unittest.TestCase):
                    'sourceDate': date, 'startedAt': started, 'completedAt': completed,
                    'artifact': {'privateObject': report_name, 'generation': '10', 'sha256': hashlib.sha256(report).hexdigest()},
                    'sourceCount': 4, 'sources': sources}
+        if book:
+            receipt.update(status='ready', calculationBasis='sharesight-book-user-synchronized.v1')
         receipt_raw = json.dumps(receipt).encode()
         objects[receipt_name] = ('11', receipt_raw)
         calls = []
@@ -820,7 +822,7 @@ class DailyBoundaryTests(unittest.TestCase):
             boundary = value['headers']['Content-Type'].split('boundary=')[1]
             display = b'<html><body>synthetic preview only</body></html>'
             metadata = {'schema': 'xuan.owner-latest.v1', 'scope': 'ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1',
-                        'dataDate': date, 'sourceDate': date, 'financialStatus': 'partial',
+                        'dataDate': date, 'sourceDate': date, 'financialStatus': 'complete' if book else 'partial',
                         'captureStartedAt': receipt['startedAt'], 'captureEndedAt': receipt['completedAt'], 'completedAt': receipt['completedAt'],
                         'artifactObject': report_name, 'artifactGeneration': '10', 'artifactSha256': hashlib.sha256(report).hexdigest(),
                         'receiptObject': receipt_name, 'receiptGeneration': '11', 'receiptSha256': hashlib.sha256(receipt_raw).hexdigest()}
@@ -864,6 +866,36 @@ class DailyBoundaryTests(unittest.TestCase):
                     bridge.dispatch(write())
                 with self.assertRaises(m.BoundaryError):
                     bridge.dispatch(write())
+            self.assertEqual(sum(method == 'POST' for _, method in calls), 0)
+
+    def test_book_ready_cas_keeps_one_attempt_and_independent_generation_readback(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture(book=True)
+        prime()
+        bridge.verify_replacement_canary_current = lambda revision: None
+        self.assertEqual(bridge.dispatch(write())['status'], 200)
+        read(m.OBJECT, '901')
+        result = read(m.OBJECT, '901', True)
+        self.assertEqual(base64.b64decode(result['body']), objects[m.OBJECT][1])
+        with self.assertRaises(m.BoundaryError):
+            bridge.dispatch(write())
+        self.assertEqual(sum(method == 'POST' for _, method in calls), 1)
+
+    def test_book_ready_receipt_keeps_original_source_pins_and_rejects_unrecognized_basis(self):
+        bridge, read, prime, write, objects, sources, calls = self.fixture(book=True)
+        prime()
+        for source in sources:
+            read(source['privateObject'], source['generation'], True)
+        self.assertEqual(len(bridge.daily_receipts), 1)
+        self.assertTrue(all(method == 'GET' for _, method in calls))
+        for basis in [None, 'sync-verified']:
+            bridge, read, prime, write, objects, sources, calls = self.fixture(book=True)
+            name = 'delivery/'+m.daily_date()+'/receipt.json'
+            gen, raw = objects[name]
+            receipt = json.loads(raw)
+            receipt['calculationBasis'] = basis
+            objects[name] = (gen, json.dumps(receipt).encode())
+            with self.assertRaises(m.BoundaryError):
+                prime()
             self.assertEqual(sum(method == 'POST' for _, method in calls), 0)
 
     def test_store_discovery_sequence_uses_metadata_get_before_pinned_metadata_and_media(self):

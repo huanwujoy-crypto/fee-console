@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import {adaptFlexArchive,applyFinancialVerification,digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,validDate} from './eod_sources.mjs';
 import {currentReserve,resolveCurrentCall} from './call_record.mjs';
 import {safeIbFailure} from './ib_diagnostics.mjs';
-import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
+import {buildEodActionModel,SHARESIGHT_BOOK_BASIS} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {renderNightActionReport,extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
 import {validateAssociationSnapshot,createAssociationReceipt,validateAssociationReceipt} from '../../scripts/xuan-ib-account-association.mjs';
@@ -16,7 +16,7 @@ export async function saveCompletedDailyReport({io,plan,receipt,html}){
   if(plan?.status!=='generate'||receipt?.dataDate!==plan.dataDate||receipt?.sourceDate!==plan.sourceDate)
     throw new Error('DAILY_REPORT_INCOMPLETE');
   if(receipt.mode==='private_eod_action')validateEodReceipt(receipt,html,plan.dataDate,plan.sourceDate);
-  if((receipt.mode==='private_eod_action'?receipt.status!=='partial':receipt.status!=='ready')||typeof html!=='string')
+  if((receipt.mode==='private_eod_action'?!['partial','ready'].includes(receipt.status):receipt.status!=='ready')||typeof html!=='string')
     throw new Error('DAILY_REPORT_INCOMPLETE');
   const prefix=`delivery/${plan.dataDate}/`;
   const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',html)};
@@ -38,7 +38,7 @@ export function validateCompletedEodSession(sourceDate, started) {
   return {dataDate,calendar};
 }
 export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
-  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,concentrationInput=null}={}){
+  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,concentrationInput=null,assumeSharesightSynchronized=false}={}){
   const currentTime=now(),started=initialStartedAt??currentTime;
   if(!Number.isFinite(started)||started>currentTime||currentTime-started>300000||!fieldMode&&initialStartedAt!==null)fail('CAPTURE_WINDOW');
   const {dataDate}=validateCompletedEodSession(sourceDate,started);
@@ -74,7 +74,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const hkt=t=>new Date(t+8*3_600_000).toISOString().slice(11,16);
   const callRecord=fieldMode?resolveCurrentCall(current.reserveLedger,dataDate,{now:completed}):null;
   const model=buildEodActionModel({dataDate,sourceDate,asOfHkt:`${dataDate} ${hkt(started)}–${hkt(completed)} HKT · 数据至 ${sourceDate}`,flex,snapshots:snapshotResults,live,
-    reserve:fieldMode?(callRecord.amountUsd??0):currentReserve(context.reserveLedger,dataDate),evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode,callRecord,captureStartedAt:new Date(started).toISOString(),captureCompletedAt:new Date(completed).toISOString(),concentrationInput});
+    reserve:fieldMode?(callRecord.amountUsd??0):currentReserve(context.reserveLedger,dataDate),evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode,callRecord,captureStartedAt:new Date(started).toISOString(),captureCompletedAt:new Date(completed).toISOString(),concentrationInput,assumeSharesightSynchronized});
   const prefix=`report-check/${new Date(started).toISOString()}-${crypto.randomUUID()}/`,sources=[];
   for(const [sourceKey,value] of [['ib.flexEod',flex?{archive:archiveResult,identityProof:archiveProof,financialProof}:{status:archiveState.status,code:archiveState.code}],...snapshotResults.map(s=>[s.sourceKey,s]),['ib.optionalLive',liveResult??{status:'failed'}]]){
     const object=prefix+sourceKey+'.json',saved=await io.savePrivate(object,value);
@@ -88,6 +88,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',html)};
   const receipt={schemaVersion:1,mode:'private_eod_action',status:model.status,dataDate,sourceDate,startedAt:new Date(started).toISOString(),completedAt:new Date(now()).toISOString(),association,sourceCount:sources.length,sources,sourceOutcomes:model.sourceOutcomes,sourceManifestSha256,evidenceSha256:model.evidenceSha256,artifact,publication:'none',scheduler:'none'};
   if(fieldMode)receipt.fieldErrors=model.fieldErrors;
+  if(model.calculationBasis)receipt.calculationBasis=model.calculationBasis;
   if(concentrationInput!==null){
     const privateObject=prefix+'concentration.sources.json',saved=await io.savePrivate(privateObject,concentrationInput);
     if(saved?.sha256!==digest(concentrationInput)||!/^\d+$/.test(saved.generation||''))fail('CONCENTRATION_SOURCE_BINDING');
@@ -97,10 +98,11 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   await io.savePrivate(prefix+'receipt.json',receipt);return receipt;
 }
 export function validateEodReceipt(r,html,dataDate,sourceDate){
-  if(r?.schemaVersion!==1||r.mode!=='private_eod_action'||r.status!=='partial'||r.dataDate!==dataDate||r.sourceDate!==sourceDate||r.publication!=='none'||r.scheduler!=='none'||r.sourceCount!==4||r.sources?.length!==4||new Set(r.sources.map(s=>s.sourceKey)).size!==4||r.sources.some(s=>!['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive'].includes(s.sourceKey)||!/^[a-f0-9]{64}$/.test(s.sha256||'')||!/^\d+$/.test(s.generation||'')))fail('RECEIPT');
+  if(r?.schemaVersion!==1||r.mode!=='private_eod_action'||!(r.status==='partial'||r.status==='ready'&&r.calculationBasis===SHARESIGHT_BOOK_BASIS)||r.dataDate!==dataDate||r.sourceDate!==sourceDate||r.publication!=='none'||r.scheduler!=='none'||r.sourceCount!==4||r.sources?.length!==4||new Set(r.sources.map(s=>s.sourceKey)).size!==4||r.sources.some(s=>!['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive'].includes(s.sourceKey)||!/^[a-f0-9]{64}$/.test(s.sha256||'')||!/^\d+$/.test(s.generation||'')))fail('RECEIPT');
   if(digest(sourceManifest(r.sources))!==r.sourceManifestSha256||r.sources.some(s=>s.rawFingerprint!==r.sourceOutcomes?.find(o=>o.sourceKey===s.sourceKey)?.rawFingerprint))fail('SOURCE_MANIFEST_BINDING');
   if(digest(html)!==r.artifact?.sha256||digest({sourceOutcomes:r.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256})!==r.evidenceSha256)fail('EVIDENCE_HASH');
   const m=extractNightActionModel(html);if(m.schemaVersion!==9||m.status!==r.status||m.sourceDate!==sourceDate||m.dataDate!==dataDate||m.evidenceSha256!==r.evidenceSha256||m.sourceManifestSha256!==r.sourceManifestSha256||JSON.stringify(m.sourceOutcomes)!==JSON.stringify(r.sourceOutcomes))fail('MODEL_BINDING');
+  if(r.calculationBasis!==m.calculationBasis)fail('CALCULATION_BASIS');
   if(Object.hasOwn(m,'concentration')!==Object.hasOwn(r,'concentration'))fail('CONCENTRATION_BINDING');
   if(m.concentration){const c=r.concentration,prefix=r.artifact.privateObject.slice(0,r.artifact.privateObject.lastIndexOf('/')+1);
     if(!c||Object.keys(c).sort().join('|')!=='generation|modelSha256|privateObject|sha256'||c.privateObject!==prefix+'concentration.sources.json'||! /^[a-f0-9]{64}$/.test(c.sha256)||!/^\d+$/.test(c.generation)||c.modelSha256!==digest(m.concentration))fail('CONCENTRATION_BINDING');}

@@ -253,7 +253,7 @@ def validate_multipart(body, content_type, daily=False):
         metadata = json_loads(custom['bundleMetadata'])
         if (not isinstance(metadata, dict) or metadata.get('schema') != 'xuan.owner-latest.v1'
                 or metadata.get('scope') != 'ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1'
-                or metadata.get('dataDate') != daily_date() or metadata.get('financialStatus') != 'partial'):
+                or metadata.get('dataDate') != daily_date() or metadata.get('financialStatus') not in ('partial', 'complete')):
             reject('MULTIPART_METADATA_INVALID')
         for key in keys - {'bundleMetadata', 'displaySha256'}:
             if metadata.get(key) != custom[key]:
@@ -791,7 +791,9 @@ class OwnerBridge:
         receipt = json_loads(raw)
         date = receipt.get('dataDate') if recovery_receipt(name) else name.split('/')[1]
         if (receipt.get('mode') != 'private_eod_action' or receipt.get('dataDate') != date
-                or receipt.get('status') != 'partial' or receipt.get('publication') != 'none'
+                or not (receipt.get('status') == 'partial' or receipt.get('status') == 'ready'
+                        and receipt.get('calculationBasis') == 'sharesight-book-user-synchronized.v1')
+                or receipt.get('publication') != 'none'
                 or receipt.get('sourceCount') != 4 or not isinstance(receipt.get('sources'), list)
                 or len(receipt['sources']) != 4
                 or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', str(receipt.get('startedAt')))):
@@ -854,7 +856,8 @@ class OwnerBridge:
             if (metadata.get('captureStartedAt') != receipt.get('startedAt')
                     or metadata.get('captureEndedAt') != receipt.get('completedAt')
                     or metadata.get('completedAt') != receipt.get('completedAt')
-                    or metadata.get('sourceDate') != receipt.get('sourceDate')):
+                    or metadata.get('sourceDate') != receipt.get('sourceDate')
+                    or metadata.get('financialStatus') != ('complete' if receipt.get('status') == 'ready' else 'partial')):
                 reject('PIN_REQUIRED')
             # Repeat the current pointer and registered canary check at the
             # native boundary; neither a caller pin nor upload ACK supplies it.

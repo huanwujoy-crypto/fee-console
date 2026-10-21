@@ -1,3 +1,4 @@
+import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE} from './eod_sources.mjs';
 // Pure admission/static export. No default transport, credentials, source call,
 // storage mutation or live entry. The controller must supply authenticated,
 // generation-pinned private reads and freshly read trusted Git contexts.
@@ -10,7 +11,7 @@ import {adaptFlexArchive,digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
 import {uniqueCloudJson,createOwnerFailureEvidence} from './cloud_io.mjs';
 import {inspectOrdersAccountEvidence} from './orders_probe.mjs';
-import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
+import {buildEodActionModel,SHARESIGHT_BOOK_BASIS,actionUnknownFields} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {extractNightActionModel,renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
 import {validateNightActionHtml} from '../../scripts/xuan-ib-night-action-guard.mjs';
 import {validateAssociationPolicy,validateAssociationSnapshot,validateAssociationReceipt} from '../../scripts/xuan-ib-account-association.mjs';
@@ -71,9 +72,9 @@ function admittedModel(html){
   let model;
   try{model=extractNightActionModel(html);validateNightActionHtml(html,model.dataDate);}
   catch{fail('CANONICAL_HTML');}
-  if(model.schemaVersion!==9||model.mode!=='eod-action'||model.status!=='partial'
-    ||model.cash.orderReserve!==null||model.cash.planning!==null||model.cash.executableBudget!==null
-    ||model.replenishment.status!=='unavailable')fail('PARTIAL_SCOPE');
+  const book=model.calculationBasis===SHARESIGHT_BOOK_BASIS;
+  if(model.schemaVersion!==9||model.mode!=='eod-action'||model.cash.executableBudget!==null
+    ||!book&&(model.status!=='partial'||model.cash.orderReserve!==null||model.cash.planning!==null||model.replenishment.status!=='unavailable'))fail('PARTIAL_SCOPE');
   return model;
 }
 
@@ -103,7 +104,7 @@ export function prepareOwnerStaticDisplay(input){
   // ticker/position matching into native order currency or contract identity.
   display=display.replaceAll('class="distance">','class="distance" title="参考价差；同名持仓匹配，原生订单合约未核实">');
   display=display.replace(/(<div class="quote"><b>[^<]*<\/b><span>)([A-Z]{3})(<\/span>)/g,'$1$2·推定$3');
-  const disclosure='<aside class="notes" role="note"><p>私有只读报告；原报告日、来源日和取数时间保持不变。挂单所列币种及距市价仅为同名持仓匹配参考；原生挂单币种、合约 ID 与市场身份尚未核实，不能据此认定完整预留或可执行预算。</p></aside>';
+  const disclosure=model.calculationBasis===SHARESIGHT_BOOK_BASIS?'<aside class="notes" role="note"><p>私有只读报告；报告日、来源日和取数时间保持不变。按用户同步前提估算 Sharesight 账面预算。挂单币种与价差按关联持仓推定；覆盖或币种缺项时不计算净预算。所有结果均非券商实时可下单额。</p></aside>':'<aside class="notes" role="note"><p>私有只读报告；原报告日、来源日和取数时间保持不变。挂单所列币种及距市价仅为同名持仓匹配参考；原生挂单币种、合约 ID 与市场身份尚未核实，不能据此认定完整预留或可执行预算。</p></aside>';
   display=display.replace('</header>','</header>'+disclosure);
   display=display.replace('<head>','<head><meta http-equiv="Content-Security-Policy" content="'+OWNER_DISPLAY_CSP+'"><meta name="referrer" content="no-referrer"><style>.quote span{font-size:10px;white-space:nowrap}</style>');
   if(!display.includes(OWNER_DISPLAY_CSP)||/<script\b/i.test(display))fail('STATIC_EXPORT');
@@ -113,7 +114,7 @@ export function prepareOwnerStaticDisplay(input){
 function metadataBinding(m,r,htmlBytes,receiptBytes,model,time){
   const keys='schema scope ownerBinding sourceIdentitySha256 dataDate sourceDate captureStartedAt captureEndedAt completedAt artifactObject artifactGeneration artifactSha256 receiptObject receiptGeneration receiptSha256 financialStatus unknownFields'.split(' ');
   if(!exact(m,keys)||m.schema!=='xuan.owner-latest.v1'||m.scope!==OWNER_SCOPE||m.ownerBinding!==OWNER_BINDING
-    ||m.sourceIdentitySha256!==SOURCE_IDENTITY_SHA256||m.financialStatus!=='partial')fail('METADATA_SCOPE');
+    ||m.sourceIdentitySha256!==SOURCE_IDENTITY_SHA256||m.financialStatus!==(model.calculationBasis===SHARESIGHT_BOOK_BASIS&&model.status==='ready'?'complete':'partial'))fail('METADATA_SCOPE');
   if(m.dataDate!==r.dataDate||m.sourceDate!==r.sourceDate||m.dataDate!==model.dataDate||m.sourceDate!==model.sourceDate
     ||!ownerBundlePathsMatch(m)
     ||r.artifact?.privateObject!==m.artifactObject||r.artifact.generation!==m.artifactGeneration
@@ -124,8 +125,8 @@ function metadataBinding(m,r,htmlBytes,receiptBytes,model,time){
   if(Date.parse(r.completedAt)-Date.parse(r.startedAt)>300000)fail('CAPTURE_WINDOW');
   reportCaptureWindow(model,r);
   const unknowns=m.unknownFields,allowed=['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'];
-  const required=['cash','prices',...(model.orders.status==='ready'?[]:['orders']),...(model.holdings?.status==='ready'?[]:['holdings']),...(model.allocation.status==='ready'?[]:['allocation'])];
-  if(!Array.isArray(unknowns)||!unknowns.length||unknowns.length>allowed.length||new Set(unknowns).size!==unknowns.length
+  const required=actionUnknownFields(model);
+  if(!Array.isArray(unknowns)||(m.financialStatus==='partial'&&!unknowns.length)||(m.financialStatus==='complete'&&unknowns.length)||unknowns.length>allowed.length||new Set(unknowns).size!==unknowns.length
     ||unknowns.some(k=>!allowed.includes(k))||required.some(k=>!unknowns.includes(k)))fail('UNKNOWN_FIELDS');
 }
 function callBinding(context,model){
@@ -167,7 +168,10 @@ function snapshotSource(key,value,r){
     return value;
   }
   const scope=SNAPSHOT_SCOPES[key],report=value.raw?.report??value.raw?.data?.report??value.raw?.result?.data?.report,p=value.provenance;
-  if(value.raw?.mode!=='read_only'||value.raw.source!=='Sharesight User API'||report?.portfolio_id!==scope.portfolioId
+  const browser=value.raw?.source===SHARESIGHT_BROWSER_SOURCE;
+  if(browser){const b=normalizeBrowserSnapshot(value.raw,{portfolioId:scope.portfolioId,sourceDate:r.sourceDate});
+    if(digest(b.raw)!==digest(value.raw)||p?.readAt!==b.readAt)fail('BROWSER_SOURCE_BINDING');}
+  if(value.raw?.mode!=='read_only'||!(value.raw.source==='Sharesight User API'||browser)||report?.portfolio_id!==scope.portfolioId
     ||report.currency?.code!=='USD'||report.start_date!==r.sourceDate||report.end_date!==r.sourceDate||report.include_sales!==false
     ||(key==='sharesight.ibGroupedPerformance'?(report.grouping!=='custom_group_category'||report.custom_group?.id!==Number(scope.grouping)):report.grouping!==scope.grouping)
     ||value.rawFingerprint!==digest(value.raw)||value.completion!==null||p?.sourceDate!==r.sourceDate||!instant(p.readAt)
@@ -207,7 +211,7 @@ function sourceModel(values,r,model,context,call){
   for(const source of r.sources)if(source.rawFingerprint!==sourceOutcomes.find(s=>s.sourceKey===source.sourceKey)?.rawFingerprint)fail('RAW_FINGERPRINT');
   const rebuilt=buildEodActionModel({dataDate:r.dataDate,sourceDate:r.sourceDate,asOfHkt:window.asOfHkt,flex,snapshots,
     live:['captured','partial'].includes(savedLive.status)?{...savedLive,previousHtml:context.previousHtml}:savedLive,
-    reserve:call.amountUsd,evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode:!!model.fieldState,
+    reserve:call.amountUsd,evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode:!!model.fieldState,assumeSharesightSynchronized:model.calculationBasis===SHARESIGHT_BOOK_BASIS,
     callRecord:model.fieldState?call:null,captureStartedAt:model.provenance.capture?.startedAt??null,captureCompletedAt:model.provenance.capture?.completedAt??null});
   rebuilt.sourceManifestSha256=r.sourceManifestSha256;
   rebuilt.evidenceSha256=digest({sourceOutcomes:rebuilt.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256});
@@ -265,7 +269,7 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       if(phase==='candidate-admission'&&(endTime-Date.parse(r.startedAt)>1800000
         ||new Date(endTime+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       return {scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,
-        sourceIdentitySha256:SOURCE_IDENTITY_SHA256,policyRevision:fingerprint(current.association.policy),financialStatus:'partial'};
+        sourceIdentitySha256:SOURCE_IDENTITY_SHA256,policyRevision:fingerprint(current.association.policy),financialStatus:m.financialStatus};
     }catch(error){
       const evidence=createOwnerFailureEvidence(error,{validatorPhase:phase,validatorPoint});
       let code;try{if(error&&!nodeTypes.isProxy(error))code=Object.getOwnPropertyDescriptor(error,'safeCode')?.value;}catch{}

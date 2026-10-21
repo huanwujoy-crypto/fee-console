@@ -55,3 +55,49 @@ export function validateEodHoldings(h,a,sourceDate){
     ||Math.abs(h.concentration.top5Pct-h.rows.slice(0,5).reduce((s,r)=>s+r.weightPct,0))>1e-8)fail();
   return h;
 }
+
+// Whole IB-HK book portfolio, separately from the four-class stock denominator.
+// No broker reconciliation or ETF/issuer look-through is implied.
+export function buildBookConcentration(snapshot,sourceDate){
+  try{
+    if(!['verified','date-verified'].includes(snapshot?.status))fail();
+    const r=reportOf(snapshot.raw);
+    if(r?.portfolio_id!==936247||r.currency?.code!=='USD'||r.end_date!==sourceDate
+      ||!Array.isArray(r.holdings)||!r.holdings.length||r.holdings.length>5000
+      ||!Array.isArray(r.cash_accounts)||!r.cash_accounts.length||!finite(r.value)||r.value<=0)fail();
+    const rows=r.holdings.map(h=>{
+      const i=h.instrument;
+      if(!Number.isSafeInteger(h.id)||h.id<=0||!symbol(i.code)||typeof i.market_code!=='string'
+        ||! /^[A-Z]{3}$/.test(i.currency_code||i.currency?.code||'')||!finite(h.value))fail();
+      return {holdingId:h.id,symbol:i.code,market:i.market_code,currency:i.currency_code??i.currency.code,
+        marketValueUsd:h.value,weightPct:h.value/r.value*100};
+    }).sort((a,b)=>b.marketValueUsd-a.marketValueUsd||a.holdingId-b.holdingId);
+    const cash=r.cash_accounts.reduce((n,c)=>{if(!finite(c.value))fail();return n+c.value;},0);
+    return validateBookConcentration({status:'ready',source:'sharesight.ibGroupedPerformance',sourceDate,
+      basis:'direct-holdings-whole-book-portfolio',currency:'USD',total:r.value,cash,rows,
+      top1Pct:rows[0].weightPct,top5Pct:rows.slice(0,5).reduce((n,r)=>n+r.weightPct,0)},sourceDate);
+  }catch{return {status:'unavailable',reason:'BOOK_CONCENTRATION_SOURCE_INCOMPLETE'};}
+}
+export function validateBookConcentration(c,sourceDate){
+  if(c?.status==='unavailable'){
+    exact(c,['status','reason']);if(c.reason!=='BOOK_CONCENTRATION_SOURCE_INCOMPLETE')fail();return c;
+  }
+  exact(c,['status','source','sourceDate','basis','currency','total','cash','rows','top1Pct','top5Pct']);
+  if(c.status!=='ready'||c.source!=='sharesight.ibGroupedPerformance'||c.sourceDate!==sourceDate
+    ||c.basis!=='direct-holdings-whole-book-portfolio'||c.currency!=='USD'||!finite(c.total)||c.total<=0
+    ||!finite(c.cash)||!Array.isArray(c.rows)||!c.rows.length||c.rows.length>5000)fail();
+  const identities=new Set();
+  for(const r of c.rows){
+    exact(r,['holdingId','symbol','market','currency','marketValueUsd','weightPct']);
+    const key=JSON.stringify([r.holdingId,r.market,r.currency]);
+    if(!Number.isSafeInteger(r.holdingId)||r.holdingId<=0||!symbol(r.symbol)||typeof r.market!=='string'
+      ||! /^[A-Z0-9][A-Z0-9 ._-]{0,39}$/.test(r.market)||! /^[A-Z]{3}$/.test(r.currency)||!finite(r.marketValueUsd)||!finite(r.weightPct)
+      ||Math.abs(r.weightPct-r.marketValueUsd/c.total*100)>1e-8||identities.has(key))fail();
+    identities.add(key);
+  }
+  if(Math.abs(c.rows.reduce((n,r)=>n+r.marketValueUsd,c.cash)-c.total)>.011
+    ||JSON.stringify(c.rows)!==JSON.stringify([...c.rows].sort((a,b)=>b.marketValueUsd-a.marketValueUsd||a.holdingId-b.holdingId))
+    ||!finite(c.top1Pct)||!finite(c.top5Pct)||Math.abs(c.top1Pct-c.rows[0].weightPct)>1e-8
+    ||Math.abs(c.top5Pct-c.rows.slice(0,5).reduce((n,r)=>n+r.weightPct,0))>1e-8)fail();
+  return c;
+}
