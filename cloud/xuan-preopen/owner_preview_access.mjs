@@ -382,6 +382,17 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
       guard();if(!evidenceMode||typeof sdk.inspectEvidenceAttempt!=='function')fail('SDK_CAPABILITIES');
       lease.current(Date.now());return sdk.inspectEvidenceAttempt();
     },
+    async inspectEvidenceContinuation(){
+      guard();if(!evidenceMode||typeof sdk.inspectEvidenceContinuation!=='function')fail('SDK_CAPABILITIES');
+      lease.current(Date.now());return sdk.inspectEvidenceContinuation();
+    },
+    async resumeEvidence(input){
+      guard();if(!evidenceMode||typeof sdk.resumeEvidence!=='function')fail('SDK_CAPABILITIES');
+      if(evidenceBegun||evidenceClosed)fail('REPLACEMENT_ADMISSION_CLOSED');
+      if(!canaryPin)fail('CANARY_REQUIRED');evidenceBegun=true;
+      try{await live();guard();lease.current(Date.now());return await sdk.resumeEvidence(input);}
+      catch(error){evidenceClosed=true;throw error;}
+    },
     async beginEvidence(input){
       guard();if(!evidenceMode||typeof sdk.beginEvidence!=='function')fail('SDK_CAPABILITIES');
       if(evidenceBegun||evidenceClosed)fail('REPLACEMENT_ADMISSION_CLOSED');

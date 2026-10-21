@@ -236,6 +236,7 @@ test('registered recovery uses GET discovery only; original report remains gener
     const json={Accept:'application/json','Accept-Encoding':'identity'},media={Accept:'application/octet-stream','Accept-Encoding':'identity'};
     await sdk.requestDaily(prefix+encodeURIComponent(reg.receiptObject),{headers:json});
     await sdk.requestDaily(prefix+encodeURIComponent(original)+'?generation=17&alt=media',{headers:media});
+    await sdk.requestDaily(prefix+encodeURIComponent(original.replace('report.html','concentration.sources.json'))+'?generation=18&alt=media',{headers:media});
     const before=seen.length;
     for(const [name,query,method,headers] of [
       [reg.receiptObject,'','HEAD',{'Accept-Encoding':'identity'}],
@@ -245,7 +246,7 @@ test('registered recovery uses GET discovery only; original report remains gener
     ])await assert.rejects(()=>sdk.requestDaily(prefix+encodeURIComponent(name)+query,{method,headers}));
     assert.equal(seen.length,before);
   });
-  assert.equal(seen.length,2);assert.ok(seen.every(v=>v.op==='dailyRequest'&&v.method==='GET'));
+  assert.equal(seen.length,3);assert.ok(seen.every(v=>v.op==='dailyRequest'&&v.method==='GET'));
 });
 
 import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
@@ -262,9 +263,10 @@ test('evidence bridge protocol is separate, finite, pinned and stops after uncer
     await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start}));
     await rejected('TARGET_INVALID',()=>sdk.writeEvidence('delivery/owner-latest.html',bytes));
     assert.equal((await sdk.writeEvidence(name,bytes)).generation,'2');
+    assert.equal((await sdk.writeEvidence(name.replace('ib.optionalLive.json','concentration.sources.json'),bytes)).generation,'2');
     await sdk.writeEvidence(reg.receiptObject,bytes);await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,bytes));
   });
-  assert.deepEqual(ops,['inspectEvidence','beginEvidence','writeEvidence','writeEvidence']);
+  assert.deepEqual(ops,['inspectEvidence','beginEvidence','writeEvidence','writeEvidence','writeEvidence']);
   let frames=0;
   await fakeWorker(frame=>{frames++;return {id:frame.id,error:'REQUEST_OUTCOME_UNKNOWN',safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
     await rejected('REQUEST_OUTCOME_UNKNOWN',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start}));
@@ -281,4 +283,24 @@ test('saved-capture bridge forwards actual end and separates five-minute capture
     await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:stamp(now-599999)}));
     assert.equal((await sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end})).captureCompletedAt,end);
   });assert.equal(calls,1);
+});
+
+test('registered continuation protocol cannot reset the claim and closes after uncertain write',async t=>{
+  const reg=registeredOwnerRecovery(),ops=[];
+  const clock=Date.parse(reg.referenceCapture.captureCompletedAt)+60000;t.mock.method(Date,'now',()=>clock);
+  await fakeWorker(frame=>{const v=frame.value;ops.push(v.op);return {id:frame.id,result:v.op==='inspectEvidenceContinuation'?{status:'verified'}:{requestId:reg.requestId,remainingObjects:3},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    await sdk.inspectEvidenceContinuation();
+    await rejected('REQUEST_INVALID',()=>sdk.resumeEvidence({requestId:'other-request'}));
+    await sdk.resumeEvidence({requestId:reg.requestId});
+    await rejected('REQUEST_INVALID',()=>sdk.resumeEvidence({requestId:reg.requestId}));
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:new Date(clock).toISOString()}));
+  });
+  assert.deepEqual(ops,['inspectEvidenceContinuation','resumeEvidence']);
+  let writes=0;
+  await fakeWorker(frame=>{const v=frame.value;if(v.op==='writeEvidence'){writes++;return {id:frame.id,error:'REQUEST_OUTCOME_UNKNOWN',safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};}return {id:frame.id,result:{status:'verified'},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    await sdk.inspectEvidenceContinuation();await sdk.resumeEvidence({requestId:reg.requestId});
+    const name=reg.continuation.objects[0].name.replace('ib.flexEod.json','concentration.sources.json');
+    await rejected('REQUEST_OUTCOME_UNKNOWN',()=>sdk.writeEvidence(name,Buffer.from('{}')));
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,Buffer.from('{}')));
+  });assert.equal(writes,1);
 });

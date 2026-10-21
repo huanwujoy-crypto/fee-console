@@ -347,8 +347,9 @@ async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,cu
   const objects=new Map(),events=[];
   const access={beginEvidence:async args=>{events.push('claim');return {...args,dataDate:reg.dataDate,runId:'11111111-2222-4333-8444-555555555555'};},
     writeEvidence:async(name,bytes)=>{events.push('write');if(failWrite)throw Error('SYNTHETIC_UNCERTAIN');assert.ok(!objects.has(name));const generation=String(objects.size+2);objects.set(name,{bytes:Buffer.from(bytes),generation});return {generation,sha256:digest(Buffer.from(bytes).toString())};}};
-  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture,concentrationInput,access,now:()=>time+processingDelayMs,loadContext:async()=>context(time+processingDelayMs)});
-  return {reg,time:time+processingDelayMs,sourceDate,objects,events,execute,concentrationInput};
+  const options={sourceDate,snapshots,captureStartedAt,ordersCapture,concentrationInput,access,now:()=>time+processingDelayMs,loadContext:async()=>context(time+processingDelayMs)};
+  const execute=()=>composeBrowserActionEvidence(options);
+  return {reg,time:time+processingDelayMs,sourceDate,objects,events,execute,concentrationInput,options};
 }
 function browserOrdersCapture(raw={orders:[order()],complete:true}){
   const d=registeredOwnerRecovery().dataDate;
@@ -562,4 +563,45 @@ test('three browser accounts and observed orders survive pinned admission and on
   assert(reads.includes(r.receipt.concentration.privateObject));assert.equal((await publisher.publish({metadata,html,receipt})).code,'ONE_SHOT_CLOSED');
   f.objects.get(r.receipt.concentration.privateObject).bytes=encode('{}');
   await assert.rejects(()=>verifier({metadata,html,receipt,phase:'candidate-admission'}),/CONCENTRATION_BYTES_HASH/);
+});
+
+import fs from 'node:fs';
+import {syncBuiltinESMExports} from 'node:module';
+test('six-object continuation preserves exact source/HTML bytes, completes three receipts, admits, CASes once and independently reads back',async()=>{
+  const capture=browserOrdersCapture({orders:[order()]}),f=await browserAttempt({threeAccounts:true,currentBookDate:true,ordersCapture:capture});
+  const first=await f.execute(),r=first.receipt,prefix=r.artifact.privateObject.replace(/report\.html$/,'');
+  const pins=r.sources.map(s=>({name:s.privateObject,generation:s.generation,sha256:s.sha256,size:f.objects.get(s.privateObject).bytes.length}));
+  pins.push({name:r.artifact.privateObject,generation:r.artifact.generation,sha256:r.artifact.sha256,size:f.objects.get(r.artifact.privateObject).bytes.length});
+  const retained=new Map(pins.map(p=>[p.name,{...f.objects.get(p.name),bytes:Buffer.from(f.objects.get(p.name).bytes)}]));
+  const registration=structuredClone(f.reg);delete registration.receiptObject;
+  registration.referenceCapture={schema:'xuan.registered-reference-capture.v1',captureStartedAt:r.startedAt,captureCompletedAt:r.captureCompletedAt,expiresAt:registration.dataDate+'T15:59:59.999Z',sourceHashes:{
+    'sharesight.ibGroupedPerformance':r.sources.find(s=>s.sourceKey==='sharesight.ibGroupedPerformance').rawFingerprint,
+    'sharesight.noahPerformance':r.sources.find(s=>s.sourceKey==='sharesight.noahPerformance').rawFingerprint,'ib.orders':capture.sources[0].rawFingerprint}};
+  registration.continuation={schema:'xuan.evidence-continuation.v1',runId:prefix.slice(-37,-1),claimGeneration:'1',objects:pins,maximumObjects:9,maximumBytes:33554432};
+  const claim={name:`report-check/orders-probe-${registration.requestId}/start.json`,generation:'1',sha256:'a'.repeat(64),size:500};
+  let inspected=0,resumed=0,writes=0;
+  const remaining=[prefix+'concentration.sources.json',prefix+'receipt.json',first.receiptObject];
+  const access={beginEvidence:()=>assert.fail('Never recreate a consumed claim'),
+    inspectEvidenceContinuation:async()=>{inspected++;return {status:'verified',requestId:registration.requestId,runId:registration.continuation.runId,captureStartedAt:r.startedAt,captureCompletedAt:r.captureCompletedAt,existingObjects:6,existingBytes:500+pins.reduce((n,p)=>n+p.size,0),pins:[claim,...pins]};},
+    resumeEvidence:async({requestId})=>{assert.equal(requestId,registration.requestId);assert.equal(resumed++,0);return {requestId,dataDate:registration.dataDate,runId:registration.continuation.runId,captureStartedAt:r.startedAt,captureCompletedAt:r.captureCompletedAt,existingObjects:6,remainingObjects:3};},
+    writeEvidence:async(name,bytes)=>{assert.equal(name,remaining[writes++]);assert(!retained.has(name));const generation=String(retained.size+2);retained.set(name,{generation,bytes:Buffer.from(bytes)});return {generation,sha256:digest(bytes)};}};
+  const savedRead=fs.readFileSync;
+  fs.readFileSync=(p,...options)=>String(p).endsWith('/security/xuan-owner-source-recovery.json')?(options[0]==='utf8'?JSON.stringify(registration):Buffer.from(JSON.stringify(registration))):savedRead(p,...options);
+  syncBuiltinESMExports();
+  try{
+    const saved=await composeBrowserActionEvidence({...f.options,resume:true,access});assert.equal(inspected,1);assert.equal(resumed,1);assert.equal(writes,3);
+    for(const p of pins){assert.equal(retained.get(p.name).generation,p.generation);assert.equal(digest(retained.get(p.name).bytes),p.sha256);}
+    const html=retained.get(saved.receipt.artifact.privateObject).bytes,receipt=retained.get(saved.receiptObject).bytes;
+    const metadata=ownerBundleMetadata({html,artifactObject:saved.receipt.artifact.privateObject,artifactGeneration:saved.receipt.artifact.generation,artifactSha256:saved.receipt.artifact.sha256,receiptObject:saved.receiptObject,receiptGeneration:saved.generation,receiptSha256:saved.sha256},saved.receipt);
+    const model=extractNightActionModel(html.toString());assert.equal(model.concentration.bindings.length,3);assert.equal(model.observedOrderPlan.status,'ready');
+    let cas=0,readbacks=0,display;
+    const verify=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async p=>{const o=retained.get(p.name);assert.equal(o.generation,p.generation);assert.equal(digest(o.bytes),p.sha256);return o.bytes;}});
+    const publisher=createOwnerLatestPublisher({ownerBinding:OWNER_BINDING,verifyProtectedReceipt:verify,prepareDisplay:prepareOwnerStaticDisplay,now:()=>f.time,
+      io:{readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,ifGenerationMatch,target})=>{assert.equal(ifGenerationMatch,'0');cas++;display=Buffer.from(bytes);return {...target,generation:'999',size:display.length};},readLatestGeneration:async()=>{readbacks++;return Buffer.from(display);}}});
+    const out=await publisher.publish({metadata,html,receipt});assert.equal(out.status,'published-verified',JSON.stringify(out));assert.equal(cas,1);assert.equal(readbacks,1);
+    assert.equal((await publisher.publish({metadata,html,receipt})).code,'ONE_SHOT_CLOSED');assert.equal(cas,1);
+    // A bad pre-existing pin must fail during local re-creation, before admission or another write.
+    registration.continuation.objects[0].sha256='f'.repeat(64);
+    await assert.rejects(()=>composeBrowserActionEvidence({...f.options,resume:true,access}));assert.equal(inspected,1);assert.equal(writes,3);
+  }finally{fs.readFileSync=savedRead;syncBuiltinESMExports();}
 });

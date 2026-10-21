@@ -5,7 +5,7 @@ import {recoveryRequestId} from './owner_bundle_contract.mjs';
 export const OWNER_SOURCE_RECOVERY_PATH='security/xuan-owner-source-recovery.json';
 export function registeredOwnerRecovery(){
   const value=JSON.parse(readFileSync(new URL('../../'+OWNER_SOURCE_RECOVERY_PATH,import.meta.url),'utf8'));
-  const keys=('schema requestId dataDate priorReceiptObject priorReceiptGeneration priorReceiptSha256'+(Object.hasOwn(value??{},'referenceCapture')?' referenceCapture':'')+(Object.hasOwn(value??{},'supersedes')?' supersedes':'')).split(' ').sort().join('|');
+  const keys=('schema requestId dataDate priorReceiptObject priorReceiptGeneration priorReceiptSha256'+(Object.hasOwn(value??{},'referenceCapture')?' referenceCapture':'')+(Object.hasOwn(value??{},'supersedes')?' supersedes':'')+(Object.hasOwn(value??{},'continuation')?' continuation':'')).split(' ').sort().join('|');
   if(!value||Object.keys(value).sort().join('|')!==keys||value.schema!=='xuan.owner-source-recovery.v1'
     ||recoveryRequestId(`report-check/orders-probe-${value.requestId}/preview-receipt.json`)!==value.requestId
     ||!/^\d{4}-\d\d-\d\d$/.test(value.dataDate)||!Number.isFinite(Date.parse(value.dataDate+'T00:00:00Z'))
@@ -27,6 +27,7 @@ export function registeredOwnerRecovery(){
       ||s.requestId===value.requestId||recoveryRequestId(`report-check/orders-probe-${s.requestId}/preview-receipt.json`)!==s.requestId
       ||![s.artifactSha256,s.receiptSha256].every(h=>/^[a-f0-9]{64}$/.test(h))||! /^[1-9][0-9]{0,29}$/.test(s.latestGeneration))throw Error('OWNER_RECOVERY_SUPERSEDES');
   }
+  if(value.continuation)validateEvidenceContinuation(value);
   return Object.freeze({...value,receiptObject:`report-check/orders-probe-${value.requestId}/preview-receipt.json`});
 }
 
@@ -56,4 +57,18 @@ export function registeredReferenceReplacement(candidate,current,generation){
     &&current.artifactSha256===s.artifactSha256&&current.receiptSha256===s.receiptSha256
     &&candidate.dataDate===r.dataDate&&candidate.completedAt>current.completedAt
     &&!!registeredReferenceCapture(r.requestId,candidate.captureStartedAt,candidate.captureEndedAt);
+}
+
+// One existing immutable attempt only; no caller-selected paths or reset budget.
+export function validateEvidenceContinuation(registration){
+  const c=registration.continuation,r=registration.referenceCapture;
+  const fail=()=>{throw Error('OWNER_RECOVERY_CONTINUATION');};
+  if(!c||!r||Object.keys(c).sort().join('|')!=='claimGeneration|maximumBytes|maximumObjects|objects|runId|schema'
+    ||c.schema!=='xuan.evidence-continuation.v1'||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(c.runId)
+    ||! /^[1-9][0-9]{0,29}$/.test(c.claimGeneration)||c.maximumObjects!==9||c.maximumBytes!==33554432||c.objects?.length!==5)fail();
+  const prefix=`report-check/${r.captureStartedAt}-${c.runId}/`,names=['ib.flexEod.json','sharesight.ibGroupedPerformance.json','sharesight.noahPerformance.json','ib.optionalLive.json','report.html'];
+  for(const [i,p] of c.objects.entries())if(Object.keys(p).sort().join('|')!=='generation|name|sha256|size'||p.name!==prefix+names[i]
+    ||! /^[1-9][0-9]{0,29}$/.test(p.generation)||! /^[a-f0-9]{64}$/.test(p.sha256)||!Number.isSafeInteger(p.size)||p.size<1||p.size>4*1024*1024)fail();
+  if(c.objects.reduce((n,p)=>n+p.size,4096)>c.maximumBytes)fail();
+  return c;
 }
