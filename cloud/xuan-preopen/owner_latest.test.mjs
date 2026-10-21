@@ -436,3 +436,36 @@ test('crossing HK midnight, 30-minute boundary or reversing clock after validati
     assert.equal((await publisher.publish(next)).status,'blocked',mode);assert.equal(writes,0);
   }
 });
+
+
+test('realistic 45s read and access preparation leaves the original 10s CAS/readback window',async()=>{
+  let time=NOW,saved,prepares=0;const durations=[],calls=[];
+  const p=createOwnerLatestPublisher({ownerBinding:OWNER,verifyProtectedReceipt:proof,prepareDisplay:copy,now:()=>time,
+    setTimer(fn,ms){durations.push(ms);return setTimeout(fn,ms);},clearTimer:clearTimeout,
+    async prepareCommit({signal}){assert.equal(signal.aborted,false);prepares++;time+=30000;},
+    io:{async readLatest(){calls.push('read');time+=15000;return {state:'absent'};},
+      async replaceLatest(a){calls.push('write');time+=2000;saved=copy(a.bytes);return {...a.target,generation:'1',size:saved.length};},
+      async readLatestGeneration(){calls.push('readback');time+=2000;return copy(saved);}}});
+  assert.equal((await p.publish(candidate())).status,'published-verified');assert.deepEqual(durations,[60000,10000]);
+  assert.deepEqual(calls,['read','write','readback']);assert.equal(prepares,1);assert.equal((await p.publish(candidate())).code,'ONE_SHOT_CLOSED');
+});
+test('preparation cannot continue past its budget or admit a newly stale, cross-day or rollback candidate',async()=>{
+  for(const kind of ['preparation-deadline','stale','cross-day','rollback']){
+    let time=kind==='cross-day'?Date.parse('2026-10-16T15:59:59Z'):NOW,writes=0;
+    const next=candidate();if(kind==='cross-day'){next.metadata.captureStartedAt='2026-10-16T15:59:00.000Z';next.metadata.captureEndedAt=next.metadata.completedAt='2026-10-16T15:59:01.000Z';}
+    if(kind==='stale')time=Date.parse(next.metadata.captureStartedAt)+1799000;
+    const p=createOwnerLatestPublisher({ownerBinding:OWNER,verifyProtectedReceipt:proof,prepareDisplay:copy,now:()=>time,
+      prepareCommit:async()=>{time+=kind==='preparation-deadline'?60001:kind==='rollback'?-1:2000;},
+      io:{readLatest:async()=>({state:'absent'}),replaceLatest:async()=>{writes++;throw Error();},readLatestGeneration:async()=>assert.fail()}});
+    const result=await p.publish(next);assert.equal(result.status,'blocked',kind);assert.equal(writes,0,kind);
+    assert.equal((await p.publish(next)).code,'ONE_SHOT_CLOSED');
+  }
+});
+test('preparation timeout aborts a delayed access preparation without a late CAS',async()=>{
+  let fire,entered,release,writes=0;const start=new Promise(r=>entered=r),hold=new Promise(r=>release=r);
+  const p=createOwnerLatestPublisher({ownerBinding:OWNER,verifyProtectedReceipt:proof,prepareDisplay:copy,now:()=>NOW,
+    setTimer(fn){fire=fn;return 1;},clearTimer(){},prepareCommit:async()=>{entered();await hold;},
+    io:{readLatest:async()=>({state:'absent'}),replaceLatest:async()=>{writes++;},readLatestGeneration:async()=>assert.fail()}});
+  const pending=p.publish(candidate());await start;fire();assert.deepEqual(await pending,{status:'blocked',code:'DEADLINE'});
+  release();await new Promise(r=>setImmediate(r));assert.equal(writes,0);
+});

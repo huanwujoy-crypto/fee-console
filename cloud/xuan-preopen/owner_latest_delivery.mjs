@@ -7,7 +7,7 @@ import {fileURLToPath} from 'node:url';
 import {OWNER_SOURCE_RECOVERY_PATH,registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {planPreopen} from './calendar.mjs';
 import {loadTrustedContext,safeErrorOrigin} from './report.mjs';
-import {ownerSourceFetch} from './owner_source_bytes.mjs';
+import {ownerSourceFetch,withOwnerPublicationReads} from './owner_source_bytes.mjs';
 import {types as nodeTypes} from 'node:util';
 import {boundedText,attachOwnerReadDiagnostics,safeOwnerReadDiagnostics,createOwnerFailureEvidence,safeOwnerFailureEvidence,ownerReadRequestClass} from './cloud_io.mjs';
 import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
@@ -136,7 +136,7 @@ export function ownerBundleMetadata(bundle,receipt){
 }
 
 export async function deliverOwnerLatest({request,now=Date.now,loadContext=createOwnerContextLoader({now}),
-  storeFactory=createOwnerLatestStore,publisherFactory=createOwnerLatestPublisher,expectedArtifactSha256=null,expectedReceiptSha256=null,registeredRecovery=false}={}){
+  storeFactory=createOwnerLatestStore,publisherFactory=createOwnerLatestPublisher,prepareCommit,expectedArtifactSha256=null,expectedReceiptSha256=null,registeredRecovery=false}={}){
   if(typeof registeredRecovery!=='boolean')fail('RECOVERY_MODE');
   const plan=planPreopen(now());
   if(plan.status!=='generate')return {status:'no-action',reason:plan.reason};
@@ -152,7 +152,7 @@ export async function deliverOwnerLatest({request,now=Date.now,loadContext=creat
     ||receipt.artifact?.generation!==bundle.artifactGeneration||receipt.artifact?.sha256!==bundle.artifactSha256)fail('DAILY_BINDING');
   const verifyProtectedReceipt=createProtectedOwnerVerifier({loadContext,readPinnedSource:pin=>io.readPinnedSource(pin),now});
   const verifyProtectedPreview=createProtectedOwnerPreviewVerifier({loadContext,now});
-  const publisher=publisherFactory({io,ownerBinding:OWNER_BINDING,verifyProtectedReceipt,verifyProtectedPreview,prepareDisplay:prepareOwnerStaticDisplay,now});
+  const publisher=publisherFactory({io,ownerBinding:OWNER_BINDING,verifyProtectedReceipt,verifyProtectedPreview,prepareDisplay:prepareOwnerStaticDisplay,prepareCommit,now});
   return publisher.publish({metadata:ownerBundleMetadata(bundle,receipt),html:bundle.html,receipt:bundle.receipt});
 }
 
@@ -173,13 +173,16 @@ export async function deliverRegisteredOwnerRecovery(){
   return deliverCurrentOwnerSdk(true);
 }
 async function deliverCurrentOwnerSdk(registeredRecovery){
+  return withOwnerPublicationReads(()=>deliverScopedOwnerSdk(registeredRecovery));
+}
+async function deliverScopedOwnerSdk(registeredRecovery){
   const {createOwnerDailyStorageAccess}=await import('./owner_preview_access.mjs');
   const access=await createOwnerDailyStorageAccess();
   let result,primary;
   try{
     const canary=await access.verifyRegisteredCanary();
     if(canary.status!=='existing-verified')return result={status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED'};
-    const delivery=await deliverOwnerLatest({request:access.requestDaily,registeredRecovery});
+    const delivery=await deliverOwnerLatest({request:access.requestDaily,registeredRecovery,prepareCommit:options=>access.prepareDailyPublication(options)});
     return result={...delivery,storageStatus:delivery.status==='published-verified'?'verified':'not-verified',
       visualStatus:'pending',acceptanceComplete:false};
   }catch(error){primary=error;throw error;}

@@ -2,12 +2,13 @@
 // storage mutation or live entry. The controller must supply authenticated,
 // generation-pinned private reads and freshly read trusted Git contexts.
 import crypto from 'node:crypto';
+import {types as nodeTypes} from 'node:util';
 import {ownerBundlePathsMatch,recoveryRequestId} from './owner_bundle_contract.mjs';
 import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {validateEodReceipt,validateCompletedEodSession} from './eod_report.mjs';
 import {adaptFlexArchive,digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
-import {uniqueCloudJson} from './cloud_io.mjs';
+import {uniqueCloudJson,createOwnerFailureEvidence} from './cloud_io.mjs';
 import {inspectOrdersAccountEvidence} from './orders_probe.mjs';
 import {buildEodActionModel} from '../../scripts/xuan-ib-eod-action-model.mjs';
 import {extractNightActionModel,renderNightActionReport} from '../../scripts/xuan-ib-night-action-view.mjs';
@@ -221,16 +222,18 @@ function sourceModel(values,r,model,context,call){
  */
 export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:clock=Date.now}={}){
   if(typeof loadContext!=='function'||typeof readPinnedSource!=='function'||typeof clock!=='function')fail('CAPABILITIES_UNAVAILABLE');
-  return async({metadata,html,receipt,now:suppliedNow,phase}={})=>{
+  return async({metadata,html,receipt,now:suppliedNow,phase,signal}={})=>{
+    let validatorPoint='entry';
     try{
+      signal?.throwIfAborted();validatorPoint='phase-clock';
       const time=clock();
       // The caller's planner timestamp is descriptive only. All admission
       // decisions use the trusted clock closure, including after slow reads.
       if(!Number.isFinite(time)||suppliedNow!==undefined&&!Number.isFinite(suppliedNow)
         ||!['candidate-admission','historical-authenticity'].includes(phase))fail('PHASE_OR_CLOCK');
-      const htmlBytes=bytesCopy(html,MAX_HTML),receiptBytes=bytesCopy(receipt,MAX_RECEIPT);
+      validatorPoint='input-copy';const htmlBytes=bytesCopy(html,MAX_HTML),receiptBytes=bytesCopy(receipt,MAX_RECEIPT);
       const m=JSON.parse(JSON.stringify(metadata)),text=decode(htmlBytes),r=parsed(receiptBytes,MAX_RECEIPT),model=admittedModel(text);
-      metadataBinding(m,r,htmlBytes,receiptBytes,model,time);
+      validatorPoint='metadata';metadataBinding(m,r,htmlBytes,receiptBytes,model,time);
       const recoveryId=recoveryRequestId(m.receiptObject);
       if(recoveryId&&r.sources?.some(s=>s.privateObject.slice(0,s.privateObject.lastIndexOf('/'))!==m.artifactObject.slice(0,m.artifactObject.lastIndexOf('/'))))fail('RECOVERY_SOURCE_BINDING');
       if(recoveryId&&phase==='candidate-admission'){const registration=registeredOwnerRecovery();
@@ -241,28 +244,34 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       try{validateCompletedEodSession(r.sourceDate,Date.parse(r.startedAt));}catch{fail('COMPLETED_SESSION_REQUIRED');}
       if(phase==='candidate-admission'&&(time-Date.parse(r.startedAt)>1800000
         ||new Date(time+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
-      const contextOptions={phase,policyCommit:phase==='historical-authenticity'?r.association.policyCommit:undefined,now:()=>clock()};
-      const context=await loadContext(contextOptions),contextHash=contextBinding(context,r,phase,clock()),call=callBinding(context,model);
-      const values=Object.fromEntries(await Promise.all(r.sources.map(async source=>{
+      const contextOptions={phase,policyCommit:phase==='historical-authenticity'?r.association.policyCommit:undefined,now:()=>clock(),...(signal?{signal}:{})};
+      validatorPoint='context-first';const context=await loadContext(contextOptions),contextHash=contextBinding(context,r,phase,clock()),call=callBinding(context,model);
+      signal?.throwIfAborted();validatorPoint='display';const values=Object.fromEntries(await Promise.all(r.sources.map(async source=>{
         if(!KEYS.includes(source.sourceKey)||!GEN.test(source.generation)||!HASH.test(source.sha256))fail('SOURCE_PIN');
         const prefix='report-check/'+r.startedAt+'-';
         if(!source.privateObject.startsWith(prefix))fail('SOURCE_RUN_PREFIX');
         const pin=Object.freeze({name:source.privateObject,generation:source.generation,sha256:source.sha256});
-        const raw=bytesCopy(await readPinnedSource(pin),MAX_SOURCE);
+        const raw=bytesCopy(await readPinnedSource({...pin,...(signal?{signal}:{})}),MAX_SOURCE);
         if(sha(raw)!==source.sha256)fail('SOURCE_BYTES_HASH');
         return [source.sourceKey,parsed(raw,MAX_SOURCE)];
       })));
       if(recoveryId&&['captured','partial'].includes(values['ib.optionalLive']?.status)
         &&values['ib.optionalLive']?.probeEvidence?.object?.name!==`report-check/orders-probe-${recoveryId}/orders.json`)fail('RECOVERY_SOURCE_BINDING');
       sourceModel(values,r,model,context,call);
-      const current=await loadContext(contextOptions),endTime=clock();
-      if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');
+      signal?.throwIfAborted();validatorPoint='context-second';const current=await loadContext(contextOptions),endTime=clock();
+      signal?.throwIfAborted();validatorPoint='final-check';if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');
       if(contextBinding(current,r,phase,endTime)!==contextHash)fail('CONTEXT_CHANGED');
       callBinding(current,model);
       if(phase==='candidate-admission'&&(endTime-Date.parse(r.startedAt)>1800000
         ||new Date(endTime+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       return {scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,
         sourceIdentitySha256:SOURCE_IDENTITY_SHA256,policyRevision:fingerprint(current.association.policy),financialStatus:'partial'};
-    }catch(error){if(error?.safeCode?.startsWith('OWNER_ADMISSION_'))throw error;fail('REJECTED');}
+    }catch(error){
+      const evidence=createOwnerFailureEvidence(error,{validatorPhase:phase,validatorPoint});
+      let code;try{if(error&&!nodeTypes.isProxy(error))code=Object.getOwnPropertyDescriptor(error,'safeCode')?.value;}catch{}
+      const rejected=typeof code==='string'&&code.startsWith('OWNER_ADMISSION_')?error:Object.assign(Error('OWNER_ADMISSION_REJECTED'),{safeCode:'OWNER_ADMISSION_REJECTED'});
+      try{Object.defineProperty(rejected,'failureEvidence',{value:evidence,enumerable:false});}catch{}
+      throw rejected;
+    }
   };
 }

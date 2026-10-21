@@ -1,6 +1,7 @@
 // One worker invocation only. Reuse immutable public bytes, never live main,
 // parsed context, approval, timestamps or a caller-supplied source snapshot.
 import {AsyncLocalStorage} from 'node:async_hooks';
+import {safeErrorOrigin} from './cloud_io.mjs';
 
 const scopes=new AsyncLocalStorage();
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console/';
@@ -34,7 +35,17 @@ function immutableLimit(url,options){
 
 export async function withOwnerSourceByteReuse(work){
   if(arguments.length!==1||typeof work!=='function')throw Error('OWNER_SOURCE_SCOPE_ARGUMENTS');
-  const scope={open:true,entries:new Map(),size:0};
+  return runScope(work,0);
+}
+// Explicit daily/recovery publication only: at most one additional anonymous
+// immutable GET after a transport failure, within its original AbortSignal.
+// Live main, HTTP failures, bodies, credentials and private requests never retry.
+export async function withOwnerPublicationReads(work){
+  if(arguments.length!==1||typeof work!=='function')throw Error('OWNER_SOURCE_SCOPE_ARGUMENTS');
+  return runScope(work,1);
+}
+async function runScope(work,retryRemaining){
+  const scope={open:true,entries:new Map(),size:0,retryRemaining};
   return scopes.run(scope,async()=>{
     try{return await work();}
     finally{scope.open=false;scope.entries.clear();scope.size=0;}
@@ -65,7 +76,14 @@ export async function ownerSourceFetch(url,options={}){
   options.signal?.throwIfAborted();
   const entry=scope.entries.get(url);
   if(entry)return cachedResponse(entry,options.signal);
-  const response=await globalThis.fetch(url,options);
+  let response;
+  try{response=await globalThis.fetch(url,options);}
+  catch(error){
+    const origin=safeErrorOrigin(error);
+    if(!scope.open||!scope.retryRemaining||!options.signal||options.signal.aborted||![origin.code,origin.causeCode].some(code=>['ETIMEDOUT','ECONNRESET','UND_ERR_CONNECT_TIMEOUT'].includes(code)))throw error;
+    scope.retryRemaining--;options.signal?.throwIfAborted();
+    response=await globalThis.fetch(url,options);
+  }
   if(!scope.open||response.status!==200||response.redirected||!response.body
     ||response.url&&response.url!==url||response.headers.has('content-range'))return response;
   const chunks=[];let size=0,complete=true;

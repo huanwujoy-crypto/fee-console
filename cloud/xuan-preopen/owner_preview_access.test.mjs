@@ -282,7 +282,7 @@ test(FACTORY_TEST,async t=>{
     const child=spawnSync(process.execPath,['--experimental-vm-modules','--test','--test-name-pattern','^'+FACTORY_TEST,fileURLToPath(import.meta.url)],
       {encoding:'utf8',timeout:30000,maxBuffer:1024*1024,shell:false,env:childEnv});
     assert.equal(child.error,undefined,child.error?.message);assert.equal(child.status,0,child.stdout+'\n'+child.stderr);
-    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:20/);return;
+    assert.match(child.stdout,/SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:21/);return;
   }
   let active={now:NOW,abort:new AbortController()},completedScenarios=0;
   t.mock.method(Date,'now',()=>active.now);
@@ -460,6 +460,7 @@ test(FACTORY_TEST,async t=>{
       await Promise.all(Array.from({length:4},()=>h.access.requestDaily('SYNTHETIC',{method:'GET'})));
       assert.equal(h.events.filter(e=>e==='daily-GET').length,4);
       h.control.postError=fail;
+      await h.access.prepareDailyPublication();
       const write=h.access.requestDaily('SYNTHETIC',{method:'POST'});
       if(fail)await assert.rejects(write);else await write;
       await h.access.refreshPreflight();
@@ -473,6 +474,7 @@ test(FACTORY_TEST,async t=>{
     h.control.dailyRead=async()=>{throw Error('SYNTHETIC_READ_FAILED');};
     const reads=await Promise.allSettled(Array.from({length:4},()=>h.access.requestDaily('SYNTHETIC',{method:'GET'})));
     assert.ok(reads.every(r=>r.status==='rejected'));assert.equal(h.events.filter(e=>e==='daily-GET').length,1);
+    await assert.rejects(h.access.prepareDailyPublication());
     await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}));
     await h.access.refreshPreflight();await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}),/ADMISSION_CLOSED/);
     assert.equal(h.events.filter(e=>e==='daily-POST').length,0);h.access.close();
@@ -483,10 +485,31 @@ test(FACTORY_TEST,async t=>{
       await h.access.verifyRegisteredCanary();
       if(kind==='iam')h.control.boundaryEdit=b=>b.bucketIam.bindings[0].members.push('user:synthetic-stranger');
       else drift=true;
+      await assert.rejects(h.access.prepareDailyPublication());
       await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST'}));
       assert.equal(h.events.filter(e=>e==='daily-POST').length,0);
       h.access.close();
     }
+  });
+  await scenario('daily preparation is one-use and expires or invalidates before native POST',async()=>{
+    for(const kind of ['unprepared','expired','backwards','refresh','abort']){
+      const h=await harness({replacing:true,daily:true});await h.access.verifyRegisteredCanary();
+      if(kind!=='unprepared')await h.access.prepareDailyPublication();
+      if(kind==='expired')h.control.now+=5001;
+      if(kind==='backwards')h.control.now--;
+      if(kind==='refresh')await h.access.refreshPreflight();
+      const signal=new AbortController();if(kind==='abort')signal.abort();
+      await assert.rejects(h.access.requestDaily('SYNTHETIC',{method:'POST',signal:signal.signal}));
+      await assert.rejects(h.access.prepareDailyPublication(),/ADMISSION_CLOSED/);
+      assert.equal(h.events.filter(e=>e==='daily-POST').length,0);h.access.close();
+    }
+    const h=await harness({replacing:true,daily:true});await h.access.verifyRegisteredCanary();
+    let release,entered;const hold=new Promise(r=>release=r),start=new Promise(r=>entered=r);
+    h.control.holdBoundary=async()=>{entered();await hold;};
+    const first=h.access.prepareDailyPublication();await start;
+    await assert.rejects(h.access.prepareDailyPublication(),/ADMISSION_CLOSED/);release();await first;
+    const before=h.events.length;await h.access.requestDaily('SYNTHETIC',{method:'POST'});
+    assert.deepEqual(h.events.slice(before),['daily-POST'],'no IAM or canary network work consumes the CAS/readback window');h.access.close();
   });
   await scenario('named storage access rejects every argument before SDK creation and cannot attest UI',async()=>{
     const h=await harness({replacing:true,storage:true}),before=[...h.events];
@@ -590,6 +613,6 @@ test(FACTORY_TEST,async t=>{
       const e=Object.freeze(failure()),close=Object.assign(Error(),{safeCode:'SDK_LOCAL_CLOSE_FAILED'});await assert.rejects(harness({boundaryError:e,closeError:close}),error=>error===e);
     });
   });
-  assert.equal(completedScenarios,20,'all factory scenarios must execute, including in the child fallback');
+  assert.equal(completedScenarios,21,'all factory scenarios must execute, including in the child fallback');
   process.stdout.write('SYNTHETIC_FACTORY_SCENARIOS_COMPLETED:'+completedScenarios+'\n');
 });

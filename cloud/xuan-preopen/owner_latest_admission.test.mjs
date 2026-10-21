@@ -250,3 +250,19 @@ test('duplicate receipt keys are rejected instead of silently accepting the last
   const f=await fixture();f.receiptBytes=encode('{"schemaVersion":9,'+JSON.stringify(f.receipt).slice(1));f.metadata.receiptSha256=digest(text(f.receiptBytes));
   await assert.rejects(verifier(f)(args(f)),/JSON/);assert.equal(f.reads.length,0);
 });
+
+
+test('daily verifier preserves finite public network root cause and exact validator phase without private error text',async()=>{
+  const f=await fixture();let calls=0;
+  const error=Object.assign(new TypeError('PRIVATE_TOKEN_MUST_NOT_ESCAPE'),{safeCode:'REPORT_SOURCE_NETWORK_FAILED',safeOrigin:{type:'TypeError',code:null,causeCode:'ETIMEDOUT',httpStatus:null}});
+  await assert.rejects(verifier(f,{loadContext:async()=>{if(++calls===2)throw error;return context();}})(args(f)),e=>{
+    assert.equal(e.safeCode,'OWNER_ADMISSION_REJECTED');assert.equal(e.failureEvidence.originalCode,'REPORT_SOURCE_NETWORK_FAILED');
+    assert.equal(e.failureEvidence.validatorPoint,'context-second');assert.equal(e.failureEvidence.validatorPhase,'candidate-admission');
+    assert.equal(e.failureEvidence.origin.causeCode,'ETIMEDOUT');assert.equal(JSON.stringify(e.failureEvidence).includes('PRIVATE_TOKEN'),false);return true;
+  });assert.equal(f.reads.length,4);
+});
+test('daily verifier propagates a real abort into context and pinned readers and cannot admit after cancellation',async()=>{
+  const f=await fixture(),ac=new AbortController();let reads=0;
+  const verify=verifier(f,{loadContext:async options=>{assert.equal(options.signal,ac.signal);return context();},readPinnedSource:async pin=>{reads++;assert.equal(pin.signal,ac.signal);if(reads===4)ac.abort();return f.objects.get(pin.name);}});
+  await assert.rejects(verify({...args(f),signal:ac.signal}));assert.equal(reads,4);
+});

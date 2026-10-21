@@ -1,7 +1,7 @@
 // Synthetic fetch and byte streams only. No SDK, credentials or network.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {ownerSourceFetch,withOwnerSourceByteReuse} from './owner_source_bytes.mjs';
+import {ownerSourceFetch,withOwnerSourceByteReuse,withOwnerPublicationReads} from './owner_source_bytes.mjs';
 
 const A='a'.repeat(40),B='b'.repeat(40),C='c'.repeat(40);
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console/';
@@ -456,4 +456,29 @@ test('the total byte cap fails open to fetch without evicting cached objects',as
       assert.equal((await read(raw(C))).length,bytes.length);assert.equal(calls,4);
     });
   });
+});
+
+
+test('publication tolerates one immutable transport timeout without caching main or retrying private calls',async()=>{
+  const signal=AbortSignal.timeout(10000);let attempts=0;
+  await stubFetch(async(url,options)=>{assert.equal(options.signal,signal);if(++attempts===1)throw Object.assign(new TypeError('PRIVATE'),{cause:{code:'ETIMEDOUT'}});return new Response('verified bytes');},()=>withOwnerPublicationReads(async()=>{
+    assert.equal(await text(raw(),opts({signal})),'verified bytes');assert.equal(await text(raw(),opts({signal})),'verified bytes');
+  }));assert.equal(attempts,2);
+  for(const url of [API+'commits/main','https://storage.googleapis.com/PRIVATE',raw()]){
+    let calls=0;await stubFetch(async()=>{calls++;throw Object.assign(new TypeError('PRIVATE'),{cause:{code:'ETIMEDOUT'}});},()=>withOwnerPublicationReads(async()=>{await assert.rejects(text(url,opts({signal})));}));
+    assert.equal(calls,url===raw()?2:1);
+  }
+});
+test('publication retry budget is shared, never renews abort deadline and does not retry HTTP/TLS/body failures',async()=>{
+  let calls=0;const ac=new AbortController();
+  await stubFetch(async()=>{calls++;if(calls===1){ac.abort();throw Object.assign(Error('PRIVATE'),{cause:{code:'ETIMEDOUT'}});}assert.fail();},()=>withOwnerPublicationReads(()=>assert.rejects(text(raw(),opts({signal:ac.signal})))));assert.equal(calls,1);
+  for(const error of [Object.assign(Error('PRIVATE'),{code:'CERT_HAS_EXPIRED'}),Error('PRIVATE')]){
+    calls=0;await stubFetch(async()=>{calls++;throw error;},()=>withOwnerPublicationReads(()=>assert.rejects(text(raw()))));assert.equal(calls,1);
+  }
+  calls=0;await stubFetch(async()=>{calls++;return new Response('PRIVATE',{status:503});},()=>withOwnerPublicationReads(async()=>{assert.equal((await ownerSourceFetch(raw(),opts())).status,503);}));assert.equal(calls,1);
+  calls=0;await stubFetch(async()=>{calls++;throw Object.assign(Error('PRIVATE'),{cause:{code:'ETIMEDOUT'}});},()=>withOwnerPublicationReads(async()=>{await assert.rejects(text(raw(A),opts({signal:AbortSignal.timeout(10000)})));await assert.rejects(text(raw(B),opts({signal:AbortSignal.timeout(10000)})));}));assert.equal(calls,3);
+});
+
+test('a transport failure without an original abort deadline never gets another request',async()=>{
+  let calls=0;await stubFetch(async()=>{calls++;throw Object.assign(Error('PRIVATE'),{cause:{code:'ETIMEDOUT'}});},()=>withOwnerPublicationReads(()=>assert.rejects(text(raw()))));assert.equal(calls,1);
 });

@@ -58,12 +58,12 @@ test('daily entry preserves verified storage or primary failure when SDK cleanup
   const entry=source.slice(source.indexOf('export async function deliverCurrentOwnerDaily(){'),source.indexOf('// Explicit review-preview entry only.'))
     .replaceAll('export async function','async function').replace("import('./owner_preview_access.mjs')",'loadAccess()');
   for(const mode of ['verified','blocked','primary']){
-    const primary=Error('SYNTHETIC_PRIMARY');let writes=0,closes=0;
+    const primary=Error('SYNTHETIC_PRIMARY'),signal=new AbortController().signal;let writes=0,closes=0;
     const access={verifyRegisteredCanary:async()=>({status:mode==='blocked'?'blocked':'existing-verified'}),
-      requestDaily:()=>assert.fail('entry forwards capability only'),close(){closes++;throw Error('SYNTHETIC_CLEANUP');}};
-    const run=new Function('fail','loadAccess','deliverOwnerLatest',entry+';return deliverCurrentOwnerDaily;')(
+      prepareDailyPublication:async options=>{assert.equal(options.signal,signal);},requestDaily:()=>assert.fail('entry forwards capability only'),close(){closes++;throw Error('SYNTHETIC_CLEANUP');}};
+    const run=new Function('fail','loadAccess','deliverOwnerLatest','withOwnerPublicationReads',entry+';return deliverCurrentOwnerDaily;')(
       ()=>assert.fail(),async()=>({createOwnerDailyStorageAccess:async()=>access}),
-      async options=>{assert.equal(options.request,access.requestDaily);writes++;if(mode==='primary')throw primary;return {status:'published-verified',generation:'901'};});
+      async options=>{assert.equal(options.request,access.requestDaily);await options.prepareCommit({signal});writes++;if(mode==='primary')throw primary;return {status:'published-verified',generation:'901'};},work=>work());
     if(mode==='primary'){await assert.rejects(run(),error=>error===primary);assert.equal(primary.ownerDeliveryCleanupFailed,true);}
     else {const result=await run();assert.equal(result.cleanupStatus,'failed');
       assert.equal(result.status,mode==='verified'?'published-verified':'blocked');
