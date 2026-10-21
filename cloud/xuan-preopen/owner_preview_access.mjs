@@ -354,12 +354,12 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
   let canaryClosed=false,canaryPin=null,sessionClosed=false,observation=null,replacementAdmissionAttempted=false,replacementPermit=null,replacementExpiresAt=null,replacementMonotonic=null;const lease=createOwnerPreflightLease();
   // The original verifier reads four sources concurrently; the existing SDK
   // worker admits one RPC at a time. A failed queued read closes this chain.
-  let dailyReads=Promise.resolve();
+  let dailyReads=Promise.resolve(),dailyAdmission=null,dailyWriteAttempted=false;
   const guard=()=>{if(sessionClosed)fail('SESSION_CLOSED');};
-  const close=()=>{sessionClosed=true;lease.invalidate();replacementPermit=null;observation?.close();sdk.close();};
-  const full=async()=>{
-    guard();lease.invalidate();
-    const start=Date.now(),boundary=await sdk.readLiveBoundary({includeRoleDefinitions:true,...(replacing?{requireDeletePermission:true}:{})});validateOwnerBoundaryWindow(boundary,Date.now());
+  const close=()=>{sessionClosed=true;dailyAdmission=null;lease.invalidate();replacementPermit=null;observation?.close();sdk.close();};
+  const full=async({signal}={})=>{
+    guard();signal?.throwIfAborted();dailyAdmission=null;lease.invalidate();
+    const start=Date.now(),boundary=await sdk.readLiveBoundary({includeRoleDefinitions:true,...(signal?{signal}:{}),...(replacing?{requireDeletePermission:true}:{})});validateOwnerBoundaryWindow(boundary,Date.now());
     const next=evaluateOwnerBoundary(boundary,FIXED_APPROVED,{requireDeletePermission:replacing}),end=Date.now();
     if(end<start||end-start>MAX_BOUNDARY_WINDOW_MS)fail('PREFLIGHT_CLOCK');guard();lease.install(next,end);
     return {boundarySha256:next.boundarySha256,rolePermissionScope:'storage.*',roleDefinitionsChecked:17,readerCount:7,
@@ -379,15 +379,27 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
         dailyReads=dailyReads.then(()=>{guard();return sdk.requestDaily(url,options);});
         return dailyReads;
       }
-      if(replacementAdmissionAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');
-      replacementAdmissionAttempted=true;
-      if(!canaryPin||options.signal?.aborted)fail('CANARY_REQUIRED');
-      await dailyReads;
-      await live(options.signal);await readCanary(sdk.requestCanary,canaryPin,options.signal);
-      guard();lease.current(Date.now());
-      const admittedAt=Date.now();
-      lease.mintAdmission(admittedAt);lease.consumeAdmission(admittedAt);
-      return sdk.requestDaily(url,options,{admissionExpiresAt:admittedAt+FINANCIAL_ADMISSION_TTL_MS});
+      if(dailyWriteAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');
+      dailyWriteAttempted=true;
+      const permit=dailyAdmission;dailyAdmission=null;
+      if(!permit||options.signal?.aborted)fail('FINANCIAL_ADMISSION_REQUIRED');
+      const wall=Date.now(),mono=performance.now();
+      if(wall<permit.at||wall>permit.expiresAt||mono<permit.monotonic||mono-permit.monotonic>FINANCIAL_ADMISSION_TTL_MS)fail('REPLACEMENT_ADMISSION_EXPIRED');
+      lease.consumeAdmission(wall);
+      return sdk.requestDaily(url,options,{admissionExpiresAt:permit.expiresAt});
+    },
+    // Slow IAM/canary reads belong to bounded preparation, before the ten-second
+    // CAS/readback clock. The resulting native admission still expires in 5s.
+    async prepareDailyPublication({signal}={}){
+      guard();if(!daily)fail('SDK_CAPABILITIES');
+      if(replacementAdmissionAttempted||dailyWriteAttempted)fail('REPLACEMENT_ADMISSION_CLOSED');
+      replacementAdmissionAttempted=true;dailyAdmission=null;
+      if(!canaryPin||signal?.aborted)fail('CANARY_REQUIRED');
+      await dailyReads;signal?.throwIfAborted();
+      await full({signal});await live(signal);await readCanary(sdk.requestCanary,canaryPin,signal);
+      guard();lease.current(Date.now());signal?.throwIfAborted();
+      const at=Date.now();lease.mintAdmission(at);
+      dailyAdmission={at,expiresAt:at+FINANCIAL_ADMISSION_TTL_MS,monotonic:performance.now()};
     },
     request:(url,options={})=>{
       guard();if((options.method??'GET')==='POST'){

@@ -863,7 +863,8 @@ class OwnerBridge:
             if current['status'] != 200 or current['headers'].get('x-goog-generation') != generation:
                 reject('REPLACEMENT_OLD_CHANGED')
             registry = (Path(__file__).resolve().parents[2]/'security'/'xuan-owner-registered-canary.json').read_bytes()
-            self.verify_replacement_canary_current({'canaryRegistrationSha256': hashlib.sha256(registry).hexdigest()})
+            self.verify_replacement_canary_current({'canaryRegistrationSha256': hashlib.sha256(registry).hexdigest(),
+                                                    'previousDisplaySha256': json_loads(registry)['pin']['candidateSha256']})
             current_time = time.time()*1000
             if not initial_wall <= current_time <= deadline or (time.monotonic()-admitted)*1000 > deadline-initial_wall:
                 reject('REPLACEMENT_ADMISSION_EXPIRED')

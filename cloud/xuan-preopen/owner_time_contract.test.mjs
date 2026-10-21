@@ -13,6 +13,8 @@ import {prepareOwnerStaticDisplay} from './owner_latest_admission.mjs';
 import {LATEST_TARGET,LATEST_HEADERS} from './owner_latest.mjs';
 import {validateCompletedEodSession} from './eod_report.mjs';
 import {planPreopen} from './calendar.mjs';
+import {readFileSync} from 'node:fs';
+import {renderOwnerPhoneCanary} from './owner_preview_access.mjs';
 const encode=x=>new TextEncoder().encode(x),decode=x=>new TextDecoder().decode(x);
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 globalThis.fetch=()=>assert.fail('No live network permitted');
@@ -75,10 +77,12 @@ function safeOutput(r){const text=JSON.stringify(r);for(const secret of ['SYNTHE
 return harness({ordersRaw:{orders:[order()]}});
 }
 
-function memoryStorage(objects,{conflict=false,corruptReadback=false}={}){
+function memoryStorage(objects,{conflict=false,corruptReadback=false,canaryChanged=false}={}){
   const records=new Map(),calls=[];let next=1000;
   const add=(name,bytes,generation=String(++next),metadata={})=>records.set(name,{bytes:Buffer.from(bytes),metadata:{bucket:LATEST_TARGET.bucket,name,generation,size:String(Buffer.byteLength(bytes)),...metadata}});
   for(const [name,value] of objects)add(name,typeof value==='string'?value:JSON.stringify(value),String([...objects.keys()].indexOf(name)+1));
+  const canary=JSON.parse(readFileSync(new URL('../../security/xuan-owner-registered-canary.json',import.meta.url)));
+  add(canary.target.object,renderOwnerPhoneCanary(canary.pin),canaryChanged?'999':canary.pin.generation,{...LATEST_HEADERS});
   const response=(body,headers={},status=200)=>new Response(body,{status,headers});
   const request=async(url,o={})=>{
     const u=new URL(url),method=o.method??'GET';calls.push({url,method});
@@ -109,14 +113,15 @@ function memoryStorage(objects,{conflict=false,corruptReadback=false}={}){
 }
 
 async function nativeBoundary(memory,{now,dataDate,priorPin},action){
+  const clockNow=()=>typeof now==='function'?now():now;
   const child=spawn(process.platform==='darwin'?'/Users/huanwu/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3.12':'python3',
     ['-I','-B',new URL('./owner_time_contract.fixture.py',import.meta.url).pathname],{stdio:['pipe','pipe','pipe']});
   const lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();let stderr='';child.stderr.on('data',x=>stderr+=x);child.on('error',()=>{});
-  const send=v=>child.stdin.write(JSON.stringify(v)+'\n');send({now,dataDate,priorPin});
+  const send=v=>child.stdin.write(JSON.stringify(v)+'\n');send({now:clockNow(),dataDate,priorPin});
   let queue=Promise.resolve();
   const run=async(url,o={})=>{
-    send({op:'dailyRequest',url,method:o.method??'GET',headers:{...o.headers,...(o.method==='POST'?{'Accept-Encoding':'identity'}:{})},body:o.body===undefined?null:Buffer.from(o.body).toString('base64'),
-      ...(o.method==='POST'?{admissionExpiresAt:now+5000}:{})});
+    const requestNow=clockNow();send({fixtureNow:requestNow,op:'dailyRequest',url,method:o.method??'GET',headers:{...o.headers,...(o.method==='POST'?{'Accept-Encoding':'identity'}:{})},body:o.body===undefined?null:Buffer.from(o.body).toString('base64'),
+      ...(o.method==='POST'?{admissionExpiresAt:requestNow+5000}:{})});
     for(;;){const line=await lines.next();assert.equal(line.done,false,stderr);const v=JSON.parse(line.value);
       if(v.kind==='fetch'){const response=await memory.request(v.url,{method:v.method,headers:v.headers,...(v.body!==null?{body:Buffer.from(v.body,'base64')}:{})});
         send({status:response.status,headers:Object.fromEntries(response.headers),body:Buffer.from(await response.arrayBuffer()).toString('base64')});continue;}
@@ -128,14 +133,14 @@ async function nativeBoundary(memory,{now,dataDate,priorPin},action){
   try{return await action(request);}finally{send({close:true});child.stdin.end();child.kill();}
 }
 
-async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,rollback=false}={}){
+async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,rollback=false,preparationMs=0,preparationFailure=false,transientContext=false,canaryChanged=false}={}){
   const start=Date.parse(iso),prior=makeHarness(start-120000),reg=registeredOwnerRecovery();
   prior.options.request.requestId='11111111-2222-4333-8444-555555555555';
   const old=await runPrivateActionPreviewOnce({...prior.options,dailyDelivery:true});assert.equal(old.status,'generated');
   const fresh=makeHarness(start),generated=await runPrivateActionPreviewOnce(fresh.options);assert.equal(generated.status,'generated');
   assert.equal(fresh.objects.size,10);assert.equal(fresh.calls.filter(c=>c.url.includes('/v1/performance')).length,2);
   assert.equal(fresh.events.filter(e=>e==='tools/call').length,1);
-  const memory=memoryStorage(prior.objects,{conflict,corruptReadback});
+  const memory=memoryStorage(prior.objects,{conflict,corruptReadback,canaryChanged});
   // Each source generation is from its own real synthetic upload response.
   for(const [name,value] of fresh.objects)memory.add(name,typeof value==='string'?value:JSON.stringify(value),String([...fresh.objects.keys()].indexOf(name)+1));
   const original=memory.records.get(reg.priorReceiptObject),priorPin={priorReceiptSha256:hash(original.bytes),priorReceiptGeneration:original.metadata.generation};
@@ -149,11 +154,17 @@ async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,roll
     const custom={bundleMetadata:JSON.stringify(metadata),displaySha256:hash(display),...Object.fromEntries(['artifactObject','artifactGeneration','artifactSha256','receiptObject','receiptGeneration','receiptSha256'].map(k=>[k,metadata[k]]))};
     memory.add(LATEST_TARGET.object,display,'900',{...LATEST_HEADERS,metadata:custom});
     const contextFetch=async(url,options)=>String(url).includes('/compare/')?Response.json({status:'identical',merge_base_commit:{sha:'a'.repeat(40)}}):fresh.options.fetchImpl(url,options);
-    let clock=start+elapsed,reads=0;
-    const result=await nativeBoundary(memory,{now:clock,dataDate:reg.dataDate,priorPin},async request=>deliverOwnerLatest({registeredRecovery:true,request,now:()=>clock,
-      loadContext:async opts=>{const result=await createOwnerContextLoader({fetchImpl:contextFetch,now:()=>clock})(opts);if(rollback&&++reads===2)clock--;return result;}}));
+    let clock=start+elapsed,reads=0,preparations=0,contextAttempts=0;
+    const {withOwnerPublicationReads,ownerSourceFetch}=await import('./owner_source_bytes.mjs');
+    const savedFetch=globalThis.fetch;globalThis.fetch=async(url,options)=>{if(transientContext&&String(url).endsWith('/claude/xuan-ib-account-association-v1.json')&&++contextAttempts===1)throw Object.assign(new TypeError('SYNTHETIC_PRIVATE'),{cause:{code:'ETIMEDOUT'}});return contextFetch(url,options);};
+    let result;try{
+    result=await withOwnerPublicationReads(()=>nativeBoundary(memory,{now:()=>clock,dataDate:reg.dataDate,priorPin},async request=>deliverOwnerLatest({registeredRecovery:true,request,now:()=>clock,
+      prepareCommit:async({signal})=>{assert.equal(signal.aborted,false);preparations++;clock+=preparationMs;if(preparationFailure)throw Error('SYNTHETIC_BOUNDARY_REJECTED');},
+      loadContext:async opts=>{const result=await createOwnerContextLoader({fetchImpl:ownerSourceFetch,now:()=>clock})(opts);if(rollback&&++reads===2)clock--;return result;}})));
+    }finally{globalThis.fetch=savedFetch;}
     const posts=memory.calls.filter(c=>c.method==='POST');
-    if(!elapsed&&!rollback&&!conflict&&!corruptReadback){assert.equal(result.status,'published-verified',JSON.stringify(result));assert.equal(posts.length,1);
+    if(!elapsed&&!rollback&&!conflict&&!corruptReadback&&!canaryChanged&&!preparationFailure&&preparationMs<60000&&clock-start<=1800000&&new Date(clock+28800000).toISOString().slice(0,10)===reg.dataDate){
+      assert.equal(preparations,1);if(transientContext)assert.equal(contextAttempts,2);assert.equal(result.status,'published-verified',JSON.stringify(result));assert.equal(posts.length,1);
       const pointer=memory.records.get(LATEST_TARGET.object);assert.equal(hash(pointer.bytes),result.sha256);
       assert.equal(JSON.parse(pointer.metadata.metadata.bundleMetadata).captureStartedAt,new Date(start).toISOString());
       assert.equal((decode(pointer.bytes).match(/<section class="card(?: concentration)?"/g)||[]).length,5);
@@ -161,7 +172,8 @@ async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,roll
       const after=memory.calls.slice(memory.calls.indexOf(posts[0])+1);assert.ok(after.some(c=>new URL(c.url).searchParams.get('alt')==='media'));
       // A later reader authenticates the same recovery bundle as historical latest.
       await nativeBoundary(memory,{now:clock,dataDate:reg.dataDate,priorPin},async request=>{const latest=await createOwnerLatestStore({request}).readLatest();assert.equal(latest.bundle.metadata.receiptObject,reg.receiptObject);});
-    }else if(conflict){assert.equal(result.status,'conflict');assert.equal(posts.length,1);}
+    }else if(canaryChanged){assert.equal(result.status,'unknown');assert.equal(posts.length,0);}
+    else if(conflict){assert.equal(result.status,'conflict');assert.equal(posts.length,1);}
     else if(corruptReadback){assert.equal(result.status,'unknown');assert.equal(posts.length,1);}
     else {assert.equal(result.status,'blocked');assert.equal(posts.length,0);}
     return result;
@@ -184,4 +196,18 @@ test('30m expiry and backwards clock stop before CAS; conflict and corrupt readb
   await pipeline('2026-10-20T23:19:52.742Z',{rollback:true});
   await pipeline('2026-10-20T23:19:52.742Z',{conflict:true});
   await pipeline('2026-10-20T23:19:52.742Z',{corruptReadback:true});
+});
+
+test('real producer and native CAS contracts survive slow preparation and one transient public GET',async()=>{
+  await pipeline('2026-10-21T00:00:00.000Z',{preparationMs:45000,transientContext:true});
+});
+test('whole chain never writes after preparation denial, deadline, expiry or HK day rollover',async()=>{
+  await pipeline('2026-10-21T00:00:00.000Z',{preparationFailure:true});
+  await pipeline('2026-10-21T00:00:00.000Z',{preparationMs:60000});
+  await pipeline('2026-10-21T00:00:00.000Z',{elapsed:1770000,preparationMs:31000});
+  await pipeline('2026-10-21T15:59:04.000Z',{preparationMs:56000});
+});
+
+test('actual native canary generation drift stops the provider POST without a second CAS',async()=>{
+  await pipeline('2026-10-21T00:00:00.000Z',{canaryChanged:true});
 });

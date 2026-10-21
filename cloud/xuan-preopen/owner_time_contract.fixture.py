@@ -1,7 +1,8 @@
 """Offline pipe fixture: real OwnerBridge, fake provider. No SDK import or auth.
 
 Every provider operation goes back to the test's in-memory GCS implementation.
-The existing canary proof is a test dependency; its native tests cover IAM/UI.
+The original native canary validator reads a synthetic registered object.
+SDK identity and real IAM/UI remain separate live checks.
 """
 import base64
 import importlib.util
@@ -50,14 +51,13 @@ class Provider:
 
 
 bridge = m.OwnerBridge(Provider())
-canary_checks = []
-bridge.verify_replacement_canary_current = lambda revision: canary_checks.append(revision)
 for line in sys.stdin:
     request = json.loads(line)
     if request.get('close'):
-        send({'kind': 'closed', 'canaryChecks': len(canary_checks)})
+        send({'kind': 'closed'})
         break
     try:
+        setup['now'] = request.pop('fixtureNow')
         result = bridge.dispatch(request)
         send({'kind': 'result', 'result': result})
     except Exception as error:
