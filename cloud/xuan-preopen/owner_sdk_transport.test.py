@@ -1009,6 +1009,25 @@ class BrowserEvidenceTests(unittest.TestCase):
             self.assertEqual(len(p.objects),8);self.assertLess(b.evidence['bytes'],32*1024*1024)
             self.assertEqual(b.safe_diagnostics.snapshot()['casHttpAttempts'],0)
             self.assertCode('REQUEST_INVALID',lambda:self.write(b,prefix+'report.html','again'))
+    def test_three_account_sidecar_is_fixed_pinned_and_rejects_scope_drift(self):
+        reg=m.recovery_registration(); stamp=m.instant()
+        observed_day=(datetime.datetime.fromisoformat(stamp.replace('Z','+00:00'))+datetime.timedelta(hours=8)).date().isoformat()
+        sources=[]
+        for key,account,label in [('sharesight.ibGroupedPerformance',936247,'IB-HK'),('sharesight.schwabPerformance',936249,'Schwab-HK'),('sharesight.webullPerformance',1350094,'Webull')]:
+            raw={'mode':'read_only','source':'Sharesight authenticated cloud browser visible DOM','observation':{'portfolio':label,'portfolioId':account,'valuationDate':observed_day,'retrievedAt':stamp}}
+            text=json.dumps(raw)
+            sources.append({'bytes':text,'receipt':{'sourceKey':key,'route':'authenticated-browser','status':'date-verified','sourceDate':observed_day,'startedAt':stamp,'completedAt':stamp,'bytes':len(text.encode()),'sha256':hashlib.sha256(text.encode()).hexdigest()}})
+        payload={'cutoff':observed_day,'sources':sources}
+        with patch.object(m,'daily_date',return_value=reg['dataDate']):
+            b,p,a=self.begin(); b.evidence['registration']=dict(b.evidence['registration'],dataDate=observed_day)
+            name=b.evidence['prefix']+'concentration.sources.json'
+            pin=self.write(b,name,payload);self.assertEqual(pin['sha256'],hashlib.sha256(json.dumps(payload).encode()).hexdigest())
+            self.assertEqual(len(p.objects),2)
+            self.assertCode('WRITE_ALREADY_ATTEMPTED',lambda:self.write(b,name,payload))
+            b,p,a=self.begin();b.evidence['registration']=dict(b.evidence['registration'],dataDate=observed_day)
+            payload['sources'][2]['receipt']['sourceKey']='sharesight.noahPerformance';count=len(p.calls)
+            self.assertCode('BODY_INVALID',lambda:self.write(b,b.evidence['prefix']+'concentration.sources.json',payload));self.assertEqual(len(p.calls),count)
+
     def test_evidence_claim_existing_and_uncertain_are_not_retried(self):
         for provider in [EvidenceProvider(existing=True),EvidenceProvider(unknown=True)]:
             reg=m.recovery_registration();b=m.OwnerBridge(provider);v={'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':m.instant()}

@@ -1,6 +1,6 @@
 {
   "schema": "xuan.owner-source-recovery.v1",
-  "requestId": "f126dcc2-0d21-4766-920f-6d2097c29de1",
+  "requestId": "554dc32c-2550-4bb9-a3db-6abd1c59364e",
   "dataDate": "2026-10-21",
   "priorReceiptObject": "delivery/2026-10-21/receipt.json",
   "priorReceiptGeneration": "1792538402491197",
@@ -15,5 +15,11 @@
       "sharesight.noahPerformance": "860f14754f1701a8db358b486967a5a5a0ae27b411fe62ef19fe479248f08a3d",
       "ib.orders": "31e67f80562a8472462ed17a1148199b3c255f802f575940791d448e009efec6"
     }
+  },
+  "supersedes": {
+    "requestId": "f126dcc2-0d21-4766-920f-6d2097c29de1",
+    "artifactSha256": "2f1ca392ac606b624760fd8eb49e4c9775b48f12bb015567f64068b75b4fb339",
+    "receiptSha256": "48f9a6886afbe4c1d01633b6a5afe1bd877472cd1eda3ca9fd8823692b8c16c9",
+    "latestGeneration": "1792569878989754"
   }
 }

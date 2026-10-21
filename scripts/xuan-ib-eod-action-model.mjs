@@ -7,7 +7,7 @@ import {parseSharesightCash,parseSharesightStockAllocation,STOCK_CLASS_TARGETS} 
 import {buildEodHoldings,validateEodHoldings,buildBookConcentration,validateBookConcentration} from './xuan-ib-eod-holdings.mjs';
 import {validProviderGeneratedText} from '../cloud/xuan-preopen/eod_sources.mjs';
 import {buildActionConcentrationCandidate,validateActionConcentration} from './xuan-ib-action-concentration.mjs';
-import {readCurrentActionFields,sharesightBookCash,sharesightOrderCurrencies,fieldState,validateActionFieldState,emptyActionErrors} from './xuan-ib-action-fields.mjs';
+import {readCurrentActionFields,sharesightBookCash,sharesightOrderCurrencies,sharesightOrderQuotes,fieldState,validateActionFieldState,emptyActionErrors} from './xuan-ib-action-fields.mjs';
 const fail=code=>{throw new Error('EOD_MODEL_'+code);};
 const finite=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;
 const cents=n=>Math.round(n*100)/100;
@@ -48,6 +48,28 @@ function buildPreOrderBookPlan(m){
       cashLikeTotal:c.cashLike?.total??null,capacity:c.cashLike===null?null:cents(c.preOrderPlanning+c.cashLike.total),executableBudget:null};
   }catch{return {status:'unavailable',reason:'BOOK_POLICY_EDGE'};}
 }
+// A calculation over returned rows only; never upgrades order coverage, full
+// reserve, broker buying power or executable budget.
+function buildObservedOrderPlan(m){
+  const o=m.orders,c=m.cash,a=m.allocation;
+  if(o.status!=='partial'||!o.buys?.length)return {status:'unavailable',reason:'OBSERVED_BUYS_UNAVAILABLE'};
+  if(o.buys.some(r=>r.currency!=='USD'))return {status:'unavailable',reason:'OBSERVED_BUY_CURRENCY_UNKNOWN'};
+  if(c.preOrderPlanning===null||a.status!=='ready'||m.holdings.status!=='ready')return {status:'unavailable',reason:'OBSERVED_PLAN_INPUTS_UNAVAILABLE'};
+  const reserve=cents(o.buys.reduce((n,r)=>n+cents(Number(r.quantity)*Number(r.limit)),0));
+  if(!finite(reserve))return {status:'unavailable',reason:'OBSERVED_RESERVE_INVALID'};
+  const budget=Math.max(0,cents(c.preOrderPlanning-reserve));
+  let projection=null,plan=null;
+  try{
+    const allocation={...a,symbolGroups:Object.fromEntries(m.holdings.rows.map(r=>[r.symbol,r.category])),
+      ussc:m.holdings.rows.find(r=>r.symbol==='USSC')?.marketValueUsd??0};
+    projection=projectOpenBuys(allocation,o.buys);
+    const p=calculateCashPlan({...planInput(projection,m.asOfHkt),ibCash:budget});
+    plan={status:'ready',budget:p.budget,total:p.plannedSpend,retained:p.budgetUnused,
+      items:['EXUS','EIMI','USSC'].map((symbol,i)=>({symbol,amount:p.allocations[i]})),executableBudget:null};
+  }catch{projection=null;}
+  return {status:'ready',basis:'observed-orders-sharesight-book-reference',orderCount:o.buys.length,
+    orderReserve:reserve,budget,capacity:c.cashLike===null?null:cents(budget+c.cashLike.total),projection,plan,executableBudget:null};
+}
 export function buildEodActionModel(input){
   if(input.fieldMode)return buildValidatedEodActionModel(input);
   if(input.live?.status!=='captured')return buildValidatedEodActionModel(input);
@@ -68,8 +90,8 @@ export function buildEodActionModel(input){
 }
 function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshots,live=null,reserve,evidenceSha256,sourceOutcomes,
   fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,dateBasis=null}){
-  if(![1,2].includes(bookDetailVersion))fail('CALCULATION_BASIS');
-  if(typeof assumeSharesightSynchronized!=='boolean'||assumeSharesightSynchronized&&(!fieldMode||concentrationInput!==null))fail('CALCULATION_BASIS');
+  if(![1,2,3].includes(bookDetailVersion))fail('CALCULATION_BASIS');
+  if(typeof assumeSharesightSynchronized!=='boolean'||assumeSharesightSynchronized&&!fieldMode)fail('CALCULATION_BASIS');
   if(fieldMode&&!flex)flex={cash:null,positions:null,trades:null,tradeCoverageProven:false,rawFingerprint:null,
     reconciliation:{status:'unknown',cashResidual:null,cancellationPending:false,verificationSha256:null},
     provenance:{sourceDate,coveredFrom:null,coveredThrough:null,providerGeneratedText:null,providerTimezone:null,readAt:null}};
@@ -108,6 +130,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
   let currentFields=null;
   if(fieldMode){
     currentFields=readCurrentActionFields({live,dataDate,startedAt:captureStartedAt,completedAt:captureCompletedAt,previousHtml:live?.previousHtml??'',
+      quoteBySymbol:assumeSharesightSynchronized&&bookDetailVersion===3?sharesightOrderQuotes(ibSnapshot):{},
       currencyBySymbol:sharesightOrderCurrencies(ibSnapshot,{onFailure:code=>{fieldErrors.orderCurrency=code;}})});
     orders=currentFields.orders;
     if(orders.status==='unknown'&&live?.status==='not-called'&&live?.code==='IB_MCP_ROUTES_UNAVAILABLE')orders={...orders,reason:'IB_MCP_ROUTES_UNAVAILABLE'};
@@ -192,8 +215,9 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
   if(assumeSharesightSynchronized){
     model.calculationBasis=SHARESIGHT_BOOK_BASIS;
     model.cash.preOrderPlanning=pool!==null&&callApplied!==null?Math.max(0,cents(pool-callApplied)):null;
-    model.bookConcentration=buildBookConcentration(ibSnapshot,sourceDate,{issuer:bookDetailVersion===2});
-    if(bookDetailVersion===2)model.bookPlan=buildPreOrderBookPlan(model);
+    model.bookConcentration=buildBookConcentration(ibSnapshot,sourceDate,{issuer:bookDetailVersion>=2});
+    if(bookDetailVersion>=2)model.bookPlan=buildPreOrderBookPlan(model);
+    if(bookDetailVersion===3)model.observedOrderPlan=buildObservedOrderPlan(model);
     model.status=bookStatus(model);
   }
   if(dateBasis!==null)model.dateBasis=dateBasis;
@@ -206,7 +230,7 @@ export function validateEodActionModel(m){
   if(browserDates&&(!book||!fields||m.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||m.sourceDate>m.dataDate
     ||m.provenance?.sharesight?.length!==2||m.provenance.sharesight.some(s=>s.channel!=='authenticated-browser')
     ||m.sourceOutcomes?.find(s=>s.sourceKey==='ib.flexEod')?.status!=='not-called'))fail('BROWSER_DATE_SCOPE');
-  if(Object.hasOwn(m??{},'calculationBasis')&&(!book||!fields||Object.hasOwn(m,'concentration')))fail('CALCULATION_BASIS');
+  if(Object.hasOwn(m??{},'calculationBasis')&&(!book||!fields))fail('CALCULATION_BASIS');
   if(m?.schemaVersion!==9||m.mode!=='eod-action'||!(book?['ready','partial'].includes(m.status):m.status==='partial')||!date(m.dataDate)||!date(m.sourceDate)||(!browserDates&&m.sourceDate>=m.dataDate)||typeof m.asOfHkt!=='string'||!new RegExp('^'+m.dataDate+' \\d{2}:\\d{2}(?:–\\d{2}:\\d{2})? HKT · 数据至 '+m.sourceDate+'$').test(m.asOfHkt)||!/^[a-f0-9]{64}$/.test(m.evidenceSha256||''))fail('HEADER');
   if(!validHktRange(m.asOfHkt,m.dataDate))fail('REPORT_TIME');
   if(!/^[a-f0-9]{64}$/.test(m.sourceManifestSha256||'')||m.evidenceSha256!==hash({sourceOutcomes:m.sourceOutcomes,sourceManifestSha256:m.sourceManifestSha256}))fail('EVIDENCE_HASH');
@@ -274,10 +298,11 @@ export function validateEodActionModel(m){
     validateBookConcentration(m.bookConcentration,m.sourceDate);
     if(m.bookConcentration.status==='ready'&&Object.hasOwn(m,'bookPlan')!==Object.hasOwn(m.bookConcentration,'issuerResultFingerprint'))fail('BOOK_VERSION');
     if(Object.hasOwn(m,'bookPlan')&&JSON.stringify(m.bookPlan)!==JSON.stringify(buildPreOrderBookPlan(m)))fail('BOOK_PLAN');
+    if(Object.hasOwn(m,'observedOrderPlan')&&JSON.stringify(m.observedOrderPlan)!==JSON.stringify(buildObservedOrderPlan(m)))fail('OBSERVED_ORDER_PLAN');
     if(c.preOrderPlanning!==(c.pool!==null&&c.callApplied!==null?Math.max(0,cents(c.pool-c.callApplied)):null)
       ||m.status!==bookStatus(m))fail('BOOK_BUDGET');
-  }else if(Object.hasOwn(m,'bookConcentration')||Object.hasOwn(m,'bookPlan'))fail('CALCULATION_BASIS');
-  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan','dateBasis'];
+  }else if(Object.hasOwn(m,'bookConcentration')||Object.hasOwn(m,'bookPlan')||Object.hasOwn(m,'observedOrderPlan'))fail('CALCULATION_BASIS');
+  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan','dateBasis','observedOrderPlan'];
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
   if(fields)validateActionFieldState(m);else if(Object.hasOwn(m,'fieldErrors'))fail('PUBLIC_KEYS');
   return m;

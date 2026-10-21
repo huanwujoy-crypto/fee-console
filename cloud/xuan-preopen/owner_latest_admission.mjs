@@ -24,7 +24,7 @@ export const SOURCE_IDENTITY_SHA256=digest({scope:OWNER_SCOPE,ibAccount:APPROVED
   sharesightStocks:{portfolioId:IB_SNAPSHOT_SCOPE.portfolioId,grouping:Number(IB_SNAPSHOT_SCOPE.grouping)},
   sharesightCash:[IB_SNAPSHOT_SCOPE.portfolioId,NOAH_SNAPSHOT_SCOPE.portfolioId],currency:'USD',ibMode:'mcp.read'});
 export const OWNER_DISPLAY_CSP="default-src 'none'; script-src 'none'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; font-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
-const MAX_HTML=100000,MAX_RECEIPT=131072,MAX_SOURCE=8000000;
+const MAX_HTML=2*1024*1024,MAX_RECEIPT=131072,MAX_SOURCE=8000000;
 const HASH=/^[a-f0-9]{64}$/,GEN=/^[1-9][0-9]{0,29}$/;
 const KEYS=['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive'];
 const fail=code=>{throw Object.assign(Error('OWNER_ADMISSION_'+code),{safeCode:'OWNER_ADMISSION_'+code});};
@@ -107,7 +107,7 @@ export function prepareOwnerStaticDisplay(input){
   const disclosure=model.calculationBasis===SHARESIGHT_BOOK_BASIS?'<aside class="notes" role="note"><p>私有只读报告；报告日、来源日和取数时间保持不变。按用户同步前提估算 Sharesight 账面预算。挂单币种与价差按关联持仓推定；覆盖或币种缺项时不计算净预算。所有结果均非券商实时可下单额。</p></aside>':'<aside class="notes" role="note"><p>私有只读报告；原报告日、来源日和取数时间保持不变。挂单所列币种及距市价仅为同名持仓匹配参考；原生挂单币种、合约 ID 与市场身份尚未核实，不能据此认定完整预留或可执行预算。</p></aside>';
   const reference=registeredReferenceCapture(registeredOwnerRecovery().requestId,model.provenance?.capture?.startedAt,model.provenance?.capture?.completedAt);
   const referenceNotice=reference?'<aside class="notes" role="note"><p>一次性参考快照，非实时数据。原始采集时间 '+reference.captureStartedAt+' 至 '+reference.captureCompletedAt+'；允许发布截止 '+reference.expiresAt+'。采集后价格、现金或挂单可能已变化。</p></aside>':'';
-  display=display.replace('</header>','</header>'+referenceNotice+disclosure);
+  display=display.replace('</header>','</header>'+referenceNotice+(Object.hasOwn(model,'observedOrderPlan')?disclosure.replace('覆盖或币种缺项时不计算净预算。','完整覆盖或币种缺项时不声称完整净预算；按已取得买单计算的参考估算单独注明。'):disclosure));
   display=display.replace('<head>','<head><meta http-equiv="Content-Security-Policy" content="'+OWNER_DISPLAY_CSP+'"><meta name="referrer" content="no-referrer"><style>.quote span{font-size:10px;white-space:nowrap}</style>');
   if(!display.includes(OWNER_DISPLAY_CSP)||/<script\b/i.test(display))fail('STATIC_EXPORT');
   return new TextEncoder().encode(display);
@@ -184,7 +184,7 @@ function snapshotSource(key,value,r){
     ||p.readAt<r.startedAt||p.readAt>r.completedAt||p.syncCompletedAt!==null||p.snapshotGeneration!==null||p.receiptSha256!==null)fail('SNAPSHOT_BINDING');
   return value;
 }
-function sourceModel(values,r,model,context,call){
+function sourceModel(values,r,model,context,call,concentrationInput=null){
   const window=reportCaptureWindow(model,r);
   const f=values['ib.flexEod'];let flex=null;
   if(f?.archive){
@@ -218,7 +218,7 @@ function sourceModel(values,r,model,context,call){
   const rebuilt=buildEodActionModel({dataDate:r.dataDate,sourceDate:r.sourceDate,asOfHkt:window.asOfHkt,flex,snapshots,
     live:['captured','partial'].includes(savedLive.status)?{...savedLive,previousHtml:context.previousHtml}:savedLive,
     reserve:call.amountUsd,evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode:!!model.fieldState,assumeSharesightSynchronized:model.calculationBasis===SHARESIGHT_BOOK_BASIS,
-    bookDetailVersion:Object.hasOwn(model,'bookPlan')?2:1,dateBasis:model.dateBasis??null,
+    bookDetailVersion:Object.hasOwn(model,'observedOrderPlan')?3:Object.hasOwn(model,'bookPlan')?2:1,concentrationInput,dateBasis:model.dateBasis??null,
     callRecord:model.fieldState?call:null,captureStartedAt:model.provenance.capture?.startedAt??null,captureCompletedAt:model.provenance.capture?.completedAt??null});
   rebuilt.sourceManifestSha256=r.sourceManifestSha256;
   rebuilt.evidenceSha256=digest({sourceOutcomes:rebuilt.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256});
@@ -282,7 +282,18 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       const reference=registeredReferenceCapture(recoveryId,r.startedAt,r.captureCompletedAt);
       if((r.referenceMode??null)!==(reference?.schema??null))fail('REFERENCE_BINDING');
       validateReferenceSources(reference,values);
-      sourceModel(values,r,model,context,call);
+      let concentrationInput=null;
+      if(r.concentration){
+        const c=r.concentration,raw=bytesCopy(await readPinnedSource({name:c.privateObject,generation:c.generation,sha256:c.sha256,...(signal?{signal}:{})}),MAX_SOURCE);
+        if(sha(raw)!==c.sha256)fail('CONCENTRATION_BYTES_HASH');
+        concentrationInput=parsed(raw,MAX_SOURCE);
+        if(model.concentration.readWindow.completedAt>r.completedAt)fail('CONCENTRATION_READ_TIME');
+        if(model.dateBasis){
+          const ib=concentrationInput.sources?.find(s=>s.receipt?.sourceKey==='sharesight.ibGroupedPerformance');
+          if(ib?.receipt.route!=='authenticated-browser'||digest(normalizeBrowserSnapshot(JSON.parse(ib.bytes),{portfolioId:936247,sourceDate:r.sourceDate}).raw)!==digest(values['sharesight.ibGroupedPerformance'].raw))fail('CONCENTRATION_IB_BINDING');
+        }
+      }
+      sourceModel(values,r,model,context,call,concentrationInput);
       signal?.throwIfAborted();validatorPoint='context-second';const current=await loadContext(contextOptions),endTime=clock();
       signal?.throwIfAborted();validatorPoint='final-check';if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');
       if(contextBinding(current,r,phase,endTime)!==contextHash)fail('CONTEXT_CHANGED');

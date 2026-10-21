@@ -1,6 +1,7 @@
 // Offline migration candidate only. No reader, schedule, authorization or publication.
 // Preserve original bytes/route/status; the compatibility wrapper is derived data.
 import crypto from 'node:crypto';
+import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE} from '../cloud/xuan-preopen/eod_sources.mjs';
 import fs from 'node:fs';
 import {readAiRiskAccounts} from './xuan-ib-ai-coefficient-resolver.mjs';
 import {buildAiRiskInput,readAiRiskInput} from './xuan-ib-ai-risk-input.mjs';
@@ -30,8 +31,26 @@ export function normalizeActionConcentrationSource({bytes,receipt},{accountKey,c
     ||receipt.startedAt<captureStartedAt||receipt.completedAt>captureCompletedAt
     ||hkt(receipt.startedAt)!==hkt(captureCompletedAt)||hkt(receipt.completedAt)!==hkt(captureCompletedAt))fail('READ_WINDOW');
   let raw;try{raw=JSON.parse(bytes);}catch{fail('SOURCE_JSON');}
-  let shell;
-  if(receipt.route==='gateway'&&(raw?.source==='Sharesight User API'||raw?.ok===true&&raw.route==='gateway')&&!Object.hasOwn(raw,'result'))shell=raw;
+  let shell,adapter='top-level-sharesight-to-normalizer-v1';
+  if(receipt.route==='authenticated-browser'&&raw?.source===SHARESIGHT_BROWSER_SOURCE){
+    const b=normalizeBrowserSnapshot(raw,{portfolioId:Number(account.portfolioId),sourceDate:cutoff});
+    if(b.readAt!==receipt.completedAt)fail('READ_WINDOW');
+    const report=structuredClone(b.raw.data.report),prior=b.raw.classification?.raw;
+    const metadata=(prior?.report??prior?.data?.report??prior?.result?.data?.report)?.holdings??[];
+    report.holdings=report.holdings.map((h,i)=>{
+      const old=metadata.filter(r=>r.id===h.id&&r.instrument?.id===h.instrument.id&&r.instrument.code===h.instrument.code
+        &&r.instrument.market_code===h.instrument.market_code&&(r.instrument.currency_code??r.instrument.currency?.code)===h.instrument.currency_code);
+      // Reuse identity/type only after exact account, holding, venue and currency match.
+      // Financial values and quantities always come from the current observation.
+      if(old.length!==1)fail('BROWSER_INSTRUMENT_IDENTITY_MISSING');
+      const securityType=old[0].instrument.friendly_instrument_description_code??old[0].instrument.friendly_instrument_description;
+      return {...h,
+        instrument:{...h.instrument,name:b.raw.observation.positions[i].description??h.instrument.code,...(securityType===undefined?{}:{friendly_instrument_description_code:securityType})}};
+    });
+    report.cash_accounts=report.cash_accounts.map((c,i)=>({...c,name:b.raw.observation.cash[i].name}));
+    shell={mode:'read_only',source:SHARESIGHT_BROWSER_SOURCE,portfolio:{id:Number(account.portfolioId),name:account.custodian,currency_code:'USD'},data:{report}};
+    adapter='browser-table-to-normalizer-v1';
+  }else if(receipt.route==='gateway'&&(raw?.source==='Sharesight User API'||raw?.ok===true&&raw.route==='gateway')&&!Object.hasOwn(raw,'result'))shell=raw;
   else if(receipt.route==='direct'&&raw?.ok===true&&raw.route==='direct'&&!Object.hasOwn(raw,'result'))shell=raw;
   else fail('SOURCE_ROUTE');
   if(shell.mode!=='read_only'||String(shell.portfolio?.id)!==account.portfolioId
@@ -40,7 +59,7 @@ export function normalizeActionConcentrationSource({bytes,receipt},{accountKey,c
   if(sourceReport.end_date!==cutoff||!Array.isArray(sourceReport.holdings))fail('SOURCE_CUTOFF_OR_ROWS');
   // Retain the entire source object inside and outside the wrapper, including
   // pagination/error indicators. Never edit the captured raw object or receipt.
-  const derived={...raw,result:raw};
+  const derived={...raw,result:shell};
   const report=normalizeSharesightReport(derived,{
     registry,portfolioId:account.portfolioId,readStartedAt:receipt.startedAt,readCompletedAt:receipt.completedAt,
     portfolioRoles:['family','ai_only'],unconfirmedTransactionMode:'risk-read-only',
@@ -50,7 +69,7 @@ export function normalizeActionConcentrationSource({bytes,receipt},{accountKey,c
   return {report,binding:{accountKey,sourceKey:receipt.sourceKey,sourceDate:cutoff,route:receipt.route,
     sourceStatus:receipt.status,sourceSha256:receipt.sha256,sourceBytes:receipt.bytes,
     readStartedAt:receipt.startedAt,readCompletedAt:receipt.completedAt,
-    derivedFingerprint:report.sourceFingerprint,adapter:'top-level-sharesight-to-normalizer-v1',
+    derivedFingerprint:report.sourceFingerprint,adapter,
     syncCompletion:'not-attested',membershipSource:report.listing.source,independentListing:'not-attested'}};
 }
 
@@ -89,10 +108,10 @@ export function validateActionConcentration(c,cutoff){
   for(const [i,a] of accounts.entries()){
     const b=c.bindings[i],p=c.envelope.provenance.find(p=>p.key===a.key);
     if(!exact(b,['accountKey','sourceKey','sourceDate','route','sourceStatus','sourceSha256','sourceBytes','readStartedAt','readCompletedAt','derivedFingerprint','adapter','syncCompletion','membershipSource','independentListing'])
-      ||b.accountKey!==a.key||b.sourceKey!==sourceKeys[a.key]||b.sourceDate!==cutoff||!['gateway','direct'].includes(b.route)||!['verified','date-verified'].includes(b.sourceStatus)
+      ||b.accountKey!==a.key||b.sourceKey!==sourceKeys[a.key]||b.sourceDate!==cutoff||!['gateway','direct','authenticated-browser'].includes(b.route)||!['verified','date-verified'].includes(b.sourceStatus)
       ||! /^[a-f0-9]{64}$/.test(b.sourceSha256)||!Number.isSafeInteger(b.sourceBytes)||b.sourceBytes<1||b.sourceBytes>8_000_000
       ||!instant(b.readStartedAt)||!instant(b.readCompletedAt)||b.readStartedAt>b.readCompletedAt||b.readStartedAt<w.startedAt||b.readCompletedAt>w.completedAt
-      ||b.membershipSource!==PERFORMANCE_MEMBERSHIP_SOURCE||b.independentListing!=='not-attested'||b.syncCompletion!=='not-attested'||b.adapter!=='top-level-sharesight-to-normalizer-v1'||p?.reportCutoffDate!==cutoff
+      ||b.membershipSource!==PERFORMANCE_MEMBERSHIP_SOURCE||b.independentListing!=='not-attested'||b.syncCompletion!=='not-attested'||b.adapter!==(b.route==='authenticated-browser'?'browser-table-to-normalizer-v1':'top-level-sharesight-to-normalizer-v1')||p?.reportCutoffDate!==cutoff
       ||p.readStartedAt!==b.readStartedAt||p.readCompletedAt!==b.readCompletedAt||p.sourceFingerprint!==b.derivedFingerprint)fail('SOURCE_BINDINGS');
   }
   if(fingerprint(buildWeeklyConcentration(c.envelope,{cutoff}))!==c.resultFingerprint)fail('CALCULATION');
@@ -109,7 +128,7 @@ export function renderActionConcentration(c){
   const result=actionConcentrationResult(c);
   const staticWeekly=renderStaticWeeklyConcentration(result);
   const qualified=staticWeekly.replace('</h2>','</h2><p class="muted concentration-basis">同日账面值 · 来源独立读取 · 已核实下限</p>');
-  return `<section class="card concentration">${qualified}<details><summary>三账户来源与读取时间</summary>${sources}<p>Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成未获独立回执，不表示券商实时持仓。</p></details></section>`;
+  return `<section class="card concentration">${qualified}<details><summary>三账户来源与读取时间</summary>${sources}<p>${c.bindings.some(b=>b.route==='authenticated-browser')?'Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成按用户计算前提采用，未独立对账。分母为 IB-HK、Schwab-HK、Webull 全部持仓与现金；不包含 NOAH-HK，也不重复加入旧混合组合。':'Sharesight 账面值；各来源独立读取，非同一次五分钟捕获。同步完成未获独立回执，不表示券商实时持仓。'}</p></details></section>`;
 }
 
 export function renderStaticWeeklyConcentration(result,options){

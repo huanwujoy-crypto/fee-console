@@ -27,7 +27,7 @@ function exactDate(value){
 function sourceName(name){
   // Same strict source-manifest family as eod_report.mjs. This intentionally
   // excludes auth probes, arbitrary report-check objects and ad hoc captures.
-  const match=typeof name==='string'&&name.match(/^report-check\/(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/(ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive)\.json$/);
+  const match=typeof name==='string'&&name.match(/^report-check\/(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)-([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})\/(ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive|concentration\.sources)\.json$/);
   if(!match||!Number.isFinite(Date.parse(match[1]))||new Date(match[1]).toISOString()!==match[1])fail('SOURCE_PATH_INVALID');
   return name;
 }

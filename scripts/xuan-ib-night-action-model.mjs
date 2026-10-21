@@ -53,7 +53,7 @@ function orderSymbol(order, total) {
     ? order.primary_description.trim().toUpperCase() : null;
 }
 
-export function ordersOf(raw, positionsRaw, { dataDate, previousHtml, currencyBySymbol={} }) {
+export function ordersOf(raw, positionsRaw, { dataDate, previousHtml, currencyBySymbol={}, quoteBySymbol={} }) {
   const orders = unwrapSource('orders', raw).orders;
   const positions = new Map();
   for (const position of normalizePositions(positionsRaw)) {
@@ -75,7 +75,8 @@ export function ordersOf(raw, positionsRaw, { dataDate, previousHtml, currencyBy
     if (limit <= 0 || total <= 0 || Math.abs(filled + remaining - total) > tolerance) fail('INVALID_ORDER_NUMBER');
     const symbol = orderSymbol(order, total), position = symbol ? positions.get(symbol) : null;
     const currency = position?.currency ?? (/^[A-Z]{3}$/.test(currencyBySymbol[symbol]||'')?currencyBySymbol[symbol]:null);
-    const marketPrice = position?.price > 0 ? position.price : null;
+    const quote=quoteBySymbol[symbol];
+    const marketPrice = position?.price > 0 ? position.price : !positions.has(symbol)&&quote?.currency===currency&&finite(quote.price)&&quote.price>0?quote.price:null;
     const placedDate = hktDate(order.order_time);
     const ageDays = placedDate && placedDate <= dataDate
       ? Math.round((Date.parse(`${dataDate}T00:00:00Z`) - Date.parse(`${placedDate}T00:00:00Z`)) / 86400000) : null;

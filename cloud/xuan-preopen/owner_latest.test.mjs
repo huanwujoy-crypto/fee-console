@@ -469,3 +469,15 @@ test('preparation timeout aborts a delayed access preparation without a late CAS
   const pending=p.publish(candidate());await start;fire();assert.deepEqual(await pending,{status:'blocked',code:'DEADLINE'});
   release();await new Promise(r=>setImmediate(r));assert.equal(writes,0);
 });
+
+test('one registered same-source correction matches the exact consumed predecessor and generation only',async()=>{
+  const {registeredOwnerRecovery,registeredReferenceReplacement,registeredReferenceCapture}=await import('./owner_source_recovery.mjs');
+  const reg=registeredOwnerRecovery(),s=reg.supersedes;if(!s)return;
+  const candidate={dataDate:reg.dataDate,captureStartedAt:reg.referenceCapture.captureStartedAt,captureEndedAt:reg.referenceCapture.captureCompletedAt,completedAt:reg.dataDate+'T12:00:00.000Z',receiptObject:reg.receiptObject};
+  const current={artifactSha256:s.artifactSha256,receiptSha256:s.receiptSha256,completedAt:reg.dataDate+'T08:04:40.858Z',receiptObject:`report-check/orders-probe-${s.requestId}/preview-receipt.json`};
+  assert.equal(registeredReferenceReplacement(candidate,current,s.latestGeneration),true);
+  assert.equal(registeredReferenceReplacement(candidate,current,'999'),false);
+  assert.equal(registeredReferenceReplacement(candidate,{...current,artifactSha256:'0'.repeat(64)},s.latestGeneration),false);
+  assert.equal(registeredReferenceReplacement({...candidate,receiptObject:current.receiptObject},current,s.latestGeneration),false);
+  assert(registeredReferenceCapture(s.requestId,candidate.captureStartedAt,candidate.captureEndedAt));
+});
