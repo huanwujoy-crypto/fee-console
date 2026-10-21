@@ -133,7 +133,7 @@ export function ownerDeliveryRequest(token,fetchImpl=fetch){
 export function ownerBundleMetadata(bundle,receipt){
   const model=extractNightActionModel(new TextDecoder('utf-8',{fatal:true}).decode(bundle.html));
   return {schema:'xuan.owner-latest.v1',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,
-    dataDate:receipt.dataDate,sourceDate:receipt.sourceDate,...(receipt.dateBasis?{dateBasis:receipt.dateBasis}:{}),captureStartedAt:receipt.startedAt,captureEndedAt:receipt.completedAt,completedAt:receipt.completedAt,
+    dataDate:receipt.dataDate,sourceDate:receipt.sourceDate,...(receipt.dateBasis?{dateBasis:receipt.dateBasis}:{}),captureStartedAt:receipt.startedAt,captureEndedAt:receipt.captureCompletedAt??receipt.completedAt,completedAt:receipt.completedAt,
     artifactObject:bundle.artifactObject,artifactGeneration:bundle.artifactGeneration,artifactSha256:bundle.artifactSha256,
     receiptObject:bundle.receiptObject,receiptGeneration:bundle.receiptGeneration,receiptSha256:bundle.receiptSha256,
     financialStatus:model.calculationBasis===SHARESIGHT_BOOK_BASIS&&model.status==='ready'?'complete':'partial',unknownFields:actionUnknownFields(model)};

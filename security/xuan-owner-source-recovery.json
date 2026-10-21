@@ -4,5 +4,16 @@
   "dataDate": "2026-10-21",
   "priorReceiptObject": "delivery/2026-10-21/receipt.json",
   "priorReceiptGeneration": "1792538402491197",
-  "priorReceiptSha256": "359817e738f2f9d313da2733e93cd1ec88d3053584403638c71147a39864cb5d"
+  "priorReceiptSha256": "359817e738f2f9d313da2733e93cd1ec88d3053584403638c71147a39864cb5d",
+  "referenceCapture": {
+    "schema": "xuan.registered-reference-capture.v1",
+    "captureStartedAt": "2026-10-21T06:39:13.531Z",
+    "captureCompletedAt": "2026-10-21T06:42:15.104Z",
+    "expiresAt": "2026-10-21T15:59:59.999Z",
+    "sourceHashes": {
+      "sharesight.ibGroupedPerformance": "590726211e22e89ce7416fde02f904e5aa3c1e8ef6066a40ed2eaec19c23f869",
+      "sharesight.noahPerformance": "860f14754f1701a8db358b486967a5a5a0ae27b411fe62ef19fe479248f08a3d",
+      "ib.orders": "31e67f80562a8472462ed17a1148199b3c255f802f575940791d448e009efec6"
+    }
+  }
 }

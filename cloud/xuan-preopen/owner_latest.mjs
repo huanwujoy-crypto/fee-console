@@ -1,3 +1,5 @@
+import {ownerCaptureDeadline} from './owner_source_recovery.mjs';
+import {recoveryRequestId} from './owner_bundle_contract.mjs';
 // Fixed-target private latest planner. All I/O and authorization capabilities
 // are injected by the trusted controller; no network or credential defaults.
 const SHARESIGHT_VALUATION_DATE_BASIS='sharesight-valuation-date.v1';
@@ -207,7 +209,7 @@ export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedRecei
       clearTimer(timer);started=checkedClock();
       timer=setTimer(()=>{controller.abort();rejectDeadline(Object.assign(Error('deadline'),{safeCode:'DEADLINE'}));},DEADLINE_MS);
       const admissionTime=checkedClock(),capture=Date.parse(plan.bundle.metadata.captureStartedAt);
-      if(admissionTime<capture||admissionTime-capture>1800000||new Date(admissionTime+28800000).toISOString().slice(0,10)!==plan.bundle.metadata.dataDate)fail('CANDIDATE_STALE');
+      if(admissionTime<capture||admissionTime>ownerCaptureDeadline(recoveryRequestId(plan.bundle.metadata.receiptObject),plan.bundle.metadata.captureStartedAt,plan.bundle.metadata.captureEndedAt)||new Date(admissionTime+28800000).toISOString().slice(0,10)!==plan.bundle.metadata.dataDate)fail('CANDIDATE_STALE');
       writing=true;
       const ack=await io.replaceLatest({target:LATEST_TARGET,ifGenerationMatch:plan.ifGenerationMatch,
         headers:LATEST_HEADERS,bytes:new Uint8Array(plan.display),

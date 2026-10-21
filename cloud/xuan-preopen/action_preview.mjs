@@ -58,9 +58,9 @@ export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date
 // The real access factory is separately protected; tests inject only synthetic IO.
 export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,access,now=Date.now,loadContext=loadTrustedContext}={}){
   // Local-only recovery registration is outside the unchanged cloud image.
-  const {registeredOwnerRecovery}=await import('./owner_source_recovery.mjs');
+  const {registeredOwnerRecovery,registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources}=await import('./owner_source_recovery.mjs');
   const registration=registeredOwnerRecovery(),keys=Object.keys(SNAPSHOT_SCOPES),start=Date.parse(captureStartedAt);
-  if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()-start>300000||hkt(start)!==registration.dataDate
+  if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()>(registration.referenceCapture?.captureStartedAt===captureStartedAt?Date.parse(registration.referenceCapture.expiresAt):start+1800000)||hkt(start)!==registration.dataDate
     ||!snapshots||Object.keys(snapshots).sort().join('|')!==keys.sort().join('|')
     ||typeof access?.beginEvidence!=='function'||typeof access?.writeEvidence!=='function')fail();
   // Browser sourceDate is the visible book valuation date, not a price date.
@@ -71,7 +71,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
     const raw=snapshots[key];if(raw?.source!==SHARESIGHT_BROWSER_SOURCE)fail();
     const value=await readVerifiedSnapshot(key,{reader:async()=>({raw}),sourceDate,now});
     if(value.status!=='date-verified'||Date.parse(value.provenance?.readAt)<start||Date.parse(value.provenance?.readAt)>now())fail();
-    verified[key]=structuredClone(raw);
+    verified[key]=structuredClone(value.raw);
   }
   const context=await loadContext({now}),contextReader=async()=>context;
   // Reuse the existing private-runner capture shape for a separately authorized
@@ -98,9 +98,15 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
       ||evidence.responseAccountEvidence==='matched'&&e.responseAccountEvidence!=='matched')fail();
     live={status:capture.status,sources:capture.sources,normalMcpEvidence:{schema:'xuan.normal-mcp-orders.v1',requestId:registration.requestId,channel:capture.channel}};
   }
+  const captureCompletedAt=new Date(Math.max(...Object.values(verified).map(v=>Date.parse(v.observation.retrievedAt)),
+    ...(live.sources??[]).map(s=>Date.parse(s.completedAt)))).toISOString();
+  const end=Date.parse(captureCompletedAt);
+  if(end<start||end-start>300000||end>now()||now()>ownerCaptureDeadline(registration.requestId,captureStartedAt,captureCompletedAt))fail();
+  const reference=registeredReferenceCapture(registration.requestId,captureStartedAt,captureCompletedAt);
+  validateReferenceSources(reference,{...Object.fromEntries(Object.entries(verified).map(([k,v])=>[k,{rawFingerprint:digest(v)}])),'ib.optionalLive':live});
   const captureOptionalLive=async()=>structuredClone(live);
   let stagedBytes=0;
-  await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,
+  await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,
     readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:async(name,value)=>{const size=Buffer.byteLength(typeof value==='string'?value:JSON.stringify(value));
@@ -109,11 +115,11 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   // All model, date, CALL, normalization and HTML checks above finish without IO.
   // Native admission chooses the immutable run ID; rebuild from these same
   // verified in-memory values, then upload once with actual generation pins.
-  const attempt=await access.beginEvidence({requestId:registration.requestId,captureStartedAt});
-  if(attempt.requestId!==registration.requestId||attempt.dataDate!==registration.dataDate||attempt.captureStartedAt!==captureStartedAt
+  const attempt=await access.beginEvidence({requestId:registration.requestId,captureStartedAt,captureCompletedAt});
+  if(attempt.requestId!==registration.requestId||attempt.dataDate!==registration.dataDate||attempt.captureStartedAt!==captureStartedAt||attempt.captureCompletedAt!==captureCompletedAt
     ||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(attempt.runId))fail();
   const reportRunId=attempt.runId;
-  const saved=await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,sourceRunId:reportRunId,
+  const saved=await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,initialCompletedAt:end,sourceRunId:reportRunId,
     readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:(name,value)=>access.writeEvidence(name,Buffer.from(typeof value==='string'?value:JSON.stringify(value)))}});

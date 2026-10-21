@@ -272,3 +272,13 @@ test('evidence bridge protocol is separate, finite, pinned and stops after uncer
     await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,bytes));
   });assert.equal(frames,1);
 });
+
+test('saved-capture bridge forwards actual end and separates five-minute capture from thirty-minute processing',async()=>{
+  const reg=registeredOwnerRecovery(),now=Date.now(),stamp=n=>new Date(n).toISOString(),start=stamp(now-900000),end=stamp(now-720000);let calls=0;
+  await fakeWorker(frame=>{calls++;assert.deepEqual(frame.value,{op:'beginEvidence',requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end});return {id:frame.id,result:{captureCompletedAt:end},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start}));
+    await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:stamp(now-1800001),captureCompletedAt:stamp(now-1700000)}));
+    await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:stamp(now-599999)}));
+    assert.equal((await sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end})).captureCompletedAt,end);
+  });assert.equal(calls,1);
+});

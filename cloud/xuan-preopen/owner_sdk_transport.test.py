@@ -1033,5 +1033,49 @@ class BrowserEvidenceTests(unittest.TestCase):
                     with self.assertRaises(m.BoundaryError):self.write(b,name,value)
                 self.assertEqual(len(p.calls),calls)
 
+class SavedCaptureEvidenceTests(BrowserEvidenceTests):
+    def test_saved_capture_delayed_processing_accepts_normal_orders_without_reread(self):
+        reg=m.recovery_registration();now=m.time.time();stamp=lambda t: datetime.datetime.fromtimestamp(t,datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+        start=stamp(now-900);end=stamp(now-720);p=EvidenceProvider();b=m.OwnerBridge(p)
+        with patch.object(m,'daily_date',return_value=reg['dataDate']):
+            a=b.dispatch({'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':start,'captureCompletedAt':end})
+            raw={'orders':[{'order_id':'synthetic-1'},{'order_id':'synthetic-2'}]}
+            source={'sourceKey':'ib.orders','raw':raw,'rawFingerprint':'a'*64,'startedAt':start,'completedAt':end,
+                'accountEvidence':{'associationBasis':'owner-attested','nativeIdentityEvidence':'not-provided','responseAccountEvidence':'not-provided'},
+                'wrapper':'json-string','transportFingerprint':'b'*64}
+            value={'status':'captured','sources':[source],'normalMcpEvidence':{'schema':'xuan.normal-mcp-orders.v1','requestId':reg['requestId'],'channel':'cloud-mcp'}}
+            name=b.evidence['prefix']+'ib.optionalLive.json'
+            for change in ['request','time','shape','transport']:
+                bad=json.loads(json.dumps(value))
+                if change=='request':bad['normalMcpEvidence']['requestId']='other'
+                if change=='time':bad['sources'][0]['completedAt']=stamp(now)
+                if change=='shape':bad['sources'].append(source)
+                if change=='transport':bad['sources'][0]['wrapper']='unknown'
+                count=len(p.calls);self.assertCode('BODY_INVALID',lambda:self.write(b,name,bad));self.assertEqual(len(p.calls),count)
+            self.write(b,name,value);self.assertEqual(len(p.objects),2);self.assertEqual(a['captureCompletedAt'],end)
+            b.evidence['monotonic']-=1801;count=len(p.calls)
+            self.assertCode('REPLACEMENT_ADMISSION_EXPIRED',lambda:self.write(b,b.evidence['prefix']+'ib.flexEod.json',{'status':'not-called','code':'FLEX_NOT_CALLED'}));self.assertEqual(len(p.calls),count)
+    def test_registered_reference_only_exact_times_extend_through_hkt_day(self):
+        reg=m.recovery_registration();ref=reg['referenceCapture'];p=EvidenceProvider();b=m.OwnerBridge(p)
+        expiry=datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z','+00:00')).timestamp()
+        value={'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':ref['captureStartedAt'],'captureCompletedAt':ref['captureCompletedAt']}
+        with patch.object(m,'daily_date',return_value=reg['dataDate']),patch.object(m.time,'time',return_value=expiry-60):
+            b.dispatch(value);self.assertGreater(b.evidence['durationMs'],1800000)
+            source={'sourceKey':'ib.orders','raw':{'orders':[]},'rawFingerprint':'0'*64,'startedAt':ref['captureStartedAt'],'completedAt':ref['captureCompletedAt'],
+                'accountEvidence':{'associationBasis':'owner-attested','nativeIdentityEvidence':'not-provided','responseAccountEvidence':'not-provided'}}
+            payload={'status':'captured','sources':[source],'normalMcpEvidence':{'schema':'xuan.normal-mcp-orders.v1','requestId':reg['requestId'],'channel':'cloud-mcp'}}
+            count=len(p.calls);self.assertCode('BODY_INVALID',lambda:self.write(b,b.evidence['prefix']+'ib.optionalLive.json',payload));self.assertEqual(len(p.calls),count)
+        p=EvidenceProvider();b=m.OwnerBridge(p)
+        with patch.object(m,'daily_date',return_value=reg['dataDate']),patch.object(m.time,'time',return_value=expiry+0.001):
+            self.assertCode('REQUEST_INVALID',lambda:b.dispatch(value));self.assertEqual(len(p.calls),0)
+
+    def test_invalid_saved_capture_boundaries_before_http(self):
+        reg=m.recovery_registration();now=m.time.time();stamp=lambda t: datetime.datetime.fromtimestamp(t,datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+        for start,end in [(now-1801,now-1700),(now-900,now-599),(now-100,now+1),(now-100,now-101)]:
+            p=EvidenceProvider();b=m.OwnerBridge(p)
+            with patch.object(m,'daily_date',return_value=reg['dataDate']):
+                self.assertCode('REQUEST_INVALID',lambda:b.dispatch({'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':stamp(start),'captureCompletedAt':stamp(end)}))
+                self.assertEqual(len(p.calls),0)
+
 if __name__ == '__main__':
     unittest.main()
