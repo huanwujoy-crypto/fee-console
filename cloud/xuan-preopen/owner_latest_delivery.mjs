@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import path from 'node:path';
 import {execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
+import {OWNER_SOURCE_RECOVERY_PATH,registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {planPreopen} from './calendar.mjs';
 import {loadTrustedContext,safeErrorOrigin} from './report.mjs';
 import {ownerSourceFetch} from './owner_source_bytes.mjs';
@@ -32,8 +33,8 @@ const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').
 const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Object.assign(error,{safeCode:error.message,safeOrigin:origin??safeErrorOrigin(error)});};
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
-  ...['owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs','cloud_io.mjs','report.mjs'].map(file=>'cloud/xuan-preopen/'+file),
-  OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
+  ...['owner_bundle_contract.mjs','owner_source_recovery.mjs','owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs','cloud_io.mjs','report.mjs'].map(file=>'cloud/xuan-preopen/'+file),
+  OWNER_SOURCE_RECOVERY_PATH,OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
 // The historical phase reads the original trusted Git version, never today's
@@ -135,12 +136,14 @@ export function ownerBundleMetadata(bundle,receipt){
 }
 
 export async function deliverOwnerLatest({request,now=Date.now,loadContext=createOwnerContextLoader({now}),
-  storeFactory=createOwnerLatestStore,publisherFactory=createOwnerLatestPublisher,expectedArtifactSha256=null,expectedReceiptSha256=null}={}){
+  storeFactory=createOwnerLatestStore,publisherFactory=createOwnerLatestPublisher,expectedArtifactSha256=null,expectedReceiptSha256=null,registeredRecovery=false}={}){
+  if(typeof registeredRecovery!=='boolean')fail('RECOVERY_MODE');
   const plan=planPreopen(now());
   if(plan.status!=='generate')return {status:'no-action',reason:plan.reason};
   if(typeof request!=='function')fail('TRANSPORT_REQUIRED');
   const io=storeFactory({request});
-  const bundle=await io.readDailyBundle({dataDate:plan.dataDate});
+  if(registeredRecovery&&registeredOwnerRecovery().dataDate!==plan.dataDate)fail('RECOVERY_DATE');
+  const bundle=await io[registeredRecovery?'readRegisteredRecoveryBundle':'readDailyBundle']({dataDate:plan.dataDate});
   if(!bundle||!(bundle.html instanceof Uint8Array)||!(bundle.receipt instanceof Uint8Array))fail('BUNDLE_REQUIRED');
   if(expectedArtifactSha256!==null&&bundle.artifactSha256!==expectedArtifactSha256
     ||expectedReceiptSha256!==null&&bundle.receiptSha256!==expectedReceiptSha256)fail('COLLECTED_BUNDLE_CHANGED');
@@ -162,13 +165,21 @@ export const createOwnerDeliveryHook=options=>async({html,receiptText})=>{
 // argument/environment export, reader change, collection or automatic retry.
 export async function deliverCurrentOwnerDaily(){
   if(arguments.length)fail('EXPLICIT_EXECUTION_REQUIRED');
+  return deliverCurrentOwnerSdk(false);
+}
+export async function deliverRegisteredOwnerRecovery(){
+  if(arguments.length)fail('EXPLICIT_EXECUTION_REQUIRED');
+  if(registeredOwnerRecovery().dataDate!==planPreopen(Date.now()).dataDate)fail('RECOVERY_DATE');
+  return deliverCurrentOwnerSdk(true);
+}
+async function deliverCurrentOwnerSdk(registeredRecovery){
   const {createOwnerDailyStorageAccess}=await import('./owner_preview_access.mjs');
   const access=await createOwnerDailyStorageAccess();
   let result,primary;
   try{
     const canary=await access.verifyRegisteredCanary();
     if(canary.status!=='existing-verified')return result={status:'blocked',code:'REGISTERED_CANARY_READBACK_FAILED'};
-    const delivery=await deliverOwnerLatest({request:access.requestDaily});
+    const delivery=await deliverOwnerLatest({request:access.requestDaily,registeredRecovery});
     return result={...delivery,storageStatus:delivery.status==='published-verified'?'verified':'not-verified',
       visualStatus:'pending',acceptanceComplete:false};
   }catch(error){primary=error;throw error;}
@@ -291,12 +302,12 @@ export async function requireProtectedOwnerCheckout({cwd=path.resolve(path.dirna
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){
   try{
-    if(process.argv.length!==3||!['--execute-current-workday','--execute-current-workday-sdk'].includes(process.argv[2]))fail('EXPLICIT_EXECUTION_REQUIRED');
+    if(process.argv.length!==3||!['--execute-current-workday','--execute-current-workday-sdk','--execute-registered-recovery-sdk'].includes(process.argv[2]))fail('EXPLICIT_EXECUTION_REQUIRED');
     const plan=planPreopen(Date.now());
     if(plan.status!=='generate'){process.stdout.write(JSON.stringify({status:'no-action',reason:plan.reason})+'\n');}
     else{
       await requireProtectedOwnerCheckout();
-      const result=process.argv[2]==='--execute-current-workday-sdk'?await deliverCurrentOwnerDaily()
+      const result=process.argv[2]==='--execute-registered-recovery-sdk'?await deliverRegisteredOwnerRecovery():process.argv[2]==='--execute-current-workday-sdk'?await deliverCurrentOwnerDaily()
         :await deliverOwnerLatest({request:ownerDeliveryRequest(process.env.XUAN_PREOPEN_GOOGLE_TOKEN)});
       process.stdout.write(JSON.stringify(result)+'\n');
       if(!['published-verified','no-op','written-verified'].includes(result.status))process.exitCode=1;

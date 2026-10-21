@@ -2,6 +2,8 @@
 // storage mutation or live entry. The controller must supply authenticated,
 // generation-pinned private reads and freshly read trusted Git contexts.
 import crypto from 'node:crypto';
+import {ownerBundlePathsMatch,recoveryRequestId} from './owner_bundle_contract.mjs';
+import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {validateEodReceipt,validateCompletedEodSession} from './eod_report.mjs';
 import {adaptFlexArchive,digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -112,7 +114,7 @@ function metadataBinding(m,r,htmlBytes,receiptBytes,model,time){
   if(!exact(m,keys)||m.schema!=='xuan.owner-latest.v1'||m.scope!==OWNER_SCOPE||m.ownerBinding!==OWNER_BINDING
     ||m.sourceIdentitySha256!==SOURCE_IDENTITY_SHA256||m.financialStatus!=='partial')fail('METADATA_SCOPE');
   if(m.dataDate!==r.dataDate||m.sourceDate!==r.sourceDate||m.dataDate!==model.dataDate||m.sourceDate!==model.sourceDate
-    ||m.artifactObject!==`delivery/${r.dataDate}/report.html`||m.receiptObject!==`delivery/${r.dataDate}/receipt.json`
+    ||!ownerBundlePathsMatch(m)
     ||r.artifact?.privateObject!==m.artifactObject||r.artifact.generation!==m.artifactGeneration
     ||!GEN.test(m.artifactGeneration)||!GEN.test(m.receiptGeneration)||m.artifactSha256!==sha(htmlBytes)
     ||m.receiptSha256!==sha(receiptBytes)||r.artifact.sha256!==m.artifactSha256)fail('METADATA_BINDING');
@@ -229,6 +231,10 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       const htmlBytes=bytesCopy(html,MAX_HTML),receiptBytes=bytesCopy(receipt,MAX_RECEIPT);
       const m=JSON.parse(JSON.stringify(metadata)),text=decode(htmlBytes),r=parsed(receiptBytes,MAX_RECEIPT),model=admittedModel(text);
       metadataBinding(m,r,htmlBytes,receiptBytes,model,time);
+      const recoveryId=recoveryRequestId(m.receiptObject);
+      if(recoveryId&&r.sources?.some(s=>s.privateObject.slice(0,s.privateObject.lastIndexOf('/'))!==m.artifactObject.slice(0,m.artifactObject.lastIndexOf('/'))))fail('RECOVERY_SOURCE_BINDING');
+      if(recoveryId&&phase==='candidate-admission'){const registration=registeredOwnerRecovery();
+        if(recoveryId!==registration.requestId||r.dataDate!==registration.dataDate)fail('RECOVERY_REGISTRATION');}
       validateEodReceipt(r,text,m.dataDate,m.sourceDate);
       // Both phases verify that the original run had a valid completed session.
       // Only candidate admission requires it still to be fresh and today.
@@ -246,6 +252,8 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
         if(sha(raw)!==source.sha256)fail('SOURCE_BYTES_HASH');
         return [source.sourceKey,parsed(raw,MAX_SOURCE)];
       })));
+      if(recoveryId&&['captured','partial'].includes(values['ib.optionalLive']?.status)
+        &&values['ib.optionalLive']?.probeEvidence?.object?.name!==`report-check/orders-probe-${recoveryId}/orders.json`)fail('RECOVERY_SOURCE_BINDING');
       sourceModel(values,r,model,context,call);
       const current=await loadContext(contextOptions),endTime=clock();
       if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');

@@ -227,3 +227,23 @@ test('pre-aborted next RPC retains ABORTED primary and previously observed local
   assert.equal(calls,1);
  },{closeFails:true});
 });
+
+test('registered recovery uses GET discovery only; original report remains generation pinned through Node lane',async()=>{
+  const {registeredOwnerRecovery}=await import('./owner_source_recovery.mjs');
+  const reg=registeredOwnerRecovery(),prefix=latest.slice(0,latest.lastIndexOf('/')+1),seen=[];
+  const original='report-check/2026-10-20T23:20:00.000Z-11111111-2222-4333-8444-555555555555/report.html';
+  await fakeWorker(frame=>{seen.push(frame.value);return {id:frame.id,result:{status:200,url:frame.value.url,headers:{'content-type':'application/json'},body:Buffer.from('{}').toString('base64')},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    const json={Accept:'application/json','Accept-Encoding':'identity'},media={Accept:'application/octet-stream','Accept-Encoding':'identity'};
+    await sdk.requestDaily(prefix+encodeURIComponent(reg.receiptObject),{headers:json});
+    await sdk.requestDaily(prefix+encodeURIComponent(original)+'?generation=17&alt=media',{headers:media});
+    const before=seen.length;
+    for(const [name,query,method,headers] of [
+      [reg.receiptObject,'','HEAD',{'Accept-Encoding':'identity'}],
+      [reg.receiptObject,'?alt=media','GET',media],
+      [reg.receiptObject.replace(reg.requestId,'11111111-2222-4333-8444-555555555555'),'','GET',json],
+      [original,'','GET',json],[original.replace('report.html','arbitrary.json'),'?generation=17','GET',json],
+    ])await assert.rejects(()=>sdk.requestDaily(prefix+encodeURIComponent(name)+query,{method,headers}));
+    assert.equal(seen.length,before);
+  });
+  assert.equal(seen.length,2);assert.ok(seen.every(v=>v.op==='dailyRequest'&&v.method==='GET'));
+});

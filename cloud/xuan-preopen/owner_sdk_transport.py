@@ -315,6 +315,40 @@ def validate_storage_request(value, expected_generation='0', daily=False):
     return url, method, headers, body
 
 
+def recovery_registration():
+    value = json_loads((Path(__file__).resolve().parents[2]/'security'/'xuan-owner-source-recovery.json').read_bytes())
+    if (set(value) != {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}
+            or value['schema'] != 'xuan.owner-source-recovery.v1'
+            or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', str(value['requestId']))
+            or not re.fullmatch(r'\d{4}-\d\d-\d\d', str(value['dataDate']))
+            or datetime.date.fromisoformat(value['dataDate']).isoformat() != value['dataDate']
+            or value['priorReceiptObject'] != 'delivery/'+value['dataDate']+'/receipt.json'
+            or not GEN.fullmatch(str(value['priorReceiptGeneration']))
+            or not re.fullmatch('[a-f0-9]{64}', str(value['priorReceiptSha256']))):
+        reject('PIN_REQUIRED')
+    return dict(value, receiptObject='report-check/orders-probe-'+value['requestId']+'/preview-receipt.json')
+
+
+def recovery_receipt(name):
+    return isinstance(name, str) and re.fullmatch(r'report-check/orders-probe-[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/preview-receipt\.json', name)
+
+
+def bundle_paths(metadata):
+    date, artifact, receipt = metadata.get('dataDate'), metadata.get('artifactObject'), metadata.get('receiptObject')
+    if not isinstance(date, str) or not re.fullmatch(r'\d{4}-\d\d-\d\d', date):
+        return False
+    try:
+        if datetime.date.fromisoformat(date).isoformat() != date:
+            return False
+    except ValueError:
+        return False
+    if artifact == 'delivery/'+date+'/report.html' and receipt == 'delivery/'+date+'/receipt.json':
+        return True
+    return bool(recovery_receipt(receipt) and isinstance(artifact, str) and re.fullmatch(
+        re.escape('report-check/'+str(metadata.get('captureStartedAt'))+'-') +
+        r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/report\.html', artifact))
+
+
 def daily_date():
     return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).date().isoformat()
 
@@ -741,11 +775,10 @@ class OwnerBridge:
                 custom = value.get('metadata', {})
                 if 'bundleMetadata' in custom:
                     old = json_loads(custom['bundleMetadata'])
-                    for kind, file in [('artifact', 'report.html'), ('receipt', 'receipt.json')]:
-                        expected = 'delivery/' + str(old.get('dataDate')) + '/' + file
-                        if not re.fullmatch(r'delivery/\d{4}-\d\d-\d\d/(report\.html|receipt\.json)', expected) or old.get(kind+'Object') != expected:
-                            reject('PIN_REQUIRED')
-                        self.daily_pin(expected, old.get(kind+'Generation'), old.get(kind+'Sha256'))
+                    if not bundle_paths(old):
+                        reject('PIN_REQUIRED')
+                    for kind in ['artifact', 'receipt']:
+                        self.daily_pin(old[kind+'Object'], old.get(kind+'Generation'), old.get(kind+'Sha256'))
             return
         pin = self.daily_pins.get(name)
         if (not pin or pin[0] != query.get('generation')
@@ -753,10 +786,10 @@ class OwnerBridge:
                 or pin[1] and hashlib.sha256(raw).hexdigest() != pin[1]):
             reject('PIN_REQUIRED')
         self.daily_pin(name, pin[0], hashlib.sha256(raw).hexdigest())
-        if not name.endswith('/receipt.json'):
+        if not name.endswith('/receipt.json') and not recovery_receipt(name):
             return
         receipt = json_loads(raw)
-        date = name.split('/')[1]
+        date = receipt.get('dataDate') if recovery_receipt(name) else name.split('/')[1]
         if (receipt.get('mode') != 'private_eod_action' or receipt.get('dataDate') != date
                 or receipt.get('status') != 'partial' or receipt.get('publication') != 'none'
                 or receipt.get('sourceCount') != 4 or not isinstance(receipt.get('sources'), list)
@@ -764,7 +797,7 @@ class OwnerBridge:
                 or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', str(receipt.get('startedAt')))):
             reject('PIN_REQUIRED')
         artifact = receipt.get('artifact', {})
-        if artifact.get('privateObject') != 'delivery/' + date + '/report.html':
+        if not bundle_paths({'dataDate': date, 'artifactObject': artifact.get('privateObject'), 'receiptObject': name, 'captureStartedAt': receipt.get('startedAt')}):
             reject('PIN_REQUIRED')
         self.daily_pin(artifact['privateObject'], artifact.get('generation'), artifact.get('sha256'))
         keys = {'ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive'}
@@ -776,7 +809,7 @@ class OwnerBridge:
             if not re.fullmatch(pattern, source_name):
                 reject('PIN_REQUIRED')
             self.daily_pin(source_name, source.get('generation'), source.get('sha256'))
-        self.daily_receipts[date] = receipt
+        self.daily_receipts[name] = receipt
 
     def daily_request(self, value):
         posting = value.get('method') == 'POST'
@@ -803,12 +836,19 @@ class OwnerBridge:
             resource, _ = validate_multipart(validated[3], validated[2]['content-type'], daily=True)
             metadata = json_loads(resource['metadata']['bundleMetadata'])
             date = daily_date()
-            receipt = self.daily_receipts.get(date)
-            if not receipt:
+            receipt = self.daily_receipts.get(metadata.get('receiptObject'))
+            if not receipt or not bundle_paths(metadata) or receipt.get('dataDate') != date:
                 reject('PIN_REQUIRED')
-            for kind, file in [('artifact', 'report.html'), ('receipt', 'receipt.json')]:
-                object_name = 'delivery/' + date + '/' + file
-                if (metadata.get(kind+'Object') != object_name or self.daily_pins.get(object_name)
+            if recovery_receipt(metadata.get('receiptObject')):
+                registration = recovery_registration()
+                if (registration['dataDate'] != date or metadata['receiptObject'] != registration['receiptObject']
+                        or registration['priorReceiptObject'] not in self.daily_receipts
+                        or self.daily_pins.get(registration['priorReceiptObject']) !=
+                            (registration['priorReceiptGeneration'], registration['priorReceiptSha256'])):
+                    reject('PIN_REQUIRED')
+            for kind in ['artifact', 'receipt']:
+                object_name = metadata.get(kind+'Object')
+                if (self.daily_pins.get(object_name)
                         != (metadata.get(kind+'Generation'), metadata.get(kind+'Sha256'))):
                     reject('PIN_REQUIRED')
             if (metadata.get('captureStartedAt') != receipt.get('startedAt')
@@ -827,6 +867,9 @@ class OwnerBridge:
             current_time = time.time()*1000
             if not initial_wall <= current_time <= deadline or (time.monotonic()-admitted)*1000 > deadline-initial_wall:
                 reject('REPLACEMENT_ADMISSION_EXPIRED')
+            capture_ms = datetime.datetime.fromisoformat(receipt['startedAt'].replace('Z', '+00:00')).timestamp()*1000
+            if not 0 <= current_time-capture_ms <= 1800000 or receipt['dataDate'] != daily_date():
+                reject('REPLACEMENT_ADMISSION_EXPIRED')
             self.mutation_started = True
             return self.raw_request(*validated)
         if name == OBJECT:
@@ -840,8 +883,13 @@ class OwnerBridge:
             _, method, headers, body = validate_storage_request(surrogate)
             query = dict(parse_qsl(parsed.query, strict_parsing=True))
             discover = name in ('delivery/'+daily_date()+'/report.html', 'delivery/'+daily_date()+'/receipt.json')
+            registration = recovery_registration()
+            if registration['dataDate'] == daily_date():
+                discover = discover or name == registration['receiptObject']
+                if name == registration['priorReceiptObject'] and query.get('generation') == registration['priorReceiptGeneration']:
+                    self.daily_pin(name, registration['priorReceiptGeneration'], registration['priorReceiptSha256'])
             pin = self.daily_pins.get(name)
-            if ('generation' not in query and not discover
+            if ('generation' not in query and (not discover or query.get('alt') == 'media')
                     or 'generation' in query and (not pin or pin[0] != query['generation'])):
                 reject('PIN_REQUIRED')
             validated = request['url'], method, headers, body

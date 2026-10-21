@@ -9,7 +9,7 @@ import {createOwnerLatestPublisher,OWNER_SCOPE,LATEST_TARGET,LATEST_HEADERS,MAX_
 // neither use credentials nor make network, account, source or storage calls.
 const encode=text=>new TextEncoder().encode(text),decode=bytes=>new TextDecoder().decode(bytes);
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
-const NOW=Date.parse('2026-10-17T10:00:00.000Z'),OWNER='a'.repeat(64);
+const NOW=Date.parse('2026-10-16T12:10:00.000Z'),OWNER='a'.repeat(64);
 const sourceName='report-check/2026-10-16T12:00:00.000Z-11111111-2222-4333-8444-555555555555/sharesight.noahPerformance.json';
 const jsonResponse=value=>{const bytes=encode(JSON.stringify(value));return new Response(bytes,{headers:{'content-type':'application/json; charset=utf-8','content-length':String(bytes.length)}});};
 function fixture(){
@@ -376,7 +376,7 @@ test('normal weekday publisher replaces verified accepted preview using actual g
     artifactObject:'delivery/2026-10-19/report.html',receiptObject:'delivery/2026-10-19/receipt.json'});
   f.add(next.metadata.artifactObject,next.metadata.artifactGeneration,next.html);f.add(next.metadata.receiptObject,next.metadata.receiptGeneration,next.receipt);
   const phases=[];
-  const p=createOwnerLatestPublisher({io:f.store,ownerBinding:OWNER,now:()=>Date.parse('2026-10-19T13:00:00.000Z'),prepareDisplay:bytes=>new Uint8Array(bytes),
+  const p=createOwnerLatestPublisher({io:f.store,ownerBinding:OWNER,now:()=>Date.parse('2026-10-19T12:10:00.000Z'),prepareDisplay:bytes=>new Uint8Array(bytes),
     verifyProtectedReceipt:({metadata:m,phase})=>{phases.push(phase);return {scope:m.scope,ownerBinding:m.ownerBinding,
       sourceIdentitySha256:m.sourceIdentitySha256,artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,policyRevision:'c'.repeat(64),financialStatus:m.financialStatus};},
     verifyProtectedPreview:({metadata:m,displayBytes,phase})=>{assert.equal(phase,'historical-authenticity');return {
