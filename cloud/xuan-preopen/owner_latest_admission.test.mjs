@@ -5,7 +5,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {prepareOwnerStaticDisplay,createProtectedOwnerVerifier,OWNER_BINDING,SOURCE_IDENTITY_SHA256,OWNER_SCOPE,OWNER_DISPLAY_CSP} from './owner_latest_admission.mjs';
 import {runPrivateEodReport,saveCompletedDailyReport} from './eod_report.mjs';
-import {ownerBundleMetadata} from './owner_latest_delivery.mjs';
+import {ownerBundleMetadata,deliverOwnerLatest} from './owner_latest_delivery.mjs';
 import {digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {associationPolicyBlob} from '../../scripts/xuan-ib-account-association.mjs';
 import {fingerprint,APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
@@ -318,8 +318,8 @@ import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {createOwnerLatestPublisher,LATEST_HEADERS} from './owner_latest.mjs';
 import {ordersReadCli} from './orders_read.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
-async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null}={}){
-  const reg=registeredOwnerRecovery(),time=Date.parse(reg.dataDate+'T02:25:00.000Z'),sourceDate=new Date(time-86400000).toISOString().slice(0,10),captureStartedAt=new Date(time-60000).toISOString();
+async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,currentBookDate=false,timeOverride=null}={}){
+  const reg=registeredOwnerRecovery(),time=timeOverride??Date.parse(reg.dataDate+'T02:25:00.000Z'),sourceDate=currentBookDate?reg.dataDate:new Date(time-86400000).toISOString().slice(0,10),captureStartedAt=new Date(time-60000).toISOString();
   const snapshots={};
   for(const key of Object.keys(SNAPSHOT_SCOPES)){
     const ib=key==='sharesight.ibGroupedPerformance',prior=snapshot(key).raw,r=prior.data.report;
@@ -383,12 +383,19 @@ test('normal CLI actual transport -> pinned source -> browser report -> admissio
   }
 });
 test('separately captured normal MCP orders join browser snapshots without a second source call or old probe execution',async()=>{
-  for(const channel of ['cloud-mcp','mac-mcp'])for(const complete of [true,false]){
+  for(const channel of ['cloud-mcp','mac-mcp'])for(const complete of [true,false])for(const currentBookDate of [false,true]){
     const capture={...browserOrdersCapture({orders:[order()],...(complete?{complete:true}:{})}),channel};
     if(channel==='mac-mcp')Object.assign(capture.sources[0],{wrapper:'native-object',transportFingerprint:capture.sources[0].rawFingerprint});
-    const f=await browserAttempt({ordersCapture:capture});
+    const f=await browserAttempt({ordersCapture:capture,currentBookDate});
     const r=await f.execute(),html=f.objects.get(r.receipt.artifact.privateObject).bytes,model=extractNightActionModel(html.toString());
     assert.equal(f.events.filter(e=>e==='claim').length,1);assert.equal(f.objects.size,7);
+    assert.equal(model.sourceDate,f.sourceDate);assert.equal(r.receipt.dateBasis,'sharesight-valuation-date.v1');
+    assert.equal(model.dateBasis,r.receipt.dateBasis);
+    assert.match(html.toString(),/Sharesight 估值日期/);assert.doesNotMatch(html.toString(),/最近已收市交易日/);assert.match(html.toString(),/单项价格日期未知/);
+    for(const pin of r.receipt.sources.filter(s=>s.sourceKey.startsWith('sharesight.'))){
+      const v=JSON.parse(f.objects.get(pin.privateObject).bytes.toString());
+      assert.equal(v.raw.observation.valuationDate,f.sourceDate);assert.ok(v.raw.observation.positions.every(p=>p.priceDate===null));
+    }
     assert.equal(model.orders.buys.length,1);assert.equal(model.cash.orderReserve,complete?60:null);
     assert.equal(model.cash.planning,complete?290:null);assert.equal(model.cash.preOrderPlanning,350);
     assert.equal(model.bookPlan.status,'ready');assert.equal(model.replenishment.status,complete?'ready':'unavailable');
@@ -456,4 +463,40 @@ test('browser prevalidation rejects wrong date, stale/future original times and 
     const f=await browserAttempt({edit});await assert.rejects(f.execute);assert.equal(f.events.length,0);
   }
   const f=await browserAttempt({failWrite:true});await assert.rejects(f.execute,/SYNTHETIC_UNCERTAIN/);assert.deepEqual(f.events,['claim','write']);
+});
+
+// These are synthetic clocks and storage only, never production replay.
+test('browser valuation day needs no completed market session through controller, admission, CAS and readback across HKT midnight',async()=>{
+  for(const timeOverride of ['2026-10-20T16:02:00.000Z','2026-10-20T22:02:00.000Z','2026-10-21T06:10:00.000Z'].map(Date.parse)){
+    const f=await browserAttempt({currentBookDate:true,timeOverride}),r=await f.execute();
+    const html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes;
+    const bundle={html,receipt,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,
+      artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256};
+    const model=extractNightActionModel(html.toString());
+    assert.equal(model.sourceDate,'2026-10-21');assert.equal(model.dateBasis,'sharesight-valuation-date.v1');
+    assert.equal(model.cash.book.sourceDate,'2026-10-21');assert.equal(model.cash.preOrderPlanning,350);
+    assert.equal(model.bookConcentration.sourceDate,'2026-10-21');assert.equal(model.holdings.sourceDate,'2026-10-21');
+    assert.equal(ownerBundleMetadata(bundle,r.receipt).sourceDate,model.sourceDate);
+    let writes=0,readbacks=0,stored;
+    const io={readRegisteredRecoveryBundle:async()=>bundle,readPinnedSource:async pin=>f.objects.get(pin.name).bytes,
+      readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,ifGenerationMatch,target})=>{writes++;assert.equal(ifGenerationMatch,'0');stored=Buffer.from(bytes);return {...target,generation:'900',size:stored.length};},
+      readLatestGeneration:async()=>{readbacks++;return Buffer.from(stored);}};
+    const result=await deliverOwnerLatest({request:()=>assert.fail('offline only'),registeredRecovery:true,now:()=>f.time,
+      loadContext:async()=>context(f.time),storeFactory:()=>io});
+    assert.equal(result.status,'published-verified',JSON.stringify(result));assert.equal(writes,1);assert.equal(readbacks,1);
+    for(const edit of [m=>m.dateBasis='unverified',m=>delete m.dateBasis,m=>m.provenance.sharesight[0].channel='api']){
+      const altered=structuredClone(model);edit(altered);assert.throws(()=>renderNightActionReport(altered));
+    }
+    const verify=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async pin=>f.objects.get(pin.name).bytes});
+    const altered={...r.receipt,dateBasis:'unverified'},tamperedReceipt=Buffer.from(JSON.stringify(altered));
+    const changedBundle={...bundle,receipt:tamperedReceipt,receiptSha256:digest(tamperedReceipt)};
+    await assert.rejects(verify({metadata:ownerBundleMetadata(changedBundle,altered),html,receipt:tamperedReceipt,phase:'candidate-admission'}));
+  }
+});
+test('browser valuation future/mixed dates and stale intake stop before a claim, with no price-date invention',async()=>{
+  for(const edit of [s=>s['sharesight.ibGroupedPerformance'].observation.valuationDate='2026-10-22',
+    s=>s['sharesight.noahPerformance'].observation.valuationDate='2026-10-20',
+    s=>s['sharesight.ibGroupedPerformance'].observation.positions[0].priceDate='2026-10-20']){
+    const f=await browserAttempt({currentBookDate:true,edit});await assert.rejects(f.execute);assert.deepEqual(f.events,[]);
+  }
 });

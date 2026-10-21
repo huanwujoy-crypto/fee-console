@@ -1,3 +1,4 @@
+import {SHARESIGHT_VALUATION_DATE_BASIS} from './eod_sources.mjs';
 import {SHARESIGHT_BOOK_BASIS,actionUnknownFields} from '../../scripts/xuan-ib-eod-action-model.mjs';
 // Explicit protected private-delivery controller. No schedule, identity grant,
 // broker call or public financial projection is activated by importing this file.
@@ -132,7 +133,7 @@ export function ownerDeliveryRequest(token,fetchImpl=fetch){
 export function ownerBundleMetadata(bundle,receipt){
   const model=extractNightActionModel(new TextDecoder('utf-8',{fatal:true}).decode(bundle.html));
   return {schema:'xuan.owner-latest.v1',scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,sourceIdentitySha256:SOURCE_IDENTITY_SHA256,
-    dataDate:receipt.dataDate,sourceDate:receipt.sourceDate,captureStartedAt:receipt.startedAt,captureEndedAt:receipt.completedAt,completedAt:receipt.completedAt,
+    dataDate:receipt.dataDate,sourceDate:receipt.sourceDate,...(receipt.dateBasis?{dateBasis:receipt.dateBasis}:{}),captureStartedAt:receipt.startedAt,captureEndedAt:receipt.completedAt,completedAt:receipt.completedAt,
     artifactObject:bundle.artifactObject,artifactGeneration:bundle.artifactGeneration,artifactSha256:bundle.artifactSha256,
     receiptObject:bundle.receiptObject,receiptGeneration:bundle.receiptGeneration,receiptSha256:bundle.receiptSha256,
     financialStatus:model.calculationBasis===SHARESIGHT_BOOK_BASIS&&model.status==='ready'?'complete':'partial',unknownFields:actionUnknownFields(model)};
@@ -141,17 +142,17 @@ export function ownerBundleMetadata(bundle,receipt){
 export async function deliverOwnerLatest({request,now=Date.now,loadContext=createOwnerContextLoader({now}),
   storeFactory=createOwnerLatestStore,publisherFactory=createOwnerLatestPublisher,prepareCommit,expectedArtifactSha256=null,expectedReceiptSha256=null,registeredRecovery=false}={}){
   if(typeof registeredRecovery!=='boolean')fail('RECOVERY_MODE');
-  const plan=planPreopen(now());
-  if(plan.status!=='generate')return {status:'no-action',reason:plan.reason};
+  const plan=planPreopen(now()),dataDate=new Date(now()+28800000).toISOString().slice(0,10);
+  if(plan.status!=='generate'&&!registeredRecovery)return {status:'no-action',reason:plan.reason};
   if(typeof request!=='function')fail('TRANSPORT_REQUIRED');
   const io=storeFactory({request});
-  if(registeredRecovery&&registeredOwnerRecovery().dataDate!==plan.dataDate)fail('RECOVERY_DATE');
-  const bundle=await io[registeredRecovery?'readRegisteredRecoveryBundle':'readDailyBundle']({dataDate:plan.dataDate});
+  if(registeredRecovery&&registeredOwnerRecovery().dataDate!==dataDate)fail('RECOVERY_DATE');
+  const bundle=await io[registeredRecovery?'readRegisteredRecoveryBundle':'readDailyBundle']({dataDate});
   if(!bundle||!(bundle.html instanceof Uint8Array)||!(bundle.receipt instanceof Uint8Array))fail('BUNDLE_REQUIRED');
   if(expectedArtifactSha256!==null&&bundle.artifactSha256!==expectedArtifactSha256
     ||expectedReceiptSha256!==null&&bundle.receiptSha256!==expectedReceiptSha256)fail('COLLECTED_BUNDLE_CHANGED');
   let receipt;try{receipt=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bundle.receipt));}catch{fail('RECEIPT_JSON');}
-  if(receipt.dataDate!==plan.dataDate||receipt.sourceDate!==plan.sourceDate||receipt.artifact?.privateObject!==bundle.artifactObject
+  if(receipt.dataDate!==dataDate||(!(registeredRecovery&&receipt.dateBasis===SHARESIGHT_VALUATION_DATE_BASIS)&&(plan.status!=='generate'||receipt.sourceDate!==plan.sourceDate))||receipt.artifact?.privateObject!==bundle.artifactObject
     ||receipt.artifact?.generation!==bundle.artifactGeneration||receipt.artifact?.sha256!==bundle.artifactSha256)fail('DAILY_BINDING');
   const verifyProtectedReceipt=createProtectedOwnerVerifier({loadContext,readPinnedSource:pin=>io.readPinnedSource(pin),now});
   const verifyProtectedPreview=createProtectedOwnerPreviewVerifier({loadContext,now});

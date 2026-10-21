@@ -1,5 +1,6 @@
 // Fixed-target private latest planner. All I/O and authorization capabilities
 // are injected by the trusted controller; no network or credential defaults.
+const SHARESIGHT_VALUATION_DATE_BASIS='sharesight-valuation-date.v1';
 import {types as nodeTypes} from 'node:util';
 import {safeOwnerFailureEvidence} from './cloud_io.mjs';
 import {ownerBundlePathsMatch} from './owner_bundle_contract.mjs';
@@ -38,11 +39,13 @@ export function deriveStaticDisplay(original,{preparePrivateReport,Parser=global
   return new TextEncoder().encode(preparePrivateReport(original,{Parser}).srcdoc);
 }
 function metadata(m,now,ownerBinding){
-  exact(m,'schema scope ownerBinding sourceIdentitySha256 dataDate sourceDate captureStartedAt captureEndedAt completedAt artifactObject artifactGeneration artifactSha256 receiptObject receiptGeneration receiptSha256 financialStatus unknownFields');
+  const browserDates=Object.hasOwn(m??{},'dateBasis');
+  exact(m,'schema scope ownerBinding sourceIdentitySha256 dataDate sourceDate captureStartedAt captureEndedAt completedAt artifactObject artifactGeneration artifactSha256 receiptObject receiptGeneration receiptSha256 financialStatus unknownFields'+(browserDates?' dateBasis':''));
+  if(browserDates&&m.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS)fail('DATE_BASIS');
   if(m.schema!=='xuan.owner-latest.v1'||m.scope!==OWNER_SCOPE||!hex(ownerBinding)||m.ownerBinding!==ownerBinding||!hex(m.sourceIdentitySha256))fail('SCOPE_MISMATCH');
   date(m.sourceDate);date(m.dataDate);
   const start=stamp(m.captureStartedAt),end=stamp(m.captureEndedAt),completed=stamp(m.completedAt);
-  if(start>end||end>completed||completed>now||m.dataDate<m.sourceDate||Date.parse(m.sourceDate+'T00:00:00.000Z')>start||Date.parse(m.dataDate+'T00:00:00.000+08:00')>completed)fail('TIME_ORDER');
+  if(start>end||end>completed||completed>now||m.dataDate<m.sourceDate||Date.parse(m.sourceDate+(browserDates?'T00:00:00.000+08:00':'T00:00:00.000Z'))>start||Date.parse(m.dataDate+'T00:00:00.000+08:00')>completed)fail('TIME_ORDER');
   if(!ownerBundlePathsMatch(m)||!gen(m.artifactGeneration)||!gen(m.receiptGeneration)||!hex(m.artifactSha256)||!hex(m.receiptSha256))fail('IMMUTABLE_BINDING');
   if(!['complete','partial'].includes(m.financialStatus)||!Array.isArray(m.unknownFields)||m.unknownFields.length>32||new Set(m.unknownFields).size!==m.unknownFields.length||m.unknownFields.some(x=>!['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'].includes(x))||(m.financialStatus==='complete'&&m.unknownFields.length)||(m.financialStatus==='partial'&&!m.unknownFields.length))fail('FINANCIAL_STATE');
   // These structural checks are NOT financial, identity, authorization or

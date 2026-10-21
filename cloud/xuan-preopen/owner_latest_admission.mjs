@@ -1,4 +1,4 @@
-import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE} from './eod_sources.mjs';
+import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS} from './eod_sources.mjs';
 // Pure admission/static export. No default transport, credentials, source call,
 // storage mutation or live entry. The controller must supply authenticated,
 // generation-pinned private reads and freshly read trusted Git contexts.
@@ -113,9 +113,11 @@ export function prepareOwnerStaticDisplay(input){
 
 function metadataBinding(m,r,htmlBytes,receiptBytes,model,time){
   const keys='schema scope ownerBinding sourceIdentitySha256 dataDate sourceDate captureStartedAt captureEndedAt completedAt artifactObject artifactGeneration artifactSha256 receiptObject receiptGeneration receiptSha256 financialStatus unknownFields'.split(' ');
+  if(Object.hasOwn(model,'dateBasis'))keys.push('dateBasis');
   if(!exact(m,keys)||m.schema!=='xuan.owner-latest.v1'||m.scope!==OWNER_SCOPE||m.ownerBinding!==OWNER_BINDING
     ||m.sourceIdentitySha256!==SOURCE_IDENTITY_SHA256||m.financialStatus!==(model.calculationBasis===SHARESIGHT_BOOK_BASIS&&model.status==='ready'?'complete':'partial'))fail('METADATA_SCOPE');
   if(m.dataDate!==r.dataDate||m.sourceDate!==r.sourceDate||m.dataDate!==model.dataDate||m.sourceDate!==model.sourceDate
+    ||m.dateBasis!==r.dateBasis||m.dateBasis!==model.dateBasis
     ||!ownerBundlePathsMatch(m)
     ||r.artifact?.privateObject!==m.artifactObject||r.artifact.generation!==m.artifactGeneration
     ||!GEN.test(m.artifactGeneration)||!GEN.test(m.receiptGeneration)||m.artifactSha256!==sha(htmlBytes)
@@ -212,7 +214,7 @@ function sourceModel(values,r,model,context,call){
   const rebuilt=buildEodActionModel({dataDate:r.dataDate,sourceDate:r.sourceDate,asOfHkt:window.asOfHkt,flex,snapshots,
     live:['captured','partial'].includes(savedLive.status)?{...savedLive,previousHtml:context.previousHtml}:savedLive,
     reserve:call.amountUsd,evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode:!!model.fieldState,assumeSharesightSynchronized:model.calculationBasis===SHARESIGHT_BOOK_BASIS,
-    bookDetailVersion:Object.hasOwn(model,'bookPlan')?2:1,
+    bookDetailVersion:Object.hasOwn(model,'bookPlan')?2:1,dateBasis:model.dateBasis??null,
     callRecord:model.fieldState?call:null,captureStartedAt:model.provenance.capture?.startedAt??null,captureCompletedAt:model.provenance.capture?.completedAt??null});
   rebuilt.sourceManifestSha256=r.sourceManifestSha256;
   rebuilt.evidenceSha256=digest({sourceOutcomes:rebuilt.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256});
@@ -243,10 +245,12 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       if(recoveryId&&r.sources?.some(s=>s.privateObject.slice(0,s.privateObject.lastIndexOf('/'))!==m.artifactObject.slice(0,m.artifactObject.lastIndexOf('/'))))fail('RECOVERY_SOURCE_BINDING');
       if(recoveryId&&phase==='candidate-admission'){const registration=registeredOwnerRecovery();
         if(recoveryId!==registration.requestId||r.dataDate!==registration.dataDate)fail('RECOVERY_REGISTRATION');}
-      validateEodReceipt(r,text,m.dataDate,m.sourceDate);
-      // Both phases verify that the original run had a valid completed session.
-      // Only candidate admission requires it still to be fresh and today.
-      try{validateCompletedEodSession(r.sourceDate,Date.parse(r.startedAt));}catch{fail('COMPLETED_SESSION_REQUIRED');}
+      validateEodReceipt(r,text,m.dataDate,r.sourceDate);
+      // Browser book values use the authentic Sharesight valuation date.
+      // Other source contracts retain their completed-session requirement.
+      if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS){
+        try{validateCompletedEodSession(r.sourceDate,Date.parse(r.startedAt));}catch{fail('COMPLETED_SESSION_REQUIRED');}
+      }
       if(phase==='candidate-admission'&&(time-Date.parse(r.startedAt)>1800000
         ||new Date(time+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       const contextOptions={phase,policyCommit:phase==='historical-authenticity'?r.association.policyCommit:undefined,now:()=>clock(),...(signal?{signal}:{})};

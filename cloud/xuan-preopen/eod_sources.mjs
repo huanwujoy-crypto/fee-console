@@ -179,6 +179,7 @@ export async function readVerifiedSnapshot(sourceKey, {reader,verifyCompletion,s
 
 // Pure adapter for an already captured authenticated Sharesight browser table.
 // No browser, network, credential or account mutation capabilities.
+export const SHARESIGHT_VALUATION_DATE_BASIS='sharesight-valuation-date.v1';
 export const SHARESIGHT_BROWSER_SOURCE='Sharesight authenticated cloud browser visible DOM';
 const browserFail=()=>{throw Error('BROWSER_SNAPSHOT_INVALID');};
 const browserAmount=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;
@@ -187,7 +188,8 @@ const browserReportOf=raw=>raw?.report??raw?.data?.report??raw?.result?.data?.re
 export function normalizeBrowserSnapshot(raw,{portfolioId,sourceDate}){
   if(raw?.mode!=='read_only'||raw.source!==SHARESIGHT_BROWSER_SOURCE)browserFail();
   const o=raw.observation,ib=portfolioId===936247;
-  if(![936247,936238].includes(portfolioId)||o?.portfolio!==(ib?'IB-HK':'NOAH-HK')||o.valuationDate!==sourceDate
+  if(!validDate(sourceDate)||!browserInstant(o?.retrievedAt)||sourceDate>new Date(Date.parse(o.retrievedAt)+28800000).toISOString().slice(0,10)
+    ||![936247,936238].includes(portfolioId)||o?.portfolio!==(ib?'IB-HK':'NOAH-HK')||o.valuationDate!==sourceDate
     ||o.reportingCurrency!=='USD'||!browserAmount(o.portfolioValue)||!browserInstant(o.retrievedAt)
     ||!Array.isArray(o.positions)||!o.positions.length||o.positions.length>5000
     ||!Array.isArray(o.cash)||!o.cash.length||o.cash.length>100)browserFail();
