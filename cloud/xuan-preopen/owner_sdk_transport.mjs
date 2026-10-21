@@ -5,6 +5,8 @@ import {realpathSync,statSync,readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {types as utilTypes} from 'node:util';
+import {recoveryRequestId,originalReportStart} from './owner_bundle_contract.mjs';
+import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {LATEST_TARGET,MAX_BYTES} from './owner_latest.mjs';
 import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 
@@ -114,11 +116,13 @@ function dailyRequestValue(input,options={},admissionExpiresAt){
   const prefix='/storage/v1/b/'+LATEST_TARGET.bucket+'/o/';
   let name;try{name=decodeURIComponent(u.pathname.slice(prefix.length));}catch{throw fail('TARGET_INVALID');}
   if(u.origin!=='https://storage.googleapis.com'||!u.pathname.startsWith(prefix)
-    ||u.pathname!==prefix+encodeURIComponent(name)||!(/^(delivery\/\d{4}-\d\d-\d\d\/(?:report\.html|receipt\.json)|report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive)\.json)$/.test(name))
+    ||u.pathname!==prefix+encodeURIComponent(name)||(!(/^(delivery\/\d{4}-\d\d-\d\d\/(?:report\.html|receipt\.json)|report-check\/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z-[a-f0-9-]{36}\/(?:ib\.flexEod|sharesight\.ibGroupedPerformance|sharesight\.noahPerformance|ib\.optionalLive)\.json)$/.test(name))
+    && !recoveryRequestId(name)&&!originalReportStart(name))
     ||method!=='GET')throw fail('TARGET_INVALID');
   // Reuse the existing strict scheme/query/header/body validation.
   const value=requestValue(input.replace(u.pathname,new URL(latest).pathname),options);
-  if(name.startsWith('report-check/')&&!u.searchParams.has('generation'))throw fail('PIN_REQUIRED');
+  if(name.startsWith('report-check/')&&!u.searchParams.has('generation')
+    &&(name!==registeredOwnerRecovery().receiptObject||u.searchParams.has('alt')))throw fail('PIN_REQUIRED');
   return {...value,op:'dailyRequest',url:input};
 }
 

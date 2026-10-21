@@ -1,5 +1,6 @@
 // Fixed-target private latest planner. All I/O and authorization capabilities
 // are injected by the trusted controller; no network or credential defaults.
+import {ownerBundlePathsMatch} from './owner_bundle_contract.mjs';
 export const OWNER_SCOPE='ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1';
 export const LATEST_TARGET=Object.freeze({bucket:'family-portfolio-gateway-xuan-preopen-private',object:'delivery/owner-latest.html'});
 export const LATEST_HEADERS=Object.freeze({contentType:'text/html; charset=utf-8',contentDisposition:'inline',cacheControl:'private, no-store, max-age=0'});
@@ -39,8 +40,8 @@ function metadata(m,now,ownerBinding){
   if(m.schema!=='xuan.owner-latest.v1'||m.scope!==OWNER_SCOPE||!hex(ownerBinding)||m.ownerBinding!==ownerBinding||!hex(m.sourceIdentitySha256))fail('SCOPE_MISMATCH');
   date(m.sourceDate);date(m.dataDate);
   const start=stamp(m.captureStartedAt),end=stamp(m.captureEndedAt),completed=stamp(m.completedAt);
-  if(start>end||end>completed||completed>now||m.dataDate<m.sourceDate||Date.parse(m.sourceDate+'T00:00:00.000Z')>start||Date.parse(m.dataDate+'T00:00:00.000Z')>completed)fail('TIME_ORDER');
-  if(m.artifactObject!==`delivery/${m.dataDate}/report.html`||m.receiptObject!==`delivery/${m.dataDate}/receipt.json`||!gen(m.artifactGeneration)||!gen(m.receiptGeneration)||!hex(m.artifactSha256)||!hex(m.receiptSha256))fail('IMMUTABLE_BINDING');
+  if(start>end||end>completed||completed>now||m.dataDate<m.sourceDate||Date.parse(m.sourceDate+'T00:00:00.000Z')>start||Date.parse(m.dataDate+'T00:00:00.000+08:00')>completed)fail('TIME_ORDER');
+  if(!ownerBundlePathsMatch(m)||!gen(m.artifactGeneration)||!gen(m.receiptGeneration)||!hex(m.artifactSha256)||!hex(m.receiptSha256))fail('IMMUTABLE_BINDING');
   if(!['complete','partial'].includes(m.financialStatus)||!Array.isArray(m.unknownFields)||m.unknownFields.length>32||new Set(m.unknownFields).size!==m.unknownFields.length||m.unknownFields.some(x=>!['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'].includes(x))||(m.financialStatus==='complete'&&m.unknownFields.length)||(m.financialStatus==='partial'&&!m.unknownFields.length))fail('FINANCIAL_STATE');
   // These structural checks are NOT financial, identity, authorization or
   // freshness proof. The trusted existing protected gates must verify receipts.
@@ -58,7 +59,7 @@ export function validateAcceptedPreviewMetadata(m,{now,ownerBinding}={}){
   const start=stamp(m.captureStartedAt),end=stamp(m.captureEndedAt),completed=stamp(m.completedAt);
   if((now!==undefined&&!Number.isFinite(now))||start>end||end>completed||(now!==undefined&&completed>now)
     ||m.dataDate<m.sourceDate||Date.parse(m.sourceDate+'T00:00:00.000Z')>start
-    ||Date.parse(m.dataDate+'T00:00:00.000Z')>completed)fail('PREVIEW_TIME_ORDER');
+    ||Date.parse(m.dataDate+'T00:00:00.000+08:00')>completed)fail('PREVIEW_TIME_ORDER');
   if(m.financialStatus!=='partial'||!Array.isArray(m.unknownFields)||!m.unknownFields.length||m.unknownFields.length>32
     ||new Set(m.unknownFields).size!==m.unknownFields.length
     ||m.unknownFields.some(x=>!['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'].includes(x)))fail('PREVIEW_FINANCIAL_STATE');
@@ -181,12 +182,16 @@ export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedRecei
     });
     const work=async()=>{
       started=now();if(!Number.isFinite(started))fail('CONFIG_UNAVAILABLE');
+      let lastClock=started;
+      const checkedClock=()=>{const t=now();if(!Number.isFinite(t)||t<lastClock)fail('CLOCK_CHANGED');lastClock=t;return t;};
       const current=copyCurrent(await io.readLatest({target:LATEST_TARGET,signal:controller.signal}));
       if(controller.signal.aborted)fail('DEADLINE');
-      const plan=await planOwnerLatest({candidate:frozenCandidate,current,ownerBinding,now:now(),
+      const plan=await planOwnerLatest({candidate:frozenCandidate,current,ownerBinding,now:checkedClock(),
         verifyProtectedReceipt,verifyProtectedPreview,prepareDisplay,hash});
       if(plan.status!=='ready')return plan;
-      if(controller.signal.aborted||now()-started>=DEADLINE_MS)fail('DEADLINE');
+      if(controller.signal.aborted||checkedClock()-started>=DEADLINE_MS)fail('DEADLINE');
+      const admissionTime=checkedClock(),capture=Date.parse(plan.bundle.metadata.captureStartedAt);
+      if(admissionTime-capture>1800000||new Date(admissionTime+28800000).toISOString().slice(0,10)!==plan.bundle.metadata.dataDate)fail('CANDIDATE_STALE');
       writing=true;
       const ack=await io.replaceLatest({target:LATEST_TARGET,ifGenerationMatch:plan.ifGenerationMatch,
         headers:LATEST_HEADERS,bytes:new Uint8Array(plan.display),
@@ -194,7 +199,7 @@ export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedRecei
       if(!obj(ack)||ack.object!==LATEST_TARGET.object||ack.bucket!==LATEST_TARGET.bucket||!gen(ack.generation)
         ||BigInt(ack.generation)<=BigInt(plan.ifGenerationMatch)||ack.size!==plan.display.length)
         return {status:'unknown',code:'WRITE_ACK_UNVERIFIED'};
-      if(controller.signal.aborted||now()-started>=DEADLINE_MS)return {status:'unknown',code:'WRITE_OUTCOME_UNKNOWN'};
+      if(controller.signal.aborted||checkedClock()-started>=DEADLINE_MS)return {status:'unknown',code:'WRITE_OUTCOME_UNKNOWN'};
       // This is a separate generation-pinned raw-byte GET, never the upload ACK
       // nor the body used for that write. The store validates stored headers.
       const readback=await io.readLatestGeneration({target:LATEST_TARGET,generation:ack.generation,
@@ -202,7 +207,7 @@ export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedRecei
       if(!(readback instanceof Uint8Array)||readback.length!==plan.display.length
         ||await hash(new Uint8Array(readback))!==plan.displaySha256)
         return {status:'unknown',code:'READBACK_UNVERIFIED'};
-      if(controller.signal.aborted||now()-started>=DEADLINE_MS)return {status:'unknown',code:'WRITE_OUTCOME_UNKNOWN'};
+      if(controller.signal.aborted||checkedClock()-started>=DEADLINE_MS)return {status:'unknown',code:'WRITE_OUTCOME_UNKNOWN'};
       return {status:'published-verified',code:'PINNED_READBACK_VERIFIED',generation:ack.generation,
         sha256:plan.displaySha256,originalArtifactSha256:plan.bundle.metadata.artifactSha256,
         originalReceiptSha256:plan.bundle.metadata.receiptSha256};

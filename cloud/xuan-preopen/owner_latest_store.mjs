@@ -3,6 +3,8 @@
 // environment, global fetch, retry, object listing or arbitrary URL fallback.
 import {LATEST_TARGET,LATEST_HEADERS,MAX_BYTES,MAX_RECEIPT_BYTES,sha256,
   ACCEPTED_PREVIEW_SCHEMA,validateAcceptedPreviewMetadata,ownerJsonMediaHeadersMatch} from './owner_latest.mjs';
+import {ownerBundlePathsMatch,originalReportStart} from './owner_bundle_contract.mjs';
+import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {parseDecisionJson} from '../../scripts/xuan-ib-decision-menu.mjs';
 
 export const MAX_METADATA_BYTES=16*1024,MAX_SOURCE_BYTES=8*1024*1024;
@@ -21,11 +23,6 @@ function exactDate(value){
   if(typeof value!=='string'||!/^\d{4}-\d\d-\d\d$/.test(value)
     ||!Number.isFinite(Date.parse(value+'T00:00:00.000Z'))
     ||new Date(value+'T00:00:00.000Z').toISOString().slice(0,10)!==value)fail('PATH_INVALID');
-}
-function dailyName(name,kind){
-  const match=typeof name==='string'&&name.match(/^delivery\/(\d{4}-\d\d-\d\d)\/(report\.html|receipt\.json)$/);
-  if(!match||(kind&&match[2]!==kind))fail('PATH_INVALID');
-  exactDate(match[1]);return name;
 }
 function sourceName(name){
   // Same strict source-manifest family as eod_report.mjs. This intentionally
@@ -96,7 +93,7 @@ function objectMetadata(value,{name,generation,max,latest=false}){
 }
 function customMetadata(bundleMetadata,displaySha256){
   if(!obj(bundleMetadata)||!hex(displaySha256))fail('CUSTOM_METADATA_INVALID');
-  dailyName(bundleMetadata.artifactObject,'report.html');dailyName(bundleMetadata.receiptObject,'receipt.json');
+  if(!ownerBundlePathsMatch(bundleMetadata))fail('PATH_INVALID');
   if(!gen(bundleMetadata.artifactGeneration)||!gen(bundleMetadata.receiptGeneration)
     ||!hex(bundleMetadata.artifactSha256)||!hex(bundleMetadata.receiptSha256))fail('CUSTOM_METADATA_INVALID');
   const value={bundleMetadata:JSON.stringify(bundleMetadata),displaySha256,
@@ -253,6 +250,21 @@ export function createOwnerLatestStore({request,requestPreviewReplacement}={}){
         metadata:{...next,displaySha256:await sha256(display)},signal,
         replacement:{revisionSha256,previousGeneration,previousDisplaySha256,previousRegistrationSha256:oldMetadata.registrationSha256}},replacementAdmission);
     },
+    async readRegisteredRecoveryBundle({dataDate,signal}={}){
+      exactDate(dataDate);const registration=registeredOwnerRecovery();
+      if(dataDate!==registration.dataDate)fail('RECOVERY_DATE');
+      // Preserve and authenticate the original failed attempt's immutable audit
+      // link. Nothing here can overwrite its claim, report or receipt.
+      await getMedia(registration.priorReceiptObject,registration.priorReceiptGeneration,
+        registration.priorReceiptSha256,MAX_RECEIPT_BYTES,signal);
+      const receiptObject=registration.receiptObject,receipt=await discoverDaily(receiptObject,MAX_RECEIPT_BYTES,signal);
+      let value;try{value=JSON.parse(decoder.decode(receipt.bytes));}catch{fail('RECEIPT_JSON');}
+      const artifact=value?.artifact,artifactObject=artifact?.privateObject;
+      if(value.dataDate!==dataDate||!originalReportStart(artifactObject)||originalReportStart(artifactObject)!==value.startedAt)fail('PATH_INVALID');
+      const html=await getMedia(artifactObject,artifact.generation,artifact.sha256,MAX_BYTES,signal);
+      return {html,receipt:receipt.bytes,artifactObject,artifactGeneration:artifact.generation,artifactSha256:artifact.sha256,
+        receiptObject,receiptGeneration:receipt.generation,receiptSha256:receipt.sha256};
+    },
     async readDailyBundle({dataDate,signal}={}){
       exactDate(dataDate);
       const artifactObject=`delivery/${dataDate}/report.html`,receiptObject=`delivery/${dataDate}/receipt.json`;
@@ -279,8 +291,8 @@ export function createOwnerLatestStore({request,requestPreviewReplacement}={}){
       const displayBytes=await getMedia(LATEST_TARGET.object,generation,custom.displaySha256,MAX_BYTES,signal,{latest:true,knownMetadata:m});
       if(custom.kind==='accepted-preview')return {state:'present',generation,kind:'accepted-preview',
         preview:{metadata:structuredClone(custom.preview)},displayBytes};
-      const html=await getMedia(dailyName(custom.bundle.artifactObject,'report.html'),custom.bundle.artifactGeneration,custom.bundle.artifactSha256,MAX_BYTES,signal);
-      const receipt=await getMedia(dailyName(custom.bundle.receiptObject,'receipt.json'),custom.bundle.receiptGeneration,custom.bundle.receiptSha256,MAX_RECEIPT_BYTES,signal);
+      const html=await getMedia(custom.bundle.artifactObject,custom.bundle.artifactGeneration,custom.bundle.artifactSha256,MAX_BYTES,signal);
+      const receipt=await getMedia(custom.bundle.receiptObject,custom.bundle.receiptGeneration,custom.bundle.receiptSha256,MAX_RECEIPT_BYTES,signal);
       return {state:'present',generation,bundle:{metadata:structuredClone(custom.bundle),html,receipt},displayBytes};
     },
     async readPinnedSource({name,generation,sha256:expectedHash,signal}={}){

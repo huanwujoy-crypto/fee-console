@@ -1,0 +1,8 @@
+{
+  "schema": "xuan.owner-source-recovery.v1",
+  "requestId": "78006513-4741-450d-bb86-4af26403600d",
+  "dataDate": "2026-10-21",
+  "priorReceiptObject": "delivery/2026-10-21/receipt.json",
+  "priorReceiptGeneration": "1792538402491197",
+  "priorReceiptSha256": "359817e738f2f9d313da2733e93cd1ec88d3053584403638c71147a39864cb5d"
+}

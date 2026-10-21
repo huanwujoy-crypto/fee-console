@@ -403,3 +403,36 @@ test('preview metadata digest is independent of object key insertion order',asyn
   const m=acceptedPreview().preview.metadata,reverse=Object.fromEntries(Object.entries(m).reverse());
   assert.equal(await previewMetadataSha256(m),await previewMetadataSha256(reverse));
 });
+
+test('HK report date is independent of UTC day, NY source date and historical preview date',async()=>{
+  for(const [reportDate,sourceDate,instant] of [
+    ['2026-10-19','2026-10-16','2026-10-18T16:00:00.000Z'], // Monday HK00, Friday NY.
+    ['2026-10-21','2026-10-20','2026-10-20T20:00:00.000Z'],
+    ['2026-10-21','2026-10-20','2026-10-20T23:59:59.999Z'],
+    ['2026-10-21','2026-10-20','2026-10-21T00:00:00.000Z'],
+    ['2027-01-01','2026-12-31','2026-12-31T23:00:00.000Z'],
+  ]){
+    const next=bundle(reportDate,'SYNTHETIC HKT REPORT');Object.assign(next.metadata,{sourceDate,captureStartedAt:instant,captureEndedAt:instant,completedAt:instant});
+    const result=await planOwnerLatest(options({candidate:next,now:Date.parse(instant)}));assert.equal(result.status,'ready',instant);
+    const m=next.metadata;const preview={schema:ACCEPTED_PREVIEW_SCHEMA,scope:m.scope,ownerBinding:OWNER,sourceIdentitySha256:SOURCE,
+      registrationId:'synthetic-hkt-test',registrationSha256:'d'.repeat(64),registrationPolicyCommit:'a'.repeat(40),
+      dataDate:reportDate,sourceDate,captureStartedAt:instant,captureEndedAt:instant,completedAt:instant,financialStatus:'partial',unknownFields:['cash']};
+    assert.doesNotThrow(()=>validateAcceptedPreviewMetadata(preview,{now:Date.parse(instant),ownerBinding:OWNER}));
+    assert.throws(()=>validateAcceptedPreviewMetadata({...preview,completedAt:new Date(Date.parse(instant)+1).toISOString()},{now:Date.parse(instant)}));
+  }
+});
+test('HK date not yet begun and reversed captures remain structural failures',async()=>{
+  const next=candidate();Object.assign(next.metadata,{dataDate:'2026-10-17',sourceDate:'2026-10-15',captureStartedAt:'2026-10-16T15:59:59.000Z',captureEndedAt:'2026-10-16T15:59:59.000Z',completedAt:'2026-10-16T15:59:59.000Z'});
+  assert.equal((await planOwnerLatest(options({candidate:next,now:Date.parse('2026-10-16T15:59:59.000Z')}))).code,'TIME_ORDER');
+  next.metadata.captureEndedAt='2026-10-16T15:59:58.000Z';assert.equal((await planOwnerLatest(options({candidate:next,now:Date.parse('2026-10-16T16:00:00.000Z')}))).code,'TIME_ORDER');
+});
+test('crossing HK midnight, 30-minute boundary or reversing clock after validation stops before CAS',async()=>{
+  for(const mode of ['midnight','expiry','rollback']){
+    const instant=mode==='midnight'?'2026-10-16T15:59:59.000Z':'2026-10-16T12:00:00.000Z',next=candidate();
+    Object.assign(next.metadata,{captureStartedAt:instant,captureEndedAt:instant,completedAt:instant});
+    let time=Date.parse(instant)+(mode==='expiry'?1800000:0),writes=0;
+    const publisher=createOwnerLatestPublisher({io:{readLatest:async()=>({state:'absent'}),replaceLatest:async()=>writes++,readLatestGeneration:async()=>assert.fail()},
+      ownerBinding:OWNER,now:()=>time,hash,verifyProtectedReceipt:proof,prepareDisplay:bytes=>{time+=mode==='midnight'?1000:mode==='expiry'?1:-1;return copy(bytes);}});
+    assert.equal((await publisher.publish(next)).status,'blocked',mode);assert.equal(writes,0);
+  }
+});

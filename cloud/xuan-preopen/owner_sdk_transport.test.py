@@ -768,17 +768,19 @@ class SafeDiagnosticTests(unittest.TestCase):
 class DailyBoundaryTests(unittest.TestCase):
     def fixture(self):
         date = m.daily_date()
+        started = datetime.datetime.fromtimestamp(m.time.time()-60, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        completed = datetime.datetime.fromtimestamp(m.time.time()-10, datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
         report_name, receipt_name = 'delivery/'+date+'/report.html', 'delivery/'+date+'/receipt.json'
         report = b'<html>synthetic canonical report</html>'
         sources = []
         objects = {report_name: ('10', report), m.OBJECT: ('900', b'{}')}
         for i, key in enumerate(['ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive']):
-            name = 'report-check/'+date+'T01:00:00.000Z-00000000-0000-4000-8000-000000000000/'+key+'.json'
+            name = 'report-check/'+started+'-00000000-0000-4000-8000-000000000000/'+key+'.json'
             raw = b'{"synthetic":true}'
             objects[name] = (str(i+1), raw)
             sources.append({'sourceKey': key, 'privateObject': name, 'generation': str(i+1), 'sha256': hashlib.sha256(raw).hexdigest()})
         receipt = {'mode': 'private_eod_action', 'status': 'partial', 'publication': 'none', 'dataDate': date,
-                   'sourceDate': date, 'startedAt': date+'T01:00:00.000Z', 'completedAt': date+'T01:01:00.000Z',
+                   'sourceDate': date, 'startedAt': started, 'completedAt': completed,
                    'artifact': {'privateObject': report_name, 'generation': '10', 'sha256': hashlib.sha256(report).hexdigest()},
                    'sourceCount': 4, 'sources': sources}
         receipt_raw = json.dumps(receipt).encode()
@@ -833,6 +835,37 @@ class DailyBoundaryTests(unittest.TestCase):
             return value
         return bridge, read, prime, write, objects, sources, calls
 
+    def test_recovery_discovery_is_one_registered_metadata_path_without_unpinned_media(self):
+        registration = m.recovery_registration()
+        bridge, read, prime, write, objects, sources, calls = self.fixture()
+        other = registration['receiptObject'].replace(registration['requestId'], '11111111-2222-4333-8444-555555555555')
+        with patch.object(m, 'daily_date', lambda: registration['dataDate']):
+            for name in [other, registration['receiptObject'].replace('preview-receipt.json', 'orders.json')]:
+                with self.assertRaises(m.BoundaryError):
+                    read(name)
+            url = 'https://storage.googleapis.com/storage/v1/b/'+m.BUCKET+'/o/'+m.quote(registration['receiptObject'], safe='')+'?alt=media'
+            value = read_value(url, headers={'Accept': 'application/octet-stream', 'Accept-Encoding': 'identity'})
+            value['op'] = 'dailyRequest'
+            with self.assertRaises(m.BoundaryError):
+                bridge.dispatch(value)
+        self.assertEqual(calls, [])
+
+    def test_native_cas_freshness_is_checked_after_canary_and_never_retried(self):
+        for change in ['expired', 'rollback']:
+            bridge, read, prime, write, objects, sources, calls = self.fixture()
+            prime()
+            initial = m.time.time()
+            clock = [initial]
+            def canary(revision):
+                clock[0] = initial + 1800 if change == 'expired' else initial - 0.1
+            bridge.verify_replacement_canary_current = canary
+            with patch.object(m.time, 'time', lambda: clock[0]):
+                with self.assertRaises(m.BoundaryError):
+                    bridge.dispatch(write())
+                with self.assertRaises(m.BoundaryError):
+                    bridge.dispatch(write())
+            self.assertEqual(sum(method == 'POST' for _, method in calls), 0)
+
     def test_store_discovery_sequence_uses_metadata_get_before_pinned_metadata_and_media(self):
         bridge, read, prime, write, objects, sources, calls = self.fixture()
         date = m.daily_date()
@@ -842,7 +875,7 @@ class DailyBoundaryTests(unittest.TestCase):
             read(name, generation, True)
         self.assertEqual(len(calls), 6)
         self.assertTrue(all(method == 'GET' for _, method in calls))
-        self.assertEqual(set(bridge.daily_receipts), {date})
+        self.assertEqual(set(bridge.daily_receipts), {'delivery/'+date+'/receipt.json'})
         self.assertTrue(all(bridge.daily_pins[s['privateObject']][0] == s['generation'] for s in sources))
         # Neither unpinned source media nor another date gains discovery rights.
         before = len(calls)
