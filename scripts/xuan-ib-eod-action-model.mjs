@@ -1,4 +1,4 @@
-import {SHARESIGHT_BROWSER_SOURCE} from '../cloud/xuan-preopen/eod_sources.mjs';
+import {SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS} from '../cloud/xuan-preopen/eod_sources.mjs';
 import crypto from 'node:crypto';
 // Same four-card action report, with explicit unknown dependencies. No I/O.
 import {calculateCashPlan} from './xuan-ib-cash-plan.mjs';
@@ -67,7 +67,7 @@ export function buildEodActionModel(input){
   }
 }
 function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshots,live=null,reserve,evidenceSha256,sourceOutcomes,
-  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2}){
+  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,dateBasis=null}){
   if(![1,2].includes(bookDetailVersion))fail('CALCULATION_BASIS');
   if(typeof assumeSharesightSynchronized!=='boolean'||assumeSharesightSynchronized&&(!fieldMode||concentrationInput!==null))fail('CALCULATION_BASIS');
   if(fieldMode&&!flex)flex={cash:null,positions:null,trades:null,tradeCoverageProven:false,rawFingerprint:null,
@@ -196,13 +196,18 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     if(bookDetailVersion===2)model.bookPlan=buildPreOrderBookPlan(model);
     model.status=bookStatus(model);
   }
+  if(dateBasis!==null)model.dateBasis=dateBasis;
   if(concentrationInput!==null)model.concentration=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
   return validateEodActionModel(model);
 }
 export function validateEodActionModel(m){
   const fields=Boolean(m?.fieldState),book=m?.calculationBasis===SHARESIGHT_BOOK_BASIS;
+  const browserDates=Object.hasOwn(m??{},'dateBasis');
+  if(browserDates&&(!book||!fields||m.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||m.sourceDate>m.dataDate
+    ||m.provenance?.sharesight?.length!==2||m.provenance.sharesight.some(s=>s.channel!=='authenticated-browser')
+    ||m.sourceOutcomes?.find(s=>s.sourceKey==='ib.flexEod')?.status!=='not-called'))fail('BROWSER_DATE_SCOPE');
   if(Object.hasOwn(m??{},'calculationBasis')&&(!book||!fields||Object.hasOwn(m,'concentration')))fail('CALCULATION_BASIS');
-  if(m?.schemaVersion!==9||m.mode!=='eod-action'||!(book?['ready','partial'].includes(m.status):m.status==='partial')||!date(m.dataDate)||!date(m.sourceDate)||m.sourceDate>=m.dataDate||typeof m.asOfHkt!=='string'||!new RegExp('^'+m.dataDate+' \\d{2}:\\d{2}(?:–\\d{2}:\\d{2})? HKT · 数据至 '+m.sourceDate+'$').test(m.asOfHkt)||!/^[a-f0-9]{64}$/.test(m.evidenceSha256||''))fail('HEADER');
+  if(m?.schemaVersion!==9||m.mode!=='eod-action'||!(book?['ready','partial'].includes(m.status):m.status==='partial')||!date(m.dataDate)||!date(m.sourceDate)||(!browserDates&&m.sourceDate>=m.dataDate)||typeof m.asOfHkt!=='string'||!new RegExp('^'+m.dataDate+' \\d{2}:\\d{2}(?:–\\d{2}:\\d{2})? HKT · 数据至 '+m.sourceDate+'$').test(m.asOfHkt)||!/^[a-f0-9]{64}$/.test(m.evidenceSha256||''))fail('HEADER');
   if(!validHktRange(m.asOfHkt,m.dataDate))fail('REPORT_TIME');
   if(!/^[a-f0-9]{64}$/.test(m.sourceManifestSha256||'')||m.evidenceSha256!==hash({sourceOutcomes:m.sourceOutcomes,sourceManifestSha256:m.sourceManifestSha256}))fail('EVIDENCE_HASH');
   validateSourceOutcomes(m.sourceOutcomes,fields);
@@ -272,7 +277,7 @@ export function validateEodActionModel(m){
     if(c.preOrderPlanning!==(c.pool!==null&&c.callApplied!==null?Math.max(0,cents(c.pool-c.callApplied)):null)
       ||m.status!==bookStatus(m))fail('BOOK_BUDGET');
   }else if(Object.hasOwn(m,'bookConcentration')||Object.hasOwn(m,'bookPlan'))fail('CALCULATION_BASIS');
-  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan'];
+  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan','dateBasis'];
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
   if(fields)validateActionFieldState(m);else if(Object.hasOwn(m,'fieldErrors'))fail('PUBLIC_KEYS');
   return m;

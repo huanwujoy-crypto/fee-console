@@ -1,6 +1,6 @@
 // Private composition after one separately approved cloud orders test. No IB
 // reader, refresh, job dispatch, public write, key or credential creation here.
-import {digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE} from './eod_sources.mjs';
+import {digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS} from './eod_sources.mjs';
 import {runPrivateEodReport} from './eod_report.mjs';
 import {loadTrustedContext,readSharesightAction} from './report.mjs';
 import {createEodSnapshotReader} from './eod_adapters.mjs';
@@ -63,6 +63,9 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()-start>300000||hkt(start)!==registration.dataDate
     ||!snapshots||Object.keys(snapshots).sort().join('|')!==keys.sort().join('|')
     ||typeof access?.beginEvidence!=='function'||typeof access?.writeEvidence!=='function')fail();
+  // Browser sourceDate is the visible book valuation date, not a price date.
+  const dateBasis=SHARESIGHT_VALUATION_DATE_BASIS;
+  if(sourceDate>hkt(start))fail();
   const verified={};
   for(const key of keys){
     const raw=snapshots[key];if(raw?.source!==SHARESIGHT_BROWSER_SOURCE)fail();
@@ -97,7 +100,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   }
   const captureOptionalLive=async()=>structuredClone(live);
   let stagedBytes=0;
-  await runPrivateEodReport({sourceDate,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,
+  await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,
     readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:async(name,value)=>{const size=Buffer.byteLength(typeof value==='string'?value:JSON.stringify(value));
@@ -110,7 +113,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   if(attempt.requestId!==registration.requestId||attempt.dataDate!==registration.dataDate||attempt.captureStartedAt!==captureStartedAt
     ||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(attempt.runId))fail();
   const reportRunId=attempt.runId;
-  const saved=await runPrivateEodReport({sourceDate,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,sourceRunId:reportRunId,
+  const saved=await runPrivateEodReport({sourceDate,dateBasis,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,sourceRunId:reportRunId,
     readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
     snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive,
     io:{savePrivate:(name,value)=>access.writeEvidence(name,Buffer.from(typeof value==='string'?value:JSON.stringify(value)))}});
