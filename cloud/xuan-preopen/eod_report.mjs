@@ -1,3 +1,4 @@
+import {readFileSync} from 'node:fs';
 // Injected EOD core. The B production composition supplies fixed readers;
 // this module itself has no default financial reader or credential provider.
 import crypto from 'node:crypto';
@@ -38,9 +39,16 @@ export function validateCompletedEodSession(sourceDate, started) {
   return {dataDate,calendar};
 }
 export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
-  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,sourceRunId=null,dateBasis=null}={}){
+  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,initialCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,sourceRunId=null,dateBasis=null}={}){
   const currentTime=now(),started=initialStartedAt??currentTime;
-  if(!Number.isFinite(started)||started>currentTime||currentTime-started>300000||!fieldMode&&initialStartedAt!==null)fail('CAPTURE_WINDOW');
+  const savedCapture=initialCompletedAt!==null;
+  // The local recovery registration is intentionally outside the cloud image.
+  const recovery=savedCapture?await import('./owner_source_recovery.mjs'):null;
+  const reference=savedCapture&&Number.isFinite(started)&&Number.isFinite(initialCompletedAt)?recovery.registeredReferenceCapture(recovery.registeredOwnerRecovery().requestId,new Date(started).toISOString(),new Date(initialCompletedAt).toISOString()):null;
+  const processingDeadline=reference?Date.parse(reference.expiresAt):started+(savedCapture?1800000:300000);
+  if(!Number.isFinite(started)||started>currentTime||currentTime>processingDeadline||!fieldMode&&initialStartedAt!==null
+    ||savedCapture&&(!Number.isFinite(initialCompletedAt)||initialCompletedAt<started||initialCompletedAt>currentTime||initialCompletedAt-started>300000
+      ||dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!fieldMode||!assumeSharesightSynchronized||readArchive!==null))fail('CAPTURE_WINDOW');
   if(sourceRunId!==null&&(!fieldMode||!assumeSharesightSynchronized||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(sourceRunId)))fail('SOURCE_RUN_ID');
   const browserDates=dateBasis!==null;
   if(browserDates&&(dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!fieldMode||!assumeSharesightSynchronized||readArchive!==null||!validDate(sourceDate)
@@ -75,7 +83,13 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const sourceOutcomes=[{sourceKey:'ib.flexEod',status:archiveState.status,rawFingerprint:flex?.rawFingerprint??null},...snapshotResults.map(s=>({sourceKey:s.sourceKey,status:s.status,rawFingerprint:s.rawFingerprint??null})),{sourceKey:'ib.optionalLive',status:['captured','partial','not-called','failed','timeout'].includes(live?.status)?live.status:'failed',rawFingerprint:['captured','partial'].includes(live?.status)?digest(liveResult):null}];
   const current=await loadContext({now});validateAssociationReceipt(association,current.association,{now:now(),edition:'am',previousSourceSha:context.previousSourceSha,runId});
   if((!fieldMode&&current.reserveHash!==context.reserveHash)||current.previousSourceSha!==context.previousSourceSha)fail('BASE_CHANGED');
-  const completed=now();if(hktDate(completed)!==dataDate)fail('CROSSED_HKT_DATE');
+  const processed=now(),completed=savedCapture?initialCompletedAt:processed;
+  if(hktDate(processed)!==dataDate)fail('CROSSED_HKT_DATE');
+  if(savedCapture){
+    const sourceTimes=[...snapshotResults.map(s=>Date.parse(s.provenance?.readAt)),...(liveResult.sources??[]).flatMap(s=>[Date.parse(s.startedAt),Date.parse(s.completedAt)])];
+    if(sourceTimes.some(t=>!Number.isFinite(t)||t<started||t>completed)||Math.max(...sourceTimes)!==completed||processed<completed||processed>processingDeadline)fail('CAPTURE_WINDOW');
+  }
+  if(reference)recovery.validateReferenceSources(reference,{...Object.fromEntries(snapshotResults.map(s=>[s.sourceKey,s])),'ib.optionalLive':liveResult});
   const hkt=t=>new Date(t+8*3_600_000).toISOString().slice(11,16);
   const callRecord=fieldMode?resolveCurrentCall(current.reserveLedger,dataDate,{now:completed}):null;
   const model=buildEodActionModel({dataDate,sourceDate,asOfHkt:`${dataDate} ${hkt(started)}–${hkt(completed)} HKT · 数据至 ${sourceDate}`,flex,snapshots:snapshotResults,live,
@@ -93,6 +107,8 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',html)};
   const receipt={schemaVersion:1,mode:'private_eod_action',status:model.status,dataDate,sourceDate,startedAt:new Date(started).toISOString(),completedAt:new Date(now()).toISOString(),association,sourceCount:sources.length,sources,sourceOutcomes:model.sourceOutcomes,sourceManifestSha256,evidenceSha256:model.evidenceSha256,artifact,publication:'none',scheduler:'none'};
   if(browserDates)receipt.dateBasis=dateBasis;
+  if(savedCapture)receipt.captureCompletedAt=new Date(completed).toISOString();
+  if(reference)receipt.referenceMode=reference.schema;
   if(fieldMode)receipt.fieldErrors=model.fieldErrors;
   if(model.calculationBasis)receipt.calculationBasis=model.calculationBasis;
   if(concentrationInput!==null){
@@ -108,6 +124,19 @@ export function validateEodReceipt(r,html,dataDate,sourceDate){
   if(digest(sourceManifest(r.sources))!==r.sourceManifestSha256||r.sources.some(s=>s.rawFingerprint!==r.sourceOutcomes?.find(o=>o.sourceKey===s.sourceKey)?.rawFingerprint))fail('SOURCE_MANIFEST_BINDING');
   if(digest(html)!==r.artifact?.sha256||digest({sourceOutcomes:r.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256})!==r.evidenceSha256)fail('EVIDENCE_HASH');
   const m=extractNightActionModel(html);if(m.schemaVersion!==9||m.status!==r.status||m.sourceDate!==sourceDate||m.dataDate!==dataDate||m.evidenceSha256!==r.evidenceSha256||m.sourceManifestSha256!==r.sourceManifestSha256||JSON.stringify(m.sourceOutcomes)!==JSON.stringify(r.sourceOutcomes))fail('MODEL_BINDING');
+  if(Object.hasOwn(r,'captureCompletedAt')){
+    const end=Date.parse(r.captureCompletedAt),start=Date.parse(r.startedAt),done=Date.parse(r.completedAt);
+    // Synchronous receipt validation reads only the fixed local registration
+    // for this new local-capture contract. Independent admission also validates
+    // the registry schema, exact request and all registered source hashes.
+    const registration=JSON.parse(readFileSync(new URL('../../security/xuan-owner-source-recovery.json',import.meta.url),'utf8'));
+    const declared=registration.referenceCapture;
+    const ref=declared?.captureStartedAt===r.startedAt&&declared.captureCompletedAt===r.captureCompletedAt?declared:null;
+    if((r.referenceMode??null)!==(ref?.schema??null))fail('REFERENCE_BINDING');
+    if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!Number.isFinite(end)||new Date(end).toISOString()!==r.captureCompletedAt
+      ||r.captureCompletedAt!==m.provenance?.capture?.completedAt||m.provenance.capture.startedAt!==r.startedAt
+      ||!Number.isFinite(start)||!Number.isFinite(done)||end<start||end-start>300000||done<end||done>(ref?Date.parse(ref.expiresAt):start+1800000))fail('CAPTURE_WINDOW');
+  }
   if(r.calculationBasis!==m.calculationBasis)fail('CALCULATION_BASIS');
   if(Object.hasOwn(r,'dateBasis')!==Object.hasOwn(m,'dateBasis')||r.dateBasis!==m.dateBasis)fail('DATE_BASIS_BINDING');
   if(Object.hasOwn(m,'concentration')!==Object.hasOwn(r,'concentration'))fail('CONCENTRATION_BINDING');

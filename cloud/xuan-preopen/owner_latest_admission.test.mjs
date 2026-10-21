@@ -318,7 +318,7 @@ import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
 import {createOwnerLatestPublisher,LATEST_HEADERS} from './owner_latest.mjs';
 import {ordersReadCli} from './orders_read.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
-async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,currentBookDate=false,timeOverride=null}={}){
+async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,currentBookDate=false,timeOverride=null,processingDelayMs=0}={}){
   const reg=registeredOwnerRecovery(),time=timeOverride??Date.parse(reg.dataDate+'T02:25:00.000Z'),sourceDate=currentBookDate?reg.dataDate:new Date(time-86400000).toISOString().slice(0,10),captureStartedAt=new Date(time-60000).toISOString();
   const snapshots={};
   for(const key of Object.keys(SNAPSHOT_SCOPES)){
@@ -332,8 +332,8 @@ async function browserAttempt({edit=()=>{},failWrite=false,ordersCapture=null,cu
   const objects=new Map(),events=[];
   const access={beginEvidence:async args=>{events.push('claim');return {...args,dataDate:reg.dataDate,runId:'11111111-2222-4333-8444-555555555555'};},
     writeEvidence:async(name,bytes)=>{events.push('write');if(failWrite)throw Error('SYNTHETIC_UNCERTAIN');assert.ok(!objects.has(name));const generation=String(objects.size+2);objects.set(name,{bytes:Buffer.from(bytes),generation});return {generation,sha256:digest(Buffer.from(bytes).toString())};}};
-  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture,access,now:()=>time,loadContext:async()=>context(time)});
-  return {reg,time,sourceDate,objects,events,execute};
+  const execute=()=>composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture,access,now:()=>time+processingDelayMs,loadContext:async()=>context(time+processingDelayMs)});
+  return {reg,time:time+processingDelayMs,sourceDate,objects,events,execute};
 }
 function browserOrdersCapture(raw={orders:[order()],complete:true}){
   const d=registeredOwnerRecovery().dataDate;
@@ -499,4 +499,33 @@ test('browser valuation future/mixed dates and stale intake stop before a claim,
     s=>s['sharesight.ibGroupedPerformance'].observation.positions[0].priceDate='2026-10-20']){
     const f=await browserAttempt({currentBookDate:true,edit});await assert.rejects(f.execute);assert.deepEqual(f.events,[]);
   }
+});
+
+
+test('saved browser capture separates collection from processing; delayed admission retains true source times',async()=>{
+  const f=await browserAttempt({currentBookDate:true,ordersCapture:browserOrdersCapture(),processingDelayMs:15*60000});
+  const r=await f.execute(),html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes;
+  assert.equal(r.receipt.captureCompletedAt,f.reg.dataDate+'T02:24:30.000Z');
+  assert.equal(r.receipt.completedAt,f.reg.dataDate+'T02:40:00.000Z');
+  const metadata=ownerBundleMetadata({html,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,
+    artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256},r.receipt);
+  const verify=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async pin=>f.objects.get(pin.name).bytes});
+  assert.equal((await verify({metadata,html,receipt,now:f.time,phase:'candidate-admission'})).financialStatus,'complete');
+  assert.equal(metadata.captureEndedAt,r.receipt.captureCompletedAt);
+  const stale=await browserAttempt({processingDelayMs:30*60000});await assert.rejects(stale.execute);assert.equal(stale.events.length,0);
+  const prolonged=browserOrdersCapture();prolonged.sources[0].completedAt=f.reg.dataDate+'T02:30:00.000Z';
+  const invalid=await browserAttempt({ordersCapture:prolonged,processingDelayMs:15*60000});await assert.rejects(invalid.execute);assert.equal(invalid.events.length,0);
+});
+
+
+import {registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources} from './owner_source_recovery.mjs';
+test('reference exception is exact request, times and source fingerprints; all other captures retain thirty minutes',()=>{
+  const reg=registeredOwnerRecovery(),r=reg.referenceCapture;
+  assert.equal(ownerCaptureDeadline(reg.requestId,r.captureStartedAt,r.captureCompletedAt),Date.parse(r.expiresAt));
+  assert.equal(ownerCaptureDeadline('other-request',r.captureStartedAt,r.captureCompletedAt),Date.parse(r.captureStartedAt)+1800000);
+  assert.equal(registeredReferenceCapture(reg.requestId,r.captureStartedAt,new Date(Date.parse(r.captureCompletedAt)+1).toISOString()),null);
+  const values=Object.fromEntries(['sharesight.ibGroupedPerformance','sharesight.noahPerformance'].map(k=>[k,{rawFingerprint:r.sourceHashes[k]}]));
+  values['ib.optionalLive']={sources:[{rawFingerprint:r.sourceHashes['ib.orders']}]};validateReferenceSources(r,values);
+  values['ib.optionalLive'].sources[0].rawFingerprint='0'.repeat(64);assert.throws(()=>validateReferenceSources(r,values),/REFERENCE_SOURCE_BINDING/);
+  assert.equal(r.expiresAt,reg.dataDate+'T15:59:59.999Z');
 });

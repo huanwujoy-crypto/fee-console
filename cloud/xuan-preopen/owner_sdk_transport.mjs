@@ -6,7 +6,7 @@ import {createHash} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {types as utilTypes} from 'node:util';
 import {recoveryRequestId,originalReportStart} from './owner_bundle_contract.mjs';
-import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
+import {registeredOwnerRecovery,ownerCaptureDeadline} from './owner_source_recovery.mjs';
 import {LATEST_TARGET,MAX_BYTES} from './owner_latest.mjs';
 import {validatePreviewReplacementRegistration,previewReplacementRegistrationText,acceptedPreviewRegistrationText} from './owner_accepted_preview.mjs';
 
@@ -217,13 +217,14 @@ export function createOwnerSdkTransport(){
   };
   return Object.freeze({
     async inspectEvidenceAttempt({signal}={}){return call({op:'inspectEvidence'},{signal});},
-    async beginEvidence({requestId,captureStartedAt,signal}={}){
-      const registration=registeredOwnerRecovery(),start=Date.parse(captureStartedAt);
+    async beginEvidence({requestId,captureStartedAt,captureCompletedAt,signal}={}){
+      const registration=registeredOwnerRecovery(),start=Date.parse(captureStartedAt),end=Date.parse(captureCompletedAt),savedCapture=captureCompletedAt!==undefined;
       if(requestId!==registration.requestId||typeof captureStartedAt!=='string'||!Number.isFinite(start)
-        ||new Date(start).toISOString()!==captureStartedAt||start>Date.now()||Date.now()-start>300000
+        ||new Date(start).toISOString()!==captureStartedAt||start>Date.now()||Date.now()>(savedCapture?ownerCaptureDeadline(requestId,captureStartedAt,captureCompletedAt):start+300000)
+        ||savedCapture&&(!Number.isFinite(end)||new Date(end).toISOString()!==captureCompletedAt||end<start||end-start>300000||end>Date.now())
         ||new Date(Date.now()+28800000).toISOString().slice(0,10)!==registration.dataDate)throw fail('REQUEST_INVALID');
       if(evidenceStarted)throw fail('WRITE_ALREADY_ATTEMPTED');evidenceStarted=true;mutationStarted=true;
-      try{return await call({op:'beginEvidence',requestId,captureStartedAt},{signal});}catch(error){evidenceClosed=true;throw error;}
+      try{return await call({op:'beginEvidence',requestId,captureStartedAt,...(savedCapture?{captureCompletedAt}:{})},{signal});}catch(error){evidenceClosed=true;throw error;}
     },
     async writeEvidence(name,bytes,{signal}={}){
       if(!evidenceStarted||evidenceClosed)throw fail('WRITE_ALREADY_ATTEMPTED');

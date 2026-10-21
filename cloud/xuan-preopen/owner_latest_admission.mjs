@@ -5,7 +5,7 @@ import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_
 import crypto from 'node:crypto';
 import {types as nodeTypes} from 'node:util';
 import {ownerBundlePathsMatch,recoveryRequestId} from './owner_bundle_contract.mjs';
-import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
+import {registeredOwnerRecovery,registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources} from './owner_source_recovery.mjs';
 import {validateEodReceipt,validateCompletedEodSession} from './eod_report.mjs';
 import {adaptFlexArchive,digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -105,7 +105,9 @@ export function prepareOwnerStaticDisplay(input){
   display=display.replaceAll('class="distance">','class="distance" title="参考价差；同名持仓匹配，原生订单合约未核实">');
   display=display.replace(/(<div class="quote"><b>[^<]*<\/b><span>)([A-Z]{3})(<\/span>)/g,'$1$2·推定$3');
   const disclosure=model.calculationBasis===SHARESIGHT_BOOK_BASIS?'<aside class="notes" role="note"><p>私有只读报告；报告日、来源日和取数时间保持不变。按用户同步前提估算 Sharesight 账面预算。挂单币种与价差按关联持仓推定；覆盖或币种缺项时不计算净预算。所有结果均非券商实时可下单额。</p></aside>':'<aside class="notes" role="note"><p>私有只读报告；原报告日、来源日和取数时间保持不变。挂单所列币种及距市价仅为同名持仓匹配参考；原生挂单币种、合约 ID 与市场身份尚未核实，不能据此认定完整预留或可执行预算。</p></aside>';
-  display=display.replace('</header>','</header>'+disclosure);
+  const reference=registeredReferenceCapture(registeredOwnerRecovery().requestId,model.provenance?.capture?.startedAt,model.provenance?.capture?.completedAt);
+  const referenceNotice=reference?'<aside class="notes" role="note"><p>一次性参考快照，非实时数据。原始采集时间 '+reference.captureStartedAt+' 至 '+reference.captureCompletedAt+'；允许发布截止 '+reference.expiresAt+'。采集后价格、现金或挂单可能已变化。</p></aside>':'';
+  display=display.replace('</header>','</header>'+referenceNotice+disclosure);
   display=display.replace('<head>','<head><meta http-equiv="Content-Security-Policy" content="'+OWNER_DISPLAY_CSP+'"><meta name="referrer" content="no-referrer"><style>.quote span{font-size:10px;white-space:nowrap}</style>');
   if(!display.includes(OWNER_DISPLAY_CSP)||/<script\b/i.test(display))fail('STATIC_EXPORT');
   return new TextEncoder().encode(display);
@@ -122,9 +124,11 @@ function metadataBinding(m,r,htmlBytes,receiptBytes,model,time){
     ||r.artifact?.privateObject!==m.artifactObject||r.artifact.generation!==m.artifactGeneration
     ||!GEN.test(m.artifactGeneration)||!GEN.test(m.receiptGeneration)||m.artifactSha256!==sha(htmlBytes)
     ||m.receiptSha256!==sha(receiptBytes)||r.artifact.sha256!==m.artifactSha256)fail('METADATA_BINDING');
-  if(!instant(r.startedAt)||!instant(r.completedAt)||m.captureStartedAt!==r.startedAt||m.captureEndedAt!==r.completedAt
+  const captureEnd=r.captureCompletedAt??r.completedAt;
+  if(!instant(r.startedAt)||!instant(r.completedAt)||!instant(captureEnd)||captureEnd<r.startedAt||captureEnd>r.completedAt
+    ||m.captureStartedAt!==r.startedAt||m.captureEndedAt!==captureEnd
     ||m.completedAt!==r.completedAt||r.startedAt>r.completedAt||Date.parse(r.completedAt)>time)fail('TIMES');
-  if(Date.parse(r.completedAt)-Date.parse(r.startedAt)>300000)fail('CAPTURE_WINDOW');
+  if(Date.parse(captureEnd)-Date.parse(r.startedAt)>300000)fail('CAPTURE_WINDOW');
   reportCaptureWindow(model,r);
   const unknowns=m.unknownFields,allowed=['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'];
   const required=actionUnknownFields(model);
@@ -251,7 +255,7 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS){
         try{validateCompletedEodSession(r.sourceDate,Date.parse(r.startedAt));}catch{fail('COMPLETED_SESSION_REQUIRED');}
       }
-      if(phase==='candidate-admission'&&(time-Date.parse(r.startedAt)>1800000
+      if(phase==='candidate-admission'&&(time>ownerCaptureDeadline(recoveryId,r.startedAt,r.captureCompletedAt)
         ||new Date(time+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       const contextOptions={phase,policyCommit:phase==='historical-authenticity'?r.association.policyCommit:undefined,now:()=>clock(),...(signal?{signal}:{})};
       validatorPoint='context-first';const context=await loadContext(contextOptions),contextHash=contextBinding(context,r,phase,clock()),call=callBinding(context,model);
@@ -275,12 +279,15 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
             ||!['cloud-mcp','mac-mcp'].includes(normal.channel))fail('RECOVERY_SOURCE_BINDING');
         }else if(live.probeEvidence?.object?.name!==`report-check/orders-probe-${recoveryId}/orders.json`)fail('RECOVERY_SOURCE_BINDING');
       }
+      const reference=registeredReferenceCapture(recoveryId,r.startedAt,r.captureCompletedAt);
+      if((r.referenceMode??null)!==(reference?.schema??null))fail('REFERENCE_BINDING');
+      validateReferenceSources(reference,values);
       sourceModel(values,r,model,context,call);
       signal?.throwIfAborted();validatorPoint='context-second';const current=await loadContext(contextOptions),endTime=clock();
       signal?.throwIfAborted();validatorPoint='final-check';if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');
       if(contextBinding(current,r,phase,endTime)!==contextHash)fail('CONTEXT_CHANGED');
       callBinding(current,model);
-      if(phase==='candidate-admission'&&(endTime-Date.parse(r.startedAt)>1800000
+      if(phase==='candidate-admission'&&(endTime>ownerCaptureDeadline(recoveryId,r.startedAt,r.captureCompletedAt)
         ||new Date(endTime+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       return {scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,
         sourceIdentitySha256:SOURCE_IDENTITY_SHA256,policyRevision:fingerprint(current.association.policy),financialStatus:m.financialStatus};
