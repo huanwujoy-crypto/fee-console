@@ -253,7 +253,7 @@ def validate_multipart(body, content_type, daily=False):
         metadata = json_loads(custom['bundleMetadata'])
         if (not isinstance(metadata, dict) or metadata.get('schema') != 'xuan.owner-latest.v1'
                 or metadata.get('scope') != 'ib-hk-classified-stocks__cash-ib-hk-noah-hk__orders-ib.v1'
-                or metadata.get('dataDate') != daily_date() or metadata.get('financialStatus') != 'partial'):
+                or metadata.get('dataDate') != daily_date() or metadata.get('financialStatus') not in ('partial', 'complete')):
             reject('MULTIPART_METADATA_INVALID')
         for key in keys - {'bundleMetadata', 'displaySha256'}:
             if metadata.get(key) != custom[key]:
@@ -600,6 +600,8 @@ class OwnerBridge:
         self.closed = False
         self.write_started = False
         self.canary_attempted = False
+        self.evidence_attempted = False
+        self.evidence = None
         self.mutation_started = False
         # Only populated by authenticated responses, never a caller pin list.
         self.daily_pins = {}
@@ -749,6 +751,143 @@ class OwnerBridge:
                                 ('attachment', 'no-cache, no-store, max-age=0, must-revalidate'))):
             reject('REPLACEMENT_CANARY_CURRENT')
 
+    def inspect_evidence_attempt(self):
+        registration = recovery_registration()
+        name = 'report-check/orders-probe-'+registration['requestId']+'/start.json'
+        result = self.raw_request('https://storage.googleapis.com/storage/v1/b/'+BUCKET+'/o/'+quote(name, safe=''),
+                                  'GET', {'Accept': 'application/json', 'Accept-Encoding': 'identity'}, None)
+        if result['status'] == 404:
+            return {'exists': False}
+        if result['status'] != 200:
+            reject('READ_FAILED')
+        metadata = json_loads(base64.b64decode(result['body'], validate=True))
+        if metadata.get('bucket') != BUCKET or metadata.get('name') != name or not GEN.fullmatch(str(metadata.get('generation'))):
+            reject('PIN_REQUIRED')
+        return {'exists': True, 'generation': metadata['generation']}
+
+    def evidence_upload(self, name, raw, content_type):
+        evidence = self.evidence
+        if (not evidence or evidence['blocked'] or evidence['count'] >= 10
+                or not isinstance(raw, bytes) or not 0 < len(raw) <= 4*1024*1024
+                or evidence['bytes']+len(raw) > 32*1024*1024 or name in evidence['attempted']):
+            reject('WRITE_ALREADY_ATTEMPTED')
+        now = time.time()*1000
+        start = evidence['startMs']
+        if (not start <= now <= start+300000 or now < evidence['lastWall']
+                or time.monotonic()-evidence['monotonic'] > (start+300000-evidence['initialWall'])/1000
+                or daily_date() != evidence['registration']['dataDate']):
+            reject('REPLACEMENT_ADMISSION_EXPIRED')
+        evidence['lastWall'] = now
+        digest = hashlib.sha256(raw).hexdigest()
+        boundary = 'xuan_evidence_'+digest
+        resource = {'name': name, 'contentType': content_type, 'contentDisposition': 'attachment',
+                    'cacheControl': 'private, no-store, max-age=0'}
+        body = ('--'+boundary+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'+json.dumps(resource)
+                +'\r\n--'+boundary+'\r\nContent-Type: '+content_type+'\r\n\r\n').encode()+raw+('\r\n--'+boundary+'--\r\n').encode()
+        # Reserve before HTTP. An uncertain/failed write closes evidence writes;
+        # the immutable claim prevents a new process from resetting this budget.
+        evidence['attempted'].add(name); evidence['count'] += 1; evidence['bytes'] += len(raw)
+        self.mutation_started = True
+        try:
+            result = self.raw_request('https://storage.googleapis.com/upload/storage/v1/b/'+BUCKET+'/o?uploadType=multipart&ifGenerationMatch=0',
+                                      'POST', {'Content-Type': 'multipart/related; boundary='+boundary, 'Accept': 'application/json', 'Accept-Encoding': 'identity'}, body)
+            if result['status'] != 200:
+                reject('WRITE_ALREADY_ATTEMPTED' if result['status'] == 412 else 'REQUEST_OUTCOME_UNKNOWN')
+            value = json_loads(base64.b64decode(result['body'], validate=True))
+            if (value.get('bucket') != BUCKET or value.get('name') != name or value.get('size') != str(len(raw))
+                    or not GEN.fullmatch(str(value.get('generation')))
+                    or value.get('md5Hash') != base64.b64encode(hashlib.md5(raw).digest()).decode()):
+                reject('REQUEST_OUTCOME_UNKNOWN')
+            pin = {'generation': value['generation'], 'sha256': digest}
+            evidence['written'][name] = pin
+            return pin
+        except Exception:
+            evidence['blocked'] = True
+            raise
+
+    def begin_evidence(self, value):
+        registration = recovery_registration()
+        if (set(value) != {'op', 'requestId', 'captureStartedAt'} or value['requestId'] != registration['requestId']
+                or registration['dataDate'] != daily_date() or self.evidence_attempted):
+            reject('REQUEST_INVALID')
+        start = value['captureStartedAt']
+        try:
+            dt = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
+            start_ms = dt.timestamp()*1000
+        except Exception:
+            reject('REQUEST_INVALID')
+        if (not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', str(start))
+                or dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z') != start
+                or not 0 <= time.time()*1000-start_ms <= 300000):
+            reject('REQUEST_INVALID')
+        self.evidence_attempted = True
+        if self.inspect_evidence_attempt()['exists']:
+            reject('WRITE_ALREADY_ATTEMPTED')
+        run_id = str(uuid_module.uuid4())
+        prefix = 'report-check/'+start+'-'+run_id+'/'
+        self.evidence = {'registration': registration, 'start': start, 'startMs': start_ms, 'prefix': prefix,
+                         'attempted': set(), 'written': {}, 'count': 0, 'bytes': 0, 'blocked': False,
+                         'lastWall': time.time()*1000, 'initialWall': time.time()*1000, 'monotonic': time.monotonic()}
+        claim = {'schema': 'xuan.browser-evidence-attempt.v1', 'requestId': registration['requestId'],
+                 'dataDate': registration['dataDate'], 'captureStartedAt': start, 'runId': run_id,
+                 'createdAt': instant(), 'maximumObjects': 10, 'maximumBytes': 32*1024*1024,
+                 'sourceMode': 'sharesight-browser-no-ib-route'}
+        pin = self.evidence_upload('report-check/orders-probe-'+registration['requestId']+'/start.json',
+                                   json.dumps(claim, sort_keys=True).encode(), 'application/json; charset=utf-8')
+        return {'requestId': registration['requestId'], 'dataDate': registration['dataDate'],
+                'captureStartedAt': start, 'runId': run_id, 'claim': pin}
+
+    def write_evidence(self, value):
+        if set(value) != {'op', 'name', 'body'} or not self.evidence or self.evidence['blocked']:
+            reject('REQUEST_INVALID')
+        evidence = self.evidence; prefix = evidence['prefix']; registration = evidence['registration']; name = value['name']
+        keys = ('ib.flexEod', 'sharesight.ibGroupedPerformance', 'sharesight.noahPerformance', 'ib.optionalLive')
+        paths = {prefix+k+'.json': k for k in keys}
+        receipt_name = prefix+'receipt.json'; preview_name = registration['receiptObject']; html_name = prefix+'report.html'
+        if name not in {*paths, receipt_name, preview_name, html_name}:
+            reject('TARGET_INVALID')
+        try:
+            raw = base64.b64decode(value['body'], validate=True)
+            text = raw.decode('utf-8')
+        except Exception:
+            reject('BODY_INVALID')
+        if name != html_name:
+            payload = json_loads(raw)
+            if not isinstance(payload, dict):
+                reject('BODY_INVALID')
+            if name in paths:
+                key = paths[name]
+                if key == 'ib.flexEod' and payload != {'status': 'not-called', 'code': 'FLEX_NOT_CALLED'}:
+                    reject('BODY_INVALID')
+                if key == 'ib.optionalLive' and payload != {'status': 'not-called', 'code': 'IB_MCP_ROUTES_UNAVAILABLE'}:
+                    reject('BODY_INVALID')
+                if key.startswith('sharesight.') and (payload.get('sourceKey') != key or payload.get('status') != 'date-verified'
+                        or payload.get('raw', {}).get('source') != 'Sharesight authenticated cloud browser visible DOM'):
+                    reject('BODY_INVALID')
+            else:
+                if len(raw) > 128*1024:
+                    reject('BODY_INVALID')
+                if (payload.get('mode') != 'private_eod_action' or payload.get('publication') != 'none'
+                        or payload.get('calculationBasis') != 'sharesight-book-user-synchronized.v1'
+                        or payload.get('dataDate') != registration['dataDate'] or payload.get('startedAt') != evidence['start']
+                        or payload.get('sourceCount') != 4 or len(payload.get('sources', [])) != 4
+                        or {s.get('sourceKey') for s in payload['sources']} != set(keys)):
+                    reject('BODY_INVALID')
+                for source in payload['sources']+[payload.get('artifact', {})]:
+                    n = source.get('privateObject'); pin = evidence['written'].get(n)
+                    if not pin or source.get('generation') != pin['generation'] or source.get('sha256') != pin['sha256']:
+                        reject('PIN_REQUIRED')
+                if payload['artifact']['privateObject'] != html_name or any(s['privateObject'] != prefix+s['sourceKey']+'.json' for s in payload['sources']):
+                    reject('PIN_REQUIRED')
+                if name == preview_name and evidence['written'].get(receipt_name, {}).get('sha256') != hashlib.sha256(raw).hexdigest():
+                    reject('PIN_REQUIRED')
+        elif not text.startswith('<!doctype html>') or len(raw) > 2*1024*1024:
+            reject('BODY_INVALID')
+        result = self.evidence_upload(name, raw, 'text/html; charset=utf-8' if name == html_name else 'application/json; charset=utf-8')
+        if name == preview_name:
+            evidence['blocked'] = True  # completed: no further evidence writes
+        return result
+
     def daily_pin(self, name, generation, digest=None):
         if (not isinstance(name, str) or not isinstance(generation, str) or not GEN.fullmatch(generation)
                 or digest is not None and (not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest))):
@@ -791,7 +930,9 @@ class OwnerBridge:
         receipt = json_loads(raw)
         date = receipt.get('dataDate') if recovery_receipt(name) else name.split('/')[1]
         if (receipt.get('mode') != 'private_eod_action' or receipt.get('dataDate') != date
-                or receipt.get('status') != 'partial' or receipt.get('publication') != 'none'
+                or not (receipt.get('status') == 'partial' or receipt.get('status') == 'ready'
+                        and receipt.get('calculationBasis') == 'sharesight-book-user-synchronized.v1')
+                or receipt.get('publication') != 'none'
                 or receipt.get('sourceCount') != 4 or not isinstance(receipt.get('sources'), list)
                 or len(receipt['sources']) != 4
                 or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', str(receipt.get('startedAt')))):
@@ -854,7 +995,8 @@ class OwnerBridge:
             if (metadata.get('captureStartedAt') != receipt.get('startedAt')
                     or metadata.get('captureEndedAt') != receipt.get('completedAt')
                     or metadata.get('completedAt') != receipt.get('completedAt')
-                    or metadata.get('sourceDate') != receipt.get('sourceDate')):
+                    or metadata.get('sourceDate') != receipt.get('sourceDate')
+                    or metadata.get('financialStatus') != ('complete' if receipt.get('status') == 'ready' else 'partial')):
                 reject('PIN_REQUIRED')
             # Repeat the current pointer and registered canary check at the
             # native boundary; neither a caller pin nor upload ACK supplies it.
@@ -915,6 +1057,12 @@ class OwnerBridge:
         if not isinstance(value, dict):
             reject('REQUEST_INVALID')
         op = value.get('op')
+        if op == 'inspectEvidence' and set(value) == {'op'}:
+            return self.inspect_evidence_attempt()
+        if op == 'beginEvidence':
+            return self.begin_evidence(value)
+        if op == 'writeEvidence':
+            return self.write_evidence(value)
         if op == 'dailyRequest':
             return self.daily_request(value)
         if op == 'replaceAcceptedPreview':

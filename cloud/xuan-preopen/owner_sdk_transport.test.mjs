@@ -247,3 +247,28 @@ test('registered recovery uses GET discovery only; original report remains gener
   });
   assert.equal(seen.length,2);assert.ok(seen.every(v=>v.op==='dailyRequest'&&v.method==='GET'));
 });
+
+import {registeredOwnerRecovery} from './owner_source_recovery.mjs';
+import {createHash} from 'node:crypto';
+test('evidence bridge protocol is separate, finite, pinned and stops after uncertain outcome',async t=>{
+  const reg=registeredOwnerRecovery(),now=Date.parse(reg.dataDate+'T02:00:00.000Z');t.mock.method(Date,'now',()=>now);
+  const start=new Date(now).toISOString(),name=`report-check/${start}-11111111-2222-4333-8444-555555555555/ib.optionalLive.json`,bytes=Buffer.from('{"synthetic":true}');
+  const ops=[];
+  await fakeWorker(frame=>{const v=frame.value;ops.push(v.op);return {id:frame.id,result:v.op==='inspectEvidence'?{exists:false}:v.op==='beginEvidence'?{requestId:reg.requestId,dataDate:reg.dataDate,captureStartedAt:start,runId:'11111111-2222-4333-8444-555555555555'}:{generation:'2',sha256:createHash('sha256').update(Buffer.from(v.body,'base64')).digest('hex')},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,bytes));
+    assert.deepEqual(await sdk.inspectEvidenceAttempt(),{exists:false});
+    await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:'old-attempt',captureStartedAt:start}));
+    await sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start});
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start}));
+    await rejected('TARGET_INVALID',()=>sdk.writeEvidence('delivery/owner-latest.html',bytes));
+    assert.equal((await sdk.writeEvidence(name,bytes)).generation,'2');
+    await sdk.writeEvidence(reg.receiptObject,bytes);await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,bytes));
+  });
+  assert.deepEqual(ops,['inspectEvidence','beginEvidence','writeEvidence','writeEvidence']);
+  let frames=0;
+  await fakeWorker(frame=>{frames++;return {id:frame.id,error:'REQUEST_OUTCOME_UNKNOWN',safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    await rejected('REQUEST_OUTCOME_UNKNOWN',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start}));
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start}));
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,bytes));
+  });assert.equal(frames,1);
+});

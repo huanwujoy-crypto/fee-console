@@ -1,6 +1,6 @@
 // Private composition after one separately approved cloud orders test. No IB
 // reader, refresh, job dispatch, public write, key or credential creation here.
-import {digest} from './eod_sources.mjs';
+import {digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE} from './eod_sources.mjs';
 import {runPrivateEodReport} from './eod_report.mjs';
 import {loadTrustedContext,readSharesightAction} from './report.mjs';
 import {createEodSnapshotReader} from './eod_adapters.mjs';
@@ -40,15 +40,55 @@ export function validatePreviewOrdersBundle(bundle,{now=Date.now(),association,e
 }
 
 export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date.now,loadContext=loadTrustedContext,
-  readSharesight=readSharesightAction,expectedAccount=APPROVED_IB_ACCOUNT_ID,concentrationInput=null}={}){
+  readSharesight=readSharesightAction,expectedAccount=APPROVED_IB_ACCOUNT_ID,concentrationInput=null,assumeSharesightSynchronized=true,snapshotReader:providedSnapshotReader=null,captureStartedAt=null}={}){
   if(typeof io?.savePrivate!=='function'||typeof loadContext!=='function')fail();
   const context=await loadContext({now});validateAssociationSnapshot(context.association,{now:now(),edition:'am'});
   const source=validatePreviewOrdersBundle(bundle,{now:now(),association:context.association,expectedAccount});
-  const snapshotReader=createEodSnapshotReader({sourceDate,readSharesightBatch:async date=>{
+  const snapshotReader=providedSnapshotReader??createEodSnapshotReader({sourceDate,readSharesightBatch:async date=>{
     if(typeof io.loadGatewayToken!=='function')throw Error('SHARESIGHT_READ_SCOPE_INVALID');
     const token=await io.loadGatewayToken();return readSharesight(date,token,{now,settle:true});
   }});
-  return runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,initialStartedAt:Date.parse(source.startedAt),
+  return runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,initialStartedAt:captureStartedAt===null?Date.parse(source.startedAt):Date.parse(captureStartedAt),
     readArchive:null,verifyArchive:null,snapshotReader,
-    captureOptionalLive:async()=>({status:'captured',sources:[source],probeEvidence:{receiptSha256:bundle.receiptSha256,object:bundle.object}}),concentrationInput});
+    captureOptionalLive:async()=>({status:'captured',sources:[source],probeEvidence:{receiptSha256:bundle.receiptSha256,object:bundle.object}}),concentrationInput,assumeSharesightSynchronized});
+}
+
+// No source clients: the parent supplies authenticated browser observations.
+// Validate/model/render every object locally before the one create-only claim.
+// The real access factory is separately protected; tests inject only synthetic IO.
+export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,access,now=Date.now,loadContext=loadTrustedContext}={}){
+  // Local-only recovery registration is outside the unchanged cloud image.
+  const {registeredOwnerRecovery}=await import('./owner_source_recovery.mjs');
+  const registration=registeredOwnerRecovery(),keys=Object.keys(SNAPSHOT_SCOPES),start=Date.parse(captureStartedAt);
+  if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()-start>300000||hkt(start)!==registration.dataDate
+    ||!snapshots||Object.keys(snapshots).sort().join('|')!==keys.sort().join('|')
+    ||typeof access?.beginEvidence!=='function'||typeof access?.writeEvidence!=='function')fail();
+  const verified={};
+  for(const key of keys){
+    const raw=snapshots[key];if(raw?.source!==SHARESIGHT_BROWSER_SOURCE)fail();
+    const value=await readVerifiedSnapshot(key,{reader:async()=>({raw}),sourceDate,now});
+    if(value.status!=='date-verified'||Date.parse(value.provenance?.readAt)<start||Date.parse(value.provenance?.readAt)>now())fail();
+    verified[key]=structuredClone(raw);
+  }
+  const context=await loadContext({now}),contextReader=async()=>context;
+  let stagedBytes=0;
+  await runPrivateEodReport({sourceDate,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,
+    readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
+    snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive:async()=>({status:'not-called',code:'IB_MCP_ROUTES_UNAVAILABLE'}),
+    io:{savePrivate:async(name,value)=>{const size=Buffer.byteLength(typeof value==='string'?value:JSON.stringify(value));
+      const limit=name.endsWith('/report.html')?2*1024*1024:name.endsWith('/receipt.json')?128*1024:4*1024*1024;
+      stagedBytes+=size;if(size>limit||stagedBytes>31*1024*1024)fail();return {generation:'1',sha256:digest(value)};}}});
+  // All model, date, CALL, normalization and HTML checks above finish without IO.
+  // Native admission chooses the immutable run ID; rebuild from these same
+  // verified in-memory values, then upload once with actual generation pins.
+  const attempt=await access.beginEvidence({requestId:registration.requestId,captureStartedAt});
+  if(attempt.requestId!==registration.requestId||attempt.dataDate!==registration.dataDate||attempt.captureStartedAt!==captureStartedAt
+    ||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(attempt.runId))fail();
+  const reportRunId=attempt.runId;
+  const saved=await runPrivateEodReport({sourceDate,now,loadContext:contextReader,fieldMode:true,initialStartedAt:start,sourceRunId:reportRunId,
+    readArchive:null,verifyArchive:null,assumeSharesightSynchronized:true,
+    snapshotReader:async({sourceKey})=>({raw:verified[sourceKey]}),captureOptionalLive:async()=>({status:'not-called',code:'IB_MCP_ROUTES_UNAVAILABLE'}),
+    io:{savePrivate:(name,value)=>access.writeEvidence(name,Buffer.from(typeof value==='string'?value:JSON.stringify(value)))}});
+  const bytes=Buffer.from(JSON.stringify(saved)),pin=await access.writeEvidence(registration.receiptObject,bytes);
+  return {requestId:registration.requestId,receipt:saved,receiptObject:registration.receiptObject,...pin};
 }
