@@ -1,3 +1,4 @@
+import {SHARESIGHT_BROWSER_SOURCE} from './eod_sources.mjs';
 // Synthetic offline evidence only. No captured accounts/values, real storage,
 // credentials, network, uploads or production context are used.
 import test from 'node:test';
@@ -24,16 +25,27 @@ function snapshot(key){
   return {raw:{mode:'read_only',source:'Sharesight User API',data:{report:{portfolio_id:scope.portfolioId,currency:{code:'USD'},start_date:SOURCE,end_date:SOURCE,include_sales:false,
     ...(key==='sharesight.ibGroupedPerformance'?{grouping:'custom_group_category',custom_group:{id:Number(scope.grouping),name:'资产类别'},holdings:[h(1,'美国底仓',450,'CSPX'),h(2,'美国底仓',50,'USSC'),h(3,'美国科技',250,'GOOG'),h(4,'非美发达',180,'EXUS'),h(5,'新兴市场',70,'EIMI'),h(6,'防御资产',90,'TLT')]}:{grouping:scope.grouping}),cash_accounts:[{value:200}]}}}};
 }
-async function fixture({live=true,fieldMode=true,saveDelayMs=0}={}){
+async function fixture({live=true,fieldMode=true,saveDelayMs=0,book=false,completeOrders=false,browser=false,browserClassification=true}={}){
   const objects=new Map();let generation=0,time=NOW;
   const io={savePrivate:async(name,value)=>{const bytes=encode(typeof value==='string'?value:JSON.stringify(value));objects.set(name,bytes);time+=saveDelayMs;return {sha256:digest(typeof value==='string'?value:JSON.stringify(value)),generation:String(++generation)};}};
-  const startedAt=new Date(NOW-60000).toISOString(),completedAt=new Date(NOW-10000).toISOString(),raw={orders:[order()]};
+  const startedAt=new Date(NOW-60000).toISOString(),completedAt=new Date(NOW-10000).toISOString(),raw={orders:[order()],...(completeOrders?{complete:true}:{})};
   const cfg=context().eodConfiguration;
   const xml=`<AF><FlexStatements><FlexStatement accountId="${cfg.account}" fromDate="2026-10-01" toDate="${SOURCE}" whenGenerated="2026-10-15;00:15:30"><CashReport><CashReportCurrency accountId="${cfg.account}" reportDate="${SOURCE}" levelOfDetail="BaseCurrency" currency="BASE_SUMMARY" endingCash="200" endingSettledCash="180"/><CashReportCurrency accountId="${cfg.account}" reportDate="${SOURCE}" levelOfDetail="Currency" currency="USD" endingCash="200" endingSettledCash="180"/></CashReport></FlexStatement></FlexStatements></AF>`;
   const archive={bytes:xml,metadata:{privateObject:'synthetic/offline/archive.xml',generation:'1',rawSha256:digest(xml),configuredQueryId:cfg.configuredQueryId,baseCurrency:'USD',providerTimezone:null}};
-  const receipt=await runPrivateEodReport({sourceDate:SOURCE,io,now:()=>time,loadContext:async()=>context(time),fieldMode,initialStartedAt:fieldMode?NOW-60000:null,
+  const receipt=await runPrivateEodReport({sourceDate:SOURCE,io,now:()=>time,loadContext:async()=>context(time),fieldMode,assumeSharesightSynchronized:book,initialStartedAt:fieldMode?NOW-60000:null,
     readArchive:fieldMode?null:async()=>archive,verifyArchive:fieldMode?null:async()=>({status:'archive-verified',account:cfg.account,configuredQueryId:cfg.configuredQueryId,sourceDate:SOURCE,rawSha256:digest(xml),generation:'1'}),
-    expectedAccount:cfg.account,expectedQueryId:cfg.configuredQueryId,snapshotReader:async({sourceKey})=>snapshot(sourceKey),
+    expectedAccount:cfg.account,expectedQueryId:cfg.configuredQueryId,snapshotReader:async({sourceKey})=>{const s=snapshot(sourceKey),r=s.raw.data.report;
+      if(book&&sourceKey==='sharesight.ibGroupedPerformance'){
+        r.value=r.holdings.reduce((n,h)=>n+h.value,0)+200;
+        for(const h of r.holdings){h.instrument.id=h.id;h.instrument.market_code='TEST';}
+      }
+      if(browser){
+        const ib=sourceKey==='sharesight.ibGroupedPerformance';
+        return {raw:{mode:'read_only',source:SHARESIGHT_BROWSER_SOURCE,observation:{portfolio:ib?'IB-HK':'NOAH-HK',valuationDate:SOURCE,retrievedAt:new Date(time).toISOString(),reportingCurrency:'USD',portfolioValue:ib?r.value:300,
+          positions:ib?r.holdings.map(h=>({instrument:h.instrument.code+' | TEST',price:10,priceCurrency:'USD',quantity:h.quantity,marketValueUSD:h.value,sourcePath:'/holdings/'+h.id,priceDate:null})):[{instrument:'SYNTH | OTHER',price:10,priceCurrency:'USD',quantity:10,marketValueUSD:100,sourcePath:'/holdings/99',priceDate:null}],
+          cash:[{name:'Synthetic cash',marketValueUSD:200,sourcePath:'/cash_accounts/1',nativeCurrency:'USD',nativeBalance:200}]},
+          classification:ib&&browserClassification?{sourceKey,status:'date-verified',raw:s.raw,rawFingerprint:digest(s.raw),provenance:{readAt:new Date(time-120000).toISOString(),sourceDate:SOURCE}}:null}};
+      }return s;},
     captureOptionalLive:live?async()=>({status:'captured',sources:[{sourceKey:'ib.orders',raw,rawFingerprint:fingerprint(raw),startedAt,completedAt}]}):null});
   const html=text(objects.get(receipt.artifact.privateObject)),model=extractNightActionModel(html);
   receipt.artifact={...receipt.artifact,privateObject:'delivery/2026-10-15/report.html'};
@@ -265,4 +277,26 @@ test('daily verifier propagates a real abort into context and pinned readers and
   const f=await fixture(),ac=new AbortController();let reads=0;
   const verify=verifier(f,{loadContext:async options=>{assert.equal(options.signal,ac.signal);return context();},readPinnedSource:async pin=>{reads++;assert.equal(pin.signal,ac.signal);if(reads===4)ac.abort();return f.objects.get(pin.name);}});
   await assert.rejects(verify({...args(f),signal:ac.signal}));assert.equal(reads,4);
+});
+
+test('book ready and partial candidates roundtrip through immutable source rebuilding and static export',async()=>{
+  for(const browser of [true,false])for(const completeOrders of [true,false]){
+    const f=await fixture({book:true,completeOrders,browser});
+    f.metadata=ownerBundleMetadata({html:f.htmlBytes,artifactObject:f.receipt.artifact.privateObject,artifactGeneration:f.receipt.artifact.generation,artifactSha256:digest(f.html),receiptObject:f.metadata.receiptObject,receiptGeneration:'99',receiptSha256:digest(JSON.stringify(f.receipt))},f.receipt);
+    const proof=await verifier(f)(args(f));assert.equal(proof.financialStatus,completeOrders?'complete':'partial');
+    assert.equal(f.reads.length,4);assert.equal(f.model.status,completeOrders?'ready':'partial');
+    const display=text(prepareOwnerStaticDisplay(f.htmlBytes));assert.match(display,/IB-HK 直接持仓/);assert.match(display,/计算前提/);assert.doesNotMatch(display,/<script/);
+    assert.equal(f.model.cash.executableBudget,null);assert.equal(f.model.provenance.sharesight[0].syncCompletedAt,null);
+    assert.equal(f.model.provenance.sharesight[0].channel,browser?'authenticated-browser':'api');
+    if(browser)assert.match(display,/分类沿用此前记录/);
+    const receipt=structuredClone(f.receipt);delete receipt.calculationBasis;
+    await assert.rejects(()=>verifier(f)({...args(f),receipt:encode(JSON.stringify(receipt))}));
+  }
+});
+
+test('a browser holding without prior class preserves book cash and direct concentration without guessing allocation',async()=>{
+  const f=await fixture({book:true,browser:true,browserClassification:false});
+  assert.equal(f.model.bookConcentration.status,'ready');assert.equal(f.model.cash.preOrderPlanning,350);
+  assert.equal(f.model.allocation.status,'unavailable');assert.equal(f.model.cash.planning,null);
+  assert.equal(f.model.status,'partial');assert.equal(f.model.cash.executableBudget,null);
 });

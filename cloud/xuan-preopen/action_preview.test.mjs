@@ -26,10 +26,10 @@ function bundle(raw={orders:[order(),order('SELL')],complete:true}){
 function batch(){const h=(id,group_name,value,code)=>({id,group_name,value,quantity:10,instrument:{code,currency:{code:'USD'}}});return [
   {sourceKey:'sharesight.ibGroupedPerformance',raw:{mode:'read_only',source:'Sharesight User API',data:{report:{portfolio_id:936247,currency:{code:'USD'},start_date:sourceDate,end_date:sourceDate,include_sales:false,grouping:'custom_group_category',custom_group:{id:83569,name:'资产类别'},holdings:[h(1,'美国底仓',450,'CSPX'),h(2,'美国底仓',50,'USSC'),h(3,'美国科技',250,'GOOG'),h(4,'非美发达',180,'EXUS'),h(5,'新兴市场',70,'EIMI'),h(6,'防御资产',90,'TLT')],cash_accounts:[{value:1000}]}}}},
   {sourceKey:'sharesight.noahPerformance',raw:{mode:'read_only',source:'Sharesight User API',data:{report:{portfolio_id:936238,currency:{code:'USD'},start_date:sourceDate,end_date:sourceDate,include_sales:false,grouping:'investment_type',cash_accounts:[{value:200}]}}}}];}
-async function run({raw,editBatch=()=>{},ledger=context().reserveLedger,now=()=>NOW,gatewayFailure=false,concentrationInput=null}={}){
+async function run({raw,editBatch=()=>{},ledger=context().reserveLedger,now=()=>NOW,gatewayFailure=false,concentrationInput=null,assumeSharesightSynchronized=true,snapshotReader=null}={}){
   const objects=new Map(),calls=[],c=context();c.reserveLedger=ledger;
   const io={savePrivate:async(name,value)=>{assert.equal(objects.has(name),false);objects.set(name,value);return {sha256:digest(value),generation:'1'};},loadGatewayToken:async()=>{calls.push('gateway-token');if(gatewayFailure)throw Error('SYNTHETIC_PRIVATE_ERROR');return 'SYNTHETIC_GATEWAY';},ibStore:new Proxy({}, {get:()=>assert.fail('Never contact IB or refresh again')}),loadFlexToken:()=>assert.fail('Never read Flex')};
-  const receipt=await composePrivateActionPreview({bundle:bundle(raw),sourceDate,io,now,loadContext:async()=>c,concentrationInput,readSharesight:async(date,token,opts)=>{calls.push('sharesight-batch');assert.equal(date,sourceDate);assert.equal(token,'SYNTHETIC_GATEWAY');assert.equal(opts.settle,true);const b=batch();editBatch(b);return b;}});
+  const receipt=await composePrivateActionPreview({bundle:bundle(raw),sourceDate,io,now,loadContext:async()=>c,concentrationInput,assumeSharesightSynchronized,snapshotReader,readSharesight:async(date,token,opts)=>{calls.push('sharesight-batch');assert.equal(date,sourceDate);assert.equal(token,'SYNTHETIC_GATEWAY');assert.equal(opts.settle,true);const b=batch();editBatch(b);return b;}});
   const html=objects.get(receipt.artifact.privateObject),model=extractNightActionModel(html);return {receipt,model,html,objects,calls};
 }
 export {run as buildSyntheticPreviewFixture};
@@ -212,7 +212,7 @@ test('private composer binds supplied concentration sources into model renderer 
     const raw={ok:true,mode:'read_only',route:'gateway',portfolio:{id,name:account.custodian,currency_code:'USD'},data:{report:{portfolio_id:id,value:100,start_date:sourceDate,end_date:sourceDate,include_sales:false,percentages_annualised:false,currency:{code:'USD'},holdings,cash_accounts:[{id:8800000+i,name:'Synthetic cash',value:i===0?99:100,currency:{code:'USD'}}]}}},bytes=JSON.stringify(raw);
     return {bytes,receipt:{sourceKey:keys[i],route:'gateway',status:'date-verified',sourceDate,startedAt:start,completedAt:end,sha256:digest(bytes),bytes:Buffer.byteLength(bytes)}};
   });
-  const r=await run({concentrationInput:{sources,cutoff:sourceDate}}),m=r.model;
+  const r=await run({concentrationInput:{sources,cutoff:sourceDate},assumeSharesightSynchronized:false}),m=r.model;
   assert.equal(m.concentration.status,'recorded');assert.equal(m.concentration.envelope.riskConstituents.length,1);assert.match(r.html,/单票集中度/);
   assert.doesNotMatch(r.html,/未接入 Schwab-HK／Webull/);assert.equal(m.provenance.capture.startedAt,start);assert.deepEqual(r.calls,['gateway-token','sharesight-batch']);
   assert.match(r.html,/\.concentration \.line\{display:flex;justify-content:space-between/);
@@ -233,6 +233,45 @@ test('three returned orders and cash facts are shown directly with coverage, inf
   const orders=[order(),{...order(),order_id:3},{...order(),order_id:4}],r=await run({raw:{orders}});
   assert.equal(r.model.orders.status,'partial');assert.equal(r.model.cash.status,'recorded');assert.equal(r.model.cash.orderReserve,null);assert.equal(validateNightActionHtml(r.html,'2026-10-15').orderCount,3);
   assert.equal((r.html.match(/class="order buy detailed"/g)||[]).length,3);assert.match(r.html,/已读记录，完整范围未核实/);assert.match(r.html,/本次返回未见/);assert.equal((r.html.match(/USD·推定/g)||[]).length,3);assert.match(r.html,/USD 按关联持仓推定/);
-  assert.match(r.html,/账面现金与 CALL 已记录/);assert.doesNotMatch(r.html,/现金、CALL、挂单覆盖或币种仍有缺项/);assert.doesNotMatch(r.html,/挂单或现金口径未齐，本轮补仓金额待核实/);assert.match(r.html,/<small>Sharesight 为账面现金；同步完成未核实；/);
+  assert.match(r.html,/扣挂单前账面可配置上限/);assert.doesNotMatch(r.html,/现金、CALL、挂单覆盖或币种仍有缺项/);assert.doesNotMatch(r.html,/挂单或现金口径未齐，本轮补仓金额待核实/);assert.match(r.html,/这是计算前提，未独立对账/);assert.doesNotMatch(r.html,/历史 Flex 核对未取得/);
   assert.deepEqual([...r.html.matchAll(/<h2>([^<]*)/g)].slice(0,4).map(x=>x[1]),['本轮补仓','挂单提醒','现金优先补仓参考','股票四类配置']);assert.match(r.html,/买单预占<\/b><span>未取得/);assert.equal(r.model.provenance.sharesight[0].syncCompletedAt,null);
+});
+
+function fullBook(b){
+  const r=b[0].raw.data.report;
+  r.value=r.holdings.reduce((n,h)=>n+h.value,0)+r.cash_accounts.reduce((n,c)=>n+c.value,0);
+  for(const h of r.holdings){h.instrument.id=h.id;h.instrument.market_code='TEST';}
+}
+test('book assumption exposes full direct concentration and CALL budget with no broker reconciliation claim',async()=>{
+  const {model:m,html,receipt}=await run({editBatch:fullBook});
+  assert.equal(m.status,'ready');assert.equal(receipt.status,'ready');assert.equal(receipt.calculationBasis,m.calculationBasis);
+  assert.equal(m.bookConcentration.total,2090);assert.equal(m.bookConcentration.cash,1000);assert.equal(m.bookConcentration.rows.length,6);
+  assert.equal(m.holdings.total,1000);assert.equal(m.holdings.rows.length,5);
+  assert.equal(m.cash.preOrderPlanning,1150);assert.equal(m.cash.orderReserve,60);assert.equal(m.cash.planning,1090);
+  assert.equal(m.cash.executableBudget,null);assert.equal(m.cash.reserve,100);assert.equal(m.cash.callApplied,50);
+  assert(m.provenance.sharesight.every(s=>s.syncCompletedAt===null&&s.receiptSha256===null));
+  assert.match(html,/IB-HK 直接持仓/);assert.match(html,/CALL 50%/);assert.match(html,/不是券商实时可下单额/);
+  assert.doesNotMatch(html,/Schwab|Webull|现金对账尚未核实|同步完成未核实/);
+  for(const change of [x=>x.cash.preOrderPlanning++,x=>x.bookConcentration.total++,x=>x.bookConcentration.rows[0].weightPct++,x=>x.calculationBasis='verified-sync']){
+    const bad=structuredClone(m);change(bad);assert.throws(()=>renderNightActionReport(bad));
+  }
+});
+test('missing orders or currency preserve pre-order book estimate and concentration without inventing reserve',async()=>{
+  for(const raw of [{orders:[]},{orders:[{...order(),primary_description:'Buy 10 UNKNOWN'}],complete:true}]){
+    const {model:m,html}=await run({raw,editBatch:fullBook});assert.equal(m.status,'partial');assert.equal(m.cash.planning,null);
+    assert.equal(m.cash.orderReserve,null);assert.equal(m.cash.preOrderPlanning,1150);assert.equal(m.bookConcentration.status,'ready');
+    assert.match(html,/扣挂单前账面可配置上限/);assert.match(html,/账面净补仓估算<\/b><span>未取得/);
+  }
+});
+test('bad whole-portfolio source cannot suppress independent cash and stock-class results or claim concentration',async()=>{
+  for(const edit of [r=>r.value++,r=>r.holdings.push(structuredClone(r.holdings[0])),r=>delete r.holdings[0].instrument.market_code,r=>r.holdings[0].value=-1]){
+    const {model:m}=await run({editBatch:b=>{fullBook(b);edit(b[0].raw.data.report);}});
+    assert.equal(m.bookConcentration.status,'unavailable');assert.equal(m.cash.preOrderPlanning,1150);assert.equal(m.status,'partial');
+  }
+});
+
+test('injected captured Sharesight reader takes priority without loading gateway credentials or reading sources again',async()=>{
+  const b=batch();fullBook(b);let reads=0;
+  const r=await run({snapshotReader:async({sourceKey})=>{reads++;return b.find(s=>s.sourceKey===sourceKey);}});
+  assert.deepEqual(r.calls,[]);assert.equal(reads,2);assert.equal(r.model.status,'ready');
 });

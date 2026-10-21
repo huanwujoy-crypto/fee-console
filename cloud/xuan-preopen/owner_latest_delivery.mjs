@@ -1,3 +1,4 @@
+import {SHARESIGHT_BOOK_BASIS,actionUnknownFields} from '../../scripts/xuan-ib-eod-action-model.mjs';
 // Explicit protected private-delivery controller. No schedule, identity grant,
 // broker call or public financial projection is activated by importing this file.
 import crypto from 'node:crypto';
@@ -34,6 +35,8 @@ const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Objec
 export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-preview.json';
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
   ...['owner_bundle_contract.mjs','owner_source_recovery.mjs','owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs','cloud_io.mjs','report.mjs'].map(file=>'cloud/xuan-preopen/'+file),
+  ...['xuan-ib-eod-action-model.mjs','xuan-ib-eod-holdings.mjs','xuan-ib-night-action-view.mjs'].map(file=>'scripts/'+file),
+  'cloud/xuan-preopen/eod_report.mjs','cloud/xuan-preopen/eod_sources.mjs',
   OWNER_SOURCE_RECOVERY_PATH,OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
@@ -132,7 +135,7 @@ export function ownerBundleMetadata(bundle,receipt){
     dataDate:receipt.dataDate,sourceDate:receipt.sourceDate,captureStartedAt:receipt.startedAt,captureEndedAt:receipt.completedAt,completedAt:receipt.completedAt,
     artifactObject:bundle.artifactObject,artifactGeneration:bundle.artifactGeneration,artifactSha256:bundle.artifactSha256,
     receiptObject:bundle.receiptObject,receiptGeneration:bundle.receiptGeneration,receiptSha256:bundle.receiptSha256,
-    financialStatus:'partial',unknownFields:[...(model.orders.status==='ready'?[]:['orders']),...(model.holdings?.status==='ready'?[]:['holdings']),...(model.allocation.status==='ready'?[]:['allocation']),'cash','prices']};
+    financialStatus:model.calculationBasis===SHARESIGHT_BOOK_BASIS&&model.status==='ready'?'complete':'partial',unknownFields:actionUnknownFields(model)};
 }
 
 export async function deliverOwnerLatest({request,now=Date.now,loadContext=createOwnerContextLoader({now}),

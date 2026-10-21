@@ -156,6 +156,13 @@ export async function readVerifiedSnapshot(sourceKey, {reader,verifyCompletion,s
   if(typeof reader!=='function')return {sourceKey,status:'not-called',code:'SNAPSHOT_ADAPTER_INACTIVE'};
   let envelope;try{envelope=await reader({sourceKey,sourceDate,...scope});}catch{return {sourceKey,status:'request-failure',code:'SNAPSHOT_READ_FAILED'};}
   if(!envelope?.raw)return {sourceKey,status:'missing-fields',code:'SNAPSHOT_RAW_MISSING'};
+  if(envelope.raw.source===SHARESIGHT_BROWSER_SOURCE){
+    try{const b=normalizeBrowserSnapshot(envelope.raw,{portfolioId:scope.portfolioId,sourceDate});
+      if(Date.parse(b.readAt)>now())throw Error('BROWSER_FUTURE');
+      return {sourceKey,status:'date-verified',raw:b.raw,rawFingerprint:digest(b.raw),completion:null,
+        provenance:{sourceDate,readAt:b.readAt,syncCompletedAt:null,snapshotGeneration:null,receiptSha256:null}};
+    }catch{return {sourceKey,status:'malformed',code:'SNAPSHOT_BROWSER_INVALID'};}
+  }
   const rawFingerprint=digest(envelope.raw),report=envelope.raw.report ?? envelope.raw.data?.report ?? envelope.raw.result?.data?.report;
   if(envelope.raw.mode!=='read_only'||envelope.raw.source!=='Sharesight User API'||!report||report.portfolio_id!==scope.portfolioId || report.currency?.code!=='USD')return {sourceKey,status:'malformed',code:'SNAPSHOT_SCOPE_INVALID'};
   if(report.end_date!==sourceDate)return {sourceKey,status:'date-mismatch',code:'SNAPSHOT_DATE_MISMATCH'};
@@ -168,4 +175,58 @@ export async function readVerifiedSnapshot(sourceKey, {reader,verifyCompletion,s
     || !Number.isFinite(Date.parse(proof.completedAt)) || Date.parse(proof.completedAt)>now())return asOf;
   return {sourceKey,status:'verified',raw:envelope.raw,rawFingerprint,completion:proof,
     provenance:{sourceDate,readAt:new Date(now()).toISOString(),syncCompletedAt:new Date(proof.completedAt).toISOString(),snapshotGeneration:proof.snapshotGeneration,receiptSha256:proof.receiptSha256}};
+}
+
+// Pure adapter for an already captured authenticated Sharesight browser table.
+// No browser, network, credential or account mutation capabilities.
+export const SHARESIGHT_BROWSER_SOURCE='Sharesight authenticated cloud browser visible DOM';
+const browserFail=()=>{throw Error('BROWSER_SNAPSHOT_INVALID');};
+const browserAmount=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;
+const browserInstant=s=>typeof s==='string'&&Number.isFinite(Date.parse(s))&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z$/.test(s);
+const browserReportOf=raw=>raw?.report??raw?.data?.report??raw?.result?.data?.report;
+export function normalizeBrowserSnapshot(raw,{portfolioId,sourceDate}){
+  if(raw?.mode!=='read_only'||raw.source!==SHARESIGHT_BROWSER_SOURCE)browserFail();
+  const o=raw.observation,ib=portfolioId===936247;
+  if(![936247,936238].includes(portfolioId)||o?.portfolio!==(ib?'IB-HK':'NOAH-HK')||o.valuationDate!==sourceDate
+    ||o.reportingCurrency!=='USD'||!browserAmount(o.portfolioValue)||!browserInstant(o.retrievedAt)
+    ||!Array.isArray(o.positions)||!o.positions.length||o.positions.length>5000
+    ||!Array.isArray(o.cash)||!o.cash.length||o.cash.length>100)browserFail();
+  const prior=raw.classification??null,groups=new Map();
+  if(prior!==null){
+    const r=browserReportOf(prior.raw);
+    if(!ib||prior.sourceKey!=='sharesight.ibGroupedPerformance'||!['date-verified','verified'].includes(prior.status)
+      ||prior.raw?.mode!=='read_only'||prior.raw.source!=='Sharesight User API'
+      ||prior.rawFingerprint!==crypto.createHash('sha256').update(JSON.stringify(prior.raw)).digest('hex')
+      ||r?.portfolio_id!==portfolioId||r.currency?.code!=='USD'||r.grouping!=='custom_group_category'
+      ||r.custom_group?.id!==83569||r.custom_group?.name!=='资产类别'||!Array.isArray(r.holdings)
+      ||!browserInstant(prior.provenance?.readAt)||prior.provenance.readAt>new Date(o.retrievedAt).toISOString()
+      ||r.end_date!==prior.provenance.sourceDate||!/^\d{4}-\d\d-\d\d$/.test(prior.provenance.sourceDate)||prior.provenance.sourceDate>sourceDate)browserFail();
+    for(const h of r.holdings){if(groups.has(h.id))browserFail();groups.set(h.id,h);}
+  }
+  const seen=new Set();
+  const holdings=o.positions.map(p=>{
+    const parts=typeof p.instrument==='string'?p.instrument.split(' | '):[],id=Number(p.sourcePath?.match(/^\/holdings\/([1-9][0-9]*)$/)?.[1]);
+    if(parts.length!==2||!Number.isSafeInteger(id)||seen.has(id)||!browserAmount(p.marketValueUSD)||!browserAmount(p.quantity)
+      ||!browserAmount(p.price)||! /^[A-Z]{3}$/.test(p.priceCurrency)||p.priceDate!==null)browserFail();
+    seen.add(id);const [code,market]=parts,old=groups.get(id);
+    const matches=old&&old.instrument?.code===code&&old.instrument.market_code===market
+      &&(old.instrument.currency_code??old.instrument.currency?.code)===p.priceCurrency;
+    // Existing groups are reused only for an exact holding and instrument match;
+    // a newly seen or ambiguous row remains unclassified, never guessed.
+    return {id,group_name:matches?old.group_name:'',value:p.marketValueUSD,quantity:p.quantity,instrument_price:p.price,
+      instrument:{...(matches?{id:old.instrument.id}:{}),code,market_code:market,currency_code:p.priceCurrency},
+      instrument_currency:{code:p.priceCurrency}};
+  });
+  const cashSeen=new Set(),cash_accounts=o.cash.map(c=>{
+    const id=Number(c.sourcePath?.match(/^\/cash_accounts\/([1-9][0-9]*)$/)?.[1]);
+    if(!Number.isSafeInteger(id)||cashSeen.has(id)||!browserAmount(c.marketValueUSD)
+      ||! /^[A-Z]{3}$/.test(c.nativeCurrency)||!browserAmount(c.nativeBalance))browserFail();
+    cashSeen.add(id);return {id,value:c.marketValueUSD,currency:{code:c.nativeCurrency}};
+  });
+  const sum=holdings.reduce((n,h)=>n+h.value,0)+cash_accounts.reduce((n,c)=>n+c.value,0);
+  if(Math.abs(sum-o.portfolioValue)>.011)browserFail();
+  const report={portfolio_id:portfolioId,currency:{code:'USD'},value:o.portfolioValue,start_date:sourceDate,end_date:sourceDate,
+    include_sales:false,grouping:ib?'custom_group_category':'investment_type',...(ib?{custom_group:{id:83569,name:'资产类别'}}:{}),holdings,cash_accounts};
+  return {raw:{mode:'read_only',source:SHARESIGHT_BROWSER_SOURCE,observation:o,classification:prior,data:{report}},
+    readAt:new Date(o.retrievedAt).toISOString(),classificationReadAt:prior?.provenance.readAt??null};
 }

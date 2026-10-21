@@ -40,15 +40,15 @@ export function validatePreviewOrdersBundle(bundle,{now=Date.now(),association,e
 }
 
 export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date.now,loadContext=loadTrustedContext,
-  readSharesight=readSharesightAction,expectedAccount=APPROVED_IB_ACCOUNT_ID,concentrationInput=null}={}){
+  readSharesight=readSharesightAction,expectedAccount=APPROVED_IB_ACCOUNT_ID,concentrationInput=null,assumeSharesightSynchronized=true,snapshotReader:providedSnapshotReader=null,captureStartedAt=null}={}){
   if(typeof io?.savePrivate!=='function'||typeof loadContext!=='function')fail();
   const context=await loadContext({now});validateAssociationSnapshot(context.association,{now:now(),edition:'am'});
   const source=validatePreviewOrdersBundle(bundle,{now:now(),association:context.association,expectedAccount});
-  const snapshotReader=createEodSnapshotReader({sourceDate,readSharesightBatch:async date=>{
+  const snapshotReader=providedSnapshotReader??createEodSnapshotReader({sourceDate,readSharesightBatch:async date=>{
     if(typeof io.loadGatewayToken!=='function')throw Error('SHARESIGHT_READ_SCOPE_INVALID');
     const token=await io.loadGatewayToken();return readSharesight(date,token,{now,settle:true});
   }});
-  return runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,initialStartedAt:Date.parse(source.startedAt),
+  return runPrivateEodReport({sourceDate,io,now,loadContext,fieldMode:true,initialStartedAt:captureStartedAt===null?Date.parse(source.startedAt):Date.parse(captureStartedAt),
     readArchive:null,verifyArchive:null,snapshotReader,
-    captureOptionalLive:async()=>({status:'captured',sources:[source],probeEvidence:{receiptSha256:bundle.receiptSha256,object:bundle.object}}),concentrationInput});
+    captureOptionalLive:async()=>({status:'captured',sources:[source],probeEvidence:{receiptSha256:bundle.receiptSha256,object:bundle.object}}),concentrationInput,assumeSharesightSynchronized});
 }
