@@ -3,7 +3,7 @@
 import crypto from 'node:crypto';
 import path from 'node:path';import {fileURLToPath} from 'node:url';
 import {runCloudOrdersProbe,validateOrdersProbeRequest} from './orders_probe.mjs';
-import {privateCloudIo,BUCKET,PROJECT} from './cloud_io.mjs';
+import {privateCloudIo,isIbCredentialLockRequest,BUCKET,PROJECT} from './cloud_io.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
 import {safeIbFailure} from './ib_diagnostics.mjs';
 import {composePrivateActionPreview} from './action_preview.mjs';
@@ -58,6 +58,7 @@ export async function runPrivateActionPreviewOnce({request,env=process.env,now=D
     };
     const probeFetch=async(url,options={})=>{
       const u=String(url),parsed=new URL(u),method=options.method??'GET';
+      if(phase==='ib-probe'&&isIbCredentialLockRequest(url,options))return fetchImpl(url,options);
       if(u===UPLOAD||parsed.origin+parsed.pathname===UPLOAD){
         const name=budgetUpload(parsed,options);
         if(!['start.json','orders.json','receipt.json'].some(file=>name===prefix+file)

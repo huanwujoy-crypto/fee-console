@@ -2,21 +2,37 @@
 // Importing this module never starts credentials, sources or the legacy probe.
 import path from 'node:path';import {fileURLToPath} from 'node:url';
 import {IbReadSession,loadReadCredential,RESOURCE,TOKEN_ENDPOINT,validateCredential} from './ib_mcp.mjs';
-import {privateCloudIo,boundedText,uniqueCloudJson,validateBoundIbVersionName,validateIbRotationReceipt} from './cloud_io.mjs';
+import {privateCloudIo,boundedText,uniqueCloudJson,validateBoundIbVersionName,validateIbRotationReceipt,validateIbCredentialBinding} from './cloud_io.mjs';
 import {ibError,safeIbFailure} from './ib_diagnostics.mjs';
 import {validateAssociationSnapshot} from '../../scripts/xuan-ib-account-association.mjs';
 import {capturePositionsCash,assessCapture} from './ib_sync_snapshot_capture.mjs';
 import {APPROVED_IB_ACCOUNT_ID} from '../../scripts/xuan-ib-run-manifest.mjs';
 // Pure existing validators only; never invoke the probe CLI or probe runner.
-import {inspectOrdersAccountEvidence,loadProbeAssociation,validateOrdersProbeRequest} from './orders_probe.mjs';
+import {inspectOrdersAccountEvidence,loadProbeAssociation} from './orders_probe.mjs';
 const failure=(code,phase='diagnostic_request',category='forbidden')=>ibError(code,{phase,category});
+export function validateDailySnapshotRequest(request,{now=Date.now(),env=process.env}={}){
+  const day=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+  if(!request||Object.getPrototypeOf(request)!==Object.prototype
+    ||Object.keys(request).sort().join('|')!=='credentialBinding|dataDate|expiresAt|requestId'
+    ||Object.values(Object.getOwnPropertyDescriptors(request)).some(d=>!Object.hasOwn(d,'value'))
+    ||!/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(request.requestId||'')
+    ||request.dataDate!==day(now)||typeof request.expiresAt!=='string'||!Number.isFinite(Date.parse(request.expiresAt))
+    ||new Date(request.expiresAt).toISOString()!==request.expiresAt||Date.parse(request.expiresAt)<=now
+    ||Date.parse(request.expiresAt)-now>15*60000||day(Date.parse(request.expiresAt))!==request.dataDate)
+    throw failure('IB_DIAGNOSTIC_REQUEST_INVALID');
+  validateIbCredentialBinding(request.credentialBinding);
+  if(env.CLOUD_RUN_JOB!=='ib-daily-snapshot'||!/^ib-daily-snapshot-[a-z0-9-]+$/.test(env.CLOUD_RUN_EXECUTION||'')
+    ||env.CLOUD_RUN_TASK_INDEX!=='0'||env.CLOUD_RUN_TASK_ATTEMPT!=='0'||env.CLOUD_RUN_TASK_COUNT!=='1')
+    throw failure('IB_DIAGNOSTIC_RUNTIME_REQUIRED');
+  return request;
+}
 async function captureSnapshot(store,options){
   const credential=await loadReadCredential(store,options);
   return capturePositionsCash(new IbReadSession(credential,options),{now:options.now});
 }
 export async function runCloudIbSnapshot({request,env=process.env,now=Date.now,fetchImpl=fetch,io,loadContext=loadProbeAssociation,capture=captureSnapshot,expectedAccount=APPROVED_IB_ACCOUNT_ID,limits={}}={}){
   let claimed=false,upstreamAttempted=false,positionsCalls=0,balancesCalls=0,rpcStep=0,refreshCalls=0,saveCalls=0,start,association=null,originalClient=null,originalRefresh=null,accountEvidence=null,transportAccountMatched=false,credentialPersistence='not-needed';
-  try{validateOrdersProbeRequest(request,{now:now(),env});
+  try{validateDailySnapshotRequest(request,{now:now(),env});
     if(!Object.hasOwn(request,'credentialBinding'))throw failure('IB_READ_ONLY_CREDENTIAL_REQUIRED','credential_load','scope_invalid');
   }catch(e){return {...safeIbFailure(e),upstreamAttempted:false};}
   const binding=request.credentialBinding;
@@ -79,7 +95,7 @@ export async function runCloudIbSnapshot({request,env=process.env,now=Date.now,f
   };
   // Private transport is deliberately not tied to the source cutoff. Even a
   // rotated credential and a failure receipt must use the bounded final window.
-  io??=privateCloudIo({fetchImpl:finalFetch});
+  io??=privateCloudIo({fetchImpl:finalFetch,now});
   try{
     guardSource();const context=await loadContext({now,fetchImpl:phaseFetch(sourceController.signal)});validateAssociationSnapshot(context.association,{now:now(),edition:'adhoc'});
     association={policyCommit:context.association.policyCommit,policyBlob:context.association.policyBlob,checkedAt:context.association.checkedAt,accountAlias:context.association.policy.accountAlias};
@@ -108,6 +124,8 @@ export async function runCloudIbSnapshot({request,env=process.env,now=Date.now,f
         credentialPersistence='saved';return saved;}
       catch(error){credentialPersistence=/^CLOUD_HTTP_4\d\d$/.test(error?.message||'')?'rejected':'outcome-unknown';throw error;}
     };
+    store.requiresCredentialLease=io.ibStore.requiresCredentialLease===true;
+    if(typeof io.ibStore.withCredentialLease==='function')store.withCredentialLease=callback=>io.ibStore.withCredentialLease(callback);
     const captured=await capture(store,{now,fetchImpl:sourceFetch,signal:sourceController.signal,refreshSignal:finalController.signal,
       inspectEnvelope:value=>{const evidence=inspectOrdersAccountEvidence(value,{expectedAccount});if(evidence.responseAccountEvidence==='matched')transportAccountMatched=true;},allowRefresh:true});
     guardSource();

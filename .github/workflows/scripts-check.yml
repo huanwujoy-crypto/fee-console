@@ -109,3 +109,6 @@ jobs:
       - name: Test disabled independent fee clock without live services
         if: ${{ github.event.pull_request.draft == false }}
         run: python3 -m unittest discover -s cloud/fee-clock -p 'test_*.py' -v
+
+      - name: IB daily read-only comparison fixtures
+        run: python3 cloud/ib-daily/test_daily_wiring.py -v

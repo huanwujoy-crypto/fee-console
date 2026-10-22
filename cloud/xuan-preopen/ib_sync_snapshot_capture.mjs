@@ -19,21 +19,32 @@ export async function capturePositionsCash(session, {now = Date.now} = {}) {
       throw new Error('IB_SNAPSHOT_SOURCE_SHAPE_INVALID');
     sources.push({...result, startedAt: readStartedAt, completedAt: new Date(now()).toISOString()});
   }
-  // Raw values stay in the existing private pipeline. Absence of paging fields
-  // alone is not treated as proof of complete positions or cash.
+  // Raw values stay in the existing private pipeline. Completeness follows
+  // the recorded provider tool contract below, never the observed row count.
   return {source: 'IB_MCP', startedAt, completedAt: new Date(now()).toISOString(),
           sources, toolCalls: 2, refreshCalls: 0, financialMutations: 0};
 }
 
-// Positive provider coverage evidence is required; an array without a cursor
-// is not sufficient. An incomplete private capture can be inspected offline.
+// Official ibkr-cpapi-mcp 1.2.2 tool definitions captured 2026-10-17:
+// get_account_positions: all open positions; get_account_balances: one entry
+// per currency. Both take {} and return one array, without paging parameters
+// or required complete/total_count/cash_basis/as_of fields. This is the MCP
+// contract, not the separate paginated Client Portal positions REST endpoint.
+// Source: private-action-20261017/ib-tool-contract.safe.json, SHA256 below.
+export const IB_SNAPSHOT_CONTRACT_SHA256='475bef6cf463c7b11cb94a48c9a5aca66f8aa972d8221f0000c480a84444f22d';
+// cash_balance is the currency's cash, distinct from settled_cash. Normalize
+// cash to the existing trade-date basis (IBKR Account Balances: cash includes
+// trade-time sales); never substitute settled cash/buying power or add BASE.
+// https://www.ibkrguides.com/traderworkstation/account-balances.htm
 const numberText=v=>typeof v==='string'&&/^[+-]?\d+(?:\.\d+)?$/.test(v)
   ||typeof v==='number'&&Number.isFinite(v)&&(!Number.isInteger(v)||Number.isSafeInteger(v));
 const currency=v=>typeof v==='string'&&/^[A-Z]{3}$/.test(v);
 export function assessCapture(capture){
   const result={comparisonReady:false,code:'IB_SYNC_CAPTURE_INCOMPLETE',positionsComplete:false,cashComplete:false,
     positionsFieldsValid:false,cashFieldsValid:false,cashBasisVerified:false,paginationComplete:false,
-    providerTimesValid:true,providerAsOfBySource:{positions:null,balances:null},providerAsOf:null};
+    providerTimesValid:true,providerAsOfBySource:{positions:null,balances:null},providerAsOf:null,
+    completenessBasis:'ibkr-mcp-all-positions-per-currency-balances',contractSha256:IB_SNAPSHOT_CONTRACT_SHA256,
+    cashField:'cash_balance',baseAggregateExcluded:true};
   if(capture?.source!=='IB_MCP'||!Array.isArray(capture.sources)||capture.sources.length!==2
     ||capture.sources[0]?.sourceKey!=='ib.positions'||capture.sources[1]?.sourceKey!=='ib.balances')return result;
   let pagePending=false,nodes=0;
@@ -50,11 +61,12 @@ export function assessCapture(capture){
   const p=capture.sources[0].raw,b=capture.sources[1].raw;
   if(!p||!b||!Array.isArray(p.positions)||!Array.isArray(b.balances))return result;
   const full=(body,rows)=>{
-    // Every supplied coverage assertion must agree; one positive assertion
-    // cannot override an explicit partial result or a conflicting count.
+    // No invented positive flag is needed. Any supplied error or contradictory
+    // coverage/paging metadata still overrides the known all-rows contract.
+    if(Object.hasOwn(body,'error')||Object.hasOwn(body,'isError')&&body.isError!==false)return false;
     if(Object.hasOwn(body,'complete')&&body.complete!==true)return false;
     if(Object.hasOwn(body,'total_count')&&(!Number.isSafeInteger(body.total_count)||body.total_count!==rows.length))return false;
-    return body.complete===true||Number.isSafeInteger(body.total_count);
+    return true;
   };
   result.paginationComplete=!pagePending;
   result.positionsComplete=!pagePending&&full(p,p.positions);
@@ -70,9 +82,9 @@ export function assessCapture(capture){
     if(!row||!(currency(row.currency)||row.currency==='BASE')||currencies.has(row.currency))return false;
     currencies.add(row.currency);return row.currency==='BASE'||numberText(row.cash_balance);
   })&&[...currencies].some(c=>c!=='BASE');
-  // Do not equate buying power or settled cash with trade-date cash. Native
-  // response without an explicit basis remains a saved, unproven capture.
-  result.cashBasisVerified=b.cash_basis==='total_trade_date';
+  // Basis comes from the documented cash_balance field, not a provider field
+  // that its schema never promised. Reject a future contradictory assertion.
+  result.cashBasisVerified=result.cashFieldsValid&&(!Object.hasOwn(b,'cash_basis')||b.cash_basis==='total_trade_date');
   for(const [index,key] of [[0,'positions'],[1,'balances']]){
     const value=capture.sources[index].raw.as_of;
     if(value===undefined||value===null)continue; // Missing source time remains explicit.
