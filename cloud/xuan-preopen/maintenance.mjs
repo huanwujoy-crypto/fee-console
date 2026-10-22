@@ -156,6 +156,10 @@ export const COPY_PATHS=Object.freeze([
   // Exact normal orders CLI and its offline tests; no broader context glob.
   "cloud/xuan-preopen/orders_read.mjs",
   "cloud/xuan-preopen/orders_read.test.mjs",
+  // Exact independent IB sync snapshot entry and its offline tests.
+  "cloud/xuan-preopen/ib_sync_snapshot.mjs",
+  "cloud/xuan-preopen/ib_sync_snapshot_capture.mjs",
+  "cloud/xuan-preopen/ib_sync_snapshot.test.mjs",
   // Fixed transitive imports for the action concentration codec.
   "claude/xuan-weekly-concentration-top10-v1.json",
   "claude/xuan-weekly-leveraged-products-v1.json",
