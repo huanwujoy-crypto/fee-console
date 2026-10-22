@@ -1,3 +1,4 @@
+import {isIbCredentialLockRequest,IB_CREDENTIAL_LOCK_KEY,privateCloudIo} from './cloud_io.mjs';
 // Synthetic transport only: no real SDK, credentials, broker or cloud requests.
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -8,6 +9,23 @@ import {associationPolicyBlob} from '../../scripts/xuan-ib-account-association.m
 
 const NOW=Date.parse('2026-10-21T04:00:00.000Z');
 const SECRET='projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp';
+// Synthetic fixed-object CAS transport; never falls back to actual fetch.
+function lockTransport(baseFetch){
+  let record=null,generation=0;
+  return async(url,options={})=>{
+    if(!isIbCredentialLockRequest(url,options))return baseFetch(url,options);
+    const u=new URL(url),meta=()=>({name:IB_CREDENTIAL_LOCK_KEY,generation:String(generation),size:String(Buffer.byteLength(JSON.stringify(record)))});
+    if((options.method??'GET')==='GET'){
+      if(record===null)return Response.json({}, {status:404});
+      if(u.searchParams.get('alt')==='media')return u.searchParams.get('generation')===String(generation)?Response.json(record):Response.json({}, {status:412});
+      return Response.json(meta());
+    }
+    if(u.searchParams.get('ifGenerationMatch')!==String(generation))return Response.json({}, {status:412});
+    record=JSON.parse(options.body.toString());generation++;return Response.json(meta());
+  };
+}
+
+
 function harness({expired=false,omitRefresh=false,saveStatus=200,refreshDelay=0}={}) {
   const calls=[],objects=new Map(),events=[];
   const credential={client_id:'SYNTHETIC_CLIENT',access_token:'SYNTHETIC_ACCESS_CANARY',refresh_token:'SYNTHETIC_REFRESH_CANARY',token_type:'Bearer',scope:'mcp.read',resource:RESOURCE,expires_at:NOW+(expired?0:3600000)};
@@ -43,6 +61,7 @@ function harness({expired=false,omitRefresh=false,saveStatus=200,refreshDelay=0}
     assert.equal(q.method,'tools/call');assert.deepEqual(q.params,{name:'get_account_orders',arguments:{}});events.push('orders');
     return Response.json({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify(raw)}]}});
   };
+  options.fetchImpl=lockTransport(options.fetchImpl);
   return {options,credential,raw,calls,objects,events};
 }
 function noCredentialLeak(h,result){
@@ -101,4 +120,14 @@ test('normal CLI rejects duplicate JSON, mixed flags and legacy nonce without IO
   for(const args of [['--request',JSON.stringify(h.options.request)],['--orders-request','{"requestId":"x","requestId":"y"}'],['--probe',JSON.stringify(h.options.request)],['--orders-request',JSON.stringify(h.options.request),'--execute'],['--orders-request',JSON.stringify({...h.options.request,nonce:'SYNTHETIC_OLD_NONCE'})]]){
     const r=await ordersReadCli(args,h.options);assert.equal(r.status,'failed');assert.equal(h.calls.length,0);noCredentialLeak(h,r);
   }
+});
+
+test('orders read and probe bounded stores retain the shared credential lease',async()=>{
+ for(const run of [runCloudOrdersRead,runCloudOrdersProbe]){
+  const h=harness();h.options.io=privateCloudIo({fetchImpl:h.options.fetchImpl,now:()=>NOW});let entered=0,active=false;const original=h.options.io.ibStore.loadBound;const realLease=h.options.io.ibStore.withCredentialLease;
+  h.options.io.ibStore.requiresCredentialLease=true;
+  h.options.io.ibStore.withCredentialLease=async callback=>realLease(async lease=>{entered++;active=true;try{return await callback(lease);}finally{active=false;}});
+  h.options.io.ibStore.loadBound=async binding=>{assert.equal(active,true);return original(binding);};
+  const r=await run(h.options);assert.equal(r.status,'passed');assert.equal(entered,1);assert.equal(active,false);
+ }
 });

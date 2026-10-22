@@ -1,3 +1,4 @@
+import {isIbCredentialLockRequest,IB_CREDENTIAL_LOCK_KEY} from './cloud_io.mjs';
 // SYNTHETIC OFFLINE ONLY. No SDK credentials, cloud jobs or broker calls.
 import test from 'node:test';import assert from 'node:assert/strict';import crypto from 'node:crypto';
 import {runCloudOrdersProbe,ordersProbeCli,validateOrdersProbeRequest,loadProbeAssociation,inspectOrdersAccountEvidence} from './orders_probe.mjs';
@@ -101,6 +102,23 @@ test('account scan is bounded and never invokes accessors or accepts cycles',()=
 
 // Exercise the actual privateCloudIo implementation (metadata, Secret Manager
 // and create-only GCS transport), with synthetic network responses only.
+// Synthetic fixed-object CAS transport; never falls back to actual fetch.
+function lockTransport(baseFetch){
+  let record=null,generation=0;
+  return async(url,options={})=>{
+    if(!isIbCredentialLockRequest(url,options))return baseFetch(url,options);
+    const u=new URL(url),meta=()=>({name:IB_CREDENTIAL_LOCK_KEY,generation:String(generation),size:String(Buffer.byteLength(JSON.stringify(record)))});
+    if((options.method??'GET')==='GET'){
+      if(record===null)return Response.json({}, {status:404});
+      if(u.searchParams.get('alt')==='media')return u.searchParams.get('generation')===String(generation)?Response.json(record):Response.json({}, {status:412});
+      return Response.json(meta());
+    }
+    if(u.searchParams.get('ifGenerationMatch')!==String(generation))return Response.json({}, {status:412});
+    record=JSON.parse(options.body.toString());generation++;return Response.json(meta());
+  };
+}
+
+
 function transportHarness({expired=false,refreshDelay=0,saveDelay=0,saveStatus=200,saveHang=false,mcpHang=false}={}){
   const calls=[],objects=new Map(),credential={client_id:'SYNTHETIC_ORIGINAL_CLIENT',access_token:'SYNTHETIC_ACCESS',refresh_token:'SYNTHETIC_REFRESH',token_type:'Bearer',scope:'mcp.read',resource:RESOURCE,expires_at:NOW+(expired?0:3600000)};
   const wait=(ms,signal,hang=false)=>new Promise((resolve,reject)=>{
@@ -110,7 +128,7 @@ function transportHarness({expired=false,refreshDelay=0,saveDelay=0,saveStatus=2
   const fetchImpl=async(url,o)=>{
     const u=String(url);calls.push({url:u,signal:o.signal,time:performance.now()});o.signal.throwIfAborted();
     if(u.startsWith('http://metadata.google.internal/'))return Response.json({access_token:'SYNTHETIC_GOOGLE_TOKEN'});
-    if(u.includes(':access'))return Response.json({payload:{data:Buffer.from(JSON.stringify(credential)).toString('base64')}});
+    if(u.includes(':access'))return Response.json({name:'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/122',payload:{data:Buffer.from(JSON.stringify(credential)).toString('base64')}});
     if(u===TOKEN_ENDPOINT){await wait(refreshDelay,o.signal);return Response.json({access_token:'SYNTHETIC_ROTATED',refresh_token:'SYNTHETIC_ROTATED_REFRESH',token_type:'Bearer',scope:'mcp.read',expires_in:3600});}
     if(u.includes(':addVersion')){
       const saved=JSON.parse(Buffer.from(JSON.parse(o.body).payload.data,'base64').toString());assert.equal(saved.client_id,credential.client_id);assert.equal(saved.scope,'mcp.read');
@@ -128,7 +146,7 @@ function transportHarness({expired=false,refreshDelay=0,saveDelay=0,saveStatus=2
     assert.deepEqual(q.params,{name:'get_account_orders',arguments:{}});
     return Response.json({jsonrpc:'2.0',id:q.id,result:{content:[{type:'text',text:JSON.stringify({orders:[]})}]}});
   };
-  return {calls,objects,options:{request:request(),env:env(),now:()=>NOW,fetchImpl,loadContext:async()=>context(),expectedAccount:'SYNTHETIC_ACCOUNT',limits:{sourceMs:200,finalizeMs:1000}}};
+  return {calls,objects,options:{request:request(),env:env(),now:()=>NOW,fetchImpl:lockTransport(fetchImpl),loadContext:async()=>context(),expectedAccount:'SYNTHETIC_ACCOUNT',limits:{sourceMs:200,finalizeMs:1000}}};
 }
 test('actual private transport persists an admitted refresh response after source cutoff, then prevents every MCP call',async()=>{
   const h=transportHarness({expired:true,refreshDelay:260,saveDelay:40}),r=await runCloudOrdersProbe(h.options);
@@ -291,7 +309,8 @@ test('synthetic exact-version chain advances only from the confirmed rotation ac
     if(u.startsWith('https://storage.googleapis.com/upload/')){const name=new URL(u).searchParams.get('name');if(objects.has(name))return Response.json({},{status:412});objects.set(name,JSON.parse(Buffer.from(o.body).toString()));return Response.json({name,size:String(o.body.length),generation:'1'});}
     assert.equal(u,RESOURCE);const q=JSON.parse(o.body);if(q.method==='initialize')return Response.json({jsonrpc:'2.0',id:q.id,result:{protocolVersion:'2025-03-26',capabilities:{tools:{}}}});
     if(q.method==='notifications/initialized')return new Response(null,{status:202});orders++;assert.deepEqual(q.params,{name:'get_account_orders',arguments:{}});return Response.json({jsonrpc:'2.0',id:q.id,result:{structuredContent:{orders:[]}}});};
-  const run=async(v,id)=>runCloudOrdersProbe({request:{...request(),requestId:`11111111-2222-4333-8444-55555555555${id}`,expiresAt:new Date(time+600000).toISOString(),credentialBinding:{clientId:'SYNTHETIC_CHAIN_CLIENT',version:v}},env:env(),now:()=>time,fetchImpl,expectedAccount:'SYNTHETIC_ACCOUNT',loadContext:async()=>{const c=context();c.association.checkedAt=new Date(time).toISOString();return c;}});
+  const lockedFetch=lockTransport(fetchImpl);
+  const run=async(v,id)=>runCloudOrdersProbe({request:{...request(),requestId:`11111111-2222-4333-8444-55555555555${id}`,expiresAt:new Date(time+600000).toISOString(),credentialBinding:{clientId:'SYNTHETIC_CHAIN_CLIENT',version:v}},env:env(),now:()=>time,fetchImpl:lockedFetch,expectedAccount:'SYNTHETIC_ACCOUNT',loadContext:async()=>{const c=context();c.association.checkedAt=new Date(time).toISOString();return c;}});
   const first=await run('50',1);assert.equal(first.status,'passed');assert.equal(first.savedCredentialVersion,null);assert.equal(refreshes,0);
   time+=3480001;const second=await run('50',2);assert.equal(second.status,'passed');assert.equal(second.savedCredentialVersion,'projects/860729177589/secrets/xuan-preopen-ib-mcp/versions/51');assert.equal(refreshes,1);
   const third=await run(second.savedCredentialVersion.split('/').at(-1),3);assert.equal(third.status,'passed');assert.equal(third.consumedCredentialVersion,'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/51');

@@ -1,0 +1,13 @@
+--- a/schwab_sync/app.py
++++ b/schwab_sync/app.py
+@@ -94,0 +95,4 @@
++
++# Exact reviewed deployment activates only the private IB recheck route.
++from .ib_daily_runtime import install_daily
++install_daily(globals())
+--- a/schwab_sync/ib_trade_recheck.py
++++ b/schwab_sync/ib_trade_recheck.py
+@@ -388,0 +389,3 @@
++        daily = namespace.get("_ib_daily_run")
++        if daily is not None:
++            return daily()

@@ -1,9 +1,27 @@
 // ALL responses/credentials/amounts are SYNTHETIC. Real fetch is forbidden.
 import test from 'node:test';import assert from 'node:assert/strict';import crypto from 'node:crypto';
 import {runPrivateActionPreviewOnce,privatePreviewOnceCli} from './action_preview_once.mjs';
+import {isIbCredentialLockRequest,IB_CREDENTIAL_LOCK_KEY} from './cloud_io.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
 import {associationPolicyText} from '../../scripts/xuan-ib-account-association.mjs';
 import {extractNightActionModel} from '../../scripts/xuan-ib-night-action-view.mjs';
+
+// Synthetic fixed-object CAS transport; never falls back to actual fetch.
+function lockTransport(baseFetch){
+  let record=null,generation=0;
+  return async(url,options={})=>{
+    if(!isIbCredentialLockRequest(url,options))return baseFetch(url,options);
+    const u=new URL(url),meta=()=>({name:IB_CREDENTIAL_LOCK_KEY,generation:String(generation),size:String(Buffer.byteLength(JSON.stringify(record)))});
+    if((options.method??'GET')==='GET'){
+      if(record===null)return Response.json({}, {status:404});
+      if(u.searchParams.get('alt')==='media')return u.searchParams.get('generation')===String(generation)?Response.json(record):Response.json({}, {status:412});
+      return Response.json(meta());
+    }
+    if(u.searchParams.get('ifGenerationMatch')!==String(generation))return Response.json({}, {status:412});
+    record=JSON.parse(options.body.toString());generation++;return Response.json(meta());
+  };
+}
+
 const NOW=Date.parse('2026-10-15T05:00:00.000Z'),DATE='2026-10-14';
 globalThis.fetch=()=>assert.fail('No real financial or network request');
 const digest=v=>crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');
@@ -33,7 +51,7 @@ function harness({expired=false,tokenStatus=200,tokenDelay=0,saveDelay=0,saveSta
       if(u.endsWith('latest.html'))return new Response('SYNTHETIC_PRIOR_HTML');assert.fail('Unknown public context');
     }
     if(u.startsWith('http://metadata.google.internal/'))return Response.json({access_token:'SYNTHETIC_GOOGLE_TOKEN'});
-    if(u.includes('/secrets/xuan-preopen-ib-mcp/versions/latest:access'))return Response.json({payload:{data:Buffer.from(JSON.stringify(credential)).toString('base64')}});
+    if(u.includes('/secrets/xuan-preopen-ib-mcp/versions/latest:access'))return Response.json({name:'projects/family-portfolio-gateway/secrets/xuan-preopen-ib-mcp/versions/122',payload:{data:Buffer.from(JSON.stringify(credential)).toString('base64')}});
     if(u.includes('/secrets/family-portfolio-gateway-key/versions/latest:access')){events.push('gateway-credential');return Response.json({payload:{data:Buffer.from('SYNTHETIC_GATEWAY_TOKEN').toString('base64')}});}
     if(u===TOKEN_ENDPOINT){events.push('refresh');assert.equal(o.body.get('client_id'),credential.client_id);assert.equal(o.body.get('scope'),'mcp.read');assert.equal(o.body.get('grant_type'),'refresh_token');await wait(tokenDelay,o.signal);
       return Response.json(tokenStatus===200?{access_token:'SYNTHETIC_NEXT_ACCESS',refresh_token:'SYNTHETIC_NEXT_REFRESH',token_type:'Bearer',scope:'mcp.read',expires_in:3600}:{error:'invalid_grant',description:'SYNTHETIC_PRIVATE_ERROR'},{status:tokenStatus});}
@@ -54,7 +72,7 @@ function harness({expired=false,tokenStatus=200,tokenDelay=0,saveDelay=0,saveSta
     const text=o.body.toString(),value=name.endsWith('.html')?text:JSON.parse(text);objects.set(name,value);events.push('saved-'+name.split('/').at(-1));
     return Response.json({name:uploadBad?'SYNTHETIC_WRONG_OBJECT':name,size:String(o.body.length),generation:String(objects.size)});
   };
-  return {options:{request:request(),env:env(),now:()=>NOW,fetchImpl},objects,calls,events,credential,rotations:()=>rotations};
+  return {options:{request:request(),env:env(),now:()=>NOW,fetchImpl:lockTransport(fetchImpl)},objects,calls,events,credential,rotations:()=>rotations};
 }
 const count=(h,fragment)=>h.calls.filter(c=>c.url.includes(fragment)).length;
 function report(h){const receipt=[...h.objects.entries()].find(([k])=>k.endsWith('/preview-receipt.json'))?.[1];return receipt?{receipt,html:h.objects.get(receipt.artifact.privateObject),model:extractNightActionModel(h.objects.get(receipt.artifact.privateObject))}:null;}

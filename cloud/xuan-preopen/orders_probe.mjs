@@ -111,7 +111,7 @@ export async function runCloudOrdersProbe({request,env=process.env,now=Date.now,
   };
   // Private transport is deliberately not tied to the source cutoff. Even a
   // rotated credential and a failure receipt must use the bounded final window.
-  io??=privateCloudIo({fetchImpl:finalFetch});
+  io??=privateCloudIo({fetchImpl:finalFetch,now});
   try{
     guardSource();const context=await loadContext({now,fetchImpl:phaseFetch(sourceController.signal)});validateAssociationSnapshot(context.association,{now:now(),edition:'adhoc'});
     association={policyCommit:context.association.policyCommit,policyBlob:context.association.policyBlob,checkedAt:context.association.checkedAt,accountAlias:context.association.policy.accountAlias};
@@ -140,6 +140,8 @@ export async function runCloudOrdersProbe({request,env=process.env,now=Date.now,
         credentialPersistence='saved';return saved;}
       catch(error){credentialPersistence=/^CLOUD_HTTP_4\d\d$/.test(error?.message||'')?'rejected':'outcome-unknown';throw error;}
     };
+    store.requiresCredentialLease=io.ibStore.requiresCredentialLease===true;
+    if(typeof io.ibStore.withCredentialLease==='function')store.withCredentialLease=callback=>io.ibStore.withCredentialLease(callback);
     const captured=await capture(store,{now,fetchImpl:sourceFetch,signal:sourceController.signal,refreshSignal:finalController.signal,
       inspectEnvelope:value=>{const evidence=inspectOrdersAccountEvidence(value,{expectedAccount});if(evidence.responseAccountEvidence==='matched')transportAccountMatched=true;},allowRefresh:true});
     guardSource();

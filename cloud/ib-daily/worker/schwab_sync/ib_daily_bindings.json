@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "source_service_account": "REQUIRES_REVIEWED_PRIVATE_BINDING",
+  "source_image": null,
+  "association_policy_blob": null,
+  "client_id": null,
+  "identity_pending": [
+    "INITIAL_IDENTITIES_NOT_VERIFIED"
+  ],
+  "identities": []
+}

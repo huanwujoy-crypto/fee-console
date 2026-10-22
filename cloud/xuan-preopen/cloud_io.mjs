@@ -9,6 +9,86 @@ const IB_SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
 const READ_SECRET = `projects/${PROJECT}/secrets/family-portfolio-gateway-key`;
 // Existing normal cash-sync/weekly token, pinned to its existing version.
 const FLEX_SECRET = `projects/${PROJECT}/secrets/ib-flex-cash-token`;
+export const IB_CREDENTIAL_LOCK_KEY='report-check/ib-mcp-credential/lease.json';
+const LOCK_META=`https://storage.googleapis.com/storage/v1/b/${BUCKET}/o/${encodeURIComponent(IB_CREDENTIAL_LOCK_KEY)}`;
+const LOCK_UPLOAD=`https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o`;
+const lockError=code=>ibError(code,{phase:'credential_load',category:'forbidden'});
+function validLease(value){
+  if(!value||Object.getPrototypeOf(value)!==Object.prototype
+    ||Object.keys(value).sort().join('|')!=='expiresAt|lastSavedVersion|owner|phase|schema'
+    ||value.schema!==1||!/^[a-f0-9-]{36}$/.test(value.owner||'')
+    ||!['idle','loading','refreshing','saving'].includes(value.phase)
+    ||(value.phase==='idle'?value.expiresAt!==null:!Number.isSafeInteger(value.expiresAt)||value.expiresAt<=0)
+    ||!(value.lastSavedVersion===null||typeof value.lastSavedVersion==='string'&&/^[1-9]\d{0,29}$/.test(value.lastSavedVersion)))
+    throw lockError('IB_CREDENTIAL_LEASE_INVALID');
+  return value;
+}
+// The existing preview allowlist can admit only this single mutable object.
+// No arbitrary bucket/key, delete, Secret or financial route is introduced.
+export function isIbCredentialLockRequest(url,options={}){
+  try{const u=new URL(String(url)),method=options.method??'GET';if(u.username||u.password||u.hash)return false;
+    if(u.origin+u.pathname===LOCK_META&&method==='GET')return u.search===''||
+      [...u.searchParams.keys()].sort().join('|')==='alt|generation'&&u.searchParams.get('alt')==='media'&&/^[1-9]\d*$/.test(u.searchParams.get('generation')||'');
+    if(u.origin+u.pathname!==LOCK_UPLOAD||method!=='POST'||[...u.searchParams.keys()].sort().join('|')!=='ifGenerationMatch|name|uploadType'
+      ||u.searchParams.get('name')!==IB_CREDENTIAL_LOCK_KEY||u.searchParams.get('uploadType')!=='media'
+      ||!/^(?:0|[1-9]\d*)$/.test(u.searchParams.get('ifGenerationMatch')||''))return false;
+    const bytes=Buffer.isBuffer(options.body)?options.body:typeof options.body==='string'?Buffer.from(options.body):null;
+    if(!bytes||bytes.length>4096)return false;validLease(uniqueCloudJson(bytes.toString('utf8'),4096));return true;
+  }catch{return false;}
+}
+
+// One fixed CAS record serializes credential load -> optional refresh -> saved
+// rotation. Expired *loading* holders may be replaced. Once refresh is marked,
+// expiry cannot authorize another refresh: an unknown outcome needs recovery.
+export function createIbCredentialLease({read,cas,now=Date.now,owner=()=>crypto.randomUUID()}={}){
+  let running=false;
+  const checked=async()=>{const row=await read();if(!row||!/^(?:0|[1-9]\d*)$/.test(String(row.generation)))throw lockError('IB_CREDENTIAL_LEASE_INVALID');
+    if(row.value===null){if(String(row.generation)!=='0')throw lockError('IB_CREDENTIAL_LEASE_INVALID');}
+    else validLease(row.value);return {value:row.value,generation:String(row.generation)};};
+  const write=async(generation,value)=>{
+    try{const next=String(await cas(generation,value));if(!/^[1-9]\d*$/.test(next)||next===generation)throw Error('unconfirmed');return next;}
+    catch(error){if(error?.message==='CLOUD_HTTP_412')throw lockError('IB_CREDENTIAL_LEASE_CONFLICT');
+      // Read back once; never blindly repeat an uncertain CAS write.
+      try{const observed=await checked();if(observed.generation!==generation&&JSON.stringify(observed.value)===JSON.stringify(value))return observed.generation;}catch{}
+      throw lockError('IB_CREDENTIAL_LEASE_OUTCOME_UNKNOWN');}
+  };
+  return {async run(callback){
+    if(running)throw lockError('IB_CREDENTIAL_LEASE_BUSY');running=true;
+    let value,generation,loadedVersion=null,savedVersion=null;
+    const owns=async(expiry=false)=>{const current=await checked();
+      if(current.generation!==generation||current.value?.owner!==value.owner||current.value.phase!==value.phase)throw lockError('IB_CREDENTIAL_LEASE_LOST');
+      if(expiry&&now()>=value.expiresAt)throw lockError('IB_CREDENTIAL_LEASE_EXPIRED');return current;};
+    const transition=async(phase,expiry)=>{await owns(expiry);const next={...value,phase};generation=await write(generation,next);value=next;};
+    const release=async()=>{await owns();const next={...value,phase:'idle',expiresAt:null,lastSavedVersion:savedVersion??value.lastSavedVersion};
+      generation=await write(generation,next);value=next;};
+    try{
+      const previous=await checked();generation=previous.generation;
+      if(previous.value&&previous.value.phase!=='idle'){
+        if(previous.value.phase!=='loading')throw lockError('IB_CREDENTIAL_RECOVERY_REQUIRED');
+        if(now()<previous.value.expiresAt)throw lockError('IB_CREDENTIAL_LEASE_BUSY');
+      }
+      value={schema:1,owner:owner(),phase:'loading',expiresAt:now()+120000,lastSavedVersion:previous.value?.lastSavedVersion??null};validLease(value);
+      generation=await write(generation,value);
+      const lease={
+        async assertLoading(version=null){await owns(true);if(value.phase!=='loading')throw lockError('IB_CREDENTIAL_LEASE_PHASE_INVALID');
+          if(version!==null&&value.lastSavedVersion!==null&&BigInt(version)<BigInt(value.lastSavedVersion))throw lockError('IB_CREDENTIAL_BINDING_STALE');},
+        loaded(version){if(!/^[1-9]\d*$/.test(version)||value.lastSavedVersion!==null&&BigInt(version)<BigInt(value.lastSavedVersion))throw lockError('IB_CREDENTIAL_BINDING_STALE');loadedVersion=version;},
+        async beforeRefresh(){if(value.phase!=='loading'||loadedVersion===null)throw lockError('IB_CREDENTIAL_LEASE_PHASE_INVALID');await transition('refreshing',true);},
+        async beforeSave(){if(value.phase!=='refreshing')throw lockError('IB_CREDENTIAL_LEASE_PHASE_INVALID');await transition('saving',false);},
+        saved(name){const version=String(name).split('/').at(-1);if(value.phase!=='saving'||!loadedVersion||!/^[1-9]\d*$/.test(version)||BigInt(version)<=BigInt(loadedVersion))throw lockError('IB_TOKEN_ROTATION_OUTCOME_UNKNOWN');savedVersion=version;}
+      };
+      let result;
+      try{result=await callback(lease);if(value.phase==='loading')await owns(true);
+        if(value.phase!=='loading'&&savedVersion===null)throw lockError('IB_CREDENTIAL_ROTATION_OUTCOME_UNKNOWN');}
+      catch(error){
+        if(value.phase==='loading'||savedVersion!==null)await release();
+        // Critical phase deliberately remains durable, including after expiry.
+        throw error;
+      }
+      await release();return result;
+    }finally{running=false;}
+  }};
+}
 
 // Finite origin metadata only. Never inspect messages, stacks, URLs or bodies.
 const ORIGIN_TYPES=new Set(['Error','TypeError','RangeError','SyntaxError','URIError','EvalError','AggregateError','AbortError','TimeoutError']);
@@ -192,7 +272,7 @@ export async function boundedText(response, limit = 8_000_000,diagnostics) {
   }
 }
 
-export function privateCloudIo({fetchImpl = fetch} = {}) {
+export function privateCloudIo({fetchImpl = fetch, now = Date.now} = {}) {
   let googleToken, googleTokenPromise;
   async function request(url, options = {}) {
     let response;
@@ -218,14 +298,39 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
     if (!result.payload?.data) throw new Error('CLOUD_CREDENTIAL_UNAVAILABLE');
     return Buffer.from(result.payload.data, 'base64').toString('utf8');
   }
+  let activeLease=null;
+  const mutex=createIbCredentialLease({now,
+    read:async()=>{
+      let metadata;try{metadata=await request(LOCK_META,{headers:await headers()});}
+      catch(error){if(error?.message==='CLOUD_HTTP_404')return {value:null,generation:'0'};throw error;}
+      if(metadata.name!==IB_CREDENTIAL_LOCK_KEY||!/^[1-9]\d*$/.test(String(metadata.generation))
+        ||!Number.isSafeInteger(Number(metadata.size))||Number(metadata.size)<0||Number(metadata.size)>4096)throw lockError('IB_CREDENTIAL_LEASE_INVALID');
+      const value=await request(LOCK_META+'?alt=media&generation='+metadata.generation,{headers:await headers()});
+      return {value,generation:String(metadata.generation)};
+    },
+    cas:async(generation,value)=>{
+      const body=Buffer.from(JSON.stringify(value)),url=new URL(LOCK_UPLOAD);
+      url.searchParams.set('uploadType','media');url.searchParams.set('name',IB_CREDENTIAL_LOCK_KEY);url.searchParams.set('ifGenerationMatch',generation);
+      const result=await request(url,{method:'POST',headers:await headers(),body});
+      if(result.name!==IB_CREDENTIAL_LOCK_KEY||String(result.size)!==String(body.length)||!/^[1-9]\d*$/.test(String(result.generation)))throw lockError('IB_CREDENTIAL_LEASE_OUTCOME_UNKNOWN');
+      return String(result.generation);
+    }});
+  const leaseRequired=()=>{if(!activeLease)throw lockError('IB_CREDENTIAL_LEASE_REQUIRED');return activeLease;};
   return {
     ibStore: {
+      requiresCredentialLease:true,
+      async withCredentialLease(callback){return mutex.run(async lease=>{activeLease=lease;try{return await callback(lease);}finally{activeLease=null;}});},
       async load() {
-        try { return JSON.parse(await secret(IB_SECRET)); }
+        const lease=leaseRequired();await lease.assertLoading();
+        try { const result=await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}/versions/latest:access`,{headers:await headers()});
+          const version=String(result.name).split('/').at(-1);validateBoundIbVersionName(result.name,version);lease.loaded(version);
+          if(typeof result.payload?.data!=='string')throw Error('invalid');
+          return uniqueCloudJson(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(result.payload.data,'base64'))); }
         catch (error) { throw inIbPhase(error, 'credential_load', 'CLOUD_IB_CREDENTIAL_UNAVAILABLE', null, 'response_invalid'); }
       },
       async loadBound(binding) {
         const {version,clientId}=validateIbCredentialBinding(binding);
+        const lease=leaseRequired();await lease.assertLoading(version);
         try {
           const result=await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}/versions/${version}:access`,{headers:await headers()});
           const versionName=validateBoundIbVersionName(result.name,version),encoded=result.payload?.data;
@@ -233,13 +338,15 @@ export function privateCloudIo({fetchImpl = fetch} = {}) {
           const credential=uniqueCloudJson(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.from(encoded,'base64')));
           if(!credential||Object.getPrototypeOf(credential)!==Object.prototype||credential.client_id!==clientId)
             throw ibError('IB_READ_ONLY_CREDENTIAL_REQUIRED',{phase:'credential_load',category:'scope_invalid'});
+          lease.loaded(version);
           return {credential,versionName};
         }catch(error){throw inIbPhase(error,'credential_load','CLOUD_IB_CREDENTIAL_UNAVAILABLE',null,'response_invalid');}
       },
       async save(value) {
+        const lease=leaseRequired();await lease.beforeSave();
         const result = await request(`https://secretmanager.googleapis.com/v1/${IB_SECRET}:addVersion`,
           {method: 'POST', headers: await headers(), body: JSON.stringify({payload: {data: Buffer.from(JSON.stringify(value)).toString('base64')}})});
-        return validateIbRotationReceipt(result);
+        const receipt=validateIbRotationReceipt(result);lease.saved(receipt.name);return receipt;
       },
     },
     async loadGatewayToken() {

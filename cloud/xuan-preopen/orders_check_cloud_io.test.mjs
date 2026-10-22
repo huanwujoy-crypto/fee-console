@@ -1,10 +1,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {privateCloudIo} from './cloud_io.mjs';
+import {privateCloudIo,isIbCredentialLockRequest,IB_CREDENTIAL_LOCK_KEY} from './cloud_io.mjs';
 import {runIbOrdersCheck, loadOrdersAssociation} from './orders_check.mjs';
 import {RESOURCE, TOKEN_ENDPOINT, loadReadCredential} from './ib_mcp.mjs';
 import {safeIbFailure} from './ib_diagnostics.mjs';
 import {associationPolicyText} from '../../scripts/xuan-ib-account-association.mjs';
+
+
+// Synthetic fixed-object CAS transport; never falls back to actual fetch.
+function lockTransport(baseFetch){
+  let record=null,generation=0;
+  return async(url,options={})=>{
+    if(!isIbCredentialLockRequest(url,options))return baseFetch(url,options);
+    const u=new URL(url),meta=()=>({name:IB_CREDENTIAL_LOCK_KEY,generation:String(generation),size:String(Buffer.byteLength(JSON.stringify(record)))});
+    if((options.method??'GET')==='GET'){
+      if(record===null)return Response.json({}, {status:404});
+      if(u.searchParams.get('alt')==='media')return u.searchParams.get('generation')===String(generation)?Response.json(record):Response.json({}, {status:412});
+      return Response.json(meta());
+    }
+    if(u.searchParams.get('ifGenerationMatch')!==String(generation))return Response.json({}, {status:412});
+    record=JSON.parse(options.body.toString());generation++;return Response.json(meta());
+  };
+}
 
 // Exercise the actual adapter and controller together. Only HTTP responses are
 // synthetic; no secret/store methods or diagnostic classifiers are stubbed.
@@ -50,7 +67,7 @@ function harness({due = true, load, save, schema = {type: 'object'}, refResponse
     }
     if (url === `https://secretmanager.googleapis.com/v1/${secret}/versions/latest:access`) {
       counts.secret++;
-      return load ? load() : response({payload: {data: Buffer.from(JSON.stringify(credential)).toString('base64')}});
+      return load ? load() : response({name: `${secret}/versions/14`,payload: {data: Buffer.from(JSON.stringify(credential)).toString('base64')}});
     }
     if (url === `https://secretmanager.googleapis.com/v1/${secret}:addVersion`) {
       counts.save++; assert.equal(options.method, 'POST');
@@ -75,7 +92,7 @@ function harness({due = true, load, save, schema = {type: 'object'}, refResponse
     assert.deepEqual(q.params, {name: 'get_account_orders', arguments: {}});
     counts.orders++; return response({jsonrpc: '2.0', id: q.id, result: {structuredContent: {orders: []}}});
   };
-  const io = privateCloudIo({fetchImpl});
+  const io = privateCloudIo({fetchImpl:lockTransport(fetchImpl),now});
   const options = {attemptId: 'a'.repeat(32), allowAttemptMarker: true, allowRefreshSave: true,
     withCatalog: true, now, io, fetchImpl, loadAssociation: () => loadOrdersAssociation({fetchImpl, now})};
   return {options, counts, io};
@@ -122,8 +139,8 @@ for (const [status, category] of [[401, 'authentication_rejected'], [403, 'permi
 });
 
 for (const [label, load] of [
-  ['invalid-secret-json', () => response({payload: {data: Buffer.from(canary).toString('base64')}})],
-  ['invalid-response-json', () => new Response(canary)], ['missing-payload', () => response({})],
+  ['invalid-secret-json', () => response({name: `${secret}/versions/14`,payload: {data: Buffer.from(canary).toString('base64')}})],
+  ['invalid-response-json', () => new Response(canary)], ['missing-payload', () => response({name: `${secret}/versions/14`})],
 ]) test(`actual cloud adapter classifies ${label} as response failure`, async () => {
   const h = harness({load}), out = await failure(h.options);
   assert.equal(out.phase, 'credential_load'); assert.equal(out.category, 'response_invalid');

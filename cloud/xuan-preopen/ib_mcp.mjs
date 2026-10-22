@@ -46,7 +46,12 @@ async function bodyText(response, limit = MAX_BYTES) {
   catch { fail('IB_INVALID_UTF8'); }
 }
 
-export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true, signal, refreshSignal = signal } = {}) {
+export async function loadReadCredential(store, options = {}) {
+  if(typeof store.withCredentialLease==='function')return store.withCredentialLease(lease=>loadReadCredentialUnlocked(store,{...options,credentialLease:lease}));
+  if(store.requiresCredentialLease===true)fail('IB_CREDENTIAL_LEASE_REQUIRED');
+  return loadReadCredentialUnlocked(store,options);
+}
+async function loadReadCredentialUnlocked(store, { fetchImpl = fetch, now = Date.now, allowRefresh = true, signal, refreshSignal = signal, credentialLease } = {}) {
   signal?.throwIfAborted();
   let original;
   try { original = validateCredential(await store.load()); }
@@ -63,6 +68,7 @@ export async function loadReadCredential(store, { fetchImpl = fetch, now = Date.
   // A refresh may revoke the old refresh token. Require a persistence capability
   // before submitting it; never refresh as a purported no-write probe.
   if (typeof store.save !== 'function') fail('IB_TOKEN_ROTATION_NOT_SAVED', {phase: 'credential_save', category: 'save_failed'});
+  await credentialLease?.beforeRefresh(); // durable marker before OAuth dispatch
   let response;
   try {
     response = await fetchImpl(TOKEN_ENDPOINT, {

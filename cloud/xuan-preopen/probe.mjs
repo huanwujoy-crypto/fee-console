@@ -2,9 +2,9 @@
 // publishing, GitHub mutation, source fallback, or scheduling is implemented.
 import crypto from 'node:crypto';
 import { captureCloudIbAction,captureCloudIbFull } from './ib_mcp.mjs';
+import {privateCloudIo} from './cloud_io.mjs';
 
 const PROJECT = 'family-portfolio-gateway';
-const SECRET = `projects/${PROJECT}/secrets/xuan-preopen-ib-mcp`;
 const BUCKET = `${PROJECT}-xuan-preopen-private`;
 let googleToken;
 async function jsonRequest(url, options = {}) {
@@ -25,18 +25,7 @@ async function headers() {
   }
   return { Authorization: `Bearer ${googleToken}`, 'content-type': 'application/json' };
 }
-const store = {
-  async load() {
-    const result = await jsonRequest(`https://secretmanager.googleapis.com/v1/${SECRET}/versions/latest:access`, { headers: await headers() });
-    if (!result.payload?.data) throw new Error('CLOUD_CREDENTIAL_UNAVAILABLE');
-    try { return JSON.parse(Buffer.from(result.payload.data, 'base64').toString('utf8')); }
-    catch { throw new Error('CLOUD_CREDENTIAL_INVALID'); }
-  },
-  async save(value) {
-    await jsonRequest(`https://secretmanager.googleapis.com/v1/${SECRET}:addVersion`,
-      { method: 'POST', headers: await headers(), body: JSON.stringify({ payload: { data: Buffer.from(JSON.stringify(value)).toString('base64') } }) });
-  },
-};
+const store = privateCloudIo().ibStore;
 async function savePrivate(name, value) {
   const data = Buffer.from(JSON.stringify(value));
   const url = new URL(`https://storage.googleapis.com/upload/storage/v1/b/${BUCKET}/o`);

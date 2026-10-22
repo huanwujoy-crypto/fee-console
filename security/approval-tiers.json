@@ -556,6 +556,21 @@
     "cloud/xuan-preopen/owner_time_contract.fixture.py",
     "cloud/xuan-preopen/owner_time_contract.test.mjs",
     "docs/xuan-owner-time-contract-recovery-20261021.md",
-    "security/xuan-owner-source-recovery.json"
+    "security/xuan-owner-source-recovery.json",
+    "cloud/ib-daily/baseline.json",
+    "cloud/ib-daily/integration.patch",
+    "cloud/ib-daily/route.fixture.py",
+    "cloud/ib-daily/test-support/schwab_sync/__init__.py",
+    "cloud/ib-daily/test-support/schwab_sync/clients.py",
+    "cloud/ib-daily/test-support/schwab_sync/ib_cash_client.py",
+    "cloud/ib-daily/test-support/schwab_sync/storage.py",
+    "cloud/ib-daily/test_daily_wiring.py",
+    "cloud/ib-daily/worker/schwab_sync/ib_daily.py",
+    "cloud/ib-daily/worker/schwab_sync/ib_daily_bindings.json",
+    "cloud/ib-daily/worker/schwab_sync/ib_daily_runtime.py",
+    "cloud/ib-daily/worker/schwab_sync/ib_daily_source.py",
+    "cloud/ib-daily/worker/schwab_sync/ib_snapshot.py",
+    "cloud/ib-daily/worker/schwab_sync/ib_snapshot_adapter.py",
+    "docs/ib-daily-readonly.md"
   ]
 }

@@ -181,6 +181,8 @@ export async function runIbOrdersCheck({mode = 'orders_check', attemptId, allowA
       rotationSaved = true;
     },
   };
+  store.requiresCredentialLease=io.ibStore.requiresCredentialLease===true;
+  if(typeof io.ibStore.withCredentialLease==='function')store.withCredentialLease=callback=>io.ibStore.withCredentialLease(callback);
   try {
     const marker = {schemaVersion: 1, purpose: 'ib-auth-orders-check', mode, attemptId,
       startedAt, withCatalog, allowRefreshSave};
