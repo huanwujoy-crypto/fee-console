@@ -287,7 +287,13 @@ test('saved-capture bridge forwards actual end and separates five-minute capture
 });
 
 test('registered continuation protocol cannot reset the claim and closes after uncertain write',async t=>{
-  const reg=registeredOwnerRecovery(),ops=[];
+  const reg=structuredClone(registeredOwnerRecovery()),ops=[];delete reg.receiptObject;
+  reg.referenceCapture={schema:'xuan.registered-reference-capture.v1',captureStartedAt:reg.dataDate+'T02:00:00.000Z',captureCompletedAt:reg.dataDate+'T02:01:00.000Z',expiresAt:reg.dataDate+'T15:59:59.999Z',sourceHashes:{'sharesight.ibGroupedPerformance':'1'.repeat(64),'sharesight.noahPerformance':'2'.repeat(64),'ib.orders':'3'.repeat(64)}};
+  const runId='11111111-2222-4333-8444-555555555555',prefix=`report-check/${reg.referenceCapture.captureStartedAt}-${runId}/`;
+  reg.continuation={schema:'xuan.evidence-continuation.v1',runId,claimGeneration:'1',objects:['ib.flexEod.json','sharesight.ibGroupedPerformance.json','sharesight.noahPerformance.json','ib.optionalLive.json','report.html'].map(name=>({name:prefix+name,generation:'2',sha256:'a'.repeat(64),size:1})),maximumObjects:9,maximumBytes:33554432};
+  const savedRead=fs.readFileSync;
+  t.mock.method(fs,'readFileSync',(p,...options)=>String(p).endsWith('/security/xuan-owner-source-recovery.json')?(options[0]==='utf8'?JSON.stringify(reg):Buffer.from(JSON.stringify(reg))):savedRead(p,...options));syncBuiltinESMExports();
+  t.after(()=>{t.mock.restoreAll();syncBuiltinESMExports();});
   const clock=Date.parse(reg.referenceCapture.captureCompletedAt)+60000;t.mock.method(Date,'now',()=>clock);
   await fakeWorker(frame=>{const v=frame.value;ops.push(v.op);return {id:frame.id,result:v.op==='inspectEvidenceContinuation'?{status:'verified'}:{requestId:reg.requestId,remainingObjects:3},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
     await sdk.inspectEvidenceContinuation();

@@ -317,12 +317,21 @@ def validate_storage_request(value, expected_generation='0', daily=False):
 
 def recovery_registration():
     value = json_loads((Path(__file__).resolve().parents[2]/'security'/'xuan-owner-source-recovery.json').read_bytes())
-    if (set(value)-{'supersedes', 'continuation'} not in ({'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}, {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256', 'referenceCapture'})
+    return validate_recovery_registration(value)
+
+
+def validate_recovery_registration(value):
+    prior = re.fullmatch(r'delivery/(\d{4}-\d\d-\d\d)/receipt\.json', str(value.get('priorReceiptObject')))
+    try:
+        prior_valid = bool(prior and datetime.date.fromisoformat(prior[1]).isoformat() == prior[1] and prior[1] <= value['dataDate'])
+    except (ValueError, TypeError, KeyError):
+        prior_valid = False
+    if (set(value)-{'supersedes', 'continuation', 'previousReferenceCapture'} not in ({'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256'}, {'schema', 'requestId', 'dataDate', 'priorReceiptObject', 'priorReceiptGeneration', 'priorReceiptSha256', 'referenceCapture'})
             or value['schema'] != 'xuan.owner-source-recovery.v1'
             or not re.fullmatch(r'[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}', str(value['requestId']))
             or not re.fullmatch(r'\d{4}-\d\d-\d\d', str(value['dataDate']))
             or datetime.date.fromisoformat(value['dataDate']).isoformat() != value['dataDate']
-            or value['priorReceiptObject'] != 'delivery/'+value['dataDate']+'/receipt.json'
+            or not prior_valid
             or not GEN.fullmatch(str(value['priorReceiptGeneration']))
             or not re.fullmatch('[a-f0-9]{64}', str(value['priorReceiptSha256']))):
         reject('PIN_REQUIRED')
@@ -354,6 +363,15 @@ def recovery_registration():
             reject('PIN_REQUIRED')
     if 'continuation' in value:
         continuation_registration(value)
+    if 'previousReferenceCapture' in value:
+        previous = value['previousReferenceCapture']
+        if (not isinstance(previous, dict) or set(previous) != {'requestId', 'dataDate', 'referenceCapture'}
+                or previous['requestId'] == value['requestId'] or not isinstance(previous['dataDate'], str)
+                or previous['dataDate'] >= value['dataDate']):
+            reject('PIN_REQUIRED')
+        validate_recovery_registration(dict(schema=value['schema'], requestId=previous['requestId'], dataDate=previous['dataDate'],
+            priorReceiptObject='delivery/'+previous['dataDate']+'/receipt.json', priorReceiptGeneration='1', priorReceiptSha256='0'*64,
+            referenceCapture=previous['referenceCapture']))
     return dict(value, receiptObject='report-check/orders-probe-'+value['requestId']+'/preview-receipt.json')
 
 

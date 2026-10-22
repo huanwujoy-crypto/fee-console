@@ -5,7 +5,7 @@ import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_
 import crypto from 'node:crypto';
 import {types as nodeTypes} from 'node:util';
 import {ownerBundlePathsMatch,recoveryRequestId} from './owner_bundle_contract.mjs';
-import {registeredOwnerRecovery,registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources} from './owner_source_recovery.mjs';
+import {registeredOwnerRecovery,registeredReferenceCapture,registeredHistoricalReferenceCapture,registeredDisplayReferenceCapture,ownerCaptureDeadline,validateReferenceSources} from './owner_source_recovery.mjs';
 import {validateEodReceipt,validateCompletedEodSession} from './eod_report.mjs';
 import {adaptFlexArchive,digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {resolveCurrentCall} from './call_record.mjs';
@@ -105,7 +105,7 @@ export function prepareOwnerStaticDisplay(input){
   display=display.replaceAll('class="distance">','class="distance" title="参考价差；同名持仓匹配，原生订单合约未核实">');
   display=display.replace(/(<div class="quote"><b>[^<]*<\/b><span>)([A-Z]{3})(<\/span>)/g,'$1$2·推定$3');
   const disclosure=model.calculationBasis===SHARESIGHT_BOOK_BASIS?'<aside class="notes" role="note"><p>私有只读报告；报告日、来源日和取数时间保持不变。按用户同步前提估算 Sharesight 账面预算。挂单币种与价差按关联持仓推定；覆盖或币种缺项时不计算净预算。所有结果均非券商实时可下单额。</p></aside>':'<aside class="notes" role="note"><p>私有只读报告；原报告日、来源日和取数时间保持不变。挂单所列币种及距市价仅为同名持仓匹配参考；原生挂单币种、合约 ID 与市场身份尚未核实，不能据此认定完整预留或可执行预算。</p></aside>';
-  const reference=registeredReferenceCapture(registeredOwnerRecovery().requestId,model.provenance?.capture?.startedAt,model.provenance?.capture?.completedAt);
+  const reference=registeredDisplayReferenceCapture(model.provenance?.capture?.startedAt,model.provenance?.capture?.completedAt);
   const referenceNotice=reference?'<aside class="notes" role="note"><p>一次性参考快照，非实时数据。原始采集时间 '+reference.captureStartedAt+' 至 '+reference.captureCompletedAt+'；允许发布截止 '+reference.expiresAt+'。采集后价格、现金或挂单可能已变化。</p></aside>':'';
   display=display.replace('</header>','</header>'+referenceNotice+(Object.hasOwn(model,'observedOrderPlan')?disclosure.replace('覆盖或币种缺项时不计算净预算。','完整覆盖或币种缺项时不声称完整净预算；按已取得买单计算的参考估算单独注明。'):disclosure));
   display=display.replace('<head>','<head><meta http-equiv="Content-Security-Policy" content="'+OWNER_DISPLAY_CSP+'"><meta name="referrer" content="no-referrer"><style>.quote span{font-size:10px;white-space:nowrap}</style>');
@@ -279,7 +279,7 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
             ||!['cloud-mcp','mac-mcp'].includes(normal.channel))fail('RECOVERY_SOURCE_BINDING');
         }else if(live.probeEvidence?.object?.name!==`report-check/orders-probe-${recoveryId}/orders.json`)fail('RECOVERY_SOURCE_BINDING');
       }
-      const reference=registeredReferenceCapture(recoveryId,r.startedAt,r.captureCompletedAt);
+      const reference=(phase==='historical-authenticity'?registeredHistoricalReferenceCapture:registeredReferenceCapture)(recoveryId,r.startedAt,r.captureCompletedAt);
       if((r.referenceMode??null)!==(reference?.schema??null))fail('REFERENCE_BINDING');
       validateReferenceSources(reference,values);
       let concentrationInput=null;
