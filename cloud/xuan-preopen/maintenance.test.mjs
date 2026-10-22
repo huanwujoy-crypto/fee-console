@@ -102,9 +102,9 @@ function contextFixture(){
 function contextFiles(root,prefix=''){
  return fs.readdirSync(path.join(root,prefix)).flatMap(name=>{const file=prefix?prefix+'/'+name:name;return fs.lstatSync(path.join(root,file)).isDirectory()?contextFiles(root,file):[file];}).sort();
 }
-test('fixed 107-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
- assert.equal(COPY_PATHS.length,107);assert.equal(new Set(COPY_PATHS).size,107);
- const normal=['cloud/xuan-preopen/orders_read.mjs','cloud/xuan-preopen/orders_read.test.mjs'];
+test('fixed 110-file context binds exact reviewed scope; unrelated tracked private source never enters it',()=>{
+ assert.equal(COPY_PATHS.length,110);assert.equal(new Set(COPY_PATHS).size,110);
+ const normal=['cloud/xuan-preopen/orders_read.mjs','cloud/xuan-preopen/orders_read.test.mjs','cloud/xuan-preopen/ib_sync_snapshot.mjs','cloud/xuan-preopen/ib_sync_snapshot_capture.mjs','cloud/xuan-preopen/ib_sync_snapshot.test.mjs'];
  assert.ok(normal.every(file=>COPY_PATHS.includes(file)));
  assert.equal(crypto.createHash('sha256').update(COPY_PATHS.filter(file=>!normal.includes(file)).join('\n')+'\n').digest('hex'),'a653bf89c39f276e9713259fff83ffc9c93dafbf428514f744a72b047b4332db');
  const f=contextFixture();

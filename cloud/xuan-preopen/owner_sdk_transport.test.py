@@ -984,6 +984,11 @@ class EvidenceProvider(Provider):
 
 class BrowserEvidenceTests(unittest.TestCase):
     assertCode = BoundaryTests.assertCode
+    def setUp(self):
+        stamp=m.recovery_registration()['dataDate']+'T04:00:00.000Z'
+        seconds=datetime.datetime.fromisoformat(stamp.replace('Z','+00:00')).timestamp()
+        clock=patch.object(m.time,'time',return_value=seconds);clock.start();self.addCleanup(clock.stop)
+        instant=patch.object(m,'instant',return_value=stamp);instant.start();self.addCleanup(instant.stop)
     def begin(self,provider=None):
         provider=provider or EvidenceProvider();b=m.OwnerBridge(provider)
         now=m.instant();reg=m.recovery_registration()
