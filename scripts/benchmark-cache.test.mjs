@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   DEFINITIONS,
   appendCrossCheckedClose,
+  benchmarkSessionClose,
   extractNasdaqClose,
   extractNasdaqDividends,
   extractNasdaqHistoricalClose,
@@ -334,7 +335,7 @@ test('SPY fallback refuses an uncovered year or a scheduled ex-date without an a
     nasdaqHistorical: nasdaqHistorical(DEFINITIONS.spy, [{ date: '01/05/2027', close: '801' }]),
     definition: DEFINITIONS.spy,
     now: new Date('2027-01-06T02:00:00Z'),
-  }), /calendar coverage missing/);
+  }), /Benchmark official calendar unavailable/);
 });
 
 test('merge source describes the cross-checked fallback and paired tail dates stay inspectable', () => {
@@ -417,14 +418,15 @@ test('historical fallback preserves symbol, listing, issuer and dividend verific
   assert.throws(() => appendCrossCheckedClose({ ...qqq, nasdaqDividends: bad }), /Unexpected Nasdaq dividend/);
 });
 
-test('expected target uses the fee NY boundary across DST and weekends without inferring holidays', () => {
+test('expected benchmark target uses reviewed sessions across DST, weekends and holidays', () => {
   for (const [time, target] of [
     ['2026-10-14T20:14:59Z', '2026-10-13'], ['2026-10-14T20:15:00Z', '2026-10-14'],
     ['2026-11-05T21:14:59Z', '2026-11-04'], ['2026-11-05T21:15:00Z', '2026-11-05'],
     ['2026-10-18T14:00:00Z', '2026-10-16'], ['2026-10-19T18:00:00Z', '2026-10-16'],
-    ['2026-11-27T02:00:00Z', '2026-11-26'],
+    ['2026-11-27T02:00:00Z', '2026-11-25'], ['2026-12-26T02:00:00Z', '2026-12-24'],
   ]) assert.equal(expectedBenchmarkTargetDate(new Date(time)), target);
   assert.throws(() => expectedBenchmarkTargetDate(new Date('invalid')), /Invalid benchmark clock/);
+  assert.throws(() => expectedBenchmarkTargetDate(new Date('2027-01-06T02:00:00Z')), /official calendar unavailable/);
 });
 
 function recoveryFetch({ freshPrimary = false, staleMeta = false, failedSymbol, failAll = false } = {}) {
@@ -566,4 +568,88 @@ test('successful target reuse is a byte-identical no-op', async t => {
   const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
   assert.equal(result.changed, false);
   assert.equal(await readFile(path, 'utf8'), bytes);
+  assert.equal(source.calls.length, 0);
+});
+
+test('reviewed early close is complete after13:15NY and a holiday never supplies a fabricated bar', () => {
+  assert.equal(benchmarkSessionClose('2026-11-27', DEFINITIONS.spy), 780);
+  assert.equal(benchmarkSessionClose('2026-11-26', DEFINITIONS.qqq), null);
+  const early = payload(DEFINITIONS.spy, { timestamps: [epoch('2026-11-27T14:30:00Z')], closes: [103] });
+  assert.throws(() => extractPrices(early, DEFINITIONS.spy, new Date('2026-11-27T18:14:59Z')), /No completed closes/);
+  assert.deepEqual(extractPrices(early, DEFINITIONS.spy, new Date('2026-11-27T18:15:00Z')), [{ d: '2026-11-27', p: 103 }]);
+  const closed = payload(DEFINITIONS.spy, { timestamps: [epoch('2026-11-26T14:30:00Z')], closes: [999] });
+  assert.throws(() => extractPrices(closed, DEFINITIONS.spy, new Date('2026-11-27T02:00:00Z')), /No completed closes/);
+});
+
+test('only the missing ETF is fetched and complete cached evidence is retained', async t => {
+  const cache = priorCache();
+  cache.benchmarks.spy.series.push({ d: '2026-10-14', p: 103 });
+  const { path } = await offlineCache(t, cache);
+  const source = recoveryFetch();
+  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+  assert.ok(source.calls.length > 0);
+  assert.ok(source.calls.every(url => !url.includes('/SPY')));
+  assert.deepEqual(result.cache.benchmarks.spy.series.at(-1), { d: '2026-10-14', p: 103 });
+  assert.deepEqual(result.cache.benchmarks.qqq.series.at(-1), { d: '2026-10-14', p: 103 });
+});
+
+test('holiday reuses the actual previous trading session without provider calls or new dates', async t => {
+  const now = new Date('2026-11-27T01:00:00Z');
+  const cache = mergePrices(null, { spy: [{ d: '2026-11-25', p: 103 }], qqq: [{ d: '2026-11-25', p: 103 }] }, now);
+  const { path, bytes } = await offlineCache(t, cache);
+  const source = recoveryFetch({ failAll: true });
+  const result = await refresh({ path, now, fetchImpl: source.fetchImpl });
+  assert.equal(result.changed, false);
+  assert.equal(source.calls.length, 0);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+test('untrusted or future cache evidence cannot bypass price verification by claiming a target row', async t => {
+  for (const alter of [
+    cache => { cache.benchmarks.spy.symbol = 'SPXL'; },
+    cache => { cache.benchmarks.spy.series.push({ d: '2026-10-15', p: 103 }); },
+    cache => { cache.benchmarks.spy.series.push({ d: '2026-10-13', p: 999 }); },
+  ]) {
+    const cache = priorCache(); alter(cache);
+    const { path, bytes } = await offlineCache(t, cache);
+    const source = recoveryFetch();
+    await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /Invalid reusable benchmark cache/);
+    assert.equal(await readFile(path, 'utf8'), bytes);
+    assert.equal(source.calls.length, 0);
+  }
+});
+
+test('target tail with missing intermediate sessions cannot be reused or written', async t => {
+  const rows = [{ d: '2026-10-09', p: 99 }, { d: '2026-10-14', p: 103 }];
+  const cache = mergePrices(null, { spy: rows, qqq: rows }, RECOVERY_NOW);
+  const { path, bytes } = await offlineCache(t, cache);
+  const source = recoveryFetch({ freshPrimary: true });
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /session gap/);
+  assert.equal(source.calls.length, 2);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+test('complete fresh history can repair missing sessions without replacing the price definition', async t => {
+  const rows = [{ d: '2026-10-09', p: 99 }, { d: '2026-10-14', p: 103 }];
+  const cache = mergePrices(null, { spy: rows, qqq: rows }, RECOVERY_NOW);
+  const { path } = await offlineCache(t, cache);
+  let calls = 0;
+  const fetchImpl = async url => {
+    calls += 1;
+    const symbol = /chart\/(SPY|QQQ)/.exec(new URL(url).pathname)?.[1];
+    assert.ok(symbol);
+    return { ok: true, status: 200, json: async () => payload(DEFINITIONS[symbol.toLowerCase()], {
+      timestamps: ['2026-10-12', '2026-10-13', '2026-10-14'].map(d => epoch(`${d}T13:30:00Z`)),
+      closes: [101, 102, 103],
+      meta: { regularMarketTime: RECOVERY_CLOSE, regularMarketPrice: 103 },
+    }) };
+  };
+  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl });
+  assert.equal(calls, 2);
+  for (const key of ['spy', 'qqq']) assert.deepEqual(result.cache.benchmarks[key].series.map(row => row.d),
+    ['2026-10-09', '2026-10-12', '2026-10-13', '2026-10-14']);
+});
+
+test('a normalized impossible date is never an official session', () => {
+  assert.throws(() => benchmarkSessionClose('2026-02-30', DEFINITIONS.spy), /calendar unavailable/);
 });

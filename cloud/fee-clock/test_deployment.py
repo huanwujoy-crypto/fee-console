@@ -53,8 +53,13 @@ class DeploymentTests(unittest.TestCase):
     def test_docker_context_contains_only_clock_sources(self):
         text = Path(__file__).with_name('Dockerfile').read_text()
         copies = [row for row in text.splitlines() if row.startswith('COPY ')]
-        self.assertEqual(copies, ['COPY clock.py runtime.py /app/'])
+        self.assertEqual(copies, ['COPY clock.py runtime.py benchmark.py benchmark-calendar.json /app/'])
         self.assertIn('FEE_CLOCK_ENABLED=false', text)
+        self.assertIn('FEE_BENCHMARK_CLOCK_ENABLED=false', text)
+        context = Path(__file__).with_name('.dockerignore').read_text().splitlines()
+        self.assertEqual(context[0], '*')
+        self.assertEqual(set(context[1:]), {'!Dockerfile', '!clock.py', '!runtime.py',
+                         '!benchmark.py', '!benchmark-calendar.json'})
 
 
 if __name__ == '__main__':

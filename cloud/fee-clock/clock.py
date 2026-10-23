@@ -75,12 +75,12 @@ def complete_list(payload, key):
     return payload[key]
 
 
-def validate_runs(payload, now, expected_status=None):
+def validate_runs(payload, now, expected_status=None, workflow_id=WORKFLOW_ID):
     runs = complete_list(payload, 'workflow_runs')
     ids = set()
     for row in runs:
         if (not isinstance(row, dict) or type(row.get('id')) is not int or row['id'] <= 0
-                or row['id'] in ids or row.get('workflow_id') != WORKFLOW_ID
+                or row['id'] in ids or row.get('workflow_id') != workflow_id
                 or row.get('repository', {}).get('full_name') != REPO
                 or row.get('head_branch') != 'main'
                 or row.get('status') not in STATUSES
@@ -91,6 +91,29 @@ def validate_runs(payload, now, expected_status=None):
         if timestamp(row.get('created_at')) > now:
             fail('METADATA_INVALID')
     return runs
+
+
+def runtime_route(mode, now, benchmark_enabled=False):
+    """Keep the original fee slots independent of benchmark/calendar failures."""
+    if mode not in ('launch', 'check-start') or not isinstance(now, datetime) or now.tzinfo is None:
+        fail('MODE')
+    hk = now.astimezone(ZoneInfo('Asia/Hong_Kong'))
+    minute = hk.hour * 60 + hk.minute
+    if (mode == 'launch' and 600 <= minute < 605) or (mode == 'check-start' and 605 <= minute < 610):
+        return 'fee'
+    if benchmark_enabled is not True:
+        return 'fee'
+    if hk.weekday() not in (1, 2, 3, 4, 5):
+        return 'no-op'
+    if mode == 'launch' and hk.hour in (6, 7, 8) and hk.minute < 5:
+        return 'benchmark-launch'
+    if mode == 'check-start' and 540 <= minute < 550:
+        return 'benchmark-check'
+    #09:05 repeats only the public deadline check, covering a delayed09:00
+    # delivery. The extra10:00 Cartesian slot never reads or dispatches anything.
+    if mode == 'check-start' and 600 <= minute < 605:
+        return 'no-op'
+    fail('OUTSIDE_WINDOW')
 
 
 def inspect_runs(github, selected, current_time):
