@@ -227,6 +227,8 @@ const htmlPath=process.env.FEE_LEDGER_TEST_INDEX||path.join(here,'..','index.htm
 if(process.env.GITHUB_ACTIONS==='true'&&process.env.FEE_LEDGER_TEST_INDEX)throw new Error('external UI preview is local-only');
 const html=fs.readFileSync(htmlPath,'utf8');
 const hasDrawdown=html.includes('/* max-drawdown-view:start */');
+const hasPeriodDisplay=html.includes('/* return-period-display:start */');
+const periodDisplayTest=(name,fn)=>test(name,{skip:hasPeriodDisplay?false:'support stage: shared period display is in the separate index-only UI change'},fn);
 const drawdownTest=(name,fn)=>test(name,{skip:hasDrawdown?false:'support stage: display implementation is in the separate index-only UI PR'},fn);
 
 const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
@@ -375,7 +377,7 @@ drawdownTest('common cutoff clips all three drawdowns and clearly labels the lat
   const {sandbox,feeView}=await model(input),out=sandbox.drawdownView(feeView);
   assert.equal(out.through,dates[2]);assert.equal(out.latest,dates[3]);
   near(out.actual.value,1-110/120);near(out.spy.value,.10);near(out.qqq.value,1-100/110);
-  assert.match(sandbox.renderDrawdowns(feeView),/2026-09-15 → 2026-09-16（共同截至；最新资产 2026-09-17）/);
+  assert.match(sandbox.renderDrawdowns(feeView),hasPeriodDisplay?/回撤统计期间：2026-09-15 → 2026-09-16，共 2 个自然日（收益截至 2026-09-17，区间不同）/:/2026-09-15 → 2026-09-16（共同截至；最新资产 2026-09-17）/);
 });
 
 drawdownTest('verified closed-session carry is flat; false carry and closed-session dividends are unverified',async()=>{
@@ -407,7 +409,7 @@ drawdownTest('pending receipt renders three explicit unverified values and no in
   const {sandbox}=await model();
   const out=sandbox.renderDrawdowns({state:'pending',start:null,asOf:null});
   assert.equal((out.match(/未核实<\/b>/g)||[]).length,3);
-  assert.ok(!out.includes('0.00%'));assert.match(out,/日期区间待核实/);
+  assert.ok(!out.includes('0.00%'));assert.match(out,hasPeriodDisplay?/回撤统计期间待核实/:/日期区间待核实/);
 });
 
 drawdownTest('drawdown calculation has no access to fee payments, credentials, network, storage or publication',()=>{
@@ -431,5 +433,90 @@ test('drawdown rollout is either absent or fully marked for this contract suite'
   }
 });
 
+/* return-period-display-contract:start */
+periodDisplayTest('period labels use inclusive calendar days, not elapsed dates or the opening anchor',async()=>{
+  const {sandbox}=await model();
+  assert.equal(sandbox.returnPeriodLabel('2026-08-01','2026-10-22'),'2026-08-01 → 2026-10-22，共 83 个自然日');
+  assert.equal(sandbox.returnPeriodLabel('2026-08-01','2026-08-01'),'2026-08-01 → 2026-08-01，共 1 个自然日');
+});
+
+periodDisplayTest('calendar labels remain correct across leap days, year boundaries and DST dates',async()=>{
+  const {sandbox}=await model();
+  for(const [from,to,days] of [['2024-02-28','2024-03-01',3],['2026-02-28','2026-03-01',2],
+    ['2026-12-31','2027-01-01',2],['2026-03-07','2026-03-09',3]]){
+    assert.equal(sandbox.returnPeriodLabel(from,to),`${from} → ${to}，共 ${days} 个自然日`);
+  }
+});
+
+periodDisplayTest('invalid or reversed periods remain unverified instead of showing a false zero-day window',async()=>{
+  const {sandbox}=await model();
+  for(const [from,to] of [[null,null],['','2026-08-01'],['2026-02-30','2026-03-01'],
+    ['2026-08-05','2026-08-01'],['2026-08-01','invalid']])assert.equal(sandbox.returnPeriodLabel(from,to),null);
+});
+
+periodDisplayTest('matching returns and drawdown windows share exactly one period line with daily-close wording',async()=>{
+  const {sandbox,feeView,st,nodes,receipt}=await model();
+  sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  const out=nodes.kpis.innerHTML,range='2026-08-01 → 2026-08-05';
+  assert.match(out,/统计期间：2026-08-01 → 2026-08-05，共 5 个自然日/);
+  assert.equal(out.split(range).length-1,1);
+  assert.ok(!sandbox.renderDrawdowns(feeView).includes(range));
+  assert.match(out,/同期最大回撤 · 费前/);
+  assert.match(out,/日末单位净值（TWR）曲线计算/);
+});
+
+periodDisplayTest('the existing model window updates the shared period automatically without a fixed 83-day assumption',async()=>{
+  const input=fixture();input.economicInput.settings.start='2026-09-01';
+  input.economicInput.months=[];input.economicInput.fees=[];
+  const dates=['2026-08-31','2026-09-01','2026-09-02','2026-09-03'];
+  input.data.daily=input.data.daily.slice(0,4);
+  input.data.daily.forEach((p,i)=>Object.assign(p,{d:dates[i],webull:[100,110,105,120][i],spy:[100,101,99,102][i],qqq:[100,102,100,103][i]}));
+  input.data.status.asOf='2026-09-03';
+  const {sandbox,feeView,st,nodes,receipt}=await model(input);
+  sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  assert.match(nodes.kpis.innerHTML,/统计期间：2026-09-01 → 2026-09-03，共 3 个自然日/);
+  assert.ok(!nodes.kpis.innerHTML.includes('83 个自然日'));
+});
+
+periodDisplayTest('lagged drawdown coverage uses its own day count and never claims the same period',async()=>{
+  const input=fixture(),dates=['2026-09-14','2026-09-15','2026-09-16','2026-09-17'];
+  input.economicInput.settings.start=dates[1];input.economicInput.months=[];input.economicInput.fees=[];
+  input.data.daily=input.data.daily.slice(0,4);
+  input.data.daily.forEach((p,i)=>Object.assign(p,{d:dates[i],bd:dates[i],bstate:'session',webull:[100,120,110,50][i],spy:[100,100,90,10][i],qqq:[100,110,100,10][i]}));
+  delete input.data.daily[3].qqq;input.data.status.asOf=dates[3];
+  const {sandbox,feeView,st,nodes,receipt}=await model(input);
+  sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  const drawdown=sandbox.renderDrawdowns(feeView);
+  assert.match(nodes.kpis.innerHTML,/统计期间：2026-09-15 → 2026-09-17，共 3 个自然日/);
+  assert.match(drawdown,/回撤统计期间：2026-09-15 → 2026-09-16，共 2 个自然日（收益截至 2026-09-17，区间不同）/);
+  assert.ok(!drawdown.includes('同期'));
+  assert.match(nodes.kpis.innerHTML,/截至 2026-09-16/);
+});
+
+periodDisplayTest('missing periods keep the date and all three drawdowns explicitly unverified',async()=>{
+  const {sandbox}=await model();
+  const out=sandbox.renderDrawdowns({state:'pending',start:null,asOf:null});
+  assert.match(out,/回撤统计期间待核实/);
+  assert.equal((out.match(/未核实<\/b>/g)||[]).length,3);
+  assert.ok(!out.includes('0 个自然日'));assert.ok(!out.includes('同期'));
+});
+
+periodDisplayTest('displayed day counts come from actual dates and rendering leaves calculation inputs intact',async()=>{
+  const {sandbox,feeView,st,nodes,receipt,input}=await model();
+  const original=JSON.stringify({feeView,input});
+  sandbox.renderKPIs(feeView,{...st,spanDays:999},{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  assert.match(nodes.kpis.innerHTML,/共 5 个自然日/);
+  assert.ok(!nodes.kpis.innerHTML.includes('999 个自然日'));
+  assert.equal(JSON.stringify({feeView,input}),original);
+});
+
+test('shared period display rollout is either absent or fully marked',()=>{
+  if(hasPeriodDisplay){section('/* return-period-display:start */','/* return-period-display:end */');}
+  else{
+    assert.ok(!html.includes('function returnPeriodLabel('));
+    assert.ok(!html.includes('/* return-period-display:end */'));
+  }
+});
+/* return-period-display-contract:end */
 }
 /* maximum-drawdown-contract:end */
