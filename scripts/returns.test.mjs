@@ -228,6 +228,8 @@ if(process.env.GITHUB_ACTIONS==='true'&&process.env.FEE_LEDGER_TEST_INDEX)throw 
 const html=fs.readFileSync(htmlPath,'utf8');
 const hasDrawdown=html.includes('/* max-drawdown-view:start */');
 const hasPeriodDisplay=html.includes('/* return-period-display:start */');
+const hasDrawdownEpisode=html.includes('/* drawdown-episode-metadata:start */');
+const episodeTest=(name,fn)=>test(name,{skip:hasDrawdownEpisode?false:'support stage: episode metadata is in the separate index-only UI change'},fn);
 const periodDisplayTest=(name,fn)=>test(name,{skip:hasPeriodDisplay?false:'support stage: shared period display is in the separate index-only UI change'},fn);
 const drawdownTest=(name,fn)=>test(name,{skip:hasDrawdown?false:'support stage: display implementation is in the separate index-only UI PR'},fn);
 
@@ -518,5 +520,130 @@ test('shared period display rollout is either absent or fully marked',()=>{
   }
 });
 /* return-period-display-contract:end */
+
+/* drawdown-episode-contract:start */
+const factorsFromLevels=(levels,anchor='2026-07-31')=>levels.slice(1).map((value,i)=>({
+  d:new Date(Date.parse(anchor+'T00:00:00Z')+(i+1)*86400000).toISOString().slice(0,10),factor:value/levels[i]
+}));
+
+episodeTest('episode metadata preserves the original drawdown result and input factors exactly',async()=>{
+  const {sandbox}=await model();let seed=123456;
+  const random=()=>((seed=(1664525*seed+1013904223)>>>0)/2**32);
+  for(let sample=0;sample<64;sample++){
+    const factors=Array.from({length:48},(_,i)=>({d:new Date(Date.parse('2026-07-31T00:00:00Z')+(i+1)*86400000).toISOString().slice(0,10),factor:.7+random()*.7}));
+    const before=JSON.stringify(factors),base=sandbox.maxDrawdownFromFactors(factors,'2026-07-31'),out=sandbox.drawdownEpisodeFromFactors(factors,'2026-07-31');
+    for(const key of ['state','value','peakDate','troughDate'])assert.equal(out[key],base[key]);
+    assert.equal(JSON.stringify(factors),before);
+  }
+});
+
+episodeTest('decline duration is the calendar-date difference without inclusive-day addition',async()=>{
+  const {sandbox}=await model();
+  for(const [anchor,through,days] of [['2024-01-05','2024-01-20',15],['2024-04-03','2024-05-07',34],['2025-02-03','2025-02-19',16],['2024-02-28','2024-03-01',2],['2026-03-07','2026-03-09',2],['2026-12-31','2027-01-01',1]]){
+    const factors=Array.from({length:days},(_,i)=>({d:new Date(Date.parse(anchor+'T00:00:00Z')+(i+1)*86400000).toISOString().slice(0,10),factor:.99}));
+    const out=sandbox.drawdownEpisodeFromFactors(factors,anchor);
+    assert.equal(out.peakDate,anchor);assert.equal(out.troughDate,through);assert.equal(out.declineDays,days);
+    assert.equal(out.recoveryState,'unrecovered');assert.equal(out.recoveryDate,null);
+  }
+});
+
+episodeTest('first regained daily-close peak records recovery date and days from the selected trough',async()=>{
+  const {sandbox}=await model(),out=sandbox.drawdownEpisodeFromFactors(factorsFromLevels([100,120,60,100,120,110,121]),'2026-07-31');
+  near(out.value,.5);assert.equal(out.peakDate,'2026-08-01');assert.equal(out.troughDate,'2026-08-02');
+  assert.equal(out.declineDays,1);assert.equal(out.recoveryDate,'2026-08-04');assert.equal(out.recoveryDays,2);assert.equal(out.recoveryState,'recovered');
+});
+
+episodeTest('recovery of an earlier smaller decline cannot recover the later selected maximum drawdown',async()=>{
+  const {sandbox}=await model(),out=sandbox.drawdownEpisodeFromFactors(factorsFromLevels([100,110,99,110,120,60,100]),'2026-07-31');
+  near(out.value,.5);assert.equal(out.peakDate,'2026-08-04');assert.equal(out.troughDate,'2026-08-05');
+  assert.equal(out.recoveryState,'unrecovered');assert.equal(out.recoveryDate,null);assert.equal(out.recoveryDays,null);
+});
+
+episodeTest('equal highs and tied maximum drawdowns retain the existing first-selected episode',async()=>{
+  const {sandbox}=await model(),out=sandbox.drawdownEpisodeFromFactors(factorsFromLevels([100,100,80,100,80]),'2026-07-31');
+  near(out.value,.2);assert.equal(out.peakDate,'2026-07-31');assert.equal(out.troughDate,'2026-08-02');
+  assert.equal(out.declineDays,2);assert.equal(out.recoveryDate,'2026-08-03');assert.equal(out.recoveryDays,1);
+});
+
+episodeTest('recovery handles floating-point equality without treating a material remaining loss as recovered',async()=>{
+  const {sandbox}=await model();
+  const almost=sandbox.drawdownEpisodeFromFactors(factorsFromLevels([1,1.25,1,1.25*(1-1e-14)]),'2026-07-31');
+  const below=sandbox.drawdownEpisodeFromFactors(factorsFromLevels([1,1.25,1,1.25*(1-1e-8)]),'2026-07-31');
+  assert.equal(almost.recoveryState,'recovered');assert.equal(almost.recoveryDate,'2026-08-03');
+  assert.equal(below.recoveryState,'unrecovered');assert.equal(below.recoveryDate,null);
+});
+
+episodeTest('zero and unverified curves do not invent episode dates, zero durations or recovery',async()=>{
+  const {sandbox}=await model();
+  const zero=sandbox.drawdownEpisodeFromFactors(factorsFromLevels([100,100,110]),'2026-07-31');
+  assert.equal(zero.value,0);assert.equal(zero.declineDays,null);assert.equal(zero.recoveryState,'not-applicable');assert.equal(zero.recoveryDate,null);
+  for(const factors of [[],[{d:'2026-08-01',factor:-1}],[{d:'2026-08-01',factor:NaN}],[{d:'2026-08-01',factor:Infinity}]]){
+    const out=sandbox.drawdownEpisodeFromFactors(factors,'2026-07-31');
+    assert.equal(out.state,'pending');assert.equal(out.declineDays,null);assert.equal(out.recoveryDate,null);assert.equal(out.recoveryState,'pending');
+  }
+});
+
+episodeTest('the initial anchor and a total loss retain a real one-day decline with no fabricated recovery',async()=>{
+  const {sandbox}=await model(),out=sandbox.drawdownEpisodeFromFactors([{d:'2026-08-01',factor:0}],'2026-07-31');
+  assert.equal(out.value,1);assert.equal(out.peakDate,'2026-07-31');assert.equal(out.troughDate,'2026-08-01');
+  assert.equal(out.declineDays,1);assert.equal(out.recoveryState,'unrecovered');assert.equal(out.recoveryDate,null);
+});
+
+episodeTest('portfolio and benchmarks derive their distinct episode and recovery dates from the existing flow-neutral curves',async()=>{
+  const {sandbox,feeView}=await model(),out=sandbox.drawdownView(feeView);
+  assert.deepEqual(plain([out.actual.declineDays,out.actual.recoveryDate,out.actual.recoveryDays]),[3,'2026-08-05',1]);
+  assert.deepEqual(plain([out.spy.declineDays,out.spy.recoveryDate,out.spy.recoveryDays]),[4,'2026-08-05',1]);
+  assert.deepEqual(plain([out.qqq.declineDays,out.qqq.recoveryDate,out.qqq.recoveryDays]),[1,'2026-08-04',2]);
+});
+
+episodeTest('a large external contribution cannot masquerade as recovery of the portfolio unit curve',async()=>{
+  const input=fixture();input.data.daily[5].webull=700;
+  const {sandbox,feeView}=await model(input),out=sandbox.drawdownView(feeView);
+  assert.ok(input.data.daily[2].webull>input.data.daily[1].webull);
+  near(out.actual.value,1-.8/1.2);assert.equal(out.actual.recoveryState,'unrecovered');assert.equal(out.actual.recoveryDate,null);
+  assert.match(sandbox.renderDrawdowns(feeView),/截至 2026-08-05 尚未恢复前高/);
+});
+
+episodeTest('each row visibly displays its own decline interval and separate recovery instead of relying on title hover',async()=>{
+  const {sandbox,feeView}=await model(),out=sandbox.renderDrawdowns(feeView),text=out.replace(/<[^>]+>/g,' ');
+  for(const line of ['高点 2026-08-01 → 低点 2026-08-04 · 下跌 3 个自然日','高点 2026-07-31 → 低点 2026-08-04 · 下跌 4 个自然日','高点 2026-08-01 → 低点 2026-08-02 · 下跌 1 个自然日'])assert.ok(text.includes(line));
+  assert.equal((text.match(/该次回撤恢复前高/g)||[]).length,3);
+  assert.ok(text.includes('低点后 2 个自然日'));assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
+  assert.match(text,/下跌历时为高点至低点的日期差；恢复历时从低点起算/);
+});
+
+episodeTest('recovery is clipped to verified common coverage and never claims the later report date',async()=>{
+  const input=fixture(),dates=['2026-09-14','2026-09-15','2026-09-16','2026-09-17'];
+  input.economicInput.settings.start=dates[1];input.economicInput.months=[];input.economicInput.fees=[];input.data.daily=input.data.daily.slice(0,4);
+  input.data.daily.forEach((p,i)=>Object.assign(p,{d:dates[i],bd:dates[i],bstate:'session',webull:[100,120,110,200][i],spy:[100,100,90,200][i],qqq:[100,110,100,200][i]}));
+  delete input.data.daily[3].qqq;input.data.status.asOf=dates[3];
+  const {sandbox,feeView}=await model(input),out=sandbox.drawdownView(feeView),text=sandbox.renderDrawdowns(feeView).replace(/<[^>]+>/g,' ');
+  assert.equal(out.through,dates[2]);
+  for(const key of ['actual','spy','qqq']){assert.equal(out[key].recoveryDate,null);assert.equal(out[key].recoveryState,'unrecovered');}
+  assert.equal((text.match(/截至 2026-09-16 尚未恢复前高/g)||[]).length,3);
+  assert.ok(!text.includes('截至 2026-09-17 尚未恢复前高'));
+});
+
+episodeTest('missing source coverage keeps all episode and recovery details unverified',async()=>{
+  const {sandbox,feeView,input}=await model();input.data.daily.splice(2,1);
+  const view=sandbox.drawdownView(feeView),text=sandbox.renderDrawdowns(feeView).replace(/<[^>]+>/g,' ');
+  for(const key of ['actual','spy','qqq']){assert.equal(view[key].state,'pending');assert.equal(view[key].declineDays,null);assert.equal(view[key].recoveryState,'pending');}
+  assert.equal((text.match(/回撤期间未核实/g)||[]).length,3);assert.equal((text.match(/恢复情况未核实/g)||[]).length,3);
+  assert.ok(!text.includes('下跌 0'));assert.ok(!text.includes('尚未恢复前高'));
+});
+
+episodeTest('flat unit curves render no episode and no misleading zero-day recovery',async()=>{
+  const input=fixture(),values=[100,100,1000,1000,700,700];
+  input.data.daily.forEach((p,i)=>Object.assign(p,{webull:values[i],spy:100,qqq:100}));
+  const {sandbox,feeView}=await model(input),text=sandbox.renderDrawdowns(feeView).replace(/<[^>]+>/g,' ');
+  assert.equal((text.match(/无回撤，无对应下跌区间/g)||[]).length,3);
+  assert.ok(!text.includes('低点后 0'));assert.ok(!text.includes('尚未恢复前高'));
+});
+
+test('drawdown episode rollout is either absent or fully marked',()=>{
+  if(hasDrawdownEpisode){section('/* drawdown-episode-metadata:start */','/* drawdown-episode-metadata:end */');assert.ok(html.includes('function drawdownEpisodeFromFactors('));}
+  else{assert.ok(!html.includes('function drawdownEpisodeFromFactors('));assert.ok(!html.includes('/* drawdown-episode-metadata:end */'));assert.ok(!html.includes('value.declineDays'));}
+});
+/* drawdown-episode-contract:end */
 }
 /* maximum-drawdown-contract:end */
