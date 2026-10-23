@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.26">
+<meta name="fee-console-build" content="4.9.27">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -950,7 +950,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.26";
+const UI_VERSION_LABEL=" · v4.9.27";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1982,8 +1982,26 @@ function maxDrawdownFromFactors(factors,anchor){
   }
   return {state:"verified",value:worst<1e-12?0:worst,peakDate:worst<1e-12?null:from,troughDate:worst<1e-12?null:to};
 }
+/* drawdown-episode-metadata:start */
+function drawdownEpisodeFromFactors(factors,anchor){
+  const base=maxDrawdownFromFactors(factors,anchor),result={...base,declineDays:null,recoveryDate:null,recoveryDays:null,recoveryState:base.state==="verified"&&base.value===0?"not-applicable":"pending"};
+  if(base.state!=="verified"||base.value===0)return result;
+  result.declineDays=benchmarkDayDiff(base.peakDate,base.troughDate);
+  let index=1,peakValue=base.peakDate===anchor?1:null;
+  for(const point of factors){
+    index*=point.factor;if(point.d===base.peakDate)peakValue=index;
+    // Recovery is the first daily close after the selected trough that regains
+    // that episode's peak; tolerance matches the existing zero-drawdown floor.
+    if(point.d>base.troughDate&&peakValue>0&&index>=peakValue*(1-1e-12)){
+      result.recoveryDate=point.d;result.recoveryDays=benchmarkDayDiff(base.troughDate,point.d);break;
+    }
+  }
+  result.recoveryState=result.recoveryDate?"recovered":"unrecovered";
+  return result;
+}
+/* drawdown-episode-metadata:end */
 function drawdownView(feeView){
-  const pending=()=>({state:"pending",value:null,peakDate:null,troughDate:null});
+  const pending=()=>({state:"pending",value:null,peakDate:null,troughDate:null,declineDays:null,recoveryDate:null,recoveryDays:null,recoveryState:"pending"});
   const result={start:feeView.start||null,through:feeView.asOf||null,latest:feeView.asOf||null,actual:pending(),spy:pending(),qqq:pending()};
   if(feeView.state!=="verified"||!benchmarkCalendarDate(result.start)||!benchmarkCalendarDate(result.through))return result;
   const daily=dailySorted(),pre=daily.filter(p=>p.d<result.start).at(-1),anchor=new Date(Date.parse(result.start+"T00:00:00Z")-86400000).toISOString().slice(0,10);
@@ -2012,7 +2030,7 @@ function drawdownView(feeView){
       const total=values.reduce((sum,value)=>sum+value,0);
       factors.push({d:point.d,factor:(total-(flows.get(point.d)||0)/100)/previous});previous=total;
     }
-    if(actualReady)result.actual=maxDrawdownFromFactors(factors,anchor);
+    if(actualReady)result.actual=drawdownEpisodeFromFactors(factors,anchor);
   }
   for(const item of items){
     const proof=coverage[item.k];if(!proof)continue;
@@ -2022,7 +2040,7 @@ function drawdownView(feeView){
       if(!(price>0&&dividend>=0&&previous>0)){ready=false;break;}
       factors.push({d:point.d,factor:benchmarkDailyFactor(price,dividend,previous,closed.has(point.d))});previous=price;
     }
-    if(ready)result[item.k]=maxDrawdownFromFactors(factors,anchor);
+    if(ready)result[item.k]=drawdownEpisodeFromFactors(factors,anchor);
   }
   return result;
 }
@@ -2039,9 +2057,11 @@ function renderDrawdowns(feeView){
   const range=!period?"回撤统计期间待核实":samePeriod?"":`回撤统计期间：${period}${returns?`（收益截至 ${feeView.asOf}，区间不同）`:"（收益区间待核实）"}`;
   const rows=[["actual","组合"],["spy","SPY"],["qqq","QQQ"]].map(([key,label])=>{
     const value=view[key],ready=value.state==="verified",phase=ready&&value.value>0?`峰值 ${value.peakDate} → 谷值 ${value.troughDate}`:"";
-    return `<div class="rr" data-drawdown-series="${key}"><span>${label}</span><b${ready&&value.value>0?' class="neg"':""}${phase?` title="${phase}"`:""}>${ready?pct(-value.value):"未核实"}</b></div>`;
+    const interval=!ready?"回撤期间未核实":value.value===0?"无回撤，无对应下跌区间":`高点 ${value.peakDate} → 低点 ${value.troughDate} · 下跌 ${value.declineDays} 个自然日`;
+    const recovery=!ready?"恢复情况未核实":value.value===0?"":value.recoveryState==="recovered"?`该次回撤恢复前高 ${value.recoveryDate} · 低点后 ${value.recoveryDays} 个自然日`:value.recoveryState==="unrecovered"?`截至 ${view.through} 尚未恢复前高`:"恢复情况未核实";
+    return `<div data-drawdown-series="${key}" style="margin-bottom:6px"><div class="rr"><span>${label}</span><b${ready&&value.value>0?' class="neg"':""}${phase?` title="${phase}"`:""}>${ready?pct(-value.value):"未核实"}</b></div><div class="small">${interval}</div>${recovery?`<div class="small">${recovery}</div>`:""}</div>`;
   }).join("");
-  return `<div role="group" aria-label="${samePeriod?"同期最大回撤":"最大回撤"}，费前"><div class="lab" style="margin-top:14px">${samePeriod?"同期最大回撤":"最大回撤"} · 费前</div>${range?`<div class="small">${range}</div>`:""}${rows}<div class="note">按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。</div></div>`;
+  return `<div role="group" aria-label="${samePeriod?"同期最大回撤":"最大回撤"}，费前"><div class="lab" style="margin-top:14px">${samePeriod?"同期最大回撤":"最大回撤"} · 费前</div>${range?`<div class="small">${range}</div>`:""}${rows}<div class="note">按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。下跌历时为高点至低点的日期差；恢复历时从低点起算。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。</div></div>`;
 }
 /* max-drawdown-view:end */
 function receiptState(feeView){
