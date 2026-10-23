@@ -571,6 +571,12 @@
     "cloud/ib-daily/worker/schwab_sync/ib_daily_source.py",
     "cloud/ib-daily/worker/schwab_sync/ib_snapshot.py",
     "cloud/ib-daily/worker/schwab_sync/ib_snapshot_adapter.py",
-    "docs/ib-daily-readonly.md"
+    "docs/ib-daily-readonly.md",
+    "docs/xuan-encrypted-action-viewer.md",
+    "scripts/xuan-ib-encrypted-action-build.mjs",
+    "scripts/xuan-ib-encrypted-action-view.mjs",
+    "scripts/xuan-ib-encrypted-action.mjs",
+    "scripts/xuan-ib-encrypted-action.test.mjs",
+    "xuan-ib/action.enc.json"
   ]
 }

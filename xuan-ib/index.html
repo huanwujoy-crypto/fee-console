@@ -10,6 +10,18 @@
   <meta name="theme-color" content="#f9f9f7">
   <title>XUAN-投资管理</title>
   <style>
+    #public-action-shell[hidden], #encrypted-action-root[hidden] { display: none; }
+    #encrypted-action-root { height: 100dvh; display: flex; flex-direction: column; color: #202328; background: #f9f9f7; }
+    .encrypted-action-panel { flex: 0 0 auto; padding: 16px; border-bottom: 1px solid #ddd; }
+    .encrypted-action-panel h1 { margin: 0 0 8px; font-size: 21px; }
+    .encrypted-action-panel p { margin: 8px 0; font-size: 13px; line-height: 1.5; }
+    .encrypted-action-panel form { max-width: 520px; }
+    .encrypted-action-panel label { display: block; margin: 10px 0; }
+    .encrypted-action-panel input[type=password] { display: block; box-sizing: border-box; width: 100%; padding: 10px; margin-top: 6px; font: inherit; }
+    .encrypted-action-panel button, .encrypted-action-panel a { margin: 6px 12px 6px 0; min-height: 44px; font: inherit; }
+    .encrypted-action-panel button { padding: 8px 14px; }
+    #encrypted-action-root iframe { flex: 1 1 auto; width: 100%; border: 0; min-height: 240px; }
+    #encrypted-action-root iframe[hidden] { display: none; }
     :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     * { box-sizing: border-box; }
     html, body { height: 100%; margin: 0; background: #f9f9f7; }
@@ -133,7 +145,8 @@
   </style>
 </head>
 <body>
-  <div class="app">
+  <div id="encrypted-action-root" data-viewer="v1"><p>正在打开行动版解锁页…</p><noscript>请启用 JavaScript 以在本机解锁报告。</noscript></div>
+  <div class="app" id="public-action-shell">
     <a id="private-action-entry" href="./private-action.html">查看完整私有报告</a>
     <header class="bar" hidden>
       <div class="title">
@@ -159,6 +172,20 @@
   </div>
   <script>
     (() => {
+      // The fixed URL now opens the encrypted copy; old public records remain
+      // an explicit history choice, never a fallback for a failed unlock.
+      const encryptedRoot = document.querySelector("#encrypted-action-root");
+      if (encryptedRoot?.getAttribute("data-viewer") === "v1") {
+        if (new URL(location.href).searchParams.get("view") === "public") {
+          encryptedRoot.hidden = true;
+        } else {
+          document.querySelector("#public-action-shell").hidden = true;
+          import("../scripts/xuan-ib-encrypted-action-view.mjs?v=2026-10-23.1")
+            .then(module => module.mountEncryptedAction(encryptedRoot))
+            .catch(() => { encryptedRoot.textContent = "解锁页面暂时无法加载，请重新打开。"; });
+          return;
+        }
+      }
       const frame = document.querySelector("#handover");
       const button = document.querySelector("#refresh");
       const decisionButton = document.querySelector("#decision");
@@ -167,7 +194,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-10-17.1";
+      const loaderBuild = "2026-10-23.1";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
