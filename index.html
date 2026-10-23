@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.24">
+<meta name="fee-console-build" content="4.9.25">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -950,7 +950,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.24";
+const UI_VERSION_LABEL=" · v4.9.25";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1930,7 +1930,7 @@ function benchmarkView(feeView,rows){
       for(const item of selected){
         const price=benchmarkNumber(point[item.k]),dividend=item.dk&&Object.prototype.hasOwnProperty.call(point,item.dk)?benchmarkNumber(point[item.dk]):0;
         if(!(Number.isFinite(price)&&Number.isFinite(dividend)&&previous[item.k]>0&&price>0&&dividend>=0))return {bench:[],byMonth:{}};
-        const factor=verifiedClosureSet.has(point.d)?1:(price+dividend*(1-BENCH_DIVIDEND_WITHHOLDING))/previous[item.k];monthIndex[item.k]*=factor;totalIndex[item.k]*=factor;previous[item.k]=price;
+        const factor=benchmarkDailyFactor(price,dividend,previous[item.k],verifiedClosureSet.has(point.d));monthIndex[item.k]*=factor;totalIndex[item.k]*=factor;previous[item.k]=price;
         if(!Number.isFinite(monthIndex[item.k])||!Number.isFinite(totalIndex[item.k]))return {bench:[],byMonth:{}};
         if(valueReady[item.k]){const next=values[item.k]*factor+(flowByDate.get(point.d)||0)/100;if(!Number.isFinite(next)||next<0){valueReady[item.k]=false;valueReason[item.k]=next<0?"withdrawal-exceeds-value":"value-unavailable";}else values[item.k]=next;}
       }
@@ -1964,6 +1964,77 @@ function benchmarkPendingText(feeView,st){
 /* benchmark-state-evidence:end */
 /* benchmark-date-integrity:end */
 /* benchmark-account-view:end */
+/* max-drawdown-view:start */
+function benchmarkDailyFactor(price,dividend,previous,closed){
+  return closed?1:(price+dividend*(1-BENCH_DIVIDEND_WITHHOLDING))/previous;
+}
+function maxDrawdownFromFactors(factors,anchor){
+  const pending=()=>({state:"pending",value:null,peakDate:null,troughDate:null});
+  if(!benchmarkCalendarDate(anchor)||!Array.isArray(factors)||!factors.length)return pending();
+  let index=1,peak=1,peakDate=anchor,previousDate=anchor,worst=0,from=null,to=null;
+  for(const point of factors){
+    if(!point||!benchmarkCalendarDate(point.d)||point.d<=previousDate||!Number.isFinite(point.factor)||point.factor<0)return pending();
+    index*=point.factor;if(!Number.isFinite(index))return pending();
+    if(index>peak){peak=index;peakDate=point.d;}
+    const decline=Math.max(0,1-index/peak);
+    if(decline>worst){worst=decline;from=peakDate;to=point.d;}
+    previousDate=point.d;
+  }
+  return {state:"verified",value:worst<1e-12?0:worst,peakDate:worst<1e-12?null:from,troughDate:worst<1e-12?null:to};
+}
+function drawdownView(feeView){
+  const pending=()=>({state:"pending",value:null,peakDate:null,troughDate:null});
+  const result={start:feeView.start||null,through:feeView.asOf||null,latest:feeView.asOf||null,actual:pending(),spy:pending(),qqq:pending()};
+  if(feeView.state!=="verified"||!benchmarkCalendarDate(result.start)||!benchmarkCalendarDate(result.through))return result;
+  const daily=dailySorted(),pre=daily.filter(p=>p.d<result.start).at(-1),anchor=new Date(Date.parse(result.start+"T00:00:00Z")-86400000).toISOString().slice(0,10);
+  const items=BENCH_ALL.filter(item=>["spy","qqq"].includes(item.k)),coverage={};
+  if(pre?.d===anchor)for(const item of items){
+    const proof=benchmarkCoverage([item],daily,result.start,result.latest,pre);
+    if(proof&&!proof.invalid&&benchmarkCalendarDate(proof.through)&&proof.through>=result.start)coverage[item.k]=proof;
+  }
+  // All verified rows share the earliest independently verified benchmark end.
+  // If neither benchmark is verified, portfolio-only coverage remains explicit.
+  const ends=Object.values(coverage).map(proof=>proof.through).sort();
+  if(ends.length)result.through=ends[0];
+  const points=daily.filter(p=>p.d>=result.start&&p.d<=result.through);
+  if(points.length!==benchmarkDayDiff(result.start,result.through)+1||points.some((p,i)=>p.d!==new Date(Date.parse(result.start+"T00:00:00Z")+i*86400000).toISOString().slice(0,10)))return result;
+  const input=feeView.benchmarkInputs,flows=new Map();
+  let actualReady=!!(input&&Number.isSafeInteger(input.openingCents)&&input.openingCents>0&&input.openingCents===feeView.periods?.[0]?.openingCents&&Array.isArray(input.flows)&&Array.isArray(DB.accounts)&&DB.accounts.length);
+  if(actualReady)for(const flow of input.flows){
+    if(!flow||!benchmarkCalendarDate(flow.date)||flow.date<result.start||flow.date>result.latest||!Number.isSafeInteger(flow.amountCents)){actualReady=false;break;}
+    const total=(flows.get(flow.date)||0)+flow.amountCents;if(!Number.isSafeInteger(total)){actualReady=false;break;}flows.set(flow.date,total);
+  }
+  if(actualReady){
+    let previous=input.openingCents/100;const factors=[];
+    for(const point of points){
+      const values=DB.accounts.map(account=>point[account.id]);
+      if(values.some(value=>typeof value!=="number"||!Number.isFinite(value)||value<0)||!(previous>0)){actualReady=false;break;}
+      const total=values.reduce((sum,value)=>sum+value,0);
+      factors.push({d:point.d,factor:(total-(flows.get(point.d)||0)/100)/previous});previous=total;
+    }
+    if(actualReady)result.actual=maxDrawdownFromFactors(factors,anchor);
+  }
+  for(const item of items){
+    const proof=coverage[item.k];if(!proof)continue;
+    const closed=new Set(proof.verifiedClosures||[]),factors=[];let previous=benchmarkNumber(pre[item.k]),ready=previous>0;
+    for(const point of points){
+      const price=benchmarkNumber(point[item.k]),dividend=Object.prototype.hasOwnProperty.call(point,item.dk)?benchmarkNumber(point[item.dk]):0;
+      if(!(price>0&&dividend>=0&&previous>0)){ready=false;break;}
+      factors.push({d:point.d,factor:benchmarkDailyFactor(price,dividend,previous,closed.has(point.d))});previous=price;
+    }
+    if(ready)result[item.k]=maxDrawdownFromFactors(factors,anchor);
+  }
+  return result;
+}
+function renderDrawdowns(feeView){
+  const view=drawdownView(feeView),range=view.start&&view.through?`${view.start} → ${view.through}${view.through!==view.latest?`（共同截至；最新资产 ${view.latest}）`:""}`:"日期区间待核实";
+  const rows=[["actual","组合"],["spy","SPY"],["qqq","QQQ"]].map(([key,label])=>{
+    const value=view[key],ready=value.state==="verified",phase=ready&&value.value>0?`峰值 ${value.peakDate} → 谷值 ${value.troughDate}`:"";
+    return `<div class="rr" data-drawdown-series="${key}"><span>${label}</span><b${ready&&value.value>0?' class="neg"':""}${phase?` title="${phase}"`:""}>${ready?pct(-value.value):"未核实"}</b></div>`;
+  }).join("");
+  return `<div role="group" aria-label="同期最大回撤，费前"><div class="lab" style="margin-top:14px">同期最大回撤 · 费前</div><div class="small">${range}</div>${rows}<div class="note">按剔除外部出入金影响的 TWR 曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。</div></div>`;
+}
+/* max-drawdown-view:end */
 function receiptState(feeView){
   const all=dailySorted(),lastPt=feeView.state==="verified"?all.find(point=>point.d===feeView.asOf)||null:all.at(-1)||null;
   const nav=lastPt?totOf(lastPt):0;if(feeView.state!=="verified")return {rows:[],done:[],live:null,lastPt,spanDays:0,gross:null,feesAll:null,net:null,twrG:null,mwrD:null,bench:[],hwm:null,cum:null,nav};
@@ -2157,7 +2228,7 @@ function renderKPIs(feeView,st,B,G){
   </ol><div class="note">${st.benchAsOf?`基准收益截至 ${st.benchAsOf}${st.benchPriceAsOf&&st.benchPriceAsOf!==st.benchAsOf?`；最近收盘日 ${st.benchPriceAsOf}`:""}。${benchmarkPendingLabel?` ${benchmarkPendingLabel}。`:""}${verifiedClosureLabel?`<br>${verifiedClosureLabel}`:""}<br>`:""}${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,benchmarkDayDiff(feeView.start,st.benchAsOf)+1))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
   const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${topHoldingsView(lp,st.nav)}${mix}`;
   if(feeView.state!=="verified"){
-    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="lab">收益率</div><div class="receipt-pending">${feeView.message}</div></div>`;return;
+    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="lab">收益率</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView)}</div>`;return;
   }
   document.getElementById("kpis").innerHTML=`
   ${assetCard}
@@ -2168,7 +2239,7 @@ function renderKPIs(feeView,st,B,G){
     ${rr("组合毛 TWR（管理能力）",st.twrG)}
     ${rr("出资方 Modified Dietz（EOD flow 模型）",st.mwrD)}
     ${st.bench.map(b=>rr((st.benchmarkPending?`截至 ${st.benchAsOf} `:"同期 ")+b.name,b.twr)).join("")}
-    ${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
+    ${renderDrawdowns(feeView)}${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
   const box=document.getElementById("chart1");if(feeView.state!=="verified"){document.getElementById("chartAsOf").textContent="";box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
   const s=st.rows.slice(-12).map(row=>({d:row.to,cum:row.cum,hwm:row.hwm,tot:row.closeT}));
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s.at(-1).d}`:"";
