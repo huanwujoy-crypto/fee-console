@@ -229,6 +229,8 @@ const html=fs.readFileSync(htmlPath,'utf8');
 const hasDrawdown=html.includes('/* max-drawdown-view:start */');
 const hasPeriodDisplay=html.includes('/* return-period-display:start */');
 const hasDrawdownEpisode=html.includes('/* drawdown-episode-metadata:start */');
+const hasCompactComparison=html.includes('/* compact-comparison-tables:start */');
+const compactTest=(name,fn)=>test(name,{skip:hasCompactComparison?false:'support stage: compact tables are in the separate index-only UI change'},fn);
 const episodeTest=(name,fn)=>test(name,{skip:hasDrawdownEpisode?false:'support stage: episode metadata is in the separate index-only UI change'},fn);
 const periodDisplayTest=(name,fn)=>test(name,{skip:hasPeriodDisplay?false:'support stage: shared period display is in the separate index-only UI change'},fn);
 const drawdownTest=(name,fn)=>test(name,{skip:hasDrawdown?false:'support stage: display implementation is in the separate index-only UI PR'},fn);
@@ -398,13 +400,16 @@ drawdownTest('original four returns remain unchanged; drawdown is an independent
   const {sandbox,feeView,st,nodes,receipt}=await model();
   sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
   const out=nodes.kpis.innerHTML;
-  assert.match(out,/组合毛 TWR（管理能力）/);assert.match(out,/出资方 Modified Dietz（EOD flow 模型）/);
+  if(hasCompactComparison){
+    assert.match(out,/data-return-series="actual"[^]*?组合毛[^]*?TWR[^]*?管理能力/);
+    assert.match(out,/data-return-series="investor"[^]*?出资方[^]*?Modified Dietz[^]*?日末资金流模型/);
+  }else{assert.match(out,/组合毛 TWR（管理能力）/);assert.match(out,/出资方 Modified Dietz（EOD flow 模型）/);}
   assert.match(out,/data-drawdown-series="actual"[^]*?-33\.33%/);
   assert.match(out,/data-drawdown-series="spy"[^]*?-20\.00%/);
   assert.match(out,/data-drawdown-series="qqq"[^]*?-18\.18%/);
   assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
   assert.match(out,/Modified Dietz 是期间收益率，不单独计算回撤/);
-  assert.ok(out.indexOf('同期最大回撤')>out.indexOf('出资方 Modified Dietz'));
+  assert.ok(out.indexOf('同期最大回撤')>out.indexOf(hasCompactComparison?'data-return-series="investor"':'出资方 Modified Dietz'));
 });
 
 drawdownTest('pending receipt renders three explicit unverified values and no invented 0.00%',async()=>{
@@ -463,7 +468,7 @@ periodDisplayTest('matching returns and drawdown windows share exactly one perio
   assert.match(out,/统计期间：2026-08-01 → 2026-08-05，共 5 个自然日/);
   assert.equal(out.split(range).length-1,1);
   assert.ok(!sandbox.renderDrawdowns(feeView).includes(range));
-  assert.match(out,/同期最大回撤 · 费前/);
+  assert.match(out,hasCompactComparison?/最大回撤对比 · 费前/:/同期最大回撤 · 费前/);
   assert.match(out,/日末单位净值（TWR）曲线计算/);
 });
 
@@ -606,10 +611,14 @@ episodeTest('a large external contribution cannot masquerade as recovery of the 
 
 episodeTest('each row visibly displays its own decline interval and separate recovery instead of relying on title hover',async()=>{
   const {sandbox,feeView}=await model(),out=sandbox.renderDrawdowns(feeView),text=out.replace(/<[^>]+>/g,' ');
-  for(const line of ['高点 2026-08-01 → 低点 2026-08-04 · 下跌 3 个自然日','高点 2026-07-31 → 低点 2026-08-04 · 下跌 4 个自然日','高点 2026-08-01 → 低点 2026-08-02 · 下跌 1 个自然日'])assert.ok(text.includes(line));
-  assert.equal((text.match(/该次回撤恢复前高/g)||[]).length,3);
-  assert.ok(text.includes('低点后 2 个自然日'));assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
-  assert.match(text,/下跌历时为高点至低点的日期差；恢复历时从低点起算/);
+  const visible=text.replace(/\s+/g,' ').trim();
+  for(const [peak,trough,days] of [['2026-08-01','2026-08-04',3],['2026-07-31','2026-08-04',4],['2026-08-01','2026-08-02',1]]){
+    assert.ok(visible.includes(`高点 ${peak} → 低点 ${trough}${hasCompactComparison?' ':' · '}下跌 ${days} 个自然日`));
+  }
+  assert.equal((text.match(hasCompactComparison?/恢复前高/g:/该次回撤恢复前高/g)||[]).length,3);
+  assert.ok(visible.includes('低点后 2 个自然日'));assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
+  if(hasCompactComparison)assert.doesNotMatch(out,/下跌历时为高点至低点的日期差/);
+  else assert.match(text,/下跌历时为高点至低点的日期差；恢复历时从低点起算/);
 });
 
 episodeTest('recovery is clipped to verified common coverage and never claims the later report date',async()=>{
@@ -644,6 +653,62 @@ test('drawdown episode rollout is either absent or fully marked',()=>{
   if(hasDrawdownEpisode){section('/* drawdown-episode-metadata:start */','/* drawdown-episode-metadata:end */');assert.ok(html.includes('function drawdownEpisodeFromFactors('));}
   else{assert.ok(!html.includes('function drawdownEpisodeFromFactors('));assert.ok(!html.includes('/* drawdown-episode-metadata:end */'));assert.ok(!html.includes('value.declineDays'));}
 });
+/* compact-comparison-contract:start */
+compactTest('compact tables preserve all four receipt values with explicitly different methods',async()=>{
+  const {sandbox,feeView,st,nodes,receipt}=await model(),before=plain(st);
+  sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  const out=nodes.kpis.innerHTML,table=out.match(/<table[^>]*aria-label="收益率对比[^]*?<\/table>/)?.[0];
+  assert.ok(table);assert.equal((table.match(/data-return-series=/g)||[]).length,4);
+  for(const [key,value] of [['actual',st.twrG],['investor',st.mwrD],...st.bench.map(b=>[b.k,b.twr])]){
+    const row=table.match(new RegExp(`<tr data-return-series="${key}"[^]*?<\\/tr>`))?.[0];
+    assert.ok(row);assert.ok(row.includes((value>0?'+':'')+(value*100).toFixed(2)+'%'));
+  }
+  assert.match(table,/TWR 与 Modified Dietz 口径不同/);
+  assert.match(table,/组合毛/);assert.match(table,/管理能力/);assert.match(table,/出资方/);
+  assert.match(table,/Modified Dietz/);assert.match(table,/日末资金流模型/);
+  assert.equal((table.match(/股息税后/g)||[]).length,2);assert.deepEqual(plain(st),before);
+});
+compactTest('complete drawdown explanation lives exactly once inside the existing disclosure',async()=>{
+  const {sandbox,feeView,st,nodes,receipt}=await model();nodes.benchExplain={open:true};
+  sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  const out=nodes.kpis.innerHTML,method=out.match(/<details[^>]*id="benchExplain"[^]*?<\/details>/)?.[0];
+  assert.match(method,/ open>/);assert.match(method,/查看计算方法与重要说明/);
+  const note='按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。下跌历时为高点至低点的日期差；恢复历时从低点起算。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。';
+  assert.ok(method.includes(note));assert.equal(out.split(note).length,2);
+  assert.ok(!sandbox.renderDrawdowns(feeView).includes(note));
+  for(const label of ['相同资金路径：','可比收益率：','金额与费用：','最大回撤：'])assert.ok(method.includes(label));
+  assert.match(out,/统计期间：2026-08-01 → 2026-08-05，共 5 个自然日/);
+});
+compactTest('drawdown table keeps row-specific dates, decline and recovery under explicit headers',async()=>{
+  const {sandbox,feeView}=await model(),view=sandbox.drawdownView(feeView),out=sandbox.renderDrawdowns(feeView);
+  assert.match(out,/最大回撤对比 · 费前/);assert.match(out,/<th scope="col">发生期间 · 恢复/);
+  for(const key of ['actual','spy','qqq']){
+    const row=out.match(new RegExp(`<tr data-drawdown-series="${key}"[^]*?<\\/tr>`))?.[0],v=view[key];
+    assert.ok(row.includes(`高点 ${v.peakDate} → 低点 ${v.troughDate}`));
+    assert.ok(row.includes(`下跌 ${v.declineDays} 个自然日`));
+    assert.ok(row.includes(`恢复前高 ${v.recoveryDate}`));assert.ok(row.includes(`低点后 ${v.recoveryDays} 个自然日`));
+  }
+});
+compactTest('benchmark lag and legacy identities remain visible in the return table',async()=>{
+  const {sandbox,st}=await model();st.benchmarkPending=true;st.benchAsOf='2026-08-04';
+  let out=sandbox.renderReturnComparison(st);assert.equal((out.match(/截至 2026-08-04/g)||[]).length,2);
+  assert.ok(!out.includes('>同期<'));
+  st.bench=[{k:'cspx',name:'S&P 500（CSPX）',twr:null},{k:'eqac',name:'纳斯达克100（EQAC）',twr:.1}];
+  out=sandbox.renderReturnComparison(st);assert.match(out,/CSPX/);assert.match(out,/EQAC/);assert.match(out,/旧欧洲收盘口径/);assert.ok(!out.includes('股息税后'));
+  assert.match(out,/data-return-series="cspx"[^]*?—/);
+});
+compactTest('pending receipt keeps the explanation accessible without creating a fake return table',async()=>{
+  const {sandbox,nodes}=await model(),view={state:'pending',start:null,asOf:null,message:'合成资料待核实'};
+  const st=sandbox.receiptState(view);sandbox.renderKPIs(view,st,null,{hold:false,holdReasons:[]});
+  const out=nodes.kpis.innerHTML;assert.match(out,/收益率对比/);assert.match(out,/id="benchExplain"/);
+  assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);assert.ok(!out.includes('data-return-series='));
+  assert.ok(!out.includes('0.00%'));assert.match(out,/未核实/);
+});
+test('compact table rollout is either absent or fully marked',()=>{
+  if(hasCompactComparison){section('/* compact-comparison-tables:start */','/* compact-comparison-tables:end */');assert.ok(html.includes('/* compact-comparison-tables:styles */'));assert.ok(html.includes('function renderReturnComparison('));}
+  else{assert.ok(!html.includes('function renderReturnComparison('));assert.ok(!html.includes('/* compact-comparison-tables:end */'));assert.ok(!html.includes('data-return-series='));}
+});
+/* compact-comparison-contract:end */
 /* drawdown-episode-contract:end */
 }
 /* maximum-drawdown-contract:end */
