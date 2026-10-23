@@ -62,7 +62,7 @@ def public(result):
             'source_read_completed_at', 'destination_read_started_at', 'destination_read_completed_at',
             'source_as_of', 'destination_as_of', 'different_instrument_count',
             'different_currency_count', 'comparison_complete', 'notification_required',
-            'source_reads_skipped', 'retry_at_1230', 'financial_mutations', 'sharesight_writes')
+            'source_reads_skipped', 'retry_at_1230', 'financial_mutations', 'sharesight_writes', 'source_error_code')
     return {k: result[k] for k in keys if k in result}
 
 
@@ -150,8 +150,9 @@ class DailyIB:
                 result.update(reason_code='IB_DIFFERENCE_REQUIRES_REVIEW',
                               notification_required=True,
                               private_differences=private_differences(source, destination, compared))
-        except SourceOutcomeUnknown:
-            result.update(status='SOURCE_OUTCOME_UNKNOWN', reason_code='IB_SOURCE_EXECUTION_OUTCOME_UNKNOWN', retry_at_1230=False, comparison_complete=False)
+        except SourceOutcomeUnknown as exc:
+            result.update(status='SOURCE_OUTCOME_UNKNOWN', reason_code='IB_SOURCE_EXECUTION_OUTCOME_UNKNOWN',
+                          source_error_code=reason(exc), retry_at_1230=False, comparison_complete=False)
         except Exception as exc:
             result.update(status='ATTENTION', reason_code=reason(exc), retry_at_1230=slot == '1215', comparison_complete=False)
         if result['status'] in {'ATTENTION', 'SOURCE_OUTCOME_UNKNOWN'}:
