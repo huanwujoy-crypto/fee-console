@@ -30,6 +30,19 @@ export async function readActionEnvelope(fetchImpl, baseUrl) {
 // Prefix the deny-all network policy before any report-provided CSS/resource.
 // The enclosing iframe additionally has an empty sandbox (no scripts/origin).
 export function actionFrameDocument(html) {
+  // Presentation only, after decryptPublishedAction has verified the original
+  // HTML hash. Move the known introduction, retaining every source paragraph.
+  // Unrecognized report shapes remain intact instead of hiding unknown text.
+  html = html.replace(/<header class="book-report-header">([\s\S]*?)<\/header>((?:<aside class="notes(?: reference-data)?"(?: role="note")?>[\s\S]*?<\/aside>)*)/, (whole, header, notes) => {
+    if (!header.includes('id="report-state"') || !notes) return whole;
+    const paragraphs = [...notes.matchAll(/<p>[\s\S]*?<\/p>/g)].map(m => m[0]);
+    const residue = notes.replace(/<aside class="notes(?: reference-data)?"(?: role="note")?>|<\/aside>|<p>[\s\S]*?<\/p>/g, '').trim();
+    if (!paragraphs.length || residue) return whole;
+    const orderNote = header.includes('挂单待核实')
+      ? '<li><p>“挂单待核实”表示完整净预算所需的覆盖或币种依据仍有缺项，不是因为必须存在卖单。挂单仅为原读取时间的快照参考，不代表当前挂单；具体缺项见报告中的说明。</p></li>' : '';
+    return '<details class="action-report-notes"><summary>说明（来源与局限）</summary><ol><li><header>'+header+'</header></li>'+paragraphs.map(p=>'<li>'+p+'</li>').join('')+orderNote+'</ol></details>';
+  });
+  html = html.replace(/<\/head>/i, '<style>.action-report-notes{margin:0 0 12px;color:#6b7280;font-size:13px;line-height:1.6}.action-report-notes>summary{cursor:pointer;min-height:44px;display:list-item;padding:10px 0}.action-report-notes ol{padding-left:24px;margin:0 0 12px}.action-report-notes li{padding-left:3px;margin:8px 0}.action-report-notes header{margin:0}.action-report-notes h1{font-size:16px;margin:0}.action-report-notes p{margin:4px 0;overflow-wrap:anywhere}</style></head>');
   return html.replace(/<head>/i, `<head><meta http-equiv="Content-Security-Policy" content="${ACTION_DISPLAY_CSP}"><meta name="referrer" content="no-referrer">`);
 }
 export function mountActionConverter(root, {document = globalThis.document, window = globalThis.window,
@@ -101,7 +114,7 @@ export function mountEncryptedAction(root, {document = globalThis.document, wind
   root.replaceChildren();
   const el = (tag, text, parent = root) => { const n = document.createElement(tag); if (text) n.textContent = text; parent.append(n); return n; };
   const panel = el('section'); panel.className = 'encrypted-action-panel';
-  el('h1', 'XUAN · 行动版', panel);
+  const heading = el('h1', 'XUAN · 行动版', panel);
   const status = el('p', '使用管理费密钥在本机解锁，密钥不会发送到服务器。', panel); status.setAttribute('role', 'status');
   const form = el('form', '', panel), label = el('label', '管理费解锁密钥', form);
   const input = el('input', '', label); input.type = 'password'; input.autocomplete = 'off'; input.spellcheck = false;
@@ -110,16 +123,21 @@ export function mountEncryptedAction(root, {document = globalThis.document, wind
   el('span', ' 在此设备记住（与管理费共用解锁项）', rememberLabel);
   const unlock = el('button', '解锁', form); unlock.type = 'submit';
   const saved = el('button', '使用本机已保存的管理费密钥', panel); saved.type = 'button';
-  const refresh = el('button', '读取最新发布', panel); refresh.type = 'button'; refresh.hidden = true;
-  const lock = el('button', '锁定行动版', panel); lock.type = 'button'; lock.hidden = true;
-  const history = el('a', '查看旧公开记录', panel); history.href = '?view=public';
-  const prepare = el('a', '本机转换已发布报告', panel); prepare.href = '?prepare=local';
+  const settings = el('details', '', panel); settings.className = 'encrypted-action-settings'; settings.hidden = true;
+  el('summary', '设置', settings);
+  const actions = el('div', '', settings); actions.className = 'encrypted-action-settings-content';
+  const refresh = el('button', '读取最新发布', actions); refresh.type = 'button'; refresh.hidden = true;
+  const lock = el('button', '锁定行动版', actions); lock.type = 'button'; lock.hidden = true;
   const frame = el('iframe'); frame.title = '已解锁的行动版参考报告'; frame.setAttribute('sandbox', '');
   frame.setAttribute('referrerpolicy', 'no-referrer'); frame.hidden = true;
   let key = null, sequence = 0, latest = null, disposed = false;
   const stored = k => { try { return storage?.getItem(k) || ''; } catch { return ''; } };
   const set = (k, v) => { try { storage?.setItem(k, v); return !!storage; } catch { return false; } };
-  function clearDisplay() { frame.srcdoc = ''; frame.hidden = true; refresh.hidden = true; lock.hidden = true; }
+  function clearDisplay() {
+    frame.srcdoc = ''; frame.hidden = true; refresh.hidden = true; lock.hidden = true;
+    settings.hidden = true; settings.open = false; heading.hidden = false; panel.className = 'encrypted-action-panel';
+    status.title = '';
+  }
   async function load(candidate, persist = false) {
     const request = ++sequence; clearDisplay(); input.value = ''; key = null;
     unlock.disabled = true; saved.disabled = true; refresh.disabled = true;
@@ -136,7 +154,10 @@ export function mountEncryptedAction(root, {document = globalThis.document, wind
       if (persist) remembered = set(FEE_UNLOCK_STORAGE_KEY, candidate);
       if (persist || stored(FEE_UNLOCK_STORAGE_KEY) === candidate) set(ACTION_AUTO_UNLOCK_KEY, 'yes');
       frame.srcdoc = actionFrameDocument(payload.html); frame.hidden = false; refresh.hidden = false; lock.hidden = false;
-      status.textContent = `报告日 ${payload.reportDate} · 原发布时间 ${new Date(payload.publishedAt).toLocaleString('zh-HK', {timeZone: 'Asia/Hong_Kong', hour12: false})} HKT · 参考快照，非实时${remembered ? '' : ' · 本机无法保存密钥'}`;
+      const todayHkt = new Date().toLocaleDateString('en-CA', {timeZone: 'Asia/Hong_Kong'});
+      status.textContent = `${payload.reportDate}${payload.reportDate < todayHkt ? ' · 历史参考' : ''} · 非实时${remembered ? '' : ' · 本机无法保存密钥'}`;
+      status.title = `原发布时间 ${new Date(payload.publishedAt).toLocaleString('zh-HK', {timeZone: 'Asia/Hong_Kong', hour12: false})} HKT`;
+      heading.hidden = true; settings.hidden = false; panel.className = 'encrypted-action-panel encrypted-action-ready';
       form.hidden = true; saved.hidden = true;
     } catch {
       if (!disposed && request === sequence) { clearDisplay(); status.textContent = '尚无可用加密报告，或密钥不匹配／读取失败。没有显示旧公开页作为最新报告。'; form.hidden = false; saved.hidden = false; }

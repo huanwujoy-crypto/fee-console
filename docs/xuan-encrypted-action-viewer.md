@@ -23,6 +23,20 @@ Locking this viewer disables its automatic unlock without deleting fee settings.
 Plaintext is kept only in memory and discarded on pagehide; new devices,
 cleared storage or a different Profile must unlock again.
 
+The daily view auto-loads as before, showing one compact report-date/non-live
+line. Older report dates explicitly say historical reference. Refresh and lock
+are in collapsed Settings; history remains an explicit `?view=public` route and
+conversion requires `?prepare=local`, with no daily-view links to either tool.
+After authenticating and hash-checking the original plaintext, the viewer moves
+the recognized book-report introduction and source paragraphs into a numbered,
+closed disclosure. Unrecognized markup stays unchanged. This is a presentation
+copy, not a new source report: all original dates, limitations and card values
+remain, and ciphertext, the validated source hash, key storage, financial
+calculations and publication policy do not change. No re-encryption is needed.
+The original order warning concerns net-budget evidence, not a requirement for
+sell orders to exist. A user's dated statement about no sell orders is not
+silently converted into API completeness or carried forward as a live fact.
+
 Both applications use the same origin; different paths or storage names are
 not a security boundary. Same-origin script compromise can read the stored
 master. Anyone holding that master can decrypt both reports. HKDF purpose
