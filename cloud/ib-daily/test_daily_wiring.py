@@ -1,6 +1,6 @@
 """Synthetic data and fake transports only; socket/DNS use fails the suite."""
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import ast
 import json
@@ -110,6 +110,20 @@ class DailyTests(unittest.TestCase):
         self.fallback(); self.failure = None
         self.assertEqual(self.runner().run()['reason_code'], 'IB_DAILY_PREVIOUS_OUTCOME_UNKNOWN')
         self.assertEqual(self.calls, 1)
+
+    def test_source_http_diagnostic_is_preserved_without_private_error_text(self):
+        self.failure = SourceOutcomeUnknown('IB_DAILY_RECEIPT_HTTP_403')
+        result = self.runner().run()
+        self.assertEqual(result['source_error_code'], 'IB_DAILY_RECEIPT_HTTP_403')
+        self.assertFalse(result['retry_at_1230'])
+        self.fallback()
+        self.assertTrue(self.runner().run()['source_reads_skipped'])
+        self.assertEqual(self.calls, 1)
+        self.store = MemoryStateStore(initial())
+        self.failure = SourceOutcomeUnknown('token=CANARY; account=PRIVATE; https://private.invalid')
+        result = self.runner().run()
+        self.assertEqual(result['source_error_code'], 'IB_DAILY_READ_FAILED')
+        self.assertNotIn('CANARY', json.dumps(self.store.value))
 
     def test_crash_after_claim_blocks_other_slot(self):
         class Crash(BaseException): pass
@@ -324,7 +338,134 @@ class SourceTests(unittest.TestCase):
                     'serviceAccount':CONFIG['source_service_account'],'timeout':'75s','maxRetries':0,
                     'containers':[{'image':'wrong' if drift else CONFIG['source_image'],'command':['node','cloud/xuan-preopen/ib_sync_snapshot.mjs']}]}}}
                 return SimpleNamespace(status_code=200,content=json.dumps(payload).encode())
-        return CloudSource(CONFIG,session=Session(),storage=storage,now=lambda:NOW,sleeper=lambda _:None),requests,rid
+        source = CloudSource(CONFIG,session=Session(),storage=storage,now=lambda:NOW,sleeper=lambda _:None)
+        source.fixture_objects = objects  # Synthetic bytes only, for fault injection.
+        return source,requests,rid
+
+    def async_source(self, *, delay=24, receipt_error=None, post_status=None):
+        source, requests, rid = self.setup_source()
+        elapsed = [0.0]
+        reads = []
+        original_request, original_bucket = source.session.request, source.storage.bucket
+
+        class StorageError(Exception):
+            def __init__(self, code):
+                super().__init__('token=CANARY; account=PRIVATE; response body must not escape')
+                self.code = code
+
+        def request(method, url, **kwargs):
+            if '/operations/' in url:
+                raise AssertionError('Regional operation permission must not be required')
+            response = original_request(method, url, **kwargs)
+            if method == 'POST':
+                if post_status:
+                    return SimpleNamespace(status_code=post_status, content=b'token=CANARY; account=PRIVATE')
+                payload = json.loads(response.content)
+                payload.pop('done')  # Actual RunJob acknowledgement is asynchronous.
+                response.content = json.dumps(payload).encode()
+            return response
+
+        class Blob:
+            def __init__(self, name, generation):
+                self.inner = original_bucket('unused').blob(name, generation=generation)
+                self.name = name
+            def __getattr__(self, key):
+                return getattr(self.inner, key)
+            def reload(self, **kwargs):
+                reads.append((self.name, elapsed[0]))
+                if self.name.endswith('/receipt.json'):
+                    if receipt_error: raise StorageError(receipt_error)
+                    if elapsed[0] < delay: raise StorageError(404)
+                return self.inner.reload(**kwargs)
+
+        source.session.request = request
+        source.storage = SimpleNamespace(bucket=lambda _:SimpleNamespace(blob=lambda name,generation=None:Blob(name,generation)))
+        source.now = lambda: NOW + timedelta(seconds=elapsed[0])
+        source.monotonic = lambda: elapsed[0]
+        source.sleep = lambda seconds: elapsed.__setitem__(0, elapsed[0] + seconds)
+        return source, requests, rid, elapsed, reads
+
+    def test_async_receipt_completes_without_operation_get_or_second_dispatch(self):
+        source, requests, rid, elapsed, reads = self.async_source()
+        result = source.capture('2026-10-21', '1215', rid)
+        self.assertEqual(result['cash'][0]['balance'], '50.25')
+        self.assertEqual(elapsed[0], 24)
+        self.assertEqual(sum(m == 'POST' for m, _, _ in requests), 1)
+        self.assertEqual(sum(n.endswith('/snapshot.json') for n, _ in reads), 1)
+        self.assertEqual(len(reads), 10)  # 8 pending reads, terminal receipt, snapshot.
+
+    def test_pending_receipt_timeout_blocks_daily_fallback_without_destination_read(self):
+        source, requests, rid, elapsed, reads = self.async_source(delay=999)
+        def factory(target, slot, request):
+            def read():
+                source.capture(target, slot, request)
+                self.fail('Destination must not read without verified source')
+            return read
+        store = MemoryStateStore(initial())
+        result = DailyIB(store, factory, now=source.now).run()
+        self.assertEqual(result['status'], 'SOURCE_OUTCOME_UNKNOWN')
+        self.assertEqual(result['source_error_code'], 'IB_DAILY_RECEIPT_TIMEOUT_HTTP_404')
+        self.assertFalse(result['retry_at_1230'])
+        self.assertEqual((elapsed[0], len(reads)), (90, 31))
+        result = DailyIB(store, factory, now=lambda:NOW.replace(minute=30)).run()
+        self.assertEqual(result['reason_code'], 'IB_DAILY_PREVIOUS_OUTCOME_UNKNOWN')
+        self.assertEqual(sum(m == 'POST' for m, _, _ in requests), 1)
+
+    def test_receipt_denial_stops_immediately_with_exact_sanitized_status(self):
+        for status in (401, 403, 429, 500):
+            with self.subTest(status=status):
+                source, requests, rid, elapsed, reads = self.async_source(receipt_error=status)
+                with self.assertRaisesRegex(SourceOutcomeUnknown, '^IB_DAILY_RECEIPT_HTTP_' + str(status) + '$'):
+                    source.capture('2026-10-21', '1215', rid)
+                self.assertEqual((elapsed[0], len(reads)), (0, 1))
+                self.assertEqual(sum(m == 'POST' for m, _, _ in requests), 1)
+
+    def test_run_http_status_retained_and_post_not_retried(self):
+        source, requests, rid, elapsed, reads = self.async_source(post_status=403)
+        with self.assertRaisesRegex(SourceOutcomeUnknown, '^IB_DAILY_RUN_HTTP_403$'):
+            source.capture('2026-10-21', '1215', rid)
+        self.assertEqual(len(reads), 0)
+        self.assertEqual(sum(m == 'POST' for m, _, _ in requests), 1)
+
+    def test_async_receipt_execution_request_and_artifact_bindings_fail_closed(self):
+        for field, value in [('execution','ib-daily-snapshot-other'), ('requestId','other'),
+                             ('status','unknown'), ('artifact',{'privateObject':'other','generation':'9'})]:
+            with self.subTest(field=field):
+                source, requests, rid, _, _ = self.async_source(delay=0)
+                path = 'report-check/ib-sync-' + rid + '/receipt.json'
+                receipt = json.loads(source.fixture_objects[path]); receipt[field] = value
+                source.fixture_objects[path] = json.dumps(receipt).encode()
+                with self.assertRaisesRegex(SourceOutcomeUnknown, 'IB_DAILY_RECEIPT_MISMATCH'):
+                    source.capture('2026-10-21', '1215', rid)
+                self.assertEqual(sum(m == 'POST' for m, _, _ in requests), 1)
+
+    def test_missing_run_execution_binding_never_uses_unbound_receipt(self):
+        source, requests, rid, _, reads = self.async_source(delay=0)
+        original = source.session.request
+        def request(method, url, **kwargs):
+            response = original(method, url, **kwargs)
+            if method == 'POST':
+                payload = json.loads(response.content); payload.pop('metadata')
+                response.content = json.dumps(payload).encode()
+            return response
+        source.session.request = request
+        with self.assertRaisesRegex(SourceOutcomeUnknown, 'IB_DAILY_EXECUTION_BINDING_UNAVAILABLE'):
+            source.capture('2026-10-21', '1215', rid)
+        self.assertEqual(len(reads), 0)
+
+    def test_deadline_without_any_read_does_not_invent_http_status(self):
+        source, _, _, elapsed, reads = self.async_source()
+        with self.assertRaisesRegex(SourceOutcomeUnknown, '^IB_DAILY_RECEIPT_TIMEOUT$'):
+            source._receipt('unused', 0)
+        self.assertEqual((elapsed[0], len(reads)), (0, 0))
+
+    def test_known_incomplete_receipt_preserves_terminal_failure_semantics(self):
+        source, _, rid, _, _ = self.async_source(delay=0)
+        path = 'report-check/ib-sync-' + rid + '/receipt.json'
+        receipt = json.loads(source.fixture_objects[path]); receipt['status'] = 'incomplete'
+        source.fixture_objects[path] = json.dumps(receipt).encode()
+        with self.assertRaisesRegex(IBSnapshotError, '^IB_DAILY_SOURCE_TERMINAL_FAILURE$'):
+            source.capture('2026-10-21', '1215', rid)
 
     def test_real_wiring_fake_transport_pins_object_and_excludes_base(self):
         source,requests,rid=self.setup_source()

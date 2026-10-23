@@ -37,10 +37,11 @@ def unique_json(raw):
 
 
 class CloudSource:
-    def __init__(self, config, *, session=None, storage=None, now=None, sleeper=time.sleep):
+    def __init__(self, config, *, session=None, storage=None, now=None, sleeper=time.sleep, monotonic=time.monotonic):
         self.config, self.session, self.storage = config, session, storage
         self.now = now or (lambda: datetime.now(timezone.utc))
         self.sleep = sleeper
+        self.monotonic = monotonic
         self.dispatched = False
 
     def _clients(self):
@@ -54,25 +55,58 @@ class CloudSource:
             from google.cloud import storage
             self.storage = storage.Client(project=PROJECT)
 
-    def _json(self, method, url, body=None):
-        response = self.session.request(method, url, json=body, timeout=10, allow_redirects=False)
-        require(response.status_code == 200, 'IB_DAILY_CONTROL_REQUEST_FAILED')
+    def _json(self, method, url, body=None, *, stage):
+        try:
+            response = self.session.request(method, url, json=body, timeout=10, allow_redirects=False)
+        except Exception:
+            raise IBSnapshotError('IB_DAILY_' + stage + '_TRANSPORT_UNAVAILABLE') from None
+        # Keep the status, never the response body, URL, headers or exception text.
+        require(response.status_code == 200, 'IB_DAILY_' + stage + '_HTTP_' + str(response.status_code))
         require(len(response.content) <= 512 * 1024, 'IB_DAILY_CONTROL_RESPONSE_TOO_LARGE')
-        return unique_json(response.content)
+        try:
+            return unique_json(response.content)
+        except (ValueError, TypeError):
+            raise IBSnapshotError('IB_DAILY_' + stage + '_RESPONSE_INVALID') from None
 
-    def _object(self, name, *, generation=None, maximum=9 * 1024 * 1024):
-        blob = self.storage.bucket(BUCKET).blob(name, generation=generation)
-        blob.reload(retry=None, timeout=10)
-        require(0 < int(blob.size) <= maximum, 'IB_DAILY_PRIVATE_OBJECT_SIZE_INVALID')
-        pinned = int(blob.generation)
-        if generation is not None:
-            require(pinned == int(generation), 'IB_DAILY_OBJECT_GENERATION_CHANGED')
-        return blob.download_as_bytes(if_generation_match=pinned, retry=None, timeout=10)
+    def _object(self, name, *, generation=None, maximum=9 * 1024 * 1024, stage='SNAPSHOT'):
+        try:
+            blob = self.storage.bucket(BUCKET).blob(name, generation=generation)
+            blob.reload(retry=None, timeout=10)
+            require(0 < int(blob.size) <= maximum, 'IB_DAILY_PRIVATE_OBJECT_SIZE_INVALID')
+            pinned = int(blob.generation)
+            if generation is not None:
+                require(pinned == int(generation), 'IB_DAILY_OBJECT_GENERATION_CHANGED')
+            return blob.download_as_bytes(if_generation_match=pinned, retry=None, timeout=10)
+        except IBSnapshotError:
+            raise
+        except Exception as exc:
+            status = getattr(exc, 'code', None)
+            code = ('HTTP_' + str(int(status)) if isinstance(status, int) and 100 <= status <= 599
+                    else 'TRANSPORT_UNAVAILABLE')
+            raise IBSnapshotError('IB_DAILY_' + stage + '_' + code) from None
+
+    def _receipt(self, name, deadline):
+        # A RunJob response acknowledges dispatch, not completion. The source
+        # writes this immutable terminal receipt after saving its snapshot.
+        # Only a missing receipt is pending; denial/transport/invalid data stop.
+        missing = False
+        for attempt in range(31):
+            if self.monotonic() >= deadline:
+                break
+            try:
+                return unique_json(self._object(name, maximum=128 * 1024, stage='RECEIPT'))
+            except IBSnapshotError as exc:
+                if str(exc) != 'IB_DAILY_RECEIPT_HTTP_404':
+                    raise
+                missing = True
+            if attempt < 30:
+                self.sleep(min(3, max(0, deadline - self.monotonic())))
+        raise SourceOutcomeUnknown('IB_DAILY_RECEIPT_TIMEOUT' + ('_HTTP_404' if missing else ''))
 
     def capture(self, target, slot, request_id):
-        deadline = time.monotonic() + 120
+        deadline = self.monotonic() + 120
         self._clients()
-        job = self._json('GET', 'https://run.googleapis.com/v2/' + JOB)
+        job = self._json('GET', 'https://run.googleapis.com/v2/' + JOB, stage='JOB')
         template = job.get('template', {})
         task = template.get('template', {})
         containers = task.get('containers', [])
@@ -86,7 +120,7 @@ class CloudSource:
                 and container.get('command') == ['node', 'cloud/xuan-preopen/ib_sync_snapshot.mjs']
                 and container.get('args', []) == [], 'IB_DAILY_SOURCE_JOB_DRIFT')
         # Metadata only, never :access. The source job alone consumes the value.
-        version = self._json('GET', 'https://secretmanager.googleapis.com/v1/' + SECRET + '/versions/latest')
+        version = self._json('GET', 'https://secretmanager.googleapis.com/v1/' + SECRET + '/versions/latest', stage='VERSION')
         match = re.fullmatch(r'projects/(?:family-portfolio-gateway|860729177589)/secrets/xuan-preopen-ib-mcp/versions/([1-9]\d*)', version.get('name', ''))
         require(match is not None and version.get('state') == 'ENABLED', 'IB_DAILY_CREDENTIAL_VERSION_UNAVAILABLE')
         began = self.now()
@@ -98,43 +132,39 @@ class CloudSource:
         try:
             operation = self._json('POST', 'https://run.googleapis.com/v2/' + JOB + ':run', {
                 'etag': job['etag'], 'overrides': {'containerOverrides': [
-                    {'args': ['--ib-sync-snapshot-request', json.dumps(request, separators=(',', ':'))]}]}})
+                    {'args': ['--ib-sync-snapshot-request', json.dumps(request, separators=(',', ':'))]}]}}, stage='RUN')
             operation_name = operation.get('name', '')
             require(re.fullmatch(r'projects/(?:family-portfolio-gateway|860729177589)/locations/asia-east2/operations/[A-Za-z0-9_-]+', operation_name) is not None,
                     'IB_DAILY_OPERATION_INVALID')
-            # At most 30 read-only status polls; no second execution on timeout.
-            for _ in range(30):
-                if operation.get('done') is True:
-                    break
-                if time.monotonic() >= deadline:
-                    break
-                self.sleep(3)
-                operation = self._json('GET', 'https://run.googleapis.com/v2/' + operation_name)
-            if operation.get('done') is not True:
-                raise SourceOutcomeUnknown()
-            prefix = 'report-check/ib-sync-' + request_id + '/'
-            receipt = unique_json(self._object(prefix + 'receipt.json', maximum=128 * 1024))
+            require('error' not in operation, 'IB_DAILY_SOURCE_EXECUTION_FAILED')
+            # Bind to the execution returned by this POST. Do not depend on a
+            # regional operation GET or infer success from HTTP 200/done alone.
             execution = operation.get('metadata', {}).get('name', '')
-            require(re.fullmatch(r'projects/(?:family-portfolio-gateway|860729177589)/locations/asia-east2/jobs/ib-daily-snapshot/executions/ib-daily-snapshot-[a-z0-9-]+', execution) is not None
-                    and receipt.get('execution') == execution.rsplit('/', 1)[-1]
+            require(re.fullmatch(r'projects/(?:family-portfolio-gateway|860729177589)/locations/asia-east2/jobs/ib-daily-snapshot/executions/ib-daily-snapshot-[a-z0-9-]+', execution) is not None,
+                    'IB_DAILY_EXECUTION_BINDING_UNAVAILABLE')
+            prefix = 'report-check/ib-sync-' + request_id + '/'
+            receipt = self._receipt(prefix + 'receipt.json', deadline)
+            require(receipt.get('execution') == execution.rsplit('/', 1)[-1]
                     and receipt.get('requestId') == request_id, 'IB_DAILY_RECEIPT_MISMATCH')
-            if receipt.get('status') != 'passed':
+            if receipt.get('status') in {'failed', 'incomplete'}:
                 # Confirmed terminal receipt permits only the other daily slot.
                 raise IBSnapshotError('IB_DAILY_SOURCE_TERMINAL_FAILURE')
-            require('error' not in operation, 'IB_DAILY_SOURCE_EXECUTION_FAILED')
+            require(receipt.get('status') == 'passed', 'IB_DAILY_RECEIPT_MISMATCH')
             artifact = receipt.get('artifact', {})
             require(artifact.get('privateObject') == prefix + 'snapshot.json'
                     and re.fullmatch(r'[1-9]\d*', str(artifact.get('generation', ''))) is not None,
                     'IB_DAILY_RECEIPT_MISMATCH')
             raw = self._object(artifact['privateObject'], generation=artifact['generation'])
             require(hashlib.sha256(raw).hexdigest() == artifact.get('sha256'), 'IB_DAILY_CAPTURE_HASH_MISMATCH')
+        except SourceOutcomeUnknown:
+            raise
         except IBSnapshotError as exc:
             if str(exc) == 'IB_DAILY_SOURCE_TERMINAL_FAILURE':
                 raise
             # A malformed/missing receipt cannot prove the dispatched outcome.
-            raise SourceOutcomeUnknown() from None
+            raise SourceOutcomeUnknown(str(exc)) from None
         except Exception:
-            raise SourceOutcomeUnknown() from None
+            raise SourceOutcomeUnknown('IB_DAILY_SOURCE_RESULT_INVALID') from None
         snapshot = unique_json(raw)
         assessment = snapshot.get('assessment', {})
         require(snapshot.get('requestId') == request_id and snapshot.get('dataDate') == request['dataDate']
