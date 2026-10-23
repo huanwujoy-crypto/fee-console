@@ -1,4 +1,4 @@
-import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS} from './eod_sources.mjs';
+import {normalizeBrowserSnapshot,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS,SHARESIGHT_REFERENCE_DATE_BASIS,isBrowserDateBasis,validateReferenceObservation} from './eod_sources.mjs';
 // Pure admission/static export. No default transport, credentials, source call,
 // storage mutation or live entry. The controller must supply authenticated,
 // generation-pinned private reads and freshly read trusted Git contexts.
@@ -128,7 +128,7 @@ function metadataBinding(m,r,htmlBytes,receiptBytes,model,time){
   if(!instant(r.startedAt)||!instant(r.completedAt)||!instant(captureEnd)||captureEnd<r.startedAt||captureEnd>r.completedAt
     ||m.captureStartedAt!==r.startedAt||m.captureEndedAt!==captureEnd
     ||m.completedAt!==r.completedAt||r.startedAt>r.completedAt||Date.parse(r.completedAt)>time)fail('TIMES');
-  if(Date.parse(captureEnd)-Date.parse(r.startedAt)>300000)fail('CAPTURE_WINDOW');
+  if(r.dateBasis!==SHARESIGHT_REFERENCE_DATE_BASIS&&Date.parse(captureEnd)-Date.parse(r.startedAt)>300000)fail('CAPTURE_WINDOW');
   reportCaptureWindow(model,r);
   const unknowns=m.unknownFields,allowed=['orders','holdings','cash','allocation','prices','sourceIdentity','freshness'];
   const required=actionUnknownFields(model);
@@ -174,13 +174,15 @@ function snapshotSource(key,value,r){
     return value;
   }
   const scope=SNAPSHOT_SCOPES[key],report=value.raw?.report??value.raw?.data?.report??value.raw?.result?.data?.report,p=value.provenance;
-  const browser=value.raw?.source===SHARESIGHT_BROWSER_SOURCE;
-  if(browser){const b=normalizeBrowserSnapshot(value.raw,{portfolioId:scope.portfolioId,sourceDate:r.sourceDate});
+  const browser=value.raw?.source===SHARESIGHT_BROWSER_SOURCE,reference=r.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
+  const sourceDate=reference?value.raw?.observation?.valuationDate:r.sourceDate;
+  if(reference){if(!browser||value.raw.dateBasis!==r.dateBasis)fail('REFERENCE_SOURCE_BASIS');validateReferenceObservation(value.raw.observation,{reportDate:r.dataDate,now:Date.parse(r.completedAt)});}
+  if(browser){const b=normalizeBrowserSnapshot(value.raw,{portfolioId:scope.portfolioId,sourceDate});
     if(digest(b.raw)!==digest(value.raw)||p?.readAt!==b.readAt)fail('BROWSER_SOURCE_BINDING');}
   if(value.raw?.mode!=='read_only'||!(value.raw.source==='Sharesight User API'||browser)||report?.portfolio_id!==scope.portfolioId
-    ||report.currency?.code!=='USD'||report.start_date!==r.sourceDate||report.end_date!==r.sourceDate||report.include_sales!==false
+    ||report.currency?.code!=='USD'||report.start_date!==sourceDate||report.end_date!==sourceDate||report.include_sales!==false
     ||(key==='sharesight.ibGroupedPerformance'?(report.grouping!=='custom_group_category'||report.custom_group?.id!==Number(scope.grouping)):report.grouping!==scope.grouping)
-    ||value.rawFingerprint!==digest(value.raw)||value.completion!==null||p?.sourceDate!==r.sourceDate||!instant(p.readAt)
+    ||value.rawFingerprint!==digest(value.raw)||value.completion!==null||p?.sourceDate!==sourceDate||!instant(p.readAt)
     ||p.readAt<r.startedAt||p.readAt>r.completedAt||p.syncCompletedAt!==null||p.snapshotGeneration!==null||p.receiptSha256!==null)fail('SNAPSHOT_BINDING');
   return value;
 }
@@ -206,8 +208,9 @@ function sourceModel(values,r,model,context,call,concentrationInput=null){
     if(!Array.isArray(savedLive.sources)||savedLive.sources.length>3||new Set(savedLive.sources.map(s=>s.sourceKey)).size!==savedLive.sources.length)fail('LIVE_SOURCE');
     for(const s of savedLive.sources){
       if(!['ib.accountSummary','ib.positions','ib.orders'].includes(s.sourceKey)||!instant(s.startedAt)||!instant(s.completedAt)
-        ||s.startedAt<r.startedAt||s.completedAt>r.completedAt||s.startedAt>s.completedAt||s.rawFingerprint!==fingerprint(s.raw))fail('LIVE_SOURCE');
-      sourceReadTime(s.startedAt,window,'LIVE_CAPTURE_TIME');sourceReadTime(s.completedAt,window,'LIVE_CAPTURE_TIME');
+        ||r.dateBasis!==SHARESIGHT_REFERENCE_DATE_BASIS&&s.startedAt<r.startedAt||s.completedAt>r.completedAt||s.startedAt>s.completedAt||s.rawFingerprint!==fingerprint(s.raw))fail('LIVE_SOURCE');
+      const liveWindow=r.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS?{...window,startedAt:new Date(r.dataDate+'T00:00:00+08:00').toISOString()}:window;
+      sourceReadTime(s.startedAt,liveWindow,'LIVE_CAPTURE_TIME');sourceReadTime(s.completedAt,liveWindow,'LIVE_CAPTURE_TIME');
       inspectOrdersAccountEvidence(s.raw);
     }
   }
@@ -218,7 +221,7 @@ function sourceModel(values,r,model,context,call,concentrationInput=null){
   const rebuilt=buildEodActionModel({dataDate:r.dataDate,sourceDate:r.sourceDate,asOfHkt:window.asOfHkt,flex,snapshots,
     live:['captured','partial'].includes(savedLive.status)?{...savedLive,previousHtml:context.previousHtml}:savedLive,
     reserve:call.amountUsd,evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode:!!model.fieldState,assumeSharesightSynchronized:model.calculationBasis===SHARESIGHT_BOOK_BASIS,
-    bookDetailVersion:Object.hasOwn(model,'observedOrderPlan')?3:Object.hasOwn(model,'bookPlan')?2:1,concentrationInput,dateBasis:model.dateBasis??null,
+    bookDetailVersion:Object.hasOwn(model,'observedOrderPlan')?3:Object.hasOwn(model,'bookPlan')?2:1,concentrationInput,dateBasis:model.dateBasis??null,referenceCheckedAt:model.referenceData?.checkedAt??null,
     callRecord:model.fieldState?call:null,captureStartedAt:model.provenance.capture?.startedAt??null,captureCompletedAt:model.provenance.capture?.completedAt??null});
   rebuilt.sourceManifestSha256=r.sourceManifestSha256;
   rebuilt.evidenceSha256=digest({sourceOutcomes:rebuilt.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256});
@@ -252,10 +255,11 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       validateEodReceipt(r,text,m.dataDate,r.sourceDate,phase==='historical-authenticity'?{historicalRequestId:recoveryId}:undefined);
       // Browser book values use the authentic Sharesight valuation date.
       // Other source contracts retain their completed-session requirement.
-      if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS){
+      if(!isBrowserDateBasis(r.dateBasis)){
         try{validateCompletedEodSession(r.sourceDate,Date.parse(r.startedAt));}catch{fail('COMPLETED_SESSION_REQUIRED');}
       }
-      if(phase==='candidate-admission'&&(time>ownerCaptureDeadline(recoveryId,r.startedAt,r.captureCompletedAt)
+      if(phase==='candidate-admission'&&r.ordersFreshUntil&&time>Date.parse(r.ordersFreshUntil))fail('ORDERS_STALE');
+      if(phase==='candidate-admission'&&(time>ownerCaptureDeadline(recoveryId,r.startedAt,r.captureCompletedAt,r.dateBasis)
         ||new Date(time+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       const contextOptions={phase,policyCommit:phase==='historical-authenticity'?r.association.policyCommit:undefined,now:()=>clock(),...(signal?{signal}:{})};
       validatorPoint='context-first';const context=await loadContext(contextOptions),contextHash=contextBinding(context,r,phase,clock()),call=callBinding(context,model);
@@ -298,7 +302,8 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       signal?.throwIfAborted();validatorPoint='final-check';if(!Number.isFinite(endTime)||endTime<time)fail('CLOCK_CHANGED');
       if(contextBinding(current,r,phase,endTime)!==contextHash)fail('CONTEXT_CHANGED');
       callBinding(current,model);
-      if(phase==='candidate-admission'&&(endTime>ownerCaptureDeadline(recoveryId,r.startedAt,r.captureCompletedAt)
+      if(phase==='candidate-admission'&&r.ordersFreshUntil&&endTime>Date.parse(r.ordersFreshUntil))fail('ORDERS_STALE');
+      if(phase==='candidate-admission'&&(endTime>ownerCaptureDeadline(recoveryId,r.startedAt,r.captureCompletedAt,r.dateBasis)
         ||new Date(endTime+28800000).toISOString().slice(0,10)!==r.dataDate))fail('CANDIDATE_STALE');
       return {scope:OWNER_SCOPE,ownerBinding:OWNER_BINDING,artifactSha256:m.artifactSha256,receiptSha256:m.receiptSha256,
         sourceIdentitySha256:SOURCE_IDENTITY_SHA256,policyRevision:fingerprint(current.association.policy),financialStatus:m.financialStatus};

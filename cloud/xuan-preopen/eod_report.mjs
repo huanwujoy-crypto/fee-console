@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 // Injected EOD core. The B production composition supplies fixed readers;
 // this module itself has no default financial reader or credential provider.
 import crypto from 'node:crypto';
-import {adaptFlexArchive,applyFinancialVerification,digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS,validDate} from './eod_sources.mjs';
+import {adaptFlexArchive,applyFinancialVerification,digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS,SHARESIGHT_REFERENCE_DATE_BASIS,isBrowserDateBasis,referenceDayDeadline,referenceOrdersDeadline,validDate} from './eod_sources.mjs';
 import {currentReserve,resolveCurrentCall} from './call_record.mjs';
 import {safeIbFailure} from './ib_diagnostics.mjs';
 import {buildEodActionModel,SHARESIGHT_BOOK_BASIS} from '../../scripts/xuan-ib-eod-action-model.mjs';
@@ -41,17 +41,17 @@ export function validateCompletedEodSession(sourceDate, started) {
 export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
   snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,initialCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,sourceRunId=null,dateBasis=null}={}){
   const currentTime=now(),started=initialStartedAt??currentTime;
-  const savedCapture=initialCompletedAt!==null;
+  const savedCapture=initialCompletedAt!==null,referenceDates=dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
   // The local recovery registration is intentionally outside the cloud image.
   const recovery=savedCapture?await import('./owner_source_recovery.mjs'):null;
   const reference=savedCapture&&Number.isFinite(started)&&Number.isFinite(initialCompletedAt)?recovery.registeredReferenceCapture(recovery.registeredOwnerRecovery().requestId,new Date(started).toISOString(),new Date(initialCompletedAt).toISOString()):null;
-  const processingDeadline=reference?Date.parse(reference.expiresAt):started+(savedCapture?1800000:300000);
+  const processingDeadline=referenceDates?referenceDayDeadline(new Date(started).toISOString()):reference?Date.parse(reference.expiresAt):started+(savedCapture?1800000:300000);
   if(!Number.isFinite(started)||started>currentTime||currentTime>processingDeadline||!fieldMode&&initialStartedAt!==null
-    ||savedCapture&&(!Number.isFinite(initialCompletedAt)||initialCompletedAt<started||initialCompletedAt>currentTime||initialCompletedAt-started>300000
-      ||dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!fieldMode||!assumeSharesightSynchronized||readArchive!==null))fail('CAPTURE_WINDOW');
+    ||savedCapture&&(!Number.isFinite(initialCompletedAt)||initialCompletedAt<started||initialCompletedAt>currentTime||(!referenceDates&&initialCompletedAt-started>300000)
+      ||!isBrowserDateBasis(dateBasis)||!fieldMode||!assumeSharesightSynchronized||readArchive!==null))fail('CAPTURE_WINDOW');
   if(sourceRunId!==null&&(!fieldMode||!assumeSharesightSynchronized||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(sourceRunId)))fail('SOURCE_RUN_ID');
   const browserDates=dateBasis!==null;
-  if(browserDates&&(dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!fieldMode||!assumeSharesightSynchronized||readArchive!==null||!validDate(sourceDate)
+  if(browserDates&&(!isBrowserDateBasis(dateBasis)||!fieldMode||!assumeSharesightSynchronized||readArchive!==null||!validDate(sourceDate)
     ||sourceDate>hktDate(started)))fail('BROWSER_DATE_SCOPE');
   const dataDate=browserDates?hktDate(started):validateCompletedEodSession(sourceDate,started).dataDate;
   if(!io?.savePrivate||typeof loadContext!=='function'||!(fieldMode&&readArchive===null)&& (typeof readArchive!=='function'||typeof verifyArchive!=='function'))fail('INACTIVE_ADAPTER_REQUIRED');
@@ -74,7 +74,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   };
   const [archiveState,snapshotResults,liveResult]=await Promise.all([
     archiveTask(),
-    Promise.all(Object.keys(SNAPSHOT_SCOPES).map(sourceKey=>readVerifiedSnapshot(sourceKey,{reader:snapshotReader,verifyCompletion:verifySnapshotCompletion,sourceDate,now}))),
+    Promise.all(Object.keys(SNAPSHOT_SCOPES).map(sourceKey=>readVerifiedSnapshot(sourceKey,{reader:snapshotReader,verifyCompletion:verifySnapshotCompletion,sourceDate,now,dateBasis}))),
     optionalLive(captureOptionalLive,optionalTimeoutMs),
   ]);
   if(browserDates&&snapshotResults.some(s=>s.status!=='date-verified'||s.raw?.source!==SHARESIGHT_BROWSER_SOURCE))fail('BROWSER_DATE_SCOPE');
@@ -87,13 +87,14 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   if(hktDate(processed)!==dataDate)fail('CROSSED_HKT_DATE');
   if(savedCapture){
     const sourceTimes=[...snapshotResults.map(s=>Date.parse(s.provenance?.readAt)),...(liveResult.sources??[]).flatMap(s=>[Date.parse(s.startedAt),Date.parse(s.completedAt)])];
-    if(sourceTimes.some(t=>!Number.isFinite(t)||t<started||t>completed)||Math.max(...sourceTimes)!==completed||processed<completed||processed>processingDeadline)fail('CAPTURE_WINDOW');
+    const lower=referenceDates?Date.parse(dataDate+'T00:00:00+08:00'):started;
+    if(sourceTimes.some(t=>!Number.isFinite(t)||t<lower||t>completed)||Math.max(...sourceTimes)!==completed||processed<completed||processed>processingDeadline)fail('CAPTURE_WINDOW');
   }
   if(reference)recovery.validateReferenceSources(reference,{...Object.fromEntries(snapshotResults.map(s=>[s.sourceKey,s])),'ib.optionalLive':liveResult});
   const hkt=t=>new Date(t+8*3_600_000).toISOString().slice(11,16);
   const callRecord=fieldMode?resolveCurrentCall(current.reserveLedger,dataDate,{now:completed}):null;
   const model=buildEodActionModel({dataDate,sourceDate,asOfHkt:`${dataDate} ${hkt(started)}–${hkt(completed)} HKT · 数据至 ${sourceDate}`,flex,snapshots:snapshotResults,live,
-    reserve:fieldMode?(callRecord.amountUsd??0):currentReserve(context.reserveLedger,dataDate),evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode,callRecord,captureStartedAt:new Date(started).toISOString(),captureCompletedAt:new Date(completed).toISOString(),concentrationInput,assumeSharesightSynchronized,bookDetailVersion,dateBasis});
+    reserve:fieldMode?(callRecord.amountUsd??0):currentReserve(context.reserveLedger,dataDate),evidenceSha256:digest(sourceOutcomes),sourceOutcomes,fieldMode,callRecord,captureStartedAt:new Date(started).toISOString(),captureCompletedAt:new Date(completed).toISOString(),concentrationInput,assumeSharesightSynchronized,bookDetailVersion,dateBasis,referenceCheckedAt:referenceDates?new Date(processed).toISOString():null});
   const prefix=`report-check/${new Date(started).toISOString()}-${sourceRunId??crypto.randomUUID()}/`,sources=[];
   for(const [sourceKey,value] of [['ib.flexEod',flex?{archive:archiveResult,identityProof:archiveProof,financialProof}:{status:archiveState.status,code:archiveState.code}],...snapshotResults.map(s=>[s.sourceKey,s]),['ib.optionalLive',liveResult??{status:'failed'}]]){
     const object=prefix+sourceKey+'.json',saved=await io.savePrivate(object,value);
@@ -107,6 +108,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const artifact={privateObject:prefix+'report.html',...await io.savePrivate(prefix+'report.html',html)};
   const receipt={schemaVersion:1,mode:'private_eod_action',status:model.status,dataDate,sourceDate,startedAt:new Date(started).toISOString(),completedAt:new Date(now()).toISOString(),association,sourceCount:sources.length,sources,sourceOutcomes:model.sourceOutcomes,sourceManifestSha256,evidenceSha256:model.evidenceSha256,artifact,publication:'none',scheduler:'none'};
   if(browserDates)receipt.dateBasis=dateBasis;
+  if(referenceDates)receipt.ordersFreshUntil=referenceOrdersDeadline(model.orders);
   if(savedCapture)receipt.captureCompletedAt=new Date(completed).toISOString();
   if(reference)receipt.referenceMode=reference.schema;
   if(fieldMode)receipt.fieldErrors=model.fieldErrors;
@@ -125,7 +127,7 @@ export function validateEodReceipt(r,html,dataDate,sourceDate,{historicalRequest
   if(digest(html)!==r.artifact?.sha256||digest({sourceOutcomes:r.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256})!==r.evidenceSha256)fail('EVIDENCE_HASH');
   const m=extractNightActionModel(html);if(m.schemaVersion!==9||m.status!==r.status||m.sourceDate!==sourceDate||m.dataDate!==dataDate||m.evidenceSha256!==r.evidenceSha256||m.sourceManifestSha256!==r.sourceManifestSha256||JSON.stringify(m.sourceOutcomes)!==JSON.stringify(r.sourceOutcomes))fail('MODEL_BINDING');
   if(Object.hasOwn(r,'captureCompletedAt')){
-    const end=Date.parse(r.captureCompletedAt),start=Date.parse(r.startedAt),done=Date.parse(r.completedAt);
+    const end=Date.parse(r.captureCompletedAt),start=Date.parse(r.startedAt),done=Date.parse(r.completedAt),referenceDates=r.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
     // Synchronous receipt validation reads only the fixed local registration
     // for this new local-capture contract. Independent admission also validates
     // the registry schema, exact request and all registered source hashes.
@@ -142,10 +144,11 @@ export function validateEodReceipt(r,html,dataDate,sourceDate,{historicalRequest
       ?(matches(declared)?declared:null)
       :previous?.requestId===historicalRequestId&&matches(previous.referenceCapture)?previous.referenceCapture:null;
     if((r.referenceMode??null)!==(ref?.schema??null))fail('REFERENCE_BINDING');
-    if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!Number.isFinite(end)||new Date(end).toISOString()!==r.captureCompletedAt
+    if(!isBrowserDateBasis(r.dateBasis)||!Number.isFinite(end)||new Date(end).toISOString()!==r.captureCompletedAt
       ||r.captureCompletedAt!==m.provenance?.capture?.completedAt||m.provenance.capture.startedAt!==r.startedAt
-      ||!Number.isFinite(start)||!Number.isFinite(done)||end<start||end-start>300000||done<end||done>(ref?Date.parse(ref.expiresAt):start+1800000))fail('CAPTURE_WINDOW');
+      ||!Number.isFinite(start)||!Number.isFinite(done)||end<start||(!referenceDates&&end-start>300000)||done<end||done>(referenceDates?referenceDayDeadline(r.startedAt):ref?Date.parse(ref.expiresAt):start+1800000))fail('CAPTURE_WINDOW');
   }
+  if(r.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS){if(r.ordersFreshUntil!==referenceOrdersDeadline(m.orders)||m.referenceData.checkedAt>r.completedAt)fail('REFERENCE_BINDING');}else if(Object.hasOwn(r,'ordersFreshUntil'))fail('REFERENCE_BINDING');
   if(r.calculationBasis!==m.calculationBasis)fail('CALCULATION_BASIS');
   if(Object.hasOwn(r,'dateBasis')!==Object.hasOwn(m,'dateBasis')||r.dateBasis!==m.dateBasis)fail('DATE_BASIS_BINDING');
   if(Object.hasOwn(m,'concentration')!==Object.hasOwn(r,'concentration'))fail('CONCENTRATION_BINDING');

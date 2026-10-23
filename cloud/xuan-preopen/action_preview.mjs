@@ -1,3 +1,4 @@
+import {SHARESIGHT_REFERENCE_DATE_BASIS,referenceDayDeadline,validateReferenceObservation} from './eod_sources.mjs';
 // Private composition after one separately approved cloud orders test. No IB
 // reader, refresh, job dispatch, public write, key or credential creation here.
 import {digest,readVerifiedSnapshot,SNAPSHOT_SCOPES,SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS,normalizeBrowserSnapshot} from './eod_sources.mjs';
@@ -57,25 +58,26 @@ export async function composePrivateActionPreview({bundle,sourceDate,io,now=Date
 // No source clients: the parent supplies authenticated browser observations.
 // Validate/model/render every object locally before the one create-only claim.
 // The real access factory is separately protected; tests inject only synthetic IO.
-export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,concentrationInput=null,access,resume=false,now=Date.now,loadContext=loadTrustedContext}={}){
+export async function composeBrowserActionEvidence({sourceDate,snapshots,captureStartedAt,ordersCapture=null,concentrationInput=null,access,resume=false,referenceDates=false,now=Date.now,loadContext=loadTrustedContext}={}){
   // Local-only recovery registration is outside the unchanged cloud image.
   const {registeredOwnerRecovery,registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources}=await import('./owner_source_recovery.mjs');
   const registration=registeredOwnerRecovery(),keys=Object.keys(SNAPSHOT_SCOPES),start=Date.parse(captureStartedAt);
-  if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()>(registration.referenceCapture?.captureStartedAt===captureStartedAt?Date.parse(registration.referenceCapture.expiresAt):start+1800000)||hkt(start)!==registration.dataDate
+  if(!instant(captureStartedAt)||!Number.isFinite(start)||start>now()||now()>(registration.referenceCapture?.captureStartedAt===captureStartedAt?Date.parse(registration.referenceCapture.expiresAt):(referenceDates?referenceDayDeadline(captureStartedAt):start+1800000))||hkt(start)!==registration.dataDate
     ||!snapshots||Object.keys(snapshots).sort().join('|')!==keys.sort().join('|')
-    ||typeof resume!=='boolean'||(resume?(!registration.continuation||typeof access?.inspectEvidenceContinuation!=='function'||typeof access?.resumeEvidence!=='function'):typeof access?.beginEvidence!=='function')||typeof access?.writeEvidence!=='function')fail();
+    ||typeof referenceDates!=='boolean'||referenceDates&&resume||typeof resume!=='boolean'||(resume?(!registration.continuation||typeof access?.inspectEvidenceContinuation!=='function'||typeof access?.resumeEvidence!=='function'):typeof access?.beginEvidence!=='function')||typeof access?.writeEvidence!=='function')fail();
   // Browser sourceDate is the visible book valuation date, not a price date.
-  const dateBasis=SHARESIGHT_VALUATION_DATE_BASIS;
+  const dateBasis=referenceDates?SHARESIGHT_REFERENCE_DATE_BASIS:SHARESIGHT_VALUATION_DATE_BASIS;
   if(sourceDate>hkt(start))fail();
   const verified={};
   for(const key of keys){
-    const raw=snapshots[key];if(raw?.source!==SHARESIGHT_BROWSER_SOURCE)fail();
-    const value=await readVerifiedSnapshot(key,{reader:async()=>({raw}),sourceDate,now});
+    const raw=referenceDates?{...snapshots[key],dateBasis}:snapshots[key];if(raw?.source!==SHARESIGHT_BROWSER_SOURCE)fail();
+    const value=await readVerifiedSnapshot(key,{reader:async()=>({raw}),sourceDate,now,dateBasis});
     if(value.status!=='date-verified'||Date.parse(value.provenance?.readAt)<start||Date.parse(value.provenance?.readAt)>now())fail();
     verified[key]=structuredClone(value.raw);
   }
   if(concentrationInput!==null){
     concentrationInput=structuredClone(concentrationInput);
+    if(referenceDates&&concentrationInput.referenceReportDate!==registration.dataDate)fail();
     const c=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
     if(c.readWindow.completedAt>new Date(now()).toISOString()||hkt(Date.parse(c.readWindow.completedAt))!==registration.dataDate)fail();
     const ib=concentrationInput.sources.find(s=>s.receipt.sourceKey==='sharesight.ibGroupedPerformance');
@@ -93,7 +95,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
       ||!s||!['accountEvidence|completedAt|raw|rawFingerprint|sourceKey|startedAt',
         'accountEvidence|completedAt|raw|rawFingerprint|sourceKey|startedAt|transportFingerprint|wrapper'].includes(sourceKeys)
       ||s.sourceKey!=='ib.orders'||s.rawFingerprint!==fingerprint(s.raw)||!instant(s.startedAt)||!instant(s.completedAt)
-      ||Date.parse(s.startedAt)<start||s.startedAt>s.completedAt||Date.parse(s.completedAt)>now())fail();
+      ||(!referenceDates&&Date.parse(s.startedAt)<start)||referenceDates&&(hkt(Date.parse(s.startedAt))!==registration.dataDate||hkt(Date.parse(s.completedAt))!==registration.dataDate)||s.startedAt>s.completedAt||Date.parse(s.completedAt)>now())fail();
     // The existing decoder retains transport metadata in its pinned source.
     // Native transport equals raw; a decoded JSON string retains its separate
     // original fingerprint, whose provenance is the controller's pinned object.
@@ -109,7 +111,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
   const captureCompletedAt=new Date(Math.max(...Object.values(verified).map(v=>Date.parse(v.observation.retrievedAt)),
     ...(live.sources??[]).map(s=>Date.parse(s.completedAt)))).toISOString();
   const end=Date.parse(captureCompletedAt);
-  if(end<start||end-start>300000||end>now()||now()>ownerCaptureDeadline(registration.requestId,captureStartedAt,captureCompletedAt))fail();
+  if(end<start||!referenceDates&&end-start>300000||end>now()||now()>ownerCaptureDeadline(registration.requestId,captureStartedAt,captureCompletedAt,dateBasis))fail();
   const reference=registeredReferenceCapture(registration.requestId,captureStartedAt,captureCompletedAt);
   validateReferenceSources(reference,{...Object.fromEntries(Object.entries(verified).map(([k,v])=>[k,{rawFingerprint:digest(v)}])),'ib.optionalLive':live});
   const captureOptionalLive=async()=>structuredClone(live);
@@ -141,7 +143,7 @@ export async function composeBrowserActionEvidence({sourceDate,snapshots,capture
       ||inspected.existingBytes!==inspected.pins.reduce((sum,p)=>sum+p.size,0))fail();
   }
   const attempt=continuation?await access.resumeEvidence({requestId:registration.requestId})
-    :await access.beginEvidence({requestId:registration.requestId,captureStartedAt,captureCompletedAt});
+    :await access.beginEvidence({requestId:registration.requestId,captureStartedAt,captureCompletedAt,...(referenceDates?{dateBasis}:{})});
   if(continuation&&(attempt.runId!==continuation.runId||attempt.existingObjects!==6||attempt.remainingObjects!==3))fail();
   if(attempt.requestId!==registration.requestId||attempt.dataDate!==registration.dataDate||attempt.captureStartedAt!==captureStartedAt||attempt.captureCompletedAt!==captureCompletedAt
     ||! /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(attempt.runId))fail();

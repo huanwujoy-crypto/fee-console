@@ -151,16 +151,20 @@ export function adaptPrivateNoahUiExport({bytes,expectedTransferSha256}, {source
 /** The fixed as-of API scope is enough to display dated source facts. A
  * completed-sync proof is optional and distinct from that scope validation;
  * neither state grants independent broker cash/execution reconciliation. */
-export async function readVerifiedSnapshot(sourceKey, {reader,verifyCompletion,sourceDate,now=Date.now}={}) {
+export async function readVerifiedSnapshot(sourceKey, {reader,verifyCompletion,sourceDate,now=Date.now,dateBasis=null}={}) {
   const scope=SNAPSHOT_SCOPES[sourceKey];if(!scope||!validDate(sourceDate))fail('SNAPSHOT_SCOPE');
   if(typeof reader!=='function')return {sourceKey,status:'not-called',code:'SNAPSHOT_ADAPTER_INACTIVE'};
   let envelope;try{envelope=await reader({sourceKey,sourceDate,...scope});}catch{return {sourceKey,status:'request-failure',code:'SNAPSHOT_READ_FAILED'};}
   if(!envelope?.raw)return {sourceKey,status:'missing-fields',code:'SNAPSHOT_RAW_MISSING'};
   if(envelope.raw.source===SHARESIGHT_BROWSER_SOURCE){
-    try{const b=normalizeBrowserSnapshot(envelope.raw,{portfolioId:scope.portfolioId,sourceDate});
+    try{const reference=dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
+      const observedDate=reference?envelope.raw.observation?.valuationDate:sourceDate;
+      if(reference&&envelope.raw.dateBasis!==dateBasis)throw Error('REFERENCE_SOURCE_BASIS');
+      const b=normalizeBrowserSnapshot(envelope.raw,{portfolioId:scope.portfolioId,sourceDate:observedDate});
+      if(reference)validateReferenceObservation(b.raw.observation,{reportDate:referenceDay(new Date(now()).toISOString()),now:now()});
       if(Date.parse(b.readAt)>now())throw Error('BROWSER_FUTURE');
       return {sourceKey,status:'date-verified',raw:b.raw,rawFingerprint:digest(b.raw),completion:null,
-        provenance:{sourceDate,readAt:b.readAt,syncCompletedAt:null,snapshotGeneration:null,receiptSha256:null}};
+        provenance:{sourceDate:b.raw.observation.valuationDate,readAt:b.readAt,syncCompletedAt:null,snapshotGeneration:null,receiptSha256:null}};
     }catch{return {sourceKey,status:'malformed',code:'SNAPSHOT_BROWSER_INVALID'};}
   }
   const rawFingerprint=digest(envelope.raw),report=envelope.raw.report ?? envelope.raw.data?.report ?? envelope.raw.result?.data?.report;
@@ -180,6 +184,21 @@ export async function readVerifiedSnapshot(sourceKey, {reader,verifyCompletion,s
 // Pure adapter for an already captured authenticated Sharesight browser table.
 // No browser, network, credential or account mutation capabilities.
 export const SHARESIGHT_VALUATION_DATE_BASIS='sharesight-valuation-date.v1';
+// Explicit opt-in for the private reference dashboard; old receipts keep v1.
+export const SHARESIGHT_REFERENCE_DATE_BASIS='sharesight-reference-dates.v1';
+export const isBrowserDateBasis=b=>[SHARESIGHT_VALUATION_DATE_BASIS,SHARESIGHT_REFERENCE_DATE_BASIS].includes(b);
+export const referenceDay=t=>new Date(Date.parse(t)+28800000).toISOString().slice(0,10);
+export const referenceDayDeadline=t=>Date.parse(referenceDay(t)+'T23:59:59.999+08:00');
+export function validateReferenceObservation(o,{reportDate,now=Date.now()}={}){
+  const read=Date.parse(o?.retrievedAt),start=Date.parse(o?.captureStartedAt??o?.retrievedAt);
+  if(!validDate(reportDate)||!validDate(o?.valuationDate)||!browserInstant(o?.retrievedAt)||!browserInstant(o?.captureStartedAt??o?.retrievedAt)
+    ||start>read||read>now||referenceDay(o.retrievedAt)!==reportDate||referenceDay(o.captureStartedAt??o.retrievedAt)!==reportDate
+    ||o.valuationDate>reportDate||Date.parse(reportDate)-Date.parse(o.valuationDate)>7*86400000)throw Error('REFERENCE_SOURCE_DATE');
+  return o;
+}
+export function referenceOrdersDeadline(orders){
+  return ['ready','partial'].includes(orders?.status)?new Date(Date.parse(orders.capturedStartedAt)+1800000).toISOString():null;
+}
 export const SHARESIGHT_BROWSER_SOURCE='Sharesight authenticated cloud browser visible DOM';
 const browserFail=()=>{throw Error('BROWSER_SNAPSHOT_INVALID');};
 const browserAmount=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0&&n<=1e12;
@@ -187,7 +206,8 @@ const browserInstant=s=>typeof s==='string'&&Number.isFinite(Date.parse(s))&&/^\
 const browserReportOf=raw=>raw?.report??raw?.data?.report??raw?.result?.data?.report;
 export function normalizeBrowserSnapshot(raw,{portfolioId,sourceDate}){
   if(raw?.mode!=='read_only'||raw.source!==SHARESIGHT_BROWSER_SOURCE)browserFail();
-  const o=raw.observation,ib=portfolioId===936247;
+  const o=raw.observation,ib=portfolioId===936247,reference=raw.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
+  if(Object.hasOwn(raw,'dateBasis')&&!reference)browserFail();
   const scopes={936247:['IB-HK','sharesight.ibGroupedPerformance'],936238:['NOAH-HK','sharesight.noahPerformance'],936249:['Schwab-HK','sharesight.schwabPerformance'],1350094:['Webull','sharesight.webullPerformance']};
   const scope=scopes[portfolioId];
   if(!validDate(sourceDate)||!browserInstant(o?.retrievedAt)||sourceDate>new Date(Date.parse(o.retrievedAt)+28800000).toISOString().slice(0,10)
@@ -226,13 +246,15 @@ export function normalizeBrowserSnapshot(raw,{portfolioId,sourceDate}){
   const cashSeen=new Set(),cash_accounts=o.cash.map(c=>{
     const id=Number(c.sourcePath?.match(/^\/cash_accounts\/([1-9][0-9]*)$/)?.[1]);
     if(!Number.isSafeInteger(id)||cashSeen.has(id)||!browserAmount(c.marketValueUSD)
-      ||! /^[A-Z]{3}$/.test(c.nativeCurrency)||!browserAmount(c.nativeBalance))browserFail();
-    cashSeen.add(id);return {id,value:c.marketValueUSD,currency:{code:c.nativeCurrency}};
+      ||!(reference&&c.nativeCurrency===null&&c.nativeBalance===null)&&(! /^[A-Z]{3}$/.test(c.nativeCurrency)||!browserAmount(c.nativeBalance)))browserFail();
+    cashSeen.add(id);return {id,value:c.marketValueUSD,currency:{code:c.nativeCurrency},...(reference?{valueCurrency:'USD',nativeBalance:c.nativeBalance}:{})};
   });
   const sum=holdings.reduce((n,h)=>n+h.value,0)+cash_accounts.reduce((n,c)=>n+c.value,0);
-  if(Math.abs(sum-o.portfolioValue)>.011)browserFail();
+  if(Math.abs(sum-o.portfolioValue)>.011&&!(reference&&portfolioId===936238))browserFail();
   const report={portfolio_id:portfolioId,currency:{code:'USD'},value:o.portfolioValue,start_date:sourceDate,end_date:sourceDate,
     include_sales:false,grouping:ib?'custom_group_category':'investment_type',...(ib?{custom_group:{id:83569,name:'资产类别'}}:{}),holdings,cash_accounts};
-  return {raw:{mode:'read_only',source:SHARESIGHT_BROWSER_SOURCE,observation:o,classification:prior,data:{report}},
+  const coverage={holdingsComplete:Math.abs(sum-o.portfolioValue)<=.011,holdingsDifferenceUSD:Math.round((sum-o.portfolioValue)*100)/100,
+    nativeCashUnknownCount:o.cash.filter(c=>c.nativeCurrency===null).length};
+  return {raw:{mode:'read_only',source:SHARESIGHT_BROWSER_SOURCE,observation:o,classification:prior,data:{report},...(reference?{dateBasis:SHARESIGHT_REFERENCE_DATE_BASIS,coverage}:{})},
     readAt:new Date(o.retrievedAt).toISOString(),classificationReadAt:prior?.provenance.readAt??null};
 }

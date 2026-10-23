@@ -651,3 +651,76 @@ test('six-object continuation preserves exact source/HTML bytes, completes three
     await assert.rejects(()=>composeBrowserActionEvidence({...f.options,resume:true,access}));assert.equal(inspected,1);assert.equal(writes,3);
   }finally{fs.readFileSync=savedRead;syncBuiltinESMExports();}
 });
+
+// Independent source dates and native-cash unknowns are deliberate source facts.
+export async function buildReferenceBrowserFixture({orders=true,staleOrders=false}={}){
+  const f=await browserAttempt({threeAccounts:true,ordersCapture:orders?browserOrdersCapture():null});
+  const day=f.reg.dataDate,start=day+'T00:00:00.000Z',early=day+'T00:01:00.000Z';
+  f.options.referenceDates=true;f.options.captureStartedAt=start;
+  const ref='sharesight-reference-dates.v1';
+  for(const [key,raw] of Object.entries(f.options.snapshots)){
+    raw.dateBasis=ref;raw.observation.captureStartedAt=start;
+    raw.observation.retrievedAt=key==='sharesight.noahPerformance'?day+'T00:08:00.000Z':early;
+    if(key==='sharesight.noahPerformance'){raw.observation.valuationDate=day;raw.observation.portfolioValue+=17;}
+    raw.observation.cash.forEach(c=>{c.nativeCurrency=null;c.nativeBalance=null;});
+  }
+  const c=f.options.concentrationInput;c.referenceReportDate=day;
+  for(const s of c.sources){
+    const ib=s.receipt.sourceKey==='sharesight.ibGroupedPerformance';
+    const raw=ib?structuredClone(f.options.snapshots[s.receipt.sourceKey]):JSON.parse(s.bytes);
+    raw.dateBasis=ref;raw.observation.captureStartedAt=start;
+    raw.observation.retrievedAt=ib?early:day+'T00:04:00.000Z';
+    if(s.receipt.sourceKey==='sharesight.webullPerformance')raw.observation.valuationDate=day;
+    raw.observation.cash.forEach(c=>{c.nativeCurrency=null;c.nativeBalance=null;});
+    s.bytes=JSON.stringify(raw);Object.assign(s.receipt,{sourceDate:raw.observation.valuationDate,startedAt:raw.observation.retrievedAt,completedAt:raw.observation.retrievedAt,bytes:Buffer.byteLength(s.bytes),sha256:digest(s.bytes)});
+  }
+  if(staleOrders){const s=f.options.ordersCapture.sources[0];s.startedAt=day+'T00:10:00.000Z';s.completedAt=day+'T00:10:10.000Z';}
+  return f;
+}
+export {context as syntheticOwnerContext};
+test('reference dashboard: different valuation dates, hours between reads, null native cash and isolated NOAH gap roundtrip to one CAS',async()=>{
+  const f=await buildReferenceBrowserFixture(),r=await f.execute();
+  const html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes,m=extractNightActionModel(html.toString());
+  assert.equal(m.concentration.bindings.length,3);assert.equal(m.cash.pool,400);assert.equal(m.cash.orderReserve,60);assert.equal(m.cash.planning,290);
+  assert.equal(m.referenceData.sources[1].holdingsComplete,false);assert.equal(m.referenceData.sources[1].holdingsDifferenceUSD,-17);
+  assert.equal(m.provenance.sharesight[0].sourceDate,f.sourceDate);assert.equal(m.provenance.sharesight[1].sourceDate,f.reg.dataDate);
+  assert.equal(m.concentration.bindings.find(b=>b.accountKey==='webull').sourceDate,f.reg.dataDate);
+  assert.match(html.toString(),/原币余额未知/);assert.match(html.toString(),/明细与页面总值差额/);
+  const metadata=ownerBundleMetadata({html,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256},r.receipt);
+  let clock=f.time;
+  const verify=createProtectedOwnerVerifier({now:()=>clock,loadContext:async()=>context(clock),readPinnedSource:async p=>f.objects.get(p.name).bytes});
+  assert.equal((await verify({metadata,html,receipt,phase:'candidate-admission'})).financialStatus,'complete');
+  let writes=0,reads=0,stored;
+  const publisher=createOwnerLatestPublisher({ownerBinding:OWNER_BINDING,verifyProtectedReceipt:verify,prepareDisplay:prepareOwnerStaticDisplay,now:()=>clock,
+    io:{readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,target,ifGenerationMatch})=>{assert.equal(ifGenerationMatch,'0');writes++;stored=Buffer.from(bytes);return {...target,generation:'999',size:stored.length};},readLatestGeneration:async()=>{reads++;return stored;}}});
+  assert.equal((await publisher.publish({metadata,html,receipt})).status,'published-verified');assert.equal(writes,1);assert.equal(reads,1);
+  clock=Date.parse(r.receipt.ordersFreshUntil)+1;
+  await assert.rejects(()=>verify({metadata,html,receipt,phase:'candidate-admission'}),/ORDERS_STALE/);
+  assert.equal((await verify({metadata,html,receipt,phase:'historical-authenticity'})).financialStatus,'complete');
+});
+test('reference dashboard: absent or already-stale orders keep book calculations while dependent values remain unknown',async()=>{
+  for(const opts of [{orders:false},{staleOrders:true}]){
+    const f=await buildReferenceBrowserFixture(opts),r=await f.execute(),m=extractNightActionModel(f.objects.get(r.receipt.artifact.privateObject).bytes.toString());
+    assert.equal(m.orders.status,'unknown');assert.equal(m.cash.planning,null);assert.equal(m.cash.orderReserve,null);assert.equal(m.bookPlan.status,'ready');assert.equal(m.concentration.bindings.length,3);assert.equal(r.receipt.ordersFreshUntil,null);
+    if(opts.staleOrders)assert.equal(m.orders.reason,'ORDERS_STALE');
+  }
+});
+test('reference dashboard: future, over-seven-day, previous-read-day and incomplete main-account sources stop before any write',async()=>{
+  for(const mutate of [
+    f=>{f.options.snapshots['sharesight.noahPerformance'].observation.valuationDate='2099-01-01';},
+    f=>{f.options.snapshots['sharesight.noahPerformance'].observation.valuationDate='2020-01-01';},
+    f=>{f.options.snapshots['sharesight.noahPerformance'].observation.retrievedAt=f.sourceDate+'T00:01:00.000Z';},
+    f=>{f.options.snapshots['sharesight.ibGroupedPerformance'].observation.portfolioValue+=17;}
+  ]){const f=await buildReferenceBrowserFixture();mutate(f);await assert.rejects(f.execute);assert.equal(f.events.length,0);}
+});
+
+test('reference dashboard orders before Sharesight collection retain their independent original clock',async()=>{
+  const f=await buildReferenceBrowserFixture(),day=f.reg.dataDate;f.options.captureStartedAt=day+'T02:24:15.000Z';
+  for(const raw of Object.values(f.options.snapshots))Object.assign(raw.observation,{captureStartedAt:f.options.captureStartedAt,retrievedAt:day+'T02:24:30.000Z'});
+  for(const source of f.options.concentrationInput.sources){const raw=source.receipt.sourceKey==='sharesight.ibGroupedPerformance'?structuredClone(f.options.snapshots[source.receipt.sourceKey]):JSON.parse(source.bytes);Object.assign(raw.observation,{captureStartedAt:f.options.captureStartedAt,retrievedAt:day+'T02:24:30.000Z'});source.bytes=JSON.stringify(raw);Object.assign(source.receipt,{startedAt:raw.observation.retrievedAt,completedAt:raw.observation.retrievedAt,bytes:Buffer.byteLength(source.bytes),sha256:digest(source.bytes)});}
+  const r=await f.execute(),html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes;
+  const metadata=ownerBundleMetadata({html,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256},r.receipt);
+  const verify=createProtectedOwnerVerifier({now:()=>f.time,loadContext:async()=>context(f.time),readPinnedSource:async p=>f.objects.get(p.name).bytes});
+  assert.equal((await verify({metadata,html,receipt,phase:'candidate-admission'})).financialStatus,'complete');
+  assert.equal(extractNightActionModel(html.toString()).orders.capturedStartedAt,day+'T02:24:10.000Z');
+});

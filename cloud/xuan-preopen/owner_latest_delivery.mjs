@@ -1,4 +1,4 @@
-import {SHARESIGHT_VALUATION_DATE_BASIS} from './eod_sources.mjs';
+import {SHARESIGHT_VALUATION_DATE_BASIS,isBrowserDateBasis} from './eod_sources.mjs';
 import {SHARESIGHT_BOOK_BASIS,actionUnknownFields} from '../../scripts/xuan-ib-eod-action-model.mjs';
 // Explicit protected private-delivery controller. No schedule, identity grant,
 // broker call or public financial projection is activated by importing this file.
@@ -152,7 +152,7 @@ export async function deliverOwnerLatest({request,now=Date.now,loadContext=creat
   if(expectedArtifactSha256!==null&&bundle.artifactSha256!==expectedArtifactSha256
     ||expectedReceiptSha256!==null&&bundle.receiptSha256!==expectedReceiptSha256)fail('COLLECTED_BUNDLE_CHANGED');
   let receipt;try{receipt=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bundle.receipt));}catch{fail('RECEIPT_JSON');}
-  if(receipt.dataDate!==dataDate||(!(registeredRecovery&&receipt.dateBasis===SHARESIGHT_VALUATION_DATE_BASIS)&&(plan.status!=='generate'||receipt.sourceDate!==plan.sourceDate))||receipt.artifact?.privateObject!==bundle.artifactObject
+  if(receipt.dataDate!==dataDate||(!(registeredRecovery&&isBrowserDateBasis(receipt.dateBasis))&&(plan.status!=='generate'||receipt.sourceDate!==plan.sourceDate))||receipt.artifact?.privateObject!==bundle.artifactObject
     ||receipt.artifact?.generation!==bundle.artifactGeneration||receipt.artifact?.sha256!==bundle.artifactSha256)fail('DAILY_BINDING');
   const verifyProtectedReceipt=createProtectedOwnerVerifier({loadContext,readPinnedSource:pin=>io.readPinnedSource(pin),now});
   const verifyProtectedPreview=createProtectedOwnerPreviewVerifier({loadContext,now});

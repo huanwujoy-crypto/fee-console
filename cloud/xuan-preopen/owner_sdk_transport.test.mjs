@@ -311,3 +311,14 @@ test('registered continuation protocol cannot reset the claim and closes after u
     await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.writeEvidence(name,Buffer.from('{}')));
   });assert.equal(writes,1);
 });
+
+test('reference date bridge forwards the explicit same-day policy without granting legacy calls a longer window',async t=>{
+  const reg=registeredOwnerRecovery(),now=Date.parse(reg.dataDate+'T04:00:00.000Z'),start=reg.dataDate+'T00:00:00.000Z',end=reg.dataDate+'T00:08:00.000Z';let calls=0;
+  t.mock.method(Date,'now',()=>now);
+  await fakeWorker(frame=>{calls++;assert.deepEqual(frame.value,{op:'beginEvidence',requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end,dateBasis:'sharesight-reference-dates.v1'});return {id:frame.id,result:{captureCompletedAt:end},safeDiagnostics:diagnostic(),safeCleanupDiagnostics:[]};},async sdk=>{
+    await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end}));
+    await rejected('REQUEST_INVALID',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end,dateBasis:'unbounded'}));
+    assert.equal((await sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end,dateBasis:'sharesight-reference-dates.v1'})).captureCompletedAt,end);
+    await rejected('WRITE_ALREADY_ATTEMPTED',()=>sdk.beginEvidence({requestId:reg.requestId,captureStartedAt:start,captureCompletedAt:end,dateBasis:'sharesight-reference-dates.v1'}));
+  });assert.equal(calls,1);
+});

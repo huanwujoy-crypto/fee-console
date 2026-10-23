@@ -1216,5 +1216,53 @@ class RecoveryRolloverTests(unittest.TestCase):
         for change in [dict(priorReceiptObject='delivery/2099-01-01/receipt.json'),dict(priorReceiptObject='delivery/2026-02-30/receipt.json'),dict(priorReceiptObject='../receipt.json'),dict(priorReceiptSha256='invalid'),dict(previousReferenceCapture=None),dict(previousReferenceCapture=dict(previous,requestId=reg['requestId']))]:
             with self.assertRaises(m.BoundaryError):m.validate_recovery_registration(dict(base,**change))
 
+class ReferenceDateBoundaryTests(unittest.TestCase):
+    assertCode = BoundaryTests.assertCode
+    setUp = BrowserEvidenceTests.setUp
+    write = BrowserEvidenceTests.write
+
+    def test_explicit_same_day_mode_and_unknown_native_cash_do_not_relax_old_intake(self):
+        reg=m.recovery_registration();day=reg['dataDate']
+        value={'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':day+'T00:00:00.000Z','captureCompletedAt':day+'T00:08:00.000Z'}
+        p=EvidenceProvider();b=m.OwnerBridge(p)
+        with patch.object(m,'daily_date',return_value=day):
+            self.assertCode('REQUEST_INVALID',lambda:b.dispatch(value));self.assertEqual(len(p.calls),0)
+            b.dispatch(dict(value,dateBasis='sharesight-reference-dates.v1'))
+            self.assertTrue(b.evidence['referenceDates'])
+            observation={'valuationDate':(datetime.date.fromisoformat(day)-datetime.timedelta(days=7)).isoformat(),'retrievedAt':day+'T00:01:00Z','captureStartedAt':day+'T00:00:00Z','cash':[{'nativeCurrency':None,'nativeBalance':None,'marketValueUSD':1}]}
+            b.reference_observation(observation,day)
+            for bad in [dict(observation,valuationDate='2020-01-01'),dict(observation,retrievedAt=day+'T15:59:00Z'),dict(observation,retrievedAt='2020-01-01T00:00:00Z'),dict(observation,retrievedAt=day+'T00:01:00+00:00')]:
+                self.assertCode('BODY_INVALID',lambda:b.reference_observation(bad,day))
+            calls=len(p.calls)
+            with patch.object(m.time,'time',return_value=datetime.datetime.fromisoformat(day+'T23:59:59.999+08:00').timestamp()+.001):
+                self.assertCode('REPLACEMENT_ADMISSION_EXPIRED',lambda:self.write(b,b.evidence['prefix']+'ib.flexEod.json',{'status':'not-called','code':'FLEX_NOT_CALLED'}))
+            self.assertEqual(len(p.calls),calls)
+
+    def test_native_cas_rechecks_independent_order_expiry_after_canary_reads(self):
+        for expired in [False,True]:
+            now=m.time.time();clock=[now]
+            with patch.object(m.time,'time',side_effect=lambda:clock[0]):
+                b,read,prime,write,objects,sources,calls=DailyBoundaryTests().fixture()
+                report_name,receipt_name='delivery/'+m.daily_date()+'/report.html','delivery/'+m.daily_date()+'/receipt.json'
+                receipt=json.loads(objects[receipt_name][1]);order_pin=sources[-1]
+                stamp=lambda t:datetime.datetime.fromtimestamp(t,datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z')
+                order_raw=json.dumps({'status':'captured','sources':[{'sourceKey':'ib.orders','startedAt':stamp(now-1799),'completedAt':stamp(now-1798)}]}).encode()
+                objects[order_pin['privateObject']]=(order_pin['generation'],order_raw);receipt['sources'][-1]['sha256']=hashlib.sha256(order_raw).hexdigest()
+                receipt.update(dateBasis='sharesight-reference-dates.v1',ordersFreshUntil=stamp(now+1))
+                receipt_raw=json.dumps(receipt).encode();objects[receipt_name]=('11',receipt_raw)
+                prime()
+                for pin in receipt['sources']:read(pin['privateObject'],pin['generation'],True)
+                value=write();raw=base64.b64decode(value['body']);boundary=value['headers']['Content-Type'].split('boundary=')[1]
+                first=('--'+boundary+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n').encode();split=raw.index(('\r\n--'+boundary+'\r\n').encode())
+                resource=json.loads(raw[len(first):split]);metadata=json.loads(resource['metadata']['bundleMetadata'])
+                metadata.update(dateBasis='sharesight-reference-dates.v1',receiptSha256=hashlib.sha256(receipt_raw).hexdigest());resource['metadata'].update(bundleMetadata=json.dumps(metadata),receiptSha256=metadata['receiptSha256'])
+                value['body']=base64.b64encode(first+json.dumps(resource).encode()+raw[split:]).decode()
+                b.verify_replacement_canary_current=lambda revision:clock.__setitem__(0,now+2 if expired else now)
+                if expired:
+                    self.assertCode('REPLACEMENT_ADMISSION_EXPIRED',lambda:b.dispatch(value));self.assertEqual(sum(method=='POST' for _,method in calls),0)
+                else:
+                    self.assertEqual(b.dispatch(value)['status'],200);self.assertEqual(sum(method=='POST' for _,method in calls),1)
+
+
 if __name__ == '__main__':
     unittest.main()
