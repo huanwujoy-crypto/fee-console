@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.25">
+<meta name="fee-console-build" content="4.9.26">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -950,7 +950,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.25";
+const UI_VERSION_LABEL=" · v4.9.26";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2026,13 +2026,22 @@ function drawdownView(feeView){
   }
   return result;
 }
+/* return-period-display:start */
+function returnPeriodLabel(from,to){
+  if(!benchmarkCalendarDate(from)||!benchmarkCalendarDate(to)||to<from)return null;
+  const days=benchmarkDayDiff(from,to)+1;
+  return Number.isSafeInteger(days)&&days>0?`${from} → ${to}，共 ${days} 个自然日`:null;
+}
+/* return-period-display:end */
 function renderDrawdowns(feeView){
-  const view=drawdownView(feeView),range=view.start&&view.through?`${view.start} → ${view.through}${view.through!==view.latest?`（共同截至；最新资产 ${view.latest}）`:""}`:"日期区间待核实";
+  const view=drawdownView(feeView),period=returnPeriodLabel(view.start,view.through),returns=returnPeriodLabel(feeView.start,feeView.asOf);
+  const samePeriod=!!(period&&returns&&view.start===feeView.start&&view.through===feeView.asOf);
+  const range=!period?"回撤统计期间待核实":samePeriod?"":`回撤统计期间：${period}${returns?`（收益截至 ${feeView.asOf}，区间不同）`:"（收益区间待核实）"}`;
   const rows=[["actual","组合"],["spy","SPY"],["qqq","QQQ"]].map(([key,label])=>{
     const value=view[key],ready=value.state==="verified",phase=ready&&value.value>0?`峰值 ${value.peakDate} → 谷值 ${value.troughDate}`:"";
     return `<div class="rr" data-drawdown-series="${key}"><span>${label}</span><b${ready&&value.value>0?' class="neg"':""}${phase?` title="${phase}"`:""}>${ready?pct(-value.value):"未核实"}</b></div>`;
   }).join("");
-  return `<div role="group" aria-label="同期最大回撤，费前"><div class="lab" style="margin-top:14px">同期最大回撤 · 费前</div><div class="small">${range}</div>${rows}<div class="note">按剔除外部出入金影响的 TWR 曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。</div></div>`;
+  return `<div role="group" aria-label="${samePeriod?"同期最大回撤":"最大回撤"}，费前"><div class="lab" style="margin-top:14px">${samePeriod?"同期最大回撤":"最大回撤"} · 费前</div>${range?`<div class="small">${range}</div>`:""}${rows}<div class="note">按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。</div></div>`;
 }
 /* max-drawdown-view:end */
 function receiptState(feeView){
@@ -2235,7 +2244,7 @@ function renderKPIs(feeView,st,B,G){
     <div class="note">${st.live?`本月毛收益 <b class="${sgn(st.live.pnl)}">${usd(st.live.pnl,0)}</b> · ${feeView.status.provisional?"暂计":"本月"}费用 <b class="amt">${usd(st.live.fees,0)}</b>（管理费 ${fmt(st.live.mgmt,0)} + Carry ${fmt(st.live.carry,0)}）`:"本月暂无数据（美股收盘后自动更新）"}${feeView.status.provisional?`<br>含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}${feeView.status.provisionalCodes?.includes("owner-notification-cash-date")?"按用户选择的到账通知日记账；券商实际入账日待核。扣减栏含预扣税及代收费，属于投资跟踪口径。":""}`:""}</div></div>  <div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="val ${sgn(st.net)}">${usd(st.net,0)}</div>
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
-    <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">收益率 · ${feeView.start} → ${feeView.asOf}（${st.spanDays} 天）</div>
+    <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">统计期间：${returnPeriodLabel(feeView.start,feeView.asOf)||"未核实"}</div>
     ${rr("组合毛 TWR（管理能力）",st.twrG)}
     ${rr("出资方 Modified Dietz（EOD flow 模型）",st.mwrD)}
     ${st.bench.map(b=>rr((st.benchmarkPending?`截至 ${st.benchAsOf} `:"同期 ")+b.name,b.twr)).join("")}
