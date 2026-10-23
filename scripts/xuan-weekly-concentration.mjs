@@ -8,22 +8,24 @@ const integer=(value,label)=>{if(!/^\d+$/.test(String(value)))throw Error('weekl
 const cents=micro=>String((micro+5000n)/10000n);
 const percent=(value,total)=>Number((value*10000n+total/2n)/total)/100;
 
-export function buildWeeklyConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_POLICY}={}){
+export function buildWeeklyConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_POLICY,referenceDates=null}={}){
   if(!Number.isFinite(dateMs(cutoff))||!Number.isSafeInteger(policy.maxSnapshotAgeDays)||policy.maxSnapshotAgeDays<1)throw Error('weekly_concentration_date_invalid');
   const components=envelope.riskDenominator?.components;
   if(!Array.isArray(components)||components.length!==3||new Set(components.map(c=>c.key)).size!==3)throw Error('weekly_concentration_accounts_invalid');
-  return buildIssuerConcentration(envelope,{cutoff,policy});
+  return buildIssuerConcentration(envelope,{cutoff,policy,referenceDates});
 }
 
 // Fixed action scope: never invent two zero accounts or weaken weekly scope.
 export function buildIbBookIssuerConcentration(envelope,{cutoff,policy=DEFAULT_TOP10_POLICY}={}){
+  const referenceDates=null;
   const components=envelope.riskDenominator?.components;
   if(components?.length!==1||components[0].key!=='ib-hk'
     ||!Array.isArray(envelope.riskConstituents)||envelope.riskConstituents.some(r=>String(r.portfolioId)!=='936247'||r.custodian!=='IB-HK'))throw Error('weekly_concentration_accounts_invalid');
-  return buildIssuerConcentration(envelope,{cutoff,policy});
+  return buildIssuerConcentration(envelope,{cutoff,policy,referenceDates});
 }
 
-function buildIssuerConcentration(envelope,{cutoff,policy}){
+function buildIssuerConcentration(envelope,{cutoff,policy,referenceDates=null}){
+  if(referenceDates&&(Object.keys(referenceDates).sort().join('|')!=='1350094|936247|936249'||Object.values(referenceDates).some(d=>!Number.isFinite(dateMs(d))||dateMs(d)>dateMs(cutoff)||dateMs(cutoff)-dateMs(d)>7*86400000)))throw Error('weekly_concentration_reference_dates_invalid');
   if(!Number.isFinite(dateMs(cutoff))||!Number.isSafeInteger(policy.maxSnapshotAgeDays)||policy.maxSnapshotAgeDays<1)throw Error('weekly_concentration_date_invalid');
   const components=envelope.riskDenominator.components;
   const denominator=components.reduce((sum,c)=>sum+integer(c.valueMicro,'denominator'),0n);
@@ -59,10 +61,10 @@ function buildIssuerConcentration(envelope,{cutoff,policy}){
   };
   for(const r of envelope.riskConstituents){
     const identity=r.portfolioId+':'+r.instrumentId;
-    if(seen.has(identity)||r.identityVerified!==true||r.valueDate!==cutoff)throw Error('weekly_concentration_source_invalid');
+    if(seen.has(identity)||r.identityVerified!==true||r.valueDate!==(referenceDates?.[r.portfolioId]??cutoff))throw Error('weekly_concentration_source_invalid');
     seen.add(identity);
     const marketValue=integer(r.marketValueMicro,'holding');
-    const leveraged=resolveLeveragedProduct(r,{cutoff});
+    const leveraged=resolveLeveragedProduct(r,{cutoff:referenceDates?r.valueDate:cutoff});
     if(leveraged){
       const issuer=policy.directAliases[leveraged.underlying]||leveraged.underlying;
       directCandidates.add(issuer);
@@ -81,7 +83,7 @@ function buildIssuerConcentration(envelope,{cutoff,policy}){
   }
   for(const [r,marketValue] of etfRows){
     const fund=funds.get(String(r.instrumentId));
-    const age=fund?(dateMs(cutoff)-dateMs(fund.asOf))/86400000:NaN;
+    const age=fund?(dateMs(referenceDates?r.valueDate:cutoff)-dateMs(fund.asOf))/86400000:NaN;
     if(!fund||fund.symbol!==r.symbol||!Number.isFinite(age)||age<0||age>policy.maxSnapshotAgeDays){
       const key=String(r.instrumentId)+':'+r.symbol;
       const entry=missingFunds.get(key)||{symbol:r.symbol,reason:fund?'前十资料过期或身份不符':'未取得前十资料',marketValueMicro:0n};

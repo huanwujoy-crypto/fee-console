@@ -682,6 +682,7 @@ class OwnerBridge:
         # Only populated by authenticated responses, never a caller pin list.
         self.daily_pins = {}
         self.daily_receipts = {}
+        self.daily_order_sources = {}
         self.daily_latest_generation = None
         self._operation = None
         self.safe_diagnostics = SafeDiagnostics()
@@ -984,16 +985,23 @@ class OwnerBridge:
 
     def begin_evidence(self, value):
         registration = recovery_registration()
-        if (set(value) not in ({'op', 'requestId', 'captureStartedAt'}, {'op', 'requestId', 'captureStartedAt', 'captureCompletedAt'}) or value['requestId'] != registration['requestId']
+        if (set(value) not in ({'op', 'requestId', 'captureStartedAt'}, {'op', 'requestId', 'captureStartedAt', 'captureCompletedAt'}, {'op', 'requestId', 'captureStartedAt', 'captureCompletedAt', 'dateBasis'}) or value['requestId'] != registration['requestId']
                 or registration['dataDate'] != daily_date() or self.evidence_attempted):
             reject('REQUEST_INVALID')
         start = value['captureStartedAt']
+        reference_dates = value.get('dateBasis') == 'sharesight-reference-dates.v1'
+        if 'dateBasis' in value and not reference_dates:
+            reject('REQUEST_INVALID')
         saved_capture = 'captureCompletedAt' in value
         ref = reference_capture(registration, start, value.get('captureCompletedAt'))
         duration_ms = 1800000 if saved_capture else 300000
         try:
             dt = datetime.datetime.fromisoformat(start.replace('Z', '+00:00'))
             start_ms = dt.timestamp()*1000
+            if reference_dates:
+                if (dt + datetime.timedelta(hours=8)).date().isoformat() != registration['dataDate'] or ref:
+                    reject('REQUEST_INVALID')
+                duration_ms = datetime.datetime.fromisoformat(registration['dataDate']+'T23:59:59.999+08:00').timestamp()*1000-start_ms
             if ref:
                 duration_ms = datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z', '+00:00')).timestamp()*1000-start_ms
         except Exception:
@@ -1010,7 +1018,7 @@ class OwnerBridge:
             except Exception:
                 reject('REQUEST_INVALID')
             if (end_dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z') != end
-                    or not 0 <= end_ms-start_ms <= 300000 or end_ms > time.time()*1000):
+                    or not 0 <= end_ms-start_ms <= (duration_ms if reference_dates else 300000) or end_ms > time.time()*1000):
                 reject('REQUEST_INVALID')
         self.evidence_attempted = True
         if self.inspect_evidence_attempt()['exists']:
@@ -1018,13 +1026,15 @@ class OwnerBridge:
         run_id = str(uuid_module.uuid4())
         prefix = 'report-check/'+start+'-'+run_id+'/'
         self.evidence = {'registration': registration, 'start': start, 'startMs': start_ms, 'prefix': prefix, 'durationMs': duration_ms,
-                         'reference': ref, 'captureCompletedAt': value.get('captureCompletedAt'), 'captureEndMs': end_ms if saved_capture else None,
+                         'reference': ref, 'referenceDates': reference_dates, 'captureCompletedAt': value.get('captureCompletedAt'), 'captureEndMs': end_ms if saved_capture else None,
                          'attempted': set(), 'written': {}, 'count': 0, 'bytes': 0, 'blocked': False,
                          'lastWall': time.time()*1000, 'initialWall': time.time()*1000, 'monotonic': time.monotonic()}
         claim = {'schema': 'xuan.browser-evidence-attempt.v1', 'requestId': registration['requestId'],
                  'dataDate': registration['dataDate'], 'captureStartedAt': start, 'runId': run_id,
                  'createdAt': instant(), 'maximumObjects': 10, 'maximumBytes': 32*1024*1024,
                  'sourceMode': 'sharesight-browser-with-optional-normal-orders' if saved_capture else 'sharesight-browser-no-ib-route'}
+        if reference_dates:
+            claim['dateBasis'] = value['dateBasis']
         if saved_capture:
             claim['captureCompletedAt'] = value['captureCompletedAt']
         pin = self.evidence_upload('report-check/orders-probe-'+registration['requestId']+'/start.json',
@@ -1032,7 +1042,7 @@ class OwnerBridge:
         return {'requestId': registration['requestId'], 'dataDate': registration['dataDate'],
                 'captureStartedAt': start, **({'captureCompletedAt': value['captureCompletedAt']} if saved_capture else {}), 'runId': run_id, 'claim': pin}
 
-    def evidence_source_time(self, value, processing=False):
+    def evidence_source_time(self, value, processing=False, independent_orders=False):
         try:
             dt = datetime.datetime.fromisoformat(value.replace('Z', '+00:00'))
             stamp = dt.timestamp()*1000
@@ -1041,10 +1051,28 @@ class OwnerBridge:
         evidence = self.evidence
         end = min(time.time()*1000, evidence['startMs']+evidence['durationMs']) if processing else evidence['captureEndMs']
         lower = evidence['captureEndMs'] if processing else evidence['startMs']
+        if independent_orders and evidence.get('referenceDates'):
+            lower = datetime.datetime.fromisoformat(evidence['registration']['dataDate']+'T00:00:00+08:00').timestamp()*1000
         if (dt.isoformat(timespec='milliseconds').replace('+00:00', 'Z') != value
                 or end is None or not lower <= stamp <= end):
             reject('BODY_INVALID')
         return stamp
+
+    def reference_observation(self, observation, report_date):
+        try:
+            for value in [observation['retrievedAt'], observation.get('captureStartedAt', observation['retrievedAt'])]:
+                if not isinstance(value, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{3})?Z', value):
+                    reject('BODY_INVALID')
+            read = datetime.datetime.fromisoformat(observation['retrievedAt'].replace('Z', '+00:00'))
+            start = datetime.datetime.fromisoformat(observation.get('captureStartedAt', observation['retrievedAt']).replace('Z', '+00:00'))
+            valued = datetime.date.fromisoformat(observation['valuationDate'])
+            day = datetime.date.fromisoformat(report_date)
+            if (read.tzinfo is None or start.tzinfo is None or start > read or read.timestamp() > time.time()
+                    or (read+datetime.timedelta(hours=8)).date() != day or (start+datetime.timedelta(hours=8)).date() != day
+                    or not 0 <= (day-valued).days <= 7):
+                reject('BODY_INVALID')
+        except (ValueError, TypeError, KeyError, AttributeError):
+            reject('BODY_INVALID')
 
     def validate_normal_orders_evidence(self, payload):
         # Data-only bridge for the already captured normal-MCP source. The JS
@@ -1063,7 +1091,7 @@ class OwnerBridge:
                 or source.get('sourceKey') != 'ib.orders' or not isinstance(source.get('raw'), dict)
                 or not re.fullmatch('[a-f0-9]{64}', str(source.get('rawFingerprint', '')))):
             reject('BODY_INVALID')
-        start = self.evidence_source_time(source.get('startedAt')); end = self.evidence_source_time(source.get('completedAt'))
+        start = self.evidence_source_time(source.get('startedAt'), independent_orders=True); end = self.evidence_source_time(source.get('completedAt'), independent_orders=True)
         account = source.get('accountEvidence')
         if (start > end or not isinstance(account, dict) or set(account) != {'associationBasis', 'nativeIdentityEvidence', 'responseAccountEvidence'}
                 or account.get('associationBasis') != 'owner-attested' or account.get('responseAccountEvidence') not in ('matched', 'not-provided')
@@ -1098,9 +1126,12 @@ class OwnerBridge:
             if not isinstance(payload, dict):
                 reject('BODY_INVALID')
             if name == concentration_name:
-                if (set(payload) - {'sources', 'cutoff', 'captureStartedAt', 'captureCompletedAt'}
+                if (set(payload) - {'sources', 'cutoff', 'captureStartedAt', 'captureCompletedAt', 'referenceReportDate'}
                         or not re.fullmatch(r'\d{4}-\d\d-\d\d', str(payload.get('cutoff', '')))
                         or not isinstance(payload.get('sources'), list) or len(payload['sources']) != 3):
+                    reject('BODY_INVALID')
+                reference_dates = evidence.get('referenceDates', False)
+                if (payload.get('referenceReportDate') != (registration['dataDate'] if reference_dates else None)):
                     reject('BODY_INVALID')
                 expected = {'sharesight.ibGroupedPerformance': (936247, 'IB-HK'), 'sharesight.schwabPerformance': (936249, 'Schwab-HK'), 'sharesight.webullPerformance': (1350094, 'Webull')}
                 if {v.get('receipt', {}).get('sourceKey') for v in payload['sources']} != set(expected):
@@ -1112,11 +1143,15 @@ class OwnerBridge:
                     account, label = expected[r['sourceKey']]; observation = source.get('observation', {})
                     if (r.get('route') != 'authenticated-browser' or r.get('status') != 'date-verified'
                             or r.get('sha256') != hashlib.sha256(b).hexdigest() or r.get('bytes') != len(b)
-                            or r.get('sourceDate') != payload['cutoff'] or source.get('mode') != 'read_only'
+                            or r.get('sourceDate') != (observation.get('valuationDate') if reference_dates else payload['cutoff']) or source.get('mode') != 'read_only'
                             or source.get('source') != 'Sharesight authenticated cloud browser visible DOM'
-                            or observation.get('portfolio') != label or observation.get('valuationDate') != payload['cutoff']
+                            or observation.get('portfolio') != label or (not reference_dates and observation.get('valuationDate') != payload['cutoff'])
                             or account != 936247 and observation.get('portfolioId') != account):
                         reject('BODY_INVALID')
+                    if reference_dates:
+                        if source.get('dateBasis') != 'sharesight-reference-dates.v1':
+                            reject('BODY_INVALID')
+                        self.reference_observation(observation, registration['dataDate'])
                     for key in ('startedAt', 'completedAt'):
                         stamp = r.get(key, '')
                         if not isinstance(stamp, str) or not re.fullmatch(r'\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z', stamp):
@@ -1136,6 +1171,10 @@ class OwnerBridge:
                     reject('BODY_INVALID')
                 if key == 'ib.optionalLive' and payload != {'status': 'not-called', 'code': 'IB_MCP_ROUTES_UNAVAILABLE'}:
                     self.validate_normal_orders_evidence(payload)
+                if key.startswith('sharesight.') and evidence.get('referenceDates'):
+                    if payload.get('raw', {}).get('dateBasis') != 'sharesight-reference-dates.v1':
+                        reject('BODY_INVALID')
+                    self.reference_observation(payload.get('raw', {}).get('observation', {}), registration['dataDate'])
                 if key.startswith('sharesight.') and evidence['captureCompletedAt'] is not None:
                     self.evidence_source_time(payload.get('provenance', {}).get('readAt'))
                     if evidence['reference'] and payload.get('rawFingerprint') != evidence['reference']['sourceHashes'][key]:
@@ -1153,7 +1192,7 @@ class OwnerBridge:
                         or {s.get('sourceKey') for s in payload['sources']} != set(keys)):
                     reject('BODY_INVALID')
                 if evidence['captureCompletedAt'] is not None:
-                    if (payload.get('dateBasis') != 'sharesight-valuation-date.v1'
+                    if (payload.get('dateBasis') != ('sharesight-reference-dates.v1' if evidence.get('referenceDates') else 'sharesight-valuation-date.v1')
                             or payload.get('captureCompletedAt') != evidence['captureCompletedAt']):
                         reject('BODY_INVALID')
                     if payload.get('referenceMode') != (evidence['reference']['schema'] if evidence['reference'] else None):
@@ -1218,6 +1257,8 @@ class OwnerBridge:
                 or pin[1] and hashlib.sha256(raw).hexdigest() != pin[1]):
             reject('PIN_REQUIRED')
         self.daily_pin(name, pin[0], hashlib.sha256(raw).hexdigest())
+        if name.endswith('/ib.optionalLive.json'):
+            self.daily_order_sources[name] = json_loads(raw)
         if not name.endswith('/receipt.json') and not recovery_receipt(name):
             return
         receipt = json_loads(raw)
@@ -1300,6 +1341,7 @@ class OwnerBridge:
                     or metadata.get('captureEndedAt') != receipt.get('captureCompletedAt', receipt.get('completedAt'))
                     or metadata.get('completedAt') != receipt.get('completedAt')
                     or metadata.get('sourceDate') != receipt.get('sourceDate')
+                    or metadata.get('dateBasis') != receipt.get('dateBasis')
                     or metadata.get('financialStatus') != ('complete' if receipt.get('status') == 'ready' else 'partial')):
                 reject('PIN_REQUIRED')
             # Repeat the current pointer and registered canary check at the
@@ -1317,7 +1359,26 @@ class OwnerBridge:
             capture_ms = datetime.datetime.fromisoformat(receipt['startedAt'].replace('Z', '+00:00')).timestamp()*1000
             registration = recovery_registration()
             ref = reference_capture(registration, receipt.get('startedAt'), receipt.get('captureCompletedAt')) if metadata.get('receiptObject') == registration['receiptObject'] else None
-            freshness_deadline = datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z', '+00:00')).timestamp()*1000 if ref else capture_ms+1800000
+            reference_dates = receipt.get('dateBasis') == 'sharesight-reference-dates.v1'
+            freshness_deadline = (datetime.datetime.fromisoformat(date+'T23:59:59.999+08:00').timestamp()*1000 if reference_dates else
+                datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z', '+00:00')).timestamp()*1000 if ref else capture_ms+1800000)
+            if reference_dates:
+                if ref or 'ordersFreshUntil' not in receipt:
+                    reject('PIN_REQUIRED')
+                deadline_text = receipt['ordersFreshUntil']
+                if deadline_text is not None:
+                    source_pin = next(s for s in receipt['sources'] if s['sourceKey'] == 'ib.optionalLive')
+                    saved = self.daily_order_sources.get(source_pin['privateObject'], {})
+                    sources = saved.get('sources', [])
+                    if len(sources) != 1 or sources[0].get('sourceKey') != 'ib.orders':
+                        reject('PIN_REQUIRED')
+                    try:
+                        started = datetime.datetime.fromisoformat(sources[0]['startedAt'].replace('Z', '+00:00'))
+                        order_deadline = started + datetime.timedelta(minutes=30)
+                        if deadline_text != order_deadline.isoformat(timespec='milliseconds').replace('+00:00','Z') or current_time > order_deadline.timestamp()*1000:
+                            reject('REPLACEMENT_ADMISSION_EXPIRED')
+                    except (ValueError, TypeError, KeyError, AttributeError):
+                        reject('PIN_REQUIRED')
             if receipt.get('referenceMode') != (ref['schema'] if ref else None) or not capture_ms <= current_time <= freshness_deadline or receipt['dataDate'] != daily_date():
                 reject('REPLACEMENT_ADMISSION_EXPIRED')
             self.mutation_started = True

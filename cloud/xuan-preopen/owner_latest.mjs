@@ -43,7 +43,7 @@ export function deriveStaticDisplay(original,{preparePrivateReport,Parser=global
 function metadata(m,now,ownerBinding){
   const browserDates=Object.hasOwn(m??{},'dateBasis');
   exact(m,'schema scope ownerBinding sourceIdentitySha256 dataDate sourceDate captureStartedAt captureEndedAt completedAt artifactObject artifactGeneration artifactSha256 receiptObject receiptGeneration receiptSha256 financialStatus unknownFields'+(browserDates?' dateBasis':''));
-  if(browserDates&&m.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS)fail('DATE_BASIS');
+  if(browserDates&&![SHARESIGHT_VALUATION_DATE_BASIS,'sharesight-reference-dates.v1'].includes(m.dateBasis))fail('DATE_BASIS');
   if(m.schema!=='xuan.owner-latest.v1'||m.scope!==OWNER_SCOPE||!hex(ownerBinding)||m.ownerBinding!==ownerBinding||!hex(m.sourceIdentitySha256))fail('SCOPE_MISMATCH');
   date(m.sourceDate);date(m.dataDate);
   const start=stamp(m.captureStartedAt),end=stamp(m.captureEndedAt),completed=stamp(m.completedAt);
@@ -209,7 +209,7 @@ export function createOwnerLatestPublisher({io,ownerBinding,verifyProtectedRecei
       clearTimer(timer);started=checkedClock();
       timer=setTimer(()=>{controller.abort();rejectDeadline(Object.assign(Error('deadline'),{safeCode:'DEADLINE'}));},DEADLINE_MS);
       const admissionTime=checkedClock(),capture=Date.parse(plan.bundle.metadata.captureStartedAt);
-      if(admissionTime<capture||admissionTime>ownerCaptureDeadline(recoveryRequestId(plan.bundle.metadata.receiptObject),plan.bundle.metadata.captureStartedAt,plan.bundle.metadata.captureEndedAt)||new Date(admissionTime+28800000).toISOString().slice(0,10)!==plan.bundle.metadata.dataDate)fail('CANDIDATE_STALE');
+      if(admissionTime<capture||admissionTime>ownerCaptureDeadline(recoveryRequestId(plan.bundle.metadata.receiptObject),plan.bundle.metadata.captureStartedAt,plan.bundle.metadata.captureEndedAt,plan.bundle.metadata.dateBasis)||new Date(admissionTime+28800000).toISOString().slice(0,10)!==plan.bundle.metadata.dataDate)fail('CANDIDATE_STALE');
       writing=true;
       const ack=await io.replaceLatest({target:LATEST_TARGET,ifGenerationMatch:plan.ifGenerationMatch,
         headers:LATEST_HEADERS,bytes:new Uint8Array(plan.display),

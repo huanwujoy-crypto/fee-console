@@ -58,7 +58,8 @@ export function registeredDisplayReferenceCapture(start,end){
   const r=registeredOwnerRecovery();
   return registeredReferenceCapture(r.requestId,start,end)??registeredHistoricalReferenceCapture(r.previousReferenceCapture?.requestId,start,end);
 }
-export function ownerCaptureDeadline(requestId,start,end){
+export function ownerCaptureDeadline(requestId,start,end,dateBasis=null){
+  if(dateBasis==='sharesight-reference-dates.v1')return Date.parse(new Date(Date.parse(start)+28800000).toISOString().slice(0,10)+'T23:59:59.999+08:00');
   return Date.parse(registeredReferenceCapture(requestId,start,end)?.expiresAt??'')||Date.parse(start)+1800000;
 }
 export function validateReferenceSources(reference,values){

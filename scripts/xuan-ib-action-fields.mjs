@@ -19,7 +19,7 @@ export const ACTION_ERROR_CODES=Object.freeze({
   cashPool:['CASH_POOL_OUT_OF_RANGE'],cashLike:['CASH_LIKE_INVALID'],capacity:['TOTAL_CAPACITY_OUT_OF_RANGE'],
   holdings:['HOLDINGS_SOURCE_UNAVAILABLE','HOLDINGS_DETAIL_UNSUPPORTED'],call:['OWNER_DECLARATION_UNAVAILABLE']});
 export const emptyActionErrors=()=>Object.fromEntries(Object.keys(ACTION_ERROR_CODES).map(k=>[k,null]));
-export function readCurrentActionFields({live,dataDate,startedAt,completedAt,previousHtml='',currencyBySymbol={},quoteBySymbol={}}={}){
+export function readCurrentActionFields({live,dataDate,startedAt,completedAt,previousHtml='',currencyBySymbol={},quoteBySymbol={},ordersAsOf=null}={}){
   const sources=Array.isArray(live?.sources)?live.sources:[],states={},accepted={};
   let brokerFundsReason='BROKER_FUNDS_SOURCE_UNAVAILABLE';
   for(const key of keys){
@@ -28,8 +28,9 @@ export function readCurrentActionFields({live,dataDate,startedAt,completedAt,pre
     if(rows.length===1&&row.raw){
       status='malformed';
       try{
-        if(!instant(row.startedAt)||!instant(row.completedAt)||row.startedAt>row.completedAt||row.startedAt<startedAt||row.completedAt>completedAt
+        if(!instant(row.startedAt)||!instant(row.completedAt)||row.startedAt>row.completedAt||ordersAsOf===null&&row.startedAt<startedAt||row.completedAt>completedAt
           ||hkt(row.startedAt)!==dataDate||hkt(row.completedAt)!==dataDate||Date.parse(row.completedAt)-Date.parse(row.startedAt)>300000)throw Error('TIME');
+        if(key==='ib.orders'&&ordersAsOf!==null&&(!instant(ordersAsOf)||Date.parse(ordersAsOf)-Date.parse(row.startedAt)>1800000||ordersAsOf<row.completedAt))throw Error('STALE_ORDER');
         const kind=key.split('.')[1];
         if(kind==='accountSummary'&&row.raw.currency==='BASE')brokerFundsReason='BROKER_FUNDS_CURRENCY_UNVERIFIED';
         unwrapSource(kind,row.raw);inspectOrdersAccountEvidence(row.raw);if(kind==='positions')normalizePositions(row.raw);
@@ -70,6 +71,7 @@ export function readCurrentActionFields({live,dataDate,startedAt,completedAt,pre
     else availableFunds={status:'recorded',amount:raw.available_funds,currency:raw.currency,source:'ib.accountSummary',readAt:summary.completedAt,
       accountBasis:inspectOrdersAccountEvidence(raw).responseAccountEvidence==='matched'?'response-account-id':'owner-attested'};
   }
+  if(orders.status==='unknown'&&ordersAsOf!==null&&sources.some(s=>s.sourceKey==='ib.orders'&&instant(s.startedAt)&&Date.parse(ordersAsOf)-Date.parse(s.startedAt)>1800000))orders.reason='ORDERS_STALE';
   return {states,current,orders,coverage,availableFunds};
 }
 export function sharesightBookCash(snapshot,{portfolioId,sourceDate,onFailure=()=>{}}={}){
@@ -120,14 +122,14 @@ export function validateActionFieldState(m){
   const date=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d+'T00:00:00Z'));
   const capture=m.provenance?.capture;
   if(!exact(capture,['startedAt','completedAt'])||!instant(capture.startedAt)||!instant(capture.completedAt)||capture.startedAt>capture.completedAt
-    ||hkt(capture.startedAt)!==m.dataDate||hkt(capture.completedAt)!==m.dataDate||Date.parse(capture.completedAt)-Date.parse(capture.startedAt)>300000)fail();
+    ||hkt(capture.startedAt)!==m.dataDate||hkt(capture.completedAt)!==m.dataDate||m.dateBasis!=='sharesight-reference-dates.v1'&&Date.parse(capture.completedAt)-Date.parse(capture.startedAt)>300000)fail();
   const allowed={ibCash:['sharesight.ibGroupedPerformance','ib.flexEod'],noahCash:['sharesight.noahPerformance'],orders:['ib.orders'],allocation:['sharesight.ibGroupedPerformance'],call:['owner.callDeclaration'],orderReserve:['derived.buyReserve'],planning:['derived.cashPlan']};
   if(!exact(m.fieldState,Object.keys(allowed)))fail();
   if(!exact(m.fieldErrors,Object.keys(ACTION_ERROR_CODES))||Object.entries(m.fieldErrors).some(([k,v])=>v!==null&&!ACTION_ERROR_CODES[k].includes(v)))fail();
   for(const [key,s] of Object.entries(m.fieldState)){
     if(!exact(s,['source','status','dataDate','readAt'])||!allowed[key].includes(s.source)
       ||!['ready','recorded','partial','blocked','not-called','request-failure','missing-fields','date-mismatch','malformed','unverified','failed','timeout','owner-declared','unavailable','invalid'].includes(s.status)
-      ||!(s.dataDate===null||date(s.dataDate)&&s.dataDate<=m.dataDate)||!(s.readAt===null||instant(s.readAt)&&s.readAt>=capture.startedAt&&s.readAt<=capture.completedAt))fail();
+      ||!(s.dataDate===null||date(s.dataDate)&&s.dataDate<=m.dataDate)||!(s.readAt===null||instant(s.readAt)&&(m.dateBasis==='sharesight-reference-dates.v1'&&s.source==='ib.orders'?hkt(s.readAt)===m.dataDate:s.readAt>=capture.startedAt)&&s.readAt<=capture.completedAt))fail();
   }
   const c=m.cash,call=c.call,b=c.book;
   if(!exact(call,['status','declarationDate','declarationSha256'])||!['owner-declared','unavailable','invalid'].includes(call.status)
@@ -137,7 +139,7 @@ export function validateActionFieldState(m){
     ||(call.status==='owner-declared'?(!finite(c.reserve)||call.declarationDate===null):(c.reserve!==null||c.callApplied!==null||c.planning!==null)))fail();
   if(!exact(b,['ib','sourceDate'])||b.sourceDate!==m.sourceDate||!(b.ib===null||finite(b.ib))||c.ib!==(b.ib!==null?b.ib:c.eod.status==='verified'?c.eod.tradeDate:null))fail();
   for(const [key,known] of [['ibCash',c.ib!==null],['noahCash',c.noah!==null],['allocation',m.allocation.status==='ready']]){
-    const s=m.fieldState[key];if(known!==['ready','recorded'].includes(s.status)||known&&(s.dataDate!==m.sourceDate||s.readAt===null))fail();
+    const s=m.fieldState[key];if(known!==['ready','recorded'].includes(s.status)||known&&(s.dataDate!==(m.dateBasis==='sharesight-reference-dates.v1'?m.provenance.sharesight.find(p=>p.sourceKey===s.source)?.sourceDate:m.sourceDate)||s.readAt===null))fail();
   }
   if(b.ib!==null&&m.fieldState.ibCash.source!=='sharesight.ibGroupedPerformance'||b.ib===null&&c.ib!==null&&m.fieldState.ibCash.source!=='ib.flexEod')fail();
   if(m.fieldState.call.status!==call.status||m.fieldState.call.dataDate!==call.declarationDate)fail();

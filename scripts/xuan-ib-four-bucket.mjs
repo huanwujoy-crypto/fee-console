@@ -325,10 +325,11 @@ function reportParameters(raw, report) {
  * listing-only identity is returned as an unvalued diagnostic. */
 export function normalizeSharesightReport(raw, { registry, portfolioId, readStartedAt, readCompletedAt,
   listing, fields = SHARESIGHT_FIELDS, portfolioRoles = ['family'],
-  unconfirmedTransactionMode = 'reject' } = {}) {
+  unconfirmedTransactionMode = 'reject', referenceCash = false } = {}) {
   if (!['reject', 'risk-read-only'].includes(unconfirmedTransactionMode)) {
     fail('UNCONFIRMED_TRANSACTION_MODE_INVALID');
   }
+  if(referenceCash&&(raw?.source!=='Sharesight authenticated cloud browser visible DOM'||raw?.dateBasis!=='sharesight-reference-dates.v1'||unconfirmedTransactionMode!=='risk-read-only'))fail('CASH_REFERENCE_SCOPE');
   const expectedId = toId(portfolioId, 'PORTFOLIO');
   const entry = scopedEntry(registry, expectedId, portfolioRoles);
   let shell;
@@ -414,7 +415,7 @@ export function normalizeSharesightReport(raw, { registry, portfolioId, readStar
       portfolioId: expectedId, cashAccountId, ...flags,
       name: text(pick(row, fields.cashAccount.name, 'CASH_ACCOUNT_NAME'), 'CASH_ACCOUNT_NAME'),
       recordType: 'cash_account', assetClass: NATIVE_CASH_LABEL,
-      currency: currencyCode(pickCurrency(row, fields.cashAccount.currency, 'CASH_ACCOUNT_CURRENCY'), 'CASH_ACCOUNT_CURRENCY'),
+      currency: referenceCash&&row.valueCurrency==='USD'&&row.currency?.code===null&&row.nativeBalance===null?null:currencyCode(pickCurrency(row, fields.cashAccount.currency, 'CASH_ACCOUNT_CURRENCY'), 'CASH_ACCOUNT_CURRENCY'),
       valueMicro: String(toMicro(pick(row, fields.cashAccount.value, 'CASH_ACCOUNT_VALUE'), 'CASH_ACCOUNT_VALUE')),
     });
   }

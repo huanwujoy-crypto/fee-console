@@ -227,14 +227,14 @@ export function createOwnerSdkTransport(){
       evidenceStarted=true;
       try{return await call({op:'resumeEvidence',requestId},{signal});}catch(error){evidenceClosed=true;throw error;}
     },
-    async beginEvidence({requestId,captureStartedAt,captureCompletedAt,signal}={}){
-      const registration=registeredOwnerRecovery(),start=Date.parse(captureStartedAt),end=Date.parse(captureCompletedAt),savedCapture=captureCompletedAt!==undefined;
-      if(requestId!==registration.requestId||typeof captureStartedAt!=='string'||!Number.isFinite(start)
-        ||new Date(start).toISOString()!==captureStartedAt||start>Date.now()||Date.now()>(savedCapture?ownerCaptureDeadline(requestId,captureStartedAt,captureCompletedAt):start+300000)
-        ||savedCapture&&(!Number.isFinite(end)||new Date(end).toISOString()!==captureCompletedAt||end<start||end-start>300000||end>Date.now())
+    async beginEvidence({requestId,captureStartedAt,captureCompletedAt,dateBasis,signal}={}){
+      const registration=registeredOwnerRecovery(),start=Date.parse(captureStartedAt),end=Date.parse(captureCompletedAt),savedCapture=captureCompletedAt!==undefined,referenceDates=dateBasis==='sharesight-reference-dates.v1';
+      if(dateBasis!==undefined&&!referenceDates||referenceDates&&!savedCapture||requestId!==registration.requestId||typeof captureStartedAt!=='string'||!Number.isFinite(start)
+        ||new Date(start).toISOString()!==captureStartedAt||start>Date.now()||Date.now()>(savedCapture?ownerCaptureDeadline(requestId,captureStartedAt,captureCompletedAt,dateBasis):start+300000)
+        ||savedCapture&&(!Number.isFinite(end)||new Date(end).toISOString()!==captureCompletedAt||end<start||!referenceDates&&end-start>300000||end>Date.now())
         ||new Date(Date.now()+28800000).toISOString().slice(0,10)!==registration.dataDate)throw fail('REQUEST_INVALID');
       if(evidenceStarted)throw fail('WRITE_ALREADY_ATTEMPTED');evidenceStarted=true;mutationStarted=true;
-      try{return await call({op:'beginEvidence',requestId,captureStartedAt,...(savedCapture?{captureCompletedAt}:{})},{signal});}catch(error){evidenceClosed=true;throw error;}
+      try{return await call({op:'beginEvidence',requestId,captureStartedAt,...(savedCapture?{captureCompletedAt}:{}),...(referenceDates?{dateBasis}:{})},{signal});}catch(error){evidenceClosed=true;throw error;}
     },
     async writeEvidence(name,bytes,{signal}={}){
       if(!evidenceStarted||evidenceClosed)throw fail('WRITE_ALREADY_ATTEMPTED');

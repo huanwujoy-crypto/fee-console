@@ -2,6 +2,8 @@
 // planner, CAS and pinned readback. No SDK credential loader or live network.
 import test from 'node:test';import assert from 'node:assert/strict';import crypto from 'node:crypto';
 import {spawn} from 'node:child_process';import {createInterface} from 'node:readline';
+import {buildReferenceBrowserFixture,syntheticOwnerContext} from './owner_latest_admission.test.mjs';
+import {composeBrowserActionEvidence} from './action_preview.mjs';
 import {runPrivateActionPreviewOnce} from './action_preview_once.mjs';
 import {isIbCredentialLockRequest,IB_CREDENTIAL_LOCK_KEY} from './cloud_io.mjs';
 import {RESOURCE,TOKEN_ENDPOINT} from './ib_mcp.mjs';
@@ -106,11 +108,14 @@ function memoryStorage(objects,{conflict=false,corruptReadback=false,canaryChang
     assert.equal(u.origin,'https://storage.googleapis.com');
     if(method==='POST'){
       assert.equal(u.pathname,`/upload/storage/v1/b/${LATEST_TARGET.bucket}/o`);
-      if(conflict||u.searchParams.get('ifGenerationMatch')!==records.get(LATEST_TARGET.object)?.metadata.generation)return response(null,{},412);
       const raw=Buffer.from(o.body),boundary=o.headers['Content-Type']??o.headers['content-type'],b=boundary.split('boundary=')[1];
-      const first=Buffer.from('--'+b+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'),middle=Buffer.from('\r\n--'+b+'\r\nContent-Type: '+LATEST_HEADERS.contentType+'\r\n\r\n');
-      const at=raw.indexOf(middle),resource=JSON.parse(raw.subarray(first.length,at)),tail=Buffer.byteLength('\r\n--'+b+'--\r\n');
-      add(resource.name,raw.subarray(at+middle.length,-tail),String(++next),{...LATEST_HEADERS,metadata:resource.metadata});
+      const first=Buffer.from('--'+b+'\r\nContent-Type: application/json; charset=utf-8\r\n\r\n'),separator=Buffer.from('\r\n--'+b+'\r\n');
+      const at=raw.indexOf(separator),resource=JSON.parse(raw.subarray(first.length,at));
+      const bodyAt=raw.indexOf(Buffer.from('\r\n\r\n'),at+separator.length)+4,tail=Buffer.byteLength('\r\n--'+b+'--\r\n');
+      if(resource.name===LATEST_TARGET.object){if(conflict||u.searchParams.get('ifGenerationMatch')!==records.get(resource.name)?.metadata.generation)return response(null,{},412);}
+      else {assert.equal(u.searchParams.get('ifGenerationMatch'),'0');assert.ok(!records.has(resource.name));}
+      const bytes=raw.subarray(bodyAt,-tail);
+      add(resource.name,bytes,String(++next),{...resource,md5Hash:crypto.createHash('md5').update(bytes).digest('base64')});
       return Response.json(records.get(resource.name).metadata);
     }
     assert.ok(['GET','HEAD'].includes(method));
@@ -136,21 +141,21 @@ async function nativeBoundary(memory,{now,dataDate,priorPin},action){
   const lines=createInterface({input:child.stdout})[Symbol.asyncIterator]();let stderr='';child.stderr.on('data',x=>stderr+=x);child.on('error',()=>{});
   const send=v=>child.stdin.write(JSON.stringify(v)+'\n');send({now:clockNow(),dataDate,priorPin});
   let queue=Promise.resolve();
-  const run=async(url,o={})=>{
-    const requestNow=clockNow();send({fixtureNow:requestNow,op:'dailyRequest',url,method:o.method??'GET',headers:{...o.headers,...(o.method==='POST'?{'Accept-Encoding':'identity'}:{})},body:o.body===undefined?null:Buffer.from(o.body).toString('base64'),
-      ...(o.method==='POST'?{admissionExpiresAt:requestNow+5000}:{})});
+  const run=async value=>{
+    send({fixtureNow:clockNow(),...value});
     for(;;){const line=await lines.next();assert.equal(line.done,false,stderr);const v=JSON.parse(line.value);
       if(v.kind==='fetch'){const response=await memory.request(v.url,{method:v.method,headers:v.headers,...(v.body!==null?{body:Buffer.from(v.body,'base64')}:{})});
         send({status:response.status,headers:Object.fromEntries(response.headers),body:Buffer.from(await response.arrayBuffer()).toString('base64')});continue;}
       if(v.kind==='error')throw Object.assign(Error(v.code),{safeCode:v.code});
-      assert.equal(v.kind,'result');return new Response(Buffer.from(v.result.body,'base64'),{status:v.result.status,headers:v.result.headers});
+      assert.equal(v.kind,'result');return v.result;
     }
   };
-  const request=(...args)=>{const p=queue.then(()=>run(...args));queue=p.catch(()=>{});return p;};
-  try{return await action(request);}finally{send({close:true});child.stdin.end();child.kill();}
+  const dispatch=value=>{const p=queue.then(()=>run(value));queue=p.catch(()=>{});return p;};
+  const request=async(url,o={})=>{const v=await dispatch({op:'dailyRequest',url,method:o.method??'GET',headers:{...o.headers,...(o.method==='POST'?{'Accept-Encoding':'identity'}:{})},body:o.body===undefined?null:Buffer.from(o.body).toString('base64'),...(o.method==='POST'?{admissionExpiresAt:clockNow()+5000}:{})});return new Response(Buffer.from(v.body,'base64'),{status:v.status,headers:v.headers});};
+  try{return await action(request,dispatch);}finally{send({close:true});child.stdin.end();child.kill();}
 }
 
-async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,rollback=false,preparationMs=0,preparationFailure=false,transientContext=false,canaryChanged=false}={}){
+async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,rollback=false,preparationMs=0,preparationFailure=false,transientContext=false,canaryChanged=false,referenceBrowser=false}={}){
   // Preserve the named HK boundary times while following the active request's
   // report date. Its immutable prior receipt may belong to an earlier day.
   const reg=registeredOwnerRecovery(),dayShift=Date.parse(reg.dataDate)-Date.parse('2026-10-21');
@@ -158,9 +163,11 @@ async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,roll
   const prior=makeHarness(start+Date.parse(priorDate)-Date.parse(reg.dataDate)-120000);
   prior.options.request.requestId='11111111-2222-4333-8444-555555555555';
   const old=await runPrivateActionPreviewOnce({...prior.options,dailyDelivery:true});assert.equal(old.status,'generated');
-  const fresh=makeHarness(start),generated=await runPrivateActionPreviewOnce(fresh.options);assert.equal(generated.status,'generated');
-  assert.equal(fresh.objects.size,10);assert.equal(fresh.calls.filter(c=>c.url.includes('/v1/performance')).length,2);
-  assert.equal(fresh.events.filter(e=>e==='tools/call').length,1);
+  const fresh=makeHarness(start),browser=referenceBrowser?await buildReferenceBrowserFixture():null;
+  if(!browser){const generated=await runPrivateActionPreviewOnce(fresh.options);assert.equal(generated.status,'generated');
+    assert.equal(fresh.objects.size,10);assert.equal(fresh.calls.filter(c=>c.url.includes('/v1/performance')).length,2);
+    assert.equal(fresh.events.filter(e=>e==='tools/call').length,1);}
+  else assert.equal(start,browser.time);
   const memory=memoryStorage(prior.objects,{conflict,corruptReadback,canaryChanged});
   // Each source generation is from its own real synthetic upload response.
   for(const [name,value] of fresh.objects)memory.add(name,typeof value==='string'?value:JSON.stringify(value),String([...fresh.objects.keys()].indexOf(name)+1));
@@ -179,15 +186,18 @@ async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,roll
     const {withOwnerPublicationReads,ownerSourceFetch}=await import('./owner_source_bytes.mjs');
     const savedFetch=globalThis.fetch;globalThis.fetch=async(url,options)=>{if(transientContext&&String(url).endsWith('/claude/xuan-ib-account-association-v1.json')&&++contextAttempts===1)throw Object.assign(new TypeError('SYNTHETIC_PRIVATE'),{cause:{code:'ETIMEDOUT'}});return contextFetch(url,options);};
     let result;try{
-    result=await withOwnerPublicationReads(()=>nativeBoundary(memory,{now:()=>clock,dataDate:reg.dataDate,priorPin},async request=>deliverOwnerLatest({registeredRecovery:true,request,now:()=>clock,
+    result=await withOwnerPublicationReads(()=>nativeBoundary(memory,{now:()=>clock,dataDate:reg.dataDate,priorPin},async(request,dispatch)=>{
+      if(browser){await composeBrowserActionEvidence({...browser.options,access:{beginEvidence:args=>dispatch({op:'beginEvidence',...args}),writeEvidence:(name,bytes)=>dispatch({op:'writeEvidence',name,body:Buffer.from(bytes).toString('base64')})}});}
+      return deliverOwnerLatest({registeredRecovery:true,request,now:()=>clock,
       prepareCommit:async({signal})=>{assert.equal(signal.aborted,false);preparations++;clock+=preparationMs;if(preparationFailure)throw Error('SYNTHETIC_BOUNDARY_REJECTED');},
-      loadContext:async opts=>{const result=await createOwnerContextLoader({fetchImpl:ownerSourceFetch,now:()=>clock})(opts);if(rollback&&++reads===2)clock--;return result;}})));
+      loadContext:async opts=>{const result=browser&&opts.phase!=='historical-authenticity'?syntheticOwnerContext(clock):await createOwnerContextLoader({fetchImpl:ownerSourceFetch,now:()=>clock})(opts);if(rollback&&++reads===2)clock--;return result;}});}));
     }finally{globalThis.fetch=savedFetch;}
-    const posts=memory.calls.filter(c=>c.method==='POST');
+    const allPosts=memory.calls.filter(c=>c.method==='POST'),posts=allPosts.filter(c=>!browser||new URL(c.url).searchParams.get('ifGenerationMatch')!=='0');
+    if(browser)assert.equal(allPosts.length-posts.length,9);
     if(!elapsed&&!rollback&&!conflict&&!corruptReadback&&!canaryChanged&&!preparationFailure&&preparationMs<60000&&clock-start<=1800000&&new Date(clock+28800000).toISOString().slice(0,10)===reg.dataDate){
-      assert.equal(preparations,1);if(transientContext)assert.equal(contextAttempts,2);assert.equal(result.status,'published-verified',JSON.stringify(result));assert.equal(posts.length,1);
+      assert.equal(preparations,1,JSON.stringify(result));if(transientContext)assert.equal(contextAttempts,2);assert.equal(result.status,'published-verified',JSON.stringify(result));assert.equal(posts.length,1);
       const pointer=memory.records.get(LATEST_TARGET.object);assert.equal(hash(pointer.bytes),result.sha256);
-      assert.equal(JSON.parse(pointer.metadata.metadata.bundleMetadata).captureStartedAt,new Date(start).toISOString());
+      assert.equal(JSON.parse(pointer.metadata.metadata.bundleMetadata).captureStartedAt,browser?browser.options.captureStartedAt:new Date(start).toISOString());
       assert.equal((decode(pointer.bytes).match(/<section class="card(?: concentration)?"/g)||[]).length,5);
       assert.deepEqual(memory.records.get(reg.priorReceiptObject).bytes,original.bytes);
       const after=memory.calls.slice(memory.calls.indexOf(posts[0])+1);assert.ok(after.some(c=>new URL(c.url).searchParams.get('alt')==='media'));
@@ -232,3 +242,5 @@ test('whole chain never writes after preparation denial, deadline, expiry or HK 
 test('actual native canary generation drift stops the provider POST without a second CAS',async()=>{
   await pipeline('2026-10-21T00:00:00.000Z',{canaryChanged:true});
 });
+
+ test('reference dashboard full native evidence bridge, pinned source admission, CAS and fixed readback',async()=>{await pipeline('2026-10-21T02:25:00.000Z',{referenceBrowser:true});});

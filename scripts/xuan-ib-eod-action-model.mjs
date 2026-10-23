@@ -1,4 +1,4 @@
-import {SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS} from '../cloud/xuan-preopen/eod_sources.mjs';
+import {SHARESIGHT_BROWSER_SOURCE,SHARESIGHT_VALUATION_DATE_BASIS,SHARESIGHT_REFERENCE_DATE_BASIS,isBrowserDateBasis,validateReferenceObservation} from '../cloud/xuan-preopen/eod_sources.mjs';
 import crypto from 'node:crypto';
 // Same four-card action report, with explicit unknown dependencies. No I/O.
 import {calculateCashPlan} from './xuan-ib-cash-plan.mjs';
@@ -89,7 +89,9 @@ export function buildEodActionModel(input){
   }
 }
 function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshots,live=null,reserve,evidenceSha256,sourceOutcomes,
-  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,dateBasis=null}){
+  fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,dateBasis=null,referenceCheckedAt=null}){
+  const reference=dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
+  if(reference){if(!instant(referenceCheckedAt)||referenceCheckedAt<captureCompletedAt)fail('REFERENCE_CLOCK');for(const s of snapshots)validateReferenceObservation(s.raw?.observation,{reportDate:dataDate,now:Date.parse(referenceCheckedAt)});}
   if(![1,2,3].includes(bookDetailVersion))fail('CALCULATION_BASIS');
   if(typeof assumeSharesightSynchronized!=='boolean'||assumeSharesightSynchronized&&!fieldMode)fail('CALCULATION_BASIS');
   if(fieldMode&&!flex)flex={cash:null,positions:null,trades:null,tradeCoverageProven:false,rawFingerprint:null,
@@ -109,7 +111,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     else n=parseSharesightCash(s.raw,{portfolioId:936238});
   }}catch{outcomes.find(s=>s.sourceKey==='sharesight.noahPerformance').status='malformed';}
   if(a&&a.dataDate!==sourceDate){if(!fieldMode)fail('SOURCE_DATE');a=null;fieldErrors.allocation='ALLOCATION_SOURCE_DATE_MISMATCH';outcomes.find(s=>s.sourceKey==='sharesight.ibGroupedPerformance').status='date-mismatch';}
-  if(n&&n.dataDate!==sourceDate){if(!fieldMode)fail('SOURCE_DATE');n=null;outcomes.find(s=>s.sourceKey==='sharesight.noahPerformance').status='date-mismatch';}
+  if(n&&!reference&&n.dataDate!==sourceDate){if(!fieldMode)fail('SOURCE_DATE');n=null;outcomes.find(s=>s.sourceKey==='sharesight.noahPerformance').status='date-mismatch';}
   if(fieldMode&&a&&!finite(a.total)){a=null;outcomes.find(s=>s.sourceKey==='sharesight.ibGroupedPerformance').status='malformed';}
   let orders={status:'unknown',asOfHkt:'未取得',buys:null,sells:null,reason:live?.status==='not-called'&&live?.code==='IB_MCP_ROUTES_UNAVAILABLE'?'IB_MCP_ROUTES_UNAVAILABLE':live?.status==='timeout'?'OPTIONAL_LIVE_TIMEOUT':live?.status==='failed'?'OPTIONAL_LIVE_FAILED':'ORDERS_NOT_CAPTURED'},projection=null;
   if(!fieldMode&&live?.status==='captured'){
@@ -129,12 +131,12 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
   const bookIb=fieldMode?sharesightBookCash(ibSnapshot,{portfolioId:936247,sourceDate,onFailure:code=>{fieldErrors.ibCash=code;}}):null;
   let currentFields=null;
   if(fieldMode){
-    currentFields=readCurrentActionFields({live,dataDate,startedAt:captureStartedAt,completedAt:captureCompletedAt,previousHtml:live?.previousHtml??'',
+    currentFields=readCurrentActionFields({live,dataDate,startedAt:captureStartedAt,completedAt:captureCompletedAt,ordersAsOf:reference?referenceCheckedAt:null,previousHtml:live?.previousHtml??'',
       quoteBySymbol:assumeSharesightSynchronized&&bookDetailVersion===3?sharesightOrderQuotes(ibSnapshot):{},
       currencyBySymbol:sharesightOrderCurrencies(ibSnapshot,{onFailure:code=>{fieldErrors.orderCurrency=code;}})});
     orders=currentFields.orders;
     if(orders.status==='unknown'&&live?.status==='not-called'&&live?.code==='IB_MCP_ROUTES_UNAVAILABLE')orders={...orders,reason:'IB_MCP_ROUTES_UNAVAILABLE'};
-    try{validateEodOrders(orders,{dataDate,readAt:captureCompletedAt,startedAt:captureStartedAt,fieldMode:true});}
+    try{validateEodOrders(orders,{dataDate,readAt:captureCompletedAt,startedAt:captureStartedAt,fieldMode:true,referenceMode:reference});}
     catch{
       orders={status:'unknown',asOfHkt:'未取得',buys:null,sells:null,reason:'ORDERS_MALFORMED_OR_UNMATCHED'};
       currentFields.states['ib.orders']=fieldState('ib.orders','malformed');
@@ -147,7 +149,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     }else fieldErrors.allocationProjection='PROJECTION_DEPENDENCIES_UNKNOWN';
   }
   const ib=bookIb!==null?bookIb:flex.cash?cents(flex.cash.tradeDate):null,
-    noah=fieldMode?sharesightBookCash(noahSnapshot,{portfolioId:936238,sourceDate,onFailure:code=>{fieldErrors.noahCash=code;}}):n?cents(n.total):null;
+    noah=fieldMode?sharesightBookCash(noahSnapshot,{portfolioId:936238,sourceDate:reference?noahSnapshot?.provenance.sourceDate:sourceDate,onFailure:code=>{fieldErrors.noahCash=code;}}):n?cents(n.total):null;
   const pool=ib!==null&&noah!==null&&finite(cents(ib+noah))?cents(ib+noah):null;
   if(fieldMode&&ib!==null&&noah!==null&&pool===null)fieldErrors.cashPool='CASH_POOL_OUT_OF_RANGE';
   const callConfirmed=!fieldMode||callRecord?.status==='owner-declared',callAmount=callConfirmed?cents(reserve):null,callApplied=callAmount===null?null:cents(callAmount*.5);
@@ -205,7 +207,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     }
     model.provenance.capture={startedAt:captureStartedAt,completedAt:captureCompletedAt};
     const snapshotState=(key,known)=>{const s=snapshots.find(s=>s.sourceKey===key),o=outcomes.find(o=>o.sourceKey===key);
-      return fieldState(key,known?(o?.status==='verified'?'ready':'recorded'):snapshotUsable(o?.status)?'missing-fields':o?.status??'not-called',known?sourceDate:null,known?s?.provenance?.readAt??null:null);};
+      return fieldState(key,known?(o?.status==='verified'?'ready':'recorded'):snapshotUsable(o?.status)?'missing-fields':o?.status??'not-called',known?(reference?s?.provenance.sourceDate:sourceDate):null,known?s?.provenance?.readAt??null:null);};
     model.fieldState={ibCash:bookIb!==null?snapshotState('sharesight.ibGroupedPerformance',true):flex.cash?fieldState('ib.flexEod','recorded',sourceDate,flex.provenance.readAt):snapshotState('sharesight.ibGroupedPerformance',false),
       noahCash:snapshotState('sharesight.noahPerformance',noah!==null),orders:currentFields.states['ib.orders'],allocation:snapshotState('sharesight.ibGroupedPerformance',!!a),
       call:fieldState('owner.callDeclaration',call.status,call.declarationDate,captureCompletedAt),
@@ -221,13 +223,14 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     model.status=bookStatus(model);
   }
   if(dateBasis!==null)model.dateBasis=dateBasis;
+  if(reference)model.referenceData={checkedAt:referenceCheckedAt,sources:snapshots.map(s=>({sourceKey:s.sourceKey,valuationDate:s.provenance.sourceDate,retrievedAt:s.provenance.readAt,...s.raw.coverage}))};
   if(concentrationInput!==null)model.concentration=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
   return validateEodActionModel(model);
 }
 export function validateEodActionModel(m){
   const fields=Boolean(m?.fieldState),book=m?.calculationBasis===SHARESIGHT_BOOK_BASIS;
-  const browserDates=Object.hasOwn(m??{},'dateBasis');
-  if(browserDates&&(!book||!fields||m.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||m.sourceDate>m.dataDate
+  const browserDates=Object.hasOwn(m??{},'dateBasis'),reference=m?.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
+  if(browserDates&&(!book||!fields||!isBrowserDateBasis(m.dateBasis)||m.sourceDate>m.dataDate
     ||m.provenance?.sharesight?.length!==2||m.provenance.sharesight.some(s=>s.channel!=='authenticated-browser')
     ||m.sourceOutcomes?.find(s=>s.sourceKey==='ib.flexEod')?.status!=='not-called'))fail('BROWSER_DATE_SCOPE');
   if(Object.hasOwn(m??{},'calculationBasis')&&(!book||!fields))fail('CALCULATION_BASIS');
@@ -238,7 +241,7 @@ export function validateEodActionModel(m){
   const outcome=k=>m.sourceOutcomes.find(s=>s.sourceKey===k);
   if(m.sourceOutcomes.some(s=>s.status==='ui-export-observed')&&m.cash?.planning!==null)fail('UI_PRIVATE_BUDGET');
   if(!fields&&outcome('ib.flexEod').status!=='verified')fail('FLEX_OUTCOME');
-  const o=m.orders;validateEodOrders(o,{dataDate:m.dataDate,readAt:fields?m.provenance.capture?.completedAt:m.provenance.flex.readAt,startedAt:m.provenance.capture?.startedAt,fieldMode:fields});
+  const o=m.orders;validateEodOrders(o,{dataDate:m.dataDate,readAt:fields?m.provenance.capture?.completedAt:m.provenance.flex.readAt,startedAt:m.provenance.capture?.startedAt,fieldMode:fields,referenceMode:reference});
   if(!fields&&(o.status==='ready')!==(outcome('ib.optionalLive').status==='captured')||fields&&o.status!=='unknown'&&!['captured','partial'].includes(outcome('ib.optionalLive').status))fail('ORDER_OUTCOME');
   const c=m.cash;if(!c||!['partial','unavailable',...(fields?['recorded']:[])].includes(c.status)||c.status==='recorded'&&![c.ib,c.noah,c.pool].every(finite)||!(fields&&c.reserve===null&&c.callApplied===null)&&(!finite(c.reserve)||!finite(c.callApplied)||Math.abs(cents(c.reserve*.5)-c.callApplied)>.001)||c.executableBudget!==null)fail('CASH');
   if(c.noah!==null&&!snapshotUsable(outcome('sharesight.noahPerformance').status))fail('CASH_OUTCOME');
@@ -271,7 +274,7 @@ export function validateEodActionModel(m){
   validateReplenishmentContribution(m.replenishment,{c,o,a,asOfHkt:m.asOfHkt});
   if(JSON.stringify(m.notes)!==JSON.stringify(fixedNotes(m.sourceDate,fields)))fail('NOTES');
   const flexKnown=outcome('ib.flexEod').status==='verified';
-  if(!m.provenance?.flex||m.provenance.flex.sourceDate!==m.sourceDate||(flexKnown||!fields)&&(m.provenance.flex.coveredThrough!==m.sourceDate||!/^[a-f0-9]{64}$/.test(m.provenance.flex.archiveSha256||'')||!instant(m.provenance.flex.readAt))||!Array.isArray(m.provenance.sharesight)||m.provenance.sharesight.some(s=>s.sourceDate!==m.sourceDate||!instant(s.readAt)))fail('PROVENANCE');
+  if(!m.provenance?.flex||m.provenance.flex.sourceDate!==m.sourceDate||(flexKnown||!fields)&&(m.provenance.flex.coveredThrough!==m.sourceDate||!/^[a-f0-9]{64}$/.test(m.provenance.flex.archiveSha256||'')||!instant(m.provenance.flex.readAt))||!Array.isArray(m.provenance.sharesight)||m.provenance.sharesight.some(s=>(!reference&&s.sourceDate!==m.sourceDate)||!instant(s.readAt)))fail('PROVENANCE');
   if(m.provenance.flex.archiveSha256!==outcome('ib.flexEod').rawFingerprint||m.provenance.sharesight.length!==m.sourceOutcomes.filter(s=>s.sourceKey.startsWith('sharesight.')&&snapshotUsable(s.status)).length||new Set(m.provenance.sharesight.map(s=>s.sourceKey)).size!==m.provenance.sharesight.length||m.provenance.sharesight.some(s=>!s.sourceKey.startsWith('sharesight.')||!snapshotUsable(outcome(s.sourceKey)?.status)||!/^[a-f0-9]{64}$/.test(outcome(s.sourceKey)?.rawFingerprint||'')))fail('PROVENANCE_BINDING');
   for(const s of m.provenance.sharesight){
     if(['date-verified','ui-export-observed'].includes(outcome(s.sourceKey).status)){
@@ -302,22 +305,32 @@ export function validateEodActionModel(m){
     if(c.preOrderPlanning!==(c.pool!==null&&c.callApplied!==null?Math.max(0,cents(c.pool-c.callApplied)):null)
       ||m.status!==bookStatus(m))fail('BOOK_BUDGET');
   }else if(Object.hasOwn(m,'bookConcentration')||Object.hasOwn(m,'bookPlan')||Object.hasOwn(m,'observedOrderPlan'))fail('CALCULATION_BASIS');
-  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan','dateBasis','observedOrderPlan'];
+  const top=['schemaVersion','mode','dataDate','sourceDate','asOfHkt','status','sourceManifestSha256','evidenceSha256','sourceOutcomes','provenance','replenishment','orders','cash','allocation','holdings','reconciliation','notes','fieldState','fieldErrors','concentration','calculationBasis','bookConcentration','bookPlan','dateBasis','observedOrderPlan',...(reference?['referenceData']:[])];
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
+  if(reference){
+    exact(m.referenceData,['checkedAt','sources']);const checked=m.referenceData.checkedAt;
+    if(!instant(checked)||checked<m.provenance.capture.completedAt||new Date(Date.parse(checked)+28800000).toISOString().slice(0,10)!==m.dataDate||m.referenceData.sources?.length!==2)fail('REFERENCE_CLOCK');
+    for(const [i,s] of m.referenceData.sources.entries()){
+      exact(s,['sourceKey','valuationDate','retrievedAt','holdingsComplete','holdingsDifferenceUSD','nativeCashUnknownCount']);
+      const p=m.provenance.sharesight[i];if(s.sourceKey!==p.sourceKey||s.valuationDate!==p.sourceDate||s.retrievedAt!==p.readAt||typeof s.holdingsComplete!=='boolean'||!Number.isFinite(s.holdingsDifferenceUSD)||s.holdingsComplete!==(Math.abs(s.holdingsDifferenceUSD)<=.011)||!Number.isSafeInteger(s.nativeCashUnknownCount)||s.nativeCashUnknownCount<0||s.nativeCashUnknownCount>100||s.sourceKey!=='sharesight.noahPerformance'&&!s.holdingsComplete)fail('REFERENCE_COVERAGE');
+      validateReferenceObservation(s,{reportDate:m.dataDate,now:Date.parse(checked)});
+    }
+    if(m.orders.status!=='unknown'&&Date.parse(checked)-Date.parse(m.orders.capturedStartedAt)>1800000)fail('REFERENCE_ORDERS_STALE');
+  }else if(Object.hasOwn(m,'referenceData'))fail('REFERENCE_SCOPE');
   if(fields)validateActionFieldState(m);else if(Object.hasOwn(m,'fieldErrors'))fail('PUBLIC_KEYS');
   return m;
 }
 
-export function validateEodOrders(orders,{dataDate,readAt,startedAt=null,fieldMode=false}) {
+export function validateEodOrders(orders,{dataDate,readAt,startedAt=null,fieldMode=false,referenceMode=false}) {
   const o=orders;if(!o||!['ready','unknown',...(fieldMode?['partial']:[])].includes(o.status)||typeof o.asOfHkt!=='string')fail('ORDERS');
   const present=o.status!=='unknown';
   if(o.status==='unknown'&&(o.buys!==null||o.sells!==null))fail('UNKNOWN_ORDERS');
   if(present&&(!Array.isArray(o.buys)||!Array.isArray(o.sells)||o.buys.length+o.sells.length>60))fail('ORDERS');
   if(present)for(const [side,rows] of [['BUY',o.buys],['SELL',o.sells]])for(const r of rows){if(r.side!==side||typeof r.description!=='string'||! /^[A-Z][A-Z0-9./-]{0,20}$/.test(r.description)||!/^\d+(?:\.\d+)?$/.test(r.quantity)||!/^\d+(?:\.\d+)?$/.test(r.limit)||!finite(Number(r.quantity))||!finite(Number(r.limit))||Number(r.limit)<=0||!['NEW','REPLACED'].includes(r.status)||!(r.currency===null||/^[A-Z]{3}$/.test(r.currency))||!(r.distancePct===null||Number.isFinite(r.distancePct))||!(r.ageDays===null||Number.isInteger(r.ageDays)&&r.ageDays>=0))fail('ORDER');if(r.trend!==null&&(!/^[a-f0-9]{64}$/.test(r.trend?.key||'')||!finite(r.trend.firstPrice)||r.trend.firstPrice<=0||!date(r.trend.firstDate)||r.trend.firstDate>dataDate||!Number.isInteger(r.trend.ageDays)||r.trend.ageDays<0||!['none','up','down','flat'].includes(r.trend.kind)||!(r.trend.label===null||typeof r.trend.label==='string'&&/^约 [→↑↓] \d+(?:\.\d+)?% · 观察\d+天$/.test(r.trend.label))))fail('TREND');if(r.trend&&(r.trend.kind==='none')!==(r.trend.label===null))fail('TREND');}
   exact(o,o.status==='unknown'?['status','asOfHkt','buys','sells','reason']:['status','asOfHkt','capturedStartedAt','capturedCompletedAt','buys','sells',...(fieldMode?['coverage']:[])]);
-  if(fieldMode&&present&&(o.coverage!==(o.status==='ready'?'complete':'unknown')||!instant(startedAt)||o.capturedStartedAt<startedAt))fail('ORDER_COVERAGE');
-  if(o.status==='unknown'&&(o.asOfHkt!=='未取得'||!['ORDERS_NOT_CAPTURED','IB_MCP_ROUTES_UNAVAILABLE','OPTIONAL_LIVE_FAILED','OPTIONAL_LIVE_TIMEOUT','ORDERS_MALFORMED_OR_UNMATCHED'].includes(o.reason)))fail('ORDER_REASON');
-  if(present&&(!instant(o.capturedStartedAt)||!instant(o.capturedCompletedAt)||Date.parse(o.capturedCompletedAt)<Date.parse(o.capturedStartedAt)||Date.parse(o.capturedCompletedAt)>Date.parse(readAt)||Date.parse(readAt)-Date.parse(o.capturedStartedAt)>300_000||!hktLabel(o.capturedStartedAt,o.capturedCompletedAt).startsWith(dataDate+' ')||o.asOfHkt!==hktLabel(o.capturedStartedAt,o.capturedCompletedAt)))fail('ORDER_TIME');
+  if(fieldMode&&present&&(o.coverage!==(o.status==='ready'?'complete':'unknown')||!instant(startedAt)||!referenceMode&&o.capturedStartedAt<startedAt))fail('ORDER_COVERAGE');
+  if(o.status==='unknown'&&(o.asOfHkt!=='未取得'||!['ORDERS_NOT_CAPTURED','IB_MCP_ROUTES_UNAVAILABLE','OPTIONAL_LIVE_FAILED','OPTIONAL_LIVE_TIMEOUT','ORDERS_MALFORMED_OR_UNMATCHED','ORDERS_STALE'].includes(o.reason)))fail('ORDER_REASON');
+  if(present&&(!instant(o.capturedStartedAt)||!instant(o.capturedCompletedAt)||Date.parse(o.capturedCompletedAt)<Date.parse(o.capturedStartedAt)||Date.parse(o.capturedCompletedAt)>Date.parse(readAt)||Date.parse(referenceMode?o.capturedCompletedAt:readAt)-Date.parse(o.capturedStartedAt)>300_000||!hktLabel(o.capturedStartedAt,o.capturedCompletedAt).startsWith(dataDate+' ')||o.asOfHkt!==hktLabel(o.capturedStartedAt,o.capturedCompletedAt)))fail('ORDER_TIME');
   if(present)for(const r of [...o.buys,...o.sells]){exact(r,['side','description','limit','quantity','status','currency','ageDays','distancePct','trend']);if(r.trend)exact(r.trend,['key','firstDate','firstPrice','ageDays','kind','label']);}
   return orders;
 }
