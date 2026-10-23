@@ -32,7 +32,7 @@ import {
   validateFeeCalculationReceipt
 } from "./fee-receipt-core.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
-import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-registry.mjs";
+import { readStyleInput, resolveStyle, summarizeTopHoldingExposure } from "./fee-style-registry.mjs";
 
 import { resolveManagementExemptions } from './fee-management-exemption.mjs';
 
@@ -309,7 +309,7 @@ if (weekendCarry) {
 }
 // Ordinary learned classifications travel only inside the encrypted payload.
 // Legacy callers remain supported until the registry is first activated.
-let styleResult = null, topHoldings, verifyStyleInput = () => {};
+let styleResult = null, topHoldings, topHoldingsBasis, verifyStyleInput = () => {};
 const styleFile = (process.env.FEE_STYLE_INPUT_FILE || '').trim();
 if (flags.has('style-preflight') && !styleFile) die('STYLE_INPUT_REQUIRED — nothing written');
 if (data.classificationRegistry !== undefined && !styleFile && !weekendCarry) {
@@ -324,7 +324,8 @@ if (styleFile) {
     const staticMap = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/fee-style-mapping.json'), 'utf8'));
     styleResult = resolveStyle({ input: snapshot.input, registry: data.classificationRegistry,
       staticMap, date, sourceDates, stock: splits.stock });
-    topHoldings = summarizeTopHoldings(snapshot.input, 3, staticMap.topHoldingExposureMappings || []);
+    const exposure = summarizeTopHoldingExposure(snapshot.input, 3, staticMap.topHoldingExposureMappings || []);
+    topHoldings = exposure.rows; topHoldingsBasis = exposure.basis;
     styleSplits.growth = styleResult.growth;
     styleSplits.value = styleResult.value;
     if (styleResult.gold !== undefined) styleSplits.gold = styleResult.gold;
@@ -427,6 +428,7 @@ const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
 const point = buildPoint({ date, accounts, splits, styleSplits, topHoldings, bench: acceptedBench, benchDiv: acceptedBenchDiv,
   benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
   provisional: check.provisional, calibrated });
+if (topHoldingsBasis) point.topHoldingsBasis = topHoldingsBasis;
 if (managementResult?.rows !== undefined) point.managementExemptions = managementResult.rows;
 if (weekendCarry && weekendCarryPrior?.managementExemptions !== undefined)
   point.managementExemptions = structuredClone(weekendCarryPrior.managementExemptions);
@@ -440,6 +442,7 @@ for(const flow of incoming)if(flow.incomeDateAudit&&['internal_income_estimated'
 if(incomeAudits.size)Object.assign(point,incomeDatePolicy.point({d:date,incomeDateAudits:[...incomeAudits.values()]}));
 if (weekendCarry && Array.isArray(weekendCarryPrior?.topHoldings)) {
   point.topHoldings = structuredClone(weekendCarryPrior.topHoldings);
+  if (weekendCarryPrior.topHoldingsBasis) point.topHoldingsBasis = structuredClone(weekendCarryPrior.topHoldingsBasis);
 }
 // A read-only correction that leaves `stock` unchanged must not erase a style
 // report allocation already verified for the same day, including independent gold.
@@ -454,6 +457,7 @@ if (noIncomingStyle && hasExistingStyle &&
 if (point.topHoldings === undefined && Array.isArray(existingPoint?.topHoldings)
     && Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
   point.topHoldings = structuredClone(existingPoint.topHoldings);
+  if (existingPoint.topHoldingsBasis) point.topHoldingsBasis = structuredClone(existingPoint.topHoldingsBasis);
 }
 // Same-date portfolio corrections may omit public benchmark arguments.  Keep
 // the complete price/date/dividend bundle together; never retain an orphaned

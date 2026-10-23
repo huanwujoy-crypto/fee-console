@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildWeeklyConcentration,renderWeeklyConcentration} from './xuan-weekly-concentration.mjs';
+import {buildWeeklyConcentration,renderWeeklyConcentration,DEFAULT_TOP10_POLICY} from './xuan-weekly-concentration.mjs';
 import {buildAiExposure,renderAiExposure,DEFAULT_POLICY} from './xuan-weekly-ai-exposure.mjs';
 import {resolveLeveragedProduct,LEVERAGED_POLICY} from './xuan-weekly-leveraged-products.mjs';
 import {renderWeeklyAudit} from './xuan-weekly-audit.mjs';
@@ -56,4 +56,28 @@ test('new issuer business evidence resolves recorded weights without changing sn
   assert.equal(a.rows[0].coveredBp,covered,symbol);assert.equal(a.rows[0].unclassifiedBp,unclassified,symbol);assert.equal(a.rows[0].unrecordedBp,unrecorded,symbol);
  }
  const a=buildAiExposure(envelope([row('synthetic','not-reviewed','TXN','STK',100)]),{cutoff});assert.equal(a.groups.find(g=>g.key==='pending').marketValueCents,'10000');
+});
+
+const proxyDate='2026-10-24';
+const proxyRow=(symbol,value,type='ETF',id=symbol)=>({...row('936247',id,symbol,type,value,id),valueDate:proxyDate});
+test('TQQQ 3x EQAC proxy combines issuers once with direct stock and known ETF; NAV stays actual',()=>{
+ const rows=[proxyRow('TQQQ',100),proxyRow('EQAC',100,'ETF','1983054'),proxyRow('NVDA',10,'STK'),proxyRow('VSTL',10,'ETF','29282953'),proxyRow('VST',40,'STK')];
+ const before=JSON.stringify(rows),r=buildWeeklyConcentration(envelope(rows),{cutoff:proxyDate});
+ const nvda=r.rows.find(x=>x.issuer==='NVDA');assert.equal(nvda.equivalentExposureCents,'4340');assert.equal(nvda.percent,4.34);
+ assert.equal(r.rows.find(x=>x.issuer==='VST').equivalentExposureCents,'6000');assert.equal(r.denominatorCents,'100000');
+ assert.ok(!r.rows.some(x=>['TQQQ','EQAC'].includes(x.issuer)));assert.equal(JSON.stringify(rows),before);
+ assert.equal(r.rows.find(x=>x.issuer==='ALPHABET').etfCents,'2372');
+ const html=renderWeeklyConcentration(r);assert.match(html,/TQQQ × 3（EQAC 前十代理参考）/);assert.match(html,/2026-09-30/);assert.match(html,/前十以外未计入/);
+ assert.match(r.methodId,/index-proxy-v1$/);
+});
+test('TQQQ zero, absent/stale weights and unknown ETF do not fabricate exposure',()=>{
+ const policy=structuredClone(DEFAULT_TOP10_POLICY);policy.funds=policy.funds.filter(f=>f.symbol!=='EQAC');
+ let r=buildWeeklyConcentration(envelope([proxyRow('TQQQ',0)]),{cutoff:proxyDate,policy});assert.equal(r.rows.length,0);assert.equal(r.missingFunds.length,0);
+ r=buildWeeklyConcentration(envelope([proxyRow('TQQQ',100),proxyRow('UNKNOWN3X',100)]),{cutoff:proxyDate,policy});assert.equal(r.rows.length,0);assert.deepEqual(r.missingFunds.map(f=>f.symbol).sort(),['TQQQ','UNKNOWN3X']);
+ const stale=proxyRow('TQQQ',100);stale.valueDate='2026-11-20';r=buildWeeklyConcentration(envelope([stale]),{cutoff:'2026-11-20'});assert.equal(r.rows.length,0);assert.match(r.missingFunds[0].reason,/过期/);
+ assert.throws(()=>buildWeeklyConcentration(envelope([proxyRow('TQQQ',100,'STK')]),{cutoff:proxyDate}),/proxy_identity/);
+});
+test('TQQQ equivalent issuer exposure can exceed actual NAV without multiplying denominator',()=>{
+ const policy=structuredClone(DEFAULT_TOP10_POLICY),fund=policy.funds.find(f=>f.symbol==='EQAC');fund.topTen=[['NVDA',5000],...Array.from({length:9},(_,i)=>['SYNTH'+i,0])];
+ const r=buildWeeklyConcentration(envelope([proxyRow('TQQQ',1000)]),{cutoff:proxyDate,policy});assert.equal(r.rows[0].percent,150);assert.equal(r.denominatorCents,'100000');
 });

@@ -140,3 +140,15 @@ test('authenticated browser tables reuse the identical three-account weekly arit
   }
 });
 function sha(v){return crypto.createHash('sha256').update(typeof v==='string'?v:JSON.stringify(v)).digest('hex');}
+
+
+test('TQQQ proxy survives the real action source normalizer and private link-free renderer without changing three-account assets',()=>{
+  const sources=[source(0,[['NVDA',100,9000001]]),source(1,[['TQQQ',100,9000002,'etf']]),source(2,[['EQAC',100,1983054,'etf']])];
+  const before=JSON.stringify(sources),candidate=buildActionConcentrationCandidate({sources,...window});
+  const result=actionConcentrationResult(candidate),nvda=result.rows.find(r=>r.issuer==='NVDA');
+  assert.equal(nvda.equivalentExposureCents,'13340');assert.equal(nvda.percent,4.45);
+  assert.equal(result.denominatorCents,'300000');assert.equal(result.rows.some(r=>['TQQQ','EQAC'].includes(r.issuer)),false);
+  assert.equal(JSON.stringify(sources),before);assert.equal(candidate.envelope.riskConstituents.find(r=>r.symbol==='TQQQ').marketValueMicro,'100000000');
+  const html=renderActionConcentration(candidate);assert.match(html,/TQQQ.*EQAC.*前十/);assert.match(html,/2026-09-30/);
+  assert.doesNotMatch(html,/<a\b|(?:href|src)\s*=/i);
+});

@@ -10,6 +10,7 @@
   },
   "displayNames": {"ALPHABET":"GOOG / GOOGL","BERKSHIRE":"BRK.B","TSM":"TSMC","SAMSUNG":"Samsung Electronics","SKHYNIX":"SK hynix","RBC":"Royal Bank of Canada","TD_BANK":"Toronto-Dominion Bank","CCB":"China Construction Bank"},
   "nonEquityEtfIds": ["1984796", "1703456", "432472", "432502", "22272", "49187"],
+  "indexProxies": [{"symbol":"TQQQ","multiplierBp":30000,"proxyInstrumentId":"1983054","proxySymbol":"EQAC","reviewedOn":"2026-10-24","basis":"daily-target-proxy"}],
   "funds": [
     {"instrumentId":"391602","symbol":"MXUS","isin":"IE00B60SX170","basis":"economic-exposure","asOf":"2026-09-30","source":"https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00B60SX170_factsheet_en.pdf","topTen":[["NVDA",796],["AAPL",742],["MSFT",549],["AMZN",366],["ALPHABET",306],["ALPHABET",242],["META",242],["AVGO",241],["MU",182],["TSLA",154]]},
     {"instrumentId":"1983054","symbol":"EQAC","isin":"IE00BFZXGZ54","basis":"physical-holdings","asOf":"2026-09-30","source":"https://www.invesco.com/content/dam/invesco/emea/en/product-documents/etf/share-class/factsheet/IE00BFZXGZ54_factsheet_en.pdf","topTen":[["NVDA",835],["AAPL",738],["MSFT",578],["MU",504],["AMD",419],["AMZN",408],["META",327],["ALPHABET",307],["ALPHABET",286],["TSLA",283]]},

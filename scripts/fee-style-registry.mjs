@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { isIsoDate } from './daily-core.mjs';
+import {concentrationFundReference,DEFAULT_TOP10_POLICY} from './xuan-weekly-concentration.mjs';
 
 export const STYLE_ACCOUNTS = Object.freeze({ schwab: 936249, webull: 1350094 });
 const fail = code => { throw new Error(`STYLE_${code}`); };
@@ -79,6 +80,40 @@ export function summarizeTopHoldings(input, limit = 3, exposureMappings = []) {
     .filter(row => row.value > 0)
     .sort((a, b) => b.value - a.value || (a.ticker < b.ticker ? -1 : a.ticker > b.ticker ? 1 : 0))
     .slice(0, limit);
+}
+
+/** Risk-only summary. Never feeds raw stock, NAV, fees or investor shares. */
+export function summarizeTopHoldingExposure(input,limit=3,exposureMappings=[],{policy=DEFAULT_TOP10_POLICY}={}){
+  summarizeTopHoldings(input,limit,exposureMappings); // retain existing amount/rule guards
+  if(input.portfolios.length!==2||new Set(input.portfolios.map(p=>p.portfolioId)).size!==2
+    ||input.portfolios.some(p=>!Object.values(STYLE_ACCOUNTS).includes(p.portfolioId)||!isIsoDate(p.sourceDate)))fail('TOP_HOLDINGS_SCOPE');
+  const rows=[],seen=new Set(),rules=new Map(exposureMappings.map(r=>[`${r.portfolioId}:${r.holdingId}`,r]));
+  const canonical=s=>policy.directAliases[s]||s;
+  for(const p of input.portfolios)for(const h of p.holdings){
+    const id=identity({...h,portfolioId:p.portfolioId});if(seen.has(id))fail('HOLDING_DUPLICATE');seen.add(id);
+    if(h.valueUsd===0)continue;
+    const rule=rules.get(id),active=rule&&rule.effectiveFrom<=p.sourceDate?rule:null;
+    const reference=active?null:concentrationFundReference(h.ticker,{cutoff:p.sourceDate,policy});
+    rows.push({h,active,reference,value:BigInt(Math.round(h.valueUsd*100))*10000n});
+  }
+  const direct=new Set(rows.filter(r=>r.active||(!r.reference&&r.h.ticker!=='TQQQ')).map(r=>canonical(r.active?.targetTicker||r.h.ticker)));
+  const totals=new Map(),notes=new Set();
+  const add=(issuer,value)=>totals.set(issuer,(totals.get(issuer)||0n)+value);
+  for(const {h,active,reference,value} of rows){
+    if(active){add(canonical(active.targetTicker),value*BigInt(Math.round(active.multiplier*10000))/10000n);notes.add(`${h.ticker} × ${active.multiplier} 归入 ${active.targetTicker} 每日目标等效敞口。`);continue;}
+    if(!reference){if(h.ticker==='TQQQ'){notes.add('TQQQ 未计入：代理权重规则未登记；未知不视为零。');continue;}add(canonical(h.ticker),value);continue;}
+    if(reference.reason){notes.add(`${h.ticker} 未计入：${reference.reason}；未知不视为零。`);continue;}
+    const {fund,multiplierBp,proxy}=reference;
+    const weights=[...fund.topTen,...(proxy?[]:(fund.directIssuerMatches??[]).filter(([issuer])=>direct.has(issuer)))];
+    for(const [issuer,weight] of weights)add(issuer,value*BigInt(multiplierBp)*BigInt(weight)/100000000n);
+    notes.add(`${h.ticker}${proxy?' × 3，采用 EQAC 前十权重代理参考':''}；权重日期 ${fund.asOf}。`);
+  }
+  notes.add('按嘉信与 Webull 实际总资产计算比例，分母含现金；前十之外及未核实成分未计入，为已知敞口下限。ETF 本身不再重复加入。');
+  notes.add('每日目标等效敞口不等于实际投资市值或多日收益倍数；账面资产、股份、成本、收益率及管理费不乘倍数。');
+  const label=s=>s==='ALPHABET'?'GOOG/GOOGL':s==='BERKSHIRE'?'BRK.B':s;
+  const top=[...totals].filter(([,v])=>v>0n).sort((a,b)=>a[1]===b[1]?a[0].localeCompare(b[0]):a[1]>b[1]?-1:1).slice(0,limit)
+    .map(([ticker,value])=>({ticker:label(ticker),value:Number((value+5000n)/10000n)/100})).filter(r=>r.value>0);
+  return {rows:top,basis:{method:'issuer-exposure-v1',scope:'schwab-webull',incomplete:true,notes:[...notes]}};
 }
 
 function validateEntry(e, saved = false) {
