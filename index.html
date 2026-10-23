@@ -2232,8 +2232,10 @@ function fundValueChart(points,id){
 /* fund-investor-render:end */
 /* top-holdings-view:start */
 function topHoldingsView(lp,nav){
-  const rows=lp?.topHoldings,stock=Number(lp?.stock),total=Number(nav);
-  if(!Array.isArray(rows)||rows.length<1||rows.length>3||!Number.isFinite(stock)||stock<0||!Number.isFinite(total)||total<=0)return "";
+  const rows=lp?.topHoldings,stock=Number(lp?.stock),total=Number(nav),basis=lp?.topHoldingsBasis;
+  const risk=basis&&Object.keys(basis).sort().join("|")==="incomplete|method|notes|scope"&&basis.method==="issuer-exposure-v1"&&basis.scope==="schwab-webull"&&basis.incomplete===true&&Array.isArray(basis.notes)&&basis.notes.length<=1000&&basis.notes.every(n=>typeof n==="string"&&n.length<=1000);
+  if(basis&&!risk)return '<div class="note">集中度口径待核实</div>';
+  if(!Array.isArray(rows)||(!risk&&rows.length<1)||rows.length>3||!Number.isFinite(stock)||stock<0||!Number.isFinite(total)||total<=0)return "";
   const seen=new Set(),safe=[];let prior=Infinity,sum=0;
   for(const row of rows){
     if(!row||typeof row!=="object"||Array.isArray(row)||Object.keys(row).sort().join("|")!=="ticker|value"
@@ -2241,8 +2243,8 @@ function topHoldingsView(lp,nav){
       ||!Number.isFinite(Number(row.value))||Number(row.value)<=0||Number(row.value)>prior+.005)return "";
     const value=Number(row.value);seen.add(row.ticker);safe.push({ticker:row.ticker,value});prior=value;sum+=value;
   }
-  if(sum>stock+1)return "";
-  return `<div class="top-holdings" aria-label="前三大持仓，不含现金及其它"><div class="top-holdings-head"><span>前三大持仓</span><span>不含现金及其它</span></div>${safe.map((row,index)=>`<div class="top-holdings-row"><span class="top-holdings-rank">${index+1}</span><span class="top-holdings-ticker">${esc(row.ticker)}</span><span class="top-holdings-value">${usd(row.value,0)}</span><span class="top-holdings-weight">${(row.value/total*100).toFixed(1)}%</span></div>`).join("")}</div>`;
+  if(!risk&&sum>stock+1)return "";
+  return `<div class="top-holdings" aria-label="${risk?'前三大已知敞口':'前三大持仓，不含现金及其它'}"><div class="top-holdings-head"><span>${risk?'前三大已知敞口':'前三大持仓'}</span><span>${risk?'占实际总资产':'不含现金及其它'}</span></div>${safe.map((row,index)=>`<div class="top-holdings-row"><span class="top-holdings-rank">${index+1}</span><span class="top-holdings-ticker">${esc(row.ticker)}</span><span class="top-holdings-value">${usd(row.value,0)}</span><span class="top-holdings-weight">${(row.value/total*100).toFixed(1)}%</span></div>`).join("")}${risk?`<details><summary>含杠杆／代理 · 不完整下限</summary>${safe.length?'':'<p>暂无可列出的已知敞口。</p>'}<ol>${basis.notes.map(n=>`<li>${esc(n)}</li>`).join('')}</ol></details>`:''}</div>`;
 }
 /* top-holdings-view:end */
 function renderKPIs(feeView,st,B,G){
