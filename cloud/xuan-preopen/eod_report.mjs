@@ -119,7 +119,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   validateEodReceipt(receipt,html,dataDate,sourceDate);
   await io.savePrivate(prefix+'receipt.json',receipt);return receipt;
 }
-export function validateEodReceipt(r,html,dataDate,sourceDate){
+export function validateEodReceipt(r,html,dataDate,sourceDate,{historicalRequestId=null}={}){
   if(r?.schemaVersion!==1||r.mode!=='private_eod_action'||!(r.status==='partial'||r.status==='ready'&&r.calculationBasis===SHARESIGHT_BOOK_BASIS)||r.dataDate!==dataDate||r.sourceDate!==sourceDate||r.publication!=='none'||r.scheduler!=='none'||r.sourceCount!==4||r.sources?.length!==4||new Set(r.sources.map(s=>s.sourceKey)).size!==4||r.sources.some(s=>!['ib.flexEod','sharesight.ibGroupedPerformance','sharesight.noahPerformance','ib.optionalLive'].includes(s.sourceKey)||!/^[a-f0-9]{64}$/.test(s.sha256||'')||!/^\d+$/.test(s.generation||'')))fail('RECEIPT');
   if(digest(sourceManifest(r.sources))!==r.sourceManifestSha256||r.sources.some(s=>s.rawFingerprint!==r.sourceOutcomes?.find(o=>o.sourceKey===s.sourceKey)?.rawFingerprint))fail('SOURCE_MANIFEST_BINDING');
   if(digest(html)!==r.artifact?.sha256||digest({sourceOutcomes:r.sourceOutcomes,sourceManifestSha256:r.sourceManifestSha256})!==r.evidenceSha256)fail('EVIDENCE_HASH');
@@ -131,7 +131,16 @@ export function validateEodReceipt(r,html,dataDate,sourceDate){
     // the registry schema, exact request and all registered source hashes.
     const registration=JSON.parse(readFileSync(new URL('../../security/xuan-owner-source-recovery.json',import.meta.url),'utf8'));
     const declared=registration.referenceCapture;
-    const ref=declared?.captureStartedAt===r.startedAt&&declared.captureCompletedAt===r.captureCompletedAt?declared:null;
+    // Only historical admission supplies the receipt's exact registered request.
+    // Normal producer/candidate validation cannot use a previous-day exception.
+    // Keep the local recovery module outside the minimal cloud image. The
+    // independent verifier validates this same fixed registry and source hashes.
+    const matches=ref=>ref?.captureStartedAt===r.startedAt&&ref.captureCompletedAt===r.captureCompletedAt;
+    const previous=registration.previousReferenceCapture;
+    const currentRequest=historicalRequestId===registration.requestId||historicalRequestId===registration.supersedes?.requestId;
+    const ref=historicalRequestId===null||currentRequest
+      ?(matches(declared)?declared:null)
+      :previous?.requestId===historicalRequestId&&matches(previous.referenceCapture)?previous.referenceCapture:null;
     if((r.referenceMode??null)!==(ref?.schema??null))fail('REFERENCE_BINDING');
     if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS||!Number.isFinite(end)||new Date(end).toISOString()!==r.captureCompletedAt
       ||r.captureCompletedAt!==m.provenance?.capture?.completedAt||m.provenance.capture.startedAt!==r.startedAt

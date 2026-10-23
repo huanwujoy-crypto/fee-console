@@ -4,7 +4,7 @@ import {SHARESIGHT_BROWSER_SOURCE} from './eod_sources.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {prepareOwnerStaticDisplay,createProtectedOwnerVerifier,OWNER_BINDING,SOURCE_IDENTITY_SHA256,OWNER_SCOPE,OWNER_DISPLAY_CSP} from './owner_latest_admission.mjs';
-import {runPrivateEodReport,saveCompletedDailyReport} from './eod_report.mjs';
+import {runPrivateEodReport,saveCompletedDailyReport,validateEodReceipt} from './eod_report.mjs';
 import {ownerBundleMetadata,deliverOwnerLatest} from './owner_latest_delivery.mjs';
 import {digest,SNAPSHOT_SCOPES} from './eod_sources.mjs';
 import {associationPolicyBlob} from '../../scripts/xuan-ib-account-association.mjs';
@@ -609,6 +609,43 @@ test('six-object continuation preserves exact source/HTML bytes, completes three
       io:{readLatest:async()=>({state:'absent'}),replaceLatest:async({bytes,ifGenerationMatch,target})=>{assert.equal(ifGenerationMatch,'0');cas++;display=Buffer.from(bytes);return {...target,generation:'999',size:display.length};},readLatestGeneration:async()=>{readbacks++;return Buffer.from(display);}}});
     const out=await publisher.publish({metadata,html,receipt});assert.equal(out.status,'published-verified',JSON.stringify(out));assert.equal(cas,1);assert.equal(readbacks,1);
     assert.equal((await publisher.publish({metadata,html,receipt})).code,'ONE_SHOT_CLOSED');assert.equal(cas,1);
+    // Rollover must validate the full historical receipt, not merely render
+    // its old display. The previous exception never admits a new candidate.
+    const originalRegistration=structuredClone(registration),next=structuredClone(registration);
+    delete next.continuation;delete next.referenceCapture;
+    next.previousReferenceCapture={requestId:registration.requestId,dataDate:registration.dataDate,referenceCapture:structuredClone(registration.referenceCapture)};
+    next.requestId='cccccccc-dddd-4eee-8fff-aaaaaaaaaaaa';
+    next.dataDate=new Date(Date.parse(registration.dataDate+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+    Object.keys(registration).forEach(k=>delete registration[k]);Object.assign(registration,next);
+    try{
+      assert.throws(()=>validateEodReceipt(saved.receipt,html.toString(),saved.receipt.dataDate,saved.receipt.sourceDate),/REFERENCE_BINDING/);
+      assert.throws(()=>validateEodReceipt(saved.receipt,html.toString(),saved.receipt.dataDate,saved.receipt.sourceDate,{historicalRequestId:next.requestId}),/REFERENCE_BINDING/);
+      const later=Date.parse(next.dataDate+'T02:25:00.000Z'),historical=createProtectedOwnerVerifier({now:()=>later,loadContext:async()=>context(later),
+        readPinnedSource:async p=>{const o=retained.get(p.name);assert.equal(o.generation,p.generation);assert.equal(digest(o.bytes),p.sha256);return o.bytes;}});
+      assert.equal((await historical({metadata,html,receipt,phase:'historical-authenticity'})).financialStatus,metadata.financialStatus);
+      await assert.rejects(()=>historical({metadata,html,receipt,phase:'candidate-admission'}),/RECOVERY_REGISTRATION/);
+      assert.equal(cas,1);assert.equal(readbacks,1);
+      // Exercise the remaining replacement path with the actual prior bundle,
+      // not an absent pointer: fresh evidence -> old historical validation ->
+      // conditional replacement -> fixed-version readback. All IO is synthetic.
+      const fresh=await browserAttempt({threeAccounts:true,currentBookDate:true,ordersCapture:browserOrdersCapture({orders:[order()]})});
+      const nextSaved=await fresh.execute(),nextReceipt=nextSaved.receipt;
+      const nextHtml=fresh.objects.get(nextReceipt.artifact.privateObject).bytes,nextReceiptBytes=fresh.objects.get(nextSaved.receiptObject).bytes;
+      const nextMetadata=ownerBundleMetadata({html:nextHtml,artifactObject:nextReceipt.artifact.privateObject,artifactGeneration:nextReceipt.artifact.generation,
+        artifactSha256:nextReceipt.artifact.sha256,receiptObject:nextSaved.receiptObject,receiptGeneration:nextSaved.generation,receiptSha256:nextSaved.sha256},nextReceipt);
+      const allObjects=new Map([...retained,...fresh.objects]);let replacements=0,finalReads=0,nextDisplay;
+      const nextVerifier=createProtectedOwnerVerifier({now:()=>fresh.time,loadContext:async()=>context(fresh.time),readPinnedSource:async pin=>{
+        const o=allObjects.get(pin.name);assert.equal(o.generation,pin.generation);assert.equal(digest(o.bytes),pin.sha256);return o.bytes;}});
+      const rollover=createOwnerLatestPublisher({ownerBinding:OWNER_BINDING,verifyProtectedReceipt:nextVerifier,prepareDisplay:prepareOwnerStaticDisplay,now:()=>fresh.time,
+        io:{readLatest:async()=>({state:'present',generation:'999',bundle:{metadata,html,receipt},displayBytes:display}),
+          replaceLatest:async({bytes,ifGenerationMatch,target})=>{assert.equal(ifGenerationMatch,'999');replacements++;nextDisplay=Buffer.from(bytes);return {...target,generation:'1000',size:bytes.length};},
+          readLatestGeneration:async pin=>{assert.equal(pin.generation,'1000');finalReads++;return Buffer.from(nextDisplay);}}});
+      const published=await rollover.publish({metadata:nextMetadata,html:nextHtml,receipt:nextReceiptBytes});
+      assert.equal(published.status,'published-verified',JSON.stringify(published));assert.equal(replacements,1);assert.equal(finalReads,1);
+      assert.equal((await rollover.publish({metadata:nextMetadata,html:nextHtml,receipt:nextReceiptBytes})).code,'ONE_SHOT_CLOSED');
+      registration.previousReferenceCapture.referenceCapture.sourceHashes['ib.orders']='0'.repeat(64);
+      await assert.rejects(()=>historical({metadata,html,receipt,phase:'historical-authenticity'}));
+    }finally{Object.keys(registration).forEach(k=>delete registration[k]);Object.assign(registration,originalRegistration);}
     // A bad pre-existing pin must fail during local re-creation, before admission or another write.
     registration.continuation.objects[0].sha256='f'.repeat(64);
     await assert.rejects(()=>composeBrowserActionEvidence({...f.options,resume:true,access}));assert.equal(inspected,1);assert.equal(writes,3);
