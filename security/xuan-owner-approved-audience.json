@@ -18,10 +18,18 @@
     "fd703b5ec8995ea6d398224b8bdba7d7f598e851bf7222f6189bf6890bc3339c"
   ],
   "bucketMetadataSha256": "b6ec597ceb8f86bc0b0ec57b464c2760a085c26821871133aece741eb7b38b82",
-  "bucketIamSha256": "60938b00a7804ff4a01cd026d587c5683c5aad03f7c0ec7c5dc5a7af4092c04f",
+  "bucketIamSha256": "2b4e345f3684e89a61f495ea60724024bd6fcfab94df4bce6beaddab110c4ccc",
   "projectIamSha256": "bbb49c8b7d2d2f033d6978dc903e006f087eca043ac929272c8803d5492aae83",
   "projectMetadataSha256": "0b88cc6978ff430414d90641b39eaa28b2dccf8866ced4060d2b624e6e0cd75e",
   "roleDefinitions": [
+    {
+      "name": "projects/family-portfolio-gateway/roles/ibDailyLeaseAccess",
+      "sha256": "a9b938488c053bb20d545871c2000d91e0c787a7dfdd0075b0ff5633859bb349"
+    },
+    {
+      "name": "projects/family-portfolio-gateway/roles/ibDailySnapshotRead",
+      "sha256": "bbed1fe6d886fb0628169567dfb916183984537ba52bcde20170f8d07fdec464"
+    },
     {
       "name": "projects/family-portfolio-gateway/roles/xuanPreopenDeliveryRead",
       "sha256": "dcfadd24a4e5d3123a85ac5d8334377a3f156e0cd346bd1021fea69334fcf3b7"
@@ -93,5 +101,5 @@
   ],
   "rolePermissionScope": "storage.*",
   "projectNumberSha256": "900c481522bbf0463f00fec8bf8f8274692786c6646249032db328968b562b6b",
-  "boundarySha256": "cdf97988bf25cf8c380e812f29090fc097fcac8ed5c4a4be5684f309dc455d64"
+  "boundarySha256": "1b535d52106abfc4e2a188f48890c73c0f5f2314d351c145c3a662102ee8c78d"
 }

@@ -1,8 +1,9 @@
 // Protected configured-audience check. No SDK, credential, environment, IAM
 // mutation or network fallback exists here. Production constructs the fixed
 // SDK bridge only after verifying the actual protected checkout.
-// Role fingerprints cover storage.* only. This is not an audit of nonstorage
-// delegation or deny policies, nor proof that every approved machine uses GET.
+// Original role fingerprints cover storage.*; the two PR431 custom roles must
+// match their complete approved permission lists. This does not audit other
+// nonstorage delegation or deny policies, or prove that approved machines use GET.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {types as utilTypes} from 'node:util';
@@ -78,6 +79,17 @@ const instant=x=>typeof x==='string'&&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/
 function strictJson(source){try{parseDecisionJson(source,2000000);return JSON.parse(source);}catch{fail('JSON');}}
 const FIXED_APPROVED=Object.freeze(strictJson(fs.readFileSync(new URL('../../security/xuan-owner-approved-audience.json',import.meta.url),'utf8')));
 const FIXED_REGISTERED_CANARY=Object.freeze(strictJson(fs.readFileSync(new URL('../../security/xuan-owner-registered-canary.json',import.meta.url),'utf8')));
+// These exact, already deployed PR431 bindings cannot address either delivery
+// object. Do not interpret arbitrary CEL or accept a changed scope/expiry.
+const PR431_ROLES=new Map([
+  ['projects/'+PROJECT+'/roles/ibDailyLeaseAccess',{
+    permissions:['storage.objects.delete','storage.objects.get'],
+    expression:"resource.name == 'projects/_/buckets/family-portfolio-gateway-xuan-preopen-private/objects/report-check/ib-mcp-credential/lease.json' && request.time < timestamp('2026-11-21T09:46:50Z')"}],
+  ['projects/'+PROJECT+'/roles/ibDailySnapshotRead',{
+    permissions:['storage.objects.get'],
+    expression:"resource.name.startsWith('projects/_/buckets/family-portfolio-gateway-xuan-preopen-private/objects/report-check/ib-sync-') && (resource.name.endsWith('/snapshot.json') || resource.name.endsWith('/receipt.json')) && request.time < timestamp('2026-11-21T09:46:50Z')"}],
+]);
+const APPROVED_ROLE_COUNT=19;
 function normalizePolicy(policy,{bucket=false}={}){
   const allowed=bucket?['bindings','etag','version','kind','resourceId']:['bindings','etag','version'];
   if(!object(policy)||Object.keys(policy).some(k=>!allowed.includes(k))||!Array.isArray(policy.bindings)
@@ -109,6 +121,8 @@ function normalizeRole(role){
     ||typeof role.name!=='string'||!Array.isArray(role.includedPermissions)||role.includedPermissions.length>20000
     ||role.includedPermissions.some(x=>typeof x!=='string'||x.length>256||!/^[a-zA-Z0-9_./-]+$/.test(x))
     ||new Set(role.includedPermissions).size!==role.includedPermissions.length||role.deleted===true||typeof role.stage!=='string')fail('ROLE');
+  const pr431=PR431_ROLES.get(role.name);
+  if(pr431&&(text([...role.includedPermissions].sort())!==text(pr431.permissions)||role.stage!=='GA'))fail('ROLE_CHANGED');
   return {name:role.name,includedPermissions:[...role.includedPermissions].filter(x=>x.startsWith('storage.')).sort(),stage:role.stage,deleted:role.deleted??false};
 }
 function normalizedBase(boundary,{requireDeletePermission=false}={}){
@@ -130,10 +144,17 @@ function normalizedBase(boundary,{requireDeletePermission=false}={}){
 }
 function readerSets(base,roles,ownerHash,{requireDeletePermission=false}={}){
   const sets=Object.fromEntries(TARGETS.map(t=>[t,new Set()])),owner=Object.fromEntries(TARGETS.map(t=>[t,new Set()]));
+  const pr431Seen=new Set();
   const selectors={projectOwner:'roles/owner',projectEditor:'roles/editor',projectViewer:'roles/viewer'};
   const basic=Object.fromEntries(Object.values(selectors).map(role=>[role,base.projectIam.bindings.filter(b=>b.role===role)]));
   for(const [level,policy] of [['bucket',base.bucketIam],['project',base.projectIam]])for(const binding of policy.bindings){
     const role=roles.get(binding.role);if(!role)fail('ROLE_MISSING');
+    const pr431=PR431_ROLES.get(binding.role);
+    if(pr431){
+      if(level!=='bucket'||pr431Seen.has(binding.role)||text(binding.condition)!==text({
+        title:'ib-daily-readonly-30-days',description:'PR431 approved scope; expires after first approved 30 days',expression:pr431.expression}))fail('CONDITION');
+      pr431Seen.add(binding.role);continue;
+    }
     const permissions=role.includedPermissions.filter(p=>['storage.objects.get','storage.objects.create','storage.objects.delete'].includes(p));
     if(!permissions.length)continue;
     const members=binding.members.flatMap(m=>{
@@ -151,6 +172,7 @@ function readerSets(base,roles,ownerHash,{requireDeletePermission=false}={}){
       }
     }
   }
+  if(pr431Seen.size!==PR431_ROLES.size)fail('ROLE_SET');
   for(const target of TARGETS)if(!['storage.objects.get','storage.objects.create'].every(p=>owner[target].has(p)))fail('OWNER_ACCESS');
   if(requireDeletePermission&&!owner[LATEST_TARGET.object].has('storage.objects.delete'))fail('REPLACEMENT_OWNER_DELETE_PERMISSION');
   return Object.fromEntries(TARGETS.map(t=>[t,[...sets[t]].sort()]));
@@ -162,9 +184,10 @@ function validApproved(approved){
     ||approved.bucket!==LATEST_TARGET.bucket||text(approved.targets)!==text(TARGETS)||hash(copy)!==approved.boundarySha256
     ||!Array.isArray(approved.approvedReaderPrincipalSha256)||approved.approvedReaderPrincipalSha256.length!==7
     ||new Set(approved.approvedReaderPrincipalSha256).size!==7||approved.approvedReaderPrincipalSha256.some(x=>!HEX.test(x))
-    ||!Array.isArray(approved.roleDefinitions)||approved.roleDefinitions.length!==17)fail('APPROVED_BOUNDARY');
+    ||!Array.isArray(approved.roleDefinitions)||approved.roleDefinitions.length!==APPROVED_ROLE_COUNT)fail('APPROVED_BOUNDARY');
   for(const field of ['actorIdentifierSha256','ownerPrincipalSha256','bucketMetadataSha256','bucketIamSha256','projectIamSha256','projectMetadataSha256'])if(!HEX.test(approved[field]))fail('APPROVED_BOUNDARY');
   for(const r of approved.roleDefinitions){exact(r,'name sha256');if(typeof r.name!=='string'||!HEX.test(r.sha256))fail('APPROVED_BOUNDARY');}
+  if(text(approved.roleDefinitions.map(r=>r.name).sort())!==text(FIXED_APPROVED.roleDefinitions.map(r=>r.name).sort()))fail('APPROVED_BOUNDARY');
 }
 // A pure descriptor is not a grant or runtime session; used to compare fixture
 // semantics without disclosing raw policies in the protected hash registry.
@@ -185,10 +208,10 @@ export function evaluateOwnerBoundary(boundary,approved,{cachedRoles,requireDele
   for(const [field,value] of [['actorIdentifierSha256',b.actorIdentifierSha256],['bucketMetadataSha256',hash(b.bucketMetadata)],
     ['bucketIamSha256',hash(b.bucketIam)],['projectIamSha256',hash(b.projectIam)],['projectMetadataSha256',hash(b.projectMetadata)]])
     if(value!==approved[field])fail('BOUNDARY_CHANGED');
-  if(!cachedRoles&&(!Array.isArray(boundary.roleDefinitions)||boundary.roleDefinitions.length!==17))fail('ROLE_SET');
+  if(!cachedRoles&&(!Array.isArray(boundary.roleDefinitions)||boundary.roleDefinitions.length!==APPROVED_ROLE_COUNT))fail('ROLE_SET');
   const roles=cachedRoles??new Map(boundary.roleDefinitions.map(r=>{const n=normalizeRole(r);return [n.name,n];}));
   const names=[...new Set([...b.bucketIam.bindings,...b.projectIam.bindings].map(x=>x.role))].sort();
-  if(names.length!==17||text(names)!==text(approved.roleDefinitions.map(r=>r.name).sort())||roles.size!==17)fail('ROLE_SET');
+  if(names.length!==APPROVED_ROLE_COUNT||text(names)!==text(approved.roleDefinitions.map(r=>r.name).sort())||roles.size!==APPROVED_ROLE_COUNT)fail('ROLE_SET');
   for(const r of approved.roleDefinitions)if(hash(normalizeRole(roles.get(r.name)))!==r.sha256)fail('ROLE_CHANGED');
   const readers=readerSets(b,roles,approved.ownerPrincipalSha256,{requireDeletePermission}),expected=[...approved.approvedReaderPrincipalSha256].sort();
   if(TARGETS.some(t=>text(readers[t])!==text(expected)))fail('READER_SET');
@@ -367,7 +390,7 @@ async function createPreviewAccessSession(replacing,storageOnly=false,daily=fals
     const start=Date.now(),boundary=await sdk.readLiveBoundary({includeRoleDefinitions:true,...(signal?{signal}:{}),...(replacing?{requireDeletePermission:true}:{})});validateOwnerBoundaryWindow(boundary,Date.now());
     const next=evaluateOwnerBoundary(boundary,FIXED_APPROVED,{requireDeletePermission:replacing}),end=Date.now();
     if(end<start||end-start>MAX_BOUNDARY_WINDOW_MS)fail('PREFLIGHT_CLOCK');guard();lease.install(next,end);
-    return {boundarySha256:next.boundarySha256,rolePermissionScope:'storage.*',roleDefinitionsChecked:17,readerCount:7,
+    return {boundarySha256:next.boundarySha256,rolePermissionScope:'storage.*',roleDefinitionsChecked:APPROVED_ROLE_COUNT,readerCount:7,
       expiresAt:new Date(end+FULL_PREFLIGHT_TTL_MS).toISOString()};
   };
   const live=async signal=>{
