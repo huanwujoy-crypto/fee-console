@@ -18,17 +18,25 @@ import {validatePreviewReplacementRegistration,previewReplacementRegistrationTex
 const hash=x=>crypto.createHash('sha256').update(x).digest('hex');
 const NOW=Date.parse('2026-10-17T12:00:00.000Z');
 const approved=JSON.parse(fs.readFileSync(new URL('../../security/xuan-owner-approved-audience.json',import.meta.url),'utf8'));
+const PR431_CASES=[
+  {name:'projects/family-portfolio-gateway/roles/ibDailyLeaseAccess',permissions:['storage.objects.delete','storage.objects.get'],
+    expression:"resource.name == 'projects/_/buckets/family-portfolio-gateway-xuan-preopen-private/objects/report-check/ib-mcp-credential/lease.json' && request.time < timestamp('2026-11-21T09:46:50Z')"},
+  {name:'projects/family-portfolio-gateway/roles/ibDailySnapshotRead',permissions:['storage.objects.get'],
+    expression:"resource.name.startsWith('projects/_/buckets/family-portfolio-gateway-xuan-preopen-private/objects/report-check/ib-sync-') && (resource.name.endsWith('/snapshot.json') || resource.name.endsWith('/receipt.json')) && request.time < timestamp('2026-11-21T09:46:50Z')"},
+];
+const pr431Condition=r=>({title:'ib-daily-readonly-30-days',description:'PR431 approved scope; expires after first approved 30 days',expression:r.expression});
+const originalRole=b=>b.roleDefinitions.find(r=>r.name==='projects/family-portfolio-gateway/roles/xuanPreopenDeliveryRead');
 function fixture(){
   const owner='user:synthetic-owner',members=[owner,...Array.from({length:6},(_,i)=>'serviceAccount:synthetic-reader-'+i)];
   const names=approved.roleDefinitions.map(x=>x.name),getRole='roles/storage.legacyObjectOwner',createRole='roles/storage.legacyBucketOwner';
   const roleDefinitions=names.map(name=>({name,stage:'GA',includedPermissions:name===getRole?['storage.objects.get']:
-    name===createRole?['storage.objects.create']:['synthetic.unrelatedPermission']}));
+    name===createRole?['storage.objects.create']:[...(PR431_CASES.find(r=>r.name===name)?.permissions??['synthetic.unrelatedPermission'])]}));
   const boundary={schema:'xuan.owner-sdk-live-boundary.v1',actorIdentifier:'SYNTHETIC_OWNER',
     bucketMetadata:{name:LATEST_TARGET.bucket,projectNumber:'123456789012',location:'ASIA-EAST2',storageClass:'STANDARD',
       iamConfiguration:{uniformBucketLevelAccess:{enabled:true},publicAccessPrevention:'enforced'}},
     projectMetadata:{projectId:'family-portfolio-gateway',projectNumber:'123456789012'},
-    bucketIam:{bindings:[{role:getRole,members},{role:createRole,members:[owner]}]},
-    projectIam:{version:3,bindings:names.filter(n=>![getRole,createRole].includes(n)).map(role=>({role,members:[owner]}))},
+    bucketIam:{bindings:[{role:getRole,members},{role:createRole,members:[owner]},...PR431_CASES.map((r,i)=>({role:r.name,members:['serviceAccount:synthetic-pr431-'+i],condition:pr431Condition(r)}))]},
+    projectIam:{version:3,bindings:names.filter(n=>![getRole,createRole,...PR431_CASES.map(r=>r.name)].includes(n)).map(role=>({role,members:[owner]}))},
     roleDefinitions,bucketTestPermissions:{permissions:['storage.objects.get','storage.objects.create']},
     startedAt:'2026-10-17T11:59:50.000Z',completedAt:'2026-10-17T11:59:59.000Z'};
   const registry=describeOwnerBoundary(boundary,{ownerPrincipalSha256:hash(owner),approvedReaderPrincipalSha256:members.map(hash)});
@@ -55,10 +63,50 @@ test('native observation is explicitly an attestation: fresh exact old canary, r
   }
   time=NOW;const missing=fresh();missing.begin();assert.throws(()=>missing.consume());const closed=fresh();closed.begin();closed.close();assert.throws(()=>closed.attest(attestation));
 });
-test('exact synthetic configured audience and all seventeen storage-role definitions pass',()=>{
-  const f=fixture(),result=evaluateOwnerBoundary(f.boundary,f.registry);assert.equal(result.readerCount,7);assert.equal(result.roles.size,17);
+test('exact synthetic configured audience and all nineteen fixed role definitions pass',()=>{
+  const f=fixture(),result=evaluateOwnerBoundary(f.boundary,f.registry);assert.equal(result.readerCount,7);assert.equal(result.roles.size,19);
   assert.equal(result.boundarySha256,f.registry.boundarySha256);assert.equal(f.registry.rolePermissionScope,'storage.*');
   assert.equal(Object.hasOwn(f.registry,'projectNumber'),false);
+});
+test('PR431 bindings remain outside both delivery objects; seven readers and cached checks stay fixed',()=>{
+  const f=fixture(),checked=evaluateOwnerBoundary(f.boundary,f.registry);
+  assert.equal(checked.readerCount,7);
+  f.boundary.roleDefinitions=[];
+  assert.equal(evaluateOwnerBoundary(f.boundary,f.registry,{cachedRoles:checked.roles}).readerCount,7);
+  const old=structuredClone(f.registry);old.roleDefinitions=old.roleDefinitions.filter(r=>!PR431_CASES.some(p=>p.name===r.name));
+  assert.throws(()=>evaluateOwnerBoundary(f.boundary,old),/APPROVED_BOUNDARY/);
+});
+test('PR431 role definitions reject every permission or lifecycle drift, including nonstorage grants',async t=>{
+  for(const role of PR431_CASES)for(const [name,edit] of [
+    ['extra get scope',r=>r.includedPermissions.push('storage.objects.list')],
+    ['extra nonstorage permission',r=>r.includedPermissions.push('iam.serviceAccounts.getAccessToken')],
+    ['missing permission',r=>r.includedPermissions.pop()],
+    ['stage',r=>r.stage='BETA'],['deleted',r=>r.deleted=true],
+  ])await t.test(role.name+'/'+name,()=>{const f=fixture();edit(f.boundary.roleDefinitions.find(r=>r.name===role.name));
+    assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry),/ROLE/);});
+});
+test('PR431 compound condition recognition is exact, bucket-only and rejects broadened or duplicate bindings',async t=>{
+  for(const role of PR431_CASES)for(const [name,edit] of [
+    ['expiry',b=>b.condition.expression=b.condition.expression.replace('2026-11-21','2026-11-22')],
+    ['resource',b=>b.condition.expression=b.condition.expression.replace('report-check/','delivery/')],
+    ['or true',b=>b.condition.expression+=' || true'],
+    ['title',b=>b.condition.title='other'],['description',b=>b.condition.description='other'],
+    ['unconditional',b=>delete b.condition],
+    ['project level',(b,f)=>{f.boundary.bucketIam.bindings=f.boundary.bucketIam.bindings.filter(x=>x!==b);f.boundary.projectIam.bindings.push(b);}],
+    ['duplicate',(b,f)=>f.boundary.bucketIam.bindings.push(structuredClone(b))],
+  ])await t.test(role.name+'/'+name,()=>{const f=fixture(),b=f.boundary.bucketIam.bindings.find(b=>b.role===role.name);edit(b,f);
+    assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry),/BOUNDARY_CHANGED/);
+    const recomputed=describeOwnerBoundary(f.boundary,{ownerPrincipalSha256:f.registry.ownerPrincipalSha256,approvedReaderPrincipalSha256:f.registry.approvedReaderPrincipalSha256});
+    assert.throws(()=>evaluateOwnerBoundary(f.boundary,recomputed),/CONDITION/);
+  });
+});
+test('PR431 member changes and unknown roles cannot be hidden by the compatibility exception',()=>{
+  for(const role of PR431_CASES){const f=fixture();f.boundary.bucketIam.bindings.find(b=>b.role===role.name).members.push('serviceAccount:synthetic-new');
+    assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry),/BOUNDARY_CHANGED/);}
+  const f=fixture(),r=originalRole(f.boundary),oldName=r.name;r.name='projects/family-portfolio-gateway/roles/unknown';
+  f.boundary.projectIam.bindings.find(b=>b.role===oldName).role=r.name;
+  const recomputed=describeOwnerBoundary(f.boundary,{ownerPrincipalSha256:f.registry.ownerPrincipalSha256,approvedReaderPrincipalSha256:f.registry.approvedReaderPrincipalSha256});
+  assert.throws(()=>evaluateOwnerBoundary(f.boundary,recomputed),/APPROVED_BOUNDARY/);
 });
 test('approved true, unknown expected fields and tampered registry hashes cannot grant access',()=>{
   const f=fixture();assert.throws(()=>evaluateOwnerBoundary(f.boundary,{approved:true}));
@@ -80,10 +128,10 @@ test('actor, any IAM binding/condition, project parent, bucket isolation or effe
   ])await t.test(name,()=>{const f=fixture();edit(f.boundary);assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry));});
 });
 test('unrelated role permissions may change; any storage permission, deletion or stage change is blocked',()=>{
-  const f=fixture();f.boundary.roleDefinitions[0].includedPermissions.push('unrelated.newPermission','synthetic.vendor.com/clusters.read');
+  const f=fixture();originalRole(f.boundary).includedPermissions.push('unrelated.newPermission','synthetic.vendor.com/clusters.read');
   assert.equal(evaluateOwnerBoundary(f.boundary,f.registry).readerCount,7);
   for(const edit of [r=>{r.includedPermissions.push('storage.objects.delete');},r=>{r.deleted=true;},r=>{r.stage='DISABLED';}]){
-    const g=fixture();edit(g.boundary.roleDefinitions[0]);assert.throws(()=>evaluateOwnerBoundary(g.boundary,g.registry));
+    const g=fixture();edit(originalRole(g.boundary));assert.throws(()=>evaluateOwnerBoundary(g.boundary,g.registry));
   }
 });
 test('policy order and etags do not change semantic boundary; missing role definitions do',()=>{
@@ -144,7 +192,7 @@ test('full preflight is sixty seconds; future, stale and long boundary windows f
 });
 test('failed role refresh invalidates previous role cache and previously minted POST admission',()=>{
   const f=fixture(),lease=createOwnerPreflightLease();lease.install(evaluateOwnerBoundary(f.boundary,f.registry),NOW);lease.mintAdmission(NOW+1000);
-  lease.invalidate();f.boundary.roleDefinitions[0].includedPermissions.push('storage.objects.delete');
+  lease.invalidate();originalRole(f.boundary).includedPermissions.push('storage.objects.delete');
   assert.throws(()=>evaluateOwnerBoundary(f.boundary,f.registry),/ROLE_CHANGED/);
   assert.throws(()=>lease.current(NOW+2000),/PREFLIGHT_EXPIRED/);
   assert.throws(()=>lease.mintAdmission(NOW+2000),/PREFLIGHT_EXPIRED/);

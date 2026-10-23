@@ -30,6 +30,9 @@ MAX_RESPONSE = 4 * 1024 * 1024
 MAX_LINE = 24 * 1024 * 1024
 GEN = re.compile(r'[1-9][0-9]{0,29}\Z')
 ROLE_NAMES = (
+    # Exact PR431 role metadata only; no new IAM write or caller-selected role.
+    'projects/' + PROJECT + '/roles/ibDailyLeaseAccess',
+    'projects/' + PROJECT + '/roles/ibDailySnapshotRead',
     'projects/' + PROJECT + '/roles/xuanPreopenDeliveryRead',
     'roles/artifactregistry.serviceAgent', 'roles/cloudbuild.builds.builder',
     'roles/cloudbuild.serviceAgent', 'roles/cloudscheduler.serviceAgent',

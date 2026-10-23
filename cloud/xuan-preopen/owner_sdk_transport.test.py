@@ -238,14 +238,27 @@ class BoundaryTests(unittest.TestCase):
     def test_boundary_only_fixed_read_apis_and_exact_permission_pair(self):
         provider = Provider()
         result = m.OwnerBridge(provider).dispatch({'op': 'boundary', 'includeRoleDefinitions': True})
-        self.assertEqual(len(provider.calls), 22)
-        self.assertEqual(len(result['roleDefinitions']), 17)
+        self.assertEqual(len(provider.calls), 24)
+        self.assertEqual(len(result['roleDefinitions']), 19)
+        role_calls = [c for c in provider.calls if c[0].startswith('https://iam.googleapis.com/v1/')]
+        registry = json.loads(Path(__file__).resolve().parents[2].joinpath('security/xuan-owner-approved-audience.json').read_text())
+        self.assertEqual(set(m.ROLE_NAMES), {r['name'] for r in registry['roleDefinitions']})
+        self.assertEqual(len(set(m.ROLE_NAMES)), 19)
+        self.assertEqual([c[0] for c in role_calls], ['https://iam.googleapis.com/v1/' + r for r in m.ROLE_NAMES])
+        self.assertTrue(all(c[1] == 'GET' and c[3] is None for c in role_calls))
+        self.assertEqual(m.ROLE_NAMES[:2], ('projects/' + m.PROJECT + '/roles/ibDailyLeaseAccess',
+                                         'projects/' + m.PROJECT + '/roles/ibDailySnapshotRead'))
         self.assertEqual([c for c in provider.calls if c[1] == 'POST'][0][0], 'https://cloudresourcemanager.googleapis.com/v1/projects/' + m.PROJECT + ':getIamPolicy')
         self.assertEqual(provider.calls[4][0], 'https://storage.googleapis.com/storage/v1/b/' + m.BUCKET + '/iam/testPermissions?permissions=storage.objects.create&permissions=storage.objects.get')
         self.assertEqual(set(result), {'schema', 'actorIdentifier', 'bucketMetadata', 'bucketIam', 'projectMetadata', 'projectIam', 'roleDefinitions', 'bucketTestPermissions', 'startedAt', 'completedAt'})
         provider.calls.clear()
         m.OwnerBridge(provider).dispatch({'op': 'boundary', 'includeRoleDefinitions': False})
         self.assertEqual(len(provider.calls), 5)
+        provider.calls.clear()
+        with self.assertRaises(m.BoundaryError):
+            m.OwnerBridge(provider).dispatch({'op': 'boundary', 'includeRoleDefinitions': True,
+                                              'roleNames': ['roles/storage.admin']})
+        self.assertEqual(provider.calls, [])
 
     def test_canary_strict_fields_template_and_pins(self):
         value = {'op': 'createCanary', 'uuid': '00000000-0000-4000-8000-000000000000', 'createdAt': m.instant(), 'candidateSha256': 'a' * 64}
