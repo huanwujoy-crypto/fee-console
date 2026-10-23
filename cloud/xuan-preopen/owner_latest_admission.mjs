@@ -249,7 +249,7 @@ export function createProtectedOwnerVerifier({loadContext,readPinnedSource,now:c
       if(recoveryId&&r.sources?.some(s=>s.privateObject.slice(0,s.privateObject.lastIndexOf('/'))!==m.artifactObject.slice(0,m.artifactObject.lastIndexOf('/'))))fail('RECOVERY_SOURCE_BINDING');
       if(recoveryId&&phase==='candidate-admission'){const registration=registeredOwnerRecovery();
         if(recoveryId!==registration.requestId||r.dataDate!==registration.dataDate)fail('RECOVERY_REGISTRATION');}
-      validateEodReceipt(r,text,m.dataDate,r.sourceDate);
+      validateEodReceipt(r,text,m.dataDate,r.sourceDate,phase==='historical-authenticity'?{historicalRequestId:recoveryId}:undefined);
       // Browser book values use the authentic Sharesight valuation date.
       // Other source contracts retain their completed-session requirement.
       if(r.dateBasis!==SHARESIGHT_VALUATION_DATE_BASIS){
