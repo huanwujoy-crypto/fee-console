@@ -20,6 +20,13 @@
     .encrypted-action-panel input[type=password] { display: block; box-sizing: border-box; width: 100%; padding: 10px; margin-top: 6px; font: inherit; }
     .encrypted-action-panel button, .encrypted-action-panel a { margin: 6px 12px 6px 0; min-height: 44px; font: inherit; }
     .encrypted-action-panel button { padding: 8px 14px; }
+    .encrypted-action-panel.encrypted-action-ready { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: env(safe-area-inset-top) 12px 0; }
+    .encrypted-action-ready p { margin: 0; font-size: 12px; }
+    .encrypted-action-settings { position: relative; flex: 0 0 auto; }
+    .encrypted-action-settings summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-size: 12px; }
+    .encrypted-action-settings summary::-webkit-details-marker { display: none; }
+    .encrypted-action-settings-content { position: absolute; z-index: 2; right: 0; top: 100%; width: 180px; padding: 8px; border: 1px solid #ddd; border-radius: 8px; background: #f9f9f7; box-shadow: 0 4px 16px #0002; }
+    .encrypted-action-settings-content button { display: block; width: 100%; margin: 0; text-align: left; }
     #encrypted-action-root iframe { flex: 1 1 auto; width: 100%; border: 0; min-height: 240px; }
     #encrypted-action-root iframe[hidden] { display: none; }
     :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
@@ -180,7 +187,7 @@
           encryptedRoot.hidden = true;
         } else {
           document.querySelector("#public-action-shell").hidden = true;
-          import("../scripts/xuan-ib-encrypted-action-view.mjs?v=2026-10-23.1")
+          import("../scripts/xuan-ib-encrypted-action-view.mjs?v=2026-10-23.2")
             .then(module => module.mountEncryptedAction(encryptedRoot))
             .catch(() => { encryptedRoot.textContent = "解锁页面暂时无法加载，请重新打开。"; });
           return;
@@ -194,7 +201,7 @@
       const appUpdate = document.querySelector("#app-update");
       const warning = document.querySelector("#warning");
       // Bump together with app-build.json whenever this shell or its mobile display code changes.
-      const loaderBuild = "2026-10-23.1";
+      const loaderBuild = "2026-10-23.2";
       const storageKey = "xuan-ib:last-verified:v1";
       const adhocWaitStorageKey = "xuan-ib:adhoc-wait:v1";
       const decisionWaitStorageKey = "xuan-ib:decision-wait:v1";
