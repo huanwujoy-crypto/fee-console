@@ -27,9 +27,9 @@ import {createProtectedOwnerPreviewVerifier,prepareAcceptedPreviewDisplay,buildA
 
 const API='https://api.github.com/repos/huanwujoy-crypto/fee-console';
 const RAW='https://raw.githubusercontent.com/huanwujoy-crypto/fee-console';
-// A saved preview's ancestry response includes the intervening public diff.
+// Historical ancestry responses include the intervening public diff.
 // Bound that comparison separately; individual protected files retain 500 kB.
-const PREVIEW_COMPARE_MAX_BYTES=2*1024*1024;
+const ANCESTRY_COMPARE_MAX_BYTES=2*1024*1024;
 const sha=bytes=>crypto.createHash('sha256').update(bytes).digest('hex');
 const gitBlob=text=>{const b=Buffer.from(text);return crypto.createHash('sha1').update(Buffer.from('blob '+b.length+'\0')).update(b).digest('hex');};
 const fail=(code,origin)=>{const error=Error('OWNER_DELIVERY_'+code);throw Object.assign(error,{safeCode:error.message,safeOrigin:origin??safeErrorOrigin(error)});};
@@ -77,7 +77,7 @@ export function createOwnerContextLoader({fetchImpl=ownerSourceFetch,now=Date.no
       if(phase!=='accepted-preview-historical'&&policyCommit!==currentCommit)fail('PREVIEW_CURRENT_CONTEXT');
       if(policyCommit!==currentCommit){
         const diagnostics={};
-        const comparison=json(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal,PREVIEW_COMPARE_MAX_BYTES,diagnostics),diagnostics.value);
+        const comparison=json(await read(API+'/compare/'+policyCommit+'...'+currentCommit,signal,ANCESTRY_COMPARE_MAX_BYTES,diagnostics),diagnostics.value);
         if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('PREVIEW_ANCESTRY');
       }
       const currentDiagnostics={},originalDiagnostics=policyCommit===currentCommit?currentDiagnostics:{};
@@ -105,7 +105,7 @@ export function createOwnerContextLoader({fetchImpl=ownerSourceFetch,now=Date.no
     }
     if(phase!=='historical-authenticity'||!/^[a-f0-9]{40}$/.test(policyCommit||''))fail('HISTORICAL_CONTEXT');
     const comparisonDiagnostics={};
-    const comparison=json(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit,signal,500000,comparisonDiagnostics),comparisonDiagnostics.value);
+    const comparison=json(await read(API+'/compare/'+policyCommit+'...'+current.association.policyCommit,signal,ANCESTRY_COMPARE_MAX_BYTES,comparisonDiagnostics),comparisonDiagnostics.value);
     if(!['ahead','identical'].includes(comparison.status)||comparison.merge_base_commit?.sha!==policyCommit)fail('HISTORICAL_ANCESTRY');
     const paths=['claude/xuan-ib-account-association-v1.json','claude/xuan-ib-etf-pending-calls-v1.json','xuan-ib/latest.meta.json','xuan-ib/latest.html'];
     const sourceDiagnostics=paths.map(()=>({}));

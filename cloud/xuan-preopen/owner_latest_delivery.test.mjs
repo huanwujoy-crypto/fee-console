@@ -189,10 +189,16 @@ test('preview loader binds an ancestor registration to identical current-main by
   await assert.rejects(loader(withComparison(comparisonBody(500001,{status:'diverged'})))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_ANCESTRY/);
   await assert.rejects(loader(withComparison(comparisonBody(500001,{mergeBase:'d'.repeat(40)})))({phase:'accepted-preview-historical',policyCommit:old}),/PREVIEW_ANCESTRY/);
   await assert.rejects(loader(async url=>url.includes('/compare/')?new Response(comparisonBody(500001),{status:403}):responseFor(url))({phase:'accepted-preview-historical',policyCommit:old}),/CONTEXT_HTTP/);
-  // Neither individual protected files nor the ordinary daily lane inherits
-  // the saved-preview comparison allowance.
+  // Individual protected files retain 500 kB; both historical ancestry lanes
+  // share the bounded public comparison budget.
   await assert.rejects(loader(async url=>url.endsWith(OWNER_PREVIEW_REGISTRATION_PATH)?new Response('x'.repeat(500001)):responseFor(url))({phase:'accepted-preview-admission',policyCommit:current}),/CLOUD_RESPONSE_TOO_LARGE/);
-  await assert.rejects(loader(withComparison(comparisonBody(500001)))({phase:'historical-authenticity',policyCommit:old}),/CLOUD_RESPONSE_TOO_LARGE/);
+  for(const bytes of [500001,503415,2*1024*1024]){
+    const historical=await loader(withComparison(comparisonBody(bytes)))({phase:'historical-authenticity',policyCommit:old});
+    assert.equal(historical.association.policyCommit,old);
+  }
+  await assert.rejects(loader(withComparison(comparisonBody(2*1024*1024+1)))({phase:'historical-authenticity',policyCommit:old}),/CLOUD_RESPONSE_TOO_LARGE/);
+  for(const change of [{status:'diverged'},{mergeBase:'d'.repeat(40)}])await assert.rejects(loader(withComparison(comparisonBody(503415,change)))({phase:'historical-authenticity',policyCommit:old}),/HISTORICAL_ANCESTRY/);
+  await assert.rejects(loader(async url=>url.includes('/'+old+'/')&&url.endsWith('latest.html')?new Response('x'.repeat(500001)):responseFor(url))({phase:'historical-authenticity',policyCommit:old}),/CLOUD_RESPONSE_TOO_LARGE/);
   await assert.rejects(loader(responseFor)({phase:'accepted-preview-historical',policyCommit:'not-a-commit'}),/PREVIEW_CONTEXT/);
   const pre=new AbortController();pre.abort();let attempts=0;await assert.rejects(loader(()=>{attempts++;assert.fail();})({phase:'accepted-preview-historical',policyCommit:old,signal:pre.signal}));assert.equal(attempts,0);
   const controller=new AbortController();let enter;const entered=new Promise(resolve=>{enter=resolve;});
