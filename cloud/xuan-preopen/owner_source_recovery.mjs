@@ -5,12 +5,17 @@ import {recoveryRequestId} from './owner_bundle_contract.mjs';
 export const OWNER_SOURCE_RECOVERY_PATH='security/xuan-owner-source-recovery.json';
 export function registeredOwnerRecovery(){
   const value=JSON.parse(readFileSync(new URL('../../'+OWNER_SOURCE_RECOVERY_PATH,import.meta.url),'utf8'));
-  const keys=('schema requestId dataDate priorReceiptObject priorReceiptGeneration priorReceiptSha256'+(Object.hasOwn(value??{},'referenceCapture')?' referenceCapture':'')+(Object.hasOwn(value??{},'supersedes')?' supersedes':'')+(Object.hasOwn(value??{},'continuation')?' continuation':'')).split(' ').sort().join('|');
+  return validateOwnerRecoveryRegistration(value);
+}
+const validDate=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\d$/.test(value)&&Number.isFinite(Date.parse(value+'T00:00:00Z'))&&new Date(value+'T00:00:00Z').toISOString().slice(0,10)===value;
+export function validateOwnerRecoveryRegistration(value){
+  const keys=('schema requestId dataDate priorReceiptObject priorReceiptGeneration priorReceiptSha256'+(Object.hasOwn(value??{},'referenceCapture')?' referenceCapture':'')+(Object.hasOwn(value??{},'supersedes')?' supersedes':'')+(Object.hasOwn(value??{},'continuation')?' continuation':'')+(Object.hasOwn(value??{},'previousReferenceCapture')?' previousReferenceCapture':'')).split(' ').sort().join('|');
+  const priorDate=/^delivery\/(\d{4}-\d\d-\d\d)\/receipt\.json$/.exec(value?.priorReceiptObject??'')?.[1];
   if(!value||Object.keys(value).sort().join('|')!==keys||value.schema!=='xuan.owner-source-recovery.v1'
     ||recoveryRequestId(`report-check/orders-probe-${value.requestId}/preview-receipt.json`)!==value.requestId
     ||!/^\d{4}-\d\d-\d\d$/.test(value.dataDate)||!Number.isFinite(Date.parse(value.dataDate+'T00:00:00Z'))
     ||new Date(value.dataDate+'T00:00:00Z').toISOString().slice(0,10)!==value.dataDate
-    ||value.priorReceiptObject!==`delivery/${value.dataDate}/receipt.json`
+    ||!validDate(priorDate)||priorDate>value.dataDate
     ||! /^[1-9][0-9]{0,29}$/.test(value.priorReceiptGeneration)||! /^[a-f0-9]{64}$/.test(value.priorReceiptSha256))throw Error('OWNER_RECOVERY_REGISTRATION');
   if(value.referenceCapture){
     const r=value.referenceCapture,keys='schema captureStartedAt captureCompletedAt expiresAt sourceHashes'.split(' ').sort().join('|');
@@ -28,14 +33,30 @@ export function registeredOwnerRecovery(){
       ||![s.artifactSha256,s.receiptSha256].every(h=>/^[a-f0-9]{64}$/.test(h))||! /^[1-9][0-9]{0,29}$/.test(s.latestGeneration))throw Error('OWNER_RECOVERY_SUPERSEDES');
   }
   if(value.continuation)validateEvidenceContinuation(value);
+  // Preserve the previous display's expired reference proof, never a new
+  // candidate's freshness exception or a permission to resume its old claim.
+  if(Object.hasOwn(value,'previousReferenceCapture')){
+    const p=value.previousReferenceCapture;
+    if(!p||!p.referenceCapture||Object.keys(p).sort().join('|')!=='dataDate|referenceCapture|requestId'||p.requestId===value.requestId||!validDate(p.dataDate)||p.dataDate>=value.dataDate)throw Error('OWNER_RECOVERY_PREVIOUS_REFERENCE');
+    validateOwnerRecoveryRegistration({schema:value.schema,requestId:p.requestId,dataDate:p.dataDate,priorReceiptObject:`delivery/${p.dataDate}/receipt.json`,priorReceiptGeneration:'1',priorReceiptSha256:'0'.repeat(64),referenceCapture:p.referenceCapture});
+  }
   return Object.freeze({...value,receiptObject:`report-check/orders-probe-${value.requestId}/preview-receipt.json`});
 }
 
 // A bounded exception for one protected request and one pinned capture only.
 // Source hashes are checked again before creation and independent admission.
 export function registeredReferenceCapture(requestId,captureStartedAt,captureCompletedAt){
-  const r=registeredOwnerRecovery();return (r.requestId===requestId||r.supersedes?.requestId===requestId)&&r.referenceCapture?.captureStartedAt===captureStartedAt
+  const r=registeredOwnerRecovery();return r.referenceCapture&&(r.requestId===requestId||r.supersedes?.requestId===requestId)&&r.referenceCapture.captureStartedAt===captureStartedAt
     &&r.referenceCapture.captureCompletedAt===captureCompletedAt?r.referenceCapture:null;
+}
+export function registeredHistoricalReferenceCapture(requestId,start,end){
+  const current=registeredReferenceCapture(requestId,start,end);if(current)return current;
+  const p=registeredOwnerRecovery().previousReferenceCapture;
+  return p&&p.requestId===requestId&&p.referenceCapture.captureStartedAt===start&&p.referenceCapture.captureCompletedAt===end?p.referenceCapture:null;
+}
+export function registeredDisplayReferenceCapture(start,end){
+  const r=registeredOwnerRecovery();
+  return registeredReferenceCapture(r.requestId,start,end)??registeredHistoricalReferenceCapture(r.previousReferenceCapture?.requestId,start,end);
 }
 export function ownerCaptureDeadline(requestId,start,end){
   return Date.parse(registeredReferenceCapture(requestId,start,end)?.expiresAt??'')||Date.parse(start)+1800000;

@@ -151,7 +151,11 @@ async function nativeBoundary(memory,{now,dataDate,priorPin},action){
 }
 
 async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,rollback=false,preparationMs=0,preparationFailure=false,transientContext=false,canaryChanged=false}={}){
-  const start=Date.parse(iso),prior=makeHarness(start-120000),reg=registeredOwnerRecovery();
+  // Preserve the named HK boundary times while following the active request's
+  // report date. Its immutable prior receipt may belong to an earlier day.
+  const reg=registeredOwnerRecovery(),dayShift=Date.parse(reg.dataDate)-Date.parse('2026-10-21');
+  const start=Date.parse(iso)+dayShift,priorDate=reg.priorReceiptObject.split('/')[1];
+  const prior=makeHarness(start+Date.parse(priorDate)-Date.parse(reg.dataDate)-120000);
   prior.options.request.requestId='11111111-2222-4333-8444-555555555555';
   const old=await runPrivateActionPreviewOnce({...prior.options,dailyDelivery:true});assert.equal(old.status,'generated');
   const fresh=makeHarness(start),generated=await runPrivateActionPreviewOnce(fresh.options);assert.equal(generated.status,'generated');
@@ -197,7 +201,7 @@ async function pipeline(iso,{conflict=false,corruptReadback=false,elapsed=0,roll
   }finally{fs.default.readFileSync=saved;syncBuiltinESMExports();}
 }
 
-test('HK 04:02, 07:19, 07:59 and 08:00 retain Oct21 report / Oct20 NY source through native CAS and readback',async()=>{
+test('HK 04:02, 07:19, 07:59 and 08:00 retain registered report / preceding NY source through native CAS and readback',async()=>{
   for(const time of ['2026-10-20T20:02:00.000Z','2026-10-20T23:19:52.742Z','2026-10-20T23:59:59.999Z','2026-10-21T00:00:00.000Z'])await pipeline(time);
 });
 test('HK 00:00–04:00 cannot fetch an uncompleted NY session; winter closes at HK05:00',async()=>{

@@ -483,15 +483,16 @@ test('browser prevalidation rejects wrong date, stale/future original times and 
 
 // These are synthetic clocks and storage only, never production replay.
 test('browser valuation day needs no completed market session through controller, admission, CAS and readback across HKT midnight',async()=>{
-  for(const timeOverride of ['2026-10-20T16:02:00.000Z','2026-10-20T22:02:00.000Z','2026-10-21T06:10:00.000Z'].map(Date.parse)){
+  const day=registeredOwnerRecovery().dataDate,midnight=Date.parse(day+'T00:00:00+08:00');
+  for(const timeOverride of [2*60000,6*3600000+2*60000,14*3600000+10*60000].map(offset=>midnight+offset)){
     const f=await browserAttempt({currentBookDate:true,timeOverride}),r=await f.execute();
     const html=f.objects.get(r.receipt.artifact.privateObject).bytes,receipt=f.objects.get(r.receiptObject).bytes;
     const bundle={html,receipt,artifactObject:r.receipt.artifact.privateObject,artifactGeneration:r.receipt.artifact.generation,
       artifactSha256:r.receipt.artifact.sha256,receiptObject:r.receiptObject,receiptGeneration:r.generation,receiptSha256:r.sha256};
     const model=extractNightActionModel(html.toString());
-    assert.equal(model.sourceDate,'2026-10-21');assert.equal(model.dateBasis,'sharesight-valuation-date.v1');
-    assert.equal(model.cash.book.sourceDate,'2026-10-21');assert.equal(model.cash.preOrderPlanning,350);
-    assert.equal(model.bookConcentration.sourceDate,'2026-10-21');assert.equal(model.holdings.sourceDate,'2026-10-21');
+    assert.equal(model.sourceDate,day);assert.equal(model.dateBasis,'sharesight-valuation-date.v1');
+    assert.equal(model.cash.book.sourceDate,day);assert.equal(model.cash.preOrderPlanning,350);
+    assert.equal(model.bookConcentration.sourceDate,day);assert.equal(model.holdings.sourceDate,day);
     assert.equal(ownerBundleMetadata(bundle,r.receipt).sourceDate,model.sourceDate);
     let writes=0,readbacks=0,stored;
     const io={readRegisteredRecoveryBundle:async()=>bundle,readPinnedSource:async pin=>f.objects.get(pin.name).bytes,
@@ -534,16 +535,24 @@ test('saved browser capture separates collection from processing; delayed admiss
 });
 
 
-import {registeredReferenceCapture,ownerCaptureDeadline,validateReferenceSources} from './owner_source_recovery.mjs';
-test('reference exception is exact request, times and source fingerprints; all other captures retain thirty minutes',()=>{
-  const reg=registeredOwnerRecovery(),r=reg.referenceCapture;
-  assert.equal(ownerCaptureDeadline(reg.requestId,r.captureStartedAt,r.captureCompletedAt),Date.parse(r.expiresAt));
+import {registeredReferenceCapture,registeredHistoricalReferenceCapture,validateOwnerRecoveryRegistration,ownerCaptureDeadline,validateReferenceSources} from './owner_source_recovery.mjs';
+test('prior reference remains verifiable but cannot extend the new request or revive an old claim',()=>{
+  const reg=registeredOwnerRecovery(),previous=reg.previousReferenceCapture,r=previous.referenceCapture;
+  assert.deepEqual(registeredHistoricalReferenceCapture(previous.requestId,r.captureStartedAt,r.captureCompletedAt),r);
+  assert.equal(registeredReferenceCapture(previous.requestId,r.captureStartedAt,r.captureCompletedAt),null);
+  assert.equal(ownerCaptureDeadline(reg.requestId,r.captureStartedAt,r.captureCompletedAt),Date.parse(r.captureStartedAt)+1800000);
   assert.equal(ownerCaptureDeadline('other-request',r.captureStartedAt,r.captureCompletedAt),Date.parse(r.captureStartedAt)+1800000);
   assert.equal(registeredReferenceCapture(reg.requestId,r.captureStartedAt,new Date(Date.parse(r.captureCompletedAt)+1).toISOString()),null);
   const values=Object.fromEntries(['sharesight.ibGroupedPerformance','sharesight.noahPerformance'].map(k=>[k,{rawFingerprint:r.sourceHashes[k]}]));
   values['ib.optionalLive']={sources:[{rawFingerprint:r.sourceHashes['ib.orders']}]};validateReferenceSources(r,values);
   values['ib.optionalLive'].sources[0].rawFingerprint='0'.repeat(64);assert.throws(()=>validateReferenceSources(r,values),/REFERENCE_SOURCE_BINDING/);
-  assert.equal(r.expiresAt,reg.dataDate+'T15:59:59.999Z');
+  assert.equal(r.expiresAt,previous.dataDate+'T15:59:59.999Z');
+  assert.equal(registeredHistoricalReferenceCapture('different-request',r.captureStartedAt,r.captureCompletedAt),null);
+  const base=structuredClone(reg);delete base.receiptObject;
+  assert.equal(validateOwnerRecoveryRegistration(base).priorReceiptObject,base.priorReceiptObject);
+  for(const edit of [v=>v.priorReceiptObject='delivery/2099-01-01/receipt.json',v=>v.priorReceiptObject='delivery/2026-02-30/receipt.json',v=>v.priorReceiptObject='../receipt.json',v=>v.priorReceiptSha256='invalid',v=>v.previousReferenceCapture.requestId=v.requestId,v=>v.previousReferenceCapture.referenceCapture=null]){
+    const invalid=structuredClone(base);edit(invalid);assert.throws(()=>validateOwnerRecoveryRegistration(invalid));
+  }
 });
 
 

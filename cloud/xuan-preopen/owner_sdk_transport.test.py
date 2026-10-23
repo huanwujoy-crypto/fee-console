@@ -16,6 +16,13 @@ from unittest.mock import patch
 spec = importlib.util.spec_from_file_location('owner_transport', Path(__file__).with_name('owner_sdk_transport.py'))
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
+
+def synthetic_reference_registration():
+    reg=dict(m.recovery_registration());reg.pop('receiptObject',None)
+    day=reg['dataDate'];start=day+'T02:00:00.000Z';run='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee'
+    reg['referenceCapture']={'schema':'xuan.registered-reference-capture.v1','captureStartedAt':start,'captureCompletedAt':day+'T02:01:00.000Z','expiresAt':day+'T15:59:59.999Z','sourceHashes':{'sharesight.ibGroupedPerformance':'1'*64,'sharesight.noahPerformance':'2'*64,'ib.orders':'3'*64}}
+    reg['continuation']={'schema':'xuan.evidence-continuation.v1','runId':run,'claimGeneration':'1','maximumObjects':9,'maximumBytes':33554432,'objects':[dict(name='report-check/'+start+'-'+run+'/'+name,generation='2',sha256='a'*64,size=1) for name in ['ib.flexEod.json','sharesight.ibGroupedPerformance.json','sharesight.noahPerformance.json','ib.optionalLive.json','report.html']]}
+    return m.validate_recovery_registration(reg)
 BASE = 'https://storage.googleapis.com/storage/v1/b/' + m.BUCKET + '/o/'
 LATEST = BASE + 'delivery%2Fowner-latest.html'
 UPLOAD = 'https://storage.googleapis.com/upload/storage/v1/b/' + m.BUCKET + '/o?uploadType=multipart&ifGenerationMatch=0'
@@ -1080,7 +1087,8 @@ class SavedCaptureEvidenceTests(BrowserEvidenceTests):
             b.evidence['monotonic']-=1801;count=len(p.calls)
             self.assertCode('REPLACEMENT_ADMISSION_EXPIRED',lambda:self.write(b,b.evidence['prefix']+'ib.flexEod.json',{'status':'not-called','code':'FLEX_NOT_CALLED'}));self.assertEqual(len(p.calls),count)
     def test_registered_reference_only_exact_times_extend_through_hkt_day(self):
-        reg=m.recovery_registration();ref=reg['referenceCapture'];p=EvidenceProvider();b=m.OwnerBridge(p)
+        reg=synthetic_reference_registration();ref=reg['referenceCapture'];p=EvidenceProvider();b=m.OwnerBridge(p)
+        registration=patch.object(m,'recovery_registration',return_value=reg);registration.start();self.addCleanup(registration.stop)
         expiry=datetime.datetime.fromisoformat(ref['expiresAt'].replace('Z','+00:00')).timestamp()
         value={'op':'beginEvidence','requestId':reg['requestId'],'captureStartedAt':ref['captureStartedAt'],'captureCompletedAt':ref['captureCompletedAt']}
         with patch.object(m,'daily_date',return_value=reg['dataDate']),patch.object(m.time,'time',return_value=expiry-60):
@@ -1124,6 +1132,7 @@ class ContinuationProvider(EvidenceProvider):
 class ContinuationEvidenceTests(unittest.TestCase):
     assertCode=BoundaryTests.assertCode
     def setUp(self):
+        registration=patch.object(m,'recovery_registration',return_value=synthetic_reference_registration());registration.start();self.addCleanup(registration.stop)
         end=m.recovery_registration()['referenceCapture']['captureCompletedAt']
         stamp=datetime.datetime.fromisoformat(end.replace('Z','+00:00'))+datetime.timedelta(seconds=60)
         clock=patch.object(m.time,'time',return_value=stamp.timestamp());clock.start();self.addCleanup(clock.stop)
@@ -1183,6 +1192,16 @@ class ContinuationEvidenceTests(unittest.TestCase):
                 if kind=='backwards':b.continuation_observation['wall']+=1e6
                 with self.assertRaises(m.BoundaryError):b.dispatch({'op':'resumeEvidence','requestId':'wrong' if kind=='wrong-request' else reg['requestId']})
             self.assertEqual(p.extra_posts,[])
+
+class RecoveryRolloverTests(unittest.TestCase):
+    def test_pinned_earlier_anchor_and_expired_history_do_not_grant_current_reference_mode(self):
+        reg=m.recovery_registration();previous=reg['previousReferenceCapture'];ref=previous['referenceCapture']
+        self.assertLess(previous['dataDate'],reg['dataDate'])
+        self.assertIsNone(m.reference_capture(reg,ref['captureStartedAt'],ref['captureCompletedAt']))
+        base=dict(reg);base.pop('receiptObject')
+        self.assertEqual(m.validate_recovery_registration(base)['priorReceiptObject'],base['priorReceiptObject'])
+        for change in [dict(priorReceiptObject='delivery/2099-01-01/receipt.json'),dict(priorReceiptObject='delivery/2026-02-30/receipt.json'),dict(priorReceiptObject='../receipt.json'),dict(priorReceiptSha256='invalid'),dict(previousReferenceCapture=None),dict(previousReferenceCapture=dict(previous,requestId=reg['requestId']))]:
+            with self.assertRaises(m.BoundaryError):m.validate_recovery_registration(dict(base,**change))
 
 if __name__ == '__main__':
     unittest.main()
