@@ -1,3 +1,6 @@
+import vm from "node:vm";
+import crypto from "node:crypto";
+import { buildFeeCalculationReceipt } from "./fee-receipt-core.mjs";
 /**
  * 收益率口径 v4.6.1 的回归测试。
  *
@@ -213,3 +216,220 @@ test("a same-month flow outside the requested interval is refused", () => {
   assert.equal(broken.flowT, 0);
   assert.ok(broken.issues.some(x=>/出入金日期越界 2026-08-05/.test(x)), broken.issues.join("; "));
 });
+
+/* maximum-drawdown-contract:start */
+{
+
+// Entirely synthetic fixtures. No financial source, credential, real ledger,
+// encryption/decryption, browser state or network access is used by this suite.
+const here=path.dirname(fileURLToPath(import.meta.url));
+const htmlPath=process.env.FEE_LEDGER_TEST_INDEX||path.join(here,'..','index.html');
+if(process.env.GITHUB_ACTIONS==='true'&&process.env.FEE_LEDGER_TEST_INDEX)throw new Error('external UI preview is local-only');
+const html=fs.readFileSync(htmlPath,'utf8');
+const hasDrawdown=html.includes('/* max-drawdown-view:start */');
+const drawdownTest=(name,fn)=>test(name,{skip:hasDrawdown?false:'support stage: display implementation is in the separate index-only UI PR'},fn);
+
+const near=(a,b)=>assert.ok(Math.abs(a-b)<1e-10,`${a} != ${b}`);
+const plain=x=>JSON.parse(JSON.stringify(x));
+const section=(start,end)=>{
+  assert.equal(html.split(start).length,2);assert.equal(html.split(end).length,2);
+  return html.slice(html.indexOf(start)+start.length,html.indexOf(end));
+};
+function fixture(){
+  const economicInput={v:4,settings:{start:'2026-08-01',mgmt:2,carry:20,fx:{USD:1}},
+    accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],
+    months:[{ym:'2026-08',flows:[
+      {id:'synthetic-deposit',date:'2026-08-02',acct:'webull',amount:900,note:'SYNTHETIC cash contribution'},
+      {id:'synthetic-withdrawal',date:'2026-08-04',acct:'webull',amount:-300,note:'SYNTHETIC withdrawal'}]}],
+    fees:[{id:'external-fee',date:'2026-08-05',amount:25,ccy:'USD'}]};
+  const totals=[100,120,990,1210,580,942.5],spy=[100,100,90,95,80,110],qqq=[100,110,90,100,120,130];
+  const data={daily:totals.map((value,i)=>({d:i?`2026-08-0${i}`:'2026-07-31',schwab:0,webull:value,spy:spy[i],qqq:qqq[i]})),
+    flowsAuto:[],flowsUnresolved:[],status:{asOf:'2026-08-05',provisional:false,calibrated:true,unresolvedCount:0}};
+  return {data,economicInput};
+}
+async function model(input=fixture()){
+  const receipt=buildFeeCalculationReceipt(input),nodes={};
+  const sandbox={crypto:{subtle:{digest:crypto.webcrypto.subtle.digest.bind(crypto.webcrypto.subtle)}},
+    TextEncoder,TextDecoder,Uint8Array,structuredClone,DAILY:input.data,DB:input.economicInput,
+    document:{getElementById:id=>nodes[id]??=(id==='benchExplain'?{open:false}:{innerHTML:''})}};
+  vm.createContext(sandbox);
+  vm.runInContext(section('/* fee-receipt-consumer:start */','/* fee-receipt-consumer:end */'),sandbox);
+  vm.runInContext(section('/* fee-receipt-render:start */','/* fee-receipt-render:end */'),sandbox);
+  vm.runInContext(`
+    const num=v=>{const n=parseFloat(v);return isFinite(n)?n:0;};
+    const usd=(v,d=2)=>v==null||!isFinite(v)?'—':(v<0?'-$':'$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+    const fmt=(v,d=2)=>v==null||!isFinite(v)?'—':Number(v).toFixed(d);
+    const pct=(v,d=2)=>v==null||!isFinite(v)?'—':(v>0?'+':'')+(v*100).toFixed(d)+'%';
+    const sgn=v=>v>0?'pos':v<0?'neg':'';
+    const esc=v=>String(v??'');
+    const ann=()=>null;
+    function dailySorted(){return [...DAILY.daily].sort((a,b)=>a.d.localeCompare(b.d));}
+    function totOf(p){return DB.accounts.reduce((sum,a)=>sum+num(p[a.id]),0);}
+    function topHoldingsView(){return '';}
+  `,sandbox);
+  vm.runInContext(html.slice(html.indexOf('const BENCH_ALL='),html.indexOf('function receiptBalance(')),sandbox);
+  vm.runInContext(html.slice(html.indexOf('function renderKPIs('),html.indexOf('function renderChart1(')),sandbox);
+  const validation=await sandbox.feeReceiptUiModel({...input,receipt});
+  assert.equal(validation.ok,true);
+  const feeView=sandbox.feeReceiptRenderProjection(validation),st=sandbox.receiptState(feeView);
+  return {sandbox,feeView,st,receipt,input,nodes};
+}
+
+test('the complete inline source parses',()=>{
+  for(const m of html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi))new vm.Script(m[2]);
+});
+
+drawdownTest('real receipt gate + flow-adjusted curve finds peak/trough despite cash movement and recovery',async()=>{
+  const {sandbox,feeView,st}=await model(),out=sandbox.drawdownView(feeView);
+  near(st.twrG,.30);near(out.actual.value,1-.8/1.2);
+  assert.equal(out.actual.peakDate,'2026-08-01');assert.equal(out.actual.troughDate,'2026-08-04');
+  near(out.spy.value,.20);near(out.qqq.value,1-90/110);
+  assert.equal(out.start,'2026-08-01');assert.equal(out.through,'2026-08-05');
+});
+
+drawdownTest('cash and in-kind transfers never manufacture a drawdown on a flat unit curve',async()=>{
+  const input=fixture(),values=[100,100,1000,1000,700,700];
+  input.data.daily.forEach((p,i)=>Object.assign(p,{webull:values[i],spy:100,qqq:100}));
+  const businessKey='synthetic:source->target;holding:1';
+  const id=crypto.createHash('sha256').update(`external_asset_transfer ${businessKey}`).digest('hex').slice(0,16);
+  input.data.flowsAuto=[{id,date:'2026-08-02',acct:'webull',amount:900,effective:true,businessKey,
+    reason:`verified external asset transfer ${businessKey}`,desc:'SYNTHETIC in-kind'}];
+  input.economicInput.months[0].flows[0].src=id;
+  const {sandbox,feeView,receipt}=await model(input),out=sandbox.drawdownView(feeView);
+  assert.equal(receipt.effectiveFlowCount,2);
+  for(const key of ['actual','spy','qqq']){assert.equal(out[key].state,'verified');near(out[key].value,0);}
+});
+
+drawdownTest('the initial unit value participates: a first-day loss is a drawdown',async()=>{
+  const {sandbox}=await model();
+  const out=sandbox.maxDrawdownFromFactors([{d:'2026-08-01',factor:.7}],'2026-07-31');
+  near(out.value,.30);assert.equal(out.peakDate,'2026-07-31');assert.equal(out.troughDate,'2026-08-01');
+});
+
+drawdownTest('rising prices and verified flat prices return zero, not pending',async()=>{
+  const {sandbox}=await model();
+  for(const factors of [[1.1,1.2,1.01],[1,1,1]]){
+    const out=sandbox.maxDrawdownFromFactors(factors.map((factor,i)=>({d:`2026-08-0${i+1}`,factor})),'2026-07-31');
+    assert.equal(out.state,'verified');assert.equal(out.value,0);assert.equal(out.peakDate,null);
+  }
+});
+
+drawdownTest('total loss is 100%; malformed/negative/nonfinite/empty curves remain unverified',async()=>{
+  const {sandbox}=await model();near(sandbox.maxDrawdownFromFactors([{d:'2026-08-01',factor:0}],'2026-07-31').value,1);
+  for(const factors of [[],[{d:'2026-08-01',factor:-1}],[{d:'2026-08-01',factor:NaN}],[{d:'2026-08-01',factor:Infinity}],
+    [{d:'2026-08-01',factor:1},{d:'2026-08-01',factor:.5}],
+    [{d:'2026-08-01',factor:1e308},{d:'2026-08-02',factor:1e308}]]){
+    const out=sandbox.maxDrawdownFromFactors(factors,'2026-07-31');assert.equal(out.state,'pending');assert.equal(out.value,null);
+  }
+});
+
+drawdownTest('dividend-adjusted benchmark drawdown uses the same factor as the existing TWR',async()=>{
+  const input=fixture();input.data.daily.forEach(p=>Object.assign(p,{spy:100,qqq:100}));
+  input.data.daily[1].spy=90;input.data.daily[1].spyd=10;
+  const {sandbox,feeView,st}=await model(input),out=sandbox.drawdownView(feeView);
+  near(sandbox.benchmarkDailyFactor(90,10,100,false),.97);
+  near(out.spy.value,.03);
+  // The same first-day .97 factor is the beginning of the existing TWR chain.
+  near(st.bench[0].twr,.97*(100/90)-1);
+});
+
+drawdownTest('external fee payment and accrual changes never affect the gross drawdown series',async()=>{
+  const first=await model(),input=fixture();input.economicInput.fees[0].amount=999;
+  input.economicInput.settings.mgmt=7;input.economicInput.settings.carry=50;
+  const second=await model(input);
+  assert.notEqual(first.receipt.balance.paidCents,second.receipt.balance.paidCents);
+  assert.notEqual(first.receipt.totals.investorDietzPpm,second.receipt.totals.investorDietzPpm);
+  assert.deepEqual(plain(first.sandbox.drawdownView(first.feeView)),plain(second.sandbox.drawdownView(second.feeView)));
+});
+
+drawdownTest('missing receipt/flows/account value stays unverified, never real-looking zero',async()=>{
+  const {sandbox,feeView,input}=await model();
+  for(const view of [{...feeView,state:'pending'},{...feeView,benchmarkInputs:null},
+    {...feeView,benchmarkInputs:{...feeView.benchmarkInputs,openingCents:0}}]){
+    const out=sandbox.drawdownView(view);assert.equal(out.actual.state,'pending');assert.equal(out.actual.value,null);
+  }
+  delete input.data.daily[2].webull;
+  const out=sandbox.drawdownView(feeView);assert.equal(out.actual.state,'pending');assert.equal(out.spy.state,'verified');
+});
+
+drawdownTest('a missing calendar day suppresses affected coverage rather than bridging the gap',async()=>{
+  const {sandbox,feeView,input}=await model();input.data.daily.splice(2,1);
+  const out=sandbox.drawdownView(feeView);
+  for(const key of ['actual','spy','qqq']){assert.equal(out[key].state,'pending');assert.equal(out[key].value,null);}
+});
+
+drawdownTest('one absent benchmark does not fabricate zero or hide the valid portfolio/other benchmark',async()=>{
+  const {sandbox,feeView,input}=await model();for(const p of input.data.daily)delete p.qqq;
+  const out=sandbox.drawdownView(feeView);
+  assert.equal(out.actual.state,'verified');assert.equal(out.spy.state,'verified');assert.equal(out.qqq.state,'pending');
+  assert.equal(out.through,feeView.asOf);
+});
+
+drawdownTest('common cutoff clips all three drawdowns and clearly labels the later asset date',async()=>{
+  const input=fixture(),dates=['2026-09-14','2026-09-15','2026-09-16','2026-09-17'];
+  input.economicInput.settings.start=dates[1];input.economicInput.months=[];input.economicInput.fees=[];
+  input.data.daily=input.data.daily.slice(0,4);
+  const values=[100,120,110,50],spy=[100,100,90,10],qqq=[100,110,100,10];
+  input.data.daily.forEach((p,i)=>Object.assign(p,{d:dates[i],bd:dates[i],bstate:'session',webull:values[i],spy:spy[i],qqq:qqq[i]}));
+  delete input.data.daily[3].qqq;input.data.status.asOf=dates[3];
+  const {sandbox,feeView}=await model(input),out=sandbox.drawdownView(feeView);
+  assert.equal(out.through,dates[2]);assert.equal(out.latest,dates[3]);
+  near(out.actual.value,1-110/120);near(out.spy.value,.10);near(out.qqq.value,1-100/110);
+  assert.match(sandbox.renderDrawdowns(feeView),/2026-09-15 → 2026-09-16（共同截至；最新资产 2026-09-17）/);
+});
+
+drawdownTest('verified closed-session carry is flat; false carry and closed-session dividends are unverified',async()=>{
+  const input=fixture(),dates=['2026-09-17','2026-09-18','2026-09-19','2026-09-20'];
+  input.economicInput.settings.start=dates[1];input.economicInput.months=[];input.economicInput.fees=[];
+  input.data.daily=input.data.daily.slice(0,4);
+  input.data.daily.forEach((p,i)=>Object.assign(p,{d:dates[i],bd:i>1?dates[1]:dates[i],bstate:i>1?'closed':'session',webull:100,spy:100,qqq:100}));
+  input.data.status.asOf=dates[3];
+  const {sandbox,feeView}=await model(input);
+  near(sandbox.drawdownView(feeView).spy.value,0);
+  input.data.daily[2].spy=80;assert.equal(sandbox.drawdownView(feeView).spy.state,'pending');
+  input.data.daily[2].spy=100;input.data.daily[2].spyd=1;assert.equal(sandbox.drawdownView(feeView).spy.state,'pending');
+});
+
+drawdownTest('original four returns remain unchanged; drawdown is an independent adjacent three-series group',async()=>{
+  const {sandbox,feeView,st,nodes,receipt}=await model();
+  sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
+  const out=nodes.kpis.innerHTML;
+  assert.match(out,/组合毛 TWR（管理能力）/);assert.match(out,/出资方 Modified Dietz（EOD flow 模型）/);
+  assert.match(out,/data-drawdown-series="actual"[^]*?-33\.33%/);
+  assert.match(out,/data-drawdown-series="spy"[^]*?-20\.00%/);
+  assert.match(out,/data-drawdown-series="qqq"[^]*?-18\.18%/);
+  assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
+  assert.match(out,/Modified Dietz 是期间收益率，不单独计算回撤/);
+  assert.ok(out.indexOf('同期最大回撤')>out.indexOf('出资方 Modified Dietz'));
+});
+
+drawdownTest('pending receipt renders three explicit unverified values and no invented 0.00%',async()=>{
+  const {sandbox}=await model();
+  const out=sandbox.renderDrawdowns({state:'pending',start:null,asOf:null});
+  assert.equal((out.match(/未核实<\/b>/g)||[]).length,3);
+  assert.ok(!out.includes('0.00%'));assert.match(out,/日期区间待核实/);
+});
+
+drawdownTest('drawdown calculation has no access to fee payments, credentials, network, storage or publication',()=>{
+  const code=section('/* max-drawdown-view:start */','/* max-drawdown-view:end */');
+  assert.doesNotMatch(code,/DB\.fees|fetch\(|localStorage|sessionStorage|crypto\.|cfg\(|GH_|publish|decrypt|Keychain/);
+});
+
+// The support PR remains valid before the independently protected UI rollout.
+// A partial/unmarked rollout must not silently skip the contract suite.
+test('drawdown rollout is either absent or fully marked for this contract suite',()=>{
+  if(!hasDrawdown){
+    assert.ok(!html.includes('function maxDrawdownFromFactors('));
+    assert.ok(!html.includes('function drawdownView('));
+    assert.ok(!html.includes('function renderDrawdowns('));
+    assert.ok(!html.includes('/* max-drawdown-view:end */'));
+  }else{
+    section('/* max-drawdown-view:start */','/* max-drawdown-view:end */');
+    assert.ok(html.includes('function maxDrawdownFromFactors('));
+    assert.ok(html.includes('function drawdownView('));
+    assert.ok(html.includes('function renderDrawdowns('));
+  }
+});
+
+}
+/* maximum-drawdown-contract:end */
