@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.27">
+<meta name="fee-console-build" content="4.9.28">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -88,6 +88,18 @@ h1{font-size:19px;margin:0}
   .bench-table th:nth-child(2),.bench-table td:nth-child(2){width:28%}
   .bench-table th:nth-child(3),.bench-table td:nth-child(3){width:43%}
 }
+/* compact-comparison-tables:styles */
+.bench-table.metric-table th,.bench-table.metric-table td{padding:7px 6px;vertical-align:top}
+.bench-table.metric-table th:nth-child(1),.bench-table.metric-table td:nth-child(1){width:26%}
+.bench-table.metric-table th:nth-child(2),.bench-table.metric-table td:nth-child(2){width:48%;text-align:left;white-space:normal;overflow-wrap:anywhere}
+.bench-table.metric-table th:nth-child(3),.bench-table.metric-table td:nth-child(3){width:26%;text-align:right}
+.metric-table .metric-value{font-size:14px;font-weight:650;white-space:nowrap}
+.metric-table .metric-method{font-weight:500;color:var(--ink-2)}
+.bench-table.drawdown-table th:nth-child(1),.bench-table.drawdown-table td:nth-child(1){width:15%}
+.bench-table.drawdown-table th:nth-child(2),.bench-table.drawdown-table td:nth-child(2){width:26%;text-align:right;white-space:nowrap}
+.bench-table.drawdown-table th:nth-child(3),.bench-table.drawdown-table td:nth-child(3){width:59%;text-align:left;overflow-wrap:anywhere;line-height:1.5}
+.drawdown-table .episode-recovery{display:block;color:var(--ink-2);margin-top:3px}
+@media(max-width:430px){.metric-table .metric-value{font-size:12px}.drawdown-table .episode-detail{font-size:10px}.bench-table.metric-table th,.bench-table.metric-table td{padding:7px 5px}}
 .amt{color:var(--ink-1);font-weight:600}
 nav.tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin-bottom:12px}
 nav.tabs button{flex:1;background:none;border:none;border-bottom:2px solid transparent;color:var(--ink-2);padding:10px 4px;font-size:15px;cursor:pointer;font-family:inherit;margin-bottom:-1px}
@@ -950,7 +962,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.27";
+const UI_VERSION_LABEL=" · v4.9.28";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2051,17 +2063,28 @@ function returnPeriodLabel(from,to){
   return Number.isSafeInteger(days)&&days>0?`${from} → ${to}，共 ${days} 个自然日`:null;
 }
 /* return-period-display:end */
+/* compact-comparison-tables:start */
+const DRAWDOWN_METHOD_NOTE="按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。下跌历时为高点至低点的日期差；恢复历时从低点起算。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。";
+function renderReturnComparison(st){
+  const row=(key,label,method,detail,value,tag="")=>`<tr data-return-series="${key}"><td><span class="scenario">${label}</span>${tag?`<span class="tag">${tag}</span>`:""}</td><td><span class="metric-method">${method}</span><span class="tag">${detail}</span></td><td><b class="metric-value ${sgn(value)}">${pct(value)}</b></td></tr>`;
+  const rows=row("actual","组合毛","TWR","管理能力",st.twrG)+row("investor","出资方","Modified Dietz","日末资金流模型",st.mwrD)+st.bench.map(b=>{
+    const known=b.k==="spy"||b.k==="qqq",label=known?b.k.toUpperCase():esc(b.name);
+    return row(esc(b.k),label,known?"含息 ETF TWR":"TWR",known?"股息税后":"旧欧洲收盘口径",b.twr,st.benchmarkPending?`截至 ${st.benchAsOf}`:"同期");
+  }).join("");
+  return `<div class="bench-title">收益率对比</div><div class="bench-table-wrap"><table class="bench-table metric-table" aria-label="收益率对比，TWR 与 Modified Dietz 口径不同"><thead><tr><th scope="col">项目</th><th scope="col">口径</th><th scope="col">收益率</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+/* compact-comparison-tables:end */
 function renderDrawdowns(feeView){
   const view=drawdownView(feeView),period=returnPeriodLabel(view.start,view.through),returns=returnPeriodLabel(feeView.start,feeView.asOf);
   const samePeriod=!!(period&&returns&&view.start===feeView.start&&view.through===feeView.asOf);
   const range=!period?"回撤统计期间待核实":samePeriod?"":`回撤统计期间：${period}${returns?`（收益截至 ${feeView.asOf}，区间不同）`:"（收益区间待核实）"}`;
   const rows=[["actual","组合"],["spy","SPY"],["qqq","QQQ"]].map(([key,label])=>{
     const value=view[key],ready=value.state==="verified",phase=ready&&value.value>0?`峰值 ${value.peakDate} → 谷值 ${value.troughDate}`:"";
-    const interval=!ready?"回撤期间未核实":value.value===0?"无回撤，无对应下跌区间":`高点 ${value.peakDate} → 低点 ${value.troughDate} · 下跌 ${value.declineDays} 个自然日`;
-    const recovery=!ready?"恢复情况未核实":value.value===0?"":value.recoveryState==="recovered"?`该次回撤恢复前高 ${value.recoveryDate} · 低点后 ${value.recoveryDays} 个自然日`:value.recoveryState==="unrecovered"?`截至 ${view.through} 尚未恢复前高`:"恢复情况未核实";
-    return `<div data-drawdown-series="${key}" style="margin-bottom:6px"><div class="rr"><span>${label}</span><b${ready&&value.value>0?' class="neg"':""}${phase?` title="${phase}"`:""}>${ready?pct(-value.value):"未核实"}</b></div><div class="small">${interval}</div>${recovery?`<div class="small">${recovery}</div>`:""}</div>`;
+    const interval=!ready?"回撤期间未核实":value.value===0?"无回撤，无对应下跌区间":`高点 ${value.peakDate} → 低点 ${value.troughDate}<span class="tag">下跌 ${value.declineDays} 个自然日</span>`;
+    const recovery=!ready?"恢复情况未核实":value.value===0?"":value.recoveryState==="recovered"?`恢复前高 ${value.recoveryDate}<span class="tag">低点后 ${value.recoveryDays} 个自然日</span>`:value.recoveryState==="unrecovered"?`截至 ${view.through} 尚未恢复前高`:"恢复情况未核实";
+    return `<tr data-drawdown-series="${key}"><td><span class="scenario">${label}</span></td><td><b class="metric-value${ready&&value.value>0?' neg':""}"${phase?` title="${phase}"`:""}>${ready?pct(-value.value):"未核实"}</b></td><td class="episode-detail">${interval}${recovery?`<span class="episode-recovery">${recovery}</span>`:""}</td></tr>`;
   }).join("");
-  return `<div role="group" aria-label="${samePeriod?"同期最大回撤":"最大回撤"}，费前"><div class="lab" style="margin-top:14px">${samePeriod?"同期最大回撤":"最大回撤"} · 费前</div>${range?`<div class="small">${range}</div>`:""}${rows}<div class="note">按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。下跌历时为高点至低点的日期差；恢复历时从低点起算。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。</div></div>`;
+  return `<div role="group" aria-label="${samePeriod?"同期最大回撤":"最大回撤"}，费前"><div class="bench-title">最大回撤对比 · 费前</div>${range?`<div class="small">${range}</div>`:""}<div class="bench-table-wrap"><table class="bench-table metric-table drawdown-table" aria-label="最大回撤及其发生期间与恢复情况"><thead><tr><th scope="col">项目</th><th scope="col">最大回撤</th><th scope="col">发生期间 · 恢复</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
 }
 /* max-drawdown-view:end */
 function receiptState(feeView){
@@ -2229,7 +2252,6 @@ function renderKPIs(feeView,st,B,G){
   const gateBox=document.getElementById("gateBox");
   gateBox.innerHTML=G.loading?'<div class="note" role="status">正在读取并核验，请稍候…</div>':G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
     <ul>${G.holdReasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>`:"";
-  const rr=(lab,v)=>`<div class="rr"><span>${lab}</span><b class="${sgn(v)}">${pct(v)}</b></div>`;
   /* 展示合并 cash+other；经核实的成长/价值及独立黄金与 stock 对账；旧点缺少黄金等于零。 */
   const hasMix=!!(lp&&(lp.cash!=null||lp.stock!=null||lp.other!=null));
   const mixV={cash:num(lp&&lp.cash),stock:num(lp&&lp.stock),other:num(lp&&lp.other)};
@@ -2254,10 +2276,11 @@ function renderKPIs(feeView,st,B,G){
     <li><b>相同资金路径：</b>现金流匹配的被动账户期末值，是相同资金路径下的期末金额。模拟账户以已验证期初本金开始；每日先按原始收盘价及扣除 30% 美国预扣税后的股息再投资计收益，再按当日收盘加入同额已核实外部出入金（包括有效实物转仓）。不用月净流量或收益率乘本金代替；私密流水不对外公开。</li>
     <li><b>可比收益率：</b>组合毛 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较；基准股息按 30% 美国预扣税净额再投资，与组合实际入账的净股息同口径。</li>
     <li><b>金额与费用：</b>金额差＝实际资产－模拟余额。实际资产未扣尚未支付的应计费用；模拟沿用含息基准（股息税后），除股息预扣税外不计其它个人税费、交易成本或管理费。短期 1–3 天的 benchmark 缺口会显示最近已验证余额作为参考估算，不假设未知市场收益，并只与基准覆盖日的同日基金资产比较；缺口内有资金流或超过 3 天时不显示估算金额。Modified Dietz 与所有费用仍只读取计算回执；本表不是第二套费用计算，也不是投资建议。</li>
+    <li><b>最大回撤：</b>${DRAWDOWN_METHOD_NOTE}</li>
   </ol><div class="note">${st.benchAsOf?`基准收益截至 ${st.benchAsOf}${st.benchPriceAsOf&&st.benchPriceAsOf!==st.benchAsOf?`；最近收盘日 ${st.benchPriceAsOf}`:""}。${benchmarkPendingLabel?` ${benchmarkPendingLabel}。`:""}${verifiedClosureLabel?`<br>${verifiedClosureLabel}`:""}<br>`:""}${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,benchmarkDayDiff(feeView.start,st.benchAsOf)+1))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
   const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${topHoldingsView(lp,st.nav)}${mix}`;
   if(feeView.state!=="verified"){
-    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="lab">收益率</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView)}</div>`;return;
+    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="bench-title">收益率对比</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView)}${benchmarkMethod}</div>`;return;
   }
   document.getElementById("kpis").innerHTML=`
   ${assetCard}
@@ -2265,9 +2288,7 @@ function renderKPIs(feeView,st,B,G){
     <div class="note">毛收益 ${usd(st.gross,0)} − 费用 ${usd(st.feesAll,0)}</div></div>
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
     <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">统计期间：${returnPeriodLabel(feeView.start,feeView.asOf)||"未核实"}</div>
-    ${rr("组合毛 TWR（管理能力）",st.twrG)}
-    ${rr("出资方 Modified Dietz（EOD flow 模型）",st.mwrD)}
-    ${st.bench.map(b=>rr((st.benchmarkPending?`截至 ${st.benchAsOf} `:"同期 ")+b.name,b.twr)).join("")}
+    ${renderReturnComparison(st)}
     ${renderDrawdowns(feeView)}${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
   const box=document.getElementById("chart1");if(feeView.state!=="verified"){document.getElementById("chartAsOf").textContent="";box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
   const s=st.rows.slice(-12).map(row=>({d:row.to,cum:row.cum,hwm:row.hwm,tot:row.closeT}));
