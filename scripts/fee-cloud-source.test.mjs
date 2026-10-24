@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
 import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate, latestCommonBenchmarkDate, normalizeRead as normalizeCloudRead, parseTradeJson, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
+import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, styleRecoveryLockDigest, matchesPrivateStyleRecoveryLock, verifyStyleRecoveryFirstHeld, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
 import { checkCashLedger } from './daily-core.mjs';
@@ -54,6 +54,26 @@ test("writer diagnostics expose fixed categories and stage without private child
     assert.equal(writerFailureCode(stderr), "FEE_CLOUD_WRITER_UNKNOWN");
   }
 });
+test('private recovery lock digest binds every field and ignores only object key order', () => {
+  const lock={schema:'synthetic',targetDate:D,proposalSha256:'a'.repeat(64),portfolioId:123,holdingId:456,ticker:'SYNTH',style:'growth',firstHeldOn:D,effectiveFrom:D};
+  const digest=styleRecoveryLockDigest(lock);
+  assert.match(digest,/^[a-f0-9]{64}$/);
+  assert.equal(styleRecoveryLockDigest(Object.fromEntries(Object.entries(lock).reverse())),digest);
+  for(const key of Object.keys(lock))assert.notEqual(styleRecoveryLockDigest({...lock,[key]:String(lock[key])+'changed'}),digest);
+  assert.equal(matchesPrivateStyleRecoveryLock(lock,D),false);
+  assert.equal(matchesPrivateStyleRecoveryLock({...lock,targetDate:'2020-01-01'},D),false);
+  assert.equal(matchesPrivateStyleRecoveryLock(null,D),false);
+});
+test('scoped recovery first-held proof requires the same dated holding and complete confirmed source history', () => {
+  const proposal={portfolioId:1350094,holdingId:123,ticker:'SYNTH',firstHeldOn:D,effectiveFrom:D};
+  const input={targetDate:D,managementInput:{date:D,historyComplete:true,holdings:[{account:'webull',portfolioId:1350094,holdingId:123,ticker:'SYNTH',sourceDate:D}],trades:[{portfolioId:1350094,holdingId:123,type:'BUY',date:D,confirmed:true}]}};
+  assert.doesNotThrow(()=>verifyStyleRecoveryFirstHeld(input,proposal));
+  for(const mutate of [x=>x.managementInput.historyComplete=false,x=>x.managementInput.holdings[0].holdingId=456,x=>x.managementInput.holdings[0].sourceDate='2020-01-01',x=>x.managementInput.trades[0].date='2020-01-01',x=>x.managementInput.trades[0].date='2099-01-01',x=>x.managementInput.trades[0].confirmed=false,x=>x.managementInput.holdings[0].ticker='WRONG',x=>x.managementInput.trades=[]]){
+    const copy=structuredClone(input);mutate(copy);assert.throws(()=>verifyStyleRecoveryFirstHeld(copy,proposal),/^Error: FEE_CLOUD_STYLE_PROPOSAL_FIRST_HELD$/);
+  }
+  assert.throws(()=>verifyStyleRecoveryFirstHeld(input,{...proposal,firstHeldOn:'2020-01-01'}),/FIRST_HELD/);
+});
+
 const benchmarkCache = { v: 1, benchmarks: {
   spy: { series: [{ d: "2026-09-22", p: 700 }, { d: D, p: 701, div: 1.5 }] },
   qqq: { series: [{ d: "2026-09-22", p: 600 }, { d: D, p: 602 }] },
