@@ -32,12 +32,41 @@ const styleProposalOutside = (root, target) => {
   return relative === '..' || relative.startsWith('..' + path.sep);
 };
 
+// One reviewed private recovery artifact. The digest is not human authorization.
+// Changing this exact scope still requires protected code and private-input approval.
+const PRIVATE_STYLE_RECOVERY_LOCK_SHA256 = "ccf950804e851df92a63f7c86601ac9d31026b35b24f36cb8719814e9afeeed6";
+export function styleRecoveryLockDigest(lock) {
+  return crypto.createHash('sha256').update(JSON.stringify(Object.fromEntries(
+    Object.keys(lock).sort().map(key => [key, lock[key]])))).digest('hex');
+}
+export function matchesPrivateStyleRecoveryLock(lock, targetDate) {
+  return !!lock && typeof lock === 'object' && !Array.isArray(lock)
+    && isIsoDate(targetDate) && lock.targetDate === targetDate
+    && styleRecoveryLockDigest(lock) === PRIVATE_STYLE_RECOVERY_LOCK_SHA256;
+}
+export function verifyStyleRecoveryFirstHeld(input, proposal) {
+  const source = input?.managementInput;
+  if (!proposal || proposal.portfolioId !== STYLE_ACCOUNTS.webull
+      || proposal.firstHeldOn !== proposal.effectiveFrom
+      || !source || source.historyComplete !== true || source.date !== input.targetDate
+      || !Array.isArray(source.holdings) || !Array.isArray(source.trades)) styleProposalFail('FIRST_HELD');
+  const held = source.holdings.filter(row => row.portfolioId === proposal.portfolioId
+    && row.holdingId === proposal.holdingId && row.ticker === proposal.ticker
+    && row.account === 'webull' && row.sourceDate === input.targetDate);
+  const history = source.trades.filter(row => row.portfolioId === proposal.portfolioId && row.holdingId === proposal.holdingId);
+  const buys = history.filter(row => row.type === 'BUY');
+  if (held.length !== 1 || !buys.length || history.some(row => row.confirmed !== true
+      || !isIsoDate(row.date) || row.date < proposal.firstHeldOn || row.date > input.targetDate)
+      || buys.map(row => row.date).sort()[0] !== proposal.firstHeldOn) styleProposalFail('FIRST_HELD');
+}
+
 export function loadStyleProposal(filename, targetDate, repoRoot, lockText) {
   if (filename === undefined) return { proposal: undefined, checkCurrent() {} };
-  let lock;
+  let lock, recoveryLock = false;
   try {
     lock = JSON.parse(lockText);
-    if (!lock || Object.keys(lock).sort().join(',') !==
+    recoveryLock = matchesPrivateStyleRecoveryLock(lock, targetDate);
+    if (!recoveryLock && (!lock || Object.keys(lock).sort().join(',') !==
         'effectiveFrom,firstHeldOn,holdingId,portfolioId,proposalSha256,schema,style,targetDate,ticker'
         || lock.schema !== 'fee-console.style-proposal-lock.v1'
         || targetDate !== '2026-10-12' || lock.targetDate !== targetDate
@@ -45,7 +74,7 @@ export function loadStyleProposal(filename, targetDate, repoRoot, lockText) {
         || lock.portfolioId !== STYLE_ACCOUNTS.schwab
         || !Number.isSafeInteger(lock.holdingId) || lock.holdingId <= 0
         || lock.ticker !== 'AMZN' || lock.style !== 'growth'
-        || lock.firstHeldOn !== '2025-11-04' || lock.effectiveFrom !== lock.firstHeldOn) styleProposalFail('LOCK');
+        || lock.firstHeldOn !== '2025-11-04' || lock.effectiveFrom !== lock.firstHeldOn)) styleProposalFail('LOCK');
   } catch { styleProposalFail('LOCK'); }
   const read = () => {
     try {
@@ -82,7 +111,7 @@ export function loadStyleProposal(filename, targetDate, repoRoot, lockText) {
     if (['portfolioId', 'holdingId', 'ticker', 'style', 'firstHeldOn', 'effectiveFrom']
       .some(key => proposal[key] !== lock[key])) styleProposalFail('SCOPE');
   } catch { styleProposalFail('INPUT'); }
-  return { proposal, checkCurrent() {
+  return { proposal, ...(recoveryLock ? { requiresFirstHeldProof: true } : {}), checkCurrent() {
     let current;
     try { current = read(); } catch { styleProposalFail('CHANGED'); }
     if (!current.bytes.equals(first.bytes) || current.ino !== first.ino
@@ -499,6 +528,7 @@ export async function produce(options = {}) {
       incomeInput.checkCurrent();
       input.sourceFetchedAt = checkedAt;
       stage = "PREPARE";
+      if (styleProposal.requiresFirstHeldProof) verifyStyleRecoveryFirstHeld(input, styleProposal.proposal);
       input.styleInput = mergeStyleProposal(input.styleInput, styleProposal.proposal);
       styleProposal.checkCurrent();
       fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
