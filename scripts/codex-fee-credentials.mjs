@@ -7,6 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
+import { validateHealth } from "./fee-data-health.mjs";
+import { validateFeeCalculationReceiptWithEcon, canonicalJson } from "./fee-receipt-core.mjs";
+import { buildIbManagerReturnReceipt, buildIbManagerDrawdownReceipt } from "./ib-manager-return.mjs";
+import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
+import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 
 const ACCOUNT = "huanwujoy-crypto";
 const SERVICES = Object.freeze({
@@ -15,6 +20,215 @@ const SERVICES = Object.freeze({
 });
 const GIST_RE = /^(?:[a-f0-9]{20}|[a-f0-9]{32})$/;
 const KEY_RE = /^[A-Za-z0-9_+/-]{43}={0,2}$/;
+
+// This mode stages an encrypted local file only. It never issues health,
+// publishes, changes a ledger or treats a plan as authorization. Use only after
+// human approval of this exact code and the concrete one-time private inputs.
+const ATTACH_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const PUBLIC_REPO_API = "https://api.github.com/repos/huanwujoy-crypto/fee-console";
+const ATTACH_CODES = new Set(["PLAN", "LOCAL_ONLY", "PRIVATE_FILE", "INPUT_CHANGED", "HEALTH",
+  "WINDOW", "PUBLIC_BASE", "CODE_CHANGED", "KEYCHAIN", "KEY", "LOCATOR", "SOURCE", "VERSION",
+  "RECEIPT", "LEGACY_SOURCE", "PERIOD", "WRITER", "REPORTER", "NON_IB_CHANGED", "OUTPUT", "CLEANUP"]);
+export class LocalAttachmentError extends Error {
+  constructor(code) { super("IB_LOCAL_" + (ATTACH_CODES.has(code) ? code : "OUTPUT")); this.name = "LocalAttachmentError"; }
+}
+const attachFail = code => { throw new LocalAttachmentError(code); };
+const attachHash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
+const exact = (v, keys) => v && typeof v === "object" && !Array.isArray(v)
+  && Object.keys(v).sort().join(",") === [...keys].sort().join(",");
+const outside = (base, file) => { const r = path.relative(base, file); return r === ".." || r.startsWith(".." + path.sep); };
+const gitBlob = bytes => crypto.createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+const parseExact = bytes => createLegacyPolicy().parseExactJson(bytes);
+
+function attachmentDirectory(file) {
+  if (typeof file !== "string" || !path.isAbsolute(file)) attachFail("PRIVATE_FILE");
+  const s = fs.lstatSync(file), real = fs.realpathSync(file);
+  if (!s.isDirectory() || s.isSymbolicLink() || real !== file || (s.mode & 0o777) !== 0o700
+      || s.uid !== process.getuid() || !outside(ATTACH_ROOT, real)) attachFail("PRIVATE_FILE");
+  for (let at = real; ; at = path.dirname(at)) {
+    if (fs.existsSync(path.join(at, ".git"))) attachFail("PRIVATE_FILE");
+    if (at === path.dirname(at)) break;
+  }
+  return { path: real, dev: s.dev, ino: s.ino };
+}
+function attachmentFile(spec, directory) {
+  if (!exact(spec, ["path", "sha256"]) || typeof spec.path !== "string" || !path.isAbsolute(spec.path)
+      || path.dirname(spec.path) !== directory.path || !/^[a-f0-9]{64}$/.test(spec.sha256)) attachFail("PRIVATE_FILE");
+  const read = () => {
+    const d = attachmentDirectory(directory.path), s = fs.lstatSync(spec.path);
+    if (d.dev !== directory.dev || d.ino !== directory.ino) attachFail("INPUT_CHANGED");
+    if (!s.isFile() || s.isSymbolicLink() || fs.realpathSync(spec.path) !== spec.path || (s.mode & 0o777) !== 0o600
+        || s.uid !== process.getuid() || s.size < 1 || s.size > 5 * 1024 * 1024) attachFail("PRIVATE_FILE");
+    const fd = fs.openSync(spec.path, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    try {
+      const a = fs.fstatSync(fd), bytes = fs.readFileSync(fd), b = fs.fstatSync(fd);
+      if (a.dev !== s.dev || a.ino !== s.ino || a.size !== b.size || a.mtimeMs !== b.mtimeMs || a.ctimeMs !== b.ctimeMs
+          || (a.mode & 0o777) !== 0o600 || a.uid !== process.getuid() || attachHash(bytes) !== spec.sha256) attachFail("INPUT_CHANGED");
+      return { bytes, dev: a.dev, ino: a.ino };
+    } finally { fs.closeSync(fd); }
+  };
+  const first = read(); return { ...first, check() { const next = read(); if (next.dev !== first.dev || next.ino !== first.ino || !next.bytes.equals(first.bytes)) attachFail("INPUT_CHANGED"); } };
+}
+function attachmentOwnedFile(file, directory) {
+  const s = fs.lstatSync(file);
+  if (path.dirname(file) !== directory.path || !s.isFile() || s.isSymbolicLink() || (s.mode & 0o777) !== 0o600
+      || s.uid !== process.getuid() || s.size < 1 || s.size > 5 * 1024 * 1024) attachFail("PRIVATE_FILE");
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW); let bytes;
+  try { const a = fs.fstatSync(fd); if (a.dev !== s.dev || a.ino !== s.ino || (a.mode & 0o777) !== 0o600 || a.uid !== process.getuid()) attachFail("PRIVATE_FILE"); bytes = fs.readFileSync(fd); }
+  finally { fs.closeSync(fd); }
+  return attachmentFile({ path: file, sha256: attachHash(bytes) }, directory);
+}
+function attachmentDecode(bytes, version, key) {
+  const outer = parseExact(bytes);
+  if (!exact(outer, ["enc", "v", "data"]) || outer.enc !== true || outer.v !== version || typeof outer.data !== "string") attachFail("RECEIPT");
+  const b = Buffer.from(outer.data, "base64"); if (b.length < 29 || b.toString("base64") !== outer.data) attachFail("RECEIPT");
+  const d = crypto.createDecipheriv("aes-256-gcm", key, b.subarray(0, 12)); d.setAuthTag(b.subarray(-16));
+  const plain = Buffer.concat([d.update(b.subarray(12, -16)), d.final()]); try { return parseExact(plain); } finally { plain.fill(0); }
+}
+
+/** Fixed transport; overrides exist only for synthetic tests, not CLI options.
+ * No retry, shell, logging, fallback credential, token, or write-capable request.
+ */
+export function createLocalAttachmentRuntime({ spawnImpl = spawnSync, fetchImpl = globalThis.fetch,
+    now = () => new Date(), platform = process.platform } = {}) {
+  const capture = (binary, args, options = {}) => {
+    const r = spawnImpl(binary, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      shell: false, timeout: 15_000, killSignal: "SIGKILL", maxBuffer: 8 * 1024 * 1024,
+      env: { PATH: "/usr/bin:/bin", TMPDIR: "/tmp" }, ...options });
+    return r;
+  };
+  const publicRead = async route => {
+    if (![/^\/git\/ref\/heads\/main$/, /^\/commits\/[a-f0-9]{40}$/, /^\/git\/trees\/[a-f0-9]{40}\?recursive=1$/].some(r => r.test(route))) attachFail("PUBLIC_BASE");
+    const url = PUBLIC_REPO_API + route, controller = new AbortController(); let timer;
+    try {
+      const operation = (async () => {
+        const r = await fetchImpl(url, { method: "GET", redirect: "manual", credentials: "omit", cache: "no-store",
+          referrerPolicy: "no-referrer", signal: controller.signal, headers: { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" } });
+        if (r.status !== 200 || r.redirected || (r.url && r.url !== url) || !r.body?.getReader) attachFail("PUBLIC_BASE");
+        const reader = r.body.getReader(), chunks = []; let length = 0;
+        try { for (;;) { const next = await reader.read(); if (next.done) break; length += next.value.byteLength; if (length > 8 * 1024 * 1024) attachFail("PUBLIC_BASE"); chunks.push(Buffer.from(next.value)); } }
+        finally { Promise.resolve(reader.cancel()).catch(() => {}); reader.releaseLock(); }
+        return parseExact(Buffer.concat(chunks));
+      })();
+      return await Promise.race([operation, new Promise((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new LocalAttachmentError("PUBLIC_BASE")); }, 10_000); })]);
+    } catch { attachFail("PUBLIC_BASE"); } finally { clearTimeout(timer); }
+  };
+  return Object.freeze({ platform, now, publicRead,
+    git(args) { const r = capture("/usr/bin/git", args, { cwd: ATTACH_ROOT }); if (r.status !== 0 || r.error || String(r.stderr || "").trim()) attachFail("CODE_CHANGED"); return String(r.stdout || "").trim(); },
+    readKeychain(service) {
+      if (!Object.values(SERVICES).includes(service)) attachFail("KEYCHAIN");
+      const r = capture("/usr/bin/security", ["find-generic-password", "-s", service, "-a", ACCOUNT, "-w"], { maxBuffer: 4096 });
+      if (r.status !== 0 || r.error || String(r.stderr || "").trim()) attachFail("KEYCHAIN"); return String(r.stdout || "").trim();
+    },
+    acquireEconomic(directory) { return fetchEconomicSnapshot({ fetchImpl, tempRoot: directory, attempts: 1 }); },
+    runNode(request) { return capture(process.execPath, request.args, { cwd: ATTACH_ROOT, env: request.env, timeout: 20_000, maxBuffer: 4096 }); },
+  });
+}
+
+async function attachmentPublicBase(base, health, runtime) {
+  const ref = await runtime.publicRead("/git/ref/heads/main"), head = ref?.object?.sha;
+  if (!/^[a-f0-9]{40}$/.test(head || "") || runtime.git(["rev-parse", "HEAD"]) !== head
+      || runtime.git(["status", "--porcelain", "--untracked-files=all"])) attachFail("CODE_CHANGED");
+  const commit = await runtime.publicRead("/commits/" + head);
+  if (commit?.sha !== head || commit?.commit?.verification?.verified !== true
+      || commit?.author?.login !== ACCOUNT || commit?.author?.id !== 283054367 || !/^[a-f0-9]{40}$/.test(commit?.commit?.tree?.sha || "")) attachFail("PUBLIC_BASE");
+  const tree = await runtime.publicRead("/git/trees/" + commit.commit.tree.sha + "?recursive=1");
+  if (tree?.sha !== commit.commit.tree.sha || tree.truncated !== false || !Array.isArray(tree.tree)) attachFail("PUBLIC_BASE");
+  const seen = new Set(), scripts = [];
+  for (const f of tree.tree) {
+    if (typeof f.path !== "string" || seen.has(f.path)) attachFail("PUBLIC_BASE"); seen.add(f.path);
+    if (f.path.startsWith("scripts/") && f.path.endsWith(".mjs")) {
+      if (!/^scripts\/[a-z0-9-]+(?:\.test)?\.mjs$/.test(f.path) || f.type !== "blob" || f.mode !== "100644" || !/^[a-f0-9]{40}$/.test(f.sha || "")) attachFail("PUBLIC_BASE");
+      scripts.push(f);
+    }
+  }
+  if (!scripts.some(f => f.path === "scripts/codex-fee-credentials.mjs") || scripts.length < 10) attachFail("PUBLIC_BASE");
+  const check = () => {
+    if (runtime.git(["rev-parse", "HEAD"]) !== head || runtime.git(["status", "--porcelain", "--untracked-files=all"])) attachFail("CODE_CHANGED");
+    for (const f of scripts) { const file = path.join(ATTACH_ROOT, f.path), s = fs.lstatSync(file); if (!s.isFile() || s.isSymbolicLink() || fs.realpathSync(file) !== file || gitBlob(fs.readFileSync(file)) !== f.sha) attachFail("CODE_CHANGED"); }
+    for (const [name, bytes] of [["data.json", base.bytes], ["fee-data-health.json", health.bytes]]) { const f = tree.tree.find(x => x.path === name); if (f?.type !== "blob" || f.mode !== "100644" || f.sha !== gitBlob(bytes)) attachFail("PUBLIC_BASE"); }
+  };
+  check(); return { head, check, async checkCurrent() { check(); if ((await runtime.publicRead("/git/ref/heads/main"))?.object?.sha !== head) attachFail("PUBLIC_BASE"); } };
+}
+
+export function readLocalAttachmentPlan(file) {
+  const directory = attachmentDirectory(path.dirname(file)), snapshot = attachmentOwnedFile(file, directory), plan = parseExact(snapshot.bytes);
+  snapshot.check(); if (plan?.workspace !== directory.path) attachFail("PLAN"); return { plan, check: () => snapshot.check() };
+}
+
+export async function prepareLocalIbAttachment({ plan, environ = process.env, checkPlan = () => {},
+    runtime = createLocalAttachmentRuntime() } = {}) {
+  let source, output, identity, keyText, key, env, finalChecks, candidateCheck, result, errorCode;
+  const cleanupOutput = () => {
+    if (!identity) return; const s = fs.lstatSync(output);
+    if (!s.isDirectory() || s.isSymbolicLink() || s.dev !== identity.dev || s.ino !== identity.ino) attachFail("CLEANUP");
+    for (const n of ["data.json", "validation.json"]) { const f = path.join(output, n); if (fs.existsSync(f)) { const st = fs.lstatSync(f); if (!st.isFile() || st.isSymbolicLink()) attachFail("CLEANUP"); fs.unlinkSync(f); } }
+    fs.rmdirSync(output); identity = undefined;
+  };
+  try {
+    const diagnosticLaunch = a => /^(?:--inspect(?:-brk|-wait)?|--(?:require|import|loader|experimental-loader|cpu-prof|heap-prof|trace-events-enabled|report-on-signal|report-on-fatalerror|heapsnapshot-signal)|-r)(?:=|$)/.test(a)
+      || /^--heapsnapshot-near-heap-limit=(?!0$)/.test(a);
+    if (runtime.platform !== "darwin" || /^(true|1)$/i.test(String(environ.GITHUB_ACTIONS || "")) || process.execArgv.some(diagnosticLaunch)) attachFail("LOCAL_ONLY");
+    if (["FEE_DATA_KEY", "FEE_ECON_GIST_ID", "FEE_ECON_GITHUB_TOKEN", "FEE_ECON_FILE", "FEE_ECON_V3_FILE", "GH_TOKEN", "GITHUB_TOKEN", "NODE_OPTIONS", "NODE_PATH"].some(n => Object.hasOwn(environ, n))
+        || Object.keys(environ).some(n => /^(?:DYLD_|LD_)/.test(n))) attachFail("LOCAL_ONLY");
+    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "ibInput", "legacySource"]) || plan.schema !== "fee-console.ib-local-attachment-plan.v1"
+        || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate)) attachFail("PLAN");
+    checkPlan(); const directory = attachmentDirectory(plan.workspace), base = attachmentFile(plan.baseData, directory), healthFile = attachmentFile(plan.baseHealth, directory), ib = attachmentFile(plan.ibInput, directory), legacy = plan.legacySource === null ? null : attachmentFile(plan.legacySource, directory);
+    const checks = () => { checkPlan(); base.check(); healthFile.check(); ib.check(); legacy?.check(); }; finalChecks = checks;
+    const health = parseExact(healthFile.bytes), now = runtime.now(), age = (Date.parse(now.toISOString().slice(0, 10)) - Date.parse(plan.targetDate)) / 86_400_000;
+    if (!Number.isInteger(age) || age < 0 || age > 4) attachFail("WINDOW");
+    if (healthFile.bytes.toString() !== JSON.stringify(health, null, 2) + "\n" || validateHealth(health, { now }).length || !["updated", "no-op"].includes(health.outcome)
+        || health.targetDate !== plan.targetDate || health.dataSha256 !== attachHash(base.bytes) || Object.values(health.sourceDates).some(d => d !== plan.targetDate)) attachFail("HEALTH");
+    output = path.join(directory.path, "candidate"); if (fs.existsSync(output)) attachFail("OUTPUT");
+    const publicBase = await attachmentPublicBase(base, healthFile, runtime);
+    const allChecks = () => { checks(); publicBase.check(); }; finalChecks = allChecks;
+    try { keyText = runtime.readKeychain(SERVICES.key); } catch { attachFail("KEYCHAIN"); }
+    if (typeof keyText !== "string" || !KEY_RE.test(keyText)) attachFail("KEY"); key = Buffer.from(keyText.replace(/-/g, "+").replace(/_/g, "/"), "base64"); if (key.length !== 32) attachFail("KEY");
+    let locator; try { locator = runtime.readKeychain(SERVICES.gist); } catch { attachFail("KEYCHAIN"); }
+    if (typeof locator !== "string" || !GIST_RE.test(locator)) attachFail("LOCATOR");
+    try { process.env.FEE_ECON_GIST_ID = locator; source = await runtime.acquireEconomic(directory.path); } catch { attachFail("SOURCE"); }
+    finally { delete process.env.FEE_ECON_GIST_ID; locator = undefined; }
+    if (source?.envelopeVersion !== 4 || typeof source.checkCurrent !== "function" || typeof source.cleanup !== "function") attachFail("VERSION");
+    const sourceDirectory = attachmentDirectory(path.dirname(source.sourcePath)); if (path.dirname(sourceDirectory.path) !== directory.path) attachFail("PRIVATE_FILE");
+    const econFile = attachmentOwnedFile(source.sourcePath, sourceDirectory), economic = attachmentDecode(econFile.bytes, 4, key), before = attachmentDecode(base.bytes, 3, key), fee = before.feeCalculationReceipt;
+    if (!validateFeeCalculationReceiptWithEcon(fee, before, economic).ok) attachFail("RECEIPT");
+    let checkLegacy; try { checkLegacy = guardLegacySourceFile(economic, key, plan.legacySource?.path || null); } catch { attachFail("LEGACY_SOURCE"); }
+    const input = parseExact(ib.bytes), expectedReturn = await buildIbManagerReturnReceipt(input), expectedDrawdown = await buildIbManagerDrawdownReceipt(input);
+    if (fee.asOf !== plan.targetDate || expectedReturn.start !== fee.start || expectedReturn.asOf !== plan.targetDate) attachFail("PERIOD");
+    env = { PATH: path.dirname(process.execPath) + ":/usr/bin:/bin", FEE_DATA_KEY: keyText, FEE_ECON_FILE: source.sourcePath }; if (legacy) env.FEE_ECON_V3_FILE = plan.legacySource.path;
+    const run = async (args, expected, code) => {
+      allChecks(); econFile.check(); checkLegacy(); let r; try { r = await runtime.runNode({ args, env }); } catch { attachFail(code); }
+      if (r?.status !== 0 || r.error || String(r.stderr || "").trim() || String(r.stdout || "").trim() !== expected) attachFail(code);
+      allChecks(); econFile.check(); checkLegacy();
+    };
+    const args = [path.join(ATTACH_ROOT, "scripts/daily.mjs"), "--ib-return-only", "--file=" + plan.baseData.path, "--ib-return-input=" + plan.ibInput.path];
+    await run(args, "IB_RETURN_ATTACHMENT_DRY_RUN_OK", "WRITER");
+    fs.mkdirSync(output, { mode: 0o700 }); identity = fs.lstatSync(output); const file = path.join(output, "data.json");
+    await run([...args, "--execute", "--ib-return-output=" + file], "IB_RETURN_ENCRYPTED_CANDIDATE_PREPARED", "WRITER");
+    if (fs.readdirSync(output).sort().join(",") !== "data.json") attachFail("OUTPUT");
+    const out = attachmentOwnedFile(file, attachmentDirectory(output)); candidateCheck = () => out.check();
+    const after = attachmentDecode(out.bytes, 3, key), strip = v => Object.fromEntries(Object.entries(v).filter(([k]) => !["ibManagerReturnReceipt", "ibManagerDrawdownReceipt"].includes(k)));
+    if (canonicalJson(strip(before)) !== canonicalJson(strip(after)) || canonicalJson(fee) !== canonicalJson(after.feeCalculationReceipt)) attachFail("NON_IB_CHANGED");
+    if (canonicalJson(after.ibManagerReturnReceipt) !== canonicalJson(expectedReturn) || canonicalJson(after.ibManagerDrawdownReceipt) !== canonicalJson(expectedDrawdown)
+        || !validateFeeCalculationReceiptWithEcon(after.feeCalculationReceipt, after, economic).ok) attachFail("RECEIPT");
+    await run([path.join(ATTACH_ROOT, "scripts/fee-receipt-report.mjs"), "--file=" + file, "--format=validate"], "receipt valid " + plan.targetDate, "REPORTER");
+    try { await source.checkCurrent(); } catch { attachFail("SOURCE"); } await publicBase.checkCurrent(); allChecks(); out.check();
+    result = { schema: "fee-console.ib-local-stage.v1", status: "IB_LOCAL_ATTACHMENT_STAGED_HEALTH_PENDING", targetDate: plan.targetDate, mainSha: publicBase.head,
+      baseDataSha256: attachHash(base.bytes), candidateDataSha256: attachHash(out.bytes), feeReceiptUnchanged: true, nonIbFieldsUnchanged: true,
+      healthCreated: false, publicationReady: false };
+  } catch (error) { errorCode = error instanceof LocalAttachmentError ? error.message.slice(9) : "OUTPUT"; }
+  finally {
+    if (env) { delete env.FEE_DATA_KEY; delete env.FEE_ECON_FILE; delete env.FEE_ECON_V3_FILE; } key?.fill(0); keyText = undefined;
+    try { source?.cleanup?.(); } catch { errorCode = "CLEANUP"; }
+    if (errorCode) try { cleanupOutput(); } catch { errorCode = "CLEANUP"; }
+  }
+  if (errorCode) attachFail(errorCode);
+  try { finalChecks(); candidateCheck(); const d = attachmentDirectory(output); if (d.dev !== identity.dev || d.ino !== identity.ino) attachFail("OUTPUT");
+    fs.writeFileSync(path.join(output, "validation.json"), JSON.stringify(result, null, 2) + "\n", { mode: 0o600, flag: "wx" }); attachmentOwnedFile(path.join(output, "validation.json"), d);
+    if (fs.existsSync(path.join(output, "fee-data-health.json"))) attachFail("OUTPUT");
+  } catch (error) { try { cleanupOutput(); } catch { attachFail("CLEANUP"); } if (error instanceof LocalAttachmentError) throw error; attachFail("OUTPUT"); }
+  return result;
+}
 
 export function parseManagerLink(input) {
   let url;
@@ -121,6 +335,12 @@ async function sourceCheck() {
 }
 
 async function main() {
+  if (process.argv[2] === "attach-ib") {
+    if (process.argv.length !== 4 || !path.isAbsolute(process.argv[3])) attachFail("PLAN");
+    const input = readLocalAttachmentPlan(process.argv[3]);
+    const result = await prepareLocalIbAttachment({ plan: input.plan, checkPlan: input.check });
+    console.log(result.status); return;
+  }
   if ((process.argv[2] === "setup-file" && process.argv.length !== 4)
       || (process.argv[2] !== "setup-file" && process.argv.length !== 3)) {
     throw new Error("USAGE: setup | setup-file <private-link-file> | check");
@@ -143,7 +363,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     const known = new Set(["MANAGER_LINK_INVALID", "MANAGER_LINK_FILE_UNSAFE", "INTERACTIVE_TERMINAL_REQUIRED",
       "CANCELLED", "INPUT_INVALID", "KEYCHAIN_STORE_FAILED", "KEYCHAIN_READ_FAILED",
       "KEYCHAIN_VALUE_INVALID", "ECON_V4_REQUIRED"]);
-    const code = error instanceof SourceFetchError ? sourceFailureCode(error)
+    const code = error instanceof LocalAttachmentError ? error.message : error instanceof SourceFetchError ? sourceFailureCode(error)
       : known.has(error.message) ? error.message : "SOURCE_CHECK_FAILED";
     console.error(`CODEX_FEE_SETUP_FAILED:${code}`);
     process.exitCode = 1;

@@ -51,6 +51,45 @@
    Keychain 弹出访问确认、Mac 锁定或首次读取失败时立即停止，
    不退回到 Claude、浏览器 token 或明文账本。
 
+### 本机独立 IB 加密附件（仅候选，不发布）
+
+完成准确版本代码批准后，可用现有入口
+`./scripts/codex-fee-setup attach-ib <私密计划文件绝对路径>`。
+它只附加已确认的 IB 收益／回撤回执，不读取券商或 Sharesight，不改原经济账本，
+不将 IB 加入原管理费组合。必须另有本次具体输入及限定本机密钥用途的批准；
+JSON 计划、自称 approved、测试回调或文件 hash 都不是授权凭证。
+
+计划及所有输入应在同一仓库外 0700 目录，均为本人拥有、0600 的普通文件，拒绝符号链接。
+计划使用 `fee-console.ib-local-attachment-plan.v1`，只允许 `schema`、`targetDate`、
+`workspace`、`baseData`、`baseHealth`、`ibInput`、`legacySource`；四种输入均以
+`{path,sha256}` 固定完整字节，`legacySource` 对无 legacy-v2 来源可为 null。
+v3-copy.v2 仍须独立原始来源文件，不能从嵌入副本制造原始凭证。
+计划文件在每次使用前后也重新核验。输出固定为该目录的全新 `candidate/`，不覆盖已有文件。
+
+必须以干净本机环境运行，不继承密钥、Gist定位项、经济来源令牌、GH_TOKEN／GITHUB_TOKEN、
+NODE_OPTIONS／NODE_PATH 或动态库注入。拒绝 GitHub Actions、非 Mac、调试／预加载／
+内存转储启动参数。命令自身不会取得代码审批；使用前须独立核对已批准且已受保护合并的
+准确源码，再运行。程序进一步匿名 GET 固定公开仓库的 main 元数据，核对 GitHub 验证签名、
+本人不可变身份、本机 HEAD／干净树、所有 mjs 源文件字节，以及基底 data/health 的 Git blob。
+公开元数据重定向、截断、变化、未合并源码或脏工作树均停止。
+
+读取 Keychain 前，必须有原组合同日真实、未过36小时的成功健康回执，且目标仍在原四 UTC
+日窗口内。仅按固定 account 与两个 service 读取，不回退到其他凭据，不重试系统拒绝，
+不创建 Key／ACL／Secret。密钥不进参数、日志或文件；定位项只去原固定 Gist GET，
+原来源工具双读并在完成后再双读。系统访问确认或拒绝应停下交由本人处理，不扩大权限。
+
+在稳定 v4 经济来源下，顺序调用唯一 writer 的 `--ib-return-only` dry-run、execute，
+再用原 reporter 的 `--format=validate` 核验；解密重建 IB 回执，比较原费用回执和全部
+非 IB 字段完全相同。子进程只接收最小环境，输出必须为固定成功字串，多余输出或任何
+错误均拒绝，CLI 不显示原始异常。临时经济来源仍为加密0600文件，结束清理；新密文和
+本地验证记录为0600。失败只删除自己创建的已知候选，遇未知文件保留现场并报清理失败。
+
+成功只输出 `IB_LOCAL_ATTACHMENT_STAGED_HEALTH_PENDING`。本地验证记录明确
+`healthCreated:false`、`publicationReady:false`；不复制、改时钟或改 hash 来伪造健康回执，
+不签名、上传、推广或启用日程。新的真实来源／style／精确候选关联与健康、受保护推广及
+解锁页面验收仍是后续独立闸门。程序仅尽力清理内存引用，不承诺 JavaScript 字符串可被
+可靠擦除；限定短生命周期进程，禁止调试与转储。
+
 ## 每日顺序
 
 云端主路径与下列数据、计算和发布顺序相同。其固定 GET-only reader、双读、

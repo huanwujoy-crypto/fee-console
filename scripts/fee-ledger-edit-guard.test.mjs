@@ -897,7 +897,8 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
       assert.doesNotMatch(h.element("chart3Legend").innerHTML, absent);
     }
     h.run('legendState.bench=[];renderChart3(legendView,legendState)');
-    assert.match(h.element("chart3Legend").innerHTML, /本组合/);
+    assert.match(h.element("chart3Legend").innerHTML,
+      html.includes('/* return-display-names:manager-jenny-ib:v1 */') ? /管理方 TWR/ : /本组合/);
     assert.doesNotMatch(h.element("chart3Legend").innerHTML, /SPY|QQQ|CSPX|EQAC/);
     h.run('renderChart3({state:"pending",message:"计算回执待更新"},legendState)');
     assert.equal(h.element("chart3Legend").innerHTML, "");
