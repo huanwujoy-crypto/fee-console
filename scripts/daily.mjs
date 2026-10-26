@@ -35,6 +35,7 @@ import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-registry.mjs";
 
 import { resolveManagementExemptions } from './fee-management-exemption.mjs';
+import { prepareIbManagerReturn } from './ib-manager-return-file.mjs';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -73,6 +74,7 @@ const num = (name, raw) => {
 };
 
 const known = new Set([
+  "ib-return-input", "ib-return-output",
   "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint",
   ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, "gold", ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
@@ -80,7 +82,12 @@ const known = new Set([
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
 ]);
 for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${k}`);
-for (const f of flags) if (!["calibrated", "style-preflight", "weekend-carry"].includes(f)) die(`unknown flag --${f}`);
+for (const f of flags) if (!["calibrated", "style-preflight", "weekend-carry", "ib-return-only", "execute"].includes(f)) die(`unknown flag --${f}`);
+if(flags.has("ib-return-only")){
+  if([...flags].some(f=>!["ib-return-only","execute"].includes(f))||Object.keys(args).some(k=>!["file","ib-return-input","ib-return-output"].includes(k))||!args.file||!args["ib-return-input"])die("invalid independent IB attachment arguments");
+  try{const result=await prepareIbManagerReturn({file:args.file,inputFile:args["ib-return-input"],outputFile:args["ib-return-output"],execute:flags.has("execute"),keyText:process.env.FEE_DATA_KEY});console.log(result.status);process.exit(0);}catch(_){die("IB return attachment refused; no financial values emitted");}
+}
+if(flags.has("execute")||args["ib-return-input"]!==undefined||args["ib-return-output"]!==undefined)die("IB return options require --ib-return-only");
 const calibrated = flags.has("calibrated");
 const weekendCarry = flags.has("weekend-carry");
 if (weekendCarry && (calibrated || flags.has("style-preflight"))) {
