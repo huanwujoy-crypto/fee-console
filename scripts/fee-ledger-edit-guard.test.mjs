@@ -775,14 +775,21 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
       return;
     }
     const h = await browserHarness(html), original = h.run("JSON.stringify(DB)");
+    const hasIbReturn = html.includes('/* ib-manager-return:receipt-v1 */');
+    const withIb = values => hasIbReturn ? [values[0], "待核对未纳入", ...values.slice(1)] : values;
     const cells = output => {
       const table = output.match(/<div class="month-returns"[^>]*>([\s\S]*?)<\/div>/)?.[1];
       assert.ok(table, "the full-history comparison must be rendered outside the folded calculation");
       const headers = [...table.matchAll(/<th\b[^>]*scope="col"[^>]*>([\s\S]*?)<\/th>/g)].map(match => match[1]);
-      assert.equal(headers.length, 4, "one month column and exactly three return columns");
+      assert.equal(headers.length, hasIbReturn ? 5 : 4, "one month column and independent return columns");
       assert.match(headers[1], /组合毛.*TWR/);
-      assert.match(headers[2], /S&amp;P 500.*SPY.*税后含息 TWR/);
-      assert.match(headers[3], /(?:纳指|纳斯达克)100.*QQQ.*税后含息 TWR/);
+      if (hasIbReturn) {
+        assert.match(headers[2], /IB.*TWR.*管理能力/);
+        const ibCells = [...table.matchAll(/<td data-return-series="ib"[^>]*>([\s\S]*?)<\/td>/g)];
+        assert.ok(ibCells.length);for (const cell of ibCells) assert.doesNotMatch(cell[1], /%|0\.00|pos|neg/);
+      }
+      assert.match(headers[hasIbReturn ? 3 : 2], /S&amp;P 500.*SPY.*税后含息 TWR/);
+      assert.match(headers[hasIbReturn ? 4 : 3], /(?:纳指|纳斯达克)100.*QQQ.*税后含息 TWR/);
       assert.doesNotMatch(table, /出资方|Dietz|CSPX|EQAC/);
       const body = table.match(/<tbody>([\s\S]*?)<\/tbody>/)?.[1]; assert.ok(body);
       return [...body.matchAll(/<tr\b([^>]*)>([\s\S]*?)<\/tr>/g)].map(match => ({
@@ -795,7 +802,7 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     const row = (ym, rG, rB, over = {}) => ({
       ym, from: ym + "-01", to: ym + "-28", pnl: 1000, fees: 250, mgmt: 50, carry: 200,
       openT: 100000, closeT: 101000, flowT: 0, averageFeeBase: 100500,
-      rG, rD: .8765, rB, excess: 1000, cum: 9000, hwm: 9000, inProgress: false, ...over
+      rG, rD: .8765, rB, rIB: .9876, ib: { twr: .9876 }, excess: 1000, cum: 9000, hwm: 9000, inProgress: false, ...over
     });
     const view = asOf => ({ state: "verified", asOf, managementRatePpm: 20000,
       carryRatePpm: 200000, status: { provisional: false } });
@@ -813,9 +820,9 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     h.run("renderMonths(monthView,monthFixture)");
     let output = h.element("monthsBox").innerHTML;
     assert.deepEqual(cells(output), [
-      { selected: true, month: "2026年9月", values: ["+1.50%", "-2.00%", "0.00%"] },
-      { selected: false, month: "2026年8月", values: ["-1.25%", "+2.50%", "-3.75%"] },
-      { selected: false, month: "2026年7月", values: ["0.00%", "-1.00%", "+3.00%"] }
+      { selected: true, month: "2026年9月", values: withIb(["+1.50%", "-2.00%", "0.00%"]) },
+      { selected: false, month: "2026年8月", values: withIb(["-1.25%", "+2.50%", "-3.75%"]) },
+      { selected: false, month: "2026年7月", values: withIb(["0.00%", "-1.00%", "+3.00%"]) }
     ], "the table reads each month's rG/rB, not cumulative TWR, Dietz, money profit or an arithmetic delta");
     assert.ok(output.indexOf('class="month-returns"') < output.indexOf('<details'),
       "all return rows stay visible when the calculation details are folded");
@@ -840,9 +847,9 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
     h.context.monthView = view("2026-07-28");
     h.run("renderMonths(monthView,monthFixture)");
     const unavailable = cells(h.element("monthsBox").innerHTML);
-    assert.deepEqual(unavailable[0].values, ["-1.00%", "缺失", "缺失"]);
-    assert.deepEqual(unavailable[1].values, ["+1.00%", "缺失", "缺失"]);
-    for (const missing of unavailable.slice(2)) assert.deepEqual(missing.values, ["缺失", "缺失", "缺失"]);
+    assert.deepEqual(unavailable[0].values, withIb(["-1.00%", "缺失", "缺失"]));
+    assert.deepEqual(unavailable[1].values, withIb(["+1.00%", "缺失", "缺失"]));
+    for (const missing of unavailable.slice(2)) assert.deepEqual(missing.values, withIb(["缺失", "缺失", "缺失"]));
     assert.doesNotMatch(h.element("monthsBox").innerHTML.match(/<tbody>[\s\S]*?<\/tbody>/)[0], /NaN|Infinity|32\.10%|65\.40%/);
 
     for (const count of [1, 36, 120]) {
