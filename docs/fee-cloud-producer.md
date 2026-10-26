@@ -1,3 +1,9 @@
+# 周／月报告候选说明
+
+新周期合同见 [fee-report-periods.md](fee-report-periods.md)。内部仍复用以下逐日来源、
+唯一 writer、现有凭据及保护推广；不新增 Secret 或权限。旧日报门禁在新版通过保护
+合并前保持生效。本次代码准备不代表周期调度或真实 IB 来源已验收。
+
 # Fee-console cloud producer
 
 This is the Mac-independent producer for the simulated fund. It does not use

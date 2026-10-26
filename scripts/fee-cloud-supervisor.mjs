@@ -53,11 +53,16 @@ async function api(path, token, init = {}) {
 export function isValidatedProducer(run, jobs) {
   if (run?.status !== 'completed' || run.conclusion !== 'success' || !ALLOWED_EVENTS.has(run.event)
       || run.head_branch !== 'main' || !Number.isSafeInteger(run.id) || run.id <= 0
-      || !/^[a-f0-9]{40}$/.test(run.head_sha || '') || jobs?.total_count !== 1
-      || !Array.isArray(jobs.jobs) || jobs.jobs.length !== 1) return false;
-  const job = jobs.jobs[0];
-  if (job?.run_id !== run.id || job.head_sha !== run.head_sha || job.status !== 'completed'
-      || job.conclusion !== 'success' || !Array.isArray(job.steps)) return false;
+      || !/^[a-f0-9]{40}$/.test(run.head_sha || '') || ![1,2].includes(jobs?.total_count)
+      || !Array.isArray(jobs.jobs) || jobs.jobs.length !== jobs.total_count) return false;
+  const valid=job=>job?.run_id===run.id&&job.head_sha===run.head_sha&&job.status==='completed'&&job.conclusion==='success'&&Array.isArray(job.steps);
+  if(!jobs.jobs.every(valid))return false;
+  const job=jobs.total_count===1?jobs.jobs[0]:jobs.jobs.find(job=>job.name==='produce');
+  if(!job)return false;
+  if(jobs.total_count===2){
+    const gates=jobs.jobs.filter(job=>job.name==='period');
+    if(gates.length!==1||gates[0].steps.filter(step=>step.name==='Plan weekly or final monthly coverage without financial credentials'&&step.status==='completed'&&step.conclusion==='success').length!==1)return false;
+  }
   return ['Read, calculate and validate the encrypted candidate', 'Create a signed owner candidate']
     .every(name => job.steps.filter(step => step.name === name && step.status === 'completed'
       && step.conclusion === 'success').length === 1);

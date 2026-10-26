@@ -581,6 +581,18 @@
     "docs/ib-manager-return.md",
     "scripts/ib-manager-return-file.mjs",
     "scripts/ib-manager-return.mjs",
-    "scripts/ib-manager-return.test.mjs"
+    "scripts/ib-manager-return.test.mjs",
+    "scripts/ib-manager-source.mjs",
+    "scripts/ib-manager-source.test.mjs",
+    "scripts/ib-manager-report.mjs",
+    "scripts/ib-manager-noncash.mjs",
+    "scripts/ib-manager-noncash.test.mjs",
+    "scripts/fee-report-period.mjs",
+    "scripts/fee-report-period.test.mjs",
+    "scripts/fee-report-metadata.mjs",
+    "scripts/fee-report-metadata.test.mjs",
+    "scripts/fee-report-producer.mjs",
+    "scripts/fee-report-producer.test.mjs",
+    "docs/fee-report-periods.md"
   ]
 }

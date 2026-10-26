@@ -36,6 +36,9 @@ import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-
 
 import { resolveManagementExemptions } from './fee-management-exemption.mjs';
 import { prepareIbManagerReturn } from './ib-manager-return-file.mjs';
+import {loadIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
+import {buildReportMetadata,preserveReportMonthLocks} from './fee-report-metadata.mjs';
+import {validateReportPlan} from './fee-report-period.mjs';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -74,7 +77,7 @@ const num = (name, raw) => {
 };
 
 const known = new Set([
-  "ib-return-input", "ib-return-output",
+  "ib-return-input", "ib-return-output", "ib-manager-input", "report-plan",
   "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint",
   ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, "gold", ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
@@ -90,6 +93,11 @@ if(flags.has("ib-return-only")){
 if(flags.has("execute")||args["ib-return-input"]!==undefined||args["ib-return-output"]!==undefined)die("IB return options require --ib-return-only");
 const calibrated = flags.has("calibrated");
 const weekendCarry = flags.has("weekend-carry");
+let reportPlan=null;
+if(args['report-plan']!==undefined){
+  try{reportPlan=JSON.parse(args['report-plan']);if(!validateReportPlan(reportPlan)||weekendCarry||calibrated||flags.has('style-preflight'))throw Error();}catch{die('FEE_REPORT_METADATA_INVALID — nothing written');}
+}
+if(args['ib-manager-input']!==undefined&&(!args['ib-manager-input']||process.env.IB_MANAGER_READ_ENABLED!=='true'||weekendCarry||calibrated))die('IB_REPORT_INPUT_REFUSED');
 if (weekendCarry && (calibrated || flags.has("style-preflight"))) {
   die("--weekend-carry cannot be combined with another mode flag");
 }
@@ -574,7 +582,7 @@ const baseUnchanged = existing.length === 1 && samePoint(existing[0], point)
   && flows.added === 0 && flows.promoted === 0 && flows.flagged === 0
   && sameStatus(data.status, status);
 
-const nextData = {
+let nextData = {
   ...data,
   daily: nextDaily,
   flowsAuto: flows.auto,
@@ -616,15 +624,28 @@ if (economicInput) {
   }
 }
 
+let ibReport=null;
+if(args['ib-manager-input']){
+  try{ibReport=await loadIbManagerReport(args['ib-manager-input']);nextData=ibReport.apply(nextData,date);}catch{die('IB_REPORT_INPUT_REFUSED — nothing written');}
+}
+try{
+  if(data.feeReportMonthLocks!==undefined||reportPlan){
+    const locks=preserveReportMonthLocks(data,nextData,economicInput,{finalCutoff:reportPlan?.monthlyCutoffs?.at(-1)||null});
+    if(locks!==undefined)nextData.feeReportMonthLocks=locks;
+  }
+  if(reportPlan){if(reportPlan.accountingThrough!==date)throw Error();nextData.feeReportPublication=buildReportMetadata({plan:reportPlan,data:nextData});}
+}catch(error){die((error?.message==='FEE_REPORT_LOCKED_MONTH_CHANGED'?error.message:'FEE_REPORT_METADATA_INVALID')+' — nothing written');}
 // No-op is also an output claim: recheck the original source before either exit.
 try { verifyLegacySourceUnchanged(); }
 catch { die("private legacy source changed before output — nothing written"); }
 try { verifyStyleInput(); verifyManagementInput(); }
 catch { die('STYLE_FILE_CHANGED — nothing written'); }
+try{ibReport?.checkCurrent();}catch{die('IB_REPORT_INPUT_REFUSED — nothing written');}
 const receiptUnchanged = sameFeeCalculationReceipt(data.feeCalculationReceipt, nextData.feeCalculationReceipt);
 const registryUnchanged = stableJson(data.classificationRegistry) === stableJson(nextData.classificationRegistry);
 const exemptionRegistryUnchanged = stableJson(data.managementExemptionRegistry) === stableJson(nextData.managementExemptionRegistry);
-if (baseUnchanged && receiptUnchanged && registryUnchanged && exemptionRegistryUnchanged) {
+const reportUnchanged=stableJson(data.feeReportPublication)===stableJson(nextData.feeReportPublication)&&stableJson(data.feeReportMonthLocks)===stableJson(nextData.feeReportMonthLocks);
+if (baseUnchanged && receiptUnchanged && registryUnchanged && exemptionRegistryUnchanged && sameIbManagerData(data,nextData) && reportUnchanged) {
   for (const message of check.benchmarkErrors) console.warn(`benchmark omitted: ${message}`);
   console.log(`no-op ${date}`);
   process.exit(0);

@@ -782,9 +782,10 @@ test("the real inline page only writes a synthetic Gist after reviewed save and 
       assert.ok(table, "the full-history comparison must be rendered outside the folded calculation");
       const headers = [...table.matchAll(/<th\b[^>]*scope="col"[^>]*>([\s\S]*?)<\/th>/g)].map(match => match[1]);
       assert.equal(headers.length, hasIbReturn ? 5 : 4, "one month column and independent return columns");
-      assert.match(headers[1], /组合毛.*TWR/);
+      const renamed = html.includes('/* return-display-names:manager-jenny-ib:v1 */');
+      assert.match(headers[1], renamed ? /管理方.*TWR/ : /组合毛.*TWR/);
       if (hasIbReturn) {
-        assert.match(headers[2], /IB.*TWR.*管理能力/);
+        assert.match(headers[2], renamed ? /Jenny's IB.*TWR.*管理能力/ : /IB.*TWR.*管理能力/);
         const ibCells = [...table.matchAll(/<td data-return-series="ib"[^>]*>([\s\S]*?)<\/td>/g)];
         assert.ok(ibCells.length);for (const cell of ibCells) assert.doesNotMatch(cell[1], /%|0\.00|pos|neg/);
       }

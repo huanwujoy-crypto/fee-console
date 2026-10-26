@@ -1,0 +1,59 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import vm from 'node:vm';
+import {buildFeeCalculationReceipt} from './fee-receipt-core.mjs';
+import {weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
+import {buildReportMetadata,preserveReportMonthLocks,createFeeReportConsumer} from './fee-report-metadata.mjs';
+
+function fixture(through='2026-10-23'){
+  const economicInput={v:4,settings:{start:'2026-09-01',mgmt:2,carry:20},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]};
+  const data={daily:[],flowsAuto:[],flowsUnresolved:[],status:{asOf:through,provisional:false,calibrated:false,unresolvedCount:0}};
+  for(let d='2026-09-01';d<=through;d=reportAddDays(d,1))data.daily.push({d,schwab:60,webull:40,bd:d,spy:100,qqq:100,bstate:'session'});
+  data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput});return {data,economicInput};
+}
+test('report metadata binds exact fee receipt and separates source cutoff from generation',async()=>{
+  const {data}=fixture(),before=structuredClone(data),plan=weeklyReportPlan('2026-10-23'),generatedAt='2026-10-26T06:00:00Z';
+  const m=buildReportMetadata({plan,data,generatedAt}),core=createFeeReportConsumer();
+  const view=await core.project(m,{state:'verified',asOf:data.feeCalculationReceipt.asOf},data.feeCalculationReceipt,new Date(generatedAt));
+  assert.equal(view.state,'updated');assert.equal(view.kindLabel,'周报');assert.equal(view.priceThrough,'2026-10-23');assert.equal(view.accountingThrough,'2026-10-23');assert.equal(view.nonRealtime,true);assert.deepEqual(data,before);
+  assert.equal((await core.project(m,{state:'verified',asOf:plan.accountingThrough},data.feeCalculationReceipt,new Date('2026-10-31T16:00Z'))).state,'pending-update');
+  for(const change of [{feeReceiptId:'a'.repeat(64)},{plan:{...plan,priceThrough:'2026-10-26'}},{generatedAt:'2026-10-27T06:00Z'},{reportId:'0'.repeat(64)}])assert.equal((await core.project({...m,...change},{state:'verified',asOf:plan.accountingThrough},data.feeCalculationReceipt,new Date(generatedAt))).state,'pending');
+  assert.throws(()=>buildReportMetadata({plan:weeklyReportPlan('2026-10-30'),data,generatedAt}));
+  assert.throws(()=>buildReportMetadata({plan,data,generatedAt:'2026-10-24T15:00Z'}));
+});
+test('final monthly locks reject changed NAV, external-flow history or fee economics; payment remains independent',()=>{
+  const {data,economicInput}=fixture('2026-09-30');
+  const locks=preserveReportMonthLocks({},data,economicInput,{finalCutoff:'2026-09-30'});
+  assert.equal(locks.periods.length,1);
+  const old={...data,feeReportMonthLocks:locks},later=fixture('2026-10-23').data;
+  assert.deepEqual(preserveReportMonthLocks(old,later,economicInput),locks);
+  const paid=structuredClone(economicInput);paid.fees=[{id:'synthetic-payment',date:'2026-10-01',amount:5,ccy:'USD'}];
+  later.feeCalculationReceipt=buildFeeCalculationReceipt({data:later,economicInput:paid});
+  assert.deepEqual(preserveReportMonthLocks(old,later,paid),locks);
+  const changed=structuredClone(later);changed.daily.find(p=>p.d==='2026-09-15').schwab=61;changed.feeCalculationReceipt=buildFeeCalculationReceipt({data:changed,economicInput});
+  assert.throws(()=>preserveReportMonthLocks(old,changed,economicInput),/LOCKED_MONTH_CHANGED/);
+  const rate=structuredClone(economicInput);rate.settings.mgmt=3;
+  assert.throws(()=>preserveReportMonthLocks(old,later,rate),/LOCKED_MONTH_CHANGED/);
+  assert.throws(()=>preserveReportMonthLocks({},fixture('2026-09-29').data,economicInput,{finalCutoff:'2026-09-29'}));
+  assert.throws(()=>buildReportMetadata({plan:monthlyReportPlan('2026-09'),data,generatedAt:'2026-10-01T00:00Z'}));
+});
+test('snapshots preserve full daily model and subtract all intervening capital/share changes',()=>{
+  const points=[];for(let d='2026-10-23';d<='2026-11-01';d=reportAddDays(d,1))points.push({date:d,investors:[{id:'A',valueCents:10000}]});
+  points[1].subscription={investorId:'A',netCents:2000};points[3].shareTransfer={fromInvestorId:'B',toInvestorId:'A',basisCents:500};points[7].investors[0].valueCents=12600;
+  const before=structuredClone(points),core=createFeeReportConsumer();
+  assert.deepEqual(core.snapshotPoints(points).map(p=>p.date),['2026-10-23','2026-10-30','2026-10-31','2026-11-01']);
+  assert.deepEqual(core.snapshotChange(points.slice(0,8),'A'),{valueCents:100,from:'2026-10-23',to:'2026-10-30'});assert.deepEqual(points,before);
+  points[3].shareTransfer={fromInvestorId:'A',toInvestorId:'B',basisCents:500};assert.equal(core.snapshotChange(points.slice(0,8),'A').valueCents,1100);
+  assert.deepEqual(core.snapshotPoints([...points,points[0]]),[]);
+});
+test('browser uses the exact shared factory and has no private metadata defaults',async()=>{
+  const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),'utf8');
+  const a='/* fee-report-consumer:start */',b='/* fee-report-consumer:end */';
+  if(!html.includes(a)){assert.equal(html.includes(b),false);return;}
+  const block=html.slice(html.indexOf(a)+a.length,html.indexOf(b)).trim();assert.equal(block,createFeeReportConsumer.toString());
+  const box={crypto:crypto.webcrypto,TextEncoder,structuredClone};vm.createContext(box);vm.runInContext(block+';globalThis.core=createFeeReportConsumer()',box);
+  const {data}=fixture(),m=buildReportMetadata({plan:weeklyReportPlan('2026-10-23'),data,generatedAt:'2026-10-26T00:00Z'}),fee={state:'verified',asOf:data.feeCalculationReceipt.asOf};
+  assert.deepEqual(JSON.parse(JSON.stringify(await box.core.project(m,fee,data.feeCalculationReceipt,new Date('2026-10-26T00:00Z')))),await createFeeReportConsumer().project(m,fee,data.feeCalculationReceipt,new Date('2026-10-26T00:00Z')));
+});

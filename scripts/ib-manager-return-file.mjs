@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { buildIbManagerReturnReceipt } from './ib-manager-return.mjs';
+import { buildIbManagerReturnReceipt, buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer } from './ib-manager-return.mjs';
 import { validateFeeCalculationReceipt } from './fee-receipt-core.mjs';
 
 export async function prepareIbManagerReturn({file,inputFile,outputFile,execute=false,keyText,environ=process.env}) {
@@ -24,11 +24,14 @@ export async function prepareIbManagerReturn({file,inputFile,outputFile,execute=
   const decode=text=>{const b=Buffer.from(text,'base64');if(b.length<29)fail();const d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(-16));return Buffer.concat([d.update(b.subarray(12,-16)),d.final()]);};
   const data=JSON.parse(decode(outer.data)),fee=data.feeCalculationReceipt;
   if(!validateFeeCalculationReceipt(fee,data).ok)fail();
-  const receipt=await buildIbManagerReturnReceipt(JSON.parse(input.raw));
+  const source=JSON.parse(input.raw),receipt=await buildIbManagerReturnReceipt(source),drawdown=await buildIbManagerDrawdownReceipt(source);
   if(receipt.start!==fee.start||receipt.asOf!==fee.asOf)fail();
-  const candidate={...data,ibManagerReturnReceipt:receipt};
+  const candidate={...data,ibManagerReturnReceipt:receipt,ibManagerDrawdownReceipt:drawdown};
   if(!validateFeeCalculationReceipt(fee,candidate).ok)fail();
-  const {ibManagerReturnReceipt:oldReceipt,...oldData}=data,{ibManagerReturnReceipt:newReceipt,...newData}=candidate;
+  const feeView={state:'verified',start:fee.start,asOf:fee.asOf,periods:fee.periods};
+  if((await createIbManagerReturnConsumer().project(receipt,feeView,candidate.ibManagerSourceStatus)).state!=='verified'
+      ||(await createIbManagerDrawdownConsumer().project(drawdown,receipt,feeView,candidate.ibManagerSourceStatus)).state!=='verified')fail();
+  const {ibManagerReturnReceipt:oldReceipt,ibManagerDrawdownReceipt:oldDrawdown,...oldData}=data,{ibManagerReturnReceipt:newReceipt,ibManagerDrawdownReceipt:newDrawdown,...newData}=candidate;
   if(JSON.stringify(oldData)!==JSON.stringify(newData))fail();
   if(!execute)return {status:'IB_RETURN_ATTACHMENT_DRY_RUN_OK'};
   if(!outputFile||!path.isAbsolute(outputFile)||!outside(path.join(fs.realpathSync(path.dirname(outputFile)),path.basename(outputFile)))||fs.existsSync(outputFile))fail();

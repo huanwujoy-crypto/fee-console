@@ -143,6 +143,8 @@ export function effectiveFlows({ months = [], flowsAuto = [] } = {}) {
  * One-period return and fee calculation.
  * ------------------------------------------------------------------ */
 
+export const grossTwrDailyFactor = (total, externalFlow, previous) => (total - externalFlow) / previous;
+
 export function periodReturns(input) {
   const points = (input.points || []).slice().sort((a, b) => String(a.d).localeCompare(String(b.d)));
   const flowByDate = input.flowByDate || {};
@@ -207,7 +209,7 @@ export function periodReturns(input) {
   if (portfolioReady) {
     for (const point of points) {
       const total = point.tot, flow = flowByDate[point.d] || 0;
-      if (grossPrevious > 0) grossIndex *= (total - flow) / grossPrevious;
+      if (grossPrevious > 0) grossIndex *= grossTwrDailyFactor(total, flow, grossPrevious);
       grossPrevious = total;
     }
   }
