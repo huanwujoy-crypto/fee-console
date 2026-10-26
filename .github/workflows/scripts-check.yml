@@ -55,7 +55,7 @@ jobs:
 
       - name: Test encrypted action viewer with synthetic data only
         if: ${{ github.event.pull_request.draft == false }}
-        run: node --test scripts/xuan-ib-encrypted-action.test.mjs
+        run: node --test scripts/xuan-ib-encrypted-action.test.mjs cloud/xuan-preopen/action_daily.test.mjs
 
       - name: Test implementation progress and classification audit
         if: ${{ github.event.pull_request.draft == false }}

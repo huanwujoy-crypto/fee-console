@@ -1,4 +1,4 @@
-import {SHARESIGHT_VALUATION_DATE_BASIS,isBrowserDateBasis} from './eod_sources.mjs';
+import {SHARESIGHT_VALUATION_DATE_BASIS,SHARESIGHT_REFERENCE_DATE_BASIS,isBrowserDateBasis} from './eod_sources.mjs';
 import {SHARESIGHT_BOOK_BASIS,actionUnknownFields} from '../../scripts/xuan-ib-eod-action-model.mjs';
 // Explicit protected private-delivery controller. No schedule, identity grant,
 // broker call or public financial projection is activated by importing this file.
@@ -37,7 +37,7 @@ export const OWNER_PREVIEW_REGISTRATION_PATH='security/xuan-owner-accepted-previ
 export const OWNER_PROTECTED_SOURCE_PATHS=Object.freeze([
   ...['owner_bundle_contract.mjs','owner_source_recovery.mjs','owner_latest.mjs','owner_latest_store.mjs','owner_latest_admission.mjs','owner_latest_delivery.mjs','owner_accepted_preview.mjs','owner_preview_access.mjs','owner_sdk_transport.mjs','owner_sdk_transport.py','owner_source_bytes.mjs','cloud_io.mjs','report.mjs'].map(file=>'cloud/xuan-preopen/'+file),
   ...['xuan-ib-eod-action-model.mjs','xuan-ib-eod-holdings.mjs','xuan-ib-night-action-view.mjs'].map(file=>'scripts/'+file),
-  'cloud/xuan-preopen/eod_report.mjs','cloud/xuan-preopen/eod_sources.mjs','cloud/xuan-preopen/action_preview.mjs',
+  'cloud/xuan-preopen/eod_report.mjs','cloud/xuan-preopen/eod_sources.mjs','cloud/xuan-preopen/action_preview.mjs','cloud/xuan-preopen/action_daily.mjs',
   OWNER_SOURCE_RECOVERY_PATH,OWNER_PREVIEW_REGISTRATION_PATH,PREVIEW_REPLACEMENT_REGISTRATION_PATH,'security/xuan-owner-approved-audience.json','security/xuan-owner-registered-canary.json',
 ]);
 
@@ -152,7 +152,7 @@ export async function deliverOwnerLatest({request,now=Date.now,loadContext=creat
   if(expectedArtifactSha256!==null&&bundle.artifactSha256!==expectedArtifactSha256
     ||expectedReceiptSha256!==null&&bundle.receiptSha256!==expectedReceiptSha256)fail('COLLECTED_BUNDLE_CHANGED');
   let receipt;try{receipt=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bundle.receipt));}catch{fail('RECEIPT_JSON');}
-  if(receipt.dataDate!==dataDate||(!(registeredRecovery&&isBrowserDateBasis(receipt.dateBasis))&&(plan.status!=='generate'||receipt.sourceDate!==plan.sourceDate))||receipt.artifact?.privateObject!==bundle.artifactObject
+  if(receipt.dataDate!==dataDate||(!(receipt.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS||registeredRecovery&&isBrowserDateBasis(receipt.dateBasis))&&(plan.status!=='generate'||receipt.sourceDate!==plan.sourceDate))||receipt.artifact?.privateObject!==bundle.artifactObject
     ||receipt.artifact?.generation!==bundle.artifactGeneration||receipt.artifact?.sha256!==bundle.artifactSha256)fail('DAILY_BINDING');
   const verifyProtectedReceipt=createProtectedOwnerVerifier({loadContext,readPinnedSource:pin=>io.readPinnedSource(pin),now});
   const verifyProtectedPreview=createProtectedOwnerPreviewVerifier({loadContext,now});

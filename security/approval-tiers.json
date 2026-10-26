@@ -581,6 +581,9 @@
     "docs/ib-manager-return.md",
     "scripts/ib-manager-return-file.mjs",
     "scripts/ib-manager-return.mjs",
-    "scripts/ib-manager-return.test.mjs"
+    "scripts/ib-manager-return.test.mjs",
+    "cloud/xuan-preopen/action_daily.mjs",
+    "cloud/xuan-preopen/action_daily.test.mjs",
+    "docs/xuan-action-daily-integration.md"
   ]
 }
