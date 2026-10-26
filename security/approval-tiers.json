@@ -577,6 +577,10 @@
     "scripts/xuan-ib-encrypted-action-view.mjs",
     "scripts/xuan-ib-encrypted-action.mjs",
     "scripts/xuan-ib-encrypted-action.test.mjs",
-    "xuan-ib/action.enc.json"
+    "xuan-ib/action.enc.json",
+    "docs/ib-manager-return.md",
+    "scripts/ib-manager-return-file.mjs",
+    "scripts/ib-manager-return.mjs",
+    "scripts/ib-manager-return.test.mjs"
   ]
 }

@@ -230,6 +230,8 @@ const hasDrawdown=html.includes('/* max-drawdown-view:start */');
 const hasPeriodDisplay=html.includes('/* return-period-display:start */');
 const hasDrawdownEpisode=html.includes('/* drawdown-episode-metadata:start */');
 const hasCompactComparison=html.includes('/* compact-comparison-tables:start */');
+const hasIbReturn=html.includes('/* ib-manager-return:receipt-v1 */');
+const ibTest=(name,fn)=>test(name,{skip:hasIbReturn?false:'support stage: IB display is in the separate index-only candidate'},fn);
 const compactTest=(name,fn)=>test(name,{skip:hasCompactComparison?false:'support stage: compact tables are in the separate index-only UI change'},fn);
 const episodeTest=(name,fn)=>test(name,{skip:hasDrawdownEpisode?false:'support stage: episode metadata is in the separate index-only UI change'},fn);
 const periodDisplayTest=(name,fn)=>test(name,{skip:hasPeriodDisplay?false:'support stage: shared period display is in the separate index-only UI change'},fn);
@@ -658,7 +660,7 @@ compactTest('compact tables preserve all four receipt values with explicitly dif
   const {sandbox,feeView,st,nodes,receipt}=await model(),before=plain(st);
   sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
   const out=nodes.kpis.innerHTML,table=out.match(/<table[^>]*aria-label="收益率对比[^]*?<\/table>/)?.[0];
-  assert.ok(table);assert.equal((table.match(/data-return-series=/g)||[]).length,4);
+  assert.ok(table);assert.equal((table.match(/data-return-series=/g)||[]).length,hasIbReturn?5:4);
   for(const [key,value] of [['actual',st.twrG],['investor',st.mwrD],...st.bench.map(b=>[b.k,b.twr])]){
     const row=table.match(new RegExp(`<tr data-return-series="${key}"[^]*?<\\/tr>`))?.[0];
     assert.ok(row);assert.ok(row.includes((value>0?'+':'')+(value*100).toFixed(2)+'%'));
@@ -709,6 +711,29 @@ test('compact table rollout is either absent or fully marked',()=>{
   else{assert.ok(!html.includes('function renderReturnComparison('));assert.ok(!html.includes('/* compact-comparison-tables:end */'));assert.ok(!html.includes('data-return-series='));}
 });
 /* compact-comparison-contract:end */
+ibTest('IB is a separate manager row immediately before SPY and cannot invent a return',async()=>{
+  const {sandbox,st}=await model(),before=plain(st);
+  st.ib={twr:.9876};st.ibTwr=.9876;st.rIB=.9876;
+  const out=sandbox.renderReturnComparison(st);
+  const row=out.match(/<tr data-return-series="ib"[^]*?<\/tr>/)?.[0];
+  assert.ok(row);assert.match(row,/IB/);assert.match(row,/TWR/);assert.match(row,/管理能力/);
+  assert.match(row,/待核对/);assert.match(row,/未纳入/);assert.doesNotMatch(row,/%|0\.00|pos|neg/);
+  assert.ok(out.includes(row+'<tr data-return-series="spy"'));
+  assert.ok(out.indexOf('data-return-series="investor"')<out.indexOf('data-return-series="ib"'));
+  assert.ok(out.indexOf('data-return-series="ib"')<out.indexOf('data-return-series="spy"'));
+  assert.match(out,/独立回执待核对/);assert.match(out,/暂未纳入正式收益/);
+  delete st.ib;delete st.ibTwr;delete st.rIB;assert.deepEqual(plain(st),before);
+});
+ibTest('uncontracted IB snapshots never change fee receipts or the managed account scope',async()=>{
+  const base=fixture(),input=structuredClone(base),receipt=buildFeeCalculationReceipt(base);
+  for(const point of input.data.daily)point.ib=999999;
+  input.data.ib={positions:[{value:999999}],balances:[{value:999999}],historical_ledger_verified:false};
+  assert.deepEqual(buildFeeCalculationReceipt(input),receipt);
+  const {st}=await model(input),original=await model(base);
+  const derived=state=>{const {lastPt,...values}=plain(state);return values;};
+  assert.deepEqual(derived(st),derived(original.st));
+  assert.deepEqual(input.economicInput.accounts.map(account=>account.id),['schwab','webull']);
+});
 /* drawdown-episode-contract:end */
 }
 /* maximum-drawdown-contract:end */
