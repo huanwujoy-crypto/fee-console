@@ -91,7 +91,7 @@ export function buildEodActionModel(input){
 function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshots,live=null,reserve,evidenceSha256,sourceOutcomes,
   fieldMode=false,callRecord=null,captureStartedAt=null,captureCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,dateBasis=null,referenceCheckedAt=null}){
   const reference=dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
-  if(reference){if(!instant(referenceCheckedAt)||referenceCheckedAt<captureCompletedAt)fail('REFERENCE_CLOCK');for(const s of snapshots)validateReferenceObservation(s.raw?.observation,{reportDate:dataDate,now:Date.parse(referenceCheckedAt)});}
+  if(reference){if(!instant(referenceCheckedAt)||referenceCheckedAt<captureCompletedAt)fail('REFERENCE_CLOCK');for(const s of snapshots.filter(s=>!(s.sourceKey==='sharesight.noahPerformance'&&s.status==='not-called'&&!s.raw)))validateReferenceObservation(s.raw?.observation,{reportDate:dataDate,now:Date.parse(referenceCheckedAt)});}
   if(![1,2,3].includes(bookDetailVersion))fail('CALCULATION_BASIS');
   if(typeof assumeSharesightSynchronized!=='boolean'||assumeSharesightSynchronized&&!fieldMode)fail('CALCULATION_BASIS');
   if(fieldMode&&!flex)flex={cash:null,positions:null,trades:null,tradeCoverageProven:false,rawFingerprint:null,
@@ -223,7 +223,7 @@ function buildValidatedEodActionModel({dataDate,sourceDate,asOfHkt,flex,snapshot
     model.status=bookStatus(model);
   }
   if(dateBasis!==null)model.dateBasis=dateBasis;
-  if(reference)model.referenceData={checkedAt:referenceCheckedAt,sources:snapshots.map(s=>({sourceKey:s.sourceKey,valuationDate:s.provenance.sourceDate,retrievedAt:s.provenance.readAt,...s.raw.coverage}))};
+  if(reference)model.referenceData={checkedAt:referenceCheckedAt,sources:snapshots.filter(s=>snapshotUsable(s.status)).map(s=>({sourceKey:s.sourceKey,valuationDate:s.provenance.sourceDate,retrievedAt:s.provenance.readAt,...s.raw.coverage}))};
   if(concentrationInput!==null)model.concentration=buildActionConcentrationCandidate({...concentrationInput,cutoff:sourceDate});
   return validateEodActionModel(model);
 }
@@ -231,7 +231,7 @@ export function validateEodActionModel(m){
   const fields=Boolean(m?.fieldState),book=m?.calculationBasis===SHARESIGHT_BOOK_BASIS;
   const browserDates=Object.hasOwn(m??{},'dateBasis'),reference=m?.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
   if(browserDates&&(!book||!fields||!isBrowserDateBasis(m.dateBasis)||m.sourceDate>m.dataDate
-    ||m.provenance?.sharesight?.length!==2||m.provenance.sharesight.some(s=>s.channel!=='authenticated-browser')
+    ||m.provenance?.sharesight?.length!==(reference&&m.sourceOutcomes?.find(s=>s.sourceKey==='sharesight.noahPerformance')?.status==='not-called'?1:2)||m.provenance.sharesight.some(s=>s.channel!=='authenticated-browser')
     ||m.sourceOutcomes?.find(s=>s.sourceKey==='ib.flexEod')?.status!=='not-called'))fail('BROWSER_DATE_SCOPE');
   if(Object.hasOwn(m??{},'calculationBasis')&&(!book||!fields))fail('CALCULATION_BASIS');
   if(m?.schemaVersion!==9||m.mode!=='eod-action'||!(book?['ready','partial'].includes(m.status):m.status==='partial')||!date(m.dataDate)||!date(m.sourceDate)||(!browserDates&&m.sourceDate>=m.dataDate)||typeof m.asOfHkt!=='string'||!new RegExp('^'+m.dataDate+' \\d{2}:\\d{2}(?:–\\d{2}:\\d{2})? HKT · 数据至 '+m.sourceDate+'$').test(m.asOfHkt)||!/^[a-f0-9]{64}$/.test(m.evidenceSha256||''))fail('HEADER');
@@ -309,7 +309,7 @@ export function validateEodActionModel(m){
   if(Object.keys(m).some(k=>!top.includes(k)))fail('PUBLIC_KEYS');
   if(reference){
     exact(m.referenceData,['checkedAt','sources']);const checked=m.referenceData.checkedAt;
-    if(!instant(checked)||checked<m.provenance.capture.completedAt||new Date(Date.parse(checked)+28800000).toISOString().slice(0,10)!==m.dataDate||m.referenceData.sources?.length!==2)fail('REFERENCE_CLOCK');
+    if(!instant(checked)||checked<m.provenance.capture.completedAt||new Date(Date.parse(checked)+28800000).toISOString().slice(0,10)!==m.dataDate||m.referenceData.sources?.length!==m.provenance.sharesight.length)fail('REFERENCE_CLOCK');
     for(const [i,s] of m.referenceData.sources.entries()){
       exact(s,['sourceKey','valuationDate','retrievedAt','holdingsComplete','holdingsDifferenceUSD','nativeCashUnknownCount']);
       const p=m.provenance.sharesight[i];if(s.sourceKey!==p.sourceKey||s.valuationDate!==p.sourceDate||s.retrievedAt!==p.readAt||typeof s.holdingsComplete!=='boolean'||!Number.isFinite(s.holdingsDifferenceUSD)||s.holdingsComplete!==(Math.abs(s.holdingsDifferenceUSD)<=.011)||!Number.isSafeInteger(s.nativeCashUnknownCount)||s.nativeCashUnknownCount<0||s.nativeCashUnknownCount>100||s.sourceKey!=='sharesight.noahPerformance'&&!s.holdingsComplete)fail('REFERENCE_COVERAGE');

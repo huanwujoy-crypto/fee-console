@@ -14,9 +14,9 @@ const fail=code=>{throw new Error('EOD_REPORT_'+code);};
 // Completion handoff shared with the current-orders producer. The caller must
 // already own the create-only daily start marker. No source or latest-page IO.
 export async function saveCompletedDailyReport({io,plan,receipt,html}){
-  if(plan?.status!=='generate'||receipt?.dataDate!==plan.dataDate||receipt?.sourceDate!==plan.sourceDate)
+  if(plan?.status!=='generate'||receipt?.dataDate!==plan.dataDate||(!(receipt?.mode==='private_eod_action'&&receipt.dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS)&&receipt?.sourceDate!==plan.sourceDate))
     throw new Error('DAILY_REPORT_INCOMPLETE');
-  if(receipt.mode==='private_eod_action')validateEodReceipt(receipt,html,plan.dataDate,plan.sourceDate);
+  if(receipt.mode==='private_eod_action')validateEodReceipt(receipt,html,plan.dataDate,receipt.sourceDate);
   if((receipt.mode==='private_eod_action'?!['partial','ready'].includes(receipt.status):receipt.status!=='ready')||typeof html!=='string')
     throw new Error('DAILY_REPORT_INCOMPLETE');
   const prefix=`delivery/${plan.dataDate}/`;
@@ -39,7 +39,8 @@ export function validateCompletedEodSession(sourceDate, started) {
   return {dataDate,calendar};
 }
 export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContext,readArchive,verifyArchive,verifyArchiveFinancial=null,expectedAccount,expectedQueryId,
-  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,initialCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,sourceRunId=null,dateBasis=null}={}){
+  snapshotReader,verifySnapshotCompletion,captureOptionalLive=null,optionalTimeoutMs=10_000,fieldMode=false,initialStartedAt=null,initialCompletedAt=null,concentrationInput=null,assumeSharesightSynchronized=false,bookDetailVersion=2,sourceRunId=null,dateBasis=null,omitNoahReference=false}={}){
+  if(typeof omitNoahReference!=='boolean'||omitNoahReference&&(dateBasis!==SHARESIGHT_REFERENCE_DATE_BASIS||!fieldMode||!assumeSharesightSynchronized||concentrationInput===null))fail('OPTIONAL_NOAH_SCOPE');
   const currentTime=now(),started=initialStartedAt??currentTime;
   const savedCapture=initialCompletedAt!==null,referenceDates=dateBasis===SHARESIGHT_REFERENCE_DATE_BASIS;
   // The local recovery registration is intentionally outside the cloud image.
@@ -74,10 +75,10 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   };
   const [archiveState,snapshotResults,liveResult]=await Promise.all([
     archiveTask(),
-    Promise.all(Object.keys(SNAPSHOT_SCOPES).map(sourceKey=>readVerifiedSnapshot(sourceKey,{reader:snapshotReader,verifyCompletion:verifySnapshotCompletion,sourceDate,now,dateBasis}))),
+    Promise.all(Object.keys(SNAPSHOT_SCOPES).map(sourceKey=>omitNoahReference&&sourceKey==='sharesight.noahPerformance'?{sourceKey,status:'not-called',code:'OPTIONAL_NOAH_NOT_SUPPLIED'}:readVerifiedSnapshot(sourceKey,{reader:snapshotReader,verifyCompletion:verifySnapshotCompletion,sourceDate,now,dateBasis}))),
     optionalLive(captureOptionalLive,optionalTimeoutMs),
   ]);
-  if(browserDates&&snapshotResults.some(s=>s.status!=='date-verified'||s.raw?.source!==SHARESIGHT_BROWSER_SOURCE))fail('BROWSER_DATE_SCOPE');
+  if(browserDates&&snapshotResults.some(s=>!(omitNoahReference&&s.sourceKey==='sharesight.noahPerformance'&&s.status==='not-called')&&(s.status!=='date-verified'||s.raw?.source!==SHARESIGHT_BROWSER_SOURCE)))fail('BROWSER_DATE_SCOPE');
   const {flex,archiveResult,archiveProof,financialProof}=archiveState;
   const live=['captured','partial'].includes(liveResult?.status)?{...liveResult,previousHtml:context.previousHtml}:liveResult;
   const sourceOutcomes=[{sourceKey:'ib.flexEod',status:archiveState.status,rawFingerprint:flex?.rawFingerprint??null},...snapshotResults.map(s=>({sourceKey:s.sourceKey,status:s.status,rawFingerprint:s.rawFingerprint??null})),{sourceKey:'ib.optionalLive',status:['captured','partial','not-called','failed','timeout'].includes(live?.status)?live.status:'failed',rawFingerprint:['captured','partial'].includes(live?.status)?digest(liveResult):null}];
@@ -86,7 +87,7 @@ export async function runPrivateEodReport({sourceDate,io,now=Date.now,loadContex
   const processed=now(),completed=savedCapture?initialCompletedAt:processed;
   if(hktDate(processed)!==dataDate)fail('CROSSED_HKT_DATE');
   if(savedCapture){
-    const sourceTimes=[...snapshotResults.map(s=>Date.parse(s.provenance?.readAt)),...(liveResult.sources??[]).flatMap(s=>[Date.parse(s.startedAt),Date.parse(s.completedAt)])];
+    const sourceTimes=[...snapshotResults.filter(s=>s.provenance).map(s=>Date.parse(s.provenance.readAt)),...(concentrationInput?.sources??[]).map(s=>Date.parse(s.receipt?.completedAt)),...(liveResult.sources??[]).flatMap(s=>[Date.parse(s.startedAt),Date.parse(s.completedAt)])];
     const lower=referenceDates?Date.parse(dataDate+'T00:00:00+08:00'):started;
     if(sourceTimes.some(t=>!Number.isFinite(t)||t<lower||t>completed)||Math.max(...sourceTimes)!==completed||processed<completed||processed>processingDeadline)fail('CAPTURE_WINDOW');
   }
@@ -152,7 +153,7 @@ export function validateEodReceipt(r,html,dataDate,sourceDate,{historicalRequest
   if(r.calculationBasis!==m.calculationBasis)fail('CALCULATION_BASIS');
   if(Object.hasOwn(r,'dateBasis')!==Object.hasOwn(m,'dateBasis')||r.dateBasis!==m.dateBasis)fail('DATE_BASIS_BINDING');
   if(Object.hasOwn(m,'concentration')!==Object.hasOwn(r,'concentration'))fail('CONCENTRATION_BINDING');
-  if(m.concentration){const c=r.concentration,prefix=r.artifact.privateObject.slice(0,r.artifact.privateObject.lastIndexOf('/')+1);
+  if(m.concentration){const c=r.concentration,sourceObject=r.sources[0].privateObject,prefix=sourceObject.slice(0,sourceObject.lastIndexOf('/')+1);
     if(!c||Object.keys(c).sort().join('|')!=='generation|modelSha256|privateObject|sha256'||c.privateObject!==prefix+'concentration.sources.json'||! /^[a-f0-9]{64}$/.test(c.sha256)||!/^\d+$/.test(c.generation)||c.modelSha256!==digest(m.concentration))fail('CONCENTRATION_BINDING');}
   if(m.fieldState?JSON.stringify(m.fieldErrors)!==JSON.stringify(r.fieldErrors):Object.hasOwn(r,'fieldErrors'))fail('FIELD_ERROR_BINDING');
   if(m.sourceOutcomes.some(s=>s.status==='ui-export-observed'))fail('UI_EXPORT_PRIVATE_ONLY');
