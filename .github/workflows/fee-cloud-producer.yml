@@ -11,6 +11,11 @@ on:
     - cron: '50 5,7,9 * * 2-6'
   workflow_dispatch:
     inputs:
+      run_reviewed_once:
+        description: Explicit manual report request; automatic daily dispatches stay paused
+        type: boolean
+        required: false
+        default: false
       apply_style_proposal:
         description: Apply one separately approved private style proposal
         type: boolean
@@ -27,7 +32,9 @@ concurrency:
 
 jobs:
   produce:
-    if: ${{ vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish' }}
+    # Pause the legacy daily cron and automated dispatch defaults. Preserve the
+    # explicit manual path; this flag does not replace source or release gates.
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
