@@ -42,6 +42,14 @@ test('execution reset requires actual source/writer/signing steps and matching j
   const skip={...run('success',2),producerValidated:false};
   assert.equal(consecutiveFailures([skip,run('failure',3),run('failure',1)]),2);
 });
+test('public period gate success alone is never validated financial execution',()=>{
+  const f=executionFixture();f.jobs.jobs[0].name='produce';
+  f.jobs.jobs.push({name:'period',run_id:f.run.id,head_sha:f.run.head_sha,status:'completed',conclusion:'success',steps:[{name:'Plan weekly or final monthly coverage without financial credentials',status:'completed',conclusion:'success'}]});f.jobs.total_count=2;
+  assert.equal(isValidatedProducer(f.run,f.jobs),true);
+  for(const change of [x=>x.jobs.jobs[0].conclusion='skipped',x=>x.jobs.jobs[1].steps[0].conclusion='skipped',x=>x.jobs.jobs[1].head_sha='b'.repeat(40),x=>x.jobs.jobs[0].name='period',x=>x.jobs.jobs[1].name='unrelated']){
+    const x=structuredClone(f);change(x);assert.equal(isValidatedProducer(x.run,x.jobs),false);
+  }
+});
 
 test('actual supervisor never auto-closes from unrelated publication and honors historical execution reset', () => {
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-supervisor-test-'));

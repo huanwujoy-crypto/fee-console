@@ -154,7 +154,7 @@ export function parseSourceJson(text) {
 }
 export const parseTradeJson = parseSourceJson;
 
-function exactNumberText(row, key, code = 'HOLDING_TERMINAL_PRECISION') {
+export function exactNumberText(row, key, code = 'HOLDING_TERMINAL_PRECISION') {
   const text = row[NUMBER_TEXT]?.[key];
   if (!finite(row[key]) || typeof text !== 'string') fail(code);
   const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(text);
@@ -170,7 +170,7 @@ function exactNumberText(row, key, code = 'HOLDING_TERMINAL_PRECISION') {
 
 // The cash-list contract supplies two-decimal original- and portfolio-currency
 // balances. Compare original money tokens, never a USD tolerance or rounded FX.
-function cashCents(row, key) {
+export function cashCents(row, key) {
   const text = exactNumberText(row, key, 'CASH_PRECISION');
   if (text === '0') return 0n;
   const match = /^(-?)(\d+)e(-?\d+)$/.exec(text), exponent = Number(match?.[3]);

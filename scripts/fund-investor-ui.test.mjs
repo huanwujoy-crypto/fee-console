@@ -21,12 +21,21 @@ const synthetic={schema:'fee-console.fund-profile.v1',manager:'SYNTHETIC MANAGER
 function context(){
  const ctx=vm.createContext({crypto:webcrypto,TextEncoder,TextDecoder,atob:s=>Buffer.from(s,'base64').toString('binary'),btoa:s=>Buffer.from(s,'binary').toString('base64'),setTimeout,clearTimeout,URLSearchParams,URL});
  vm.runInContext(`const values=new Map(),elements=new Map();const store={};const K={gid:'gid',key:'key',tok:'tok'};const cfg=k=>values.get(k)||'';const setCfg=(k,v)=>{v?values.set(k,v):values.delete(k);};const isMgr=()=>!!cfg(K.tok);const managerDocumentsAuthorized=()=>false;const HASH={fund:''};const SHELL_BUILD=${JSON.stringify(shellBuild)};let _sourceEpoch=0;let _receiptSource={state:'verified'};const sourceMatches=()=>true;const document={getElementById:id=>{if(!elements.has(id))elements.set(id,{innerHTML:'',textContent:'',value:''});return elements.get(id);}};const location={origin:'https://synthetic.invalid',pathname:'/',search:'',hash:'',get href(){return this.origin+this.pathname+this.search+this.hash}};const history={replaceState(_state,_unused,url){const value=String(url);location.hash=value.includes('#')?value.slice(value.indexOf('#')):'';}};let DAILY={},DB={fees:[]};async function render(){await readFundProfile();}setCfg(K.gid,'synthetic-gist-A');setCfg(K.key,'${Buffer.alloc(32,7).toString('base64url')}');setCfg(K.tok,'synthetic-manager-token');`,ctx);
- vm.runInContext(helper+region('fund-investor-core')+region('fund-profile-storage')+region('fund-investor-render')+viewLink,ctx);
+ const report=region('fee-report-consumer');
+ vm.runInContext(helper+(report?report+'\nconst feeReportCore=createFeeReportConsumer();\n':'')+region('fund-investor-core')+region('fund-profile-storage')+region('fund-investor-render')+viewLink,ctx);
  vm.runInContext(`globalThis.profile=${JSON.stringify(synthetic)};globalThis.fixtureFee={state:'verified',start:'2026-08-01',asOf:'2026-08-22',status:{provisional:false},benchmarkInputs:{flows:[]}};DAILY={flowsAuto:[],flowsUnresolved:[],daily:[{d:'2026-08-20',schwab:100,webull:50},{d:'2026-08-21',schwab:110,webull:70},{d:'2026-08-22',schwab:150,webull:100}]};`,ctx);
  return ctx;
 }
 const run=(ctx,code)=>vm.runInContext(code,ctx);
 const importProfile=ctx=>run(ctx,'importFundProfile({size:100,text:async()=>JSON.stringify(profile)})');
+test('weekly/monthly presentation keeps daily source intact and includes month end between Fridays',()=>{
+ if(!region('fee-report-consumer'))return;
+ const c=context();run(c,`DAILY.daily=[];for(let d='2026-08-20';d<='2026-09-05';d=new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10))DAILY.daily.push({d,schwab:100,webull:50});fixtureFee.asOf='2026-09-05';globalThis.beforeSnapshot=JSON.stringify(DAILY);renderInvestors({profile},fixtureFee);`);
+ const body=run(c,'elements.get("fundInvestorBox").innerHTML');
+ for(const date of ['2026-08-20','2026-08-21','2026-08-28','2026-08-31','2026-09-04','2026-09-05'])assert.ok(body.includes('>'+date+'</td>'),date);
+ for(const date of ['2026-08-24','2026-08-26','2026-09-01'])assert.ok(!body.includes('>'+date+'</td>'),date);
+ assert.match(body,/周／月估值快照/);assert.equal(run(c,'JSON.stringify(DAILY)'),run(c,'beforeSnapshot'));
+});
 test('synthetic import stores only authenticated encrypted data and preserves source',async()=>{
  const c=context();await importProfile(c);const raw=run(c,'cfg(FUND_PROFILE_KEY)');assert(raw,run(c,'_fundProfileMessage'));assert(!raw.includes('SYNTHETIC'));assert(!raw.includes('ALPHA'));assert.equal(JSON.parse(raw).enc,true);const read=await run(c,'readFundProfile()');assert.equal(read.profile.fundName,'SYNTHETIC FUND');assert.equal(run(c,'cfg(K.gid)'),'synthetic-gist-A');assert(!run(c,'viewLink()').includes('synthetic-manager-token'));
 });
@@ -60,7 +69,7 @@ test('subscription view shows current shares and excludes contributed capital fr
  const c=context();run(c,`profile.subscriptions=[{id:'synthetic-sub-1',date:'2026-08-22',investorId:'B',grossCents:9002,feeCents:2,netCents:9000,priceDate:'2026-08-21',priceTotalCents:18000,issuedShares:500,sourceRef:'sharesight:synthetic-1'}];DAILY.daily[2].webull+=90;DAILY.flowsAuto=[{date:'2026-08-22',acct:'webull',amount:90}];fixtureFee.benchmarkInputs.flows=[{date:'2026-08-22',amountCents:9000}];_fundSelection='B';renderInvestors({profile},fixtureFee);`);
  const profileHtml=run(c,'elements.get("fundProfileBox").innerHTML'),body=run(c,'elements.get("fundInvestorBox").innerHTML');
  assert.match(profileHtml,/1,500 股/);assert.match(profileHtml,/B · 60\.00%/);
- assert.match(body,/最新可核验份额(?: · 2026-08-22)?<b>900 股/);assert.match(body,/较前一估值日 · 已剔除增资/);
+ assert.match(body,/最新可核验份额(?: · 2026-08-22)?<b>900 股/);assert.match(body,region('fee-report-consumer')?/较前一周／月快照 · 已剔除期间增资/:/较前一估值日 · 已剔除增资/);
  assert.match(body,/\$42\.00/);assert(!body.includes('>$132.00</div>'));
 },{skip:!html.includes('const EVENT_KEYS =')});
 test('external fee payment displays the registered transfer immediately and excludes transfer basis from daily change',()=>{
@@ -68,7 +77,7 @@ test('external fee payment displays the registered transfer immediately and excl
  const profileHtml=run(c,'elements.get("fundProfileBox").innerHTML'),body=run(c,'elements.get("fundInvestorBox").innerHTML');
  assert.match(profileHtml,/B → A/);assert.match(profileHtml,/56 股/);assert.match(profileHtml,/A · 65\.60%/);
  assert.match(body,/基金档案已登记份额<b>656 股/);assert.match(body,/最新可核验份额 · 2026-08-22<b>656 股/);
- assert.match(body,/已剔除增资／份额转让/);assert.match(body,/>\$45\.92</);
+ assert.match(body,region('fee-report-consumer')?/已剔除期间增资／份额转让/:/已剔除增资／份额转让/);assert.match(body,/>\$45\.92</);
 },{skip:!html.includes('const TRANSFER_KEYS =')});
 test('future unknown flow shows only last safe dated investor value',()=>{
  const c=context();run(c,`fixtureFee.benchmarkInputs.flows=[{date:'2026-08-22',amountCents:999999}];renderInvestors({profile},fixtureFee);`);const body=run(c,'elements.get("fundInvestorBox").innerHTML');assert.match(body,/最近可计算市值/);assert.match(body,/当前市值待核验/);assert.match(body,/历史市值仅截至 2026-08-21/);assert.match(body,/>\$108\.00</);assert(!body.includes('>2026-08-22</td>'));assert.match(body,/外部资金流|投资人归属/);

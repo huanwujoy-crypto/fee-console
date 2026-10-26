@@ -17,6 +17,8 @@ import { boundedJson } from './fee-http-json.mjs';
 import { isIsoDate, isWeekend } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
+import {prepareIbManagerReport} from './ib-manager-report.mjs';
+import {validateReportPlan,selectReportBenchmark} from './fee-report-period.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -185,7 +187,7 @@ async function publicationRequest(route, signal) {
   catch { fail('PUBLICATION_READ'); }
 }
 
-export async function readPublicationState(targetDate, startedAt, request = publicationRequest) {
+export async function readPublicationState(targetDate, startedAt, request = publicationRequest, {requireIb=false}={}) {
   if (!isIsoDate(targetDate) || !Number.isFinite(Date.parse(startedAt))) fail("CONFIG");
   const ref = () => request("git/ref/heads/main");
   const mainSha = (await ref())?.object?.sha;
@@ -204,7 +206,7 @@ export async function readPublicationState(targetDate, startedAt, request = publ
   try { health = JSON.parse(healthBytes); } catch { health = null; }
   const finalMainSha = (await ref())?.object?.sha;
   const state = { mainSha, finalMainSha, health, data, pending: false };
-  if (mainSha !== finalMainSha || isPublishedTarget(state, targetDate)) return state;
+  if (mainSha !== finalMainSha || (!requireIb&&isPublishedTarget(state, targetDate))) return state;
   const prefix = `codex/fee-daily-${targetDate.replaceAll("-", "")}-`;
   const refs = await request(`git/matching-refs/heads/${prefix}`);
   if (!Array.isArray(refs) || refs.length > 32) fail("PUBLICATION_READ");
@@ -231,7 +233,8 @@ export async function readPublicationState(targetDate, startedAt, request = publ
 }
 
 export async function publishedPreflight({ cache, startedAt = new Date().toISOString(), now = () => new Date(),
-  readState = (target, start, signal) => readPublicationState(target, start, route => publicationRequest(route, signal)),
+  ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',
+  readState = (target, start, signal) => readPublicationState(target, start, route => publicationRequest(route, signal),{requireIb:ibEnabled}),
   sleep = ms => new Promise(resolve => setTimeout(resolve, ms)),
   attempts = 21, delayMs = 15_000 } = {}) {
   const targetDate = expectedTargetDate(now());
@@ -239,7 +242,7 @@ export async function publishedPreflight({ cache, startedAt = new Date().toISOSt
   selectBenchmark(cache, targetDate); // includes exact row and dividend validation
   if (!Number.isInteger(attempts) || attempts < 1 || attempts > 21
       || !Number.isInteger(delayMs) || delayMs < 0 || delayMs > 15_000) fail("CONFIG");
-  let pending = false;
+  let pending = false,pendingMainSha=null;
   const signal = AbortSignal.timeout(300_000);
   for (let attempt = 0; attempt < attempts; attempt++) {
     if (signal.aborted) fail("PUBLICATION_WAIT_TIMEOUT");
@@ -252,11 +255,12 @@ export async function publishedPreflight({ cache, startedAt = new Date().toISOSt
       await sleep(delayMs);
       continue;
     }
-    if (isPublishedTarget(state, targetDate, now())) return { targetDate, outcome: "already-published", mainSha: state.mainSha };
+    if (!ibEnabled&&isPublishedTarget(state, targetDate, now())) return { targetDate, outcome: "already-published", mainSha: state.mainSha };
+    if(ibEnabled&&pending&&state.mainSha!==pendingMainSha&&isPublishedTarget(state,targetDate,now()))pending=false;
     if (state.mainSha !== state.finalMainSha) {
       if (attempt + 1 === attempts) fail("PUBLICATION_UNSTABLE");
-    } else if (!state.pending && !pending) return { targetDate, outcome: "produce", reason: "target-not-published" };
-    else pending = true;
+    } else if (!state.pending && !pending) return { targetDate, outcome: "produce", reason: ibEnabled?'ib-verification-required':"target-not-published" };
+    else {pending = true;pendingMainSha=state.mainSha;}
     if (attempt + 1 < attempts) await sleep(delayMs);
   }
   fail("PUBLICATION_WAIT_TIMEOUT");
@@ -342,6 +346,7 @@ export function writerFailureCode(stderr, preflight = false) {
     [/^error: (?:schwab|webull) moved .*refusing an impossible amount/m, "ACCOUNT_MOVE"],
     [/^error: fee calculation receipt failed:/m, "FEE_RECEIPT"],
     [/^error: FEE_ECON_FILE /m, "ECONOMIC_INPUT"],
+    [/^error: IB_REPORT_INPUT_REFUSED(?: — nothing written)?$/m, "IB_INPUT"],
     [/^error: (?:private legacy source|current legacy economic input)/m, "ECONOMIC_SOURCE"],
     [/^error: flow /m, "FLOW"],
     [/^error: (?:split is impossible|growth\/value split is incomplete)/m, "SPLIT"],
@@ -384,7 +389,7 @@ export function weekendGapDates(points, targetDate) {
   return gap;
 }
 
-function decryptCandidate(filename, keyText) {
+export function decryptCandidate(filename, keyText) {
   let envelope;
   try { envelope = JSON.parse(fs.readFileSync(filename, "utf8")); } catch { fail("CANDIDATE"); }
   if (!envelope || envelope.enc !== true || envelope.v !== 3 || typeof envelope.data !== "string") fail("CANDIDATE");
@@ -500,14 +505,20 @@ export async function produce(options = {}) {
     stage = "BENCHMARK";
     const cache = readJson(benchmarkFile, 3 * 1024 * 1024);
     const targetDate = cli["target-date"] || expectedTargetDate(options.now ? options.now() : new Date());
-    const benchmark = selectBenchmark(cache, targetDate);
+    const benchmark = options.periodMode===true?selectReportBenchmark(cache,targetDate):selectBenchmark(cache, targetDate);
     const checkedAt = cli["checked-at"] || new Date().toISOString();
+    const baseDataFile=options.baseDataFile||path.join(ROOT,'data.json');
+    if(options.baseDataFile){
+      const st=fs.lstatSync(baseDataFile),real=fs.realpathSync(baseDataFile),relative=path.relative(ROOT,real);
+      if(!path.isAbsolute(baseDataFile)||!st.isFile()||st.isSymbolicLink()||(st.mode&0o077)!==0||st.uid!==process.getuid()||st.size<1||st.size>=2*1024*1024||!(relative==='..'||relative.startsWith('..'+path.sep)))fail('CANDIDATE');
+    }
+    if(options.reportPlan&&(!validateReportPlan(options.reportPlan)||options.reportPlan.accountingThrough!==targetDate))fail('REPORT_PLAN');
     if (options.reader && cli["style-proposal-file"] !== undefined) fail("STYLE_PROPOSAL_INPUT");
     const styleProposal = loadStyleProposal(cli["style-proposal-file"], targetDate, ROOT, process.env.FEE_STYLE_PROPOSAL_LOCK);
     stage = "READER_SETUP";
     if(options.reader&&cli['income-date-evidence-file']!==undefined)fail('INCOME_INPUT');
     const incomeInput=options.reader?{checkCurrent(){}}:loadIncomeDateEvidence(
-      decryptCandidate(path.join(ROOT,'data.json'),process.env.FEE_DATA_KEY),targetDate,cli['income-date-evidence-file']);
+      decryptCandidate(baseDataFile,process.env.FEE_DATA_KEY),targetDate,cli['income-date-evidence-file']);
     const reader = options.reader || new SharesightCloudReader({
       clientId: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,
       clientSecret: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
@@ -534,7 +545,7 @@ export async function produce(options = {}) {
       fs.writeFileSync(styleFile, `${JSON.stringify(input.styleInput)}\n`, { mode: 0o600, flag: "wx" });
       const managementFile = path.join(output, 'management-input.json');
       if (input.managementInput) fs.writeFileSync(managementFile, JSON.stringify(input.managementInput), {mode:0o600,flag:'wx'});
-      fs.copyFileSync(path.join(ROOT, "data.json"), dataFile, fs.constants.COPYFILE_EXCL);
+      fs.copyFileSync(baseDataFile, dataFile, fs.constants.COPYFILE_EXCL);
       fs.chmodSync(dataFile, 0o600);
       const env = { ...process.env, FEE_ECON_FILE: economic.sourcePath, FEE_STYLE_INPUT_FILE: styleFile, FEE_MANAGEMENT_INPUT_FILE: input.managementInput ? managementFile : '' };
       delete env.FEE_STYLE_PROPOSAL_JSON;
@@ -546,6 +557,9 @@ export async function produce(options = {}) {
       stage = "STYLE_PREFLIGHT";
       styleProposal.checkCurrent();
       run("daily.mjs", [...baseArgs, "--style-preflight"], env);
+      const ib=options.includeIb===false?null:await prepareIbManagerReport({payload:process.env.IB_MANAGER_READ_ENABLED==='true'?decryptCandidate(dataFile,process.env.FEE_DATA_KEY):null,targetDate,outputDir:output,reader:options.ibReader});
+      if(ib)baseArgs.push(`--ib-manager-input=${ib.file}`);
+      if(options.reportPlan)baseArgs.push(`--report-plan=${JSON.stringify(options.reportPlan)}`);
       stage = "WRITER";
       styleProposal.checkCurrent();
       incomeInput.checkCurrent();
@@ -553,7 +567,8 @@ export async function produce(options = {}) {
       const after = sha256(fs.readFileSync(dataFile));
       const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
       stage = "RECEIPT";
-      assertCandidateReceiptable(decryptCandidate(dataFile, process.env.FEE_DATA_KEY));
+      const finalPayload=decryptCandidate(dataFile, process.env.FEE_DATA_KEY);
+      assertCandidateReceiptable(finalPayload);
       run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
       stage = "HEALTH_CREATE";
       run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
@@ -568,10 +583,11 @@ export async function produce(options = {}) {
       run("fee-data-health.mjs", ["validate", `--health=${healthFile}`, `--data=${dataFile}`], env);
       return { targetDate, outcome, retryCount: economicRead.retryCount + stableRead.retryCount, dataSha256: after, sourceDates: {
         schwab: input.sourceDates.schwab, webull: input.sourceDates.webull, benchmark: input.benchmark.sourceDate,
-      }, dataFile, healthFile };
+      }, dataFile, healthFile,...(ib?{ibManager:finalPayload.ibManagerSourceStatus}:{}) };
     } finally {
       try { fs.unlinkSync(styleFile); } catch { /* best effort */ }
       try { fs.unlinkSync(path.join(output, "management-input.json")); } catch { /* best effort */ }
+      try { fs.unlinkSync(path.join(output, "ib-manager-input.json")); } catch { /* best effort */ }
       try { economic?.cleanup(); } catch (error) {
         throw new Error(producerFailureCode(error, "CLEANUP"));
       }
@@ -606,7 +622,8 @@ async function main() {
   }
   const result = await produce({ cli });
   console.log(JSON.stringify({ schema: "fee-console.cloud-producer.v1", targetDate: result.targetDate,
-    outcome: result.outcome, retryCount: result.retryCount, sourceDates: result.sourceDates, dataSha256: result.dataSha256 }));
+    outcome: result.outcome, retryCount: result.retryCount, sourceDates: result.sourceDates, dataSha256: result.dataSha256,
+    ...(result.ibManager?{ibManager:result.ibManager}:{}) }));
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

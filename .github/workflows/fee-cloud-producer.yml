@@ -2,25 +2,27 @@ name: Fee console cloud producer
 
 on:
   schedule:
-    # HKT Tue-Sat 10:00 first attempt. Independent 11:40, 11:55 and 12:20
-    # idempotent slots reduce the impact of a delayed or dropped GitHub schedule
-    # event; the later slots still pick up delayed source data without a Mac.
-    - cron: '0 2 * * 2-6'
-    - cron: '40,55 3 * * 2-6'
-    - cron: '20,50 4 * * 2-6'
-    - cron: '50 5,7,9 * * 2-6'
+    # Public period gate only: HKT 00:00 first attempt, then 01:00/08:00/13:00.
+    # Financial production runs only for a due, unpublished weekly/monthly cutoff.
+    # 13:00 also covers a natural NY month-end still unfinished at HKT midnight.
+    - cron: '0 16,17,0,5 * * *'
   workflow_dispatch:
     inputs:
       run_reviewed_once:
-        description: Explicit manual report request; automatic daily dispatches stay paused
+        description: Run one separately reviewed weekly/monthly report
         type: boolean
         required: false
         default: false
-      apply_style_proposal:
-        description: Apply one separately approved private style proposal
-        type: boolean
+      report_kind:
+        description: Leave blank for the next due period, or select reviewed weekly/monthly
+        type: string
         required: false
-        default: false
+        default: ''
+      report_target:
+        description: Reviewed accounting cutoff YYYY-MM-DD (not the generation date)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -31,10 +33,54 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  period:
+    # Legacy automated dispatchers omit run_reviewed_once and stay stopped.
+    if: ${{ ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      outcome: ${{ steps.plan.outputs.outcome }}
+      target: ${{ steps.plan.outputs.target }}
+      kind: ${{ steps.plan.outputs.kind }}
+      main: ${{ steps.plan.outputs.main }}
+    steps:
+      - name: Check out trusted main for public period gate
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Plan weekly or final monthly coverage without financial credentials
+        id: plan
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
+          REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.report_target || '' }}
+        run: |
+          set -euo pipefail
+          args=(--mode=preflight)
+          if [[ -n "$REVIEWED_KIND" || -n "$REVIEWED_TARGET" ]]; then
+            args+=("--report-kind=$REVIEWED_KIND" "--report-target=$REVIEWED_TARGET")
+          fi
+          summary=$(node scripts/fee-report-producer.mjs "${args[@]}")
+          node - "$summary" <<'NODE'
+          const fs=require('fs'),r=JSON.parse(process.argv[2]);
+          if(r.schema!=='fee-console.report-preflight.v1'||!['produce','already-published','not-due','waiting','candidate-pending','recovery-required'].includes(r.outcome))throw Error('unexpected period decision');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`outcome=${r.outcome}\n`);
+          if(r.outcome==='produce'){
+            if(!/^\d{4}-\d{2}-\d{2}$/.test(r.plan?.accountingThrough)||!['weekly','monthly','weekly-monthly'].includes(r.plan?.kind)||!/^[a-f0-9]{40}$/.test(r.mainSha))throw Error('invalid frozen period');
+            const kind=r.plan.kind==='monthly'?'monthly':'weekly';
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,`target=${r.plan.accountingThrough}\nkind=${kind}\nmain=${r.mainSha}\n`);
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`## Fee report period\n\n- Decision: ${r.outcome}\n- Accounting cutoff: ${r.plan?.accountingThrough||'not due'}\n- Price cutoff: ${r.plan?.priceThrough||'not due'}\n\nNo financial source or encrypted economic book is read by this gate.\n`);
+          if(r.outcome==='recovery-required')throw Error('FEE_REPORT_RECOVERY_REQUIRED');
+          NODE
+
   produce:
-    # Pause the legacy daily cron and automated dispatch defaults. Preserve the
-    # explicit manual path; this flag does not replace source or release gates.
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    needs: period
+    if: ${{ needs.period.outputs.outcome == 'produce' && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -55,36 +101,15 @@ jobs:
           git show origin/market-data-cache:benchmark-close.json > "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
           chmod 600 "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
 
-      - name: Check whether this complete target is already published
-        id: published
+      - name: Confirm the frozen period base before financial access
         shell: bash
         env:
-          GITHUB_TOKEN: ${{ github.token }}
+          PLANNED_MAIN: ${{ needs.period.outputs.main }}
         run: |
           set -euo pipefail
-          summary=$(node scripts/fee-cloud-producer.mjs \
-            --mode=published-preflight \
-            --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json")
-          node - "$summary" <<'NODE'
-          const fs = require('fs'), result = JSON.parse(process.argv[2]);
-          if (result.schema !== 'fee-console.published-preflight.v1'
-              || !['produce', 'already-published'].includes(result.outcome)
-              || !/^\d{4}-\d{2}-\d{2}$/.test(result.targetDate)) throw new Error('unexpected publication decision');
-          fs.appendFileSync(process.env.GITHUB_OUTPUT, `outcome=${result.outcome}\ntarget=${result.targetDate}\n`);
-          if (result.outcome === 'already-published') fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-            `## Fee cloud producer\n\n- Target: ${result.targetDate}\n- Outcome: already-published\n\nThe existing main receipt and encrypted data were verified. Its source check time is unchanged.\n`);
-          NODE
-
-      - name: Refresh the producer base after publication preflight
-        if: ${{ steps.published.outputs.outcome == 'produce' }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          git fetch --no-tags origin main
-          git checkout --detach origin/main
+          test "$(git rev-parse HEAD)" = "$PLANNED_MAIN"
 
       - name: Exchange the trusted workflow identity for short-lived Google credentials
-        if: ${{ steps.published.outputs.outcome == 'produce' }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
         with:
           project_id: family-portfolio-gateway
@@ -93,7 +118,6 @@ jobs:
 
       - name: Read the isolated cloud Sharesight credentials
         id: sharesight_credentials
-        if: ${{ steps.published.outputs.outcome == 'produce' }}
         uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
         with:
           secrets: |-
@@ -102,39 +126,27 @@ jobs:
 
       - name: Read, calculate and validate the encrypted candidate
         id: producer
-        if: ${{ steps.published.outputs.outcome == 'produce' }}
         shell: bash
         env:
           FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.sharesight_credentials.outputs.client_id }}
           FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.sharesight_credentials.outputs.client_secret }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
+          IB_MANAGER_READ_ENABLED: ${{ vars.IB_MANAGER_READ_ENABLED }}
+          IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
-          APPLY_STYLE_PROPOSAL: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_style_proposal }}
-          FEE_STYLE_PROPOSAL_JSON: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_style_proposal && secrets.FEE_STYLE_PROPOSAL_JSON || '' }}
-          FEE_STYLE_PROPOSAL_LOCK: ${{ github.event_name == 'workflow_dispatch' && inputs.apply_style_proposal && secrets.FEE_STYLE_PROPOSAL_LOCK || '' }}
+          REPORT_KIND: ${{ needs.period.outputs.kind }}
+          REPORT_TARGET: ${{ needs.period.outputs.target }}
         run: |
           set -euo pipefail
-          style_args=()
-          if [[ "$APPLY_STYLE_PROPOSAL" == 'true' ]]; then
-            node <<'NODE'
-            const fs = require('fs'), path = require('path');
-            try {
-              const text = process.env.FEE_STYLE_PROPOSAL_JSON;
-              if (!text || Buffer.byteLength(text) > 64 * 1024) throw new Error();
-              fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'fee-cloud-private', 'style-proposal.json'),
-                text, {mode: 0o600, flag: 'wx'});
-            } catch { console.error('FEE_CLOUD_STYLE_PROPOSAL_INPUT'); process.exit(1); }
-          NODE
-            style_args+=("--style-proposal-file=$RUNNER_TEMP/fee-cloud-private/style-proposal.json")
-          fi
-          unset FEE_STYLE_PROPOSAL_JSON
           error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"
-          if ! summary=$(node scripts/fee-cloud-producer.mjs \
+          if ! summary=$(node scripts/fee-report-producer.mjs \
+            --mode=produce \
+            --report-kind="$REPORT_KIND" \
+            --report-target="$REPORT_TARGET" \
             --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
-            --target-date="${{ steps.published.outputs.target }}" \
-            --out-dir="$RUNNER_TEMP/fee-cloud-private" "${style_args[@]}" 2>"$error_file"); then
+            --out-dir="$RUNNER_TEMP/fee-cloud-private" 2>"$error_file"); then
             code=$(tail -n 1 "$error_file")
-            if [[ ! "$code" =~ ^(FEE_CLOUD|SOURCE)_[A-Z0-9_]+$ ]]; then
+            if [[ ! "$code" =~ ^(FEE_CLOUD|FEE_REPORT|SOURCE)_[A-Z0-9_]+$ ]]; then
               code=FEE_CLOUD_FAILED
             fi
             printf '%s\n' "$code"
@@ -146,10 +158,14 @@ jobs:
           if (result.schema !== 'fee-console.cloud-producer.v1') throw new Error('unexpected producer summary');
           process.stdout.write([
             '## Fee cloud producer', '',
-            `- Target: ${result.targetDate}`,
+            `- Report: ${result.reportKind}`,
+            `- Accounting cutoff: ${result.accountingThrough}`,
+            `- Price cutoff: ${result.priceThrough}`,
+            `- Reconstructed calendar days: ${result.reconstructedDays}`,
             `- Outcome: ${result.outcome}`,
             `- Transient source retries: ${result.retryCount}`,
             `- Source dates: Schwab ${result.sourceDates.schwab}; Webull ${result.sourceDates.webull}; benchmark ${result.sourceDates.benchmark}`,
+            ...(result.ibManager ? [`- Independent IB: ${result.ibManager.state === 'verified' ? 'verified' : 'pending'}${/^IB_SOURCE_[A-Z_]{1,48}$/.test(result.ibManager.reasonCode || '') ? ` (${result.ibManager.reasonCode})` : ''}`] : []),
             '', 'No portfolio amounts or credentials are included in this summary.', ''
           ].join('\n'));
           NODE
@@ -160,7 +176,7 @@ jobs:
 
       - name: Create a signed owner candidate
         id: candidate
-        if: ${{ vars.FEE_CLOUD_MODE == 'publish' && steps.published.outputs.outcome == 'produce' }}
+        if: ${{ vars.FEE_CLOUD_MODE == 'publish' && needs.period.outputs.outcome == 'produce' }}
         shell: bash
         env:
           FEE_CLOUD_GITHUB_TOKEN: ${{ secrets.FEE_CLOUD_GITHUB_TOKEN }}
@@ -172,7 +188,7 @@ jobs:
             --base-sha="$(git rev-parse HEAD)"
 
       - name: Explain shadow mode
-        if: ${{ vars.FEE_CLOUD_MODE == 'shadow' && steps.published.outputs.outcome == 'produce' }}
+        if: ${{ vars.FEE_CLOUD_MODE == 'shadow' && needs.period.outputs.outcome == 'produce' }}
         shell: bash
         run: echo 'Shadow mode validated the full private calculation and intentionally published nothing.' >> "$GITHUB_STEP_SUMMARY"
 

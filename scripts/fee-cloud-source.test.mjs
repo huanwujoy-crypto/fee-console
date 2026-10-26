@@ -130,6 +130,15 @@ test('preflight waits only for publication, bounds pending candidates, and fails
   await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,attempts:1,readState:async()=>moved}),/PUBLICATION_UNSTABLE/);
 });
 
+test('enabled independent IB cannot rely on composite health or race an earlier pending candidate',async()=>{
+  const state=publicationFixture();
+  assert.equal((await publishedPreflight({cache:benchmarkCache,now:gateNow,ibEnabled:true,readState:async()=>state})).reason,'ib-verification-required');
+  await assert.rejects(publishedPreflight({cache:benchmarkCache,now:gateNow,ibEnabled:true,attempts:1,readState:async()=>({...state,pending:true})}),/WAIT_TIMEOUT/);
+  let calls=0;const result=await publishedPreflight({cache:benchmarkCache,now:gateNow,ibEnabled:true,attempts:2,delayMs:0,sleep:async()=>{},readState:async()=>{
+    if(!calls++)return {...state,pending:true};return {...state,mainSha:'c'.repeat(40),finalMainSha:'c'.repeat(40)};
+  }});assert.equal(result.outcome,'produce');assert.equal(calls,2);
+});
+
 function earlierCandidateFixture() {
   return {sha:'b'.repeat(40),parents:[{sha:'a'.repeat(40)}],author:{login:'huanwujoy-crypto'},committer:{login:'web-flow'},
     commit:{message:`daily ${D}`,committer:{date:`${D}T21:00:00Z`},verification:{verified:true}},
@@ -167,6 +176,9 @@ test('public reader pins both encrypted files to main and never trusts candidate
   assert.equal(result.pending,true);assert.equal(isPublishedTarget(result,D,gateNow()),false);
   assert.equal(routes.filter(r=>r==='git/ref/heads/main').length,3);
   assert.equal(routes.some(r=>r.includes('fee-cloud-producer.yml/runs')),false);
+  state.health.targetDate=D;
+  assert.equal((await readPublicationState(D,`${D}T22:00:00Z`,request,{requireIb:true})).pending,true);
+  state.health.targetDate='2026-09-22';
   assert.equal((await readPublicationState(D,`${D}T22:00:00Z`,async route=>{
     if(route.startsWith('actions/'))throw new Error('read-only Actions metadata unavailable');
     return request(route);
@@ -179,17 +191,16 @@ test('public reader pins both encrypted files to main and never trusts candidate
 
 test('workflow gates all credential, source and candidate steps before authentication and preserves old health', () => {
   const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
-  const steps=workflow.split('\n      - name: ').slice(1);
-  const preflight=steps.findIndex(s=>s.startsWith('Check whether this complete target'));
-  const names=['Refresh the producer base','Exchange the trusted workflow identity','Read the isolated cloud Sharesight credentials',
-    'Read, calculate and validate','Create a signed owner candidate','Explain shadow mode'];
-  for(const name of names){const index=steps.findIndex(s=>s.startsWith(name));assert.ok(index>preflight);assert.match(steps[index],/if:.*steps\.published\.outputs\.outcome == 'produce'/);}
-  assert.ok(steps.findIndex(s=>s.startsWith('Read the independent benchmark cache'))<preflight);
-  assert.doesNotMatch(steps[preflight],/secrets\.|create-success|create-failure|fee-data-health\.json|FEE_DATA_KEY|SHARESIGHT/);
-  assert.match(steps[preflight],/already-published/);assert.match(steps[preflight],/source check time is unchanged/);
+  const gate=workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:'));
+  const production=workflow.slice(workflow.indexOf('  produce:'));
+  assert.match(production,/needs: period/);assert.match(production,/if:.*needs\.period\.outputs\.outcome == 'produce'/);
+  assert.doesNotMatch(gate,/secrets\.|create-success|create-failure|FEE_DATA_KEY|SHARESIGHT/);
+  assert.match(gate,/already-published/);assert.match(gate,/candidate-pending/);
+  assert.ok(production.indexOf('Confirm the frozen period base')<production.indexOf('Exchange the trusted workflow identity'));
+  assert.ok(production.indexOf('Read the independent benchmark cache')<production.indexOf('Exchange the trusted workflow identity'));
   assert.match(workflow,/permissions:\n  contents: read\n  id-token: write/);
   assert.match(workflow,/group: fee-cloud-producer\n  cancel-in-progress: false/);
-  assert.match(steps.at(-1),/if:.*always\(\)/);
+  assert.match(production,/Remove private runtime files[\s\S]*if:.*always\(\)/);
 });
 
 test('real preflight CLI performs only public main GETs and never reads financial credentials or creates a candidate', async t => {
@@ -1300,14 +1311,14 @@ test("cloud producer bridges only a contiguous weekend before the next market se
 
 test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight secrets", () => {
   const workflow = fs.readFileSync(new URL("../.github/workflows/fee-cloud-producer.yml", import.meta.url), "utf8");
-  assert.match(workflow, /cron: '0 2 \* \* 2-6'/,
-    "the first cloud attempt must be 10:00 HKT on the existing production weekdays");
-  assert.match(workflow, /cron: '40,55 3 \* \* 2-6'/,
-    "the existing independent 11:40 and 11:55 HKT retries must remain");
-  assert.match(workflow, /cron: '20,50 4 \* \* 2-6'/,
-    "the early recovery window must continue through 12:50 HKT");
-  assert.match(workflow, /cron: '50 5,7,9 \* \* 2-6'/,
-    "the existing 13:50, 15:50 and 17:50 HKT recovery slots must remain");
+  assert.match(workflow, /cron: '0 16,17,0,5 \* \* \*'/, 'public gate starts at HKT midnight with bounded retry slots');
+  assert.doesNotMatch(workflow, /cron: '[^']+ \* \* 2-6'/);
+  assert.match(workflow, /needs: period/);
+  assert.match(workflow, /needs\.period\.outputs\.outcome == 'produce'/);
+  assert.match(workflow, /inputs\.run_reviewed_once/);
+  assert.match(workflow, /github\.event_name == 'schedule' && vars\.FEE_REPORT_PERIODS_ENABLED == 'true'/);
+  const publicGate=workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:'));
+  assert.doesNotMatch(publicGate, /secrets\.|get-secretmanager|FEE_DATA_KEY|client_secret/);
   assert.match(workflow, /permissions:\n  contents: read\n  id-token: write/);
   assert.match(workflow, /google-github-actions\/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093/);
   assert.match(workflow, /workloadIdentityPools\/fee-console-github\/providers\/fee-console-main/);
@@ -1353,7 +1364,7 @@ function scheduledReceiptDecision(iso, event = "schedule", receipt = null, {rece
   const cycleStart = shiftDay(hkt, -((weekdayNumber + 1) % 7));
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "fee-watchdog-test-"));
   try {
-    const data = Buffer.from('{"synthetic":true}'), hash = createHash("sha256").update(data).digest("hex");
+    const data = Buffer.from(JSON.stringify({enc:true,v:3,data:Buffer.alloc(64).toString("base64")})), hash = createHash("sha256").update(data).digest("hex");
     fs.writeFileSync(path.join(directory, "data.json"), data);
     let checkedDay = "";
     if (receipt) {
@@ -1368,7 +1379,10 @@ function scheduledReceiptDecision(iso, event = "schedule", receipt = null, {rece
     }
     const clock = path.join(directory, "clock.mjs");
     fs.writeFileSync(clock, `const OriginalDate=Date, now=OriginalDate.parse(process.env.TEST_NOW);globalThis.Date=class extends OriginalDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`);
+    const watchScript=path.join(directory,'period-watch.mjs');
+    fs.writeFileSync(watchScript,`import fs from 'node:fs';import {reportPublicationWatch} from ${JSON.stringify(new URL('./fee-report-producer.mjs',import.meta.url).href)};try{console.log(JSON.stringify(await reportPublicationWatch({mainSha:'a'.repeat(40),data:fs.readFileSync('data.json'),health:JSON.parse(fs.readFileSync('fee-data-health.json'))})));}catch(error){console.error(error.message);process.exitCode=1;}`);
     const script = `set -euo pipefail
+base_sha=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 candidates=(${candidateCount ? "verified-candidate" : ""})
 recent_unpromoted_candidate=${recentCandidate}
 date() {
@@ -1379,64 +1393,43 @@ date() {
   else echo "$TEST_TODAY"; fi
 }
 jq() { "$TEST_NODE" -e 'const fs=require("fs"),value=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));console.log(value[process.argv[1].includes("checkedAt")?"checkedAt":"outcome"]||"");' "$2" "$3"; }
-node() { echo "receipt-validation $*" >&2; "$TEST_NODE" --import "$TEST_CLOCK" "$TEST_VALIDATOR" "\${@:2}"; }
+node() { echo "receipt-validation $*" >&2; if [[ "$1" == scripts/fee-report-producer.mjs ]]; then "$TEST_NODE" --import "$TEST_CLOCK" "$TEST_PERIOD_WATCH" "\${@:2}"; else "$TEST_NODE" --import "$TEST_CLOCK" "$TEST_VALIDATOR" "\${@:2}"; fi; }
 ${workflow.slice(start, end)}
 echo candidate-path`;
     const result = spawnSync("bash", ["-c", script], {cwd: directory, encoding: "utf8", env: {...process.env,
       TZ: "America/Los_Angeles", GITHUB_EVENT_NAME: event, GITHUB_OUTPUT: path.join(directory, "output"), TEST_NOW: iso,
       TEST_TODAY: hkt, TEST_WEEKDAY: String(weekdayNumber), TEST_CYCLE_START: cycleStart, TEST_RECEIPT_DATE: checkedDay,
-      TEST_NODE: process.execPath, TEST_CLOCK: clock, TEST_VALIDATOR: fileURLToPath(new URL("./fee-data-health.mjs", import.meta.url))}});
+      TEST_NODE: process.execPath, TEST_CLOCK: clock, TEST_PERIOD_WATCH: watchScript, TEST_VALIDATOR: fileURLToPath(new URL("./fee-data-health.mjs", import.meta.url))}});
     return {...result, output: fs.existsSync(path.join(directory, "output")) ? fs.readFileSync(path.join(directory, "output"), "utf8") : ""};
   } finally { fs.rmSync(directory, {recursive: true, force: true}); }
 }
 
-test("scheduled watchdog skips only Hong Kong non-production Sun/Mon with no candidate", () => {
-  for (const iso of ["2026-10-04T11:06:24Z", "2026-10-04T16:00:00Z", "2026-10-05T07:45:00Z"]) {
-    const result = scheduledReceiptDecision(iso, "schedule", {date: "2026-10-03", valid: true});
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /No producer is scheduled today/);
-    assert.equal(result.output, "sha=\n");
-    assert.match(result.stderr, /receipt-validation/);
+test("scheduled period watchdog accepts this weekly receipt across the whole week", () => {
+  const receipt={checkedAt:'2026-10-04T01:00:00Z',targetDate:'2026-10-02'};
+  for(const iso of ['2026-10-04T11:06:24Z','2026-10-05T16:00:00Z','2026-10-06T05:15:00Z','2026-10-07T05:15:00Z','2026-10-08T05:15:00Z','2026-10-09T05:15:00Z','2026-10-10T07:45:00Z']){
+    const result=scheduledReceiptDecision(iso,'schedule',receipt);
+    assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/already-published/);assert.equal(result.output,'sha=\n');
   }
 });
-
-test("all Hong Kong Tue-Sat production days still fail without a verified same-day receipt", () => {
-  for (const iso of ["2026-10-05T16:00:00Z", "2026-10-06T05:15:00Z", "2026-10-07T05:15:00Z", "2026-10-08T05:15:00Z", "2026-10-09T05:15:00Z", "2026-10-10T07:45:00Z"]) {
-    const result = scheduledReceiptDecision(iso);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /No verified Codex fee-data producer receipt exists for today/);
-    assert.equal(result.output, "");
+test("next weekly cycle still fails until the new target is independently published", () => {
+  const old={checkedAt:'2026-10-04T01:00:00Z',targetDate:'2026-10-02'};
+  const result=scheduledReceiptDecision('2026-10-11T05:15:00Z','schedule',old);
+  assert.equal(result.status,1);assert.match(result.stderr,/PUBLISHED_PERIOD_MISSING/);
+  assert.equal(scheduledReceiptDecision('2026-10-11T05:15:00Z','schedule',{checkedAt:'2026-10-11T01:00:00Z',targetDate:'2026-10-09'}).status,0);
+});
+test("manual/event no-candidate receipts retain same-day and fresh-health protections", () => {
+  for(const event of ['workflow_dispatch','workflow_run']){
+    assert.equal(scheduledReceiptDecision('2026-10-06T05:15:00Z',event).status,1);
+    assert.equal(scheduledReceiptDecision('2026-10-06T05:15:00Z',event,{checkedAt:'2026-10-04T01:00:00Z',targetDate:'2026-10-02'}).status,1);
+    assert.equal(scheduledReceiptDecision('2026-10-06T05:15:00Z',event,{date:'2026-10-06',valid:true}).status,0);
   }
 });
-
-test("same-day validation and manual/event receipt protections remain enforced", () => {
-  for (const event of ["workflow_dispatch", "workflow_run"]) {
-    const missing = scheduledReceiptDecision("2026-10-04T11:06:24Z", event);
-    assert.equal(missing.status, 1);
-    assert.match(missing.stderr, /No verified Codex fee-data producer receipt/);
+test("period no-op cannot hide a rejected candidate, corrupt envelope/receipt, missing report or source mismatch", () => {
+  const good={checkedAt:'2026-10-04T01:00:00Z',targetDate:'2026-10-02'};
+  for(const [receipt,options] of [[null,{}],[{...good,valid:false},{}],[{...good,badHash:true},{}],[{...good,outcome:'failed'},{}],[{...good,checkedAt:'2026-10-05T12:22:40.904Z'},{}],[{...good,sourceDates:{schwab:'2026-10-02',webull:'2026-10-01',benchmark:'2026-10-02'}},{}],[good,{recentCandidate:true}]]){
+    const result=scheduledReceiptDecision('2026-10-05T12:16:40.904Z','schedule',receipt,options);assert.equal(result.status,1);assert.equal(result.output,'');
   }
-  const valid = scheduledReceiptDecision("2026-10-06T05:15:00Z", "schedule", {date: "2026-10-06", valid: true});
-  assert.equal(valid.status, 0);
-  assert.match(valid.stderr, /receipt-validation/);
-  assert.match(valid.stdout, /verified producer receipt/);
-  for (const receipt of [{date: "2026-10-05", valid: true}, {date: "2026-10-06", valid: false}]) {
-    assert.equal(scheduledReceiptDecision("2026-10-06T05:15:00Z", "schedule", receipt).status, 1);
-  }
-});
-
-
-test("non-production no-op cannot hide recent rejected candidates or an invalid published receipt", () => {
-  for (const [receipt, options] of [[null, {}], [{date: "2026-10-03", valid: false}, {}], [{date: "2026-10-03", valid: true}, {recentCandidate: true}]]) {
-    const result = scheduledReceiptDecision("2026-10-04T11:06:24Z", "schedule", receipt, options);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /Non-production-day no-op refused/);
-    assert.equal(result.output, "");
-  }
-  const candidate = scheduledReceiptDecision("2026-10-04T11:06:24Z", "schedule", null, {candidateCount: 1});
-  assert.equal(candidate.status, 0);
-  assert.equal(candidate.stdout, "candidate-path\n");
-  assert.doesNotMatch(candidate.stderr, /receipt-validation/);
-  assert.equal(candidate.output, "");
+  const candidate=scheduledReceiptDecision('2026-10-05T12:16:40.904Z','schedule',null,{candidateCount:1});assert.equal(candidate.status,0);assert.equal(candidate.stdout,'candidate-path\n');assert.equal(candidate.output,'');
 });
 
 test("recent outstanding branch detection separates rejected attempts from promoted and old branches", () => {
@@ -1457,57 +1450,6 @@ echo "$recent_unpromoted_candidate"`], {encoding: "utf8"});
   }
 });
 
-
-test("real validator accepts the observed Monday 49-hour receipt only in the scheduled off-day branch", () => {
-  const receipt = {checkedAt: "2026-10-03T10:38:26.828Z", targetDate: "2026-10-02"};
-  const iso = "2026-10-05T12:16:40.904Z", result = scheduledReceiptDecision(iso, "schedule", receipt);
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /health ok 2026-10-02 no-op/);
-  assert.match(result.stderr, /--max-age-hours=72/);
-  assert.equal(result.output, "sha=\n");
-  const health = {schema: HEALTH_SCHEMA, checkedAt: receipt.checkedAt, targetDate: receipt.targetDate, sourceDates: {schwab: receipt.targetDate, webull: receipt.targetDate, benchmark: receipt.targetDate}, outcome: "no-op", dataSha256: "a".repeat(64), errorCode: null};
-  assert.deepEqual(validateHealth(health, {now: new Date(iso)}), ["health receipt age"]);
-  for (const event of ["workflow_dispatch", "workflow_run"]) {
-    const strict = scheduledReceiptDecision(iso, event, receipt);
-    assert.equal(strict.status, 1);
-    assert.doesNotMatch(strict.stderr, /--max-age-hours=72/);
-  }
-});
-
-test("latest Saturday cycle is mandatory even when a Friday or older receipt is within 72 hours", () => {
-  for (const checkedAt of ["2026-10-02T15:59:59.999Z", "2026-09-26T10:38:26.828Z"]) {
-    const result = scheduledReceiptDecision("2026-10-05T07:45:00Z", "schedule", {checkedAt});
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /latest production cycle/);
-  }
-  const failed = scheduledReceiptDecision("2026-10-05T07:45:00Z", "schedule", {date: "2026-10-03", outcome: "failed"});
-  assert.equal(failed.status, 1);
-  assert.match(failed.stderr, /latest production cycle/);
-  // A real later successful receipt may resolve the cycle; do not invent one.
-  assert.equal(scheduledReceiptDecision("2026-10-05T07:45:00Z", "schedule", {date: "2026-10-05", outcome: "updated"}).status, 0);
-});
-
-test("earliest Saturday receipt survives late Monday but Tuesday HKT restores strict production freshness", () => {
-  const receipt = {checkedAt: "2026-10-02T16:00:00.000Z", targetDate: "2026-10-01"};
-  const monday = scheduledReceiptDecision("2026-10-05T15:59:59.999Z", "schedule", receipt);
-  assert.equal(monday.status, 0, monday.stderr);
-  assert.match(monday.stderr, /--max-age-hours=72/);
-  const tuesday = scheduledReceiptDecision("2026-10-05T16:00:00.000Z", "schedule", receipt);
-  assert.equal(tuesday.status, 1);
-  assert.doesNotMatch(tuesday.stderr, /--max-age-hours=72/);
-  // UTC Sunday 16:00 is already HKT Monday; UTC Monday 16:00 is HKT Tuesday.
-  assert.equal(scheduledReceiptDecision("2026-10-04T16:00:00Z", "schedule", receipt).status, 0);
-});
-
-test("off-day real CLI still blocks corrupt structure, failed hash, future time and source-date mismatch", () => {
-  const iso = "2026-10-05T12:16:40.904Z";
-  for (const receipt of [{date: "2026-10-03", valid: false}, {date: "2026-10-03", badHash: true},
-    {checkedAt: "2026-10-05T12:22:40.904Z"}, {date: "2026-10-03", sourceDates: {schwab: "2026-10-03", webull: "2026-10-02", benchmark: "2026-10-02"}}]) {
-    const result = scheduledReceiptDecision(iso, "schedule", receipt);
-    assert.equal(result.status, 1);
-    assert.match(result.stderr, /latest production cycle/);
-  }
-});
 
 test("real validator has an inclusive 72-hour cap; default 36-hour validation stays unchanged", () => {
   const health = {schema: HEALTH_SCHEMA, checkedAt: "2026-10-02T16:00:00.000Z", targetDate: "2026-10-01", sourceDates: {schwab: "2026-10-01", webull: "2026-10-01", benchmark: "2026-10-01"}, outcome: "no-op", dataSha256: "a".repeat(64), errorCode: null};
@@ -1585,14 +1527,14 @@ test('net-proceeds mapping rejects mismatched identity, money, currency, links a
 
 // One-time opt-in integration remains on the formal CI path.
 {
-test('workflow exposes proposal only for explicit manual opt-in and preserves protected runtime identity',()=>{
+test('period workflow cannot reuse old one-time style authority and preserves protected runtime identity',()=>{
   const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
-  assert.match(workflow,/apply_style_proposal:[\s\S]*?type: boolean[\s\S]*?default: false/);
-  assert.match(workflow,/FEE_STYLE_PROPOSAL_JSON: \$\{\{ github\.event_name == 'workflow_dispatch' && inputs\.apply_style_proposal && secrets\.FEE_STYLE_PROPOSAL_JSON \|\| '' \}\}/);
+  assert.doesNotMatch(workflow,/apply_style_proposal|secrets\.FEE_STYLE_PROPOSAL/);
+  assert.match(workflow,/run_reviewed_once:[\s\S]*?type: boolean[\s\S]*?default: false/);
   assert.match(workflow,/permissions:\n  contents: read\n  id-token: write/);
   assert.match(workflow,/environment: fee-cloud-producer/);
   assert.match(workflow,/service_account: fee-cloud-producer@family-portfolio-gateway\.iam\.gserviceaccount\.com/);
-  assert.match(workflow,/unset FEE_STYLE_PROPOSAL_JSON/);
+  assert.match(workflow,/--mode=produce/);
   const producer=fs.readFileSync(new URL('./fee-cloud-producer.mjs',import.meta.url),'utf8');
   assert.match(producer,/delete env\.FEE_STYLE_PROPOSAL_JSON/);
   assert.match(producer,/delete env\.FEE_STYLE_PROPOSAL_LOCK/);

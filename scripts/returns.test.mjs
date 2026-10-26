@@ -27,6 +27,7 @@ import { periodReturns } from "./fee-engine.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
+const renamedReturnLabels = html.includes('/* return-display-names:manager-jenny-ib:v1 */');
 
 const block = periodReturns.toString();
 const annMatch = html.match(/function ann\(r,days\)\{([^}]*)\}/);
@@ -226,6 +227,7 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const htmlPath=process.env.FEE_LEDGER_TEST_INDEX||path.join(here,'..','index.html');
 if(process.env.GITHUB_ACTIONS==='true'&&process.env.FEE_LEDGER_TEST_INDEX)throw new Error('external UI preview is local-only');
 const html=fs.readFileSync(htmlPath,'utf8');
+const renamedReturnLabels=html.includes('/* return-display-names:manager-jenny-ib:v1 */');
 const hasDrawdown=html.includes('/* max-drawdown-view:start */');
 const hasPeriodDisplay=html.includes('/* return-period-display:start */');
 const hasDrawdownEpisode=html.includes('/* drawdown-episode-metadata:start */');
@@ -403,13 +405,13 @@ drawdownTest('original four returns remain unchanged; drawdown is an independent
   sandbox.renderKPIs(feeView,st,{due:receipt.balance.dueCents/100},{hold:false,holdReasons:[]});
   const out=nodes.kpis.innerHTML;
   if(hasCompactComparison){
-    assert.match(out,/data-return-series="actual"[^]*?组合毛[^]*?TWR[^]*?管理能力/);
+    assert.match(out,renamedReturnLabels?/data-return-series="actual"[^]*?管理方[^]*?TWR[^]*?管理能力/:/data-return-series="actual"[^]*?组合毛[^]*?TWR[^]*?管理能力/);
     assert.match(out,/data-return-series="investor"[^]*?出资方[^]*?Modified Dietz[^]*?日末资金流模型/);
   }else{assert.match(out,/组合毛 TWR（管理能力）/);assert.match(out,/出资方 Modified Dietz（EOD flow 模型）/);}
   assert.match(out,/data-drawdown-series="actual"[^]*?-33\.33%/);
   assert.match(out,/data-drawdown-series="spy"[^]*?-20\.00%/);
   assert.match(out,/data-drawdown-series="qqq"[^]*?-18\.18%/);
-  assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
+  assert.equal((out.match(/data-drawdown-series=/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);
   assert.match(out,/Modified Dietz 是期间收益率，不单独计算回撤/);
   assert.ok(out.indexOf('同期最大回撤')>out.indexOf(hasCompactComparison?'data-return-series="investor"':'出资方 Modified Dietz'));
 });
@@ -417,7 +419,7 @@ drawdownTest('original four returns remain unchanged; drawdown is an independent
 drawdownTest('pending receipt renders three explicit unverified values and no invented 0.00%',async()=>{
   const {sandbox}=await model();
   const out=sandbox.renderDrawdowns({state:'pending',start:null,asOf:null});
-  assert.equal((out.match(/未核实<\/b>/g)||[]).length,3);
+  assert.equal((out.match(/未核实<\/b>/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);
   assert.ok(!out.includes('0.00%'));assert.match(out,hasPeriodDisplay?/回撤统计期间待核实/:/日期区间待核实/);
 });
 
@@ -506,7 +508,7 @@ periodDisplayTest('missing periods keep the date and all three drawdowns explici
   const {sandbox}=await model();
   const out=sandbox.renderDrawdowns({state:'pending',start:null,asOf:null});
   assert.match(out,/回撤统计期间待核实/);
-  assert.equal((out.match(/未核实<\/b>/g)||[]).length,3);
+  assert.equal((out.match(/未核实<\/b>/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);
   assert.ok(!out.includes('0 个自然日'));assert.ok(!out.includes('同期'));
 });
 
@@ -618,7 +620,7 @@ episodeTest('each row visibly displays its own decline interval and separate rec
     assert.ok(visible.includes(`高点 ${peak} → 低点 ${trough}${hasCompactComparison?' ':' · '}下跌 ${days} 个自然日`));
   }
   assert.equal((text.match(hasCompactComparison?/恢复前高/g:/该次回撤恢复前高/g)||[]).length,3);
-  assert.ok(visible.includes('低点后 2 个自然日'));assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);
+  assert.ok(visible.includes('低点后 2 个自然日'));assert.equal((out.match(/data-drawdown-series=/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);
   if(hasCompactComparison)assert.doesNotMatch(out,/下跌历时为高点至低点的日期差/);
   else assert.match(text,/下跌历时为高点至低点的日期差；恢复历时从低点起算/);
 });
@@ -639,7 +641,7 @@ episodeTest('missing source coverage keeps all episode and recovery details unve
   const {sandbox,feeView,input}=await model();input.data.daily.splice(2,1);
   const view=sandbox.drawdownView(feeView),text=sandbox.renderDrawdowns(feeView).replace(/<[^>]+>/g,' ');
   for(const key of ['actual','spy','qqq']){assert.equal(view[key].state,'pending');assert.equal(view[key].declineDays,null);assert.equal(view[key].recoveryState,'pending');}
-  assert.equal((text.match(/回撤期间未核实/g)||[]).length,3);assert.equal((text.match(/恢复情况未核实/g)||[]).length,3);
+  assert.equal((text.match(/回撤期间未核实/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);assert.equal((text.match(/恢复情况未核实/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);
   assert.ok(!text.includes('下跌 0'));assert.ok(!text.includes('尚未恢复前高'));
 });
 
@@ -666,7 +668,7 @@ compactTest('compact tables preserve all four receipt values with explicitly dif
     assert.ok(row);assert.ok(row.includes((value>0?'+':'')+(value*100).toFixed(2)+'%'));
   }
   assert.match(table,/TWR 与 Modified Dietz 口径不同/);
-  assert.match(table,/组合毛/);assert.match(table,/管理能力/);assert.match(table,/出资方/);
+  assert.match(table,renamedReturnLabels?/管理方/:/组合毛/);assert.match(table,/管理能力/);assert.match(table,/出资方/);
   assert.match(table,/Modified Dietz/);assert.match(table,/日末资金流模型/);
   assert.equal((table.match(/股息税后/g)||[]).length,2);assert.deepEqual(plain(st),before);
 });
@@ -703,7 +705,7 @@ compactTest('pending receipt keeps the explanation accessible without creating a
   const {sandbox,nodes}=await model(),view={state:'pending',start:null,asOf:null,message:'合成资料待核实'};
   const st=sandbox.receiptState(view);sandbox.renderKPIs(view,st,null,{hold:false,holdReasons:[]});
   const out=nodes.kpis.innerHTML;assert.match(out,/收益率对比/);assert.match(out,/id="benchExplain"/);
-  assert.equal((out.match(/data-drawdown-series=/g)||[]).length,3);assert.ok(!out.includes('data-return-series='));
+  assert.equal((out.match(/data-drawdown-series=/g)||[]).length,html.includes("/* ib-manager-drawdown:receipt-v1 */")?4:3);assert.ok(!out.includes('data-return-series='));
   assert.ok(!out.includes('0.00%'));assert.match(out,/未核实/);
 });
 test('compact table rollout is either absent or fully marked',()=>{
@@ -734,6 +736,25 @@ ibTest('uncontracted IB snapshots never change fee receipts or the managed accou
   assert.deepEqual(derived(st),derived(original.st));
   assert.deepEqual(input.economicInput.accounts.map(account=>account.id),['schwab','webull']);
 });
+
+const ibDrawdownTest=html.includes('/* ib-manager-drawdown:receipt-v1 */')?test:test.skip;
+ibDrawdownTest('independent IB reuses peak, trough and recovery logic while all existing rows stay unchanged',async()=>{
+  const {sandbox,feeView}=await model(),before=plain(sandbox.drawdownView(feeView));
+  const date=n=>new Date(Date.parse(feeView.start+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
+  const ib={state:'verified',start:feeView.start,asOf:feeView.asOf,anchorDate:date(-1),factors:[1.2,.8,1,1.25,1].map((factor,i)=>({d:date(i),factor}))};
+  const view=sandbox.drawdownView(feeView,ib);near(view.ib.value,.2);assert.equal(view.ib.peakDate,date(0));assert.equal(view.ib.troughDate,date(1));assert.equal(view.ib.declineDays,1);assert.equal(view.ib.recoveryDate,date(3));assert.equal(view.ib.recoveryDays,2);
+  for(const key of ['actual','spy','qqq'])assert.deepEqual(plain(view[key]),before[key]);
+  const out=sandbox.renderDrawdowns(feeView,ib);assert.match(out,/data-drawdown-series="actual"[^]*?管理方/);assert.match(out,/data-drawdown-series="ib"[^]*?Jenny's IB[^]*?-20\.00%/);assert.ok(out.indexOf('data-drawdown-series="ib"')<out.indexOf('data-drawdown-series="spy"'));
+  for(const bad of [null,{...ib,state:'pending'},{...ib,asOf:date(9)},{...ib,anchorDate:date(0)},{...ib,factors:ib.factors.slice(1)}])assert.equal(sandbox.drawdownView(feeView,bad).ib.state,'pending');
+});
+ibDrawdownTest('IB drawdown is clipped to the same independently verified benchmark end',async()=>{
+  const {sandbox,feeView}=await model(),date=n=>new Date(Date.parse(feeView.start+'T00:00:00Z')+n*86400000).toISOString().slice(0,10);
+  sandbox.benchmarkCoverage=()=>({through:date(3),verifiedClosures:[]});
+  const ib={state:'verified',start:feeView.start,asOf:feeView.asOf,anchorDate:date(-1),factors:[1.2,.8,1,1.25,.1].map((factor,i)=>({d:date(i),factor}))};
+  const view=sandbox.drawdownView(feeView,ib);assert.equal(view.through,date(3));near(view.ib.value,.2);assert.equal(view.ib.recoveryDate,date(3));
+  const row=sandbox.renderDrawdowns(feeView,null).match(/<tr data-drawdown-series="ib"[^]*?<\/tr>/)[0];assert.match(row,/未核实/);assert.doesNotMatch(row,/%/);
+});
+
 /* drawdown-episode-contract:end */
 }
 /* maximum-drawdown-contract:end */
