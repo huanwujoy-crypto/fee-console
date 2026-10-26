@@ -2080,3 +2080,16 @@ test('weekend carry retains independent gold and rejects explicit gold override'
   assert.match(run(dir,carried,['--weekend-carry']).stdout,/no-op/);
   assert.deepEqual(fs.readFileSync(path.join(dir,'data.json')),bytes);
 });
+
+test('TQQQ proxy integration persists risk basis without changing actual stock, account values or fee inputs',()=>{
+ const dir=tmp(),source=path.join(dir,'tqqq-synthetic.json'),date=today();
+ const portfolios=[{account:'schwab',portfolioId:936249,sourceDate:date,stockTotalUsd:200000,holdings:[{holdingId:90001,ticker:'TQQQ',valueUsd:200000}]},
+  {account:'webull',portfolioId:1350094,sourceDate:date,stockTotalUsd:253845.98,holdings:[{holdingId:90002,ticker:'NVDA',valueUsd:253845.98}]}];
+ const proposals=portfolios.flatMap(p=>p.holdings.map(h=>({portfolioId:p.portfolioId,holdingId:h.holdingId,ticker:h.ticker,style:'growth',firstHeldOn:date,effectiveFrom:date,classifiedAt:new Date().toISOString(),classifier:'synthetic-a',reviewer:'synthetic-b',evidenceRef:'https://example.invalid/synthetic',rationale:'Synthetic classification only',reviewNote:'Synthetic independent review'})));
+ const input={schemaVersion:1,date,portfolios,proposals},bytes=JSON.stringify(input);fs.writeFileSync(source,bytes,{mode:0o600});
+ const r=run(dir,{},[],{FEE_STYLE_INPUT_FILE:source});assert.equal(r.status,0,r.stderr);const point=readPayload(dir).daily[0];
+ assert.equal(point.stock,453845.98);assert.equal(point.schwab,598517.36);assert.equal(point.webull,119026.45);assert.equal(point.cash,263697.83);assert.equal(point.other,0);assert.equal(point.growth,453845.98);
+ assert.equal(point.topHoldingsBasis.method,'issuer-exposure-v1');assert.equal(point.topHoldingsBasis.scope,'schwab-webull');assert.match(point.topHoldingsBasis.notes.join(' '),/TQQQ/);
+ assert.ok(!point.topHoldings.some(h=>h.ticker==='TQQQ'));assert.equal(fs.readFileSync(source,'utf8'),bytes);
+ const encrypted=fs.readFileSync(path.join(dir,'data.json'),'utf8');assert.ok(!encrypted.includes('TQQQ'));assert.ok(!encrypted.includes('topHoldingsBasis'));
+});

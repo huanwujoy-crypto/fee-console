@@ -482,7 +482,9 @@ globalThis.Date=class extends NativeDate {
  static now(){return fixedNow;}
 };`,{mode:0o600});
     fs.mkdirSync(repo,{mode:0o700});fs.cpSync(path.join(ROOT,'scripts'),path.join(repo,'scripts'),{recursive:true});
-    fs.mkdirSync(path.join(repo,'claude'));fs.copyFileSync(path.join(ROOT,'claude/fee-style-mapping.json'),path.join(repo,'claude/fee-style-mapping.json'));
+    fs.mkdirSync(path.join(repo,'claude'));
+    for(const name of ['fee-style-mapping.json','xuan-weekly-concentration-top10-v1.json','xuan-weekly-leveraged-products-v1.json'])
+      fs.copyFileSync(path.join(ROOT,'claude',name),path.join(repo,'claude',name));
     fs.writeFileSync(path.join(repo,'data.json'),seal(payload),{mode:0o600});
     const evidence=path.join(dir,'evidence.json'),cache=path.join(dir,'benchmark.json'),econ=path.join(dir,'economic.json');
     fs.writeFileSync(evidence,JSON.stringify({schema:'fee-console.income-date-evidence.v1',targetDate:date,audits:[auditFixture(date,'SGOV')]}),{mode:0o600});
@@ -538,7 +540,9 @@ globalThis.Date=class extends NativeDate {
  static now(){return fixedNow;}
 };`,{mode:0o600});
     fs.mkdirSync(repo,{mode:0o700});fs.cpSync(path.join(ROOT,'scripts'),path.join(repo,'scripts'),{recursive:true});
-    fs.mkdirSync(path.join(repo,'claude'));fs.copyFileSync(path.join(ROOT,'claude/fee-style-mapping.json'),path.join(repo,'claude/fee-style-mapping.json'));
+    fs.mkdirSync(path.join(repo,'claude'));
+    for(const name of ['fee-style-mapping.json','xuan-weekly-concentration-top10-v1.json','xuan-weekly-leveraged-products-v1.json'])
+      fs.copyFileSync(path.join(ROOT,'claude',name),path.join(repo,'claude',name));
     fs.writeFileSync(path.join(repo,'data.json'),seal(payload),{mode:0o600});
     const evidence=path.join(dir,'evidence.json'),cache=path.join(dir,'benchmark.json'),econ=path.join(dir,'economic.json');
     fs.writeFileSync(evidence,JSON.stringify({schema:'fee-console.income-date-evidence.v1',targetDate:date,audits:[auditFixture(date,'SGOV')]}),{mode:0o600});

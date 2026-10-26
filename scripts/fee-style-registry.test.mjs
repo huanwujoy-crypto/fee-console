@@ -1,11 +1,13 @@
 import crypto from 'node:crypto';
+import vm from 'node:vm';
+import {DEFAULT_TOP10_POLICY} from './xuan-weekly-concentration.mjs';
 import {loadStyleProposal,mergeStyleProposal} from './fee-cloud-producer.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveStyle, readStyleInput, summarizeTopHoldings } from './fee-style-registry.mjs';
+import { resolveStyle, readStyleInput, summarizeTopHoldings, summarizeTopHoldingExposure } from './fee-style-registry.mjs';
 
 const fixture = () => ({
   date: '2026-09-06', sourceDates: { schwab: '2026-09-04', webull: '2026-09-04' }, stock: 300,
@@ -257,3 +259,32 @@ test('one-time lock rejects absent/wrong lock, other target/hash/account/holding
   }
 });
 }
+
+const exposureFixture=()=>({date:'2026-10-24',portfolios:[
+ {portfolioId:936249,sourceDate:'2026-10-23',holdings:[{holdingId:10001,ticker:'TQQQ',valueUsd:100},{holdingId:10002,ticker:'NVDA',valueUsd:10},{holdingId:10003,ticker:'GOOGL',valueUsd:5}]},
+ {portfolioId:1350094,sourceDate:'2026-10-24',holdings:[{holdingId:10004,ticker:'EQAC',valueUsd:100},{holdingId:29274212,ticker:'VSTL',valueUsd:10},{holdingId:10005,ticker:'VST',valueUsd:40}]}
+]});
+const vstRules=[{portfolioId:1350094,holdingId:29274212,ticker:'VSTL',targetTicker:'VST',multiplier:2,effectiveFrom:'2026-09-30',basis:'Synthetic existing 2x rule'}];
+test('fee risk summary shares EQAC proxy, issuer merge and existing VSTL while preserving two-account raw values',()=>{
+ const input=exposureFixture(),before=JSON.stringify(input),r=summarizeTopHoldingExposure(input,3,vstRules);
+ assert.deepEqual(r.rows,[{ticker:'VST',value:60},{ticker:'NVDA',value:43.4},{ticker:'AAPL',value:29.52}]);
+ assert.equal(summarizeTopHoldingExposure(input,10,vstRules).rows.find(r=>r.ticker==='GOOG/GOOGL').value,28.72);
+ assert.match(r.basis.notes.join(' '),/TQQQ × 3.*EQAC.*2026-09-30/);assert.match(r.basis.notes.join(' '),/下限/);assert.equal(JSON.stringify(input),before);
+ input.portfolios.push({portfolioId:936247,sourceDate:'2026-10-24',holdings:[]});assert.throws(()=>summarizeTopHoldingExposure(input),/SCOPE/);
+});
+test('fee proxy zero, missing/stale weights and unknown ticker do not invent 3x or a complete result',()=>{
+ const input=exposureFixture();input.portfolios[0].holdings=[{holdingId:10001,ticker:'TQQQ',valueUsd:0},{holdingId:10009,ticker:'UNKNOWN3X',valueUsd:20}];input.portfolios[1].holdings=[];
+ let r=summarizeTopHoldingExposure(input);assert.deepEqual(r.rows,[{ticker:'UNKNOWN3X',value:20}]);assert.doesNotMatch(r.basis.notes.join(' '),/TQQQ/);
+ input.portfolios[0].holdings[0].valueUsd=100;const policy=structuredClone(DEFAULT_TOP10_POLICY);policy.funds=policy.funds.filter(f=>f.symbol!=='EQAC');
+ r=summarizeTopHoldingExposure(input,3,[],{policy});assert.deepEqual(r.rows,[{ticker:'UNKNOWN3X',value:20}]);assert.match(r.basis.notes.join(' '),/TQQQ 未计入/);
+ input.portfolios.forEach(p=>p.sourceDate='2026-11-20');r=summarizeTopHoldingExposure(input);assert.match(r.basis.notes.join(' '),/过期/);assert.equal(r.rows[0].value,20);
+});
+test('fee renderer distinguishes actual holdings from risk exposure above stock and keeps actual NAV denominator',()=>{
+ const text=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');const code=text.split('/* top-holdings-view:start */')[1].split('/* top-holdings-view:end */')[0];
+ const ctx=vm.createContext({esc:s=>String(s).replace(/</g,'&lt;'),usd:n=>'$'+n});vm.runInContext(code+';globalThis.render=topHoldingsView;',ctx);
+ const point={stock:100,topHoldings:[{ticker:'NVDA',value:150}],topHoldingsBasis:{method:'issuer-exposure-v1',scope:'schwab-webull',incomplete:true,notes:['合成代理；2026-09-30']}};
+ const html=ctx.render(point,200);assert.match(html,/75.0%/);assert.match(html,/前三大已知敞口/);assert.match(html,/合成代理/);
+ assert.equal(ctx.render({...point,topHoldingsBasis:undefined},200),'');
+ assert.match(ctx.render({...point,topHoldingsBasis:{...point.topHoldingsBasis,scope:'all'}},200),/口径待核实/);
+ assert.match(ctx.render({...point,topHoldings:[],topHoldingsBasis:{...point.topHoldingsBasis,notes:['TQQQ 未计入：缺权重']}},200),/缺权重/);
+});
