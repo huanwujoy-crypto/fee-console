@@ -375,8 +375,16 @@ export function isControlledWebullNetProceeds({ account, row, movement, targetDa
     && exactCents(Number(proof[9])) === net;
 }
 
+function verifyBenchmarkIdentity(cache) {
+  if (!object(cache) || cache.v !== 1 || !object(cache.benchmarks)) fail('BENCHMARK_SCHEMA');
+  for (const [key, symbol, exchange] of [['spy','SPY','NYSEArca'],['qqq','QQQ','NasdaqGS']]) {
+    const b = cache.benchmarks[key];
+    if (!object(b) || b.symbol !== symbol || b.currency !== 'USD' || b.exchange !== exchange
+        || !Array.isArray(b.series)) fail('BENCHMARK_IDENTITY');
+  }
+}
 export function selectBenchmark(cache, targetDate) {
-  if (!object(cache) || cache.v !== 1 || !object(cache.benchmarks)) fail("BENCHMARK_SCHEMA");
+  verifyBenchmarkIdentity(cache);
   const selected = {};
   for (const key of ["spy", "qqq"]) {
     const series = cache.benchmarks[key]?.series;
@@ -393,7 +401,7 @@ export function selectBenchmark(cache, targetDate) {
 }
 
 export function latestCommonBenchmarkDate(cache) {
-  if (!object(cache) || cache.v !== 1 || !object(cache.benchmarks)) fail("BENCHMARK_SCHEMA");
+  verifyBenchmarkIdentity(cache);
   const dates = ["spy", "qqq"].map(key => new Set((cache.benchmarks[key]?.series || [])
     .filter(row => object(row) && DATE_RE.test(String(row.d)) && finite(row.p) && row.p > 0)
     .map(row => row.d)));

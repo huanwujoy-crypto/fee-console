@@ -72,7 +72,7 @@ cannot hide behind a matching hash and change the engine's return. Frozen v1
 inputs and receipts remain unchanged.
 The approved baseline window is
 2026-08-01 through 2026-10-23, with the preceding EOD opening. No real NAV, flow,
-return or private baseline hash is embedded in the public source. A first read
+return or private baseline hash is embedded in the public source. A native first read
 must reproduce that entire baseline. It does **not** silently apply historical
 corrections to Sharesight or shift automatic event dates. If manually synchronized
 source history still differs from the audit, `BASELINE_MISMATCH`/`DATE_ALIGNMENT`
@@ -104,8 +104,9 @@ inputs remain a byte no-op. The old `--ib-return-only` Actions refusal remains.
 
 The existing scheduled producer, Environment `fee-cloud-producer`, encryption,
 Validate → Promote → Pages and exact-head OWNER protections remain in force.
-When enabled, already-published fee health alone cannot certify IB: the existing
-idempotent slots recheck IB while still waiting for any earlier candidate.
+When enabled, already-published fee health alone cannot certify IB. The local
+future-period candidate adds one bounded same-period recheck, described below;
+it does not run an unlimited daily retry or expose IB status in public health.
 No schedule, Actions permission or Secret mapping is added. Neither workflow
 dispatch nor immediate production is part of offline preparation. Activation
 requires reviewed protected code, confirmed completion of manual synchronization,
@@ -137,8 +138,9 @@ The resulting `fee-console.ib-manager-noncash-proof.v1` is explicitly
 `audited-baseline-source-native`. It is not a signature or an authorization.
 The entire reconstructed historical business input must still equal the existing
 audited baseline commitment before any receipt can be built. A zero-price sale
-or transfer comment alone never authorizes a flow. Future transfers are outside
-that historical authority and remain pending. Source proofs and separate cash
+or transfer comment alone never authorizes a flow. Future transfers remain outside
+that historical authority; the candidate below defines a separate typed proof.
+Source proofs and separate cash
 flows reconcile exactly to the engine's combined external-flow inputs; duplicate
 trade proofs are refused. Raw identifiers/quantities remain inside the existing
 authenticated encrypted checkpoint, not public source or browser receipts.
@@ -202,8 +204,52 @@ current source suppresses stale IB comparisons.
 
 ## Local verification
 
-Run `node --test scripts/ib-manager-return.test.mjs scripts/ib-manager-source.test.mjs scripts/ib-manager-noncash.test.mjs`. All fixtures, keys and
-files in this suite are synthetic. The complete UI contract can be tested
-locally with the existing absolute `FEE_LEDGER_TEST_INDEX` override; CI must
-use its own checkout. Producer/tests are a separate protected support change;
-the final UI change remains index-only under the existing UI guard.
+### Future-period local candidate — not activated
+
+No financial read, Keychain use, variable write, dispatch or source write is
+performed for these fixtures. The original frozen receipt and all historical
+correction precision remain unchanged. `buildIbOwnerBaseline` reconstructs both
+original return/drawdown receipts, requiring exact equality before adding the
+owner-confirmed input to `ibManagerBaselineState`. A digest is integrity, not
+human approval. The historical exception is never called native Sharesight data.
+
+The reviewed `finalize-ratio` candidate carries optional
+`ibBootstrap:{baseline,coverage}` through the existing private files and encrypted
+payload. The sole writer refuses replacement of an existing native checkpoint.
+No new JSON Secret, persistent private channel or independent ledger is added.
+See `docs/fee-ratio-management.md` for actual route and its unactivated safeguards.
+
+Coverage-v1 remains a finite legacy contract. New coverage-v2 includes a bounded
+Sharesight source audit, dates, exact noncash events and any dated source quotes.
+The first source-v3 read must cover its exact through date; the audit is retained
+without rewriting it. Once verified, later native checkpoints append daily
+history, validating opening NAV AND positions/cash against stored snapshots.
+Each read is double-captured and reconciles dated performance, cash and trades.
+At most eight missing calendar days plus opening are accepted at one time.
+An unsupported/ambiguous source, old prefix change or unknown transfer fails IB
+only. No blind removal of the old date cutoff or weekly blanket flow assertion.
+
+Native typed TRANSFER_OUT must show exact quantity reduction with zero cash
+settlement. A zero-value SELL needs the separately reviewed Sharesight audit
+match; comments alone are insufficient. Full disposal needs an actual dated
+Sharesight instrument mark, including a validated audit quote if applicable;
+missing historical rows/quotes cannot be filled from current holdings, guessed
+prices or broker/Flex/mail. A provider label/hash alone does not prove provenance.
+Real source currency/date/full-outflow/absence contracts remain unverified.
+
+The weekly/monthly optional reread is bounded: at most two producer runs from the
+fixed plan schedule, at most twelve hours after checkedAt, original 36-hour and
+four-day windows, and no earlier pending candidate. Overlapping runs consume the
+budget conservatively; metadata uncertainty suppresses retry. A reread preserves
+all fee, benchmark, month-lock and publication metadata, except the sole writer’s
+updatedAt timestamp and explicit IB fields. Refreshed health does not reset count.
+
+Before activation: exact signed support/UI approval; real existing-client scope
+and complete Sharesight transfer/quote/date acceptance; reviewed private bootstrap
+and manager recipient; genuine fresh producer health/code identity; protected
+cipher promotion and normal manager/investor read-back. No real execution or
+switch change is authorized by a source schema or synthetic test.
+
+Run `node --test scripts/ib-manager-return.test.mjs scripts/ib-manager-source.test.mjs scripts/ib-manager-noncash.test.mjs`.
+All inputs and keys in these tests are synthetic. UI stays index-only; local
+UI overlay testing never changes production or its protection policy.

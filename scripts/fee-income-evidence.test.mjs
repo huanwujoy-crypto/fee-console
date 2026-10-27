@@ -486,7 +486,7 @@ globalThis.Date=class extends NativeDate {
     fs.writeFileSync(path.join(repo,'data.json'),seal(payload),{mode:0o600});
     const evidence=path.join(dir,'evidence.json'),cache=path.join(dir,'benchmark.json'),econ=path.join(dir,'economic.json');
     fs.writeFileSync(evidence,JSON.stringify({schema:'fee-console.income-date-evidence.v1',targetDate:date,audits:[auditFixture(date,'SGOV')]}),{mode:0o600});
-    fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy:{series:[{d:date,p:100}]},qqq:{series:[{d:date,p:100}]}}}),{mode:0o600});
+    fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:date,p:100}]},qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:date,p:100}]}}}),{mode:0o600});
     fs.writeFileSync(econ,seal({v:4,settings:{start:prior,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:1000},{id:'webull',opening:1000}],months:[],fees:[]},4),{mode:0o600});
     const out1=path.join(dir,'first'),out2=path.join(dir,'second');fs.mkdirSync(out1,{mode:0o700});fs.mkdirSync(out2,{mode:0o700});
     const runner=path.join(dir,'runner.mjs');
@@ -542,7 +542,7 @@ globalThis.Date=class extends NativeDate {
     fs.writeFileSync(path.join(repo,'data.json'),seal(payload),{mode:0o600});
     const evidence=path.join(dir,'evidence.json'),cache=path.join(dir,'benchmark.json'),econ=path.join(dir,'economic.json');
     fs.writeFileSync(evidence,JSON.stringify({schema:'fee-console.income-date-evidence.v1',targetDate:date,audits:[auditFixture(date,'SGOV')]}),{mode:0o600});
-    fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy:{series:[{d:date,p:100}]},qqq:{series:[{d:date,p:100}]}}}),{mode:0o600});
+    fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:date,p:100}]},qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:date,p:100}]}}}),{mode:0o600});
     fs.writeFileSync(econ,seal({v:4,settings:{start:prior,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:1000},
       {id:'webull',opening:1012.85}],months:[],fees:[]},4),{mode:0o600});
     const out=path.join(dir,'out');fs.mkdirSync(out,{mode:0o700});const runner=path.join(dir,'runner.mjs');

@@ -224,7 +224,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
       const classes = new Set();
       let innerHTML = "";
       elements.set(id, {
-        id, dataset: {}, style: {},
+        id, dataset: {}, style: {}, replaceChildren(){this.innerHTML="";},
         get innerHTML() { return innerHTML; },
         set innerHTML(value) { innerHTML = value; paints.push({ id, html: String(value) }); },
         textContent: id === "btnRefresh" ? "刷新" : "",
@@ -318,7 +318,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
         ? "fixture-corrupt-readback" : remote.content;
       const files=network.missingGistFile ? {} : { "fee-console-db.json": { content: readContent, truncated: false } };
       if(remote.backupContent!==null)files["fee-console-db-v3-backup.json"]={content:remote.backupContent,truncated:false};
-      const result = ok({ id: "fixture-gist", owner: manager?{login:"fixture-owner"}:undefined, history: [{ version: remote.revision }], files });
+      const result = ok({ id: "fixture-gist", public:false, owner: manager?{login:"fixture-owner",id:1}:undefined, history: [{ version: remote.revision }], files });
       if (method === "GET") await passReadGate("gist");
       return result;
     }
@@ -328,7 +328,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
       if (network.rejectTokenProbe) return { ok: false, status: 401, json: async () => ({ message: "Bad credentials" }) };
       return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
     }
-    if (url === "https://api.github.com/user" && manager) return ok({login:"fixture-owner"});
+    if (url === "https://api.github.com/user" && manager) return ok({login:"fixture-owner",id:1});
     if (/^(?:data\.json|https:\/\/fixture\.invalid\/fee-console\/data\.json)(?:\?|$)/.test(url)) {
       if (network.failDaily) throw new Error("fixture daily unavailable");
       const result = ok(structuredClone(network.invalidDaily ? { invalid: true } : data));

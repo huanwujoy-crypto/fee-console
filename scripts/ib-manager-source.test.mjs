@@ -7,9 +7,9 @@ import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
 import {expectedTargetDate} from './fee-cloud-source.mjs';
-import {SharesightIbManagerReader,ibBaselineBusinessHash,ibSourceFailureCode} from './ib-manager-source.mjs';
-import {buildIbManagerReportBundle,validateIbManagerReportState,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
+import {SharesightIbManagerReader,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
+import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage} from './ib-manager-report.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 
 // Synthetic portfolio/holding/cash IDs. No real source, credentials or NAV.
@@ -46,6 +46,78 @@ function wire({mutate=()=>{},changeSecond=false}={}){
 }
 const read=(w,extra={})=>w.reader.readStable({targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline,...extra});
 const source=async()=>read(wire());
+async function frozenFixture(){
+  const frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:input()};
+  const payload={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)};
+  return {frozen,payload,state:await buildIbOwnerBaseline(payload,frozen,lock())};
+}
+test('owner-confirmed baseline retains corrected history and appends only reconciled native days',async()=>{
+  const {payload,state}=await frozenFixture();payload.ibManagerBaselineState=state;
+  assert.deepEqual(await validateIbOwnerBaselineState(payload,lock()),state);
+  const w=wire(),s=await read(w,{targetDate:'2026-09-03',ownerBaseline:state});
+  assert.equal(s.schema,'fee-console.ib-manager-source.v2');assert.deepEqual(s.periodReturnsInput.points.slice(0,3),input().points);assert.deepEqual(s.ownerBaseline,state);
+  assert.equal(w.calls.filter(c=>c.url.includes('/performance?')).length,4); // opening + new day, twice
+  const bundle=await buildIbManagerReportBundle(s,lock());assert.equal(bundle.returnReceipt.asOf,'2026-09-03');
+  const out={...payload,ibManagerReturnReceipt:bundle.returnReceipt,ibManagerDrawdownReceipt:bundle.drawdownReceipt,ibManagerSourceState:bundle.sourceState};
+  assert.deepEqual(await validateIbManagerReportState(out,lock()),s);
+  assert.deepEqual((await read(wire(),{targetDate:'2026-09-03',checkpoint:s})).periodReturnsInput,s.periodReturnsInput);
+});
+test('future normal handoff needs finite audited coverage as well as authenticated history, before any source read',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-coverage-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const points=[];for(let d='2026-08-01';d<='2026-10-23';d=add(d))points.push({d,tot:136});
+  const frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:{points,openT:136,from:'2026-08-01',to:'2026-10-23',days:points.length,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0}};
+  const payload={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)},expectedHash=ibBaselineBusinessHash(frozen.periodReturnsInput);
+  payload.ibManagerBaselineState=await buildIbOwnerBaseline(payload,frozen,expectedHash);
+  const body={schema:'fee-console.ib-manager-coverage.v1',authority:'reviewed-source-reconciliation',baselineInputsHash:expectedHash,from:'2026-10-24',through:'2026-10-30',evidenceSha256:'e'.repeat(64)},coverage={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:expectedHash};let calls=0;
+  let prep=await prepareIbManagerReport({payload,targetDate:'2026-10-24',outputDir:dir,environ,reader:{readStable(){calls++;assert.fail('known migration coverage must hold');}}});
+  assert.equal(prep.reasonCode,'IB_SOURCE_COVERAGE_UNVERIFIED');assert.equal(calls,0);fs.unlinkSync(prep.file);
+  for(const mutate of [x=>x.through='2026-10-23',x=>x.through='2026-11-30',x=>x.coverageId='a'.repeat(64),x=>x.baselineInputsHash='a'.repeat(64),x=>x.authority='approved=true',x=>x.extra=true]){
+    const bad=structuredClone(coverage);mutate(bad);await assert.rejects(validateIbManagerCoverage(bad,'2026-10-24',expectedHash),/COVERAGE_UNVERIFIED/);
+  }
+  await assert.rejects(validateIbManagerCoverage(coverage,'2026-10-31',expectedHash),/COVERAGE_UNVERIFIED/);
+  await assert.rejects(validateIbManagerCoverage(coverage,'2026-10-30',expectedHash,'2026-10-23'),/COVERAGE_UNVERIFIED/);
+  payload.ibManagerCoverageState=coverage;const w=wire();
+  prep=await prepareIbManagerReport({payload,targetDate:'2026-10-24',outputDir:dir,environ,reader:w.reader});assert.equal(prep.state,'verified');assert.equal(w.calls.filter(x=>x.url.includes('/performance?')).length,4);
+  const request=await loadIbManagerReport(prep.file,{environ});assert.equal(typeof request.apply,'function');assert.equal(payload.ibManagerReturnReceipt.asOf,'2026-10-23');
+  const absent=structuredClone(payload);delete absent.ibManagerCoverageState;assert.throws(()=>request.apply(absent,'2026-10-24'),/REFUSED/);
+  const raw=fs.readFileSync(prep.file),tampered=JSON.parse(raw);delete tampered.coverage;fs.writeFileSync(prep.file,JSON.stringify(tampered));
+  await assert.rejects(loadIbManagerReport(prep.file,{environ}),/REFUSED/);fs.writeFileSync(prep.file,raw);
+});
+test('baseline digest is not approval; original receipts, full correction and anchor are mandatory',async()=>{
+  const {frozen,payload,state}=await frozenFixture(),bad=structuredClone(frozen);bad.periodReturnsInput.points[0].tot++;
+  await assert.rejects(buildIbOwnerBaseline(payload,bad,ibBaselineBusinessHash(bad.periodReturnsInput)),/BASELINE_MISMATCH/);
+  for(const mutate of [x=>x.input.periodReturnsInput.points[0].tot++,x=>x.stateId='b'.repeat(64),x=>x.input.correctionsConfirmed=false]){
+    const copy=structuredClone(state);mutate(copy);await assert.rejects(read(wire(),{targetDate:'2026-09-03',ownerBaseline:copy}),/STATE|BASELINE/);
+  }
+  const forged=structuredClone(state);forged.returnReceiptId='d'.repeat(64);const {stateId,...body}=forged;forged.stateId=await createIbManagerReturnConsumer().digest(body);
+  await assert.rejects(validateIbOwnerBaselineState({...payload,ibManagerBaselineState:forged},lock()),/STATE_INVALID/);
+  const changed=wire({mutate:b=>{if(b.report?.end_date==='2026-09-02'){b.report.holdings[0].value++;b.report.value++;}}});
+  await assert.rejects(read(changed,{targetDate:'2026-09-03',ownerBaseline:state}),/PAST_POINT_CHANGED/);
+  const over=wire();await assert.rejects(read(over,{targetDate:'2026-09-20',ownerBaseline:state}),/HISTORY_LIMIT/);assert.equal(over.calls.length,0);
+});
+test('owner baseline preserves original correction precision without downgrading or recertifying old native history',async()=>{
+  const {frozen}=await frozenFixture();frozen.periodReturnsInput.points[0].tot=103.456;
+  const expectedHash=ibBaselineBusinessHash(frozen.periodReturnsInput),payload={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)},state=await buildIbOwnerBaseline(payload,frozen,expectedHash);
+  const s=await read(wire(),{targetDate:'2026-09-03',ownerBaseline:state,expectedBaselineHash:expectedHash});
+  assert.equal(s.periodReturnsInput.points[0].tot,103.456);assert.equal(s.ownerBaseline.authority,'owner-confirmed-frozen');await buildIbManagerReportBundle(s,expectedHash);
+  const edited=structuredClone(s);edited.periodReturnsInput.points[0].tot+=.0001;
+  assert.equal(ibBaselineBusinessHash(edited.periodReturnsInput,baseline.asOf),expectedHash);
+  await assert.rejects(buildIbManagerReportBundle(edited,expectedHash),/BASELINE_MISMATCH/);
+});
+test('native future transfer needs typed settlement evidence; a comment or unexplained loss refuses',async()=>{
+  const {state}=await frozenFixture(),instrument={id:7,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
+  const make=(code='TRANSFER_OUT',quantity=.5)=>wire({mutate:(b,{q})=>{
+    if(b.holdings)b.holdings[0].instrument=instrument;
+    if(b.report){const h=b.report.holdings[0];h.instrument=instrument;if(b.report.end_date==='2026-09-03'){h.quantity=quantity;h.value=86*quantity;b.report.value=h.value+50;}}
+    if(b.trades)b.trades=[{id:8,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:'2026-09-03',description_code:code,quantity:.5,value:0,price:0,brokerage:0,instrument,comments:'transfer'}];
+  }});
+  const s=await read(make(),{targetDate:'2026-09-03',ownerBaseline:state});assert.equal(s.noncashProofs[0].authority,'source-native-transfer');assert.equal(s.periodReturnsInput.flowByDate['2026-09-03'],-43);
+  const bundle=await buildIbManagerReportBundle(s,lock());assert.ok(Math.abs(bundle.drawdownReceipt.dailyFactors.at(-1).factor-136/135)<1e-12);
+  await assert.rejects(read(make('SELL'),{targetDate:'2026-09-03',ownerBaseline:state}),/UNVERIFIED_TRANSFER/);
+  await assert.rejects(read(make('TRANSFER_OUT',0),{targetDate:'2026-09-03',ownerBaseline:state}),/UNVERIFIED_TRANSFER|NONCASH_EVIDENCE/);
+  const tampered=structuredClone(s);tampered.noncashProofs[0].authority='audited-baseline-source-native';await assert.rejects(buildIbManagerReportBundle(tampered,lock()),/NONCASH_EVIDENCE/);
+});
 
 test('normal read is narrowly scoped, double-read, cent-normalized and baseline locked',async()=>{
   const w=wire(),s=await read(w);assert.deepEqual(s.periodReturnsInput,input());
@@ -189,7 +261,7 @@ test('normal producer validates synthetic encrypted IB candidate through the exi
   Object.assign(data.status,{asOf:target,notes:[],splitDelta:0});for(const p of data.daily)Object.assign(p,{cash:100,stock:0,other:0,spy:100,qqq:100,acctCash:{schwab:60,webull:40}});
   const original=encrypt(data,3);fs.writeFileSync(path.join(root,'data.json'),original);
   const econ=path.join(dir,'econ.json');fs.writeFileSync(econ,encrypt({v:4,settings:{start:baseline.from,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]},4),{mode:0o600});
-  const cache=path.join(dir,'benchmark.json');fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy:{series:[{d:target,p:100}]},qqq:{series:[{d:target,p:100}]}}}));
+  const cache=path.join(dir,'benchmark.json');fs.writeFileSync(cache,JSON.stringify({v:1,benchmarks:{spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:target,p:100}]},qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:target,p:100}]}}}));
   const s=await source();for(let d=add(baseline.asOf);d<=target;d=add(d))s.periodReturnsInput.points.push({d,tot:135});s.sourceAsOf=target;s.periodReturnsInput.to=target;s.periodReturnsInput.days=s.periodReturnsInput.points.length;
   const ibFile=path.join(dir,'synthetic-source.json');fs.writeFileSync(ibFile,JSON.stringify(s),{mode:0o600});
   const script=path.join(root,'exercise.mjs');fs.writeFileSync(script,`
@@ -223,4 +295,24 @@ test('post-baseline coverage hold performs no IB read and preserves original fee
   assert.equal(calls,0);assert.equal(request.reasonCode,'IB_SOURCE_COVERAGE_UNVERIFIED');
   const result=(await loadIbManagerReport(request.file,{environ})).apply(data,'2026-10-26');
   assert.deepEqual(result.feeCalculationReceipt,data.feeCalculationReceipt);assert.deepEqual(data,before);assert.equal(result.ibManagerSourceStatus.state,'pending');
+});
+
+test('source-native checkpoint extends beyond its one-time bootstrap audit without reusing an old period',async()=>{
+  const {state}=await frozenFixture(),body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:lock(),from:'2026-09-03',through:'2026-09-03',evidenceSha256:'e'.repeat(64),events:[],quotes:[]},coverage={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};
+  validateIbBootstrapCoverage(coverage,lock(),{baselineAsOf:baseline.asOf});
+  const first=await read(wire(),{targetDate:'2026-09-03',ownerBaseline:state,bootstrapCoverage:coverage});assert.equal(first.schema,'fee-console.ib-manager-source.v3');assert.equal(first.closingSnapshots.length,2);
+  const next=await read(wire(),{targetDate:'2026-09-04',checkpoint:first});assert.equal(next.sourceAsOf,'2026-09-04');assert.deepEqual(next.bootstrapCoverage,coverage);assert.equal(next.periodReturnsInput.to,'2026-09-04');await buildIbManagerReportBundle(next,lock());
+  const moved=wire({mutate:(b,{q})=>{if(b.report)b.report.holdings[0].quantity=2;}});
+  await assert.rejects(read(moved,{targetDate:'2026-09-04',checkpoint:first}),/PAST_POINT_CHANGED/);
+  for(const mutate of [x=>x.sourceProvider='Broker',x=>x.through='2026-09-12',x=>x.coverageId='a'.repeat(64),x=>x.from='2026-09-02',x=>x.quotes=[{}]]){const bad=structuredClone(coverage);mutate(bad);assert.throws(()=>validateIbBootstrapCoverage(bad,lock(),{baselineAsOf:baseline.asOf}));}
+  const bad=structuredClone(first);bad.closingSnapshots[0].totalCents++;assert.throws(()=>validateIbManagerReportInput(bad,lock()),/STATE/);
+  const skipped=wire();await assert.rejects(read(skipped,{targetDate:'2026-09-04',ownerBaseline:state,bootstrapCoverage:coverage}),/STATE/);assert.equal(skipped.calls.length,0);
+});
+
+import {attachIbBootstrap} from './fee-ratio-packet.mjs';
+
+test('existing encrypted carrier seeds confirmed IB history and finite source audit without changing returns or fee fields',async()=>{
+  const {frozen,payload}=await frozenFixture(),before={...payload,feeCalculationReceipt:{synthetic:'unchanged'},other:{synthetic:'unchanged'}},body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:lock(),from:'2026-09-03',through:'2026-09-03',evidenceSha256:'e'.repeat(64),events:[],quotes:[]},coverage={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};
+  const after=await attachIbBootstrap(before,frozen,coverage),{ibManagerBaselineState,ibManagerCoverageState,...rest}=after;assert.deepEqual(rest,before);assert.equal(ibManagerBaselineState.authority,'owner-confirmed-frozen');assert.deepEqual(ibManagerCoverageState,coverage);
+  await assert.rejects(attachIbBootstrap(after,frozen,coverage));const edited=structuredClone(frozen);edited.periodReturnsInput.points[0].tot++;await assert.rejects(attachIbBootstrap(before,edited,coverage));await assert.rejects(attachIbBootstrap(before,frozen,{...coverage,sourceProvider:'Broker'}));
 });

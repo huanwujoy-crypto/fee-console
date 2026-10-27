@@ -6,11 +6,11 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
-import {periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight,reportPublicationWatch,explicitReportPlan} from './fee-report-producer.mjs';
+import {periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged} from './fee-report-producer.mjs';
 import {weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 
-const cache={v:1,benchmarks:{spy:{series:[{d:'2026-10-22',p:100},{d:'2026-10-23',p:101,div:1}]},qqq:{series:[{d:'2026-10-22',p:200},{d:'2026-10-23',p:202}]}}};
+const cache={v:1,benchmarks:{spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:'2026-10-22',p:100},{d:'2026-10-23',p:101,div:1}]},qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:'2026-10-22',p:200},{d:'2026-10-23',p:202}]}}};
 function cashOnly(date){
   const result={};let cashId=100;
   for(const [account,{name,portfolioId}] of Object.entries(CLOUD_ACCOUNTS)){
@@ -27,6 +27,36 @@ function state(plan,checkedAt='2026-10-25T01:00:00Z'){
   const data=Buffer.from(JSON.stringify({enc:true,v:3,data:Buffer.alloc(64).toString('base64')}));
   return {mainSha:'a'.repeat(40),finalMainSha:'a'.repeat(40),data,pending:false,health:{schema:HEALTH_SCHEMA,checkedAt,targetDate:plan.accountingThrough,sourceDates:{schwab:plan.accountingThrough,webull:plan.accountingThrough,benchmark:plan.priceThrough},outcome:'updated',errorCode:null,dataSha256:crypto.createHash('sha256').update(data).digest('hex')}};
 }
+test('IB period retry is bounded by fixed schedule, candidate wait and original freshness',async()=>{
+  const plan=weeklyReportPlan('2026-10-23'),now=new Date('2026-10-25T01:15Z'),s=state(plan,'2026-10-24T16:05Z');
+  const run=id=>({id,path:'.github/workflows/fee-cloud-producer.yml',head_branch:'main',head_sha:'a'.repeat(40),event:'schedule',created_at:'2026-10-24T16:00Z'});
+  const args={plan,now,ibEnabled:true,currentRunId:'2',readState:async()=>s,readRetryRuns:async()=>[run(1),run(2)]};
+  assert.equal((await reportPublicationPreflight(args)).reasonCode,'IB_BOUNDED_SAME_PERIOD_RECHECK');
+  assert.equal((await reportPublicationPreflight({...args,readRetryRuns:async()=>[run(1),run(2),run(3)]})).outcome,'already-published');
+  assert.equal((await reportPublicationPreflight({...args,readState:async()=>({...s,pending:true})})).outcome,'candidate-pending');
+  assert.equal((await reportPublicationPreflight({...args,readRetryRuns:async()=>{throw Error('private-canary');}})).outcome,'already-published');
+  assert.equal((await reportPublicationPreflight({...args,now:new Date('2026-10-26T01:15Z')})).outcome,'already-published');
+  assert.equal((await reportPublicationPreflight({...args,ibEnabled:false,readRetryRuns:async()=>assert.fail('disabled must not list runs')})).outcome,'already-published');
+  for(const runs of [[],[run(1),run(1)],[{...run(1),path:'other'}],[{...run(1),head_branch:'other'}],[{...run(1),created_at:'2026-10-24T15:00Z'}]])assert.equal(periodIbRetryAllowed({runs,scheduledAt:plan.scheduledAt,now,currentRunId:2}),false);
+  // A refreshed second health receipt cannot reset the fixed run budget.
+  assert.equal((await reportPublicationPreflight({...args,readState:async()=>state(plan,'2026-10-25T01:00Z'),currentRunId:'3',readRetryRuns:async()=>[run(1),run(2),run(3)]})).outcome,'already-published');
+});
+test('IB retry metadata uses one public fixed route, bounded complete pages, no secrets or logs',async()=>{
+  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+  assert.match(workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:')),/IB_MANAGER_READ_ENABLED: \$\{\{ vars.IB_MANAGER_READ_ENABLED \}\}/);
+  const now=new Date('2026-10-25T01:15Z');let calls=0;
+  const response=(url,value)=>{const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
+  const fetchImpl=async(url,init)=>{calls++;assert.match(url,/^https:\/\/api.github.com\/repos\/huanwujoy-crypto\/fee-console\/actions\/workflows\/fee-cloud-producer.yml\/runs\?/);assert.equal(init.headers.Authorization,undefined);assert.equal(init.redirect,'error');return response(url,{total_count:0,workflow_runs:[]});};
+  assert.deepEqual(await readPeriodRetryRuns({scheduledAt:'2026-10-25T00:00:00+08:00',now,fetchImpl}),[]);assert.equal(calls,1);
+  await assert.rejects(readPeriodRetryRuns({scheduledAt:'2026-10-25T00:00:00+08:00',now,fetchImpl:async url=>response(url,{total_count:101,workflow_runs:[]})}),/IB_RETRY_METADATA/);
+});
+test('same-period IB recheck forbids any fee, benchmark, ledger, report lock or unknown field change',()=>{
+  const before={daily:[{d:'2026-10-23',schwab:100,webull:100,spy:100}],feeCalculationReceipt:{receiptId:'a'.repeat(64)},feeReportMonthLocks:{schema:'synthetic'},feeReportPublication:{reportId:'b'.repeat(64)},flowsAuto:[],privateEconomic:{version:4}};
+  assert.doesNotThrow(()=>assertPeriodIbRecheckUnchanged(before,{...before,ibManagerSourceStatus:{state:'pending'},updatedAt:'2026-10-25T01:00Z'}));
+  for(const change of [x=>x.daily[0].schwab++,x=>x.daily[0].spy++,x=>x.feeCalculationReceipt.receiptId='b'.repeat(64),x=>x.feeReportMonthLocks.schema='changed',x=>x.feeReportPublication.reportId='c'.repeat(64),x=>x.flowsAuto.push({}),x=>x.privateEconomic.version=5,x=>x.ibManagerArbitrary='must not escape strict allowlist']){
+    const after=structuredClone(before);change(after);assert.throws(()=>assertPeriodIbRecheckUnchanged(before,after),/IB_RECHECK_CHANGED_FEE_DATA/);
+  }
+});
 test('closed sessions carry only the last reviewed common close, without repeating dividends',()=>{
   assert.deepEqual(periodBenchmark(cache,'2026-10-24'),{sourceDate:'2026-10-23',state:'closed',spy:101,spyd:0,qqq:202,qqqd:0});
   assert.equal(periodBenchmark(cache,'2026-10-23').spyd,1);

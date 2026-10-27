@@ -373,7 +373,13 @@ function normalizedSeries(series) {
     .sort((a, b) => a.d.localeCompare(b.d));
 }
 
+function validateExistingCacheIdentity(existing){
+  if(existing===null||existing===undefined)return;
+  if(existing.v!==1||!existing.benchmarks)throw Error('Benchmark cache identity invalid');
+  for(const [key,d]of Object.entries(DEFINITIONS)){const b=existing.benchmarks[key];if(!b||b.symbol!==d.symbol||b.currency!==d.currency||b.exchange!==d.exchange||!Array.isArray(b.series))throw Error('Benchmark cache identity invalid');}
+}
 export function mergePrices(existing, fetched, now = new Date()) {
+  validateExistingCacheIdentity(existing);
   const cutoff = new Date(now.getTime() - RETENTION_DAYS * DAY_MS).toISOString().slice(0, 10);
   const benchmarks = {};
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
@@ -433,7 +439,30 @@ async function fetchJson(url, fetchImpl) {
   return response.json();
 }
 
-async function fetchSymbol(definition, now, fetchImpl) {
+// A Yahoo-independent extension of an already verified cache. It never
+// fabricates price-only total return or attempts to bootstrap unknown history.
+export function appendIndependentNasdaqClose({prior,definition,nasdaqInfo,nasdaqHistorical,nasdaqDividends,now=new Date()}){
+  if(!prior||prior.symbol!==definition.symbol||prior.currency!==definition.currency||prior.exchange!==definition.exchange||!Array.isArray(prior.series))throw Error('Independent fallback cache identity missing');
+  const series=normalizedSeries(prior.series),last=series.at(-1),target=expectedBenchmarkTargetDate(now),quote=extractNasdaqClose(nasdaqInfo,definition,now),close=extractNasdaqHistoricalClose(nasdaqHistorical,definition,now);
+  if(!last||last.d>=target||quote.d!==target||close.d!==target||Math.abs(quote.p-close.p)>0.005)throw Error('Independent fallback target/close mismatch');
+  const rows=nasdaqHistorical.data.tradesTable.rows.map(r=>({d:nasdaqHistoricalDate(r.date),p:roundPrice(usdNumber(r.close,'historical anchor'))})).filter(r=>r.d<=target).sort((a,b)=>a.d.localeCompare(b.d));
+  if(new Set(rows.map(r=>r.d)).size!==rows.length||rows.length<2||rows.at(-2).d!==last.d||Math.abs(rows.at(-2).p-last.p)>0.005||(Date.parse(target)-Date.parse(last.d))/DAY_MS>4)throw Error('Independent fallback opening history mismatch');
+  const dividends=extractNasdaqDividends(nasdaqDividends,definition),div=dividends.get(target)||0;
+  if(definition.symbol==='SPY'){
+    const g=definition.dividendGuard;
+    if(!g||target<g.validFrom||target>g.validThrough||g.exDates.includes(target)!==(div>0))throw Error('Independent fallback dividend coverage missing');
+  }
+  return [...series,div>0?{...close,div}:close];
+}
+async function independentNasdaq(definition,prior,now,fetchImpl){
+  const prefix='https://api.nasdaq.com/api/quote/'+definition.symbol;
+  const info=await fetchJson(prefix+'/info?assetclass=etf',fetchImpl);
+  const target=expectedBenchmarkTargetDate(now),from=new Date(now.getTime()-10*DAY_MS).toISOString().slice(0,10);
+  const historical=await fetchJson(prefix+'/historical?assetclass=etf&fromdate='+from+'&todate='+target+'&limit=20',fetchImpl);
+  const dividends=await fetchJson(prefix+'/dividends?assetclass=etf',fetchImpl);
+  return appendIndependentNasdaqClose({prior,definition,nasdaqInfo:info,nasdaqHistorical:historical,nasdaqDividends:dividends,now});
+}
+async function fetchSymbol(definition, now, fetchImpl, prior) {
   const errors = [];
   let bestPrimary = null;
   const target = expectedBenchmarkTargetDate(now);
@@ -474,18 +503,22 @@ async function fetchSymbol(definition, now, fetchImpl) {
       }
     }
   }
+  if(prior?.series?.at(-1)?.d<target)try{
+    return {series:await independentNasdaq(definition,prior,now,fetchImpl),warnings:errors};
+  }catch(error){errors.push('independent Nasdaq fallback unavailable: '+error.message);}
   if (bestPrimary) return { series: bestPrimary, warnings: errors };
   throw new Error(`${definition.symbol} fetch failed (${errors.join('; ')})`);
 }
 
 export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl = fetch } = {}) {
   const existing = await readExisting(path);
+  validateExistingCacheIdentity(existing);
   const fetched = {};
   const failures = [];
 
   for (const [key, definition] of Object.entries(DEFINITIONS)) {
     try {
-      const result = await fetchSymbol(definition, now, fetchImpl);
+      const result = await fetchSymbol(definition, now, fetchImpl, existing?.benchmarks?.[key]);
       fetched[key] = result.series;
       failures.push(...result.warnings);
     } catch (error) {

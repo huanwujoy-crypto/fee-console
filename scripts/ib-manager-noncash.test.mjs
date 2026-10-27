@@ -17,6 +17,21 @@ test('native noncash proof derives USD EOD flow from exact source quantity and d
   assert.deepEqual(validateIbNativeNoncashProof(p,{portfolioIdentityHash:identity,from:'2026-09-01',to:'2026-09-03'}),p);
   assert.doesNotMatch(JSON.stringify(p),/SYNTH|comments|clientSecret/);
 });
+test('complete outflow needs a same-day independent instrument mark, never a zero or prior close',()=>{
+  const args=fixture();args.authority='source-native-transfer';args.trade.description_code='TRANSFER_OUT';args.trade.quantity=4;
+  // Parse source numbers through the exact-decimal adapter after mutation.
+  args.trade=parseSourceJson(JSON.stringify({trades:[args.trade]})).trades[0];args.after=mark('2026-09-03',0,0);
+  assert.throws(()=>buildIbNativeNoncashProof(args));
+  args.closingMark={...mark('2026-09-03',1,12),holdingId:6};
+  const p=buildIbNativeNoncashProof(args);assert.equal(p.externalFlowCents,-4800);
+  const result=periodReturns({points:[{d:'2026-09-03',tot:50}],openT:94,from:'2026-09-03',to:'2026-09-03',days:1,flowByDate:{'2026-09-03':p.externalFlowCents/100},rate:0,cr:0,cumBefore:0,hwmBefore:0});
+  assert.deepEqual(result.issues,[]);assert.ok(Math.abs(result.rG-4/94)<1e-12);
+  assert.deepEqual(validateIbNativeNoncashProof(p,{portfolioIdentityHash:identity,from:'2026-09-01',baselineAsOf:'2026-09-02',to:'2026-09-03'}),p);
+  for(const mutate of [x=>x.closingMark.d='2026-09-02',x=>x.closingMark.holdingId=2,x=>x.closingMark.instrumentIdentityHash='b'.repeat(64),x=>x.closingMark.quantityAtoms='0',x=>x.trade.value=1]){
+    const bad=structuredClone(args);mutate(bad);assert.throws(()=>buildIbNativeNoncashProof(bad));
+  }
+  assert.throws(()=>validateIbNativeNoncashProof(p,{portfolioIdentityHash:identity,from:'2026-09-01',baselineAsOf:'2026-09-03',to:'2026-09-03'}));
+});
 test('unknown cash, mixed trades, wrong identity, unproved quantity and ambiguous prices fail closed',()=>{
   for(const change of [x=>x.trade.price=1,x=>x.trade.value=1,x=>x.trade.brokerage=1,x=>x.trade.state='unconfirmed',x=>x.portfolioId=5,x=>x.trade.holding_id=8,x=>x.trade.id=0,x=>x.trade.transaction_date='2026-09-02',x=>x.after=mark('2026-09-03',0,0),x=>x.after=mark('2026-09-03',2,24.01),x=>x.before=mark('2026-09-02',5,55),x=>x.catalogInstrument={...instrument,id:10},x=>x.cashLegs=[{tradeId:3,movement:1}],x=>x.sameDayTrades.push({...x.trade,id:4})]){
     const args=fixture();change(args);assert.throws(()=>buildIbNativeNoncashProof(args),/IB_NONCASH_EVIDENCE_INVALID/);

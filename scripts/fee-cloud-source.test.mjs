@@ -75,8 +75,8 @@ test('scoped recovery first-held proof requires the same dated holding and compl
 });
 
 const benchmarkCache = { v: 1, benchmarks: {
-  spy: { series: [{ d: "2026-09-22", p: 700 }, { d: D, p: 701, div: 1.5 }] },
-  qqq: { series: [{ d: "2026-09-22", p: 600 }, { d: D, p: 602 }] },
+  spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series: [{ d: "2026-09-22", p: 700 }, { d: D, p: 701, div: 1.5 }] },
+  qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series: [{ d: "2026-09-22", p: 600 }, { d: D, p: 602 }] },
 } };
 
 const gateNow = () => new Date(`${D}T22:00:00Z`);
@@ -219,7 +219,7 @@ test('real preflight CLI performs only public main GETs and never reads financia
     const state=publicationFixture();
     state.health.checkedAt=now;state.health.targetDate=date;
     state.health.sourceDates={schwab:date,webull:date,benchmark:date};
-    const cache={v:1,benchmarks:{spy:{series:[{d:cacheDate,p:100}]},qqq:{series:[{d:cacheDate,p:100}]}}};
+    const cache={v:1,benchmarks:{spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:cacheDate,p:100}]},qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:cacheDate,p:100}]}}};
     const benchmarkFile=path.join(dir,'benchmark.json'),preload=path.join(dir,'public-only.mjs');
     fs.writeFileSync(benchmarkFile,JSON.stringify(cache));
     fs.writeFileSync(preload,`const NativeDate=globalThis.Date,fixedNow=NativeDate.parse(${JSON.stringify(now)});
@@ -1562,3 +1562,14 @@ test('all workflow literal shell blocks pass bash syntax without executing them'
 
 
 }
+
+// Cache labels remain authoritative at the consumer boundary, even with valid rows.
+test('benchmark consumers reject wrong or absent ETF, currency and venue labels', () => {
+  for (const key of ['spy','qqq']) for (const [field,bad] of [['symbol','SP500'],['currency','EUR'],['exchange','OTHER']]) {
+    for (const missing of [false,true]) {
+      const cache=structuredClone(benchmarkCache); if(missing)delete cache.benchmarks[key][field];else cache.benchmarks[key][field]=bad;
+      assert.throws(()=>selectBenchmark(cache,D),/BENCHMARK_IDENTITY/);
+      assert.throws(()=>latestCommonBenchmarkDate(cache),/BENCHMARK_IDENTITY/);
+    }
+  }
+});

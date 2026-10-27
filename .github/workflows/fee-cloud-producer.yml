@@ -56,6 +56,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          IB_MANAGER_READ_ENABLED: ${{ vars.IB_MANAGER_READ_ENABLED }}
           REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
           REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.report_target || '' }}
         run: |

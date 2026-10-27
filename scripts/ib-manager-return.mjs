@@ -1,7 +1,7 @@
 // Independent, frozen IB history. No source reads, credentials, fees or ledger writes.
 import crypto from 'node:crypto';
 import { periodReturns, grossTwrDailyFactor, isCalendarDate, inclusiveDays, endOfMonth } from './fee-engine.mjs';
-import {validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {validateIbManagerReportInput,validateIbOwnerBaseline,ibBaselineBusinessHash} from './ib-manager-source.mjs';
 
 // This factory is copied verbatim into the single-file browser shell.
 export function createIbManagerReturnConsumer() {
@@ -122,10 +122,33 @@ async function buildValidatedIbDrawdown(i,ret){
 
 export async function buildIbManagerReportBundle(input,expectedBaselineHash){
   const source=validateIbManagerReportInput(input,expectedBaselineHash),core=createIbManagerReturnConsumer();
+  if(source.ownerBaseline)await checkedOwnerBaseline(source.ownerBaseline,expectedBaselineHash);
   const ret=await buildValidatedIbReturn(source.periodReturnsInput,crypto.createHash('sha256').update(core.canonical(source)).digest('hex'),source);
   const drawdown=await buildValidatedIbDrawdown(source.periodReturnsInput,ret);
   const body={schema:'fee-console.ib-manager-source-state.v1',returnReceiptId:ret.receiptId,source};
   return {returnReceipt:ret,drawdownReceipt:drawdown,sourceState:{...body,stateId:await core.digest(body)}};
+}
+async function checkedOwnerBaseline(state,expectedHash){
+  const s=validateIbOwnerBaseline(state,expectedHash),ret=await buildIbManagerReturnReceipt(s.input),dd=await buildIbManagerDrawdownReceipt(s.input);
+  if(ret.receiptId!==s.returnReceiptId||dd.receiptId!==s.drawdownReceiptId)throw Error('IB_SOURCE_STATE_INVALID');return s;
+}
+// Pure staging helper only. No CLI, import, credentials or promotion. Real
+// carriage must be separately reviewed through the existing encrypted writer.
+export async function buildIbOwnerBaseline(payload,input,expectedHash){
+  const ret=await buildIbManagerReturnReceipt(input),dd=await buildIbManagerDrawdownReceipt(input),core=createIbManagerReturnConsumer();
+  if(ibBaselineBusinessHash(input.periodReturnsInput)!==expectedHash||core.canonical(ret)!==core.canonical(payload.ibManagerReturnReceipt)||core.canonical(dd)!==core.canonical(payload.ibManagerDrawdownReceipt))throw Error('IB_SOURCE_BASELINE_MISMATCH');
+  const body={schema:'fee-console.ib-owner-baseline.v1',authority:'owner-confirmed-frozen',input:structuredClone(input),baselineInputsHash:expectedHash,returnReceiptId:ret.receiptId,drawdownReceiptId:dd.receiptId};
+  return checkedOwnerBaseline({...body,stateId:await core.digest(body)},expectedHash);
+}
+export async function validateIbOwnerBaselineState(payload,expectedHash){
+  if(!Object.hasOwn(payload,'ibManagerBaselineState'))return null;
+  try{
+    const s=await checkedOwnerBaseline(payload.ibManagerBaselineState,expectedHash);
+    // A later v2 receipt binds this baseline via its source state. Before the
+    // first append, the original verified frozen return and daily path must match.
+    if(!payload.ibManagerSourceState&&(s.returnReceiptId!==payload.ibManagerReturnReceipt?.receiptId||s.drawdownReceiptId!==payload.ibManagerDrawdownReceipt?.receiptId))throw Error();
+    return s;
+  }catch{throw Error('IB_SOURCE_STATE_INVALID');}
 }
 export async function validateIbManagerReportState(payload,expectedBaselineHash){
   if(!Object.hasOwn(payload,'ibManagerSourceState'))return null;
