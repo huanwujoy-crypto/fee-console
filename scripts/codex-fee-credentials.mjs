@@ -11,6 +11,10 @@ import { validateHealth } from "./fee-data-health.mjs";
 import { validateFeeCalculationReceiptWithEcon, canonicalJson } from "./fee-receipt-core.mjs";
 import { buildIbManagerReturnReceipt, buildIbManagerDrawdownReceipt, createIbManagerReturnConsumer, createIbManagerDrawdownConsumer } from "./ib-manager-return.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
+import {createFeeRatioCore} from './fee-ratio-management.mjs';
+import {readVerifiedBrowserEvidence,consumeBrowserEvidence} from './fee-ratio-browser-evidence.mjs';
+import {attachIbBootstrap} from './fee-ratio-packet.mjs';
+import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 
 const ACCOUNT = "huanwujoy-crypto";
@@ -331,6 +335,99 @@ export async function finalizeLocalIbAttachment({ plan, environ = process.env, c
   return result;
 }
 
+// Manager-only addition uses the same base/run/style/source gates, but constructs
+// its cipher with the sole writer after those proofs; no opaque cipher admission.
+export async function finalizeLocalRatioAttachment({ plan, environ = process.env, checkPlan = () => {},
+    runtime = createLocalAttachmentRuntime() } = {}) {
+  let source, output, identity, recipientCheck, keyText, key, env, recipientPath, result, errorCode, finalChecks, finalCandidateCheck, finalHealthCheck, healthAttempted = false;
+  let browserProof=null;
+  const cleanup = () => {
+    if (!identity) return; const s = fs.lstatSync(output);
+    if (!s.isDirectory() || s.isSymbolicLink() || s.dev !== identity.dev || s.ino !== identity.ino) attachFail("CLEANUP");
+    for (const n of ["data.json", "validation.json", ...(healthAttempted ? ["fee-data-health.json"] : [])]) {
+      const f = path.join(output, n); if (fs.existsSync(f)) { const st = fs.lstatSync(f); if (!st.isFile() || st.isSymbolicLink()) attachFail("CLEANUP"); fs.unlinkSync(f); }
+    } fs.rmdirSync(output); identity = undefined;
+  };
+  try {
+    if (runtime.platform !== "darwin" || /^(true|1)$/i.test(String(environ.GITHUB_ACTIONS || ""))
+        || process.execArgv.some(a => /^(?:--inspect(?:-brk|-wait)?|--(?:require|import|loader|experimental-loader|cpu-prof|heap-prof|trace-events-enabled|report-on-signal|report-on-fatalerror|heapsnapshot-signal)|-r)(?:=|$)/.test(a) || /^--heapsnapshot-near-heap-limit=(?!0$)/.test(a))
+        || ["FEE_DATA_KEY", "FEE_ECON_GIST_ID", "FEE_ECON_GITHUB_TOKEN", "FEE_ECON_FILE", "FEE_ECON_V3_FILE", "GH_TOKEN", "GITHUB_TOKEN", "NODE_OPTIONS", "NODE_PATH"].some(n => Object.hasOwn(environ, n))
+        || Object.keys(environ).some(n => /^(?:DYLD_|LD_)/.test(n))) attachFail("LOCAL_ONLY");
+    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "ratioInput", "legacySource", "ratioSourceDate", "ratioKind", "ibBootstrap", "producerEvidence",...(plan.schema==='fee-console.ratio-local-finalize-plan.v2'?['browserEvidence']:[])])
+        || !["fee-console.ratio-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v2"].includes(plan.schema) || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate || "")) attachFail("PLAN");
+    checkPlan(); const directory = attachmentDirectory(plan.workspace), base = attachmentFile(plan.baseData, directory), healthFile = attachmentFile(plan.baseHealth, directory), input = attachmentFile(plan.ratioInput, directory), legacy = plan.legacySource === null ? null : attachmentFile(plan.legacySource, directory), health = parseExact(healthFile.bytes);
+    if(plan.ibBootstrap!==null&&!exact(plan.ibBootstrap,['baseline','coverage']))attachFail('PLAN');
+    const baseline=plan.ibBootstrap?attachmentFile(plan.ibBootstrap.baseline,directory):null,coverage=plan.ibBootstrap?attachmentFile(plan.ibBootstrap.coverage,directory):null;
+    const browserPlan=plan.schema==='fee-console.ratio-local-finalize-plan.v2'?attachmentFile(plan.browserEvidence,directory):null;
+    if(browserPlan)try{const staged=parseExact(browserPlan.bytes);browserProof=readVerifiedBrowserEvidence({planPath:plan.browserEvidence.path,expectedScopeId:staged.managerScopeId,input:parseExact(input.bytes),now:runtime.now()});}catch{attachFail('SOURCE');}
+    const fresh = () => { const now = runtime.now(), age = (Date.parse(now.toISOString().slice(0, 10)) - Date.parse(plan.targetDate)) / 86_400_000;
+      if (!Number.isInteger(age) || age < 0 || age > 4) attachFail("WINDOW");
+      if (validateHealth(health, { now }).length || health.targetDate !== plan.targetDate || !["updated", "no-op"].includes(health.outcome)
+          || health.dataSha256 !== attachHash(base.bytes) || health.sourceDates.schwab !== plan.targetDate || health.sourceDates.webull !== plan.targetDate
+          || healthFile.bytes.toString() !== JSON.stringify(health, null, 2) + "\n") attachFail("HEALTH"); };
+    const checks = () => { fresh(); checkPlan(); base.check(); healthFile.check(); input.check();baseline?.check();coverage?.check();browserPlan?.check();browserProof?.check();if(browserProof)consumeBrowserEvidence(browserProof,parseExact(input.bytes),browserProof.scopeId,runtime.now()); legacy?.check(); }; checks();
+    output = path.join(directory.path, "ratio-finalized"); if (fs.existsSync(output)) attachFail("OUTPUT");
+    const publicBase = await attachmentPublicBase(base, healthFile, runtime), proof = await attachmentProducerProof(plan.producerEvidence, base, healthFile, publicBase, runtime);
+    const allChecks = () => { checks(); publicBase.check(); proof.check(); }; finalChecks = allChecks; allChecks();
+    try { keyText = runtime.readKeychain(SERVICES.key); } catch { attachFail("KEYCHAIN"); }
+    if (typeof keyText !== "string" || !KEY_RE.test(keyText)) attachFail("KEY"); key = Buffer.from(keyText.replace(/-/g, "+").replace(/_/g, "/"), "base64"); if (key.length !== 32) attachFail("KEY");
+    let locator; try { locator = runtime.readKeychain(SERVICES.gist); } catch { attachFail("KEYCHAIN"); }
+    if (typeof locator !== "string" || !GIST_RE.test(locator)) attachFail("LOCATOR");
+    try { process.env.FEE_ECON_GIST_ID = locator; source = await runtime.acquireEconomic(directory.path); } catch { attachFail("SOURCE"); }
+    finally { delete process.env.FEE_ECON_GIST_ID; }
+    if (source?.envelopeVersion !== 4 || typeof source.checkCurrent !== "function" || typeof source.cleanup !== "function") attachFail("VERSION");
+    const sourceDirectory = attachmentDirectory(path.dirname(source.sourcePath)); if (path.dirname(sourceDirectory.path) !== directory.path) attachFail("PRIVATE_FILE");
+    const econ = attachmentOwnedFile(source.sourcePath, sourceDirectory), economic = attachmentDecode(econ.bytes, 4, key), before = attachmentDecode(base.bytes, 3, key), fee = before.feeCalculationReceipt;
+    if (!validateFeeCalculationReceiptWithEcon(fee, before, economic).ok) attachFail("RECEIPT");
+    let checkLegacy; try { checkLegacy = guardLegacySourceFile(economic, key, plan.legacySource?.path || null); } catch { attachFail("LEGACY_SOURCE"); }
+    const ratioCore=createFeeRatioCore(createRankedExposureCore(),crypto.webcrypto);
+    let recipient;try { recipient=await ratioCore.validateRecipient(parseExact(Buffer.from(source.managerRecipientRaw||'')),await ratioCore.recipientScope(locator)); } catch { attachFail('SOURCE'); }
+    locator=undefined;
+    if(browserPlan)try{consumeBrowserEvidence(browserProof,parseExact(input.bytes),recipient.scopeId,runtime.now());}catch{attachFail('SOURCE');}
+    if(fee.asOf!==plan.targetDate||!['weekly','monthly','weekly-monthly','snapshot'].includes(plan.ratioKind)||!/^\d{4}-\d{2}-\d{2}$/.test(plan.ratioSourceDate||'')||plan.ratioSourceDate>fee.asOf)attachFail('PERIOD');
+    try{await source.checkCurrent({requireManagerRecipient:true});}catch{attachFail('SOURCE');}
+    env = { PATH: path.dirname(process.execPath) + ":/usr/bin:/bin", FEE_DATA_KEY: keyText, FEE_ECON_FILE: source.sourcePath }; if (legacy) env.FEE_ECON_V3_FILE = plan.legacySource.path;
+    const run = async (args, expected, code) => { allChecks(); econ.check(); checkLegacy(); let r; try { r = await runtime.runNode({ args, env }); } catch { attachFail(code); }
+      if (r?.status !== 0 || r.error || String(r.stderr || "").trim() || String(r.stdout || "").trim() !== expected) attachFail(code);
+      allChecks(); econ.check(); checkLegacy(); };
+    fs.mkdirSync(output, { mode: 0o700 }); identity = fs.lstatSync(output); const file = path.join(output, "data.json"), hf = path.join(output, "fee-data-health.json");
+    recipientPath=path.join(directory.path,'ratio-public-recipient.json');
+    fs.writeFileSync(recipientPath,JSON.stringify(recipient),{mode:0o600,flag:'wx'});
+    const recipientFile=attachmentOwnedFile(recipientPath,directory);recipientCheck=()=>recipientFile.check();
+    const writer=[path.join(ATTACH_ROOT,'scripts/daily.mjs'),'--ratio-only','--file='+plan.baseData.path,'--ratio-input='+plan.ratioInput.path,'--ratio-recipient='+recipientPath,'--ratio-output='+file,'--ratio-kind='+plan.ratioKind,'--ratio-source-date='+plan.ratioSourceDate,'--ratio-scope='+recipient.scopeId,...(browserPlan?['--ratio-evidence-plan='+plan.browserEvidence.path]:[]),...(baseline?['--ib-baseline-input='+plan.ibBootstrap.baseline.path,'--ib-coverage-input='+plan.ibBootstrap.coverage.path]:[])];
+    await run(writer,'RATIO_ATTACHMENT_DRY_RUN_OK','WRITER');recipientFile.check();
+    await run([...writer,'--execute'],'RATIO_ATTACHMENT_ENCRYPTED_CANDIDATE_PREPARED','WRITER');recipientFile.check();
+    const frozen = attachmentOwnedFile(file, attachmentDirectory(output)); finalCandidateCheck = () => frozen.check();
+    const after=attachmentDecode(frozen.bytes,3,key),expectedBase=baseline?await attachIbBootstrap(before,parseExact(baseline.bytes),parseExact(coverage.bytes)):before,strip=v=>Object.fromEntries(Object.entries(v).filter(([k])=>!['ratioManagerEnvelope','ratioManagerPublication'].includes(k)));
+    if(canonicalJson(strip(expectedBase))!==canonicalJson(strip(after))||canonicalJson(fee)!==canonicalJson(after.feeCalculationReceipt))attachFail('NON_IB_CHANGED');
+    if(!validateFeeCalculationReceiptWithEcon(after.feeCalculationReceipt,after,economic).ok)attachFail('RECEIPT');
+    try{await ratioCore.validatePublication(after.ratioManagerEnvelope,after.ratioManagerPublication,fee);if(after.ratioManagerEnvelope.recipientId!==recipient.recipientId||after.ratioManagerEnvelope.scopeId!==recipient.scopeId||after.ratioManagerEnvelope.binding.sourceDate!==plan.ratioSourceDate||after.ratioManagerEnvelope.binding.previousCipherSha256!==(before.ratioManagerEnvelope?await ratioCore.digest(before.ratioManagerEnvelope):null))throw Error();}catch{attachFail('RECEIPT');}
+    await run([path.join(ATTACH_ROOT, "scripts/fee-receipt-report.mjs"), "--file=" + file, "--format=validate"], "receipt valid " + plan.targetDate, "REPORTER");
+    frozen.check(); healthAttempted = true;
+    await run([path.join(ATTACH_ROOT, "scripts/fee-data-health.mjs"), "create-success", "--out=" + hf, "--data=" + file, "--target-date=" + plan.targetDate,
+      "--source-schwab=" + health.sourceDates.schwab, "--source-webull=" + health.sourceDates.webull, "--source-benchmark=" + health.sourceDates.benchmark,
+      "--outcome=updated", "--style-preflight=pass", "--checked-at=" + health.checkedAt], "health ok " + plan.targetDate + " updated", "HEALTH_WRITE");
+    const hs = fs.lstatSync(hf); if (!hs.isFile() || hs.isSymbolicLink() || hs.uid !== process.getuid()) attachFail("OUTPUT"); fs.chmodSync(hf, 0o600);
+    const bound = attachmentOwnedFile(hf, attachmentDirectory(output)), actualHealth = parseExact(bound.bytes), expectedHealth = { ...health, outcome: "updated", dataSha256: attachHash(frozen.bytes) };
+    if (validateHealth(actualHealth, { now: runtime.now() }).length || canonicalJson(actualHealth) !== canonicalJson(expectedHealth)
+        || fs.readdirSync(output).sort().join(",") !== "data.json,fee-data-health.json") attachFail("HEALTH_WRITE");
+    finalHealthCheck = () => bound.check(); frozen.check();
+    try { await source.checkCurrent({requireManagerRecipient:true}); } catch { attachFail("SOURCE"); } await publicBase.checkCurrent(); allChecks(); frozen.check(); bound.check();
+    result = { schema: "fee-console.ratio-local-finalized.v1", status: "RATIO_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW", targetDate: plan.targetDate, mainSha: publicBase.head,
+      baseDataSha256: attachHash(base.bytes), candidateDataSha256: attachHash(frozen.bytes), inheritedProducerRunId: proof.runId,
+      inheritedCandidateSha: proof.candidateSha, sourceCheckedAt: health.checkedAt, feeReceiptUnchanged: true, nonAttachmentFieldsUnchanged: true, ibBootstrapAdded: !!baseline,
+      healthCreated: true, readyForSignedCandidate: true, publicationReady: false };
+  } catch (error) { errorCode = error instanceof LocalAttachmentError ? error.message.slice(9) : "OUTPUT"; }
+  finally { if (env) { delete env.FEE_DATA_KEY; delete env.FEE_ECON_FILE; delete env.FEE_ECON_V3_FILE; } key?.fill(0); keyText = undefined;
+    if(recipientPath)try{recipientCheck();fs.unlinkSync(recipientPath);}catch{errorCode='CLEANUP';}
+    try { source?.cleanup?.(); } catch { errorCode = "CLEANUP"; } if (errorCode) try { cleanup(); } catch { errorCode = "CLEANUP"; } }
+  if (errorCode) attachFail(errorCode);
+  try { finalChecks(); finalCandidateCheck(); finalHealthCheck(); const dir = attachmentDirectory(output); if (dir.dev !== identity.dev || dir.ino !== identity.ino) attachFail("OUTPUT");
+    fs.writeFileSync(path.join(output, "validation.json"), JSON.stringify(result, null, 2) + "\n", { mode: 0o600, flag: "wx" }); attachmentOwnedFile(path.join(output, "validation.json"), dir);
+  } catch (error) { try { cleanup(); } catch { attachFail("CLEANUP"); } if (error instanceof LocalAttachmentError) throw error; attachFail("OUTPUT"); }
+  return result;
+}
+
 export function readLocalAttachmentPlan(file) {
   const directory = attachmentDirectory(path.dirname(file)), snapshot = attachmentOwnedFile(file, directory), plan = parseExact(snapshot.bytes);
   snapshot.check(); if (plan?.workspace !== directory.path) attachFail("PLAN"); return { plan, check: () => snapshot.check() };
@@ -515,6 +612,12 @@ async function sourceCheck() {
 }
 
 async function main() {
+  if (process.argv[2] === 'finalize-ratio') {
+    if(process.argv.length!==4||!path.isAbsolute(process.argv[3]))attachFail('PLAN');
+    const input=readLocalAttachmentPlan(process.argv[3]);
+    const result=await finalizeLocalRatioAttachment({plan:input.plan,checkPlan:input.check});
+    console.log(result.status);return;
+  }
   if (process.argv[2] === "finalize-ib") {
     if (process.argv.length !== 4 || !path.isAbsolute(process.argv[3])) attachFail("PLAN");
     const input = readLocalAttachmentPlan(process.argv[3]);

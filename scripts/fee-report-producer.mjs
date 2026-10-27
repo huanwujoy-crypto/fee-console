@@ -12,6 +12,7 @@ import {fetchEconomicSnapshot} from './fee-economic-source.mjs';
 import {incomeDateEvidenceFromData} from './fee-income-date-policy.mjs';
 import {canonicalJson} from './fee-receipt-core.mjs';
 import {validateHealth} from './fee-data-health.mjs';
+import {boundedJson} from './fee-http-json.mjs';
 import {reportDate,reportAddDays,selectReportBenchmark,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates} from './fee-report-period.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -60,7 +61,30 @@ export function explicitReportPlan(kind,target){
   }
   fail('TARGET');
 }
-export async function reportPublicationPreflight({now=new Date(),plan=null,readState=readPublicationState}={}){
+// At most one additional financial entry for a newly published period. This
+// public metadata budget carries no independent account fields or raw logs.
+// Counts are conservative: unrelated runs in the narrow window consume budget.
+export async function readPeriodRetryRuns({scheduledAt,now,fetchImpl=globalThis.fetch}={}){
+  const from=new Date(Date.parse(scheduledAt)).toISOString();
+  const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
+  const url='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions/workflows/fee-cloud-producer.yml/runs?'+query;
+  const listing=await boundedJson(fetchImpl,url,{headers:{Accept:'application/vnd.github+json'}},{timeoutMs:15000,maxBytes:2*1024*1024});
+  if(!Number.isSafeInteger(listing.total_count)||!Array.isArray(listing.workflow_runs)||listing.total_count!==listing.workflow_runs.length||listing.total_count>100)fail('IB_RETRY_METADATA');
+  return listing.workflow_runs;
+}
+export function periodIbRetryAllowed({runs,currentRunId=null,scheduledAt,now}={}){
+  if(!Array.isArray(runs)||!Number.isFinite(Date.parse(scheduledAt))||!Number.isFinite(now?.getTime()))return false;
+  const current=String(currentRunId||''),seen=new Set();let previous=0;
+  for(const r of runs){
+    if(!Number.isSafeInteger(r.id)||r.id<=0||seen.has(r.id)||r.head_branch!=='main'||r.path!=='.github/workflows/fee-cloud-producer.yml'||!/^[a-f0-9]{40}$/.test(r.head_sha||'')||!['schedule','workflow_dispatch'].includes(r.event)||!Number.isFinite(Date.parse(r.created_at)))return false;
+    seen.add(r.id);const time=Date.parse(r.created_at);
+    if(time<Date.parse(scheduledAt)||time>now.getTime())return false;
+    if(String(r.id)!==current)previous++;
+  }
+  return previous===1;
+}
+export async function reportPublicationPreflight({now=new Date(),plan=null,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,readRetryRuns=readPeriodRetryRuns,readState}={}){
+  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
   if(plans.some(p=>!validateReportPlan(p)))fail('PLAN');
@@ -69,7 +93,18 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,readS
   if(state.mainSha!==state.finalMainSha||validateHealth(state.health,{now:new Date(state.health?.checkedAt)}).length||Date.parse(state.health?.checkedAt)>now.getTime()+300000||state.health?.dataSha256!==hash(state.data))fail('PUBLICATION_READ');
   if(plan&&state.health.targetDate>plan.accountingThrough)fail('HISTORY_AHEAD_OF_TARGET');
   const pending=plans.filter(p=>p.accountingThrough>=state.health.targetDate&&!publishedReportMatches(state,p,now));
-  if(!pending.length)return {schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:latest,mainSha:state.mainSha};
+  if(!pending.length){
+    const covered={schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:latest,mainSha:state.mainSha};
+    // Between reports coverage remains valid; this bounded IB retry never
+    // rejuvenates stale health, changes target windows or retries every day.
+    if(!ibEnabled||state.health.targetDate!==latest.accountingThrough||!freshTarget(latest,now)||validateHealth(state.health,{now}).length||now.getTime()-Date.parse(state.health.checkedAt)>12*3600000)return covered;
+    if(state.pending)return {...covered,outcome:'candidate-pending'};
+    try{
+      const runs=await readRetryRuns({scheduledAt:latest.scheduledAt,now});
+      if(periodIbRetryAllowed({runs,currentRunId,scheduledAt:latest.scheduledAt,now}))return {...covered,outcome:'produce',reasonCode:'IB_BOUNDED_SAME_PERIOD_RECHECK'};
+    }catch{/* IB metadata uncertainty cannot block or invalidate fee coverage. */}
+    return covered;
+  }
   const next=pending[0],readiness=reportPlanReadiness(next,now);
   if(readiness.state!=='due')return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:readiness.reasonCode,plan:next,mainSha:state.mainSha};
   if(!freshTarget(next,now))return {schema:'fee-console.report-preflight.v1',outcome:'recovery-required',reasonCode:'REPORT_TARGET_OUTSIDE_PROMOTION_WINDOW',plan:next,mainSha:state.mainSha};
@@ -82,7 +117,7 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,readS
 export async function reportPublicationWatch({mainSha,health,data,now=new Date()}={}){
   if(!/^[a-f0-9]{40}$/.test(mainSha||''))fail('PUBLICATION_READ');
   const state={mainSha,finalMainSha:mainSha,health,data,pending:false};
-  const result=await reportPublicationPreflight({now,readState:async()=>state});
+  const result=await reportPublicationPreflight({now,ibEnabled:false,readState:async()=>state});
   if(!['already-published','not-due'].includes(result.outcome)&&!(result.outcome==='waiting'&&result.reasonCode==='ACCOUNTING_DAY_NOT_COMPLETE'))fail('PUBLISHED_PERIOD_MISSING');
   return {schema:'fee-console.report-watch.v1',outcome:result.outcome,accountingThrough:health.targetDate};
 }
@@ -91,6 +126,10 @@ function outputDirectory(file){
   const st=fs.lstatSync(file),real=fs.realpathSync(file),r=path.relative(ROOT,real);
   if(!st.isDirectory()||st.isSymbolicLink()||(st.mode&0o077)!==0||st.uid!==process.getuid()||!(r==='..'||r.startsWith('..'+path.sep)))fail('OUTPUT_DIR');
   return real;
+}
+export function assertPeriodIbRecheckUnchanged(before,after){
+  const strip=o=>Object.fromEntries(Object.entries(o).filter(([k])=>!['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState','ibManagerSourceStatus','ibManagerBaselineState','ibManagerCoverageState','updatedAt'].includes(k)));
+  if(canonicalJson(strip(before))!==canonicalJson(strip(after)))fail('IB_RECHECK_CHANGED_FEE_DATA');
 }
 export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json')}={}){
   if(!validateReportPlan(plan)||reportPlanReadiness(plan,now).state!=='due')fail('NOT_READY');
@@ -121,6 +160,9 @@ export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new 
     }
     await economic.checkCurrent();
     if(!fs.readFileSync(sourceFile).equals(originalBytes))fail('BASE_CHANGED');
+    if(process.env.IB_MANAGER_READ_ENABLED==='true'&&latest===plan.accountingThrough){
+      assertPeriodIbRecheckUnchanged(payload,decryptCandidate(result.dataFile,process.env.FEE_DATA_KEY));
+    }
     for(const name of ['data.json','fee-data-health.json'])fs.copyFileSync(path.join(path.dirname(result.dataFile),name),path.join(output,name),fs.constants.COPYFILE_EXCL);
     fs.chmodSync(path.join(output,'data.json'),0o600);
     return {...result,dataFile:path.join(output,'data.json'),healthFile:path.join(output,'fee-data-health.json'),reportKind:plan.kind,accountingThrough:plan.accountingThrough,priceThrough:plan.priceThrough,reconstructedDays:dates.length};

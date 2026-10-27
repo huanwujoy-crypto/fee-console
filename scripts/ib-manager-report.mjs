@@ -2,16 +2,36 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {SharesightIbManagerReader,ibSourceFailureCode,IB_BASELINE_WINDOW} from './ib-manager-source.mjs';
-import {buildIbManagerReportBundle,validateIbManagerReportState,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
+import {SharesightIbManagerReader,ibSourceFailureCode,IB_BASELINE_WINDOW,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
+import {buildIbManagerReportBundle,validateIbManagerReportState,validateIbOwnerBaselineState,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
 import {validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
+import {isCalendarDate,inclusiveDays} from './fee-engine.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const refused=()=>{throw Error('IB_REPORT_INPUT_REFUSED');};
 const outside=p=>{const r=path.relative(ROOT,p);return r==='..'||r.startsWith('..'+path.sep);};
 const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',');
-const fields=['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState','ibManagerSourceStatus'];
+const fields=['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState','ibManagerSourceStatus','ibManagerBaselineState','ibManagerCoverageState'];
 export function sameIbManagerData(a,b){const c=createIbManagerReturnConsumer().canonical;return fields.every(k=>c(a[k]??null)===c(b[k]??null));}
+
+// Finite reconciliation scope in the existing authenticated private payload.
+// It must come from a separately reviewed operator/source-audit handoff. A hash
+// or JSON assertion is not permission, and stable GETs cannot release an
+// externally known unfinished migration. No ingress or activation is added here.
+export async function validateIbManagerCoverage(state,targetDate,expectedHash,requiredFrom=state?.from,nativeCheckpoint=null){
+  if(state?.schema==='fee-console.ib-manager-coverage.v2'){
+    try{
+      const audit=validateIbBootstrapCoverage(state,expectedHash);
+      if(nativeCheckpoint){const source=validateIbManagerReportInput(nativeCheckpoint,expectedHash);if(source.schema!=='fee-console.ib-manager-source.v3'||createIbManagerReturnConsumer().canonical(source.bootstrapCoverage)!==createIbManagerReturnConsumer().canonical(audit)||source.sourceAsOf<audit.through)throw Error();}
+      else if(targetDate!==audit.through||requiredFrom!==audit.from)throw Error();
+      if(!isCalendarDate(targetDate)||targetDate<audit.through)throw Error();return audit;
+    }catch{throw Error('IB_SOURCE_COVERAGE_UNVERIFIED');}
+  }
+  if(!exact(state,['schema','authority','baselineInputsHash','from','through','evidenceSha256','coverageId'])||state.schema!=='fee-console.ib-manager-coverage.v1'||state.authority!=='reviewed-source-reconciliation'||state.baselineInputsHash!==expectedHash||![state.from,state.through,targetDate,requiredFrom].every(isCalendarDate)||state.from<=IB_BASELINE_WINDOW.asOf||state.from>requiredFrom||requiredFrom>targetDate||state.through<state.from||inclusiveDays(state.from,state.through)>8||targetDate<state.from||targetDate>state.through||!['evidenceSha256','coverageId'].every(k=>/^[a-f0-9]{64}$/.test(state[k]||'')))throw Error('IB_SOURCE_COVERAGE_UNVERIFIED');
+  const {coverageId,...body}=state;
+  if(await createIbManagerReturnConsumer().digest(body)!==coverageId)throw Error('IB_SOURCE_COVERAGE_UNVERIFIED');
+  return structuredClone(state);
+}
 
 export async function prepareIbManagerReport({payload,targetDate,outputDir,environ=process.env,reader}={}){
   if(environ.IB_MANAGER_READ_ENABLED!=='true')return null;
@@ -19,17 +39,25 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
   const dir=fs.realpathSync(outputDir),stat=fs.statSync(dir);
   if(!outside(dir)||!stat.isDirectory()||(stat.mode&0o077)!==0)refused();
   const expectedBaselineHash=environ.IB_MANAGER_BASELINE_SHA256;
-  let request;
+  let request,coverage=null;
   try{
-    // Later source coverage is not attested while a reported noncash migration
-    // is unfinished. A stable but stale Sharesight portfolio is not completeness
-    // evidence. This hold is independent of the two-account fee report.
-    if(targetDate>IB_BASELINE_WINDOW.asOf)throw Error('IB_SOURCE_COVERAGE_UNVERIFIED');
     if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))throw Error('IB_SOURCE_BASELINE_LOCK');
     const checkpoint=await validateIbManagerReportState(payload,expectedBaselineHash);
-    const source=await (reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET})).readStable({targetDate,expectedBaselineHash,checkpoint});
+    const ownerBaseline=await validateIbOwnerBaselineState(payload,expectedBaselineHash);
+    if(checkpoint?.ownerBaseline&&ownerBaseline&&createIbManagerReturnConsumer().canonical(checkpoint.ownerBaseline)!==createIbManagerReturnConsumer().canonical(ownerBaseline))throw Error('IB_SOURCE_STATE_INVALID');
+    // Future reads require authenticated history, not only a later date. Real
+    // activation still requires the known unfinished migration to be reconciled;
+    // Sharesight cannot attest a broker event that has never been entered.
+    if(targetDate>IB_BASELINE_WINDOW.asOf){
+      if(!checkpoint&&!ownerBaseline)throw Error('IB_SOURCE_COVERAGE_UNVERIFIED');
+      const priorDate=checkpoint?.sourceAsOf||ownerBaseline.input.periodReturnsInput.to;
+      const requiredFrom=priorDate===targetDate?targetDate:new Date(Date.parse(priorDate+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+      coverage=await validateIbManagerCoverage(payload.ibManagerCoverageState,targetDate,expectedBaselineHash,requiredFrom,checkpoint?.schema==='fee-console.ib-manager-source.v3'?checkpoint:null);
+      if(coverage.schema==='fee-console.ib-manager-coverage.v2'&&checkpoint&&checkpoint.schema!=='fee-console.ib-manager-source.v3')throw Error('IB_SOURCE_STATE_INVALID');
+    }
+    const source=await (reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET})).readStable({targetDate,expectedBaselineHash,checkpoint,...(!checkpoint&&ownerBaseline?{ownerBaseline}:{}),...(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'?{bootstrapCoverage:coverage}:{})});
     await buildIbManagerReportBundle(source,expectedBaselineHash);
-    request={state:'verified',source};
+    request={state:'verified',source,...(coverage?{coverage}:{})};
   }catch(error){
     const fixed=['IB_SOURCE_BASELINE_LOCK','IB_SOURCE_STATE_INVALID','IB_SOURCE_COVERAGE_UNVERIFIED'];
     request={state:'pending',reasonCode:fixed.includes(error?.message)?error.message:ibSourceFailureCode(error)};
@@ -49,12 +77,20 @@ export async function loadIbManagerReport(file,{environ=process.env}={}){
   if(request.schema!=='fee-console.ib-manager-report-request.v1'||!/^\d{4}-\d{2}-\d{2}$/.test(request.targetDate||''))refused();
   let bundle=null;
   if(request.state==='verified'){
-    if(!exact(request,['schema','targetDate','state','source']))refused();
+    const future=request.targetDate>IB_BASELINE_WINDOW.asOf;
+    if(!exact(request,['schema','targetDate','state','source',...(future?['coverage']:[])]))refused();
     try{bundle=await buildIbManagerReportBundle(request.source,environ.IB_MANAGER_BASELINE_SHA256);}catch{refused();}
+    if(future)try{await validateIbManagerCoverage(request.coverage,request.targetDate,environ.IB_MANAGER_BASELINE_SHA256,request.coverage?.from,request.source.schema==='fee-console.ib-manager-source.v3'?request.source:null);}catch{refused();}
     if(bundle.returnReceipt.asOf!==request.targetDate)refused();
   }else if(request.state!=='pending'||!exact(request,['schema','targetDate','state','reasonCode'])||!/^IB_SOURCE_[A-Z_]{1,48}$/.test(request.reasonCode||''))refused();
   return {checkCurrent,apply(data,targetDate){
     checkCurrent();if(request.targetDate!==targetDate)refused();
+    if(bundle&&targetDate>IB_BASELINE_WINDOW.asOf){
+      const core=createIbManagerReturnConsumer();
+      if(core.canonical(request.coverage)!==core.canonical(data.ibManagerCoverageState))refused();
+      const stored=data.ibManagerBaselineState||data.ibManagerSourceState?.source?.ownerBaseline;
+      if(request.source.ownerBaseline&&core.canonical(stored)!==core.canonical(request.source.ownerBaseline))refused();
+    }
     const fee=data.feeCalculationReceipt;
     // Independent failure never changes the original fee calculation or ledger.
     const matched=bundle&&validateFeeCalculationReceipt(fee,data).ok&&bundle.returnReceipt.start===fee.start&&bundle.returnReceipt.asOf===fee.asOf;

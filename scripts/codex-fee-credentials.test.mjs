@@ -48,7 +48,7 @@ test("private-file setup only reads an owned, restricted regular file", () => {
 import {spawnSync} from 'node:child_process';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
-import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,readLocalAttachmentPlan,readProducerLogRecord} from './codex-fee-credentials.mjs';
+import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,finalizeLocalRatioAttachment,readLocalAttachmentPlan,readProducerLogRecord} from './codex-fee-credentials.mjs';
 import {buildFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {convertEncryptedV3Copy} from './fee-econ-v3-copy.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
@@ -316,3 +316,77 @@ for(const [name,change] of [
  ['signing step before job',f=>f.proof.jobs.jobs[0].steps[1].started_at='2026-10-26T05:58:59Z'],['signing step after job',f=>f.proof.jobs.jobs[0].steps[1].completed_at='2026-10-26T06:01:01Z'],['record before signing step',f=>f.proof.logs=syntheticLog.replace('06:00:30.0720195','06:00:19.9999999')],['record beyond completed API second',f=>f.proof.logs=syntheticLog.replace('06:00:30.0720195','06:00:31.0000000')],['precise completion cannot be extended',f=>f.proof.jobs.jobs[0].steps[1].completed_at='2026-10-26T06:00:30.070Z'],
  ['matching OID hidden by cursor controls',f=>f.proof.logs='untrusted\r\x1b[2K'+syntheticLog],['matching OID only in echoed command',f=>f.proof.logs='2026-10-26T06:00:30Z echo candidate '+PROOF_CANDIDATE],['duplicate canonical proof',f=>f.proof.logs+=f.proof.logs],
 ])test('new log boundary fails before financial keys: '+name,async t=>{const f=await finalizeFixture(t);change(f);await refusedFinal(f,/PROVENANCE/);assert.equal(f.calls.secrets.length,0);assert.equal(f.calls.requests.length,0);assert.equal(f.calls.children.length,0);});
+
+import {createFeeRatioCore} from './fee-ratio-management.mjs';
+import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
+import {buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
+import {ibBaselineBusinessHash} from './ib-manager-source.mjs';
+import {prepareRatioAttachment} from './fee-ratio-packet.mjs';
+function ratioFixtureForAttachment(){
+  const accounts=Array.from({length:10},(_,i)=>'Invented account '+i),scopeHash=crypto.createHash('sha256').update(JSON.stringify([...accounts].sort())).digest('hex');
+  const exp={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scopeHash},core=createFeeRatioCore(exp,crypto.webcrypto);
+  const exposure={schema:exp.RANKED_EXPOSURE_SCHEMA,retrievedAtBasis:exp.EXPOSURE_OBSERVED_TIME_BASIS,retrievedAt:'2000-01-03T02:00:00.000Z',summary:{asOf:'2000-01-03',currency:'USD',source:{provider:'Sharesight',view:'All Together',report:'Tools Exposure',groupBy:'No grouping',show:'Top 500',classification:'Investments→资产类别',url:'https://portfolio.sharesight.com/portfolios/1/tools/exposure/2?consolidated=true'},totalValueUSD:4000,accounts,classes:['PE/VC','对冲基金','常青基金','二级市场'].map((name,i)=>({name,...(i===0?{sourceCategory:'VC/PE'}:{}),totalValueUSD:1000,basis:i===3?'Exposure individual security direct plus ETF look-through, includes cash in class denominator':'direct',top5:Array.from({length:5},(_,j)=>({name:'Invented '+i+' security '+j,valueUSD:100-j*10,...(i===3?{securityCode:'SYNTH'+j,market:'TEST'}:{})}))})),residualETFs:{valueUSD:40,weightTotalPct:1,weightSecondaryClassPct:4},limitations:['Synthetic residual coverage'],transferStatus:'Synthetic source reconciliation incomplete',sourceXlsxSHA256:'e'.repeat(64)}};
+  const model={schema:core.SCHEMA,source:'Sharesight',report:{kind:'snapshot',targetDate:'2000-01-03',feeAccountingThrough:'1999-12-31',generatedAt:'2000-01-03T03:00:00.000Z'},exposure,book:null,limitations:['Synthetic missing whole-book source']};
+  return {core,exposure,model,scopeHash};
+}
+
+async function ratioFinalFixture(t,options={}){
+  const f=fixture(t),{core,exposure}=ratioFixtureForAttachment();let ibBootstrap=null;
+  if(options.bootstrap){
+    const baselineInput=JSON.parse(fs.readFileSync(path.join(f.root,'ib-input.json')));
+    f.data.ibManagerReturnReceipt=await buildIbManagerReturnReceipt(baselineInput);f.data.ibManagerDrawdownReceipt=await buildIbManagerDrawdownReceipt(baselineInput);
+    f.plan.baseData=f.write('base-data.json',seal(f.data,f.key,3));f.health.dataSha256=f.plan.baseData.sha256;f.plan.baseHealth=f.write('base-health.json',JSON.stringify(f.health,null,2)+'\n');
+    for(const tree of [f.tree,f.proof.candidateTree,f.proof.sourceTree])for(const [name,spec]of [['data.json',f.plan.baseData],['fee-data-health.json',f.plan.baseHealth]])tree.tree.find(x=>x.path===name).sha=gitBlob(fs.readFileSync(spec.path));
+    const body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:ibBaselineBusinessHash(baselineInput.periodReturnsInput),from:'2026-10-24',through:'2026-10-26',evidenceSha256:'e'.repeat(64),events:[],quotes:[]};
+    ibBootstrap={baseline:f.write('baseline-source.json',JSON.stringify(baselineInput)),coverage:f.write('coverage-source.json',JSON.stringify({...body,coverageId:await createIbManagerReturnConsumer().digest(body)}))};
+  }
+  exposure.retrievedAt='2026-10-26T06:00:00.000Z';exposure.summary.asOf=TARGET;
+  const manager=await core.deriveManager(LOCATOR,f.key.toString('base64url'),'synthetic-owner-token-for-ratio-123'),raw=JSON.stringify(manager.recipient);
+  f.options.mutateResponse=b=>{if(!options.noRecipient)b.files['fee-console-ratio-recipient.json']={filename:'fee-console-ratio-recipient.json',content:raw,size:Buffer.byteLength(raw),truncated:false};};
+  f.plan={schema:'fee-console.ratio-local-finalize-plan.v1',targetDate:TARGET,workspace:f.root,baseData:f.plan.baseData,baseHealth:f.plan.baseHealth,ratioInput:f.write('ratio-input.json',JSON.stringify(exposure)),legacySource:null,ratioSourceDate:TARGET,ratioKind:'weekly',ibBootstrap,producerEvidence:{runId:PROOF_RUN,candidateSha:PROOF_CANDIDATE}};
+  const old=f.runtime.runNode;
+  f.runtime={...f.runtime,async runNode({args,env}){
+    if(args[0].endsWith('/daily.mjs')){
+      const get=k=>args.find(a=>a.startsWith('--'+k+'='))?.slice(k.length+3);
+      // Same real writer library, with synthetic scope and clock injected only
+      // by this test. Production CLI has no override for either policy.
+      try{const r=await prepareRatioAttachment({file:get('file'),inputFile:get('ratio-input'),recipientFile:get('ratio-recipient'),outputFile:get('ratio-output'),kind:get('ratio-kind'),sourceDate:get('ratio-source-date'),scopeId:get('ratio-scope'),baselineFile:get('ib-baseline-input'),coverageFile:get('ib-coverage-input'),keyText:env.FEE_DATA_KEY,execute:args.includes('--execute'),environ:env,now:NOW,viewCore:core});return {status:0,stdout:r.status+'\n',stderr:''};}catch{return {status:1,stdout:'',stderr:'SYNTHETIC_WRITER_REFUSAL'};}
+    }
+    return old({args,env});
+  }};return {...f,core,manager};
+}
+const ratioFinalize=f=>finalizeLocalRatioAttachment({plan:f.plan,environ:f.environ,runtime:f.runtime});
+test('ratio full private pipeline constructs cipher, validates actual fee/health tools, preserves IB and all other data',async t=>{
+  const f=await ratioFinalFixture(t),original=fs.readFileSync(f.plan.baseData.path),before=open(original,f.key),r=await ratioFinalize(f),out=path.join(f.root,'ratio-finalized'),after=open(fs.readFileSync(path.join(out,'data.json')),f.key),health=JSON.parse(fs.readFileSync(path.join(out,'fee-data-health.json')));
+  assert.equal(r.status,'RATIO_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW');assert.equal(r.publicationReady,false);assert.deepEqual(f.calls.secrets,[SERVICES.key,SERVICES.gist]);
+  assert.equal(health.checkedAt,f.health.checkedAt);assert.deepEqual(health.sourceDates,f.health.sourceDates);assert.equal(health.dataSha256,digest(fs.readFileSync(path.join(out,'data.json'))));
+  const {ratioManagerEnvelope,ratioManagerPublication,...rest}=after;assert.deepEqual(rest,before);assert.equal((await f.core.open(ratioManagerEnvelope,f.manager)).exposure.summary.asOf,TARGET);await f.core.validatePublication(ratioManagerEnvelope,ratioManagerPublication,after.feeCalculationReceipt);
+  const investor=await f.core.deriveManager(LOCATOR,f.key.toString('base64url'),'synthetic-investor-token-for-ratio-456');await assert.rejects(f.core.open(ratioManagerEnvelope,investor));
+  for(const name of ['data.json','fee-data-health.json','validation.json']){assert.equal(fs.statSync(path.join(out,name)).mode&0o777,0o600);assert.ok(!fs.readFileSync(path.join(out,name),'utf8').includes('Invented account'));}
+  assert.deepEqual(fs.readFileSync(f.plan.baseData.path),original);assert.equal(fs.existsSync(path.join(f.root,'ratio-public-recipient.json')),false);
+  await assert.rejects(ratioFinalize(f),/OUTPUT/);assert.equal(f.calls.secrets.length,2);
+});
+for(const mode of ['missing-recipient','bad-date','expired','bad-source','bad-proof','writer-failure','health-failure'])test('ratio private pipeline fails closed: '+mode,async t=>{
+  const f=await ratioFinalFixture(t,{noRecipient:mode==='missing-recipient'}),original=fs.readFileSync(f.plan.baseData.path);
+  if(mode==='bad-date')f.plan.ratioSourceDate='2026-10-26';
+  if(mode==='expired')f.runtime={...f.runtime,now:()=>new Date('2026-10-28T00:00:00Z')};
+  if(mode==='bad-source'){const x=JSON.parse(fs.readFileSync(f.plan.ratioInput.path));x.summary.source.provider='Broker';f.plan.ratioInput=f.write('ratio-input.json',JSON.stringify(x));}
+  if(mode==='bad-proof')f.proof.jobs.jobs[0].steps[0].conclusion='failure';
+  if(mode==='writer-failure')f.runtime={...f.runtime,runNode:()=>({status:1,stderr:'SYNTHETIC_CANARY',stdout:''})};
+  if(mode==='health-failure')f.options.mutateDerivedHealth=x=>x.checkedAt='2026-10-26T12:00:00.000Z';
+  await assert.rejects(ratioFinalize(f),e=>{assert.ok(!e.message.includes('CANARY'));return true;});
+  assert.deepEqual(fs.readFileSync(f.plan.baseData.path),original);assert.equal(fs.existsSync(path.join(f.root,'ratio-finalized')),false);assert.equal(fs.existsSync(path.join(f.root,'ratio-public-recipient.json')),false);
+  if(['expired','bad-proof'].includes(mode))assert.equal(f.calls.secrets.length,0);
+});
+
+test('one private ratio operation can seed approved historical IB without another secret channel or changing original receipts',async t=>{
+  const f=await ratioFinalFixture(t,{bootstrap:true}),before=open(fs.readFileSync(f.plan.baseData.path),f.key),r=await ratioFinalize(f),after=open(fs.readFileSync(path.join(f.root,'ratio-finalized/data.json')),f.key);
+  assert.equal(r.ibBootstrapAdded,true);assert.deepEqual(f.calls.secrets,[SERVICES.key,SERVICES.gist]);assert.deepEqual(after.ibManagerReturnReceipt,before.ibManagerReturnReceipt);assert.deepEqual(after.ibManagerDrawdownReceipt,before.ibManagerDrawdownReceipt);assert.deepEqual(after.feeCalculationReceipt,before.feeCalculationReceipt);assert.equal(after.ibManagerCoverageState.sourceProvider,'Sharesight');assert.equal(after.ibManagerBaselineState.authority,'owner-confirmed-frozen');
+});
+
+test('v2 browser finalization never reads financial keys for missing or self-asserted source evidence',async t=>{
+  for(const mode of ['missing','summary']){
+    const f=await ratioFinalFixture(t);f.plan.schema='fee-console.ratio-local-finalize-plan.v2';f.plan.browserEvidence=mode==='missing'?{path:path.join(f.root,'missing.json'),sha256:'a'.repeat(64)}:f.write('browser-evidence.json',JSON.stringify({verified:true,summaryOnly:true}));
+    await assert.rejects(ratioFinalize(f));assert.equal(f.calls.secrets.length,0);assert.equal(f.calls.children.length,0);assert.equal(fs.existsSync(path.join(f.root,'ratio-finalized')),false);
+  }
+});

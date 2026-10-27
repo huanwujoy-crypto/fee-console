@@ -47,7 +47,7 @@ for (const v of [3, 4]) test(`v${v}: exact encrypted bytes, private modes, remot
   assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8"), envelope(v));
   assert.equal(fs.statSync(snapshot.sourcePath).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(snapshot.sourcePath)).mode & 0o777, 0o700);
-  assert.deepEqual(Object.keys(snapshot).sort(), ["checkCurrent", "cleanup", "envelopeVersion", "sourcePath"]);
+  assert.deepEqual(Object.keys(snapshot).sort(), ["checkCurrent", "cleanup", "envelopeVersion", "managerRecipientRaw", "sourcePath"]);
   assert.equal(JSON.stringify(snapshot).includes(TOKEN), false);
   assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8").includes(TOKEN), false);
   assert.equal(await snapshot.checkCurrent(), true); assert.equal(calls, 4);
@@ -416,4 +416,12 @@ test("replaced temporary directory cannot redirect cleanup outside the created d
   assert.throws(() => snapshot.cleanup(), error => error.code === "SOURCE_STORAGE");
   assert.equal(fs.readFileSync(sentinel, "utf8"), "SYNTHETIC-SENTINEL");
   fs.unlinkSync(directory); fs.renameSync(moved, directory); snapshot.cleanup();
+});
+
+test('optional recipient is stable metadata only; missing or changed registration never blocks ordinary fees',async t=>{
+  let text='{"public":"synthetic-recipient"}';
+  const snap=await run(t,async()=>{const b=fixture(4);b.files['fee-console-ratio-recipient.json']={filename:'fee-console-ratio-recipient.json',content:text,size:Buffer.byteLength(text),truncated:false};return reply(b);});
+  assert.equal(snap.managerRecipientRaw,text);await snap.checkCurrent({requireManagerRecipient:true});
+  text='{"public":"different-synthetic-recipient"}';await snap.checkCurrent();await rejected(snap.checkCurrent({requireManagerRecipient:true}),'SOURCE_CHANGED');snap.cleanup();
+  const missing=await run(t,async()=>reply(fixture(4)));await missing.checkCurrent();await rejected(missing.checkCurrent({requireManagerRecipient:true}),'SOURCE_CHANGED');missing.cleanup();
 });

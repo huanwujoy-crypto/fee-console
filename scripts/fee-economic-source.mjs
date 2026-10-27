@@ -79,7 +79,14 @@ function inspect(body, response, id) {
   if (typeof revision !== "string" || !/^[a-f0-9]{40,64}$/i.test(revision)) fail("SOURCE_REVISION");
   const etag = response.headers.get("etag");
   if (typeof etag !== "string" || !/^(?:W\/)?"[^"\x00-\x20\x7f]{1,512}"$/.test(etag)) fail("SOURCE_ETAG");
-  return { bytes, revision, etag, envelopeVersion: envelope.v };
+  const recipient = body.files['fee-console-ratio-recipient.json'];
+  // Optional public-key metadata is not part of fee availability. Only the
+  // explicit ratio operation insists on a present, stable, exact registration.
+  const managerRecipientRaw = object(recipient) && recipient.filename === 'fee-console-ratio-recipient.json'
+    && recipient.truncated === false && typeof recipient.content === 'string'
+    && Buffer.byteLength(recipient.content) <= 4096 && recipient.size === Buffer.byteLength(recipient.content)
+    ? recipient.content : null;
+  return { bytes, revision, etag, envelopeVersion: envelope.v, managerRecipientRaw };
 }
 
 async function readOnce(id, token, options) {
@@ -134,7 +141,7 @@ function same(a, b) {
 async function stableRead(id, token, options) {
   const first = await readWithRetry(id, token, options), second = await readWithRetry(id, token, options);
   if (!same(first, second)) fail("SOURCE_CHANGED");
-  return first;
+  return {...first,managerRecipientStable:first.managerRecipientRaw===second.managerRecipientRaw};
 }
 
 function checkedRoot(requested) {
@@ -215,10 +222,15 @@ export async function fetchEconomicSnapshot(options = {}) {
   return Object.freeze({
     sourcePath,
     envelopeVersion: expected.envelopeVersion,
-    async checkCurrent() {
+    managerRecipientRaw: expected.managerRecipientStable ? expected.managerRecipientRaw : null,
+    async checkCurrent(options = {}) {
+      if (!object(options) || Object.keys(options).some(k => k !== 'requireManagerRecipient')
+          || (options.requireManagerRecipient !== undefined && options.requireManagerRecipient !== true)) fail('SOURCE_CHANGED');
       verifyLocal();
       const current = await stableRead(id, token, opts);
       if (!same(expected, current)) fail("SOURCE_CHANGED");
+      if (options.requireManagerRecipient && (!expected.managerRecipientStable || !current.managerRecipientStable
+          || !expected.managerRecipientRaw || expected.managerRecipientRaw !== current.managerRecipientRaw)) fail('SOURCE_CHANGED');
       verifyLocal();
       return true;
     },

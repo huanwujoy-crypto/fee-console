@@ -593,6 +593,11 @@
     "scripts/fee-report-metadata.test.mjs",
     "scripts/fee-report-producer.mjs",
     "scripts/fee-report-producer.test.mjs",
-    "docs/fee-report-periods.md"
+    "docs/fee-report-periods.md",
+    "scripts/xuan-ib-sharesight-exposure.mjs",
+    "scripts/fee-ratio-management.mjs",
+    "scripts/fee-ratio-packet.mjs",
+    "docs/fee-ratio-management.md",
+    "scripts/fee-ratio-browser-evidence.mjs"
   ]
 }

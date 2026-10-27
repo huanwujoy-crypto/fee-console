@@ -73,7 +73,8 @@ rates, Carry, payment amounts, investor shares or original benchmarks.
 Manual synchronization completion is per account and per captured period. A
 stable Sharesight response does not prove that an externally reported migration
 has been recorded. Until later IB source coverage is attested, normal IB handoff
-is held at the existing audited baseline cutoff with
+is held at the existing audited baseline cutoff (or validated finite private
+coverage in the local future-period candidate) with
 `IB_SOURCE_COVERAGE_UNVERIFIED`. Original composite production can continue.
 Post-cutoff transfers cannot enter an earlier historical report. Payout date,
 settlement date and actual cash-credit date remain distinct under existing income
@@ -89,6 +90,28 @@ drawdown bundle is actually encrypted, protected, published and unlocked for
 read-back. See `ib-manager-return.md` for the remaining evidence-carriage boundary.
 
 ## One reviewed historical preview
+
+### HKT midnight versus the current New York completion guard
+
+No schedule or guard is changed by the future-IB local candidate. The requested
+monthly start remains D+2 HKT 00:00, not a silently changed 13:00 schedule.
+`monthlyReportPlan` separately chooses the last NYSE price date and the last
+calendar accounting day. `reportPlanReadiness` then explicitly requires the
+current New York date to be later than that accounting day. For October 2026,
+11/1 00:00 HKT is still 10/31 12:00 New York. The NY day finishes at 11/1 12:00
+HKT; the next existing gate is 13:00. Thus 00:00 begins checking, not guaranteed
+final-month publication. Weekly 10/30 coverage is independently eligible at 00:00.
+
+The source checks `report.start_date`, `end_date`, `portfolio_tz_name` and dated
+cash `date_time`/query bounds. It has no observed provider field certifying
+"this business day is closed". Requiring exact historical dates, complete
+cash/transactions and refusing unoccurred future activity is necessary. The
+fixed NY-current-date wait is this implementation's extra conservative method;
+it has not been proved to be an API-mandated delay. Two stable midday reads are
+not proof that no later month-end cash event will arrive. Finalizing at HKT
+midnight would need independently verified period-close evidence or an explicitly
+reviewed accounting-timezone/contract decision, not simply removing this guard.
+Neither is implemented here. Explain this difference before production activation.
 
 The normal path can prepare an explicitly selected weekly or month-end target:
 

@@ -14,7 +14,7 @@ const snapshot = () => ({ date: targetDate, sourceDates: { schwab: targetDate, w
       holdings: [{ holdingId: 2, ticker: 'TESTB', valueUsd: 200 }] },
   ] } });
 const cache = date => ({ v: 1, benchmarks: {
-  spy: { series: [{ d: date, p: 100 }] }, qqq: { series: [{ d: date, p: 200 }] },
+  spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series: [{ d: date, p: 100 }] }, qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series: [{ d: date, p: 200 }] },
 } });
 
 test('one pass exposes benchmark, cash and classification blockers together without writer or identity output', async () => {

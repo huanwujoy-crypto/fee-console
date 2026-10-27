@@ -42,6 +42,9 @@ test('month-end waits both synchronization day and natural month end',()=>{
   assert.equal(oct.priceThrough,'2026-10-30');assert.equal(oct.accountingThrough,'2026-10-31');
   assert.equal(oct.scheduledAt,'2026-11-01T00:00:00+08:00');
   assert.equal(reportPlanReadiness(oct,new Date('2026-10-31T16:00Z')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+  assert.equal(reportPlanReadiness(oct,new Date('2026-11-01T03:59:59Z')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+  // Current guard clears at HKT noon, not at 13:00: the latter is only
+  // the next existing cron slot. Neither the guard nor schedule is changed.
   assert.equal(reportPlanReadiness(oct,new Date('2026-11-01T04:00Z')).state,'due');
   const july=monthlyReportPlan('2026-07');assert.equal(july.scheduledAt,'2026-08-02T00:00:00+08:00');
   const may=monthlyReportPlan('2026-05');assert.equal(may.scheduledAt,'2026-06-01T00:00:00+08:00');
