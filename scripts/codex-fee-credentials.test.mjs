@@ -48,7 +48,7 @@ test("private-file setup only reads an owned, restricted regular file", () => {
 import {spawnSync} from 'node:child_process';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
-import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,readLocalAttachmentPlan} from './codex-fee-credentials.mjs';
+import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,readLocalAttachmentPlan,readProducerLogRecord} from './codex-fee-credentials.mjs';
 import {buildFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {convertEncryptedV3Copy} from './fee-econ-v3-copy.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
@@ -85,10 +85,10 @@ function fixture(t,options={}){
   const scripts=fs.readdirSync(path.join(CORE_ROOT,'scripts')).filter(n=>n.endsWith('.mjs')).map(n=>({path:'scripts/'+n,type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(path.join(CORE_ROOT,'scripts',n)))}));
   const tree={sha:TREE,truncated:false,tree:[...scripts,{path:'.github/workflows/fee-cloud-producer.yml',type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(path.join(CORE_ROOT,'.github/workflows/fee-cloud-producer.yml')))},{path:'data.json',type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(baseData.path))},{path:'fee-data-health.json',type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(baseHealth.path))}]};
   const proof={run:{id:PROOF_RUN,status:'completed',conclusion:'success',run_attempt:1,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',head_repository:{full_name:'huanwujoy-crypto/fee-console'},head_sha:PROOF_HEAD},
-    jobs:{total_count:1,jobs:[{id:PROOF_JOB,run_id:PROOF_RUN,head_sha:PROOF_HEAD,name:'produce',status:'completed',conclusion:'success',started_at:'2026-10-26T05:59:00Z',completed_at:'2026-10-26T06:01:00Z',steps:[{name:'Read, calculate and validate the encrypted candidate',status:'completed',conclusion:'success'},{name:'Create a signed owner candidate',status:'completed',conclusion:'success'}]}]},
+    jobs:{total_count:1,jobs:[{id:PROOF_JOB,run_id:PROOF_RUN,head_sha:PROOF_HEAD,name:'produce',status:'completed',conclusion:'success',started_at:'2026-10-26T05:59:00Z',completed_at:'2026-10-26T06:01:00Z',steps:[{name:'Read, calculate and validate the encrypted candidate',status:'completed',conclusion:'success'},{name:'Create a signed owner candidate',status:'completed',conclusion:'success',started_at:'2026-10-26T06:00:20Z',completed_at:'2026-10-26T06:00:30Z'}]}]},
     candidate:{sha:PROOF_CANDIDATE,author:{login:'huanwujoy-crypto',id:283054367},commit:{verification:{verified:true},tree:{sha:PROOF_CANDIDATE_TREE},message:'daily '+TARGET},parents:[{sha:PROOF_HEAD}],files:[{filename:'data.json',status:'modified'},{filename:'fee-data-health.json',status:'modified'}]},
     sourceCommit:{sha:PROOF_HEAD,author:{login:'huanwujoy-crypto',id:283054367},commit:{verification:{verified:true},tree:{sha:PROOF_TREE}}},
-    candidateTree:{...structuredClone(tree),sha:PROOF_CANDIDATE_TREE},sourceTree:{...structuredClone(tree),sha:PROOF_TREE},logs:'synthetic-prefix candidate '+PROOF_CANDIDATE+'\n'};
+    candidateTree:{...structuredClone(tree),sha:PROOF_CANDIDATE_TREE},sourceTree:{...structuredClone(tree),sha:PROOF_TREE},logs:'2026-10-26T06:00:30.0720195Z candidate '+PROOF_CANDIDATE+'\n'};
   options.mutateTree?.(tree);
   let fetchCount=0,refCount=0,childCount=0;
   const sealEconomic=seal(economic,key,4);
@@ -115,11 +115,13 @@ function fixture(t,options={}){
     assert.equal(opts.shell,false);assert.deepEqual(opts.stdio,['ignore','pipe','pipe']);assert.equal(opts.killSignal,'SIGKILL');
     if(binary==='/Users/huanwu/.local/bin/gh'){
       assert.deepEqual(args.slice(0,5),['api','--hostname','github.com','--method','GET']);
-      assert.equal(args.length,6);assert.ok(args[5].startsWith('repos/huanwujoy-crypto/fee-console/'));assert.deepEqual(opts.env,{PATH:'/usr/bin:/bin',TMPDIR:'/tmp',HOME:os.userInfo().homedir});assert.equal(opts.maxBuffer,2*1024*1024);assert.ok(!JSON.stringify(opts).includes(keyText));
-      const route=args[5].slice('repos/huanwujoy-crypto/fee-console/'.length);calls.github.push(route);if(options.githubFailure)return {status:1,stdout:'MOCK_SECRET_'+keyText,stderr:'MOCK_SECRET_'+LOCATOR};
+      const endpoint=args.at(-1);assert.ok(endpoint.startsWith('repos/huanwujoy-crypto/fee-console/'));const route=endpoint.slice('repos/huanwujoy-crypto/fee-console/'.length),raw=/^actions\/jobs\/[0-9]+\/logs$/.test(route);
+      assert.equal(args.length,raw?7:6);assert.deepEqual(args.slice(5,-1),raw?['--allow-escape-sequences']:[]);assert.equal(opts.encoding,raw?null:'utf8');
+      assert.deepEqual(opts.env,{PATH:'/usr/bin:/bin',TMPDIR:'/tmp',HOME:os.userInfo().homedir});assert.equal(opts.maxBuffer,2*1024*1024);assert.ok(!JSON.stringify(opts).includes(keyText));
+      calls.github.push(route);if(options.githubFailure)return {status:1,stdout:'MOCK_SECRET_'+keyText,stderr:'MOCK_SECRET_'+LOCATOR};
       if(route==='actions/runs/'+PROOF_RUN)return {status:0,stdout:JSON.stringify(proof.run),stderr:''};
       if(route==='actions/runs/'+PROOF_RUN+'/jobs?per_page=100')return {status:0,stdout:JSON.stringify(proof.jobs),stderr:''};
-      if(route==='actions/jobs/'+PROOF_JOB+'/logs')return {status:0,stdout:proof.logs,stderr:''};throw Error('unexpected GitHub route');
+      if(route==='actions/jobs/'+PROOF_JOB+'/logs')return options.logFormatDenied?{status:1,stdout:'',stderr:'the response contains terminal escape sequences'}:{status:0,stdout:Buffer.from(proof.logs),stderr:''};throw Error('unexpected GitHub route');
     }
     if(binary==='/usr/bin/git'){
       assert.equal(opts.cwd,CORE_ROOT);assert.deepEqual(opts.env,{PATH:'/usr/bin:/bin',TMPDIR:'/tmp'});
@@ -252,7 +254,7 @@ for(const [name,change] of [
  ['unsigned candidate',f=>f.proof.candidate.commit.verification.verified=false],['wrong candidate owner',f=>f.proof.candidate.author.id=0],['wrong candidate parent',f=>f.proof.candidate.parents[0].sha=HEAD],['wrong candidate target',f=>f.proof.candidate.commit.message='daily 2026-10-26'],['extra candidate file',f=>f.proof.candidate.files.push({filename:'index.html',status:'modified'})],['duplicate candidate path',f=>f.proof.candidate.files=[{filename:'fee-data-health.json',status:'modified'},{filename:'fee-data-health.json',status:'modified'}]],
  ['wrong base data blob',f=>f.proof.candidateTree.tree.find(x=>x.path==='data.json').sha='0'.repeat(40)],['wrong base health blob',f=>f.proof.candidateTree.tree.find(x=>x.path==='fee-data-health.json').sha='0'.repeat(40)],['unsigned producer code',f=>f.proof.sourceCommit.commit.verification.verified=false],['wrong producer owner',f=>f.proof.sourceCommit.author.login='other'],['truncated source tree',f=>f.proof.sourceTree.truncated=true],['duplicate source path',f=>f.proof.sourceTree.tree.push(f.proof.sourceTree.tree[0])],
  ['changed style/source code',f=>f.proof.sourceTree.tree.find(x=>x.path==='scripts/daily.mjs').sha='0'.repeat(40)],['changed producer workflow',f=>f.proof.sourceTree.tree.find(x=>x.path==='.github/workflows/fee-cloud-producer.yml').sha='0'.repeat(40)],['missing producer workflow',f=>f.proof.sourceTree.tree=f.proof.sourceTree.tree.filter(x=>x.path!=='.github/workflows/fee-cloud-producer.yml')],
- ['missing signed candidate output',f=>f.proof.logs='success but no candidate'],['different candidate output',f=>f.proof.logs='candidate '+HEAD+'\n'],['ambiguous candidate output',f=>f.proof.logs+='candidate '+HEAD+'\n'],['changed candidate input',f=>fs.appendFileSync(f.plan.candidateData.path,' ')],['wrong candidate permissions',f=>fs.chmodSync(f.plan.candidateData.path,0o644)],
+ ['missing signed candidate output',f=>f.proof.logs='success but no candidate'],['different candidate output',f=>f.proof.logs='2026-10-26T06:00:30.0720195Z candidate '+HEAD+'\n'],['ambiguous candidate output',f=>f.proof.logs+='2026-10-26T06:00:30.0800000Z candidate '+HEAD+'\n'],['changed candidate input',f=>fs.appendFileSync(f.plan.candidateData.path,' ')],['wrong candidate permissions',f=>fs.chmodSync(f.plan.candidateData.path,0o644)],
  ['Actions environment',f=>f.environ.GITHUB_ACTIONS='true'],['inherited secret',f=>f.environ.FEE_DATA_KEY='mock-inherited'],['clock exceeds target window',f=>f.runtime={...f.runtime,now:()=>new Date('2026-10-28T00:00:00Z')}],
 ])test('finalize before keys: '+name,async t=>{const f=await finalizeFixture(t);change(f);await refusedFinal(f);assert.equal(f.calls.secrets.length,0);assert.equal(f.calls.children.length,0);});
 test('GitHub transport failure is fail-closed and does not print private canaries or read financial keys',async t=>{const f=await finalizeFixture(t,{githubFailure:true});await refusedFinal(f,/PROVENANCE/);assert.equal(f.calls.secrets.length,0);});
@@ -288,3 +290,29 @@ test('finalization never overrides an existing pending IB source status or calls
   for(const tree of [f.tree,f.proof.candidateTree])for(const [name,spec] of [['data.json',f.plan.baseData],['fee-data-health.json',f.plan.baseHealth]])tree.tree.find(x=>x.path===name).sha=gitBlob(fs.readFileSync(spec.path));
   await refusedFinal(f,/RECEIPT/);assert.equal(f.calls.children.length,0);assert.equal(f.calls.cleanup,1);
 });
+
+const syntheticLog='2026-10-26T06:00:30.0720195Z candidate '+PROOF_CANDIDATE;
+test('untrusted ANSI logs yield only an inert canonical record, including CRLF and API subsecond precision',()=>{
+  const raw=Buffer.from('\ufeff2026-10-26T06:00:20Z \x1b[36;1msetup MOCK_LOG_SECRET\x1b[0m\r\n'+syntheticLog+'\r\n'),before=Buffer.from(raw);
+  const r=readProducerLogRecord(raw);assert.deepEqual(r,{at:'2026-10-26T06:00:30.0720195Z',oid:PROOF_CANDIDATE});assert.deepEqual(raw,before);assert.ok(Object.isFrozen(r));assert.ok(!JSON.stringify(r).includes('MOCK_LOG_SECRET'));assert.doesNotMatch(JSON.stringify(r),/[\x00-\x1f\x7f-\x9f]/);
+});
+for(const [name,bytes] of [
+ ['no stdout',Buffer.alloc(0)],['wrong input type',syntheticLog],['invalid UTF8',Buffer.from([0xff,0xfe])],['oversized body',Buffer.alloc(2*1024*1024+1,65)],
+ ['missing timestamp',Buffer.from('candidate '+PROOF_CANDIDATE)],['echoed command',Buffer.from('2026-10-26T06:00:30Z echo candidate '+PROOF_CANDIDATE)],['step heading prefix',Buffer.from('Create a signed owner candidate\t'+syntheticLog)],['quoted output',Buffer.from('"'+syntheticLog+'"')],
+ ['impossible timestamp',Buffer.from(syntheticLog.replace('2026-10-26','2026-02-30'))],['missing OID',Buffer.from('2026-10-26T06:00:30Z candidate')],['upper case OID',Buffer.from(syntheticLog.toUpperCase())],['extra field',Buffer.from(syntheticLog+' verified=true')],
+ ['duplicate identical proof',Buffer.from(syntheticLog+'\n'+syntheticLog)],['different repeated proof',Buffer.from(syntheticLog+'\n'+syntheticLog.replace(PROOF_CANDIDATE,HEAD))],
+ ['ANSI cannot be stripped into proof',Buffer.from('\x1b[32m'+syntheticLog+'\x1b[0m')],['OSC clipboard must stay inert',Buffer.from('\x1b]52;c;MOCK_SECRET\x07'+syntheticLog)],['cursor erase cannot create proof',Buffer.from('untrusted\r\x1b[2K'+syntheticLog)],['bare CR is not a new record',Buffer.from('untrusted\r'+syntheticLog)],['backspace cannot repair field',Buffer.from(syntheticLog.replace('candidate','candidX\bate'))],
+ ['NUL cannot join OID',Buffer.from(syntheticLog.replace(PROOF_CANDIDATE,'c'.repeat(20)+'\x00'+'c'.repeat(20)))],['C1 CSI cannot be interpreted',Buffer.from('\u009b2K'+syntheticLog)],['BOM cannot create a first-line record',Buffer.from('\ufeff'+syntheticLog)],['bidi cannot create a record',Buffer.from('\u202e'+syntheticLog)],['zero width cannot join field',Buffer.from(syntheticLog.replace('candidate','candi\u200bdate'))],['Unicode line separator is not LF',Buffer.from('untrusted\u2028'+syntheticLog)],
+])test('untrusted log proof refuses '+name,()=>assert.throws(()=>readProducerLogRecord(bytes),/^LocalAttachmentError: IB_LOCAL_PROVENANCE$/));
+test('control code characters cannot be removed to fabricate a canonical record',()=>{
+  for(let n=0;n<=0x9f;n++)if(n<0x20||n>=0x7f){const raw=syntheticLog.replace('candidate','can'+String.fromCharCode(n)+'didate');assert.throws(()=>readProducerLogRecord(Buffer.from(raw)),/PROVENANCE/);}
+});
+test('synthetic full finalizer accepts harmless colored setup and CRLF but never exports the log text',async t=>{
+  const f=await finalizeFixture(t);f.proof.logs='2026-10-26T06:00:20Z \x1b]52;c;MOCK_LOG_CANARY\x07\r\n'+syntheticLog+'\r\n';
+  const r=await finalize(f);assert.equal(r.readyForSignedCandidate,true);assert.ok(!JSON.stringify(r).includes('MOCK_LOG_CANARY'));assert.ok(!fs.readFileSync(path.join(f.root,'finalized/validation.json'),'utf8').includes('MOCK_LOG_CANARY'));
+});
+for(const [name,change] of [
+ ['CLI still rejects log format',f=>f.options.logFormatDenied=true],['no signing start time',f=>delete f.proof.jobs.jobs[0].steps[1].started_at],['no signing completion time',f=>delete f.proof.jobs.jobs[0].steps[1].completed_at],['inverted signing interval',f=>f.proof.jobs.jobs[0].steps[1].started_at='2026-10-26T06:00:31Z'],
+ ['signing step before job',f=>f.proof.jobs.jobs[0].steps[1].started_at='2026-10-26T05:58:59Z'],['signing step after job',f=>f.proof.jobs.jobs[0].steps[1].completed_at='2026-10-26T06:01:01Z'],['record before signing step',f=>f.proof.logs=syntheticLog.replace('06:00:30.0720195','06:00:19.9999999')],['record beyond completed API second',f=>f.proof.logs=syntheticLog.replace('06:00:30.0720195','06:00:31.0000000')],['precise completion cannot be extended',f=>f.proof.jobs.jobs[0].steps[1].completed_at='2026-10-26T06:00:30.070Z'],
+ ['matching OID hidden by cursor controls',f=>f.proof.logs='untrusted\r\x1b[2K'+syntheticLog],['matching OID only in echoed command',f=>f.proof.logs='2026-10-26T06:00:30Z echo candidate '+PROOF_CANDIDATE],['duplicate canonical proof',f=>f.proof.logs+=f.proof.logs],
+])test('new log boundary fails before financial keys: '+name,async t=>{const f=await finalizeFixture(t);change(f);await refusedFinal(f,/PROVENANCE/);assert.equal(f.calls.secrets.length,0);assert.equal(f.calls.requests.length,0);assert.equal(f.calls.children.length,0);});
