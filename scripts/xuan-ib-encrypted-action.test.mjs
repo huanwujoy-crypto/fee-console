@@ -9,6 +9,7 @@ import {ACTION_SCHEMA, ACTION_DISPLAY_CSP, MAX_ACTION_HTML_BYTES, MAX_ACTION_ENV
   actionSha256, encryptPublishedAction, decryptPublishedAction, parseActionEnvelope, validateActionHtml} from './xuan-ib-encrypted-action.mjs';
 import {packagePublishedAction, runActionPackage} from './xuan-ib-encrypted-action-build.mjs';
 import {mountEncryptedAction, mountActionConverter, readActionEnvelope, actionFrameDocument, FEE_UNLOCK_STORAGE_KEY, ACTION_AUTO_UNLOCK_KEY} from './xuan-ib-encrypted-action-view.mjs';
+import {renderNightActionReport, extractNightActionModel} from './xuan-ib-night-action-view.mjs';
 const master = Buffer.alloc(32, 7).toString('base64url');
 const other = Buffer.alloc(32, 8).toString('base64url');
 const html = `<!doctype html><html lang="zh"><head><meta http-equiv="Content-Security-Policy" content="${ACTION_DISPLAY_CSP}"><title>Synthetic only</title></head><body><h1>合成参考报告</h1><p>示例金额 123.45，不是真实资料</p></body></html>`;
@@ -179,14 +180,40 @@ test('numbered report disclosure retains every original date, limitation and val
   assert.ok(rendered.includes('<details class="action-report-notes"><summary>说明（来源与局限）</summary><ol>'));
   assert.doesNotMatch(rendered, /<details[^>]*\sopen/);
   for (const text of paragraphs) assert.equal(rendered.split(text).length, 2);
-  assert.ok(rendered.includes(header.replace(' class="book-report-header"', '')));
-  assert.ok(rendered.includes(card)); assert.match(rendered, /不是因为必须存在卖单/);
-  assert.match(rendered, /不代表当前挂单/); validateActionHtml(rendered);
+  assert.ok(rendered.includes(header.replace(' class="book-report-header"', '').replace(' · 挂单待核实', '')));
+  assert.ok(rendered.includes(card)); // An unfamiliar card shape is not removed.
+  assert.doesNotMatch(rendered, /挂单待核实|不是因为必须存在卖单/); validateActionHtml(rendered);
   assert.equal(await actionSha256(Buffer.from(source)), payload.displaySha256);
   const unfamiliar = source.replace(notes, notes.replace('</aside>', '<div>未知的新说明</div></aside>'));
   const unchanged = actionFrameDocument(unfamiliar);
   assert.ok(unchanged.includes(header)); assert.ok(unchanged.includes('未知的新说明'));
   assert.ok(!unchanged.includes('<details class="action-report-notes">'));
+});
+test('phone view removes the generated order reminder without changing model, budget or source evidence', async () => {
+  for (const available of [true, false]) {
+    const model = {schemaVersion: 1, dataDate: '2000-01-02', asOfHkt: '2000-01-02 13:05 HKT', status: 'partial',
+      replenishment: {status: 'unavailable'}, cash: {status: 'unavailable'}, allocation: {status: 'unavailable'},
+      orders: {status: available ? 'ready' : 'unavailable', asOfHkt: '2000-01-02 13:04 HKT',
+        buys: available ? [{side: 'BUY', description: 'SYNTHETIC', limit: '1 USD', quantity: '2', status: 'NEW'}] : [], sells: []},
+      notes: ['完整净预算未知；不代表零挂单或完整覆盖。', '挂单读取 2000-01-02 13:04 HKT；仅为快照。']};
+    const source = renderNightActionReport(model).replace(/<script>[\s\S]*?<\/script>/g, '')
+      .replace('<head>', `<head><meta http-equiv="Content-Security-Policy" content="${ACTION_DISPLAY_CSP}">`);
+    const {envelope, payload} = await fixture({html: source, displaySha256: await actionSha256(Buffer.from(source))});
+    const decoded = await decryptPublishedAction(envelope, master), rendered = actionFrameDocument(decoded.html);
+    const sourceBody = source.replace(/<!--[\s\S]*?-->/g, ''), renderedBody = rendered.replace(/<!--[\s\S]*?-->/g, '');
+    assert.match(sourceBody, /<h2>挂单提醒/); assert.doesNotMatch(renderedBody, /<h2>挂单提醒|class="order-group"/);
+    assert.match(renderedBody, /部分更新/);
+    for (const note of model.notes) assert.ok(renderedBody.includes(note));
+    const cash = '<section class="card"><h2>现金优先补仓参考</h2>';
+    assert.equal(rendered.slice(rendered.indexOf(cash)), source.slice(source.indexOf(cash)));
+    assert.deepEqual(extractNightActionModel(rendered), model);
+    assert.equal(await actionSha256(Buffer.from(decoded.html)), payload.displaySha256);
+    validateActionHtml(rendered);
+    // A missing end tag or changed following card must not erase other content.
+    const malformed = source.replace('</section>\n'+cash, '\n'+cash);
+    assert.match(actionFrameDocument(malformed).replace(/<!--[\s\S]*?-->/g, ''), /<h2>挂单提醒/);
+    assert.match(actionFrameDocument(source.replace(cash, '<section class="card"><h2>新栏目</h2>')), /<h2>挂单提醒/);
+  }
 });
 test('failed unlock never saves a typed key or falls back to public report; explicit remember waits for successful decrypt', async () => {
   const {envelope} = await fixture(), f = view(async () => new Response(envelope));

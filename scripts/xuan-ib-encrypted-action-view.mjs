@@ -27,9 +27,28 @@ export async function readActionEnvelope(fetchImpl, baseUrl) {
   } finally { controller.abort(); await reader?.cancel().catch(() => {}); clearTimeout(timer); }
 }
 
+function withoutOrderReminder(html) {
+  // Only the known generated card, after authenticated decryption. Ignore
+  // embedded model comments, and leave unfamiliar/malformed layouts intact.
+  const visible = html.replace(/<!--[\s\S]*?-->/g, value => ' '.repeat(value.length));
+  const marker = '<section class="card"><h2>挂单提醒<small>';
+  const start = visible.indexOf(marker);
+  if (start < 0 || visible.indexOf(marker, start + marker.length) >= 0) return html;
+  let depth = 0;
+  for (const tag of visible.slice(start).matchAll(/<\/?section\b[^>]*>/g)) {
+    depth += tag[0].startsWith('</') ? -1 : 1;
+    if (depth !== 0) continue;
+    const end = start + tag.index + tag[0].length;
+    if (!visible.slice(end).trimStart().startsWith('<section class="card"><h2>现金优先补仓参考</h2>')) return html;
+    return html.slice(0, start) + html.slice(end);
+  }
+  return html;
+}
+
 // Prefix the deny-all network policy before any report-provided CSS/resource.
 // The enclosing iframe additionally has an empty sandbox (no scripts/origin).
 export function actionFrameDocument(html) {
+  html = withoutOrderReminder(html);
   // Presentation only, after decryptPublishedAction has verified the original
   // HTML hash. Move the known introduction, retaining every source paragraph.
   // Unrecognized report shapes remain intact instead of hiding unknown text.
@@ -38,9 +57,9 @@ export function actionFrameDocument(html) {
     const paragraphs = [...notes.matchAll(/<p>[\s\S]*?<\/p>/g)].map(m => m[0]);
     const residue = notes.replace(/<aside class="notes(?: reference-data)?"(?: role="note")?>|<\/aside>|<p>[\s\S]*?<\/p>/g, '').trim();
     if (!paragraphs.length || residue) return whole;
-    const orderNote = header.includes('挂单待核实')
-      ? '<li><p>“挂单待核实”表示完整净预算所需的覆盖或币种依据仍有缺项，不是因为必须存在卖单。挂单仅为原读取时间的快照参考，不代表当前挂单；具体缺项见报告中的说明。</p></li>' : '';
-    return '<details class="action-report-notes"><summary>说明（来源与局限）</summary><ol><li><header>'+header+'</header></li>'+paragraphs.map(p=>'<li>'+p+'</li>').join('')+orderNote+'</ol></details>';
+    // Remove the standalone reminder badge, not the budget/source limitations.
+    header = header.replace(/(<span\b[^>]*\bid="report-state"[^>]*>)账面更新完成 · 挂单待核实(<\/span>)/, '$1账面更新完成$2');
+    return '<details class="action-report-notes"><summary>说明（来源与局限）</summary><ol><li><header>'+header+'</header></li>'+paragraphs.map(p=>'<li>'+p+'</li>').join('')+'</ol></details>';
   });
   html = html.replace(/<\/head>/i, '<style>.action-report-notes{margin:0 0 12px;color:#6b7280;font-size:13px;line-height:1.6}.action-report-notes>summary{cursor:pointer;min-height:44px;display:list-item;padding:10px 0}.action-report-notes ol{padding-left:24px;margin:0 0 12px}.action-report-notes li{padding-left:3px;margin:8px 0}.action-report-notes header{margin:0}.action-report-notes h1{font-size:16px;margin:0}.action-report-notes p{margin:4px 0;overflow-wrap:anywhere}</style></head>');
   return html.replace(/<head>/i, `<head><meta http-equiv="Content-Security-Policy" content="${ACTION_DISPLAY_CSP}"><meta name="referrer" content="no-referrer">`);
