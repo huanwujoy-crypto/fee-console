@@ -231,6 +231,17 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
       </div><p id="ratioRecipientStatus" class="note" role="status"></p>
       <label class="f" for="ratioCipherFile">导入管理人密文候选（仅本机预览）</label><input id="ratioCipherFile" type="file" accept="application/json,.json">
       <p>此处不读取券商、不改账本、不发布报告。没有本期来源时保留实际日期和缺项。</p></details>
+    <details><summary>独立比例快照 · 本机完整原件复核与投递</summary>
+      <p>比例来源日期独立于管理费。仅接收已审核完整原件及同份转换输入；不读取金融网站，不修改管理费数据。原证据过期即拒绝投递。</p>
+      <label for="ratioSnapshotCandidate">独立候选密文</label><input id="ratioSnapshotCandidate" type="file" accept="application/json,.json">
+      <label for="ratioSnapshotOriginal">已批准的完整原件（仅在本机读取）</label><input id="ratioSnapshotOriginal" type="file" accept="application/json,.json">
+      <label for="ratioSnapshotInput">同份转换输入（仅在本机读取）</label><input id="ratioSnapshotInput" type="file" accept="application/json,.json">
+      <button class="btn" id="ratioSnapshotPreview" type="button">复核并预览，不投递</button>
+      <div id="ratioSnapshotReview" hidden><p id="ratioSnapshotSummary" style="overflow-wrap:anywhere"></p>
+        <label><input id="ratioSnapshotConsent" type="checkbox">我确认此版本、指纹、来源与目标，同意本次在内存派生比例认证子密钥，并仅投递上述独立加密文件。</label>
+        <button class="btn" id="ratioSnapshotConfirm" type="button" disabled>确认本次独立投递</button><button class="btn" id="ratioSnapshotCancel" type="button">取消</button>
+      </div><button class="btn" id="ratioSnapshotCheck" type="button">只读核对上次投递结果</button><p id="ratioSnapshotStatus" role="status"></p>
+    </details>
   </div><div id="ratioContent"></div>
 </section>
 
@@ -1815,6 +1826,13 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const body={schema:RECIPIENT,algorithm:'X25519-HKDF-SHA256-AES256GCM',scopeId,publicKey:encode(pub)};
     return {privateKey,recipient:{...body,recipientId:await digest(body)}};
   }
+  async function deriveSnapshotManager(gid,feeKey,managerToken){
+    const manager=await deriveManager(gid,feeKey,managerToken);
+    const raw=decode(feeKey.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''));
+    const normalized=encode(raw);raw.fill(0);
+    const seed=new Uint8Array(await cryptoImpl.subtle.digest('SHA-256',bytes(canonical(['fee-console/ratio-snapshot/manager-authentication/v1',gid,normalized,managerToken]))));
+    try{return {...manager,authenticationKey:await cryptoImpl.subtle.importKey('raw',seed,{name:'HMAC',hash:'SHA-256'},false,['sign','verify'])};}finally{seed.fill(0);}
+  }
   async function contentKey(privateKey,publicKey,salt,context){
     const shared=new Uint8Array(await cryptoImpl.subtle.deriveBits({name:'X25519',public:publicKey},privateKey,256));
     try{if(!shared.some(n=>n))fail();const material=await cryptoImpl.subtle.importKey('raw',shared,'HKDF',false,['deriveKey']);return await cryptoImpl.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info:bytes(canonical([DOMAIN,context]))},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}finally{shared.fill(0);}
@@ -1883,13 +1901,15 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>n===null?'未取得':'USD '+(n/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   function renderRatioModel(m){
+    const view=exposureCore.buildRankedExposureView(m.exposure),delta=view.groups.reduce((n,g)=>n+g.totalUsd,0)-view.portfolioTotalUsd;
+    const overview='<section class="card ratio-asset-overview"><h2>四类资产配置总览</h2><p>All Together · 10账户 · USD · 来源截至 '+esc(view.valuationDate)+'</p>'+view.groups.map(g=>'<div><strong>'+esc(g.category)+'</strong> · '+money(Math.round(g.totalUsd*100))+' · '+(g.totalUsd/view.portfolioTotalUsd*100).toFixed(2)+'%<div role="meter" aria-label="'+esc(g.category)+'占总资产" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(g.totalUsd/view.portfolioTotalUsd*100).toFixed(4)+'" style="height:8px;background:#edf0f5;margin:6px 0 12px"><span style="display:block;height:100%;background:#4778b8;width:'+Math.max(0,Math.min(100,g.totalUsd/view.portfolioTotalUsd*100))+'%"></span></div></div>').join('')+'<p>二级市场为前三类以外全部资产，含现金；采用来源类别金额，与下方前五同一范围及日期。类别合计与总资产舍入差 '+delta.toFixed(2)+' USD，保留原差异，不强行调整比例。</p></section>';
     const b=m.book,a=b?.allocation,ib=b?.ibCashCents??null,noah=b?.noahCashCents??null,pool=ib===null||noah===null?null:ib+noah;
     const rows=a?a.categories.map(c=>`<tr><td>${esc(c.label)}</td><td>${money(c.valueCents)}</td><td>${(c.valueCents/a.totalCents*100).toFixed(2)}%／${c.targetPct}%</td></tr>`).join(''):'';
     const alloc=rows?`<table><thead><tr><th>分类</th><th>当前市值</th><th>当前／参考目标</th></tr></thead><tbody>${rows}</tbody></table>`:'<p>Sharesight 完整分类持仓未取得。</p>';
     const holdings=b?.holdings?'<table><thead><tr><th>证券</th><th>类别</th><th>市值</th>'+(b.browserEvidence?'<th>原时点数量／价值依据</th>':'')+'</tr></thead><tbody>'+b.holdings.map(h=>`<tr><td>${esc(h.name)} · ${esc(h.symbol)}${h.market?' · '+esc(h.market):''}</td><td>${esc(h.category)}</td><td>${money(h.valueCents)}</td>${b.browserEvidence?'<td>'+esc(h.quantity===null?'未知（原时点未取得）':h.quantity)+'／'+(h.valueBasis==='same-export-underlying-plus-residual'?'同份Exposure底层＋残余合成':'原浏览器来源')+(h.nameBasis==='source-code-only'?'；仅证券代码，名称未取得':'')+'</td>':''}</tr>`).join('')+'</tbody></table>':'<p>完整持仓未取得；四类前五不能替代全量持仓。</p>';
     const browserNote=b?.browserEvidence?`<p>书目：原浏览器快照（非 API） · 截至 ${esc(b.asOf)} · 原下载 ${esc(b.retrievedAt)}。${b.browserEvidence.integrity==='verified-original-library-association'?'原始JSON、Library版本、范围及逐行关联已在构建时核验。':'原始全量证据尚未接入本机核验，仅供私密预览，不能作为正式发布来源。'}</p><p>仅证明原时点开放持仓，不含闭仓／交易历史，不证明未来IB流量；Top500也不代表全ETF底层。</p><p>导出写入 ${esc(b.browserEvidence.exportLastWrittenAt)}；分类保存 ${esc(b.browserEvidence.classificationSavedAt)}，未用于改写快照时间。</p>${b.browserEvidence.integrity==='verified-original-library-association'?'<p>分类与页面差 '+(b.browserEvidence.classificationDeltaCents/100).toFixed(2)+' USD；Exposure与页面差 '+(b.browserEvidence.exposureDeltaCents/100).toFixed(2)+' USD，保留原差异。'+(b.browserEvidence.migrationPending?'来源转仓尚未核销，保留原账面持仓。':'')+'</p>':''}<p>${esc(b.browserEvidence.transferStatus)}</p>${b.browserEvidence.limitations.map(x=>'<p>'+esc(x)+'</p>').join('')}`:'';
     return `<div class="ratio-report"><p>比例管理 · ${esc({weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报',snapshot:'来源快照'}[m.report.kind])} · 报告目标 ${esc(m.report.targetDate)} · 非实时</p><p>Exposure 来源截至 ${esc(m.exposure.summary.asOf)}${m.exposure.summary.asOf!==m.report.targetDate?' · 来源尚未覆盖本期':''}</p><p>生成 ${esc(m.report.generatedAt)}${m.report.feeAccountingThrough&&m.report.feeAccountingThrough!==m.report.targetDate?' · 管理费账务截至 '+esc(m.report.feeAccountingThrough)+'，两者日期不同':''}</p>`
-      +'<section class="card"><h2>本轮补仓</h2><p>EXUS · EIMI · USSC：金额未计算。</p><p>Sharesight 未提供已核实的 CALL／资本承诺记录，预留及净预算保持未知；不以零值补齐。</p><p>USSC 的 10% 是原补仓预算参考规则，不是持仓目标。</p></section>'
+      +overview+'<section class="card"><h2>本轮补仓</h2><p>EXUS · EIMI · USSC：金额未计算。</p><p>Sharesight 未提供已核实的 CALL／资本承诺记录，预留及净预算保持未知；不以零值补齐。</p><p>USSC 的 10% 是原补仓预算参考规则，不是持仓目标。</p></section>'
       +`<section class="card"><h2>现金优先补仓参考</h2><p>Sharesight IB-HK 账面现金：${money(ib)}</p><p>Sharesight NOAH-HK 账面现金：${money(noah)}</p><p>账面现金池：${money(pool)}</p><p>CALL 原额／50%预留／净规划预算：未取得</p><p>现金类资产：${a?esc(a.cashLike.map(c=>c.symbol+' '+money(c.valueCents)).join(' · ')||'本次完整分类来源未见非零项'):'未取得'}；不默认出售。</p><p>可执行预算未提供；账面余额不等于实时购买力。</p></section>`
       +`<section class="card"><h2>股票四类配置</h2><p>IB-HK 股票范围，与 All Together 总资产分母不同。</p>${alloc}<p>成交后投影未计算。</p></section>`
       +browserNote+exposureCore.renderRankedExposure(m.exposure)+`<section class="card"><h2>IB-HK 完整持仓</h2><p>仅此账户的完整书目，不代表 All Together 十账户全量持仓。</p>${holdings}</section>`
@@ -1902,9 +1922,163 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const clear=()=>{generation++;model=null;onClear();};
     return {clear,async show(envelope,derive){clear();if(!authorized())return false;const ticket=generation,who=identity();try{const manager=await derive();if(ticket!==generation||!authorized()||identity()!==who)return false;const value=await open(envelope,manager);const proof=await verify(envelope,value);if(ticket!==generation||!authorized()||identity()!==who)return false;model=value;onRender(renderRatioModel(model),model,proof);return true;}catch{if(ticket===generation)clear();return false;}},hasPlaintext(){return model!==null;}};
   }
-  return {SCHEMA,RECIPIENT,ENVELOPE,DOMAIN,canonical,digest,encode,decode,recipientScope,deriveManager,validateRecipient,validateModel,validateBinding,publication,validatePublication,seal,open,render:renderRatioModel,controller};
+  return {SCHEMA,RECIPIENT,ENVELOPE,DOMAIN,canonical,digest,encode,decode,recipientScope,deriveManager,deriveSnapshotManager,validateRecipient,validateModel,validateBinding,publication,validatePublication,seal,open,render:renderRatioModel,controller};
+}
+function createRatioSourceCore(hashScope){
+const fail=()=>{throw Error('RATIO_BROWSER_EVIDENCE_REFUSED');};
+const exact=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...k].sort().join(',');
+const STOCK_CLASS_TARGETS=new Map([['美国底仓',45],['美国科技',20],['非美发达',23],['新兴市场',12]]);
+const key=r=>JSON.stringify([r.securityCode,r.market]);
+const signed=n=>{if(typeof n!=='number'||!Number.isFinite(n)||Math.abs(n)>1e15)fail();return n;};
+const amount=n=>{signed(n);if(n<0)fail();return n;};
+const cents=n=>Math.round(amount(n)*100),near=(a,b)=>Math.abs(a-b)<=1e-7;
+const time=s=>{if(typeof s!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)||!Number.isFinite(Date.parse(s)))fail();return Date.parse(s);};
+const date=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+const total=rows=>rows.reduce((s,r)=>s+signed(r.valueUSD),0);
+const normalize=s=>String(s).replaceAll('&amp;','&');
+const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+
+function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
+  if(!exact(input,['schema','exposure','book'])||input.schema!=='fee-console.ratio-sources.v1'||input.book?.schema!=='fee-console.ratio-sharesight-browser-book.v1')fail();
+  const b=input.book,s=input.exposure?.summary,p=b.provenance;
+  if(!raw||raw.schemaVersion!=='sharesight-private-full-v1'||raw.source?.provider!=='Sharesight'||raw.source.apiResponse!==false||raw.source.view!=='All Together'||!Array.isArray(raw.accounts)||raw.accounts.length!==10||hashScope(raw.accounts)!==scopeHash||hashScope(s.accounts)!==scopeHash)fail();
+  const snap=raw.snapshot,coverage=raw.coverage;
+  if(!snap||!date(snap.asOf)||snap.asOf!==b.asOf||snap.asOf!==s.asOf||snap.currency!=='USD'||b.currency!=='USD'||s.currency!=='USD'||!p||time(snap.observedAt)!==time(b.retrievedAt)||time(snap.observedAt)!==time(input.exposure.retrievedAt)||time(snap.exportCreatedAt)!==time(p.exportCreatedAt)||time(snap.exportReceivedAtFilesystem)!==time(p.exportLastWrittenAt)||time(snap.classificationSnapshotSavedAt)!==time(p.classificationSavedAt)||Math.floor(time(p.exportLastWrittenAt)/1000)*1000!==time(b.retrievedAt))fail();
+  const clock=now.getTime(),captured=time(snap.observedAt);if(!Number.isFinite(clock)||clock<captured||clock-captured>36*3600000||[p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].some(t=>time(t)>clock))fail();
+  if(!coverage||coverage.originalDirectPositionTableCompleteForObservedOpenScope!==true||coverage.allExportRowsIncluded!==true||coverage.closedPositionsIncluded!==false||coverage.transactionHistoryIncluded!==false||coverage.completeETFUniverseClaimed!==false||raw.readOnlySupplement?.mustNotSilentlyMergeIntoOriginalSnapshot!==true)fail();
+  for(const k of ['directHoldingsConsolidated','directPositionsByAccount','cashAccounts','classTotals','fourClassTotals'])if(!Array.isArray(raw[k])||raw[k].length>5000)fail();
+  if(raw.directHoldingsConsolidated.length!==coverage.directConsolidatedSecurities||raw.directPositionsByAccount.length!==coverage.directAccountPositions||raw.cashAccounts.length!==coverage.cashAccounts||raw.directPositionsByAccount.some(r=>r.holdingId!==null||r.valuationCurrency!=='USD'||!raw.accounts.includes(r.account))||raw.cashAccounts.some(r=>r.valuationCurrency!=='USD'||!raw.accounts.includes(r.account)))fail();
+  const combined=new Map();for(const r of raw.directPositionsByAccount){amount(r.valueUSD);combined.set(key(r),(combined.get(key(r))||0)+r.valueUSD);}
+  const consolidated=new Map(raw.directHoldingsConsolidated.map(r=>[key(r),r]));if(consolidated.size!==raw.directHoldingsConsolidated.length||consolidated.size!==combined.size||[...combined].some(([k,v])=>!consolidated.has(k)||cents(v)!==cents(consolidated.get(k).valueUSD)))fail();
+  const original=raw.directPositionsByAccount.filter(r=>r.account==='IB-HK'),byKey=new Map(original.map(r=>[key(r),r]));
+  if(b.ib===null||b.noah===null||original.length!==byKey.size||original.length!==b.ib.holdings.length)fail();
+  for(const h of b.ib.holdings){const r=byKey.get(JSON.stringify([h.code,h.market]));if(!r||h.group!==r.sharesightCategory||cents(h.valueUSD)!==cents(r.valueUSD)||h.quantity!==r.quantity||h.name!==null&&h.name!==r.name)fail();}
+  const ibCash=raw.cashAccounts.filter(r=>r.account==='IB-HK'),cashMap=new Map(ibCash.map(r=>[r.name,r]));
+  if(ibCash.length!==cashMap.size||ibCash.length!==b.ib.cashRows.length||b.ib.cashRows.some(r=>!cashMap.has(r.label)||r.valueBasis!=='portfolio-usd-converted'||cents(r.valueUSD)!==cents(cashMap.get(r.label).valueUSD)))fail();
+  const noah=raw.cashAccounts.filter(r=>r.account==='NOAH-HK');
+  if(cents(total(original))!==cents(b.ib.holdingsValueUSD)||cents(total(ibCash))!==cents(b.ib.cashValueUSD)||cents(total(original)+total(ibCash))!==cents(b.ib.totalValueUSD)||!noah.length||b.noah.name!=='NOAH-HK'||b.noah.valueBasis!=='portfolio-usd-converted'||cents(total(noah))!==cents(b.noah.cashValueUSD))fail();
+  const e=raw.exposure;if(!e||!Array.isArray(e.rows)||e.rows.length>100000||!Array.isArray(e.securitiesAggregatedFromExport)||e.securitiesAggregatedFromExport.length>100000||e.rows.length!==coverage.exposureExportRows||e.securitiesAggregatedFromExport.length!==coverage.exposureSecurityAggregateCount)fail();
+  const counts={Direct:0,Underlying:0,Residual:0,Cash:0},agg=new Map(),rowIds=new Set();
+  for(const r of e.rows){if(!Object.hasOwn(counts,r.ownership)||!raw.accounts.includes(r.account)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||rowIds.has(r.sourceRow))fail();rowIds.add(r.sourceRow);counts[r.ownership]++;signed(r.valueUSD);if(['Direct','Underlying'].includes(r.ownership)){const k=key(r);agg.set(k,(agg.get(k)||0)+r.valueUSD);}}
+  for(const [k,v]of Object.entries(counts))if(v!==coverage['exposure'+k+'Rows'])fail();
+  const sourceAgg=new Map(e.securitiesAggregatedFromExport.map(r=>[key(r),r]));if(sourceAgg.size!==agg.size||sourceAgg.size!==e.securitiesAggregatedFromExport.length||[...agg].some(([k,v])=>!sourceAgg.has(k)||!near(v,sourceAgg.get(k).valueUSD)))fail();
+  for(const h of b.ib.holdings)if(h.valueBasis==='same-export-underlying-plus-residual'){
+    const linked=e.rows.filter(r=>r.account==='IB-HK'&&(r.ownership==='Underlying'&&String(r.withinETF||'').split('.')[0]===h.code||r.ownership==='Residual'&&key(r)===JSON.stringify([h.code,h.market])));
+    if(!linked.length||cents(total(linked))!==cents(h.valueUSD))fail();
+  }
+  const xlsx=Object.entries(raw.sourceFileSHA256||{}).filter(([k])=>k.toLowerCase().endsWith('.xlsx'));
+  if(xlsx.length!==1||s.sourceXlsxSHA256!==xlsx[0][1]||s.source.url!==raw.source.exposureURL||cents(s.totalValueUSD)!==cents(snap.totalValueUSD))fail();
+  const four=new Map(raw.fourClassTotals.map(r=>[r.name,r]));if(four.size!==4||s.classes.some(g=>!four.has(g.name)||cents(g.totalValueUSD)!==cents(four.get(g.name).valueUSD)))fail();
+  for(const g of s.classes.slice(0,3)){
+    const rows=raw.directHoldingsConsolidated.filter(r=>r.fourClass===g.name),top=[...rows].sort((a,b)=>b.valueUSD-a.valueUSD).slice(0,5),linked=[];
+    for(const old of g.top5){const display=normalize(old.name).toLowerCase(),matches=rows.filter(r=>new RegExp('(?<![\\w])'+esc(String(r.securityCode).toLowerCase())+'(?![\\w])','u').test(display));if(matches.length!==1||cents(matches[0].valueUSD)!==cents(old.valueUSD))fail();linked.push(key(matches[0]));}
+    if(new Set(linked).size!==5||top.some(r=>!linked.includes(key(r))))fail();
+  }
+  const secondary=new Map();for(const r of e.rows)if(r.fourClass==='二级市场'&&['Direct','Underlying'].includes(r.ownership))secondary.set(key(r),(secondary.get(key(r))||0)+r.valueUSD);
+  const known=new Map((e.uiKnownAggregateDifferences||[]).map(r=>[key(r),r]));
+  for(const r of known.values())if(!sourceAgg.has(key(r))||cents(sourceAgg.get(key(r)).valueUSD)!==cents(r.exportSumValueUSD))fail();
+  const secondaryKeys=s.classes[3].top5.map(r=>key(r));if(new Set(secondaryKeys).size!==5||[...secondary].sort((a,b)=>b[1]-a[1]).slice(0,5).some(([k])=>!secondaryKeys.includes(k)))fail();
+  for(const old of s.classes[3].top5){const k=key(old),v=secondary.get(k),ui=known.get(k);if(v===undefined||cents(old.valueUSD)!==cents(v)&&(!ui||cents(ui.originalUIValueUSD)!==cents(old.valueUSD)||cents(ui.exportSumValueUSD)!==cents(v)))fail();}
+  if(cents(s.residualETFs.valueUSD)!==cents(e.residualValueUSD)||Math.abs(s.residualETFs.weightTotalPct-e.residualWeightTotalPct)>.0051||Math.abs(s.residualETFs.weightSecondaryClassPct-e.residualWeightSecondaryPct)>.0051||cents(total(e.rows))!==cents(e.exportRowsTotalUSD)||Math.round((total(e.rows)-snap.totalValueUSD)*100)!==Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100)||cents(total([...raw.directPositionsByAccount,...raw.cashAccounts]))!==cents(coverage.directPlusCashRowsValueUSD)||Math.round((total(raw.classTotals)-snap.totalValueUSD)*100)!==Math.round(coverage.directPlusCashRoundingDeltaVersusReportedTotalUSD*100))fail();
+  return {observedAt:new Date(captured).toISOString(),asOf:snap.asOf,migrationPending:raw.transferReconciliation?.receiptConfirmed!==true,classificationDeltaCents:Math.round((total(raw.classTotals)-snap.totalValueUSD)*100),exposureDeltaCents:Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100)};
 }
 
+function buildBrowserRatioBook(input,targetDate){
+  if(!exact(input,['schema','source','currency','asOf','retrievedAt','sourceSha256','provenance','ib','noah'])||input.schema!=='fee-console.ratio-sharesight-browser-book.v1'||input.source!=='Sharesight'||input.currency!=='USD'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
+  const instant=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)&&Number.isFinite(Date.parse(s));
+  const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
+  const money=v=>{if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e12||Math.abs(v*100-Math.round(v*100))>0.00001)fail();return Math.round(v*100);};
+  const p=input.provenance;
+  if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000||p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
+  let holdings=null,allocation=null,ibCashCents=null,noahCashCents=null;
+  const ib=input.ib;
+  if(ib!==null){
+    if(!exact(ib,['name','holdings','holdingsValueUSD','cashRows','cashValueUSD','totalValueUSD'])||ib.name!=='IB-HK'||!Array.isArray(ib.holdings)||!ib.holdings.length||ib.holdings.length>5000||!Array.isArray(ib.cashRows)||ib.cashRows.length>100)fail();
+    const seen=new Set(),groups=new Map([...STOCK_CLASS_TARGETS.keys()].map(k=>[k,0])),cashLike=new Map(),symbolGroups=new Map();let usscCents=0,holdingsTotal=0;
+    holdings=ib.holdings.map(h=>{
+      if(!exact(h,['code','market','group','valueUSD','quantity','name','valueBasis'])||![h.code,h.market,h.group].every(text)||!(h.name===null||text(h.name))||!(h.quantity===null||typeof h.quantity==='number'&&Number.isFinite(h.quantity)&&h.quantity>=0)||!['preserved-browser-source','same-export-underlying-plus-residual'].includes(h.valueBasis))fail();
+      const key=h.code+'|'+h.market,symbol=h.code.toUpperCase().split('.')[0],valueCents=money(h.valueUSD);
+      if(seen.has(key)||symbolGroups.has(symbol)&&symbolGroups.get(symbol)!==h.group)fail();seen.add(key);symbolGroups.set(symbol,h.group);holdingsTotal+=valueCents;
+      if(groups.has(h.group))groups.set(h.group,groups.get(h.group)+valueCents);else if(!['主题投资','防御资产'].includes(h.group))fail();
+      if(symbol==='USSC'){if(h.group!=='美国底仓')fail();usscCents+=valueCents;}
+      if(['VGSH','VGIT','TLT'].includes(symbol)){if(h.group!=='防御资产')fail();cashLike.set(symbol,(cashLike.get(symbol)||0)+valueCents);}
+      return {name:h.name||h.code,symbol:h.code,valueCents,category:h.group,market:h.market,quantity:h.quantity,valueBasis:h.valueBasis,nameBasis:h.name===null?'source-code-only':'source-name'};
+    });
+    const cashSeen=new Set();ibCashCents=ib.cashRows.reduce((sum,c)=>{if(!exact(c,['label','valueUSD','valueBasis'])||!text(c.label)||cashSeen.has(c.label)||c.valueBasis!=='portfolio-usd-converted')fail();cashSeen.add(c.label);return sum+money(c.valueUSD);},0);
+    if(holdingsTotal!==money(ib.holdingsValueUSD)||ibCashCents!==money(ib.cashValueUSD)||holdingsTotal+ibCashCents!==money(ib.totalValueUSD))fail();
+    const totalCents=[...groups.values()].reduce((a,b)=>a+b,0);if(totalCents<=0)fail();
+    allocation={totalCents,categories:[...STOCK_CLASS_TARGETS].map(([label,targetPct])=>({label,valueCents:groups.get(label),targetPct})),usscCents,cashLike:[...cashLike].filter(([,v])=>v>0).map(([symbol,valueCents])=>({symbol,valueCents}))};
+  }
+  if(input.noah!==null){if(!exact(input.noah,['name','cashValueUSD','valueBasis'])||input.noah.name!=='NOAH-HK'||input.noah.valueBasis!=='portfolio-usd-converted')fail();noahCashCents=money(input.noah.cashValueUSD);}
+  return {source:'Sharesight',asOf:input.asOf,retrievedAt:input.retrievedAt,sourceSha256:input.sourceSha256,ibCashCents,noahCashCents,allocation,holdings,browserEvidence:{...structuredClone(p),integrity:'declared-not-verified-on-this-device'}};
+}
+return {verifyBrowserSourceAssociations,buildBrowserRatioBook};
+}
+function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,cryptoImpl=globalThis.crypto){
+  const SCHEMA='fee-console.ratio-snapshot.v1',FILE='fee-console-ratio-snapshot.json',MAX=5*1024*1024,accepted=new WeakSet();
+  const fail=()=>{throw Error('RATIO_SNAPSHOT_REFUSED');},canonical=ratioCore.canonical,hash=ratioCore.digest;
+  const exact=(v,k)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===[...k].sort().join(',');
+  const hex=v=>typeof v==='string'&&/^[a-f0-9]{64}$/.test(v);
+  const iso=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString()===s;
+  const encode=s=>new TextEncoder().encode(s),digestBytes=async b=>[...new Uint8Array(await cryptoImpl.subtle.digest('SHA-256',b))].map(n=>n.toString(16).padStart(2,'0')).join('');
+  const read=b=>{if(!(b instanceof Uint8Array)||b.byteLength<1||b.byteLength>MAX)fail();return parseJson(b);};
+  const normalizeBook=b=>{const out=structuredClone(b);if(out?.browserEvidence){out.browserEvidence.integrity='declared-not-verified-on-this-device';for(const k of ['associationId','managerScopeId','sourceVersion','migrationPending','classificationDeltaCents','exposureDeltaCents'])delete out.browserEvidence[k];}return out;};
+  async function verifyOriginal({originalBytes,inputBytes,model,recipient,sourceSha256,inputSha256,libraryVersion,now=new Date()}){
+    const r=await ratioCore.validateRecipient(recipient),m=await ratioCore.validateModel(model);
+    if(m.report.kind!=='snapshot'||m.report.feeAccountingThrough!==null||!hex(sourceSha256)||!hex(inputSha256)||!Number.isSafeInteger(libraryVersion)||libraryVersion<0||await digestBytes(originalBytes)!==sourceSha256||await digestBytes(inputBytes)!==inputSha256)fail();
+    const raw=read(originalBytes),input=read(inputBytes),scope=accounts=>JSON.stringify(accounts.map(s=>s.replaceAll('&amp;','&')).sort());
+    const originalScope=scope(raw.accounts),inputScope=scope(input.exposure.summary.accounts),scopeHash=await hash(raw.accounts.map(s=>s.replaceAll('&amp;','&')).sort());
+    if(originalScope!==inputScope||scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||input.book?.sourceSha256!==sourceSha256||input.book?.provenance.fullSourceSha256!==sourceSha256||input.book.provenance.fullSourceBytes!==originalBytes.byteLength)fail();
+    const source=sourceFactory(accounts=>{if(scope(accounts)!==originalScope)fail();return scopeHash;});
+    exposureCore.buildRankedExposureView(input.exposure);
+    const facts=source.verifyBrowserSourceAssociations(raw,input,{scopeHash,now});
+    if(canonical(input.exposure)!==canonical(m.exposure)||canonical(source.buildBrowserRatioBook(input.book,m.report.targetDate))!==canonical(normalizeBook(m.book))||m.report.targetDate!==facts.asOf)fail();
+    const association=m.book.browserEvidence;
+    if(association.integrity!=='verified-original-library-association'||association.managerScopeId!==r.scopeId||association.sourceVersion!==libraryVersion||['migrationPending','classificationDeltaCents','exposureDeltaCents'].some(k=>association[k]!==facts[k]))fail();
+    const capturedAt=facts.observedAt,expiresAt=new Date(Date.parse(capturedAt)+36*3600000).toISOString();
+    if(Date.parse(m.report.generatedAt)<Date.parse(capturedAt)||Date.parse(m.report.generatedAt)>now.getTime()||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(facts.asOf))/86400000)>4)fail();
+    const evidence={provider:'Sharesight',kind:'complete-original-browser-association',asOf:facts.asOf,capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};
+    Object.freeze(evidence);const proof=Object.freeze({evidence,recipientId:r.recipientId,scopeId:r.scopeId,checkedAt:now.toISOString()});accepted.add(proof);return proof;
+  }
+  function fresh(source,now){const n=now.getTime();if(!Number.isFinite(n)||n<Date.parse(source.capturedAt)||n>Date.parse(source.expiresAt)||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(source.asOf))/86400000)>4)fail();}
+  async function bodyCheck(body){
+    if(!exact(body,['schema','version','previousSnapshotId','recipientId','scopeId','source','envelope'])||body.schema!==SCHEMA||!Number.isSafeInteger(body.version)||body.version<1||!(body.previousSnapshotId===null||hex(body.previousSnapshotId))||!hex(body.recipientId)||!hex(body.scopeId))fail();
+    const s=body.source;if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256'])||s.provider!=='Sharesight'||s.kind!=='complete-original-browser-association'||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();
+    const e=body.envelope;ratioCore.validateBinding(e?.binding);
+    if(e.scopeId!==body.scopeId||e.recipientId!==body.recipientId||e.binding.feeReceiptId!==null||e.binding.sourceDate!==s.asOf||e.binding.feeAsOf!==s.asOf)fail();
+    if(body.version===1?body.previousSnapshotId!==null:body.previousSnapshotId===null)fail();
+    return body;
+  }
+  async function candidate({model,recipient,proof,previous=null,now=new Date()}){
+    if(!accepted.has(proof))fail();fresh(proof.evidence,now);
+    const r=await ratioCore.validateRecipient(recipient),m=await ratioCore.validateModel(model);
+    if(r.recipientId!==proof.recipientId||r.scopeId!==proof.scopeId||await hash(m)!==proof.evidence.modelSha256)fail();
+    if(previous)await bodyCheck(previous.body);
+    const binding={schema:'fee-console.ratio-binding.v1',revision:cryptoImpl.randomUUID(),previousCipherSha256:previous?await hash(previous.body.envelope):null,feeReceiptId:null,feeAsOf:proof.evidence.asOf,sourceDate:proof.evidence.asOf};
+    const envelope=await ratioCore.seal(m,r,binding),body={schema:SCHEMA,version:previous?previous.body.version+1:1,previousSnapshotId:previous?await hash(previous.body):null,recipientId:r.recipientId,scopeId:r.scopeId,source:structuredClone(proof.evidence),envelope};
+    await bodyCheck(body);return {body,authentication:null};
+  }
+  async function authenticate(packet,proof,manager,{previous=null,profileSha256,now=new Date()}={}){
+    if(!exact(packet,['body','authentication'])||packet.authentication!==null||!accepted.has(proof)||!hex(profileSha256)||!manager?.authenticationKey||manager.authenticationKey.extractable!==false)fail();
+    const b=await bodyCheck(packet.body);fresh(b.source,now);
+    if(canonical(b.source)!==canonical(proof.evidence)||proof.recipientId!==b.recipientId||proof.scopeId!==b.scopeId||manager.recipient.recipientId!==b.recipientId||manager.recipient.scopeId!==b.scopeId||await hash(await ratioCore.open(b.envelope,manager))!==b.source.modelSha256)fail();
+    if(previous){await verify(previous,manager,{now});if(b.version!==previous.body.version+1||b.previousSnapshotId!==await hash(previous.body)||b.envelope.binding.previousCipherSha256!==await hash(previous.body.envelope)||b.source.asOf<previous.body.source.asOf||b.source.capturedAt<previous.body.source.capturedAt)fail();}
+    else if(b.version!==1||b.previousSnapshotId!==null||b.envelope.binding.previousCipherSha256!==null)fail();
+    const auth={schema:'fee-console.ratio-snapshot-manager-auth.v1',confirmedAt:now.toISOString(),profileSha256,bodySha256:await hash(b)};
+    const mac=ratioCore.encode(new Uint8Array(await cryptoImpl.subtle.sign('HMAC',manager.authenticationKey,encode(canonical(auth)))));
+    return {body:structuredClone(b),authentication:{...auth,mac}};
+  }
+  async function verify(packet,manager,{watermark=null,now=new Date()}={}){
+    if(!exact(packet,['body','authentication']))fail();const b=await bodyCheck(packet.body),a=packet.authentication;
+    if(!exact(a,['schema','confirmedAt','profileSha256','bodySha256','mac'])||a.schema!=='fee-console.ratio-snapshot-manager-auth.v1'||!iso(a.confirmedAt)||!hex(a.profileSha256)||a.bodySha256!==await hash(b)||Date.parse(a.confirmedAt)<Date.parse(b.source.capturedAt)||Date.parse(a.confirmedAt)>Date.parse(b.source.expiresAt)||Date.parse(a.confirmedAt)>now.getTime()||Math.floor((Date.parse(a.confirmedAt.slice(0,10))-Date.parse(b.source.asOf))/86400000)>4||b.recipientId!==manager.recipient.recipientId||b.scopeId!==manager.recipient.scopeId||!manager.authenticationKey)fail();
+    const {mac,...auth}=a;if(!await cryptoImpl.subtle.verify('HMAC',manager.authenticationKey,ratioCore.decode(mac),encode(canonical(auth))))fail();
+    const model=await ratioCore.open(b.envelope,manager);if(model.report.kind!=='snapshot'||model.report.feeAccountingThrough!==null||await hash(model)!==b.source.modelSha256)fail();
+    const id=await hash(b),value={version:b.version,id,sourceDate:b.source.asOf,capturedAt:b.source.capturedAt};
+    if(watermark&&(!exact(watermark,['version','id','sourceDate','capturedAt'])||!Number.isSafeInteger(watermark.version)||watermark.version<1||!hex(watermark.id)||!iso(watermark.capturedAt)||typeof watermark.sourceDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(watermark.sourceDate)||b.version<watermark.version||b.version===watermark.version&&id!==watermark.id||value.sourceDate<watermark.sourceDate||value.capturedAt<watermark.capturedAt))fail();
+    return {model,watermark:value,stale:now.getTime()>Date.parse(b.source.expiresAt),source:structuredClone(b.source),confirmedAt:a.confirmedAt};
+  }
+  return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
+}
 const ratioExposureCore=createRankedExposureCore(),ratioCore=createFeeRatioCore(ratioExposureCore);
 const RATIO_RECIPIENT_FILE="fee-console-ratio-recipient.json";
 const RATIO_SESSION_MS=10*60*1000;
@@ -1919,7 +2093,7 @@ function clearRatioRecipientPreview(){
   for(const id of ['ratioRecipientFingerprint','ratioRecipientScope','ratioRecipientStatus']){const el=document.getElementById(id);if(el)el.textContent='';}
 }
 function clearRatioManagement(forgetPreview=true){
-  if(forgetPreview)clearRatioRecipientPreview();
+  if(forgetPreview){clearRatioRecipientPreview();if(typeof clearRatioSnapshotReview==='function')clearRatioSnapshotReview(true);}
   ++_ratioTicket;clearTimeout(_ratioExpiry);_ratioExpiry=null;_ratioController?.clear();_ratioLastEnvelope=null;if(forgetPreview)_ratioPreview=null;
   const box=document.getElementById("ratioContent");if(box)box.replaceChildren();
   const file=document.getElementById("ratioCipherFile");if(file)file.value="";
@@ -1938,6 +2112,7 @@ async function renderRatioManagement(){
   tab.hidden=!allowed;tab.style.display=allowed?"":"none";pane.hidden=!allowed;
   if(!allowed){clearRatioManagement();notice.textContent="核验管理人身份后读取。";if(pane.classList.contains("on")){pane.classList.remove("on");document.getElementById("p-investors").classList.add("on");document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}return;}
   if(!pane.classList.contains("on")){clearRatioManagement(false);return;}
+  if(!_ratioPreview&&typeof renderIndependentRatio==='function'&&await renderIndependentRatio())return;
   const envelope=_ratioPreview||DAILY.ratioManagerEnvelope;
   if(!envelope){clearRatioManagement(false);notice.textContent="尚无管理人专用比例密文；原共享行动版密文不会自动解锁。";return;}
   if(_ratioLastEnvelope===envelope&&_ratioController?.hasPlaintext())return;
@@ -1959,7 +2134,7 @@ async function renderRatioManagement(){
   _ratioLastEnvelope=ok?envelope:null;notice.textContent=ok?(_ratioPreview?"本机候选预览，尚未发布。":"已解锁管理人专用快照；来源日期与缺项见下方。"):"比例密文未通过管理人核验；未显示旧内容。";
 }
 async function previewRatioRecipient(event){
-  if(event?.isTrusted!==true||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite)return false;
+  if(event?.isTrusted!==true||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite||_ratioSnapshotWrite)return false;
   clearRatioRecipientPreview();const ticket=_ratioRecipientPreviewTicket,who=ratioIdentity(),gid=cfg(K.gid),epoch=_sourceEpoch;
   const check=()=>{if(ticket!==_ratioRecipientPreviewTicket||!ratioAuthorized()||epoch!==_sourceEpoch||who!==ratioIdentity()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite)throw Error();};
   try{
@@ -1983,7 +2158,7 @@ async function registerRatioRecipient(event){
   _ratioRecipientPreview=null;document.getElementById('ratioRecipientConfirm').disabled=true;
   const check=()=>{if(document.getElementById('ratioRecipientConsent').checked!==true||document.getElementById('ratioRecipientFingerprint').textContent!==preview.fingerprint||document.getElementById('ratioRecipientScope').textContent!==preview.scopeId||preview.ticket!==_ratioRecipientPreviewTicket||!ratioAuthorized()||preview.epoch!==_sourceEpoch||preview.who!==ratioIdentity()||Date.now()<preview.createdAt||Date.now()-preview.createdAt>300000||EDIT.draft||EDIT.pending||_ledgerBusy)throw Error();};
   try{
-    check();if(_ratioRecipientWrite||!await verifyRatioCapabilityNow())throw Error();check();
+    check();if(_ratioRecipientWrite||_ratioSnapshotWrite||!await verifyRatioCapabilityNow())throw Error();check();
     const {gid,raw}=preview,current=await ghApi('/gists/'+gid);check();
     if(current.public!==false||current.owner?.id!==_managerCapability.ownerId||current.owner?.login!==_managerCapability.ownerLogin||current.history?.[0]?.version!==preview.revision)throw Error();
     const old=current.files?.[RATIO_RECIPIENT_FILE];if(old&&(old.truncated||old.content!==raw))throw Error();
@@ -2002,6 +2177,93 @@ async function importRatioCipher(file){
     const envelope=JSON.parse(raw);if(envelope?.schema!==ratioCore.ENVELOPE)throw Error();_ratioPreview=envelope;_ratioLastEnvelope=null;await renderRatioManagement();
   }catch{clearRatioManagement();toast("仅接受管理人专用密文；原数据未改变");}
 }
+const ratioSnapshotParse=s=>createLegacyPolicy().parseExactJson(typeof s==='string'?new TextEncoder().encode(s):s);
+const RATIO_SNAPSHOT_FILE='fee-console-ratio-snapshot.json';
+const ratioSnapshotCore=createRatioSnapshotCore(ratioCore,ratioExposureCore,createRatioSourceCore,ratioSnapshotParse);
+let _ratioSnapshotReview=null,_ratioSnapshotFiles={},_ratioSnapshotWrite=null,_ratioSnapshotUnknown=null,_ratioSnapshotGeneration=0;
+function clearRatioSnapshotReview(forgetFiles=false){
+  ++_ratioSnapshotGeneration;_ratioSnapshotReview=null;
+  const panel=document.getElementById('ratioSnapshotReview');if(panel)panel.hidden=true;
+  const consent=document.getElementById('ratioSnapshotConsent');if(consent)consent.checked=false;
+  const confirm=document.getElementById('ratioSnapshotConfirm');if(confirm)confirm.disabled=true;
+  if(forgetFiles){_ratioSnapshotFiles={};for(const id of ['ratioSnapshotCandidate','ratioSnapshotOriginal','ratioSnapshotInput']){const e=document.getElementById(id);if(e)e.value='';}}
+}
+function ratioSnapshotGist(gist){
+  if(!ratioAuthorized()||gist?.public!==false||gist.owner?.id!==_managerCapability.ownerId||gist.owner?.login!==_managerCapability.ownerLogin||!/^[a-f0-9]{40,64}$/.test(gist.history?.[0]?.version||''))throw Error('RATIO_SNAPSHOT_REFUSED');
+  return gist;
+}
+function ratioSnapshotFile(gist,name){const f=gist.files?.[name];if(!f)return null;if(f.truncated||typeof f.content!=='string'||new TextEncoder().encode(f.content).length>5*1024*1024)throw Error('RATIO_SNAPSHOT_REFUSED');return f.content;}
+async function renderIndependentRatio(){
+  if(!ratioAuthorized()||!document.getElementById('p-ratio').classList.contains('on'))return false;
+  const who=ratioIdentity(),ticket=++_ratioTicket,notice=document.getElementById('ratioNotice');
+  const check=()=>{if(ticket!==_ratioTicket||who!==ratioIdentity()||!ratioAuthorized()||!document.getElementById('p-ratio').classList.contains('on'))throw Error('RATIO_SNAPSHOT_REFUSED');};
+  let found=false;
+  try{
+    if(!await verifyRatioCapabilityNow())throw Error();check();
+    const gist=ratioSnapshotGist(await ghApi('/gists/'+cfg(K.gid)));check();
+    const raw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE);if(raw===null)return false;found=true;
+    const packet=ratioSnapshotParse(raw),manager=await ratioCore.deriveSnapshotManager(cfg(K.gid),cfg(K.key),cfg(K.tok));check();
+    const recipient=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(recipient===null||ratioCore.canonical(ratioSnapshotParse(recipient))!==ratioCore.canonical(manager.recipient))throw Error();
+    const key='feeConsole.ratioSnapshotWatermark.'+manager.recipient.recipientId;let watermark=null;
+    try{watermark=cfg(key)?JSON.parse(cfg(key)):null;}catch{throw Error();}
+    const result=await ratioSnapshotCore.verify(packet,manager,{watermark});check();if(!store)throw Error();
+    store.setItem(key,JSON.stringify(result.watermark));document.getElementById('ratioContent').innerHTML=ratioCore.render(result.model);
+    notice.textContent='管理人独立比例快照 · 来源截至 '+result.source.asOf+' · '+(result.stale?'待更新（显示已核验历史快照）':'已核验')+' · 非实时；管理费报告日期独立，未改原账本。';
+    clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开比例管理核验。';},RATIO_SESSION_MS);return true;
+  }catch{if(ticket===_ratioTicket){document.getElementById('ratioContent').replaceChildren();notice.textContent='独立比例文件或管理人核验失败，未显示旧内容。';}return true;}
+}
+async function previewRatioSnapshot(event){
+  if(event?.isTrusted!==true||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite||_ratioSnapshotWrite||_ratioSnapshotUnknown)return false;
+  clearRatioSnapshotReview();const ticket=_ratioSnapshotGeneration,who=ratioIdentity(),gid=cfg(K.gid),createdAt=Date.now();
+  const check=()=>{if(ticket!==_ratioSnapshotGeneration||who!==ratioIdentity()||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioSnapshotUnknown)throw Error();};
+  try{
+    const files=['candidate','original','input'].map(k=>_ratioSnapshotFiles[k]);if(files.some(f=>!f||f.size<1||f.size>5*1024*1024))throw Error();
+    if(!await verifyRatioCapabilityNow())throw Error();check();
+    const [candidateText,originalBuffer,inputBuffer]=await Promise.all([files[0].text(),files[1].arrayBuffer(),files[2].arrayBuffer()]);check();
+    const packet=ratioSnapshotParse(candidateText);if(packet.authentication!==null)throw Error();
+    await ratioSnapshotCore.bodyCheck(packet.body);
+    // Read-only review uses the existing decrypt purpose. Authentication is a
+    // separate purpose invoked only after the second, explicit trusted consent.
+    const manager=await ratioCore.deriveManager(gid,cfg(K.key),cfg(K.tok));check();
+    const gist=ratioSnapshotGist(await ghApi('/gists/'+gid));check();
+    const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(registered===null||ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error();
+    const model=await ratioCore.open(packet.body.envelope,manager),s=packet.body.source;
+    const proof=await ratioSnapshotCore.verifyOriginal({originalBytes:new Uint8Array(originalBuffer),inputBytes:new Uint8Array(inputBuffer),model,recipient:manager.recipient,sourceSha256:s.sourceSha256,inputSha256:s.inputSha256,libraryVersion:s.libraryVersion});check();
+    if(ratioCore.canonical(proof.evidence)!==ratioCore.canonical(s))throw Error();
+    const priorRaw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE),prior=priorRaw===null?null:ratioSnapshotParse(priorRaw);
+    if(prior?packet.body.version!==prior.body.version+1||packet.body.previousSnapshotId!==await ratioCore.digest(prior.body):packet.body.version!==1||packet.body.previousSnapshotId!==null)throw Error();
+    const profileSha256=await ratioCore.digest([createRatioSnapshotCore.toString(),createRatioSourceCore.toString(),createFeeRatioCore.toString(),createRankedExposureCore.toString()]);check();
+    const summary='仅写入同一私密 Gist 的 '+RATIO_SNAPSHOT_FILE+'；版本 '+packet.body.version+'；来源截至 '+s.asOf+'；原采集 '+s.capturedAt+'；原证据到期 '+s.expiresAt+'；接收指纹 '+manager.recipient.recipientId+'；scope '+manager.recipient.scopeId+'；原件 SHA256 '+s.sourceSha256+'；模型 SHA256 '+s.modelSha256+'。使用现有管理人凭据派生仅在内存的认证子密钥，不修改管理费 data/health 或原账本；五分钟有效。';
+    _ratioSnapshotReview={ticket,who,gid,createdAt,packet,proof,prior,priorRaw,revision:gist.history[0].version,profileSha256,summary};
+    document.getElementById('ratioSnapshotSummary').textContent=summary;document.getElementById('ratioSnapshotReview').hidden=false;document.getElementById('ratioSnapshotConfirm').disabled=false;
+    clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>clearRatioManagement(),RATIO_SESSION_MS);
+    document.getElementById('ratioContent').innerHTML=ratioCore.render(model);document.getElementById('ratioNotice').textContent='本机独立比例候选预览，尚未投递。原件完整关联复核通过。';return true;
+  }catch{if(ticket===_ratioSnapshotGeneration){clearRatioSnapshotReview();document.getElementById('ratioSnapshotStatus').textContent='预览未通过；检查原件、转换文件、版本及原证据时效。没有写入。';}return false;}
+}
+async function confirmRatioSnapshot(event){
+  const p=_ratioSnapshotReview;if(event?.isTrusted!==true||!p||document.getElementById('ratioSnapshotConsent').checked!==true)return false;
+  const check=()=>{if(p.ticket!==_ratioSnapshotGeneration||p.who!==ratioIdentity()||!ratioAuthorized()||Date.now()<p.createdAt||Date.now()-p.createdAt>300000||document.getElementById('ratioSnapshotConsent').checked!==true||document.getElementById('ratioSnapshotSummary').textContent!==p.summary||EDIT.draft||EDIT.pending||_ledgerBusy)throw Error();};
+  _ratioSnapshotReview=null;document.getElementById('ratioSnapshotConfirm').disabled=true;let dispatched=false;
+  try{
+    check();if(_ratioSnapshotWrite||_ratioRecipientWrite||_ratioSnapshotUnknown||!await verifyRatioCapabilityNow())throw Error();check();
+    const gist=ratioSnapshotGist(await ghApi('/gists/'+p.gid));check();
+    if(gist.history[0].version!==p.revision||ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE)!==p.priorRaw)throw Error();
+    const manager=await ratioCore.deriveSnapshotManager(p.gid,cfg(K.key),cfg(K.tok));check();
+    const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(registered===null||ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error();
+    const authenticated=await ratioSnapshotCore.authenticate(p.packet,p.proof,manager,{previous:p.prior,profileSha256:p.profileSha256});check();
+    const raw=JSON.stringify(authenticated),op={gid:p.gid,token:cfg(K.tok),epoch:_sourceEpoch,raw};_ratioSnapshotWrite=op;_ratioSnapshotUnknown={gid:p.gid,who:p.who,raw};
+    try{check();dispatched=true;await ghApi('/gists/'+p.gid,{method:'PATCH',body:JSON.stringify({files:{[RATIO_SNAPSHOT_FILE]:{content:raw}}}),reviewedRatioSnapshot:op});}finally{if(_ratioSnapshotWrite===op)_ratioSnapshotWrite=null;}
+    check();const back=ratioSnapshotGist(await ghApi('/gists/'+p.gid));check();if(ratioSnapshotFile(back,RATIO_SNAPSHOT_FILE)!==raw)throw Error();await ratioSnapshotCore.verify(authenticated,manager);check();
+    _ratioSnapshotUnknown=null;clearRatioSnapshotReview(true);_ratioPreview=null;document.getElementById('ratioSnapshotStatus').textContent='独立加密比例文件已投递并精确回读；原账本和管理费 data/health 未修改。';await renderRatioManagement();return true;
+  }catch{if(!dispatched)_ratioSnapshotUnknown=null;document.getElementById('ratioSnapshotStatus').textContent=dispatched?'投递结果待核对，禁止重复投递；仅可点击只读核对结果。':'投递未执行；没有改变原账本。';return false;}
+}
+async function checkRatioSnapshotOutcome(event){
+  const pending=_ratioSnapshotUnknown;if(event?.isTrusted!==true||!pending||!ratioAuthorized()||pending.who!==ratioIdentity())return false;
+  try{if(!await verifyRatioCapabilityNow())throw Error();const back=ratioSnapshotGist(await ghApi('/gists/'+pending.gid));if(pending.who!==ratioIdentity()||ratioSnapshotFile(back,RATIO_SNAPSHOT_FILE)!==pending.raw)throw Error();
+    const manager=await ratioCore.deriveSnapshotManager(pending.gid,cfg(K.key),cfg(K.tok));await ratioSnapshotCore.verify(ratioSnapshotParse(pending.raw),manager);if(pending.who!==ratioIdentity()||!ratioAuthorized())throw Error();_ratioSnapshotUnknown=null;document.getElementById('ratioSnapshotStatus').textContent='只读回读已确认投递内容；没有再次写入。';await renderRatioManagement();return true;
+  }catch{document.getElementById('ratioSnapshotStatus').textContent='尚未确认投递结果，未重试写入。';return false;}
+}
+
 /* fee-ratio-management:manager-v1:end */
 
 /* ============ 数据模型 ============ */
@@ -3043,14 +3305,15 @@ function setSync(msg,err){const b=document.getElementById("syncBadge");if(!store
   if(!msg){b.style.display=(isMgr()||cfg(K.gid))?"":"none";b.textContent=isMgr()?"☁ 已连接":"👁 只读";b.className="badge";return;}
   b.style.display="";b.textContent="☁ "+msg;b.className="badge "+(err?"hwm":(/中/.test(msg)?"est":"ok"));const s=document.getElementById("ghStatus");if(s)s.textContent=msg;}
 async function ghApi(path,opt={},auth=true){
-  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,reviewedRatioRecipient,...request}=opt;
+  const method=String(opt.method||"GET").toUpperCase(),{reviewedLedger,reviewedFund,reviewedMigration,reviewedRatioRecipient,reviewedRatioSnapshot,...request}=opt;
   const ledgerWrite=method==="PATCH"&&_ledgerBusy&&!_draftBlocked&&EDIT.mode==="saving"&&EDIT.base?.envelopeVersion===4&&EDIT.base.db.v===4&&reviewedLedger===EDIT.pending&&EDIT.pending?.content&&path==="/gists/"+EDIT.base?.gid&&cfg(K.gid)===EDIT.base?.gid;
   const expectedFundBody=reviewedFund?JSON.stringify({files:{[GH_FUND_FILE]:{content:reviewedFund.raw}}}):"";
   const fundWrite=method==="PATCH"&&reviewedFund&&reviewedFund===_fundRemoteWrite&&reviewedFund.gid===cfg(K.gid)&&reviewedFund.token===cfg(K.tok)&&reviewedFund.raw&&path==="/gists/"+reviewedFund.gid&&request.body===expectedFundBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized();
   const expectedMigrationBody=reviewedMigration?JSON.stringify({files:{[GH_FILE]:{content:reviewedMigration.content},[GH_LEGACY_BACKUP_FILE]:{content:reviewedMigration.original}}}):"";
   const migrationWrite=method==="PATCH"&&reviewedMigration===_legacyMigrationPending&&reviewedMigration?.gid===cfg(K.gid)&&reviewedMigration?.token===cfg(K.tok)&&reviewedMigration?.keyValue===cfg(K.key)&&reviewedMigration?.sourceEpoch===_sourceEpoch&&reviewedMigration?.content&&reviewedMigration?.original&&path==="/gists/"+reviewedMigration.gid&&request.body===expectedMigrationBody&&Object.keys(request).sort().join(",")==="body,method"&&managerDocumentsAuthorized()&&!EDIT.draft&&!_draftBlocked;
   const ratioRecipientWrite=method==="PATCH"&&reviewedRatioRecipient===_ratioRecipientWrite&&reviewedRatioRecipient?.gid===cfg(K.gid)&&reviewedRatioRecipient?.token===cfg(K.tok)&&reviewedRatioRecipient?.epoch===_sourceEpoch&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[RATIO_RECIPIENT_FILE]:{content:reviewedRatioRecipient.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
-  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite&&!ratioRecipientWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
+  const ratioSnapshotWrite=method==="PATCH"&&reviewedRatioSnapshot===_ratioSnapshotWrite&&reviewedRatioSnapshot?.gid===cfg(K.gid)&&reviewedRatioSnapshot?.token===cfg(K.tok)&&reviewedRatioSnapshot?.epoch===_sourceEpoch&&ratioAuthorized()&&!EDIT.draft&&!EDIT.pending&&!_ledgerBusy&&path==="/gists/"+cfg(K.gid)&&request.body===JSON.stringify({files:{[RATIO_SNAPSHOT_FILE]:{content:reviewedRatioSnapshot.raw}}})&&Object.keys(request).sort().join(",")==="body,method";
+  if(method!=="GET"&&!ledgerWrite&&!fundWrite&&!migrationWrite&&!ratioRecipientWrite&&!ratioSnapshotWrite)throw new Error("只有已复核的账本或基金档案保存可以写入远端");
   const h={"Accept":"application/vnd.github+json","Content-Type":"application/json"};if(auth&&cfg(K.tok))h["Authorization"]="Bearer "+cfg(K.tok);
   let r;try{r=await fetch("https://api.github.com"+path,{...request,headers:h});}
   catch(cause){const e=new Error("网络暂不可用");e.transient=true;e.cause=cause;throw e;}
@@ -3281,6 +3544,10 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="fundDocClear"){clearFundDocumentForm();return;}
   if(T.id==="fundDocsExport"){exportFundDocuments();return;}
   if(T.id==="fundPublishLatest"){publishCurrentFundBundle();return;}
+  if(T.id==="ratioSnapshotPreview"){previewRatioSnapshot(e);return;}
+  if(T.id==="ratioSnapshotConfirm"){confirmRatioSnapshot(e);return;}
+  if(T.id==="ratioSnapshotCheck"){checkRatioSnapshotOutcome(e);return;}
+  if(T.id==="ratioSnapshotCancel"){if(e.isTrusted)clearRatioSnapshotReview(true);return;}
   if(T.id==="ratioRecipient"){previewRatioRecipient(e);return;}
   if(T.id==="ratioRecipientConfirm"){registerRatioRecipient(e);return;}
   if(T.id==="ratioRecipientCancel"){if(e.isTrusted)clearRatioRecipientPreview();return;}
@@ -3318,6 +3585,7 @@ document.body.addEventListener("change",e=>{const historyMonth=monthHistoryMonth
   if(T.dataset.flow){const f=(DAILY.flowsAuto||[]).find(x=>x.id===T.dataset.flow);if(!f||f.effective===true)return;changeDraft(d=>{const ym=f.date.slice(0,7);let m=d.months.find(x=>x.ym===ym);if(!m){m={ym,flows:[]};d.months.push(m);d.months.sort((a,b)=>a.ym.localeCompare(b.ym));}m.flows=m.flows.filter(c=>c.src!==f.id);if(T.checked)m.flows.push({id:crypto.randomUUID(),src:f.id,date:f.date,acct:f.acct,amount:f.amount,note:f.desc||""});});return;}ledgerInput(e);});
 for(const event of ["pointerdown","keydown"])document.addEventListener(event,()=>{if(LG.isEditable(EDIT,Date.now()))EDIT=LG.touch(EDIT,Date.now());else if(["editing","review"].includes(EDIT.mode))lockLedger();},{passive:true});
 
+for(const [id,key]of [['ratioSnapshotCandidate','candidate'],['ratioSnapshotOriginal','original'],['ratioSnapshotInput','input']])document.getElementById(id).addEventListener('change',e=>{clearRatioSnapshotReview();_ratioSnapshotFiles[key]=e.target.files?.[0]||null;});
 document.getElementById("ratioCipherFile").addEventListener("change",e=>importRatioCipher(e.target.files?.[0]));
 window.addEventListener("pagehide",()=>clearRatioManagement());
 document.addEventListener("visibilitychange",()=>{if(document.hidden)clearRatioManagement();});
