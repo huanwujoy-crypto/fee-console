@@ -367,9 +367,12 @@ test('full Sharesight book cannot be replaced by Exposure rows, truncated pages 
 });
 const unifiedUiFile=process.env.FEE_RATIO_TEST_UI_PATH||new URL('../index.html',import.meta.url);
 const unifiedUiSource=fs.readFileSync(unifiedUiFile,'utf8');
+const independentRatioUi=unifiedUiSource.includes('const RATIO_SNAPSHOT_FILE=');
+const legacyRatioFactorySha256='5e7570832f7655adca74c15d20c4540cc58f46f463506a847f23a8bb1aa7b8d1'; // exact already-published codec; support/UI roll out separately
+
 test('unified UI embeds exact reviewed codec and denies investor, revoked roles and source switches',{skip:!unifiedUiSource.includes('const RATIO_RECIPIENT_FILE=')},async()=>{
   for(const [name,next]of [['xuan-ib-sharesight-exposure.mjs','const exposureCore='],['fee-ratio-management.mjs',null]]){
-    let factory=fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1];if(next)factory=factory.slice(0,factory.indexOf('\n'+next));assert.ok(unifiedUiSource.includes(factory.trim()),name+' factory must match');
+    let factory=fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1];if(next)factory=factory.slice(0,factory.indexOf('\n'+next));if(name==='fee-ratio-management.mjs'&&!independentRatioUi){const a=unifiedUiSource.indexOf('function createFeeRatioCore('),b=unifiedUiSource.indexOf('const ratioExposureCore=',a);assert.equal(ratioCrypto.createHash('sha256').update(unifiedUiSource.slice(a,b).trim()).digest('hex'),legacyRatioFactorySha256,'only the exact published legacy codec may coexist during support-first rollout');}else assert.ok(unifiedUiSource.includes(factory.trim()),name+' factory must match');
   }
   const {core,model}=ratioFixture(),manager=await core.deriveManager('0'.repeat(32),master,'synthetic-owner-token-for-ratio-123'),fee={receiptId:'f'.repeat(64),asOf:'2000-01-03'},m={...model,report:{...model.report,feeAccountingThrough:fee.asOf}},binding={schema:'fee-console.ratio-binding.v1',revision:ratioCrypto.randomUUID(),previousCipherSha256:null,feeReceiptId:fee.receiptId,feeAsOf:fee.asOf,sourceDate:fee.asOf},cipher=await core.seal(m,manager.recipient,binding),publication=await core.publication(cipher,m);
   const values=new Map([['gid','0'.repeat(32)],['key',master],['tok','synthetic-owner-token-for-ratio-123']]),elements=new Map(),timer=[];
@@ -389,7 +392,7 @@ test('recipient registration requires a trusted preview and separate explicit pu
     let clock=Date.now(),derivations=0,revision='a'.repeat(40),raw=null,allow=true;
     const values=new Map([['gid','0'.repeat(32)],['key',master],['tok',token]]),elements=new Map(),calls=[],downloads=[];
     for(const id of ['ratioRecipientReview','ratioRecipientConsent','ratioRecipientConfirm','ratioRecipientFingerprint','ratioRecipientScope','ratioRecipientStatus','ratioContent','ratioCipherFile'])elements.set(id,{hidden:true,checked:false,disabled:true,textContent:'',value:'',replaceChildren(){this.textContent='';}});
-    const ctx={createRankedExposureCore:()=>({}),createFeeRatioCore:()=>({...core,async deriveManager(...args){derivations++;return core.deriveManager(...args);}}),managerDocumentsAuthorized:()=>allow,_receiptSource:{state:'verified'},sourceMatches:()=>true,_readOnlyEntry:false,_sourceEpoch:1,_managerCapability:{state:'verified',privateSource:true,ownerId:1,ownerLogin:'synthetic-owner',verifiedAt:clock},cfg:k=>values.get(k)||'',K:{gid:'gid',key:'key',tok:'tok'},EDIT:{draft:null,pending:null},_ledgerBusy:false,document:{getElementById:id=>elements.get(id)},Date:class extends Date{static now(){return clock;}},JSON,Number,Error,clearTimeout(){},saveBlob:(...args)=>downloads.push(args),async ghApi(route,opt={}){
+    const ctx={createRankedExposureCore:()=>({}),createFeeRatioCore:()=>({...core,async deriveManager(...args){derivations++;return core.deriveManager(...args);}}),managerDocumentsAuthorized:()=>allow,_receiptSource:{state:'verified'},sourceMatches:()=>true,_readOnlyEntry:false,_sourceEpoch:1,_managerCapability:{state:'verified',privateSource:true,ownerId:1,ownerLogin:'synthetic-owner',verifiedAt:clock},cfg:k=>values.get(k)||'',K:{gid:'gid',key:'key',tok:'tok'},EDIT:{draft:null,pending:null},_ledgerBusy:false,_ratioSnapshotWrite:null,document:{getElementById:id=>elements.get(id)},Date:class extends Date{static now(){return clock;}},JSON,Number,Error,clearTimeout(){},saveBlob:(...args)=>downloads.push(args),async ghApi(route,opt={}){
       calls.push({route,method:opt.method||'GET'});assert.equal(route,'/gists/'+'0'.repeat(32));
       if(opt.method==='PATCH'){
         assert.equal(elements.get('ratioRecipientConsent').checked,true);assert.match(elements.get('ratioRecipientFingerprint').textContent,/^[a-f0-9]{64}$/);
@@ -507,3 +510,104 @@ test('actual sole-writer ratio entry revalidates source evidence and binds encry
 
 import {validateIbBootstrapCoverage} from './ib-manager-source.mjs';
 test('open-position browser proof is never accepted as IB flow or transfer coverage',async t=>{const f=await originalEvidenceFixture(t),proof=f.read();assert.throws(()=>validateIbBootstrapCoverage(JSON.parse(JSON.stringify(proof)),'a'.repeat(64)));});
+
+import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
+import {createRatioSnapshotCore} from './fee-ratio-snapshot.mjs';
+import {stageIndependentRatioSnapshot} from './fee-ratio-snapshot-packet.mjs';
+import {createLegacyPolicy} from './fee-legacy-policy.mjs';
+async function independentFixture(t){
+  const f=await originalEvidenceFixture(t),manager=await f.core.deriveSnapshotManager('0'.repeat(32),master,'synthetic-owner-token-for-ratio-123');
+  const snapshot=createRatioSnapshotCore(f.core,f.exposureCore,createRatioSourceCore,s=>createLegacyPolicy().parseExactJson(s),ratioCrypto.webcrypto);
+  const model=await buildRatioModel(f.input,{kind:'snapshot',targetDate:f.input.book.asOf,browserEvidence:f.read(),managerScopeId:manager.recipient.scopeId,viewCore:f.core,now:f.now});
+  const args={originalBytes:new Uint8Array(fs.readFileSync(f.plan.source.path)),inputBytes:new Uint8Array(fs.readFileSync(f.plan.input.path)),model,recipient:manager.recipient,sourceSha256:f.plan.source.sha256,inputSha256:f.plan.input.sha256,libraryVersion:0,now:f.now};
+  const proof=await snapshot.verifyOriginal(args),packet=await snapshot.candidate({model,recipient:manager.recipient,proof,now:f.now}),options={profileSha256:'a'.repeat(64),now:f.now};
+  return {...f,manager,snapshot,model,args,proof,packet,options};
+}
+test('independent snapshot complete original to authenticated cipher to manager display leaves fee data untouched',async t=>{
+  const f=await independentFixture(t),before={fee:123,health:{checkedAt:'2000-01-01'},ibReturn:-1},saved=JSON.stringify(before);
+  assert.equal(f.manager.authenticationKey.extractable,false);assert.equal(f.manager.privateKey.extractable,false);
+  const published=await f.snapshot.authenticate(f.packet,f.proof,f.manager,f.options),out=await f.snapshot.verify(published,f.manager,{now:f.now});
+  assert.deepEqual(out.model,f.model);assert.equal(out.stale,false);assert.equal(out.model.report.feeAccountingThrough,null);assert.equal(published.body.envelope.binding.feeReceiptId,null);assert.equal(JSON.stringify(before),saved);
+  const future=new Date('2000-01-10T03:00:00.000Z');assert.equal((await f.snapshot.verify(published,f.manager,{now:future})).stale,true);
+  const html=f.core.render(out.model);assert.match(html,/四类资产配置总览/);assert.match(html,/二级市场为前三类以外全部资产，含现金/);assert.match(html,/舍入差/);assert.equal((html.match(/role="meter"/g)||[]).length,4);
+});
+test('independent snapshot refuses byte/hash/time/scope/currency/summary and mixed supplement forgeries',async t=>{
+  const f=await independentFixture(t);
+  for(const mutate of [a=>a.sourceSha256='0'.repeat(64),a=>a.inputSha256='0'.repeat(64),a=>a.originalBytes=new TextEncoder().encode('{}'),a=>a.libraryVersion=-1,a=>a.now=new Date('2000-01-05'),a=>a.model.report.targetDate='2000-01-04',a=>a.model.report.feeAccountingThrough='2000-01-03',a=>a.model.book.ibCashCents++,a=>a.model.exposure.summary.classes[0].totalValueUSD+=10,a=>a.model.book.holdings[0].quantity=999,a=>a.model.book.browserEvidence.managerScopeId='f'.repeat(64),a=>a.model.book.browserEvidence.migrationPending=false,a=>a.model.book.browserEvidence.classificationDeltaCents++,a=>a.model.book.browserEvidence.integrity='declared-not-verified-on-this-device']){
+    const a=structuredClone(f.args);mutate(a);await assert.rejects(f.snapshot.verifyOriginal(a));
+  }
+  for(const mutate of [x=>x.book.currency='EUR',x=>x.book.asOf='2000-01-04',x=>x.book.ib.holdings[0].quantity=999,x=>x.exposure.summary.accounts[0]='Different user',x=>x.book.provenance.fullSourceBytes++,x=>x.book.retrievedAt='2000-01-04T02:00:00.000Z']){
+    const input=structuredClone(f.input);mutate(input);const b=new TextEncoder().encode(JSON.stringify(input));await assert.rejects(f.snapshot.verifyOriginal({...f.args,inputBytes:b,inputSha256:await f.snapshot.digestBytes(b)}));
+  }
+  await assert.rejects(f.snapshot.candidate({model:f.model,recipient:f.manager.recipient,proof:JSON.parse(JSON.stringify(f.proof)),now:f.now}));
+});
+test('independent authentication refuses forged MAC, public-key-only sender, changed model/health and another manager',async t=>{
+  const f=await independentFixture(t),p=await f.snapshot.authenticate(f.packet,f.proof,f.manager,f.options);
+  for(const mutate of [x=>x.authentication=null,x=>x.authentication.mac='A'.repeat(43),x=>x.body.source.asOf='2000-01-04',x=>x.body.source.capturedAt='2000-01-03T02:30:00.000Z',x=>x.body.source.modelSha256='f'.repeat(64),x=>x.body.envelope.ciphertext=x.body.envelope.ciphertext.slice(1),x=>x.body.version++,x=>x.authentication.confirmedAt='2000-01-10T00:00:00.000Z',x=>x.authentication.profileSha256='f'.repeat(64),x=>x.body.source.provider='IBKR']){
+    const b=structuredClone(p);mutate(b);await assert.rejects(f.snapshot.verify(b,f.manager,{now:f.now}));
+  }
+  const otherManager=await f.core.deriveSnapshotManager('1'.repeat(32),master,'synthetic-owner-token-for-ratio-123');await assert.rejects(f.snapshot.verify(p,otherManager,{now:f.now}));
+  await assert.rejects(f.snapshot.authenticate(f.packet,f.proof,{...f.manager,authenticationKey:null},f.options));
+  await assert.rejects(f.snapshot.authenticate(f.packet,f.proof,f.manager,{...f.options,now:new Date('2000-01-05')}));
+});
+test('independent version chain and recipient scoped watermark reject replay and cross-version substitution',async t=>{
+  const f=await independentFixture(t),first=await f.snapshot.authenticate(f.packet,f.proof,f.manager,f.options);
+  const secondCandidate=await f.snapshot.candidate({model:f.model,recipient:f.manager.recipient,proof:f.proof,previous:first,now:f.now}),second=await f.snapshot.authenticate(secondCandidate,f.proof,f.manager,{...f.options,previous:first}),wm=(await f.snapshot.verify(second,f.manager,{now:f.now})).watermark;
+  assert.equal(second.body.version,2);assert.equal(second.body.previousSnapshotId,await f.core.digest(first.body));
+  await assert.rejects(f.snapshot.verify(first,f.manager,{watermark:wm,now:f.now}));await f.snapshot.verify(second,f.manager,{watermark:wm,now:f.now});
+  await assert.rejects(f.snapshot.authenticate(secondCandidate,f.proof,f.manager,f.options));
+  const bad=structuredClone(secondCandidate);bad.body.envelope.binding.previousCipherSha256='f'.repeat(64);await assert.rejects(f.snapshot.authenticate(bad,f.proof,f.manager,{...f.options,previous:first}));
+  const fabricated=structuredClone(first);fabricated.authentication.mac='A'.repeat(43);await assert.rejects(f.snapshot.authenticate(secondCandidate,f.proof,f.manager,{...f.options,previous:fabricated}));
+});
+test('independent private CLI is public-recipient-only, original identity checked and emits candidate-only 0600 files',async t=>{
+  const f=await independentFixture(t),workspace=path.dirname(f.planPath),recipient=f.write('public-recipient.json',f.manager.recipient),evidence=f.write('evidence-plan.json',f.plan),plan={schema:'fee-console.ratio-snapshot-plan.v1',workspace,evidence,recipient,previous:null};
+  const result=await stageIndependentRatioSnapshot({plan,now:f.now,environ:{},evidenceRuntime:f.runtime,exposureCore:f.exposureCore});assert.equal(result.publicationReady,false);assert.equal(result.keychainRead,false);assert.equal(result.feeOrHealthWrite,false);
+  const out=path.join(workspace,'ratio-independent-candidate');assert.equal(fs.statSync(out).mode&0o777,0o700);for(const name of fs.readdirSync(out))assert.equal(fs.statSync(path.join(out,name)).mode&0o777,0o600);
+  const packet=JSON.parse(fs.readFileSync(path.join(out,'fee-console-ratio-snapshot.candidate.json')));assert.equal(packet.authentication,null);assert.deepEqual(await f.core.open(packet.body.envelope,f.manager),f.model);
+  await assert.rejects(stageIndependentRatioSnapshot({plan,now:f.now,environ:{},evidenceRuntime:f.runtime,exposureCore:f.exposureCore}));
+  for(const env of [{FEE_DATA_KEY:'synthetic'},{GH_TOKEN:'synthetic'},{NODE_OPTIONS:'--inspect'},{DYLD_INSERT_LIBRARIES:'invented'}])await assert.rejects(stageIndependentRatioSnapshot({plan,now:f.now,environ:env,evidenceRuntime:f.runtime,exposureCore:f.exposureCore}));
+});
+
+test('independent browser closed loop requires trusted two-phase consent and touches only the private snapshot file',{skip:!independentRatioUi},async t=>{
+  const f=await independentFixture(t),code=unifiedUiSource.slice(unifiedUiSource.indexOf('const ratioSnapshotParse='),unifiedUiSource.indexOf('/* fee-ratio-management:manager-v1:end */'));
+  assert.ok(code.startsWith('const ratioSnapshotParse='));
+  function harness(){
+    let allowed=true,clock=f.now.getTime(),failure='',readFailure=false;const calls=[],elements=new Map(),values=new Map();
+    for(const id of ['p-ratio','ratioNotice','ratioContent','ratioSnapshotReview','ratioSnapshotConsent','ratioSnapshotConfirm','ratioSnapshotSummary','ratioSnapshotStatus','ratioSnapshotCandidate','ratioSnapshotOriginal','ratioSnapshotInput'])elements.set(id,{hidden:false,disabled:false,checked:false,textContent:'',innerHTML:'',value:'',classList:{contains:()=>true},replaceChildren(){this.innerHTML='';}});
+    const gid='0'.repeat(32),token='synthetic-owner-token-for-ratio-123',gist={public:false,owner:{id:1,login:'synthetic'},history:[{version:'a'.repeat(40)}],files:{'fee-console-ratio-recipient.json':{content:JSON.stringify(f.manager.recipient)},'original-ledger.json':{content:'DO_NOT_CHANGE'}}};
+    const original=JSON.stringify(gist.files['original-ledger.json']);
+    const build=()=>{const s=f.snapshot;return {...s,verifyOriginal:o=>s.verifyOriginal({...o,now:new Date(clock)}),authenticate:(p,proof,m,o)=>s.authenticate(p,proof,m,{...o,now:new Date(clock)}),verify:(p,m,o)=>s.verify(p,m,{...o,now:new Date(clock)})};};
+    const ctx={createRatioSnapshotCore:build,createRatioSourceCore,createFeeRatioCore,createRankedExposureCore,createLegacyPolicy,ratioCore:f.core,ratioExposureCore:f.exposureCore,Uint8Array,TextEncoder,Date:class extends Date{constructor(v){super(v===undefined?clock:v);}static now(){return clock;}},JSON,Number,Error,Promise,Object,EDIT:{},_ledgerBusy:false,_ratioSnapshotWrite:null,_ratioRecipientWrite:null,_sourceEpoch:1,_ratioTicket:0,_ratioExpiry:null,_ratioPreview:null,RATIO_SESSION_MS:600000,RATIO_RECIPIENT_FILE:'fee-console-ratio-recipient.json',_managerCapability:{ownerId:1,ownerLogin:'synthetic'},ratioAuthorized:()=>allowed,ratioIdentity:()=>JSON.stringify([gid,allowed]),cfg:k=>({gid,key:master,tok:token}[k]||values.get(k)||''),K:{gid:'gid',key:'key',tok:'tok'},store:{setItem:(k,v)=>values.set(k,v)},document:{getElementById:id=>elements.get(id)},setTimeout:()=>1,clearTimeout(){},verifyRatioCapabilityNow:async()=>allowed,clearRatioManagement(){elements.get('ratioContent').replaceChildren();ctx.ops?.clear(true);},renderRatioManagement:async()=>true,ghApi:async(route,opt={})=>{calls.push({route,method:opt.method||'GET'});if(route!=='/gists/'+gid)assert.fail('fixed same-Gist endpoint only');if(opt.method==='PATCH'){assert.equal(allowed,true);const body=JSON.parse(opt.body);assert.deepEqual(Object.keys(body),['files']);assert.deepEqual(Object.keys(body.files),['fee-console-ratio-snapshot.json']);if(failure==='before')throw Error();gist.files['fee-console-ratio-snapshot.json']={content:body.files['fee-console-ratio-snapshot.json'].content};gist.history[0].version='b'.repeat(40);if(failure==='after')throw Error();}if(readFailure)throw Error();return structuredClone(gist);}};
+    vm.createContext(ctx);vm.runInContext(code+'\nthis.ops={preview:previewRatioSnapshot,confirm:confirmRatioSnapshot,read:renderIndependentRatio,check:checkRatioSnapshotOutcome,clear:clearRatioSnapshotReview,setFiles(v){_ratioSnapshotFiles=v;},review(){return _ratioSnapshotReview;},pending(){return _ratioSnapshotUnknown;}};',ctx);
+    const file=b=>({size:b.length,text:async()=>Buffer.from(b).toString(),arrayBuffer:async()=>new Uint8Array(b).buffer});
+    ctx.ops.setFiles({candidate:file(Buffer.from(JSON.stringify(f.packet))),original:file(fs.readFileSync(f.plan.source.path)),input:file(fs.readFileSync(f.plan.input.path))});
+    return {ctx,elements,calls,gist,original,setAllowed:v=>allowed=v,advance:ms=>clock+=ms,fail:v=>failure=v,readFail:v=>readFailure=v,patches:()=>calls.filter(c=>c.method==='PATCH').length};
+  }
+  const h=harness();assert.equal(await h.ctx.ops.preview({isTrusted:false}),false);assert.equal(h.calls.length,0);
+  assert.equal(await h.ctx.ops.preview({isTrusted:true}),true);assert.equal(h.patches(),0);assert.equal(h.elements.get('ratioSnapshotConsent').checked,false);
+  assert.equal(await h.ctx.ops.confirm({isTrusted:true}),false);assert.equal(h.patches(),0);
+  h.elements.get('ratioSnapshotConsent').checked=true;assert.equal(await h.ctx.ops.confirm({isTrusted:true}),true);assert.equal(h.patches(),1);assert.equal(JSON.stringify(h.gist.files['original-ledger.json']),h.original);
+  assert.equal(await h.ctx.ops.read(),true);assert.match(h.elements.get('ratioContent').innerHTML,/四类资产配置总览/);assert.match(h.elements.get('ratioNotice').textContent,/来源截至/);
+  for(const mode of ['role','expiry','display','revision','no-consent']){
+    const a=harness();assert.equal(await a.ctx.ops.preview({isTrusted:true}),true);a.elements.get('ratioSnapshotConsent').checked=mode!=='no-consent';if(mode==='role')a.setAllowed(false);if(mode==='expiry')a.advance(300001);if(mode==='display')a.elements.get('ratioSnapshotSummary').textContent='altered';if(mode==='revision')a.gist.history[0].version='f'.repeat(40);
+    assert.equal(await a.ctx.ops.confirm({isTrusted:true}),false);assert.equal(a.patches(),0,mode);
+  }
+  const uncertain=harness();assert.equal(await uncertain.ctx.ops.preview({isTrusted:true}),true);uncertain.elements.get('ratioSnapshotConsent').checked=true;uncertain.fail('after');assert.equal(await uncertain.ctx.ops.confirm({isTrusted:true}),false);assert.equal(uncertain.patches(),1);assert.ok(uncertain.ctx.ops.pending());assert.equal(await uncertain.ctx.ops.preview({isTrusted:true}),false);assert.equal(await uncertain.ctx.ops.check({isTrusted:true}),true);assert.equal(uncertain.patches(),1);
+  const bad=harness();bad.gist.files['fee-console-ratio-snapshot.json']={content:'{}'};assert.equal(await bad.ctx.ops.read(),true);assert.equal(bad.elements.get('ratioContent').innerHTML,'');assert.match(bad.elements.get('ratioNotice').textContent,/失败/);assert.equal(bad.patches(),0);
+});
+
+test('independent factories are embedded exactly and no source plaintext or fee files enter the protected PATCH',{skip:!independentRatioUi},async()=>{
+  for(const name of ['fee-ratio-source-core.mjs','fee-ratio-snapshot.mjs'])assert.ok(unifiedUiSource.includes(fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1].trim()),name);
+  const a=unifiedUiSource.indexOf('async function ghApi('),b=unifiedUiSource.indexOf('\n}',a)+2,raw='{"syntheticCipherOnly":true}',gid='0'.repeat(32),op={gid,token:'invented-token',epoch:1,raw};
+  let calls=0;const values={gid,tok:'invented-token'},ctx={_ledgerBusy:false,_draftBlocked:false,EDIT:{},_fundRemoteWrite:null,_legacyMigrationPending:null,_ratioRecipientWrite:null,_ratioSnapshotWrite:op,_sourceEpoch:1,RATIO_RECIPIENT_FILE:'fee-console-ratio-recipient.json',RATIO_SNAPSHOT_FILE:'fee-console-ratio-snapshot.json',ratioAuthorized:()=>true,managerDocumentsAuthorized:()=>true,cfg:k=>values[k]||'',K:{gid:'gid',tok:'tok'},Object,JSON,Error,String,fetch:async(url,o)=>{calls++;assert.equal(url,'https://api.github.com/gists/'+gid);assert.equal(o.headers.Authorization,'Bearer invented-token');assert.equal(o.reviewedRatioSnapshot,undefined);assert.deepEqual(Object.keys(JSON.parse(o.body).files),['fee-console-ratio-snapshot.json']);return {ok:true,status:200,json:async()=>({})};}};
+  vm.createContext(ctx);vm.runInContext(unifiedUiSource.slice(a,b)+'\nthis.run=ghApi;',ctx);
+  const body=JSON.stringify({files:{'fee-console-ratio-snapshot.json':{content:raw}}});
+  await ctx.run('/gists/'+gid,{method:'PATCH',body,reviewedRatioSnapshot:op});assert.equal(calls,1);
+  for(const opt of [{method:'PATCH',body},{method:'PATCH',body,reviewedRatioSnapshot:{...op}},{method:'PATCH',body:JSON.stringify({files:{'data.json':{content:raw}}}),reviewedRatioSnapshot:op},{method:'PATCH',body:JSON.stringify({files:{'fee-console-ratio-snapshot.json':{content:raw},'fee-data-health.json':{content:raw}}}),reviewedRatioSnapshot:op},{method:'PATCH',body,headers:{},reviewedRatioSnapshot:op}])await assert.rejects(ctx.run('/gists/'+gid,opt));
+  await assert.rejects(ctx.run('/gists/'+'1'.repeat(32),{method:'PATCH',body,reviewedRatioSnapshot:op}));assert.equal(calls,1);
+});
+test('independent proof evidence is immutable and exact JSON refuses duplicate keys before association',async t=>{
+  const f=await independentFixture(t);assert.ok(Object.isFrozen(f.proof));assert.ok(Object.isFrozen(f.proof.evidence));assert.throws(()=>{f.proof.evidence.modelSha256='0'.repeat(64);});
+  const bytes=new TextEncoder().encode('{"schema":"one","schema":"two"}');await assert.rejects(f.snapshot.verifyOriginal({...f.args,originalBytes:bytes,sourceSha256:await f.snapshot.digestBytes(bytes)}));
+  const p=await f.snapshot.authenticate(f.packet,f.proof,f.manager,f.options);for(const watermark of [{version:1,id:'0'.repeat(64),sourceDate:'invalid',capturedAt:'bad'},{version:-1,id:'0'.repeat(64),sourceDate:'2000-01-01',capturedAt:'2000-01-01T00:00:00.000Z'}])await assert.rejects(f.snapshot.verify(p,f.manager,{watermark,now:f.now}));
+});
