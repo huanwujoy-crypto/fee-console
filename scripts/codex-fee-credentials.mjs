@@ -86,6 +86,25 @@ function attachmentDecode(bytes, version, key) {
   const plain = Buffer.concat([d.update(b.subarray(12, -16)), d.final()]); try { return parseExact(plain); } finally { plain.fill(0); }
 }
 
+// Untrusted log bytes never reach a terminal or a log file. Preserve character
+// boundaries: turn controls into inert text; do not strip/join them into proof.
+// Only the trusted signer's canonical timestamped stdout is evidence.
+export function readProducerLogRecord(bytes) {
+  if (!Buffer.isBuffer(bytes) || !bytes.length || bytes.length > 2 * 1024 * 1024) attachFail("PROVENANCE");
+  let text; try { text = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes); } catch { attachFail("PROVENANCE"); }
+  const found = [];
+  for (const raw of text.replace(/\r\n/g, "\n").split("\n")) {
+    const line = raw.replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, c => "\\u{" + c.codePointAt(0).toString(16) + "}");
+    const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,7})?Z) candidate ([a-f0-9]{40})$/.exec(line);
+    if (!m) continue;
+    const at = Date.parse(m[1]);
+    if (!Number.isFinite(at) || new Date(at).toISOString().slice(0, 19) !== m[1].slice(0, 19)) attachFail("PROVENANCE");
+    found.push({ at: m[1], oid: m[2] });
+  }
+  if (found.length !== 1) attachFail("PROVENANCE");
+  return Object.freeze({ ...found[0] });
+}
+
 /** Fixed transport; overrides exist only for synthetic tests, not CLI options.
  * No retry, shell, logging, fallback credential, token, or write-capable request.
  */
@@ -119,10 +138,14 @@ export function createLocalAttachmentRuntime({ spawnImpl = spawnSync, fetchImpl 
     githubRead(route) {
       const raw = /^actions\/jobs\/[1-9][0-9]{0,15}\/logs$/.test(route);
       if (!raw && !/^actions\/runs\/[1-9][0-9]{0,15}(?:\/jobs\?per_page=100)?$/.test(route)) attachFail("PROVENANCE");
-      const r = capture("/Users/huanwu/.local/bin/gh", ["api", "--hostname", "github.com", "--method", "GET", "repos/huanwujoy-crypto/fee-console/" + route],
-        { env: { PATH: "/usr/bin:/bin", TMPDIR: "/tmp", HOME: os.userInfo().homedir }, maxBuffer: 2 * 1024 * 1024 });
+      // Explicit per-request format opt-in needs exact-code/operator review.
+      // It is permitted only for this fixed log route, captured as bytes in
+      // pipes and normalized immediately. No terminal, pager or raw output.
+      const r = capture("/Users/huanwu/.local/bin/gh", ["api", "--hostname", "github.com", "--method", "GET",
+        ...(raw ? ["--allow-escape-sequences"] : []), "repos/huanwujoy-crypto/fee-console/" + route],
+        { env: { PATH: "/usr/bin:/bin", TMPDIR: "/tmp", HOME: os.userInfo().homedir }, encoding: raw ? null : "utf8", maxBuffer: 2 * 1024 * 1024 });
       if (r.status !== 0 || r.error || String(r.stderr || "").trim()) attachFail("PROVENANCE");
-      try { return raw ? String(r.stdout || "") : parseExact(Buffer.from(r.stdout || "")); } catch { attachFail("PROVENANCE"); }
+      try { return raw ? readProducerLogRecord(r.stdout) : parseExact(Buffer.from(r.stdout || "")); } catch { attachFail("PROVENANCE"); }
     },
     git(args) { const r = capture("/usr/bin/git", args, { cwd: ATTACH_ROOT }); if (r.status !== 0 || r.error || String(r.stderr || "").trim()) attachFail("CODE_CHANGED"); return String(r.stdout || "").trim(); },
     readKeychain(service) {
@@ -215,10 +238,14 @@ async function attachmentProducerProof(evidence, base, healthFile, publicBase, r
   for (const name of paths) { const a = publicBase.tree.tree.find(f => f.path === name), b = sourceTree.tree.find(f => f.path === name);
     if (!a || !b || a.type !== "blob" || b.type !== "blob" || a.mode !== "100644" || b.mode !== "100644"
         || !/^[a-f0-9]{40}$/.test(a.sha || "") || a.sha !== b.sha) attachFail("PROVENANCE"); }
-  const logs = await runtime.githubRead("actions/jobs/" + job.id + "/logs");
-  if (typeof logs !== "string" || Buffer.byteLength(logs) > 2 * 1024 * 1024) attachFail("PROVENANCE");
-  const oids = [...new Set([...logs.matchAll(/(?:^|\s)candidate ([a-f0-9]{40})\s*$/gm)].map(m => m[1]))];
-  if (oids.length !== 1 || oids[0] !== evidence.candidateSha) attachFail("PROVENANCE");
+  const record = await runtime.githubRead("actions/jobs/" + job.id + "/logs"), signer = job.steps.find(s => s.name === "Create a signed owner candidate");
+  // The API's whole-second completion time represents that second, not its
+  // first millisecond. This does not extend checkedAt/target freshness limits.
+  const completion = time(signer.completed_at), end = completion + (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/.test(signer.completed_at || "") ? 999 : 0);
+  if (!exact(record, ["at", "oid"]) || record.oid !== evidence.candidateSha || !Number.isFinite(time(record.at))
+      || !Number.isFinite(time(signer.started_at)) || !Number.isFinite(completion) || completion < time(signer.started_at)
+      || time(signer.started_at) < time(job.started_at) || completion > time(job.completed_at)
+      || time(record.at) < time(signer.started_at) || time(record.at) > end) attachFail("PROVENANCE");
   return { runId: run.id, candidateSha: evidence.candidateSha, sourceHeadSha: run.head_sha, check() {
     if (health.dataSha256 !== attachHash(base.bytes)) attachFail("PROVENANCE");
   } };

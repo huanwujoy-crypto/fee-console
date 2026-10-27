@@ -114,6 +114,34 @@ Actions run、完整 jobs 和实际 produce job 日志。原始日志只在内�
 仅本机衔接入口及测试不参与这项继承比较。所有本机 mjs 字节仍须匹配当时受保护 main。
 任何 API 身份／签名／日志／完整性缺项均在读金融密钥前停止，不回退到手工成功标记。
 
+#### 日志格式及单请求批准边界
+
+GitHub的job日志REST接口下载纯文本，gh run view的JSON字段不包含日志中的候选OID。
+gh 2.98默认拒绝API输出中的终端转义；不得删除日志关联证明、换传输规避拒绝，
+或把允许转义的原始输出送往终端。官方run view虽然会净化控制字符，但同时缓存原始
+run日志ZIP，故不用于此处“原始日志仅内存”的合同。
+
+本入口的格式适配只在固定actions/jobs/<id>/logs请求上添加
+--allow-escape-sequences，属于必须在新准确源码及执行包中明示批准的单请求格式选择；
+旧head批准不能替代。它不改变gh全局设置，不新增权限或日志端点。metadata请求不带
+该选项。stdout/stderr始终为私密pipe，日志以最多2MiB的原始bytes捕获，UTF-8解码
+严格失败关闭；不调用终端、pager或浏览器，不保存或输出原文。
+
+仅规范CRLF行尾；其余C0/C1、CR、BOM、双向／零宽等控制字符转换为惰性转义文本，
+不删除、拼接、重放或执行。因此控制字符不能修补出candidate或OID。仅接受一条完整
+UTC时间戳加candidate加40位小写OID的原生stdout记录；命令回显、格式化标题、
+错误日期、重复或多OID均不能作为证明。返回仅有时间与OID，不返回原文。
+记录时间须在实际成功签名step的区间内。API若仅给出整秒结束时间，该秒的毫秒属于同一
+已完成区间；带毫秒的结束时间按原精度严格比较。这不延长健康36小时、四日窗口或来源
+checkedAt。签名、步骤、完整tree／blob、代码匹配及费用／非IB比较全部保留。
+
+官方依据：
+[日志REST接口](https://docs.github.com/en/rest/actions/workflow-jobs#download-job-logs-for-a-workflow-run)、
+[gh run view字段](https://cli.github.com/manual/gh_run_view)、
+[gh 2.98缓存及净化实现](https://github.com/cli/cli/blob/v2.98.0/pkg/cmd/run/view/view.go)。
+该适配只经离线合成验收不能授权真实日志重试、金融Keychain读取或发布；均等新版本保护
+及明确限定执行批准。失败的旧入口没有读取金融Keychain或发布IB密文。
+
 通过来源证明后，仅用既有固定服务读取本机密钥与原经济 Gist 定位项，双读稳定原加密
 账本；重建已确认 IB 输入的收益与日度回撤回执，要求与已有附件完全相同，且费用回执
 和全部非 IB 字段不变。随后以原 reporter 核验，并由既有 `fee-data-health.mjs`
