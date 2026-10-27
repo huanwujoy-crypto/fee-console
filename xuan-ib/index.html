@@ -187,7 +187,7 @@
           encryptedRoot.hidden = true;
         } else {
           document.querySelector("#public-action-shell").hidden = true;
-          import("../scripts/xuan-ib-encrypted-action-view.mjs?v=2026-10-23.2")
+          import("../scripts/xuan-ib-encrypted-action-view.mjs?v=2026-10-27.1")
             .then(module => module.mountEncryptedAction(encryptedRoot))
             .catch(() => { encryptedRoot.textContent = "解锁页面暂时无法加载，请重新打开。"; });
           return;
