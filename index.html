@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.28">
+<meta name="fee-console-build" content="4.9.31">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -197,6 +197,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
   <div><h1>投资管理费</h1><div class="sub" id="subTitle"></div></div>
   <div class="row"><button class="btn sm" id="btnRefresh" type="button">↻ 刷新</button><span class="badge" id="syncBadge" style="display:none"></span></div>
 </header>
+<div id="reportPublicationBox" class="card" role="status" hidden></div>
 
 <div id="setupBox"></div>
 <div id="viewerRecovery" class="warn" role="status" style="display:none"></div>
@@ -962,7 +963,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.29";
+const UI_VERSION_LABEL=" · v4.9.31";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1842,9 +1843,60 @@ function ann(r,days){return r==null||!isFinite(r)||!(days>0)?null:Math.pow(1+r,3
    cspx / eqac 是 v4.5 及以前的欧洲收盘口径（LSE/SIX 约 11:30 ET），与组合的美股
    收盘估值存在时点错位（2026-08 实测约 0.9pp）。只在 SPY/QQQ 尚未回补时回放，
    并在脚注标明；两套字段各自独立，绝不互相顶替、绝不做换算估算。 */
+/* fee-report-consumer:start */
+function createFeeReportConsumer(){
+  const date=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d+'T00:00:00Z'))&&new Date(d+'T00:00:00Z').toISOString().slice(0,10)===d;
+  const canonical=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(canonical).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}';
+  const digest=async v=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(v))))).map(b=>b.toString(16).padStart(2,'0')).join('');
+  const exact=(o,keys)=>!!o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===keys.split(',').sort().join(',');
+  async function project(metadata,feeView,receipt,now=new Date()){
+    const pending={state:'pending',kindLabel:'报告类型待更新',message:'报告信息尚未完成核验',nonRealtime:true};
+    try{
+      if(feeView?.state!=='verified'||!exact(metadata,'schema,plan,generatedAt,nextScheduledAt,feeReceiptId,reportId')||metadata.schema!=='fee-console.report-publication.v1'||metadata.feeReceiptId!==receipt?.receiptId)return pending;
+      const p=metadata.plan,labels={weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报（合并）'};
+      if(!exact(p,'schema,kind,periodFrom,accountingThrough,priceThrough,scheduledAt,monthlyCutoffs')||p.schema!=='fee-console.report-plan.v1'||!labels[p.kind]||![p.periodFrom,p.accountingThrough,p.priceThrough].every(date)||p.periodFrom>p.accountingThrough||p.priceThrough>p.accountingThrough||p.accountingThrough!==feeView.asOf||!Array.isArray(p.monthlyCutoffs)||p.monthlyCutoffs.some(d=>!date(d)||d!==p.accountingThrough))return pending;
+      const generated=Date.parse(metadata.generatedAt),scheduled=Date.parse(p.scheduledAt),next=Date.parse(metadata.nextScheduledAt),clock=new Date(now).getTime();
+      if(![generated,scheduled,next,clock].every(Number.isFinite)||generated<scheduled||generated>clock+300000||next<=scheduled)return pending;
+      const {reportId,...body}=metadata;
+      if(!/^[a-f0-9]{64}$/.test(reportId)||await digest(body)!==reportId)return pending;
+      return {state:clock>=next?'pending-update':'updated',kindLabel:labels[p.kind],periodFrom:p.periodFrom,accountingThrough:p.accountingThrough,priceThrough:p.priceThrough,generatedAt:metadata.generatedAt,nextScheduledAt:metadata.nextScheduledAt,nonRealtime:true};
+    }catch{return pending;}
+  }
+  function snapshotPoints(points){
+    if(!Array.isArray(points)||points.some(p=>!date(p?.date)))return [];
+    const ordered=[...points].sort((a,b)=>a.date.localeCompare(b.date));
+    if(new Set(ordered.map(p=>p.date)).size!==ordered.length)return [];
+    return ordered.filter((p,i)=>i===0||i===ordered.length-1||new Date(p.date+'T00:00:00Z').getUTCDay()===5||new Date(Date.parse(p.date+'T00:00:00Z')+86400000).getUTCDate()===1);
+  }
+  function snapshotChange(points,investorId){
+    const snapshots=snapshotPoints(points),last=snapshots.at(-1),previous=snapshots.at(-2);
+    if(!last||!previous)return {valueCents:null,from:null,to:last?.date||null};
+    const a=previous.investors?.find(i=>i.id===investorId),b=last.investors?.find(i=>i.id===investorId);
+    if(!Number.isSafeInteger(a?.valueCents)||!Number.isSafeInteger(b?.valueCents))return {valueCents:null,from:previous.date,to:last.date};
+    let external=0;
+    for(const p of points.filter(p=>p.date>previous.date&&p.date<=last.date)){
+      const capital=p.subscription?.investorId===investorId?p.subscription.netCents:0;
+      const transfer=p.shareTransfer?.toInvestorId===investorId?p.shareTransfer.basisCents:p.shareTransfer?.fromInvestorId===investorId?-p.shareTransfer.basisCents:0;
+      if(!Number.isSafeInteger(capital)||!Number.isSafeInteger(transfer))return {valueCents:null,from:previous.date,to:last.date};
+      external+=capital+transfer;
+      if(!Number.isSafeInteger(external))return {valueCents:null,from:previous.date,to:last.date};
+    }
+    const valueCents=b.valueCents-a.valueCents-external;
+    return {valueCents:Number.isSafeInteger(valueCents)?valueCents:null,from:previous.date,to:last.date};
+  }
+  return {project,snapshotPoints,snapshotChange};
+}
+/* fee-report-consumer:end */
+const feeReportCore=createFeeReportConsumer();
+function renderReportPublication(view){
+  const box=document.getElementById("reportPublicationBox");if(!box)return;box.hidden=false;
+  if(view.state==="pending"){box.innerHTML=`<b>报告类型待更新</b><div class="small">报告信息尚未完成核验 · 非实时。现有收益和费用仍以已核验计算回执为准。</div>`;return;}
+  const generated=new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Hong_Kong",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(view.generatedAt));
+  box.innerHTML=`<b>${esc(view.kindLabel)}</b> <span class="badge ${view.state==="updated"?"ok":"est"}">${view.state==="updated"?"已更新":"待同步／待更新"}</span><div class="small">报告期间 ${esc(view.periodFrom)} → ${esc(view.accountingThrough)}<br>股票估值截至 ${esc(view.priceThrough)} · 账务截至 ${esc(view.accountingThrough)}<br>生成 ${esc(generated)}（香港时间） · 非实时</div>`;
+}
 /* ib-manager-return-consumer:start */
 function createIbManagerReturnConsumer() {
-  const schema='fee-console.ib-manager-return-receipt.v1';
+  const schema='fee-console.ib-manager-return-receipt.v1',dailySchema='fee-console.ib-manager-return-receipt.v2';
   const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',');
   const date=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
   const next=s=>new Date(Date.parse(s+'T00:00:00Z')+86400000).toISOString().slice(0,10);
@@ -1855,11 +1907,13 @@ function createIbManagerReturnConsumer() {
   const pending=(reason,asOf=null)=>({state:'pending',reason,asOf,value:null,byMonth:{}});
   async function validate(receipt) {
     try {
-      if(!exact(receipt,['schema','scope','currency','timezone','flowTiming','historyMode','start','asOf','periods','spanDays','grossTwrPpm','sourceInputsHash','receiptId']))throw Error();
+      const live=receipt?.schema===dailySchema;
+      if(!exact(receipt,['schema','scope','currency','timezone','flowTiming','historyMode','start','asOf','periods','spanDays','grossTwrPpm','sourceInputsHash','receiptId',...(live?['baselineAsOf','baselineInputsHash']:[])]))throw Error();
       const r=structuredClone(receipt);
-      if(r.schema!==schema||r.scope!=='ib-manager'||r.currency!=='USD'||r.timezone!=='America/New_York'||r.flowTiming!=='eod'||r.historyMode!=='owner-confirmed-frozen')throw Error();
+      if(![schema,dailySchema].includes(r.schema)||r.scope!=='ib-manager'||r.currency!=='USD'||r.timezone!=='America/New_York'||r.flowTiming!=='eod'||r.historyMode!==(live?'confirmed-baseline-source-verified-daily':'owner-confirmed-frozen'))throw Error();
       if(!date(r.start)||!date(r.asOf)||r.asOf<r.start||r.spanDays!==days(r.start,r.asOf)||r.spanDays>3660||!Array.isArray(r.periods)||!r.periods.length||r.periods.length>121)throw Error();
       if(!/^[a-f0-9]{64}$/.test(r.sourceInputsHash)||!/^[a-f0-9]{64}$/.test(r.receiptId))throw Error();
+      if(live&&(!date(r.baselineAsOf)||r.baselineAsOf<r.start||r.baselineAsOf>r.asOf||!/^[a-f0-9]{64}$/.test(r.baselineInputsHash)))throw Error();
       let from=r.start,index=1;
       for(const p of r.periods){
         const to=from.slice(0,7)===r.asOf.slice(0,7)?r.asOf:eom(from);
@@ -1871,18 +1925,51 @@ function createIbManagerReturnConsumer() {
       return {ok:true,receipt:structuredClone(r)};
     }catch(_){return {ok:false};}
   }
-  async function project(receipt,feeView){
+  async function project(receipt,feeView,sourceStatus){
+    if(sourceStatus?.state==='pending')return pending('source-unavailable',receipt?.asOf||null);
     if(!receipt)return pending('missing');
     const checked=await validate(receipt);if(!checked.ok)return pending('invalid');
     const r=checked.receipt;
+    if(r.schema===dailySchema&&(sourceStatus?.state!=='verified'||sourceStatus.targetDate!==r.asOf))return pending('source-unavailable',r.asOf);
     if(feeView?.state!=='verified')return pending('fee-pending',r.asOf);
     if(r.start!==feeView.start||r.asOf!==feeView.asOf||!Array.isArray(feeView.periods)||r.periods.length!==feeView.periods.length||r.periods.some((p,i)=>['ym','from','to','calendarDayCount'].some(k=>p[k]!==feeView.periods[i][k])))return pending('period-mismatch',r.asOf);
-    return {state:'verified',reason:null,asOf:r.asOf,value:r.grossTwrPpm/1000000,byMonth:Object.fromEntries(r.periods.map(p=>[p.ym,p.grossTwrPpm/1000000]))};
+    return {state:'verified',reason:null,asOf:r.asOf,historyMode:r.historyMode,value:r.grossTwrPpm/1000000,byMonth:Object.fromEntries(r.periods.map(p=>[p.ym,p.grossTwrPpm/1000000]))};
   }
-  return {schema,canonical,digest,validate,project};
+  return {schema,dailySchema,canonical,digest,validate,project};
 }
 /* ib-manager-return-consumer:end */
 const ibManagerReturnCore=createIbManagerReturnConsumer();
+/* ib-manager-drawdown-consumer:start */
+function createIbManagerDrawdownConsumer() {
+  const core=createIbManagerReturnConsumer(),schema='fee-console.ib-manager-drawdown-receipt.v1';
+  const exact=(o,keys)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...keys].sort().join(',');
+  const next=d=>new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+  const pending=reason=>({state:'pending',reason,start:null,asOf:null,anchorDate:null,factors:null});
+  async function validate(receipt,returnReceipt){
+    try{
+      const checked=await core.validate(returnReceipt);if(!checked.ok)throw Error();
+      const r=structuredClone(receipt),ret=checked.receipt;
+      if(!exact(r,['schema','scope','currency','timezone','flowTiming','historyMode','start','asOf','anchorDate','spanDays','returnReceiptId','sourceInputsHash','dailyFactors','receiptId']))throw Error();
+      if(r.schema!==schema||r.scope!=='ib-manager'||r.currency!==ret.currency||r.timezone!==ret.timezone||r.flowTiming!==ret.flowTiming||r.historyMode!==ret.historyMode||r.start!==ret.start||r.asOf!==ret.asOf||r.spanDays!==ret.spanDays||r.returnReceiptId!==ret.receiptId||r.sourceInputsHash!==ret.sourceInputsHash)throw Error();
+      if(r.anchorDate!==new Date(Date.parse(r.start+'T00:00:00Z')-86400000).toISOString().slice(0,10)||!Array.isArray(r.dailyFactors)||r.dailyFactors.length!==r.spanDays)throw Error();
+      let date=r.start;
+      for(const p of r.dailyFactors){if(!exact(p,['d','factor'])||p.d!==date||!Number.isFinite(p.factor)||p.factor<0)throw Error();date=next(date);}
+      if(date!==next(r.asOf))throw Error();
+      for(const p of ret.periods){let index=1;for(const f of r.dailyFactors)if(f.d>=p.from&&f.d<=p.to)index*=f.factor;if(!Number.isFinite(index)||Math.round((index-1)*1000000)!==p.grossTwrPpm)throw Error();}
+      const {receiptId,...body}=r;if(await core.digest(body)!==receiptId)throw Error();
+      return {ok:true,receipt:r};
+    }catch(_){return {ok:false};}
+  }
+  async function project(receipt,returnReceipt,feeView,sourceStatus){
+    if(!receipt)return pending('missing-daily-path');
+    const checked=await validate(receipt,returnReceipt);if(!checked.ok)return pending('invalid-daily-path');
+    const view=await core.project(returnReceipt,feeView,sourceStatus);if(view.state!=='verified')return pending(view.reason);
+    const r=checked.receipt;return {state:'verified',reason:null,start:r.start,asOf:r.asOf,anchorDate:r.anchorDate,factors:structuredClone(r.dailyFactors)};
+  }
+  return {schema,validate,project};
+}
+/* ib-manager-drawdown-consumer:end */
+const ibManagerDrawdownCore=createIbManagerDrawdownConsumer();
 const BENCH_ALL=[{k:"spy",dk:"spyd",name:"S&P 500（SPY·含息 ETF TWR，股息税后）",account:"S&P 500（SPY）",col:"var(--ink-muted)"},
   {k:"qqq",dk:"qqqd",name:"纳斯达克100（QQQ·含息 ETF TWR，股息税后）",account:"纳斯达克100（QQQ）",col:"var(--series-2)"},
   {k:"cspx",dk:"",name:"S&P 500（CSPX·欧洲收盘）",account:"S&P 500（CSPX）",col:"var(--ink-muted)"},
@@ -2053,9 +2140,10 @@ function drawdownEpisodeFromFactors(factors,anchor){
   return result;
 }
 /* drawdown-episode-metadata:end */
-function drawdownView(feeView){
+/* ib-manager-drawdown:receipt-v1 */
+function drawdownView(feeView,ibDrawdown){
   const pending=()=>({state:"pending",value:null,peakDate:null,troughDate:null,declineDays:null,recoveryDate:null,recoveryDays:null,recoveryState:"pending"});
-  const result={start:feeView.start||null,through:feeView.asOf||null,latest:feeView.asOf||null,actual:pending(),spy:pending(),qqq:pending()};
+  const result={start:feeView.start||null,through:feeView.asOf||null,latest:feeView.asOf||null,actual:pending(),ib:pending(),spy:pending(),qqq:pending()};
   if(feeView.state!=="verified"||!benchmarkCalendarDate(result.start)||!benchmarkCalendarDate(result.through))return result;
   const daily=dailySorted(),pre=daily.filter(p=>p.d<result.start).at(-1),anchor=new Date(Date.parse(result.start+"T00:00:00Z")-86400000).toISOString().slice(0,10);
   const items=BENCH_ALL.filter(item=>["spy","qqq"].includes(item.k)),coverage={};
@@ -2085,6 +2173,10 @@ function drawdownView(feeView){
     }
     if(actualReady)result.actual=drawdownEpisodeFromFactors(factors,anchor);
   }
+  if(ibDrawdown?.state==="verified"&&ibDrawdown.start===result.start&&ibDrawdown.asOf===result.latest&&ibDrawdown.anchorDate===anchor&&Array.isArray(ibDrawdown.factors)){
+    const factors=ibDrawdown.factors.filter(p=>p.d>=result.start&&p.d<=result.through);
+    if(factors.length===points.length&&factors.every((p,i)=>p.d===points[i].d))result.ib=drawdownEpisodeFromFactors(factors,anchor);
+  }
   for(const item of items){
     const proof=coverage[item.k];if(!proof)continue;
     const closed=new Set(proof.verifiedClosures||[]),factors=[];let previous=benchmarkNumber(pre[item.k]),ready=previous>0;
@@ -2106,28 +2198,32 @@ function returnPeriodLabel(from,to){
 /* return-period-display:end */
 /* compact-comparison-tables:start */
 /* ib-manager-return:receipt-v1 */
+/* return-display-names:manager-jenny-ib:v1 */
+/* ib-manager-report-source:v1 */
 function ibManagerReturnNote(view){
-  if(view?.state==="verified")return `IB 独立历史数据截至 ${view.asOf}，已按确认的资金及证券转仓日期核对；后续尚未自动更新。`;
-  if(view?.reason==="period-mismatch")return `IB 历史数据截至 ${view.asOf}，与当前统计期间不一致，暂不显示同期收益；后续尚未自动更新。`;
-  if(view?.reason==="invalid")return "IB 独立回执未通过核验，暂不显示收益。";
-  return "IB 独立回执待核对，暂未纳入正式收益。";
+  if(view?.state==="verified"&&view.historyMode==="confirmed-baseline-source-verified-daily")return `Jenny's IB 独立数据截至 ${view.asOf}，历史基线及本次 Sharesight 只读来源已核验；资金与证券转仓按日末外部流量处理。`;
+  if(view?.reason==="source-unavailable")return "Jenny's IB 本次来源尚未通过核验，暂不显示收益；原管理费组合不变。";
+  if(view?.state==="verified")return `Jenny's IB 独立历史数据截至 ${view.asOf}，已按确认的资金及证券转仓日期核对；后续尚未自动更新。`;
+  if(view?.reason==="period-mismatch")return `Jenny's IB 历史数据截至 ${view.asOf}，与当前统计期间不一致，暂不显示同期收益；后续尚未自动更新。`;
+  if(view?.reason==="invalid")return "Jenny's IB 独立回执未通过核验，暂不显示收益。";
+  return "Jenny's IB 独立回执待核对，暂未纳入正式收益。";
 }
 const DRAWDOWN_METHOD_NOTE="按剔除外部出入金影响的日末单位净值（TWR）曲线计算，含期初单位净值；SPY / QQQ 沿用税后分红再投资口径。下跌历时为高点至低点的日期差；恢复历时从低点起算。Modified Dietz 是期间收益率，不单独计算回撤。未核实表示资料不足。";
 function renderReturnComparison(st){
   const ib=st.ibManager,ibReady=ib?.state==="verified";
   const row=(key,label,method,detail,value,tag="")=>`<tr data-return-series="${key}"><td><span class="scenario">${label}</span>${tag?`<span class="tag">${tag}</span>`:""}</td><td><span class="metric-method">${method}</span><span class="tag">${detail}</span></td><td><b class="metric-value ${sgn(value)}">${pct(value)}</b></td></tr>`;
-  const rows=row("actual","组合毛","TWR","管理能力",st.twrG)+row("investor","出资方","Modified Dietz","日末资金流模型",st.mwrD)+`<tr data-return-series="ib" data-return-state="${ibReady?"verified":"pending"}"><td><span class="scenario">IB</span></td><td><span class="metric-method">TWR</span><span class="tag">管理能力</span></td><td><b class="metric-value ${ibReady?sgn(ib.value):""}">${ibReady?pct(ib.value):"待核对"}</b>${ibReady?"":`<span class="tag">未纳入</span>`}</td></tr>`+st.bench.map(b=>{
+  const rows=row("actual","管理方","TWR","管理能力",st.twrG)+row("investor","出资方","Modified Dietz","日末资金流模型",st.mwrD)+`<tr data-return-series="ib" data-return-state="${ibReady?"verified":"pending"}"><td><span class="scenario">Jenny's IB</span></td><td><span class="metric-method">TWR</span><span class="tag">管理能力</span></td><td><b class="metric-value ${ibReady?sgn(ib.value):""}">${ibReady?pct(ib.value):"待核对"}</b>${ibReady?"":`<span class="tag">未纳入</span>`}</td></tr>`+st.bench.map(b=>{
     const known=b.k==="spy"||b.k==="qqq",label=known?b.k.toUpperCase():esc(b.name);
     return row(esc(b.k),label,known?"含息 ETF TWR":"TWR",known?"股息税后":"旧欧洲收盘口径",b.twr,st.benchmarkPending?`截至 ${st.benchAsOf}`:"同期");
   }).join("");
   return `<div class="bench-title">收益率对比</div><div class="bench-table-wrap"><table class="bench-table metric-table" aria-label="收益率对比，TWR 与 Modified Dietz 口径不同"><thead><tr><th scope="col">项目</th><th scope="col">口径</th><th scope="col">收益率</th></tr></thead><tbody>${rows}</tbody></table></div><div class="small">${esc(ibManagerReturnNote(ib))}</div>`;
 }
 /* compact-comparison-tables:end */
-function renderDrawdowns(feeView){
-  const view=drawdownView(feeView),period=returnPeriodLabel(view.start,view.through),returns=returnPeriodLabel(feeView.start,feeView.asOf);
+function renderDrawdowns(feeView,ibDrawdown){
+  const view=drawdownView(feeView,ibDrawdown),period=returnPeriodLabel(view.start,view.through),returns=returnPeriodLabel(feeView.start,feeView.asOf);
   const samePeriod=!!(period&&returns&&view.start===feeView.start&&view.through===feeView.asOf);
   const range=!period?"回撤统计期间待核实":samePeriod?"":`回撤统计期间：${period}${returns?`（收益截至 ${feeView.asOf}，区间不同）`:"（收益区间待核实）"}`;
-  const rows=[["actual","组合"],["spy","SPY"],["qqq","QQQ"]].map(([key,label])=>{
+  const rows=[["actual","管理方"],["ib","Jenny's IB"],["spy","SPY"],["qqq","QQQ"]].map(([key,label])=>{
     const value=view[key],ready=value.state==="verified",phase=ready&&value.value>0?`峰值 ${value.peakDate} → 谷值 ${value.troughDate}`:"";
     const interval=!ready?"回撤期间未核实":value.value===0?"无回撤，无对应下跌区间":`高点 ${value.peakDate} → 低点 ${value.troughDate}<span class="tag">下跌 ${value.declineDays} 个自然日</span>`;
     const recovery=!ready?"恢复情况未核实":value.value===0?"":value.recoveryState==="recovered"?`恢复前高 ${value.recoveryDate}<span class="tag">低点后 ${value.recoveryDays} 个自然日</span>`:value.recoveryState==="unrecovered"?`截至 ${view.through} 尚未恢复前高`:"恢复情况未核实";
@@ -2177,19 +2273,20 @@ async function render(){
   /* fee-receipt-render-call */
   const feeView=feeReceiptRenderProjection(await feeReceiptUiModel({receipt:source.state==="verified"&&sourceMatches(source)?DAILY.feeCalculationReceipt:null,data:DAILY,economicInput:DB,legacySource:source.legacySource}));
   const documentsAuthorized=managerDocumentsAuthorized()&&source.state==="verified"&&sourceMatches(source);
-  const [fundProfile,fundDocuments,ibView]=await Promise.all([readFundProfile(),documentsAuthorized?readFundDocuments():Promise.resolve({library:emptyFundDocuments(),reason:null,raw:""}),ibManagerReturnCore.project(source.state==="verified"&&sourceMatches(source)?DAILY.ibManagerReturnReceipt:null,feeView)]);
+  const [fundProfile,fundDocuments,ibView,ibDrawdown,reportView]=await Promise.all([readFundProfile(),documentsAuthorized?readFundDocuments():Promise.resolve({library:emptyFundDocuments(),reason:null,raw:""}),ibManagerReturnCore.project(source.state==="verified"&&sourceMatches(source)?DAILY.ibManagerReturnReceipt:null,feeView,DAILY.ibManagerSourceStatus),ibManagerDrawdownCore.project(source.state==="verified"&&sourceMatches(source)?DAILY.ibManagerDrawdownReceipt:null,source.state==="verified"&&sourceMatches(source)?DAILY.ibManagerReturnReceipt:null,feeView,DAILY.ibManagerSourceStatus),feeReportCore.project(source.state==="verified"&&sourceMatches(source)?DAILY.feeReportPublication:null,feeView,source.state==="verified"&&sourceMatches(source)?DAILY.feeCalculationReceipt:null)]);
   let fundArchive;if(documentsAuthorized&&!fundDocuments.reason)fundArchive={library:publicFundDocuments(fundDocuments.library),reason:null,raw:currentRemoteFund()?.raw||""};else fundArchive=await readInvestorFundArchive();
   if(generation!==_renderGeneration||sourceEpoch!==_sourceEpoch||source!==_receiptSource)return;
   // An in-flight read has no trusted fee values, but is not a failed validation.
   if(source.state==="loading"){feeView.state="loading";feeView.message="正在读取并核验…";}
   if(source.state==="verified"&&!sourceMatches(source)){invalidateReceiptSource();return;}
-  const st=receiptState(feeView),B=receiptBalance(feeView),G=health(feeView,st);st.ibManager=ibView;
+  const st=receiptState(feeView),B=receiptBalance(feeView),G=health(feeView,st);st.ibManager=ibView;st.ibDrawdown=ibDrawdown;
   document.querySelectorAll(".mgr").forEach(e=>e.style.display=isMgr()?"":"none");
   const fundDocsCard=document.getElementById("fundDocsCard");if(fundDocsCard)fundDocsCard.style.display=documentsAuthorized?"":"none";if(!documentsAuthorized)clearFundDocumentPlaintext();
   document.getElementById("tabs").classList.remove("hidden");
   if(!isMgr()&&["p-fee","p-set"].some(id=>document.getElementById(id).classList.contains("on"))){document.querySelectorAll("section.pane").forEach(p=>p.classList.toggle("on",p.id==="p-investors"));document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.p==="p-investors"));}
   const feeSummary=feeView.state==="verified"?` · 起算 ${feeView.start} · ${feeView.managementRatePpm/10000}% / ${feeView.carryRatePpm/10000}%`:` · ${feeView.message}`;
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
+  renderReportPublication(reportView);
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
   renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();renderStyleRegistryDiagnostic(documentsAuthorized);
 }
@@ -2230,18 +2327,15 @@ function renderInvestors(loaded,feeView){
   const shareLabel=registeredVerified?`截至 ${last.date} · ${fmt(registeredTotal)} 股`:(profile.subscriptions?.length||profile.shareTransfers?.length)?`档案登记 ${fmt(registeredTotal)} 股 · 最新估值待覆盖`:last?`截至 ${last.date} · ${fmt(latestShares)} 股`:`初始 ${fmt(profile.initialShares)} 股`;
   profileBox.innerHTML=`<div class="card"><div class="fund-label">投资管理人 · ${esc(profile.manager)}</div><h2 class="fund-title">${esc(profile.fundName)}</h2><div class="fund-label">成立 ${esc(profile.inceptionDate)} · 美元计价 · ${esc(shareLabel)}</div><div class="fund-switch" role="group" aria-label="投资人视图">${profile.investors.map((i,index)=>{const verified=last?.investors.find(row=>row.id===i.id),shownShares=registeredVerified?verified.shares:registeredShares[index],shownTotal=registeredVerified?latestShares:registeredTotal;return `<button class="btn ${i.id===investor.id?"on":""}" data-investor="${esc(i.id)}" aria-pressed="${i.id===investor.id}">${esc(i.name)}<br><span class="small">${esc(i.id)} · ${(shownShares/shownTotal*100).toFixed(2)}%${registeredVerified?"":"（档案）"}</span></button>`;}).join("")}</div>${registeredText}${fundInvestorRecordsHtml(explanationRecords)}<div class="small">视图切换显示同一基金的两位投资人；此链接可查看完整基金数据。基金文件及状态在本页下方只读展示。</div></div>`;
   const message=model.reason||"";
-  const points=model.points||[],previous=points.length>1?points.at(-2)?.investors.find(i=>i.id===investor.id):null,
-    capitalToday=last?.subscription?.investorId===investor.id?last.subscription.netCents:0,
-    transferToday=last?.shareTransfer?.toInvestorId===investor.id?last.shareTransfer.basisCents:last?.shareTransfer?.fromInvestorId===investor.id?-last.shareTransfer.basisCents:0,
-    change=previous&&held?held.valueCents-previous.valueCents-capitalToday-transferToday:null;
+  const dailyPoints=model.points||[],points=feeReportCore.snapshotPoints(dailyPoints),comparison=feeReportCore.snapshotChange(dailyPoints,investor.id),change=comparison.valueCents;
   const chart=points.length>1?fundValueChart(points,investor.id):'<p class="hint">有两个完整估值日后显示走势。</p>';
   const tableRows=[...points].reverse().map(p=>{const row=p.investors.find(i=>i.id===investor.id);return `<tr><td>${esc(p.date)}${p.provisional?" *":""}</td><td>${p.unitValue.toFixed(6)}</td><td>${money(row.valueCents)}</td></tr>`;});
   box.innerHTML=`${message?`<div class="fund-alert" role="status">${esc(message)}${model.flowGateDate?` 首笔日期：${esc(model.flowGateDate)}。`:""}${last?` 下列历史市值仅截至 ${esc(last.date)}。`:""}</div>`:""}
     <div class="kpis"><div class="kpi wide fund-hero"><div class="lab">${esc(investor.id)} 的${current?"份额市值":"最近可计算市值"} · 费用前</div><div class="val">${money(held?.valueCents)}</div><div class="note">${last?`${esc(last.date)} 收盘${last.provisional||feeView.status?.provisional?" · 来源暂估":""}`:"数据待核验"}${current?"":" · 当前市值待核验"}</div></div>
-    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}${last&&!current?` · 截至 ${esc(last.date)}`:""}</div></div><div class="kpi"><div class="lab">较前一估值日 · 已剔除增资／份额转让</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${previous&&points.at(-2)?esc(points.at(-2).date)+" → "+esc(last.date):"等待可比日期"}</div></div></div>
+    <div class="kpi"><div class="lab">成立以来盈亏 · 费用前</div><div class="val ${sgn(held?.pnlCents)}">${money(held?.pnlCents)}</div><div class="note">${held?pct(held.returnRate):"—"}${last&&!current?` · 截至 ${esc(last.date)}`:""}</div></div><div class="kpi"><div class="lab">较前一周／月快照 · 已剔除期间增资／份额转让</div><div class="val ${sgn(change)}">${money(change)}</div><div class="note">${comparison.from?esc(comparison.from)+" → "+esc(comparison.to):"等待可比日期"}</div></div></div>
     <div class="card"><h2>我的份额</h2><div class="fund-meta"><div>基金档案已登记份额<b>${fmt(registeredShares[profile.investors.findIndex(row=>row.id===investor.id)])} 股</b></div><div>基金档案已登记占比<b>${(registeredShares[profile.investors.findIndex(row=>row.id===investor.id)]/registeredTotal*100).toFixed(2)}%</b></div><div>最新可核验份额 · ${last?esc(last.date):"待核验"}<b>${held?fmt(held.shares)+" 股":"—"}</b></div><div>最新可核验占比<b>${held&&latestShares?(held.shares/latestShares*100).toFixed(2)+"%":"—"}</b></div><div>初始持有份额<b>${fmt(investor.shares)} 股</b></div><div>成立时归属资产<b>${money(start?.valueCents)}</b></div><div>基金总资产 · ${last?esc(last.date):"待核验"}<b>${money(last?.totalCents)}</b></div><div>每股份额市值 · 费用前<b>${last?usd(last.unitValue,6):"—"}</b></div></div></div>
-    <div class="card"><h2>${esc(investor.id)} 的市值变化</h2>${chart}<div class="small">${initial&&last?`${esc(initial.date)} → ${esc(last.date)} · 美元 · 费用前`:"成立日以后逐日展示"}</div></div>
-    <div class="card"><h2>估值明细</h2>${tableRows.length?`<table class="fund-table" aria-label="投资人每日份额估值"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 日</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
+    <div class="card"><h2>${esc(investor.id)} 的市值变化</h2>${chart}<div class="small">${initial&&last?`${esc(initial.date)} → ${esc(last.date)} · 美元 · 费用前`:"成立日以后按周／月快照展示"}</div></div>
+    <div class="card"><h2>周／月估值快照</h2><div class="small">显示成立日、每周末、自然月末及最新可核验日期；日期为实际账务估值日。内部仍逐日核算收益、现金流、费用和回撤。</div>${tableRows.length?`<table class="fund-table" aria-label="投资人周月份额估值快照"><thead><tr><th>估值日</th><th>每股市值</th><th>${esc(investor.id)} 的市值</th></tr></thead><tbody>${tableRows.slice(0,10).join("")}</tbody></table>${tableRows.length>10?`<details class="fund-method"><summary>更早 ${tableRows.length-10} 期</summary><table class="fund-table"><tbody>${tableRows.slice(10).join("")}</tbody></table></details>`:""}`:'<p class="hint">完整数据到齐后显示。</p>'}</div>
     <div class="card"><details class="fund-method"><summary>份额与估值说明</summary><p>成立基准为 ${esc(profile.inceptionDate)} 纽约估值日收盘，转入后 Schwab-HK + Webull 的全部资产与现金。香港到账通知日为 ${esc(profile.inceptionNoticeDate)}。现金已包含在账户总额中。</p><p>每股份额市值＝基金账户总资产 ÷ 基金份额；个人市值＝个人份额 × 每股市值。初始份额合计 ${fmt(profile.initialShares)} 股。成立日收盘作为起点，从次日起计算变化。</p><p>这里的“费用前”指未另扣小程序应计管理费及 Carry；已计入券商资产的实际支出保留在原账户金额内。此页暂不提供扣除全部费用负债后的 NAV。</p><p>新增或提取本金需明确投资人和发行／注销份额，不能当作投资收益；未完成归属时暂停后续个人估值。内部买卖不会增减基金份额。</p><p>* 表示来源暂估。历史未标星不代表独立校准。投资人档案是展示配置，视图切换不提供个人之间的数据隔离。</p></details></div>`;
 }
 const fundDocumentStatusLabel={draft:"草案（未签署）", "internal-review":"内部已复核（仍非签署）",archived:"已归档"};
@@ -2323,14 +2417,14 @@ function renderKPIs(feeView,st,B,G){
   const benchmarkTable=passive.length===2?`<div class="bench-title">相同资金路径 · 期末金额${benchmarkTitleSuffix}</div><div class="bench-table-wrap"><table class="bench-table" aria-label="实际资产与SPY和QQQ模拟账户期末金额比较"><thead><tr><th>方案</th><th>期末金额</th><th>实际相对模拟</th></tr></thead><tbody><tr><td><span class="scenario">实际资产</span><span class="tag">${actualTag}</span></td><td><span class="end-val">${comparisonNav==null?"—":usd(comparisonNav,0)}</span></td><td>—</td></tr>${passive.map(b=>{const ready=Number.isFinite(b.val)&&b.val>=0,gapReady=ready&&comparisonReady,gap=gapReady?comparisonNav-b.val:null;return `<tr><td><span class="scenario">${b.k.toUpperCase()}</span><span class="tag">模拟${referenceEstimate?" · 参考估算":""}</span></td><td><span class="end-val">${ready?usd(b.val,0):"—"}</span></td><td>${gapReady?`<span class="gap-dir">${Math.abs(gap)<0.5?"持平":gap>0?"领先":"落后"}</span><span class="gap-val ${sgn(gap)}">${usd(Math.abs(gap),0)}</span>`:ready?'<span class="tag">同日资产待核实</span>':`<span class="tag">${unavailableLabel(b)}</span>`}</td></tr>`;}).join("")}</tbody></table></div>`:`<div class="note" style="margin-top:10px">SPY / QQQ 价格未完整覆盖，暂不显示模拟余额。</div>`;
   const benchmarkMethod=`<details class="expl bench-expl" id="benchExplain"${benchExplainOpen?" open":""}><summary>查看计算方法与重要说明</summary><div class="hint"><ol class="bench-points">
     <li><b>相同资金路径：</b>现金流匹配的被动账户期末值，是相同资金路径下的期末金额。模拟账户以已验证期初本金开始；每日先按原始收盘价及扣除 30% 美国预扣税后的股息再投资计收益，再按当日收盘加入同额已核实外部出入金（包括有效实物转仓）。不用月净流量或收益率乘本金代替；私密流水不对外公开。</li>
-    <li><b>可比收益率：</b>组合毛 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较；基准股息按 30% 美国预扣税净额再投资，与组合实际入账的净股息同口径。</li>
-    <li><b>IB 独立考核：</b>沿用组合毛的 USD 估值、统计区间及逐日 TWR 口径；IB 账户的资金进出与证券转仓均须作为其外部流量剔除。IB 仅消费独立加密历史回执，按确认的业务日修正现金及证券转仓时点；后续尚未自动更新。IB 不纳入原管理费组合及计费本金。</li>
+    <li><b>可比收益率：</b>管理方 TWR 与 SPY / QQQ 含息 ETF TWR 都按每日收益几何链接，并按同一期间直接比较；基准股息按 30% 美国预扣税净额再投资，与组合实际入账的净股息同口径。</li>
+    <li><b>Jenny's IB 独立考核：</b>沿用管理方的 USD 估值、统计区间及逐日 TWR 口径；Jenny's IB 账户的资金进出与证券转仓均须作为其外部流量剔除。Jenny's IB 仅消费独立加密回执；确认的历史基线和后续 Sharesight 只读来源须通过核验，资料不足或新转仓未核实则不显示收益。Jenny's IB 不纳入原管理费组合及计费本金。</li>
     <li><b>金额与费用：</b>金额差＝实际资产－模拟余额。实际资产未扣尚未支付的应计费用；模拟沿用含息基准（股息税后），除股息预扣税外不计其它个人税费、交易成本或管理费。短期 1–3 天的 benchmark 缺口会显示最近已验证余额作为参考估算，不假设未知市场收益，并只与基准覆盖日的同日基金资产比较；缺口内有资金流或超过 3 天时不显示估算金额。Modified Dietz 与所有费用仍只读取计算回执；本表不是第二套费用计算，也不是投资建议。</li>
     <li><b>最大回撤：</b>${DRAWDOWN_METHOD_NOTE}</li>
-  </ol><div class="note">${st.benchAsOf?`基准收益截至 ${st.benchAsOf}${st.benchPriceAsOf&&st.benchPriceAsOf!==st.benchAsOf?`；最近收盘日 ${st.benchPriceAsOf}`:""}。${benchmarkPendingLabel?` ${benchmarkPendingLabel}。`:""}${verifiedClosureLabel?`<br>${verifiedClosureLabel}`:""}<br>`:""}${showAnn?`年化：组合毛 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,benchmarkDayDiff(feeView.start,st.benchAsOf)+1))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
+  </ol><div class="note">${st.benchAsOf?`基准收益截至 ${st.benchAsOf}${st.benchPriceAsOf&&st.benchPriceAsOf!==st.benchAsOf?`；最近收盘日 ${st.benchPriceAsOf}`:""}。${benchmarkPendingLabel?` ${benchmarkPendingLabel}。`:""}${verifiedClosureLabel?`<br>${verifiedClosureLabel}`:""}<br>`:""}${showAnn?`年化：管理方 TWR ${pct(ann(st.twrG,st.spanDays))}${st.bench.map(b=>` · ${b.name} ${pct(ann(b.twr,benchmarkDayDiff(feeView.start,st.benchAsOf)+1))}`).join("")}`:"满一年后仅对 TWR 与基准显示年化"}${st.bench.some(b=>b.k==="cspx"||b.k==="eqac")?`<br>⚠ SPY / QQQ 数据尚未完整覆盖，暂回放旧欧洲收盘口径；这一过渡值不用于判断跑赢跑输。`:""}</div></div></details>`;
   const assetCard=`<div class="kpi wide"><div class="lab">当前总资产 <span class="small">${lp?("· 数据日 "+lp.d):"· 尚无数据"}</span></div><div class="val">${lp?usd(st.nav,0):"—"}</div>${acctLine}${topHoldingsView(lp,st.nav)}${mix}`;
   if(feeView.state!=="verified"){
-    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="bench-title">收益率对比</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView)}${benchmarkMethod}</div>`;return;
+    document.getElementById("kpis").innerHTML=`${assetCard}<div class="note">${feeView.message}</div></div><div class="kpi"><div class="lab">出资方 · 累计净收益</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="receipt-pending">${feeView.message}</div></div><div class="kpi wide"><div class="bench-title">收益率对比</div><div class="receipt-pending">${feeView.message}</div>${renderDrawdowns(feeView,st?.ibDrawdown)}${benchmarkMethod}</div>`;return;
   }
   document.getElementById("kpis").innerHTML=`
   ${assetCard}
@@ -2339,7 +2433,7 @@ function renderKPIs(feeView,st,B,G){
   <div class="kpi"><div class="lab">管理方 · 应付费用</div><div class="val${G.hold?" hold":""}">${G.hold?"暂不可用":usd(B.due,0)}</div>
     <div class="note">${G.hold?"见上方警告，解决后才会给出金额":`累计费用 ${usd(B.accrued,0)} − 已付 ${usd(B.paid,0)}`}</div></div>  <div class="kpi wide"><div class="lab">统计期间：${returnPeriodLabel(feeView.start,feeView.asOf)||"未核实"}</div>
     ${renderReturnComparison(st)}
-    ${renderDrawdowns(feeView)}${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
+    ${renderDrawdowns(feeView,st?.ibDrawdown)}${benchmarkTable}${benchmarkMethod}</div>`;}function renderChart1(feeView,st){
   const box=document.getElementById("chart1");if(feeView.state!=="verified"){document.getElementById("chartAsOf").textContent="";box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}
   const s=st.rows.slice(-12).map(row=>({d:row.to,cum:row.cum,hwm:row.hwm,tot:row.closeT}));
   document.getElementById("chartAsOf").textContent=s.length?`· 截至 ${s.at(-1).d}`:"";
@@ -2392,7 +2486,7 @@ function renderChart2(feeView,st){
 }
 function renderChart3(feeView,st){
   const BB=feeView.state==="verified"?(st.bench||[]):[];
-  document.getElementById("chart3Legend").innerHTML=feeView.state==="verified"?`<span><i style="background:var(--series-1)"></i>本组合·毛 TWR</span>${BB.map(b=>`<span><i style="background:${b.col}"></i>${esc(b.name)}${st.benchmarkPending?`·截至 ${st.benchAsOf}`:""}</span>`).join("")}`:"";
+  document.getElementById("chart3Legend").innerHTML=feeView.state==="verified"?`<span><i style="background:var(--series-1)"></i>管理方 TWR</span>${BB.map(b=>`<span><i style="background:${b.col}"></i>${esc(b.name)}${st.benchmarkPending?`·截至 ${st.benchAsOf}`:""}</span>`).join("")}`:"";
   const box=document.getElementById("chart3");if(feeView.state!=="verified"){box.innerHTML=`<div class="receipt-pending">${feeView.message}</div>`;return;}const R=st.rows.slice(-12);
   if(!R.length){box.innerHTML=`<div class="empty">月末后此处出现柱状图</div>`;return;}
   const w=720,h=210,l=54,r=12,t=14,b=32,iw=w-l-r,ih=h-t-b;
@@ -2408,7 +2502,7 @@ function monthlyReturnsTable(model,ib){
   if(!model.months.length)return "";
   const olderCount=Math.max(0,model.months.length-3);
   const cell=value=>typeof value==="number"&&Number.isFinite(value)?`<td class="${sgn(value)}">${pct(value)}</td>`:'<td><span class="small">缺失</span></td>';
-  return `<div class="month-returns" role="region" aria-label="月度收益率比较，近三个月，较早月份可展开，新到旧" tabindex="0">${olderCount?`<button type="button" class="btn sm month-returns-toggle" id="monthReturnHistoryToggle" aria-controls="monthReturnTable" aria-expanded="${_monthReturnHistoryExpanded}">${_monthReturnHistoryExpanded?"收起":"查看"}更早月份（${olderCount}）</button>`:""}<table id="monthReturnTable" aria-label="组合毛 TWR、IB 独立 TWR、SPY 和 QQQ 税后含息 TWR 月度比较"><thead><tr><th scope="col">月份</th><th scope="col">组合毛<br>TWR</th><th scope="col">IB<br>TWR<small>管理能力</small></th><th scope="col">S&amp;P 500<br>SPY<small>税后含息 TWR</small></th><th scope="col" aria-label="纳斯达克100，QQQ，税后含息 TWR">纳指100<br>QQQ<small>税后含息 TWR</small></th></tr></thead><tbody>${model.months.map((row,index)=>`<tr${index>=3?` data-month-return-history${_monthReturnHistoryExpanded?"":" hidden"}`:""}${row.ym===model.selectedYm?' aria-current="true"':""}><th scope="row">${ymLabel(row.ym)}<small>${esc(row.from.slice(5))} 起<br>${row.inProgress?"月截至":"截至"} ${esc(row.to.slice(5))}</small></th>${cell(row.rG)}${ib?.state==="verified"?cell(ib.byMonth[row.ym]):`<td data-return-series="ib" data-return-state="pending"><span class="small">待核对</span><small>未纳入</small></td>`}${cell(row.rB?.spy)}${cell(row.rB?.qqq)}</tr>`).join("")}</tbody></table></div><div class="small">${esc(ibManagerReturnNote(ib))}</div>`;
+  return `<div class="month-returns" role="region" aria-label="月度收益率比较，近三个月，较早月份可展开，新到旧" tabindex="0">${olderCount?`<button type="button" class="btn sm month-returns-toggle" id="monthReturnHistoryToggle" aria-controls="monthReturnTable" aria-expanded="${_monthReturnHistoryExpanded}">${_monthReturnHistoryExpanded?"收起":"查看"}更早月份（${olderCount}）</button>`:""}<table id="monthReturnTable" aria-label="管理方 TWR、Jenny's IB 独立 TWR、SPY 和 QQQ 税后含息 TWR 月度比较"><thead><tr><th scope="col">月份</th><th scope="col">管理方<br>TWR</th><th scope="col">Jenny's IB<br>TWR<small>管理能力</small></th><th scope="col">S&amp;P 500<br>SPY<small>税后含息 TWR</small></th><th scope="col" aria-label="纳斯达克100，QQQ，税后含息 TWR">纳指100<br>QQQ<small>税后含息 TWR</small></th></tr></thead><tbody>${model.months.map((row,index)=>`<tr${index>=3?` data-month-return-history${_monthReturnHistoryExpanded?"":" hidden"}`:""}${row.ym===model.selectedYm?' aria-current="true"':""}><th scope="row">${ymLabel(row.ym)}<small>${esc(row.from.slice(5))} 起<br>${row.inProgress?"月截至":"截至"} ${esc(row.to.slice(5))}</small></th>${cell(row.rG)}${ib?.state==="verified"?cell(ib.byMonth[row.ym]):`<td data-return-series="ib" data-return-state="pending"><span class="small">待核对</span><small>未纳入</small></td>`}${cell(row.rB?.spy)}${cell(row.rB?.qqq)}</tr>`).join("")}</tbody></table></div><div class="small">${esc(ibManagerReturnNote(ib))}</div>`;
 }
 function toggleMonthReturnHistory(button){
   const rows=document.getElementById("monthReturnTable")?.querySelectorAll("[data-month-return-history]");
@@ -2427,7 +2521,7 @@ function renderMonths(feeView,st){
   const monthVerifiedClosures=(st.verifiedClosures||[]).filter(date=>date.slice(0,7)===r.ym);
   box.innerHTML=`<div class="history-tools"><label for="monthHistoryMonth">月份</label><select id="monthHistoryMonth" aria-label="选择月份，全部历史均保留">${model.months.map(row=>`<option value="${row.ym}"${row.ym===r.ym?" selected":""}>${ymLabel(row.ym)}</option>`).join("")}</select><span class="badge ${r.inProgress?"est":r.excess>0?"ok":r.cum<r.hwm?"hwm":""}">${status}</span></div>
     <div class="month-totals" aria-live="polite"><span>毛收益<b class="${sgn(r.pnl)}">${usd(r.pnl,0)}</b></span><span>费用<b>${usd(r.fees,0)}</b></span><span>净收益<b class="${sgn(net)}">${usd(net,0)}</b></span></div>${feeView.status.provisional?`<div class="small" style="margin:0 0 6px">本回执含暂估数据，费用非最终结算。${feeView.status.provisionalCodes?.includes("owner-estimated-cash-date")?"现金记账日采用用户推定，待正式结单／Fund Records 核对。":""}${feeView.status.provisionalCodes?.includes("owner-notification-cash-date")?"按用户选择的到账通知日记账；券商实际入账日待核。扣减栏含预扣税及代收费，属于投资跟踪口径。":""}</div>`:""}
-    ${monthlyReturnsTable(model,st.ibManager)}<details class="month-detail" id="monthCalculation" data-ym="${r.ym}"${open?" open":""}><summary>计算及组成 <span class="month-summary">${r.from} → ${r.to}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt)}</b></span><span>Carry <b>${usd(r.carry)}</b></span><span>组合毛 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)}（${r.from} → ${r.to}） <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}${monthVerifiedClosures.length?`<span class="wide">基准已核验休市 <b>${monthVerifiedClosures.join("、")}</b></span>`:""}</div></div></details>`;
+    ${monthlyReturnsTable(model,st.ibManager)}<details class="month-detail" id="monthCalculation" data-ym="${r.ym}"${open?" open":""}><summary>计算及组成 <span class="month-summary">${r.from} → ${r.to}</span></summary><div class="month-body"><div class="month-grid"><span>期初 <b>${usd(r.openT,0)}</b></span><span>期末 <b>${usd(r.closeT,0)}</b></span><span>外部资金流 <b>${usd(r.flowT,0)}</b></span><span>日均管理费基数 <b>${usd(r.averageFeeBase,0)}</b></span><span>管理费 <b>${usd(r.mgmt)}</b></span><span>Carry <b>${usd(r.carry)}</b></span><span>管理方 TWR <b>${pct(r.rG,1)}</b></span><span>出资方 Dietz <b>${pct(r.rD,1)}</b></span>${st.bench.map(b=>`<span class="wide">${esc(b.name)}（${r.from} → ${r.to}） <b>${pct(r.rB&&r.rB[b.k],1)}</b></span>`).join("")}${monthVerifiedClosures.length?`<span class="wide">基准已核验休市 <b>${monthVerifiedClosures.join("、")}</b></span>`:""}</div></div></details>`;
 }
 function renderBal(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
