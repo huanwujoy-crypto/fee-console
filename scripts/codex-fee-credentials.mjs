@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 import { validateFeeCalculationReceiptWithEcon, canonicalJson } from "./fee-receipt-core.mjs";
-import { buildIbManagerReturnReceipt, buildIbManagerDrawdownReceipt } from "./ib-manager-return.mjs";
+import { buildIbManagerReturnReceipt, buildIbManagerDrawdownReceipt, createIbManagerReturnConsumer, createIbManagerDrawdownConsumer } from "./ib-manager-return.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 
@@ -21,14 +21,14 @@ const SERVICES = Object.freeze({
 const GIST_RE = /^(?:[a-f0-9]{20}|[a-f0-9]{32})$/;
 const KEY_RE = /^[A-Za-z0-9_+/-]{43}={0,2}$/;
 
-// This mode stages an encrypted local file only. It never issues health,
-// publishes, changes a ledger or treats a plan as authorization. Use only after
-// human approval of this exact code and the concrete one-time private inputs.
+// Local attachment/finalization never publishes, changes a ledger or treats a
+// plan as authorization. Finalization derives health only from verified actual
+// producer evidence, without extending its age. Both need exact-code approval.
 const ATTACH_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_REPO_API = "https://api.github.com/repos/huanwujoy-crypto/fee-console";
 const ATTACH_CODES = new Set(["PLAN", "LOCAL_ONLY", "PRIVATE_FILE", "INPUT_CHANGED", "HEALTH",
   "WINDOW", "PUBLIC_BASE", "CODE_CHANGED", "KEYCHAIN", "KEY", "LOCATOR", "SOURCE", "VERSION",
-  "RECEIPT", "LEGACY_SOURCE", "PERIOD", "WRITER", "REPORTER", "NON_IB_CHANGED", "OUTPUT", "CLEANUP"]);
+  "RECEIPT", "LEGACY_SOURCE", "PERIOD", "WRITER", "REPORTER", "NON_IB_CHANGED", "OUTPUT", "CLEANUP", "PROVENANCE", "HEALTH_WRITE"]);
 export class LocalAttachmentError extends Error {
   constructor(code) { super("IB_LOCAL_" + (ATTACH_CODES.has(code) ? code : "OUTPUT")); this.name = "LocalAttachmentError"; }
 }
@@ -114,6 +114,16 @@ export function createLocalAttachmentRuntime({ spawnImpl = spawnSync, fetchImpl 
     } catch { attachFail("PUBLIC_BASE"); } finally { clearTimeout(timer); }
   };
   return Object.freeze({ platform, now, publicRead,
+    // Existing GitHub identity, fixed repository GETs, before financial keys.
+    // Raw job text is kept in memory, never logged or treated as approval.
+    githubRead(route) {
+      const raw = /^actions\/jobs\/[1-9][0-9]{0,15}\/logs$/.test(route);
+      if (!raw && !/^actions\/runs\/[1-9][0-9]{0,15}(?:\/jobs\?per_page=100)?$/.test(route)) attachFail("PROVENANCE");
+      const r = capture("/Users/huanwu/.local/bin/gh", ["api", "--hostname", "github.com", "--method", "GET", "repos/huanwujoy-crypto/fee-console/" + route],
+        { env: { PATH: "/usr/bin:/bin", TMPDIR: "/tmp", HOME: os.userInfo().homedir }, maxBuffer: 2 * 1024 * 1024 });
+      if (r.status !== 0 || r.error || String(r.stderr || "").trim()) attachFail("PROVENANCE");
+      try { return raw ? String(r.stdout || "") : parseExact(Buffer.from(r.stdout || "")); } catch { attachFail("PROVENANCE"); }
+    },
     git(args) { const r = capture("/usr/bin/git", args, { cwd: ATTACH_ROOT }); if (r.status !== 0 || r.error || String(r.stderr || "").trim()) attachFail("CODE_CHANGED"); return String(r.stdout || "").trim(); },
     readKeychain(service) {
       if (!Object.values(SERVICES).includes(service)) attachFail("KEYCHAIN");
@@ -148,7 +158,150 @@ async function attachmentPublicBase(base, health, runtime) {
     for (const f of scripts) { const file = path.join(ATTACH_ROOT, f.path), s = fs.lstatSync(file); if (!s.isFile() || s.isSymbolicLink() || fs.realpathSync(file) !== file || gitBlob(fs.readFileSync(file)) !== f.sha) attachFail("CODE_CHANGED"); }
     for (const [name, bytes] of [["data.json", base.bytes], ["fee-data-health.json", health.bytes]]) { const f = tree.tree.find(x => x.path === name); if (f?.type !== "blob" || f.mode !== "100644" || f.sha !== gitBlob(bytes)) attachFail("PUBLIC_BASE"); }
   };
-  check(); return { head, check, async checkCurrent() { check(); if ((await runtime.publicRead("/git/ref/heads/main"))?.object?.sha !== head) attachFail("PUBLIC_BASE"); } };
+  check(); return { head, tree, check, async checkCurrent() { check(); if ((await runtime.publicRead("/git/ref/heads/main"))?.object?.sha !== head) attachFail("PUBLIC_BASE"); } };
+}
+
+async function attachmentProducerProof(evidence, base, healthFile, publicBase, runtime) {
+  if (!exact(evidence, ["runId", "candidateSha"]) || !Number.isSafeInteger(evidence.runId) || evidence.runId < 1
+      || !/^[a-f0-9]{40}$/.test(evidence.candidateSha || "") || typeof runtime.githubRead !== "function") attachFail("PROVENANCE");
+  const run = await runtime.githubRead("actions/runs/" + evidence.runId);
+  if (run?.id !== evidence.runId || run.status !== "completed" || run.conclusion !== "success" || run.run_attempt !== 1
+      || !["workflow_dispatch", "schedule"].includes(run.event) || run.head_branch !== "main"
+      || run.path !== ".github/workflows/fee-cloud-producer.yml" || run.head_repository?.full_name !== "huanwujoy-crypto/fee-console"
+      || !/^[a-f0-9]{40}$/.test(run.head_sha || "")) attachFail("PROVENANCE");
+  const listing = await runtime.githubRead("actions/runs/" + evidence.runId + "/jobs?per_page=100");
+  if (!Array.isArray(listing?.jobs) || listing.jobs.length > 100 || listing.total_count !== listing.jobs.length
+      || new Set(listing.jobs.map(j => j.id)).size !== listing.jobs.length) attachFail("PROVENANCE");
+  const producers = listing.jobs.filter(j => j.name === "produce"); if (producers.length !== 1) attachFail("PROVENANCE");
+  const job = producers[0], health = parseExact(healthFile.bytes);
+  const time = value => typeof value === "string" && /Z$/.test(value) ? Date.parse(value) : NaN;
+  if (!Number.isSafeInteger(job.id) || job.id < 1 || job.run_id !== run.id || job.head_sha !== run.head_sha
+      || job.status !== "completed" || job.conclusion !== "success" || !Array.isArray(job.steps)
+      || !Number.isFinite(time(job.started_at)) || !Number.isFinite(time(job.completed_at))
+      || time(job.completed_at) < time(job.started_at) || time(health.checkedAt) < time(job.started_at)
+      || time(health.checkedAt) > time(job.completed_at)) attachFail("PROVENANCE");
+  for (const name of ["Read, calculate and validate the encrypted candidate", "Create a signed owner candidate"]) {
+    const steps = job.steps.filter(s => s.name === name);
+    if (steps.length !== 1 || steps[0].status !== "completed" || steps[0].conclusion !== "success") attachFail("PROVENANCE");
+  }
+  const commit = await runtime.publicRead("/commits/" + evidence.candidateSha);
+  if (commit?.sha !== evidence.candidateSha || commit.commit?.verification?.verified !== true || commit.author?.id !== 283054367
+      || commit.author?.login !== ACCOUNT || commit.commit?.message !== "daily " + health.targetDate
+      || commit.parents?.length !== 1 || commit.parents[0].sha !== run.head_sha || !Array.isArray(commit.files)
+      || commit.files.length < 1 || commit.files.length > 2 || new Set(commit.files.map(f => f.filename)).size !== commit.files.length
+      || !commit.files.some(f => f.filename === "fee-data-health.json")
+      || commit.files.some(f => f.status !== "modified" || !["data.json", "fee-data-health.json"].includes(f.filename))) attachFail("PROVENANCE");
+  if (!/^[a-f0-9]{40}$/.test(commit.commit?.tree?.sha || "")) attachFail("PROVENANCE");
+  const candidateTree = await runtime.publicRead("/git/trees/" + commit.commit.tree.sha + "?recursive=1");
+  const sourceCommit = await runtime.publicRead("/commits/" + run.head_sha);
+  if (sourceCommit?.sha !== run.head_sha || sourceCommit.commit?.verification?.verified !== true || sourceCommit.author?.id !== 283054367 || sourceCommit.author?.login !== ACCOUNT
+      || !/^[a-f0-9]{40}$/.test(sourceCommit.commit?.tree?.sha || "")) attachFail("PROVENANCE");
+  const sourceTree = await runtime.publicRead("/git/trees/" + sourceCommit.commit.tree.sha + "?recursive=1");
+  for (const [tree, expected] of [[candidateTree, commit.commit.tree.sha], [sourceTree, sourceCommit.commit.tree.sha]])
+    if (tree?.sha !== expected || tree.truncated !== false || !Array.isArray(tree.tree)
+        || new Set(tree.tree.map(f => f.path)).size !== tree.tree.length) attachFail("PROVENANCE");
+  for (const [name, bytes] of [["data.json", base.bytes], ["fee-data-health.json", healthFile.bytes]]) {
+    const entry = candidateTree.tree.find(f => f.path === name);
+    if (entry?.type !== "blob" || entry.mode !== "100644" || entry.sha !== gitBlob(bytes)) attachFail("PROVENANCE");
+  }
+  // Inherit style/source proof only when the runtime that produced it is still
+  // the reviewed one. Exclude this local finalizer and tests; never infer style
+  // success from a caller boolean, a nearby timestamp, or a changed producer.
+  const critical = p => p === ".github/workflows/fee-cloud-producer.yml"
+    || /^claude\/fee-[^/]+\.json$/.test(p)
+    || (p.startsWith("scripts/") && p.endsWith(".mjs") && !p.endsWith(".test.mjs") && p !== "scripts/codex-fee-credentials.mjs");
+  const paths = new Set([".github/workflows/fee-cloud-producer.yml", "scripts/fee-cloud-producer.mjs", "scripts/daily.mjs", "scripts/fee-data-health.mjs",
+    ...[...publicBase.tree.tree, ...sourceTree.tree].filter(f => critical(f.path)).map(f => f.path)]);
+  for (const name of paths) { const a = publicBase.tree.tree.find(f => f.path === name), b = sourceTree.tree.find(f => f.path === name);
+    if (!a || !b || a.type !== "blob" || b.type !== "blob" || a.mode !== "100644" || b.mode !== "100644"
+        || !/^[a-f0-9]{40}$/.test(a.sha || "") || a.sha !== b.sha) attachFail("PROVENANCE"); }
+  const logs = await runtime.githubRead("actions/jobs/" + job.id + "/logs");
+  if (typeof logs !== "string" || Buffer.byteLength(logs) > 2 * 1024 * 1024) attachFail("PROVENANCE");
+  const oids = [...new Set([...logs.matchAll(/(?:^|\s)candidate ([a-f0-9]{40})\s*$/gm)].map(m => m[1]))];
+  if (oids.length !== 1 || oids[0] !== evidence.candidateSha) attachFail("PROVENANCE");
+  return { runId: run.id, candidateSha: evidence.candidateSha, sourceHeadSha: run.head_sha, check() {
+    if (health.dataSha256 !== attachHash(base.bytes)) attachFail("PROVENANCE");
+  } };
+}
+
+/** Complete existing writer bytes; no encryption, publication, source refresh,
+ * scheduling or new public schema. All inherited claims are re-proved here.
+ */
+export async function finalizeLocalIbAttachment({ plan, environ = process.env, checkPlan = () => {},
+    runtime = createLocalAttachmentRuntime() } = {}) {
+  let source, output, identity, keyText, key, env, result, errorCode, finalChecks, finalCandidateCheck, finalHealthCheck, healthAttempted = false;
+  const cleanup = () => {
+    if (!identity) return; const s = fs.lstatSync(output);
+    if (!s.isDirectory() || s.isSymbolicLink() || s.dev !== identity.dev || s.ino !== identity.ino) attachFail("CLEANUP");
+    for (const n of ["data.json", "validation.json", ...(healthAttempted ? ["fee-data-health.json"] : [])]) {
+      const f = path.join(output, n); if (fs.existsSync(f)) { const st = fs.lstatSync(f); if (!st.isFile() || st.isSymbolicLink()) attachFail("CLEANUP"); fs.unlinkSync(f); }
+    } fs.rmdirSync(output); identity = undefined;
+  };
+  try {
+    if (runtime.platform !== "darwin" || /^(true|1)$/i.test(String(environ.GITHUB_ACTIONS || ""))
+        || process.execArgv.some(a => /^(?:--inspect(?:-brk|-wait)?|--(?:require|import|loader|experimental-loader|cpu-prof|heap-prof|trace-events-enabled|report-on-signal|report-on-fatalerror|heapsnapshot-signal)|-r)(?:=|$)/.test(a) || /^--heapsnapshot-near-heap-limit=(?!0$)/.test(a))
+        || ["FEE_DATA_KEY", "FEE_ECON_GIST_ID", "FEE_ECON_GITHUB_TOKEN", "FEE_ECON_FILE", "FEE_ECON_V3_FILE", "GH_TOKEN", "GITHUB_TOKEN", "NODE_OPTIONS", "NODE_PATH"].some(n => Object.hasOwn(environ, n))
+        || Object.keys(environ).some(n => /^(?:DYLD_|LD_)/.test(n))) attachFail("LOCAL_ONLY");
+    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "ibInput", "legacySource", "candidateData", "producerEvidence"])
+        || plan.schema !== "fee-console.ib-local-finalize-plan.v1" || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate || "")) attachFail("PLAN");
+    checkPlan(); const directory = attachmentDirectory(plan.workspace), base = attachmentFile(plan.baseData, directory), healthFile = attachmentFile(plan.baseHealth, directory), ib = attachmentFile(plan.ibInput, directory), candidate = attachmentFile(plan.candidateData, directory), legacy = plan.legacySource === null ? null : attachmentFile(plan.legacySource, directory), health = parseExact(healthFile.bytes);
+    const fresh = () => { const now = runtime.now(), age = (Date.parse(now.toISOString().slice(0, 10)) - Date.parse(plan.targetDate)) / 86_400_000;
+      if (!Number.isInteger(age) || age < 0 || age > 4) attachFail("WINDOW");
+      if (validateHealth(health, { now }).length || health.targetDate !== plan.targetDate || !["updated", "no-op"].includes(health.outcome)
+          || health.dataSha256 !== attachHash(base.bytes) || health.sourceDates.schwab !== plan.targetDate || health.sourceDates.webull !== plan.targetDate
+          || healthFile.bytes.toString() !== JSON.stringify(health, null, 2) + "\n") attachFail("HEALTH"); };
+    const checks = () => { fresh(); checkPlan(); base.check(); healthFile.check(); ib.check(); candidate.check(); legacy?.check(); }; checks();
+    output = path.join(directory.path, "finalized"); if (fs.existsSync(output)) attachFail("OUTPUT");
+    const publicBase = await attachmentPublicBase(base, healthFile, runtime), proof = await attachmentProducerProof(plan.producerEvidence, base, healthFile, publicBase, runtime);
+    const allChecks = () => { checks(); publicBase.check(); proof.check(); }; finalChecks = allChecks; allChecks();
+    try { keyText = runtime.readKeychain(SERVICES.key); } catch { attachFail("KEYCHAIN"); }
+    if (typeof keyText !== "string" || !KEY_RE.test(keyText)) attachFail("KEY"); key = Buffer.from(keyText.replace(/-/g, "+").replace(/_/g, "/"), "base64"); if (key.length !== 32) attachFail("KEY");
+    let locator; try { locator = runtime.readKeychain(SERVICES.gist); } catch { attachFail("KEYCHAIN"); }
+    if (typeof locator !== "string" || !GIST_RE.test(locator)) attachFail("LOCATOR");
+    try { process.env.FEE_ECON_GIST_ID = locator; source = await runtime.acquireEconomic(directory.path); } catch { attachFail("SOURCE"); }
+    finally { delete process.env.FEE_ECON_GIST_ID; locator = undefined; }
+    if (source?.envelopeVersion !== 4 || typeof source.checkCurrent !== "function" || typeof source.cleanup !== "function") attachFail("VERSION");
+    const sourceDirectory = attachmentDirectory(path.dirname(source.sourcePath)); if (path.dirname(sourceDirectory.path) !== directory.path) attachFail("PRIVATE_FILE");
+    const econ = attachmentOwnedFile(source.sourcePath, sourceDirectory), economic = attachmentDecode(econ.bytes, 4, key), before = attachmentDecode(base.bytes, 3, key), after = attachmentDecode(candidate.bytes, 3, key), fee = before.feeCalculationReceipt;
+    if (!validateFeeCalculationReceiptWithEcon(fee, before, economic).ok || !validateFeeCalculationReceiptWithEcon(after.feeCalculationReceipt, after, economic).ok) attachFail("RECEIPT");
+    let checkLegacy; try { checkLegacy = guardLegacySourceFile(economic, key, plan.legacySource?.path || null); } catch { attachFail("LEGACY_SOURCE"); }
+    const input = parseExact(ib.bytes), ret = await buildIbManagerReturnReceipt(input), dd = await buildIbManagerDrawdownReceipt(input), strip = v => Object.fromEntries(Object.entries(v).filter(([k]) => !["ibManagerReturnReceipt", "ibManagerDrawdownReceipt"].includes(k)));
+    if (fee.asOf !== plan.targetDate || ret.start !== fee.start || ret.asOf !== plan.targetDate) attachFail("PERIOD");
+    if (canonicalJson(strip(before)) !== canonicalJson(strip(after)) || canonicalJson(fee) !== canonicalJson(after.feeCalculationReceipt)) attachFail("NON_IB_CHANGED");
+    if (canonicalJson(after.ibManagerReturnReceipt) !== canonicalJson(ret) || canonicalJson(after.ibManagerDrawdownReceipt) !== canonicalJson(dd)) attachFail("RECEIPT");
+    const feeView = { state: "verified", start: fee.start, asOf: fee.asOf, periods: fee.periods };
+    if ((await createIbManagerReturnConsumer().project(ret, feeView, after.ibManagerSourceStatus)).state !== "verified"
+        || (await createIbManagerDrawdownConsumer().project(dd, ret, feeView, after.ibManagerSourceStatus)).state !== "verified") attachFail("RECEIPT");
+    if (candidate.bytes.equals(base.bytes)) attachFail("OUTPUT");
+    env = { PATH: path.dirname(process.execPath) + ":/usr/bin:/bin", FEE_DATA_KEY: keyText, FEE_ECON_FILE: source.sourcePath }; if (legacy) env.FEE_ECON_V3_FILE = plan.legacySource.path;
+    const run = async (args, expected, code) => { allChecks(); econ.check(); checkLegacy(); let r; try { r = await runtime.runNode({ args, env }); } catch { attachFail(code); }
+      if (r?.status !== 0 || r.error || String(r.stderr || "").trim() || String(r.stdout || "").trim() !== expected) attachFail(code);
+      allChecks(); econ.check(); checkLegacy(); };
+    fs.mkdirSync(output, { mode: 0o700 }); identity = fs.lstatSync(output); const file = path.join(output, "data.json"), hf = path.join(output, "fee-data-health.json");
+    fs.writeFileSync(file, candidate.bytes, { mode: 0o600, flag: "wx" }); const frozen = attachmentOwnedFile(file, attachmentDirectory(output)); finalCandidateCheck = () => frozen.check();
+    await run([path.join(ATTACH_ROOT, "scripts/fee-receipt-report.mjs"), "--file=" + file, "--format=validate"], "receipt valid " + plan.targetDate, "REPORTER");
+    frozen.check(); healthAttempted = true;
+    await run([path.join(ATTACH_ROOT, "scripts/fee-data-health.mjs"), "create-success", "--out=" + hf, "--data=" + file, "--target-date=" + plan.targetDate,
+      "--source-schwab=" + health.sourceDates.schwab, "--source-webull=" + health.sourceDates.webull, "--source-benchmark=" + health.sourceDates.benchmark,
+      "--outcome=updated", "--style-preflight=pass", "--checked-at=" + health.checkedAt], "health ok " + plan.targetDate + " updated", "HEALTH_WRITE");
+    const hs = fs.lstatSync(hf); if (!hs.isFile() || hs.isSymbolicLink() || hs.uid !== process.getuid()) attachFail("OUTPUT"); fs.chmodSync(hf, 0o600);
+    const bound = attachmentOwnedFile(hf, attachmentDirectory(output)), actualHealth = parseExact(bound.bytes), expectedHealth = { ...health, outcome: "updated", dataSha256: attachHash(candidate.bytes) };
+    if (validateHealth(actualHealth, { now: runtime.now() }).length || canonicalJson(actualHealth) !== canonicalJson(expectedHealth)
+        || fs.readdirSync(output).sort().join(",") !== "data.json,fee-data-health.json") attachFail("HEALTH_WRITE");
+    finalHealthCheck = () => bound.check(); frozen.check();
+    try { await source.checkCurrent(); } catch { attachFail("SOURCE"); } await publicBase.checkCurrent(); allChecks(); frozen.check(); bound.check();
+    result = { schema: "fee-console.ib-local-finalized.v1", status: "IB_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW", targetDate: plan.targetDate, mainSha: publicBase.head,
+      baseDataSha256: attachHash(base.bytes), candidateDataSha256: attachHash(candidate.bytes), inheritedProducerRunId: proof.runId,
+      inheritedCandidateSha: proof.candidateSha, sourceCheckedAt: health.checkedAt, feeReceiptUnchanged: true, nonIbFieldsUnchanged: true,
+      healthCreated: true, readyForSignedCandidate: true, publicationReady: false };
+  } catch (error) { errorCode = error instanceof LocalAttachmentError ? error.message.slice(9) : "OUTPUT"; }
+  finally { if (env) { delete env.FEE_DATA_KEY; delete env.FEE_ECON_FILE; delete env.FEE_ECON_V3_FILE; } key?.fill(0); keyText = undefined;
+    try { source?.cleanup?.(); } catch { errorCode = "CLEANUP"; } if (errorCode) try { cleanup(); } catch { errorCode = "CLEANUP"; } }
+  if (errorCode) attachFail(errorCode);
+  try { finalChecks(); finalCandidateCheck(); finalHealthCheck(); const dir = attachmentDirectory(output); if (dir.dev !== identity.dev || dir.ino !== identity.ino) attachFail("OUTPUT");
+    fs.writeFileSync(path.join(output, "validation.json"), JSON.stringify(result, null, 2) + "\n", { mode: 0o600, flag: "wx" }); attachmentOwnedFile(path.join(output, "validation.json"), dir);
+  } catch (error) { try { cleanup(); } catch { attachFail("CLEANUP"); } if (error instanceof LocalAttachmentError) throw error; attachFail("OUTPUT"); }
+  return result;
 }
 
 export function readLocalAttachmentPlan(file) {
@@ -335,6 +488,12 @@ async function sourceCheck() {
 }
 
 async function main() {
+  if (process.argv[2] === "finalize-ib") {
+    if (process.argv.length !== 4 || !path.isAbsolute(process.argv[3])) attachFail("PLAN");
+    const input = readLocalAttachmentPlan(process.argv[3]);
+    const result = await finalizeLocalIbAttachment({ plan: input.plan, checkPlan: input.check });
+    console.log(result.status); return;
+  }
   if (process.argv[2] === "attach-ib") {
     if (process.argv.length !== 4 || !path.isAbsolute(process.argv[3])) attachFail("PLAN");
     const input = readLocalAttachmentPlan(process.argv[3]);
