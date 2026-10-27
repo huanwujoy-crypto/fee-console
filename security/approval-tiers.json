@@ -36,6 +36,9 @@
     "xuan-ib/"
   ],
   "sensitiveFiles": [
+    "scripts/fee-ratio-source-core.mjs",
+    "scripts/fee-ratio-snapshot.mjs",
+    "scripts/fee-ratio-snapshot-packet.mjs",
     ".github/workflows/app-readiness-check.yml",
     "docs/app-readiness.md",
     "scripts/app-readiness.mjs",

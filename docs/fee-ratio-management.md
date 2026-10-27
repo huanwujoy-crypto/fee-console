@@ -220,3 +220,89 @@ Only after unified acceptance: retire old independent action entry, producer,
 clock/watch and action-specific monitoring duty. Preserve historical objects,
 keys/IAM, shared Pages and fee/benchmark monitors. Exact old IDs are in the action
 handoff and need fresh read-back before changes. No old jobs are resumed here.
+
+## Independent manager snapshot — local candidate, not enabled
+
+The independent source date no longer needs an unrelated fee cutoff or fee
+receipt. Existing fee-attached publication and its producer/style/health checks
+are unchanged; this route neither edits nor imitates them. The only proposed
+remote destination is `fee-console-ratio-snapshot.json` in the same private Gist.
+No workflow, automatic schedule, financial source or permission is added.
+
+`node scripts/fee-ratio-snapshot-packet.mjs /absolute/private/plan.json` accepts
+`fee-console.ratio-snapshot-plan.v1` with exact fields `workspace`, `evidence`,
+`recipient`, `previous` (null on first publication) and `schema`. File pins are
+`{path,sha256}`; `evidence` points to the existing complete-original Library
+plan. It checks owned 0700/0600 regular non-linked files, exact original Library
+identity/version, input bytes, scope and full associations. It rebuilds the model
+and encrypts with the registered PUBLIC recipient only. `ratio-independent-candidate/`
+contains candidate packet, inner preview envelope and validation; always
+`publicationReady:false`, `authentication:null`. No financial credential or
+network is used. Previous packets are pinned hints, never publication authority.
+
+The shared `createRatioSourceCore` runs the SAME full association logic in Node
+and browser. Browser review needs the full original and exact converted input
+via local file selectors. Files are read in browser memory, never uploaded.
+The model, original hashes, full row relationships, same scope/currency/date and
+unmodified capture time must agree; a summary, serialized proof or caller flag
+cannot substitute. Library native xattrs are checked by the local builder.
+A browser cannot independently authenticate Library service identity/xattrs;
+its subsequent attestation states manager-confirmed full-original association,
+not a new Sharesight API read or independently authenticated Library download.
+The approved original hash/materialization remains an explicit trust boundary.
+
+Public-key encryption authenticates ciphertext integrity but does not prove who
+produced it. Therefore a new, separately approved manager authentication purpose
+is required for formal delivery: after trusted review and a separate unchecked
+consent, the existing manager credentials derive a domain-separated,
+nonextractable HMAC-SHA256 key in memory. The original X25519 recipient and
+fingerprint are unchanged. No fee Keychain read, key export, new Secret or new
+persistent credential occurs. A token alone or investor fee key alone cannot
+forge this attestation. Combined manager-token/fee-key compromise still can.
+This new use has NOT been exercised with real credentials by local tests.
+
+The attestation binds full source/input/model/cipher hashes, original capture
+and expiry, scope/recipient, integer version, prior snapshot/cipher commitment,
+confirmation time and a digest of the actual in-page validator/codec factories.
+The profile digest records code identity; it is not a remote CI proof or OWNER
+approval. Formal code still needs signed exact-head review and protected merge.
+No old producer run, fee style evidence or checkedAt is rewritten or reused as
+independent source health. The new record is manager-confirmed snapshot health,
+not a fee producer receipt or certification of transactions/future IB flows.
+
+Admission and confirmation preserve the 36-hour ORIGINAL capture and four-UTC-day
+source-date windows. A new audit/confirmation/model generation cannot renew them.
+Authenticated historical snapshots may still be viewed after expiry with their
+actual date and explicit “待更新”, never labelled current. The page verifies the
+MAC, model and recipient each time and records only recipient-scoped version,
+hash and dates in its existing local watermark. A new device without a prior
+watermark cannot prove global anti-rollback; it relies on current authenticated
+Gist content, visible source dates and expiry. Owner/source/role changes,
+hidden/pagehide, late async completions and ten-minute view expiry clear content.
+A corrupt independent file fails closed, without falling back to old fee data.
+
+A five-minute confirmation preview binds owner, source epoch, Gist revision,
+actual file/body hashes and the visible summary. The protected browser PATCH
+allows exactly the snapshot filename. It does not send original files, plaintext,
+keys, tokens in body, data.json, fee health, recipient config or ledger writes.
+Before writing it rereads the Gist and verifies the authenticated previous version;
+a changed revision or chain refuses. It reads back exact bytes and verifies the
+MAC. A network error after dispatch keeps an explicit pending state and allows
+only read-only outcome checks, never an automatic retry. Gist partial PATCH has
+no server-side compare-and-swap transaction: the prewrite revision check narrows,
+but cannot eliminate, concurrent owner-write races. Run one publisher at a time.
+
+The top “四类资产配置总览” uses the same accepted class totals and All Together
+scope/date as the four top-five groups: PE/VC, hedge, evergreen and secondary
+(all remaining assets including cash). It displays USD amounts, total-asset
+weights and simple bars. Small original rounding differences are disclosed,
+never forced into one category or reconstructed from look-through sums. The
+existing per-security total/class dual weights stay unchanged.
+
+Local candidate validation does not approve a live new cryptographic use or Gist
+write. First publication requires review of the exact signed support and aligned
+index-only UI heads, required checks/protected merges, explicit one-time manager
+authentication/delivery approval, then actual owner/manager decrypt, investor
+refusal and exact same-Gist readback. No auto-production or action retirement
+is enabled by this candidate. Real source files and decrypted preview artifacts
+remain private, outside Git, with 0700 directories/0600 files.

@@ -2,6 +2,7 @@
 // Existing private-file handoff -> manager-recipient ciphertext. No Keychain,
 // financial calls, network, Gist write, fee write, workflow or publication.
 import fs from 'node:fs';
+import {createRatioSourceCore} from './fee-ratio-source-core.mjs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
@@ -23,35 +24,8 @@ const parse=bytes=>createLegacyPolicy().parseExactJson(bytes);
 const core=createFeeRatioCore(createRankedExposureCore(),crypto.webcrypto);
 // Preserved browser evidence is a distinct transport, never an API-shaped
 // report with invented identifiers. Parsing is not source authentication.
-export function buildBrowserRatioBook(input,targetDate){
-  if(!exact(input,['schema','source','currency','asOf','retrievedAt','sourceSha256','provenance','ib','noah'])||input.schema!=='fee-console.ratio-sharesight-browser-book.v1'||input.source!=='Sharesight'||input.currency!=='USD'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
-  const instant=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)&&Number.isFinite(Date.parse(s));
-  const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
-  const money=v=>{if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e12||Math.abs(v*100-Math.round(v*100))>0.00001)fail();return Math.round(v*100);};
-  const p=input.provenance;
-  if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000||p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
-  let holdings=null,allocation=null,ibCashCents=null,noahCashCents=null;
-  const ib=input.ib;
-  if(ib!==null){
-    if(!exact(ib,['name','holdings','holdingsValueUSD','cashRows','cashValueUSD','totalValueUSD'])||ib.name!=='IB-HK'||!Array.isArray(ib.holdings)||!ib.holdings.length||ib.holdings.length>5000||!Array.isArray(ib.cashRows)||ib.cashRows.length>100)fail();
-    const seen=new Set(),groups=new Map([...STOCK_CLASS_TARGETS.keys()].map(k=>[k,0])),cashLike=new Map(),symbolGroups=new Map();let usscCents=0,holdingsTotal=0;
-    holdings=ib.holdings.map(h=>{
-      if(!exact(h,['code','market','group','valueUSD','quantity','name','valueBasis'])||![h.code,h.market,h.group].every(text)||!(h.name===null||text(h.name))||!(h.quantity===null||typeof h.quantity==='number'&&Number.isFinite(h.quantity)&&h.quantity>=0)||!['preserved-browser-source','same-export-underlying-plus-residual'].includes(h.valueBasis))fail();
-      const key=h.code+'|'+h.market,symbol=h.code.toUpperCase().split('.')[0],valueCents=money(h.valueUSD);
-      if(seen.has(key)||symbolGroups.has(symbol)&&symbolGroups.get(symbol)!==h.group)fail();seen.add(key);symbolGroups.set(symbol,h.group);holdingsTotal+=valueCents;
-      if(groups.has(h.group))groups.set(h.group,groups.get(h.group)+valueCents);else if(!['主题投资','防御资产'].includes(h.group))fail();
-      if(symbol==='USSC'){if(h.group!=='美国底仓')fail();usscCents+=valueCents;}
-      if(['VGSH','VGIT','TLT'].includes(symbol)){if(h.group!=='防御资产')fail();cashLike.set(symbol,(cashLike.get(symbol)||0)+valueCents);}
-      return {name:h.name||h.code,symbol:h.code,valueCents,category:h.group,market:h.market,quantity:h.quantity,valueBasis:h.valueBasis,nameBasis:h.name===null?'source-code-only':'source-name'};
-    });
-    const cashSeen=new Set();ibCashCents=ib.cashRows.reduce((sum,c)=>{if(!exact(c,['label','valueUSD','valueBasis'])||!text(c.label)||cashSeen.has(c.label)||c.valueBasis!=='portfolio-usd-converted')fail();cashSeen.add(c.label);return sum+money(c.valueUSD);},0);
-    if(holdingsTotal!==money(ib.holdingsValueUSD)||ibCashCents!==money(ib.cashValueUSD)||holdingsTotal+ibCashCents!==money(ib.totalValueUSD))fail();
-    const totalCents=[...groups.values()].reduce((a,b)=>a+b,0);if(totalCents<=0)fail();
-    allocation={totalCents,categories:[...STOCK_CLASS_TARGETS].map(([label,targetPct])=>({label,valueCents:groups.get(label),targetPct})),usscCents,cashLike:[...cashLike].filter(([,v])=>v>0).map(([symbol,valueCents])=>({symbol,valueCents}))};
-  }
-  if(input.noah!==null){if(!exact(input.noah,['name','cashValueUSD','valueBasis'])||input.noah.name!=='NOAH-HK'||input.noah.valueBasis!=='portfolio-usd-converted')fail();noahCashCents=money(input.noah.cashValueUSD);}
-  return {source:'Sharesight',asOf:input.asOf,retrievedAt:input.retrievedAt,sourceSha256:input.sourceSha256,ibCashCents,noahCashCents,allocation,holdings,browserEvidence:{...structuredClone(p),integrity:'declared-not-verified-on-this-device'}};
-}
+export function buildBrowserRatioBook(input,targetDate){return createRatioSourceCore().buildBrowserRatioBook(input,targetDate);}
+
 export function buildRatioBook(input,targetDate){
   if(input===null)return null;
   if(input.schema==='fee-console.ratio-sharesight-browser-book.v1')return buildBrowserRatioBook(input,targetDate);

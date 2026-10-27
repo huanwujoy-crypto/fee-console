@@ -35,6 +35,13 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const body={schema:RECIPIENT,algorithm:'X25519-HKDF-SHA256-AES256GCM',scopeId,publicKey:encode(pub)};
     return {privateKey,recipient:{...body,recipientId:await digest(body)}};
   }
+  async function deriveSnapshotManager(gid,feeKey,managerToken){
+    const manager=await deriveManager(gid,feeKey,managerToken);
+    const raw=decode(feeKey.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,''));
+    const normalized=encode(raw);raw.fill(0);
+    const seed=new Uint8Array(await cryptoImpl.subtle.digest('SHA-256',bytes(canonical(['fee-console/ratio-snapshot/manager-authentication/v1',gid,normalized,managerToken]))));
+    try{return {...manager,authenticationKey:await cryptoImpl.subtle.importKey('raw',seed,{name:'HMAC',hash:'SHA-256'},false,['sign','verify'])};}finally{seed.fill(0);}
+  }
   async function contentKey(privateKey,publicKey,salt,context){
     const shared=new Uint8Array(await cryptoImpl.subtle.deriveBits({name:'X25519',public:publicKey},privateKey,256));
     try{if(!shared.some(n=>n))fail();const material=await cryptoImpl.subtle.importKey('raw',shared,'HKDF',false,['deriveKey']);return await cryptoImpl.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info:bytes(canonical([DOMAIN,context]))},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}finally{shared.fill(0);}
@@ -103,13 +110,15 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>n===null?'未取得':'USD '+(n/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   function renderRatioModel(m){
+    const view=exposureCore.buildRankedExposureView(m.exposure),delta=view.groups.reduce((n,g)=>n+g.totalUsd,0)-view.portfolioTotalUsd;
+    const overview='<section class="card ratio-asset-overview"><h2>四类资产配置总览</h2><p>All Together · 10账户 · USD · 来源截至 '+esc(view.valuationDate)+'</p>'+view.groups.map(g=>'<div><strong>'+esc(g.category)+'</strong> · '+money(Math.round(g.totalUsd*100))+' · '+(g.totalUsd/view.portfolioTotalUsd*100).toFixed(2)+'%<div role="meter" aria-label="'+esc(g.category)+'占总资产" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(g.totalUsd/view.portfolioTotalUsd*100).toFixed(4)+'" style="height:8px;background:#edf0f5;margin:6px 0 12px"><span style="display:block;height:100%;background:#4778b8;width:'+Math.max(0,Math.min(100,g.totalUsd/view.portfolioTotalUsd*100))+'%"></span></div></div>').join('')+'<p>二级市场为前三类以外全部资产，含现金；采用来源类别金额，与下方前五同一范围及日期。类别合计与总资产舍入差 '+delta.toFixed(2)+' USD，保留原差异，不强行调整比例。</p></section>';
     const b=m.book,a=b?.allocation,ib=b?.ibCashCents??null,noah=b?.noahCashCents??null,pool=ib===null||noah===null?null:ib+noah;
     const rows=a?a.categories.map(c=>`<tr><td>${esc(c.label)}</td><td>${money(c.valueCents)}</td><td>${(c.valueCents/a.totalCents*100).toFixed(2)}%／${c.targetPct}%</td></tr>`).join(''):'';
     const alloc=rows?`<table><thead><tr><th>分类</th><th>当前市值</th><th>当前／参考目标</th></tr></thead><tbody>${rows}</tbody></table>`:'<p>Sharesight 完整分类持仓未取得。</p>';
     const holdings=b?.holdings?'<table><thead><tr><th>证券</th><th>类别</th><th>市值</th>'+(b.browserEvidence?'<th>原时点数量／价值依据</th>':'')+'</tr></thead><tbody>'+b.holdings.map(h=>`<tr><td>${esc(h.name)} · ${esc(h.symbol)}${h.market?' · '+esc(h.market):''}</td><td>${esc(h.category)}</td><td>${money(h.valueCents)}</td>${b.browserEvidence?'<td>'+esc(h.quantity===null?'未知（原时点未取得）':h.quantity)+'／'+(h.valueBasis==='same-export-underlying-plus-residual'?'同份Exposure底层＋残余合成':'原浏览器来源')+(h.nameBasis==='source-code-only'?'；仅证券代码，名称未取得':'')+'</td>':''}</tr>`).join('')+'</tbody></table>':'<p>完整持仓未取得；四类前五不能替代全量持仓。</p>';
     const browserNote=b?.browserEvidence?`<p>书目：原浏览器快照（非 API） · 截至 ${esc(b.asOf)} · 原下载 ${esc(b.retrievedAt)}。${b.browserEvidence.integrity==='verified-original-library-association'?'原始JSON、Library版本、范围及逐行关联已在构建时核验。':'原始全量证据尚未接入本机核验，仅供私密预览，不能作为正式发布来源。'}</p><p>仅证明原时点开放持仓，不含闭仓／交易历史，不证明未来IB流量；Top500也不代表全ETF底层。</p><p>导出写入 ${esc(b.browserEvidence.exportLastWrittenAt)}；分类保存 ${esc(b.browserEvidence.classificationSavedAt)}，未用于改写快照时间。</p>${b.browserEvidence.integrity==='verified-original-library-association'?'<p>分类与页面差 '+(b.browserEvidence.classificationDeltaCents/100).toFixed(2)+' USD；Exposure与页面差 '+(b.browserEvidence.exposureDeltaCents/100).toFixed(2)+' USD，保留原差异。'+(b.browserEvidence.migrationPending?'来源转仓尚未核销，保留原账面持仓。':'')+'</p>':''}<p>${esc(b.browserEvidence.transferStatus)}</p>${b.browserEvidence.limitations.map(x=>'<p>'+esc(x)+'</p>').join('')}`:'';
     return `<div class="ratio-report"><p>比例管理 · ${esc({weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报',snapshot:'来源快照'}[m.report.kind])} · 报告目标 ${esc(m.report.targetDate)} · 非实时</p><p>Exposure 来源截至 ${esc(m.exposure.summary.asOf)}${m.exposure.summary.asOf!==m.report.targetDate?' · 来源尚未覆盖本期':''}</p><p>生成 ${esc(m.report.generatedAt)}${m.report.feeAccountingThrough&&m.report.feeAccountingThrough!==m.report.targetDate?' · 管理费账务截至 '+esc(m.report.feeAccountingThrough)+'，两者日期不同':''}</p>`
-      +'<section class="card"><h2>本轮补仓</h2><p>EXUS · EIMI · USSC：金额未计算。</p><p>Sharesight 未提供已核实的 CALL／资本承诺记录，预留及净预算保持未知；不以零值补齐。</p><p>USSC 的 10% 是原补仓预算参考规则，不是持仓目标。</p></section>'
+      +overview+'<section class="card"><h2>本轮补仓</h2><p>EXUS · EIMI · USSC：金额未计算。</p><p>Sharesight 未提供已核实的 CALL／资本承诺记录，预留及净预算保持未知；不以零值补齐。</p><p>USSC 的 10% 是原补仓预算参考规则，不是持仓目标。</p></section>'
       +`<section class="card"><h2>现金优先补仓参考</h2><p>Sharesight IB-HK 账面现金：${money(ib)}</p><p>Sharesight NOAH-HK 账面现金：${money(noah)}</p><p>账面现金池：${money(pool)}</p><p>CALL 原额／50%预留／净规划预算：未取得</p><p>现金类资产：${a?esc(a.cashLike.map(c=>c.symbol+' '+money(c.valueCents)).join(' · ')||'本次完整分类来源未见非零项'):'未取得'}；不默认出售。</p><p>可执行预算未提供；账面余额不等于实时购买力。</p></section>`
       +`<section class="card"><h2>股票四类配置</h2><p>IB-HK 股票范围，与 All Together 总资产分母不同。</p>${alloc}<p>成交后投影未计算。</p></section>`
       +browserNote+exposureCore.renderRankedExposure(m.exposure)+`<section class="card"><h2>IB-HK 完整持仓</h2><p>仅此账户的完整书目，不代表 All Together 十账户全量持仓。</p>${holdings}</section>`
@@ -122,5 +131,5 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     const clear=()=>{generation++;model=null;onClear();};
     return {clear,async show(envelope,derive){clear();if(!authorized())return false;const ticket=generation,who=identity();try{const manager=await derive();if(ticket!==generation||!authorized()||identity()!==who)return false;const value=await open(envelope,manager);const proof=await verify(envelope,value);if(ticket!==generation||!authorized()||identity()!==who)return false;model=value;onRender(renderRatioModel(model),model,proof);return true;}catch{if(ticket===generation)clear();return false;}},hasPlaintext(){return model!==null;}};
   }
-  return {SCHEMA,RECIPIENT,ENVELOPE,DOMAIN,canonical,digest,encode,decode,recipientScope,deriveManager,validateRecipient,validateModel,validateBinding,publication,validatePublication,seal,open,render:renderRatioModel,controller};
+  return {SCHEMA,RECIPIENT,ENVELOPE,DOMAIN,canonical,digest,encode,decode,recipientScope,deriveManager,deriveSnapshotManager,validateRecipient,validateModel,validateBinding,publication,validatePublication,seal,open,render:renderRatioModel,controller};
 }
