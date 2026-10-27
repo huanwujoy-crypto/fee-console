@@ -90,6 +90,49 @@ NODE_OPTIONS／NODE_PATH 或动态库注入。拒绝 GitHub Actions、非 Mac、
 解锁页面验收仍是后续独立闸门。程序仅尽力清理内存引用，不承诺 JavaScript 字符串可被
 可靠擦除；限定短生命周期进程，禁止调试与转储。
 
+### 同一期 IB 附件的健康衔接（本机审核候选）
+
+新增入口 `./scripts/codex-fee-setup finalize-ib <私密计划文件绝对路径>` 仍须
+准确源码受保护合并、本人批准的限定本机用途及具体输入；不是新的自动生产器。
+它读取已存在的 IB 加密附件，不调用 writer 重新加密，不取 Sharesight／券商数据，
+不创建私有存储通道、Secret 或持久权限，也不自行签名、上传、推广或启用日程。
+
+计划 schema 为 `fee-console.ib-local-finalize-plan.v1`；沿用上节的七个字段，
+再加 `candidateData:{path,sha256}` 和
+`producerEvidence:{runId,candidateSha}`。全部文件仍须在同一仓库外0700目录且为0600；
+输出只能是不存在的 `finalized/`。计划不接受 approved、style 成功声明或任意 API 地址。
+运行前须固定真实 producer run、该 run 实际输出的已签名候选，以及该候选的完整
+base data／health 字节，不能只提供相近时间的成功运行。
+
+在读取两个既有 Keychain 项之前，入口使用既有本机 gh 客户端，以固定仓库 GET 查询
+Actions run、完整 jobs 和实际 produce job 日志。原始日志只在内存中，不输出或保存。
+要求 main 上的原工作流首次运行确实成功，实际来源计算／style 步骤及签名步骤均成功，
+不能是 skipped、shadow、失败或其它工作流。日志中的唯一候选 OID 必须匹配；
+该候选须为原运行 head 的单亲 GitHub 已验证 owner 提交，只改原 data／health，
+其 Git blob 须精确匹配计划基底。原 checkedAt 必须落在实际 produce job 时间内。
+来源、writer、health、style 配置及 producer 工作流代码必须与原运行相同；
+仅本机衔接入口及测试不参与这项继承比较。所有本机 mjs 字节仍须匹配当时受保护 main。
+任何 API 身份／签名／日志／完整性缺项均在读金融密钥前停止，不回退到手工成功标记。
+
+通过来源证明后，仅用既有固定服务读取本机密钥与原经济 Gist 定位项，双读稳定原加密
+账本；重建已确认 IB 输入的收益与日度回撤回执，要求与已有附件完全相同，且费用回执
+和全部非 IB 字段不变。随后以原 reporter 核验，并由既有 `fee-data-health.mjs`
+生成绑定新密文字节的健康文件。原 sourceDates 和 checkedAt 原样保留，36小时与
+四 UTC 日窗口在执行前后均检查，不能延长健康期限、修改旧回执或伪造新取数。
+新的健康文件表示同一期已验证来源加经重建的独立附件；不声称 IB 后续日期已自动接通。
+公开健康 schema 不增加账户资料、金额、IB 收益值、私有路径或输入 hash。
+
+成功只输出 `IB_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW`。三个本机0600文件为既有
+data 字节、新 fee-data-health.json 和私有 validation.json，后者记录原 producer／
+候选关联及 `readyForSignedCandidate:true`、`publicationReady:false`。
+正式签名候选、validate-fee-data、受保护推广、Pages 字节回读和解锁后的真实 IB
+验收仍须完成。此入口本身不授权这些动作。失败清理仅限自己创建的文件；保留原候选、
+原健康和原输入。过期、源变动或 main 变动均关闭，不能刷新旧时间来继续。
+
+周／月开关 `FEE_REPORT_PERIODS_ENABLED` 与该历史附件衔接独立，仍按
+`docs/fee-report-periods.md` 的受保护验收后配置。仅打开开关不能补足未来 IB 来源：
+现行 `IB_SOURCE_COVERAGE_UNVERIFIED` 截止和 native checkpoint／baseline 闸门保留。
+
 ## 每日顺序
 
 云端主路径与下列数据、计算和发布顺序相同。其固定 GET-only reader、双读、
