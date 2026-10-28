@@ -227,7 +227,7 @@ export class SharesightIbManagerReader{
         let closingMark=null;
         if(after?.quantityAtoms==='0'&&!auditQuote){
           const others=Object.values(reports.find(p=>p.d===t.transaction_date)?.marks||{}).filter(m=>m&&m.holdingId!==t.holding_id&&m.instrumentIdentityHash===after.instrumentIdentityHash&&BigInt(m.quantityAtoms)>0n);
-          const nativePriced=t.description_code==='TRANSFER_OUT'&&t.price>0&&t.value>0&&t.brokerage===0;
+          const nativePriced=t.description_code==='TRANSFER_OUT'&&t.price>0&&Number.isFinite(t.value)&&t.value!==0&&t.brokerage===0;
           if(others.length===1)closingMark=others[0];else if(others.length!==0||!nativePriced)fail('NONCASH_EVIDENCE');
         }
         noncashProofs.push(buildIbNativeNoncashProof({portfolioId:this.#portfolio,portfolioIdentityHash:identityHash,trade:t,before,after,closingMark,...(event?{auditEvent:event,auditQuote:after?.quantityAtoms==='0'?auditQuote:null}:{}),cashLegs:ledger.filter(p=>p.tradeId===t.id),sameDayTrades:trades.filter(x=>x.holding_id===t.holding_id&&x.transaction_date===t.transaction_date),catalogInstrument:catalog.find(h=>h.id===t.holding_id)?.instrument||t.instrument,authority:event?'reviewed-source-transfer':t.transaction_date>baseline.asOf?'source-native-transfer':'audited-baseline-source-native'}));

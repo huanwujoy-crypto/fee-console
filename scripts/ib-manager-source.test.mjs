@@ -137,6 +137,24 @@ test('native future transfer needs typed settlement evidence; a comment or unexp
   await assert.rejects(read(make('TRANSFER_OUT',0),{targetDate:'2026-09-03',ownerBaseline:state}),/UNVERIFIED_TRANSFER|NONCASH_EVIDENCE/);
   const tampered=structuredClone(s);tampered.noncashProofs[0].authority='audited-baseline-source-native';await assert.rejects(buildIbManagerReportBundle(tampered,lock()),/NONCASH_EVIDENCE/);
 });
+test('the real reader full-disposal gate accepts both native value signs before the independent proof checks',async()=>{
+  const {state}=await frozenFixture(),instrument={id:7,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
+  for(const sign of [-1,1]){
+    const w=wire({mutate:b=>{
+      if(b.holdings)b.holdings=[];
+      if(b.report){for(const h of b.report.holdings)h.instrument=instrument;if(b.report.end_date==='2026-09-03'){b.report.holdings=[];b.report.value=50;}}
+      if(b.trades)b.trades=[{id:8,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:'2026-09-03',description_code:'TRANSFER_OUT',quantity:1,price:86,value:sign*86,brokerage:0,instrument}];
+    }});
+    const source=await read(w,{targetDate:'2026-09-03',ownerBaseline:state});assert.equal(source.noncashProofs[0].externalFlowCents,-8600);assert.equal(source.periodReturnsInput.flowByDate['2026-09-03'],-86);assert.ok((await buildIbManagerReportBundle(source,lock())).returnReceipt);
+    const privateSentinel='SYNTHETIC_PRIVATE_RAW_RESPONSE';
+    for(const key of ['originalResponseBody','pairedTransferEvidence','fundProfileEnvelope','holdings','trades','cashTransactions']){
+      const bad=structuredClone(source);bad[key]=privateSentinel;
+      await assert.rejects(buildIbManagerReportBundle(bad,lock()),error=>{assert.doesNotMatch(error.message,new RegExp(privateSentinel));return /SCHEMA/.test(error.message);});
+    }
+    const bad=structuredClone(source);bad.noncashProofs[0].originalTrade=privateSentinel;
+    await assert.rejects(buildIbManagerReportBundle(bad,lock()),error=>{assert.doesNotMatch(error.message,new RegExp(privateSentinel));return /NONCASH_EVIDENCE/.test(error.message);});
+  }
+});
 
 test('normal read is narrowly scoped, double-read, cent-normalized and baseline locked',async()=>{
   const w=wire(),s=await read(w);assert.deepEqual(s.periodReturnsInput,input());
