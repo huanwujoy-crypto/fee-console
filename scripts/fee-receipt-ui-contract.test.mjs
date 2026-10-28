@@ -26,7 +26,7 @@ const RENDER_END = "/* fee-receipt-render:end */";
 const RENDER_CALL = "/* fee-receipt-render-call */";
 
 const CONTRACT_REGIONS = ["fee-receipt-consumer", "fee-receipt-render", "fund-investor-core", "fund-remote-storage", "fee-report-consumer"];
-const FIXTURE_SHA256 = "ea77f693f37ba7dcab04ef61179024c3bc2a32dd69c2a78295fd028b6c677707";
+const FIXTURE_SHA256 = "c5c4652bc09df84902fbe7ac7e8e88b22fda718316063310585c993cc7bdfeb6";
 const uiHash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
 const uiRegion = (html, name) => {
   const start = `/* ${name}:start */`, end = `/* ${name}:end */`;
@@ -36,10 +36,11 @@ const uiRegion = (html, name) => {
 const validateReviewedFixture = bytes => {
   assert.equal(uiHash(bytes), FIXTURE_SHA256, "unreviewed UI fixture bytes");
   const value = JSON.parse(bytes.toString("utf8"));
-  assert.deepEqual(Object.keys(value).sort(), ["schema", "priorIndexSha256", "nextIndexSha256", "priorRegionSha256", "nextRegionSha256", "nextRegions"].sort());
+  assert.deepEqual(Object.keys(value).sort(), ["schema", "priorIndexSha256", "nextIndexSha256", "presentationIndexSha256", "priorRegionSha256", "nextRegionSha256", "nextRegions"].sort());
   assert.equal(value.schema, "fee-console.reviewed-ui-code-fixture.v1");
   assert.equal(value.priorIndexSha256, "ff37233ad4c549d60561fd6e3764c7ba7633f8892432128ff1b39669cf5afef2");
   assert.equal(value.nextIndexSha256, "d5570720d45cf45136e3f23a15111ac01fb33f21277c46f5819aff1754eee9dc");
+  assert.equal(value.presentationIndexSha256, "0107f0632eb962aef9563c61fa81becbed0be2d8eaeda5c4dd8a645324725414");
   for (const field of ["priorRegionSha256", "nextRegionSha256", "nextRegions"])
     assert.deepEqual(Object.keys(value[field]).sort(), [...CONTRACT_REGIONS].sort());
   for (const name of CONTRACT_REGIONS) {
@@ -51,12 +52,14 @@ const validateReviewedFixture = bytes => {
 const reviewedFixtureBytes = fs.readFileSync(new URL("./fixtures/fee-reviewed-ui-contract-v1.json", import.meta.url));
 const reviewedFixture = validateReviewedFixture(reviewedFixtureBytes);
 
-// Test-only release snapshots, never imported by production. The prior hash
+// Test-only release snapshots, never imported by production.
+// The single presentation hash shares all five exact financial regions. It
+// grants no source, financial execution or publication permission. The prior hash
 // proves only the old contract; it does not declare new receipts compatible or
 // authorize a run. Both workflows must remain externally disabled during staging.
 export function reviewedUiStage(html) {
   const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 ? "next" : null;
+    : [reviewedFixture.nextIndexSha256, reviewedFixture.presentationIndexSha256].includes(sha) ? "next" : null;
   assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);

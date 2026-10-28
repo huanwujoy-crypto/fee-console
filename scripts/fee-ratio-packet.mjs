@@ -55,7 +55,7 @@ export async function buildRatioModel(input,{kind,targetDate,feeAccountingThroug
   const exposure=wrapped?input.exposure:input,view=createRankedExposureCore().buildRankedExposureView(exposure);
   if(view.valuationDate!==targetDate||!view.retrievedAt||Date.parse(view.retrievedAt)>now.getTime()||now.getTime()-Date.parse(view.retrievedAt)>36*3600000||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(targetDate))/86400000)>7)fail();
   const model={schema:core.SCHEMA,source:'Sharesight',report:{kind,targetDate,feeAccountingThrough,generatedAt:now.toISOString()},exposure:structuredClone(exposure),book:buildRatioBook(wrapped?input.book:null,targetDate),limitations:['CALL／资本承诺字段尚无已验收的 Sharesight 读取契约；预留和净预算保持未知。','没有完整订单来源，不生成成交后投影或可执行预算；不恢复券商／Flex／邮件读取。','All Together 十账户用于比例管理，不扩大原管理费计费组合。']};
-  if(verified)model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',...verified};
+  if(verified){const {companyExposure,...association}=verified;model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',...association};model.companyExposure=companyExposure;}
   const result=await viewCore.validateModel(model);browserEvidence?.check();return result;
 }
 // The sole daily writer constructs the official envelope itself. An opaque

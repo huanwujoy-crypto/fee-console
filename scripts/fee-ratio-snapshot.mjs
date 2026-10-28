@@ -18,6 +18,7 @@ export function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,par
     const source=sourceFactory(accounts=>{if(scope(accounts)!==originalScope)fail();return scopeHash;});
     exposureCore.buildRankedExposureView(input.exposure);
     const facts=source.verifyBrowserSourceAssociations(raw,input,{scopeHash,now});
+    if(Object.hasOwn(m,'companyExposure')&&canonical(m.companyExposure)!==canonical(facts.companyExposure))fail();
     if(canonical(input.exposure)!==canonical(m.exposure)||canonical(source.buildBrowserRatioBook(input.book,m.report.targetDate))!==canonical(normalizeBook(m.book))||m.report.targetDate!==facts.asOf)fail();
     const association=m.book.browserEvidence;
     if(association.integrity!=='verified-original-library-association'||association.managerScopeId!==r.scopeId||association.sourceVersion!==libraryVersion||['migrationPending','classificationDeltaCents','exposureDeltaCents'].some(k=>association[k]!==facts[k]))fail();
