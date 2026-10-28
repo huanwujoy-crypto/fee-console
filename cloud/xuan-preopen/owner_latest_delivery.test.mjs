@@ -238,7 +238,7 @@ test('empty public private-entry shell has no financial bytes, APIs, scripts, qu
   assert.ok(html.includes("connect-src 'none'"));assert.ok(html.includes("script-src 'none'"));
   assert.ok(!/<script\b|<iframe\b|<input\b|<form\b|\bfetch\s*\(|localStorage|sessionStorage|access_token|cash_accounts|order_id/i.test(html));
   assert.ok(!html.includes('xuan-ib-night-action-v1:'));
-  const loader=fs.readFileSync(path.join(root,'xuan-ib/index.html'),'utf8');assert.ok(loader.includes('id="private-action-entry" href="./private-action.html"'));
+  const loader=fs.readFileSync(path.join(root,'xuan-ib/index.html'),'utf8');if(loader.includes('name="xuan-action-status" content="retired"')){assert.match(loader,/<a href="\.\.\/"/);assert.doesNotMatch(loader,/<script\b|<iframe\b|href="[^"]*[?#]|href="\.\/private-action\.html"/i);}else assert.ok(loader.includes('id="private-action-entry" href="./private-action.html"'));
 });
 test('fixed replacement resolver preserves original registration and resolves new historical SHA for later weekday verification',async()=>{
   const current='b'.repeat(40),old='a'.repeat(40),hash=b=>crypto.createHash('sha256').update(b).digest('hex'),calls=[];

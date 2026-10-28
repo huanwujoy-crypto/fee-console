@@ -3,11 +3,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import {spawnSync} from 'node:child_process';
+import {spawnSync,execFileSync} from 'node:child_process';
 import {renderPublicEodSummary,qualifyRecordedPublicSummary} from './xuan-ib-public-eod-summary.mjs';
 const page=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
-const info=page.slice(page.indexOf('const reportInfo ='),page.indexOf('const requireExactKeys ='));
-const status=page.slice(page.indexOf('const statusFor ='),page.indexOf('function updateDecisionControl'));
+let parserPage=page;
+if(page.includes('name="xuan-action-status" content="retired"')){
+ parserPage='';for(const commit of execFileSync('git',['log','--format=%H','--','xuan-ib/index.html'],{encoding:'utf8'}).trim().split('\n')){
+  const archived=execFileSync('git',['show',commit+':xuan-ib/index.html'],{encoding:'utf8'});
+  if(archived.includes('const reportInfo =')&&archived.includes('const statusFor =')){parserPage=archived;break;}
+ }
+ assert.ok(parserPage,'retirement preserves the archived parser and its negative tests');
+}
+const info=parserPage.slice(parserPage.indexOf('const reportInfo ='),parserPage.indexOf('const requireExactKeys ='));
+const status=parserPage.slice(parserPage.indexOf('const statusFor ='),parserPage.indexOf('function updateDecisionControl'));
 const sandbox={TextDecoder,Uint8Array,atob:s=>Buffer.from(s,'base64').toString('binary'),clock:()=> 'synthetic clock'};
 vm.createContext(sandbox);vm.runInContext(info+status+'\nglobalThis.reportInfo=reportInfo;globalThis.statusFor=statusFor;',sandbox);
 const html=model=>`<title>XUAN · EOD 行动版</title><!-- xuan-ib-night-action-v1:${Buffer.from(JSON.stringify(model)).toString('base64url')} --><header><p>2026-10-09 · 2026-10-09 13:00 HKT · 数据至 2026-10-08</p></header>`;

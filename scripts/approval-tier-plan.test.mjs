@@ -205,7 +205,7 @@ for(const [name,change]of [
   ['variable report marker',s=>s+'<!-- xuan-ib-night-action-v1: synthetic -->'],
 ])test('retirement entry rejects '+name,()=>assert.throws(()=>verifyXuanEntry(Buffer.from(change(retiredEntryFixture.toString()))),/REFUSED/));
 test('the original loader requirements remain intact and malformed encodings fail closed',()=>{
-  const original=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url));assert.equal(verifyXuanEntry(original),'legacy-loader');
+  const original=execFileSync('git',['show','7cffb05dcdc3fb7624e1c7a5d0626b5bd7cac503:xuan-ib/index.html'],{cwd:new URL('..',import.meta.url)});assert.equal(verifyXuanEntry(original),'legacy-loader');
   for(const token of ['const loaderBuild = "','new URL("latest.meta.json", location.href)','new URL("latest.html", location.href)'])assert.throws(()=>verifyXuanEntry(Buffer.from(original.toString().replace(token,'missing-original-signature'))),/REFUSED/);
   for(const bytes of [Buffer.alloc(0),Buffer.alloc(512*1024+1),Buffer.from([0xff,0xfe]),Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),retiredEntryFixture])])assert.throws(()=>verifyXuanEntry(bytes),/REFUSED/);
 });

@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
+import {execFileSync} from 'node:child_process';
 import {ACTION_SCHEMA, ACTION_DISPLAY_CSP, MAX_ACTION_HTML_BYTES, MAX_ACTION_ENVELOPE_BYTES,
   actionSha256, encryptPublishedAction, decryptPublishedAction, parseActionEnvelope, validateActionHtml} from './xuan-ib-encrypted-action.mjs';
 import {packagePublishedAction, runActionPackage} from './xuan-ib-encrypted-action-build.mjs';
@@ -276,7 +277,17 @@ test('refresh refuses older pinned generation and clears stale display instead o
   await until(() => f.status.textContent.includes('读取失败')); assert.equal(f.frame.hidden, true); f.mounted.dispose();
 });
 test('fixed URL selects encrypted module; explicit history still uses existing loader, build versions agree', () => {
-  const shell = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
+  const currentShell = fs.readFileSync(new URL('../xuan-ib/index.html', import.meta.url), 'utf8');
+  // Retirement must not delete the historical loader's crypto tests. Exercise
+  // the unchanged archived loader while separately testing the inert new entry.
+  let shell=currentShell;
+  if(currentShell.includes('name="xuan-action-status" content="retired"')){
+    shell='';for(const commit of execFileSync('git',['log','--format=%H','--','xuan-ib/index.html'],{encoding:'utf8'}).trim().split('\n')){
+      const archived=execFileSync('git',['show',commit+':xuan-ib/index.html'],{encoding:'utf8'});
+      if(archived.includes('const encryptedRoot =')&&archived.includes('const frame =')){shell=archived;break;}
+    }
+    assert.ok(shell,'the archived encrypted loader must remain available for verification');
+  }
   const prefix = shell.slice(shell.indexOf('const encryptedRoot ='), shell.indexOf('const frame ='));
   let imported = false; const root = {getAttribute: () => 'v1', hidden: false}, old = {hidden: false};
   const run = query => vm.runInNewContext(`(function(){${prefix.replace(/import\("[^\"]+"\)/, 'loadModule()')} return 'history';})()`, {
@@ -610,4 +621,15 @@ test('independent proof evidence is immutable and exact JSON refuses duplicate k
   const f=await independentFixture(t);assert.ok(Object.isFrozen(f.proof));assert.ok(Object.isFrozen(f.proof.evidence));assert.throws(()=>{f.proof.evidence.modelSha256='0'.repeat(64);});
   const bytes=new TextEncoder().encode('{"schema":"one","schema":"two"}');await assert.rejects(f.snapshot.verifyOriginal({...f.args,originalBytes:bytes,sourceSha256:await f.snapshot.digestBytes(bytes)}));
   const p=await f.snapshot.authenticate(f.packet,f.proof,f.manager,f.options);for(const watermark of [{version:1,id:'0'.repeat(64),sourceDate:'invalid',capturedAt:'bad'},{version:-1,id:'0'.repeat(64),sourceDate:'2000-01-01',capturedAt:'2000-01-01T00:00:00.000Z'}])await assert.rejects(f.snapshot.verify(p,f.manager,{watermark,now:f.now}));
+});
+
+
+test('retired independent action entry is inert and links to the manager app without forwarding secrets',()=>{
+  const page=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url),'utf8');
+  if(!page.includes('name="xuan-action-status" content="retired"')){assert.ok(page.includes('const encryptedRoot ='),'only the pre-retirement audited loader is compatible');return;}
+  assert.match(page,/<h1>独立行动版已停止<\/h1>/);assert.match(page,/历史文件保留归档/);
+  assert.doesNotMatch(page,/<(?:script|iframe|form|input)\b/i);assert.doesNotMatch(page,/http-equiv=["']refresh|action\.enc\.json|localStorage|sessionStorage|fetch\(|location\./i);
+  assert.match(page,/default-src 'none'/);assert.match(page,/base-uri 'none'/);
+  const links=[...page.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(x=>x[1]);assert.deepEqual(links,['../']);assert.ok(links.every(x=>!/[?#:]/.test(x)));
+  for(const name of ['latest.html','latest.meta.json','action.enc.json'])assert.ok(fs.existsSync(new URL('../xuan-ib/'+name,import.meta.url)),'historical file preserved: '+name);
 });
