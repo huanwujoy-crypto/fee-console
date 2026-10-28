@@ -240,7 +240,8 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
       <div id="ratioSnapshotReview" hidden><p id="ratioSnapshotSummary" style="overflow-wrap:anywhere"></p>
         <label><input id="ratioSnapshotConsent" type="checkbox">我确认此版本、指纹、来源与目标，同意本次在内存派生比例认证子密钥，并仅投递上述独立加密文件。</label>
         <button class="btn" id="ratioSnapshotConfirm" type="button" disabled>确认本次独立投递</button><button class="btn" id="ratioSnapshotCancel" type="button">取消</button>
-      </div><button class="btn" id="ratioSnapshotCheck" type="button">只读核对上次投递结果</button><p id="ratioSnapshotStatus" role="status"></p>
+      </div><button class="btn" id="ratioSnapshotCheck" type="button">只读核对上次投递结果</button>
+      <button class="btn" id="ratioSnapshotExport" type="button">下载当前加密快照（供下期衔接）</button><p id="ratioSnapshotStatus" role="status"></p>
     </details>
   </div><div id="ratioContent"></div>
 </section>
@@ -2257,6 +2258,21 @@ async function confirmRatioSnapshot(event){
     _ratioSnapshotUnknown=null;clearRatioSnapshotReview(true);_ratioPreview=null;document.getElementById('ratioSnapshotStatus').textContent='独立加密比例文件已投递并精确回读；原账本和管理费 data/health 未修改。';await renderRatioManagement();return true;
   }catch{if(!dispatched)_ratioSnapshotUnknown=null;document.getElementById('ratioSnapshotStatus').textContent=dispatched?'投递结果待核对，禁止重复投递；仅可点击只读核对结果。':'投递未执行；没有改变原账本。';return false;}
 }
+async function exportCurrentRatioSnapshot(event){
+  if(event?.isTrusted!==true||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioSnapshotWrite||_ratioRecipientWrite||_ratioSnapshotUnknown)return false;
+  const who=ratioIdentity(),epoch=_sourceEpoch,check=()=>{if(who!==ratioIdentity()||epoch!==_sourceEpoch||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioSnapshotWrite||_ratioRecipientWrite||_ratioSnapshotUnknown)throw Error();};
+  try{
+    if(!await verifyRatioCapabilityNow())throw Error();check();
+    const gist=ratioSnapshotGist(await ghApi('/gists/'+cfg(K.gid)));check();
+    const raw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE),registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(raw===null||registered===null)throw Error();
+    const manager=await ratioCore.deriveSnapshotManager(cfg(K.gid),cfg(K.key),cfg(K.tok));check();
+    if(ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error();
+    const value=cfg('feeConsole.ratioSnapshotWatermark.'+manager.recipient.recipientId),watermark=value?JSON.parse(value):null;
+    await ratioSnapshotCore.verify(ratioSnapshotParse(raw),manager,{watermark});check();
+    saveBlob('fee-console-ratio-previous.json',raw,'application/json');
+    document.getElementById('ratioSnapshotStatus').textContent='已下载当前已核验加密快照；不含凭据，没有投递或改变原账本。下期仍需新来源及当次复核。';return true;
+  }catch{document.getElementById('ratioSnapshotStatus').textContent='当前快照或管理人核验未通过，没有下载或投递。';return false;}
+}
 async function checkRatioSnapshotOutcome(event){
   const pending=_ratioSnapshotUnknown;if(event?.isTrusted!==true||!pending||!ratioAuthorized()||pending.who!==ratioIdentity())return false;
   try{if(!await verifyRatioCapabilityNow())throw Error();const back=ratioSnapshotGist(await ghApi('/gists/'+pending.gid));if(pending.who!==ratioIdentity()||ratioSnapshotFile(back,RATIO_SNAPSHOT_FILE)!==pending.raw)throw Error();
@@ -3550,6 +3566,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="ratioSnapshotCancel"){if(e.isTrusted)clearRatioSnapshotReview(true);return;}
   if(T.id==="ratioRecipient"){previewRatioRecipient(e);return;}
   if(T.id==="ratioRecipientConfirm"){registerRatioRecipient(e);return;}
+  if(T.id==="ratioSnapshotExport"){exportCurrentRatioSnapshot(e);return;}
   if(T.id==="ratioRecipientCancel"){if(e.isTrusted)clearRatioRecipientPreview();return;}
   if(T.id==="btnAddFee"){changeDraft(d=>d.fees.push({id:crypto.randomUUID(),date:todayStr(),amount:"",ccy:"USD",fx:"",note:""}));return;}
   if(T.dataset.delfee){changeDraft(d=>{d.fees=d.fees.filter(f=>f.id!==T.dataset.delfee);});return;}
