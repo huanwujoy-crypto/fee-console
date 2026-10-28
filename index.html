@@ -109,6 +109,38 @@ section.pane{display:none} section.pane.on{display:block}
 .card{background:var(--surface-1);border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:12px}
 .card h2{font-size:15px;margin:0 0 4px}
 .card .hint{font-size:12px;color:var(--ink-2);margin:0 0 10px}
+/* ratio-presentation:v1 — display only; the reviewed model/crypto factories stay unchanged. */
+#p-ratio{min-width:0}#p-ratio .card,#p-ratio details,#p-ratio code{min-width:0;overflow-wrap:anywhere}
+#p-ratio p{font-size:12px;color:var(--ink-2);line-height:1.6;margin:6px 0}
+#p-ratio .ratio-intro{padding:12px 14px}#ratioNotice{color:var(--ink-1)!important;font-weight:600}
+.ratio-report-meta{margin:0 2px 12px}.ratio-report-meta p{margin:2px 0!important}
+.ratio-asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.ratio-asset-grid>.kpi{min-width:0;margin:0;padding:10px;background:var(--plane)}
+.ratio-asset-grid .lab{font-size:12px;font-weight:500;color:var(--ink-2);display:block}
+.ratio-asset-pct{font-size:23px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ratio-asset-total{display:block;font-size:11px;color:var(--ink-2);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.ratio-asset-grid [role=meter]{height:5px!important;margin:8px 0 0!important;background:var(--grid)!important;border-radius:4px;overflow:hidden}
+.ratio-asset-grid [role=meter]>span{background:var(--series-1)!important}
+.ratio-exposure-grid,.ratio-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ratio-exposure-grid{margin:12px 0}.ratio-exposure-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--plane)}
+.ratio-exposure-grid h3{font-size:13px;margin:0 0 4px;overflow-wrap:anywhere}
+.ratio-plan-grid>.card{min-width:0;margin-bottom:12px}
+#p-ratio table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin:8px 0}
+#p-ratio th,#p-ratio td{padding:8px 5px;border-bottom:1px solid var(--grid);vertical-align:top;text-align:right;overflow-wrap:anywhere;word-break:normal;white-space:normal}
+#p-ratio th{font-size:10px;font-weight:500;color:var(--ink-2)}#p-ratio td{font-weight:550}
+#p-ratio th:first-child,#p-ratio td:first-child{width:40%;text-align:left;font-weight:500}
+#p-ratio tbody tr:last-child td{border-bottom:0}
+#p-ratio .ratio-holdings th:first-child,#p-ratio .ratio-holdings td:first-child{width:32%}
+.ratio-coverage{border-top:1px solid var(--grid);padding-top:8px}.ratio-coverage-list{list-style:none;margin:0;padding:0}
+.ratio-coverage-list li{font-size:12px;line-height:1.6;color:var(--ink-2);margin:4px 0;overflow-wrap:anywhere}
+#p-ratio .ratio-caveats{border-left:3px solid var(--axis);padding:2px 10px;margin-bottom:12px}
+#p-ratio details{font-size:12px;margin-top:8px}#p-ratio summary{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer;color:var(--ink-2);list-style:none}
+#p-ratio summary::-webkit-details-marker{display:none}#p-ratio summary::before{content:"▸";font-size:11px;color:var(--ink-muted)}#p-ratio details[open]>summary::before{content:"▾"}
+#p-ratio summary:focus-visible,#p-ratio .btn:focus-visible{outline:2px solid var(--series-1);outline-offset:3px}
+.ratio-tools>details+details{border-top:1px solid var(--grid)}#p-ratio .ratio-tools label{display:block;margin:10px 0 4px;font-size:12px;color:var(--ink-2)}
+#p-ratio input[type=checkbox]{width:auto;margin-right:7px}#p-ratio .btn{min-height:44px;max-width:100%;white-space:normal;margin:4px 4px 4px 0}
+@media(max-width:600px){.ratio-asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ratio-exposure-grid,.ratio-plan-grid{grid-template-columns:minmax(0,1fr)}#p-ratio .ratio-tools .btn{width:100%;margin-right:0}}
+@media(max-width:360px){#p-ratio th,#p-ratio td{padding:7px 3px;font-size:11px}#p-ratio th{font-size:10px}.ratio-asset-pct{font-size:21px}}
 .fund-doc-list{display:grid;gap:10px}.fund-doc-list details{border:1px solid var(--border);border-radius:10px;padding:10px}.fund-doc-list summary{cursor:pointer;font-weight:650}.fund-doc-meta{font-size:12px;color:var(--ink-2);margin:4px 0 8px}.fund-doc-body{white-space:pre-wrap;word-break:break-word;font:inherit;font-size:13px;max-height:320px;overflow:auto;background:var(--lockbg);border-radius:8px;padding:10px}.fund-doc-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:9px}
 .fund-archive-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.fund-archive-head>div{min-width:0}.fund-archive-head .btn{flex:0 0 auto}.fund-role-list{display:grid;gap:7px;margin:10px 0 12px}.fund-role{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-radius:8px;background:var(--lockbg);font-size:12px}.fund-role span{color:var(--ink-2)}.fund-role b{text-align:right;max-width:58%;overflow-wrap:anywhere}.fund-archive-empty{padding:12px 0 2px;color:var(--ink-muted);font-size:13px}
 .fund-print-sheet{display:none}
@@ -216,8 +248,10 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
 </nav>
 
 <section class="pane mgr" id="p-ratio" hidden>
-  <div class="card"><h2>比例管理</h2><p>管理人专用 · Sharesight 来源 · 非实时。十账户资产比例不扩大管理费计费范围。</p>
+  <div class="card ratio-intro"><h2>比例管理</h2><p>管理人专用 · Sharesight 来源 · 非实时。十账户资产比例不扩大管理费计费范围。</p>
     <p id="ratioNotice" role="status">核验管理人身份后读取。</p>
+  </div><div id="ratioContent"></div>
+  <div class="card ratio-tools"><h2>管理人工具</h2>
     <details><summary>管理人接收与本机候选</summary><p>先登记接收公钥，再导入已核对来源生成的管理人密文。投资人只读链接不能解密。</p>
       <button class="btn" id="ratioRecipient" type="button">生成接收公钥登记预览</button>
       <div id="ratioRecipientReview" hidden>
@@ -243,7 +277,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
       </div><button class="btn" id="ratioSnapshotCheck" type="button">只读核对上次投递结果</button>
       <button class="btn" id="ratioSnapshotExport" type="button">下载当前加密快照（供下期衔接）</button><p id="ratioSnapshotStatus" role="status"></p>
     </details>
-  </div><div id="ratioContent"></div>
+  </div>
 </section>
 
 <section class="pane on" id="p-home">
@@ -853,8 +887,12 @@ const incomeDatePolicy=createIncomeDatePolicy();
   const sameEvent=(a,b,sameAccount)=>{if(Math.abs(finite(a.amount)-finite(b.amount))>.005||(String(a.acct||"")===String(b.acct||""))!==sameAccount)return false;const gap=Math.abs(dateMs(a.date)-dateMs(b.date))/DAY_MS;if(!Number.isFinite(gap)||gap>1)return false;const ev=evidence(a.note,b.note);if(ev==="conflict")return false;return sameAccount?(gap>0?ev==="match":true):ev==="match";};
   const pair=(list,flow,pick)=>{let i=list.findIndex(value=>pick(value)&&sameEvent(pick(value),flow,true));if(i<0)i=list.findIndex(value=>pick(value)&&sameEvent(pick(value),flow,false));return i;};
   const effectiveFlows=(econ,normalized)=>{
-    const confirmed=econ.months.flatMap(month=>month.flows),sources=new Set(confirmed.map(f=>f.src).filter(Boolean)),pool=confirmed.filter(f=>f&&!f.src).map(record=>({record,used:false})),kept=[],seen=new Set();
-    for(const flow of normalized.flowsAuto){if(!flow||flow.effective!==true)continue;const automatic={id:flow.id,src:flow.id,date:flow.date,acct:flow.acct,amount:finite(flow.amount),note:flow.desc||"",reason:flow.reason==null?"":flow.reason,automatic:true},key=String(automatic.reason).trim();if(key){if(seen.has(key))continue;seen.add(key);}if(sources.has(flow.id))continue;const index=pair(pool,automatic,value=>value.used?null:value.record);if(index>=0){pool[index].used=true;continue;}if(!key&&pair(kept,automatic,value=>value)>=0)continue;kept.push(automatic);}return confirmed.concat(kept).filter(flow=>flow.date>=normalized.start&&flow.date<=normalized.asOf);
+    const confirmed=econ.months.flatMap(month=>month.flows),sources=new Set(confirmed.map(f=>f.src).filter(Boolean)),pool=confirmed.filter(f=>f&&!f.src).map(record=>({record,used:false})),kept=[],seen=new Set(),seenBusinessKey=new Set();
+    for(const flow of normalized.flowsAuto){if(!flow||flow.effective!==true)continue;const automatic={id:flow.id,src:flow.id,date:flow.date,acct:flow.acct,amount:finite(flow.amount),note:flow.desc||"",reason:flow.reason==null?"":flow.reason,automatic:true},key=String(automatic.reason).trim();
+      // Same source-identity rule as the writer: unrelated cash never covers
+      // a keyed in-kind event. Commitment verification below remains strict.
+      if(flow.businessKey){if(seenBusinessKey.has(flow.businessKey))continue;seenBusinessKey.add(flow.businessKey);if(!sources.has(flow.id))kept.push(automatic);continue;}
+      if(key){if(seen.has(key))continue;seen.add(key);}if(sources.has(flow.id))continue;const index=pair(pool,automatic,value=>value.used?null:value.record);if(index>=0){pool[index].used=true;continue;}if(!key&&pair(kept,automatic,value=>value)>=0)continue;kept.push(automatic);}return confirmed.concat(kept).filter(flow=>flow.date>=normalized.start&&flow.date<=normalized.asOf);
   };
   const validateStructure=async receipt=>{
     const legacy=receipt?.schema===LEGACY_SCHEMA;
@@ -1052,19 +1090,32 @@ function createFundInvestorCore() {
     if (total !== BigInt(profile.initialShares)) return invalid("投资人股份合计与发行股份不符");
     const subscriptions = profile.subscriptions || [];
     if (!Array.isArray(subscriptions) || subscriptions.length > 12) return invalid("增资事件资料待核对");
-    const eventIds = new Set(), sourceRefs = new Set(), eventsById = new Map(); let previousDate = "";
+    const eventIds = new Set(), sourceRefs = new Set(), sourceTransferKeys = new Set(), eventsById = new Map(); let previousDate = "";
     for (const event of subscriptions) {
-      if (!exact(event, EVENT_KEYS) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
+      const close = Object.hasOwn(event || {}, "inKindClose");
+      const binding=event?.inKindClose?.sourceBinding;
+      if(object(event?.inKindClose)&&Object.hasOwn(event.inKindClose,'sourceBinding')&&(!exact(binding,['sourcePortfolioId','destinationPortfolioId','sourceHoldingIds'])
+        ||![binding.sourcePortfolioId,binding.destinationPortfolioId].every(v=>integer(v)&&v>0)
+        ||binding.sourcePortfolioId===binding.destinationPortfolioId||!Array.isArray(binding.sourceHoldingIds)
+        ||binding.sourceHoldingIds.length!==event.inKindClose.sourceKeys?.length
+        ||binding.sourceHoldingIds.some(v=>!integer(v)||v<=0)))return invalid("非现金转仓来源身份待核对");
+      if (close && (!exact(event.inKindClose, ["sourceKeys",...(object(event.inKindClose)&&Object.hasOwn(event.inKindClose,'sourceBinding')?['sourceBinding']:[])]) || !Array.isArray(event.inKindClose.sourceKeys)
+        || event.inKindClose.sourceKeys.length < 1 || event.inKindClose.sourceKeys.length > 7
+        || new Set(event.inKindClose.sourceKeys).size !== event.inKindClose.sourceKeys.length
+        || event.inKindClose.sourceKeys.some(key => typeof key !== "string" || !/^sharesight:[1-9]\d{0,14}->[1-9]\d{0,14};holding:[1-9]\d{0,14}$/.test(key)
+          || sourceTransferKeys.has(key)))) return invalid("非现金转仓认购来源待核对");
+      if (!exact(event, [...EVENT_KEYS, ...(close ? ["inKindClose"] : [])]) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
         || !date(event.date) || event.date <= profile.inceptionDate || event.date <= previousDate
         || !ids.has(event.investorId) || !integer(event.grossCents) || event.grossCents <= 0
         || !integer(event.feeCents) || event.feeCents < 0 || event.feeCents >= event.grossCents
         || !integer(event.netCents) || event.netCents !== event.grossCents - event.feeCents
-        || !date(event.priceDate) || event.priceDate >= event.date
+        || !date(event.priceDate) || (close ? event.priceDate !== event.date || event.feeCents !== 0 : event.priceDate >= event.date)
         || !integer(event.priceTotalCents) || event.priceTotalCents <= 0
         || !integer(event.issuedShares) || event.issuedShares <= 0
         || typeof event.sourceRef !== "string" || !/^[A-Za-z0-9:._-]{8,120}$/.test(event.sourceRef)
         || sourceRefs.has(event.sourceRef)) return invalid("增资事件资料待核对");
       eventIds.add(event.id); sourceRefs.add(event.sourceRef); eventsById.set(event.id, event); previousDate = event.date;
+      if (close) for (const key of event.inKindClose.sourceKeys) sourceTransferKeys.add(key);
       total += BigInt(event.issuedShares);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) return invalid("增资后发行份额超出安全范围");
     }
@@ -1154,7 +1205,8 @@ function createFundInvestorCore() {
       previousTransferDate = transfer.date;
     }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
-      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
+      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event,
+        ...(event.inKindClose ? {inKindClose:{sourceKeys:[...event.inKindClose.sourceKeys],...(event.inKindClose.sourceBinding?{sourceBinding:{...event.inKindClose.sourceBinding,sourceHoldingIds:[...event.inKindClose.sourceBinding.sourceHoldingIds]}}:{})}} : {}) })) } : {}),
       ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}),
       ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}),
       ...(Object.hasOwn(profile, "shareTransferPriceCorrections") ? { shareTransferPriceCorrections: priceCorrections.map(correction => ({ ...correction })) } : {}) }, reason: null, effectiveTransfers: validatedTransfers.map(transfer => ({ ...transfer })) };
@@ -1236,15 +1288,31 @@ function createFundInvestorCore() {
       const pricePoint = daily.find(point => point.date === event.priceDate);
       const flows = receiptFlows.filter(flow => flow.date === event.date);
       const candidates = candidatesByDate.get(event.date) || [];
-      const matchingCandidate = candidates.length === 0 || candidates.length === 1 &&
+      const close = Object.hasOwn(event, "inKindClose"), sourceKeys = event.inKindClose?.sourceKeys || [];
+      const closeCandidates = close && candidates.length === sourceKeys.length && candidates.every(({field,event:flow}) =>
+        field === "flowsAuto" && flow.effective === true && flow.acct === "webull"
+        && typeof flow.amount === "number" && Number.isFinite(flow.amount) && flow.amount > 0
+        && Number.isSafeInteger(Math.round(flow.amount*100)) && Math.abs(flow.amount*100-Math.round(flow.amount*100))<1e-5
+        && flow.businessKey === `sharesight:${flow.sourceTradeId}->${flow.tradeId};holding:${flow.holdingId}`
+        && sourceKeys.includes(flow.businessKey) && flow.reason === `verified external asset transfer ${flow.businessKey}`)
+        && new Set(candidates.map(({event:flow}) => flow.businessKey)).size === sourceKeys.length;
+      const amountSignature = values => values.slice().sort((a,b)=>a-b).join(",");
+      const matchingCloseFlows = closeCandidates && flows.length === sourceKeys.length && flows.every(flow=>flow.amountCents>0)
+        && amountSignature(flows.map(flow=>flow.amountCents)) === amountSignature(candidates.map(({event:flow})=>Math.round(flow.amount*100)))
+        && flows.reduce((sum,flow)=>sum+flow.amountCents,0) === event.netCents;
+      const matchingCandidate = close ? matchingCloseFlows : candidates.length === 0 || candidates.length === 1 &&
         candidates[0].field === "flowsAuto" && candidates[0].event.acct === "webull" &&
         Number.isFinite(Number(candidates[0].event.amount)) &&
         Math.round(Number(candidates[0].event.amount) * 100) === event.netCents;
-      const expectedShares = pricePoint && pricePoint.totalCents === event.priceTotalCents
+      // End-of-day in-kind subscriptions use the *same* closing composite minus
+      // their verified incoming market value. Existing holders retain that day's
+      // gain; history/cost is never used as contribution or issue-price basis.
+      const pricingTotal = pricePoint ? pricePoint.totalCents - (close ? event.netCents : 0) : null;
+      const expectedShares = pricePoint && pricingTotal > 0 && pricingTotal === event.priceTotalCents
         ? Number((BigInt(event.netCents) * outstanding * 2n + BigInt(event.priceTotalCents)) /
           (2n * BigInt(event.priceTotalCents))) : null;
-      if (!pricePoint || pricePoint.date >= event.date || pricePoint.totalCents !== event.priceTotalCents
-        || flows.length !== 1 || flows[0].amountCents !== event.netCents
+      if (!pricePoint || (close ? pricePoint.date !== event.date : pricePoint.date >= event.date) || pricingTotal !== event.priceTotalCents
+        || !(close ? matchingCloseFlows : flows.length === 1 && flows[0].amountCents === event.netCents)
         || !matchingCandidate || expectedShares !== event.issuedShares) gate(event.date);
       else accepted.set(event.date, event);
       outstanding += BigInt(event.issuedShares);
@@ -1560,7 +1628,7 @@ async function writeRemoteFundBundle(profile,library,expectedRaw=currentRemoteFu
       olderCorrections=previous.profile.subscriptionCorrections||[],newerCorrections=profileCheck.profile.subscriptionCorrections||[],
       olderTransfers=previous.profile.shareTransfers||[],newerTransfers=profileCheck.profile.shareTransfers||[],
       olderPriceCorrections=previous.profile.shareTransferPriceCorrections||[],newerPriceCorrections=profileCheck.profile.shareTransferPriceCorrections||[];
-    if(older.length&&(
+    if((older.length||newer.length)&&(
       previous.profile.inceptionDate!==profileCheck.profile.inceptionDate||
       previous.profile.initialShares!==profileCheck.profile.initialShares||
       previous.profile.investors.some((i,index)=>i.id!==profileCheck.profile.investors[index].id||i.shares!==profileCheck.profile.investors[index].shares)||
@@ -2080,6 +2148,60 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
   }
   return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
 }
+/* ratio-presentation:v1 */
+function styleRatioReport(root){
+  const report=root?.querySelector?.('.ratio-report');
+  if(!report||report.classList.contains('ratio-styled'))return;
+  const overview=report.querySelector('.ratio-asset-overview'),exposure=report.querySelector('.sharesight-exposure');
+  if(!overview||!exposure)return;
+  const make=(tag,cls)=>{const el=document.createElement(tag);if(cls)el.className=cls;return el;};
+  const direct=(el,tag)=>Array.from(el.children).filter(n=>n.tagName===tag);
+  const meta=make('header','ratio-report-meta');
+  for(const n of Array.from(report.children)){if(n===overview)break;if(n.tagName==='P')meta.append(n);}
+  report.insertBefore(meta,overview);
+  const assets=make('div','ratio-asset-grid');
+  for(const item of direct(overview,'DIV')){
+    item.classList.add('kpi');
+    const label=item.querySelector('strong'),value=label?.nextSibling;
+    if(label)label.classList.add('lab');
+    // Split only existing display text; never calculate or round financial values here.
+    if(value?.nodeType===3){
+      const parts=value.textContent.split(' · ');
+      if(parts.length===3&&parts[0]===''){
+        const pct=make('span','ratio-asset-pct'),amount=make('span','ratio-asset-total');
+        pct.textContent=parts[2];amount.textContent=parts[1];value.replaceWith(pct,amount);
+      }
+    }
+    assets.append(item);
+  }
+  overview.insertBefore(assets,overview.lastElementChild);
+  // Keep source dates and all twenty dual-denominator rows together immediately after the overview.
+  overview.after(exposure);
+  const groups=make('div','ratio-exposure-grid');
+  for(const group of direct(exposure,'SECTION'))groups.append(group);
+  const coverage=direct(exposure,'DETAILS')[0];
+  exposure.insertBefore(groups,coverage||null);
+  if(coverage){
+    const visible=make('div','ratio-coverage'),list=make('ul','ratio-coverage-list');
+    // Residual, source limitations and reconciliation status remain visible; only method notes fold.
+    Array.from(coverage.querySelectorAll('li')).forEach((n,i)=>{if(i===1||i>=3)list.append(n);});
+    visible.append(list);exposure.insertBefore(visible,coverage);
+  }
+  const sections=direct(report,'SECTION'),find=title=>sections.find(s=>s.querySelector('h2')?.textContent===title);
+  const plan=find('本轮补仓'),cash=find('现金优先补仓参考'),holdings=find('IB-HK 完整持仓');
+  if(plan&&cash){const grid=make('div','ratio-plan-grid');report.insertBefore(grid,plan);grid.append(plan,cash);}
+  if(holdings)holdings.classList.add('ratio-holdings');
+  const notes=direct(report,'P');
+  if(notes.length){const source=make('section','card ratio-source-note'),title=make('h2');title.textContent='原时点来源记录';report.insertBefore(source,notes[0]);source.append(title,...notes);}
+  const scope=direct(report,'DETAILS')[0];
+  if(scope){
+    const warnings=make('div','ratio-caveats'),paragraphs=direct(scope,'P');
+    paragraphs.forEach((n,i)=>{if(i!==2)warnings.append(n);});
+    report.insertBefore(warnings,scope);
+  }
+  report.classList.add('ratio-styled');
+}
+/* ratio-presentation:v1:end */
 const ratioExposureCore=createRankedExposureCore(),ratioCore=createFeeRatioCore(ratioExposureCore);
 const RATIO_RECIPIENT_FILE="fee-console-ratio-recipient.json";
 const RATIO_SESSION_MS=10*60*1000;
@@ -2128,6 +2250,7 @@ async function renderRatioManagement(){
   },onRender(fragment,model,proof){
     if(!_ratioPreview){if(!store||!proof)throw Error('RATIO_MANAGER_REFUSED');store.setItem(proof.key,JSON.stringify(proof.value));}
     document.getElementById("ratioContent").innerHTML=fragment;
+    if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
   }});
   const ok=await _ratioController.show(envelope,async()=>{if(!await verifyRatioCapabilityNow())throw Error("RATIO_MANAGER_REFUSED");return ratioCore.deriveManager(cfg(K.gid),cfg(K.key),cfg(K.tok));});
   if(ticket!==_ratioTicket||!ratioAuthorized()||who!==ratioIdentity())return;
@@ -2209,6 +2332,7 @@ async function renderIndependentRatio(){
     try{watermark=cfg(key)?JSON.parse(cfg(key)):null;}catch{throw Error();}
     const result=await ratioSnapshotCore.verify(packet,manager,{watermark});check();if(!store)throw Error();
     store.setItem(key,JSON.stringify(result.watermark));document.getElementById('ratioContent').innerHTML=ratioCore.render(result.model);
+    if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
     notice.textContent='管理人独立比例快照 · 来源截至 '+result.source.asOf+' · '+(result.stale?'待更新（显示已核验历史快照）':'已核验')+' · 非实时；管理费报告日期独立，未改原账本。';
     clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开比例管理核验。';},RATIO_SESSION_MS);return true;
   }catch{if(ticket===_ratioTicket){document.getElementById('ratioContent').replaceChildren();notice.textContent='独立比例文件或管理人核验失败，未显示旧内容。';}return true;}
@@ -2238,7 +2362,9 @@ async function previewRatioSnapshot(event){
     _ratioSnapshotReview={ticket,who,gid,createdAt,packet,proof,prior,priorRaw,revision:gist.history[0].version,profileSha256,summary};
     document.getElementById('ratioSnapshotSummary').textContent=summary;document.getElementById('ratioSnapshotReview').hidden=false;document.getElementById('ratioSnapshotConfirm').disabled=false;
     clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>clearRatioManagement(),RATIO_SESSION_MS);
-    document.getElementById('ratioContent').innerHTML=ratioCore.render(model);document.getElementById('ratioNotice').textContent='本机独立比例候选预览，尚未投递。原件完整关联复核通过。';return true;
+    document.getElementById('ratioContent').innerHTML=ratioCore.render(model);
+    if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
+    document.getElementById('ratioNotice').textContent='本机独立比例候选预览，尚未投递。原件完整关联复核通过。';return true;
   }catch{if(ticket===_ratioSnapshotGeneration){clearRatioSnapshotReview();document.getElementById('ratioSnapshotStatus').textContent='预览未通过；检查原件、转换文件、版本及原证据时效。没有写入。';}return false;}
 }
 async function confirmRatioSnapshot(event){
@@ -2429,10 +2555,13 @@ function effectiveFlows(){
   const confirmed=DB.months.flatMap(m=>m.flows||[]);
   const confirmedSrc=new Set(confirmed.map(f=>f.src).filter(Boolean));
   const pool=confirmed.filter(f=>f&&!f.src).map(f=>({rec:f,used:false}));
-  const kept=[],seenKey=new Set();
+  const kept=[],seenKey=new Set(),seenBusinessKey=new Set();
   for(const f of (DAILY.flowsAuto||[])){
     if(!f||f.effective!==true)continue;
     const a={id:f.id,src:f.id,date:f.date,acct:f.acct,amount:num(f.amount),note:f.desc||"",reason:f.reason==null?"":f.reason,automatic:true};
+    // Exact in-kind identity cannot match an unrelated manual cash entry.
+    // Only confirmed src or the same business key covers a keyed event.
+    if(f.businessKey){if(seenBusinessKey.has(f.businessKey))continue;seenBusinessKey.add(f.businessKey);if(!confirmedSrc.has(f.id))kept.push(a);continue;}
     const rk=String(a.reason).trim();
     if(rk){if(seenKey.has(rk))continue;seenKey.add(rk);}
     if(confirmedSrc.has(f.id))continue;
@@ -2463,13 +2592,14 @@ function createFeeReportConsumer(){
     const pending={state:'pending',kindLabel:'报告类型待更新',message:'报告信息尚未完成核验',nonRealtime:true};
     try{
       if(feeView?.state!=='verified'||!exact(metadata,'schema,plan,generatedAt,nextScheduledAt,feeReceiptId,reportId')||metadata.schema!=='fee-console.report-publication.v1'||metadata.feeReceiptId!==receipt?.receiptId)return pending;
-      const p=metadata.plan,labels={weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报（合并）'};
-      if(!exact(p,'schema,kind,periodFrom,accountingThrough,priceThrough,scheduledAt,monthlyCutoffs')||p.schema!=='fee-console.report-plan.v1'||!labels[p.kind]||![p.periodFrom,p.accountingThrough,p.priceThrough].every(date)||p.periodFrom>p.accountingThrough||p.priceThrough>p.accountingThrough||p.accountingThrough!==feeView.asOf||!Array.isArray(p.monthlyCutoffs)||p.monthlyCutoffs.some(d=>!date(d)||d!==p.accountingThrough))return pending;
+      const p=metadata.plan,labels={weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报（合并）',daily:'日报','daily-monthly':'日报／月末归档（合并）'},daily=p?.schema==='fee-console.report-plan.v2';
+      if(!exact(p,'schema,kind,periodFrom,accountingThrough,priceThrough,scheduledAt,monthlyCutoffs'+(daily?',markets':''))||!(daily?['daily','daily-monthly'].includes(p.kind):p.schema==='fee-console.report-plan.v1'&&['weekly','monthly','weekly-monthly'].includes(p.kind))||!labels[p.kind]||![p.periodFrom,p.accountingThrough,p.priceThrough].every(date)||p.periodFrom>p.accountingThrough||p.priceThrough>p.accountingThrough||p.accountingThrough!==feeView.asOf||!Array.isArray(p.monthlyCutoffs)||new Set(p.monthlyCutoffs).size!==p.monthlyCutoffs.length||p.monthlyCutoffs.some(d=>!date(d)||(daily?d<p.periodFrom||d>p.accountingThrough||new Date(Date.parse(d+'T00:00Z')+86400000).getUTCDate()!==1:d!==p.accountingThrough)))return pending;
+      if(daily&&(!Array.isArray(p.markets)||!p.markets.length||p.markets.length>16||new Set(p.markets).size!==p.markets.length||p.markets.some(m=>typeof m!=='string'||!['NYSE','NASDAQ','LSE','SIX','EURONEXT_AMSTERDAM','EURONEXT_BRUSSELS','EURONEXT_PARIS','EURONEXT_LISBON','EURONEXT_DUBLIN','EURONEXT_MILAN','EURONEXT_OSLO'].includes(m))))return pending;
       const generated=Date.parse(metadata.generatedAt),scheduled=Date.parse(p.scheduledAt),next=Date.parse(metadata.nextScheduledAt),clock=new Date(now).getTime();
       if(![generated,scheduled,next,clock].every(Number.isFinite)||generated<scheduled||generated>clock+300000||next<=scheduled)return pending;
       const {reportId,...body}=metadata;
       if(!/^[a-f0-9]{64}$/.test(reportId)||await digest(body)!==reportId)return pending;
-      return {state:clock>=next?'pending-update':'updated',kindLabel:labels[p.kind],periodFrom:p.periodFrom,accountingThrough:p.accountingThrough,priceThrough:p.priceThrough,generatedAt:metadata.generatedAt,nextScheduledAt:metadata.nextScheduledAt,nonRealtime:true};
+      return {state:clock>=next?'pending-update':'updated',kindLabel:labels[p.kind],periodFrom:p.periodFrom,accountingThrough:p.accountingThrough,priceThrough:p.priceThrough,generatedAt:metadata.generatedAt,nextScheduledAt:metadata.nextScheduledAt,nonRealtime:true,...(daily?{priceLabel:'SPY／QQQ行情截至'}:{})};
     }catch{return pending;}
   }
   function snapshotPoints(points){
@@ -2502,7 +2632,7 @@ function renderReportPublication(view){
   const box=document.getElementById("reportPublicationBox");if(!box)return;box.hidden=false;
   if(view.state==="pending"){box.innerHTML=`<b>报告类型待更新</b><div class="small">报告信息尚未完成核验 · 非实时。现有收益和费用仍以已核验计算回执为准。</div>`;return;}
   const generated=new Intl.DateTimeFormat("zh-CN",{timeZone:"Asia/Hong_Kong",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).format(new Date(view.generatedAt));
-  box.innerHTML=`<b>${esc(view.kindLabel)}</b> <span class="badge ${view.state==="updated"?"ok":"est"}">${view.state==="updated"?"已更新":"待同步／待更新"}</span><div class="small">报告期间 ${esc(view.periodFrom)} → ${esc(view.accountingThrough)}<br>股票估值截至 ${esc(view.priceThrough)} · 账务截至 ${esc(view.accountingThrough)}<br>生成 ${esc(generated)}（香港时间） · 非实时</div>`;
+  box.innerHTML=`<b>${esc(view.kindLabel)}</b> <span class="badge ${view.state==="updated"?"ok":"est"}">${view.state==="updated"?"已更新":"待同步／待更新"}</span><div class="small">报告期间 ${esc(view.periodFrom)} → ${esc(view.accountingThrough)}<br>${esc(view.priceLabel||"股票估值截至")} ${esc(view.priceThrough)} · 账务截至 ${esc(view.accountingThrough)}<br>生成 ${esc(generated)}（香港时间） · 非实时</div>`;
 }
 /* ib-manager-return-consumer:start */
 function createIbManagerReturnConsumer() {
