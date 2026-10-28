@@ -5,7 +5,7 @@
 
 import crypto from "node:crypto";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
-import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof} from './fee-sharesight-transfers.mjs';
+import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof,validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
 
 const API = "https://api.sharesight.com";
 const TOKEN_URL = `${API}/oauth2/token`;
@@ -138,7 +138,7 @@ export function parseSourceJson(text) {
   };
   const retainPayload = (payload, rawPayload) => {
     retainRows(object(payload) ? payload.trades : payload, object(rawPayload) ? rawPayload.trades : rawPayload,
-      ['quantity', 'balance', 'balance_in_portfolio_currency']);
+      ['quantity', 'price', 'value', 'balance', 'balance_in_portfolio_currency']);
     if (object(payload)) retainRows(payload.cash_accounts, rawPayload.cash_accounts,
       ['balance', 'balance_in_portfolio_currency']);
     if (object(payload)) retainRows(payload.cash_account_transactions, rawPayload.cash_account_transactions,
@@ -798,8 +798,10 @@ class FixedHttp {
 }
 
 export class SharesightCloudReader {
-  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null } = {}) {
+  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null,managedTransferIdentities=null } = {}) {
     if(typeof reconcileInKind!=='boolean')fail('CONFIG');this.reconcileInKind=reconcileInKind;
+    this.managedTransferIdentities=managedTransferIdentities==null?null:structuredClone(validateManagedTransferIdentities(managedTransferIdentities));
+    if(this.managedTransferIdentities&&!reconcileInKind)fail('CONFIG');
     this.incomeDateEvidence=incomeDateEvidence;
     if (![clientId, clientSecret].every(value => typeof value === "string" && value.length >= 1 && value.length <= 8192
         && !/[\r\n\0]/.test(value))) fail("CREDENTIALS");
@@ -877,7 +879,8 @@ export class SharesightCloudReader {
         ...(holdingHistory ? { holdingHistory } : {}), ...(terminalPerformance ? { terminalPerformance } : {}) };
     }
     if(this.reconcileInKind){
-      const needed=Object.entries(raw).filter(([,p])=>managedTransferCandidates(p).length);let peer=null,peerPortfolio=null;
+      const identitiesFor=account=>this.managedTransferIdentities?.date===targetDate&&this.managedTransferIdentities.account===account?this.managedTransferIdentities:null;
+      const needed=Object.entries(raw).filter(([account,p])=>managedTransferCandidates(p,identitiesFor(account)).length);let peer=null,peerPortfolio=null;
       if(needed.length){
         const matches=listed.filter(p=>p.name==='IB-HK'&&p.currency_code==='USD');if(matches.length!==1)fail('NONCASH_PEER_REQUIRED');this.http.registerIbPeer(matches[0]);peerPortfolio={name:'IB-HK',id:matches[0].id};
         const base=`${API}/api/v3/portfolios/${peerPortfolio.id}`,query=d=>`consolidated=false&end_date=${d}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${d}`;
@@ -885,7 +888,7 @@ export class SharesightCloudReader {
         for(const c of rows(cashAccounts,'cash_accounts')){if(c.portfolio_id!==peerPortfolio.id)fail('CASH_IDENTITY');const cashId=id(c.id);cashTransactions[cashId]=await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`,token);}
         peer={performance,previousPerformance,trades,cashTransactions};
       }
-      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate});
+      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate,identifiedTransfers:identitiesFor(account)});
     }
     return raw;
   }

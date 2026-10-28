@@ -483,7 +483,18 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
       if (businessKey && effective) {
         // De-duplicate by the business event even if an older producer chose a
         // different record id.  Distinct complete keys remain distinct events.
-        if (auto.some(f => f && f.businessKey === businessKey)) continue;
+        const existing = auto.filter(f => f && f.businessKey === businessKey);
+        if (existing.length) {
+          const previous = existing[0];
+          if (existing.length !== 1 || previous.effective !== true
+              || ["date", "acct", "sourceTradeId", "tradeId", "holdingId", "reason"]
+                .some(field => previous[field] !== record[field])
+              || !Number.isFinite(Number(previous.amount))
+              || Number(previous.amount) !== Number(record.amount)) {
+            errors.push(`flow ${raw.date} ${raw.acct}: immutable in-kind event conflicts with its persisted economics; repair required before writing`);
+          }
+          continue;
+        }
 
         // Legacy verified rows did not persist their immutable source ids.  A
         // same-tuple match is therefore ambiguous: fail closed rather than add

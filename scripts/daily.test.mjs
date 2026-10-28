@@ -982,6 +982,23 @@ test("a verified in-kind transfer is stored as an effective flow", () => {
   assert.equal(r.unresolved.length, 0);
 });
 
+test("Astra: a persisted in-kind key is idempotent only with identical economics and exact source IDs", () => {
+  const raw={date:"2026-08-20",acct:"webull",amount:200,sourceTradeId:201,tradeId:301,holdingId:401,
+    holdingDelta:2,sourceDate:"2026-08-20",destinationDate:"2026-08-20",sourceInstrument:"SYN",destinationInstrument:"SYN",
+    sourceQuantity:2,destinationQuantity:2,evidence:"external_asset_transfer"};
+  const initial=reconcileFlows([],[],[raw]);assert.deepEqual(initial.errors,[]);assert.equal(initial.added,1);
+  const replay=reconcileFlows(initial.auto,[],[{...raw,id:"rewritten-prompt-id",desc:"new description"}]);
+  assert.deepEqual(replay.errors,[]);assert.equal(replay.added,0);assert.deepEqual(replay.auto,initial.auto);
+  for(const changed of [{...raw,amount:210},{...raw,date:"2026-08-21",sourceDate:"2026-08-21",destinationDate:"2026-08-21"},{...raw,acct:"schwab"}]){
+    const result=reconcileFlows(initial.auto,[],[changed]);
+    assert.match(result.errors.join(" "),/persisted economics; repair required/);assert.equal(result.added,0);assert.deepEqual(result.auto,initial.auto);
+  }
+  for(const field of ["sourceTradeId","tradeId","holdingId"]){
+    const changed=initial.auto.map(f=>({...f,[field]:f[field]+1})),result=reconcileFlows(changed,[],[raw]);
+    assert.match(result.errors.join(" "),/persisted economics; repair required/);assert.deepEqual(result.auto,changed);
+  }
+});
+
 test("an in-kind transfer has one immutable identity across rewritten prompts", () => {
   const base = {
     date: "2026-08-20", acct: "webull", amount: 387550.8,

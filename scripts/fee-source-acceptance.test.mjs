@@ -4,6 +4,11 @@ import {buildManagedTransferProof,consumeManagedTransferProof} from './fee-share
 import {captureSourceAcceptance,acceptanceTransport,verifySourceAcceptanceMain} from './fee-source-acceptance.mjs';
 import {classifyFlow,reconcileFlows} from './daily-core.mjs';
 import {reportAddDays} from './fee-report-period.mjs';
+import {reportDate,reportWindowDates} from './fee-report-period.mjs';
+import {expectedTargetDate} from './fee-cloud-source.mjs';
+import {sourceAcceptanceFailure} from './fee-source-acceptance.mjs';
+import {BoundedJsonError} from './fee-http-json.mjs';
+import vm from 'node:vm';
 const D='2026-10-27',wire=v=>parseSourceJson(JSON.stringify(v)),instrument={id:99,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
 function transferFixture(){
  const portfolio={id:1,name:'Webull'},peerPortfolio={id:2,name:'IB-HK'},holding=(id,quantity,value,p)=>({id,quantity,value,instrument,instrument_currency:{code:'USD'},valid_position:true,portfolio:p});
@@ -47,3 +52,89 @@ test('partial pages, wrong scope, unstable source and raw errors produce fixed i
 test('source acceptance transport blocks all non-GET source actions, non-provider origins and excess grant/call budgets',async()=>{let calls=0;const x=acceptanceTransport({fetchImpl:async()=>{calls++;return new Response('{}');}});await assert.rejects(x.fetch('https://evil.invalid/api/v2/portfolios.json',{method:'GET'}));await assert.rejects(x.fetch('https://api.sharesight.com/api/v2/portfolios.json',{method:'POST'}));for(let i=0;i<10;i++)await x.fetch('https://api.sharesight.com/oauth2/token',{method:'POST'});await assert.rejects(x.fetch('https://api.sharesight.com/oauth2/token',{method:'POST'}),/CALL_BUDGET/);assert.equal(calls,10);});
 
 test('source validation checks exact public main and verified owner commit twice, never loads credentials or logs',async()=>{const head='a'.repeat(40);for(const mode of ['valid','moved','unsigned','wrong-owner']){let reads=0;const fetchImpl=async(url,init)=>{assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,undefined);let value;if(url.endsWith('/git/ref/heads/main'))value={object:{sha:mode==='moved'&&++reads>1?'b'.repeat(40):head}};else{assert.ok(url.endsWith('/commits/'+head));value={sha:head,author:{id:mode==='wrong-owner'?1:283054367},commit:{verification:{verified:mode!=='unsigned'}}};}const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};if(mode==='valid')await verifySourceAcceptanceMain(head,{fetchImpl});else await assert.rejects(verifySourceAcceptanceMain(head,{fetchImpl}),/CODE_CHANGED/);}});
+
+// Exercise the actual private CLI body with only external IO replaced. The
+// parsed arguments, environment, Git/date/main gates and call order are product
+// code; this fixture cannot acquire credentials, call Sharesight or write files.
+const cliSource=fs.readFileSync(new URL('./fee-source-acceptance.mjs',import.meta.url),'utf8');
+const cliBody=cliSource.slice(cliSource.indexOf('async function main(){'),cliSource.indexOf('\nif(process.argv[1]&&'));
+const cliDates=/function dates\(from,to,now\)\{[^\n]+\}/.exec(cliSource)[0];
+const MAIN='a'.repeat(40),CLI_NOW='2026-10-28T04:24:58.321Z';
+const cliArgs=()=>['--check-plan','--expected-main='+MAIN,'--from-date=2026-10-26','--target-date=2026-10-27','--out-dir=/home/runner/work/_temp/fee-source-acceptance'];
+function publicReply(url,value,status=200,headers={}){const r=new Response(typeof value==='string'?value:JSON.stringify(value),{status,headers:{'content-type':'application/json',...headers}});Object.defineProperty(r,'url',{value:url});return r;}
+async function replayCli({args=cliArgs(),env={},execArgv=[],gitHead=MAIN,tracked='',untracked='',gitError=false,now=CLI_NOW,publicMode='valid',captureError=false}={}){
+ const events=[],logs=[],counts={publicGets:0,capture:0};let refs=0;
+ const fetchImpl=async(url,init)=>{
+  counts.publicGets++;assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,undefined);assert.ok(url.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/'));
+  if(publicMode==='network')throw Error('SYNTHETIC_PRIVATE_CANARY');
+  if(publicMode==='timeout')throw new BoundedJsonError('TIMEOUT');
+  if(publicMode==='rate')return publicReply(url,'{}',403,{'x-ratelimit-remaining':'0'});
+  if(publicMode==='forbidden')return publicReply(url,'{}',403);
+  if(publicMode==='json')return publicReply(url,'{"partial":');
+  if(publicMode==='size')return publicReply(url,'{}',200,{'content-length':String(2*1024*1024)});
+  if(url.endsWith('/git/ref/heads/main'))return publicReply(url,{object:{sha:publicMode==='moved'&&++refs>1?'b'.repeat(40):MAIN}});
+  return publicReply(url,{sha:MAIN,author:{id:publicMode==='wrong-owner'?1:283054367},commit:{verification:{verified:publicMode!=='unsigned'}}});
+ };
+ class ClockDate extends Date{constructor(...args){super(...(args.length?args:[now]));}static now(){return Date.parse(now);}}
+ const context={cliStage:'arguments',ROOT:'/synthetic/checkout',process:{argv:['/synthetic/node','/synthetic/checkout/scripts/fee-source-acceptance.mjs',...args],env:{GITHUB_RUN_ATTEMPT:'1',...env},execArgv},Date:ClockDate,
+  reportDate,reportAddDays,reportWindowDates,expectedTargetDate,console:{log:value=>logs.push(value)},fail:code=>{throw Error('FEE_SOURCE_ACCEPTANCE_'+code);},
+  execFileSync:(command,argv,options)=>{assert.equal(command,'git');assert.equal(options.cwd,'/synthetic/checkout');const call=argv.join(' ');events.push(call);if(gitError)throw Error('SYNTHETIC_PRIVATE_CANARY');if(call==='rev-parse HEAD')return gitHead;if(call==='diff --name-only HEAD')return tracked;if(call==='ls-files --others --exclude-standard')return untracked;assert.fail('Unexpected Git operation');},
+  verifySourceAcceptanceMain:expected=>{events.push('public-main');return verifySourceAcceptanceMain(expected,{fetchImpl});},
+  captureSourceAcceptance:async()=>{counts.capture++;if(captureError)throw Error('SYNTHETIC_PRIVATE_CANARY');assert.fail('An offline plan must never enter source capture');}};
+ let failure=null;try{await vm.runInNewContext(cliDates+'\n'+cliBody+';main',context)();}catch(error){failure=sourceAcceptanceFailure(error,context.cliStage);}
+ return {failure,events,logs,counts};
+}
+test('actual CLI replays the workflow arguments and clean attempt without source or credential access',async()=>{const r=await replayCli();assert.equal(r.failure,null);assert.deepEqual(r.logs,['SOURCE_ACCEPTANCE_PLAN_READY']);assert.deepEqual(r.events,['rev-parse HEAD','diff --name-only HEAD','ls-files --others --exclude-standard','public-main']);assert.equal(r.counts.publicGets,3);assert.equal(r.counts.capture,0);});
+test('actual CLI preserves argument and every forbidden environment gate before Git or public/source requests',async t=>{
+ for(const name of ['FEE_DATA_KEY','FEE_ECON_GIST_ID','FEE_CLOUD_GITHUB_TOKEN','GH_TOKEN','GITHUB_TOKEN','NODE_OPTIONS','NODE_PATH','LD_PRELOAD','LD_LIBRARY_PATH','DYLD_INSERT_LIBRARIES'])await t.test(name,async()=>{for(const value of ['','SYNTHETIC_PRIVATE_CANARY']){const r=await replayCli({env:{[name]:value}});assert.equal(r.failure.stage,'environment');assert.equal(r.failure.reasonCode,'FEE_SOURCE_ACCEPTANCE_ENVIRONMENT');assert.equal(r.events.length,0);assert.equal(r.counts.capture+r.counts.publicGets,0);assert.ok(!JSON.stringify(r.failure).includes('CANARY'));}});
+ for(const args of [[...cliArgs(),'--check-plan'],[...cliArgs(),'--unexpected=value'],cliArgs().filter(x=>!x.startsWith('--expected-main='))]){const r=await replayCli({args});assert.ok(r.failure);assert.equal(r.events.length,0);assert.equal(r.counts.capture+r.counts.publicGets,0);}
+ const debug=await replayCli({execArgv:['--inspect']});assert.equal(debug.failure.stage,'environment');assert.equal(debug.counts.publicGets+debug.counts.capture,0);
+});
+test('actual CLI identifies rerun, HEAD, tracked/untracked and date branches without weakening refusals',async()=>{
+ for(const [options,stage,code]of [[{env:{GITHUB_RUN_ATTEMPT:'2'}},'attempt','RERUN'],[{gitHead:'b'.repeat(40)},'git-head','CODE_CHANGED'],[{tracked:'scripts/changed.mjs'},'git-tracked','CODE_CHANGED'],[{untracked:'unknown.json'},'git-untracked','CODE_CHANGED'],[{untracked:'gha-creds-nothex.json'},'git-untracked','CODE_CHANGED'],[{gitError:true},'git-head','GIT_CHECK_FAILED'],[{now:'2026-11-01T04:24:58Z'},'dates','DATE']]){const r=await replayCli(options);assert.equal(r.failure.stage,stage);assert.equal(r.failure.reasonCode,'FEE_SOURCE_ACCEPTANCE_'+code);assert.equal(r.counts.publicGets+r.counts.capture,0);assert.equal(r.failure.sourceGets,0);assert.equal(r.failure.oauthGrants,0);}
+ assert.equal((await replayCli({untracked:'gha-creds-a1b2.json'})).failure,null);
+});
+test('actual CLI distinguishes public HTTP/rate/JSON/size/network/timeout and identity failures; no retry or source follows',async()=>{
+ for(const [mode,reason]of [['rate','PUBLIC_RATE_LIMIT'],['forbidden','PUBLIC_HTTP'],['json','PUBLIC_JSON'],['size','PUBLIC_SIZE'],['network','PUBLIC_NETWORK'],['timeout','PUBLIC_TIMEOUT'],['moved','CODE_CHANGED'],['unsigned','CODE_CHANGED'],['wrong-owner','CODE_CHANGED']]){const r=await replayCli({publicMode:mode});assert.equal(r.failure.stage,'public-main');assert.equal(r.failure.reasonCode,'FEE_SOURCE_ACCEPTANCE_'+reason);assert.equal(r.counts.capture,0);assert.equal(r.failure.sourceGets+r.failure.oauthGrants,0);assert.ok(r.counts.publicGets<=3);if(['rate','forbidden'].includes(mode))assert.equal(r.failure.httpStatus,403);if(!['moved','unsigned','wrong-owner'].includes(mode))assert.equal(r.counts.publicGets,1);assert.ok(!JSON.stringify(r.failure).includes('CANARY'));}
+});
+test('finite diagnostics do not invoke getters or serialize values; capture errors never invent zero-call evidence',async()=>{
+ let reads=0;const error={get message(){reads++;return 'SYNTHETIC_PRIVATE_CANARY';},toJSON(){throw Error('Must not serialize');}};const r=sourceAcceptanceFailure(error,'public-main');assert.equal(reads,0);assert.ok(!JSON.stringify(r).includes('CANARY'));assert.equal(r.reasonCode,'FEE_SOURCE_ACCEPTANCE_REFUSED');
+ for(const stage of ['SYNTHETIC_PRIVATE_CANARY',null,{}])assert.equal(sourceAcceptanceFailure(Error('SYNTHETIC_PRIVATE_CANARY'),stage).stage,'unknown');
+ const captured=await replayCli({args:cliArgs().filter(x=>x!=='--check-plan'),captureError:true});assert.equal(captured.failure.stage,'capture');assert.equal(captured.failure.sourceGets,null);assert.equal(captured.failure.oauthGrants,null);assert.equal(captured.failure.publicationReady,false);assert.ok(!JSON.stringify(captured.failure).includes('CANARY'));
+});
+test('metadata-only workflow mode has no financial environment/identity and excludes every financial entry',()=>{
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');const block=name=>{const start=workflow.indexOf('\n  '+name+':\n');assert.ok(start>=0);const rest=workflow.slice(start+1);return rest.slice(0,rest.slice(1).search(/\n  [a-z][a-z-]*:\n/)+1||undefined);};
+ const plan=block('source-plan-check');assert.match(plan,/permissions:\n      contents: read/);assert.doesNotMatch(plan,/\n    environment:|id-token:|google-github-actions\/|secrets\.|source_credentials|fee-data-health|--execute/);assert.match(plan,/--check-plan/);assert.match(plan,/timeout-minutes: 3/);
+ const condition=name=>{const text=block(name),expression=/\n    if: \$\{\{ (.+) \}\}/.exec(text)[1];return inputs=>vm.runInNewContext(expression,{inputs,github:{event_name:'workflow_dispatch',run_attempt:1},vars:{FEE_REPORT_PERIODS_ENABLED:'true',FEE_CLOUD_MODE:'publish'},needs:{period:{outputs:{outcome:'produce'}}}});};
+ for(const source of [false,true])for(const report of [false,true]){const inputs={source_plan_check_only:true,source_acceptance_once:source,run_reviewed_once:report};assert.equal(condition('period')(inputs),false);assert.equal(condition('produce')(inputs),false);assert.equal(condition('source-acceptance')(inputs),false);assert.equal(condition('source-plan-check')(inputs),!source&&!report);}
+ assert.equal(condition('source-acceptance')({source_plan_check_only:false,source_acceptance_once:true,run_reviewed_once:false}),true);
+});
+
+// Local finite in-kind design regression; synthetic data only.
+{
+const {managedTransferCandidates}=await import('./fee-sharesight-transfers.mjs');
+const wire=v=>parseSourceJson(JSON.stringify(v)),D='2026-10-27';
+function fixture(){
+ const portfolio={id:1,name:'Webull'},peerPortfolio={id:2,name:'IB-HK'},instrument={id:99,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
+ const holding=(p,id,q)=>({id,quantity:q,value:q*100,instrument,instrument_currency:{code:'USD'},valid_position:true,portfolio:p});
+ const report=(p,d,h,c)=>wire({report:{portfolio_id:p.id,start_date:d,end_date:d,include_sales:false,portfolio_tz_name:'America/New_York',currency:{code:'USD'},value:h.reduce((n,x)=>n+x.value,100),holdings:h,cash_accounts:[{id:c,value:100,currency:{code:'USD'},portfolio:p}]}});
+ const raw={performance:report(portfolio,D,[holding(portfolio,11,3)],101),previousPerformance:report(portfolio,'2026-10-26',[holding(portfolio,11,1)],101),trades:wire({trades:[{id:21,portfolio_id:1,holding_id:11,transaction_date:D,state:'confirmed',description_code:'BUY',quantity:2,price:17,value:34,brokerage:0,instrument,comments:'noncash transfer'}]}),cashTransactions:{101:wire({cash_account_transactions:[]})}};
+ const peer={performance:report(peerPortfolio,D,[holding(peerPortfolio,12,1)],102),previousPerformance:report(peerPortfolio,'2026-10-26',[holding(peerPortfolio,12,3)],102),trades:wire({trades:[{id:22,portfolio_id:2,holding_id:12,transaction_date:D,state:'confirmed',description_code:'TRANSFER_OUT',quantity:2,price:100,value:200,brokerage:0,instrument}]}),cashTransactions:{102:wire({cash_account_transactions:[]})}};
+ return {account:'webull',targetDate:D,portfolio,peerPortfolio,raw,peer,identifiedTransfers:{schema:'fee-console.managed-transfer-identities.v1',date:D,account:'webull',sourcePortfolioId:2,destinationPortfolioId:1,pairs:[{sourceTradeId:22,sourceHoldingId:12,tradeId:21,holdingId:11}]}};
+}
+test('exact native identity plus positions, zero cash and EOD mark allow only the identified cost-preserving Buy',()=>{const f=fixture(),p=buildManagedTransferProof(f),flow=consumeManagedTransferProof(p,'webull',D)[0];assert.equal(flow.amount,200);assert.equal(flow.type,'BUY');assert.equal(f.raw.trades.trades[0].value,34);assert.equal(f.raw.performance.report.holdings[0].quantity,3);const r=reconcileFlows([],[],[flow]);assert.equal(r.auto[0].effective,true);assert.equal(reconcileFlows(r.auto,[],[flow]).auto.length,1);});
+test('comments alone and every ordinary unlinked Buy remain refused',()=>{const f=fixture();delete f.identifiedTransfers;assert.equal(managedTransferCandidates(f.raw).length,0);assert.throws(()=>buildManagedTransferProof(f),/TRADE_CASH_UNVERIFIED/);});
+test('wrong IDs, account scope, date and unknown authorization-shaped fields fail closed',()=>{for(const change of [x=>x.identifiedTransfers.pairs[0].sourceTradeId++,x=>x.identifiedTransfers.pairs[0].sourceHoldingId++,x=>x.identifiedTransfers.pairs[0].tradeId++,x=>x.identifiedTransfers.pairs[0].holdingId++,x=>x.identifiedTransfers.sourcePortfolioId++,x=>x.identifiedTransfers.destinationPortfolioId++,x=>x.identifiedTransfers.account='schwab',x=>x.identifiedTransfers.date='2026-10-28',x=>x.identifiedTransfers.approved=true]){const f=fixture();change(f);assert.throws(()=>buildManagedTransferProof(f));}});
+test('a selected Buy still rejects any real linked cash leg, missing cash coverage or failed mark',()=>{for(const change of [x=>x.raw.cashTransactions[101].cash_account_transactions.push({id:33,cash_account_id:101,date_time:D+'T00:00:00Z',amount:-34,trade_id:21}),x=>x.raw.cashTransactions={},x=>x.peer.trades.trades[0].price=17,x=>x.raw.performance.report.holdings[0].quantity=2,x=>x.peer.trades.trades[0].transaction_date='2026-10-26']){const f=fixture();change(f);assert.throws(()=>buildManagedTransferProof(f));}});
+test('partial mapping, duplicate source pair and extra activity cannot broaden a reviewed group',()=>{for(const change of [x=>x.identifiedTransfers.pairs.push({...x.identifiedTransfers.pairs[0]}),x=>x.identifiedTransfers.pairs=[],x=>x.raw.trades.trades.push({...x.raw.trades.trades[0],id:23}),x=>x.peer=null]){const f=fixture();change(f);assert.throws(()=>buildManagedTransferProof(f));}});
+test('mutating identified pair evidence invalidates an already built proof',()=>{const f=fixture(),p=buildManagedTransferProof(f);f.identifiedTransfers.pairs[0].sourceTradeId++;assert.throws(()=>consumeManagedTransferProof(p,'webull',D),/PROOF/);});
+test('source sub-cent quotes retain exact decimals without rounding market-value evidence',()=>{const f=fixture();const price=12.3456;for(const [packet,q]of [[f.raw,200],[f.peer,200]]){const t=packet.trades.trades[0];t.quantity=q;if(packet===f.peer){t.price=price;t.value=2469.12;}packet.trades=wire(packet.trades);}for(const [packet,before,after]of [[f.raw,100,300],[f.peer,300,100]]){for(const [key,q]of [['previousPerformance',before],['performance',after]]){packet[key].report.holdings[0].quantity=q;packet[key].report.holdings[0].value=q*price;packet[key].report.value=q*price+100;packet[key]=wire(packet[key]);}}const p=buildManagedTransferProof(f);assert.equal(consumeManagedTransferProof(p,'webull',D)[0].amount,2469.12);f.peer.trades.trades[0].price=12.35;assert.throws(()=>buildManagedTransferProof(f),/SOURCE_MARK/);});
+test('signed native disposal is still a positive receiver noncash flow, never cash or cost',()=>{
+ const f=fixture();f.peer.trades.trades[0].value=-200;f.peer.trades=wire(f.peer.trades);
+ const p=buildManagedTransferProof(f);assert.equal(consumeManagedTransferProof(p,'webull',D)[0].amount,200);
+ for(const mutate of [x=>x.peer.trades.trades[0].value=-199,x=>x.peer.trades.trades[0].description_code='SELL',x=>x.peer.trades.trades[0].price=-100,x=>x.raw.cashTransactions[101].cash_account_transactions.push({id:34,cash_account_id:101,date_time:D+'T00:00:00Z',amount:-34,trade_id:21})]){
+  const bad=fixture();bad.peer.trades.trades[0].value=-200;mutate(bad);bad.peer.trades=wire(bad.peer.trades);assert.throws(()=>buildManagedTransferProof(bad));
+ }
+});
+
+}

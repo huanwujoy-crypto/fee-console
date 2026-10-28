@@ -3,35 +3,31 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { createHash } from "node:crypto";
 import { createFundInvestorCore } from "./fund-investor-core.mjs";
+import { reviewedUiStage, reviewedNextUiRegion } from "./fee-receipt-ui-contract.test.mjs";
 
 const core = createFundInvestorCore();
-test("activated browser uses the exact reviewed fund factory", () => {
+test('independent Astra EOD scenario: symmetric noncash flow, unchanged cost and one seven-source subscription',async()=>{
+ const {grossTwrDailyFactor,periodReturns}=await import('./fee-engine.mjs');
+ assert.ok(Math.abs(grossTwrDailyFactor(200,-1100,1200)-1-1/12)<1e-12);
+ assert.equal(grossTwrDailyFactor(2100,1100,1000)-1,0);
+ assert.ok(Math.abs(grossTwrDailyFactor(2300,0,2200)-1-1/22)<1e-12);
+ assert.ok(Math.abs(grossTwrDailyFactor(2122,0,2100)-1-22/2100)<1e-12);
+ assert.ok(Math.abs(grossTwrDailyFactor(2322,0,2300)-1-22/2300)<1e-12);
+ assert.ok(Math.abs(grossTwrDailyFactor(2100,800,1000)-1-.3)<1e-12);
+ const r=periodReturns({points:[{d:'2026-10-27',tot:2100},{d:'2026-10-28',tot:2122}],openT:1000,from:'2026-10-27',to:'2026-10-28',days:2,flowByDate:{'2026-10-27':1100},rate:.01,cr:.2,cumBefore:0,hwmBefore:0});
+ assert.equal(r.pnl,22);assert.equal(r.feeBaseSum,3122);assert.ok(Math.abs(r.mgmt-3122*.01/365)<1e-12);assert.ok(Math.abs(r.carry-4.4)<1e-12);
+ assert.equal(-1100+1100,0,'AllTogether transfer is internal, no second family subscription');
+});
+test("reviewed next fund factory exactly matches source; the frozen prior factory remains a separate contract", () => {
   const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX || new URL("../index.html",import.meta.url),"utf8");
-  const start="/* fund-investor-core:start */",end="/* fund-investor-core:end */";
-  if(!html.includes(start)){assert.ok(!html.includes('id="p-investors"'));return;}
+  const stage=reviewedUiStage(html),start="/* fund-investor-core:start */",end="/* fund-investor-core:end */";
   assert.equal(html.split(start).length,2);assert.equal(html.split(end).length,2);
   const embedded=html.split(start)[1].split(end)[0].trim();
-  if(!embedded.includes('const EVENT_KEYS =')){
-    // During the support-only PR, accept precisely the reviewed pre-event UI.
-    // The subsequent index-only PR must embed the new factory exactly.
-    assert.equal(createHash("sha256").update(embedded).digest("hex"),"4714a07b1c7fccd974253d91814d63d8e98707ee652dd8e3e6ac6974a57b89fc");
-    return;
-  }
-  if(!embedded.includes('const CORRECTION_KEYS =')){
-    // Support-only PR: preserve the exact published pre-correction factory.
-    assert.equal(createHash("sha256").update(embedded).digest("hex"),"b53dd552718319f220fc0ba57a7055a3fd5eb0de7781910d226848fa0705c92a");
-    return;
-  }
-  if(!embedded.includes('const TRANSFER_KEYS =')){
-    // Support-only PR: preserve the exact published pre-transfer factory.
-    // The subsequent index-only PR must embed the new factory exactly.
-    assert.equal(createHash("sha256").update(embedded).digest("hex"),"163d6718f4202d96b7e21d151ab3f63c90ca3a8d94e54da13ea5f76e1c90b725");
-    return;
-  }
-  if(!embedded.includes('const PRICE_CORRECTION_KEYS =')) {
-    assert.equal(createHash("sha256").update(embedded).digest("hex"),"a849201b27f0f25742c87526d6a821b451eb092534c7ad98d761553cc8315bc5");return;
-  }
-  assert.equal(embedded,createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();");
+  const expected=createFundInvestorCore.toString()+"\nconst fundInvestorCore=createFundInvestorCore();";
+  assert.equal(reviewedNextUiRegion("fund-investor-core").trim(),expected,
+    "the next UI parity assertion always executes, including in support-only staging");
+  if(stage==="prior")assert.notEqual(embedded,expected,"known old UI must not be described as the new factory");
+  else assert.equal(embedded,expected);
 });
 const fixture = () => ({
   profile: { schema: "fee-console.fund-profile.v1", manager: "Example Manager", fundName: "Example Fund",
@@ -378,3 +374,35 @@ test('corrected math cannot bypass a mismatched valuation point, missing payment
  const input=priceCorrectionFixture();input.profile.shareTransferPriceCorrections=[priceCorrection()];mutate(input);assert.notEqual(core.calculate(input).status,'ready');
  }
 });
+
+// Local finite in-kind design regression; synthetic data only.
+{
+const core=createFundInvestorCore();
+function fixture(){
+ const dates=['2026-10-25','2026-10-26','2026-10-27','2026-10-28'],amounts=[10,20,30,40,50,60,70];
+ const flows=amounts.map((amount,i)=>{const sourceTradeId=200+i,tradeId=300+i,holdingId=400+i,businessKey=`sharesight:${sourceTradeId}->${tradeId};holding:${holdingId}`;return {id:'fixture-'+i,date:dates[2],acct:'webull',amount,effective:true,sourceTradeId,tradeId,holdingId,businessKey,reason:'verified external asset transfer '+businessKey};});
+ const profile={schema:'fee-console.fund-profile.v1',manager:'Synthetic Manager',fundName:'Synthetic Fund',inceptionDate:dates[0],inceptionNoticeDate:dates[0],currency:'USD',initialShares:1000000,investors:[{id:'A',name:'Synthetic Existing A',shares:900000},{id:'B',name:'Synthetic Existing B',shares:100000}],subscriptions:[{id:'sub-in-kind-20261027',date:dates[2],investorId:'B',grossCents:28000,feeCents:0,netCents:28000,priceDate:dates[2],priceTotalCents:110000,issuedShares:254545,sourceRef:'sharesight:synthetic-group-seven',inKindClose:{sourceKeys:flows.map(f=>f.businessKey)}}]};
+ return {profile,data:{daily:dates.map((d,i)=>({d,schwab:500,webull:[500,550,880,880][i]})),flowsAuto:flows},feeView:{state:'verified',start:dates[0],asOf:dates[3],status:{provisional:false},benchmarkInputs:{openingCents:100000,flows:flows.map(f=>({date:f.date,amountCents:Math.round(f.amount*100)}))}}};
+}
+test('seven verified noncash events issue one closing subscription only to the existing investor ID',()=>{const f=fixture(),r=core.calculate(f);assert.equal(r.status,'ready');assert.equal(r.current.subscription,null);assert.deepEqual(r.current.investors.map(i=>i.shares),[900000,354545]);assert.equal(r.current.grossPnlCents,10000);assert.equal(r.points[2].subscription.netCents,28000);assert.equal(r.points[2].unitValue>0,true);assert.equal(f.profile.investors[0].shares,900000);});
+test('Astra same-value independent cash cannot replace one of seven in-kind receipt events',async()=>{
+ const {buildFeeCalculationReceipt}=await import('./fee-receipt-core.mjs');
+ const {computeFeeStatement}=await import('./fee-engine.mjs');
+ const f=fixture(),date='2026-10-27';
+ for(const flow of f.data.flowsAuto)flow.id=createHash('sha256').update('external_asset_transfer '+flow.businessKey).digest('hex').slice(0,16);
+ for(const point of f.data.daily)if(point.d>=date)point.webull+=10;
+ f.data.flowsUnresolved=[];f.data.status={asOf:'2026-10-28',provisional:false,calibrated:false,unresolvedCount:0};
+ const economicInput={v:4,settings:{start:'2026-10-25',mgmt:0,carry:20},accounts:[{id:'schwab',opening:500},{id:'webull',opening:500}],months:[{ym:'2026-10',flows:[{id:'synthetic-independent-cash',date,acct:'webull',amount:10,note:''}]}],fees:[]};
+ const receipt=buildFeeCalculationReceipt({data:f.data,economicInput});
+ assert.equal(receipt.effectiveFlowCount,8);assert.equal(receipt.effectiveFlowNetCents,29000);
+ assert.equal(receipt.totals.grossPnlCents,10000);assert.equal(receipt.totals.carryCents,2000);
+ f.feeView.benchmarkInputs.flows=computeFeeStatement({daily:f.data.daily,flowsAuto:f.data.flowsAuto,econ:economicInput,asOf:'2026-10-28'}).flows.map(flow=>({date:flow.date,amountCents:Math.round(flow.amount*100)}));
+ f.profile.subscriptions[0].priceTotalCents=111000;f.profile.subscriptions[0].issuedShares=252252;
+ const result=core.calculate(f);assert.equal(result.status,'partial');assert.equal(result.flowGateDate,date);assert.equal(result.current,null);
+});
+test('closing pre-contribution price preserves existing-holder same-day gain and adds no cash',()=>{const f=fixture(),r=core.calculate(f);assert.equal(r.points[1].investors[0].valueCents,94500);assert.ok(Math.abs(r.points[2].investors[0].valueCents-99000)<=1);assert.equal(r.points[2].investors.reduce((n,i)=>n+i.valueCents,0),138000);assert.equal(r.current.investors.reduce((n,i)=>n+i.pnlCents,0),10000);assert.equal('cashTransactions' in f.data,false);});
+test('manager display name, unknown ID and copied approval-shaped fields cannot stand in for investor identity',()=>{for(const change of [f=>f.profile.subscriptions[0].investorId='ManagerDisplay',f=>f.profile.subscriptions[0].inKindClose.approved=true,f=>f.profile.subscriptions[0].feeCents=1]){const f=fixture();change(f);assert.notEqual(core.calculate(f).status,'ready');}});
+test('missing, extra, unresolved, ordinary Buy or wrong-identity source candidates stop at the contribution date',()=>{for(const change of [f=>f.data.flowsAuto.pop(),f=>f.data.flowsAuto.push({...f.data.flowsAuto[0],id:'extra'}),f=>{f.data.flowsUnresolved=[f.data.flowsAuto.pop()];},f=>f.data.flowsAuto[0].effective=false,f=>f.data.flowsAuto[0].reason='noncash transfer comment',f=>f.data.flowsAuto[0].tradeId++,f=>f.data.flowsAuto[0].acct='schwab']){const f=fixture();change(f);const r=core.calculate(f);assert.equal(r.status,'partial');assert.equal(r.flowGateDate,'2026-10-27');assert.equal(r.current,null);}});
+test('cost basis, prior-day price and rounded/netted flow mismatch cannot issue closing shares',()=>{for(const change of [f=>f.profile.subscriptions[0].priceTotalCents=105000,f=>f.profile.subscriptions[0].priceDate='2026-10-26',f=>f.feeView.benchmarkInputs.flows[0].amountCents++,f=>f.profile.subscriptions[0].issuedShares++,f=>f.data.flowsAuto[0].amount++,f=>f.profile.subscriptions[0].netCents--]){const f=fixture();change(f);assert.notEqual(core.calculate(f).status,'ready');}});
+test('source keys cannot be duplicated or reused as a second contribution',()=>{const f=fixture();f.profile.subscriptions[0].inKindClose.sourceKeys[1]=f.profile.subscriptions[0].inKindClose.sourceKeys[0];assert.equal(core.validateProfile(f.profile).ok,false);const g=fixture();g.profile.subscriptions.push({...g.profile.subscriptions[0],id:'sub-next-day-duplicate',date:'2026-10-28',priceDate:'2026-10-28',sourceRef:'sharesight:synthetic-duplicate'});assert.equal(core.validateProfile(g.profile).ok,false);});
+}

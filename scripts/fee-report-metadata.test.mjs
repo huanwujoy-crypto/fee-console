@@ -4,8 +4,9 @@ import fs from 'node:fs';
 import crypto from 'node:crypto';
 import vm from 'node:vm';
 import {buildFeeCalculationReceipt} from './fee-receipt-core.mjs';
-import {weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
+import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {buildReportMetadata,preserveReportMonthLocks,createFeeReportConsumer} from './fee-report-metadata.mjs';
+import {reviewedUiStage,reviewedNextUiRegion} from './fee-receipt-ui-contract.test.mjs';
 
 function fixture(through='2026-10-23'){
   const economicInput={v:4,settings:{start:'2026-09-01',mgmt:2,carry:20},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]};
@@ -50,10 +51,19 @@ test('snapshots preserve full daily model and subtract all intervening capital/s
 });
 test('browser uses the exact shared factory and has no private metadata defaults',async()=>{
   const html=fs.readFileSync(process.env.FEE_LEDGER_TEST_INDEX||new URL('../index.html',import.meta.url),'utf8');
+  const stage=reviewedUiStage(html);
   const a='/* fee-report-consumer:start */',b='/* fee-report-consumer:end */';
-  if(!html.includes(a)){assert.equal(html.includes(b),false);return;}
-  const block=html.slice(html.indexOf(a)+a.length,html.indexOf(b)).trim();assert.equal(block,createFeeReportConsumer.toString());
+  assert.equal(html.split(a).length,2);assert.equal(html.split(b).length,2);
+  const block=html.slice(html.indexOf(a)+a.length,html.indexOf(b)).trim(),reviewed=reviewedNextUiRegion('fee-report-consumer').trim();
+  assert.equal(reviewed,createFeeReportConsumer.toString(),'next metadata factory parity always executes');
+  if(stage==='prior')assert.notEqual(block,reviewed);else assert.equal(block,reviewed);
   const box={crypto:crypto.webcrypto,TextEncoder,structuredClone};vm.createContext(box);vm.runInContext(block+';globalThis.core=createFeeReportConsumer()',box);
+  const nextBox={crypto:crypto.webcrypto,TextEncoder,structuredClone};vm.createContext(nextBox);vm.runInContext(reviewed+';globalThis.core=createFeeReportConsumer()',nextBox);
   const {data}=fixture(),m=buildReportMetadata({plan:weeklyReportPlan('2026-10-23'),data,generatedAt:'2026-10-26T00:00Z'}),fee={state:'verified',asOf:data.feeCalculationReceipt.asOf};
   assert.deepEqual(JSON.parse(JSON.stringify(await box.core.project(m,fee,data.feeCalculationReceipt,new Date('2026-10-26T00:00Z')))),await createFeeReportConsumer().project(m,fee,data.feeCalculationReceipt,new Date('2026-10-26T00:00Z')));
+  assert.deepEqual(JSON.parse(JSON.stringify(await nextBox.core.project(m,fee,data.feeCalculationReceipt,new Date('2026-10-26T00:00Z')))),await createFeeReportConsumer().project(m,fee,data.feeCalculationReceipt,new Date('2026-10-26T00:00Z')));
+  const daily=fixture('2026-10-27').data,plan=dailyReportPlan('2026-10-27',['NYSE','LSE'],{periodFrom:'2026-10-24'}),clock=new Date('2026-10-28T06:00:00Z'),metadata=buildReportMetadata({plan,data:daily,generatedAt:clock.toISOString()}),view={state:'verified',asOf:plan.accountingThrough};
+  assert.equal((await nextBox.core.project(metadata,view,daily.feeCalculationReceipt,clock)).state,'updated');
+  assert.equal((await box.core.project(metadata,view,daily.feeCalculationReceipt,clock)).state,stage==='prior'?'pending':'updated',
+    'old weekly contract must not claim compatibility with daily v2 metadata');
 });

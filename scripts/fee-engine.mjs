@@ -111,7 +111,7 @@ export function effectiveFlows({ months = [], flowsAuto = [] } = {}) {
   const confirmed = months.flatMap(month => Array.isArray(month?.flows) ? month.flows : []);
   const confirmedSources = new Set(confirmed.map(flow => flow?.src).filter(Boolean));
   const pool = confirmed.filter(flow => flow && !flow.src).map(record => ({ record, used: false }));
-  const kept = [], seenReason = new Set();
+  const kept = [], seenReason = new Set(), seenBusinessKey = new Set();
 
   for (const flow of flowsAuto) {
     if (!flow || flow.effective !== true) continue;
@@ -125,6 +125,16 @@ export function effectiveFlows({ months = [], flowsAuto = [] } = {}) {
       reason: flow.reason == null ? "" : flow.reason,
       automatic: true
     };
+    // A source-identified in-kind event is distinct from an unlinked manual
+    // cash entry, even when date/account/amount (or note text) coincide. Only
+    // an exact confirmed src or a replay of this immutable business key can
+    // cover it. Legacy unkeyed records retain their existing matching rules.
+    if (flow.businessKey) {
+      if (seenBusinessKey.has(flow.businessKey)) continue;
+      seenBusinessKey.add(flow.businessKey);
+      if (!confirmedSources.has(flow.id)) kept.push(automatic);
+      continue;
+    }
     const reasonKey = String(automatic.reason).trim();
     if (reasonKey) {
       if (seenReason.has(reasonKey)) continue;

@@ -7,6 +7,24 @@ import {SharesightCloudReader,expectedTargetDate} from './fee-cloud-source.mjs';
 import {reportDate,reportAddDays,reportWindowDates} from './fee-report-period.mjs';
 import {boundedJson} from './fee-http-json.mjs';
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),fail=code=>{throw Error('FEE_SOURCE_ACCEPTANCE_'+code);};
+const publicFailures=new WeakMap();
+const stages=new Set(['arguments','environment','attempt','git-head','git-tracked','git-untracked','dates','public-main','capture']);
+const knownReasons=new Set(['ARGUMENT','ENVIRONMENT','RERUN','CODE_CHANGED','DATE']);
+let cliStage='arguments';
+// Diagnostics are finite data, never raw exceptions, environment values or a
+// source/health attestation. A capture failure must not claim zero source calls.
+export function sourceAcceptanceFailure(error,stage){
+ const phase=typeof stage==='string'&&stages.has(stage)?stage:'unknown';let message='';
+ try{const d=error&&typeof error==='object'?Object.getOwnPropertyDescriptor(error,'message'):null;if(d&&Object.hasOwn(d,'value')&&typeof d.value==='string')message=d.value;}catch{}
+ const code=message.startsWith('FEE_SOURCE_ACCEPTANCE_')?message.slice('FEE_SOURCE_ACCEPTANCE_'.length):'';
+ let reasonCode=knownReasons.has(code)?'FEE_SOURCE_ACCEPTANCE_'+code:'FEE_SOURCE_ACCEPTANCE_REFUSED';
+ const metadata=error&&typeof error==='object'?publicFailures.get(error):null;
+ if(metadata){const bounded=/^BOUNDED_JSON_(HTTP|NETWORK|TIMEOUT|ABORTED|SIZE|BODY|JSON|TYPE|CONFIG)$/.exec(message);if(bounded)reasonCode='FEE_SOURCE_ACCEPTANCE_PUBLIC_'+(metadata.rateLimited?'RATE_LIMIT':bounded[1]);}
+ else if(phase.startsWith('git-')&&!knownReasons.has(code))reasonCode='FEE_SOURCE_ACCEPTANCE_GIT_CHECK_FAILED';
+ else if(phase==='dates'&&!knownReasons.has(code))reasonCode='FEE_SOURCE_ACCEPTANCE_DATE_CHECK_FAILED';
+ const beforeSource=phase!=='capture'&&phase!=='unknown';
+ return {schema:'fee-console.source-acceptance-failure.v1',stage:phase,reasonCode,...(metadata?{httpStatus:metadata.httpStatus,rateLimited:metadata.rateLimited}:{}),sourceCaptureEntered:phase==='capture',sourceGets:beforeSource?0:null,oauthGrants:beforeSource?0:null,financialCalculationVerified:false,publicationReady:false};
+}
 const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
 const canonical=v=>v&&typeof v==='object'?Array.isArray(v)?v.map(canonical):Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const digest=v=>hash(JSON.stringify(canonical(v)));
@@ -56,18 +74,31 @@ export async function captureSourceAcceptance({fromDate,targetDate,outputDir,cli
  fs.writeFileSync(path.join(dir,'private-evidence-manifest.json'),JSON.stringify({files})+'\n',{flag:'wx',mode:0o600});fs.writeFileSync(path.join(dir,'field-acceptance.json'),JSON.stringify(result)+'\n',{flag:'wx',mode:0o600});return result;
 }
 export async function verifySourceAcceptanceMain(expected,{fetchImpl=globalThis.fetch}={}){
- if(!/^[a-f0-9]{40}$/.test(expected||''))fail('CODE_CHANGED');const base='https://api.github.com/repos/huanwujoy-crypto/fee-console',get=url=>boundedJson(fetchImpl,url,{method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:10000,maxBytes:1024*1024});
+ if(!/^[a-f0-9]{40}$/.test(expected||''))fail('CODE_CHANGED');const base='https://api.github.com/repos/huanwujoy-crypto/fee-console',get=async url=>{
+  let httpStatus=null,rateLimited=false;
+  try{return await boundedJson(async(u,init)=>{const r=await fetchImpl(u,init);if(Number.isInteger(r?.status)&&r.status>=100&&r.status<=599){httpStatus=r.status;rateLimited=r.status===429||r.status===403&&r.headers?.get?.('x-ratelimit-remaining')==='0';}return r;},url,{method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:10000,maxBytes:1024*1024});}
+  catch(error){if(error&&typeof error==='object')publicFailures.set(error,{httpStatus,rateLimited});throw error;}
+ };
  const ref=await get(base+'/git/ref/heads/main');if(ref.object?.sha!==expected)fail('CODE_CHANGED');
  const c=await get(base+'/commits/'+expected);if(c.sha!==expected||c.author?.id!==283054367||c.commit?.verification?.verified!==true)fail('CODE_CHANGED');
  if((await get(base+'/git/ref/heads/main')).object?.sha!==expected)fail('CODE_CHANGED');
 }
 async function main(){
+ cliStage='arguments';
  const args={};let checkOnly=false;for(const a of process.argv.slice(2)){if(a==='--check-plan'&&!checkOnly){checkOnly=true;continue;}const m=/^--(from-date|target-date|out-dir|expected-main)=([^\r\n]+)$/.exec(a);if(!m||Object.hasOwn(args,m[1]))fail('ARGUMENT');args[m[1]]=m[2];}
+ cliStage='environment';
  if(Object.keys(args).length!==4||!/^[a-f0-9]{40}$/.test(args['expected-main']||'')||['FEE_DATA_KEY','FEE_ECON_GIST_ID','FEE_CLOUD_GITHUB_TOKEN','GH_TOKEN','GITHUB_TOKEN','NODE_OPTIONS','NODE_PATH'].some(k=>Object.hasOwn(process.env,k))||process.execArgv.length||Object.keys(process.env).some(k=>/^(DYLD_|LD_)/.test(k)))fail('ENVIRONMENT');
+ cliStage='attempt';
  if(process.env.GITHUB_RUN_ATTEMPT!==undefined&&process.env.GITHUB_RUN_ATTEMPT!=='1')fail('RERUN');
- if(execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim()!==args['expected-main']||execFileSync('git',['diff','--name-only','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim())fail('CODE_CHANGED');
+ cliStage='git-head';
+ if(execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim()!==args['expected-main'])fail('CODE_CHANGED');
+ cliStage='git-tracked';
+ if(execFileSync('git',['diff','--name-only','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim())fail('CODE_CHANGED');
+ cliStage='git-untracked';
  const untracked=execFileSync('git',['ls-files','--others','--exclude-standard'],{cwd:ROOT,encoding:'utf8'}).trim().split('\n').filter(Boolean);if(untracked.some(f=>/\.(?:mjs|js|py|json)$/.test(f)&&!/^gha-creds-[a-f0-9]+\.json$/.test(f)))fail('CODE_CHANGED');
- dates(args['from-date'],args['target-date'],new Date());await verifySourceAcceptanceMain(args['expected-main']);if(checkOnly){console.log('SOURCE_ACCEPTANCE_PLAN_READY');return;}
+ cliStage='dates';dates(args['from-date'],args['target-date'],new Date());
+ cliStage='public-main';await verifySourceAcceptanceMain(args['expected-main']);if(checkOnly){console.log('SOURCE_ACCEPTANCE_PLAN_READY');return;}
+ cliStage='capture';
  const r=await captureSourceAcceptance({fromDate:args['from-date'],targetDate:args['target-date'],outputDir:args['out-dir'],clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET});console.log(JSON.stringify(r));if(r.status!=='fields-captured')process.exitCode=1;
 }
-if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(()=>{console.error('FEE_SOURCE_ACCEPTANCE_REFUSED');process.exitCode=1;});
+if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(JSON.stringify(sourceAcceptanceFailure(error,cliStage)));process.exitCode=1;});

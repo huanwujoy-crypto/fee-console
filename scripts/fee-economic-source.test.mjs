@@ -20,6 +20,17 @@ function reply(body = fixture(), etag = '"synthetic-etag"', status = 200) {
   return new Response(status === 304 ? null : JSON.stringify(body), { status, headers: { etag, "content-type": "application/json" } });
 }
 const makeRoot = () => fs.mkdtempSync(path.join(os.tmpdir(), "fee-fetch-synthetic-"));
+const withFund=(body,raw='synthetic-encrypted-fund-placeholder')=>({...body,files:{...body.files,'fee-console-fund.json':{filename:'fee-console-fund.json',content:raw,size:Buffer.byteLength(raw),truncated:false}}});
+test('existing private fund ciphertext is bound to the same Gist and two reads without another credential or endpoint',async t=>{
+  let calls=0;const snap=await run(t,async url=>{assert.equal(url,'https://api.github.com/gists/'+ID);calls++;return reply(withFund(fixture(4)));});
+  assert.equal(calls,2);assert.equal(snap.fundProfileStable,true);assert.equal(snap.fundProfileRaw,'synthetic-encrypted-fund-placeholder');assert.equal(snap.fundProfileMatchesGist(ID),true);assert.equal(snap.fundProfileMatchesGist('b'.repeat(32)),false);
+  await snap.checkCurrent({requireFundProfile:true});assert.equal(calls,4);snap.cleanup();assert.equal(snap.fundProfileMatchesGist(ID),false);
+});
+test('changed or unstable optional fund ciphertext never grants a transfer exception or refreshes old evidence',async t=>{
+  let calls=0;const snap=await run(t,async()=>reply(withFund(fixture(4),++calls<=2?'synthetic-first':'synthetic-changed')));
+  await rejected(snap.checkCurrent({requireFundProfile:true}),'SOURCE_CHANGED');snap.cleanup();
+  let n=0;const unstable=await run(t,async()=>reply(withFund(fixture(4),'synthetic-'+(++n))));assert.equal(unstable.fundProfileStable,false);assert.equal(unstable.fundProfileRaw,null);unstable.cleanup();
+});
 async function run(t, fetchImpl, options = {}) {
   const tempRoot = makeRoot();
   t.after(() => fs.rmSync(tempRoot, { recursive: true, force: true }));
@@ -47,7 +58,7 @@ for (const v of [3, 4]) test(`v${v}: exact encrypted bytes, private modes, remot
   assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8"), envelope(v));
   assert.equal(fs.statSync(snapshot.sourcePath).mode & 0o777, 0o600);
   assert.equal(fs.statSync(path.dirname(snapshot.sourcePath)).mode & 0o777, 0o700);
-  assert.deepEqual(Object.keys(snapshot).sort(), ["checkCurrent", "cleanup", "envelopeVersion", "managerRecipientRaw", "sourcePath"]);
+  assert.deepEqual(Object.keys(snapshot).sort(), ["checkCurrent", "cleanup", "envelopeVersion", "fundProfileMatchesGist", "fundProfileRaw", "fundProfileStable", "managerRecipientRaw", "sourcePath"]);
   assert.equal(JSON.stringify(snapshot).includes(TOKEN), false);
   assert.equal(fs.readFileSync(snapshot.sourcePath, "utf8").includes(TOKEN), false);
   assert.equal(await snapshot.checkCurrent(), true); assert.equal(calls, 4);

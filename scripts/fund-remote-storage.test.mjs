@@ -5,11 +5,15 @@ import path from "node:path";
 import vm from "node:vm";
 import { webcrypto } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { createFundInvestorCore } from "./fund-investor-core.mjs";
+import { reviewedUiStage, reviewedNextUiRegion } from "./fee-receipt-ui-contract.test.mjs";
 
 const root = process.env.FUND_UI_ROOT || path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const html = fs.readFileSync(path.join(root, "index.html"), "utf8");
 const region = name => html.split(`/* ${name}:start */`)[1]?.split(`/* ${name}:end */`)[0];
 const remoteCode = region("fund-remote-storage");
+const currentUiStage = reviewedUiStage(html);
+const reviewedRemoteCode = reviewedNextUiRegion("fund-remote-storage");
 const remoteTest = (name, fn, opt = {}) => test(name, { skip: !remoteCode || !!opt.skip }, fn);
 
 const profile = {
@@ -22,7 +26,7 @@ const library = {
   governance: { managerController: "L.W.", guardians: [] }, documents: []
 };
 
-function context({ remoteFile = "" } = {}) {
+function context({ remoteFile = "", realProfile = false, reviewedNext = false } = {}) {
   assert(remoteCode, "active UI is missing fund-remote-storage");
   const ctx = vm.createContext({
     crypto: webcrypto, TextEncoder, TextDecoder,
@@ -39,7 +43,7 @@ function context({ remoteFile = "" } = {}) {
     const fundDocsExact=(value,keys)=>fundDocsObject(value)&&Object.keys(value).length===keys.length&&keys.every(key=>Object.hasOwn(value,key));
     const fundDocsInstant=value=>typeof value==='string'&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString()===value;
     const validateFundDocuments=value=>value&&value.schema==='fee-console.fund-documents.v2'?{ok:true,library:value}:{ok:false,reason:'bad library'};
-    const fundInvestorCore={validateProfile:value=>value&&value.schema==='fee-console.fund-profile.v1'?{ok:true,profile:value}:{ok:false,reason:'bad profile'}};
+    const fundInvestorCore=${realProfile ? "("+createFundInvestorCore.toString()+")()" : "{validateProfile:value=>value&&value.schema==='fee-console.fund-profile.v1'?{ok:true,profile:value}:{ok:false,reason:'bad profile'}}"};
     const b64u2buf=s=>Uint8Array.from(atob(s.replace(/-/g,'+').replace(/_/g,'/')),c=>c.charCodeAt(0));
     const buf2b64=b=>btoa(String.fromCharCode(...new Uint8Array(b)));
     async function keyOf(value){return crypto.subtle.importKey('raw',b64u2buf(value),'AES-GCM',false,['encrypt','decrypt']);}
@@ -54,11 +58,20 @@ function context({ remoteFile = "" } = {}) {
     const fetch=async()=>{throw new Error('unexpected truncated fetch')};
     let _fundProfileMessage='',_fundDocsMessage='';const document={getElementById:()=>null};const toast=()=>{};const render=async()=>{};
   `, ctx);
-  vm.runInContext(remoteCode, ctx);
+  vm.runInContext(reviewedNext ? reviewedRemoteCode : remoteCode, ctx);
   return ctx;
 }
 
 const run = (ctx, code) => vm.runInContext(code, ctx);
+
+remoteTest("published remote-writer contract is pinned separately from the reviewed next first-subscription guard", () => {
+  assert.ok(reviewedRemoteCode.includes("if((older.length||newer.length)&&("));
+  if(currentUiStage==="prior"){
+    assert.notEqual(remoteCode,reviewedRemoteCode);
+    assert.equal(remoteCode.includes("if((older.length||newer.length)&&("),false,
+      "the old writer is explicitly not upgraded; profile writes remain outside staging authorization");
+  }else assert.equal(remoteCode,reviewedRemoteCode);
+});
 
 remoteTest("a remote fund snapshot decrypts to the latest profile and document library", async () => {
   const ctx = context();
@@ -104,6 +117,31 @@ remoteTest("published capital events cannot be erased, rewritten or retrospectiv
     assert.equal(run(ctx, "patchCalls"), 1);
   }
 }, { skip: !remoteCode?.includes("已发布增资事件不可删除") });
+
+remoteTest("Astra P1: first subscription cannot rewrite the stored founding baseline before any PATCH", async () => {
+  const ctx=context({realProfile:true,reviewedNext:true});
+  const raw=await run(ctx,`(async()=>{const bundle={schema:FUND_REMOTE_SCHEMA,gid:cfg(K.gid),updatedAt:new Date().toISOString(),profile:${JSON.stringify(profile)},library:${JSON.stringify(library)}};remoteFile=JSON.stringify({enc:true,v:1,data:await encTxt(await keyOf(cfg(K.key)),JSON.stringify(bundle))});return remoteFile;})()`);
+  await run(ctx,`acceptRemoteFundSnapshot({gid:cfg(K.gid),keyValue:cfg(K.key),revision:'synthetic-stored-baseline',fundContent:${JSON.stringify(raw)}})`);
+  const event={id:"synthetic-first-sub",date:"2026-08-22",investorId:"X",grossCents:1000,feeCents:0,netCents:1000,priceDate:"2026-08-21",priceTotalCents:10000,issuedShares:100,sourceRef:"sharesight:synthetic-first"};
+  const subscribed={...profile,subscriptions:[event]};
+  const mutations=[
+    {...subscribed,investors:profile.investors.map((i,n)=>({...i,shares:[200,800][n]}))},
+    {...subscribed,inceptionDate:"2026-08-19"},
+    {...subscribed,initialShares:1200,investors:profile.investors.map((i,n)=>({...i,shares:[300,900][n]}))},
+    {...subscribed,investors:profile.investors.map((i,n)=>({...i,id:n===0?"Q":i.id})),subscriptions:[{...event,investorId:"Q"}]}
+  ];
+  for(const altered of mutations){
+    assert.equal(run(ctx,`fundInvestorCore.validateProfile(${JSON.stringify(altered)}).ok`),true,"a valid-shaped profile must still fail the stored-baseline check");
+    await assert.rejects(run(ctx,`writeRemoteFundBundle(${JSON.stringify(altered)},${JSON.stringify(library)},${JSON.stringify(raw)})`),/不可删除或重写/);
+    assert.equal(run(ctx,"patchCalls"),0);assert.equal(run(ctx,"remoteFile"),raw);
+  }
+  await run(ctx,`writeRemoteFundBundle(${JSON.stringify(subscribed)},${JSON.stringify(library)},${JSON.stringify(raw)})`);
+  assert.equal(run(ctx,"patchCalls"),1);
+  assert.deepEqual(JSON.parse(run(ctx,"JSON.stringify(_remoteFund.bundle.profile.investors)")),profile.investors);
+  const first=run(ctx,"_remoteFund.raw");
+  await run(ctx,`writeRemoteFundBundle(${JSON.stringify(subscribed)},${JSON.stringify(library)},${JSON.stringify(first)})`);
+  assert.equal(run(ctx,"patchCalls"),1,"exact replay is read-only");
+});
 
 remoteTest("published price corrections remain append-only and an exact repeat performs no PATCH", async () => {
   const ctx=context();

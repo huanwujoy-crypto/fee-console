@@ -149,6 +149,41 @@ review are still required before activation.
 
 ## Fixed read-only field acceptance (local candidate; not executed)
 
+### Credential-free plan diagnosis
+
+`source_plan_check_only=true` is a separate default-false manual mode. It must
+not be combined with `source_acceptance_once` or `run_reviewed_once`. Its
+three-minute `source-plan-check` job has only `contents: read`, no financial
+Environment, OIDC exchange, Secret step, benchmark read, writer or source
+capture. It uses the same `source_main`, `source_from`, `source_target` and
+`--check-plan` CLI gates as field acceptance. Normal period production and the
+financial source job are explicitly excluded whenever this mode is selected.
+It does not install a schedule or enable any production variable.
+
+Plan failure emits only a finite phase/reason JSON object: arguments,
+environment, attempt, Git HEAD/tracked/untracked, dates or public-main checks.
+Public HTTP status/rate-limit classification is included without headers,
+response bodies, raw exceptions, paths, environment names or values. Before
+source capture, the diagnostic can truthfully report zero source/OAuth calls;
+after entry to capture those counters are unknown rather than invented zeroes.
+It is diagnostic data, never health, source completeness or publication proof.
+Unknown exceptions remain redacted, and every existing refusal stays closed.
+
+After this exact code has passed protected review, a separately authorized
+metadata-only check may use `source_plan_check_only=true`, the two financial
+mode flags false, and the frozen live protected main plus reviewed dates.
+It makes at most the existing three public GitHub metadata GETs and does not
+load Sharesight credentials. A successful plan check does not authorize or
+consume a financial capture: a new bounded source attempt still needs its own
+specific execution scope and current main. Do not replay a failed or consumed
+run, replace dates automatically, renew evidence times or weaken a guard.
+
+The old CLI collapsed every exception to `FEE_SOURCE_ACCEPTANCE_REFUSED`.
+Where a historical run did not record its inner reason, replaying selected
+inputs cannot prove which unrecorded host-environment or HTTP condition occurred.
+Keep that uncertainty explicit; the new diagnostic must not retroactively
+attribute an old failure to a particular branch without evidence.
+
 The same `fee-cloud-producer.yml` has a default-false manual-only
 `source_acceptance_once` input, mutually exclusive with `run_reviewed_once`.
 It never runs naturally, never reruns, and never invokes the fee writer,

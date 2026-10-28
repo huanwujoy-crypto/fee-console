@@ -2,6 +2,7 @@
 import crypto from 'node:crypto';
 import {canonicalJson,normalizeDataInputs,normalizeEconomicInputs,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {validateReportPlan,reportPlanReadiness,reportDate,reportAddDays,weeklyReportPlan,monthlyReportPlan} from './fee-report-period.mjs';
+import {sessionUnion} from './fee-market-calendar.mjs';
 
 const fail=()=>{throw Error('FEE_REPORT_METADATA_INVALID');};
 const hash=value=>crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
@@ -38,6 +39,10 @@ export function preserveReportMonthLocks(previous,next,economicInput,{finalCutof
   return old!==undefined||locks.length?{schema:'fee-console.report-month-locks.v1',periods:locks.sort((a,b)=>a.ym.localeCompare(b.ym))}:undefined;
 }
 function nextScheduled(plan){
+  if(plan.schema==='fee-console.report-plan.v2'){
+    for(let i=1;i<=14;i++){const d=reportAddDays(plan.accountingThrough,i),session=sessionUnion(d,plan.markets);if(session.state!=='closed')return reportAddDays(d,1)+'T10:30:00+08:00';}
+    fail();
+  }
   let friday=reportAddDays(plan.accountingThrough,1);
   while(new Date(friday+'T00:00:00Z').getUTCDay()!==5)friday=reportAddDays(friday,1);
   const weekly=weeklyReportPlan(friday).scheduledAt;
@@ -68,13 +73,14 @@ export function createFeeReportConsumer(){
     const pending={state:'pending',kindLabel:'报告类型待更新',message:'报告信息尚未完成核验',nonRealtime:true};
     try{
       if(feeView?.state!=='verified'||!exact(metadata,'schema,plan,generatedAt,nextScheduledAt,feeReceiptId,reportId')||metadata.schema!=='fee-console.report-publication.v1'||metadata.feeReceiptId!==receipt?.receiptId)return pending;
-      const p=metadata.plan,labels={weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报（合并）'};
-      if(!exact(p,'schema,kind,periodFrom,accountingThrough,priceThrough,scheduledAt,monthlyCutoffs')||p.schema!=='fee-console.report-plan.v1'||!labels[p.kind]||![p.periodFrom,p.accountingThrough,p.priceThrough].every(date)||p.periodFrom>p.accountingThrough||p.priceThrough>p.accountingThrough||p.accountingThrough!==feeView.asOf||!Array.isArray(p.monthlyCutoffs)||p.monthlyCutoffs.some(d=>!date(d)||d!==p.accountingThrough))return pending;
+      const p=metadata.plan,labels={weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报（合并）',daily:'日报','daily-monthly':'日报／月末归档（合并）'},daily=p?.schema==='fee-console.report-plan.v2';
+      if(!exact(p,'schema,kind,periodFrom,accountingThrough,priceThrough,scheduledAt,monthlyCutoffs'+(daily?',markets':''))||!(daily?['daily','daily-monthly'].includes(p.kind):p.schema==='fee-console.report-plan.v1'&&['weekly','monthly','weekly-monthly'].includes(p.kind))||!labels[p.kind]||![p.periodFrom,p.accountingThrough,p.priceThrough].every(date)||p.periodFrom>p.accountingThrough||p.priceThrough>p.accountingThrough||p.accountingThrough!==feeView.asOf||!Array.isArray(p.monthlyCutoffs)||new Set(p.monthlyCutoffs).size!==p.monthlyCutoffs.length||p.monthlyCutoffs.some(d=>!date(d)||(daily?d<p.periodFrom||d>p.accountingThrough||new Date(Date.parse(d+'T00:00Z')+86400000).getUTCDate()!==1:d!==p.accountingThrough)))return pending;
+      if(daily&&(!Array.isArray(p.markets)||!p.markets.length||p.markets.length>16||new Set(p.markets).size!==p.markets.length||p.markets.some(m=>typeof m!=='string'||!['NYSE','NASDAQ','LSE','SIX','EURONEXT_AMSTERDAM','EURONEXT_BRUSSELS','EURONEXT_PARIS','EURONEXT_LISBON','EURONEXT_DUBLIN','EURONEXT_MILAN','EURONEXT_OSLO'].includes(m))))return pending;
       const generated=Date.parse(metadata.generatedAt),scheduled=Date.parse(p.scheduledAt),next=Date.parse(metadata.nextScheduledAt),clock=new Date(now).getTime();
       if(![generated,scheduled,next,clock].every(Number.isFinite)||generated<scheduled||generated>clock+300000||next<=scheduled)return pending;
       const {reportId,...body}=metadata;
       if(!/^[a-f0-9]{64}$/.test(reportId)||await digest(body)!==reportId)return pending;
-      return {state:clock>=next?'pending-update':'updated',kindLabel:labels[p.kind],periodFrom:p.periodFrom,accountingThrough:p.accountingThrough,priceThrough:p.priceThrough,generatedAt:metadata.generatedAt,nextScheduledAt:metadata.nextScheduledAt,nonRealtime:true};
+      return {state:clock>=next?'pending-update':'updated',kindLabel:labels[p.kind],periodFrom:p.periodFrom,accountingThrough:p.accountingThrough,priceThrough:p.priceThrough,generatedAt:metadata.generatedAt,nextScheduledAt:metadata.nextScheduledAt,nonRealtime:true,...(daily?{priceLabel:'SPY／QQQ行情截至'}:{})};
     }catch{return pending;}
   }
   function snapshotPoints(points){
