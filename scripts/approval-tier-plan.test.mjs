@@ -146,3 +146,75 @@ test('CLI checks actual complete trees and rejects a bundled policy change', () 
     assert.equal(run('--all').status, 1);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+
+// Trusted entry-policy regression fixtures. This exact public notice has no
+// source data, private parameters, runtime script or credential handling.
+import {verifyXuanEntry,RETIRED_ENTRY_SHA256} from './xuan-ib-entry-policy.mjs';
+import crypto from 'node:crypto';
+const retiredEntryFixture=Buffer.from(`<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="xuan-action-status" content="retired">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>独立行动版已停止 · 比例管理</title>
+  <style>
+    *{box-sizing:border-box}body{margin:0;padding:32px 16px;background:#f5f7fa;color:#203348;font:16px/1.65 system-ui,sans-serif}
+    main{max-width:680px;margin:8vh auto;padding:28px;border:1px solid #dce3eb;border-radius:16px;background:#fff}
+    h1{font-size:24px;line-height:1.35}a{display:inline-block;padding:10px 16px;border-radius:8px;background:#315f91;color:#fff;text-decoration:none}
+    .note{color:#53677b;font-size:14px}a:focus-visible{outline:3px solid #e4aa38;outline-offset:3px}
+  </style>
+</head>
+<body>
+  <main>
+    <h1>独立行动版已停止</h1>
+    <p>请在管理费小程序的管理人界面，打开「设置」旁的「比例管理」。</p>
+    <p>此入口不再读取或生成独立行动报告，也不会自动解锁历史内容。历史文件保留归档。</p>
+    <p><a href="../" rel="noreferrer">打开管理费小程序</a></p>
+    <p class="note">比例数据仅在已核验的管理人会话内显示；来源日期及未取得项目以该页面说明为准。未来自动更新以实际启用状态及合格发布回执为准。</p>
+  </main>
+</body>
+</html>
+`);
+test('only the exact reviewed inert retirement document is admitted for the single entry path',()=>{
+  assert.equal(crypto.createHash('sha256').update(retiredEntryFixture).digest('hex'),RETIRED_ENTRY_SHA256);
+  assert.equal(verifyXuanEntry(retiredEntryFixture),'static-retirement');
+  assert.throws(()=>verifyXuanEntry(retiredEntryFixture,'index.html'),/REFUSED/);
+  assert.throws(()=>verifyXuanEntry(retiredEntryFixture,'xuan-ib/latest.html'),/REFUSED/);
+  assert.throws(()=>verifyXuanEntry(retiredEntryFixture.toString()),/REFUSED/);
+});
+for(const [name,change]of [
+  ['script',s=>s.replace('</body>','<script>alert(1)</script></body>')],
+  ['event handler',s=>s.replace('<main>','<main onclick="alert(1)">')],
+  ['remote image',s=>s.replace('</body>','<img src="https://example.invalid/track"></body>')],
+  ['external CSS',s=>s.replace('<style>','<style>@import "https://example.invalid/style";')],
+  ['CSS resource',s=>s.replace('*{box-sizing:border-box}','*{background:url(https://example.invalid)}')],
+  ['form',s=>s.replace('</main>','<form action="../"></form></main>')],
+  ['refresh redirect',s=>s.replace('</head>','<meta http-equiv="refresh" content="0;url=../"></head>')],
+  ['private fragment',s=>s.replace('href="../"','href="../#k=synthetic-secret"')],
+  ['query forwarding',s=>s.replace('href="../"','href="../?token=synthetic-secret"')],
+  ['javascript URL',s=>s.replace('href="../"','href="javascript:alert(1)"')],
+  ['data URL',s=>s.replace('href="../"','href="data:text/html,synthetic"')],
+  ['iframe',s=>s.replace('</body>','<iframe src="../"></iframe></body>')],
+  ['weakened CSP',s=>s.replace("default-src 'none'","default-src *")],
+  ['generic retired marker',s=>s.replace('历史文件保留归档。','different notice')],
+  ['forged loader comments',s=>s+'<!-- const loaderBuild = " new URL("latest.meta.json", location.href) new URL("latest.html", location.href) -->'],
+  ['variable report marker',s=>s+'<!-- xuan-ib-night-action-v1: synthetic -->'],
+])test('retirement entry rejects '+name,()=>assert.throws(()=>verifyXuanEntry(Buffer.from(change(retiredEntryFixture.toString()))),/REFUSED/));
+test('the original loader requirements remain intact and malformed encodings fail closed',()=>{
+  const original=fs.readFileSync(new URL('../xuan-ib/index.html',import.meta.url));assert.equal(verifyXuanEntry(original),'legacy-loader');
+  for(const token of ['const loaderBuild = "','new URL("latest.meta.json", location.href)','new URL("latest.html", location.href)'])assert.throws(()=>verifyXuanEntry(Buffer.from(original.toString().replace(token,'missing-original-signature'))),/REFUSED/);
+  for(const bytes of [Buffer.alloc(0),Buffer.alloc(512*1024+1),Buffer.from([0xff,0xfe]),Buffer.concat([Buffer.from([0xef,0xbb,0xbf]),retiredEntryFixture])])assert.throws(()=>verifyXuanEntry(bytes),/REFUSED/);
+});
+test('the policy workflow uses only the trusted verifier and retains original specific OWNER identity and exact-head gate',()=>{
+  const wf=fs.readFileSync(new URL('../.github/workflows/xuan-ib-policy-lock.yml',import.meta.url),'utf8');
+  assert.ok(wf.includes('ref: ${{ github.event.pull_request.base.sha }}'));
+  assert.ok(wf.includes('node scripts/xuan-ib-entry-policy.mjs "$proposed_index"'));
+  assert.ok(wf.includes('select(.author_association == "OWNER")'));
+  assert.ok(wf.includes('.user.id == 283054367 and .user.type == "User"'));
+  assert.ok(wf.includes('approval_line="/approve-xuan-ib-maintenance $head_sha"'));
+  assert.equal(classifyChanges([{path:'scripts/xuan-ib-entry-policy.mjs',status:'A',baseMode:null,headMode:'100644'}]),'specific');
+});
