@@ -83,7 +83,45 @@ export function periodIbRetryAllowed({runs,currentRunId=null,scheduledAt,now}={}
   }
   return previous===1;
 }
-export async function reportPublicationPreflight({now=new Date(),plan=null,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,readRetryRuns=readPeriodRetryRuns,readState}={}){
+// Count source entries, not the four daily public-only gate executions. Job
+// metadata includes every rerun attempt; no logs, secrets or new storage are used.
+// Two is a hard per-kind/cutoff ceiling, not permission to retry financial IO.
+export async function readPeriodSourceAttempts({plan,now,currentRunId=null,fetchImpl=globalThis.fetch}={}){
+  if(!validateReportPlan(plan)||!Number.isFinite(now?.getTime()))fail('SOURCE_ATTEMPT_METADATA');
+  const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(plan.scheduledAt).toISOString();
+  const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
+  const get=url=>boundedJson(fetchImpl,url,{method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:5000,maxBytes:512*1024});
+  const listing=await get(root+'/workflows/fee-cloud-producer.yml/runs?'+query),seen=new Set(),jobsSeen=new Set();
+  if(!Number.isSafeInteger(listing.total_count)||!Array.isArray(listing.workflow_runs)||listing.total_count!==listing.workflow_runs.length||listing.total_count>32)fail('SOURCE_ATTEMPT_METADATA');
+  const runs=listing.workflow_runs;
+  for(const r of runs){
+    if(!Number.isSafeInteger(r.id)||r.id<=0||seen.has(r.id)||r.head_branch!=='main'||r.path!=='.github/workflows/fee-cloud-producer.yml'||!/^[a-f0-9]{40}$/.test(r.head_sha||'')||!['schedule','workflow_dispatch'].includes(r.event)||!Number.isFinite(Date.parse(r.created_at))||Date.parse(r.created_at)<Date.parse(from)||Date.parse(r.created_at)>now.getTime())fail('SOURCE_ATTEMPT_METADATA');
+    seen.add(r.id);
+  }
+  const expected='Produce '+(plan.kind==='monthly'?'monthly':'weekly')+' '+plan.accountingThrough;
+  let attempts=0,inProgress=false;
+  for(const r of runs){
+    if(String(r.id)===String(currentRunId||''))continue;
+    const payload=await get(root+'/runs/'+r.id+'/jobs?filter=all&per_page=100');
+    if(!Number.isSafeInteger(payload.total_count)||!Array.isArray(payload.jobs)||!payload.jobs.length||payload.total_count!==payload.jobs.length||payload.total_count>100)fail('SOURCE_ATTEMPT_METADATA');
+    for(const j of payload.jobs){
+      if(!Number.isSafeInteger(j.id)||j.id<=0||jobsSeen.has(j.id)||j.run_id!==r.id||j.head_sha!==r.head_sha||typeof j.name!=='string'||!['queued','in_progress','completed','waiting','pending','requested'].includes(j.status))fail('SOURCE_ATTEMPT_METADATA');
+      jobsSeen.add(j.id);
+      if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
+      if(['period','watch'].includes(j.name))continue;
+      if(j.name!=='produce'&&!/^Produce (weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
+      // A legacy unlabelled source job conservatively consumes either budget.
+      if(j.name!==expected&&j.name!=='produce'&&j.name!=='Source acceptance '+plan.accountingThrough)continue;
+      if(j.status==='completed'&&typeof j.conclusion!=='string')fail('SOURCE_ATTEMPT_METADATA');
+      if(j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('SOURCE_ATTEMPT_METADATA');
+      if(j.status!=='completed')inProgress=true;
+      if(j.started_at!==null||j.status!=='completed')attempts++;
+    }
+    if(attempts>=2)return {attempts,inProgress};
+  }
+  return {attempts,inProgress};
+}
+export async function reportPublicationPreflight({now=new Date(),plan=null,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readState}={}){
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
@@ -97,7 +135,7 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,ibEna
     const covered={schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:latest,mainSha:state.mainSha};
     // Between reports coverage remains valid; this bounded IB retry never
     // rejuvenates stale health, changes target windows or retries every day.
-    if(!ibEnabled||state.health.targetDate!==latest.accountingThrough||!freshTarget(latest,now)||validateHealth(state.health,{now}).length||now.getTime()-Date.parse(state.health.checkedAt)>12*3600000)return covered;
+    if(runAttempt!==undefined&&String(runAttempt)!=='1'||!ibEnabled||state.health.targetDate!==latest.accountingThrough||!freshTarget(latest,now)||validateHealth(state.health,{now}).length||now.getTime()-Date.parse(state.health.checkedAt)>12*3600000)return covered;
     if(state.pending)return {...covered,outcome:'candidate-pending'};
     try{
       const runs=await readRetryRuns({scheduledAt:latest.scheduledAt,now});
@@ -112,6 +150,14 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,ibEna
   if(state.mainSha!==state.finalMainSha||validateHealth(state.health,{now:new Date(state.health?.checkedAt)}).length||state.health?.dataSha256!==hash(state.data)||state.health.targetDate>next.accountingThrough)fail('PUBLICATION_READ');
   if(publishedReportMatches(state,next,now))return {schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:next,mainSha:state.mainSha};
   if(state.pending)return {schema:'fee-console.report-preflight.v1',outcome:'candidate-pending',plan:next,mainSha:state.mainSha};
+  // Old workflow reruns can retain a creation date before this period. They
+  // cannot be used to evade its metadata budget or replay one-time execution.
+  if(runAttempt!==undefined&&String(runAttempt)!=='1')return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_RERUN_NOT_ALLOWED',plan:next,mainSha:state.mainSha};
+  try{
+    const budget=await readSourceAttempts({plan:next,now,currentRunId});
+    if(!budget||!Number.isSafeInteger(budget.attempts)||budget.attempts<0||typeof budget.inProgress!=='boolean')throw Error();
+    if(budget.inProgress||budget.attempts>=2)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:budget.inProgress?'REPORT_SOURCE_RUN_IN_PROGRESS':'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED',plan:next,mainSha:state.mainSha};
+  }catch{return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
 export async function reportPublicationWatch({mainSha,health,data,now=new Date()}={}){
@@ -132,6 +178,7 @@ export function assertPeriodIbRecheckUnchanged(before,after){
   if(canonicalJson(strip(before))!==canonicalJson(strip(after)))fail('IB_RECHECK_CHANGED_FEE_DATA');
 }
 export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json')}={}){
+  if(process.env.GITHUB_RUN_ATTEMPT!==undefined&&process.env.GITHUB_RUN_ATTEMPT!=='1')fail('SOURCE_RERUN_NOT_ALLOWED');
   if(!validateReportPlan(plan)||reportPlanReadiness(plan,now).state!=='due')fail('NOT_READY');
   if(!freshTarget(plan,now))fail('RECOVERY_REQUIRED');
   const output=outputDirectory(outputDir),originalBytes=fs.readFileSync(sourceFile),payload=decryptCandidate(sourceFile,process.env.FEE_DATA_KEY);
@@ -146,7 +193,7 @@ export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new 
     // Freeze one private economic revision for the entire range. No intermediate
     // candidate can escape. Recheck again after all daily receipts are proved.
     economic=await fetchEconomic();if(economic.envelopeVersion!==4)fail('ECON_VERSION');
-    const reads=await captureReportRange({dates,cache,readOnce:readOnce||(async date=>new SharesightCloudReader({clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,incomeDateEvidence:incomeDateEvidenceFromData(payload,date)}).readOnce(date))});
+    const reads=await captureReportRange({dates,cache,readOnce:readOnce||(async date=>new SharesightCloudReader({clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,incomeDateEvidence:incomeDateEvidenceFromData(payload,date),reconcileInKind:true}).readOnce(date))});
     let base=sourceFile,result;
     for(let i=0;i<reads.length;i++){
       const input=reads[i],final=i===reads.length-1,dayDir=path.join(runtime,input.targetDate);fs.mkdirSync(dayDir,{mode:0o700});

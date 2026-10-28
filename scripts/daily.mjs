@@ -35,7 +35,7 @@ import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
 import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-registry.mjs";
 
 import { resolveManagementExemptions } from './fee-management-exemption.mjs';
-import {prepareRatioAttachment} from './fee-ratio-packet.mjs';
+import {prepareRatioAttachment,prepareIbBootstrapAttachment} from './fee-ratio-packet.mjs';
 import { prepareIbManagerReturn } from './ib-manager-return-file.mjs';
 import {loadIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
 import {buildReportMetadata,preserveReportMonthLocks} from './fee-report-metadata.mjs';
@@ -78,7 +78,7 @@ const num = (name, raw) => {
 };
 
 const known = new Set([
-  "ib-baseline-input", "ib-coverage-input", "ratio-evidence-plan", "ratio-input", "ratio-recipient", "ratio-output", "ratio-kind", "ratio-source-date", "ratio-scope",
+  "ib-bootstrap-output", "ib-baseline-input", "ib-coverage-input", "ratio-evidence-plan", "ratio-input", "ratio-recipient", "ratio-output", "ratio-kind", "ratio-source-date", "ratio-scope",
   "ib-return-input", "ib-return-output", "ib-manager-input", "report-plan",
   "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint",
   ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, "gold", ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
@@ -87,12 +87,16 @@ const known = new Set([
   ...ACCOUNTS.map(a => `prev-acct-cash-${a}`)
 ]);
 for (const k of Object.keys(args)) if (!known.has(k)) die(`unknown argument --${k}`);
-for (const f of flags) if (!["calibrated", "style-preflight", "weekend-carry", "ratio-only", "ib-return-only", "execute"].includes(f)) die(`unknown flag --${f}`);
+for (const f of flags) if (!["calibrated", "style-preflight", "weekend-carry", "ratio-only", "ib-bootstrap-only", "ib-return-only", "execute"].includes(f)) die(`unknown flag --${f}`);
+if(flags.has('ib-bootstrap-only')){
+  if([...flags].some(f=>!['ib-bootstrap-only','execute'].includes(f))||Object.keys(args).some(k=>!['file','ib-baseline-input','ib-coverage-input','ib-bootstrap-output'].includes(k)))die('invalid IB bootstrap arguments');
+  try{const result=await prepareIbBootstrapAttachment({file:args.file,baselineFile:args['ib-baseline-input'],coverageFile:args['ib-coverage-input'],outputFile:args['ib-bootstrap-output'],execute:flags.has('execute'),keyText:process.env.FEE_DATA_KEY});console.log(result.status);process.exit(0);}catch{die('IB_BOOTSTRAP_REFUSED');}
+}
 if(flags.has('ratio-only')){
   if([...flags].some(f=>!['ratio-only','execute'].includes(f))||Object.keys(args).some(k=>!['file','ratio-input','ratio-recipient','ratio-output','ratio-kind','ratio-source-date','ratio-scope','ib-baseline-input','ib-coverage-input','ratio-evidence-plan'].includes(k)))die('invalid ratio attachment arguments');
   try{const result=await prepareRatioAttachment({file:args.file,inputFile:args['ratio-input'],recipientFile:args['ratio-recipient'],outputFile:args['ratio-output'],kind:args['ratio-kind'],sourceDate:args['ratio-source-date'],scopeId:args['ratio-scope'],baselineFile:args['ib-baseline-input'],coverageFile:args['ib-coverage-input'],browserEvidenceFile:args['ratio-evidence-plan'],execute:flags.has('execute'),keyText:process.env.FEE_DATA_KEY});console.log(result.status);process.exit(0);}catch{die('RATIO_ATTACHMENT_REFUSED');}
 }
-if(Object.keys(args).some(k=>k.startsWith('ratio-')||['ib-baseline-input','ib-coverage-input','ratio-evidence-plan'].includes(k)))die('ratio options require --ratio-only');
+if(Object.keys(args).some(k=>k.startsWith('ratio-')||['ib-baseline-input','ib-coverage-input','ib-bootstrap-output'].includes(k)))die('attachment options require their dedicated mode');
 if(flags.has("ib-return-only")){
   if([...flags].some(f=>!["ib-return-only","execute"].includes(f))||Object.keys(args).some(k=>!["file","ib-return-input","ib-return-output"].includes(k))||!args.file||!args["ib-return-input"])die("invalid independent IB attachment arguments");
   try{const result=await prepareIbManagerReturn({file:args.file,inputFile:args["ib-return-input"],outputFile:args["ib-return-output"],execute:flags.has("execute"),keyText:process.env.FEE_DATA_KEY});console.log(result.status);process.exit(0);}catch(_){die("IB return attachment refused; no financial values emitted");}

@@ -8,6 +8,26 @@ on:
     - cron: '0 16,17,0,5 * * *'
   workflow_dispatch:
     inputs:
+      source_acceptance_once:
+        description: One separately approved Sharesight field check; no fee decryption or publication
+        type: boolean
+        required: false
+        default: false
+      source_from:
+        description: Reviewed field-check first date, maximum four dates
+        type: string
+        required: false
+        default: ''
+      source_target:
+        description: Reviewed completed field-check last date
+        type: string
+        required: false
+        default: ''
+      source_main:
+        description: Exact protected main SHA approved for this field check
+        type: string
+        required: false
+        default: ''
       run_reviewed_once:
         description: Run one separately reviewed weekly/monthly report
         type: boolean
@@ -35,7 +55,7 @@ concurrency:
 jobs:
   period:
     # Legacy automated dispatchers omit run_reviewed_once and stay stopped.
-    if: ${{ ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -80,8 +100,9 @@ jobs:
           NODE
 
   produce:
+    name: Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}
     needs: period
-    if: ${{ needs.period.outputs.outcome == 'produce' && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -200,4 +221,59 @@ jobs:
           if [[ -d "$RUNNER_TEMP/fee-cloud-private" ]]; then
             find "$RUNNER_TEMP/fee-cloud-private" -type f -exec shred -u {} + 2>/dev/null || true
             rm -rf "$RUNNER_TEMP/fee-cloud-private"
+          fi
+
+  source-acceptance:
+    name: Source acceptance ${{ inputs.source_target }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: fee-cloud-producer
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Validate frozen code, date range and field-check plan before credentials
+        env:
+          SOURCE_MAIN: ${{ inputs.source_main }}
+          SOURCE_FROM: ${{ inputs.source_from }}
+          SOURCE_TARGET: ${{ inputs.source_target }}
+        run: |
+          set -euo pipefail
+          node scripts/fee-source-acceptance.mjs --check-plan \
+            --expected-main="$SOURCE_MAIN" --from-date="$SOURCE_FROM" \
+            --target-date="$SOURCE_TARGET" --out-dir="$RUNNER_TEMP/fee-source-acceptance"
+      - name: Exchange the existing trusted read identity
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          project_id: family-portfolio-gateway
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+      - name: Read only the existing Sharesight OAuth pair
+        id: source_credentials
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262
+        with:
+          secrets: |-
+            client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
+            client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+      - name: Capture the fixed private source evidence and field summary
+        env:
+          SOURCE_MAIN: ${{ inputs.source_main }}
+          SOURCE_FROM: ${{ inputs.source_from }}
+          SOURCE_TARGET: ${{ inputs.source_target }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.source_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.source_credentials.outputs.client_secret }}
+        run: |
+          set -euo pipefail
+          mkdir -m 700 "$RUNNER_TEMP/fee-source-acceptance"
+          node scripts/fee-source-acceptance.mjs \
+            --expected-main="$SOURCE_MAIN" --from-date="$SOURCE_FROM" \
+            --target-date="$SOURCE_TARGET" --out-dir="$RUNNER_TEMP/fee-source-acceptance"
+      - name: Remove private field evidence without uploading artifacts
+        if: always()
+        run: |
+          if [[ -d "$RUNNER_TEMP/fee-source-acceptance" ]]; then
+            find "$RUNNER_TEMP/fee-source-acceptance" -type f -exec shred -u {} + 2>/dev/null || true
+            rm -rf "$RUNNER_TEMP/fee-source-acceptance"
           fi

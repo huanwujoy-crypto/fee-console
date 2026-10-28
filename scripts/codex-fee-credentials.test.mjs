@@ -48,7 +48,7 @@ test("private-file setup only reads an owned, restricted regular file", () => {
 import {spawnSync} from 'node:child_process';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
-import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,finalizeLocalRatioAttachment,readLocalAttachmentPlan,readProducerLogRecord} from './codex-fee-credentials.mjs';
+import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,finalizeLocalRatioAttachment,finalizeLocalIbBootstrapAttachment,readLocalAttachmentPlan,readProducerLogRecord} from './codex-fee-credentials.mjs';
 import {buildFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {convertEncryptedV3Copy} from './fee-econ-v3-copy.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
@@ -348,6 +348,7 @@ async function ratioFinalFixture(t,options={}){
   f.runtime={...f.runtime,async runNode({args,env}){
     if(args[0].endsWith('/daily.mjs')){
       const get=k=>args.find(a=>a.startsWith('--'+k+'='))?.slice(k.length+3);
+      if(args.includes('--ib-bootstrap-only'))return old({args,env});
       // Same real writer library, with synthetic scope and clock injected only
       // by this test. Production CLI has no override for either policy.
       try{const r=await prepareRatioAttachment({file:get('file'),inputFile:get('ratio-input'),recipientFile:get('ratio-recipient'),outputFile:get('ratio-output'),kind:get('ratio-kind'),sourceDate:get('ratio-source-date'),scopeId:get('ratio-scope'),baselineFile:get('ib-baseline-input'),coverageFile:get('ib-coverage-input'),keyText:env.FEE_DATA_KEY,execute:args.includes('--execute'),environ:env,now:NOW,viewCore:core});return {status:0,stdout:r.status+'\n',stderr:''};}catch{return {status:1,stdout:'',stderr:'SYNTHETIC_WRITER_REFUSAL'};}
@@ -382,6 +383,48 @@ for(const mode of ['missing-recipient','bad-date','expired','bad-source','bad-pr
 test('one private ratio operation can seed approved historical IB without another secret channel or changing original receipts',async t=>{
   const f=await ratioFinalFixture(t,{bootstrap:true}),before=open(fs.readFileSync(f.plan.baseData.path),f.key),r=await ratioFinalize(f),after=open(fs.readFileSync(path.join(f.root,'ratio-finalized/data.json')),f.key);
   assert.equal(r.ibBootstrapAdded,true);assert.deepEqual(f.calls.secrets,[SERVICES.key,SERVICES.gist]);assert.deepEqual(after.ibManagerReturnReceipt,before.ibManagerReturnReceipt);assert.deepEqual(after.ibManagerDrawdownReceipt,before.ibManagerDrawdownReceipt);assert.deepEqual(after.feeCalculationReceipt,before.feeCalculationReceipt);assert.equal(after.ibManagerCoverageState.sourceProvider,'Sharesight');assert.equal(after.ibManagerBaselineState.authority,'owner-confirmed-frozen');
+});
+
+async function bootstrapFinalFixture(t){
+  const f=await ratioFinalFixture(t,{bootstrap:true,noRecipient:true});
+  const {ratioInput,ratioSourceDate,ratioKind,...rest}=f.plan;
+  f.plan={...rest,schema:'fee-console.ib-bootstrap-local-finalize-plan.v1'};
+  return f;
+}
+const bootstrapFinalize=f=>finalizeLocalIbBootstrapAttachment({plan:f.plan,environ:f.environ,runtime:f.runtime});
+test('baseline-only sole-writer path binds original health without ratio date, recipient or a new secret channel',async t=>{
+  const f=await bootstrapFinalFixture(t),before=open(fs.readFileSync(f.plan.baseData.path),f.key),r=await bootstrapFinalize(f),dir=path.join(f.root,'ib-bootstrap-finalized'),after=open(fs.readFileSync(path.join(dir,'data.json')),f.key);
+  const {ibManagerBaselineState,ibManagerCoverageState,...unchanged}=after;
+  assert.deepEqual(unchanged,before);assert.equal(ibManagerBaselineState.authority,'owner-confirmed-frozen');assert.equal(ibManagerCoverageState.sourceProvider,'Sharesight');
+  assert.equal(r.status,'IB_BOOTSTRAP_BOUND_HEALTH_READY_FOR_REVIEW');assert.equal(r.publicationReady,false);assert.equal(r.ibBootstrapAdded,true);
+  assert.deepEqual(f.calls.secrets,[SERVICES.key,SERVICES.gist]);assert.ok(f.calls.children.some(c=>c.args.includes('--ib-bootstrap-only')));
+  assert.ok(f.calls.children.every(c=>!c.args.includes('--ratio-only')));assert.equal(fs.existsSync(path.join(f.root,'ratio-public-recipient.json')),false);
+  const health=JSON.parse(fs.readFileSync(path.join(dir,'fee-data-health.json')));assert.equal(health.checkedAt,f.health.checkedAt);assert.deepEqual(health.sourceDates,f.health.sourceDates);assert.equal(health.dataSha256,digest(fs.readFileSync(path.join(dir,'data.json'))));
+  for(const name of ['data.json','fee-data-health.json','validation.json'])assert.equal(fs.statSync(path.join(dir,name)).mode&0o777,0o600);
+  await assert.rejects(bootstrapFinalize(f),/OUTPUT/);assert.equal(f.calls.secrets.length,2);
+  await assert.rejects(ratioFinalize(f),/PLAN/);
+});
+for(const [name,mutate,beforeKeys] of [
+  ['extra ratio source',f=>f.plan.ratioSourceDate=TARGET,true],
+  ['no baseline',f=>f.plan.ibBootstrap=null,true],
+  ['modified private input',f=>fs.appendFileSync(f.plan.ibBootstrap.baseline.path,' '),true],
+  ['expired health',f=>f.runtime={...f.runtime,now:()=>new Date('2026-10-28T00:00:00Z')},true],
+  ['invalid producer step',f=>f.proof.jobs.jobs[0].steps[0].conclusion='failure',true],
+  ['historical value changed',f=>{const x=JSON.parse(fs.readFileSync(f.plan.ibBootstrap.baseline.path));x.periodReturnsInput.points[0].tot++;f.plan.ibBootstrap.baseline=f.write('baseline-source.json',JSON.stringify(x));},false],
+  ['health time reset',f=>f.options.mutateDerivedHealth=x=>x.checkedAt='2026-10-26T12:00:00.000Z',false],
+])test('baseline-only private pipeline rejects '+name,async t=>{
+  const f=await bootstrapFinalFixture(t),base=fs.readFileSync(f.plan.baseData.path);mutate(f);await assert.rejects(bootstrapFinalize(f));
+  if(beforeKeys)assert.equal(f.calls.secrets.length,0);assert.deepEqual(fs.readFileSync(f.plan.baseData.path),base);assert.equal(fs.existsSync(path.join(f.root,'ib-bootstrap-finalized')),false);
+});
+for(const name of ['Produce weekly '+TARGET,'Produce monthly '+TARGET])test('producer proof accepts exact target-labelled job '+name,async t=>{
+  const f=await bootstrapFinalFixture(t);f.proof.jobs.jobs[0].name=name;assert.equal((await bootstrapFinalize(f)).readyForSignedCandidate,true);
+});
+for(const name of ['Produce weekly 2026-10-22','Produce snapshot '+TARGET,'Produce weekly '+TARGET+' extra'])test('producer proof refuses unrelated job '+name,async t=>{
+  const f=await bootstrapFinalFixture(t);f.proof.jobs.jobs[0].name=name;await assert.rejects(bootstrapFinalize(f),/PROVENANCE/);assert.equal(f.calls.secrets.length,0);
+});
+test('producer proof refuses duplicate legacy and labelled jobs before reading financial keys',async t=>{
+  const f=await bootstrapFinalFixture(t);f.proof.jobs.jobs.push({...structuredClone(f.proof.jobs.jobs[0]),id:PROOF_JOB+1,name:'Produce weekly '+TARGET});f.proof.jobs.total_count=2;
+  await assert.rejects(bootstrapFinalize(f),/PROVENANCE/);assert.equal(f.calls.secrets.length,0);
 });
 
 test('v2 browser finalization never reads financial keys for missing or self-asserted source evidence',async t=>{

@@ -84,23 +84,30 @@ export async function attachRatioToPayload(data,input,recipient,{kind,sourceDate
   if(canonicalJson(strip(data))!==canonicalJson(strip(after))||!validateFeeCalculationReceipt(fee,after).ok)fail();
   return after;
 }
-export async function prepareRatioAttachment({file,inputFile,recipientFile,outputFile,kind,sourceDate,scopeId,keyText,baselineFile=null,coverageFile=null,browserEvidenceFile=null,evidenceContext=undefined,execute=false,environ=process.env,now=new Date(),viewCore=core}={}){
-  if(!/^[a-f0-9]{64}$/.test(scopeId||'')||!!baselineFile!==!!coverageFile)fail();
+export function prepareRatioAttachment(options={}){return preparePrivateAttachment({...options,bootstrapOnly:false});}
+export function prepareIbBootstrapAttachment(options={}){return preparePrivateAttachment({...options,bootstrapOnly:true});}
+async function preparePrivateAttachment({file,inputFile,recipientFile,outputFile,kind,sourceDate,scopeId,keyText,baselineFile=null,coverageFile=null,browserEvidenceFile=null,evidenceContext=undefined,execute=false,environ=process.env,now=new Date(),viewCore=core,bootstrapOnly}={}){
+  if(!!baselineFile!==!!coverageFile)fail();
+  if(bootstrapOnly){if(!baselineFile||[inputFile,recipientFile,kind,sourceDate,scopeId,browserEvidenceFile,evidenceContext].some(v=>v!==undefined&&v!==null))fail();}
+  else if(!/^[a-f0-9]{64}$/.test(scopeId||''))fail();
   if(/^(true|1)$/i.test(String(environ.GITHUB_ACTIONS||''))||typeof keyText!=='string'||!/^[A-Za-z0-9_+/-]{43}={0,2}$/.test(keyText))fail();
   const dir=privateDirectory(path.dirname(file)),spec=p=>{if(path.dirname(p)!==dir)fail();const st=fs.lstatSync(p);if(!st.isFile()||st.isSymbolicLink()||fs.realpathSync(p)!==p||st.uid!==process.getuid()||(st.mode&0o777)!==0o600||st.size<1||st.size>5*1024*1024)fail();const fd=fs.openSync(p,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let raw;try{const at=fs.fstatSync(fd);if(at.ino!==st.ino||at.dev!==st.dev)fail();raw=fs.readFileSync(fd);}finally{fs.closeSync(fd);}return frozenFile({path:p,sha256:hash(raw)},dir);};
-  const base=spec(file),input=spec(inputFile),recipient=spec(recipientFile),baseline=baselineFile?spec(baselineFile):null,coverage=coverageFile?spec(coverageFile):null,outer=parse(base.bytes),key=Buffer.from(keyText.replace(/-/g,'+').replace(/_/g,'/'),'base64');
+  const base=spec(file),input=bootstrapOnly?null:spec(inputFile),recipient=bootstrapOnly?null:spec(recipientFile),baseline=baselineFile?spec(baselineFile):null,coverage=coverageFile?spec(coverageFile):null,outer=parse(base.bytes),key=Buffer.from(keyText.replace(/-/g,'+').replace(/_/g,'/'),'base64');
   if(key.length!==32||!exact(outer,['enc','v','data'])||outer.enc!==true||outer.v!==3||typeof outer.data!=='string')fail();
   const decode=data=>{const b=Buffer.from(data,'base64');if(b.length<29||b.toString('base64')!==data)fail();const d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(-16));const plain=Buffer.concat([d.update(b.subarray(12,-16)),d.final()]);try{return parse(plain);}finally{plain.fill(0);}};
   try{
-    const sourceInput=parse(input.bytes),browserEvidence=browserEvidenceFile?readVerifiedBrowserEvidence({...evidenceContext,planPath:browserEvidenceFile,expectedScopeId:scopeId,input:sourceInput,now}):null;
-    const before=decode(outer.data),seeded=baseline?await attachIbBootstrap(before,parse(baseline.bytes),parse(coverage.bytes)):before,after=await attachRatioToPayload(seeded,sourceInput,parse(recipient.bytes),{kind,sourceDate,scopeId,now,viewCore,browserEvidence});
-    base.check();input.check();recipient.check();baseline?.check();coverage?.check();browserEvidence?.check();if(!execute)return {status:'RATIO_ATTACHMENT_DRY_RUN_OK'};
+    const sourceInput=input?parse(input.bytes):null,browserEvidence=browserEvidenceFile?readVerifiedBrowserEvidence({...evidenceContext,planPath:browserEvidenceFile,expectedScopeId:scopeId,input:sourceInput,now}):null;
+    const before=decode(outer.data);
+    if(!validateFeeCalculationReceipt(before.feeCalculationReceipt,before).ok)fail();
+    const seeded=baseline?await attachIbBootstrap(before,parse(baseline.bytes),parse(coverage.bytes)):before,after=bootstrapOnly?seeded:await attachRatioToPayload(seeded,sourceInput,parse(recipient.bytes),{kind,sourceDate,scopeId,now,viewCore,browserEvidence});
+    const checks=()=>{base.check();input?.check();recipient?.check();baseline?.check();coverage?.check();browserEvidence?.check();};
+    checks();if(!execute)return {status:bootstrapOnly?'IB_BOOTSTRAP_DRY_RUN_OK':'RATIO_ATTACHMENT_DRY_RUN_OK'};
     if(!path.isAbsolute(outputFile)||path.dirname(path.dirname(outputFile))!==dir||path.basename(outputFile)!=='data.json'||fs.existsSync(outputFile)||privateDirectory(path.dirname(outputFile))!==path.dirname(outputFile))fail();
     const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv),plain=Buffer.from(JSON.stringify(after));let packed;
     try{packed=Buffer.concat([iv,cipher.update(plain),cipher.final(),cipher.getAuthTag()]);}finally{plain.fill(0);}
     if(canonicalJson(decode(packed.toString('base64')))!==canonicalJson(after))fail();
-    const encoded=JSON.stringify({enc:true,v:3,data:packed.toString('base64')})+'\n';base.check();input.check();recipient.check();baseline?.check();coverage?.check();browserEvidence?.check();
-    fs.writeFileSync(outputFile,encoded,{flag:'wx',mode:0o600});if(fs.readFileSync(outputFile,'utf8')!==encoded)fail();return {status:'RATIO_ATTACHMENT_ENCRYPTED_CANDIDATE_PREPARED'};
+    const encoded=JSON.stringify({enc:true,v:3,data:packed.toString('base64')})+'\n';checks();
+    fs.writeFileSync(outputFile,encoded,{flag:'wx',mode:0o600});if(fs.readFileSync(outputFile,'utf8')!==encoded)fail();return {status:bootstrapOnly?'IB_BOOTSTRAP_ENCRYPTED_CANDIDATE_PREPARED':'RATIO_ATTACHMENT_ENCRYPTED_CANDIDATE_PREPARED'};
   }finally{key.fill(0);}
 }
 function privateDirectory(p){
