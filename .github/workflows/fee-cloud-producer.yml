@@ -2,12 +2,17 @@ name: Fee console cloud producer
 
 on:
   schedule:
-    # Public period gate only: HKT 00:00 first attempt, then 01:00/08:00/13:00.
-    # Financial production runs only for a due, unpublished weekly/monthly cutoff.
-    # 13:00 also covers a natural NY month-end still unfinished at HKT midnight.
-    - cron: '0 16,17,0,5 * * *'
+    # Public market gate: HKT10:30 first check, same-day13:00/14:00 continuation.
+    # Unknown/closed markets or an incomplete NY accounting day enter no source.
+    - cron: '30 2 * * *'
+    - cron: '0 5,6 * * *'
   workflow_dispatch:
     inputs:
+      source_plan_check_only:
+        description: Public code/date plan check only; no financial environment or credentials
+        type: boolean
+        required: false
+        default: false
       source_acceptance_once:
         description: One separately approved Sharesight field check; no fee decryption or publication
         type: boolean
@@ -43,6 +48,11 @@ on:
         type: string
         required: false
         default: ''
+      report_markets:
+        description: Separately reviewed one-off triggering calendars; never used by scheduled runs
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -55,7 +65,7 @@ concurrency:
 jobs:
   period:
     # Legacy automated dispatchers omit run_reviewed_once and stay stopped.
-    if: ${{ !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -65,25 +75,31 @@ jobs:
       target: ${{ steps.plan.outputs.target }}
       kind: ${{ steps.plan.outputs.kind }}
       main: ${{ steps.plan.outputs.main }}
+      plan: ${{ steps.plan.outputs.plan }}
     steps:
       - name: Check out trusted main for public period gate
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: main
           persist-credentials: false
-      - name: Plan weekly or final monthly coverage without financial credentials
+      - name: Plan daily coverage and month-end archive without financial credentials
         id: plan
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
           IB_MANAGER_READ_ENABLED: ${{ vars.IB_MANAGER_READ_ENABLED }}
+          FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
           REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
           REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.report_target || '' }}
+          REVIEWED_MARKETS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_markets || '' }}
         run: |
           set -euo pipefail
           args=(--mode=preflight)
           if [[ -n "$REVIEWED_KIND" || -n "$REVIEWED_TARGET" ]]; then
             args+=("--report-kind=$REVIEWED_KIND" "--report-target=$REVIEWED_TARGET")
+          fi
+          if [[ -n "$REVIEWED_MARKETS" ]]; then
+            args+=("--report-markets=$REVIEWED_MARKETS")
           fi
           summary=$(node scripts/fee-report-producer.mjs "${args[@]}")
           node - "$summary" <<'NODE'
@@ -91,9 +107,9 @@ jobs:
           if(r.schema!=='fee-console.report-preflight.v1'||!['produce','already-published','not-due','waiting','candidate-pending','recovery-required'].includes(r.outcome))throw Error('unexpected period decision');
           fs.appendFileSync(process.env.GITHUB_OUTPUT,`outcome=${r.outcome}\n`);
           if(r.outcome==='produce'){
-            if(!/^\d{4}-\d{2}-\d{2}$/.test(r.plan?.accountingThrough)||!['weekly','monthly','weekly-monthly'].includes(r.plan?.kind)||!/^[a-f0-9]{40}$/.test(r.mainSha))throw Error('invalid frozen period');
-            const kind=r.plan.kind==='monthly'?'monthly':'weekly';
-            fs.appendFileSync(process.env.GITHUB_OUTPUT,`target=${r.plan.accountingThrough}\nkind=${kind}\nmain=${r.mainSha}\n`);
+            if(!/^\d{4}-\d{2}-\d{2}$/.test(r.plan?.accountingThrough)||!['daily','daily-monthly','weekly','monthly','weekly-monthly'].includes(r.plan?.kind)||!/^[a-f0-9]{40}$/.test(r.mainSha))throw Error('invalid frozen period');
+            const kind=r.plan.kind.startsWith('daily')?'daily':r.plan.kind==='monthly'?'monthly':'weekly';
+            fs.appendFileSync(process.env.GITHUB_OUTPUT,`target=${r.plan.accountingThrough}\nkind=${kind}\nmain=${r.mainSha}\nplan=${JSON.stringify(r.plan)}\n`);
           }
           fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY,`## Fee report period\n\n- Decision: ${r.outcome}\n- Accounting cutoff: ${r.plan?.accountingThrough||'not due'}\n- Price cutoff: ${r.plan?.priceThrough||'not due'}\n\nNo financial source or encrypted economic book is read by this gate.\n`);
           if(r.outcome==='recovery-required')throw Error('FEE_REPORT_RECOVERY_REQUIRED');
@@ -102,7 +118,7 @@ jobs:
   produce:
     name: Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}
     needs: period
-    if: ${{ github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -158,6 +174,7 @@ jobs:
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
           REPORT_KIND: ${{ needs.period.outputs.kind }}
           REPORT_TARGET: ${{ needs.period.outputs.target }}
+          REPORT_PLAN: ${{ needs.period.outputs.plan }}
         run: |
           set -euo pipefail
           error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"
@@ -165,6 +182,7 @@ jobs:
             --mode=produce \
             --report-kind="$REPORT_KIND" \
             --report-target="$REPORT_TARGET" \
+            --report-plan="$REPORT_PLAN" \
             --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
             --out-dir="$RUNNER_TEMP/fee-cloud-private" 2>"$error_file"); then
             code=$(tail -n 1 "$error_file")
@@ -223,9 +241,32 @@ jobs:
             rm -rf "$RUNNER_TEMP/fee-cloud-private"
           fi
 
+  source-plan-check:
+    name: Public source plan check ${{ inputs.source_target }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Check the original plan without a financial environment or identity
+        env:
+          SOURCE_MAIN: ${{ inputs.source_main }}
+          SOURCE_FROM: ${{ inputs.source_from }}
+          SOURCE_TARGET: ${{ inputs.source_target }}
+        run: |
+          set -euo pipefail
+          node scripts/fee-source-acceptance.mjs --check-plan \
+            --expected-main="$SOURCE_MAIN" --from-date="$SOURCE_FROM" \
+            --target-date="$SOURCE_TARGET" --out-dir="$RUNNER_TEMP/fee-source-plan-check"
+
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer

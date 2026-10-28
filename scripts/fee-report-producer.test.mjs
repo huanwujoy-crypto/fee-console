@@ -7,14 +7,52 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
-import {periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged} from './fee-report-producer.mjs';
-import {weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
+import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged} from './fee-report-producer.mjs';
+import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
+
+function syntheticFundTransfer(){
+ const gid='a'.repeat(32),key=crypto.randomBytes(32),iv=crypto.randomBytes(12),date='2026-10-27';
+ const sourceKeys=Array.from({length:7},(_,i)=>`sharesight:${200+i}->${300+i};holding:${400+i}`);
+ const event={id:'synthetic-inkind-group',date,investorId:'B',grossCents:700,feeCents:0,netCents:700,priceDate:date,priceTotalCents:10000,issuedShares:70,sourceRef:'sharesight:synthetic-group',inKindClose:{sourceKeys,sourceBinding:{sourcePortfolioId:2,destinationPortfolioId:1,sourceHoldingIds:Array.from({length:7},(_,i)=>500+i)}}};
+ const bundle={schema:'fee-console.fund-remote.v1',gid,updatedAt:'2026-10-28T00:00:00.000Z',profile:{schema:'fee-console.fund-profile.v1',manager:'Synthetic Manager',fundName:'Synthetic Fund',inceptionDate:'2026-10-01',inceptionNoticeDate:'2026-10-01',currency:'USD',initialShares:1000,investors:[{id:'A',name:'Synthetic A',shares:900},{id:'B',name:'Synthetic B',shares:100}],subscriptions:[event]},library:{}};
+ const seal=()=>{const c=crypto.createCipheriv('aes-256-gcm',key,iv),data=Buffer.concat([iv,c.update(JSON.stringify(bundle)),c.final(),c.getAuthTag()]).toString('base64');return JSON.stringify({enc:true,v:1,data});};
+ const economic={fundProfileRaw:seal(),fundProfileStable:true,fundProfileMatchesGist:value=>value===gid};
+ return {bundle,key:key.toString('base64url'),economic,seal,date};
+}
+test('actual period input helper decrypts only the existing same-Gist fund file and selects exact dated identity pairs',()=>{
+ const f=syntheticFundTransfer(),r=managedTransferIdentitiesFromFund(f.economic,f.key,f.date);assert.equal(r.pairs.length,7);assert.deepEqual(r.pairs[0],{sourceTradeId:200,sourceHoldingId:500,tradeId:300,holdingId:400});assert.equal(r.date,f.date);assert.equal(r.account,'webull');assert.equal(managedTransferIdentitiesFromFund(f.economic,f.key,'2026-10-28'),null);assert.equal(managedTransferIdentitiesFromFund({},f.key,f.date),null);
+});
+test('wrong key/Gist, unstable encrypted file, missing binding and profile identity mismatch stop before Sharesight',()=>{
+ for(const mutate of [f=>f.key=crypto.randomBytes(32).toString('base64url'),f=>{f.bundle.gid='b'.repeat(32);f.economic.fundProfileRaw=f.seal();},f=>f.economic.fundProfileStable=false,f=>{delete f.bundle.profile.subscriptions[0].inKindClose.sourceBinding;f.economic.fundProfileRaw=f.seal();},f=>{f.bundle.profile.subscriptions[0].investorId='ManagerLabel';f.economic.fundProfileRaw=f.seal();},f=>{f.bundle.profile.subscriptions[0].inKindClose.approved=true;f.economic.fundProfileRaw=f.seal();},f=>f.economic.fundProfileRaw=f.economic.fundProfileRaw.slice(0,-2)]){const f=syntheticFundTransfer();mutate(f);assert.throws(()=>managedTransferIdentitiesFromFund(f.economic,f.key,f.date),/^Error: FEE_REPORT_FUND_TRANSFER_INPUT_UNVERIFIED$/);}
+});
 
 // Existing preflight scenarios isolate unrelated public attempt metadata.
 const reportPublicationPreflight = args=>nativeReportPreflight({readSourceAttempts:async()=>({attempts:0,inProgress:false}),...args});
 
 const cache={v:1,benchmarks:{spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:'2026-10-22',p:100},{d:'2026-10-23',p:101,div:1}]},qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:'2026-10-22',p:200},{d:'2026-10-23',p:202}]}}};
+test('real daily preflight waits at10:30, continues the same target at13:00 and keeps bounded source attempts',async()=>{
+ const old=state(weeklyReportPlan('2026-10-23')),markets=['NYSE','LSE','SIX','EURONEXT_PARIS'],args={markets,ibEnabled:false,readState:async()=>old,readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ const first=await dailyPublicationPreflight({...args,now:new Date('2026-10-28T10:30:00+08:00')});assert.equal(first.outcome,'waiting');assert.equal(first.reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+ const next=await dailyPublicationPreflight({...args,now:new Date('2026-10-28T13:00:00+08:00')});assert.equal(next.outcome,'produce');assert.equal(next.plan.accountingThrough,'2026-10-27');assert.equal(next.plan.periodFrom,'2026-10-24');assert.equal(next.plan.kind,'daily');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-10-28T14:00:00+08:00'),readSourceAttempts:async()=>({attempts:2,inProgress:false})})).reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-10-28T13:00:00+08:00'),runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ for(const scope of [[],['NYSE','EURONEXT']])assert.equal((await dailyPublicationPreflight({...args,markets:scope,now:new Date('2026-10-28T13:00:00+08:00'),readState:()=>assert.fail('unresolved market must not access source state')})).reasonCode,'CALENDAR_SCOPE_UNVERIFIED');
+});
+test('known US session permits only the reviewed one-off calendar qualifier; scheduled scope stays unchanged',async()=>{
+ const r=await dailyPublicationPreflight({markets:['NYSE','NASDAQ'],targetDate:'2026-10-27',now:new Date('2026-10-28T13:00:00+08:00'),ibEnabled:false,readState:async()=>state(weeklyReportPlan('2026-10-23')),readSourceAttempts:async()=>({attempts:0,inProgress:false})});
+ assert.equal(r.outcome,'produce');assert.equal(r.plan.accountingThrough,'2026-10-27');assert.deepEqual(r.plan.markets,['NASDAQ','NYSE']);
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const expression=workflow.match(/REVIEWED_MARKETS:\s*\$\{\{([^\n]+)\}\}/)[1];
+ const qualifier=Function('github','inputs','return ('+expression+');');
+ assert.equal(qualifier({event_name:'schedule'},{run_reviewed_once:true,report_markets:'NYSE'}),'');
+ assert.equal(qualifier({event_name:'workflow_dispatch'},{run_reviewed_once:false,report_markets:'NYSE'}),'');
+ assert.equal(qualifier({event_name:'workflow_dispatch'},{run_reviewed_once:true,report_markets:'NYSE'}),'NYSE');
+ for(const args of [['--mode=produce','--report-kind=daily','--report-target=2026-10-27'],['--mode=preflight','--report-kind=weekly','--report-target=2026-10-23'],['--mode=preflight']]){
+  const result=spawnSync(process.execPath,[new URL('./fee-report-producer.mjs',import.meta.url).pathname,...args,'--report-markets=NYSE'],{encoding:'utf8',env:{PATH:process.env.PATH}});
+  assert.equal(result.status,1);assert.match(result.stderr,/FEE_REPORT_ARGUMENT/);
+ }
+});
 function cashOnly(date){
   const result={};let cashId=100;
   for(const [account,{name,portfolioId}] of Object.entries(CLOUD_ACCOUNTS)){

@@ -215,6 +215,33 @@ test("the trusted receipt uses daily EOD pre-flow NAV, not an endpoint average",
   assert.equal(august.calendarDayCount, 24);
 });
 
+test("independent same-value cash and exact in-kind events survive the full receipt chain", () => {
+  const date = "2026-08-20", automatic = fopFlow({ amount: 200 });
+  const cash = { id: "synthetic-cash", src: "", date, acct: "webull", amount: 200, note: automatic.desc };
+  const economicInput = { v: 4, settings: { start: date, mgmt: 0, carry: 20 },
+    accounts: [{ id: "schwab", opening: 500 }, { id: "webull", opening: 500 }],
+    months: [{ ym: "2026-08", flows: [cash] }], fees: [] };
+  const data = { daily: [{ d: date, schwab: 500, webull: 900 }], flowsAuto: [automatic], flowsUnresolved: [],
+    status: { asOf: date, provisional: false, calibrated: false, unresolvedCount: 0 } };
+  const receipt = buildFeeCalculationReceipt({ data, economicInput });
+  assert.equal(receipt.effectiveFlowCount, 2);
+  assert.equal(receipt.effectiveFlowNetCents, 40000);
+  assert.equal(receipt.totals.grossPnlCents, 0);
+  assert.equal(receipt.totals.grossTwrPpm, 0);
+  assert.equal(receipt.totals.carryCents, 0);
+  assert.deepEqual(validateFeeCalculationReceiptWithEcon(receipt, data, economicInput), { ok: true, errors: [] });
+});
+
+test("exact in-kind replay and explicit confirmed src deduplicate without fuzzy matching", () => {
+  const automatic = fopFlow(), duplicate = { ...automatic, id: "synthetic-rehash", desc: "rewritten" };
+  assert.equal(effectiveFlows({ flowsAuto: [automatic, duplicate] }).length, 1);
+  const linked = { id: "synthetic-confirmed", src: automatic.id, date: automatic.date,
+    acct: automatic.acct, amount: automatic.amount, note: "explicit source confirmation" };
+  assert.deepEqual(effectiveFlows({ months: [{ flows: [linked] }], flowsAuto: [automatic] }), [linked]);
+  const distinct = fopFlow({ businessKey: "synthetic:fop-2", amount: automatic.amount });
+  assert.equal(effectiveFlows({ flowsAuto: [automatic, distinct] }).length, 2);
+});
+
 test("one FOP produces the intended P&L and Carry; omission changes it and duplicate identity is refused", () => {
   const once = buildFeeCalculationReceipt(fixture());
   const omitted = buildFeeCalculationReceipt(fixture({ flowsAuto: [] }));

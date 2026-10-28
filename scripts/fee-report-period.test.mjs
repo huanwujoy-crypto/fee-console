@@ -1,7 +1,14 @@
+import './fee-market-calendar.test.mjs';
+test('daily v2 binds the real capture range, markets and deferred month lock without a separate monthly production',()=>{
+ const p=dailyReportPlan('2026-11-02',['NYSE','LSE','SIX','EURONEXT_PARIS'],{periodFrom:'2026-10-31'});
+ assert.equal(validateReportPlan(p),true);assert.equal(p.kind,'daily-monthly');assert.deepEqual(p.monthlyCutoffs,['2026-10-31']);assert.equal(p.scheduledAt,'2026-11-03T10:30:00+08:00');
+ assert.equal(reportPlanReadiness(p,new Date('2026-11-03T10:30:00+08:00')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');assert.equal(reportPlanReadiness(p,new Date('2026-11-03T13:00:00+08:00')).state,'due');
+ for(const change of [x=>x.markets.push('EURONEXT'),x=>x.priceThrough='2026-10-30',x=>x.monthlyCutoffs=[],x=>x.scheduledAt='2026-11-03T10:00:00+08:00']){const b=structuredClone(p);change(b);assert.equal(validateReportPlan(b),false);}
+});
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,reportSessionOpen,reportAddDays} from './fee-report-period.mjs';
+import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,reportSessionOpen,reportAddDays} from './fee-report-period.mjs';
 import {marketOpen} from '../cloud/xuan-preopen/calendar.mjs';
 
 test('standalone NYSE calendar exactly matches existing reviewed calendar for every supported date',()=>{

@@ -13,12 +13,38 @@ import {incomeDateEvidenceFromData} from './fee-income-date-policy.mjs';
 import {canonicalJson} from './fee-receipt-core.mjs';
 import {validateHealth} from './fee-data-health.mjs';
 import {boundedJson} from './fee-http-json.mjs';
-import {reportDate,reportAddDays,selectReportBenchmark,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates} from './fee-report-period.mjs';
+import {createFundInvestorCore} from './fund-investor-core.mjs';
+import {validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
+import {reportDate,reportAddDays,selectReportBenchmark,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,dailyReportPlan} from './fee-report-period.mjs';
+import {sessionUnion} from './fee-market-calendar.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const fail=code=>{throw Error('FEE_REPORT_'+code);};
 const hash=v=>crypto.createHash('sha256').update(typeof v==='string'||Buffer.isBuffer(v)?v:canonicalJson(v)).digest('hex');
 const freshTarget=(plan,now)=>{const age=Math.floor((Date.parse(now.toISOString().slice(0,10)+'T00:00:00Z')-Date.parse(plan.accountingThrough+'T00:00:00Z'))/86400000);return age>=0&&age<=4;};
+// Read-only use of the existing encrypted private fund file from the *same*
+// stable economic Gist snapshot. No new URL, key, storage or approval field.
+export function managedTransferIdentitiesFromFund(economic,keyText,targetDate){
+  if(economic?.fundProfileRaw==null)return null;
+  try{
+    if(economic.fundProfileStable!==true||typeof economic.fundProfileMatchesGist!=='function')throw Error();
+    const raw=economic.fundProfileRaw;if(typeof raw!=='string'||Buffer.byteLength(raw)>1024*1024)throw Error();
+    const outer=JSON.parse(raw),keys=[...raw.matchAll(/"((?:\\.|[^"\\])*)"\s*:/g)].map(m=>JSON.parse('"'+m[1]+'"'));
+    if(Object.keys(outer).sort().join(',')!=='data,enc,v'||keys.length!==3||new Set(keys).size!==3||outer.enc!==true||outer.v!==1||typeof outer.data!=='string')throw Error();
+    const bytes=Buffer.from(outer.data,'base64'),key=Buffer.from(String(keyText||'').replace(/-/g,'+').replace(/_/g,'/'),'base64');
+    if(bytes.length<29||bytes.toString('base64')!==outer.data||key.length!==32)throw Error();
+    const decipher=crypto.createDecipheriv('aes-256-gcm',key,bytes.subarray(0,12));decipher.setAuthTag(bytes.subarray(-16));
+    const bundle=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat([decipher.update(bytes.subarray(12,-16)),decipher.final()])));
+    if(Object.keys(bundle).sort().join(',')!=='gid,library,profile,schema,updatedAt'||bundle.schema!=='fee-console.fund-remote.v1'||!economic.fundProfileMatchesGist(bundle.gid)||typeof bundle.updatedAt!=='string'||new Date(bundle.updatedAt).toISOString()!==bundle.updatedAt)throw Error();
+    const checked=createFundInvestorCore().validateProfile(bundle.profile);if(!checked.ok)throw Error();
+    const events=(checked.profile.subscriptions||[]).filter(e=>e.date===targetDate&&e.inKindClose);
+    if(!events.length)return null;if(events.length!==1||!events[0].inKindClose.sourceBinding)throw Error();
+    const {sourceKeys,sourceBinding:b}=events[0].inKindClose;
+    return structuredClone(validateManagedTransferIdentities({schema:'fee-console.managed-transfer-identities.v1',date:targetDate,account:'webull',sourcePortfolioId:b.sourcePortfolioId,destinationPortfolioId:b.destinationPortfolioId,pairs:sourceKeys.map((key,i)=>{
+      const m=/^sharesight:(\d+)->(\d+);holding:(\d+)$/.exec(key);return {sourceTradeId:Number(m[1]),sourceHoldingId:b.sourceHoldingIds[i],tradeId:Number(m[2]),holdingId:Number(m[3])};
+    })}));
+  }catch{fail('FUND_TRANSFER_INPUT_UNVERIFIED');}
+}
 export function periodBenchmark(cache,date){
   return selectReportBenchmark(cache,date);
 }
@@ -98,7 +124,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,fetch
     if(!Number.isSafeInteger(r.id)||r.id<=0||seen.has(r.id)||r.head_branch!=='main'||r.path!=='.github/workflows/fee-cloud-producer.yml'||!/^[a-f0-9]{40}$/.test(r.head_sha||'')||!['schedule','workflow_dispatch'].includes(r.event)||!Number.isFinite(Date.parse(r.created_at))||Date.parse(r.created_at)<Date.parse(from)||Date.parse(r.created_at)>now.getTime())fail('SOURCE_ATTEMPT_METADATA');
     seen.add(r.id);
   }
-  const expected='Produce '+(plan.kind==='monthly'?'monthly':'weekly')+' '+plan.accountingThrough;
+  const expected='Produce '+(plan.kind.startsWith('daily')?'daily':plan.kind==='monthly'?'monthly':'weekly')+' '+plan.accountingThrough;
   let attempts=0,inProgress=false;
   for(const r of runs){
     if(String(r.id)===String(currentRunId||''))continue;
@@ -108,8 +134,8 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,fetch
       if(!Number.isSafeInteger(j.id)||j.id<=0||jobsSeen.has(j.id)||j.run_id!==r.id||j.head_sha!==r.head_sha||typeof j.name!=='string'||!['queued','in_progress','completed','waiting','pending','requested'].includes(j.status))fail('SOURCE_ATTEMPT_METADATA');
       jobsSeen.add(j.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
-      if(['period','watch'].includes(j.name))continue;
-      if(j.name!=='produce'&&!/^Produce (weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
+      if(['period','watch','source-plan-check'].includes(j.name))continue;
+      if(j.name!=='produce'&&!/^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
       // A legacy unlabelled source job conservatively consumes either budget.
       if(j.name!==expected&&j.name!=='produce'&&j.name!=='Source acceptance '+plan.accountingThrough)continue;
       if(j.status==='completed'&&typeof j.conclusion!=='string')fail('SOURCE_ATTEMPT_METADATA');
@@ -160,10 +186,31 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,ibEna
   }catch{return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
-export async function reportPublicationWatch({mainSha,health,data,now=new Date()}={}){
+export async function dailyPublicationPreflight({now=new Date(),targetDate=null,markets=String(process.env.FEE_REPORT_MARKETS||'').split(',').filter(Boolean),readState,...options}={}){
+  const localDate=(zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+  const target=targetDate||reportAddDays(localDate('Asia/Hong_Kong'),-1),base={schema:'fee-console.report-preflight.v1',plan:null};reportDate(target);
+  let sessions;try{sessions=sessionUnion(target,markets);}catch{return {...base,outcome:'waiting',reasonCode:'CALENDAR_SCOPE_UNVERIFIED'};}
+  if(sessions.rows.some(row=>row.state==='unknown'))return {...base,outcome:'waiting',reasonCode:'CALENDAR_SCOPE_UNVERIFIED'};
+  if(sessions.state==='closed')return {...base,outcome:'not-due',reasonCode:'ALL_RELEVANT_MARKETS_CLOSED'};
+  const scheduled=reportAddDays(target,1)+'T10:30:00+08:00';
+  if(now.getTime()<Date.parse(scheduled))return {...base,outcome:'waiting',reasonCode:'REPORT_NOT_DUE'};
+  readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:options.ibEnabled??process.env.IB_MANAGER_READ_ENABLED==='true'}));
+  const state=await readState(target,now.toISOString());
+  if(!state.health||state.health.targetDate>target)fail('HISTORY_AHEAD_OF_TARGET');
+  let plan;try{plan=dailyReportPlan(target,markets,{periodFrom:state.health.targetDate===target?target:reportAddDays(state.health.targetDate,1)});}catch{return {...base,outcome:'recovery-required',reasonCode:'REPORT_SOURCE_RANGE_UNVERIFIED'};}
+  return reportPublicationPreflight({...options,now,plan,readState:async()=>state});
+}
+export async function reportPublicationWatch({mainSha,health,data,now=new Date(),daily=false,markets}={}){
   if(!/^[a-f0-9]{40}$/.test(mainSha||''))fail('PUBLICATION_READ');
   const state={mainSha,finalMainSha:mainSha,health,data,pending:false};
-  const result=await reportPublicationPreflight({now,ibEnabled:false,readState:async()=>state});
+  const result=await(daily?dailyPublicationPreflight({now,markets,ibEnabled:false,readState:async()=>state}):reportPublicationPreflight({now,ibEnabled:false,readState:async()=>state}));
+  if(daily){
+    const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+    if(result.outcome==='already-published')return {schema:'fee-console.report-watch.v1',outcome:'published',accountingThrough:health.targetDate};
+    if(result.outcome==='not-due'||result.outcome==='waiting'&&['REPORT_NOT_DUE','ACCOUNTING_DAY_NOT_COMPLETE'].includes(result.reasonCode))return {schema:'fee-console.report-watch.v1',outcome:result.outcome,reasonCode:result.reasonCode,accountingThrough:health.targetDate};
+    if(result.outcome==='produce'&&now.getTime()<Date.parse(day+'T14:00:00+08:00'))return {schema:'fee-console.report-watch.v1',outcome:'waiting',reasonCode:'AWAITING_SAME_DAY_SOURCE_CHECK',accountingThrough:health.targetDate};
+    fail('PUBLISHED_PERIOD_MISSING');
+  }
   if(!['already-published','not-due'].includes(result.outcome)&&!(result.outcome==='waiting'&&result.reasonCode==='ACCOUNTING_DAY_NOT_COMPLETE'))fail('PUBLISHED_PERIOD_MISSING');
   return {schema:'fee-console.report-watch.v1',outcome:result.outcome,accountingThrough:health.targetDate};
 }
@@ -193,7 +240,9 @@ export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new 
     // Freeze one private economic revision for the entire range. No intermediate
     // candidate can escape. Recheck again after all daily receipts are proved.
     economic=await fetchEconomic();if(economic.envelopeVersion!==4)fail('ECON_VERSION');
-    const reads=await captureReportRange({dates,cache,readOnce:readOnce||(async date=>new SharesightCloudReader({clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,incomeDateEvidence:incomeDateEvidenceFromData(payload,date),reconcileInKind:true}).readOnce(date))});
+    const transferInputs=new Map(dates.map(date=>[date,managedTransferIdentitiesFromFund(economic,process.env.FEE_DATA_KEY,date)]));
+    const needsFund=Array.from(transferInputs.values()).some(Boolean);
+    const reads=await captureReportRange({dates,cache,readOnce:readOnce||(async date=>new SharesightCloudReader({clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,incomeDateEvidence:incomeDateEvidenceFromData(payload,date),reconcileInKind:true,managedTransferIdentities:transferInputs.get(date)}).readOnce(date))});
     let base=sourceFile,result;
     for(let i=0;i<reads.length;i++){
       const input=reads[i],final=i===reads.length-1,dayDir=path.join(runtime,input.targetDate);fs.mkdirSync(dayDir,{mode:0o700});
@@ -205,7 +254,7 @@ export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new 
         fetchEconomic:async()=>({...economic,cleanup(){}}),includeIb:final,ibReader,...(final?{reportPlan:plan}:{})});
       base=result.dataFile;
     }
-    await economic.checkCurrent();
+    await economic.checkCurrent(needsFund?{requireFundProfile:true}:{});
     if(!fs.readFileSync(sourceFile).equals(originalBytes))fail('BASE_CHANGED');
     if(process.env.IB_MANAGER_READ_ENABLED==='true'&&latest===plan.accountingThrough){
       assertPeriodIbRecheckUnchanged(payload,decryptCandidate(result.dataFile,process.env.FEE_DATA_KEY));
@@ -223,22 +272,25 @@ export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new 
 }
 function cliArgs(argv){
   const out={};for(const arg of argv){const m=/^--([a-z-]+)=([\s\S]+)$/.exec(arg);if(!m||out[m[1]]!==undefined)fail('ARGUMENT');out[m[1]]=m[2];}
-  if(Object.keys(out).some(k=>!['mode','report-kind','report-target','benchmark-file','out-dir','main-sha'].includes(k)))fail('ARGUMENT');
+  if(Object.keys(out).some(k=>!['mode','report-kind','report-target','report-markets','report-plan','benchmark-file','out-dir','main-sha'].includes(k)))fail('ARGUMENT');
+  if(out['report-markets']&&(out.mode!=='preflight'||out['report-kind']!=='daily'||!out['report-target']))fail('ARGUMENT');
   if((out['report-kind']===undefined)!==(out['report-target']===undefined))fail('ARGUMENT');return out;
 }
 async function main(){
-  const args=cliArgs(process.argv.slice(2)),plan=args['report-target']?explicitReportPlan(args['report-kind'],args['report-target']):null;
+  const args=cliArgs(process.argv.slice(2));let plan=null;
+  if(args['report-plan']){try{plan=JSON.parse(args['report-plan']);}catch{fail('PLAN');}if(!validateReportPlan(plan)||args['report-target']!==plan.accountingThrough||args['report-kind']!==(plan.kind.startsWith('daily')?'daily':plan.kind==='monthly'?'monthly':'weekly'))fail('PLAN');}
+  else if(args['report-target']&&args['report-kind']!=='daily')plan=explicitReportPlan(args['report-kind'],args['report-target']);
   if(args.mode==='watch'){
     if(Object.keys(args).sort().join(',')!=='main-sha,mode')fail('ARGUMENT');
     const data=fs.readFileSync(path.join(ROOT,'data.json')),bytes=fs.readFileSync(path.join(ROOT,'fee-data-health.json'));
-    const result=await reportPublicationWatch({mainSha:args['main-sha'],health:JSON.parse(bytes),data});
+    const result=await reportPublicationWatch({mainSha:args['main-sha'],health:JSON.parse(bytes),data,daily:true});
     if(!fs.readFileSync(path.join(ROOT,'data.json')).equals(data)||!fs.readFileSync(path.join(ROOT,'fee-data-health.json')).equals(bytes))fail('PUBLICATION_READ');
     console.log(JSON.stringify(result));return;
   }
   if(args['main-sha'])fail('ARGUMENT');
   if(args.mode==='preflight'){
-    if(args['out-dir']||args['benchmark-file'])fail('ARGUMENT');
-    console.log(JSON.stringify(await reportPublicationPreflight({plan})));return;
+    if(args['out-dir']||args['benchmark-file']||args['report-plan'])fail('ARGUMENT');
+    console.log(JSON.stringify(await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}))));return;
   }
   if(args.mode!=='produce'||!plan)fail('ARGUMENT');
   const result=await produceReportPeriod({plan,outputDir:args['out-dir'],benchmarkFile:args['benchmark-file']});

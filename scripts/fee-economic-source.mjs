@@ -86,7 +86,13 @@ function inspect(body, response, id) {
     && recipient.truncated === false && typeof recipient.content === 'string'
     && Buffer.byteLength(recipient.content) <= 4096 && recipient.size === Buffer.byteLength(recipient.content)
     ? recipient.content : null;
-  return { bytes, revision, etag, envelopeVersion: envelope.v, managerRecipientRaw };
+  const fund = body.files['fee-console-fund.json'];
+  // Existing private fund file only; never follow raw_url or accept another Gist.
+  // Invalid/absent optional data cannot grant a transfer identity exception.
+  const fundProfileRaw=object(fund)&&fund.filename==='fee-console-fund.json'&&fund.truncated===false
+    &&typeof fund.content==='string'&&Buffer.byteLength(fund.content)<=MAX_FILE
+    &&fund.size===Buffer.byteLength(fund.content)?fund.content:null;
+  return { bytes, revision, etag, envelopeVersion: envelope.v, managerRecipientRaw, fundProfileRaw };
 }
 
 async function readOnce(id, token, options) {
@@ -141,7 +147,8 @@ function same(a, b) {
 async function stableRead(id, token, options) {
   const first = await readWithRetry(id, token, options), second = await readWithRetry(id, token, options);
   if (!same(first, second)) fail("SOURCE_CHANGED");
-  return {...first,managerRecipientStable:first.managerRecipientRaw===second.managerRecipientRaw};
+  return {...first,managerRecipientStable:first.managerRecipientRaw===second.managerRecipientRaw,
+    fundProfileStable:first.fundProfileRaw===second.fundProfileRaw};
 }
 
 function checkedRoot(requested) {
@@ -223,14 +230,19 @@ export async function fetchEconomicSnapshot(options = {}) {
     sourcePath,
     envelopeVersion: expected.envelopeVersion,
     managerRecipientRaw: expected.managerRecipientStable ? expected.managerRecipientRaw : null,
+    fundProfileRaw: expected.fundProfileStable ? expected.fundProfileRaw : null,
+    fundProfileStable: expected.fundProfileStable,
+    fundProfileMatchesGist(value){return !closed&&typeof value==='string'&&value===id;},
     async checkCurrent(options = {}) {
-      if (!object(options) || Object.keys(options).some(k => k !== 'requireManagerRecipient')
-          || (options.requireManagerRecipient !== undefined && options.requireManagerRecipient !== true)) fail('SOURCE_CHANGED');
+      if (!object(options) || Object.keys(options).some(k => !['requireManagerRecipient','requireFundProfile'].includes(k))
+          || ['requireManagerRecipient','requireFundProfile'].some(k=>options[k]!==undefined&&options[k]!==true)) fail('SOURCE_CHANGED');
       verifyLocal();
       const current = await stableRead(id, token, opts);
       if (!same(expected, current)) fail("SOURCE_CHANGED");
       if (options.requireManagerRecipient && (!expected.managerRecipientStable || !current.managerRecipientStable
           || !expected.managerRecipientRaw || expected.managerRecipientRaw !== current.managerRecipientRaw)) fail('SOURCE_CHANGED');
+      if(options.requireFundProfile&&(!expected.fundProfileStable||!current.fundProfileStable
+          ||!expected.fundProfileRaw||expected.fundProfileRaw!==current.fundProfileRaw))fail('SOURCE_CHANGED');
       verifyLocal();
       return true;
     },

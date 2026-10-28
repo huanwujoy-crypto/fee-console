@@ -41,19 +41,32 @@ export function createFundInvestorCore() {
     if (total !== BigInt(profile.initialShares)) return invalid("投资人股份合计与发行股份不符");
     const subscriptions = profile.subscriptions || [];
     if (!Array.isArray(subscriptions) || subscriptions.length > 12) return invalid("增资事件资料待核对");
-    const eventIds = new Set(), sourceRefs = new Set(), eventsById = new Map(); let previousDate = "";
+    const eventIds = new Set(), sourceRefs = new Set(), sourceTransferKeys = new Set(), eventsById = new Map(); let previousDate = "";
     for (const event of subscriptions) {
-      if (!exact(event, EVENT_KEYS) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
+      const close = Object.hasOwn(event || {}, "inKindClose");
+      const binding=event?.inKindClose?.sourceBinding;
+      if(object(event?.inKindClose)&&Object.hasOwn(event.inKindClose,'sourceBinding')&&(!exact(binding,['sourcePortfolioId','destinationPortfolioId','sourceHoldingIds'])
+        ||![binding.sourcePortfolioId,binding.destinationPortfolioId].every(v=>integer(v)&&v>0)
+        ||binding.sourcePortfolioId===binding.destinationPortfolioId||!Array.isArray(binding.sourceHoldingIds)
+        ||binding.sourceHoldingIds.length!==event.inKindClose.sourceKeys?.length
+        ||binding.sourceHoldingIds.some(v=>!integer(v)||v<=0)))return invalid("非现金转仓来源身份待核对");
+      if (close && (!exact(event.inKindClose, ["sourceKeys",...(object(event.inKindClose)&&Object.hasOwn(event.inKindClose,'sourceBinding')?['sourceBinding']:[])]) || !Array.isArray(event.inKindClose.sourceKeys)
+        || event.inKindClose.sourceKeys.length < 1 || event.inKindClose.sourceKeys.length > 7
+        || new Set(event.inKindClose.sourceKeys).size !== event.inKindClose.sourceKeys.length
+        || event.inKindClose.sourceKeys.some(key => typeof key !== "string" || !/^sharesight:[1-9]\d{0,14}->[1-9]\d{0,14};holding:[1-9]\d{0,14}$/.test(key)
+          || sourceTransferKeys.has(key)))) return invalid("非现金转仓认购来源待核对");
+      if (!exact(event, [...EVENT_KEYS, ...(close ? ["inKindClose"] : [])]) || !/^[A-Za-z0-9_-]{8,80}$/.test(event.id) || eventIds.has(event.id)
         || !date(event.date) || event.date <= profile.inceptionDate || event.date <= previousDate
         || !ids.has(event.investorId) || !integer(event.grossCents) || event.grossCents <= 0
         || !integer(event.feeCents) || event.feeCents < 0 || event.feeCents >= event.grossCents
         || !integer(event.netCents) || event.netCents !== event.grossCents - event.feeCents
-        || !date(event.priceDate) || event.priceDate >= event.date
+        || !date(event.priceDate) || (close ? event.priceDate !== event.date || event.feeCents !== 0 : event.priceDate >= event.date)
         || !integer(event.priceTotalCents) || event.priceTotalCents <= 0
         || !integer(event.issuedShares) || event.issuedShares <= 0
         || typeof event.sourceRef !== "string" || !/^[A-Za-z0-9:._-]{8,120}$/.test(event.sourceRef)
         || sourceRefs.has(event.sourceRef)) return invalid("增资事件资料待核对");
       eventIds.add(event.id); sourceRefs.add(event.sourceRef); eventsById.set(event.id, event); previousDate = event.date;
+      if (close) for (const key of event.inKindClose.sourceKeys) sourceTransferKeys.add(key);
       total += BigInt(event.issuedShares);
       if (total > BigInt(Number.MAX_SAFE_INTEGER)) return invalid("增资后发行份额超出安全范围");
     }
@@ -143,7 +156,8 @@ export function createFundInvestorCore() {
       previousTransferDate = transfer.date;
     }
     return { ok: true, profile: { ...profile, investors: profile.investors.map(investor => ({ ...investor })),
-      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event })) } : {}),
+      ...(Object.hasOwn(profile, "subscriptions") ? { subscriptions: subscriptions.map(event => ({ ...event,
+        ...(event.inKindClose ? {inKindClose:{sourceKeys:[...event.inKindClose.sourceKeys],...(event.inKindClose.sourceBinding?{sourceBinding:{...event.inKindClose.sourceBinding,sourceHoldingIds:[...event.inKindClose.sourceBinding.sourceHoldingIds]}}:{})}} : {}) })) } : {}),
       ...(Object.hasOwn(profile, "subscriptionCorrections") ? { subscriptionCorrections: corrections.map(correction => ({ ...correction })) } : {}),
       ...(Object.hasOwn(profile, "shareTransfers") ? { shareTransfers: transfers.map(transfer => ({ ...transfer })) } : {}),
       ...(Object.hasOwn(profile, "shareTransferPriceCorrections") ? { shareTransferPriceCorrections: priceCorrections.map(correction => ({ ...correction })) } : {}) }, reason: null, effectiveTransfers: validatedTransfers.map(transfer => ({ ...transfer })) };
@@ -225,15 +239,31 @@ export function createFundInvestorCore() {
       const pricePoint = daily.find(point => point.date === event.priceDate);
       const flows = receiptFlows.filter(flow => flow.date === event.date);
       const candidates = candidatesByDate.get(event.date) || [];
-      const matchingCandidate = candidates.length === 0 || candidates.length === 1 &&
+      const close = Object.hasOwn(event, "inKindClose"), sourceKeys = event.inKindClose?.sourceKeys || [];
+      const closeCandidates = close && candidates.length === sourceKeys.length && candidates.every(({field,event:flow}) =>
+        field === "flowsAuto" && flow.effective === true && flow.acct === "webull"
+        && typeof flow.amount === "number" && Number.isFinite(flow.amount) && flow.amount > 0
+        && Number.isSafeInteger(Math.round(flow.amount*100)) && Math.abs(flow.amount*100-Math.round(flow.amount*100))<1e-5
+        && flow.businessKey === `sharesight:${flow.sourceTradeId}->${flow.tradeId};holding:${flow.holdingId}`
+        && sourceKeys.includes(flow.businessKey) && flow.reason === `verified external asset transfer ${flow.businessKey}`)
+        && new Set(candidates.map(({event:flow}) => flow.businessKey)).size === sourceKeys.length;
+      const amountSignature = values => values.slice().sort((a,b)=>a-b).join(",");
+      const matchingCloseFlows = closeCandidates && flows.length === sourceKeys.length && flows.every(flow=>flow.amountCents>0)
+        && amountSignature(flows.map(flow=>flow.amountCents)) === amountSignature(candidates.map(({event:flow})=>Math.round(flow.amount*100)))
+        && flows.reduce((sum,flow)=>sum+flow.amountCents,0) === event.netCents;
+      const matchingCandidate = close ? matchingCloseFlows : candidates.length === 0 || candidates.length === 1 &&
         candidates[0].field === "flowsAuto" && candidates[0].event.acct === "webull" &&
         Number.isFinite(Number(candidates[0].event.amount)) &&
         Math.round(Number(candidates[0].event.amount) * 100) === event.netCents;
-      const expectedShares = pricePoint && pricePoint.totalCents === event.priceTotalCents
+      // End-of-day in-kind subscriptions use the *same* closing composite minus
+      // their verified incoming market value. Existing holders retain that day's
+      // gain; history/cost is never used as contribution or issue-price basis.
+      const pricingTotal = pricePoint ? pricePoint.totalCents - (close ? event.netCents : 0) : null;
+      const expectedShares = pricePoint && pricingTotal > 0 && pricingTotal === event.priceTotalCents
         ? Number((BigInt(event.netCents) * outstanding * 2n + BigInt(event.priceTotalCents)) /
           (2n * BigInt(event.priceTotalCents))) : null;
-      if (!pricePoint || pricePoint.date >= event.date || pricePoint.totalCents !== event.priceTotalCents
-        || flows.length !== 1 || flows[0].amountCents !== event.netCents
+      if (!pricePoint || (close ? pricePoint.date !== event.date : pricePoint.date >= event.date) || pricingTotal !== event.priceTotalCents
+        || !(close ? matchingCloseFlows : flows.length === 1 && flows[0].amountCents === event.netCents)
         || !matchingCandidate || expectedShares !== event.issuedShares) gate(event.date);
       else accepted.set(event.date, event);
       outstanding += BigInt(event.issuedShares);

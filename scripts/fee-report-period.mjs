@@ -1,5 +1,6 @@
 // Pure scheduling/coverage contract. No credentials, source reads or publication.
 import {selectBenchmark} from './fee-cloud-source.mjs';
+import {sessionUnion,monthlyArchivesBetween} from './fee-market-calendar.mjs';
 
 // Same reviewed NYSE dates as cloud/xuan-preopen/calendar.mjs, copied here to
 // keep the standalone fee writer independent of the other application's tree.
@@ -63,6 +64,11 @@ export function coalesceReportPlans(plans){
 }
 export function validateReportPlan(plan){
   try{
+    if(plan?.schema==='fee-console.report-plan.v2'){
+      if(Object.keys(plan).sort().join(',')!=='accountingThrough,kind,markets,monthlyCutoffs,periodFrom,priceThrough,scheduledAt,schema')return false;
+      const expected=dailyReportPlan(plan.accountingThrough,plan.markets,{periodFrom:plan.periodFrom});
+      return Object.keys(expected).every(k=>JSON.stringify(expected[k])===JSON.stringify(plan[k]));
+    }
     if(!plan||Object.keys(plan).sort().join(',')!=='accountingThrough,kind,monthlyCutoffs,periodFrom,priceThrough,scheduledAt,schema'||plan.schema!=='fee-console.report-plan.v1')return false;
     if(!['weekly','monthly','weekly-monthly'].includes(plan.kind))return false;
     reportDate(plan.accountingThrough);const candidates=[];
@@ -72,6 +78,13 @@ export function validateReportPlan(plan){
     const expected=coalesceReportPlans(candidates)[0];
     return !!expected&&Object.keys(expected).every(k=>JSON.stringify(expected[k])===JSON.stringify(plan[k]));
   }catch{return false;}
+}
+export function dailyReportPlan(target,markets,{periodFrom=target}={}){
+  reportDate(target);reportDate(periodFrom);
+  const sessions=sessionUnion(target,markets);
+  if(sessions.state!=='open'||sessions.rows.some(r=>r.state==='unknown'))throw Error('FEE_REPORT_CALENDAR_SCOPE_UNVERIFIED');
+  if(periodFrom>target)fail();const monthlyCutoffs=monthlyArchivesBetween(reportAddDays(periodFrom,-1),target);
+  return {schema:'fee-console.report-plan.v2',kind:monthlyCutoffs.length?'daily-monthly':'daily',periodFrom,accountingThrough:target,priceThrough:lastReportSession(target),scheduledAt:reportAddDays(target,1)+'T10:30:00+08:00',monthlyCutoffs,markets:[...markets].sort()};
 }
 export function reportPlanReadiness(plan,now=new Date()){
   if(!validateReportPlan(plan))fail();now=instant(now);

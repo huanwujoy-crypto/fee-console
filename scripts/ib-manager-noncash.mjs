@@ -47,11 +47,26 @@ function markPrice(m){
   if(q<=0n||v<=0n||v%q!==0n)fail();const price=v/q;if(price>100000000000000n)fail();return Number(price);
 }
 function flowCents(q,price){const value=atoms(q)*BigInt(cents(price));if(value<=0n||value%SCALE!==0n||value/SCALE>100000000000000n)fail();return -Number(value/SCALE);}
+function sourcePriceAtoms(row){const text=exactNumberText(row,'price'),m=/^(\d+)e(-?\d+)$/.exec(text);if(!m||Number(text)!==row.price||row.price<=0||row.price>1e12||+m[2]<-18||+m[2]>12)fail();return BigInt(m[1])*10n**BigInt(+m[2]+18);}
+function preciseFlow(q,p){const value=atoms(q)*p*100n,den=SCALE*SCALE;if(value<=0n||value%den!==0n||value/den>100000000000000n)fail();return -Number(value/den);}
+function preciseMark(m,p){validateMark(m);if(atoms(m.quantityAtoms)<=0n||BigInt(m.valueCents)*SCALE*SCALE!==atoms(m.quantityAtoms)*p*100n)fail();}
+// Preserve the raw provider sign. This compatibility applies only after exact
+// TRANSFER_OUT identity, quantity delta, quote and zero-cash checks.
+const nativeValueMatches=(value,externalFlow)=>value===externalFlow||value===-externalFlow;
+function preciseNativeProof(p,scope){
+ const closing=Object.hasOwn(p,'closingMark'),v=p.nativeTransferValuation;
+ if(!exact(p,['schema','authority','portfolioIdentityHash','tradeId','holdingId','instrumentIdentityHash','recordedDate','effectiveDate','quantityAtoms','before','after','unitPriceAtoms','externalFlowCents','nativeTransferValuation','proofId',...(closing?['closingMark']:[])])||p.schema!=='fee-console.ib-manager-noncash-proof.v2'||p.authority!=='source-native-transfer'||p.portfolioIdentityHash!==hash(scope.portfolioIdentityHash)||p.effectiveDate<date(scope.from)||p.effectiveDate>date(scope.to)||p.effectiveDate<=date(scope.baselineAsOf)||p.recordedDate!==p.effectiveDate)fail();
+ if(typeof p.unitPriceAtoms!=='string'||!/^\d{1,31}$/.test(p.unitPriceAtoms))fail();const price=BigInt(p.unitPriceAtoms);if(price<=0n||price>10n**30n||price%(SCALE/100n)===0n)fail();
+ id(p.tradeId);id(p.holdingId);hash(p.instrumentIdentityHash);validateMark(p.before);validateMark(p.after);
+ if(p.before.holdingId!==p.holdingId||p.after.holdingId!==p.holdingId||p.before.instrumentIdentityHash!==p.instrumentIdentityHash||p.after.instrumentIdentityHash!==p.instrumentIdentityHash||next(p.before.d)!==p.effectiveDate||p.after.d!==p.effectiveDate||atoms(p.before.quantityAtoms)-atoms(p.after.quantityAtoms)!==atoms(p.quantityAtoms)||p.externalFlowCents!==preciseFlow(p.quantityAtoms,price)||!exact(v,['descriptionCode','unitPriceAtoms','scale','valueCents'])||v.descriptionCode!=='TRANSFER_OUT'||v.unitPriceAtoms!==p.unitPriceAtoms||v.scale!==SCALE.toString()||!nativeValueMatches(cents(v.valueCents),p.externalFlowCents))fail();
+ if(closing){validateMark(p.closingMark);if(atoms(p.after.quantityAtoms)!==0n||p.closingMark.holdingId===p.holdingId||p.closingMark.d!==p.effectiveDate||p.closingMark.instrumentIdentityHash!==p.instrumentIdentityHash)fail();preciseMark(p.closingMark,price);}else if(atoms(p.after.quantityAtoms)>0n)preciseMark(p.after,price);
+ const {proofId,...body}=p;if(hash(proofId)!==digest(body))fail();return p;
+}
 
 export function buildIbNativeNoncashProof({portfolioId,portfolioIdentityHash,trade,before,after,cashLegs,sameDayTrades,catalogInstrument,authority='audited-baseline-source-native',closingMark=null,auditEvent=null,auditQuote=null}={}){
   validateMark(before);validateMark(after);const q=ibNoncashQuantity(trade),identity=instrumentHash(trade.instrument);
   const reviewed=authority==='reviewed-source-transfer',future=reviewed||authority==='source-native-transfer';
-  const nativePriced=authority==='source-native-transfer'&&trade.description_code==='TRANSFER_OUT'&&typeof trade.price==='number'&&trade.price>0&&typeof trade.value==='number'&&trade.value>0;
+  const nativePriced=authority==='source-native-transfer'&&trade.description_code==='TRANSFER_OUT'&&typeof trade.price==='number'&&trade.price>0&&typeof trade.value==='number'&&Number.isFinite(trade.value)&&trade.value!==0;
   if(!future&&authority!=='audited-baseline-source-native'||trade.portfolio_id!==id(portfolioId)||trade.state!=='confirmed'||!(reviewed?['SELL','TRANSFER_OUT']:[future?'TRANSFER_OUT':'SELL']).includes(trade.description_code)||!nativePriced&&(trade.value!==0||trade.price!==0)||trade.brokerage!==0||q<=0n||trade.holding_id!==before.holdingId||before.holdingId!==after.holdingId||identity!==before.instrumentIdentityHash||identity!==after.instrumentIdentityHash||identity!==instrumentHash(catalogInstrument)||trade.transaction_date!==after.d||next(before.d)!==after.d||atoms(before.quantityAtoms)-atoms(after.quantityAtoms)!==q)fail();
   if(!Array.isArray(cashLegs)||cashLegs.some(x=>x.tradeId!==trade.id||x.movement!==0)||!Array.isArray(sameDayTrades)||sameDayTrades.length!==1||sameDayTrades[0].id!==trade.id)fail();
   // Full disposal needs an independent positive position of the *same*
@@ -61,7 +76,17 @@ export function buildIbNativeNoncashProof({portfolioId,portfolioIdentityHash,tra
   if(reviewed){validateIbAuditEvent(auditEvent);if(auditEvent.d!==after.d||auditEvent.quantityAtoms!==q.toString()||canonical(auditEvent.instrument)!==canonical(instrumentKey(trade.instrument)))fail();}else if(auditEvent||auditQuote)fail();
   if(auditQuote){validateIbAuditQuote(auditQuote);if(!reviewed||closingMark||atoms(after.quantityAtoms)!==0n||auditQuote.d!==after.d||canonical(auditQuote.instrument)!==canonical(auditEvent.instrument))fail();}
   let nativeTransferValuation=null;
-  if(nativePriced){const price=Math.round(trade.price*100),value=Math.round(trade.value*100);if(!Number.isSafeInteger(price)||!Number.isSafeInteger(value)||Math.abs(trade.price*100-price)>1e-5||Math.abs(trade.value*100-value)>1e-5||flowCents(q.toString(),price)!==-value)fail();nativeTransferValuation={descriptionCode:'TRANSFER_OUT',unitPriceCents:price,valueCents:value};}
+  if(nativePriced){
+    const price=sourcePriceAtoms(trade);
+    if(price%(SCALE/100n)!==0n){
+      if(atoms(after.quantityAtoms)>0n||closingMark)preciseMark(closingMark||after,price);
+      const externalFlowCents=preciseFlow(q.toString(),price),value=Math.round(trade.value*100);
+      if(!Number.isSafeInteger(value)||Math.abs(trade.value*100-value)>1e-5||!nativeValueMatches(value,externalFlowCents))fail();
+      const body={schema:'fee-console.ib-manager-noncash-proof.v2',authority,portfolioIdentityHash:hash(portfolioIdentityHash),tradeId:id(trade.id),holdingId:id(trade.holding_id),instrumentIdentityHash:identity,recordedDate:date(trade.transaction_date),effectiveDate:after.d,quantityAtoms:q.toString(),before:structuredClone(before),after:structuredClone(after),unitPriceAtoms:price.toString(),externalFlowCents,nativeTransferValuation:{descriptionCode:'TRANSFER_OUT',unitPriceAtoms:price.toString(),scale:SCALE.toString(),valueCents:value},...(closingMark?{closingMark:structuredClone(closingMark)}:{})};
+      return {...body,proofId:digest(body)};
+    }
+  }
+  if(nativePriced){const price=Math.round(trade.price*100),value=Math.round(trade.value*100);if(!Number.isSafeInteger(price)||!Number.isSafeInteger(value)||Math.abs(trade.price*100-price)>1e-5||Math.abs(trade.value*100-value)>1e-5||!nativeValueMatches(value,flowCents(q.toString(),price)))fail();nativeTransferValuation={descriptionCode:'TRANSFER_OUT',unitPriceCents:price,valueCents:value};}
   // An explicit provider TRANSFER_OUT carries its dated market valuation.
   // It is not cash proceeds. Legacy SELL/correction paths still need their
   // original independent quote; opening cost is never used as a closing mark.
@@ -73,13 +98,14 @@ export function buildIbNativeNoncashProof({portfolioId,portfolioIdentityHash,tra
 export function validateIbNativeNoncashProof(proof,{portfolioIdentityHash,from,to,baselineAsOf=to}={}){
   try{
     const p=structuredClone(proof);
+    if(p?.schema==='fee-console.ib-manager-noncash-proof.v2')return preciseNativeProof(p,{portfolioIdentityHash,from,to,baselineAsOf});
     const reviewed=p.authority==='reviewed-source-transfer',future=reviewed||p.authority==='source-native-transfer',closing=Object.hasOwn(p,'closingMark'),quoted=Object.hasOwn(p,'auditQuote'),native=Object.hasOwn(p,'nativeTransferValuation');
     if(!exact(p,['schema','authority','portfolioIdentityHash','tradeId','holdingId','instrumentIdentityHash','recordedDate','effectiveDate','quantityAtoms','before','after','unitPriceCents','externalFlowCents','proofId',...(closing?['closingMark']:[]),...(reviewed?['auditEvent','instrument']:[]),...(quoted?['auditQuote']:[]),...(native?['nativeTransferValuation']:[])])||p.schema!=='fee-console.ib-manager-noncash-proof.v1'||!future&&p.authority!=='audited-baseline-source-native'||p.portfolioIdentityHash!==hash(portfolioIdentityHash)||p.effectiveDate<date(from)||p.effectiveDate>date(to)||p.recordedDate!==p.effectiveDate||future!==(p.effectiveDate>date(baselineAsOf)))fail();
     id(p.tradeId);id(p.holdingId);hash(p.instrumentIdentityHash);validateMark(p.before);validateMark(p.after);
     if(closing){validateMark(p.closingMark);if(!future||atoms(p.after.quantityAtoms)!==0n||p.closingMark.holdingId===p.holdingId||p.closingMark.d!==p.effectiveDate||p.closingMark.instrumentIdentityHash!==p.instrumentIdentityHash)fail();}
     if(reviewed){validateIbAuditEvent(p.auditEvent);if(instrumentHash(p.instrument)!==p.instrumentIdentityHash||canonical(instrumentKey(p.instrument))!==canonical(p.auditEvent.instrument)||p.auditEvent.d!==p.effectiveDate||p.auditEvent.quantityAtoms!==p.quantityAtoms)fail();}
     if(quoted){validateIbAuditQuote(p.auditQuote);if(!reviewed||closing||atoms(p.after.quantityAtoms)!==0n||p.auditQuote.d!==p.effectiveDate||canonical(p.auditQuote.instrument)!==canonical(p.auditEvent.instrument))fail();}
-    if(native){const v=p.nativeTransferValuation;if(p.authority!=='source-native-transfer'||quoted||!exact(v,['descriptionCode','unitPriceCents','valueCents'])||v.descriptionCode!=='TRANSFER_OUT'||cents(v.unitPriceCents)<=0||cents(v.valueCents)<=0||v.unitPriceCents!==p.unitPriceCents||v.valueCents!==-p.externalFlowCents)fail();}
+    if(native){const v=p.nativeTransferValuation;if(p.authority!=='source-native-transfer'||quoted||!exact(v,['descriptionCode','unitPriceCents','valueCents'])||v.descriptionCode!=='TRANSFER_OUT'||cents(v.unitPriceCents)<=0||cents(v.valueCents)===0||v.unitPriceCents!==p.unitPriceCents||!nativeValueMatches(v.valueCents,p.externalFlowCents))fail();}
     if(p.before.holdingId!==p.holdingId||p.after.holdingId!==p.holdingId||p.before.instrumentIdentityHash!==p.instrumentIdentityHash||p.after.instrumentIdentityHash!==p.instrumentIdentityHash||next(p.before.d)!==p.effectiveDate||p.after.d!==p.effectiveDate||atoms(p.before.quantityAtoms)-atoms(p.after.quantityAtoms)!==atoms(p.quantityAtoms)||p.unitPriceCents!==(quoted?p.auditQuote.unitPriceCents:native&&atoms(p.after.quantityAtoms)===0n&&!closing?p.nativeTransferValuation.unitPriceCents:markPrice(p.closingMark||p.after))||p.externalFlowCents!==flowCents(p.quantityAtoms,p.unitPriceCents))fail();
     const {proofId,...body}=p;if(hash(proofId)!==digest(body))fail();return p;
   }catch{fail();}

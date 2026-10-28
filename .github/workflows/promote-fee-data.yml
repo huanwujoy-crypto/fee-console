@@ -14,9 +14,10 @@ on:
     branches:
       - 'codex/fee-daily-*'
   schedule:
-    # Independent period watchdog, HKT 01:15/09:15/14:15. Candidate promotion
+    # Independent daily watchdog, HKT10:45/13:15/14:15. Candidate promotion
     # keeps its separate signature, exact base, fresh-health and envelope gates.
-    - cron: '15 17,1,6 * * *'
+    - cron: '45 2 * * *'
+    - cron: '15 5,6 * * *'
   workflow_dispatch:
 
 permissions:
@@ -52,6 +53,7 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
         run: |
           set -euo pipefail
 

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { buildFeeCalculationReceipt, semanticHash } from "./fee-receipt-core.mjs";
 import { createLegacyPolicy } from "./fee-legacy-policy.mjs";
 import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
+import { createFundInvestorCore } from "./fund-investor-core.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Share the ledger suite's local-only, read-only cross-worktree preview.
@@ -23,6 +24,122 @@ const HISTORY_END = "/* month-history-view:end */";
 const RENDER_START = "/* fee-receipt-render:start */";
 const RENDER_END = "/* fee-receipt-render:end */";
 const RENDER_CALL = "/* fee-receipt-render-call */";
+
+const CONTRACT_REGIONS = ["fee-receipt-consumer", "fee-receipt-render", "fund-investor-core", "fund-remote-storage", "fee-report-consumer"];
+const FIXTURE_SHA256 = "ea77f693f37ba7dcab04ef61179024c3bc2a32dd69c2a78295fd028b6c677707";
+const uiHash = bytes => crypto.createHash("sha256").update(bytes).digest("hex");
+const uiRegion = (html, name) => {
+  const start = `/* ${name}:start */`, end = `/* ${name}:end */`;
+  assert.equal(html.split(start).length, 2); assert.equal(html.split(end).length, 2);
+  return html.split(start)[1].split(end)[0];
+};
+const validateReviewedFixture = bytes => {
+  assert.equal(uiHash(bytes), FIXTURE_SHA256, "unreviewed UI fixture bytes");
+  const value = JSON.parse(bytes.toString("utf8"));
+  assert.deepEqual(Object.keys(value).sort(), ["schema", "priorIndexSha256", "nextIndexSha256", "priorRegionSha256", "nextRegionSha256", "nextRegions"].sort());
+  assert.equal(value.schema, "fee-console.reviewed-ui-code-fixture.v1");
+  assert.equal(value.priorIndexSha256, "ff37233ad4c549d60561fd6e3764c7ba7633f8892432128ff1b39669cf5afef2");
+  assert.equal(value.nextIndexSha256, "d5570720d45cf45136e3f23a15111ac01fb33f21277c46f5819aff1754eee9dc");
+  for (const field of ["priorRegionSha256", "nextRegionSha256", "nextRegions"])
+    assert.deepEqual(Object.keys(value[field]).sort(), [...CONTRACT_REGIONS].sort());
+  for (const name of CONTRACT_REGIONS) {
+    assert.match(value.priorRegionSha256[name], /^[a-f0-9]{64}$/);
+    assert.equal(uiHash(value.nextRegions[name]), value.nextRegionSha256[name]);
+  }
+  return value;
+};
+const reviewedFixtureBytes = fs.readFileSync(new URL("./fixtures/fee-reviewed-ui-contract-v1.json", import.meta.url));
+const reviewedFixture = validateReviewedFixture(reviewedFixtureBytes);
+
+// Test-only release snapshots, never imported by production. The prior hash
+// proves only the old contract; it does not declare new receipts compatible or
+// authorize a run. Both workflows must remain externally disabled during staging.
+export function reviewedUiStage(html) {
+  const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
+    : sha === reviewedFixture.nextIndexSha256 ? "next" : null;
+  assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
+  for (const name of CONTRACT_REGIONS) {
+    const region = uiRegion(html, name);
+    assert.equal(uiHash(region), reviewedFixture[stage + "RegionSha256"][name]);
+    if (stage === "next") assert.equal(region, reviewedFixture.nextRegions[name]);
+  }
+  return stage;
+}
+export function reviewedNextUiRegion(name) {
+  assert.ok(CONTRACT_REGIONS.includes(name));
+  return reviewedFixture.nextRegions[name];
+}
+
+test("staged UI contracts pin complete old/new HTML and reject altered fixtures or unknown pages", () => {
+  const html = fs.readFileSync(htmlPath, "utf8");
+  assert.ok(["prior", "next"].includes(reviewedUiStage(html)));
+  assert.throws(() => reviewedUiStage(html + "\n"), /unreviewed UI/);
+  assert.throws(() => validateReviewedFixture(Buffer.concat([reviewedFixtureBytes, Buffer.from(" ")])), /unreviewed UI fixture/);
+  const altered = structuredClone(reviewedFixture);
+  altered.nextRegions["fee-receipt-consumer"] += "\n// altered";
+  altered.nextRegionSha256["fee-receipt-consumer"] = uiHash(altered.nextRegions["fee-receipt-consumer"]);
+  assert.throws(() => validateReviewedFixture(Buffer.from(JSON.stringify(altered))), /unreviewed UI fixture/);
+});
+
+const browserFeeModel = async (data, economicInput, receipt, reviewedNext) => {
+  const html = fs.readFileSync(htmlPath, "utf8");
+  const stage = reviewedUiStage(html);
+  const sandbox = { crypto: crypto.webcrypto, TextEncoder, TextDecoder, structuredClone };
+  sandbox.globalThis = sandbox; vm.createContext(sandbox);
+  for (const name of ["fee-receipt-consumer", "fee-receipt-render"]) {
+    vm.runInContext(reviewedNext ? reviewedNextUiRegion(name) : uiRegion(html, name), sandbox);
+  }
+  const model = await sandbox.feeReceiptUiModel({ data, economicInput, receipt });
+  return { stage, model: structuredClone(model), view: structuredClone(sandbox.feeReceiptRenderProjection(model)) };
+};
+const reviewedBrowserFeeView = async (data, economicInput, receipt) => {
+  // Always execute the exact reviewed next consumer and all original positive
+  // assertions, including while the deployed UI is still the frozen prior one.
+  const next = await browserFeeModel(data, economicInput, receipt, true);
+  assert.equal(next.model.ok, true, "reviewed next commitment verifier must accept the writer receipt");
+  const current = await browserFeeModel(data, economicInput, receipt, false);
+  if (current.stage === "prior") {
+    assert.equal(current.model.ok, false, "prior UI is explicitly incompatible with the new keyed-flow receipt");
+    assert.equal(current.model.reason, "calculation receipt pending");
+    assert.equal(current.view.state, "pending");
+    assert.equal(current.view.benchmarkInputs, null);
+  } else {
+    assert.deepEqual(current.model, next.model, "installed next consumer must be identical to the reviewed code");
+    assert.deepEqual(current.view, next.view);
+  }
+  return next.view;
+};
+
+test("Astra P1: reviewed next browser preserves equal independent cash/in-kind; prior contract remains explicitly pending", async () => {
+  const date = "2026-10-27", businessKey = "sharesight:200->300;holding:400";
+  const flow = { id: crypto.createHash("sha256").update("external_asset_transfer " + businessKey).digest("hex").slice(0,16),
+    date, acct: "webull", amount: 200, effective: true, businessKey,
+    reason: "verified external asset transfer " + businessKey, desc: "synthetic transfer" };
+  const economicInput = { v:4, settings:{start:date,mgmt:0,carry:20}, accounts:[{id:"schwab",opening:500},{id:"webull",opening:500}],
+    months:[{ym:"2026-10",flows:[{id:"synthetic-cash",date,acct:"webull",amount:200,note:flow.desc}]}], fees:[] };
+  const data = { daily:[{d:date,schwab:500,webull:900}], flowsAuto:[flow], flowsUnresolved:[],
+    status:{asOf:date,provisional:false,calibrated:false,unresolvedCount:0} };
+  const receipt = buildFeeCalculationReceipt({data,economicInput}), view = await reviewedBrowserFeeView(data,economicInput,receipt);
+  assert.equal(receipt.effectiveFlowCount,2); assert.equal(receipt.effectiveFlowNetCents,40000);
+  assert.equal(view.state,"verified"); assert.equal(view.benchmarkInputs.flows.length,2);
+  assert.equal(view.totals.grossPnlCents,0); assert.equal(view.totals.grossTwrPpm,0); assert.equal(view.totals.carryCents,0);
+});
+
+test("Astra P1: real writer-to-browser chain freezes seven-source investor allocation when extra cash is present", async () => {
+  const dates=["2026-10-25","2026-10-26","2026-10-27","2026-10-28"], date=dates[2];
+  const flows=[10,20,30,40,50,60,70].map((amount,i)=>{
+    const sourceTradeId=200+i,tradeId=300+i,holdingId=400+i,businessKey=`sharesight:${sourceTradeId}->${tradeId};holding:${holdingId}`;
+    return {id:crypto.createHash("sha256").update("external_asset_transfer "+businessKey).digest("hex").slice(0,16),date,acct:"webull",amount,effective:true,sourceTradeId,tradeId,holdingId,businessKey,reason:"verified external asset transfer "+businessKey};
+  });
+  const data={daily:dates.map((d,i)=>({d,schwab:500,webull:[500,550,890,890][i]})),flowsAuto:flows,flowsUnresolved:[],status:{asOf:dates[3],provisional:false,calibrated:false,unresolvedCount:0}};
+  const economicInput={v:4,settings:{start:dates[0],mgmt:0,carry:20},accounts:[{id:"schwab",opening:500},{id:"webull",opening:500}],months:[{ym:"2026-10",flows:[{id:"synthetic-independent-cash",date,acct:"webull",amount:10,note:""}]}],fees:[]};
+  const receipt=buildFeeCalculationReceipt({data,economicInput}),feeView=await reviewedBrowserFeeView(data,economicInput,receipt);
+  assert.equal(receipt.effectiveFlowCount,8); assert.equal(feeView.benchmarkInputs.flows.length,8);
+  assert.equal(feeView.totals.grossPnlCents,10000); assert.equal(feeView.totals.carryCents,2000);
+  const profile={schema:"fee-console.fund-profile.v1",manager:"Synthetic Manager",fundName:"Synthetic Fund",inceptionDate:dates[0],inceptionNoticeDate:dates[0],currency:"USD",initialShares:1000000,investors:[{id:"A",name:"Synthetic A",shares:900000},{id:"B",name:"Synthetic B",shares:100000}],subscriptions:[{id:"synthetic-seven-source-sub",date,investorId:"B",grossCents:28000,feeCents:0,netCents:28000,priceDate:date,priceTotalCents:111000,issuedShares:252252,sourceRef:"sharesight:synthetic-seven",inKindClose:{sourceKeys:flows.map(f=>f.businessKey)}}]};
+  const result=createFundInvestorCore().calculate({profile,data,feeView});
+  assert.equal(result.status,"partial"); assert.equal(result.flowGateDate,date); assert.equal(result.current,null);
+});
 
 const fixture = () => {
   const businessKey = "sharesight:source-1->target-1;holding:holding-1";
