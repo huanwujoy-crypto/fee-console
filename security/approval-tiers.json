@@ -602,6 +602,10 @@
     "scripts/fee-ratio-packet.mjs",
     "docs/fee-ratio-management.md",
     "scripts/fee-ratio-browser-evidence.mjs",
-    "scripts/xuan-ib-entry-policy.mjs"
+    "scripts/xuan-ib-entry-policy.mjs",
+    "scripts/fee-sharesight-transfers.mjs",
+    "scripts/fee-source-acceptance.mjs",
+    "scripts/fee-source-acceptance.test.mjs",
+    "scripts/fee-ratio-cycle.mjs"
   ]
 }

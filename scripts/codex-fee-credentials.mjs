@@ -199,8 +199,10 @@ async function attachmentProducerProof(evidence, base, healthFile, publicBase, r
   const listing = await runtime.githubRead("actions/runs/" + evidence.runId + "/jobs?per_page=100");
   if (!Array.isArray(listing?.jobs) || listing.jobs.length > 100 || listing.total_count !== listing.jobs.length
       || new Set(listing.jobs.map(j => j.id)).size !== listing.jobs.length) attachFail("PROVENANCE");
-  const producers = listing.jobs.filter(j => j.name === "produce"); if (producers.length !== 1) attachFail("PROVENANCE");
-  const job = producers[0], health = parseExact(healthFile.bytes);
+  const health = parseExact(healthFile.bytes);
+  const producers = listing.jobs.filter(j => j.name === "produce" || ["weekly","monthly"].some(kind => j.name === "Produce " + kind + " " + health.targetDate));
+  if (producers.length !== 1) attachFail("PROVENANCE");
+  const job = producers[0];
   const time = value => typeof value === "string" && /Z$/.test(value) ? Date.parse(value) : NaN;
   if (!Number.isSafeInteger(job.id) || job.id < 1 || job.run_id !== run.id || job.head_sha !== run.head_sha
       || job.status !== "completed" || job.conclusion !== "success" || !Array.isArray(job.steps)
@@ -337,7 +339,15 @@ export async function finalizeLocalIbAttachment({ plan, environ = process.env, c
 
 // Manager-only addition uses the same base/run/style/source gates, but constructs
 // its cipher with the sole writer after those proofs; no opaque cipher admission.
-export async function finalizeLocalRatioAttachment({ plan, environ = process.env, checkPlan = () => {},
+export async function finalizeLocalRatioAttachment(options={}){
+  if(!['fee-console.ratio-local-finalize-plan.v1','fee-console.ratio-local-finalize-plan.v2'].includes(options.plan?.schema))attachFail('PLAN');
+  return finalizeLocalPrivateAttachment(options);
+}
+export async function finalizeLocalIbBootstrapAttachment(options={}){
+  if(options.plan?.schema!=='fee-console.ib-bootstrap-local-finalize-plan.v1')attachFail('PLAN');
+  return finalizeLocalPrivateAttachment(options);
+}
+async function finalizeLocalPrivateAttachment({ plan, environ = process.env, checkPlan = () => {},
     runtime = createLocalAttachmentRuntime() } = {}) {
   let source, output, identity, recipientCheck, keyText, key, env, recipientPath, result, errorCode, finalChecks, finalCandidateCheck, finalHealthCheck, healthAttempted = false;
   let browserProof=null;
@@ -353,10 +363,11 @@ export async function finalizeLocalRatioAttachment({ plan, environ = process.env
         || process.execArgv.some(a => /^(?:--inspect(?:-brk|-wait)?|--(?:require|import|loader|experimental-loader|cpu-prof|heap-prof|trace-events-enabled|report-on-signal|report-on-fatalerror|heapsnapshot-signal)|-r)(?:=|$)/.test(a) || /^--heapsnapshot-near-heap-limit=(?!0$)/.test(a))
         || ["FEE_DATA_KEY", "FEE_ECON_GIST_ID", "FEE_ECON_GITHUB_TOKEN", "FEE_ECON_FILE", "FEE_ECON_V3_FILE", "GH_TOKEN", "GITHUB_TOKEN", "NODE_OPTIONS", "NODE_PATH"].some(n => Object.hasOwn(environ, n))
         || Object.keys(environ).some(n => /^(?:DYLD_|LD_)/.test(n))) attachFail("LOCAL_ONLY");
-    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "ratioInput", "legacySource", "ratioSourceDate", "ratioKind", "ibBootstrap", "producerEvidence",...(plan.schema==='fee-console.ratio-local-finalize-plan.v2'?['browserEvidence']:[])])
-        || !["fee-console.ratio-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v2"].includes(plan.schema) || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate || "")) attachFail("PLAN");
-    checkPlan(); const directory = attachmentDirectory(plan.workspace), base = attachmentFile(plan.baseData, directory), healthFile = attachmentFile(plan.baseHealth, directory), input = attachmentFile(plan.ratioInput, directory), legacy = plan.legacySource === null ? null : attachmentFile(plan.legacySource, directory), health = parseExact(healthFile.bytes);
-    if(plan.ibBootstrap!==null&&!exact(plan.ibBootstrap,['baseline','coverage']))attachFail('PLAN');
+    const bootstrapOnly=plan?.schema==='fee-console.ib-bootstrap-local-finalize-plan.v1';
+    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "legacySource", "ibBootstrap", "producerEvidence",...(!bootstrapOnly?["ratioInput","ratioSourceDate","ratioKind"]:[]),...(plan.schema==='fee-console.ratio-local-finalize-plan.v2'?['browserEvidence']:[])])
+        || !["fee-console.ib-bootstrap-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v2"].includes(plan.schema) || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate || "")) attachFail("PLAN");
+    checkPlan(); const directory = attachmentDirectory(plan.workspace), base = attachmentFile(plan.baseData, directory), healthFile = attachmentFile(plan.baseHealth, directory), input = bootstrapOnly?null:attachmentFile(plan.ratioInput, directory), legacy = plan.legacySource === null ? null : attachmentFile(plan.legacySource, directory), health = parseExact(healthFile.bytes);
+    if((bootstrapOnly&&plan.ibBootstrap===null)||(plan.ibBootstrap!==null&&!exact(plan.ibBootstrap,['baseline','coverage'])))attachFail('PLAN');
     const baseline=plan.ibBootstrap?attachmentFile(plan.ibBootstrap.baseline,directory):null,coverage=plan.ibBootstrap?attachmentFile(plan.ibBootstrap.coverage,directory):null;
     const browserPlan=plan.schema==='fee-console.ratio-local-finalize-plan.v2'?attachmentFile(plan.browserEvidence,directory):null;
     if(browserPlan)try{const staged=parseExact(browserPlan.bytes);browserProof=readVerifiedBrowserEvidence({planPath:plan.browserEvidence.path,expectedScopeId:staged.managerScopeId,input:parseExact(input.bytes),now:runtime.now()});}catch{attachFail('SOURCE');}
@@ -365,8 +376,8 @@ export async function finalizeLocalRatioAttachment({ plan, environ = process.env
       if (validateHealth(health, { now }).length || health.targetDate !== plan.targetDate || !["updated", "no-op"].includes(health.outcome)
           || health.dataSha256 !== attachHash(base.bytes) || health.sourceDates.schwab !== plan.targetDate || health.sourceDates.webull !== plan.targetDate
           || healthFile.bytes.toString() !== JSON.stringify(health, null, 2) + "\n") attachFail("HEALTH"); };
-    const checks = () => { fresh(); checkPlan(); base.check(); healthFile.check(); input.check();baseline?.check();coverage?.check();browserPlan?.check();browserProof?.check();if(browserProof)consumeBrowserEvidence(browserProof,parseExact(input.bytes),browserProof.scopeId,runtime.now()); legacy?.check(); }; checks();
-    output = path.join(directory.path, "ratio-finalized"); if (fs.existsSync(output)) attachFail("OUTPUT");
+    const checks = () => { fresh(); checkPlan(); base.check(); healthFile.check(); input?.check();baseline?.check();coverage?.check();browserPlan?.check();browserProof?.check();if(browserProof)consumeBrowserEvidence(browserProof,parseExact(input.bytes),browserProof.scopeId,runtime.now()); legacy?.check(); }; checks();
+    output = path.join(directory.path, bootstrapOnly?"ib-bootstrap-finalized":"ratio-finalized"); if (fs.existsSync(output)) attachFail("OUTPUT");
     const publicBase = await attachmentPublicBase(base, healthFile, runtime), proof = await attachmentProducerProof(plan.producerEvidence, base, healthFile, publicBase, runtime);
     const allChecks = () => { checks(); publicBase.check(); proof.check(); }; finalChecks = allChecks; allChecks();
     try { keyText = runtime.readKeychain(SERVICES.key); } catch { attachFail("KEYCHAIN"); }
@@ -381,27 +392,28 @@ export async function finalizeLocalRatioAttachment({ plan, environ = process.env
     if (!validateFeeCalculationReceiptWithEcon(fee, before, economic).ok) attachFail("RECEIPT");
     let checkLegacy; try { checkLegacy = guardLegacySourceFile(economic, key, plan.legacySource?.path || null); } catch { attachFail("LEGACY_SOURCE"); }
     const ratioCore=createFeeRatioCore(createRankedExposureCore(),crypto.webcrypto);
-    let recipient;try { recipient=await ratioCore.validateRecipient(parseExact(Buffer.from(source.managerRecipientRaw||'')),await ratioCore.recipientScope(locator)); } catch { attachFail('SOURCE'); }
+    let recipient;if(!bootstrapOnly)try { recipient=await ratioCore.validateRecipient(parseExact(Buffer.from(source.managerRecipientRaw||'')),await ratioCore.recipientScope(locator)); } catch { attachFail('SOURCE'); }
     locator=undefined;
     if(browserPlan)try{consumeBrowserEvidence(browserProof,parseExact(input.bytes),recipient.scopeId,runtime.now());}catch{attachFail('SOURCE');}
-    if(fee.asOf!==plan.targetDate||!['weekly','monthly','weekly-monthly','snapshot'].includes(plan.ratioKind)||!/^\d{4}-\d{2}-\d{2}$/.test(plan.ratioSourceDate||'')||plan.ratioSourceDate>fee.asOf)attachFail('PERIOD');
-    try{await source.checkCurrent({requireManagerRecipient:true});}catch{attachFail('SOURCE');}
+    if(fee.asOf!==plan.targetDate||(!bootstrapOnly&&(!['weekly','monthly','weekly-monthly','snapshot'].includes(plan.ratioKind)||!/^\d{4}-\d{2}-\d{2}$/.test(plan.ratioSourceDate||'')||plan.ratioSourceDate>fee.asOf)))attachFail('PERIOD');
+    const sourceOptions=bootstrapOnly?{}:{requireManagerRecipient:true};
+    try{await source.checkCurrent(sourceOptions);}catch{attachFail('SOURCE');}
     env = { PATH: path.dirname(process.execPath) + ":/usr/bin:/bin", FEE_DATA_KEY: keyText, FEE_ECON_FILE: source.sourcePath }; if (legacy) env.FEE_ECON_V3_FILE = plan.legacySource.path;
     const run = async (args, expected, code) => { allChecks(); econ.check(); checkLegacy(); let r; try { r = await runtime.runNode({ args, env }); } catch { attachFail(code); }
       if (r?.status !== 0 || r.error || String(r.stderr || "").trim() || String(r.stdout || "").trim() !== expected) attachFail(code);
       allChecks(); econ.check(); checkLegacy(); };
     fs.mkdirSync(output, { mode: 0o700 }); identity = fs.lstatSync(output); const file = path.join(output, "data.json"), hf = path.join(output, "fee-data-health.json");
-    recipientPath=path.join(directory.path,'ratio-public-recipient.json');
-    fs.writeFileSync(recipientPath,JSON.stringify(recipient),{mode:0o600,flag:'wx'});
-    const recipientFile=attachmentOwnedFile(recipientPath,directory);recipientCheck=()=>recipientFile.check();
-    const writer=[path.join(ATTACH_ROOT,'scripts/daily.mjs'),'--ratio-only','--file='+plan.baseData.path,'--ratio-input='+plan.ratioInput.path,'--ratio-recipient='+recipientPath,'--ratio-output='+file,'--ratio-kind='+plan.ratioKind,'--ratio-source-date='+plan.ratioSourceDate,'--ratio-scope='+recipient.scopeId,...(browserPlan?['--ratio-evidence-plan='+plan.browserEvidence.path]:[]),...(baseline?['--ib-baseline-input='+plan.ibBootstrap.baseline.path,'--ib-coverage-input='+plan.ibBootstrap.coverage.path]:[])];
-    await run(writer,'RATIO_ATTACHMENT_DRY_RUN_OK','WRITER');recipientFile.check();
-    await run([...writer,'--execute'],'RATIO_ATTACHMENT_ENCRYPTED_CANDIDATE_PREPARED','WRITER');recipientFile.check();
+    if(!bootstrapOnly){recipientPath=path.join(directory.path,'ratio-public-recipient.json');
+      fs.writeFileSync(recipientPath,JSON.stringify(recipient),{mode:0o600,flag:'wx'});
+      const recipientFile=attachmentOwnedFile(recipientPath,directory);recipientCheck=()=>recipientFile.check();}
+    const writer=[path.join(ATTACH_ROOT,'scripts/daily.mjs'),'--file='+plan.baseData.path,...(bootstrapOnly?['--ib-bootstrap-only','--ib-bootstrap-output='+file]:['--ratio-only','--ratio-input='+plan.ratioInput.path,'--ratio-recipient='+recipientPath,'--ratio-output='+file,'--ratio-kind='+plan.ratioKind,'--ratio-source-date='+plan.ratioSourceDate,'--ratio-scope='+recipient.scopeId]),...(browserPlan?['--ratio-evidence-plan='+plan.browserEvidence.path]:[]),...(baseline?['--ib-baseline-input='+plan.ibBootstrap.baseline.path,'--ib-coverage-input='+plan.ibBootstrap.coverage.path]:[])];
+    await run(writer,bootstrapOnly?'IB_BOOTSTRAP_DRY_RUN_OK':'RATIO_ATTACHMENT_DRY_RUN_OK','WRITER');recipientCheck?.();
+    await run([...writer,'--execute'],bootstrapOnly?'IB_BOOTSTRAP_ENCRYPTED_CANDIDATE_PREPARED':'RATIO_ATTACHMENT_ENCRYPTED_CANDIDATE_PREPARED','WRITER');recipientCheck?.();
     const frozen = attachmentOwnedFile(file, attachmentDirectory(output)); finalCandidateCheck = () => frozen.check();
     const after=attachmentDecode(frozen.bytes,3,key),expectedBase=baseline?await attachIbBootstrap(before,parseExact(baseline.bytes),parseExact(coverage.bytes)):before,strip=v=>Object.fromEntries(Object.entries(v).filter(([k])=>!['ratioManagerEnvelope','ratioManagerPublication'].includes(k)));
-    if(canonicalJson(strip(expectedBase))!==canonicalJson(strip(after))||canonicalJson(fee)!==canonicalJson(after.feeCalculationReceipt))attachFail('NON_IB_CHANGED');
+    if(canonicalJson(bootstrapOnly?expectedBase:strip(expectedBase))!==canonicalJson(bootstrapOnly?after:strip(after))||canonicalJson(fee)!==canonicalJson(after.feeCalculationReceipt))attachFail('NON_IB_CHANGED');
     if(!validateFeeCalculationReceiptWithEcon(after.feeCalculationReceipt,after,economic).ok)attachFail('RECEIPT');
-    try{await ratioCore.validatePublication(after.ratioManagerEnvelope,after.ratioManagerPublication,fee);if(after.ratioManagerEnvelope.recipientId!==recipient.recipientId||after.ratioManagerEnvelope.scopeId!==recipient.scopeId||after.ratioManagerEnvelope.binding.sourceDate!==plan.ratioSourceDate||after.ratioManagerEnvelope.binding.previousCipherSha256!==(before.ratioManagerEnvelope?await ratioCore.digest(before.ratioManagerEnvelope):null))throw Error();}catch{attachFail('RECEIPT');}
+    if(!bootstrapOnly)try{await ratioCore.validatePublication(after.ratioManagerEnvelope,after.ratioManagerPublication,fee);if(after.ratioManagerEnvelope.recipientId!==recipient.recipientId||after.ratioManagerEnvelope.scopeId!==recipient.scopeId||after.ratioManagerEnvelope.binding.sourceDate!==plan.ratioSourceDate||after.ratioManagerEnvelope.binding.previousCipherSha256!==(before.ratioManagerEnvelope?await ratioCore.digest(before.ratioManagerEnvelope):null))throw Error();}catch{attachFail('RECEIPT');}
     await run([path.join(ATTACH_ROOT, "scripts/fee-receipt-report.mjs"), "--file=" + file, "--format=validate"], "receipt valid " + plan.targetDate, "REPORTER");
     frozen.check(); healthAttempted = true;
     await run([path.join(ATTACH_ROOT, "scripts/fee-data-health.mjs"), "create-success", "--out=" + hf, "--data=" + file, "--target-date=" + plan.targetDate,
@@ -412,8 +424,8 @@ export async function finalizeLocalRatioAttachment({ plan, environ = process.env
     if (validateHealth(actualHealth, { now: runtime.now() }).length || canonicalJson(actualHealth) !== canonicalJson(expectedHealth)
         || fs.readdirSync(output).sort().join(",") !== "data.json,fee-data-health.json") attachFail("HEALTH_WRITE");
     finalHealthCheck = () => bound.check(); frozen.check();
-    try { await source.checkCurrent({requireManagerRecipient:true}); } catch { attachFail("SOURCE"); } await publicBase.checkCurrent(); allChecks(); frozen.check(); bound.check();
-    result = { schema: "fee-console.ratio-local-finalized.v1", status: "RATIO_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW", targetDate: plan.targetDate, mainSha: publicBase.head,
+    try { await source.checkCurrent(sourceOptions); } catch { attachFail("SOURCE"); } await publicBase.checkCurrent(); allChecks(); frozen.check(); bound.check();
+    result = { schema: bootstrapOnly?"fee-console.ib-bootstrap-local-finalized.v1":"fee-console.ratio-local-finalized.v1", status: bootstrapOnly?"IB_BOOTSTRAP_BOUND_HEALTH_READY_FOR_REVIEW":"RATIO_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW", targetDate: plan.targetDate, mainSha: publicBase.head,
       baseDataSha256: attachHash(base.bytes), candidateDataSha256: attachHash(frozen.bytes), inheritedProducerRunId: proof.runId,
       inheritedCandidateSha: proof.candidateSha, sourceCheckedAt: health.checkedAt, feeReceiptUnchanged: true, nonAttachmentFieldsUnchanged: true, ibBootstrapAdded: !!baseline,
       healthCreated: true, readyForSignedCandidate: true, publicationReady: false };
@@ -616,6 +628,12 @@ async function main() {
     if(process.argv.length!==4||!path.isAbsolute(process.argv[3]))attachFail('PLAN');
     const input=readLocalAttachmentPlan(process.argv[3]);
     const result=await finalizeLocalRatioAttachment({plan:input.plan,checkPlan:input.check});
+    console.log(result.status);return;
+  }
+  if (process.argv[2] === 'finalize-ib-bootstrap') {
+    if(process.argv.length!==4||!path.isAbsolute(process.argv[3]))attachFail('PLAN');
+    const input=readLocalAttachmentPlan(process.argv[3]);
+    const result=await finalizeLocalIbBootstrapAttachment({plan:input.plan,checkPlan:input.check});
     console.log(result.status);return;
   }
   if (process.argv[2] === "finalize-ib") {
