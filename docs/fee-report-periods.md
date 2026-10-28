@@ -126,3 +126,186 @@ request or execute it during code preparation. No key is passed in arguments.
 An encrypted ledger already ahead of the requested historical cutoff is refused;
 current holdings are never used to roll it backwards or impersonate history.
 The original signed two-file candidate and trusted promotion remain mandatory.
+
+## Proposed source-attempt ceiling (local, not enabled)
+
+The four public daily gates previously could enter financial sources again after
+a failed due period. This local candidate caps financial entry at two source jobs
+per report kind and accounting cutoff: the original plus at most one later gate.
+It reads only fixed public Actions run/job metadata, including all job attempts;
+no logs, secrets, private input channel or new persistent state is introduced.
+Each source job is labelled with its kind and cutoff. A legacy unlabelled source
+job conservatively consumes either budget. Missing/partial metadata, another
+active job, or an exhausted budget waits without financial credentials.
+Workflow reruns are refused before financial source access, including reruns of
+older workflows that predate the queried period. A new dispatch is not implicitly
+authorized by an available budget. The original period, freshness, source,
+signature, candidate and publication gates remain mandatory.
+
+This is a local scheduling-safety candidate only. It does not enable the schedule,
+prove transfer ingestion, provide future IB coverage or automate ratio capture and
+manager authentication. Public metadata acceptance and the final protected code
+review are still required before activation.
+
+## Fixed read-only field acceptance (local candidate; not executed)
+
+The same `fee-cloud-producer.yml` has a default-false manual-only
+`source_acceptance_once` input, mutually exclusive with `run_reviewed_once`.
+It never runs naturally, never reruns, and never invokes the fee writer,
+economic source, signing token, fee decryption key, Gist delivery or promotion.
+Its expected-main/date plan is checked before existing source credentials are
+loaded, and again before source access. The CLI verifies clean tracked code,
+public main twice, verified owner identity, and refuses extra decryption or
+publication credentials and preload/debug injection.
+
+After separate exact-version and bounded-execution approval, the concrete call is:
+
+```
+node scripts/fee-source-acceptance.mjs --check-plan \
+  --expected-main=<frozen-protected-main> --from-date=2026-10-24 \
+  --target-date=2026-10-27 --out-dir=<private-temporary-directory>
+```
+
+The real capture uses those same arguments without `--check-plan`, only in the
+reviewed source job. Its four-date maximum includes one additional opening
+anchor. Two whole passes use the existing Sharesight client: Schwab-HK and
+Webull daily performance, complete holdings/trades, dated cash and ledger
+predecessors; IB-HK gets the same bounded date window and native transfer
+fields. There is no broker, mail, Flex, arbitrary API URL or market quote call.
+Limits are 300 source GETs, 10 OAuth client-credential grants, 2 MiB per response,
+32 MiB private evidence and a 15-minute job. Scope, dates, currencies, truncation,
+stability or any limit failure stops. OAuth replies, source secrets and bearer
+values are never persisted. Bounded financial replies and the private manifest
+are 0700/0600, never uploaded as artifacts, and cleaned on the hosted runner.
+Only dates, fixed reason codes, counts and hashes reach the job output.
+`fields-captured` is not a fee calculation, IB coverage grant or publication proof.
+No actual field acceptance, permission expansion or financial run happened during
+local development. There is no new Secret, IAM, recipient, private storage service
+or financial write. Existing source rights being insufficient must stop the check.
+
+## In-kind transfer adapter and valuation boundary
+
+Normal reviewed period capture now validates account position changes. A newly
+received Sharesight `OPENING_BALANCE` can become an effective existing
+`external_asset_transfer` flow only with a unique same-day IB-HK `TRANSFER_OUT`,
+exact instrument/market/currency and quantities, both dated position deltas,
+complete cash coverage without a nonzero linked cash leg, and receiving EOD
+market value agreeing with the explicit transfer-out valuation. Opening price
+and value can preserve historical cost and never set the external-flow amount.
+The original writer, flow identity/deduplication and TWR/fee rules are reused.
+
+No received event means no fabricated receipt or added asset. No receipt event
+in the managed accounts requires no IB connection. When an actual managed
+receipt exists but its counterpart/date/valuation is missing, that account's
+source is incomplete; this is not a reason to silently count the NAV rise as
+profit. Date-mismatched settlement, arbitrary BUYs without proved cash, unsupported
+splits/types and opposite/within-composite transfers remain unsupported and
+fail closed; this first adapter does not pretend every transfer form is accepted.
+It does not modify Sharesight, acquisition dates, cost base or historical fees.
+The independent IB report remains nonblocking for an otherwise proved fee report.
+
+The new independent-IB proof variant accepts a confirmed provider-native
+`TRANSFER_OUT` with a positive dated price/value as noncash valuation rather
+than sale cash. Value must equal exact quantity times price, cash legs must be
+zero, and dates/quantity changes/identity/sole-trade coverage still match. A
+surviving position independently agrees with that unit mark. For full disposal,
+the explicit provider transfer valuation is recorded as
+`nativeTransferValuation` and revalidated with the signed proof; it is a
+Sharesight ledger valuation, not a new independently observed market quote.
+This new evidence authority requires exact-version review and real API-field
+acceptance before activation. Legacy zero-price SELL/history corrections keep
+their existing quote requirements and previously confirmed dates.
+
+## Ratio cycle preparation and legal delivery boundary
+
+`node scripts/fee-ratio-cycle.mjs <private-cycle-plan.json>` is a concrete local
+period entry. The plan is 0600 outside Git, schema
+`fee-console.ratio-cycle-plan.v1`, fields `period` (the reviewed pure report plan)
+and `packetPlan:{path,sha256}` (the existing private snapshot plan). It refuses
+not-due/incomplete monthly periods and altered files. It calls the real original
+Library proof -> source association -> public-recipient encryption path, and
+writes a 0600 cycle handoff beside the candidate. It never changes original
+capture time or disguises actual source asOf as the fee price/accounting cutoff.
+It has no token, fee key, Keychain, browser or network access and cannot formally
+publish. Existing trusted manager preview, explicit consent, owner/recipient/scope,
+Gist revision, MAC, version chain, exact PATCH/readback and replay checks remain.
+
+A periodic operator still needs fresh complete original Sharesight Tools Exposure,
+classification/position/cash evidence and genuine Library materialization, then
+an online unlocked Mac and its existing owner-verified manager browser session.
+Only the existing same private Gist's `fee-console-ratio-snapshot.json` can be
+updated through the existing confirmation flow; the recipient, fee data/health
+and economic ledger stay untouched. Continuing this browser authentication and
+private file transfer on a schedule is a new recurring purpose and must be
+approved with its concrete frequency/recipient. The local entry does not install
+a daemon, renew sessions, export credentials or turn the read-only monitor into
+a publisher. No unattended Exposure collector or cloud manager-token delivery
+has been demonstrated. Cloud fee production does not need the Mac; ratio
+browser delivery does. Mac offline/session failure keeps the last real dated
+snapshot stale and cannot claim a current update.
+
+### Remaining live-adapter gates, not solved by field capture
+
+The local independent IB TWR reader can now retain unchanged non-USD native cash
+with complete dated cash-account balances and matching USD report valuations.
+FX repricing stays in NAV return; native balances are preserved in the verified
+checkpoint. Missing/changed native balances, nonzero foreign-currency ledger
+events, changed currency or bad dated USD reconciliation fail closed. No FX
+transaction is guessed or silently counted as a USD external flow. Actual source
+field acceptance remains necessary before activation; the field check reports
+native currency codes without amounts and is not calculation approval.
+
+An authenticated confirmed-baseline/finite-coverage checkpoint is still required.
+The local `finalize-ib-bootstrap` path below decouples this one-time seed from a
+ratio report date, using the existing encrypted carrier rather than a JSON Secret
+or new storage channel. Once a finite audited boundary has been rebuilt by two
+stable source reads, the first normal report can extend it in memory through the
+ordinary native checkpoint rules. The old audit is not extended or reissued; no
+intermediate result is published as the final target. Native gaps still have the
+existing eight-day limit and all transfer/cash/anchor proof gates. A failed IB
+read remains nonblocking for an otherwise valid original fee report.
+
+The next-cycle prior packet can be downloaded through the proposed manager-only
+"下载当前加密快照（供下期衔接）" UI. It verifies owner, recipient, MAC and current
+watermark and exports only the existing encrypted packet, never a token, private
+key, fee key, raw holdings or ledger. It refuses pending/uncertain writes and
+role/source changes. This is a separate index-only candidate; it neither changes
+the formal Gist nor supplies recurring authentication approval. The downloaded
+cipher is moved into the existing private workspace and chmod 0600 before use by
+the packet stager. There is no direct hidden-config extraction path.
+
+### Independent historical IB seed in the existing encrypted carrier
+
+`./scripts/codex-fee-setup finalize-ib-bootstrap <private-plan.json>` is a proposed
+one-time local adapter, not an enabled schedule or a new private input channel.
+Its exact schema is `fee-console.ib-bootstrap-local-finalize-plan.v1`, fields
+`targetDate`, `workspace`, `baseData`, `baseHealth`, `legacySource`, `ibBootstrap`
+and `producerEvidence`. The two `ibBootstrap` members `baseline` and `coverage`
+and every other input use the existing `{path,sha256}` private-file contract:
+same owned repository-external 0700 directory, regular 0600 files, no symlinks,
+no overwrite, bytes rechecked throughout. The baseline is rebuilt against the
+already published IB return and drawdown receipts; a hash or coverage JSON does
+not grant user/source approval. A finite audited interval must come from an
+actually reviewed complete Sharesight reconciliation, not identical stale GETs.
+
+Before either existing Keychain item is used, the adapter requires protected
+clean signed main, exact base blobs, a successful real producer run/candidate,
+source/style/runtime equality and original health within 36 hours and four UTC
+days. It accepts the old `produce` job name or exactly `Produce weekly <target>`
+or `Produce monthly <target>`; ambiguous or wrong-target names fail. Actual job
+log access keeps the existing private-pipe parser and requires its own concrete
+endpoint approval; no historical single-request authorization is reused.
+
+After separately approved one-time use of the two fixed local services
+`fee-console.codex.FEE_DATA_KEY` and `fee-console.codex.FEE_ECON_GIST_ID`, the
+sole `daily.mjs --ib-bootstrap-only` writer dry-runs then constructs a new
+encrypted candidate. Reporter/economic checks require the complete original fee,
+IB returns/drawdown, ratio envelopes and every non-seed field to remain identical.
+Only `ibManagerBaselineState` and `ibManagerCoverageState` are added. Existing
+health is rebound to the exact checked cipher with the original checkedAt and
+source dates; neither freshness nor style proof is manufactured. Fixed output
+`ib-bootstrap-finalized/` contains 0600 data/health/validation; result remains
+`publicationReady:false` until the original signed two-file protected promotion.
+No manager token, recipient registration, financial call, ledger write, secret
+creation or automatic flag is part of this adapter. No real execution occurred
+during this local development.

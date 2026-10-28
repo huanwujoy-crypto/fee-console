@@ -5,6 +5,7 @@
 
 import crypto from "node:crypto";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
+import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof} from './fee-sharesight-transfers.mjs';
 
 const API = "https://api.sharesight.com";
 const TOKEN_URL = `${API}/oauth2/token`;
@@ -743,7 +744,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     account: p.account, portfolioId: p.portfolioId, sourceDate: p.sourceDate,
     stockTotalUsd: p.stock, holdings: p.holdings,
   })), proposals: [] };
-  const flows = portfolios.flatMap(p => p.flows);
+  const flows = portfolios.flatMap(p => [...p.flows,...(raw[p.account].managedTransferProof?consumeManagedTransferProof(raw[p.account].managedTransferProof,p.account,targetDate):[])]);
   const acctCash = {}, prevAcctCash = {};
   for (const p of portfolios) if (p.cashCheck) {
     acctCash[p.account] = p.cashCheck.current;
@@ -759,15 +760,19 @@ export function normalizeRead(raw, targetDate, benchmark) {
 }
 
 class FixedHttp {
-  constructor(fetchImpl, { timeoutMs = 20_000 } = {}) {
+  constructor(fetchImpl, { timeoutMs = 20_000,onSourceResponse=null } = {}) {
     if (typeof fetchImpl !== "function" || !Number.isInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 30_000) {
       fail("CONFIG");
     }
     this.fetchImpl = fetchImpl;
     this.timeoutMs = timeoutMs;
+    this.peerPortfolioId=null;
+    if(onSourceResponse!==null&&typeof onSourceResponse!=='function')fail('CONFIG');this.onSourceResponse=onSourceResponse;
   }
+  registerIbPeer(row){if(row?.name!=='IB-HK'||row.currency_code!=='USD')fail('PORTFOLIO_IDENTITY');const peer=id(row.id);if(this.peerPortfolioId!==null&&this.peerPortfolioId!==peer)fail('PORTFOLIO_IDENTITY');this.peerPortfolioId=peer;}
   async json(url, init) {
-    const allowed = url === TOKEN_URL || url === PORTFOLIOS_URL
+    const peer=this.peerPortfolioId,p=new URL(url),peerRoute=peer&&p.origin===API&&(p.pathname===`/api/v3/portfolios/${peer}/performance`||p.pathname===`/api/v3/portfolios/${peer}/holdings`||p.pathname===`/api/v3/portfolios/${peer}/trades.json`||p.pathname===`/api/v2/portfolios/${peer}/cash_accounts.json`);
+    const allowed = peerRoute || url === TOKEN_URL || url === PORTFOLIOS_URL
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/payouts\/[1-9]\d{0,14}\.json$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v3\/portfolios\/(?:936249|1350094)\/(?:performance|holdings|trades\.json)(?:\?.*)?$/.test(url)
       || /^https:\/\/api\.sharesight\.com\/api\/v2\/portfolios\/(?:936249|1350094)\/cash_accounts\.json\?date=\d{4}-\d{2}-\d{2}$/.test(url)
@@ -777,10 +782,12 @@ class FixedHttp {
       const path = new URL(url).pathname;
       const isPrecisionSource = path.endsWith('/trades.json') || path.endsWith('/performance') || path.endsWith('/cash_accounts.json')
         || path.endsWith('/cash_account_transactions.json');
+      const includeBytes=isPrecisionSource||this.onSourceResponse&&url!==TOKEN_URL;
       const response = await boundedJson(this.fetchImpl, url, init, {
-        timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: isPrecisionSource,
+        timeoutMs: this.timeoutMs, maxBytes: MAX_BODY, requireJsonType: true, includeBytes: !!includeBytes,
       });
-      return isPrecisionSource ? parseSourceJson(new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : response;
+      if(this.onSourceResponse&&url!==TOKEN_URL){const bearer=init?.headers?.Authorization?.replace(/^Bearer /,'');if(bearer&&response.bytes.includes(Buffer.from(bearer)))fail('RESPONSE_CREDENTIAL');await this.onSourceResponse(response.bytes);}
+      return isPrecisionSource ? parseSourceJson(new TextDecoder('utf-8', { fatal: true }).decode(response.bytes)) : includeBytes?response.json:response;
     } catch (error) {
       const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
       if (['NETWORK', 'TIMEOUT', 'ABORTED'].includes(code)) fail(url === TOKEN_URL ? 'AUTH_UNAVAILABLE' : 'SOURCE_UNAVAILABLE');
@@ -791,12 +798,13 @@ class FixedHttp {
 }
 
 export class SharesightCloudReader {
-  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {} } = {}) {
+  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null } = {}) {
+    if(typeof reconcileInKind!=='boolean')fail('CONFIG');this.reconcileInKind=reconcileInKind;
     this.incomeDateEvidence=incomeDateEvidence;
     if (![clientId, clientSecret].every(value => typeof value === "string" && value.length >= 1 && value.length <= 8192
         && !/[\r\n\0]/.test(value))) fail("CREDENTIALS");
     this.clientId = clientId; this.clientSecret = clientSecret;
-    this.http = new FixedHttp(fetchImpl, { timeoutMs });
+    this.http = new FixedHttp(fetchImpl, { timeoutMs,onSourceResponse });
   }
   async token() {
     const body = new URLSearchParams({ grant_type: "client_credentials", client_id: this.clientId,
@@ -868,6 +876,17 @@ export class SharesightCloudReader {
         ...(previousCashAccounts ? { previousCashAccounts } : {}),
         ...(holdingHistory ? { holdingHistory } : {}), ...(terminalPerformance ? { terminalPerformance } : {}) };
     }
+    if(this.reconcileInKind){
+      const needed=Object.entries(raw).filter(([,p])=>managedTransferCandidates(p).length);let peer=null,peerPortfolio=null;
+      if(needed.length){
+        const matches=listed.filter(p=>p.name==='IB-HK'&&p.currency_code==='USD');if(matches.length!==1)fail('NONCASH_PEER_REQUIRED');this.http.registerIbPeer(matches[0]);peerPortfolio={name:'IB-HK',id:matches[0].id};
+        const base=`${API}/api/v3/portfolios/${peerPortfolio.id}`,query=d=>`consolidated=false&end_date=${d}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${d}`;
+        const performance=await this.get(base+'/performance?'+query(targetDate),token),previousPerformance=await this.get(base+'/performance?'+query(previousCalendarDate(targetDate)),token),trades=await this.get(base+`/trades.json?consolidated=false&end_date=${targetDate}&start_date=${targetDate}`,token),cashAccounts=await this.get(`${API}/api/v2/portfolios/${peerPortfolio.id}/cash_accounts.json?date=${targetDate}`,token),cashTransactions={};
+        for(const c of rows(cashAccounts,'cash_accounts')){if(c.portfolio_id!==peerPortfolio.id)fail('CASH_IDENTITY');const cashId=id(c.id);cashTransactions[cashId]=await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`,token);}
+        peer={performance,previousPerformance,trades,cashTransactions};
+      }
+      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate});
+    }
     return raw;
   }
   async readStable(targetDate, benchmark) {
@@ -875,5 +894,19 @@ export class SharesightCloudReader {
     const second = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark);
     if (stable(first) !== stable(second)) fail("SOURCE_UNSTABLE");
     return first;
+  }
+  // Field acceptance only, not an IB TWR receipt or a baseline/coverage grant.
+  // Uses the same credential, fixed GET client and name-bound peer discovery.
+  async readIbEvidenceWindow(fromDate,targetDate){
+    date(fromDate);date(targetDate);const span=(Date.parse(targetDate)-Date.parse(fromDate))/86400000;if(span<0||span>7)fail('DATE');
+    const token=await this.token(),listing=rows(await this.get(PORTFOLIOS_URL,token),'portfolios'),matches=listing.filter(p=>p.name==='IB-HK'&&p.currency_code==='USD');
+    if(matches.length!==1)fail('PORTFOLIO_IDENTITY');this.http.registerIbPeer(matches[0]);const portfolio={id:id(matches[0].id),name:'IB-HK',currency:'USD'},base=`${API}/api/v3/portfolios/${portfolio.id}`;
+    const catalog=await this.get(base+'/holdings?consolidated=false',token),trades=await this.get(base+`/trades.json?consolidated=false&end_date=${targetDate}&start_date=${fromDate}`,token),days=[];
+    for(let d=previousCalendarDate(fromDate);d<=targetDate;d=new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10)){
+      const performance=await this.get(base+`/performance?consolidated=false&end_date=${d}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${d}`,token),cashAccounts=await this.get(`${API}/api/v2/portfolios/${portfolio.id}/cash_accounts.json?date=${d}`,token),cashTransactions={};
+      for(const c of rows(cashAccounts,'cash_accounts')){if(c.portfolio_id!==portfolio.id)fail('CASH_IDENTITY');const n=id(c.id);cashTransactions[n]=await this.get(`${API}/api/v2/cash_accounts/${n}/cash_account_transactions.json?from=${d}&to=${d}`,token);}
+      days.push({date:d,performance,cashAccounts,cashTransactions});
+    }
+    return {portfolio,catalog,trades,days};
   }
 }

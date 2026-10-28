@@ -42,7 +42,7 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
   let request,coverage=null;
   try{
     if(!/^[a-f0-9]{64}$/.test(expectedBaselineHash||''))throw Error('IB_SOURCE_BASELINE_LOCK');
-    const checkpoint=await validateIbManagerReportState(payload,expectedBaselineHash);
+    let checkpoint=await validateIbManagerReportState(payload,expectedBaselineHash);
     const ownerBaseline=await validateIbOwnerBaselineState(payload,expectedBaselineHash);
     if(checkpoint?.ownerBaseline&&ownerBaseline&&createIbManagerReturnConsumer().canonical(checkpoint.ownerBaseline)!==createIbManagerReturnConsumer().canonical(ownerBaseline))throw Error('IB_SOURCE_STATE_INVALID');
     // Future reads require authenticated history, not only a later date. Real
@@ -52,11 +52,24 @@ export async function prepareIbManagerReport({payload,targetDate,outputDir,envir
       if(!checkpoint&&!ownerBaseline)throw Error('IB_SOURCE_COVERAGE_UNVERIFIED');
       const priorDate=checkpoint?.sourceAsOf||ownerBaseline.input.periodReturnsInput.to;
       const requiredFrom=priorDate===targetDate?targetDate:new Date(Date.parse(priorDate+'T00:00:00Z')+86400000).toISOString().slice(0,10);
-      coverage=await validateIbManagerCoverage(payload.ibManagerCoverageState,targetDate,expectedBaselineHash,requiredFrom,checkpoint?.schema==='fee-console.ib-manager-source.v3'?checkpoint:null);
+      const bootstrapBoundary=!checkpoint&&ownerBaseline&&payload.ibManagerCoverageState?.schema==='fee-console.ib-manager-coverage.v2'?payload.ibManagerCoverageState.through:null;
+      // First establish the finite audited boundary in memory, then extend it
+      // with the ordinary native reader. Never claim the old audit covers the
+      // later target or publish an intermediate period as the final report.
+      const coverageTarget=bootstrapBoundary&&targetDate>bootstrapBoundary?bootstrapBoundary:targetDate;
+      coverage=await validateIbManagerCoverage(payload.ibManagerCoverageState,coverageTarget,expectedBaselineHash,requiredFrom,checkpoint?.schema==='fee-console.ib-manager-source.v3'?checkpoint:null);
       if(coverage.schema==='fee-console.ib-manager-coverage.v2'&&checkpoint&&checkpoint.schema!=='fee-console.ib-manager-source.v3')throw Error('IB_SOURCE_STATE_INVALID');
     }
-    const source=await (reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET})).readStable({targetDate,expectedBaselineHash,checkpoint,...(!checkpoint&&ownerBaseline?{ownerBaseline}:{}),...(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'?{bootstrapCoverage:coverage}:{})});
+    const activeReader=reader||new SharesightIbManagerReader({clientId:environ.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:environ.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET});
+    if(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'&&targetDate>coverage.through){
+      const boundary=await activeReader.readStable({targetDate:coverage.through,expectedBaselineHash,ownerBaseline,bootstrapCoverage:coverage});
+      await buildIbManagerReportBundle(boundary,expectedBaselineHash);
+      if(boundary.sourceAsOf!==coverage.through)throw Error('IB_SOURCE_STATE_INVALID');
+      await validateIbManagerCoverage(coverage,targetDate,expectedBaselineHash,coverage.through,boundary);checkpoint=boundary;
+    }
+    const source=await activeReader.readStable({targetDate,expectedBaselineHash,checkpoint,...(!checkpoint&&ownerBaseline?{ownerBaseline}:{}),...(!checkpoint&&coverage?.schema==='fee-console.ib-manager-coverage.v2'?{bootstrapCoverage:coverage}:{})});
     await buildIbManagerReportBundle(source,expectedBaselineHash);
+    if(source.sourceAsOf!==targetDate)throw Error('IB_SOURCE_STATE_INVALID');
     request={state:'verified',source,...(coverage?{coverage}:{})};
   }catch(error){
     const fixed=['IB_SOURCE_BASELINE_LOCK','IB_SOURCE_STATE_INVALID','IB_SOURCE_COVERAGE_UNVERIFIED'];
