@@ -83,18 +83,24 @@ jobs:
             echo 'The pull-request file list is incomplete or exceeds the approved review size.' >&2
             exit 1
           fi
-          # `xuan-ib/index.html` is the stable phone loader. Report candidates
-          # also use that path on their unmerged candidate branches, but a PR
-          # must never merge those variable report bytes over the fixed entry.
+          # Execute only the trusted-main entry verifier. The original loader
+          # remains valid; one exact reviewed inert retirement document is the
+          # only additional form. OWNER/signature/all other guards still apply.
           if jq -e '.[][] | select(.filename == "xuan-ib/index.html")' "$files_json" >/dev/null; then
             proposed_index="$RUNNER_TEMP/proposed-xuan-index.html"
             gh api \
               -H 'Accept: application/vnd.github.raw+json' \
               "repos/$GITHUB_REPOSITORY/contents/xuan-ib/index.html?ref=${{ github.event.pull_request.head.sha }}" \
               > "$proposed_index"
-            grep -Fq 'const loaderBuild = "' "$proposed_index"
-            grep -Fq 'new URL("latest.meta.json", location.href)' "$proposed_index"
-            grep -Fq 'new URL("latest.html", location.href)' "$proposed_index"
+            entry_policy=$(node scripts/xuan-ib-entry-policy.mjs "$proposed_index")
+            if [[ "$entry_policy" == 'XUAN_ENTRY_POLICY_OK legacy-loader' ]]; then
+              grep -Fq 'const loaderBuild = "' "$proposed_index"
+              grep -Fq 'new URL("latest.meta.json", location.href)' "$proposed_index"
+              grep -Fq 'new URL("latest.html", location.href)' "$proposed_index"
+            elif [[ "$entry_policy" != 'XUAN_ENTRY_POLICY_OK static-retirement' ]]; then
+              echo 'The trusted entry verifier returned an invalid form.' >&2
+              exit 1
+            fi
             if grep -Eq '<!--[[:space:]]*xuan-ib-(handover:v1|night-action-v1:)' "$proposed_index"; then
               echo 'A variable XUAN-IB report cannot replace the stable phone loader in a pull request.' >&2
               exit 1
