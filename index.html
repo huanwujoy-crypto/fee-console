@@ -430,6 +430,7 @@ code{background:var(--chip);padding:1px 5px;border-radius:4px;font-size:12px}
     <div style="border-top:1px solid var(--grid);margin-top:12px;padding-top:10px"><label class="f" for="fundDocsFile">导入管理人加密备份（JSON）</label><p class="hint">用于在同一基金的另一台管理人设备恢复或合并角色说明、文件及历史版本。系统只接受基金身份相同且可用当前原管理人 token 解密的备份；不会上传文件，也不会改变份额或账本。投资人无需使用此功能。</p><input id="fundDocsFile" type="file" accept="application/json,.json"><div class="row" style="margin-top:8px"><button class="btn" id="fundDocsExport" type="button">导出管理人加密备份</button></div></div>
     <p class="hint" id="fundDocsNotice" style="margin-top:10px">文件库在当前设备本地加密；恢复加密备份必须使用创建备份时的原管理人 token。全部文件及历史版本会按原状态加密加入新生成的基金只读链接。</p>
   </div>
+  <div class="card mgr" id="giftRegistryCheck" hidden><div class="row" style="justify-content:space-between"><span id="giftRegistryState" role="status">本报告赠股登记：未知</span><button class="btn sm" id="giftRegistryPick" type="button" aria-label="核对赠股登记" title="仅本机读取核对目标，不上传、不改登记" disabled>核对</button><input id="giftRegistryQueryFile" type="file" accept="application/json,.json" hidden></div><div class="muted" id="giftRegistryNote">报告截至 未核验 · 核对目标 未选择 · 非交易验收</div></div>
   <div class="card"><h2>重要设置</h2><p class="hint">期初本金、费率和起算日影响历史计算；只有确认差异后才会保存。</p>
     <div class="grid">
       <div><label class="f">管理费率（%/年）</label><input type="number" id="sMgmt" step="0.01"></div>
@@ -685,6 +686,51 @@ function createLegacyPolicy() {
 }
 /* fee-legacy-policy:end */
 globalThis.feeLegacyPolicy=createLegacyPolicy();
+
+/* fee-gift-registry-status:start */
+function createFeeGiftRegistryStatusCore(){
+ const unknown=()=>({state:'unknown'});
+ const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join('|')===[...keys].sort().join('|');
+ const id=n=>Number.isSafeInteger(n)&&n>0;
+ const date=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+ const symbol=s=>typeof s==='string'&&/^[A-Z0-9][A-Z0-9./^-]{0,31}$/.test(s);
+ function query(v){
+  return exact(v,['schema','account','portfolioId','holdingId','ticker','tradeId','date'])
+   &&v.schema==='fee-console.gift-registry-query.v1'&&v.account==='webull'&&v.portfolioId===1350094
+   &&id(v.holdingId)&&id(v.tradeId)&&symbol(v.ticker)&&v.date==='2026-10-28';
+ }
+ function parse(text){
+  if(typeof text!=='string'||text.length<2||text.length>2048)throw Error('GIFT_QUERY_INVALID');
+  try{
+   const value=JSON.parse(text),keys=[...text.matchAll(/"((?:\\.|[^"\\])*)"\s*:/g)].map(m=>JSON.parse('"'+m[1]+'"'));
+   if(!query(value)||keys.length!==7||new Set(keys).size!==7)throw Error();
+   return value;
+  }catch{throw Error('GIFT_QUERY_INVALID');}
+ }
+ function registry(v){
+  if(!exact(v,['schemaVersion','entries'])||v.schemaVersion!==1||!Array.isArray(v.entries)||!v.entries.length||v.entries.length>100)return false;
+  const names=new Set(),holdings=new Set();
+  for(const r of v.entries){
+   if(!exact(r,['id','account','portfolioId','holdingId','ticker','firstHeldOn','effectiveFrom','authorizationRef','giftTradeIds'])
+    ||typeof r.id!=='string'||!/^[a-z0-9-]{1,64}$/.test(r.id)||names.has(r.id)||r.account!=='webull'||r.portfolioId!==1350094
+    ||!id(r.holdingId)||holdings.has(r.holdingId)||!symbol(r.ticker)||!date(r.firstHeldOn)||!date(r.effectiveFrom)||r.effectiveFrom<r.firstHeldOn
+    ||typeof r.authorizationRef!=='string'||!r.authorizationRef.trim()||r.authorizationRef.length>1000
+    ||!Array.isArray(r.giftTradeIds)||!r.giftTradeIds.length||!r.giftTradeIds.every(id)||new Set(r.giftTradeIds).size!==r.giftTradeIds.length)return false;
+   names.add(r.id);holdings.add(r.holdingId);
+  }
+  return true;
+ }
+ function status({ready=false,query:scope,registry:rules}={}){
+  if(ready!==true||!query(scope)||!registry(rules))return unknown();
+  const r=rules.entries.find(r=>r.account===scope.account&&r.portfolioId===scope.portfolioId
+   &&r.holdingId===scope.holdingId&&r.ticker===scope.ticker);
+  return {state:r&&r.firstHeldOn<=scope.date&&r.effectiveFrom<=scope.date&&r.giftTradeIds.includes(scope.tradeId)?'matched':'unmatched'};
+ }
+ return Object.freeze({parse,status});
+}
+
+const giftRegistryStatusCore=createFeeGiftRegistryStatusCore();
+/* fee-gift-registry-status:end */
 
 /* fee-receipt-consumer:start */
 function createIncomeDatePolicy() {
@@ -2420,12 +2466,13 @@ let _sourceEpoch=0,_receiptSource={state:"unverified"};
 const sourceIdentity=()=>({gid:cfg(K.gid),keyValue:cfg(K.key)});
 const sourceMatches=source=>source?.gid===cfg(K.gid)&&source?.keyValue===cfg(K.key);
 /* fee-receipt-loading:v1 */
-function invalidateReceiptSource(loading=false){clearRatioManagement();const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};_managerCapability={state:"unverified"};_fundDocsCache=null;clearFundDocumentPlaintext();renderStyleRegistryDiagnostic(false);for(const id of ["fundDocsBox","fundGovSummary"]){const node=document.getElementById(id);if(typeof node?.replaceChildren==="function")node.replaceChildren();else if(node)node.innerHTML="";}const card=document.getElementById("fundDocsCard");if(card)card.style.display="none";++_renderGeneration;render();return epoch;}
+function invalidateReceiptSource(loading=false){clearGiftRegistryCheck();clearRatioManagement();const epoch=++_sourceEpoch;_receiptSource={state:loading?"loading":"unverified"};_managerCapability={state:"unverified"};_fundDocsCache=null;clearFundDocumentPlaintext();renderStyleRegistryDiagnostic(false);for(const id of ["fundDocsBox","fundGovSummary"]){const node=document.getElementById(id);if(typeof node?.replaceChildren==="function")node.replaceChildren();else if(node)node.innerHTML="";}const card=document.getElementById("fundDocsCard");if(card)card.style.display="none";++_renderGeneration;render();return epoch;}
 function acceptReceiptSource(snapshot,epoch){if(epoch!==_sourceEpoch||!sourceMatches(snapshot))throw new Error("来源已变化，请重新读取");_receiptSource={state:"verified",...sourceIdentity(),envelopeVersion:snapshot.envelopeVersion,legacySource:snapshot.legacySource};}
 let DB=seed();
 let _localLedgerPresent=!!cfg(K.db);
 try{const s=cfg(K.db);if(s){const raw=JSON.parse(s);if(raw?.v===4){DB=raw;_receiptSource={state:"verified",...sourceIdentity()};}else if(raw?.v===3)DB=projectLegacyLedger(raw);}}catch(_){}
 let DAILY={updatedAt:"",daily:[],flowsAuto:[]};
+let _giftRegistryQuery=null,_giftRegistryReady=false,_giftRegistryEpoch=-1,_giftRegistryTicket=0,_giftRegistryReportDate=null,_giftRegistryInput=null,_giftRegistryRulesText=null;
 try{const s=cfg(K.daily);if(s)DAILY=JSON.parse(s);}catch(_){}
 // Link hints never modify the committed ledger. Restore only an existing cloud ledger.
 const LG=feeLedgerEditGuard,DRAFT_KEY="feeConsole.editDraft.v1",BASELINE_KEY="feeConsole.verifiedLedger.v1";
@@ -3028,8 +3075,45 @@ async function render(){
   document.getElementById("subTitle").textContent=`${DB.accounts.map(a=>a.name).join(" + ")}${feeSummary}${SHELL_BUILD?` · v${SHELL_BUILD}`:UI_VERSION_LABEL}`+(isMgr()?"":" · 只读");
   renderReportPublication(reportView);
   renderKPIs(feeView,st,B,G);renderChart1(feeView,st);renderChart2(feeView,st);renderChart3(feeView,st);renderMonths(feeView,st);renderBal(feeView,st,B,G);if(isMgr()){renderFees(feeView,st,B,G);renderSettings();renderFlows();}
+  renderGiftRegistryStatus(documentsAuthorized,feeView.state==='verified',feeView.asOf);
   renderRatioManagement();renderInvestors(fundProfile,feeView);renderInvestorFundArchive(fundProfile,fundArchive);if(documentsAuthorized)renderFundDocuments(fundDocuments);renderSetup();renderA2hs();renderLedgerControls();renderStyleRegistryDiagnostic(documentsAuthorized);
 }
+
+/* fee-gift-registry-controller:start */
+function clearGiftRegistryCheck(){
+  _giftRegistryQuery=null;_giftRegistryReady=false;_giftRegistryEpoch=-1;++_giftRegistryTicket;
+  _giftRegistryReportDate=null;_giftRegistryInput=null;_giftRegistryRulesText=null;
+  const text=document.getElementById('giftRegistryState'),note=document.getElementById('giftRegistryNote'),input=document.getElementById('giftRegistryQueryFile'),pick=document.getElementById('giftRegistryPick');
+  if(text)text.textContent='本报告赠股登记：未知';if(note)note.textContent='报告截至 未核验 · 核对目标 未选择 · 非交易验收';if(input)input.value='';if(pick)pick.disabled=true;
+}
+function renderGiftRegistryStatus(authorized,receiptVerified,reportDate=_giftRegistryReportDate){
+  const card=document.getElementById('giftRegistryCheck'),text=document.getElementById('giftRegistryState'),note=document.getElementById('giftRegistryNote'),pick=document.getElementById('giftRegistryPick');
+  if(!card||!text||!note||!pick)return;
+  card.hidden=!isMgr();
+  if(!authorized||!receiptVerified||!isMgr()||!managerDocumentsAuthorized()||_receiptSource.state!=='verified'||!sourceMatches(_receiptSource)||typeof reportDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(reportDate)){clearGiftRegistryCheck();return;}
+  const rulesText=JSON.stringify(DAILY.managementExemptionRegistry);
+  if(_giftRegistryInput!==DAILY||_giftRegistryReportDate!==reportDate||_giftRegistryRulesText!==rulesText||_giftRegistryEpoch>=0&&_giftRegistryEpoch!==_sourceEpoch)clearGiftRegistryCheck();
+  _giftRegistryInput=DAILY;_giftRegistryReportDate=reportDate;_giftRegistryRulesText=rulesText;_giftRegistryReady=true;
+  const result=giftRegistryStatusCore.status({ready:_giftRegistryEpoch===_sourceEpoch,query:_giftRegistryQuery,registry:DAILY.managementExemptionRegistry});
+  text.textContent='本报告赠股登记：'+({matched:'匹配',unmatched:'未匹配',unknown:'未知'}[result.state]||'未知');
+  note.textContent='报告截至 '+reportDate+' · 核对目标 '+(_giftRegistryQuery?.date||'未选择')+' · 非交易验收';pick.disabled=false;
+}
+async function readGiftRegistryQuery(event){
+  const input=event.target,ticket=++_giftRegistryTicket,epoch=_sourceEpoch,data=DAILY,rulesText=JSON.stringify(DAILY.managementExemptionRegistry);
+  if(!_giftRegistryReady||!managerDocumentsAuthorized()||_receiptSource.state!=='verified'||!sourceMatches(_receiptSource)){clearGiftRegistryCheck();return;}
+  _giftRegistryQuery=null;_giftRegistryEpoch=-1;renderGiftRegistryStatus(true,true);
+  try{
+    const file=input.files?.[0];if(input.files?.length!==1||!file||file.size<2||file.size>2048)throw Error();
+    const query=giftRegistryStatusCore.parse(await file.text());
+    if(ticket!==_giftRegistryTicket)return;
+    if(epoch!==_sourceEpoch||data!==DAILY||rulesText!==JSON.stringify(DAILY.managementExemptionRegistry)||!_giftRegistryReady||!managerDocumentsAuthorized()||_receiptSource.state!=='verified'||!sourceMatches(_receiptSource)){clearGiftRegistryCheck();return;}
+    _giftRegistryQuery=query;_giftRegistryEpoch=epoch;renderGiftRegistryStatus(true,true);
+  }catch{if(ticket===_giftRegistryTicket){if(!_giftRegistryReady||!managerDocumentsAuthorized()||_receiptSource.state!=='verified'||!sourceMatches(_receiptSource)){clearGiftRegistryCheck();return;}_giftRegistryQuery=null;_giftRegistryEpoch=-1;renderGiftRegistryStatus(true,true);}}
+  finally{input.value='';}
+}
+document.getElementById('giftRegistryPick').onclick=()=>{if(_giftRegistryReady&&managerDocumentsAuthorized())document.getElementById('giftRegistryQueryFile').click();};
+document.getElementById('giftRegistryQueryFile').onchange=readGiftRegistryQuery;
+/* fee-gift-registry-controller:end */
 
 /* fund-investor-render:start */
 function orderedFundInvestorRecords(records){
