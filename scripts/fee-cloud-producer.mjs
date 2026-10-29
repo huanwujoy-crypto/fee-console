@@ -489,9 +489,10 @@ function writerArgs(input, file) {
     `--flows=${JSON.stringify(input.flows)}`, `--source-fetched-at=${input.sourceFetchedAt}`,
     `--source-fingerprint=${input.sourceFingerprint}`,
   ];
+  if(input.sourceReference)cli.push(`--sharesight-reference=${JSON.stringify(input.sourceReference)}`);
   for (const account of ["schwab", "webull"]) if (Object.hasOwn(input.acctCash, account)) {
-    cli.push(`--acct-cash-${account}=${input.acctCash[account]}`,
-      `--prev-acct-cash-${account}=${input.prevAcctCash[account]}`);
+    cli.push(`--acct-cash-${account}=${input.acctCash[account]}`);
+    if(!input.sourceReference)cli.push(`--prev-acct-cash-${account}=${input.prevAcctCash[account]}`);
   }
   return cli;
 }
@@ -517,12 +518,13 @@ export async function produce(options = {}) {
     const styleProposal = loadStyleProposal(cli["style-proposal-file"], targetDate, ROOT, process.env.FEE_STYLE_PROPOSAL_LOCK);
     stage = "READER_SETUP";
     if(options.reader&&cli['income-date-evidence-file']!==undefined)fail('INCOME_INPUT');
+    const basePayloadForReader=options.reader?null:decryptCandidate(baseDataFile,process.env.FEE_DATA_KEY);
     const incomeInput=options.reader?{checkCurrent(){}}:loadIncomeDateEvidence(
-      decryptCandidate(baseDataFile,process.env.FEE_DATA_KEY),targetDate,cli['income-date-evidence-file']);
+      basePayloadForReader,targetDate,cli['income-date-evidence-file']);
     const reader = options.reader || new SharesightCloudReader({
       clientId: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,
       clientSecret: process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
-      incomeDateEvidence:incomeInput.evidence,fetchImpl:options.fetchImpl,
+      incomeDateEvidence:incomeInput.evidence,fetchImpl:options.fetchImpl,sourceMode:'sharesight-reference',managementExemptionRegistry:basePayloadForReader.managementExemptionRegistry,
     });
     let economic;
     const styleFile = path.join(output, "style-input.json");

@@ -36,6 +36,31 @@ export const BENCH_STATE_EVIDENCE_FROM = "2026-09-14";
 export const BENCH_STATES = Object.freeze(["session", "closed"]);
 export const CASH_EPS = 0.01;
 
+// Business input contract, not a source-authentication certificate. The
+// controlled Sharesight reader/producer selects this mode; provider JSON
+// cannot opt into it. The same-day report is authoritative, and no opening
+// balance or historical cash-reconciliation success is asserted.
+export const SHARESIGHT_REFERENCE_SCHEMA='fee-console.sharesight-reference.v1';
+export function normalizeSharesightReference(value,{date,acctCash,accounts,sourceDates,splits}={}){
+  const keys=['schema','date','currency','cashByAccount','currenciesByAccount','cashHistoryReconstructed','warnings'];
+  const exact=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...k].sort().join(',');
+  if(!exact(value,keys)||value.schema!==SHARESIGHT_REFERENCE_SCHEMA||!isIsoDate(value.date)||value.date!==date
+    ||value.currency!=='USD'||value.cashHistoryReconstructed!==false||!exact(value.cashByAccount,ACCOUNTS)
+    ||!exact(value.currenciesByAccount,ACCOUNTS)||!Array.isArray(value.warnings)
+    ||new Set(value.warnings).size!==value.warnings.length||value.warnings.some(x=>!['AUXILIARY_CASH_BALANCE_DIFF','CATALOG_SCOPE_DIFF','NAV_CHANGE'].includes(x)))throw Error('invalid Sharesight reference contract');
+  for(const a of ACCOUNTS){
+    const currencies=value.currenciesByAccount[a];
+    if(!Number.isFinite(value.cashByAccount[a])||Math.round(value.cashByAccount[a]*100)/100!==value.cashByAccount[a]||!Array.isArray(currencies)||!currencies.length&&value.cashByAccount[a]!==0
+      ||new Set(currencies).size!==currencies.length||currencies.some(c=>typeof c!=='string'||!/^[A-Z]{3}$/.test(c))
+      ||acctCash&&(!Number.isFinite(acctCash[a])||acctCash[a]!==value.cashByAccount[a])
+      ||accounts&&(!Number.isFinite(accounts[a])||accounts[a]<0)
+      ||sourceDates&&sourceDates[a]!==date)throw Error('invalid Sharesight reference account');
+  }
+  if(splits&&(!Number.isFinite(splits.cash)||ACCOUNTS.reduce((n,a)=>n+Math.round(value.cashByAccount[a]*100),0)!==Math.round(splits.cash*100)))throw Error('invalid Sharesight reference cash total');
+  return {schema:value.schema,date:value.date,currency:'USD',cashByAccount:{...value.cashByAccount},
+    currenciesByAccount:Object.fromEntries(ACCOUNTS.map(a=>[a,[...value.currenciesByAccount[a]].sort()])),cashHistoryReconstructed:false,warnings:[...value.warnings].sort()};
+}
+
 export const ACCOUNTS = ["schwab", "webull"];
 export const SPLITS = ["cash", "stock", "other"];
 // Optional style look-through.  Keep `stock` as the authoritative equity total:
@@ -230,7 +255,12 @@ export function validateInputs(input) {
  * but the reported balance still shows the pre-movement figure. This is the
  * exact shape of the 2026-08-18 Webull error.
  */
-export function checkCashLedger({ date, acctCash = {}, prevAcctCash = {}, movements = [] }) {
+export function checkCashLedger({ date, acctCash = {}, prevAcctCash = {}, movements = [], sourceReference=null }) {
+  if(sourceReference!==null){
+    normalizeSharesightReference(sourceReference,{date,acctCash});
+    if(movements.some(m=>!m||m.date!==date||!ACCOUNTS.includes(m.acct)||!Number.isFinite(m.amount)))return ['invalid Sharesight reference movement'];
+    return [];
+  }
   const errors = [];
   for (const a of ACCOUNTS) {
     const sameDay = movements.filter(m =>
@@ -337,7 +367,8 @@ export function notificationIncomeFlowAudit(raw) {
   } catch { return null; }
 }
 
-export function classifyFlow(raw) {
+export function classifyFlow(raw,{reference=false}={}) {
+  if(reference===true&&Number.isFinite(raw.amount)&&raw.amount===0)return {kind:'internal',reason:'Sharesight reports zero cash movement'};
   const desc = typeof raw.desc === "string" ? raw.desc : "";
   const type = typeof raw.type === "string" ? raw.type : "";
   const trade = hasTradeEvidence(raw);
@@ -434,7 +465,7 @@ export function flowId(raw) {
  * Sort incoming records. A `misfiled` record — an internal trade dressed up as
  * an external transfer — is an obvious error and aborts the write.
  */
-export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
+export function reconcileFlows(existingAuto, existingUnresolved, incoming,{reference=false}={}) {
   const auto = existingAuto.filter(Boolean).map(f => ({ ...f }));
   const unresolved = existingUnresolved.filter(Boolean).map(f => ({ ...f }));
   const autoIds = new Set(auto.map(f => f.id));
@@ -443,7 +474,7 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming) {
   let added = 0, promoted = 0, flagged = 0;
 
   for (const raw of incoming) {
-    const { kind, reason, effective = false } = classifyFlow(raw);
+    const { kind, reason, effective = false } = classifyFlow(raw,{reference});
     const businessKey = inKindBusinessKey(raw);
     // A verified in-kind transfer always uses the immutable source identity.
     // Never trust a free-form id supplied by a scheduled prompt for this case.

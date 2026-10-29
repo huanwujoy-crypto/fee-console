@@ -58,15 +58,25 @@ function activity(before,after,own,candidates){
   if((current?quantity(current):0n)-(prior?quantity(prior):0n)!==delta)fail('POSITION_DELTA');
  }
 }
-export function buildManagedTransferProof({account,portfolio,raw,peerPortfolio,peer,targetDate,identifiedTransfers=null,managementExemptionRegistry}){
+export function buildManagedTransferProof({account,portfolio,raw,peerPortfolio,peer,targetDate,identifiedTransfers=null,managementExemptionRegistry,referenceSource=false}){
+ if(typeof referenceSource!=='boolean')fail('SCOPE');
  if(!['schwab','webull'].includes(account)||!isCalendarDate(targetDate)||!portfolio||portfolio.name!==({schwab:'Schwab-HK',webull:'Webull'})[account]||peerPortfolio&&(peerPortfolio.name!=='IB-HK'||portfolio.id===peerPortfolio.id))fail('SCOPE');id(portfolio.id);if(peerPortfolio)id(peerPortfolio.id);
  const identities=validateManagedTransferIdentities(identifiedTransfers);
  if(identities&&(identities.date!==targetDate||identities.account!==account||identities.destinationPortfolioId!==portfolio.id||identities.sourcePortfolioId!==peerPortfolio?.id))fail('IDENTIFIED_SCOPE');
- const before=report(raw.previousPerformance,portfolio,previous(targetDate)),after=report(raw.performance,portfolio,targetDate),own=trades(raw.trades,portfolio,targetDate);
- const cashEvidence=cashResolution(account,portfolio,raw,targetDate,own);
  const candidates=managedTransferCandidates(raw,identities);if(candidates.some(t=>t.transaction_date!==targetDate))fail('DATE');
- activity(before,after,own,candidates);
  if(identities&&(identities.pairs.length!==candidates.length||identities.pairs.some(p=>!candidates.some(t=>t.id===p.tradeId&&t.holding_id===p.holdingId))))fail('IDENTIFIED_SCOPE');
+ if(referenceSource&&!candidates.length){
+  trades(raw.trades,portfolio,targetDate);
+  // This is only an empty capital-event result. The source normalizer still
+  // validates the complete dated report/cash records; ordinary report values
+  // must not inherit this transfer-only exact-quantity/valuation contract.
+  const evidence=()=>hash([portfolio,raw.performance,raw.trades,raw.cashTransactions]),proof=Object.freeze({account,targetDate,flows:Object.freeze([]),evidenceHash:evidence()});
+  accepted.set(proof,()=>evidence()===proof.evidenceHash);return proof;
+ }
+ const after=report(raw.performance,portfolio,targetDate),own=trades(raw.trades,portfolio,targetDate);
+ const before=referenceSource&&!candidates.length?[]:report(raw.previousPerformance,portfolio,previous(targetDate));
+ const cashEvidence=cashResolution(account,portfolio,raw,targetDate,own);
+ activity(before,after,own,candidates);
  if(!candidates.length){const evidence=()=>hash([portfolio,raw.previousPerformance,raw.performance,raw.trades,raw.cashTransactions]),proof=Object.freeze({account,targetDate,flows:Object.freeze([]),evidenceHash:evidence()});accepted.set(proof,()=>evidence()===proof.evidenceHash);return proof;}
  if(!peer||!peerPortfolio)fail('PEER_REQUIRED');
  const peerBefore=report(peer.previousPerformance,peerPortfolio,previous(targetDate)),peerAfter=report(peer.performance,peerPortfolio,targetDate),other=trades(peer.trades,peerPortfolio,targetDate),used=new Set(),flows=[];

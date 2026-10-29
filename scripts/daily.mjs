@@ -20,7 +20,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
-  validateInputs, checkCashLedger, checkMove, reconcileFlows, notificationIncomeFlowAudit,
+  validateInputs, checkCashLedger, checkMove, reconcileFlows, notificationIncomeFlowAudit,normalizeSharesightReference,classifyFlow,
   buildPoint, validateBenchmarkTimeline, samePoint, buildLatestStatus, sameStatus, isIsoDate, isWeekend, dayDiff
 } from "./daily-core.mjs";
 import {
@@ -80,7 +80,7 @@ const num = (name, raw) => {
 const known = new Set([
   "ib-bootstrap-output", "ib-baseline-input", "ib-coverage-input", "ratio-evidence-plan", "ratio-input", "ratio-recipient", "ratio-output", "ratio-kind", "ratio-source-date", "ratio-scope",
   "ib-return-input", "ib-return-output", "ib-manager-input", "report-plan",
-  "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint",
+  "date", "flows", "file", "src-bench", "bench-state", "source-fetched-at", "source-fingerprint", "sharesight-reference",
   ...ACCOUNTS, ...SPLITS, ...STYLE_SPLITS, "gold", ...BENCH_KEYS, ...BENCH_DIV_KEYS, ...BENCH_LEGACY_KEYS,
   ...ACCOUNTS.map(a => `src-${a}`),
   ...ACCOUNTS.map(a => `acct-cash-${a}`),
@@ -145,6 +145,13 @@ for (const b of BENCH_DIV_KEYS) if (args[b] !== undefined) benchDiv[b] = num(b, 
 
 const date = args.date;
 if (date === undefined) die("missing --date");
+let sourceReference=null;
+if(args['sharesight-reference']!==undefined){
+  try{
+    if(!sourceFetchedAt||!suppliedSourceFingerprint||Object.keys(prevAcctCash).length)throw Error();
+    sourceReference=normalizeSharesightReference(JSON.parse(args['sharesight-reference']),{date,acctCash,accounts,sourceDates,splits});
+  }catch{die('invalid Sharesight reference input — nothing written');}
+}
 
 let check = validateInputs({
   date, accounts, splits, styleSplits, sourceDates, bench, benchDiv,
@@ -401,8 +408,9 @@ if (args.flows !== undefined) {
     if (!f || typeof f !== "object" || Array.isArray(f)) die(`flow #${i} must be an object`);
     if (!isIsoDate(f.date)) die(`flow #${i} has a bad date`);
     if (!ACCOUNTS.includes(f.acct)) die(`flow #${i} has an unknown acct (expected one of ${ACCOUNTS.join(", ")})`);
+    if (sourceReference && typeof f.amount !== "number") die(`flow #${i} reference amount must be an explicit finite number`);
     const amount = typeof f.amount === "number" ? f.amount : Number(String(f.amount).trim());
-    if (!Number.isFinite(amount) || amount === 0) die(`flow #${i} amount must be a non-zero finite number`);
+    if (!Number.isFinite(amount) || amount === 0&&!sourceReference) die(`flow #${i} amount must be a non-zero finite number`);
     const desc = f.desc == null ? "" : String(f.desc);
     if (desc.length > 300) die(`flow #${i} desc is too long`);
     if (f.id != null && f.id !== "" && !ID_RE.test(String(f.id))) die(`flow #${i} has a bad id`);
@@ -411,6 +419,7 @@ if (args.flows !== undefined) {
     return {
       id: f.id == null || f.id === "" ? "" : String(f.id),
       date: f.date, acct: f.acct, amount, desc,
+      ...(sourceReference?{currency:f.currency??'USD'}:{}),
       type: f.type == null ? "" : String(f.type),
       sourceTradeId: f.sourceTradeId ?? null,
       tradeId: f.tradeId ?? null,
@@ -442,9 +451,15 @@ if (args.flows !== undefined) {
 for(const flow of incoming)if(incomeDatePolicy.isNotification(flow.incomeDateAudit?.proof)
   &&flow.evidence!=='internal_income_owner_notification')die('notification income evidence is inconsistent — nothing written');
 const hard = [];
-hard.push(...checkCashLedger({ date, acctCash, prevAcctCash, movements: incoming }));
+if(sourceReference)for(const flow of incoming){
+  const inKind=flow.evidence==='external_asset_transfer'&&classifyFlow(flow).effective===true;
+  if(flow.date!==date||typeof flow.currency!=='string'||!/^[A-Z]{3}$/.test(flow.currency)
+    ||!inKind&&!sourceReference.currenciesByAccount[flow.acct].includes(flow.currency)
+    ||flow.currency!=='USD'&&classifyFlow(flow,{reference:true}).kind!=='internal')hard.push('Sharesight flow lacks an unambiguous portfolio-currency amount');
+}
+hard.push(...checkCashLedger({ date, acctCash, prevAcctCash, movements: incoming,sourceReference }));
 
-const flows = reconcileFlows(data.flowsAuto, data.flowsUnresolved, incoming);
+const flows = reconcileFlows(data.flowsAuto, data.flowsUnresolved, incoming,{reference:sourceReference!==null});
 hard.push(...flows.errors);
 
 const benchmarkRejected = check.benchmarkErrors.length > 0;
@@ -453,6 +468,7 @@ const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
 const point = buildPoint({ date, accounts, splits, styleSplits, topHoldings, bench: acceptedBench, benchDiv: acceptedBenchDiv,
   benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
   provisional: check.provisional, calibrated });
+if(sourceReference)point.sourceReference=sourceReference;
 if (managementResult?.rows !== undefined) point.managementExemptions = managementResult.rows;
 if (weekendCarry && weekendCarryPrior?.managementExemptions !== undefined)
   point.managementExemptions = structuredClone(weekendCarryPrior.managementExemptions);
@@ -571,7 +587,11 @@ const prior = data.daily
   .sort((a, b) => a.d.localeCompare(b.d))
   .pop();
 const externalAccts = new Set([...flows.auto, ...flows.unresolved].filter(f => f && f.date === date).map(f => f.acct));
-hard.push(...checkMove(prior, point, externalAccts));
+const moveCheck=checkMove(prior, point, externalAccts);
+if(sourceReference&&moveCheck.length){
+  point.sourceReference={...sourceReference,warnings:[...new Set([...sourceReference.warnings,'NAV_CHANGE'])].sort()};
+  point.prov=1;check.provisional.push('Sharesight reference NAV-change warning');
+}else hard.push(...moveCheck);
 
 if (hard.length) dieAll([...hard, "nothing written"]);
 
