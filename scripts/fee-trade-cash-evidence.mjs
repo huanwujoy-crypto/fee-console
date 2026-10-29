@@ -152,6 +152,47 @@ function principalRelations({account,row,trades}){
   &&(holding?sameId(t.holding_id,holding):sameId(t.id,tradeId))).map(t=>id(t.id));
 }
 
+// Sharesight record authority: these already supported cash descriptions
+// explicitly identify securities principal. They do not need a second,
+// same-day trade record to be treated as internal cash. Generic notes and bare
+// DEPOSIT/WITHDRAWAL records deliberately do not acquire that meaning here.
+export function isSharesightDeclaredTradeCash({account,portfolioId,row,targetDate}){
+ if(account!=='webull'||portfolioId!==CLOUD_ACCOUNTS.webull.portfolioId||row.payout_id!=null
+   ||String(row.date_time||'').slice(0,10)!==targetDate
+   ||!['DEPOSIT','WITHDRAWAL'].includes(row.cash_account_transaction_type?.name))return false;
+ const text=typeof row.description==='string'?row.description:'';
+ const short=shortCash.exec(text),long=longCash.exec(text),principal=CONTROLLED_WEBULL_PRINCIPAL_RE.exec(text),net=NET_PROCEEDS_RE.exec(text);
+ if(short)return /^webull\.manual\|10205226\|[a-f0-9]{16}\|(BUY|SELL)\|[A-Z0-9][A-Z0-9./^-]{0,31}\|\d+(?:\.\d+)?\|\d+(?:\.\d+)?\|cash$/.test(short[10]);
+ if(long)return `${long[5]}-${long[6]}-${long[7]}`===targetDate&&long[12]==='webull.manual|10205226|...';
+ if(principal)return principal[6]===targetDate;
+ return !!net&&net[4]===targetDate;
+}
+
+// Relationship-only index for the selected noncash transfer's no-cash guard.
+// A wrong amount or a pointer to a different/absent trade does not erase a
+// relationship. This grants no paid-trade authority and creates no flow.
+export function sharesightCashRelations({account,portfolioId,targetDate,trades,cashRows}){
+ if(!Array.isArray(trades)||!Array.isArray(cashRows)
+   ||new Set(trades.map(t=>id(t.id))).size!==trades.length
+   ||new Set(cashRows.map(r=>id(r.id))).size!==cashRows.length)throw Error('FEE_NONCASH_INCOMPLETE');
+ const relatedCash=new Map();
+ for(const row of cashRows){
+  const pointers=new Set();
+  if(row.trade_id!=null)pointers.add(id(row.trade_id));
+  if(account==='webull'){
+   // A recognisable identity remains related even if the rest of the record
+   // cannot grant the principal role. Invalid money/key text must never turn
+   // a selected transfer's real cash leg into an assertion of zero cash.
+   const text=typeof row.description==='string'?row.description:'';
+   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(text))
+    for(const m of text.matchAll(/(?:\bTrade|\bSharesight trade )([1-9]\d{0,14});/g))pointers.add(id(m[1]));
+   for(const pointer of principalRelations({account,row,trades}))pointers.add(pointer);
+  }
+  for(const pointer of pointers){if(!relatedCash.has(pointer))relatedCash.set(pointer,[]);relatedCash.get(pointer).push(id(row.id));}
+ }
+ return {relatedCash};
+}
+
 /** One shared resolution for activity, cash classification and zero-cash
  * rejection. Association is deliberately distinct from verified payment:
  * a pointed-to wrong-amount cash row must still invalidate a noncash claim.

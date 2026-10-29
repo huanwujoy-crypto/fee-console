@@ -1272,7 +1272,7 @@ test("account-bound Webull principal cash legs match the unique live Sharesight 
   assert.equal(flow.evidence, "internal_trade");
 });
 
-test("Webull principal text alone stays unresolved when its trade evidence does not match", () => {
+test("Sharesight's supported principal declaration is internal without a second matching trade amount", () => {
   const fixture = raw();
   const orderId = "0387IJ3B2S80O0K7Q9BC000000";
   fixture.webull.cashTransactions[90250].cash_account_transactions.push({
@@ -1290,7 +1290,7 @@ test("Webull principal text alone stays unresolved when its trade evidence does 
   fixture.webull.previousPerformance.report.cash_accounts[0].value = fixture.webull.cashTransactions[90250].cash_account_transactions[0]?.amount === -9650 ? 10050 : 525;
   const result = normalizeRead(fixture, D, selectBenchmark(benchmarkCache, D));
   const flow = result.flows.find(row => row.desc.includes(orderId));
-  assert.equal(Object.hasOwn(flow, "evidence"), false);
+  assert.equal(flow.evidence, "internal_trade");
 });
 
 test("a generic Webull withdrawal is not promoted to internal without the controlled evidence", () => {

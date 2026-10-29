@@ -123,15 +123,17 @@ export function sourceAttemptWindowStart(plan){
 // The parent pin avoids a self-referential SHA; dispatch also pins the actual
 // signed merge SHA. Every later main is ineligible without a new policy review.
 const RECOVERY_BASE='50d6454b062030d4ee6565a4d879c56b68e65911';
-// Rebind the same unconsumed admission after the one-gift repair. This is not a
-// fourth historical source attempt or another recovery allocation.
-const RECOVERY_REPAIR_BASE='451efca392e474f434b7ac7891eb6f5570cf7108';
-const RECOVERY_REPAIR_FILES=Object.freeze(['scripts/fee-sharesight-transfers.mjs','scripts/fee-source-acceptance.test.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs']);
+// A separately reviewed single admission after the Sharesight policy repair.
+// The old recovery was consumed. Keep all four failures and ordinary budget 2;
+// this exception belongs only to the exact signed successor of this base.
+const RECOVERY_REPAIR_BASE='b7dd66876b153a5ff8c486c11822d0e07816760a';
+const RECOVERY_REPAIR_FILES=Object.freeze(['docs/fee-cloud-producer.md','scripts/fee-cloud-source.mjs','scripts/fee-cloud-source.test.mjs','scripts/fee-sharesight-transfers.mjs','scripts/fee-source-acceptance.test.mjs','scripts/fee-trade-cash-evidence.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs']);
 const RECOVERY_TARGET='2026-10-28';
 const RECOVERY_FAILED_RUNS=Object.freeze([
-  {id:40803101364,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
-  {id:40805169117,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
-  {id:40815850578,head:RECOVERY_BASE},
+  {id:40803101364,jobId:123215645936,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
+  {id:40805169117,jobId:123222332691,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
+  {id:40815850578,jobId:123256663738,head:RECOVERY_BASE},
+  {id:40864143294,jobId:123414594502,head:RECOVERY_REPAIR_BASE},
 ]);
 // Filled from the final index-only candidate bytes before this package freezes.
 const RECOVERY_UI_BLOB='1f1218943293e035bbfe07fa56e9b74341c22177';
@@ -162,10 +164,13 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
     for(const j of payload.jobs){
       if(!Number.isSafeInteger(j.id)||j.id<=0||jobsSeen.has(j.id)||j.run_id!==r.id||j.head_sha!==r.head_sha||typeof j.name!=='string'||!['queued','in_progress','completed','waiting','pending','requested'].includes(j.status))fail('SOURCE_ATTEMPT_METADATA');
       jobsSeen.add(j.id);
+      // Burn a new manual admission even if cancelled/queued/skipped before
+      // source entry. Only the four exact old failed runs are historical;
+      // their already-consumed admission cannot reserve this new exception.
+      if(evidence&&j.name==='period'&&r.event==='workflow_dispatch'&&[recoveryMain,RECOVERY_REPAIR_BASE].includes(r.head_sha)
+          &&!RECOVERY_FAILED_RUNS.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
-      // Reserve on admission, including cancellation before financial entry.
-      if(evidence&&j.name==='period'&&[recoveryMain,RECOVERY_REPAIR_BASE].includes(r.head_sha))evidence.reservations.push(r.id);
       if(['period','watch','source-plan-check'].includes(j.name))continue;
       if(j.name!=='produce'&&!/^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
       if(evidence&&j.status!=='completed')evidence.otherSourceActive=true;
@@ -196,7 +201,7 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
   let base,comparison,tree;
   try{[base,comparison,tree]=await Promise.all([get('commits/'+RECOVERY_REPAIR_BASE+'?per_page=1'),get('compare/'+RECOVERY_REPAIR_BASE+'...'+expectedMain+'?per_page=100'),get('git/trees/'+commit.commit.tree.sha)]);}catch{fail('RECOVERY_METADATA');}
   // No new UI version: the already deployed reviewed blob must remain exact.
-  // Only the four reviewed repair/test files may differ from the protected UI.
+  // Only the eight reviewed policy/repair/test files may differ from the UI.
   const files=comparison.files,indices=Array.isArray(tree.tree)?tree.tree.filter(f=>f.path==='index.html'):[];
   if(base.sha!==RECOVERY_REPAIR_BASE||base.parents?.length!==1||!signed(base)
     ||comparison.status!=='ahead'||comparison.ahead_by!==1||comparison.behind_by!==0||comparison.total_commits!==1
@@ -213,9 +218,9 @@ export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,b
       ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===RECOVERY_BASE||release?.mainSha!==expectedMain||release.baseSha!==RECOVERY_BASE
       ||release.repairBaseSha!==RECOVERY_REPAIR_BASE||release.parent!==RECOVERY_REPAIR_BASE||expectedMain===RECOVERY_REPAIR_BASE||release.uiBlob!==RECOVERY_UI_BLOB||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
   if(!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0||c?.id!==Number(currentRunId)||c.head!==expectedMain||c.attempt!==1||c.event!=='workflow_dispatch'||c.workflowId!==365873934||c.actorId!==RECOVERY_OWNER||c.status!=='in_progress'||c.conclusion!==null)fail('RECOVERY_RUN');
-  if(budget.attempts!==3||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==3||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
-  if(e.entries.some(x=>!RECOVERY_FAILED_RUNS.some(r=>r.id===x.runId&&r.head===x.head)||!Number.isSafeInteger(x.jobId)||x.jobId<=0||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+RECOVERY_TARGET||x.status!=='completed'||x.conclusion!=='failure')
-      ||new Set(e.entries.map(x=>x.runId)).size!==3||new Set(e.entries.map(x=>x.jobId)).size!==3)fail('RECOVERY_PRIOR_RUNS');
+  if(budget.attempts!==4||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==4||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
+  if(e.entries.some(x=>!RECOVERY_FAILED_RUNS.some(r=>r.id===x.runId&&r.head===x.head&&r.jobId===x.jobId)||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+RECOVERY_TARGET||x.status!=='completed'||x.conclusion!=='failure')
+      ||new Set(e.entries.map(x=>x.runId)).size!==4||new Set(e.entries.map(x=>x.jobId)).size!==4)fail('RECOVERY_PRIOR_RUNS');
   return true;
 }
 export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease}={}){

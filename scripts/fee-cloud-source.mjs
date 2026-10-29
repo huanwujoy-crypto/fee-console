@@ -8,7 +8,7 @@ import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof,validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
 import {validateManagementRegistry} from './fee-management-exemption.mjs';
 
-import {resolveTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
+import {isSharesightDeclaredTradeCash} from './fee-trade-cash-evidence.mjs';
 export {isControlledWebullNetProceeds} from './fee-trade-cash-evidence.mjs';
 
 const API = "https://api.sharesight.com";
@@ -555,10 +555,6 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   const trades = rows(tradesPayload, "trades");
   if (trades.some(row => id(row.portfolio_id) !== expected.portfolioId || row.transaction_date !== targetDate
       || row.state !== 'confirmed')) fail('TRADE_IDENTITY');
-  const tradeIds = new Set(trades.map(row => id(row.id)));
-  const tradeCash=resolveTradeCashEvidence({account,portfolioId:expected.portfolioId,targetDate,trades,
-    cashRows:Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions')),
-    cashAccounts:listedCash});
   const flows = [];
   const seenTransactions = new Set();
   let movementTotal = 0;
@@ -587,15 +583,14 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         date: targetDate, acct: account, amount: movement,
         desc: description,
         type: typeof row.cash_account_transaction_type?.name === "string" ? row.cash_account_transaction_type.name : "",
-        tradeId: row.trade_id == null ? (tradeCash.tradeForCash.get(id(row.id)) ?? null) : id(row.trade_id),
+        tradeId: row.trade_id == null ? null : id(row.trade_id),
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
-        ...(legacyControlledWebullPrincipal || tradeCash.tradeForCash.has(id(row.id)) ? { evidence: "internal_trade" } : {}),
+        ...(legacyControlledWebullPrincipal || isSharesightDeclaredTradeCash({account,portfolioId:expected.portfolioId,row,targetDate}) ? { evidence: "internal_trade" } : {}),
         ...(incomeEvidence.get(row.id) || {}),
       });
     }
   }
-  for (const flow of flows) if (flow.tradeId !== null && !tradeIds.has(flow.tradeId)) fail("TRADE_NOT_LISTED");
   const total = amount(report.value);
   const cash = round2(cashRows.reduce((sum, row) => sum + row.valueUsd, 0));
   const other = round2(holdings.filter(row => row.ticker === "SGOV").reduce((sum, row) => sum + row.valueUsd, 0));
@@ -720,7 +715,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
   const normalized = { targetDate, accounts, splits, sourceDates, styleInput, flows, acctCash, prevAcctCash,
     ...(managementInput ? {managementInput} : {}),
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
-  return { ...normalized, sourceFingerprint: sha256({ ...normalized,
+  return { ...normalized, sourceFingerprint: sha256({ ...normalized, sourcePolicy:'sharesight-records-v1',
     catalogEvidence: portfolios.map(p => ({ account: p.account, ...p.catalogEvidence })),
     cashEvidence: portfolios.map(p => ({ account: p.account, balances: p.cashEvidence, settings: p.cashSettings })) }) };
 }
@@ -848,6 +843,7 @@ export class SharesightCloudReader {
     if(this.reconcileInKind){
       const identitiesFor=account=>this.managedTransferIdentities?.date===targetDate&&this.managedTransferIdentities.account===account?this.managedTransferIdentities:null;
       const needed=Object.entries(raw).filter(([account,p])=>managedTransferCandidates(p,identitiesFor(account)).length);let peer=null,peerPortfolio=null;
+      if(needed.some(([account])=>!identitiesFor(account)))throw Error('FEE_NONCASH_IDENTIFIED_SCOPE');
       if(needed.length){
         const matches=listed.filter(p=>p.name==='IB-HK'&&p.currency_code==='USD');if(matches.length!==1)fail('NONCASH_PEER_REQUIRED');this.http.registerIbPeer(matches[0]);peerPortfolio={name:'IB-HK',id:matches[0].id};
         const base=`${API}/api/v3/portfolios/${peerPortfolio.id}`,query=d=>`consolidated=false&end_date=${d}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${d}`;
