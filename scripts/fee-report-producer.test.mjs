@@ -1,5 +1,5 @@
 import './fee-source-acceptance.test.mjs';
-import test from 'node:test';
+import test,{after} from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -7,9 +7,76 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
-import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod} from './fee-report-producer.mjs';
+import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod,reportFailureCode,reviewedRecoveryConfirmation,readReportRecoveryRelease,validateReportRecoveryEvidence,authorizeReportRecovery} from './fee-report-producer.mjs';
+import {producerFailureCode} from './fee-cloud-producer.mjs';
+import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
+
+// Default fetch is forbidden for the entire suite. Individual wire mocks may
+// replace it temporarily, but a forgotten injection must fail even if product
+// code catches the error. No real request is sent by this tripwire.
+const originalDefaultFetch=globalThis.fetch;
+let unmockedFetchAttempts=0;
+globalThis.fetch=async()=>{unmockedFetchAttempts++;throw Error('OFFLINE_UNMOCKED_FETCH_FORBIDDEN');};
+after(()=>{globalThis.fetch=originalDefaultFetch;assert.equal(unmockedFetchAttempts,0,'every network dependency must have an explicit offline mock');});
+
+test('period diagnostics retain only literal noncash failures and fixed stages',()=>{
+ const module=fs.readFileSync(new URL('./fee-sharesight-transfers.mjs',import.meta.url),'utf8');
+ const codes=new Set([...module.matchAll(/fail\('([A-Z_]+)'\)/g)].map(m=>m[1]));
+ assert.equal(codes.size,20);
+ for(const code of codes){
+  const error=Error('FEE_NONCASH_'+code),fixed='FEE_CLOUD_STAGE_SOURCE_READ_NONCASH_'+code;
+  assert.equal(reportFailureCode(error,'SOURCE_READ'),fixed);
+  assert.equal(reportFailureCode(Error(fixed)),fixed); // outer CLI must not erase it again
+ }
+ const hidden='PRIVATE_CANARY amount=123456.78 account=synthetic-private /private/location \u001b[31m\r\n';
+ for(const message of [hidden,'FEE_NONCASH_'+hidden,'FEE_NONCASH_NOT_A_REGISTERED_CODE','FEE_NONCASH_POSITION_DELTA\n'+hidden]){
+  assert.equal(reportFailureCode(Error(message),'SOURCE_READ'),'FEE_CLOUD_STAGE_SOURCE_READ_UNKNOWN');
+ }
+ assert.equal(reportFailureCode(Error('FEE_NONCASH_POSITION_DELTA'),hidden),'FEE_CLOUD_STAGE_UNKNOWN_NONCASH_POSITION_DELTA');
+ for(const [error,category] of [[new TypeError(hidden),'TYPE'],[new RangeError(hidden),'RANGE'],[new SyntaxError(hidden),'SYNTAX'],[new ReferenceError(hidden),'REFERENCE']]){
+  assert.equal(reportFailureCode(error,'SOURCE_READ'),'FEE_CLOUD_STAGE_SOURCE_READ_'+category);
+ }
+ assert.equal(reportFailureCode(new SourceFetchError('SOURCE_HTTP'),'ECONOMIC_READ'),'SOURCE_HTTP');
+ for(const code of ['SOURCE_HTTP','SOURCE_FORBIDDEN','SOURCE_HTTP_PRIVATE_CANARY']){
+  assert.equal(reportFailureCode(Error(code),'ECONOMIC_READ'),'FEE_CLOUD_STAGE_ECONOMIC_READ_UNKNOWN');
+  assert.equal(reportFailureCode(Object.assign(Error(code),{name:'SourceFetchError'}),'ECONOMIC_READ'),'FEE_CLOUD_STAGE_ECONOMIC_READ_UNKNOWN');
+ }
+ assert.equal(reportFailureCode(Error('FEE_REPORT_SOURCE_UNSTABLE'),'SOURCE_READ'),'FEE_REPORT_SOURCE_UNSTABLE');
+ assert.equal(reportFailureCode(Error('FEE_CLOUD_CASH_BALANCE_STALE'),'SOURCE_READ'),'FEE_CLOUD_CASH_BALANCE_STALE');
+ assert.equal(producerFailureCode(Error('FEE_NONCASH_POSITION_DELTA'),'SOURCE_READ'),'FEE_CLOUD_STAGE_SOURCE_READ_NONCASH_POSITION_DELTA');
+});
+
+test('actual period error path preserves source/economic stage without IO, candidate or private exception text',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-period-diagnostic-'));fs.chmodSync(dir,0o700);
+ t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const oldKey=process.env.FEE_DATA_KEY,key=crypto.randomBytes(32),iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);
+ const bytes=Buffer.from(JSON.stringify({enc:true,v:3,data:Buffer.concat([iv,c.update(JSON.stringify({daily:[{d:'2026-10-22'}]})),c.final(),c.getAuthTag()]).toString('base64')}));
+ const source=path.join(dir,'base.json'),benchmark=path.join(dir,'benchmark.json');fs.writeFileSync(source,bytes,{mode:0o600});
+ fs.writeFileSync(benchmark,JSON.stringify(cache),{mode:0o600});process.env.FEE_DATA_KEY=key.toString('base64url');
+ t.after(()=>{if(oldKey===undefined)delete process.env.FEE_DATA_KEY;else process.env.FEE_DATA_KEY=oldKey;});
+ let network=0;const oldFetch=globalThis.fetch;globalThis.fetch=async()=>{network++;throw Error('network forbidden in synthetic test');};t.after(()=>globalThis.fetch=oldFetch);
+ const hidden='PRIVATE_CANARY source/body/account/123456.78 \u001b[31m';
+ const cases=[
+  ['economic',Error(hidden),'FEE_CLOUD_STAGE_ECONOMIC_READ_UNKNOWN'],
+  ['economic',new SourceFetchError('SOURCE_FORBIDDEN'),'SOURCE_FORBIDDEN'],
+  ['source',Error('FEE_NONCASH_POSITION_DELTA'),'FEE_CLOUD_STAGE_SOURCE_READ_NONCASH_POSITION_DELTA'],
+  ['source',Error('FEE_NONCASH_SOURCE_MARK'),'FEE_CLOUD_STAGE_SOURCE_READ_NONCASH_SOURCE_MARK'],
+  ['source',Error(hidden),'FEE_CLOUD_STAGE_SOURCE_READ_UNKNOWN'],
+  ['source',new TypeError(hidden),'FEE_CLOUD_STAGE_SOURCE_READ_TYPE'],
+  ['source',Error('FEE_CLOUD_SOURCE_INCOMPLETE'),'FEE_CLOUD_SOURCE_INCOMPLETE'],
+ ];
+ for(const [index,[phase,error,expected]]of cases.entries()){
+  const out=path.join(dir,'out'+index);fs.mkdirSync(out,{mode:0o700});let reads=0,cleaned=0;
+  await assert.rejects(produceReportPeriod({plan:weeklyReportPlan('2026-10-23'),now:new Date('2026-10-26T06:00:00Z'),sourceFile:source,outputDir:out,benchmarkFile:benchmark,
+   fetchEconomic:async()=>{if(phase==='economic')throw error;return{envelopeVersion:4,cleanup(){cleaned++;}};},
+   readOnce:async()=>{reads++;throw error;}}),actual=>{assert.equal(actual.message,expected);assert.equal(reportFailureCode(actual),expected);assert.equal(actual instanceof SourceFetchError,error instanceof SourceFetchError);assert.equal(actual.message.includes(hidden),false);assert.equal(Object.hasOwn(actual,'cause'),false);return true;});
+  assert.equal(reads,phase==='source'?1:0);assert.equal(cleaned,phase==='source'?1:0);
+  assert.deepEqual(fs.readdirSync(out),[]);assert.deepEqual(fs.readFileSync(source),bytes);
+ }
+ assert.equal(network,0);
+});
 
 function syntheticFundTransfer(){
  const gid='a'.repeat(32),key=crypto.randomBytes(32),iv=crypto.randomBytes(12),date='2026-10-27';
@@ -144,10 +211,18 @@ test('public preflight deduplicates exact accounting target, waits for incomplet
   assert.throws(()=>explicitReportPlan('monthly','2026-10-23'),/TARGET/);
   assert.equal((await reportPublicationPreflight({plan,now:new Date('2026-10-30T00:00Z'),readState:async()=>old})).outcome,'recovery-required');
 });
-test('period watchdog accepts existing cycle coverage but rejects missing publication',async()=>{
+test('period watchdog accepts existing cycle coverage but rejects missing publication with explicit offline attempt metadata',async t=>{
+  let calls=0;const priorFetch=globalThis.fetch;
+  globalThis.fetch=async(url,init)=>{
+    calls++;assert.match(url,/^https:\/\/api\.github\.com\/repos\/huanwujoy-crypto\/fee-console\/actions\/workflows\/fee-cloud-producer\.yml\/runs\?/);
+    assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,undefined);assert.equal(init.redirect,'error');
+    const r=new Response(JSON.stringify({total_count:0,workflow_runs:[]}),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;
+  };t.after(()=>globalThis.fetch=priorFetch);
   const p=weeklyReportPlan('2026-10-23');
   assert.equal((await reportPublicationWatch({...state(p),now:new Date('2026-10-28T00:00Z')})).outcome,'already-published');
+  assert.equal(calls,0);
   await assert.rejects(reportPublicationWatch({...state(weeklyReportPlan('2026-10-16'),'2026-10-18T00:00Z'),now:new Date('2026-10-26T00:00Z')}),/PUBLISHED_PERIOD_MISSING/);
+  assert.equal(calls,1);
 });
 test('real period preflight CLI makes only public main GETs and never enters financial sources',t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-period-gate-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
@@ -269,4 +344,122 @@ test('early published coverage deduplicates the later normal cycle without reset
   assert.deepEqual(count,{attempts:1,inProgress:false});
  }
  assert.equal(new URL(query[0]).searchParams.get('created'),new URL(query[2]).searchParams.get('created'));
+});
+
+const recoveryBase='fbb79a694acb232fbdb522939d98a933da03b1f2',recoveryHead='d'.repeat(40),recoveryId=90000000001;
+const recoveryNow=new Date('2026-10-29T03:30:00Z');
+function recoveryFixture(){
+ const plan=dailyReportPlan('2026-10-28',['NYSE','NASDAQ'],{periodFrom:'2026-10-24',reviewedSyncDate:'2026-10-28'});
+ const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor:{id:283054367},status:id===recoveryId?'in_progress':'completed',conclusion:id===recoveryId?null:'failure'});
+ const runs=[run(recoveryId,recoveryHead,'2026-10-29T03:00:00Z'),run(40805169117,recoveryBase,'2026-10-29T02:14:24Z'),run(40803101364,recoveryBase,'2026-10-29T01:53:22Z')];
+ const job=(r,id,name='Produce daily 2026-10-28',status='completed',conclusion='failure')=>({id,run_id:r.id,head_sha:r.head_sha,name,status,conclusion,started_at:r.created_at});
+ const jobs={40805169117:[job(runs[1],123222332691)],40803101364:[job(runs[2],123215645936)]};
+ const commit={sha:recoveryHead,parents:[{sha:recoveryBase}],author:{id:283054367,login:'huanwujoy-crypto'},committer:{login:'web-flow'},commit:{verification:{verified:true,reason:'valid'}}};
+ return{plan,runs,jobs,commit,ref:{object:{sha:recoveryHead}},run,job};
+}
+function recoveryWire(f,trace=[]){return async(url,init)=>{
+ assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,undefined);assert.equal(init.redirect,'error');
+ const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/';assert.ok(url.startsWith(root));const p=url.slice(root.length);trace.push(p);
+ let value;if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
+ else if(/^actions\/runs\/\d+\/jobs\?filter=all&per_page=100$/.test(p)){const id=Number(p.match(/runs\/(\d+)/)[1]),jobs=f.jobs[id];assert.ok(jobs);value={total_count:jobs.length,jobs};}
+ else if(p==='git/ref/heads/main')value=f.ref;
+ else if(p==='commits/'+recoveryHead)value=f.commit;else assert.fail('unexpected offline metadata route');
+ const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;
+};}
+function recoveryReaders(f){const fetchImpl=recoveryWire(f);return{readSourceAttempts:args=>readPeriodSourceAttempts({...args,fetchImpl}),readRecoveryRelease:sha=>readReportRecoveryRelease(sha,{fetchImpl})};}
+test('only the signed immediate-successor release and the two fixed failed runs admit one recovery; ordinary budget stays two',async()=>{
+ const f=recoveryFixture(),readers=recoveryReaders(f),args={plan:f.plan,now:recoveryNow,currentRunId:String(recoveryId),...readers};
+ await assert.doesNotReject(authorizeReportRecovery({...args,expectedMain:recoveryHead}));
+ assert.deepEqual(await readers.readSourceAttempts(args),{attempts:2,inProgress:false});
+ const old=state(weeklyReportPlan('2026-10-23'),'2026-10-27T01:00:00Z');old.mainSha=old.finalMainSha=recoveryHead;
+ const ordinary=await nativeReportPreflight({...args,reviewedSyncDate:'2026-10-28',readState:async()=>old});assert.equal(ordinary.reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ const recovered=await nativeReportPreflight({...args,reviewedSyncDate:'2026-10-28',recoveryMain:recoveryHead,readState:async()=>old});assert.equal(recovered.outcome,'produce');assert.equal(recovered.mainSha,recoveryHead);
+});
+test('recovery fails closed on scope, missing/changed failures, reruns, actor, current run, consumed admission and competitors',async()=>{
+ const f=recoveryFixture(),readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
+ const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:{mainSha:recoveryHead,parent:recoveryBase,signatureVerified:true}};
+ const mutations=[x=>x.plan=dailyReportPlan('2026-10-27',['NYSE','NASDAQ'],{reviewedSyncDate:'2026-10-27'}),x=>x.plan=weeklyReportPlan('2026-10-23'),x=>x.expectedMain='e'.repeat(40),x=>x.release.parent='e'.repeat(40),x=>x.release.signatureVerified=false,
+  x=>x.budget.attempts=1,x=>x.budget.attempts=3,x=>x.budget.inProgress=true,x=>x.budget.recoveryEvidence.otherSourceActive=true,x=>x.budget.recoveryEvidence.reservations.push(90000000000),
+  x=>x.budget.recoveryEvidence.currentRun=null,x=>x.budget.recoveryEvidence.currentRun.head=recoveryBase,x=>x.budget.recoveryEvidence.currentRun.actorId=1,x=>x.budget.recoveryEvidence.currentRun.attempt=2,x=>x.budget.recoveryEvidence.currentRun.event='schedule',x=>x.budget.recoveryEvidence.currentRun.workflowId=1,x=>x.budget.recoveryEvidence.currentRun.status='completed',x=>x.budget.recoveryEvidence.currentRun.conclusion='failure',
+  x=>x.budget.recoveryEvidence.entries.pop(),x=>x.budget.recoveryEvidence.entries[0].runId=1,x=>x.budget.recoveryEvidence.entries[0].head=recoveryHead,x=>x.budget.recoveryEvidence.entries[0].attempt=2,x=>x.budget.recoveryEvidence.entries[0].conclusion='success',x=>x.budget.recoveryEvidence.entries[0].name='Produce daily 2026-10-29',x=>x.budget.recoveryEvidence.entries[0].jobId=0,x=>x.budget.recoveryEvidence.entries[0]=structuredClone(x.budget.recoveryEvidence.entries[1])];
+ for(const mutate of mutations){const value=structuredClone(good);mutate(value);assert.throws(()=>validateReportRecoveryEvidence(value),/FEE_REPORT_RECOVERY_/);}
+});
+for(const [runStatus,runConclusion]of [['in_progress',null],['completed','cancelled']])test('historical run itself must be completed/failure, not '+runStatus+'/'+runConclusion+', even when its source job failed',async()=>{
+ const f=recoveryFixture(),historical=f.runs.find(r=>r.id===40805169117);historical.status=runStatus;historical.conclusion=runConclusion;
+ assert.equal(f.jobs[historical.id][0].status,'completed');assert.equal(f.jobs[historical.id][0].conclusion,'failure');
+ const readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
+ const item=budget.recoveryEvidence.entries.find(x=>x.runId===historical.id);assert.equal(item.runStatus,runStatus);assert.equal(item.runConclusion,runConclusion);
+ await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,now:recoveryNow,currentRunId:recoveryId,...readers}),/FEE_REPORT_RECOVERY_PRIOR_RUNS/);
+});
+test('complete recovery metadata reserves cancelled admission and scans beyond the ordinary two-entry early return',async()=>{
+ for(const kind of ['cancelled-period','queued-period','failed-source','other-target-active','skipped-schedule']){
+  const f=recoveryFixture(),r=f.run(90000000000,kind==='other-target-active'?recoveryBase:recoveryHead,'2026-10-29T02:50:00Z');f.runs.push(r);
+  let j;if(kind==='failed-source')j=f.job(r,90000000011);else if(kind==='other-target-active')j=f.job(r,90000000011,'Produce daily 2026-10-27','in_progress',null);else j=f.job(r,90000000011,'period',kind==='queued-period'?'queued':'completed',kind==='skipped-schedule'?'skipped':kind==='cancelled-period'?'cancelled':null);
+  if(kind==='cancelled-period'||kind==='queued-period')j.started_at=null;if(kind==='skipped-schedule')r.event='schedule';f.jobs[r.id]=[j];
+  const readers=recoveryReaders(f),args={plan:f.plan,now:recoveryNow,currentRunId:recoveryId,expectedMain:recoveryHead,...readers};
+  if(kind==='skipped-schedule')await assert.doesNotReject(authorizeReportRecovery(args));else await assert.rejects(authorizeReportRecovery(args),/FEE_REPORT_RECOVERY_/);
+ }
+});
+test('recovery metadata release check rejects later versions, unsigned/wrong-owner/multi-parent commits and drift with fixed GET-only routes',async()=>{
+ for(const mutate of [f=>f.ref.object.sha='e'.repeat(40),f=>f.commit.sha='e'.repeat(40),f=>f.commit.parents=[{sha:recoveryHead}],f=>f.commit.parents.push({sha:recoveryBase}),f=>f.commit.commit.verification.verified=false,f=>f.commit.author.id=1,f=>f.commit.committer.login='other']){
+  const f=recoveryFixture();mutate(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_RELEASE/);
+ }
+ const f=recoveryFixture(),trace=[];await readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f,trace)});assert.equal(trace.length,2);assert.ok(trace.every(p=>!p.includes('/logs')));
+});
+test('recovery confirmation binds real reviewed event, exact target/head, owner, main and first attempt; JSON claims cannot reset it',()=>{
+ const args={mode:'preflight','report-kind':'daily','report-target':'2026-10-28','manual-sync-completed-for':'2026-10-28','recovery-main':recoveryHead};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId)};
+ const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-10-28',manual_sync_completed_for:'2026-10-28',recovery_main:recoveryHead,source_plan_check_only:'false',source_acceptance_once:'false'},sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'}};
+ assert.equal(reviewedRecoveryConfirmation(args,{env,readEvent:()=>event}),recoveryHead);
+ for(const mutate of [x=>x.args['report-target']='2026-10-27',x=>x.args.mode='watch',x=>x.env.GITHUB_SHA='e'.repeat(40),x=>x.env.GITHUB_ACTOR_ID='1',x=>x.env.GITHUB_RUN_ATTEMPT='2',x=>x.env.GITHUB_REF='refs/heads/other',x=>x.env.GITHUB_REPOSITORY='other/repo',x=>x.event.inputs.recovery_main='e'.repeat(40),x=>x.event.inputs.run_reviewed_once='false',x=>x.event.inputs.source_acceptance_once='true',x=>x.event.sender.id=1,x=>x.event.repository.full_name='other/repo']){
+  const x=structuredClone({args,env,event});mutate(x);assert.throws(()=>reviewedRecoveryConfirmation(x.args,{env:x.env,readEvent:()=>x.event}),/RECOVERY_CONFIRMATION/);
+ }
+ assert.equal(reviewedRecoveryConfirmation({mode:'preflight'},{env,readEvent:()=>({...event,approved:true})}),null);
+});
+test('workflow carries the opt-in exact recovery SHA through both gates without changing timeout, permissions or scheduled activation',()=>{
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ assert.equal((workflow.match(/REVIEWED_RECOVERY_MAIN:/g)||[]).length,2);assert.equal((workflow.match(/args\+=\("--recovery-main=\$REVIEWED_RECOVERY_MAIN"\)/g)||[]).length,2);
+ const expression=workflow.match(/REVIEWED_RECOVERY_MAIN:\s*\$\{\{([^\n]+)\}\}/)[1],value=Function('github','inputs','return ('+expression+');');
+ assert.equal(value({event_name:'schedule'},{run_reviewed_once:true,recovery_main:recoveryHead}),'');assert.equal(value({event_name:'workflow_dispatch'},{run_reviewed_once:false,recovery_main:recoveryHead}),'');assert.equal(value({event_name:'workflow_dispatch'},{run_reviewed_once:true,recovery_main:recoveryHead}),recoveryHead);
+ assert.match(workflow,/timeout-minutes: 15/);assert.match(workflow,/github\.run_attempt == 1/);assert.match(workflow,/vars\.FEE_REPORT_PERIODS_ENABLED == 'true'/);
+});
+
+test('actual recovery preflight and producer CLI use only mocked fixed routes, recheck release before IO and preserve typed source errors through both catches',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-recovery-cli-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const root=path.join(dir,'checkout');fs.mkdirSync(root);fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
+ const f=recoveryFixture(),key=crypto.randomBytes(32),iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv);
+ const data=JSON.stringify({enc:true,v:3,data:Buffer.concat([iv,cipher.update(JSON.stringify({daily:[{d:'2026-10-23'}]})),cipher.final(),cipher.getAuthTag()]).toString('base64')});fs.writeFileSync(path.join(root,'data.json'),data);
+ const health={schema:HEALTH_SCHEMA,checkedAt:'2026-10-27T01:00:00Z',targetDate:'2026-10-23',sourceDates:{schwab:'2026-10-23',webull:'2026-10-23',benchmark:'2026-10-23'},outcome:'updated',errorCode:null,dataSha256:crypto.createHash('sha256').update(data).digest('hex')};
+ const cache={v:1,benchmarks:Object.fromEntries([['spy','SPY','NYSEArca'],['qqq','QQQ','NasdaqGS']].map(([k,s,e])=>[k,{symbol:s,currency:'USD',exchange:e,series:['2026-10-23','2026-10-26','2026-10-27','2026-10-28'].map(d=>({d,p:100,div:0}))}]))};
+ const benchmark=path.join(dir,'benchmark.json');fs.writeFileSync(benchmark,JSON.stringify(cache));
+ const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-10-28',manual_sync_completed_for:'2026-10-28',recovery_main:recoveryHead,source_plan_check_only:'false',source_acceptance_once:'false'},sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'}};
+ const eventFile=path.join(dir,'event.json');fs.writeFileSync(eventFile,JSON.stringify(event));
+ const trace=path.join(dir,'trace.json'),preload=path.join(dir,'mock-only.mjs');
+ fs.writeFileSync(preload,`import fs from 'node:fs';const D=Date,now=D.parse('2026-10-29T03:30:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+  const f=${JSON.stringify(f)},data=${JSON.stringify(data)},health=${JSON.stringify(health)},calls=[];
+  globalThis.fetch=async(url,init={})=>{url=String(url);if(init.method&&init.method!=='GET')throw Error('unexpected method');let value,status=200;
+   const api='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
+   if(url.startsWith(api)){const p=url.slice(api.length);calls.push('public-metadata');
+    if(p==='git/ref/heads/main')value=f.ref;else if(p==='commits/${recoveryHead}'){value=structuredClone(f.commit);if(process.env.SYNTHETIC_REJECT_RELEASE==='true')value.parents=[{sha:'e'.repeat(40)}];}
+    else if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
+    else if(/^actions\\/runs\\/\\d+\\/jobs\\?filter=all&per_page=100$/.test(p)){const jobs=f.jobs[Number(p.match(/runs\\/(\\d+)/)[1])];if(!jobs)throw Error('unexpected job');value={total_count:jobs.length,jobs};}
+    else if(p.startsWith('contents/')){const text=p.startsWith('contents/data.json?')?data:p.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unexpected content');value={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}
+    else if(p.startsWith('git/matching-refs/heads/'))value=[];else throw Error('unexpected public route');
+   }else if(url==='https://api.github.com/gists/${'a'.repeat(32)}'){calls.push('economic-mock');status=Number(process.env.SYNTHETIC_HTTP_STATUS);value={message:'PRIVATE_CANARY SOURCE_HTTP amount=123456.78 \\u001b[31m'};}
+   else throw Error('all real financial routes forbidden');
+   fs.writeFileSync(${JSON.stringify(trace)},JSON.stringify(calls));const r=new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};`);
+ const env={PATH:process.env.PATH,NODE_OPTIONS:'--import='+preload,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_GIST_ID:'a'.repeat(32),IB_MANAGER_READ_ENABLED:'',GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId),GITHUB_EVENT_PATH:eventFile};
+ // Node resolves ESM symlinks; pass the canonical temp path so the real CLI
+ // entry guard executes rather than silently importing a library module.
+ const cli=path.join(fs.realpathSync(root),'scripts/fee-report-producer.mjs'),common=['--report-kind=daily','--report-target=2026-10-28','--manual-sync-completed-for=2026-10-28','--recovery-main='+recoveryHead];
+ const gate=spawnSync(process.execPath,[cli,'--mode=preflight',...common,'--report-markets=NYSE,NASDAQ'],{encoding:'utf8',env,timeout:10000});assert.equal(gate.status,0,gate.stderr);assert.equal(JSON.parse(gate.stdout).outcome,'produce');assert.ok(JSON.parse(fs.readFileSync(trace)).every(x=>x==='public-metadata'));
+ for(const [status,code]of [[403,'SOURCE_FORBIDDEN'],[503,'SOURCE_HTTP']]){
+  const out=path.join(dir,'out'+status);fs.mkdirSync(out,{mode:0o700});
+  const result=spawnSync(process.execPath,[cli,'--mode=produce',...common,'--report-plan='+JSON.stringify(f.plan),'--benchmark-file='+benchmark,'--out-dir='+out],{encoding:'utf8',env:{...env,SYNTHETIC_HTTP_STATUS:String(status)},timeout:10000});
+  assert.equal(result.status,1);assert.equal(result.stderr.trim(),code);assert.equal(result.stdout,'');assert.doesNotMatch(result.stderr,/PRIVATE_CANARY|123456|SOURCE_HTTP amount/);assert.deepEqual(fs.readdirSync(out),[]);
+  const calls=JSON.parse(fs.readFileSync(trace));assert.equal(calls.filter(x=>x==='economic-mock').length,1);assert.ok(calls.indexOf('economic-mock')>0);
+ }
+ const out=path.join(dir,'rejected');fs.mkdirSync(out,{mode:0o700});
+ const rejected=spawnSync(process.execPath,[cli,'--mode=produce',...common,'--report-plan='+JSON.stringify(f.plan),'--benchmark-file='+benchmark,'--out-dir='+out],{encoding:'utf8',env:{...env,SYNTHETIC_REJECT_RELEASE:'true'},timeout:10000});
+ assert.equal(rejected.status,1);assert.equal(rejected.stderr.trim(),'FEE_REPORT_RECOVERY_RELEASE');assert.ok(JSON.parse(fs.readFileSync(trace)).every(x=>x==='public-metadata'));assert.deepEqual(fs.readdirSync(out),[]);assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),data);
 });
