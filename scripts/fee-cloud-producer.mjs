@@ -14,7 +14,7 @@ import { fileURLToPath } from "node:url";
 import { fetchEconomicSnapshot, SourceFetchError, sourceFailureCode } from "./fee-economic-source.mjs";
 import { expectedTargetDate, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
 import { boundedJson } from './fee-http-json.mjs';
-import { isIsoDate, isWeekend } from "./daily-core.mjs";
+import { isIsoDate, isWeekend, classifyFlow, flowId, inKindBusinessKey, notificationIncomeFlowAudit } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
 import {prepareIbManagerReport} from './ib-manager-report.mjs';
@@ -328,9 +328,7 @@ export function loadIncomeDateEvidence(payload,targetDate,filename) {
 
 // Return only fixed categories. Child stderr can contain private amounts,
 // account identities or paths and must never be forwarded to Actions output.
-export function writerFailureCode(stderr, preflight = false) {
-  const text = String(stderr || "");
-  const styleCodes = new Set(["ACCOUNT", "ACCOUNT_STOCK_SUM", "AMOUNT", "BEFORE_FIRST_HOLDING",
+const WRITER_STYLE_CODES = new Set(["ACCOUNT", "ACCOUNT_STOCK_SUM", "AMOUNT", "BEFORE_FIRST_HOLDING",
     "CLASSIFIED_AT", "DATE", "DIRECTORY_PERMISSIONS", "EFFECTIVE_FIRST_HOLDING", "ENTRY_ID",
     "EVIDENCE_REQUIRED", "FILE_ABSOLUTE", "FILE_CHANGED", "FILE_IN_REPO", "FILE_PERMISSIONS",
     "FILE_SIZE", "FUTURE_CLASSIFICATION", "HOLDINGS", "HOLDING_DUPLICATE", "IDENTITY",
@@ -338,8 +336,7 @@ export function writerFailureCode(stderr, preflight = false) {
     "REGISTRY_CAPACITY", "REGISTRY_DUPLICATE", "REGISTRY_IMMUTABLE", "SCHEMA", "SOURCE_DATE",
     "STATIC_CONFLICT", "STATIC_IMMUTABLE", "STATIC_LEARNED_CONFLICT", "STATIC_MAP", "STOCK_SUM",
     "STYLE", "TICKER_CONFLICT", "TOP_HOLDINGS", "INPUT_REQUIRED", "INPUT_INVALID", "MANUAL_TOTALS_REFUSED"]);
-  const style = /^error: STYLE_([A-Z0-9_]+) — nothing written$/m.exec(text)?.[1];
-  const categories = [
+const WRITER_FAILURE_PATTERNS = [
     [/^error: STYLE_[A-Z0-9_]+(?: — nothing written)?$/m, "STYLE"],
     [/^error: duplicate\/stale cash in /m, "CASH_RECONCILIATION"],
     [/^error: --acct-cash-.* are required:/m, "CASH_EVIDENCE"],
@@ -352,8 +349,11 @@ export function writerFailureCode(stderr, preflight = false) {
     [/^error: (?:split is impossible|growth\/value split is incomplete)/m, "SPLIT"],
     [/^error: --(?:date|src-|schwab|webull|cash|stock|other|spy|qqq)/m, "INPUT"],
   ];
-  const category = styleCodes.has(style) ? `STYLE_${style}`
-    : categories.find(([pattern]) => pattern.test(text))?.[1] || "UNKNOWN";
+export function writerFailureCode(stderr, preflight = false) {
+  const text = String(stderr || "");
+  const style = /^error: STYLE_([A-Z0-9_]+) — nothing written$/m.exec(text)?.[1];
+  const category = WRITER_STYLE_CODES.has(style) ? `STYLE_${style}`
+    : WRITER_FAILURE_PATTERNS.find(([pattern]) => pattern.test(text))?.[1] || "UNKNOWN";
   return `FEE_CLOUD_WRITER_${preflight ? "PREFLIGHT_" : ""}${category}`;
 }
 
@@ -406,6 +406,154 @@ export function decryptCandidate(filename, keyText) {
 export function assertCandidateReceiptable(payload) {
   if (!payload || !Array.isArray(payload.flowsUnresolved)) fail("CANDIDATE");
   if (payload.flowsUnresolved.length > 0) fail("UNRESOLVED_FLOW");
+}
+
+// This single failure's public projection is closed and independent of Error
+// metadata. Raw rows, identifiers and reasons remain in memory only. This does
+// not grant event identity, change classification or remove persisted rows.
+export const UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX = 'FEE_CLOUD_UNRESOLVED_FLOW_DIAGNOSTIC=';
+const FLOW_DIAGNOSTIC_SCHEMA = 'fee-console.unresolved-flow-diagnostic.v1';
+const FLOW_DIAGNOSTIC_LIMIT = 10000, FLOW_DIAGNOSTIC_GROUP_LIMIT = 32;
+const FLOW_DIAGNOSTIC_REASON = new Map([
+  ['bare DEPOSIT with no trade or transfer evidence', 'BARE_DEPOSIT'],
+  ['bare WITHDRAWAL with no trade or transfer evidence', 'BARE_WITHDRAWAL'],
+  ['verified dividend cash/collection fee awaits cash-posting date evidence', 'INCOME_DATE_PENDING'],
+  ['dividend cash evidence is incomplete or inconsistent', 'INCOME_EVIDENCE_INCONSISTENT'],
+  ['notification-date audit requires its own income evidence authority', 'INCOME_EVIDENCE_INCONSISTENT'],
+  ['notification-date dividend evidence is incomplete or inconsistent', 'INCOME_EVIDENCE_INCONSISTENT'],
+  ['external asset transfer lacks paired source/destination trade evidence', 'EXTERNAL_PROOF_MISSING'],
+  ['evidence=external_transfer but no externalRef supplied', 'EXTERNAL_PROOF_MISSING'],
+  ['no evidence either way', 'UNKNOWN'],
+]);
+const FLOW_DIAGNOSTIC_ORIGINS = new Set(['BASELINE', 'NEW', 'PERSISTED_AFTER_RECLASSIFICATION', 'UNKNOWN']);
+const FLOW_DIAGNOSTIC_FACTS = ['tradePointer', 'holdingPointer', 'payoutPointer', 'principal', 'income', 'dateProof'];
+const FLOW_DIAGNOSTIC_INCOME = new Set(['internal_income', 'internal_income_pending_date', 'internal_income_estimated', 'internal_income_owner_notification']);
+const diagnosticObject = (value, keys) => value !== null && typeof value === 'object' && !Array.isArray(value)
+  && Object.keys(value).sort().join(',') === [...keys].sort().join(',');
+const diagnosticCount = value => Number.isSafeInteger(value) && value >= 0 && value <= FLOW_DIAGNOSTIC_LIMIT;
+const diagnosticDate = value => value === 'unknown' || isIsoDate(value);
+
+export function validateUnresolvedFlowDiagnostic(value) {
+  try {
+    if (!diagnosticObject(value, ['schema','code','stage','runId','headSha','reportTarget','processingDate','processingIndex','unresolvedCount','overflowCount','groups','facts'])
+        || value.schema !== FLOW_DIAGNOSTIC_SCHEMA || value.code !== 'FEE_CLOUD_UNRESOLVED_FLOW' || value.stage !== 'RECEIPT'
+        || !(value.runId === 'unknown' || typeof value.runId === 'string' && /^[1-9]\d{0,19}$/.test(value.runId))
+        || !(value.headSha === 'unknown' || typeof value.headSha === 'string' && /^[a-f0-9]{40}$/.test(value.headSha))
+        || !diagnosticDate(value.reportTarget) || !diagnosticDate(value.processingDate)
+        || !(value.processingIndex === 'unknown' || Number.isSafeInteger(value.processingIndex) && value.processingIndex >= 1 && value.processingIndex <= 10)
+        || !diagnosticCount(value.unresolvedCount) || value.unresolvedCount === 0
+        || !diagnosticCount(value.overflowCount) || value.overflowCount > value.unresolvedCount
+        || !Array.isArray(value.groups) || value.groups.length < 1 || value.groups.length > FLOW_DIAGNOSTIC_GROUP_LIMIT
+        || !diagnosticObject(value.facts, FLOW_DIAGNOSTIC_FACTS)) return false;
+    const reasons = new Set([...FLOW_DIAGNOSTIC_REASON.values(),'UNSUPPORTED_SOURCE_TYPE']), seen = new Set(); let count = 0;
+    for (const group of value.groups) {
+      if (!diagnosticObject(group, ['flowDate','reasonCode','origin','count']) || !diagnosticDate(group.flowDate)
+          || !reasons.has(group.reasonCode) || !FLOW_DIAGNOSTIC_ORIGINS.has(group.origin)
+          || !diagnosticCount(group.count) || group.count === 0) return false;
+      const key = JSON.stringify([group.flowDate, group.reasonCode, group.origin]);
+      if (seen.has(key)) return false; seen.add(key); count += group.count;
+    }
+    if (count !== value.unresolvedCount) return false;
+    if (value.overflowCount > 0 && (value.overflowCount !== value.unresolvedCount || value.groups.length !== 1
+        || value.groups[0].flowDate !== 'unknown' || value.groups[0].reasonCode !== 'UNKNOWN'
+        || value.groups[0].origin !== 'UNKNOWN' || value.groups[0].count !== value.unresolvedCount)) return false;
+    for (const name of FLOW_DIAGNOSTIC_FACTS) {
+      const fact = value.facts[name];
+      if (!diagnosticObject(fact, ['true','false','unknown']) || !Object.values(fact).every(diagnosticCount)
+          || fact.true + fact.false + fact.unknown !== value.unresolvedCount) return false;
+    }
+    return true;
+  } catch { return false; }
+}
+
+export function buildUnresolvedFlowDiagnostic({payload, input, context, env = process.env} = {}) {
+  try {
+    const rows = payload?.flowsUnresolved;
+    if (!Array.isArray(rows) || rows.length < 1 || rows.length > FLOW_DIAGNOSTIC_LIMIT) return null;
+    const incoming = new Map(), flows = input?.flows;
+    if (Array.isArray(flows) && flows.length <= FLOW_DIAGNOSTIC_LIMIT) for (const raw of flows) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+      // Mirror the writer's diagnostic association only; ordinary flowId is
+      // deliberately never used here as proof of a real event or to clear data.
+      const id = inKindBusinessKey(raw) || notificationIncomeFlowAudit(raw) ? flowId(raw)
+        : raw.id != null && raw.id !== '' ? String(raw.id) : flowId(raw);
+      if (!incoming.has(id)) incoming.set(id, []); incoming.get(id).push(raw);
+    }
+    const baselineIds = Array.isArray(context?.baselineUnresolvedIds)
+      && context.baselineUnresolvedIds.length <= FLOW_DIAGNOSTIC_LIMIT
+      && [...context.baselineUnresolvedIds].every(id => typeof id === 'string' && id.length > 0)
+      ? context.baselineUnresolvedIds : null;
+    const baseline = baselineIds && new Map();
+    if (baseline) for (const id of baselineIds) baseline.set(id, (baseline.get(id) || 0) + 1);
+    const facts = Object.fromEntries(FLOW_DIAGNOSTIC_FACTS.map(name => [name, {true:0,false:0,unknown:0}]));
+    const groups = new Map();
+    for (const row of rows) {
+      const id = typeof row?.id === 'string' && row.id !== '' ? row.id : null;
+      const matches = id === null ? null : incoming.get(id);
+      const ambiguous = (id !== null && baseline?.get(id) > 1) || matches?.length > 1;
+      const raw = !ambiguous && matches?.length === 1 ? matches[0] : null;
+      const classification = raw ? classifyFlow(raw, {reference: input?.sourceReference != null}) : null;
+      const origin = !ambiguous && baseline && id !== null ? baseline.has(id)
+        ? raw && classification?.kind === 'internal' ? 'PERSISTED_AFTER_RECLASSIFICATION' : 'BASELINE'
+        : raw ? 'NEW' : 'UNKNOWN' : 'UNKNOWN';
+      const flowDate = isIsoDate(row?.date) ? row.date : 'unknown';
+      let reasonCode = FLOW_DIAGNOSTIC_REASON.get(row?.reason) || 'UNKNOWN';
+      if (row?.reason === 'no evidence either way' && raw && classification?.kind === 'unresolved'
+          && typeof raw.type === 'string' && raw.type.trim() !== ''
+          && !['DEPOSIT','WITHDRAWAL'].includes(raw.type.trim().toUpperCase())) reasonCode = 'UNSUPPORTED_SOURCE_TYPE';
+      const key = JSON.stringify([flowDate, reasonCode, origin]);
+      if (!groups.has(key)) groups.set(key, {flowDate, reasonCode, origin, count:0});
+      groups.get(key).count++;
+      // These flags describe fields/recognized tags in this uniquely matched
+      // current input, not proven underlying financial facts. Missing fields
+      // remain unknown, including a missing evidence tag or pointer field.
+      const knownEvidence = raw && Object.hasOwn(raw, 'evidence')
+        && (raw.evidence === null || ['internal_trade','external_transfer','external_asset_transfer',...FLOW_DIAGNOSTIC_INCOME].includes(raw.evidence));
+      const values = raw ? {
+        tradePointer: Object.hasOwn(raw, 'tradeId') ? raw.tradeId != null : 'unknown',
+        holdingPointer: Object.hasOwn(raw, 'holdingId') ? raw.holdingId != null : 'unknown',
+        // A resolver's sourcePayoutId is not the original source-row pointer.
+        // Only the reader's explicit presence flag describes that native field.
+        payoutPointer: Object.hasOwn(raw, 'payoutPointerPresent') && typeof raw.payoutPointerPresent === 'boolean' ? raw.payoutPointerPresent : 'unknown',
+        principal: knownEvidence ? raw.evidence === 'internal_trade' && classification?.kind === 'internal' : 'unknown',
+        income: knownEvidence ? FLOW_DIAGNOSTIC_INCOME.has(raw.evidence) : 'unknown',
+        dateProof: typeof raw.incomeDateVerified === 'boolean' ? raw.incomeDateVerified : 'unknown',
+      } : {};
+      for (const name of FLOW_DIAGNOSTIC_FACTS) facts[name][values[name] === true ? 'true' : values[name] === false ? 'false' : 'unknown']++;
+    }
+    // Preserve the total, processing context and full fact counts even when
+    // grouping would exceed its public bound. The fold claims no date/reason.
+    const overflowCount = groups.size > FLOW_DIAGNOSTIC_GROUP_LIMIT ? rows.length : 0;
+    const value = {schema:FLOW_DIAGNOSTIC_SCHEMA,code:'FEE_CLOUD_UNRESOLVED_FLOW',stage:'RECEIPT',
+      runId:typeof env?.GITHUB_RUN_ID === 'string' && /^[1-9]\d{0,19}$/.test(env.GITHUB_RUN_ID) ? env.GITHUB_RUN_ID : 'unknown',
+      headSha:typeof env?.GITHUB_SHA === 'string' && /^[a-f0-9]{40}$/.test(env.GITHUB_SHA) ? env.GITHUB_SHA : 'unknown',
+      reportTarget:isIsoDate(context?.reportTarget) ? context.reportTarget : 'unknown',
+      processingDate:isIsoDate(context?.processingDate) ? context.processingDate : 'unknown',
+      processingIndex:Number.isSafeInteger(context?.processingIndex) && context.processingIndex >= 1 && context.processingIndex <= 10 ? context.processingIndex : 'unknown',
+      unresolvedCount:rows.length,overflowCount,
+      groups:overflowCount ? [{flowDate:'unknown',reasonCode:'UNKNOWN',origin:'UNKNOWN',count:rows.length}] : [...groups.values()],facts};
+    return validateUnresolvedFlowDiagnostic(value) ? value : null;
+  } catch { return null; }
+}
+
+// The workflow uses this same validator before forwarding at most one safe
+// projection. No other private stderr line is ever returned or printed.
+export function safeProducerFailureSummary(privateStderr) {
+  const fallback = {code:'FEE_CLOUD_FAILED',diagnostic:null};
+  if (typeof privateStderr !== 'string' || Buffer.byteLength(privateStderr) > 65536) return fallback;
+  const lines = privateStderr.replace(/\n$/, '').split('\n'), last = lines.at(-1);
+  const code = SAFE_PRODUCER_FAILURE_CODES.has(last) ? last : fallback.code;
+  const candidates = lines.filter(line => line.includes(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX));
+  let diagnostic = null;
+  if (code === 'FEE_CLOUD_UNRESOLVED_FLOW' && candidates.length === 1) {
+    const line = candidates[0];
+    if (line.startsWith(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX) && Buffer.byteLength(line) <= 16384) try {
+      const json = line.slice(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX.length), parsed = JSON.parse(json);
+      // Canonical emission also rejects duplicate JSON keys before validation.
+      if (JSON.stringify(parsed) === json && validateUnresolvedFlowDiagnostic(parsed)) diagnostic = parsed;
+    } catch { /* private malformed metadata remains private */ }
+  }
+  return {code,diagnostic};
 }
 
 const TRANSIENT_READ_FAILURES = new Set([
@@ -570,6 +718,10 @@ export async function produce(options = {}) {
       const outcome = verifyWriterOutcome(original, after, writer, targetDate, weekendCarries > 0);
       stage = "RECEIPT";
       const finalPayload=decryptCandidate(dataFile, process.env.FEE_DATA_KEY);
+      if (finalPayload.flowsUnresolved?.length > 0) {
+        const diagnostic = buildUnresolvedFlowDiagnostic({payload:finalPayload,input,context:options.flowDiagnosticContext});
+        if (diagnostic) process.stderr.write(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX + JSON.stringify(diagnostic) + '\n');
+      }
       assertCandidateReceiptable(finalPayload);
       run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
       stage = "HEALTH_CREATE";
@@ -611,6 +763,46 @@ const NONCASH_DIAGNOSTICS = new Set(['ACTIVITY_UNVERIFIED', 'AMBIGUOUS_TRADES',
   'INSTRUMENT', 'PAIR_REQUIRED', 'PEER_REQUIRED', 'POSITION_DELTA', 'PROOF',
   'QUANTITY', 'SCOPE', 'SOURCE_MARK', 'TRADE', 'TRADE_CASH_UNVERIFIED',
   'UNSUPPORTED_TYPE', 'VALUATION'].map(code => 'FEE_NONCASH_' + code));
+// Only source-defined literals and the existing finite diagnostic enums may
+// leave the private failure file. A matching prefix alone grants no authority.
+const SAFE_PRODUCER_FAILURE_CODES = new Set([
+  ...`AMOUNT ARGUMENT AUTH_REJECTED AUTH_RESPONSE AUTH_UNAVAILABLE BENCHMARK_IDENTITY
+    BENCHMARK_PENDING BENCHMARK_SCHEMA CANDIDATE CASH_ANCHOR_AMBIGUOUS CASH_ANCHOR_CHAIN
+    CASH_ANCHOR_MISSING CASH_BALANCE_STALE CASH_CHAIN CASH_CURRENCY CASH_HISTORY_BOUNDARY
+    CASH_HISTORY_EVIDENCE CASH_HISTORY_TARGET CASH_IDENTITY CASH_PRECISION CASH_PREVIOUS_EVIDENCE
+    CASH_RECONCILIATION CASH_REPORT_BALANCE CASH_TRANSACTION_IDENTITY CONFIG CREDENTIALS DATE
+    ECON_VERSION FAILED HEALTH HOLDING HOLDING_CATALOG_DATE_CONFLICT HOLDING_HISTORY_CURRENT
+    HOLDING_HISTORY_IDENTITY HOLDING_HISTORY_INCEPTION HOLDING_HISTORY_REQUIRED HOLDING_HISTORY_UNSUPPORTED
+    HOLDING_IDENTITY HOLDING_TERMINAL_CURRENT HOLDING_TERMINAL_IDENTITY HOLDING_TERMINAL_OPEN
+    HOLDING_TERMINAL_PRECISION HOLDING_TERMINAL_REQUIRED HTTP_REJECTED IDENTITY INCOME_EVIDENCE
+    INCOME_INPUT INCOME_INPUT_CHANGED INCOME_INPUT_CONFLICT INPUT_FILE MANAGEMENT_HISTORY_INCOMPLETE
+    NONCASH_PEER_REQUIRED NON_USD_BALANCE_CHANGED NON_USD_EXTERNAL_FLOW NON_USD_MOVEMENT OUTPUT_DIR
+    PERFORMANCE_IDENTITY PORTFOLIO_IDENTITY PUBLICATION_CANDIDATE_FAILED PUBLICATION_READ
+    PUBLICATION_UNSTABLE PUBLICATION_UNVERIFIED PUBLICATION_WAIT_TIMEOUT PUBLICATION_WAIT_UNVERIFIED
+    RECEIPT REPORT_PLAN RESPONSE_CREDENTIAL ROUTE_BLOCKED SCHEMA SOURCE_DUPLICATE SOURCE_INCOMPLETE
+    SOURCE_MISSING SOURCE_MODE SOURCE_UNAVAILABLE SOURCE_UNSTABLE STYLE_PROPOSAL_INPUT
+    TOTAL_RECONCILIATION TRADE_IDENTITY UNRESOLVED_FLOW WEEKEND_GAP WRITER_OUTCOME`.split(/\s+/).map(code=>'FEE_CLOUD_'+code),
+  ...`ARGUMENT BASE_CHANGED BENCHMARK CLEANUP ECON_VERSION FUND_TRANSFER_INPUT_UNVERIFIED
+    HISTORY_AHEAD_OF_TARGET IB_RECHECK_CHANGED_FEE_DATA IB_RETRY_METADATA MANUAL_SYNC_CONFIRMATION
+    NOT_READY OUTPUT_DIR OUTPUT_EXISTS PLAN PUBLICATION_READ PUBLISHED_PERIOD_MISSING RANGE
+    RECOVERY_CONFIRMATION RECOVERY_CONSUMED RECOVERY_METADATA RECOVERY_PRIOR_RUNS RECOVERY_RELEASE
+    RECOVERY_REQUIRED RECOVERY_RUN RECOVERY_SCOPE SOURCE_ATTEMPT_METADATA SOURCE_RERUN_NOT_ALLOWED
+    SOURCE_UNSTABLE TARGET`.split(/\s+/).map(code=>'FEE_REPORT_'+code),
+  ...['FIRST_HELD','LOCK','INPUT','HASH','SCOPE','CHANGED','CONFLICT'].map(code=>'FEE_CLOUD_STYLE_PROPOSAL_'+code),
+  ...['CONFIG','ABORTED','HTTP','TYPE','SIZE','BODY','JSON','TIMEOUT','NETWORK'].map(code=>'FEE_CLOUD_RESPONSE_'+code),
+]);
+for (const stage of [...DIAGNOSTIC_STAGES, 'UNKNOWN']) {
+  for (const category of ['TYPE','RANGE','SYNTAX','REFERENCE','UNKNOWN',...Array.from(SYSTEM_CODES,code=>'SYSTEM_'+code),...Array.from(NONCASH_DIAGNOSTICS,code=>code.slice(4))])
+    SAFE_PRODUCER_FAILURE_CODES.add(`FEE_CLOUD_STAGE_${stage}_${category}`);
+}
+for (const prefix of ['', 'PREFLIGHT_']) for (const category of ['UNKNOWN',...WRITER_FAILURE_PATTERNS.map(([,code])=>code),...Array.from(WRITER_STYLE_CODES,code=>'STYLE_'+code)])
+  SAFE_PRODUCER_FAILURE_CODES.add('FEE_CLOUD_WRITER_'+prefix+category);
+// SourceFetchError owns its finite enum; its constructor replaces unknown input
+// with SOURCE_RESPONSE. No untyped SOURCE_* suffix is accepted by this boundary.
+for (const code of ['LOCATOR','OPTIONS','AUTH_CONFIG','AUTH','NETWORK','TIMEOUT','HTTP','FORBIDDEN','REDIRECT','RESPONSE','IDENTITY','TRUNCATED','FILE','ENVELOPE','REVISION','ETAG','CHANGED','STORAGE','CLOSED']) {
+  const literal='SOURCE_'+code;
+  if (sourceFailureCode(new SourceFetchError(literal))===literal) SAFE_PRODUCER_FAILURE_CODES.add(literal);
+}
 export function producerFailureCode(error, stage) {
   if (error instanceof SourceFetchError) return sourceFailureCode(error);
   const message = typeof error?.message === 'string' ? error.message : '';

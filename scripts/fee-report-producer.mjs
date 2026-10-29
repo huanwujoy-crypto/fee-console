@@ -333,6 +333,12 @@ async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benc
   if(isReviewedDailyPlan(plan)?reviewedSyncDate!==plan.accountingThrough:reviewedSyncDate!==null)fail('MANUAL_SYNC_CONFIRMATION');
   if(!freshTarget(plan,now))fail('RECOVERY_REQUIRED');
   const output=outputDirectory(outputDir),originalBytes=fs.readFileSync(sourceFile),payload=decryptCandidate(sourceFile,process.env.FEE_DATA_KEY);
+  // Reuse only this existing in-memory plaintext. These ids associate a safe
+  // failure diagnostic, not Sharesight event identity or reconciliation
+  // authority. Preserve duplicates so ambiguous ids remain explicitly unknown.
+  const baselineRows=payload.flowsUnresolved;
+  const baselineUnresolvedIds=Array.isArray(baselineRows)&&baselineRows.every(row=>typeof row?.id==='string'&&row.id!=='')
+    ?baselineRows.map(row=>row.id):null;
   const latest=payload.daily?.map(p=>p.d).sort().at(-1),dates=reportWindowDates(latest,plan.accountingThrough);
   setStage('BENCHMARK');
   const cache=JSON.parse(fs.readFileSync(benchmarkFile));
@@ -358,6 +364,7 @@ async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benc
       const input=reads[i],final=i===reads.length-1,dayDir=path.join(runtime,input.targetDate);fs.mkdirSync(dayDir,{mode:0o700});
       setStage('WRITER');
       result=await produce({cli:{'benchmark-file':benchmarkFile,'target-date':input.targetDate,'checked-at':now.toISOString(),'out-dir':dayDir},periodMode:true,baseDataFile:base===sourceFile?undefined:base,
+        flowDiagnosticContext:{baselineUnresolvedIds,processingDate:input.targetDate,processingIndex:i+1,reportTarget:plan.accountingThrough},
         // The root source is fixed; a caller-provided synthetic source is
         // accepted only by the test/library entry, never the CLI/workflow.
         ...(base===sourceFile&&sourceFile!==path.join(ROOT,'data.json')?{baseDataFile:base}:{}),

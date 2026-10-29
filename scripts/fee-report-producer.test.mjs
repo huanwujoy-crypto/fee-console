@@ -9,7 +9,7 @@ import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
 import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod,reportFailureCode,reviewedRecoveryConfirmation,readReportRecoveryRelease,validateReportRecoveryEvidence,authorizeReportRecovery} from './fee-report-producer.mjs';
-import {producerFailureCode} from './fee-cloud-producer.mjs';
+import {producerFailureCode,safeProducerFailureSummary,UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX} from './fee-cloud-producer.mjs';
 import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
@@ -290,6 +290,50 @@ test('period producer uses actual sole writer, receipt reporter and health; orig
   const r=spawnSync(process.execPath,[script],{encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:'--import='+clockFile,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,IB_MANAGER_READ_ENABLED:'',FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',SYNTHETIC_SNAPSHOTS:snapshots,SYNTHETIC_BENCHMARK:benchmarkFile}});
   assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/SYNTHETIC_PERIOD_CANDIDATE_VERIFIED/);assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original);
  });
+});
+
+test('unresolved diagnostic survives the actual producer, period wrapper and workflow failure branch without private stderr',async t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-unresolved-path-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const root=path.join(dir,'checkout');fs.mkdirSync(root,{mode:0o700});fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
+ fs.mkdirSync(path.join(root,'claude'));fs.copyFileSync(new URL('../claude/fee-style-mapping.json',import.meta.url),path.join(root,'claude/fee-style-mapping.json'));
+ const key=crypto.randomBytes(32),encrypt=(o,v)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(o)),c.final(),c.getAuthTag()]).toString('base64')});};
+ const original=encrypt({daily:[{d:'2026-10-20',schwab:100,webull:100,cash:200,stock:0,other:0,spy:100,qqq:200,bd:'2026-10-20',bstate:'session',acctCash:{schwab:100,webull:100}}],flowsAuto:[],flowsUnresolved:[],status:{asOf:'2026-10-20',provisional:false,calibrated:false,unresolvedCount:0,notes:[],splitDelta:0}},3);
+ fs.writeFileSync(path.join(root,'data.json'),original,{mode:0o600});
+ const econ=path.join(dir,'econ.json');fs.writeFileSync(econ,encrypt({v:4,settings:{start:'2026-10-20',mgmt:2,carry:20},accounts:[{id:'schwab',opening:100},{id:'webull',opening:100}],months:[],fees:[]},4),{mode:0o600});
+ const benchmark=path.join(dir,'benchmark.json');fs.writeFileSync(benchmark,JSON.stringify({v:1,benchmarks:Object.fromEntries(Object.entries(cache.benchmarks).map(([k,v])=>[k,{...v,series:[{d:'2026-10-21',p:k==='spy'?100:200},...v.series]}]))}),{mode:0o600});
+ const hidden='PRIVATE_CANARY amount=123456.78 account=opaque /private/path';
+ const snapshots=path.join(dir,'snapshots.json');fs.writeFileSync(snapshots,JSON.stringify(Object.fromEntries(['2026-10-21','2026-10-22','2026-10-23'].map(d=>{
+  const raw=cashOnly(d);if(d==='2026-10-22'){const cash=raw.webull.cashAccounts.cash_accounts[0];raw.webull.cashTransactions[cash.id]={cash_account_transactions:[{id:765432,cash_account_id:cash.id,date_time:d+'T12:00:00Z',amount:1,description:hidden,foreign_identifier:hidden,cash_account_transaction_type:{name:'DEPOSIT'}}]};}return[d,raw];
+ }))),{mode:0o600});
+ const script=path.join(root,'exercise.mjs');fs.writeFileSync(script,`
+  import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';
+  import {produceReportPeriod,reportFailureCode} from './scripts/fee-report-producer.mjs';import {weeklyReportPlan} from './scripts/fee-report-period.mjs';import {parseSourceJson} from './scripts/fee-cloud-source.mjs';
+  const dir=path.dirname(process.env.SYNTHETIC_SNAPSHOTS),snapshots=JSON.parse(fs.readFileSync(process.env.SYNTHETIC_SNAPSHOTS)),out=path.join(dir,'out');fs.mkdirSync(out,{mode:0o700});let reads=0,checks=0,cleanups=0;
+  const readOnce=async d=>{reads++;const raw=structuredClone(snapshots[d]);for(const p of Object.values(raw)){for(const k of ['performance','cashAccounts','previousPerformance'])if(p[k])p[k]=parseSourceJson(JSON.stringify(p[k]));for(const k of ['cashTransactions','cashLedgerHistory'])if(p[k])p[k]=Object.fromEntries(Object.entries(p[k]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;};
+  try{await produceReportPeriod({plan:weeklyReportPlan('2026-10-23'),outputDir:out,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){checks++;},cleanup(){cleanups++;}})});assert.fail('expected unresolved flow');}
+  catch(error){assert.equal(reportFailureCode(error),'FEE_CLOUD_UNRESOLVED_FLOW');assert.equal(error.message,'FEE_CLOUD_UNRESOLVED_FLOW');assert.equal(Object.hasOwn(error,'cause'),false);assert.deepEqual(fs.readdirSync(out),[]);assert.equal(reads,6);assert.equal(checks,1);assert.equal(cleanups,1);console.error(reportFailureCode(error));process.exitCode=1;}
+ `);
+ const clock=path.join(dir,'clock.mjs');fs.writeFileSync(clock,`const RealDate=Date,now=RealDate.parse('2026-10-26T06:00:00Z');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};let attempts=0;globalThis.fetch=async()=>{attempts++;throw Error('OFFLINE_UNMOCKED_FETCH_FORBIDDEN');};process.on('exit',()=>{if(attempts)process.exitCode=97;});`);
+ const child=spawnSync(process.execPath,[script],{cwd:root,encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:[process.env.NODE_OPTIONS||'','--import='+clock].join(' ').trim(),GITHUB_RUN_ID:'123',GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ATTEMPT:'1',FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,IB_MANAGER_READ_ENABLED:'',FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',SYNTHETIC_SNAPSHOTS:snapshots,SYNTHETIC_BENCHMARK:benchmark}});
+ assert.equal(child.status,1,child.stderr);assert.equal(child.stdout,'');assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original);
+ assert.equal(child.stderr.trim().split('\n').length,2,child.stderr);assert.equal(child.stderr.trim().split('\n').at(-1),'FEE_CLOUD_UNRESOLVED_FLOW');assert.equal(child.stderr.includes(hidden),false);
+ const projection=safeProducerFailureSummary(child.stderr);assert.ok(projection.diagnostic);assert.equal(projection.diagnostic.processingDate,'2026-10-22');assert.equal(projection.diagnostic.processingIndex,2);assert.equal(projection.diagnostic.reportTarget,'2026-10-23');
+ assert.equal(projection.diagnostic.overflowCount,0);
+ assert.deepEqual(projection.diagnostic.groups,[{flowDate:'2026-10-22',reasonCode:'BARE_DEPOSIT',origin:'NEW',count:1}]);
+ assert.deepEqual(Object.keys(projection.diagnostic.facts).sort(),['tradePointer','holdingPointer','payoutPointer','principal','income','dateProof'].sort());
+ for(const name of ['tradePointer','holdingPointer','payoutPointer'])assert.deepEqual(projection.diagnostic.facts[name],{true:0,false:1,unknown:0});
+ for(const fact of Object.values(projection.diagnostic.facts))assert.equal(fact.true+fact.false+fact.unknown,projection.diagnostic.unresolvedCount);
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const failureScript=workflow.match(/node --input-type=module - "\$error_file" <<'NODE'\n([\s\S]+?)\n          NODE/)[1];
+ assert.doesNotMatch(failureScript,/console\.(?:log|error)\(privateStderr|process\.stdout\.write\(privateStderr/);assert.doesNotMatch(workflow,/tail -n 1 "\$error_file"/);
+ const collapsed={...projection.diagnostic,unresolvedCount:33,overflowCount:33,groups:[{flowDate:'unknown',reasonCode:'UNKNOWN',origin:'UNKNOWN',count:33}],facts:Object.fromEntries(Object.keys(projection.diagnostic.facts).map(name=>[name,{true:0,false:0,unknown:33}]))};
+ for(const [name,stderr,wantDiagnostic,wantCode='FEE_CLOUD_UNRESOLVED_FLOW']of [['valid','PRIVATE_CANARY raw account and stack\n'+child.stderr,true],['group-overflow',UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX+JSON.stringify(collapsed)+'\nFEE_CLOUD_UNRESOLVED_FLOW\n',true],['duplicate',child.stderr.split('\n')[0]+'\n'+child.stderr,false],['invalid',UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX+JSON.stringify({...projection.diagnostic,private:'PRIVATE_CANARY'})+'\nFEE_CLOUD_UNRESOLVED_FLOW\n',false],['code-canary','FEE_CLOUD_PRIVATE_CANARY\n',false,'FEE_CLOUD_FAILED'],['overflow','x'.repeat(65537)+'\nFEE_CLOUD_UNRESOLVED_FLOW\n',false,'FEE_CLOUD_FAILED']]){
+  const privateFile=path.join(dir,name+'.stderr'),summary=path.join(dir,name+'.summary');fs.writeFileSync(privateFile,stderr,{mode:0o600});fs.writeFileSync(summary,'',{mode:0o600});
+  const publicResult=spawnSync(process.execPath,['--input-type=module','-',privateFile],{cwd:new URL('..',import.meta.url),input:failureScript,encoding:'utf8',env:{...process.env,GITHUB_STEP_SUMMARY:summary}});
+  assert.equal(publicResult.status,0,publicResult.stderr);assert.equal(publicResult.stderr,'');const publicText=publicResult.stdout+fs.readFileSync(summary,'utf8');assert.equal(publicText.includes('PRIVATE_CANARY'),false);assert.equal(publicText.includes('123456.78'),false);assert.equal(publicText.includes('/private/path'),false);
+  assert.equal(publicResult.stdout.includes('fee-console.unresolved-flow-diagnostic.v1'),wantDiagnostic);assert.equal(publicResult.stdout.trim().split('\n').at(-1),wantCode);
+  if(name==='group-overflow'){const displayed=JSON.parse(publicResult.stdout.split('\n')[0]);assert.equal(displayed.overflowCount,33);assert.equal(displayed.unresolvedCount,33);assert.equal(displayed.processingDate,'2026-10-22');assert.equal(displayed.processingIndex,2);assert.deepEqual(displayed.groups,collapsed.groups);}
+ }
 });
 
 // Source-attempt budgets read public metadata only. All data is synthetic.

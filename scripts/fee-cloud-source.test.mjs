@@ -8,11 +8,11 @@ import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
 import { isControlledWebullNetProceeds, expectedTargetDate, previousCalendarDate, latestCommonBenchmarkDate, normalizeRead as normalizeCloudRead, parseTradeJson, selectBenchmark, SharesightCloudReader } from "./fee-cloud-source.mjs";
-import { assertCandidateReceiptable, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, styleRecoveryLockDigest, matchesPrivateStyleRecoveryLock, verifyStyleRecoveryFirstHeld, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
+import { assertCandidateReceiptable, buildUnresolvedFlowDiagnostic, validateUnresolvedFlowDiagnostic, safeProducerFailureSummary, UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX, fetchEconomicWithRetry, readStableWithRetry, verifyWriterOutcome, weekendGapDates, writerFailureCode, producerFailureCode, styleRecoveryLockDigest, matchesPrivateStyleRecoveryLock, verifyStyleRecoveryFirstHeld, produce, isPublishedTarget, isEarlierCandidate, readPublicationState, publishedPreflight } from "./fee-cloud-producer.mjs";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import { SourceFetchError } from "./fee-economic-source.mjs";
 import { checkCashLedger } from './daily-core.mjs';
-import { reconcileFlows } from './daily-core.mjs';
+import { reconcileFlows, flowId } from './daily-core.mjs';
 import { buildFeeCalculationReceipt } from './fee-receipt-core.mjs';
 import { createFundInvestorCore } from './fund-investor-core.mjs';
 
@@ -1395,6 +1395,99 @@ test("cloud producer reports unresolved cash before the generic receipt gate", (
   assert.doesNotThrow(() => assertCandidateReceiptable({ flowsUnresolved: [] }));
   assert.throws(() => assertCandidateReceiptable({ flowsUnresolved: [{ id: "review" }] }),
     /FEE_CLOUD_UNRESOLVED_FLOW/);
+});
+
+test('unresolved diagnostic projects only fixed reasons, origins and three-state counts from memory', () => {
+  const hidden='PRIVATE_CANARY account=opaque amount=123456.78 /private/path\r\n\u001b[31m';
+  const baseline={id:'baseline-private',date:D,acct:hidden,amount:123456.78,desc:hidden,reason:'bare DEPOSIT with no trade or transfer evidence'};
+  const reclassified={date:D,acct:'webull',amount:3,desc:hidden,type:'DEPOSIT',evidence:'internal_trade',tradeId:null,holdingId:null,payoutPointerPresent:false};
+  assert.equal(flowId({...reclassified,payoutPointerPresent:true}),flowId(reclassified),'diagnostic pointer presence cannot change a flow identity');
+  const pending={id:'pending-private',date:D,acct:'webull',amount:1,type:'DEPOSIT',evidence:'internal_income_pending_date',incomeRole:'dividend',sourcePayoutId:7,cashPostingDate:D,incomeDateVerified:false};
+  const fresh={id:'new-private',date:D,acct:'webull',amount:-1,type:'WITHDRAWAL',desc:hidden};
+  const rows=[baseline,{id:flowId(reclassified),date:D,reason:'bare DEPOSIT with no trade or transfer evidence'},
+    {id:fresh.id,date:D,reason:'bare WITHDRAWAL with no trade or transfer evidence'},
+    {id:pending.id,date:D,reason:'verified dividend cash/collection fee awaits cash-posting date evidence'},
+    {id:'opaque-private',date:'2026-02-30',reason:'verified external asset transfer '+hidden},
+    {id:'inconsistent-private',date:D,reason:'dividend cash evidence is incomplete or inconsistent'},
+    {id:'external-private',date:D,reason:'external asset transfer lacks paired source/destination trade evidence'}];
+  const payload={flowsUnresolved:rows},original=structuredClone(payload),input={flows:[reclassified,fresh,pending]};
+  const value=buildUnresolvedFlowDiagnostic({payload,input,context:{baselineUnresolvedIds:[baseline.id,flowId(reclassified)],reportTarget:'2026-09-25',processingDate:D,processingIndex:2},env:{GITHUB_RUN_ID:'123',GITHUB_SHA:'a'.repeat(40)}});
+  assert.equal(validateUnresolvedFlowDiagnostic(value),true);assert.deepEqual(payload,original);
+  assert.equal(value.overflowCount,0);
+  assert.equal(value.processingIndex,2);assert.equal(value.processingDate,D);assert.equal(value.reportTarget,'2026-09-25');
+  assert.ok(value.groups.some(g=>g.origin==='BASELINE'&&g.reasonCode==='BARE_DEPOSIT'));
+  assert.ok(value.groups.some(g=>g.origin==='PERSISTED_AFTER_RECLASSIFICATION'));
+  assert.ok(value.groups.some(g=>g.origin==='NEW'&&g.reasonCode==='BARE_WITHDRAWAL'));
+  for(const code of ['INCOME_DATE_PENDING','INCOME_EVIDENCE_INCONSISTENT','EXTERNAL_PROOF_MISSING','UNKNOWN'])assert.ok(value.groups.some(g=>g.reasonCode===code));
+  assert.deepEqual(value.facts.principal,{true:1,false:1,unknown:5});assert.deepEqual(value.facts.dateProof,{true:0,false:1,unknown:6});
+  for(const name of ['tradePointer','holdingPointer','payoutPointer'])assert.deepEqual(value.facts[name],{true:0,false:1,unknown:6});
+  const text=JSON.stringify(value);for(const privateText of [hidden,'baseline-private','pending-private','new-private','123456.78','webull','verified external asset transfer','desc','sourcePayoutId'])assert.equal(text.includes(privateText),false);
+  const absent=buildUnresolvedFlowDiagnostic({payload,env:{GITHUB_RUN_ID:hidden,GITHUB_SHA:hidden}});
+  assert.equal(absent.runId,'unknown');assert.equal(absent.headSha,'unknown');assert.equal(absent.processingDate,'unknown');assert.equal(absent.processingIndex,'unknown');assert.equal(absent.reportTarget,'unknown');
+  assert.ok(absent.groups.every(g=>g.origin==='UNKNOWN'));for(const name of ['tradePointer','holdingPointer','payoutPointer'])assert.deepEqual(absent.facts[name],{true:0,false:0,unknown:7});
+  // A duplicate ordinary diagnostic id cannot supply reclassification evidence.
+  const duplicate=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[rows[1]]},input:{flows:[reclassified,{...reclassified}]},context:{baselineUnresolvedIds:[rows[1].id]}});
+  assert.equal(duplicate.groups[0].origin,'UNKNOWN');assert.equal(duplicate.facts.principal.unknown,1);
+  const duplicateBaseline=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[rows[1]]},input:{flows:[reclassified]},context:{baselineUnresolvedIds:[rows[1].id,rows[1].id]}});
+  assert.equal(duplicateBaseline.groups[0].origin,'UNKNOWN');for(const fact of Object.values(duplicateBaseline.facts))assert.deepEqual(fact,{true:0,false:0,unknown:1});
+  const missing=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[baseline]},input:{flows:[{id:baseline.id,date:D,amount:1,type:'DEPOSIT'}]},context:{baselineUnresolvedIds:[baseline.id]}});
+  for(const fact of Object.values(missing.facts))assert.deepEqual(fact,{true:0,false:0,unknown:1});
+  const explicit=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[baseline]},input:{flows:[{id:baseline.id,date:D,amount:1,type:'DEPOSIT',tradeId:null,holdingId:null,payoutPointerPresent:false,evidence:null,incomeDateVerified:false}]}});
+  for(const fact of Object.values(explicit.facts))assert.deepEqual(fact,{true:0,false:1,unknown:0});
+  const nativePointers=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[baseline]},input:{flows:[{id:baseline.id,date:D,amount:1,type:'DEPOSIT',tradeId:7,holdingId:null,payoutPointerPresent:true,sourcePayoutId:999}]}});
+  assert.deepEqual(nativePointers.facts.tradePointer,{true:1,false:0,unknown:0});assert.deepEqual(nativePointers.facts.holdingPointer,{true:0,false:1,unknown:0});assert.deepEqual(nativePointers.facts.payoutPointer,{true:1,false:0,unknown:0});
+  for(const payoutPointerPresent of [undefined,null,0,'false','PRIVATE_CANARY']){
+    const invalidPointer=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[baseline]},input:{flows:[{id:baseline.id,date:D,amount:1,type:'DEPOSIT',sourcePayoutId:999,...(payoutPointerPresent===undefined?{}:{payoutPointerPresent})}]}});
+    assert.deepEqual(invalidPointer.facts.payoutPointer,{true:0,false:0,unknown:1});
+  }
+  // An external classification is not a claim of persisted internal cash.
+  const external=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[baseline]},input:{flows:[{...baseline,evidence:'external_transfer',externalRef:'private'}]},context:{baselineUnresolvedIds:[baseline.id]}});
+  assert.equal(external.groups[0].origin,'BASELINE');
+  const unknownRow={id:'unsupported-private',date:D,reason:'no evidence either way'};
+  for(const type of ['INTEREST','DIVIDEND','PRIVATE_CANARY /private/path amount=123456.78']){
+    const unsupported=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[unknownRow]},input:{flows:[{id:unknownRow.id,date:D,amount:1,type}]}});
+    assert.equal(validateUnresolvedFlowDiagnostic(unsupported),true);assert.equal(unsupported.groups[0].reasonCode,'UNSUPPORTED_SOURCE_TYPE');assert.equal(JSON.stringify(unsupported).includes(type),false);
+  }
+  for(const type of [undefined,null,'','  ','DEPOSIT','WITHDRAWAL',' deposit ','withdrawal']){
+    const unknown=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[unknownRow]},input:{flows:[{id:unknownRow.id,date:D,amount:1,...(type===undefined?{}:{type})}]}});
+    assert.equal(unknown.groups[0].reasonCode,'UNKNOWN');
+  }
+  const noRaw=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[unknownRow]}});assert.equal(noRaw.groups[0].reasonCode,'UNKNOWN');
+  const nowInternal=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[unknownRow]},input:{flows:[{id:unknownRow.id,date:D,amount:1,type:'INTEREST',evidence:'internal_trade'}]},context:{baselineUnresolvedIds:[unknownRow.id]}});
+  assert.equal(nowInternal.groups[0].reasonCode,'UNKNOWN');assert.equal(nowInternal.groups[0].origin,'PERSISTED_AFTER_RECLASSIFICATION');
+  const changedReason=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[{...unknownRow,reason:'no evidence either way PRIVATE_CANARY'}]},input:{flows:[{id:unknownRow.id,date:D,amount:1,type:'INTEREST'}]}});assert.equal(changedReason.groups[0].reasonCode,'UNKNOWN');
+});
+
+test('unresolved diagnostic validator and private stderr reader reject unknown keys, canaries, dates, counts and duplicates', () => {
+  const valid=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:[{id:'private',date:D,reason:'no evidence either way'}]},env:{}});
+  const line=value=>UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX+JSON.stringify(value),code='FEE_CLOUD_UNRESOLVED_FLOW';
+  assert.deepEqual(safeProducerFailureSummary('PRIVATE_CANARY raw stderr\n'+line(valid)+'\n'+code+'\n'),{code,diagnostic:valid});
+  const cases=[v=>v.private='PRIVATE_CANARY',v=>v.groups[0].account='PRIVATE_CANARY',v=>v.facts.tradePointer.private='PRIVATE_CANARY',v=>v.facts.pointer={true:0,false:0,unknown:1},
+    v=>v.runId='PRIVATE_CANARY',v=>v.headSha='PRIVATE_CANARY',v=>v.reportTarget='2026-02-30',v=>v.processingDate='PRIVATE_CANARY',v=>v.processingIndex=11,
+    v=>v.stage='PRIVATE_CANARY',v=>v.code='FEE_CLOUD_PRIVATE_CANARY',v=>v.schema='PRIVATE_CANARY',v=>v.groups[0].flowDate='2026-02-30',
+    v=>v.groups[0].reasonCode='bare DEPOSIT with no trade or transfer evidence',v=>v.groups[0].origin='PRIVATE_CANARY',
+    v=>v.unresolvedCount=10001,v=>v.groups[0].count=10001,v=>v.groups[0].count=-1,v=>v.facts.tradePointer.unknown=2,v=>v.facts.payoutPointer.false=1,
+    v=>delete v.overflowCount,v=>v.overflowCount=-1,v=>v.overflowCount=2,v=>{v.overflowCount=1;v.groups[0].flowDate=D;},v=>{v.overflowCount=1;v.groups[0].origin='BASELINE';},
+    v=>v.groups.push({...v.groups[0]}),v=>v.groups=Array.from({length:33},()=>({...v.groups[0]}))];
+  for(const mutate of cases){const value=structuredClone(valid);mutate(value);assert.equal(validateUnresolvedFlowDiagnostic(value),false);const result=safeProducerFailureSummary(line(value)+'\n'+code+'\n');assert.equal(result.diagnostic,null);assert.equal(JSON.stringify(result).includes('PRIVATE_CANARY'),false);}
+  for(const stderr of [line(valid)+'\n'+line(valid)+'\n'+code+'\n',line(valid)+'\n'+UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX+'bad\n'+code+'\n',
+    'prefix '+line(valid)+'\n'+code+'\n',line(valid).replace('{','{"schema":"PRIVATE_CANARY",')+'\n'+code+'\n',
+    'x'.repeat(65537),line(valid)+'\nSOURCE_HTTP\n'])assert.equal(safeProducerFailureSummary(stderr).diagnostic,null);
+  assert.equal(buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:Array.from({length:10001},()=>({}))}}),null);
+  const collapsed=buildUnresolvedFlowDiagnostic({payload:{flowsUnresolved:Array.from({length:33},(_,i)=>({date:`2026-01-${String(i%31+1).padStart(2,'0')}`,reason:i<31?'no evidence either way':'bare DEPOSIT with no trade or transfer evidence'}))},context:{processingDate:D,processingIndex:2,reportTarget:'2026-09-25'}});
+  assert.equal(validateUnresolvedFlowDiagnostic(collapsed),true);assert.equal(collapsed.unresolvedCount,33);assert.equal(collapsed.overflowCount,33);assert.equal(collapsed.processingDate,D);assert.equal(collapsed.processingIndex,2);assert.equal(collapsed.reportTarget,'2026-09-25');
+  assert.deepEqual(collapsed.groups,[{flowDate:'unknown',reasonCode:'UNKNOWN',origin:'UNKNOWN',count:33}]);for(const fact of Object.values(collapsed.facts))assert.deepEqual(fact,{true:0,false:0,unknown:33});
+  assert.deepEqual(safeProducerFailureSummary(line(collapsed)+'\n'+code+'\n'),{code,diagnostic:collapsed});
+  const partialOverflow=structuredClone(collapsed);partialOverflow.overflowCount=32;assert.equal(validateUnresolvedFlowDiagnostic(partialOverflow),false);
+  const falseReason=structuredClone(collapsed);falseReason.groups[0].reasonCode='BARE_DEPOSIT';assert.equal(validateUnresolvedFlowDiagnostic(falseReason),false);
+  for(const code of ['FEE_CLOUD_PRIVATE_CANARY','FEE_REPORT_PRIVATE_CANARY','SOURCE_PRIVATE_CANARY','FEE_CLOUD_STAGE_SOURCE_READ_PRIVATE_CANARY','FEE_CLOUD_WRITER_STYLE_PRIVATE_CANARY']){
+    assert.deepEqual(safeProducerFailureSummary(code+'\n'),{code:'FEE_CLOUD_FAILED',diagnostic:null});
+  }
+  for(const code of ['SOURCE_HTTP','SOURCE_FORBIDDEN','FEE_CLOUD_STAGE_SOURCE_READ_TYPE','FEE_CLOUD_STAGE_ECONOMIC_READ_SYSTEM_ENOENT','FEE_CLOUD_STAGE_SOURCE_READ_NONCASH_POSITION_DELTA','FEE_CLOUD_WRITER_STYLE_FILE_CHANGED','FEE_CLOUD_WRITER_PREFLIGHT_CASH_EVIDENCE','FEE_CLOUD_CASH_BALANCE_STALE','FEE_REPORT_RECOVERY_CONSUMED'])assert.equal(safeProducerFailureSummary(code+'\n').code,code);
+  for(const [file,prefix]of [['fee-cloud-producer.mjs','FEE_CLOUD_'],['fee-cloud-source.mjs','FEE_CLOUD_'],['fee-report-producer.mjs','FEE_REPORT_']]){
+    const source=fs.readFileSync(new URL('./'+file,import.meta.url),'utf8');
+    for(const [,suffix]of source.matchAll(/\bfail\(['"]([A-Z0-9_]+)['"]/g))assert.equal(safeProducerFailureSummary(prefix+suffix+'\n').code,prefix+suffix,'literal failure must retain its safe code');
+  }
 });
 
 test("cloud producer retries one transient stable-read failure only", async () => {
