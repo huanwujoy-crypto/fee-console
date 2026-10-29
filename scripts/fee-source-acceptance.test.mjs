@@ -1,5 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
-import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
+import {CLOUD_ACCOUNTS,parseSourceJson,SharesightCloudReader,normalizeRead} from './fee-cloud-source.mjs';
+import {resolveTradeCashEvidence,isControlledWebullPrincipal} from './fee-trade-cash-evidence.mjs';
+import {resolveManagementExemptions} from './fee-management-exemption.mjs';
 import {buildManagedTransferProof,consumeManagedTransferProof} from './fee-sharesight-transfers.mjs';
 import {captureSourceAcceptance,acceptanceTransport,verifySourceAcceptanceMain} from './fee-source-acceptance.mjs';
 import {classifyFlow,reconcileFlows} from './daily-core.mjs';
@@ -137,4 +139,234 @@ test('signed native disposal is still a positive receiver noncash flow, never ca
  }
 });
 
+}
+
+// Shared paid-cash association regressions execute on the existing formal source path.
+{
+const D='2026-10-28',P='2026-10-27',wire=x=>parseSourceJson(JSON.stringify(x));
+const instrument={id:99,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
+function fixture(side='BUY',kind='short',fee=1){
+ const portfolio={id:CLOUD_ACCOUNTS.webull.portfolioId,name:'Webull'},quantity=2,price=10,gross=20;
+ const movement=side==='BUY'?-(gross+fee):gross-fee;
+ const key=`webull.manual|10205226|aaaaaaaaaaaaaaaa|${side}|SYNTH|2|10`;
+ const t={id:222,portfolio_id:portfolio.id,holding_id:4,transaction_date:D,state:'confirmed',description_code:side,
+  instrument,quantity,price,price_currency_code:'USD',brokerage:fee,brokerage_currency_code:'USD',value:side==='BUY'?-movement:-movement,
+  comments:`Synthetic confirmed source; key=${key}.`};
+ const row={id:333,cash_account_id:8,date_time:D+'T04:00:00Z',amount:movement,balance:100+movement,
+  cash_account_transaction_type:{name:side==='BUY'?'WITHDRAWAL':'DEPOSIT'},trade_id:null,holding_id:null,payout_id:null,foreign_identifier:null,
+  description:`Webull SYNTH ${side} 2@10; NOT external funding. Trade222; Gmailaaaaaaaaaaaaaaaa; gross20, fee${fee}, cash${movement}. key=${key}|cash`};
+ if(kind==='long')row.description=`Webull SYNTH ${side} securities principal; NOT external funding. Trade222; Gmailaaaaaaaaaaaaaaaa; filled 2026/10/28 09:30:00 EDT; 2@USD10, actual transaction fee${fee}. Source phone cash matched by exact six-trade bridge. key=webull.manual|10205226|...`;
+ if(kind==='native'||kind==='string-native'){row.description='native source';row.trade_id=kind==='native'?t.id:String(t.id);}
+ if(kind==='net'){
+  const order='ABCDEF0123456789ABCD';
+  t.comments=`Webull SYNTH SELL 2 shares on ${D} at USD10; order ${order}. Commission USD0; actual fee USD1.00 recorded in trade fees. Gross USD20.00; net USD19.00.`;
+  row.description=`Webull SYNTH SELL net proceeds; NOT external funding. Order ${order}; Sharesight trade 222; ${D}; gross USD20.00 less fee USD1.00 = net USD19.00. Fee included, no separate fee debit.`;
+ }
+ if(kind==='principal'){
+  const order='ABCDEF0123456789ABCD';
+  t.comments=`Webull account 10205226; ${D} source; order ${order}; synthetic.`;
+  row.description=`Webull SYNTH ${side} securities principal; NOT external funding; order ${order}; Sharesight trade 222; ${D} 09:30:00 EDT; source fee USD 0.00.`;
+ }
+ const holding=(q,p=portfolio,id=4)=>({id,quantity:q,value:q*10,instrument,instrument_currency:{code:'USD'},valid_position:true,portfolio:p});
+ const report=(date,q,cash)=>({report:{portfolio_id:portfolio.id,start_date:date,end_date:date,include_sales:false,
+  portfolio_tz_name:'America/New_York',currency:{code:'USD'},value:q*10+cash,holdings:[holding(q)],
+  cash_accounts:[{id:8,value:cash,currency:{code:'USD'},portfolio}]}});
+ const before=side==='BUY'?1:3,after=side==='BUY'?3:1;
+ const raw={previousPerformance:report(P,before,100),performance:report(D,after,100+movement),
+  trades:{trades:[t]},cashTransactions:{8:{cash_account_transactions:[row]}}};
+ for(const k of ['previousPerformance','performance','trades'])raw[k]=wire(raw[k]);
+ return {account:'webull',portfolio,targetDate:D,raw};
+}
+const resolve=f=>resolveTradeCashEvidence({account:f.account,portfolioId:f.portfolio.id,targetDate:f.targetDate,
+ trades:f.raw.trades.trades,cashRows:Object.values(f.raw.cashTransactions).flatMap(p=>p.cash_account_transactions),cashAccounts:f.raw.performance.report.cash_accounts});
+function assertNotMatched(f,message){
+ try{assert.equal(resolve(f).cashForTrade.size,0,message);}catch(error){
+  if(error.message!=='FEE_NONCASH_TRADE_CASH_UNVERIFIED')throw error;
+ }
+}
+test('shared resolver accepts observed short BUY/SELL, explicit abbreviated form and both legacy formats',()=>{
+ for(const [side,kind,fee]of [['BUY','short',1],['SELL','short',1],['BUY','long',1],['BUY','principal',0],['SELL','net',1],['BUY','native',1],['BUY','string-native',1]]){
+  const f=fixture(side,kind,fee),r=resolve(f);assert.equal(r.cashForTrade.get(222),333,kind);
+  assert.equal(r.tradeForCash.get(333),222);const proof=buildManagedTransferProof(f);
+  assert.equal(consumeManagedTransferProof(proof,'webull',D).length,0,'ordinary paid cash is not a transfer');
+  assert.equal(consumeManagedTransferProof(buildManagedTransferProof(f),'webull',D).length,0,'repeat creates no transfer');
+ }
+});
+test('new manual association rejects account/date/side/security/quantity/price/fee/net/key mismatches',()=>{
+ const changes=[f=>f.account='schwab',f=>f.raw.trades.trades[0].portfolio_id++,
+  f=>f.raw.trades.trades[0].transaction_date=P,f=>f.raw.cashTransactions[8].cash_account_transactions[0].date_time=P+'T04:00Z',
+  f=>f.raw.trades.trades[0].state='pending',f=>f.raw.trades.trades[0].description_code='SELL',
+  f=>f.raw.trades.trades[0].instrument.code='OTHER',f=>f.raw.trades.trades[0].quantity=3,
+  f=>f.raw.trades.trades[0].price=11,f=>f.raw.trades.trades[0].brokerage=2,
+  f=>f.raw.trades.trades[0].value=String(f.raw.trades.trades[0].value),
+  f=>f.raw.trades.trades[0].brokerage=String(f.raw.trades.trades[0].brokerage),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].amount=String(f.raw.cashTransactions[8].cash_account_transactions[0].amount),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].amount=-22,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('fee1','fee2'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('cash-21','cash-22'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('Trade222','Trade223'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('Gmailaaaaaaaaaaaaaaaa','Gmailbbbbbbbbbbbbbbbb'),
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description+=' unknown',
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].cash_account_id++,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].payout_id=1,
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].holding_id=5,
+  f=>f.raw.trades.trades[0].brokerage_currency_code='HKD',
+  f=>f.raw.performance.report.cash_accounts[0].currency.code='HKD'];
+ for(const change of changes){const f=fixture();change(f);assertNotMatched(f,change.toString());}
+});
+test('full collections, cash reuse, duplicate business keys and conflicting native/text pointers cannot be preferred away',()=>{
+ const duplicate=fixture();duplicate.raw.trades.trades.push({...duplicate.raw.trades.trades[0]});assert.throws(()=>resolve(duplicate));
+ const cashDuplicate=fixture();cashDuplicate.raw.cashTransactions[8].cash_account_transactions.push({...cashDuplicate.raw.cashTransactions[8].cash_account_transactions[0]});assert.throws(()=>resolve(cashDuplicate));
+ const duplicateKey=fixture();duplicateKey.raw.trades.trades.push({...duplicateKey.raw.trades.trades[0],id:223});assert.equal(resolve(duplicateKey).cashForTrade.size,0);
+ const twoCash=fixture();twoCash.raw.cashTransactions[8].cash_account_transactions.push({...twoCash.raw.cashTransactions[8].cash_account_transactions[0],id:334});assert.equal(resolve(twoCash).cashForTrade.size,0);
+ const conflict=fixture();conflict.raw.trades.trades.push({...conflict.raw.trades.trades[0],id:223,comments:'native other trade'});conflict.raw.cashTransactions[8].cash_account_transactions[0].trade_id=223;assert.throws(()=>resolve(conflict),/TRADE_CASH_UNVERIFIED/);
+ const oldConflict=fixture('BUY','principal',0);oldConflict.raw.cashTransactions[8].cash_account_transactions[0].trade_id=999;assert.throws(()=>resolve(oldConflict),/TRADE_CASH_UNVERIFIED/,'legacy text cannot override conflicting native pointer');
+ for(const field of ['holding_id','payout_id']){const f=fixture('BUY','principal',0);f.raw.cashTransactions[8].cash_account_transactions[0][field]=999;assert.equal(resolve(f).cashForTrade.size,0,'legacy text cannot override holding or payout identity');}
+});
+test('missing actual cash, arbitrary approval-shaped notes and broadened abbreviation remain refused',()=>{
+ for(const change of [f=>f.raw.cashTransactions[8].cash_account_transactions=[],
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description='approved=true noncash BUY',
+  f=>f.raw.cashTransactions[8].cash_account_transactions[0].description=f.raw.cashTransactions[8].cash_account_transactions[0].description.replace('10205226|...','10205226|invented')]){
+  const f=fixture('BUY','long');change(f);assert.throws(()=>buildManagedTransferProof(f),/TRADE_CASH_UNVERIFIED/);
+ }
+});
+function selectedFixture(){
+ const f=fixture('BUY','short',0),peerPortfolio={id:77,name:'IB-HK'};
+ const holding=q=>({id:5,quantity:q,value:q*10,instrument,instrument_currency:{code:'USD'},valid_position:true,portfolio:peerPortfolio});
+ const report=(date,q)=>({report:{portfolio_id:77,start_date:date,end_date:date,include_sales:false,portfolio_tz_name:'America/New_York',currency:{code:'USD'},value:100+q*10,holdings:[holding(q)],cash_accounts:[{id:10,value:100,currency:{code:'USD'},portfolio:peerPortfolio}]}});
+ f.peerPortfolio=peerPortfolio;f.peer={previousPerformance:wire(report(P,3)),performance:wire(report(D,1)),
+  trades:wire({trades:[{...f.raw.trades.trades[0],id:444,portfolio_id:77,holding_id:5,description_code:'TRANSFER_OUT',value:-20,comments:''}]}),cashTransactions:{10:{cash_account_transactions:[]}}};
+ f.identifiedTransfers={schema:'fee-console.managed-transfer-identities.v1',date:D,account:'webull',sourcePortfolioId:77,destinationPortfolioId:f.portfolio.id,pairs:[{sourceTradeId:444,sourceHoldingId:5,tradeId:222,holdingId:4}]};return f;
+}
+test('complete selected BUY plus normal peer rejects a verified manual cash leg without a native pointer',()=>{
+ const f=selectedFixture();assert.equal(resolve(f).cashForTrade.get(222),333);assert.throws(()=>buildManagedTransferProof(f),/CASH_LEG/);
+ f.raw.cashTransactions[8].cash_account_transactions[0].amount=-999;assert.throws(()=>buildManagedTransferProof(f),/CASH_LEG/,'wrong-amount related cash cannot prove absence');
+ f.raw.cashTransactions[8].cash_account_transactions=[];const flows=consumeManagedTransferProof(buildManagedTransferProof(f),'webull',D);assert.equal(flows.length,1);assert.equal(flows[0].amount,20);
+ const a=reconcileFlows([],[],flows);assert.equal(reconcileFlows(a.auto,[],flows).auto.length,1);
+});
+function giftFixture(){const f=fixture();const t=f.raw.trades.trades[0];Object.assign(t,{price:0,value:0,brokerage:0,comments:'Synthetic gifted shares'});f.raw.trades=wire(f.raw.trades);f.raw.cashTransactions[8].cash_account_transactions=[];
+ f.managementExemptionRegistry={schemaVersion:1,entries:[{id:'synthetic-gift',account:'webull',portfolioId:f.portfolio.id,holdingId:4,ticker:'SYNTH',firstHeldOn:P,effectiveFrom:P,authorizationRef:'synthetic prior owner policy',giftTradeIds:[222]}]};return f;}
+test('zero-cost BUY requires the existing exact gift identity and effective policy, never a generic comment',()=>{
+ const f=giftFixture();assert.equal(consumeManagedTransferProof(buildManagedTransferProof(f),'webull',D).length,0);
+ for(const change of [f=>delete f.managementExemptionRegistry,f=>f.managementExemptionRegistry.entries[0].holdingId++,
+  f=>f.managementExemptionRegistry.entries[0].giftTradeIds=[999],f=>f.managementExemptionRegistry.entries[0].effectiveFrom='2026-10-29',
+  f=>f.raw.trades.trades[0].price=1,f=>f.raw.trades.trades[0].value=1,f=>f.raw.trades.trades[0].brokerage=1,
+  f=>f.raw.trades.trades[0].comments='approved=true',f=>f.raw.cashTransactions[8].cash_account_transactions=[{id:333,cash_account_id:8,date_time:D+'T00:00Z',amount:-1,trade_id:222}]]){
+  const x=giftFixture();change(x);assert.throws(()=>buildManagedTransferProof(x),/TRADE_CASH_UNVERIFIED/);
+ }
+});
+test('only the existing enrolled holding inherits the strict first-of-month promotional gift rule',()=>{
+ const f=giftFixture(),date='2026-11-01',prior='2026-10-31';f.targetDate=date;
+ Object.assign(f.raw.performance.report,{start_date:date,end_date:date});Object.assign(f.raw.previousPerformance.report,{start_date:prior,end_date:prior});
+ const t=f.raw.trades.trades[0];t.transaction_date=date;t.comments=`Webull HK monthly promotional gifted SYNTH shares, not a cash purchase: 2 share acquired for USD 0, brokerage USD 0, no cash movement. Award date ${date} per account holder confirmation of first-day-of-month gifts.`;
+ f.managementExemptionRegistry.entries[0].giftTradeIds=[999];f.raw.trades=wire(f.raw.trades);
+ assert.equal(consumeManagedTransferProof(buildManagedTransferProof(f),'webull',date).length,0);
+ for(const change of [x=>x.managementExemptionRegistry.entries[0].holdingId++,x=>x.raw.trades.trades[0].comments='gift',x=>x.raw.trades.trades[0].comments=x.raw.trades.trades[0].comments.replace('2 share','3 share')]){
+  const x=structuredClone(f);for(const k of ['performance','previousPerformance','trades'])x.raw[k]=wire(x.raw[k]);change(x);assert.throws(()=>buildManagedTransferProof(x),/TRADE_CASH_UNVERIFIED/);
+ }
+});
+test('period reader receives gift policy from decrypted base, not from a source-response claim',async()=>{
+ const fs=await import('node:fs');const text=fs.readFileSync(new URL('./fee-report-producer.mjs',import.meta.url),'utf8');
+ assert.match(text,/managementExemptionRegistry:payload\.managementExemptionRegistry/);
+});
+
+function transport(f){
+ const calls=[],portfolio=f.portfolio,schwab={id:CLOUD_ACCOUNTS.schwab.portfolioId,name:'Schwab-HK'};
+ const response=(url,x)=>{const r=new Response(JSON.stringify(x),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
+ const empty=date=>({report:{portfolio_id:schwab.id,start_date:date,end_date:date,include_sales:false,portfolio_tz_name:'America/New_York',currency:{code:'USD'},value:100,holdings:[],cash_accounts:[{id:9,value:100,currency:{code:'USD'},portfolio:schwab}]}});
+ return {calls,fetchImpl:async(url,init)=>{const u=new URL(url),p=u.pathname,q=u.searchParams;calls.push(p);assert.equal(u.origin,'https://api.sharesight.com');assert.equal(init.redirect,'error');let data;
+  if(p==='/oauth2/token')data={access_token:'synthetic-12345678901234567890',token_type:'bearer'};
+  else if(p==='/api/v2/portfolios.json')data={portfolios:[portfolio,schwab,...(f.peerPortfolio?[f.peerPortfolio]:[])].map(x=>({...x,currency_code:'USD'}))};
+  else if(p.includes('/portfolios/')){const pid=Number(p.split('/')[4]),isWebull=pid===portfolio.id,isPeer=pid===f.peerPortfolio?.id,date=q.get('end_date')||q.get('date');assert.ok(isWebull||isPeer||pid===schwab.id);
+   if(p.endsWith('/performance'))data=isWebull?(date===D?f.raw.performance:f.raw.previousPerformance):isPeer?(date===D?f.peer.performance:f.peer.previousPerformance):empty(date);
+   else if(p.endsWith('/holdings'))data={holdings:isWebull?f.raw.performance.report.holdings.map(h=>({...h,inception_date:P})):[]};
+   else if(p.endsWith('/trades.json'))data=isWebull?(!q.has('start_date')&&f.history?f.history:f.raw.trades):isPeer?f.peer.trades:{trades:[]};
+   else if(p.endsWith('/cash_accounts.json')){const amount=isWebull?f.raw.performance.report.cash_accounts[0].value:100;data={cash_accounts:[{id:isWebull?8:isPeer?10:9,portfolio_id:pid,currency:'USD',portfolio_currency:'USD',date,balance:amount,balance_in_portfolio_currency:amount}]};}
+   else assert.fail('unexpected fixed route');
+  }else if(p.includes('/cash_accounts/')){const cashId=Number(p.split('/')[4]);assert.ok([8,9,10].includes(cashId));const own=cashId===8?f.raw.cashTransactions[8].cash_account_transactions:cashId===10?f.peer.cashTransactions[10].cash_account_transactions:[];
+   const opening=cashId===8?f.raw.previousPerformance.report.cash_accounts[0].value:100;
+   data={cash_account_transactions:q.has('from')?own:[{id:999+cashId,cash_account_id:cashId,date_time:P+'T00:00Z',amount:0,balance:opening,cash_account_transaction_type:{name:'FEE'}},...own]};}
+  else assert.fail('unexpected endpoint');return response(url,data);
+ }};
+}
+test('actual reader → transfer activity → normalizer uses the same manual pair and produces only internal cash',async()=>{
+ for(const [side,kind]of [['BUY','short'],['SELL','short'],['BUY','long'],['SELL','net']]){
+  const f=fixture(side,kind),io=transport(f),reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:io.fetchImpl,reconcileInKind:true});
+  const raw=await reader.readOnce(D),out=normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0});
+  const cash=out.flows.find(x=>x.acct==='webull');assert.equal(cash.evidence,'internal_trade');assert.equal(cash.tradeId,222);assert.equal(classifyFlow(cash).kind,'internal');
+  assert.equal(out.flows.filter(x=>x.evidence==='external_asset_transfer').length,0);assert.ok(!io.calls.some(p=>p.includes('/77/')));
+ }
+});
+test('unknown or conflicting explicit text pointers stop the actual reader and normalizer before native fallback',async()=>{
+ for(const change of [row=>row.description=row.description.replace('Trade222','Trade999'),
+  row=>row.description=row.description.replace('Trade222','Tradeinvalid'),row=>row.description+=' Trade999;']){
+  const f=fixture();f.raw.cashTransactions[8].cash_account_transactions[0].trade_id=222;
+  change(f.raw.cashTransactions[8].cash_account_transactions[0]);
+  assert.throws(()=>resolve(f),/TRADE_CASH_UNVERIFIED/);
+  const reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl,reconcileInKind:true});
+  await assert.rejects(reader.readOnce(D),/TRADE_CASH_UNVERIFIED/);
+  const raw=await new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl}).readOnce(D);
+  assert.throws(()=>normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0}),/TRADE_CASH_UNVERIFIED/);
+ }
+ const valid=fixture();valid.raw.cashTransactions[8].cash_account_transactions[0].trade_id=222;
+ assert.equal(resolve(valid).cashForTrade.get(222),333,'consistent native/text pointers still work');
+});
+test('actual reader gift identity continues into the unchanged mixed-lot exemption resolver; unknown gift stays refused',async()=>{
+ const f=giftFixture();f.raw.performance.report.cash_accounts[0].value=100;f.raw.performance.report.value=130;
+ f.history={trades:[{...f.raw.trades.trades[0],id:111,transaction_date:P,description_code:'OPENING_BALANCE',quantity:1,price:10,value:10,comments:'paid pre-existing lot'},f.raw.trades.trades[0]]};
+ const io=transport(f),reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:io.fetchImpl,reconcileInKind:true,managementExemptionRegistry:f.managementExemptionRegistry});
+ const raw=await reader.readOnce(D),out=normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0});
+ const {proposals,...input}=out.managementInput;
+ const result=resolveManagementExemptions({registry:f.managementExemptionRegistry,input,date:D,accounts:out.accounts});
+ assert.equal(result.rows[0].valueUsd,20,'only the registered gifted lot is exempt, not the pre-existing paid lot');
+ assert.equal(out.flows.length,0);assert.equal(consumeManagedTransferProof(raw.webull.managedTransferProof,'webull',D).length,0);
+ const unknown=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl,reconcileInKind:true});
+ await assert.rejects(unknown.readOnce(D),/TRADE_CASH_UNVERIFIED/);
+});
+function useHoldingPrincipal(f,amount,opening=2000){
+ const t=f.raw.trades.trades[0],order='ABCDEF0123456789ABCD';
+ t.comments=`Webull account 10205226; ${D} source; order ${order}; synthetic gifted-or-paid identity.`;
+ const row=f.raw.cashTransactions[8].cash_account_transactions[0]||{id:333,cash_account_id:8,date_time:D+'T04:00Z',cash_account_transaction_type:{name:'WITHDRAWAL'},trade_id:null,payout_id:null};
+ Object.assign(row,{amount,balance:opening+amount,holding_id:4,
+  description:`Webull SYNTH BUY securities principal; NOT external funding; order ${order}; holding 4; ${D} 09:30:00 EDT; source fee USD 0.00.`});
+ f.raw.cashTransactions[8].cash_account_transactions=[row];
+ f.raw.previousPerformance.report.cash_accounts[0].value=opening;
+ f.raw.previousPerformance.report.value=opening+f.raw.previousPerformance.report.holdings[0].value;
+ f.raw.performance.report.cash_accounts[0].value=opening+amount;
+ f.raw.performance.report.value=opening+amount+f.raw.performance.report.holdings[0].value;
+ return row;
+}
+test('holding plus unique legacy order remains related when economics fail, and selected BUY cannot hide that cash',async()=>{
+ for(const amount of [-20,-999]){
+  const f=selectedFixture();useHoldingPrincipal(f,amount);
+  assert.deepEqual(resolve(f).relatedCash.get(222),[333]);
+  assert.equal(resolve(f).cashForTrade.has(222),amount===-20);
+  assert.throws(()=>buildManagedTransferProof(f),/CASH_LEG/);
+  const reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl,reconcileInKind:true,managedTransferIdentities:f.identifiedTransfers});
+  await assert.rejects(reader.readOnce(D),/CASH_LEG/);
+ }
+ const none=selectedFixture();useHoldingPrincipal(none,0);none.raw.cashTransactions[8].cash_account_transactions=[];
+ const reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(none).fetchImpl,reconcileInKind:true,managedTransferIdentities:none.identifiedTransfers});
+ const raw=await reader.readOnce(D),out=normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0});
+ assert.equal(out.flows.length,1);assert.equal(out.flows[0].evidence,'external_asset_transfer');assert.equal(out.flows[0].amount,20);
+});
+test('same holding alone never turns an unrelated dividend into trade principal',()=>{
+ const f=selectedFixture(),row=useHoldingPrincipal(f,5);
+ Object.assign(row,{description:'Synthetic confirmed dividend',payout_id:7,cash_account_transaction_type:{name:'DEPOSIT'}});
+ assert.equal(resolve(f).relatedCash.has(222),false);
+ assert.equal(consumeManagedTransferProof(buildManagedTransferProof(f),'webull',D).length,1,'separate income evidence is outside this transfer relation');
+});
+test('legacy one-cent classification cannot authorise zero-economic paid BUY or bypass gift zero-cash, with or without registry',async()=>{
+ for(const registered of [true,false]){
+  const f=giftFixture(),row=useHoldingPrincipal(f,-0.01);
+  f.history={trades:[{...f.raw.trades.trades[0],id:111,transaction_date:P,description_code:'OPENING_BALANCE',quantity:1,price:10,value:10,comments:'paid prior lot'},f.raw.trades.trades[0]]};
+  if(!registered)delete f.managementExemptionRegistry;
+  assert.equal(isControlledWebullPrincipal({account:'webull',row,movement:row.amount,targetDate:D,trades:f.raw.trades.trades}),true,'old tolerance is unchanged, not used as paid authority');
+  assert.throws(()=>resolve(f),/TRADE_CASH_UNVERIFIED/);
+  const reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl,reconcileInKind:true,managementExemptionRegistry:f.managementExemptionRegistry});
+  await assert.rejects(reader.readOnce(D),/TRADE_CASH_UNVERIFIED/);
+  const raw=await new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl}).readOnce(D);
+  assert.throws(()=>normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0}),/TRADE_CASH_UNVERIFIED/);
+ }
+});
 }

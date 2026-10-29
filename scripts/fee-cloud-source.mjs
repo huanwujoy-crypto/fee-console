@@ -6,6 +6,10 @@
 import crypto from "node:crypto";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof,validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
+import {validateManagementRegistry} from './fee-management-exemption.mjs';
+
+import {resolveTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
+export {isControlledWebullNetProceeds} from './fee-trade-cash-evidence.mjs';
 
 const API = "https://api.sharesight.com";
 const TOKEN_URL = `${API}/oauth2/token`;
@@ -338,75 +342,6 @@ export function catalogScopeEvidence(listing, report, historyPayload, targetTrad
 import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
 import { notificationIncomeAudits } from './fee-income-date-policy.mjs';
 
-const CONTROLLED_WEBULL_PRINCIPAL_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) (BUY|SELL) securities principal; NOT external funding; order ([A-Z0-9]{16,40}); (?:holding ([1-9]\d{0,14})|Sharesight trade ([1-9]\d{0,14})); (\d{4}-\d{2}-\d{2}) \d{2}:\d{2}:\d{2} EDT; source fee USD (\d+\.\d{2})\.$/;
-
-function isControlledWebullPrincipal({ account, row, movement, targetDate, trades }) {
-  if (account !== "webull" || !/^(?:DEPOSIT|WITHDRAWAL)$/i.test(String(row.cash_account_transaction_type?.name || ""))) {
-    return false;
-  }
-  const description = typeof row.description === "string" ? row.description : "";
-  const match = CONTROLLED_WEBULL_PRINCIPAL_RE.exec(description);
-  if (!match || match[6] !== targetDate) return false;
-  const [, ticker, side, orderId, holdingIdText, tradeIdText] = match;
-  const expectedMovement = side === "BUY" ? -Math.abs(movement) : Math.abs(movement);
-  if (Math.abs(expectedMovement - movement) > 0.01) return false;
-  const matches = trades.filter(trade => {
-    const value = Number(trade.value);
-    const comments = typeof trade.comments === "string" ? trade.comments : "";
-    return id(trade.portfolio_id) === CLOUD_ACCOUNTS.webull.portfolioId
-      && trade.transaction_date === targetDate
-      && trade.state === "confirmed"
-      && trade.description_code === side
-      && exactTicker(trade.instrument?.code) === ticker
-      && finite(value) && Math.abs(Math.abs(value) - Math.abs(movement)) <= 0.01
-      && comments.startsWith("Webull account 10205226;")
-      && comments.includes(`; order ${orderId};`)
-      && (holdingIdText ? id(trade.holding_id) === Number(holdingIdText) : id(trade.id) === Number(tradeIdText));
-  });
-  return matches.length === 1;
-}
-
-// Strict support for the reviewed net-proceeds format. Text alone is never proof.
-const NET_PROCEEDS_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) SELL net proceeds; NOT external funding\. Order ([A-Z0-9]{16,40}); Sharesight trade ([1-9]\d{0,14}); (\d{4}-\d{2}-\d{2}); gross USD(\d+\.\d{2}) less fee USD(\d+\.\d{2}) = net USD(\d+\.\d{2})\. Fee included, no separate fee debit\.$/;
-const NET_TRADE_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) SELL (\d+(?:\.\d+)?) shares on (\d{4}-\d{2}-\d{2}) at USD(\d+(?:\.\d+)?); order ([A-Z0-9]{16,40})\. Commission USD(\d+(?:\.\d{1,2})?); actual fee USD(\d+\.\d{2}) recorded in trade fees\. Gross USD(\d+\.\d{2}); net USD(\d+\.\d{2})\.$/;
-const exactCents = value => {
-  if (!finite(value) || value < 0 || value > 1e12) return null;
-  const cents = Math.round(value * 100);
-  return Number.isSafeInteger(cents) && Math.abs(value * 100 - cents) < 1e-4 ? cents : null;
-};
-export function isControlledWebullNetProceeds({ account, row, movement, targetDate, trades }) {
-  if (account !== 'webull' || row.cash_account_transaction_type?.name !== 'DEPOSIT'
-      || row.payout_id != null || String(row.date_time || '').slice(0, 10) !== targetDate
-      || !Number.isSafeInteger(row.id) || row.id <= 0
-      || !Number.isSafeInteger(row.cash_account_id) || row.cash_account_id <= 0 || !finite(movement) || movement <= 0 || !Array.isArray(trades)) return false;
-  const cash = NET_PROCEEDS_RE.exec(typeof row.description === 'string' ? row.description : '');
-  if (!cash || cash[4] !== targetDate) return false;
-  const [, ticker, order, tradeId, , grossText, feeText, netText] = cash;
-  const byId = trades.filter(t => String(t.id) === tradeId);
-  const byOrder = trades.filter(t => typeof t.comments === 'string' && t.comments.includes(`; order ${order}.`));
-  if (byId.length !== 1 || byOrder.length !== 1 || byId[0] !== byOrder[0]) return false;
-  const trade = byId[0], proof = NET_TRADE_RE.exec(trade.comments);
-  if (!proof || trade.portfolio_id !== CLOUD_ACCOUNTS.webull.portfolioId
-      || trade.transaction_date !== targetDate || trade.state !== 'confirmed'
-      || trade.description_code !== 'SELL' || trade.instrument?.code !== ticker
-      || !Number.isSafeInteger(trade.holding_id) || trade.holding_id <= 0
-      || !(trade.price_currency_code === 'USD' || (trade.price_currency_code == null && trade.instrument?.currency_code === 'USD'))
-      || trade.brokerage_currency_code !== 'USD'
-      || !finite(trade.price) || trade.price <= 0 || !finite(trade.quantity) || trade.quantity <= 0
-      || !finite(trade.value) || trade.value >= 0
-      || (row.trade_id != null && String(row.trade_id) !== tradeId)
-      || (row.holding_id != null && row.holding_id !== trade.holding_id)) return false;
-  const gross = exactCents(Number(grossText)), fee = exactCents(Number(feeText)), net = exactCents(Number(netText));
-  return gross !== null && fee !== null && net !== null && gross > 0 && net > 0
-    && gross - fee === net && exactCents(movement) === net && exactCents(Math.abs(trade.value)) === net
-    && exactCents(trade.brokerage) === fee && Math.abs(trade.price * trade.quantity * 100 - gross) < 0.5
-    && proof[1] === ticker && proof[3] === targetDate && proof[5] === order
-    && Number(proof[2]) === trade.quantity && Number(proof[4]) === trade.price
-    && exactCents(Number(proof[6])) !== null && Number(proof[6]) <= Number(feeText)
-    && exactCents(Number(proof[7])) === fee && exactCents(Number(proof[8])) === gross
-    && exactCents(Number(proof[9])) === net;
-}
-
 function verifyBenchmarkIdentity(cache) {
   if (!object(cache) || cache.v !== 1 || !object(cache.benchmarks)) fail('BENCHMARK_SCHEMA');
   for (const [key, symbol, exchange] of [['spy','SPY','NYSEArca'],['qqq','QQQ','NasdaqGS']]) {
@@ -621,6 +556,9 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   if (trades.some(row => id(row.portfolio_id) !== expected.portfolioId || row.transaction_date !== targetDate
       || row.state !== 'confirmed')) fail('TRADE_IDENTITY');
   const tradeIds = new Set(trades.map(row => id(row.id)));
+  const tradeCash=resolveTradeCashEvidence({account,portfolioId:expected.portfolioId,targetDate,trades,
+    cashRows:Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions')),
+    cashAccounts:listedCash});
   const flows = [];
   const seenTransactions = new Set();
   let movementTotal = 0;
@@ -645,17 +583,14 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         && /^(?:DEPOSIT|WITHDRAWAL)$/i.test(String(row.cash_account_transaction_type?.name || ""))
         && /^webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(foreignIdentifier)
         && /^Webull [A-Z0-9./^-]+ (?:BUY|SELL) securities principal; NOT external funding; webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(description);
-      const matchedControlledWebullPrincipal = isControlledWebullPrincipal({
-        account, row: { ...row, description }, movement, targetDate, trades,
-      });
       flows.push({
         date: targetDate, acct: account, amount: movement,
         desc: description,
         type: typeof row.cash_account_transaction_type?.name === "string" ? row.cash_account_transaction_type.name : "",
-        tradeId: row.trade_id == null ? null : id(row.trade_id),
+        tradeId: row.trade_id == null ? (tradeCash.tradeForCash.get(id(row.id)) ?? null) : id(row.trade_id),
         holdingId: row.holding_id == null ? null : id(row.holding_id),
         foreignIdentifier,
-        ...(legacyControlledWebullPrincipal || matchedControlledWebullPrincipal || isControlledWebullNetProceeds({ account, row: { ...row, description }, movement, targetDate, trades }) ? { evidence: "internal_trade" } : {}),
+        ...(legacyControlledWebullPrincipal || tradeCash.tradeForCash.has(id(row.id)) ? { evidence: "internal_trade" } : {}),
         ...(incomeEvidence.get(row.id) || {}),
       });
     }
@@ -829,9 +764,10 @@ class FixedHttp {
 }
 
 export class SharesightCloudReader {
-  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null,managedTransferIdentities=null } = {}) {
+  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null,managedTransferIdentities=null,managementExemptionRegistry } = {}) {
     if(typeof reconcileInKind!=='boolean')fail('CONFIG');this.reconcileInKind=reconcileInKind;
     this.managedTransferIdentities=managedTransferIdentities==null?null:structuredClone(validateManagedTransferIdentities(managedTransferIdentities));
+    this.managementExemptionRegistry=validateManagementRegistry(managementExemptionRegistry);
     if(this.managedTransferIdentities&&!reconcileInKind)fail('CONFIG');
     this.incomeDateEvidence=incomeDateEvidence;
     if (![clientId, clientSecret].every(value => typeof value === "string" && value.length >= 1 && value.length <= 8192
@@ -919,7 +855,7 @@ export class SharesightCloudReader {
         for(const c of rows(cashAccounts,'cash_accounts')){if(c.portfolio_id!==peerPortfolio.id)fail('CASH_IDENTITY');const cashId=id(c.id);cashTransactions[cashId]=await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`,token);}
         peer={performance,previousPerformance,trades,cashTransactions};
       }
-      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate,identifiedTransfers:identitiesFor(account)});
+      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate,identifiedTransfers:identitiesFor(account),managementExemptionRegistry:this.managementExemptionRegistry});
     }
     return raw;
   }

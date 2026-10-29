@@ -122,9 +122,15 @@ export function sourceAttemptWindowStart(plan){
 // One reviewed recovery only, on the unique immediate successor of this main.
 // The parent pin avoids a self-referential SHA; dispatch also pins the actual
 // signed merge SHA. Every later main is ineligible without a new policy review.
-const RECOVERY_BASE='fbb79a694acb232fbdb522939d98a933da03b1f2';
+const RECOVERY_BASE='50d6454b062030d4ee6565a4d879c56b68e65911';
 const RECOVERY_TARGET='2026-10-28';
-const RECOVERY_FAILED_RUNS=Object.freeze([40803101364,40805169117]);
+const RECOVERY_FAILED_RUNS=Object.freeze([
+  {id:40803101364,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
+  {id:40805169117,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
+  {id:40815850578,head:RECOVERY_BASE},
+]);
+// Filled from the final index-only candidate bytes before this package freezes.
+const RECOVERY_UI_BLOB='1f1218943293e035bbfe07fa56e9b74341c22177';
 const RECOVERY_OWNER=283054367;
 export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,fetchImpl=globalThis.fetch}={}){
   if(!validateReportPlan(plan)||!Number.isFinite(now?.getTime()))fail('SOURCE_ATTEMPT_METADATA');
@@ -177,20 +183,34 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
   if(!/^[a-f0-9]{40}$/.test(expectedMain||''))fail('RECOVERY_RELEASE');
   const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
   const get=p=>boundedJson(fetchImpl,root+p,{method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:5000,maxBytes:512*1024});
-  let ref,commit;try{[ref,commit]=await Promise.all([get('git/ref/heads/main'),get('commits/'+expectedMain)]);}catch{fail('RECOVERY_METADATA');}
-  if(ref.object?.sha!==expectedMain||commit.sha!==expectedMain||commit.parents?.length!==1||commit.parents[0].sha!==RECOVERY_BASE
-      ||commit.author?.id!==RECOVERY_OWNER||commit.author?.login!=='huanwujoy-crypto'||!['huanwujoy-crypto','web-flow'].includes(commit.committer?.login)
-      ||commit.commit?.verification?.verified!==true||commit.commit.verification.reason!=='valid')fail('RECOVERY_RELEASE');
-  return {mainSha:expectedMain,parent:RECOVERY_BASE,signatureVerified:true};
+  let ref,commit;try{[ref,commit]=await Promise.all([get('git/ref/heads/main'),get('commits/'+expectedMain+'?per_page=1')]);}catch{fail('RECOVERY_METADATA');}
+  const signed=c=>c.author?.id===RECOVERY_OWNER&&c.author?.login==='huanwujoy-crypto'
+    &&['huanwujoy-crypto','web-flow'].includes(c.committer?.login)
+    &&c.commit?.verification?.verified===true&&c.commit.verification.reason==='valid';
+  if(ref.object?.sha!==expectedMain||commit.sha!==expectedMain||commit.parents?.length!==1
+      ||!/^[a-f0-9]{40}$/.test(commit.parents[0].sha||'')||[expectedMain,RECOVERY_BASE].includes(commit.parents[0].sha)||!signed(commit))fail('RECOVERY_RELEASE');
+  const supportSha=commit.parents[0].sha;
+  let support,comparison;
+  try{[support,comparison]=await Promise.all([get('commits/'+supportSha+'?per_page=1'),get('compare/'+supportSha+'...'+expectedMain+'?per_page=100')]);}catch{fail('RECOVERY_METADATA');}
+  // Preserve support/index-only separation. No production on support + old UI;
+  // the final approved UI successor must contain exactly the reviewed HTML.
+  if(support.sha!==supportSha||support.parents?.length!==1||support.parents[0].sha!==RECOVERY_BASE||!signed(support)
+    ||comparison.status!=='ahead'||comparison.ahead_by!==1||comparison.behind_by!==0||comparison.total_commits!==1
+    ||comparison.base_commit?.sha!==supportSha||comparison.merge_base_commit?.sha!==supportSha
+    ||comparison.commits?.length!==1||comparison.commits[0].sha!==expectedMain
+    ||comparison.files?.length!==1||comparison.files[0].filename!=='index.html'||comparison.files[0].status!=='modified'
+    ||comparison.files[0].previous_filename!==undefined||comparison.files[0].sha!==RECOVERY_UI_BLOB)fail('RECOVERY_RELEASE');
+  return {mainSha:expectedMain,parent:supportSha,baseSha:RECOVERY_BASE,supportSha,uiBlob:RECOVERY_UI_BLOB,signatureVerified:true};
 }
 export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release}={}){
   const e=budget?.recoveryEvidence,c=e?.currentRun;
   if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||plan.accountingThrough!==RECOVERY_TARGET||plan.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE'
-      ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===RECOVERY_BASE||release?.mainSha!==expectedMain||release.parent!==RECOVERY_BASE||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
+      ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===RECOVERY_BASE||release?.mainSha!==expectedMain||release.baseSha!==RECOVERY_BASE
+      ||!/^[a-f0-9]{40}$/.test(release.supportSha||'')||release.supportSha===expectedMain||release.parent!==release.supportSha||release.uiBlob!==RECOVERY_UI_BLOB||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
   if(!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0||c?.id!==Number(currentRunId)||c.head!==expectedMain||c.attempt!==1||c.event!=='workflow_dispatch'||c.workflowId!==365873934||c.actorId!==RECOVERY_OWNER||c.status!=='in_progress'||c.conclusion!==null)fail('RECOVERY_RUN');
-  if(budget.attempts!==2||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==2||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
-  if(e.entries.some(x=>!RECOVERY_FAILED_RUNS.includes(x.runId)||!Number.isSafeInteger(x.jobId)||x.jobId<=0||x.head!==RECOVERY_BASE||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+RECOVERY_TARGET||x.status!=='completed'||x.conclusion!=='failure')
-      ||new Set(e.entries.map(x=>x.runId)).size!==2||new Set(e.entries.map(x=>x.jobId)).size!==2)fail('RECOVERY_PRIOR_RUNS');
+  if(budget.attempts!==3||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==3||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
+  if(e.entries.some(x=>!RECOVERY_FAILED_RUNS.some(r=>r.id===x.runId&&r.head===x.head)||!Number.isSafeInteger(x.jobId)||x.jobId<=0||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+RECOVERY_TARGET||x.status!=='completed'||x.conclusion!=='failure')
+      ||new Set(e.entries.map(x=>x.runId)).size!==3||new Set(e.entries.map(x=>x.jobId)).size!==3)fail('RECOVERY_PRIOR_RUNS');
   return true;
 }
 export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease}={}){
@@ -319,7 +339,7 @@ async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benc
     const transferInputs=new Map(dates.map(date=>[date,managedTransferIdentitiesFromFund(economic,process.env.FEE_DATA_KEY,date)]));
     const needsFund=Array.from(transferInputs.values()).some(Boolean);
     setStage('SOURCE_READ');
-    const reads=await captureReportRange({dates,cache,readOnce:readOnce||(async date=>new SharesightCloudReader({clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,incomeDateEvidence:incomeDateEvidenceFromData(payload,date),reconcileInKind:true,managedTransferIdentities:transferInputs.get(date)}).readOnce(date))});
+    const reads=await captureReportRange({dates,cache,readOnce:readOnce||(async date=>new SharesightCloudReader({clientId:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_ID,clientSecret:process.env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,incomeDateEvidence:incomeDateEvidenceFromData(payload,date),reconcileInKind:true,managedTransferIdentities:transferInputs.get(date),managementExemptionRegistry:payload.managementExemptionRegistry}).readOnce(date))});
     let base=sourceFile,result;
     for(let i=0;i<reads.length;i++){
       setStage('PREPARE');
