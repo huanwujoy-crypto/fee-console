@@ -42,7 +42,7 @@ function rows(payload, key) {
 
 function assertComplete(payload) {
   if (!object(payload)) return;
-  if (payload.links?.next || payload.pagination?.next_page || payload.meta?.pagination?.next_page
+  if (payload.links?.next || payload.pagination?.next_page || payload.meta?.pagination?.next_page || payload.meta?.next_page
       || payload.next_page || payload.has_more === true || payload.complete === false
       || payload.restricted === true || payload.limited === true || payload.truncated === true) fail('SOURCE_INCOMPLETE');
 }
@@ -209,15 +209,34 @@ function quantityUnits(trade) {
 // A complete report including sold positions supplies end-date quantity/value.
 // History remains an identity/event audit; a BUY/SELL sum is not the terminal
 // quantity authority, especially after corporate actions or stored decimal tails.
+function catalogStartDate(listing, targetDate) {
+  return listing.map(row => date(row.inception_date)).filter(d => d <= targetDate).sort()[0] || targetDate;
+}
+
+function terminalCoverageFailure(expected, targetDate, reason) {
+  // Only fixed public aliases, the requested date and a fixed category may reach
+  // the existing safe diagnostic channel. Never append IDs, tickers or amounts.
+  const account = Object.entries(CLOUD_ACCOUNTS).find(([, known]) =>
+    known.portfolioId === expected.portfolioId && known.name === expected.name)?.[0].toUpperCase() || 'UNKNOWN';
+  fail(`HOLDING_TERMINAL_COVERAGE_${account}_${date(targetDate).replaceAll('-', '')}_${reason}`);
+}
+
 export function catalogScopeEvidence(listing, report, historyPayload, targetTrades, expected, targetDate, terminalPayload) {
   const reportRows = rows(report.holdings || [], 'holdings');
   const byId = new Map(listing.map(row => [id(row.id), row]));
   const reportIds = new Set(reportRows.map(row => id(row.id)));
-  const extra = listing.filter(row => !reportIds.has(id(row.id)));
+  // An undated catalog can contain securities first acquired after this report.
+  // A future inception alone is not authority to discard a dated position or
+  // trade. Require complete target-bounded history with no such event as well.
+  const future = listing.filter(row => typeof row.inception_date === 'string'
+    && date(row.inception_date) > targetDate);
+  const futureIds = new Set(future.map(row => id(row.id)));
+  if (future.some(row => reportIds.has(id(row.id)))) fail('HOLDING_CATALOG_DATE_CONFLICT');
+  const extra = listing.filter(row => !reportIds.has(id(row.id)) && !futureIds.has(id(row.id)));
   const identities = listing.map(row => ({ holdingId: id(row.id), ...holdingIdentity(row) }))
     .sort((a, b) => a.holdingId - b.holdingId);
-  if (!extra.length) return { identities, closed: [] };
-  const fromDate = listing.map(row => date(row.inception_date)).sort()[0];
+  if (!extra.length && !future.length) return { identities, closed: [] };
+  const fromDate = catalogStartDate(listing, targetDate);
   const terminal = terminalPayload?.report;
   assertComplete(terminalPayload); assertComplete(terminal);
   if (!object(terminal) || id(terminal.portfolio_id) !== expected.portfolioId
@@ -225,8 +244,23 @@ export function catalogScopeEvidence(listing, report, historyPayload, targetTrad
       || terminal.include_sales !== true || terminal.portfolio_tz_name !== 'America/New_York'
       || terminal.currency?.code !== 'USD' || terminal.grouping !== 'investment_type') fail('HOLDING_TERMINAL_REQUIRED');
   const terminalRows = rows(terminal.holdings, 'holdings');
-  if (terminalRows.length !== listing.length || terminalRows.some(row => !byId.has(id(row.id)))) {
-    fail('HOLDING_TERMINAL_COVERAGE');
+  const historyRows = () => {
+    if (!historyPayload) fail('HOLDING_HISTORY_REQUIRED');
+    const history = rows(historyPayload, 'trades');
+    for (const trade of history) {
+      if (id(trade.portfolio_id) !== expected.portfolioId || !byId.has(id(trade.holding_id))
+          || date(trade.transaction_date) > targetDate || trade.state !== 'confirmed') fail('HOLDING_HISTORY_IDENTITY');
+    }
+    return history;
+  };
+  const futureHistory = future.length ? historyRows() : null;
+  if (futureHistory?.some(trade => futureIds.has(id(trade.holding_id)))) fail('HOLDING_CATALOG_DATE_CONFLICT');
+  if (terminalRows.some(row => !byId.has(id(row.id)))) {
+    terminalCoverageFailure(expected, targetDate, 'UNKNOWN_ID');
+  }
+  const applicable = listing.filter(row => !futureIds.has(id(row.id)));
+  if (terminalRows.filter(row => !futureIds.has(id(row.id))).length !== applicable.length) {
+    terminalCoverageFailure(expected, targetDate, 'MISSING_ID');
   }
   const terminalById = new Map(terminalRows.map(row => [id(row.id), row]));
   const terminalProof = terminalRows.map(row => {
@@ -253,12 +287,7 @@ export function catalogScopeEvidence(listing, report, historyPayload, targetTrad
   }).sort((a, b) => a.id - b.id);
   const terminalCash = cashProof(terminal);
   if (stable(terminalCash) !== stable(cashProof(report))) fail('HOLDING_TERMINAL_CURRENT');
-  if (!historyPayload) fail('HOLDING_HISTORY_REQUIRED');
-  const history = rows(historyPayload, 'trades');
-  for (const trade of history) {
-    if (id(trade.portfolio_id) !== expected.portfolioId || !byId.has(id(trade.holding_id))
-        || date(trade.transaction_date) > targetDate || trade.state !== 'confirmed') fail('HOLDING_HISTORY_IDENTITY');
-  }
+  const history = futureHistory || historyRows();
   if (history.filter(trade => trade.transaction_date === targetDate).length !== targetTrades.length) {
     fail('HOLDING_HISTORY_CURRENT');
   }
@@ -301,7 +330,9 @@ export function catalogScopeEvidence(listing, report, historyPayload, targetTrad
       buySellContributionUnits: buySellContributionUnits.toString(), trades: proof.sort((a, b) => a.id - b.id) };
   });
   return { identities, terminal: { fromDate, targetDate, includeSales: true, holdings: terminalProof,
-    cash: terminalCash, total: exactNumberText(terminal, 'value') }, closed: closed.sort((a, b) => a.holdingId - b.holdingId) };
+    cash: terminalCash, total: exactNumberText(terminal, 'value') }, closed: closed.sort((a, b) => a.holdingId - b.holdingId),
+    ...(future.length ? {notYetHeld: future.map(row => ({holdingId: id(row.id), inception: row.inception_date}))
+      .sort((a, b) => a.holdingId - b.holdingId)} : {}) };
 }
 
 import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
@@ -868,7 +899,7 @@ export class SharesightCloudReader {
       const holdingHistory = account === 'webull' || needsHistory
         ? await this.get(`${base3}/trades.json?consolidated=false&end_date=${targetDate}`, token) : undefined;
       const managementTrades = account === 'webull' ? holdingHistory : undefined;
-      const fromDate = needsHistory ? rows(holdingsPayload, 'holdings').map(row => date(row.inception_date)).sort()[0] : undefined;
+      const fromDate = needsHistory ? catalogStartDate(rows(holdingsPayload, 'holdings'), targetDate) : undefined;
       const terminalPerformance = needsHistory ? await this.get(
         `${base3}/performance?consolidated=false&end_date=${targetDate}&grouping=investment_type&include_limited=false&include_sales=true&report_combined=false&start_date=${fromDate}`, token) : undefined;
       const cashSettings = Object.fromEntries(['tz_name', 'apply_cash_account_adjustments', 'account_for_delayed_cash_transactions',

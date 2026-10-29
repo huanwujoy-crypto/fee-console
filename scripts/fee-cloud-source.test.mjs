@@ -312,6 +312,110 @@ function closedCatalogFixture(account = 'webull', openingType = 'BUY') {
   return fixture;
 }
 
+function futureCatalogFixture(account = 'webull') {
+  const fixture = closedCatalogFixture(account), p = fixture[account];
+  p.holdings.holdings.at(-1).inception_date = '2026-09-24';
+  p.holdingHistory.trades = p.holdingHistory.trades.filter(t => t.holding_id !== 700);
+  p.terminalPerformance.report.start_date = '2026-09-22';
+  p.terminalPerformance.report.holdings = p.terminalPerformance.report.holdings.filter(h => h.id !== 700);
+  return fixture;
+}
+
+test('later catalog entries are not historical positions when dated reports and complete history agree', async () => {
+  for (const account of ['schwab', 'webull']) {
+    const baseline = normalizeRead(raw(), D, selectBenchmark(benchmarkCache, D));
+    for (const explicitZero of [false, true]) {
+      const input = futureCatalogFixture(account), p = input[account];
+      if (explicitZero) p.terminalPerformance.report.holdings.push({ ...p.holdings.holdings.at(-1),
+        quantity: 0, value: 0, number_of_unconfirmed_transactions: 0 });
+      const result = normalizeRead(input, D, selectBenchmark(benchmarkCache, D));
+      for (const key of ['accounts', 'splits', 'styleInput', 'flows', 'acctCash', 'prevAcctCash'])
+        assert.deepEqual(result[key], baseline[key]);
+      assert.equal(result.styleInput.portfolios.flatMap(p => p.holdings).some(h => h.holdingId === 700), false);
+      assert.notEqual(result.sourceFingerprint, baseline.sourceFingerprint);
+    }
+    const liveShape = await quantityLexemeReader(futureCatalogFixture(account)).readStable(D, selectBenchmark(benchmarkCache, D));
+    assert.deepEqual(liveShape.accounts, baseline.accounts);
+  }
+});
+
+test('future catalog exclusion cannot hide current positions, prior events or ambiguous inception', () => {
+  const changes = [
+    p => p.holdings.holdings.at(-1).inception_date = '2026-09-22',
+    p => delete p.holdings.holdings.at(-1).inception_date,
+    p => p.holdings.holdings.at(-1).inception_date = 'not-a-date',
+    p => p.holdingHistory.trades.push({ id: 703, portfolio_id: 1350094, holding_id: 700,
+      transaction_date: '2026-09-22', state: 'confirmed' }),
+    p => p.holdingHistory.trades.push({ id: 703, portfolio_id: 1350094, holding_id: 700,
+      transaction_date: D, state: 'confirmed' }),
+    p => p.holdingHistory.trades.push({ id: 703, portfolio_id: 1350094, holding_id: 700,
+      transaction_date: '2026-09-24', state: 'confirmed' }),
+    p => p.performance.report.holdings.push({ ...p.holdings.holdings.at(-1), quantity: 3, value: 60 }),
+  ];
+  for (const change of changes) {
+    const input = futureCatalogFixture(); change(input.webull);
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)),
+      /HOLDING_(?:TERMINAL|CATALOG_DATE_CONFLICT|HISTORY_IDENTITY)|FEE_CLOUD_DATE/);
+  }
+});
+
+test('future scope still rejects incomplete catalogs, terminal reports, histories and duplicate identities', () => {
+  for (const key of ['holdings', 'terminalPerformance', 'holdingHistory']) {
+    for (const mark of [p => p.links = {next: 'next'}, p => p.meta = {pagination: {next_page: 2}}, p => p.meta = {next_page: 2},
+      p => p.restricted = true, p => p.limited = true, p => p.truncated = true, p => p.complete = false]) {
+      const input = futureCatalogFixture(); mark(input.webull[key]);
+      assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /SOURCE_INCOMPLETE/);
+    }
+  }
+  const missing = futureCatalogFixture(); delete missing.webull.holdingHistory;
+  assert.throws(() => normalizeRead(missing, D, selectBenchmark(benchmarkCache, D)), /HOLDING_HISTORY_REQUIRED/);
+  const duplicate = futureCatalogFixture(); duplicate.webull.holdings.holdings.push({...duplicate.webull.holdings.holdings.at(-1)});
+  assert.throws(() => normalizeRead(duplicate, D, selectBenchmark(benchmarkCache, D)), /SOURCE_DUPLICATE/);
+});
+
+test('future scope preserves dated identity, terminal-zero, NAV and cash reconciliation gates', () => {
+  const changes = [
+    p => p.terminalPerformance.report.portfolio_id = 999,
+    p => p.terminalPerformance.report.end_date = '2026-09-24',
+    p => p.terminalPerformance.report.holdings.pop(),
+    p => p.terminalPerformance.report.holdings[0].instrument.id = 999,
+    p => p.terminalPerformance.report.holdings[0].quantity += 1,
+    p => p.terminalPerformance.report.value += 1,
+    p => p.terminalPerformance.report.cash_accounts[0].value += 1,
+    p => p.terminalPerformance.report.cash_accounts = [],
+    p => p.terminalPerformance.report.holdings.push({...p.holdings.holdings.at(-1),quantity:1,value:0,number_of_unconfirmed_transactions:0}),
+    p => p.terminalPerformance.report.holdings.push({...p.holdings.holdings.at(-1),quantity:0,value:1,number_of_unconfirmed_transactions:0}),
+    p => p.terminalPerformance.report.holdings.push({...p.holdings.holdings.at(-1),quantity:0,value:0,number_of_unconfirmed_transactions:1}),
+  ];
+  for (const change of changes) {
+    const input = futureCatalogFixture(); change(input.webull);
+    assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)), /HOLDING_TERMINAL/);
+  }
+});
+
+test('a later catalog entry never excuses another missing historical holding', () => {
+  const input = closedCatalogFixture(), p = input.webull;
+  p.holdings.holdings.push({ ...p.holdings.holdings.at(-1), id: 800, inception_date: '2026-09-24',
+    instrument: syntheticInstrument(800, 'SYNTHF') });
+  p.terminalPerformance.report.holdings = p.terminalPerformance.report.holdings.filter(h => h.id !== 700);
+  assert.throws(() => normalizeRead(input, D, selectBenchmark(benchmarkCache, D)),
+    /^Error: FEE_CLOUD_HOLDING_TERMINAL_COVERAGE_WEBULL_20260923_MISSING_ID$/);
+});
+
+test('coverage diagnostics reveal only fixed account/date/reason, never holding identity or money', () => {
+  for (const account of ['schwab', 'webull']) for (const unknown of [false, true]) {
+    const input = closedCatalogFixture(account), p = input[account];
+    p.holdings.holdings.at(-1).instrument.code = 'SYNTH PRIVATE LABEL';
+    p.terminalPerformance.report.holdings.pop();
+    if (unknown) p.terminalPerformance.report.holdings.push({id: 987654321});
+    let error; try {normalizeRead(input, D, selectBenchmark(benchmarkCache, D));} catch(e) {error=e;}
+    assert.equal(error?.message, `FEE_CLOUD_HOLDING_TERMINAL_COVERAGE_${account.toUpperCase()}_20260923_${unknown?'UNKNOWN_ID':'MISSING_ID'}`);
+    assert.equal(error.message.includes('987654321'), false);
+    assert.equal(error.message.includes('PRIVATE'), false);
+    assert.equal(producerFailureCode(error, 'SOURCE'), error.message);
+  }
+});
+
 test('catalog-only historical positions require complete target-bound zero quantity proof for either account', () => {
   for (const account of ['schwab', 'webull']) for (const opening of ['BUY', 'OPENING_BALANCE']) {
     const baseline = normalizeRead(raw(), D, selectBenchmark(benchmarkCache, D));
@@ -486,7 +590,7 @@ test('target-day closed proof rejects conflicting or missing corporate-action ma
   }
 });
 
-function quantityLexemeReader(fixtures, historyLexemes, dayLexemes = []) {
+function quantityLexemeReader(fixtures, historyLexemes, dayLexemes = [], observeRequest = null) {
   const response = (url, value, lexemes) => {
     let body = JSON.stringify(value), index = 0;
     if (lexemes) body = body.replace(/"quantity":3/g, () => `"quantity":${lexemes[index++]}`);
@@ -494,6 +598,7 @@ function quantityLexemeReader(fixtures, historyLexemes, dayLexemes = []) {
     Object.defineProperty(r, 'url', { value: url }); return r;
   };
   const fetchImpl = async (url, init) => {
+    observeRequest?.(url);
     if (url.endsWith('/oauth2/token')) return response(url, { access_token: 'x'.repeat(30), token_type: 'bearer' });
     assert.equal(init.method, 'GET');
     if (url.endsWith('/portfolios.json')) return response(url, { portfolios: [
@@ -517,6 +622,24 @@ function quantityLexemeReader(fixtures, historyLexemes, dayLexemes = []) {
   };
   return new SharesightCloudReader({ clientId: 'id', clientSecret: 'secret', fetchImpl });
 }
+
+test('an all-future catalog uses a valid target-bounded terminal query and retains only target cash', async () => {
+  const input = futureCatalogFixture(), p = input.webull, requests = [];
+  p.holdings.holdings = [p.holdings.holdings.at(-1)];
+  p.performance.report.holdings = [];
+  p.performance.report.value = 400;
+  p.terminalPerformance.report.holdings = [];
+  p.terminalPerformance.report.value = 400;
+  p.terminalPerformance.report.start_date = D;
+  const result = await quantityLexemeReader(input, undefined, [], url => requests.push(url))
+    .readStable(D, selectBenchmark(benchmarkCache, D));
+  const terminalRequests = requests.map(url => new URL(url)).filter(url =>
+    url.pathname.includes('/1350094/performance') && url.searchParams.get('include_sales') === 'true');
+  assert.equal(terminalRequests.length, 2);
+  assert.ok(terminalRequests.every(url => url.searchParams.get('start_date') === D && url.searchParams.get('end_date') === D));
+  assert.equal(result.styleInput.portfolios.find(p => p.account === 'webull').holdings.length, 0);
+  assert.equal(result.accounts.webull, 400);
+});
 
 test('reader rejects invalid original history quantity tokens and preserves residuals in its audit fingerprint', async () => {
   for (const [lexemes, error] of [

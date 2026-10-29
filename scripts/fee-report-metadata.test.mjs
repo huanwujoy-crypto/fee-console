@@ -24,6 +24,23 @@ test('report metadata binds exact fee receipt and separates source cutoff from g
   assert.throws(()=>buildReportMetadata({plan:weeklyReportPlan('2026-10-30'),data,generatedAt}));
   assert.throws(()=>buildReportMetadata({plan,data,generatedAt:'2026-10-24T15:00Z'}));
 });
+test('reviewed early daily metadata keeps the existing receipt and actual generation time, including the published browser factory',async()=>{
+  const target='2026-10-28',clock=new Date('2026-10-29T00:50:00Z'),{data}=fixture(target),before=structuredClone(data);
+  const plan=dailyReportPlan(target,['NYSE','NASDAQ'],{periodFrom:'2026-10-24',reviewedSyncDate:target});
+  const metadata=buildReportMetadata({plan,data,generatedAt:clock.toISOString()}),view={state:'verified',asOf:target};
+  const projected=await createFeeReportConsumer().project(metadata,view,data.feeCalculationReceipt,clock);
+  assert.equal(projected.state,'updated');assert.equal(projected.generatedAt,clock.toISOString());
+  assert.equal(projected.accountingThrough,target);assert.equal(projected.nextScheduledAt,'2026-10-30T10:30:00+08:00');
+  assert.deepEqual(data,before);
+  const html=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),a='/* fee-report-consumer:start */',b='/* fee-report-consumer:end */';
+  const block=html.slice(html.indexOf(a)+a.length,html.indexOf(b)).trim();
+  assert.equal(block,createFeeReportConsumer.toString(),'no new browser contract or UI rollout is required');
+  const box={crypto:crypto.webcrypto,TextEncoder,structuredClone};vm.createContext(box);vm.runInContext(block+';globalThis.core=createFeeReportConsumer()',box);
+  assert.equal((await box.core.project(metadata,view,data.feeCalculationReceipt,clock)).state,'updated');
+  assert.throws(()=>buildReportMetadata({plan:dailyReportPlan(target,['NYSE','NASDAQ']),data,generatedAt:clock.toISOString()}),/METADATA_INVALID/);
+  assert.throws(()=>buildReportMetadata({plan,data,generatedAt:'2026-10-28T19:00:00Z'}),/METADATA_INVALID/);
+  assert.equal((await createFeeReportConsumer().project({...metadata,generatedAt:'2026-10-29T01:00:00Z'},view,data.feeCalculationReceipt,clock)).state,'pending');
+});
 test('final monthly locks reject changed NAV, external-flow history or fee economics; payment remains independent',()=>{
   const {data,economicInput}=fixture('2026-09-30');
   const locks=preserveReportMonthLocks({},data,economicInput,{finalCutoff:'2026-09-30'});
