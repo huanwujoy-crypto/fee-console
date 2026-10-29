@@ -123,6 +123,10 @@ export function sourceAttemptWindowStart(plan){
 // The parent pin avoids a self-referential SHA; dispatch also pins the actual
 // signed merge SHA. Every later main is ineligible without a new policy review.
 const RECOVERY_BASE='50d6454b062030d4ee6565a4d879c56b68e65911';
+// Rebind the same unconsumed admission after the one-gift repair. This is not a
+// fourth historical source attempt or another recovery allocation.
+const RECOVERY_REPAIR_BASE='451efca392e474f434b7ac7891eb6f5570cf7108';
+const RECOVERY_REPAIR_FILES=Object.freeze(['scripts/fee-sharesight-transfers.mjs','scripts/fee-source-acceptance.test.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs']);
 const RECOVERY_TARGET='2026-10-28';
 const RECOVERY_FAILED_RUNS=Object.freeze([
   {id:40803101364,head:'fbb79a694acb232fbdb522939d98a933da03b1f2'},
@@ -161,7 +165,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
       // Reserve on admission, including cancellation before financial entry.
-      if(evidence&&j.name==='period'&&r.head_sha===recoveryMain)evidence.reservations.push(r.id);
+      if(evidence&&j.name==='period'&&[recoveryMain,RECOVERY_REPAIR_BASE].includes(r.head_sha))evidence.reservations.push(r.id);
       if(['period','watch','source-plan-check'].includes(j.name))continue;
       if(j.name!=='produce'&&!/^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
       if(evidence&&j.status!=='completed')evidence.otherSourceActive=true;
@@ -188,25 +192,26 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
     &&['huanwujoy-crypto','web-flow'].includes(c.committer?.login)
     &&c.commit?.verification?.verified===true&&c.commit.verification.reason==='valid';
   if(ref.object?.sha!==expectedMain||commit.sha!==expectedMain||commit.parents?.length!==1
-      ||!/^[a-f0-9]{40}$/.test(commit.parents[0].sha||'')||[expectedMain,RECOVERY_BASE].includes(commit.parents[0].sha)||!signed(commit))fail('RECOVERY_RELEASE');
-  const supportSha=commit.parents[0].sha;
-  let support,comparison;
-  try{[support,comparison]=await Promise.all([get('commits/'+supportSha+'?per_page=1'),get('compare/'+supportSha+'...'+expectedMain+'?per_page=100')]);}catch{fail('RECOVERY_METADATA');}
-  // Preserve support/index-only separation. No production on support + old UI;
-  // the final approved UI successor must contain exactly the reviewed HTML.
-  if(support.sha!==supportSha||support.parents?.length!==1||support.parents[0].sha!==RECOVERY_BASE||!signed(support)
+      ||commit.parents[0].sha!==RECOVERY_REPAIR_BASE||!signed(commit)||!/^[a-f0-9]{40}$/.test(commit.commit?.tree?.sha||''))fail('RECOVERY_RELEASE');
+  let base,comparison,tree;
+  try{[base,comparison,tree]=await Promise.all([get('commits/'+RECOVERY_REPAIR_BASE+'?per_page=1'),get('compare/'+RECOVERY_REPAIR_BASE+'...'+expectedMain+'?per_page=100'),get('git/trees/'+commit.commit.tree.sha)]);}catch{fail('RECOVERY_METADATA');}
+  // No new UI version: the already deployed reviewed blob must remain exact.
+  // Only the four reviewed repair/test files may differ from the protected UI.
+  const files=comparison.files,indices=Array.isArray(tree.tree)?tree.tree.filter(f=>f.path==='index.html'):[];
+  if(base.sha!==RECOVERY_REPAIR_BASE||base.parents?.length!==1||!signed(base)
     ||comparison.status!=='ahead'||comparison.ahead_by!==1||comparison.behind_by!==0||comparison.total_commits!==1
-    ||comparison.base_commit?.sha!==supportSha||comparison.merge_base_commit?.sha!==supportSha
+    ||comparison.base_commit?.sha!==RECOVERY_REPAIR_BASE||comparison.merge_base_commit?.sha!==RECOVERY_REPAIR_BASE
     ||comparison.commits?.length!==1||comparison.commits[0].sha!==expectedMain
-    ||comparison.files?.length!==1||comparison.files[0].filename!=='index.html'||comparison.files[0].status!=='modified'
-    ||comparison.files[0].previous_filename!==undefined||comparison.files[0].sha!==RECOVERY_UI_BLOB)fail('RECOVERY_RELEASE');
-  return {mainSha:expectedMain,parent:supportSha,baseSha:RECOVERY_BASE,supportSha,uiBlob:RECOVERY_UI_BLOB,signatureVerified:true};
+    ||!Array.isArray(files)||files.length!==RECOVERY_REPAIR_FILES.length||new Set(files.map(f=>f.filename)).size!==files.length
+    ||files.some(f=>!RECOVERY_REPAIR_FILES.includes(f.filename)||f.status!=='modified'||f.previous_filename!==undefined||!/^[a-f0-9]{40}$/.test(f.sha||''))
+    ||tree.sha!==commit.commit.tree.sha||tree.truncated!==false||indices.length!==1||indices[0].mode!=='100644'||indices[0].type!=='blob'||indices[0].sha!==RECOVERY_UI_BLOB)fail('RECOVERY_RELEASE');
+  return {mainSha:expectedMain,parent:RECOVERY_REPAIR_BASE,baseSha:RECOVERY_BASE,repairBaseSha:RECOVERY_REPAIR_BASE,uiBlob:RECOVERY_UI_BLOB,signatureVerified:true};
 }
 export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release}={}){
   const e=budget?.recoveryEvidence,c=e?.currentRun;
   if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||plan.accountingThrough!==RECOVERY_TARGET||plan.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE'
       ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===RECOVERY_BASE||release?.mainSha!==expectedMain||release.baseSha!==RECOVERY_BASE
-      ||!/^[a-f0-9]{40}$/.test(release.supportSha||'')||release.supportSha===expectedMain||release.parent!==release.supportSha||release.uiBlob!==RECOVERY_UI_BLOB||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
+      ||release.repairBaseSha!==RECOVERY_REPAIR_BASE||release.parent!==RECOVERY_REPAIR_BASE||expectedMain===RECOVERY_REPAIR_BASE||release.uiBlob!==RECOVERY_UI_BLOB||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
   if(!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0||c?.id!==Number(currentRunId)||c.head!==expectedMain||c.attempt!==1||c.event!=='workflow_dispatch'||c.workflowId!==365873934||c.actorId!==RECOVERY_OWNER||c.status!=='in_progress'||c.conclusion!==null)fail('RECOVERY_RUN');
   if(budget.attempts!==3||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==3||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
   if(e.entries.some(x=>!RECOVERY_FAILED_RUNS.some(r=>r.id===x.runId&&r.head===x.head)||!Number.isSafeInteger(x.jobId)||x.jobId<=0||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+RECOVERY_TARGET||x.status!=='completed'||x.conclusion!=='failure')

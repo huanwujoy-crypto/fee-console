@@ -11,6 +11,8 @@ import {expectedTargetDate} from './fee-cloud-source.mjs';
 import {sourceAcceptanceFailure} from './fee-source-acceptance.mjs';
 import {BoundedJsonError} from './fee-http-json.mjs';
 import vm from 'node:vm';
+import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
 const D='2026-10-27',wire=v=>parseSourceJson(JSON.stringify(v)),instrument={id:99,code:'SYNTH',market_code:'NYSE',currency_code:'USD'};
 function transferFixture(){
  const portfolio={id:1,name:'Webull'},peerPortfolio={id:2,name:'IB-HK'},holding=(id,quantity,value,p)=>({id,quantity,value,instrument,instrument_currency:{code:'USD'},valid_position:true,portfolio:p});
@@ -368,5 +370,66 @@ test('legacy one-cent classification cannot authorise zero-economic paid BUY or 
   const raw=await new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl}).readOnce(D);
   assert.throws(()=>normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0}),/TRADE_CASH_UNVERIFIED/);
  }
+});
+test('one reviewed chargeable gift passes the actual reader and normalizer, keeps old exemptions and never becomes funding',()=>{
+ const f=giftFixture();f.raw.performance.report.cash_accounts[0].value=100;f.raw.performance.report.value=130;
+ f.managementExemptionRegistry.entries[0].giftTradeIds=[111];
+ f.history={trades:[{...f.raw.trades.trades[0],id:111,transaction_date:P,description_code:'OPENING_BALANCE',quantity:1,price:0,value:0,comments:'synthetic prior gifted lot'},f.raw.trades.trades[0]]};
+ const t=f.raw.trades.trades[0],key=JSON.stringify([instrument.id,instrument.code,instrument.market_code,instrument.currency_code]);
+ const pin=crypto.createHash('sha256').update(JSON.stringify(['fee-console.chargeable-gift.v1','webull',f.portfolio.id,t.holding_id,t.id,key,D,t.quantity])).digest('hex');
+ const target=new URL('./fee-sharesight-transfers.mjs',import.meta.url).href;
+ const source=fs.readFileSync(new URL(target),'utf8'),productionPin=/const CHARGEABLE_GIFT_PIN='([a-f0-9]{64})';/.exec(source)[1];
+ assert.notEqual(pin,productionPin,'public tests contain synthetic identities only');
+ // The isolated process substitutes only the private identity pin. It loads
+ // the actual reader/activity/normalizer/resolver; no branch is skipped and
+ // every network operation is an explicit synthetic response.
+ const script=`import assert from 'node:assert/strict';import {registerHooks} from 'node:module';
+  globalThis.fetch=()=>{throw Error('all unmocked network forbidden');};
+  const target=${JSON.stringify(target)},oldPin=${JSON.stringify(productionPin)},pin=${JSON.stringify(pin)};let replaced=0;
+  const hook=registerHooks({load(url,context,next){const value=next(url,context);if(url===target){const s=String(value.source);assert.equal(s.split(oldPin).length,2);replaced++;return {...value,source:s.replace(oldPin,pin)};}return value;}});
+  const {CLOUD_ACCOUNTS,parseSourceJson,SharesightCloudReader,normalizeRead}=await import(${JSON.stringify(new URL('./fee-cloud-source.mjs',import.meta.url).href)});
+  const {buildManagedTransferProof,consumeManagedTransferProof,matchesReviewedChargeableGift}=await import(target);
+  const {resolveManagementExemptions}=await import(${JSON.stringify(new URL('./fee-management-exemption.mjs',import.meta.url).href)});
+  const {periodReturns}=await import(${JSON.stringify(new URL('./fee-engine.mjs',import.meta.url).href)});
+  hook.deregister();assert.equal(replaced,1);
+  const D=${JSON.stringify(D)},P=${JSON.stringify(P)},base=${JSON.stringify(f)},transport=${transport.toString()};
+  const read=async f=>{const io=transport(f),reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:io.fetchImpl,reconcileInKind:true,managementExemptionRegistry:f.managementExemptionRegistry});return normalizeRead(await reader.readOnce(D),D,{spy:100,qqq:100,spyd:0,qqqd:0});};
+  const v=await read(structuredClone(base));assert.equal(v.flows.length,0);assert.equal(v.managedTransferProof,undefined);
+  const {proposals,...input}=v.managementInput;
+  const m=resolveManagementExemptions({registry:base.managementExemptionRegistry,input,date:D,accounts:v.accounts});
+  assert.equal(m.rows[0].valueUsd,10,'only the older registered gift remains exempt; the new value20 is chargeable');
+  assert.deepEqual(m.registry,base.managementExemptionRegistry,'no registration, source flow or subscription is added');
+  const r=periodReturns({points:[{d:D,tot:130,managementExemptUsd:10}],flowByDate:{},from:D,to:D,openT:110,days:1,rate:0.01,cr:0.2,cumBefore:0,hwmBefore:0});
+  assert.equal(r.averageFeeBase,120);assert.equal(r.pnl,20);assert.equal(r.carry,4);assert.equal(r.rG,130/110-1);
+  const none=structuredClone(base);delete none.managementExemptionRegistry;assert.equal((await read(none)).flows.length,0);
+  const original=parseSourceJson(JSON.stringify(base.raw.trades)).trades[0];assert.equal(matchesReviewedChargeableGift(original,'webull',base.portfolio,D),true);
+  for(const change of [t=>t.id++,t=>t.holding_id++,t=>t.portfolio_id++,t=>t.quantity=3,t=>t.transaction_date='2026-10-29',t=>t.description_code='OPENING_BALANCE',t=>t.state='pending',t=>t.instrument.id++,t=>t.instrument.code='OTHER',t=>t.instrument.market_code='LSE',t=>t.instrument.currency_code='CAD',t=>t.price=1,t=>t.value=1,t=>t.brokerage=0.01]){
+   const t=structuredClone(base.raw.trades.trades[0]);change(t);assert.equal(matchesReviewedChargeableGift(parseSourceJson(JSON.stringify({trades:[t]})).trades[0],'webull',base.portfolio,D),false);
+  }
+  assert.equal(matchesReviewedChargeableGift(original,'schwab',base.portfolio,D),false);
+  const rawText=JSON.stringify({trades:[base.raw.trades.trades[0]]}).replace('"price":0','"price":1e-400');
+  assert.equal(matchesReviewedChargeableGift(parseSourceJson(rawText).trades[0],'webull',base.portfolio,D),false,'numeric underflow is not raw zero');
+  const precision=structuredClone(base);for(const k of ['performance','previousPerformance'])precision.raw[k]=parseSourceJson(JSON.stringify(precision.raw[k]));
+  precision.raw.trades=parseSourceJson(JSON.stringify(precision.raw.trades).replace('"quantity":2','"quantity":2.0000000000000001'));
+  assert.equal(matchesReviewedChargeableGift(precision.raw.trades.trades[0],'webull',precision.portfolio,D),true,'equivalent numeric identity does not replace source arithmetic');
+  assert.throws(()=>buildManagedTransferProof(precision),/POSITION_DELTA/,'original exact raw-quantity delta still rejects the extra sub-unit');
+  for(const mode of ['cash','unknown-id','duplicate','incomplete','already-exempt']){
+   const f=structuredClone(base);
+   if(mode==='cash'){f.raw.cashTransactions[8].cash_account_transactions=[{id:333,cash_account_id:8,date_time:D+'T00:00Z',amount:-0.01,balance:99.99,trade_id:222,cash_account_transaction_type:{name:'WITHDRAWAL'}}];f.raw.performance.report.cash_accounts[0].value=99.99;f.raw.performance.report.value=129.99;}
+   if(mode==='unknown-id')f.raw.trades.trades[0].id=223;
+   if(mode==='duplicate')f.raw.trades.trades.push({...f.raw.trades.trades[0]});
+   if(mode==='incomplete')f.raw.trades.has_more=true;
+   if(mode==='already-exempt')f.managementExemptionRegistry.entries[0].giftTradeIds.push(222);
+   await assert.rejects(read(f),/FEE_/);
+  }
+  for(const mode of ['cash','selected-transfer']){
+   const f=structuredClone(base);for(const k of ['performance','previousPerformance','trades'])f.raw[k]=parseSourceJson(JSON.stringify(f.raw[k]));
+   if(mode==='cash')f.raw.cashTransactions[8].cash_account_transactions=[{id:333,cash_account_id:8,date_time:D+'T00:00Z',amount:-0.01,trade_id:222}];
+   if(mode==='selected-transfer')f.identifiedTransfers={schema:'fee-console.managed-transfer-identities.v1',date:D,account:'webull',sourcePortfolioId:77,destinationPortfolioId:f.portfolio.id,pairs:[{sourceTradeId:444,sourceHoldingId:5,tradeId:222,holdingId:4}]};
+   assert.throws(()=>buildManagedTransferProof(f),/TRADE_CASH_UNVERIFIED|IDENTIFIED_SCOPE|PEER_REQUIRED/);
+  }
+  console.log('CHARGEABLE_GIFT_INTEGRATION_OK');`;
+ const run=spawnSync(process.execPath,['--input-type=module','-e',script],{encoding:'utf8',env:{PATH:process.env.PATH},timeout:20000});
+ assert.equal(run.status,0,run.stderr);assert.equal(run.stdout.trim(),'CHARGEABLE_GIFT_INTEGRATION_OK');
 });
 }
