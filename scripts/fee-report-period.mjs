@@ -1,5 +1,5 @@
 // Pure scheduling/coverage contract. No credentials, source reads or publication.
-import {selectBenchmark} from './fee-cloud-source.mjs';
+import {selectBenchmark,expectedTargetDate} from './fee-cloud-source.mjs';
 import {sessionUnion,monthlyArchivesBetween} from './fee-market-calendar.mjs';
 
 // Same reviewed NYSE dates as cloud/xuan-preopen/calendar.mjs, copied here to
@@ -66,7 +66,8 @@ export function validateReportPlan(plan){
   try{
     if(plan?.schema==='fee-console.report-plan.v2'){
       if(Object.keys(plan).sort().join(',')!=='accountingThrough,kind,markets,monthlyCutoffs,periodFrom,priceThrough,scheduledAt,schema')return false;
-      const expected=dailyReportPlan(plan.accountingThrough,plan.markets,{periodFrom:plan.periodFrom});
+      const expected=dailyReportPlan(plan.accountingThrough,plan.markets,{periodFrom:plan.periodFrom,
+        reviewedSyncDate:isReviewedDailyPlan(plan)?plan.accountingThrough:null});
       return Object.keys(expected).every(k=>JSON.stringify(expected[k])===JSON.stringify(plan[k]));
     }
     if(!plan||Object.keys(plan).sort().join(',')!=='accountingThrough,kind,monthlyCutoffs,periodFrom,priceThrough,scheduledAt,schema'||plan.schema!=='fee-console.report-plan.v1')return false;
@@ -79,16 +80,29 @@ export function validateReportPlan(plan){
     return !!expected&&Object.keys(expected).every(k=>JSON.stringify(expected[k])===JSON.stringify(plan[k]));
   }catch{return false;}
 }
-export function dailyReportPlan(target,markets,{periodFrom=target}={}){
+export function isReviewedDailyPlan(plan){
+  return plan?.schema==='fee-console.report-plan.v2'&&typeof plan.accountingThrough==='string'
+    && plan.scheduledAt===midnight(reportAddDays(plan.accountingThrough,1));
+}
+export function dailyReportPlan(target,markets,{periodFrom=target,reviewedSyncDate=null}={}){
   reportDate(target);reportDate(periodFrom);
+  if(reviewedSyncDate!==null&&reportDate(reviewedSyncDate)!==target)fail();
   const sessions=sessionUnion(target,markets);
   if(sessions.state!=='open'||sessions.rows.some(r=>r.state==='unknown'))throw Error('FEE_REPORT_CALENDAR_SCOPE_UNVERIFIED');
   if(periodFrom>target)fail();const monthlyCutoffs=monthlyArchivesBetween(reportAddDays(periodFrom,-1),target);
-  return {schema:'fee-console.report-plan.v2',kind:monthlyCutoffs.length?'daily-monthly':'daily',periodFrom,accountingThrough:target,priceThrough:lastReportSession(target),scheduledAt:reportAddDays(target,1)+'T10:30:00+08:00',monthlyCutoffs,markets:[...markets].sort()};
+  // The existing v2 shape remains compatible with the receipt/UI consumer.
+  // Midnight is only the reviewed entry's date anchor, not a claim that the
+  // source was complete then. Readiness still requires the real market close.
+  return {schema:'fee-console.report-plan.v2',kind:monthlyCutoffs.length?'daily-monthly':'daily',periodFrom,accountingThrough:target,priceThrough:lastReportSession(target),scheduledAt:reviewedSyncDate?midnight(reportAddDays(target,1)):reportAddDays(target,1)+'T10:30:00+08:00',monthlyCutoffs,markets:[...markets].sort()};
 }
 export function reportPlanReadiness(plan,now=new Date()){
   if(!validateReportPlan(plan))fail();now=instant(now);
   if(now.getTime()<Date.parse(plan.scheduledAt))return {state:'waiting',reasonCode:'REPORT_NOT_DUE'};
+  if(isReviewedDailyPlan(plan)){
+    if(localDate(now,'Asia/Hong_Kong')<=plan.accountingThrough||expectedTargetDate(now)<plan.accountingThrough)
+      return {state:'waiting',reasonCode:'SOURCE_DAY_NOT_CLOSED'};
+    return {state:'due',reasonCode:null};
+  }
   // A final monthly cutoff includes all natural days. HKT midnight can still
   // be the prior New York afternoon; neither a price nor cash poll completes it.
   if(localDate(now,'America/New_York')<=plan.accountingThrough)return {state:'waiting',reasonCode:'ACCOUNTING_DAY_NOT_COMPLETE'};

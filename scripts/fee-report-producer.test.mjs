@@ -7,7 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
-import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged} from './fee-report-producer.mjs';
+import {dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod} from './fee-report-producer.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 
@@ -163,6 +163,7 @@ test('real period preflight CLI makes only public main GETs and never enters fin
   const calls=JSON.parse(fs.readFileSync(trace));assert.ok(calls.length>=4);assert.ok(calls.every(u=>u.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/')));
 });
 test('period producer uses actual sole writer, receipt reporter and health; original ciphertext and fees stay intact',async t=>{
+ for(const reviewed of [false,true])await t.test(reviewed?'reviewed early daily':'original weekly',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-period-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const root=path.join(dir,'checkout');fs.mkdirSync(root,{mode:0o700});fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
   fs.mkdirSync(path.join(root,'claude'));fs.copyFileSync(new URL('../claude/fee-style-mapping.json',import.meta.url),path.join(root,'claude/fee-style-mapping.json'));
@@ -174,26 +175,28 @@ test('period producer uses actual sole writer, receipt reporter and health; orig
   const snapshots=path.join(dir,'snapshots.json');fs.writeFileSync(snapshots,JSON.stringify(Object.fromEntries(['2026-10-22','2026-10-23'].map(d=>[d,cashOnly(d)]))),{mode:0o600});
   const script=path.join(root,'exercise.mjs');fs.writeFileSync(script,`
     import fs from 'node:fs';import path from 'node:path';import assert from 'node:assert/strict';
-    import {produceReportPeriod} from './scripts/fee-report-producer.mjs';import {weeklyReportPlan} from './scripts/fee-report-period.mjs';import {parseSourceJson} from './scripts/fee-cloud-source.mjs';import {decryptCandidate} from './scripts/fee-cloud-producer.mjs';import {validateFeeCalculationReceiptWithEcon} from './scripts/fee-receipt-core.mjs';
+    import {produceReportPeriod} from './scripts/fee-report-producer.mjs';import {weeklyReportPlan,dailyReportPlan} from './scripts/fee-report-period.mjs';import {parseSourceJson} from './scripts/fee-cloud-source.mjs';import {decryptCandidate} from './scripts/fee-cloud-producer.mjs';import {validateFeeCalculationReceiptWithEcon} from './scripts/fee-receipt-core.mjs';
+    const plan=${reviewed}?dailyReportPlan('2026-10-23',['NYSE','NASDAQ'],{periodFrom:'2026-10-22',reviewedSyncDate:'2026-10-23'}):weeklyReportPlan('2026-10-23'),reviewedSyncDate=${reviewed}?'2026-10-23':null;
     const dir=path.dirname(process.env.SYNTHETIC_SNAPSHOTS),snapshots=JSON.parse(fs.readFileSync(process.env.SYNTHETIC_SNAPSHOTS)),out=path.join(dir,'out');fs.mkdirSync(out,{mode:0o700});let calls=0,checks=0,cleanups=0;
-    const r=await produceReportPeriod({plan:weeklyReportPlan('2026-10-23'),outputDir:out,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce:async d=>{calls++;const raw=structuredClone(snapshots[d]);for(const p of Object.values(raw)){for(const key of ['performance','cashAccounts','previousPerformance'])p[key]=parseSourceJson(JSON.stringify(p[key]));for(const key of ['cashTransactions','cashLedgerHistory'])p[key]=Object.fromEntries(Object.entries(p[key]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;},fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){checks++;},cleanup(){cleanups++;}})});
+    const r=await produceReportPeriod({plan,reviewedSyncDate,outputDir:out,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce:async d=>{calls++;const raw=structuredClone(snapshots[d]);for(const p of Object.values(raw)){for(const key of ['performance','cashAccounts','previousPerformance'])p[key]=parseSourceJson(JSON.stringify(p[key]));for(const key of ['cashTransactions','cashLedgerHistory'])p[key]=Object.fromEntries(Object.entries(p[key]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;},fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){checks++;},cleanup(){cleanups++;}})});
     assert.equal(r.reconstructedDays,2);assert.equal(calls,4);assert.equal(checks,3);assert.equal(cleanups,1);assert.equal(fs.existsSync(path.join(out,'period-private')),false);
     const data=decryptCandidate(r.dataFile,process.env.FEE_DATA_KEY),econ={v:4,settings:{start:'2026-10-21',mgmt:2,carry:20},accounts:[{id:'schwab',opening:100},{id:'webull',opening:100}],months:[],fees:[]};
-    assert.deepEqual(data.daily.map(p=>p.d),['2026-10-21','2026-10-22','2026-10-23']);assert.equal(data.feeReportPublication.plan.kind,'weekly');assert.equal(data.feeCalculationReceipt.asOf,'2026-10-23');assert.deepEqual(data.feeCalculationReceipt.accountIds,['schwab','webull']);assert.equal(validateFeeCalculationReceiptWithEcon(data.feeCalculationReceipt,data,econ).ok,true);
+    assert.deepEqual(data.daily.map(p=>p.d),['2026-10-21','2026-10-22','2026-10-23']);assert.equal(data.feeReportPublication.plan.kind,${reviewed}?'daily':'weekly');assert.equal(data.feeCalculationReceipt.asOf,'2026-10-23');assert.deepEqual(data.feeCalculationReceipt.accountIds,['schwab','webull']);assert.equal(validateFeeCalculationReceiptWithEcon(data.feeCalculationReceipt,data,econ).ok,true);
     assert.equal(fs.statSync(r.dataFile).mode&0o777,0o600);assert.equal(fs.existsSync(r.healthFile),true);
     const repeatedOut=path.join(dir,'repeated');fs.mkdirSync(repeatedOut,{mode:0o700});
     const readOnce=async d=>{const raw=structuredClone(snapshots[d]);for(const p of Object.values(raw)){for(const key of ['performance','cashAccounts','previousPerformance'])p[key]=parseSourceJson(JSON.stringify(p[key]));for(const key of ['cashTransactions','cashLedgerHistory'])p[key]=Object.fromEntries(Object.entries(p[key]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;};
-    const repeated=await produceReportPeriod({plan:weeklyReportPlan('2026-10-23'),sourceFile:r.dataFile,outputDir:repeatedOut,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){},cleanup(){}})});
+    const repeated=await produceReportPeriod({plan,reviewedSyncDate,sourceFile:r.dataFile,outputDir:repeatedOut,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){},cleanup(){}})});
     assert.equal(repeated.outcome,'no-op');assert.deepEqual(fs.readFileSync(repeated.dataFile),fs.readFileSync(r.dataFile));assert.deepEqual(decryptCandidate(repeated.dataFile,process.env.FEE_DATA_KEY).feeCalculationReceipt,data.feeCalculationReceipt);
     const failedOut=path.join(dir,'failed');fs.mkdirSync(failedOut,{mode:0o700});let failureChecks=0;
-    await assert.rejects(produceReportPeriod({plan:weeklyReportPlan('2026-10-23'),outputDir:failedOut,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){if(++failureChecks===2)throw Error('synthetic economic revision changed');},cleanup(){}})}));
+    await assert.rejects(produceReportPeriod({plan,reviewedSyncDate,outputDir:failedOut,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){if(++failureChecks===2)throw Error('synthetic economic revision changed');},cleanup(){}})}));
     assert.equal(fs.existsSync(path.join(failedOut,'data.json')),false);assert.equal(fs.existsSync(path.join(failedOut,'fee-data-health.json')),false);assert.equal(fs.existsSync(path.join(failedOut,'period-private')),false);console.log('SYNTHETIC_PERIOD_CANDIDATE_VERIFIED');
   `);
   // Isolated synthetic subprocess clock only; production has no clock/guard
   // override. Its real writer, reporter and health still enforce every window.
-  const clockFile=path.join(dir,'synthetic-clock.mjs');fs.writeFileSync(clockFile,`const RealDate=Date;const now=RealDate.parse('2026-10-26T06:00:00Z');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`);
+  const clockFile=path.join(dir,'synthetic-clock.mjs');fs.writeFileSync(clockFile,`const RealDate=Date;const now=RealDate.parse('${reviewed?'2026-10-24T00:40:00Z':'2026-10-26T06:00:00Z'}');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`);
   const r=spawnSync(process.execPath,[script],{encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:'--import='+clockFile,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,IB_MANAGER_READ_ENABLED:'',FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',SYNTHETIC_SNAPSHOTS:snapshots,SYNTHETIC_BENCHMARK:benchmarkFile}});
   assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/SYNTHETIC_PERIOD_CANDIDATE_VERIFIED/);assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original);
+ });
 });
 
 // Source-attempt budgets read public metadata only. All data is synthetic.
@@ -207,3 +210,63 @@ test('queued or active source reserves the budget, while a skipped source job ne
 test('source budget rejects partial metadata, duplicate jobs, wrong run/head/branch, changed route, future time and unknown job',async()=>{const r=budgetRun();for(const mutate of [v=>{v.total_count++;},v=>{if(v.workflow_runs)v.workflow_runs[0].head_branch='other';},v=>{if(v.workflow_runs)v.workflow_runs[0].path='other';},v=>{if(v.jobs)v.jobs[0].head_sha='b'.repeat(40);},v=>{if(v.jobs)v.jobs[0].run_id=99;},v=>{if(v.jobs)v.jobs[0].name='unknown-source';},v=>{if(v.jobs)v.jobs[0].started_at='2099-01-01T00:00:00Z';},v=>{if(v.jobs){v.jobs.push(v.jobs[0]);v.total_count++;}}])await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[budgetJob(r)],mutate)}),/SOURCE_ATTEMPT_METADATA/);});
 test('preflight blocks exhausted, unknown, active and rerun source budgets without calling a financial reader',async()=>{const old=state(weeklyReportPlan('2026-10-23'),'2026-10-27T01:00:00Z'),args={plan:budgetPlan,now:budgetNow,readState:async()=>old};for(const [budget,reason] of [[{attempts:0,inProgress:false},null],[{attempts:1,inProgress:false},null],[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:1,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS'],[{attempts:-1,inProgress:false},'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED']]){const result=await nativeReportPreflight({...args,readSourceAttempts:async()=>budget});assert.equal(result.outcome,reason?'waiting':'produce');assert.equal(result.reasonCode||null,reason);}assert.equal((await nativeReportPreflight({...args,readSourceAttempts:async()=>{throw Error('private-canary');}})).reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');assert.equal((await nativeReportPreflight({...args,runAttempt:'2',readSourceAttempts:async()=>assert.fail('rerun must stop before metadata')})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');});
 test('source budget never changes an already published fee receipt or incomplete accounting day',async()=>{const p=weeklyReportPlan('2026-10-23');assert.equal((await nativeReportPreflight({plan:p,now:new Date('2026-10-27T01:00Z'),ibEnabled:false,readState:async()=>state(p),readSourceAttempts:()=>assert.fail('covered fee must not query attempts')})).outcome,'already-published');});
+
+test('reviewed daily entry requires exact completed-sync target and preserves source attempts, stale and pending gates',async()=>{
+ const target='2026-10-28',now=new Date('2026-10-29T08:40:00+08:00'),markets=['NYSE','NASDAQ'];
+ const args={targetDate:target,reviewedSyncDate:target,now,markets,ibEnabled:false,readState:async()=>state(weeklyReportPlan('2026-10-23')),readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ const result=await dailyPublicationPreflight(args);assert.equal(result.outcome,'produce');assert.equal(result.plan.accountingThrough,target);assert.equal(result.plan.periodFrom,'2026-10-24');
+ assert.equal((await dailyPublicationPreflight({...args,reviewedSyncDate:null})).reasonCode,'REPORT_NOT_DUE');
+ for(const reviewedSyncDate of ['',true,'2026-10-27'])await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate,readState:()=>assert.fail('wrong confirmation cannot read state')}));
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-10-29T03:00:00+08:00'),readState:()=>assert.fail('open market cannot read state')})).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+ assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>({attempts:2,inProgress:false})})).reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ assert.equal((await dailyPublicationPreflight({...args,runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...state(weeklyReportPlan('2026-10-23')),pending:true})})).outcome,'candidate-pending');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-03T08:40:00+08:00')})).reasonCode,'REPORT_TARGET_OUTSIDE_PROMOTION_WINDOW');
+ await assert.rejects(produceReportPeriod({plan:result.plan,now,fetchEconomic:()=>assert.fail('missing confirmation before finance')}),/MANUAL_SYNC_CONFIRMATION/);
+ await assert.rejects(nativeReportPreflight({plan:result.plan,now,readState:()=>assert.fail('missing confirmation before public state')}),/MANUAL_SYNC_CONFIRMATION/);
+ const broken=cashOnly(target);broken.webull.performance.report.end_date='2026-10-27';
+ await assert.rejects(captureReportRange({dates:[target],cache:{v:1,benchmarks:{spy:{symbol:'SPY',currency:'USD',exchange:'NYSEArca',series:[{d:target,p:100}]},qqq:{symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series:[{d:target,p:200}]}}},readOnce:async()=>broken}),/PERFORMANCE_IDENTITY/);
+});
+
+test('manual sync flag binds existing reviewed dispatch, main, first attempt and the real event input',()=>{
+ const target='2026-10-28',args={mode:'preflight','report-kind':'daily','report-target':target,'manual-sync-completed-for':target};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main'};
+ const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:target,manual_sync_completed_for:target,source_plan_check_only:'false',source_acceptance_once:'false'}};
+ const check=(a=args,e=env,v=event)=>reviewedSyncConfirmation(a,{env:e,readEvent:()=>v});
+ assert.equal(check(),target);assert.equal(check({...args,mode:'produce'}),target);assert.equal(check({...args,'manual-sync-completed-for':undefined}),null);
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-reviewed-event-')),file=path.join(dir,'event.json');
+ try{
+  fs.writeFileSync(file,JSON.stringify(event));
+  assert.equal(reviewedSyncConfirmation(args,{env:{...env,GITHUB_EVENT_PATH:file}}),target);
+  fs.writeFileSync(file,'{}');assert.throws(()=>reviewedSyncConfirmation(args,{env:{...env,GITHUB_EVENT_PATH:file}}),/MANUAL_SYNC_CONFIRMATION/);
+  fs.writeFileSync(file,'not-json');assert.throws(()=>reviewedSyncConfirmation(args,{env:{...env,GITHUB_EVENT_PATH:file}}),/MANUAL_SYNC_CONFIRMATION/);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+ for(const changed of [{GITHUB_ACTIONS:'false'},{GITHUB_EVENT_NAME:'schedule'},{GITHUB_RUN_ATTEMPT:'2'},{GITHUB_REF:'refs/heads/not-main'}])assert.throws(()=>check(args,{...env,...changed}),/MANUAL_SYNC_CONFIRMATION/);
+ for(const changed of [{run_reviewed_once:'false'},{manual_sync_completed_for:''},{manual_sync_completed_for:'2026-10-27'},{report_target:'2026-10-27'},{report_kind:'weekly'},{source_plan_check_only:'true'},{source_acceptance_once:'true'}])assert.throws(()=>check(args,env,{inputs:{...event.inputs,...changed}}),/MANUAL_SYNC_CONFIRMATION/);
+ assert.throws(()=>check(args,env,{}),/MANUAL_SYNC_CONFIRMATION/);
+ assert.throws(()=>check({...args,mode:'watch'}),/MANUAL_SYNC_CONFIRMATION/);
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const qualifier=Function('github','inputs','return ('+wf.match(/REVIEWED_SYNC_DATE:\s*\$\{\{([^\n]+)\}\}/)[1]+');');
+ assert.equal(qualifier({event_name:'schedule'},{run_reviewed_once:true,manual_sync_completed_for:target}),'');
+ assert.equal(qualifier({event_name:'workflow_dispatch'},{run_reviewed_once:false,manual_sync_completed_for:target}),'');
+ assert.equal(qualifier({event_name:'workflow_dispatch'},{run_reviewed_once:true,manual_sync_completed_for:target}),target);
+ for(const cli of [['--mode=preflight','--report-kind=daily','--report-target='+target],['--mode=produce','--report-kind=daily','--report-target='+target]]){
+   const r=spawnSync(process.execPath,[new URL('./fee-report-producer.mjs',import.meta.url).pathname,...cli,'--manual-sync-completed-for='+target],{encoding:'utf8',env:{PATH:process.env.PATH}});
+   assert.equal(r.status,1);assert.match(r.stderr,/MANUAL_SYNC_CONFIRMATION/);assert.equal(r.stdout,'');
+ }
+});
+
+test('early published coverage deduplicates the later normal cycle without resetting attempts or freshness',async()=>{
+ const target='2026-10-28',markets=['NYSE','NASDAQ'],ordinary=dailyReportPlan(target,markets),reviewed=dailyReportPlan(target,markets,{reviewedSyncDate:target});
+ assert.equal(sourceAttemptWindowStart(ordinary),sourceAttemptWindowStart(reviewed));
+ const s=state(reviewed,'2026-10-29T00:50:00Z'),later=new Date('2026-10-29T05:00:00Z');
+ assert.equal(publishedReportMatches(s,ordinary,later),true);
+ assert.equal((await nativeReportPreflight({plan:ordinary,now:later,ibEnabled:false,readState:async()=>s,readSourceAttempts:()=>assert.fail('already published no source')})).outcome,'already-published');
+ assert.equal(publishedReportMatches(state(reviewed,'2026-10-28T19:00:00Z'),ordinary,later),false);
+ const query=[];const response=(url,v)=>{const r=new Response(JSON.stringify(v),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
+ for(const plan of [ordinary,reviewed]){
+  const count=await readPeriodSourceAttempts({plan,now:later,currentRunId:'2',fetchImpl:async url=>{query.push(url);return response(url,url.includes('/runs?')?{total_count:1,workflow_runs:[{id:1,head_branch:'main',head_sha:'a'.repeat(40),path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:'2026-10-29T00:40:00Z'}]}:{total_count:1,jobs:[{id:10,run_id:1,head_sha:'a'.repeat(40),name:'Produce daily '+target,status:'completed',conclusion:'failure',started_at:'2026-10-29T00:40:00Z'}]});}});
+  assert.deepEqual(count,{attempts:1,inProgress:false});
+ }
+ assert.equal(new URL(query[0]).searchParams.get('created'),new URL(query[2]).searchParams.get('created'));
+});

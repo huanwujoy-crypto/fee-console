@@ -8,7 +8,7 @@ test('daily v2 binds the real capture range, markets and deferred month lock wit
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,reportSessionOpen,reportAddDays} from './fee-report-period.mjs';
+import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,reportSessionOpen,reportAddDays,isReviewedDailyPlan} from './fee-report-period.mjs';
 import {marketOpen} from '../cloud/xuan-preopen/calendar.mjs';
 
 test('standalone NYSE calendar exactly matches existing reviewed calendar for every supported date',()=>{
@@ -79,4 +79,22 @@ test('forged/extra plan fields and malformed dates cannot change target',()=>{
   const p=weeklyReportPlan('2026-10-23');
   for(const change of [{accountingThrough:'2026-10-26'},{priceThrough:'2026-10-26'},{scheduledAt:'2026-10-24T00:00:00+08:00'},{allowEarly:true},{kind:'daily'}])assert.equal(validateReportPlan({...p,...change}),false);
   assert.throws(()=>monthlyReportPlan('2026-13'));
+});
+test('reviewed synchronized daily entry uses the same v2 shape and waits for the real completed market day',()=>{
+  const target='2026-10-28',markets=['NYSE','NASDAQ'];
+  const ordinary=dailyReportPlan(target,markets),reviewed=dailyReportPlan(target,markets,{reviewedSyncDate:target});
+  assert.equal(validateReportPlan(reviewed),true);assert.equal(isReviewedDailyPlan(reviewed),true);
+  assert.deepEqual(Object.keys(reviewed),Object.keys(ordinary));
+  assert.equal(ordinary.scheduledAt,'2026-10-29T10:30:00+08:00');
+  assert.equal(reviewed.scheduledAt,'2026-10-29T00:00:00+08:00');
+  assert.equal(reportPlanReadiness(reviewed,new Date('2026-10-29T03:59:00+08:00')).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+  for(const time of ['2026-10-29T04:15:00+08:00','2026-10-29T08:40:00+08:00'])assert.equal(reportPlanReadiness(reviewed,new Date(time)).state,'due');
+  assert.equal(reportPlanReadiness(ordinary,new Date('2026-10-29T08:40:00+08:00')).reasonCode,'REPORT_NOT_DUE');
+  assert.equal(reportPlanReadiness(ordinary,new Date('2026-10-29T10:30:00+08:00')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+  const winter=dailyReportPlan('2026-11-23',markets,{reviewedSyncDate:'2026-11-23'});
+  assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:14:59+08:00')).reasonCode,'SOURCE_DAY_NOT_CLOSED');
+  assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:15:00+08:00')).state,'due');
+  for(const reviewedSyncDate of ['',true,'2026-10-27','invalid'])assert.throws(()=>dailyReportPlan(target,markets,{reviewedSyncDate}));
+  for(const change of [{scheduledAt:'2026-10-29T01:00:00+08:00'},{syncCompleted:true},{priceThrough:'2026-10-27'}])assert.equal(validateReportPlan({...reviewed,...change}),false);
+  assert.throws(()=>dailyReportPlan('2026-11-01',markets,{reviewedSyncDate:'2026-11-01'}),/CALENDAR_SCOPE_UNVERIFIED/);
 });

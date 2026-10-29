@@ -38,6 +38,11 @@ on:
         type: boolean
         required: false
         default: false
+      manual_sync_completed_for:
+        description: For a separately reviewed daily one-off only, explicitly confirm all accounts were synchronized for this exact YYYY-MM-DD target
+        type: string
+        required: false
+        default: ''
       report_kind:
         description: Leave blank for the next due period, or select reviewed weekly/monthly
         type: string
@@ -92,6 +97,7 @@ jobs:
           REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
           REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.report_target || '' }}
           REVIEWED_MARKETS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_markets || '' }}
+          REVIEWED_SYNC_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.manual_sync_completed_for || '' }}
         run: |
           set -euo pipefail
           args=(--mode=preflight)
@@ -100,6 +106,9 @@ jobs:
           fi
           if [[ -n "$REVIEWED_MARKETS" ]]; then
             args+=("--report-markets=$REVIEWED_MARKETS")
+          fi
+          if [[ -n "$REVIEWED_SYNC_DATE" ]]; then
+            args+=("--manual-sync-completed-for=$REVIEWED_SYNC_DATE")
           fi
           summary=$(node scripts/fee-report-producer.mjs "${args[@]}")
           node - "$summary" <<'NODE'
@@ -175,16 +184,17 @@ jobs:
           REPORT_KIND: ${{ needs.period.outputs.kind }}
           REPORT_TARGET: ${{ needs.period.outputs.target }}
           REPORT_PLAN: ${{ needs.period.outputs.plan }}
+          REVIEWED_SYNC_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.manual_sync_completed_for || '' }}
         run: |
           set -euo pipefail
           error_file="$RUNNER_TEMP/fee-cloud-private/producer-error.txt"
-          if ! summary=$(node scripts/fee-report-producer.mjs \
-            --mode=produce \
-            --report-kind="$REPORT_KIND" \
-            --report-target="$REPORT_TARGET" \
-            --report-plan="$REPORT_PLAN" \
-            --benchmark-file="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
-            --out-dir="$RUNNER_TEMP/fee-cloud-private" 2>"$error_file"); then
+          args=(--mode=produce "--report-kind=$REPORT_KIND" "--report-target=$REPORT_TARGET" \
+            "--report-plan=$REPORT_PLAN" "--benchmark-file=$RUNNER_TEMP/fee-cloud-private/benchmark-close.json" \
+            "--out-dir=$RUNNER_TEMP/fee-cloud-private")
+          if [[ -n "$REVIEWED_SYNC_DATE" ]]; then
+            args+=("--manual-sync-completed-for=$REVIEWED_SYNC_DATE")
+          fi
+          if ! summary=$(node scripts/fee-report-producer.mjs "${args[@]}" 2>"$error_file"); then
             code=$(tail -n 1 "$error_file")
             if [[ ! "$code" =~ ^(FEE_CLOUD|FEE_REPORT|SOURCE)_[A-Z0-9_]+$ ]]; then
               code=FEE_CLOUD_FAILED

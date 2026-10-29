@@ -15,7 +15,7 @@ import {validateHealth} from './fee-data-health.mjs';
 import {boundedJson} from './fee-http-json.mjs';
 import {createFundInvestorCore} from './fund-investor-core.mjs';
 import {validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
-import {reportDate,reportAddDays,selectReportBenchmark,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,dailyReportPlan} from './fee-report-period.mjs';
+import {reportDate,reportAddDays,selectReportBenchmark,weeklyReportPlan,monthlyReportPlan,coalesceReportPlans,validateReportPlan,reportPlanReadiness,reportPlansAround,reportWindowDates,dailyReportPlan,isReviewedDailyPlan} from './fee-report-period.mjs';
 import {sessionUnion} from './fee-market-calendar.mjs';
 
 const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
@@ -69,7 +69,11 @@ export function publishedReportMatches(state,plan,now=new Date()){
     const h=state.health,checked=new Date(h?.checkedAt);
     // This is coverage/dedup of an existing weekly receipt, not permission to
     // promote an old candidate. Fresh candidate health still has its 36h gate.
-    if(validateHealth(h,{now:checked}).length||checked.getTime()>now.getTime()+300000||reportPlanReadiness(plan,checked).state!=='due'||h.targetDate!==plan.accountingThrough||!['updated','no-op'].includes(h.outcome)||h.dataSha256!==hash(state.data)||h.sourceDates.schwab!==plan.accountingThrough||h.sourceDates.webull!==plan.accountingThrough||h.sourceDates.benchmark!==plan.priceThrough)return false;
+    // Existing protected coverage may have come from the explicitly reviewed
+    // early entry. Dedup it under the same closed target, without authorizing a
+    // new early run or extending candidate-health freshness.
+    const checkedPlan=plan.schema==='fee-console.report-plan.v2'?dailyReportPlan(plan.accountingThrough,plan.markets,{periodFrom:plan.periodFrom,reviewedSyncDate:plan.accountingThrough}):plan;
+    if(validateHealth(h,{now:checked}).length||checked.getTime()>now.getTime()+300000||reportPlanReadiness(checkedPlan,checked).state!=='due'||h.targetDate!==plan.accountingThrough||!['updated','no-op'].includes(h.outcome)||h.dataSha256!==hash(state.data)||h.sourceDates.schwab!==plan.accountingThrough||h.sourceDates.webull!==plan.accountingThrough||h.sourceDates.benchmark!==plan.priceThrough)return false;
     const e=JSON.parse(state.data.toString());
     return Object.keys(e).sort().join(',')==='data,enc,v'&&e.enc===true&&e.v===3&&typeof e.data==='string'&&e.data.length>=40&&Buffer.from(e.data,'base64').toString('base64')===e.data;
   }catch{return false;}
@@ -112,9 +116,12 @@ export function periodIbRetryAllowed({runs,currentRunId=null,scheduledAt,now}={}
 // Count source entries, not the four daily public-only gate executions. Job
 // metadata includes every rerun attempt; no logs, secrets or new storage are used.
 // Two is a hard per-kind/cutoff ceiling, not permission to retry financial IO.
+export function sourceAttemptWindowStart(plan){
+  return plan.schema==='fee-console.report-plan.v2'?reportAddDays(plan.accountingThrough,1)+'T00:00:00+08:00':plan.scheduledAt;
+}
 export async function readPeriodSourceAttempts({plan,now,currentRunId=null,fetchImpl=globalThis.fetch}={}){
   if(!validateReportPlan(plan)||!Number.isFinite(now?.getTime()))fail('SOURCE_ATTEMPT_METADATA');
-  const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(plan.scheduledAt).toISOString();
+  const root='https://api.github.com/repos/huanwujoy-crypto/fee-console/actions',from=new Date(sourceAttemptWindowStart(plan)).toISOString();
   const query=new URLSearchParams({branch:'main',created:from+'..'+now.toISOString(),per_page:'100'});
   const get=url=>boundedJson(fetchImpl,url,{method:'GET',headers:{Accept:'application/vnd.github+json'}},{timeoutMs:5000,maxBytes:512*1024});
   const listing=await get(root+'/workflows/fee-cloud-producer.yml/runs?'+query),seen=new Set(),jobsSeen=new Set();
@@ -147,11 +154,13 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,fetch
   }
   return {attempts,inProgress};
 }
-export async function reportPublicationPreflight({now=new Date(),plan=null,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readState}={}){
+export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readState}={}){
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
   if(plans.some(p=>!validateReportPlan(p)))fail('PLAN');
+  if(plans.some(p=>isReviewedDailyPlan(p)&&reviewedSyncDate!==p.accountingThrough)
+      ||reviewedSyncDate!==null&&(!plan||!isReviewedDailyPlan(plan)||reviewedSyncDate!==plan.accountingThrough))fail('MANUAL_SYNC_CONFIRMATION');
   const latest=plans.at(-1),startedAt=now.toISOString();
   let state=await readState(latest.accountingThrough,startedAt);
   if(state.mainSha!==state.finalMainSha||validateHealth(state.health,{now:new Date(state.health?.checkedAt)}).length||Date.parse(state.health?.checkedAt)>now.getTime()+300000||state.health?.dataSha256!==hash(state.data))fail('PUBLICATION_READ');
@@ -164,8 +173,8 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,ibEna
     if(runAttempt!==undefined&&String(runAttempt)!=='1'||!ibEnabled||state.health.targetDate!==latest.accountingThrough||!freshTarget(latest,now)||validateHealth(state.health,{now}).length||now.getTime()-Date.parse(state.health.checkedAt)>12*3600000)return covered;
     if(state.pending)return {...covered,outcome:'candidate-pending'};
     try{
-      const runs=await readRetryRuns({scheduledAt:latest.scheduledAt,now});
-      if(periodIbRetryAllowed({runs,currentRunId,scheduledAt:latest.scheduledAt,now}))return {...covered,outcome:'produce',reasonCode:'IB_BOUNDED_SAME_PERIOD_RECHECK'};
+      const scheduledAt=sourceAttemptWindowStart(latest),runs=await readRetryRuns({scheduledAt,now});
+      if(periodIbRetryAllowed({runs,currentRunId,scheduledAt,now}))return {...covered,outcome:'produce',reasonCode:'IB_BOUNDED_SAME_PERIOD_RECHECK'};
     }catch{/* IB metadata uncertainty cannot block or invalidate fee coverage. */}
     return covered;
   }
@@ -186,19 +195,20 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,ibEna
   }catch{return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
-export async function dailyPublicationPreflight({now=new Date(),targetDate=null,markets=String(process.env.FEE_REPORT_MARKETS||'').split(',').filter(Boolean),readState,...options}={}){
+export async function dailyPublicationPreflight({now=new Date(),targetDate=null,reviewedSyncDate=null,markets=String(process.env.FEE_REPORT_MARKETS||'').split(',').filter(Boolean),readState,...options}={}){
   const localDate=(zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
   const target=targetDate||reportAddDays(localDate('Asia/Hong_Kong'),-1),base={schema:'fee-console.report-preflight.v1',plan:null};reportDate(target);
+  if(reviewedSyncDate!==null&&(!targetDate||reportDate(reviewedSyncDate)!==target))fail('MANUAL_SYNC_CONFIRMATION');
   let sessions;try{sessions=sessionUnion(target,markets);}catch{return {...base,outcome:'waiting',reasonCode:'CALENDAR_SCOPE_UNVERIFIED'};}
   if(sessions.rows.some(row=>row.state==='unknown'))return {...base,outcome:'waiting',reasonCode:'CALENDAR_SCOPE_UNVERIFIED'};
   if(sessions.state==='closed')return {...base,outcome:'not-due',reasonCode:'ALL_RELEVANT_MARKETS_CLOSED'};
-  const scheduled=reportAddDays(target,1)+'T10:30:00+08:00';
-  if(now.getTime()<Date.parse(scheduled))return {...base,outcome:'waiting',reasonCode:'REPORT_NOT_DUE'};
+  const initial=dailyReportPlan(target,markets,{reviewedSyncDate}),readiness=reportPlanReadiness(initial,now);
+  if(reviewedSyncDate!==null&&readiness.state!=='due'||reviewedSyncDate===null&&now.getTime()<Date.parse(initial.scheduledAt))return {...base,outcome:'waiting',reasonCode:readiness.reasonCode};
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:options.ibEnabled??process.env.IB_MANAGER_READ_ENABLED==='true'}));
   const state=await readState(target,now.toISOString());
   if(!state.health||state.health.targetDate>target)fail('HISTORY_AHEAD_OF_TARGET');
-  let plan;try{plan=dailyReportPlan(target,markets,{periodFrom:state.health.targetDate===target?target:reportAddDays(state.health.targetDate,1)});}catch{return {...base,outcome:'recovery-required',reasonCode:'REPORT_SOURCE_RANGE_UNVERIFIED'};}
-  return reportPublicationPreflight({...options,now,plan,readState:async()=>state});
+  let plan;try{plan=dailyReportPlan(target,markets,{periodFrom:state.health.targetDate===target?target:reportAddDays(state.health.targetDate,1),reviewedSyncDate});}catch{return {...base,outcome:'recovery-required',reasonCode:'REPORT_SOURCE_RANGE_UNVERIFIED'};}
+  return reportPublicationPreflight({...options,now,plan,reviewedSyncDate,readState:async()=>state});
 }
 export async function reportPublicationWatch({mainSha,health,data,now=new Date(),daily=false,markets}={}){
   if(!/^[a-f0-9]{40}$/.test(mainSha||''))fail('PUBLICATION_READ');
@@ -224,9 +234,10 @@ export function assertPeriodIbRecheckUnchanged(before,after){
   const strip=o=>Object.fromEntries(Object.entries(o).filter(([k])=>!['ibManagerReturnReceipt','ibManagerDrawdownReceipt','ibManagerSourceState','ibManagerSourceStatus','ibManagerBaselineState','ibManagerCoverageState','updatedAt'].includes(k)));
   if(canonicalJson(strip(before))!==canonicalJson(strip(after)))fail('IB_RECHECK_CHANGED_FEE_DATA');
 }
-export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json')}={}){
+export async function produceReportPeriod({plan,reviewedSyncDate=null,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json')}={}){
   if(process.env.GITHUB_RUN_ATTEMPT!==undefined&&process.env.GITHUB_RUN_ATTEMPT!=='1')fail('SOURCE_RERUN_NOT_ALLOWED');
   if(!validateReportPlan(plan)||reportPlanReadiness(plan,now).state!=='due')fail('NOT_READY');
+  if(isReviewedDailyPlan(plan)?reviewedSyncDate!==plan.accountingThrough:reviewedSyncDate!==null)fail('MANUAL_SYNC_CONFIRMATION');
   if(!freshTarget(plan,now))fail('RECOVERY_REQUIRED');
   const output=outputDirectory(outputDir),originalBytes=fs.readFileSync(sourceFile),payload=decryptCandidate(sourceFile,process.env.FEE_DATA_KEY);
   const latest=payload.daily?.map(p=>p.d).sort().at(-1),dates=reportWindowDates(latest,plan.accountingThrough);
@@ -272,14 +283,28 @@ export async function produceReportPeriod({plan,outputDir,benchmarkFile,now=new 
 }
 function cliArgs(argv){
   const out={};for(const arg of argv){const m=/^--([a-z-]+)=([\s\S]+)$/.exec(arg);if(!m||out[m[1]]!==undefined)fail('ARGUMENT');out[m[1]]=m[2];}
-  if(Object.keys(out).some(k=>!['mode','report-kind','report-target','report-markets','report-plan','benchmark-file','out-dir','main-sha'].includes(k)))fail('ARGUMENT');
+  if(Object.keys(out).some(k=>!['mode','report-kind','report-target','report-markets','report-plan','benchmark-file','out-dir','main-sha','manual-sync-completed-for'].includes(k)))fail('ARGUMENT');
   if(out['report-markets']&&(out.mode!=='preflight'||out['report-kind']!=='daily'||!out['report-target']))fail('ARGUMENT');
   if((out['report-kind']===undefined)!==(out['report-target']===undefined))fail('ARGUMENT');return out;
+}
+export function reviewedSyncConfirmation(args,{env=process.env,readEvent}={}){
+  const value=args['manual-sync-completed-for'];if(value===undefined)return null;
+  try{
+    if(!['preflight','produce'].includes(args.mode)||args['report-kind']!=='daily'||reportDate(value)!==args['report-target']
+        ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_REF!=='refs/heads/main')throw Error();
+    const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
+    const i=event?.inputs,off=v=>v===undefined||v===false||v==='false';
+    if(!i||![true,'true'].includes(i.run_reviewed_once)||i.report_kind!=='daily'||i.report_target!==value
+        ||i.manual_sync_completed_for!==value||!off(i.source_plan_check_only)||!off(i.source_acceptance_once))throw Error();
+    return value;
+  }catch{fail('MANUAL_SYNC_CONFIRMATION');}
 }
 async function main(){
   const args=cliArgs(process.argv.slice(2));let plan=null;
   if(args['report-plan']){try{plan=JSON.parse(args['report-plan']);}catch{fail('PLAN');}if(!validateReportPlan(plan)||args['report-target']!==plan.accountingThrough||args['report-kind']!==(plan.kind.startsWith('daily')?'daily':plan.kind==='monthly'?'monthly':'weekly'))fail('PLAN');}
   else if(args['report-target']&&args['report-kind']!=='daily')plan=explicitReportPlan(args['report-kind'],args['report-target']);
+  const reviewedSyncDate=reviewedSyncConfirmation(args);
+  if(plan&&isReviewedDailyPlan(plan)&&reviewedSyncDate!==plan.accountingThrough)fail('MANUAL_SYNC_CONFIRMATION');
   if(args.mode==='watch'){
     if(Object.keys(args).sort().join(',')!=='main-sha,mode')fail('ARGUMENT');
     const data=fs.readFileSync(path.join(ROOT,'data.json')),bytes=fs.readFileSync(path.join(ROOT,'fee-data-health.json'));
@@ -290,10 +315,10 @@ async function main(){
   if(args['main-sha'])fail('ARGUMENT');
   if(args.mode==='preflight'){
     if(args['out-dir']||args['benchmark-file']||args['report-plan'])fail('ARGUMENT');
-    console.log(JSON.stringify(await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}))));return;
+    console.log(JSON.stringify(await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,reviewedSyncDate,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}))));return;
   }
   if(args.mode!=='produce'||!plan)fail('ARGUMENT');
-  const result=await produceReportPeriod({plan,outputDir:args['out-dir'],benchmarkFile:args['benchmark-file']});
+  const result=await produceReportPeriod({plan,reviewedSyncDate,outputDir:args['out-dir'],benchmarkFile:args['benchmark-file']});
   console.log(JSON.stringify({schema:'fee-console.cloud-producer.v1',targetDate:result.targetDate,outcome:result.outcome,retryCount:result.retryCount,sourceDates:result.sourceDates,dataSha256:result.dataSha256,reportKind:result.reportKind,priceThrough:result.priceThrough,accountingThrough:result.accountingThrough,reconstructedDays:result.reconstructedDays,...(result.ibManager?{ibManager:result.ibManager}:{})}));
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{const code=/^FEE_REPORT_[A-Z_]{1,64}$/.test(error?.message||'')?error.message:producerFailureCode(error,'UNKNOWN');console.error(code);process.exitCode=1;});
