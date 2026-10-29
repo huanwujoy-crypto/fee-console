@@ -347,7 +347,7 @@ test('early published coverage deduplicates the later normal cycle without reset
  assert.equal(new URL(query[0]).searchParams.get('created'),new URL(query[2]).searchParams.get('created'));
 });
 
-const recoveryBase='50d6454b062030d4ee6565a4d879c56b68e65911',originalFailureBase='fbb79a694acb232fbdb522939d98a933da03b1f2',recoverySupport='c'.repeat(40),recoveryHead='d'.repeat(40),recoveryId=90000000001;
+const recoveryBase='50d6454b062030d4ee6565a4d879c56b68e65911',originalFailureBase='fbb79a694acb232fbdb522939d98a933da03b1f2',recoverySupport='451efca392e474f434b7ac7891eb6f5570cf7108',recoveryHead='d'.repeat(40),recoveryId=90000000001;
 const recoveryUi=fs.readFileSync(new URL('./fixtures/fee-gift-registry-status-index.html',import.meta.url));
 const recoveryUiBlob=crypto.createHash('sha1').update(Buffer.concat([Buffer.from('blob '+recoveryUi.length+'\0'),recoveryUi])).digest('hex');
 const recoveryNow=new Date('2026-10-29T06:30:00Z');
@@ -357,10 +357,11 @@ function recoveryFixture(){
  const runs=[run(recoveryId,recoveryHead,'2026-10-29T06:00:00Z'),run(40815850578,recoveryBase,'2026-10-29T04:06:22Z'),run(40805169117,originalFailureBase,'2026-10-29T02:14:24Z'),run(40803101364,originalFailureBase,'2026-10-29T01:53:22Z')];
  const job=(r,id,name='Produce daily 2026-10-28',status='completed',conclusion='failure')=>({id,run_id:r.id,head_sha:r.head_sha,name,status,conclusion,started_at:r.created_at});
  const jobs={40815850578:[job(runs[1],123256663738)],40805169117:[job(runs[2],123222332691)],40803101364:[job(runs[3],123215645936)]};
- const commit={sha:recoveryHead,parents:[{sha:recoverySupport}],author:{id:283054367,login:'huanwujoy-crypto'},committer:{login:'web-flow'},commit:{verification:{verified:true,reason:'valid'}}};
+ const commit={sha:recoveryHead,parents:[{sha:recoverySupport}],author:{id:283054367,login:'huanwujoy-crypto'},committer:{login:'web-flow'},commit:{tree:{sha:'a'.repeat(40)},verification:{verified:true,reason:'valid'}}};
  const supportCommit={...structuredClone(commit),sha:recoverySupport,parents:[{sha:recoveryBase}]};
- const comparison={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:recoverySupport},merge_base_commit:{sha:recoverySupport},commits:[{sha:recoveryHead}],files:[{filename:'index.html',status:'modified',sha:recoveryUiBlob}]};
- return{plan,runs,jobs,commit,supportCommit,comparison,ref:{object:{sha:recoveryHead}},run,job};
+ const comparison={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:recoverySupport},merge_base_commit:{sha:recoverySupport},commits:[{sha:recoveryHead}],files:['scripts/fee-sharesight-transfers.mjs','scripts/fee-source-acceptance.test.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs'].map(filename=>({filename,status:'modified',sha:'b'.repeat(40)}))};
+ const tree={sha:commit.commit.tree.sha,truncated:false,tree:[{path:'index.html',type:'blob',mode:'100644',sha:recoveryUiBlob}]};
+ return{plan,runs,jobs,commit,supportCommit,comparison,tree,ref:{object:{sha:recoveryHead}},run,job};
 }
 function recoveryWire(f,trace=[]){return async(url,init)=>{
  assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,undefined);assert.equal(init.redirect,'error');
@@ -368,11 +369,11 @@ function recoveryWire(f,trace=[]){return async(url,init)=>{
  let value;if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
  else if(/^actions\/runs\/\d+\/jobs\?filter=all&per_page=100$/.test(p)){const id=Number(p.match(/runs\/(\d+)/)[1]),jobs=f.jobs[id];assert.ok(jobs);value={total_count:jobs.length,jobs};}
  else if(p==='git/ref/heads/main')value=f.ref;
- else if(p==='commits/'+recoveryHead+'?per_page=1')value=f.commit;else if(p==='commits/'+recoverySupport+'?per_page=1')value=f.supportCommit;else if(p==='compare/'+recoverySupport+'...'+recoveryHead+'?per_page=100')value=f.comparison;else assert.fail('unexpected offline metadata route');
+ else if(p==='commits/'+recoveryHead+'?per_page=1')value=f.commit;else if(p==='commits/'+recoverySupport+'?per_page=1')value=f.supportCommit;else if(p==='compare/'+recoverySupport+'...'+recoveryHead+'?per_page=100')value=f.comparison;else if(p==='git/trees/'+'a'.repeat(40))value=f.tree;else assert.fail('unexpected offline metadata route');
  const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;
 };}
 function recoveryReaders(f){const fetchImpl=recoveryWire(f);return{readSourceAttempts:args=>readPeriodSourceAttempts({...args,fetchImpl}),readRecoveryRelease:sha=>readReportRecoveryRelease(sha,{fetchImpl})};}
-test('only the exact signed support/UI release and three fixed failures admit one new recovery; ordinary budget stays two',async()=>{
+test('only the signed one-gift repair of the deployed UI rebinds the same recovery; three failures and ordinary budget two remain',async()=>{
  const f=recoveryFixture(),readers=recoveryReaders(f),args={plan:f.plan,now:recoveryNow,currentRunId:String(recoveryId),...readers};
  await assert.doesNotReject(authorizeReportRecovery({...args,expectedMain:recoveryHead}));
  assert.deepEqual(await readers.readSourceAttempts(args),{attempts:2,inProgress:false});
@@ -382,7 +383,7 @@ test('only the exact signed support/UI release and three fixed failures admit on
 });
 test('recovery fails closed on scope, missing/changed failures, reruns, actor, current run, consumed admission and competitors',async()=>{
  const f=recoveryFixture(),readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
- const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:{mainSha:recoveryHead,parent:recoverySupport,baseSha:recoveryBase,supportSha:recoverySupport,uiBlob:recoveryUiBlob,signatureVerified:true}};
+ const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:{mainSha:recoveryHead,parent:recoverySupport,baseSha:recoveryBase,repairBaseSha:recoverySupport,uiBlob:recoveryUiBlob,signatureVerified:true}};
  const mutations=[x=>x.plan=dailyReportPlan('2026-10-27',['NYSE','NASDAQ'],{reviewedSyncDate:'2026-10-27'}),x=>x.plan=weeklyReportPlan('2026-10-23'),x=>x.expectedMain='e'.repeat(40),x=>x.release.parent='e'.repeat(40),x=>x.release.signatureVerified=false,
   x=>x.budget.attempts=1,x=>x.budget.attempts=2,x=>x.budget.attempts=4,x=>x.budget.inProgress=true,x=>x.budget.recoveryEvidence.otherSourceActive=true,x=>x.budget.recoveryEvidence.reservations.push(90000000000),
   x=>x.budget.recoveryEvidence.currentRun=null,x=>x.budget.recoveryEvidence.currentRun.head=recoveryBase,x=>x.budget.recoveryEvidence.currentRun.actorId=1,x=>x.budget.recoveryEvidence.currentRun.attempt=2,x=>x.budget.recoveryEvidence.currentRun.event='schedule',x=>x.budget.recoveryEvidence.currentRun.workflowId=1,x=>x.budget.recoveryEvidence.currentRun.status='completed',x=>x.budget.recoveryEvidence.currentRun.conclusion='failure',
@@ -397,10 +398,10 @@ for(const historicalId of [40803101364,40805169117,40815850578])for(const [runSt
  await assert.rejects(authorizeReportRecovery({plan:f.plan,expectedMain:recoveryHead,now:recoveryNow,currentRunId:recoveryId,...readers}),/FEE_REPORT_RECOVERY_PRIOR_RUNS/);
 });
 test('complete recovery metadata reserves cancelled admission and scans beyond the ordinary two-entry early return',async()=>{
- for(const kind of ['cancelled-period','queued-period','failed-source','other-target-active','skipped-schedule']){
-  const f=recoveryFixture(),r=f.run(90000000000,kind==='other-target-active'?recoveryBase:recoveryHead,'2026-10-29T02:50:00Z');f.runs.push(r);
-  let j;if(kind==='failed-source')j=f.job(r,90000000011);else if(kind==='other-target-active')j=f.job(r,90000000011,'Produce daily 2026-10-27','in_progress',null);else j=f.job(r,90000000011,'period',kind==='queued-period'?'queued':'completed',kind==='skipped-schedule'?'skipped':kind==='cancelled-period'?'cancelled':null);
-  if(kind==='cancelled-period'||kind==='queued-period')j.started_at=null;if(kind==='skipped-schedule')r.event='schedule';f.jobs[r.id]=[j];
+ for(const kind of ['cancelled-period','queued-period','old-release-cancelled-period','old-release-queued-period','failed-source','other-target-active','skipped-schedule']){
+  const f=recoveryFixture(),r=f.run(90000000000,kind==='other-target-active'?recoveryBase:kind.startsWith('old-release-')?recoverySupport:recoveryHead,'2026-10-29T02:50:00Z');f.runs.push(r);
+  let j;if(kind==='failed-source')j=f.job(r,90000000011);else if(kind==='other-target-active')j=f.job(r,90000000011,'Produce daily 2026-10-27','in_progress',null);else j=f.job(r,90000000011,'period',kind.endsWith('queued-period')?'queued':'completed',kind==='skipped-schedule'?'skipped':kind.endsWith('cancelled-period')?'cancelled':null);
+  if(kind.endsWith('cancelled-period')||kind.endsWith('queued-period'))j.started_at=null;if(kind==='skipped-schedule')r.event='schedule';f.jobs[r.id]=[j];
   const readers=recoveryReaders(f),args={plan:f.plan,now:recoveryNow,currentRunId:recoveryId,expectedMain:recoveryHead,...readers};
   if(kind==='skipped-schedule')await assert.doesNotReject(authorizeReportRecovery(args));else await assert.rejects(authorizeReportRecovery(args),/FEE_REPORT_RECOVERY_/);
  }
@@ -409,20 +410,23 @@ test('recovery metadata release check rejects later versions, unsigned/wrong-own
  for(const mutate of [f=>f.ref.object.sha='e'.repeat(40),f=>f.commit.sha='e'.repeat(40),f=>f.commit.parents=[{sha:recoveryHead}],f=>f.commit.parents.push({sha:recoveryBase}),f=>f.commit.commit.verification.verified=false,f=>f.commit.author.id=1,f=>f.commit.committer.login='other']){
   const f=recoveryFixture();mutate(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_RELEASE/);
  }
- const f=recoveryFixture(),trace=[];await readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f,trace)});assert.equal(trace.length,4);assert.ok(trace.every(p=>!p.includes('/logs')));
+ const f=recoveryFixture(),trace=[];await readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f,trace)});assert.equal(trace.length,5);assert.ok(trace.every(p=>!p.includes('/logs')));
 });
-test('new recovery requires the exact signed support then index-only chain, including its pinned UI bytes',async()=>{
- const changes=[f=>f.supportCommit.parents=[{sha:originalFailureBase}],f=>f.supportCommit.parents.push({sha:recoveryBase}),
+test('repair release permits exactly four code/test modifications and preserves the deployed UI blob',async()=>{
+ const changes=[f=>f.supportCommit.parents=[],f=>f.supportCommit.parents.push({sha:recoveryBase}),
   f=>f.supportCommit.commit.verification.verified=false,f=>f.supportCommit.author.id=1,
   f=>f.comparison.total_commits=2,f=>f.comparison.ahead_by=2,f=>f.comparison.behind_by=1,
   f=>f.comparison.base_commit.sha=recoveryBase,f=>f.comparison.merge_base_commit.sha=recoveryBase,
   f=>f.comparison.commits.push({sha:'e'.repeat(40)}),f=>f.comparison.commits[0].sha='e'.repeat(40),
   f=>f.comparison.files.push({filename:'scripts/extra.mjs',status:'modified',sha:'a'.repeat(40)}),
   f=>f.comparison.files[0].filename='data.json',f=>f.comparison.files[0].status='renamed',
-  f=>f.comparison.files[0].previous_filename='old.html',f=>f.comparison.files[0].sha='e'.repeat(40)];
+  f=>f.comparison.files[0].previous_filename='old.html',f=>f.comparison.files[0].sha='not-a-sha',
+  f=>f.comparison.files.pop(),f=>f.comparison.files[1]=structuredClone(f.comparison.files[0]),
+  f=>f.tree.sha='e'.repeat(40),f=>f.tree.truncated=true,f=>f.tree.tree=[],f=>f.tree.tree.push({...f.tree.tree[0]}),
+  f=>f.tree.tree[0].sha='e'.repeat(40),f=>f.tree.tree[0].mode='120000',f=>f.tree.tree[0].type='tree'];
  for(const change of changes){const f=recoveryFixture();change(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_RELEASE/);}
  const support=recoveryFixture();support.ref.object.sha=recoverySupport;
- await assert.rejects(readReportRecoveryRelease(recoverySupport,{fetchImpl:recoveryWire(support)}),/RECOVERY_RELEASE/,'support before UI cannot be released');
+ await assert.rejects(readReportRecoveryRelease(recoverySupport,{fetchImpl:recoveryWire(support)}),/RECOVERY_RELEASE/,'old release must not bypass the newly approved repair');
 });
 test('recovery confirmation binds real reviewed event, exact target/head, owner, main and first attempt; JSON claims cannot reset it',()=>{
  const args={mode:'preflight','report-kind':'daily','report-target':'2026-10-28','manual-sync-completed-for':'2026-10-28','recovery-main':recoveryHead};
@@ -459,7 +463,7 @@ test('actual recovery preflight and producer CLI use only mocked fixed routes, r
    const api='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
    if(url.startsWith(api)){const p=url.slice(api.length);calls.push('public-metadata');
     if(p==='git/ref/heads/main')value=f.ref;else if(p==='commits/${recoveryHead}?per_page=1'){value=structuredClone(f.commit);if(process.env.SYNTHETIC_REJECT_RELEASE==='true')value.parents=[{sha:'${recoveryBase}'}];}
-    else if(p==='commits/${recoverySupport}?per_page=1')value=f.supportCommit;else if(p==='compare/${recoverySupport}...${recoveryHead}?per_page=100')value=f.comparison;
+    else if(p==='commits/${recoverySupport}?per_page=1')value=f.supportCommit;else if(p==='compare/${recoverySupport}...${recoveryHead}?per_page=100')value=f.comparison;else if(p==='git/trees/${'a'.repeat(40)}')value=f.tree;
     else if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
     else if(/^actions\\/runs\\/\\d+\\/jobs\\?filter=all&per_page=100$/.test(p)){const jobs=f.jobs[Number(p.match(/runs\\/(\\d+)/)[1])];if(!jobs)throw Error('unexpected job');value={total_count:jobs.length,jobs};}
     else if(p.startsWith('contents/')){const text=p.startsWith('contents/data.json?')?data:p.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unexpected content');value={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}
