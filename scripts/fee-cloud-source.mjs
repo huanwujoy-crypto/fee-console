@@ -7,6 +7,7 @@ import crypto from "node:crypto";
 import { boundedJson, BoundedJsonError } from './fee-http-json.mjs';
 import {managedTransferCandidates,buildManagedTransferProof,consumeManagedTransferProof,validateManagedTransferIdentities} from './fee-sharesight-transfers.mjs';
 import {validateManagementRegistry} from './fee-management-exemption.mjs';
+import {SHARESIGHT_REFERENCE_SCHEMA,normalizeSharesightReference,classifyFlow} from './daily-core.mjs';
 
 import {isSharesightDeclaredTradeCash} from './fee-trade-cash-evidence.mjs';
 export {isControlledWebullNetProceeds} from './fee-trade-cash-evidence.mjs';
@@ -185,13 +186,14 @@ export function cashCents(row, key) {
   return value;
 }
 
-function datedCashList(payload, expected, targetDate) {
+function datedCashList(payload, expected, targetDate,reference=false) {
   const list = rows(payload, 'cash_accounts');
   for (const row of list) {
     if (id(row.portfolio_id) !== expected.portfolioId || row.portfolio_currency !== 'USD'
         || !/^[A-Z]{3}$/.test(row.currency || '') || row.date !== targetDate) fail('CASH_IDENTITY');
-    cashCents(row, 'balance'); cashCents(row, 'balance_in_portfolio_currency');
-    if (row.currency === 'USD' && cashCents(row, 'balance') !== cashCents(row, 'balance_in_portfolio_currency')) fail('CASH_REPORT_BALANCE');
+    if(reference){amount(row.balance);amount(row.balance_in_portfolio_currency);}
+    else {cashCents(row, 'balance'); cashCents(row, 'balance_in_portfolio_currency');
+      if (row.currency === 'USD' && cashCents(row, 'balance') !== cashCents(row, 'balance_in_portfolio_currency')) fail('CASH_REPORT_BALANCE');}
   }
   return list;
 }
@@ -493,14 +495,16 @@ function cashLedgerProof(historyPayload, targetPayload, cashId, portfolioId, tar
     anchor: anchorGroup, target };
 }
 
-function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance, previousCashPayload, cashLedgerHistory, cashSettings) {
+function normalizePortfolio(account, performancePayload, holdingsPayload, cashPayload, cashTransactions, tradesPayload, targetDate, incomePayouts = {}, incomeDateEvidence = {}, previousPerformance, holdingHistory, terminalPerformance, previousCashPayload, cashLedgerHistory, cashSettings,reference=false) {
   const expected = CLOUD_ACCOUNTS[account];
   const report = performancePayload?.report;
+  const referenceWarnings=[];
   assertComplete(performancePayload); assertComplete(report);
   if (!object(report) || id(report.portfolio_id) !== expected.portfolioId
       || date(report.start_date) !== targetDate || date(report.end_date) !== targetDate
       || report.currency?.code !== "USD" || report.include_sales !== false
       || report.portfolio_tz_name !== 'America/New_York') fail("PERFORMANCE_IDENTITY");
+  if(reference&&(!Array.isArray(report.holdings)||!Array.isArray(report.cash_accounts)))fail('SOURCE_MISSING');
   const listing = rows(holdingsPayload, "holdings");
   const listedIds = new Set(listing.map(row => {
     if (id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
@@ -516,14 +520,15 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     if (stable(holdingIdentity(row)) !== stable(holdingIdentity(listed))) fail('HOLDING_IDENTITY');
     return { holdingId, ticker, valueUsd: amount(row.value) };
   }).sort((a, b) => a.holdingId - b.holdingId);
-  const catalogEvidence = catalogScopeEvidence(listing, report,
+  const catalogEvidence = reference?{authority:'sharesight.same-day-report.v1',reportHoldingIds:holdings.map(h=>h.holdingId),catalogHoldingIds:[...listedIds].sort((a,b)=>a-b)}:catalogScopeEvidence(listing, report,
     holdingHistory, rows(tradesPayload, 'trades'), expected, targetDate, terminalPerformance);
+  if(reference&&listing.length!==holdings.length)referenceWarnings.push('CATALOG_SCOPE_DIFF');
   const cashRows = rows(report.cash_accounts || [], "cash_accounts").map(row => {
     if (id(row.portfolio?.id) !== expected.portfolioId || row.portfolio?.name !== expected.name
         || typeof row.currency?.code !== "string") fail("CASH_CURRENCY");
     return { id: id(row.id), currency: row.currency.code, valueUsd: amount(row.value) };
   }).sort((a, b) => a.id - b.id);
-  const listedCash = datedCashList(cashPayload, expected, targetDate);
+  const listedCash = datedCashList(cashPayload, expected, targetDate,reference);
   const listedCashById = new Map(listedCash.map(row => [id(row.id), row]));
   for (const row of cashRows) {
     const listed = listedCashById.get(row.id);
@@ -531,15 +536,18 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || listed.currency !== row.currency) {
       fail("CASH_IDENTITY");
     }
-    if (Math.abs(row.valueUsd - listed.balance_in_portfolio_currency) > 0.01
-        || (row.currency === 'USD' && cashCents(listed, 'balance') !== cashCents(listed, 'balance_in_portfolio_currency'))) fail('CASH_REPORT_BALANCE');
+    const differs=Math.abs(row.valueUsd - listed.balance_in_portfolio_currency)>0.01
+      ||row.currency==='USD'&&Math.abs(listed.balance-listed.balance_in_portfolio_currency)>0.01;
+    if(differs){if(reference)referenceWarnings.push('AUXILIARY_CASH_BALANCE_DIFF');else fail('CASH_REPORT_BALANCE');}
   }
   if (listedCash.length !== cashRows.length || Object.keys(cashTransactions).length !== listedCash.length
       || listedCash.some(row => !Object.hasOwn(cashTransactions, String(id(row.id))))) fail('CASH_IDENTITY');
   for (const payload of Object.values(cashTransactions)) rows(payload, 'cash_account_transactions');
+  if(!reference){
   const usdIds = listedCash.filter(row => row.currency === 'USD').map(row => String(id(row.id)));
   if (!object(cashLedgerHistory) || Object.keys(cashLedgerHistory).length !== usdIds.length
       || usdIds.some(key => !Object.hasOwn(cashLedgerHistory, key))) fail('CASH_HISTORY_EVIDENCE');
+  }
   let incomeEvidence;
   try {
     if(account==='webull')for(const audit of notificationIncomeAudits(incomeDateEvidence,targetDate)) {
@@ -560,18 +568,19 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   let movementTotal = 0;
   for (const [cashIdText, payload] of Object.entries(cashTransactions)) {
     const cashId = id(cashIdText), cashAccount = listedCashById.get(cashId);
-    if (!cashAccount || cashAccount.currency !== "USD") {
+    if (!cashAccount || !reference&&cashAccount.currency !== "USD") {
       if (rows(payload, "cash_account_transactions").length) fail("NON_USD_MOVEMENT");
       continue;
     }
     const transactionRows = rows(payload, "cash_account_transactions");
-    if (transactionRows.some(row => !Number.isFinite(Date.parse(row.date_time)) || !finite(row.balance))) fail('CASH_TRANSACTION_IDENTITY');
+    if (transactionRows.some(row => !Number.isFinite(Date.parse(row.date_time)) || !reference&&!finite(row.balance))) fail('CASH_TRANSACTION_IDENTITY');
     for (const row of transactionRows) {
       if (seenTransactions.has(id(row.id))) fail('SOURCE_DUPLICATE');
       seenTransactions.add(id(row.id));
       const movementDate = date(String(row.date_time || "").slice(0, 10));
       if (movementDate !== targetDate || id(row.cash_account_id) !== cashId) fail("CASH_TRANSACTION_IDENTITY");
       const movement = amount(row.amount);
+      if(reference&&movement===0&&(row.amount!==0||exactNumberText(row,'amount','AMOUNT')!=='0'))fail('AMOUNT');
       movementTotal += movement;
       const description = typeof row.description === "string" ? row.description.slice(0, 300) : "";
       const foreignIdentifier = typeof row.foreign_identifier === "string" ? row.foreign_identifier : "";
@@ -579,8 +588,9 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         && /^(?:DEPOSIT|WITHDRAWAL)$/i.test(String(row.cash_account_transaction_type?.name || ""))
         && /^webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(foreignIdentifier)
         && /^Webull [A-Z0-9./^-]+ (?:BUY|SELL) securities principal; NOT external funding; webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(description);
-      flows.push({
+      const flow={
         date: targetDate, acct: account, amount: movement,
+        ...(reference?{currency:cashAccount.currency}:{}),
         desc: description,
         type: typeof row.cash_account_transaction_type?.name === "string" ? row.cash_account_transaction_type.name : "",
         tradeId: row.trade_id == null ? null : id(row.trade_id),
@@ -588,7 +598,9 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         foreignIdentifier,
         ...(legacyControlledWebullPrincipal || isSharesightDeclaredTradeCash({account,portfolioId:expected.portfolioId,row,targetDate}) ? { evidence: "internal_trade" } : {}),
         ...(incomeEvidence.get(row.id) || {}),
-      });
+      };
+      if(reference&&cashAccount.currency!=='USD'&&classifyFlow(flow,{reference:true}).kind!=='internal')fail('NON_USD_EXTERNAL_FLOW');
+      flows.push(flow);
     }
   }
   const total = amount(report.value);
@@ -598,10 +610,12 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
   const stock = round2(equity.reduce((sum, row) => sum + row.valueUsd, 0));
   if (Math.abs(total - cash - other - stock) > 1) fail("TOTAL_RECONCILIATION");
   let previousCash = null;
-  const cashEvidence = listedCash.map(row => ({ cashAccountId: id(row.id), currency: row.currency,
+  const cashEvidence = reference?listedCash.map(row=>({cashAccountId:id(row.id),currency:row.currency,date:row.date,
+    authority:'sharesight.same-day-report.v1',nativeBalance:row.balance,
+    reportValueUsd:cashRows.find(x=>x.id===row.id).valueUsd})):listedCash.map(row => ({ cashAccountId: id(row.id), currency: row.currency,
     date: row.date, balanceCents: String(cashCents(row, 'balance')),
     valueUsdCents: String(cashCents(row, 'balance_in_portfolio_currency')) })).sort((a,b) => a.cashAccountId-b.cashAccountId);
-  {
+  if(!reference)  {
     assertComplete(previousPerformance); assertComplete(previousPerformance?.report);
     const prior = previousPerformance?.report;
     if (!object(prior) || id(prior.portfolio_id) !== expected.portfolioId
@@ -649,7 +663,8 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     account, portfolioId: expected.portfolioId, sourceDate: targetDate, total, cash, other, stock,
     holdings: equity,
     flows: flows.sort((a, b) => stable(a).localeCompare(stable(b))),
-    cashCheck: flows.length ? { current: round2(cashRows.filter(row => row.currency === 'USD').reduce((sum, row) => sum + row.valueUsd, 0)), previous: previousCash } : null,
+    ...(reference?{referenceCash:cash,referenceCurrencies:[...new Set(cashRows.map(r=>r.currency))].sort(),referenceWarnings:[...new Set(referenceWarnings)]}:{}),
+    cashCheck: !reference&&flows.length ? { current: round2(cashRows.filter(row => row.currency === 'USD').reduce((sum, row) => sum + row.valueUsd, 0)), previous: previousCash } : null,
     catalogEvidence, cashEvidence, cashSettings,
   };
 }
@@ -683,8 +698,10 @@ export function managementSourceInput(raw, targetDate) {
   return {schemaVersion:1,date:targetDate,holdings,trades,historyComplete:true,proposals:[]};
 }
 
-export function normalizeRead(raw, targetDate, benchmark) {
+export function normalizeRead(raw, targetDate, benchmark,{sourceMode='legacy-reconstruction'}={}) {
   date(targetDate);
+  if(!['legacy-reconstruction','sharesight-reference'].includes(sourceMode))fail('SOURCE_MODE');
+  const reference=sourceMode==='sharesight-reference';
   const portfolios = [];
   for (const account of Object.keys(CLOUD_ACCOUNTS)) {
     const source = raw[account];
@@ -692,7 +709,7 @@ export function normalizeRead(raw, targetDate, benchmark) {
     portfolios.push(normalizePortfolio(account, source.performance, source.holdings, source.cashAccounts,
       source.cashTransactions, source.trades, targetDate, source.incomePayouts, source.incomeDateEvidence,
       source.previousPerformance, source.holdingHistory || (account === 'webull' ? source.managementTrades : undefined),
-      source.terminalPerformance, source.previousCashAccounts, source.cashLedgerHistory, source.cashSettings));
+      source.terminalPerformance, source.previousCashAccounts, source.cashLedgerHistory, source.cashSettings,reference));
   }
   const accounts = Object.fromEntries(portfolios.map(p => [p.account, p.total]));
   const splits = {
@@ -711,9 +728,15 @@ export function normalizeRead(raw, targetDate, benchmark) {
     acctCash[p.account] = p.cashCheck.current;
     prevAcctCash[p.account] = p.cashCheck.previous;
   }
+  const sourceReference=reference?normalizeSharesightReference({schema:SHARESIGHT_REFERENCE_SCHEMA,date:targetDate,currency:'USD',
+    cashByAccount:Object.fromEntries(portfolios.map(p=>[p.account,p.referenceCash])),
+    currenciesByAccount:Object.fromEntries(portfolios.map(p=>[p.account,p.referenceCurrencies])),cashHistoryReconstructed:false,
+    warnings:[...new Set(portfolios.flatMap(p=>p.referenceWarnings))]}, {date:targetDate,accounts,sourceDates,splits}):null;
+  if(reference)Object.assign(acctCash,sourceReference.cashByAccount);
   const managementInput = managementSourceInput(raw, targetDate);
   const normalized = { targetDate, accounts, splits, sourceDates, styleInput, flows, acctCash, prevAcctCash,
     ...(managementInput ? {managementInput} : {}),
+    ...(sourceReference?{sourceReference}:{}),
     benchmark: { ...benchmark, sourceDate: targetDate, state: "session" } };
   return { ...normalized, sourceFingerprint: sha256({ ...normalized, sourcePolicy:'sharesight-records-v1',
     catalogEvidence: portfolios.map(p => ({ account: p.account, ...p.catalogEvidence })),
@@ -759,7 +782,8 @@ class FixedHttp {
 }
 
 export class SharesightCloudReader {
-  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null,managedTransferIdentities=null,managementExemptionRegistry } = {}) {
+  constructor({ clientId, clientSecret, fetchImpl = globalThis.fetch, timeoutMs, incomeDateEvidence = {},reconcileInKind=false,onSourceResponse=null,managedTransferIdentities=null,managementExemptionRegistry,sourceMode='legacy-reconstruction' } = {}) {
+    if(!['legacy-reconstruction','sharesight-reference'].includes(sourceMode))fail('SOURCE_MODE');this.sourceMode=sourceMode;
     if(typeof reconcileInKind!=='boolean')fail('CONFIG');this.reconcileInKind=reconcileInKind;
     this.managedTransferIdentities=managedTransferIdentities==null?null:structuredClone(validateManagedTransferIdentities(managedTransferIdentities));
     this.managementExemptionRegistry=validateManagementRegistry(managementExemptionRegistry);
@@ -806,13 +830,15 @@ export class SharesightCloudReader {
       for (const cash of cashAccounts) {
         const cashId = id(cash.id);
         cashTransactions[cashId] = await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`, token);
-        if (cash.currency === 'USD') cashLedgerHistory[cashId] = await this.get(
+        if (this.sourceMode!=='sharesight-reference'&&cash.currency === 'USD') cashLedgerHistory[cashId] = await this.get(
           `${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?to=${targetDate}`, token);
       }
       const priorDate = previousCalendarDate(targetDate);
-      const previousPerformance = await this.get(
-        `${base3}/performance?consolidated=false&end_date=${priorDate}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${priorDate}`, token);
-      const previousCashAccounts = cashAccounts.some(cash => cash.currency !== 'USD')
+      const scopedIdentities=this.managedTransferIdentities?.date===targetDate&&this.managedTransferIdentities.account===account?this.managedTransferIdentities:null;
+      const transferNeeded=this.reconcileInKind&&managedTransferCandidates({trades:tradesPayload},scopedIdentities).length>0;
+      const previousPerformance = this.sourceMode!=='sharesight-reference'||transferNeeded?await this.get(
+        `${base3}/performance?consolidated=false&end_date=${priorDate}&grouping=investment_type&include_limited=false&include_sales=false&report_combined=false&start_date=${priorDate}`, token):undefined;
+      const previousCashAccounts = this.sourceMode!=='sharesight-reference'&&cashAccounts.some(cash => cash.currency !== 'USD')
         ? await this.get(`${API}/api/v2/portfolios/${expected.portfolioId}/cash_accounts.json?date=${priorDate}`, token) : undefined;
       const incomePayouts = {};
       if (account === 'webull') {
@@ -826,10 +852,11 @@ export class SharesightCloudReader {
       // Entire Webull history, not just today's trades, is required to bound
       // owner-authorized gift lots and retain a chargeable paid-lot balance.
       const datedHoldingIds = new Set(rows(performancePayload?.report?.holdings || [], 'holdings').map(row => id(row.id)));
-      const needsHistory = rows(holdingsPayload, 'holdings').some(row => !datedHoldingIds.has(id(row.id)));
-      const holdingHistory = account === 'webull' || needsHistory
+      const needsHistory = this.sourceMode!=='sharesight-reference'&&rows(holdingsPayload, 'holdings').some(row => !datedHoldingIds.has(id(row.id)));
+      const needsGiftHistory=account==='webull'&&(this.sourceMode!=='sharesight-reference'||this.managementExemptionRegistry?.entries.some(e=>e.account==='webull'&&e.effectiveFrom<=targetDate));
+      const holdingHistory = needsGiftHistory || needsHistory
         ? await this.get(`${base3}/trades.json?consolidated=false&end_date=${targetDate}`, token) : undefined;
-      const managementTrades = account === 'webull' ? holdingHistory : undefined;
+      const managementTrades = needsGiftHistory ? holdingHistory : undefined;
       const fromDate = needsHistory ? catalogStartDate(rows(holdingsPayload, 'holdings'), targetDate) : undefined;
       const terminalPerformance = needsHistory ? await this.get(
         `${base3}/performance?consolidated=false&end_date=${targetDate}&grouping=investment_type&include_limited=false&include_sales=true&report_combined=false&start_date=${fromDate}`, token) : undefined;
@@ -851,13 +878,13 @@ export class SharesightCloudReader {
         for(const c of rows(cashAccounts,'cash_accounts')){if(c.portfolio_id!==peerPortfolio.id)fail('CASH_IDENTITY');const cashId=id(c.id);cashTransactions[cashId]=await this.get(`${API}/api/v2/cash_accounts/${cashId}/cash_account_transactions.json?from=${targetDate}&to=${targetDate}`,token);}
         peer={performance,previousPerformance,trades,cashTransactions};
       }
-      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate,identifiedTransfers:identitiesFor(account),managementExemptionRegistry:this.managementExemptionRegistry});
+      for(const [account,p]of Object.entries(raw))p.managedTransferProof=buildManagedTransferProof({account,portfolio:{name:CLOUD_ACCOUNTS[account].name,id:CLOUD_ACCOUNTS[account].portfolioId},raw:p,peerPortfolio,peer,targetDate,identifiedTransfers:identitiesFor(account),managementExemptionRegistry:this.managementExemptionRegistry,referenceSource:this.sourceMode==='sharesight-reference'});
     }
     return raw;
   }
   async readStable(targetDate, benchmark) {
-    const first = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark);
-    const second = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark);
+    const first = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark,{sourceMode:this.sourceMode});
+    const second = normalizeRead(await this.readOnce(targetDate), targetDate, benchmark,{sourceMode:this.sourceMode});
     if (stable(first) !== stable(second)) fail("SOURCE_UNSTABLE");
     return first;
   }

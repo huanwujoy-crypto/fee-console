@@ -2097,3 +2097,58 @@ test('weekend carry retains independent gold and rejects explicit gold override'
   assert.match(run(dir,carried,['--weekend-carry']).stdout,/no-op/);
   assert.deepEqual(fs.readFileSync(path.join(dir,'data.json')),bytes);
 });
+
+const referenceWriterArgs = (d=today()) => ({
+  date:d,schwab:'200',webull:'100',cash:'100',stock:'200',other:'0',
+  'src-schwab':d,'src-webull':d,spy:'100',qqq:'100','src-bench':d,'bench-state':'session',
+  'acct-cash-schwab':'60','acct-cash-webull':'40',
+  'source-fetched-at':new Date().toISOString(),'source-fingerprint':'a'.repeat(64),
+  'sharesight-reference':JSON.stringify({schema:'fee-console.sharesight-reference.v1',date:d,currency:'USD',cashByAccount:{schwab:60,webull:40},currenciesByAccount:{schwab:['USD'],webull:['USD']},cashHistoryReconstructed:false,warnings:[]})
+});
+const referenceEconomic = (dir,start=today()) => ({FEE_ECON_FILE:writeEconEnvelope(dir,econForToday({settings:{start},accounts:[{id:'schwab',name:'Synthetic A',opening:200},{id:'webull',name:'Synthetic B',opening:100}],fees:[]}))});
+test('Sharesight reference reaches the actual writer and unchanged receipt with current cash only, no invented opening and byte-idempotence',()=>{
+ const d=today(),args=referenceWriterArgs(d),flows=[{date:d,acct:'webull',amount:-10,currency:'USD',type:'Buy Trade',tradeId:42,desc:'Synthetic source trade'},{date:d,acct:'webull',amount:0,currency:'USD',type:'DEPOSIT',desc:'Source zero cash record'}];
+ args.flows=JSON.stringify(flows);
+ const legacyDir=tmp(),legacy={...args};delete legacy['sharesight-reference'];assert.notEqual(run(legacyDir,legacy).status,0,'the legacy stale-cash contract is not silently relaxed');
+ const dir=tmp(),env=referenceEconomic(dir),r=run(dir,args,[],env);assert.equal(r.status,0,r.stderr);
+ const p=readPayload(dir),point=p.daily.at(-1);assert.equal(point.schwab,200);assert.equal(point.webull,100);assert.equal(point.cash,100);
+ assert.equal(point.sourceReference.cashHistoryReconstructed,false);assert.equal(p.flowsAuto.length,0);assert.equal(p.flowsUnresolved.length,0);
+ assert.equal(p.feeCalculationReceipt.status.valid,true);assert.equal(p.feeCalculationReceipt.asOf,d);
+ const reporter=spawnSync(process.execPath,[path.join(here,'fee-receipt-report.mjs'),`--file=${path.join(dir,'data.json')}`,'--format=json'],{encoding:'utf8',env:{...process.env,GITHUB_ACTIONS:'',FEE_DATA_KEY:TEST_KEY,...env}});
+ assert.equal(reporter.status,0,reporter.stderr);assert.equal(JSON.parse(reporter.stdout).receiptId,p.feeCalculationReceipt.receiptId);
+ const bytes=fs.readFileSync(path.join(dir,'data.json'));const repeat=run(dir,args,[],env);assert.equal(repeat.status,0,repeat.stderr);assert.match(repeat.stdout,/no-op/);assert.deepEqual(fs.readFileSync(path.join(dir,'data.json')),bytes);
+});
+test('Sharesight reference cannot hide an unknown nonzero external-flow meaning; writer keeps it unresolved and no fee receipt',()=>{
+ const dir=tmp(),d=today(),args=referenceWriterArgs(d);args.flows=JSON.stringify([{date:d,acct:'webull',amount:10,currency:'USD',type:'DEPOSIT',desc:'unclassified source record'}]);
+ const r=run(dir,args,[],referenceEconomic(dir));assert.equal(r.status,0,r.stderr);const p=readPayload(dir);assert.equal(p.flowsUnresolved.length,1);assert.equal(p.flowsUnresolved[0].amount,10);assert.equal(p.feeCalculationReceipt,undefined);
+});
+test('Sharesight reference rejects blank, missing and coerced cash amounts instead of converting them to explicit zero',()=>{
+ for(const amount of ['', ' ', '\t\n', '0', null, undefined, false, [], {}]){
+  const dir=tmp(),d=today(),args=referenceWriterArgs(d);
+  args.flows=JSON.stringify([{date:d,acct:'webull',amount,currency:'USD',type:'DEPOSIT',desc:'synthetic invalid source amount'}]);
+  const r=run(dir,args,[],referenceEconomic(dir));assert.notEqual(r.status,0,JSON.stringify(amount));
+  assert.match(r.stderr,/reference amount must be an explicit finite number/);assert.equal(fs.existsSync(path.join(dir,'data.json')),false);
+ }
+});
+test('Sharesight reference contract rejects false reconstruction claims, fake prior cash, wrong date/currency/current values and missing provenance',()=>{
+ const d=today();for(const change of [x=>x['source-fingerprint']=undefined,x=>x['source-fetched-at']=undefined,x=>x['prev-acct-cash-webull']='50',
+  x=>{const v=JSON.parse(x['sharesight-reference']);v.cashHistoryReconstructed=true;x['sharesight-reference']=JSON.stringify(v);},
+  x=>{const v=JSON.parse(x['sharesight-reference']);v.date=shift(d,-1);x['sharesight-reference']=JSON.stringify(v);},
+  x=>{const v=JSON.parse(x['sharesight-reference']);v.currency='HKD';x['sharesight-reference']=JSON.stringify(v);},
+  x=>{const v=JSON.parse(x['sharesight-reference']);v.cashByAccount.webull=41;x['sharesight-reference']=JSON.stringify(v);},
+  x=>{const v=JSON.parse(x['sharesight-reference']);v.extra=true;x['sharesight-reference']=JSON.stringify(v);}]){
+  const dir=tmp(),x=referenceWriterArgs(d);change(x);const r=run(dir,x);assert.notEqual(r.status,0);assert.equal(fs.existsSync(path.join(dir,'data.json')),false);
+ }
+});
+test('Sharesight reference foreign cash cannot become USD or zero, while a genuinely internal native movement stays non-capital',()=>{
+ for(const internal of [true,false]){const dir=tmp(),d=today(),args=referenceWriterArgs(d),v=JSON.parse(args['sharesight-reference']);v.currenciesByAccount.webull=['HKD'];args['sharesight-reference']=JSON.stringify(v);
+  args.flows=JSON.stringify([{date:d,acct:'webull',amount:-10,currency:'HKD',type:internal?'Buy Trade':'WITHDRAWAL',tradeId:internal?42:null,desc:internal?'Synthetic source trade':'unknown withdrawal'}]);
+  const r=run(dir,args,[],referenceEconomic(dir));if(internal){assert.equal(r.status,0,r.stderr);assert.equal(readPayload(dir).flowsAuto.length,0);assert.equal(readPayload(dir).daily.at(-1).webull,100);}else{assert.notEqual(r.status,0);assert.match(r.stderr,/portfolio-currency/);assert.equal(fs.existsSync(path.join(dir,'data.json')),false);}
+ }
+});
+test('Sharesight reference large NAV changes are disclosed as warnings; the same heuristic still blocks legacy input',()=>{
+ const dir=tmp(),d=today(),prior=shift(d,-1),env=referenceEconomic(dir,prior);
+ const initial=run(dir,{...referenceWriterArgs(prior),'source-fetched-at':new Date().toISOString()},[],env);assert.equal(initial.status,0,initial.stderr);
+ const next={...referenceWriterArgs(d),schwab:'500',stock:'500'};const legacy={...next};delete legacy['sharesight-reference'];const blocked=run(dir,legacy,[],env);assert.notEqual(blocked.status,0);assert.match(blocked.stderr,/impossible amount/);
+ const r=run(dir,next,[],env);assert.equal(r.status,0,r.stderr);const p=readPayload(dir);assert.equal(p.daily.at(-1).schwab,500);assert.ok(p.daily.at(-1).sourceReference.warnings.includes('NAV_CHANGE'));assert.equal(p.daily.at(-1).prov,1);assert.equal(p.feeCalculationReceipt.status.valid,true);
+});

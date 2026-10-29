@@ -269,18 +269,18 @@ function transport(f){
  const calls=[],portfolio=f.portfolio,schwab={id:CLOUD_ACCOUNTS.schwab.portfolioId,name:'Schwab-HK'};
  const response=(url,x)=>{const r=new Response(JSON.stringify(x),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
  const empty=date=>({report:{portfolio_id:schwab.id,start_date:date,end_date:date,include_sales:false,portfolio_tz_name:'America/New_York',currency:{code:'USD'},value:100,holdings:[],cash_accounts:[{id:9,value:100,currency:{code:'USD'},portfolio:schwab}]}});
- return {calls,fetchImpl:async(url,init)=>{const u=new URL(url),p=u.pathname,q=u.searchParams;calls.push(p);assert.equal(u.origin,'https://api.sharesight.com');assert.equal(init.redirect,'error');let data;
+ return {calls,fetchImpl:async(url,init)=>{const u=new URL(url),p=u.pathname,q=u.searchParams;calls.push(p+u.search);assert.equal(u.origin,'https://api.sharesight.com');assert.equal(init.redirect,'error');let data;
   if(p==='/oauth2/token')data={access_token:'synthetic-12345678901234567890',token_type:'bearer'};
   else if(p==='/api/v2/portfolios.json')data={portfolios:[portfolio,schwab,...(f.peerPortfolio?[f.peerPortfolio]:[])].map(x=>({...x,currency_code:'USD'}))};
   else if(p.includes('/portfolios/')){const pid=Number(p.split('/')[4]),isWebull=pid===portfolio.id,isPeer=pid===f.peerPortfolio?.id,date=q.get('end_date')||q.get('date');assert.ok(isWebull||isPeer||pid===schwab.id);
    if(p.endsWith('/performance'))data=isWebull?(date===D?f.raw.performance:f.raw.previousPerformance):isPeer?(date===D?f.peer.performance:f.peer.previousPerformance):empty(date);
-   else if(p.endsWith('/holdings'))data={holdings:isWebull?f.raw.performance.report.holdings.map(h=>({...h,inception_date:P})):[]};
+   else if(p.endsWith('/holdings'))data={holdings:isWebull?[...f.raw.performance.report.holdings.map(h=>({...h,inception_date:P})),...(f.extraCatalog||[])]:[]};
    else if(p.endsWith('/trades.json'))data=isWebull?(!q.has('start_date')&&f.history?f.history:f.raw.trades):isPeer?f.peer.trades:{trades:[]};
-   else if(p.endsWith('/cash_accounts.json')){const amount=isWebull?f.raw.performance.report.cash_accounts[0].value:100;data={cash_accounts:[{id:isWebull?8:isPeer?10:9,portfolio_id:pid,currency:'USD',portfolio_currency:'USD',date,balance:amount,balance_in_portfolio_currency:amount}]};}
+   else if(p.endsWith('/cash_accounts.json')){const amount=isWebull?f.raw.performance.report.cash_accounts[0].value:100;data={cash_accounts:[{id:isWebull?8:isPeer?10:9,portfolio_id:pid,currency:isWebull?(f.cashCurrency||'USD'):'USD',portfolio_currency:'USD',date,balance:isWebull?(f.cashNativeBalance??amount)+(f.cashAuxiliaryOffset||0):amount,balance_in_portfolio_currency:isWebull?amount+(f.cashAuxiliaryOffset||0):amount}]};}
    else assert.fail('unexpected fixed route');
   }else if(p.includes('/cash_accounts/')){const cashId=Number(p.split('/')[4]);assert.ok([8,9,10].includes(cashId));const own=cashId===8?f.raw.cashTransactions[8].cash_account_transactions:cashId===10?f.peer.cashTransactions[10].cash_account_transactions:[];
-   const opening=cashId===8?f.raw.previousPerformance.report.cash_accounts[0].value:100;
-   data=q.has('from')?{...(cashId===8?f.raw.cashTransactions[8]:cashId===10?f.peer.cashTransactions[10]:{}),cash_account_transactions:own}:{cash_account_transactions:[{id:999+cashId,cash_account_id:cashId,date_time:P+'T00:00Z',amount:0,balance:opening,cash_account_transaction_type:{name:'FEE'}},...own]};}
+   if(q.has('from'))data={...(cashId===8?f.raw.cashTransactions[8]:cashId===10?f.peer.cashTransactions[10]:{}),cash_account_transactions:own};
+   else{const opening=cashId===8?f.raw.previousPerformance.report.cash_accounts[0].value:100;data={cash_account_transactions:[{id:999+cashId,cash_account_id:cashId,date_time:P+'T00:00Z',amount:0,balance:opening,cash_account_transaction_type:{name:'FEE'}},...own]};}}
   else assert.fail('unexpected endpoint');return response(url,data);
  }};
 }
@@ -404,5 +404,86 @@ test('the actual reader cannot turn an unmapped opening balance into new capital
  const io=transport(f),reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:io.fetchImpl,reconcileInKind:true});
  await assert.rejects(reader.readOnce(D),/IDENTIFIED_SCOPE/);
  assert.ok(!io.calls.some(p=>p.includes('/77/')),'unknown capital semantics stop before an additional peer read');
+});
+
+const refRead=async f=>{const io=transport(f),reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:io.fetchImpl,reconcileInKind:true,managedTransferIdentities:f.identifiedTransfers,managementExemptionRegistry:f.managementExemptionRegistry,sourceMode:'sharesight-reference'});const raw=await reader.readOnce(D);return {raw,input:normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0},{sourceMode:'sharesight-reference'}),io};};
+test('reference actual reader uses complete current NAV/cash without predecessor, running balances, cash history or ordinary catalog replay',async()=>{
+ const f=fixture();delete f.raw.previousPerformance;delete f.raw.cashTransactions[8].cash_account_transactions[0].balance;
+ f.extraCatalog=[{...f.raw.performance.report.holdings[0],id:999,inception_date:'2026-10-29'}];
+ const {raw,input,io}=await refRead(f);
+ assert.equal(input.accounts.webull,f.raw.performance.report.value);assert.equal(input.acctCash.webull,f.raw.performance.report.cash_accounts[0].value);
+ assert.deepEqual(input.prevAcctCash,{});assert.equal(input.sourceReference.cashHistoryReconstructed,false);
+ assert.ok(input.sourceReference.warnings.includes('CATALOG_SCOPE_DIFF'));assert.equal(input.flows.length,1);
+ assert.ok(io.calls.filter(p=>p.includes('/cash_account_transactions.json')).every(p=>p.includes('from='+D)&&p.includes('to='+D)));
+ assert.ok(!io.calls.some(p=>p.includes('include_sales=true')||p.includes('start_date='+P)));
+ assert.deepEqual(raw.webull.cashLedgerHistory,{});assert.equal(raw.webull.previousPerformance,undefined);
+ assert.throws(()=>normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0}),/CASH_HISTORY_EVIDENCE/,'raw source data cannot silently select reference mode');
+});
+test('reference auxiliary balance differences warn without recalculating the report NAV or cash',async()=>{
+ const f=fixture('SELL','net');f.cashAuxiliaryOffset=3;f.raw.cashTransactions[8].cash_account_transactions[0].balance=-999;
+ const {input}=await refRead(f);assert.equal(input.accounts.webull,f.raw.performance.report.value);
+ assert.equal(input.sourceReference.cashByAccount.webull,f.raw.performance.report.cash_accounts[0].value);
+ assert.ok(input.sourceReference.warnings.includes('AUXILIARY_CASH_BALANCE_DIFF'));
+ assert.equal(input.flows.length,1);assert.equal(input.flows[0].amount,f.raw.cashTransactions[8].cash_account_transactions[0].amount);
+});
+test('reference unknown current cash is preserved and still blocks financial publication',async()=>{
+ const f=fixture('SELL');f.raw.cashTransactions[8].cash_account_transactions[0].description='unknown source cash';
+ const {input}=await refRead(f),r=reconcileFlows([],[],input.flows,{reference:true});assert.equal(r.unresolved.length,1);
+ const {assertCandidateReceiptable}=await import('./fee-cloud-producer.mjs');assert.throws(()=>assertCandidateReceiptable({flowsUnresolved:r.unresolved}),/UNRESOLVED_FLOW/);
+});
+test('reference preserves internal foreign-currency source amounts and rejects unvalued external or unknown foreign cash',async()=>{
+ const f=fixture('BUY','native');f.cashCurrency='HKD';f.cashNativeBalance=800;f.raw.performance.report.cash_accounts[0].currency.code='HKD';
+ const {input}=await refRead(f);assert.equal(input.flows[0].currency,'HKD');assert.equal(input.flows[0].amount,f.raw.cashTransactions[8].cash_account_transactions[0].amount);
+ assert.equal(input.sourceReference.cashByAccount.webull,f.raw.performance.report.cash_accounts[0].value);
+ for(const desc of ['unclassified source cash','external bank transfer']){const bad=structuredClone(f),row=bad.raw.cashTransactions[8].cash_account_transactions[0];row.trade_id=null;row.description=desc;await assert.rejects(refRead(bad),/NON_USD_EXTERNAL_FLOW/);}
+});
+test('reference zero-valued source cash stays present but cannot manufacture external capital',async()=>{
+ const f=fixture();f.raw.cashTransactions[8].cash_account_transactions[0].amount=0;f.raw.cashTransactions[8].cash_account_transactions[0].description='source zero record';
+ const {input}=await refRead(f);assert.equal(input.flows.length,1);assert.equal(input.flows[0].amount,0);
+ const r=reconcileFlows([],[],input.flows,{reference:true});assert.equal(r.auto.length,0);assert.equal(r.unresolved.length,0);
+});
+test('reference never converts a nonzero sub-cent native source movement into a zero internal flow',async()=>{
+ for(const currency of ['USD','HKD'])for(const amount of [0.004,-0.004,0.0001,-0.0001]){
+  const f=fixture(),row=f.raw.cashTransactions[8].cash_account_transactions[0];
+  f.cashCurrency=currency;f.raw.performance.report.cash_accounts[0].currency.code=currency;
+  Object.assign(row,{amount,trade_id:null,holding_id:null,description:'unknown sub-cent source cash',cash_account_transaction_type:{name:'DEPOSIT'}});
+  await assert.rejects(refRead(f),/^Error: FEE_CLOUD_AMOUNT$/);
+ }
+ for(const original of ['1e-400','-1e-400']){
+  const f=fixture();f.raw.cashTransactions[8].cash_account_transactions[0].amount=0;
+  const {raw}=await refRead(f),text=JSON.stringify(raw.webull.cashTransactions[8]).replace('"amount":0','"amount":'+original);
+  raw.webull.cashTransactions[8]=parseSourceJson(text);
+  assert.throws(()=>normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0},{sourceMode:'sharesight-reference'}),/^Error: FEE_CLOUD_AMOUNT$/);
+ }
+ const f=fixture(),row=f.raw.cashTransactions[8].cash_account_transactions[0];
+ Object.assign(row,{amount:0.01,trade_id:null,holding_id:null,description:'unknown explicit one-cent source cash',cash_account_transaction_type:{name:'DEPOSIT'}});
+ const {input}=await refRead(f),r=reconcileFlows([],[],input.flows,{reference:true});
+ assert.equal(input.flows[0].amount,0.01);assert.equal(r.unresolved.length,1);
+});
+test('reference selected transfer still requires dated positions, valuation and absence of any related cash; replays add no capital',async()=>{
+ const f=selectedFixture();useHoldingPrincipal(f,0);f.raw.cashTransactions[8].cash_account_transactions=[];
+ const {input,io}=await refRead(f);assert.equal(input.flows.length,1);assert.equal(input.flows[0].evidence,'external_asset_transfer');
+ assert.ok(io.calls.some(p=>p.includes('/77/')&&p.includes('start_date='+P)));
+ const r=reconcileFlows([],[],input.flows,{reference:true});assert.equal(reconcileFlows(r.auto,[],input.flows,{reference:true}).auto.length,1);
+ for(const change of [x=>useHoldingPrincipal(x,-20),x=>x.peer.trades.trades[0].price=1,x=>x.identifiedTransfers.pairs[0].sourceTradeId++,x=>x.raw.previousPerformance.report.end_date=D]){
+  const bad=structuredClone(f);change(bad);await assert.rejects(refRead(bad),/FEE_/);
+ }
+});
+test('reference retains full history solely for an existing gift exemption, with unchanged lot arithmetic',async()=>{
+ const f=giftFixture();f.raw.performance.report.cash_accounts[0].value=100;f.raw.performance.report.value=130;
+ f.history={trades:[{...f.raw.trades.trades[0],id:111,transaction_date:P,description_code:'OPENING_BALANCE',quantity:1,price:10,value:10,comments:'prior paid lot'},f.raw.trades.trades[0]]};
+ const {input,io}=await refRead(f),{proposals,...m}=input.managementInput;
+ assert.equal(resolveManagementExemptions({registry:f.managementExemptionRegistry,input:m,date:D,accounts:input.accounts}).rows[0].valueUsd,20);
+ assert.ok(io.calls.some(p=>p.includes('/trades.json?')&&!p.includes('start_date=')));
+ assert.ok(io.calls.filter(p=>p.includes('/cash_account_transactions.json')).every(p=>p.includes('from=')));
+ assert.equal(input.flows.length,0);
+});
+test('reference still rejects incomplete, duplicate, wrong-date/identity, missing and nonfinite actually used source fields',async()=>{
+ for(const change of [x=>x.raw.performance.has_more=true,x=>x.raw.performance.report.end_date=P,x=>delete x.raw.performance.report.cash_accounts,
+  x=>x.raw.performance.report.value=null,x=>x.raw.trades.trades[0].portfolio_id++,x=>x.raw.cashTransactions[8].has_more=true,
+  x=>x.raw.cashTransactions[8].cash_account_transactions[0].amount=null,x=>x.raw.cashTransactions[8].cash_account_transactions[0].date_time=P+'T00:00Z',
+  x=>x.raw.cashTransactions[8].cash_account_transactions.push({...x.raw.cashTransactions[8].cash_account_transactions[0]})]){
+  const f=fixture();change(f);await assert.rejects(refRead(f),/FEE_/);
+ }
 });
 }

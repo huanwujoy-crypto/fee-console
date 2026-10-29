@@ -7,11 +7,12 @@
 已支持的现金记录若明确声明为买卖本金，按内部现金处理，不要求另一笔同日交易来证明。
 裸 DEPOSIT/WITHDRAWAL 没有资金性质说明时仍标为待核，不全部当入出金或默认为零。
 
-来源完整性、日期、身份、有限数字和现金余额链检查保留。普通零成本 BUY 作为来源持仓事实，
+来源完整性、日期、身份、有限数字和外部资金性质检查保留。普通零成本 BUY 作为来源持仓事实，
 不自动生成外部资本、认购或免管理费登记；既有明确豁免条目、费率及收益计算公式不变。
 已批准转仓只沿用私密档案的精确事件映射、交接估值和去重规则；未知非现金资本事件仍需明确语义。
-本地准备不恢复生产，也不修改已写认购。普通两次预算及四次失败历史保留；
-另经明确批准的恢复例外仅限本补丁最终签名版本和2026-10-28，手动占用后取消或失败也不能再用。
+本地准备不恢复生产，也不修改已写认购。普通两次预算及五次失败历史保留；
+上次恢复机会已消费。本次补丁不授权实际运行；任何新恢复机会必须另外批准准确签名版本、
+2026-10-28 目标及受控凭据用途，手动占用后取消或失败也不能再用。
 
 新周期合同见 [fee-report-periods.md](fee-report-periods.md)。内部仍复用以下逐日来源、
 唯一 writer、现有凭据及保护推广；不新增 Secret 或权限。旧日报门禁在新版通过保护
@@ -113,6 +114,47 @@ explicit next page, restricted/limited report, duplicate ID, missing cash
 collection or mismatched account/date stops calculation; management history
 retains its existing separate completeness gate. Pagination is not silently
 followed or truncated.
+
+### Sharesight reference authority
+
+The cloud and period producers explicitly select `sourceMode=sharesight-reference`;
+provider JSON cannot select this mode. The fixed same-day Sharesight performance
+report supplies NAV, current holdings and all currencies' USD cash valuations.
+The dated cash list supplies native-currency identities and transactions. A/B
+reads still compare the complete normalized input. Missing, restricted, paginated,
+duplicate, misdated or invalid current data remains an error.
+
+Ordinary catalog-only positions are auxiliary; they do not trigger a historical
+holding replay or an additional sold-position report. Ordinary cash movements
+need no running balance, full-ledger predecessor, timestamp ordering or
+`opening + movements = closing` reconstruction. The reader no longer obtains the
+full `to=target` cash history or a previous-day cash list for that purpose.
+Previous/peer positions remain required for the already approved in-kind events;
+existing management-exemption lots still require their original full history.
+
+A difference between the dated auxiliary cash list and the same-day report is
+`AUXILIARY_CASH_BALANCE_DIFF`; it does not replace report NAV/cash. Catalog-scope
+differences and the old 50% NAV-jump heuristic are similarly fixed warnings.
+The sole writer receives a closed `fee-console.sharesight-reference.v1` input:
+date, USD cash by account, native-currency set and fixed warnings. It explicitly
+records `cashHistoryReconstructed:false`, validates the current cash/split binding
+and movement identities, and selects the same reference branch. No synthetic
+opening balance or historical-reconciliation success is manufactured. This input
+is a business contract, not a source authentication certificate or new permission.
+
+Every actual cash movement remains available for classification. Recognized
+internal trade/income/fee records are not investor capital. Unknown funding stays
+unresolved and prevents a valid fee candidate; it is never zeroed or guessed.
+Internal non-USD movements retain their native currency; an external or unknown
+non-USD movement without a proven USD amount stops. A reported zero cash amount
+is retained as zero internal movement. The seven approved transfer events,
+their exact private selector/valuation/zero-cash proof and business-key dedup
+remain unchanged, as do subscriptions, fee/TWR/Carry/HWM formulas and privacy.
+
+### Legacy reconstruction contract
+
+The following historical rules remain available for the legacy reader/writer
+contract. The reference producer above does not claim or require these proofs.
 
 The undated holdings list is an identity catalog and can retain sold positions.
 The dated open-position report must match each catalog holding's instrument ID,
@@ -218,6 +260,8 @@ fingerprint; array order does not churn it. Those records and amounts are never
 included in public health or workflow logs. This implementation does not add a
 dated-list fallback for ambiguous predecessors; those cases remain blocked.
 
+### Shared calculation and publication checks
+
 Cash accounts form `cash`, SGOV forms `other`, and remaining USD holdings form
 `stock`; the three buckets must reconcile to the two portfolio totals. Style
 classification continues through the existing static and encrypted learned
@@ -228,11 +272,10 @@ same day's managed-composite total. Cash and SGOV remain in “现金及其它�
 not repeated in the top-three list. Cash transactions linked to a trade remain
 internal. The fixed Webull writer's exact account-bound principal-cash identity
 and its explicit `NOT external funding` description are also retained as
-`internal_trade`. When Sharesight omits the cash row's `foreign_identifier`,
-the reader requires one unique same-day confirmed trade matching the account,
-order ID, ticker, side, principal amount and referenced Sharesight trade or
-holding ID. Similar free text, a mismatched trade or a generic
-deposit/withdrawal does not pass that rule. A remaining bare deposit or
+`internal_trade`. The reference branch also accepts the existing explicit,
+account-bound Sharesight trade-principal declaration without reconstructing a
+same-day trade/cash pair. It does not accept similar arbitrary free text as
+funding evidence. A remaining bare deposit or
 withdrawal becomes unresolved unless the existing private ledger already
 contains its reviewed classification.
 
