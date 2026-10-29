@@ -602,10 +602,20 @@ const DIAGNOSTIC_STAGES = new Set(['CONFIG', 'BENCHMARK', 'READER_SETUP', 'ECONO
   'SOURCE_READ', 'PREPARE', 'WEEKEND_CARRY', 'STYLE_PREFLIGHT', 'WRITER', 'RECEIPT',
   'HEALTH_CREATE', 'ECONOMIC_RECHECK', 'HEALTH_VALIDATE', 'CLEANUP']);
 const SYSTEM_CODES = new Set(['EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'ENOSPC', 'EMFILE', 'EIO']);
+// Literal program-defined failures only. A prefix match could expose arbitrary
+// text supplied by a response, so unknown suffixes still use the safe category.
+const NONCASH_DIAGNOSTICS = new Set(['ACTIVITY_UNVERIFIED', 'AMBIGUOUS_TRADES',
+  'CASH_EVIDENCE', 'CASH_LEG', 'DATE', 'IDENTIFIED_SCOPE', 'IDENTITY', 'INCOMPLETE',
+  'INSTRUMENT', 'PAIR_REQUIRED', 'PEER_REQUIRED', 'POSITION_DELTA', 'PROOF',
+  'QUANTITY', 'SCOPE', 'SOURCE_MARK', 'TRADE', 'TRADE_CASH_UNVERIFIED',
+  'UNSUPPORTED_TYPE', 'VALUATION'].map(code => 'FEE_NONCASH_' + code));
 export function producerFailureCode(error, stage) {
   if (error instanceof SourceFetchError) return sourceFailureCode(error);
   const message = typeof error?.message === 'string' ? error.message : '';
   if (/^FEE_CLOUD_[A-Z0-9_]{1,80}$/.test(message)) return message;
+  if (NONCASH_DIAGNOSTICS.has(message)) {
+    return `FEE_CLOUD_STAGE_${DIAGNOSTIC_STAGES.has(stage) ? stage : 'UNKNOWN'}_${message.slice(4)}`;
+  }
   const category = error instanceof TypeError ? 'TYPE' : error instanceof RangeError ? 'RANGE'
     : error instanceof SyntaxError ? 'SYNTAX' : error instanceof ReferenceError ? 'REFERENCE'
     : SYSTEM_CODES.has(error?.code) ? `SYSTEM_${error.code}` : 'UNKNOWN';
