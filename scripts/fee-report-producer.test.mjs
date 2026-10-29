@@ -1,3 +1,4 @@
+import './fee-gift-registry-status.test.mjs';
 import './fee-source-acceptance.test.mjs';
 import test,{after} from 'node:test';
 import assert from 'node:assert/strict';
@@ -346,16 +347,20 @@ test('early published coverage deduplicates the later normal cycle without reset
  assert.equal(new URL(query[0]).searchParams.get('created'),new URL(query[2]).searchParams.get('created'));
 });
 
-const recoveryBase='fbb79a694acb232fbdb522939d98a933da03b1f2',recoveryHead='d'.repeat(40),recoveryId=90000000001;
-const recoveryNow=new Date('2026-10-29T03:30:00Z');
+const recoveryBase='50d6454b062030d4ee6565a4d879c56b68e65911',originalFailureBase='fbb79a694acb232fbdb522939d98a933da03b1f2',recoverySupport='c'.repeat(40),recoveryHead='d'.repeat(40),recoveryId=90000000001;
+const recoveryUi=fs.readFileSync(new URL('./fixtures/fee-gift-registry-status-index.html',import.meta.url));
+const recoveryUiBlob=crypto.createHash('sha1').update(Buffer.concat([Buffer.from('blob '+recoveryUi.length+'\0'),recoveryUi])).digest('hex');
+const recoveryNow=new Date('2026-10-29T06:30:00Z');
 function recoveryFixture(){
  const plan=dailyReportPlan('2026-10-28',['NYSE','NASDAQ'],{periodFrom:'2026-10-24',reviewedSyncDate:'2026-10-28'});
  const run=(id,head,created)=>({id,head_sha:head,head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',event:'workflow_dispatch',created_at:created,run_attempt:1,workflow_id:365873934,actor:{id:283054367},status:id===recoveryId?'in_progress':'completed',conclusion:id===recoveryId?null:'failure'});
- const runs=[run(recoveryId,recoveryHead,'2026-10-29T03:00:00Z'),run(40805169117,recoveryBase,'2026-10-29T02:14:24Z'),run(40803101364,recoveryBase,'2026-10-29T01:53:22Z')];
+ const runs=[run(recoveryId,recoveryHead,'2026-10-29T06:00:00Z'),run(40815850578,recoveryBase,'2026-10-29T04:06:22Z'),run(40805169117,originalFailureBase,'2026-10-29T02:14:24Z'),run(40803101364,originalFailureBase,'2026-10-29T01:53:22Z')];
  const job=(r,id,name='Produce daily 2026-10-28',status='completed',conclusion='failure')=>({id,run_id:r.id,head_sha:r.head_sha,name,status,conclusion,started_at:r.created_at});
- const jobs={40805169117:[job(runs[1],123222332691)],40803101364:[job(runs[2],123215645936)]};
- const commit={sha:recoveryHead,parents:[{sha:recoveryBase}],author:{id:283054367,login:'huanwujoy-crypto'},committer:{login:'web-flow'},commit:{verification:{verified:true,reason:'valid'}}};
- return{plan,runs,jobs,commit,ref:{object:{sha:recoveryHead}},run,job};
+ const jobs={40815850578:[job(runs[1],123256663738)],40805169117:[job(runs[2],123222332691)],40803101364:[job(runs[3],123215645936)]};
+ const commit={sha:recoveryHead,parents:[{sha:recoverySupport}],author:{id:283054367,login:'huanwujoy-crypto'},committer:{login:'web-flow'},commit:{verification:{verified:true,reason:'valid'}}};
+ const supportCommit={...structuredClone(commit),sha:recoverySupport,parents:[{sha:recoveryBase}]};
+ const comparison={status:'ahead',ahead_by:1,behind_by:0,total_commits:1,base_commit:{sha:recoverySupport},merge_base_commit:{sha:recoverySupport},commits:[{sha:recoveryHead}],files:[{filename:'index.html',status:'modified',sha:recoveryUiBlob}]};
+ return{plan,runs,jobs,commit,supportCommit,comparison,ref:{object:{sha:recoveryHead}},run,job};
 }
 function recoveryWire(f,trace=[]){return async(url,init)=>{
  assert.equal(init.method,'GET');assert.equal(init.headers.Authorization,undefined);assert.equal(init.redirect,'error');
@@ -363,11 +368,11 @@ function recoveryWire(f,trace=[]){return async(url,init)=>{
  let value;if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
  else if(/^actions\/runs\/\d+\/jobs\?filter=all&per_page=100$/.test(p)){const id=Number(p.match(/runs\/(\d+)/)[1]),jobs=f.jobs[id];assert.ok(jobs);value={total_count:jobs.length,jobs};}
  else if(p==='git/ref/heads/main')value=f.ref;
- else if(p==='commits/'+recoveryHead)value=f.commit;else assert.fail('unexpected offline metadata route');
+ else if(p==='commits/'+recoveryHead+'?per_page=1')value=f.commit;else if(p==='commits/'+recoverySupport+'?per_page=1')value=f.supportCommit;else if(p==='compare/'+recoverySupport+'...'+recoveryHead+'?per_page=100')value=f.comparison;else assert.fail('unexpected offline metadata route');
  const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;
 };}
 function recoveryReaders(f){const fetchImpl=recoveryWire(f);return{readSourceAttempts:args=>readPeriodSourceAttempts({...args,fetchImpl}),readRecoveryRelease:sha=>readReportRecoveryRelease(sha,{fetchImpl})};}
-test('only the signed immediate-successor release and the two fixed failed runs admit one recovery; ordinary budget stays two',async()=>{
+test('only the exact signed support/UI release and three fixed failures admit one new recovery; ordinary budget stays two',async()=>{
  const f=recoveryFixture(),readers=recoveryReaders(f),args={plan:f.plan,now:recoveryNow,currentRunId:String(recoveryId),...readers};
  await assert.doesNotReject(authorizeReportRecovery({...args,expectedMain:recoveryHead}));
  assert.deepEqual(await readers.readSourceAttempts(args),{attempts:2,inProgress:false});
@@ -377,15 +382,15 @@ test('only the signed immediate-successor release and the two fixed failed runs 
 });
 test('recovery fails closed on scope, missing/changed failures, reruns, actor, current run, consumed admission and competitors',async()=>{
  const f=recoveryFixture(),readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
- const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:{mainSha:recoveryHead,parent:recoveryBase,signatureVerified:true}};
+ const good={plan:f.plan,expectedMain:recoveryHead,currentRunId:recoveryId,budget,release:{mainSha:recoveryHead,parent:recoverySupport,baseSha:recoveryBase,supportSha:recoverySupport,uiBlob:recoveryUiBlob,signatureVerified:true}};
  const mutations=[x=>x.plan=dailyReportPlan('2026-10-27',['NYSE','NASDAQ'],{reviewedSyncDate:'2026-10-27'}),x=>x.plan=weeklyReportPlan('2026-10-23'),x=>x.expectedMain='e'.repeat(40),x=>x.release.parent='e'.repeat(40),x=>x.release.signatureVerified=false,
-  x=>x.budget.attempts=1,x=>x.budget.attempts=3,x=>x.budget.inProgress=true,x=>x.budget.recoveryEvidence.otherSourceActive=true,x=>x.budget.recoveryEvidence.reservations.push(90000000000),
+  x=>x.budget.attempts=1,x=>x.budget.attempts=2,x=>x.budget.attempts=4,x=>x.budget.inProgress=true,x=>x.budget.recoveryEvidence.otherSourceActive=true,x=>x.budget.recoveryEvidence.reservations.push(90000000000),
   x=>x.budget.recoveryEvidence.currentRun=null,x=>x.budget.recoveryEvidence.currentRun.head=recoveryBase,x=>x.budget.recoveryEvidence.currentRun.actorId=1,x=>x.budget.recoveryEvidence.currentRun.attempt=2,x=>x.budget.recoveryEvidence.currentRun.event='schedule',x=>x.budget.recoveryEvidence.currentRun.workflowId=1,x=>x.budget.recoveryEvidence.currentRun.status='completed',x=>x.budget.recoveryEvidence.currentRun.conclusion='failure',
   x=>x.budget.recoveryEvidence.entries.pop(),x=>x.budget.recoveryEvidence.entries[0].runId=1,x=>x.budget.recoveryEvidence.entries[0].head=recoveryHead,x=>x.budget.recoveryEvidence.entries[0].attempt=2,x=>x.budget.recoveryEvidence.entries[0].conclusion='success',x=>x.budget.recoveryEvidence.entries[0].name='Produce daily 2026-10-29',x=>x.budget.recoveryEvidence.entries[0].jobId=0,x=>x.budget.recoveryEvidence.entries[0]=structuredClone(x.budget.recoveryEvidence.entries[1])];
  for(const mutate of mutations){const value=structuredClone(good);mutate(value);assert.throws(()=>validateReportRecoveryEvidence(value),/FEE_REPORT_RECOVERY_/);}
 });
-for(const [runStatus,runConclusion]of [['in_progress',null],['completed','cancelled']])test('historical run itself must be completed/failure, not '+runStatus+'/'+runConclusion+', even when its source job failed',async()=>{
- const f=recoveryFixture(),historical=f.runs.find(r=>r.id===40805169117);historical.status=runStatus;historical.conclusion=runConclusion;
+for(const historicalId of [40803101364,40805169117,40815850578])for(const [runStatus,runConclusion]of [['in_progress',null],['completed','cancelled']])test('historical run '+historicalId+' must be completed/failure, not '+runStatus+'/'+runConclusion+', even when its source job failed',async()=>{
+ const f=recoveryFixture(),historical=f.runs.find(r=>r.id===historicalId);historical.status=runStatus;historical.conclusion=runConclusion;
  assert.equal(f.jobs[historical.id][0].status,'completed');assert.equal(f.jobs[historical.id][0].conclusion,'failure');
  const readers=recoveryReaders(f),budget=await readers.readSourceAttempts({plan:f.plan,now:recoveryNow,currentRunId:recoveryId,recoveryMain:recoveryHead});
  const item=budget.recoveryEvidence.entries.find(x=>x.runId===historical.id);assert.equal(item.runStatus,runStatus);assert.equal(item.runConclusion,runConclusion);
@@ -404,7 +409,20 @@ test('recovery metadata release check rejects later versions, unsigned/wrong-own
  for(const mutate of [f=>f.ref.object.sha='e'.repeat(40),f=>f.commit.sha='e'.repeat(40),f=>f.commit.parents=[{sha:recoveryHead}],f=>f.commit.parents.push({sha:recoveryBase}),f=>f.commit.commit.verification.verified=false,f=>f.commit.author.id=1,f=>f.commit.committer.login='other']){
   const f=recoveryFixture();mutate(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_RELEASE/);
  }
- const f=recoveryFixture(),trace=[];await readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f,trace)});assert.equal(trace.length,2);assert.ok(trace.every(p=>!p.includes('/logs')));
+ const f=recoveryFixture(),trace=[];await readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f,trace)});assert.equal(trace.length,4);assert.ok(trace.every(p=>!p.includes('/logs')));
+});
+test('new recovery requires the exact signed support then index-only chain, including its pinned UI bytes',async()=>{
+ const changes=[f=>f.supportCommit.parents=[{sha:originalFailureBase}],f=>f.supportCommit.parents.push({sha:recoveryBase}),
+  f=>f.supportCommit.commit.verification.verified=false,f=>f.supportCommit.author.id=1,
+  f=>f.comparison.total_commits=2,f=>f.comparison.ahead_by=2,f=>f.comparison.behind_by=1,
+  f=>f.comparison.base_commit.sha=recoveryBase,f=>f.comparison.merge_base_commit.sha=recoveryBase,
+  f=>f.comparison.commits.push({sha:'e'.repeat(40)}),f=>f.comparison.commits[0].sha='e'.repeat(40),
+  f=>f.comparison.files.push({filename:'scripts/extra.mjs',status:'modified',sha:'a'.repeat(40)}),
+  f=>f.comparison.files[0].filename='data.json',f=>f.comparison.files[0].status='renamed',
+  f=>f.comparison.files[0].previous_filename='old.html',f=>f.comparison.files[0].sha='e'.repeat(40)];
+ for(const change of changes){const f=recoveryFixture();change(f);await assert.rejects(readReportRecoveryRelease(recoveryHead,{fetchImpl:recoveryWire(f)}),/RECOVERY_RELEASE/);}
+ const support=recoveryFixture();support.ref.object.sha=recoverySupport;
+ await assert.rejects(readReportRecoveryRelease(recoverySupport,{fetchImpl:recoveryWire(support)}),/RECOVERY_RELEASE/,'support before UI cannot be released');
 });
 test('recovery confirmation binds real reviewed event, exact target/head, owner, main and first attempt; JSON claims cannot reset it',()=>{
  const args={mode:'preflight','report-kind':'daily','report-target':'2026-10-28','manual-sync-completed-for':'2026-10-28','recovery-main':recoveryHead};
@@ -435,12 +453,13 @@ test('actual recovery preflight and producer CLI use only mocked fixed routes, r
  const event={inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-10-28',manual_sync_completed_for:'2026-10-28',recovery_main:recoveryHead,source_plan_check_only:'false',source_acceptance_once:'false'},sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'}};
  const eventFile=path.join(dir,'event.json');fs.writeFileSync(eventFile,JSON.stringify(event));
  const trace=path.join(dir,'trace.json'),preload=path.join(dir,'mock-only.mjs');
- fs.writeFileSync(preload,`import fs from 'node:fs';const D=Date,now=D.parse('2026-10-29T03:30:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+ fs.writeFileSync(preload,`import fs from 'node:fs';const D=Date,now=D.parse('2026-10-29T06:30:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
   const f=${JSON.stringify(f)},data=${JSON.stringify(data)},health=${JSON.stringify(health)},calls=[];
   globalThis.fetch=async(url,init={})=>{url=String(url);if(init.method&&init.method!=='GET')throw Error('unexpected method');let value,status=200;
    const api='https://api.github.com/repos/huanwujoy-crypto/fee-console/';
    if(url.startsWith(api)){const p=url.slice(api.length);calls.push('public-metadata');
-    if(p==='git/ref/heads/main')value=f.ref;else if(p==='commits/${recoveryHead}'){value=structuredClone(f.commit);if(process.env.SYNTHETIC_REJECT_RELEASE==='true')value.parents=[{sha:'e'.repeat(40)}];}
+    if(p==='git/ref/heads/main')value=f.ref;else if(p==='commits/${recoveryHead}?per_page=1'){value=structuredClone(f.commit);if(process.env.SYNTHETIC_REJECT_RELEASE==='true')value.parents=[{sha:'${recoveryBase}'}];}
+    else if(p==='commits/${recoverySupport}?per_page=1')value=f.supportCommit;else if(p==='compare/${recoverySupport}...${recoveryHead}?per_page=100')value=f.comparison;
     else if(p.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:f.runs.length,workflow_runs:f.runs};
     else if(/^actions\\/runs\\/\\d+\\/jobs\\?filter=all&per_page=100$/.test(p)){const jobs=f.jobs[Number(p.match(/runs\\/(\\d+)/)[1])];if(!jobs)throw Error('unexpected job');value={total_count:jobs.length,jobs};}
     else if(p.startsWith('contents/')){const text=p.startsWith('contents/data.json?')?data:p.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unexpected content');value={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}

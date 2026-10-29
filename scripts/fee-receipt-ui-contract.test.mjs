@@ -51,12 +51,25 @@ const validateReviewedFixture = bytes => {
 const reviewedFixtureBytes = fs.readFileSync(new URL("./fixtures/fee-reviewed-ui-contract-v1.json", import.meta.url));
 const reviewedFixture = validateReviewedFixture(reviewedFixtureBytes);
 
+// One additional reviewed whole-page snapshot for the read-only gift display.
+// Its financial regions must remain byte-identical to the existing next UI.
+const GIFT_FIXTURE_SHA256 = "eada672f9928fcb20dc4ab5b98a6b000a8a73dc5ce66edfbddfba0663b722c3c";
+const giftFixtureBytes = fs.readFileSync(new URL("./fixtures/fee-gift-registry-status-index.html", import.meta.url));
+const validateGiftFixture = bytes => {
+  assert.equal(uiHash(bytes), GIFT_FIXTURE_SHA256, "unreviewed gift UI fixture bytes");
+  const html = bytes.toString("utf8");
+  for (const name of CONTRACT_REGIONS) assert.equal(uiRegion(html, name), reviewedFixture.nextRegions[name], "read-only display cannot change a financial region");
+  return html;
+};
+validateGiftFixture(giftFixtureBytes);
+
+
 // Test-only release snapshots, never imported by production. The prior hash
 // proves only the old contract; it does not declare new receipts compatible or
 // authorize a run. Both workflows must remain externally disabled during staging.
 export function reviewedUiStage(html) {
   const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 ? "next" : null;
+    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 ? "next" : null;
   assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);
@@ -74,6 +87,7 @@ test("staged UI contracts pin complete old/new HTML and reject altered fixtures 
   const html = fs.readFileSync(htmlPath, "utf8");
   assert.ok(["prior", "next"].includes(reviewedUiStage(html)));
   assert.throws(() => reviewedUiStage(html + "\n"), /unreviewed UI/);
+  assert.throws(() => validateGiftFixture(Buffer.concat([giftFixtureBytes, Buffer.from(" ")])), /unreviewed gift UI fixture/);
   assert.throws(() => validateReviewedFixture(Buffer.concat([reviewedFixtureBytes, Buffer.from(" ")])), /unreviewed UI fixture/);
   const altered = structuredClone(reviewedFixture);
   altered.nextRegions["fee-receipt-consumer"] += "\n// altered";

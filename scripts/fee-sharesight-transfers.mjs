@@ -3,6 +3,9 @@
 import crypto from 'node:crypto';
 import {exactNumberText} from './fee-cloud-source.mjs';
 import {isCalendarDate} from './fee-engine.mjs';
+import {resolveTradeCashEvidence} from './fee-trade-cash-evidence.mjs';
+import {validateManagementRegistry} from './fee-management-exemption.mjs';
+import {monthlyGiftEvidence} from './fee-cloud-source.mjs';
 const SCALE=10n**18n,accepted=new WeakMap();
 const fail=code=>{throw Error('FEE_NONCASH_'+code);};
 const id=n=>{if(!Number.isSafeInteger(n)||n<=0)fail('IDENTITY');return n;};
@@ -23,10 +26,15 @@ function report(payload,portfolio,d){
 }
 const previous=d=>new Date(Date.parse(d+'T00:00:00Z')-86400000).toISOString().slice(0,10);
 function trades(payload,portfolio,d){return rows(payload,'trades').filter(t=>{if(t.portfolio_id!==portfolio.id||t.state!=='confirmed'||!isCalendarDate(t.transaction_date)||t.transaction_date>d)fail('TRADE');return t.transaction_date===d;});}
-function noCash(payloads,trade,performance,targetDate){
+function cashResolution(account,portfolio,raw,targetDate,own){
+ return resolveTradeCashEvidence({account,portfolioId:portfolio.id,targetDate,trades:own,
+  cashRows:Object.values(raw.cashTransactions).flatMap(p=>rows(p,'cash_account_transactions')),
+  cashAccounts:rows(raw.performance.report,'cash_accounts')});
+}
+function noCash(payloads,trade,performance,targetDate,resolution){
  if(!payloads||typeof payloads!=='object'||Array.isArray(payloads))fail('CASH_EVIDENCE');
  const ids=rows(performance.report,'cash_accounts').map(c=>String(c.id)).sort();if(JSON.stringify(Object.keys(payloads).sort())!==JSON.stringify(ids))fail('CASH_EVIDENCE');
- for(const [cashId,payload] of Object.entries(payloads))for(const c of rows(payload,'cash_account_transactions')){if(c.cash_account_id!==Number(cashId)||typeof c.date_time!=='string'||c.date_time.slice(0,10)!==targetDate||!Number.isFinite(c.amount))fail('CASH_EVIDENCE');if(c.trade_id===trade.id&&c.amount!==0)fail('CASH_LEG');}
+ for(const [cashId,payload] of Object.entries(payloads))for(const c of rows(payload,'cash_account_transactions')){if(c.cash_account_id!==Number(cashId)||typeof c.date_time!=='string'||c.date_time.slice(0,10)!==targetDate||!Number.isFinite(c.amount))fail('CASH_EVIDENCE');if(resolution.relatedCash.get(trade.id)?.includes(c.id)&&c.amount!==0)fail('CASH_LEG');}
 }
 // Identities are evidence selectors, never an authorization flag. A caller must
 // bind them through the reviewed private input path before real use. All native
@@ -41,7 +49,16 @@ export function validateManagedTransferIdentities(value){
  return value;
 }
 export function managedTransferCandidates(raw,identities=null){const selected=validateManagedTransferIdentities(identities);return rows(raw.trades,'trades').filter(t=>['OPENING_BALANCE','TRANSFER_IN','TRANSFER_OUT'].includes(t.description_code)||t.description_code==='BUY'&&selected?.pairs.some(p=>p.tradeId===t.id&&p.holdingId===t.holding_id));}
-function activity(before,after,own,raw,identities){
+function approvedGift(t,account,portfolio,targetDate,registry){
+ if(account!=='webull'||t.portfolio_id!==portfolio.id||t.transaction_date!==targetDate
+   ||t.state!=='confirmed'||t.description_code!=='BUY'||t.price!==0||t.value!==0||t.brokerage!==0
+   ||t.instrument?.currency_code!=='USD'||quantity(t)<=0n)return false;
+ const match=registry?.entries.filter(r=>r.account===account&&r.portfolioId===portfolio.id
+   &&r.holdingId===t.holding_id&&r.ticker===t.instrument.code&&r.firstHeldOn<=targetDate&&r.effectiveFrom<=targetDate)||[];
+ return match.length===1&&((match[0].giftTradeIds.includes(t.id)&&/(?:promotional gifted|gifted|gift)\b/i.test(String(t.comments||'')))
+   ||monthlyGiftEvidence(t));
+}
+function activity(before,after,own,raw,identities,resolution,account,portfolio,targetDate,registry){
  const ids=new Set([...before,...after].map(h=>h.id));
  for(const t of own)if(!ids.has(t.holding_id)||!['BUY','SELL','OPENING_BALANCE','TRANSFER_IN','TRANSFER_OUT'].includes(t.description_code))fail('ACTIVITY_UNVERIFIED');
  for(const holdingId of ids){
@@ -49,20 +66,25 @@ function activity(before,after,own,raw,identities){
   if(prior&&current&&instrument(prior,false)!==identity||ts.some(t=>instrument(t,false)!==identity))fail('INSTRUMENT');
   const delta=ts.reduce((n,t)=>n+(['SELL','TRANSFER_OUT'].includes(t.description_code)?-quantity(t):quantity(t)),0n);
   if((current?quantity(current):0n)-(prior?quantity(prior):0n)!==delta)fail('POSITION_DELTA');
-  for(const t of ts)if(['BUY','SELL'].includes(t.description_code)&&!(t.description_code==='BUY'&&identities?.pairs.some(p=>p.tradeId===t.id&&p.holdingId===t.holding_id))&&!Object.values(raw.cashTransactions).some(p=>rows(p,'cash_account_transactions').some(c=>c.trade_id===t.id&&Number.isFinite(c.amount)&&c.amount!==0)))fail('TRADE_CASH_UNVERIFIED');
+  for(const t of ts)if(['BUY','SELL'].includes(t.description_code)&&!(t.description_code==='BUY'&&identities?.pairs.some(p=>p.tradeId===t.id&&p.holdingId===t.holding_id))&&!resolution.cashForTrade.has(t.id)){
+   if(!approvedGift(t,account,portfolio,targetDate,registry)||resolution.relatedCash.get(t.id)?.length)fail('TRADE_CASH_UNVERIFIED');
+  }
  }
 }
-export function buildManagedTransferProof({account,portfolio,raw,peerPortfolio,peer,targetDate,identifiedTransfers=null}){
+export function buildManagedTransferProof({account,portfolio,raw,peerPortfolio,peer,targetDate,identifiedTransfers=null,managementExemptionRegistry}){
  if(!['schwab','webull'].includes(account)||!isCalendarDate(targetDate)||!portfolio||portfolio.name!==({schwab:'Schwab-HK',webull:'Webull'})[account]||peerPortfolio&&(peerPortfolio.name!=='IB-HK'||portfolio.id===peerPortfolio.id))fail('SCOPE');id(portfolio.id);if(peerPortfolio)id(peerPortfolio.id);
  const identities=validateManagedTransferIdentities(identifiedTransfers);
+ const registry=validateManagementRegistry(managementExemptionRegistry);
  if(identities&&(identities.date!==targetDate||identities.account!==account||identities.destinationPortfolioId!==portfolio.id||identities.sourcePortfolioId!==peerPortfolio?.id))fail('IDENTIFIED_SCOPE');
  const before=report(raw.previousPerformance,portfolio,previous(targetDate)),after=report(raw.performance,portfolio,targetDate),own=trades(raw.trades,portfolio,targetDate);
- activity(before,after,own,raw,identities);
+ const cashEvidence=cashResolution(account,portfolio,raw,targetDate,own);
+ activity(before,after,own,raw,identities,cashEvidence,account,portfolio,targetDate,registry);
  const candidates=managedTransferCandidates(raw,identities);if(candidates.some(t=>t.transaction_date!==targetDate))fail('DATE');
  if(identities&&(identities.pairs.length!==candidates.length||identities.pairs.some(p=>!candidates.some(t=>t.id===p.tradeId&&t.holding_id===p.holdingId))))fail('IDENTIFIED_SCOPE');
- if(!candidates.length){const evidence=()=>hash([portfolio,raw.previousPerformance,raw.performance,raw.trades,raw.cashTransactions]),proof=Object.freeze({account,targetDate,flows:Object.freeze([]),evidenceHash:evidence()});accepted.set(proof,()=>evidence()===proof.evidenceHash);return proof;}
+ if(!candidates.length){const evidence=()=>hash([portfolio,raw.previousPerformance,raw.performance,raw.trades,raw.cashTransactions,registry]),proof=Object.freeze({account,targetDate,flows:Object.freeze([]),evidenceHash:evidence()});accepted.set(proof,()=>evidence()===proof.evidenceHash);return proof;}
  if(!peer||!peerPortfolio)fail('PEER_REQUIRED');
  const peerBefore=report(peer.previousPerformance,peerPortfolio,previous(targetDate)),peerAfter=report(peer.performance,peerPortfolio,targetDate),other=trades(peer.trades,peerPortfolio,targetDate),used=new Set(),flows=[];
+ const peerCash=cashResolution('ib',peerPortfolio,peer,targetDate,other);
  for(const incoming of candidates){
   // TRANSFER_IN is not an accepted observed provider type yet. Do not infer it.
   const selected=identities?.pairs.find(p=>p.tradeId===incoming.id&&p.holdingId===incoming.holding_id);
@@ -70,7 +92,7 @@ export function buildManagedTransferProof({account,portfolio,raw,peerPortfolio,p
   const key=instrument(incoming),q=quantity(incoming),out=other.filter(t=>t.description_code==='TRANSFER_OUT'&&instrument(t)===key&&quantity(t)===q&&(!selected||t.id===selected.sourceTradeId&&t.holding_id===selected.sourceHoldingId));
   if(q<=0n||out.length!==1||used.has(out[0].id)||incoming.id===out[0].id)fail('PAIR_REQUIRED');const outgoing=out[0];used.add(outgoing.id);
   if(incoming.brokerage!==0||outgoing.brokerage!==0||own.filter(t=>t.holding_id===incoming.holding_id).length!==1||other.filter(t=>t.holding_id===outgoing.holding_id).length!==1)fail('AMBIGUOUS_TRADES');
-  noCash(raw.cashTransactions,incoming,raw.performance,targetDate);noCash(peer.cashTransactions,outgoing,peer.performance,targetDate);
+  noCash(raw.cashTransactions,incoming,raw.performance,targetDate,cashEvidence);noCash(peer.cashTransactions,outgoing,peer.performance,targetDate,peerCash);
   const mark=after.filter(h=>h.id===incoming.holding_id),prior=before.filter(h=>h.id===incoming.holding_id),sourceBefore=peerBefore.filter(h=>h.id===outgoing.holding_id),sourceAfter=peerAfter.filter(h=>h.id===outgoing.holding_id);
   if(mark.length!==1||prior.length>1||sourceBefore.length!==1||sourceAfter.length>1||[...mark,...prior,...sourceBefore,...sourceAfter].some(h=>instrument(h)!==key)||quantity(mark[0])-(prior.length?quantity(prior[0]):0n)!==q||quantity(sourceBefore[0])-(sourceAfter.length?quantity(sourceAfter[0]):0n)!==q)fail('POSITION_DELTA');
   const price=quotedPrice(outgoing),denominator=SCALE*SCALE,valueNumerator=q*price*100n;
@@ -89,6 +111,6 @@ export function buildManagedTransferProof({account,portfolio,raw,peerPortfolio,p
   const amount=Number(valueCents)/100,ticker=incoming.instrument.code;
   flows.push({date:targetDate,acct:account,amount,desc:'Sharesight paired in-kind transfer',type:incoming.description_code,sourceTradeId:outgoing.id,tradeId:incoming.id,holdingId:incoming.holding_id,holdingDelta:Number(q)/Number(SCALE),sourceDate:outgoing.transaction_date,destinationDate:incoming.transaction_date,sourceInstrument:ticker,destinationInstrument:ticker,sourceQuantity:Number(q)/Number(SCALE),destinationQuantity:Number(q)/Number(SCALE),evidence:'external_asset_transfer'});
  }
- const evidence=()=>hash([portfolio,peerPortfolio,raw.previousPerformance,raw.performance,raw.trades,raw.cashTransactions,peer.previousPerformance,peer.performance,peer.trades,peer.cashTransactions,identities]),proof=Object.freeze({account,targetDate,flows:Object.freeze(flows.map(f=>Object.freeze(f))),evidenceHash:evidence()});accepted.set(proof,()=>evidence()===proof.evidenceHash);return proof;
+ const evidence=()=>hash([portfolio,peerPortfolio,raw.previousPerformance,raw.performance,raw.trades,raw.cashTransactions,peer.previousPerformance,peer.performance,peer.trades,peer.cashTransactions,identities,registry]),proof=Object.freeze({account,targetDate,flows:Object.freeze(flows.map(f=>Object.freeze(f))),evidenceHash:evidence()});accepted.set(proof,()=>evidence()===proof.evidenceHash);return proof;
 }
 export function consumeManagedTransferProof(proof,account,targetDate){if(!accepted.get(proof)?.()||proof.account!==account||proof.targetDate!==targetDate)fail('PROOF');return proof.flows.map(f=>({...f}));}
