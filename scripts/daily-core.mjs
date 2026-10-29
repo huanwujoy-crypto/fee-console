@@ -421,6 +421,10 @@ export function classifyFlow(raw,{reference=false}={}) {
     }
     if (valid && raw.evidence === 'internal_income'  && raw.incomeDateVerified === true)
       return {kind:'internal',reason:'verified dividend payout and cash-posting evidence'};
+    if(reference===true&&valid&&raw.currency==='USD'&&raw.evidence==='internal_income_pending_date'&&raw.incomeDateVerified===false
+      &&raw.sourcePortfolioId===1350094&&['sourceHoldingId','sourceCashRecordId','sourceCashAccountId'].every(k=>Number.isSafeInteger(raw[k])&&raw[k]>0)
+      &&raw.tradeId==null&&(raw.holdingId==null||raw.holdingId===raw.sourceHoldingId))
+      return {kind:'internal',reason:'confirmed Sharesight income; Sharesight cash date, broker date unverified'};
     return {kind:'unresolved',effective:false,reason:valid
       ? 'verified dividend cash/collection fee awaits cash-posting date evidence'
       : 'dividend cash evidence is incomplete or inconsistent'};
@@ -437,6 +441,8 @@ export function classifyFlow(raw,{reference=false}={}) {
   }
 
   if (trade) return { kind: "internal", reason: trade };
+
+  if(reference===true&&type==='FEE'&&Number.isFinite(raw.amount))return {kind:'internal',reason:'Sharesight native fee; no investor capital movement'};
 
   if (EXTERNAL_DESC_RE.some(re => re.test(desc))) {
     return { kind: "external", effective: false, reason: "description shows an external transfer" };

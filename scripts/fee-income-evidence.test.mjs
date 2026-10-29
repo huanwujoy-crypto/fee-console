@@ -12,7 +12,7 @@ import {CLOUD_ACCOUNTS,normalizeRead as normalizeCloudRead,parseSourceJson,Share
 import {loadIncomeDateEvidence} from './fee-cloud-producer.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt,semanticHash} from './fee-receipt-core.mjs';
 import {createFundInvestorCore} from './fund-investor-core.mjs';
-import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
+import { dividendCashKey, legacyDividendCashKey, resolveDividendCashEvidence, resolveSharesightReferenceIncomeEvidence, validateSharesightReferenceIncomeEvidence } from './fee-income-evidence.mjs';
 import { classifyFlow, reconcileFlows, flowId } from './daily-core.mjs';
 
 // Synthetic direct fixtures use the cash transport's original-number path.
@@ -35,6 +35,105 @@ const fixture=()=>({account:'webull',portfolioId:1350094,targetDate:D,dateEviden
     {id:2,cash_account_id:902,date_time:D+'T04:00:00Z',amount:-0.4,cash_account_transaction_type:{name:'FEE'},description:`SYNTH dividend collection fee: gross100.00 x0.4%, min0.30, rounded0.40. NOT WHT. Official Webull schedule + exact net69.60 cash match; rule-authorized. key=${KEY}:fee`}]
 });
 const flows=(input)=>{const tags=resolveDividendCashEvidence(input);return input.cashRows.map(r=>({date:D,acct:'webull',amount:r.amount,type:r.cash_account_transaction_type.name,desc:r.description,...tags.get(r.id)}));};
+test('reference native fees remain portfolio expense while bare funding and explicit external cash keep their old meaning',()=>{
+ const fee={date:D,acct:'webull',currency:'USD',type:'FEE',amount:-1,desc:'Synthetic source fee'};
+ assert.equal(classifyFlow(fee).kind,'unresolved');assert.equal(classifyFlow(fee,{reference:true}).kind,'internal');
+ assert.equal(classifyFlow({...fee,amount:1},{reference:true}).kind,'internal');
+ assert.equal(classifyFlow({...fee,amount:NaN},{reference:true}).kind,'unresolved');
+ for(const type of ['DEPOSIT','WITHDRAWAL'])assert.equal(classifyFlow({...fee,type,desc:'NOT external funding'},{reference:true}).kind,'unresolved');
+ assert.equal(classifyFlow({...fee,evidence:'external_transfer',externalRef:'SYNTHETIC-REVIEWED-TRANSFER'},{reference:true}).kind,'external');
+});
+test('reference accepts a confirmed income role on the Sharesight cash date without claiming broker date verification or clearing old pending rows',()=>{
+ const input={...fixture(),cashCurrencies:{902:'USD'}},tags=validateSharesightReferenceIncomeEvidence({...input,evidence:resolveDividendCashEvidence(input)});
+ const result=input.cashRows.map(r=>({date:D,acct:'webull',currency:'USD',amount:r.amount,type:r.cash_account_transaction_type.name,desc:r.description,...tags.get(r.id)}));
+ for(const row of result){assert.equal(row.incomeDateVerified,false);assert.equal(classifyFlow(row).kind,'unresolved');assert.equal(classifyFlow(row,{reference:true}).kind,'internal');}
+ const prior=reconcileFlows([],[],result);
+ assert.equal(prior.unresolved.length,2);
+ assert.equal(reconcileFlows([],prior.unresolved,result,{reference:true}).unresolved.length,2,'hash-based legacy pending entries are not cleared');
+ assert.equal(classifyFlow({...result[0],currency:'HKD'},{reference:true}).kind,'unresolved');
+ assert.equal(classifyFlow({...result[0],incomeDateVerified:undefined},{reference:true}).kind,'unresolved');
+});
+function legacyReferenceIncomeFixture(){
+ const date='2026-10-26',paid='2026-10-23',key='webullhk-10205226-SYNTH-20261023-ce77-cashcredit20261026';
+ const row=(id,type,amount,description)=>({id,cash_account_id:902,date_time:date+'T04:00:00Z',amount,cash_account_transaction_type:{name:type},description});
+ return {account:'webull',portfolioId:1350094,targetDate:date,cashCurrencies:{902:'USD'},payouts:{900:{id:900,portfolio_id:1350094,holding_id:901,symbol:'SYNTH',paid_on:paid,currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:100,resident_withholding_tax:30,amount:70}},cashRows:[
+  row(1,'DEPOSIT',100,`SYNTH gross dividend; NOT external funding. Paid${paid}; cash credited${date}. Payout900. key=${key}-gross`),
+  row(2,'FEE',-30,`SYNTH WHT 30% of USD100; tax cash leg, NOT commission. Payout900; cash date${date}. key=${key}-tax`),
+  row(3,'FEE',-0.4,`SYNTH dividend collection fee0.4% of100; NOT tax. Official Webull SCHEDULE1. Payout900. key=${key}-fee`)]};
+}
+test('legacy gross/tax/fee income requires the controlled complete group and confirmed same-portfolio Sharesight payout',()=>{
+ const f=legacyReferenceIncomeFixture(),tags=resolveSharesightReferenceIncomeEvidence(f);
+ assert.equal(tags.size,1);const evidence=tags.get(1);assert.equal(evidence.incomeDateVerified,false);assert.equal(evidence.evidence,'internal_income_pending_date');
+ const incoming=f.cashRows.map(r=>({date:f.targetDate,acct:'webull',currency:'USD',type:r.cash_account_transaction_type.name,amount:r.amount,desc:r.description,...tags.get(r.id)}));
+ for(const r of incoming)assert.equal(classifyFlow(r,{reference:true}).kind,'internal');
+ assert.equal(reconcileFlows([],[],incoming,{reference:true}).auto.length,0);assert.equal(reconcileFlows([],[],incoming,{reference:true}).unresolved.length,0);
+ assert.equal(reconcileFlows([],[],incoming).unresolved.length,3,'legacy classifier is not relaxed');
+ assert.deepEqual(f.cashRows.map(r=>legacyDividendCashKey(r.description).role),['gross','tax','fee']);
+});
+test('arbitrary dividend notes, incomplete groups and conflicting payout/date/currency/economics never gain reference income evidence',()=>{
+ for(const change of [x=>x.cashRows[0].description='dividend; NOT external funding',x=>x.cashRows.shift(),
+  x=>x.cashRows[0].description=x.cashRows[0].description.replace('10205226','10205227')]){
+  const f=legacyReferenceIncomeFixture();change(f);assert.equal(resolveSharesightReferenceIncomeEvidence(f).size,0);
+ }
+ for(const change of [x=>x.cashRows.pop(),x=>x.cashRows.push({...x.cashRows[2],id:4}),
+  x=>x.payouts[900].confirmed=false,x=>x.payouts[900].portfolio_id=936249,x=>x.payouts[900].symbol='OTHER',x=>x.payouts[900].paid_on='2026-10-22',
+  x=>x.cashCurrencies[902]='HKD',x=>x.cashRows[0].amount=101,x=>x.cashRows[1].amount=-29,x=>x.cashRows[0].trade_id=55,
+  x=>x.cashRows[0].holding_id=999,x=>x.cashRows[1].cash_account_id=903,x=>x.targetDate='2026-10-27',
+  x=>x.cashRows[2].description=x.cashRows[2].description.replace('of100','of101')]){
+  const f=legacyReferenceIncomeFixture();change(f);assert.throws(()=>resolveSharesightReferenceIncomeEvidence(f),{message:'invalid reference income source evidence'});
+ }
+});
+test('native payout pointer alone grants no reference income authority',()=>{
+ const f=legacyReferenceIncomeFixture();f.cashRows=[{...f.cashRows[0],payout_id:900,amount:70,description:'Native Sharesight payout'}];
+ assert.equal(resolveSharesightReferenceIncomeEvidence(f).size,0);
+ assert.equal(validateSharesightReferenceIncomeEvidence({...f,evidence:resolveDividendCashEvidence(f)}).size,0);
+ assert.equal(classifyFlow({date:f.targetDate,acct:'webull',currency:'USD',type:'DEPOSIT',amount:70,desc:'Native Sharesight payout'},{reference:true}).kind,'unresolved');
+});
+test('reference rejects repeated payout credit claims across legacy keys, native pointers and modern pairs',()=>{
+ const fail={message:'invalid reference income source evidence'};
+ for(const change of [
+  f=>f.cashRows.push(...f.cashRows.map(r=>({...r,id:r.id+3,description:r.description.replace('-ce77-','-ce78-')}))),
+  f=>f.cashRows.push({...f.cashRows[0],id:4,amount:70,payout_id:900,description:'Native Sharesight payout'}),
+  f=>f.cashRows.push({...f.cashRows[0]}),
+  f=>f.cashRows[0].payout_id=901]){
+  const f=legacyReferenceIncomeFixture();change(f);assert.throws(()=>resolveSharesightReferenceIncomeEvidence(f),fail);
+ }
+ const f=legacyReferenceIncomeFixture();f.cashRows[0].payout_id=900;
+ assert.equal(resolveSharesightReferenceIncomeEvidence(f).size,1,'same record native and legacy selectors may agree');
+ const modern={...fixture(),cashCurrencies:{902:'USD'}};
+ modern.cashRows.push(...modern.cashRows.map(r=>({...r,id:r.id+3,description:r.description.replace('dividend:12345678:','dividend:12345679:')})));
+ assert.throws(()=>validateSharesightReferenceIncomeEvidence({...modern,evidence:resolveDividendCashEvidence(modern)}),fail);
+ const mixed=legacyReferenceIncomeFixture(),pair=fixture();mixed.payouts[900].paid_on='2026-09-30';
+ mixed.cashRows=mixed.cashRows.map(r=>({...r,description:r.description.replaceAll('2026-10-23','2026-09-30').replaceAll('20261023','20260930')}));
+ mixed.cashRows.push(...pair.cashRows.map(r=>({...r,id:r.id+10,date_time:mixed.targetDate+'T04:00:00Z'})));
+ assert.throws(()=>resolveSharesightReferenceIncomeEvidence(mixed),fail);
+});
+test('reference validator binds existing modern income to unique actual USD rows and matching native source pointers',()=>{
+ const make=()=>({...fixture(),cashCurrencies:{902:'USD'}}),f=make(),old=resolveDividendCashEvidence(f);
+ const enriched=validateSharesightReferenceIncomeEvidence({...f,evidence:old});
+ assert.equal(enriched.size,2);
+ for(const [recordId,tag]of enriched){assert.equal(tag.sourcePortfolioId,1350094);assert.equal(tag.sourceHoldingId,901);assert.equal(tag.sourceCashRecordId,recordId);assert.equal(tag.sourceCashAccountId,902);assert.equal(tag.incomeDateVerified,false);assert.deepEqual(tag,{...old.get(recordId),sourcePortfolioId:1350094,sourceHoldingId:901});}
+ for(const change of [x=>x.cashRows[0].payout_id=999,x=>x.cashRows[0].holding_id=999,x=>x.cashRows[1].payout_id=999,
+  x=>x.cashRows[1].holding_id=999,x=>x.cashRows[0].trade_id=55,x=>x.cashRows[1].trade_id=55,
+  x=>x.cashRows.push({...x.cashRows[0]}),x=>x.cashRows[0].date_time='2026-09-30T04:00:00Z',
+  x=>x.cashRows[1].date_time='invalid',x=>x.cashCurrencies[902]='HKD',x=>delete x.cashCurrencies[902],
+  x=>x.payouts[900].currency='HKD',x=>x.payouts[900].portfolio_id=936249,x=>x.payouts.alias=x.payouts[900],
+  x=>x.cashRows[0].cash_account_transaction_type.name='FEE',x=>x.cashRows[0].description='untrusted note',
+  x=>x.cashRows.pop()]){
+  const x=make(),evidence=resolveDividendCashEvidence(x);change(x);
+  assert.throws(()=>validateSharesightReferenceIncomeEvidence({...x,evidence}),{message:'invalid reference income source evidence'});
+ }
+ for(const change of [m=>m.get(1).sourcePayoutId='900',m=>m.get(1).sourceCashAccountId=903,
+  m=>m.get(1).sourceCashRecordId=4,m=>m.get(1).sourcePortfolioId=936249,m=>m.get(1).sourceHoldingId=999,
+  m=>m.set(4,m.get(1))]){
+  const x=make(),evidence=resolveDividendCashEvidence(x);change(evidence);
+  assert.throws(()=>validateSharesightReferenceIncomeEvidence({...x,evidence}),{message:'invalid reference income source evidence'});
+ }
+ const linked=make();linked.cashRows[0].payout_id=900;linked.cashRows[0].holding_id=901;
+ assert.equal(validateSharesightReferenceIncomeEvidence({...linked,evidence:resolveDividendCashEvidence(linked)}).size,2);
+ const missingAccount=make(),missingTags=resolveDividendCashEvidence(missingAccount);for(const tag of missingTags.values())delete tag.sourceCashAccountId;
+ assert.equal(validateSharesightReferenceIncomeEvidence({...missingAccount,evidence:missingTags}).get(1).sourceCashAccountId,902);
+});
 test('a confirmed payout plus matched net dividend and separate fee identifies income without guessing funding',()=>{
   const input=fixture(),result=flows(input);assert.equal(result.length,2);
   assert.deepEqual(result.map(r=>r.incomeRole),['dividend','collection_fee']);
@@ -166,6 +265,16 @@ const fixture=(date=D,ticker='SYNTH')=>{
     cashRows:[{id:s.cashRecordIds[0],cash_account_id:s.cashAccountId,date_time:date+'T00:00:00Z',amount:69.50,balance:469.50,
       cash_account_transaction_type:{name:'DEPOSIT'},trade_id:null,holding_id:null,payout_id:null,description:'synthetic net income; no legacy key'}]};
 };
+test('reference source validation preserves notification audit without a key and rejects a second legacy credit',()=>{
+ const x=fixture(),evidence=resolveDividendCashEvidence(x),cashCurrencies={930:'USD'};
+ const checked=validateSharesightReferenceIncomeEvidence({...x,evidence,cashCurrencies});
+ assert.deepEqual([...checked],[...evidence],'the existing notification policy and broker-date status are preserved');
+ const legacy=legacyReferenceIncomeFixture(),compact=D.replaceAll('-','');
+ x.cashRows.push(...legacy.cashRows.map(r=>({...r,id:r.id+1000,cash_account_id:930,date_time:D+'T04:00:00Z',
+  description:r.description.replaceAll('2026-10-23',D).replaceAll('2026-10-26',D).replaceAll('20261023',compact).replaceAll('20261026',compact).replaceAll('Payout900','Payout920')})));
+ const old=resolveDividendCashEvidence(x);assert.equal(old.size,1,'the existing notification selector does not see legacy descriptions');
+ assert.throws(()=>validateSharesightReferenceIncomeEvidence({...x,evidence:old,cashCurrencies}),{message:'invalid reference income source evidence'});
+});
 const flow=input=>{
   const row=input.cashRows[0];return {date:input.targetDate,acct:'webull',amount:row.amount,type:row.cash_account_transaction_type.name,
     desc:row.description,tradeId:row.trade_id,holdingId:row.holding_id,...resolveDividendCashEvidence(input).get(row.id)};

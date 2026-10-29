@@ -341,7 +341,7 @@ export function catalogScopeEvidence(listing, report, historyPayload, targetTrad
       .sort((a, b) => a.holdingId - b.holdingId)} : {}) };
 }
 
-import { dividendCashKey, resolveDividendCashEvidence } from './fee-income-evidence.mjs';
+import { dividendCashKey, legacyDividendCashKey, resolveDividendCashEvidence, resolveSharesightReferenceIncomeEvidence, validateSharesightReferenceIncomeEvidence } from './fee-income-evidence.mjs';
 import { notificationIncomeAudits } from './fee-income-date-policy.mjs';
 
 function verifyBenchmarkIdentity(cache) {
@@ -559,7 +559,16 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
     }
     incomeEvidence = resolveDividendCashEvidence({account,portfolioId:expected.portfolioId,targetDate,holdings,
     cashRows:Object.values(cashTransactions).flatMap(p => rows(p,'cash_account_transactions')),
-    payouts:incomePayouts,dateEvidence:incomeDateEvidence}); } catch { fail('INCOME_EVIDENCE'); }
+    payouts:incomePayouts,dateEvidence:incomeDateEvidence});
+    if(reference){
+      const referenceContext={account,portfolioId:expected.portfolioId,targetDate,
+        cashRows:Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions')),payouts:incomePayouts,
+        cashCurrencies:Object.fromEntries(listedCash.map(c=>[id(c.id),c.currency]))};
+      incomeEvidence=validateSharesightReferenceIncomeEvidence({...referenceContext,evidence:incomeEvidence});
+      const referenceIncome=resolveSharesightReferenceIncomeEvidence(referenceContext);
+      for(const [record,evidence]of referenceIncome)if(!incomeEvidence.has(record))incomeEvidence.set(record,evidence);
+    }
+  } catch { fail('INCOME_EVIDENCE'); }
   const trades = rows(tradesPayload, "trades");
   if (trades.some(row => id(row.portfolio_id) !== expected.portfolioId || row.transaction_date !== targetDate
       || row.state !== 'confirmed')) fail('TRADE_IDENTITY');
@@ -590,7 +599,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         && /^Webull [A-Z0-9./^-]+ (?:BUY|SELL) securities principal; NOT external funding; webullhk-10205226-email-[a-f0-9]{32}-cash$/.test(description);
       const flow={
         date: targetDate, acct: account, amount: movement,
-        ...(reference?{currency:cashAccount.currency}:{}),
+        ...(reference?{currency:cashAccount.currency,payoutPointerPresent:row.payout_id!=null}:{}),
         desc: description,
         type: typeof row.cash_account_transaction_type?.name === "string" ? row.cash_account_transaction_type.name : "",
         tradeId: row.trade_id == null ? null : id(row.trade_id),
@@ -842,8 +851,11 @@ export class SharesightCloudReader {
         ? await this.get(`${API}/api/v2/portfolios/${expected.portfolioId}/cash_accounts.json?date=${priorDate}`, token) : undefined;
       const incomePayouts = {};
       if (account === 'webull') {
-        const keys=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'))
-          .map(row=>dividendCashKey(row.description)).filter(Boolean);
+        const cashRecords=Object.values(cashTransactions).flatMap(p=>rows(p,'cash_account_transactions'));
+        const keys=cashRecords.map(row=>{
+          const legacy=this.sourceMode==='sharesight-reference'&&row.cash_account_transaction_type?.name==='DEPOSIT'?legacyDividendCashKey(row.description):null;
+          return dividendCashKey(row.description)||(legacy?.role==='gross'?legacy:null);
+        }).filter(Boolean);
         let audits;
         try { audits=notificationIncomeAudits(this.incomeDateEvidence,targetDate); } catch { fail('INCOME_EVIDENCE'); }
         for (const payoutId of new Set([...keys.map(k=>k.payoutId),...audits.map(a=>a.proof.scope.payoutId)]))

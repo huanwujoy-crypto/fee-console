@@ -281,6 +281,7 @@ function transport(f){
   }else if(p.includes('/cash_accounts/')){const cashId=Number(p.split('/')[4]);assert.ok([8,9,10].includes(cashId));const own=cashId===8?f.raw.cashTransactions[8].cash_account_transactions:cashId===10?f.peer.cashTransactions[10].cash_account_transactions:[];
    if(q.has('from'))data={...(cashId===8?f.raw.cashTransactions[8]:cashId===10?f.peer.cashTransactions[10]:{}),cash_account_transactions:own};
    else{const opening=cashId===8?f.raw.previousPerformance.report.cash_accounts[0].value:100;data={cash_account_transactions:[{id:999+cashId,cash_account_id:cashId,date_time:P+'T00:00Z',amount:0,balance:opening,cash_account_transaction_type:{name:'FEE'}},...own]};}}
+  else if(/^\/api\/v2\/payouts\/\d+\.json$/.test(p))data=f.payouts?.[Number(p.match(/payouts\/(\d+)/)[1])]||{};
   else assert.fail('unexpected endpoint');return response(url,data);
  }};
 }
@@ -407,6 +408,40 @@ test('the actual reader cannot turn an unmapped opening balance into new capital
 });
 
 const refRead=async f=>{const io=transport(f),reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:io.fetchImpl,reconcileInKind:true,managedTransferIdentities:f.identifiedTransfers,managementExemptionRegistry:f.managementExemptionRegistry,sourceMode:'sharesight-reference'});const raw=await reader.readOnce(D);return {raw,input:normalizeRead(raw,D,{spy:100,qqq:100,spyd:0,qqqd:0},{sourceMode:'sharesight-reference'}),io};};
+function referenceLegacyDividendFixture(){
+ const f=fixture(),paid=P,key=`webullhk-10205226-SYNTH-${paid.replaceAll('-','')}-ce77-cashcredit${D.replaceAll('-','')}`;
+ const row=(id,type,amount,description)=>({id,cash_account_id:8,date_time:D+'T04:00:00Z',amount,cash_account_transaction_type:{name:type},description});
+ f.raw.cashTransactions[8].cash_account_transactions=[
+  row(601,'DEPOSIT',100,`SYNTH gross dividend; NOT external funding. Paid${paid}; cash credited${D}. Payout900. key=${key}-gross`),
+  row(602,'FEE',-30,`SYNTH WHT 30% of USD100; tax cash leg, NOT commission. Payout900; cash date${D}. key=${key}-tax`),
+  row(603,'FEE',-0.4,`SYNTH dividend collection fee0.4% of100; NOT tax. Official Webull SCHEDULE1. Payout900. key=${key}-fee`)];
+ f.payouts={900:{id:900,portfolio_id:f.portfolio.id,holding_id:f.raw.performance.report.holdings[0].id,symbol:'SYNTH',paid_on:paid,currency:'USD',confirmed:true,state:'confirmed',non_taxable:false,tax_credit:0,gross_amount:100,resident_withholding_tax:30,amount:70}};
+ return f;
+}
+test('reference reader binds audited legacy income to one confirmed Sharesight payout, keeps source NAV and creates no capital',async()=>{
+ const f=referenceLegacyDividendFixture(),{input,io}=await refRead(f);
+ assert.equal(io.calls.filter(p=>p.includes('/payouts/')).length,1);assert.ok(io.calls.some(p=>p==='/api/v2/payouts/900.json'));
+ assert.equal(input.accounts.webull,f.raw.performance.report.value);assert.equal(input.acctCash.webull,f.raw.performance.report.cash_accounts[0].value);
+ assert.equal(input.flows.length,3);const income=input.flows.find(r=>r.type==='DEPOSIT');
+ assert.equal(income.evidence,'internal_income_pending_date');assert.equal(income.incomeDateVerified,false);
+ assert.equal(income.sourcePortfolioId,f.portfolio.id);assert.equal(income.sourceCashRecordId,601);
+ for(const row of input.flows)assert.equal(classifyFlow(row,{reference:true}).kind,'internal');
+ const result=reconcileFlows([],[],input.flows,{reference:true});assert.equal(result.auto.length,0);assert.equal(result.unresolved.length,0);
+});
+test('reference income does not accept arbitrary notes, conflicting source pointers or duplicate credit representations',async()=>{
+ for(const change of [x=>x.raw.cashTransactions[8].cash_account_transactions[0].description='dividend; NOT external funding',
+  x=>x.payouts[900].confirmed=false,x=>x.payouts[900].portfolio_id=CLOUD_ACCOUNTS.schwab.portfolioId,
+  x=>x.raw.cashTransactions[8].cash_account_transactions[0].payout_id=999,
+  x=>x.raw.cashTransactions[8].cash_account_transactions[0].holding_id=999,
+  x=>x.raw.cashTransactions[8].cash_account_transactions.push(...x.raw.cashTransactions[8].cash_account_transactions.map(r=>({...r,id:r.id+10,description:r.description.replace('ce77','ce78')}))),
+  x=>x.raw.cashTransactions[8].cash_account_transactions.push({id:699,cash_account_id:8,date_time:D+'T05:00:00Z',amount:70,payout_id:900,cash_account_transaction_type:{name:'DEPOSIT'},description:'native net credit'})]){
+  const f=referenceLegacyDividendFixture();change(f);let read;
+  try{read=await refRead(f);}catch(error){assert.match(error.message,/FEE_CLOUD_INCOME_EVIDENCE/);continue;}
+  assert.ok(reconcileFlows([],[],read.input.flows,{reference:true}).unresolved.length>0,'unsupported income must remain pending, never become capital or disappear');
+ }
+ const bank=fixture(),row=bank.raw.cashTransactions[8].cash_account_transactions[0];Object.assign(row,{trade_id:null,holding_id:null,description:'bank transfer',cash_account_transaction_type:{name:'DEPOSIT'}});
+ const {input,io}=await refRead(bank);assert.equal(reconcileFlows([],[],input.flows,{reference:true}).auto.length,1);assert.ok(!io.calls.some(p=>p.includes('/payouts/')));
+});
 test('reference actual reader uses complete current NAV/cash without predecessor, running balances, cash history or ordinary catalog replay',async()=>{
  const f=fixture();delete f.raw.previousPerformance;delete f.raw.cashTransactions[8].cash_account_transactions[0].balance;
  f.extraCatalog=[{...f.raw.performance.report.holdings[0],id:999,inception_date:'2026-10-29'}];
@@ -465,7 +500,7 @@ test('reference selected transfer still requires dated positions, valuation and 
  const {input,io}=await refRead(f);assert.equal(input.flows.length,1);assert.equal(input.flows[0].evidence,'external_asset_transfer');
  assert.ok(io.calls.some(p=>p.includes('/77/')&&p.includes('start_date='+P)));
  const r=reconcileFlows([],[],input.flows,{reference:true});assert.equal(reconcileFlows(r.auto,[],input.flows,{reference:true}).auto.length,1);
- for(const change of [x=>useHoldingPrincipal(x,-20),x=>x.peer.trades.trades[0].price=1,x=>x.identifiedTransfers.pairs[0].sourceTradeId++,x=>x.raw.previousPerformance.report.end_date=D]){
+ for(const change of [x=>useHoldingPrincipal(x,-20),x=>{const row=useHoldingPrincipal(x,-20);row.cash_account_transaction_type={name:'FEE'};row.trade_id=x.raw.trades.trades[0].id;},x=>x.peer.trades.trades[0].price=1,x=>x.identifiedTransfers.pairs[0].sourceTradeId++,x=>x.raw.previousPerformance.report.end_date=D]){
   const bad=structuredClone(f);change(bad);await assert.rejects(refRead(bad),/FEE_/);
  }
 });

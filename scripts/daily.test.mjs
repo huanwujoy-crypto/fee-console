@@ -2122,6 +2122,17 @@ test('Sharesight reference cannot hide an unknown nonzero external-flow meaning;
  const dir=tmp(),d=today(),args=referenceWriterArgs(d);args.flows=JSON.stringify([{date:d,acct:'webull',amount:10,currency:'USD',type:'DEPOSIT',desc:'unclassified source record'}]);
  const r=run(dir,args,[],referenceEconomic(dir));assert.equal(r.status,0,r.stderr);const p=readPayload(dir);assert.equal(p.flowsUnresolved.length,1);assert.equal(p.flowsUnresolved[0].amount,10);assert.equal(p.feeCalculationReceipt,undefined);
 });
+test('reference confirmed income and native fees use reported NAV without creating capital, subscriptions or verified broker dates',()=>{
+ const dir=tmp(),d=today(),args=referenceWriterArgs(d),ref=JSON.parse(args['sharesight-reference']);
+ args.webull='169.6';args.cash='169.6';args['acct-cash-webull']='109.6';ref.cashByAccount.webull=109.6;args['sharesight-reference']=JSON.stringify(ref);
+ const income={date:d,acct:'webull',currency:'USD',amount:100,type:'DEPOSIT',desc:'Synthetic confirmed source income',evidence:'internal_income_pending_date',incomeRole:'dividend',incomeDateVerified:false,cashPostingDate:d,sourcePortfolioId:1350094,sourcePayoutId:900,sourceHoldingId:901,sourceCashRecordId:601,sourceCashAccountId:8};
+ args.flows=JSON.stringify([income,{date:d,acct:'webull',currency:'USD',amount:-30,type:'FEE',desc:'Synthetic source tax fee'},{date:d,acct:'webull',currency:'USD',amount:-0.4,type:'FEE',desc:'Synthetic source collection fee'}]);
+ const env=referenceEconomic(dir),out=run(dir,args,[],env);assert.equal(out.status,0,out.stderr);
+ const data=readPayload(dir);assert.equal(data.daily.at(-1).webull,169.6);assert.equal(data.daily.at(-1).cash,169.6);
+ assert.equal(data.flowsAuto.length,0);assert.equal(data.flowsUnresolved.length,0);assert.equal(data.feeCalculationReceipt.status.valid,true);
+ assert.equal(data.feeCalculationReceipt.totals.grossPnlCents,6960);
+ const bytes=fs.readFileSync(path.join(dir,'data.json'));const again=run(dir,args,[],env);assert.equal(again.status,0,again.stderr);assert.deepEqual(fs.readFileSync(path.join(dir,'data.json')),bytes);
+});
 test('Sharesight reference rejects blank, missing and coerced cash amounts instead of converting them to explicit zero',()=>{
  for(const amount of ['', ' ', '\t\n', '0', null, undefined, false, [], {}]){
   const dir=tmp(),d=today(),args=referenceWriterArgs(d);
