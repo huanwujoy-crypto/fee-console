@@ -19,7 +19,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
-  ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
+  ACCOUNTS, SPLITS, STYLE_SPLITS, STYLE_SPLIT_EPS, normalizeAssetAllocation, BENCH_KEYS, BENCH_DIV_KEYS, BENCH_LEGACY_KEYS,
   validateInputs, checkCashLedger, checkMove, reconcileFlows, notificationIncomeFlowAudit,normalizeSharesightReference,classifyFlow,
   buildPoint, validateBenchmarkTimeline, samePoint, buildLatestStatus, sameStatus, isIsoDate, isWeekend, dayDiff
 } from "./daily-core.mjs";
@@ -32,7 +32,7 @@ import {
   validateFeeCalculationReceipt
 } from "./fee-receipt-core.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
-import { readStyleInput, resolveStyle, summarizeTopHoldings } from "./fee-style-registry.mjs";
+import { readStyleInput, resolveStyle, resolveAssetAllocation, summarizeTopHoldings } from "./fee-style-registry.mjs";
 
 import { resolveManagementExemptions } from './fee-management-exemption.mjs';
 import {prepareRatioAttachment,prepareIbBootstrapAttachment} from './fee-ratio-packet.mjs';
@@ -342,7 +342,7 @@ if (weekendCarry) {
 }
 // Ordinary learned classifications travel only inside the encrypted payload.
 // Legacy callers remain supported until the registry is first activated.
-let styleResult = null, topHoldings, verifyStyleInput = () => {};
+let styleResult = null, assetAllocation, topHoldings, verifyStyleInput = () => {};
 const styleFile = (process.env.FEE_STYLE_INPUT_FILE || '').trim();
 if (flags.has('style-preflight') && !styleFile) die('STYLE_INPUT_REQUIRED — nothing written');
 if (data.classificationRegistry !== undefined && !styleFile && !weekendCarry) {
@@ -355,12 +355,16 @@ if (styleFile) {
     const snapshot = readStyleInput(styleFile, repoRoot);
     verifyStyleInput = snapshot.verify;
     const staticMap = JSON.parse(fs.readFileSync(path.join(repoRoot, 'claude/fee-style-mapping.json'), 'utf8'));
-    styleResult = resolveStyle({ input: snapshot.input, registry: data.classificationRegistry,
+    const resolver = snapshot.input.schemaVersion === 2 ? resolveAssetAllocation : resolveStyle;
+    styleResult = resolver({ input: snapshot.input, registry: data.classificationRegistry,
       staticMap, date, sourceDates, stock: splits.stock });
     topHoldings = summarizeTopHoldings(snapshot.input, 3, staticMap.topHoldingExposureMappings || []);
-    styleSplits.growth = styleResult.growth;
-    styleSplits.value = styleResult.value;
-    if (styleResult.gold !== undefined) styleSplits.gold = styleResult.gold;
+    if (styleResult.assetAllocation) assetAllocation = styleResult.assetAllocation;
+    else {
+      styleSplits.growth = styleResult.growth;
+      styleSplits.value = styleResult.value;
+      if (styleResult.gold !== undefined) styleSplits.gold = styleResult.gold;
+    }
   } catch (error) {
     const code = /^STYLE_[A-Z0-9_]+$/.test(error.message) ? error.message : 'STYLE_INPUT_INVALID';
     die(`${code} — nothing written`);
@@ -465,7 +469,7 @@ hard.push(...flows.errors);
 const benchmarkRejected = check.benchmarkErrors.length > 0;
 const acceptedBench = benchmarkRejected ? {} : bench;
 const acceptedBenchDiv = benchmarkRejected ? {} : benchDiv;
-const point = buildPoint({ date, accounts, splits, styleSplits, topHoldings, bench: acceptedBench, benchDiv: acceptedBenchDiv,
+const point = buildPoint({ date, accounts, splits, styleSplits, assetAllocation, topHoldings, bench: acceptedBench, benchDiv: acceptedBenchDiv,
   benchDate: args["src-bench"] ?? null, benchState: benchmarkRejected ? null : check.benchmarkState,
   provisional: check.provisional, calibrated });
 if(sourceReference)point.sourceReference=sourceReference;
@@ -489,9 +493,15 @@ if (weekendCarry && Array.isArray(weekendCarryPrior?.topHoldings)) {
 // “证券（未拆分）” instead of presenting stale classification.
 const noIncomingStyle = [...STYLE_SPLITS, "gold"].every(k => point[k] === undefined);
 const hasExistingStyle = STYLE_SPLITS.every(k => Number.isFinite(existingPoint?.[k]));
-if (noIncomingStyle && hasExistingStyle &&
+if (!point.assetAllocation && noIncomingStyle && hasExistingStyle &&
     Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
   for (const k of [...STYLE_SPLITS, "gold"]) if (existingPoint[k] !== undefined) point[k] = Number(existingPoint[k]);
+}
+// Weekend carries retain the same verified allocation with the carried values.
+// Ordinary same-day edits with no fresh source metadata do not manufacture one.
+if (weekendCarry && weekendCarryPrior?.assetAllocation !== undefined) {
+  try { point.assetAllocation = normalizeAssetAllocation(weekendCarryPrior.assetAllocation, point.stock); }
+  catch { die('STYLE_ASSET_ALLOCATION — nothing written'); }
 }
 if (point.topHoldings === undefined && Array.isArray(existingPoint?.topHoldings)
     && Math.abs(Number(existingPoint.stock) - Number(point.stock)) <= STYLE_SPLIT_EPS) {
@@ -620,7 +630,7 @@ let nextData = {
   flowsUnresolved: flows.unresolved,
   status
 };
-if (styleResult) nextData.classificationRegistry = styleResult.registry;
+if (styleResult?.registry) nextData.classificationRegistry = styleResult.registry;
 if (managementResult?.registry) nextData.managementExemptionRegistry = managementResult.registry;
 
 let receiptState = "unchanged";

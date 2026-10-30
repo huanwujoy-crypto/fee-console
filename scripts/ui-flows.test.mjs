@@ -16,6 +16,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -477,4 +478,132 @@ test("a mixed month with copies, references and a confirmation stays whole", () 
   const flows = effectiveFlows(month("2026-08", [manual]), autos);
   assert.equal(flows.length, 3, "BRK/B once, and the two same-day wires separately");
   assert.equal(sum(flows), Number((TRANSFER + 7500 + 7500).toFixed(2)));
+});
+
+
+// Source asset-type allocation is display metadata. Exercise the exact page
+// region with synthetic values, independently of the fee/flow engines above.
+const assetStart = "/* asset-allocation-view:start */";
+const assetEnd = "/* asset-allocation-view:end */";
+// Exact reviewed new block runs in both deployment stages. The old page
+// remains pinned as the old contract; it is never claimed to render this UI.
+const reviewedAssetBlock = "\n// Reporting only. Never reinterpret the legacy `stock` total as ordinary shares\n// or feed this projection into NAV, returns, cash flows or fee calculations.\nfunction assetAllocationProjection(lp){\n  if(!lp||!Object.hasOwn(lp,\"assetAllocation\"))return {state:\"legacy\"};\n  const value=lp.assetAllocation,keys=[\"equity\",\"etf\",\"bond\",\"cash\",\"gold\",\"other\",\"unclassified\"];\n  const expected=[\"schemaVersion\",\"mode\",...keys].sort().join(\",\");\n  if(!value||typeof value!==\"object\"||Array.isArray(value)\n    ||Object.keys(value).sort().join(\",\")!==expected||value.schemaVersion!==1||value.mode!==\"sharesight-asset-type-v1\"\n    ||!Number.isFinite(lp.stock)||lp.stock<0||keys.some(k=>!Number.isFinite(value[k])||value[k]<0)\n    ||Math.abs(keys.reduce((sum,k)=>sum+value[k],0)-lp.stock)>1)return {state:\"unavailable\"};\n  return {state:\"ready\",value};\n}\nfunction assetMixView(lp,nav){\n  if(!lp||(lp.cash==null&&lp.stock==null&&lp.other==null))return \"\";\n  const mixV={cash:num(lp.cash),stock:num(lp.stock),other:num(lp.other)};\n  const mixSum=mixV.cash+mixV.stock+mixV.other,allocation=assetAllocationProjection(lp);\n  const cell=(label,value)=>`<div><div class=\"k\">${label}</div><div class=\"v\">${usd(value,0)}<span class=\"p\">${nav>0?(value/nav*100).toFixed(0)+\"%\":\"—\"}</span></div></div>`;\n  let cells,note=\"\";\n  if(allocation.state===\"ready\"){\n    const a=allocation.value;\n    cells=cell(\"现金及其它\",mixV.cash+mixV.other+a.cash)+cell(\"股票\",a.equity);\n    for(const [key,label] of [[\"etf\",\"ETF\"],[\"bond\",\"债券\"],[\"gold\",\"黄金\"],[\"other\",\"其他证券\"],[\"unclassified\",\"待分类证券\"]])\n      if(a[key]>0)cells+=cell(label,a[key]);\n    if(a.unclassified>0)note=\"待分类证券已计入总资产；仅证券类型待确认，不改变资金流或费用计算口径。\";\n  }else if(allocation.state===\"unavailable\"){\n    // Never fall back to stale growth/value fields when new metadata is invalid.\n    cells=cell(\"现金及其它\",mixV.cash+mixV.other)+cell(\"证券（分类待核实）\",mixV.stock);\n    note=\"证券类型拆分暂不可用；不替代总资产与费用回执核验。\";\n  }else{\n    const growth=lp.growth,value=lp.value,gold=lp.gold==null?0:Number(lp.gold);\n    const ready=growth!=null&&value!=null&&Number.isFinite(Number(growth))&&Number.isFinite(Number(value))\n      &&Number(growth)>=0&&Number(value)>=0&&Number.isFinite(gold)&&gold>=0\n      &&Math.abs(Number(growth)+Number(value)+gold-mixV.stock)<=1;\n    cells=cell(\"现金及其它\",mixV.cash+mixV.other)+(ready?cell(\"历史成长/价值合计\",Number(growth)+Number(value))+(gold>0?cell(\"黄金\",gold):\"\"):cell(\"证券（未拆分）\",mixV.stock));\n    note=ready?\"历史分类原样保留；成长/价值合计不等同于按 Sharesight 类型确认的个股。\":\"尚无经核实的证券类型拆分\";\n  }\n  return `<div class=\"mix two\">${cells}</div>${note?`<div class=\"note\">${note}</div>`:\"\"}${Math.abs(mixSum-nav)>1?`<div class=\"note\">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-nav,0)}</div>`:\"\"}`;\n}\n";
+const pageSha = page => createHash("sha256").update(page).digest("hex");
+function assetBlockForReviewedStage(page) {
+  const digest=pageSha(page);
+  if(digest==="eada672f9928fcb20dc4ab5b98a6b000a8a73dc5ce66edfbddfba0663b722c3c"){
+    assert.equal(page.includes(assetStart),false);
+    assert.equal(page.includes(assetEnd),false);
+    return reviewedAssetBlock;
+  }
+  assert.equal(digest,"de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d",
+    "asset allocation tests require an exact reviewed old or new page");
+  assert.equal(page.split(assetStart).length,2);
+  assert.equal(page.split(assetEnd).length,2);
+  const actual=page.split(assetStart)[1].split(assetEnd)[0];
+  assert.equal(actual,reviewedAssetBlock,"live new block must equal the reviewed fixture");
+  return actual;
+}
+const assetBlock=assetBlockForReviewedStage(html);
+test("asset allocation staged fixture rejects unreviewed page bytes",()=>{
+  assert.throws(()=>assetBlockForReviewedStage(html+"\n"));
+  assert.equal(pageSha(reviewedAssetBlock),"282a469dbb8fdc3a9c748ce2c8303b629f992078d5fce8decac498fb609f95ea");
+});
+const { assetAllocationProjection, assetMixView } = new Function("num", "usd",
+  `${assetBlock}\nreturn {assetAllocationProjection,assetMixView};`)(num, value => `$${value}`);
+const assetPoint = overrides => ({
+  d:"2026-10-29", cash:10, other:5, stock:100,
+  assetAllocation:{schemaVersion:1,mode:"sharesight-asset-type-v1",
+    equity:40,etf:20,bond:10,cash:5,gold:10,other:10,unclassified:5}, ...overrides
+});
+
+test("asset-type view renders ordinary shares as stocks, never all securities", () => {
+  const point=assetPoint(), before=JSON.stringify(point);
+  const view=assetMixView(point,115);
+  assert.match(view,/股票<\/div><div class="v">\$40/);
+  assert.match(view,/ETF<\/div><div class="v">\$20/);
+  assert.match(view,/债券<\/div><div class="v">\$10/);
+  assert.match(view,/黄金<\/div><div class="v">\$10/);
+  assert.match(view,/其他证券<\/div><div class="v">\$10/);
+  assert.match(view,/待分类证券<\/div><div class="v">\$5/);
+  assert.match(view,/现金及其它<\/div><div class="v">\$20/);
+  assert.doesNotMatch(view,/成长股|价值股|股票<\/div><div class="v">\$100/);
+  assert.equal(JSON.stringify(point),before,"rendering must not mutate daily data");
+});
+
+test("asset-type projection takes precedence over stale legacy styles", () => {
+  const point=assetPoint({growth:100,value:0,gold:999});
+  assert.equal(assetAllocationProjection(point).state,"ready");
+  const view=assetMixView(point,115);
+  assert.doesNotMatch(view,/历史成长|\$999|\$100/);
+  assert.match(view,/股票<\/div><div class="v">\$40/);
+});
+
+test("legacy styles remain read-only merged history, not source-verified stocks", () => {
+  const point={cash:10,other:5,stock:100,growth:60,value:30,gold:10};
+  const before=JSON.stringify(point),view=assetMixView(point,115);
+  assert.equal(assetAllocationProjection(point).state,"legacy");
+  assert.match(view,/历史成长\/价值合计<\/div><div class="v">\$90/);
+  assert.match(view,/黄金<\/div><div class="v">\$10/);
+  assert.doesNotMatch(view,/股票<\/div>/);
+  assert.equal(JSON.stringify(point),before);
+});
+
+test("missing source types retain the complete unclassified value and NAV denominator", () => {
+  const point=assetPoint();
+  for(const key of ["equity","etf","bond","cash","gold","other"])point.assetAllocation[key]=0;
+  point.assetAllocation.unclassified=100;
+  const view=assetMixView(point,115);
+  assert.match(view,/股票<\/div><div class="v">\$0/);
+  assert.match(view,/待分类证券<\/div><div class="v">\$100<span class="p">87%/);
+  assert.match(view,/已计入总资产/);
+});
+
+test("malformed new allocation is disclosed, never coerced or replaced by legacy fields", () => {
+  const invalid=[null,[],{}, {...assetPoint().assetAllocation,mode:"other"},
+    {...assetPoint().assetAllocation,schemaVersion:2},
+    {...assetPoint().assetAllocation,extra:0}];
+  for(const bad of ["40","",null,NaN,Infinity,-1])invalid.push({...assetPoint().assetAllocation,equity:bad});
+  invalid.push({...assetPoint().assetAllocation,equity:42});
+  for(const allocation of invalid){
+    const point=assetPoint({assetAllocation:allocation,growth:100,value:0});
+    assert.equal(assetAllocationProjection(point).state,"unavailable");
+    const view=assetMixView(point,115);
+    assert.match(view,/证券（分类待核实）<\/div><div class="v">\$100/);
+    assert.match(view,/证券类型拆分暂不可用/);
+    assert.doesNotMatch(view,/历史成长|股票<\/div>/);
+  }
+  const point=assetPoint({stock:"100"});
+  assert.equal(assetAllocationProjection(point).state,"unavailable");
+});
+
+test("asset-allocation UI respects the existing one-dollar total tolerance", () => {
+  const point=assetPoint();point.assetAllocation.equity=41;
+  assert.equal(assetAllocationProjection(point).state,"ready");
+  point.assetAllocation.equity=41.01;
+  assert.equal(assetAllocationProjection(point).state,"unavailable");
+});
+
+const reviewedHealthBlock="function health(feeView,st){\n  if(feeView.state===\"loading\")return {hold:true,holdReasons:[],loading:true};\n  const hold=[];\n  if(feeView.state!==\"verified\")hold.push(feeView.message);\n  const unresolved=(DAILY.flowsUnresolved||[]).length;\n  const lp=st.lastPt;\n  if(!lp)hold.push(\"尚无每日数据\");\n  else{\n    const age=Math.round((Date.parse(todayStr()+\"T00:00:00Z\")-Date.parse(lp.d+\"T00:00:00Z\"))/86400000);\n    if(age>10)hold.push(\"每日数据已停更 \"+age+\" 天（最新 \"+lp.d+\"）\");\n    const ms=num(lp.cash)+num(lp.stock)+num(lp.other);\n    if(ms>0&&Math.abs(ms-st.nav)>st.nav*0.02)hold.push(\"资产拆分与账户总额相差过大\");\n    // Asset types are report metadata, not an additional payable-fee gate.\n    // Keep the legacy validation for old points only; malformed new metadata\n    // is disclosed in the allocation card without hiding verified fee inputs.\n    if(!Object.hasOwn(lp,\"assetAllocation\")){\n      const styleFields=[lp.growth,lp.value].filter(v=>v!=null&&v!==\"\");\n      const gold=lp.gold==null?0:Number(lp.gold);\n      if(!Number.isFinite(gold)||gold<0||(lp.gold!=null&&styleFields.length!==2))hold.push(\"黄金分类金额无效或证券分类不完整\");\n      if(styleFields.length===1)hold.push(\"历史成长 / 价值拆分只有一项，暂按证券未拆分显示\");\n      else if(styleFields.length===2&&Math.abs(num(lp.growth)+num(lp.value)+gold-num(lp.stock))>1)\n        hold.push(\"历史成长 + 价值 + 黄金与证券总额不一致，暂按证券未拆分显示\");\n    }\n  }\n  if(unresolved>0)hold.push(unresolved+\" 笔资金变动尚未判定内部交易或外部出入金\");\n  return {hold:hold.length>0,holdReasons:hold};}\n";
+const actualHealthBlock=html.slice(html.indexOf("function health(feeView,st){"),html.indexOf("/* ============ 渲染 ============ */"));
+const oldPageStage=pageSha(html)==="eada672f9928fcb20dc4ab5b98a6b000a8a73dc5ce66edfbddfba0663b722c3c";
+if(!oldPageStage)assert.equal(actualHealthBlock,reviewedHealthBlock);
+const healthBlock=oldPageStage?reviewedHealthBlock:actualHealthBlock;
+test("old page remains explicitly legacy during support-only deployment",()=>{
+  if(oldPageStage){
+    const oldHealth=new Function("DAILY","num","todayStr",`${actualHealthBlock}\nreturn health(arguments[3],arguments[4]);`);
+    assert.equal(oldHealth({flowsUnresolved:[]},num,()=>"2026-10-29",{state:"verified"},{lastPt:assetPoint({growth:100}),nav:115}).hold,true);
+  }else assert.equal(pageSha(html),"de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d");
+});
+const uiHealth=(point,{verified=true,unresolved=[]}={})=>new Function("DAILY","num","todayStr",
+  `${healthBlock}\nreturn health(arguments[3],arguments[4]);`)({flowsUnresolved:unresolved},num,()=>"2026-10-29",
+    {state:verified?"verified":"unavailable",message:"receipt unverified"},{lastPt:point,nav:115});
+
+test("new type metadata does not reintroduce growth/value fee holds", () => {
+  assert.equal(uiHealth(assetPoint({growth:100})).hold,false);
+  assert.equal(uiHealth(assetPoint({assetAllocation:null,growth:100})).hold,false);
+  assert.equal(uiHealth(assetPoint(),{verified:false}).hold,true,"receipt gate remains");
+  assert.equal(uiHealth(assetPoint(),{unresolved:[{}]}).hold,true,"external flow gate remains");
+  assert.equal(uiHealth(assetPoint({stock:200})).hold,true,"NAV consistency gate remains");
+  assert.equal(uiHealth({d:"2026-10-29",cash:10,other:5,stock:100,growth:100}).hold,true,"legacy behavior remains");
 });

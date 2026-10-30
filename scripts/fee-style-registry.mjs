@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { isIsoDate } from './daily-core.mjs';
+import { isIsoDate, ASSET_ALLOCATION_MODE, ASSET_ALLOCATION_KEYS, normalizeAssetAllocation } from './daily-core.mjs';
 
 export const STYLE_ACCOUNTS = Object.freeze({ schwab: 936249, webull: 1350094 });
 const fail = code => { throw new Error(`STYLE_${code}`); };
@@ -187,6 +187,66 @@ export function resolveStyle({ input, registry, staticMap, date, sourceDates, st
     registry: { schemaVersion: 1, entries: [...saved.entries, ...appended.sort((a, b) => a.id.localeCompare(b.id))] },
     newEventIds: appended.map(e => e.id).sort()
   };
+}
+
+/** Explicit source-type reporting mode. No growth/value proposal or registry
+ * append is needed. An absent/unknown type keeps its entire value visibly
+ * unclassified; it never becomes equity or zero. Historical gold decisions
+ * are read only by exact identity and effective date, not by ticker alone.
+ */
+export function resolveAssetAllocation({ input, registry, staticMap, date, sourceDates, stock }) {
+  exact(input, ['schemaVersion', 'mode', 'date', 'portfolios', 'proposals']);
+  if (input.schemaVersion !== 2 || input.mode !== ASSET_ALLOCATION_MODE || input.date !== date) fail('INPUT_DATE');
+  iso(date); amount(stock);
+  if (!Array.isArray(input.portfolios) || input.portfolios.length !== 2
+      || !Array.isArray(input.proposals) || input.proposals.length !== 0) fail('SCHEMA');
+  const allocation = {schemaVersion: 1, mode: ASSET_ALLOCATION_MODE,
+    ...Object.fromEntries(ASSET_ALLOCATION_KEYS.map(k => [k, 0]))};
+  const goldRows = [];
+  if (staticMap?.schemaVersion === 1 && isIsoDate(staticMap.effectiveDate) && Array.isArray(staticMap.holdings)) {
+    for (const e of staticMap.holdings) if (e.style === 'gold') goldRows.push({...e, effectiveFrom: staticMap.effectiveDate});
+  }
+  if (registry?.schemaVersion === 1 && Array.isArray(registry.entries)) {
+    for (const e of registry.entries) if (e.style === 'gold') {
+      validateEntry(e, true);
+      goldRows.push(e);
+    }
+  }
+  const ordinary = new Set(['ordinary_shares', 'ordinary_share', 'common_stock', 'common_stocks']);
+  const etf = new Set(['exchange_traded_fund', 'exchange_traded_funds', 'etf']);
+  const bond = new Set(['bond', 'bonds', 'fixed_interest']);
+  const other = new Set(['fund', 'managed_fund', 'unit_trust', 'mutual_fund', 'option', 'options',
+    'future', 'futures', 'warrant', 'warrants', 'right', 'rights', 'private_equity',
+    'preference_shares', 'commodity', 'cryptocurrency', 'crypto', 'index']);
+  const ids = new Set(), accountsSeen = new Set();
+  for (const p of input.portfolios) {
+    exact(p, ['account', 'portfolioId', 'sourceDate', 'stockTotalUsd', 'holdings']);
+    if (!Object.hasOwn(STYLE_ACCOUNTS, p.account) || p.portfolioId !== STYLE_ACCOUNTS[p.account]
+        || accountsSeen.has(p.account)) fail('ACCOUNT');
+    accountsSeen.add(p.account); iso(p.sourceDate);
+    if (p.sourceDate !== sourceDates[p.account] || p.sourceDate > date) fail('SOURCE_DATE');
+    amount(p.stockTotalUsd);
+    if (!Array.isArray(p.holdings) || p.holdings.length > 1000) fail('HOLDINGS');
+    let total = 0;
+    for (const h of p.holdings) {
+      exact(h, ['holdingId', 'ticker', 'valueUsd', 'sourceAssetType']);
+      const key = identity({...h, portfolioId: p.portfolioId});
+      if (ids.has(key)) fail('HOLDING_DUPLICATE');
+      ids.add(key); amount(h.valueUsd); total += h.valueUsd;
+      if (h.sourceAssetType !== null && (typeof h.sourceAssetType !== 'string' || h.sourceAssetType.length > 128)) fail('SCHEMA');
+      const type = (h.sourceAssetType || '').trim().toLowerCase();
+      // Preserve verified gold only for the exact dated security, never a
+      // similarly named new position or an explicitly ordinary share.
+      const gold = !ordinary.has(type) && goldRows.some(e => e.portfolioId === p.portfolioId
+        && e.holdingId === h.holdingId && e.ticker === h.ticker && e.effectiveFrom <= p.sourceDate);
+      const bucket = ordinary.has(type) ? 'equity' : gold ? 'gold' : etf.has(type) ? 'etf'
+        : bond.has(type) ? 'bond' : type === 'cash' ? 'cash' : other.has(type) ? 'other' : 'unclassified';
+      allocation[bucket] += h.valueUsd;
+    }
+    if (Math.abs(total - p.stockTotalUsd) > 1) fail('ACCOUNT_STOCK_SUM');
+  }
+  for (const k of ASSET_ALLOCATION_KEYS) allocation[k] = Math.round(allocation[k] * 100) / 100;
+  return {assetAllocation: normalizeAssetAllocation(allocation, stock), newEventIds: []};
 }
 
 export function readStyleInput(filename, repoRoot) {

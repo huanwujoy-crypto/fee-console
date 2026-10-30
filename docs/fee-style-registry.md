@@ -1,6 +1,29 @@
-# 新增持仓分类：一次决定，持续复用
+# 证券类型报告与历史风格登记
 
-## 业务范围
+## 当前 Sharesight 简化模式（2026-10-30）
+
+用户已将成长股／价值股合并为股票。新的 Sharesight reader 使用
+`schemaVersion: 2, mode: "sharesight-asset-type-v1"` 的 `FEE_STYLE_INPUT_FILE`，
+每行保留同日 performance report 的
+`instrument.friendly_instrument_description_code` 为 `sourceAssetType`。
+`ordinary_shares` 等明确普通股类型自动归股票；ETF、债券、现金及其它证券
+不兜底为股票。缺失／未知类型保留全部金额并显示“待分类证券”，不阻断已通过
+来源、金额、日期、资金流和费用回执校验的参考报告。
+
+`--style-preflight` 作为既有 producer／health 入口的兼容名称保留；新模式实际
+核对持仓身份、账户、日期、数值及分类合计，不要求 growth/value proposal。
+实际 writer 使用同一 resolver，不是假通过或只跳过预检。新输入必须 `proposals: []`。
+新点保存 `assetAllocation`，其 equity/etf/bond/cash/gold/other/unclassified 合计
+与原 `stock` 一致；原 `stock` 是非 SGOV 证券总额，不能改名冒充全部普通股。
+原 cash/stock/other、NAV、资金流、费率、费用、TWR 及投资人份额口径不变。
+
+不重写历史点或 `classificationRegistry`，不新增 growth/value 事件；已审黄金
+分类仅按精确 portfolioId/holdingId/ticker 与有效日期只读复用，不按 ticker 猜测。
+历史 growth/value 仍可读取，页面合并标示“历史成长/价值合计”，不声称该合计
+全为普通股。缺分类与未识别外部资金完全不同，资金流门槛仍保留。
+以下 v1 流程只供旧输入兼容和历史审计，不再用于阻塞新 Sharesight 简化模式。
+
+## 历史 v1 业务范围
 
 Wu 已授权 Codex / Claude 对新增仓位的 growth / value 报告分类（2026-10-03 用户另批 GLD 独立 gold 分类）作决定、复核和计算，
 实际发布完成后通知一次，不再逐只要求用户选择。不涉及买卖、资金划转、Sharesight

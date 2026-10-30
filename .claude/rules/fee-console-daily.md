@@ -12,15 +12,17 @@ computes values or writes `data.json`, it must read and obey:
 - `docs/fee-style-registry.md`
 - `docs/fee-economic-source.md`
 
-Use the reviewed static mapping plus the encrypted append-only classification
-registry, bound to `(portfolioId, holdingId, ticker)`. Every new producer run
-must prepare `FEE_STYLE_INPUT_FILE`, run `--style-preflight`, resolve missing
-rows with evidence and independent Codex/Claude review under Wu's delegated
-classification authority, then run the actual writer without manual style
-totals. Follow the registry runbook for post-publication one-time notification.
-Do not guess from a ticker/name, default unknown positions to growth, or silently
-reuse an old split. Codex owns unresolved technical exceptions; do not create
-another per-stock user decision. Financial execution remains out of scope.
+New Sharesight runs use the explicit `sharesight-asset-type-v1` reporting mode
+specified in `docs/fee-style-registry.md`: retain the dated report's native asset
+type, merge ordinary stocks as equity, and keep ETF/bond/cash/other/unclassified
+values separate. Missing asset type stays visible with its full value; do not
+request growth/value proposals or block a valid fee reference report for them.
+Still prepare `FEE_STYLE_INPUT_FILE` and run `--style-preflight` (the compatible
+name for the new identity/date/amount/allocation preflight), then the same actual
+writer. Historical v1 inputs and immutable registry records remain readable;
+do not rewrite them or infer ordinary stock from their growth/value labels.
+Unknown external cash flows, source integrity and fee-receipt checks are not
+relaxed. Financial execution remains out of scope.
 
 Do not publish the first Sharesight response. Read the same dated source until
 two consecutive results are stable, record the completed read time and source

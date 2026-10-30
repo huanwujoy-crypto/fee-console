@@ -173,8 +173,10 @@ shadow/publish 切换、秘密边界和停用方法见 `docs/fee-cloud-producer.
    弱标记兼容规则核对（只允许 `W/` 标记不同，opaque tag 仍须完全相同）；
    只能使用 `scripts/fee-economic-source.mjs` 的固定来源读取路径。
 2. 在仓库外的私密临时目录准备来源快照和 `FEE_STYLE_INPUT_FILE`，用真实持仓身份
-   运行 `scripts/daily.mjs --style-preflight`。新持仓按原登记规则取证并独立复核；
-   证据不足则停在待复核，不猜风格。
+   运行 `scripts/daily.mjs --style-preflight`。新 Sharesight 输入按
+   `docs/fee-style-registry.md` 的明确源类型模式自动把普通股归“股票”，ETF、债券、
+   现金、其它及待分类保留原值；不再逐票区分 growth/value 或等待 proposal。
+   缺少类型只是报告待分类，不替代或放宽来源、金额、资金流及费用回执校验。
 3. 确认最近现金流水中的内部交易、外部本金和投资人归属。已确认的 Jenny Z
    新增本金只能沿用私密账本中的对应确认，不得再记为 XiXi Z 或重复发行份额。
 4. 在同一稳定来源和私密账本下运行 `scripts/daily.mjs`。随后用
@@ -198,7 +200,7 @@ shadow/publish 切换、秘密边界和停用方法见 `docs/fee-cloud-producer.
 
 ## 失败处理
 
-- 只读来源、私密账本、密钥、风格分类、资金流、费用回执或推广回读有缺口时，
+- 只读来源、私密账本、密钥、资金流、费用回执或推广回读有缺口时，
   保留原数据，报告具体闸门和最后已验证日期；不造数、不直接改 `main`、不把
   管理人链接中的密钥提取到脚本，也不借用 Claude 的凭据或提交身份。
 - 运行回执可区分 `updated`、验证后的 `no-op` 和未运行。GitHub watchdog

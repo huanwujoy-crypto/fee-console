@@ -67,9 +67,13 @@ validateGiftFixture(giftFixtureBytes);
 // Test-only release snapshots, never imported by production. The prior hash
 // proves only the old contract; it does not declare new receipts compatible or
 // authorize a run. Both workflows must remain externally disabled during staging.
+// Reviewed source-asset allocation display candidate. This exact whole-page
+// pin is test evidence only, not permission to publish or waive owner approval.
+// Every financial contract region must still match the existing next fixture.
+const ASSET_ALLOCATION_UI_SHA256 = 'de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d';
 export function reviewedUiStage(html) {
   const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 ? "next" : null;
+    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 ? "next" : null;
   assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);
