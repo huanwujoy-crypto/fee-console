@@ -103,6 +103,10 @@ export function reportPlanReadiness(plan,now=new Date()){
       return {state:'waiting',reasonCode:'SOURCE_DAY_NOT_CLOSED'};
     return {state:'due',reasonCode:null};
   }
+  // Ordinary daily reference reports use the validated next-day HKT10:30
+  // schedule. Calendar readiness does not attest synchronization or sources.
+  // Keep any final monthly cutoff on the existing completion rule below.
+  if(plan.schema==='fee-console.report-plan.v2'&&plan.kind==='daily')return {state:'due',reasonCode:null};
   // A final monthly cutoff includes all natural days. HKT midnight can still
   // be the prior New York afternoon; neither a price nor cash poll completes it.
   if(localDate(now,'America/New_York')<=plan.accountingThrough)return {state:'waiting',reasonCode:'ACCOUNTING_DAY_NOT_COMPLETE'};

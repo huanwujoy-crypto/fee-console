@@ -60,8 +60,9 @@ export function planDailyFirstAttempt({now,venues,lastPublished}={}){
  if(!priceThrough)return {...base,sessions,state:'waiting',reason:'BENCHMARK_CALENDAR_UNVERIFIED'};
  const monthlyCutoffs=monthlyArchivesBetween(lastPublished,target);
  const plan={...base,sessions,accountingThrough:target,priceThrough,monthlyCutoffs,kind:monthlyCutoffs.length?'daily-monthly':'daily',coverageKey:target+'|'+priceThrough};
- // Retain the actual current reportPlanReadiness NY-accounting-date constraint.
- if(local(now,'America/New_York')<=target)return {...plan,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE'};
+ // Ordinary daily references are eligible at next-day HKT10:30. A plan that
+ // also finalizes a month retains reportPlanReadiness's completion rule.
+ if(monthlyCutoffs.length&&local(now,'America/New_York')<=target)return {...plan,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE'};
  // This is only calendar readiness. It cannot authorize or prove source capture.
  return {...plan,state:'calendar-ready',reason:'REAL_SOURCE_VALIDATION_REQUIRED'};
 }
@@ -80,7 +81,8 @@ export function sameDaySourceDecision({plan,now,mainSha,currentMainSha,sourceAtt
  if(local(now,'Asia/Hong_Kong')!==add(plan.target,1))return {...base,state:'waiting',reason:'FIXED_TARGET_DAY_ENDED'};
  if(now.getTime()<Date.parse(plan.scheduledAt))return {...base,state:'waiting',reason:'BEFORE_1030'};
  if(plan.sessions?.rows?.some(row=>row.state==='unknown')||!plan.accountingThrough)return {...base,state:'waiting',reason:'CALENDAR_SCOPE_UNVERIFIED'};
- if(local(now,'America/New_York')<=plan.target)return {...base,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE',nextCheckAt:nextSameDayCheck(plan,now)};
+ const ordinaryDaily=plan.kind==='daily'&&Array.isArray(plan.monthlyCutoffs)&&plan.monthlyCutoffs.length===0;
+ if(!ordinaryDaily&&local(now,'America/New_York')<=plan.target)return {...base,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE',nextCheckAt:nextSameDayCheck(plan,now)};
  if(inProgress||sourceAttempts>=2)return {...base,state:'waiting',reason:inProgress?'SOURCE_RUN_IN_PROGRESS':'SOURCE_ATTEMPT_BUDGET_EXHAUSTED'};
  // Calendar/budget readiness alone cannot authorize a source call or report.
  // Publication is observable only via the existing real signed-publication verifier.

@@ -90,11 +90,23 @@ test('reviewed synchronized daily entry uses the same v2 shape and waits for the
   assert.equal(reportPlanReadiness(reviewed,new Date('2026-10-29T03:59:00+08:00')).reasonCode,'SOURCE_DAY_NOT_CLOSED');
   for(const time of ['2026-10-29T04:15:00+08:00','2026-10-29T08:40:00+08:00'])assert.equal(reportPlanReadiness(reviewed,new Date(time)).state,'due');
   assert.equal(reportPlanReadiness(ordinary,new Date('2026-10-29T08:40:00+08:00')).reasonCode,'REPORT_NOT_DUE');
-  assert.equal(reportPlanReadiness(ordinary,new Date('2026-10-29T10:30:00+08:00')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
+  assert.equal(reportPlanReadiness(ordinary,new Date('2026-10-29T10:30:00+08:00')).state,'due');
   const winter=dailyReportPlan('2026-11-23',markets,{reviewedSyncDate:'2026-11-23'});
   assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:14:59+08:00')).reasonCode,'SOURCE_DAY_NOT_CLOSED');
   assert.equal(reportPlanReadiness(winter,new Date('2026-11-24T05:15:00+08:00')).state,'due');
   for(const reviewedSyncDate of ['',true,'2026-10-27','invalid'])assert.throws(()=>dailyReportPlan(target,markets,{reviewedSyncDate}));
   for(const change of [{scheduledAt:'2026-10-29T01:00:00+08:00'},{syncCompleted:true},{priceThrough:'2026-10-27'}])assert.equal(validateReportPlan({...reviewed,...change}),false);
   assert.throws(()=>dailyReportPlan('2026-11-01',markets,{reviewedSyncDate:'2026-11-01'}),/CALENDAR_SCOPE_UNVERIFIED/);
+});
+
+test('ordinary daily readiness keeps next-day timing and exact plan validation',()=>{
+ for(const [target,day]of [['2026-10-30','2026-10-31'],['2026-11-03','2026-11-04']]){
+  const p=dailyReportPlan(target,['NYSE','NASDAQ']);
+  assert.equal(reportPlanReadiness(p,new Date(day+'T10:29:59+08:00')).reasonCode,'REPORT_NOT_DUE');
+  assert.equal(reportPlanReadiness(p,new Date(day+'T10:30:00+08:00')).state,'due');
+  assert.equal(isReviewedDailyPlan(p),false);
+  for(const x of [{...p,scheduledAt:day+'T09:00:00+08:00'},{...p,monthlyCutoffs:[target]},{...p,accountingThrough:day}])assert.throws(()=>reportPlanReadiness(x,new Date(day+'T10:30:00+08:00')));
+ }
+ const month=dailyReportPlan('2026-09-30',['NYSE'],{periodFrom:'2026-09-30'});
+ assert.equal(month.kind,'daily-monthly');assert.equal(reportPlanReadiness(month,new Date('2026-10-01T10:30:00+08:00')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');
 });
