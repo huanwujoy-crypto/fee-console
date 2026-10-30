@@ -8,7 +8,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const RETENTION_DAYS = 120;
 const TOTAL_RETURN_TOLERANCE = 5e-4;
 const CLOSE_CROSSCHECK_TOLERANCE = 0.005;
-const CACHE_SOURCE = 'Yahoo Finance chart API; Nasdaq official quote and historical close cross-check; issuer/Nasdaq dividend evidence';
+const CACHE_SOURCE = 'Nasdaq historical daily closes and cash dividends for current updates; retained legacy cache history; State Street SPY dividend calendar';
 
 export const DEFINITIONS = Object.freeze({
   spy: Object.freeze({
@@ -439,20 +439,24 @@ async function fetchJson(url, fetchImpl) {
   return response.json();
 }
 
-// A Yahoo-independent extension of an already verified cache. It never
-// fabricates price-only total return or attempts to bootstrap unknown history.
+// Extend the verified cache from one price authority: Nasdaq dated historical
+// closes. Current quote status and prices are never evidence for this path.
 export function appendIndependentNasdaqClose({prior,definition,nasdaqInfo,nasdaqHistorical,nasdaqDividends,now=new Date()}){
-  if(!prior||prior.symbol!==definition.symbol||prior.currency!==definition.currency||prior.exchange!==definition.exchange||!Array.isArray(prior.series))throw Error('Independent fallback cache identity missing');
-  const series=normalizedSeries(prior.series),last=series.at(-1),target=expectedBenchmarkTargetDate(now),quote=extractNasdaqClose(nasdaqInfo,definition,now),close=extractNasdaqHistoricalClose(nasdaqHistorical,definition,now);
-  if(!last||last.d>=target||quote.d!==target||close.d!==target||Math.abs(quote.p-close.p)>0.005)throw Error('Independent fallback target/close mismatch');
+  if(!prior||prior.symbol!==definition.symbol||prior.currency!==definition.currency||prior.exchange!==definition.exchange||!Array.isArray(prior.series))throw Error('Nasdaq historical cache identity missing');
+  nasdaqIdentity(nasdaqInfo,definition); // Identity only; do not read quote prices/status.
+  const series=normalizedSeries(prior.series),last=series.at(-1),target=expectedBenchmarkTargetDate(now),close=extractNasdaqHistoricalClose(nasdaqHistorical,definition,now);
+  if(!last||last.d>target||close.d!==target)throw Error('Nasdaq historical target pending');
   const rows=nasdaqHistorical.data.tradesTable.rows.map(r=>({d:nasdaqHistoricalDate(r.date),p:roundPrice(usdNumber(r.close,'historical anchor'))})).filter(r=>r.d<=target).sort((a,b)=>a.d.localeCompare(b.d));
-  if(new Set(rows.map(r=>r.d)).size!==rows.length||rows.length<2||rows.at(-2).d!==last.d||Math.abs(rows.at(-2).p-last.p)>0.005||(Date.parse(target)-Date.parse(last.d))/DAY_MS>4)throw Error('Independent fallback opening history mismatch');
+  if(new Set(rows.map(r=>r.d)).size!==rows.length)throw Error('Duplicate Nasdaq historical dates');
+  // Retain the existing continuity check only when extending history. A repeated
+  // target can be revalidated without requiring another opening balance.
+  if(last.d<target&&(rows.length<2||rows.at(-2).d!==last.d||Math.abs(rows.at(-2).p-last.p)>0.005||(Date.parse(target)-Date.parse(last.d))/DAY_MS>4))throw Error('Nasdaq historical opening history mismatch');
   const dividends=extractNasdaqDividends(nasdaqDividends,definition),div=dividends.get(target)||0;
   if(definition.symbol==='SPY'){
     const g=definition.dividendGuard;
-    if(!g||target<g.validFrom||target>g.validThrough||g.exDates.includes(target)!==(div>0))throw Error('Independent fallback dividend coverage missing');
+    if(!g||target<g.validFrom||target>g.validThrough||g.exDates.includes(target)!==(div>0))throw Error('Nasdaq historical dividend coverage missing');
   }
-  return [...series,div>0?{...close,div}:close];
+  return [...series.filter(row=>row.d<target),div>0?{...close,div}:close];
 }
 async function independentNasdaq(definition,prior,now,fetchImpl){
   const prefix='https://api.nasdaq.com/api/quote/'+definition.symbol;
@@ -463,51 +467,9 @@ async function independentNasdaq(definition,prior,now,fetchImpl){
   return appendIndependentNasdaqClose({prior,definition,nasdaqInfo:info,nasdaqHistorical:historical,nasdaqDividends:dividends,now});
 }
 async function fetchSymbol(definition, now, fetchImpl, prior) {
-  const errors = [];
-  let bestPrimary = null;
-  const target = expectedBenchmarkTargetDate(now);
-  for (const host of ['query2.finance.yahoo.com', 'query1.finance.yahoo.com']) {
-    const url = `https://${host}/v8/finance/chart/${encodeURIComponent(definition.symbol)}?range=3mo&interval=1d&events=div%2Csplits&includeAdjustedClose=true`;
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      try {
-        const yahooPayload = await fetchJson(url, fetchImpl);
-        const primary = extractPrices(yahooPayload, definition, now);
-        if (!bestPrimary || primary.at(-1)?.d > bestPrimary.at(-1)?.d) bestPrimary = primary;
-        // The original primary daily-bar/adjusted-close/dividend contract
-        // already verifies this path; no current-session quote is needed.
-        if (primary.at(-1)?.d === target) return { series: primary, warnings: errors };
-        try {
-          const nasdaqInfo = await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/info?assetclass=etf`, fetchImpl);
-          const current = localParts(now, definition.timezone).date;
-          const from = new Date(now.getTime() - 10 * DAY_MS).toISOString().slice(0, 10);
-          const nasdaqHistorical = await fetchJson(
-            `https://api.nasdaq.com/api/quote/${definition.symbol}/historical?assetclass=etf&fromdate=${from}&todate=${current}&limit=20`,
-            fetchImpl,
-          );
-          const nasdaqDividends = definition.symbol === 'QQQ'
-            ? await fetchJson(`https://api.nasdaq.com/api/quote/${definition.symbol}/dividends?assetclass=etf`, fetchImpl)
-            : undefined;
-          const crossChecked = appendCrossCheckedClose({
-            yahooPayload, nasdaqInfo, nasdaqHistorical, nasdaqDividends, definition, now,
-          });
-          if (!bestPrimary || crossChecked.at(-1)?.d > bestPrimary.at(-1)?.d) bestPrimary = crossChecked;
-          if (crossChecked.at(-1)?.d === target) return { series: crossChecked, warnings: errors };
-          // A valid older close is useful evidence, but must not stop the
-          // bounded retries or prevent the other Yahoo host reaching target.
-          errors.push(`${host} attempt ${attempt} completed close still stale: expected=${target} actual=${crossChecked.at(-1)?.d || 'missing'}`);
-        } catch (error) {
-          errors.push(`${host} attempt ${attempt} cross-check fallback unavailable: ${error.message}`);
-        }
-      } catch (error) {
-        errors.push(`${host} attempt ${attempt}: ${error.message}`);
-      }
-    }
-  }
-  if(prior?.series?.at(-1)?.d<target)try{
-    return {series:await independentNasdaq(definition,prior,now,fetchImpl),warnings:errors};
-  }catch(error){errors.push('independent Nasdaq fallback unavailable: '+error.message);}
-  if (bestPrimary) return { series: bestPrimary, warnings: errors };
-  throw new Error(`${definition.symbol} fetch failed (${errors.join('; ')})`);
+  // One source, one bounded read of each existing Nasdaq endpoint. Never make a
+  // Yahoo request or compare a daily historical close with live quote metadata.
+  return { series: await independentNasdaq(definition, prior, now, fetchImpl), warnings: [] };
 }
 
 export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl = fetch } = {}) {
@@ -539,6 +501,9 @@ export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl =
   if (spyDate !== target || qqqDate !== target) {
     throw new Error(`Benchmark target pending: expected=${target} spy=${spyDate || 'missing'} qqq=${qqqDate || 'missing'}`);
   }
+  // An old same-target cache must not hide a failed current read: both ETFs
+  // must validate in this refresh before either correction can be published.
+  if (failures.length) throw new Error('Benchmark source pending: both ETFs must validate in this refresh');
   const changed = JSON.stringify(contentIgnoringTimestamp(existing)) !== JSON.stringify(contentIgnoringTimestamp(next));
   if (changed) {
     await writeFile(path, `${JSON.stringify(next, null, 2)}\n`, 'utf8');
