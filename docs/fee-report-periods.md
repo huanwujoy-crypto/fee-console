@@ -344,3 +344,19 @@ source dates; neither freshness nor style proof is manufactured. Fixed output
 No manager token, recipient registration, financial call, ledger write, secret
 creation or automatic flag is part of this adapter. No real execution occurred
 during this local development.
+
+## Ordinary daily HKT10:30 readiness
+
+A validated ordinary v2 `daily` plan with no monthly cutoff becomes calendar-ready
+at its original next-day HKT10:30 time. Its target, accounting date and source
+query remain the previous HKT calendar date; no earlier date is substituted.
+The extra New York midnight wait still applies to v1 weekly/monthly plans and
+v2 `daily-monthly` plans that finalize a month. The reviewed one-off contract,
+including its exact manual synchronization confirmation, is unchanged.
+
+Calendar readiness alone does not confirm manual synchronization or source
+completeness. Schedule activation still needs its own authorized scope and the
+current target's confirmed manual synchronization. The normal source dates,
+benchmark coverage, candidate and concurrency checks, original attempt budget,
+rerun refusal and protected publication remain mandatory. No dispatch or enablement
+is performed by this code change; it does not authorize future daily execution.
