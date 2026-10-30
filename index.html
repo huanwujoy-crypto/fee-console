@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.32">
+<meta name="fee-console-build" content="4.9.33">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1079,7 +1079,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.32";
+const UI_VERSION_LABEL=" · v4.9.33";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2617,26 +2617,52 @@ function ratioSnapshotGist(gist){
   return gist;
 }
 function ratioSnapshotFile(gist,name){const f=gist.files?.[name];if(!f)return null;if(f.truncated||typeof f.content!=='string'||new TextEncoder().encode(f.content).length>5*1024*1024)throw Error('RATIO_SNAPSHOT_REFUSED');return f.content;}
+async function readRatioSnapshotFile(gist,guard=()=>{}){
+  guard();ratioSnapshotGist(gist);const f=gist.files?.[RATIO_SNAPSHOT_FILE];if(!f||f.truncated!==true)return ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE);
+  const max=5*1024*1024,gid=cfg(K.gid),revision=gist.history[0].version;
+  const fail=()=>{throw Error('RATIO_SNAPSHOT_RAW_REFUSED');};
+  if(f.filename!==RATIO_SNAPSHOT_FILE||!Number.isSafeInteger(f.size)||f.size<1||f.size>max||typeof f.raw_url!=='string')fail();
+  const url=new URL(f.raw_url),expected='/'+gist.owner.login+'/'+gid+'/raw/'+revision+'/'+RATIO_SNAPSHOT_FILE;
+  if(url.protocol!=='https:'||url.hostname!=='gist.githubusercontent.com'||url.port||url.username||url.password||url.search||url.hash||url.pathname!==expected)fail();
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);let reader;
+  try{
+    const response=await freshFetch(url.href,{cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});guard();
+    if(response.status!==200||!response.ok||response.redirected||response.url!==url.href||!response.body?.getReader)fail();
+    reader=response.body.getReader();const chunks=[];let total=0;
+    for(;;){const {done,value}=await reader.read();guard();if(done)break;if(!(value instanceof Uint8Array)||!value.byteLength)fail();total+=value.byteLength;if(total>max||total>f.size){await reader.cancel();guard();fail();}chunks.push(value);}
+    if(total!==f.size)fail();const bytes=new Uint8Array(total);let at=0;for(const chunk of chunks){bytes.set(chunk,at);at+=chunk.byteLength;}
+    return new TextDecoder('utf-8',{fatal:true}).decode(bytes);
+  }finally{clearTimeout(timer);reader?.releaseLock();}
+}
+async function readCurrentRatioSnapshot(who,guard=()=>{}){
+  const check=()=>{guard();if(who!==ratioIdentity()||!ratioAuthorized())throw Error('RATIO_SNAPSHOT_REFUSED');};check();
+  if(!await verifyRatioCapabilityNow())throw Error('RATIO_SNAPSHOT_REFUSED');check();
+  const gist=ratioSnapshotGist(await ghApi('/gists/'+cfg(K.gid)));check();
+  if(!gist.files?.[RATIO_SNAPSHOT_FILE])throw Error('RATIO_SNAPSHOT_ABSENT');
+  const manager=await ratioCore.deriveSnapshotManager(cfg(K.gid),cfg(K.key),cfg(K.tok));check();
+  const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);
+  if(registered===null||ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error('RATIO_SNAPSHOT_REFUSED');
+  const raw=await readRatioSnapshotFile(gist,check);check();if(raw===null)throw Error('RATIO_SNAPSHOT_ABSENT');
+  const packet=ratioSnapshotParse(raw),key='feeConsole.ratioSnapshotWatermark.'+manager.recipient.recipientId;
+  const saved=cfg(key),watermark=saved?JSON.parse(saved):null;
+  const result=await ratioSnapshotCore.verify(packet,manager,{watermark});check();if(!store)throw Error('RATIO_SNAPSHOT_REFUSED');
+  const bodySha256=await ratioCore.digest(packet.body);check();return {raw,packet,manager,key,result,bodySha256};
+}
+function showCurrentRatioSnapshot(read,guard=()=>{}){
+  guard();store.setItem(read.key,JSON.stringify(read.result.watermark));guard();document.getElementById('ratioContent').innerHTML=ratioCore.render(read.result.model);
+  if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
+  const {source,stale}=read.result,notice=document.getElementById('ratioNotice');
+  notice.textContent='管理人独立比例快照 · '+(source.sourceDates?'资产分类截至 '+source.sourceDates.classification+' · 个股穿透截至 '+source.sourceDates.exposure:'来源截至 '+source.asOf)+' · '+(stale?'待更新（显示已核验历史快照）':'已核验')+' · 非实时；管理费报告日期独立，未改原账本。';
+  clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开比例管理核验。';},RATIO_SESSION_MS);
+}
 async function renderIndependentRatio(){
   if(!ratioAuthorized()||!document.getElementById('p-ratio').classList.contains('on'))return false;
   const who=ratioIdentity(),ticket=++_ratioTicket,notice=document.getElementById('ratioNotice');
   const check=()=>{if(ticket!==_ratioTicket||who!==ratioIdentity()||!ratioAuthorized()||!document.getElementById('p-ratio').classList.contains('on'))throw Error('RATIO_SNAPSHOT_REFUSED');};
-  let found=false;
-  try{
-    if(!await verifyRatioCapabilityNow())throw Error();check();
-    const gist=ratioSnapshotGist(await ghApi('/gists/'+cfg(K.gid)));check();
-    const raw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE);if(raw===null)return false;found=true;
-    const packet=ratioSnapshotParse(raw),manager=await ratioCore.deriveSnapshotManager(cfg(K.gid),cfg(K.key),cfg(K.tok));check();
-    const recipient=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(recipient===null||ratioCore.canonical(ratioSnapshotParse(recipient))!==ratioCore.canonical(manager.recipient))throw Error();
-    const key='feeConsole.ratioSnapshotWatermark.'+manager.recipient.recipientId;let watermark=null;
-    try{watermark=cfg(key)?JSON.parse(cfg(key)):null;}catch{throw Error();}
-    const result=await ratioSnapshotCore.verify(packet,manager,{watermark});check();if(!store)throw Error();
-    store.setItem(key,JSON.stringify(result.watermark));document.getElementById('ratioContent').innerHTML=ratioCore.render(result.model);
-    if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
-    notice.textContent='管理人独立比例快照 · '+(result.source.sourceDates?'资产分类截至 '+result.source.sourceDates.classification+' · 个股穿透截至 '+result.source.sourceDates.exposure:'来源截至 '+result.source.asOf)+' · '+(result.stale?'待更新（显示已核验历史快照）':'已核验')+' · 非实时；管理费报告日期独立，未改原账本。';
-    clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开比例管理核验。';},RATIO_SESSION_MS);return true;
-  }catch{if(ticket===_ratioTicket){document.getElementById('ratioContent').replaceChildren();notice.textContent='独立比例文件或管理人核验失败，未显示旧内容。';}return true;}
+  try{const read=await readCurrentRatioSnapshot(who,check);check();showCurrentRatioSnapshot(read,check);return true;}
+  catch(error){if(ticket===_ratioTicket){document.getElementById('ratioContent').replaceChildren();notice.textContent='独立比例文件或管理人核验失败，未显示旧内容。';}return error?.message==='RATIO_SNAPSHOT_ABSENT'?false:true;}
 }
+
 async function previewRatioSnapshot(event){
   if(event?.isTrusted!==true||!ratioAuthorized()||EDIT.draft||EDIT.pending||_ledgerBusy||_ratioRecipientWrite||_ratioSnapshotWrite||_ratioSnapshotUnknown)return false;
   clearRatioSnapshotReview();const ticket=_ratioSnapshotGeneration,who=ratioIdentity(),gid=cfg(K.gid),createdAt=Date.now();
@@ -2700,10 +2726,26 @@ async function exportCurrentRatioSnapshot(event){
   }catch{document.getElementById('ratioSnapshotStatus').textContent='当前快照或管理人核验未通过，没有下载或投递。';return false;}
 }
 async function checkRatioSnapshotOutcome(event){
-  const pending=_ratioSnapshotUnknown;if(event?.isTrusted!==true||!pending||!ratioAuthorized()||pending.who!==ratioIdentity())return false;
-  try{if(!await verifyRatioCapabilityNow())throw Error();const back=ratioSnapshotGist(await ghApi('/gists/'+pending.gid));if(pending.who!==ratioIdentity()||ratioSnapshotFile(back,RATIO_SNAPSHOT_FILE)!==pending.raw)throw Error();
-    const manager=await ratioCore.deriveSnapshotManager(pending.gid,cfg(K.key),cfg(K.tok));await ratioSnapshotCore.verify(ratioSnapshotParse(pending.raw),manager);if(pending.who!==ratioIdentity()||!ratioAuthorized())throw Error();_ratioSnapshotUnknown=null;document.getElementById('ratioSnapshotStatus').textContent='只读回读已确认投递内容；没有再次写入。';await renderRatioManagement();return true;
-  }catch{document.getElementById('ratioSnapshotStatus').textContent='尚未确认投递结果，未重试写入。';return false;}
+  if(event?.isTrusted!==true)return false;
+  const status=document.getElementById('ratioSnapshotStatus');
+  if(!ratioAuthorized()){status.textContent='当前管理人核验未完成，尚未读取投递结果。没有重试写入。';return false;}
+  const who=ratioIdentity(),ticket=++_ratioTicket,pending=_ratioSnapshotUnknown,file=_ratioSnapshotFiles.candidate;
+  const check=()=>{if(ticket!==_ratioTicket||who!==ratioIdentity()||!ratioAuthorized())throw Error('RATIO_SNAPSHOT_REFUSED');};
+  status.textContent='正在只读核对现存快照，不重新投递。';
+  try{
+    let expected=null;
+    if(pending?.who===who)expected=ratioSnapshotParse(pending.raw);
+    else if(file){if(file.size<1||file.size>5*1024*1024)throw Error('RATIO_SNAPSHOT_REFUSED');expected=ratioSnapshotParse(await file.text());check();if(expected.authentication!==null)throw Error('RATIO_SNAPSHOT_REFUSED');}
+    if(expected)await ratioSnapshotCore.bodyCheck(expected.body);check();
+    const read=await readCurrentRatioSnapshot(who,check);check();
+    if(expected&&(expected.body.recipientId!==read.manager.recipient.recipientId||expected.body.scopeId!==read.manager.recipient.scopeId))throw Error('RATIO_SNAPSHOT_REFUSED');
+    const expectedHash=expected?await ratioCore.digest(expected.body):null;check();
+    if(expectedHash&&expectedHash!==read.bodySha256){status.textContent='现存快照认证通过，但与原候选 body 指纹不一致；原投递尚未确认。版本 '+read.packet.body.version+' · body SHA256 '+read.bodySha256+'。没有重试写入。';return false;}
+    showCurrentRatioSnapshot(read,check);
+    if(pending&&pending===_ratioSnapshotUnknown&&pending.who===who&&pending.raw===read.raw)_ratioSnapshotUnknown=null;
+    const source=read.result.source,dates=source.sourceDates?'分类 '+source.sourceDates.classification+' · 穿透 '+source.sourceDates.exposure:'来源 '+source.asOf;
+    status.textContent=(expectedHash?'现存快照认证通过，原候选 body 指纹一致；':'现存快照认证通过；未提供原候选，原投递仍需按指纹比对；')+'版本 '+read.packet.body.version+' · '+dates+' · body SHA256 '+read.bodySha256+(read.result.stale?' · 已过期历史来源':'')+'。没有再次写入。';return true;
+  }catch{if(ticket===_ratioTicket&&who===ratioIdentity()&&ratioAuthorized())status.textContent='现存快照只读核验未完成，原投递尚未确认；没有重试写入。';return false;}
 }
 
 /* fee-ratio-management:manager-v1:end */
@@ -4057,6 +4099,7 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="shClose"){document.getElementById("share").classList.remove("on");return;}
   if(T.id==="shCopy"){const v=document.getElementById("shLink");navigator.clipboard?.writeText(v.value).then(()=>toast("链接已复制")).catch(()=>{v.select();toast("已全选，请长按复制");});return;}
   const archiveButton=T.closest("button[data-archive-print]");if(archiveButton){const archiveBox=document.getElementById("fundArchiveBox"),library=archiveBox._fundArchive,profile=archiveBox._fundProfile;if(library&&profile)printFundMaterial(profile,library,archiveButton.dataset.archivePrint==="all"?null:{id:archiveButton.dataset.archivePrint,version:Number(archiveButton.dataset.docVersion)});return;}
+  if(T.id==="ratioSnapshotCheck"){checkRatioSnapshotOutcome(e);return;}
   if(!isMgr())return;
   const docLibrary=document.getElementById("fundDocsBox")._fundDocumentLibrary;
   if(T.dataset.docRevise&&docLibrary){reviseFundDocument(T.dataset.docRevise,docLibrary);return;}
@@ -4066,7 +4109,6 @@ document.body.addEventListener("click",e=>{const T=e.target;
   if(T.id==="fundPublishLatest"){publishCurrentFundBundle();return;}
   if(T.id==="ratioSnapshotPreview"){previewRatioSnapshot(e);return;}
   if(T.id==="ratioSnapshotConfirm"){confirmRatioSnapshot(e);return;}
-  if(T.id==="ratioSnapshotCheck"){checkRatioSnapshotOutcome(e);return;}
   if(T.id==="ratioSnapshotCancel"){if(e.isTrusted)clearRatioSnapshotReview(true);return;}
   if(T.id==="ratioRecipient"){previewRatioRecipient(e);return;}
   if(T.id==="ratioRecipientConfirm"){registerRatioRecipient(e);return;}
