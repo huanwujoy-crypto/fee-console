@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.31">
+<meta name="fee-console-build" content="4.9.32">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -130,7 +130,7 @@ section.pane{display:none} section.pane.on{display:block}
 #p-ratio th{font-size:10px;font-weight:500;color:var(--ink-2)}#p-ratio td{font-weight:550}
 #p-ratio th:first-child,#p-ratio td:first-child{width:40%;text-align:left;font-weight:500}
 #p-ratio tbody tr:last-child td{border-bottom:0}
-#p-ratio .ratio-holdings th:first-child,#p-ratio .ratio-holdings td:first-child{width:32%}
+.ratio-key-status{font-size:12px;line-height:1.6;overflow-wrap:anywhere}#p-ratio td details{font-weight:400}#p-ratio td summary{font-size:11px;text-align:left}#p-ratio td details ul{padding-left:16px;text-align:left}
 .ratio-coverage{border-top:1px solid var(--grid);padding-top:8px}.ratio-coverage-list{list-style:none;margin:0;padding:0}
 .ratio-coverage-list li{font-size:12px;line-height:1.6;color:var(--ink-2);margin:4px 0;overflow-wrap:anywhere}
 #p-ratio .ratio-caveats{border-left:3px solid var(--axis);padding:2px 10px;margin-bottom:12px}
@@ -1079,7 +1079,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.31";
+const UI_VERSION_LABEL=" · v4.9.32";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -1850,17 +1850,18 @@ const EXPOSURE_OBSERVED_TIME_BASIS = '原始Exposure导出文件下载落地时�
 const ALL_TOGETHER_SCOPE_SHA256 = '25d1c346d1be590d75d906435e2fec752f851dbfc231c07dd279b5e12adc11c6';
 const secondaryBasis = 'Exposure individual security direct plus ETF look-through, includes cash in class denominator';
 function buildRankedExposureView(input) {
+  const official=input?.schema==='xuan.sharesight-exposure-ranked.v2';
   check(object(input) && Object.keys(input).sort().join('|') === 'retrievedAt|retrievedAtBasis|schema|summary'
-    && input.schema === RANKED_EXPOSURE_SCHEMA, 'RANKED_SCHEMA');
+    && (input.schema === RANKED_EXPOSURE_SCHEMA||official), 'RANKED_SCHEMA');
   const s = input.summary;
   check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|source|sourceXlsxSHA256|totalValueUSD|transferStatus', 'RANKED_KEYS');
   check(object(s) && s.currency === 'USD' && date(s.asOf) && amount(s.totalValueUSD) && s.totalValueUSD > 0, 'RANKED_TOTAL_DATE');
-  check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === EXPOSURE_OBSERVED_TIME_BASIS, 'OBSERVED_TIME_BASIS');
+  check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === (official?'原始官方导出文件mtime（非独立下载完成时间）':EXPOSURE_OBSERVED_TIME_BASIS), 'OBSERVED_TIME_BASIS');
   check(input.retrievedAt === null || instant(input.retrievedAt) && s.asOf <= new Date(Date.parse(input.retrievedAt) + 28800000).toISOString().slice(0, 10), 'DATE');
   check(s.source?.provider === 'Sharesight' && s.source.view === 'All Together'
     && s.source.report === 'Tools Exposure' && s.source.groupBy === 'No grouping'
     && s.source.show === 'Top 500' && s.source.classification === 'Investments→资产类别', 'RANKED_SOURCE');
-  check(/^https:\/\/portfolio\.sharesight\.com\/portfolios\/\d+\/tools\/exposure\/\d+\?consolidated=true$/.test(s.source.url ?? ''), 'RANKED_SOURCE');
+  check(official&&s.source.url===null||/^https:\/\/portfolio\.sharesight\.com\/portfolios\/\d+\/tools\/exposure\/\d+\?consolidated=true$/.test(s.source.url ?? ''), 'RANKED_SOURCE');
   check(Array.isArray(s.accounts) && s.accounts.length === 10 && s.accounts.every(text)
     && unique(s.accounts.map(n => n.replaceAll('&amp;', '&'))), 'SCOPE');
   check(Array.isArray(s.classes) && s.classes.length === 4 && s.classes.every((g, i) => g?.name === categories[i]
@@ -1874,19 +1875,22 @@ function buildRankedExposureView(input) {
       && (n === 0 || g.top5[n - 1].valueUSD >= r.valueUSD)
       && (i !== 3 || text(r.securityCode) && text(r.market))
       && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market'].includes(k))), 'RANKED_ROW');
-    check(sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
+    // v1 ranks asset values. v2 secondary rows are complete-export economic
+    // exposures: a leveraged product's negative residual can make these exceed
+    // asset NAV. Its full-source association is recomputed before publication.
+    check(official && i === 3 || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
     return {category: g.name, totalUsd: g.totalValueUSD, top: g.top5.map(r => ({name: r.name,
       ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
   const residual = s.residualETFs;
-  check(object(residual) && amount(residual.valueUSD) && residual.valueUSD >= 0 && residual.valueUSD <= groups[3].totalUsd
+  check(object(residual) && amount(residual.valueUSD) && (official || residual.valueUSD >= 0 && residual.valueUSD <= groups[3].totalUsd)
     && ['weightTotalPct', 'weightSecondaryClassPct'].every(k => Number.isFinite(residual[k]))
     && Math.abs(residual.weightTotalPct - pct(residual.valueUSD, s.totalValueUSD)) <= .0051
     && Math.abs(residual.weightSecondaryClassPct - pct(residual.valueUSD, groups[3].totalUsd)) <= .0051, 'RESIDUAL');
   check(Array.isArray(s.limitations) && s.limitations.length <= 50 && s.limitations.every(text)
     && text(s.transferStatus) && /^[a-f0-9]{64}$/.test(s.sourceXlsxSHA256 ?? ''), 'RANKED_COVERAGE');
-  return {schema: RANKED_EXPOSURE_SCHEMA, valuationDate: s.asOf, retrievedAt: input.retrievedAt, retrievedAtBasis: input.retrievedAtBasis,
+  return {schema: input.schema, valuationDate: s.asOf, retrievedAt: input.retrievedAt, retrievedAtBasis: input.retrievedAtBasis,
     portfolioTotalUsd: s.totalValueUSD, groups, residualUsd: residual.valueUSD,
     residualPortfolioWeightPct: pct(residual.valueUSD, s.totalValueUSD), residualCategoryWeightPct: pct(residual.valueUSD, groups[3].totalUsd),
     limitations: [...s.limitations], transferStatus: s.transferStatus,
@@ -1907,7 +1911,229 @@ function renderRankedExposure(input) {
 return {RANKED_EXPOSURE_SCHEMA,EXPOSURE_OBSERVED_TIME_BASIS,ALL_TOGETHER_SCOPE_SHA256,buildRankedExposureView,renderRankedExposure};
 }
 
+function createFeeCompanyExposureCore(){
+  const SCHEMA='fee-console.company-exposure.v1',RULE='company-economic-exposure.2026-10-28.v1';
+  const fail=()=>{throw Error('RATIO_COMPANY_EXPOSURE_REFUSED');};
+  const exact=(o,k)=>o&&Object.getPrototypeOf(o)===Object.prototype&&Object.keys(o).sort().join('|')===[...k].sort().join('|');
+  const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
+  const amount=n=>typeof n==='number'&&Number.isFinite(n)&&Math.abs(n)<1e15;
+  // This export's association contract compares USD amounts at aggregate-cent
+  // precision. Sum decimal representations exactly BEFORE rounding to cents;
+  // never round each constituent, compare binary floats or add an epsilon.
+  function sourceCents(values){
+    let numerator=0n,scale=0;
+    for(const v of values){
+      if(!amount(v))fail();
+      const m=String(v).match(/^(-?)(\d+)(?:\.(\d+))?(?:e([+-]?\d+))?$/);if(!m)fail();
+      let n=BigInt(m[2]+(m[3]||''))*(m[1]?-1n:1n),s=(m[3]||'').length-Number(m[4]||0)-2;
+      if(s<0){n*=10n**BigInt(-s);s=0;}
+      if(s>scale){numerator*=10n**BigInt(s-scale);scale=s;}
+      numerator+=n*10n**BigInt(scale-s);
+    }
+    const d=10n**BigInt(scale),floor=numerator>=0n?numerator/d:-((-numerator+d-1n)/d),remainder=numerator-floor*d;
+    return floor+(remainder*2n>=d?1n:0n);
+  }
+  const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
+  const key=(code,market)=>JSON.stringify([code,market]);
+  const accounts=xs=>xs.map(s=>s.replaceAll('&amp;','&')).sort();
+  // Explicit venue-scoped aliases only. Future products require a reviewed rule.
+  const rules=new Map([
+    [key('VST','NYSE'),{id:'vistra',name:'Vistra',factor:1}],
+    [key('VSTL','NASDAQ'),{id:'vistra',name:'Vistra',factor:2}],
+    [key('GOOG','NASDAQ'),{id:'alphabet',name:'Alphabet',factor:1}],
+    [key('GOOGL','NASDAQ'),{id:'alphabet',name:'Alphabet',factor:1}]
+  ]);
+  const identity=r=>rules.get(key(r.securityCode,r.market))||{id:'security:'+key(r.securityCode,r.market),name:r.name,factor:1};
+  function contribution(r){
+    if(!exact(r,['sourceRow','sourceRows','securityCode','market','name','ownership','product','basis','valueUsd'])||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||!Array.isArray(r.sourceRows)||!r.sourceRows.length||r.sourceRows[0]!==r.sourceRow||r.sourceRows.some(n=>!Number.isSafeInteger(n)||n<1)||new Set(r.sourceRows).size!==r.sourceRows.length||![r.securityCode,r.market,r.name].every(text)||!['Direct','Underlying','Product'].includes(r.ownership)||!(r.product===null||text(r.product))||!amount(r.valueUsd))fail();
+    const own=identity(r),leveragedParent=r.product==='VSTL.NASDAQ';
+    let factor=own.factor,pending=false;
+    if(r.ownership==='Product'){
+      if(r.securityCode!=='VSTL'||r.market!=='NASDAQ'||r.product!=='VSTL.NASDAQ'||r.basis!=='product-asset-replacement'||r.valueUsd<=0)fail();
+    }else if(r.ownership==='Direct'){
+      if(r.product!==null||!['direct-asset-value','unknown-direct-product-value'].includes(r.basis))fail();
+      if(r.basis==='unknown-direct-product-value'){factor=1;pending=true;}
+    }else{
+      if(r.product===null||!['source-lookthrough','unknown-parent-lookthrough','unknown-leverage-lookthrough'].includes(r.basis))fail();
+      if(leveragedParent){
+        if(r.basis!=='unknown-leverage-lookthrough')fail();
+        factor=1;pending=true;
+      }else if(!['source-lookthrough','unknown-parent-lookthrough'].includes(r.basis))fail();
+      pending=pending||r.basis==='unknown-parent-lookthrough';
+    }
+    return {id:own.id,name:own.name,factor,pending};
+  }
+  function validate(model,exposure,sourceSha256){
+    if(!exact(model,['schema','ruleVersion','asOf','retrievedAt','currency','sourceSha256','sourceXlsxSha256','accounts','portfolioTotalUsd','categoryTotalUsd','components'])||model.schema!==SCHEMA||model.ruleVersion!==RULE||model.currency!=='USD'||!Array.isArray(model.components)||model.components.length>100000||!/^[a-f0-9]{64}$/.test(model.sourceSha256||''))fail();
+    const s=exposure?.summary;
+    if(!s||model.asOf!==s.asOf||model.retrievedAt!==exposure.retrievedAt||model.sourceXlsxSha256!==s.sourceXlsxSHA256||model.portfolioTotalUsd!==s.totalValueUSD||model.categoryTotalUsd!==s.classes[3].totalValueUSD||canonical(model.accounts)!==canonical(accounts(s.accounts))||sourceSha256&&model.sourceSha256!==sourceSha256)fail();
+    const ids=new Set(),companies=new Map(),pending=[];
+    for(const r of model.components){
+      const rule=contribution(r);for(const n of r.sourceRows){if(ids.has(n))fail();ids.add(n);}if(rule.pending)pending.push(r.securityCode+' · '+r.product);
+      const c=companies.get(rule.id)||{companyId:rule.id,name:rule.name,valueUsd:0,constituents:[]};
+      const valueUsd=r.valueUsd*rule.factor;if(!amount(valueUsd))fail();c.valueUsd+=valueUsd;
+      c.constituents.push({sourceRows:[...r.sourceRows],securityCode:r.securityCode,market:r.market,product:r.product,basis:r.basis,sourceValueUsd:r.valueUsd,multiplier:rule.factor,valueUsd});companies.set(rule.id,c);
+    }
+    const top=[...companies.values()].filter(r=>r.valueUsd>0).sort((a,b)=>b.valueUsd-a.valueUsd||(a.companyId<b.companyId?-1:a.companyId>b.companyId?1:0)).slice(0,5).map(r=>({...r,portfolioWeightPct:r.valueUsd/model.portfolioTotalUsd*100,categoryWeightPct:r.valueUsd/model.categoryTotalUsd*100}));
+    return {state:pending.length?'pending-source-basis':'projection-complete',pending:[...new Set(pending)].sort(),top:pending.length?null:top};
+  }
+  function build(raw,input,officialContext=null){
+    const exposure=input?.exposure,s=exposure?.summary,b=input?.book;
+    const official=raw?.schemaVersion==='sharesight-private-full-v2';
+    if(!['sharesight-private-full-v1','sharesight-private-full-v2'].includes(raw?.schemaVersion)||!s||(official?raw.exposure?.asOf:raw.snapshot?.asOf)!==s.asOf||(!official&&raw.snapshot?.currency!=='USD')||s.currency!=='USD'||!Array.isArray(raw.exposure?.rows)||!Array.isArray(raw.accounts)||canonical(accounts(raw.accounts))!==canonical(accounts(s.accounts))||b?.sourceSha256!==b?.provenance?.fullSourceSha256||official&&(!officialContext||!Array.isArray(officialContext.rows)||!Array.isArray(officialContext.positions)))fail();
+    const rows=official?officialContext.rows:raw.exposure.rows,positions=official?officialContext.positions:raw.directPositionsByAccount,components=[],replaced=new Set();
+    // Establish a leveraged product's basis only by SAME-export linkage at the
+    // existing aggregate USD-cent precision:
+    // one direct asset value, its VST underlying and all its residual rows.
+    // No caller flag or guessed product ratio can authorize another multiplier.
+    for(const h of positions||[]){
+      if(h.securityCode!=='VSTL'||h.market!=='NASDAQ'||h.fourClass!=='二级市场'||!amount(h.valueUSD)||h.valueUSD<=0)continue;
+      const holdings=(positions||[]).filter(x=>x.account===h.account&&x.securityCode==='VSTL'&&x.market==='NASDAQ');
+      const direct=rows.filter(r=>r.account===h.account&&r.ownership==='Direct'&&r.securityCode==='VSTL'&&r.market==='NASDAQ');
+      const underlying=rows.filter(r=>r.account===h.account&&r.ownership==='Underlying'&&r.withinETF==='VSTL.NASDAQ');
+      const residual=rows.filter(r=>r.account===h.account&&r.ownership==='Residual'&&r.securityCode==='VSTL'&&r.market==='NASDAQ');
+      if(holdings.length!==1||direct.length>1||!underlying.length||underlying.some(r=>r.securityCode!=='VST'||r.market!=='NYSE'||r.fourClass!=='二级市场'||!amount(r.valueUSD))||residual.some(r=>r.fourClass!=='二级市场'||!amount(r.valueUSD)))continue;
+      if(sourceCents([...underlying,...residual].map(r=>r.valueUSD))!==sourceCents([h.valueUSD]))continue;
+      // Replace the complete product contribution with 2x its independently
+      // associated asset value, INCLUDING when the old underlying already
+      // contains leverage. Never add another 2x to the existing contribution.
+      const sourceRows=[...underlying,...residual].map(r=>r.sourceRow).sort((a,b)=>a-b);
+      if(sourceRows.some(n=>replaced.has(n)))fail();sourceRows.forEach(n=>replaced.add(n));
+      components.push({sourceRow:sourceRows[0],sourceRows,securityCode:'VSTL',market:'NASDAQ',name:'VSTL',ownership:'Product',product:'VSTL.NASDAQ',basis:'product-asset-replacement',valueUsd:h.valueUSD});
+
+    }
+    // A parent ETF and its underlying rows are mutually exclusive contributions.
+    const parents=new Set(rows.filter(r=>r.ownership==='Underlying'&&r.withinETF).map(r=>key(r.account,r.withinETF)));
+    for(const r of rows){
+      if(replaced.has(r.sourceRow))continue;
+      if(r.fourClass!=='二级市场'||!['Direct','Underlying'].includes(r.ownership))continue;
+      if(r.ownership==='Direct'&&parents.has(key(r.account,r.securityCode+'.'+r.market)))continue;
+      const product=r.ownership==='Underlying'?r.withinETF:null;
+      let basis=r.ownership==='Direct'?'direct-asset-value':'source-lookthrough',valueUsd=r.valueUSD;
+      if(r.ownership==='Direct'&&r.securityCode==='VSTL'&&r.market==='NASDAQ'&&rows.filter(x=>x.account===r.account&&x.ownership==='Direct'&&x.securityCode===r.securityCode&&x.market===r.market).length!==1)basis='unknown-direct-product-value';
+      if(r.ownership==='Direct'&&r.instrumentType==='ETF'){
+        const asset=(positions||[]).filter(h=>h.account===r.account&&h.securityCode===r.securityCode&&h.market===r.market);
+        const direct=rows.filter(x=>x.account===r.account&&x.ownership==='Direct'&&x.securityCode===r.securityCode&&x.market===r.market);
+        if(r.securityCode==='VSTL'&&r.market==='NASDAQ'&&asset.length===1&&direct.length===1&&asset[0].fourClass==='二级市场'&&asset[0].valuationCurrency==='USD'&&amount(asset[0].valueUSD)&&asset[0].valueUSD>0&&sourceCents([r.valueUSD])===sourceCents([asset[0].valueUSD]))valueUsd=asset[0].valueUSD;
+        else basis='unknown-direct-product-value';
+      }
+      if(r.ownership==='Underlying'&&!(positions||[]).some(h=>h.account===r.account&&h.securityCode+'.'+h.market===product))basis='unknown-parent-lookthrough';
+      if(product==='VSTL.NASDAQ')basis='unknown-leverage-lookthrough';
+      components.push({sourceRow:r.sourceRow,sourceRows:[r.sourceRow],securityCode:r.securityCode,market:r.market,name:r.name,ownership:r.ownership,product,basis,valueUsd});
+    }
+    components.sort((a,b)=>a.sourceRow-b.sourceRow);
+    const model={schema:SCHEMA,ruleVersion:RULE,asOf:s.asOf,retrievedAt:exposure.retrievedAt,currency:'USD',sourceSha256:b.sourceSha256,sourceXlsxSha256:s.sourceXlsxSHA256,accounts:accounts(s.accounts),portfolioTotalUsd:s.totalValueUSD,categoryTotalUsd:s.classes[3].totalValueUSD,components};
+    validate(model,exposure,b.sourceSha256);return model;
+  }
+  const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const usd=v=>'USD '+v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  function renderCompanyExposure(model,exposure,sourceSha256){
+    const v=validate(model,exposure,sourceSha256);
+    if(!v.top)return '<p class="ratio-key-status" role="status">公司敞口待核实：原份穿透归属或杠杆倍数依据未完整核实；保留原证券前五，不重复乘二。</p>';
+    return '<table><thead><tr><th>公司／组成</th><th>经济敞口 USD</th><th>占总资产／占二级资产</th></tr></thead><tbody>'+v.top.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+'<details><summary>组成与计算依据</summary><ul>'+r.constituents.map(c=>'<li>'+esc(c.securityCode)+' · '+esc(c.market)+(c.product?'／'+esc(c.product):'')+'：'+usd(c.sourceValueUsd)+' × '+c.multiplier+' = '+usd(c.valueUsd)+'；'+esc(({'direct-asset-value':'直接资产价值','unknown-direct-product-value':'产品资产价值／穿透依据待核实','product-asset-replacement':'整项替换：原底层＋残余已关联','source-lookthrough':'来源穿透','unknown-parent-lookthrough':'穿透归属待核实','unknown-leverage-lookthrough':'杠杆倍数待核实'})[c.basis])+'</li>').join('')+'</ul></details></td><td>'+usd(r.valueUsd)+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
+  }
+  return {SCHEMA,RULE,build,validate,render:renderCompanyExposure};
+}
+
+function createOfficialRatioSourceCore(){
+  const RAW='sharesight-private-full-v2',INPUT='fee-console.ratio-sources.v2';
+  const fail=()=>{throw Error('RATIO_OFFICIAL_SOURCE_REFUSED');};
+  const exact=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join('|')===[...k].sort().join('|');
+  const text=s=>typeof s==='string'&&s.length>0&&s.length<=1000&&!/[\u0000-\u001f\u007f]/.test(s);
+  const date=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+  const instant=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(s)&&Number.isFinite(Date.parse(s));
+  const hex=s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s);
+  const canonical=o=>Array.isArray(o)?'['+o.map(canonical).join(',')+']':o&&typeof o==='object'?'{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canonical(o[k])).join(',')+'}':JSON.stringify(o);
+  const cents=n=>{if(typeof n!=='number'||!Number.isFinite(n)||Math.abs(n)>1e12||!/^[-]?\d+(?:\.\d{1,2})?$/.test(String(n)))fail();const c=Math.round(n*100);if(!Number.isSafeInteger(c))fail();return c;};
+  const sum=rows=>{let total=0;for(const r of rows){total+=cents(r.valueUSD);if(!Number.isSafeInteger(total))fail();}return total/100;};
+  const key=(a,c,m)=>JSON.stringify([a,c,m]);
+  const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
+  const names=['PE/VC','对冲基金','常青基金','二级市场'];
+  const sourceId=s=>{if(!exact(s,['file','sha256','libraryFileId','libraryVersion'])||!text(s.file)||!hex(s.sha256)||!/^libfile_[a-f0-9]{32}$/.test(s.libraryFileId)||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();};
+  function capture(s){
+    if(!date(s.asOf)||!instant(s.capturedAt)||s.captureTimeBasis!=='original-download-file-mtime'
+      ||!(s.downloadCompletedAt===null||instant(s.downloadCompletedAt))||!(s.serverSuggestedOriginalFilename===null||text(s.serverSuggestedOriginalFilename))
+      ||!text(s.dateEvidence)||!Number.isSafeInteger(s.canonicalDataRows)||s.canonicalDataRows<1||!Number.isSafeInteger(s.allWorksheetXmlRows)||s.allWorksheetXmlRows<s.canonicalDataRows)fail();
+    const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const observed=[...s.dateEvidence.matchAll(/\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})\b/g)].map(m=>m[3]+'-'+String(months.indexOf(m[2])+1).padStart(2,'0')+'-'+m[1].padStart(2,'0'));
+    if(!observed.length||observed.some(d=>d!==s.asOf)||s.asOf>new Date(Date.parse(s.capturedAt)+8*3600000).toISOString().slice(0,10))fail();
+  }
+  function overview(positions,cash,asOf){
+    const all=positions.concat(cash),classes=names.map(name=>({name,totalValueUSD:sum(all.filter(r=>r.fourClass===name))}));
+    // Venue-scoped GLD is the previously confirmed physical-gold ETF. Mining
+    // companies and unrelated ETF names are not inferred to be gold.
+    const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(positions.filter(r=>r.securityCode==='GLD'&&r.market==='NYSE'))};
+    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold};
+  }
+  function build(raw,{sourceSha256,sourceBytes}={}){
+    if(!exact(raw,['schemaVersion','source','accounts','sources','classification','exposure','coverage','limitations'])||raw.schemaVersion!==RAW
+      ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-workbook-exports'
+      ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024
+      ||!Array.isArray(raw.accounts)||raw.accounts.length!==10||!raw.accounts.every(text)||new Set(raw.accounts).size!==10
+      ||!Array.isArray(raw.sources)||raw.sources.length!==3||!Array.isArray(raw.limitations)||!raw.limitations.every(text))fail();
+    raw.sources.forEach(sourceId);if(new Set(raw.sources.map(s=>s.file)).size!==3||new Set(raw.sources.map(s=>s.libraryFileId)).size!==3)fail();
+    const sources=new Map(raw.sources.map(s=>[s.file,s]));if(!['classification.xlsx','exposure.xlsx','capture-metadata.json'].every(s=>sources.has(s)))fail();
+    const cov=raw.coverage;if(!exact(cov,['classificationCombinedComplete','exposureCombinedComplete','groupingSheetsAreDuplicates','closedPositionsIncluded','transactionHistoryIncluded','completeETFUniverseClaimed'])||cov.classificationCombinedComplete!==true||cov.exposureCombinedComplete!==true||cov.groupingSheetsAreDuplicates!==true||cov.closedPositionsIncluded!==false||cov.transactionHistoryIncluded!==false||cov.completeETFUniverseClaimed!==false)fail();
+    const c=raw.classification,e=raw.exposure,metadata=['asOf','capturedAt','captureTimeBasis','downloadCompletedAt','serverSuggestedOriginalFilename','dateEvidence','canonicalDataRows','allWorksheetXmlRows'];
+    if(!exact(c,[...metadata,'positions','cashAccounts'])||!exact(e,[...metadata,'rows']))fail();
+    capture(c);capture(e);if(c.asOf>e.asOf)fail();
+    if(!Array.isArray(c.positions)||!Array.isArray(c.cashAccounts)||c.positions.length+c.cashAccounts.length!==c.canonicalDataRows||!Array.isArray(e.rows)||e.rows.length!==e.canonicalDataRows||e.rows.length>100000)fail();
+    const accounts=new Set(raw.accounts),positions=[],cash=[],byKey=new Map(),cashByKey=new Map(),sourceRows=new Set();
+    const common=r=>{if(!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||sourceRows.has(r.sourceRow)||!text(r.sharesightCategory)||cents(r.valueUSD)<0)fail();sourceRows.add(r.sourceRow);};
+    for(const r of c.positions){
+      if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory','securityCode','market','quantity']))fail();common(r);
+      if(!text(r.securityCode)||!text(r.market)||!(r.quantity===null||typeof r.quantity==='number'&&Number.isFinite(r.quantity)&&r.quantity>=0))fail();
+      const k=key(r.account,r.securityCode,r.market);if(byKey.has(k))fail();const p={...r,fourClass:four(r.sharesightCategory)};byKey.set(k,p);positions.push(p);
+    }
+    for(const r of c.cashAccounts){
+      if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory']))fail();common(r);if(r.sharesightCategory!=='Cash Accounts')fail();
+      const k=key(r.account,r.name,'cash');if(cashByKey.has(k))fail();const p={...r,fourClass:'二级市场'};cashByKey.set(k,p);cash.push(p);
+    }
+    const sourceDates={classification:c.asOf,exposure:e.asOf},classification=overview(positions,cash,c.asOf),rows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set();
+    for(const r of e.rows){
+      if(!exact(r,['sourceRow','account','securityCode','market','name','withinETF','ownership','valueUSD','sourcePercentage'])||!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||ids.has(r.sourceRow)||!(r.sourcePercentage===null||typeof r.sourcePercentage==='number'&&Number.isFinite(r.sourcePercentage)))fail();ids.add(r.sourceRow);cents(r.valueUSD);
+      let owner;
+      if(r.ownership==='Cash'){
+        if(r.securityCode!==null||r.market!==null||r.withinETF!==null||!cashByKey.has(key(r.account,r.name,'cash'))||r.valueUSD<0)fail();
+        cash30.push({...r,fourClass:'二级市场'});rows.push({...r,fourClass:'二级市场'});continue;
+      }
+      if(!['Direct','Underlying','Residual'].includes(r.ownership)||!text(r.securityCode)||!text(r.market))fail();
+      if(r.ownership==='Underlying'){
+        if(!text(r.withinETF))fail();owner=positions.find(p=>p.account===r.account&&p.securityCode+'.'+p.market===r.withinETF);
+      }else owner=byKey.get(key(r.account,r.securityCode,r.market));
+      if(!owner)fail();const item={...r,fourClass:owner.fourClass};rows.push(item);
+      if(r.ownership==='Direct'){
+        if(r.withinETF!==null||r.valueUSD<0||direct30.has(key(r.account,r.securityCode,r.market)))fail();direct30.set(key(r.account,r.securityCode,r.market),{...owner,valueUSD:r.valueUSD,quantity:null});
+      }else{
+        const k=key(owner.account,owner.securityCode,owner.market),g=parents.get(k)||{owner,rows:[]};g.rows.push(item);parents.set(k,g);
+      }
+    }
+    if(cash30.length!==cash.length||new Set(cash30.map(r=>key(r.account,r.name,'cash'))).size!==cash.length)fail();
+    const positions30=[...direct30.values()];
+    for(const [k,g]of parents){
+      if(direct30.has(k)||g.rows.filter(r=>r.ownership==='Residual').length!==1||!g.rows.some(r=>r.ownership==='Underlying'))fail();
+      const valueUSD=sum(g.rows);if(valueUSD<0)fail();positions30.push({...g.owner,valueUSD,quantity:null,instrumentType:'ETF',valueBasis:'same-export-underlying-plus-residual'});
+    }
+    if(positions30.length!==positions.length||cents(sum(positions30.concat(cash30)))!==cents(sum(rows)))fail();
+    const groups=names.map((name,i)=>{
+      let top;
+      if(i<3){const grouped=new Map();for(const r of positions30.filter(p=>p.fourClass===name)){const k=key('',r.securityCode,r.market),old=grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:0};old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;grouped.set(k,old);}const values=[...grouped.values()],counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);top=values.map(r=>({name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':''),valueUSD:r.valueUSD}));}
+      else {const selected=new Map();for(const r of rows.filter(p=>p.fourClass===name&&(p.ownership==='Direct'||p.ownership==='Underlying'))){const k=key('',r.securityCode,r.market),old=selected.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:0};old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;selected.set(k,old);}top=[...selected.values()];}
+      top=top.sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);if(top.length!==5)fail();
+      return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3?'Exposure individual security direct plus ETF look-through, includes cash in class denominator':'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};
+    });
+    const total=sum(rows),residual=sum(rows.filter(r=>r.ownership==='Residual'));
+    const exposure={schema:'xuan.sharesight-exposure-ranked.v2',summary:{asOf:e.asOf,currency:'USD',source:{provider:'Sharesight',view:'All Together',report:'Tools Exposure',groupBy:'No grouping',show:'Top 500',classification:'Investments→资产类别',url:null},totalValueUSD:total,accounts:[...raw.accounts],classes:groups,residualETFs:{valueUSD:residual,weightTotalPct:residual/total*100,weightSecondaryClassPct:residual/groups[3].totalValueUSD*100},limitations:[...raw.limitations,e.asOf+' Exposure分组沿用 '+c.asOf+' 资产类别标签；金额和比例分母取 '+e.asOf+' 完整Exposure原表。'],transferStatus:'按Sharesight现有记录显示；不新增或重复任何转仓和认购。',sourceXlsxSHA256:sources.get('exposure.xlsx').sha256},retrievedAt:e.capturedAt,retrievedAtBasis:'原始官方导出文件mtime（非独立下载完成时间）'};
+    const ibRows=positions.filter(r=>r.account==='IB-HK'),ibCash=cash.filter(r=>r.account==='IB-HK'),noahCash=cash.filter(r=>r.account==='NOAH-HK');if(!ibRows.length||!ibCash.length||!noahCash.length)fail();
+    const provenance={transport:'official-workbooks',observedAtBasis:'original-download-file-mtime',classificationCapturedAt:c.capturedAt,exposureCapturedAt:e.capturedAt,downloadCompletedAt:null,fullSourceBytes:sourceBytes,fullSourceSha256:sourceSha256,transferStatus:exposure.summary.transferStatus,limitations:[...raw.limitations]};
+    const book={schema:'fee-console.ratio-sharesight-browser-book.v2',source:'Sharesight',currency:'USD',asOf:c.asOf,retrievedAt:c.capturedAt,sourceSha256,provenance,ib:{name:'IB-HK',holdings:ibRows.map(r=>({code:r.securityCode,market:r.market,group:r.sharesightCategory,valueUSD:r.valueUSD,quantity:r.quantity,name:r.name,valueBasis:'preserved-browser-source'})),holdingsValueUSD:sum(ibRows),cashRows:ibCash.map(r=>({label:r.name,valueUSD:r.valueUSD,valueBasis:'portfolio-usd-converted'})),cashValueUSD:sum(ibCash),totalValueUSD:sum(ibRows.concat(ibCash))},noah:{name:'NOAH-HK',cashValueUSD:sum(noahCash),valueBasis:'portfolio-usd-converted'}};
+    return {input:{schema:INPUT,classification,exposure,book},sourceDates,classificationSummary:classification,companyContext:{rows,positions:positions30},capturedAt:[c.capturedAt,e.capturedAt].sort()[0],targetDate:e.asOf};
+  }
+  return {RAW,INPUT,build,canonical};
+}
+
 function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
+  const companyCore=createFeeCompanyExposureCore();
   const SCHEMA='fee-console.ratio-view.v1',RECIPIENT='fee-console.ratio-recipient.v1',ENVELOPE='fee-console.ratio-manager-envelope.v1';
   const DOMAIN='fee-console/ratio-management/manager-recipient/v1',MAX=2*1024*1024;
   const fail=()=>{throw Error('RATIO_MANAGER_REFUSED');};
@@ -1953,11 +2179,17 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
     try{if(!shared.some(n=>n))fail();const material=await cryptoImpl.subtle.importKey('raw',shared,'HKDF',false,['deriveKey']);return await cryptoImpl.subtle.deriveKey({name:'HKDF',hash:'SHA-256',salt,info:bytes(canonical([DOMAIN,context]))},material,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);}finally{shared.fill(0);}
   }
   async function validateModel(m){
-    if(!exact(m,['schema','source','report','exposure','book','limitations'])||m.schema!==SCHEMA||m.source!=='Sharesight'||!Array.isArray(m.limitations)||m.limitations.length>50||!m.limitations.every(text))fail();
+    const official=m?.schema==='fee-console.ratio-view.v2';
+    if(!exact(m,['schema','source','report','exposure','book','limitations',...(Object.hasOwn(m||{},'companyExposure')?['companyExposure']:[]),...(official?['sourceDates','classificationSummary']:[])])||![SCHEMA,'fee-console.ratio-view.v2'].includes(m.schema)||m.source!=='Sharesight'||!Array.isArray(m.limitations)||m.limitations.length>50||!m.limitations.every(text))fail();
     const p=m.report;if(!exact(p,['kind','targetDate','feeAccountingThrough','generatedAt'])||!['weekly','monthly','weekly-monthly','snapshot'].includes(p.kind)||!date(p.targetDate)||!(p.feeAccountingThrough===null||date(p.feeAccountingThrough))||!instant(p.generatedAt))fail();
     if(new TextEncoder().encode(canonical(m)).length>MAX)fail();
     const exp=exposureCore.buildRankedExposureView(m.exposure);
     if(!exp.retrievedAt||Date.parse(exp.retrievedAt)>Date.parse(p.generatedAt)||exp.valuationDate>p.targetDate)fail();
+    if(official){
+      const d=m.sourceDates,c=m.classificationSummary,labels=['PE/VC','对冲基金','常青基金','二级市场'];
+      if(!exact(d,['classification','exposure'])||![d.classification,d.exposure].every(date)||d.classification>d.exposure||d.exposure!==exp.valuationDate||p.targetDate!==d.exposure||m.book?.asOf!==d.classification||m.exposure.schema!=='xuan.sharesight-exposure-ranked.v2')fail();
+      if(!exact(c,['schema','asOf','currency','basis','totalValueUSD','classes','gold'])||c.schema!=='fee-console.classification-overview.v1'||c.asOf!==d.classification||c.currency!=='USD'||c.basis!=='complete-official-classification-row-sum'||!Number.isFinite(c.totalValueUSD)||c.totalValueUSD<=0||!Array.isArray(c.classes)||c.classes.length!==4||c.classes.some((g,i)=>!exact(g,['name','totalValueUSD'])||g.name!==labels[i]||!Number.isFinite(g.totalValueUSD)||g.totalValueUSD<0)||Math.round(c.classes.reduce((s,g)=>s+g.totalValueUSD,0)*100)!==Math.round(c.totalValueUSD*100)||!exact(c.gold,['rule','valueUSD'])||c.gold.rule!=='physical-gold-etf.GLD.NYSE.v1'||!Number.isFinite(c.gold.valueUSD)||c.gold.valueUSD<0||c.gold.valueUSD>c.totalValueUSD)fail();
+    }else if(m.exposure.schema==='xuan.sharesight-exposure-ranked.v2'||m.book?.browserEvidence?.transport==='official-workbooks')fail();
     const scope=await digest(m.exposure.summary.accounts.map(x=>x.replaceAll('&amp;','&')).sort());
     if(scope!==exposureCore.ALL_TOGETHER_SCOPE_SHA256)fail();
     if(m.book!==null){
@@ -1969,9 +2201,16 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
         if(a.cashLike.some(c=>!exact(c,['symbol','valueCents'])||!['VGSH','VGIT','TLT'].includes(c.symbol)||!cents(c.valueCents))||new Set(a.cashLike.map(c=>c.symbol)).size!==a.cashLike.length)fail();
       }
       if(b.holdings!==null&&(!Array.isArray(b.holdings)||b.holdings.length>5000||b.holdings.some(h=>!exact(h,['name','symbol','valueCents','category',...(browser?['market','quantity','valueBasis','nameBasis']:[])])||!text(h.name)||!text(h.symbol)||!text(h.category)||!cents(h.valueCents)||browser&&(!text(h.market)||!(h.quantity===null||Number.isFinite(h.quantity)&&h.quantity>=0)||!['preserved-browser-source','same-export-underlying-plus-residual'].includes(h.valueBasis)||!['source-code-only','source-name'].includes(h.nameBasis)))))fail();
-      if(browser){const e=b.browserEvidence,verified=e.integrity==='verified-original-library-association',time=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)&&Number.isFinite(Date.parse(s));
+      if(browser&&official){
+        const e=b.browserEvidence,verified=e.integrity==='verified-original-library-association';
+        if(!exact(e,['transport','observedAtBasis','classificationCapturedAt','exposureCapturedAt','downloadCompletedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations','integrity',...(verified?['associationId','managerScopeId','sourceVersion','migrationPending','classificationDeltaCents','exposureDeltaCents']:[])])||e.transport!=='official-workbooks'||e.observedAtBasis!=='original-download-file-mtime'||e.downloadCompletedAt!==null||![e.classificationCapturedAt,e.exposureCapturedAt].every(instant)||e.classificationCapturedAt!==b.retrievedAt||e.exposureCapturedAt!==m.exposure.retrievedAt||[e.classificationCapturedAt,e.exposureCapturedAt].some(s=>Date.parse(s)>Date.parse(p.generatedAt))||!['declared-not-verified-on-this-device','verified-original-library-association'].includes(e.integrity)||e.fullSourceSha256!==b.sourceSha256||!Number.isSafeInteger(e.fullSourceBytes)||e.fullSourceBytes<1||e.fullSourceBytes>5*1024*1024||!text(e.transferStatus)||!Array.isArray(e.limitations)||!e.limitations.every(text)||verified&&(!/^[a-f0-9]{64}$/.test(e.associationId)||!/^[a-f0-9]{64}$/.test(e.managerScopeId)||!Number.isSafeInteger(e.sourceVersion)||e.sourceVersion<0||typeof e.migrationPending!=='boolean'||![e.classificationDeltaCents,e.exposureDeltaCents].every(Number.isSafeInteger)))fail();
+      }else if(browser){const e=b.browserEvidence,verified=e.integrity==='verified-original-library-association',time=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)&&Number.isFinite(Date.parse(s));
         if(!exact(e,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations','integrity',...(verified?['associationId','managerScopeId','sourceVersion','migrationPending','classificationDeltaCents','exposureDeltaCents']:[])])||e.transport!=='browser-export-and-ui'||e.observedAtBasis!=='original-export-download-time'||!['declared-not-verified-on-this-device','verified-original-library-association'].includes(e.integrity)||verified&&(!/^[a-f0-9]{64}$/.test(e.associationId)||!/^[a-f0-9]{64}$/.test(e.managerScopeId)||!Number.isSafeInteger(e.sourceVersion)||e.sourceVersion<0||typeof e.migrationPending!=='boolean'||![e.classificationDeltaCents,e.exposureDeltaCents].every(Number.isSafeInteger))||e.fullSourceSha256!==b.sourceSha256||!Number.isSafeInteger(e.fullSourceBytes)||e.fullSourceBytes<1||e.fullSourceBytes>5*1024*1024||![e.exportCreatedAt,e.exportLastWrittenAt,e.classificationSavedAt].every(time)||[e.exportCreatedAt,e.exportLastWrittenAt,e.classificationSavedAt].some(s=>Date.parse(s)>Date.parse(p.generatedAt))||!text(e.transferStatus)||!Array.isArray(e.limitations)||e.limitations.length>50||!e.limitations.every(text))fail();
       }
+    }
+    if(Object.hasOwn(m,'companyExposure')){
+      if(m.book?.browserEvidence?.integrity!=='verified-original-library-association')fail();
+      companyCore.validate(m.companyExposure,m.exposure,m.book.sourceSha256);
     }
     return structuredClone(m);
   }
@@ -2016,19 +2255,28 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>n===null?'未取得':'USD '+(n/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
   function renderRatioModel(m){
-    const view=exposureCore.buildRankedExposureView(m.exposure),delta=view.groups.reduce((n,g)=>n+g.totalUsd,0)-view.portfolioTotalUsd;
-    const overview='<section class="card ratio-asset-overview"><h2>四类资产配置总览</h2><p>All Together · 10账户 · USD · 来源截至 '+esc(view.valuationDate)+'</p>'+view.groups.map(g=>'<div><strong>'+esc(g.category)+'</strong> · '+money(Math.round(g.totalUsd*100))+' · '+(g.totalUsd/view.portfolioTotalUsd*100).toFixed(2)+'%<div role="meter" aria-label="'+esc(g.category)+'占总资产" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(g.totalUsd/view.portfolioTotalUsd*100).toFixed(4)+'" style="height:8px;background:#edf0f5;margin:6px 0 12px"><span style="display:block;height:100%;background:#4778b8;width:'+Math.max(0,Math.min(100,g.totalUsd/view.portfolioTotalUsd*100))+'%"></span></div></div>').join('')+'<p>二级市场为前三类以外全部资产，含现金；采用来源类别金额，与下方前五同一范围及日期。类别合计与总资产舍入差 '+delta.toFixed(2)+' USD，保留原差异，不强行调整比例。</p></section>';
+    const view=exposureCore.buildRankedExposureView(m.exposure),classification=m.classificationSummary;
+    const overviewView=classification?{valuationDate:classification.asOf,portfolioTotalUsd:classification.totalValueUSD,groups:classification.classes.map(g=>({category:g.name,totalUsd:g.totalValueUSD}))}:view;
+    const delta=overviewView.groups.reduce((n,g)=>n+g.totalUsd,0)-overviewView.portfolioTotalUsd;
     const b=m.book,a=b?.allocation,ib=b?.ibCashCents??null,noah=b?.noahCashCents??null,pool=ib===null||noah===null?null:ib+noah;
-    const rows=a?a.categories.map(c=>`<tr><td>${esc(c.label)}</td><td>${money(c.valueCents)}</td><td>${(c.valueCents/a.totalCents*100).toFixed(2)}%／${c.targetPct}%</td></tr>`).join(''):'';
-    const alloc=rows?`<table><thead><tr><th>分类</th><th>当前市值</th><th>当前／参考目标</th></tr></thead><tbody>${rows}</tbody></table>`:'<p>Sharesight 完整分类持仓未取得。</p>';
-    const holdings=b?.holdings?'<table><thead><tr><th>证券</th><th>类别</th><th>市值</th>'+(b.browserEvidence?'<th>原时点数量／价值依据</th>':'')+'</tr></thead><tbody>'+b.holdings.map(h=>`<tr><td>${esc(h.name)} · ${esc(h.symbol)}${h.market?' · '+esc(h.market):''}</td><td>${esc(h.category)}</td><td>${money(h.valueCents)}</td>${b.browserEvidence?'<td>'+esc(h.quantity===null?'未知（原时点未取得）':h.quantity)+'／'+(h.valueBasis==='same-export-underlying-plus-residual'?'同份Exposure底层＋残余合成':'原浏览器来源')+(h.nameBasis==='source-code-only'?'；仅证券代码，名称未取得':'')+'</td>':''}</tr>`).join('')+'</tbody></table>':'<p>完整持仓未取得；四类前五不能替代全量持仓。</p>';
-    const browserNote=b?.browserEvidence?`<p>书目：原浏览器快照（非 API） · 截至 ${esc(b.asOf)} · 原下载 ${esc(b.retrievedAt)}。${b.browserEvidence.integrity==='verified-original-library-association'?'原始JSON、Library版本、范围及逐行关联已在构建时核验。':'原始全量证据尚未接入本机核验，仅供私密预览，不能作为正式发布来源。'}</p><p>仅证明原时点开放持仓，不含闭仓／交易历史，不证明未来IB流量；Top500也不代表全ETF底层。</p><p>导出写入 ${esc(b.browserEvidence.exportLastWrittenAt)}；分类保存 ${esc(b.browserEvidence.classificationSavedAt)}，未用于改写快照时间。</p>${b.browserEvidence.integrity==='verified-original-library-association'?'<p>分类与页面差 '+(b.browserEvidence.classificationDeltaCents/100).toFixed(2)+' USD；Exposure与页面差 '+(b.browserEvidence.exposureDeltaCents/100).toFixed(2)+' USD，保留原差异。'+(b.browserEvidence.migrationPending?'来源转仓尚未核销，保留原账面持仓。':'')+'</p>':''}<p>${esc(b.browserEvidence.transferStatus)}</p>${b.browserEvidence.limitations.map(x=>'<p>'+esc(x)+'</p>').join('')}`:'';
-    return `<div class="ratio-report"><p>比例管理 · ${esc({weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报',snapshot:'来源快照'}[m.report.kind])} · 报告目标 ${esc(m.report.targetDate)} · 非实时</p><p>Exposure 来源截至 ${esc(m.exposure.summary.asOf)}${m.exposure.summary.asOf!==m.report.targetDate?' · 来源尚未覆盖本期':''}</p><p>生成 ${esc(m.report.generatedAt)}${m.report.feeAccountingThrough&&m.report.feeAccountingThrough!==m.report.targetDate?' · 管理费账务截至 '+esc(m.report.feeAccountingThrough)+'，两者日期不同':''}</p>`
-      +overview+'<section class="card"><h2>本轮补仓</h2><p>EXUS · EIMI · USSC：金额未计算。</p><p>Sharesight 未提供已核实的 CALL／资本承诺记录，预留及净预算保持未知；不以零值补齐。</p><p>USSC 的 10% 是原补仓预算参考规则，不是持仓目标。</p></section>'
-      +`<section class="card"><h2>现金优先补仓参考</h2><p>Sharesight IB-HK 账面现金：${money(ib)}</p><p>Sharesight NOAH-HK 账面现金：${money(noah)}</p><p>账面现金池：${money(pool)}</p><p>CALL 原额／50%预留／净规划预算：未取得</p><p>现金类资产：${a?esc(a.cashLike.map(c=>c.symbol+' '+money(c.valueCents)).join(' · ')||'本次完整分类来源未见非零项'):'未取得'}；不默认出售。</p><p>可执行预算未提供；账面余额不等于实时购买力。</p></section>`
-      +`<section class="card"><h2>股票四类配置</h2><p>IB-HK 股票范围，与 All Together 总资产分母不同。</p>${alloc}<p>成交后投影未计算。</p></section>`
-      +browserNote+exposureCore.renderRankedExposure(m.exposure)+`<section class="card"><h2>IB-HK 完整持仓</h2><p>仅此账户的完整书目，不代表 All Together 十账户全量持仓。</p>${holdings}</section>`
-      +`<details><summary>来源、范围与缺项</summary><p>账户、持仓、现金、分类及 Exposure 均以 Sharesight 记录为准；不读取券商、Flex 或邮件。没有完整订单证据时，内部风控保留未知状态。</p><p>Exposure 快照日不是各私募基金的 NAV 日；已验收来源未提供逐项 NAV 日期时保持未知。</p><p>管理费仍为嘉信＋Webull；Jenny's IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>${m.limitations.map(x=>'<p>'+esc(x)+'</p>').join('')}</details></div>`;
+    const company=m.companyExposure?companyCore.validate(m.companyExposure,m.exposure,b?.sourceSha256):null;
+    const detail=(label,body)=>'<details><summary>'+label+'</summary>'+body+'</details>';
+    const gold=classification?'<p>黄金（GLD · NYSE）：'+money(Math.round(classification.gold.valueUSD*100))+' · 占 '+esc(classification.asOf)+' 分类来源总资产 '+(classification.gold.valueUSD/classification.totalValueUSD*100).toFixed(2)+'%；已包含在四类资产合计中。</p>':'';
+    const overview='<section class="card ratio-asset-overview"><h2>四类资产配置总览</h2><p>All Together · 10账户 · USD · 资产分类截至 '+esc(overviewView.valuationDate)+'</p>'+overviewView.groups.map(g=>'<div><strong>'+esc(g.category)+'</strong> · '+money(Math.round(g.totalUsd*100))+' · '+(g.totalUsd/overviewView.portfolioTotalUsd*100).toFixed(2)+'%<div role="meter" aria-label="'+esc(g.category)+'占总资产" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+(g.totalUsd/overviewView.portfolioTotalUsd*100).toFixed(4)+'" style="height:8px;background:#edf0f5;margin:6px 0 12px"><span style="display:block;height:100%;background:#4778b8;width:'+Math.max(0,Math.min(100,g.totalUsd/overviewView.portfolioTotalUsd*100))+'%"></span></div></div>').join('')+gold+'<p>类别合计与总资产舍入差 '+delta.toFixed(2)+' USD，保留原差异。</p></section>';
+    const table=rows=>'<table><thead><tr><th>名称</th><th>USD金额</th><th>占总资产／占本类资产</th></tr></thead><tbody>'+rows.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+'</td><td>'+money(Math.round(r.valueUsd*100))+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
+    const groups=view.groups.map((g,i)=>'<section><h3>'+esc(g.category)+(i===3?(company?.top?' · 公司经济敞口前五':' · 原证券口径前五'):' · 直接持仓前五')+'</h3><p>Exposure截至 '+esc(view.valuationDate)+' · 本类资产 '+money(Math.round(g.totalUsd*100))+'</p>'+(i===3&&company?.top?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):table(g.top))+'</section>').join('');
+    const companyStatus=company?.top?'<p class="ratio-key-status">公司经济敞口含显式杠杆，比例可能超过100%；不改变总资产、类别资产及管理费。</p>':company?companyCore.render(m.companyExposure,m.exposure,b?.sourceSha256):'<p class="ratio-key-status">旧快照仅有证券前五，未由同份完整原件重算公司排名；不猜测合并后的前五。</p>';
+    const exposure='<section class="card sharesight-exposure"><h2>All Together · 四类前五</h2>'+companyStatus+groups+'</section>';
+    const rows=a?a.categories.map(c=>'<tr><td>'+esc(c.label)+'</td><td>'+money(c.valueCents)+'</td><td>'+(c.valueCents/a.totalCents*100).toFixed(2)+'%／'+c.targetPct+'%</td></tr>').join(''):'';
+    const alloc=rows?'<table><thead><tr><th>分类</th><th>当前市值</th><th>当前／参考目标</th></tr></thead><tbody>'+rows+'</tbody></table>':'<p>Sharesight 完整分类持仓未取得。</p>';
+    const method='<p>二级市场为前三类以外全部资产，含现金；公司经济敞口只重算分子，不改变四类资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL直接资产价值按2倍替换原贡献；已含杠杆的穿透贡献仅合并、不再乘二。未核实倍数则保留原证券榜并提示。ETF本体与已识别底层不能双计；本规则可版本化扩展，不按相似名称合并。</p><p>管理费仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';
+    const official=b?.browserEvidence?.transport==='official-workbooks';
+    const browserSource=b?.browserEvidence?'<p>来源：'+(official?'Sharesight 官方工作簿导出':'原浏览器快照（非 API）')+' · 资产分类截至 '+esc(b.asOf)+'。'+(b.browserEvidence.integrity==='verified-original-library-association'?(official?'官方工作簿逐行投影与固定Library版本关联已核验；原工作簿哈希保留于受控转换记录。':'原件字节、Library版本、账户范围及逐行关联已在构建时核验。'):'原始全量证据尚未接入本机核验，仅供私密预览，不能作为正式发布来源。')+'</p>'+(official?'<p>分类原件mtime '+esc(b.browserEvidence.classificationCapturedAt)+'；Exposure原件mtime '+esc(b.browserEvidence.exposureCapturedAt)+'；独立下载完成时间未知。未用复制或查看时间刷新来源。</p>':'<p>原下载 '+esc(b.retrievedAt)+'；导出写入 '+esc(b.browserEvidence.exportLastWrittenAt)+'；分类保存 '+esc(b.browserEvidence.classificationSavedAt)+'，未用于改写快照时间。</p>'):'';
+    const source='<p>账户、持仓、现金、分类及 Exposure 均以 Sharesight 记录为准；不读取券商、Flex 或邮件。</p><p>Exposure 估值 '+esc(view.valuationDate)+'；读取 '+esc(view.retrievedAt??'未取得')+'；时间依据 '+esc(view.retrievedAtBasis??'未取得')+'。</p>'+browserSource;
+    const coverage='<p>仅证明原时点开放持仓，不含闭仓／交易历史，不证明未来IB流量；Top500也不代表全ETF底层。</p><p>ETF Residual '+money(Math.round(view.residualUsd*100))+'（占总资产 '+view.residualPortfolioWeightPct.toFixed(2)+'%／占二级 '+view.residualCategoryWeightPct.toFixed(2)+'%）；残余不列作个股。</p><p>Exposure 快照日不是各私募基金的 NAV 日；未取得逐项 NAV 日期时保持未知。</p>'+[...view.limitations,...m.limitations,...(b?.browserEvidence?.limitations||[])].map(x=>'<p>'+esc(x)+'</p>').join('')+(!official&&b?.browserEvidence?.integrity==='verified-original-library-association'?'<p>分类与页面差 '+(b.browserEvidence.classificationDeltaCents/100).toFixed(2)+' USD；Exposure与页面差 '+(b.browserEvidence.exposureDeltaCents/100).toFixed(2)+' USD，保留原差异。</p>':'');
+    const cash='<p>Sharesight IB-HK 账面现金：'+money(ib)+'</p><p>Sharesight NOAH-HK 账面现金：'+money(noah)+'</p><p>账面现金池：'+money(pool)+'</p><p>CALL 原额／50%预留／净规划预算：未取得；账面余额不等于实时购买力。</p><p>EXUS · EIMI · USSC：补仓金额未计算。USSC 的10%仅为原补仓预算参考，不是持仓目标。</p><p>现金类资产：'+(a?esc(a.cashLike.map(c=>c.symbol+' '+money(c.valueCents)).join(' · ')||'本次完整分类来源未见非零项'):'未取得')+'；不默认出售。</p><h3>股票四类配置</h3><p>仅IB-HK 股票范围，与 All Together 分母不同。</p>'+alloc+'<p>成交后投影未计算；没有完整订单证据时，内部风控保持未知。</p>';
+    const status='<p class="ratio-key-status" role="status">预算／资本承诺未核实，未生成可执行补仓金额。'+(!b||b.browserEvidence&&b.browserEvidence.integrity!=='verified-original-library-association'?'完整来源尚未通过本机核验。':'')+(b?.browserEvidence?.migrationPending?'来源转仓尚未核销，保留原账面持仓。':'')+'</p><p class="ratio-key-status">'+esc(view.transferStatus)+'</p>';
+    return '<div class="ratio-report"><p>比例管理 · '+esc({weekly:'周报',monthly:'月报','weekly-monthly':'周报／月报',snapshot:'来源快照'}[m.report.kind])+' · 报告目标 '+esc(m.report.targetDate)+' · 非实时</p><p>Exposure 来源截至 '+esc(view.valuationDate)+(view.valuationDate!==m.report.targetDate?' · 来源尚未覆盖本期':'')+'</p><p>生成 '+esc(m.report.generatedAt)+(m.report.feeAccountingThrough&&m.report.feeAccountingThrough!==m.report.targetDate?' · 管理费账务截至 '+esc(m.report.feeAccountingThrough)+'，两者日期不同':'')+'</p>'+(m.sourceDates?'<p class="ratio-key-status">资产分类截至 '+esc(m.sourceDates.classification)+' · 个股穿透截至 '+esc(m.sourceDates.exposure)+'；各自使用同日来源总额，管理费保持原日期。</p>':'')+overview+status+exposure+detail('计算口径与合并规则',method)+detail('来源日期与核验记录',source)+detail('覆盖范围、残余与缺项',coverage)+detail('现金与补仓参考说明',cash)+'</div>';
   }
   // Authorization is checked before and after crypto; a late async result can
   // never repopulate a locked or switched manager pane.
@@ -2039,6 +2287,7 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   }
   return {SCHEMA,RECIPIENT,ENVELOPE,DOMAIN,canonical,digest,encode,decode,recipientScope,deriveManager,deriveSnapshotManager,validateRecipient,validateModel,validateBinding,publication,validatePublication,seal,open,render:renderRatioModel,controller};
 }
+
 function createRatioSourceCore(hashScope){
 const fail=()=>{throw Error('RATIO_BROWSER_EVIDENCE_REFUSED');};
 const exact=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...k].sort().join(',');
@@ -2054,6 +2303,15 @@ const normalize=s=>String(s).replaceAll('&amp;','&');
 const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
 function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
+  if(raw?.schemaVersion==='sharesight-private-full-v2'){
+    const core=createOfficialRatioSourceCore();
+    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes});
+    if(core.canonical(input)!==core.canonical(built.input)||hashScope(raw.accounts)!==scopeHash)fail();
+    const clock=now.getTime(),captured=time(built.capturedAt);
+    if(!Number.isFinite(clock)||clock<captured||clock-captured>36*3600000
+      ||[raw.classification,raw.exposure].some(s=>time(s.capturedAt)>clock||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)<0||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)>4))fail();
+    return {observedAt:built.capturedAt,asOf:built.targetDate,sourceDates:built.sourceDates,classificationSummary:built.classificationSummary,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0,companyExposure:createFeeCompanyExposureCore().build(raw,input,built.companyContext)};
+  }
   if(!exact(input,['schema','exposure','book'])||input.schema!=='fee-console.ratio-sources.v1'||input.book?.schema!=='fee-console.ratio-sharesight-browser-book.v1')fail();
   const b=input.book,s=input.exposure?.summary,p=b.provenance;
   if(!raw||raw.schemaVersion!=='sharesight-private-full-v1'||raw.source?.provider!=='Sharesight'||raw.source.apiResponse!==false||raw.source.view!=='All Together'||!Array.isArray(raw.accounts)||raw.accounts.length!==10||hashScope(raw.accounts)!==scopeHash||hashScope(s.accounts)!==scopeHash)fail();
@@ -2095,16 +2353,20 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
   const secondaryKeys=s.classes[3].top5.map(r=>key(r));if(new Set(secondaryKeys).size!==5||[...secondary].sort((a,b)=>b[1]-a[1]).slice(0,5).some(([k])=>!secondaryKeys.includes(k)))fail();
   for(const old of s.classes[3].top5){const k=key(old),v=secondary.get(k),ui=known.get(k);if(v===undefined||cents(old.valueUSD)!==cents(v)&&(!ui||cents(ui.originalUIValueUSD)!==cents(old.valueUSD)||cents(ui.exportSumValueUSD)!==cents(v)))fail();}
   if(cents(s.residualETFs.valueUSD)!==cents(e.residualValueUSD)||Math.abs(s.residualETFs.weightTotalPct-e.residualWeightTotalPct)>.0051||Math.abs(s.residualETFs.weightSecondaryClassPct-e.residualWeightSecondaryPct)>.0051||cents(total(e.rows))!==cents(e.exportRowsTotalUSD)||Math.round((total(e.rows)-snap.totalValueUSD)*100)!==Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100)||cents(total([...raw.directPositionsByAccount,...raw.cashAccounts]))!==cents(coverage.directPlusCashRowsValueUSD)||Math.round((total(raw.classTotals)-snap.totalValueUSD)*100)!==Math.round(coverage.directPlusCashRoundingDeltaVersusReportedTotalUSD*100))fail();
-  return {observedAt:new Date(captured).toISOString(),asOf:snap.asOf,migrationPending:raw.transferReconciliation?.receiptConfirmed!==true,classificationDeltaCents:Math.round((total(raw.classTotals)-snap.totalValueUSD)*100),exposureDeltaCents:Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100)};
+  return {observedAt:new Date(captured).toISOString(),asOf:snap.asOf,migrationPending:raw.transferReconciliation?.receiptConfirmed!==true,classificationDeltaCents:Math.round((total(raw.classTotals)-snap.totalValueUSD)*100),exposureDeltaCents:Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100),companyExposure:createFeeCompanyExposureCore().build(raw,input)};
 }
 
 function buildBrowserRatioBook(input,targetDate){
-  if(!exact(input,['schema','source','currency','asOf','retrievedAt','sourceSha256','provenance','ib','noah'])||input.schema!=='fee-console.ratio-sharesight-browser-book.v1'||input.source!=='Sharesight'||input.currency!=='USD'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
+  const official=input?.schema==='fee-console.ratio-sharesight-browser-book.v2';
+  if(!exact(input,['schema','source','currency','asOf','retrievedAt','sourceSha256','provenance','ib','noah'])||!['fee-console.ratio-sharesight-browser-book.v1','fee-console.ratio-sharesight-browser-book.v2'].includes(input.schema)||input.source!=='Sharesight'||input.currency!=='USD'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
   const instant=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)&&Number.isFinite(Date.parse(s));
   const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
   const money=v=>{if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e12||Math.abs(v*100-Math.round(v*100))>0.00001)fail();return Math.round(v*100);};
   const p=input.provenance;
-  if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000||p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
+  if(official){
+    if(!exact(p,['transport','observedAtBasis','classificationCapturedAt','exposureCapturedAt','downloadCompletedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='official-workbooks'||p.observedAtBasis!=='original-download-file-mtime'||p.downloadCompletedAt!==null||![input.retrievedAt,p.classificationCapturedAt,p.exposureCapturedAt].every(instant)||input.retrievedAt!==p.classificationCapturedAt)fail();
+  }else if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000)fail();
+  if(p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
   let holdings=null,allocation=null,ibCashCents=null,noahCashCents=null;
   const ib=input.ib;
   if(ib!==null){
@@ -2129,6 +2391,7 @@ function buildBrowserRatioBook(input,targetDate){
 }
 return {verifyBrowserSourceAssociations,buildBrowserRatioBook};
 }
+
 function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,cryptoImpl=globalThis.crypto){
   const SCHEMA='fee-console.ratio-snapshot.v1',FILE='fee-console-ratio-snapshot.json',MAX=5*1024*1024,accepted=new WeakSet();
   const fail=()=>{throw Error('RATIO_SNAPSHOT_REFUSED');},canonical=ratioCore.canonical,hash=ratioCore.digest;
@@ -2147,18 +2410,26 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
     const source=sourceFactory(accounts=>{if(scope(accounts)!==originalScope)fail();return scopeHash;});
     exposureCore.buildRankedExposureView(input.exposure);
     const facts=source.verifyBrowserSourceAssociations(raw,input,{scopeHash,now});
-    if(canonical(input.exposure)!==canonical(m.exposure)||canonical(source.buildBrowserRatioBook(input.book,m.report.targetDate))!==canonical(normalizeBook(m.book))||m.report.targetDate!==facts.asOf)fail();
+    if(Object.hasOwn(m,'companyExposure')&&canonical(m.companyExposure)!==canonical(facts.companyExposure))fail();
+    const official=input.schema==='fee-console.ratio-sources.v2';
+    if(official&&(canonical(m.sourceDates)!==canonical(facts.sourceDates)||canonical(m.classificationSummary)!==canonical(facts.classificationSummary)))fail();
+    if(canonical(input.exposure)!==canonical(m.exposure)||canonical(source.buildBrowserRatioBook(input.book,official?input.book.asOf:m.report.targetDate))!==canonical(normalizeBook(m.book))||m.report.targetDate!==facts.asOf)fail();
     const association=m.book.browserEvidence;
     if(association.integrity!=='verified-original-library-association'||association.managerScopeId!==r.scopeId||association.sourceVersion!==libraryVersion||['migrationPending','classificationDeltaCents','exposureDeltaCents'].some(k=>association[k]!==facts[k]))fail();
     const capturedAt=facts.observedAt,expiresAt=new Date(Date.parse(capturedAt)+36*3600000).toISOString();
     if(Date.parse(m.report.generatedAt)<Date.parse(capturedAt)||Date.parse(m.report.generatedAt)>now.getTime()||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(facts.asOf))/86400000)>4)fail();
-    const evidence={provider:'Sharesight',kind:'complete-original-browser-association',asOf:facts.asOf,capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};
+    const evidence={provider:'Sharesight',kind:official?'complete-official-workbook-association':'complete-original-browser-association',asOf:facts.asOf,...(official?{sourceDates:structuredClone(facts.sourceDates)}:{}),capturedAt,expiresAt,sourceSha256,inputSha256,scopeHash,libraryVersion,modelSha256:await hash(m)};
     Object.freeze(evidence);const proof=Object.freeze({evidence,recipientId:r.recipientId,scopeId:r.scopeId,checkedAt:now.toISOString()});accepted.add(proof);return proof;
   }
-  function fresh(source,now){const n=now.getTime();if(!Number.isFinite(n)||n<Date.parse(source.capturedAt)||n>Date.parse(source.expiresAt)||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(source.asOf))/86400000)>4)fail();}
+  const sourceDates=s=>s.kind==='complete-official-workbook-association'?Object.values(s.sourceDates):[s.asOf];
+  const recent=(s,at)=>sourceDates(s).every(d=>{const age=Math.floor((Date.parse(at.slice(0,10))-Date.parse(d))/86400000);return age>=0&&age<=4;});
+  function fresh(source,now){const n=now.getTime();if(!Number.isFinite(n)||n<Date.parse(source.capturedAt)||n>Date.parse(source.expiresAt)||!recent(source,now.toISOString()))fail();}
   async function bodyCheck(body){
     if(!exact(body,['schema','version','previousSnapshotId','recipientId','scopeId','source','envelope'])||body.schema!==SCHEMA||!Number.isSafeInteger(body.version)||body.version<1||!(body.previousSnapshotId===null||hex(body.previousSnapshotId))||!hex(body.recipientId)||!hex(body.scopeId))fail();
-    const s=body.source;if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256'])||s.provider!=='Sharesight'||s.kind!=='complete-original-browser-association'||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();
+    const s=body.source,official=s?.kind==='complete-official-workbook-association';
+    const date=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
+    if(!exact(s,['provider','kind','asOf','capturedAt','expiresAt','sourceSha256','inputSha256','scopeHash','libraryVersion','modelSha256',...(official?['sourceDates']:[])])||s.provider!=='Sharesight'||!['complete-original-browser-association','complete-official-workbook-association'].includes(s.kind)||!date(s.asOf)||!iso(s.capturedAt)||!iso(s.expiresAt)||Date.parse(s.expiresAt)-Date.parse(s.capturedAt)!==36*3600000||![s.sourceSha256,s.inputSha256,s.scopeHash,s.modelSha256].every(hex)||s.scopeHash!==exposureCore.ALL_TOGETHER_SCOPE_SHA256||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();
+    if(official&&(!exact(s.sourceDates,['classification','exposure'])||!Object.values(s.sourceDates).every(date)||s.sourceDates.classification>s.sourceDates.exposure||s.sourceDates.exposure!==s.asOf))fail();
     const e=body.envelope;ratioCore.validateBinding(e?.binding);
     if(e.scopeId!==body.scopeId||e.recipientId!==body.recipientId||e.binding.feeReceiptId!==null||e.binding.sourceDate!==s.asOf||e.binding.feeAsOf!==s.asOf)fail();
     if(body.version===1?body.previousSnapshotId!==null:body.previousSnapshotId===null)fail();
@@ -2177,7 +2448,7 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
     if(!exact(packet,['body','authentication'])||packet.authentication!==null||!accepted.has(proof)||!hex(profileSha256)||!manager?.authenticationKey||manager.authenticationKey.extractable!==false)fail();
     const b=await bodyCheck(packet.body);fresh(b.source,now);
     if(canonical(b.source)!==canonical(proof.evidence)||proof.recipientId!==b.recipientId||proof.scopeId!==b.scopeId||manager.recipient.recipientId!==b.recipientId||manager.recipient.scopeId!==b.scopeId||await hash(await ratioCore.open(b.envelope,manager))!==b.source.modelSha256)fail();
-    if(previous){await verify(previous,manager,{now});if(b.version!==previous.body.version+1||b.previousSnapshotId!==await hash(previous.body)||b.envelope.binding.previousCipherSha256!==await hash(previous.body.envelope)||b.source.asOf<previous.body.source.asOf||b.source.capturedAt<previous.body.source.capturedAt)fail();}
+    if(previous){await verify(previous,manager,{now});const prior=previous.body.source;if(b.version!==previous.body.version+1||b.previousSnapshotId!==await hash(previous.body)||b.envelope.binding.previousCipherSha256!==await hash(previous.body.envelope)||b.source.asOf<prior.asOf||b.source.capturedAt<prior.capturedAt||(b.source.sourceDates?.classification||b.source.asOf)<(prior.sourceDates?.classification||prior.asOf))fail();}
     else if(b.version!==1||b.previousSnapshotId!==null||b.envelope.binding.previousCipherSha256!==null)fail();
     const auth={schema:'fee-console.ratio-snapshot-manager-auth.v1',confirmedAt:now.toISOString(),profileSha256,bodySha256:await hash(b)};
     const mac=ratioCore.encode(new Uint8Array(await cryptoImpl.subtle.sign('HMAC',manager.authenticationKey,encode(canonical(auth)))));
@@ -2185,11 +2456,12 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
   }
   async function verify(packet,manager,{watermark=null,now=new Date()}={}){
     if(!exact(packet,['body','authentication']))fail();const b=await bodyCheck(packet.body),a=packet.authentication;
-    if(!exact(a,['schema','confirmedAt','profileSha256','bodySha256','mac'])||a.schema!=='fee-console.ratio-snapshot-manager-auth.v1'||!iso(a.confirmedAt)||!hex(a.profileSha256)||a.bodySha256!==await hash(b)||Date.parse(a.confirmedAt)<Date.parse(b.source.capturedAt)||Date.parse(a.confirmedAt)>Date.parse(b.source.expiresAt)||Date.parse(a.confirmedAt)>now.getTime()||Math.floor((Date.parse(a.confirmedAt.slice(0,10))-Date.parse(b.source.asOf))/86400000)>4||b.recipientId!==manager.recipient.recipientId||b.scopeId!==manager.recipient.scopeId||!manager.authenticationKey)fail();
+    if(!exact(a,['schema','confirmedAt','profileSha256','bodySha256','mac'])||a.schema!=='fee-console.ratio-snapshot-manager-auth.v1'||!iso(a.confirmedAt)||!hex(a.profileSha256)||a.bodySha256!==await hash(b)||Date.parse(a.confirmedAt)<Date.parse(b.source.capturedAt)||Date.parse(a.confirmedAt)>Date.parse(b.source.expiresAt)||Date.parse(a.confirmedAt)>now.getTime()||!recent(b.source,a.confirmedAt)||b.recipientId!==manager.recipient.recipientId||b.scopeId!==manager.recipient.scopeId||!manager.authenticationKey)fail();
     const {mac,...auth}=a;if(!await cryptoImpl.subtle.verify('HMAC',manager.authenticationKey,ratioCore.decode(mac),encode(canonical(auth))))fail();
     const model=await ratioCore.open(b.envelope,manager);if(model.report.kind!=='snapshot'||model.report.feeAccountingThrough!==null||await hash(model)!==b.source.modelSha256)fail();
-    const id=await hash(b),value={version:b.version,id,sourceDate:b.source.asOf,capturedAt:b.source.capturedAt};
-    if(watermark&&(!exact(watermark,['version','id','sourceDate','capturedAt'])||!Number.isSafeInteger(watermark.version)||watermark.version<1||!hex(watermark.id)||!iso(watermark.capturedAt)||typeof watermark.sourceDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(watermark.sourceDate)||b.version<watermark.version||b.version===watermark.version&&id!==watermark.id||value.sourceDate<watermark.sourceDate||value.capturedAt<watermark.capturedAt))fail();
+    if(b.source.kind==='complete-official-workbook-association'?(model.schema!=='fee-console.ratio-view.v2'||canonical(model.sourceDates)!==canonical(b.source.sourceDates)):model.schema==='fee-console.ratio-view.v2')fail();
+    const id=await hash(b),value={version:b.version,id,sourceDate:b.source.asOf,capturedAt:b.source.capturedAt,...(b.source.sourceDates?{sourceDates:structuredClone(b.source.sourceDates)}:{})};
+    if(watermark&&(!exact(watermark,['version','id','sourceDate','capturedAt',...(Object.hasOwn(watermark,'sourceDates')?['sourceDates']:[])])||!Number.isSafeInteger(watermark.version)||watermark.version<1||!hex(watermark.id)||!iso(watermark.capturedAt)||typeof watermark.sourceDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(watermark.sourceDate)||watermark.sourceDates&&(!exact(watermark.sourceDates,['classification','exposure'])||Object.values(watermark.sourceDates).some(d=>typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d))||watermark.sourceDates.classification>watermark.sourceDates.exposure||watermark.sourceDates.exposure!==watermark.sourceDate)||b.version<watermark.version||b.version===watermark.version&&id!==watermark.id||value.sourceDate<watermark.sourceDate||value.capturedAt<watermark.capturedAt||(value.sourceDates?.classification||value.sourceDate)<(watermark.sourceDates?.classification||watermark.sourceDate)))fail();
     return {model,watermark:value,stale:now.getTime()>Date.parse(b.source.expiresAt),source:structuredClone(b.source),confirmedAt:a.confirmedAt};
   }
   return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
@@ -2221,30 +2493,12 @@ function styleRatioReport(root){
     assets.append(item);
   }
   overview.insertBefore(assets,overview.lastElementChild);
-  // Keep source dates and all twenty dual-denominator rows together immediately after the overview.
-  overview.after(exposure);
+  // Source dates and pending/unknown status precede rankings in the render order.
+  // Leave those visible status paragraphs in place; do not lift rankings above them.
   const groups=make('div','ratio-exposure-grid');
   for(const group of direct(exposure,'SECTION'))groups.append(group);
   const coverage=direct(exposure,'DETAILS')[0];
   exposure.insertBefore(groups,coverage||null);
-  if(coverage){
-    const visible=make('div','ratio-coverage'),list=make('ul','ratio-coverage-list');
-    // Residual, source limitations and reconciliation status remain visible; only method notes fold.
-    Array.from(coverage.querySelectorAll('li')).forEach((n,i)=>{if(i===1||i>=3)list.append(n);});
-    visible.append(list);exposure.insertBefore(visible,coverage);
-  }
-  const sections=direct(report,'SECTION'),find=title=>sections.find(s=>s.querySelector('h2')?.textContent===title);
-  const plan=find('本轮补仓'),cash=find('现金优先补仓参考'),holdings=find('IB-HK 完整持仓');
-  if(plan&&cash){const grid=make('div','ratio-plan-grid');report.insertBefore(grid,plan);grid.append(plan,cash);}
-  if(holdings)holdings.classList.add('ratio-holdings');
-  const notes=direct(report,'P');
-  if(notes.length){const source=make('section','card ratio-source-note'),title=make('h2');title.textContent='原时点来源记录';report.insertBefore(source,notes[0]);source.append(title,...notes);}
-  const scope=direct(report,'DETAILS')[0];
-  if(scope){
-    const warnings=make('div','ratio-caveats'),paragraphs=direct(scope,'P');
-    paragraphs.forEach((n,i)=>{if(i!==2)warnings.append(n);});
-    report.insertBefore(warnings,scope);
-  }
   report.classList.add('ratio-styled');
 }
 /* ratio-presentation:v1:end */
@@ -2379,7 +2633,7 @@ async function renderIndependentRatio(){
     const result=await ratioSnapshotCore.verify(packet,manager,{watermark});check();if(!store)throw Error();
     store.setItem(key,JSON.stringify(result.watermark));document.getElementById('ratioContent').innerHTML=ratioCore.render(result.model);
     if(typeof styleRatioReport==='function')styleRatioReport(document.getElementById('ratioContent'));
-    notice.textContent='管理人独立比例快照 · 来源截至 '+result.source.asOf+' · '+(result.stale?'待更新（显示已核验历史快照）':'已核验')+' · 非实时；管理费报告日期独立，未改原账本。';
+    notice.textContent='管理人独立比例快照 · '+(result.source.sourceDates?'资产分类截至 '+result.source.sourceDates.classification+' · 个股穿透截至 '+result.source.sourceDates.exposure:'来源截至 '+result.source.asOf)+' · '+(result.stale?'待更新（显示已核验历史快照）':'已核验')+' · 非实时；管理费报告日期独立，未改原账本。';
     clearTimeout(_ratioExpiry);_ratioExpiry=setTimeout(()=>{clearRatioManagement();notice.textContent='管理人查看已锁定，请重新打开比例管理核验。';},RATIO_SESSION_MS);return true;
   }catch{if(ticket===_ratioTicket){document.getElementById('ratioContent').replaceChildren();notice.textContent='独立比例文件或管理人核验失败，未显示旧内容。';}return true;}
 }
@@ -2403,7 +2657,7 @@ async function previewRatioSnapshot(event){
     if(ratioCore.canonical(proof.evidence)!==ratioCore.canonical(s))throw Error();
     const priorRaw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE),prior=priorRaw===null?null:ratioSnapshotParse(priorRaw);
     if(prior?packet.body.version!==prior.body.version+1||packet.body.previousSnapshotId!==await ratioCore.digest(prior.body):packet.body.version!==1||packet.body.previousSnapshotId!==null)throw Error();
-    const profileSha256=await ratioCore.digest([createRatioSnapshotCore.toString(),createRatioSourceCore.toString(),createFeeRatioCore.toString(),createRankedExposureCore.toString()]);check();
+    const profileSha256=await ratioCore.digest([createOfficialRatioSourceCore.toString(),createFeeCompanyExposureCore.toString(),createRatioSnapshotCore.toString(),createRatioSourceCore.toString(),createFeeRatioCore.toString(),createRankedExposureCore.toString()]);check();
     const summary='仅写入同一私密 Gist 的 '+RATIO_SNAPSHOT_FILE+'；版本 '+packet.body.version+'；来源截至 '+s.asOf+'；原采集 '+s.capturedAt+'；原证据到期 '+s.expiresAt+'；接收指纹 '+manager.recipient.recipientId+'；scope '+manager.recipient.scopeId+'；原件 SHA256 '+s.sourceSha256+'；模型 SHA256 '+s.modelSha256+'。使用现有管理人凭据派生仅在内存的认证子密钥，不修改管理费 data/health 或原账本；五分钟有效。';
     _ratioSnapshotReview={ticket,who,gid,createdAt,packet,proof,prior,priorRaw,revision:gist.history[0].version,profileSha256,summary};
     document.getElementById('ratioSnapshotSummary').textContent=summary;document.getElementById('ratioSnapshotReview').hidden=false;document.getElementById('ratioSnapshotConfirm').disabled=false;
