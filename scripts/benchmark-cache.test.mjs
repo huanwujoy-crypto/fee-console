@@ -651,3 +651,65 @@ test('same-target cache cannot mask missing dividend evidence during a correctio
   await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl }), /source pending/);
   assert.equal(await readFile(path, 'utf8'), bytes);
 });
+
+test('explicit numeric zero dividends in retained and incoming rows normalize to absence', () => {
+  const existing = priorCache();
+  for (const key of ['spy', 'qqq']) existing.benchmarks[key].series[0].div = 0;
+  const merged = mergePrices(existing, {
+    spy: [{ d: '2026-10-14', p: 103, div: 0 }],
+    qqq: [{ d: '2026-10-14', p: 103, div: -0 }],
+  }, RECOVERY_NOW);
+  for (const key of ['spy', 'qqq']) {
+    assert.equal(merged.benchmarks[key].series.length, 2);
+    for (const row of merged.benchmarks[key].series) assert.equal(Object.hasOwn(row, 'div'), false);
+  }
+});
+
+test('invalid dividends cannot become zero in retained or incoming cache rows', () => {
+  for (const div of [-0.01, NaN, Infinity, -Infinity, null, '', '0', false, {}]) {
+    const existing = priorCache();
+    existing.benchmarks.spy.series[0].div = div;
+    assert.throws(() => mergePrices(existing, {}, RECOVERY_NOW), /Malformed benchmark dividend/);
+    assert.throws(() => mergePrices(priorCache(), {
+      spy: [{ d: '2026-10-14', p: 103, div }],
+    }, RECOVERY_NOW), /Malformed benchmark dividend/);
+  }
+});
+
+test('zero correction never erases a verified positive gross dividend', () => {
+  const existing = priorCache();
+  existing.benchmarks.spy.series[0].div = 0.75;
+  const merged = mergePrices(existing, {
+    spy: [{ d: '2026-10-13', p: 101, div: 0 }],
+    qqq: [{ d: '2026-10-14', p: 103, div: 0.5 }],
+  }, RECOVERY_NOW);
+  assert.deepEqual(merged.benchmarks.spy.series[0], { d: '2026-10-13', p: 101, div: 0.75 });
+  assert.deepEqual(merged.benchmarks.qqq.series.at(-1), { d: '2026-10-14', p: 103, div: 0.5 });
+});
+
+test('full refresh accepts explicit zero history and is byte-idempotent after normalization', async t => {
+  const existing = priorCache();
+  for (const key of ['spy', 'qqq']) existing.benchmarks[key].series[0].div = 0;
+  const { path } = await offlineCache(t, existing);
+  const source = recoveryFetch();
+  const first = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+  assert.equal(first.changed, true);
+  for (const key of ['spy', 'qqq']) for (const row of first.cache.benchmarks[key].series) {
+    assert.equal(Object.hasOwn(row, 'div'), false);
+  }
+  const bytes = await readFile(path, 'utf8');
+  const second = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+  assert.equal(second.changed, false);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+test('zero history never hides a failed source or causes a partial cache rewrite', async t => {
+  for (const failedSymbol of ['SPY', 'QQQ']) {
+    const existing = priorCache();
+    for (const key of ['spy', 'qqq']) existing.benchmarks[key].series[0].div = 0;
+    const { path, bytes } = await offlineCache(t, existing);
+    const source = recoveryFetch({ failedSymbol });
+    await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /Benchmark latest-date mismatch/);
+    assert.equal(await readFile(path, 'utf8'), bytes);
+  }
+});
