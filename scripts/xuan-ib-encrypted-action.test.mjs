@@ -1,6 +1,8 @@
 // All keys, dates, report content and receipts below are synthetic, never live.
 import test from 'node:test';
-import './fee-ratio-official-source.test.mjs';
+// Explicit offline guard; no loader flags enter the private staging tests.
+globalThis.fetch=async()=>{throw Error('OFFLINE_TEST_NETWORK_FORBIDDEN');};
+import {syntheticOfficialSource} from './fee-ratio-official-source.test.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -382,10 +384,11 @@ if(process.env.GITHUB_ACTIONS==='true'&&process.env.FEE_RATIO_TEST_UI_PATH)throw
 const ratioUiHash=s=>ratioCrypto.createHash('sha256').update(s).digest('hex');
 const ratioUiStagesBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-ui-stages-v1.json',import.meta.url));
 function reviewedRatioUiFixture(bytes){
-  assert.equal(ratioUiHash(bytes),'72f1076dc9bc30aa1053fdad3abc536769a94682f7c97df5e3cbc17f46b55393','unreviewed ratio code fixture');
-  const f=JSON.parse(bytes);assert.deepEqual(Object.keys(f).sort(),['schema','priorIndexSha256','nextIndexSha256','regions'].sort());
-  assert.equal(f.schema,'fee-console.ratio-ui-stages.v1');assert.equal(f.priorIndexSha256,'de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d');assert.equal(f.nextIndexSha256,'abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34');
-  assert.deepEqual(Object.keys(f.regions).sort(),['buildMeta','manager','presentationCss','versionLabel']);
+  assert.equal(ratioUiHash(bytes),'0b7be025ba530a040375aa707f70d30a90dee92deb587471c940b1b6aa93d055','unreviewed ratio code fixture');
+  const f=JSON.parse(bytes);assert.deepEqual(Object.keys(f).sort(),['schema','priorIndexSha256','nextIndexSha256','regions','legacyManager','legacyManagerSha256'].sort());
+  assert.equal(f.legacyManagerSha256,'947c17804148a3ce7b15228ba86b61a5e457ef7416c56d1ae77426dbe6295f36');assert.equal(ratioUiHash(f.legacyManager),f.legacyManagerSha256);
+  assert.equal(f.schema,'fee-console.ratio-ui-stages.v1');assert.equal(f.priorIndexSha256,'abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34');assert.equal(f.nextIndexSha256,'46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61');
+  assert.deepEqual(Object.keys(f.regions).sort(),['buildMeta','manager','presentationCss','readbackRouting','versionLabel']);
   for(const r of Object.values(f.regions)){
     assert.deepEqual(Object.keys(r).sort(),['start','end','includeEnd','prior','next','priorSha256','nextSha256'].sort());
     for(const stage of ['prior','next'])assert.equal(ratioUiHash(r[stage]),r[stage+'Sha256']);
@@ -585,7 +588,7 @@ async function independentFixture(t){
   return {...f,manager,snapshot,model,args,proof,packet,options};
 }
 test('staged ratio upgrade reads authenticated prior snapshots honestly; old codec refuses company data and replay',async t=>{
-  const f=await independentFixture(t),prior=ratioUiStages.regions.manager.prior;
+  const f=await independentFixture(t),prior=ratioUiStages.legacyManager;
   const factory=(name,end)=>{
     const a=prior.indexOf('function '+name+'('),b=prior.indexOf(end,a);assert.ok(a>=0&&b>a);
     // Only the exact hash-pinned public code fixture is evaluated, never source
@@ -812,3 +815,139 @@ test('review r2: multiple accounts stay separate during ETF asset matching; dupl
   const repeatedAsset=structuredClone(f.raw);repeatedAsset.directPositionsByAccount.push({...repeatedAsset.directPositionsByAccount[0]});assert.equal(f.view(f.core.build(repeatedAsset,f.input)).state,'pending-source-basis');
   const parent=companyFixture([['VSTL','NASDAQ',50,'Direct',null,{instrumentType:'ETF'}],['VST','NYSE',100,'Underlying','VSTL.NASDAQ'],['VSTL','NASDAQ',-50,'Residual']],{directPositionsByAccount:[asset('Invented scope 0',50)]});assert.equal(parent.view(parent.build()).top[0].valueUsd,100);parent.raw.exposure.rows.push({...parent.raw.exposure.rows[0],sourceRow:4});assert.equal(parent.view(parent.build()).state,'pending-source-basis');
 });
+
+// Read-only snapshot outcome recovery. Pure synthetic full authentication tests.
+{
+const crypto=ratioCrypto,html=unifiedUiSource,hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+function fn(name){let start=html.indexOf('async function '+name+'(');if(start<0)start=html.indexOf('function '+name+'(');assert.ok(start>=0);return html.slice(start,html.indexOf('\n}\n',start)+2);}
+async function fixture(t){
+ const raw=syntheticOfficialSource(),bytes=Buffer.from(JSON.stringify(raw)),sha=hash(bytes),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha,sourceBytes:bytes.length}),scope=hash(JSON.stringify([...raw.accounts].sort()));
+ const exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope},ratio=createFeeRatioCore(exposure,crypto.webcrypto),now=new Date('2026-10-30T06:00:00.000Z');
+ const gid='0'.repeat(32),key=Buffer.alloc(32,7).toString('base64url'),token='synthetic-manager-token-not-real-123',manager=await ratio.deriveSnapshotManager(gid,key,token);
+ const dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-readback-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const write=(name,v)=>{const b=Buffer.isBuffer(v)?v:Buffer.from(JSON.stringify(v)),p=path.join(dir,name);fs.writeFileSync(p,b,{mode:0o600});return {path:p,sha256:hash(b)};};
+ const plan={schema:'fee-console.ratio-browser-evidence-plan.v1',workspace:dir,source:write('original.json',bytes),input:write('input.json',built.input),library:{libraryFileId:'libfile_'+'9'.repeat(32),version:0},managerScopeId:manager.recipient.scopeId,localOwnerUid:process.getuid()};
+ const evidence=readVerifiedBrowserEvidence({planPath:write('plan.json',plan).path,expectedScopeId:manager.recipient.scopeId,input:built.input,now,runtime:{uid:process.getuid(),readIdentity:()=>plan.library},exposureCore:exposure});
+ const model=await buildRatioModel(built.input,{kind:'snapshot',targetDate:'2026-10-30',browserEvidence:evidence,managerScopeId:manager.recipient.scopeId,viewCore:ratio,now});
+ const snapshot=createRatioSnapshotCore(ratio,exposure,createRatioSourceCore,b=>JSON.parse(Buffer.from(b)),crypto.webcrypto);
+ const proof=await snapshot.verifyOriginal({originalBytes:new Uint8Array(bytes),inputBytes:new Uint8Array(fs.readFileSync(plan.input.path)),model,recipient:manager.recipient,sourceSha256:sha,inputSha256:plan.input.sha256,libraryVersion:0,now});
+ const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,now}),signed=await snapshot.authenticate(candidate,proof,manager,{profileSha256:'a'.repeat(64),now});
+ const next=async()=>{const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,previous:signed,now});return {candidate,signed:await snapshot.authenticate(candidate,proof,manager,{previous:signed,profileSha256:'a'.repeat(64),now})};};
+ return {ratio,snapshot,candidate,signed,manager,gid,key,token,now,next};
+}
+function harness(f,{pending=false,candidate=true,authorized=true,changedPending=false,truncated=false,mutate,watermark,networkError=false,rawEdit,fetchEdit,at=f.now,identityDrift=false}={}){
+ const revision='a'.repeat(40),raw=JSON.stringify(f.signed),size=Buffer.byteLength(raw),url=`https://gist.githubusercontent.com/synthetic-owner/${f.gid}/raw/${revision}/fee-console-ratio-snapshot.json`;
+ const gist={public:false,owner:{id:123,login:'synthetic-owner'},history:[{version:revision}],files:{'fee-console-ratio-snapshot.json':{filename:'fee-console-ratio-snapshot.json',size,raw_url:url,content:truncated?raw.slice(0,10):raw,truncated},'fee-console-ratio-recipient.json':{content:JSON.stringify(f.manager.recipient),truncated:false}}};
+ mutate?.(gist);const elements=new Map(),stored=new Map(),requests=[],fetches=[];if(watermark)stored.set('feeConsole.ratioSnapshotWatermark.'+f.manager.recipient.recipientId,JSON.stringify(watermark));
+ const settings={gid:f.gid,key:f.key,tok:f.token},state={identity:'SYNTHETIC_WHO',authorized};
+ const c={URL,AbortController,Uint8Array,TextDecoder,TextEncoder,JSON,Number,Error,Date,structuredClone,state,stored,requests,fetches,settings,renderCalls:0,timers:[],rawFetchCount:0};
+ c.document={getElementById:id=>{if(!elements.has(id))elements.set(id,{textContent:'',innerHTML:'',replaceChildren(){this.innerHTML='';},classList:{contains:()=>true}});return elements.get(id);}};
+ c.element=id=>c.document.getElementById(id);c.cfg=k=>Object.hasOwn(settings,k)?settings[k]:(stored.get(k)||'');c.K={gid:'gid',key:'key',tok:'tok'};
+ c.ratioAuthorized=()=>state.authorized;c.ratioIdentity=()=>state.identity;c.verifyRatioCapabilityNow=async()=>true;
+ c._managerCapability={ownerId:123,ownerLogin:'synthetic-owner'};c._ratioSnapshotUnknown=pending?{gid:f.gid,who:changedPending?'OLD_WHO':state.identity,raw}:null;
+ c._ratioSnapshotFiles=candidate?{candidate:{size:Buffer.byteLength(JSON.stringify(f.candidate)),text:async()=>JSON.stringify(f.candidate)}}:{};
+ c._ratioExpiry=null;c._ratioTicket=0;c._ratioController=null;c._ratioLastEnvelope=null;c._ratioPreview=null;c.clearRatioRecipientPreview=()=>{};c.clearRatioSnapshotReview=()=>{};c.RATIO_SESSION_MS=600000;c.RATIO_SNAPSHOT_FILE='fee-console-ratio-snapshot.json';c.RATIO_RECIPIENT_FILE='fee-console-ratio-recipient.json';
+ c.ratioCore={...f.ratio,render:model=>{c.renderCalls++;return f.ratio.render(model);}};c.ratioSnapshotCore={...f.snapshot,verify:(packet,manager,opt)=>f.snapshot.verify(packet,manager,{...opt,now:at})};c.ratioSnapshotParse=JSON.parse;
+ c.store={setItem:(k,v)=>stored.set(k,v)};c.setTimeout=(_,ms)=>{c.timers.push(ms);return 123;};c.clearTimeout=()=>{};c.clearRatioManagement=()=>{};
+ c.ghApi=async(route,opt)=>{assert.equal(opt,undefined,'readback may only GET');assert.equal(route,'/gists/'+f.gid);requests.push(route);if(networkError)throw Error('SYNTHETIC_NETWORK_FAILURE');if(identityDrift)state.identity='CHANGED_DURING_READ';return gist;};
+ c.freshFetch=async(received,opt)=>{fetches.push({url:received,opt});assert.equal(received,url);assert.equal(opt.credentials,'omit');assert.equal(opt.redirect,'error');assert.equal(opt.referrerPolicy,'no-referrer');assert.equal(opt.cache,'no-store');assert.equal(opt.headers,undefined);assert.equal(opt.method,undefined);assert.ok(opt.signal instanceof AbortSignal);let bytes=new TextEncoder().encode(raw);if(rawEdit)bytes=rawEdit(bytes);const r=new Response(bytes,{status:200});Object.defineProperty(r,'url',{value:url});fetchEdit?.(r);return r;};
+ vm.createContext(c);vm.runInContext([fn('ratioSnapshotGist'),html.split('\n').find(l=>l.startsWith('function ratioSnapshotFile(')),fn('readRatioSnapshotFile'),fn('readCurrentRatioSnapshot'),fn('showCurrentRatioSnapshot'),fn('checkRatioSnapshotOutcome'),fn('renderIndependentRatio'),fn('clearRatioManagement'),'this.run=checkRatioSnapshotOutcome;this.view=renderIndependentRatio;this.close=clearRatioManagement;'].join('\n'),c);return c;
+}
+
+test('independent readback authenticates and matches the original candidate after pending memory is lost',async t=>{
+ const f=await fixture(t),c=harness(f);assert.equal(await c.run({isTrusted:true}),true);assert.equal(c.requests.length,1);assert.equal(c.fetches.length,0);assert.equal(c.renderCalls,1);
+ assert.match(c.element('ratioSnapshotStatus').textContent,/原候选 body 指纹一致/);assert.match(c.element('ratioSnapshotStatus').textContent,new RegExp(await f.ratio.digest(f.candidate.body)));
+ assert.equal(c.stored.size,1);assert.match(c.element('ratioNotice').textContent,/分类截至 2026-10-29 · 个股穿透截至 2026-10-30/);
+});
+test('without a candidate the authenticated current fingerprint is displayed without claiming original-write confirmation',async t=>{
+ const c=harness(await fixture(t),{candidate:false});assert.equal(await c.run({isTrusted:true}),true);assert.match(c.element('ratioSnapshotStatus').textContent,/未提供原候选，原投递仍需按指纹比对/);assert.equal(c.requests.length,1);
+});
+test('stale pending identity does not prevent a fresh authenticated read, but is never cleared by re-binding',async t=>{
+ const c=harness(await fixture(t),{pending:true,changedPending:true});assert.equal(await c.run({isTrusted:true}),true);assert.ok(c._ratioSnapshotUnknown);assert.match(c.element('ratioSnapshotStatus').textContent,/原候选 body 指纹一致/);
+});
+test('only exact same-identity authenticated raw readback clears the original pending object',async t=>{
+ const c=harness(await fixture(t),{pending:true,candidate:false});assert.equal(await c.run({isTrusted:true}),true);assert.equal(c._ratioSnapshotUnknown,null);
+});
+test('unauthorized and untrusted requests perform no service or raw reads',async t=>{
+ const f=await fixture(t);for(const [opts,event] of [[{authorized:false},{isTrusted:true}],[{},{isTrusted:false}]]){const c=harness(f,opts);assert.equal(await c.run(event),false);assert.equal(c.requests.length,0);assert.equal(c.fetches.length,0);assert.equal(c.stored.size,0);}
+});
+test('wrong owner, public destination, recipient and invalid revision fail closed',async t=>{
+ const f=await fixture(t);for(const mutate of [g=>g.public=true,g=>g.owner.id=456,g=>g.owner.login='other-owner',g=>g.history[0].version='bad',g=>g.files['fee-console-ratio-recipient.json'].content=JSON.stringify({...f.manager.recipient,scopeId:'b'.repeat(64)})]){const c=harness(f,{mutate});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);}
+});
+test('a body fingerprint match cannot substitute for a valid snapshot MAC or date/source binding',async t=>{
+ const f=await fixture(t);for(const edit of [p=>p.authentication.mac='invalid',p=>p.body.source.sourceDates.classification='2026-10-30',p=>p.authentication.profileSha256='not-a-hash']){const c=harness(f,{mutate:g=>{const p=structuredClone(f.signed);edit(p);g.files['fee-console-ratio-snapshot.json'].content=JSON.stringify(p);}});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);}
+});
+test('higher-version and same-version different-id watermarks reject replay without clearing or rewriting the watermark',async t=>{
+ const f=await fixture(t),good=await f.snapshot.verify(f.signed,f.manager,{now:f.now});for(const watermark of [{...good.watermark,version:2},{...good.watermark,id:'b'.repeat(64)}]){const c=harness(f,{watermark}),before=[...c.stored.values()];assert.equal(await c.run({isTrusted:true}),false);assert.deepEqual([...c.stored.values()],before);assert.equal(c.renderCalls,0);}
+});
+test('different original candidate body stays explicitly unconfirmed despite a valid current packet',async t=>{
+ const f=await fixture(t),c=harness(f);const other=structuredClone(f.candidate);other.body.envelope.binding.revision=crypto.randomUUID();c._ratioSnapshotFiles.candidate.text=async()=>JSON.stringify(other);
+ assert.equal(await c.run({isTrusted:true}),false);assert.match(c.element('ratioSnapshotStatus').textContent,/与原候选 body 指纹不一致/);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);
+});
+test('identity changes during an awaited read reject before rendering or storage',async t=>{
+ const c=harness(await fixture(t),{identityDrift:true});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);
+});
+test('the expired source remains labelled historical, without weakening its original authentication',async t=>{
+ const c=harness(await fixture(t),{at:new Date('2026-11-03T00:00:00.000Z')});assert.equal(await c.run({isTrusted:true}),true);assert.match(c.element('ratioSnapshotStatus').textContent,/已过期历史来源/);assert.match(c.element('ratioNotice').textContent,/待更新/);
+});
+test('truncated exact-service bytes are bounded, authenticated and rendered through both entry points',async t=>{
+ const f=await fixture(t);for(const entry of ['run','view']){const c=harness(f,{truncated:true});assert.equal(await c[entry]({isTrusted:true}),true);assert.equal(c.fetches.length,1);assert.ok(c.timers.includes(15000));assert.equal(c.renderCalls,1);assert.equal(c.stored.size,1);}
+});
+test('raw URL pinning rejects other destinations, revision, filename, credentials, query and fragment before fetch',async t=>{
+ const f=await fixture(t);for(const edit of [u=>u.protocol='http:',u=>u.hostname='example.com',u=>u.port='444',u=>u.username='user',u=>u.password='secret-not-real',u=>u.search='?token=synthetic',u=>u.hash='#synthetic',u=>u.pathname=u.pathname.replace('/synthetic-owner/','/other-owner/'),u=>u.pathname=u.pathname.replace('/'+f.gid+'/', '/'+'1'.repeat(32)+'/'),u=>u.pathname=u.pathname.replace('/'+'a'.repeat(40)+'/', '/'+'b'.repeat(40)+'/'),u=>u.pathname=u.pathname.replace('snapshot.json','other.json')]){const c=harness(f,{truncated:true,mutate:g=>{const u=new URL(g.files['fee-console-ratio-snapshot.json'].raw_url);edit(u);g.files['fee-console-ratio-snapshot.json'].raw_url=u.href;}});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);assert.equal(c.stored.size,0);}
+});
+test('invalid or oversized size and wrong filename reject before any raw read',async t=>{
+ const f=await fixture(t);for(const edit of [s=>s.size=0,s=>s.size=5*1024*1024+1,s=>s.size=1.1,s=>s.size='100',s=>s.filename='other.json']){const c=harness(f,{truncated:true,mutate:g=>edit(g.files['fee-console-ratio-snapshot.json'])});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);}
+});
+test('short, long, invalid UTF-8, redirected, or wrong-response URL bodies stay unconfirmed',async t=>{
+ const f=await fixture(t);for(const options of [{rawEdit:b=>b.slice(0,-1)},{rawEdit:b=>new Uint8Array([...b,1])},{rawEdit:b=>{const a=new Uint8Array(b);a[0]=255;return a;}},{fetchEdit:r=>Object.defineProperty(r,'redirected',{value:true})},{fetchEdit:r=>Object.defineProperty(r,'url',{value:'https://example.com/'})}]){const c=harness(f,{truncated:true,...options});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);}
+});
+test('read errors never trigger a retry, write, new candidate, signing, ledger or funds endpoint',async t=>{
+ const c=harness(await fixture(t),{networkError:true,pending:true});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.requests.length,1);assert.equal(c.fetches.length,0);assert.ok(c._ratioSnapshotUnknown);assert.match(c.element('ratioSnapshotStatus').textContent,/没有重试写入/);
+ for(const name of ['readRatioSnapshotFile','readCurrentRatioSnapshot','showCurrentRatioSnapshot','checkRatioSnapshotOutcome'])assert.doesNotMatch(fn(name),/method:\s*['"]PATCH|\.authenticate\(|\.candidate\(|readKeychain|fee-console-db\.json|fee-console-fund\.json/);
+});
+
+test('no independent file preserves the existing legacy-view fallback even without a recipient registration',async t=>{
+ const c=harness(await fixture(t),{mutate:g=>{delete g.files['fee-console-ratio-snapshot.json'];delete g.files['fee-console-ratio-recipient.json'];}});
+ assert.equal(await c.view(),false);assert.equal(c.renderCalls,0);assert.equal(c.stored.size,0);assert.equal(c.fetches.length,0);
+});
+
+test('different existing credential inputs fail current-recipient verification before displaying any snapshot',async t=>{
+ const f=await fixture(t);for(const field of ['key','tok']){const c=harness(f);c.settings[field]=field==='key'?Buffer.alloc(32,8).toString('base64url'):'different-synthetic-token-not-real';assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);}
+});
+
+function deferred(){let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b;});return {promise,resolve,reject};}
+function holdFirst(object,key){const entered=deferred(),release=deferred(),original=object[key];let count=0;object[key]=async function(...args){if(++count===1){entered.resolve();await release.promise;}return original.apply(this,args);};return {entered,release};}
+test('closing the real manager controller invalidates readback at every asynchronous boundary',async t=>{
+ const f=await fixture(t);
+ for(const stage of ['candidate','body','capability','gist','manager','raw','verify','digest']){
+  const c=harness(f,{truncated:stage==='raw'}),targets={candidate:[c._ratioSnapshotFiles.candidate,'text'],body:[c.ratioSnapshotCore,'bodyCheck'],capability:[c,'verifyRatioCapabilityNow'],gist:[c,'ghApi'],manager:[c.ratioCore,'deriveSnapshotManager'],raw:[c,'freshFetch'],verify:[c.ratioSnapshotCore,'verify'],digest:[c.ratioCore,'digest']},hold=holdFirst(...targets[stage]);
+  const old=c.run({isTrusted:true});await hold.entered.promise;c.close();c.element('ratioSnapshotStatus').textContent='SYNTHETIC_CLOSED';c.element('ratioNotice').textContent='SYNTHETIC_CLOSED';hold.release.resolve();assert.equal(await old,false,stage);
+  assert.equal(c.renderCalls,0,stage);assert.equal(c.stored.size,0,stage);assert.equal(c.element('ratioContent').innerHTML,'',stage);assert.equal(c.element('ratioSnapshotStatus').textContent,'SYNTHETIC_CLOSED',stage);assert.equal(c.element('ratioNotice').textContent,'SYNTHETIC_CLOSED',stage);
+ }
+});
+test('a late verified version one cannot lower the version two watermark or overwrite the latest result',async t=>{
+ const f=await fixture(t),next=await f.next(),c=harness(f,{candidate:false}),entered=deferred(),release=deferred(),verify=c.ratioSnapshotCore.verify;let count=0;
+ c.ratioSnapshotCore.verify=async(...args)=>{const result=await verify(...args);if(++count===1){assert.equal(result.watermark.version,1);entered.resolve();await release.promise;}return result;};
+ const old=c.run({isTrusted:true});await entered.promise;const get=c.ghApi;c.ghApi=async(...args)=>{const g=await get(...args);g.files['fee-console-ratio-snapshot.json'].content=JSON.stringify(next.signed);return g;};
+ assert.equal(await c.run({isTrusted:true}),true);const status=c.element('ratioSnapshotStatus').textContent,notice=c.element('ratioNotice').textContent,content=c.element('ratioContent').innerHTML,watermark=[...c.stored.values()];assert.equal(JSON.parse(watermark[0]).version,2);
+ release.resolve();assert.equal(await old,false);assert.equal(c.renderCalls,1);assert.deepEqual([...c.stored.values()],watermark);assert.equal(c.element('ratioSnapshotStatus').textContent,status);assert.equal(c.element('ratioNotice').textContent,notice);assert.equal(c.element('ratioContent').innerHTML,content);
+});
+test('a stale rejected read cannot replace a newer authenticated success with a failure message',async t=>{
+ const c=harness(await fixture(t),{candidate:false}),hold=holdFirst(c,'ghApi'),old=c.run({isTrusted:true});await hold.entered.promise;
+ assert.equal(await c.run({isTrusted:true}),true);const status=c.element('ratioSnapshotStatus').textContent,watermark=[...c.stored.values()];hold.release.reject(Error('SYNTHETIC_PRIVATE_ERROR_DO_NOT_DISPLAY'));
+ assert.equal(await old,false);assert.equal(c.element('ratioSnapshotStatus').textContent,status);assert.deepEqual([...c.stored.values()],watermark);assert.equal(c.renderCalls,1);
+});
+test('a newer failed read also invalidates an older success instead of silently restoring old content',async t=>{
+ const c=harness(await fixture(t),{candidate:false}),hold=holdFirst(c,'ghApi'),old=c.run({isTrusted:true});await hold.entered.promise;const get=c.ghApi;c.ghApi=async()=>{throw Error('SYNTHETIC_NEW_READ_FAILURE');};
+ assert.equal(await c.run({isTrusted:true}),false);const status=c.element('ratioSnapshotStatus').textContent;c.ghApi=get;hold.release.resolve();assert.equal(await old,false);assert.equal(c.element('ratioSnapshotStatus').textContent,status);assert.equal(c.stored.size,0);assert.equal(c.renderCalls,0);
+});
+test('normal-view and button readback share one cancellation ticket in both interleavings',async t=>{
+ const f=await fixture(t);
+ for(const [first,last] of [['run','view'],['view','run']]){
+  const c=harness(f,{candidate:false}),hold=holdFirst(c,'ghApi'),old=c[first]({isTrusted:true});await hold.entered.promise;assert.equal(await c[last]({isTrusted:true}),true);const status=c.element('ratioSnapshotStatus').textContent,content=c.element('ratioContent').innerHTML,watermark=[...c.stored.values()];hold.release.resolve();await old;
+  assert.equal(c.renderCalls,1,first);assert.equal(c.element('ratioSnapshotStatus').textContent,status,first);assert.equal(c.element('ratioContent').innerHTML,content,first);assert.deepEqual([...c.stored.values()],watermark,first);
+ }
+});
+
+}
