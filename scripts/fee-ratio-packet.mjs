@@ -28,7 +28,7 @@ export function buildBrowserRatioBook(input,targetDate){return createRatioSource
 
 export function buildRatioBook(input,targetDate){
   if(input===null)return null;
-  if(input.schema==='fee-console.ratio-sharesight-browser-book.v1')return buildBrowserRatioBook(input,targetDate);
+  if(['fee-console.ratio-sharesight-browser-book.v1','fee-console.ratio-sharesight-browser-book.v2'].includes(input.schema))return buildBrowserRatioBook(input,targetDate);
   if(!exact(input,['schema','source','asOf','retrievedAt','sourceSha256','ib','noah'])||input.schema!=='fee-console.ratio-sharesight-book.v1'||input.source!=='Sharesight'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
   const source=(s,name)=>{
     if(s===null)return null;
@@ -47,15 +47,15 @@ export function buildRatioBook(input,targetDate){
 }
 export async function buildRatioModel(input,{kind,targetDate,feeAccountingThrough=null,now=new Date(),viewCore=core,previewOnly=false,browserEvidence=null,managerScopeId=null}={}){
   if(!iso(targetDate)||!(feeAccountingThrough===null||iso(feeAccountingThrough))||!['snapshot','weekly','monthly','weekly-monthly'].includes(kind))fail();
-  const wrapped=input?.schema==='fee-console.ratio-sources.v1';
-  if(wrapped&&!exact(input,['schema','exposure','book']))fail();
-  const browser=wrapped&&input.book?.schema==='fee-console.ratio-sharesight-browser-book.v1',verified=browser&&browserEvidence?consumeBrowserEvidence(browserEvidence,input,managerScopeId,now):null;
+  const official=input?.schema==='fee-console.ratio-sources.v2',wrapped=official||input?.schema==='fee-console.ratio-sources.v1';
+  if(wrapped&&!exact(input,['schema','exposure','book',...(official?['classification']:[])]))fail();
+  const browser=wrapped&&['fee-console.ratio-sharesight-browser-book.v1','fee-console.ratio-sharesight-browser-book.v2'].includes(input.book?.schema),verified=browser&&browserEvidence?consumeBrowserEvidence(browserEvidence,input,managerScopeId,now):null;
   if(browser&&!previewOnly&&!verified)fail();
   if(wrapped&&input.book!==null){const at=Date.parse(input.book.retrievedAt);if(!Number.isFinite(at)||at>now.getTime()||now.getTime()-at>36*3600000)fail();}
   const exposure=wrapped?input.exposure:input,view=createRankedExposureCore().buildRankedExposureView(exposure);
   if(view.valuationDate!==targetDate||!view.retrievedAt||Date.parse(view.retrievedAt)>now.getTime()||now.getTime()-Date.parse(view.retrievedAt)>36*3600000||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(targetDate))/86400000)>7)fail();
-  const model={schema:core.SCHEMA,source:'Sharesight',report:{kind,targetDate,feeAccountingThrough,generatedAt:now.toISOString()},exposure:structuredClone(exposure),book:buildRatioBook(wrapped?input.book:null,targetDate),limitations:['CALL／资本承诺字段尚无已验收的 Sharesight 读取契约；预留和净预算保持未知。','没有完整订单来源，不生成成交后投影或可执行预算；不恢复券商／Flex／邮件读取。','All Together 十账户用于比例管理，不扩大原管理费计费组合。']};
-  if(verified)model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',...verified};
+  const model={schema:official?'fee-console.ratio-view.v2':core.SCHEMA,source:'Sharesight',report:{kind,targetDate,feeAccountingThrough,generatedAt:now.toISOString()},exposure:structuredClone(exposure),book:buildRatioBook(wrapped?input.book:null,official?input.book.asOf:targetDate),...(official?{sourceDates:{classification:input.book.asOf,exposure:input.exposure.summary.asOf},classificationSummary:structuredClone(input.classification)}:{}),limitations:['CALL／资本承诺字段尚无已验收的 Sharesight 读取契约；预留和净预算保持未知。','没有完整订单来源，不生成成交后投影或可执行预算；不恢复券商／Flex／邮件读取。','All Together 十账户用于比例管理，不扩大原管理费计费组合。']};
+  if(verified){const {companyExposure,sourceDates,classificationSummary,...association}=verified;model.book.browserEvidence={...model.book.browserEvidence,integrity:'verified-original-library-association',...association};model.companyExposure=companyExposure;if(official){model.sourceDates=sourceDates;model.classificationSummary=classificationSummary;}}
   const result=await viewCore.validateModel(model);browserEvidence?.check();return result;
 }
 // The sole daily writer constructs the official envelope itself. An opaque

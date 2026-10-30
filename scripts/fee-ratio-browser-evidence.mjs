@@ -62,10 +62,11 @@ export function readVerifiedBrowserEvidence({planPath,expectedScopeId,input,now=
   const identity=()=>{const x=runtime.readIdentity(plan.source.path);if(!exact(x,['libraryFileId','version'])||x.libraryFileId!==plan.library.libraryFileId||String(x.version)!==String(plan.library.version))fail();};identity();
   exposureCore.buildRankedExposureView(input.exposure);
   const facts=verifyBrowserSourceAssociations(parse(original.bytes),input,{scopeHash:exposureCore.ALL_TOGETHER_SCOPE_SHA256,now}),body={schema:'fee-console.ratio-browser-proof.v1',sourceSha256:plan.source.sha256,inputSha256:plan.input.sha256,library:plan.library,scopeId:expectedScopeId,localOwnerUid:plan.localOwnerUid,...facts};
+  const freeze=v=>{if(v&&typeof v==='object'){for(const x of Object.values(v))freeze(x);Object.freeze(v);}return v;};freeze(body.companyExposure);freeze(body.sourceDates);freeze(body.classificationSummary);
   const proof=Object.freeze({...body,associationId:sha(canonical(body)),inputCanonicalHash:sha(canonical(input)),check(){pf.check();original.check();data.check();identity();}});accepted.add(proof);proof.check();return proof;
 }
 export function consumeBrowserEvidence(proof,input,scopeId,now=new Date()){
-  if(!proof||!accepted.has(proof)||proof.scopeId!==scopeId||proof.inputCanonicalHash!==sha(canonical(input))||proof.sourceSha256!==input.book?.sourceSha256||proof.asOf!==input.book.asOf)fail();
+  if(!proof||!accepted.has(proof)||proof.scopeId!==scopeId||proof.inputCanonicalHash!==sha(canonical(input))||proof.sourceSha256!==input.book?.sourceSha256||(input.schema==='fee-console.ratio-sources.v2'?(proof.sourceDates?.classification!==input.book.asOf||proof.sourceDates.exposure!==input.exposure.summary.asOf||proof.asOf!==input.exposure.summary.asOf):proof.asOf!==input.book.asOf))fail();
   const age=now.getTime()-time(proof.observedAt);if(age<0||age>36*3600000)fail();proof.check();
-  return {associationId:proof.associationId,managerScopeId:proof.scopeId,sourceVersion:proof.library.version,migrationPending:proof.migrationPending,classificationDeltaCents:proof.classificationDeltaCents,exposureDeltaCents:proof.exposureDeltaCents};
+  return {associationId:proof.associationId,managerScopeId:proof.scopeId,sourceVersion:proof.library.version,migrationPending:proof.migrationPending,classificationDeltaCents:proof.classificationDeltaCents,exposureDeltaCents:proof.exposureDeltaCents,companyExposure:structuredClone(proof.companyExposure),...(proof.sourceDates?{sourceDates:structuredClone(proof.sourceDates),classificationSummary:structuredClone(proof.classificationSummary)}:{})};
 }

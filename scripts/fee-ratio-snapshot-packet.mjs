@@ -31,7 +31,7 @@ export async function stageIndependentRatioSnapshot({plan,now=new Date(),environ
   privateDir(plan.workspace);const ep=pinned(plan.evidence),rp=pinned(plan.recipient),pp=plan.previous===null?null:pinned(plan.previous),evidencePlan=parse(ep.bytes);
   const ip=pinned(evidencePlan.input),op=pinned(evidencePlan.source),input=parse(ip.bytes),recipient=parse(rp.bytes),ratio=createFeeRatioCore(exposureCore,crypto.webcrypto),snapshot=createRatioSnapshotCore(ratio,exposureCore,createRatioSourceCore,parse,crypto.webcrypto);
   const sourceProof=readVerifiedBrowserEvidence({planPath:plan.evidence.path,expectedScopeId:recipient.scopeId,input,now,...(evidenceRuntime?{runtime:evidenceRuntime}:{}),exposureCore});
-  const model=await buildRatioModel(input,{kind:'snapshot',targetDate:input.book.asOf,feeAccountingThrough:null,now,browserEvidence:sourceProof,managerScopeId:recipient.scopeId,viewCore:ratio});
+  const model=await buildRatioModel(input,{kind:'snapshot',targetDate:input.schema==='fee-console.ratio-sources.v2'?input.exposure.summary.asOf:input.book.asOf,feeAccountingThrough:null,now,browserEvidence:sourceProof,managerScopeId:recipient.scopeId,viewCore:ratio});
   const proof=await snapshot.verifyOriginal({originalBytes:new Uint8Array(op.bytes),inputBytes:new Uint8Array(ip.bytes),model,recipient,sourceSha256:evidencePlan.source.sha256,inputSha256:evidencePlan.input.sha256,libraryVersion:evidencePlan.library.version,now});
   const packet=await snapshot.candidate({model,recipient,proof,previous:pp?parse(pp.bytes):null,now}),out=path.join(plan.workspace,'ratio-independent-candidate');
   const check=()=>{ep.check();rp.check();pp?.check();ip.check();op.check();sourceProof.check();};check();if(fs.existsSync(out))fail();

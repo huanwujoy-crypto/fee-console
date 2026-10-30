@@ -30,17 +30,18 @@ const EXPOSURE_OBSERVED_TIME_BASIS = '原始Exposure导出文件下载落地时�
 const ALL_TOGETHER_SCOPE_SHA256 = '25d1c346d1be590d75d906435e2fec752f851dbfc231c07dd279b5e12adc11c6';
 const secondaryBasis = 'Exposure individual security direct plus ETF look-through, includes cash in class denominator';
 function buildRankedExposureView(input) {
+  const official=input?.schema==='xuan.sharesight-exposure-ranked.v2';
   check(object(input) && Object.keys(input).sort().join('|') === 'retrievedAt|retrievedAtBasis|schema|summary'
-    && input.schema === RANKED_EXPOSURE_SCHEMA, 'RANKED_SCHEMA');
+    && (input.schema === RANKED_EXPOSURE_SCHEMA||official), 'RANKED_SCHEMA');
   const s = input.summary;
   check(object(s) && Object.keys(s).sort().join('|') === 'accounts|asOf|classes|currency|limitations|residualETFs|source|sourceXlsxSHA256|totalValueUSD|transferStatus', 'RANKED_KEYS');
   check(object(s) && s.currency === 'USD' && date(s.asOf) && amount(s.totalValueUSD) && s.totalValueUSD > 0, 'RANKED_TOTAL_DATE');
-  check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === EXPOSURE_OBSERVED_TIME_BASIS, 'OBSERVED_TIME_BASIS');
+  check(input.retrievedAt === null ? input.retrievedAtBasis === null : input.retrievedAtBasis === (official?'原始官方导出文件mtime（非独立下载完成时间）':EXPOSURE_OBSERVED_TIME_BASIS), 'OBSERVED_TIME_BASIS');
   check(input.retrievedAt === null || instant(input.retrievedAt) && s.asOf <= new Date(Date.parse(input.retrievedAt) + 28800000).toISOString().slice(0, 10), 'DATE');
   check(s.source?.provider === 'Sharesight' && s.source.view === 'All Together'
     && s.source.report === 'Tools Exposure' && s.source.groupBy === 'No grouping'
     && s.source.show === 'Top 500' && s.source.classification === 'Investments→资产类别', 'RANKED_SOURCE');
-  check(/^https:\/\/portfolio\.sharesight\.com\/portfolios\/\d+\/tools\/exposure\/\d+\?consolidated=true$/.test(s.source.url ?? ''), 'RANKED_SOURCE');
+  check(official&&s.source.url===null||/^https:\/\/portfolio\.sharesight\.com\/portfolios\/\d+\/tools\/exposure\/\d+\?consolidated=true$/.test(s.source.url ?? ''), 'RANKED_SOURCE');
   check(Array.isArray(s.accounts) && s.accounts.length === 10 && s.accounts.every(text)
     && unique(s.accounts.map(n => n.replaceAll('&amp;', '&'))), 'SCOPE');
   check(Array.isArray(s.classes) && s.classes.length === 4 && s.classes.every((g, i) => g?.name === categories[i]
@@ -54,19 +55,22 @@ function buildRankedExposureView(input) {
       && (n === 0 || g.top5[n - 1].valueUSD >= r.valueUSD)
       && (i !== 3 || text(r.securityCode) && text(r.market))
       && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market'].includes(k))), 'RANKED_ROW');
-    check(sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
+    // v1 ranks asset values. v2 secondary rows are complete-export economic
+    // exposures: a leveraged product's negative residual can make these exceed
+    // asset NAV. Its full-source association is recomputed before publication.
+    check(official && i === 3 || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
     return {category: g.name, totalUsd: g.totalValueUSD, top: g.top5.map(r => ({name: r.name,
       ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
   const residual = s.residualETFs;
-  check(object(residual) && amount(residual.valueUSD) && residual.valueUSD >= 0 && residual.valueUSD <= groups[3].totalUsd
+  check(object(residual) && amount(residual.valueUSD) && (official || residual.valueUSD >= 0 && residual.valueUSD <= groups[3].totalUsd)
     && ['weightTotalPct', 'weightSecondaryClassPct'].every(k => Number.isFinite(residual[k]))
     && Math.abs(residual.weightTotalPct - pct(residual.valueUSD, s.totalValueUSD)) <= .0051
     && Math.abs(residual.weightSecondaryClassPct - pct(residual.valueUSD, groups[3].totalUsd)) <= .0051, 'RESIDUAL');
   check(Array.isArray(s.limitations) && s.limitations.length <= 50 && s.limitations.every(text)
     && text(s.transferStatus) && /^[a-f0-9]{64}$/.test(s.sourceXlsxSHA256 ?? ''), 'RANKED_COVERAGE');
-  return {schema: RANKED_EXPOSURE_SCHEMA, valuationDate: s.asOf, retrievedAt: input.retrievedAt, retrievedAtBasis: input.retrievedAtBasis,
+  return {schema: input.schema, valuationDate: s.asOf, retrievedAt: input.retrievedAt, retrievedAtBasis: input.retrievedAtBasis,
     portfolioTotalUsd: s.totalValueUSD, groups, residualUsd: residual.valueUSD,
     residualPortfolioWeightPct: pct(residual.valueUSD, s.totalValueUSD), residualCategoryWeightPct: pct(residual.valueUSD, groups[3].totalUsd),
     limitations: [...s.limitations], transferStatus: s.transferStatus,
