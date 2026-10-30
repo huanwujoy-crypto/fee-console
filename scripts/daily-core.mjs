@@ -63,9 +63,27 @@ export function normalizeSharesightReference(value,{date,acctCash,accounts,sourc
 
 export const ACCOUNTS = ["schwab", "webull"];
 export const SPLITS = ["cash", "stock", "other"];
-// Optional style look-through.  Keep `stock` as the authoritative equity total:
+// Legacy `stock` is the unchanged non-SGOV securities total, not an asset type.
+// Optional historical style look-through:
 // growth/value remain a complete pair; optional independent gold joins the stock reconciliation.
 export const STYLE_SPLITS = ["growth", "value"];
+// Source asset classification is report metadata only. It cannot change NAV,
+// cash flows, fee bases or immutable historical growth/value decisions.
+export const ASSET_ALLOCATION_MODE = 'sharesight-asset-type-v1';
+export const ASSET_ALLOCATION_KEYS = Object.freeze(['equity', 'etf', 'bond', 'cash', 'gold', 'other', 'unclassified']);
+export function normalizeAssetAllocation(value, stock) {
+  const keys = ['schemaVersion', 'mode', ...ASSET_ALLOCATION_KEYS];
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+      || Object.keys(value).sort().join('|') !== keys.sort().join('|')
+      || value.schemaVersion !== 1 || value.mode !== ASSET_ALLOCATION_MODE
+      || !Number.isFinite(stock) || stock < 0
+      || ASSET_ALLOCATION_KEYS.some(k => !Number.isFinite(value[k]) || value[k] < 0)
+      || Math.abs(ASSET_ALLOCATION_KEYS.reduce((sum, k) => sum + value[k], 0) - stock) > STYLE_SPLIT_EPS)
+    throw new Error('STYLE_ASSET_ALLOCATION');
+  return {schemaVersion: 1, mode: ASSET_ALLOCATION_MODE,
+    ...Object.fromEntries(ASSET_ALLOCATION_KEYS.map(k => [k, value[k]]))};
+}
+
 /* 基准（口径 v4.6）：美股收盘、含息。存的是当日原始收盘价 + 当日除息金额，
    两者都写一次就永不重述——这是不用 Yahoo adjclose 的原因。
    cspx / eqac 是 v4.5 及以前的欧洲收盘口径，只读不再写，供历史数据回放。 */
@@ -578,11 +596,12 @@ export function reconcileFlows(existingAuto, existingUnresolved, incoming,{refer
  * `prov` is only written when the day is an approximation, so a calibrated
  * weekend rewrite produces a clean point and a small diff.
  */
-export function buildPoint({ date, accounts, splits, styleSplits = {}, topHoldings, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
+export function buildPoint({ date, accounts, splits, styleSplits = {}, assetAllocation, topHoldings, bench = {}, benchDiv = {}, benchDate = null, benchState = null, provisional = [], calibrated = false }) {
   const point = { d: date };
   for (const a of ACCOUNTS) point[a] = accounts[a];
   for (const s of SPLITS) point[s] = splits[s];
   for (const s of [...STYLE_SPLITS, "gold"]) if (styleSplits[s] !== undefined) point[s] = styleSplits[s];
+  if (assetAllocation !== undefined) point.assetAllocation = normalizeAssetAllocation(assetAllocation, splits.stock);
   if (Array.isArray(topHoldings)) point.topHoldings = topHoldings.map(row => ({ ticker: row.ticker, value: row.value }));
   for (const k of [...BENCH_KEYS, ...BENCH_LEGACY_KEYS]) if (bench[k] !== undefined) point[k] = bench[k];
   if (BENCH_KEYS.every(k => bench[k] !== undefined) && isIsoDate(benchDate)) {

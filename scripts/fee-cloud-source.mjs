@@ -518,7 +518,12 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || row.instrument_currency?.code !== "USD") fail("HOLDING_IDENTITY");
     const listed = listing.find(item => id(item.id) === holdingId);
     if (stable(holdingIdentity(row)) !== stable(holdingIdentity(listed))) fail('HOLDING_IDENTITY');
-    return { holdingId, ticker, valueUsd: amount(row.value) };
+    return { holdingId, ticker, valueUsd: amount(row.value),
+      // Keep only the dated report's native asset type. Missing metadata is
+      // explicitly unclassified, not inferred from ticker or security name.
+      sourceAssetType: typeof row.instrument?.friendly_instrument_description_code === 'string'
+        && row.instrument.friendly_instrument_description_code.length <= 128
+        ? row.instrument.friendly_instrument_description_code : null };
   }).sort((a, b) => a.holdingId - b.holdingId);
   const catalogEvidence = reference?{authority:'sharesight.same-day-report.v1',reportHoldingIds:holdings.map(h=>h.holdingId),catalogHoldingIds:[...listedIds].sort((a,b)=>a-b)}:catalogScopeEvidence(listing, report,
     holdingHistory, rows(tradesPayload, 'trades'), expected, targetDate, terminalPerformance);
@@ -727,7 +732,7 @@ export function normalizeRead(raw, targetDate, benchmark,{sourceMode='legacy-rec
     other: round2(portfolios.reduce((sum, p) => sum + p.other, 0)),
   };
   const sourceDates = Object.fromEntries(portfolios.map(p => [p.account, p.sourceDate]));
-  const styleInput = { schemaVersion: 1, date: targetDate, portfolios: portfolios.map(p => ({
+  const styleInput = { schemaVersion: 2, mode: 'sharesight-asset-type-v1', date: targetDate, portfolios: portfolios.map(p => ({
     account: p.account, portfolioId: p.portfolioId, sourceDate: p.sourceDate,
     stockTotalUsd: p.stock, holdings: p.holdings,
   })), proposals: [] };

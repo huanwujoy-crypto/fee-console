@@ -2163,3 +2163,140 @@ test('Sharesight reference large NAV changes are disclosed as warnings; the same
  const next={...referenceWriterArgs(d),schwab:'500',stock:'500'};const legacy={...next};delete legacy['sharesight-reference'];const blocked=run(dir,legacy,[],env);assert.notEqual(blocked.status,0);assert.match(blocked.stderr,/impossible amount/);
  const r=run(dir,next,[],env);assert.equal(r.status,0,r.stderr);const p=readPayload(dir);assert.equal(p.daily.at(-1).schwab,500);assert.ok(p.daily.at(-1).sourceReference.warnings.includes('NAV_CHANGE'));assert.equal(p.daily.at(-1).prov,1);assert.equal(p.feeCalculationReceipt.status.valid,true);
 });
+
+/* ---------------- Sharesight source-asset reporting ---------------- */
+const sourceAssetFixture = (dir, date = today()) => {
+  const f = styleFixture(dir);
+  f.input.schemaVersion = 2;
+  f.input.mode = 'sharesight-asset-type-v1';
+  f.input.date = date;
+  f.input.proposals = [];
+  for (const p of f.input.portfolios) {
+    p.sourceDate = date;
+    for (const h of p.holdings) h.sourceAssetType = p.account === 'schwab'
+      ? 'ordinary_shares' : 'exchange_traded_fund';
+  }
+  f.save();
+  return f;
+};
+
+test('asset type: preflight and writer need no growth/value proposals and preserve legacy registry/history', () => {
+  const dir = tmp(), legacy = styleFixture(dir);
+  const initial = run(dir, {}, [], legacy.env);
+  assert.equal(initial.status, 0, initial.stderr);
+  const old = readPayload(dir), history = {...structuredClone(old.daily[0]), d: shift(today(), -1)};
+  old.daily.unshift(history);
+  writePayload(dir, old);
+  const registry = JSON.stringify(old.classificationRegistry);
+  const f = sourceAssetFixture(dir), bytesBefore = fs.readFileSync(path.join(dir, 'data.json'));
+  // Entirely new identities intentionally have no legacy style decision.
+  f.input.portfolios[0].holdings[0].holdingId = 1901;
+  f.input.portfolios[1].holdings[0].holdingId = 1902;
+  f.save();
+  const preflight = run(dir, {}, ['--style-preflight'], f.env);
+  assert.equal(preflight.status, 0, preflight.stderr);
+  assert.match(preflight.stdout, /style-preflight pass new-classifications=0/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), bytesBefore);
+  const result = run(dir, {}, [], f.env);
+  assert.equal(result.status, 0, result.stderr);
+  const next = readPayload(dir), point = next.daily.find(p => p.d === today());
+  assert.deepEqual(next.daily.find(p => p.d === history.d), history);
+  assert.equal(JSON.stringify(next.classificationRegistry), registry);
+  assert.deepEqual(point.assetAllocation, {schemaVersion: 1, mode: 'sharesight-asset-type-v1',
+    equity: 200000, etf: 253845.98, bond: 0, cash: 0, gold: 0, other: 0, unclassified: 0});
+  for (const key of ['growth', 'value', 'gold']) assert.equal(Object.hasOwn(point, key), false,
+    'fresh source classification must not inherit a stale historical style split');
+  for (const key of ['schwab','webull','cash','stock','other']) assert.equal(point[key], old.daily.at(-1)[key]);
+  assert.deepEqual(next.flowsAuto, old.flowsAuto);
+  assert.deepEqual(next.flowsUnresolved, old.flowsUnresolved);
+  const bytesAfter = fs.readFileSync(path.join(dir, 'data.json'));
+  assert.equal(bytesAfter.includes(Buffer.from('assetAllocation')), false);
+  assert.equal(bytesAfter.includes(Buffer.from('SYNTHA')), false);
+  const repeat = run(dir, {}, [], f.env);
+  assert.equal(repeat.status, 0, repeat.stderr);
+  assert.match(repeat.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), bytesAfter);
+});
+
+test('asset type: unknown source metadata retains its entire value and does not block the fee receipt', () => {
+  const dir = tmp(), f = sourceAssetFixture(dir);
+  const economicFile = writeEconEnvelope(dir, econForToday());
+  const plain = run(dir, {}, [], {FEE_ECON_FILE: economicFile});
+  assert.equal(plain.status, 0, plain.stderr);
+  const before = readPayload(dir);
+  f.input.portfolios[1].holdings[0].sourceAssetType = null;
+  f.save();
+  const result = run(dir, {}, [], {...f.env, FEE_ECON_FILE: economicFile});
+  assert.equal(result.status, 0, result.stderr);
+  const next = readPayload(dir);
+  assert.equal(next.daily.at(-1).assetAllocation.equity, 200000);
+  assert.equal(next.daily.at(-1).assetAllocation.unclassified, 253845.98);
+  assert.equal(next.daily.at(-1).stock, before.daily.at(-1).stock);
+  assert.deepEqual(next.feeCalculationReceipt, before.feeCalculationReceipt,
+    'source classification metadata must not change the economic projection or fee formula');
+  assert.deepEqual(next.status, before.status, 'an unknown asset type is not an unresolved cash flow');
+  assert.equal(Object.hasOwn(next, 'classificationRegistry'), false);
+});
+
+test('asset type: simplification keeps identity/date/amount integrity failures fail-closed without writes', () => {
+  for (const [name, mutate, error] of [
+    ['account', f => { f.input.portfolios[0].portfolioId = 7; }, /STYLE_ACCOUNT/],
+    ['duplicate holding', f => { f.input.portfolios[0].holdings.push({...f.input.portfolios[0].holdings[0]}); }, /STYLE_HOLDING_DUPLICATE/],
+    ['source date', f => { f.input.portfolios[0].sourceDate = shift(today(), -1); }, /STYLE_SOURCE_DATE/],
+    ['negative amount', f => { f.input.portfolios[0].holdings[0].valueUsd = -1; }, /STYLE_AMOUNT/],
+    ['incomplete securities', f => { f.input.portfolios[0].holdings = []; }, /STYLE_ACCOUNT_STOCK_SUM/],
+    ['unknown mode', f => { f.input.mode = 'guess-all-stocks'; }, /STYLE_INPUT_DATE/]
+  ]) {
+    const dir = tmp(), f = sourceAssetFixture(dir);
+    const baseline = run(dir); assert.equal(baseline.status, 0, baseline.stderr);
+    const bytes = fs.readFileSync(path.join(dir, 'data.json'));
+    mutate(f); f.save();
+    for (const flags of [['--style-preflight'], []]) {
+      const result = run(dir, {}, flags, f.env);
+      assert.notEqual(result.status, 0, name);
+      assert.match(result.stderr, error, name);
+      assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), bytes, name);
+    }
+  }
+});
+
+test('asset type: explicit weekend carries copy allocation without creating new style decisions', () => {
+  const weekday = new Date(today() + 'T00:00:00Z').getUTCDay();
+  const friday = shift(today(), -((weekday + 2) % 7) - (weekday >= 5 ? 7 : 0));
+  const dir = tmp(), f = sourceAssetFixture(dir, friday);
+  const first = run(dir, {date: friday, spy: '700', qqq: '600', 'src-bench': friday,
+    'bench-state': 'session'}, [], f.env);
+  assert.equal(first.status, 0, first.stderr);
+  const prior = readPayload(dir).daily.at(-1);
+  for (const n of [1, 2]) {
+    const result = run(dir, {date: shift(friday, n), 'src-schwab': friday, 'src-webull': friday,
+      spy: '700', qqq: '600', 'src-bench': friday, 'bench-state': 'closed', flows: '[]'}, ['--weekend-carry']);
+    assert.equal(result.status, 0, result.stderr);
+    const data = readPayload(dir), point = data.daily.at(-1);
+    assert.deepEqual(point.assetAllocation, prior.assetAllocation);
+    for (const key of ['growth', 'value', 'gold']) assert.equal(Object.hasOwn(point, key), false);
+    assert.equal(Object.hasOwn(data, 'classificationRegistry'), false);
+    assert.equal(point.stock, prior.stock);
+  }
+});
+
+test('asset type: legacy source bytes, fees and provenance survive source-type reporting unchanged', () => {
+  const dir = tmp(), legacy = legacyFixture(dir), f = sourceAssetFixture(dir);
+  const sourceBytes = fs.readFileSync(legacy.sourceFile);
+  const first = run(dir, {}, [], legacy.env);
+  assert.equal(first.status, 0, first.stderr);
+  const before = readPayload(dir);
+  assert.equal(before.feeCalculationReceipt.schema, 'fee-console.calculation-receipt.v2');
+  const result = run(dir, {}, [], {...legacy.env, ...f.env});
+  assert.equal(result.status, 0, result.stderr);
+  const after = readPayload(dir);
+  assert.deepEqual(after.feeCalculationReceipt, before.feeCalculationReceipt);
+  assert.deepEqual(after.flowsAuto, before.flowsAuto);
+  assert.deepEqual(after.flowsUnresolved, before.flowsUnresolved);
+  assert.deepEqual(fs.readFileSync(legacy.sourceFile), sourceBytes);
+  const encrypted = fs.readFileSync(path.join(dir, 'data.json'));
+  const again = run(dir, {}, [], {...legacy.env, ...f.env});
+  assert.equal(again.status, 0, again.stderr);
+  assert.match(again.stdout, /no-op/);
+  assert.deepEqual(fs.readFileSync(path.join(dir, 'data.json')), encrypted);
+});

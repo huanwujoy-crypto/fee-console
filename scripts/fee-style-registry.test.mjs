@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveStyle, readStyleInput, summarizeTopHoldings } from './fee-style-registry.mjs';
+import { resolveStyle, resolveAssetAllocation, readStyleInput, summarizeTopHoldings } from './fee-style-registry.mjs';
 
 const fixture = () => ({
   date: '2026-09-06', sourceDates: { schwab: '2026-09-04', webull: '2026-09-04' }, stock: 300,
@@ -257,3 +257,68 @@ test('one-time lock rejects absent/wrong lock, other target/hash/account/holding
   }
 });
 }
+
+
+const assetFixture = () => {
+  const f = fixture();
+  f.input = { ...f.input, schemaVersion: 2, mode: 'sharesight-asset-type-v1', proposals: [] };
+  for (const p of f.input.portfolios) for (const h of p.holdings) h.sourceAssetType = 'ordinary_shares';
+  return f;
+};
+test('source asset mode merges ordinary stocks without growth/value proposals or registry writes', () => {
+  const f = assetFixture(), before = structuredClone(f);
+  const r = resolveAssetAllocation(f);
+  assert.deepEqual(r.assetAllocation, {schemaVersion: 1, mode: 'sharesight-asset-type-v1',
+    equity: 300, etf: 0, bond: 0, cash: 0, gold: 0, other: 0, unclassified: 0});
+  assert.deepEqual(r.newEventIds, []);
+  assert.equal(Object.hasOwn(r, 'registry'), false);
+  assert.equal(Object.hasOwn(r, 'growth'), false);
+  assert.equal(Object.hasOwn(r, 'value'), false);
+  assert.deepEqual(f, before);
+});
+for (const [type, bucket] of [['exchange_traded_fund', 'etf'], ['bond', 'bond'],
+  ['fixed_interest', 'bond'], ['cash', 'cash'], ['option', 'other'], ['private_equity', 'other'],
+  ['managed_fund', 'other'], ['preference_shares', 'other'], ['unrecognized_product', 'unclassified'],
+  ['', 'unclassified'], [null, 'unclassified']]) test(`source asset mode keeps ${type} outside stocks`, () => {
+  const f = assetFixture(); f.input.portfolios[1].holdings[0].sourceAssetType = type;
+  const r = resolveAssetAllocation(f).assetAllocation;
+  assert.equal(r.equity, 100); assert.equal(r[bucket], 200);
+  assert.equal(['equity','etf','bond','cash','gold','other','unclassified'].reduce((s,k)=>s+r[k],0), f.stock);
+});
+test('gold is an effective exact-identity historical override, never a ticker-only guess', () => {
+  const f = assetFixture(); f.input.portfolios[0].holdings[0].sourceAssetType = 'exchange_traded_fund';
+  f.staticMap.holdings[0].style = 'gold';
+  assert.equal(resolveAssetAllocation(f).assetAllocation.gold, 100);
+  f.input.portfolios[0].holdings[0].holdingId = 10;
+  assert.equal(resolveAssetAllocation(f).assetAllocation.etf, 100);
+  f.input.portfolios[0].holdings[0].holdingId = 1;
+  f.staticMap.effectiveDate = '2026-09-05';
+  assert.equal(resolveAssetAllocation(f).assetAllocation.etf, 100);
+  f.staticMap.effectiveDate = '2026-08-28';
+  f.input.portfolios[0].holdings[0].sourceAssetType = 'ordinary_shares';
+  assert.equal(resolveAssetAllocation(f).assetAllocation.equity, 300);
+});
+test('saved gold decision is read without mutating historical registry or creating new decisions', () => {
+  const old = fixture(); old.input.proposals[0].style = 'gold';
+  const registry = resolveStyle(old).registry, bytes = JSON.stringify(registry);
+  const f = assetFixture(); f.registry = registry;
+  f.input.portfolios[1].holdings[0].sourceAssetType = 'exchange_traded_fund';
+  assert.equal(resolveAssetAllocation(f).assetAllocation.gold, 200);
+  assert.equal(JSON.stringify(registry), bytes);
+});
+for (const [name, change, code] of [
+  ['wrong mode', f=>f.input.mode='anything', 'INPUT_DATE'],
+  ['proposals cannot silently mutate history', f=>f.input.proposals=[{}], 'SCHEMA'],
+  ['wrong source date', f=>f.input.portfolios[0].sourceDate='2026-09-03', 'SOURCE_DATE'],
+  ['wrong account', f=>f.input.portfolios[0].portfolioId=999, 'ACCOUNT'],
+  ['duplicate account', f=>f.input.portfolios[1]=structuredClone(f.input.portfolios[0]), 'ACCOUNT'],
+  ['duplicate holding', f=>f.input.portfolios[0].holdings.push({...f.input.portfolios[0].holdings[0]}), 'HOLDING_DUPLICATE'],
+  ['negative value', f=>f.input.portfolios[0].holdings[0].valueUsd=-1, 'AMOUNT'],
+  ['coerced value', f=>f.input.portfolios[0].holdings[0].valueUsd='100', 'AMOUNT'],
+  ['account sum missing', f=>f.input.portfolios[0].stockTotalUsd=102, 'ACCOUNT_STOCK_SUM'],
+  ['global sum missing', f=>f.stock=302, 'ASSET_ALLOCATION'],
+  ['type object', f=>f.input.portfolios[0].holdings[0].sourceAssetType={}, 'SCHEMA'],
+  ['SGOV remains outside this legacy securities aggregate', f=>f.input.portfolios[0].holdings[0].ticker='SGOV', 'IDENTITY'],
+]) test(`source asset mode still blocks ${name}`, () => {
+  const f=assetFixture(); change(f); assert.throws(()=>resolveAssetAllocation(f), new RegExp('STYLE_'+code));
+});

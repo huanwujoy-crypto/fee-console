@@ -35,7 +35,16 @@ test('new UI is exact embedded code; support-stage old UI is explicitly absent a
  assert.ok(factory.includes(createFeeGiftRegistryStatusCore.toString()));
  const expected=crypto.createHash('sha1').update(Buffer.concat([Buffer.from('blob '+Buffer.byteLength(html)+'\0'),Buffer.from(html)])).digest('hex');
  const source=fs.readFileSync(new URL('./fee-report-producer.mjs',import.meta.url),'utf8');assert.ok(source.includes("const RECOVERY_UI_BLOB='"+expected+"'"));
+ const liveSha=crypto.createHash('sha256').update(live).digest('hex');
  if(live===html){assert.ok(live.includes('id="giftRegistryCheck"'));assert.ok(live.includes('renderGiftRegistryStatus(documentsAuthorized'))}
+ else if(liveSha==='de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d'){
+  // Exact display-only asset-allocation candidate; existing gift code is unchanged.
+  assert.equal(section(live,'/* fee-gift-registry-status:start */','/* fee-gift-registry-status:end */'),factory);
+  assert.equal(section(live,'/* fee-gift-registry-controller:start */','/* fee-gift-registry-controller:end */'),controller);
+  assert.ok(live.includes('id="giftRegistryCheck"'));
+  // A new page does not silently renew the already-consumed old recovery lock.
+  assert.notEqual(crypto.createHash('sha1').update(Buffer.concat([Buffer.from('blob '+Buffer.byteLength(live)+'\0'),Buffer.from(live)])).digest('hex'),expected);
+ }
  else{
   assert.equal(crypto.createHash('sha256').update(live).digest('hex'),'d5570720d45cf45136e3f23a15111ac01fb33f21277c46f5819aff1754eee9dc');
   assert.equal(live.includes('id="giftRegistryCheck"'),false,'old UI has no status; it is not declared compatible');

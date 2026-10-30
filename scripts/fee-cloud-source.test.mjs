@@ -1790,3 +1790,41 @@ test('benchmark consumers reject wrong or absent ETF, currency and venue labels'
     }
   }
 });
+
+test('asset type: dated Sharesight native type reaches the writer without changing economic values', () => {
+  const input = raw(), benchmark = selectBenchmark(benchmarkCache, D);
+  const before = normalizeRead(input, D, benchmark, {sourceMode: 'sharesight-reference'});
+  input.schwab.performance.report.holdings.find(h => h.id === 2).instrument.friendly_instrument_description_code = 'ordinary_shares';
+  input.webull.performance.report.holdings.find(h => h.id === 4).instrument.friendly_instrument_description_code = 'exchange_traded_fund';
+  // Contradictory current catalogue type cannot replace the dated report type.
+  input.schwab.holdings.holdings.find(h => h.id === 2).instrument.friendly_instrument_description_code = 'exchange_traded_fund';
+  input.webull.holdings.holdings.find(h => h.id === 4).instrument.friendly_instrument_description_code = 'ordinary_shares';
+  const next = normalizeRead(input, D, benchmark, {sourceMode: 'sharesight-reference'});
+  assert.equal(next.styleInput.schemaVersion, 2);
+  assert.equal(next.styleInput.mode, 'sharesight-asset-type-v1');
+  assert.deepEqual(next.styleInput.proposals, []);
+  assert.equal(next.styleInput.portfolios[0].holdings[0].sourceAssetType, 'ordinary_shares');
+  assert.equal(next.styleInput.portfolios[1].holdings[0].sourceAssetType, 'exchange_traded_fund');
+  for (const key of ['accounts','splits','flows','acctCash','prevAcctCash','benchmark','sourceReference'])
+    assert.deepEqual(next[key], before[key], key);
+  assert.notEqual(next.sourceFingerprint, before.sourceFingerprint, 'type changes must participate in stable source reads');
+  assert.equal(normalizeRead(input, D, benchmark, {sourceMode: 'sharesight-reference'}).sourceFingerprint, next.sourceFingerprint);
+});
+
+test('asset type: missing and unfamiliar native metadata never becomes an inferred ordinary share', () => {
+  const input = raw(), benchmark = selectBenchmark(benchmarkCache, D);
+  input.schwab.holdings.holdings.find(h => h.id === 2).instrument.friendly_instrument_description_code = 'ordinary_shares';
+  input.webull.performance.report.holdings.find(h => h.id === 4).instrument.friendly_instrument_description_code = 'future_provider_type';
+  const normalized = normalizeRead(input, D, benchmark, {sourceMode: 'sharesight-reference'});
+  assert.equal(normalized.styleInput.portfolios[0].holdings[0].sourceAssetType, null);
+  assert.equal(normalized.styleInput.portfolios[1].holdings[0].sourceAssetType, 'future_provider_type');
+  assert.deepEqual(normalized.splits, {cash: 800, stock: 1050, other: 150});
+  assert.equal(normalized.styleInput.portfolios[0].holdings[0].valueUsd, 500);
+  assert.equal(normalized.styleInput.portfolios[1].holdings[0].valueUsd, 550);
+  for (const invalid of [42, {}, [], 'x'.repeat(129)]) {
+    input.schwab.performance.report.holdings.find(h => h.id === 2).instrument.friendly_instrument_description_code = invalid;
+    const result = normalizeRead(input, D, benchmark, {sourceMode: 'sharesight-reference'});
+    assert.equal(result.styleInput.portfolios[0].holdings[0].sourceAssetType, null);
+    assert.deepEqual(result.splits, normalized.splits);
+  }
+});

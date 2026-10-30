@@ -278,6 +278,11 @@ async function model(input=fixture()){
     function topHoldingsView(){return '';}
   `,sandbox);
   vm.runInContext(html.slice(html.indexOf('const BENCH_ALL='),html.indexOf('function receiptBalance(')),sandbox);
+  // Load the real allocation dependency when the page uses it; keep every
+  // existing return/drawdown assertion running against the actual renderer.
+  if(html.includes('/* asset-allocation-view:start */')){
+    vm.runInContext(section('/* asset-allocation-view:start */','/* asset-allocation-view:end */'),sandbox);
+  }
   vm.runInContext(html.slice(html.indexOf('function renderKPIs('),html.indexOf('function renderChart1(')),sandbox);
   const validation=await sandbox.feeReceiptUiModel({...input,receipt});
   assert.equal(validation.ok,true);

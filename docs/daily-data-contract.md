@@ -3,6 +3,16 @@
 `scripts/daily.mjs` 是唯一写 `data.json` 的代码。本文件是它的行为契约；
 `scripts/daily.test.mjs` 对下面每一条都有对应的自动测试。
 
+## 当前证券分类补充（2026-10-30）
+
+Sharesight 新输入采用 `sharesight-asset-type-v1` 简化模式，详见
+`docs/fee-style-registry.md`。普通股票合并为“股票”，不再要求逐票 growth/value
+proposal；ETF／债券／现金／其它和未知类型不默认股票。未知类型保留全额并明确
+显示待分类，不成为费用参考报告的业务阻断。原数值 `stock` 继续表示非 SGOV
+证券合计，另存仅用于展示的 `assetAllocation`；旧点、旧分类 registry 和全部
+费用／现金流／NAV／回执口径不改。下文 growth/value 成对及 registry 激活要求
+仅适用于旧 v1 输入；新模式仍通过原预检入口和同一实际 writer 完整校验输入。
+
 ## 0. 这个台账是干什么的
 
 **长期观察管理人的投资能力。** 不是记账软件，也没有结算流程。
