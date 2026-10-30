@@ -416,7 +416,24 @@ for(const [name,mutate,beforeKeys] of [
   const f=await bootstrapFinalFixture(t),base=fs.readFileSync(f.plan.baseData.path);mutate(f);await assert.rejects(bootstrapFinalize(f));
   if(beforeKeys)assert.equal(f.calls.secrets.length,0);assert.deepEqual(fs.readFileSync(f.plan.baseData.path),base);assert.equal(fs.existsSync(path.join(f.root,'ib-bootstrap-finalized')),false);
 });
-for(const name of ['Produce weekly '+TARGET,'Produce monthly '+TARGET])test('producer proof accepts exact target-labelled job '+name,async t=>{
+test('IB finalizer accepts exact daily-labelled producer without changing source health or fees',async t=>{
+  const f=await finalizeFixture(t);f.proof.jobs.jobs[0].name='Produce daily '+TARGET;
+  const result=await finalize(f);
+  assert.equal(result.readyForSignedCandidate,true);assert.equal(result.feeReceiptUnchanged,true);assert.equal(result.nonIbFieldsUnchanged,true);
+  const h=JSON.parse(fs.readFileSync(path.join(f.root,'finalized/fee-data-health.json')));
+  assert.equal(h.checkedAt,f.health.checkedAt);assert.deepEqual(h.sourceDates,f.health.sourceDates);
+  assert.deepEqual(f.calls.github,['actions/runs/11','actions/runs/11/jobs?per_page=100','actions/jobs/22/logs']);
+});
+for(const [name,change] of [
+  ['wrong target',f=>f.proof.jobs.jobs[0].name='Produce daily 2026-10-22'],
+  ['extra text',f=>f.proof.jobs.jobs[0].name='Produce daily '+TARGET+' extra'],
+  ['duplicate producer',f=>{f.proof.jobs.jobs.push({...structuredClone(f.proof.jobs.jobs[0]),id:PROOF_JOB+1,name:'Produce daily '+TARGET});f.proof.jobs.total_count=2;}],
+])test('IB daily-labelled producer rejects '+name+' before keys and log',async t=>{
+  const f=await finalizeFixture(t);f.proof.jobs.jobs[0].name='Produce daily '+TARGET;change(f);
+  await refusedFinal(f,/PROVENANCE/);assert.equal(f.calls.secrets.length,0);
+  assert.equal(f.calls.github.some(route=>route.endsWith('/logs')),false);
+});
+for(const name of ['Produce daily '+TARGET,'Produce weekly '+TARGET,'Produce monthly '+TARGET])test('producer proof accepts exact target-labelled job '+name,async t=>{
   const f=await bootstrapFinalFixture(t);f.proof.jobs.jobs[0].name=name;assert.equal((await bootstrapFinalize(f)).readyForSignedCandidate,true);
 });
 for(const name of ['Produce weekly 2026-10-22','Produce snapshot '+TARGET,'Produce weekly '+TARGET+' extra'])test('producer proof refuses unrelated job '+name,async t=>{

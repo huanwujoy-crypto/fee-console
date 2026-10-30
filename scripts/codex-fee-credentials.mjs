@@ -200,7 +200,7 @@ async function attachmentProducerProof(evidence, base, healthFile, publicBase, r
   if (!Array.isArray(listing?.jobs) || listing.jobs.length > 100 || listing.total_count !== listing.jobs.length
       || new Set(listing.jobs.map(j => j.id)).size !== listing.jobs.length) attachFail("PROVENANCE");
   const health = parseExact(healthFile.bytes);
-  const producers = listing.jobs.filter(j => j.name === "produce" || ["weekly","monthly"].some(kind => j.name === "Produce " + kind + " " + health.targetDate));
+  const producers = listing.jobs.filter(j => j.name === "produce" || ["daily","weekly","monthly"].some(kind => j.name === "Produce " + kind + " " + health.targetDate));
   if (producers.length !== 1) attachFail("PROVENANCE");
   const job = producers[0];
   const time = value => typeof value === "string" && /Z$/.test(value) ? Date.parse(value) : NaN;
