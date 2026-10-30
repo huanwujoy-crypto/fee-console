@@ -83,7 +83,7 @@ test('requested display names are consistent across comparison, monthly details 
   assert.match(html,/Jenny's IB 独立回执待核对，暂未纳入正式收益/);
   assert.match(html,/年化：管理方 TWR/);assert.match(html,/<span>管理方 TWR <b>/);
   assert.match(html,/Jenny's IB 不纳入原管理费组合及计费本金/);
-  const build=html.match(/<meta name="fee-console-build" content="(4\.9\.3[012])">/);assert.ok(build);assert.ok(html.includes('UI_VERSION_LABEL=" · v'+build[1]+'"'));
+  const build=html.match(/<meta name="fee-console-build" content="(4\.9\.3[0123])">/);assert.ok(build);assert.ok(html.includes('UI_VERSION_LABEL=" · v'+build[1]+'"'));
 });
 test('offline encrypted candidate preserves every composite input, fee receipt and original ciphertext',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-return-synthetic-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
