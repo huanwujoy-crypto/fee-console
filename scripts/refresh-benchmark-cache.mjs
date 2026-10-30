@@ -362,7 +362,7 @@ function normalizedSeries(series) {
   for (const item of series || []) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(item?.d)) throw new Error('Malformed benchmark cache date');
     if (!Number.isFinite(item?.p) || item.p <= 0) throw new Error(`Malformed benchmark price on ${item.d}`);
-    if (item.div !== undefined && (!Number.isFinite(item.div) || item.div <= 0)) {
+    if (item.div !== undefined && (!Number.isFinite(item.div) || item.div < 0)) {
       throw new Error(`Malformed benchmark dividend on ${item.d}`);
     }
     const div = Number.isFinite(item?.div) && item.div > 0 ? roundPrice(item.div) : 0;
