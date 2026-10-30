@@ -338,7 +338,7 @@ test('SPY fallback refuses an uncovered year or a scheduled ex-date without an a
   }), /calendar coverage missing/);
 });
 
-test('merge source describes the cross-checked fallback and paired tail dates stay inspectable', () => {
+test('merge source truthfully describes Nasdaq updates and retained legacy history', () => {
   const existing = {v:1, benchmarks: {
     spy: {symbol:'SPY',currency:'USD',exchange:'NYSEArca',series: [{ d: '2026-09-21', p: 773.5 }] },
     qqq: {symbol:'QQQ',currency:'USD',exchange:'NasdaqGS',series: [{ d: '2026-09-21', p: 741.47, div: 0.751 }] },
@@ -347,7 +347,9 @@ test('merge source describes the cross-checked fallback and paired tail dates st
     spy: [{ d: '2026-09-22', p: 773.38 }],
     qqq: [{ d: '2026-09-22', p: 747.46 }],
   }, new Date('2026-09-23T02:00:00Z'));
-  assert.match(merged.source, /Nasdaq official quote and historical close cross-check/);
+  assert.match(merged.source, /Nasdaq historical daily closes and cash dividends/);
+  assert.match(merged.source, /retained legacy cache history/);
+  assert.doesNotMatch(merged.source, /cross-check|official quote/);
   assert.equal(merged.benchmarks.spy.series.at(-1).d, merged.benchmarks.qqq.series.at(-1).d);
 });
 
@@ -428,7 +430,7 @@ test('expected target uses the fee NY boundary across DST and weekends without i
   assert.throws(() => expectedBenchmarkTargetDate(new Date('invalid')), /Invalid benchmark clock/);
 });
 
-function recoveryFetch({ freshPrimary = false, staleMeta = false, failedSymbol, failAll = false } = {}) {
+function recoveryFetch({ staleHistorical = false, failedSymbol, failAll = false, missingDividends = false, marketStatus = 'After-Hours' } = {}) {
   const calls = [];
   const fetchImpl = async url => {
     calls.push(url);
@@ -438,17 +440,16 @@ function recoveryFetch({ freshPrimary = false, staleMeta = false, failedSymbol, 
     if (failAll || symbol === failedSymbol) return { ok: false, status: 503 };
     const definition = DEFINITIONS[symbol.toLowerCase()];
     let body;
-    if (parsed.hostname.endsWith('finance.yahoo.com')) {
-      body = payload(definition, {
-        timestamps: [freshPrimary ? epoch('2026-10-14T13:30:00Z') : RECOVERY_PRIOR],
-        closes: [freshPrimary ? 103 : 100],
-        meta: { regularMarketTime: staleMeta ? RECOVERY_PRIOR : RECOVERY_CLOSE, regularMarketPrice: staleMeta ? 100 : 103 },
-      });
-    } else if (parsed.pathname.endsWith('/info')) {
-      body = nasdaqInfo(definition, { date: 'Oct 14, 2026', price: 999, marketStatus: 'After-Hours' });
+    assert.equal(parsed.hostname, 'api.nasdaq.com', 'refresh must use only Nasdaq');
+    if (parsed.pathname.endsWith('/info')) {
+      body = nasdaqInfo(definition, { date: 'invalid quote date', price: 999, marketStatus });
     } else if (parsed.pathname.endsWith('/historical')) {
-      body = nasdaqHistorical(definition, [{ date: '10/14/2026', close: '103' }]);
-    } else if (parsed.pathname.endsWith('/dividends')) body = nasdaqDividends();
+      assert.equal(parsed.searchParams.get('todate'), '2026-10-14');
+      body = nasdaqHistorical(definition, [
+        ...(!staleHistorical ? [{ date: '10/14/2026', close: '103' }] : []),
+        { date: '10/13/2026', close: '100' },
+      ]);
+    } else if (parsed.pathname.endsWith('/dividends')) body = missingDividends ? {} : nasdaqDividends();
     else assert.fail(`Unexpected offline request ${url}`);
     return { ok: true, status: 200, json: async () => body };
   };
@@ -475,50 +476,30 @@ test('full refresh recovers two target rows from historical data while ignoring 
   assert.equal(result.changed, true);
   for (const key of ['spy', 'qqq']) assert.deepEqual(result.cache.benchmarks[key].series.at(-1), { d: '2026-10-14', p: 103 });
   assert.ok(source.calls.some(url => url.includes('/historical?')));
-  assert.equal(source.calls.filter(url => url.includes('/dividends?')).length, 1);
+  assert.equal(source.calls.filter(url => url.includes('/dividends?')).length, 2);
+  assert.equal(source.calls.length, 6);
+  assert.ok(source.calls.every(url => new URL(url).hostname === 'api.nasdaq.com'));
   const persisted = JSON.parse(await readFile(path, 'utf8'));
   assert.deepEqual(persisted, result.cache);
 });
 
-test('verified fresh daily bars do not depend on current Nasdaq market status', async t => {
-  const { path } = await offlineCache(t, priorCache());
-  const source = recoveryFetch({ freshPrimary: true });
-  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
-  assert.equal(result.cache.benchmarks.spy.series.at(-1).d, '2026-10-14');
-  assert.equal(source.calls.length, 2);
-  assert.ok(source.calls.every(url => new URL(url).hostname.endsWith('finance.yahoo.com')));
+test('refresh ignores every current Nasdaq status and never queries Yahoo', async t => {
+  for (const marketStatus of ['Closed', 'After-Hours', 'Pre-Market', 'Open', 'unknown-provider-state', undefined]) {
+    const { path } = await offlineCache(t, priorCache());
+    const source = recoveryFetch({ marketStatus });
+    const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
+    assert.equal(result.cache.benchmarks.spy.series.at(-1).p, 103);
+    assert.equal(source.calls.length, 6);
+    assert.ok(source.calls.every(url => new URL(url).hostname === 'api.nasdaq.com'));
+  }
 });
 
-test('valid stale fallback keeps trying the other Yahoo host for the exact target', async t => {
-  const { path } = await offlineCache(t, priorCache());
-  const calls = [];
-  const fetchImpl = async url => {
-    calls.push(url);
-    const parsed = new URL(url);
-    const symbol = /(?:chart|quote)\/(SPY|QQQ)/.exec(parsed.pathname)?.[1];
-    const definition = DEFINITIONS[symbol?.toLowerCase()];
-    assert.ok(definition, `Unexpected offline request ${url}`);
-    let body;
-    if (parsed.hostname.endsWith('finance.yahoo.com')) {
-      const fresh = parsed.hostname === 'query1.finance.yahoo.com';
-      body = payload(definition, {
-        timestamps: [fresh ? epoch('2026-10-14T13:30:00Z') : RECOVERY_PRIOR],
-        closes: [fresh ? 103 : 100],
-        meta: { regularMarketTime: RECOVERY_PRIOR, regularMarketPrice: 100 },
-      });
-    } else if (parsed.pathname.endsWith('/info')) {
-      body = nasdaqInfo(definition, { date: 'Oct 13, 2026', price: 100 });
-    } else if (parsed.pathname.endsWith('/historical')) {
-      body = nasdaqHistorical(definition, [{ date: '10/13/2026', close: '100' }]);
-    } else if (parsed.pathname.endsWith('/dividends')) body = nasdaqDividends();
-    else assert.fail(`Unexpected offline request ${url}`);
-    return { ok: true, status: 200, json: async () => body };
-  };
-  const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl });
-  for (const key of ['spy', 'qqq']) assert.deepEqual(result.cache.benchmarks[key].series.at(-1), { d: '2026-10-14', p: 103 });
-  assert.equal(calls.filter(url => new URL(url).hostname === 'query1.finance.yahoo.com').length, 2);
-  assert.equal(calls.filter(url => new URL(url).hostname === 'query2.finance.yahoo.com').length, 4);
-  assert.equal(result.failures.filter(message => message.includes('completed close still stale')).length, 4);
+test('stale historical rows stay pending without consulting Yahoo or live prices', async t => {
+  const { path, bytes } = await offlineCache(t, priorCache());
+  const source = recoveryFetch({ staleHistorical: true });
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /target pending/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+  assert.equal(source.calls.length, 6);
 });
 
 test('regular-market metadata timestamp is a witness; only historical daily close supplies the appended price', () => {
@@ -543,7 +524,7 @@ test('all source failures cannot report success or rewrite old cache bytes', asy
   const source = recoveryFetch({ failAll: true });
   await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /target pending: expected=2026-10-14/);
   assert.equal(await readFile(path, 'utf8'), bytes);
-  assert.equal(source.calls.length, 10);
+  assert.equal(source.calls.length, 2);
 });
 
 test('one fresh ETF and one stale ETF cannot partially write the cache', async t => {
@@ -553,9 +534,9 @@ test('one fresh ETF and one stale ETF cannot partially write the cache', async t
   assert.equal(await readFile(path, 'utf8'), bytes);
 });
 
-test('same-date historical data without independent regular-market evidence stays pending', async t => {
+test('missing dividend evidence stays pending and cannot rewrite old cache bytes', async t => {
   const { path, bytes } = await offlineCache(t, priorCache());
-  const source = recoveryFetch({ staleMeta: true });
+  const source = recoveryFetch({ missingDividends: true });
   await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /target pending/);
   assert.equal(await readFile(path, 'utf8'), bytes);
 });
@@ -563,22 +544,22 @@ test('same-date historical data without independent regular-market evidence stay
 test('successful target reuse is a byte-identical no-op', async t => {
   const cache = mergePrices(null, { spy: [{ d: '2026-10-14', p: 103 }], qqq: [{ d: '2026-10-14', p: 103 }] }, RECOVERY_NOW);
   const { path, bytes } = await offlineCache(t, cache);
-  const source = recoveryFetch({ freshPrimary: true });
+  const source = recoveryFetch();
   const result = await refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl });
   assert.equal(result.changed, false);
   assert.equal(await readFile(path, 'utf8'), bytes);
 });
 
-test('independent Nasdaq fallback survives both Yahoo hosts failing, with prior close and cash-dividend evidence',async t=>{
+test('Nasdaq historical refresh uses only the six existing same-source endpoints',async t=>{
   const {path}=await offlineCache(t,priorCache()),calls=[];
   const fetchImpl=async url=>{calls.push(url);const u=new URL(url),symbol=/quote\/(SPY|QQQ)/.exec(u.pathname)?.[1];if(u.hostname.endsWith('yahoo.com'))return {ok:false,status:503};const def=DEFINITIONS[symbol.toLowerCase()];
     const body=u.pathname.endsWith('/info')?nasdaqInfo(def,{date:'Oct 14, 2026',price:103}):u.pathname.endsWith('/historical')?nasdaqHistorical(def,[{date:'10/14/2026',close:'103'},{date:'10/13/2026',close:'100'}]):nasdaqDividends();return {ok:true,json:async()=>body};};
   const r=await refresh({path,now:RECOVERY_NOW,fetchImpl});for(const key of ['spy','qqq'])assert.equal(r.cache.benchmarks[key].series.at(-1).p,103);
-  assert.equal(calls.length,14);assert.equal(calls.filter(u=>u.startsWith('https://api.nasdaq.com/')).length,6);
+  assert.equal(calls.length,6);assert.equal(calls.filter(u=>u.startsWith('https://api.nasdaq.com/')).length,6);
 });
-test('independent fallback refuses mismatched ETF, currency, anchor, missing dividends or after-hours evidence',()=>{
+test('Nasdaq historical path preserves identity, USD, continuity and dividend boundaries',()=>{
   const definition=DEFINITIONS.spy,base={prior:priorCache().benchmarks.spy,definition,nasdaqInfo:nasdaqInfo(definition,{date:'Oct 14, 2026',price:103}),nasdaqHistorical:nasdaqHistorical(definition,[{date:'10/14/2026',close:'103'},{date:'10/13/2026',close:'100'}]),nasdaqDividends:nasdaqDividends(),now:RECOVERY_NOW};
-  for(const edit of [x=>x.prior.symbol='SP500',x=>x.prior.currency='EUR',x=>x.prior.series[0].p=99,x=>x.nasdaqInfo.data.marketStatus='After-Hours',x=>x.nasdaqDividends={},x=>x.nasdaqHistorical.data.tradesTable.rows.pop(),x=>x.nasdaqHistorical.data.tradesTable.rows[0].close='104']){const x=structuredClone(base);edit(x);assert.throws(()=>appendIndependentNasdaqClose(x));}
+  for(const edit of [x=>x.prior.symbol='SP500',x=>x.prior.currency='EUR',x=>x.prior.series[0].p=99,x=>x.nasdaqInfo.data.symbol='QQQ',x=>x.nasdaqInfo.data.assetClass='STOCK',x=>x.nasdaqInfo.data.exchange='OTHER',x=>x.nasdaqInfo.data.companyName='OTHER',x=>x.nasdaqDividends={},x=>x.nasdaqHistorical.data.tradesTable.rows.pop(),x=>x.nasdaqHistorical.data.symbol='QQQ',x=>x.nasdaqHistorical.data.tradesTable.rows[0].close='0',x=>x.nasdaqHistorical.data.tradesTable.rows[0].close='€103',x=>x.nasdaqHistorical.data.tradesTable.rows[0].date='10/15/2026',x=>x.nasdaqHistorical.data.tradesTable.rows.push({...x.nasdaqHistorical.data.tradesTable.rows[0]})]){const x=structuredClone(base);edit(x);assert.throws(()=>appendIndependentNasdaqClose(x));}
   const ex={...base,now:new Date('2026-09-19T02:00:00Z'),prior:{...base.prior,series:[{d:'2026-09-17',p:100}]},nasdaqInfo:nasdaqInfo(definition,{date:'Sep 18, 2026',price:101}),nasdaqHistorical:nasdaqHistorical(definition,[{date:'09/18/2026',close:'101'},{date:'09/17/2026',close:'100'}])};
   assert.throws(()=>appendIndependentNasdaqClose(ex),/dividend/);
   ex.nasdaqDividends=nasdaqDividends([{exOrEffDate:'09/18/2026',currency:'USD',type:'Cash',amount:'1.25'}]);assert.deepEqual(appendIndependentNasdaqClose(ex).at(-1),{d:'2026-09-18',p:101,div:1.25});
@@ -587,4 +568,86 @@ test('independent fallback refuses mismatched ETF, currency, anchor, missing div
 test('refresh rejects unverified old-cache identity before any request or cache rewrite',async t=>{
   const cache=priorCache();cache.benchmarks.spy.symbol='SP500';const {path,bytes}=await offlineCache(t,cache);
   await assert.rejects(refresh({path,now:RECOVERY_NOW,fetchImpl:()=>assert.fail('invalid cache must not request a source')}),/cache identity/);assert.equal(await readFile(path,'utf8'),bytes);
+});
+
+
+test('historical-only authority never reads current quote state, time or prices', () => {
+  const definition = DEFINITIONS.spy;
+  const info = nasdaqInfo(definition);
+  for (const key of ['marketStatus', 'primaryData', 'secondaryData']) {
+    Object.defineProperty(info.data, key, { get() { assert.fail(`live quote field ${key} was read`); } });
+  }
+  const result = appendIndependentNasdaqClose({
+    prior: priorCache().benchmarks.spy, definition, nasdaqInfo: info,
+    nasdaqHistorical: nasdaqHistorical(definition, [{ date: '10/14/2026', close: '$103.25' }, { date: '10/13/2026', close: '$100' }]),
+    nasdaqDividends: nasdaqDividends(), now: RECOVERY_NOW,
+  });
+  assert.deepEqual(result.at(-1), { d: '2026-10-14', p: 103.25 });
+});
+
+test('target 29 uses dated historical closes, keeps dividend total return and is repeatable', async t => {
+  const now = new Date('2026-10-30T00:02:35Z');
+  const cache = mergePrices(null, {
+    spy: [{ d: '2026-10-28', p: 100 }], qqq: [{ d: '2026-10-28', p: 200 }],
+  }, now);
+  cache.source = 'legacy Yahoo verified history';
+  const { path } = await offlineCache(t, cache);
+  const calls = [];
+  const fetchImpl = async url => {
+    calls.push(url);
+    const u = new URL(url);
+    assert.equal(u.hostname, 'api.nasdaq.com');
+    const symbol = /quote\/(SPY|QQQ)/.exec(u.pathname)?.[1];
+    const definition = DEFINITIONS[symbol?.toLowerCase()];
+    assert.ok(definition);
+    let body;
+    if (u.pathname.endsWith('/info')) body = nasdaqInfo(definition, { marketStatus: 'After-Hours', price: 999 });
+    else if (u.pathname.endsWith('/historical')) {
+      assert.equal(u.searchParams.get('todate'), '2026-10-29');
+      body = nasdaqHistorical(definition, [{ date: '10/29/2026', close: symbol === 'SPY' ? '$101' : '$203' }, { date: '10/28/2026', close: symbol === 'SPY' ? '$100' : '$200' }]);
+    } else if (u.pathname.endsWith('/dividends')) body = nasdaqDividends(symbol === 'QQQ' ? [{ exOrEffDate: '10/29/2026', amount: '$0.75', currency: 'USD', type: 'Cash' }] : []);
+    else assert.fail(url);
+    return { ok: true, json: async () => body };
+  };
+  const first = await refresh({ path, now, fetchImpl });
+  assert.equal(first.changed, true);
+  assert.deepEqual(first.cache.benchmarks.spy.series.at(-1), { d: '2026-10-29', p: 101 });
+  assert.deepEqual(first.cache.benchmarks.qqq.series.at(-1), { d: '2026-10-29', p: 203, div: 0.75 });
+  assert.match(first.cache.source, /retained legacy cache history/);
+  const bytes = await readFile(path, 'utf8');
+  const second = await refresh({ path, now: new Date('2026-10-30T00:30:00Z'), fetchImpl });
+  assert.equal(second.changed, false);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+  assert.equal(calls.length, 12);
+});
+
+
+test('failed refresh does not relabel an already-current legacy cache as a new source', async t => {
+  const cache = mergePrices(null, { spy: [{ d: '2026-10-14', p: 103 }], qqq: [{ d: '2026-10-14', p: 103 }] }, RECOVERY_NOW);
+  cache.source = 'legacy verified source';
+  const { path, bytes } = await offlineCache(t, cache);
+  const source = recoveryFetch({ failAll: true });
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /source pending/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+
+test('same-target cache cannot hide one failed ETF while publishing the other correction', async t => {
+  for (const failedSymbol of ['SPY', 'QQQ']) {
+    const cache = mergePrices(null, { spy: [{ d: '2026-10-14', p: 100 }], qqq: [{ d: '2026-10-14', p: 100 }] }, RECOVERY_NOW);
+    const { path, bytes } = await offlineCache(t, cache);
+    const source = recoveryFetch({ failedSymbol });
+    await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl: source.fetchImpl }), /source pending/);
+    assert.equal(await readFile(path, 'utf8'), bytes);
+  }
+});
+
+test('same-target cache cannot mask missing dividend evidence during a correction', async t => {
+  const cache = mergePrices(null, { spy: [{ d: '2026-10-14', p: 100 }], qqq: [{ d: '2026-10-14', p: 100 }] }, RECOVERY_NOW);
+  const { path, bytes } = await offlineCache(t, cache);
+  const source = recoveryFetch();
+  const fetchImpl = url => url.includes('/QQQ/dividends?')
+    ? Promise.resolve({ ok: true, json: async () => ({}) }) : source.fetchImpl(url);
+  await assert.rejects(refresh({ path, now: RECOVERY_NOW, fetchImpl }), /source pending/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
 });
