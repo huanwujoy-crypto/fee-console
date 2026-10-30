@@ -3044,12 +3044,17 @@ function health(feeView,st){
     if(age>10)hold.push("每日数据已停更 "+age+" 天（最新 "+lp.d+"）");
     const ms=num(lp.cash)+num(lp.stock)+num(lp.other);
     if(ms>0&&Math.abs(ms-st.nav)>st.nav*0.02)hold.push("资产拆分与账户总额相差过大");
-    const styleFields=[lp.growth,lp.value].filter(v=>v!=null&&v!=="");
-    const gold=lp.gold==null?0:Number(lp.gold);
-    if(!Number.isFinite(gold)||gold<0||(lp.gold!=null&&styleFields.length!==2))hold.push("黄金分类金额无效或证券分类不完整");
-    if(styleFields.length===1)hold.push("成长股 / 价值股拆分只有一项，暂按股票未拆分显示");
-    else if(styleFields.length===2&&Math.abs(num(lp.growth)+num(lp.value)+gold-num(lp.stock))>1)
-      hold.push("成长股 + 价值股 + 黄金与证券总额不一致，暂按证券未拆分显示");
+    // Asset types are report metadata, not an additional payable-fee gate.
+    // Keep the legacy validation for old points only; malformed new metadata
+    // is disclosed in the allocation card without hiding verified fee inputs.
+    if(!Object.hasOwn(lp,"assetAllocation")){
+      const styleFields=[lp.growth,lp.value].filter(v=>v!=null&&v!=="");
+      const gold=lp.gold==null?0:Number(lp.gold);
+      if(!Number.isFinite(gold)||gold<0||(lp.gold!=null&&styleFields.length!==2))hold.push("黄金分类金额无效或证券分类不完整");
+      if(styleFields.length===1)hold.push("历史成长 / 价值拆分只有一项，暂按证券未拆分显示");
+      else if(styleFields.length===2&&Math.abs(num(lp.growth)+num(lp.value)+gold-num(lp.stock))>1)
+        hold.push("历史成长 + 价值 + 黄金与证券总额不一致，暂按证券未拆分显示");
+    }
   }
   if(unresolved>0)hold.push(unresolved+" 笔资金变动尚未判定内部交易或外部出入金");
   return {hold:hold.length>0,holdReasons:hold};}
@@ -3212,6 +3217,46 @@ function topHoldingsView(lp,nav){
   return `<div class="top-holdings" aria-label="前三大持仓，不含现金及其它"><div class="top-holdings-head"><span>前三大持仓</span><span>不含现金及其它</span></div>${safe.map((row,index)=>`<div class="top-holdings-row"><span class="top-holdings-rank">${index+1}</span><span class="top-holdings-ticker">${esc(row.ticker)}</span><span class="top-holdings-value">${usd(row.value,0)}</span><span class="top-holdings-weight">${(row.value/total*100).toFixed(1)}%</span></div>`).join("")}</div>`;
 }
 /* top-holdings-view:end */
+/* asset-allocation-view:start */
+// Reporting only. Never reinterpret the legacy `stock` total as ordinary shares
+// or feed this projection into NAV, returns, cash flows or fee calculations.
+function assetAllocationProjection(lp){
+  if(!lp||!Object.hasOwn(lp,"assetAllocation"))return {state:"legacy"};
+  const value=lp.assetAllocation,keys=["equity","etf","bond","cash","gold","other","unclassified"];
+  const expected=["schemaVersion","mode",...keys].sort().join(",");
+  if(!value||typeof value!=="object"||Array.isArray(value)
+    ||Object.keys(value).sort().join(",")!==expected||value.schemaVersion!==1||value.mode!=="sharesight-asset-type-v1"
+    ||!Number.isFinite(lp.stock)||lp.stock<0||keys.some(k=>!Number.isFinite(value[k])||value[k]<0)
+    ||Math.abs(keys.reduce((sum,k)=>sum+value[k],0)-lp.stock)>1)return {state:"unavailable"};
+  return {state:"ready",value};
+}
+function assetMixView(lp,nav){
+  if(!lp||(lp.cash==null&&lp.stock==null&&lp.other==null))return "";
+  const mixV={cash:num(lp.cash),stock:num(lp.stock),other:num(lp.other)};
+  const mixSum=mixV.cash+mixV.stock+mixV.other,allocation=assetAllocationProjection(lp);
+  const cell=(label,value)=>`<div><div class="k">${label}</div><div class="v">${usd(value,0)}<span class="p">${nav>0?(value/nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
+  let cells,note="";
+  if(allocation.state==="ready"){
+    const a=allocation.value;
+    cells=cell("现金及其它",mixV.cash+mixV.other+a.cash)+cell("股票",a.equity);
+    for(const [key,label] of [["etf","ETF"],["bond","债券"],["gold","黄金"],["other","其他证券"],["unclassified","待分类证券"]])
+      if(a[key]>0)cells+=cell(label,a[key]);
+    if(a.unclassified>0)note="待分类证券已计入总资产；仅证券类型待确认，不改变资金流或费用计算口径。";
+  }else if(allocation.state==="unavailable"){
+    // Never fall back to stale growth/value fields when new metadata is invalid.
+    cells=cell("现金及其它",mixV.cash+mixV.other)+cell("证券（分类待核实）",mixV.stock);
+    note="证券类型拆分暂不可用；不替代总资产与费用回执核验。";
+  }else{
+    const growth=lp.growth,value=lp.value,gold=lp.gold==null?0:Number(lp.gold);
+    const ready=growth!=null&&value!=null&&Number.isFinite(Number(growth))&&Number.isFinite(Number(value))
+      &&Number(growth)>=0&&Number(value)>=0&&Number.isFinite(gold)&&gold>=0
+      &&Math.abs(Number(growth)+Number(value)+gold-mixV.stock)<=1;
+    cells=cell("现金及其它",mixV.cash+mixV.other)+(ready?cell("历史成长/价值合计",Number(growth)+Number(value))+(gold>0?cell("黄金",gold):""):cell("证券（未拆分）",mixV.stock));
+    note=ready?"历史分类原样保留；成长/价值合计不等同于按 Sharesight 类型确认的个股。":"尚无经核实的证券类型拆分";
+  }
+  return `<div class="mix two">${cells}</div>${note?`<div class="note">${note}</div>`:""}${Math.abs(mixSum-nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-nav,0)}</div>`:""}`;
+}
+/* asset-allocation-view:end */
 function renderKPIs(feeView,st,B,G){
   G=G||{hold:false,holdReasons:[]};
   const lp=st.lastPt;const showAnn=st.spanDays>365;
@@ -3219,16 +3264,7 @@ function renderKPIs(feeView,st,B,G){
   const gateBox=document.getElementById("gateBox");
   gateBox.innerHTML=G.loading?'<div class="note" role="status">正在读取并核验，请稍候…</div>':G.hold?`<div class="gate"><b>⚠ 数据待复核，暂不给出可付款金额</b>
     <ul>${G.holdReasons.map(r=>`<li>${esc(r)}</li>`).join("")}</ul></div>`:"";
-  /* 展示合并 cash+other；经核实的成长/价值及独立黄金与 stock 对账；旧点缺少黄金等于零。 */
-  const hasMix=!!(lp&&(lp.cash!=null||lp.stock!=null||lp.other!=null));
-  const mixV={cash:num(lp&&lp.cash),stock:num(lp&&lp.stock),other:num(lp&&lp.other)};
-  const mixSum=mixV.cash+mixV.stock+mixV.other;
-  const hasStyle=!!(lp&&lp.growth!=null&&lp.value!=null&&isFinite(Number(lp.growth))&&isFinite(Number(lp.value))&&Number(lp.growth)>=0&&Number(lp.value)>=0);
-  const gold=lp?.gold==null?0:Number(lp.gold);
-  const styleReady=hasStyle&&Number.isFinite(gold)&&gold>=0&&Math.abs(num(lp.growth)+num(lp.value)+gold-mixV.stock)<=1;
-  const mixCell=(lab,v)=>`<div><div class="k">${lab}</div><div class="v">${usd(v,0)}<span class="p">${st.nav>0?(v/st.nav*100).toFixed(0)+"%":"—"}</span></div></div>`;
-  const mixCells=styleReady?`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("成长股",num(lp.growth))}${mixCell("价值股",num(lp.value))}${gold>0?mixCell("黄金",gold):""}`:`${mixCell("现金及其它",mixV.cash+mixV.other)}${mixCell("证券（未拆分）",mixV.stock)}`;
-  const mix=hasMix?`<div class="mix${styleReady?(gold>0?" gold":""):" two"}">${mixCells}</div>${!styleReady?`<div class="note">尚无经核实的成长股 / 价值股 / 黄金持仓级拆分</div>`:""}${Math.abs(mixSum-st.nav)>1?`<div class="note">拆分合计 ${usd(mixSum,0)}，与总资产相差 ${usd(mixSum-st.nav,0)}</div>`:""}`:"";
+  const mix=assetMixView(lp,st.nav);
   /* 分账户：总资产下方列出各账户当日数值（与起始基准页的账户名一致） */
   const acctLine=lp?`<div class="small" style="margin-top:2px">${DB.accounts.map(a=>`${esc(a.name)} <b style="font-weight:600;font-variant-numeric:tabular-nums">${usd(num(lp[a.id]),0)}</b>`).join(" · ")}</div>`:"";
   const passive=st.bench.filter(b=>["spy","qqq"].includes(b.k));
