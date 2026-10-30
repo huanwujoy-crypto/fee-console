@@ -1,4 +1,6 @@
 // Pure complete-original association and normalization; no IO or authority.
+import {createFeeCompanyExposureCore} from './fee-ratio-company-exposure.mjs';
+import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
 export function createRatioSourceCore(hashScope){
 const fail=()=>{throw Error('RATIO_BROWSER_EVIDENCE_REFUSED');};
 const exact=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&Object.keys(o).sort().join(',')===[...k].sort().join(',');
@@ -14,6 +16,15 @@ const normalize=s=>String(s).replaceAll('&amp;','&');
 const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 
 function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
+  if(raw?.schemaVersion==='sharesight-private-full-v2'){
+    const core=createOfficialRatioSourceCore();
+    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes});
+    if(core.canonical(input)!==core.canonical(built.input)||hashScope(raw.accounts)!==scopeHash)fail();
+    const clock=now.getTime(),captured=time(built.capturedAt);
+    if(!Number.isFinite(clock)||clock<captured||clock-captured>36*3600000
+      ||[raw.classification,raw.exposure].some(s=>time(s.capturedAt)>clock||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)<0||Math.floor((Date.parse(now.toISOString().slice(0,10))-Date.parse(s.asOf))/86400000)>4))fail();
+    return {observedAt:built.capturedAt,asOf:built.targetDate,sourceDates:built.sourceDates,classificationSummary:built.classificationSummary,migrationPending:false,classificationDeltaCents:0,exposureDeltaCents:0,companyExposure:createFeeCompanyExposureCore().build(raw,input,built.companyContext)};
+  }
   if(!exact(input,['schema','exposure','book'])||input.schema!=='fee-console.ratio-sources.v1'||input.book?.schema!=='fee-console.ratio-sharesight-browser-book.v1')fail();
   const b=input.book,s=input.exposure?.summary,p=b.provenance;
   if(!raw||raw.schemaVersion!=='sharesight-private-full-v1'||raw.source?.provider!=='Sharesight'||raw.source.apiResponse!==false||raw.source.view!=='All Together'||!Array.isArray(raw.accounts)||raw.accounts.length!==10||hashScope(raw.accounts)!==scopeHash||hashScope(s.accounts)!==scopeHash)fail();
@@ -55,16 +66,20 @@ function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}
   const secondaryKeys=s.classes[3].top5.map(r=>key(r));if(new Set(secondaryKeys).size!==5||[...secondary].sort((a,b)=>b[1]-a[1]).slice(0,5).some(([k])=>!secondaryKeys.includes(k)))fail();
   for(const old of s.classes[3].top5){const k=key(old),v=secondary.get(k),ui=known.get(k);if(v===undefined||cents(old.valueUSD)!==cents(v)&&(!ui||cents(ui.originalUIValueUSD)!==cents(old.valueUSD)||cents(ui.exportSumValueUSD)!==cents(v)))fail();}
   if(cents(s.residualETFs.valueUSD)!==cents(e.residualValueUSD)||Math.abs(s.residualETFs.weightTotalPct-e.residualWeightTotalPct)>.0051||Math.abs(s.residualETFs.weightSecondaryClassPct-e.residualWeightSecondaryPct)>.0051||cents(total(e.rows))!==cents(e.exportRowsTotalUSD)||Math.round((total(e.rows)-snap.totalValueUSD)*100)!==Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100)||cents(total([...raw.directPositionsByAccount,...raw.cashAccounts]))!==cents(coverage.directPlusCashRowsValueUSD)||Math.round((total(raw.classTotals)-snap.totalValueUSD)*100)!==Math.round(coverage.directPlusCashRoundingDeltaVersusReportedTotalUSD*100))fail();
-  return {observedAt:new Date(captured).toISOString(),asOf:snap.asOf,migrationPending:raw.transferReconciliation?.receiptConfirmed!==true,classificationDeltaCents:Math.round((total(raw.classTotals)-snap.totalValueUSD)*100),exposureDeltaCents:Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100)};
+  return {observedAt:new Date(captured).toISOString(),asOf:snap.asOf,migrationPending:raw.transferReconciliation?.receiptConfirmed!==true,classificationDeltaCents:Math.round((total(raw.classTotals)-snap.totalValueUSD)*100),exposureDeltaCents:Math.round(e.roundingDeltaVersusOriginalPortfolioUSD*100),companyExposure:createFeeCompanyExposureCore().build(raw,input)};
 }
 
 function buildBrowserRatioBook(input,targetDate){
-  if(!exact(input,['schema','source','currency','asOf','retrievedAt','sourceSha256','provenance','ib','noah'])||input.schema!=='fee-console.ratio-sharesight-browser-book.v1'||input.source!=='Sharesight'||input.currency!=='USD'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
+  const official=input?.schema==='fee-console.ratio-sharesight-browser-book.v2';
+  if(!exact(input,['schema','source','currency','asOf','retrievedAt','sourceSha256','provenance','ib','noah'])||!['fee-console.ratio-sharesight-browser-book.v1','fee-console.ratio-sharesight-browser-book.v2'].includes(input.schema)||input.source!=='Sharesight'||input.currency!=='USD'||input.asOf!==targetDate||!/^[a-f0-9]{64}$/.test(input.sourceSha256||''))fail();
   const instant=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(s)&&Number.isFinite(Date.parse(s));
   const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
   const money=v=>{if(typeof v!=='number'||!Number.isFinite(v)||v<0||v>1e12||Math.abs(v*100-Math.round(v*100))>0.00001)fail();return Math.round(v*100);};
   const p=input.provenance;
-  if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000||p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
+  if(official){
+    if(!exact(p,['transport','observedAtBasis','classificationCapturedAt','exposureCapturedAt','downloadCompletedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='official-workbooks'||p.observedAtBasis!=='original-download-file-mtime'||p.downloadCompletedAt!==null||![input.retrievedAt,p.classificationCapturedAt,p.exposureCapturedAt].every(instant)||input.retrievedAt!==p.classificationCapturedAt)fail();
+  }else if(!exact(p,['transport','observedAtBasis','exportCreatedAt','exportLastWrittenAt','classificationSavedAt','fullSourceBytes','fullSourceSha256','transferStatus','limitations'])||p.transport!=='browser-export-and-ui'||p.observedAtBasis!=='original-export-download-time'||![input.retrievedAt,p.exportCreatedAt,p.exportLastWrittenAt,p.classificationSavedAt].every(instant)||Date.parse(p.exportCreatedAt)>Date.parse(p.exportLastWrittenAt)||Date.parse(input.retrievedAt)!==Math.floor(Date.parse(p.exportLastWrittenAt)/1000)*1000)fail();
+  if(p.fullSourceSha256!==input.sourceSha256||!Number.isSafeInteger(p.fullSourceBytes)||p.fullSourceBytes<1||p.fullSourceBytes>5*1024*1024||!text(p.transferStatus)||!Array.isArray(p.limitations)||p.limitations.length>50||!p.limitations.every(text))fail();
   let holdings=null,allocation=null,ibCashCents=null,noahCashCents=null;
   const ib=input.ib;
   if(ib!==null){

@@ -229,16 +229,28 @@ export function resolveAssetAllocation({ input, registry, staticMap, date, sourc
     if (!Array.isArray(p.holdings) || p.holdings.length > 1000) fail('HOLDINGS');
     let total = 0;
     for (const h of p.holdings) {
-      exact(h, ['holdingId', 'ticker', 'valueUsd', 'sourceAssetType']);
+      exact(h, ['holdingId', 'ticker', 'valueUsd', 'sourceAssetType', ...(Object.hasOwn(h,'sourceInstrument')?['sourceInstrument']:[])]);
       const key = identity({...h, portfolioId: p.portfolioId});
       if (ids.has(key)) fail('HOLDING_DUPLICATE');
       ids.add(key); amount(h.valueUsd); total += h.valueUsd;
       if (h.sourceAssetType !== null && (typeof h.sourceAssetType !== 'string' || h.sourceAssetType.length > 128)) fail('SCHEMA');
       const type = (h.sourceAssetType || '').trim().toLowerCase();
+      const instrument=h.sourceInstrument;
+      if(instrument!==undefined){
+        exact(instrument,['instrumentId','instrumentCode','market','currency']);
+        if(!Number.isSafeInteger(instrument.instrumentId)||instrument.instrumentId<=0
+            ||instrument.instrumentCode!==h.ticker||typeof instrument.market!=='string'||!instrument.market
+            ||instrument.market.length>32||/[\u0000-\u001f\u007f]/.test(instrument.market)
+            ||instrument.currency!=='USD')fail('IDENTITY');
+      }
+      // Global Sharesight security identity survives a portfolio transfer and
+      // does not turn other ETFs or mining-company ordinary shares into gold.
+      const sourceGold=etf.has(type)&&instrument?.instrumentId===22272
+        &&instrument.instrumentCode==='GLD'&&instrument.market==='NYSE';
       // Preserve verified gold only for the exact dated security, never a
       // similarly named new position or an explicitly ordinary share.
-      const gold = !ordinary.has(type) && goldRows.some(e => e.portfolioId === p.portfolioId
-        && e.holdingId === h.holdingId && e.ticker === h.ticker && e.effectiveFrom <= p.sourceDate);
+      const gold = !ordinary.has(type) && (sourceGold||goldRows.some(e => e.portfolioId === p.portfolioId
+        && e.holdingId === h.holdingId && e.ticker === h.ticker && e.effectiveFrom <= p.sourceDate));
       const bucket = ordinary.has(type) ? 'equity' : gold ? 'gold' : etf.has(type) ? 'etf'
         : bond.has(type) ? 'bond' : type === 'cash' ? 'cash' : other.has(type) ? 'other' : 'unclassified';
       allocation[bucket] += h.valueUsd;

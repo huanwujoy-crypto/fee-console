@@ -306,6 +306,22 @@ test('saved gold decision is read without mutating historical registry or creati
   assert.equal(resolveAssetAllocation(f).assetAllocation.gold, 200);
   assert.equal(JSON.stringify(registry), bytes);
 });
+test('verified GLD instrument stays gold across fee portfolios and new holding identities',()=>{
+  const f=assetFixture(),before=JSON.stringify(f.registry);
+  for(const p of f.input.portfolios)for(const h of p.holdings){h.holdingId+=100;h.ticker='GLD';h.sourceAssetType='exchange_traded_fund';h.sourceInstrument={instrumentId:22272,instrumentCode:'GLD',market:'NYSE',currency:'USD'};}
+  const result=resolveAssetAllocation(f);assert.equal(result.assetAllocation.gold,300);assert.equal(result.assetAllocation.etf,0);
+  assert.equal(JSON.stringify(f.registry),before);assert.deepEqual(result.newEventIds,[]);
+});
+for(const change of [h=>h.sourceInstrument.instrumentId=22273,h=>h.sourceInstrument.market='NASDAQ',h=>h.sourceAssetType='ordinary_shares',h=>{delete h.sourceInstrument;}])
+test('gold instrument rule does not guess other securities, markets, ordinary shares or missing identity',()=>{
+  const f=assetFixture(),h=f.input.portfolios[1].holdings[0];h.ticker='GLD';h.sourceAssetType='exchange_traded_fund';h.sourceInstrument={instrumentId:22272,instrumentCode:'GLD',market:'NYSE',currency:'USD'};change(h);
+  const a=resolveAssetAllocation(f).assetAllocation;assert.equal(a.gold,0);assert.equal(a.equity+a.etf,300);
+});
+test('contradictory or untyped native security identity is rejected without a ticker fallback',()=>{
+  for(const change of [h=>h.sourceInstrument.instrumentCode='OTHER',h=>h.sourceInstrument.instrumentId='22272',h=>h.sourceInstrument.currency='HKD',h=>h.sourceInstrument.extra=true]){
+    const f=assetFixture(),h=f.input.portfolios[1].holdings[0];h.ticker='GLD';h.sourceAssetType='exchange_traded_fund';h.sourceInstrument={instrumentId:22272,instrumentCode:'GLD',market:'NYSE',currency:'USD'};change(h);assert.throws(()=>resolveAssetAllocation(f));
+  }
+});
 for (const [name, change, code] of [
   ['wrong mode', f=>f.input.mode='anything', 'INPUT_DATE'],
   ['proposals cannot silently mutate history', f=>f.input.proposals=[{}], 'SCHEMA'],

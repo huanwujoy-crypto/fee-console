@@ -1,5 +1,6 @@
 // All keys, dates, report content and receipts below are synthetic, never live.
 import test from 'node:test';
+import './fee-ratio-official-source.test.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -45,10 +46,10 @@ test('ratio ciphertext authenticates recipient, scope, header, nonce and content
 });
 test('full module inventory is retained; missing CALL, orders, budget and holdings remain unknown',async()=>{
   const {core,model}=ratioFixture();await core.validateModel(model);const rendered=core.render(model);
-  for(const title of ['本轮补仓','现金优先补仓参考','股票四类配置','All Together · 四类前五大持仓','完整持仓'])assert.ok(rendered.includes(title));
+  for(const title of ['计算口径与合并规则','现金与补仓参考说明','股票四类配置','All Together · 四类前五','覆盖范围、残余与缺项'])assert.ok(rendered.includes(title));
   assert.doesNotMatch(rendered,/挂单提醒|IB MCP|Flex快照|AvailableFunds|ETF产品前五/);assert.match(rendered,/金额未计算|预留及净预算保持未知/);assert.match(rendered,/本类资产|占总资产|占本类资产/);
   assert.match(rendered,/2.50%／10.00%/);assert.match(rendered,/Exposure 来源截至 2000-01-03/);assert.match(rendered,/管理费账务截至 1999-12-31，.*日期不同/);assert.match(rendered,/Synthetic residual coverage/);
-  assert.equal((rendered.match(/<h3>/g)||[]).length,4);assert.equal((rendered.match(/Invented \d security \d/g)||[]).length,20);
+  assert.equal((rendered.match(/ · (?:直接持仓前五|原证券口径前五)<\/h3>/g)||[]).length,4);assert.doesNotMatch(rendered,/IB-HK 完整持仓/);assert.equal((rendered.match(/Invented \d security \d/g)||[]).length,20);
 });
 test('ratio source, scope, classes and dates cannot be silently relabelled or widened',async()=>{
   const {core,model}=ratioFixture();
@@ -377,9 +378,57 @@ test('full Sharesight book cannot be replaced by Exposure rows, truncated pages 
   for(const edit of [x=>x.ib.performance.next_page=2,x=>x.ib.performance.report.holdings.push(x.ib.performance.report.holdings[0]),x=>delete x.ib.performance.report.cash_accounts,x=>x.ib.performance.report.currency.code='EUR',x=>x.ib.performance.report.end_date='2000-01-04']){const b=structuredClone(book);edit(b);assert.throws(()=>buildRatioBook(b,'2000-01-03'));}
 });
 const unifiedUiFile=process.env.FEE_RATIO_TEST_UI_PATH||new URL('../index.html',import.meta.url);
-const unifiedUiSource=fs.readFileSync(unifiedUiFile,'utf8');
+if(process.env.GITHUB_ACTIONS==='true'&&process.env.FEE_RATIO_TEST_UI_PATH)throw Error('external ratio UI preview is local-only');
+const ratioUiHash=s=>ratioCrypto.createHash('sha256').update(s).digest('hex');
+const ratioUiStagesBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-ui-stages-v1.json',import.meta.url));
+function reviewedRatioUiFixture(bytes){
+  assert.equal(ratioUiHash(bytes),'72f1076dc9bc30aa1053fdad3abc536769a94682f7c97df5e3cbc17f46b55393','unreviewed ratio code fixture');
+  const f=JSON.parse(bytes);assert.deepEqual(Object.keys(f).sort(),['schema','priorIndexSha256','nextIndexSha256','regions'].sort());
+  assert.equal(f.schema,'fee-console.ratio-ui-stages.v1');assert.equal(f.priorIndexSha256,'de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d');assert.equal(f.nextIndexSha256,'abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34');
+  assert.deepEqual(Object.keys(f.regions).sort(),['buildMeta','manager','presentationCss','versionLabel']);
+  for(const r of Object.values(f.regions)){
+    assert.deepEqual(Object.keys(r).sort(),['start','end','includeEnd','prior','next','priorSha256','nextSha256'].sort());
+    for(const stage of ['prior','next'])assert.equal(ratioUiHash(r[stage]),r[stage+'Sha256']);
+  }
+  return f;
+}
+const ratioUiStages=reviewedRatioUiFixture(ratioUiStagesBytes);
+function stagedRatioUi(html,target='next'){
+  assert.ok(['prior','next'].includes(target));
+  const stage=['prior','next'].find(s=>ratioUiHash(html)===ratioUiStages[s+'IndexSha256']);
+  assert.ok(stage,'unreviewed installed ratio UI');
+  let result=html;
+  for(const r of Object.values(ratioUiStages.regions)){
+    assert.equal(result.split(r.start).length,2);const a=result.indexOf(r.start),z=result.indexOf(r.end,a);assert.ok(z>a);
+    const b=z+(r.includeEnd?r.end.length:0),current=result.slice(a,b);
+    assert.equal(current,r[stage]);assert.equal(ratioUiHash(current),r[stage+'Sha256']);
+    result=result.slice(0,a)+r[target]+result.slice(b);
+  }
+  assert.equal(ratioUiHash(result),ratioUiStages[target+'IndexSha256'],'complete materialized UI must match reviewed bytes');
+  return {stage,source:result};
+}
+// These are test-only snapshots of public CODE, never a production fallback or
+// source permission. Check the actual installed page first, then ALWAYS execute
+// every next-UI regression, even during the support-first stage. The exact old
+// consumer is exercised separately below; it is not called company-compatible.
+const installedUnifiedUiSource=fs.readFileSync(unifiedUiFile,'utf8');
+const ratioUiStage=stagedRatioUi(installedUnifiedUiSource);
+const unifiedUiSource=ratioUiStage.source;
 const independentRatioUi=unifiedUiSource.includes('const RATIO_SNAPSHOT_FILE=');
 const legacyRatioFactorySha256='5e7570832f7655adca74c15d20c4540cc58f46f463506a847f23a8bb1aa7b8d1'; // exact already-published codec; support/UI roll out separately
+
+test('ratio staged code pins both full pages, roundtrips only reviewed regions and always runs next UI contracts',()=>{
+  assert.ok(['prior','next'].includes(ratioUiStage.stage));assert.equal(independentRatioUi,true);
+  const prior=stagedRatioUi(unifiedUiSource,'prior').source,next=stagedRatioUi(prior).source;
+  assert.equal(next,unifiedUiSource);assert.equal(stagedRatioUi(next,'prior').source,prior);
+  assert.throws(()=>stagedRatioUi(installedUnifiedUiSource+'\n'),/unreviewed installed/);
+  assert.throws(()=>reviewedRatioUiFixture(Buffer.concat([ratioUiStagesBytes,Buffer.from(' ')])),/unreviewed ratio code fixture/);
+  const edited=structuredClone(ratioUiStages);edited.regions.manager.next+='\n';edited.regions.manager.nextSha256=ratioUiHash(edited.regions.manager.next);
+  assert.throws(()=>reviewedRatioUiFixture(Buffer.from(JSON.stringify(edited))),/unreviewed ratio code fixture/);
+  for(const name of ['fee-receipt-consumer','fee-receipt-render','fund-investor-core','fund-remote-storage','fee-report-consumer']){
+    const block=s=>s.split('/* '+name+':start */')[1].split('/* '+name+':end */')[0];assert.equal(block(prior),block(next));
+  }
+});
 
 test('unified UI embeds exact reviewed codec and denies investor, revoked roles and source switches',{skip:!unifiedUiSource.includes('const RATIO_RECIPIENT_FILE=')},async()=>{
   for(const [name,next]of [['xuan-ib-sharesight-exposure.mjs','const exposureCore='],['fee-ratio-management.mjs',null]]){
@@ -435,7 +484,7 @@ test('browser book preserves original dates, null quantities, converted cash and
   const input=syntheticBrowserBook(),{core,exposure}=ratioFixture(),wrapped={schema:'fee-console.ratio-sources.v1',exposure,book:input},options={kind:'snapshot',targetDate:'2000-01-03',feeAccountingThrough:'2000-01-03',now:new Date('2000-01-03T03:00:00.000Z'),viewCore:core};
   const b=buildRatioBook(input,'2000-01-03');assert.equal(b.ibCashCents,500);assert.equal(b.noahCashCents,700);assert.equal(b.allocation.totalCents,10000);assert.equal(b.holdings[0].quantity,null);assert.equal(b.holdings[0].nameBasis,'source-code-only');assert.equal(b.browserEvidence.exportLastWrittenAt,input.provenance.exportLastWrittenAt);assert.equal(b.retrievedAt,input.retrievedAt);assert.equal(b.browserEvidence.integrity,'declared-not-verified-on-this-device');
   assert.doesNotMatch(JSON.stringify(b),/portfolio_id|holding_id|"id"/);
-  const model=await buildRatioModel(wrapped,{...options,previewOnly:true}),html=core.render(model);assert.match(html,/原浏览器快照（非 API）|不能作为正式发布来源/);assert.match(html,/未知（原时点未取得）|底层＋残余合成/);assert.match(html,/IB-HK 完整持仓/);assert.match(html,/不代表 All Together 十账户/);
+  const model=await buildRatioModel(wrapped,{...options,previewOnly:true}),html=core.render(model);assert.match(html,/原浏览器快照（非 API）|不能作为正式发布来源/);assert.doesNotMatch(html,/IB-HK 完整持仓/);assert.match(html,/仅IB-HK 股票范围，与 All Together 分母不同/);assert.equal(model.book.holdings[0].quantity,null);assert.equal(model.book.holdings[0].valueBasis,b.holdings[0].valueBasis);
   await assert.rejects(buildRatioModel(wrapped,options)); // Preview is never official admission.
   const changed=structuredClone(wrapped);changed.book.asOf='2000-01-04';await assert.rejects(buildRatioModel(changed,{...options,previewOnly:true}));
   const forgery=structuredClone(model);forgery.book.browserEvidence.integrity='verified';await assert.rejects(core.validateModel(forgery));
@@ -535,6 +584,36 @@ async function independentFixture(t){
   const proof=await snapshot.verifyOriginal(args),packet=await snapshot.candidate({model,recipient:manager.recipient,proof,now:f.now}),options={profileSha256:'a'.repeat(64),now:f.now};
   return {...f,manager,snapshot,model,args,proof,packet,options};
 }
+test('staged ratio upgrade reads authenticated prior snapshots honestly; old codec refuses company data and replay',async t=>{
+  const f=await independentFixture(t),prior=ratioUiStages.regions.manager.prior;
+  const factory=(name,end)=>{
+    const a=prior.indexOf('function '+name+'('),b=prior.indexOf(end,a);assert.ok(a>=0&&b>a);
+    // Only the exact hash-pinned public code fixture is evaluated, never source
+    // records, an imported packet, an environment string or a downloaded page.
+    return vm.runInThisContext('('+prior.slice(a,b).trim()+')');
+  };
+  const oldCore=factory('createFeeRatioCore','function createRatioSourceCore(')(f.exposureCore,ratioCrypto.webcrypto);
+  const oldSource=factory('createRatioSourceCore','function createRatioSnapshotCore(');
+  const oldSnapshot=factory('createRatioSnapshotCore','/* ratio-presentation:v1 */')(oldCore,f.exposureCore,oldSource,s=>createLegacyPolicy().parseExactJson(s),ratioCrypto.webcrypto);
+  const legacyModel=structuredClone(f.model);delete legacyModel.companyExposure;
+  const oldProof=await oldSnapshot.verifyOriginal({...f.args,model:legacyModel});
+  const oldCandidate=await oldSnapshot.candidate({model:legacyModel,recipient:f.manager.recipient,proof:oldProof,now:f.now});
+  const oldSigned=await oldSnapshot.authenticate(oldCandidate,oldProof,f.manager,f.options);
+  assert.equal((await oldSnapshot.verify(oldSigned,f.manager,{now:f.now})).model.companyExposure,undefined);
+  const upgraded=await f.snapshot.verify(oldSigned,f.manager,{now:f.now});
+  assert.equal(upgraded.model.companyExposure,undefined);assert.ok(upgraded.model.book.holdings.length>0);
+  const shown=f.core.render(upgraded.model);assert.match(shown,/旧快照仅有证券前五/);assert.match(shown,/原证券口径前五/);assert.doesNotMatch(shown,/公司经济敞口前五|IB-HK 完整持仓/);
+  const companyCandidate=await f.snapshot.candidate({model:f.model,recipient:f.manager.recipient,proof:f.proof,previous:oldSigned,now:f.now});
+  const companySigned=await f.snapshot.authenticate(companyCandidate,f.proof,f.manager,{...f.options,previous:oldSigned});
+  const verified=await f.snapshot.verify(companySigned,f.manager,{now:f.now});assert.equal(companySigned.body.version,2);assert.ok(verified.model.companyExposure);
+  await assert.rejects(oldSnapshot.verify(companySigned,f.manager,{now:f.now}),/RATIO_MANAGER_REFUSED/);
+  // No UI rollback may erase the version watermark or make an earlier private
+  // snapshot a valid replacement. Prior UI is rollback-compatible only while
+  // the still-published snapshot has its prior shape; otherwise it fails shut.
+  await assert.rejects(f.snapshot.verify(oldSigned,f.manager,{watermark:verified.watermark,now:f.now}));
+  await assert.rejects(oldSnapshot.verify(oldSigned,f.manager,{watermark:verified.watermark,now:f.now}));
+  for(const core of [f.core,oldCore])await assert.rejects(core.validateModel({...legacyModel,unreviewedCompanyClaim:true}));
+});
 test('independent snapshot complete original to authenticated cipher to manager display leaves fee data untouched',async t=>{
   const f=await independentFixture(t),before={fee:123,health:{checkedAt:'2000-01-01'},ibReturn:-1},saved=JSON.stringify(before);
   assert.equal(f.manager.authenticationKey.extractable,false);assert.equal(f.manager.privateKey.extractable,false);
@@ -589,7 +668,7 @@ test('independent browser closed loop requires trusted two-phase consent and tou
     const gid='0'.repeat(32),token='synthetic-owner-token-for-ratio-123',gist={public:false,owner:{id:1,login:'synthetic'},history:[{version:'a'.repeat(40)}],files:{'fee-console-ratio-recipient.json':{content:JSON.stringify(f.manager.recipient)},'original-ledger.json':{content:'DO_NOT_CHANGE'}}};
     const original=JSON.stringify(gist.files['original-ledger.json']);
     const build=()=>{const s=f.snapshot;return {...s,verifyOriginal:o=>s.verifyOriginal({...o,now:new Date(clock)}),authenticate:(p,proof,m,o)=>s.authenticate(p,proof,m,{...o,now:new Date(clock)}),verify:(p,m,o)=>s.verify(p,m,{...o,now:new Date(clock)})};};
-    const ctx={saveBlob:(name,raw)=>downloads.push({name,raw}),createRatioSnapshotCore:build,createRatioSourceCore,createFeeRatioCore,createRankedExposureCore,createLegacyPolicy,ratioCore:f.core,ratioExposureCore:f.exposureCore,Uint8Array,TextEncoder,Date:class extends Date{constructor(v){super(v===undefined?clock:v);}static now(){return clock;}},JSON,Number,Error,Promise,Object,EDIT:{},_ledgerBusy:false,_ratioSnapshotWrite:null,_ratioRecipientWrite:null,_sourceEpoch:1,_ratioTicket:0,_ratioExpiry:null,_ratioPreview:null,RATIO_SESSION_MS:600000,RATIO_RECIPIENT_FILE:'fee-console-ratio-recipient.json',_managerCapability:{ownerId:1,ownerLogin:'synthetic'},ratioAuthorized:()=>allowed,ratioIdentity:()=>JSON.stringify([gid,allowed]),cfg:k=>({gid,key:master,tok:token}[k]||values.get(k)||''),K:{gid:'gid',key:'key',tok:'tok'},store:{setItem:(k,v)=>values.set(k,v)},document:{getElementById:id=>elements.get(id)},setTimeout:()=>1,clearTimeout(){},verifyRatioCapabilityNow:async()=>allowed,clearRatioManagement(){elements.get('ratioContent').replaceChildren();ctx.ops?.clear(true);},renderRatioManagement:async()=>true,ghApi:async(route,opt={})=>{calls.push({route,method:opt.method||'GET'});if(route!=='/gists/'+gid)assert.fail('fixed same-Gist endpoint only');if(opt.method==='PATCH'){assert.equal(allowed,true);const body=JSON.parse(opt.body);assert.deepEqual(Object.keys(body),['files']);assert.deepEqual(Object.keys(body.files),['fee-console-ratio-snapshot.json']);if(failure==='before')throw Error();gist.files['fee-console-ratio-snapshot.json']={content:body.files['fee-console-ratio-snapshot.json'].content};gist.history[0].version='b'.repeat(40);if(failure==='after')throw Error();}if(readFailure)throw Error();return structuredClone(gist);}};
+    const ctx={saveBlob:(name,raw)=>downloads.push({name,raw}),createRatioSnapshotCore:build,createRatioSourceCore,createFeeRatioCore,createOfficialRatioSourceCore,createFeeCompanyExposureCore,createRankedExposureCore,createLegacyPolicy,ratioCore:f.core,ratioExposureCore:f.exposureCore,Uint8Array,TextEncoder,Date:class extends Date{constructor(v){super(v===undefined?clock:v);}static now(){return clock;}},JSON,Number,Error,Promise,Object,EDIT:{},_ledgerBusy:false,_ratioSnapshotWrite:null,_ratioRecipientWrite:null,_sourceEpoch:1,_ratioTicket:0,_ratioExpiry:null,_ratioPreview:null,RATIO_SESSION_MS:600000,RATIO_RECIPIENT_FILE:'fee-console-ratio-recipient.json',_managerCapability:{ownerId:1,ownerLogin:'synthetic'},ratioAuthorized:()=>allowed,ratioIdentity:()=>JSON.stringify([gid,allowed]),cfg:k=>({gid,key:master,tok:token}[k]||values.get(k)||''),K:{gid:'gid',key:'key',tok:'tok'},store:{setItem:(k,v)=>values.set(k,v)},document:{getElementById:id=>elements.get(id)},setTimeout:()=>1,clearTimeout(){},verifyRatioCapabilityNow:async()=>allowed,clearRatioManagement(){elements.get('ratioContent').replaceChildren();ctx.ops?.clear(true);},renderRatioManagement:async()=>true,ghApi:async(route,opt={})=>{calls.push({route,method:opt.method||'GET'});if(route!=='/gists/'+gid)assert.fail('fixed same-Gist endpoint only');if(opt.method==='PATCH'){assert.equal(allowed,true);const body=JSON.parse(opt.body);assert.deepEqual(Object.keys(body),['files']);assert.deepEqual(Object.keys(body.files),['fee-console-ratio-snapshot.json']);if(failure==='before')throw Error();gist.files['fee-console-ratio-snapshot.json']={content:body.files['fee-console-ratio-snapshot.json'].content};gist.history[0].version='b'.repeat(40);if(failure==='after')throw Error();}if(readFailure)throw Error();return structuredClone(gist);}};
     vm.createContext(ctx);vm.runInContext(code+'\nthis.ops={export:typeof exportCurrentRatioSnapshot==="function"?exportCurrentRatioSnapshot:null,preview:previewRatioSnapshot,confirm:confirmRatioSnapshot,read:renderIndependentRatio,check:checkRatioSnapshotOutcome,clear:clearRatioSnapshotReview,setFiles(v){_ratioSnapshotFiles=v;},review(){return _ratioSnapshotReview;},pending(){return _ratioSnapshotUnknown;}};',ctx);
     const file=b=>({size:b.length,text:async()=>Buffer.from(b).toString(),arrayBuffer:async()=>new Uint8Array(b).buffer});
     ctx.ops.setFiles({candidate:file(Buffer.from(JSON.stringify(f.packet))),original:file(fs.readFileSync(f.plan.source.path)),input:file(fs.readFileSync(f.plan.input.path))});
@@ -639,4 +718,97 @@ test('retired independent action entry is inert and links to the manager app wit
   assert.match(page,/default-src 'none'/);assert.match(page,/base-uri 'none'/);
   const links=[...page.matchAll(/<a\b[^>]*href="([^"]+)"/g)].map(x=>x[1]);assert.deepEqual(links,['../']);assert.ok(links.every(x=>!/[?#:]/.test(x)));
   for(const name of ['latest.html','latest.meta.json','action.enc.json'])assert.ok(fs.existsSync(new URL('../xuan-ib/'+name,import.meta.url)),'historical file preserved: '+name);
+});
+
+// Entirely synthetic company-exposure regression. No private source is imported.
+import {createOfficialRatioSourceCore} from './fee-ratio-official-source.mjs';
+import {createFeeCompanyExposureCore} from './fee-ratio-company-exposure.mjs';
+function companyFixture(entries,extra={}){
+  const core=createFeeCompanyExposureCore(),{exposure}=ratioFixture(),accounts=exposure.summary.accounts;
+  const rows=entries.map((r,i)=>({sourceRow:i+1,securityCode:r[0],market:r[1],name:r[0],valueUSD:r[2],ownership:r[3]||'Direct',withinETF:r[4]??null,account:'Invented scope 0',fourClass:'二级市场',...(r[5]||{})}));
+  const raw={schemaVersion:'sharesight-private-full-v1',snapshot:{asOf:exposure.summary.asOf,currency:'USD'},accounts,exposure:{rows},directPositionsByAccount:[],...extra};
+  const input={exposure,book:{sourceSha256:'a'.repeat(64),provenance:{fullSourceSha256:'a'.repeat(64)}}};
+  return {core,raw,input,build(){return core.build(raw,input);},view(model){return core.validate(model,exposure,input.book.sourceSha256);}};
+}
+test('company exposure replaces VSTL contribution with 2x, merges Alphabet from outside old top five, preserves asset denominators',()=>{
+  const f=companyFixture([['VST','NYSE',100],['VSTL','NASDAQ',50],['GOOG','NASDAQ',65],['GOOGL','NASDAQ',60],['A','TEST',110],['B','TEST',100],['C','TEST',90],['D','TEST',80]]),before=JSON.stringify(f.input),model=f.build(),view=f.view(model);
+  assert.equal(view.state,'projection-complete');assert.equal(view.top[0].companyId,'vistra');assert.equal(view.top[0].valueUsd,200);assert.equal(view.top[1].companyId,'alphabet');assert.equal(view.top[1].valueUsd,125);assert.equal(view.top.some(c=>c.companyId==='security:["D","TEST"]'),false);
+  assert.equal(model.components.slice(0,2).reduce((s,r)=>s+r.valueUsd,0),150);assert.equal(JSON.stringify(f.input),before);assert.equal(model.portfolioTotalUsd,f.input.exposure.summary.totalValueUSD);assert.equal(model.categoryTotalUsd,f.input.exposure.summary.classes[3].totalValueUSD);const bad=structuredClone(f.input.exposure);bad.summary.classes[3].top5[0].valueUSD=2000;assert.throws(()=>createRankedExposureCore().buildRankedExposureView(bad),/RANKED_TOTAL/);
+});
+test('company lookthrough establishes leverage from same product asset and residual, never counts parent and underlying twice',()=>{
+  for(const [u,residual,basis]of [[50,0,'asset-value-lookthrough'],[100,-50,'already-leveraged-lookthrough']]){
+    const f=companyFixture([['VSTL','NASDAQ',50],['VST','NYSE',u,'Underlying','VSTL.NASDAQ'],['VSTL','NASDAQ',residual,'Residual']],{directPositionsByAccount:[{account:'Invented scope 0',securityCode:'VSTL',market:'NASDAQ',fourClass:'二级市场',valueUSD:50}]}),model=f.build(),v=f.view(model);
+    assert.equal(model.components.length,1);assert.equal(model.components[0].basis,'product-asset-replacement');assert.equal(model.components[0].valueUsd,50);assert.equal(v.top[0].valueUsd,100);const changed=structuredClone(f.raw);changed.directPositionsByAccount[0].valueUSD++;assert.equal(f.view(f.core.build(changed,f.input)).state,'pending-source-basis');
+  }
+  const f=companyFixture([['INDEX','TEST',500],['VST','NYSE',50,'Underlying','INDEX.TEST']],{directPositionsByAccount:[{account:'Invented scope 0',securityCode:'INDEX',market:'TEST',valueUSD:500}]});assert.equal(f.view(f.build()).top[0].valueUsd,50);
+});
+test('ambiguous leveraged lookthrough is visibly pending, even if a caller asserts already leveraged',()=>{
+  const f=companyFixture([['VST','NYSE',100,'Underlying','VSTL.NASDAQ',{exposureBasis:'already-leveraged'}]]),model=f.build(),view=f.view(model);
+  assert.equal(view.state,'pending-source-basis');assert.equal(view.top,null);assert.match(f.core.render(model,f.input.exposure,f.input.book.sourceSha256),/待核实/);
+});
+test('company aliases are exact and venue scoped; unknown symbols, dates, amounts, sources and multiplier tampering fail safely',()=>{
+  const f=companyFixture([['VST','NYSE',100],['VST','TEST',50],['GOOG','TEST',30],['GOOGL','NASDAQ',20],['GOOGL-A','NASDAQ',10]]),model=f.build(),view=f.view(model);
+  assert.equal(view.top.length,5);assert.equal(view.top.find(r=>r.companyId==='vistra').valueUsd,100);assert.equal(view.top.find(r=>r.companyId==='alphabet').valueUsd,20);
+  for(const mutate of [x=>x.components[0].sourceRows.push(x.components[0].sourceRow),x=>x.ruleVersion='unreviewed-v2',x=>x.asOf='2000-01-04',x=>x.sourceSha256='b'.repeat(64),x=>x.components[0].multiplier=2,x=>x.components[0].valueUsd=NaN,x=>x.components.push({...x.components[0]}),x=>x.accounts.reverse()]){const bad=structuredClone(model);mutate(bad);assert.throws(()=>f.view(bad));}
+  const other=structuredClone(f.raw);other.snapshot.asOf='2000-01-04';assert.throws(()=>f.core.build(other,f.input));
+});
+test('leverage can exceed 100% without mutating portfolio/class asset amounts or emitting HTML from source names',()=>{
+  const f=companyFixture([['VSTL','NASDAQ',900],['<img src=x onerror=alert(1)>','TEST',50]]),model=f.build(),before=JSON.stringify(f.input),view=f.view(model),html=f.core.render(model,f.input.exposure,f.input.book.sourceSha256);
+  assert.ok(view.top[0].categoryWeightPct>100);assert.match(html,/180.00%/);assert.equal(JSON.stringify(f.input),before);assert.doesNotMatch(html,/<img/);assert.match(html,/&lt;img/);
+});
+test('new company model is recomputed against full original and refuses edited numerator, provenance and rule',async t=>{
+  const f=await independentFixture(t);assert.ok(f.model.companyExposure);assert.equal(Object.isFrozen(f.read().companyExposure.components[0]),true);
+  for(const mutate of [x=>x.components[0].valueUsd++,x=>x.components[0].sourceRow=9999,x=>x.components[0].securityCode='VSTL',x=>x.ruleVersion='forged',x=>x.sourceSha256='c'.repeat(64)]){
+    const model=structuredClone(f.model);mutate(model.companyExposure);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model}));
+  }
+  const legacy=structuredClone(f.model);delete legacy.companyExposure;await f.core.validateModel(legacy);const oldProof=await f.snapshot.verifyOriginal({...f.args,model:legacy});assert.ok(oldProof);assert.match(f.core.render(legacy),/旧快照仅有证券前五/);assert.doesNotMatch(f.core.render(legacy),/公司经济敞口前五/);
+});
+test('ratio presentation keeps holdings validated but hidden and all four explanatory details closed and stable',async t=>{
+  const f=await independentFixture(t),before=JSON.stringify(f.model),html=f.core.render(f.model);
+  assert.doesNotMatch(html,/IB-HK 完整持仓/);assert.ok(f.model.book.holdings.length>0);assert.equal(JSON.stringify(f.model),before);assert.equal(f.core.render(f.model),html);
+  for(const label of ['计算口径与合并规则','来源日期与核验记录','覆盖范围、残余与缺项','现金与补仓参考说明'])assert.ok(html.includes('<details><summary>'+label+'</summary>'));
+  assert.doesNotMatch(html,/<details[^>]*\bopen\b/);assert.match(html,/role="status"/);assert.match(html,/来源截至/);assert.match(html,/预算／资本承诺未核实/);
+  const invalid=structuredClone(f.model);invalid.book.holdings[0].valueCents=-1;await assert.rejects(f.core.validateModel(invalid));
+  const style=unifiedUiSource.slice(unifiedUiSource.indexOf('function styleRatioReport('),unifiedUiSource.indexOf('/* ratio-presentation:v1:end */'));
+  assert.doesNotMatch(style,/querySelectorAll\('li'\)|direct\(scope,'P'\)|warnings.append|list.append/);
+  assert.match(style,/ratio-styled/);assert.doesNotMatch(style,/overview.after\(exposure\)/);assert.ok(html.indexOf('role="status"')<html.indexOf('card sharesight-exposure'));assert.match(unifiedUiSource,/@media\(max-width:600px\)/);assert.match(unifiedUiSource,/#p-ratio summary:focus-visible/);assert.match(unifiedUiSource,/min-height:44px/);
+  assert.ok(unifiedUiSource.includes(fs.readFileSync(new URL('./fee-ratio-company-exposure.mjs',import.meta.url),'utf8').split('export ',2)[1].trim()));
+});
+
+test('review r2: direct VSTL labelled ETF uses associated asset value, or remains visibly pending',()=>{
+  const extra={directPositionsByAccount:[{account:'Invented scope 0',securityCode:'VSTL',market:'NASDAQ',fourClass:'二级市场',valuationCurrency:'USD',valueUSD:50}]};
+  const f=companyFixture([['VSTL','NASDAQ',50,'Direct',null,{instrumentType:'ETF'}]],extra),model=f.build();
+  assert.equal(f.view(model).state,'projection-complete');assert.equal(f.view(model).top[0].valueUsd,100);
+  for(const change of [r=>r.directPositionsByAccount=[],r=>r.directPositionsByAccount[0].valueUSD=51,r=>r.directPositionsByAccount[0].valuationCurrency='CAD']){
+    const raw=structuredClone(f.raw);change(raw);const m=f.core.build(raw,f.input),v=f.view(m);assert.equal(v.state,'pending-source-basis');assert.equal(v.top,null);assert.equal(m.components.length,1);
+  }
+});
+test('review r2: USD source-cent reconciliation sums decimal inputs before rounding, without epsilon',()=>{
+  const fixtures=[{u:[0.1],r:0.2,h:0.3,ok:true},{u:[0.1,0.2],r:-0.15,h:0.15,ok:true},{u:[0.1,0.2],r:-0.15,h:0.16,ok:false},{u:[0.5],r:-0.2,h:0.3,ok:true},{u:[0.11],r:0.2,h:0.3,ok:false},{u:[0.1],r:0.195,h:0.3,ok:true},{u:[0.1],r:0.205,h:0.3,ok:false},{u:Array(100).fill(0.001),r:0,h:0.1,ok:true}];
+  for(const c of fixtures){
+    const entries=[...c.u.map(u=>['VST','NYSE',u,'Underlying','VSTL.NASDAQ']),['VSTL','NASDAQ',c.r,'Residual']];
+    const f=companyFixture(entries,{directPositionsByAccount:[{account:'Invented scope 0',securityCode:'VSTL',market:'NASDAQ',fourClass:'二级市场',valuationCurrency:'USD',valueUSD:c.h}]}),m=f.build(),v=f.view(m);
+    assert.equal(v.state,c.ok?'projection-complete':'pending-source-basis');if(c.ok){assert.equal(v.top[0].valueUsd,c.h*2);assert.equal(m.components.length,1);}else assert.equal(v.top,null);
+  }
+});
+test('review r2: audit profile binds the actual company-rule factory code',async()=>{
+  const html=unifiedUiSource,match=html.match(/const profileSha256=await ratioCore\.digest\((\[[^\n]+\])\);check\(\);/);assert.ok(match);assert.match(match[1],/createFeeCompanyExposureCore\.toString\(\)/);
+  const core=createFeeRatioCore(createRankedExposureCore(),ratioCrypto.webcrypto),ctx={ratioCore:core,createOfficialRatioSourceCore,createFeeCompanyExposureCore,createRatioSnapshotCore,createRatioSourceCore,createFeeRatioCore,createRankedExposureCore};
+  const get=()=>vm.runInNewContext('(async()=>ratioCore.digest('+match[1]+'))()',ctx);
+  const before=await get(),code=createFeeCompanyExposureCore.toString();
+  for(const changed of [code.replace("{id:'vistra',name:'Vistra',factor:2}","{id:'vistra',name:'Vistra',factor:3}"),code.replace("{id:'alphabet',name:'Alphabet',factor:1}","{id:'synthetic-other',name:'Alphabet',factor:1}")]){assert.notEqual(changed,code);ctx.createFeeCompanyExposureCore=vm.runInNewContext('('+changed+')');assert.notEqual(await get(),before);}
+});
+test('review r2: every displayed company contribution retains immutable-copy source row references',()=>{
+  const f=companyFixture([['VST','NYSE',100],['VST','NYSE',20],['VSTL','NASDAQ',50]]),m=f.build(),v=f.view(m);
+  assert.deepEqual(v.top[0].constituents.map(c=>c.sourceRows),[[1],[2],[3]]);v.top[0].constituents[0].sourceRows[0]=999;assert.equal(m.components[0].sourceRows[0],1);
+  const product=companyFixture([['VST','NYSE',0.1,'Underlying','VSTL.NASDAQ'],['VSTL','NASDAQ',0.2,'Residual']],{directPositionsByAccount:[{account:'Invented scope 0',securityCode:'VSTL',market:'NASDAQ',fourClass:'二级市场',valuationCurrency:'USD',valueUSD:0.3}]});assert.deepEqual(product.view(product.build()).top[0].constituents[0].sourceRows,[1,2]);
+});
+test('review r2: multiple accounts stay separate during ETF asset matching; duplicates never double the parent',()=>{
+  const asset=(account,valueUSD)=>({account,securityCode:'VSTL',market:'NASDAQ',fourClass:'二级市场',valuationCurrency:'USD',valueUSD});
+  const f=companyFixture([['VSTL','NASDAQ',50,'Direct',null,{instrumentType:'ETF'}],['VSTL','NASDAQ',30,'Direct',null,{instrumentType:'ETF',account:'Invented scope 1'}]],{directPositionsByAccount:[asset('Invented scope 0',50),asset('Invented scope 1',30)]});assert.equal(f.view(f.build()).top[0].valueUsd,160);
+  const duplicate=structuredClone(f.raw);duplicate.exposure.rows.push({...duplicate.exposure.rows[0],sourceRow:3});assert.equal(f.view(f.core.build(duplicate,f.input)).state,'pending-source-basis');duplicate.exposure.rows.forEach(r=>delete r.instrumentType);assert.equal(f.view(f.core.build(duplicate,f.input)).state,'pending-source-basis');
+  const wrong=structuredClone(f.raw);wrong.directPositionsByAccount[0].account='Another scope';assert.equal(f.view(f.core.build(wrong,f.input)).state,'pending-source-basis');
+  const unknown=companyFixture([['UNKNOWN-ETF','TEST',50,'Direct',null,{instrumentType:'ETF'}]]);assert.equal(unknown.view(unknown.build()).state,'pending-source-basis');
+  const repeatedAsset=structuredClone(f.raw);repeatedAsset.directPositionsByAccount.push({...repeatedAsset.directPositionsByAccount[0]});assert.equal(f.view(f.core.build(repeatedAsset,f.input)).state,'pending-source-basis');
+  const parent=companyFixture([['VSTL','NASDAQ',50,'Direct',null,{instrumentType:'ETF'}],['VST','NYSE',100,'Underlying','VSTL.NASDAQ'],['VSTL','NASDAQ',-50,'Residual']],{directPositionsByAccount:[asset('Invented scope 0',50)]});assert.equal(parent.view(parent.build()).top[0].valueUsd,100);parent.raw.exposure.rows.push({...parent.raw.exposure.rows[0],sourceRow:4});assert.equal(parent.view(parent.build()).state,'pending-source-basis');
 });

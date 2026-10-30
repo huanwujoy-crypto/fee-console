@@ -518,7 +518,7 @@ function normalizePortfolio(account, performancePayload, holdingsPayload, cashPa
         || row.instrument_currency?.code !== "USD") fail("HOLDING_IDENTITY");
     const listed = listing.find(item => id(item.id) === holdingId);
     if (stable(holdingIdentity(row)) !== stable(holdingIdentity(listed))) fail('HOLDING_IDENTITY');
-    return { holdingId, ticker, valueUsd: amount(row.value),
+    return { holdingId, ticker, valueUsd: amount(row.value), sourceInstrument: holdingIdentity(row),
       // Keep only the dated report's native asset type. Missing metadata is
       // explicitly unclassified, not inferred from ticker or security name.
       sourceAssetType: typeof row.instrument?.friendly_instrument_description_code === 'string'
