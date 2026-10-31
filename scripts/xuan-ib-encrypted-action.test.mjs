@@ -396,8 +396,26 @@ function reviewedRatioUiFixture(bytes){
   return f;
 }
 const ratioUiStages=reviewedRatioUiFixture(ratioUiStagesBytes);
+// Exact test-only compatibility for the returned file-pin repair. Frozen fixture
+// bytes stay unchanged; every default next-stage test executes the repaired page.
+const ratioFilePinUiSha256='7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541';
+const ratioFilePinPriorGuard="  const max=5*1024*1024,gid=cfg(K.gid),revision=gist.history[0].version;\n  const fail=()=>{throw Error('RATIO_SNAPSHOT_RAW_REFUSED');};\n  if(f.filename!==RATIO_SNAPSHOT_FILE||!Number.isSafeInteger(f.size)||f.size<1||f.size>max||typeof f.raw_url!=='string')fail();\n  const url=new URL(f.raw_url),expected='/'+gist.owner.login+'/'+gid+'/raw/'+revision+'/'+RATIO_SNAPSHOT_FILE;\n  if(url.protocol!=='https:'||url.hostname!=='gist.githubusercontent.com'||url.port||url.username||url.password||url.search||url.hash||url.pathname!==expected)fail();\n";
+const ratioFilePinNextGuard="  const max=5*1024*1024,gid=cfg(K.gid);\n  const fail=()=>{throw Error('RATIO_SNAPSHOT_RAW_REFUSED');};\n  if(f.filename!==RATIO_SNAPSHOT_FILE||!Number.isSafeInteger(f.size)||f.size<1||f.size>max||typeof f.raw_url!=='string')fail();\n  // The returned file pin can precede the latest multi-file Gist revision.\n  // Keep that exact pin and the original owner/Gist/file binding.\n  const url=new URL(f.raw_url),revision=url.pathname.split('/')[4],expected='/'+gist.owner.login+'/'+gid+'/raw/'+revision+'/'+RATIO_SNAPSHOT_FILE;\n  if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision||'')||f.raw_url!=='https://gist.githubusercontent.com'+expected||url.protocol!=='https:'||url.hostname!=='gist.githubusercontent.com'||url.port||url.username||url.password||url.search||url.hash||url.pathname!==expected)fail();\n";
+function filePinUiAdapter(page,forward=true){
+  assert.equal(typeof forward,'boolean');
+  const [from,to,inputSha,outputSha]=forward
+    ?[ratioFilePinPriorGuard,ratioFilePinNextGuard,ratioUiStages.nextIndexSha256,ratioFilePinUiSha256]
+    :[ratioFilePinNextGuard,ratioFilePinPriorGuard,ratioFilePinUiSha256,ratioUiStages.nextIndexSha256];
+  assert.equal(ratioUiHash(page),inputSha,'unreviewed file-pin input page');
+  assert.equal(page.split(from).length,2,'exact raw guard must occur once');
+  const result=page.replace(from,to);
+  assert.equal(ratioUiHash(result),outputSha,'complete file-pin output must match reviewed bytes');
+  return result;
+}
+
 function stagedRatioUi(html,target='next'){
   assert.ok(['prior','next'].includes(target));
+  const filePin=ratioUiHash(html)===ratioFilePinUiSha256;if(filePin)html=filePinUiAdapter(html,false);
   const stage=['prior','next'].find(s=>ratioUiHash(html)===ratioUiStages[s+'IndexSha256']);
   assert.ok(stage,'unreviewed installed ratio UI');
   let result=html;
@@ -408,7 +426,7 @@ function stagedRatioUi(html,target='next'){
     result=result.slice(0,a)+r[target]+result.slice(b);
   }
   assert.equal(ratioUiHash(result),ratioUiStages[target+'IndexSha256'],'complete materialized UI must match reviewed bytes');
-  return {stage,source:result};
+  return {stage:filePin?'filePin':stage,source:target==='next'?filePinUiAdapter(result):result};
 }
 // These are test-only snapshots of public CODE, never a production fallback or
 // source permission. Check the actual installed page first, then ALWAYS execute
@@ -421,7 +439,14 @@ const independentRatioUi=unifiedUiSource.includes('const RATIO_SNAPSHOT_FILE=');
 const legacyRatioFactorySha256='5e7570832f7655adca74c15d20c4540cc58f46f463506a847f23a8bb1aa7b8d1'; // exact already-published codec; support/UI roll out separately
 
 test('ratio staged code pins both full pages, roundtrips only reviewed regions and always runs next UI contracts',()=>{
-  assert.ok(['prior','next'].includes(ratioUiStage.stage));assert.equal(independentRatioUi,true);
+  assert.ok(['prior','next','filePin'].includes(ratioUiStage.stage));assert.equal(independentRatioUi,true);
+  assert.equal(ratioUiHash(unifiedUiSource),ratioFilePinUiSha256);
+  const frozenNext=filePinUiAdapter(unifiedUiSource,false);
+  assert.equal(ratioUiHash(frozenNext),ratioUiStages.nextIndexSha256);
+  assert.equal(filePinUiAdapter(frozenNext),unifiedUiSource);
+  assert.equal(stagedRatioUi(frozenNext).source,unifiedUiSource);
+  assert.throws(()=>filePinUiAdapter(frozenNext+'\n'),/unreviewed file-pin/);
+  assert.throws(()=>filePinUiAdapter(unifiedUiSource+'\n',false),/unreviewed file-pin/);
   const prior=stagedRatioUi(unifiedUiSource,'prior').source,next=stagedRatioUi(prior).source;
   assert.equal(next,unifiedUiSource);assert.equal(stagedRatioUi(next,'prior').source,prior);
   assert.throws(()=>stagedRatioUi(installedUnifiedUiSource+'\n'),/unreviewed installed/);
@@ -835,8 +860,8 @@ async function fixture(t){
  const next=async()=>{const candidate=await snapshot.candidate({model,recipient:manager.recipient,proof,previous:signed,now});return {candidate,signed:await snapshot.authenticate(candidate,proof,manager,{previous:signed,profileSha256:'a'.repeat(64),now})};};
  return {ratio,snapshot,candidate,signed,manager,gid,key,token,now,next};
 }
-function harness(f,{pending=false,candidate=true,authorized=true,changedPending=false,truncated=false,mutate,watermark,networkError=false,rawEdit,fetchEdit,at=f.now,identityDrift=false}={}){
- const revision='a'.repeat(40),raw=JSON.stringify(f.signed),size=Buffer.byteLength(raw),url=`https://gist.githubusercontent.com/synthetic-owner/${f.gid}/raw/${revision}/fee-console-ratio-snapshot.json`;
+function harness(f,{pending=false,candidate=true,authorized=true,changedPending=false,truncated=false,mutate,watermark,networkError=false,rawEdit,fetchEdit,fileRevision='a'.repeat(40),rawStatus=200,rawFetchError=false,at=f.now,identityDrift=false}={}){
+ const revision='a'.repeat(40),raw=JSON.stringify(f.signed),size=Buffer.byteLength(raw),url=`https://gist.githubusercontent.com/synthetic-owner/${f.gid}/raw/${fileRevision}/fee-console-ratio-snapshot.json`;
  const gist={public:false,owner:{id:123,login:'synthetic-owner'},history:[{version:revision}],files:{'fee-console-ratio-snapshot.json':{filename:'fee-console-ratio-snapshot.json',size,raw_url:url,content:truncated?raw.slice(0,10):raw,truncated},'fee-console-ratio-recipient.json':{content:JSON.stringify(f.manager.recipient),truncated:false}}};
  mutate?.(gist);const elements=new Map(),stored=new Map(),requests=[],fetches=[];if(watermark)stored.set('feeConsole.ratioSnapshotWatermark.'+f.manager.recipient.recipientId,JSON.stringify(watermark));
  const settings={gid:f.gid,key:f.key,tok:f.token},state={identity:'SYNTHETIC_WHO',authorized};
@@ -850,7 +875,7 @@ function harness(f,{pending=false,candidate=true,authorized=true,changedPending=
  c.ratioCore={...f.ratio,render:model=>{c.renderCalls++;return f.ratio.render(model);}};c.ratioSnapshotCore={...f.snapshot,verify:(packet,manager,opt)=>f.snapshot.verify(packet,manager,{...opt,now:at})};c.ratioSnapshotParse=JSON.parse;
  c.store={setItem:(k,v)=>stored.set(k,v)};c.setTimeout=(_,ms)=>{c.timers.push(ms);return 123;};c.clearTimeout=()=>{};c.clearRatioManagement=()=>{};
  c.ghApi=async(route,opt)=>{assert.equal(opt,undefined,'readback may only GET');assert.equal(route,'/gists/'+f.gid);requests.push(route);if(networkError)throw Error('SYNTHETIC_NETWORK_FAILURE');if(identityDrift)state.identity='CHANGED_DURING_READ';return gist;};
- c.freshFetch=async(received,opt)=>{fetches.push({url:received,opt});assert.equal(received,url);assert.equal(opt.credentials,'omit');assert.equal(opt.redirect,'error');assert.equal(opt.referrerPolicy,'no-referrer');assert.equal(opt.cache,'no-store');assert.equal(opt.headers,undefined);assert.equal(opt.method,undefined);assert.ok(opt.signal instanceof AbortSignal);let bytes=new TextEncoder().encode(raw);if(rawEdit)bytes=rawEdit(bytes);const r=new Response(bytes,{status:200});Object.defineProperty(r,'url',{value:url});fetchEdit?.(r);return r;};
+ c.freshFetch=async(received,opt)=>{fetches.push({url:received,opt});assert.equal(received,url);assert.equal(opt.credentials,'omit');assert.equal(opt.redirect,'error');assert.equal(opt.referrerPolicy,'no-referrer');assert.equal(opt.cache,'no-store');assert.equal(opt.headers,undefined);assert.equal(opt.method,undefined);assert.ok(opt.signal instanceof AbortSignal);if(rawFetchError)throw Error('SYNTHETIC_RAW_NETWORK_FAILURE');let bytes=new TextEncoder().encode(raw);if(rawEdit)bytes=rawEdit(bytes);const r=new Response(bytes,{status:rawStatus});Object.defineProperty(r,'url',{value:url});fetchEdit?.(r);return r;};
  vm.createContext(c);vm.runInContext([fn('ratioSnapshotGist'),html.split('\n').find(l=>l.startsWith('function ratioSnapshotFile(')),fn('readRatioSnapshotFile'),fn('readCurrentRatioSnapshot'),fn('showCurrentRatioSnapshot'),fn('checkRatioSnapshotOutcome'),fn('renderIndependentRatio'),fn('clearRatioManagement'),'this.run=checkRatioSnapshotOutcome;this.view=renderIndependentRatio;this.close=clearRatioManagement;'].join('\n'),c);return c;
 }
 
@@ -893,8 +918,37 @@ test('the expired source remains labelled historical, without weakening its orig
 test('truncated exact-service bytes are bounded, authenticated and rendered through both entry points',async t=>{
  const f=await fixture(t);for(const entry of ['run','view']){const c=harness(f,{truncated:true});assert.equal(await c[entry]({isTrusted:true}),true);assert.equal(c.fetches.length,1);assert.ok(c.timers.includes(15000));assert.equal(c.renderCalls,1);assert.equal(c.stored.size,1);}
 });
-test('raw URL pinning rejects other destinations, revision, filename, credentials, query and fragment before fetch',async t=>{
- const f=await fixture(t);for(const edit of [u=>u.protocol='http:',u=>u.hostname='example.com',u=>u.port='444',u=>u.username='user',u=>u.password='secret-not-real',u=>u.search='?token=synthetic',u=>u.hash='#synthetic',u=>u.pathname=u.pathname.replace('/synthetic-owner/','/other-owner/'),u=>u.pathname=u.pathname.replace('/'+f.gid+'/', '/'+'1'.repeat(32)+'/'),u=>u.pathname=u.pathname.replace('/'+'a'.repeat(40)+'/', '/'+'b'.repeat(40)+'/'),u=>u.pathname=u.pathname.replace('snapshot.json','other.json')]){const c=harness(f,{truncated:true,mutate:g=>{const u=new URL(g.files['fee-console-ratio-snapshot.json'].raw_url);edit(u);g.files['fee-console-ratio-snapshot.json'].raw_url=u.href;}});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);assert.equal(c.stored.size,0);}
+test('a different complete returned file pin authenticates and displays without substituting the global Gist head',async t=>{
+ const f=await fixture(t);
+ for(const fileRevision of ['b'.repeat(40),'c'.repeat(64)])for(const entry of ['run','view']){
+  const c=harness(f,{truncated:true,fileRevision,candidate:false});
+  assert.equal(await c[entry]({isTrusted:true}),true);assert.equal(c.requests.length,1);assert.equal(c.fetches.length,1);assert.ok(c.fetches[0].url.includes('/raw/'+fileRevision+'/'));assert.equal(c.renderCalls,1);assert.equal(c.stored.size,1);
+ }
+});
+test('raw file pins must be complete lowercase hashes, never an alias, prefix or normalized path',async t=>{
+ const f=await fixture(t);
+ for(const fileRevision of ['latest','a'.repeat(39),'a'.repeat(41),'a'.repeat(63),'a'.repeat(65),'A'.repeat(40),'g'.repeat(40),'', 'a'.repeat(40)+'/..']){
+  const c=harness(f,{truncated:true,fileRevision});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);assert.equal(c.stored.size,0);
+ }
+ for(const edit of [u=>u+'?',u=>u+'#',u=>u.replace('gist.githubusercontent.com/','gist.githubusercontent.com:443/'),u=>u.replace('https://','https://@'),u=>u.replace('/raw/','/unused/../raw/'),u=>u.replace('/raw/','/%72aw/'),u=>u.replace('snapshot.json','snapshot.json/extra')]){
+  const c=harness(f,{truncated:true,mutate:g=>{const s=g.files['fee-console-ratio-snapshot.json'];s.raw_url=edit(s.raw_url);}});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);assert.equal(c.stored.size,0);
+ }
+});
+test('different file pin still refuses unsuccessful raw transport, missing stream, oversize and incomplete bytes without retry',async t=>{
+ const f=await fixture(t);
+ for(const options of [{rawStatus:201},{rawStatus:404},{rawStatus:500},{rawFetchError:true},{fetchEdit:r=>Object.defineProperty(r,'body',{value:null})},{rawEdit:()=>new Uint8Array(5*1024*1024+1)},{rawEdit:b=>b.slice(0,-1)}]){
+  const c=harness(f,{truncated:true,fileRevision:'b'.repeat(40),pending:true,...options});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,1);assert.equal(c.requests.length,1);assert.equal(c.renderCalls,0);assert.equal(c.stored.size,0);assert.ok(c._ratioSnapshotUnknown);
+ }
+});
+test('a successful different-pin raw download cannot bypass packet authentication or watermark rejection',async t=>{
+ const f=await fixture(t),verified=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
+ const tamper=b=>{const p=JSON.parse(new TextDecoder().decode(b));p.authentication.mac=(p.authentication.mac[0]==='A'?'B':'A')+p.authentication.mac.slice(1);const out=new TextEncoder().encode(JSON.stringify(p));assert.equal(out.length,b.length);return out;};
+ for(const options of [{rawEdit:tamper},{watermark:{...verified.watermark,version:2}}]){
+  const c=harness(f,{truncated:true,fileRevision:'b'.repeat(40),...options}),before=[...c.stored.values()];assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,1);assert.equal(c.renderCalls,0);assert.deepEqual([...c.stored.values()],before);
+ }
+});
+test('raw URL pinning rejects other destinations, unpinned revision, filename, credentials, query and fragment before fetch',async t=>{
+ const f=await fixture(t);for(const edit of [u=>u.protocol='http:',u=>u.hostname='example.com',u=>u.port='444',u=>u.username='user',u=>u.password='secret-not-real',u=>u.search='?token=synthetic',u=>u.hash='#synthetic',u=>u.pathname=u.pathname.replace('/synthetic-owner/','/other-owner/'),u=>u.pathname=u.pathname.replace('/'+f.gid+'/', '/'+'1'.repeat(32)+'/'),u=>u.pathname=u.pathname.replace('/'+'a'.repeat(40)+'/', '/latest/'),u=>u.pathname=u.pathname.replace('snapshot.json','other.json')]){const c=harness(f,{truncated:true,mutate:g=>{const u=new URL(g.files['fee-console-ratio-snapshot.json'].raw_url);edit(u);g.files['fee-console-ratio-snapshot.json'].raw_url=u.href;}});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);assert.equal(c.stored.size,0);}
 });
 test('invalid or oversized size and wrong filename reject before any raw read',async t=>{
  const f=await fixture(t);for(const edit of [s=>s.size=0,s=>s.size=5*1024*1024+1,s=>s.size=1.1,s=>s.size='100',s=>s.filename='other.json']){const c=harness(f,{truncated:true,mutate:g=>edit(g.files['fee-console-ratio-snapshot.json'])});assert.equal(await c.run({isTrusted:true}),false);assert.equal(c.fetches.length,0);}
