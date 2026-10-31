@@ -2619,11 +2619,13 @@ function ratioSnapshotGist(gist){
 function ratioSnapshotFile(gist,name){const f=gist.files?.[name];if(!f)return null;if(f.truncated||typeof f.content!=='string'||new TextEncoder().encode(f.content).length>5*1024*1024)throw Error('RATIO_SNAPSHOT_REFUSED');return f.content;}
 async function readRatioSnapshotFile(gist,guard=()=>{}){
   guard();ratioSnapshotGist(gist);const f=gist.files?.[RATIO_SNAPSHOT_FILE];if(!f||f.truncated!==true)return ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE);
-  const max=5*1024*1024,gid=cfg(K.gid),revision=gist.history[0].version;
+  const max=5*1024*1024,gid=cfg(K.gid);
   const fail=()=>{throw Error('RATIO_SNAPSHOT_RAW_REFUSED');};
   if(f.filename!==RATIO_SNAPSHOT_FILE||!Number.isSafeInteger(f.size)||f.size<1||f.size>max||typeof f.raw_url!=='string')fail();
-  const url=new URL(f.raw_url),expected='/'+gist.owner.login+'/'+gid+'/raw/'+revision+'/'+RATIO_SNAPSHOT_FILE;
-  if(url.protocol!=='https:'||url.hostname!=='gist.githubusercontent.com'||url.port||url.username||url.password||url.search||url.hash||url.pathname!==expected)fail();
+  // The returned file pin can precede the latest multi-file Gist revision.
+  // Keep that exact pin and the original owner/Gist/file binding.
+  const url=new URL(f.raw_url),revision=url.pathname.split('/')[4],expected='/'+gist.owner.login+'/'+gid+'/raw/'+revision+'/'+RATIO_SNAPSHOT_FILE;
+  if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision||'')||f.raw_url!=='https://gist.githubusercontent.com'+expected||url.protocol!=='https:'||url.hostname!=='gist.githubusercontent.com'||url.port||url.username||url.password||url.search||url.hash||url.pathname!==expected)fail();
   const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);let reader;
   try{
     const response=await freshFetch(url.href,{cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});guard();
