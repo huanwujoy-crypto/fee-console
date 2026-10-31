@@ -337,6 +337,15 @@ const WRITER_STYLE_CODES = new Set(["ACCOUNT", "ACCOUNT_STOCK_SUM", "AMOUNT", "B
     "STATIC_CONFLICT", "STATIC_IMMUTABLE", "STATIC_LEARNED_CONFLICT", "STATIC_MAP", "STOCK_SUM",
     "STYLE", "TICKER_CONFLICT", "TOP_HOLDINGS", "INPUT_REQUIRED", "INPUT_INVALID", "MANUAL_TOTALS_REFUSED"]);
 const WRITER_FAILURE_PATTERNS = [
+    [/^error: FEE_REPORT_METADATA_INVALID — nothing written$/m, "REPORT_METADATA_INVALID"],
+    [/^error: FEE_REPORT_LOCKED_MONTH_CHANGED — nothing written$/m, "REPORT_LOCKED_MONTH_CHANGED"],
+    [/^error: MANAGEMENT_EXEMPTION_INVALID — nothing written$/m, "MANAGEMENT_EXEMPTION_INVALID"],
+    [/^error: MANAGEMENT_EXEMPTION_INPUT_REQUIRED — nothing written$/m, "MANAGEMENT_EXEMPTION_INPUT_REQUIRED"],
+    [/^error: SOURCE_FILE_CHANGED — nothing written$/m, "SOURCE_FILE_CHANGED"],
+    [/^TypeError:[^\r\n]*\n[ \t]+at /m, "UNCAUGHT_TYPE"],
+    [/^ReferenceError:[^\r\n]*\n[ \t]+at /m, "UNCAUGHT_REFERENCE"],
+    [/^SyntaxError:[^\r\n]*\n[ \t]+at /m, "UNCAUGHT_SYNTAX"],
+    [/^RangeError:[^\r\n]*\n[ \t]+at /m, "UNCAUGHT_RANGE"],
     [/^error: STYLE_[A-Z0-9_]+(?: — nothing written)?$/m, "STYLE"],
     [/^error: duplicate\/stale cash in /m, "CASH_RECONCILIATION"],
     [/^error: --acct-cash-.* are required:/m, "CASH_EVIDENCE"],
@@ -349,12 +358,44 @@ const WRITER_FAILURE_PATTERNS = [
     [/^error: (?:split is impossible|growth\/value split is incomplete)/m, "SPLIT"],
     [/^error: --(?:date|src-|schwab|webull|cash|stock|other|spy|qqq)/m, "INPUT"],
   ];
-export function writerFailureCode(stderr, preflight = false) {
+const WRITER_PROCESS_FAILURES = ['PROCESS_TIMEOUT', 'PROCESS_ERROR', 'PROCESS_SIGNAL'];
+export function writerFailureCode(stderr, preflight = false, result = null) {
   const text = String(stderr || "");
   const style = /^error: STYLE_([A-Z0-9_]+) — nothing written$/m.exec(text)?.[1];
-  const category = WRITER_STYLE_CODES.has(style) ? `STYLE_${style}`
-    : WRITER_FAILURE_PATTERNS.find(([pattern]) => pattern.test(text))?.[1] || "UNKNOWN";
+  const processCategory = result?.error?.code === 'ETIMEDOUT' ? 'PROCESS_TIMEOUT'
+    : result?.error ? 'PROCESS_ERROR' : result?.signal ? 'PROCESS_SIGNAL' : null;
+  const category = processCategory || (WRITER_STYLE_CODES.has(style) ? `STYLE_${style}`
+    : WRITER_FAILURE_PATTERNS.find(([pattern]) => pattern.test(text))?.[1] || "UNKNOWN");
   return `FEE_CLOUD_WRITER_${preflight ? "PREFLIGHT_" : ""}${category}`;
+}
+const WRITER_FAILURE_CODES = new Set(['', 'PREFLIGHT_'].flatMap(prefix =>
+  ['UNKNOWN', ...WRITER_PROCESS_FAILURES, ...WRITER_FAILURE_PATTERNS.map(([,code]) => code),
+    ...Array.from(WRITER_STYLE_CODES, code => 'STYLE_' + code)].map(code => 'FEE_CLOUD_WRITER_' + prefix + code)));
+export const WRITER_DIAGNOSTIC_PREFIX = 'FEE_CLOUD_WRITER_DIAGNOSTIC=';
+export function validateWriterFailureDiagnostic(value) {
+  try {
+    if (!diagnosticObject(value, ['schema','code','stage','termination','reportTarget','processingDate','processingIndex'])
+        || value.schema !== 'fee-console.writer-diagnostic.v1' || !WRITER_FAILURE_CODES.has(value.code)
+        || !['STYLE_PREFLIGHT','WEEKEND_CARRY','WRITER'].includes(value.stage)
+        || value.code.includes('_PREFLIGHT_') !== (value.stage === 'STYLE_PREFLIGHT')) return false;
+    const processKind = value.code.endsWith('_PROCESS_TIMEOUT') ? 'TIMEOUT'
+      : value.code.endsWith('_PROCESS_ERROR') ? 'SPAWN_ERROR'
+      : value.code.endsWith('_PROCESS_SIGNAL') ? 'SIGNAL' : null;
+    if (processKind ? value.termination !== processKind : !['EXIT','UNKNOWN'].includes(value.termination)) return false;
+    if ([value.reportTarget,value.processingDate,value.processingIndex].every(v => v === 'unknown')) return true;
+    return isIsoDate(value.reportTarget) && isIsoDate(value.processingDate)
+      && value.processingDate <= value.reportTarget
+      && Number.isSafeInteger(value.processingIndex) && value.processingIndex >= 1 && value.processingIndex <= 10;
+  } catch { return false; }
+}
+export function buildWriterFailureDiagnostic({code,stage,termination,context,targetDate} = {}) {
+  const value = {schema:'fee-console.writer-diagnostic.v1',code,stage,termination,
+    reportTarget:'unknown',processingDate:'unknown',processingIndex:'unknown'};
+  if (context && context.processingDate === targetDate) {
+    const bound = {...value,reportTarget:context.reportTarget,processingDate:context.processingDate,processingIndex:context.processingIndex};
+    if (validateWriterFailureDiagnostic(bound)) return bound;
+  }
+  return validateWriterFailureDiagnostic(value) ? value : null;
 }
 
 function run(script, cli, env) {
@@ -362,7 +403,13 @@ function run(script, cli, env) {
     cwd: ROOT, env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 120_000,
   });
   if (result.status !== 0) {
-    if (script === "daily.mjs") throw new Error(writerFailureCode(result.stderr, cli.includes("--style-preflight")));
+    if (script === "daily.mjs") {
+      const error = new Error(writerFailureCode(result.stderr, cli.includes("--style-preflight"), result));
+      error.writerTermination = result.error?.code === 'ETIMEDOUT' ? 'TIMEOUT'
+        : result.error ? 'SPAWN_ERROR' : result.signal ? 'SIGNAL'
+        : Number.isInteger(result.status) && result.status > 0 ? 'EXIT' : 'UNKNOWN';
+      throw error;
+    }
     fail(script === "fee-receipt-report.mjs" ? "RECEIPT" : "HEALTH");
   }
   return String(result.stdout || "").trim();
@@ -543,14 +590,18 @@ export function safeProducerFailureSummary(privateStderr) {
   if (typeof privateStderr !== 'string' || Buffer.byteLength(privateStderr) > 65536) return fallback;
   const lines = privateStderr.replace(/\n$/, '').split('\n'), last = lines.at(-1);
   const code = SAFE_PRODUCER_FAILURE_CODES.has(last) ? last : fallback.code;
-  const candidates = lines.filter(line => line.includes(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX));
+  const prefixes = [UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX, WRITER_DIAGNOSTIC_PREFIX];
+  const candidates = lines.filter(line => prefixes.some(prefix => line.includes(prefix)));
   let diagnostic = null;
-  if (code === 'FEE_CLOUD_UNRESOLVED_FLOW' && candidates.length === 1) {
+  const prefix = code === 'FEE_CLOUD_UNRESOLVED_FLOW' ? UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX
+    : WRITER_FAILURE_CODES.has(code) ? WRITER_DIAGNOSTIC_PREFIX : null;
+  if (prefix && candidates.length === 1) {
     const line = candidates[0];
-    if (line.startsWith(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX) && Buffer.byteLength(line) <= 16384) try {
-      const json = line.slice(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX.length), parsed = JSON.parse(json);
+    if (line.startsWith(prefix) && Buffer.byteLength(line) <= 16384) try {
+      const json = line.slice(prefix.length), parsed = JSON.parse(json);
       // Canonical emission also rejects duplicate JSON keys before validation.
-      if (JSON.stringify(parsed) === json && validateUnresolvedFlowDiagnostic(parsed)) diagnostic = parsed;
+      if (JSON.stringify(parsed) === json && parsed.code === code
+          && (prefix === WRITER_DIAGNOSTIC_PREFIX ? validateWriterFailureDiagnostic(parsed) : validateUnresolvedFlowDiagnostic(parsed))) diagnostic = parsed;
     } catch { /* private malformed metadata remains private */ }
   }
   return {code,diagnostic};
@@ -747,7 +798,11 @@ export async function produce(options = {}) {
       }
     }
   } catch (error) {
-    throw new Error(producerFailureCode(error, stage));
+    const code = producerFailureCode(error, stage);
+    const diagnostic = buildWriterFailureDiagnostic({code,stage,termination:error?.writerTermination,
+      context:options.flowDiagnosticContext,targetDate:options.cli?.['target-date']});
+    if (diagnostic) process.stderr.write(WRITER_DIAGNOSTIC_PREFIX + JSON.stringify(diagnostic) + '\n');
+    throw new Error(code);
   }
 }
 
@@ -795,8 +850,7 @@ for (const stage of [...DIAGNOSTIC_STAGES, 'UNKNOWN']) {
   for (const category of ['TYPE','RANGE','SYNTAX','REFERENCE','UNKNOWN',...Array.from(SYSTEM_CODES,code=>'SYSTEM_'+code),...Array.from(NONCASH_DIAGNOSTICS,code=>code.slice(4))])
     SAFE_PRODUCER_FAILURE_CODES.add(`FEE_CLOUD_STAGE_${stage}_${category}`);
 }
-for (const prefix of ['', 'PREFLIGHT_']) for (const category of ['UNKNOWN',...WRITER_FAILURE_PATTERNS.map(([,code])=>code),...Array.from(WRITER_STYLE_CODES,code=>'STYLE_'+code)])
-  SAFE_PRODUCER_FAILURE_CODES.add('FEE_CLOUD_WRITER_'+prefix+category);
+for (const code of WRITER_FAILURE_CODES) SAFE_PRODUCER_FAILURE_CODES.add(code);
 // SourceFetchError owns its finite enum; its constructor replaces unknown input
 // with SOURCE_RESPONSE. No untyped SOURCE_* suffix is accepted by this boundary.
 for (const code of ['LOCATOR','OPTIONS','AUTH_CONFIG','AUTH','NETWORK','TIMEOUT','HTTP','FORBIDDEN','REDIRECT','RESPONSE','IDENTITY','TRUNCATED','FILE','ENVELOPE','REVISION','ETAG','CHANGED','STORAGE','CLOSED']) {
