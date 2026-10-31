@@ -122,8 +122,18 @@ section.pane{display:none} section.pane.on{display:block}
 .ratio-asset-grid [role=meter]{height:5px!important;margin:8px 0 0!important;background:var(--grid)!important;border-radius:4px;overflow:hidden}
 .ratio-asset-grid [role=meter]>span{background:var(--series-1)!important}
 .ratio-exposure-grid,.ratio-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
-.ratio-exposure-grid{margin:12px 0}.ratio-exposure-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--plane)}
+.ratio-exposure-grid{margin:12px 0;align-items:start}.ratio-exposure-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--plane)}
 .ratio-exposure-grid h3{font-size:13px;margin:0 0 4px;overflow-wrap:anywhere}
+.ratio-holding-list{margin-top:8px}.ratio-holding-row{padding:9px 0;border-top:1px solid var(--grid)}
+.ratio-holding-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:12px;font-variant-numeric:tabular-nums}
+.ratio-holding-name{min-width:0;font-weight:600;overflow-wrap:anywhere}.ratio-holding-amount{flex:none;white-space:nowrap;font-weight:600}
+.ratio-holding-weights{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;margin:5px 0 0;font-size:11px;font-variant-numeric:tabular-nums}
+.ratio-holding-weights>div{display:flex;justify-content:space-between;gap:5px;align-items:baseline}.ratio-holding-weights dt{color:var(--ink-muted)}.ratio-holding-weights dd{margin:0;white-space:nowrap;color:var(--ink-2)}
+#p-ratio .ratio-composition{margin-top:4px;border-top:1px dashed var(--grid)}#p-ratio .ratio-composition summary{font-size:11px;min-height:44px}
+.ratio-constituents{list-style:none;margin:0;padding:0 0 2px}.ratio-constituents li{display:flex;gap:7px;padding:7px 0;border-top:1px solid var(--grid);font-size:12px;line-height:1.65;color:var(--ink-2)}
+.ratio-constituent-number,.ratio-note-number{flex:none;color:var(--ink-muted);font-variant-numeric:tabular-nums}.ratio-constituent-text{min-width:0;overflow-wrap:anywhere}
+#p-ratio .ratio-explanation{border:1px solid var(--border);border-radius:10px;padding:0 12px;margin-top:8px;background:var(--surface-1)}
+#p-ratio .ratio-explanation>summary{font-weight:600;color:var(--ink-1)}#p-ratio .ratio-explanation>p{display:flex;gap:8px;margin:8px 0}.ratio-note-text{min-width:0;overflow-wrap:anywhere}
 .ratio-plan-grid>.card{min-width:0;margin-bottom:12px}
 #p-ratio table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin:8px 0}
 #p-ratio th,#p-ratio td{padding:8px 5px;border-bottom:1px solid var(--grid);vertical-align:top;text-align:right;overflow-wrap:anywhere;word-break:normal;white-space:normal}
@@ -2467,6 +2477,28 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
   return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
 }
 /* ratio-presentation:v1 */
+function ratioHoldingDisplayName(raw){
+  if(typeof raw!=='string')return '';
+  const original=raw.trim();
+  // Official ranked rows may append [securityCode · market] to distinguish
+  // repeated Sharesight names. Only a date-prefixed code is shortened here.
+  const afterMonth=value=>(value.match(/^(?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])(?:\s*[-–—_:：/]\s*|\s+)(\S[\s\S]*)$/)?.[1]||value.match(/^(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月\s*(?:[-–—_:：/]\s*)?(\S[\s\S]*)$/)?.[1])?.trim();
+  const knownSuffix=/\s+·\s+(?:OTHER|NASDAQ|NYSE|SWX)$/;
+  for(const [open,close] of [['[',']'],['【','】'],['（','）'],['(',')']]){
+    if(!original.endsWith(close))continue;
+    const start=original.indexOf(open);
+    if(start<0)continue;
+    const content=original.slice(start+open.length,-close.length).trim();
+    if(!afterMonth(content))continue;
+    const marker=content.lastIndexOf(' · '),generated=open==='['&&start>0&&original[start-1]===' '&&marker>=0;
+    const code=generated?content.slice(0,marker):content.replace(knownSuffix,'');
+    return afterMonth(code)||original;
+  }
+  const project=afterMonth(original);
+  // Without the app's wrapper, preserve unrecognized suffixes and project
+  // punctuation. Never split project names on their own digits or hyphens.
+  return project?.replace(knownSuffix,'').trim()||original;
+}
 function styleRatioReport(root){
   const report=root?.querySelector?.('.ratio-report');
   if(!report||report.classList.contains('ratio-styled'))return;
@@ -2496,9 +2528,58 @@ function styleRatioReport(root){
   // Source dates and pending/unknown status precede rankings in the render order.
   // Leave those visible status paragraphs in place; do not lift rankings above them.
   const groups=make('div','ratio-exposure-grid');
-  for(const group of direct(exposure,'SECTION'))groups.append(group);
+  for(const group of direct(exposure,'SECTION')){
+    const table=direct(group,'TABLE')[0],rows=table?Array.from(table.tBodies[0]?.rows||[]):[];
+    const labels=table?Array.from(table.tHead?.rows[0]?.cells||[]).map(c=>c.textContent):[];
+    // Move already rendered display values; this layer never recalculates
+    // rankings, amounts, ratios, source associations or leverage multipliers.
+    if(rows.length&&labels.length===3&&rows.every(row=>row.cells.length===3&&row.cells[2].textContent.split('／').length===2)){
+      const holdings=make('div','ratio-holding-list');
+      for(const [index,row] of rows.entries()){
+        const [nameCell,amountCell,weightCell]=Array.from(row.cells),details=nameCell.querySelector('details');
+        const original=Array.from(nameCell.childNodes).filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
+        const ranked=original.match(/^(\d+\.\s*)([\s\S]*)$/),sourceName=ranked?ranked[2]:original;
+        const card=make('article','ratio-holding-row'),head=make('div','ratio-holding-head'),name=make('span','ratio-holding-name'),amount=make('span','ratio-holding-amount');
+        name.textContent=(ranked?ranked[1]:'')+(ratioHoldingDisplayName(sourceName)||sourceName);name.title=sourceName;
+        amount.textContent=amountCell.textContent;head.append(name,amount);card.append(head);
+        const weights=make('dl','ratio-holding-weights'),values=weightCell.textContent.split('／'),weightLabels=labels[2].split('／');
+        for(let i=0;i<2;i++){
+          const item=make('div'),label=make('dt'),value=make('dd');
+          label.textContent=weightLabels[i]||labels[2];value.textContent=values[i];item.append(label,value);weights.append(item);
+        }
+        card.append(weights);
+        if(details){
+          const number=ranked?ranked[1].trim().replace(/\.$/,''):String(index+1),summary=direct(details,'SUMMARY')[0],oldList=direct(details,'UL')[0];
+          details.classList.add('ratio-composition');
+          if(summary)summary.textContent='明细 '+number+' · '+summary.textContent;
+          if(oldList){
+            const items=make('ol','ratio-constituents');
+            for(const [i,item] of direct(oldList,'LI').entries()){
+              const label=make('span','ratio-constituent-number'),body=make('span','ratio-constituent-text');
+              label.textContent=number+'.'+(i+1);while(item.firstChild)body.append(item.firstChild);item.append(label,body);items.append(item);
+            }
+            oldList.replaceWith(items);
+          }
+          card.append(details);
+        }
+        holdings.append(card);
+      }
+      table.replaceWith(holdings);
+    }
+    groups.append(group);
+  }
   const coverage=direct(exposure,'DETAILS')[0];
   exposure.insertBefore(groups,coverage||null);
+  const noteNumbers={'计算口径与合并规则':'1','来源日期与核验记录':'2','覆盖范围、残余与缺项':'3','现金与补仓参考说明':'4'};
+  for(const note of direct(report,'DETAILS')){
+    const summary=direct(note,'SUMMARY')[0],number=noteNumbers[summary?.textContent];
+    if(!number)continue;
+    note.classList.add('ratio-explanation');summary.textContent='说明 '+number+' · '+summary.textContent;
+    for(const [i,p] of direct(note,'P').entries()){
+      const label=make('span','ratio-note-number'),body=make('span','ratio-note-text');
+      label.textContent=number+'.'+(i+1);while(p.firstChild)body.append(p.firstChild);p.append(label,body);
+    }
+  }
   report.classList.add('ratio-styled');
 }
 /* ratio-presentation:v1:end */
