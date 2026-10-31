@@ -75,7 +75,7 @@ concurrency:
 jobs:
   period:
     # Legacy automated dispatchers omit run_reviewed_once and stay stopped.
-    if: ${{ !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_REPORT_ONCE_MAIN != '') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -97,6 +97,8 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
           IB_MANAGER_READ_ENABLED: ${{ vars.IB_MANAGER_READ_ENABLED }}
           FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
           REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
@@ -106,6 +108,13 @@ jobs:
           REVIEWED_RECOVERY_MAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.recovery_main || '' }}
         run: |
           set -euo pipefail
+          if [[ -n "$FEE_REPORT_ONCE_MAIN" ]]; then
+            scope=$(node scripts/fee-report-producer.mjs --mode=once-scope)
+            if [[ $(node -e 'process.stdout.write(JSON.parse(process.argv[1]).state)' "$scope") != active ]]; then
+              echo 'outcome=not-due' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
           args=(--mode=preflight)
           if [[ -n "$REVIEWED_KIND" || -n "$REVIEWED_TARGET" ]]; then
             args+=("--report-kind=$REVIEWED_KIND" "--report-target=$REVIEWED_TARGET")
@@ -133,13 +142,40 @@ jobs:
           if(r.outcome==='recovery-required')throw Error('FEE_REPORT_RECOVERY_REQUIRED');
           NODE
 
+  once-admit:
+    needs: period
+    if: ${{ vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ needs.period.outputs.main }}
+          persist-credentials: false
+      - name: Reserve this target once and close later producer entries
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          ONCE_PLAN: ${{ needs.period.outputs.plan }}
+          FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
+        run: node scripts/fee-report-producer.mjs --mode=once-admit
+
   produce:
     name: Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}
-    needs: period
-    if: ${{ !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    needs: [period, once-admit]
+    if: ${{ !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    outputs:
+      candidate: ${{ steps.candidate.outputs.sha }}
     steps:
       - name: Check out trusted main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -147,6 +183,14 @@ jobs:
           ref: main
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Confirm the reserved run before any financial credentials
+        if: ${{ vars.FEE_REPORT_ONCE_MAIN != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
+        run: node scripts/fee-report-producer.mjs --mode=once-confirm
 
       - name: Read the independent benchmark cache
         id: benchmark_base
@@ -296,6 +340,28 @@ jobs:
             rm -rf "$RUNNER_TEMP/fee-cloud-private"
           fi
 
+  once-finish:
+    needs: [period, once-admit, produce]
+    if: ${{ always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          persist-credentials: false
+      - name: Bind the unique candidate or pause after failure
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          ONCE_CANDIDATE_SHA: ${{ needs.produce.outputs.candidate }}
+          ONCE_PRODUCE_RESULT: ${{ needs.produce.result }}
+          ONCE_ADMIT_RESULT: ${{ needs['once-admit'].result }}
+        run: node scripts/fee-report-producer.mjs --mode=once-finish
+
   source-plan-check:
     name: Public source plan check ${{ inputs.source_target }}
     if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
@@ -321,7 +387,7 @@ jobs:
 
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer

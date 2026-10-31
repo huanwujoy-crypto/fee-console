@@ -13,6 +13,163 @@ import {producerFailureCode,safeProducerFailureSummary,UNRESOLVED_FLOW_DIAGNOSTI
 import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
+import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl} from './fee-report-producer.mjs';
+
+function cloudOnceFixture(){
+ const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T05:00:10Z');
+ const refs=new Map(),tags=new Map(),calls=[],workflows=new Map([[CLOUD_ONCE.producer,'active'],[CLOUD_ONCE.promotion,'active']]);
+ const makeRun=id=>({id,workflow_id:CLOUD_ONCE.producer,head_sha:main,head_branch:'main',event:'schedule',run_attempt:1,path:'.github/workflows/fee-cloud-producer.yml',created_at:'2026-11-03T05:00:00Z',status:'in_progress',conclusion:null});
+ const f={main,candidate,runId,now,refs,tags,calls,workflows,runs:new Map([[runId,makeRun(runId)],[1002,makeRun(1002)]]),currentMain:main,failDisable:new Set(),unknownRef:false,
+  jobs:{total_count:1,jobs:[{id:2001,run_id:runId,head_sha:main,name:'Produce daily 2026-11-02',status:'completed',conclusion:'success'}]},
+  commit:{sha:candidate,parents:[{sha:main}],author:{id:283054367},commit:{verification:{verified:true}},files:[{filename:'data.json',status:'modified'},{filename:'fee-data-health.json',status:'modified'}]},
+  validation:{total_count:1,workflow_runs:[{id:3001,head_sha:candidate,head_branch:'codex/fee-daily-20261102-abcdef',path:'.github/workflows/validate-fee-data.yml',event:'push',run_attempt:1,status:'completed',conclusion:'success'}]}};
+ f.request=async(method,route,body)=>{
+  calls.push({method,route,...(body===undefined?{}:{body:structuredClone(body)})});
+  if(method==='GET'&&route==='/git/ref/heads/main')return {object:{sha:f.currentMain}};
+  if(method==='GET'&&route.startsWith('/git/ref/tags/'))return structuredClone(refs.get(route.slice('/git/ref/'.length))||null);
+  if(method==='GET'&&route.startsWith('/git/tags/'))return structuredClone(tags.get(route.slice('/git/tags/'.length)));
+  if(method==='GET'&&/\/actions\/runs\/\d+\/jobs\?/.test(route))return structuredClone(f.jobs);
+  if(method==='GET'&&/^\/actions\/runs\/\d+$/.test(route))return structuredClone(f.runs.get(Number(route.split('/').at(-1))));
+  if(method==='GET'&&route.startsWith('/commits/'))return structuredClone(f.commit);
+  if(method==='GET'&&route.startsWith('/actions/workflows/validate-fee-data.yml/runs?'))return structuredClone(f.validation);
+  if(method==='GET'&&/^\/actions\/workflows\/\d+$/.test(route)){const id=Number(route.split('/').at(-1));return {id,state:workflows.get(id)};}
+  if(method==='POST'&&route==='/git/tags'){
+   const sha=crypto.createHash('sha1').update(JSON.stringify(body)).digest('hex');tags.set(sha,{...body,sha,object:{type:body.type,sha:body.object}});return {sha};
+  }
+  if(method==='POST'&&route==='/git/refs'){
+   const key=body.ref.slice('refs/'.length);if(refs.has(key))throw Error('SYNTHETIC_CONFLICT');
+   const ref={ref:body.ref,object:{type:tags.has(body.sha)?'tag':'commit',sha:body.sha}};refs.set(key,ref);
+   if(f.unknownRef)throw Error('SYNTHETIC_LOST_RESPONSE');return structuredClone(ref);
+  }
+  if(method==='PUT'&&/^\/actions\/workflows\/\d+\/disable$/.test(route)){
+   const id=Number(route.split('/').at(-2));if(f.failDisable.has(id))throw Error('SYNTHETIC_API_DOWN');workflows.set(id,'disabled_manually');return null;
+  }
+  assert.fail('unexpected synthetic control route');
+ };
+ f.plan=dailyReportPlan(CLOUD_ONCE.target,['NYSE','NASDAQ'],{periodFrom:CLOUD_ONCE.from});
+ f.budget={attempts:0,inProgress:false};f.readBudget=async()=>structuredClone(f.budget);
+ f.args={main,head:main,event:'schedule',attempt:'1',runId,plan:f.plan,now,request:f.request,readBudget:f.readBudget};
+ f.env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:main,GITHUB_EVENT_NAME:'schedule',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:String(runId),FEE_REPORT_ONCE_MAIN:main,FEE_CLOUD_MODE:'publish',ONCE_PLAN:JSON.stringify(f.plan)};
+ f.control=(mode,extra={},time=now)=>cloudOnceControl(mode,{env:{...f.env,...extra},now:time,request:f.request,readBudget:f.readBudget});
+ f.complete=async()=>{await admitCloudOnce(f.args);await recordCloudOnceCandidate({...f.args,candidate});f.runs.get(runId).status='completed';f.runs.get(runId).conclusion='success';};
+ return f;
+}
+test('once window waits without reserving at 10:30 and rejects wrong date head attempt or mode',async()=>{
+ const f=cloudOnceFixture();assert.equal(await f.control('once-scope',{},new Date('2026-11-03T02:30:00Z')).then(x=>x.state),'active');assert.equal(f.calls.length,0);
+ await assert.rejects(admitCloudOnce({...f.args,now:new Date('2026-11-03T02:30:00Z')}),/ONCE_CONTROL/);assert.equal(f.calls.length,0);
+ for(const change of [{head:'c'.repeat(40)},{event:'workflow_dispatch'},{attempt:'2'},{now:new Date('2026-11-03T05:45:00Z')},{now:new Date('2026-11-04T05:00:00Z')}])assert.equal(cloudOnceWindow({...f.args,...change}),'closed');
+ assert.equal(cloudOnceWindow({...f.args,now:new Date('2026-11-03T02:00:00Z')}),'waiting');
+ assert.equal((await f.control('once-scope',{FEE_CLOUD_MODE:'shadow'})).state,'closed');
+ await assert.rejects(f.control('once-admit',{FEE_CLOUD_MODE:'shadow'}),/ONCE_CONTROL/);
+ await assert.rejects(f.control('once-unknown'),/ONCE_CONTROL/);assert.equal(f.calls.length,0);
+ for(const plan of [{...f.plan,accountingThrough:'2026-11-03'},{...f.plan,monthlyCutoffs:[]},{...f.plan,markets:['NYSE','LSE']}])await assert.rejects(admitCloudOnce({...f.args,plan}),/ONCE_CONTROL/);
+});
+test('atomic once reservation precedes producer disable and financial admission; second run cannot consume',async()=>{
+ const f=cloudOnceFixture();assert.equal((await f.control('once-admit')).state,'admitted');
+ assert.equal(f.refs.size,1);assert.equal(f.workflows.get(CLOUD_ONCE.producer),'disabled_manually');assert.equal(f.workflows.get(CLOUD_ONCE.promotion),'active');
+ assert.equal((await f.control('once-confirm')).state,'confirmed');
+ assert(f.calls.findIndex(c=>c.method==='POST'&&c.route==='/git/refs')<f.calls.findIndex(c=>c.method==='PUT'));
+ const before=f.calls.filter(c=>c.method==='POST').length;
+ await assert.rejects(admitCloudOnce({...f.args,runId:1002}),/ONCE_CONTROL/);
+ assert.equal(f.calls.filter(c=>c.method==='POST').length,before);
+ assert(!f.calls.some(c=>/sharesight|gist|secret|338411790/.test(c.route)));
+});
+test('once acceptance does not reset or reuse an already spent ordinary target budget',async()=>{
+ for(const budget of [{attempts:1,inProgress:false},{attempts:2,inProgress:false},{attempts:0,inProgress:true},null]){
+  const f=cloudOnceFixture();f.budget=budget;await assert.rejects(admitCloudOnce(f.args),/ONCE_CONTROL/);assert.equal(f.refs.size,0);assert.equal(f.calls.length,0);
+ }
+});
+test('two simultaneous synthetic admissions have exactly one winner and no mutable ref operation',async()=>{
+ const f=cloudOnceFixture();const results=await Promise.allSettled([admitCloudOnce(f.args),admitCloudOnce({...f.args,runId:1002})]);
+ assert.equal(results.filter(r=>r.status==='fulfilled').length,1);assert.equal(f.refs.size,1);
+ assert.equal(f.calls.filter(c=>c.method==='POST'&&c.route==='/git/refs').length,2);
+ assert(!f.calls.some(c=>c.method==='PATCH'||c.method==='DELETE'));
+});
+test('uncertain ref response is resolved by readback without a second creation request',async()=>{
+ const f=cloudOnceFixture();f.unknownRef=true;assert.equal((await admitCloudOnce(f.args)).state,'admitted');
+ assert.equal(f.calls.filter(c=>c.route==='/git/refs'&&c.method==='POST').length,1);
+});
+test('cancelled failed or timed out source leaves the claim consumed and pauses both flows',async()=>{
+ for(const result of ['failure','cancelled','timed_out']){
+  const f=cloudOnceFixture();await admitCloudOnce(f.args);
+  assert.equal((await f.control('once-finish',{ONCE_ADMIT_RESULT:'success',ONCE_PRODUCE_RESULT:result})).state,'paused');
+  assert([...f.workflows.values()].every(s=>s==='disabled_manually'));assert.equal(f.refs.size,1);
+  await assert.rejects(admitCloudOnce({...f.args,runId:1002}),/ONCE_CONTROL/);
+ }
+});
+test('pause tries both fixed workflows and reports incomplete shutdown without touching the legacy workflow',async()=>{
+ const f=cloudOnceFixture();f.failDisable.add(CLOUD_ONCE.producer);
+ await assert.rejects(pauseCloudOnce(f.request),/ONCE_CONTROL/);
+ assert.equal(f.workflows.get(CLOUD_ONCE.promotion),'disabled_manually');
+ assert.deepEqual(f.calls.filter(c=>c.method==='PUT').map(c=>c.route),[CLOUD_ONCE.producer,CLOUD_ONCE.promotion].map(id=>'/actions/workflows/'+id+'/disable'));
+});
+test('claim failure after reservation cannot enter financial work or grant another attempt',async()=>{
+ const f=cloudOnceFixture();f.failDisable.add(CLOUD_ONCE.producer);await assert.rejects(admitCloudOnce(f.args),/ONCE_CONTROL/);
+ assert.equal(f.refs.size,1);await assert.rejects(confirmCloudOnce(f.args),/ONCE_CONTROL/);await assert.rejects(admitCloudOnce({...f.args,runId:1002}),/ONCE_CONTROL/);
+});
+test('candidate association requires the successful source job, signed exact parent and original two files',async()=>{
+ for(const mutate of [f=>f.jobs.jobs[0].conclusion='failure',f=>f.jobs.jobs.push({...f.jobs.jobs[0]}),f=>f.commit.parents[0].sha='c'.repeat(40),f=>f.commit.commit.verification.verified=false,f=>f.commit.files[0].filename='index.html',f=>f.commit.author.id=1]){
+  const f=cloudOnceFixture();await admitCloudOnce(f.args);mutate(f);await assert.rejects(recordCloudOnceCandidate({...f.args,candidate:f.candidate}),/ONCE_CONTROL/);assert.equal(f.refs.size,1);
+ }
+});
+test('only the bound candidate after successful validation can promote; every terminal outcome pauses',async()=>{
+ const f=cloudOnceFixture();await f.complete();
+ assert.deepEqual(await cloudOnceStatus(f.args),{state:'candidate',candidate:f.candidate});
+ f.validation.workflow_runs[0].status='in_progress';assert.equal((await cloudOnceStatus(f.args)).state,'waiting');
+ f.validation.workflow_runs[0].status='completed';f.validation.workflow_runs[0].conclusion='failure';
+ assert.equal((await f.control('once-cleanup',{ONCE_PROMOTE_RESULT:'skipped'})).state,'paused');
+ assert([...f.workflows.values()].every(s=>s==='disabled_manually'));
+ const published=cloudOnceFixture();await published.complete();published.currentMain=published.candidate;
+ assert.equal((await published.control('once-cleanup',{ONCE_PROMOTE_RESULT:'success'})).state,'paused');
+ const failed=cloudOnceFixture();await failed.complete();assert.equal((await failed.control('once-cleanup',{ONCE_PROMOTE_RESULT:'failure'})).state,'paused');
+});
+test('waiting gates do not consume; expiry and lost-runner terminal metadata cause shutdown without any second source',async()=>{
+ const f=cloudOnceFixture();assert.equal((await f.control('once-finish',{ONCE_ADMIT_RESULT:'skipped',ONCE_PRODUCE_RESULT:'skipped'},new Date('2026-11-03T02:30:00Z'))).state,'waiting');
+ assert.equal(f.refs.size,0);assert.equal(f.calls.filter(c=>c.method!=='GET').length,0);
+ assert.equal((await f.control('once-cleanup',{ONCE_PROMOTE_RESULT:'skipped'},new Date(CLOUD_ONCE.finishBy))).state,'paused');
+ const lost=cloudOnceFixture();await admitCloudOnce(lost.args);lost.runs.get(lost.runId).status='completed';lost.runs.get(lost.runId).conclusion='cancelled';
+ assert.equal((await lost.control('once-cleanup',{ONCE_PROMOTE_RESULT:'skipped'})).state,'paused');assert.equal(lost.refs.size,1);
+});
+test('changed head, rerun, stale native run and uncertain control metadata never confirm source admission',async()=>{
+ for(const mutate of [f=>f.currentMain='c'.repeat(40),f=>f.runs.get(f.runId).run_attempt=2,f=>f.runs.get(f.runId).created_at='2026-11-02T05:00:00Z']){
+  const f=cloudOnceFixture();mutate(f);await assert.rejects(admitCloudOnce(f.args),/ONCE_CONTROL/);assert.equal(f.refs.size,0);
+ }
+ const f=cloudOnceFixture();await admitCloudOnce(f.args);await assert.rejects(confirmCloudOnce({...f.args,attempt:'2'}),/ONCE_CONTROL/);
+ f.currentMain='c'.repeat(40);await assert.rejects(confirmCloudOnce(f.args),/ONCE_CONTROL/);
+});
+test('control transport never forwards credentials to redirects, other hosts, legacy workflow or raw error text',async()=>{
+ const token='SYNTHETIC_SECRET_CANARY'.repeat(2),calls=[];
+ const fetchImpl=async(url,opts)=>{calls.push({url,opts});throw Error(token+' URL account amount body');};
+ await assert.rejects(cloudOnceRequest('GET','/git/ref/heads/main',undefined,{token,fetchImpl}),e=>e.message==='FEE_REPORT_ONCE_CONTROL');
+ assert.equal(calls.length,1);assert.equal(calls[0].opts.redirect,'error');assert.match(calls[0].url,/^https:\/\/api\.github\.com\/repos\/huanwujoy-crypto\/fee-console\//);
+ for(const [method,route] of [['PUT','/actions/workflows/338411790/disable'],['DELETE','/git/ref/tags/'+CLOUD_ONCE.tag],['GET','https://evil.invalid/']])await assert.rejects(cloudOnceRequest(method,route,undefined,{token,fetchImpl}),/ONCE_CONTROL/);
+ assert.equal(calls.length,1);
+});
+test('once workflow wiring isolates short-lived control permissions and gates every financial step',()=>{
+ const producer=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const promotion=fs.readFileSync(new URL('../.github/workflows/promote-fee-data.yml',import.meta.url),'utf8');
+ const block=(text,name)=>text.split('\n  '+name+':\n')[1].split(/\n  [a-z][a-z-]*:\n/)[0];
+ for(const name of ['once-admit','once-finish']){
+  const b=block(producer,name);assert.match(b,/contents: write\n      actions: write/);assert.doesNotMatch(b,/secrets\.|environment:|id-token:|google-github-actions/);
+ }
+ const cleanup=block(promotion,'once-cleanup');assert.match(cleanup,/always\(\)/);assert.match(cleanup,/contents: read\n      actions: write/);assert.doesNotMatch(cleanup,/secrets\.|environment:|id-token:/);
+ const source=block(producer,'produce');assert.match(source,/needs: \[period, once-admit\]/);assert.match(source,/needs\['once-admit'\]\.result == 'success'/);
+ assert(source.indexOf('--mode=once-confirm')<source.indexOf('google-github-actions/auth@'));
+ assert.doesNotMatch(source,/contents: write|actions: write/);assert.match(source,/timeout-minutes: 15/);
+ assert.match(block(producer,'period'),/github.event_name == 'schedule'.*FEE_REPORT_ONCE_MAIN != ''/);
+ assert.match(promotion,/steps.once.outputs.state == 'candidate'/);assert.match(promotion,/git rev-parse "\$candidate_ref"\) != "\$ONCE_CANDIDATE_SHA"/);
+ assert(!producer.includes('/enable'));assert(!promotion.includes('/enable'));
+});
+test('read-only promotion inspection does not attempt a write on metadata failure; the separate cleanup role pauses',async()=>{
+ const f=cloudOnceFixture(),request=async(method,route,body)=>{
+  if(route==='/git/ref/heads/main')throw Error('SYNTHETIC_PRIVATE_CANARY');
+  return f.request(method,route,body);
+ };
+ await assert.rejects(cloudOnceControl('once-promotion',{env:f.env,now:f.now,request}),e=>e.message==='FEE_REPORT_ONCE_CONTROL');
+ assert.equal(f.calls.filter(c=>c.method!=='GET').length,0);
+ await assert.rejects(cloudOnceControl('once-cleanup',{env:f.env,now:f.now,request}),e=>e.message==='FEE_REPORT_ONCE_CONTROL');
+ assert([...f.workflows.values()].every(s=>s==='disabled_manually'));
+});
 
 // Default fetch is forbidden for the entire suite. Individual wire mocks may
 // replace it temporarily, but a forgotten injection must fail even if product
@@ -353,7 +510,7 @@ const budgetPlan=weeklyReportPlan('2026-10-30'),budgetNow=new Date('2026-11-01T0
 const budgetRun=(id=1)=>({id,path:'.github/workflows/fee-cloud-producer.yml',head_branch:'main',head_sha:'a'.repeat(40),event:'schedule',created_at:'2026-10-31T16:00:00Z'});
 const budgetJob=(run,id=10,name='Produce weekly 2026-10-30')=>({id,run_id:run.id,head_sha:run.head_sha,name,status:'completed',conclusion:'failure',started_at:'2026-10-31T16:01:00Z'});
 function budgetWire(runs,jobs,mutate=()=>{}){return async(url,init)=>{assert.equal(init.method,'GET');assert.equal(init.redirect,'error');assert.equal(init.headers.Authorization,undefined);assert.ok(!url.includes('/logs'));let value;if(url.includes('/workflows/fee-cloud-producer.yml/runs?'))value={total_count:runs.length,workflow_runs:runs};else{assert.match(url,/\/runs\/\d+\/jobs\?filter=all&per_page=100$/);value={total_count:jobs.length,jobs};}value=structuredClone(value);mutate(value,url);const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};}
-test('source budget counts all source job attempts, ignores the public gate and other cutoff, and excludes current run',async()=>{const r=budgetRun(),p={...budgetJob(r,12,'period'),conclusion:'success'},different=budgetJob(r,13,'Produce monthly 2026-10-31');assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[p,different,budgetJob(r)])}),{attempts:1,inProgress:false});assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,currentRunId:1,fetchImpl:budgetWire([r],[])}),{attempts:0,inProgress:false});});
+test('source budget counts all source job attempts, ignores public and once-control jobs and other cutoff, and excludes current run',async()=>{const r=budgetRun(),p={...budgetJob(r,12,'period'),conclusion:'success'},different=budgetJob(r,13,'Produce monthly 2026-10-31'),controls=['once-admit','once-finish'].map((name,i)=>({...budgetJob(r,20+i,name),conclusion:'success'}));assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[p,different,...controls,budgetJob(r)])}),{attempts:1,inProgress:false});assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,currentRunId:1,fetchImpl:budgetWire([r],[])}),{attempts:0,inProgress:false});});
 test('a rerun with two failed source jobs consumes two attempts, and an old unlabelled source is conservatively counted',async()=>{const r=budgetRun();assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[budgetJob(r),budgetJob(r,11,'produce')])}),{attempts:2,inProgress:false});});
 test('queued or active source reserves the budget, while a skipped source job never entered finance',async()=>{const r=budgetRun(),j={...budgetJob(r),status:'queued',conclusion:null,started_at:null};assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[j])}),{attempts:1,inProgress:true});assert.deepEqual(await readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[{...j,status:'completed',conclusion:'skipped'}])}),{attempts:0,inProgress:false});});
 test('source budget rejects partial metadata, duplicate jobs, wrong run/head/branch, changed route, future time and unknown job',async()=>{const r=budgetRun();for(const mutate of [v=>{v.total_count++;},v=>{if(v.workflow_runs)v.workflow_runs[0].head_branch='other';},v=>{if(v.workflow_runs)v.workflow_runs[0].path='other';},v=>{if(v.jobs)v.jobs[0].head_sha='b'.repeat(40);},v=>{if(v.jobs)v.jobs[0].run_id=99;},v=>{if(v.jobs)v.jobs[0].name='unknown-source';},v=>{if(v.jobs)v.jobs[0].started_at='2099-01-01T00:00:00Z';},v=>{if(v.jobs){v.jobs.push(v.jobs[0]);v.total_count++;}}])await assert.rejects(readPeriodSourceAttempts({plan:budgetPlan,now:budgetNow,fetchImpl:budgetWire([r],[budgetJob(r)],mutate)}),/SOURCE_ATTEMPT_METADATA/);});

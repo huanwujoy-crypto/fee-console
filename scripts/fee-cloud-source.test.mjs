@@ -289,7 +289,7 @@ test('workflow gates all credential, source and candidate steps before authentic
   const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
   const gate=workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:'));
   const production=workflow.slice(workflow.indexOf('  produce:'));
-  assert.match(production,/needs: period/);assert.match(production,/if:.*needs\.period\.outputs\.outcome == 'produce'/);
+  assert.match(production,/needs: \[period, once-admit\]/);assert.match(production,/if:.*needs\.period\.outputs\.outcome == 'produce'/);
   assert.doesNotMatch(gate,/secrets\.|create-success|create-failure|FEE_DATA_KEY|SHARESIGHT/);
   assert.match(gate,/already-published/);assert.match(gate,/candidate-pending/);
   assert.ok(production.indexOf('Confirm the frozen period base')<production.indexOf('Exchange the trusted workflow identity'));
