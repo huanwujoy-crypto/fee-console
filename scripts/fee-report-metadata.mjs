@@ -4,36 +4,52 @@ import {canonicalJson,normalizeDataInputs,normalizeEconomicInputs,validateFeeCal
 import {validateReportPlan,reportPlanReadiness,reportDate,reportAddDays,weeklyReportPlan,monthlyReportPlan} from './fee-report-period.mjs';
 import {sessionUnion} from './fee-market-calendar.mjs';
 
-const fail=()=>{throw Error('FEE_REPORT_METADATA_INVALID');};
+// Exact public rejection categories only; no receipt errors, data or hashes.
+export const REPORT_METADATA_FAILURE_CODES=Object.freeze([
+  'METADATA_INVALID','PLAN_INPUT_INVALID','PLAN_NOT_DUE','TARGET_DATE_MISMATCH',
+  'RECEIPT_MISSING','RECEIPT_UNRESOLVED_FLOW','RECEIPT_UNCONFIRMED_EXTERNAL_FLOW',
+  'RECEIPT_INVALID','RECEIPT_DATE_MISMATCH','DAILY_DATE_MISMATCH','BENCHMARK_DATE_MISMATCH',
+  'MONTH_LOCK_SHAPE','MONTH_LOCK_ENTRY',
+  'MONTH_LOCK_PREVIOUS_RECEIPT_MISSING','MONTH_LOCK_PREVIOUS_RECEIPT_INVALID','MONTH_LOCK_PREVIOUS_PERIOD_INVALID',
+  'MONTH_LOCK_NEXT_RECEIPT_MISSING','MONTH_LOCK_NEXT_RECEIPT_INVALID','MONTH_LOCK_NEXT_PERIOD_INVALID',
+  'MONTH_LOCK_CUTOFF_INVALID','LOCKED_MONTH_CHANGED','NEXT_SCHEDULE_INVALID',
+].map(code=>'FEE_REPORT_'+code));
+export function reportMetadataFailureCode(error){
+  return REPORT_METADATA_FAILURE_CODES.includes(error?.message)?error.message:'FEE_REPORT_METADATA_INVALID';
+}
+const fail=(code='METADATA_INVALID')=>{throw Error('FEE_REPORT_'+code);};
 const hash=value=>crypto.createHash('sha256').update(canonicalJson(value)).digest('hex');
 const monthEnd=ym=>{const d=new Date(ym+'-01T00:00:00Z');d.setUTCMonth(d.getUTCMonth()+1);return reportAddDays(d.toISOString().slice(0,10),-1);};
 
-function monthLockBody(data,economicInput,ym){
+function monthLockBody(data,economicInput,ym,side){
+  // side comes only from the fixed call sites below, never from data/errors.
+  const reject=code=>fail('MONTH_LOCK_'+side+'_'+code);
   const fee=data.feeCalculationReceipt;
-  if(!validateFeeCalculationReceipt(fee,data).ok)fail();
+  if(fee==null)reject('RECEIPT_MISSING');
+  if(!validateFeeCalculationReceipt(fee,data).ok)reject('RECEIPT_INVALID');
   const p=fee.periods.find(p=>p.ym===ym);
-  if(!p||p.to!==monthEnd(ym)||p.state!=='complete')fail();
+  if(!p||p.to!==monthEnd(ym)||p.state!=='complete')reject('PERIOD_INVALID');
   const normalized=normalizeDataInputs(data,{start:fee.start,asOf:fee.asOf,accountIds:fee.accountIds});
   const econ=normalizeEconomicInputs(economicInput);
   return {period:p,daily:normalized.daily.filter(p=>p.d>=ym+'-01'&&p.d<=monthEnd(ym)),flowsAuto:normalized.flowsAuto.filter(p=>p.date.slice(0,7)===ym),economic:{settings:econ.settings,accounts:econ.accounts,months:econ.months.filter(p=>p.ym===ym)}};
 }
 export function preserveReportMonthLocks(previous,next,economicInput,{finalCutoff=null}={}){
   const old=previous.feeReportMonthLocks;
-  if(old!==undefined&&(!old||old.schema!=='fee-console.report-month-locks.v1'||Object.keys(old).sort().join(',')!=='periods,schema'||!Array.isArray(old.periods)))fail();
+  if(old!==undefined&&(!old||old.schema!=='fee-console.report-month-locks.v1'||Object.keys(old).sort().join(',')!=='periods,schema'||!Array.isArray(old.periods)))fail('MONTH_LOCK_SHAPE');
   const locks=structuredClone(old?.periods||[]),seen=new Set();
   for(const lock of locks){
-    if(!lock||Object.keys(lock).sort().join(',')!=='digest,ym'||!/^\d{4}-\d{2}$/.test(lock.ym)||!/^[a-f0-9]{64}$/.test(lock.digest)||seen.has(lock.ym))fail();
+    if(!lock||Object.keys(lock).sort().join(',')!=='digest,ym'||!/^\d{4}-\d{2}$/.test(lock.ym)||!/^[a-f0-9]{64}$/.test(lock.digest)||seen.has(lock.ym))fail('MONTH_LOCK_ENTRY');
     seen.add(lock.ym);
     // Verify the old ciphertext state as well as the candidate. A corrupt old
     // lock is not silently replaced by the candidate's recomputed digest.
-    if(hash(monthLockBody(previous,economicInput,lock.ym))!==lock.digest||hash(monthLockBody(next,economicInput,lock.ym))!==lock.digest)throw Error('FEE_REPORT_LOCKED_MONTH_CHANGED');
+    if(hash(monthLockBody(previous,economicInput,lock.ym,'PREVIOUS'))!==lock.digest||hash(monthLockBody(next,economicInput,lock.ym,'NEXT'))!==lock.digest)throw Error('FEE_REPORT_LOCKED_MONTH_CHANGED');
   }
   if(finalCutoff!==null){
-    reportDate(finalCutoff);
-    if(finalCutoff!==monthEnd(finalCutoff.slice(0,7)))fail();
+    try{reportDate(finalCutoff);}catch{fail('MONTH_LOCK_CUTOFF_INVALID');}
+    if(finalCutoff!==monthEnd(finalCutoff.slice(0,7)))fail('MONTH_LOCK_CUTOFF_INVALID');
     for(const p of next.feeCalculationReceipt?.periods||[]){
       if(p.to!==monthEnd(p.ym)||p.to>finalCutoff||seen.has(p.ym))continue;
-      locks.push({ym:p.ym,digest:hash(monthLockBody(next,economicInput,p.ym))});seen.add(p.ym);
+      locks.push({ym:p.ym,digest:hash(monthLockBody(next,economicInput,p.ym,'NEXT'))});seen.add(p.ym);
     }
   }
   return old!==undefined||locks.length?{schema:'fee-console.report-month-locks.v1',periods:locks.sort((a,b)=>a.ym.localeCompare(b.ym))}:undefined;
@@ -41,7 +57,7 @@ export function preserveReportMonthLocks(previous,next,economicInput,{finalCutof
 function nextScheduled(plan){
   if(plan.schema==='fee-console.report-plan.v2'){
     for(let i=1;i<=14;i++){const d=reportAddDays(plan.accountingThrough,i),session=sessionUnion(d,plan.markets);if(session.state!=='closed')return reportAddDays(d,1)+'T10:30:00+08:00';}
-    fail();
+    fail('NEXT_SCHEDULE_INVALID');
   }
   let friday=reportAddDays(plan.accountingThrough,1);
   while(new Date(friday+'T00:00:00Z').getUTCDay()!==5)friday=reportAddDays(friday,1);
@@ -51,9 +67,14 @@ function nextScheduled(plan){
   return [weekly,monthly.scheduledAt].sort((a,b)=>Date.parse(a)-Date.parse(b))[0];
 }
 export function buildReportMetadata({plan,data,generatedAt=new Date().toISOString()}){
-  if(!validateReportPlan(plan)||reportPlanReadiness(plan,new Date(generatedAt)).state!=='due')fail();
+  if(!validateReportPlan(plan))fail('PLAN_INPUT_INVALID');
+  if(reportPlanReadiness(plan,new Date(generatedAt)).state!=='due')fail('PLAN_NOT_DUE');
   const fee=data.feeCalculationReceipt;
-  if(!validateFeeCalculationReceipt(fee,data).ok||fee.asOf!==plan.accountingThrough||data.daily.at(-1)?.d!==fee.asOf||data.daily.at(-1)?.bd!==plan.priceThrough)fail();
+  if(fee==null)fail('RECEIPT_MISSING');
+  if(!validateFeeCalculationReceipt(fee,data).ok)fail('RECEIPT_INVALID');
+  if(fee.asOf!==plan.accountingThrough)fail('RECEIPT_DATE_MISMATCH');
+  if(data.daily.at(-1)?.d!==fee.asOf)fail('DAILY_DATE_MISMATCH');
+  if(data.daily.at(-1)?.bd!==plan.priceThrough)fail('BENCHMARK_DATE_MISMATCH');
   const body={schema:'fee-console.report-publication.v1',plan:structuredClone(plan),generatedAt:new Date(generatedAt).toISOString(),nextScheduledAt:nextScheduled(plan),feeReceiptId:fee.receiptId};
   const old=data.feeReportPublication;
   if(old&&Object.keys(old).sort().join(',')==='feeReceiptId,generatedAt,nextScheduledAt,plan,reportId,schema'){
