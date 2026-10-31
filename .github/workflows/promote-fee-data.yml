@@ -36,6 +36,9 @@ jobs:
            github.event.workflow_run.event == 'push')) }}
     runs-on: ubuntu-latest
     environment: trusted-promotion
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Check out trusted main
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -44,16 +47,27 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.PROMOTE_MAIN_DEPLOY_KEY }}
 
+      - name: Restrict one-off promotion to its recorded candidate
+        id: once
+        if: ${{ vars.FEE_REPORT_ONCE_MAIN != '' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+        run: node scripts/fee-report-producer.mjs --mode=once-promotion
+
       - name: Fetch Codex daily branches
+        if: ${{ vars.FEE_REPORT_ONCE_MAIN == '' || steps.once.outputs.state == 'candidate' }}
         shell: bash
         run: git fetch --no-tags --prune origin '+refs/heads/codex/fee-daily-*:refs/remotes/origin/codex/fee-daily-*'
 
       - name: Select one fresh, verified data update
         id: candidate
+        if: ${{ vars.FEE_REPORT_ONCE_MAIN == '' || steps.once.outputs.state == 'candidate' }}
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
+          ONCE_CANDIDATE_SHA: ${{ steps.once.outputs.candidate }}
         run: |
           set -euo pipefail
 
@@ -65,6 +79,9 @@ jobs:
           recent_unpromoted_candidate=false
 
           while IFS= read -r candidate_ref; do
+            if [[ -n "${ONCE_CANDIDATE_SHA:-}" && $(git rev-parse "$candidate_ref") != "$ONCE_CANDIDATE_SHA" ]]; then
+              continue
+            fi
             branch_name=${candidate_ref#origin/}
             # A rejected recent outstanding candidate is an anomaly, even off-day.
             # Already promoted branches and old abandoned branches do not count.
@@ -234,3 +251,25 @@ jobs:
             exit 1
           fi
           git push origin "$CANDIDATE_SHA:refs/heads/main"
+
+  once-cleanup:
+    needs: promote
+    if: ${{ always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          persist-credentials: false
+      - name: Pause the two workflows after terminal outcome or expiry
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
+          ONCE_PROMOTE_RESULT: ${{ needs.promote.result }}
+          ONCE_EVENT_HEAD: ${{ github.event.workflow_run.head_sha }}
+          ONCE_EVENT_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+        run: node scripts/fee-report-producer.mjs --mode=once-cleanup

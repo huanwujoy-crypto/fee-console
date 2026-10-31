@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Weekly/monthly orchestration of the existing daily writer. This module never
-// publishes, finds credentials or changes the economic book. The public gate
-// runs before any financial environment is entered.
+// publishes financial data, finds credentials or changes the economic book.
+// The bounded once-control modes only reserve public refs and disable the two
+// original workflows using an explicitly scoped ephemeral Actions token.
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -22,6 +23,179 @@ const ROOT=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..');
 const fail=code=>{throw Error('FEE_REPORT_'+code);};
 const hash=v=>crypto.createHash('sha256').update(typeof v==='string'||Buffer.isBuffer(v)?v:canonicalJson(v)).digest('hex');
 const freshTarget=(plan,now)=>{const age=Math.floor((Date.parse(now.toISOString().slice(0,10)+'T00:00:00Z')-Date.parse(plan.accountingThrough+'T00:00:00Z'))/86400000);return age>=0&&age<=4;};
+// One bounded cloud acceptance, not a recurring permission or a budget reset.
+// Git reference creation is the atomic reservation. Neither ref is ever moved
+// or deleted. These refs hold only run/code identifiers, never financial data.
+export const CLOUD_ONCE=Object.freeze({target:'2026-11-02',from:'2026-10-31',
+  checkAt:'2026-11-03T02:30:00Z',openAt:'2026-11-03T05:00:00Z',
+  closeAt:'2026-11-03T05:45:00Z',finishBy:'2026-11-03T06:15:00Z',
+  tag:'fee-cloud-once-20261102',producer:365873934,promotion:336677756});
+const ONCE_REPO='huanwujoy-crypto/fee-console',ONCE_SHA=/^[a-f0-9]{40}$/;
+const onceFail=()=>fail('ONCE_CONTROL');
+const onceId=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):onceFail();
+export function cloudOnceWindow({main,head,event,attempt,now=new Date()}={}){
+  if(!main)return 'inactive';
+  if(!ONCE_SHA.test(main)||!Number.isFinite(now.getTime()))onceFail();
+  if(head!==main||event!=='schedule'||String(attempt)!=='1')return 'closed';
+  if(now<Date.parse(CLOUD_ONCE.checkAt))return 'waiting';
+  return now<Date.parse(CLOUD_ONCE.closeAt)?'active':'closed';
+}
+export async function cloudOnceRequest(method,route,body,{token,fetchImpl=globalThis.fetch}={}){
+  // All callers construct routes from fixed names, validated SHA/run IDs.
+  const fixed=['/git/tags','/git/refs','/git/ref/heads/main',
+    '/git/ref/tags/'+CLOUD_ONCE.tag,'/git/ref/tags/'+CLOUD_ONCE.tag+'-candidate'];
+  const allowed=method==='GET'&&(fixed.slice(2).includes(route)||/^\/git\/tags\/[a-f0-9]{40}$/.test(route)
+    ||/^\/actions\/runs\/[1-9]\d{0,15}(?:\/jobs\?filter=all&per_page=100)?$/.test(route)
+    ||/^\/actions\/workflows\/validate-fee-data\.yml\/runs\?head_sha=[a-f0-9]{40}&event=push&per_page=100$/.test(route)
+    ||/^\/commits\/[a-f0-9]{40}\?per_page=100$/.test(route)
+    ||[CLOUD_ONCE.producer,CLOUD_ONCE.promotion].some(id=>route==='/actions/workflows/'+id))
+    ||method==='POST'&&fixed.slice(0,2).includes(route)
+    ||method==='PUT'&&[CLOUD_ONCE.producer,CLOUD_ONCE.promotion].some(id=>route==='/actions/workflows/'+id+'/disable');
+  if(!allowed||typeof token!=='string'||token.length<20||/[\r\n\0]/.test(token))onceFail();
+  try{
+    const response=await fetchImpl('https://api.github.com/repos/'+ONCE_REPO+route,{method,redirect:'error',
+      headers:{Accept:'application/vnd.github+json',Authorization:'Bearer '+token,'Content-Type':'application/json'},
+      ...(body===undefined?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(10000)});
+    if(method==='GET'&&response.status===404&&route.startsWith('/git/ref/tags/'))return null;
+    if(method==='PUT'){if(response.status!==204)onceFail();return null;}
+    if(![200,201].includes(response.status))onceFail();
+    const reader=response.body.getReader(),chunks=[];let size=0;
+    try{for(;;){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>256*1024)onceFail();chunks.push(value);}}
+    finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+    return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));
+  }catch{onceFail();}
+}
+async function onceClaimRecord(request,main){
+  const ref=await request('GET','/git/ref/tags/'+CLOUD_ONCE.tag);
+  if(ref===null)return null;
+  if(ref.ref!=='refs/tags/'+CLOUD_ONCE.tag||ref.object?.type!=='tag'||!ONCE_SHA.test(ref.object.sha))onceFail();
+  const tag=await request('GET','/git/tags/'+ref.object.sha);let record;
+  try{record=JSON.parse(tag.message);}catch{onceFail();}
+  if(tag.tag!==CLOUD_ONCE.tag||tag.object?.type!=='commit'||tag.object.sha!==main
+    ||!record||Array.isArray(record)||Object.keys(record).sort().join(',')!=='main,runId,schema,target'
+    ||record.schema!=='fee-console.cloud-once.v1'||record.main!==main
+    ||record.target!==CLOUD_ONCE.target||record.runId!==onceId(record.runId))onceFail();
+  return record;
+}
+async function onceRun(request,record){
+  const run=await request('GET','/actions/runs/'+record.runId);
+  if(run.id!==record.runId||run.workflow_id!==CLOUD_ONCE.producer||run.head_sha!==record.main
+    ||run.head_branch!=='main'||run.event!=='schedule'||run.run_attempt!==1
+    ||run.path!=='.github/workflows/fee-cloud-producer.yml'
+    ||!Number.isFinite(Date.parse(run.created_at))||Date.parse(run.created_at)<Date.parse(CLOUD_ONCE.checkAt)
+    ||Date.parse(run.created_at)>=Date.parse(CLOUD_ONCE.closeAt))onceFail();
+  return run;
+}
+async function onceCreateRef(request,name,sha){
+  try{await request('POST','/git/refs',{ref:'refs/tags/'+name,sha});}catch{/* Unknown mutation: read back, never repeat POST. */}
+  const actual=await request('GET','/git/ref/tags/'+name);
+  if(actual?.ref!=='refs/tags/'+name||actual.object?.sha!==sha)onceFail();
+}
+export async function pauseCloudOnce(request,ids=[CLOUD_ONCE.producer,CLOUD_ONCE.promotion]){
+  let failed=false;
+  for(const id of ids){
+    if(![CLOUD_ONCE.producer,CLOUD_ONCE.promotion].includes(id))onceFail();
+    try{await request('PUT','/actions/workflows/'+id+'/disable');}catch{/* Read the actual state even after an uncertain response. */}
+    try{const w=await request('GET','/actions/workflows/'+id);if(w.id!==id||w.state!=='disabled_manually')failed=true;}catch{failed=true;}
+  }
+  if(failed)onceFail();
+  return {state:'paused',workflows:ids};
+}
+export async function admitCloudOnce({main,head,event,attempt,runId,plan,now=new Date(),request,readBudget=readPeriodSourceAttempts}={}){
+  if(cloudOnceWindow({main,head,event,attempt,now})!=='active'||now<Date.parse(CLOUD_ONCE.openAt)
+    ||!validateReportPlan(plan)||plan.accountingThrough!==CLOUD_ONCE.target||plan.priceThrough!==CLOUD_ONCE.target
+    ||plan.periodFrom!==CLOUD_ONCE.from||plan.kind!=='daily-monthly'
+    ||JSON.stringify(plan.monthlyCutoffs)!=='["2026-10-31"]'
+    ||JSON.stringify(plan.markets)!=='["NASDAQ","NYSE"]'||reportPlanReadiness(plan,now).state!=='due')onceFail();
+  const record={schema:'fee-console.cloud-once.v1',target:CLOUD_ONCE.target,main,runId:onceId(runId)};
+  const budget=await readBudget({plan,now,currentRunId:record.runId});
+  if(budget?.attempts!==0||budget.inProgress!==false)onceFail();
+  const run=await onceRun(request,record),current=await request('GET','/git/ref/heads/main');
+  if(run.status!=='in_progress'||current.object?.sha!==main||await onceClaimRecord(request,main)!==null)onceFail();
+  const tag=await request('POST','/git/tags',{tag:CLOUD_ONCE.tag,message:JSON.stringify(record),object:main,type:'commit'});
+  if(!ONCE_SHA.test(tag?.sha||''))onceFail();
+  await onceCreateRef(request,CLOUD_ONCE.tag,tag.sha);
+  const saved=await onceClaimRecord(request,main);
+  if(canonicalJson(saved)!==canonicalJson(record))onceFail();
+  await pauseCloudOnce(request,[CLOUD_ONCE.producer]);
+  return {state:'admitted',runId:record.runId};
+}
+export async function confirmCloudOnce({main,head,runId,attempt,now=new Date(),request}={}){
+  if(!ONCE_SHA.test(main||'')||head!==main||String(attempt)!=='1'||now>=Date.parse(CLOUD_ONCE.closeAt))onceFail();
+  const r=await onceClaimRecord(request,main);if(!r||r.runId!==onceId(runId))onceFail();
+  const [run,current,w]=await Promise.all([onceRun(request,r),request('GET','/git/ref/heads/main'),request('GET','/actions/workflows/'+CLOUD_ONCE.producer)]);
+  if(run.status!=='in_progress'||current.object?.sha!==main||w.state!=='disabled_manually')onceFail();
+  return {state:'confirmed'};
+}
+export async function recordCloudOnceCandidate({main,runId,candidate,request}={}){
+  const r=await onceClaimRecord(request,main);if(!r||r.runId!==onceId(runId)||!ONCE_SHA.test(candidate||''))onceFail();
+  await onceRun(request,r);
+  const jobs=await request('GET','/actions/runs/'+r.runId+'/jobs?filter=all&per_page=100');
+  const source=jobs.jobs?.filter(j=>j.name==='Produce daily '+CLOUD_ONCE.target);
+  if(jobs.total_count!==jobs.jobs?.length||jobs.total_count>100||source?.length!==1
+    ||source[0].head_sha!==main||source[0].run_id!==r.runId||source[0].conclusion!=='success'||source[0].status!=='completed')onceFail();
+  const c=await request('GET','/commits/'+candidate+'?per_page=100');
+  if(c.sha!==candidate||c.parents?.length!==1||c.parents[0].sha!==main
+    ||c.author?.id!==RECOVERY_OWNER||c.commit?.verification?.verified!==true
+    ||!Array.isArray(c.files)||!c.files.length||c.files.length>2
+    ||!c.files.some(f=>f.filename==='fee-data-health.json')
+    ||c.files.some(f=>!['data.json','fee-data-health.json'].includes(f.filename)||f.status!=='modified'))onceFail();
+  if(await request('GET','/git/ref/tags/'+CLOUD_ONCE.tag+'-candidate')!==null)onceFail();
+  await onceCreateRef(request,CLOUD_ONCE.tag+'-candidate',candidate);
+  return {state:'candidate-recorded',candidate};
+}
+export async function cloudOnceStatus({main,now=new Date(),request}={}){
+  if(!ONCE_SHA.test(main||'')||!Number.isFinite(now.getTime()))onceFail();
+  const record=await onceClaimRecord(request,main);
+  const candidateRef=await request('GET','/git/ref/tags/'+CLOUD_ONCE.tag+'-candidate');
+  let candidate=null;
+  if(candidateRef!==null){
+    if(!record||candidateRef.ref!=='refs/tags/'+CLOUD_ONCE.tag+'-candidate'
+      ||candidateRef.object?.type!=='commit'||!ONCE_SHA.test(candidateRef.object.sha))onceFail();
+    candidate=candidateRef.object.sha;
+  }
+  const current=await request('GET','/git/ref/heads/main');
+  if(candidate&&current.object?.sha===candidate)return {state:'terminal',reason:'published'};
+  if(current.object?.sha!==main||now>=Date.parse(CLOUD_ONCE.finishBy))return {state:'terminal',reason:'closed'};
+  if(!record)return {state:now>=Date.parse(CLOUD_ONCE.closeAt)?'terminal':'waiting',reason:'unclaimed'};
+  const run=await onceRun(request,record);
+  if(run.status!=='completed')return {state:'waiting',reason:'producer-running'};
+  if(run.conclusion!=='success'||!candidate)return {state:'terminal',reason:'producer-failed-or-unbound'};
+  const validation=await request('GET','/actions/workflows/validate-fee-data.yml/runs?head_sha='+candidate+'&event=push&per_page=100');
+  if(!Array.isArray(validation.workflow_runs)||validation.total_count!==validation.workflow_runs.length||validation.total_count>1)onceFail();
+  if(!validation.total_count)return {state:'waiting',reason:'validation-pending'};
+  const v=validation.workflow_runs[0];
+  if(v.head_sha!==candidate||v.path!=='.github/workflows/validate-fee-data.yml'||v.event!=='push'||v.run_attempt!==1
+    ||!/^codex\/fee-daily-20261102-[a-z0-9]{6}$/.test(v.head_branch||''))onceFail();
+  if(v.status!=='completed')return {state:'waiting',reason:'validation-pending'};
+  if(v.conclusion!=='success')return {state:'terminal',reason:'validation-failed'};
+  return {state:'candidate',candidate};
+}
+export async function cloudOnceControl(mode,{env=process.env,now=new Date(),request,readBudget}={}){
+  if(!['once-scope','once-admit','once-confirm','once-finish','once-promotion','once-cleanup'].includes(mode))onceFail();
+  const main=env.FEE_REPORT_ONCE_MAIN||'';
+  if(!main)return {state:'inactive'};
+  if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_REPOSITORY!==ONCE_REPO||env.GITHUB_REF!=='refs/heads/main')onceFail();
+  request||=((method,route,body)=>cloudOnceRequest(method,route,body,{token:env.GITHUB_TOKEN}));
+  const args={main,head:env.GITHUB_SHA,event:env.GITHUB_EVENT_NAME,attempt:env.GITHUB_RUN_ATTEMPT,runId:env.GITHUB_RUN_ID,now,request};
+  if(mode==='once-scope')return {state:env.FEE_CLOUD_MODE==='publish'?cloudOnceWindow(args):'closed'};
+  if(['once-admit','once-confirm'].includes(mode)&&env.FEE_CLOUD_MODE!=='publish')onceFail();
+  if(mode==='once-admit')return admitCloudOnce({...args,plan:JSON.parse(env.ONCE_PLAN||'null'),readBudget});
+  if(mode==='once-confirm')return confirmCloudOnce(args);
+  if(mode==='once-finish'&&env.ONCE_PRODUCE_RESULT==='success'){
+    try{return await recordCloudOnceCandidate({...args,candidate:env.ONCE_CANDIDATE_SHA});}
+    catch{await pauseCloudOnce(request);onceFail();}
+  }
+  if(mode==='once-finish'&&env.ONCE_ADMIT_RESULT!=='skipped'&&env.ONCE_PRODUCE_RESULT!=='success')return pauseCloudOnce(request);
+  let status;
+  try{status=await cloudOnceStatus(args);}catch{if(mode!=='once-promotion')await pauseCloudOnce(request);onceFail();}
+  const relevantValidationFailure=env.GITHUB_EVENT_NAME==='workflow_run'&&status.candidate
+    &&env.ONCE_EVENT_HEAD===status.candidate&&env.ONCE_EVENT_CONCLUSION!=='success';
+  if(mode==='once-cleanup'&&(relevantValidationFailure||['failure','cancelled','timed_out'].includes(env.ONCE_PROMOTE_RESULT)))return pauseCloudOnce(request);
+  if(status.state==='terminal'&&mode!=='once-promotion')return pauseCloudOnce(request);
+  if(!['once-finish','once-promotion','once-cleanup'].includes(mode))onceFail();
+  return status;
+}
 // Read-only use of the existing encrypted private fund file from the *same*
 // stable economic Gist snapshot. No new URL, key, storage or approval field.
 export function managedTransferIdentitiesFromFund(economic,keyText,targetDate){
@@ -187,7 +361,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
           &&!scope?.failures.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
-      if(['period','watch','source-plan-check'].includes(j.name))continue;
+      if(['period','watch','source-plan-check','once-admit','once-finish'].includes(j.name))continue;
       if(j.name!=='produce'&&!/^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
       if(evidence&&j.status!=='completed')evidence.otherSourceActive=true;
       // A legacy unlabelled source job conservatively consumes either budget.
@@ -437,6 +611,12 @@ export function reviewedRecoveryConfirmation(args,{env=process.env,readEvent}={}
 }
 async function main(){
   const args=cliArgs(process.argv.slice(2));let plan=null;
+  if(args.mode?.startsWith('once-')){
+    if(Object.keys(args).join(',')!=='mode')onceFail();
+    const result=await cloudOnceControl(args.mode);
+    if(process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,`state=${result.state}\ncandidate=${result.candidate||''}\n`);
+    console.log(JSON.stringify(result));return;
+  }
   if(args['report-plan']){try{plan=JSON.parse(args['report-plan']);}catch{fail('PLAN');}if(!validateReportPlan(plan)||args['report-target']!==plan.accountingThrough||args['report-kind']!==(plan.kind.startsWith('daily')?'daily':plan.kind==='monthly'?'monthly':'weekly'))fail('PLAN');}
   else if(args['report-target']&&args['report-kind']!=='daily')plan=explicitReportPlan(args['report-kind'],args['report-target']);
   const reviewedSyncDate=reviewedSyncConfirmation(args);

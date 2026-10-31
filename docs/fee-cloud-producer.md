@@ -1,5 +1,87 @@
 # Sharesight cloud continuation
 
+## Bounded November 2 cloud acceptance (not yet activated)
+
+This amendment uses the existing producer and promotion workflows, not a second
+scheduler. Before activation, the signed exact code head and the additional
+short-lived Actions permissions below require explicit protected approval.
+The two previously verified benchmark holding Environment variables are already
+configured. No new Sharesight request, token, IAM grant or secret is required to
+prepare or activate the controller.
+
+Set the ordinary repository variable `FEE_REPORT_ONCE_MAIN` to that approved
+actual main. Keep `FEE_CLOUD_MODE=publish`; temporarily set the existing periods
+switch and `FEE_REPORT_MARKETS=NYSE,NASDAQ`. Only the existing producer and
+promotion workflows are enabled; the old benchmark remains disabled. Scheduled
+production now also requires the exact once binding; an empty binding does not
+grant ordinary recurring schedule permission.
+
+The reviewed window is November 3 HKT: the 10:30 gate can wait without consuming
+an attempt; the November 2 report with the October 31 archive is eligible at
+13:00 under the unchanged month-completion rule. Admission closes at 13:45,
+and promotion/cleanup expires at 14:15. Late cron delivery may miss this window;
+it does not authorize a new target, a manual dispatch or a retry.
+
+Before any financial environment or credential access, `once-admit` creates an
+annotated tag and atomically creates `refs/tags/fee-cloud-once-20261102`. The tag
+contains only the target, code SHA and GitHub run ID. A race has one winner; any
+existing reservation refuses another admission, including after failure or
+cancellation. An uncertain creation is read back once, never posted again.
+The record is not moved or deleted. Original source-attempt records and the
+ordinary two-attempt ceiling are unchanged. The claim then disables and reads
+back the producer workflow before the financial job may start.
+
+The financial job rechecks this exact claim, disabled producer, unchanged main
+and first attempt. Its original 15-minute limit, writer/receipt/identity checks
+and existing cloud credentials remain unchanged. No shadow or source-acceptance
+entry is available while the once binding is armed. A successful source job
+records only its existing signed candidate under a second create-only ref,
+`refs/tags/fee-cloud-once-20261102-candidate`. Promotion requires that exact
+candidate, successful original candidate validation, and all original promotion
+checks. Other branches cannot be promoted through this acceptance.
+
+Control jobs use the automatically issued, job-scoped `GITHUB_TOKEN`:
+
+- `once-admit` and `once-finish`: `contents: write` to create the two control refs
+  and `actions: write` to disable the original two workflows.
+- `once-cleanup`: `contents: read` and `actions: write`.
+- Financial production retains read-only repository access and its original
+  WIF permission; promotion additionally reads Actions metadata.
+
+These GitHub permissions are repository-wide capabilities, limited in code to
+the fixed refs and two disable endpoints; they are not path-scoped IAM. They
+must be approved, rather than assumed to be covered by the old default-read
+token. No persistent broad token is introduced or exported, no protection rule
+is changed, and pull-request approval permission stays disabled.
+Official API requirements: [create a Git reference](https://docs.github.com/en/rest/git/refs#create-a-reference),
+[create an annotated tag](https://docs.github.com/en/rest/git/tags#create-a-tag-object),
+[disable a workflow](https://docs.github.com/en/rest/actions/workflows#disable-a-workflow).
+
+Source failure/cancellation uses an `always()` control job to pause both flows.
+Success leaves promotion active only for the recorded candidate; its terminal
+cleanup pauses both and reads the actual states. The existing promotion
+watchdog at 13:15/14:15 also checks failed/lost-runner or expired admissions.
+The expired once binding and refs remain to deny later reads even if the UI
+workflow state was not changed successfully. Ordinary enable variables may be
+removed after verified closure; the holding variables may remain configured.
+
+No workflow can guarantee instantaneous administrative shutdown during a GitHub
+outage, force-cancellation of cleanup jobs, revoked token permission or a runner
+that never starts. Such cases are reported as unconfirmed cleanup; the immutable
+reservation, exact date/code and expiry still deny a second financial entry.
+On service recovery, use read-only run/ref/workflow-state inspection first;
+do not delete the claim, rerun source work or substitute another target.
+If a platform fault prevents the watchdog from executing, an operator may still
+need to disable the two workflows, without relying on a Mac for financial work.
+
+Acceptance requires actual cloud source/cache evidence, the unique producer and
+candidate-validation outcomes, protected promotion, exact deployed report/health
+bytes and dates, normal page display, and final pause readback. A local mock or
+an enabled schedule is not that evidence. The October 30 historical card is
+retained; the new report uses the already merged Alphabet company aggregation.
+Jenny's existing history, fee formulas, economic book and ratio automation are
+not modified or enabled by this acceptance.
+
 ## Current deployment and activation boundary
 
 The normal fee chain already runs without a Mac: GitHub Actions → existing
