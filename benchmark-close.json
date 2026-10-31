@@ -1,7 +1,7 @@
 {
   "v": 1,
-  "generatedAt": "2026-10-30T02:41:00.694541+00:00",
-  "source": "Yahoo Finance chart API; Nasdaq official quote and historical close cross-check; issuer/Nasdaq dividend evidence; ONE-OFF 2026-10-29 only: USD raw closes from Sharesight date-selected Add trade suggested closing price (SPY observed29Oct16:45EDT, QQQ16:47EDT), https://help.sharesight.com/how-to-add-a-new-holding/; gross dividends SPY=0 per reviewed State Street2026 ex-date calendar, QQQ=0 per current Nasdaq dividend history (58 events,latest ex-date2026-09-21,no2026-10-29 event); no withholding applied; all earlier rows unchanged; future refresh method unchanged.",
+  "generatedAt": "2026-10-31T02:26:18.391Z",
+  "source": "Sharesight holding daily prices and company-event gross dividends; retained verified earlier history",
   "benchmarks": {
     "spy": {
       "symbol": "SPY",
@@ -349,6 +349,10 @@
           "d": "2026-10-29",
           "p": 769.36,
           "div": 0
+        },
+        {
+          "d": "2026-10-30",
+          "p": 757.04
         }
       ]
     },
@@ -698,6 +702,10 @@
           "d": "2026-10-29",
           "p": 715.34,
           "div": 0
+        },
+        {
+          "d": "2026-10-30",
+          "p": 690.97
         }
       ]
     }
