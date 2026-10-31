@@ -40,6 +40,7 @@ import { prepareIbManagerReturn } from './ib-manager-return-file.mjs';
 import {loadIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
 import {buildReportMetadata,preserveReportMonthLocks,reportMetadataFailureCode} from './fee-report-metadata.mjs';
 import {validateReportPlan} from './fee-report-period.mjs';
+import {validateHealth} from './fee-data-health.mjs';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const NUM_RE = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
@@ -76,6 +77,84 @@ const num = (name, raw) => {
   if (!Number.isFinite(n)) die(`--${name} must be a finite number`);
   return n;
 };
+
+// Explicit offline presentation amendment. It does not rebuild financial inputs,
+// acquire sources, or create a new source-check time. Publication is separate.
+if(flags.has('top-holdings-only')){
+  let key,output,created=false;
+  try{
+    const refuse=()=>{throw Error('TOP_HOLDINGS_AMENDMENT_REFUSED');};
+    const exact=(v,keys)=>v&&typeof v==='object'&&!Array.isArray(v)&&Object.keys(v).sort().join(',')===[...keys].sort().join(',');
+    const sha=b=>crypto.createHash('sha256').update(b).digest('hex');
+    const repo=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'..'),frozen=[];
+    const outside=p=>{const r=path.relative(fs.realpathSync(repo),p);return r==='..'||r.startsWith('..'+path.sep);};
+    const read=p=>{
+      if(typeof p!=='string'||!path.isAbsolute(p)||fs.lstatSync(p).isSymbolicLink())refuse();
+      const real=fs.realpathSync(p),st=fs.statSync(real),parent=fs.statSync(path.dirname(real));
+      if(!outside(real)||!st.isFile()||st.size<1||st.size>5*1024*1024||(st.mode&0o077)||(parent.mode&0o077)
+        ||st.uid!==process.getuid()||parent.uid!==process.getuid())refuse();
+      const bytes=fs.readFileSync(real);
+      frozen.push(()=>{const s=fs.lstatSync(p);if(s.isSymbolicLink()||fs.realpathSync(p)!==real||s.dev!==st.dev||s.ino!==st.ino
+        ||(s.mode&0o077)||!bytes.equals(fs.readFileSync(real)))refuse();});
+      return bytes;
+    };
+    const bound=s=>{if(!exact(s,['path','sha256'])||!/^[a-f0-9]{64}$/.test(s.sha256))refuse();const b=read(s.path);if(sha(b)!==s.sha256)refuse();return b;};
+    if(/^(true|1)$/i.test(String(process.env.GITHUB_ACTIONS||''))||[...flags].some(f=>!['top-holdings-only','execute'].includes(f))
+      ||Object.keys(args).some(k=>!['file','top-holdings-plan','top-holdings-output'].includes(k))||!args.file||!args['top-holdings-plan'])refuse();
+    const plan=JSON.parse(read(args['top-holdings-plan']));
+    if(!exact(plan,['schema','targetDate','baseDataSha256','baseHealth','sourceInput','replacementSha256'])
+      ||plan.schema!=='fee-console.top-holdings-amendment.v1'||!isIsoDate(plan.targetDate)
+      ||![plan.baseDataSha256,plan.replacementSha256].every(h=>/^[a-f0-9]{64}$/.test(h)))refuse();
+    const original=read(args.file),health=JSON.parse(bound(plan.baseHealth)),input=JSON.parse(bound(plan.sourceInput));
+    if(sha(original)!==plan.baseDataSha256||validateHealth(health).length||health.targetDate!==plan.targetDate
+      ||health.outcome!=='updated'||health.dataSha256!==plan.baseDataSha256
+      ||health.sourceDates.schwab!==plan.targetDate||health.sourceDates.webull!==plan.targetDate)refuse();
+    const text=process.env.FEE_DATA_KEY;
+    if(typeof text!=='string'||!/^[A-Za-z0-9_+/-]{43}={0,2}$/.test(text))refuse();
+    key=Buffer.from(text.replace(/-/g,'+').replace(/_/g,'/'),'base64');if(key.length!==32)refuse();
+    const decode=raw=>{const outer=JSON.parse(raw);if(!exact(outer,['enc','v','data'])||outer.enc!==true||outer.v!==3||typeof outer.data!=='string')refuse();
+      const b=Buffer.from(outer.data,'base64');if(b.length<29||b.toString('base64')!==outer.data)refuse();
+      const d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(-16));return JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));};
+    const before=decode(original),fee=before.feeCalculationReceipt,point=before.daily?.at(-1);
+    if(!validateFeeCalculationReceipt(fee,before).ok||fee.asOf!==plan.targetDate||point?.d!==plan.targetDate
+      ||before.daily.filter(p=>p.d===plan.targetDate).length!==1||!Array.isArray(point.topHoldings))refuse();
+    const mapping=JSON.parse(fs.readFileSync(path.join(repo,'claude/fee-style-mapping.json')));
+    resolveAssetAllocation({input,registry:{schemaVersion:1,entries:[]},staticMap:mapping,date:plan.targetDate,
+      sourceDates:{schwab:plan.targetDate,webull:plan.targetDate},stock:point.stock});
+    const replacement=summarizeTopHoldings(input,3,mapping.topHoldingExposureMappings||[]);
+    if(replacement.length!==3||sha(JSON.stringify(replacement))!==plan.replacementSha256)refuse();
+    if(JSON.stringify(point.topHoldings)===JSON.stringify(replacement)){console.log('TOP_HOLDINGS_AMENDMENT_NO_OP');process.exitCode=0;}
+    else{
+      const after=structuredClone(before);after.daily.at(-1).topHoldings=replacement;
+      const strip=v=>{const c=structuredClone(v);delete c.daily.at(-1).topHoldings;return JSON.stringify(c);};
+      if(strip(before)!==strip(after)||JSON.stringify(fee)!==JSON.stringify(after.feeCalculationReceipt)
+        ||!validateFeeCalculationReceipt(fee,after).ok)refuse();
+      frozen.forEach(check=>check());
+      if(!flags.has('execute'))console.log('TOP_HOLDINGS_AMENDMENT_DRY_RUN_OK');
+      else{
+        output=args['top-holdings-output'];
+        if(typeof output!=='string'||!path.isAbsolute(output)||fs.existsSync(output))refuse();
+        const parent=fs.realpathSync(path.dirname(output));if(!outside(parent)||fs.statSync(parent).mode&0o077)refuse();
+        output=path.join(parent,path.basename(output));
+        const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);
+        const encoded=Buffer.from(JSON.stringify({enc:true,v:3,data:Buffer.concat([iv,c.update(JSON.stringify(after)),c.final(),c.getAuthTag()]).toString('base64')})+'\n');
+        const nextHealth={...health,dataSha256:sha(encoded)};
+        if(JSON.stringify(decode(encoded))!==JSON.stringify(after)||validateHealth(nextHealth).length)refuse();
+        frozen.forEach(check=>check());fs.mkdirSync(output,{mode:0o700});created=true;
+        for(const [name,bytes] of [['data.json',encoded],['fee-data-health.json',Buffer.from(JSON.stringify(nextHealth,null,2)+'\n')]]){
+          const file=path.join(output,name),fd=fs.openSync(file,'wx',0o600);try{fs.writeFileSync(fd,bytes);fs.fsyncSync(fd);}finally{fs.closeSync(fd);}
+          if(!fs.readFileSync(file).equals(bytes))refuse();
+        }
+        frozen.forEach(check=>check());console.log('TOP_HOLDINGS_ENCRYPTED_CANDIDATE_PREPARED');
+      }
+    }
+  }catch{
+    if(created)for(const name of ['data.json','fee-data-health.json']){const p=path.join(output,name);if(fs.existsSync(p))fs.unlinkSync(p);}
+    if(created)fs.rmdirSync(output);
+    console.error('error: TOP_HOLDINGS_AMENDMENT_REFUSED');process.exitCode=1;
+  }finally{key?.fill(0);}
+  process.exit(process.exitCode||0);
+}
 
 const known = new Set([
   "ib-bootstrap-output", "ib-baseline-input", "ib-coverage-input", "ratio-evidence-plan", "ratio-input", "ratio-recipient", "ratio-output", "ratio-kind", "ratio-source-date", "ratio-scope",

@@ -9,6 +9,31 @@
 
 ## 数据与权限
 
+### 已发布前三持仓的窄范围展示修正
+
+`daily.mjs --top-holdings-only --file=<旧密文> --top-holdings-plan=<私密计划>`
+只在本地准备候选，不取 Sharesight、经济账本或凭据，不执行普通日报计算。
+密钥仍仅由获准的原受控调用方通过 `FEE_DATA_KEY` 提供；默认仅验证，
+显式 `--execute --top-holdings-output=<不存在的私密目录>` 才生成独立密文候选。
+
+计划 `fee-console.top-holdings-amendment.v1` 仅包含 `schema`、`targetDate`、
+`baseDataSha256`、`baseHealth`、`sourceInput`、`replacementSha256`。
+`baseHealth`、`sourceInput` 引用为 `{path,sha256}`；输入、计划及输出位于仓库外本人受限目录。
+使用已保存的同日完整两账户来源投影，重用现有公司合并规则，不能把比例管理的
+All Together 排名当作费用账户排名，也不能仅提交三行任意金额。
+
+只允许替换最新已验证日期的 `daily[-1].topHoldings`。先后费用回执必须有效，
+且除该字段外整个解密对象必须完全一致；费用、历史、Jenny附件、月锁、日期、
+来源时间均不重写。健康文件继承原成功记录，仅更新实际新密文的 `dataSha256`，
+不能假造新的取数或生成时间。已一致时返回 no-op；拒绝覆盖既有输出。
+计划哈希是输入约束，不是用户授权或新的发布证明。
+
+候选必须另获实际凭据用途及签名发布批准，并经过原仓库准确版本保护。
+如一次未来云端窗口已经绑定旧 main，先暂停生成和推广，再发布修正；确认该窗口
+尚未消费且控制代码未变后，将同一目标的绑定更新为最终准确 main 并恢复等待。
+不能删除旧消费记录、新增次数、改目标或启用旧基准。单独改报告但遗留旧 main
+绑定会使未来验收停止，因此发布与绑定读回必须作为同一次受控操作收尾。
+
 - 纽约前一交易日为目标日。先以固定 Sharesight Native `direct` 只读客户端实时解析
   `Schwab-HK` 与 `Webull` 的 portfolio ID，再读取相同目标日的 performance、
   holdings、cash accounts、cash transactions 和最近交易；不能用截图或 Webull
