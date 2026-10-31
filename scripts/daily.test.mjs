@@ -12,6 +12,7 @@ import "./fee-income-evidence.test.mjs";
 import "./fee-style-registry.test.mjs";
 import { convertEncryptedV3Copy } from "./fee-econ-v3-copy.mjs";
 import { guardLegacySourceFile } from "./fee-legacy-source-file.mjs";
+import { buildFeeCalculationReceipt, validateFeeCalculationReceipt } from './fee-receipt-core.mjs';
 
 import {
   validateInputs, checkCashLedger, checkMove, classifyFlow, reconcileFlows,
@@ -92,6 +93,76 @@ const writePayload = (dir, payload) => {
   const data = Buffer.concat([iv, ct, c.getAuthTag()]).toString("base64");
   fs.writeFileSync(path.join(dir, "data.json"), JSON.stringify({ enc: true, v: 3, data }));
 };
+
+function topHoldingsAmendmentFixture(t){
+  const dir=tmp();t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.chmodSync(dir,0o700);
+  const target=shift(today(),-1),prior=shift(target,-1),hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+  const point=d=>({d,schwab:320,webull:180,stock:475,cash:25,other:0,bd:d,
+    topHoldings:[{ticker:'VST',value:160},{ticker:'AVGO',value:100},{ticker:'ORCL',value:95}]});
+  const data={daily:[point(prior),point(target)],flowsAuto:[],flowsUnresolved:[],status:{asOf:target,provisional:false,calibrated:true,unresolvedCount:0},
+    ibManagerReturnReceipt:{synthetic:'unchanged-return',points:[1,2]},ibManagerDrawdownReceipt:{synthetic:'unchanged-drawdown'},
+    feeReportPublication:{synthetic:'unchanged-publication'},feeReportMonthLocks:{synthetic:'unchanged-month-lock'},
+    learnedStyleRegistry:{synthetic:'unchanged-style'},fund:{synthetic:'unchanged-fund'}};
+  data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput:{v:4,settings:{start:prior,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:320},{id:'webull',opening:180}],months:[],fees:[]}});
+  const h=(holdingId,ticker,valueUsd,market='NASDAQ')=>({holdingId,ticker,valueUsd,sourceAssetType:'ordinary_shares',sourceInstrument:{instrumentId:holdingId,instrumentCode:ticker,market,currency:'USD'}});
+  const source={schemaVersion:2,mode:'sharesight-asset-type-v1',date:target,proposals:[],portfolios:[
+    {account:'schwab',portfolioId:936249,sourceDate:target,stockTotalUsd:300,holdings:[h(101,'VST',120,'NYSE'),h(102,'GOOG',80),h(103,'AVGO',100)]},
+    {account:'webull',portfolioId:1350094,sourceDate:target,stockTotalUsd:175,holdings:[h(201,'GOOGL',60),h(202,'ORCL',95),h(29274212,'VSTL',20)]}
+  ]};
+  const replacement=[{ticker:'VST',value:160},{ticker:'GOOG/GOOGL',value:140},{ticker:'AVGO',value:100}];
+  const file=path.join(dir,'data.json'),hf=path.join(dir,'health.json'),sf=path.join(dir,'source.json'),pf=path.join(dir,'plan.json'),out=path.join(dir,'candidate');
+  const health={schema:'fee-console.daily-health.v1',checkedAt:new Date().toISOString(),targetDate:target,sourceDates:{schwab:target,webull:target,benchmark:target},outcome:'updated',dataSha256:'',errorCode:null};
+  const plan={schema:'fee-console.top-holdings-amendment.v1',targetDate:target,baseDataSha256:'',baseHealth:{path:hf,sha256:''},sourceInput:{path:sf,sha256:''},replacementSha256:hash(JSON.stringify(replacement))};
+  const write=(name,v)=>{fs.writeFileSync(name,JSON.stringify(v),{mode:0o600});fs.chmodSync(name,0o600);return hash(fs.readFileSync(name));};
+  const save=()=>{writePayload(dir,data);fs.chmodSync(file,0o600);plan.baseDataSha256=health.dataSha256=hash(fs.readFileSync(file));plan.baseHealth.sha256=write(hf,health);plan.sourceInput.sha256=write(sf,source);write(pf,plan);};
+  save();
+  const execute=(extra=[],env={})=>spawnSync(process.execPath,[cli,'--top-holdings-only','--file='+file,'--top-holdings-plan='+pf,'--top-holdings-output='+out,...extra],
+    {encoding:'utf8',env:{...process.env,GITHUB_ACTIONS:'false',FEE_DATA_KEY:TEST_KEY,...env}});
+  return {dir,target,data,source,health,plan,replacement,file,hf,sf,pf,out,hash,write,save,execute};
+}
+test('top holdings amendment changes only the latest three display rows and ciphertext binding without financial recomputation',t=>{
+  const f=topHoldingsAmendmentFixture(t),original=fs.readFileSync(f.file),health=fs.readFileSync(f.hf);
+  const dry=f.execute();assert.equal(dry.status,0,dry.stderr);assert.equal(dry.stdout.trim(),'TOP_HOLDINGS_AMENDMENT_DRY_RUN_OK');assert(!fs.existsSync(f.out));
+  const result=f.execute(['--execute']);assert.equal(result.status,0,result.stderr);assert.equal(result.stdout.trim(),'TOP_HOLDINGS_ENCRYPTED_CANDIDATE_PREPARED');
+  assert.deepEqual(fs.readdirSync(f.out).sort(),['data.json','fee-data-health.json']);
+  const after=readPayload(f.out),expected=structuredClone(f.data);expected.daily.at(-1).topHoldings=f.replacement;
+  assert.deepEqual(after,expected);assert.equal(validateFeeCalculationReceipt(after.feeCalculationReceipt,after).ok,true);
+  assert.equal(JSON.stringify(after.feeCalculationReceipt),JSON.stringify(f.data.feeCalculationReceipt));
+  assert(fs.readFileSync(f.file).equals(original));assert(fs.readFileSync(f.hf).equals(health));
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(f.out,'fee-data-health.json'))),{...f.health,dataSha256:f.hash(fs.readFileSync(path.join(f.out,'data.json')))});
+  assert.equal(fs.statSync(f.out).mode&0o777,0o700);assert.equal(fs.statSync(path.join(f.out,'data.json')).mode&0o777,0o600);
+  assert.equal(f.execute(['--execute']).status,1);assert(fs.readFileSync(f.file).equals(original));
+});
+test('top holdings amendment rejects wrong source, identity, receipt, date, bound bytes and mixed writer modes',async t=>{
+  const cases=[
+    ['wrong source date',f=>f.source.portfolios[0].sourceDate=shift(f.target,-1)],
+    ['duplicate account',f=>f.source.portfolios[1]=structuredClone(f.source.portfolios[0])],
+    ['duplicate holding',f=>f.source.portfolios[0].holdings[1].holdingId=101],
+    ['account source sum outside existing rounding tolerance',f=>f.source.portfolios[0].stockTotalUsd+=2],
+    ['stock mismatch outside existing rounding tolerance',f=>f.data.daily.at(-1).stock+=2],
+    ['wrong Google market',f=>f.source.portfolios[0].holdings[1].sourceInstrument.market='NYSE'],
+    ['unverified Google identity',f=>delete f.source.portfolios[0].holdings[1].sourceInstrument],
+    ['invalid fee receipt',f=>delete f.data.feeCalculationReceipt],
+    ['receipt input drift',f=>f.data.daily.at(-1).schwab++],
+    ['newer daily point',f=>f.data.daily.push({...f.data.daily.at(-1),d:shift(f.target,1)})],
+    ['stale health',f=>f.health.checkedAt=new Date(Date.now()-40*3600000).toISOString()],
+    ['health failed',f=>f.health.outcome='failed']
+  ];
+  for(const [name,change] of cases)await t.test(name,t=>{const f=topHoldingsAmendmentFixture(t);change(f);f.save();const r=f.execute(['--execute']);assert.equal(r.status,1);assert.equal(r.stderr.trim(),'error: TOP_HOLDINGS_AMENDMENT_REFUSED');assert(!fs.existsSync(f.out));});
+  for(const name of ['baseDataSha256','replacementSha256'])await t.test(name,t=>{const f=topHoldingsAmendmentFixture(t);f.plan[name]='0'.repeat(64);f.write(f.pf,f.plan);assert.equal(f.execute(['--execute']).status,1);assert(!fs.existsSync(f.out));});
+  await t.test('source bytes changed after plan',t=>{const f=topHoldingsAmendmentFixture(t);f.source.portfolios[0].holdings[0].valueUsd++;f.write(f.sf,f.source);assert.equal(f.execute(['--execute']).status,1);assert(!fs.existsSync(f.out));});
+  await t.test('mixed finance or cloud mode',t=>{const f=topHoldingsAmendmentFixture(t);assert.equal(f.execute(['--execute','--date='+f.target]).status,1);assert.equal(f.execute(['--execute'],{GITHUB_ACTIONS:'true'}).status,1);assert.equal(f.execute(['--execute'],{FEE_DATA_KEY:'PRIVATE_CANARY'}).status,1);assert(!fs.existsSync(f.out));});
+});
+test('top holdings amendment never rewrites an already corrected report',t=>{
+  const f=topHoldingsAmendmentFixture(t);f.data.daily.at(-1).topHoldings=f.replacement;f.save();const r=f.execute(['--execute']);
+  assert.equal(r.status,0,r.stderr);assert.equal(r.stdout.trim(),'TOP_HOLDINGS_AMENDMENT_NO_OP');assert(!fs.existsSync(f.out));
+});
+test('a display publication requires an explicit future once-main rebind and does not grant another date or attempt',async()=>{
+  const {cloudOnceWindow}=await import('./fee-report-producer.mjs');
+  const old='a'.repeat(40),next='b'.repeat(40),args={head:next,event:'schedule',attempt:'1',now:new Date('2026-11-03T05:00:00Z')};
+  assert.equal(cloudOnceWindow({...args,main:old}),'closed');assert.equal(cloudOnceWindow({...args,main:next}),'active');
+  assert.equal(cloudOnceWindow({...args,main:next,attempt:'2'}),'closed');assert.equal(cloudOnceWindow({...args,main:next,now:new Date('2026-11-04T05:00:00Z')}),'closed');
+});
 
 const styleFixture = dir => {
   const source = path.join(dir, 'style-input.json');
