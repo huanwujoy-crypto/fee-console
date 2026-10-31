@@ -69,6 +69,14 @@ export function summarizeTopHoldings(input, limit = 3, exposureMappings = []) {
           value *= rule.multiplier;
         }
       }
+      // Company concentration must combine both Alphabet share classes before
+      // ranking across the fee portfolios. Require the dated SS listing identity;
+      // legacy/other-market tickers alone do not grant a company mapping.
+      const instrument = holding.sourceInstrument;
+      if (['GOOG', 'GOOGL'].includes(ticker) && instrument?.instrumentCode === ticker
+          && instrument.market === 'NASDAQ' && instrument.currency === 'USD') {
+        ticker = 'GOOG/GOOGL';
+      }
       const total = (totals.get(ticker) || 0) + value;
       if (!Number.isFinite(total) || total > 1e12) fail('TOP_HOLDINGS');
       totals.set(ticker, total);

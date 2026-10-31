@@ -1,4 +1,70 @@
-# 周／月报告候选说明
+# Sharesight cloud continuation
+
+## Current deployment and activation boundary
+
+The normal fee chain already runs without a Mac: GitHub Actions → existing
+Google WIF / Secret Manager → the sole fee writer → signed candidate → protected
+promotion → Pages. Successful producer run `41189289981` published the October 30
+report. This is evidence for the existing fee chain, not evidence that this new
+benchmark adapter has run in the cloud. The producer, promotion and legacy Nasdaq
+benchmark workflows remain paused until an explicit activation approval.
+
+This candidate completes the missing benchmark step inside the existing
+`Produce <kind> <target>` job, after its existing credential lookup and before
+fee calculation. It retains the same WIF workflow/identity, 15-minute job limit,
+source-attempt accounting, receipt checks and protected publication. No new cloud
+service, IAM grant, key, Mac credential migration or broker connection is needed.
+
+The fixed SPY and QQQ holdings are configured privately as Environment variables
+`FEE_BENCHMARK_SPY_HOLDING_ID` and `FEE_BENCHMARK_QQQ_HOLDING_ID`; their actual
+values must not be committed or logged. The adapter uses the existing Sharesight
+client only for authentication, then four fixed GETs: daily price history and
+company-event payouts for each holding. It does not read unrelated holdings or
+use the holding's personal return, quantity, net payout or reinvestment amount.
+Dates and USD prices come from Sharesight; dividends use ex-date and gross
+amount per share. A complete empty event list means no dividend. Existing page
+calculation applies its 30% withholding once; the cache never deducts it.
+
+Only missing market sessions up to the frozen plan's `priceThrough` are appended,
+within the existing ten-calendar-day catch-up window. Both series must succeed
+before any cache write. Existing history is retained, not relabelled or rewritten.
+An already-current cache needs no authentication or Sharesight request. Calendar
+closure handling remains in the existing report calendar/writer.
+
+In publish mode, the existing repository-scoped owner token signs one atomic
+`benchmark-close.json` commit on `market-data-cache`, using its exact prior head
+and frozen main. Its signature, parent, single-file diff and Git blob are read
+back before the report uses it. An uncertain commit is not retried. Shadow mode
+uses a temporary cache only and receives no publishing token. Raw account replies
+and OAuth tokens are never written to the cache or logs. No fallback market API
+is used by the new path; the legacy Nasdaq workflow stays disabled.
+
+Activation requires protected exact-head code approval, confirmation of the two
+private holding bindings and this additional purpose for the existing token,
+then enabling the existing producer and promotion workflows with
+`FEE_CLOUD_MODE=publish`, `FEE_REPORT_PERIODS_ENABLED=true` and the explicitly
+approved `FEE_REPORT_MARKETS`. No independent IB, weekly action product, or ratio
+snapshot automation is activated by these settings. Jenny's independent IB data
+needs its own existing attachment/checkpoint acceptance; it does not become part
+of the two-account management-fee calculation.
+
+The current cron first checks at HKT10:30, with the already bounded 13:00/14:00
+continuations. GitHub can delay cron delivery. The user completes Sharesight sync
+before 10:00; this migration does not re-synchronize or cross-check brokers.
+The public plan gate and actual source-date checks still select the report date.
+An accepted report skips later slots; failed source entries remain limited to two
+per target, including shadow. Never run two shadows then a real third attempt.
+Reuse the existing real cloud evidence and approve one next-target acceptance;
+do not rerun the already completed October 30 report to prove migration.
+
+Rollback is to disable producer/promotion and remove the enable variable. Keep
+the last accepted report and cache; do not restore the Nasdaq scheduler, reset
+budgets, or run a Mac producer concurrently. Completion requires a real cloud
+run with the new source step, validated signed publication, matching Pages/data
+and health dates, and normal unlocked-page acceptance. Local tests alone do not
+establish migration completion.
+
+## Earlier reference-mode migration history
 
 ## Sharesight 账户来源口径（本地候选）
 
@@ -37,11 +103,9 @@ is the release switch:
   then append one GitHub-signed owner candidate commit.
 
 The existing no-secret candidate validator and `trusted-promotion` workflow
-remain the only path to `main`. Start with at least two completed-session shadow
-runs that match the local producer before changing the variable to `publish`.
-Keep the local heartbeat active until one real cloud candidate has been
-validated, promoted and read back from Pages; then pause it to avoid two
-producers.
+remain the only path to `main`. The real cloud publication evidence and bounded
+acceptance procedure above replace the historical two-shadow suggestion. Keep
+the Mac fallback paused while cloud publication is active.
 
 ## Cloud identity and environment secrets
 
@@ -77,20 +141,11 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The benchmark cache remains independent, with existing 07:35 and 09:35 HKT
-attempts before the first producer slot. From 2026-10-10, the producer starts at 10:00 HKT,
-with independent 11:40, 11:55, 12:20, 12:50, 13:50, 15:50 and 17:50 HKT slots
-Tuesday through Saturday. GitHub may delay a scheduled start; 10:00 is the
-first attempt, not a guaranteed time for completed public publication.
-Its default target is computed independently of the
-cache: the latest New York weekday whose 16:15 close boundary has passed.
-SPY and QQQ must both have exactly one complete row for that target, including
-validated dividend fields. Old or future cache rows cannot change that target.
-Holiday and half-day support is not added here: absence of the expected row
-stops the run as benchmark pending; it does not invent a closed-session point.
-Explicit reviewed recovery dates still use the existing writer's backfill
-gates. Publication preflight passes its selected target to calculation, so a
-clock boundary between steps cannot silently change the date.
+The current daily plan uses the market calendar and HKT10:30 readiness contract
+in `fee-report-periods.md`. It fixes accounting and price cutoffs before source
+access. The Sharesight step above fills the cache for that price cutoff inside
+the same budgeted source job. Old or future cache rows cannot choose the report
+date. Reviewed recovery dates retain their separate existing writer gates.
 
 An unreadable publication state is retried within the bounded preflight, then
 stops before financial credentials or sources are used. It never means that
