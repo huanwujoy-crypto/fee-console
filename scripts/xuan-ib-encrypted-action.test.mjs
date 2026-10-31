@@ -413,8 +413,253 @@ function filePinUiAdapter(page,forward=true){
   return result;
 }
 
+// Exact test-only presentation successor. The installed file-pin page remains
+// valid during support-first rollout; all next-stage regressions still execute
+// the complete successor. Only these two presentation blocks differ; the whole
+// input/output hashes reject unrelated edits. Frozen fixture bytes stay intact.
+const ratioPresentationUiSha256='d71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5';
+const ratioPresentationRegions=Object.freeze([
+  Object.freeze({priorSha256:'74b3dcac79ddca490951c6224cc2a506edd3b66a0f9e1246712c33fee206b43c',nextSha256:'f6cf88b4527d64cd63dbff66b8698ed32b0f0e8de48f5f58c4f6692b0b968320',
+    prior:String.raw`/* ratio-presentation:v1 — display only; the reviewed model/crypto factories stay unchanged. */
+#p-ratio{min-width:0}#p-ratio .card,#p-ratio details,#p-ratio code{min-width:0;overflow-wrap:anywhere}
+#p-ratio p{font-size:12px;color:var(--ink-2);line-height:1.6;margin:6px 0}
+#p-ratio .ratio-intro{padding:12px 14px}#ratioNotice{color:var(--ink-1)!important;font-weight:600}
+.ratio-report-meta{margin:0 2px 12px}.ratio-report-meta p{margin:2px 0!important}
+.ratio-asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.ratio-asset-grid>.kpi{min-width:0;margin:0;padding:10px;background:var(--plane)}
+.ratio-asset-grid .lab{font-size:12px;font-weight:500;color:var(--ink-2);display:block}
+.ratio-asset-pct{font-size:23px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ratio-asset-total{display:block;font-size:11px;color:var(--ink-2);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.ratio-asset-grid [role=meter]{height:5px!important;margin:8px 0 0!important;background:var(--grid)!important;border-radius:4px;overflow:hidden}
+.ratio-asset-grid [role=meter]>span{background:var(--series-1)!important}
+.ratio-exposure-grid,.ratio-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ratio-exposure-grid{margin:12px 0}.ratio-exposure-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--plane)}
+.ratio-exposure-grid h3{font-size:13px;margin:0 0 4px;overflow-wrap:anywhere}
+.ratio-plan-grid>.card{min-width:0;margin-bottom:12px}
+#p-ratio table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin:8px 0}
+#p-ratio th,#p-ratio td{padding:8px 5px;border-bottom:1px solid var(--grid);vertical-align:top;text-align:right;overflow-wrap:anywhere;word-break:normal;white-space:normal}
+#p-ratio th{font-size:10px;font-weight:500;color:var(--ink-2)}#p-ratio td{font-weight:550}
+#p-ratio th:first-child,#p-ratio td:first-child{width:40%;text-align:left;font-weight:500}
+#p-ratio tbody tr:last-child td{border-bottom:0}
+.ratio-key-status{font-size:12px;line-height:1.6;overflow-wrap:anywhere}#p-ratio td details{font-weight:400}#p-ratio td summary{font-size:11px;text-align:left}#p-ratio td details ul{padding-left:16px;text-align:left}
+.ratio-coverage{border-top:1px solid var(--grid);padding-top:8px}.ratio-coverage-list{list-style:none;margin:0;padding:0}
+.ratio-coverage-list li{font-size:12px;line-height:1.6;color:var(--ink-2);margin:4px 0;overflow-wrap:anywhere}
+#p-ratio .ratio-caveats{border-left:3px solid var(--axis);padding:2px 10px;margin-bottom:12px}
+#p-ratio details{font-size:12px;margin-top:8px}#p-ratio summary{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer;color:var(--ink-2);list-style:none}
+#p-ratio summary::-webkit-details-marker{display:none}#p-ratio summary::before{content:"▸";font-size:11px;color:var(--ink-muted)}#p-ratio details[open]>summary::before{content:"▾"}
+#p-ratio summary:focus-visible,#p-ratio .btn:focus-visible{outline:2px solid var(--series-1);outline-offset:3px}
+.ratio-tools>details+details{border-top:1px solid var(--grid)}#p-ratio .ratio-tools label{display:block;margin:10px 0 4px;font-size:12px;color:var(--ink-2)}
+#p-ratio input[type=checkbox]{width:auto;margin-right:7px}#p-ratio .btn{min-height:44px;max-width:100%;white-space:normal;margin:4px 4px 4px 0}
+@media(max-width:600px){.ratio-asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ratio-exposure-grid,.ratio-plan-grid{grid-template-columns:minmax(0,1fr)}#p-ratio .ratio-tools .btn{width:100%;margin-right:0}}
+@media(max-width:360px){#p-ratio th,#p-ratio td{padding:7px 3px;font-size:11px}#p-ratio th{font-size:10px}.ratio-asset-pct{font-size:21px}}
+`,
+    next:String.raw`/* ratio-presentation:v1 — display only; the reviewed model/crypto factories stay unchanged. */
+#p-ratio{min-width:0}#p-ratio .card,#p-ratio details,#p-ratio code{min-width:0;overflow-wrap:anywhere}
+#p-ratio p{font-size:12px;color:var(--ink-2);line-height:1.6;margin:6px 0}
+#p-ratio .ratio-intro{padding:12px 14px}#ratioNotice{color:var(--ink-1)!important;font-weight:600}
+.ratio-report-meta{margin:0 2px 12px}.ratio-report-meta p{margin:2px 0!important}
+.ratio-asset-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0}
+.ratio-asset-grid>.kpi{min-width:0;margin:0;padding:10px;background:var(--plane)}
+.ratio-asset-grid .lab{font-size:12px;font-weight:500;color:var(--ink-2);display:block}
+.ratio-asset-pct{font-size:23px;font-weight:650;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.ratio-asset-total{display:block;font-size:11px;color:var(--ink-2);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.ratio-asset-grid [role=meter]{height:5px!important;margin:8px 0 0!important;background:var(--grid)!important;border-radius:4px;overflow:hidden}
+.ratio-asset-grid [role=meter]>span{background:var(--series-1)!important}
+.ratio-exposure-grid,.ratio-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.ratio-exposure-grid{margin:12px 0;align-items:start}.ratio-exposure-grid>section{min-width:0;border:1px solid var(--border);border-radius:10px;padding:10px;background:var(--plane)}
+.ratio-exposure-grid h3{font-size:13px;margin:0 0 4px;overflow-wrap:anywhere}
+.ratio-holding-list{margin-top:8px}.ratio-holding-row{padding:9px 0;border-top:1px solid var(--grid)}
+.ratio-holding-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;font-size:12px;font-variant-numeric:tabular-nums}
+.ratio-holding-name{min-width:0;font-weight:600;overflow-wrap:anywhere}.ratio-holding-amount{flex:none;white-space:nowrap;font-weight:600}
+.ratio-holding-weights{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px 12px;margin:5px 0 0;font-size:11px;font-variant-numeric:tabular-nums}
+.ratio-holding-weights>div{display:flex;justify-content:space-between;gap:5px;align-items:baseline}.ratio-holding-weights dt{color:var(--ink-muted)}.ratio-holding-weights dd{margin:0;white-space:nowrap;color:var(--ink-2)}
+#p-ratio .ratio-composition{margin-top:4px;border-top:1px dashed var(--grid)}#p-ratio .ratio-composition summary{font-size:11px;min-height:44px}
+.ratio-constituents{list-style:none;margin:0;padding:0 0 2px}.ratio-constituents li{display:flex;gap:7px;padding:7px 0;border-top:1px solid var(--grid);font-size:12px;line-height:1.65;color:var(--ink-2)}
+.ratio-constituent-number,.ratio-note-number{flex:none;color:var(--ink-muted);font-variant-numeric:tabular-nums}.ratio-constituent-text{min-width:0;overflow-wrap:anywhere}
+#p-ratio .ratio-explanation{border:1px solid var(--border);border-radius:10px;padding:0 12px;margin-top:8px;background:var(--surface-1)}
+#p-ratio .ratio-explanation>summary{font-weight:600;color:var(--ink-1)}#p-ratio .ratio-explanation>p{display:flex;gap:8px;margin:8px 0}.ratio-note-text{min-width:0;overflow-wrap:anywhere}
+.ratio-plan-grid>.card{min-width:0;margin-bottom:12px}
+#p-ratio table{width:100%;table-layout:fixed;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums;margin:8px 0}
+#p-ratio th,#p-ratio td{padding:8px 5px;border-bottom:1px solid var(--grid);vertical-align:top;text-align:right;overflow-wrap:anywhere;word-break:normal;white-space:normal}
+#p-ratio th{font-size:10px;font-weight:500;color:var(--ink-2)}#p-ratio td{font-weight:550}
+#p-ratio th:first-child,#p-ratio td:first-child{width:40%;text-align:left;font-weight:500}
+#p-ratio tbody tr:last-child td{border-bottom:0}
+.ratio-key-status{font-size:12px;line-height:1.6;overflow-wrap:anywhere}#p-ratio td details{font-weight:400}#p-ratio td summary{font-size:11px;text-align:left}#p-ratio td details ul{padding-left:16px;text-align:left}
+.ratio-coverage{border-top:1px solid var(--grid);padding-top:8px}.ratio-coverage-list{list-style:none;margin:0;padding:0}
+.ratio-coverage-list li{font-size:12px;line-height:1.6;color:var(--ink-2);margin:4px 0;overflow-wrap:anywhere}
+#p-ratio .ratio-caveats{border-left:3px solid var(--axis);padding:2px 10px;margin-bottom:12px}
+#p-ratio details{font-size:12px;margin-top:8px}#p-ratio summary{display:flex;align-items:center;gap:8px;min-height:44px;cursor:pointer;color:var(--ink-2);list-style:none}
+#p-ratio summary::-webkit-details-marker{display:none}#p-ratio summary::before{content:"▸";font-size:11px;color:var(--ink-muted)}#p-ratio details[open]>summary::before{content:"▾"}
+#p-ratio summary:focus-visible,#p-ratio .btn:focus-visible{outline:2px solid var(--series-1);outline-offset:3px}
+.ratio-tools>details+details{border-top:1px solid var(--grid)}#p-ratio .ratio-tools label{display:block;margin:10px 0 4px;font-size:12px;color:var(--ink-2)}
+#p-ratio input[type=checkbox]{width:auto;margin-right:7px}#p-ratio .btn{min-height:44px;max-width:100%;white-space:normal;margin:4px 4px 4px 0}
+@media(max-width:600px){.ratio-asset-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.ratio-exposure-grid,.ratio-plan-grid{grid-template-columns:minmax(0,1fr)}#p-ratio .ratio-tools .btn{width:100%;margin-right:0}}
+@media(max-width:360px){#p-ratio th,#p-ratio td{padding:7px 3px;font-size:11px}#p-ratio th{font-size:10px}.ratio-asset-pct{font-size:21px}}
+`}),
+  Object.freeze({priorSha256:'06e74eee8f26773fcc6fa47442d96690d36610df296761807ace9d00a9c6ae47',nextSha256:'aa6d762c228db1466f5925852adb45c3d560f0039c1f722752605bc581658cc1',
+    prior:String.raw`/* ratio-presentation:v1 */
+function styleRatioReport(root){
+  const report=root?.querySelector?.('.ratio-report');
+  if(!report||report.classList.contains('ratio-styled'))return;
+  const overview=report.querySelector('.ratio-asset-overview'),exposure=report.querySelector('.sharesight-exposure');
+  if(!overview||!exposure)return;
+  const make=(tag,cls)=>{const el=document.createElement(tag);if(cls)el.className=cls;return el;};
+  const direct=(el,tag)=>Array.from(el.children).filter(n=>n.tagName===tag);
+  const meta=make('header','ratio-report-meta');
+  for(const n of Array.from(report.children)){if(n===overview)break;if(n.tagName==='P')meta.append(n);}
+  report.insertBefore(meta,overview);
+  const assets=make('div','ratio-asset-grid');
+  for(const item of direct(overview,'DIV')){
+    item.classList.add('kpi');
+    const label=item.querySelector('strong'),value=label?.nextSibling;
+    if(label)label.classList.add('lab');
+    // Split only existing display text; never calculate or round financial values here.
+    if(value?.nodeType===3){
+      const parts=value.textContent.split(' · ');
+      if(parts.length===3&&parts[0]===''){
+        const pct=make('span','ratio-asset-pct'),amount=make('span','ratio-asset-total');
+        pct.textContent=parts[2];amount.textContent=parts[1];value.replaceWith(pct,amount);
+      }
+    }
+    assets.append(item);
+  }
+  overview.insertBefore(assets,overview.lastElementChild);
+  // Source dates and pending/unknown status precede rankings in the render order.
+  // Leave those visible status paragraphs in place; do not lift rankings above them.
+  const groups=make('div','ratio-exposure-grid');
+  for(const group of direct(exposure,'SECTION'))groups.append(group);
+  const coverage=direct(exposure,'DETAILS')[0];
+  exposure.insertBefore(groups,coverage||null);
+  report.classList.add('ratio-styled');
+}
+/* ratio-presentation:v1:end */`,
+    next:String.raw`/* ratio-presentation:v1 */
+function ratioHoldingDisplayName(raw){
+  if(typeof raw!=='string')return '';
+  const original=raw.trim();
+  // Official ranked rows may append [securityCode · market] to distinguish
+  // repeated Sharesight names. Only a date-prefixed code is shortened here.
+  const afterMonth=value=>(value.match(/^(?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])(?:\s*[-–—_:：/]\s*|\s+)(\S[\s\S]*)$/)?.[1]||value.match(/^(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月\s*(?:[-–—_:：/]\s*)?(\S[\s\S]*)$/)?.[1])?.trim();
+  const knownSuffix=/\s+·\s+(?:OTHER|NASDAQ|NYSE|SWX)$/;
+  for(const [open,close] of [['[',']'],['【','】'],['（','）'],['(',')']]){
+    if(!original.endsWith(close))continue;
+    const start=original.indexOf(open);
+    if(start<0)continue;
+    const content=original.slice(start+open.length,-close.length).trim();
+    if(!afterMonth(content))continue;
+    const marker=content.lastIndexOf(' · '),generated=open==='['&&start>0&&original[start-1]===' '&&marker>=0;
+    const code=generated?content.slice(0,marker):content.replace(knownSuffix,'');
+    return afterMonth(code)||original;
+  }
+  const project=afterMonth(original);
+  // Without the app's wrapper, preserve unrecognized suffixes and project
+  // punctuation. Never split project names on their own digits or hyphens.
+  return project?.replace(knownSuffix,'').trim()||original;
+}
+function styleRatioReport(root){
+  const report=root?.querySelector?.('.ratio-report');
+  if(!report||report.classList.contains('ratio-styled'))return;
+  const overview=report.querySelector('.ratio-asset-overview'),exposure=report.querySelector('.sharesight-exposure');
+  if(!overview||!exposure)return;
+  const make=(tag,cls)=>{const el=document.createElement(tag);if(cls)el.className=cls;return el;};
+  const direct=(el,tag)=>Array.from(el.children).filter(n=>n.tagName===tag);
+  const meta=make('header','ratio-report-meta');
+  for(const n of Array.from(report.children)){if(n===overview)break;if(n.tagName==='P')meta.append(n);}
+  report.insertBefore(meta,overview);
+  const assets=make('div','ratio-asset-grid');
+  for(const item of direct(overview,'DIV')){
+    item.classList.add('kpi');
+    const label=item.querySelector('strong'),value=label?.nextSibling;
+    if(label)label.classList.add('lab');
+    // Split only existing display text; never calculate or round financial values here.
+    if(value?.nodeType===3){
+      const parts=value.textContent.split(' · ');
+      if(parts.length===3&&parts[0]===''){
+        const pct=make('span','ratio-asset-pct'),amount=make('span','ratio-asset-total');
+        pct.textContent=parts[2];amount.textContent=parts[1];value.replaceWith(pct,amount);
+      }
+    }
+    assets.append(item);
+  }
+  overview.insertBefore(assets,overview.lastElementChild);
+  // Source dates and pending/unknown status precede rankings in the render order.
+  // Leave those visible status paragraphs in place; do not lift rankings above them.
+  const groups=make('div','ratio-exposure-grid');
+  for(const group of direct(exposure,'SECTION')){
+    const table=direct(group,'TABLE')[0],rows=table?Array.from(table.tBodies[0]?.rows||[]):[];
+    const labels=table?Array.from(table.tHead?.rows[0]?.cells||[]).map(c=>c.textContent):[];
+    // Move already rendered display values; this layer never recalculates
+    // rankings, amounts, ratios, source associations or leverage multipliers.
+    if(rows.length&&labels.length===3&&rows.every(row=>row.cells.length===3&&row.cells[2].textContent.split('／').length===2)){
+      const holdings=make('div','ratio-holding-list');
+      for(const [index,row] of rows.entries()){
+        const [nameCell,amountCell,weightCell]=Array.from(row.cells),details=nameCell.querySelector('details');
+        const original=Array.from(nameCell.childNodes).filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
+        const ranked=original.match(/^(\d+\.\s*)([\s\S]*)$/),sourceName=ranked?ranked[2]:original;
+        const card=make('article','ratio-holding-row'),head=make('div','ratio-holding-head'),name=make('span','ratio-holding-name'),amount=make('span','ratio-holding-amount');
+        name.textContent=(ranked?ranked[1]:'')+(ratioHoldingDisplayName(sourceName)||sourceName);name.title=sourceName;
+        amount.textContent=amountCell.textContent;head.append(name,amount);card.append(head);
+        const weights=make('dl','ratio-holding-weights'),values=weightCell.textContent.split('／'),weightLabels=labels[2].split('／');
+        for(let i=0;i<2;i++){
+          const item=make('div'),label=make('dt'),value=make('dd');
+          label.textContent=weightLabels[i]||labels[2];value.textContent=values[i];item.append(label,value);weights.append(item);
+        }
+        card.append(weights);
+        if(details){
+          const number=ranked?ranked[1].trim().replace(/\.$/,''):String(index+1),summary=direct(details,'SUMMARY')[0],oldList=direct(details,'UL')[0];
+          details.classList.add('ratio-composition');
+          if(summary)summary.textContent='明细 '+number+' · '+summary.textContent;
+          if(oldList){
+            const items=make('ol','ratio-constituents');
+            for(const [i,item] of direct(oldList,'LI').entries()){
+              const label=make('span','ratio-constituent-number'),body=make('span','ratio-constituent-text');
+              label.textContent=number+'.'+(i+1);while(item.firstChild)body.append(item.firstChild);item.append(label,body);items.append(item);
+            }
+            oldList.replaceWith(items);
+          }
+          card.append(details);
+        }
+        holdings.append(card);
+      }
+      table.replaceWith(holdings);
+    }
+    groups.append(group);
+  }
+  const coverage=direct(exposure,'DETAILS')[0];
+  exposure.insertBefore(groups,coverage||null);
+  const noteNumbers={'计算口径与合并规则':'1','来源日期与核验记录':'2','覆盖范围、残余与缺项':'3','现金与补仓参考说明':'4'};
+  for(const note of direct(report,'DETAILS')){
+    const summary=direct(note,'SUMMARY')[0],number=noteNumbers[summary?.textContent];
+    if(!number)continue;
+    note.classList.add('ratio-explanation');summary.textContent='说明 '+number+' · '+summary.textContent;
+    for(const [i,p] of direct(note,'P').entries()){
+      const label=make('span','ratio-note-number'),body=make('span','ratio-note-text');
+      label.textContent=number+'.'+(i+1);while(p.firstChild)body.append(p.firstChild);p.append(label,body);
+    }
+  }
+  report.classList.add('ratio-styled');
+}
+/* ratio-presentation:v1:end */`})
+]);
+function presentationUiAdapter(page,forward=true){
+  assert.equal(typeof forward,'boolean');
+  const [inputSha,outputSha]=forward?[ratioFilePinUiSha256,ratioPresentationUiSha256]:[ratioPresentationUiSha256,ratioFilePinUiSha256];
+  assert.equal(ratioUiHash(page),inputSha,'unreviewed presentation input page');
+  let result=page;
+  for(const region of ratioPresentationRegions){
+    assert.equal(ratioUiHash(region.prior),region.priorSha256);
+    assert.equal(ratioUiHash(region.next),region.nextSha256);
+    const [from,to]=forward?[region.prior,region.next]:[region.next,region.prior];
+    assert.equal(result.split(from).length,2,'exact presentation block must occur once');
+    result=result.replace(from,to);
+  }
+  assert.equal(ratioUiHash(result),outputSha,'complete presentation output must match reviewed bytes');
+  return result;
+}
+
 function stagedRatioUi(html,target='next'){
   assert.ok(['prior','next'].includes(target));
+  const presentation=ratioUiHash(html)===ratioPresentationUiSha256;if(presentation)html=presentationUiAdapter(html,false);
   const filePin=ratioUiHash(html)===ratioFilePinUiSha256;if(filePin)html=filePinUiAdapter(html,false);
   const stage=['prior','next'].find(s=>ratioUiHash(html)===ratioUiStages[s+'IndexSha256']);
   assert.ok(stage,'unreviewed installed ratio UI');
@@ -426,7 +671,7 @@ function stagedRatioUi(html,target='next'){
     result=result.slice(0,a)+r[target]+result.slice(b);
   }
   assert.equal(ratioUiHash(result),ratioUiStages[target+'IndexSha256'],'complete materialized UI must match reviewed bytes');
-  return {stage:filePin?'filePin':stage,source:target==='next'?filePinUiAdapter(result):result};
+  return {stage:presentation?'presentation':filePin?'filePin':stage,source:target==='next'?presentationUiAdapter(filePinUiAdapter(result)):result};
 }
 // These are test-only snapshots of public CODE, never a production fallback or
 // source permission. Check the actual installed page first, then ALWAYS execute
@@ -439,14 +684,16 @@ const independentRatioUi=unifiedUiSource.includes('const RATIO_SNAPSHOT_FILE=');
 const legacyRatioFactorySha256='5e7570832f7655adca74c15d20c4540cc58f46f463506a847f23a8bb1aa7b8d1'; // exact already-published codec; support/UI roll out separately
 
 test('ratio staged code pins both full pages, roundtrips only reviewed regions and always runs next UI contracts',()=>{
-  assert.ok(['prior','next','filePin'].includes(ratioUiStage.stage));assert.equal(independentRatioUi,true);
-  assert.equal(ratioUiHash(unifiedUiSource),ratioFilePinUiSha256);
-  const frozenNext=filePinUiAdapter(unifiedUiSource,false);
+  assert.ok(['prior','next','filePin','presentation'].includes(ratioUiStage.stage));assert.equal(independentRatioUi,true);
+  assert.equal(ratioUiHash(unifiedUiSource),ratioPresentationUiSha256);
+  const filePinNext=presentationUiAdapter(unifiedUiSource,false),frozenNext=filePinUiAdapter(filePinNext,false);
+  assert.equal(ratioUiHash(filePinNext),ratioFilePinUiSha256);
   assert.equal(ratioUiHash(frozenNext),ratioUiStages.nextIndexSha256);
-  assert.equal(filePinUiAdapter(frozenNext),unifiedUiSource);
+  assert.equal(filePinUiAdapter(frozenNext),filePinNext);
+  assert.equal(presentationUiAdapter(filePinNext),unifiedUiSource);
   assert.equal(stagedRatioUi(frozenNext).source,unifiedUiSource);
   assert.throws(()=>filePinUiAdapter(frozenNext+'\n'),/unreviewed file-pin/);
-  assert.throws(()=>filePinUiAdapter(unifiedUiSource+'\n',false),/unreviewed file-pin/);
+  assert.throws(()=>filePinUiAdapter(filePinNext+'\n',false),/unreviewed file-pin/);
   const prior=stagedRatioUi(unifiedUiSource,'prior').source,next=stagedRatioUi(prior).source;
   assert.equal(next,unifiedUiSource);assert.equal(stagedRatioUi(next,'prior').source,prior);
   assert.throws(()=>stagedRatioUi(installedUnifiedUiSource+'\n'),/unreviewed installed/);
@@ -456,6 +703,51 @@ test('ratio staged code pins both full pages, roundtrips only reviewed regions a
   for(const name of ['fee-receipt-consumer','fee-receipt-render','fund-investor-core','fund-remote-storage','fee-report-consumer']){
     const block=s=>s.split('/* '+name+':start */')[1].split('/* '+name+':end */')[0];assert.equal(block(prior),block(next));
   }
+});
+
+test('presentation support accepts both exact installed versions, roundtrips and rejects mutations of either',()=>{
+  const next=unifiedUiSource,prior=presentationUiAdapter(next,false);
+  assert.equal(ratioUiHash(prior),ratioFilePinUiSha256);
+  assert.equal(ratioUiHash(next),ratioPresentationUiSha256);
+  assert.equal(presentationUiAdapter(prior),next);assert.equal(presentationUiAdapter(next,false),prior);
+  assert.equal(stagedRatioUi(prior).stage,'filePin');assert.equal(stagedRatioUi(next).stage,'presentation');
+  assert.equal(stagedRatioUi(prior).source,next);assert.equal(stagedRatioUi(next).source,next);
+  const strip=page=>ratioPresentationRegions.reduce((s,r)=>s.replace(r.prior,'DISPLAY_BLOCK').replace(r.next,'DISPLAY_BLOCK'),page);
+  assert.equal(strip(prior),strip(next),'every byte outside the two display blocks stays unchanged');
+  for(const [page,forward] of [[prior,true],[next,false]]){
+    const display=ratioPresentationRegions[0][forward?'prior':'next'];
+    const changedDisplay=page.replace(display,display+' '),changedOther=page.replace('<title>','<title>changed ');
+    assert.notEqual(changedOther,page);
+    for(const changed of [page+'\n',changedDisplay,changedOther]){
+      assert.throws(()=>presentationUiAdapter(changed,forward),/unreviewed presentation/);
+      assert.throws(()=>stagedRatioUi(changed),/unreviewed installed/);
+    }
+  }
+  assert.throws(()=>presentationUiAdapter(next),/unreviewed presentation/);
+  assert.throws(()=>presentationUiAdapter(prior,false),/unreviewed presentation/);
+});
+
+test('exact presentation successor shortens only supported date-prefixed names and preserves project content',()=>{
+  const start=unifiedUiSource.indexOf('function ratioHoldingDisplayName('),end=unifiedUiSource.indexOf('function styleRatioReport(',start);
+  assert.ok(start>=0&&end>start);
+  const format=vm.runInNewContext(unifiedUiSource.slice(start,end)+';ratioHoldingDisplayName;');
+  const cases=[
+    ['Noah [2017-12-金融生态 · OTHER]','金融生态'],
+    ['Synthetic [2017-12-Series-2 · OTHER]','Series-2'],
+    ['Synthetic [2017-12-2024-05 Innovation-II · OTHER]','2024-05 Innovation-II'],
+    ['Synthetic [2017-12-Alpha · Beta · OTHER]','Alpha · Beta'],
+    ['Synthetic (2017/12-Series-2 · OTHER)','Series-2'],
+    ['Synthetic 【2017.12-成长-2 · OTHER】','成长-2'],
+    ['Synthetic （2017年12月-中英文 Growth-3 · OTHER）','中英文 Growth-3'],
+    ['Synthetic (2017-12-Alpha · Project text)','Alpha · Project text'],
+    ['2017-12-Alpha · Project text','Alpha · Project text'],
+    ['Alphabet','Alphabet'],['Fund 2024-05 Growth','Fund 2024-05 Growth'],
+    ['Noah [2017-13-Fund · OTHER]','Noah [2017-13-Fund · OTHER]'],
+    ['Noah [2017-1-Fund · OTHER]','Noah [2017-1-Fund · OTHER]'],
+    ['Noah [2017-12- · OTHER]','Noah [2017-12- · OTHER]'],
+    ['',''],[null,''],[undefined,''],[123,''],
+  ];
+  for(const [name,expected]of cases)assert.equal(format(name),expected,JSON.stringify(name));
 });
 
 test('unified UI embeds exact reviewed codec and denies investor, revoked roles and source switches',{skip:!unifiedUiSource.includes('const RATIO_RECIPIENT_FILE=')},async()=>{
