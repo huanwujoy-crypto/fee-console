@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 
 import {
   DEFINITIONS,
@@ -15,7 +17,312 @@ import {
   expectedBenchmarkTargetDate,
   mergePrices,
   refresh,
+  sharesightBenchmarkPoint,
+  appendSharesightBenchmark,
+  readSharesightBenchmark,
+  sharesightBenchmarkDates,
+  readSharesightBenchmarkRange,
+  commitSharesightBenchmark,
+  refreshSharesightCloud,
+  sharesightBenchmarkFailureCode,
 } from './refresh-benchmark-cache.mjs';
+
+function ssFixture(key = 'spy') {
+  const spy = key === 'spy', id = spy ? 101 : 102;
+  return {
+    key, holdingId: id, targetDate: '2026-10-30',
+    holdingResponse: { holding: { id,
+      instrument: { id: spy ? 44697 : 1886621, code: spy ? 'SPY' : 'QQQ', market_code: spy ? 'NYSE' : 'NASDAQ', currency_code: 'USD' },
+      instrument_currency: { code: 'USD' }, quantity: 987.123,
+      values_over_time: [{ timestamp: '2026-10-30', value: spy ? 101 : 202 }, { timestamp: '2026-10-29', value: 99 }],
+    } },
+    payoutsResponse: { payouts: [{ id: 999, personal_net: 321, company_event: {
+      id: 1, ex_date: '2026-09-18', paid_on: '2026-10-30', amount_per_share: 0.8, currency_code: 'USD',
+    } }] },
+  };
+}
+function ssCache() {
+  return { v: 1, generatedAt: '2026-10-30T00:00:00.000Z', source: 'prior verified source', benchmarks: {
+    spy: { symbol: 'SPY', currency: 'USD', exchange: 'NYSEArca', series: [{ d: '2026-09-18', p: 90, div: 0.8 }, { d: '2026-10-29', p: 99, div: 0 }] },
+    qqq: { symbol: 'QQQ', currency: 'USD', exchange: 'NasdaqGS', series: [{ d: '2026-09-18', p: 190 }, { d: '2026-10-29', p: 199 }] },
+  } };
+}
+const ssPoints = () => Object.fromEntries(['spy', 'qqq'].map(key => [key, sharesightBenchmarkPoint(ssFixture(key))]));
+
+test('Sharesight daily dates map directly; payment date does not cause a second dividend', () => {
+  assert.deepEqual(sharesightBenchmarkPoint(ssFixture()), { d: '2026-10-30', p: 101 });
+});
+test('Sharesight gross per-share dividend ignores holding quantity, net payment and withholding', () => {
+  const input = ssFixture();
+  input.payoutsResponse.payouts[0].company_event.ex_date = input.targetDate;
+  const point = sharesightBenchmarkPoint(input);
+  assert.deepEqual(point, { d: '2026-10-30', p: 101, div: 0.8 });
+  assert.equal((point.p + point.div * 0.7) / 99 - 1, (101 + 0.8 * 0.7) / 99 - 1);
+});
+test('Sharesight complete empty payout collection is an ordinary no-dividend day', () => {
+  const input = ssFixture(); input.payoutsResponse.payouts = [];
+  assert.deepEqual(sharesightBenchmarkPoint(input), { d: '2026-10-30', p: 101 });
+  delete input.payoutsResponse.payouts;
+  assert.throws(() => sharesightBenchmarkPoint(input), /SS_BENCHMARK_DIVIDENDS/);
+});
+test('Sharesight duplicate company event counts once and contradictory duplicate is rejected', () => {
+  const input = ssFixture(), payout = input.payoutsResponse.payouts[0];
+  payout.company_event.ex_date = input.targetDate;
+  input.payoutsResponse.payouts.push(structuredClone(payout));
+  assert.equal(sharesightBenchmarkPoint(input).div, 0.8);
+  input.payoutsResponse.payouts[1].company_event.amount_per_share = 0.9;
+  assert.throws(() => sharesightBenchmarkPoint(input), /SS_BENCHMARK_DIVIDEND_CONFLICT/);
+});
+test('Sharesight two distinct same-date events sum their gross per-share amounts', () => {
+  const input = ssFixture(); input.payoutsResponse.payouts[0].company_event.ex_date = input.targetDate;
+  input.payoutsResponse.payouts.push({ company_event: { id: 2, ex_date: input.targetDate, amount_per_share: 0.1, currency_code: 'USD' } });
+  assert.equal(sharesightBenchmarkPoint(input).div, 0.9);
+});
+test('Sharesight identity and currency mismatches are rejected', () => {
+  for (const change of [x => x.holdingResponse.holding.id++, x => x.holdingResponse.holding.instrument.code = 'OTHER',
+    x => x.holdingResponse.holding.instrument.market_code = 'OTHER', x => x.holdingResponse.holding.instrument.currency_code = 'HKD',
+    x => x.payoutsResponse.payouts[0].company_event.currency_code = 'HKD']) {
+    const input = ssFixture(); change(input); assert.throws(() => sharesightBenchmarkPoint(input), /SS_BENCHMARK_/);
+  }
+});
+test('Sharesight missing target date, malformed date and nonnumeric price are not zero or carry', () => {
+  for (const change of [x => x.holdingResponse.holding.values_over_time.shift(),
+    x => x.holdingResponse.holding.values_over_time[0].timestamp = '2026-02-30',
+    x => x.holdingResponse.holding.values_over_time[0].value = '101',
+    x => x.holdingResponse.holding.values_over_time[0].value = NaN]) {
+    const input = ssFixture(); change(input); assert.throws(() => sharesightBenchmarkPoint(input), /SS_BENCHMARK_/);
+  }
+});
+test('Sharesight conflicting same-day prices are rejected; repeated identical row is harmless', () => {
+  const input = ssFixture(); input.holdingResponse.holding.values_over_time.push({ timestamp: input.targetDate, value: 101 });
+  assert.equal(sharesightBenchmarkPoint(input).p, 101);
+  input.holdingResponse.holding.values_over_time.at(-1).value = 102;
+  assert.throws(() => sharesightBenchmarkPoint(input), /SS_BENCHMARK_PRICE_CONFLICT/);
+});
+test('Sharesight explicitly partial or restricted response is not a no-dividend day', () => {
+  for (const flag of [{ meta: { pagination: { next_page: 2 } } }, { restricted: true }, { links: { next: '/next' } }]) {
+    const input = ssFixture(); Object.assign(input.payoutsResponse, flag);
+    assert.throws(() => sharesightBenchmarkPoint(input), /SS_BENCHMARK_INCOMPLETE/);
+  }
+});
+test('Sharesight append preserves every historical byte value and excludes private response fields', () => {
+  const existing = ssCache(), before = structuredClone(existing);
+  const { changed, cache } = appendSharesightBenchmark({ existing, points: ssPoints(), targetDate: '2026-10-30', now: new Date('2026-10-31T02:00:00Z') });
+  assert.equal(changed, true); assert.deepEqual(existing, before);
+  for (const key of ['spy', 'qqq']) assert.deepEqual(cache.benchmarks[key].series.slice(0, -1), before.benchmarks[key].series);
+  assert.match(cache.source, /Sharesight/); assert.match(cache.source, /earlier history/);
+  for (const forbidden of ['quantity', 'personal_net', 'company_event', 'holdingId', 'payouts']) assert.equal(JSON.stringify(cache).includes(forbidden), false);
+});
+test('Sharesight same target exact data is no-op; different target data cannot rewrite history', () => {
+  const first = appendSharesightBenchmark({ existing: ssCache(), points: ssPoints(), targetDate: '2026-10-30' });
+  const second = appendSharesightBenchmark({ existing: first.cache, points: ssPoints(), targetDate: '2026-10-30' });
+  assert.equal(second.changed, false); assert.equal(second.cache, first.cache);
+  const points = ssPoints(); points.qqq.p++;
+  assert.throws(() => appendSharesightBenchmark({ existing: first.cache, points, targetDate: '2026-10-30' }), /SS_BENCHMARK_TARGET_CONFLICT/);
+});
+test('Sharesight controlled reader issues exactly four bounded paths and has no write callback', async () => {
+  const paths = [];
+  const result = await readSharesightBenchmark({ existing: ssCache(), targetDate: '2026-10-30', holdingIds: { spy: 101, qqq: 102 },
+    readJson: async path => { paths.push(path); const x = ssFixture(path.includes('/101') ? 'spy' : 'qqq'); return path.includes('/payouts?') ? x.payoutsResponse : x.holdingResponse; } });
+  assert.equal(result.changed, true);
+  assert.deepEqual(paths, ['/api/v3/holdings/101?values_over_time=2026-10-30', '/api/v3/holdings/101/payouts?use_date=ex_date', '/api/v3/holdings/102?values_over_time=2026-10-30', '/api/v3/holdings/102/payouts?use_date=ex_date']);
+});
+test('Sharesight controlled reader does not retry or return a partial pair after request failure', async () => {
+  let calls = 0;
+  await assert.rejects(readSharesightBenchmark({ existing: ssCache(), targetDate: '2026-10-30', holdingIds: { spy: 101, qqq: 102 },
+    readJson: async () => { calls++; throw Error('synthetic unavailable'); } }), /synthetic unavailable/);
+  assert.equal(calls, 1);
+});
+test('Sharesight controlled reader rejects duplicate holding bindings before any read', async () => {
+  let calls = 0;
+  await assert.rejects(readSharesightBenchmark({ existing: ssCache(), targetDate: '2026-10-30', holdingIds: { spy: 101, qqq: 101 }, readJson: async () => calls++ }), /SS_BENCHMARK_BINDING/);
+  assert.equal(calls, 0);
+});
+
+const SS_MAIN = 'a'.repeat(40), SS_BASE = 'b'.repeat(40), SS_COMMIT = 'c'.repeat(40);
+const ssGitBlob = bytes => createHash('sha1').update(`blob ${Buffer.byteLength(bytes)}\0`).update(bytes).digest('hex');
+const ssCloudArgs = path => ({ path, targetDate: '2026-10-30', mode: 'publish', expectedMain: SS_MAIN,
+  expectedCacheHead: SS_BASE, clientId: 'synthetic-client', clientSecret: 'synthetic-secret-canary',
+  holdingIds: { spy: 101, qqq: 102 }, githubToken: 'synthetic-owner-token-only', now: new Date('2026-10-31T02:30:00Z') });
+function ssHttp({ failAt = 0, change = () => {} } = {}) {
+  const calls = [];
+  return { calls, fetchImpl: async (url, init) => {
+    calls.push({ url, method: init.method });
+    assert.equal(new URL(url).origin, 'https://api.sharesight.com');
+    assert.equal(init.redirect, 'error'); assert.ok(init.signal);
+    if (calls.length === failAt) throw Error('private-url-token-canary');
+    let value;
+    if (url.endsWith('/oauth2/token')) {
+      assert.equal(init.method, 'POST'); assert.match(init.body, /grant_type=client_credentials/);
+      assert.equal(init.headers.Authorization, undefined);
+      value = { access_token: 'synthetic-access-token-canary', token_type: 'bearer' };
+    } else {
+      assert.equal(init.method, 'GET'); assert.equal(init.headers.Authorization, 'Bearer synthetic-access-token-canary');
+      assert.match(url, /^https:\/\/api.sharesight.com\/api\/v3\/holdings\/(101|102)(\?values_over_time=2026-10-30|\/payouts\?use_date=ex_date)$/);
+      const fixture = ssFixture(url.includes('/101') ? 'spy' : 'qqq');
+      value = url.includes('/payouts?') ? fixture.payoutsResponse : fixture.holdingResponse;
+      change(value, url);
+    }
+    const response = new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } });
+    Object.defineProperty(response, 'url', { value: url }); return response;
+  } };
+}
+function ssGithub(beforeBytes, { mutate = () => {}, uncertain = false, refsChanged = false } = {}) {
+  const calls = [], state = { afterBytes: null, mutations: 0 };
+  const request = async (url, token, init = {}) => {
+    assert.equal(token, 'synthetic-owner-token-only'); calls.push({ url, method: init.method || 'GET' });
+    let value;
+    if (url === 'https://api.github.com/graphql') {
+      const body = JSON.parse(init.body);
+      if (body.query.startsWith('mutation')) {
+        state.mutations++;
+        assert.equal(body.variables.input.expectedHeadOid, SS_BASE);
+        assert.deepEqual(body.variables.input.branch, { repositoryNameWithOwner: 'huanwujoy-crypto/fee-console', branchName: 'market-data-cache' });
+        assert.equal(body.variables.input.fileChanges.additions.length, 1);
+        const file = body.variables.input.fileChanges.additions[0]; assert.equal(file.path, 'benchmark-close.json');
+        state.afterBytes = Buffer.from(file.contents, 'base64');
+        assert.doesNotMatch(state.afterBytes.toString(), /canary|quantity|personal_net|holdingId|paid_on/);
+        if (uncertain) throw Error('secret-canary-uncertain');
+        value = { data: { createCommitOnBranch: { commit: { oid: SS_COMMIT }, ref: { name: 'market-data-cache' } } } };
+      } else value = { data: { viewer: { login: 'huanwujoy-crypto' }, repository: {
+        main: { target: { oid: refsChanged ? 'd'.repeat(40) : SS_MAIN } },
+        cache: { target: { oid: state.afterBytes ? SS_COMMIT : SS_BASE } },
+        file: { oid: ssGitBlob(state.afterBytes || beforeBytes) },
+      } } };
+    } else {
+      assert.equal(url, `https://api.github.com/repos/huanwujoy-crypto/fee-console/commits/${SS_COMMIT}`);
+      value = { sha: SS_COMMIT, commit: { verification: { verified: true } }, author: { login: 'huanwujoy-crypto' },
+        parents: [{ sha: SS_BASE }], files: [{ filename: 'benchmark-close.json', status: 'modified', sha: ssGitBlob(state.afterBytes) }] };
+    }
+    mutate(value, url, state); return value;
+  };
+  return { request, calls, state };
+}
+
+test('cloud SS range fills missed sessions, skips weekends, and makes only four GETs', async () => {
+  const existing = ssCache(); for (const k of ['spy', 'qqq']) existing.benchmarks[k].series.at(-1).d = '2026-10-28';
+  const calls = [];
+  const result = await readSharesightBenchmarkRange({ existing, targetDate: '2026-11-02', holdingIds: { spy: 101, qqq: 102 },
+    readJson: async route => {
+      calls.push(route); const fixture = ssFixture(route.includes('/101') ? 'spy' : 'qqq');
+      fixture.holdingResponse.holding.values_over_time.push({ timestamp: '2026-11-02', value: 105 });
+      fixture.payoutsResponse.payouts[0].company_event.ex_date = '2026-10-30';
+      return route.includes('/payouts?') ? fixture.payoutsResponse : fixture.holdingResponse;
+    } });
+  assert.deepEqual(result.dates, ['2026-10-29', '2026-10-30', '2026-11-02']); assert.equal(calls.length, 4);
+  assert.equal(calls.filter(p => p.endsWith('values_over_time=2026-10-29')).length, 2);
+  for (const k of ['spy', 'qqq']) {
+    const series = result.cache.benchmarks[k].series;
+    assert.equal(series.find(p => p.d === '2026-10-30').div, 0.8, 'gross dividend remains gross');
+    assert.equal(series.some(p => ['2026-10-31', '2026-11-01'].includes(p.d)), false);
+    assert.deepEqual(series.slice(0, existing.benchmarks[k].series.length), existing.benchmarks[k].series);
+  }
+});
+
+test('cloud SS range retains official holiday and catch-up limits without source access', async () => {
+  const cache = ssCache(); for (const k of ['spy', 'qqq']) cache.benchmarks[k].series.at(-1).d = '2026-11-25';
+  assert.deepEqual(await sharesightBenchmarkDates(cache, '2026-11-27'), ['2026-11-27']);
+  for (const target of ['2026-11-26', '2026-11-28', '2026-12-07', '2026-11-24']) {
+    await assert.rejects(sharesightBenchmarkDates(cache, target), /SS_BENCHMARK_/);
+  }
+  cache.benchmarks.qqq.series.at(-1).d = '2026-11-24';
+  await assert.rejects(sharesightBenchmarkDates(cache, '2026-11-27'), /HISTORY/);
+});
+
+test('cloud SS full path authenticates once, reads four routes, signs one exact cache and saves verified bytes', async t => {
+  const { path, bytes } = await offlineCache(t, ssCache()), http = ssHttp(), git = ssGithub(bytes);
+  const result = await refreshSharesightCloud({ ...ssCloudArgs(path), fetchImpl: http.fetchImpl, githubRequest: git.request });
+  assert.deepEqual(result, { changed: true, targetDate: '2026-10-30', sourceGets: 4, cacheCommit: SS_COMMIT });
+  assert.equal(http.calls.length, 5); assert.equal(git.state.mutations, 1);
+  assert.deepEqual(await readFile(path), git.state.afterBytes);
+  const persisted = await readFile(path, 'utf8');
+  assert.doesNotMatch(persisted, /canary|quantity|personal_net|holdingId/);
+  const noRead = () => assert.fail('already-complete cache must neither authenticate nor write');
+  assert.deepEqual(await refreshSharesightCloud({ ...ssCloudArgs(path), fetchImpl: noRead, githubRequest: noRead }),
+    { changed: false, targetDate: '2026-10-30', sourceGets: 0, cacheCommit: null });
+  assert.equal(await readFile(path, 'utf8'), persisted);
+});
+
+test('cloud SS shadow has no repository write or publishing token requirement', async t => {
+  const { path } = await offlineCache(t, ssCache()), http = ssHttp();
+  const result = await refreshSharesightCloud({ ...ssCloudArgs(path), mode: 'shadow', githubToken: undefined,
+    fetchImpl: http.fetchImpl, githubRequest: () => assert.fail('shadow must not use repository identity') });
+  assert.equal(result.changed, true); assert.equal(result.cacheCommit, null); assert.equal(http.calls.length, 5);
+});
+
+test('every source failure stops without retry, partial cache, or repository call', async t => {
+  for (let failAt = 1; failAt <= 5; failAt++) {
+    const { path, bytes } = await offlineCache(t, ssCache()), http = ssHttp({ failAt });
+    await assert.rejects(refreshSharesightCloud({ ...ssCloudArgs(path), fetchImpl: http.fetchImpl,
+      githubRequest: () => assert.fail('source failure must not write') }), /SS_BENCHMARK_(AUTH|NETWORK)/);
+    assert.equal(http.calls.length, failAt); assert.equal(await readFile(path, 'utf8'), bytes);
+  }
+});
+
+test('missing second ETF day cannot create a partial cloud cache', async t => {
+  const { path, bytes } = await offlineCache(t, ssCache());
+  const http = ssHttp({ change: (value, url) => { if (url.includes('/102?')) value.holding.values_over_time = []; } });
+  await assert.rejects(refreshSharesightCloud({ ...ssCloudArgs(path), fetchImpl: http.fetchImpl,
+    githubRequest: () => assert.fail('incomplete pair must not write') }), /TARGET_PENDING/);
+  assert.equal(await readFile(path, 'utf8'), bytes);
+});
+
+test('main/cache conflicts refuse the mutation; ambiguous mutation is never repeated', async t => {
+  for (const options of [{ refsChanged: true }, { uncertain: true }, {
+    mutate: value => { if (value?.data?.repository) value.data.repository.cache.target.oid = 'd'.repeat(40); },
+  }, { mutate: value => { if (value?.data?.repository) value.data.repository.file.oid = 'd'.repeat(40); } }]) {
+    const { path, bytes } = await offlineCache(t, ssCache()), http = ssHttp(), git = ssGithub(bytes, options);
+    await assert.rejects(refreshSharesightCloud({ ...ssCloudArgs(path), fetchImpl: http.fetchImpl, githubRequest: git.request }),
+      /SS_BENCHMARK_(BASE_CHANGED|COMMIT_UNCERTAIN)/);
+    assert.equal(git.state.mutations, options.uncertain ? 1 : 0); assert.equal(await readFile(path, 'utf8'), bytes);
+  }
+});
+
+test('unsigned, wrong-parent, wrong-owner, extra-file or mismatching cache result cannot reach writer', async t => {
+  for (const edit of [c => c.commit.verification.verified = false, c => c.parents[0].sha = SS_MAIN,
+    c => c.author.login = 'other', c => c.files.push({ filename: 'data.json' }),
+    c => c.files[0].sha = 'd'.repeat(40), c => c.files[0].filename = 'data.json']) {
+    const { path, bytes } = await offlineCache(t, ssCache()), http = ssHttp();
+    const git = ssGithub(bytes, { mutate: (value, url) => { if (url.includes('/commits/')) edit(value); } });
+    await assert.rejects(refreshSharesightCloud({ ...ssCloudArgs(path), fetchImpl: http.fetchImpl, githubRequest: git.request }), /COMMIT_VERIFICATION/);
+    assert.equal(git.state.mutations, 1); assert.equal(await readFile(path, 'utf8'), bytes);
+  }
+});
+
+test('invalid bindings/mode fail before auth and error display uses a closed vocabulary', async t => {
+  const { path } = await offlineCache(t, ssCache());
+  for (const options of [{ mode: 'other' }, { expectedMain: 'short' }, { holdingIds: { spy: 101, qqq: 101 } }, { githubToken: '' }]) {
+    await assert.rejects(refreshSharesightCloud({ ...ssCloudArgs(path), ...options, fetchImpl: () => assert.fail('invalid options must not authenticate') }));
+  }
+  for (const message of ['SS_BENCHMARK_AUTH secret-canary', 'SS_BENCHMARK_URL', 'https://private/?key=secret-canary', 'SS_BENCHMARK_AUTH\nsecret']) {
+    assert.equal(sharesightBenchmarkFailureCode(Error(message)), 'SS_BENCHMARK_RESPONSE');
+  }
+  assert.equal(sharesightBenchmarkFailureCode(Error('SS_BENCHMARK_TIMEOUT')), 'SS_BENCHMARK_TIMEOUT');
+});
+
+test('actual SS CLI rejects malformed plans and extra arguments without credential access', () => {
+  for (const args of [['--sharesight-cloud'], ['--sharesight-cloud', '--extra']]) {
+    const result = spawnSync(process.execPath, [new URL('./refresh-benchmark-cache.mjs', import.meta.url).pathname, ...args],
+      { encoding: 'utf8', env: { PATH: process.env.PATH, REPORT_PLAN: '{"priceThrough":"2026-10-30","secret":"canary"}' } });
+    assert.equal(result.status, 1); assert.equal(result.stderr.trim(), 'SS_BENCHMARK_ARGUMENT'); assert.equal(result.stdout, '');
+  }
+});
+
+test('SS cloud step stays in the same budgeted 15-minute source job and keeps public preflight secret-free', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/fee-cloud-producer.yml', import.meta.url), 'utf8');
+  const gate = workflow.slice(workflow.indexOf('\n  period:'), workflow.indexOf('\n  produce:'));
+  assert.doesNotMatch(gate, /secrets\.|sharesight_credentials|FEE_BENCHMARK/);
+  const produce = workflow.slice(workflow.indexOf('\n  produce:'), workflow.indexOf('\n  source-plan:') > 0 ? workflow.indexOf('\n  source-plan:') : undefined);
+  assert.match(produce, /name: Produce \$\{\{ needs.period.outputs.kind \}\} \$\{\{ needs.period.outputs.target \}\}/);
+  assert.match(produce, /timeout-minutes: 15/); assert.match(produce, /github.run_attempt == 1/);
+  const start = produce.indexOf('- name: Complete the frozen price cutoff from Sharesight');
+  assert.ok(start > produce.indexOf('id: sharesight_credentials'));
+  assert.ok(start < produce.indexOf('- name: Read, calculate and validate'));
+  const step = produce.slice(start, produce.indexOf('- name: Read, calculate and validate'));
+  assert.match(step, /--sharesight-cloud/); assert.match(step, /vars.FEE_CLOUD_MODE == 'publish' && secrets.FEE_CLOUD_GITHUB_TOKEN/);
+  assert.doesNotMatch(step, /FEE_DATA_KEY|FEE_ECON_GIST_ID|keychain|nasdaq|workflow_dispatch/);
+  assert.match(produce, /if: always\(\)/);
+});
 
 function epoch(iso) {
   return Math.floor(new Date(iso).getTime() / 1000);

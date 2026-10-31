@@ -61,6 +61,32 @@ test('identity-bound leveraged exposure folds VSTL into VST without changing raw
   assert.throws(() => summarizeTopHoldings(input, 3, [{ ...rules[0], ticker: 'WRONG' }]), /STYLE_TOP_HOLDINGS/);
   assert.throws(() => summarizeTopHoldings(input, 3, [{ ...rules[0], multiplier: 0 }]), /STYLE_TOP_HOLDINGS/);
 });
+test('top three combine verified Alphabet share classes across accounts before the cutoff', () => {
+  const row=(ticker,valueUsd,market='NASDAQ')=>({holdingId:1,ticker,valueUsd,
+    sourceInstrument:{instrumentId:1,instrumentCode:ticker,market,currency:'USD'}});
+  const input={portfolios:[{portfolioId:936249,sourceDate:'2026-10-30',holdings:[row('GOOG',60),row('A',100),row('B',90)]},
+    {portfolioId:1350094,sourceDate:'2026-10-30',holdings:[{...row('GOOGL',50),holdingId:2},row('C',80),row('GOOG',10)]}]};
+  const before=structuredClone(input);
+  assert.deepEqual(summarizeTopHoldings(input),[{ticker:'GOOG/GOOGL',value:120},{ticker:'A',value:100},{ticker:'B',value:90}]);
+  assert.deepEqual(input,before,'source values and identities are immutable');
+  for(const edit of [r=>delete r.sourceInstrument,r=>r.sourceInstrument.market='OTHER',r=>r.sourceInstrument.currency='EUR',r=>r.sourceInstrument.instrumentCode='OTHER']){
+    const r=row('GOOGL',50);edit(r);
+    const view=summarizeTopHoldings({portfolios:[{holdings:[row('GOOG',60),r]}]});
+    assert.equal(view.length,2,'unconfirmed identity must not inherit the company alias');
+  }
+});
+test('Alphabet aggregation leaves VSTL two-times replacement and raw asset totals unchanged',()=>{
+  const input={portfolios:[{portfolioId:1350094,sourceDate:'2026-10-30',holdings:[
+    {holdingId:29274212,ticker:'VSTL',valueUsd:20},
+    {holdingId:2,ticker:'VST',valueUsd:30},
+    {holdingId:3,ticker:'GOOG',valueUsd:20,sourceInstrument:{instrumentCode:'GOOG',market:'NASDAQ',currency:'USD'}},
+    {holdingId:4,ticker:'GOOGL',valueUsd:25,sourceInstrument:{instrumentCode:'GOOGL',market:'NASDAQ',currency:'USD'}},
+  ]}]};
+  const rules=[{portfolioId:1350094,holdingId:29274212,ticker:'VSTL',targetTicker:'VST',multiplier:2,effectiveFrom:'2026-09-30',basis:'Synthetic existing rule'}];
+  const prior=structuredClone(input);
+  assert.deepEqual(summarizeTopHoldings(input,3,rules),[{ticker:'VST',value:70},{ticker:'GOOG/GOOGL',value:45}]);
+  assert.deepEqual(input,prior);
+});
 const badCases = [
   ['missing classification has source row index', f => { f.input.proposals = []; }, /MISSING_ROWS_1/],
   ['duplicate stock identity', f => { f.input.portfolios[1].holdings.push({ ...f.input.portfolios[1].holdings[0] }); }, /HOLDING_DUPLICATE/],

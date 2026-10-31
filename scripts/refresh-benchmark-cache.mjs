@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, writeFile, rename, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const CACHE_PATH = process.env.BENCHMARK_CACHE_PATH || 'benchmark-close.json';
@@ -514,6 +515,278 @@ export async function refresh({ path = CACHE_PATH, now = new Date(), fetchImpl =
   return { changed, cache: changed ? next : existing, failures };
 }
 
+// Sharesight is the sole authority for this adapter. It emits only public
+// per-share benchmark fields, never a holding's quantity or personal payout.
+// The legacy CLI remains available only for the separately paused old workflow.
+const SS_INSTRUMENTS = Object.freeze({
+  spy: Object.freeze({ id: 44697, code: 'SPY', market: 'NYSE' }),
+  qqq: Object.freeze({ id: 1886621, code: 'QQQ', market: 'NASDAQ' }),
+});
+const SS_SOURCE = 'Sharesight holding daily prices and company-event gross dividends; retained verified earlier history';
+
+function ssDate(value) {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
+      || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) {
+    throw Error('SS_BENCHMARK_DATE');
+  }
+  return value;
+}
+
+function ssComplete(response) {
+  if (!response || typeof response !== 'object' || Array.isArray(response)) throw Error('SS_BENCHMARK_RESPONSE');
+  for (const part of [response, response.meta, response.pagination, response.meta?.pagination]) {
+    if (!part || typeof part !== 'object') continue;
+    if (part.truncated === true || part.restricted === true || part.limited === true
+        || part.has_more === true || (part.next_page !== undefined && part.next_page !== null && part.next_page !== false)) {
+      throw Error('SS_BENCHMARK_INCOMPLETE');
+    }
+  }
+  if (response.links?.next) throw Error('SS_BENCHMARK_INCOMPLETE');
+}
+
+export function sharesightBenchmarkPoint({ key, targetDate, holdingId, holdingResponse, payoutsResponse }) {
+  const expected = SS_INSTRUMENTS[key];
+  if (!expected || !Number.isSafeInteger(holdingId) || holdingId <= 0) throw Error('SS_BENCHMARK_BINDING');
+  ssDate(targetDate); ssComplete(holdingResponse); ssComplete(payoutsResponse);
+  const holding = holdingResponse.holding, instrument = holding?.instrument;
+  if (holding?.id !== holdingId || instrument?.id !== expected.id || instrument?.code !== expected.code
+      || instrument?.market_code !== expected.market || instrument?.currency_code !== 'USD'
+      || holding?.instrument_currency?.code !== 'USD') throw Error('SS_BENCHMARK_IDENTITY');
+  if (!Array.isArray(holding.values_over_time)) throw Error('SS_BENCHMARK_PRICES');
+  const prices = new Map();
+  for (const row of holding.values_over_time) {
+    // The verified holding endpoint supplies daily valuation dates directly.
+    // Do not move a date-only price into the preceding US day through UTC.
+    const date = ssDate(row?.timestamp);
+    if (!Number.isFinite(row?.value) || row.value <= 0) throw Error('SS_BENCHMARK_PRICE');
+    const price = roundPrice(row.value);
+    if (prices.has(date) && prices.get(date) !== price) throw Error('SS_BENCHMARK_PRICE_CONFLICT');
+    prices.set(date, price);
+  }
+  if (!prices.has(targetDate)) throw Error('SS_BENCHMARK_TARGET_PENDING');
+  if (!Array.isArray(payoutsResponse.payouts)) throw Error('SS_BENCHMARK_DIVIDENDS');
+  const events = new Map();
+  for (const payout of payoutsResponse.payouts) {
+    const event = payout?.company_event;
+    if (!event || !Number.isSafeInteger(event.id) || event.id <= 0
+        || event.currency_code !== 'USD' || !Number.isFinite(event.amount_per_share)
+        || event.amount_per_share < 0) throw Error('SS_BENCHMARK_DIVIDEND');
+    const date = ssDate(event.ex_date);
+    const entry = { d: date, units: Math.round(event.amount_per_share * 10000) };
+    if (events.has(event.id) && JSON.stringify(events.get(event.id)) !== JSON.stringify(entry)) {
+      throw Error('SS_BENCHMARK_DIVIDEND_CONFLICT');
+    }
+    events.set(event.id, entry);
+  }
+  const dividend = [...events.values()].filter(event => event.d === targetDate).reduce((sum, event) => sum + event.units, 0) / 10000;
+  return { d: targetDate, p: prices.get(targetDate), ...(dividend > 0 ? { div: dividend } : {}) };
+}
+
+export function appendSharesightBenchmark({ existing, points, targetDate, now = new Date() }) {
+  validateExistingCacheIdentity(existing); ssDate(targetDate);
+  if (!existing || !(now instanceof Date) || !Number.isFinite(now.getTime())) throw Error('SS_BENCHMARK_CACHE');
+  const next = structuredClone(existing);
+  let changed = false;
+  for (const key of ['spy', 'qqq']) {
+    const point = points?.[key], series = next.benchmarks[key].series;
+    if (point?.d !== targetDate || !Number.isFinite(point.p) || point.p <= 0
+        || (point.div !== undefined && (!Number.isFinite(point.div) || point.div < 0))) throw Error('SS_BENCHMARK_POINT');
+    if (!series.length) throw Error('SS_BENCHMARK_HISTORY');
+    let previous = '';
+    for (const row of series) {
+      ssDate(row?.d);
+      if (row.d <= previous || !Number.isFinite(row.p) || row.p <= 0
+          || (row.div !== undefined && (!Number.isFinite(row.div) || row.div < 0))) throw Error('SS_BENCHMARK_HISTORY');
+      previous = row.d;
+    }
+    if (previous > targetDate) throw Error('SS_BENCHMARK_HISTORY_REWRITE');
+    if (previous === targetDate) {
+      const old = series.at(-1);
+      if (old.p !== point.p || (old.div || 0) !== (point.div || 0)) throw Error('SS_BENCHMARK_TARGET_CONFLICT');
+    } else {
+      // No historical normalization, restatement, retention trimming or
+      // account-specific identifiers enter the cache from this source.
+      series.push({ d: point.d, p: point.p, ...(point.div > 0 ? { div: point.div } : {}) });
+      changed = true;
+    }
+  }
+  if (!changed) return { changed: false, cache: existing };
+  next.generatedAt = now.toISOString(); next.source = SS_SOURCE;
+  return { changed: true, cache: next };
+}
+
+export async function readSharesightBenchmark({ existing, targetDate, holdingIds, readJson, now = new Date() }) {
+  ssDate(targetDate);
+  if (typeof readJson !== 'function') throw Error('SS_BENCHMARK_READER');
+  const points = {};
+  // Authentication stays inside the caller's existing controlled client.
+  // Each of the two explicitly bound holdings receives exactly two GETs.
+  for (const key of ['spy', 'qqq']) {
+    const id = holdingIds?.[key];
+    if (!Number.isSafeInteger(id) || id <= 0) throw Error('SS_BENCHMARK_BINDING');
+  }
+  if (holdingIds.spy === holdingIds.qqq) throw Error('SS_BENCHMARK_BINDING');
+  for (const key of ['spy', 'qqq']) {
+    const id = holdingIds[key];
+    const holdingResponse = await readJson(`/api/v3/holdings/${id}?values_over_time=${targetDate}`);
+    const payoutsResponse = await readJson(`/api/v3/holdings/${id}/payouts?use_date=ex_date`);
+    points[key] = sharesightBenchmarkPoint({ key, targetDate, holdingId: id, holdingResponse, payoutsResponse });
+  }
+  // Both instruments must succeed before returning any cache candidate.
+  // This function does not write a cache or retry failed reads.
+  return appendSharesightBenchmark({ existing, points, targetDate, now });
+}
+
+// Reuse the report calendar and its ten-calendar-day catch-up boundary. Four
+// source GETs cover the missing range; no request per day and no second source.
+export async function sharesightBenchmarkDates(existing, targetDate) {
+  ssDate(targetDate);
+  const { reportSessionOpen, reportAddDays } = await import('./fee-report-period.mjs');
+  const last = existing?.benchmarks?.spy?.series?.at(-1)?.d;
+  if (!last || last !== existing?.benchmarks?.qqq?.series?.at(-1)?.d) throw Error('SS_BENCHMARK_HISTORY');
+  appendSharesightBenchmark({ existing, targetDate: last,
+    points: Object.fromEntries(['spy', 'qqq'].map(k => [k, existing.benchmarks[k].series.at(-1)])) });
+  if (last > targetDate || !reportSessionOpen(targetDate)) throw Error('SS_BENCHMARK_DATE');
+  if ((Date.parse(targetDate) - Date.parse(last)) / DAY_MS > 10) throw Error('SS_BENCHMARK_RANGE');
+  const dates = [];
+  for (let date = reportAddDays(last, 1); date <= targetDate; date = reportAddDays(date, 1)) {
+    if (reportSessionOpen(date)) dates.push(date);
+  }
+  return dates;
+}
+
+export async function readSharesightBenchmarkRange({ existing, targetDate, holdingIds, readJson, now = new Date() }) {
+  const dates = await sharesightBenchmarkDates(existing, targetDate);
+  if (!dates.length) return { changed: false, cache: existing, dates, sourceGets: 0 };
+  if (typeof readJson !== 'function' || !['spy', 'qqq'].every(k => Number.isSafeInteger(holdingIds?.[k]) && holdingIds[k] > 0)
+      || holdingIds.spy === holdingIds.qqq) throw Error('SS_BENCHMARK_BINDING');
+  const points = {};
+  for (const key of ['spy', 'qqq']) {
+    const holdingId = holdingIds[key];
+    const holdingResponse = await readJson(`/api/v3/holdings/${holdingId}?values_over_time=${dates[0]}`);
+    const payoutsResponse = await readJson(`/api/v3/holdings/${holdingId}/payouts?use_date=ex_date`);
+    points[key] = dates.map(date => sharesightBenchmarkPoint({ key, targetDate: date, holdingId, holdingResponse, payoutsResponse }));
+  }
+  let cache = existing;
+  for (let i = 0; i < dates.length; i++) cache = appendSharesightBenchmark({ existing: cache,
+    points: { spy: points.spy[i], qqq: points.qqq[i] }, targetDate: dates[i], now }).cache;
+  return { changed: true, cache, dates, sourceGets: 4 };
+}
+
+const SS_REPO = 'huanwujoy-crypto/fee-console', SS_BRANCH = 'market-data-cache';
+const SS_SHA = /^[a-f0-9]{40}$/;
+const ssBlob = bytes => createHash('sha1').update(`blob ${Buffer.byteLength(bytes)}\0`).update(bytes).digest('hex');
+const SS_SAFE_ERRORS = new Set(['DATE', 'RESPONSE', 'INCOMPLETE', 'BINDING', 'IDENTITY', 'PRICES', 'PRICE',
+  'PRICE_CONFLICT', 'TARGET_PENDING', 'DIVIDENDS', 'DIVIDEND', 'DIVIDEND_CONFLICT', 'CACHE', 'POINT', 'HISTORY',
+  'HISTORY_REWRITE', 'TARGET_CONFLICT', 'READER', 'RANGE', 'MODE', 'TOKEN', 'BASE_CHANGED', 'COMMIT_UNCERTAIN',
+  'COMMIT_VERIFICATION', 'HTTP', 'NETWORK', 'TIMEOUT', 'RESPONSE_SIZE', 'AUTH', 'LOCAL_WRITE', 'ARGUMENT']);
+export function sharesightBenchmarkFailureCode(error) {
+  const code = typeof error?.message === 'string' && error.message.startsWith('SS_BENCHMARK_')
+    ? error.message.slice('SS_BENCHMARK_'.length) : '';
+  return 'SS_BENCHMARK_' + (SS_SAFE_ERRORS.has(code) ? code : 'RESPONSE');
+}
+
+// Only a public per-share projection reaches GitHub. The existing owner token
+// signs one fixed-file CAS update; uncertainty never triggers a second mutation.
+export async function commitSharesightBenchmark({ beforeBytes, afterBytes, expectedMain, expectedCacheHead,
+  targetDate, token, request: suppliedRequest }) {
+  ssDate(targetDate);
+  if (!SS_SHA.test(expectedMain || '') || !SS_SHA.test(expectedCacheHead || '')) throw Error('SS_BENCHMARK_BINDING');
+  if (typeof token !== 'string' || token.length < 20 || /[\r\n\0]/.test(token)) throw Error('SS_BENCHMARK_TOKEN');
+  const request = suppliedRequest || (await import('./fee-cloud-commit.mjs')).request;
+  const graph = 'https://api.github.com/graphql', rest = `https://api.github.com/repos/${SS_REPO}`;
+  const readRefs = () => request(graph, token, { method: 'POST', body: JSON.stringify({ query:
+    'query { viewer { login } repository(owner:"huanwujoy-crypto", name:"fee-console") { main:ref(qualifiedName:"refs/heads/main") { target { oid } } cache:ref(qualifiedName:"refs/heads/market-data-cache") { target { oid } } file:object(expression:"market-data-cache:benchmark-close.json") { oid } } }' }) });
+  const refs = await readRefs(), repository = refs?.data?.repository;
+  if (refs?.errors || refs?.data?.viewer?.login !== 'huanwujoy-crypto' || repository?.main?.target?.oid !== expectedMain
+      || repository?.cache?.target?.oid !== expectedCacheHead || repository?.file?.oid !== ssBlob(beforeBytes)) throw Error('SS_BENCHMARK_BASE_CHANGED');
+  let result;
+  try {
+    result = await request(graph, token, { method: 'POST', body: JSON.stringify({
+      query: 'mutation($input:CreateCommitOnBranchInput!){createCommitOnBranch(input:$input){commit{oid}ref{name}}}',
+      variables: { input: { branch: { repositoryNameWithOwner: SS_REPO, branchName: SS_BRANCH }, expectedHeadOid: expectedCacheHead,
+        message: { headline: `Sharesight benchmark ${targetDate}` },
+        fileChanges: { additions: [{ path: 'benchmark-close.json', contents: Buffer.from(afterBytes).toString('base64') }] } } },
+    }) });
+  } catch { throw Error('SS_BENCHMARK_COMMIT_UNCERTAIN'); }
+  const oid = result?.data?.createCommitOnBranch?.commit?.oid;
+  if (result?.errors || !SS_SHA.test(oid || '') || result?.data?.createCommitOnBranch?.ref?.name !== SS_BRANCH) throw Error('SS_BENCHMARK_COMMIT_UNCERTAIN');
+  try {
+    const commit = await request(`${rest}/commits/${oid}`, token);
+    const current = await readRefs();
+    if (commit?.sha !== oid || commit?.commit?.verification?.verified !== true || commit?.author?.login !== 'huanwujoy-crypto'
+        || commit?.parents?.length !== 1 || commit.parents[0].sha !== expectedCacheHead || commit?.files?.length !== 1
+        || commit.files[0].filename !== 'benchmark-close.json' || commit.files[0].status !== 'modified'
+        || commit.files[0].sha !== ssBlob(afterBytes) || current?.errors
+        || current?.data?.repository?.main?.target?.oid !== expectedMain
+        || current?.data?.repository?.cache?.target?.oid !== oid || current?.data?.repository?.file?.oid !== ssBlob(afterBytes)) {
+      throw Error();
+    }
+  } catch { throw Error('SS_BENCHMARK_COMMIT_VERIFICATION'); }
+  return oid;
+}
+
+export async function refreshSharesightCloud({ path, targetDate, mode, expectedMain, expectedCacheHead,
+  clientId, clientSecret, holdingIds, githubToken, fetchImpl = globalThis.fetch, githubRequest, now = new Date() }) {
+  if (!['shadow', 'publish'].includes(mode)) throw Error('SS_BENCHMARK_MODE');
+  if (!SS_SHA.test(expectedMain || '') || !SS_SHA.test(expectedCacheHead || '')) throw Error('SS_BENCHMARK_BINDING');
+  const beforeBytes = await readFile(path), existing = JSON.parse(beforeBytes);
+  const dates = await sharesightBenchmarkDates(existing, targetDate);
+  if (!dates.length) return { changed: false, targetDate, sourceGets: 0, cacheCommit: null };
+  if (!['spy', 'qqq'].every(k => Number.isSafeInteger(holdingIds?.[k]) && holdingIds[k] > 0)
+      || holdingIds.spy === holdingIds.qqq) throw Error('SS_BENCHMARK_BINDING');
+  if (mode === 'publish' && (typeof githubToken !== 'string' || githubToken.length < 20 || /[\r\n\0]/.test(githubToken))) throw Error('SS_BENCHMARK_TOKEN');
+  const { SharesightCloudReader } = await import('./fee-cloud-source.mjs');
+  const { boundedJson, BoundedJsonError } = await import('./fee-http-json.mjs');
+  let accessToken;
+  try { accessToken = await new SharesightCloudReader({ clientId, clientSecret, fetchImpl, timeoutMs: 20_000 }).token(); }
+  catch { throw Error('SS_BENCHMARK_AUTH'); }
+  const routes = new Set(['spy', 'qqq'].flatMap(k => [
+    `/api/v3/holdings/${holdingIds[k]}?values_over_time=${dates[0]}`,
+    `/api/v3/holdings/${holdingIds[k]}/payouts?use_date=ex_date`,
+  ]));
+  const readJson = async route => {
+    if (!routes.delete(route)) throw Error('SS_BENCHMARK_BINDING');
+    try { return await boundedJson(fetchImpl, `https://api.sharesight.com${route}`, { method: 'GET',
+      headers: { Accept: 'application/json', Authorization: `Bearer ${accessToken}` } },
+    { timeoutMs: 20_000, maxBytes: 2 * 1024 * 1024, requireJsonType: true }); }
+    catch (error) {
+      const code = error instanceof BoundedJsonError ? error.code : 'NETWORK';
+      throw Error('SS_BENCHMARK_' + ({ HTTP: 'HTTP', TIMEOUT: 'TIMEOUT', NETWORK: 'NETWORK', SIZE: 'RESPONSE_SIZE' }[code] || 'RESPONSE'));
+    }
+  };
+  let candidate;
+  try { candidate = await readSharesightBenchmarkRange({ existing, targetDate, holdingIds, readJson, now }); }
+  finally { accessToken = null; }
+  const afterBytes = Buffer.from(JSON.stringify(candidate.cache, null, 2) + '\n');
+  const cacheCommit = mode === 'publish' ? await commitSharesightBenchmark({ beforeBytes, afterBytes,
+    expectedMain, expectedCacheHead, targetDate, token: githubToken, request: githubRequest }) : null;
+  // Only the public projection is saved. Never save authentication, raw holding
+  // responses, quantities, portfolio IDs or personal payout totals.
+  const temporary = path + '.sharesight-new';
+  let created = false;
+  try {
+    if (!(await readFile(path)).equals(beforeBytes)) throw Error();
+    await writeFile(temporary, afterBytes, { mode: 0o600, flag: 'wx' });
+    created = true;
+    await rename(temporary, path);
+  } catch { if (created) await rm(temporary, { force: true }); throw Error('SS_BENCHMARK_LOCAL_WRITE'); }
+  return { changed: true, targetDate, sourceGets: candidate.sourceGets, cacheCommit };
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await refresh();
+  if (process.argv.length === 3 && process.argv[2] === '--sharesight-cloud') {
+    try {
+      const env = process.env, plan = JSON.parse(env.REPORT_PLAN || 'null');
+      const { validateReportPlan } = await import('./fee-report-period.mjs');
+      if (!validateReportPlan(plan)) throw Error('SS_BENCHMARK_ARGUMENT');
+      const result = await refreshSharesightCloud({ path: env.BENCHMARK_CACHE_PATH, targetDate: plan.priceThrough,
+        mode: env.FEE_CLOUD_MODE, expectedMain: env.PLANNED_MAIN, expectedCacheHead: env.BENCHMARK_CACHE_HEAD,
+        clientId: env.FEE_CLOUD_SHARESIGHT_CLIENT_ID, clientSecret: env.FEE_CLOUD_SHARESIGHT_CLIENT_SECRET,
+        holdingIds: { spy: Number(env.FEE_BENCHMARK_SPY_HOLDING_ID), qqq: Number(env.FEE_BENCHMARK_QQQ_HOLDING_ID) },
+        githubToken: env.FEE_CLOUD_GITHUB_TOKEN });
+      console.log(JSON.stringify(result));
+    } catch (error) { console.error(sharesightBenchmarkFailureCode(error)); process.exitCode = 1; }
+  } else if (process.argv.length === 2) await refresh();
+  else { console.error('SS_BENCHMARK_ARGUMENT'); process.exitCode = 1; }
 }

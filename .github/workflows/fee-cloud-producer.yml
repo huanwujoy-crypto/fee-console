@@ -149,10 +149,12 @@ jobs:
           persist-credentials: false
 
       - name: Read the independent benchmark cache
+        id: benchmark_base
         shell: bash
         run: |
           set -euo pipefail
           git fetch --no-tags origin market-data-cache:refs/remotes/origin/market-data-cache
+          echo "sha=$(git rev-parse origin/market-data-cache)" >> "$GITHUB_OUTPUT"
           mkdir -m 700 "$RUNNER_TEMP/fee-cloud-private"
           git show origin/market-data-cache:benchmark-close.json > "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
           chmod 600 "$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
@@ -179,6 +181,23 @@ jobs:
           secrets: |-
             client_id:family-portfolio-gateway/sharesight-broker-sync-client-id/1
             client_secret:family-portfolio-gateway/sharesight-broker-sync-client-secret/1
+
+      - name: Complete the frozen price cutoff from Sharesight
+        shell: bash
+        env:
+          FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.sharesight_credentials.outputs.client_id }}
+          FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.sharesight_credentials.outputs.client_secret }}
+          FEE_BENCHMARK_SPY_HOLDING_ID: ${{ vars.FEE_BENCHMARK_SPY_HOLDING_ID }}
+          FEE_BENCHMARK_QQQ_HOLDING_ID: ${{ vars.FEE_BENCHMARK_QQQ_HOLDING_ID }}
+          FEE_CLOUD_GITHUB_TOKEN: ${{ vars.FEE_CLOUD_MODE == 'publish' && secrets.FEE_CLOUD_GITHUB_TOKEN || '' }}
+          FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
+          PLANNED_MAIN: ${{ needs.period.outputs.main }}
+          BENCHMARK_CACHE_HEAD: ${{ steps.benchmark_base.outputs.sha }}
+          REPORT_PLAN: ${{ needs.period.outputs.plan }}
+        run: |
+          set -euo pipefail
+          export BENCHMARK_CACHE_PATH="$RUNNER_TEMP/fee-cloud-private/benchmark-close.json"
+          node scripts/refresh-benchmark-cache.mjs --sharesight-cloud
 
       - name: Read, calculate and validate the encrypted candidate
         id: producer
