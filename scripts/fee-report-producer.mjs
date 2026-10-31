@@ -140,6 +140,20 @@ const RECOVERY_FAILED_RUNS=Object.freeze([
 // Filled from the final index-only candidate bytes before this package freezes.
 const RECOVERY_UI_BLOB='1f1218943293e035bbfe07fa56e9b74341c22177';
 const RECOVERY_OWNER=283054367;
+// Preserve the consumed October 28 contract and its evidence. The independently
+// approved October 30 admission belongs only to this signed immediate successor;
+// it neither resets ordinary attempts nor grants a future target/version a retry.
+const RECOVERY_SCOPES=Object.freeze([
+ Object.freeze({target:RECOVERY_TARGET,baseSha:RECOVERY_BASE,repairBase:RECOVERY_REPAIR_BASE,files:RECOVERY_REPAIR_FILES,failures:RECOVERY_FAILED_RUNS,uiBlob:RECOVERY_UI_BLOB}),
+ Object.freeze({target:'2026-10-30',baseSha:'2ba1e968e7a5401c9bb90aac967f4e57e34a7078',repairBase:'2ba1e968e7a5401c9bb90aac967f4e57e34a7078',
+  baseParents:Object.freeze(['7048510f1138b44113089b37ac112de30d95e105','7171c1a028e6557ae37529655c4d01c6fa9d817c']),
+  files:Object.freeze(['.github/workflows/fee-cloud-producer.yml','scripts/fee-trade-cash-evidence.mjs','scripts/fee-cloud-source.test.mjs','scripts/fee-source-acceptance.test.mjs','scripts/fee-report-producer.mjs','scripts/fee-report-producer.test.mjs']),
+  failures:Object.freeze([
+   {id:41161244083,jobId:124419094644,head:'b08f45e76ca57323dbfdea6d7c17134c45cfa19c'},
+   {id:41163889615,jobId:124427211645,head:'bac02b38b9ce52376464556575df9aadb17826ab'},
+  ]),uiBlob:'26096fe78ad571d7a8a43476d2fbf72f1194797d'}),
+]);
+const recoveryScope=target=>RECOVERY_SCOPES.find(s=>s.target===target);
 export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recoveryMain=null,fetchImpl=globalThis.fetch}={}){
   if(!validateReportPlan(plan)||!Number.isFinite(now?.getTime()))fail('SOURCE_ATTEMPT_METADATA');
   if(recoveryMain!==null&&!/^[a-f0-9]{40}$/.test(recoveryMain))fail('RECOVERY_METADATA');
@@ -155,7 +169,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
   }
   const expected='Produce '+(plan.kind.startsWith('daily')?'daily':plan.kind==='monthly'?'monthly':'weekly')+' '+plan.accountingThrough;
   let attempts=0,inProgress=false;
-  const evidence=recoveryMain===null?null:{currentRun:null,entries:[],reservations:[],otherSourceActive:false};
+  const evidence=recoveryMain===null?null:{currentRun:null,entries:[],reservations:[],otherSourceActive:false},scope=recoveryScope(plan.accountingThrough);
   for(const r of runs){
     if(String(r.id)===String(currentRunId||'')){
       if(evidence)evidence.currentRun={id:r.id,head:r.head_sha,attempt:r.run_attempt,event:r.event,workflowId:r.workflow_id,actorId:r.actor?.id,status:r.status,conclusion:r.conclusion};
@@ -167,10 +181,10 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
       if(!Number.isSafeInteger(j.id)||j.id<=0||jobsSeen.has(j.id)||j.run_id!==r.id||j.head_sha!==r.head_sha||typeof j.name!=='string'||!['queued','in_progress','completed','waiting','pending','requested'].includes(j.status))fail('SOURCE_ATTEMPT_METADATA');
       jobsSeen.add(j.id);
       // Burn a new manual admission even if cancelled/queued/skipped before
-      // source entry. Only the four exact old failed runs are historical;
+      // source entry. Only the exact failures in this target's contract are historical;
       // their already-consumed admission cannot reserve this new exception.
-      if(evidence&&j.name==='period'&&r.event==='workflow_dispatch'&&[recoveryMain,RECOVERY_REPAIR_BASE].includes(r.head_sha)
-          &&!RECOVERY_FAILED_RUNS.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
+      if(evidence&&j.name==='period'&&r.event==='workflow_dispatch'&&[recoveryMain,scope?.repairBase].includes(r.head_sha)
+          &&!scope?.failures.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
       if(['period','watch','source-plan-check'].includes(j.name))continue;
@@ -198,31 +212,32 @@ export async function readReportRecoveryRelease(expectedMain,{fetchImpl=globalTh
   const signed=c=>c.author?.id===RECOVERY_OWNER&&c.author?.login==='huanwujoy-crypto'
     &&['huanwujoy-crypto','web-flow'].includes(c.committer?.login)
     &&c.commit?.verification?.verified===true&&c.commit.verification.reason==='valid';
+  const scope=RECOVERY_SCOPES.find(s=>s.repairBase===commit.parents?.[0]?.sha);
   if(ref.object?.sha!==expectedMain||commit.sha!==expectedMain||commit.parents?.length!==1
-      ||commit.parents[0].sha!==RECOVERY_REPAIR_BASE||!signed(commit)||!/^[a-f0-9]{40}$/.test(commit.commit?.tree?.sha||''))fail('RECOVERY_RELEASE');
+      ||!scope||!signed(commit)||!/^[a-f0-9]{40}$/.test(commit.commit?.tree?.sha||''))fail('RECOVERY_RELEASE');
   let base,comparison,tree;
-  try{[base,comparison,tree]=await Promise.all([get('commits/'+RECOVERY_REPAIR_BASE+'?per_page=1'),get('compare/'+RECOVERY_REPAIR_BASE+'...'+expectedMain+'?per_page=100'),get('git/trees/'+commit.commit.tree.sha)]);}catch{fail('RECOVERY_METADATA');}
+  try{[base,comparison,tree]=await Promise.all([get('commits/'+scope.repairBase+'?per_page=1'),get('compare/'+scope.repairBase+'...'+expectedMain+'?per_page=100'),get('git/trees/'+commit.commit.tree.sha)]);}catch{fail('RECOVERY_METADATA');}
   // No new UI version: the already deployed reviewed blob must remain exact.
-  // Only the reviewed eleven contract/repair/test files may differ from main.
+  // Only this contract's reviewed files may differ from its pinned main.
   const files=comparison.files,indices=Array.isArray(tree.tree)?tree.tree.filter(f=>f.path==='index.html'):[];
-  if(base.sha!==RECOVERY_REPAIR_BASE||base.parents?.length!==1||!signed(base)
+  if(base.sha!==scope.repairBase||(scope.baseParents?(!Array.isArray(base.parents)||JSON.stringify(base.parents.map(p=>p.sha))!==JSON.stringify(scope.baseParents)):base.parents?.length!==1)||!signed(base)
     ||comparison.status!=='ahead'||comparison.ahead_by!==1||comparison.behind_by!==0||comparison.total_commits!==1
-    ||comparison.base_commit?.sha!==RECOVERY_REPAIR_BASE||comparison.merge_base_commit?.sha!==RECOVERY_REPAIR_BASE
+    ||comparison.base_commit?.sha!==scope.repairBase||comparison.merge_base_commit?.sha!==scope.repairBase
     ||comparison.commits?.length!==1||comparison.commits[0].sha!==expectedMain
-    ||!Array.isArray(files)||files.length!==RECOVERY_REPAIR_FILES.length||new Set(files.map(f=>f.filename)).size!==files.length
-    ||files.some(f=>!RECOVERY_REPAIR_FILES.includes(f.filename)||f.status!=='modified'||f.previous_filename!==undefined||!/^[a-f0-9]{40}$/.test(f.sha||''))
-    ||tree.sha!==commit.commit.tree.sha||tree.truncated!==false||indices.length!==1||indices[0].mode!=='100644'||indices[0].type!=='blob'||indices[0].sha!==RECOVERY_UI_BLOB)fail('RECOVERY_RELEASE');
-  return {mainSha:expectedMain,parent:RECOVERY_REPAIR_BASE,baseSha:RECOVERY_BASE,repairBaseSha:RECOVERY_REPAIR_BASE,uiBlob:RECOVERY_UI_BLOB,signatureVerified:true};
+    ||!Array.isArray(files)||files.length!==scope.files.length||new Set(files.map(f=>f.filename)).size!==files.length
+    ||files.some(f=>!scope.files.includes(f.filename)||f.status!=='modified'||f.previous_filename!==undefined||!/^[a-f0-9]{40}$/.test(f.sha||''))
+    ||tree.sha!==commit.commit.tree.sha||tree.truncated!==false||indices.length!==1||indices[0].mode!=='100644'||indices[0].type!=='blob'||indices[0].sha!==scope.uiBlob)fail('RECOVERY_RELEASE');
+  return {mainSha:expectedMain,parent:scope.repairBase,baseSha:scope.baseSha,repairBaseSha:scope.repairBase,uiBlob:scope.uiBlob,signatureVerified:true};
 }
 export function validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release}={}){
-  const e=budget?.recoveryEvidence,c=e?.currentRun;
-  if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||plan.accountingThrough!==RECOVERY_TARGET||plan.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE'
-      ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===RECOVERY_BASE||release?.mainSha!==expectedMain||release.baseSha!==RECOVERY_BASE
-      ||release.repairBaseSha!==RECOVERY_REPAIR_BASE||release.parent!==RECOVERY_REPAIR_BASE||expectedMain===RECOVERY_REPAIR_BASE||release.uiBlob!==RECOVERY_UI_BLOB||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
+  const e=budget?.recoveryEvidence,c=e?.currentRun,scope=recoveryScope(plan?.accountingThrough);
+  if(!validateReportPlan(plan)||!isReviewedDailyPlan(plan)||!scope||plan.kind!=='daily'||plan.markets.join(',')!=='NASDAQ,NYSE'
+      ||!/^[a-f0-9]{40}$/.test(expectedMain||'')||expectedMain===scope.baseSha||release?.mainSha!==expectedMain||release.baseSha!==scope.baseSha
+      ||release.repairBaseSha!==scope.repairBase||release.parent!==scope.repairBase||expectedMain===scope.repairBase||release.uiBlob!==scope.uiBlob||release.signatureVerified!==true)fail('RECOVERY_SCOPE');
   if(!Number.isSafeInteger(Number(currentRunId))||Number(currentRunId)<=0||c?.id!==Number(currentRunId)||c.head!==expectedMain||c.attempt!==1||c.event!=='workflow_dispatch'||c.workflowId!==365873934||c.actorId!==RECOVERY_OWNER||c.status!=='in_progress'||c.conclusion!==null)fail('RECOVERY_RUN');
-  if(budget.attempts!==5||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==5||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
-  if(e.entries.some(x=>!RECOVERY_FAILED_RUNS.some(r=>r.id===x.runId&&r.head===x.head&&r.jobId===x.jobId)||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+RECOVERY_TARGET||x.status!=='completed'||x.conclusion!=='failure')
-      ||new Set(e.entries.map(x=>x.runId)).size!==5||new Set(e.entries.map(x=>x.jobId)).size!==5)fail('RECOVERY_PRIOR_RUNS');
+  if(budget.attempts!==scope.failures.length||budget.inProgress!==false||!Array.isArray(e.entries)||e.entries.length!==scope.failures.length||!Array.isArray(e.reservations)||e.reservations.length||e.otherSourceActive!==false)fail('RECOVERY_CONSUMED');
+  if(e.entries.some(x=>!scope.failures.some(r=>r.id===x.runId&&r.head===x.head&&r.jobId===x.jobId)||x.attempt!==1||x.event!=='workflow_dispatch'||x.runStatus!=='completed'||x.runConclusion!=='failure'||x.name!=='Produce daily '+scope.target||x.status!=='completed'||x.conclusion!=='failure')
+      ||new Set(e.entries.map(x=>x.runId)).size!==scope.failures.length||new Set(e.entries.map(x=>x.jobId)).size!==scope.failures.length)fail('RECOVERY_PRIOR_RUNS');
   return true;
 }
 export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),currentRunId=process.env.GITHUB_RUN_ID,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease}={}){
@@ -237,7 +252,7 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
   if(plans.some(p=>!validateReportPlan(p)))fail('PLAN');
-  if(recoveryMain!==null&&(!plan||!isReviewedDailyPlan(plan)||plan.accountingThrough!==RECOVERY_TARGET))fail('RECOVERY_SCOPE');
+  if(recoveryMain!==null&&(!plan||!isReviewedDailyPlan(plan)||!recoveryScope(plan.accountingThrough)))fail('RECOVERY_SCOPE');
   if(plans.some(p=>isReviewedDailyPlan(p)&&reviewedSyncDate!==p.accountingThrough)
       ||reviewedSyncDate!==null&&(!plan||!isReviewedDailyPlan(plan)||reviewedSyncDate!==plan.accountingThrough))fail('MANUAL_SYNC_CONFIRMATION');
   const latest=plans.at(-1),startedAt=now.toISOString();
@@ -411,8 +426,9 @@ export function reviewedSyncConfirmation(args,{env=process.env,readEvent}={}){
 export function reviewedRecoveryConfirmation(args,{env=process.env,readEvent}={}){
   const value=args['recovery-main'];if(value===undefined)return null;
   try{
-    if(!/^[a-f0-9]{40}$/.test(value)||value===RECOVERY_BASE||reviewedSyncConfirmation(args,{env,readEvent})!==RECOVERY_TARGET
-        ||args['report-target']!==RECOVERY_TARGET||env.GITHUB_SHA!==value||env.GITHUB_REPOSITORY!=='huanwujoy-crypto/fee-console'
+    const scope=recoveryScope(args['report-target']);
+    if(!scope||!/^[a-f0-9]{40}$/.test(value)||value===scope.baseSha||reviewedSyncConfirmation(args,{env,readEvent})!==scope.target
+        ||env.GITHUB_SHA!==value||env.GITHUB_REPOSITORY!=='huanwujoy-crypto/fee-console'
         ||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||!/^[1-9]\d{0,15}$/.test(env.GITHUB_RUN_ID||''))throw Error();
     const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
     if(event.inputs.recovery_main!==value||event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!=='huanwujoy-crypto/fee-console')throw Error();

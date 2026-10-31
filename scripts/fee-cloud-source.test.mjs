@@ -19,8 +19,41 @@ import { buildWriterFailureDiagnostic, validateWriterFailureDiagnostic, WRITER_D
 import { reportFailureCode } from './fee-report-producer.mjs';
 import { CLOUD_ACCOUNTS, parseSourceJson } from './fee-cloud-source.mjs';
 import { reportAddDays } from './fee-report-period.mjs';
+import { isSharesightDeclaredTradeCash, sharesightCashRelations } from './fee-trade-cash-evidence.mjs';
 
 const D = "2026-09-23";
+function quotedPrincipalFixture(){
+ const key='webull.manual|10205226|abcdef0123456789|BUY|TEST|2|10|cash';
+ return {account:'webull',portfolioId:1350094,targetDate:D,row:{
+  id:777,cash_account_id:90250,date_time:D+'T00:00:00Z',amount:-20,trade_id:null,holding_id:null,payout_id:null,foreign_identifier:null,
+  cash_account_transaction_type:{name:'WITHDRAWAL'},
+  description:`Webull TEST BUY2@10 securities principal; NOT external funding. Trade222; Gmailabcdef0123456789; actual fee0.00. key=${key}`}};
+}
+test('quoted principal: complete dated source declaration maps to internal cash without a new flow',()=>{
+ const f=quotedPrincipalFixture();assert.equal(isSharesightDeclaredTradeCash(f),true);
+ const source=raw(),before=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+ source.webull.cashTransactions[90250].cash_account_transactions=[f.row];
+ const next=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+ for(const k of ['accounts','splits','acctCash','prevAcctCash','benchmark','sourceReference'])assert.deepEqual(next[k],before[k],k);
+ const flow=next.flows.find(v=>v.acct==='webull');assert.equal(flow.evidence,'internal_trade');assert.equal(flow.amount,-20);
+ const r=reconcileFlows([],[],next.flows,{reference:true});assert.deepEqual(r.auto,[]);assert.deepEqual(r.unresolved,[]);assert.deepEqual(r.errors,[]);
+ const links=sharesightCashRelations({...f,trades:[{id:222}],cashRows:[f.row]});
+ assert.deepEqual(links.relatedCash.get(222),[777],'the cash leg remains related for the noncash guard');
+});
+test('quoted principal: arbitrary notes, wrong identity/date/side and incomplete grammar remain untrusted',()=>{
+ const changes=[f=>f.account='schwab',f=>f.portfolioId=936249,f=>f.targetDate='2026-09-22',
+  f=>f.row.payout_id=1,f=>f.row.cash_account_transaction_type.name='DEPOSIT',f=>f.row.amount=20,
+  f=>f.row.amount=0,f=>f.row.amount=NaN,f=>f.row.amount='-20',f=>f.row.trade_id=223,
+  f=>f.row.foreign_identifier='unrelated',f=>f.row.description='NOT external funding',
+  f=>f.row.description+=' extra',f=>f.row.description=f.row.description.replace('BUY2','SELL2'),
+  f=>f.row.description=f.row.description.replace('2@10','0@10'),f=>f.row.description=f.row.description.replace('2@10','2@0'),
+  f=>f.row.description=f.row.description.replace('|BUY|','|SELL|'),f=>f.row.description=f.row.description.replace('|TEST|','|OTHER|'),
+  f=>f.row.description=f.row.description.replace('|2|10|cash','|3|10|cash'),f=>f.row.description=f.row.description.replace('Gmailabcdef','Gmailfedcba'),
+  f=>f.row.description=f.row.description.replace('actual fee0.00','actual fee-1'),f=>f.row.description=f.row.description.replace('securities principal; ','')];
+ for(const change of changes){const f=quotedPrincipalFixture();change(f);assert.equal(isSharesightDeclaredTradeCash(f),false,change.toString());}
+ const f=quotedPrincipalFixture();f.row.description='unknown withdrawal';
+ const r=reconcileFlows([],[],[{date:D,acct:'webull',amount:-20,type:'WITHDRAWAL',desc:f.row.description}],{reference:true});assert.equal(r.unresolved.length,1);
+});
 // Legacy synthetic cases already state an independent opening in their prior
 // fixture. Give those fixtures an explicit predecessor record. New ledger tests
 // supply their own frozen history and never derive it from target or closing.
