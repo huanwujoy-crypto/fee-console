@@ -72,11 +72,14 @@ validateGiftFixture(giftFixtureBytes);
 // Every financial contract region must still match the existing next fixture.
 const RATIO_READBACK_UI_SHA256 = '46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61';
 const RATIO_FILE_PIN_UI_SHA256 = '7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541';
+// Exact display-only successor; support-first and installed successor both keep
+// every frozen financial-contract region check below. This is not run approval.
+const RATIO_PRESENTATION_UI_SHA256 = 'd71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5';
 const RATIO_COMPLETION_UI_SHA256 = 'abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34';
 const ASSET_ALLOCATION_UI_SHA256 = 'de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d';
 export function reviewedUiStage(html) {
   const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 ? "next" : null;
+    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 || sha === RATIO_PRESENTATION_UI_SHA256 ? "next" : null;
   assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);

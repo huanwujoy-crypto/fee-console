@@ -496,7 +496,7 @@ function assetBlockForReviewedStage(page) {
     assert.equal(page.includes(assetEnd),false);
     return reviewedAssetBlock;
   }
-  assert.ok(["de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d","abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34","46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61","7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541"].includes(digest),
+  assert.ok(["de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d","abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34","46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61","7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541","d71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5"].includes(digest),
     "asset allocation tests require an exact reviewed old or new page");
   assert.equal(page.split(assetStart).length,2);
   assert.equal(page.split(assetEnd).length,2);
@@ -593,7 +593,7 @@ test("old page remains explicitly legacy during support-only deployment",()=>{
   if(oldPageStage){
     const oldHealth=new Function("DAILY","num","todayStr",`${actualHealthBlock}\nreturn health(arguments[3],arguments[4]);`);
     assert.equal(oldHealth({flowsUnresolved:[]},num,()=>"2026-10-29",{state:"verified"},{lastPt:assetPoint({growth:100}),nav:115}).hold,true);
-  }else assert.ok(["de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d","abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34","46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61","7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541"].includes(pageSha(html)));
+  }else assert.ok(["de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d","abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34","46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61","7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541","d71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5"].includes(pageSha(html)));
 });
 const uiHealth=(point,{verified=true,unresolved=[]}={})=>new Function("DAILY","num","todayStr",
   `${healthBlock}\nreturn health(arguments[3],arguments[4]);`)({flowsUnresolved:unresolved},num,()=>"2026-10-29",
