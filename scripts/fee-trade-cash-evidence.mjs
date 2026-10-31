@@ -156,11 +156,30 @@ function principalRelations({account,row,trades}){
 // explicitly identify securities principal. They do not need a second,
 // same-day trade record to be treated as internal cash. Generic notes and bare
 // DEPOSIT/WITHDRAWAL records deliberately do not acquire that meaning here.
+const DECLARED_QUOTED_BUY_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) BUY ?(\d+(?:\.\d+)?)\s*@(\d+(?:\.\d+)?) securities principal; NOT external funding\. Trade([1-9]\d{0,14}); Gmail([a-f0-9]{16}); actual fee\s*(\d+(?:\.\d+)?)\. key=(webull\.manual\|10205226\|[a-f0-9]{16}\|BUY\|[A-Z0-9][A-Z0-9./^-]{0,31}\|\d+(?:\.\d+)?\|\d+(?:\.\d+)?\|cash)$/;
+// Relationship recognition must also cover the compact BUY<quantity> prefix,
+// even when the remainder cannot grant a principal role. A real cash pointer
+// must not become a claim of zero cash after a malformed key or fee.
+const DECLARED_QUOTED_BUY_POINTER_RE = /^Webull [A-Z0-9][A-Z0-9./^-]{0,31} BUY\d+(?:\.\d+)?\s*@\d+(?:\.\d+)? securities principal; NOT external funding\. Trade/;
 export function isSharesightDeclaredTradeCash({account,portfolioId,row,targetDate}){
  if(account!=='webull'||portfolioId!==CLOUD_ACCOUNTS.webull.portfolioId||row.payout_id!=null
    ||String(row.date_time||'').slice(0,10)!==targetDate
    ||!['DEPOSIT','WITHDRAWAL'].includes(row.cash_account_transaction_type?.name))return false;
  const text=typeof row.description==='string'?row.description:'';
+ // The dated Sharesight cash record is authoritative. This newer memo keeps
+ // the same explicit principal declaration, with quantity/price before it.
+ // Verify its complete identity syntax without requiring a second trade read.
+ const quoted=DECLARED_QUOTED_BUY_RE.exec(text);
+ if(quoted){
+  const [,ticker,quantity,price,tradeId,gmail,fee,key]=quoted;
+  return row.cash_account_transaction_type.name==='WITHDRAWAL'
+   &&finite(row.amount)&&row.amount<0
+   &&Number(quantity)>0&&finite(Number(quantity))&&Number(price)>0&&finite(Number(price))
+   &&finite(Number(fee))&&Number(fee)>=0
+   &&(row.trade_id==null||sameId(row.trade_id,tradeId))
+   &&key===`webull.manual|10205226|${gmail}|BUY|${ticker}|${quantity}|${price}|cash`
+   &&(row.foreign_identifier==null||row.foreign_identifier===''||row.foreign_identifier===key);
+ }
  const short=shortCash.exec(text),long=longCash.exec(text),principal=CONTROLLED_WEBULL_PRINCIPAL_RE.exec(text),net=NET_PROCEEDS_RE.exec(text);
  if(short)return /^webull\.manual\|10205226\|[a-f0-9]{16}\|(BUY|SELL)\|[A-Z0-9][A-Z0-9./^-]{0,31}\|\d+(?:\.\d+)?\|\d+(?:\.\d+)?\|cash$/.test(short[10]);
  if(long)return `${long[5]}-${long[6]}-${long[7]}`===targetDate&&long[12]==='webull.manual|10205226|...';
@@ -184,7 +203,7 @@ export function sharesightCashRelations({account,portfolioId,targetDate,trades,c
    // cannot grant the principal role. Invalid money/key text must never turn
    // a selected transfer's real cash leg into an assertion of zero cash.
    const text=typeof row.description==='string'?row.description:'';
-   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(text))
+   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(text)||DECLARED_QUOTED_BUY_POINTER_RE.test(text))
     for(const m of text.matchAll(/(?:\bTrade|\bSharesight trade )([1-9]\d{0,14});/g))pointers.add(id(m[1]));
    for(const pointer of principalRelations({account,row,trades}))pointers.add(pointer);
   }
@@ -223,7 +242,7 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
   if(row.trade_id!=null){try{pointerIds.add(id(row.trade_id));}catch{pointerIds.add(-1);}}
   if(account==='webull'){
    const description=typeof row.description==='string'?row.description:'';
-   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(description))
+   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(description)||DECLARED_QUOTED_BUY_POINTER_RE.test(description))
     for(const match of description.matchAll(/(?:\bTrade|\bSharesight trade )([^;\s]+);/g)){
      try{pointerIds.add(id(match[1]));}catch{pointerIds.add(-1);}
     }

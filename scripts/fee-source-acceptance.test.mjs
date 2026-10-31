@@ -245,6 +245,24 @@ test('complete selected BUY plus normal peer rejects a verified manual cash leg 
  f.raw.cashTransactions[8].cash_account_transactions=[];const flows=consumeManagedTransferProof(buildManagedTransferProof(f),'webull',D);assert.equal(flows.length,1);assert.equal(flows[0].amount,20);
  const a=reconcileFlows([],[],flows);assert.equal(reconcileFlows(a.auto,[],flows).auto.length,1);
 });
+function useCompactPrincipal(f){
+ const row=f.raw.cashTransactions[8].cash_account_transactions[0];
+ row.description='Webull SYNTH BUY2@10 securities principal; NOT external funding. Trade222; Gmailaaaaaaaaaaaaaaaa; actual fee0. key=webull.manual|10205226|aaaaaaaaaaaaaaaa|BUY|SYNTH|2|10|cash';return row;
+}
+test('compact declared principal passes the real reader and cannot conceal selected-transfer cash',async()=>{
+ const f=fixture('BUY','short',0);useCompactPrincipal(f);
+ const reader=new SharesightCloudReader({clientId:'synthetic',clientSecret:'synthetic',fetchImpl:transport(f).fetchImpl,reconcileInKind:true,sourceMode:'sharesight-reference'});
+ const out=normalizeRead(await reader.readOnce(D),D,{spy:100,qqq:100,spyd:0,qqqd:0},{sourceMode:'sharesight-reference'});
+ assert.equal(out.flows.find(x=>x.acct==='webull').evidence,'internal_trade');
+ assert.deepEqual(reconcileFlows([],[],out.flows,{reference:true}).unresolved,[]);
+ assert.equal(out.flows.filter(x=>x.evidence==='external_asset_transfer').length,0);
+ for(const change of [r=>{},r=>r.amount=-999,r=>r.description+=' malformed',r=>r.trade_id=999]){
+  const selected=selectedFixture();const row=useCompactPrincipal(selected);change(row);
+  assert.throws(()=>buildManagedTransferProof(selected),/CASH_LEG/);
+ }
+ const none=selectedFixture();useCompactPrincipal(none);none.raw.cashTransactions[8].cash_account_transactions=[];
+ assert.equal(consumeManagedTransferProof(buildManagedTransferProof(none),'webull',D).length,1);
+});
 function giftFixture(){const f=fixture();const t=f.raw.trades.trades[0];Object.assign(t,{price:0,value:0,brokerage:0,comments:'Synthetic gifted shares'});f.raw.trades=wire(f.raw.trades);f.raw.cashTransactions[8].cash_account_transactions=[];
  f.managementExemptionRegistry={schemaVersion:1,entries:[{id:'synthetic-gift',account:'webull',portfolioId:f.portfolio.id,holdingId:4,ticker:'SYNTH',firstHeldOn:P,effectiveFrom:P,authorizationRef:'synthetic prior owner policy',giftTradeIds:[222]}]};return f;}
 test('source zero-cost BUY is not new capital or an automatic management exemption',()=>{

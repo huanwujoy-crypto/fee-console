@@ -44,7 +44,7 @@ on:
         required: false
         default: ''
       recovery_main:
-        description: Separately approved target2026-10-28 recovery only; exact signed immediate-successor main SHA, never resets ordinary budgets
+        description: Separately approved single-use recovery for a code-pinned target; exact signed immediate-successor main SHA, never resets ordinary budgets
         type: string
         required: false
         default: ''
