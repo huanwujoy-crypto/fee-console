@@ -38,7 +38,7 @@ import { resolveManagementExemptions } from './fee-management-exemption.mjs';
 import {prepareRatioAttachment,prepareIbBootstrapAttachment} from './fee-ratio-packet.mjs';
 import { prepareIbManagerReturn } from './ib-manager-return-file.mjs';
 import {loadIbManagerReport,sameIbManagerData} from './ib-manager-report.mjs';
-import {buildReportMetadata,preserveReportMonthLocks} from './fee-report-metadata.mjs';
+import {buildReportMetadata,preserveReportMonthLocks,reportMetadataFailureCode} from './fee-report-metadata.mjs';
 import {validateReportPlan} from './fee-report-period.mjs';
 
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
@@ -106,7 +106,7 @@ const calibrated = flags.has("calibrated");
 const weekendCarry = flags.has("weekend-carry");
 let reportPlan=null;
 if(args['report-plan']!==undefined){
-  try{reportPlan=JSON.parse(args['report-plan']);if(!validateReportPlan(reportPlan)||weekendCarry||calibrated||flags.has('style-preflight'))throw Error();}catch{die('FEE_REPORT_METADATA_INVALID — nothing written');}
+  try{reportPlan=JSON.parse(args['report-plan']);if(!validateReportPlan(reportPlan)||weekendCarry||calibrated||flags.has('style-preflight'))throw Error();}catch{die('FEE_REPORT_PLAN_INPUT_INVALID — nothing written');}
 }
 if(args['ib-manager-input']!==undefined&&(!args['ib-manager-input']||process.env.IB_MANAGER_READ_ENABLED!=='true'||weekendCarry||calibrated))die('IB_REPORT_INPUT_REFUSED');
 if (weekendCarry && (calibrated || flags.has("style-preflight"))) {
@@ -634,11 +634,13 @@ if (styleResult?.registry) nextData.classificationRegistry = styleResult.registr
 if (managementResult?.registry) nextData.managementExemptionRegistry = managementResult.registry;
 
 let receiptState = "unchanged";
+let receiptUnavailableCode = null;
 if (economicInput) {
   // An unresolved or identified-but-unconfirmed cash movement makes fees and
   // Carry non-authoritative.  Keep the read-only AUM point, but remove the
   // receipt until the external-flow ledger has been confirmed.
   if (nextData.flowsUnresolved.length > 0) {
+    receiptUnavailableCode = 'FEE_REPORT_RECEIPT_UNRESOLVED_FLOW';
     if (data.feeCalculationReceipt) {
       delete nextData.feeCalculationReceipt;
       receiptState = "unavailable-removed";
@@ -650,6 +652,7 @@ if (economicInput) {
       if (error.code !== "UNCONFIRMED_EXTERNAL_CASH_FLOW") {
         die(`fee calculation receipt failed: ${error.message} — nothing written`);
       }
+      receiptUnavailableCode = 'FEE_REPORT_RECEIPT_UNCONFIRMED_EXTERNAL_FLOW';
       receiptState = data.feeCalculationReceipt ? "unavailable-removed" : "unavailable";
     }
     if (receipt) {
@@ -674,8 +677,11 @@ try{
     const locks=preserveReportMonthLocks(data,nextData,economicInput,{finalCutoff:reportPlan?.monthlyCutoffs?.at(-1)||null});
     if(locks!==undefined)nextData.feeReportMonthLocks=locks;
   }
-  if(reportPlan){if(reportPlan.accountingThrough!==date)throw Error();nextData.feeReportPublication=buildReportMetadata({plan:reportPlan,data:nextData});}
-}catch(error){die((error?.message==='FEE_REPORT_LOCKED_MONTH_CHANGED'?error.message:'FEE_REPORT_METADATA_INVALID')+' — nothing written');}
+  if(reportPlan){if(reportPlan.accountingThrough!==date)throw Error('FEE_REPORT_TARGET_DATE_MISMATCH');nextData.feeReportPublication=buildReportMetadata({plan:reportPlan,data:nextData});}
+}catch(error){
+  const code=reportMetadataFailureCode(error);
+  die((['FEE_REPORT_RECEIPT_MISSING','FEE_REPORT_MONTH_LOCK_NEXT_RECEIPT_MISSING'].includes(code)&&receiptUnavailableCode?receiptUnavailableCode:code)+' — nothing written');
+}
 // No-op is also an output claim: recheck the original source before either exit.
 try { verifyLegacySourceUnchanged(); }
 catch { die("private legacy source changed before output — nothing written"); }

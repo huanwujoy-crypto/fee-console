@@ -1925,14 +1925,14 @@ test('writer failure diagnostic survives real daily and period execution and the
   const dir=path.dirname(process.env.SYNTHETIC_SNAPSHOTS),snapshots=JSON.parse(fs.readFileSync(process.env.SYNTHETIC_SNAPSHOTS)),out=path.join(dir,'out');fs.mkdirSync(out,{mode:0o700});let reads=0,checks=0,cleanups=0;
   const readOnce=async d=>{reads++;const raw=structuredClone(snapshots[d]);for(const p of Object.values(raw)){for(const k of ['performance','cashAccounts','previousPerformance'])if(p[k])p[k]=parseSourceJson(JSON.stringify(p[k]));for(const k of ['cashTransactions','cashLedgerHistory'])if(p[k])p[k]=Object.fromEntries(Object.entries(p[k]).map(([id,v])=>[id,parseSourceJson(JSON.stringify(v))]));}return raw;};
   try{await produceReportPeriod({plan:dailyReportPlan('2026-10-23',['NYSE','NASDAQ'],{periodFrom:'2026-10-21',reviewedSyncDate:'2026-10-23'}),reviewedSyncDate:'2026-10-23',outputDir:out,benchmarkFile:process.env.SYNTHETIC_BENCHMARK,readOnce,fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){checks++;},cleanup(){cleanups++;}})});assert.fail('expected unresolved flow');}
-  catch(error){assert.equal(reportFailureCode(error),'FEE_CLOUD_WRITER_REPORT_METADATA_INVALID');assert.equal(error.message,'FEE_CLOUD_WRITER_REPORT_METADATA_INVALID');assert.equal(Object.hasOwn(error,'cause'),false);assert.deepEqual(fs.readdirSync(out),[]);assert.equal(reads,6);assert.equal(checks,2);assert.equal(cleanups,1);console.error(reportFailureCode(error));process.exitCode=1;}
+  catch(error){assert.equal(reportFailureCode(error),'FEE_CLOUD_WRITER_REPORT_RECEIPT_UNRESOLVED_FLOW');assert.equal(error.message,'FEE_CLOUD_WRITER_REPORT_RECEIPT_UNRESOLVED_FLOW');assert.equal(Object.hasOwn(error,'cause'),false);assert.deepEqual(fs.readdirSync(out),[]);assert.equal(reads,6);assert.equal(checks,2);assert.equal(cleanups,1);console.error(reportFailureCode(error));process.exitCode=1;}
  `);
  const clock=path.join(dir,'clock.mjs');fs.writeFileSync(clock,`const RealDate=Date,now=RealDate.parse('2026-10-26T06:00:00Z');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};let attempts=0;globalThis.fetch=async()=>{attempts++;throw Error('OFFLINE_UNMOCKED_FETCH_FORBIDDEN');};process.on('exit',()=>{if(attempts)process.exitCode=97;});`);
  const child=spawnSync(process.execPath,[script],{cwd:root,encoding:'utf8',timeout:30000,env:{...process.env,NODE_OPTIONS:[process.env.NODE_OPTIONS||'','--import='+clock].join(' ').trim(),GITHUB_RUN_ID:'123',GITHUB_SHA:'a'.repeat(40),GITHUB_RUN_ATTEMPT:'1',FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,IB_MANAGER_READ_ENABLED:'',FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',SYNTHETIC_SNAPSHOTS:snapshots,SYNTHETIC_BENCHMARK:benchmark}});
  assert.equal(child.status,1,child.stderr);assert.equal(child.stdout,'');assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original);
- assert.equal(child.stderr.trim().split('\n').length,2,child.stderr);assert.equal(child.stderr.trim().split('\n').at(-1),'FEE_CLOUD_WRITER_REPORT_METADATA_INVALID');assert.equal(child.stderr.includes(hidden),false);
+ assert.equal(child.stderr.trim().split('\n').length,2,child.stderr);assert.equal(child.stderr.trim().split('\n').at(-1),'FEE_CLOUD_WRITER_REPORT_RECEIPT_UNRESOLVED_FLOW');assert.equal(child.stderr.includes(hidden),false);
  const projection=safeProducerFailureSummary(child.stderr);
- assert.deepEqual(projection.diagnostic,{schema:'fee-console.writer-diagnostic.v1',code:'FEE_CLOUD_WRITER_REPORT_METADATA_INVALID',stage:'WRITER',termination:'EXIT',reportTarget:'2026-10-23',processingDate:'2026-10-23',processingIndex:3});
+ assert.deepEqual(projection.diagnostic,{schema:'fee-console.writer-diagnostic.v1',code:'FEE_CLOUD_WRITER_REPORT_RECEIPT_UNRESOLVED_FLOW',stage:'WRITER',termination:'EXIT',reportTarget:'2026-10-23',processingDate:'2026-10-23',processingIndex:3});
  const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
  const failureScript=workflow.match(/node --input-type=module - \"\$error_file\" <<'NODE'\n([\s\S]+?)\n          NODE/)[1];
  const prefix=WRITER_DIAGNOSTIC_PREFIX,code=projection.code,line=prefix+JSON.stringify(projection.diagnostic);
@@ -1952,4 +1952,32 @@ test('writer failure diagnostic survives real daily and period execution and the
    assert.equal(result.stdout.includes('fee-console.writer-diagnostic.v1'),wantDiagnostic);
    assert.equal(result.stdout.trim().split('\n').at(-1),wantCode);
  }
+});
+
+test('target30 real writer keeps successful receipts and separates missing-receipt causes from prior lock faults',async t=>{
+  const {dailyReportPlan,reportAddDays}=await import('./fee-report-period.mjs');
+  const {preserveReportMonthLocks}=await import('./fee-report-metadata.mjs');
+  const target='2026-10-30',prior='2026-10-29',dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-metadata-real-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const key=randomBytes(32),seal=(value,v)=>{const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(value)),c.final(),c.getAuthTag()]).toString('base64')});};
+  const economic={v:4,settings:{start:'2026-09-01',mgmt:2,carry:20},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]};
+  const make=through=>{const data={daily:[],flowsAuto:[],flowsUnresolved:[],status:{asOf:through,provisional:false,calibrated:false,unresolvedCount:0,notes:[],splitDelta:0}};for(let d='2026-09-01';d<=through;d=reportAddDays(d,1))data.daily.push({d,schwab:60,webull:40,cash:100,stock:0,other:0,spy:100,qqq:100,bd:d,bstate:'session',acctCash:{schwab:60,webull:40}});data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput:economic});return data;};
+  const oldLocks=preserveReportMonthLocks({},make('2026-09-30'),economic,{finalCutoff:'2026-09-30'}),econ=path.join(dir,'econ.json'),clock=path.join(dir,'clock.mjs');
+  fs.writeFileSync(econ,seal(economic,4),{mode:0o600});fs.writeFileSync(clock,"const D=Date,n=D.parse('2026-10-31T06:00:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[n]));}static now(){return n;}};globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN');};");
+  const plan=dailyReportPlan(target,['NYSE','NASDAQ'],{reviewedSyncDate:target});
+  for(const [name,locked,kind,expected] of [
+    ['normal',false,null,null],['normal-locked',true,null,null],
+    ['unresolved',false,'unresolved','RECEIPT_UNRESOLVED_FLOW'],['unconfirmed',false,'unconfirmed','RECEIPT_UNCONFIRMED_EXTERNAL_FLOW'],
+    ['unresolved-locked',true,'unresolved','RECEIPT_UNRESOLVED_FLOW'],['unconfirmed-locked',true,'unconfirmed','RECEIPT_UNCONFIRMED_EXTERNAL_FLOW'],
+    ['old-invalid-first',true,'unresolved','MONTH_LOCK_PREVIOUS_RECEIPT_INVALID'],
+  ]) await t.test(name,()=>{
+    const data=make(prior);if(locked)data.feeReportMonthLocks=structuredClone(oldLocks);if(name==='old-invalid-first')data.feeCalculationReceipt.receiptId='0'.repeat(64);
+    const file=path.join(dir,name+'.json'),before=seal(data,3);fs.writeFileSync(file,before,{mode:0o600});
+    const flows=kind?[{id:'synthetic-current-flow',date:target,acct:'webull',amount:1,type:'DEPOSIT',desc:'PRIVATE_CANARY',...(kind==='unconfirmed'?{evidence:'external_transfer',externalRef:'synthetic-confirmation'}:{})}]:[];
+    const webull=kind?41:40;
+    const args=['--date='+target,'--file='+file,'--schwab=60','--webull='+webull,'--cash='+(60+webull),'--stock=0','--other=0','--src-schwab='+target,'--src-webull='+target,'--acct-cash-schwab=60','--prev-acct-cash-schwab=60','--acct-cash-webull='+webull,'--prev-acct-cash-webull=40','--spy=100','--qqq=100','--src-bench='+target,'--bench-state=session','--flows='+JSON.stringify(flows),'--report-plan='+JSON.stringify(plan)];
+    const result=spawnSync(process.execPath,['--import',clock,new URL('./daily.mjs',import.meta.url).pathname,...args],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ}});
+    assert.equal(result.stderr.includes('PRIVATE_CANARY'),false);
+    if(expected){assert.equal(result.status,1,result.stderr);assert.equal(result.stderr.trim(),'error: FEE_REPORT_'+expected+' — nothing written');assert.equal(fs.readFileSync(file,'utf8'),before);}
+    else {assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/^ok 2026-10-30 /);}
+  });
 });

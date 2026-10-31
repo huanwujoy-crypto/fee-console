@@ -19,6 +19,7 @@ import { validateHealth } from "./fee-data-health.mjs";
 import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
 import {prepareIbManagerReport} from './ib-manager-report.mjs';
 import {validateReportPlan,selectReportBenchmark} from './fee-report-period.mjs';
+import {REPORT_METADATA_FAILURE_CODES} from './fee-report-metadata.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const NODE = process.execPath;
@@ -337,8 +338,7 @@ const WRITER_STYLE_CODES = new Set(["ACCOUNT", "ACCOUNT_STOCK_SUM", "AMOUNT", "B
     "STATIC_CONFLICT", "STATIC_IMMUTABLE", "STATIC_LEARNED_CONFLICT", "STATIC_MAP", "STOCK_SUM",
     "STYLE", "TICKER_CONFLICT", "TOP_HOLDINGS", "INPUT_REQUIRED", "INPUT_INVALID", "MANUAL_TOTALS_REFUSED"]);
 const WRITER_FAILURE_PATTERNS = [
-    [/^error: FEE_REPORT_METADATA_INVALID — nothing written$/m, "REPORT_METADATA_INVALID"],
-    [/^error: FEE_REPORT_LOCKED_MONTH_CHANGED — nothing written$/m, "REPORT_LOCKED_MONTH_CHANGED"],
+    ...REPORT_METADATA_FAILURE_CODES.map(code=>[new RegExp('^error: '+code+' — nothing written$','m'),code.slice(4)]),
     [/^error: MANAGEMENT_EXEMPTION_INVALID — nothing written$/m, "MANAGEMENT_EXEMPTION_INVALID"],
     [/^error: MANAGEMENT_EXEMPTION_INPUT_REQUIRED — nothing written$/m, "MANAGEMENT_EXEMPTION_INPUT_REQUIRED"],
     [/^error: SOURCE_FILE_CHANGED — nothing written$/m, "SOURCE_FILE_CHANGED"],
