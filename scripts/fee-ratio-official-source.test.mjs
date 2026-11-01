@@ -161,3 +161,35 @@ test('evergreen never fuzzy-merges spelling, trailing class or later date text, 
  for(const edit of [r=>r.sourceHoldings[0].valueUSD++,r=>r.sourceHoldings[0].account='Unknown',r=>r.sourceHoldings.push({...r.sourceHoldings[0]}),r=>r.accounts=[],r=>r.sourceHoldings[0].extra=true]){const bad=structuredClone(ranked);edit(bad.summary.classes[2].top5[0]);assert.throws(()=>f.exposure.buildRankedExposureView(bad));}
  assert.equal(f.built.input.classification.gold.secondaryIncluded,true);assert.equal(f.built.input.book.ib.totalValueUSD,projected().built.input.book.ib.totalValueUSD);
 });
+
+test('fund distributions classify original first fields before same-name merging, using own classification totals',()=>{
+ const raw=syntheticOfficialSource(),funds=raw.classification.positions.filter(p=>p.sharesightCategory==='常青基金');
+ const labels=['策略甲-渠道-2021-10-Shared I','策略乙-渠道-2022-10-Shared I','策略甲-2023-01-Other-I','2024-01-Unknown','Undated'];
+ funds.forEach((p,i)=>{const old=p.securityCode;p.securityCode=labels[i];for(const r of raw.exposure.rows)if(r.account===p.account&&r.securityCode===old)r.securityCode=p.securityCode;});
+ const extra={...funds[4],sourceRow:901,securityCode:'Another undated',valueUSD:0};raw.classification.positions.push(extra);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;raw.exposure.rows.push({...raw.exposure.rows.find(r=>r.securityCode===funds[4].securityCode),sourceRow:901,securityCode:extra.securityCode,valueUSD:0});raw.exposure.canonicalDataRows++;raw.exposure.allWorksheetXmlRows++;
+ const f=projected(raw),d=f.built.input.classification.fundDistributions.find(g=>g.name==='常青基金');
+ assert.equal(d.totalCents,49000);assert.deepEqual(d.groups,[{name:'策略甲',valueCents:19800},{name:'未分类',valueCents:19300},{name:'策略乙',valueCents:9900}]);
+ assert.equal(d.groups.reduce((s,g)=>s+g.valueCents,0),d.totalCents);
+ assert.notEqual(d.totalCents,Math.round(f.built.input.exposure.summary.classes[2].totalValueUSD*100));
+ assert.equal(f.built.input.exposure.summary.classes[2].top5.find(g=>g.name==='Shared I').sourceHoldings.length,2);
+ const facts=f.source.verifyBrowserSourceAssociations(raw,f.built.input,{scopeHash:f.scope,now:f.now});assert.deepEqual(facts.classificationSummary.fundDistributions,f.built.input.classification.fundDistributions);
+ const tampered=structuredClone(f.built.input);tampered.classification.fundDistributions[0].groups[0].name='Guessed';assert.throws(()=>f.source.verifyBrowserSourceAssociations(raw,tampered,{scopeHash:f.scope,now:f.now}));
+});
+test('old official projections without distributions preserve exact original association',()=>{
+ const f=projected(),old=createOfficialRatioSourceCore().build(f.raw,{sourceSha256:f.sha,sourceBytes:f.bytes.length,includeFundDistributions:false});
+ assert.equal(Object.hasOwn(old.input.classification,'fundDistributions'),false);
+ assert.doesNotThrow(()=>f.source.verifyBrowserSourceAssociations(f.raw,old.input,{scopeHash:f.scope,now:f.now}));
+ const next=structuredClone(f.built.input);delete next.classification.fundDistributions;assert.deepEqual(next,old.input);
+});
+test('distribution validation rejects forged totals, duplicate groups and wrong order; rendering rounds to 100%',async t=>{
+ const f=await authenticated(t),original=f.model.classificationSummary.fundDistributions;
+ assert.equal(original.length,2);
+ for(const change of [d=>d[0].totalCents++,d=>d[0].groups[0].valueCents++,d=>d[0].groups.push({...d[0].groups[0]}),d=>d.reverse(),d=>d[0].groups[0].name='',d=>d[0].groups[0].valueCents=-1]){const m=structuredClone(f.model);change(m.classificationSummary.fundDistributions);await assert.rejects(f.ratio.validateModel(m));}
+ const m=structuredClone(f.model),d=m.classificationSummary.fundDistributions[0];
+ d.groups=[{name:'合成长中文分类用于手机换行不会改变基金策略甲',valueCents:16334},{name:'合成策略乙',valueCents:16333},{name:'未分类',valueCents:16333}];
+ await f.ratio.validateModel(m);const html=f.ratio.render(m),section=html.split('<h2>常青基金分布</h2>')[1].split('</section>')[0];
+ assert.equal([...section.matchAll(/aria-valuenow="([\d.]+)"/g)].reduce((s,x)=>s+Math.round(Number(x[1])*100),0),10000);
+ assert.ok(html.indexOf('股票四类配置')<html.indexOf('常青基金分布'));assert.ok(html.indexOf('常青基金分布')<html.indexOf('对冲基金分布'));assert.ok(html.indexOf('对冲基金分布')<html.indexOf('All Together · 四类前五'));
+ const old=structuredClone(f.model);delete old.classificationSummary.fundDistributions;await f.ratio.validateModel(old);assert.doesNotMatch(f.ratio.render(old),/常青基金分布/);
+ const zero=structuredClone(m),z=zero.classificationSummary;z.totalValueUSD-=d.totalCents/100;z.classes.find(g=>g.name==='常青基金').totalValueUSD=0;z.fundDistributions[0]={name:'常青基金',totalCents:0,groups:[{name:'未分类',valueCents:0}]};await f.ratio.validateModel(zero);assert.doesNotMatch(f.ratio.render(zero),/NaN|Infinity/);
+});

@@ -26,6 +26,30 @@ export function createOfficialRatioSourceCore(){
     }
     return null;
   }
+  // Strategy is the first field of the original dated custom holding name.
+  // Official exports preserve that name in securityCode, not the display alias.
+  function strategyName(r){
+    for(const value of [r.securityCode,r.name]){
+      if(typeof value!=='string')continue;
+      const dated=value.match(/^(.*?)((?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])[-–—_:：/\s]|(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月)/);
+      if(!dated)continue;
+      const first=dated[1].trim().split(/[-–—_:：/]+/u)[0].trim();
+      return first||'未分类';
+    }
+    return '未分类';
+  }
+  function fundDistributions(positions){
+    return ['常青基金','对冲基金'].map(name=>{
+      const grouped=new Map();let totalCents=0;
+      for(const r of positions.filter(p=>p.fourClass===name)){
+        const category=strategyName(r),valueCents=cents(r.valueUSD);
+        totalCents+=valueCents;grouped.set(category,(grouped.get(category)||0)+valueCents);
+      }
+      if(!Number.isSafeInteger(totalCents))fail();
+      const groups=[...grouped].map(([name,valueCents])=>({name,valueCents})).sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name));
+      return {name,totalCents,groups};
+    });
+  }
   const sourceId=s=>{if(!exact(s,['file','sha256','libraryFileId','libraryVersion'])||!text(s.file)||!hex(s.sha256)||!/^libfile_[a-f0-9]{32}$/.test(s.libraryFileId)||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();};
   function capture(s){
     if(!date(s.asOf)||!instant(s.capturedAt)||s.captureTimeBasis!=='original-download-file-mtime'
@@ -35,15 +59,16 @@ export function createOfficialRatioSourceCore(){
     const observed=[...s.dateEvidence.matchAll(/\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})\b/g)].map(m=>m[3]+'-'+String(months.indexOf(m[2])+1).padStart(2,'0')+'-'+m[1].padStart(2,'0'));
     if(!observed.length||observed.some(d=>d!==s.asOf)||s.asOf>new Date(Date.parse(s.capturedAt)+8*3600000).toISOString().slice(0,10))fail();
   }
-  function overview(positions,cash,asOf){
+  function overview(positions,cash,asOf,includeFundDistributions){
     const all=positions.concat(cash),classes=names.map(name=>({name,totalValueUSD:sum(all.filter(r=>r.fourClass===name))}));
     // Venue-scoped GLD is the previously confirmed physical-gold ETF. Mining
     // companies and unrelated ETF names are not inferred to be gold.
     const goldRows=positions.filter(r=>r.securityCode==='GLD'&&r.market==='NYSE');
     const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(goldRows),secondaryIncluded:goldRows.every(r=>r.fourClass==='二级市场')};
-    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold};
+    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold,...(includeFundDistributions?{fundDistributions:fundDistributions(positions)}:{})};
   }
-  function build(raw,{sourceSha256,sourceBytes}={}){
+  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true}={}){
+    if(typeof includeFundDistributions!=='boolean')fail();
     if(!exact(raw,['schemaVersion','source','accounts','sources','classification','exposure','coverage','limitations'])||raw.schemaVersion!==RAW
       ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-workbook-exports'
       ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024
@@ -67,7 +92,7 @@ export function createOfficialRatioSourceCore(){
       if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory']))fail();common(r);if(r.sharesightCategory!=='Cash Accounts')fail();
       const k=key(r.account,r.name,'cash');if(cashByKey.has(k))fail();const p={...r,fourClass:'二级市场'};cashByKey.set(k,p);cash.push(p);
     }
-    const sourceDates={classification:c.asOf,exposure:e.asOf},classification=overview(positions,cash,c.asOf),rows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set();
+    const sourceDates={classification:c.asOf,exposure:e.asOf},classification=overview(positions,cash,c.asOf,includeFundDistributions),rows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set();
     for(const r of e.rows){
       if(!exact(r,['sourceRow','account','securityCode','market','name','withinETF','ownership','valueUSD','sourcePercentage'])||!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||ids.has(r.sourceRow)||!(r.sourcePercentage===null||typeof r.sourcePercentage==='number'&&Number.isFinite(r.sourcePercentage)))fail();ids.add(r.sourceRow);cents(r.valueUSD);
       let owner;
