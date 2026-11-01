@@ -8,7 +8,14 @@ const hash=s=>crypto.createHash('sha256').update(s).digest('hex');
 const fixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-session-view-ui.json',import.meta.url));
 assert.equal(hash(fixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652cc884d67f7a1594649af8caed9c1d02');
 const fixture=JSON.parse(fixtureBytes);
-const installed=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+const downloadedPage=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8');
+// Adapt only these exact reviewed bytes for the existing historical stage tests.
+let installed=downloadedPage;
+if(hash(installed)==='f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0'){
+  assert.equal(installed.split('timer=setTimeout(()=>controller.abort(),60000)').length,2);
+  installed=installed.replace('timer=setTimeout(()=>controller.abort(),60000)','timer=setTimeout(()=>controller.abort(),15000)');
+  assert.equal(hash(installed),fixture.nextSha256);
+}
 function staged(page,forward=true){
   assert.equal(hash(page),forward?fixture.priorSha256:fixture.nextSha256);
   for(const r of forward?fixture.regions:[...fixture.regions].reverse()){
@@ -100,4 +107,48 @@ test('storage, page hiding and credential invalidation continue to clear session
 test('unchanged authenticated background result preserves user-opened presentation details',async()=>{
  const f=harness();await f.first();f.leave();f.enter();const p=f.c.ops.load();f.content.innerHTML+='<details open>expanded synthetic detail</details>';f.resolve(1,1);await p;assert.match(f.content.innerHTML,/expanded synthetic detail/);assert.doesNotMatch(f.notice.textContent,/后台/);
  f.leave();f.enter();const next=f.c.ops.load();f.resolve(2,2);await next;assert.doesNotMatch(f.content.innerHTML,/expanded synthetic detail/);assert.match(f.content.innerHTML,/version 2/);
+});
+
+// Test the actual new helper independently of historical-stage normalization.
+const downloadPrior=html;
+const downloadCandidate=hash(downloadedPage)==='f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0'?downloadedPage:downloadPrior.replace('timer=setTimeout(()=>controller.abort(),15000)','timer=setTimeout(()=>controller.abort(),60000)');
+assert.equal(hash(downloadCandidate),'f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0');
+function downloadSection(html){return html.slice(html.indexOf('async function readRatioSnapshotFile('),html.indexOf('async function readCurrentRatioSnapshot('));}
+function downloadHarness(html,{delays=[4000,4000,4000,4000,4000],size=5,host='gist.githubusercontent.com',redirected=false}={}){
+  let elapsed=0,timer=null,cleared=false,released=false,signal,reads=0,requests=0;
+  const bytes=new TextEncoder().encode('hello'),gid='a'.repeat(32),revision='b'.repeat(40);
+  const raw=`https://${host}/synthetic/${gid}/raw/${revision}/fee-console-ratio-snapshot.json`;
+  const f={filename:'fee-console-ratio-snapshot.json',size,truncated:true,raw_url:raw};
+  const gist={public:false,owner:{id:1,login:'synthetic'},files:{[f.filename]:f},history:[{version:revision}]};
+  const advance=ms=>{elapsed+=ms;if(timer&&elapsed>=timer.at){const fn=timer.fn;timer=null;fn();}if(signal?.aborted)throw new DOMException('synthetic deadline','AbortError');};
+  const context={URL,AbortController,TextDecoder,Uint8Array,Number,Error,RATIO_SNAPSHOT_FILE:f.filename,K:{gid:'gid'},cfg:()=>gid,ratioSnapshotGist:()=>gist,ratioSnapshotFile:()=>{throw Error('unexpected inline path');},setTimeout:(fn,ms)=>{timer={fn,at:elapsed+ms};return 1;},clearTimeout:()=>{cleared=true;timer=null;},freshFetch:async(url,options)=>{
+    requests++;assert.equal(url,raw);assert.equal(options.cache,'no-store');assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');assert.equal(options.referrerPolicy,'no-referrer');signal=options.signal;
+    return {status:200,ok:true,redirected,url,body:{getReader:()=>({read:async()=>{if(reads<bytes.length){advance(delays[reads]??0);return {done:false,value:bytes.slice(reads,++reads)};}advance(0);return {done:true};},cancel:async()=>{},releaseLock:()=>{released=true;}})}};
+  }};
+  vm.createContext(context);vm.runInContext(downloadSection(html)+';this.read=readRatioSnapshotFile;',context);
+  return {run:()=>context.read(gist),summary:()=>({elapsed,cleared,released,requests})};
+}
+test('one-line transport bound only; all identity, byte, URL and authentication code unchanged',()=>{
+  assert.equal(downloadCandidate,downloadPrior.replace('timer=setTimeout(()=>controller.abort(),15000)','timer=setTimeout(()=>controller.abort(),60000)'));
+});
+test('current 15-second bound reproduces failure during healthy progressive streaming',async()=>{
+  const h=downloadHarness(downloadPrior);await assert.rejects(h.run(),{name:'AbortError'});assert.deepEqual(h.summary(),{elapsed:16000,cleared:true,released:true,requests:1});
+});
+test('candidate accepts complete progressive stream taking 20 seconds without retry',async()=>{
+  const h=downloadHarness(downloadCandidate);assert.equal(await h.run(),'hello');assert.deepEqual(h.summary(),{elapsed:20000,cleared:true,released:true,requests:1});
+});
+test('candidate still aborts at bounded 60 seconds and releases reader',async()=>{
+  const h=downloadHarness(downloadCandidate,{delays:[61000]});await assert.rejects(h.run(),{name:'AbortError'});assert.equal(h.summary().requests,1);assert.equal(h.summary().released,true);assert.equal(h.summary().cleared,true);
+});
+test('wrong host rejected before any request',async()=>{
+  const h=downloadHarness(downloadCandidate,{host:'example.invalid'});await assert.rejects(h.run(),/RATIO_SNAPSHOT_RAW_REFUSED/);assert.equal(h.summary().requests,0);
+});
+test('redirect remains rejected',async()=>{
+  const h=downloadHarness(downloadCandidate,{redirected:true});await assert.rejects(h.run(),/RATIO_SNAPSHOT_RAW_REFUSED/);assert.equal(h.summary().requests,1);
+});
+test('over-size source rejected before any request',async()=>{
+  const h=downloadHarness(downloadCandidate,{size:5*1024*1024+1});await assert.rejects(h.run(),/RATIO_SNAPSHOT_RAW_REFUSED/);assert.equal(h.summary().requests,0);
+});
+test('declared byte mismatch remains rejected after transfer',async()=>{
+  const h=downloadHarness(downloadCandidate,{size:6});await assert.rejects(h.run(),/RATIO_SNAPSHOT_RAW_REFUSED/);assert.equal(h.summary().released,true);
 });

@@ -720,6 +720,12 @@ assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652
 const instantFixture=JSON.parse(instantFixtureBytes);
 const actualInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
 let actualInstalledUiSource=actualInstalledUiBytes;
+// Preserve exact historical fixtures; the live download helper has separate boundary tests.
+if(ratioUiHash(actualInstalledUiSource)==='f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0'){
+ assert.equal(actualInstalledUiSource.split('timer=setTimeout(()=>controller.abort(),60000)').length,2);
+ actualInstalledUiSource=actualInstalledUiSource.replace('timer=setTimeout(()=>controller.abort(),60000)','timer=setTimeout(()=>controller.abort(),15000)');
+ assert.equal(ratioUiHash(actualInstalledUiSource),instantFixture.nextSha256);
+}
 if(ratioUiHash(actualInstalledUiSource)===instantFixture.nextSha256){
  for(const r of [...instantFixture.regions].reverse()){assert.equal(actualInstalledUiSource.split(r.next).length,2);actualInstalledUiSource=actualInstalledUiSource.replace(r.next,()=>r.prior);}
  assert.equal(ratioUiHash(actualInstalledUiSource),instantFixture.priorSha256);
