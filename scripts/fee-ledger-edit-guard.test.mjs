@@ -1524,13 +1524,17 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
       constructor(...args) { super(...(args.length ? args : ["2026-08-03T04:00:00Z"])); }
       static now() { return Date.parse("2026-08-03T04:00:00Z"); }
     };
+    // Distinguish the new independent presentation preload from the ledger
+    // initialization. Both must coalesce; neither is a second ledger pull.
+    h.run("this.syntheticRatioReads=0;if(typeof readCurrentRatioSnapshot==='function'){const original=readCurrentRatioSnapshot;readCurrentRatioSnapshot=(...args)=>{this.syntheticRatioReads++;return original(...args);};}");
     const daily = h.pauseNextRead("daily"), startup = h.run("startInitialRead()");
     await daily.entered; await loading(h);
     const foreground = h.run("requestAutomaticPull()"), online = h.run("requestAutomaticPull()");
     daily.release(); await Promise.all([startup, foreground, online]);
     await complete(h); noRedPaint(h);
-    assert.equal(h.requests.filter(request => request.url.endsWith("/gists/fixture-gist")).length, 1,
+    assert.equal(h.requests.filter(request => request.url.endsWith("/gists/fixture-gist")).length, 1+h.context.syntheticRatioReads,
       "startup lifecycle events must not cancel or duplicate the verified Gist read");
+    assert.ok(h.context.syntheticRatioReads<=1,"at most one independent ratio preload");
   });
 
   await t.test("final source failure and a mismatched receipt remain red and fail closed, then recover on a fresh read", async () => {

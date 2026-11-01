@@ -617,6 +617,8 @@
     "scripts/fee-ratio-company-exposure.mjs",
     "scripts/fixtures/fee-ratio-ui-stages-v1.json",
     "scripts/fee-ratio-official-source.mjs",
-    "scripts/fee-ratio-official-source.test.mjs"
+    "scripts/fee-ratio-official-source.test.mjs",
+    "scripts/fee-ratio-session-view.test.mjs",
+    "scripts/fixtures/fee-ratio-session-view-ui.json"
   ]
 }
