@@ -2774,7 +2774,7 @@ async function previewRatioSnapshot(event){
     const model=await ratioCore.open(packet.body.envelope,manager),s=packet.body.source;
     const proof=await ratioSnapshotCore.verifyOriginal({originalBytes:new Uint8Array(originalBuffer),inputBytes:new Uint8Array(inputBuffer),model,recipient:manager.recipient,sourceSha256:s.sourceSha256,inputSha256:s.inputSha256,libraryVersion:s.libraryVersion});check();
     if(ratioCore.canonical(proof.evidence)!==ratioCore.canonical(s))throw Error();
-    const priorRaw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE),prior=priorRaw===null?null:ratioSnapshotParse(priorRaw);
+    const priorRaw=await readRatioSnapshotFile(gist,check);check();const prior=priorRaw===null?null:ratioSnapshotParse(priorRaw);
     if(prior?packet.body.version!==prior.body.version+1||packet.body.previousSnapshotId!==await ratioCore.digest(prior.body):packet.body.version!==1||packet.body.previousSnapshotId!==null)throw Error();
     const profileSha256=await ratioCore.digest([createOfficialRatioSourceCore.toString(),createFeeCompanyExposureCore.toString(),createRatioSnapshotCore.toString(),createRatioSourceCore.toString(),createFeeRatioCore.toString(),createRankedExposureCore.toString()]);check();
     const summary='仅写入同一私密 Gist 的 '+RATIO_SNAPSHOT_FILE+'；版本 '+packet.body.version+'；来源截至 '+s.asOf+'；原采集 '+s.capturedAt+'；原证据到期 '+s.expiresAt+'；接收指纹 '+manager.recipient.recipientId+'；scope '+manager.recipient.scopeId+'；原件 SHA256 '+s.sourceSha256+'；模型 SHA256 '+s.modelSha256+'。使用现有管理人凭据派生仅在内存的认证子密钥，不修改管理费 data/health 或原账本；五分钟有效。';
@@ -2793,13 +2793,14 @@ async function confirmRatioSnapshot(event){
   try{
     check();if(_ratioSnapshotWrite||_ratioRecipientWrite||_ratioSnapshotUnknown||!await verifyRatioCapabilityNow())throw Error();check();
     const gist=ratioSnapshotGist(await ghApi('/gists/'+p.gid));check();
-    if(gist.history[0].version!==p.revision||ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE)!==p.priorRaw)throw Error();
+    if(gist.history[0].version!==p.revision)throw Error();
+    const currentRaw=await readRatioSnapshotFile(gist,check);check();if(currentRaw!==p.priorRaw)throw Error();
     const manager=await ratioCore.deriveSnapshotManager(p.gid,cfg(K.key),cfg(K.tok));check();
     const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(registered===null||ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error();
     const authenticated=await ratioSnapshotCore.authenticate(p.packet,p.proof,manager,{previous:p.prior,profileSha256:p.profileSha256});check();
     const raw=JSON.stringify(authenticated),op={gid:p.gid,token:cfg(K.tok),epoch:_sourceEpoch,raw};_ratioSnapshotWrite=op;_ratioSnapshotUnknown={gid:p.gid,who:p.who,raw};
     try{check();dispatched=true;await ghApi('/gists/'+p.gid,{method:'PATCH',body:JSON.stringify({files:{[RATIO_SNAPSHOT_FILE]:{content:raw}}}),reviewedRatioSnapshot:op});}finally{if(_ratioSnapshotWrite===op)_ratioSnapshotWrite=null;}
-    check();const back=ratioSnapshotGist(await ghApi('/gists/'+p.gid));check();if(ratioSnapshotFile(back,RATIO_SNAPSHOT_FILE)!==raw)throw Error();await ratioSnapshotCore.verify(authenticated,manager);check();
+    check();const back=ratioSnapshotGist(await ghApi('/gists/'+p.gid));check();const backRaw=await readRatioSnapshotFile(back,check);check();if(backRaw!==raw)throw Error();await ratioSnapshotCore.verify(authenticated,manager);check();
     _ratioSnapshotUnknown=null;clearRatioSnapshotReview(true);_ratioPreview=null;document.getElementById('ratioSnapshotStatus').textContent='独立加密比例文件已投递并精确回读；原账本和管理费 data/health 未修改。';await renderRatioManagement();return true;
   }catch{if(!dispatched)_ratioSnapshotUnknown=null;document.getElementById('ratioSnapshotStatus').textContent=dispatched?'投递结果待核对，禁止重复投递；仅可点击只读核对结果。':'投递未执行；没有改变原账本。';return false;}
 }
@@ -2809,7 +2810,7 @@ async function exportCurrentRatioSnapshot(event){
   try{
     if(!await verifyRatioCapabilityNow())throw Error();check();
     const gist=ratioSnapshotGist(await ghApi('/gists/'+cfg(K.gid)));check();
-    const raw=ratioSnapshotFile(gist,RATIO_SNAPSHOT_FILE),registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(raw===null||registered===null)throw Error();
+    const raw=await readRatioSnapshotFile(gist,check);check();const registered=ratioSnapshotFile(gist,RATIO_RECIPIENT_FILE);if(raw===null||registered===null)throw Error();
     const manager=await ratioCore.deriveSnapshotManager(cfg(K.gid),cfg(K.key),cfg(K.tok));check();
     if(ratioCore.canonical(ratioSnapshotParse(registered))!==ratioCore.canonical(manager.recipient))throw Error();
     const value=cfg('feeConsole.ratioSnapshotWatermark.'+manager.recipient.recipientId),watermark=value?JSON.parse(value):null;
