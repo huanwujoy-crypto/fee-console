@@ -2848,7 +2848,7 @@ async function readRatioSnapshotFile(gist,guard=()=>{}){
   // Keep that exact pin and the original owner/Gist/file binding.
   const url=new URL(f.raw_url),revision=url.pathname.split('/')[4],expected='/'+gist.owner.login+'/'+gid+'/raw/'+revision+'/'+RATIO_SNAPSHOT_FILE;
   if(!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(revision||'')||f.raw_url!=='https://gist.githubusercontent.com'+expected||url.protocol!=='https:'||url.hostname!=='gist.githubusercontent.com'||url.port||url.username||url.password||url.search||url.hash||url.pathname!==expected)fail();
-  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),15000);let reader;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);let reader;
   try{
     const response=await freshFetch(url.href,{cache:'no-store',credentials:'omit',redirect:'error',referrerPolicy:'no-referrer',signal:controller.signal});guard();
     if(response.status!==200||!response.ok||response.redirected||response.url!==url.href||!response.body?.getReader)fail();
