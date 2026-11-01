@@ -80,7 +80,7 @@ test('same-name fund securities stay separate and a claimed capture before its v
  assert.equal(new Set(top.map(r=>r.name)).size,5);assert.ok(top[0].name.includes('[F00 · PRIVATE]'));assert.ok(top[1].name.includes('[F01 · PRIVATE]'));
  raw.classification.capturedAt='2026-10-27T00:00:00.000Z';assert.throws(()=>projected(raw));
 });
-async function authenticated(t){
+export async function authenticated(t){
  const f=projected(),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const write=(name,value)=>{const bytes=Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value)),p=path.join(dir,name);fs.writeFileSync(p,bytes,{mode:0o600});return {path:p,sha256:hash(bytes)};};
  const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123'),plan={schema:'fee-console.ratio-browser-evidence-plan.v1',workspace:dir,source:write('original.json',f.bytes),input:write('input.json',f.built.input),library:{libraryFileId:'libfile_'+'9'.repeat(32),version:0},managerScopeId:manager.recipient.scopeId,localOwnerUid:process.getuid()},planPath=write('plan.json',plan).path;
@@ -105,4 +105,34 @@ test('edited dates, summaries, downgrade, stale source, MAC and rollback cannot 
  for(const change of [p=>p.body.source.sourceDates.classification='2026-10-30',p=>delete p.body.source.sourceDates,p=>p.body.source.kind='complete-original-browser-association',p=>p.authentication.mac='x']){const p=structuredClone(f.signed);change(p);await assert.rejects(f.snapshot.verify(p,f.manager,{now:f.now}));}
  const good=await f.snapshot.verify(f.signed,f.manager,{now:f.now});await assert.rejects(f.snapshot.verify(f.signed,f.manager,{now:f.now,watermark:{...good.watermark,version:2}}));
  await assert.rejects(f.snapshot.verify(f.signed,f.manager,{now:f.now,watermark:{...good.watermark,sourceDates:{classification:'2026-10-30',exposure:'2026-10-30'}}}));
+});
+
+test('ranked source preserves original security names and every contributing account without changing order or values',()=>{
+ const raw=syntheticOfficialSource(),p=raw.classification.positions[0],r=raw.exposure.rows[0];
+ p.name=r.name='Legacy Fund Series IV';p.securityCode=r.securityCode='2021-10-Synthetic Project-IV';
+ raw.classification.positions.push({...p,sourceRow:900,account:raw.accounts[3],valueUSD:2});
+ raw.exposure.rows.push({...r,sourceRow:900,account:raw.accounts[3],valueUSD:3});
+ raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;raw.exposure.canonicalDataRows++;raw.exposure.allWorksheetXmlRows++;
+ const f=projected(raw),first=f.built.input.exposure.summary.classes[0].top5[0];
+ assert.equal(first.name,'Legacy Fund Series IV');assert.equal(first.securityCode,'2021-10-Synthetic Project-IV');
+ assert.deepEqual(first.accounts,[raw.accounts[2],raw.accounts[3]]);assert.equal(first.valueUSD,113);
+ const v=f.exposure.buildRankedExposureView(f.built.input.exposure);assert.deepEqual(v.groups[0].top[0].accounts,first.accounts);
+ v.groups[0].top[0].accounts.pop();assert.equal(first.accounts.length,2);
+ for(const mutate of [i=>i.exposure.summary.classes[0].top5[0].accounts=['Invented stranger'],i=>i.exposure.summary.classes[0].top5[0].accounts=[raw.accounts[2]],i=>i.exposure.summary.classes[0].top5[0].securityCode='2021-10-Other']){
+  const input=structuredClone(f.built.input);mutate(input);assert.throws(()=>f.source.verifyBrowserSourceAssociations(raw,input,{scopeHash:f.scope,now:f.now}));
+ }
+});
+test('company aggregation keeps all account labels and old authenticated models remain readable',async t=>{
+ const f=await authenticated(t),company=createFeeCompanyExposureCore(),model=f.model,view=company.validate(model.companyExposure,model.exposure,model.book.sourceSha256);
+ assert.ok(view.top.every(r=>r.accounts.length>0));assert.equal(view.top.find(r=>r.companyId==='vistra').valueUsd,100);assert.equal(view.top.find(r=>r.companyId==='alphabet').valueUsd,83);
+ for(const mutate of [m=>m.companyExposure.components[0].account='Unknown account',m=>m.companyExposure.components[0].account=f.raw.accounts[3]]){
+  const bad=structuredClone(model);mutate(bad);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:bad}));
+ }
+ const legacy=structuredClone(model);for(const c of legacy.companyExposure.components)delete c.account;
+ for(const [i,g] of legacy.exposure.summary.classes.entries())for(const r of g.top5){delete r.accounts;if(i<3){delete r.securityCode;delete r.market;}}
+ await f.ratio.validateModel(legacy);const sealed=await f.ratio.seal(legacy,f.manager.recipient);assert.deepEqual(await f.ratio.open(sealed,f.manager),legacy);
+ const prior=company.validate(legacy.companyExposure,legacy.exposure,legacy.book.sourceSha256);
+ assert.deepEqual(prior.top.map(r=>[r.companyId,r.valueUsd,r.portfolioWeightPct,r.categoryWeightPct]),view.top.map(r=>[r.companyId,r.valueUsd,r.portfolioWeightPct,r.categoryWeightPct]));
+ const html=f.ratio.render(model);assert.ok(html.indexOf('ratio-stock-allocation')<html.indexOf('sharesight-exposure'));assert.equal(html.match(/股票四类配置/g).length,1);
+ assert.ok(html.includes('class="ratio-holding-accounts"'));assert.doesNotMatch(html,/<details[^>]* open/);
 });

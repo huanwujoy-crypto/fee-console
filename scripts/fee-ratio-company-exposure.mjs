@@ -34,7 +34,7 @@ export function createFeeCompanyExposureCore(){
   ]);
   const identity=r=>rules.get(key(r.securityCode,r.market))||{id:'security:'+key(r.securityCode,r.market),name:r.name,factor:1};
   function contribution(r){
-    if(!exact(r,['sourceRow','sourceRows','securityCode','market','name','ownership','product','basis','valueUsd'])||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||!Array.isArray(r.sourceRows)||!r.sourceRows.length||r.sourceRows[0]!==r.sourceRow||r.sourceRows.some(n=>!Number.isSafeInteger(n)||n<1)||new Set(r.sourceRows).size!==r.sourceRows.length||![r.securityCode,r.market,r.name].every(text)||!['Direct','Underlying','Product'].includes(r.ownership)||!(r.product===null||text(r.product))||!amount(r.valueUsd))fail();
+    if(!exact(r,['sourceRow','sourceRows','securityCode','market','name','ownership','product','basis','valueUsd',...(Object.hasOwn(r,'account')?['account']:[])])||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||!Array.isArray(r.sourceRows)||!r.sourceRows.length||r.sourceRows[0]!==r.sourceRow||r.sourceRows.some(n=>!Number.isSafeInteger(n)||n<1)||new Set(r.sourceRows).size!==r.sourceRows.length||![r.securityCode,r.market,r.name].every(text)||!['Direct','Underlying','Product'].includes(r.ownership)||!(r.product===null||text(r.product))||!amount(r.valueUsd))fail();
     const own=identity(r),leveragedParent=r.product==='VSTL.NASDAQ';
     let factor=own.factor,pending=false;
     if(r.ownership==='Product'){
@@ -58,12 +58,12 @@ export function createFeeCompanyExposureCore(){
     if(!s||model.asOf!==s.asOf||model.retrievedAt!==exposure.retrievedAt||model.sourceXlsxSha256!==s.sourceXlsxSHA256||model.portfolioTotalUsd!==s.totalValueUSD||model.categoryTotalUsd!==s.classes[3].totalValueUSD||canonical(model.accounts)!==canonical(accounts(s.accounts))||sourceSha256&&model.sourceSha256!==sourceSha256)fail();
     const ids=new Set(),companies=new Map(),pending=[];
     for(const r of model.components){
-      const rule=contribution(r);for(const n of r.sourceRows){if(ids.has(n))fail();ids.add(n);}if(rule.pending)pending.push(r.securityCode+' · '+r.product);
+      const rule=contribution(r);if(Object.hasOwn(r,'account')&&(!text(r.account)||!model.accounts.includes(r.account.replaceAll('&amp;','&'))))fail();for(const n of r.sourceRows){if(ids.has(n))fail();ids.add(n);}if(rule.pending)pending.push(r.securityCode+' · '+r.product);
       const c=companies.get(rule.id)||{companyId:rule.id,name:rule.name,valueUsd:0,constituents:[]};
       const valueUsd=r.valueUsd*rule.factor;if(!amount(valueUsd))fail();c.valueUsd+=valueUsd;
-      c.constituents.push({sourceRows:[...r.sourceRows],securityCode:r.securityCode,market:r.market,product:r.product,basis:r.basis,sourceValueUsd:r.valueUsd,multiplier:rule.factor,valueUsd});companies.set(rule.id,c);
+      c.constituents.push({...(r.account?{account:r.account}:{}),sourceRows:[...r.sourceRows],securityCode:r.securityCode,market:r.market,product:r.product,basis:r.basis,sourceValueUsd:r.valueUsd,multiplier:rule.factor,valueUsd});companies.set(rule.id,c);
     }
-    const top=[...companies.values()].filter(r=>r.valueUsd>0).sort((a,b)=>b.valueUsd-a.valueUsd||(a.companyId<b.companyId?-1:a.companyId>b.companyId?1:0)).slice(0,5).map(r=>({...r,portfolioWeightPct:r.valueUsd/model.portfolioTotalUsd*100,categoryWeightPct:r.valueUsd/model.categoryTotalUsd*100}));
+    const top=[...companies.values()].filter(r=>r.valueUsd>0).sort((a,b)=>b.valueUsd-a.valueUsd||(a.companyId<b.companyId?-1:a.companyId>b.companyId?1:0)).slice(0,5).map(r=>({...r,accounts:[...new Set(r.constituents.map(c=>c.account).filter(Boolean))].sort(),portfolioWeightPct:r.valueUsd/model.portfolioTotalUsd*100,categoryWeightPct:r.valueUsd/model.categoryTotalUsd*100}));
     return {state:pending.length?'pending-source-basis':'projection-complete',pending:[...new Set(pending)].sort(),top:pending.length?null:top};
   }
   function build(raw,input,officialContext=null){
@@ -88,7 +88,7 @@ export function createFeeCompanyExposureCore(){
       // contains leverage. Never add another 2x to the existing contribution.
       const sourceRows=[...underlying,...residual].map(r=>r.sourceRow).sort((a,b)=>a-b);
       if(sourceRows.some(n=>replaced.has(n)))fail();sourceRows.forEach(n=>replaced.add(n));
-      components.push({sourceRow:sourceRows[0],sourceRows,securityCode:'VSTL',market:'NASDAQ',name:'VSTL',ownership:'Product',product:'VSTL.NASDAQ',basis:'product-asset-replacement',valueUsd:h.valueUSD});
+      components.push({sourceRow:sourceRows[0],sourceRows,securityCode:'VSTL',market:'NASDAQ',name:'VSTL',account:h.account,ownership:'Product',product:'VSTL.NASDAQ',basis:'product-asset-replacement',valueUsd:h.valueUSD});
 
     }
     // A parent ETF and its underlying rows are mutually exclusive contributions.
@@ -108,7 +108,7 @@ export function createFeeCompanyExposureCore(){
       }
       if(r.ownership==='Underlying'&&!(positions||[]).some(h=>h.account===r.account&&h.securityCode+'.'+h.market===product))basis='unknown-parent-lookthrough';
       if(product==='VSTL.NASDAQ')basis='unknown-leverage-lookthrough';
-      components.push({sourceRow:r.sourceRow,sourceRows:[r.sourceRow],securityCode:r.securityCode,market:r.market,name:r.name,ownership:r.ownership,product,basis,valueUsd});
+      components.push({sourceRow:r.sourceRow,sourceRows:[r.sourceRow],securityCode:r.securityCode,market:r.market,name:r.name,account:r.account,ownership:r.ownership,product,basis,valueUsd});
     }
     components.sort((a,b)=>a.sourceRow-b.sourceRow);
     const model={schema:SCHEMA,ruleVersion:RULE,asOf:s.asOf,retrievedAt:exposure.retrievedAt,currency:'USD',sourceSha256:b.sourceSha256,sourceXlsxSha256:s.sourceXlsxSHA256,accounts:accounts(s.accounts),portfolioTotalUsd:s.totalValueUSD,categoryTotalUsd:s.classes[3].totalValueUSD,components};
@@ -119,7 +119,7 @@ export function createFeeCompanyExposureCore(){
   function renderCompanyExposure(model,exposure,sourceSha256){
     const v=validate(model,exposure,sourceSha256);
     if(!v.top)return '<p class="ratio-key-status" role="status">公司敞口待核实：原份穿透归属或杠杆倍数依据未完整核实；保留原证券前五，不重复乘二。</p>';
-    return '<table><thead><tr><th>公司／组成</th><th>经济敞口 USD</th><th>占总资产／占二级资产</th></tr></thead><tbody>'+v.top.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+'<details><summary>组成与计算依据</summary><ul>'+r.constituents.map(c=>'<li>'+esc(c.securityCode)+' · '+esc(c.market)+(c.product?'／'+esc(c.product):'')+'：'+usd(c.sourceValueUsd)+' × '+c.multiplier+' = '+usd(c.valueUsd)+'；'+esc(({'direct-asset-value':'直接资产价值','unknown-direct-product-value':'产品资产价值／穿透依据待核实','product-asset-replacement':'整项替换：原底层＋残余已关联','source-lookthrough':'来源穿透','unknown-parent-lookthrough':'穿透归属待核实','unknown-leverage-lookthrough':'杠杆倍数待核实'})[c.basis])+'</li>').join('')+'</ul></details></td><td>'+usd(r.valueUsd)+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
+    return '<table><thead><tr><th>公司／组成</th><th>经济敞口 USD</th><th>占总资产／占二级资产</th></tr></thead><tbody>'+v.top.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+(r.accounts.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+'<details><summary>组成与计算依据</summary><ul>'+r.constituents.map(c=>'<li>'+esc(c.securityCode)+' · '+esc(c.market)+(c.product?'／'+esc(c.product):'')+'：'+usd(c.sourceValueUsd)+' × '+c.multiplier+' = '+usd(c.valueUsd)+'；'+esc(({'direct-asset-value':'直接资产价值','unknown-direct-product-value':'产品资产价值／穿透依据待核实','product-asset-replacement':'整项替换：原底层＋残余已关联','source-lookthrough':'来源穿透','unknown-parent-lookthrough':'穿透归属待核实','unknown-leverage-lookthrough':'杠杆倍数待核实'})[c.basis])+'</li>').join('')+'</ul></details></td><td>'+usd(r.valueUsd)+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
   }
   return {SCHEMA,RULE,build,validate,render:renderCompanyExposure};
 }

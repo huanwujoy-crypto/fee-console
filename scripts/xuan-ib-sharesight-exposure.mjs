@@ -54,13 +54,14 @@ function buildRankedExposureView(input) {
     check(g.top5.every((r, n) => object(r) && text(r.name) && amount(r.valueUSD) && r.valueUSD >= 0
       && (n === 0 || g.top5[n - 1].valueUSD >= r.valueUSD)
       && (i !== 3 || text(r.securityCode) && text(r.market))
-      && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market'].includes(k))), 'RANKED_ROW');
+      && (r.accounts===undefined||Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
+      && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market', 'accounts'].includes(k))), 'RANKED_ROW');
     // v1 ranks asset values. v2 secondary rows are complete-export economic
     // exposures: a leveraged product's negative residual can make these exceed
     // asset NAV. Its full-source association is recomputed before publication.
     check(official && i === 3 || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
     return {category: g.name, totalUsd: g.totalValueUSD, top: g.top5.map(r => ({name: r.name,
-      ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), valueUsd: r.valueUSD,
+      ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
   const residual = s.residualETFs;
