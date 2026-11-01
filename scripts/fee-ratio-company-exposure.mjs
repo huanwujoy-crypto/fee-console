@@ -1,7 +1,7 @@
 // Pure manager-only projection of the SAME verified complete Exposure export.
 // No reads, credentials, fee/NAV edits, fuzzy aliases or top-five-only reranking.
 export function createFeeCompanyExposureCore(){
-  const SCHEMA='fee-console.company-exposure.v1',LEGACY_RULE='company-economic-exposure.2026-10-28.v1',RULE='company-economic-exposure.2026-11-01.v2';
+  const SCHEMA='fee-console.company-exposure.v1',LEGACY_RULE='company-economic-exposure.2026-10-28.v1',PREVIOUS_RULE='company-economic-exposure.2026-11-01.v2',RULE='company-economic-exposure.2026-11-01.v3';
   const fail=()=>{throw Error('RATIO_COMPANY_EXPOSURE_REFUSED');};
   const exact=(o,k)=>o&&Object.getPrototypeOf(o)===Object.prototype&&Object.keys(o).sort().join('|')===[...k].sort().join('|');
   const text=s=>typeof s==='string'&&s.length>0&&s.length<=500&&!/[\u0000-\u001f\u007f]/.test(s);
@@ -25,6 +25,9 @@ export function createFeeCompanyExposureCore(){
   const canonical=v=>Array.isArray(v)?'['+v.map(canonical).join(',')+']':v&&typeof v==='object'?'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+canonical(v[k])).join(',')+'}':JSON.stringify(v);
   const key=(code,market)=>JSON.stringify([code,market]);
   const accounts=xs=>xs.map(s=>s.replaceAll('&amp;','&')).sort();
+  // Only this explicitly designated benchmark account/product contribution.
+  // Asset totals, benchmark reads and all other accounts remain unchanged.
+  const benchmarkLeg=(account,product)=>account?.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(product);
   // Explicit venue-scoped aliases only. Future products require a reviewed rule.
   const rules=new Map([
     [key('VST','NYSE'),{id:'vistra',name:'Vistra',factor:1}],
@@ -36,7 +39,8 @@ export function createFeeCompanyExposureCore(){
   function contribution(r,ruleVersion){
     if(!exact(r,['sourceRow','sourceRows','securityCode','market','name','ownership','product','basis','valueUsd',...(Object.hasOwn(r,'account')?['account']:[])])||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||!Array.isArray(r.sourceRows)||!r.sourceRows.length||r.sourceRows[0]!==r.sourceRow||r.sourceRows.some(n=>!Number.isSafeInteger(n)||n<1)||new Set(r.sourceRows).size!==r.sourceRows.length||![r.securityCode,r.market,r.name].every(text)||!['Direct','Underlying','Product'].includes(r.ownership)||!(r.product===null||text(r.product))||!amount(r.valueUsd))fail();
     const own=identity(r),leveragedParent=r.product==='VSTL.NASDAQ';
-    const current=ruleVersion===RULE,tqqq=r.securityCode==='TQQQ'&&r.market==='NASDAQ';
+    if(ruleVersion===RULE&&r.ownership==='Underlying'&&benchmarkLeg(r.account,r.product))fail();
+    const current=ruleVersion!==LEGACY_RULE,tqqq=r.securityCode==='TQQQ'&&r.market==='NASDAQ';
     let factor=current&&tqqq?3:own.factor,pending=false,leverage=factor;
     if(r.ownership==='Product'){
       if(r.securityCode!=='VSTL'||r.market!=='NASDAQ'||r.product!=='VSTL.NASDAQ'||r.basis!=='product-asset-replacement'||r.valueUsd<=0)fail();
@@ -60,7 +64,7 @@ export function createFeeCompanyExposureCore(){
     return {id:own.id,name:own.name,factor,leverage:pending?null:leverage,pending};
   }
   function validate(model,exposure,sourceSha256){
-    if(!exact(model,['schema','ruleVersion','asOf','retrievedAt','currency','sourceSha256','sourceXlsxSha256','accounts','portfolioTotalUsd','categoryTotalUsd','components'])||model.schema!==SCHEMA||![LEGACY_RULE,RULE].includes(model.ruleVersion)||model.currency!=='USD'||!Array.isArray(model.components)||model.components.length>100000||!/^[a-f0-9]{64}$/.test(model.sourceSha256||''))fail();
+    if(!exact(model,['schema','ruleVersion','asOf','retrievedAt','currency','sourceSha256','sourceXlsxSha256','accounts','portfolioTotalUsd','categoryTotalUsd','components'])||model.schema!==SCHEMA||![LEGACY_RULE,PREVIOUS_RULE,RULE].includes(model.ruleVersion)||model.currency!=='USD'||!Array.isArray(model.components)||model.components.length>100000||!/^[a-f0-9]{64}$/.test(model.sourceSha256||''))fail();
     const s=exposure?.summary;
     if(!s||model.asOf!==s.asOf||model.retrievedAt!==exposure.retrievedAt||model.sourceXlsxSha256!==s.sourceXlsxSHA256||model.portfolioTotalUsd!==s.totalValueUSD||model.categoryTotalUsd!==s.classes[3].totalValueUSD||canonical(model.accounts)!==canonical(accounts(s.accounts))||sourceSha256&&model.sourceSha256!==sourceSha256)fail();
     const ids=new Set(),companies=new Map(),pending=[];
@@ -118,6 +122,7 @@ export function createFeeCompanyExposureCore(){
     const parents=new Set(rows.filter(r=>r.ownership==='Underlying'&&r.withinETF).map(r=>key(r.account,r.withinETF)));
     for(const r of rows){
       if(replaced.has(r.sourceRow))continue;
+      if(r.ownership==='Underlying'&&benchmarkLeg(r.account,r.withinETF))continue;
       if(r.fourClass!=='二级市场'||!['Direct','Underlying'].includes(r.ownership))continue;
       if(r.ownership==='Direct'&&parents.has(key(r.account,r.securityCode+'.'+r.market)))continue;
       const product=r.ownership==='Underlying'?r.withinETF:null;
@@ -157,5 +162,5 @@ export function createFeeCompanyExposureCore(){
     const legacy=model.ruleVersion===LEGACY_RULE&&model.components.some(r=>r.product==='TQQQ.NASDAQ'||r.securityCode==='TQQQ')?'<p class="ratio-key-status">当前历史快照保留原TQQQ口径；3倍规则将在更新快照后生效。</p>':'';
     return legacy+'<table><thead><tr><th>公司／组成</th><th>经济敞口 USD</th><th>占总资产／占二级资产</th></tr></thead><tbody>'+v.top.map((r,i)=>'<tr><td>'+(i+1)+'. '+esc(r.name)+(r.accounts.length?'<span class="ratio-holding-accounts">'+esc(r.accounts.join(' · '))+'</span>':'')+'<details><summary>持仓与穿透明细</summary>'+detail(r,i+1)+'</details></td><td>'+usd(r.valueUsd)+'</td><td>'+r.portfolioWeightPct.toFixed(2)+'%／'+r.categoryWeightPct.toFixed(2)+'%</td></tr>').join('')+'</tbody></table>';
   }
-  return {SCHEMA,RULE,LEGACY_RULE,build,validate,render:renderCompanyExposure};
+  return {SCHEMA,RULE,LEGACY_RULE,PREVIOUS_RULE,build,validate,render:renderCompanyExposure};
 }

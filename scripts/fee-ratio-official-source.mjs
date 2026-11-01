@@ -14,6 +14,18 @@ export function createOfficialRatioSourceCore(){
   const key=(a,c,m)=>JSON.stringify([a,c,m]);
   const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
   const names=['PE/VC','对冲基金','常青基金','二级市场'];
+  // Exact Sharesight dated-name suffix, not a fuzzy product/share-class alias.
+  function evergreenName(r){
+    for(const value of [r.securityCode,r.name]){
+      const marker=value.match(/(?:^|[-–—_:：/\s])(?=(?:19|20)\d{2}(?:[-/.]|年))/);
+      if(!marker)continue;
+      const tail=value.slice(marker.index+marker[0].length);
+      const name=tail.match(/^(?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])(?:\s*[-–—_:：/]\s*|\s+)(\S[\s\S]*)$/)?.[1]
+        ||tail.match(/^(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月\s*(?:[-–—_:：/]\s*)?(\S[\s\S]*)$/)?.[1];
+      if(name)return name.trim();
+    }
+    return null;
+  }
   const sourceId=s=>{if(!exact(s,['file','sha256','libraryFileId','libraryVersion'])||!text(s.file)||!hex(s.sha256)||!/^libfile_[a-f0-9]{32}$/.test(s.libraryFileId)||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();};
   function capture(s){
     if(!date(s.asOf)||!instant(s.capturedAt)||s.captureTimeBasis!=='original-download-file-mtime'
@@ -27,7 +39,8 @@ export function createOfficialRatioSourceCore(){
     const all=positions.concat(cash),classes=names.map(name=>({name,totalValueUSD:sum(all.filter(r=>r.fourClass===name))}));
     // Venue-scoped GLD is the previously confirmed physical-gold ETF. Mining
     // companies and unrelated ETF names are not inferred to be gold.
-    const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(positions.filter(r=>r.securityCode==='GLD'&&r.market==='NYSE'))};
+    const goldRows=positions.filter(r=>r.securityCode==='GLD'&&r.market==='NYSE');
+    const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(goldRows),secondaryIncluded:goldRows.every(r=>r.fourClass==='二级市场')};
     return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold};
   }
   function build(raw,{sourceSha256,sourceBytes}={}){
@@ -82,7 +95,20 @@ export function createOfficialRatioSourceCore(){
     if(positions30.length!==positions.length||cents(sum(positions30.concat(cash30)))!==cents(sum(rows)))fail();
     const groups=names.map((name,i)=>{
       let top;
-      if(i<3){const grouped=new Map();for(const r of positions30.filter(p=>p.fourClass===name)){const k=key('',r.securityCode,r.market),old=grouped.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0};if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;grouped.set(k,old);}const values=[...grouped.values()],counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);top=values.map(r=>({name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':''),valueUSD:r.valueUSD,securityCode:r.securityCode,market:r.market,accounts:r.accounts}));}
+      if(i<3){
+        const grouped=new Map();
+        for(const r of positions30.filter(p=>p.fourClass===name)){
+          const suffix=i===2?evergreenName(r):null,k=suffix?JSON.stringify(['dated-fund-name',suffix]):key('',r.securityCode,r.market);
+          const old=grouped.get(k)||{name:suffix||r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0,...(i===2?{sourceHoldings:[]}: {})};
+          if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();
+          old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;
+          if(i===2)old.sourceHoldings.push({account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueUSD:r.valueUSD});
+          grouped.set(k,old);
+        }
+        const values=[...grouped.values()],counts=new Map();for(const r of values)counts.set(r.name,(counts.get(r.name)||0)+1);
+        top=values.map(r=>({...r,name:r.name+(counts.get(r.name)>1?' ['+r.securityCode+' · '+r.market+']':'')}));
+        for(const r of top)if(r.sourceHoldings)r.sourceHoldings.sort((a,b)=>b.valueUSD-a.valueUSD||canonical(a).localeCompare(canonical(b)));
+      }
       else {const selected=new Map();for(const r of rows.filter(p=>p.fourClass===name&&(p.ownership==='Direct'||p.ownership==='Underlying'))){const k=key('',r.securityCode,r.market),old=selected.get(k)||{name:r.name,securityCode:r.securityCode,market:r.market,accounts:[],valueUSD:0};if(!old.accounts.includes(r.account))old.accounts.push(r.account);old.accounts.sort();old.valueUSD=(cents(old.valueUSD)+cents(r.valueUSD))/100;selected.set(k,old);}top=[...selected.values()];}
       top=top.sort((a,b)=>b.valueUSD-a.valueUSD||(a.name<b.name?-1:a.name>b.name?1:0)).slice(0,5);if(top.length!==5)fail();
       return {name,totalValueUSD:sum(positions30.concat(cash30).filter(r=>r.fourClass===name)),basis:i===3?'Exposure individual security direct plus ETF look-through, includes cash in class denominator':'direct',...(i===0?{sourceCategory:'VC/PE'}:{}),top5:top};
