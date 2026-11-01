@@ -37,7 +37,7 @@ test('new UI is exact embedded code; support-stage old UI is explicitly absent a
  const source=fs.readFileSync(new URL('./fee-report-producer.mjs',import.meta.url),'utf8');assert.ok(source.includes("const RECOVERY_UI_BLOB='"+expected+"'"));
  const liveSha=crypto.createHash('sha256').update(live).digest('hex');
  if(live===html){assert.ok(live.includes('id="giftRegistryCheck"'));assert.ok(live.includes('renderGiftRegistryStatus(documentsAuthorized'))}
- else if(['de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d','abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34','46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61','7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541','d71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5','2908a0bde68c3c8f189afac4d9e0e391462a27c52b1bc8a43ca1992c270cb605'].includes(liveSha)){
+ else if(['de3ac592f57c314bf94092d99fa43f9e7c0f273b50a1261b66df1c2d8211dc0d','abc5541ad27f63f9ff21de91e5645160a46e1d9ea4aa67759961cfa96cdabc34','46d397806a708522a51ecd5666f95bd39462394aad79a93afef7ff02db90fb61','7f695d7b5e8a08f66bb9ef7a7f385dc905e5cabdd04a9ef8710c2c90840a7541','d71430d2f9febbbfc0e6fbbb3760430b9ff0f7efc5cbf79c5afd3b71953c16e5','2908a0bde68c3c8f189afac4d9e0e391462a27c52b1bc8a43ca1992c270cb605','52c415ca96e81486785fe3b9ce245400b479e29002e78efc348869cfa48df936'].includes(liveSha)){
   // Exact display-only asset-allocation candidate; existing gift code is unchanged.
   assert.equal(section(live,'/* fee-gift-registry-status:start */','/* fee-gift-registry-status:end */'),factory);
   assert.equal(section(live,'/* fee-gift-registry-controller:start */','/* fee-gift-registry-controller:end */'),controller);
