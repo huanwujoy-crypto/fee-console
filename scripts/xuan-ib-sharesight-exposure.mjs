@@ -55,13 +55,14 @@ function buildRankedExposureView(input) {
       && (n === 0 || g.top5[n - 1].valueUSD >= r.valueUSD)
       && (i !== 3 || text(r.securityCode) && text(r.market))
       && (r.accounts===undefined||Array.isArray(r.accounts)&&r.accounts.length>0&&r.accounts.length<=s.accounts.length&&unique(r.accounts)&&r.accounts.every(a=>s.accounts.includes(a)))
-      && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market', 'accounts'].includes(k))), 'RANKED_ROW');
+      && (r.sourceHoldings===undefined||official&&i===2&&Array.isArray(r.sourceHoldings)&&r.sourceHoldings.length>0&&r.sourceHoldings.length<=5000&&r.sourceHoldings.every(h=>object(h)&&Object.keys(h).sort().join('|')==='account|market|name|securityCode|valueUSD'&&[h.name,h.securityCode,h.market].every(text)&&s.accounts.includes(h.account)&&amount(h.valueUSD)&&h.valueUSD>=0)&&unique(r.sourceHoldings.map(h=>JSON.stringify([h.account,h.securityCode,h.market])))&&Math.round(sum(r.sourceHoldings.map(h=>h.valueUSD))*100)===Math.round(r.valueUSD*100)&&JSON.stringify([...new Set(r.sourceHoldings.map(h=>h.account))].sort())===JSON.stringify(r.accounts))
+      && !Object.keys(r).some(k => !['name', 'valueUSD', 'securityCode', 'market', 'accounts', 'sourceHoldings'].includes(k))), 'RANKED_ROW');
     // v1 ranks asset values. v2 secondary rows are complete-export economic
     // exposures: a leveraged product's negative residual can make these exceed
     // asset NAV. Its full-source association is recomputed before publication.
     check(official && i === 3 || sum(g.top5.map(r => r.valueUSD)) <= g.totalValueUSD + .05, 'RANKED_TOTAL');
     return {category: g.name, totalUsd: g.totalValueUSD, top: g.top5.map(r => ({name: r.name,
-      ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), valueUsd: r.valueUSD,
+      ...(r.securityCode ? {securityCode: r.securityCode, market: r.market} : {}), ...(r.accounts?{accounts:[...r.accounts]}:{}), ...(r.sourceHoldings?{sourceHoldings:structuredClone(r.sourceHoldings)}:{}), valueUsd: r.valueUSD,
       portfolioWeightPct: pct(r.valueUSD, s.totalValueUSD), categoryWeightPct: pct(r.valueUSD, g.totalValueUSD)}))};
   });
   const residual = s.residualETFs;

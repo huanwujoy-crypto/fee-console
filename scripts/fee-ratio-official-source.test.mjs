@@ -93,7 +93,7 @@ test('full source to manager snapshot authenticates both dates, renders distinct
  const f=await authenticated(t),result=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
  assert.deepEqual(result.source.sourceDates,f.model.sourceDates);assert.equal(result.stale,false);
  const html=f.ratio.render(result.model);
- for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD · NYSE）','已包含在四类资产合计中','独立下载完成时间未知','公司经济敞口前五','计算口径与合并规则'])assert.ok(html.includes(text),text);
+ for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','包含在二级市场中','独立下载完成时间未知','公司经济敞口前五','计算口径与合并规则'])assert.ok(html.includes(text),text);
  assert.doesNotMatch(html,/完整持仓|undefined|<details open/);
  assert.equal((html.match(/<details><summary>/g)||[]).length>=4,true);
  assert.equal(result.model.feeCalculationReceipt,undefined);
@@ -129,10 +129,35 @@ test('company aggregation keeps all account labels and old authenticated models 
   const bad=structuredClone(model);mutate(bad);await assert.rejects(f.snapshot.verifyOriginal({...f.args,model:bad}));
  }
  const legacy=structuredClone(model);for(const c of legacy.companyExposure.components)delete c.account;
- for(const [i,g] of legacy.exposure.summary.classes.entries())for(const r of g.top5){delete r.accounts;if(i<3){delete r.securityCode;delete r.market;}}
+ for(const [i,g] of legacy.exposure.summary.classes.entries())for(const r of g.top5){delete r.accounts;delete r.sourceHoldings;if(i<3){delete r.securityCode;delete r.market;}}
  await f.ratio.validateModel(legacy);const sealed=await f.ratio.seal(legacy,f.manager.recipient);assert.deepEqual(await f.ratio.open(sealed,f.manager),legacy);
  const prior=company.validate(legacy.companyExposure,legacy.exposure,legacy.book.sourceSha256);
  assert.deepEqual(prior.top.map(r=>[r.companyId,r.valueUsd,r.portfolioWeightPct,r.categoryWeightPct]),view.top.map(r=>[r.companyId,r.valueUsd,r.portfolioWeightPct,r.categoryWeightPct]));
  const html=f.ratio.render(model);assert.ok(html.indexOf('ratio-stock-allocation')<html.indexOf('sharesight-exposure'));assert.equal(html.match(/股票四类配置/g).length,1);
  assert.ok(html.includes('class="ratio-holding-accounts"'));assert.doesNotMatch(html,/<details[^>]* open/);
+});
+
+// Synthetic dated products: aggregate complete input, never just an old top five.
+function evergreenFixture(){
+ const raw=syntheticOfficialSource(),ps=raw.classification.positions.filter(p=>p.sharesightCategory==='常青基金');
+ const names=['2020-01-Synthetic Alpha E-1','2021-02-Synthetic Alpha E-1','2022-03-Synthetic Beta','2023-04-Synthetic Gamma','2024-05-Synthetic Delta'];
+ for(let i=0;i<ps.length;i++){const p=ps[i],code=p.securityCode;p.securityCode=names[i];p.name='Synthetic channel '+i;const r=raw.exposure.rows.find(r=>r.securityCode===code);r.securityCode=p.securityCode;r.name=p.name;}
+ const p={...ps[0],sourceRow:999,account:raw.accounts[5],securityCode:'2025-06-Synthetic Epsilon',name:'Synthetic later holding',valueUSD:50};raw.classification.positions.push(p);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;
+ raw.exposure.rows.push({sourceRow:999,account:p.account,securityCode:p.securityCode,market:p.market,name:p.name,withinETF:null,ownership:'Direct',valueUSD:50,sourcePercentage:null});raw.exposure.canonicalDataRows++;raw.exposure.allWorksheetXmlRows++;return raw;
+}
+test('evergreen merges exact original month suffix before ranking, retains share class and all accounts',()=>{
+ const raw=evergreenFixture(),before=JSON.stringify(raw),f=projected(raw),g=f.built.input.exposure.summary.classes[2],top=g.top5;
+ assert.equal(top.length,5);assert.equal(top[0].name,'Synthetic Alpha E-1');assert.equal(top[0].valueUSD,219);assert.equal(top[0].sourceHoldings.length,2);assert.ok(top.some(r=>r.name==='Synthetic Epsilon'));
+ assert.equal(top.reduce((s,r)=>s+Math.round(r.valueUSD*100),0),Math.round(g.totalValueUSD*100));assert.equal(JSON.stringify(raw),before);
+ const first=raw.classification.positions.find(p=>p.securityCode==='2021-02-Synthetic Alpha E-1'),r=raw.exposure.rows.find(r=>r.securityCode===first.securityCode);first.account=raw.accounts[6];r.account=first.account;
+ const grouped=projected(raw).built.input.exposure.summary.classes[2].top5[0];assert.deepEqual(grouped.accounts,[raw.accounts[4],raw.accounts[6]].sort());assert.equal(grouped.sourceHoldings.length,2);
+ first.securityCode='2021-02-Synthetic Alpha E-2';r.securityCode=first.securityCode;const distinct=projected(raw).built.input.exposure.summary.classes[2].top5;assert.ok(distinct.some(r=>r.name==='Synthetic Alpha E-1'));assert.ok(distinct.some(r=>r.name==='Synthetic Alpha E-2'));
+});
+test('evergreen never fuzzy-merges spelling, trailing class or later date text, and validates retained sources',()=>{
+ for(const suffix of ['Synthetic alpha E-1','Synthetic Alpha E-1 (Accumulating)','Synthetic Alpha E-1 2025-06-Other']){
+  const raw=evergreenFixture(),p=raw.classification.positions.find(p=>p.securityCode==='2021-02-Synthetic Alpha E-1'),r=raw.exposure.rows.find(r=>r.securityCode===p.securityCode);p.securityCode='2021-02-'+suffix;r.securityCode=p.securityCode;const top=projected(raw).built.input.exposure.summary.classes[2].top5;assert.ok(top.some(r=>r.name===suffix));assert.ok(top.every(r=>r.sourceHoldings.length===1));
+ }
+ const f=projected(evergreenFixture()),ranked=f.built.input.exposure;
+ for(const edit of [r=>r.sourceHoldings[0].valueUSD++,r=>r.sourceHoldings[0].account='Unknown',r=>r.sourceHoldings.push({...r.sourceHoldings[0]}),r=>r.accounts=[],r=>r.sourceHoldings[0].extra=true]){const bad=structuredClone(ranked);edit(bad.summary.classes[2].top5[0]);assert.throws(()=>f.exposure.buildRankedExposureView(bad));}
+ assert.equal(f.built.input.classification.gold.secondaryIncluded,true);assert.equal(f.built.input.book.ib.totalValueUSD,projected().built.input.book.ib.totalValueUSD);
 });
