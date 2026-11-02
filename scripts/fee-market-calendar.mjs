@@ -28,6 +28,10 @@ const fail=()=>{throw Error('LOCAL_DAILY_PLAN_INVALID');};
 function date(d){if(typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d)||new Date(d+'T00:00Z').toISOString().slice(0,10)!==d)fail();return d;}
 const add=(d,n)=>new Date(Date.parse(date(d)+'T00:00Z')+n*DAY).toISOString().slice(0,10);
 const local=(now,zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+// Preserve the schedule encoded in accepted historical receipts. The new
+// next-day start applies from the November 2 accounting target onward.
+export function ordinaryDailyStartTime(target){return date(target)>='2026-11-02'?'10:00':'10:30';}
+export function ordinaryDailyScheduledAt(target){return add(target,1)+'T'+ordinaryDailyStartTime(target)+':00+08:00';}
 const within=d=>d>=calendarCoverage.from&&d<=calendarCoverage.through;
 export function marketSession(d,venue){
  date(d);const m=markets[venue];
@@ -50,9 +54,9 @@ export function monthlyArchivesBetween(lastPublished,target){
 function lastUsSession(d){for(let i=0;i<8;i++){const p=add(d,-i),state=marketSession(p,'NYSE');if(state.state==='unknown')return null;if(state.state==='open')return p;}return null;}
 export function planDailyFirstAttempt({now,venues,lastPublished}={}){
  now=new Date(now);if(!Number.isFinite(now.getTime()))fail();
- const hktDay=local(now,'Asia/Hong_Kong'),target=add(hktDay,-1),scheduledAt=hktDay+'T10:30:00+08:00';
+ const hktDay=local(now,'Asia/Hong_Kong'),target=add(hktDay,-1),scheduledAt=ordinaryDailyScheduledAt(target);
  const base={schema:'fee-console.daily-calendar-plan.v1',target,scheduledAt,publicationReady:false,sourceAcceptanceRequired:true};
- if(now.getTime()<Date.parse(scheduledAt))return {...base,state:'not-due',reason:'BEFORE_1030'};
+ if(now.getTime()<Date.parse(scheduledAt))return {...base,state:'not-due',reason:'BEFORE_'+ordinaryDailyStartTime(target).replace(':','')};
  const sessions=sessionUnion(target,venues);
  if(sessions.state==='closed')return {...base,sessions,state:'market-closed',reason:'ALL_RELEVANT_MARKETS_CLOSED'};
  if(sessions.rows.some(row=>row.state==='unknown'))return {...base,sessions,state:'waiting',reason:'CALENDAR_SCOPE_UNVERIFIED'};
@@ -60,9 +64,9 @@ export function planDailyFirstAttempt({now,venues,lastPublished}={}){
  if(!priceThrough)return {...base,sessions,state:'waiting',reason:'BENCHMARK_CALENDAR_UNVERIFIED'};
  const monthlyCutoffs=monthlyArchivesBetween(lastPublished,target);
  const plan={...base,sessions,accountingThrough:target,priceThrough,monthlyCutoffs,kind:monthlyCutoffs.length?'daily-monthly':'daily',coverageKey:target+'|'+priceThrough};
- // Ordinary daily references are eligible at next-day HKT10:30. A plan that
- // also finalizes a month retains reportPlanReadiness's completion rule.
- if(monthlyCutoffs.length&&local(now,'America/New_York')<=target)return {...plan,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE'};
+ // A deferred archive closes its actual month, not the later daily target.
+ // A genuine current month-end still waits until that NY natural day ends.
+ if(monthlyCutoffs.length&&local(now,'America/New_York')<=monthlyCutoffs.at(-1))return {...plan,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE'};
  // This is only calendar readiness. It cannot authorize or prove source capture.
  return {...plan,state:'calendar-ready',reason:'REAL_SOURCE_VALIDATION_REQUIRED'};
 }
@@ -70,8 +74,8 @@ export function nextSameDayCheck(plan,now){
  if(plan?.schema!=='fee-console.daily-calendar-plan.v1')fail();
  now=new Date(now);if(!Number.isFinite(now.getTime()))fail();
  const day=add(date(plan.target),1);
- if(plan.scheduledAt!==day+'T10:30:00+08:00'||local(now,'Asia/Hong_Kong')!==day)return null;
- return ['10:30','13:00','14:00'].map(t=>day+'T'+t+':00+08:00').find(t=>Date.parse(t)>now.getTime())||null;
+ if(plan.scheduledAt!==ordinaryDailyScheduledAt(plan.target)||local(now,'Asia/Hong_Kong')!==day)return null;
+ return [ordinaryDailyStartTime(plan.target),'13:00','14:00'].map(t=>day+'T'+t+':00+08:00').find(t=>Date.parse(t)>now.getTime())||null;
 }
 export function sameDaySourceDecision({plan,now,mainSha,currentMainSha,sourceAttempts,inProgress=false,runAttempt='1'}={}){
  now=new Date(now);if(!Number.isFinite(now.getTime())||plan?.schema!=='fee-console.daily-calendar-plan.v1'||!Number.isSafeInteger(sourceAttempts)||sourceAttempts<0||typeof inProgress!=='boolean')fail();
@@ -79,10 +83,20 @@ export function sameDaySourceDecision({plan,now,mainSha,currentMainSha,sourceAtt
  if(!/^[a-f0-9]{40}$/.test(mainSha||'')||mainSha!==currentMainSha)return {...base,state:'waiting',reason:'FROZEN_CODE_CHANGED'};
  if(String(runAttempt)!=='1')return {...base,state:'waiting',reason:'RERUN_NOT_AUTHORIZED'};
  if(local(now,'Asia/Hong_Kong')!==add(plan.target,1))return {...base,state:'waiting',reason:'FIXED_TARGET_DAY_ENDED'};
- if(now.getTime()<Date.parse(plan.scheduledAt))return {...base,state:'waiting',reason:'BEFORE_1030'};
+ if(plan.scheduledAt!==ordinaryDailyScheduledAt(plan.target))fail();
+ if(now.getTime()<Date.parse(plan.scheduledAt))return {...base,state:'waiting',reason:'BEFORE_'+ordinaryDailyStartTime(plan.target).replace(':','')};
  if(plan.sessions?.rows?.some(row=>row.state==='unknown')||!plan.accountingThrough)return {...base,state:'waiting',reason:'CALENDAR_SCOPE_UNVERIFIED'};
  const ordinaryDaily=plan.kind==='daily'&&Array.isArray(plan.monthlyCutoffs)&&plan.monthlyCutoffs.length===0;
- if(!ordinaryDaily&&local(now,'America/New_York')<=plan.target)return {...base,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE',nextCheckAt:nextSameDayCheck(plan,now)};
+ let monthCutoff=null;
+ if(!ordinaryDaily){
+  try{
+   const cutoffs=plan.monthlyCutoffs;
+   if(plan.kind!=='daily-monthly'||plan.accountingThrough!==plan.target||!Array.isArray(cutoffs)||!cutoffs.length)fail();
+   for(const [i,d]of cutoffs.entries())if(add(date(d),1).slice(8)!=='01'||d>plan.target||Date.parse(plan.target)-Date.parse(d)>10*DAY||(i&&d<=cutoffs[i-1]))fail();
+   monthCutoff=cutoffs.at(-1);
+  }catch{return {...base,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE',nextCheckAt:nextSameDayCheck(plan,now)};}
+ }
+ if(monthCutoff&&local(now,'America/New_York')<=monthCutoff)return {...base,state:'waiting',reason:'ACCOUNTING_DAY_NOT_COMPLETE',nextCheckAt:nextSameDayCheck(plan,now)};
  if(inProgress||sourceAttempts>=2)return {...base,state:'waiting',reason:inProgress?'SOURCE_RUN_IN_PROGRESS':'SOURCE_ATTEMPT_BUDGET_EXHAUSTED'};
  // Calendar/budget readiness alone cannot authorize a source call or report.
  // Publication is observable only via the existing real signed-publication verifier.

@@ -5,7 +5,7 @@ const plan=(now,lastPublished='2026-10-26',scope=venues)=>planDailyFirstAttempt(
 test('09:00 is not source completion and no financial work is scheduled before10:30',()=>{const p=plan('2026-10-28T09:00:00+08:00');assert.equal(p.state,'not-due');assert.equal(p.publicationReady,false);});
 test('10:30 summer-time daily attempt reaches source validation with the correct prior date',()=>{const p=plan('2026-10-28T10:30:00+08:00');assert.equal(p.target,'2026-10-27');assert.equal(p.state,'calendar-ready');assert.equal(p.publicationReady,false);});
 test('10:30 winter-time ordinary daily attempt is also calendar ready',()=>{assert.equal(plan('2026-11-04T10:30:00+08:00','2026-11-02').state,'calendar-ready');});
-test('month-archive plans retain summer and winter NY completion boundaries',()=>{for(const [day,last,cutoff] of [['2026-10-01','2026-09-29','12:00:00'],['2026-11-03','2026-10-30','13:00:00']]){assert.equal(plan(day+'T10:30:00+08:00',last).reason,'ACCOUNTING_DAY_NOT_COMPLETE');assert.equal(plan(day+'T'+cutoff+'+08:00',last).state,'calendar-ready');}});
+test('actual month-end plans retain summer and winter NY completion boundaries',()=>{for(const [day,last,cutoff] of [['2026-10-01','2026-09-29','12:00:00'],['2026-12-01','2026-11-29','13:00:00']]){assert.equal(plan(day+'T10:30:00+08:00',last).reason,'ACCOUNTING_DAY_NOT_COMPLETE');assert.equal(plan(day+'T'+cutoff+'+08:00',last).state,'calendar-ready');}});
 test('European and US DST mismatch week still uses timezone rules rather than fixed offsets',()=>{for(const day of ['2026-10-27','2026-10-28','2026-10-29','2026-10-30']){const p=plan(day+'T10:30:00+08:00','2026-10-23');assert.equal(p.state,'calendar-ready');}});
 test('Thanksgiving closed US plus open Europe triggers next-day calendar checking',()=>{const p=plan('2026-11-27T10:30:00+08:00','2026-11-25');assert.equal(p.state,'calendar-ready');assert.equal(p.priceThrough,'2026-11-25');assert.equal(p.sessions.rows.find(x=>x.venue==='NYSE').state,'closed');assert.equal(p.sessions.rows.find(x=>x.venue==='LSE').state,'open');});
 test('a UK holiday does not suppress an open US session',()=>{const p=sessionUnion('2026-12-28',venues);assert.equal(p.state,'open');assert.equal(p.rows.find(x=>x.venue==='LSE').state,'closed');assert.equal(p.rows.find(x=>x.venue==='NYSE').state,'open');});
@@ -33,4 +33,25 @@ test('10:30 control retains budget, concurrency and month-finalization restricti
  const monthly=plan('2026-10-01T10:30:00+08:00','2026-09-29');
  assert.equal(sameDaySourceDecision({plan:monthly,now:'2026-10-01T10:30:00+08:00',mainSha:sha,currentMainSha:sha,sourceAttempts:0}).reason,'ACCOUNTING_DAY_NOT_COMPLETE');
  for(const p of [{...first(),monthlyCutoffs:undefined},{...first(),kind:'daily-monthly'},{...monthly,kind:'daily'}])assert.equal(sameDaySourceDecision({plan:p,now:p.scheduledAt,mainSha:sha,currentMainSha:sha,sourceAttempts:0}).reason,'ACCOUNTING_DAY_NOT_COMPLETE');
+});
+
+test('new 10:00 start closes the prior month without claiming the latest NY natural day ended',()=>{
+ const at='2026-11-03T10:00:00+08:00',p=plan(at,'2026-10-30');
+ assert.equal(plan('2026-11-03T09:59:59+08:00','2026-10-30').reason,'BEFORE_1000');
+ assert.equal(p.scheduledAt,at);assert.equal(p.target,'2026-11-02');assert.deepEqual(p.monthlyCutoffs,['2026-10-31']);assert.equal(p.state,'calendar-ready');
+ assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date(at)),'2026-11-02');
+ const control=extra=>sameDaySourceDecision({plan:p,now:at,mainSha:sha,currentMainSha:sha,sourceAttempts:0,...extra});
+ assert.equal(control().state,'ready-for-source-validation');assert.equal(control().publicationReady,false);
+ assert.equal(nextSameDayCheck(p,at),'2026-11-03T13:00:00+08:00');
+ for(const [extra,reason]of [[{sourceAttempts:2},'SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{inProgress:true},'SOURCE_RUN_IN_PROGRESS'],[{runAttempt:'2'},'RERUN_NOT_AUTHORIZED'],[{currentMainSha:'b'.repeat(40)},'FROZEN_CODE_CHANGED']])assert.equal(control(extra).reason,reason);
+ for(const monthlyCutoffs of [undefined,[],['2026-10-30'],['2026-11-30'],['2026-09-30'],['2026-10-31','2026-10-31'],['invalid']])assert.equal(control({plan:{...p,monthlyCutoffs}}).reason,'ACCOUNTING_DAY_NOT_COMPLETE');
+ assert.equal(control({plan:{...p,kind:'daily'}}).reason,'ACCOUNTING_DAY_NOT_COMPLETE');
+ assert.throws(()=>control({plan:{...p,scheduledAt:'2026-11-03T09:00:00+08:00'}}),/LOCAL_DAILY_PLAN_INVALID/);
+});
+
+test('future ordinary reports start at10:00 and unverified or closed calendars still stop',()=>{
+ assert.equal(plan('2026-11-04T09:59:59+08:00','2026-11-02').state,'not-due');
+ assert.equal(plan('2026-11-04T10:00:00+08:00','2026-11-02').state,'calendar-ready');
+ assert.equal(plan('2026-11-04T10:00:00+08:00','2026-11-02',['NYSE','EURONEXT']).reason,'CALENDAR_SCOPE_UNVERIFIED');
+ assert.equal(plan('2026-12-26T10:00:00+08:00','2026-12-24').state,'market-closed');
 });

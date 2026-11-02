@@ -16,9 +16,10 @@ promotion workflows are enabled; the old benchmark remains disabled. Scheduled
 production now also requires the exact once binding; an empty binding does not
 grant ordinary recurring schedule permission.
 
-The reviewed window is November 3 HKT: the 10:30 gate can wait without consuming
-an attempt; the November 2 report with the October 31 archive is eligible at
-13:00 under the unchanged month-completion rule. Admission closes at 13:45,
+The reviewed window is November 3 HKT: checking and admission begin at 10:00.
+The November 2 report can include the already completed October 31 archive;
+this does not claim that the November 2 New York natural day has ended.
+Only the actual monthly cutoff uses that completion test. Admission closes at 13:45,
 and promotion/cleanup expires at 14:15. Late cron delivery may miss this window;
 it does not authorize a new target, a manual dispatch or a retry.
 
@@ -130,7 +131,7 @@ snapshot automation is activated by these settings. Jenny's independent IB data
 needs its own existing attachment/checkpoint acceptance; it does not become part
 of the two-account management-fee calculation.
 
-The current cron first checks at HKT10:30, with the already bounded 13:00/14:00
+The current cron first checks at HKT10:00, with the already bounded 13:00/14:00
 continuations. GitHub can delay cron delivery. The user completes Sharesight sync
 before 10:00; this migration does not re-synchronize or cross-check brokers.
 The public plan gate and actual source-date checks still select the report date.
@@ -223,7 +224,7 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The current daily plan uses the market calendar and HKT10:30 readiness contract
+The current daily plan uses the market calendar and HKT10:00 readiness contract
 in `fee-report-periods.md`. It fixes accounting and price cutoffs before source
 access. The Sharesight step above fills the cache for that price cutoff inside
 the same budgeted source job. Old or future cache rows cannot choose the report

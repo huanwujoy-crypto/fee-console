@@ -16,9 +16,9 @@ import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
 import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
- const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T05:00:10Z');
+ const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
  const refs=new Map(),tags=new Map(),calls=[],workflows=new Map([[CLOUD_ONCE.producer,'active'],[CLOUD_ONCE.promotion,'active']]);
- const makeRun=id=>({id,workflow_id:CLOUD_ONCE.producer,head_sha:main,head_branch:'main',event:'schedule',run_attempt:1,path:'.github/workflows/fee-cloud-producer.yml',created_at:'2026-11-03T05:00:00Z',status:'in_progress',conclusion:null});
+ const makeRun=id=>({id,workflow_id:CLOUD_ONCE.producer,head_sha:main,head_branch:'main',event:'schedule',run_attempt:1,path:'.github/workflows/fee-cloud-producer.yml',created_at:'2026-11-03T02:00:00Z',status:'in_progress',conclusion:null});
  const f={main,candidate,runId,now,refs,tags,calls,workflows,runs:new Map([[runId,makeRun(runId)],[1002,makeRun(1002)]]),currentMain:main,failDisable:new Set(),unknownRef:false,
   jobs:{total_count:1,jobs:[{id:2001,run_id:runId,head_sha:main,name:'Produce daily 2026-11-02',status:'completed',conclusion:'success'}]},
   commit:{sha:candidate,parents:[{sha:main}],author:{id:283054367},commit:{verification:{verified:true}},files:[{filename:'data.json',status:'modified'},{filename:'fee-data-health.json',status:'modified'}]},
@@ -54,11 +54,11 @@ function cloudOnceFixture(){
  f.complete=async()=>{await admitCloudOnce(f.args);await recordCloudOnceCandidate({...f.args,candidate});f.runs.get(runId).status='completed';f.runs.get(runId).conclusion='success';};
  return f;
 }
-test('once window waits without reserving at 10:30 and rejects wrong date head attempt or mode',async()=>{
- const f=cloudOnceFixture();assert.equal(await f.control('once-scope',{},new Date('2026-11-03T02:30:00Z')).then(x=>x.state),'active');assert.equal(f.calls.length,0);
- await assert.rejects(admitCloudOnce({...f.args,now:new Date('2026-11-03T02:30:00Z')}),/ONCE_CONTROL/);assert.equal(f.calls.length,0);
+test('once window admits10:00 but not earlier and rejects wrong date head attempt or mode',async()=>{
+ const f=cloudOnceFixture();assert.equal(await f.control('once-scope',{},new Date('2026-11-03T02:00:00Z')).then(x=>x.state),'active');assert.equal(f.calls.length,0);
+ await assert.rejects(admitCloudOnce({...f.args,now:new Date('2026-11-03T01:59:59Z')}),/ONCE_CONTROL/);assert.equal(f.calls.length,0);
  for(const change of [{head:'c'.repeat(40)},{event:'workflow_dispatch'},{attempt:'2'},{now:new Date('2026-11-03T05:45:00Z')},{now:new Date('2026-11-04T05:00:00Z')}])assert.equal(cloudOnceWindow({...f.args,...change}),'closed');
- assert.equal(cloudOnceWindow({...f.args,now:new Date('2026-11-03T02:00:00Z')}),'waiting');
+ assert.equal(cloudOnceWindow({...f.args,now:new Date('2026-11-03T01:59:59Z')}),'waiting');
  assert.equal((await f.control('once-scope',{FEE_CLOUD_MODE:'shadow'})).state,'closed');
  await assert.rejects(f.control('once-admit',{FEE_CLOUD_MODE:'shadow'}),/ONCE_CONTROL/);
  await assert.rejects(f.control('once-unknown'),/ONCE_CONTROL/);assert.equal(f.calls.length,0);
@@ -275,6 +275,16 @@ test('scheduled target30 reaches metadata checks at10:30 without a forged manual
  assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...old,pending:true})})).outcome,'candidate-pending');
  for(const markets of [[],['NYSE','EURONEXT']])assert.equal((await dailyPublicationPreflight({...args,markets,readState:()=>assert.fail('unknown calendar must not read publication state')})).reasonCode,'CALENDAR_SCOPE_UNVERIFIED');
  await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-10-30',readState:()=>assert.fail('scheduled plan cannot impersonate manual confirmation')}),/MANUAL_SYNC_CONFIRMATION/);
+});
+test('scheduled Nov2 and deferred October archive use one10:00 source admission without manual impersonation',async()=>{
+ const old=state(dailyReportPlan('2026-10-30',['NYSE','NASDAQ']),'2026-10-31T09:35:00Z');
+ const args={now:new Date('2026-11-03T10:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,readState:async()=>old,readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ const r=await dailyPublicationPreflight(args);assert.equal(r.outcome,'produce');assert.equal(r.plan.scheduledAt,'2026-11-03T10:00:00+08:00');
+ assert.equal(r.plan.accountingThrough,'2026-11-02');assert.equal(r.plan.periodFrom,'2026-10-31');assert.equal(r.plan.kind,'daily-monthly');assert.deepEqual(r.plan.monthlyCutoffs,['2026-10-31']);
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-03T09:59:59+08:00'),readState:()=>assert.fail('early gate must not read state')})).reasonCode,'REPORT_NOT_DUE');
+ assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>({attempts:2,inProgress:false})})).reasonCode,'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...old,pending:true})})).outcome,'candidate-pending');
+ await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-02'}),/MANUAL_SYNC_CONFIRMATION/);
 });
 test('known US session permits only the reviewed one-off calendar qualifier; scheduled scope stays unchanged',async()=>{
  const r=await dailyPublicationPreflight({markets:['NYSE','NASDAQ'],targetDate:'2026-10-27',now:new Date('2026-10-28T13:00:00+08:00'),ibEnabled:false,readState:async()=>state(weeklyReportPlan('2026-10-23')),readSourceAttempts:async()=>({attempts:0,inProgress:false})});

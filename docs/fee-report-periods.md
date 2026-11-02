@@ -345,18 +345,26 @@ No manager token, recipient registration, financial call, ledger write, secret
 creation or automatic flag is part of this adapter. No real execution occurred
 during this local development.
 
-## Ordinary daily HKT10:30 readiness
+## Ordinary daily HKT10:00 readiness
 
-A validated ordinary v2 `daily` plan with no monthly cutoff becomes calendar-ready
-at its original next-day HKT10:30 time. Its target, accounting date and source
-query remain the previous HKT calendar date; no earlier date is substituted.
-The extra New York midnight wait still applies to v1 weekly/monthly plans and
-v2 `daily-monthly` plans that finalize a month. The reviewed one-off contract,
-including its exact manual synchronization confirmation, is unchanged.
+Starting with the November 2, 2026 accounting target, qualifying ordinary v2
+reports become calendar-ready at next-day HKT10:00. Older targets retain their
+10:30 plan and metadata times so accepted report IDs remain unchanged. A new
+report shows 10:00 as its next scheduled start; old reports are not rewritten.
+Targets, accounting dates and source queries retain their actual dates.
+
+A combined daily/month-end report checks New York completion against its actual
+monthly cutoff, not the later daily target. The October 31 archive is already
+complete at November 3 10:00 even though the November 2 NY natural day is not.
+If the daily target itself is month-end, its genuine natural-day completion
+check still waits for NY midnight. v1 weekly/monthly and reviewed manual-entry
+rules remain unchanged. No completed month lock or financial formula is relaxed.
 
 Calendar readiness alone does not confirm manual synchronization or source
-completeness. Schedule activation still needs its own authorized scope and the
-current target's confirmed manual synchronization. The normal source dates,
-benchmark coverage, candidate and concurrency checks, original attempt budget,
-rerun refusal and protected publication remain mandatory. No dispatch or enablement
-is performed by this code change; it does not authorize future daily execution.
+completeness. Source dates, benchmark coverage, candidate/concurrency checks,
+original attempt budget, rerun refusal and protected publication remain mandatory.
+The November 3 acceptance reuses the same single target/tag; it opens at 10:00
+and keeps its 13:45 admission deadline and 14:15 finish deadline. Later cron
+slots cannot consume a second opportunity. Recurring daily time is now 10:00,
+but recurring production activation remains separate from this one acceptance.
+No credential, identity, other reminder or monitoring schedule is changed.
