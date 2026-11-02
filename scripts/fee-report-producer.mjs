@@ -361,7 +361,7 @@ export async function readPeriodSourceAttempts({plan,now,currentRunId=null,recov
           &&!scope?.failures.some(old=>old.id===r.id&&old.head===r.head_sha))evidence.reservations.push(r.id);
       if(j.conclusion==='skipped'){if(j.status!=='completed')fail('SOURCE_ATTEMPT_METADATA');continue;}
       if(evidence&&j.started_at!==null&&(!Number.isFinite(Date.parse(j.started_at))||Date.parse(j.started_at)<Date.parse(r.created_at)||Date.parse(j.started_at)>now.getTime()+300000))fail('RECOVERY_METADATA');
-      if(['period','watch','source-plan-check','once-admit','once-finish'].includes(j.name))continue;
+      if(['period','watch','source-plan-check','once-admit','once-finish','ratio-preflight','ratio'].includes(j.name))continue;
       if(j.name!=='produce'&&!/^Produce (daily|weekly|monthly) \d{4}-\d{2}-\d{2}$/.test(j.name)&&!/^Source acceptance \d{4}-\d{2}-\d{2}$/.test(j.name))fail('SOURCE_ATTEMPT_METADATA');
       if(evidence&&j.status!=='completed')evidence.otherSourceActive=true;
       // A legacy unlabelled source job conservatively consumes either budget.
