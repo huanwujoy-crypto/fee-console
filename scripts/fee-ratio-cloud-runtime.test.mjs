@@ -1,0 +1,114 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import crypto from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import {authenticated} from './fee-ratio-official-source.test.mjs';
+import {createRatioCloudPublisher} from './fee-ratio-cloud-publish.mjs';
+import {ratioAdmission,createRatioTransport,executeRatioCloud,saveRatioReceipt,safeRatioReceipt,RATIO_BUCKET,RATIO_OWNER} from './fee-ratio-cloud-runtime.mjs';
+const gid='0'.repeat(32),managerToken='synthetic-manager-token-not-real-123',accessToken='synthetic-google-token-not-real-123',head='a'.repeat(40),canary='CANARY_PRIVATE_TOKEN_NEVER_LOG';
+const hash=b=>crypto.createHash('sha256').update(b).digest('hex');
+const response=(url,value,status=200)=>{const r=new Response(status===204||status===412?null:typeof value==='string'?value:JSON.stringify(value),{status});Object.defineProperty(r,'url',{value:url});return r;};
+const plan=()=>({mode:'verify-current',previousBodySha256:'b'.repeat(64),bundleId:null,original:null,input:null,library:null});
+function admission(p=plan()){
+ const event={sender:{id:RATIO_OWNER},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{ratio_main:head,ratio_plan:JSON.stringify(p)}};
+ const env={GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:String(RATIO_OWNER),GITHUB_SHA:head,RATIO_PLAN:event.inputs.ratio_plan,FEE_ECON_GIST_ID:gid,FEE_DATA_KEY:Buffer.alloc(32,7).toString('base64url'),FEE_RATIO_MANAGER_TOKEN:managerToken};return {event,env};
+}
+const safe=()=>({schema:'fee-console.ratio-cloud-safe-result.v1',status:'REFUSED',stage:'ADMISSION',claim:'NOT_ATTEMPTED',patchAttempts:0,bodySha256:null,contentSha256:null,cleanup:'NO_INPUTS_READ'});
+test('exact manual owner/main/attempt and closed plan; fee inputs cannot be mixed',()=>{
+ assert.equal(ratioAdmission(admission().env,admission().event).mode,'verify-current');
+ for(const change of [f=>f.env.GITHUB_EVENT_NAME='schedule',f=>f.env.GITHUB_RUN_ATTEMPT='2',f=>f.env.GITHUB_REF='refs/heads/other',f=>f.env.GITHUB_ACTOR_ID='1',f=>f.event.sender.id=1,f=>f.event.inputs.ratio_main='c'.repeat(40),f=>f.event.inputs.run_reviewed_once='true',f=>f.event.inputs.manual_sync_completed_for='2026-11-02',f=>f.event.inputs.bad=canary,f=>f.env.RATIO_PLAN='{}']){const f=admission();change(f);assert.throws(()=>ratioAdmission(f.env,f.event),/REFUSED/);}
+});
+test('full read-only entry authenticates exact packet; no storage, claims, PATCH or financial API',async t=>{
+ const f=await authenticated(t),p=plan();p.previousBodySha256=await f.ratio.digest(f.signed.body);const a=admission(p),calls=[],saved=[],files={};
+ for(const [name,value]of [['fee-console-ratio-recipient.json',f.manager.recipient],['fee-console-ratio-snapshot.json',f.signed]]){const content=JSON.stringify(value);files[name]={filename:name,size:Buffer.byteLength(content),content,truncated:false};}
+ const fetchImpl=async(url,o)=>{calls.push({url,method:o.method||'GET'});assert.equal(o.redirect,'error');if(url.endsWith('/git/ref/heads/main'))return response(url,{object:{sha:head}});assert.equal(o.headers.Authorization,'Bearer '+managerToken);if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});assert.equal(url,'https://api.github.com/gists/'+gid);return response(url,{id:gid,public:false,owner:{id:RATIO_OWNER,login:'synthetic-owner'},history:[{version:'d'.repeat(40)}],files});};
+ const r=await executeRatioCloud({...a,fetchImpl,publisher:createRatioCloudPublisher({exposureCore:f.exposure}),clock:()=>f.now,saveReceipt:async v=>saved.push(structuredClone(v))});assert.equal(r.status,'VERIFIED_CURRENT_NO_WRITE');assert.equal(r.patchAttempts,0);assert.deepEqual(saved.at(-1),r);assert.equal(calls.length,3);assert.ok(calls.every(c=>c.method==='GET'&&!c.url.includes('storage')));
+});
+test('public preflight main mismatch and unknown inputs fail before credentials, preserving fixed receipt',async()=>{
+ for(const change of [false,true]){const a=admission(),calls=[],saved=[];const r=await executeRatioCloud({...a,env:{...a.env,FEE_RATIO_MANAGER_TOKEN:undefined},preflight:true,fetchImpl:async url=>{calls.push(url);return response(url,{object:{sha:change?'b'.repeat(40):head}});},saveReceipt:async v=>saved.push(v)});assert.equal(calls.length,1);assert.equal(change?r.stage:r.preflight,change?'MAIN':true);if(change)assert.equal(saved.length,1);}
+ const a=admission();a.event.inputs.bad=canary;const saved=[];const r=await executeRatioCloud({...a,fetchImpl:()=>{throw Error('NO_CALL')},saveReceipt:async v=>saved.push(v)});assert.equal(r.stage,'ADMISSION');assert.ok(!JSON.stringify(saved).includes(canary));
+});
+function transportFixture({truncated=false,mutate=()=>{},extra}={}){
+ const body=Buffer.from('{"synthetic":"snapshot"}'),raw='https://gist.githubusercontent.com/synthetic-owner/'+gid+'/raw/'+'c'.repeat(40)+'/fee-console-ratio-snapshot.json';
+ const files={'fee-console-ratio-recipient.json':{filename:'fee-console-ratio-recipient.json',content:'{}',size:2,truncated:false},'fee-console-ratio-snapshot.json':{filename:'fee-console-ratio-snapshot.json',content:body.toString(),size:body.length,truncated,raw_url:raw}};
+ const gist={id:gid,public:false,owner:{id:RATIO_OWNER,login:'synthetic-owner'},history:[{version:'d'.repeat(40)}],files};mutate(gist);const calls=[];
+ const io=createRatioTransport({gistId:gid,managerToken,accessToken,saveReceipt:async()=>{},fetchImpl:async(url,o)=>{calls.push({url,o});assert.equal(o.redirect,'error');assert.equal(o.credentials,'omit');if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});if(url==='https://api.github.com/gists/'+gid)return response(url,gist);if(url===raw){assert.equal(o.headers.Authorization,undefined);return response(url,body.toString());}if(extra)return extra(url,o);throw Error(canary);}});return {io,calls,body,raw,gist};
+}
+test('truncated exact older file revision; no credential to raw host; cleanup clears held bytes',async()=>{
+ const f=transportFixture({truncated:true}),r=await f.io.readDestination('fee-console-ratio-snapshot.json');assert.ok(r.snapshotBytes.equals(f.body));assert.equal(f.calls.length,3);await f.io.cleanupLocal();assert.ok(r.snapshotBytes.every(x=>x===0));
+});
+test('wrong owner/public/id/raw URL/filename/size fail closed',async()=>{
+ for(const mutate of [g=>g.owner.id=1,g=>g.public=true,g=>g.id='1'.repeat(32),g=>g.files['fee-console-ratio-snapshot.json'].filename='fee-console-db.json',g=>g.files['fee-console-ratio-snapshot.json'].size++,g=>g.files['fee-console-ratio-snapshot.json'].raw_url='https://example.invalid/'+canary]){const f=transportFixture({truncated:true,mutate});await assert.rejects(f.io.readDestination('fee-console-ratio-snapshot.json'),/REFUSED/);assert.ok(f.calls.every(c=>c.o.method==='GET'));}
+});
+test('redirect, oversized stream and transport failure do not retry',async()=>{
+ for(const kind of ['redirect','oversize','throw']){let calls=0;const io=createRatioTransport({gistId:gid,managerToken,saveReceipt:async()=>{},fetchImpl:async(url)=>{calls++;if(kind==='throw')throw Error(canary);const r=response(url,kind==='oversize'?'x'.repeat(65537):{});if(kind==='redirect')Object.defineProperty(r,'redirected',{value:true});return r;}});await assert.rejects(io.readDestination('fee-console-ratio-snapshot.json'));assert.equal(calls,1);}
+});
+test('pinned input exact metadata and hash; no object listing',async()=>{
+ const bytes=Buffer.from('{}'),s={name:'inputs/'+'a'.repeat(64)+'/original.json',generation:'101',sha256:hash(bytes)};
+ const f=transportFixture({extra:async(url,o)=>{assert.equal(o.headers.Authorization,'Bearer '+accessToken);assert.ok(url.includes(encodeURIComponent(s.name)));assert.ok(url.includes('generation=101'));return response(url,url.endsWith('&alt=media')?'{}':{bucket:RATIO_BUCKET,name:s.name,generation:s.generation,size:'2'});}});
+ assert.ok((await f.io.readInput(s)).bytes.equals(bytes));assert.equal(f.calls.length,2);await assert.rejects(f.io.readInput({...s,name:'claims/x.json'}),/REFUSED/);assert.equal(f.calls.length,2);
+});
+test('create-only claims conflict without retry; no claim deletion or reset',async()=>{
+ const name='claims/'+'b'.repeat(64)+'.json',body={bodySha256:'a'.repeat(64),contentSha256:'b'.repeat(64)};
+ const f=transportFixture({extra:async(url,o)=>{if(o.method==='DELETE'){assert.match(url,/generation=101&ifGenerationMatch=101$/);assert.ok(url.includes('inputs%2F'));return response(url,null,204);}assert.equal(o.method,'POST');assert.ok(url.endsWith('&ifGenerationMatch=0'));return response(url,null,412);}});
+ assert.equal(await f.io.claimOnce(name,body,{ifGenerationMatch:0}),'EXISTS');assert.equal(f.calls.length,1);await assert.rejects(f.io.claimOnce(name,body,{ifGenerationMatch:1}),/REFUSED/);
+ const spec=n=>({name:'inputs/'+'a'.repeat(64)+'/'+n+'.json',generation:'101',sha256:'a'.repeat(64)});await f.io.deleteInputs([spec('original'),spec('input')]);assert.equal(f.calls.length,3);await assert.rejects(f.io.deleteInputs([{...spec('input'),name}]),/REFUSED/);
+});
+test('one fixed-file PATCH only; no fee/health/recipient/ledger write',async()=>{
+ const f=transportFixture(),body={files:{'fee-console-ratio-snapshot.json':{content:'{}'}}};await f.io.patchSnapshot(body);await assert.rejects(f.io.patchSnapshot(body),/REFUSED/);assert.equal(f.calls.filter(c=>c.o.method==='PATCH').length,1);
+ for(const name of ['fee-console-db.json','fee-console-fund.json','fee-console-ratio-recipient.json','data.json','fee-data-health.json']){const g=transportFixture();await assert.rejects(g.io.patchSnapshot({files:{[name]:{content:'{}'}}}),/REFUSED/);assert.equal(g.calls.length,0);}
+});
+test('outer error cannot erase a possibly issued PATCH outcome',async()=>{
+ const a=admission(),saved=[],publisher={async run({io}){await io.saveReceipt({...safe(),stage:'READBACK',status:'WRITE_UNCONFIRMED',patchAttempts:1});throw Error(canary);}};
+ const r=await executeRatioCloud({...a,publisher,fetchImpl:async url=>response(url,{object:{sha:head}}),saveReceipt:async v=>saved.push(v)});assert.equal(r.patchAttempts,1);assert.equal(r.status,'WRITE_UNCONFIRMED');assert.equal(saved.at(-1).patchAttempts,1);
+});
+test('safe receipt atomic save refuses extra fields and cannot overwrite pending evidence',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ratio-safe-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const file=path.join(dir,'result.json');saveRatioReceipt(file,safe());assert.equal(fs.statSync(file).mode&0o777,0o600);assert.deepEqual(JSON.parse(fs.readFileSync(file)),safe());assert.throws(()=>safeRatioReceipt({...safe(),secret:canary}),/REFUSED/);fs.writeFileSync(file+'.pending','pending');assert.throws(()=>saveRatioReceipt(file,safe()));assert.deepEqual(JSON.parse(fs.readFileSync(file)),safe());
+});
+test('actual final command fails admission without networking and saves before displaying',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ratio-entry-test-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));fs.writeFileSync(path.join(dir,'event.json'),JSON.stringify({bad:canary}));
+ const r=spawnSync(process.execPath,['scripts/fee-ratio-cloud-runtime.mjs','--preflight'],{cwd:new URL('..',import.meta.url),env:{...process.env,GITHUB_EVENT_PATH:path.join(dir,'event.json'),RUNNER_TEMP:dir,GITHUB_ACTIONS:'false'},encoding:'utf8'});assert.equal(r.status,1);assert.ok(!r.stdout.includes(canary));assert.ok(!r.stderr.includes(canary));assert.equal(JSON.parse(fs.readFileSync(path.join(dir,'fee-ratio-result.safe.json'))).stage,'ADMISSION');
+});
+test('workflow isolates all fee jobs, preserves schedule/concurrency and never exposes SS credentials to ratio',()=>{
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.match(body,/    if: \$\{\{ !inputs\.ratio_plan && !inputs\.ratio_main && /,job);}
+ assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/cron: '30 2 \* \* \*'/);assert.match(wf,/cron: '0 5,6 \* \* \*'/);
+ const ratio=wf.split('\n  ratio:\n')[1];assert.ok(!ratio.includes('SHARESIGHT'));assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
+});
+
+test('complete publish entry: pinned storage, real crypto, durable intent, one PATCH, exact readback and cleanup',async t=>{
+ const {createOfficialRatioSourceCore}=await import('./fee-ratio-official-source.mjs');const f=await authenticated(t),raw=structuredClone(f.raw);raw.classification.capturedAt='2026-10-30T05:45:00.000Z';raw.exposure.capturedAt='2026-10-30T05:44:00.000Z';
+ const original=Buffer.from(JSON.stringify(raw)),input=Buffer.from(JSON.stringify(createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(original),sourceBytes:original.length}).input));
+ const bundleId=hash(Buffer.concat([original,input])),spec=(file,b,generation)=>({name:'inputs/'+bundleId+'/'+file+'.json',generation,sha256:hash(b)});
+ const p={mode:'publish',previousBodySha256:await f.ratio.digest(f.signed.body),bundleId,original:spec('original',original,'101'),input:spec('input',input,'102'),library:{fileId:'libfile_'+'9'.repeat(32),version:0}},a=admission(p);a.env.RATIO_STORAGE_ACCESS_TOKEN=accessToken;
+ let current=JSON.stringify(f.signed),revision='d'.repeat(40),patches=0,claims=0;const events=[],saved=[],objects=new Map([[p.original.name,{spec:p.original,bytes:original}],[p.input.name,{spec:p.input,bytes:input}]]);
+ const fetchImpl=async(url,o)=>{
+  const u=new URL(url);events.push(o.method||'GET');
+  if(url.endsWith('/git/ref/heads/main'))return response(url,{object:{sha:head}});
+  if(u.host==='api.github.com'){
+   assert.equal(o.headers.Authorization,'Bearer '+managerToken);
+   if(url.endsWith('/user'))return response(url,{id:RATIO_OWNER,login:'synthetic-owner'});
+   assert.equal(url,'https://api.github.com/gists/'+gid);
+   if(o.method==='PATCH'){assert.equal(saved.at(-1).stage,'WRITE_INTENT');patches++;current=JSON.parse(o.body).files['fee-console-ratio-snapshot.json'].content;revision='e'.repeat(40);}
+   const files={};for(const [name,content]of [['fee-console-ratio-recipient.json',JSON.stringify(f.manager.recipient)],['fee-console-ratio-snapshot.json',current]])files[name]={filename:name,content,size:Buffer.byteLength(content),truncated:false};
+   return response(url,{id:gid,public:false,owner:{id:RATIO_OWNER,login:'synthetic-owner'},history:[{version:revision}],files});
+  }
+  assert.equal(u.host,'storage.googleapis.com');assert.equal(o.headers.Authorization,'Bearer '+accessToken);
+  if(o.method==='POST'){claims++;assert.equal(u.searchParams.get('ifGenerationMatch'),'0');assert.match(u.searchParams.get('name'),/^claims\/[a-f0-9]{64}\.json$/);return response(url,{bucket:RATIO_BUCKET,name:u.searchParams.get('name'),generation:'301'});}
+  const name=decodeURIComponent(u.pathname.split('/o/')[1]),obj=objects.get(name);assert.ok(obj);assert.equal(u.searchParams.get('generation'),obj.spec.generation);
+  if(o.method==='DELETE'){assert.equal(u.searchParams.get('ifGenerationMatch'),obj.spec.generation);objects.delete(name);return response(url,null,204);}
+  return response(url,u.searchParams.get('alt')==='media'?obj.bytes.toString():{bucket:RATIO_BUCKET,name,generation:obj.spec.generation,size:String(obj.bytes.length)});
+ };
+ const r=await executeRatioCloud({...a,fetchImpl,publisher:createRatioCloudPublisher({exposureCore:f.exposure}),clock:()=>f.now,saveReceipt:async v=>{saved.push(structuredClone(v));events.push('saved');}});
+ assert.equal(r.status,'PUBLISHED_CONFIRMED');assert.equal(patches,1);assert.equal(claims,1);assert.equal(objects.size,0);assert.equal(r.cleanup,'LOCAL_AND_PINNED_INPUTS');assert.equal(events.at(-1),'saved');assert.equal(JSON.parse(current).body.version,2);assert.ok(!JSON.stringify(saved).includes(managerToken));
+});
+
+
+test('ratio-only runs do not wake fee failure diagnosis or candidate promotion',()=>{
+ const root=new URL('../.github/workflows/',import.meta.url),producer=fs.readFileSync(new URL('fee-cloud-producer.yml',root),'utf8'),supervisor=fs.readFileSync(new URL('fee-cloud-supervisor.yml',root),'utf8'),promotion=fs.readFileSync(new URL('promote-fee-data.yml',root),'utf8');
+ assert.match(producer,/run-name:.*inputs.ratio_plan.*inputs.ratio_main.*Manual ratio snapshot.*github.workflow/);
+ assert.match(supervisor,/if: \$\{\{ github.event.workflow_run.display_title != 'Manual ratio snapshot' \}\}/);
+ assert.ok(!promotion.includes('- Fee console cloud producer'));
+});

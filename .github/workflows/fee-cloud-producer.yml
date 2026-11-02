@@ -1,4 +1,5 @@
 name: Fee console cloud producer
+run-name: ${{ (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ratio snapshot' || github.workflow }}
 
 on:
   schedule:
@@ -8,6 +9,16 @@ on:
     - cron: '0 5,6 * * *'
   workflow_dispatch:
     inputs:
+      ratio_main:
+        description: Exact reviewed main for a manual ratio operation; leave blank for fees
+        type: string
+        required: false
+        default: ''
+      ratio_plan:
+        description: Reviewed ratio plan JSON with hashes and object generations only; never credentials or holdings
+        type: string
+        required: false
+        default: ''
       source_plan_check_only:
         description: Public code/date plan check only; no financial environment or credentials
         type: boolean
@@ -75,7 +86,7 @@ concurrency:
 jobs:
   period:
     # Legacy automated dispatchers omit run_reviewed_once and stay stopped.
-    if: ${{ !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_REPORT_ONCE_MAIN != '') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_REPORT_ONCE_MAIN != '') || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -144,7 +155,7 @@ jobs:
 
   once-admit:
     needs: period
-    if: ${{ vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN != '' && needs.period.outputs.outcome == 'produce' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -166,7 +177,7 @@ jobs:
   produce:
     name: Produce ${{ needs.period.outputs.kind }} ${{ needs.period.outputs.target }}
     needs: [period, once-admit]
-    if: ${{ !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && !cancelled() && !inputs.source_plan_check_only && github.run_attempt == 1 && needs.period.outputs.outcome == 'produce' && (vars.FEE_REPORT_ONCE_MAIN == '' || needs['once-admit'].result == 'success') && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -342,7 +353,7 @@ jobs:
 
   once-finish:
     needs: [period, once-admit, produce]
-    if: ${{ always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && always() && vars.FEE_REPORT_ONCE_MAIN != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -364,7 +375,7 @@ jobs:
 
   source-plan-check:
     name: Public source plan check ${{ inputs.source_target }}
-    if: ${{ github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -387,7 +398,7 @@ jobs:
 
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -439,3 +450,64 @@ jobs:
             find "$RUNNER_TEMP/fee-source-acceptance" -type f -exec shred -u {} + 2>/dev/null || true
             rm -rf "$RUNNER_TEMP/fee-source-acceptance"
           fi
+
+  ratio-preflight:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact reviewed ratio code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Validate manual ratio admission without financial credentials
+        env:
+          RATIO_PLAN: ${{ inputs.ratio_plan }}
+        run: node scripts/fee-ratio-cloud-runtime.mjs --preflight
+
+  ratio:
+    needs: ratio-preflight
+    if: ${{ needs.ratio-preflight.result == 'success' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.run_attempt == 1 && inputs.ratio_main == github.sha }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: fee-cloud-producer
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out exact reviewed ratio code
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Authenticate existing cloud identity for pinned ratio inputs only
+        if: ${{ fromJSON(inputs.ratio_plan).mode == 'publish' }}
+        id: ratio-auth
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093
+        with:
+          workload_identity_provider: projects/860729177589/locations/global/workloadIdentityPools/fee-console-github/providers/fee-console-main
+          service_account: fee-cloud-producer@family-portfolio-gateway.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_lifetime: 600s
+          access_token_scopes: https://www.googleapis.com/auth/devstorage.read_write
+          create_credentials_file: false
+          export_environment_variables: false
+      - name: Execute only the reviewed ratio operation
+        env:
+          RATIO_PLAN: ${{ inputs.ratio_plan }}
+          RATIO_STORAGE_ACCESS_TOKEN: ${{ steps.ratio-auth.outputs.access_token }}
+          FEE_RATIO_MANAGER_TOKEN: ${{ secrets.FEE_RATIO_MANAGER_TOKEN }}
+          FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
+          FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
+        run: node scripts/fee-ratio-cloud-runtime.mjs --run
+      - name: Retain only the closed safe ratio result
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ratio-result-${{ github.run_id }}
+          path: ${{ runner.temp }}/fee-ratio-result.safe.json
+          if-no-files-found: warn
+          retention-days: 7
