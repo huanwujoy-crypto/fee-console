@@ -3,9 +3,9 @@ run-name: ${{ (inputs.ratio_plan != '' || inputs.ratio_main != '') && 'Manual ra
 
 on:
   schedule:
-    # Public market gate: HKT10:00 first check, same-day11:30/14:00 continuation.
+    # Public market gate: HKT09:00 first check, same-day11:30/14:00 continuation.
     # Unknown/closed markets or an incomplete month-end enter no source.
-    - cron: '0 2 * * *'
+    - cron: '0 1 * * *'
     - cron: '30 3 * * *'
     - cron: '0 6 * * *'
   workflow_dispatch:

@@ -49,11 +49,11 @@ test('new 10:00 start closes the prior month without claiming the latest NY natu
  assert.throws(()=>control({plan:{...p,scheduledAt:'2026-11-03T09:00:00+08:00'}}),/LOCAL_DAILY_PLAN_INVALID/);
 });
 
-test('future ordinary reports start at10:00 and unverified or closed calendars still stop',()=>{
- assert.equal(plan('2026-11-04T09:59:59+08:00','2026-11-02').state,'not-due');
- assert.equal(plan('2026-11-04T10:00:00+08:00','2026-11-02').state,'calendar-ready');
- assert.equal(plan('2026-11-04T10:00:00+08:00','2026-11-02',['NYSE','EURONEXT']).reason,'CALENDAR_SCOPE_UNVERIFIED');
- assert.equal(plan('2026-12-26T10:00:00+08:00','2026-12-24').state,'market-closed');
+test('from November4 ordinary reports start at09:00 and unverified or closed calendars still stop',()=>{
+ assert.equal(plan('2026-11-04T08:59:59+08:00','2026-11-02').state,'not-due');
+ assert.equal(plan('2026-11-04T09:00:00+08:00','2026-11-02').state,'calendar-ready');
+ assert.equal(plan('2026-11-04T09:00:00+08:00','2026-11-02',['NYSE','EURONEXT']).reason,'CALENDAR_SCOPE_UNVERIFIED');
+ assert.equal(plan('2026-12-26T09:00:00+08:00','2026-12-24').state,'market-closed');
 });
 
 test('11:30 replaces13:00 without changing target, budget, rerun or14:00 boundary',()=>{
@@ -65,4 +65,23 @@ test('11:30 replaces13:00 without changing target, budget, rerun or14:00 boundar
  assert.equal(check().target,'2026-11-02');assert.equal(check().state,'ready-for-source-validation');
  assert.equal(check({sourceAttempts:2}).reason,'SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
  assert.equal(check({runAttempt:'2'}).reason,'RERUN_NOT_AUTHORIZED');
+});
+
+
+test('09:00 keeps historical dates, unchanged follow-ups and source admission guards',()=>{
+ const now='2026-11-04T09:00:00+08:00',p=plan(now,'2026-11-02',['NYSE','NASDAQ']);
+ assert.equal(p.target,'2026-11-03');assert.equal(p.scheduledAt,now);assert.equal(p.publicationReady,false);assert.equal(p.sourceAcceptanceRequired,true);
+ assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date(now)),'2026-11-03');
+ assert.equal(nextSameDayCheck(p,'2026-11-04T08:59:59+08:00'),now);
+ assert.equal(nextSameDayCheck(p,now),'2026-11-04T11:30:00+08:00');
+ assert.equal(nextSameDayCheck(p,'2026-11-04T11:30:00+08:00'),'2026-11-04T14:00:00+08:00');
+ assert.equal(nextSameDayCheck(p,'2026-11-04T14:00:00+08:00'),null);
+ const decision=extra=>sameDaySourceDecision({plan:p,now,mainSha:sha,currentMainSha:sha,sourceAttempts:0,...extra});
+ assert.equal(decision().state,'ready-for-source-validation');
+ for(const [extra,reason]of [[{sourceAttempts:2},'SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{inProgress:true},'SOURCE_RUN_IN_PROGRESS'],[{runAttempt:'2'},'RERUN_NOT_AUTHORIZED'],[{currentMainSha:'b'.repeat(40)},'FROZEN_CODE_CHANGED']])assert.equal(decision(extra).reason,reason);
+ assert.equal(decision({now:'2026-11-04T08:59:59+08:00'}).reason,'BEFORE_0900');
+ assert.equal(plan('2026-12-01T09:00:00+08:00','2026-11-29').reason,'ACCOUNTING_DAY_NOT_COMPLETE');
+ assert.equal(plan('2026-12-01T13:00:00+08:00','2026-11-29').state,'calendar-ready');
+ assert.equal(plan('2026-11-03T09:00:00+08:00','2026-10-30').reason,'BEFORE_1000');
+ assert.equal(plan('2026-10-31T09:00:00+08:00','2026-10-29').reason,'BEFORE_1030');
 });

@@ -193,9 +193,11 @@ Any one-time attachment repair retains the fee and all non-IB fields and needs i
 own bounded source and protected publication approval. This code change does not
 enable schedules, create a baseline approval, or authorize another run.
 
-The current cron first checks at HKT10:00, with the already bounded 11:30/14:00
-continuations. GitHub can delay cron delivery. The user completes Sharesight sync
-before 10:00; this migration does not re-synchronize or cross-check brokers.
+The current cron first checks at HKT09:00, with the already bounded 11:30/14:00
+continuations. The new time applies from November 4, 2026 HKT (November 3 target).
+GitHub can delay cron delivery. Calendar readiness does not attest completed
+Sharesight synchronization; the original source checks remain mandatory. This
+change does not re-synchronize or cross-check brokers.
 The public plan gate and actual source-date checks still select the report date.
 The shared follow-up slot moves from13:00 to11:30 for this acceptance and future
 qualifying days. The original opportunity,13:45 admission deadline and14:15 finish
@@ -289,7 +291,7 @@ Webull. It has no mutation route.
 
 ## Daily behavior
 
-The current daily plan uses the market calendar and HKT10:00 readiness contract
+The current daily plan uses the market calendar and HKT09:00 readiness contract
 in `fee-report-periods.md`. It fixes accounting and price cutoffs before source
 access. The Sharesight step above fills the cache for that price cutoff inside
 the same budgeted source job. Old or future cache rows cannot choose the report
@@ -598,3 +600,14 @@ input for a proposal absent from its registry. The existing economic Gist is not
 repurposed or modified. Financial writer/publication authorization, signed owner
 candidate, Validate, Promote, Pages and read-back remain separate gates. Existing
 weekend carry behavior is unchanged.
+
+
+### November 4 time-only adjustment
+
+Only the first cron and ordinary daily start move from10:00 to09:00 HKT.
+The11:30/14:00 continuations, ratio dispatch, publication gates and permissions
+are unchanged. Targets before November3 preserve historical plan/metadata times;
+the consumed November3 acceptance retains its original controller and records.
+This does not enable paused workflows or provide a recurring daily entry. The
+separate unified daily/Jenny continuation and baseline setup remain unactivated.
+Changing this time rule must not be reported as successful daily activation.

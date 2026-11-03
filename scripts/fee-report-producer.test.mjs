@@ -896,3 +896,15 @@ test('October30 recovery confirmation uses the original exact reviewed event and
  const old=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
  assert.match(old,/timeout-minutes: 15/);assert.match(old,/never resets ordinary budgets/);
 });
+
+
+test('actual daily preflight starts at09:00 without clearing candidate, budget or source gates',async()=>{
+ const old=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:45:00Z');
+ const args={now:new Date('2026-11-04T09:00:00+08:00'),markets:['NYSE','NASDAQ'],ibEnabled:false,readState:async()=>old,readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ const result=await dailyPublicationPreflight(args);assert.equal(result.outcome,'produce');assert.equal(result.plan.accountingThrough,'2026-11-03');assert.equal(result.plan.priceThrough,'2026-11-03');assert.equal(result.plan.scheduledAt,'2026-11-04T09:00:00+08:00');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-04T08:59:59+08:00'),readState:()=>assert.fail('early gate must not read publication state')})).reasonCode,'REPORT_NOT_DUE');
+ for(const [budget,reason]of [[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']])assert.equal((await dailyPublicationPreflight({...args,readSourceAttempts:async()=>budget})).reasonCode,reason);
+ assert.equal((await dailyPublicationPreflight({...args,runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...old,pending:true})})).outcome,'candidate-pending');
+ await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-03'}),/MANUAL_SYNC_CONFIRMATION/);
+});

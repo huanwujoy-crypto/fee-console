@@ -368,3 +368,20 @@ and keeps its 13:45 admission deadline and 14:15 finish deadline. Later cron
 slots cannot consume a second opportunity. Recurring daily time is now 10:00,
 but recurring production activation remains separate from this one acceptance.
 No credential, identity, other reminder or monitoring schedule is changed.
+
+
+## Ordinary daily HKT09:00 readiness from November 4
+
+For accounting targets from2026-11-03, qualifying daily plans begin checking at
+next-day HKT09:00. The producer cron is01:00UTC; existing03:30UTC/06:00UTC checks
+remain11:30/14:00HKT. November2 keeps10:00, and earlier targets keep10:30, so
+accepted historical plans, next-update metadata and report IDs remain stable.
+New reports in this range show09:00 for their next scheduled start. Previously
+published reports are not rewritten solely to change that hint.
+
+The target remains the prior Hong Kong date. This does not claim that its New
+York natural day is complete. Genuine month-end finalization still waits for
+that monthly cutoff's NY midnight; source dates, closed/unknown market handling,
+financial validation, same-target claims, attempt budgets and rerun refusal stay
+unchanged. Calendar readiness is not evidence of source availability or a grant
+to run. No paused workflow or continuous daily production is enabled here.
