@@ -23,7 +23,7 @@ test('a ten-day recovery bound stays finite',()=>{assert.throws(()=>monthlyArchi
 test('calendar ready never asserts financial readiness or publication success',()=>{const p=plan('2026-10-28T13:00:00+08:00');assert.equal(p.state,'calendar-ready');assert.equal(p.publicationReady,false);assert.equal(p.sourceAcceptanceRequired,true);});
 const sha='a'.repeat(40),first=()=>plan('2026-10-28T10:30:00+08:00');
 const decision=(now,extra={})=>sameDaySourceDecision({plan:first(),now,mainSha:sha,currentMainSha:sha,sourceAttempts:0,...extra});
-test('the 10:30 daily result retains the same target for natural13:00 and14:00 checks',()=>{const p=first();assert.equal(nextSameDayCheck(p,'2026-10-28T10:30:00+08:00'),'2026-10-28T13:00:00+08:00');assert.equal(decision('2026-10-28T13:00:00+08:00').target,p.target);assert.equal(decision('2026-10-28T14:00:00+08:00').state,'ready-for-source-validation');assert.equal(nextSameDayCheck(p,'2026-10-28T14:00:00+08:00'),null);});
+test('the 10:30 daily result retains the same target for natural11:30 and14:00 checks',()=>{const p=first();assert.equal(nextSameDayCheck(p,'2026-10-28T10:30:00+08:00'),'2026-10-28T11:30:00+08:00');assert.equal(decision('2026-10-28T13:00:00+08:00').target,p.target);assert.equal(decision('2026-10-28T14:00:00+08:00').state,'ready-for-source-validation');assert.equal(nextSameDayCheck(p,'2026-10-28T14:00:00+08:00'),null);});
 test('same-day continuation cannot renew financial attempt budget, rerun approval or frozen code',()=>{for(const [extra,reason]of [[{sourceAttempts:2},'SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{inProgress:true},'SOURCE_RUN_IN_PROGRESS'],[{runAttempt:'2'},'RERUN_NOT_AUTHORIZED'],[{currentMainSha:'b'.repeat(40)},'FROZEN_CODE_CHANGED']])assert.equal(decision('2026-10-28T13:00:00+08:00',extra).reason,reason);});
 test('the same pending operation cannot silently roll to tomorrow or claim published',()=>{const r=decision('2026-10-29T13:00:00+08:00');assert.equal(r.reason,'FIXED_TARGET_DAY_ENDED');assert.equal(r.published,false);assert.equal(r.publicationReady,false);});
 
@@ -42,7 +42,7 @@ test('new 10:00 start closes the prior month without claiming the latest NY natu
  assert.equal(new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York'}).format(new Date(at)),'2026-11-02');
  const control=extra=>sameDaySourceDecision({plan:p,now:at,mainSha:sha,currentMainSha:sha,sourceAttempts:0,...extra});
  assert.equal(control().state,'ready-for-source-validation');assert.equal(control().publicationReady,false);
- assert.equal(nextSameDayCheck(p,at),'2026-11-03T13:00:00+08:00');
+ assert.equal(nextSameDayCheck(p,at),'2026-11-03T11:30:00+08:00');
  for(const [extra,reason]of [[{sourceAttempts:2},'SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{inProgress:true},'SOURCE_RUN_IN_PROGRESS'],[{runAttempt:'2'},'RERUN_NOT_AUTHORIZED'],[{currentMainSha:'b'.repeat(40)},'FROZEN_CODE_CHANGED']])assert.equal(control(extra).reason,reason);
  for(const monthlyCutoffs of [undefined,[],['2026-10-30'],['2026-11-30'],['2026-09-30'],['2026-10-31','2026-10-31'],['invalid']])assert.equal(control({plan:{...p,monthlyCutoffs}}).reason,'ACCOUNTING_DAY_NOT_COMPLETE');
  assert.equal(control({plan:{...p,kind:'daily'}}).reason,'ACCOUNTING_DAY_NOT_COMPLETE');
@@ -54,4 +54,15 @@ test('future ordinary reports start at10:00 and unverified or closed calendars s
  assert.equal(plan('2026-11-04T10:00:00+08:00','2026-11-02').state,'calendar-ready');
  assert.equal(plan('2026-11-04T10:00:00+08:00','2026-11-02',['NYSE','EURONEXT']).reason,'CALENDAR_SCOPE_UNVERIFIED');
  assert.equal(plan('2026-12-26T10:00:00+08:00','2026-12-24').state,'market-closed');
+});
+
+test('11:30 replaces13:00 without changing target, budget, rerun or14:00 boundary',()=>{
+ const p=plan('2026-11-03T10:00:00+08:00','2026-10-30');
+ assert.equal(nextSameDayCheck(p,'2026-11-03T11:29:59+08:00'),'2026-11-03T11:30:00+08:00');
+ for(const now of ['2026-11-03T11:30:00+08:00','2026-11-03T13:00:00+08:00'])assert.equal(nextSameDayCheck(p,now),'2026-11-03T14:00:00+08:00');
+ assert.equal(nextSameDayCheck(p,'2026-11-03T14:00:00+08:00'),null);
+ const check=extra=>sameDaySourceDecision({plan:p,now:'2026-11-03T11:30:00+08:00',mainSha:sha,currentMainSha:sha,sourceAttempts:0,...extra});
+ assert.equal(check().target,'2026-11-02');assert.equal(check().state,'ready-for-source-validation');
+ assert.equal(check({sourceAttempts:2}).reason,'SOURCE_ATTEMPT_BUDGET_EXHAUSTED');
+ assert.equal(check({runAttempt:'2'}).reason,'RERUN_NOT_AUTHORIZED');
 });

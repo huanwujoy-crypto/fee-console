@@ -131,10 +131,13 @@ snapshot automation is activated by these settings. Jenny's independent IB data
 needs its own existing attachment/checkpoint acceptance; it does not become part
 of the two-account management-fee calculation.
 
-The current cron first checks at HKT10:00, with the already bounded 13:00/14:00
+The current cron first checks at HKT10:00, with the already bounded 11:30/14:00
 continuations. GitHub can delay cron delivery. The user completes Sharesight sync
 before 10:00; this migration does not re-synchronize or cross-check brokers.
 The public plan gate and actual source-date checks still select the report date.
+The shared follow-up slot moves from13:00 to11:30 for this acceptance and future
+qualifying days. The original opportunity,13:45 admission deadline and14:15 finish
+deadline are unchanged; promotion watchdogs and other monitoring are not moved.
 An accepted report skips later slots; failed source entries remain limited to two
 per target, including shadow. Never run two shadows then a real third attempt.
 Reuse the existing real cloud evidence and approve one next-target acceptance;
