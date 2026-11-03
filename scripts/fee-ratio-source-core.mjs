@@ -18,7 +18,7 @@ const esc=s=>String(s).replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
 function verifyBrowserSourceAssociations(raw,input,{scopeHash,now=new Date()}={}){
   if(raw?.schemaVersion==='sharesight-private-full-v2'){
     const core=createOfficialRatioSourceCore();
-    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation')});
+    const built=core.build(raw,{sourceSha256:input?.book?.sourceSha256,sourceBytes:input?.book?.provenance?.fullSourceBytes,includeFundDistributions:Object.hasOwn(input?.classification||{},'fundDistributions'),includeAssetAllocation:Object.hasOwn(input?.classification||{},'assetAllocation'),excludeBenchmarkOnly:input?.classification?.basis===core.BENCHMARK_EXCLUDED_BASIS,includeFundHoldings:input?.classification?.fundDistributions?.some(f=>f.groups?.some(g=>Object.hasOwn(g,'holdings')))===true});
     if(core.canonical(input)!==core.canonical(built.input)||hashScope(raw.accounts)!==scopeHash)fail();
     const clock=now.getTime(),captured=time(built.capturedAt);
     if(!Number.isFinite(clock)||clock<captured||clock-captured>36*3600000

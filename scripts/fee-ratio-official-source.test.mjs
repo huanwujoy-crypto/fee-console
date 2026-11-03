@@ -32,8 +32,8 @@ export function syntheticOfficialSource(){
  const capture=(asOf,at,rows)=>({asOf,capturedAt:at,captureTimeBasis:'original-download-file-mtime',downloadCompletedAt:null,serverSuggestedOriginalFilename:null,dateEvidence:'Showing as at '+(asOf.endsWith('29')?'29':'30')+' Oct 2026',canonicalDataRows:rows,allWorksheetXmlRows:rows+5});
  return {schemaVersion:'sharesight-private-full-v2',source:{provider:'Sharesight',view:'All Together',transport:'official-workbook-exports'},accounts,sources:['classification.xlsx','exposure.xlsx','capture-metadata.json'].map((file,i)=>({file,sha256:String(i+1).repeat(64),libraryFileId:'libfile_'+String(i+1).repeat(32),libraryVersion:0})),classification:{...capture('2026-10-29','2026-10-30T05:31:53.561Z',positions.length+cashAccounts.length),positions,cashAccounts},exposure:{...capture('2026-10-30','2026-10-30T05:28:49.118Z',rows.length),rows},coverage:{classificationCombinedComplete:true,exposureCombinedComplete:true,groupingSheetsAreDuplicates:true,closedPositionsIncluded:false,transactionHistoryIncluded:false,completeETFUniverseClaimed:false},limitations:['Synthetic complete Combined sheet; other grouping sheets are duplicates.']};
 }
-function projected(raw=syntheticOfficialSource()){
- const bytes=Buffer.from(JSON.stringify(raw)),sha=hash(bytes),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha,sourceBytes:bytes.length}),scope=hash(JSON.stringify([...raw.accounts].sort())),exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope},ratio=createFeeRatioCore(exposure,crypto.webcrypto),source=createRatioSourceCore(()=>scope),now=new Date('2026-10-30T06:00:00.000Z');
+function projected(raw=syntheticOfficialSource(),options={}){
+ const bytes=Buffer.from(JSON.stringify(raw)),sha=hash(bytes),built=createOfficialRatioSourceCore().build(raw,{sourceSha256:sha,sourceBytes:bytes.length,...options}),scope=hash(JSON.stringify([...raw.accounts].sort())),exposure={...createRankedExposureCore(),ALL_TOGETHER_SCOPE_SHA256:scope},ratio=createFeeRatioCore(exposure,crypto.webcrypto),source=createRatioSourceCore(()=>scope),now=new Date('2026-10-30T06:00:00.000Z');
  return {raw,bytes,sha,built,scope,exposure,ratio,source,now};
 }
 test('mixed official dates keep their own totals, signed residual and same-export parent basis',()=>{
@@ -80,8 +80,8 @@ test('same-name fund securities stay separate and a claimed capture before its v
  assert.equal(new Set(top.map(r=>r.name)).size,5);assert.ok(top[0].name.includes('[F00 · PRIVATE]'));assert.ok(top[1].name.includes('[F01 · PRIVATE]'));
  raw.classification.capturedAt='2026-10-27T00:00:00.000Z';assert.throws(()=>projected(raw));
 });
-export async function authenticated(t,raw=syntheticOfficialSource()){
- const f=projected(raw),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+export async function authenticated(t,raw=syntheticOfficialSource(),options={}){
+ const f=projected(raw,options),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const write=(name,value)=>{const bytes=Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value)),p=path.join(dir,name);fs.writeFileSync(p,bytes,{mode:0o600});return {path:p,sha256:hash(bytes)};};
  const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123'),plan={schema:'fee-console.ratio-browser-evidence-plan.v1',workspace:dir,source:write('original.json',f.bytes),input:write('input.json',f.built.input),library:{libraryFileId:'libfile_'+'9'.repeat(32),version:0},managerScopeId:manager.recipient.scopeId,localOwnerUid:process.getuid()},planPath=write('plan.json',plan).path;
  const proof=readVerifiedBrowserEvidence({planPath,expectedScopeId:manager.recipient.scopeId,input:f.built.input,now:f.now,runtime:{uid:process.getuid(),readIdentity:()=>({libraryFileId:plan.library.libraryFileId,version:0})},exposureCore:f.exposure});
@@ -98,6 +98,58 @@ test('full source to manager snapshot authenticates both dates, renders distinct
  assert.equal((html.match(/<details><summary>/g)||[]).length>=4,true);
  assert.equal(result.model.feeCalculationReceipt,undefined);
  const late=await f.snapshot.verify(f.signed,f.manager,{now:new Date('2026-11-02T00:00:00.000Z')});assert.equal(late.stale,true);
+});
+
+function benchmarkOnlyFixture(){
+ const raw=syntheticOfficialSource(),account='Citi-HK & 地产四期';raw.accounts[9]=account;
+ const add=(account,code,market,valueUSD,sourceRow,legs)=>{
+  const p={sourceRow,account,name:'Synthetic reference '+code,securityCode:code,market,sharesightCategory:'美国底仓',valueUSD,quantity:1};raw.classification.positions.push(p);
+  for(const [i,leg] of legs.entries())raw.exposure.rows.push({sourceRow:sourceRow+i,account,securityCode:code,market,name:p.name,withinETF:null,ownership:'Direct',valueUSD,sourcePercentage:null,...leg});
+ };
+ add(account,'QQQ','NASDAQ',1000,900,[{valueUSD:1100}]);
+ add(account,'SPY','NYSE',2000,910,[{securityCode:'GOOG',market:'NASDAQ',ownership:'Underlying',withinETF:'SPY.NYSE',valueUSD:1700},{ownership:'Residual',valueUSD:500}]);
+ add('IB-HK','QQQ','NASDAQ',10,920,[{valueUSD:11}]);
+ add('IB-HK','SPY','NYSE',20,930,[{securityCode:'GOOG',market:'NASDAQ',ownership:'Underlying',withinETF:'SPY.NYSE',valueUSD:17},{ownership:'Residual',valueUSD:5}]);
+ add(account,'QQQ','TEST',30,940,[{valueUSD:33}]);
+ add(account,'OTHER','TEST',40,950,[{valueUSD:44}]);
+ raw.classification.canonicalDataRows=raw.classification.positions.length+raw.classification.cashAccounts.length;raw.classification.allWorksheetXmlRows=raw.classification.canonicalDataRows+5;
+ raw.exposure.canonicalDataRows=raw.exposure.rows.length;raw.exposure.allWorksheetXmlRows=raw.exposure.rows.length+5;
+ return raw;
+}
+test('benchmark-only assets leave both date-specific denominators and rankings, never the original source or other accounts',()=>{
+ const raw=benchmarkOnlyFixture(),before=JSON.stringify(raw),f=projected(raw),core=createOfficialRatioSourceCore(),legacy=core.build(raw,{sourceSha256:f.sha,sourceBytes:f.bytes.length,excludeBenchmarkOnly:false}),current=f.built;
+ assert.equal(current.input.classification.basis,core.BENCHMARK_EXCLUDED_BASIS);
+ assert.equal(legacy.input.classification.totalValueUSD-current.input.classification.totalValueUSD,3000);
+ assert.equal(legacy.input.exposure.summary.totalValueUSD-current.input.exposure.summary.totalValueUSD,3300);
+ assert.equal(legacy.input.classification.assetAllocation.groups[3].valueCents-current.input.classification.assetAllocation.groups[3].valueCents,300000);
+ assert.equal(legacy.input.exposure.summary.classes[3].totalValueUSD-current.input.exposure.summary.classes[3].totalValueUSD,3300);
+ assert.equal(legacy.input.exposure.summary.residualETFs.valueUSD-current.input.exposure.summary.residualETFs.valueUSD,500);
+ const a=current.input.classification.assetAllocation;assert.equal(a.groups.reduce((n,g)=>n+g.valueCents,0),a.totalCents);for(const g of a.groups)assert.equal(g.accounts.reduce((n,r)=>n+r.valueCents,0),g.valueCents);
+ assert.ok(current.companyContext.positions.some(p=>p.account==='IB-HK'&&p.securityCode==='QQQ'));
+ assert.ok(current.companyContext.positions.some(p=>p.account==='IB-HK'&&p.securityCode==='SPY'));
+ assert.ok(current.companyContext.positions.some(p=>p.account==='Citi-HK & 地产四期'&&p.securityCode==='QQQ'&&p.market==='TEST'));
+ assert.ok(current.companyContext.positions.some(p=>p.account==='Citi-HK & 地产四期'&&p.securityCode==='OTHER'));
+ assert.ok(current.companyContext.rows.some(r=>r.account==='IB-HK'&&r.withinETF==='SPY.NYSE'));
+ assert.ok(current.companyContext.rows.every(r=>r.account!=='Citi-HK & 地产四期'||r.securityCode+'.'+r.market!=='QQQ.NASDAQ'&&r.securityCode+'.'+r.market!=='SPY.NYSE'&&r.withinETF!=='SPY.NYSE'));
+ assert.deepEqual(current.input.book,legacy.input.book);assert.equal(JSON.stringify(raw),before);
+ const facts=f.source.verifyBrowserSourceAssociations(raw,current.input,{scopeHash:f.scope,now:f.now}),company=createFeeCompanyExposureCore().validate(facts.companyExposure,current.input.exposure,current.input.book.sourceSha256);
+ assert.equal(facts.companyExposure.portfolioTotalUsd,current.input.exposure.summary.totalValueUSD);assert.equal(facts.companyExposure.categoryTotalUsd,current.input.exposure.summary.classes[3].totalValueUSD);
+ assert.equal(company.top.find(r=>r.companyId==='alphabet').valueUsd,100);
+ assert.ok(current.input.exposure.summary.classes[3].top5.every(r=>r.valueUSD<1100));
+ assert.doesNotThrow(()=>f.source.verifyBrowserSourceAssociations(raw,legacy.input,{scopeHash:f.scope,now:f.now}));
+ for(const edit of [i=>i.classification.basis=legacy.input.classification.basis,i=>i.classification.totalValueUSD++,i=>i.exposure.summary.totalValueUSD++,i=>i.exposure.summary.classes[3].top5[0].valueUSD++]){const bad=structuredClone(current.input);edit(bad);assert.throws(()=>f.source.verifyBrowserSourceAssociations(raw,bad,{scopeHash:f.scope,now:f.now}));}
+});
+test('excluded benchmark rows still require complete source associations; matching remains account and venue exact',()=>{
+ for(const mutate of [r=>r.exposure.rows.find(r=>r.sourceRow===911).valueUSD=NaN,r=>r.exposure.rows.splice(r.exposure.rows.findIndex(r=>r.sourceRow===911),1),r=>r.exposure.rows.find(r=>r.sourceRow===910).withinETF='UNKNOWN.NYSE']){const raw=benchmarkOnlyFixture();mutate(raw);assert.throws(()=>projected(raw));}
+ const raw=benchmarkOnlyFixture();raw.accounts[9]='Citi-HK &amp; 地产四期';for(const r of raw.classification.positions.concat(raw.exposure.rows))if(r.account==='Citi-HK & 地产四期')r.account=raw.accounts[9];
+ assert.equal(projected(raw).built.input.classification.totalValueUSD,projected(benchmarkOnlyFixture()).built.input.classification.totalValueUSD);
+});
+test('new exclusion snapshot authenticates and renders while prior signed six-category snapshots remain readable',async t=>{
+ const f=await authenticated(t,benchmarkOnlyFixture()),read=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
+ assert.match(f.ratio.render(read.model),/已从投资资产、占比分母及穿透中排除/);
+ const prior=await authenticated(t,benchmarkOnlyFixture(),{excludeBenchmarkOnly:false}),legacy=await prior.snapshot.verify(prior.signed,prior.manager,{now:prior.now});
+ assert.equal(legacy.model.classificationSummary.basis,'complete-official-classification-row-sum');
+ assert.doesNotMatch(prior.ratio.render(legacy.model),/已从投资资产、占比分母及穿透中排除/);
 });
 test('edited dates, summaries, downgrade, stale source, MAC and rollback cannot authenticate as a new formal snapshot',async t=>{
  const f=await authenticated(t);
@@ -168,7 +220,7 @@ test('fund distributions classify original first fields before same-name merging
  funds.forEach((p,i)=>{const old=p.securityCode;p.securityCode=labels[i];for(const r of raw.exposure.rows)if(r.account===p.account&&r.securityCode===old)r.securityCode=p.securityCode;});
  const extra={...funds[4],sourceRow:901,securityCode:'Another undated',valueUSD:0};raw.classification.positions.push(extra);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;raw.exposure.rows.push({...raw.exposure.rows.find(r=>r.securityCode===funds[4].securityCode),sourceRow:901,securityCode:extra.securityCode,valueUSD:0});raw.exposure.canonicalDataRows++;raw.exposure.allWorksheetXmlRows++;
  const f=projected(raw),d=f.built.input.classification.fundDistributions.find(g=>g.name==='常青基金');
- assert.equal(d.totalCents,49000);assert.deepEqual(d.groups,[{name:'策略甲',valueCents:19800},{name:'未分类',valueCents:19300},{name:'策略乙',valueCents:9900}]);
+ assert.equal(d.totalCents,49000);assert.deepEqual(d.groups.map(({name,valueCents})=>({name,valueCents})),[{name:'策略甲',valueCents:19800},{name:'未分类',valueCents:19300},{name:'策略乙',valueCents:9900}]);
  assert.equal(d.groups.reduce((s,g)=>s+g.valueCents,0),d.totalCents);
  assert.notEqual(d.totalCents,Math.round(f.built.input.exposure.summary.classes[2].totalValueUSD*100));
  assert.equal(f.built.input.exposure.summary.classes[2].top5.find(g=>g.name==='Shared I').sourceHoldings.length,2);
@@ -181,11 +233,52 @@ test('old official projections without distributions preserve exact original ass
  assert.doesNotThrow(()=>f.source.verifyBrowserSourceAssociations(f.raw,old.input,{scopeHash:f.scope,now:f.now}));
  const next=structuredClone(f.built.input);delete next.classification.fundDistributions;assert.deepEqual(next,old.input);
 });
+function fundDetailFixture(){
+ const raw=syntheticOfficialSource();
+ for(const category of ['常青基金','对冲基金']){
+  const rows=raw.classification.positions.filter(p=>p.sharesightCategory===category);
+  const extra={...rows[0],sourceRow:900+(category==='常青基金'?0:1),securityCode:'EXTRA-'+category,valueUSD:90};
+  raw.classification.positions.push(extra);rows.push(extra);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;
+  raw.exposure.rows.push({sourceRow:extra.sourceRow,account:extra.account,securityCode:extra.securityCode,market:extra.market,name:extra.name,withinETF:null,ownership:'Direct',valueUSD:95,sourcePercentage:null});raw.exposure.canonicalDataRows++;raw.exposure.allWorksheetXmlRows++;
+  for(const [i,p]of rows.entries()){
+   const code=p.securityCode,account=p.account,linked=raw.exposure.rows.find(r=>r.securityCode===code&&r.account===account);
+   p.securityCode=['策略甲-渠道-2021-10-Synthetic Shared E-1','策略乙-2022-02-Synthetic Shared E-1','策略甲-2023-03-Synthetic Other-IV','策略甲-2024-04-Synthetic Long-Name E-2','策略乙-2025-05-Synthetic Final','策略乙-2026-06-Synthetic Sixth'][i];
+   p.name='Synthetic platform alias '+i;if(i===2)p.account=raw.accounts[category==='常青基金'?6:7];
+   linked.securityCode=p.securityCode;linked.name=p.name;linked.account=p.account;
+  }
+ }
+ return raw;
+}
+test('fund detail rows preserve every source holding/account and strategy before display-name shortening',()=>{
+ const raw=fundDetailFixture(),before=JSON.stringify(raw),f=projected(raw),funds=f.built.input.classification.fundDistributions;
+ for(const fund of funds){
+  const holdings=fund.groups.flatMap(g=>g.holdings),source=raw.classification.positions.filter(p=>p.sharesightCategory===fund.name);
+  assert.equal(holdings.length,source.length);assert.equal(new Set(holdings.map(h=>h.sourceRow)).size,source.length);
+  for(const group of fund.groups){assert.equal(group.holdings.reduce((n,h)=>n+h.valueCents,0),group.valueCents);assert.ok(group.holdings.every((h,i)=>i===0||group.holdings[i-1].valueCents>=h.valueCents));}
+  for(const h of holdings){const r=source.find(p=>p.sourceRow===h.sourceRow);assert.deepEqual(h,{sourceRow:r.sourceRow,account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueCents:Math.round(r.valueUSD*100)});}
+  assert.equal(fund.groups.length,2);assert.equal(fund.groups.find(g=>g.name==='策略甲').holdings.length,3);
+  assert.equal(new Set(holdings.map(h=>h.account)).size,2);
+ }
+ assert.equal(JSON.stringify(raw),before);
+ for(const edit of [h=>h.account=raw.accounts[7],h=>h.name='Invented label',h=>h.securityCode='Invented code',h=>h.valueCents++]){const bad=structuredClone(f.built.input);edit(bad.classification.fundDistributions[0].groups[0].holdings[0]);assert.throws(()=>f.source.verifyBrowserSourceAssociations(raw,bad,{scopeHash:f.scope,now:f.now}));}
+ const old=createOfficialRatioSourceCore().build(raw,{sourceSha256:f.sha,sourceBytes:f.bytes.length,includeFundHoldings:false});
+ assert.doesNotThrow(()=>f.source.verifyBrowserSourceAssociations(raw,old.input,{scopeHash:f.scope,now:f.now}));
+ const stripped=structuredClone(f.built.input);for(const fund of stripped.classification.fundDistributions)for(const group of fund.groups)delete group.holdings;assert.deepEqual(stripped,old.input);
+});
+test('fund detail snapshot binds accounts and sums, renders collapsed mobile lists and honest target denominators',async t=>{
+ const f=await authenticated(t,fundDetailFixture()),read=await f.snapshot.verify(f.signed,f.manager,{now:f.now}),html=f.ratio.render(read.model);
+ assert.equal((html.match(/class="ratio-distribution-details"/g)||[]).length,2);assert.equal((html.match(/class="ratio-fund-holding"/g)||[]).length,12);
+ assert.match(html,/组合参考目标：35%（占总资产）/);assert.match(html,/组合参考目标：15%（占总资产）/);assert.match(html,/各策略的参考目标未设置/);assert.match(html,/data-security-code="策略甲-渠道-2021-10-Synthetic Shared E-1"/);assert.doesNotMatch(html,/<details[^>]* open|NaN|Infinity/);
+ for(const change of [d=>d[0].groups[0].holdings[0].account='Unknown account',d=>d[0].groups[0].holdings[0].valueCents++,d=>d[0].groups[0].holdings.reverse(),d=>d[0].groups[0].holdings[0].name='',d=>d[0].groups[0].holdings[0].sourceRow=d[1].groups[0].holdings[0].sourceRow,d=>delete d[0].groups[0].holdings]){const bad=structuredClone(f.model);change(bad.classificationSummary.fundDistributions);await assert.rejects(f.ratio.validateModel(bad));}
+ const prior=await authenticated(t,fundDetailFixture(),{includeFundHoldings:false}),old=await prior.snapshot.verify(prior.signed,prior.manager,{now:prior.now});assert.match(prior.ratio.render(old.model),/此历史快照未包含账户及持仓明细/);
+ const escaped=structuredClone(f.model);escaped.classificationSummary.fundDistributions[0].groups[0].holdings[0].name='<img src=x onerror=alert(1)>';await f.ratio.validateModel(escaped);assert.doesNotMatch(f.ratio.render(escaped),/<img src=x/);
+});
 test('distribution validation rejects forged totals, duplicate groups and wrong order; rendering rounds to 100%',async t=>{
  const f=await authenticated(t),original=f.model.classificationSummary.fundDistributions;
  assert.equal(original.length,2);
  for(const change of [d=>d[0].totalCents++,d=>d[0].groups[0].valueCents++,d=>d[0].groups.push({...d[0].groups[0]}),d=>d.reverse(),d=>d[0].groups[0].name='',d=>d[0].groups[0].valueCents=-1]){const m=structuredClone(f.model);change(m.classificationSummary.fundDistributions);await assert.rejects(f.ratio.validateModel(m));}
  const m=structuredClone(f.model),d=m.classificationSummary.fundDistributions[0];
+ for(const f of m.classificationSummary.fundDistributions)for(const g of f.groups)delete g.holdings;
  d.groups=[{name:'合成长中文分类用于手机换行不会改变基金策略甲',valueCents:16334},{name:'合成策略乙',valueCents:16333},{name:'未分类',valueCents:16333}];
  await f.ratio.validateModel(m);const html=f.ratio.render(m),section=html.split('<h2>常青基金分布</h2>')[1].split('</section>')[0];
  assert.equal([...section.matchAll(/aria-valuenow="([\d.]+)"/g)].reduce((s,x)=>s+Math.round(Number(x[1])*100),0),10000);

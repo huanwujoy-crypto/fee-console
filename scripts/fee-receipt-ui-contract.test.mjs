@@ -85,9 +85,10 @@ const RATIO_REFINEMENT_UI_SHA256 = '2908a0bde68c3c8f189afac4d9e0e391462a27c52b1b
 const RATIO_INSTANT_UI_SHA256 = '7c916cf2d45231f5e774239e6d409ef4c9642a86691b6cbc4e5ad3bdd8d76e2a';
 const RATIO_DOWNLOAD_UI_SHA256 = 'f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0';
 const RATIO_SIX_ALLOCATION_UI_SHA256 = 'e456d7a6f32d2550b22eea40064bd6e8efbfc328d4ab3a8f0c41be6926289cb6';
+const RATIO_BENCHMARK_EXCLUSION_UI_SHA256 = 'b87f93ad4f73d4d0b5bce603a3f6a55677a531f6cc875440082ab0026c6a2e29';
 export function reviewedUiStage(html) {
   const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 || sha === RATIO_PRESENTATION_UI_SHA256 || sha === RATIO_REFINEMENT_UI_SHA256 || sha === RATIO_CONTINUITY_UI_SHA256 || sha === RATIO_NAME_UI_SHA256 || sha === RATIO_DETAILS_UI_SHA256 || sha === RATIO_FOLLOWUP_UI_SHA256 || sha === RATIO_INSTANT_UI_SHA256 || sha === RATIO_DOWNLOAD_UI_SHA256 || sha === RATIO_SIX_ALLOCATION_UI_SHA256 ? "next" : null;
+    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 || sha === RATIO_PRESENTATION_UI_SHA256 || sha === RATIO_REFINEMENT_UI_SHA256 || sha === RATIO_CONTINUITY_UI_SHA256 || sha === RATIO_NAME_UI_SHA256 || sha === RATIO_DETAILS_UI_SHA256 || sha === RATIO_FOLLOWUP_UI_SHA256 || sha === RATIO_INSTANT_UI_SHA256 || sha === RATIO_DOWNLOAD_UI_SHA256 || sha === RATIO_SIX_ALLOCATION_UI_SHA256 || sha === RATIO_BENCHMARK_EXCLUSION_UI_SHA256 ? "next" : null;
   assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);

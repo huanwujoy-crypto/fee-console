@@ -319,3 +319,41 @@ authentication/delivery approval, then actual owner/manager decrypt, investor
 refusal and exact same-Gist readback. No auto-production or action retirement
 is enabled by this candidate. Real source files and decrypted preview artifacts
 remain private, outside Git, with 0700 directories/0600 files.
+# Benchmark-only assets and date-specific denominators
+
+New official projections use basis
+`complete-official-classification-excluding-benchmark-only.v1`.
+Only `QQQ.NASDAQ` and `SPY.NYSE` in `Citi-HK & 地产四期` are reference-only:
+exclude their direct asset values from classification, six-category totals and
+account contributions, and exclude their complete Direct or Underlying plus
+Residual association from Exposure totals, rankings and denominators. Preserve
+other accounts' real holdings, other securities and cash. IB-HK stock allocation
+is unchanged. Source workbooks and benchmark-price consumption are unchanged.
+
+Validate the entire original source before projection. Classification and
+Exposure can have different dates and values: subtract each date's own complete
+reference assets, never the other source's amount. Source dates remain the
+actual official export dates; a fee-report cutoff does not advance ratio data.
+Prior authenticated snapshots retain the previous basis and original totals.
+Original-source association reconstructs that explicit historical basis; new
+builders default to the exclusion rule. Invalid original rows remain errors
+even when they belong to reference-only holdings.
+
+## Fund distribution account and holding details
+
+New official projections retain every evergreen and hedge-fund classification
+row in its original strategy group. The collapsed “分类、账户与参考目标” section
+shows strategy → account → holding, with accounts and holdings ordered by value.
+Names use the same original-source date-suffix formatter as the top-five list;
+individual periods and account associations remain traceable rather than being
+replaced by a truncated display alias. Classification values do not include
+ETF look-through contributions. Each group, account and fund total must reconcile.
+
+Bar percentages use the corresponding fund category as denominator. The
+evergreen 35% and hedge 15% references are the existing portfolio-level asset
+targets, not strategy targets. No strategy target is invented. Authenticated
+older snapshots without the optional holding details remain readable and
+explicitly state that an updated snapshot is required for these details.
+Raw source names and accounts stay inside the existing private authenticated
+snapshot; only synthetic examples belong in public tests. This is a data-model
+and display update, not a fee, ledger, source-date or authentication change.

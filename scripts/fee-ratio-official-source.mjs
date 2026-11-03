@@ -14,6 +14,8 @@ export function createOfficialRatioSourceCore(){
   const key=(a,c,m)=>JSON.stringify([a,c,m]);
   const four=s=>s==='VC/PE'?'PE/VC':s==='对冲基金'||s==='常青基金'?s:'二级市场';
   const names=['PE/VC','对冲基金','常青基金','二级市场'];
+  const BENCHMARK_EXCLUDED_BASIS='complete-official-classification-excluding-benchmark-only.v1';
+  const benchmarkOnly=r=>r.account.replaceAll('&amp;','&')==='Citi-HK & 地产四期'&&['QQQ.NASDAQ','SPY.NYSE'].includes(r.securityCode+'.'+r.market);
   // Exact Sharesight dated-name suffix, not a fuzzy product/share-class alias.
   function evergreenName(r){
     for(const value of [r.securityCode,r.name]){
@@ -38,15 +40,19 @@ export function createOfficialRatioSourceCore(){
     }
     return '未分类';
   }
-  function fundDistributions(positions){
+  function fundDistributions(positions,includeFundHoldings){
     return ['常青基金','对冲基金'].map(name=>{
       const grouped=new Map();let totalCents=0;
       for(const r of positions.filter(p=>p.fourClass===name)){
         const category=strategyName(r),valueCents=cents(r.valueUSD);
-        totalCents+=valueCents;grouped.set(category,(grouped.get(category)||0)+valueCents);
+        const group=grouped.get(category)||{name:category,valueCents:0,...(includeFundHoldings?{holdings:[]}: {})};
+        totalCents+=valueCents;group.valueCents+=valueCents;
+        if(includeFundHoldings)group.holdings.push({sourceRow:r.sourceRow,account:r.account,name:r.name,securityCode:r.securityCode,market:r.market,valueCents});
+        grouped.set(category,group);
       }
       if(!Number.isSafeInteger(totalCents))fail();
-      const groups=[...grouped].map(([name,valueCents])=>({name,valueCents})).sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name));
+      const groups=[...grouped.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name));
+      for(const g of groups)if(g.holdings)g.holdings.sort((a,b)=>b.valueCents-a.valueCents||a.account.localeCompare(b.account)||a.sourceRow-b.sourceRow);
       return {name,totalCents,groups};
     });
   }
@@ -74,16 +80,16 @@ export function createOfficialRatioSourceCore(){
     const observed=[...s.dateEvidence.matchAll(/\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})\b/g)].map(m=>m[3]+'-'+String(months.indexOf(m[2])+1).padStart(2,'0')+'-'+m[1].padStart(2,'0'));
     if(!observed.length||observed.some(d=>d!==s.asOf)||s.asOf>new Date(Date.parse(s.capturedAt)+8*3600000).toISOString().slice(0,10))fail();
   }
-  function overview(positions,cash,asOf,includeFundDistributions,includeAssetAllocation){
+  function overview(positions,cash,asOf,includeFundDistributions,includeAssetAllocation,excludeBenchmarkOnly,includeFundHoldings){
     const all=positions.concat(cash),classes=names.map(name=>({name,totalValueUSD:sum(all.filter(r=>r.fourClass===name))}));
     // Venue-scoped GLD is the previously confirmed physical-gold ETF. Mining
     // companies and unrelated ETF names are not inferred to be gold.
     const goldRows=positions.filter(r=>r.securityCode==='GLD'&&r.market==='NYSE');
     const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(goldRows),secondaryIncluded:goldRows.every(r=>r.fourClass==='二级市场')};
-    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold,...(includeFundDistributions?{fundDistributions:fundDistributions(positions)}:{}),...(includeAssetAllocation?{assetAllocation:assetAllocation(positions,cash)}:{})};
+    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:excludeBenchmarkOnly?BENCHMARK_EXCLUDED_BASIS:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold,...(includeFundDistributions?{fundDistributions:fundDistributions(positions,includeFundHoldings)}:{}),...(includeAssetAllocation?{assetAllocation:assetAllocation(positions,cash)}:{})};
   }
-  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true}={}){
-    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean')fail();
+  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true,excludeBenchmarkOnly=true,includeFundHoldings=true}={}){
+    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean'||typeof excludeBenchmarkOnly!=='boolean'||typeof includeFundHoldings!=='boolean')fail();
     if(!exact(raw,['schemaVersion','source','accounts','sources','classification','exposure','coverage','limitations'])||raw.schemaVersion!==RAW
       ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-workbook-exports'
       ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024
@@ -107,19 +113,19 @@ export function createOfficialRatioSourceCore(){
       if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory']))fail();common(r);if(r.sharesightCategory!=='Cash Accounts')fail();
       const k=key(r.account,r.name,'cash');if(cashByKey.has(k))fail();const p={...r,fourClass:'二级市场'};cashByKey.set(k,p);cash.push(p);
     }
-    const sourceDates={classification:c.asOf,exposure:e.asOf},classification=overview(positions,cash,c.asOf,includeFundDistributions,includeAssetAllocation),rows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set();
+    const sourceDates={classification:c.asOf,exposure:e.asOf},assetPositions=excludeBenchmarkOnly?positions.filter(r=>!benchmarkOnly(r)):positions,classification=overview(assetPositions,cash,c.asOf,includeFundDistributions,includeAssetAllocation,excludeBenchmarkOnly,includeFundHoldings),allRows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set(),benchmarkRows=new Set();
     for(const r of e.rows){
       if(!exact(r,['sourceRow','account','securityCode','market','name','withinETF','ownership','valueUSD','sourcePercentage'])||!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||ids.has(r.sourceRow)||!(r.sourcePercentage===null||typeof r.sourcePercentage==='number'&&Number.isFinite(r.sourcePercentage)))fail();ids.add(r.sourceRow);cents(r.valueUSD);
       let owner;
       if(r.ownership==='Cash'){
         if(r.securityCode!==null||r.market!==null||r.withinETF!==null||!cashByKey.has(key(r.account,r.name,'cash'))||r.valueUSD<0)fail();
-        cash30.push({...r,fourClass:'二级市场'});rows.push({...r,fourClass:'二级市场'});continue;
+        cash30.push({...r,fourClass:'二级市场'});allRows.push({...r,fourClass:'二级市场'});continue;
       }
       if(!['Direct','Underlying','Residual'].includes(r.ownership)||!text(r.securityCode)||!text(r.market))fail();
       if(r.ownership==='Underlying'){
         if(!text(r.withinETF))fail();owner=positions.find(p=>p.account===r.account&&p.securityCode+'.'+p.market===r.withinETF);
       }else owner=byKey.get(key(r.account,r.securityCode,r.market));
-      if(!owner)fail();const item={...r,fourClass:owner.fourClass};rows.push(item);
+      if(!owner)fail();const item={...r,fourClass:owner.fourClass};allRows.push(item);if(benchmarkOnly(owner))benchmarkRows.add(r.sourceRow);
       if(r.ownership==='Direct'){
         if(r.withinETF!==null||r.valueUSD<0||direct30.has(key(r.account,r.securityCode,r.market)))fail();direct30.set(key(r.account,r.securityCode,r.market),{...owner,valueUSD:r.valueUSD,quantity:null});
       }else{
@@ -127,12 +133,16 @@ export function createOfficialRatioSourceCore(){
       }
     }
     if(cash30.length!==cash.length||new Set(cash30.map(r=>key(r.account,r.name,'cash'))).size!==cash.length)fail();
-    const positions30=[...direct30.values()];
+    const allPositions30=[...direct30.values()];
     for(const [k,g]of parents){
       if(direct30.has(k)||g.rows.filter(r=>r.ownership==='Residual').length!==1||!g.rows.some(r=>r.ownership==='Underlying'))fail();
-      const valueUSD=sum(g.rows);if(valueUSD<0)fail();positions30.push({...g.owner,valueUSD,quantity:null,instrumentType:'ETF',valueBasis:'same-export-underlying-plus-residual'});
+      const valueUSD=sum(g.rows);if(valueUSD<0)fail();allPositions30.push({...g.owner,valueUSD,quantity:null,instrumentType:'ETF',valueBasis:'same-export-underlying-plus-residual'});
     }
-    if(positions30.length!==positions.length||cents(sum(positions30.concat(cash30)))!==cents(sum(rows)))fail();
+    // Validate every original row and its complete ETF association before
+    // excluding benchmark-only assets from the derived investment view.
+    if(allPositions30.length!==positions.length||cents(sum(allPositions30.concat(cash30)))!==cents(sum(allRows)))fail();
+    const positions30=excludeBenchmarkOnly?allPositions30.filter(r=>!benchmarkOnly(r)):allPositions30,rows=excludeBenchmarkOnly?allRows.filter(r=>!benchmarkRows.has(r.sourceRow)):allRows;
+    if(cents(sum(positions30.concat(cash30)))!==cents(sum(rows)))fail();
     const groups=names.map((name,i)=>{
       let top;
       if(i<3){
@@ -160,5 +170,5 @@ export function createOfficialRatioSourceCore(){
     const book={schema:'fee-console.ratio-sharesight-browser-book.v2',source:'Sharesight',currency:'USD',asOf:c.asOf,retrievedAt:c.capturedAt,sourceSha256,provenance,ib:{name:'IB-HK',holdings:ibRows.map(r=>({code:r.securityCode,market:r.market,group:r.sharesightCategory,valueUSD:r.valueUSD,quantity:r.quantity,name:r.name,valueBasis:'preserved-browser-source'})),holdingsValueUSD:sum(ibRows),cashRows:ibCash.map(r=>({label:r.name,valueUSD:r.valueUSD,valueBasis:'portfolio-usd-converted'})),cashValueUSD:sum(ibCash),totalValueUSD:sum(ibRows.concat(ibCash))},noah:{name:'NOAH-HK',cashValueUSD:sum(noahCash),valueBasis:'portfolio-usd-converted'}};
     return {input:{schema:INPUT,classification,exposure,book},sourceDates,classificationSummary:classification,companyContext:{rows,positions:positions30},capturedAt:[c.capturedAt,e.capturedAt].sort()[0],targetDate:e.asOf};
   }
-  return {RAW,INPUT,build,canonical};
+  return {RAW,INPUT,BENCHMARK_EXCLUDED_BASIS,build,canonical};
 }

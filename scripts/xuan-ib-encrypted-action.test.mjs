@@ -720,16 +720,21 @@ assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652
 const instantFixture=JSON.parse(instantFixtureBytes);
 const actualInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
-assert.equal(ratioUiHash(sixFixtureBytes),'87357be01d0d2b29208ce066eb61da3d591f9924fbaf427500402fcd80ab9cc7');
+assert.equal(ratioUiHash(sixFixtureBytes),'d930692c43245b877974bcca946e3312af236e61befe233bebdc157294081f65');
 const sixFixture=JSON.parse(sixFixtureBytes);
 function sixUiAdapter(page,forward=true){
  assert.equal(typeof forward,'boolean');assert.equal(ratioUiHash(page),forward?sixFixture.priorSha256:sixFixture.nextSha256,'unreviewed six-category input');
  for(const r of (forward?sixFixture.regions:[...sixFixture.regions].reverse())){const [from,to]=forward?[r.prior,r.next]:[r.next,r.prior];assert.equal(page.split(from).length,2);page=page.replace(from,()=>to);}
  assert.equal(ratioUiHash(page),forward?sixFixture.nextSha256:sixFixture.priorSha256,'unreviewed six-category output');return page;
 }
-const sixReviewedUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.priorSha256?sixUiAdapter(actualInstalledUiBytes):actualInstalledUiBytes;
+let sixStageUiSource=actualInstalledUiBytes;
+if(ratioUiHash(sixStageUiSource)===sixFixture.intermediateSha256){
+ for(const r of sixFixture.updateRegions){assert.equal(sixStageUiSource.split(r.prior).length,2);sixStageUiSource=sixStageUiSource.replace(r.prior,()=>r.next);}
+ assert.equal(ratioUiHash(sixStageUiSource),sixFixture.nextSha256);
+}
+const sixReviewedUiSource=ratioUiHash(sixStageUiSource)===sixFixture.priorSha256?sixUiAdapter(sixStageUiSource):sixStageUiSource;
 assert.equal(ratioUiHash(sixReviewedUiSource),sixFixture.nextSha256);
-let actualInstalledUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.nextSha256?sixUiAdapter(actualInstalledUiBytes,false):actualInstalledUiBytes;
+let actualInstalledUiSource=ratioUiHash(sixStageUiSource)===sixFixture.nextSha256?sixUiAdapter(sixStageUiSource,false):sixStageUiSource;
 // Preserve exact historical fixtures; the live download helper has separate boundary tests.
 if(ratioUiHash(actualInstalledUiSource)==='f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0'){
  assert.equal(actualInstalledUiSource.split('timer=setTimeout(()=>controller.abort(),60000)').length,2);
@@ -1547,7 +1552,7 @@ test('current followup pins exact stages, keeps financial and write functions by
  for(const n of ['readRatioSnapshotFile','previewRatioSnapshot','confirmRatioSnapshot','ghReadSnapshot','verifyManagerCapability'])assert.equal(fn(detailsUiSource,n),fn(unifiedUiSource,n),n);
  for(const n of ['fee-receipt-consumer','fee-receipt-render','fund-investor-core','fund-remote-storage','fee-report-consumer']){const block=s=>s.split('/* '+n+':start */')[1].split('/* '+n+':end */')[0];assert.equal(block(detailsUiSource),block(unifiedUiSource));}
 });
-test('Citi benchmark exclusion affects only its SPY/QQQ underlying legs; other accounts and asset totals remain',()=>{
+test('legacy company-only exclusion keeps historical asset totals; current official-source exclusion is checked separately',()=>{
  const account='Citi-HK & 地产四期',f=companyFixture([['GOOG','NASDAQ',20,'Underlying','SPY.NYSE'],['GOOGL','NASDAQ',30,'Underlying','QQQ.NASDAQ'],['GOOG','NASDAQ',11,'Underlying','SPY.NYSE',{account:'Invented scope 1'}],['GOOG','NASDAQ',7],['A','TEST',8,'Underlying','OTHER.TEST'],['B','TEST',9,'Underlying','TQQQ.NASDAQ']]);
  f.raw.accounts[0]=account;f.input.exposure.summary.accounts[0]=account;for(const r of f.raw.exposure.rows)if(r.account==='Invented scope 0')r.account=account;
  const raw=JSON.stringify(f.raw),input=JSON.stringify(f.input),m=f.build();assert.equal(m.ruleVersion,f.core.RULE);assert.equal(m.components.length,4);assert.ok(m.components.some(c=>c.account==='Invented scope 1'&&c.product==='SPY.NYSE'));assert.ok(m.components.some(c=>c.ownership==='Direct'));assert.ok(m.components.some(c=>c.product==='TQQQ.NASDAQ'));assert.equal(JSON.stringify(f.raw),raw);assert.equal(JSON.stringify(f.input),input);
@@ -1578,4 +1583,23 @@ test('six-category staged UI pins exact pages, preserves authorization and embed
  const between=(page,a,b)=>page.slice(page.indexOf(a),page.indexOf(b,page.indexOf(a)));
  for(const [a,b]of [['const ratioExposureCore=','function ratioHoldingDisplayName('],['async function readRatioSnapshotFile(','async function readCurrentRatioSnapshot(']])assert.equal(between(prior,a,b),between(sixReviewedUiSource,a,b));
  assert.match(sixReviewedUiSource,/if\(assets.childElementCount\)overview.insertBefore/);assert.match(sixReviewedUiSource,/ratio-six-allocation/);
+});
+
+test('fund details use the same full source-name formatter as top-five and keep compact wrapping layout',()=>{
+ const a=sixReviewedUiSource.indexOf('function ratioHoldingDisplayName('),b=sixReviewedUiSource.indexOf('/* ratio-presentation:v1:end */',a);
+ const labels=[
+  ['Synthetic alias','策略甲-渠道-2021-10-Synthetic Fund E-1','Synthetic Fund E-1'],
+  ['Synthetic alias','策略乙-2022-02-Synthetic Long-Name 2025-03 E-2','Synthetic Long-Name 2025-03 E-2'],
+  ['2023-03-Synthetic Other-IV','','Synthetic Other-IV'],
+  ['Unrecognized source','','Unrecognized source']
+ ].map(([textContent,securityCode,expected])=>({textContent,dataset:{securityCode},expected}));
+ const original=labels.map(l=>l.dataset.securityCode),report={classList:{contains:()=>false},querySelectorAll:s=>{assert.equal(s,'.ratio-fund-holding-name');return labels;},querySelector:()=>null};
+ const ctx={};vm.createContext(ctx);vm.runInContext(sixReviewedUiSource.slice(a,b),ctx);
+ ctx.styleRatioReport({querySelector:()=>report});
+ for(const l of labels)assert.equal(l.textContent,l.expected);
+ assert.deepEqual(labels.map(l=>l.dataset.securityCode),original);
+ ctx.styleRatioReport({querySelector:()=>report});for(const l of labels)assert.equal(l.textContent,l.expected);
+ assert.match(sixReviewedUiSource,/\.ratio-distribution-account h4,\.ratio-fund-holding\{display:grid;grid-template-columns:minmax\(0,1fr\) auto/);
+ assert.match(sixReviewedUiSource,/\.ratio-fund-holding-name\{min-width:0;overflow-wrap:anywhere\}/);
+ assert.match(sixReviewedUiSource,/\.ratio-distribution-account ul\{list-style:none;margin:0;padding:0\}/);
 });
