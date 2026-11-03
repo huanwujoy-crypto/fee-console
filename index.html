@@ -2429,6 +2429,36 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   }
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>n===null?'未取得':'USD '+(n/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  function fundHoldingDisplayName(raw,securityCode=''){
+    if(typeof raw!=='string')return '';
+    const original=raw.trim();
+    // Official ranked rows may append [securityCode · market] to distinguish
+    // repeated Sharesight names. Only a dated source code is shortened here.
+    const afterMonth=(value,allowPrefix=false)=>{
+      // Sharesight custom codes may prepend a strategy/platform before the date.
+      // Choose the first delimited date marker, then keep the full fund suffix,
+      // including internal hyphens, share classes and any later date-like text.
+      if(allowPrefix){const marker=value.match(/(?:^|[-–—_:：/\s])(?=(?:19|20)\d{2}(?:[-/.]|年))/);if(!marker)return;value=value.slice(marker.index+marker[0].length);}
+      return (value.match(/^(?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])(?:\s*[-–—_:：/]\s*|\s+)(\S[\s\S]*)$/)?.[1]||value.match(/^(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月\s*(?:[-–—_:：/]\s*)?(\S[\s\S]*)$/)?.[1])?.trim();
+    };
+    const sourceProject=typeof securityCode==='string'?afterMonth(securityCode.trim(),true):null;
+    if(sourceProject)return sourceProject;
+    const knownSuffix=/\s+·\s+(?:OTHER|NASDAQ|NYSE|SWX)$/;
+    for(const [open,close] of [['[',']'],['【','】'],['（','）'],['(',')']]){
+      if(!original.endsWith(close))continue;
+      const start=original.indexOf(open);
+      if(start<0)continue;
+      const content=original.slice(start+open.length,-close.length).trim();
+      if(!afterMonth(content,true))continue;
+      const marker=content.lastIndexOf(' · '),generated=open==='['&&start>0&&original[start-1]===' '&&marker>=0;
+      const code=generated?content.slice(0,marker):content.replace(knownSuffix,'');
+      return afterMonth(code,true)||original;
+    }
+    const project=afterMonth(original);
+    // Without the app's wrapper, preserve unrecognized suffixes and project
+    // punctuation. Never split project names on their own digits or hyphens.
+    return project?.replace(knownSuffix,'').trim()||original;
+  }
   function renderRatioModel(m){
     const view=exposureCore.buildRankedExposureView(m.exposure),classification=m.classificationSummary;
     const overviewView=classification?{valuationDate:classification.asOf,portfolioTotalUsd:classification.totalValueUSD,groups:classification.classes.map(g=>({category:g.name,totalUsd:g.totalValueUSD}))}:view;
@@ -2458,11 +2488,18 @@ function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       const target=asset?.groups.find(g=>g.name===f.name)?.targetPct;
       const holdings=f.groups.map((g,i)=>{
         if(!g.holdings)return '';
-        const accounts=new Map();for(const h of g.holdings){const a=accounts.get(h.account)||{name:h.account,valueCents:0,holdings:[]};a.valueCents+=h.valueCents;a.holdings.push(h);accounts.set(h.account,a);}
-        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+a.holdings.map(h=>'<li class="ratio-fund-holding"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span></li>').join('')+'</ul></section>').join('')+'</section>';
+        const accounts=new Map();for(const h of g.holdings){
+          const a=accounts.get(h.account)||{name:h.account,valueCents:0,holdings:new Map()};
+          const name=fundHoldingDisplayName(h.name,h.securityCode)||h.name,prior=a.holdings.get(name);
+          a.valueCents+=h.valueCents;
+          if(prior){prior.valueCents+=h.valueCents;prior.sourceCount++;}
+          else a.holdings.set(name,{...h,name,sourceCount:1});
+          accounts.set(h.account,a);
+        }
+        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+[...a.holdings.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(h=>'<li class="ratio-fund-holding" data-source-count="'+h.sourceCount+'"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span></li>').join('')+'</ul></section>').join('')+'</section>';
       }).join('');
       const missing=f.groups.length&&!f.groups.some(g=>g.holdings)?'<p>此历史快照未包含账户及持仓明细，更新快照后可查看。</p>':'';
-      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同名不同期次逐笔保留。</p>'+holdings+missing+'</details></section>';
+      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。</p>'+holdings+missing+'</details></section>';
     }).join('');
     const method='<p>黄金占比的分母为同日All Together分类来源总资产；已计入对应类别，不额外累加。常青按原始年月后的完整基金名聚合，份额类别和内部连字符保留，先合并全部持仓再选前五。</p>'+(benchmarkExcluded?'<p>指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。</p>':'<p>此历史快照仅排除了指定Citi基准的公司穿透，资产总额保留原口径。</p>')+'<p>'+(asset?'下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。':'二级市场为前三类以外全部资产，含现金；')+'公司经济敞口只重算分子，不改变真实资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL按2倍、TQQQ按3倍经济敞口；来源已完整包含相同杠杆时不重复相乘。直接持仓按实际市值降序，穿透按经济敞口降序；各行保留账户。未穿透的残余不猜测归属到个股，ETF本体与底层不双计；真实资产、现金和费用不乘杠杆。</p><p>管理费仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';
     const official=b?.browserEvidence?.transport==='official-workbooks';
@@ -4249,12 +4286,19 @@ async function ghApi(path,opt={},auth=true){
   let r;try{r=await fetch("https://api.github.com"+path,{...request,headers:h});}
   catch(cause){const e=new Error("网络暂不可用");e.transient=true;e.cause=cause;throw e;}
   if(!r.ok){let t="";try{t=(await r.json()).message||"";}catch(_){}const e=new Error(r.status+(t?" "+t:""));e.status=r.status;e.transient=r.status===408||r.status===429||r.status>=500;throw e;}return r.status===204?null:r.json();}
-async function verifyManagerCapability(snapshot,epoch){
+async function verifyManagerCapability(snapshot,epoch,prefetchedUser=null){
   const token=cfg(K.tok),gid=cfg(K.gid);if(!token||!gid||snapshot?.gid!==gid||!snapshot.ownerLogin)throw new Error("目标账本所有者资料缺失");
   if(managerDocumentsAuthorized()&&_managerCapability.ownerLogin===snapshot.ownerLogin)return true;
-  const user=await ghApi("/user");if(epoch!==_sourceEpoch||token!==cfg(K.tok)||gid!==cfg(K.gid))throw new Error("管理人访问在核验期间变化");
+  let user,verifiedAt;
+  if(prefetchedUser){
+    if(prefetchedUser.epoch!==epoch||prefetchedUser.token!==token||prefetchedUser.gid!==gid)throw new Error("管理人访问在核验期间变化");
+    const result=await prefetchedUser.read;if(!result.ok)throw result.error;
+    user=result.value;verifiedAt=result.checkedAt;
+    if(!Number.isFinite(verifiedAt)||Date.now()<verifiedAt||Date.now()-verifiedAt>=RATIO_SESSION_MS)throw new Error("管理人核验已过期");
+  }else{user=await ghApi("/user");verifiedAt=Date.now();}
+  if(epoch!==_sourceEpoch||token!==cfg(K.tok)||gid!==cfg(K.gid))throw new Error("管理人访问在核验期间变化");
   if(!user?.login||!Number.isSafeInteger(user.id)||user.id!==snapshot.ownerId||user.login!==snapshot.ownerLogin)throw new Error("当前令牌不是目标账本所有者");
-  _managerCapability={state:"verified",gid,token,ownerLogin:user.login,ownerId:user.id,privateSource:snapshot.privateSource,verifiedAt:Date.now()};return true;
+  _managerCapability={state:"verified",gid,token,ownerLogin:user.login,ownerId:user.id,privateSource:snapshot.privateSource,verifiedAt};return true;
 }
 async function ghFind(epoch){const token=cfg(K.tok);for(let p=1;p<=5;p++){const l=await ghApi(`/gists?per_page=100&page=${p}`);if(epoch!==_sourceEpoch||token!==cfg(K.tok))throw new Error("访问已变化");const hit=l.find(g=>g.files&&g.files[GH_FILE]);if(hit){setCfg(K.gid,hit.id);return hit.id;}if(l.length<100)break;}return "";}
 async function ghReadSnapshot({epoch}={}){
@@ -4384,14 +4428,21 @@ async function fetchDailyFresh(stamp=Date.now()){
 }
 async function pullAll(quiet,opt={}){
   const epoch=invalidateReceiptSource(true),current=()=>epoch===_sourceEpoch;let dailyReady=!!opt.skipDaily;
-  await restoreDraft();await restoreBaseline();
-  if(!current()||!opt.skipShell&&await ensureLatestShell())return;if(!current())return;
-  if(!opt.skipDaily)try{const d=await fetchDailyFresh();if(!current())return;DAILY=d;setCfg(K.daily,JSON.stringify(d));dailyReady=true;}catch(_){}
+  await restoreDraft();await restoreBaseline();if(!current())return;
+  // Independent read-only downloads share this source epoch. Settle failures
+  // immediately; nothing is accepted until the shell and source guards pass.
+  const settleRead=p=>p.then(value=>({ok:true,value}),error=>({ok:false,error}));
+  const shellRead=opt.skipShell?Promise.resolve(false):ensureLatestShell();
+  const dailyRead=opt.skipDaily?null:settleRead(fetchDailyFresh());
+  const snapshotRead=cfg(K.gid)&&!_ledgerBusy?settleRead(ghPull(epoch)):null;
+  const managerRead=snapshotRead&&isMgr()?{epoch,gid:cfg(K.gid),token:cfg(K.tok),read:ghApi("/user").then(value=>({ok:true,value,checkedAt:Date.now()}),error=>({ok:false,error}))}:null;
+  if(await shellRead||!current())return;
+  if(dailyRead){const result=await dailyRead;if(!current())return;if(result.ok){DAILY=result.value;setCfg(K.daily,JSON.stringify(result.value));dailyReady=true;}}
   if(!current())return;
   if(!cfg(K.gid)&&isMgr()){try{await ghFind(epoch);}catch(_){}}
   if(!current())return;
   if(cfg(K.gid)&&!_ledgerBusy){
-    _busy=true;try{const snapshot=await ghPull(epoch);if(!current())return;if(isMgr())try{await verifyManagerCapability(snapshot,epoch);}catch(e){_managerCapability={state:"denied"};_fundDocsMessage="基金文件管理身份未核验："+e.message;}if(!current())return;try{await acceptRemoteFundSnapshot(snapshot);}catch(e){_fundProfileMessage="远端基金档案读取失败："+e.message;_fundDocsMessage=_fundProfileMessage;}if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
+    _busy=true;try{const result=snapshotRead?await snapshotRead:{ok:true,value:await ghPull(epoch)};if(!result.ok)throw result.error;const snapshot=result.value;if(!current())return;if(isMgr())try{await verifyManagerCapability(snapshot,epoch,managerRead);}catch(e){_managerCapability={state:"denied"};_fundDocsMessage="基金文件管理身份未核验："+e.message;}if(!current())return;try{await acceptRemoteFundSnapshot(snapshot);}catch(e){_fundProfileMessage="远端基金档案读取失败："+e.message;_fundDocsMessage=_fundProfileMessage;}if(!current())return;const raw=snapshot.db,remote=snapshot.envelopeVersion===3?snapshot.projection:raw;if(!remote)throw new Error("原账本无法识别，未覆盖本机记录");
       if(_localLedgerPresent&&localLedgerCanonical()!==LG.canonical(raw)&&!localMatchesBaseline()&&!sameLedger(DB,remote)){if(!_draftBlocked)_ledgerMessage="本机与云端账本不同，原记录均保留，请复核；未自动覆盖";try{_ledgerConflict=LG.diffLedger(remote,EDIT.draft||DB);}catch(_){}setSync("账本差异待复核",true);}
       else{await recordBaseline(snapshot);if(!current())return;if(!_localLedgerPresent||localLedgerCanonical()!==LG.canonical(raw))setCfg(K.db,JSON.stringify(raw));DB=remote;_last=strip(DB);_localLedgerPresent=true;if(dailyReady)acceptReceiptSource(snapshot,epoch);if(EDIT.draft&&!LG.sameSnapshot(EDIT.base,snapshot)){_ledgerConflict=LG.diffLedger(remote,EDIT.draft);_ledgerMessage="正式账本已同步；草稿保留，但云端版本已变化，不能直接保存";}else if(!_draftBlocked&&!EDIT.draft){_ledgerConflict=[];_ledgerMessage=snapshot.envelopeVersion===3?"旧版原账本已严格核验；只读查看，不会改写":"正式账本已核验；刷新只读取，不会上传";}setViewerRecovery("");setSync(dailyReady?"已读取 "+hhmm():opt.deferFailure?"正在读取并核验":"每日数据读取失败，费用暂不可用",!dailyReady&&!opt.deferFailure);if(!quiet&&dailyReady)toast("已重新读取，不会上传账本");}
     }catch(e){if(current()&&!opt.deferFailure){_receiptSource={state:"unverified"};_ledgerMessage="来源暂不可核验，旧费用已隐藏；原账本未修改";if(!isMgr())setViewerRecovery("读取失败："+e.message);setSync("读取失败："+e.message,true);}}finally{_busy=false;}
