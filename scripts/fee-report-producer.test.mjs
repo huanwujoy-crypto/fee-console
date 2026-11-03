@@ -54,6 +54,88 @@ function cloudOnceFixture(){
  f.complete=async()=>{await admitCloudOnce(f.args);await recordCloudOnceCandidate({...f.args,candidate});f.runs.get(runId).status='completed';f.runs.get(runId).conclusion='success';};
  return f;
 }
+function manualCloudOnceFixture(){
+ const f=cloudOnceFixture();f.now=new Date('2026-11-03T03:30:10Z');
+ f.event={sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{run_reviewed_once:'true',report_kind:'daily',report_target:'2026-11-02',report_markets:'NASDAQ,NYSE'}};
+ f.env={...f.env,GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR_ID:'283054367'};
+ f.args={...f.args,event:'workflow_dispatch',reviewedManual:true,now:f.now};
+ Object.assign(f.runs.get(f.runId),{event:'workflow_dispatch',actor:{id:283054367},created_at:'2026-11-03T03:30:00Z'});
+ f.control=(mode,extra={},time=f.now)=>cloudOnceControl(mode,{env:{...f.env,...extra},now:time,request:f.request,readBudget:f.readBudget,readEvent:()=>structuredClone(f.event)});
+ return f;
+}
+test('reviewed owner manual recovery uses the original claim, October plan and complete protected candidate chain',async()=>{
+ const f=manualCloudOnceFixture();
+ assert.equal((await f.control('once-scope')).state,'active');assert.equal(f.calls.length,0);
+ assert.equal(f.plan.kind,'daily-monthly');assert.deepEqual(f.plan.monthlyCutoffs,['2026-10-31']);
+ assert.equal((await f.control('once-admit')).state,'admitted');
+ assert.equal((await f.control('once-confirm')).state,'confirmed');
+ const claim=[...f.tags.values()][0];assert.equal(claim.tag,CLOUD_ONCE.tag);assert.equal(JSON.parse(claim.message).runId,f.runId);
+ assert.equal((await f.control('once-finish',{ONCE_ADMIT_RESULT:'success',ONCE_PRODUCE_RESULT:'success',ONCE_CANDIDATE_SHA:f.candidate})).state,'candidate-recorded');
+ Object.assign(f.runs.get(f.runId),{status:'completed',conclusion:'success'});
+ assert.deepEqual(await f.control('once-promotion',{GITHUB_EVENT_NAME:'workflow_run',GITHUB_ACTOR_ID:'1'}),{state:'candidate',candidate:f.candidate});
+ f.currentMain=f.candidate;
+ assert.equal((await f.control('once-cleanup',{GITHUB_EVENT_NAME:'workflow_run',ONCE_PROMOTE_RESULT:'success'})).state,'paused');
+ assert([...f.workflows.values()].every(s=>s==='disabled_manually'));
+ assert.equal(f.refs.size,2);assert(!f.calls.some(c=>['PATCH','DELETE'].includes(c.method)));
+});
+test('manual owner input validation rejects every scope mismatch before any control or financial request',async()=>{
+ const mutations=[
+  f=>f.env.GITHUB_ACTOR_ID='1',f=>f.env.GITHUB_RUN_ATTEMPT='2',f=>f.env.GITHUB_SHA='c'.repeat(40),
+  f=>f.event.sender.id=1,f=>f.event.repository.full_name='other/repository',
+  f=>f.event.inputs.run_reviewed_once='false',f=>f.event.inputs.report_kind='monthly',
+  f=>f.event.inputs.report_target='2026-11-03',f=>f.event.inputs.report_markets='NYSE',
+  ...['manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].map(k=>f=>f.event.inputs[k]='unexpected'),
+  ...['source_plan_check_only','source_acceptance_once'].map(k=>f=>f.event.inputs[k]='true'),
+  f=>f.event.inputs.unrecognized='true',f=>f.event=null
+ ];
+ for(const mutate of mutations){const f=manualCloudOnceFixture();mutate(f);
+  assert.equal((await f.control('once-scope')).state,'closed');
+  await assert.rejects(f.control('once-admit'),/ONCE_CONTROL/);assert.equal(f.calls.length,0);
+ }
+});
+test('manual recovery respects exact11:30 start and original13:45 admission end, including native run time',async()=>{
+ for(const time of ['2026-11-03T03:29:59.999Z','2026-11-03T05:45:00Z','2026-11-04T03:30:00Z']){
+  const f=manualCloudOnceFixture();assert.equal((await f.control('once-scope',{},new Date(time))).state,'closed');
+  await assert.rejects(f.control('once-admit',{},new Date(time)),/ONCE_CONTROL/);assert.equal(f.refs.size,0);
+ }
+ for(const time of ['2026-11-03T03:30:00Z','2026-11-03T05:44:59.999Z']){
+  const f=manualCloudOnceFixture();assert.equal((await f.control('once-scope',{},new Date(time))).state,'active');
+ }
+ for(const mutate of [r=>r.actor.id=1,r=>r.created_at='2026-11-03T03:29:59Z',r=>r.created_at=CLOUD_ONCE.closeAt,r=>r.event='schedule',r=>r.run_attempt=2]){
+  const f=manualCloudOnceFixture();mutate(f.runs.get(f.runId));await assert.rejects(f.control('once-admit'),/ONCE_CONTROL/);assert.equal(f.refs.size,0);
+ }
+});
+test('manual and delayed natural admission race shares one immutable opportunity, without another source allowance',async()=>{
+ const f=manualCloudOnceFixture();
+ const scheduled={...f.args,event:'schedule',reviewedManual:false,runId:1002};
+ const r=await Promise.allSettled([f.control('once-admit'),admitCloudOnce(scheduled)]);
+ assert.equal(r.filter(x=>x.status==='fulfilled').length,1);assert.equal(f.refs.size,1);
+ assert(!f.calls.some(c=>['PATCH','DELETE'].includes(c.method)));
+ for(const budget of [{attempts:1,inProgress:false},{attempts:2,inProgress:false},{attempts:0,inProgress:true}]){
+  const x=manualCloudOnceFixture();x.budget=budget;await assert.rejects(x.control('once-admit'),/ONCE_CONTROL/);assert.equal(x.refs.size,0);
+ }
+});
+test('manual failure or cancellation consumes the same claim and cleanup never creates a replacement opportunity',async()=>{
+ for(const result of ['failure','cancelled','timed_out']){
+  const f=manualCloudOnceFixture();await f.control('once-admit');
+  assert.equal((await f.control('once-finish',{ONCE_ADMIT_RESULT:'success',ONCE_PRODUCE_RESULT:result})).state,'paused');
+  await assert.rejects(f.control('once-admit'),/ONCE_CONTROL/);
+  assert.equal(f.refs.size,1);assert([...f.workflows.values()].every(s=>s==='disabled_manually'));
+ }
+ const f=manualCloudOnceFixture();await f.control('once-admit');f.event.inputs.report_target='2026-11-03';
+ await assert.rejects(f.control('once-confirm'),/ONCE_CONTROL/);assert.equal(f.refs.size,1);
+});
+test('actual event-file path supplies manual evidence while malformed or missing evidence fails closed',async()=>{
+ const f=manualCloudOnceFixture(),dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-once-event-')),file=path.join(dir,'event.json');
+ try{
+  fs.writeFileSync(file,JSON.stringify(f.event),{mode:0o600});
+  const args={env:{...f.env,GITHUB_EVENT_PATH:file},now:f.now,request:f.request};
+  assert.equal((await cloudOnceControl('once-scope',args)).state,'active');
+  fs.writeFileSync(file,'{malformed');assert.equal((await cloudOnceControl('once-scope',args)).state,'closed');
+  fs.rmSync(file);assert.equal((await cloudOnceControl('once-scope',args)).state,'closed');
+  assert.equal(f.calls.length,0);
+ }finally{fs.rmSync(dir,{recursive:true,force:true});}
+});
 test('once window admits10:00 but not earlier and rejects wrong date head attempt or mode',async()=>{
  const f=cloudOnceFixture();assert.equal(await f.control('once-scope',{},new Date('2026-11-03T02:00:00Z')).then(x=>x.state),'active');assert.equal(f.calls.length,0);
  await assert.rejects(admitCloudOnce({...f.args,now:new Date('2026-11-03T01:59:59Z')}),/ONCE_CONTROL/);assert.equal(f.calls.length,0);

@@ -21,7 +21,23 @@ The November 2 report can include the already completed October 31 archive;
 this does not claim that the November 2 New York natural day has ended.
 Only the actual monthly cutoff uses that completion test. Admission closes at 13:45,
 and promotion/cleanup expires at 14:15. Late cron delivery may miss this window;
-it does not authorize a new target, a manual dispatch or a retry.
+it does not itself authorize another target, dispatch or retry.
+
+The separately reviewed November 3 manual recovery can consume the **same**
+still-unused opportunity from HKT11:30 until the original13:45 admission cutoff.
+It uses the existing workflow with `run_reviewed_once=true`, `report_kind=daily`,
+`report_target=2026-11-02`, and `report_markets=NASDAQ,NYSE`. All ratio/source-check,
+manual-sync and previous-target recovery inputs stay blank or false. The current
+event must be an initial owner dispatch on the exact bound main; both the native
+event payload and run metadata are verified. Unknown input fields fail closed.
+No new workflow, permission, nonce, source allowance or mutable claim is added.
+The previous accepted Oct30 baseline still determines the Oct31–Nov2 interval
+and October archive; no new manual synchronization claim is fabricated.
+Before dispatch, confirm no natural run, reservation, candidate or publication
+has appeared. A delayed natural run and this recovery compete for one atomic
+claim; failure consumes that opportunity too. Describe the result as manual
+recovery, never as successful natural-schedule acceptance. This exception expires
+with the original window and does not enable future manual or daily production.
 
 Before any financial environment or credential access, `once-admit` creates an
 annotated tag and atomically creates `refs/tags/fee-cloud-once-20261102`. The tag

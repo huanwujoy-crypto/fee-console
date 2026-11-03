@@ -33,10 +33,26 @@ export const CLOUD_ONCE=Object.freeze({target:'2026-11-02',from:'2026-10-31',
 const ONCE_REPO='huanwujoy-crypto/fee-console',ONCE_SHA=/^[a-f0-9]{40}$/;
 const onceFail=()=>fail('ONCE_CONTROL');
 const onceId=v=>Number.isSafeInteger(Number(v))&&Number(v)>0?Number(v):onceFail();
-export function cloudOnceWindow({main,head,event,attempt,now=new Date()}={}){
+const ONCE_MANUAL_FROM='2026-11-03T03:30:00Z';
+function reviewedCloudOnceManual(env,readEvent){
+  try{
+    if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)
+      ||env.GITHUB_RUN_ATTEMPT!=='1'||env.GITHUB_SHA!==env.FEE_REPORT_ONCE_MAIN)return false;
+    const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
+    const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
+    const keys=['run_reviewed_once','report_kind','report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_plan_check_only','source_acceptance_once','source_from','source_target','source_main'];
+    return event.sender?.id===RECOVERY_OWNER&&event.repository?.full_name===ONCE_REPO&&i&&!Array.isArray(i)
+      &&Object.keys(i).every(k=>keys.includes(k))&&[true,'true'].includes(i.run_reviewed_once)
+      &&i.report_kind==='daily'&&i.report_target===CLOUD_ONCE.target&&i.report_markets==='NASDAQ,NYSE'
+      &&['manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'].every(k=>blank(i[k]))
+      &&off(i.source_plan_check_only)&&off(i.source_acceptance_once);
+  }catch{return false;}
+}
+export function cloudOnceWindow({main,head,event,attempt,reviewedManual=false,now=new Date()}={}){
   if(!main)return 'inactive';
   if(!ONCE_SHA.test(main)||!Number.isFinite(now.getTime()))onceFail();
-  if(head!==main||event!=='schedule'||String(attempt)!=='1')return 'closed';
+  if(head!==main||String(attempt)!=='1')return 'closed';
+  if(event!=='schedule'&&(event!=='workflow_dispatch'||reviewedManual!==true||now<Date.parse(ONCE_MANUAL_FROM)))return 'closed';
   if(now<Date.parse(CLOUD_ONCE.checkAt))return 'waiting';
   return now<Date.parse(CLOUD_ONCE.closeAt)?'active':'closed';
 }
@@ -79,10 +95,11 @@ async function onceClaimRecord(request,main){
 }
 async function onceRun(request,record){
   const run=await request('GET','/actions/runs/'+record.runId);
+  const manual=run.event==='workflow_dispatch'&&run.actor?.id===RECOVERY_OWNER;
   if(run.id!==record.runId||run.workflow_id!==CLOUD_ONCE.producer||run.head_sha!==record.main
-    ||run.head_branch!=='main'||run.event!=='schedule'||run.run_attempt!==1
+    ||run.head_branch!=='main'||(run.event!=='schedule'&&!manual)||run.run_attempt!==1
     ||run.path!=='.github/workflows/fee-cloud-producer.yml'
-    ||!Number.isFinite(Date.parse(run.created_at))||Date.parse(run.created_at)<Date.parse(CLOUD_ONCE.checkAt)
+    ||!Number.isFinite(Date.parse(run.created_at))||Date.parse(run.created_at)<Date.parse(manual?ONCE_MANUAL_FROM:CLOUD_ONCE.checkAt)
     ||Date.parse(run.created_at)>=Date.parse(CLOUD_ONCE.closeAt))onceFail();
   return run;
 }
@@ -101,8 +118,8 @@ export async function pauseCloudOnce(request,ids=[CLOUD_ONCE.producer,CLOUD_ONCE
   if(failed)onceFail();
   return {state:'paused',workflows:ids};
 }
-export async function admitCloudOnce({main,head,event,attempt,runId,plan,now=new Date(),request,readBudget=readPeriodSourceAttempts}={}){
-  if(cloudOnceWindow({main,head,event,attempt,now})!=='active'||now<Date.parse(CLOUD_ONCE.openAt)
+export async function admitCloudOnce({main,head,event,attempt,reviewedManual=false,runId,plan,now=new Date(),request,readBudget=readPeriodSourceAttempts}={}){
+  if(cloudOnceWindow({main,head,event,attempt,reviewedManual,now})!=='active'||now<Date.parse(CLOUD_ONCE.openAt)
     ||!validateReportPlan(plan)||plan.accountingThrough!==CLOUD_ONCE.target||plan.priceThrough!==CLOUD_ONCE.target
     ||plan.periodFrom!==CLOUD_ONCE.from||plan.kind!=='daily-monthly'
     ||JSON.stringify(plan.monthlyCutoffs)!=='["2026-10-31"]'
@@ -111,7 +128,7 @@ export async function admitCloudOnce({main,head,event,attempt,runId,plan,now=new
   const budget=await readBudget({plan,now,currentRunId:record.runId});
   if(budget?.attempts!==0||budget.inProgress!==false)onceFail();
   const run=await onceRun(request,record),current=await request('GET','/git/ref/heads/main');
-  if(run.status!=='in_progress'||current.object?.sha!==main||await onceClaimRecord(request,main)!==null)onceFail();
+  if(run.event!==event||run.status!=='in_progress'||current.object?.sha!==main||await onceClaimRecord(request,main)!==null)onceFail();
   const tag=await request('POST','/git/tags',{tag:CLOUD_ONCE.tag,message:JSON.stringify(record),object:main,type:'commit'});
   if(!ONCE_SHA.test(tag?.sha||''))onceFail();
   await onceCreateRef(request,CLOUD_ONCE.tag,tag.sha);
@@ -120,11 +137,11 @@ export async function admitCloudOnce({main,head,event,attempt,runId,plan,now=new
   await pauseCloudOnce(request,[CLOUD_ONCE.producer]);
   return {state:'admitted',runId:record.runId};
 }
-export async function confirmCloudOnce({main,head,runId,attempt,now=new Date(),request}={}){
-  if(!ONCE_SHA.test(main||'')||head!==main||String(attempt)!=='1'||now>=Date.parse(CLOUD_ONCE.closeAt))onceFail();
+export async function confirmCloudOnce({main,head,event,reviewedManual=false,runId,attempt,now=new Date(),request}={}){
+  if(cloudOnceWindow({main,head,event,attempt,reviewedManual,now})!=='active')onceFail();
   const r=await onceClaimRecord(request,main);if(!r||r.runId!==onceId(runId))onceFail();
   const [run,current,w]=await Promise.all([onceRun(request,r),request('GET','/git/ref/heads/main'),request('GET','/actions/workflows/'+CLOUD_ONCE.producer)]);
-  if(run.status!=='in_progress'||current.object?.sha!==main||w.state!=='disabled_manually')onceFail();
+  if(run.event!==event||run.status!=='in_progress'||current.object?.sha!==main||w.state!=='disabled_manually')onceFail();
   return {state:'confirmed'};
 }
 export async function recordCloudOnceCandidate({main,runId,candidate,request}={}){
@@ -171,13 +188,14 @@ export async function cloudOnceStatus({main,now=new Date(),request}={}){
   if(v.conclusion!=='success')return {state:'terminal',reason:'validation-failed'};
   return {state:'candidate',candidate};
 }
-export async function cloudOnceControl(mode,{env=process.env,now=new Date(),request,readBudget}={}){
+export async function cloudOnceControl(mode,{env=process.env,now=new Date(),request,readBudget,readEvent}={}){
   if(!['once-scope','once-admit','once-confirm','once-finish','once-promotion','once-cleanup'].includes(mode))onceFail();
   const main=env.FEE_REPORT_ONCE_MAIN||'';
   if(!main)return {state:'inactive'};
   if(env.GITHUB_ACTIONS!=='true'||env.GITHUB_REPOSITORY!==ONCE_REPO||env.GITHUB_REF!=='refs/heads/main')onceFail();
   request||=((method,route,body)=>cloudOnceRequest(method,route,body,{token:env.GITHUB_TOKEN}));
-  const args={main,head:env.GITHUB_SHA,event:env.GITHUB_EVENT_NAME,attempt:env.GITHUB_RUN_ATTEMPT,runId:env.GITHUB_RUN_ID,now,request};
+  const reviewedManual=['once-scope','once-admit','once-confirm'].includes(mode)&&reviewedCloudOnceManual(env,readEvent);
+  const args={main,head:env.GITHUB_SHA,event:env.GITHUB_EVENT_NAME,attempt:env.GITHUB_RUN_ATTEMPT,runId:env.GITHUB_RUN_ID,reviewedManual,now,request};
   if(mode==='once-scope')return {state:env.FEE_CLOUD_MODE==='publish'?cloudOnceWindow(args):'closed'};
   if(['once-admit','once-confirm'].includes(mode)&&env.FEE_CLOUD_MODE!=='publish')onceFail();
   if(mode==='once-admit')return admitCloudOnce({...args,plan:JSON.parse(env.ONCE_PLAN||'null'),readBudget});
