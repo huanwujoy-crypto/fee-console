@@ -620,6 +620,7 @@
     "scripts/fee-ratio-official-source.test.mjs",
     "scripts/fee-ratio-session-view.test.mjs",
     "scripts/fixtures/fee-ratio-session-view-ui.json",
+    "scripts/fixtures/fee-ratio-six-allocation-ui.json",
     "scripts/fee-ratio-cloud-publish.mjs",
     "scripts/fee-ratio-cloud-publish.test.mjs",
     "scripts/fee-ratio-cloud-runtime.mjs",

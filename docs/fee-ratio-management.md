@@ -292,12 +292,25 @@ only read-only outcome checks, never an automatic retry. Gist partial PATCH has
 no server-side compare-and-swap transaction: the prewrite revision check narrows,
 but cannot eliminate, concurrent owner-write races. Run one publisher at a time.
 
-The top “四类资产配置总览” uses the same accepted class totals and All Together
-scope/date as the four top-five groups: PE/VC, hedge, evergreen and secondary
-(all remaining assets including cash). It displays USD amounts, total-asset
-weights and simple bars. Small original rounding differences are disclosed,
-never forced into one category or reconstructed from look-through sums. The
-existing per-security total/class dual weights stay unchanged.
+New official snapshots show “资产配置总览” as six mutually exclusive rows,
+using the classification workbook's actual date and all ten accounts' direct
+asset values. The reference targets are PE/VC 0%, hedge 15%, evergreen 35%,
+stock market 40%, cash-like 8%, and thematic 2%. These are comparison targets,
+not actual weights or instructions to trade. Stock market includes only the
+four stock classifications; cash-like includes every Cash Accounts row and
+every source-classified defensive asset, across all accounts. Thematic assets
+are separate. No leverage or Exposure look-through value enters this total.
+Each row retains a collapsed account breakdown. Integer-cent category/account
+totals must reconcile to the unchanged classification total. Unknown source
+categories refuse the new projection rather than being guessed into stocks.
+
+Older authenticated snapshots without this optional projection retain their
+four-category overview; the UI never invents six-category values from their
+four totals or IB-only subset. The four top-five groups and their existing
+per-security total/class weights remain unchanged. Their legacy “二级市场”
+includes cash and thematic assets and differs from the new stock-market row.
+New source associations recompute the optional projection from the same
+pinned original rows; no report/health/ledger or source dates are rewritten.
 
 Local candidate validation does not approve a live new cryptographic use or Gist
 write. First publication requires review of the exact signed support and aligned
