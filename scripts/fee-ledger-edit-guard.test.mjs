@@ -23,9 +23,10 @@ assert.ok(path.isAbsolute(uiFile), "the optional synthetic UI preview path must 
 // The support PR tests the exact reviewed next UI before the index-only PR lands.
 function performanceCandidate(){
   const bytes=fs.readFileSync(path.join(root,'scripts/fixtures/fee-ratio-six-allocation-ui.json'));
-  assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'34b6b499ef85751cecb8e7586fd43f8ccb35686dbc2a84c0d8da20354969a261');
+  assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'fc628cf1c6dcb70aafd7e1545de69743ce8bdd9a7a27a4953f8f726813e3e3dc');
   const fixture=JSON.parse(bytes),sha=text=>crypto.createHash('sha256').update(text).digest('hex');
   let page=fs.readFileSync(uiFile,'utf8');
+  if(sha(page)===fixture.releaseNextSha256){for(const r of [...fixture.releaseRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.releasePriorSha256);}
   if(sha(page)===fixture.performancePriorSha256)for(const region of fixture.performanceRegions){
     assert.equal(page.split(region.prior).length,2);page=page.replace(region.prior,region.next);
   }
@@ -345,7 +346,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
       const result = ok(structuredClone(network.invalidDaily ? { invalid: true } : data));
       await passReadGate("daily"); return result;
     }
-    if (url.startsWith("https://fixture.invalid/fee-console/")) { await passReadGate("shell"); return ok(html); }
+    if (url.startsWith("https://fixture.invalid/fee-console/")) { await passReadGate("shell"); return ok(network.remoteHtml||html); }
     throw new Error(`unmocked network request: ${method} ${url}`);
   };
   const sandbox = {
@@ -359,7 +360,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
     },
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms }); return id; },
     clearTimeout: id => timers.delete(id), setInterval: () => ++timerId, clearInterval() {},
-    DOMParser: class { parseFromString() { return { querySelector: () => ({ content: network.changedShell ? build+"-changed" : build }) }; } }
+    DOMParser: class { parseFromString(source) { return { querySelector: () => ({ content: network.changedShell ? build+"-changed" : /name="fee-console-build" content="([^"]+)"/.exec(source)?.[1]||"" }) }; } }
   };
   for (const [, id] of html.matchAll(/\bid="([A-Za-z][\w-]*)"/g)) sandbox[id] = element(id);
   sandbox.window = { addEventListener: (event, fn) => add(winListeners, event, fn) };
@@ -1642,5 +1643,26 @@ test('stale parallel reads cannot commit after source changes and cannot extend 
   let now=Date.now();h.context.Date=class extends Date{static now(){return now;}};
   const pending=h.run('pullAll(true,{skipShell:true})');await gate.entered;await h.settle();now+=age;gate.release();await pending;
   assert.equal(h.run('ratioAuthorized()'),false);assert.deepEqual(h.writes(),[]);
+ });
+});
+
+test('a deployed shell release reloads old windows and preserves their access fragment',async t=>{
+ const fixture=JSON.parse(fs.readFileSync(path.join(root,'scripts/fixtures/fee-ratio-six-allocation-ui.json'),'utf8'));
+ let page=fs.readFileSync(uiFile,'utf8'),sha=s=>crypto.createHash('sha256').update(s).digest('hex');
+ if(sha(page)===fixture.releasePriorSha256)for(const r of fixture.releaseRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
+ assert.equal(sha(page),fixture.releaseNextSha256);
+ let prior=page;for(const r of [...fixture.releaseRegions].reverse()){assert.equal(prior.split(r.next).length,2);prior=prior.replace(r.next,()=>r.prior);}
+ assert.equal(sha(prior),fixture.releasePriorSha256);
+ assert.notEqual(/name="fee-console-build" content="([^"]+)"/.exec(page)[1],/name="fee-console-build" content="([^"]+)"/.exec(prior)[1]);
+ for(const call of ['ensureLatestShell()','manualRefresh()'])for(const next of [false,true])await t.test(call+' / '+(next?'new release':'unchanged release'),async()=>{
+  const h=await browserHarness(prior,{manager:true}),fragment='#synthetic-access-fragment';let reloads=0,target='';
+  h.context.location.href='https://fixture.invalid/fee-console/?view=1'+fragment;h.context.location.hash=fragment;
+  h.context.location.reload=()=>{reloads++;};h.context.history.replaceState=(a,b,url)=>{target=url;};h.network.remoteHtml=next?page:prior;
+  await h.run(call);assert.equal(reloads,next?1:0);assert.deepEqual(h.writes(),[]);
+  if(next){assert.ok(target.includes('_shell=4.9.37'));assert.ok(target.endsWith(fragment));assert.ok(target.includes('view=1'));}
+ });
+ await t.test('an unsaved draft still prevents an automatic reload',async()=>{
+  const h=await browserHarness(prior,{manager:true});let reloads=0;h.context.location.reload=()=>{reloads++;};h.network.remoteHtml=page;
+  h.run('EDIT.draft={synthetic:true}');await h.run('ensureLatestShell()');assert.equal(reloads,0);assert.deepEqual(h.writes(),[]);
  });
 });
