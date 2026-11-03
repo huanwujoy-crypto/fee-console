@@ -13,7 +13,7 @@ import {producerFailureCode,safeProducerFailureSummary,UNRESOLVED_FLOW_DIAGNOSTI
 import {SourceFetchError} from './fee-economic-source.mjs';
 import {dailyReportPlan,weeklyReportPlan,monthlyReportPlan,reportAddDays} from './fee-report-period.mjs';
 import {HEALTH_SCHEMA,validateHealth} from './fee-data-health.mjs';
-import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl} from './fee-report-producer.mjs';
+import {CLOUD_ONCE,cloudOnceWindow,cloudOnceRequest,admitCloudOnce,confirmCloudOnce,recordCloudOnceCandidate,cloudOnceStatus,pauseCloudOnce,cloudOnceControl,scheduledDailyContext} from './fee-report-producer.mjs';
 
 function cloudOnceFixture(){
  const main='a'.repeat(40),candidate='b'.repeat(40),runId=1001,now=new Date('2026-11-03T02:00:10Z');
@@ -368,6 +368,46 @@ test('scheduled Nov2 and deferred October archive use one10:00 source admission 
  assert.equal((await dailyPublicationPreflight({...args,readState:async()=>({...old,pending:true})})).outcome,'candidate-pending');
  await assert.rejects(dailyPublicationPreflight({...args,reviewedSyncDate:'2026-11-02'}),/MANUAL_SYNC_CONFIRMATION/);
 });
+test('recurring daily entry is separately enabled and leaves the consumed one-off authoritative',()=>{
+ const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:'a'.repeat(40),GITHUB_EVENT_NAME:'schedule',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:'1001',FEE_REPORT_ONCE_MAIN:'',FEE_REPORT_DAILY_ENABLED:'true',FEE_REPORT_PERIODS_ENABLED:'true',FEE_CLOUD_MODE:'publish',PLANNED_MAIN:'a'.repeat(40)};
+ const now=new Date('2026-11-04T09:00:00+08:00'),preflight={mode:'preflight'},produce={mode:'produce','report-kind':'daily','report-target':'2026-11-03'};
+ assert.equal(scheduledDailyContext(preflight,{env,now}),true);assert.equal(scheduledDailyContext(produce,{env,now}),true);
+ assert.equal(scheduledDailyContext(preflight,{env:{...env,FEE_REPORT_ONCE_MAIN:'b'.repeat(40)},now}),false);
+ assert.equal(scheduledDailyContext(preflight,{env:{...env,GITHUB_EVENT_NAME:'workflow_dispatch'},now}),false);
+ for(const change of [{FEE_REPORT_DAILY_ENABLED:''},{FEE_REPORT_PERIODS_ENABLED:'false'},{FEE_CLOUD_MODE:'shadow'},{GITHUB_ACTIONS:'false'},{GITHUB_REPOSITORY:'other/repo'},{GITHUB_REF:'refs/heads/other'},{GITHUB_SHA:''},{GITHUB_RUN_ATTEMPT:'2'},{GITHUB_RUN_ID:'0'}])assert.throws(()=>scheduledDailyContext(preflight,{env:{...env,...change},now}),/DAILY_SCOPE/);
+ for(const args of [{...preflight,'report-target':'2026-11-03'},{...produce,'report-target':'2026-11-02'},{...produce,'report-kind':'monthly'},{...produce,'manual-sync-completed-for':'2026-11-03'},{...produce,'recovery-main':'a'.repeat(40)}])assert.throws(()=>scheduledDailyContext(args,{env,now}),/DAILY_SCOPE/);
+ assert.throws(()=>scheduledDailyContext(produce,{env:{...env,PLANNED_MAIN:'b'.repeat(40)},now}),/DAILY_SCOPE/);
+});
+test('Nov4 daily09:00 and11:30 share one target; waiting, failed, pending and published entries do not read finance again',async()=>{
+ const prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:47:41Z');
+ const args={scheduledDaily:true,markets:['NYSE','NASDAQ'],ibEnabled:true,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>({attempts:0,inProgress:false})};
+ for(const clock of ['09:00:00','11:30:00','14:00:00']){
+  const result=await dailyPublicationPreflight({...args,now:new Date('2026-11-04T'+clock+'+08:00')});
+  assert.equal(result.outcome,'produce');assert.equal(result.plan.accountingThrough,'2026-11-03');assert.equal(result.plan.periodFrom,'2026-11-03');assert.equal(result.plan.scheduledAt,'2026-11-04T09:00:00+08:00');
+ }
+ const now=new Date('2026-11-04T11:30:00+08:00');
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-04T08:59:59+08:00'),readState:()=>assert.fail('early check must be public-only and not consume a source attempt')})).outcome,'waiting');
+ for(const [budget,reason] of [[{attempts:1,inProgress:false},'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED'],[{attempts:2,inProgress:false},'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED'],[{attempts:0,inProgress:true},'REPORT_SOURCE_RUN_IN_PROGRESS']])assert.equal((await dailyPublicationPreflight({...args,now,readSourceAttempts:async()=>budget})).reasonCode,reason);
+ assert.equal((await dailyPublicationPreflight({...args,now,readSourceAttempts:async()=>{throw Error('private-canary');}})).reasonCode,'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED');
+ assert.equal((await dailyPublicationPreflight({...args,now,runAttempt:'2'})).reasonCode,'REPORT_SOURCE_RERUN_NOT_ALLOWED');
+ assert.equal((await dailyPublicationPreflight({...args,now,readState:async()=>({...prior,pending:true}),readSourceAttempts:()=>assert.fail('pending candidate must wait')})).outcome,'candidate-pending');
+ const published=state(dailyReportPlan('2026-11-03',['NYSE','NASDAQ']),'2026-11-04T02:15:00Z');
+ assert.equal((await dailyPublicationPreflight({...args,now,readState:async()=>published,readRetryRuns:()=>assert.fail('same-cutoff Jenny recheck is forbidden in unified daily mode'),readSourceAttempts:()=>assert.fail('published report must not enter finance')})).outcome,'already-published');
+ await assert.rejects(dailyPublicationPreflight({...args,now,targetDate:'2026-11-03'}),/DAILY_SCOPE/);
+ assert.equal((await dailyPublicationPreflight({...args,now:new Date('2026-11-08T10:00:00+08:00'),readState:()=>assert.fail('closed US markets must not read source state')})).outcome,'not-due');
+});
+test('daily opt-in uses the original serialized producer, unchanged clocks and no extra control permissions',()=>{
+ const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ assert.match(workflow,/group: fee-cloud-producer\n  cancel-in-progress: false/);
+ assert.deepEqual([...workflow.matchAll(/cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
+ const period=workflow.split('\n  period:\n')[1].split('\n  once-admit:\n')[0],produce=workflow.split('\n  produce:\n')[1].split('\n  once-finish:\n')[0];
+ assert.match(period,/vars.FEE_REPORT_ONCE_MAIN != '' \|\| \(vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'\)/);
+ assert(period.indexOf('--mode=once-scope')<period.indexOf('args=(--mode=preflight)'));
+ assert(produce.indexOf('scheduledDailyContext({mode:')<produce.indexOf('google-github-actions/auth@'));
+ assert(produce.indexOf('assertIbManagerConfiguration();')<produce.indexOf('google-github-actions/auth@'));
+ assert.doesNotMatch(produce,/contents: write|actions: write/);
+ assert.equal((workflow.match(/FEE_REPORT_DAILY_ENABLED: \$\{\{ vars.FEE_REPORT_DAILY_ENABLED \}\}/g)||[]).length,3);
+});
 test('known US session permits only the reviewed one-off calendar qualifier; scheduled scope stays unchanged',async()=>{
  const r=await dailyPublicationPreflight({markets:['NYSE','NASDAQ'],targetDate:'2026-10-27',now:new Date('2026-10-28T13:00:00+08:00'),ibEnabled:false,readState:async()=>state(weeklyReportPlan('2026-10-23')),readSourceAttempts:async()=>({attempts:0,inProgress:false})});
  assert.equal(r.outcome,'produce');assert.equal(r.plan.accountingThrough,'2026-10-27');assert.deepEqual(r.plan.markets,['NASDAQ','NYSE']);
@@ -510,6 +550,21 @@ test('real period preflight CLI makes only public main GETs and never enters fin
   const r=spawnSync(process.execPath,['--import',preload,new URL('./fee-report-producer.mjs',import.meta.url).pathname,'--mode=preflight','--report-kind=weekly','--report-target=2026-10-23'],{encoding:'utf8',env:{PATH:process.env.PATH,FEE_DATA_KEY:'must-not-be-used',FEE_ECON_GIST_ID:'must-not-be-used',FEE_CLOUD_SHARESIGHT_CLIENT_ID:'must-not-be-used',FEE_CLOUD_SHARESIGHT_CLIENT_SECRET:'must-not-be-used'}});
   assert.equal(r.status,0,r.stderr);assert.equal(JSON.parse(r.stdout).outcome,'already-published');assert.doesNotMatch(r.stdout,/must-not-be-used|"enc"|"data"/);
   const calls=JSON.parse(fs.readFileSync(trace));assert.ok(calls.length>=4);assert.ok(calls.every(u=>u.startsWith('https://api.github.com/repos/huanwujoy-crypto/fee-console/')));
+});
+test('actual recurring daily CLI freezes tomorrow target with public metadata only and fails before financial access on wrong activation or main',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-daily-gate-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const s=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:47:41Z'),trace=path.join(dir,'trace.json'),preload=path.join(dir,'preload.mjs');
+ fs.writeFileSync(preload,`import fs from 'node:fs';const D=Date,now=D.parse('2026-11-04T02:00:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[now]));}static now(){return now;}};
+ const calls=[],data=${JSON.stringify(s.data.toString())},health=${JSON.stringify(s.health)};globalThis.fetch=async(url,init={})=>{url=String(url);calls.push(url);fs.writeFileSync(${JSON.stringify(trace)},JSON.stringify(calls));if(init.method&&init.method!=='GET'||init.headers?.Authorization)throw Error('unexpected credential or method');
+ const prefix='https://api.github.com/repos/huanwujoy-crypto/fee-console/';if(!url.startsWith(prefix))throw Error('financial route refused');const route=url.slice(prefix.length);let value;
+ if(route==='git/ref/heads/main')value={object:{sha:process.env.SYNTHETIC_MAIN||'a'.repeat(40)}};else if(route.startsWith('contents/')){const text=route.startsWith('contents/data.json?')?data:route.startsWith('contents/fee-data-health.json?')?JSON.stringify(health):null;if(text===null)throw Error('unknown file');value={type:'file',encoding:'base64',size:Buffer.byteLength(text),content:Buffer.from(text).toString('base64')};}else if(route.startsWith('git/matching-refs/heads/'))value=[];else if(route.startsWith('actions/workflows/fee-cloud-producer.yml/runs?'))value={total_count:0,workflow_runs:[]};else throw Error('unknown route');
+ const response=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(response,'url',{value:url});return response;};`);
+ const env={PATH:process.env.PATH,GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:'a'.repeat(40),GITHUB_EVENT_NAME:'schedule',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:'1001',FEE_REPORT_DAILY_ENABLED:'true',FEE_REPORT_PERIODS_ENABLED:'true',FEE_CLOUD_MODE:'publish',FEE_REPORT_MARKETS:'NYSE,NASDAQ',IB_MANAGER_READ_ENABLED:'true',FEE_DATA_KEY:'synthetic-secret-canary'};
+ const invoke=change=>spawnSync(process.execPath,['--import',preload,new URL('./fee-report-producer.mjs',import.meta.url).pathname,'--mode=preflight'],{encoding:'utf8',env:{...env,...change},timeout:10000});
+ const ok=invoke({});assert.equal(ok.status,0,ok.stderr);const decision=JSON.parse(ok.stdout);assert.equal(decision.outcome,'produce');assert.equal(decision.plan.accountingThrough,'2026-11-03');assert.equal(decision.plan.periodFrom,'2026-11-03');assert.equal(decision.mainSha,env.GITHUB_SHA);assert.doesNotMatch(ok.stdout,/synthetic-secret-canary|"enc"/);
+ assert(JSON.parse(fs.readFileSync(trace)).some(u=>u.includes('/actions/workflows/fee-cloud-producer.yml/runs?')));
+ const changed=invoke({SYNTHETIC_MAIN:'b'.repeat(40)});assert.equal(changed.status,1);assert.equal(changed.stderr.trim(),'FEE_REPORT_DAILY_SCOPE');
+ fs.rmSync(trace);const disabled=invoke({FEE_REPORT_DAILY_ENABLED:''});assert.equal(disabled.status,1);assert.equal(disabled.stderr.trim(),'FEE_REPORT_DAILY_SCOPE');assert.equal(fs.existsSync(trace),false);
 });
 test('period producer uses actual sole writer, receipt reporter and health; original ciphertext and fees stay intact',async t=>{
  for(const scenario of ['weekly','reviewed','reference'])await t.test(scenario,async t=>{

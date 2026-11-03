@@ -1,5 +1,46 @@
 # Sharesight cloud continuation
 
+## Unified recurring daily entry (prepared, not activated)
+
+The recurring path reuses this producer, its global non-cancelling concurrency,
+the existing source-attempt history, signed candidate validation and protected
+promotion. It adds no workflow, identity, credential, storage or permission.
+`FEE_REPORT_DAILY_ENABLED=true` is a separate repository opt-in, with
+`FEE_REPORT_PERIODS_ENABLED=true`, `FEE_CLOUD_MODE=publish` and the reviewed
+market scope. A nonempty `FEE_REPORT_ONCE_MAIN` always retains the old one-off
+controller; the daily flag cannot override it.
+
+Activation requires separate approval to retire the consumed November 3 active
+binding by removing only `FEE_REPORT_ONCE_MAIN`, after preserving its value and
+confirming no in-flight run/candidate. Both immutable once tags, all source
+attempt records and the old opportunity remain untouched. Enable promotion
+before the original producer only after the accepted Jenny native checkpoint
+and `IB_MANAGER_BASELINE_SHA256` are in place. The old benchmark stays disabled.
+Do not activate merely because this code or the frozen display attachment exists.
+
+Qualified sessions begin at HKT09:00; the original11:30 and14:00 slots are fallbacks
+for a target that has not entered financial processing. The target is the prior
+Hong Kong calendar date, with the existing market calendar, actual accounting
+cutoffs and month-end completion checks. No completed-sync assertion is invented.
+All three accounts are read in the same production round; Jenny's independent
+return/drawdown must reach that target before the single candidate can publish.
+Jenny does not become part of the management-fee calculation.
+
+An already published target skips even the legacy same-period Jenny recheck.
+A pending candidate waits. Any previous source-job entry for that target stops
+automatic re-entry, including failure, cancellation, timeout and shadow entry;
+unknown attempt metadata also stops. The ordinary two-attempt ceiling is retained
+as historical accounting, not permission for an automatic retry. A separately
+approved recovery is necessary after a financial attempt. Global concurrency and
+the frozen main check preserve the existing race guards. Before credentials,
+the job verifies the scheduled event, first attempt, current target and main.
+
+GitHub schedule delivery can be delayed or omitted. Local tests cannot guarantee
+09:00 delivery or establish a successful next-day report. Acceptance must include
+the actual run, signed/promoted candidate, report/health byte binding and normal
+page showing all three accounts at the real target. Until approved bootstrap and
+activation complete, producer/promotion remain paused and tomorrow is not ready.
+
 ## Bounded November 2 cloud acceptance (not yet activated)
 
 This amendment uses the existing producer and promotion workflows, not a second
@@ -13,8 +54,8 @@ Set the ordinary repository variable `FEE_REPORT_ONCE_MAIN` to that approved
 actual main. Keep `FEE_CLOUD_MODE=publish`; temporarily set the existing periods
 switch and `FEE_REPORT_MARKETS=NYSE,NASDAQ`. Only the existing producer and
 promotion workflows are enabled; the old benchmark remains disabled. Scheduled
-production now also requires the exact once binding; an empty binding does not
-grant ordinary recurring schedule permission.
+production for this acceptance requires the exact once binding; an empty binding
+alone does not grant recurring permission (see the separately approved opt-in above).
 
 The reviewed window is November 3 HKT: checking and admission begin at 10:00.
 The November 2 report can include the already completed October 31 archive;
@@ -608,6 +649,6 @@ Only the first cron and ordinary daily start move from10:00 to09:00 HKT.
 The11:30/14:00 continuations, ratio dispatch, publication gates and permissions
 are unchanged. Targets before November3 preserve historical plan/metadata times;
 the consumed November3 acceptance retains its original controller and records.
-This does not enable paused workflows or provide a recurring daily entry. The
-separate unified daily/Jenny continuation and baseline setup remain unactivated.
+The time-only adjustment did not enable paused workflows. The recurring entry
+prepared above still requires verified Jenny continuation and explicit activation.
 Changing this time rule must not be reported as successful daily activation.

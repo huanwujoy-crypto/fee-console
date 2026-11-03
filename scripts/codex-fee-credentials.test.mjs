@@ -4,6 +4,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+// The formal scripts-check suite already runs this entry; include the new
+// bootstrap writer boundaries without adding another workflow or test runner.
+import './fee-ratio-packet.test.mjs';
 import { parseManagerLink, readPrivateManagerLink } from "./codex-fee-credentials.mjs";
 
 const key = crypto.randomBytes(32).toString("base64url");
@@ -48,7 +51,7 @@ test("private-file setup only reads an owned, restricted regular file", () => {
 import {spawnSync} from 'node:child_process';
 import childProcess from 'node:child_process';
 import {syncBuiltinESMExports} from 'node:module';
-import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,finalizeLocalRatioAttachment,finalizeLocalIbBootstrapAttachment,readLocalAttachmentPlan,readProducerLogRecord} from './codex-fee-credentials.mjs';
+import {createLocalAttachmentRuntime,prepareLocalIbAttachment,finalizeLocalIbAttachment,finalizeLocalRatioAttachment,finalizeLocalIbBootstrapAttachment,readLocalAttachmentPlan,readProducerLogRecord,IB_BOOTSTRAP_MAINTENANCE} from './codex-fee-credentials.mjs';
 import {buildFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {convertEncryptedV3Copy} from './fee-econ-v3-copy.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
@@ -68,20 +71,21 @@ const add=d=>new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0
 const seal=(o,key,v)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return Buffer.from(JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(o)),c.final(),c.getAuthTag()]).toString('base64')}));};
 const open=(b,key)=>{const x=Buffer.from(JSON.parse(b).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,x.subarray(0,12));d.setAuthTag(x.subarray(-16));return JSON.parse(Buffer.concat([d.update(x.subarray(12,-16)),d.final()]));};
 function fixture(t,options={}){
+  const target=options.target||TARGET,clockNow=options.now||NOW;
   const rawRoot=fs.mkdtempSync(path.join(os.tmpdir(),'ib-local-synthetic-'));fs.chmodSync(rawRoot,0o700);const root=fs.realpathSync(rawRoot);t.after(()=>fs.rmSync(root,{recursive:true,force:true}));
   const key=crypto.randomBytes(32),keyText=key.toString('base64url'),calls={secrets:[],requests:[],public:[],github:[],children:[],cleanup:0},environ={};
   let economic={v:4,settings:{start:'2026-08-01',mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]},legacy;
   if(options.legacy){const original={...economic,v:3,updatedAt:'2026-10-26T00:00:00Z',settings:{...economic.settings,who:'SYNTHETIC OWNER',openingAt:'2026-07-31',fx:{USD:1,HKD:1,CNY:1,EUR:1,SGD:1,GBP:1,JPY:1}},accounts:economic.accounts.map(a=>({...a,name:'SYNTHETIC '+a.id}))};legacy=seal(original,key,3);economic=open(convertEncryptedV3Copy(legacy,key,{policyId:createLegacyPolicy().LEGACY_POLICY_ID}),key);}
-  const daily=[];for(let i=0,d='2026-08-01';d<=TARGET;i++,d=add(d))daily.push({d,schwab:60+i*.01,webull:40+i*.01,spy:100,qqq:100,bd:d,bstate:'session'});
-  const data={daily,flowsAuto:[],flowsUnresolved:[],status:{asOf:TARGET,provisional:false,calibrated:true,unresolvedCount:0},opaqueExistingRecord:{synthetic:'must stay exactly unchanged'},feeReportPublication:{syntheticOnly:true}};
+  const daily=[];for(let i=0,d='2026-08-01';d<=target;i++,d=add(d))daily.push({d,schwab:60+i*.01,webull:40+i*.01,spy:100,qqq:100,bd:d,bstate:'session'});
+  const data={daily,flowsAuto:[],flowsUnresolved:[],status:{asOf:target,provisional:false,calibrated:true,unresolvedCount:0},opaqueExistingRecord:{synthetic:'must stay exactly unchanged'},feeReportPublication:{syntheticOnly:true}};
   data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput:economic});
   const points=daily.map((p,i)=>({d:p.d,tot:100+i*.01}));
-  const ib={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'a'.repeat(64),periodReturnsInput:{points,openT:100,from:'2026-08-01',to:TARGET,days:84,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0}};
+  const ib={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'a'.repeat(64),periodReturnsInput:{points,openT:100,from:'2026-08-01',to:target,days:points.length,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0}};
   const write=(name,b)=>{const p=path.join(root,name);fs.writeFileSync(p,b,{mode:0o600});return {path:p,sha256:digest(Buffer.from(b))};};
   const baseData=write('base-data.json',seal(data,key,3));
-  const health={schema:'fee-console.daily-health.v1',checkedAt:'2026-10-26T06:00:00.000Z',targetDate:TARGET,sourceDates:{schwab:TARGET,webull:TARGET,benchmark:TARGET},outcome:'updated',dataSha256:baseData.sha256,errorCode:null};
+  const health={schema:'fee-console.daily-health.v1',checkedAt:options.checkedAt||'2026-10-26T06:00:00.000Z',targetDate:target,sourceDates:{schwab:target,webull:target,benchmark:target},outcome:'updated',dataSha256:baseData.sha256,errorCode:null};
   const baseHealth=write('base-health.json',JSON.stringify(health,null,2)+'\n'),ibInput=write('ib-input.json',JSON.stringify(ib)),legacySource=options.legacy&&options.includeLegacy?write('original-legacy.json',legacy):null;
-  const plan={schema:'fee-console.ib-local-attachment-plan.v1',targetDate:TARGET,workspace:root,baseData,baseHealth,ibInput,legacySource};
+  const plan={schema:'fee-console.ib-local-attachment-plan.v1',targetDate:target,workspace:root,baseData,baseHealth,ibInput,legacySource};
   const scripts=fs.readdirSync(path.join(CORE_ROOT,'scripts')).filter(n=>n.endsWith('.mjs')).map(n=>({path:'scripts/'+n,type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(path.join(CORE_ROOT,'scripts',n)))}));
   const tree={sha:TREE,truncated:false,tree:[...scripts,{path:'.github/workflows/fee-cloud-producer.yml',type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(path.join(CORE_ROOT,'.github/workflows/fee-cloud-producer.yml')))},{path:'data.json',type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(baseData.path))},{path:'fee-data-health.json',type:'blob',mode:'100644',sha:gitBlob(fs.readFileSync(baseHealth.path))}]};
   const proof={run:{id:PROOF_RUN,status:'completed',conclusion:'success',run_attempt:1,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/fee-cloud-producer.yml',head_repository:{full_name:'huanwujoy-crypto/fee-console'},head_sha:PROOF_HEAD},
@@ -142,7 +146,7 @@ function fixture(t,options={}){
     if(options.noisyChild&&childCount===1)return options.noisyChild==='success'?{status:0,stdout:'IB_RETURN_ATTACHMENT_DRY_RUN_OK\n'+keyText,stderr:''}:{status:1,stdout:keyText,stderr:'MOCK_SECRET_'+LOCATOR};
     // Pin only the synthetic health subprocess clock. Production receives no
     // preload or alternate clock; no actual secret is available in this worker.
-    const realArgs=name==='fee-data-health.mjs'?['--import=data:text/javascript,'+encodeURIComponent(`const NativeDate=Date;globalThis.Date=class extends NativeDate{constructor(...a){super(...(a.length?a:[${NOW.getTime()}]));}static now(){return ${NOW.getTime()};}};`),...args]:args;
+    const realArgs=name==='fee-data-health.mjs'?['--import=data:text/javascript,'+encodeURIComponent(`const NativeDate=Date;globalThis.Date=class extends NativeDate{constructor(...a){super(...(a.length?a:[${clockNow.getTime()}]));}static now(){return ${clockNow.getTime()};}};`),...args]:args;
     const r=spawnSync(binary,realArgs,{...opts,env:opts.env});
     if(name==='fee-data-health.mjs'&&r.status===0){const file=args.find(a=>a.startsWith('--out=')).slice(6);
       if(options.mutateDerivedHealth){const h=JSON.parse(fs.readFileSync(file));options.mutateDerivedHealth(h);fs.writeFileSync(file,JSON.stringify(h,null,2)+'\n');}
@@ -156,7 +160,7 @@ function fixture(t,options={}){
     if(options.unexpectedOutput&&childCount===2)fs.writeFileSync(path.join(root,'candidate/user-owned.txt'),'preserve me');
     return r;
   };
-  const actual=createLocalAttachmentRuntime({spawnImpl:spawnMock,fetchImpl:fetchMock,now:()=>NOW,platform:'darwin'});
+  const actual=createLocalAttachmentRuntime({spawnImpl:spawnMock,fetchImpl:fetchMock,now:()=>clockNow,platform:'darwin'});
   const runtime={...actual,async acquireEconomic(...args){const s=await actual.acquireEconomic(...args);return {...s,cleanup(){calls.cleanup++;s.cleanup();if(options.cleanupFail)throw Error('MOCK_SECRET_'+keyText);if(options.mutateAfterCleanup)fs.appendFileSync(baseData.path,' ');}};}};
   return {root,key,keyText,data,economic,health,plan,runtime,environ,calls,tree,proof,options,sealEconomic,write,reset(){fetchCount=0;refCount=0;childCount=0;for(const n of ['secrets','requests','public','github','children'])calls[n]=[];calls.cleanup=0;}};
 }
@@ -319,7 +323,7 @@ for(const [name,change] of [
 
 import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
-import {buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
+import {buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,buildIbOwnerBaseline,validateIbManagerReportState,createIbManagerReturnConsumer} from './ib-manager-return.mjs';
 import {ibBaselineBusinessHash} from './ib-manager-source.mjs';
 import {prepareRatioAttachment} from './fee-ratio-packet.mjs';
 function ratioFixtureForAttachment(){
@@ -442,6 +446,100 @@ for(const name of ['Produce weekly 2026-10-22','Produce snapshot '+TARGET,'Produ
 test('producer proof refuses duplicate legacy and labelled jobs before reading financial keys',async t=>{
   const f=await bootstrapFinalFixture(t);f.proof.jobs.jobs.push({...structuredClone(f.proof.jobs.jobs[0]),id:PROOF_JOB+1,name:'Produce weekly '+TARGET});f.proof.jobs.total_count=2;
   await assert.rejects(bootstrapFinalize(f),/PROVENANCE/);assert.equal(f.calls.secrets.length,0);
+});
+
+async function maintenanceBootstrapFixture(t){
+  const anchor=IB_BOOTSTRAP_MAINTENANCE,f=fixture(t,{target:anchor.target,now:new Date('2026-11-03T07:00:00Z'),checkedAt:'2026-11-03T04:00:00.000Z'});
+  const frozenInput=JSON.parse(fs.readFileSync(f.plan.ibInput.path)),baseline=structuredClone(frozenInput);
+  baseline.periodReturnsInput.points=baseline.periodReturnsInput.points.filter(p=>p.d<='2026-10-30');baseline.periodReturnsInput.to='2026-10-30';baseline.periodReturnsInput.days=91;
+  const expected=ibBaselineBusinessHash(baseline.periodReturnsInput),ownerBaseline=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(baseline),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(baseline)},baseline,expected);
+  const c={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:'2026-10-31',through:anchor.target,evidenceSha256:'e'.repeat(64),events:[],quotes:[]},coverage={...c,coverageId:await createIbManagerReturnConsumer().digest(c)};
+  const source={schema:'fee-console.ib-manager-source.v3',scope:'ib-manager',currency:'USD',timezone:'America/New_York',flowTiming:'eod',baselineFrom:'2026-08-01',baselineAsOf:'2026-10-30',baselineInputsHash:expected,portfolioIdentityHash:'c'.repeat(64),sourceAsOf:anchor.target,sourceEvidenceHash:'d'.repeat(64),cashFlowByDate:{},noncashProofs:[],periodReturnsInput:structuredClone(frozenInput.periodReturnsInput),ownerBaseline,bootstrapCoverage:coverage,
+    closingSnapshots:frozenInput.periodReturnsInput.points.slice(-2).map(p=>({d:p.d,totalCents:Math.round(p.tot*100),cash:{'3':0},cashCurrency:{'3':'USD'},positions:{'2':'1000000000000000000'},marks:{'2':null}}))};
+  const native={schema:'fee-console.ib-native-bootstrap-input.v1',frozenInput,source};
+  f.data.ibManagerReturnReceipt=await buildIbManagerReturnReceipt(frozenInput);f.data.ibManagerDrawdownReceipt=await buildIbManagerDrawdownReceipt(frozenInput);
+  f.plan.baseData=f.write('base-data.json',seal(f.data,f.key,3));f.health.dataSha256=f.plan.baseData.sha256;f.plan.baseHealth=f.write('base-health.json',JSON.stringify(f.health,null,2)+'\n');
+  for(const [name,spec]of [['data.json',f.plan.baseData],['fee-data-health.json',f.plan.baseHealth]])f.tree.tree.find(x=>x.path===name).sha=gitBlob(fs.readFileSync(spec.path));
+  f.plan={schema:'fee-console.ib-bootstrap-local-finalize-plan.v2',targetDate:anchor.target,workspace:f.root,baseData:f.plan.baseData,baseHealth:f.plan.baseHealth,legacySource:null,
+    ibBootstrap:{baseline:f.write('baseline-source.json',JSON.stringify(baseline)),coverage:f.write('coverage-source.json',JSON.stringify(coverage)),native:f.write('native-source.json',JSON.stringify(native))},maintenanceEvidence:{publishedMain:anchor.main,supportMain:HEAD}};
+  const user={login:'huanwujoy-crypto',id:283054367,type:'User'},treeSha='7'.repeat(40),mergeTime='2026-11-03T06:00:00Z';
+  const makeCommit=sha=>({sha,author:user,commit:{verification:{verified:true},tree:{sha:treeSha}},parents:[{sha:anchor.base}]});
+  const maintenance={pr:{number:517,state:'closed',merged:true,draft:false,merge_commit_sha:anchor.main,merged_at:mergeTime,user,merged_by:user,head:{sha:anchor.head,repo:{full_name:'huanwujoy-crypto/fee-console'}},base:{ref:'main',repo:{full_name:'huanwujoy-crypto/fee-console'}}},
+    merged:makeCommit(anchor.main),head:makeCommit(anchor.head),tree:{...structuredClone(f.tree),sha:treeSha},
+    comments:[{user,author_association:'OWNER',created_at:'2026-11-03T05:00:00Z',updated_at:'2026-11-03T05:00:00Z',body:'/approve-xuan-ib-maintenance '+anchor.head}],
+    checks:{total_count:3,check_runs:['scripts-check','ui-pr-check','xuan-ib-policy-lock'].map(name=>({name,head_sha:anchor.head,status:'completed',conclusion:'success',completed_at:'2026-11-03T05:30:00Z',app:{id:15368}}))}};
+  // The reviewed maintenance base intentionally predates the support code.
+  maintenance.tree.tree.find(x=>x.path==='scripts/ib-manager-source.mjs').sha='8'.repeat(40);
+  const oldPublic=f.runtime.publicRead;
+  f.runtime={...f.runtime,async publicRead(route){
+    const found=route==='/commits/'+anchor.main?maintenance.merged:route==='/commits/'+anchor.head?maintenance.head:route==='/git/trees/'+treeSha+'?recursive=1'?maintenance.tree:null;
+    if(found){f.calls.public.push(route);return found;}return oldPublic(route);
+  },async githubRead(route){
+    f.calls.github.push(route);
+    if(route==='pulls/517')return maintenance.pr;
+    if(/^issues\/517\/comments\?per_page=100&page=[1-5]$/.test(route))return maintenance.pages?maintenance.pages[Number(route.at(-1))-1]:maintenance.comments;
+    if(route==='commits/'+anchor.head+'/check-runs?filter=latest&per_page=100')return maintenance.checks;
+    throw Error('UNEXPECTED_SYNTHETIC_GITHUB_ROUTE');
+  }};
+  return {...f,maintenance,native,baseline,coverage,expected};
+}
+test('exact protected maintenance bootstrap uses the real sole writer and health checker without inheriting an obsolete producer',async t=>{
+  const f=await maintenanceBootstrapFixture(t),base=fs.readFileSync(f.plan.baseData.path),before=open(base,f.key),r=await bootstrapFinalize(f),out=path.join(f.root,'ib-bootstrap-finalized'),after=open(fs.readFileSync(path.join(out,'data.json')),f.key);
+  assert.equal(r.maintenanceBase,IB_BOOTSTRAP_MAINTENANCE.main);assert.equal(r.maintenanceApprovedHead,IB_BOOTSTRAP_MAINTENANCE.head);assert.equal(r.nativeCheckpointAdded,true);assert.equal(Object.hasOwn(r,'inheritedProducerRunId'),false);assert.equal(r.publicationReady,false);
+  assert.deepEqual(after.ibManagerReturnReceipt.periods,before.ibManagerReturnReceipt.periods);assert.deepEqual(after.ibManagerDrawdownReceipt.dailyFactors,before.ibManagerDrawdownReceipt.dailyFactors);
+  assert.deepEqual(await validateIbManagerReportState(after,f.expected),f.native.source);
+  const strip=o=>Object.fromEntries(Object.entries(o).filter(([k])=>!k.startsWith('ibManager')));assert.deepEqual(strip(after),strip(before));
+  assert.deepEqual(fs.readFileSync(f.plan.baseData.path),base);assert.deepEqual(f.calls.secrets,[SERVICES.key,SERVICES.gist]);assert.equal(f.calls.github.some(x=>x.startsWith('actions/')),false);
+  const health=JSON.parse(fs.readFileSync(path.join(out,'fee-data-health.json')));assert.deepEqual(health,{...f.health,dataSha256:digest(fs.readFileSync(path.join(out,'data.json')))});
+  assert.ok(f.calls.children.some(x=>x.args.some(a=>a.startsWith('--ib-native-input='))));
+  const count=f.calls.secrets.length;await assert.rejects(bootstrapFinalize(f),/OUTPUT/);assert.equal(f.calls.secrets.length,count);
+});
+for(const [name,mutate] of [
+  ['unapproved base',f=>f.plan.maintenanceEvidence.publishedMain='1'.repeat(40)],
+  ['wrong support main',f=>f.plan.maintenanceEvidence.supportMain='2'.repeat(40)],
+  ['dirty support code',f=>f.options.dirtyMain=true],
+  ['wrong PR head',f=>f.maintenance.pr.head.sha='3'.repeat(40)],
+  ['unmerged PR',f=>f.maintenance.pr.merged=false],
+  ['unverified maintenance signature',f=>f.maintenance.merged.commit.verification.verified=false],
+  ['different merge tree',f=>f.maintenance.head.commit.tree.sha='4'.repeat(40)],
+  ['wrong base parent',f=>f.maintenance.head.parents[0].sha='5'.repeat(40)],
+  ['old exact-head approval',f=>f.maintenance.comments[0].body='/approve-xuan-ib-maintenance '+'6'.repeat(40)],
+  ['agent approval',f=>f.maintenance.comments[0].user={login:'agent',id:1,type:'Bot'}],
+  ['approval added after merge',f=>f.maintenance.comments[0].updated_at='2026-11-03T06:01:00Z'],
+  ['no approval',f=>f.maintenance.comments=[]],
+  ['truncated approval pages',f=>f.maintenance.pages=Array.from({length:5},()=>Array.from({length:100},()=>structuredClone(f.maintenance.comments[0])))],
+  ['failed formal check',f=>f.maintenance.checks.check_runs[0].conclusion='failure'],
+  ['pending formal check',f=>f.maintenance.checks.check_runs[0].status='in_progress'],
+  ['draft check name',f=>f.maintenance.checks.check_runs[0].name='scripts-check-draft'],
+  ['wrong check integration',f=>f.maintenance.checks.check_runs[0].app.id=1],
+  ['check on another head',f=>f.maintenance.checks.check_runs[0].head_sha='9'.repeat(40)],
+  ['check completed after merge',f=>f.maintenance.checks.check_runs[0].completed_at='2026-11-03T06:01:00Z'],
+  ['missing checks page',f=>f.maintenance.checks.total_count++],
+  ['changed published data',f=>f.maintenance.tree.tree.find(x=>x.path==='data.json').sha='f'.repeat(40)],
+  ['changed published health',f=>f.maintenance.tree.tree.find(x=>x.path==='fee-data-health.json').sha='f'.repeat(40)],
+  ['extra legacy evidence',f=>f.plan.producerEvidence={runId:PROOF_RUN,candidateSha:PROOF_CANDIDATE}],
+  ['missing native packet',f=>delete f.plan.ibBootstrap.native],
+  ['changed private packet',f=>fs.appendFileSync(f.plan.ibBootstrap.native.path,' ')],
+  ['expired health',f=>f.runtime={...f.runtime,now:()=>new Date('2026-11-05T07:00:00Z')}],
+])test('maintenance bootstrap refuses before financial access: '+name,async t=>{
+  const f=await maintenanceBootstrapFixture(t),base=fs.readFileSync(f.plan.baseData.path);mutate(f);await assert.rejects(bootstrapFinalize(f),/^LocalAttachmentError: IB_LOCAL_/);
+  assert.equal(f.calls.secrets.length,0);assert.equal(f.calls.requests.length,0);assert.equal(f.calls.children.length,0);assert.deepEqual(fs.readFileSync(f.plan.baseData.path),base);assert.equal(fs.existsSync(path.join(f.root,'ib-bootstrap-finalized')),false);
+});
+for(const [name,mutate] of [
+  ['main changes during operation',f=>f.options.mainChanged=true],
+  ['source changes during operation',f=>f.options.changeSourceOnRecheck=true],
+  ['support code changes during writer',f=>f.options.codeChangedDuringWriter=true],
+  ['health timestamp rejuvenation',f=>f.options.mutateDerivedHealth=x=>x.checkedAt='2026-11-03T07:00:00.000Z'],
+  ['reconstructed frozen hash differs',f=>{f.native.frozenInput.sourceSha256='f'.repeat(64);f.plan.ibBootstrap.native=f.write('native-source.json',JSON.stringify(f.native));}],
+])test('maintenance bootstrap late failure cleans only its candidate: '+name,async t=>{
+  const f=await maintenanceBootstrapFixture(t),base=fs.readFileSync(f.plan.baseData.path);mutate(f);await assert.rejects(bootstrapFinalize(f));assert.deepEqual(fs.readFileSync(f.plan.baseData.path),base);assert.equal(fs.existsSync(path.join(f.root,'ib-bootstrap-finalized')),false);
+});
+test('maintenance proof GET allowlist cannot select another PR, head, repository or mutation',()=>{
+  const calls=[],runtime=createLocalAttachmentRuntime({spawnImpl(binary,args){calls.push(args.at(-1));return {status:0,stdout:'{}',stderr:''};}});
+  for(const route of ['pulls/517','issues/517/comments?per_page=100&page=1','commits/'+IB_BOOTSTRAP_MAINTENANCE.head+'/check-runs?filter=latest&per_page=100'])runtime.githubRead(route);
+  assert.equal(calls.length,3);
+  for(const route of ['pulls/518','issues/517/comments','issues/517/comments?per_page=100&page=6','commits/'+'a'.repeat(40)+'/check-runs?filter=latest&per_page=100','pulls/517/merge','repos/other/repo/pulls/517'])assert.throws(()=>runtime.githubRead(route),/PROVENANCE/);
+  assert.equal(calls.length,3);
 });
 
 test('v2 browser finalization never reads financial keys for missing or self-asserted source evidence',async t=>{

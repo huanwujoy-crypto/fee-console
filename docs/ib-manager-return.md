@@ -219,6 +219,49 @@ payload. The sole writer refuses replacement of an existing native checkpoint.
 No new JSON Secret, persistent private channel or independent ledger is added.
 See `docs/fee-ratio-management.md` for actual route and its unactivated safeguards.
 
+### One protected Nov2 frozen-to-native bootstrap — not activated
+
+The optional `--ib-native-input` is accepted only by the existing local
+`daily.mjs --ib-bootstrap-only` writer. Its private v1 packet contains the full
+reconstructed `frozenInput` and the validated source-v3 `source`. The original
+Oct30 input, finite Oct31–Nov2 audit and native source must agree. Rebuilding
+the full frozen input must reproduce both currently published receipts exactly,
+including `sourceInputsHash`; monthly percentages or daily factors cannot replace
+missing NAV/flow inputs. The native period input must equal that frozen input's
+period input, and every monthly result and daily factor remains unchanged.
+The writer then installs the original owner baseline, coverage and native
+checkpoint inside the existing encrypted `data.json`, with native v2 IB receipts.
+Fee and all non-IB fields remain unchanged. Existing state or a repeated output
+refuses replacement. Future reports use the ordinary checkpoint continuation.
+
+`finalize-ib-bootstrap` v2 is the only new finalizer branch. It accepts private
+`ibBootstrap:{baseline,coverage,native}` file specifications and
+`maintenanceEvidence:{publishedMain,supportMain}` instead of producer evidence.
+These fields do not confer approval. Code pins the already published PR517:
+main `fd7d0c1851fbef9286a7a2ae80f4a4c212da5079`, approved head
+`30d49d3035b6162e4090b28ab08d231ff9e43dec`, Nov2 cutoff and Oct30 original
+baseline. Before financial keys, fixed read-only GitHub routes verify the merged
+owner PR, both verified signatures and identical merge/head trees, the owner's
+exact-head maintenance comment made before merge, and successful completed
+`scripts-check`, `ui-pr-check` and `xuan-ib-policy-lock` checks from Actions App
+15368 on that head. The current signed main and clean local scripts must match
+the separately reviewed support main; its data/health bytes must still equal
+the protected maintenance publication. Missing/truncated evidence fails closed.
+The old attachment, ratio and producer-evidence paths retain their original rules.
+
+Execution still requires concrete owner approval of the support code, private
+input hashes and bounded source work. The cleared Nov2 private input is not
+assumed available: reconstruct it only from the retained hash-locked Oct30
+history and a separately authorized finite Sharesight double capture, and stop
+if the complete published commitments cannot be reproduced. Neither writer nor
+finalizer performs the Sharesight history capture. Finalization uses the two existing
+local Keychain services and the original economic book, validates the actual fee
+receipt and legacy-source requirement, and preserves `checkedAt` and source dates.
+The original 36-hour health and four-UTC-day limits, source rechecks, exact-main
+recheck, private output permissions and cleanup remain in force. It creates a
+candidate only; protected publication and unlocked-page acceptance are separate.
+It neither changes the consumed once claim nor enables a daily workflow.
+
 Coverage-v1 remains a finite legacy contract. New coverage-v2 includes a bounded
 Sharesight source audit, dates, exact noncash events and any dated source quotes.
 The first source-v3 read must cover its exact through date; the audit is retained
