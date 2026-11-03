@@ -12,8 +12,12 @@ const downloadedPage=fs.readFileSync(new URL('../index.html',import.meta.url),'u
 // Adapt only these exact reviewed bytes for the existing historical stage tests.
 let installed=downloadedPage;
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
-assert.equal(hash(sixFixtureBytes),'d930692c43245b877974bcca946e3312af236e61befe233bebdc157294081f65');
+assert.equal(hash(sixFixtureBytes),'34b6b499ef85751cecb8e7586fd43f8ccb35686dbc2a84c0d8da20354969a261');
 const sixFixture=JSON.parse(sixFixtureBytes);
+if(hash(installed)===sixFixture.performanceNextSha256){
+ for(const r of [...sixFixture.performanceRegions].reverse()){assert.equal(installed.split(r.next).length,2);installed=installed.replace(r.next,()=>r.prior);}
+ assert.equal(hash(installed),sixFixture.performancePriorSha256);
+}
 if(hash(installed)===sixFixture.intermediateSha256){
  for(const r of sixFixture.updateRegions){assert.equal(installed.split(r.prior).length,2);installed=installed.replace(r.prior,()=>r.next);}
  assert.equal(hash(installed),sixFixture.nextSha256);

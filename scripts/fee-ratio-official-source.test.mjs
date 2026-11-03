@@ -333,3 +333,41 @@ test('six-category snapshot validates targets, account membership, sums and rend
  const zero=sixAllocationFixture();for(const p of zero.classification.positions)if(p.sharesightCategory==='VC/PE')p.valueUSD=0;
  const z=await authenticated(t,zero);await z.ratio.validateModel(z.model);assert.match(z.ratio.render(z.model),/PE\/VC<\/td><td>USD 0\.00<\/td><td>0\.00%／0%/);
 });
+
+test('fund display merges exact dated names only within the same class strategy and account',async t=>{
+ const raw=fundDetailFixture();
+ for(const category of ['常青基金','对冲基金']){
+  const rows=raw.classification.positions.filter(p=>p.sharesightCategory===category);
+  for(const i of [1,2,3]){
+   const p=rows[i],linked=raw.exposure.rows.find(r=>r.account===p.account&&r.securityCode===p.securityCode);
+   const name=i===3?'Synthetic Shared E-2':'Synthetic Shared E-1';
+   p.securityCode=`策略甲-渠道-${2021+i}-10-${name}`;p.name='Synthetic wrong display alias';
+   // Row 2 deliberately keeps another account; row 3 keeps another share class.
+   if(i!==2)p.account=rows[0].account;
+   linked.securityCode=p.securityCode;linked.name=p.name;linked.account=p.account;
+  }
+  const extra={...rows[4],sourceRow:950+(category==='常青基金'?0:1),securityCode:'策略乙-2026-07-Synthetic Seventh',valueUSD:12};
+  raw.classification.positions.push(extra);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;
+  raw.exposure.rows.push({sourceRow:extra.sourceRow,account:extra.account,securityCode:extra.securityCode,market:extra.market,name:extra.name,withinETF:null,ownership:'Direct',valueUSD:12,sourcePercentage:null});raw.exposure.canonicalDataRows++;raw.exposure.allWorksheetXmlRows++;
+ }
+ const f=await authenticated(t,raw),read=await f.snapshot.verify(f.signed,f.manager,{now:f.now}),before=JSON.stringify(read.model),html=f.ratio.render(read.model);
+ assert.equal((html.match(/data-source-count="2"/g)||[]).length,2,'one merged row in each fund class');
+ assert.equal((html.match(/class="ratio-fund-holding"/g)||[]).length,12);
+ assert.match(html,/同分类、同账户、年月后完整名称相同/);
+ for(const fund of read.model.classificationSummary.fundDistributions){
+  const section=html.split('<h2>'+fund.name+'分布</h2>')[1].split('<section class="card ')[0];
+  const rows=[...section.matchAll(/class="ratio-fund-holding"[^>]*><span[^>]*>([^<]*)<\/span><span>USD ([\d,.]+)<\/span>/g)];
+  assert.equal(rows.length,6);assert.equal(rows.filter(x=>x[1]==='Synthetic Shared E-1').length,2,'another account stays separate');
+  assert.equal(rows.filter(x=>x[1]==='Synthetic Shared E-2').length,1,'share class stays separate');
+  assert.equal(rows.reduce((n,x)=>n+Math.round(Number(x[2].replaceAll(',',''))*100),0),fund.totalCents);
+  assert.equal(fund.groups.flatMap(g=>g.holdings).length,7,'signed source rows remain complete');
+ }
+ assert.equal(JSON.stringify(read.model),before,'presentation must not rewrite the authenticated model');
+});
+test('fund grouping uses exactly the existing top-five date/name parser, including punctuation and classes',()=>{
+ const page=fs.readFileSync(new URL('../index.html',import.meta.url),'utf8'),module=fs.readFileSync(new URL('./fee-ratio-management.mjs',import.meta.url),'utf8');
+ const browser=page.slice(page.indexOf('function ratioHoldingDisplayName('),page.indexOf('\nfunction styleRatioReport('));
+ const a=module.indexOf('  function fundHoldingDisplayName('),b=module.indexOf('\n  function renderRatioModel(',a);
+ const shared=module.slice(a,b).split('\n').map(line=>line.startsWith('  ')?line.slice(2):line).join('\n').trim();
+ assert.equal(shared.replace('fundHoldingDisplayName','ratioHoldingDisplayName'),browser.trim());
+});

@@ -156,6 +156,36 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
   }
   const esc=v=>String(v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const money=n=>n===null?'未取得':'USD '+(n/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  function fundHoldingDisplayName(raw,securityCode=''){
+    if(typeof raw!=='string')return '';
+    const original=raw.trim();
+    // Official ranked rows may append [securityCode · market] to distinguish
+    // repeated Sharesight names. Only a dated source code is shortened here.
+    const afterMonth=(value,allowPrefix=false)=>{
+      // Sharesight custom codes may prepend a strategy/platform before the date.
+      // Choose the first delimited date marker, then keep the full fund suffix,
+      // including internal hyphens, share classes and any later date-like text.
+      if(allowPrefix){const marker=value.match(/(?:^|[-–—_:：/\s])(?=(?:19|20)\d{2}(?:[-/.]|年))/);if(!marker)return;value=value.slice(marker.index+marker[0].length);}
+      return (value.match(/^(?:19|20)\d{2}[-/.](?:0[1-9]|1[0-2])(?:\s*[-–—_:：/]\s*|\s+)(\S[\s\S]*)$/)?.[1]||value.match(/^(?:19|20)\d{2}年(?:0?[1-9]|1[0-2])月\s*(?:[-–—_:：/]\s*)?(\S[\s\S]*)$/)?.[1])?.trim();
+    };
+    const sourceProject=typeof securityCode==='string'?afterMonth(securityCode.trim(),true):null;
+    if(sourceProject)return sourceProject;
+    const knownSuffix=/\s+·\s+(?:OTHER|NASDAQ|NYSE|SWX)$/;
+    for(const [open,close] of [['[',']'],['【','】'],['（','）'],['(',')']]){
+      if(!original.endsWith(close))continue;
+      const start=original.indexOf(open);
+      if(start<0)continue;
+      const content=original.slice(start+open.length,-close.length).trim();
+      if(!afterMonth(content,true))continue;
+      const marker=content.lastIndexOf(' · '),generated=open==='['&&start>0&&original[start-1]===' '&&marker>=0;
+      const code=generated?content.slice(0,marker):content.replace(knownSuffix,'');
+      return afterMonth(code,true)||original;
+    }
+    const project=afterMonth(original);
+    // Without the app's wrapper, preserve unrecognized suffixes and project
+    // punctuation. Never split project names on their own digits or hyphens.
+    return project?.replace(knownSuffix,'').trim()||original;
+  }
   function renderRatioModel(m){
     const view=exposureCore.buildRankedExposureView(m.exposure),classification=m.classificationSummary;
     const overviewView=classification?{valuationDate:classification.asOf,portfolioTotalUsd:classification.totalValueUSD,groups:classification.classes.map(g=>({category:g.name,totalUsd:g.totalValueUSD}))}:view;
@@ -185,11 +215,18 @@ export function createFeeRatioCore(exposureCore,cryptoImpl=globalThis.crypto){
       const target=asset?.groups.find(g=>g.name===f.name)?.targetPct;
       const holdings=f.groups.map((g,i)=>{
         if(!g.holdings)return '';
-        const accounts=new Map();for(const h of g.holdings){const a=accounts.get(h.account)||{name:h.account,valueCents:0,holdings:[]};a.valueCents+=h.valueCents;a.holdings.push(h);accounts.set(h.account,a);}
-        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+a.holdings.map(h=>'<li class="ratio-fund-holding"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span></li>').join('')+'</ul></section>').join('')+'</section>';
+        const accounts=new Map();for(const h of g.holdings){
+          const a=accounts.get(h.account)||{name:h.account,valueCents:0,holdings:new Map()};
+          const name=fundHoldingDisplayName(h.name,h.securityCode)||h.name,prior=a.holdings.get(name);
+          a.valueCents+=h.valueCents;
+          if(prior){prior.valueCents+=h.valueCents;prior.sourceCount++;}
+          else a.holdings.set(name,{...h,name,sourceCount:1});
+          accounts.set(h.account,a);
+        }
+        return '<section class="ratio-distribution-category"><h3>'+esc(g.name)+' · '+(weights[i].bp/100).toFixed(2)+'%</h3>'+[...accounts.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(a=>'<section class="ratio-distribution-account"><h4><span>'+esc(a.name)+'</span><span>'+money(a.valueCents)+'</span></h4><ul>'+[...a.holdings.values()].sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name)).map(h=>'<li class="ratio-fund-holding" data-source-count="'+h.sourceCount+'"><span class="ratio-fund-holding-name" data-security-code="'+esc(h.securityCode)+'" title="'+esc(h.name)+'">'+esc(h.name)+'</span><span>'+money(h.valueCents)+'</span></li>').join('')+'</ul></section>').join('')+'</section>';
       }).join('');
       const missing=f.groups.length&&!f.groups.some(g=>g.holdings)?'<p>此历史快照未包含账户及持仓明细，更新快照后可查看。</p>':'';
-      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同名不同期次逐笔保留。</p>'+holdings+missing+'</details></section>';
+      return '<section class="card ratio-fund-distribution"><h2>'+esc(f.name)+'分布</h2><p>截至 '+esc(classification.asOf)+' · 占本类市值</p>'+(bars||'<p>本类暂无持仓。</p>')+'<details class="ratio-distribution-details"><summary>分类、账户与参考目标</summary><p>按 Sharesight 原始持仓名称首字段分类。上方百分比分母仅为'+esc(f.name)+'市值，不叠加穿透。</p><p>组合参考目标：'+(target===undefined?'未设置':target+'%（占总资产）')+'；各策略的参考目标未设置。</p><p>本类合计 '+money(f.totalCents)+(f.totalCents?' · 占比合计100.00%':' · 市值为零，占比均为0.00%')+'。明细按账户及市值降序列出，同分类、同账户、年月后完整名称相同的持仓合并合计；不同账户和不同份额名称分别列出。</p>'+holdings+missing+'</details></section>';
     }).join('');
     const method='<p>黄金占比的分母为同日All Together分类来源总资产；已计入对应类别，不额外累加。常青按原始年月后的完整基金名聚合，份额类别和内部连字符保留，先合并全部持仓再选前五。</p>'+(benchmarkExcluded?'<p>指定Citi账户的QQQ／SPY仅作基准取值，不计入投资资产、占比分母和穿透；原始资料及基准用途保留。</p>':'<p>此历史快照仅排除了指定Citi基准的公司穿透，资产总额保留原口径。</p>')+'<p>'+(asset?'下方四类前五沿用原排名分组：二级市场为前三类以外全部资产，含现金，与上方六类中的股票市场范围不同。':'二级市场为前三类以外全部资产，含现金；')+'公司经济敞口只重算分子，不改变真实资产金额、NAV 或费用。仅明确证券及市场映射合并：VST（NYSE）与VSTL（NASDAQ）归Vistra，GOOG／GOOGL（NASDAQ）归Alphabet；未知证券保持独立。</p><p>VSTL按2倍、TQQQ按3倍经济敞口；来源已完整包含相同杠杆时不重复相乘。直接持仓按实际市值降序，穿透按经济敞口降序；各行保留账户。未穿透的残余不猜测归属到个股，ETF本体与底层不双计；真实资产、现金和费用不乘杠杆。</p><p>管理费仍为嘉信＋Webull；Jenny&#39;s IB 收益及回撤独立考核，比例管理不扩大计费范围。</p>';
     const official=b?.browserEvidence?.transport==='official-workbooks';
