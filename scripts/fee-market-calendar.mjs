@@ -75,7 +75,7 @@ export function nextSameDayCheck(plan,now){
  now=new Date(now);if(!Number.isFinite(now.getTime()))fail();
  const day=add(date(plan.target),1);
  if(plan.scheduledAt!==ordinaryDailyScheduledAt(plan.target)||local(now,'Asia/Hong_Kong')!==day)return null;
- return [ordinaryDailyStartTime(plan.target),'13:00','14:00'].map(t=>day+'T'+t+':00+08:00').find(t=>Date.parse(t)>now.getTime())||null;
+ return [ordinaryDailyStartTime(plan.target),'11:30','14:00'].map(t=>day+'T'+t+':00+08:00').find(t=>Date.parse(t)>now.getTime())||null;
 }
 export function sameDaySourceDecision({plan,now,mainSha,currentMainSha,sourceAttempts,inProgress=false,runAttempt='1'}={}){
  now=new Date(now);if(!Number.isFinite(now.getTime())||plan?.schema!=='fee-console.daily-calendar-plan.v1'||!Number.isSafeInteger(sourceAttempts)||sourceAttempts<0||typeof inProgress!=='boolean')fail();
