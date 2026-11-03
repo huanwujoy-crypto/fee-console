@@ -20,6 +20,17 @@ const uiFile = process.env.FEE_LEDGER_TEST_INDEX || path.join(root, "index.html"
 if (process.env.GITHUB_ACTIONS === "true" && process.env.FEE_LEDGER_TEST_INDEX)
   throw new Error("external UI preview is local-only");
 assert.ok(path.isAbsolute(uiFile), "the optional synthetic UI preview path must be absolute");
+// The support PR tests the exact reviewed next UI before the index-only PR lands.
+function performanceCandidate(){
+  const bytes=fs.readFileSync(path.join(root,'scripts/fixtures/fee-ratio-six-allocation-ui.json'));
+  assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'34b6b499ef85751cecb8e7586fd43f8ccb35686dbc2a84c0d8da20354969a261');
+  const fixture=JSON.parse(bytes),sha=text=>crypto.createHash('sha256').update(text).digest('hex');
+  let page=fs.readFileSync(uiFile,'utf8');
+  if(sha(page)===fixture.performancePriorSha256)for(const region of fixture.performanceRegions){
+    assert.equal(page.split(region.prior).length,2);page=page.replace(region.prior,region.next);
+  }
+  assert.equal(sha(page),fixture.performanceNextSha256);return page;
+}
 const ledger = () => ({
   v: 4,
   updatedAt: "2026-09-01T00:00:00Z",
@@ -328,13 +339,13 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
       if (network.rejectTokenProbe) return { ok: false, status: 401, json: async () => ({ message: "Bad credentials" }) };
       return ok([{ id: "fixture-gist", files: { "fee-console-db.json": {} } }]);
     }
-    if (url === "https://api.github.com/user" && manager) return ok({login:"fixture-owner",id:1});
+    if (url === "https://api.github.com/user" && manager) { await passReadGate("user"); if(network.failUser) throw new Error("synthetic identity unavailable"); return ok({login:"fixture-owner",id:network.wrongOwner?2:1}); }
     if (/^(?:data\.json|https:\/\/fixture\.invalid\/fee-console\/data\.json)(?:\?|$)/.test(url)) {
       if (network.failDaily) throw new Error("fixture daily unavailable");
       const result = ok(structuredClone(network.invalidDaily ? { invalid: true } : data));
       await passReadGate("daily"); return result;
     }
-    if (url.startsWith("https://fixture.invalid/fee-console/")) return ok(html);
+    if (url.startsWith("https://fixture.invalid/fee-console/")) { await passReadGate("shell"); return ok(html); }
     throw new Error(`unmocked network request: ${method} ${url}`);
   };
   const sandbox = {
@@ -348,7 +359,7 @@ async function browserHarness(html, { stored = null, legacy = false, manager = f
     },
     setTimeout: (fn, ms) => { const id = ++timerId; timers.set(id, { fn, ms }); return id; },
     clearTimeout: id => timers.delete(id), setInterval: () => ++timerId, clearInterval() {},
-    DOMParser: class { parseFromString() { return { querySelector: () => ({ content: build }) }; } }
+    DOMParser: class { parseFromString() { return { querySelector: () => ({ content: network.changedShell ? build+"-changed" : build }) }; } }
   };
   for (const [, id] of html.matchAll(/\bid="([A-Za-z][\w-]*)"/g)) sandbox[id] = element(id);
   sandbox.window = { addEventListener: (event, fn) => add(winListeners, event, fn) };
@@ -1454,11 +1465,11 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
 
   for (const legacy of [false, true]) await t.test(`${legacy ? "raw-v3" : "native-v4"} startup stays neutral through delayed data, source and receipt verification`, async () => {
     const h = await fixture(legacy), before = h.store.get("feeConsole.v3.db"), original = h.remote.content;
-    const daily = h.pauseNextRead("daily");
+    const daily = h.pauseNextRead("daily"), gist = h.pauseNextRead("gist");
     // Execute the production startup ordering, including its initial render.
     const startup = h.run("render();setSync('');pullAll(true,{skipShell:true})");
     await daily.entered; await loading(h);
-    const gist = h.pauseNextRead("gist"); daily.release(); await gist.entered; await loading(h);
+    daily.release(); await gist.entered; await loading(h);
     const digest = h.pauseNextRead("digest"); gist.release(); await digest.entered; await loading(h);
     digest.release(); await startup; await complete(h); noRedPaint(h);
     assert.equal(h.store.get("feeConsole.v3.db"), before);
@@ -1467,9 +1478,9 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
 
   await t.test("manual refresh immediately removes old fees, shows neutral loading, then restores only a validated receipt", async () => {
     const h = await ready(), before = h.store.get("feeConsole.v3.db");
-    const daily = h.pauseNextRead("daily"), refresh = h.run("manualRefresh()");
+    const daily = h.pauseNextRead("daily"), gist = h.pauseNextRead("gist"), refresh = h.run("manualRefresh()");
     await daily.entered; await loading(h); assert.equal(h.element("btnRefresh").disabled, true);
-    const gist = h.pauseNextRead("gist"); daily.release(); await gist.entered; await loading(h);
+    daily.release(); await gist.entered; await loading(h);
     gist.release(); await refresh; await complete(h); noRedPaint(h);
     assert.equal(h.element("btnRefresh").disabled, false);
     assert.equal(h.store.get("feeConsole.v3.db"), before);
@@ -1593,4 +1604,43 @@ test("receipt refresh distinguishes real in-flight reads from final validation f
     assert.equal(h.run("_receiptSource.state"), "verified");
     await complete(h); noRedPaint(h);
   });
+});
+
+test('independent startup downloads overlap while source and owner acceptance still wait',async()=>{
+ const page=performanceCandidate(),h=await browserHarness(page,{manager:true});
+ const gates=['shell','daily','gist','user'].map(kind=>h.pauseNextRead(kind));
+ const pending=h.run('pullAll(true)');
+ await Promise.all(gates.map(g=>g.entered));
+ assert.equal(h.run('_receiptSource.state'),'loading');assert.equal(h.run('ratioAuthorized()'),false);
+ assert.equal(h.run('_managerCapability.state'),'unverified');assert.deepEqual(h.writes(),[]);
+ gates[3].release();gates[2].release();await h.settle();
+ assert.equal(h.run('_receiptSource.state'),'loading');assert.equal(h.run('ratioAuthorized()'),false);
+ gates[0].release();await h.settle();assert.equal(h.run('_receiptSource.state'),'loading');
+ gates[1].release();await pending;
+ assert.equal(h.run('_receiptSource.state'),'verified');assert.equal(h.run('ratioAuthorized()'),true);
+ assert.equal(h.requests.filter(r=>r.url==='https://api.github.com/user').length,1);
+ assert.equal(h.requests.filter(r=>r.url.endsWith('/gists/fixture-gist')).length,2,'one ledger read plus the existing authorized ratio preload');
+ assert.deepEqual(h.writes(),[]);
+});
+test('parallel read failure, shell update or identity mismatch never unlocks private ratio',async t=>{
+ for(const kind of ['failDaily','failGistRead','failUser','wrongOwner','changedShell'])await t.test(kind,async()=>{
+  const h=await browserHarness(performanceCandidate(),{manager:true});h.network[kind]=true;
+  await h.run('pullAll(true)');await h.settle();
+  assert.equal(h.run('ratioAuthorized()'),false);assert.deepEqual(h.writes(),[]);
+  if(kind!=='changedShell')assert.notEqual(h.run('_receiptSource.state+"/"+_managerCapability.state'),'verified/verified');
+ });
+});
+test('stale parallel reads cannot commit after source changes and cannot extend owner proof lifetime',async t=>{
+ await t.test('source switch',async()=>{
+  const h=await browserHarness(performanceCandidate(),{manager:true}),gate=h.pauseNextRead('daily');
+  const pending=h.run('pullAll(true,{skipShell:true})');await gate.entered;
+  h.run('invalidateReceiptSource()');gate.release();await pending;await h.settle();
+  assert.equal(h.run('_receiptSource.state'),'unverified');assert.equal(h.run('ratioAuthorized()'),false);assert.deepEqual(h.writes(),[]);
+ });
+ for(const age of [-1,600001])await t.test('proof age '+age,async()=>{
+  const h=await browserHarness(performanceCandidate(),{manager:true}),gate=h.pauseNextRead('gist');
+  let now=Date.now();h.context.Date=class extends Date{static now(){return now;}};
+  const pending=h.run('pullAll(true,{skipShell:true})');await gate.entered;await h.settle();now+=age;gate.release();await pending;
+  assert.equal(h.run('ratioAuthorized()'),false);assert.deepEqual(h.writes(),[]);
+ });
 });
