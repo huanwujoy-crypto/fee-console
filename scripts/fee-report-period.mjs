@@ -1,6 +1,6 @@
 // Pure scheduling/coverage contract. No credentials, source reads or publication.
 import {selectBenchmark,expectedTargetDate} from './fee-cloud-source.mjs';
-import {sessionUnion,monthlyArchivesBetween} from './fee-market-calendar.mjs';
+import {sessionUnion,monthlyArchivesBetween,ordinaryDailyScheduledAt} from './fee-market-calendar.mjs';
 
 // Same reviewed NYSE dates as cloud/xuan-preopen/calendar.mjs, copied here to
 // keep the standalone fee writer independent of the other application's tree.
@@ -93,7 +93,7 @@ export function dailyReportPlan(target,markets,{periodFrom=target,reviewedSyncDa
   // The existing v2 shape remains compatible with the receipt/UI consumer.
   // Midnight is only the reviewed entry's date anchor, not a claim that the
   // source was complete then. Readiness still requires the real market close.
-  return {schema:'fee-console.report-plan.v2',kind:monthlyCutoffs.length?'daily-monthly':'daily',periodFrom,accountingThrough:target,priceThrough:lastReportSession(target),scheduledAt:reviewedSyncDate?midnight(reportAddDays(target,1)):reportAddDays(target,1)+'T10:30:00+08:00',monthlyCutoffs,markets:[...markets].sort()};
+  return {schema:'fee-console.report-plan.v2',kind:monthlyCutoffs.length?'daily-monthly':'daily',periodFrom,accountingThrough:target,priceThrough:lastReportSession(target),scheduledAt:reviewedSyncDate?midnight(reportAddDays(target,1)):ordinaryDailyScheduledAt(target),monthlyCutoffs,markets:[...markets].sort()};
 }
 export function reportPlanReadiness(plan,now=new Date()){
   if(!validateReportPlan(plan))fail();now=instant(now);
@@ -103,13 +103,13 @@ export function reportPlanReadiness(plan,now=new Date()){
       return {state:'waiting',reasonCode:'SOURCE_DAY_NOT_CLOSED'};
     return {state:'due',reasonCode:null};
   }
-  // Ordinary daily reference reports use the validated next-day HKT10:30
-  // schedule. Calendar readiness does not attest synchronization or sources.
-  // Keep any final monthly cutoff on the existing completion rule below.
+  // Daily references use the validated next-day schedule; this does not
+  // attest synchronization or sources. Finalize only completed natural months.
   if(plan.schema==='fee-console.report-plan.v2'&&plan.kind==='daily')return {state:'due',reasonCode:null};
   // A final monthly cutoff includes all natural days. HKT midnight can still
   // be the prior New York afternoon; neither a price nor cash poll completes it.
-  if(localDate(now,'America/New_York')<=plan.accountingThrough)return {state:'waiting',reasonCode:'ACCOUNTING_DAY_NOT_COMPLETE'};
+  const finalCutoff=plan.schema==='fee-console.report-plan.v2'&&plan.kind==='daily-monthly'?plan.monthlyCutoffs.at(-1):plan.accountingThrough;
+  if(localDate(now,'America/New_York')<=finalCutoff)return {state:'waiting',reasonCode:'ACCOUNTING_DAY_NOT_COMPLETE'};
   return {state:'due',reasonCode:null};
 }
 export function reportPlansAround(now=new Date()){

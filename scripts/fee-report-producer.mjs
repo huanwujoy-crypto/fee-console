@@ -27,7 +27,7 @@ const freshTarget=(plan,now)=>{const age=Math.floor((Date.parse(now.toISOString(
 // Git reference creation is the atomic reservation. Neither ref is ever moved
 // or deleted. These refs hold only run/code identifiers, never financial data.
 export const CLOUD_ONCE=Object.freeze({target:'2026-11-02',from:'2026-10-31',
-  checkAt:'2026-11-03T02:30:00Z',openAt:'2026-11-03T05:00:00Z',
+  checkAt:'2026-11-03T02:00:00Z',openAt:'2026-11-03T02:00:00Z',
   closeAt:'2026-11-03T05:45:00Z',finishBy:'2026-11-03T06:15:00Z',
   tag:'fee-cloud-once-20261102',producer:365873934,promotion:336677756});
 const ONCE_REPO='huanwujoy-crypto/fee-console',ONCE_SHA=/^[a-f0-9]{40}$/;

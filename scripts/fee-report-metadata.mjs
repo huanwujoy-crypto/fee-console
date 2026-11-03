@@ -2,7 +2,7 @@
 import crypto from 'node:crypto';
 import {canonicalJson,normalizeDataInputs,normalizeEconomicInputs,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 import {validateReportPlan,reportPlanReadiness,reportDate,reportAddDays,weeklyReportPlan,monthlyReportPlan} from './fee-report-period.mjs';
-import {sessionUnion} from './fee-market-calendar.mjs';
+import {sessionUnion,ordinaryDailyStartTime} from './fee-market-calendar.mjs';
 
 // Exact public rejection categories only; no receipt errors, data or hashes.
 export const REPORT_METADATA_FAILURE_CODES=Object.freeze([
@@ -56,7 +56,9 @@ export function preserveReportMonthLocks(previous,next,economicInput,{finalCutof
 }
 function nextScheduled(plan){
   if(plan.schema==='fee-console.report-plan.v2'){
-    for(let i=1;i<=14;i++){const d=reportAddDays(plan.accountingThrough,i),session=sessionUnion(d,plan.markets);if(session.state!=='closed')return reportAddDays(d,1)+'T10:30:00+08:00';}
+    // Keep historical report IDs stable even when their next date crosses
+    // the new schedule boundary. New reports use the new start time.
+    for(let i=1;i<=14;i++){const d=reportAddDays(plan.accountingThrough,i),session=sessionUnion(d,plan.markets);if(session.state!=='closed')return reportAddDays(d,1)+'T'+ordinaryDailyStartTime(plan.accountingThrough)+':00+08:00';}
     fail('NEXT_SCHEDULE_INVALID');
   }
   let friday=reportAddDays(plan.accountingThrough,1);

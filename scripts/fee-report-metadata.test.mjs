@@ -19,6 +19,18 @@ function fixture(through='2026-10-23'){
   for(let d='2026-09-01';d<=through;d=reportAddDays(d,1))data.daily.push({d,schwab:60,webull:40,bd:d,spy:100,qqq:100,bstate:'session'});
   data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput});return {data,economicInput};
 }
+test('new report keeps actual cutoffs and shows10:00 while historical metadata remains byte-stable',async()=>{
+ const {data}=fixture('2026-11-02'),before=structuredClone(data),plan=dailyReportPlan('2026-11-02',['NYSE','NASDAQ'],{periodFrom:'2026-10-31'});
+ const clock=new Date('2026-11-03T10:00:00+08:00'),metadata=buildReportMetadata({plan,data,generatedAt:clock.toISOString()});
+ assert.equal(metadata.plan.accountingThrough,'2026-11-02');assert.deepEqual(metadata.plan.monthlyCutoffs,['2026-10-31']);
+ assert.equal(metadata.nextScheduledAt,'2026-11-04T10:00:00+08:00');assert.deepEqual(data,before);
+ assert.equal((await createFeeReportConsumer().project(metadata,{state:'verified',asOf:'2026-11-02'},data.feeCalculationReceipt,clock)).state,'updated');
+ assert.throws(()=>buildReportMetadata({plan,data,generatedAt:'2026-11-03T01:59:59Z'}),/PLAN_NOT_DUE/);
+ const old=fixture('2026-10-30').data,oldPlan=dailyReportPlan('2026-10-30',['NYSE','NASDAQ']);
+ const original=buildReportMetadata({plan:oldPlan,data:old,generatedAt:'2026-10-31T06:00:00Z'});old.feeReportPublication=original;
+ assert.equal(original.nextScheduledAt,'2026-11-03T10:30:00+08:00');
+ assert.deepEqual(buildReportMetadata({plan:oldPlan,data:old,generatedAt:'2026-11-03T02:00:00Z'}),original);
+});
 test('report metadata binds exact fee receipt and separates source cutoff from generation',async()=>{
   const {data}=fixture(),before=structuredClone(data),plan=weeklyReportPlan('2026-10-23'),generatedAt='2026-10-26T06:00:00Z';
   const m=buildReportMetadata({plan,data,generatedAt}),core=createFeeReportConsumer();
