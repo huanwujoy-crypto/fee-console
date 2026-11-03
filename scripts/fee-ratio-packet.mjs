@@ -9,7 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {createRankedExposureCore} from './xuan-ib-sharesight-exposure.mjs';
 import {createFeeRatioCore} from './fee-ratio-management.mjs';
 import {validateFeeCalculationReceipt,canonicalJson} from './fee-receipt-core.mjs';
-import {buildIbOwnerBaseline} from './ib-manager-return.mjs';
+import {buildIbOwnerBaseline,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,buildIbManagerReportBundle,validateIbManagerReportState} from './ib-manager-return.mjs';
 import {ibBaselineBusinessHash,validateIbBootstrapCoverage} from './ib-manager-source.mjs';
 import {readVerifiedBrowserEvidence,consumeBrowserEvidence} from './fee-ratio-browser-evidence.mjs';
 import {createLegacyPolicy} from './fee-legacy-policy.mjs';
@@ -60,8 +60,27 @@ export async function buildRatioModel(input,{kind,targetDate,feeAccountingThroug
 }
 // The sole daily writer constructs the official envelope itself. An opaque
 // externally encrypted candidate is never accepted as source/health proof.
-export async function attachIbBootstrap(data,baselineInput,coverage){
+export async function attachIbBootstrap(data,baselineInput,coverage,nativeInput=null){
   if(data.ibManagerSourceState||data.ibManagerBaselineState||data.ibManagerCoverageState)fail();
+  if(nativeInput!==null){
+    if(!exact(nativeInput,['schema','frozenInput','source'])||nativeInput.schema!=='fee-console.ib-native-bootstrap-input.v1')fail();
+    const {frozenInput,source}=nativeInput,expected=ibBaselineBusinessHash(baselineInput.periodReturnsInput);
+    // Rebuild the complete published frozen receipts, including sourceInputsHash.
+    // Daily factors alone cannot reconstruct a missing NAV/flow history.
+    await buildIbOwnerBaseline(data,frozenInput,ibBaselineBusinessHash(frozenInput.periodReturnsInput));
+    const baselineReceipts={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(baselineInput),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(baselineInput)};
+    const state=await buildIbOwnerBaseline(baselineReceipts,baselineInput,expected),audit=validateIbBootstrapCoverage(coverage,expected,{baselineAsOf:baselineInput.periodReturnsInput.to});
+    if(source?.schema!=='fee-console.ib-manager-source.v3'||source.sourceAsOf!==data.feeCalculationReceipt?.asOf||source.sourceAsOf!==audit.through
+      ||canonicalJson(source.ownerBaseline)!==canonicalJson(state)||canonicalJson(source.bootstrapCoverage)!==canonicalJson(audit)
+      ||canonicalJson(source.periodReturnsInput)!==canonicalJson(frozenInput.periodReturnsInput))fail();
+    const bundle=await buildIbManagerReportBundle(source,expected);
+    for(const k of ['start','asOf','spanDays','grossTwrPpm','periods'])if(canonicalJson(bundle.returnReceipt[k])!==canonicalJson(data.ibManagerReturnReceipt[k]))fail();
+    if(canonicalJson(bundle.drawdownReceipt.dailyFactors)!==canonicalJson(data.ibManagerDrawdownReceipt.dailyFactors))fail();
+    const out={...data,ibManagerBaselineState:state,ibManagerCoverageState:audit,ibManagerReturnReceipt:bundle.returnReceipt,
+      ibManagerDrawdownReceipt:bundle.drawdownReceipt,ibManagerSourceState:bundle.sourceState,ibManagerSourceStatus:{state:'verified',targetDate:source.sourceAsOf}};
+    if(!validateFeeCalculationReceipt(out.feeCalculationReceipt,out).ok)fail();
+    await validateIbManagerReportState(out,expected);return out;
+  }
   const expected=ibBaselineBusinessHash(baselineInput.periodReturnsInput),state=await buildIbOwnerBaseline(data,baselineInput,expected);
   const audit=validateIbBootstrapCoverage(coverage,expected,{baselineAsOf:baselineInput.periodReturnsInput.to});
   return {...data,ibManagerBaselineState:state,ibManagerCoverageState:audit};
@@ -86,21 +105,22 @@ export async function attachRatioToPayload(data,input,recipient,{kind,sourceDate
 }
 export function prepareRatioAttachment(options={}){return preparePrivateAttachment({...options,bootstrapOnly:false});}
 export function prepareIbBootstrapAttachment(options={}){return preparePrivateAttachment({...options,bootstrapOnly:true});}
-async function preparePrivateAttachment({file,inputFile,recipientFile,outputFile,kind,sourceDate,scopeId,keyText,baselineFile=null,coverageFile=null,browserEvidenceFile=null,evidenceContext=undefined,execute=false,environ=process.env,now=new Date(),viewCore=core,bootstrapOnly}={}){
+async function preparePrivateAttachment({file,inputFile,recipientFile,outputFile,kind,sourceDate,scopeId,keyText,baselineFile=null,coverageFile=null,nativeFile=null,browserEvidenceFile=null,evidenceContext=undefined,execute=false,environ=process.env,now=new Date(),viewCore=core,bootstrapOnly}={}){
   if(!!baselineFile!==!!coverageFile)fail();
+  if(nativeFile&&!bootstrapOnly)fail();
   if(bootstrapOnly){if(!baselineFile||[inputFile,recipientFile,kind,sourceDate,scopeId,browserEvidenceFile,evidenceContext].some(v=>v!==undefined&&v!==null))fail();}
   else if(!/^[a-f0-9]{64}$/.test(scopeId||''))fail();
   if(/^(true|1)$/i.test(String(environ.GITHUB_ACTIONS||''))||typeof keyText!=='string'||!/^[A-Za-z0-9_+/-]{43}={0,2}$/.test(keyText))fail();
   const dir=privateDirectory(path.dirname(file)),spec=p=>{if(path.dirname(p)!==dir)fail();const st=fs.lstatSync(p);if(!st.isFile()||st.isSymbolicLink()||fs.realpathSync(p)!==p||st.uid!==process.getuid()||(st.mode&0o777)!==0o600||st.size<1||st.size>5*1024*1024)fail();const fd=fs.openSync(p,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);let raw;try{const at=fs.fstatSync(fd);if(at.ino!==st.ino||at.dev!==st.dev)fail();raw=fs.readFileSync(fd);}finally{fs.closeSync(fd);}return frozenFile({path:p,sha256:hash(raw)},dir);};
-  const base=spec(file),input=bootstrapOnly?null:spec(inputFile),recipient=bootstrapOnly?null:spec(recipientFile),baseline=baselineFile?spec(baselineFile):null,coverage=coverageFile?spec(coverageFile):null,outer=parse(base.bytes),key=Buffer.from(keyText.replace(/-/g,'+').replace(/_/g,'/'),'base64');
+  const base=spec(file),input=bootstrapOnly?null:spec(inputFile),recipient=bootstrapOnly?null:spec(recipientFile),baseline=baselineFile?spec(baselineFile):null,coverage=coverageFile?spec(coverageFile):null,native=nativeFile?spec(nativeFile):null,outer=parse(base.bytes),key=Buffer.from(keyText.replace(/-/g,'+').replace(/_/g,'/'),'base64');
   if(key.length!==32||!exact(outer,['enc','v','data'])||outer.enc!==true||outer.v!==3||typeof outer.data!=='string')fail();
   const decode=data=>{const b=Buffer.from(data,'base64');if(b.length<29||b.toString('base64')!==data)fail();const d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(-16));const plain=Buffer.concat([d.update(b.subarray(12,-16)),d.final()]);try{return parse(plain);}finally{plain.fill(0);}};
   try{
     const sourceInput=input?parse(input.bytes):null,browserEvidence=browserEvidenceFile?readVerifiedBrowserEvidence({...evidenceContext,planPath:browserEvidenceFile,expectedScopeId:scopeId,input:sourceInput,now}):null;
     const before=decode(outer.data);
     if(!validateFeeCalculationReceipt(before.feeCalculationReceipt,before).ok)fail();
-    const seeded=baseline?await attachIbBootstrap(before,parse(baseline.bytes),parse(coverage.bytes)):before,after=bootstrapOnly?seeded:await attachRatioToPayload(seeded,sourceInput,parse(recipient.bytes),{kind,sourceDate,scopeId,now,viewCore,browserEvidence});
-    const checks=()=>{base.check();input?.check();recipient?.check();baseline?.check();coverage?.check();browserEvidence?.check();};
+    const seeded=baseline?await attachIbBootstrap(before,parse(baseline.bytes),parse(coverage.bytes),native?parse(native.bytes):null):before,after=bootstrapOnly?seeded:await attachRatioToPayload(seeded,sourceInput,parse(recipient.bytes),{kind,sourceDate,scopeId,now,viewCore,browserEvidence});
+    const checks=()=>{base.check();input?.check();recipient?.check();baseline?.check();coverage?.check();native?.check();browserEvidence?.check();};
     checks();if(!execute)return {status:bootstrapOnly?'IB_BOOTSTRAP_DRY_RUN_OK':'RATIO_ATTACHMENT_DRY_RUN_OK'};
     if(!path.isAbsolute(outputFile)||path.dirname(path.dirname(outputFile))!==dir||path.basename(outputFile)!=='data.json'||fs.existsSync(outputFile)||privateDirectory(path.dirname(outputFile))!==path.dirname(outputFile))fail();
     const iv=crypto.randomBytes(12),cipher=crypto.createCipheriv('aes-256-gcm',key,iv),plain=Buffer.from(JSON.stringify(after));let packed;

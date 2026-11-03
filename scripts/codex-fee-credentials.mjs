@@ -26,10 +26,15 @@ const GIST_RE = /^(?:[a-f0-9]{20}|[a-f0-9]{32})$/;
 const KEY_RE = /^[A-Za-z0-9_+/-]{43}={0,2}$/;
 
 // Local attachment/finalization never publishes, changes a ledger or treats a
-// plan as authorization. Finalization derives health only from verified actual
-// producer evidence, without extending its age. Both need exact-code approval.
+// plan as authorization. Health inherits verified actual producer evidence or
+// the fixed protected bootstrap maintenance base, never a refreshed age.
+// Both paths need exact-code approval.
 const ATTACH_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const PUBLIC_REPO_API = "https://api.github.com/repos/huanwujoy-crypto/fee-console";
+// This is one already protected maintenance publication, not a caller-selected
+// producer substitute. New execution still requires concrete owner approval.
+export const IB_BOOTSTRAP_MAINTENANCE=Object.freeze({main:'fd7d0c1851fbef9286a7a2ae80f4a4c212da5079',
+  head:'30d49d3035b6162e4090b28ab08d231ff9e43dec',base:'b9f53cce1f635f4b2b5ac4c24111141c57691536',pullRequest:517,target:'2026-11-02'});
 const ATTACH_CODES = new Set(["PLAN", "LOCAL_ONLY", "PRIVATE_FILE", "INPUT_CHANGED", "HEALTH",
   "WINDOW", "PUBLIC_BASE", "CODE_CHANGED", "KEYCHAIN", "KEY", "LOCATOR", "SOURCE", "VERSION",
   "RECEIPT", "LEGACY_SOURCE", "PERIOD", "WRITER", "REPORTER", "NON_IB_CHANGED", "OUTPUT", "CLEANUP", "PROVENANCE", "HEALTH_WRITE"]);
@@ -141,7 +146,9 @@ export function createLocalAttachmentRuntime({ spawnImpl = spawnSync, fetchImpl 
     // Raw job text is kept in memory, never logged or treated as approval.
     githubRead(route) {
       const raw = /^actions\/jobs\/[1-9][0-9]{0,15}\/logs$/.test(route);
-      if (!raw && !/^actions\/runs\/[1-9][0-9]{0,15}(?:\/jobs\?per_page=100)?$/.test(route)) attachFail("PROVENANCE");
+      const maintenance=route==='pulls/517'||/^issues\/517\/comments\?per_page=100&page=[1-5]$/.test(route)
+        ||route==='commits/'+IB_BOOTSTRAP_MAINTENANCE.head+'/check-runs?filter=latest&per_page=100';
+      if (!raw && !maintenance && !/^actions\/runs\/[1-9][0-9]{0,15}(?:\/jobs\?per_page=100)?$/.test(route)) attachFail("PROVENANCE");
       // Explicit per-request format opt-in needs exact-code/operator review.
       // It is permitted only for this fixed log route, captured as bytes in
       // pipes and normalized immediately. No terminal, pager or raw output.
@@ -257,6 +264,49 @@ async function attachmentProducerProof(evidence, base, healthFile, publicBase, r
   } };
 }
 
+// Bootstrap only: re-prove the exact accepted maintenance base instead of
+// falsely claiming its changed cipher/code came from the older producer run.
+async function attachmentMaintenanceProof(evidence,base,healthFile,publicBase,runtime){
+  const anchor=IB_BOOTSTRAP_MAINTENANCE,owner=u=>u?.login===ACCOUNT&&u.id===283054367&&u.type==='User';
+  if(!exact(evidence,['publishedMain','supportMain'])||evidence.publishedMain!==anchor.main||evidence.supportMain!==publicBase.head
+    ||evidence.supportMain===anchor.main||parseExact(healthFile.bytes).targetDate!==anchor.target)attachFail('PROVENANCE');
+  const pr=await runtime.githubRead('pulls/517'),mergedAt=Date.parse(pr?.merged_at);
+  if(pr?.number!==517||pr.state!=='closed'||pr.merged!==true||pr.draft!==false||pr.merge_commit_sha!==anchor.main
+    ||pr.head?.sha!==anchor.head||pr.head?.repo?.full_name!=='huanwujoy-crypto/fee-console'||pr.base?.ref!=='main'
+    ||pr.base?.repo?.full_name!=='huanwujoy-crypto/fee-console'||!owner(pr.user)||!owner(pr.merged_by)||!Number.isFinite(mergedAt))attachFail('PROVENANCE');
+  const merged=await runtime.publicRead('/commits/'+anchor.main),head=await runtime.publicRead('/commits/'+anchor.head);
+  for(const [c,sha] of [[merged,anchor.main],[head,anchor.head]])if(c?.sha!==sha||c.commit?.verification?.verified!==true
+    ||c.author?.login!==ACCOUNT||c.author?.id!==283054367||c.parents?.length!==1||c.parents[0].sha!==anchor.base
+    ||!/^[a-f0-9]{40}$/.test(c.commit?.tree?.sha||''))attachFail('PROVENANCE');
+  if(merged.commit.tree.sha!==head.commit.tree.sha)attachFail('PROVENANCE');
+  const tree=await runtime.publicRead('/git/trees/'+merged.commit.tree.sha+'?recursive=1');
+  if(tree?.sha!==merged.commit.tree.sha||tree.truncated!==false||!Array.isArray(tree.tree)||new Set(tree.tree.map(x=>x.path)).size!==tree.tree.length)attachFail('PROVENANCE');
+  for(const [name,bytes] of [['data.json',base.bytes],['fee-data-health.json',healthFile.bytes]]){
+    const entry=tree.tree.find(x=>x.path===name);if(entry?.type!=='blob'||entry.mode!=='100644'||entry.sha!==gitBlob(bytes))attachFail('PROVENANCE');
+  }
+  let approved=false,complete=false;
+  for(let page=1;page<=5;page++){
+    const comments=await runtime.githubRead('issues/517/comments?per_page=100&page='+page);
+    if(!Array.isArray(comments)||comments.length>100)attachFail('PROVENANCE');
+    approved||=comments.some(c=>owner(c.user)&&c.author_association==='OWNER'&&typeof c.body==='string'
+      &&Number.isFinite(Date.parse(c.created_at))&&Date.parse(c.created_at)<=mergedAt
+      &&Number.isFinite(Date.parse(c.updated_at))&&Date.parse(c.updated_at)<=mergedAt
+      &&c.body.split('\n').map(s=>s.trim()).includes('/approve-xuan-ib-maintenance '+anchor.head));
+    if(comments.length<100){complete=true;break;}
+  }
+  if(!approved||!complete)attachFail('PROVENANCE');
+  const checks=await runtime.githubRead('commits/'+anchor.head+'/check-runs?filter=latest&per_page=100');
+  if(!Array.isArray(checks?.check_runs)||checks.total_count!==checks.check_runs.length||checks.total_count>100)attachFail('PROVENANCE');
+  for(const name of ['scripts-check','ui-pr-check','xuan-ib-policy-lock']){
+    const found=checks.check_runs.filter(c=>c.name===name&&c.app?.id===15368);
+    if(found.length!==1||found[0].head_sha!==anchor.head||found[0].status!=='completed'||found[0].conclusion!=='success'
+      ||!Number.isFinite(Date.parse(found[0].completed_at))||Date.parse(found[0].completed_at)>mergedAt)attachFail('PROVENANCE');
+  }
+  return {publishedMain:anchor.main,pullRequest:anchor.pullRequest,approvedHead:anchor.head,check(){
+    if(evidence.supportMain!==publicBase.head||parseExact(healthFile.bytes).dataSha256!==attachHash(base.bytes))attachFail('PROVENANCE');
+  }};
+}
+
 /** Complete existing writer bytes; no encryption, publication, source refresh,
  * scheduling or new public schema. All inherited claims are re-proved here.
  */
@@ -344,7 +394,7 @@ export async function finalizeLocalRatioAttachment(options={}){
   return finalizeLocalPrivateAttachment(options);
 }
 export async function finalizeLocalIbBootstrapAttachment(options={}){
-  if(options.plan?.schema!=='fee-console.ib-bootstrap-local-finalize-plan.v1')attachFail('PLAN');
+  if(!['fee-console.ib-bootstrap-local-finalize-plan.v1','fee-console.ib-bootstrap-local-finalize-plan.v2'].includes(options.plan?.schema))attachFail('PLAN');
   return finalizeLocalPrivateAttachment(options);
 }
 async function finalizeLocalPrivateAttachment({ plan, environ = process.env, checkPlan = () => {},
@@ -363,12 +413,14 @@ async function finalizeLocalPrivateAttachment({ plan, environ = process.env, che
         || process.execArgv.some(a => /^(?:--inspect(?:-brk|-wait)?|--(?:require|import|loader|experimental-loader|cpu-prof|heap-prof|trace-events-enabled|report-on-signal|report-on-fatalerror|heapsnapshot-signal)|-r)(?:=|$)/.test(a) || /^--heapsnapshot-near-heap-limit=(?!0$)/.test(a))
         || ["FEE_DATA_KEY", "FEE_ECON_GIST_ID", "FEE_ECON_GITHUB_TOKEN", "FEE_ECON_FILE", "FEE_ECON_V3_FILE", "GH_TOKEN", "GITHUB_TOKEN", "NODE_OPTIONS", "NODE_PATH"].some(n => Object.hasOwn(environ, n))
         || Object.keys(environ).some(n => /^(?:DYLD_|LD_)/.test(n))) attachFail("LOCAL_ONLY");
-    const bootstrapOnly=plan?.schema==='fee-console.ib-bootstrap-local-finalize-plan.v1';
-    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "legacySource", "ibBootstrap", "producerEvidence",...(!bootstrapOnly?["ratioInput","ratioSourceDate","ratioKind"]:[]),...(plan.schema==='fee-console.ratio-local-finalize-plan.v2'?['browserEvidence']:[])])
-        || !["fee-console.ib-bootstrap-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v2"].includes(plan.schema) || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate || "")) attachFail("PLAN");
+    const maintenance=plan?.schema==='fee-console.ib-bootstrap-local-finalize-plan.v2',bootstrapOnly=maintenance||plan?.schema==='fee-console.ib-bootstrap-local-finalize-plan.v1';
+    if (!exact(plan, ["schema", "targetDate", "workspace", "baseData", "baseHealth", "legacySource", "ibBootstrap", maintenance?'maintenanceEvidence':'producerEvidence',...(!bootstrapOnly?["ratioInput","ratioSourceDate","ratioKind"]:[]),...(plan.schema==='fee-console.ratio-local-finalize-plan.v2'?['browserEvidence']:[])])
+        || !["fee-console.ib-bootstrap-local-finalize-plan.v1","fee-console.ib-bootstrap-local-finalize-plan.v2","fee-console.ratio-local-finalize-plan.v1","fee-console.ratio-local-finalize-plan.v2"].includes(plan.schema) || !/^\d{4}-\d{2}-\d{2}$/.test(plan.targetDate || "")||maintenance&&plan.targetDate!==IB_BOOTSTRAP_MAINTENANCE.target) attachFail("PLAN");
     checkPlan(); const directory = attachmentDirectory(plan.workspace), base = attachmentFile(plan.baseData, directory), healthFile = attachmentFile(plan.baseHealth, directory), input = bootstrapOnly?null:attachmentFile(plan.ratioInput, directory), legacy = plan.legacySource === null ? null : attachmentFile(plan.legacySource, directory), health = parseExact(healthFile.bytes);
-    if((bootstrapOnly&&plan.ibBootstrap===null)||(plan.ibBootstrap!==null&&!exact(plan.ibBootstrap,['baseline','coverage'])))attachFail('PLAN');
+    if((bootstrapOnly&&plan.ibBootstrap===null)||(plan.ibBootstrap!==null&&!exact(plan.ibBootstrap,['baseline','coverage',...(maintenance?['native']:[])])))attachFail('PLAN');
     const baseline=plan.ibBootstrap?attachmentFile(plan.ibBootstrap.baseline,directory):null,coverage=plan.ibBootstrap?attachmentFile(plan.ibBootstrap.coverage,directory):null;
+    const native=maintenance?attachmentFile(plan.ibBootstrap.native,directory):null;
+    if(maintenance){const original=parseExact(baseline.bytes);if(original.periodReturnsInput?.from!=='2026-08-01'||original.periodReturnsInput?.to!=='2026-10-30')attachFail('PLAN');}
     const browserPlan=plan.schema==='fee-console.ratio-local-finalize-plan.v2'?attachmentFile(plan.browserEvidence,directory):null;
     if(browserPlan)try{const staged=parseExact(browserPlan.bytes);browserProof=readVerifiedBrowserEvidence({planPath:plan.browserEvidence.path,expectedScopeId:staged.managerScopeId,input:parseExact(input.bytes),now:runtime.now()});}catch{attachFail('SOURCE');}
     const fresh = () => { const now = runtime.now(), age = (Date.parse(now.toISOString().slice(0, 10)) - Date.parse(plan.targetDate)) / 86_400_000;
@@ -376,9 +428,11 @@ async function finalizeLocalPrivateAttachment({ plan, environ = process.env, che
       if (validateHealth(health, { now }).length || health.targetDate !== plan.targetDate || !["updated", "no-op"].includes(health.outcome)
           || health.dataSha256 !== attachHash(base.bytes) || health.sourceDates.schwab !== plan.targetDate || health.sourceDates.webull !== plan.targetDate
           || healthFile.bytes.toString() !== JSON.stringify(health, null, 2) + "\n") attachFail("HEALTH"); };
-    const checks = () => { fresh(); checkPlan(); base.check(); healthFile.check(); input?.check();baseline?.check();coverage?.check();browserPlan?.check();browserProof?.check();if(browserProof)consumeBrowserEvidence(browserProof,parseExact(input.bytes),browserProof.scopeId,runtime.now()); legacy?.check(); }; checks();
+    const checks = () => { fresh(); checkPlan(); base.check(); healthFile.check(); input?.check();baseline?.check();coverage?.check();native?.check();browserPlan?.check();browserProof?.check();if(browserProof)consumeBrowserEvidence(browserProof,parseExact(input.bytes),browserProof.scopeId,runtime.now()); legacy?.check(); }; checks();
     output = path.join(directory.path, bootstrapOnly?"ib-bootstrap-finalized":"ratio-finalized"); if (fs.existsSync(output)) attachFail("OUTPUT");
-    const publicBase = await attachmentPublicBase(base, healthFile, runtime), proof = await attachmentProducerProof(plan.producerEvidence, base, healthFile, publicBase, runtime);
+    const publicBase = await attachmentPublicBase(base, healthFile, runtime), proof = maintenance
+      ?await attachmentMaintenanceProof(plan.maintenanceEvidence,base,healthFile,publicBase,runtime)
+      :await attachmentProducerProof(plan.producerEvidence, base, healthFile, publicBase, runtime);
     const allChecks = () => { checks(); publicBase.check(); proof.check(); }; finalChecks = allChecks; allChecks();
     try { keyText = runtime.readKeychain(SERVICES.key); } catch { attachFail("KEYCHAIN"); }
     if (typeof keyText !== "string" || !KEY_RE.test(keyText)) attachFail("KEY"); key = Buffer.from(keyText.replace(/-/g, "+").replace(/_/g, "/"), "base64"); if (key.length !== 32) attachFail("KEY");
@@ -406,11 +460,11 @@ async function finalizeLocalPrivateAttachment({ plan, environ = process.env, che
     if(!bootstrapOnly){recipientPath=path.join(directory.path,'ratio-public-recipient.json');
       fs.writeFileSync(recipientPath,JSON.stringify(recipient),{mode:0o600,flag:'wx'});
       const recipientFile=attachmentOwnedFile(recipientPath,directory);recipientCheck=()=>recipientFile.check();}
-    const writer=[path.join(ATTACH_ROOT,'scripts/daily.mjs'),'--file='+plan.baseData.path,...(bootstrapOnly?['--ib-bootstrap-only','--ib-bootstrap-output='+file]:['--ratio-only','--ratio-input='+plan.ratioInput.path,'--ratio-recipient='+recipientPath,'--ratio-output='+file,'--ratio-kind='+plan.ratioKind,'--ratio-source-date='+plan.ratioSourceDate,'--ratio-scope='+recipient.scopeId]),...(browserPlan?['--ratio-evidence-plan='+plan.browserEvidence.path]:[]),...(baseline?['--ib-baseline-input='+plan.ibBootstrap.baseline.path,'--ib-coverage-input='+plan.ibBootstrap.coverage.path]:[])];
+    const writer=[path.join(ATTACH_ROOT,'scripts/daily.mjs'),'--file='+plan.baseData.path,...(bootstrapOnly?['--ib-bootstrap-only','--ib-bootstrap-output='+file]:['--ratio-only','--ratio-input='+plan.ratioInput.path,'--ratio-recipient='+recipientPath,'--ratio-output='+file,'--ratio-kind='+plan.ratioKind,'--ratio-source-date='+plan.ratioSourceDate,'--ratio-scope='+recipient.scopeId]),...(browserPlan?['--ratio-evidence-plan='+plan.browserEvidence.path]:[]),...(baseline?['--ib-baseline-input='+plan.ibBootstrap.baseline.path,'--ib-coverage-input='+plan.ibBootstrap.coverage.path]:[]),...(native?['--ib-native-input='+plan.ibBootstrap.native.path]:[])];
     await run(writer,bootstrapOnly?'IB_BOOTSTRAP_DRY_RUN_OK':'RATIO_ATTACHMENT_DRY_RUN_OK','WRITER');recipientCheck?.();
     await run([...writer,'--execute'],bootstrapOnly?'IB_BOOTSTRAP_ENCRYPTED_CANDIDATE_PREPARED':'RATIO_ATTACHMENT_ENCRYPTED_CANDIDATE_PREPARED','WRITER');recipientCheck?.();
     const frozen = attachmentOwnedFile(file, attachmentDirectory(output)); finalCandidateCheck = () => frozen.check();
-    const after=attachmentDecode(frozen.bytes,3,key),expectedBase=baseline?await attachIbBootstrap(before,parseExact(baseline.bytes),parseExact(coverage.bytes)):before,strip=v=>Object.fromEntries(Object.entries(v).filter(([k])=>!['ratioManagerEnvelope','ratioManagerPublication'].includes(k)));
+    const after=attachmentDecode(frozen.bytes,3,key),expectedBase=baseline?await attachIbBootstrap(before,parseExact(baseline.bytes),parseExact(coverage.bytes),native?parseExact(native.bytes):null):before,strip=v=>Object.fromEntries(Object.entries(v).filter(([k])=>!['ratioManagerEnvelope','ratioManagerPublication'].includes(k)));
     if(canonicalJson(bootstrapOnly?expectedBase:strip(expectedBase))!==canonicalJson(bootstrapOnly?after:strip(after))||canonicalJson(fee)!==canonicalJson(after.feeCalculationReceipt))attachFail('NON_IB_CHANGED');
     if(!validateFeeCalculationReceiptWithEcon(after.feeCalculationReceipt,after,economic).ok)attachFail('RECEIPT');
     if(!bootstrapOnly)try{await ratioCore.validatePublication(after.ratioManagerEnvelope,after.ratioManagerPublication,fee);if(after.ratioManagerEnvelope.recipientId!==recipient.recipientId||after.ratioManagerEnvelope.scopeId!==recipient.scopeId||after.ratioManagerEnvelope.binding.sourceDate!==plan.ratioSourceDate||after.ratioManagerEnvelope.binding.previousCipherSha256!==(before.ratioManagerEnvelope?await ratioCore.digest(before.ratioManagerEnvelope):null))throw Error();}catch{attachFail('RECEIPT');}
@@ -426,8 +480,8 @@ async function finalizeLocalPrivateAttachment({ plan, environ = process.env, che
     finalHealthCheck = () => bound.check(); frozen.check();
     try { await source.checkCurrent(sourceOptions); } catch { attachFail("SOURCE"); } await publicBase.checkCurrent(); allChecks(); frozen.check(); bound.check();
     result = { schema: bootstrapOnly?"fee-console.ib-bootstrap-local-finalized.v1":"fee-console.ratio-local-finalized.v1", status: bootstrapOnly?"IB_BOOTSTRAP_BOUND_HEALTH_READY_FOR_REVIEW":"RATIO_LOCAL_BOUND_HEALTH_READY_FOR_REVIEW", targetDate: plan.targetDate, mainSha: publicBase.head,
-      baseDataSha256: attachHash(base.bytes), candidateDataSha256: attachHash(frozen.bytes), inheritedProducerRunId: proof.runId,
-      inheritedCandidateSha: proof.candidateSha, sourceCheckedAt: health.checkedAt, feeReceiptUnchanged: true, nonAttachmentFieldsUnchanged: true, ibBootstrapAdded: !!baseline,
+      baseDataSha256: attachHash(base.bytes), candidateDataSha256: attachHash(frozen.bytes), ...(maintenance?{maintenanceBase:proof.publishedMain,maintenancePullRequest:proof.pullRequest,maintenanceApprovedHead:proof.approvedHead,nativeCheckpointAdded:true}:{inheritedProducerRunId:proof.runId,inheritedCandidateSha:proof.candidateSha}),
+      sourceCheckedAt: health.checkedAt, feeReceiptUnchanged: true, nonAttachmentFieldsUnchanged: true, ibBootstrapAdded: !!baseline,
       healthCreated: true, readyForSignedCandidate: true, publicationReady: false };
   } catch (error) { errorCode = error instanceof LocalAttachmentError ? error.message.slice(9) : "OUTPUT"; }
   finally { if (env) { delete env.FEE_DATA_KEY; delete env.FEE_ECON_FILE; delete env.FEE_ECON_V3_FILE; } key?.fill(0); keyText = undefined;

@@ -603,6 +603,7 @@
     "scripts/xuan-ib-sharesight-exposure.mjs",
     "scripts/fee-ratio-management.mjs",
     "scripts/fee-ratio-packet.mjs",
+    "scripts/fee-ratio-packet.test.mjs",
     "docs/fee-ratio-management.md",
     "scripts/fee-ratio-browser-evidence.mjs",
     "scripts/xuan-ib-entry-policy.mjs",

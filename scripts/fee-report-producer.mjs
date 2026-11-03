@@ -440,11 +440,12 @@ export async function authorizeReportRecovery({plan,expectedMain,now=new Date(),
   }
   validateReportRecoveryEvidence({plan,expectedMain,currentRunId,budget,release});
 }
-export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,recoveryMain=null,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readState}={}){
+export async function reportPublicationPreflight({now=new Date(),plan=null,reviewedSyncDate=null,recoveryMain=null,scheduledDaily=false,ibEnabled=process.env.IB_MANAGER_READ_ENABLED==='true',currentRunId=process.env.GITHUB_RUN_ID,runAttempt=process.env.GITHUB_RUN_ATTEMPT,readRetryRuns=readPeriodRetryRuns,readSourceAttempts=readPeriodSourceAttempts,readRecoveryRelease=readReportRecoveryRelease,readState}={}){
   readState||=((target,start)=>readPublicationState(target,start,undefined,{requireIb:ibEnabled}));
   const plans=plan?[plan]:reportPlansAround(now);
   if(!plans.length)return {schema:'fee-console.report-preflight.v1',outcome:'not-due',plan:null};
   if(plans.some(p=>!validateReportPlan(p)))fail('PLAN');
+  if(scheduledDaily&&(reviewedSyncDate!==null||recoveryMain!==null||!plan||!plan.kind.startsWith('daily')||isReviewedDailyPlan(plan)))fail('DAILY_SCOPE');
   if(recoveryMain!==null&&(!plan||!isReviewedDailyPlan(plan)||!recoveryScope(plan.accountingThrough)))fail('RECOVERY_SCOPE');
   if(plans.some(p=>isReviewedDailyPlan(p)&&reviewedSyncDate!==p.accountingThrough)
       ||reviewedSyncDate!==null&&(!plan||!isReviewedDailyPlan(plan)||reviewedSyncDate!==plan.accountingThrough))fail('MANUAL_SYNC_CONFIRMATION');
@@ -455,7 +456,7 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
   const pending=plans.filter(p=>p.accountingThrough>=state.health.targetDate&&!publishedReportMatches(state,p,now));
   if(!pending.length){
     const covered={schema:'fee-console.report-preflight.v1',outcome:'already-published',plan:latest,mainSha:state.mainSha};
-    if(recoveryMain!==null)return covered;
+    if(recoveryMain!==null||scheduledDaily)return covered;
     // Between reports coverage remains valid; this bounded IB retry never
     // rejuvenates stale health, changes target windows or retries every day.
     if(runAttempt!==undefined&&String(runAttempt)!=='1'||!ibEnabled||state.health.targetDate!==latest.accountingThrough||!freshTarget(latest,now)||validateHealth(state.health,{now}).length||now.getTime()-Date.parse(state.health.checkedAt)>12*3600000)return covered;
@@ -485,10 +486,15 @@ export async function reportPublicationPreflight({now=new Date(),plan=null,revie
     const budget=await readSourceAttempts({plan:next,now,currentRunId});
     if(!budget||!Number.isSafeInteger(budget.attempts)||budget.attempts<0||typeof budget.inProgress!=='boolean')throw Error();
     if(budget.inProgress||budget.attempts>=2)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:budget.inProgress?'REPORT_SOURCE_RUN_IN_PROGRESS':'REPORT_SOURCE_ATTEMPT_BUDGET_EXHAUSTED',plan:next,mainSha:state.mainSha};
+    // The later daily clock is a fallback for an unstarted target, not an
+    // automatic retry after financial entry. Keep the ordinary 2-attempt
+    // accounting intact; a separate reviewed recovery must authorize reuse.
+    if(scheduledDaily&&budget.attempts!==0)return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED',plan:next,mainSha:state.mainSha};
   }catch{return {schema:'fee-console.report-preflight.v1',outcome:'waiting',reasonCode:'REPORT_SOURCE_ATTEMPT_METADATA_UNVERIFIED',plan:next,mainSha:state.mainSha};}
   return {schema:'fee-console.report-preflight.v1',outcome:'produce',plan:next,mainSha:state.mainSha};
 }
 export async function dailyPublicationPreflight({now=new Date(),targetDate=null,reviewedSyncDate=null,markets=String(process.env.FEE_REPORT_MARKETS||'').split(',').filter(Boolean),readState,...options}={}){
+  if(options.scheduledDaily&&(targetDate!==null||reviewedSyncDate!==null||options.recoveryMain!=null))fail('DAILY_SCOPE');
   const localDate=(zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
   const target=targetDate||reportAddDays(localDate('Asia/Hong_Kong'),-1),base={schema:'fee-console.report-preflight.v1',plan:null};reportDate(target);
   if(reviewedSyncDate!==null&&(!targetDate||reportDate(reviewedSyncDate)!==target))fail('MANUAL_SYNC_CONFIRMATION');
@@ -502,6 +508,24 @@ export async function dailyPublicationPreflight({now=new Date(),targetDate=null,
   if(!state.health||state.health.targetDate>target)fail('HISTORY_AHEAD_OF_TARGET');
   let plan;try{plan=dailyReportPlan(target,markets,{periodFrom:state.health.targetDate===target?target:reportAddDays(state.health.targetDate,1),reviewedSyncDate});}catch{return {...base,outcome:'recovery-required',reasonCode:'REPORT_SOURCE_RANGE_UNVERIFIED'};}
   return reportPublicationPreflight({...options,now,plan,reviewedSyncDate,readState:async()=>state});
+}
+// A distinct opt-in reuses the original daily producer and promotion path.
+// The consumed one-off remains authoritative until its active binding is
+// explicitly retired; its immutable tags and attempt history are never reset.
+export function scheduledDailyContext(args,{env=process.env,now=new Date()}={}){
+  if(env.GITHUB_EVENT_NAME!=='schedule'||env.FEE_REPORT_ONCE_MAIN)return false;
+  if(env.FEE_REPORT_DAILY_ENABLED!=='true'||env.FEE_REPORT_PERIODS_ENABLED!=='true'||env.FEE_CLOUD_MODE!=='publish'
+      ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_REPOSITORY!=='huanwujoy-crypto/fee-console'||env.GITHUB_REF!=='refs/heads/main'
+      ||env.GITHUB_RUN_ATTEMPT!=='1'||!/^\d+$/.test(env.GITHUB_RUN_ID||'')||!Number.isSafeInteger(Number(env.GITHUB_RUN_ID))||Number(env.GITHUB_RUN_ID)<=0
+      ||!/^[a-f0-9]{40}$/.test(env.GITHUB_SHA||'')||!['preflight','produce'].includes(args.mode))fail('DAILY_SCOPE');
+  if(args.mode==='preflight'){
+    if(Object.keys(args).join(',')!=='mode')fail('DAILY_SCOPE');
+  }else{
+    const day=new Intl.DateTimeFormat('en-CA',{timeZone:'Asia/Hong_Kong',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
+    if(args['report-kind']!=='daily'||args['report-target']!==reportAddDays(day,-1)
+        ||args['manual-sync-completed-for']||args['recovery-main']||env.PLANNED_MAIN!==env.GITHUB_SHA)fail('DAILY_SCOPE');
+  }
+  return true;
 }
 export async function reportPublicationWatch({mainSha,health,data,now=new Date(),daily=false,markets}={}){
   if(!/^[a-f0-9]{40}$/.test(mainSha||''))fail('PUBLICATION_READ');
@@ -651,9 +675,12 @@ async function main(){
     console.log(JSON.stringify(result));return;
   }
   if(args['main-sha'])fail('ARGUMENT');
+  const scheduledDaily=scheduledDailyContext(args);
   if(args.mode==='preflight'){
     if(args['out-dir']||args['benchmark-file']||args['report-plan'])fail('ARGUMENT');
-    console.log(JSON.stringify(await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,reviewedSyncDate,recoveryMain,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}))));return;
+    const result=await(!args['report-kind']||args['report-kind']==='daily'?dailyPublicationPreflight({targetDate:args['report-target']||null,reviewedSyncDate,recoveryMain,scheduledDaily,...(args['report-markets']?{markets:args['report-markets'].split(',')}:{} )}):reportPublicationPreflight({plan}));
+    if(scheduledDaily&&result.outcome==='produce'&&result.mainSha!==process.env.GITHUB_SHA)fail('DAILY_SCOPE');
+    console.log(JSON.stringify(result));return;
   }
   if(args.mode!=='produce'||!plan)fail('ARGUMENT');
   // Recheck admission before economic/source IO, including the same-run owner,
