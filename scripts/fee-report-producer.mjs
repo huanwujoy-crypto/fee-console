@@ -9,6 +9,7 @@ import crypto from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {SharesightCloudReader,normalizeRead} from './fee-cloud-source.mjs';
 import {produce,decryptCandidate,readPublicationState,producerFailureCode} from './fee-cloud-producer.mjs';
+import {assertIbManagerConfiguration,assertIbManagerPublication} from './ib-manager-report.mjs';
 import {fetchEconomicSnapshot,SourceFetchError} from './fee-economic-source.mjs';
 import {incomeDateEvidenceFromData} from './fee-income-date-policy.mjs';
 import {canonicalJson} from './fee-receipt-core.mjs';
@@ -534,11 +535,12 @@ export async function produceReportPeriod(options={}){
   try{return await produceReportPeriodRun(options,value=>{stage=value;});}
   catch(error){if(error instanceof SourceFetchError)throw error;throw Error(reportFailureCode(error,stage));}
 }
-async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json')},setStage){
+async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benchmarkFile,now=new Date(),readOnce,ibReader,requireIb=false,fetchEconomic=fetchEconomicSnapshot,sourceFile=path.join(ROOT,'data.json')},setStage){
   if(process.env.GITHUB_RUN_ATTEMPT!==undefined&&process.env.GITHUB_RUN_ATTEMPT!=='1')fail('SOURCE_RERUN_NOT_ALLOWED');
   if(!validateReportPlan(plan)||reportPlanReadiness(plan,now).state!=='due')fail('NOT_READY');
   if(isReviewedDailyPlan(plan)?reviewedSyncDate!==plan.accountingThrough:reviewedSyncDate!==null)fail('MANUAL_SYNC_CONFIRMATION');
   if(!freshTarget(plan,now))fail('RECOVERY_REQUIRED');
+  if(requireIb)assertIbManagerConfiguration();
   const output=outputDirectory(outputDir),originalBytes=fs.readFileSync(sourceFile),payload=decryptCandidate(sourceFile,process.env.FEE_DATA_KEY);
   // Reuse only this existing in-memory plaintext. These ids associate a safe
   // failure diagnostic, not Sharesight event identity or reconciliation
@@ -576,12 +578,13 @@ async function produceReportPeriodRun({plan,reviewedSyncDate=null,outputDir,benc
         // accepted only by the test/library entry, never the CLI/workflow.
         ...(base===sourceFile&&sourceFile!==path.join(ROOT,'data.json')?{baseDataFile:base}:{}),
         reader:{async readStable(target){if(target!==input.targetDate)fail('RANGE');return structuredClone(input);}},
-        fetchEconomic:async()=>({...economic,cleanup(){}}),includeIb:final,ibReader,...(final?{reportPlan:plan}:{})});
+        fetchEconomic:async()=>({...economic,cleanup(){}}),includeIb:final,requireIb:requireIb&&final,ibReader,...(final?{reportPlan:plan}:{})});
       base=result.dataFile;
     }
     setStage('ECONOMIC_RECHECK');
     await economic.checkCurrent(needsFund?{requireFundProfile:true}:{});
     if(!fs.readFileSync(sourceFile).equals(originalBytes))fail('BASE_CHANGED');
+    if(requireIb)await assertIbManagerPublication(decryptCandidate(result.dataFile,process.env.FEE_DATA_KEY),plan.accountingThrough);
     if(process.env.IB_MANAGER_READ_ENABLED==='true'&&latest===plan.accountingThrough){
       assertPeriodIbRecheckUnchanged(payload,decryptCandidate(result.dataFile,process.env.FEE_DATA_KEY));
     }
@@ -656,7 +659,7 @@ async function main(){
   // Recheck admission before economic/source IO, including the same-run owner,
   // signed release, prior failures and absence of any earlier recovery admission.
   if(recoveryMain!==null)await authorizeReportRecovery({plan,expectedMain:recoveryMain});
-  const result=await produceReportPeriod({plan,reviewedSyncDate,outputDir:args['out-dir'],benchmarkFile:args['benchmark-file']});
+  const result=await produceReportPeriod({plan,reviewedSyncDate,outputDir:args['out-dir'],benchmarkFile:args['benchmark-file'],requireIb:true});
   console.log(JSON.stringify({schema:'fee-console.cloud-producer.v1',targetDate:result.targetDate,outcome:result.outcome,retryCount:result.retryCount,sourceDates:result.sourceDates,dataSha256:result.dataSha256,reportKind:result.reportKind,priceThrough:result.priceThrough,accountingThrough:result.accountingThrough,reconstructedDays:result.reconstructedDays,...(result.ibManager?{ibManager:result.ibManager}:{})}));
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url))main().catch(error=>{console.error(reportFailureCode(error));process.exitCode=1;});

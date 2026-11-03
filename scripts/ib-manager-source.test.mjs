@@ -6,10 +6,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {nyDate} from './daily-core.mjs';
-import {expectedTargetDate} from './fee-cloud-source.mjs';
 import {SharesightIbManagerReader,ibBaselineBusinessHash,ibSourceFailureCode,validateIbBootstrapCoverage,validateIbManagerReportInput} from './ib-manager-source.mjs';
 import {buildIbManagerReportBundle,validateIbManagerReportState,buildIbOwnerBaseline,validateIbOwnerBaselineState,buildIbManagerReturnReceipt,buildIbManagerDrawdownReceipt,createIbManagerReturnConsumer,createIbManagerDrawdownConsumer} from './ib-manager-return.mjs';
-import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage} from './ib-manager-report.mjs';
+import {prepareIbManagerReport,loadIbManagerReport,sameIbManagerData,validateIbManagerCoverage,assertIbManagerConfiguration,assertIbManagerPublication} from './ib-manager-report.mjs';
 import {buildFeeCalculationReceipt,validateFeeCalculationReceipt} from './fee-receipt-core.mjs';
 
 // Synthetic portfolio/holding/cash IDs. No real source, credentials or NAV.
@@ -47,6 +46,42 @@ function wire({mutate=()=>{},changeSecond=false}={}){
 }
 const read=(w,extra={})=>w.reader.readStable({targetDate:baseline.asOf,expectedBaselineHash:lock(),baseline,...extra});
 const source=async()=>read(wire());
+function foreignPassive(body,{p,q}){
+  const instrument={id:7,code:'SYNTH',market_code:'TSE',currency_code:'CAD'};
+  if(p.endsWith('/holdings'))body.holdings[0].instrument=instrument;
+  if(body.report){const h=body.report.holdings[0];h.instrument=instrument;h.instrument_currency={code:'CAD'};h.instrument_price=200;}
+}
+test('passive foreign-currency holding uses dated portfolio USD value, not native price times quantity',async()=>{
+  const a=await source(),b=await read(wire({mutate:foreignPassive}));
+  assert.deepEqual(b.periodReturnsInput,a.periodReturnsInput);assert.deepEqual(b.cashFlowByDate,a.cashFlowByDate);
+});
+test('foreign holding compatibility does not permit FX trades, identity changes or unproved quantity/valuation changes',async()=>{
+  for(const [change,code] of [
+    [(body,{p})=>{if(p.endsWith('/trades.json'))body.trades=[{id:8,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:'2026-09-02',description_code:'SELL',value:200,quantity:1}];},/UNSUPPORTED_CURRENCY/],
+    [(body)=>{if(body.report)body.report.holdings[0].instrument.currency_code='EUR';},/IDENTITY/],
+    [(body)=>{if(body.report)body.report.holdings[0].instrument_currency.code='US';},/IDENTITY/],
+    [(body)=>{if(body.report)body.report.holdings[0].value=200;},/AMOUNT/],
+    [(body)=>{if(body.report)delete body.report.holdings[0].instrument;},/IDENTITY/]
+  ])await assert.rejects(read(wire({mutate:(body,ctx)=>{foreignPassive(body,ctx);change(body,ctx);}})),code);
+  const {state}=await frozenFixture();
+  await assert.rejects(read(wire({mutate:(body,ctx)=>{foreignPassive(body,ctx);if(body.report?.end_date==='2026-09-03')body.report.holdings[0].quantity=2;}}),{targetDate:'2026-09-03',ownerBaseline:state}),/UNVERIFIED_TRANSFER/);
+});
+test('foreign holding currency is bound across stable reads and future checkpoints',async()=>{
+  const {state}=await frozenFixture(),body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:lock(),from:'2026-09-03',through:'2026-09-03',evidenceSha256:'e'.repeat(64),events:[],quotes:[]},coverage={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};
+  const first=await read(wire({mutate:foreignPassive}),{targetDate:'2026-09-03',ownerBaseline:state,bootstrapCoverage:coverage});
+  assert.deepEqual(first.closingSnapshots.map(s=>s.foreignCurrencies),[{'2':'CAD'},{'2':'CAD'}]);
+  const next=await read(wire({mutate:foreignPassive}),{targetDate:'2026-09-04',checkpoint:first});
+  assert.deepEqual(next.periodReturnsInput.points.slice(0,3),input().points);
+  for(const mutate of [s=>s.closingSnapshots[0].foreignCurrencies[2]='EUR',s=>s.closingSnapshots[0].foreignCurrencies[99]='CAD',s=>s.closingSnapshots[0].marks[2]={},s=>s.closingSnapshots.forEach(x=>x.foreignCurrencies[2]='EUR')]){
+    const bad=structuredClone(first);mutate(bad);await assert.rejects(read(wire({mutate:foreignPassive}),{targetDate:'2026-09-04',checkpoint:bad}),/STATE|PAST_POINT_CHANGED/);
+  }
+  await assert.rejects(read(wire({mutate:(b,c)=>{foreignPassive(b,c);if(c.capture===2){if(b.holdings)b.holdings[0].instrument.currency_code='EUR';if(b.report){b.report.holdings[0].instrument_currency.code='EUR';b.report.holdings[0].instrument.currency_code='EUR';}}}})),/UNSTABLE/);
+  await assert.rejects(read(wire({mutate:(b,c)=>{foreignPassive(b,c);if(b.report?.end_date==='2026-09-02'){b.report.holdings[0].instrument_currency.code='EUR';b.report.holdings[0].instrument.currency_code='EUR';}}})),/IDENTITY/);
+});
+test('foreign zero-net trades and transfers remain rejected; explicit USD trade currency cannot conflict',async()=>{
+  for(const kinds of [['BUY','SELL'],['TRANSFER_OUT']])await assert.rejects(read(wire({mutate:(b,c)=>{foreignPassive(b,c);if(b.trades)b.trades=kinds.map((kind,n)=>({id:80+n,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:'2026-09-02',description_code:kind,value:kind==='BUY'?10:-10,quantity:1}));}})),/UNSUPPORTED_CURRENCY/);
+  await assert.rejects(read(wire({mutate:b=>{if(b.trades)b.trades=[{id:80,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:'2026-09-02',description_code:'BUY',value:10,quantity:1,instrument:{currency_code:'CAD'}}];}})),/IDENTITY/);
+});
 async function frozenFixture(){
   const frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:input()};
   const payload={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)};
@@ -84,6 +119,27 @@ test('future normal handoff needs finite audited coverage as well as authenticat
   const absent=structuredClone(payload);delete absent.ibManagerCoverageState;assert.throws(()=>request.apply(absent,'2026-10-24'),/REFUSED/);
   const raw=fs.readFileSync(prep.file),tampered=JSON.parse(raw);delete tampered.coverage;fs.writeFileSync(prep.file,JSON.stringify(tampered));
   await assert.rejects(loadIbManagerReport(prep.file,{environ}),/REFUSED/);fs.writeFileSync(prep.file,raw);
+});
+test('normal handoff continues a reviewed later frozen baseline without relabelling its dates or extending audited coverage',async t=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-later-baseline-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+  const points=[];for(let d='2026-08-01';d<='2026-10-30';d=add(d))points.push({d,tot:136});
+  const frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:{points,openT:136,from:'2026-08-01',to:'2026-10-30',days:points.length,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0}};
+  const expected=ibBaselineBusinessHash(frozen.periodReturnsInput),environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:expected};
+  const payload={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)};
+  payload.ibManagerBaselineState=await buildIbOwnerBaseline(payload,frozen,expected);
+  const body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:'2026-10-31',through:'2026-10-31',evidenceSha256:'e'.repeat(64),events:[],quotes:[]};
+  payload.ibManagerCoverageState={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};
+  const original=structuredClone(payload),w=wire(),targets=[],reader={async readStable(args){targets.push(args.targetDate);assert.deepEqual(args.baseline,{from:'2026-08-01',asOf:'2026-10-30'});return w.reader.readStable(args);}};
+  const prep=await prepareIbManagerReport({payload,targetDate:'2026-11-02',outputDir:dir,environ,reader});
+  assert.equal(prep.state,'verified');assert.deepEqual(targets,['2026-10-31','2026-11-02']);assert.deepEqual(payload,original);
+  const request=JSON.parse(fs.readFileSync(prep.file));assert.equal(request.source.baselineAsOf,'2026-10-30');
+  assert.deepEqual(request.source.periodReturnsInput.points.slice(0,points.length),points);assert.deepEqual(request.source.bootstrapCoverage,original.ibManagerCoverageState);
+  assert.equal((await loadIbManagerReport(prep.file,{environ})).checkCurrent(),undefined);
+  const b=await buildIbManagerReportBundle(request.source,expected),next={...payload,ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState};
+  fs.unlinkSync(prep.file);targets.length=0;
+  const later=await prepareIbManagerReport({payload:next,targetDate:'2026-11-03',outputDir:dir,environ,reader});assert.equal(later.state,'verified');assert.deepEqual(targets,['2026-11-03']);
+  fs.unlinkSync(later.file);let calls=0;const bad=structuredClone(payload);bad.ibManagerBaselineState.input.periodReturnsInput.to='2026-10-23';
+  const refused=await prepareIbManagerReport({payload:bad,targetDate:'2026-11-02',outputDir:dir,environ,reader:{readStable(){calls++;}}});assert.equal(refused.state,'pending');assert.equal(calls,0);
 });
 test('baseline digest is not approval; original receipts, full correction and anchor are mandatory',async()=>{
   const {frozen,payload,state}=await frozenFixture(),bad=structuredClone(frozen);bad.periodReturnsInput.points[0].tot++;
@@ -248,6 +304,32 @@ test('source receipts bind TWR and daily drawdown; raw source stays only in priv
 });
 function feeData(){const i=input(),economicInput={v:4,settings:{start:i.from,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]};
   const data={daily:i.points.map(p=>({d:p.d,schwab:60,webull:40})),flowsAuto:[],flowsUnresolved:[],status:{asOf:i.to,provisional:false,calibrated:true,unresolvedCount:0}};data.feeCalculationReceipt=buildFeeCalculationReceipt({data,economicInput});return data;}
+test('publication requires authenticated same-cutoff IB returns and daily drawdown visible to the real UI consumers',async()=>{
+  const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()};
+  assert.throws(()=>assertIbManagerConfiguration({}),/^Error: FEE_CLOUD_IB_CONFIG$/);
+  assert.throws(()=>assertIbManagerConfiguration({IB_MANAGER_READ_ENABLED:'true'}),/^Error: FEE_CLOUD_IB_BASELINE_LOCK$/);
+  const b=await buildIbManagerReportBundle(await source(),lock());
+  const data={...feeData(),ibManagerReturnReceipt:b.returnReceipt,ibManagerDrawdownReceipt:b.drawdownReceipt,ibManagerSourceState:b.sourceState,ibManagerSourceStatus:{state:'verified',targetDate:baseline.asOf}};
+  const before=structuredClone(data);await assertIbManagerPublication(data,baseline.asOf,environ);assert.deepEqual(data,before);
+  const frozen=await frozenFixture();
+  await assertIbManagerPublication({...feeData(),...frozen.payload},baseline.asOf,environ);
+  for(const mutate of [x=>delete x.ibManagerReturnReceipt,x=>delete x.ibManagerDrawdownReceipt,x=>delete x.ibManagerSourceState,
+    x=>x.ibManagerSourceStatus.state='pending',x=>x.ibManagerSourceStatus.targetDate='2026-09-01',
+    x=>x.ibManagerReturnReceipt.asOf='2026-09-01',x=>x.ibManagerReturnReceipt.periods[0].grossTwrPpm++,
+    x=>x.ibManagerDrawdownReceipt.dailyFactors[1].factor=0,x=>x.ibManagerSourceState.source.sourceAsOf='2026-09-01',
+    x=>x.feeCalculationReceipt.asOf='2026-09-01']){
+    const bad=structuredClone(data);mutate(bad);await assert.rejects(assertIbManagerPublication(bad,baseline.asOf,environ),/^Error: FEE_CLOUD_IB_INCOMPLETE$/);
+  }
+  // A valid old receipt is not a fresh report, and a flag/hash cannot create evidence.
+  await assert.rejects(assertIbManagerPublication(data,'2026-09-03',environ),/IB_INCOMPLETE/);
+  await assert.rejects(assertIbManagerPublication(data,baseline.asOf,{...environ,IB_MANAGER_BASELINE_SHA256:'e'.repeat(64)}),/IB_INCOMPLETE/);
+});
+test('real producer CLI refuses missing IB activation or baseline before source IO',()=>{
+  for(const env of [{},{IB_MANAGER_READ_ENABLED:'true'},{IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:'not-a-hash'}]){
+    const result=spawnSync(process.execPath,[new URL('./fee-cloud-producer.mjs',import.meta.url).pathname],{encoding:'utf8',timeout:10000,env:{PATH:process.env.PATH,...env}});
+    assert.equal(result.status,1);assert.equal(result.stdout,'');assert.match(result.stderr,/^FEE_CLOUD_IB_(CONFIG|BASELINE_LOCK)\n$/);
+  }
+});
 test('normal handoff preserves fee accounts, amounts and receipt; pending suppresses stale IB',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-source-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const environ={IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()},data=feeData(),original=structuredClone(data),s=await source();
@@ -269,13 +351,17 @@ test('disabled path performs no read or file write; missing lock does not use cr
 
 test('real normal daily CLI encrypts independent IB only, preserves fees and repeats as byte no-op',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-daily-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
-  const key=crypto.randomBytes(32),target=[nyDate(new Date()),'2026-10-23'].sort()[0],file=path.join(dir,'data.json'),econFile=path.join(dir,'econ.json');
+  const key=crypto.randomBytes(32),target='2026-10-23',file=path.join(dir,'data.json'),econFile=path.join(dir,'econ.json'),clock=path.join(dir,'clock.mjs');
+  // Freeze only the synthetic CLI child at the last instant within its real 10-day window.
+  const withinWindow='2026-11-03T04:59:59.999Z',outsideWindow='2026-11-03T05:00:00.000Z';
+  assert.equal(nyDate(new Date(withinWindow)),'2026-11-02');assert.equal(nyDate(new Date(outsideWindow)),'2026-11-03');
+  fs.writeFileSync(clock,`const RealDate=Date,now=RealDate.parse(process.env.TEST_NOW);globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`,{mode:0o600});
   const encrypt=(data,v=3)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(data)),c.final(),c.getAuthTag()]).toString('base64')});};
   const decrypt=()=>{const b=Buffer.from(JSON.parse(fs.readFileSync(file)).data,'base64'),d=crypto.createDecipheriv('aes-256-gcm',key,b.subarray(0,12));d.setAuthTag(b.subarray(-16));return JSON.parse(Buffer.concat([d.update(b.subarray(12,-16)),d.final()]));};
   const data=feeData();for(let d=add(baseline.asOf);d<=target;d=add(d))data.daily.push({d,schwab:60,webull:40});data.status={asOf:target,provisional:false,calibrated:true,unresolvedCount:0,splitDelta:0,notes:[]};
   fs.writeFileSync(file,encrypt(data));fs.writeFileSync(econFile,encrypt({v:4,settings:{start:baseline.from,mgmt:2,carry:20,fx:{USD:1}},accounts:[{id:'schwab',opening:60},{id:'webull',opening:40}],months:[],fees:[]},4),{mode:0o600});
-  const environ={...process.env,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econFile,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()};
-  const cli=[new URL('./daily.mjs',import.meta.url).pathname,`--file=${file}`,`--date=${target}`,'--schwab=60','--webull=40',`--src-schwab=${target}`,`--src-webull=${target}`,'--cash=0','--stock=100','--other=0'];
+  const environ={...process.env,TEST_NOW:withinWindow,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econFile,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:lock()};
+  const cli=['--import',clock,new URL('./daily.mjs',import.meta.url).pathname,`--file=${file}`,`--date=${target}`,'--schwab=60','--webull=40',`--src-schwab=${target}`,`--src-webull=${target}`,'--cash=0','--stock=100','--other=0'];
   const run=extra=>spawnSync(process.execPath,[...cli,...extra],{encoding:'utf8',env:environ});
   const ordinary=run([]);assert.equal(ordinary.status,0,ordinary.stderr);const before=decrypt();
   const s=await source();for(let d=add(baseline.asOf);d<=target;d=add(d))s.periodReturnsInput.points.push({d,tot:135});s.periodReturnsInput.to=target;s.sourceAsOf=target;s.periodReturnsInput.days=s.periodReturnsInput.points.length;
@@ -283,6 +369,8 @@ test('real normal daily CLI encrypts independent IB only, preserves fees and rep
   const result=run([`--ib-manager-input=${prepared.file}`]);assert.equal(result.status,0,result.stderr);const out=decrypt();assert.equal(out.ibManagerSourceStatus.state,'verified');assert.deepEqual(out.feeCalculationReceipt,before.feeCalculationReceipt);
   const strip=o=>Object.fromEntries(Object.entries(o).filter(([k])=>!k.startsWith('ibManager')&&k!=='updatedAt'));assert.deepEqual(strip(out),strip(before));
   const bytes=fs.readFileSync(file),repeat=run([`--ib-manager-input=${prepared.file}`]);assert.equal(repeat.status,0,repeat.stderr);assert.match(repeat.stdout,/no-op/);assert.deepEqual(fs.readFileSync(file),bytes);
+  const expired=spawnSync(process.execPath,[...cli,`--ib-manager-input=${prepared.file}`],{encoding:'utf8',env:{...environ,TEST_NOW:outsideWindow}});
+  assert.equal(expired.status,1);assert.match(expired.stderr,/11 days behind the New York date 2026-11-03; the calibration window is 10 days/);assert.deepEqual(fs.readFileSync(file),bytes);
   const refused=spawnSync(process.execPath,[...cli,`--ib-manager-input=${prepared.file}`],{encoding:'utf8',env:{...environ,IB_MANAGER_READ_ENABLED:''}});assert.notEqual(refused.status,0);assert.deepEqual(fs.readFileSync(file),bytes);
   fs.unlinkSync(prepared.file);const pending=await prepareIbManagerReport({payload:out,targetDate:target,outputDir:dir,environ,reader:{async readStable(){throw Error('private-canary');}}});
   const p=run([`--ib-manager-input=${pending.file}`]);assert.equal(p.status,0,p.stderr);const after=decrypt();assert.equal(after.ibManagerSourceStatus.state,'pending');assert.deepEqual(after.feeCalculationReceipt,before.feeCalculationReceipt);assert.deepEqual(after.ibManagerReturnReceipt,out.ibManagerReturnReceipt);
@@ -292,7 +380,9 @@ test('normal producer validates synthetic encrypted IB candidate through the exi
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ib-producer-synthetic-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const root=path.join(dir,'checkout');fs.mkdirSync(root,{mode:0o700});fs.cpSync(new URL('.',import.meta.url),path.join(root,'scripts'),{recursive:true});
   fs.mkdirSync(path.join(root,'claude'));fs.copyFileSync(new URL('../claude/fee-style-mapping.json',import.meta.url),path.join(root,'claude/fee-style-mapping.json'));
-  const target=[expectedTargetDate(new Date()),'2026-10-23'].sort()[0],key=crypto.randomBytes(32);
+  const target='2026-10-23',key=crypto.randomBytes(32),clock=path.join(dir,'clock.mjs');
+  // The synthetic producer and each writer/reporter/health child share the fixture clock.
+  fs.writeFileSync(clock,`const RealDate=Date,now=RealDate.parse('2026-10-24T06:00:00Z');globalThis.Date=class extends RealDate{constructor(...args){super(...(args.length?args:[now]));}static now(){return now;}};`,{mode:0o600});
   const encrypt=(o,v)=>{const iv=crypto.randomBytes(12),c=crypto.createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(o)),c.final(),c.getAuthTag()]).toString('base64')});};
   const data=feeData();for(let d=add(baseline.asOf);d<=target;d=add(d))data.daily.push({d,schwab:60,webull:40});
   Object.assign(data.status,{asOf:target,notes:[],splitDelta:0});for(const p of data.daily)Object.assign(p,{cash:100,stock:0,other:0,spy:100,qqq:100,acctCash:{schwab:60,webull:40}});
@@ -309,7 +399,7 @@ test('normal producer validates synthetic encrypted IB candidate through the exi
     let ibReads=0,feeReads=0,cleanups=0;const results=[],checkedAt=new Date().toISOString();
     for(const enabled of [false,true]){
       process.env.IB_MANAGER_READ_ENABLED=enabled?'true':'';const output=path.join(dir,enabled?'enabled':'disabled');fs.mkdirSync(output,{mode:0o700});
-      const result=await produce({cli:{'benchmark-file':process.env.SYNTHETIC_CACHE,'target-date':target,'out-dir':output,'checked-at':checkedAt},
+      const result=await produce({requireIb:enabled,cli:{'benchmark-file':process.env.SYNTHETIC_CACHE,'target-date':target,'out-dir':output,'checked-at':checkedAt},
         fetchEconomic:async()=>({envelopeVersion:4,sourcePath:process.env.FEE_ECON_FILE,async checkCurrent(){},cleanup(){cleanups++;}}),
         ibReader:{async readStable(){ibReads++;return structuredClone(source);}},
         reader:{async readStable(_target,benchmark){feeReads++;return {targetDate:target,accounts:{schwab:60,webull:40},splits:{cash:100,stock:0,other:0},acctCash:{schwab:60,webull:40},prevAcctCash:{schwab:60,webull:40},sourceDates:{schwab:target,webull:target},benchmark:{...benchmark,sourceDate:target,state:'session'},sourceFingerprint:'a'.repeat(64),flows:[],styleInput:{schemaVersion:1,date:target,portfolios:Object.entries(STYLE_ACCOUNTS).map(([account,portfolioId])=>({account,portfolioId,sourceDate:target,stockTotalUsd:0,holdings:[]})),proposals:[]}};}}});
@@ -319,7 +409,7 @@ test('normal producer validates synthetic encrypted IB candidate through the exi
     const strip=o=>Object.fromEntries(Object.entries(o).filter(([k])=>!k.startsWith('ibManager')&&k!=='updatedAt'));assert.deepEqual(strip(results[0]),strip(results[1]));
     console.log('SYNTHETIC_NORMAL_PRODUCER_VERIFIED');
   `);
-  const result=spawnSync(process.execPath,[script],{encoding:'utf8',env:{...process.env,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',IB_MANAGER_READ_ENABLED:'',IB_MANAGER_BASELINE_SHA256:lock(),SYNTHETIC_IB_FILE:ibFile,SYNTHETIC_CACHE:cache},timeout:20000});
+  const result=spawnSync(process.execPath,[script],{encoding:'utf8',env:{...process.env,NODE_OPTIONS:[process.env.NODE_OPTIONS||'','--import='+clock].join(' ').trim(),FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ,FEE_STYLE_INPUT_FILE:'',FEE_MANAGEMENT_INPUT_FILE:'',IB_MANAGER_READ_ENABLED:'',IB_MANAGER_BASELINE_SHA256:lock(),SYNTHETIC_IB_FILE:ibFile,SYNTHETIC_CACHE:cache},timeout:20000});
   assert.equal(result.status,0,result.stderr);assert.match(result.stdout,/SYNTHETIC_NORMAL_PRODUCER_VERIFIED/);assert.equal(fs.readFileSync(path.join(root,'data.json'),'utf8'),original);
 });
 
@@ -359,3 +449,105 @@ const cadBusiness=()=>({points:[{d:'2026-08-31',tot:110},{d:'2026-09-01',tot:160
 test('unchanged CAD native cash uses dated USD valuations, treats only its FX repricing as NAV return and never creates an external CAD flow',async()=>{const w=cadWire(),expected=ibBaselineBusinessHash(cadBusiness()),s=await w.reader.readStable({targetDate:baseline.asOf,baseline,expectedBaselineHash:expected});assert.deepEqual(s.periodReturnsInput,cadBusiness());assert.deepEqual(s.cashFlowByDate,{'2026-09-01':50});assert.ok(w.calls.some(c=>c.url.includes('cash_accounts.json?date=2026-08-30')));assert.ok((await buildIbManagerReportBundle(s,expected)).returnReceipt);});
 test('CAD native movement, missing dated balance, wrong FX valuation and changed currency cannot be silently converted or ignored',async()=>{const expected=ibBaselineBusinessHash(cadBusiness());for(const change of [(b,{p,q})=>{if(b.cash_accounts&&p.includes('/portfolios/')&&q.get('date')==='2026-09-01')b.cash_accounts.find(c=>c.id===5).balance=201;},(b,{p})=>{if(p==='/api/v2/cash_accounts/5/cash_account_transactions.json')b.cash_account_transactions.push({id:80,cash_account_id:5,date_time:'2026-09-01T12:00:00Z',amount:1,balance:201,cash_account_transaction_type:{name:'DEPOSIT'}});},(b,{p})=>{if(b.cash_accounts&&p.includes('/portfolios/'))b.cash_accounts.find(c=>c.id===5).balance_in_portfolio_currency=99;},(b,{p})=>{if(b.cash_accounts&&p.includes('/portfolios/'))b.cash_accounts.find(c=>c.id===5).currency='EUR';}])await assert.rejects(cadWire(change).reader.readStable({targetDate:baseline.asOf,baseline,expectedBaselineHash:expected}),/IB_SOURCE_(UNSUPPORTED_CURRENCY|CASH_RECONCILIATION)/);});
 test('CAD native balances are carried and revalidated in an authenticated future checkpoint without changing the frozen baseline',async()=>{const business=cadBusiness(),expected=ibBaselineBusinessHash(business),frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'f'.repeat(64),periodReturnsInput:business};const payload={ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)};const owner=await buildIbOwnerBaseline(payload,frozen,expected),body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:'2026-09-03',through:'2026-09-03',evidenceSha256:'e'.repeat(64),events:[],quotes:[]},coverage={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};const first=await cadWire().reader.readStable({targetDate:'2026-09-03',baseline,expectedBaselineHash:expected,ownerBaseline:owner,bootstrapCoverage:coverage});assert.equal(first.closingSnapshots[0].nativeCash[5],20000);assert.equal(first.closingSnapshots[1].cashCurrency[5],'CAD');const second=await cadWire().reader.readStable({targetDate:'2026-09-04',baseline,expectedBaselineHash:expected,checkpoint:first});assert.equal(second.closingSnapshots[0].nativeCash[5],20000);assert.deepEqual(second.periodReturnsInput.points.slice(0,3),business.points);const bad=structuredClone(first);bad.closingSnapshots[0].nativeCash[5]++;await assert.rejects(cadWire().reader.readStable({targetDate:'2026-09-04',baseline,expectedBaselineHash:expected,checkpoint:bad}),/IB_SOURCE_(STATE|PAST_POINT_CHANGED)/);});
+
+async function nativeMidnightFixture(d='2026-11-02',kind='BUY',change=()=>{}){
+  const prev=new Date(Date.parse(d+'T00:00:00Z')-86400000).toISOString().slice(0,10),base={from:prev,asOf:prev};
+  const business={points:[{d:prev,tot:136}],openT:136,from:prev,to:prev,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
+  const expected=ibBaselineBusinessHash(business),frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:business};
+  const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)},frozen,expected),buy=kind==='BUY',movement=buy?-10:10;
+  const w=wire({mutate:(b,c)=>{
+    if(b.report){const current=b.report.end_date===d;b.report.value=136;b.report.holdings[0].value=86-(current?movement:0);b.report.holdings[0].quantity=2+(current?(buy?1:-1):0);b.report.cash_accounts[0].value=50+(current?movement:0);}
+    if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=50+movement;
+    if(b.trades)b.trades=[{id:8,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:d,description_code:kind,value:-movement,quantity:1,instrument:{currency_code:'USD'}}];
+    if(b.cash_account_transactions)b.cash_account_transactions=[{id:9,cash_account_id:3,date_time:d+'T00:00:00.000Z',amount:movement,balance:50+movement,trade_id:8,holding_id:2,cash_account_transaction_type:{name:buy?'Buy Trade':'Sell Trade'}}];
+    change(b,c);
+  }});
+  return w.reader.readStable({targetDate:d,expectedBaselineHash:expected,baseline:base,ownerBaseline:owner});
+}
+test('native UTC-midnight BUY/SELL cash carries independently proved trade date in summer and winter',async()=>{
+  for(const d of ['2026-09-03','2026-11-02'])for(const kind of ['BUY','SELL']){
+    const s=await nativeMidnightFixture(d,kind);assert.equal(s.sourceAsOf,d);assert.deepEqual(s.cashFlowByDate,{});assert.equal(s.periodReturnsInput.points.at(-1).tot,136);
+  }
+});
+test('midnight exception requires exact carrier, trade identity, type and direction without weakening ledger checks',async()=>{
+  for(const change of [r=>delete r.trade_id,r=>r.trade_id=88,r=>r.holding_id=99,r=>r.payout_id=1,r=>r.cash_account_transaction_type.name='DEPOSIT',r=>r.amount=10,r=>r.date_time='2026-11-01T00:00:00.000Z',r=>r.date_time='2026-11-02T00:00:00.001Z',r=>r.date_time='2026-11-02T00:00:00Z',r=>r.date_time='2026-11-02T00:00:00.000+00:00']){
+    await assert.rejects(nativeMidnightFixture('2026-11-02','BUY',b=>{if(b.cash_account_transactions)change(b.cash_account_transactions[0]);}),/DATE_ALIGNMENT/);
+  }
+  for(const change of [rows=>rows.push({...rows[0]}),rows=>rows.length=0,rows=>rows[0].amount=-9,rows=>rows[0].balance=41])await assert.rejects(nativeMidnightFixture('2026-11-02','BUY',b=>{if(b.cash_account_transactions)change(b.cash_account_transactions);}),/IDENTITY|UNVERIFIED_TRANSFER|CASH_RECONCILIATION/);
+});
+
+async function cashDateFixture({events=[{d:'2026-11-02',kind:'BUY'}],target='2026-11-02',baseDate='2026-10-30',early=true,checkpoint=null,mutate=()=>{}}={}){
+  const base={from:baseDate,asOf:baseDate},business={points:[{d:baseDate,tot:136}],openT:136,from:baseDate,to:baseDate,days:1,flowByDate:{},rate:0,cr:0,cumBefore:0,hwmBefore:0};
+  const expected=ibBaselineBusinessHash(business),frozen={schema:'fee-console.ib-manager-return-input.v1',currency:'USD',timezone:'America/New_York',flowTiming:'eod',flowsComplete:true,correctionsConfirmed:true,sourceSha256:'c'.repeat(64),periodReturnsInput:business};
+  const owner=await buildIbOwnerBaseline({ibManagerReturnReceipt:await buildIbManagerReturnReceipt(frozen),ibManagerDrawdownReceipt:await buildIbManagerDrawdownReceipt(frozen)},frozen,expected);
+  const body={schema:'fee-console.ib-manager-coverage.v2',authority:'reviewed-source-reconciliation',sourceProvider:'Sharesight',baselineInputsHash:expected,from:add(baseDate),through:target,evidenceSha256:'e'.repeat(64),events:[],quotes:[]},coverage={...body,coverageId:await createIbManagerReturnConsumer().digest(body)};
+  const prev=d=>new Date(Date.parse(d+'T00:00:00Z')-86400000).toISOString().slice(0,10),move=e=>e.kind==='BUY'?-10:10;
+  const cash=d=>50+events.filter(e=>(early?prev(e.d):e.d)<=d).reduce((v,e)=>v+move(e),0),held=d=>events.filter(e=>e.d<=d).reduce((v,e)=>v-move(e),0);
+  const captured=[];
+  const w=wire({mutate:(b,c)=>{
+    const d=c.q.get('end_date')||c.q.get('date');
+    if(b.report){const h=b.report.holdings[0];h.value=86+held(d);h.quantity=2+held(d)/10;b.report.cash_accounts[0].value=cash(d);b.report.value=h.value+cash(d);}
+    if(b.cash_accounts)for(const a of b.cash_accounts)a.balance=a.balance_in_portfolio_currency=cash(d);
+    const active=events.map((e,n)=>({...e,n})).filter(e=>e.d>=(c.q.get('start_date')||c.q.get('from'))&&e.d<=(c.q.get('end_date')||c.q.get('to')));
+    if(b.trades)b.trades=active.map(e=>({id:8+e.n,portfolio_id:1,holding_id:2,state:'confirmed',transaction_date:e.d,description_code:e.kind,value:-move(e),quantity:1,instrument:{currency_code:'USD'}}));
+    if(b.cash_account_transactions)b.cash_account_transactions=active.map(e=>({id:18+e.n,cash_account_id:3,date_time:e.d+'T00:00:00.000Z',amount:move(e),balance:50+events.filter(x=>x.d<=e.d).reduce((v,x)=>v+move(x),0),trade_id:8+e.n,holding_id:2,cash_account_transaction_type:{name:e.kind==='BUY'?'Buy Trade':'Sell Trade'}}));
+    mutate(b,c);if(b.report)captured.push(structuredClone(b.report));
+  }});
+  const args={targetDate:target,baseline:base,expectedBaselineHash:expected,...(checkpoint?{checkpoint}:{ownerBaseline:owner,bootstrapCoverage:coverage})};
+  return {expected,owner,coverage,captured,args,w,run:()=>w.reader.readStable(args)};
+}
+test('one early USD trade cash valuation is explicitly proved without shifting trades, flows, endpoints or raw snapshots',async()=>{
+  for(const kind of ['BUY','SELL']){
+    const f=await cashDateFixture({events:[{d:'2026-11-02',kind}]}),s=await f.run(),normal=await(await cashDateFixture({events:[{d:'2026-11-02',kind}],early:false})).run();
+    const {cashDateNormalizations,...rest}=s;assert.deepEqual(rest,normal);assert.equal(cashDateNormalizations.length,1);
+    const p=cashDateNormalizations[0],movement=kind==='BUY'?-1000:1000;
+    assert.equal(p.rawBefore.d,'2026-11-01');assert.equal(p.rawBefore.totalCents,13600+movement);assert.equal(p.rawBefore.cash[3],5000+movement);
+    assert.equal(p.rawAfter.d,'2026-11-02');assert.equal(p.rawAfter.totalCents,13600);assert.equal(p.anchor.d,'2026-10-31');
+    assert.equal(p.trade.date,'2026-11-02');assert.deepEqual(s.cashFlowByDate,{});assert.deepEqual(s.periodReturnsInput.points.map(x=>x.tot),[136,136,136,136]);
+    assert.equal(f.captured.find(x=>x.end_date==='2026-11-01').value,136+movement/100);
+    assert.equal(s.closingSnapshots[0].cash[3],5000);assert.equal(s.closingSnapshots[0].totalCents,13600);
+    assert.equal(s.baselineInputsHash,f.expected);assert.deepEqual(s.ownerBaseline,f.owner);assert.deepEqual(s.bootstrapCoverage,f.coverage);
+    assert.deepEqual(validateIbManagerReportInput(s,f.expected),s);await buildIbManagerReportBundle(s,f.expected);
+    const again=await(await cashDateFixture({events:[{d:'2026-11-02',kind}],checkpoint:s})).run();
+    assert.deepEqual(again.cashDateNormalizations,s.cashDateNormalizations);assert.deepEqual(again.periodReturnsInput,s.periodReturnsInput);
+  }
+});
+test('a later trade may reprice the raw checkpoint anchor only when its canonical snapshot still matches in full',async()=>{
+  const first=await(await cashDateFixture()).run(),events=[{d:'2026-11-02',kind:'BUY'},{d:'2026-11-03',kind:'BUY'}];
+  const f=await cashDateFixture({events,target:'2026-11-03',checkpoint:first}),next=await f.run();
+  assert.equal(f.captured[0].end_date,'2026-11-02');assert.equal(f.captured[0].value,126);
+  assert.deepEqual(next.closingSnapshots[0],first.closingSnapshots[1]);assert.equal(next.cashDateNormalizations.length,2);
+  assert.deepEqual(next.cashDateNormalizations[0],first.cashDateNormalizations[0]);assert.equal(next.cashDateNormalizations[1].anchorKind,'checkpoint');
+  const same=await(await cashDateFixture({events,target:'2026-11-03',checkpoint:next})).run();assert.deepEqual(same.cashDateNormalizations,next.cashDateNormalizations);
+  const later=await(await cashDateFixture({events,target:'2026-11-04',checkpoint:next})).run();assert.deepEqual(later.cashDateNormalizations,next.cashDateNormalizations);assert.deepEqual(later.periodReturnsInput.points.slice(0,-1),next.periodReturnsInput.points);
+  await assert.rejects((await cashDateFixture({events,target:'2026-11-03',checkpoint:first,mutate:b=>{if(b.report?.end_date==='2026-11-02'){b.report.holdings[0].value++;b.report.value++;}}})).run(),/PAST_POINT_CHANGED/);
+});
+test('cash-date normalization rejects absent anchors, extra events, nonmatching amounts and all unrelated anomalies',async()=>{
+  const changes=[
+    b=>{if(b.report?.end_date==='2026-11-01'){b.report.cash_accounts[0].value++;b.report.value++;}},
+    b=>{if(b.report?.end_date==='2026-10-31'){b.report.cash_accounts[0].value++;b.report.value++;}},
+    b=>{if(b.report?.end_date==='2026-11-02')b.report.holdings[0].quantity++;},
+    b=>{if(b.trades)b.trades.push({...b.trades[0],id:99,quantity:.1,value:1});},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions.push({id:99,cash_account_id:3,date_time:'2026-11-01T12:00:00Z',amount:0,balance:50,cash_account_transaction_type:{name:'FEE'}});},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].amount=-9.99;},
+    b=>{if(b.trades)b.trades[0].instrument.currency_code='CAD';},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].balance=41;},
+    b=>{if(b.report?.end_date==='2026-11-01')b.report.complete=false;},
+    b=>{if(b.cash_account_transactions)b.cash_account_transactions[0].payout_id=99;}
+  ];
+  for(const mutate of changes)await assert.rejects((await cashDateFixture({mutate})).run(),/IB_SOURCE_/);
+  await assert.rejects((await cashDateFixture({baseDate:'2026-11-01'})).run(),/CASH_RECONCILIATION/);
+  await assert.rejects((await cashDateFixture({events:[{d:'2026-11-02',kind:'BUY'},{d:'2026-11-04',kind:'BUY'}],target:'2026-11-04'})).run(),/CASH_RECONCILIATION/);
+});
+test('normalization proofs remain bound to the private source, arithmetic, native identities and daily path',async()=>{
+  const f=await cashDateFixture(),s=await f.run(),canonical=createIbManagerReturnConsumer().canonical;
+  const rehash=p=>{const {proofId,...body}=p;p.proofId=crypto.createHash('sha256').update(canonical(body)).digest('hex');};
+  for(const mutate of [
+    p=>p.cashLeg.amountCents++,p=>p.cashLeg.tradeId++,p=>p.cashLeg.dateTime='2026-11-01T00:00:00.000Z',p=>p.cashLeg.payoutId=99,
+    p=>p.rawBefore.cash[3]++,p=>p.rawBefore.totalCents++,p=>p.rawAfter.cash[3]++,p=>p.anchor.cash[3]++,
+    p=>p.trade.currency='CAD',p=>p.trade.quantityAtoms='2000000000000000000',p=>p.rawBefore.positions[2]='1000000000000000000',
+    p=>p.windowThrough='2026-11-10',p=>p.anchorKind='checkpoint',p=>p.portfolioIdentityHash='a'.repeat(64)
+  ]){const bad=structuredClone(s);mutate(bad.cashDateNormalizations[0]);rehash(bad.cashDateNormalizations[0]);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
+  for(const mutate of [x=>x.cashDateNormalizations.push(structuredClone(x.cashDateNormalizations[0])),x=>x.cashDateNormalizations=[],x=>x.closingSnapshots[0].cash[3]++,x=>x.periodReturnsInput.points.find(p=>p.d==='2026-11-01').tot++]){const bad=structuredClone(s);mutate(bad);assert.throws(()=>validateIbManagerReportInput(bad,f.expected),/IB_SOURCE_/);}
+  const before=structuredClone(s);await buildIbManagerReportBundle(s,f.expected);assert.deepEqual(s,before);
+});

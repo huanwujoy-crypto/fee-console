@@ -414,12 +414,24 @@ test('IB period retry is bounded by fixed schedule, candidate wait and original 
 });
 test('IB retry metadata uses one public fixed route, bounded complete pages, no secrets or logs',async()=>{
   const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
-  assert.match(workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:')),/IB_MANAGER_READ_ENABLED: \$\{\{ vars.IB_MANAGER_READ_ENABLED \}\}/);
+  assert.match(workflow.slice(workflow.indexOf('  period:'),workflow.indexOf('  produce:')),/IB_MANAGER_READ_ENABLED: 'true'/);
   const now=new Date('2026-10-25T01:15Z');let calls=0;
   const response=(url,value)=>{const r=new Response(JSON.stringify(value),{headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};
   const fetchImpl=async(url,init)=>{calls++;assert.match(url,/^https:\/\/api.github.com\/repos\/huanwujoy-crypto\/fee-console\/actions\/workflows\/fee-cloud-producer.yml\/runs\?/);assert.equal(init.headers.Authorization,undefined);assert.equal(init.redirect,'error');return response(url,{total_count:0,workflow_runs:[]});};
   assert.deepEqual(await readPeriodRetryRuns({scheduledAt:'2026-10-25T00:00:00+08:00',now,fetchImpl}),[]);assert.equal(calls,1);
   await assert.rejects(readPeriodRetryRuns({scheduledAt:'2026-10-25T00:00:00+08:00',now,fetchImpl:async url=>response(url,{total_count:101,workflow_runs:[]})}),/IB_RETRY_METADATA/);
+});
+test('required IB period publication rejects absent configuration before any source or economic read',async()=>{
+  const prior=process.env.IB_MANAGER_READ_ENABLED;delete process.env.IB_MANAGER_READ_ENABLED;
+  try{
+    let calls=0;const forbidden=async()=>{calls++;assert.fail('financial IO must not start');};
+    await assert.rejects(produceReportPeriod({plan:dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),now:new Date('2026-11-03T04:00:00Z'),requireIb:true,readOnce:forbidden,ibReader:{readStable:forbidden},fetchEconomic:forbidden}),/^Error: FEE_CLOUD_IB_CONFIG$/);
+    assert.equal(calls,0);
+    const workflow=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+    assert.ok(workflow.indexOf('Require Jenny IB configuration before financial access')<workflow.indexOf('Exchange the trusted workflow identity'));
+    const cli=fs.readFileSync(new URL('./fee-report-producer.mjs',import.meta.url),'utf8');
+    assert.match(cli,/const result=await produceReportPeriod\(\{plan,reviewedSyncDate,[^\n]*requireIb:true/);
+  }finally{if(prior===undefined)delete process.env.IB_MANAGER_READ_ENABLED;else process.env.IB_MANAGER_READ_ENABLED=prior;}
 });
 test('same-period IB recheck forbids any fee, benchmark, ledger, report lock or unknown field change',()=>{
   const before={daily:[{d:'2026-10-23',schwab:100,webull:100,spy:100}],feeCalculationReceipt:{receiptId:'a'.repeat(64)},feeReportMonthLocks:{schema:'synthetic'},feeReportPublication:{reportId:'b'.repeat(64)},flowsAuto:[],privateEconomic:{version:4}};
@@ -794,7 +806,7 @@ test('actual recovery preflight and producer CLI use only mocked fixed routes, r
    }else if(url==='https://api.github.com/gists/${'a'.repeat(32)}'){calls.push('economic-mock');status=Number(process.env.SYNTHETIC_HTTP_STATUS);value={message:'PRIVATE_CANARY SOURCE_HTTP amount=123456.78 \\u001b[31m'};}
    else throw Error('all real financial routes forbidden');
    fs.writeFileSync(${JSON.stringify(trace)},JSON.stringify(calls));const r=new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});Object.defineProperty(r,'url',{value:url});return r;};`);
- const env={PATH:process.env.PATH,NODE_OPTIONS:'--import='+preload,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_GIST_ID:'a'.repeat(32),IB_MANAGER_READ_ENABLED:'',GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId),GITHUB_EVENT_PATH:eventFile};
+ const env={PATH:process.env.PATH,NODE_OPTIONS:'--import='+preload,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_GIST_ID:'a'.repeat(32),IB_MANAGER_READ_ENABLED:'true',IB_MANAGER_BASELINE_SHA256:'b'.repeat(64),GITHUB_ACTIONS:'true',GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_RUN_ATTEMPT:'1',GITHUB_REF:'refs/heads/main',GITHUB_SHA:recoveryHead,GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ID:String(recoveryId),GITHUB_EVENT_PATH:eventFile};
  // Node resolves ESM symlinks; pass the canonical temp path so the real CLI
  // entry guard executes rather than silently importing a library module.
  const cli=path.join(fs.realpathSync(root),'scripts/fee-report-producer.mjs'),common=['--report-kind=daily','--report-target=2026-10-28','--manual-sync-completed-for=2026-10-28','--recovery-main='+recoveryHead];
