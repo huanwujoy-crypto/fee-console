@@ -1623,8 +1623,8 @@ test("cloud producer bridges only a contiguous weekend before the next market se
 
 test("cloud workflow uses main-bound Google OIDC instead of stored Sharesight secrets", () => {
   const workflow = fs.readFileSync(new URL("../.github/workflows/fee-cloud-producer.yml", import.meta.url), "utf8");
-  assert.match(workflow, /cron: '0 2 \* \* \*'/, 'public market gate first checks at HKT10:00');
-  assert.deepEqual([...workflow.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]), ['0 2 * * *','30 3 * * *','0 6 * * *'], 'replace HKT13:00 with11:30, retain10:00 and14:00');
+  assert.match(workflow, /cron: '0 1 \* \* \*'/, 'public market gate first checks at HKT09:00');
+  assert.deepEqual([...workflow.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]), ['0 1 * * *','30 3 * * *','0 6 * * *'], 'first check HKT09:00, retain11:30 and14:00');
   assert.doesNotMatch(workflow, /cron: '[^']+ \* \* 2-6'/);
   assert.match(workflow, /needs: period/);
   assert.match(workflow, /needs\.period\.outputs\.outcome == 'produce'/);

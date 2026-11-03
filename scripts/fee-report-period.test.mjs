@@ -101,12 +101,12 @@ test('reviewed synchronized daily entry uses the same v2 shape and waits for the
 });
 
 test('ordinary daily readiness keeps next-day timing and exact plan validation',()=>{
- for(const [target,day,start,before]of [['2026-10-30','2026-10-31','10:30:00','10:29:59'],['2026-11-03','2026-11-04','10:00:00','09:59:59']]){
+ for(const [target,day,start,before]of [['2026-10-30','2026-10-31','10:30:00','10:29:59'],['2026-11-02','2026-11-03','10:00:00','09:59:59'],['2026-11-03','2026-11-04','09:00:00','08:59:59']]){
   const p=dailyReportPlan(target,['NYSE','NASDAQ']);
   assert.equal(reportPlanReadiness(p,new Date(day+'T'+before+'+08:00')).reasonCode,'REPORT_NOT_DUE');
   assert.equal(reportPlanReadiness(p,new Date(day+'T'+start+'+08:00')).state,'due');
   assert.equal(isReviewedDailyPlan(p),false);
-  for(const x of [{...p,scheduledAt:day+'T09:00:00+08:00'},{...p,monthlyCutoffs:[target]},{...p,accountingThrough:day}])assert.throws(()=>reportPlanReadiness(x,new Date(day+'T10:30:00+08:00')));
+  for(const x of [{...p,scheduledAt:day+'T08:00:00+08:00'},{...p,monthlyCutoffs:[target]},{...p,accountingThrough:day}])assert.throws(()=>reportPlanReadiness(x,new Date(day+'T10:30:00+08:00')));
  }
  const month=dailyReportPlan('2026-09-30',['NYSE'],{periodFrom:'2026-09-30'});
  assert.equal(month.kind,'daily-monthly');assert.equal(reportPlanReadiness(month,new Date('2026-10-01T10:30:00+08:00')).reasonCode,'ACCOUNTING_DAY_NOT_COMPLETE');

@@ -29,8 +29,9 @@ function date(d){if(typeof d!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(d)||new Dat
 const add=(d,n)=>new Date(Date.parse(date(d)+'T00:00Z')+n*DAY).toISOString().slice(0,10);
 const local=(now,zone)=>new Intl.DateTimeFormat('en-CA',{timeZone:zone,year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
 // Preserve the schedule encoded in accepted historical receipts. The new
-// next-day start applies from the November 2 accounting target onward.
-export function ordinaryDailyStartTime(target){return date(target)>='2026-11-02'?'10:00':'10:30';}
+// next-day 09:00 start applies from the November 3 accounting target onward.
+// The consumed November 2 acceptance and earlier reports keep their old times.
+export function ordinaryDailyStartTime(target){const d=date(target);return d>='2026-11-03'?'09:00':d>='2026-11-02'?'10:00':'10:30';}
 export function ordinaryDailyScheduledAt(target){return add(target,1)+'T'+ordinaryDailyStartTime(target)+':00+08:00';}
 const within=d=>d>=calendarCoverage.from&&d<=calendarCoverage.through;
 export function marketSession(d,venue){

@@ -74,7 +74,7 @@ test('actual final command fails admission without networking and saves before d
 });
 test('workflow isolates all fee jobs, preserves schedule/concurrency and never exposes SS credentials to ratio',()=>{
  const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');for(const job of ['period','once-admit','produce','once-finish','source-plan-check','source-acceptance']){const body=wf.split('\n  '+job+':\n')[1].split(/\n  [a-z-]+:\n/)[0];assert.match(body,/    if: \$\{\{ !inputs\.ratio_plan && !inputs\.ratio_main && /,job);}
- assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/cron: '0 2 \* \* \*'/);assert.deepEqual([...wf.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['0 2 * * *','30 3 * * *','0 6 * * *']);
+ assert.match(wf,/group: fee-cloud-producer\n  cancel-in-progress: false/);assert.match(wf,/cron: '0 1 \* \* \*'/);assert.deepEqual([...wf.matchAll(/- cron: '([^']+)'/g)].map(m=>m[1]),['0 1 * * *','30 3 * * *','0 6 * * *']);
  const ratio=wf.split('\n  ratio:\n')[1];assert.ok(!ratio.includes('SHARESIGHT'));assert.ok(!ratio.includes('fee-report-producer.mjs'));assert.match(ratio,/create_credentials_file: false/);assert.match(ratio,/access_token_scopes: https:\/\/www.googleapis.com\/auth\/devstorage.read_write/);assert.match(ratio,/fromJSON\(inputs.ratio_plan\).mode == 'publish'/);assert.equal((wf.match(/secrets.FEE_RATIO_MANAGER_TOKEN/g)||[]).length,1);assert.match(ratio,/path: \$\{\{ runner.temp \}\}\/fee-ratio-result.safe.json/);
 });
 

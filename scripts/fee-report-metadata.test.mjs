@@ -183,3 +183,17 @@ test('normal target30 report plan crosses the real daily argument gate without a
   }
   assert.deepEqual(fs.readdirSync(dir),['clock.mjs']);
 });
+
+
+test('09:00 metadata keeps actual Nov3 cutoff and does not rewrite accepted Nov2 metadata',async()=>{
+ const target='2026-11-03',clock=new Date('2026-11-04T09:00:00+08:00'),{data}=fixture(target),before=structuredClone(data);
+ const plan=dailyReportPlan(target,['NYSE','NASDAQ']),m=buildReportMetadata({plan,data,generatedAt:clock.toISOString()});
+ assert.equal(plan.scheduledAt,'2026-11-04T09:00:00+08:00');assert.equal(m.plan.accountingThrough,target);assert.equal(m.plan.priceThrough,target);
+ assert.equal(m.nextScheduledAt,'2026-11-05T09:00:00+08:00');assert.deepEqual(data,before);
+ assert.equal((await createFeeReportConsumer().project(m,{state:'verified',asOf:target},data.feeCalculationReceipt,clock)).state,'updated');
+ assert.throws(()=>buildReportMetadata({plan,data,generatedAt:'2026-11-04T00:59:59Z'}),/PLAN_NOT_DUE/);
+ const old=fixture('2026-11-02').data,oldPlan=dailyReportPlan('2026-11-02',['NYSE','NASDAQ']);
+ const accepted=buildReportMetadata({plan:oldPlan,data:old,generatedAt:'2026-11-03T02:00:00Z'});old.feeReportPublication=accepted;
+ assert.equal(accepted.nextScheduledAt,'2026-11-04T10:00:00+08:00');
+ assert.deepEqual(buildReportMetadata({plan:oldPlan,data:old,generatedAt:clock.toISOString()}),accepted);
+});
