@@ -1,13 +1,13 @@
 {
   "schema": "fee-console.daily-health.v1",
-  "checkedAt": "2026-10-31T09:35:33.316Z",
-  "targetDate": "2026-10-30",
+  "checkedAt": "2026-11-03T03:47:41.073Z",
+  "targetDate": "2026-11-02",
   "sourceDates": {
-    "schwab": "2026-10-30",
-    "webull": "2026-10-30",
-    "benchmark": "2026-10-30"
+    "schwab": "2026-11-02",
+    "webull": "2026-11-02",
+    "benchmark": "2026-11-02"
   },
   "outcome": "updated",
-  "dataSha256": "e9616f5f9727ab056ad5c8d844f9cc88ee8a41e0f59e11d8ddfae9caa34146ef",
+  "dataSha256": "2d801a0736364512467489eb3a265a75fef82830054affa48f9c417db2f98712",
   "errorCode": null
 }
