@@ -147,6 +147,52 @@ snapshot automation is activated by these settings. Jenny's independent IB data
 needs its own existing attachment/checkpoint acceptance; it does not become part
 of the two-account management-fee calculation.
 
+### Jenny IB must accompany production reports
+
+The production workflow now explicitly includes Jenny IB. Before any financial
+access, its reviewed `IB_MANAGER_BASELINE_SHA256` must be configured; an absent
+activation variable can no longer silently skip the module. Configuration alone
+does not establish the frozen baseline, finite source coverage or native checkpoint.
+Those existing evidence gates remain mandatory and must be accepted before activation.
+For an already reviewed later frozen history, the reader and coverage check use
+the dates from the hash-locked, receipt-verified baseline/checkpoint. They do not
+reinterpret that input as the old default window or extend the finite audited
+range. Normal native continuation preserves the original history and evidence.
+
+The independent IB reader accepts a passive foreign-currency instrument only
+when its stable catalog identity and dated USD portfolio value are proved. It
+never treats a foreign price or trade amount as USD; foreign-instrument trades
+remain unsupported. Optional currency evidence is retained in native checkpoints.
+
+Native trade cash may use an exact UTC-midnight timestamp as a business-date
+carrier. The confirmed trade date, holding, USD cash account, transaction type,
+direction, cash net and quantity change must all match; other timestamps retain
+the original date-alignment check. A separately reviewed finite normalization
+may correct the narrow single-trade case in which cash appears one day before
+its holding quantity. It must retain raw snapshots and a recomputable proof,
+restore cash to the independently anchored trade-date balance and adjust only
+that day's IB NAV by the cash difference. This affects the IB daily-return and
+drawdown path, so it requires explicit approval with the concrete correction.
+It does not change Sharesight records, management-fee values or the economic
+ledger. Ambiguous or unproved differences must still stop publication.
+
+Both production CLI paths require valid IB return and daily drawdown receipts at
+the exact final report cutoff. Native receipts also require their authenticated
+source state; a valid reviewed frozen attachment is not rejected merely for using
+the original receipt version. The same browser consumers
+must project the return, monthly periods and drawdown as verified. Pending, missing,
+stale or tampered IB data prevents a publishable candidate; it never becomes zero or
+receives a newer date. Intermediate private reconstruction days can omit IB; only
+the final complete package may leave the run. Fee formulas and economic data stay
+independent and unchanged. Synthetic library calls are not publication authority.
+
+Acceptance requires the actual unlocked page to show Jenny's target cutoff, return,
+monthly values and drawdown, in addition to signed candidate/health/Pages byte checks.
+A previously consumed opportunity must not be replayed to repair an old attachment.
+Any one-time attachment repair retains the fee and all non-IB fields and needs its
+own bounded source and protected publication approval. This code change does not
+enable schedules, create a baseline approval, or authorize another run.
+
 The current cron first checks at HKT10:00, with the already bounded 11:30/14:00
 continuations. GitHub can delay cron delivery. The user completes Sharesight sync
 before 10:00; this migration does not re-synchronize or cross-check brokers.
