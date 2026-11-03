@@ -719,7 +719,17 @@ const instantFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-session-
 assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652cc884d67f7a1594649af8caed9c1d02');
 const instantFixture=JSON.parse(instantFixtureBytes);
 const actualInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
-let actualInstalledUiSource=actualInstalledUiBytes;
+const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
+assert.equal(ratioUiHash(sixFixtureBytes),'87357be01d0d2b29208ce066eb61da3d591f9924fbaf427500402fcd80ab9cc7');
+const sixFixture=JSON.parse(sixFixtureBytes);
+function sixUiAdapter(page,forward=true){
+ assert.equal(typeof forward,'boolean');assert.equal(ratioUiHash(page),forward?sixFixture.priorSha256:sixFixture.nextSha256,'unreviewed six-category input');
+ for(const r of (forward?sixFixture.regions:[...sixFixture.regions].reverse())){const [from,to]=forward?[r.prior,r.next]:[r.next,r.prior];assert.equal(page.split(from).length,2);page=page.replace(from,()=>to);}
+ assert.equal(ratioUiHash(page),forward?sixFixture.nextSha256:sixFixture.priorSha256,'unreviewed six-category output');return page;
+}
+const sixReviewedUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.priorSha256?sixUiAdapter(actualInstalledUiBytes):actualInstalledUiBytes;
+assert.equal(ratioUiHash(sixReviewedUiSource),sixFixture.nextSha256);
+let actualInstalledUiSource=ratioUiHash(actualInstalledUiBytes)===sixFixture.nextSha256?sixUiAdapter(actualInstalledUiBytes,false):actualInstalledUiBytes;
 // Preserve exact historical fixtures; the live download helper has separate boundary tests.
 if(ratioUiHash(actualInstalledUiSource)==='f9191c1e166ef86066785f86d9e5372ed51fee957c6916cc0eb2f56fd78626a0'){
  assert.equal(actualInstalledUiSource.split('timer=setTimeout(()=>controller.abort(),60000)').length,2);
@@ -825,7 +835,7 @@ test('exact presentation successor shortens only supported date-prefixed names a
 
 test('unified UI embeds exact reviewed codec and denies investor, revoked roles and source switches',{skip:!unifiedUiSource.includes('const RATIO_RECIPIENT_FILE=')},async()=>{
   for(const [name,next]of [['xuan-ib-sharesight-exposure.mjs','const exposureCore='],['fee-ratio-management.mjs',null]]){
-    let factory=fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1];if(next)factory=factory.slice(0,factory.indexOf('\n'+next));if(name==='fee-ratio-management.mjs'&&!independentRatioUi){const a=unifiedUiSource.indexOf('function createFeeRatioCore('),b=unifiedUiSource.indexOf('const ratioExposureCore=',a);assert.equal(ratioCrypto.createHash('sha256').update(unifiedUiSource.slice(a,b).trim()).digest('hex'),legacyRatioFactorySha256,'only the exact published legacy codec may coexist during support-first rollout');}else assert.ok(instantReviewedUiSource.includes(factory.trim()),name+' factory must match');
+    let factory=fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1];if(next)factory=factory.slice(0,factory.indexOf('\n'+next));if(name==='fee-ratio-management.mjs'&&!independentRatioUi){const a=unifiedUiSource.indexOf('function createFeeRatioCore('),b=unifiedUiSource.indexOf('const ratioExposureCore=',a);assert.equal(ratioCrypto.createHash('sha256').update(unifiedUiSource.slice(a,b).trim()).digest('hex'),legacyRatioFactorySha256,'only the exact published legacy codec may coexist during support-first rollout');}else assert.ok(sixReviewedUiSource.includes(factory.trim()),name+' factory must match');
   }
   const {core,model}=ratioFixture(),manager=await core.deriveManager('0'.repeat(32),master,'synthetic-owner-token-for-ratio-123'),fee={receiptId:'f'.repeat(64),asOf:'2000-01-03'},m={...model,report:{...model.report,feeAccountingThrough:fee.asOf}},binding={schema:'fee-console.ratio-binding.v1',revision:ratioCrypto.randomUUID(),previousCipherSha256:null,feeReceiptId:fee.receiptId,feeAsOf:fee.asOf,sourceDate:fee.asOf},cipher=await core.seal(m,manager.recipient,binding),publication=await core.publication(cipher,m);
   const values=new Map([['gid','0'.repeat(32)],['key',master],['tok','synthetic-owner-token-for-ratio-123']]),elements=new Map(),timer=[];
@@ -1088,7 +1098,7 @@ test('independent browser closed loop requires trusted two-phase consent and tou
 });
 
 test('independent factories are embedded exactly and no source plaintext or fee files enter the protected PATCH',{skip:!independentRatioUi},async()=>{
-  for(const name of ['fee-ratio-source-core.mjs','fee-ratio-snapshot.mjs'])assert.ok(instantReviewedUiSource.includes(fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1].trim()),name);
+  for(const name of ['fee-ratio-source-core.mjs','fee-ratio-snapshot.mjs'])assert.ok(sixReviewedUiSource.includes(fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1].trim()),name);
   const a=unifiedUiSource.indexOf('async function ghApi('),b=unifiedUiSource.indexOf('\n}',a)+2,raw='{"syntheticCipherOnly":true}',gid='0'.repeat(32),op={gid,token:'invented-token',epoch:1,raw};
   let calls=0;const values={gid,tok:'invented-token'},ctx={_ledgerBusy:false,_draftBlocked:false,EDIT:{},_fundRemoteWrite:null,_legacyMigrationPending:null,_ratioRecipientWrite:null,_ratioSnapshotWrite:op,_sourceEpoch:1,RATIO_RECIPIENT_FILE:'fee-console-ratio-recipient.json',RATIO_SNAPSHOT_FILE:'fee-console-ratio-snapshot.json',ratioAuthorized:()=>true,managerDocumentsAuthorized:()=>true,cfg:k=>values[k]||'',K:{gid:'gid',tok:'tok'},Object,JSON,Error,String,fetch:async(url,o)=>{calls++;assert.equal(url,'https://api.github.com/gists/'+gid);assert.equal(o.headers.Authorization,'Bearer invented-token');assert.equal(o.reviewedRatioSnapshot,undefined);assert.deepEqual(Object.keys(JSON.parse(o.body).files),['fee-console-ratio-snapshot.json']);return {ok:true,status:200,json:async()=>({})};}};
   vm.createContext(ctx);vm.runInContext(unifiedUiSource.slice(a,b)+'\nthis.run=ghApi;',ctx);
@@ -1559,3 +1569,13 @@ test('navigation cold/hot refresh exposes all allowed tabs atomically before dat
 
 // Execute the exact reviewed successor controller contracts in both rollout stages.
 import './fee-ratio-session-view.test.mjs';
+
+
+test('six-category staged UI pins exact pages, preserves authorization and embeds matching source projection',()=>{
+ const prior=sixUiAdapter(sixReviewedUiSource,false);assert.equal(sixUiAdapter(prior),sixReviewedUiSource);
+ for(const [page,forward]of [[prior,true],[sixReviewedUiSource,false]])assert.throws(()=>sixUiAdapter(page+' ',forward),/unreviewed six-category input/);
+ for(const name of ['fee-ratio-official-source.mjs','fee-ratio-source-core.mjs','fee-ratio-management.mjs'])assert.ok(sixReviewedUiSource.includes(fs.readFileSync(new URL('./'+name,import.meta.url),'utf8').split('export ',2)[1].trim()),name);
+ const between=(page,a,b)=>page.slice(page.indexOf(a),page.indexOf(b,page.indexOf(a)));
+ for(const [a,b]of [['const ratioExposureCore=','function ratioHoldingDisplayName('],['async function readRatioSnapshotFile(','async function readCurrentRatioSnapshot(']])assert.equal(between(prior,a,b),between(sixReviewedUiSource,a,b));
+ assert.match(sixReviewedUiSource,/if\(assets.childElementCount\)overview.insertBefore/);assert.match(sixReviewedUiSource,/ratio-six-allocation/);
+});

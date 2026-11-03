@@ -80,8 +80,8 @@ test('same-name fund securities stay separate and a claimed capture before its v
  assert.equal(new Set(top.map(r=>r.name)).size,5);assert.ok(top[0].name.includes('[F00 · PRIVATE]'));assert.ok(top[1].name.includes('[F01 · PRIVATE]'));
  raw.classification.capturedAt='2026-10-27T00:00:00.000Z';assert.throws(()=>projected(raw));
 });
-export async function authenticated(t){
- const f=projected(),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+export async function authenticated(t,raw=syntheticOfficialSource()){
+ const f=projected(raw),dir=fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(),'ratio-official-synthetic-')));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
  const write=(name,value)=>{const bytes=Buffer.isBuffer(value)?value:Buffer.from(JSON.stringify(value)),p=path.join(dir,name);fs.writeFileSync(p,bytes,{mode:0o600});return {path:p,sha256:hash(bytes)};};
  const manager=await f.ratio.deriveSnapshotManager('0'.repeat(32),Buffer.alloc(32,7).toString('base64url'),'synthetic-manager-token-not-real-123'),plan={schema:'fee-console.ratio-browser-evidence-plan.v1',workspace:dir,source:write('original.json',f.bytes),input:write('input.json',f.built.input),library:{libraryFileId:'libfile_'+'9'.repeat(32),version:0},managerScopeId:manager.recipient.scopeId,localOwnerUid:process.getuid()},planPath=write('plan.json',plan).path;
  const proof=readVerifiedBrowserEvidence({planPath,expectedScopeId:manager.recipient.scopeId,input:f.built.input,now:f.now,runtime:{uid:process.getuid(),readIdentity:()=>({libraryFileId:plan.library.libraryFileId,version:0})},exposureCore:f.exposure});
@@ -93,7 +93,7 @@ test('full source to manager snapshot authenticates both dates, renders distinct
  const f=await authenticated(t),result=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
  assert.deepEqual(result.source.sourceDates,f.model.sourceDates);assert.equal(result.stale,false);
  const html=f.ratio.render(result.model);
- for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','包含在二级市场中','独立下载完成时间未知','公司经济敞口前五','计算口径与合并规则'])assert.ok(html.includes(text),text);
+ for(const text of ['资产分类截至 2026-10-29','个股穿透截至 2026-10-30','Exposure截至 2026-10-30','黄金（GLD）','已计入所属分类，不另加总','独立下载完成时间未知','公司经济敞口前五','计算口径与合并规则'])assert.ok(html.includes(text),text);
  assert.doesNotMatch(html,/完整持仓|undefined|<details open/);
  assert.equal((html.match(/<details><summary>/g)||[]).length>=4,true);
  assert.equal(result.model.feeCalculationReceipt,undefined);
@@ -191,5 +191,52 @@ test('distribution validation rejects forged totals, duplicate groups and wrong 
  assert.equal([...section.matchAll(/aria-valuenow="([\d.]+)"/g)].reduce((s,x)=>s+Math.round(Number(x[1])*100),0),10000);
  assert.ok(html.indexOf('股票四类配置')<html.indexOf('常青基金分布'));assert.ok(html.indexOf('常青基金分布')<html.indexOf('对冲基金分布'));assert.ok(html.indexOf('对冲基金分布')<html.indexOf('All Together · 四类前五'));
  const old=structuredClone(f.model);delete old.classificationSummary.fundDistributions;await f.ratio.validateModel(old);assert.doesNotMatch(f.ratio.render(old),/常青基金分布/);
- const zero=structuredClone(m),z=zero.classificationSummary;z.totalValueUSD-=d.totalCents/100;z.classes.find(g=>g.name==='常青基金').totalValueUSD=0;z.fundDistributions[0]={name:'常青基金',totalCents:0,groups:[{name:'未分类',valueCents:0}]};await f.ratio.validateModel(zero);assert.doesNotMatch(f.ratio.render(zero),/NaN|Infinity/);
+ const zero=structuredClone(m),z=zero.classificationSummary;delete z.assetAllocation;z.totalValueUSD-=d.totalCents/100;z.classes.find(g=>g.name==='常青基金').totalValueUSD=0;z.fundDistributions[0]={name:'常青基金',totalCents:0,groups:[{name:'未分类',valueCents:0}]};await f.ratio.validateModel(zero);assert.doesNotMatch(f.ratio.render(zero),/NaN|Infinity/);
+});
+
+function sixAllocationFixture(){
+ const raw=syntheticOfficialSource(),account=raw.accounts[9];
+ const p={sourceRow:901,account,name:'Synthetic defensive holding',securityCode:'DEF-OTHER',market:'TEST',sharesightCategory:'防御资产',valueUSD:12.34,quantity:1};
+ raw.classification.positions.push(p);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;
+ raw.exposure.rows.push({sourceRow:901,account,securityCode:p.securityCode,market:p.market,name:p.name,withinETF:null,ownership:'Direct',valueUSD:34.56,sourcePercentage:null});
+ const c={sourceRow:902,account,name:'Synthetic extra cash',sharesightCategory:'Cash Accounts',valueUSD:1.23};
+ raw.classification.cashAccounts.push(c);raw.classification.canonicalDataRows++;raw.classification.allWorksheetXmlRows++;
+ raw.exposure.rows.push({sourceRow:902,account,securityCode:null,market:null,name:c.name,withinETF:null,ownership:'Cash',valueUSD:2.35,sourcePercentage:null});
+ raw.exposure.canonicalDataRows+=2;raw.exposure.allWorksheetXmlRows+=2;
+ return raw;
+}
+test('six asset categories conserve all accounts, separate defense and themes, and never use look-through values',()=>{
+ const raw=sixAllocationFixture(),f=projected(raw),c=f.built.input.classification,a=c.assetAllocation;
+ assert.deepEqual(a.groups.map(g=>[g.name,g.valueCents,g.targetPct]),[['PE/VC',49000,0],['对冲基金',49000,15],['常青基金',49000,35],['股票市场',16000,40],['现金类',2357,8],['主题投资',4700,2]]);
+ assert.equal(a.totalCents,170057);assert.equal(a.totalCents,Math.round(c.totalValueUSD*100));assert.equal(a.groups.reduce((n,g)=>n+g.valueCents,0),a.totalCents);assert.equal(a.groups.reduce((n,g)=>n+g.targetPct,0),100);
+ assert.deepEqual(a.groups[4].accounts,[{name:raw.accounts[9],valueCents:1357},{name:'IB-HK',valueCents:500},{name:'NOAH-HK',valueCents:500}]);
+ for(const g of a.groups)assert.equal(g.accounts.reduce((n,r)=>n+r.valueCents,0),g.valueCents);
+ assert.notEqual(a.totalCents,Math.round(f.built.input.exposure.summary.totalValueUSD*100));
+ const prior=createOfficialRatioSourceCore().build(raw,{sourceSha256:f.sha,sourceBytes:f.bytes.length,includeAssetAllocation:false});
+ const next=structuredClone(f.built.input);delete next.classification.assetAllocation;assert.deepEqual(next,prior.input);
+ assert.deepEqual(f.built.companyContext,prior.companyContext);assert.deepEqual(f.built.input.book,prior.input.book);
+ assert.doesNotThrow(()=>f.source.verifyBrowserSourceAssociations(raw,prior.input,{scopeHash:f.scope,now:f.now}));
+ const tampered=structuredClone(f.built.input);tampered.classification.assetAllocation.groups[4].accounts[0].name='IB-HK';assert.throws(()=>f.source.verifyBrowserSourceAssociations(raw,tampered,{scopeHash:f.scope,now:f.now}));
+});
+test('six asset categories use exact source classifications, not symbols, fuzzy names or leverage multiples',()=>{
+ const raw=sixAllocationFixture(),p=raw.classification.positions.find(p=>p.securityCode==='VSTL');
+ // A leveraged product is still its actual direct asset value in its declared category.
+ p.securityCode='TQQQ';for(const r of raw.exposure.rows){if(r.securityCode==='VSTL')r.securityCode='TQQQ';if(r.withinETF==='VSTL.NASDAQ')r.withinETF='TQQQ.NASDAQ';}
+ assert.equal(projected(raw).built.input.classification.assetAllocation.groups[5].valueCents,4700);
+ p.sharesightCategory='美国科技';const moved=projected(raw).built.input.classification.assetAllocation;
+ assert.equal(moved.groups[3].valueCents,18000);assert.equal(moved.groups[5].valueCents,2700);assert.equal(moved.totalCents,170057);
+ p.sharesightCategory='Unmapped';assert.throws(()=>projected(raw),/RATIO_OFFICIAL_SOURCE_REFUSED/);
+ const bytes=Buffer.from(JSON.stringify(raw));assert.doesNotThrow(()=>createOfficialRatioSourceCore().build(raw,{sourceSha256:hash(bytes),sourceBytes:bytes.length,includeAssetAllocation:false}));
+});
+test('six-category snapshot validates targets, account membership, sums and renders zero reference without hiding assets',async t=>{
+ const f=await authenticated(t,sixAllocationFixture()),result=await f.snapshot.verify(f.signed,f.manager,{now:f.now});
+ for(const edit of [a=>a.totalCents++,a=>a.groups[0].targetPct=1,a=>a.groups.reverse(),a=>a.groups[4].valueCents++,a=>a.groups[4].accounts[0].valueCents++,a=>a.groups[4].accounts[0].name='Unknown account',a=>a.groups[4].accounts.push({...a.groups[4].accounts[0]}),a=>a.groups[4].accounts.reverse(),a=>a.groups[0].valueCents=-1,a=>a.groups[4].extra=true]){
+  const bad=structuredClone(f.model);edit(bad.classificationSummary.assetAllocation);await assert.rejects(f.ratio.validateModel(bad));
+ }
+ const html=f.ratio.render(result.model),overview=html.split('<section class="card ratio-asset-overview')[1].split('</table>')[0];
+ assert.equal((overview.match(/<tr>/g)||[]).length,7);assert.match(overview,/PE\/VC<\/td><td>USD 490\.00<\/td><td>[\d.]+%／0%/);assert.match(overview,/资产分类截至 2026-10-29/);assert.doesNotMatch(overview,/2026-10-30/);
+ assert.match(html,/参考目标合计100%/);assert.match(html,/DEF-OTHER/);assert.match(html,/不代表卖出指令/);assert.doesNotMatch(html,/NaN|Infinity|<details[^>]* open/);
+ const old=structuredClone(f.model);delete old.classificationSummary.assetAllocation;await f.ratio.validateModel(old);assert.match(f.ratio.render(old),/四类资产配置总览/);assert.doesNotMatch(f.ratio.render(old),/ratio-six-allocation/);
+ const zero=sixAllocationFixture();for(const p of zero.classification.positions)if(p.sharesightCategory==='VC/PE')p.valueUSD=0;
+ const z=await authenticated(t,zero);await z.ratio.validateModel(z.model);assert.match(z.ratio.render(z.model),/PE\/VC<\/td><td>USD 0\.00<\/td><td>0\.00%／0%/);
 });

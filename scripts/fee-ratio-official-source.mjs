@@ -50,6 +50,21 @@ export function createOfficialRatioSourceCore(){
       return {name,totalCents,groups};
     });
   }
+  function assetAllocation(positions,cash){
+    const labels=['PE/VC','对冲基金','常青基金','股票市场','现金类','主题投资'],targets=[0,15,35,40,8,2];
+    const categories=new Map([['VC/PE',0],['对冲基金',1],['常青基金',2],['美国底仓',3],['美国科技',3],['非美发达',3],['新兴市场',3],['防御资产',4],['Cash Accounts',4],['主题投资',5]]);
+    const groups=labels.map((name,i)=>({name,valueCents:0,targetPct:targets[i],accounts:new Map()}));
+    // Use each direct classification row exactly once. Exposure, leverage and
+    // reference targets never change actual assets or the account denominator.
+    for(const r of positions.concat(cash)){
+      const i=categories.get(r.sharesightCategory);if(i===undefined)fail();
+      const g=groups[i],value=cents(r.valueUSD);g.valueCents+=value;
+      g.accounts.set(r.account,(g.accounts.get(r.account)||0)+value);
+      if(!Number.isSafeInteger(g.valueCents))fail();
+    }
+    const totalCents=groups.reduce((n,g)=>n+g.valueCents,0);if(!Number.isSafeInteger(totalCents))fail();
+    return {totalCents,groups:groups.map(g=>({...g,accounts:[...g.accounts].map(([name,valueCents])=>({name,valueCents})).sort((a,b)=>b.valueCents-a.valueCents||a.name.localeCompare(b.name))}))};
+  }
   const sourceId=s=>{if(!exact(s,['file','sha256','libraryFileId','libraryVersion'])||!text(s.file)||!hex(s.sha256)||!/^libfile_[a-f0-9]{32}$/.test(s.libraryFileId)||!Number.isSafeInteger(s.libraryVersion)||s.libraryVersion<0)fail();};
   function capture(s){
     if(!date(s.asOf)||!instant(s.capturedAt)||s.captureTimeBasis!=='original-download-file-mtime'
@@ -59,16 +74,16 @@ export function createOfficialRatioSourceCore(){
     const observed=[...s.dateEvidence.matchAll(/\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{4})\b/g)].map(m=>m[3]+'-'+String(months.indexOf(m[2])+1).padStart(2,'0')+'-'+m[1].padStart(2,'0'));
     if(!observed.length||observed.some(d=>d!==s.asOf)||s.asOf>new Date(Date.parse(s.capturedAt)+8*3600000).toISOString().slice(0,10))fail();
   }
-  function overview(positions,cash,asOf,includeFundDistributions){
+  function overview(positions,cash,asOf,includeFundDistributions,includeAssetAllocation){
     const all=positions.concat(cash),classes=names.map(name=>({name,totalValueUSD:sum(all.filter(r=>r.fourClass===name))}));
     // Venue-scoped GLD is the previously confirmed physical-gold ETF. Mining
     // companies and unrelated ETF names are not inferred to be gold.
     const goldRows=positions.filter(r=>r.securityCode==='GLD'&&r.market==='NYSE');
     const gold={rule:'physical-gold-etf.GLD.NYSE.v1',valueUSD:sum(goldRows),secondaryIncluded:goldRows.every(r=>r.fourClass==='二级市场')};
-    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold,...(includeFundDistributions?{fundDistributions:fundDistributions(positions)}:{})};
+    return {schema:'fee-console.classification-overview.v1',asOf,currency:'USD',basis:'complete-official-classification-row-sum',totalValueUSD:sum(all),classes,gold,...(includeFundDistributions?{fundDistributions:fundDistributions(positions)}:{}),...(includeAssetAllocation?{assetAllocation:assetAllocation(positions,cash)}:{})};
   }
-  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true}={}){
-    if(typeof includeFundDistributions!=='boolean')fail();
+  function build(raw,{sourceSha256,sourceBytes,includeFundDistributions=true,includeAssetAllocation=true}={}){
+    if(typeof includeFundDistributions!=='boolean'||typeof includeAssetAllocation!=='boolean')fail();
     if(!exact(raw,['schemaVersion','source','accounts','sources','classification','exposure','coverage','limitations'])||raw.schemaVersion!==RAW
       ||!exact(raw.source,['provider','view','transport'])||raw.source.provider!=='Sharesight'||raw.source.view!=='All Together'||raw.source.transport!=='official-workbook-exports'
       ||!hex(sourceSha256)||!Number.isSafeInteger(sourceBytes)||sourceBytes<1||sourceBytes>5*1024*1024
@@ -92,7 +107,7 @@ export function createOfficialRatioSourceCore(){
       if(!exact(r,['sourceRow','account','name','valueUSD','sharesightCategory']))fail();common(r);if(r.sharesightCategory!=='Cash Accounts')fail();
       const k=key(r.account,r.name,'cash');if(cashByKey.has(k))fail();const p={...r,fourClass:'二级市场'};cashByKey.set(k,p);cash.push(p);
     }
-    const sourceDates={classification:c.asOf,exposure:e.asOf},classification=overview(positions,cash,c.asOf,includeFundDistributions),rows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set();
+    const sourceDates={classification:c.asOf,exposure:e.asOf},classification=overview(positions,cash,c.asOf,includeFundDistributions,includeAssetAllocation),rows=[],cash30=[],direct30=new Map(),parents=new Map(),ids=new Set();
     for(const r of e.rows){
       if(!exact(r,['sourceRow','account','securityCode','market','name','withinETF','ownership','valueUSD','sourcePercentage'])||!accounts.has(r.account)||!text(r.name)||!Number.isSafeInteger(r.sourceRow)||r.sourceRow<1||ids.has(r.sourceRow)||!(r.sourcePercentage===null||typeof r.sourcePercentage==='number'&&Number.isFinite(r.sourcePercentage)))fail();ids.add(r.sourceRow);cents(r.valueUSD);
       let owner;
