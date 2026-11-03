@@ -17,7 +17,7 @@ import { boundedJson } from './fee-http-json.mjs';
 import { isIsoDate, isWeekend, classifyFlow, flowId, inKindBusinessKey, notificationIncomeFlowAudit } from "./daily-core.mjs";
 import { validateHealth } from "./fee-data-health.mjs";
 import { STYLE_ACCOUNTS } from './fee-style-registry.mjs';
-import {prepareIbManagerReport} from './ib-manager-report.mjs';
+import {prepareIbManagerReport,assertIbManagerConfiguration,assertIbManagerPublication} from './ib-manager-report.mjs';
 import {validateReportPlan,selectReportBenchmark} from './fee-report-period.mjs';
 import {REPORT_METADATA_FAILURE_CODES} from './fee-report-metadata.mjs';
 
@@ -699,6 +699,7 @@ function writerArgs(input, file) {
 export async function produce(options = {}) {
   let stage = "CONFIG";
   try {
+    if(options.requireIb===true)assertIbManagerConfiguration();
     const cli = options.cli || args(process.argv.slice(2));
     const benchmarkFile = path.resolve(cli["benchmark-file"] || "");
     const output = safeOutputDir(cli["out-dir"] || "");
@@ -774,6 +775,7 @@ export async function produce(options = {}) {
         if (diagnostic) process.stderr.write(UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX + JSON.stringify(diagnostic) + '\n');
       }
       assertCandidateReceiptable(finalPayload);
+      if(options.requireIb===true)await assertIbManagerPublication(finalPayload,targetDate);
       run("fee-receipt-report.mjs", [`--file=${dataFile}`, "--format=validate"], env);
       stage = "HEALTH_CREATE";
       run("fee-data-health.mjs", ["create-success", `--out=${healthFile}`, `--data=${dataFile}`,
@@ -826,7 +828,7 @@ const SAFE_PRODUCER_FAILURE_CODES = new Set([
     CASH_ANCHOR_MISSING CASH_BALANCE_STALE CASH_CHAIN CASH_CURRENCY CASH_HISTORY_BOUNDARY
     CASH_HISTORY_EVIDENCE CASH_HISTORY_TARGET CASH_IDENTITY CASH_PRECISION CASH_PREVIOUS_EVIDENCE
     CASH_RECONCILIATION CASH_REPORT_BALANCE CASH_TRANSACTION_IDENTITY CONFIG CREDENTIALS DATE
-    ECON_VERSION FAILED HEALTH HOLDING HOLDING_CATALOG_DATE_CONFLICT HOLDING_HISTORY_CURRENT
+    ECON_VERSION FAILED HEALTH IB_CONFIG IB_BASELINE_LOCK IB_INCOMPLETE HOLDING HOLDING_CATALOG_DATE_CONFLICT HOLDING_HISTORY_CURRENT
     HOLDING_HISTORY_IDENTITY HOLDING_HISTORY_INCEPTION HOLDING_HISTORY_REQUIRED HOLDING_HISTORY_UNSUPPORTED
     HOLDING_IDENTITY HOLDING_TERMINAL_CURRENT HOLDING_TERMINAL_IDENTITY HOLDING_TERMINAL_OPEN
     HOLDING_TERMINAL_PRECISION HOLDING_TERMINAL_REQUIRED HTTP_REJECTED IDENTITY INCOME_EVIDENCE
@@ -878,7 +880,7 @@ async function main() {
     console.log(JSON.stringify({ schema: "fee-console.published-preflight.v1", ...result }));
     return;
   }
-  const result = await produce({ cli });
+  const result = await produce({ cli, requireIb:true });
   console.log(JSON.stringify({ schema: "fee-console.cloud-producer.v1", targetDate: result.targetDate,
     outcome: result.outcome, retryCount: result.retryCount, sourceDates: result.sourceDates, dataSha256: result.dataSha256,
     ...(result.ibManager?{ibManager:result.ibManager}:{}) }));

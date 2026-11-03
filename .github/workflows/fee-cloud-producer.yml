@@ -111,7 +111,7 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
           FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
-          IB_MANAGER_READ_ENABLED: ${{ vars.IB_MANAGER_READ_ENABLED }}
+          IB_MANAGER_READ_ENABLED: 'true'
           FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
           REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
           REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.report_target || '' }}
@@ -204,6 +204,12 @@ jobs:
           FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
         run: node scripts/fee-report-producer.mjs --mode=once-confirm
 
+      - name: Require Jenny IB configuration before financial access
+        env:
+          IB_MANAGER_READ_ENABLED: 'true'
+          IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
+        run: node --input-type=module -e "import {assertIbManagerConfiguration} from './scripts/ib-manager-report.mjs'; assertIbManagerConfiguration();"
+
       - name: Read the independent benchmark cache
         id: benchmark_base
         shell: bash
@@ -262,7 +268,7 @@ jobs:
           FEE_CLOUD_SHARESIGHT_CLIENT_ID: ${{ steps.sharesight_credentials.outputs.client_id }}
           FEE_CLOUD_SHARESIGHT_CLIENT_SECRET: ${{ steps.sharesight_credentials.outputs.client_secret }}
           FEE_DATA_KEY: ${{ secrets.FEE_DATA_KEY }}
-          IB_MANAGER_READ_ENABLED: ${{ vars.IB_MANAGER_READ_ENABLED }}
+          IB_MANAGER_READ_ENABLED: 'true'
           IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
           REPORT_KIND: ${{ needs.period.outputs.kind }}
