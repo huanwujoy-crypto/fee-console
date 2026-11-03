@@ -720,7 +720,7 @@ assert.equal(ratioUiHash(instantFixtureBytes),'f4903f4e28f8f5a53ae7d2387db589652
 const instantFixture=JSON.parse(instantFixtureBytes);
 const actualInstalledUiBytes=fs.readFileSync(unifiedUiFile,'utf8');
 const sixFixtureBytes=fs.readFileSync(new URL('./fixtures/fee-ratio-six-allocation-ui.json',import.meta.url));
-assert.equal(ratioUiHash(sixFixtureBytes),'34b6b499ef85751cecb8e7586fd43f8ccb35686dbc2a84c0d8da20354969a261');
+assert.equal(ratioUiHash(sixFixtureBytes),'fc628cf1c6dcb70aafd7e1545de69743ce8bdd9a7a27a4953f8f726813e3e3dc');
 const sixFixture=JSON.parse(sixFixtureBytes);
 function sixUiAdapter(page,forward=true){
  assert.equal(typeof forward,'boolean');assert.equal(ratioUiHash(page),forward?sixFixture.priorSha256:sixFixture.nextSha256,'unreviewed six-category input');
@@ -729,6 +729,7 @@ function sixUiAdapter(page,forward=true){
 }
 let sixStageUiSource=actualInstalledUiBytes;
 let performanceReviewedUiSource=actualInstalledUiBytes;
+if(ratioUiHash(sixStageUiSource)===sixFixture.releaseNextSha256){for(const r of [...sixFixture.releaseRegions].reverse()){assert.equal(sixStageUiSource.split(r.next).length,2);sixStageUiSource=sixStageUiSource.replace(r.next,()=>r.prior);}assert.equal(ratioUiHash(sixStageUiSource),sixFixture.releasePriorSha256);performanceReviewedUiSource=sixStageUiSource;}
 if(ratioUiHash(performanceReviewedUiSource)===sixFixture.performancePriorSha256){
  for(const r of sixFixture.performanceRegions){assert.equal(performanceReviewedUiSource.split(r.prior).length,2);performanceReviewedUiSource=performanceReviewedUiSource.replace(r.prior,()=>r.next);}
 }
