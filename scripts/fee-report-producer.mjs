@@ -536,8 +536,20 @@ export async function dailyPublicationPreflight({now=new Date(),targetDate=null,
 // A distinct opt-in reuses the original daily producer and promotion path.
 // The consumed one-off remains authoritative until its active binding is
 // explicitly retired; its immutable tags and attempt history are never reset.
-export function scheduledDailyContext(args,{env=process.env,now=new Date()}={}){
-  if(env.GITHUB_EVENT_NAME!=='schedule'||env.FEE_REPORT_ONCE_MAIN)return false;
+export function scheduledDailyContext(args,{env=process.env,now=new Date(),readEvent}={}){
+  const automatic=env.FEE_AUTOMATIC_DAILY_REQUEST==='true';
+  if(automatic){
+    try{
+      if(env.GITHUB_EVENT_NAME!=='workflow_dispatch'||env.GITHUB_ACTOR_ID!==String(RECOVERY_OWNER)||env.FEE_REPORT_ONCE_MAIN)throw Error();
+      const event=readEvent?readEvent():(()=>{const p=env.GITHUB_EVENT_PATH;if(!p||fs.statSync(p).size>256*1024)throw Error();return JSON.parse(fs.readFileSync(p,'utf8'));})();
+      const i=event?.inputs,off=v=>v===undefined||v===false||v==='false',blank=v=>v===undefined||v==='';
+      const bools=['run_reviewed_once','source_plan_check_only','source_acceptance_once'];
+      const strings=['report_target','report_markets','manual_sync_completed_for','recovery_main','ratio_main','ratio_plan','source_from','source_target','source_main'];
+      if(event.sender?.id!==RECOVERY_OWNER||event.repository?.full_name!==ONCE_REPO||!i||Array.isArray(i)
+          ||i.report_kind!=='automatic-daily'||Object.keys(i).some(k=>!['report_kind',...bools,...strings].includes(k))
+          ||!bools.every(k=>off(i[k]))||!strings.every(k=>blank(i[k])))throw Error();
+    }catch{fail('DAILY_SCOPE');}
+  }else if(env.GITHUB_EVENT_NAME!=='schedule'||env.FEE_REPORT_ONCE_MAIN)return false;
   if(env.FEE_REPORT_DAILY_ENABLED!=='true'||env.FEE_REPORT_PERIODS_ENABLED!=='true'||env.FEE_CLOUD_MODE!=='publish'
       ||env.GITHUB_ACTIONS!=='true'||env.GITHUB_REPOSITORY!=='huanwujoy-crypto/fee-console'||env.GITHUB_REF!=='refs/heads/main'
       ||env.GITHUB_RUN_ATTEMPT!=='1'||!/^\d+$/.test(env.GITHUB_RUN_ID||'')||!Number.isSafeInteger(Number(env.GITHUB_RUN_ID))||Number(env.GITHUB_RUN_ID)<=0

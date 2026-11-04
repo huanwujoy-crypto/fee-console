@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 REPO = 'huanwujoy-crypto/fee-console'
 WORKFLOW = 'fee-cloud-producer.yml'
 WORKFLOW_ID = 365873934
-JOB = 'produce'
+JOB_PREFIX = 'Produce '
 SCHEMA = 'fee-console.clock-intent.v1'
 ACTIVE = ('queued', 'in_progress', 'waiting', 'pending', 'requested')
 STATUSES = set(ACTIVE) | {'completed'}
@@ -58,7 +58,7 @@ def plan(mode, now):
     if hk.weekday() not in (1, 2, 3, 4, 5):
         return {**result, 'action': False}
     minute = hk.hour * 60 + hk.minute
-    start = 600 if mode == 'launch' else 605
+    start = 540 if mode == 'launch' else 545
     if not start <= minute < start + 5:
         fail('OUTSIDE_WINDOW')
     midnight = hk.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -107,8 +107,33 @@ def inspect_runs(github, selected, current_time):
     busy = []
     for status, payload in results:
         busy.extend(validate_runs(payload, current_time(), status))
-    expected = [row for row in day if row['event'] in ('schedule', 'workflow_dispatch')]
+    expected = [row for row in day if row['event'] in ('schedule', 'workflow_dispatch')
+                and not nonfinancial_run(github, row)]
     return expected, busy
+
+
+def nonfinancial_run(github, run):
+    # Exclude only completed, positively identified non-fee paths. Unknown,
+    # queued or incomplete metadata remains blocking; titles alone prove nothing.
+    if run['event'] != 'workflow_dispatch' or run['status'] != 'completed':
+        return False
+    rows = complete_list(github.jobs(run['id']), 'jobs')
+    if (len({row.get('id') for row in rows}) != len(rows)
+        or any(type(row.get('id')) is not int or row['id'] <= 0
+               or row.get('run_id') != run['id'] or row.get('status') != 'completed'
+               or not isinstance(row.get('name'), str)
+               or row.get('conclusion') not in ('success','failure','neutral','cancelled','skipped','timed_out','action_required','startup_failure','stale')
+               for row in rows)):
+        fail('METADATA_INVALID')
+    periods = [row for row in rows if row['name'] == 'period']
+    producers = [row for row in rows if row['name'].strip() == 'Produce'
+                 or row['name'].startswith(JOB_PREFIX)]
+    if len(periods) != 1 or periods[0].get('conclusion') != 'skipped' or not producers:
+        return False
+    if any(row.get('conclusion') != 'skipped' for row in producers):
+        return False
+    return any((row['name'] == 'ratio' or row['name'].startswith('Public source plan check '))
+               and row.get('conclusion') in ('success', 'failure', 'cancelled', 'timed_out') for row in rows)
 
 
 def valid_intent(value, selected):
@@ -125,7 +150,9 @@ def valid_intent(value, selected):
 
 def started_job(payload, run, selected, now):
     rows = complete_list(payload, 'jobs')
-    matches = [row for row in rows if row.get('name') == JOB]
+    matches = [row for row in rows if re.fullmatch(
+        r'Produce (?:daily|daily-monthly|weekly|monthly) ' + re.escape(selected['targetDate']),
+        row.get('name', ''))]
     if len(matches) > 1:
         fail('METADATA_INVALID')
     if not matches:
@@ -207,7 +234,7 @@ def run_clock(mode, now, github, store, enabled=False, current_time=None):
         store.result({**intent, 'outcome': 'natural-request-visible'})
         return {'event': 'FEE_CLOCK', 'outcome': 'natural-request-visible', **safe}
     still_in_slot()
-    dispatched = github.dispatch()  # Fixed main, sole input false; no retry.
+    dispatched = github.dispatch()  # Fixed main, automatic daily mode; no retry.
     store.result({**intent, 'outcome': 'dispatch-accepted', 'runId': dispatched})
     return {'event': 'FEE_CLOCK', 'outcome': 'dispatch-accepted', **safe, 'runId': dispatched,
             'publicationVerified': False}

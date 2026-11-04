@@ -1,12 +1,12 @@
 {
-  "status": "default-off-candidate-final-owner-gate-required",
+  "status": "local-existing-resource-update-candidate-not-approved-or-deployed",
   "project": "family-portfolio-gateway",
   "region": "asia-east2",
   "repository": "huanwujoy-crypto/fee-console",
   "workflow": ".github/workflows/fee-cloud-producer.yml",
   "ref": "main",
   "workflowDispatchInputs": {
-    "apply_style_proposal": false
+    "report_kind": "automatic-daily"
   },
   "noExtraLaunchSlots": true,
   "image": "asia-east2-docker.pkg.dev/family-portfolio-gateway/cloud-run-source-deploy/fee-clock@sha256:REQUIRES_VERIFIED_RELEASE_DIGEST",
@@ -104,7 +104,7 @@
   "schedulerJobs": [
     {
       "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-launch-1000",
-      "schedule": "0 10 * * 2-6",
+      "schedule": "0 9 * * 2-6",
       "timeZone": "Asia/Hong_Kong",
       "attemptDeadline": "30s",
       "retryConfig": {
@@ -126,7 +126,7 @@
     },
     {
       "name": "projects/family-portfolio-gateway/locations/asia-east2/jobs/fee-clock-check-start-1005",
-      "schedule": "5 10 * * 2-6",
+      "schedule": "5 9 * * 2-6",
       "timeZone": "Asia/Hong_Kong",
       "attemptDeadline": "30s",
       "retryConfig": {
@@ -283,10 +283,10 @@
   ],
   "approvalRequired": [
     "exact final GitHub-verified signed code head and complete diff via existing specific OWNER gate",
-    "verified runtime/base image and final release digest",
-    "owner personally creating and entering dedicated repository Actions-write credential through secure interface",
-    "one approved nonfinancial simulation and verified delivery to existing owner channel",
-    "explicit final enable/resume approval and next natural clock/publication acceptance"
+    "verify actual existing job, scheduler, secret metadata and identity without reading secret values; stop on scope mismatch",
+    "verified release digest; update existing runtime and two existing Scheduler times only after applicable approval",
+    "preserve existing claims, budgets, no retry and original fee protection; no create/delete/reset",
+    "real next natural clock and complete publication acceptance; synthetic tests are not production evidence"
   ],
   "costEstimateUsd": {
     "daysPerMonth": 23,
@@ -324,5 +324,10 @@
       "https://cloud.google.com/products/observability/pricing"
     ]
   },
-  "existingProducerModeActivationGate": "Verify live FEE_CLOUD_MODE=publish without changing it; missing/shadow is not publication acceptance."
+  "existingProducerModeActivationGate": "Verify live FEE_CLOUD_MODE=publish without changing it; missing/shadow is not publication acceptance.",
+  "schedulerUpdateSafety": "Update the two existing named jobs only after exact code approval and actual live metadata verification; retain paused state until explicit approved release. Historical resource names are not new 10:00 slots. No create, dispatch, retry, claim reset or IAM expansion.",
+  "updateExistingOnly": true,
+  "newResourcesAllowed": false,
+  "permissionChangesAllowed": false,
+  "liveResourceReadbackRequired": true
 }

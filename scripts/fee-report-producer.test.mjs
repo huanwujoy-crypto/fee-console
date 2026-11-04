@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
+import vm from 'node:vm';
 import {CLOUD_ACCOUNTS,parseSourceJson} from './fee-cloud-source.mjs';
 import {reportPreflightSummary,dailyPublicationPreflight,managedTransferIdentitiesFromFund,periodBenchmark,captureReportRange,publishedReportMatches,reportPublicationPreflight as nativeReportPreflight,readPeriodSourceAttempts,reportPublicationWatch,explicitReportPlan,periodIbRetryAllowed,readPeriodRetryRuns,assertPeriodIbRecheckUnchanged,reviewedSyncConfirmation,sourceAttemptWindowStart,produceReportPeriod,reportFailureCode,reviewedRecoveryConfirmation,readReportRecoveryRelease,validateReportRecoveryEvidence,authorizeReportRecovery} from './fee-report-producer.mjs';
 import {producerFailureCode,safeProducerFailureSummary,UNRESOLVED_FLOW_DIAGNOSTIC_PREFIX} from './fee-cloud-producer.mjs';
@@ -377,6 +378,60 @@ test('recurring daily entry is separately enabled and leaves the consumed one-of
  for(const change of [{FEE_REPORT_DAILY_ENABLED:''},{FEE_REPORT_PERIODS_ENABLED:'false'},{FEE_CLOUD_MODE:'shadow'},{GITHUB_ACTIONS:'false'},{GITHUB_REPOSITORY:'other/repo'},{GITHUB_REF:'refs/heads/other'},{GITHUB_SHA:''},{GITHUB_RUN_ATTEMPT:'2'},{GITHUB_RUN_ID:'0'}])assert.throws(()=>scheduledDailyContext(preflight,{env:{...env,...change},now}),/DAILY_SCOPE/);
  for(const args of [{...preflight,'report-target':'2026-11-03'},{...produce,'report-target':'2026-11-02'},{...produce,'report-kind':'monthly'},{...produce,'manual-sync-completed-for':'2026-11-03'},{...produce,'recovery-main':'a'.repeat(40)}])assert.throws(()=>scheduledDailyContext(args,{env,now}),/DAILY_SCOPE/);
  assert.throws(()=>scheduledDailyContext(produce,{env:{...env,PLANNED_MAIN:'b'.repeat(40)},now}),/DAILY_SCOPE/);
+});
+function automaticDailyFixture(){
+ const env={GITHUB_ACTIONS:'true',GITHUB_REPOSITORY:'huanwujoy-crypto/fee-console',GITHUB_REF:'refs/heads/main',GITHUB_SHA:'a'.repeat(40),GITHUB_EVENT_NAME:'workflow_dispatch',GITHUB_ACTOR_ID:'283054367',GITHUB_RUN_ATTEMPT:'1',GITHUB_RUN_ID:'1001',FEE_REPORT_ONCE_MAIN:'',FEE_REPORT_DAILY_ENABLED:'true',FEE_REPORT_PERIODS_ENABLED:'true',FEE_CLOUD_MODE:'publish',FEE_AUTOMATIC_DAILY_REQUEST:'true',PLANNED_MAIN:'a'.repeat(40)};
+ const event={sender:{id:283054367},repository:{full_name:'huanwujoy-crypto/fee-console'},inputs:{report_kind:'automatic-daily'}};
+ return {env,event,now:new Date('2026-11-04T09:00:00+08:00')};
+}
+test('automatic daily dispatch uses original daily guards without asserting manual review',()=>{
+ const f=automaticDailyFixture(),args={mode:'preflight'},readEvent=()=>f.event;
+ assert.equal(scheduledDailyContext(args,{...f,readEvent}),true);
+ assert.equal(reviewedSyncConfirmation(args,{...f,readEvent}),null);
+ assert.equal(scheduledDailyContext({mode:'produce','report-kind':'daily','report-target':'2026-11-03'},{...f,readEvent}),true);
+ assert.equal(f.env.GITHUB_EVENT_NAME,'workflow_dispatch');assert.equal(f.event.inputs.run_reviewed_once,undefined);
+});
+test('automatic daily rejects wrong identity, reruns, disabled mode and old one-off binding',()=>{
+ for(const change of [{GITHUB_ACTOR_ID:'1'},{GITHUB_EVENT_NAME:'schedule'},{GITHUB_REF:'refs/heads/topic'},{GITHUB_RUN_ATTEMPT:'2'},{FEE_REPORT_DAILY_ENABLED:'false'},{FEE_REPORT_PERIODS_ENABLED:'false'},{FEE_CLOUD_MODE:'shadow'},{FEE_REPORT_ONCE_MAIN:'b'.repeat(40)}]){
+  const f=automaticDailyFixture();assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,env:{...f.env,...change},readEvent:()=>f.event}),/DAILY_SCOPE/);
+ }
+});
+test('automatic daily rejects target overrides, human confirmation, mixed operations and unknown inputs',()=>{
+ const changes=[{report_kind:'daily'},{report_target:'2026-11-03'},{report_markets:'NYSE'},{manual_sync_completed_for:'2026-11-03'},{recovery_main:'b'.repeat(40)},{run_reviewed_once:'true'},{source_acceptance_once:'true'},{source_plan_check_only:'true'},{source_from:'2026-11-01'},{source_target:'2026-11-03'},{source_main:'b'.repeat(40)},{ratio_plan:'private-canary'},{ratio_main:'b'.repeat(40)},{unexpected:'private-canary'}];
+ for(const change of changes){const f=automaticDailyFixture();Object.assign(f.event.inputs,change);assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event}),/^Error: FEE_REPORT_DAILY_SCOPE$/);}
+ const f=automaticDailyFixture();for(const change of [{sender:{id:1}},{repository:{full_name:'other/repo'}}])assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>({...f.event,...change})}),/DAILY_SCOPE/);
+ assert.throws(()=>scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>{throw Error('private-canary');}}),/^Error: FEE_REPORT_DAILY_SCOPE$/);
+});
+test('automatic daily accepts GitHub default fields but cannot override preflight arguments',()=>{
+ const f=automaticDailyFixture();Object.assign(f.event.inputs,{run_reviewed_once:'false',source_plan_check_only:'false',source_acceptance_once:'false',report_target:'',report_markets:'',manual_sync_completed_for:'',recovery_main:'',ratio_main:'',ratio_plan:'',source_from:'',source_target:'',source_main:''});
+ assert.equal(scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event}),true);
+ assert.throws(()=>scheduledDailyContext({mode:'preflight','report-target':'2026-11-03'},{...f,readEvent:()=>f.event}),/DAILY_SCOPE/);
+});
+test('clock request passes the real automatic admission and retains attempted-source refusal',async()=>{
+ const result=spawnSync('python3',['-c',"import json; from runtime import Github\nclass H:\n def request(self,url,**kw):\n  print(json.dumps(kw['body'])); return 204,None\nGithub(http=H(),read_token=lambda:'synthetic-only').dispatch()"],{cwd:new URL('../cloud/fee-clock/',import.meta.url),encoding:'utf8',env:{PATH:process.env.PATH,PYTHONDONTWRITEBYTECODE:'1'}});
+ assert.equal(result.status,0,result.stderr);const body=JSON.parse(result.stdout),f=automaticDailyFixture();assert.equal(body.ref,'main');f.event.inputs=body.inputs;
+ const automatic=scheduledDailyContext({mode:'preflight'},{...f,readEvent:()=>f.event});
+ const prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:47:41Z');
+ const outcome=await dailyPublicationPreflight({scheduledDaily:automatic,now:f.now,markets:['NYSE','NASDAQ'],ibEnabled:true,runAttempt:'1',readState:async()=>prior,readSourceAttempts:async()=>({attempts:1,inProgress:false})});
+ assert.equal(outcome.reasonCode,'REPORT_DAILY_SOURCE_ALREADY_ATTEMPTED');
+});
+test('actual workflow admits only the opted-in automatic period path and propagates context before finance',()=>{
+ const wf=fs.readFileSync(new URL('../.github/workflows/fee-cloud-producer.yml',import.meta.url),'utf8');
+ const condition=(name,inputs,overrides={})=>{
+  const block=wf.split('\n  '+name+':\n')[1].split(/\n  [a-z-]+:\n/)[0];
+  const expression=/(?:^|\n)    if: \$\{\{ (.+) \}\}/.exec(block)[1];
+  const github={event_name:'workflow_dispatch',actor_id:'283054367',ref:'refs/heads/main',run_attempt:1,sha:'a'.repeat(40),...overrides.github};
+  const vars={FEE_REPORT_ONCE_MAIN:'',FEE_REPORT_DAILY_ENABLED:'true',FEE_REPORT_PERIODS_ENABLED:'true',FEE_CLOUD_MODE:'publish',...overrides.vars};
+  return Boolean(vm.runInNewContext(expression,{inputs,github,vars}));
+ };
+ const input={report_kind:'automatic-daily'};
+ assert.equal(condition('period',input),true);
+ for(const change of [{run_reviewed_once:true},{run_reviewed_once:false,ratio_plan:'x'},{source_acceptance_once:true},{source_plan_check_only:true}])assert.equal(condition('period',{...input,...change}),false);
+ for(const overrides of [{github:{actor_id:'1'}},{github:{ref:'refs/heads/topic'}},{github:{run_attempt:2}},{vars:{FEE_REPORT_DAILY_ENABLED:'false'}},{vars:{FEE_REPORT_ONCE_MAIN:'b'.repeat(40)}}])assert.equal(condition('period',input,overrides),false);
+ for(const job of ['source-plan-check','source-acceptance','ratio-preflight'])assert.equal(condition(job,{...input,source_plan_check_only:true,source_acceptance_once:true,ratio_plan:'x',ratio_main:'a'.repeat(40)}),false);
+ assert.equal((wf.match(/FEE_AUTOMATIC_DAILY_REQUEST:/g)||[]).length,3);
+ assert.match(wf,/REVIEWED_KIND: \$\{\{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_kind/);
+ assert.match(wf,/REVIEWED_TARGET: \$\{\{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_target/);
 });
 test('Nov4 daily09:00 and11:30 share one target; waiting, failed, pending and published entries do not read finance again',async()=>{
  const prior=state(dailyReportPlan('2026-11-02',['NYSE','NASDAQ']),'2026-11-03T03:47:41Z');

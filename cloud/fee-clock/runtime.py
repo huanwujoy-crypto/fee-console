@@ -99,7 +99,7 @@ class Github:
 
     def dispatch(self):
         status, value = self.http.request(API + '/actions/workflows/' + WORKFLOW + '/dispatches', method='POST',
-            body={'ref': 'main', 'inputs': {'apply_style_proposal': False}}, uncertain=True,
+            body={'ref': 'main', 'inputs': {'report_kind': 'automatic-daily'}}, uncertain=True,
             headers={'Accept': 'application/vnd.github+json', 'Content-Type': 'application/json',
                      'User-Agent': 'fee-console-independent-clock', 'X-GitHub-Api-Version': '2026-03-10',
                      'Authorization': 'Bearer ' + self.read_token()})

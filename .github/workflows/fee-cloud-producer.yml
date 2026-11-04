@@ -61,7 +61,7 @@ on:
         required: false
         default: ''
       report_kind:
-        description: Leave blank for the next due period, or select reviewed weekly/monthly
+        description: Leave blank for the next due period; automatic-daily is the opted-in clock path, never a reviewed one-off
         type: string
         required: false
         default: ''
@@ -86,8 +86,8 @@ concurrency:
 
 jobs:
   period:
-    # Legacy automated dispatchers omit run_reviewed_once and stay stopped.
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once)) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
+    # The clock has an explicit automatic-daily mode; it never asserts human review.
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && !inputs.source_plan_check_only && !inputs.source_acceptance_once && ((github.event_name == 'schedule' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && (vars.FEE_REPORT_ONCE_MAIN != '' || (vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish'))) || (github.event_name == 'workflow_dispatch' && ((inputs.run_reviewed_once && inputs.report_kind != 'automatic-daily') || (!inputs.run_reviewed_once && inputs.report_kind == 'automatic-daily' && vars.FEE_REPORT_ONCE_MAIN == '' && vars.FEE_REPORT_DAILY_ENABLED == 'true' && vars.FEE_REPORT_PERIODS_ENABLED == 'true' && vars.FEE_CLOUD_MODE == 'publish' && github.actor_id == '283054367' && github.ref == 'refs/heads/main' && github.run_attempt == 1)))) && (vars.FEE_CLOUD_MODE == 'shadow' || vars.FEE_CLOUD_MODE == 'publish') }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -113,12 +113,13 @@ jobs:
           FEE_REPORT_ACTIONS_TOKEN: ${{ github.token }}
           FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
           FEE_REPORT_DAILY_ENABLED: ${{ vars.FEE_REPORT_DAILY_ENABLED }}
+          FEE_AUTOMATIC_DAILY_REQUEST: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind == 'automatic-daily' && 'true' || '' }}
           FEE_REPORT_PERIODS_ENABLED: ${{ vars.FEE_REPORT_PERIODS_ENABLED }}
           FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
           IB_MANAGER_READ_ENABLED: 'true'
           FEE_REPORT_MARKETS: ${{ vars.FEE_REPORT_MARKETS }}
-          REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind || '' }}
-          REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.report_target || '' }}
+          REVIEWED_KIND: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_kind || '' }}
+          REVIEWED_TARGET: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_target || '' }}
           REVIEWED_MARKETS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.report_markets || '' }}
           REVIEWED_SYNC_DATE: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.manual_sync_completed_for || '' }}
           REVIEWED_RECOVERY_MAIN: ${{ github.event_name == 'workflow_dispatch' && inputs.run_reviewed_once && inputs.recovery_main || '' }}
@@ -216,6 +217,7 @@ jobs:
           IB_MANAGER_BASELINE_SHA256: ${{ vars.IB_MANAGER_BASELINE_SHA256 }}
           FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
           FEE_REPORT_DAILY_ENABLED: ${{ vars.FEE_REPORT_DAILY_ENABLED }}
+          FEE_AUTOMATIC_DAILY_REQUEST: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind == 'automatic-daily' && 'true' || '' }}
           FEE_REPORT_PERIODS_ENABLED: ${{ vars.FEE_REPORT_PERIODS_ENABLED }}
           FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
           PLANNED_MAIN: ${{ needs.period.outputs.main }}
@@ -292,6 +294,7 @@ jobs:
           FEE_ECON_GIST_ID: ${{ secrets.FEE_ECON_GIST_ID }}
           FEE_REPORT_ONCE_MAIN: ${{ vars.FEE_REPORT_ONCE_MAIN }}
           FEE_REPORT_DAILY_ENABLED: ${{ vars.FEE_REPORT_DAILY_ENABLED }}
+          FEE_AUTOMATIC_DAILY_REQUEST: ${{ github.event_name == 'workflow_dispatch' && inputs.report_kind == 'automatic-daily' && 'true' || '' }}
           FEE_REPORT_PERIODS_ENABLED: ${{ vars.FEE_REPORT_PERIODS_ENABLED }}
           FEE_CLOUD_MODE: ${{ vars.FEE_CLOUD_MODE }}
           PLANNED_MAIN: ${{ needs.period.outputs.main }}
@@ -406,7 +409,7 @@ jobs:
 
   source-plan-check:
     name: Public source plan check ${{ inputs.source_target }}
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.source_plan_check_only && !inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:
@@ -429,7 +432,7 @@ jobs:
 
   source-acceptance:
     name: Source acceptance ${{ inputs.source_target }}
-    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
+    if: ${{ !inputs.ratio_plan && !inputs.ratio_main && vars.FEE_REPORT_ONCE_MAIN == '' && github.event_name == 'workflow_dispatch' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && !inputs.source_plan_check_only && inputs.source_acceptance_once && !inputs.run_reviewed_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: fee-cloud-producer
@@ -483,7 +486,7 @@ jobs:
           fi
 
   ratio-preflight:
-    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && github.actor_id == '283054367' && github.run_attempt == 1 && inputs.report_kind != 'automatic-daily' && inputs.ratio_plan != '' && inputs.ratio_main == github.sha && !inputs.run_reviewed_once && !inputs.source_plan_check_only && !inputs.source_acceptance_once }}
     runs-on: ubuntu-latest
     timeout-minutes: 3
     permissions:

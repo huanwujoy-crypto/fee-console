@@ -9,7 +9,7 @@ class DeploymentTests(unittest.TestCase):
 
     def test_only_two_requested_slots_and_oauth_job_invocation(self):
         rows = self.plan['schedulerJobs']
-        self.assertEqual([x['schedule'] for x in rows], ['0 10 * * 2-6', '5 10 * * 2-6'])
+        self.assertEqual([x['schedule'] for x in rows], ['0 9 * * 2-6', '5 9 * * 2-6'])
         for row in rows:
             self.assertEqual(row['timeZone'], 'Asia/Hong_Kong')
             self.assertEqual(row['retryConfig'], {'retryCount': 0, 'maxRetryDuration': '0s'})
@@ -31,7 +31,7 @@ class DeploymentTests(unittest.TestCase):
         self.assertEqual(self.plan['secret']['githubScope']['Contents'], 'none')
         check = [x for x in self.plan['runtimeIam'] if x['member'].startswith('fee-clock-check@')]
         self.assertEqual([x['role'] for x in check], ['roles/storage.objectViewer'])
-        self.assertEqual(self.plan['workflowDispatchInputs'], {'apply_style_proposal': False})
+        self.assertEqual(self.plan['workflowDispatchInputs'], {'report_kind': 'automatic-daily'})
         self.assertFalse(any(x['role'] in ('roles/owner', 'roles/editor', 'roles/iam.serviceAccountTokenCreator') for x in self.plan['runtimeIam']))
 
     def test_scheduler_failures_and_job_failures_both_have_disabled_proposals(self):
