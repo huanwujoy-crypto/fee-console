@@ -9,11 +9,11 @@ from clock import ClockError, REPO, WORKFLOW, WORKFLOW_ID, target_date, plan, ru
 from runtime import Github, Http, Store
 
 
-NOW = datetime(2026, 10, 14, 2, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 14, 1, 0, tzinfo=timezone.utc)
 CHECK = NOW + timedelta(minutes=5)
 
 
-def run_row(run_id=11, status='queued', event='workflow_dispatch', created='2026-10-14T02:00:00Z'):
+def run_row(run_id=11, status='queued', event='workflow_dispatch', created='2026-10-14T01:00:00Z'):
     return {'id': run_id, 'workflow_id': WORKFLOW_ID, 'repository': {'full_name': REPO},
             'head_branch': 'main', 'status': status, 'event': event, 'created_at': created}
 
@@ -101,6 +101,45 @@ class ClockTests(unittest.TestCase):
         self.assertEqual(run_clock('launch', NOW, self.github, self.store)['outcome'], 'disabled')
         self.assertEqual(self.github.read_count, 0)
 
+    def nonfee_completed(self, name='ratio'):
+        row=run_row(status='completed'); row['display_title']='Manual ratio snapshot'
+        self.github.day=[row]
+        self.github.job[11]=[
+            {'id':21,'run_id':11,'name':'period','status':'completed','conclusion':'skipped'},
+            {'id':22,'run_id':11,'name':'Produce  ','status':'completed','conclusion':'skipped'},
+            {'id':23,'run_id':11,'name':name,'status':'completed','conclusion':'success'}]
+
+    def test_completed_ratio_only_run_is_not_a_fee_launch(self):
+        self.nonfee_completed()
+        self.assertEqual(self.go()['outcome'],'dispatch-accepted')
+        self.assertEqual(self.github.post_count,1)
+        self.assertEqual(self.go()['outcome'],'intent-already-exists')
+        self.assertEqual(self.github.post_count,1)
+
+    def test_completed_public_plan_check_is_not_a_fee_launch(self):
+        self.nonfee_completed('Public source plan check 2026-10-13')
+        self.assertEqual(self.go()['outcome'],'dispatch-accepted')
+
+    def test_nonfee_title_does_not_hide_a_real_fee_attempt(self):
+        self.nonfee_completed()
+        self.github.job[11][0]['conclusion']='success'
+        self.assertEqual(self.go()['outcome'],'already-requested')
+        self.assertEqual(self.github.post_count,0)
+
+    def test_incomplete_nonfee_jobs_fail_closed_without_dispatch(self):
+        self.nonfee_completed()
+        self.github.job[11][1]['run_id']=99
+        self.error('METADATA_INVALID')
+        self.assertEqual(self.github.post_count,0)
+
+    def test_active_ratio_still_blocks_shared_producer_concurrency(self):
+        self.github.active['in_progress']=[run_row(status='in_progress')]
+        self.error('PRODUCER_BUSY')
+        self.assertEqual(self.github.post_count,0)
+
+    def test_old_ten_am_window_cannot_create_a_late_clock_attempt(self):
+        self.error('OUTSIDE_WINDOW',now=NOW+timedelta(hours=1))
+
     def test_launch_once_and_duplicate_scheduler_delivery(self):
         self.assertEqual(self.go()['runId'], 41)
         self.assertEqual(self.go()['outcome'], 'intent-already-exists')
@@ -184,13 +223,13 @@ class ClockTests(unittest.TestCase):
 
     def test_workflow_in_progress_but_actual_job_queued_is_not_started(self):
         self.github.day = [run_row(status='in_progress')]
-        self.github.job[11] = [{'id': 21, 'run_id': 11, 'name': 'produce', 'status': 'queued', 'started_at': None}]
+        self.github.job[11] = [{'id': 21, 'run_id': 11, 'name': 'Produce daily 2026-10-13', 'status': 'queued', 'started_at': None}]
         self.error('REQUESTED_NOT_STARTED', mode='check-start', now=CHECK)
 
     def job_started(self, status='in_progress', conclusion=None):
         self.github.day = [run_row(status='in_progress')]
-        self.github.job[11] = [{'id': 21, 'run_id': 11, 'name': 'produce', 'status': status,
-                               'conclusion': conclusion, 'started_at': '2026-10-14T02:01:00Z'}]
+        self.github.job[11] = [{'id': 21, 'run_id': 11, 'name': 'Produce daily 2026-10-13', 'status': status,
+                               'conclusion': conclusion, 'started_at': '2026-10-14T01:01:00Z'}]
 
     def test_actual_produce_job_start_is_evidence_not_publication(self):
         self.job_started()
@@ -214,7 +253,7 @@ class ClockTests(unittest.TestCase):
 
     def test_dst_and_weekend_match_original_target_contract(self):
         for value, expected in (
-            ('2026-10-14T02:00:00Z', '2026-10-13'),
+            ('2026-10-14T01:00:00Z', '2026-10-13'),
             ('2026-11-04T02:00:00Z', '2026-11-03'),
             ('2026-10-13T02:00:00Z', '2026-10-12'),
             ('2026-10-16T20:14:00Z', '2026-10-15'),
@@ -241,12 +280,12 @@ class FakeHttp:
 
 
 class AdapterTests(unittest.TestCase):
-    def test_dispatch_exact_target_and_sole_false_input(self):
+    def test_dispatch_exact_target_and_automatic_mode_without_human_confirmation(self):
         http = FakeHttp([(204, None)])
         Github(http, lambda: 'synthetic-not-a-real-credential').dispatch()
         url, call = http.calls[0]
         self.assertEqual(url, 'https://api.github.com/repos/' + REPO + '/actions/workflows/fee-cloud-producer.yml/dispatches')
-        self.assertEqual(call['body'], {'ref': 'main', 'inputs': {'apply_style_proposal': False}})
+        self.assertEqual(call['body'], {'ref': 'main', 'inputs': {'report_kind': 'automatic-daily'}})
         self.assertTrue(call['uncertain'])
         self.assertEqual(len(http.calls), 1)
 
