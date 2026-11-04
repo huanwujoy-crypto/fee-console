@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="管理费">
 <meta name="theme-color" content="#fcfcfb">
-<meta name="fee-console-build" content="4.9.37">
+<meta name="fee-console-build" content="4.9.38">
 <title>投资管理费</title>
 <style>
 :root{color-scheme:light;--surface-1:#fcfcfb;--plane:#f9f9f7;--ink-1:#0b0b0b;--ink-2:#52514e;--ink-muted:#898781;--grid:#e1e0d9;--axis:#c3c2b7;--border:rgba(11,11,11,.10);--series-1:#2a78d6;--series-2:#eb6834;--good-text:#006300;--critical:#d03b3b;--chip:#f0efec;--lockbg:rgba(11,11,11,.035)}
@@ -1103,7 +1103,7 @@ const DATA_URL="data.json";
 const GH_FILE="fee-console-db.json",GH_LEGACY_BACKUP_FILE="fee-console-db-v3-backup.json";
 const TOKEN_URL="https://github.com/settings/tokens/new?scopes=gist&description=fee-console";
 const SHELL_BUILD=document.querySelector('meta[name="fee-console-build"]')?.content||"";
-const UI_VERSION_LABEL=" · v4.9.37";
+const UI_VERSION_LABEL=" · v4.9.38";
 const freshFetch=(url,opt)=>fetch(url,opt);
 
 /* ============ 链接参数 ============ */
@@ -2699,6 +2699,29 @@ function createRatioSnapshotCore(ratioCore,exposureCore,sourceFactory,parseJson,
   return {SCHEMA,FILE,verifyOriginal,candidate,authenticate,verify,bodyCheck,digestBytes};
 }
 /* ratio-presentation:v1 */
+function foldRatioFundNotes(report){
+  for(const details of report.querySelectorAll('.ratio-asset-notes, .ratio-distribution-details')){
+    const summary=Array.from(details.children).find(n=>n.tagName==='SUMMARY');
+    if(summary?.textContent==='分类、账户与参考目标')summary.textContent='明细';
+  }
+  const numbers={'常青基金分布':'5','对冲基金分布':'6'};
+  for(const section of report.querySelectorAll('.ratio-fund-distribution')){
+    const title=Array.from(section.children).find(n=>n.tagName==='H2')?.textContent;
+    const number=numbers[title],details=Array.from(section.children).find(n=>n.tagName==='DETAILS'&&n.classList.contains('ratio-distribution-details'));
+    if(!number||!details||Array.from(details.children).some(n=>n.classList.contains('ratio-fund-notes')))continue;
+    const paragraphs=Array.from(details.children).filter(n=>n.tagName==='P');
+    if(!paragraphs.length)continue;
+    const note=document.createElement('details'),summary=document.createElement('summary');
+    note.className='ratio-explanation ratio-fund-notes';
+    summary.textContent='说明 '+number;note.append(summary);
+    for(const [i,p] of paragraphs.entries()){
+      const label=document.createElement('span'),body=document.createElement('span');
+      label.className='ratio-note-number';body.className='ratio-note-text';label.textContent=number+'.'+(i+1);
+      while(p.firstChild)body.append(p.firstChild);p.append(label,body);note.append(p);
+    }
+    details.insertBefore(note,details.children[1]||null);
+  }
+}
 function ratioHoldingDisplayName(raw,securityCode=''){
   if(typeof raw!=='string')return '';
   const original=raw.trim();
@@ -2816,6 +2839,7 @@ function styleRatioReport(root){
       label.textContent=number+'.'+(i+1);while(p.firstChild)body.append(p.firstChild);p.append(label,body);
     }
   }
+  foldRatioFundNotes(report);
   report.classList.add('ratio-styled');
 }
 /* ratio-presentation:v1:end */
