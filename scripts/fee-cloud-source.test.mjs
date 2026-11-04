@@ -1839,22 +1839,171 @@ test("period no-op cannot hide a rejected candidate, corrupt envelope/receipt, m
   const candidate=scheduledReceiptDecision('2026-10-05T12:16:40.904Z','schedule',null,{candidateCount:1});assert.equal(candidate.status,0);assert.equal(candidate.stdout,'candidate-path\n');assert.equal(candidate.output,'');
 });
 
-test("recent outstanding branch detection separates rejected attempts from promoted and old branches", () => {
-  const workflow = fs.readFileSync(new URL("../.github/workflows/promote-fee-data.yml", import.meta.url), "utf8");
-  const start = workflow.indexOf("            # A rejected recent outstanding candidate");
-  const end = workflow.indexOf('            if [[ ! "$branch_name"', start);
-  assert.ok(start > 0 && end > start);
-  for (const [promoted, timestamp, expected] of [[false, 100, "true"], [false, 99, "false"], [true, 101, "false"]]) {
-    const result = spawnSync("bash", ["-c", `set -euo pipefail
+// Run the deployed shell classification against real synthetic Git histories.
+// No remote, credential, source data, signature shortcut or publication occurs.
+function promotionHistoryFixture(run) {
+  const directory=fs.mkdtempSync(path.join(os.tmpdir(),'fee-promotion-history-'));
+  const env={...process.env,GIT_CONFIG_NOSYSTEM:'1',GIT_CONFIG_GLOBAL:os.devNull,
+    GIT_AUTHOR_NAME:'Synthetic Test',GIT_AUTHOR_EMAIL:'synthetic@example.invalid',
+    GIT_COMMITTER_NAME:'Synthetic Test',GIT_COMMITTER_EMAIL:'synthetic@example.invalid',
+    GIT_AUTHOR_DATE:'2026-10-04T12:00:00Z',GIT_COMMITTER_DATE:'2026-10-04T12:00:00Z'};
+  delete env.GIT_DIR;delete env.GIT_WORK_TREE;delete env.GIT_INDEX_FILE;
+  const git=(...args)=>{
+    const result=spawnSync('git',args,{cwd:directory,env,encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);return result.stdout.trim();
+  };
+  const commit=(files,message='synthetic data update')=>{
+    for(const [name,value]of Object.entries(files)){
+      if(value===null)fs.rmSync(path.join(directory,name));
+      else fs.writeFileSync(path.join(directory,name),value);
+    }
+    git('add','-A');git('-c','commit.gpgsign=false','commit','--allow-empty','-qm',message);
+    return git('rev-parse','HEAD');
+  };
+  const pair=n=>({'data.json':JSON.stringify({enc:true,v:3,data:Buffer.alloc(64,n).toString('base64')}),
+    'fee-data-health.json':JSON.stringify({schema:'synthetic-health',pair:n})});
+  const ref=(sha,suffix='abcdef')=>{const name='origin/codex/fee-daily-20261003-'+suffix;git('update-ref','refs/remotes/'+name,sha);return name;};
+  const classify=({cutoff='2026-10-03T00:00:00Z',once=''}={})=>{
+    const workflow=fs.readFileSync(new URL('../.github/workflows/promote-fee-data.yml',import.meta.url),'utf8');
+    const start=workflow.indexOf('          candidate_pair_in_main_history()');
+    const end=workflow.indexOf('            if ! git merge-base --is-ancestor origin/main "$candidate_ref";',start);
+    assert.ok(start>0&&end>start);
+    const script=`set -euo pipefail
 recent_unpromoted_candidate=false
-candidate_ref=origin/codex/fee-daily-20261002-abcdef
-cutoff_epoch=100
-git() { if [[ "$1" == merge-base ]]; then return ${promoted ? 0 : 1}; else echo ${timestamp}; fi; }
-${workflow.slice(start, end)}
-echo "$recent_unpromoted_candidate"`], {encoding: "utf8"});
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.trim(), expected);
-  }
+cutoff_epoch=${Date.parse(cutoff)/1000}
+ONCE_CANDIDATE_SHA=${once}
+${workflow.slice(start,end)}
+          done < <(git for-each-ref --format='%(refname:short)' 'refs/remotes/origin/codex/fee-daily-*')
+printf '%s\\n' "$recent_unpromoted_candidate"
+`;
+    const result=spawnSync('bash',['-c',script],{cwd:directory,env,encoding:'utf8'});
+    assert.equal(result.status,0,result.stderr);return result.stdout.trim();
+  };
+  try{
+    git('init','-q');const initial=commit(pair(1));git('update-ref','refs/remotes/origin/main',initial);
+    return run({git,commit,pair,ref,classify,initial});
+  }finally{fs.rmSync(directory,{recursive:true,force:true});}
+}
+
+test('promotion history ignores non-data prefix branches before anomaly classification',()=>promotionHistoryFixture(f=>{
+  const code=f.commit({'notes.txt':'synthetic maintenance'});
+  f.git('update-ref','refs/remotes/origin/codex/fee-daily-1130-20261004',code);
+  assert.equal(f.classify(),'false');
+}));
+test('promotion history retains recent unprocessed candidates and inclusive age boundary',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2)));
+  assert.equal(f.classify(),'true');
+  assert.equal(f.classify({cutoff:'2026-10-04T12:00:00Z'}),'true');
+  assert.equal(f.classify({cutoff:'2026-10-04T12:00:01Z'}),'false');
+}));
+test('promotion history recognizes normal fast-forward publication',()=>promotionHistoryFixture(f=>{
+  const candidate=f.commit(f.pair(2));f.ref(candidate);
+  f.git('update-ref','refs/remotes/origin/main',candidate);
+  assert.equal(f.classify(),'false');
+}));
+test('promotion history recognizes protected squash with identical data and health',()=>promotionHistoryFixture(f=>{
+  const candidate=f.commit(f.pair(2),'daily synthetic');f.ref(candidate);
+  f.git('checkout','-q','--detach',f.initial);
+  const merged=f.commit(f.pair(2),'protected squash publication');
+  assert.notEqual(merged,candidate);f.git('update-ref','refs/remotes/origin/main',merged);
+  assert.equal(f.classify(),'false');
+}));
+test('promotion history recognizes separate data candidate included in combined protected PR',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2),'standalone encrypted attachment'));
+  f.git('checkout','-q','--detach',f.initial);
+  const merged=f.commit({...f.pair(2),'notes.txt':'synthetic companion fix'},'combined protected publication');
+  f.git('update-ref','refs/remotes/origin/main',merged);
+  assert.equal(f.classify(),'false');
+}));
+test('promotion history keeps already-published pair recognized after newer reports and code',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2)));
+  f.git('checkout','-q','--detach',f.initial);f.commit(f.pair(2),'protected publication');
+  f.commit(f.pair(3),'next report');const main=f.commit({'notes.txt':'later code'});
+  f.git('update-ref','refs/remotes/origin/main',main);
+  assert.equal(f.classify(),'false');
+}));
+test('promotion history accepts health-only no-op only when its complete pair was published',()=>promotionHistoryFixture(f=>{
+  const health={'fee-data-health.json':f.pair(2)['fee-data-health.json']};
+  f.ref(f.commit(health));assert.equal(f.classify(),'true');
+  f.git('checkout','-q','--detach',f.initial);
+  f.git('update-ref','refs/remotes/origin/main',f.commit(health,'protected no-op'));
+  assert.equal(f.classify(),'false');
+}));
+test('promotion history does not combine data and receipt from different main commits',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2)));
+  f.git('checkout','-q','--detach',f.initial);
+  f.commit({'data.json':f.pair(2)['data.json']});
+  const main=f.commit({'data.json':f.pair(3)['data.json'],'fee-data-health.json':f.pair(2)['fee-data-health.json']});
+  f.git('update-ref','refs/remotes/origin/main',main);
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history rejects altered data, altered receipt and missing receipt independently',()=>{
+  for(const change of [{'data.json':'synthetic corrupt envelope'}, {'fee-data-health.json':'synthetic corrupt receipt'}, {'fee-data-health.json':null}])promotionHistoryFixture(f=>{
+    const published=f.commit(f.pair(2),'published');f.git('update-ref','refs/remotes/origin/main',published);
+    f.git('checkout','-q','--detach',f.initial);f.ref(f.commit({...f.pair(2),...change}));
+    assert.equal(f.classify(),'true');
+  });
+});
+test('promotion history cannot hide extra changed files behind a known pair',()=>promotionHistoryFixture(f=>{
+  const published=f.commit(f.pair(2));f.git('update-ref','refs/remotes/origin/main',published);
+  f.git('checkout','-q','--detach',f.initial);f.ref(f.commit({...f.pair(2),'extra.txt':'unreviewed code'}));
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history cannot hide changed file modes behind known blob bytes',()=>promotionHistoryFixture(f=>{
+  const published=f.commit(f.pair(2));f.git('update-ref','refs/remotes/origin/main',published);
+  f.git('checkout','-q','--detach',f.initial);f.commit(f.pair(2),'candidate pair');
+  f.git('update-index','--chmod=+x','fee-data-health.json');
+  f.git('-c','commit.gpgsign=false','commit','--amend','--no-edit','-q');
+  f.ref(f.git('rev-parse','HEAD'));
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history does not treat a branch-only copy as trusted main publication',()=>promotionHistoryFixture(f=>{
+  const candidate=f.commit(f.pair(2));f.ref(candidate);
+  f.git('update-ref','refs/remotes/other/published',candidate);
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history ignores pairs present only in a merged side parent',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2),'independent candidate'));
+  f.git('checkout','-q','--detach',f.initial);
+  const side=f.commit({...f.pair(2),'side.txt':'not selected as main state'},'side branch');
+  f.git('checkout','-q','--detach',f.initial);
+  const main=f.commit(f.pair(3),'main report');
+  const merge=f.git('commit-tree',f.git('rev-parse','HEAD^{tree}'),'-p',main,'-p',side,'-m','merge keeps main report');
+  f.git('update-ref','refs/remotes/origin/main',merge);
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history does not exempt merge candidates even with a known pair',()=>promotionHistoryFixture(f=>{
+  const published=f.commit(f.pair(2));f.git('update-ref','refs/remotes/origin/main',published);
+  const tree=f.git('rev-parse','HEAD^{tree}');
+  f.git('checkout','-q','--detach',f.initial);const side=f.commit({'side.txt':'synthetic'});
+  f.ref(f.git('commit-tree',tree,'-p',f.initial,'-p',side,'-m','unresolved merge candidate'));
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history cannot silently accept unreadable trusted main history',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2)));f.git('update-ref','-d','refs/remotes/origin/main');
+  assert.equal(f.classify(),'true');
+}));
+test('promotion history does not clear a real unresolved candidate beside integrated ones',()=>promotionHistoryFixture(f=>{
+  f.ref(f.commit(f.pair(2)),'aaaaaa');
+  f.git('checkout','-q','--detach',f.initial);
+  const published=f.commit(f.pair(2),'protected publication');f.git('update-ref','refs/remotes/origin/main',published);
+  f.ref(f.commit(f.pair(3)),'bbbbbb');assert.equal(f.classify(),'true');
+  const result=scheduledReceiptDecision('2026-10-05T12:16:40.904Z','schedule',null,{recentCandidate:true,candidateCount:1});
+  assert.equal(result.status,0);assert.equal(result.stdout,'candidate-path\n');
+}));
+test('promotion history preserves exact one-off candidate restriction',()=>promotionHistoryFixture(f=>{
+  const unrelated=f.commit(f.pair(2));f.ref(unrelated,'aaaaaa');
+  f.git('checkout','-q','--detach',f.initial);
+  const chosen=f.commit(f.pair(3));f.ref(chosen,'bbbbbb');
+  f.git('checkout','-q','--detach',f.initial);
+  f.git('update-ref','refs/remotes/origin/main',f.commit(f.pair(3),'protected chosen publication'));
+  assert.equal(f.classify(),'true');assert.equal(f.classify({once:chosen}),'false');
+}));
+test('watchdog failure distinguishes missing receipt from an outstanding candidate',()=>{
+  const missing=scheduledReceiptDecision('2026-10-05T12:16:40.904Z');
+  assert.equal(missing.status,1);assert.match(missing.stderr,/Period watch refused: missing receipt\./);
+  const pending=scheduledReceiptDecision('2026-10-05T12:16:40.904Z','schedule',null,{recentCandidate:true});
+  assert.equal(pending.status,1);assert.match(pending.stderr,/Period watch refused: outstanding candidate\./);
 });
 
 
