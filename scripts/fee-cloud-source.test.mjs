@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { createHash, randomBytes, createCipheriv } from "node:crypto";
+import { createHash, randomBytes, createCipheriv, createDecipheriv } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { HEALTH_SCHEMA, validateHealth } from "./fee-data-health.mjs";
 import test from "node:test";
@@ -19,7 +19,7 @@ import { buildWriterFailureDiagnostic, validateWriterFailureDiagnostic, WRITER_D
 import { reportFailureCode } from './fee-report-producer.mjs';
 import { CLOUD_ACCOUNTS, parseSourceJson } from './fee-cloud-source.mjs';
 import { reportAddDays } from './fee-report-period.mjs';
-import { isSharesightDeclaredTradeCash, sharesightCashRelations } from './fee-trade-cash-evidence.mjs';
+import { isSharesightDeclaredTradeCash, sharesightCashRelations, resolveTradeCashEvidence } from './fee-trade-cash-evidence.mjs';
 
 const D = "2026-09-23";
 function quotedPrincipalFixture(){
@@ -53,6 +53,100 @@ test('quoted principal: arbitrary notes, wrong identity/date/side and incomplete
  for(const change of changes){const f=quotedPrincipalFixture();change(f);assert.equal(isSharesightDeclaredTradeCash(f),false,change.toString());}
  const f=quotedPrincipalFixture();f.row.description='unknown withdrawal';
  const r=reconcileFlows([],[],[{date:D,acct:'webull',amount:-20,type:'WITHDRAWAL',desc:f.row.description}],{reference:true});assert.equal(r.unresolved.length,1);
+});
+function compactPrincipalFixture(side='BUY'){
+ const f=quotedPrincipalFixture(),buy=side==='BUY',q=buy?'2':'3',p=buy?'10':'10.005';
+ f.row.amount=buy?-20.02:30;
+ f.row.cash_account_transaction_type.name=buy?'WITHDRAWAL':'DEPOSIT';
+ f.row.description=`Webull TEST ${side}${q}@${p} ${buy?'principal20 fee0.02':'net30.00; gross30.02 fee0.02 included'}; NOT external funding. Trade222; Gmailabcdef0123456789; no auto cash. key=webull.manual|10205226|abcdef0123456789|${side}|TEST|${q}|${p}|cash`;
+ return f;
+}
+test('compact principal: dated BUY and net SELL remain internal without changing source or account values',()=>{
+ for(const side of ['BUY','SELL']){
+  const f=compactPrincipalFixture(side);assert.equal(isSharesightDeclaredTradeCash(f),true);
+  const source=raw(),before=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+  source.webull.cashTransactions[90250].cash_account_transactions=[f.row];
+  const original=JSON.stringify(source),next=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+  assert.equal(JSON.stringify(source),original);
+  for(const k of ['accounts','splits','acctCash','prevAcctCash','benchmark','sourceReference'])assert.deepEqual(next[k],before[k],k);
+  const flow=next.flows.find(v=>v.acct==='webull');assert.equal(flow.evidence,'internal_trade');assert.equal(flow.amount,f.row.amount);
+  const result=reconcileFlows([],[],next.flows,{reference:true});
+  assert.deepEqual(result.auto,[]);assert.deepEqual(result.unresolved,[]);assert.deepEqual(result.errors,[]);
+ }
+});
+test('compact principal: only complete consistent identities, dated signs and cent amounts qualify',()=>{
+ const changes=[f=>f.account='schwab',f=>f.portfolioId=936249,f=>f.targetDate='2026-09-22',
+  f=>f.row.payout_id=1,f=>f.row.cash_account_transaction_type.name='FEE',f=>f.row.amount=-f.row.amount,
+  f=>f.row.amount=0,f=>f.row.amount=NaN,f=>f.row.amount=String(f.row.amount),f=>f.row.amount+=0.01,
+  f=>f.row.amount+=0.001,f=>f.row.amount+=0.0000001,f=>f.row.amount=Infinity,f=>f.row.amount=1e13,
+  f=>f.row.trade_id=223,f=>f.row.foreign_identifier='unrelated',
+  f=>f.row.description='NOT external funding',f=>f.row.description+=' extra',
+  f=>f.row.description+='\n',f=>f.row.description+='\r',f=>f.row.description+='\r\n',
+  f=>f.row.description=f.row.description.replace('fee0.02','fee0.03'),
+  f=>f.row.description=f.row.description.replace('fee0.02','fee0.001'),
+  f=>f.row.description=f.row.description.replace('fee0.02','fee-0.02'),
+  f=>f.row.description=f.row.description.replace('Gmailabcdef','Gmailfedcba'),
+  f=>f.row.description=f.row.description.replace('|TEST|','|OTHER|'),
+  f=>f.row.description=f.row.description.replace('|10205226|','|99999999|'),
+  f=>f.row.description=f.row.description.replace('|cash','|unknown'),
+  f=>f.row.description=f.row.description.replace(/\|(BUY|SELL)\|/,'|OTHER|'),
+  f=>f.row.description=f.row.description.replace('NOT external funding','external funding'),
+  f=>f.row.description=f.row.description.replace('no auto cash. ','')];
+ for(const side of ['BUY','SELL'])for(const change of changes){const f=compactPrincipalFixture(side);change(f);assert.equal(isSharesightDeclaredTradeCash(f),false,`${side}: ${change}`);}
+ for(const side of ['BUY','SELL']){
+  const f=compactPrincipalFixture(side);f.row.trade_id=222;f.row.foreign_identifier=f.row.description.split('key=')[1];assert.equal(isSharesightDeclaredTradeCash(f),true);
+ }
+ for(const [from,to] of [['gross30.02','gross30.01'],['net30.00','net29.99'],['SELL3@10.005','SELL3@10.004'],['SELL3@10.005','SELL0@10.005']]){
+  const f=compactPrincipalFixture('SELL');f.row.description=f.row.description.replace(from,to);assert.equal(isSharesightDeclaredTradeCash(f),false);
+ }
+ const f=compactPrincipalFixture();f.row.description=f.row.description.replace('principal20','principal19.99');assert.equal(isSharesightDeclaredTradeCash(f),false);
+});
+test('compact principal: half-cent gross is checked against declared cash, never rounded into the ledger',()=>{
+ for(const [p,gross,net,accepted] of [['10.004','30.01','29.99',true],['10.005','30.02','30.00',true],['10.006','30.02','30.00',true],['10.005','30.01','29.99',false]]){
+  const f=compactPrincipalFixture('SELL');f.row.description=f.row.description.replaceAll('10.005',p).replace('gross30.02',`gross${gross}`).replace('net30.00',`net${net}`);f.row.amount=Number(net);
+  const before=JSON.stringify(f);assert.equal(isSharesightDeclaredTradeCash(f),accepted);assert.equal(JSON.stringify(f),before);
+ }
+});
+test('compact principal: malformed cash still prevents zero-cash claims and unknown/conflicting pointers',()=>{
+ for(const side of ['BUY','SELL'])for(const mutate of [f=>{},f=>f.row.amount+=1,f=>f.row.description=f.row.description.replace('|cash','|bad'),f=>f.row.description=f.row.description.replace(/@[^ ]+/,'@bad')]){
+  const f=compactPrincipalFixture(side);mutate(f);
+  const trade={id:222,portfolio_id:f.portfolioId,transaction_date:D,state:'confirmed',description_code:side,holding_id:333,instrument:{code:'TEST'},value:side==='BUY'?20.02:-30,price:10,quantity:2};
+  const args={...f,trades:[trade],cashRows:[f.row],cashAccounts:[{id:90250,currency:'USD',portfolio_id:f.portfolioId}]};
+  assert.deepEqual(sharesightCashRelations(args).relatedCash.get(222),[777]);
+  const resolved=resolveTradeCashEvidence(args);assert.deepEqual(resolved.relatedCash.get(222),[777]);assert.equal(resolved.cashForTrade.size,0,'a description alone does not grant strict paid-trade authority');
+  trade.value=0;assert.throws(()=>resolveTradeCashEvidence(args),/FEE_NONCASH_TRADE_CASH_UNVERIFIED/);
+  trade.value=20;f.row.trade_id=223;assert.throws(()=>resolveTradeCashEvidence(args),/FEE_NONCASH_TRADE_CASH_UNVERIFIED/);
+  f.row.trade_id=null;args.trades=[];assert.throws(()=>resolveTradeCashEvidence(args),/FEE_NONCASH_TRADE_CASH_UNVERIFIED/);
+ }
+ const f=compactPrincipalFixture();f.row.description=f.row.description.replace('fee0.02','fee0.03');
+ const source=raw();source.webull.cashTransactions[90250].cash_account_transactions=[f.row];
+ const normalized=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'});
+ assert.equal(normalized.flows[0].evidence,undefined);assert.equal(reconcileFlows([],[],normalized.flows,{reference:true}).unresolved.length,1);
+});
+test('compact principal: actual offline writer keeps NAV and produces a receipt; contradictory memo still blocks publication',async t=>{
+ const {dailyReportPlan}=await import('./fee-report-period.mjs');
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'fee-compact-writer-'));fs.chmodSync(dir,0o700);t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ const key=randomBytes(32),seal=(value,v=3)=>{const iv=randomBytes(12),c=createCipheriv('aes-256-gcm',key,iv);return JSON.stringify({enc:true,v,data:Buffer.concat([iv,c.update(JSON.stringify(value)),c.final(),c.getAuthTag()]).toString('base64')});};
+ const unseal=text=>{const b=Buffer.from(JSON.parse(text).data,'base64'),c=createDecipheriv('aes-256-gcm',key,b.subarray(0,12));c.setAuthTag(b.subarray(-16));return JSON.parse(Buffer.concat([c.update(b.subarray(12,-16)),c.final()]));};
+ const economic={v:4,settings:{start:previousCalendarDate(D),mgmt:2,carry:20},accounts:[{id:'schwab',opening:1000},{id:'webull',opening:1000}],months:[],fees:[]};
+ const base={daily:[{d:previousCalendarDate(D),schwab:1000,webull:1000,cash:800,stock:1050,other:150,acctCash:{schwab:400,webull:400},spy:700,qqq:600,bd:previousCalendarDate(D),bstate:'session'}],flowsAuto:[],flowsUnresolved:[],status:{asOf:previousCalendarDate(D),provisional:false,calibrated:false,unresolvedCount:0,notes:[],splitDelta:0}};
+ base.feeCalculationReceipt=buildFeeCalculationReceipt({data:base,economicInput:economic});
+ const econ=path.join(dir,'economic.json'),clock=path.join(dir,'clock.mjs'),economicBytes=seal(economic,4);
+ fs.writeFileSync(econ,economicBytes,{mode:0o600});fs.writeFileSync(clock,"const D=Date,n=D.parse('2026-09-24T06:00:00Z');globalThis.Date=class extends D{constructor(...a){super(...(a.length?a:[n]));}static now(){return n;}};globalThis.fetch=()=>{throw Error('NETWORK_FORBIDDEN');};");
+ for(const invalid of [false,true]){
+  const source=raw(),buy=compactPrincipalFixture(),sell=compactPrincipalFixture('SELL');sell.row.id=778;
+  if(invalid)buy.row.description=buy.row.description.replace('principal20','principal19.99');
+  source.webull.cashTransactions[90250].cash_account_transactions=[buy.row,sell.row];
+  const input=normalizeRead(source,D,selectBenchmark(benchmarkCache,D),{sourceMode:'sharesight-reference'}),file=path.join(dir,invalid?'rejected.json':'accepted.json'),before=seal(base);
+  fs.writeFileSync(file,before,{mode:0o600});
+  const args=['--date='+D,'--file='+file,'--source-fetched-at=2026-09-24T05:59:00Z','--source-fingerprint='+input.sourceFingerprint,'--sharesight-reference='+JSON.stringify(input.sourceReference),'--flows='+JSON.stringify(input.flows),'--report-plan='+JSON.stringify(dailyReportPlan(D,['NYSE','NASDAQ'])),'--src-bench='+D,'--bench-state=session','--spy=701','--qqq=602'];
+  for(const a of ['schwab','webull'])args.push(`--${a}=${input.accounts[a]}`,`--src-${a}=${D}`,`--acct-cash-${a}=${input.acctCash[a]}`);
+  for(const s of ['cash','stock','other'])args.push(`--${s}=${input.splits[s]}`);
+  const result=spawnSync(process.execPath,['--import',clock,new URL('./daily.mjs',import.meta.url).pathname,...args],{cwd:dir,encoding:'utf8',env:{PATH:process.env.PATH,FEE_DATA_KEY:key.toString('base64url'),FEE_ECON_FILE:econ}});
+  if(invalid){assert.equal(result.status,1,result.stderr);assert.equal(result.stderr.trim(),'error: FEE_REPORT_RECEIPT_UNRESOLVED_FLOW — nothing written');assert.equal(fs.readFileSync(file,'utf8'),before);}
+  else{assert.equal(result.status,0,result.stderr);const data=unseal(fs.readFileSync(file,'utf8')),point=data.daily.at(-1);assert.equal(point.schwab,input.accounts.schwab);assert.equal(point.webull,input.accounts.webull);assert.deepEqual(data.flowsUnresolved,[]);assert.deepEqual(data.flowsAuto,[]);assert.equal(data.feeCalculationReceipt.asOf,D);assert.equal(data.feeReportPublication.plan.accountingThrough,D);assert.equal(data.feeReportPublication.feeReceiptId,data.feeCalculationReceipt.receiptId);}
+  assert.equal(fs.readFileSync(econ,'utf8'),economicBytes);
+ }
 });
 // Legacy synthetic cases already state an independent opening in their prior
 // fixture. Give those fixtures an explicit predecessor record. New ledger tests

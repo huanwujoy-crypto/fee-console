@@ -161,11 +161,41 @@ const DECLARED_QUOTED_BUY_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) BUY ?(\d+(?
 // even when the remainder cannot grant a principal role. A real cash pointer
 // must not become a claim of zero cash after a malformed key or fee.
 const DECLARED_QUOTED_BUY_POINTER_RE = /^Webull [A-Z0-9][A-Z0-9./^-]{0,31} BUY\d+(?:\.\d+)?\s*@\d+(?:\.\d+)? securities principal; NOT external funding\. Trade/;
+const DECLARED_COMPACT_BUY_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) BUY(\d+(?:\.\d+)?)@(\d+(?:\.\d+)?) principal(\d+(?:\.\d+)?) fee(\d+(?:\.\d+)?); NOT external funding\. Trade([1-9]\d{0,14}); Gmail([a-f0-9]{16}); no auto cash\. key=([^\r\n]+)$/;
+const DECLARED_COMPACT_SELL_RE = /^Webull ([A-Z0-9][A-Z0-9./^-]{0,31}) SELL(\d+(?:\.\d+)?)@(\d+(?:\.\d+)?) net(\d+(?:\.\d+)?); gross(\d+(?:\.\d+)?) fee(\d+(?:\.\d+)?) included; NOT external funding\. Trade([1-9]\d{0,14}); Gmail([a-f0-9]{16}); no auto cash\. key=([^\r\n]+)$/;
+// Recognize the relationship independently of money/key validity. This does
+// not classify cash or grant paid-trade authority.
+const DECLARED_COMPACT_POINTER_RE = /^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (?:BUY[^\s;]* principal|SELL[^\s;]* net)/;
+function declaredCompactCash(row,text){
+ if(text.length>2000||/[\r\n]/.test(text))return false;
+ const buy=DECLARED_COMPACT_BUY_RE.exec(text),sell=DECLARED_COMPACT_SELL_RE.exec(text);
+ if(!buy&&!sell)return false;
+ const side=buy?'BUY':'SELL';
+ const [,ticker,quantity,price]=buy||sell;
+ const [grossText,feeText,tradeId,gmail,key]=buy?buy.slice(4):sell.slice(5);
+ const netText=sell?.[4];
+ if(key!==`webull.manual|10205226|${gmail}|${side}|${ticker}|${quantity}|${price}|cash`
+   ||row.trade_id!=null&&!sameId(row.trade_id,tradeId)
+   ||row.foreign_identifier!=null&&row.foreign_identifier!==''&&row.foreign_identifier!==key
+   ||row.cash_account_transaction_type.name!==(buy?'WITHDRAWAL':'DEPOSIT')
+   ||!finite(row.amount)||(buy?row.amount>=0:row.amount<=0))return false;
+ const q=rational(quantity),p=rational(price);
+ const money=text=>{const v=rational(text);return v&&v.n>=0n&&v.n*100n%v.d===0n?v.n*100n/v.d:null;};
+ const gross=money(grossText),fee=money(feeText),net=netText===undefined?null:money(netText);
+ const native=Math.abs(row.amount)<=1e12?money(String(Math.abs(row.amount))):null;
+ if(!q||!p||q.n<=0n||p.n<=0n||gross===null||gross<=0n||fee===null||native===null)return false;
+ // This checks the source declaration; it never changes a source amount.
+ // Sharesight cash is reported in cents, including a half-cent gross rounded up.
+ const numerator=q.n*p.n*100n,denominator=q.d*p.d;
+ if((2n*numerator+denominator)/(2n*denominator)!==gross)return false;
+ return buy?native===gross+fee:net!==null&&net>0n&&gross-fee===net&&native===net;
+}
 export function isSharesightDeclaredTradeCash({account,portfolioId,row,targetDate}){
  if(account!=='webull'||portfolioId!==CLOUD_ACCOUNTS.webull.portfolioId||row.payout_id!=null
    ||String(row.date_time||'').slice(0,10)!==targetDate
    ||!['DEPOSIT','WITHDRAWAL'].includes(row.cash_account_transaction_type?.name))return false;
  const text=typeof row.description==='string'?row.description:'';
+ if(declaredCompactCash(row,text))return true;
  // The dated Sharesight cash record is authoritative. This newer memo keeps
  // the same explicit principal declaration, with quantity/price before it.
  // Verify its complete identity syntax without requiring a second trade read.
@@ -203,7 +233,7 @@ export function sharesightCashRelations({account,portfolioId,targetDate,trades,c
    // cannot grant the principal role. Invalid money/key text must never turn
    // a selected transfer's real cash leg into an assertion of zero cash.
    const text=typeof row.description==='string'?row.description:'';
-   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(text)||DECLARED_QUOTED_BUY_POINTER_RE.test(text))
+   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(text)||DECLARED_QUOTED_BUY_POINTER_RE.test(text)||DECLARED_COMPACT_POINTER_RE.test(text))
     for(const m of text.matchAll(/(?:\bTrade|\bSharesight trade )([1-9]\d{0,14});/g))pointers.add(id(m[1]));
    for(const pointer of principalRelations({account,row,trades}))pointers.add(pointer);
   }
@@ -242,7 +272,7 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
   if(row.trade_id!=null){try{pointerIds.add(id(row.trade_id));}catch{pointerIds.add(-1);}}
   if(account==='webull'){
    const description=typeof row.description==='string'?row.description:'';
-   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(description)||DECLARED_QUOTED_BUY_POINTER_RE.test(description))
+   if(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(description)||DECLARED_QUOTED_BUY_POINTER_RE.test(description)||DECLARED_COMPACT_POINTER_RE.test(description))
     for(const match of description.matchAll(/(?:\bTrade|\bSharesight trade )([^;\s]+);/g)){
      try{pointerIds.add(id(match[1]));}catch{pointerIds.add(-1);}
     }
@@ -254,7 +284,7 @@ export function resolveTradeCashEvidence({account,portfolioId,targetDate,trades,
    throw Error('FEE_NONCASH_TRADE_CASH_UNVERIFIED');
   for(const t of trades){
    const desc=typeof row.description==='string'?row.description:'';
-   const explicit=account==='webull'&&/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(desc)
+   const explicit=account==='webull'&&(/^Webull [A-Z0-9][A-Z0-9./^-]{0,31} (BUY|SELL) /.test(desc)||DECLARED_COMPACT_POINTER_RE.test(desc))
       &&new RegExp('(?:Trade|Sharesight trade )'+id(t.id)+';').test(desc);
    const old=legacyIds.has(id(t.id));
    const related=sameId(row.trade_id,t.id)||explicit||principalIds.has(id(t.id))||old;
