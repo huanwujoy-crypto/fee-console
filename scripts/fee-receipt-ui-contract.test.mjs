@@ -88,9 +88,11 @@ const RATIO_SIX_ALLOCATION_UI_SHA256 = 'e456d7a6f32d2550b22eea40064bd6e8efbfc328
 const RATIO_BENCHMARK_EXCLUSION_UI_SHA256 = 'b87f93ad4f73d4d0b5bce603a3f6a55677a531f6cc875440082ab0026c6a2e29';
 const RATIO_PERFORMANCE_UI_SHA256 = '6d168c6e33791a34f6bf7a7c37848bde73b7476af4da89088b1f2a96c13024a7';
 const RATIO_SHELL_VERSION_UI_SHA256 = '31101cf73ec304acd401d765b7013cdceaf1b5bb9be46628c3dc98dcaf205509';
+// Exact notes-only successor; the frozen financial regions below remain unchanged.
+const RATIO_FOLDED_NOTES_UI_SHA256 = '0d72a8f1ab1eed9e1b57248c791a1ac946b752b8b035f980f5de8c4cc4c0552f';
 export function reviewedUiStage(html) {
   const sha = uiHash(html), stage = sha === reviewedFixture.priorIndexSha256 ? "prior"
-    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 || sha === RATIO_PRESENTATION_UI_SHA256 || sha === RATIO_REFINEMENT_UI_SHA256 || sha === RATIO_CONTINUITY_UI_SHA256 || sha === RATIO_NAME_UI_SHA256 || sha === RATIO_DETAILS_UI_SHA256 || sha === RATIO_FOLLOWUP_UI_SHA256 || sha === RATIO_INSTANT_UI_SHA256 || sha === RATIO_DOWNLOAD_UI_SHA256 || sha === RATIO_SIX_ALLOCATION_UI_SHA256 || sha === RATIO_BENCHMARK_EXCLUSION_UI_SHA256 || sha === RATIO_PERFORMANCE_UI_SHA256 || sha === RATIO_SHELL_VERSION_UI_SHA256 ? "next" : null;
+    : sha === reviewedFixture.nextIndexSha256 || sha === GIFT_FIXTURE_SHA256 || sha === ASSET_ALLOCATION_UI_SHA256 || sha === RATIO_COMPLETION_UI_SHA256 || sha === RATIO_READBACK_UI_SHA256 || sha === RATIO_FILE_PIN_UI_SHA256 || sha === RATIO_PRESENTATION_UI_SHA256 || sha === RATIO_REFINEMENT_UI_SHA256 || sha === RATIO_CONTINUITY_UI_SHA256 || sha === RATIO_NAME_UI_SHA256 || sha === RATIO_DETAILS_UI_SHA256 || sha === RATIO_FOLLOWUP_UI_SHA256 || sha === RATIO_INSTANT_UI_SHA256 || sha === RATIO_DOWNLOAD_UI_SHA256 || sha === RATIO_SIX_ALLOCATION_UI_SHA256 || sha === RATIO_BENCHMARK_EXCLUSION_UI_SHA256 || sha === RATIO_PERFORMANCE_UI_SHA256 || sha === RATIO_SHELL_VERSION_UI_SHA256 || sha === RATIO_FOLDED_NOTES_UI_SHA256 ? "next" : null;
   assert.ok(stage, "unreviewed UI: neither exact prior nor reviewed next bytes");
   for (const name of CONTRACT_REGIONS) {
     const region = uiRegion(html, name);
