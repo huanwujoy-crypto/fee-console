@@ -23,9 +23,10 @@ assert.ok(path.isAbsolute(uiFile), "the optional synthetic UI preview path must 
 // The support PR tests the exact reviewed next UI before the index-only PR lands.
 function performanceCandidate(){
   const bytes=fs.readFileSync(path.join(root,'scripts/fixtures/fee-ratio-six-allocation-ui.json'));
-  assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'b86797b1ca00198c61228c5dca45f50489ff8e2b5d20b6ea80814c2e9dab5039');
+  assert.equal(crypto.createHash('sha256').update(bytes).digest('hex'),'21d9bbddea14fbfaa8092ac1e5cb03059481034cc4c8f30549062fb918085683');
   const fixture=JSON.parse(bytes),sha=text=>crypto.createHash('sha256').update(text).digest('hex');
   let page=fs.readFileSync(uiFile,'utf8');
+  if(sha(page)===fixture.assetNotesNextSha256){for(const r of [...fixture.assetNotesRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.assetNotesPriorSha256);}
   if(sha(page)===fixture.notesNextSha256){for(const r of [...fixture.notesRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.notesPriorSha256);}
   if(sha(page)===fixture.releaseNextSha256){for(const r of [...fixture.releaseRegions].reverse()){assert.equal(page.split(r.next).length,2);page=page.replace(r.next,()=>r.prior);}assert.equal(sha(page),fixture.releasePriorSha256);}
   if(sha(page)===fixture.performancePriorSha256)for(const region of fixture.performanceRegions){
@@ -1652,16 +1653,17 @@ test('a deployed shell release reloads old windows and preserves their access fr
  let page=fs.readFileSync(uiFile,'utf8'),sha=s=>crypto.createHash('sha256').update(s).digest('hex');
  if(sha(page)===fixture.releasePriorSha256)for(const r of fixture.releaseRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
  if(sha(page)===fixture.notesPriorSha256)for(const r of fixture.notesRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
- assert.equal(sha(page),fixture.notesNextSha256);
- let prior=page;for(const r of [...fixture.notesRegions].reverse()){assert.equal(prior.split(r.next).length,2);prior=prior.replace(r.next,()=>r.prior);}
- assert.equal(sha(prior),fixture.notesPriorSha256);
+ if(sha(page)===fixture.assetNotesPriorSha256)for(const r of fixture.assetNotesRegions){assert.equal(page.split(r.prior).length,2);page=page.replace(r.prior,()=>r.next);}
+ assert.equal(sha(page),fixture.assetNotesNextSha256);
+ let prior=page;for(const r of [...fixture.assetNotesRegions].reverse()){assert.equal(prior.split(r.next).length,2);prior=prior.replace(r.next,()=>r.prior);}
+ assert.equal(sha(prior),fixture.assetNotesPriorSha256);
  assert.notEqual(/name="fee-console-build" content="([^"]+)"/.exec(page)[1],/name="fee-console-build" content="([^"]+)"/.exec(prior)[1]);
  for(const call of ['ensureLatestShell()','manualRefresh()'])for(const next of [false,true])await t.test(call+' / '+(next?'new release':'unchanged release'),async()=>{
   const h=await browserHarness(prior,{manager:true}),fragment='#synthetic-access-fragment';let reloads=0,target='';
   h.context.location.href='https://fixture.invalid/fee-console/?view=1'+fragment;h.context.location.hash=fragment;
   h.context.location.reload=()=>{reloads++;};h.context.history.replaceState=(a,b,url)=>{target=url;};h.network.remoteHtml=next?page:prior;
   await h.run(call);assert.equal(reloads,next?1:0);assert.deepEqual(h.writes(),[]);
-  if(next){assert.ok(target.includes('_shell=4.9.38'));assert.ok(target.endsWith(fragment));assert.ok(target.includes('view=1'));}
+  if(next){assert.ok(target.includes('_shell=4.9.39'));assert.ok(target.endsWith(fragment));assert.ok(target.includes('view=1'));}
  });
  await t.test('an unsaved draft still prevents an automatic reload',async()=>{
   const h=await browserHarness(prior,{manager:true});let reloads=0;h.context.location.reload=()=>{reloads++;};h.network.remoteHtml=page;
